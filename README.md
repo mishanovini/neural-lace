@@ -1,15 +1,17 @@
 # Neural Lace
 
-> A self-learning, continuously evolving foundation for AI-assisted development.
+> A foundation for AI-assisted development: enforced best practices, risk-based permissions, progressive autonomy, and continuous self-evaluation.
 
-Neural Lace is a harness platform that grows with its host. It wraps AI coding tools (Claude Code, Codex, Cursor, Gemini) with risk-based permissions, progressive autonomy, continuous monitoring, and a learning loop that improves the system over time.
+Neural Lace is a harness platform that grows with its host. It wraps AI coding tools (Claude Code, Codex, Cursor, Gemini) with a mechanically-enforced layer of software-engineering + AI-collaboration best practices — so individual developers and teams inherit years of distilled discipline by default, not by self-enforcement.
 
 ## What It Does
 
+- **Enforced best practices** (not aspirational): evidence-based task completion, anti-vaporware verification, decision-record atomicity, tool-call budget discipline, and more — each backed by a pre-commit hook or session gate that blocks the anti-pattern mechanically. See [`docs/best-practices.md`](docs/best-practices.md) for the full catalog.
 - **Risk-based permissions**: Actions are classified by 6 risk dimensions (reversibility, blast radius, sensitivity, authority escalation, novelty, velocity) instead of brittle pattern matching. Unknown actions are handled gracefully.
-- **Progressive autonomy**: Trust accumulates through safe operation. The system asks less and does more as reliability is demonstrated — but never stops protecting against catastrophic actions.
-- **Self-evaluation**: The harness tests itself with golden scenarios, tracks its own behavior through telemetry, and proposes improvements based on observed patterns.
-- **Defense in depth**: Credentials are scanned at commit time AND push time. Security anti-patterns common in AI-generated code are flagged before they ship.
+- **Progressive autonomy**: Trust accumulates through safe operation. The system asks less and does more as reliability is demonstrated — but never stops protecting against catastrophic actions. Automation mode is configurable per-session, per-user, or per-project.
+- **Two-layer configuration**: shareable harness code never contains identity, credentials, or machine-specific paths. Personal config lives in `~/.claude/local/` (gitignored). Hygiene scanner mechanically enforces this at pre-commit time.
+- **Self-evaluation**: A weekly `/harness-review` skill audits the harness itself — dead doc links, stale references, drift between installed and source copies, hygiene violations.
+- **Defense in depth**: Credentials scanned at commit time AND push time. Security anti-patterns common in AI-generated code flagged before they ship. Public-repo creation blocked per-account via `public_blocked` flag.
 - **Forward-compatible**: Universal principles (Layer 0) and abstract patterns (Layer 1) survive tool changes. Only thin adapters (Layer 2) need to be rewritten per tool.
 
 ## Architecture
@@ -56,7 +58,22 @@ chmod +x install.sh
 ./install.sh
 ```
 
-This deploys rules, agents, hooks, and templates to `~/.claude/` and sets up global git hooks for security scanning.
+This deploys rules, agents, hooks, and templates to `~/.claude/` and sets up global git hooks for security scanning. See [`SETUP.md`](SETUP.md) for the detailed walkthrough (customizing `~/.claude/local/`, choosing an automation mode, first-run verification).
+
+## Best Practices
+
+This harness is as much about **encoded best practices** as it is about AI autonomy. A few highlights:
+
+- **CLAUDE.md < 200 lines** — Anthropic recommends keeping it an index, not a book. `adapters/claude-code/CLAUDE.md` is the model.
+- **Evidence-first task completion** — plan checkboxes can only be flipped by the `task-verifier` agent, never by self-report. A separate hook (`plan-edit-validator`) enforces this mechanically.
+- **Decision records are atomic with the index** — every `docs/decisions/NNN-*.md` must be staged alongside `docs/DECISIONS.md` in the same commit. Hook-enforced.
+- **Tool-call budget discipline** — after every 30 Edit/Write/Bash calls, the harness blocks further work until a `plan-evidence-reviewer` audit runs.
+- **Orchestrator pattern for long plans** — main session dispatches build work to sub-agents; stays lean as an orchestrator. Documented in `rules/orchestrator-pattern.md`.
+- **Anti-vaporware enforcement** — runtime features require a replayable runtime-verification command; "code exists" isn't done.
+- **Two-layer config separation** — no identity in shareable code; everything personal lives in `~/.claude/local/`. Pre-commit scanner blocks accidental leaks.
+- **Automation-mode default is safe** — `review-before-deploy` pauses before `git push`, `gh pr merge`, `supabase db push`, etc. Users opt IN to `full-auto`.
+
+Full catalog of 25+ practices, their rationale, and where each is enforced: **[`docs/best-practices.md`](docs/best-practices.md)**.
 
 ## How It Works (Operational Wiring)
 
@@ -216,9 +233,12 @@ Trust (0.0-1.0) grows with safe operation and decays with incidents. Higher trus
 
 | Document | Location | Covers |
 |----------|----------|--------|
+| **Setup Guide** | [`SETUP.md`](SETUP.md) | Fresh-install walkthrough, two-layer config customization |
+| **Best Practices** | [`docs/best-practices.md`](docs/best-practices.md) | Full catalog of encoded practices + rationale |
 | Strategy & Roadmap | `docs/harness-strategy.md` | Vision, milestones, security maturity model |
 | Architecture | `docs/harness-architecture.md` | Hook chains, agent table, credential layers |
 | Developer Guide | `docs/harness-guide.md` | File-by-file reference, setup instructions |
+| Hygiene Principle | `principles/harness-hygiene.md` | No sensitive data in harness code; two-layer config |
 | Team Patterns | `docs/business-patterns-workflow.md` | Sharing credential patterns across a team |
 | Permission Model | `principles/permission-model.md` | Risk dimensions, scoring, tiers |
 | Progressive Autonomy | `principles/progressive-autonomy.md` | Trust model, autonomy ladder |
@@ -227,5 +247,5 @@ Trust (0.0-1.0) grows with safe operation and decays with incidents. Higher trus
 
 ## License
 
-Private. Distribution strategy under evaluation.
+[MIT](LICENSE) — free to use, fork, and modify. Contributions welcome.
 

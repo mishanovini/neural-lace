@@ -1,5 +1,7 @@
 # Global Claude Code Standards
 
+> **For the catalog of best practices this harness encodes** (decision records, anti-vaporware, orchestrator pattern, two-layer config, and 20+ more with rationale for each), see [`docs/best-practices.md`](../../docs/best-practices.md). The sections below are the operational rules — the best-practices doc is the narrative guide that explains *why* each rule exists.
+
 ## Accounts & Auto-Switching
 - Work account for business repos, personal account for personal repos
 - Directory-based: `~/claude-projects/<org>/` determines which GitHub + Supabase account is active
