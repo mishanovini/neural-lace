@@ -497,7 +497,7 @@ A weekly cadence balances cost and drift tolerance. Shorter cadences (per-sessio
 
 ### Code-to-docs atomicity
 
-**Classification:** Pattern (aspirational Mechanism). The "stage docs with code" rule is self-applied; enforcement via a pre-commit gate is planned but not fully landed.
+**Classification:** Mechanism (pre-commit gate). The "stage docs with code" rule is hook-enforced via `adapters/claude-code/hooks/docs-freshness-gate.sh`.
 
 **The rule.** When a harness-layer file is created, deleted, or renamed, the corresponding documentation entry in `docs/harness-architecture.md` (the file-by-file enforcement map) or `docs/harness-guide.md` must be staged in the same commit.
 
@@ -505,7 +505,7 @@ A weekly cadence balances cost and drift tolerance. Shorter cadences (per-sessio
 
 Atomicity in the same commit is the discipline that keeps this from drifting. A rename commit that updates the file but not the doc passes review; six months later a reviewer searches for the old path and finds a reference that doesn't resolve. Forcing both changes into the same commit closes that gap.
 
-**How the harness enforces it.** `adapters/claude-code/rules/harness-maintenance.md` documents the rule. A planned pre-commit gate (`code-to-docs-atomicity-gate.sh`, tracked in `document-freshness-system.md`) will detect rename/add/delete operations on harness files without a staged change to the relevant doc, but as of this writing the gate is self-applied.
+**How the harness enforces it.** `adapters/claude-code/hooks/docs-freshness-gate.sh` is a pre-commit hook that detects structural changes (A=Added, D=Deleted, R=Renamed) to files under `adapters/claude-code/{hooks,rules,agents,skills,commands}/` or `principles/` and blocks the commit unless at least one of `docs/harness-architecture.md`, `docs/harness-guide.md`, or `docs/best-practices.md` is also staged. Modifications (M) to existing files do not trigger the gate — only structural changes that affect the documented inventory. See `adapters/claude-code/rules/harness-maintenance.md` for the narrative rule this hook enforces.
 
 **When to break it.** Rarely. If a file's purpose is genuinely too minor to document in `harness-architecture.md` (a one-line helper, a transient template), leaving it undocumented is fine — but then it should not appear in the doc at all. The rule is "if it's documented, keep the doc current," not "document everything."
 
