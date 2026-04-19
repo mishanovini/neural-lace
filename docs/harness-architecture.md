@@ -29,6 +29,11 @@ Both are reviewed by the `harness-reviewer` agent, which classifies changes firs
 | `post-tool-task-verifier-reminder.sh` | Reminds to invoke task-verifier when editing src files matching unchecked plan tasks | Soft (PostToolUse) |
 | `claim-reviewer.md` (agent) | Product Q&A claims must cite file:line | Self-invoked (residual gap) |
 | `verify-feature` skill | Ripgrep-backed citation lookup before making feature claims | Self-invoked |
+| `backlog-plan-atomicity.sh` | New plan with non-empty `Backlog items absorbed:` requires `docs/backlog.md` also staged | Mechanical (pre-commit) |
+| `decisions-index-gate.sh` | Decision record (`docs/decisions/NNN-*.md`) and `docs/DECISIONS.md` index must be staged together | Mechanical (pre-commit) |
+| `docs-freshness-gate.sh` | Structural harness changes (A/D/R) require docs staged | Mechanical (pre-commit) |
+| `migration-claude-md-gate.sh` | New `supabase/migrations/*.sql` requires `CLAUDE.md "Migrations: through N"` line update | Mechanical (pre-commit, opt-in) |
+| `review-finding-fix-gate.sh` | Commit message references review finding ID → review file must also be staged | Mechanical (pre-commit) |
 
 The residual gap (verbal vaporware) is bounded by Claude Code's lack of a PostMessage hook and is mitigated via the `verify-feature` skill + memory priming + user interrupt authority.
 

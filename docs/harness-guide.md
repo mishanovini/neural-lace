@@ -155,7 +155,7 @@ To trigger the prompt again, delete `~/.claude/local/automation-mode.json` and s
 │   ├── completion-report.md           # Appended to plans when done
 │   └── decision-log-entry.md          # Format for mid-build decisions
 ├── hooks/
-│   ├── pre-commit-gate.sh                      # Orchestrator: TDD gate → plan-reviewer → tests → build → API audit
+│   ├── pre-commit-gate.sh                      # Orchestrator: freshness gates → TDD gate → plan-reviewer → tests → build → API audit
 │   ├── pre-commit-tdd-gate.sh                  # Gen 4: 4 layers (new/modified file tests, mock ban, trivial-assertion ban)
 │   ├── plan-reviewer.sh                        # Gen 4: adversarial plan check (sweep, manual-verif, Scope, DoD)
 │   ├── plan-edit-validator.sh                  # Gen 4: blocks casual plan checkbox flips (evidence-first authorization)
@@ -165,6 +165,12 @@ To trigger the prompt again, delete `~/.claude/local/automation-mode.json` and s
 │   ├── post-tool-task-verifier-reminder.sh     # Gen 4: reminds to invoke task-verifier on src edits
 │   ├── pre-stop-verifier.sh                    # Blocks session end on incomplete/unverified plans (Check 4 calls executor + reviewer)
 │   ├── check-harness-sync.sh                   # Warns if ~/.claude/ has diverged from neural-lace repo
+│   ├── harness-hygiene-scan.sh                 # Scans for denylisted identity/credential patterns
+│   ├── decisions-index-gate.sh                 # Rule 5: decision record ↔ DECISIONS.md atomicity
+│   ├── backlog-plan-atomicity.sh               # Rule 1: plan creation absorbs backlog items
+│   ├── docs-freshness-gate.sh                  # Rule 8: structural changes touch docs
+│   ├── migration-claude-md-gate.sh             # Rule 3: migrations ↔ CLAUDE.md atomicity
+│   ├── review-finding-fix-gate.sh              # Rule 4: review fixes update review file
 │   ├── pre-push-scan.sh                        # Credential scanner (global git pre-push hook)
 │   ├── sensitive-patterns.local                # Personal credential patterns (never shared)
 │   └── sensitive-patterns.local.example        # Template for personal patterns
@@ -188,6 +194,8 @@ To trigger the prompt again, delete `~/.claude/local/automation-mode.json` and s
 ```
 
 > **Gen 4 note (2026-04-15):** the `plan-edit-validator`, `runtime-verification-executor`, `runtime-verification-reviewer`, `plan-reviewer`, `tool-call-budget`, and `post-tool-task-verifier-reminder` hooks were added as part of the anti-vaporware enforcement redesign. Together they shift enforcement from self-applied prose rules to mechanically-executed gates: plan checkbox flips require fresh matching evidence, "Runtime verification:" entries must actually execute before session end, and the tool-call-budget forces a periodic audit during long sessions.
+
+> **Document Freshness note (2026-04-18):** the `harness-hygiene-scan`, `decisions-index-gate`, `backlog-plan-atomicity`, `docs-freshness-gate`, `migration-claude-md-gate`, and `review-finding-fix-gate` hooks mechanically enforce the document-freshness rules: decisions land with their index entry in the same commit, new plans that claim to absorb backlog items stage `docs/backlog.md` too, structural harness changes (A/D/R) require matching doc updates, migrations and `CLAUDE.md` stay in sync, and review-finding fixes update their review file atomically. Each gate reads `git diff --cached` and blocks the commit if the invariant is violated — the gates are wired in both the repo-local `.git/hooks/pre-commit` wrapper (via `install-repo-hooks.sh`) and the Claude Code `pre-commit-gate.sh` PreToolUse hook. See `docs/best-practices.md` for the rule-by-rule rationale.
 
 ### Project-Level Files (in individual project repos)
 

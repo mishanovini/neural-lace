@@ -5,11 +5,13 @@
 # Exits non-zero to BLOCK the commit if any check fails.
 #
 # Checks:
-#   0. TDD gate — new runtime-feature files must have matching test files
-#      (anti-vaporware; runs FIRST because it's cheapest to fail)
-#   1. Unit tests pass (npm test)
-#   2. Build succeeds (npm run build)
-#   3. API consumer audit (no unstaged consumers of changed API routes)
+#   0. Document Freshness gates — hygiene + atomicity rules (cheapest to fail)
+#   1. TDD gate — new runtime-feature files must have matching test files
+#      (anti-vaporware; still runs before tests/build because it's fast)
+#   2. Plan-reviewer — adversarial review of any staged plan files
+#   3. Unit tests pass (npm test)
+#   4. Build succeeds (npm run build)
+#   5. API consumer audit (no unstaged consumers of changed API routes)
 
 set -eo pipefail
 
@@ -18,6 +20,26 @@ echo "╔═══════════════════════�
 echo "║        PRE-COMMIT VERIFICATION           ║" >&2
 echo "╚══════════════════════════════════════════╝" >&2
 echo "" >&2
+
+# --- Document Freshness gates (fail fast) ---
+# Run hygiene + atomicity hooks before any slower gates (TDD, tests, build).
+# Each gate reads `git diff --cached` and exits non-zero on violation.
+# Order within this block matters less — all are fast — but hygiene-scan
+# runs first because it's the most common block path.
+FRESHNESS_GATES=(
+  "harness-hygiene-scan.sh"
+  "decisions-index-gate.sh"
+  "backlog-plan-atomicity.sh"
+  "docs-freshness-gate.sh"
+  "migration-claude-md-gate.sh"
+  "review-finding-fix-gate.sh"
+)
+for gate in "${FRESHNESS_GATES[@]}"; do
+  gate_path="$HOME/.claude/hooks/$gate"
+  if [ -x "$gate_path" ]; then
+    bash "$gate_path" || exit 1
+  fi
+done
 
 # 0. TDD gate — anti-vaporware (new + modified runtime files)
 TDD_GATE="$HOME/.claude/hooks/pre-commit-tdd-gate.sh"
