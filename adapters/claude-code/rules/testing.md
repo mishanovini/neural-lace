@@ -47,6 +47,13 @@ All P0 (blocking) and P1 (confusing/frustrating) findings must be fixed. P2 (pol
 
 **Fix tasks for sweep findings must track per-file.** When a finding lists 8 files, the corresponding fix task is 8 sub-items, not 1. Mark each sub-item complete only after that specific file is verified. Otherwise the task gets marked done after fixing 5 of 8 files and the remaining 3 silently slip. This has happened: an "S3 — wire RequiredLabel into 14 forms" task was marked done after 11 forms; the other 3 were only caught by a sweep agent days later. The fix is mechanical: split the task before starting, never let a sweep finding be a single checkbox.
 
+**Review-finding ↔ fix-commit convention (Rule 4).** When a commit addresses one or more review findings, both sides of the link must be updated in the SAME commit:
+
+- **Commit message** must reference each addressed finding by its ID, using the format `<TAG>-NNN` (e.g., `UX-E04`, `CONTENT-042`, `AUDIT-7`). The first token maps to the review category (UX, CONTENT, AUDIT, etc.); the number maps to the finding row in the review file.
+- **Review file** (`docs/reviews/YYYY-MM-DD-*.md`) must be updated in the same commit to mark the addressed finding with `Fixed: <SHA>` on its row. Do not delete findings — the historical record is load-bearing.
+- Enforced by `adapters/claude-code/hooks/review-finding-fix-gate.sh`: if the commit message references a finding ID that exists in any review file, but the corresponding review file isn't staged in the same commit, the commit is blocked.
+- The enforcement is conservative — only finding IDs that actually exist in review files trigger the gate. Unrelated `<TAG>-NNN` patterns in commit messages (PR numbers, ticket references, etc.) don't false-positive.
+
 ## Link Validation (Mandatory Before Deploy)
 
 Run `npm run test:links` after any commit that adds or modifies `href` values. This catches dead internal links (like `/insights` when the page is at `/ai-insights`).

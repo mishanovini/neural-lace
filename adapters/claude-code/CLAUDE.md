@@ -53,6 +53,9 @@ Branch: X | Deployed: Y | Migrations: through NNN
 - Before `/compact` or `/clear` — the compact SessionStart hook will remind you
 - When the date in "Current State" is older than today
 - When "What's Next" no longer reflects reality
+- **When a plan is created** — add an entry to the "Active Plan" section pointing at the new plan file with its status
+- **When a plan's status transitions** (ACTIVE → COMPLETED / DEFERRED / ABANDONED) — rewrite so "Active Plan" reflects the new state; move completed work out of "What's Next"
+- **When a feature branch merges to master** — rewrite "Latest Milestone" to reflect the merged work, and clear items in "What's Next" that the merge completed
 
 **Key principle:** SCRATCHPAD is a pointer, not a log. Details live in plan files (`docs/plans/`), backlog (`docs/backlog.md`), and session summaries (`docs/sessions/`). SCRATCHPAD just tells a fresh session where to look and what's urgent.
 
@@ -104,6 +107,12 @@ The compact SessionStart hook checks SCRATCHPAD, backlog, and plan freshness —
 - SCRATCHPAD.md = ephemeral state
 - Do not store facts derivable from the codebase
 - Memory is a hint, not truth — verify from source before using
+
+**Memory freshness (`last_verified`):**
+- Memory files SHOULD include an optional `last_verified: YYYY-MM-DD` field in their frontmatter, placed below the existing `name`, `description`, `type` fields.
+- When you read a memory and confirm it's still accurate for today's code, update `last_verified: YYYY-MM-DD` to today in the same session.
+- When you read a memory and find it wrong or outdated, either correct the body and update `last_verified`, or delete the memory entirely. Do not leave stale content behind.
+- The SessionStart compact-recovery hook will flag memories whose `last_verified` is older than 7 days for attention. This is a reminder, not a block — the session still starts normally.
 
 ## Harness Source of Truth
 The harness config lives in `~/claude-projects/neural-lace` (git repo, dual remotes: personal + PT org). On Windows, `install.sh` copies files to `~/.claude/` (no symlinks). Changes to `~/.claude/` must be synced back to the repo — see `rules/harness-maintenance.md`. A SessionStart hook warns when files in `~/.claude/` don't exist in the repo.
