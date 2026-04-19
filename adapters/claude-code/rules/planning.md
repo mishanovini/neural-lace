@@ -135,6 +135,24 @@ If you start work on a new plan while another plan is `Status: ACTIVE`, you MUST
 
 **Do NOT start a new plan with the previous one still ACTIVE.** The pre-stop hook will block session termination, and worse, the unbuilt tasks from the previous plan will be invisible to future sessions because the new plan becomes the source of truth in SCRATCHPAD. This has happened: a 30-task plan was left ACTIVE while a consistency overhaul ran, and 7 unbuilt tasks were lost until a sweep agent found them.
 
+### Backlog absorption at plan creation
+
+When a new plan is created that addresses one or more items currently listed in `docs/backlog.md`, those items MUST be **absorbed into the plan** — meaning deleted from the backlog's open sections in the same commit that creates the plan file. This is enforced by `adapters/claude-code/hooks/backlog-plan-atomicity.sh`.
+
+**The contract:**
+
+1. **Plan header declares what it absorbed.** Every plan file MUST include a header field `Backlog items absorbed: [none | list of slugs]` between `Status:` and `## Goal`. Examples:
+   - `Backlog items absorbed: none` — the plan addresses a fresh user request or a need that was not tracked in the backlog.
+   - `Backlog items absorbed: slug-1, slug-2` — the plan absorbs two specific backlog entries.
+
+2. **Absorbed items are deleted from the backlog's open sections.** In the same commit as the plan file creation, the corresponding entries are removed from the backlog (not marked "in progress" — deleted). The backlog represents **items not yet claimed by any plan**; once a plan owns an item, it leaves the backlog.
+
+3. **On plan COMPLETION:** the completion report's "Implementation Summary" lists each absorbed item with its shipped status (built, with commit SHA). The items do NOT return to the backlog — they are archived inside the plan's completion report.
+
+4. **On plan ABANDONMENT or DEFERRAL:** absorbed items RETURN to the backlog's open section with a note `(deferred from <plan-path>)`. This restores the "not yet claimed" state so a future plan can pick them up.
+
+**Rationale:** backlog = "not yet claimed by any plan"; plan = "actively being built." A single source of truth per item prevents the "built but forgot to update backlog" staleness that is common in long-running projects, and prevents duplicate work where two plans both claim the same backlog entry. The enforcing hook makes the deletion-on-absorption atomic with the plan file creation commit, so no plan can exist with absorbed items still listed in the open backlog.
+
 ## Process
 1. **Explore first.** Read relevant files, understand architecture, identify conventions.
 2. **Surface decisions.** Present choices with pros/cons. Get alignment.
@@ -195,6 +213,8 @@ Use format at @~/.claude/templates/decision-log-entry.md
 
 ## Completion Report
 After all tasks complete, append handoff report using @~/.claude/templates/completion-report.md
+
+The completion report's "Implementation Summary" (section 1) MUST list each `Backlog items absorbed` entry from the plan header with its completion status (built with commit SHA, or deferred/abandoned with reason). Items marked built are archived inside the plan and do NOT return to `docs/backlog.md`; items marked deferred/abandoned return to the backlog's open section with a `(deferred from <plan-path>)` note.
 
 ## Decision Records & Session History
 

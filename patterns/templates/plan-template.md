@@ -1,6 +1,7 @@
 # Plan: [Task Title]
 Status: ACTIVE
 Execution Mode: orchestrator
+Backlog items absorbed: [none | slug-1, slug-2]
 
 <!--
 Execution Mode values:
@@ -15,6 +16,25 @@ Execution Mode values:
 If unsure, use orchestrator. The overhead of dispatching is small; the cost of
 running a multi-phase plan in one context is large (context accumulates 200+
 tool uses, quality degrades).
+
+Backlog items absorbed — required. Declares which `docs/backlog.md` open items
+this plan claims. The hook `backlog-plan-atomicity.sh` enforces that absorbed
+items are deleted from the backlog's open sections in the same commit as the
+plan file creation.
+
+  Backlog items absorbed: none
+      Use when the plan addresses a fresh user request not previously tracked
+      in the backlog (single-task quick fixes, ad-hoc bug reports, new feature
+      requests). The plan creates no obligation against the backlog.
+
+  Backlog items absorbed: add-link-validation, dark-mode-contrast-audit
+      Use when the plan claims two existing backlog items. Those exact entries
+      must be deleted from the backlog's open sections in the same commit. On
+      plan COMPLETION the items ship archived inside the completion report. On
+      ABANDONMENT or DEFERRAL the items return to the backlog with a
+      `(deferred from <plan-path>)` note.
+
+See ~/.claude/rules/planning.md, "Backlog absorption at plan creation".
 -->
 
 ## Goal

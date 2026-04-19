@@ -5,6 +5,13 @@ Append this report as the final section of the plan file after all tasks are com
 ### 1. Implementation Summary
 Map each plan task to what was actually built. Note any tasks that were modified, expanded, or descoped during implementation.
 
+**Backlog items shipped.** Read the `Backlog items absorbed:` field from the plan's header and list each absorbed item with its final status:
+- **built** — cite the commit SHA where the item shipped.
+- **deferred** — cite the reason the item was deferred and note that it returns to `docs/backlog.md` with a `(deferred from <plan-path>)` marker.
+- **abandoned** — cite the reason and note that it returns to `docs/backlog.md` with an `(abandoned from <plan-path>)` marker.
+
+If the plan's header declares `Backlog items absorbed: none`, omit this subsection entirely.
+
 ### 2. Design Decisions & Plan Deviations
 Summarize all decisions from the Decisions Log. Call out any deviations from the original approved plan and explain why they were necessary.
 

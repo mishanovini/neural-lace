@@ -110,6 +110,8 @@ For sweep tasks with > 5 sub-tasks: batch them in groups of 3-5. Dispatch 5 in p
 
 ## The dispatch protocol
 
+**Plan header owns backlog metadata, not builder output.** The plan file's header declares `Backlog items absorbed: [...]` (see `planning.md` → "Backlog absorption at plan creation"). The orchestrator reads this header at task-verifier time to mark those items as shipped in the backlog's Completed section on plan completion. **Builders are NOT asked to report backlog mapping in their return shape** — metadata lives where it was authored (in the plan header), not duplicated in builder output. Do NOT ask builders for a `backlog_items_addressed` field or any other backlog mapping in their returns; the builder return contract below is the complete set of fields expected.
+
 For each batch of tasks (one if serial, up to 5 if parallel):
 
 1. **Pick the next batch of tasks** from the plan. For parallel batches: group tasks whose `Files to Modify/Create` sets are disjoint, up to 5. For serial batches: one task. One builder per task is the default granularity within a batch. You MAY bundle tightly-coupled tasks (e.g., "2.1 + 2.2 + 2.3 are one coherent change") into a single builder dispatch IF they're in the same commit anyway, but never bundle across phases.
