@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://neural-lace.dev/schemas/telemetry/agent-invoked.json",
+  "title": "Agent Invoked Event",
+  "description": "Emitted when a subagent is spawned (task-verifier, code-reviewer, UX tester, etc.).",
+  "type": "object",
+  "required": ["event_type", "timestamp", "session_id", "invocation_id", "agent_name", "agent_type", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "event_type": {
+      "type": "string",
+      "const": "agent_invoked"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the agent was invoked."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Unique identifier for the parent session."
+    },
+    "invocation_id": {
+      "type": "string",
+      "description": "Unique identifier for this agent invocation."
+    },
+    "agent_name": {
+      "type": "string",
+      "description": "Name of the agent file or skill (e.g., 'task-verifier', 'code-reviewer', 'ux-end-user-tester')."
+    },
+    "agent_type": {
+      "type": "string",
+      "enum": ["verifier", "reviewer", "tester", "decomposer", "explorer", "custom"],
+      "description": "Category of the agent."
+    },
+    "trigger": {
+      "type": "string",
+      "description": "What caused the agent to be invoked (e.g., 'task-completion', 'pre-commit', 'user-request')."
+    },
+    "input_summary": {
+      "type": ["string", "null"],
+      "description": "Brief summary of what was passed to the agent (plan file, task ID, files list)."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["started", "completed", "failed", "timeout"],
+      "description": "Current status of the agent invocation."
+    },
+    "result": {
+      "type": ["string", "null"],
+      "enum": ["PASS", "FAIL", "INCOMPLETE", null],
+      "description": "Verdict returned by the agent, if applicable."
+    },
+    "duration_ms": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Total execution time in milliseconds. Null if still running."
+    },
+    "tokens_used": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Approximate token count consumed by the agent invocation."
+    },
+    "files_examined": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of file paths the agent read or inspected."
+    },
+    "findings_count": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Number of findings or issues reported by the agent."
+    },
+    "project": {
+      "type": "string",
+      "description": "Project name from the working directory."
+    }
+  }
+}

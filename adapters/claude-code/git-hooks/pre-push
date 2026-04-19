@@ -1,0 +1,44 @@
+#!/bin/bash
+# Global git pre-push hook dispatcher.
+#
+# This file is referenced by `git config --global core.hooksPath`
+# so it runs on EVERY push from EVERY repo on this machine.
+#
+# What it does:
+#   1. Runs the sensitive pattern scanner (blocks on credentials/business IDs)
+#   2. If the repo has a local hook at .git/hooks/pre-push.local, runs that too
+#
+# To bypass: git push --no-verify
+
+set -e
+
+# Find the scanner (follows symlinks for cases where the file itself is linked)
+HOOK_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
+SCANNER="$HOOK_DIR/../hooks/pre-push-scan.sh"
+
+# Fallback: try the canonical neural-lace install location
+if [ ! -f "$SCANNER" ]; then
+  if [ -f "$HOME/claude-projects/neural-lace/adapters/claude-code/hooks/pre-push-scan.sh" ]; then
+    SCANNER="$HOME/claude-projects/neural-lace/adapters/claude-code/hooks/pre-push-scan.sh"
+  else
+    echo "WARNING: pre-push-scan.sh not found — scanner skipped" >&2
+    SCANNER=""
+  fi
+fi
+
+# 1. Run the scanner with the hook args and stdin
+if [ -n "$SCANNER" ] && [ -f "$SCANNER" ]; then
+  # Capture stdin so we can replay it to both scanner and local hook
+  REF_INPUT=$(cat)
+  echo "$REF_INPUT" | bash "$SCANNER" "$@"
+else
+  REF_INPUT=$(cat)
+fi
+
+# 2. Run any local repo-specific pre-push hook
+LOCAL_HOOK="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/pre-push.local"
+if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then
+  echo "$REF_INPUT" | "$LOCAL_HOOK" "$@"
+fi
+
+exit 0

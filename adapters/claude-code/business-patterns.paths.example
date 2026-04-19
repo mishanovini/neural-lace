@@ -1,0 +1,11 @@
+# Path pointers to team-shared sensitive pattern files.
+# One absolute path per line. Lines starting with # are comments.
+# On macOS/Linux, prefer symlinks in ~/.claude/business-patterns.d/ — they auto-update via git pull.
+# On Windows or when symlinks aren't practical, use this file instead.
+#
+# Copy this to `business-patterns.paths` (no .example suffix) in your local
+# clone and add the paths you want the scanner to include. The real file is
+# git-ignored; this .example template is committed.
+
+# Example (adapt to your environment):
+# $HOME/.claude/local/team-patterns/your-org.txt

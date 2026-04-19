@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://neural-lace.dev/schemas/telemetry/session-lifecycle.json",
+  "title": "Session Lifecycle Event",
+  "description": "Emitted at session start, stop, compact, and resume to track session-level metadata.",
+  "type": "object",
+  "required": ["event_type", "timestamp", "session_id", "lifecycle_stage", "project"],
+  "additionalProperties": false,
+  "properties": {
+    "event_type": {
+      "type": "string",
+      "const": "session_lifecycle"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the lifecycle event."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Unique identifier for this session."
+    },
+    "lifecycle_stage": {
+      "type": "string",
+      "enum": ["start", "resume", "compact", "stop", "crash"],
+      "description": "Which lifecycle transition occurred."
+    },
+    "project": {
+      "type": "string",
+      "description": "Project name from the working directory."
+    },
+    "branch": {
+      "type": ["string", "null"],
+      "description": "Git branch active at the time of the event."
+    },
+    "trust_score": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Project trust score at session start/resume."
+    },
+    "hooks_loaded": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of hook names loaded for this session."
+    },
+    "agents_available": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of agent names available in this session."
+    },
+    "active_plan": {
+      "type": ["string", "null"],
+      "description": "Path to the currently active plan file, if any."
+    },
+    "session_duration_ms": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Total session duration at stop/compact. Null at start."
+    },
+    "actions_count": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Total actions evaluated by the permission engine during this session."
+    },
+    "blocks_count": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Number of actions blocked during this session."
+    },
+    "overrides_count": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Number of user overrides during this session."
+    },
+    "agents_invoked_count": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Number of subagent invocations during this session."
+    },
+    "commits_count": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Number of git commits made during this session."
+    },
+    "error": {
+      "type": ["string", "null"],
+      "description": "Error message if lifecycle_stage is 'crash'."
+    }
+  }
+}

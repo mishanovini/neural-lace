@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "projects": {
+    "~/code/my-saas-app": {
+      "type": "web",
+      "example_persona": "A small-business owner checking their dashboard on mobile",
+      "preferred_color_keywords": ["blue", "neutral", "minimal"]
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-lace.dev/schemas/personal.config.v1.json",
+  "title": "Personal Config (v1)",
+  "description": "Identity of the person using this harness. Lives at ~/.claude/local/personal.config.json (never committed). Used to personalize log output, git commit attribution, and timezone-aware behavior without leaking identity into harness-layer files.",
+  "type": "object",
+  "required": ["version", "preferred_name", "noreply_email"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently always 1."
+    },
+    "preferred_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Display name used in logs and session output. Not committed to git."
+    },
+    "noreply_email": {
+      "type": "string",
+      "format": "email",
+      "description": "Email address used for git commit attribution. Prefer a GitHub no-reply address (see examples/personal.config.example.json for the format) to avoid leaking a real address into public commit history."
+    },
+    "timezone": {
+      "type": "string",
+      "description": "IANA timezone identifier (e.g. America/Los_Angeles, Europe/London). Optional — defaults to the system timezone when omitted."
+    }
+  }
+}

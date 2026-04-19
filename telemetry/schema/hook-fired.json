@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://neural-lace.dev/schemas/telemetry/hook-fired.json",
+  "title": "Hook Fired Event",
+  "description": "Emitted when a lifecycle hook is triggered (PreToolUse, PostToolUse, SessionStart, SessionStop, etc.).",
+  "type": "object",
+  "required": ["event_type", "timestamp", "session_id", "hook_id", "hook_type", "trigger", "result"],
+  "additionalProperties": false,
+  "properties": {
+    "event_type": {
+      "type": "string",
+      "const": "hook_fired"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the hook fired."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Unique identifier for the current session."
+    },
+    "hook_id": {
+      "type": "string",
+      "description": "Unique identifier for this hook invocation."
+    },
+    "hook_type": {
+      "type": "string",
+      "enum": ["PreToolUse", "PostToolUse", "SessionStart", "SessionStop", "PreCommit", "PrePush"],
+      "description": "The lifecycle point at which this hook fires."
+    },
+    "hook_name": {
+      "type": "string",
+      "description": "Human-readable name of the hook (e.g., 'block-env-edit', 'pre-push-scan')."
+    },
+    "trigger": {
+      "type": "string",
+      "description": "What caused the hook to fire (tool name, event type, etc.)."
+    },
+    "tool_name": {
+      "type": ["string", "null"],
+      "description": "The tool that triggered the hook, if applicable."
+    },
+    "command": {
+      "type": ["string", "null"],
+      "description": "The command or path being evaluated, redacted of secrets."
+    },
+    "result": {
+      "type": "string",
+      "enum": ["pass", "block", "warn", "error", "skip"],
+      "description": "Outcome of the hook execution."
+    },
+    "message": {
+      "type": ["string", "null"],
+      "description": "Human-readable message produced by the hook (block reason, warning text, etc.)."
+    },
+    "duration_ms": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Execution time of the hook in milliseconds."
+    },
+    "exit_code": {
+      "type": ["integer", "null"],
+      "description": "Exit code of the hook script, if it ran as a subprocess."
+    },
+    "project": {
+      "type": "string",
+      "description": "Project name from the working directory."
+    }
+  }
+}

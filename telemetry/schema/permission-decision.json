@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://neural-lace.dev/schemas/telemetry/permission-decision.json",
+  "title": "Permission Decision Event",
+  "description": "Emitted when the permission engine evaluates an action and produces a tier decision.",
+  "type": "object",
+  "required": ["event_type", "timestamp", "session_id", "action_id", "profile_id", "tool", "tier", "outcome", "dimensions"],
+  "additionalProperties": false,
+  "properties": {
+    "event_type": {
+      "type": "string",
+      "const": "permission_decision"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the decision."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Unique identifier for the current session."
+    },
+    "action_id": {
+      "type": "string",
+      "description": "Unique identifier for this specific action evaluation."
+    },
+    "profile_id": {
+      "type": "string",
+      "description": "ID of the risk profile that matched, or 'dynamic' if classified at runtime."
+    },
+    "classifier_id": {
+      "type": ["string", "null"],
+      "description": "ID of the classifier rule used, if dynamic classification was applied."
+    },
+    "tool": {
+      "type": "string",
+      "description": "Abstract tool category (shell, file-edit, file-write, file-read, web-fetch)."
+    },
+    "command": {
+      "type": ["string", "null"],
+      "description": "The command or path being evaluated, redacted of secrets."
+    },
+    "tier": {
+      "type": "string",
+      "enum": ["T0", "T1", "T2", "T3"],
+      "description": "Computed permission tier."
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["allowed", "confirmed", "blocked", "overridden"],
+      "description": "What actually happened after the tier was determined."
+    },
+    "dimensions": {
+      "type": "object",
+      "required": ["R", "B", "S", "A"],
+      "additionalProperties": false,
+      "properties": {
+        "R": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "B": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "S": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "A": { "type": "integer", "minimum": 0, "maximum": 4 }
+      }
+    },
+    "composite_score": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Weighted composite risk score used in tier calculation."
+    },
+    "trust_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Project trust score at the time of decision."
+    },
+    "novelty_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "description": "Novelty dimension value if applicable."
+    },
+    "override_applied": {
+      "type": "boolean",
+      "description": "Whether a profile override changed the computed tier."
+    },
+    "side_effects_triggered": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Side effects triggered by this action (e.g., quality-gate, account-switch)."
+    },
+    "latency_ms": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Time in milliseconds to compute the permission decision."
+    },
+    "project": {
+      "type": "string",
+      "description": "Project name from the trust ledger."
+    }
+  }
+}

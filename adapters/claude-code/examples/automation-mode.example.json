@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "mode": "review-before-deploy",
+  "deploy_matchers": [
+    "git push",
+    "gh pr merge",
+    "gh repo create",
+    "supabase db push",
+    "vercel deploy",
+    "npm publish"
+  ]
+}

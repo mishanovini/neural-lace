@@ -1,0 +1,247 @@
+# Planning & Decision Protocol
+
+## When to Plan
+For tasks involving architectural decisions, non-obvious multi-file interactions, or work > ~15 minutes: enter plan mode. For simple single-file changes, bug fixes with obvious solutions, or docs: proceed directly.
+
+## How multi-task plans execute: orchestrator pattern
+
+**For any plan with more than one task, the main session orchestrates and dispatches build work to `plan-phase-builder` sub-agents — it does NOT do the build work itself.** This keeps the main session's context from accumulating 200+ tool uses of raw build detail across a long plan, which is a quality-of-life improvement for extended autonomous work. (Historical note: the 2026-04-14 vaporware failures were caused by self-enforcement gaps in verification, not by context accumulation — those are addressed by the hook-enforced Gen 4 mechanisms. The orchestrator pattern is a separate improvement.)
+
+See `~/.claude/rules/orchestrator-pattern.md` for the full protocol: when to use it, the dispatch contract, the builder output contract, and anti-patterns.
+
+Plan files should declare `Execution Mode: orchestrator` in their header (default for multi-task plans). The template at `~/.claude/templates/plan-template.md` includes this.
+
+The `task-verifier` mandate (only task-verifier can flip checkboxes) is unchanged — builders invoke task-verifier, orchestrator trusts the verdict. The anti-vaporware rule, runtime verification requirements, evidence block format, and tool-call-budget all still apply; they now apply to the builder's scope rather than the main session's.
+
+## Philosophy
+**Planning is where human judgment matters most. Building is where autonomy matters most.** Invest heavily in planning so implementation runs autonomously.
+
+### Completeness over speed — always
+
+Never prioritize speed over completeness. When a user asks for autonomous execution, they are authorizing you to work without pausing — they are NOT authorizing you to cut scope to finish faster. "Finish the plan" means every task in every phase, not "the critical path to a stopping point I pick."
+
+**Completeness INCLUDES runtime verification.** A task is not complete when the code exists — it is complete when the user-observable outcome has been verified at runtime. See `~/.claude/rules/vaporware-prevention.md` for the full anti-vaporware rule, including:
+- Dependency trace requirement (chain from user action to observable outcome, every arrow verified)
+- Runtime verification is mandatory for UI / API / webhook / cron / migration features
+- Never claim a feature exists when asked without citing file:line
+- Never answer "yes it works" to a user question without exercising it in the current session
+- Integration tests (Playwright/Vitest) are mandatory, not optional, for runtime features
+
+Vaporware shipping is the #1 source of user trust loss. Every feature must be end-to-end tested before marking done.
+
+**Scope is mechanical, not interpretive.** Scope = whatever is in the plan file's explicit task list. Check the list. If a task is `- [ ]` in the plan, it is in scope. If it is not in the plan, it is not in scope. You do not get to decide mid-execution that a planned task is "polish" or "stretch goal" or "minimum viable done without it." There is no "genuinely out of scope" vs "out of scope" — scope is a grep.
+
+**Deferral is only legitimate in these cases:**
+- **Dependency-blocked**: the task in the plan requires something that doesn't exist yet (user input, an external service, a prerequisite task in a later phase that also isn't done). Must be a hard dependency, not a preference.
+- **User explicitly deferred it mid-execution**: the user said "skip X" or "defer X" in so many words during the current session. Not a prior conversation, not an inferred preference.
+- **Never was in the plan**: the task doesn't appear in the plan's task list at all. If you're about to work on something not in the plan, stop and either add it to the backlog or surface it to the user — don't build off-plan work just because it seems related.
+
+**Deferral is NOT legitimate for any of these reasons:**
+- "I want to finish faster"
+- "This is polish, not blocking"
+- "The minimum viable version is enough"
+- "I'll come back to this later if there's time"
+- "The user will probably prioritize X over Y" (don't assume — ask or build everything in the plan)
+- "This is a UI tweak and the backend is working"
+- "The tests pass without this"
+- "A follow-up session can pick it up"
+
+If you catch yourself writing "deferred to backlog" during autonomous execution, stop. Check the plan file. If the task is there, build it. The user's autonomous-execution grant explicitly said "through every phase" — every sub-task listed in the plan is in scope until the user interrupts and defers it.
+
+**Mandatory pre-commit check:** before marking a phase as complete in the plan file, scan the tasks list. If any task is unchecked AND is not explicitly deferred-by-user-request, the phase is NOT complete. Keep building.
+
+**Mandatory pre-session-end check:** before writing a completion report, re-read the original plan's task list and verify every task that wasn't explicitly deferred by the user has been built. Incomplete work dressed up as "~75% done + follow-up items" is how plans get silently abandoned.
+
+**If you're genuinely stuck on a task** (hit a dependency you didn't anticipate, or the task is larger than it looked), the correct action is to STOP and report the blocker to the user, not to drop the task and move on to the next phase.
+
+### Strategy Before Planning (for substantial features)
+For new features, page redesigns, or workflow changes that affect the user experience: **define the strategy before writing the plan.** The sequence is: understand the domain → define what success looks like → design how to get there → build.
+
+- **Strategy** = what are we trying to achieve and why? Who is the user? What's their workflow? What does "done" look like from their perspective?
+- **Plan** = how do we build it? What files, what order, what tests?
+
+Without the strategy step, plans can be technically correct but solve the wrong problem. Strategy alignment with the user prevents rework.
+
+### UX During Design, Not Just Testing
+For any user-facing feature, apply the UX checklist (`~/.claude/docs/ux-checklist.md`) **during the design phase**, not just after building. Plan files for UI work should reference specific checklist items: which empty states need handling, which forms need required indicators, what dark mode considerations exist. Catching UX issues at design time is 10x cheaper than catching them in testing.
+
+### Mandatory: ux-designer review for new UI surfaces
+
+Before any plan task that creates a **new route, new top-level page, new dashboard section, new modal flow, or any substantial user-facing component** is marked as "ready to build," invoke the `ux-designer` agent on the plan's UI section. This is a hard requirement.
+
+**Triggers that require a ux-designer pre-build review:**
+- New Next.js route (new directory under `src/app/`)
+- New top-level page (a new nav item in the sidebar)
+- New tab or sub-section on an existing page
+- New modal flow with more than one step
+- New form with more than 3 fields
+- Redesign of an existing page's primary layout
+
+**Triggers that do NOT require a review:**
+- Bug fix that changes no layout
+- Adding a single button/field to an existing form
+- Wiring an existing component into a new location (if it was already reviewed)
+- Backend-only changes
+
+**How to invoke:**
+1. Draft the UI section of the plan (entry points, layout, states, flow)
+2. Invoke ux-designer via the Task tool with the plan path + the UI section
+3. Read the review. Every "Critical" gap must be addressed in the plan before building. "Important" gaps should be addressed unless there's a good reason not to. "Nice-to-haves" are optional.
+4. Paste the ux-designer's "Summary for the plan file" into the plan under a `### UX Design Review` heading so the design decisions are locked in.
+5. THEN start building.
+
+**Why this is strict:** UX gaps found in planning take 10 minutes to fix. UX gaps found in testing take 10 hours. UX gaps found in production take 10 days of user complaints. A new UI page that lacks an entry point, or has no empty state, or dead-ends the user, will ship as planned and then be silently abandoned. See the 2026-04-14 AI Conversations page incident: I built a dedicated page with no "start a new conversation" button, so the user had no way to initiate one. The ux-designer agent would have caught this at plan time.
+
+During planning:
+- Do not rush to start building — thorough > fast
+- Surface all architectural decisions with options, tradeoffs, and your recommendation
+- Identify edge cases and potential problems before they become surprises
+- Ask clarifying questions grouped in a single message
+- The plan should be detailed enough that implementation is mechanical
+- Don't suggest starting implementation until all ambiguities are resolved
+
+### Reusable Component Rule
+
+When a plan includes building a reusable component, guard, utility, modal, banner, or any pattern that solves a general problem:
+
+1. **Ask: "Where else does this problem exist?"** The component solves a problem (e.g., "user loses data on navigation"). That problem is not unique to the page you're building — it exists everywhere the same pattern applies. Grep the codebase for all locations.
+
+2. **The plan MUST include a separate task: "Wire [component] into all applicable locations."** List every location explicitly — do not leave it as "wire into other pages later." If you built an `UnsavedChangesGuard`, the plan must list every form page. If you built an `UnhappyCustomerBanner`, the plan must list every page it should appear on.
+
+3. **The verifier checks coverage, not just existence.** When verifying a reusable component task, the verifier should grep for all places the component SHOULD be used and confirm it IS used in each one. A component that exists but is only wired into one page is an incomplete task.
+
+Failure mode this prevents: Building a reusable guard/modal/banner for one page and forgetting to apply it to the 5 other pages where the same problem exists. This has happened in practice — `UnsavedChangesGuard` was built for the Automation page but never wired into campaigns, templates, or settings forms.
+
+### Sweep Task Decomposition
+
+When a plan task is worded as "wire X into all the forms" or "fix Y across the codebase" or "add Z to every page", it is **not a task — it's a category**. Categories cannot be verified as complete because there's no objective definition of "all". This is how partial fixes happen: the plan says "wire RequiredLabel into all forms", 11 of 14 get done, the box gets checked, and 3 forms silently never get fixed.
+
+**Mandatory rule:** Sweep tasks must be decomposed per-target before starting:
+
+1. **Grep the codebase** for every file that needs the change. Save the file list.
+2. **Write the file list into the plan** as one sub-task per file (or as an explicit checklist within one task).
+3. **The task is not complete until every file in the list is verified.** The task-verifier checks every file individually, not the existence of the change in any one file.
+4. **If you discover additional files mid-task**, add them to the list and verify those too.
+
+A task that says "wire RequiredLabel into all 14 forms" must list those 14 forms by path. A task that says "add try/catch to all server pages" must list every server page by path. The decomposition step is non-negotiable — without it, the task is uncheckable.
+
+### Pivoting Between Plans
+
+If you start work on a new plan while another plan is `Status: ACTIVE`, you MUST first reconcile the original plan:
+
+1. **If the original plan is mostly done** (>80% complete and the unbuilt tasks are no longer in scope) → set `Status: COMPLETED` with a one-line note explaining what was abandoned. Move any unbuilt-but-still-needed tasks to `docs/backlog.md` as standalone items.
+2. **If the original plan is partially done and the rest still matters** → set `Status: DEFERRED` with the date and a one-line reason. The unbuilt tasks remain in the plan file for resumption later.
+3. **If the original plan is being abandoned entirely** → set `Status: ABANDONED` with a reason.
+
+**Do NOT start a new plan with the previous one still ACTIVE.** The pre-stop hook will block session termination, and worse, the unbuilt tasks from the previous plan will be invisible to future sessions because the new plan becomes the source of truth in SCRATCHPAD. This has happened: a 30-task plan was left ACTIVE while a consistency overhaul ran, and 7 unbuilt tasks were lost until a sweep agent found them.
+
+## Process
+1. **Explore first.** Read relevant files, understand architecture, identify conventions.
+2. **Surface decisions.** Present choices with pros/cons. Get alignment.
+3. **Write the plan.** Persist to `docs/plans/<descriptive-slug>.md` using @~/.claude/templates/plan-template.md
+4. **Create a feature branch.** `feat/<plan-slug>` or `fix/<plan-slug>` from current branch.
+5. **Implement autonomously.** After completing each task, invoke the `task-verifier` agent to check the task — **do NOT check the task's box yourself.** Update SCRATCHPAD.md after each verified task.
+6. **If deviating:** Update plan file with deviation and reasoning BEFORE implementing.
+
+After compaction, read plan file + SCRATCHPAD.md to resume. To stop early, set `Status: ABANDONED` or `Status: DEFERRED`.
+
+## Task Completion — Verifier Mandate
+
+**As of 2026-04-09, task checkboxes in plan files may only be marked complete (`- [x]`) by the `task-verifier` agent.** Self-reporting is forbidden because it has failed in practice — it is too easy to edit checkboxes without doing the work.
+
+### How it works
+
+1. When you finish building a task, do NOT edit the plan file yourself to check the box.
+2. Instead, invoke the `task-verifier` agent via the Task tool with:
+   - Plan file path
+   - Task ID
+   - Task description
+   - Files you modified
+   - Any acceptance criteria you want checked
+3. The verifier runs its own checks (reads files, runs typecheck, greps for expected patterns, queries APIs if applicable).
+4. If the verifier returns PASS, **it** checks the box and appends an evidence block to the plan's `## Evidence Log` section.
+5. If the verifier returns FAIL or INCOMPLETE, it explains the gaps. Address them and re-invoke the verifier.
+
+### Enforcement
+
+The `pre-stop-verifier.sh` Stop hook blocks session termination if:
+- The active plan has checked tasks without corresponding evidence blocks
+- Any evidence block is malformed or missing required fields
+- Any evidence block has a FAIL or INCOMPLETE verdict
+- The plan has unchecked tasks and its status is not ABANDONED/DEFERRED/COMPLETED
+
+If you need to stop early without completing the plan, set `Status: ABANDONED` or `Status: DEFERRED` at the top of the plan file.
+
+### What NOT to do
+
+- ❌ Do not edit `- [ ]` → `- [x]` in any plan file manually.
+- ❌ Do not write your own evidence blocks in the Evidence Log. Only the task-verifier agent may do this.
+- ❌ Do not skip verification for "obvious" tasks. The point of the system is that no task is exempt.
+- ❌ Do not try to trick the verifier with vague or misleading inputs. It's instructed to err toward FAIL, and it cross-checks against the actual repo state.
+
+### Why this exists
+
+Previous plans have had tasks marked complete that weren't actually done — up to 9 of 41 in one case — because the builder (self-report) was trusted to be honest about their own work. The verifier agent is a second set of eyes that doesn't trust the builder's claims without checking them. This protects the end user from shipping something half-built.
+
+## Mid-Build Decisions
+
+Assess reversibility:
+
+**Tier 1 — Continue + Document:** Isolated, trivially reversible. Log in plan + SCRATCHPAD.
+**Tier 2 — Continue + Checkpoint:** Multi-file but revertible. Commit first. Log with SHA.
+**Tier 3 — Pause + Wait:** DB schema, public API, auth, production data. Stop. Document tradeoffs. Wait for approval.
+
+Use format at @~/.claude/templates/decision-log-entry.md
+
+## Completion Report
+After all tasks complete, append handoff report using @~/.claude/templates/completion-report.md
+
+## Decision Records & Session History
+
+Maintain traceable records in the repo:
+
+**Decision Records** (`docs/decisions/NNN-slug.md`): Create when a product/architecture direction is chosen, external input changes the plan, or a significant "either way works" choice is made. Format: Title, Date, Status, Stakeholders, Context, Decision, Alternatives, Consequences. Index at `docs/DECISIONS.md`.
+
+**Session Summaries** (`docs/sessions/YYYY-MM-DD-slug.md`): Write at end of every significant session. Include: what was built, decisions made, bugs found, key artifacts, what's left.
+
+**Plan Files** (`docs/plans/<slug>.md`): Permanent records. Never delete. Include final status + completion report.
+
+### Mandatory: every Tier 2+ decision gets a decision record in the same commit
+
+Writing a `Decision:` entry in a plan file's Decisions Log is **not sufficient**. That's the short-form local note. Any Tier 2 or Tier 3 decision (by the reversibility classification above) ALSO requires a standalone `docs/decisions/NNN-slug.md` file committed with the same change that implements the decision.
+
+**Triggers that require a decision record:**
+- New schema (table, column, enum, RLS policy)
+- New cross-file architecture pattern (auth guard pattern, token system, alert system, etc.)
+- Choice between two or more valid implementations where the user approved one
+- Scope shape decisions (single-phase vs split, bundled vs separate commits, what belongs in vs out of scope)
+- Process conventions (naming, timeout rules, commit cadence, retention policies)
+- Anything the user explicitly asks about ("which approach?", "α or β?", "do we need...")
+
+**Workflow:**
+1. Make the choice (with user input if needed).
+2. Write the decision record as `docs/decisions/NNN-slug.md` where NNN is the next number in `docs/DECISIONS.md`.
+3. Add one row to `docs/DECISIONS.md` pointing at the new file.
+4. Reference the decision record from the plan file's Decisions Log (short form) AND from the implementing commit message.
+5. Stage the decision record file along with the implementation files so they land in the same commit.
+
+**What the record must contain:**
+- **Title**, **Date**, **Status** (Active / Implemented / Deferred / Reverted), **Stakeholders**
+- **Context** — what problem drove the decision
+- **Decision** — what was chosen
+- **Alternatives Considered** — the other options, with a 1-2 line "why rejected" each
+- **Consequences** — what this enables, what it costs, what it blocks
+
+**Enforcement:** The plan file's Decisions Log section is audited before every session end. Any Tier 2+ entry without a matching `docs/decisions/NNN-*.md` file blocks `Status: COMPLETED` on the plan.
+
+**Why this is strict:** decision records are how future sessions (and future humans) understand *why* the codebase looks the way it does. A short entry in a plan file disappears from context once the plan is completed and archived. A decision record lives forever in `docs/decisions/` as a permanent artifact. Without this, every future session has to re-derive the reasoning from git history and code reading, and often gets it wrong.
+
+## Session Retrospective
+
+At the end of a significant session (before the user runs `/clear` or the session ends naturally), review the conversation for improvement signals:
+
+1. **User corrections** — did the user correct your approach, judgment, or output at any point? Each correction is a candidate for a new rule. Propose: "Based on [correction], should I add a rule to [file] to prevent this in future sessions?"
+2. **Repeated patterns** — did you do the same type of work 3+ times manually? That's a candidate for a reusable component, helper, or automation.
+3. **Feedback memories** — check if any existing feedback memories are now broadly applicable enough to graduate to a rule. A feedback entry that's been validated across multiple sessions should become a rule.
+
+This is not a blocker — don't prevent the session from ending. Surface all actionable improvements, not just a subset.

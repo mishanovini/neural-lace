@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://neural-lace.dev/schemas/trust-ledger.json",
+  "title": "Trust Ledger",
+  "description": "Tracks per-project trust scores, incident history, and tool-level trust for the Neural Lace permission engine.",
+  "type": "object",
+  "required": ["version", "global_defaults", "projects"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Schema version for migration support."
+    },
+    "global_defaults": {
+      "type": "object",
+      "required": ["initial_trust", "decay_rate", "decay_interval_days"],
+      "additionalProperties": false,
+      "properties": {
+        "initial_trust": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Trust score assigned to a new project on first session."
+        },
+        "decay_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Multiplicative decay factor applied per interval when no sessions occur."
+        },
+        "decay_interval_days": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of days between decay applications."
+        }
+      }
+    },
+    "projects": {
+      "type": "object",
+      "description": "Map of project name to trust state.",
+      "additionalProperties": {
+        "$ref": "#/definitions/project_trust"
+      }
+    }
+  },
+  "definitions": {
+    "project_trust": {
+      "type": "object",
+      "required": ["trust", "last_session", "sessions_completed", "incidents", "tool_trust", "overrides_this_month", "blocks_this_month"],
+      "additionalProperties": false,
+      "properties": {
+        "trust": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Current trust score for this project."
+        },
+        "last_session": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the most recent session."
+        },
+        "sessions_completed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of completed sessions for this project."
+        },
+        "incidents": {
+          "type": "array",
+          "description": "History of trust-affecting incidents.",
+          "items": {
+            "$ref": "#/definitions/incident"
+          }
+        },
+        "tool_trust": {
+          "type": "object",
+          "description": "Per-tool trust overrides. Keys are tool identifiers, values are trust scores.",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "overrides_this_month": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of times the user overrode a block or confirmation this calendar month."
+        },
+        "blocks_this_month": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of actions blocked (T3 hard blocks) this calendar month."
+        }
+      }
+    },
+    "incident": {
+      "type": "object",
+      "required": ["date", "type", "trust_delta", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the incident occurred."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["override", "block", "error", "security", "recovery"],
+          "description": "Category of the incident."
+        },
+        "trust_delta": {
+          "type": "number",
+          "description": "Change applied to the trust score. Negative for trust-reducing events."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what happened."
+        }
+      }
+    }
+  }
+}

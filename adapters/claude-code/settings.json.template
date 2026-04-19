@@ -1,0 +1,191 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Write",
+      "Edit",
+      "Task",
+      "Bash(*)",
+      "WebFetch(*)"
+    ],
+    "additionalDirectories": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -qiE '\\.(env|env\\.local|env\\.production|credentials\\.json|secrets\\.yaml)'; then echo 'BLOCKED: Cannot edit sensitive files (.env, credentials, secrets)' >&2; exit 1; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -qiE '(package-lock\\.json|bun\\.lock|yarn\\.lock|pnpm-lock\\.yaml)'; then echo 'BLOCKED: Lock files should only change via package manager' >&2; exit 1; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/plan-edit-validator.sh"
+          }
+        ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/tool-call-budget.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -qiE '(curl|wget).*\\|\\s*(ba)?sh|chmod\\s+-R\\s+777|mkfs\\.|dd\\s+if='; then echo 'BLOCKED: Dangerous command pattern detected' >&2; exit 1; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CMD=$(echo \"$CLAUDE_TOOL_INPUT\" | jq -r '.command // \"\"' 2>/dev/null); if echo \"$CMD\" | grep -qiE 'gh\\s+repo\\s+create.*--public|gh\\s+repo\\s+edit.*--visibility\\s+public|gh\\s+api.*visibility.*public'; then POLICY_BLOCK=0; CURRENT_USER=$(gh api user --jq '.login' 2>/dev/null); if [ -n \"$CURRENT_USER\" ] && bash ~/.claude/scripts/read-local-config.sh public-blocked \"$CURRENT_USER\" >/dev/null 2>&1; then POLICY_BLOCK=1; fi; if [ \"$POLICY_BLOCK\" = \"0\" ]; then MATCH=$(bash ~/.claude/scripts/read-local-config.sh match-dir \"$PWD\" 2>/dev/null); if [ -n \"$MATCH\" ]; then MATCH_USER=$(echo \"$MATCH\" | awk '{print $2}'); if [ -n \"$MATCH_USER\" ] && bash ~/.claude/scripts/read-local-config.sh public-blocked \"$MATCH_USER\" >/dev/null 2>&1; then POLICY_BLOCK=1; fi; fi; fi; echo 'BLOCKED: Public repo creation/conversion requires explicit user authorization in the current message + completed security audit. See rules/security.md.' >&2; if [ \"$POLICY_BLOCK\" = \"1\" ]; then echo 'Additionally: the current account/directory is marked `public_blocked: true` in your accounts.config.json — this is a policy-level block, not just the default guard.' >&2; fi; exit 1; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/automation-mode-gate.sh",
+            "statusMessage": "Checking automation mode for deploy commands..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command // \"\"' | grep -q 'git commit' && bash ~/.claude/hooks/pre-commit-gate.sh || true",
+            "statusMessage": "Running pre-commit gate (tests + build + API audit)..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CMD=$(echo \"$CLAUDE_TOOL_INPUT\" | jq -r '.command // \"\"' 2>/dev/null); if echo \"$CMD\" | grep -qE 'git push'; then if match=$(bash ~/.claude/scripts/read-local-config.sh match-dir \"$PWD\" 2>/dev/null) && [ -n \"$match\" ]; then GH_USER=$(echo \"$match\" | awk '{print $2}'); if [ -n \"$GH_USER\" ]; then gh auth switch --user \"$GH_USER\" 2>/dev/null && gh auth setup-git 2>/dev/null; fi; fi; fi",
+            "statusMessage": "Ensuring correct GitHub account for push..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/post-tool-task-verifier-reminder.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "MODE=$(bash ~/.claude/scripts/read-local-config.sh automation-mode 2>/dev/null); if [ -z \"$MODE\" ]; then MODE=\"review-before-deploy\"; fi; printf '\\033]0;%s [%s]\\007' \"$(basename \"$PWD\")\" \"$MODE\" >&2"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo -e '\\a'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/pre-stop-verifier.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'STOP — Context was just compacted. Before doing ANYTHING else:'; echo '1. Read SCRATCHPAD.md in the project root'; echo '2. If its Current State date is older than today, REWRITE it immediately (30 lines max, see CLAUDE.md format)'; echo '3. Read the plan file and/or backlog file referenced in SCRATCHPAD'; echo '4. Only then resume work'; echo ''; TODAY=$(date +%Y-%m-%d); if [ -f SCRATCHPAD.md ]; then SCRATCH_DATE=$(grep -oP '\\d{4}-\\d{2}-\\d{2}' SCRATCHPAD.md | head -1); if [ \"$SCRATCH_DATE\" != \"$TODAY\" ] && [ -n \"$SCRATCH_DATE\" ]; then echo \"WARNING: SCRATCHPAD.md date is $SCRATCH_DATE (today is $TODAY) — STALE. Rewrite before continuing.\"; fi; else echo 'WARNING: No SCRATCHPAD.md found. Create one (see CLAUDE.md format).'; fi; for BACKLOG in docs/backlog.md; do if [ -f \"$BACKLOG\" ]; then BL_DATE=$(grep -oP '(?<=Last updated: )\\d{4}-\\d{2}-\\d{2}' \"$BACKLOG\" | head -1); if [ -n \"$BL_DATE\" ] && [ \"$BL_DATE\" != \"$TODAY\" ]; then echo \"WARNING: $BACKLOG last updated $BL_DATE — verify it reflects completed and new work.\"; elif [ -z \"$BL_DATE\" ]; then echo \"WARNING: $BACKLOG has no Last updated date. Add one.\"; fi; break; fi; done; PLAN=$(ls -t docs/plans/*.md 2>/dev/null | grep -v evidence | head -1); if [ -n \"$PLAN\" ]; then PLAN_STATUS=$(grep -oP '(?<=Status: )\\w+' \"$PLAN\" | head -1); if [ \"$PLAN_STATUS\" = 'ACTIVE' ]; then UNCHECKED=$(grep -c '^- \\[ \\]' \"$PLAN\" 2>/dev/null || echo 0); echo \"Active plan: $PLAN ($UNCHECKED unchecked tasks)\"; fi; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "AMF=\"$HOME/.claude/local/automation-mode.json\"; if [ ! -f \"$AMF\" ]; then echo 'Neural Lace — choose an automation mode (reply in chat):'; echo '  (1) review-before-deploy  [safer default — pauses before git push, merges, deploys]'; echo '  (2) full-auto             [runs through multi-step plans without pausing]'; echo 'Change anytime with: /automation-mode <review|full-auto>'; echo 'Per-project override: create <project>/.claude/automation-mode.json'; mkdir -p \"$HOME/.claude/local\"; EXAMPLE_SEED=\"\"; for CAND in \"$HOME/.claude/examples/automation-mode.example.json\" \"$HOME/claude-projects/neural-lace/adapters/claude-code/examples/automation-mode.example.json\"; do if [ -f \"$CAND\" ]; then EXAMPLE_SEED=\"$CAND\"; break; fi; done; if [ -n \"$EXAMPLE_SEED\" ]; then cp \"$EXAMPLE_SEED\" \"$AMF\"; else printf '%s\\n' '{' '  \"version\": 1,' '  \"mode\": \"review-before-deploy\",' '  \"deploy_matchers\": [' '    \"git push\",' '    \"gh pr merge\",' '    \"gh repo create\",' '    \"supabase db push\",' '    \"vercel deploy\",' '    \"npm publish\"' '  ]' '}' > \"$AMF\"; fi; fi",
+            "statusMessage": "Checking automation mode (first run)..."
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if match=$(bash ~/.claude/scripts/read-local-config.sh match-dir \"$PWD\" 2>/dev/null) && [ -n \"$match\" ]; then TYPE=$(echo \"$match\" | awk '{print $1}'); GH_USER=$(echo \"$match\" | awk '{print $2}'); gh auth switch --user \"$GH_USER\" 2>/dev/null; echo \"GitHub account: $GH_USER ($TYPE)\"; SB_TOKEN_FILE=\"$HOME/.supabase/tokens/$TYPE\"; if [ -f \"$SB_TOKEN_FILE\" ]; then supabase login --token \"$(cat \"$SB_TOKEN_FILE\")\" 2>/dev/null; echo \"Supabase account: $(basename \"$SB_TOKEN_FILE\")\"; else echo \"Supabase: no token found at $SB_TOKEN_FILE\"; fi; else echo 'Account switcher: no match for $PWD in ~/.claude/local/accounts.config.json (or config missing — see ~/.claude/local/accounts.config.example.json)'; fi",
+            "statusMessage": "Switching GitHub + Supabase accounts..."
+          },
+          {
+            "type": "command",
+            "command": "if [ -f pipeline/evidence.md ] || [ -f orchestrate.sh ]; then echo 'Pipeline: active. Use Option B (build → evidence → gates → verifier → commit) for all changes.'; elif [ -f ~/.claude/pipeline-templates/orchestrate.sh ]; then echo 'Pipeline: available but not set up for this project. Run /setup-pipeline to initialize.'; fi",
+            "statusMessage": "Checking pipeline status..."
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "claude-md-management@claude-plugins-official": true,
+    "claude-code-setup@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "explanatory-output-style@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true
+  },
+  "autoUpdatesChannel": "latest",
+  "effortLevel": "high"
+}

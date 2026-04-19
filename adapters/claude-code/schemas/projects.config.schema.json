@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-lace.dev/schemas/projects.config.v1.json",
+  "title": "Projects Config (v1)",
+  "description": "Per-project overrides that give UX-testing agents and other audience-aware tooling domain context without hardcoding it into harness files. Lives at ~/.claude/local/projects.config.json (never committed). Keys under 'projects' are free-form path hints (absolute, home-relative, or a substring the harness can match against the working directory). Each entry describes the project type and a one-line example persona the agents can adopt.",
+  "type": "object",
+  "required": ["version", "projects"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently always 1."
+    },
+    "projects": {
+      "type": "object",
+      "description": "Map from project path hint to project metadata. The object may be empty. Keys are arbitrary strings — the harness performs a longest-prefix match against the current working directory.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type", "example_persona"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["web", "cli", "library", "other"],
+            "description": "High-level project shape. Drives which UX agents and tests are relevant (e.g. web projects get the end-user-tester agent, CLI projects skip it)."
+          },
+          "example_persona": {
+            "type": "string",
+            "description": "One-line description of the target user, used by UX agents as domain context. Example: 'A small-business owner checking their dashboard on mobile.'"
+          },
+          "preferred_color_keywords": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional list of palette keywords (e.g. 'blue', 'neutral', 'warm') that describe the project's visual language. Used by design-adjacent tooling to stay consistent."
+          }
+        }
+      }
+    }
+  }
+}

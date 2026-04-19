@@ -1,0 +1,25 @@
+# Local business-specific sensitive patterns
+#
+# Copy this file to ~/.claude/sensitive-patterns.local and add your
+# organization's identifiers that should never end up in any git repo.
+#
+# Format: DESCRIPTION|REGEX (pipe-separated, one per line)
+# Lines starting with # are comments.
+# Empty lines are ignored.
+#
+# This file is referenced by hooks/pre-push-scan.sh at push time.
+# It is NEVER committed — keep it strictly local.
+#
+# Examples (replace with your actual identifiers):
+#
+# Supabase project ID (prod)|abc123def456ghi789jk
+# Supabase project ID (staging)|xyz789qrs456tuv123wx
+# Internal API endpoint|api.mycompany-internal.com
+# Database host|db.mycompany-internal.com
+# Internal email domain|@internal.mycompany.com
+#
+# Remember:
+# - These patterns will be scanned against every file you try to push
+# - Matches BLOCK the push (overridable with --no-verify)
+# - Don't put actual credentials here — put those in your .env files instead
+# - This file catches infrastructure identifiers that shouldn't leak

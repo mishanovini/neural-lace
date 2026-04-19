@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "personal": {
+    "user": "alice-example",
+    "dir_triggers": ["~/code", "~/personal"]
+  },
+  "work": [
+    {
+      "user": "alice-at-acme",
+      "dir_triggers": ["~/work/acme-corp", "~/code/acme"],
+      "public_blocked": true
+    }
+  ]
+}

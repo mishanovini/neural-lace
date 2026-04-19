@@ -1,0 +1,68 @@
+# Credentials and secrets
+*.env
+*.env.*
+*.token
+auth-state.json
+credentials.json
+secrets.yaml
+secrets.yml
+sensitive-patterns.local
+
+# Machine-specific settings (generated from template)
+adapters/claude-code/settings.json
+settings.local.json
+
+# Telemetry data (local only, never committed)
+telemetry/store/
+*.jsonl
+!patterns/risk-profiles/actions.jsonl
+
+# Trust ledger (contains per-project trust scores, local only)
+trust-ledger.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Node
+node_modules/
+
+# ============================================================
+# Harness-repo-specific gitignore additions (Public Release Hardening plan)
+# See docs/plans/public-release-hardening.md and principles/harness-hygiene.md.
+#
+# Neural Lace is a harness repo that publishes publicly. These patterns
+# prevent per-project operational artifacts from accumulating identifiers
+# of the projects the harness was used to build.
+#
+# NOTE: normal project repos using Neural Lace as a template should NOT
+# copy these rules. Projects SHOULD commit their plans, decisions, reviews,
+# and session summaries — those are team-shared permanent records.
+# ============================================================
+
+# Private keys + certificates (defense-in-depth; scanner catches too)
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+
+# Operational artifacts (harness-repo-specific — see note above)
+SCRATCHPAD.md
+docs/plans/
+docs/decisions/
+docs/reviews/
+docs/sessions/
+
+# Local user config surface (new in Phase 3)
+# ~/.claude/local/ is a user-home path, but shadow any local mirror here:
+.claude-local/
+
+# Moved to .example (Phase 4 scrub)
+adapters/claude-code/business-patterns.paths

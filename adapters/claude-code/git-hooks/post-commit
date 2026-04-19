@@ -1,0 +1,41 @@
+#!/bin/bash
+# Global post-commit hook — auto-deploys and auto-syncs Neural Lace.
+#
+# This runs after EVERY commit in EVERY repo (via core.hooksPath).
+# It only takes action when the commit is inside the neural-lace repo.
+#
+# What it does for neural-lace commits:
+#   1. Deploys to ~/.claude/ (install.sh)
+#   2. Pushes to both remotes (sync.sh)
+
+REPO_DIR="$(git rev-parse --show-toplevel 2>/dev/null)"
+
+# Only act when committing inside neural-lace itself
+if [[ "$REPO_DIR" != *"neural-lace"* ]]; then
+  # Run any local repo-specific post-commit hook
+  LOCAL_HOOK="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/post-commit.local"
+  if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then
+    "$LOCAL_HOOK" "$@"
+  fi
+  exit 0
+fi
+
+INSTALLER="$REPO_DIR/adapters/claude-code/install.sh"
+SYNCER="$REPO_DIR/sync.sh"
+
+# 1. Auto-deploy to ~/.claude/
+if [ -f "$INSTALLER" ]; then
+  echo ""
+  echo "Auto-deploying Neural Lace to ~/.claude/..."
+  bash "$INSTALLER" 2>&1 | grep -E "(✓|✗|installed|hooksPath|already)"
+  echo "Deploy complete."
+fi
+
+# 2. Auto-push to both remotes
+if [ -f "$SYNCER" ]; then
+  echo ""
+  echo "Auto-syncing to remotes..."
+  bash "$SYNCER" 2>&1 | grep -E "(✓|✗|synced|failed)"
+fi
+
+echo ""

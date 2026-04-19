@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "description": "Dynamic risk classifiers for actions not matched by explicit profiles. Rules are evaluated in order; first match wins.",
+  "rules": [
+    {
+      "id": "read-operations",
+      "description": "Read-only operations on files, configs, and docs. Sensitivity inherited from path classification.",
+      "match": {
+        "tool_category": "read"
+      },
+      "dimensions": {
+        "R": 0,
+        "B": 0,
+        "S": "inherit",
+        "A": 0
+      }
+    },
+    {
+      "id": "local-file-write",
+      "description": "Write operations scoped to the current project directory.",
+      "match": {
+        "tool_category": "write",
+        "scope": "project"
+      },
+      "dimensions": {
+        "R": 1,
+        "B": 1,
+        "S": "classify_path",
+        "A": 0
+      }
+    },
+    {
+      "id": "network-command",
+      "description": "Commands that initiate network connections or transfer data.",
+      "match": {
+        "command_signals": ["curl", "wget", "fetch", "http", "ssh", "scp"]
+      },
+      "dimensions": {
+        "R": 2,
+        "B": 3,
+        "S": "classify_args",
+        "A": 1
+      }
+    },
+    {
+      "id": "package-install",
+      "description": "Install third-party packages from registries. Dynamic scoring checks package reputation.",
+      "match": {
+        "command_signals": ["npm install", "pip install", "bun add", "cargo add", "go get"]
+      },
+      "dimensions": {
+        "R": 2,
+        "B": 2,
+        "S": 0,
+        "A": 1
+      },
+      "dynamic_scoring": {
+        "check_package_age": true,
+        "check_download_count": true,
+        "check_known_vulnerabilities": true
+      }
+    },
+    {
+      "id": "git-operations",
+      "description": "General git commands not matched by explicit profiles (status, log, diff, branch, checkout).",
+      "match": {
+        "command_signals": ["git"]
+      },
+      "dimensions": {
+        "R": 1,
+        "B": 1,
+        "S": 0,
+        "A": 0
+      }
+    },
+    {
+      "id": "database-operations",
+      "description": "Database CLI tools and ORM commands. Sensitivity depends on whether the command is read or write.",
+      "match": {
+        "command_signals": ["psql", "mysql", "sqlite3", "prisma", "supabase"]
+      },
+      "dimensions": {
+        "R": 2,
+        "B": 2,
+        "S": "classify_args",
+        "A": 0
+      }
+    },
+    {
+      "id": "unknown-action",
+      "description": "Fallback classifier for any action not matched by prior rules. Applies conservative defaults and high novelty.",
+      "match": {
+        "fallback": true
+      },
+      "dimensions": {
+        "R": 2,
+        "B": 2,
+        "S": 1,
+        "A": 1
+      },
+      "novelty_override": 4
+    }
+  ]
+}

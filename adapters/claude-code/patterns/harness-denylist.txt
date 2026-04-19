@@ -1,0 +1,62 @@
+# harness-denylist.txt
+# Patterns that must NEVER appear in Neural Lace harness code.
+# Enforced by adapters/claude-code/hooks/harness-hygiene-scan.sh at pre-commit time.
+# Format: one pattern per line. # begins a comment. Regex allowed (POSIX extended).
+# Do NOT add generic English words; this must be high-signal-only to avoid false positives.
+#
+# Patterns are case-insensitive; scanner uses `grep -iE`.
+
+# === Personal identifiers (owner of this private dev environment) ===
+# NOTE: standalone `misha` pattern removed — caused false-positive on
+# `**Owner:** Misha` attribution line (user-approved attribution-only policy).
+# The filesystem-path patterns below (/c/Users/misha/, /Users/misha/, etc.)
+# still catch any dangerous lowercase `misha` uses.
+mishanovini
+MishaPT
+jagguar7
+
+# === Business org + product codenames (never publish) ===
+Pocket-Technician
+pocket-technician
+pt-leads
+Pocket\sTechnician
+Circuit(?:\s|$|[^A-Za-z])
+Foresight(?:\s|$|[^A-Za-z])
+
+# === Filesystem markers revealing personal setup ===
+OneDrive
+/c/Users/misha/
+c:\\Users\\misha\\
+/Users/misha/
+
+# === Known test credentials that must never resurface ===
+PipelineTest2026
+pipeline-test@pocket-technician\.com
+
+# === Generic credential/PII shapes (catch future additions) ===
+# NOTE: generic email matching was removed 2026-04-18. POSIX ERE does not
+# support negative lookahead, so an `@(?!example\.com)` pattern silently
+# failed to compile and either no-op'd or produced false positives. The
+# targeted entries above (jagguar7, pipeline-test@pocket-technician) catch
+# the known leaks; broader email matching risks more false positives than
+# prevented leaks. Reintroduce with per-file exemptions if a real leak
+# surfaces.
+# Absolute POSIX home paths containing a username segment
+/(?:home|Users)/[a-z][a-z0-9_-]+/
+# GitHub fine-grained PAT + classic PAT
+ghp_[A-Za-z0-9]{20,}
+github_pat_[A-Za-z0-9_]{20,}
+# AWS access key ID
+AKIA[0-9A-Z]{16}
+# Stripe live keys
+sk_live_[A-Za-z0-9]{20,}
+# Slack tokens
+xox[baprs]-[A-Za-z0-9-]{20,}
+# OpenAI API keys
+sk-[A-Za-z0-9]{40,}
+# Private key headers
+-----BEGIN (?:RSA |EC |OPENSSH |PGP |DSA )?PRIVATE KEY
+# Supabase service role indicators
+service_role
+# Claude API keys
+sk-ant-api[A-Za-z0-9_-]{20,}
