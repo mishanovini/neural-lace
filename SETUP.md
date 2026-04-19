@@ -31,6 +31,81 @@ The installer:
 
 It's safe to re-run: existing files are backed up before overwrite, and user customizations in `~/.claude/local/` are never touched.
 
+### Installer flags
+
+The installer supports several flags for advanced workflows:
+
+```bash
+./install.sh                     # install or refresh (default)
+./install.sh --dry-run           # print everything that would change; don't execute
+./install.sh --replace-settings  # install settings.json from template (backs up existing)
+./install.sh --uninstall         # best-effort uninstall (see below for limitations)
+./install.sh --help              # full usage reference
+```
+
+## Trying Neural Lace alongside an existing harness
+
+Many users already have a working Claude Code setup — their own `CLAUDE.md`, rules, agents, hooks, and a `settings.json`. Neural Lace is designed to be reversible, but the installer only backs up files it directly overwrites. That is **not** a full revert path.
+
+If you want a guaranteed way to get back to exactly-as-it-was, take a whole-directory snapshot of `~/.claude/` before first install:
+
+```bash
+# Belt: snapshot existing harness first
+cp -r ~/.claude ~/.claude-pre-neural-lace-$(date +%Y%m%d)
+
+# Install Neural Lace
+./install.sh
+```
+
+### What install.sh will and will NOT touch
+
+**Will do:**
+
+- Back up existing files to `~/.claude/.backup-<timestamp>/` before replacing them (e.g., an existing `CLAUDE.md`, `rules/`, `hooks/`, etc.)
+- Set global `git core.hooksPath` to the adapter's `git-hooks/` directory. **This affects all git repos on your machine, not just AI-assisted ones.** Reversible via `git config --global --unset core.hooksPath`.
+- Seed `~/.claude/local/*.json` from examples IF those files don't already exist
+
+**Will NOT do:**
+
+- **Overwrite `settings.json`.** By default, an existing `settings.json` is left untouched — but Neural Lace's hooks live INSIDE `settings.json`, so without merging them the harness is effectively dormant. The installer prints a loud warning when this happens and points you at the three options to activate (manual merge, `--replace-settings`, or remove-and-reinstall).
+- Touch anything under `~/.claude/local/` once those files exist (personal config layer)
+
+### Preview before installing
+
+The `--dry-run` flag prints every action the installer would take without executing any of them:
+
+```bash
+./install.sh --dry-run
+```
+
+Each line is labeled `[WOULD CREATE]`, `[WOULD REPLACE -- backup existing]`, `[WOULD SKIP -- already exists]`, or `[WOULD REMOVE -- stale backup]`, grouped by install phase. Use this to audit exactly what will happen before committing to the install.
+
+### Revert path
+
+Guaranteed-correct revert (using the snapshot above):
+
+```bash
+# Revert to exactly-as-it-was:
+rm -rf ~/.claude
+mv ~/.claude-pre-neural-lace-YYYYMMDD ~/.claude
+# Also reset global hooks if desired:
+git config --global --unset core.hooksPath
+```
+
+Convenience revert (best-effort, no pre-install snapshot needed):
+
+```bash
+./install.sh --uninstall
+```
+
+The `--uninstall` flag removes symlinks + Neural-Lace-originated file copies and restores the most recent `~/.claude/.backup-<timestamp>/`. It prompts for confirmation and clearly lists what it will and will NOT do. Important caveats:
+
+- It only restores what the most recent install overwrote — NOT your full pre-Neural-Lace state.
+- It does NOT remove `~/.claude/local/` (your personal config).
+- It does NOT reset `core.hooksPath` (run the `git config` command above manually).
+
+**For a true revert, the pre-install whole-directory snapshot is the only guaranteed-correct path.** `--uninstall` is a convenience, not a guarantee.
+
 ## Customize — the two-layer config pattern
 
 Neural Lace separates **harness data** (shared, generic, safe for any repo) from **local data** (your identity, accounts, project specifics). The harness ships only generic placeholders; your personalization lives in `~/.claude/local/`.

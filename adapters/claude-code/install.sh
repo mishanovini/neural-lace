@@ -1,4 +1,5 @@
 #!/bin/bash
+# NEURAL-LACE-INSTALLER
 # install.sh — Deploy Neural Lace's Claude Code adapter to ~/.claude/
 #
 # What it does:
@@ -11,14 +12,42 @@
 #
 # Usage:
 #   cd /path/to/neural-lace/adapters/claude-code
-#   ./install.sh
-#
-# Or from neural-lace root:
-#   ./adapters/claude-code/install.sh
+#   ./install.sh                   # install or refresh
+#   ./install.sh --dry-run         # print what would change, don't execute
+#   ./install.sh --replace-settings  # install settings.json, back up existing
+#   ./install.sh --uninstall       # best-effort uninstall (see --help)
+#   ./install.sh --help            # full usage reference
 #
 # Re-run anytime to refresh (safe — existing symlinks are replaced).
 
 set -e
+
+# ============================================================
+# Flag parsing
+# ============================================================
+
+MODE="install"
+for arg in "$@"; do
+  case "$arg" in
+    --help|-h)
+      MODE="help"
+      ;;
+    --dry-run)
+      MODE="dry-run"
+      ;;
+    --replace-settings)
+      MODE="replace-settings"
+      ;;
+    --uninstall)
+      MODE="uninstall"
+      ;;
+    *)
+      echo "install.sh: unknown argument: $arg" >&2
+      echo "Run './install.sh --help' for usage." >&2
+      exit 2
+      ;;
+  esac
+done
 
 # Resolve paths relative to this script's location
 ADAPTER_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -26,13 +55,415 @@ NEURAL_LACE_ROOT="$(cd "$ADAPTER_DIR/../.." && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 NEURAL_LACE_DATA="$HOME/.neural-lace"
 
+# ============================================================
+# --help
+# ============================================================
+
+if [ "$MODE" = "help" ]; then
+  cat <<'HELP'
+Neural Lace -- Claude Code Adapter Installer
+
+USAGE
+  ./install.sh                     Install or refresh Neural Lace in ~/.claude/
+  ./install.sh --dry-run           Print what would change; don't execute
+  ./install.sh --replace-settings  Install settings.json from template, backing up existing
+  ./install.sh --uninstall         Best-effort uninstall (restores most recent backup)
+  ./install.sh --help, -h          This message
+
+NOTES
+  - Re-running without flags is safe; existing files are backed up before overwrite.
+  - settings.json is NOT overwritten by default; use --replace-settings to override.
+  - ~/.claude/local/ is NEVER touched by the installer (personal config layer).
+  - For a true revert to a pre-Neural-Lace state, take a whole-directory snapshot
+    of ~/.claude/ BEFORE first install and restore it if needed. See SETUP.md.
+HELP
+  exit 0
+fi
+
+# ============================================================
+# --uninstall
+# ============================================================
+
+if [ "$MODE" = "uninstall" ]; then
+  echo ""
+  echo "Neural Lace -- Uninstaller"
+  echo ""
+
+  # Detect Neural Lace install via symlink target OR sentinel header
+  has_nl_signal=0
+  if [ -L "$CLAUDE_DIR/CLAUDE.md" ]; then
+    target=$(readlink "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null || echo "")
+    if echo "$target" | grep -q "neural-lace"; then
+      has_nl_signal=1
+    fi
+  fi
+  if [ -f "$CLAUDE_DIR/CLAUDE.md" ] && ! [ -L "$CLAUDE_DIR/CLAUDE.md" ]; then
+    if head -3 "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null | grep -q "Global Claude Code Standards"; then
+      has_nl_signal=1
+    fi
+  fi
+
+  if [ "$has_nl_signal" -eq 0 ]; then
+    echo "  No Neural Lace install detected at $CLAUDE_DIR."
+    echo "  Nothing to uninstall."
+    echo ""
+    exit 0
+  fi
+
+  # Find most recent backup directory
+  most_recent_backup=""
+  shopt -s nullglob 2>/dev/null || true
+  for dir in "$CLAUDE_DIR"/.backup-*; do
+    [ -d "$dir" ] || continue
+    if [ -z "$most_recent_backup" ] || [ "$dir" \> "$most_recent_backup" ]; then
+      most_recent_backup="$dir"
+    fi
+  done
+  shopt -u nullglob 2>/dev/null || true
+
+  # Count symlinks pointing at neural-lace
+  symlink_count=0
+  shopt -s nullglob 2>/dev/null || true
+  for entry in "$CLAUDE_DIR"/*; do
+    [ -L "$entry" ] || continue
+    target=$(readlink "$entry" 2>/dev/null || echo "")
+    if echo "$target" | grep -q "neural-lace"; then
+      symlink_count=$((symlink_count + 1))
+    fi
+  done
+  shopt -u nullglob 2>/dev/null || true
+
+  # Count sentinel-bearing files (copy-mode installs)
+  sentinel_count=0
+  if [ -d "$CLAUDE_DIR/hooks" ] && ! [ -L "$CLAUDE_DIR/hooks" ]; then
+    shopt -s nullglob 2>/dev/null || true
+    for f in "$CLAUDE_DIR/hooks"/*.sh; do
+      [ -f "$f" ] || continue
+      if head -3 "$f" 2>/dev/null | grep -q "NEURAL-LACE-"; then
+        sentinel_count=$((sentinel_count + 1))
+      fi
+    done
+    shopt -u nullglob 2>/dev/null || true
+  fi
+
+  echo "  Detected Neural Lace install at $CLAUDE_DIR"
+  if [ -n "$most_recent_backup" ]; then
+    echo "  Most recent backup: $most_recent_backup"
+  else
+    echo "  Most recent backup: (none found)"
+  fi
+  echo ""
+  echo "  This will:"
+  echo "    - Remove symlinks pointing at the Neural Lace repo ($symlink_count found)"
+  echo "    - Remove Neural Lace-originated file copies ($sentinel_count files detected by presence of sentinel)"
+  if [ -n "$most_recent_backup" ]; then
+    echo "    - Restore contents of $most_recent_backup to $CLAUDE_DIR"
+  else
+    echo "    - (No backup to restore from)"
+  fi
+  echo ""
+  echo "  This will NOT:"
+  echo "    - Remove $CLAUDE_DIR/local/ (personal config -- remove manually if desired)"
+  echo "    - Remove other $CLAUDE_DIR/.backup-*/ directories (kept for 30 days per retention)"
+  echo "    - Reset global git core.hooksPath (run: git config --global --unset core.hooksPath)"
+  echo "    - Guarantee a pristine pre-Neural-Lace state (the backup dir only contains"
+  echo "      files Neural Lace overwrote during install -- not your full prior state)."
+  echo "      For a true revert, use your own pre-install whole-directory snapshot"
+  echo "      (see SETUP.md \"Trying Neural Lace alongside an existing harness\")."
+  echo ""
+  printf "  Proceed? [y/N] "
+  read -r reply
+  if [ "$reply" != "y" ] && [ "$reply" != "Y" ]; then
+    echo ""
+    echo "  Aborted."
+    exit 0
+  fi
+  echo ""
+
+  # Execute: remove symlinks
+  removed=0
+  shopt -s nullglob 2>/dev/null || true
+  for entry in "$CLAUDE_DIR"/*; do
+    if [ -L "$entry" ]; then
+      target=$(readlink "$entry" 2>/dev/null || echo "")
+      if echo "$target" | grep -q "neural-lace"; then
+        rm -f "$entry"
+        removed=$((removed + 1))
+      fi
+    fi
+  done
+  shopt -u nullglob 2>/dev/null || true
+  echo "  Removed $removed Neural Lace symlinks."
+
+  # Remove sentinel-bearing files in hooks/
+  sentinel_removed=0
+  if [ -d "$CLAUDE_DIR/hooks" ] && ! [ -L "$CLAUDE_DIR/hooks" ]; then
+    shopt -s nullglob 2>/dev/null || true
+    for f in "$CLAUDE_DIR/hooks"/*.sh; do
+      [ -f "$f" ] || continue
+      if head -3 "$f" 2>/dev/null | grep -q "NEURAL-LACE-"; then
+        rm -f "$f"
+        sentinel_removed=$((sentinel_removed + 1))
+      fi
+    done
+    shopt -u nullglob 2>/dev/null || true
+  fi
+  echo "  Removed $sentinel_removed Neural Lace-originated files."
+
+  # Restore from backup
+  if [ -n "$most_recent_backup" ] && [ -d "$most_recent_backup" ]; then
+    restored=0
+    shopt -s nullglob 2>/dev/null || true
+    for item in "$most_recent_backup"/*; do
+      [ -e "$item" ] || continue
+      name=$(basename "$item")
+      cp -r "$item" "$CLAUDE_DIR/$name"
+      restored=$((restored + 1))
+    done
+    shopt -u nullglob 2>/dev/null || true
+    echo "  Restored $restored items from $most_recent_backup."
+  fi
+
+  echo ""
+  echo "  Uninstall complete (best-effort)."
+  echo "  Reminder: run 'git config --global --unset core.hooksPath' if desired."
+  echo ""
+  exit 0
+fi
+
+# ============================================================
+# --replace-settings
+# ============================================================
+
+if [ "$MODE" = "replace-settings" ]; then
+  echo ""
+  echo "Neural Lace -- Settings Replace"
+
+  if [ ! -f "$ADAPTER_DIR/settings.json.template" ]; then
+    echo "  ERROR: $ADAPTER_DIR/settings.json.template not found." >&2
+    exit 1
+  fi
+
+  BACKUP_DIR_RS="$CLAUDE_DIR/.backup-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$CLAUDE_DIR"
+
+  if [ -f "$CLAUDE_DIR/settings.json" ] || [ -L "$CLAUDE_DIR/settings.json" ]; then
+    mkdir -p "$BACKUP_DIR_RS"
+    mv "$CLAUDE_DIR/settings.json" "$BACKUP_DIR_RS/settings.json"
+    echo "  Backed up: $CLAUDE_DIR/settings.json -> $BACKUP_DIR_RS/settings.json"
+  else
+    echo "  (No existing settings.json to back up)"
+  fi
+
+  cp "$ADAPTER_DIR/settings.json.template" "$CLAUDE_DIR/settings.json"
+  echo "  Installed: $CLAUDE_DIR/settings.json from template"
+  echo ""
+  echo "  ACTION REQUIRED: Edit $CLAUDE_DIR/settings.json and replace placeholders"
+  echo ""
+  exit 0
+fi
+
+# ============================================================
+# --dry-run
+# ============================================================
+
+if [ "$MODE" = "dry-run" ]; then
+  echo ""
+  echo "Neural Lace -- Dry Run (no changes will be made)"
+  echo "  Adapter: $ADAPTER_DIR"
+  echo "  Target:  $CLAUDE_DIR"
+  echo ""
+
+  changes=0
+  backups=0
+
+  # Directories
+  echo "[Phase 1: Directories]"
+  for d in "$CLAUDE_DIR" "$CLAUDE_DIR/business-patterns.d" "$NEURAL_LACE_DATA/telemetry" "$CLAUDE_DIR/local"; do
+    if [ -d "$d" ]; then
+      echo "  [WOULD SKIP -- already exists]     $d"
+    else
+      echo "  [WOULD CREATE]                     $d"
+      changes=$((changes + 1))
+    fi
+  done
+  echo ""
+
+  # Stale backup pruning
+  echo "[Phase 2: Backup pruning (stale > 30 days)]"
+  now_epoch=$(date +%s)
+  cutoff_epoch=$((now_epoch - 30 * 24 * 60 * 60))
+  stale_seen=0
+  shopt -s nullglob 2>/dev/null || true
+  for dir in "$CLAUDE_DIR"/.backup-*; do
+    [ -d "$dir" ] || continue
+    base=$(basename "$dir")
+    ts="${base#.backup-}"
+    if ! echo "$ts" | grep -Eq '^[0-9]{8}-[0-9]{6}$'; then
+      continue
+    fi
+    ymd="${ts%-*}"
+    hms="${ts#*-}"
+    y="${ymd:0:4}"; mo="${ymd:4:2}"; d="${ymd:6:2}"
+    h="${hms:0:2}"; mi="${hms:2:2}"; se="${hms:4:2}"
+    dir_epoch=$(date -d "$y-$mo-$d $h:$mi:$se" +%s 2>/dev/null \
+      || date -j -f "%Y-%m-%d %H:%M:%S" "$y-$mo-$d $h:$mi:$se" +%s 2>/dev/null \
+      || echo "")
+    [ -z "$dir_epoch" ] && continue
+    if [ "$dir_epoch" -lt "$cutoff_epoch" ]; then
+      echo "  [WOULD REMOVE -- stale backup]     $dir"
+      stale_seen=$((stale_seen + 1))
+    fi
+  done
+  shopt -u nullglob 2>/dev/null || true
+  if [ "$stale_seen" -eq 0 ]; then
+    echo "  (no stale backups to prune)"
+  fi
+  echo ""
+
+  # File syncs
+  echo "[Phase 3: File/directory syncs]"
+  check_sync_target() {
+    local src="$1"
+    local dst="$2"
+    local label="$3"
+    if [ -e "$dst" ] && [ ! -L "$dst" ]; then
+      echo "  [WOULD REPLACE -- backup existing] $dst ($label)"
+      backups=$((backups + 1))
+      changes=$((changes + 1))
+    elif [ -L "$dst" ]; then
+      echo "  [WOULD REPLACE -- relink]          $dst ($label)"
+      changes=$((changes + 1))
+    else
+      echo "  [WOULD CREATE]                     $dst ($label)"
+      changes=$((changes + 1))
+    fi
+  }
+
+  check_sync_target "$ADAPTER_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
+  for dir in rules agents hooks scripts pipeline-prompts pipeline-templates commands; do
+    if [ -d "$ADAPTER_DIR/$dir" ]; then
+      check_sync_target "$ADAPTER_DIR/$dir" "$CLAUDE_DIR/$dir" "$dir/"
+    fi
+  done
+  if [ -d "$NEURAL_LACE_ROOT/patterns/templates" ]; then
+    check_sync_target "$NEURAL_LACE_ROOT/patterns/templates" "$CLAUDE_DIR/templates" "templates/"
+  fi
+  if [ -d "$NEURAL_LACE_ROOT/docs" ]; then
+    check_sync_target "$NEURAL_LACE_ROOT/docs" "$CLAUDE_DIR/docs" "docs/"
+  fi
+  echo ""
+
+  # Global git hooks
+  echo "[Phase 4: Global git core.hooksPath]"
+  current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || echo "")
+  if [ "$current_hooks_path" = "$ADAPTER_DIR/git-hooks" ]; then
+    echo "  [WOULD SKIP -- already set]        core.hooksPath=$ADAPTER_DIR/git-hooks"
+  elif [ -n "$current_hooks_path" ]; then
+    echo "  [WOULD CHANGE]                     core.hooksPath: $current_hooks_path -> $ADAPTER_DIR/git-hooks"
+    changes=$((changes + 1))
+  else
+    echo "  [WOULD SET]                        core.hooksPath=$ADAPTER_DIR/git-hooks"
+    changes=$((changes + 1))
+  fi
+  echo ""
+
+  # Legacy hook cleanup
+  echo "[Phase 5: Legacy per-repo hook cleanup]"
+  CLAUDE_PROJECTS_ROOT="$HOME/claude-projects"
+  if [ -d "$CLAUDE_PROJECTS_ROOT" ]; then
+    echo "  Would scan for legacy hooks under: $CLAUDE_PROJECTS_ROOT/*/.git and $CLAUDE_PROJECTS_ROOT/*/*/.git"
+    legacy_seen=0
+    shopt -s nullglob 2>/dev/null || true
+    for repo in \
+      "$CLAUDE_PROJECTS_ROOT"/*/.git \
+      "$CLAUDE_PROJECTS_ROOT"/*/*/.git \
+    ; do
+      [ -d "$repo" ] || continue
+      hook="$(dirname "$repo")/.git/hooks/pre-push"
+      [ -e "$hook" ] || continue
+      if [ -L "$hook" ]; then
+        target=$(readlink "$hook" 2>/dev/null || echo "")
+        if echo "$target" | grep -q "claude-config/hooks/pre-push-scan.sh"; then
+          echo "  [WOULD REMOVE -- legacy symlink]   $hook"
+          legacy_seen=$((legacy_seen + 1))
+          changes=$((changes + 1))
+          continue
+        fi
+      fi
+      if [ -f "$hook" ] && grep -q "pre-push-scan.sh" "$hook" 2>/dev/null; then
+        echo "  [WOULD REMOVE -- legacy copy]      $hook"
+        legacy_seen=$((legacy_seen + 1))
+        changes=$((changes + 1))
+      fi
+    done
+    shopt -u nullglob 2>/dev/null || true
+    if [ "$legacy_seen" -eq 0 ]; then
+      echo "  (no legacy hooks found)"
+    fi
+  else
+    echo "  (no $CLAUDE_PROJECTS_ROOT directory -- nothing to scan)"
+  fi
+  echo ""
+
+  # settings.json
+  echo "[Phase 6: settings.json]"
+  if [ -f "$CLAUDE_DIR/settings.json" ]; then
+    echo "  [WOULD SKIP -- not overwritten]    $CLAUDE_DIR/settings.json"
+    echo "    (use --replace-settings to force install from template)"
+  else
+    if [ -f "$ADAPTER_DIR/settings.json.template" ]; then
+      echo "  [WOULD CREATE]                     $CLAUDE_DIR/settings.json (from template)"
+      changes=$((changes + 1))
+    else
+      echo "  (no template available)"
+    fi
+  fi
+  echo ""
+
+  # Seed ~/.claude/local/
+  echo "[Phase 7: Seed ~/.claude/local/ from examples]"
+  if [ -d "$ADAPTER_DIR/examples" ]; then
+    shopt -s nullglob 2>/dev/null || true
+    for example in "$ADAPTER_DIR/examples"/*.example.json; do
+      [ -f "$example" ] || continue
+      base=$(basename "$example")
+      target_name="${base%.example.json}.json"
+      target="$CLAUDE_DIR/local/$target_name"
+      if [ -e "$target" ]; then
+        echo "  [WOULD SKIP -- already exists]     $target"
+      else
+        echo "  [WOULD CREATE]                     $target (from $base)"
+        changes=$((changes + 1))
+      fi
+    done
+    shopt -u nullglob 2>/dev/null || true
+  else
+    echo "  (no examples/ directory in adapter)"
+  fi
+  echo ""
+
+  # Summary
+  echo "[Summary]"
+  echo "  $changes change(s) would be made."
+  echo "  $backups existing file(s) would be backed up."
+  echo ""
+  echo "Dry run complete. No changes made."
+  echo ""
+  exit 0
+fi
+
+# ============================================================
+# Normal install flow
+# ============================================================
+
 echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║  Neural Lace — Claude Code Adapter Installer ║"
-echo "╠══════════════════════════════════════════════╣"
-echo "║  Adapter: $ADAPTER_DIR"
-echo "║  Target:  $CLAUDE_DIR"
-echo "╚══════════════════════════════════════════════╝"
+echo "========================================================"
+echo "  Neural Lace -- Claude Code Adapter Installer"
+echo "--------------------------------------------------------"
+echo "  Adapter: $ADAPTER_DIR"
+echo "  Target:  $CLAUDE_DIR"
+echo "========================================================"
 echo ""
 
 mkdir -p "$CLAUDE_DIR"
@@ -124,11 +555,11 @@ sync_file() {
   ln -s "$src" "$dst" 2>/dev/null || true
 
   if [ -L "$dst" ]; then
-    echo "  ✓ linked $label"
+    echo "  linked $label"
   else
     rm -f "$dst"
     cp "$src" "$dst"
-    echo "  ✓ copied $label (symlinks unavailable)"
+    echo "  copied $label (symlinks unavailable)"
   fi
 }
 
@@ -143,7 +574,7 @@ sync_directory() {
 
   ln -s "$src" "$dst" 2>/dev/null || true
   if [ -L "$dst" ]; then
-    echo "  ✓ linked $label/"
+    echo "  linked $label/"
     return 0
   fi
 
@@ -163,7 +594,7 @@ sync_directory() {
       count=$((count + 1))
     fi
   done < <(cd "$src" && find . -print0)
-  echo "  ✓ synced $label/ ($count files)"
+  echo "  synced $label/ ($count files)"
 }
 
 echo "Deploying Claude Code adapter..."
@@ -202,12 +633,12 @@ if [ -d "$ADAPTER_DIR/git-hooks" ]; then
   if [ "$current_hooks_path" != "$ADAPTER_DIR/git-hooks" ]; then
     git config --global core.hooksPath "$ADAPTER_DIR/git-hooks"
     echo ""
-    echo "  ✓ set global git core.hooksPath to: $ADAPTER_DIR/git-hooks"
+    echo "  set global git core.hooksPath to: $ADAPTER_DIR/git-hooks"
     if [ -n "$current_hooks_path" ]; then
       echo "    (was: $current_hooks_path)"
     fi
   else
-    echo "  ✓ global git core.hooksPath already correct"
+    echo "  global git core.hooksPath already correct"
   fi
 fi
 
@@ -261,12 +692,41 @@ echo ""
 if [ ! -f "$CLAUDE_DIR/settings.json" ]; then
   if [ -f "$ADAPTER_DIR/settings.json.template" ]; then
     cp "$ADAPTER_DIR/settings.json.template" "$CLAUDE_DIR/settings.json"
-    echo "  ✓ created settings.json from template"
+    echo "  created settings.json from template"
     echo ""
     echo "  ACTION REQUIRED: Edit $CLAUDE_DIR/settings.json and replace placeholders"
   fi
 else
-  echo "  ✓ settings.json exists (not overwritten)"
+  # Loud, actionable warning: existing settings.json means Neural Lace's hooks
+  # are NOT installed in the user's actual config. A silent skip would leave
+  # the harness effectively dormant. Call this out clearly with three paths
+  # forward.
+  echo "  ##########################################################"
+  echo "  # WARNING: settings.json exists -- NOT overwritten."
+  echo "  #"
+  echo "  # IMPORTANT: Neural Lace's hooks live inside settings.json."
+  echo "  # Your existing settings.json does NOT contain them, which"
+  echo "  # means most Neural Lace features are currently INACTIVE"
+  echo "  # (public-repo block, automation-mode gate, first-run"
+  echo "  # prompt, pre-commit-gate, SessionStart account switcher,"
+  echo "  # etc.)."
+  echo "  #"
+  echo "  # To activate Neural Lace, you have three options:"
+  echo "  #"
+  echo "  #   (a) Manually merge hooks from:"
+  echo "  #         $ADAPTER_DIR/settings.json.template"
+  echo "  #       into your existing $CLAUDE_DIR/settings.json"
+  echo "  #       (merge the \"hooks\" section)."
+  echo "  #"
+  echo "  #   (b) Replace your settings.json with the template"
+  echo "  #       (existing file will be backed up first):"
+  echo "  #         ./install.sh --replace-settings"
+  echo "  #"
+  echo "  #   (c) Remove your existing settings.json and re-run"
+  echo "  #       install.sh -- the template will install fresh"
+  echo "  #       (your old settings.json backed up to"
+  echo "  #       .backup-<timestamp>/ as usual)."
+  echo "  ##########################################################"
 fi
 
 # ============================================================
@@ -289,10 +749,10 @@ if [ -d "$ADAPTER_DIR/examples" ]; then
     target="$CLAUDE_DIR/local/$target_name"
 
     if [ -e "$target" ]; then
-      echo "  ✓ ~/.claude/local/$target_name exists (not overwritten)"
+      echo "  $CLAUDE_DIR/local/$target_name exists (not overwritten)"
     else
       cp "$example" "$target"
-      echo "  ✓ created ~/.claude/local/$target_name from example"
+      echo "  created $CLAUDE_DIR/local/$target_name from example"
       seeded_any=1
     fi
   done
@@ -300,7 +760,7 @@ if [ -d "$ADAPTER_DIR/examples" ]; then
 
   if [ "$seeded_any" -eq 1 ]; then
     echo ""
-    echo "  ACTION: edit files in ~/.claude/local/ to match your setup. See adapters/claude-code/schemas/ for each schema."
+    echo "  ACTION: edit files in $CLAUDE_DIR/local/ to match your setup. See adapters/claude-code/schemas/ for each schema."
   fi
 fi
 
@@ -314,9 +774,9 @@ if [ $BACKED_UP -eq 1 ]; then
   echo ""
 fi
 
-echo "╔══════════════════════════════════════════════╗"
-echo "║  Neural Lace installed successfully.         ║"
-echo "╚══════════════════════════════════════════════╝"
+echo "========================================================"
+echo "  Neural Lace installed successfully."
+echo "========================================================"
 echo ""
 echo "Pre-push security scanner active on all repos."
 echo "Telemetry data directory: $NEURAL_LACE_DATA/telemetry/"
