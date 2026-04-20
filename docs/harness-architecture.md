@@ -36,6 +36,7 @@ Both are reviewed by the `harness-reviewer` agent, which classifies changes firs
 | `docs-freshness-gate.sh` | Structural harness changes (A/D/R) require docs staged | Mechanical (pre-commit) |
 | `migration-claude-md-gate.sh` | New `supabase/migrations/*.sql` requires `CLAUDE.md "Migrations: through N"` line update | Mechanical (pre-commit, opt-in) |
 | `review-finding-fix-gate.sh` | Commit message references review finding ID → review file must also be staged | Mechanical (pre-commit) |
+| `no-test-skip-gate.sh` **(2026-04-20)** | Staged `*.spec.ts` / `*.test.ts` diffs are scanned for new `test.skip(`, `it.skip(`, `.skip(` on describe blocks, and `xtest(` / `xdescribe(`. Blocked unless the skip line references an issue number (`#NNN` or `github.com/.*/issues/NNN`). Prevents vaporware testing where data-unavailability was dodged by skipping instead of seeding. | Mechanical (pre-commit) |
 
 The residual gap (verbal vaporware) is bounded by Claude Code's lack of a PostMessage hook and is mitigated via the `verify-feature` skill + memory priming + user interrupt authority.
 
@@ -274,6 +275,7 @@ Rules are loaded contextually when Claude detects relevant files being edited.
 | `security.md` | All | Never commit .env, never create public repos, pre-push scanner |
 | `pipeline-agents.md` | Pipeline mode | BUILDER/VERIFIER/DECOMPOSER roles with strict boundaries |
 | `harness-maintenance.md` | `~/.claude/**` changes | Global-first, commit to neural-lace repo, update architecture doc, no project-level copies |
+| `deploy-to-production.md` **(2026-04-20)** | Any project where master merge auto-deploys to production (Vercel/similar) | Default: always merge + deploy to production after testing. Never leave work on a preview branch for manual merge. Preview is for the agent's own pre-merge validation only — the user tests in production. Pattern-class (no hook); the user's feedback memory + this rule carry it. |
 
 ## Templates (`~/.claude/templates/`)
 

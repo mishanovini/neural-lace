@@ -7,6 +7,21 @@
 - Never delete or skip tests to make a build pass
 - Test edge cases: empty states, error states, boundary values
 
+## No Skipped Tests — Make It Testable Or Surface The Blocker (MANDATORY)
+
+**Never use `test.skip()`, `it.skip()`, `xtest()`, `.only()` that excludes others, or `expect.soft()` to dodge an assertion.** "Skip when the org has no reps" is not a valid test — it's a test that doesn't test. If you find yourself unable to exercise a code path in a test, the correct response is to make the code path reachable:
+
+- **Seed the data inline.** Create a rep, a contact, a pricing entry, etc. inside the test's setup, use it, clean it up in a `finally` block. Use the real project APIs — this is more faithful than mocking anyway.
+- **Use API endpoints to set up state.** `page.request.post('/api/reps', ...)` + `page.request.get('/api/auth/session')` to get org_id. This is the canonical pattern for workflow tests that need prerequisite data.
+- **Add a fixture or helper** if the same setup recurs across tests (e.g., `tests/fixtures/seed-rep.ts`).
+- **If the code path is genuinely unreachable** (e.g., depends on a third-party service that can't be touched from tests, or on a manual action), do NOT skip. Instead: document the blocker in the test body as a `test.fail({ message: '...' })` with a specific explanation, or surface it to the user explicitly in the session summary so we can come up with a solution together.
+
+**The only legitimate skip** is a test that is temporarily broken due to a known upstream bug AND has an issue number to fix it. In that case the skip message MUST reference the issue (`test.skip('Blocked by #NNN — <short reason>')`). Anything else is vaporware testing.
+
+**Enforcement:** pre-commit hook `no-test-skip-gate.sh` scans staged `*.spec.ts` / `*.test.ts` files for new `test.skip(`, `it.skip(`, `.skip(` on describe blocks, and blocks the commit unless the skip line references an issue number (`#NNN` or `github.com/.*/issues/NNN`).
+
+**Why this is strict:** a skipped test is worse than no test. It creates the illusion of coverage while silently passing anything. The 2026-04-20 incident where calendar tests skipped 2 cases on empty-rep orgs made a real infinite-render-loop bug go undetected until the tests were fixed to seed data. Don't ship skips.
+
 ## E2E Testing (System Boundary Rule)
 
 **After any commit touching a system boundary, run E2E tests against live deployment.** A successful build is NOT validation.
