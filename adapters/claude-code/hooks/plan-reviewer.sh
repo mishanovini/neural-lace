@@ -154,6 +154,92 @@ if [[ -n "$GEN3_PATTERNS" ]]; then
 fi
 
 # ============================================================
+# Check 7 (Gen 5): Mode: design plans must have substantive
+# Systems Engineering Analysis sections
+# ============================================================
+#
+# When a plan declares Mode: design, it MUST include the 10 sections
+# (Outcome, End-to-end trace, Interface contracts, Environment,
+# Authentication, Observability, Failure modes, Idempotency, Load/capacity,
+# Decision records & runbook). Each section must have > 2 lines of
+# non-placeholder content.
+#
+# Rationale: design-mode work fails catastrophically when any of these
+# 10 dimensions is unexamined. See ~/.claude/rules/design-mode-planning.md.
+
+# Only apply to plans with Mode: design (not design-skip, not code)
+MODE_VALUE=$(awk '/^Mode:/ { print $2; exit }' "$PLAN_FILE" 2>/dev/null | tr -d '[:space:]')
+
+if [[ "$MODE_VALUE" == "design" ]]; then
+  # Required section headings (look for "### N." or "## Systems Engineering")
+  REQUIRED_SECTIONS=(
+    "Outcome"
+    "End-to-end trace"
+    "Interface contracts"
+    "Environment"
+    "Authentication"
+    "Observability"
+    "Failure-mode analysis"
+    "Idempotency"
+    "Load"
+    "Decision records"
+  )
+
+  # First, require the parent section exists
+  if ! grep -qE '^## Systems Engineering Analysis' "$PLAN_FILE"; then
+    add_finding "Check 7 (design-mode): plan declares Mode: design but lacks '## Systems Engineering Analysis' section. Copy the template from ~/.claude/templates/plan-template.md."
+  else
+    # Check each of the 10 sub-sections exists
+    MISSING_SECTIONS=""
+    for sec in "${REQUIRED_SECTIONS[@]}"; do
+      if ! grep -qiE "^### [0-9]+\. .*$sec" "$PLAN_FILE"; then
+        MISSING_SECTIONS+="    - $sec"$'\n'
+      fi
+    done
+
+    if [[ -n "$MISSING_SECTIONS" ]]; then
+      add_finding "Check 7 (design-mode): plan is missing required sections:"$'\n'"$MISSING_SECTIONS"
+    fi
+
+    # Check for placeholder text inside sections: lines that are just
+    # bracket-text like "[What we're building]" or "[TBD]" or one-liner
+    # sections with fewer than 3 substantive lines.
+    PLACEHOLDER_COUNT=$(grep -cE '^\s*\[[^]]+\]\s*$' "$PLAN_FILE" 2>/dev/null | tr -cd '[:digit:]')
+    PLACEHOLDER_COUNT=${PLACEHOLDER_COUNT:-0}
+    if [[ $PLACEHOLDER_COUNT -gt 3 ]]; then
+      add_finding "Check 7 (design-mode): plan has $PLACEHOLDER_COUNT placeholder lines (bracket-text like '[What we're building]'). Replace all placeholders with task-specific content before the plan is ACTIVE."
+    fi
+
+    # Section-substance check: for each of the 10 sections, count the
+    # non-blank, non-comment lines between that heading and the next.
+    # Fewer than 3 lines = placeholder.
+    SHALLOW_SECTIONS=""
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      # Extract the content between ### i. and the next ### or end of Systems Eng section
+      CONTENT=$(awk -v n="$i" '
+        /^## Systems Engineering Analysis/ { in_sys = 1; next }
+        in_sys && /^## / && !/^## Systems Engineering/ { exit }
+        in_sys && $0 ~ "^### "n"\\. " { in_sec = 1; next }
+        in_sys && in_sec && /^### / { exit }
+        in_sec { print }
+      ' "$PLAN_FILE" 2>/dev/null)
+
+      # Count substantive lines: non-blank, non-comment, non-pure-bracket
+      SUBSTANTIVE=$(echo "$CONTENT" | grep -vE '^\s*$|^\s*<!--|^\s*-->|^\s*\[[^]]+\]\s*$' | wc -l | tr -cd '[:digit:]')
+      SUBSTANTIVE=${SUBSTANTIVE:-0}
+
+      if [[ $SUBSTANTIVE -lt 3 ]] && [[ -n "$CONTENT" ]]; then
+        SHALLOW_SECTIONS+="    - Section $i has only $SUBSTANTIVE substantive line(s)"$'\n'
+      fi
+    done
+
+    if [[ -n "$SHALLOW_SECTIONS" ]]; then
+      add_finding "Check 7 (design-mode): sections are too shallow to pass systems review. Each section needs specific content (typically 5+ lines), not one-line placeholders:"$'\n'"$SHALLOW_SECTIONS    Then invoke the systems-designer agent for substantive review."
+    fi
+  fi
+fi
+
+# ============================================================
 # Report
 # ============================================================
 

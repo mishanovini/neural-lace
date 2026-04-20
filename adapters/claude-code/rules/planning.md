@@ -3,6 +3,29 @@
 ## When to Plan
 For tasks involving architectural decisions, non-obvious multi-file interactions, or work > ~15 minutes: enter plan mode. For simple single-file changes, bug fixes with obvious solutions, or docs: proceed directly.
 
+## Two modes of plan: `code` vs `design`
+
+Every plan declares a **Mode** in its header:
+
+- **`Mode: code`** (default). Code-level work: bug fixes, UI changes, refactors, test additions, isolated feature work. Iteration cost is low, iterate-and-observe is appropriate. The standard plan template (Goal, Scope, Tasks, etc.) is sufficient.
+
+- **`Mode: design`**. System-design work where iteration cost is high and failures compound. Required for CI/CD workflows, database migrations, infrastructure config, deployment systems, multi-service integrations. Design-mode plans MUST include a "Systems Engineering Analysis" section with 10 sub-sections (Outcome, End-to-end trace, Interface contracts, Environment, Authentication, Observability, Failure modes, Idempotency, Load/capacity, Decision records & runbook).
+
+**How to decide:** if any of these are true, use `Mode: design`:
+- Editing `.github/workflows/*.yml`, migrations, `vercel.json`, `Dockerfile`, or similar infra files
+- Integrating a third-party tool you haven't used before in this project
+- Plan has more than 3 state transitions in its flow
+- Iteration costs > 5 minutes or real money (CI builds, API calls, deployment)
+- Other systems/teams will depend on the output
+
+See `~/.claude/rules/design-mode-planning.md` for the full protocol, the 10 required sections, and what each requires.
+
+**Enforcement (hook-backed):**
+- `plan-reviewer.sh` enforces section presence and substance for `Mode: design` plans.
+- `systems-designer` agent MUST pass the plan before implementation (parallel to how `ux-designer` gates UI plans).
+- `systems-design-gate.sh` PreToolUse hook blocks edits to design-mode files (workflows, migrations, etc.) unless an active `Mode: design` plan exists.
+- Escape hatch: `Mode: design-skip` with a short justification allows trivial edits (version bumps, typo fixes) without the full 10-section treatment, while leaving an auditable record.
+
 ## How multi-task plans execute: orchestrator pattern
 
 **For any plan with more than one task, the main session orchestrates and dispatches build work to `plan-phase-builder` sub-agents — it does NOT do the build work itself.** This keeps the main session's context from accumulating 200+ tool uses of raw build detail across a long plan, which is a quality-of-life improvement for extended autonomous work. (Historical note: the 2026-04-14 vaporware failures were caused by self-enforcement gaps in verification, not by context accumulation — those are addressed by the hook-enforced Gen 4 mechanisms. The orchestrator pattern is a separate improvement.)

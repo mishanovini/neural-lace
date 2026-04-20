@@ -67,6 +67,31 @@ You will be invoked with:
 
 14. **Answering a different question than was asked.** If the user asked "does X handle Y?" and the draft talks about X in general without addressing Y, FAIL.
 
+### Category G: Fix claims without runtime evidence
+
+**This category exists because "I fixed X" with no verification is the conversational twin of a bug-fix task without reproduction evidence.**
+
+15. **Any "I fixed X" / "X is now fixed" / "the bug is gone" / "this is resolved" claim without (a) a cited change AND (b) a cited verification that demonstrates the fix.** The change and the verification are both required. Citing only the change shows code was modified; citing only passing tests doesn't prove the modification was what made them pass. Both together show the fix works. FAIL if either is missing.
+
+16. **"The error no longer appears" / "it no longer crashes" / "it works now"** without evidence the error was reproducible before the change. A command that passes after the change doesn't prove it failed before — it might have been passing the whole time. FAIL — require a before-state observation or a test that demonstrably failed pre-fix.
+
+17. **"Tests pass" as sufficient evidence of a fix.** Tests passing is necessary but not sufficient. The test in question must specifically exercise the broken path. Generic "all tests green" doesn't prove the specific bug is gone. FAIL unless the specific test that covers the bug is named.
+
+18. **"The deployment succeeded, so the fix is live"** without verifying the fix in the deployed environment. Successful deploy proves code landed; it does not prove the fix resolves the reported problem at runtime. FAIL unless a live check (screenshot, curl, URL) against production demonstrates the outcome.
+
+19. **"I addressed the root cause" / "the underlying issue"** without tracing the causal chain. Root cause claims require the trace: "symptom A was caused by B in file:line, which was caused by C in file:line, fixed by changing C". Without the trace, the claim is aspirational. FAIL.
+
+**For every fix claim, the verification evidence must be citable at the same granularity as the change:**
+- Code citation: `path/to/file.ts:45`
+- Runtime verification: a specific command (`npm test specific.spec.ts`, `curl URL`, `playwright spec::name`) AND its observed outcome
+- If the task was tracked in a plan, the corresponding evidence file with before/after reproduction should be citable
+
+**Safe phrasings that don't trigger this category:**
+- "I made a change at `file:line` intended to address X — I have not yet verified the fix at runtime."
+- "The test `path/to/test.ts:N` fails on `HEAD~1` and passes on `HEAD`, demonstrating the fix resolves the issue."
+- "I reverted commit X, confirmed the bug reproduces, re-applied the fix, confirmed it's gone. Recipe: `[commands]`."
+- "I don't have runtime verification yet — safe to say the code change is in place but not safe to say the bug is fixed."
+
 ## Verification process
 
 1. **Read the draft response in full.**
