@@ -22,6 +22,7 @@ Both are reviewed by the `harness-reviewer` agent, which classifies changes firs
 |---|---|---|
 | `pre-commit-tdd-gate.sh` | New + modified runtime files must have tests; integration tiers cannot mock; trivial assertions alone are rejected; silent-skip tests blocked (Layer 5) | Mechanical (pre-commit) |
 | `plan-edit-validator.sh` | Plan checkbox flips require fresh matching evidence file AND Runtime verification entry | Mechanical (PreToolUse) |
+| `outcome-evidence-gate.sh` **(Gen 5)** | Fix tasks (matching fix/bug/broken/etc.) require before/after reproduction evidence — same runtime verification command showing FAIL pre-fix and PASS post-fix. Escape hatch for cases where automated before-state can't be captured: a "Reproduction recipe" block documenting manual repro | Mechanical (PreToolUse) |
 | `runtime-verification-executor.sh` | "Runtime verification:" lines must parse as `test`/`playwright`/`curl`/`sql`/`file` and actually execute; `test`/`playwright` entries reject files containing unannotated runtime-conditional skips (silent-skip vaporware guard, 2026-04-15) | Mechanical (Stop hook) |
 | `runtime-verification-reviewer.sh` | Verification commands must correspond to modified files (curl URL, sql table, test imports) | Mechanical (Stop hook) |
 | `plan-reviewer.sh` | Plans must have Scope, DoD, decomposed sweep tasks, Runtime verification specs | Mechanical (pre-commit) |
@@ -111,6 +112,7 @@ Runs `pre-stop-verifier.sh`:
 | `pre-commit-tdd-gate.sh` **(Gen 4)** | `pre-commit-gate.sh` step 0a | 5 layers: new-file test requirement, modified-file full-path test reference, integration-tier mock ban, trivial-assertion ban, silent-skip ban (2026-04-15) |
 | `plan-reviewer.sh` **(Gen 4)** | `pre-commit-gate.sh` step 0b | Adversarial review of staged plan files: sweep decomposition, manual-verification language, missing Scope/DoD, Gen 3 anti-patterns |
 | `plan-edit-validator.sh` **(Gen 4)** | PreToolUse `Edit\|Write` | Blocks plan checkbox flips without fresh matching evidence file |
+| `outcome-evidence-gate.sh` **(Gen 5)** | PreToolUse `Edit\|Write` | For fix tasks specifically: blocks checkbox flip unless evidence contains `Runtime verification (before):` + `Runtime verification (after):` with the same command (proof the fix addresses the bug). Escape hatch: `Reproduction recipe:` block for manual-repro cases. Triggered by task descriptions matching fix/bug/broken/regression/etc. Non-fix tasks pass through untouched. |
 | `runtime-verification-executor.sh` **(Gen 4)** | `pre-stop-verifier.sh` Check 4b | Parses and executes Runtime verification entries (`test`/`playwright`/`curl`/`sql`/`file`); since 2026-04-15 also rejects cited test files that contain silent-skip patterns (`test.skip(!CRED, ...)`, `test.skipIf(...)`, etc.) unless annotated with `// harness-allow-skip:` |
 | `runtime-verification-reviewer.sh` **(Gen 4)** | `pre-stop-verifier.sh` Check 4c | Correspondence check: verification commands must actually exercise modified files |
 | `tool-call-budget.sh` **(Gen 4)** | PreToolUse `.*` | Blocks after 30 tool calls without ack; `--ack` flag resets |

@@ -46,6 +46,7 @@ Runtime verification: file <path>::<line-pattern>
 
 | Task type | Minimum acceptable Runtime verification format |
 |---|---|
+| **Bug fix / behavior correction / regression fix** | **Before/after reproduction** (see "Reproduction-based verification for FIX tasks" below). Both entries required. A fix task without a before-failing command is INCOMPLETE. |
 | New UI page or component | `playwright <spec>::<test-name>` (test must exist, name must match) OR `curl <command>` hitting the page + `file <path>::<pattern>` check |
 | New API route | `curl <full command>` that actually hits the route AND `test <file>::<test-name>` OR returns a 2xx response at hook execution |
 | New webhook handler | `curl <POST command>` replaying the webhook payload AND `sql SELECT ...` verifying the expected side effect row |
@@ -55,6 +56,44 @@ Runtime verification: file <path>::<line-pattern>
 | New background task wiring | `test <integration-test>::<name>` that traces the call chain end-to-end |
 
 If the task involves a user-facing outcome and you cannot produce one of the above formats, the verdict is **INCOMPLETE** (not PASS), with reason "runtime verification cannot be expressed in a replayable command format in this environment". Do not fabricate evidence to escape INCOMPLETE.
+
+### Reproduction-based verification for FIX tasks
+
+**For any task whose description describes fixing a bug, correcting broken behavior, or resolving an incorrect outcome, PASS requires proof that (a) the problem was reproducible before the change and (b) the same reproduction no longer succeeds after the change.**
+
+**Triggering keywords in task descriptions** (case-insensitive match): `fix`, `bug`, `broken`, `doesn't work`, `not working`, `wrong`, `incorrect`, `should be`, `should have`, `regression`, `issue #N`. If any of these appear in the task description (or in the linked GitHub issue body), reproduction-based verification applies.
+
+**The mandatory evidence structure for fix tasks:**
+
+```
+Runtime verification (before): <replayable command>
+  Commit: <SHA before the fix, typically HEAD~1 or origin/master>
+  Expected: FAIL — this command should demonstrate the bug
+  Observed: <actual observation showing the bug manifests>
+
+Runtime verification (after): <the same command>
+  Commit: <SHA after the fix, typically HEAD>
+  Expected: PASS — this command should succeed now that the fix is applied
+  Observed: <actual observation showing the bug is resolved>
+```
+
+**Both entries must use the same verification command.** If the command passes before and also passes after, that's not proof the fix worked — that's proof the command wasn't testing what broke. If you can't find a command that fails before the fix, the fix isn't verifiable, and your verdict is INCOMPLETE with reason "no reproduction command identified — the fix cannot be distinguished from a no-op."
+
+**For tasks where the "before" command genuinely can't be run** (the buggy code was already overwritten, or the bug only manifested in production data that's since been updated), the evidence must include a **written reproduction recipe** that a human could follow manually to see the bug reoccur if the fix were reverted:
+
+```
+Reproduction recipe (could not replay automated):
+  1. Revert commit <SHA>
+  2. Run <command>
+  3. Observe: <specific incorrect outcome>
+  Re-apply the fix commit
+  4. Run <command>
+  5. Observe: <specific correct outcome>
+```
+
+This is weaker than an automated before/after test. If a test CAN be written, write it — don't fall back to the recipe format out of convenience.
+
+**Why this exists:** The codebase has accumulated "fixes" that looked correct at the code level but did not actually fix the reported problem. Some were symptom-patches (the symptom was silenced but the root cause remained). Some were no-ops (the changed code wasn't on the path that produced the bug). Some were wrong-target fixes (edited the right-looking file but the bug was elsewhere). Every one of these would have been caught by the before/after reproduction rule — which is why PASS on a fix task now requires it.
 
 ### Correspondence rule
 
