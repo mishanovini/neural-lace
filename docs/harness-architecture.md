@@ -124,6 +124,8 @@ Runs `pre-stop-verifier.sh`:
 | `pre-push-scan.sh` | Global git pre-push hook (NOT a Claude hook) | Scans push diffs for credentials. Loads 18 built-in patterns + `sensitive-patterns.local` + `business-patterns.paths` |
 | `check-harness-sync.sh` | Pre-commit (via gate) | Warns if `~/.claude/` files have diverged from `neural-lace` repo |
 | `pre-stop-verifier.sh` | Stop hook | Blocks session end if active plan has incomplete/unverified tasks. Check 4 calls executor + reviewer. |
+| `bug-persistence-gate.sh` | Stop hook | Scans transcript for bug/gap trigger phrases; blocks if no persistence (backlog or review file) happened in this session. |
+| `narrate-and-wait-gate.sh` | Stop hook | When the user has given a keep-going directive, blocks if the final assistant message trails off with a permission-seeking / wait-for-confirmation phrase. |
 | `sensitive-patterns.local` | Loaded by `pre-push-scan.sh` | Personal credential patterns (never shared) |
 | `sensitive-patterns.local.example` | Documentation | Template showing the format for personal patterns |
 

@@ -141,6 +141,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/bug-persistence-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/narrate-and-wait-gate.sh"
           }
         ]
       }

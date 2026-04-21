@@ -1,5 +1,25 @@
 # Testing & Verification Standards
 
+## Keep Going When Keep-Going Is Authorized (MANDATORY)
+
+**When the user has given a keep-going / autonomous directive, don't narrate-and-wait between work units.** The directive is standing; it does not expire at a phase boundary, a commit, or an "end of task." If the plan, backlog, or standing instruction authorizes more work, pick the next concrete item and keep working.
+
+**What narrate-and-wait looks like (don't do these when keep-going is active):**
+- "Want me to continue with phase 2?" — the answer is yes; just do it.
+- "Should I proceed with the next task?" — the authorization exists; proceed.
+- "Ready to continue when you give the go-ahead." — the go-ahead was already given.
+- "Next I'll need to [X]. Shall I proceed?" — stop asking, do X.
+- "Let me know if you'd like me to [Y]." — Y is on the plan; do Y.
+
+**Legitimate stopping points (always OK):**
+- All authorized work is complete. Report completion with specifics (plan file, backlog items, commit SHAs) — NOT with a question.
+- You hit a genuine blocker: missing credentials, ambiguous product decision, hard dependency on something the user must provide. Describe the blocker concretely.
+- The user revoked the directive in their most recent message ("that's enough for today," "let's stop here," "pause").
+
+**Enforcement:** Stop hook `narrate-and-wait-gate.sh` scans the session for keep-going signals from the user and checks whether the final assistant message trails off with a permission-seeking phrase. If so, the hook blocks session end. Escape hatch: write `.claude/state/autonomous-done-YYYY-MM-DD-HHMM.txt` with a one-line justification when authorized work is genuinely done.
+
+**Why this is strict:** in the 2026-04-21 session the user corrected narrate-and-wait behavior at least six times ("are you still working?", "why do you keep stopping?", "please continue"). The behavioral rule alone hasn't held. The hook closes the loop — if the agent is about to stop after a permission-seeking tail, something is wrong and should be reconsidered.
+
 ## Bug Persistence — Every Identified Bug Goes to Durable Storage Within the Same Session (MANDATORY)
 
 **Any bug, gap, or functional deficiency you observe during a session MUST be persisted to durable storage before the session ends.** Discovery without persistence is equivalent to not finding it.
