@@ -157,14 +157,34 @@ check_persisted_for() {
     PERSISTED=1
     return
   fi
-  # Committed backlog.md change in the last N commits on the current branch
-  # (session might span multiple commits)
-  if git -C "$root" log --oneline -10 --pretty=format:'%H' 2>/dev/null | while read -r sha; do
-    if git -C "$root" diff-tree --no-commit-id --name-only -r "$sha" 2>/dev/null | grep -qE '^docs/backlog\.md$|^docs/reviews/[0-9]{4}-[0-9]{2}-[0-9]{2}-'; then
-      exit 0
-    fi
-  done; [[ $? -eq 0 ]]; then
-    :
+  # Commits ANY branch touched these paths in the last ~6 hours (the
+  # session window). This catches the case where persistence was done
+  # on a feature branch that isn't the current HEAD — the bugs are
+  # recorded, they just live on a different branch that will be merged
+  # separately. `--all` picks up every ref, not just current branch.
+  local recent_touches
+  recent_touches=$(git -C "$root" log --all --since="6 hours ago" \
+    --pretty=format:'%H' -- docs/backlog.md 'docs/reviews/*' 2>/dev/null | head -1)
+  if [[ -n "$recent_touches" ]]; then
+    PERSISTED=1
+    return
+  fi
+  # Reflog: any commit on any branch in the session window that touched
+  # the persistence paths. Belt-and-suspenders for detached HEAD or
+  # worktree edge cases.
+  local reflog_touches
+  reflog_touches=$(git -C "$root" reflog --since="6 hours ago" --pretty=format:'%H' 2>/dev/null | \
+    while read -r sha; do
+      [[ -z "$sha" ]] && continue
+      if git -C "$root" diff-tree --no-commit-id --name-only -r "$sha" 2>/dev/null | \
+         grep -qE '^docs/backlog\.md$|^docs/reviews/[0-9]{4}-[0-9]{2}-[0-9]{2}-'; then
+        echo "$sha"
+        break
+      fi
+    done)
+  if [[ -n "$reflog_touches" ]]; then
+    PERSISTED=1
+    return
   fi
 }
 
