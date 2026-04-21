@@ -17,3 +17,21 @@ Several rules in `~/.claude/rules/` are Pattern-level (no hook enforcement) and 
 - `planning.md`'s "Identifying a gap = writing a backlog entry, in the same response" — violated on 2026-04-20
 - `orchestrator-pattern.md`'s "Main session dispatches, doesn't build directly" — violated when main session is tempted by small edits
 - `testing.md`'s "E2E testing after system-boundary commit" — often skipped when under time pressure
+
+## P0 — Stop hook for "narrate-and-wait" pattern (new 2026-04-21)
+
+Counterpart to bug-persistence-gate: catch the pattern where the agent
+completes a unit of work, narrates a summary, and implicitly stops
+waiting for user confirmation. Specifically blocks session termination
+when the last N assistant turns contain trigger phrases like "next up
+is", "ready to continue", "want me to proceed", "after merge", "then
+I'll" — indicating the agent has queued up work it could be doing now
+but is pausing to announce.
+
+Scope ~3 hrs: Stop hook script, transcript regex, allowlist for genuine
+end-of-session summaries (e.g., "done for tonight", explicit /clear
+requests, explicit "stop" from user).
+
+This was added after the maintainer repeatedly observed the agent
+stopping mid-execution on 2026-04-21 and asking rhetorical "are you
+still working?" questions.
