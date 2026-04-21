@@ -89,6 +89,23 @@ for the full safety rules on parallelization.
 ## Testing Strategy
 - [How each task will be verified]
 
+## Walking Skeleton
+<!--
+Thinnest end-to-end slice that touches every architectural layer the
+plan will ultimately affect (e.g., UI → API → worker → DB → back to UI).
+Build this FIRST, before adding features. Prevents the integration-
+vaporware pattern where pieces are built in isolation and the wires
+between them never get connected.
+
+Format: one paragraph naming the slice, followed by "First task:" with
+the task number from your task list that implements it. The first task
+MUST be the skeleton, not individual layers.
+
+To opt out for legitimate cases (pure refactor, pure docs, no new
+user-facing flow), replace this entire block with a single line:
+    Walking Skeleton: n/a — <one-sentence justification>
+-->
+
 ## Decisions Log
 [Populated during implementation — see Mid-Build Decision Protocol]
 

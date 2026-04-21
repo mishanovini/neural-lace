@@ -111,6 +111,38 @@ if ! grep -qiE '^## Definition of Done|^## Done When|^## Acceptance' "$PLAN_FILE
 fi
 
 # ============================================================
+# Check 4b: Walking-skeleton section (integration-vaporware defense)
+# ============================================================
+#
+# Research-backed rule (2026-04-21, see docs/reviews/2026-04-20-integration-vaporware-research.md
+# in projects using the harness): plans must identify the thinnest
+# end-to-end slice touching every architectural layer, and the first
+# task must be to build that slice. Forces integration FIRST, features
+# second — prevents the pattern where each piece is built in isolation
+# and the wires between them never get connected.
+#
+# Plans can opt out with "Walking Skeleton: n/a" on a single line,
+# followed by a one-sentence justification (e.g., "Pure refactor — no
+# new end-to-end slice being added"). This keeps the forcing function
+# while allowing pragmatic edge cases. Plans covering only test-harness
+# or docs-only changes are auto-exempt.
+
+IS_DOCS_ONLY=0
+if grep -qiE '^# Plan: .*(docs?|documentation|readme|changelog)' "$PLAN_FILE" 2>/dev/null; then
+  IS_DOCS_ONLY=1
+fi
+IS_TEST_HARNESS=0
+if grep -qiE 'tests/.*harness|journey.harness|test.infrastructure' "$PLAN_FILE" 2>/dev/null; then
+  IS_TEST_HARNESS=1
+fi
+
+if [[ $IS_DOCS_ONLY -eq 0 ]] && [[ $IS_TEST_HARNESS -eq 0 ]]; then
+  if ! grep -qiE '^## Walking Skeleton|^Walking Skeleton:' "$PLAN_FILE" 2>/dev/null; then
+    add_finding "Check 4b: missing '## Walking Skeleton' section. Plans that add new user-facing functionality must identify the thinnest end-to-end slice touching every architectural layer (UI → API → worker → DB → notification) as the first task. Build the skeleton first, then add flesh. Use 'Walking Skeleton: n/a' with a one-sentence justification if this plan is a pure refactor or other exempt case."
+  fi
+fi
+
+# ============================================================
 # Check 5: Runtime tasks without test specs
 # ============================================================
 #
