@@ -1,5 +1,34 @@
 # Testing & Verification Standards
 
+## Bug Persistence — Every Identified Bug Goes to Durable Storage Within the Same Session (MANDATORY)
+
+**Any bug, gap, or functional deficiency you observe during a session MUST be persisted to durable storage before the session ends.** Discovery without persistence is equivalent to not finding it.
+
+**What counts as "identifying a bug":**
+- A test that fails or produces unexpected output
+- A tool return or log that surfaces an error
+- An observation that the code / data / UI doesn't behave as expected
+- A gap noticed while investigating something else ("wait, also X is broken")
+- A limitation flagged by a user in the conversation
+- A vulnerability or inconsistency you notice while reading code for another purpose
+- Anything where a future session would benefit from knowing what you now know
+
+**Where it goes (pick one, immediately):**
+- **`docs/backlog.md`** — if the bug is actionable and clearly scoped for future work. One bullet per bug, under the appropriate P0/P1/P2 section. Include enough detail that next-session you could start on it cold.
+- **`docs/reviews/YYYY-MM-DD-<slug>.md`** — if the bug is one of a cluster found during a testing / investigation / audit pass. Entire set goes in one review doc with evidence.
+- **An existing plan's Evidence Log or Decisions section** — if the bug was discovered *while working on* that plan and is directly related.
+
+**The trigger phrases that mean "write it down NOW":**
+"we should also...", "this is missing", "we don't have X yet", "ideally we'd...", "I'll document this later", "as a follow-up", "for next session", "this is out of scope for this PR", "let me flag this", "turns out X doesn't work".
+
+Every one of those phrases is your brain trying to move on before persisting. **Stop. Write the backlog entry in the same response. Then continue.** This is the same principle as `planning.md`'s "Identifying a gap = writing a backlog entry" rule, but it applies to BUGS surfaced during execution, not just gaps noticed during planning.
+
+**The bar:** if the bug isn't in `docs/backlog.md` or `docs/reviews/` by the end of the session, it's lost. "It's in the PR body" doesn't count — PR bodies are not searchable by future sessions. "I mentioned it in chat" doesn't count — the chat is ephemeral.
+
+**End-of-session check:** before closing out, scan the session for any of the trigger phrases above. For each one, verify the corresponding bug is persisted. If not, persist it now.
+
+**Why this is strict:** the 2026-04-20 session discovered ~25 distinct issues across state machine integration, harness gaps, and NEPQ prompt content. Without this rule, most of them were at risk of being lost when the session ended because they lived only in PR bodies + conversation chat. The consolidated gap list (`docs/reviews/2026-04-20-consolidated-gap-list.md`) had to be reconstructed retroactively. Going forward, every bug is persisted as it's found.
+
 ## Test Discipline
 - Run existing tests before declaring work complete
 - Write tests for new features and bug fixes (reproduce bug BEFORE fixing)
