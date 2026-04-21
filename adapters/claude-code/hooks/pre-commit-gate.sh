@@ -128,6 +128,26 @@ if grep -q '"audit:events"' package.json 2>/dev/null; then
   echo "✓ Event coupling passed" >&2
 fi
 
+# 3c. Connectivity audit (Knip) — orphan files / unreachable exports.
+# Runs only if the project defines npm run audit:connectivity:files-only.
+# Catches files that exist and typecheck but are never imported by any
+# entry point. Complement to the event-coupling audit: connectivity
+# covers dead code at the import-graph level; event-coupling covers
+# dead code at the string-keyed-channel level.
+if grep -q '"audit:connectivity:files-only"' package.json 2>/dev/null; then
+  echo "[3c/4] Auditing connectivity (Knip)..." >&2
+  if ! npm run audit:connectivity:files-only 2>&1 | tail -30 >&2; then
+    echo "" >&2
+    echo "✗ BLOCKED: Knip found unused files." >&2
+    echo "  Either delete the file, wire it into a real entry point, or" >&2
+    echo "  add it to knip.config.ts 'ignore' list with a comment" >&2
+    echo "  explaining why it's intentionally unreferenced (e.g., backlog" >&2
+    echo "  partial-implementation flag, manual-run tool)." >&2
+    exit 1
+  fi
+  echo "✓ Connectivity passed" >&2
+fi
+
 echo "" >&2
 echo "═══ ALL PRE-COMMIT CHECKS PASSED ═══" >&2
 echo "" >&2
