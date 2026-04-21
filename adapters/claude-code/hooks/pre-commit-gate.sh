@@ -107,6 +107,27 @@ else
   echo "- API audit script not found, skipping" >&2
 fi
 
+# 3b. Event-coupling audit (integration-vaporware defense).
+# Runs only if the project defines npm run audit:events. Catches
+# broken-wire bugs where producer and consumer typecheck independently
+# but the string-keyed channel between them is broken (e.g., PATCH
+# /api/appointments writes status='completed' but nothing fires the
+# corresponding state-machine event). See scripts/audit-event-coupling.ts
+# in the project for the specific checks.
+if grep -q '"audit:events"' package.json 2>/dev/null; then
+  echo "[3b/4] Auditing event-coupling..." >&2
+  if ! npm run audit:events 2>&1 | tail -20 >&2; then
+    echo "" >&2
+    echo "✗ BLOCKED: Event-coupling audit found broken wires." >&2
+    echo "  Either fix the orphan emit/consumer, or if it's intentionally" >&2
+    echo "  legacy / externally-fired, add to NON_EVENT_PREFIXES or" >&2
+    echo "  knownExternal allowlist in scripts/audit-event-coupling.ts" >&2
+    echo "  with a comment explaining why." >&2
+    exit 1
+  fi
+  echo "✓ Event coupling passed" >&2
+fi
+
 echo "" >&2
 echo "═══ ALL PRE-COMMIT CHECKS PASSED ═══" >&2
 echo "" >&2
