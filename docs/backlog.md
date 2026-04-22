@@ -1,6 +1,88 @@
 # Neural Lace — Harness Backlog
 
+Last updated: 2026-04-22
+
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
+
+Strategy context and reasoning for many entries below lives in [`docs/claude-code-quality-strategy.md`](./claude-code-quality-strategy.md).
+
+## Known gaps in current enforcement (from strategy doc, 2026-04-22)
+
+These are residual risks in the Gen 4+ harness. Each is documented honestly rather than left hidden.
+
+### P1 — Verbal vaporware in conversation is not mechanically blocked
+
+Claude Code has no PostMessage hook. `claim-reviewer` is self-invoked and can be skipped. When the agent makes a feature claim in conversation without citing file:line, no mechanism catches it. Current mitigation: user reflex to ask for citations. Closing requires either a PostMessage hook in Claude Code itself or an adversarial post-response review agent that fires on every Nth response.
+
+### P1 — Tool-call-budget `--ack` attestation is bypassable
+
+The `tool-call-budget.sh` hook looks for sentinel lines in `~/.claude/state/reviews/`. A builder agent could Write that file directly without actually invoking `plan-evidence-reviewer`. Friction is raised but not cryptographically closed. Closing requires either per-session HMAC signing or architectural support for observing Task tool invocations.
+
+### P1 — Concurrent-session state collisions (plan-wipe incidents)
+
+Multiple Claude Code sessions on the same machine share `~/.claude/` state and the git working tree. Uncommitted plan files have been lost to concurrent-session `git stash`/`clean` operations on multiple documented occasions (2026-04-19, 2026-04-20). A project-level plan addressing commit-on-creation is in flight, but cross-session state coordination (shared `~/.claude/` directory) is still unresolved.
+
+### P1 — Harness portability to `claude --remote` cloud sessions
+
+Cloud-hosted Claude Code sessions don't inherit the user's local `~/.claude/` configuration. Isolation wins (no collision) but enforcement loses (no hooks). Need to establish dotfiles-sync pattern or equivalent so cloud sessions inherit the same harness rules as local sessions.
+
+## Improvements surfaced by 2026-04-22 strategy review
+
+Prioritized order of leverage. Full reasoning in `docs/claude-code-quality-strategy.md` section "Additional Suggestions for Improvement."
+
+### P0 — Adopt `claude --remote` + dotfiles sync as official background-work pattern
+
+Directly resolves the concurrent-session plan-wipe incidents we've hit twice. Document the canonical pattern in a new `rules/automation-modes.md`: interactive work → local Claude Code; autonomous background work → `claude --remote` with dotfiles-synced harness; recurring work → `/schedule`. Requires verifying harness-portability mechanics in the cloud session first.
+
+### P0 — Harness-tests-itself: synthetic session runner
+
+Build a tool that runs synthetic Claude Code sessions against known-bad scenarios and measures whether hooks catch them (unauthorized checkbox flip, mocked integration test, uncited feature claim, budget exhaustion without audit). Runs on demand or weekly via `/schedule`. Produces a report showing which enforcement mechanisms have regressed. This catches silent enforcement regressions — currently invisible.
+
+### P1 — Failure mode catalog as a first-class artifact
+
+Maintain `docs/failure-modes.md` as a living document. Each entry has symptom / root cause / detection mechanism / prevention / example. Externalizes the "every bug → harness opportunity" discipline from individual memory to shareable artifact. Also serves as onboarding material.
+
+### P1 — Adversarial pre-mortem pattern for plans
+
+Before any plan is marked ready to build, an adversarial agent answers "if the builder's only input is this plan, what will they get wrong?" Produces a list of expected failure modes. Plan is revised to close each. This is "verbose plans" with teeth — catches gaps humans approve as "looks plausible."
+
+### P1 — Capture-codify cycle at PR level
+
+Every fix PR requires a description field: "What rule/hook/agent would have caught this?" Empty = PR blocked. If a mechanism exists → link to it (confirms enforcement works); if none → propose one, or explicitly accept residual risk. Makes the capture-codify discipline structurally mandatory.
+
+### P1 — Prompt template library for meta-questions
+
+Codify canonical meta-questions as slash commands or skills: `/why-did-this-bug-slip`, `/find-my-bugs`, `/make-this-plan-verbose`, `/harness-this-lesson`. Currently these patterns live in individual memory; codifying makes them reusable and consistent.
+
+### P1 — Delegability classification on plan tasks
+
+Every plan task declares: fully-delegable / review-at-phase / interactive. Shapes dispatch automatically — fully-delegable auto-dispatches to background sessions, review-at-phase produces PRs at phase boundaries, interactive stays in foreground. Replaces per-task manual routing decisions.
+
+### P1 — Explicit interactive vs autonomous session mode
+
+Session-start directive declaring interactive (human watching; more permissive) or autonomous (human not watching; stricter gates, auto-commit plans, harder enforcement). Same cadence shouldn't apply to both modes.
+
+### P2 — Effort-level enforcement at project level
+
+`.claude/minimum-effort.json` in project root declares minimum effort level. SessionStart hook warns if effort is below project minimum. Eliminates "forgot to set max" errors on quality-critical projects.
+
+### P2 — Multi-model routing strategy
+
+Codify model assignment per task type: Opus for planning/adversarial review/judgment; Sonnet for implementation; Haiku for mechanical operations. Partially done via individual agent frontmatter; could be more systematic via a central routing config.
+
+### P2 — Scheduled retrospectives via `/schedule`
+
+Weekly scheduled agent that reads the week's completed plans, decisions, and failure-mode entries; proposes harness improvements based on patterns; drafts `docs/retrospectives/YYYY-WW.md`. Turns ad-hoc "half my time on the harness" into systematic weekly attention.
+
+### P2 — Session observability dashboard
+
+Lightweight `claude-status` command aggregating active sessions (local + `--remote`), active plans, tool-call budget consumption, recent hook firings, uncommitted work at risk of wipe. Aggregates existing state files — no new infrastructure needed.
+
+### P2 — Harness version contracts
+
+Each project declares `harness-version: >=N` in its CLAUDE.md. Breaking harness changes bump the version. SessionStart warns if project version predates current harness. Prevents silent regressions as harness evolves beyond what older projects expected.
+
+## Existing entries
 
 ## ✅ DELIVERED 2026-04-20 — Mechanical enforcement of bug-persistence rule
 
