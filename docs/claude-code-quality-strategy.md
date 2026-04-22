@@ -19,13 +19,20 @@ Claude Code's default posture is to favor performance over quality — what the 
 
 **Operational implication:** the `effort` setting should be set to `extra high` at minimum, `max` when quality still suffers. The setting *"actually provides more context window to every individual agent so that it doesn't feel the pressure of having to try and finish within before running out of context."* It directly relieves the quality-destroying pressure-to-complete bias.
 
-### 2. Determinism requires mechanism, not prompt
+### 2. Determinism requires mechanism AND prompt — both layers, not either/or
 
 > *"Context and prompts are not perfect… it's guidance but it's not deterministic. So the one deterministic thing that we can do to keep things on track is to create hooks."*
 
-Prompts are probabilistic. Claude will sometimes acknowledge a directive and then quietly work around it — *"Cloud Code tends to sometimes be like hey I have direction to do things this way but when things come down to it I still tend to work around them."* Rules written in prose are guidance; rules written as hooks are physics.
+Prompts alone are probabilistic. Claude will sometimes acknowledge a directive and then quietly work around it — *"Cloud Code tends to sometimes be like hey I have direction to do things this way but when things come down to it I still tend to work around them."* But hooks alone aren't enough either — a hook only catches specific, mechanically-detectable violations. Many quality concerns (tone, judgment calls, cross-cutting patterns) can only be communicated through prose guidance.
 
-**Operational implication:** any rule that matters must have a hook that enforces it. Prose rules are starting points, not endpoints. If you catch a bug class that a prose rule should have prevented, the next step is always "build the hook that makes this class impossible."
+The correct architecture is **both layers working together:**
+
+- **Prose as guidance** — `CLAUDE.md`, rule files, agent prompts, plan templates. Tells the agent *what's expected* and *why*. Shapes 80% of behavior for 20% of cases.
+- **Hooks as physics** — PreToolUse, PostToolUse, Stop hooks. *Enforce* the rules that must not be violated, even when prose guidance was present but ignored.
+
+Prose is the instruction; hooks are the backstop. Neither substitutes for the other. Prose without hooks is aspirational; hooks without prose are inscrutable (the agent doesn't know *why* it got blocked).
+
+**Operational implication:** any rule that matters needs both a prose description (so the agent understands the intent and follows it most of the time) AND a hook (so violations are mechanically blocked when the agent drifts). If you catch a bug class that was already documented in prose, the next step is to add the hook that makes violations impossible, not to rewrite the prose. If you add a hook, also add the prose that explains what it's checking for — otherwise future agents hit the hook without context for how to comply.
 
 ### 3. Adversarial context separation is load-bearing
 
@@ -134,9 +141,21 @@ This is how Neural Lace turns the four core beliefs into executable code. Every 
 
 ---
 
-## The Planning Discipline
+## The Two Biggest Quality Levers
 
-the maintainer identifies planning as *"the single biggest lever on implementation quality"* that doesn't require new harness work. The discipline:
+Two levers matter more than any others for implementation quality. They are complementary — using one without the other produces significantly worse results than using both.
+
+### Lever 1: Maximum effort setting
+
+The VS Code Claude Code extension exposes an `effort` setting that controls per-agent context budget. Default is medium/high. **Always set to `Extra High` at minimum, `Max` when quality is still insufficient.**
+
+Why it matters: *"It actually provides more context window to every individual agent so that it doesn't feel the pressure of having to try and finish within before running out of context."* Higher effort directly relieves the pressure-to-complete bias that causes Claude to rush through details and ship buggy code. This setting is described in the source transcript as *"the key unlock"* of the current moment.
+
+Practical impact: effort level is a setting the user must remember to configure per VS Code session. If the default is left in place, every other quality mechanism in the harness fights an uphill battle against an agent operating under artificial context pressure.
+
+### Lever 2: Verbose plans
+
+The maintainer identifies planning verbosity as *"the single biggest lever on implementation quality"* that doesn't require new harness work. The discipline:
 
 ### 1. Verbose plans produce good code; terse plans produce bugs
 
@@ -216,6 +235,69 @@ Codify this pattern as a standing practice: the final turn of any significant bu
 - Sub-agents with `isolation: "worktree"` for parallelism
 - Documentation-as-you-build (the harness auto-generates docs so humans read docs, not code)
 - `claude --remote` for background autonomous work (per ongoing exploration — see "Multi-session management" below)
+
+---
+
+## Automating Best Practices — Removing the Need for User Discipline
+
+The strategy above assumes the user remembers to do things. That's fragile. The long-term goal is to **make every best practice automatic** — enforced by default rather than memorized. This section maps each best practice to its current automation status and the specific mechanism that would complete the automation.
+
+The tension this resolves: users shouldn't need to know Claude Code's internals to get quality output. The harness should make the path of least resistance the path of highest quality.
+
+### Best Practice → Automation Mechanism
+
+| Best Practice | Currently Requires | Proposed Automation |
+|---|---|---|
+| **Effort setting at Extra High / Max** | User must configure in VS Code dropdown every session | (1) SessionStart hook reads `~/.claude/local/effort-policy.json` and warns if effort is below configured minimum. (2) Per-project `.claude/minimum-effort.json` declares project-level minimum. (3) Stretch: hook could query Claude Code's current effort setting via an introspection API if one exists. |
+| **Verbose plans** | User must request "more detail" iteratively | (1) Plan-reviewer agent automatically rejects plans below a complexity threshold (line count, section count, enumerated assumptions). (2) Adversarial pre-mortem agent (backlog P1) automatically runs on every draft plan and returns a list of gaps to fill. (3) Plan template with required sections (Assumptions, Edge Cases, Files Modified, Testing Strategy) that must be populated. |
+| **Immediate commit of new plans** | User must remember to commit | `plan-lifecycle.sh` PostToolUse hook (planned in a project-level plan, `robust-plan-file-lifecycle`) detects a new plan file and surfaces a loud reminder; pre-stop-verifier warns on uncommitted plans at session end. |
+| **Auto-archival on status transition** | User must manually move plans to archive | Same `plan-lifecycle.sh` hook: when `Status:` changes to COMPLETED/DEFERRED/ABANDONED/SUPERSEDED, auto-executes `git mv` to `docs/plans/archive/`. |
+| **Meta-questions after significant work** | User must remember to ask | (1) Prompt template library as slash commands (`/why-did-this-bug-slip`, `/find-my-bugs`, `/harness-this-lesson`) — codifies the discipline into one-keystroke invocations. (2) Post-completion hook that automatically prompts the agent to self-audit on significant plan completions. |
+| **Adversarial validation** | User must dispatch validator agents | (1) `task-verifier` mandate (already hook-enforced) — only this agent can flip plan checkboxes, forcing the builder to invoke it. (2) Pre-commit hook dispatches `code-reviewer` / `security-reviewer` automatically based on file types changed. (3) Plan-reviewer runs on every new plan automatically. |
+| **Encode failures as new hooks/rules** | User must consciously run the capture-codify cycle | (1) PR template field (backlog P1): every fix PR requires "what rule/hook/agent would have caught this?" — empty = PR blocked. (2) Scheduled weekly retrospective agent (backlog P2) reviews failures and drafts proposed hook changes. |
+| **Bug persistence to backlog** | User must add bugs to backlog.md | `bug-persistence-gate.sh` Stop hook (already shipped) scans transcript for trigger phrases and blocks session end if no persistence happened. |
+| **Credential scanning** | User must avoid committing secrets | `pre-commit` + `pre-push` hooks (already shipped) block any commit matching denylisted credential patterns. |
+| **Test coverage for runtime files** | User must write tests | `pre-commit-tdd-gate.sh` (already shipped, 5 layers) rejects commits that add runtime code without tests, use mocks in integration tests, or rely on trivial assertions. |
+| **Plan checkboxes backed by evidence** | User must run task-verifier | `plan-edit-validator.sh` (already shipped) blocks checkbox flips without fresh evidence file within 120s. |
+| **Runtime verification for completed tasks** | User must run verification commands | `runtime-verification-executor.sh` + `pre-stop-verifier.sh` (already shipped) parse verification entries and execute them at session end. |
+| **Background autonomous work without collisions** | User must manage worktrees or remote sessions | Adopt `claude --remote` + dotfiles sync as the canonical pattern (backlog P0). Document in `rules/automation-modes.md` so it's the default answer when a user asks "how do I run this overnight." |
+| **Context hygiene on long plans** | User must use orchestrator pattern voluntarily | `tool-call-budget.sh` (already shipped) blocks every 30 Edit/Write/Bash calls without a `plan-evidence-reviewer` audit — indirectly pressures toward dispatch-based work. |
+
+### The Automation Maturity Model
+
+Every best practice sits on a maturity ladder. The goal is moving each practice up the ladder over time:
+
+**Level 0 — Verbal/aspirational.** Best practice exists in someone's head or in a rule file nobody reads.
+
+**Level 1 — Documented prose.** Best practice is in `CLAUDE.md` or `rules/*.md`. Agent reads it and usually complies, sometimes forgets.
+
+**Level 2 — Reminder hook.** A hook surfaces a warning when the practice is being violated. Non-blocking. Relies on agent noticing and responding.
+
+**Level 3 — Blocking hook.** A hook refuses to proceed when the practice is violated. Agent cannot continue until it complies. This is where the practice becomes automatic.
+
+**Level 4 — Default by construction.** The practice is structurally impossible to violate — the system is designed such that the non-compliant path doesn't exist. Example: the task-verifier mandate makes self-flipping checkboxes impossible because the hook blocks all plan edits that aren't preceded by an evidence file.
+
+**Current positions (partial):**
+
+| Practice | Level | Path to next level |
+|---|---|---|
+| Effort setting | Level 0 | SessionStart warning hook → Level 2 |
+| Verbose plans | Level 1 | Plan-reviewer rejection threshold → Level 3 |
+| Commit plans immediately | Level 1 | `plan-lifecycle.sh` reminder hook → Level 2 (planned) |
+| Auto-archival | Level 1 | `plan-lifecycle.sh` auto-execution → Level 4 (planned) |
+| Meta-questions | Level 0 | Slash command library → Level 2 |
+| Adversarial validation | Level 3 (via task-verifier) | Already mature for plan work; extend to code review → Level 3 |
+| Bug persistence | Level 3 | Already shipped |
+| Credential scanning | Level 3 | Already shipped |
+| TDD for runtime files | Level 3 | Already shipped |
+| Evidence-first checkbox flips | Level 4 | Already shipped (blocking hook + mandate) |
+| Runtime verification | Level 3 | Already shipped |
+
+### Principle: Every Best Practice Has a Level Target
+
+When documenting a best practice, declare which maturity level it should reach. Practices critical to quality (e.g., max effort, verbose plans) target Level 3 or 4. Practices that are nice-to-have but not load-bearing can stay at Level 2. Explicitly declaring the target prevents drift where a critical practice stays at Level 1 forever because "we documented it."
+
+When a practice causes repeated failures despite being documented, that's the signal to move it up the ladder — either by adding a reminder hook (Level 2), a blocking hook (Level 3), or restructuring the system to make violation impossible (Level 4).
 
 ---
 
@@ -406,13 +488,13 @@ Document this in `rules/automation-modes.md` with concrete examples. Resolves th
 
 ## Summary: The Strategy in Five Sentences
 
-1. **Quality over speed** means max effort, verbose plans, long builds, and token indifference.
-2. **Determinism via mechanism** means every rule that matters becomes a hook; prose rules are aspirational.
+1. **Quality over speed** means the two biggest levers are maxed effort setting AND verbose plans — both levers used together, not either alone — plus long-build acceptance and token indifference.
+2. **Determinism via mechanism AND prompt** means every rule that matters has both a prose description (so the agent follows it most of the time) and a hook (so violations are mechanically blocked when the agent drifts).
 3. **Adversarial separation** means builders don't validate their own work; different agents with different goals do.
 4. **Ask, don't tell** means every failure becomes a prompt to understand the failure mode, not just a patch.
 5. **Encode every lesson** means the harness grows teeth over time; today's bug is tomorrow's blocked-at-commit-time violation.
 
-The harness is how these principles get enforced without human discipline. The discipline that remains — planning verbosity, meta-questions, SRE-style oscillation — is what the human contributes.
+The harness is how these principles get enforced without human discipline. The discipline that remains — planning verbosity, meta-questions, SRE-style oscillation — is what the human contributes. The goal over time is to automate even this residual discipline, so that best practices are invoked by default rather than memorized.
 
 ---
 
