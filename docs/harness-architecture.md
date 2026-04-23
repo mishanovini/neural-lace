@@ -307,6 +307,10 @@ Both scripts exit non-zero on failure and print a structured report. They can be
 | `verify-feature.md` **(Gen 4)** | Ripgrep-backed citation lookup. Invoke BEFORE answering any "does X work?" / "is Y wired up?" / "how does Z handle W?" question to ground the answer with file:line citations. |
 | `find-skills` | Discovery helper for finding which skill matches a task |
 | `new-project-setup` | Scaffolds a new project with Claude Code configuration |
+| `why-slipped.md` | Post-mortem analyzer. After a bug, identifies what hook/rule/agent should have caught it and proposes a specific harness fix. |
+| `find-bugs.md` | Adversarial self-audit. Invoke after significant changes to enumerate likely failure modes and run verification commands before the user finds issues. |
+| `verbose-plan.md` | Plan expander. Fills gaps in thin plan files (Assumptions, Edge Cases, Testing Strategy) so they meet the mandatory verbose-plan standard. |
+| `harness-lesson.md` | Failure-to-mechanism encoder. Takes a recent failure and proposes a concrete harness change (full file path + actual content) to prevent the class. |
 
 ## Docs (`~/.claude/docs/`)
 
