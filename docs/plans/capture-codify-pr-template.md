@@ -41,15 +41,31 @@ Close the single biggest behavioral gap in the harness: the "every failure is a 
 - [ ] 14. **Update Testing Strategy section** of this plan to remove the `act` reference (Section 4 documents `act` as optional; Testing Strategy should not depend on it). Sole verification path is Task 7's real GitHub Actions runs.
 
 ## Files to Modify/Create
+
+### Tasks 1-8 (original plan)
 - `docs/plans/capture-codify-pr-template.md` — this plan file (created in task 8's commit).
-- `.github/PULL_REQUEST_TEMPLATE.md` — new file, required PR template with the mechanism field.
-- `.github/workflows/pr-template-check.yml` — new workflow, validates the mechanism field on PR events.
-- `adapters/claude-code/git-hooks/pre-push-pr-template.sh` — new local hook, equivalent check before push.
-- `.github/scripts/validate-pr-template.sh` — NEW shared validator library sourced by both the workflow and the local hook. Per Decision 7, lives at `.github/scripts/` (not under `adapters/claude-code/`) so the rollout script can copy `.github/` to downstream repos with no path rewriting.
-- `adapters/claude-code/rules/planning.md` — add "Capture-codify at PR time" section. Mirror to `~/.claude/rules/planning.md`.
-- `~/.claude/rules/planning.md` — mirror the rule change per harness-maintenance rule.
-- `adapters/claude-code/docs/harness-architecture.md` — record the new artifacts in the architecture tables.
-- `docs/failure-modes.md` — stub file, links forward to the companion catalog plan.
+- `.github/PULL_REQUEST_TEMPLATE.md` — new file, required PR template with the mechanism field. (Task 1)
+- `.github/workflows/pr-template-check.yml` — new workflow, validates the mechanism field on PR events. (Task 2)
+- `adapters/claude-code/git-hooks/pre-push-pr-template.sh` — new local hook, equivalent check before push. (Task 3)
+- `.github/scripts/validate-pr-template.sh` — NEW shared validator library sourced by both the workflow and the local hook. Per Decision 7, lives at `.github/scripts/` (not under `adapters/claude-code/`) so the rollout script can copy `.github/` to downstream repos with no path rewriting. (Tasks 2 + 3)
+- `adapters/claude-code/rules/planning.md` — add "Capture-codify at PR time" section. Mirror to `~/.claude/rules/planning.md`. (Task 4)
+- `~/.claude/rules/planning.md` — mirror the rule change per harness-maintenance rule. (Task 4)
+- `adapters/claude-code/docs/harness-architecture.md` — record the four new artifacts in the architecture tables. (Task 5)
+- `docs/failure-modes.md` — stub file, links forward to the companion catalog plan. (Task 6)
+
+### Tasks 9-13 (cross-cutting fixes added during plan revision)
+- Branch protection configuration on `repos/<owner>/neural-lace/branches/master/protection` — applied via `gh api ... -X PUT --input <protection-config.json>`. Not a file in the repo but a GitHub API state change. (Task 9)
+- `docs/decisions/NNN-capture-codify-mechanism-field-shape.md` — Decision 1 record. (Task 10)
+- `docs/decisions/NNN-capture-codify-rationale-threshold.md` — Decision 2 record. (Task 10)
+- `docs/decisions/NNN-capture-codify-ci-and-local-hook.md` — Decision 3 record. (Task 10)
+- `docs/decisions/NNN-capture-codify-per-repo-hook-optin.md` — Decision 4 record. (Task 10)
+- `docs/decisions/NNN-capture-codify-failure-modes-stub.md` — Decision 5 record. (Task 10)
+- `docs/decisions/NNN-capture-codify-squash-merge-body.md` — Decision 6 record. (Task 10)
+- `docs/decisions/NNN-capture-codify-validator-library-location.md` — Decision 7 record. (Task 10)
+- `docs/DECISIONS.md` — add 7 new rows pointing at the records above. Atomicity gate (`decisions-index-gate.sh`) enforces records ↔ index in same commit. (Task 10)
+- `adapters/claude-code/scripts/install-pr-template.sh` — NEW rollout helper. (Task 11)
+- `adapters/claude-code/scripts/audit-merged-prs.sh` — NEW retroactive-audit script. (Task 12)
+- `docs/backlog.md` — append 3 new entries (catalog-cited-but-doesnt-exist gap, answer-form distribution telemetry, template-edit atomicity gate). (Task 13)
 
 ## Assumptions
 
@@ -73,14 +89,20 @@ Close the single biggest behavioral gap in the harness: the "every failure is a 
 
 ## Testing Strategy
 
-- **Task 1 (template):** verify the file exists at the correct path, contains all four required sections, and the placeholder text is obviously-not-real (e.g., `<mechanism answer — replace this bracketed text>`). Grep for `<mechanism` to confirm.
-- **Task 2 (workflow):** trigger the workflow via a throwaway PR (see task 7). Capture the full GitHub Actions run log showing fail-on-empty and pass-on-filled. Evidence must include the run URL and exit code. (Optional pre-task fast-feedback: `act` per Section 4, but the canonical verification is the real GitHub Actions run.)
-- **Task 3 (local hook):** run the hook manually against a staged commit with (a) empty mechanism field (expect exit 1), (b) filled field (expect exit 0). Capture both outputs.
-- **Task 4 (rule update):** grep `~/.claude/rules/planning.md` and `adapters/claude-code/rules/planning.md` for the new section heading after the edit. Diff the two files to confirm they match (per harness-maintenance's mirror-verify loop).
-- **Task 5 (architecture doc):** grep the architecture doc for the three new file names; all three must be present with one-line descriptions.
-- **Task 6 (failure-modes stub):** verify the file exists and contains a forward-link to the companion plan.
-- **Task 7 (smoke test):** five throwaway PRs with explicit pass/fail expectations (per Task 7's a/b/c/d/e enumeration, including the fork-PR scenario); each PR's check-run URL recorded as evidence. The throwaway PRs are closed without merging after verification.
+- **Task 1 (template):** verify the file exists at the correct path, contains all four required `##` sections (Summary, What changed and why, What mechanism would have caught this?, Testing performed), the three `### a/b/c)` answer-form sub-headings under the mechanism section, and the obviously-not-real placeholder text. Grep: `grep -c '^## ' .github/PULL_REQUEST_TEMPLATE.md` returns 4; `grep -c '^### ' .github/PULL_REQUEST_TEMPLATE.md` returns 3; `grep -c 'mechanism answer — replace this bracketed text' .github/PULL_REQUEST_TEMPLATE.md` returns 1.
+- **Task 2 (workflow):** trigger the workflow via a throwaway PR (see task 7). Capture the full GitHub Actions run log showing fail-on-empty and pass-on-filled. Evidence must include the run URL and exit code. Workflow YAML must include `actions/checkout@v4` as the first job step (verified via `grep checkout@v4 .github/workflows/pr-template-check.yml`). (Optional pre-task fast-feedback: `act` per Section 4, but the canonical verification is the real GitHub Actions run.)
+- **Task 3 (local hook):** run the hook manually against a staged commit with (a) empty mechanism field (expect exit 1), (b) filled field (expect exit 0). Capture both stderr outputs and verify they match the canonical messages from Section 6.
+- **Task 4 (rule update):** grep `~/.claude/rules/planning.md` and `adapters/claude-code/rules/planning.md` for the new section heading "Capture-codify at PR time" after the edit. Diff the two files to confirm they match (per harness-maintenance's mirror-verify loop).
+- **Task 5 (architecture doc):** grep the architecture doc for ALL FOUR new artifact names: `.github/PULL_REQUEST_TEMPLATE.md`, `.github/workflows/pr-template-check.yml`, `adapters/claude-code/git-hooks/pre-push-pr-template.sh`, `.github/scripts/validate-pr-template.sh`. All four must be present with one-line descriptions.
+- **Task 6 (failure-modes stub):** verify the file exists at `docs/failure-modes.md` and contains a forward-link to the companion `failure-mode-catalog` plan (grep for `failure-mode-catalog`).
+- **Task 7 (smoke test):** five throwaway PRs with explicit pass/fail expectations (per Task 7's a/b/c/d/e enumeration, including the fork-PR scenario); each PR's check-run URL recorded as evidence. The throwaway PRs are closed without merging after verification. Fork-PR test confirms the auto-emitted check name on the PR matches `PR Template Check / validate`.
 - **Task 8 (commit discipline):** verify via `git log` that the plan file's creation commit is distinct from any implementation commit, and that implementation commits reference the plan path in their message.
+- **Task 9 (branch protection):** verify via `gh api repos/<owner>/neural-lace/branches/master/protection --jq '.required_status_checks.contexts'` that the array includes `PR Template Check / validate`. Additionally, attempt a merge on a deliberately-failing throwaway PR; verify the merge is blocked.
+- **Task 10 (decision records):** verify all 7 records exist with `ls docs/decisions/*-capture-codify-*.md | wc -l` returning 7. Verify `docs/DECISIONS.md` has 7 new rows by `grep -c 'capture-codify-' docs/DECISIONS.md`. Verify each record has the required fields (Title, Date, Status, Stakeholders, Context, Decision, Alternatives Considered, Consequences) via `for f in docs/decisions/*-capture-codify-*.md; do grep -c '^## ' "$f"; done` showing each ≥ 4.
+- **Task 11 (rollout script):** run the script against a throwaway test directory: `mkdir -p /tmp/rollout-test && cd /tmp/rollout-test && git init && bash <neural-lace>/adapters/claude-code/scripts/install-pr-template.sh .`. Verify the four artifacts (template, workflow, validator library, local hook) exist in the test directory. Re-run the script (idempotency check) — second run must not error.
+- **Task 12 (audit script):** run `bash adapters/claude-code/scripts/audit-merged-prs.sh --limit 5` and verify it produces per-PR PASS/FAIL output for the last 5 merged PRs. Test against a known-failing PR body and confirm FAIL is reported.
+- **Task 13 (backlog entries):** verify `docs/backlog.md` contains the 3 new entries via `grep -c 'capture-codify' docs/backlog.md` returning ≥ 3, and each entry has a P0/P1/P2 prefix.
+- **Task 14 (Testing Strategy cleanup):** verify the `act` reference no longer appears in the Task 2 Testing Strategy bullet via `grep -A1 '\*\*Task 2 ' docs/plans/capture-codify-pr-template.md | grep -c 'act'` returning 0. (Section 4's optional-tooling mention of `act` is unaffected and remains.)
 
 Each task's evidence block will be written by `task-verifier` after the builder runs the relevant verification command; the builder does NOT write evidence directly.
 
