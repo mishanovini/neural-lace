@@ -38,10 +38,6 @@ Directly resolves the concurrent-session plan-wipe incidents we've hit twice. Do
 
 Build a tool that runs synthetic Claude Code sessions against known-bad scenarios and measures whether hooks catch them (unauthorized checkbox flip, mocked integration test, uncited feature claim, budget exhaustion without audit). Runs on demand or weekly via `/schedule`. Produces a report showing which enforcement mechanisms have regressed. This catches silent enforcement regressions — currently invisible.
 
-### P1 — Failure mode catalog as a first-class artifact
-
-Maintain `docs/failure-modes.md` as a living document. Each entry has symptom / root cause / detection mechanism / prevention / example. Externalizes the "every bug → harness opportunity" discipline from individual memory to shareable artifact. Also serves as onboarding material.
-
 ### P1 — Adversarial pre-mortem pattern for plans
 
 Before any plan is marked ready to build, an adversarial agent answers "if the builder's only input is this plan, what will they get wrong?" Produces a list of expected failure modes. Plan is revised to close each. This is "verbose plans" with teeth — catches gaps humans approve as "looks plausible."
