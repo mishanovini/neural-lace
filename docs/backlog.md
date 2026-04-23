@@ -66,22 +66,6 @@ Lightweight `claude-status` command aggregating active sessions (local + `--remo
 
 Each project declares `harness-version: >=N` in its CLAUDE.md. Breaking harness changes bump the version. SessionStart warns if project version predates current harness. Prevents silent regressions as harness evolves beyond what older projects expected.
 
-### P0 — Plan file deletion protection
-
-Plan files should NEVER be deleted. The only legitimate operation on a plan file after creation is move-to-archive on terminal-status transition. Current state: nothing mechanically prevents deletion, and we have lost plan files multiple times (NEPQ, robust-plan-file-lifecycle) to `git stash -u` / `git clean -fd` operations from concurrent sessions.
-
-Needed: a PreToolUse Bash hook that blocks destructive commands targeting plan files. Patterns to block:
-- `rm` or `rm -rf` targeting `docs/plans/` or any path containing `/plans/`
-- `git clean` in a working tree with uncommitted files under `docs/plans/`
-- `git stash -u` / `git stash --include-untracked` when plan files are untracked (warn, optionally block)
-- `git checkout .` / `git restore .` / `git reset --hard` that would discard uncommitted plan files
-
-The hook should be conservative — if uncertain whether the command affects plan files, warn and require explicit confirmation rather than block outright. Block only when detection is high-confidence.
-
-Companion work (in `robust-plan-file-lifecycle` plan): the commit-on-creation protection prevents plans from ever being uncommitted for long, which eliminates most wipe scenarios. Plan-deletion-protection is a defense-in-depth layer catching the residual cases.
-
-Priority P0 because: this is a recurring, observed pain point. The mechanism needed is small (single hook). The blast radius of missing protection is high (days of planning work lost).
-
 ### P1 — Mysterious `effortLevel` wipe during session (2026-04-22/23)
 
 Observed: `~/.claude/settings.json` started the session with `effortLevel: "max"`. Partway through, a subsequent `jq -r '.effortLevel'` returned `null` (key removed or value nulled). No task in the executing plan intentionally touched this field. Neither the main session nor any dispatched builder agent reported editing it.
