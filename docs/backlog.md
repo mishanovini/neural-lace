@@ -82,6 +82,23 @@ Lightweight `claude-status` command aggregating active sessions (local + `--remo
 
 Each project declares `harness-version: >=N` in its CLAUDE.md. Breaking harness changes bump the version. SessionStart warns if project version predates current harness. Prevents silent regressions as harness evolves beyond what older projects expected.
 
+### P1 — Mysterious `effortLevel` wipe during session (2026-04-22/23)
+
+Observed: `~/.claude/settings.json` started the session with `effortLevel: "max"`. Partway through, a subsequent `jq -r '.effortLevel'` returned `null` (key removed or value nulled). No task in the executing plan intentionally touched this field. Neither the main session nor any dispatched builder agent reported editing it.
+
+Plausible causes:
+- A PreToolUse or PostToolUse hook silently normalizing settings.json (e.g., a JSON rewriter that drops unknown keys)
+- A concurrent session on the same machine overwriting settings.json with an older version (the concurrent-session state collision pattern we already have logged)
+- An `install.sh` re-run during the session restoring from a template that had the key but was processed incorrectly
+- A tool call with a full-file Write to settings.json that didn't preserve the effortLevel field
+
+Remediation needed:
+- Audit every hook that reads/writes `~/.claude/settings.json` for normalization that could drop top-level keys
+- Consider adding a SessionStart hook that snapshots `settings.json` to `~/.claude/state/settings-snapshot.json` and, on next SessionStart, diffs against the current file to surface silent mutations
+- Document the root cause once identified, then add a test/guard
+
+Until fixed: users should periodically check `jq -r '.effortLevel' ~/.claude/settings.json` is not `null`. The existing `effort-policy-warn.sh` hook catches this indirectly (will warn if env var is unset and settings is missing the key AND policy requires non-low).
+
 ### P1 — Harness-work plans have no tracked home
 
 Per `harness-hygiene.md`, the harness repo adds `docs/plans/` to `.gitignore` (harness repos don't ship instance artifacts). But harness-dev work DOES produce plan files, and those plans have no naturally-tracked home:
