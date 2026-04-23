@@ -31,13 +31,23 @@ Harness code that needs personalization reads from a two-layer config:
 
 Harness code reads from the local layer at runtime via safe fallbacks. If the local layer is missing or partially populated, the harness still works with generic defaults; it does not crash, and it does not substitute a real identifier from anywhere else. A fresh install with no local config should behave correctly out of the box.
 
-## Harness repos do not ship plan, decision, or review INSTANCES
+## Harness repos do not ship DOWNSTREAM-PROJECT plan, decision, or review INSTANCES
 
-The harness ships **templates** for plans, decisions, and reviews (`templates/plan-template.md`, `templates/decision-log-entry.md`, `templates/completion-report.md`) and the **rules** describing when and how to produce instances of those templates. Harness repos never ship individual plan files, decision records, review outputs, or SCRATCHPADs — because those instances accumulate identifiers from every project the harness was used to build, and would leak that history into the published kit.
+The harness ships **templates** for plans, decisions, and reviews (`templates/plan-template.md`, `templates/decision-log-entry.md`, `templates/completion-report.md`) and the **rules** describing when and how to produce instances of those templates.
 
-**Important distinction:** normal project repos SHOULD commit their plans, decisions, and reviews as team-shared permanent records. A product team's `docs/plans/*.md`, `docs/decisions/NNN-*.md`, `docs/reviews/YYYY-MM-DD-*.md`, and `docs/sessions/YYYY-MM-DD-*.md` are how future teammates understand rationale and history — they belong in the project's own repo. The project-level rule is unchanged; see `~/.claude/rules/planning.md`.
+**The distinction that matters:** the harness repo has its own development — improving the harness itself, adding hooks, writing new rules, etc. That work is a real project and produces real plans, decisions, reviews, and session summaries. Those artifacts BELONG in the harness repo and SHOULD be committed.
 
-This hygiene rule applies **only to harness repos specifically.** Enforcement for the harness case: harness repos add `docs/plans/`, `docs/decisions/`, `docs/reviews/`, `docs/sessions/`, and `SCRATCHPAD.md` to `.gitignore`. Project repos do NOT copy this pattern — they commit those directories normally.
+What does NOT belong in the harness repo: plan/decision/review/session files that were produced while USING the harness to build a DIFFERENT project. Those accumulate downstream-project identifiers and belong in the downstream project's own repo.
+
+### Rules by file type
+
+- **`templates/`** — shipped: these are generic, identifier-free templates.
+- **`docs/plans/`, `docs/decisions/`, `docs/reviews/`, `docs/sessions/`** — committed when they describe harness-dev work itself (improving the harness). Enforcement is via the denylist scanner, which catches identifier leakage in any committed file regardless of directory. These are NOT gitignored in the harness repo.
+- **`SCRATCHPAD.md`** — gitignored (ephemeral session state, not a permanent record).
+
+### For downstream projects using the harness
+
+Normal project repos SHOULD commit their plans, decisions, and reviews as team-shared permanent records. A product team's `docs/plans/*.md`, `docs/decisions/NNN-*.md`, `docs/reviews/YYYY-MM-DD-*.md`, and `docs/sessions/YYYY-MM-DD-*.md` are how future teammates understand rationale and history — they belong in that project's own repo. The project-level rule is unchanged; see `~/.claude/rules/planning.md`.
 
 ## Installation is idempotent and lossless
 

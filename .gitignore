@@ -53,12 +53,35 @@ id_rsa.pub
 id_ed25519
 id_ed25519.pub
 
-# Operational artifacts (harness-repo-specific — see note above)
+# Operational artifacts
+#
+# Neural Lace is itself a project with its own development work. PLANS
+# for improving neural-lace belong in the repo and get committed like
+# any project's artifacts — the denylist scanner catches identifier
+# leakage in those committed plans.
+#
+# Decisions, reviews, sessions, and SCRATCHPAD remain local-only for now:
+# decisions/reviews might reference incident detail that's hard to sanitize,
+# sessions are ephemeral transcripts, and SCRATCHPAD is per-session working
+# state. Promote individual entries to harness-architecture.md or best-practices.md
+# if they merit a permanent, sanitized record.
+#
+# What is NEVER committed: plan/decision/review/session files that were
+# produced while USING neural-lace to build something else — those belong
+# in the downstream project's own repo, not here.
 SCRATCHPAD.md
-docs/plans/
 docs/decisions/
 docs/reviews/
 docs/sessions/
+
+# Pre-sanitization plan files (committed before the "track our own plans"
+# convention was settled; contain test data / denylist patterns that the
+# scanner flags). These remain local-only. Sanitize first if you want to
+# commit them.
+docs/plans/document-freshness-system.md
+docs/plans/document-freshness-system-evidence.md
+docs/plans/public-release-hardening.md
+docs/plans/public-release-hardening-evidence.md
 
 # Local user config surface (new in Phase 3)
 # ~/.claude/local/ is a user-home path, but shadow any local mirror here:

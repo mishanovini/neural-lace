@@ -186,9 +186,17 @@ is_exempt() {
     adapters/claude-code/hooks/decisions-index-gate.sh) return 0 ;;
   esac
 
-  # Directory-prefix exemptions (gitignored in the harness repo; defense-in-depth)
+  # Directory-prefix exemptions
+  #
+  # NOTE: docs/plans/ is NOT exempt. Neural Lace now commits its own
+  # development plans (not downstream-project plans), so plan files
+  # are subject to the same hygiene checks as any other committed file.
+  #
+  # Still exempt: decisions/reviews/sessions/SCRATCHPAD remain
+  # gitignored (instance artifacts), and SCRATCHPAD.md is ephemeral
+  # working state.
   case "$path" in
-    docs/plans/*|docs/plans|docs/decisions/*|docs/decisions) return 0 ;;
+    docs/decisions/*|docs/decisions) return 0 ;;
     docs/reviews/*|docs/reviews|docs/sessions/*|docs/sessions) return 0 ;;
     SCRATCHPAD.md|*/SCRATCHPAD.md) return 0 ;;
   esac
