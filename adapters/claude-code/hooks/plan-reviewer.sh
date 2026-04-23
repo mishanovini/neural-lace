@@ -23,8 +23,129 @@
 
 set -u
 
+# ============================================================
+# --self-test: exercise pass/fail paths for required-section validation
+# ============================================================
+#
+# Creates four temporary plan files:
+#   (a) fully populated  → expected pass
+#   (b) missing "## Assumptions" header → expected fail
+#   (c) Assumptions section contains only "[populate me]" → expected fail
+#   (d) every required section populated substantively → expected pass
+#
+# Exits 0 on all scenarios matching expectations, non-zero otherwise.
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  TMPDIR_SELFTEST=$(mktemp -d)
+  trap 'rm -rf "$TMPDIR_SELFTEST"' EXIT
+  SCRIPT="${BASH_SOURCE[0]}"
+  FAILED=0
+
+  write_plan_base() {
+    # $1 = output path, $2 = "include_assumptions" (0|1), $3 = assumptions_body
+    local out="$1"
+    local include_assumptions="$2"
+    local assumptions_body="${3:-}"
+    cat > "$out" <<'PLAN_HEAD'
+# Plan: Self-test fixture
+Status: ACTIVE
+Mode: code
+Backlog items absorbed: none
+
+## Goal
+Exercise the plan-reviewer required-section check with substantive
+content that exceeds the twenty-character minimum for each section.
+
+## Scope
+- IN: the required-section validator in plan-reviewer.sh
+- OUT: anything not related to required-section enforcement
+
+## Tasks
+- [ ] 1. Add a substantive content line so this passes length gate.
+
+## Files to Modify/Create
+- `hooks/plan-reviewer.sh` — extend validator with required-section checks
+
+Walking Skeleton: n/a — self-test fixture, no runtime user-facing slice.
+PLAN_HEAD
+
+    if [[ "$include_assumptions" == "1" ]]; then
+      cat >> "$out" <<PLAN_ASSUMPTIONS
+
+## Assumptions
+${assumptions_body}
+PLAN_ASSUMPTIONS
+    fi
+
+    cat >> "$out" <<'PLAN_TAIL'
+
+## Edge Cases
+- Plan with zero edge cases — the check must still enforce a populated
+  Edge Cases section rather than allowing it to be omitted.
+
+## Testing Strategy
+- Run `--self-test`; confirm every scenario exits with the expected
+  pass/fail status (documented in-line at the call site).
+
+## Definition of Done
+- [ ] Self-test passes
+PLAN_TAIL
+  }
+
+  # Scenario (a): fully populated — expect PASS
+  write_plan_base "$TMPDIR_SELFTEST/a.md" 1 \
+    "- Assumes the existing plan-reviewer bash script remains invocable
+  from command line with a single file-path argument as documented."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/a.md" > /dev/null 2>&1; then
+    echo "self-test (a) fully-populated: PASS (expected)" >&2
+  else
+    echo "self-test (a) fully-populated: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Scenario (b): missing Assumptions header — expect FAIL
+  write_plan_base "$TMPDIR_SELFTEST/b.md" 0
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/b.md" > /dev/null 2>&1; then
+    echo "self-test (b) missing-assumptions: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (b) missing-assumptions: FAIL (expected)" >&2
+  fi
+
+  # Scenario (c): Assumptions section contains only "[populate me]" — expect FAIL
+  write_plan_base "$TMPDIR_SELFTEST/c.md" 1 "[populate me]"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/c.md" > /dev/null 2>&1; then
+    echo "self-test (c) placeholder-only: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (c) placeholder-only: FAIL (expected)" >&2
+  fi
+
+  # Scenario (d): every section substantive — expect PASS (re-uses a.md shape)
+  write_plan_base "$TMPDIR_SELFTEST/d.md" 1 \
+    "- Assumes the shell supports bash 4+ associative arrays and awk is
+  the GNU or BSD variant available on the developer's machine.
+- Assumes the temporary directory is writable for the duration of
+  this self-test run."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/d.md" > /dev/null 2>&1; then
+    echo "self-test (d) every-section-substantive: PASS (expected)" >&2
+  else
+    echo "self-test (d) every-section-substantive: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  if [[ $FAILED -eq 0 ]]; then
+    echo "plan-reviewer --self-test: all scenarios matched expectations" >&2
+    exit 0
+  else
+    echo "plan-reviewer --self-test: one or more scenarios failed" >&2
+    exit 1
+  fi
+fi
+
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <plan-file>" >&2
+  echo "       $0 --self-test" >&2
   exit 2
 fi
 
@@ -184,6 +305,126 @@ if [[ -n "$GEN3_PATTERNS" ]]; then
     add_finding "Check 6 (Gen 3 anti-pattern): line $ln uses 'typecheck passes' or similar as acceptance"
   done <<< "$GEN3_PATTERNS"
 fi
+
+# ============================================================
+# Check 6b (Gen 5): Required sections must be present AND populated
+# ============================================================
+#
+# Every plan — regardless of size or mode — must include the seven
+# required sections listed in `~/.claude/rules/planning.md` → "Verbose
+# Plans Are Mandatory". A section fails the check if:
+#
+#   (1) its `## <Heading>` marker is missing from the file, OR
+#   (2) its body has fewer than 20 non-whitespace characters, OR
+#   (3) its body (with whitespace collapsed) consists solely of one or
+#       more placeholder tokens: "[populate me]", "[TODO]", "TODO",
+#       "...", or a literal fragment of the template's own prompt text.
+#
+# The check reports the FIRST offending section so the author can fix
+# and re-run. Scope and Definition-of-Done checks above remain in place;
+# this check adds Assumptions, Edge Cases, Testing Strategy, plus
+# re-validates Goal, Tasks, and Files to Modify/Create for substance.
+
+REQUIRED_HEADINGS=(
+  "## Goal"
+  "## Scope"
+  "## Tasks"
+  "## Files to Modify/Create"
+  "## Assumptions"
+  "## Edge Cases"
+  "## Testing Strategy"
+)
+
+# Placeholder tokens that disqualify a section's body if it consists
+# only of these (case-insensitive).
+PLACEHOLDER_PATTERNS=(
+  '\[populate me\]'
+  '\[todo\]'
+  '\btodo\b'
+  '\.\.\.'
+  '\[first explicit premise this plan depends on\]'
+  '\[first edge case and how this plan handles it\]'
+  '\[how each task will be verified\]'
+  '\[what we.?re building/changing and why\]'
+  '\[what we.?re building and why\]'
+  '\[what.?s included\]'
+  '\[what.?s explicitly excluded\]'
+  '\[first task'
+  '\[second task\]'
+  '\[what changes and why\]'
+)
+
+check_required_section() {
+  local heading="$1"
+  # Locate the heading line number. Must be an exact heading match —
+  # "## Goal" must not match "## Goal Achievement" etc.
+  local heading_pattern
+  heading_pattern="$(printf '%s' "$heading" | sed 's/[][\/.^$*]/\\&/g')"
+  local ln
+  ln=$(grep -nE "^${heading_pattern}\s*\$" "$PLAN_FILE" 2>/dev/null | head -1 | cut -d: -f1)
+
+  if [[ -z "$ln" ]]; then
+    add_finding "Check 6b: required section '$heading' is missing. Every plan must include: ${REQUIRED_HEADINGS[*]}. See ~/.claude/rules/planning.md, 'Verbose Plans Are Mandatory'."
+    return
+  fi
+
+  # Extract the body: lines after the heading up to the next '## ' header
+  # or end of file. Strip HTML comments so prompts inside <!-- --> don't
+  # count toward substance.
+  local body
+  body=$(awk -v start="$ln" '
+    NR == start { next }
+    NR > start {
+      if ($0 ~ /^## /) exit
+      print
+    }
+  ' "$PLAN_FILE" 2>/dev/null | awk '
+    /<!--/ { in_comment = 1 }
+    !in_comment { print }
+    /-->/ { in_comment = 0 }
+  ')
+
+  # Collapse to a single normalized string for checks
+  local normalized
+  normalized=$(printf '%s' "$body" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
+
+  # Count non-whitespace characters
+  local non_ws_count
+  non_ws_count=$(printf '%s' "$body" | tr -d '[:space:]' | wc -c | tr -cd '[:digit:]')
+  non_ws_count=${non_ws_count:-0}
+
+  if [[ $non_ws_count -lt 20 ]]; then
+    add_finding "Check 6b: required section '$heading' is empty or too short (only $non_ws_count non-whitespace chars; needs >= 20). Populate with substantive, plan-specific content. See ~/.claude/rules/planning.md, 'Verbose Plans Are Mandatory'."
+    return
+  fi
+
+  # Placeholder-only check: strip placeholder tokens and list-bullets; if
+  # nothing substantive remains, the section is placeholder-only.
+  # Use '|' as sed delimiter so forward slashes inside patterns are safe.
+  local stripped="$normalized"
+  for pat in "${PLACEHOLDER_PATTERNS[@]}"; do
+    stripped=$(printf '%s' "$stripped" | sed -E "s|${pat}||g")
+  done
+  # Remove bullet markers and stray punctuation
+  stripped=$(printf '%s' "$stripped" | sed -E 's|[[:space:]]*[-*][[:space:]]*||g; s|[][(){}:;,.!?"`'"'"']||g')
+  stripped=$(printf '%s' "$stripped" | tr -d '[:space:]')
+
+  if [[ -z "$stripped" ]]; then
+    add_finding "Check 6b: required section '$heading' contains only placeholder text (e.g., '[populate me]', 'TODO', or template prompt). Replace with plan-specific content. See ~/.claude/rules/planning.md, 'Verbose Plans Are Mandatory'."
+    return
+  fi
+}
+
+# Run the check for each required heading, reporting the first
+# offender and stopping so the author can fix and resubmit without
+# being buried in duplicate findings.
+for heading in "${REQUIRED_HEADINGS[@]}"; do
+  PREV_COUNT=$FINDING_COUNT
+  check_required_section "$heading"
+  if [[ $FINDING_COUNT -gt $PREV_COUNT ]]; then
+    break
+  fi
+done
 
 # ============================================================
 # Check 7 (Gen 5): Mode: design plans must have substantive

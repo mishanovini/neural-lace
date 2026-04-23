@@ -26,6 +26,28 @@ See `~/.claude/rules/design-mode-planning.md` for the full protocol, the 10 requ
 - `systems-design-gate.sh` PreToolUse hook blocks edits to design-mode files (workflows, migrations, etc.) unless an active `Mode: design` plan exists.
 - Escape hatch: `Mode: design-skip` with a short justification allows trivial edits (version bumps, typo fixes) without the full 10-section treatment, while leaving an auditable record.
 
+## Verbose Plans Are Mandatory
+
+**Every plan file must include all seven required sections, populated with substantive, plan-specific content.** The required sections are:
+
+1. `## Goal` — what we're building and why
+2. `## Scope` — explicit IN and OUT clauses
+3. `## Tasks` — the task list (checkboxes)
+4. `## Files to Modify/Create` — every file this plan touches, with a brief reason
+5. `## Assumptions` — every premise this plan relies on, made explicit rather than implied
+6. `## Edge Cases` — the corner cases and failure modes this plan must handle
+7. `## Testing Strategy` — how each task will be verified (unit, integration, runtime)
+
+**No size threshold.** Verbose planning is cheap for small plans and essential for large ones. A 50-line plan that fills every section thoughtfully is better than a 300-line plan that pads content for its own sake. Do not skip sections because a plan "feels small" — the cost of populating Assumptions on a trivial plan is one minute; the benefit of forcing assumptions to be explicit upfront prevents the builder from filling them in badly at build time.
+
+**The Assumptions section is required even for trivial plans.** This is the most frequently-skipped section and the most valuable one. If you genuinely cannot think of an assumption, write "Assumes the existing X API behaves as documented" — but do not omit the section. Forcing explicit assumptions upfront surfaces the hidden premises that cause builds to fail.
+
+**Empty or placeholder-only required sections are blocked.** `plan-reviewer.sh` enforces both presence (the heading must exist) and substance (the section must contain at least 20 non-whitespace characters of non-placeholder content). Sections consisting solely of `[populate me]`, `[TODO]`, `TODO`, `...`, or literal template placeholder text are rejected. Fill the sections with real, plan-specific content before marking the plan ACTIVE.
+
+**Cross-references:**
+- Template: `~/.claude/templates/plan-template.md` includes all seven required sections with placeholder prompts explaining what each should contain.
+- Validator: `~/.claude/hooks/plan-reviewer.sh` performs the mechanical check at plan-edit time. Run with `--self-test` to exercise pass/fail scenarios.
+
 ## How multi-task plans execute: orchestrator pattern
 
 **For any plan with more than one task, the main session orchestrates and dispatches build work to `plan-phase-builder` sub-agents — it does NOT do the build work itself.** This keeps the main session's context from accumulating 200+ tool uses of raw build detail across a long plan, which is a quality-of-life improvement for extended autonomous work. (Historical note: the 2026-04-14 vaporware failures were caused by self-enforcement gaps in verification, not by context accumulation — those are addressed by the hook-enforced Gen 4 mechanisms. The orchestrator pattern is a separate improvement.)
