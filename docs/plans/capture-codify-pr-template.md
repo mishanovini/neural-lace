@@ -31,8 +31,14 @@ Close the single biggest behavioral gap in the harness: the "every failure is a 
 - [ ] 4. Update `adapters/claude-code/rules/planning.md` with a new section "Capture-codify at PR time" that describes the convention, cites the template, and documents the three allowed answer forms. Mirror the change to `~/.claude/rules/planning.md` per the harness-maintenance rule.
 - [ ] 5. Update `adapters/claude-code/docs/harness-architecture.md` (the architecture doc) to record the new template file, the new workflow, and the new git hook in the relevant tables.
 - [ ] 6. Add a one-paragraph stub at `docs/failure-modes.md` declaring the file's purpose and linking forward to the companion `failure-mode-catalog` plan. Rationale: the PR template references the catalog (`catalog entry FM-NNN`), so the catalog file must at minimum exist as a stub so the reference doesn't 404 when reviewers click it. Full catalog content is the companion plan's scope.
-- [ ] 7. Smoke-test the workflow end-to-end by opening a throwaway PR with (a) an empty mechanism section (expect fail), (b) a filled section citing a catalog entry (expect pass), (c) a "residual risk" answer with only "N/A" (expect fail), (d) a "residual risk" answer with substantive rationale (expect pass). Record the four GitHub Actions run URLs as evidence.
+- [ ] 7. Smoke-test the workflow end-to-end by opening throwaway PRs with (a) an empty mechanism section (expect fail), (b) a filled section citing a catalog entry (expect pass), (c) a "residual risk" answer with only "N/A" (expect fail), (d) a "residual risk" answer with substantive rationale (expect pass), AND **(e) a fork-PR scenario** verifying that the auto-emitted check appears for fork-originated PRs without `checks: write` permission. Record the five GitHub Actions run URLs as evidence. The fork-PR scenario is required because Section 5's resolution depends on it; if the auto-check doesn't appear, fall back to documenting the fork-PR limitation honestly in the rule update (Task 4).
 - [ ] 8. Commit the plan file itself in its own commit immediately after creation (satisfies the "commit the plan file immediately" requirement in the dispatch prompt). Subsequent implementation commits reference this plan by path.
+- [ ] 9. **Configure branch protection on neural-lace** to require the `PR Template Check / validate` check. Use `gh api repos/<owner>/neural-lace/branches/master/protection -X PUT --input <protection-config.json>` (see runbook for the exact JSON shape). Verify by attempting a merge on a failing PR — should be blocked. Without this task, Section 1's outcome ("every fix-PR merged to master has a non-empty mechanism field") is not enforceable; the check would be advisory only.
+- [ ] 10. **Create decision records** as standalone files in `docs/decisions/NNN-*.md` for each Tier 2+ decision listed in Section 10 — six decisions total: (1) single-field-vs-structured, (2) 40-char threshold, (3) CI+local both layers, (4) per-repo opt-in for hook, (5) failure-modes stub creation, (6) squash-merge body inclusion. Each record uses the format from `~/.claude/templates/decision-log-entry.md` (Title, Date, Status, Stakeholders, Context, Decision, Alternatives Considered with reject reasons, Consequences). Add one row per record to `docs/DECISIONS.md`. Atomicity gate (`decisions-index-gate.sh`) enforces records ↔ index consistency at commit time.
+- [ ] 11. **Write rollout helper script** `adapters/claude-code/scripts/install-pr-template.sh <target-repo-path>` that copies the PR template + workflow + local hook into a target downstream repo. Idempotent (re-runnable). Documented in the rule update (Task 4).
+- [ ] 12. **Write retroactive-audit script** `adapters/claude-code/scripts/audit-merged-prs.sh --limit N` that iterates `gh pr list --state merged` and runs the validator library against each PR body, reporting per-PR PASS/FAIL with the count of pre-rollout PRs that would have failed. Used in the runbook entry for retroactive audit.
+- [ ] 13. **File observability backlog entries** in `docs/backlog.md` for the gaps acknowledged in Section 6: (a) "P2 — automatic detection of FM-NNN-cited-but-doesn't-exist in `docs/failure-modes.md`"; (b) "P2 — answer-form (a/b/c) distribution tracking for capture-codify telemetry"; (c) "P2 — pre-commit atomicity gate: PR template edits must atomically update the validator regex" (per Section 7's accidental-template-edit failure mode). Each entry brief but actionable.
+- [ ] 14. **Update Testing Strategy section** of this plan to remove the `act` reference (Section 4 documents `act` as optional; Testing Strategy should not depend on it). Sole verification path is Task 7's real GitHub Actions runs.
 
 ## Files to Modify/Create
 - `docs/plans/capture-codify-pr-template.md` — this plan file (created in task 8's commit).
@@ -67,7 +73,7 @@ Close the single biggest behavioral gap in the harness: the "every failure is a 
 ## Testing Strategy
 
 - **Task 1 (template):** verify the file exists at the correct path, contains all four required sections, and the placeholder text is obviously-not-real (e.g., `<mechanism answer — replace this bracketed text>`). Grep for `<mechanism` to confirm.
-- **Task 2 (workflow):** run the workflow locally via `act` if available, OR trigger it via a throwaway PR (see task 7). Capture the full GitHub Actions run log showing fail-on-empty and pass-on-filled. Evidence must include the run URL and exit code.
+- **Task 2 (workflow):** trigger the workflow via a throwaway PR (see task 7). Capture the full GitHub Actions run log showing fail-on-empty and pass-on-filled. Evidence must include the run URL and exit code. (Optional pre-task fast-feedback: `act` per Section 4, but the canonical verification is the real GitHub Actions run.)
 - **Task 3 (local hook):** run the hook manually against a staged commit with (a) empty mechanism field (expect exit 1), (b) filled field (expect exit 0). Capture both outputs.
 - **Task 4 (rule update):** grep `~/.claude/rules/planning.md` and `adapters/claude-code/rules/planning.md` for the new section heading after the edit. Diff the two files to confirm they match (per harness-maintenance's mirror-verify loop).
 - **Task 5 (architecture doc):** grep the architecture doc for the three new file names; all three must be present with one-line descriptions.
@@ -107,63 +113,133 @@ Secondary outcome: the time from "I just fixed a bug" to "the harness has a mech
 
 ### 2. End-to-end trace with a concrete example
 
-Consider a future fix-PR: "Fix: pre-commit-tdd-gate.sh allowed a 12-line file with a single trivial-assertion test."
+**Real example:** retroactively applying the template to neural-lace commit `9d21965` ("fix(hook): bug-persistence-gate now checks --all branches + reflog (6h window)") — a real fix to an existing hook, identified during dogfooding.
 
-- **T=0**: Developer (or autonomous Claude session) opens PR #N against neural-lace master. PR body is auto-populated from `.github/PULL_REQUEST_TEMPLATE.md` with sections: Summary, What changed and why, **What mechanism would have caught this?** (with three answer-form options), Testing performed.
-- **T=1**: Developer fills the mechanism section with answer form (a): "Existing catalog entry FM-007 (trivial-assertion bypass). The current Layer 4 check counts assertion-with-string-literal patterns, but missed `expect(true).toBe(true)` because it counted the literal `true` as a property access, not an assertion. Tightened the regex to also detect bare-identifier assertions."
-- **T=2**: PR is opened. GitHub Actions workflow `pr-template-check.yml` triggers on `opened` event. Workflow checks out repo, reads `${{ github.event.pull_request.body }}`, locates the mechanism section heading via regex, extracts the content, validates: (a) section present (yes), (b) placeholder text absent (yes — no `<mechanism answer — replace this bracketed text>` pattern), (c) if "no mechanism" option, then ≥40 chars rationale (n/a — option (a) selected). All pass. Workflow exits 0; check shows green.
-- **T=3**: Developer pushes a fixup commit, edits PR body to clarify wording. Workflow re-fires on `synchronize` + `edited` events. Re-validates. Still passes.
-- **T=4**: PR merges to master via `gh pr merge --squash`. The merge commit message includes the PR body's mechanism analysis text by default (squash convention). Future grep for "FM-007" finds both the catalog entry AND this commit, providing traceability.
+- **T=0**: Maintainer opens PR (hypothetical PR-N for commit `9d21965`) against `<owner>/neural-lace` master. PR body is auto-populated from `.github/PULL_REQUEST_TEMPLATE.md` with the four sections: `## Summary`, `## What changed and why`, `## What mechanism would have caught this?` (with three answer-form sub-headings — see Section 3 for exact text), `## Testing performed`.
+- **T=1**: Maintainer fills the mechanism section with answer form (a): "Existing catalog entry FM-NNN (bug-persistence trigger fires without actual persistence) — to be added to docs/failure-modes.md by failure-mode-catalog plan. The hook scanned the current branch's recent commits but missed bugs that had been persisted to a different branch's backlog within the same session. Mitigation: scan `--all` branches + reflog within a 6h window."
+- **T=2**: PR opened. GitHub Actions workflow file `.github/workflows/pr-template-check.yml` triggers on `pull_request` event of types `[opened, edited, synchronize, reopened]`. The workflow defines a single job `validate` whose `name:` field is `PR Template Check` — this job name becomes the GitHub check name that appears on the PR and that branch-protection rules require. The job step reads `${{ github.event.pull_request.body }}` from the trigger context (no API call required). Bash logic:
+  - Locate section heading via case-sensitive regex: `^## What mechanism would have caught this\?$` (anchored, `\?` escaped). If not matched → exit 1, stderr: `[pr-template] FAIL: required section heading "## What mechanism would have caught this?" not found in PR body`.
+  - Extract content from after the heading to the next `^## ` heading or EOF.
+  - Detect placeholder via regex: `<mechanism answer — replace this bracketed text>` (literal substring match for the angle-bracketed instruction text). If present → exit 1, stderr: `[pr-template] FAIL: placeholder text still present; section was not filled in`.
+  - Detect answer-form selection by Markdown sub-heading: `^### (a\) Existing catalog entry|b\) New catalog entry proposed|c\) No mechanism — accepted residual risk)`. If `c)` selected, count chars of content after the sub-heading; if < 40 → exit 1, stderr: `[pr-template] FAIL: "no mechanism" option requires ≥40 chars of substantive rationale (got N chars)`.
+  - All checks pass → exit 0; job concludes success → GitHub Actions auto-creates a check named `PR Template Check / validate` (job + step naming) with status `success`.
+- **T=3**: Maintainer pushes a fixup commit, edits PR body to clarify wording. Workflow re-fires on `edited` and `synchronize` events. Re-validates. Still passes.
+- **T=4**: PR merges to master via `gh pr merge --squash`. **Squash-merge body behavior on neural-lace specifically:** repo was created 2026-04-19 with no custom squash-merge commit-message setting (`squash_merge_commit_message: null` per `gh api repos/<owner>/neural-lace`). GitHub's default for unset `squash_merge_commit_message` uses `COMMIT_MESSAGES` (concatenated commit messages of the squashed commits), NOT the PR body. **Therefore the mechanism analysis from the PR body does NOT automatically land in the master commit log.** Traceability must come from grepping the PRs (`gh pr list --search FM-NNN`), not from the merge commit. This is a real consequence: future archaeology requires PR-search, not git-log-search. Acknowledged limitation; addressed by Decision 6 below (whether to change repo squash setting to include PR body) and Section 6 (observability via PR-list aggregation).
 
-**Divergent trace — empty mechanism section.** At T=1, developer forgets to fill it in. At T=2, workflow runs, finds the placeholder text `<mechanism answer — replace this bracketed text>` still present. Workflow exits 1 with stderr: "PR body is missing the 'What mechanism would have caught this?' section content. Edit the PR description and try again." Check shows red. Branch protection rule (if configured) blocks merge until the check passes.
+**Divergent trace — empty mechanism section.** At T=1, maintainer forgets to fill it in. At T=2, workflow runs, the regex for section heading matches (heading is in the template), but the placeholder regex matches the still-present `<mechanism answer — replace this bracketed text>`. Workflow exits 1 with stderr message named above. Job conclusion is `failure` → GitHub auto-creates check with status `failure`. Branch protection rule (if configured per Task 9 below) blocks merge until the check passes.
 
-**Divergent trace — fork PR from external contributor.** Workflow runs on `pull_request` event, which fires for fork PRs too. GitHub Actions handles fork PRs with a restricted permissions model — `GITHUB_TOKEN` for fork PRs has read-only repo access, which is sufficient to read the PR body. No special handling needed.
+**Divergent trace — fork PR from external contributor.** Workflow runs on `pull_request` event, which fires for fork PRs too. The fork PR's workflow runs with a **read-only** `GITHUB_TOKEN` and **no access to repo secrets** (standard GitHub Actions behavior for `pull_request` from forks; well-documented). Reading `${{ github.event.pull_request.body }}` works because it's an event-context value, not an API call. The check is auto-created from the workflow conclusion (`success` or `failure`) — this auto-creation does NOT require `checks: write` permission and works for fork PRs. **The plan therefore does NOT require `checks: write` and does NOT require `pull_request_target` (which would be a security risk for an untrusted-code workflow).** Section 5 documents the resolved permissions. Verification at Task 7 smoke test must include a fork-PR scenario.
 
 ### 3. Interface contracts between components
 
+**Identifier conventions used throughout this plan:**
+- Workflow file: `.github/workflows/pr-template-check.yml`
+- Workflow `name:` field (top of YAML): `PR Template Check`
+- Job ID inside workflow: `validate`
+- Job `name:` field: `PR Template Check` (matches workflow name)
+- GitHub-emitted check name (what branch protection requires): `PR Template Check / validate` (workflow-name / job-name format per GitHub Actions convention; verify in Task 7 smoke test)
+- PR template path: `.github/PULL_REQUEST_TEMPLATE.md`
+
+**Exact section heading text the template uses (case-sensitive, regex-anchored):**
+- `## Summary`
+- `## What changed and why`
+- `## What mechanism would have caught this?` ← the load-bearing one
+  - `### a) Existing catalog entry`
+  - `### b) New catalog entry proposed`
+  - `### c) No mechanism — accepted residual risk`
+- `## Testing performed`
+
+**Exact placeholder text the template uses** (multi-line block under each section, lowercase bracketed instruction):
+- After mechanism heading: `<mechanism answer — replace this bracketed text>`
+- After other sections: `<replace this bracketed text with content>`
+
 | Producer | Consumer | Contract |
 |---|---|---|
-| `.github/PULL_REQUEST_TEMPLATE.md` | GitHub PR creation flow | UTF-8 Markdown, valid frontmatter optional. GitHub auto-populates the PR body with this template's content on PR open. Sections must be Markdown headings (`##`) so the workflow's regex can locate them by text match. Placeholder text must be obviously-not-real (e.g., bracketed lowercase prose) so the workflow can detect un-filled state. |
-| `.github/workflows/pr-template-check.yml` | GitHub Actions runner | Standard YAML workflow. Triggered on `pull_request` event types `[opened, edited, synchronize, reopened]`. Reads `${{ github.event.pull_request.body }}`. Exits 0 (pass) or non-zero (fail). Failure surfaces as a red check on the PR. Timeout: 60s (should run in <5s — just regex matching). |
-| `adapters/claude-code/git-hooks/pre-push-pr-template.sh` | Local git pre-push hook | Bash script. Reads either `.pr-description.md` (if present) or the latest commit message body. Same validation logic as the workflow. Exits 0 to allow push, non-zero to block with stderr message. Idempotent: rerun-able with no side effects. |
-| Validation logic | PR body content | Inputs: PR body string (≤ 65536 chars, GitHub limit). Outputs: pass/fail verdict + diagnostic message. Detects: (a) section heading present, (b) placeholder text absent, (c) if "no mechanism — accepted residual risk" answer form selected, ≥40 chars after the colon. |
-| Workflow | Branch protection rule | Workflow's check name is `pr-template-check`. Branch protection rule (if configured) requires this check to pass before merge. Configuration is per-repo and out-of-scope for this plan; documented in rule update for opt-in. |
-| `rules/planning.md` (updated) | Future plan authors | Adds "Capture-codify at PR time" section explaining the convention, the three answer forms, and the rationale. Discoverable via the rule file index in `CLAUDE.md`. |
+| `.github/PULL_REQUEST_TEMPLATE.md` | GitHub PR creation flow | UTF-8 Markdown, no frontmatter (GitHub PR templates ignore YAML frontmatter; rendered as-is). GitHub auto-populates the PR body with this template's content on PR open via the `pull_request_body` value in the new-PR API. Sections are Markdown `##` headings as enumerated above. Placeholder text is the angle-bracketed strings as enumerated above; the regex's literal-substring detection requires byte-for-byte match. |
+| `.github/workflows/pr-template-check.yml` | GitHub Actions runner | Standard YAML workflow, `name: PR Template Check`. Triggered on `pull_request` event types `[opened, edited, synchronize, reopened]`. Defines a single job `validate` (job `name: PR Template Check`). Job runs on `ubuntu-latest`. Reads `${{ github.event.pull_request.body }}` from the trigger context. Exits 0 (pass) or non-zero (fail). Auto-emitted check name on the PR is `PR Template Check / validate`. Timeout: 60s (workflow-level). |
+| `adapters/claude-code/git-hooks/pre-push-pr-template.sh` | Local git pre-push hook | Bash script. Reads `.pr-description.md` from repo root if present, otherwise reads `git log -1 --format=%B` for the latest commit message body. Same validation logic as the workflow (identical regex patterns; shared via a sourced `validate-pr-template.sh` library file to avoid drift). Exits 0 to allow push, non-zero to block with stderr message naming the same failure category as the workflow. Idempotent. **Note on `.pr-description.md` flow:** this is a local-only file; it is NOT auto-uploaded to the PR body. The convention is: developer writes `.pr-description.md` locally, runs the hook to validate, then on `gh pr create` passes `--body-file .pr-description.md` to upload. Documented in Task 4's rule update. |
+| Shared `adapters/claude-code/git-hooks/validate-pr-template.sh` (NEW — added during implementation) | Workflow + local hook | Bash function library sourced by both the workflow's `run:` step and the local pre-push hook. Defines: `find_section_heading()`, `extract_section_content()`, `detect_placeholder()`, `detect_answer_form()`, `validate_rationale_length()`, `emit_failure_message()`. Functions return 0/non-zero; messages go to stderr in the same format from both call sites. Eliminates regex drift between CI and local. |
+| Validation logic | PR body content | Inputs: PR body string (≤ 65,536 chars per GitHub PR body limit, documented at `https://docs.github.com/en/rest/pulls/pulls`). Outputs: exit code (0/1) + stderr diagnostic. Detects in order: (a) `^## What mechanism would have caught this\?$` heading present, (b) `<mechanism answer — replace this bracketed text>` placeholder absent in extracted content, (c) one of `^### (a|b|c)\)` answer-form sub-headings selected and present, (d) if `c)` selected, ≥40 chars of non-whitespace content after that sub-heading. |
+| Workflow → GitHub auto-check | Branch protection rule | The check name `PR Template Check / validate` is what branch protection rules opt-in for required-status-check enforcement. Branch protection configuration is per-repo and is added by Task 9 (newly added — see Cross-cutting fix). |
+| `rules/planning.md` (updated) | Future plan authors | Adds "Capture-codify at PR time" section explaining the convention, the three answer forms, and the `.pr-description.md` local-flow convention. Discoverable via the rule file index in `CLAUDE.md`. |
 
 ### 4. Environment & execution context
 
-**GitHub Actions workflow runs on:** Ubuntu-latest runner. Pre-installed: standard CI tools (bash, jq, git, curl, grep). `${{ github.event.pull_request.body }}` is provided in the trigger context; no API call needed. `GITHUB_TOKEN` is auto-provisioned with default permissions (`pull-requests: read` is sufficient for this workflow). VM destroyed at job end; no persistent state needed.
+**GitHub Actions workflow runs on:** `ubuntu-latest` runner. Pre-installed: standard CI tools (bash, jq, git, curl, grep). `${{ github.event.pull_request.body }}` is provided in the trigger context; no API call needed for body retrieval. `GITHUB_TOKEN` is auto-provisioned but with **restrictive defaults** because neural-lace was created 2026-04-19 (after the 2023-02-02 GitHub default-permissions change). The workflow MUST declare an explicit `permissions:` block (see Section 5). VM destroyed at job end; no persistent state needed.
 
-**Local pre-push hook runs on:** developer's local machine (varied OS — macOS, Linux, Windows-with-Git-Bash). Working directory is the repo root. Has access to `git log -1 --format=%B` for the latest commit message and `cat .pr-description.md` for an alternative description-source convention. Bash 3+ assumed. No network access needed.
+**Local pre-push hook runs on:** developer's local machine (varied OS — macOS, Linux, Windows-with-Git-Bash). Working directory is the repo root. Has access to `git log -1 --format=%B` for the latest commit message and `cat .pr-description.md` for an alternative description-source convention. **Bash 3.2+ assumed** (macOS default). The hook script must avoid Bash-4-only features: associative arrays (`declare -A`), `mapfile`, `${var,,}` lowercase parameter expansion, `&>>` append-redirect — these will silently fail or error on macOS. No network access needed.
 
 **Persistence:** None. All inputs are read-on-demand; no caching.
 
 **Cross-environment behavior:** workflow result is the source of truth (CI is canonical). Local hook is a pre-push convenience to catch mistakes before they reach CI; it can be skipped (`git push --no-verify`) for legitimate WIP pushes — branch protection still gates merge.
 
+**Optional local-only tooling:** `act` (https://github.com/nektos/act) can run GitHub Actions workflows locally for testing without opening a real PR. Mentioned in the Testing Strategy as an OPTIONAL pre-Task-7 fast-feedback loop. NOT a hard dependency; the plan ships and tests against real GitHub Actions runs (Task 7) regardless.
+
 ### 5. Authentication & authorization map
 
-- **GitHub Actions workflow → GitHub API**: uses `GITHUB_TOKEN` (auto-provisioned, scoped to repo, read-only by default). Permissions needed: `pull-requests: read` (for body text — included in event context anyway), `checks: write` (to set the check status). Both are default for `pull_request` workflows.
-- **Local pre-push hook → file system**: reads `.pr-description.md` and runs `git log` against local repo. No external auth.
-- **Branch protection rule → workflow check**: managed by GitHub repo admin; out-of-scope for this plan but documented for opt-in.
+- **GitHub Actions workflow → GitHub API (same-repo PR):** uses `GITHUB_TOKEN`. neural-lace is post-2023-02-02 so default permissions are restrictive (`contents: read` only). The workflow YAML must declare an explicit `permissions:` block. **Required permissions:** `pull-requests: read` is technically not even needed because `${{ github.event.pull_request.body }}` is read from the event context (no API call). The workflow can declare `permissions: read-all` or even `permissions: {}` — neither requires elevation. **Decision: declare `permissions: {}` (no elevated permissions)** to minimize attack surface, since the workflow only reads event-context data and emits exit codes.
+- **GitHub Actions workflow → check status:** the check is auto-emitted by GitHub Actions from the job conclusion (success/failure/cancelled). This auto-emission does NOT require `checks: write`. The workflow does NOT use `actions/github-script` or `gh api` to manually create custom check runs — auto-emission is sufficient. **This means Section 7's "External contributor PR" failure-mode row is RESOLVED: auto-emitted checks work for fork PRs too, with no permissions difference.**
+- **Fork PR auth (resolved):** workflow runs with read-only `GITHUB_TOKEN`, no secrets access. Reading the event context still works. Auto-emitted check still works. No special handling needed; no `pull_request_target` required (which would be a security risk because it would run untrusted code with elevated permissions).
+- **Local pre-push hook → file system:** reads `.pr-description.md` and runs `git log` against local repo. No external auth.
+- **Branch protection rule → workflow check:** managed by GitHub repo admin. **Configuration is now IN scope** (added as Task 9 — see Cross-cutting fix below); the outcome in Section 1 only holds if branch protection enforces the check.
+- **Token rotation:** `GITHUB_TOKEN` is auto-managed per workflow run (ephemeral); no manual rotation needed.
 
-No new tokens or secrets introduced. Rate limit is GitHub Actions' standard 2000 requests/hour per repo (way over what this workflow consumes). No rate-limit concerns.
+No new tokens or secrets introduced. Rate limit is GitHub Actions' standard 1000 requests/hour per repo for `GITHUB_TOKEN`-authenticated requests (way over what this workflow consumes — it makes zero API calls). No rate-limit concerns.
 
 ### 6. Observability plan (built before the feature)
 
+**Canonical workflow stderr messages** (one per failure mode; consistent format `[pr-template] FAIL: <reason>`):
+
+| Failure | Canonical stderr message |
+|---|---|
+| Section heading missing | `[pr-template] FAIL: required section heading "## What mechanism would have caught this?" not found in PR body` |
+| Placeholder still present | `[pr-template] FAIL: placeholder text "<mechanism answer — replace this bracketed text>" still present; section was not filled in` |
+| No answer-form sub-heading | `[pr-template] FAIL: no answer form selected; expected one of "### a) Existing catalog entry", "### b) New catalog entry proposed", or "### c) No mechanism — accepted residual risk"` |
+| Insufficient rationale on (c) | `[pr-template] FAIL: "no mechanism" option requires ≥40 chars of substantive rationale (got N chars)` |
+
+The local hook uses identical messages (sourced from the shared library — Section 3) so users see the same message in both contexts.
+
+**Intra-workflow logging** (stdout, for forensic reconstruction from the workflow log):
+
+```
+[pr-template] checking PR #N body (M chars)
+[pr-template] section heading found at offset O
+[pr-template] extracted N chars of mechanism content
+[pr-template] placeholder detection: <PRESENT|ABSENT>
+[pr-template] answer form: <a|b|c|NONE>
+[pr-template] (if c) rationale length: N chars (threshold: 40)
+[pr-template] verdict: PASS|FAIL
+```
+
+These lines appear in every workflow run and let an operator reconstruct exactly what the validator saw.
+
 **Per-PR signals:**
-- Workflow check status visible on the PR page (green/red).
-- Workflow log accessible via `gh pr checks <PR>` or the GitHub UI.
-- On failure, workflow stderr names the specific deficiency (missing section / placeholder present / insufficient rationale).
-- Local hook stderr explains the same on push attempt.
+- Workflow check status visible on the PR page (green/red), check name `PR Template Check / validate`.
+- Workflow log accessible via `gh pr checks <PR>` (look at the `link` field of the JSON output) or the GitHub UI.
+- Failure stderr message names the specific deficiency (one of the four canonical messages above).
+- Local hook stderr uses the same messages on push attempt.
 
-**Cross-PR aggregation (for outcome measurement):**
-- `gh pr list --state merged --limit 50 --json body,number` returns recent merged PRs with body text.
-- A simple grep against this output measures the % of PRs with a non-empty mechanism section.
-- Catalog growth measured by `git log --oneline docs/failure-modes.md | wc -l` over time.
+**Operational outcome measurement** (how Section 1's 30-day / 90-day metrics are produced):
 
-**Observability gaps (acknowledged):**
-- No automatic tracking of "this PR cited FM-NNN, did the cited entry actually exist?" — reviewer responsibility for now.
-- No tracking of "answer form (a) vs (b) vs (c) distribution" — could be added later via a script over PR bodies.
+Add to weekly `/harness-review` skill: a step that runs the following commands and records results in the dated review document at `docs/reviews/YYYY-MM-DD-harness-review.md`:
+
+```bash
+# Measure mechanism-field compliance over the last 30 days
+gh pr list --state merged --limit 200 --search "merged:>$(date -d '30 days ago' +%Y-%m-%d)" \
+  --json number,body \
+  | jq -r '.[] | select(.body | contains("## What mechanism would have caught this?")) | .number' \
+  | wc -l
+# Compare against total PR count for percentage
+
+# Measure catalog growth
+git log --oneline --since='30 days ago' docs/failure-modes.md | wc -l
+```
+
+The existing `/harness-review` skill (shipped 2026-04-18 per SCRATCHPAD's milestone log) already has a weekly cadence; adding these queries to its run is the operational implementation of the metric. Documented in the skill's body as part of Task 5 (architecture-doc update) cross-reference.
+
+**Observability gaps (filed to backlog as P2 entries via Task 10 below):**
+- No automatic detection of "this PR cited FM-NNN, did the cited entry actually exist in `docs/failure-modes.md` at PR open time?" — reviewer responsibility for now. **Backlog entry filed in Task 10.**
+- No tracking of "answer form (a) vs (b) vs (c) distribution" — could be added later via a script over PR bodies. **Backlog entry filed in Task 10.**
 
 ### 7. Failure-mode analysis per step
 
@@ -171,18 +247,21 @@ No new tokens or secrets introduced. Rate limit is GitHub Actions' standard 2000
 |---|---|---|---|---|
 | PR template autopopulation | GitHub doesn't autopopulate body (rare; happens if user uses an API client that bypasses templates) | PR body is whatever the user wrote, no template structure | Workflow detects missing section heading, fails with clear message | User edits PR body to include the template structure |
 | Workflow trigger | Workflow doesn't run (GitHub outage, malformed YAML) | No check appears on the PR | Re-trigger via a dummy commit; check GitHub status page | If chronic, surface as a known issue in the runbook |
-| Workflow regex | Regex falsely matches placeholder pattern in valid content (e.g., user writes `<mechanism answer goes here>` literally as part of explanation) | False fail | Edit the PR body to phrase differently | Tighten regex if pattern recurs |
-| Workflow regex | Regex misses an actual placeholder (variant phrasing) | False pass | Reviewer catches in code review | Add the missed pattern to the regex; ship a hook update |
+| Workflow regex (false positive) | Regex falsely matches placeholder pattern in valid content (e.g., user writes the literal placeholder text inside a fenced code block to document the template itself) | False fail on a meta-PR | Edit the PR body to use a different code-block fence pattern OR document the template-edit exemption | Add code-fence-aware extraction to the validator if pattern recurs |
+| Workflow regex (false negative) | Regex misses an actual placeholder (variant phrasing) | False pass | Reviewer catches in code review | Add the missed pattern to the regex; ship a validator update |
+| Workflow regex (code-block placeholder) | A PR that's documenting the PR template itself includes the literal placeholder string in a fenced code block; validator counts it as un-filled | False fail | Validator should extract content excluding fenced-code blocks before placeholder check; if not implemented, user adjusts wording | Implement code-fence-aware extraction in shared validator library |
 | Workflow rationale check | "No mechanism" answer with 39-char rationale (just under threshold) | Workflow fails with "rationale too short" | User extends to ≥40 chars | Threshold tuning if false-positive rate is high |
 | Workflow exit code | Workflow exits 0 despite failure (bug in workflow logic) | Bad PR slips through | Catch via post-merge audit; fix workflow | Self-test with known-bad inputs |
+| Empty PR body entirely | PR opened with empty body (developer skipped the template entirely, e.g., used `gh pr create --title X` without `--body`) | Workflow runs, finds NO section headings (not even mis-filled) | Workflow fails with section-missing message, points user at the template path | Same as above — workflow message names the template file |
+| Accidental template-file edit | A builder modifies `.github/PULL_REQUEST_TEMPLATE.md` for an unrelated reason (e.g., changes wording while editing nearby files), breaking the regex contract for all future PRs | First PR after the change fails CI unexpectedly; nothing wrong with the PR itself | Revert the template change; investigate why it was edited | Add a `pre-commit` check that warns if `.github/PULL_REQUEST_TEMPLATE.md` is staged and `.github/workflows/pr-template-check.yml` is NOT staged in the same commit (atomicity rule similar to existing `decisions-index-gate.sh`). **Filed as backlog entry in Task 10.** |
 | Local hook | Hook doesn't fire (not installed, opt-out) | Bad push reaches origin | CI check still catches at PR open | Local hook is a convenience; CI is canonical |
 | Local hook | Hook false-positive blocks legitimate push (e.g., WIP commit) | Push rejected | User uses `--no-verify` for WIP pushes | Document the WIP-skip pattern; consider auto-skip for `wip-` branches |
-| Branch protection rule | Not configured on the repo | Bad PRs can merge despite check failing | Reviewer must enforce manually | Document in setup instructions; recommend repo admins enable |
-| External contributor PR | Workflow has reduced permissions on fork PRs | May not be able to write checks back | Verify GitHub Actions defaults — body-read is sufficient; check writes work for forks too in standard config | Document any limitations |
+| Branch protection rule | Not configured on the repo | Bad PRs can merge despite check failing | **Now in scope: Task 9 configures branch protection for neural-lace.** For downstream rollout, document in setup instructions. | If repo admins disable branch protection later, the check becomes advisory; surfaced by `/harness-review` audit |
+| External contributor PR | Fork-PR auth nuances | Workflow runs but fails to set check status | **RESOLVED in Section 5: auto-emitted check from job conclusion works for fork PRs without `checks: write`. Verified by Task 7 smoke test which now MUST include a fork-PR scenario.** | If smoke test reveals the auto-check doesn't appear, fall back to documenting fork-PR limitation honestly |
 | Sweep PR with multiple fixes | Single mechanism field can't cover 5 unrelated fixes coherently | User writes a multi-bullet list | Workflow accepts (≥40 chars total) | Document multi-bullet pattern in the template |
 | Emergency hotfix | Mechanism analysis is genuinely n/a (rollback) | User selects "no mechanism — accepted residual risk" + writes "Rollback; mechanism analysis lives on the rolled-back PR" | PASS (>40 chars) | Normal flow |
 | Workflow YAML breaks on update | Plan #3 update breaks the workflow | Workflow check shows error, not pass/fail | Revert the update; fix; redeploy | Test workflow changes in a draft PR first |
-| Placeholder text drift | Future template revision changes placeholder text without updating regex | Workflow's placeholder-detect stops working | False-pass on un-filled PRs | Self-test catches this; require updating both files atomically |
+| Placeholder text drift | Future template revision changes placeholder text without updating regex | Workflow's placeholder-detect stops working | False-pass on un-filled PRs | Self-test catches this; require updating both files atomically (see "accidental template-file edit" row above for the proposed enforcement) |
 
 ### 8. Idempotency & restart semantics
 
@@ -208,7 +287,7 @@ There's no "intermediate state" to recover from because the workflow is stateles
 
 1. **Single `What mechanism would have caught this?` field vs. structured answer form selector.** Chose: a single Markdown section with three explicit answer-form sub-headings (existing catalog entry / new entry proposed / accepted residual risk). Alternatives: (a) GitHub Issue Forms for structured input — rejected because Issue Forms only work for issues, not PR bodies; (b) HTML comment instructions only — rejected because the workflow needs to detect placeholder vs. filled state, which requires distinct text patterns. Tradeoff: requires writers to choose an answer form, which is a slight cognitive cost; offsets are clearer auditing and easier regex-matching.
 
-2. **~40-character rationale threshold for "no mechanism" option.** Chose 40. Alternatives: 80 (more substance required), 20 (lower bar). Rejected 80 because legitimate one-sentence rationales can be tight ("This is a copy-paste typo; no mechanism catches single-char prose typos without false positives" is 89 chars but a tighter one might be 50). Rejected 20 because "N/A — see prior PR" is 18 chars and gameable. 40 is the floor that rejects 1-3 word brush-offs while accepting genuine one-sentence rationales. Tunable.
+2. **~40-character rationale threshold for "no mechanism" option.** Chose 40. Alternatives: 80, 20. **Rejected 80** because tighter legitimate one-sentence rationales fall in the 40-70 range (e.g., a tight 50-char justification like "Single-char prose typo; no rule catches that cheaply." is meaningful but would fail an 80-char gate, producing false rejections of substantive answers). **Rejected 20** because terse brush-offs ("N/A — see prior PR" is 18 chars; "Rollback only" is 13 chars) would slip through. 40 sits at the inflection point where most genuine one-sentence rationales succeed and most cop-outs fail. Threshold is tunable later via a single constant in the shared validator library; if FP rate is high after rollout, raise to 50.
 
 3. **CI workflow + local hook (both layers) vs CI only.** Chose both. Alternative: CI only — rejected because the local hook saves a CI roundtrip when the omission is caught locally. Local-only would miss cases where the developer pushes from an environment without the hook installed. Both layers cost little and catch overlapping windows.
 
@@ -216,11 +295,13 @@ There's no "intermediate state" to recover from because the workflow is stateles
 
 5. **Failure-modes file as a stub created by this plan vs. requiring the catalog plan first.** Chose: this plan creates a one-paragraph stub at `docs/failure-modes.md` that forward-links to the catalog plan. The PR template references the catalog (`FM-NNN` IDs); without at least a stub, the references are dangling. Real catalog content is plan #2's scope. Stub is a 5-minute task that unblocks the PR template's references regardless of plan #2 sequencing. (Note: in the reorganization sequence, plan #2 ships before this plan, so the stub may be no-op by the time plan #3 builds — that's fine, the stub is overwriteable.)
 
+6. **Squash-merge body inclusion (whether to change repo setting).** Chose: do NOT change the repo's `squash_merge_commit_message` setting. Alternative: change to `PR_BODY` so the mechanism analysis lands in the master commit log automatically. Rejected because (a) it would change ALL squash-merge bodies repo-wide, not just the mechanism section — affects unrelated work; (b) PR-list aggregation (Section 6) provides equivalent traceability without the side effect; (c) the change is reversible later if the absence proves painful.
+
 **Runbook entries:**
 
-- **Symptom**: my PR check is failing on `pr-template-check`. **Diagnostic**: read the failure message (visible on PR check status). It will name the specific deficiency: missing section, placeholder still present, or insufficient rationale. **Fix**: edit PR body to address. Workflow re-fires on `edited` event automatically.
+- **Symptom**: my PR check is failing on `PR Template Check / validate`. **Diagnostic**: open the workflow run via `gh pr checks <PR-number>` (look at the `link` JSON field) and read the canonical stderr message naming the specific deficiency (one of the four messages enumerated in Section 6). **Fix**: edit PR body to address. Workflow re-fires on `edited` event automatically.
 
-- **Symptom**: workflow's check shows "error" (yellow) not pass/fail. **Diagnostic**: open the workflow run via `gh pr checks <PR> --json link` and read the log. Common causes: GitHub Actions outage, YAML syntax error from a recent workflow edit. **Fix**: if outage, wait + retry; if YAML, revert and fix in a separate PR.
+- **Symptom**: workflow's check shows "error" (yellow) not pass/fail. **Diagnostic**: open the workflow run via `gh pr checks <PR>` and read the log. Common causes: GitHub Actions outage, YAML syntax error from a recent workflow edit. **Fix**: if outage, wait + retry; if YAML, revert and fix in a separate PR.
 
 - **Symptom**: I genuinely cannot fill the mechanism field (e.g., the PR is auto-generated by a tool with no body customization). **Diagnostic**: edit the PR body manually after creation. **Fix**: the workflow re-fires on `edited` events, so post-creation edits work.
 
@@ -228,4 +309,10 @@ There's no "intermediate state" to recover from because the workflow is stateles
 
 - **Symptom**: I want to opt out of the local hook for a specific repo. **Diagnostic**: check `.git/hooks/pre-push` for the installed script. **Fix**: delete or rename `.git/hooks/pre-push`; the CI check is canonical and continues to gate merges.
 
-- **Symptom**: a PR was merged with a low-quality mechanism answer (gibberish that passed the threshold). **Diagnostic**: review the merged PR's body. **Fix**: the threshold caught the bypass-by-omission case but not bypass-by-gibberish. Acknowledged residual risk in original plan; mitigation is reviewer vigilance + the harness-reviewer agent flagging suspicious patterns over time.
+- **Symptom**: a PR was merged with a low-quality mechanism answer (gibberish that passed the threshold). **Diagnostic**: review the merged PR's body. **Fix**: the threshold caught the bypass-by-omission case but not bypass-by-gibberish. Acknowledged residual risk; mitigation is reviewer vigilance + the harness-reviewer agent flagging suspicious patterns over time.
+
+- **Symptom**: I changed `.github/PULL_REQUEST_TEMPLATE.md` and now all open PRs are failing CI. **Diagnostic**: the regex in the validator expects specific section headings and placeholder text (per Section 3's "exact text" tables). If the template wording changed, the validator's expectations diverged. **Fix**: either revert the template change OR update the shared validator library `validate-pr-template.sh` (and re-test via self-test) in the same commit. The "atomicity" gate proposed in Section 7 is the future enforcement.
+
+- **Symptom**: I want to roll out the workflow to a downstream repo. **Diagnostic**: the rollout script (Task 9 — see Cross-cutting fix) handles this. **Fix**: run `bash adapters/claude-code/scripts/install-pr-template.sh <target-repo-path>`. Verify by opening a draft PR in the target repo and confirming the check appears.
+
+- **Symptom**: I want to retroactively check whether the past N merged PRs would have passed the new check. **Diagnostic**: the validator library is sourceable as a script. **Fix**: run `bash adapters/claude-code/scripts/audit-merged-prs.sh --limit N` (Task 9 — see Cross-cutting fix) which iterates `gh pr list --state merged` and reports per-PR PASS/FAIL.
