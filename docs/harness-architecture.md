@@ -1,5 +1,5 @@
 # Claude Code Harness — Architecture Overview
-Last updated: 2026-04-15 (silent-skip ban + orchestrator pattern)
+Last updated: 2026-04-22 (quick-win automation: effort policy, verbose plans, meta-skills)
 
 ## Strategy & Evolution
 
@@ -26,7 +26,8 @@ Both are reviewed by the `harness-reviewer` agent, which classifies changes firs
 | `systems-design-gate.sh` **(Gen 5)** | Edits to design-mode files (CI/CD workflows, migrations, vercel.json, Dockerfile, etc.) require an active plan with `Mode: design` in `docs/plans/`. Escape hatch: `Mode: design-skip` for trivial edits (version bumps, typos) with a short written justification. Forces systems-engineering thinking before implementation | Mechanical (PreToolUse) |
 | `runtime-verification-executor.sh` | "Runtime verification:" lines must parse as `test`/`playwright`/`curl`/`sql`/`file` and actually execute; `test`/`playwright` entries reject files containing unannotated runtime-conditional skips (silent-skip vaporware guard, 2026-04-15) | Mechanical (Stop hook) |
 | `runtime-verification-reviewer.sh` | Verification commands must correspond to modified files (curl URL, sql table, test imports) | Mechanical (Stop hook) |
-| `plan-reviewer.sh` | Plans must have Scope, DoD, decomposed sweep tasks, Runtime verification specs | Mechanical (pre-commit) |
+| `plan-reviewer.sh` | Plans must have Scope, DoD, decomposed sweep tasks, Runtime verification specs, and all 7 required sections populated (Goal, Scope, Tasks, Files to Modify/Create, Assumptions, Edge Cases, Testing Strategy — Check 6b, 2026-04-22) | Mechanical (pre-commit) |
+| `effort-policy-warn.sh` **(2026-04-22)** | SessionStart warning when configured effort level is below the project-level (`.claude/effort-policy.json`) or user-level (`~/.claude/local/effort-policy.json`) declared minimum. Ordering: `low < medium < high < xhigh <= max`. Non-blocking. | Mechanical (SessionStart, warn-only) |
 | `tool-call-budget.sh` | Every 30 tool calls blocks until plan-evidence-reviewer is invoked | Mechanical (PreToolUse) |
 | `post-tool-task-verifier-reminder.sh` | Reminds to invoke task-verifier when editing src files matching unchecked plan tasks | Soft (PostToolUse) |
 | `claim-reviewer.md` (agent) | Product Q&A claims must cite file:line | Self-invoked (residual gap) |
@@ -53,7 +54,9 @@ Patterns are NOT weaker than Mechanisms — they solve different problems. Mecha
 
 | File | Purpose |
 |------|---------|
-| `~/.claude/settings.json` | Central config: permissions, 12 hooks across 6 lifecycle events, 6 plugins, effort level |
+| `~/.claude/settings.json` | Central config: permissions, 13 hooks across 6 lifecycle events, 6 plugins, effort level |
+| `~/.claude/settings.json.template` | Template shipped via neural-lace install.sh. Declares `effortLevel: "max"` as the default for fresh installs (2026-04-22). User-edited `settings.json` is preserved on re-install via `.example` suffix convention. |
+| `~/.claude/local/effort-policy.json.example` **(2026-04-22)** | User-level effort policy template. User copies to `effort-policy.json` to declare a per-account minimum effort level that `effort-policy-warn.sh` checks on each SessionStart. Schema: `{"minimum_effort_level": "<low\|medium\|high\|xhigh\|max>"}`. |
 | `~/.claude/CLAUDE.md` | Global behavioral instructions: autonomy, SCRATCHPAD protocol, code quality, context hygiene, memory discipline. References all rule files. |
 
 ## Lifecycle Hooks (settings.json)
@@ -113,7 +116,7 @@ Runs `pre-stop-verifier.sh`:
 |--------|-------------|---------|
 | `pre-commit-gate.sh` | PreToolUse (on `git commit`) | Orchestrates: TDD gate (0a), plan-reviewer (0b), npm test (1), npm build (2), API audit (3) |
 | `pre-commit-tdd-gate.sh` **(Gen 4)** | `pre-commit-gate.sh` step 0a | 5 layers: new-file test requirement, modified-file full-path test reference, integration-tier mock ban, trivial-assertion ban, silent-skip ban (2026-04-15) |
-| `plan-reviewer.sh` **(Gen 4)** | `pre-commit-gate.sh` step 0b | Adversarial review of staged plan files: sweep decomposition, manual-verification language, missing Scope/DoD, Gen 3 anti-patterns |
+| `plan-reviewer.sh` **(Gen 4 + 2026-04-22)** | `pre-commit-gate.sh` step 0b | Adversarial review of staged plan files: sweep decomposition, manual-verification language, missing Scope/DoD, Gen 3 anti-patterns, and Check 6b — all 7 required sections must be present AND populated with non-placeholder content (Goal, Scope, Tasks, Files to Modify/Create, Assumptions, Edge Cases, Testing Strategy). Has `--self-test` flag exercising 4 scenarios. |
 | `plan-edit-validator.sh` **(Gen 4)** | PreToolUse `Edit\|Write` | Blocks plan checkbox flips without fresh matching evidence file |
 | `outcome-evidence-gate.sh` **(Gen 5)** | PreToolUse `Edit\|Write` | For fix tasks specifically: blocks checkbox flip unless evidence contains `Runtime verification (before):` + `Runtime verification (after):` with the same command (proof the fix addresses the bug). Escape hatch: `Reproduction recipe:` block for manual-repro cases. Triggered by task descriptions matching fix/bug/broken/regression/etc. Non-fix tasks pass through untouched. |
 | `systems-design-gate.sh` **(Gen 5)** | PreToolUse `Edit\|Write` | Blocks edits to design-mode files (`.github/workflows/*.yml`, migrations, `vercel.json`, `Dockerfile`, deploy/migrate scripts, terraform, nginx config) unless an active plan with `Mode: design` AND `Status: ACTIVE` exists in `docs/plans/`. Escape hatch: `Mode: design-skip` plan with a written justification referencing the target file's basename. Works alongside `plan-reviewer.sh` (which enforces section presence for `Mode: design` plans) and the `systems-designer` agent (which enforces section substance). |
@@ -126,7 +129,7 @@ Runs `pre-stop-verifier.sh`:
 | `pre-stop-verifier.sh` | Stop hook | Blocks session end if active plan has incomplete/unverified tasks. Check 4 calls executor + reviewer. |
 | `bug-persistence-gate.sh` | Stop hook | Scans transcript for bug/gap trigger phrases; blocks if no persistence (backlog or review file) happened in this session. |
 | `narrate-and-wait-gate.sh` | Stop hook | When the user has given a keep-going directive, blocks if the final assistant message trails off with a permission-seeking / wait-for-confirmation phrase. |
-| `effort-policy-warn.sh` | SessionStart hook | Warns (non-blocking) when the configured effort level is below the minimum declared by a project-level `.claude/effort-policy.json` or user-level `~/.claude/local/effort-policy.json`. Ordering: `low < medium < high < xhigh <= max`. |
+| `effort-policy-warn.sh` **(2026-04-22)** | SessionStart hook | Warns (non-blocking) when the configured effort level is below the minimum declared by a project-level `.claude/effort-policy.json` or user-level `~/.claude/local/effort-policy.json`. Ordering: `low < medium < high < xhigh <= max`. Has `--self-test` flag exercising 10 scenarios. |
 | `sensitive-patterns.local` | Loaded by `pre-push-scan.sh` | Personal credential patterns (never shared) |
 | `sensitive-patterns.local.example` | Documentation | Template showing the format for personal patterns |
 
@@ -262,7 +265,7 @@ Rules are loaded contextually when Claude detects relevant files being edited.
 
 | Rule | Scope | Key enforcement |
 |------|-------|-----------------|
-| `planning.md` | Task planning | Strategy-first for substantial features, UX during design, plan files in `docs/plans/`, task-verifier mandate, reusable component rule, session retrospectives, decision tiers. References `orchestrator-pattern.md` for multi-task plan execution. Now distinguishes `Mode: code` vs `Mode: design` and points at `design-mode-planning.md` for systems work. |
+| `planning.md` | Task planning | Strategy-first for substantial features, UX during design, plan files in `docs/plans/`, task-verifier mandate, reusable component rule, session retrospectives, decision tiers. References `orchestrator-pattern.md` for multi-task plan execution. Distinguishes `Mode: code` vs `Mode: design` and points at `design-mode-planning.md` for systems work. Contains "Verbose Plans Are Mandatory" section (2026-04-22) — all plans must enumerate Goal, Scope, Tasks, Files to Modify/Create, Assumptions, Edge Cases, Testing Strategy regardless of size; enforced by `plan-reviewer.sh` Check 6b. |
 | `design-mode-planning.md` **(Gen 5)** | System design tasks | The 10-section Systems Engineering Analysis protocol for design-mode plans. When to use design-mode (CI/CD, migrations, infra, multi-service integrations). What each of the 10 sections requires with PASS/FAIL examples. Documents the enforcement chain (template → plan-reviewer → systems-designer agent → systems-design-gate). Escape hatch: `Mode: design-skip` for trivial edits. |
 | `orchestrator-pattern.md` **(2026-04-16)** | Multi-task plans | **Pattern-class** (self-applied, not hook-enforced). Main session dispatches build work to `plan-phase-builder` sub-agents instead of building directly. Parallel dispatch is the preferred mode when tasks touch disjoint files — up to 5 concurrent builders in isolated git worktrees via `isolation: "worktree"`. Build-in-parallel, verify-sequentially. See also Patterns section of this doc. |
 | `testing.md` | All testing | 6-layer tests, pre-commit code review, 3 UX agents mandatory, link validation, deployment validation |
@@ -285,7 +288,7 @@ Rules are loaded contextually when Claude detects relevant files being edited.
 
 | Template | Used by | Purpose |
 |----------|---------|---------|
-| `plan-template.md` | `planning.md` | Structure for new plan files |
+| `plan-template.md` | `planning.md` | Structure for new plan files. Contains 7 required sections (2026-04-22): Goal, Scope, Tasks, Files to Modify/Create, Assumptions, Edge Cases, Testing Strategy — each with placeholder prompts. Validated by `plan-reviewer.sh` Check 6b. |
 | `completion-report.md` | `planning.md` | Appended to plan files when all tasks complete |
 | `decision-log-entry.md` | `planning.md` | Mid-build decision records |
 
