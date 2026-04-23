@@ -42,10 +42,6 @@ Build a tool that runs synthetic Claude Code sessions against known-bad scenario
 
 Before any plan is marked ready to build, an adversarial agent answers "if the builder's only input is this plan, what will they get wrong?" Produces a list of expected failure modes. Plan is revised to close each. This is "verbose plans" with teeth — catches gaps humans approve as "looks plausible."
 
-### P1 — Capture-codify cycle at PR level
-
-Every fix PR requires a description field: "What rule/hook/agent would have caught this?" Empty = PR blocked. If a mechanism exists → link to it (confirms enforcement works); if none → propose one, or explicitly accept residual risk. Makes the capture-codify discipline structurally mandatory.
-
 ### P1 — Prompt template library for meta-questions
 
 Codify canonical meta-questions as slash commands or skills: `/why-did-this-bug-slip`, `/find-my-bugs`, `/make-this-plan-verbose`, `/harness-this-lesson`. Currently these patterns live in individual memory; codifying makes them reusable and consistent.
