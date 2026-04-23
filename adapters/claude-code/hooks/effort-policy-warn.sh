@@ -14,7 +14,7 @@
 #   2. .effortLevel field from ~/.claude/settings.json
 #   3. treated as "unknown" => warn, since we cannot confirm compliance
 #
-# Ordering: low < medium < high < xhigh. "max" is treated as >= xhigh.
+# Ordering: low < medium < high < xhigh < max. Max is the top level.
 #
 # Non-blocking: always exits 0. Emits warnings on stderr only.
 #
@@ -29,7 +29,7 @@ effort_rank() {
     medium) echo 2 ;;
     high)   echo 3 ;;
     xhigh)  echo 4 ;;
-    max)    echo 4 ;;   # session-only; treat as >= xhigh for compliance
+    max)    echo 5 ;;
     *)      echo 0 ;;   # unknown / unset
   esac
 }
@@ -172,6 +172,15 @@ run_self_test() {
   # Scenario 8: env unset, no settings.json => warn about unknown current
   run_scenario "unknown-current" yes \
     "$tmp/nope.json" "$user_pol" "" "$tmp/no-settings.json"
+
+  # Scenario 9: policy=max, env=xhigh => warn (max is strictly above xhigh)
+  echo '{"minimum_effort_level":"max"}' > "$user_pol"
+  run_scenario "policy-max-env-xhigh" yes \
+    "$tmp/nope.json" "$user_pol" "xhigh" "$tmp/no-settings.json"
+
+  # Scenario 10: policy=max, env=max => silent
+  run_scenario "policy-max-env-max" no \
+    "$tmp/nope.json" "$user_pol" "max" "$tmp/no-settings.json"
 
   if [ "$failures" -eq 0 ]; then
     echo "SELF-TEST: all scenarios passed"

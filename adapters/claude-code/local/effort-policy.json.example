@@ -1,6 +1,6 @@
 {
   "_comment": "Copy this file to effort-policy.json (same directory, or project-level at <project>/.claude/effort-policy.json) to activate. Project-level policy takes precedence over user-level.",
-  "_valid_levels": "low | medium | high | xhigh — persisted via settings.json effortLevel. The session-only 'max' (set via /effort command) is treated as >= xhigh for policy-compliance purposes.",
-  "_ordering": "low < medium < high < xhigh <= max",
-  "minimum_effort_level": "xhigh"
+  "_valid_levels": "low | medium | high | xhigh | max — persisted via settings.json effortLevel. Max is the top level and the recommended default.",
+  "_ordering": "low < medium < high < xhigh < max",
+  "minimum_effort_level": "max"
 }

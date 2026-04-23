@@ -200,5 +200,5 @@
     "security-guidance@claude-plugins-official": true
   },
   "autoUpdatesChannel": "latest",
-  "effortLevel": "xhigh"
+  "effortLevel": "max"
 }
