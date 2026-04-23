@@ -1,6 +1,6 @@
 # Neural Lace — Harness Backlog
 
-Last updated: 2026-04-22
+Last updated: 2026-04-23
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
@@ -29,10 +29,6 @@ Prioritized order of leverage. Full reasoning in `docs/claude-code-quality-strat
 ### P0 — Harness-tests-itself: synthetic session runner
 
 Build a tool that runs synthetic Claude Code sessions against known-bad scenarios and measures whether hooks catch them (unauthorized checkbox flip, mocked integration test, uncited feature claim, budget exhaustion without audit). Runs on demand or weekly via `/schedule`. Produces a report showing which enforcement mechanisms have regressed. This catches silent enforcement regressions — currently invisible.
-
-### P1 — Adversarial pre-mortem pattern for plans
-
-Before any plan is marked ready to build, an adversarial agent answers "if the builder's only input is this plan, what will they get wrong?" Produces a list of expected failure modes. Plan is revised to close each. This is "verbose plans" with teeth — catches gaps humans approve as "looks plausible."
 
 ### P1 — Prompt template library for meta-questions
 
