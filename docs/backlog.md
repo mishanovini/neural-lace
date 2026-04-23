@@ -22,17 +22,9 @@ The `tool-call-budget.sh` hook looks for sentinel lines in `~/.claude/state/revi
 
 Multiple Claude Code sessions on the same machine share `~/.claude/` state and the git working tree. Uncommitted plan files have been lost to concurrent-session `git stash`/`clean` operations on multiple documented occasions (2026-04-19, 2026-04-20). A project-level plan addressing commit-on-creation is in flight, but cross-session state coordination (shared `~/.claude/` directory) is still unresolved.
 
-### P1 — Harness portability to `claude --remote` cloud sessions
-
-Cloud-hosted Claude Code sessions don't inherit the user's local `~/.claude/` configuration. Isolation wins (no collision) but enforcement loses (no hooks). Need to establish dotfiles-sync pattern or equivalent so cloud sessions inherit the same harness rules as local sessions.
-
 ## Improvements surfaced by 2026-04-22 strategy review
 
 Prioritized order of leverage. Full reasoning in `docs/claude-code-quality-strategy.md` section "Additional Suggestions for Improvement."
-
-### P0 — Adopt `claude --remote` + dotfiles sync as official background-work pattern
-
-Directly resolves the concurrent-session plan-wipe incidents we've hit twice. Document the canonical pattern in a new `rules/automation-modes.md`: interactive work → local Claude Code; autonomous background work → `claude --remote` with dotfiles-synced harness; recurring work → `/schedule`. Requires verifying harness-portability mechanics in the cloud session first.
 
 ### P0 — Harness-tests-itself: synthetic session runner
 
