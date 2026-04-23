@@ -181,6 +181,11 @@
             "type": "command",
             "command": "if [ -f pipeline/evidence.md ] || [ -f orchestrate.sh ]; then echo 'Pipeline: active. Use Option B (build → evidence → gates → verifier → commit) for all changes.'; elif [ -f ~/.claude/pipeline-templates/orchestrate.sh ]; then echo 'Pipeline: available but not set up for this project. Run /setup-pipeline to initialize.'; fi",
             "statusMessage": "Checking pipeline status..."
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/effort-policy-warn.sh",
+            "statusMessage": "Checking effort-level policy..."
           }
         ]
       }
@@ -195,5 +200,5 @@
     "security-guidance@claude-plugins-official": true
   },
   "autoUpdatesChannel": "latest",
-  "effortLevel": "high"
+  "effortLevel": "xhigh"
 }
