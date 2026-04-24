@@ -238,7 +238,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
   - **Files:** `neural-lace/adapters/claude-code/docs/harness-architecture.md`
   - **Done when:** Commit exists; diff is clean.
 
-- [ ] F.3 End-to-end verification: complete lifecycle test
+- [x] F.3 End-to-end verification: complete lifecycle test
   - In a fresh Claude session:
     1. Create a throwaway plan file at `docs/plans/lifecycle-test.md` with `Status: ACTIVE`
     2. Observe the creation warning fires

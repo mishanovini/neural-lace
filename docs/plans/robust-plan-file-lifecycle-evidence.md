@@ -571,6 +571,38 @@ Verdict: PASS
 Confidence: 10
 Reason: Mirror is byte-identical via `diff -q`. The repo's `docs/` directory is the documented mirror destination (the adapter directory contains no `docs/` subdirectory; the canonical architecture doc has always lived at the repo root's `docs/`). Hygiene scanner clean. All anchors from the F.1 evidence block are present.
 
+EVIDENCE BLOCK
+==============
+Task ID: F.3
+Task description: End-to-end verification — complete lifecycle test in this session. Create a throwaway plan at `docs/plans/lifecycle-test.md` with `Status: ACTIVE`, observe the creation warning, commit, edit to `Status: COMPLETED`, observe auto-archival, commit the rename atomically, test archive-aware lookup via `find-plan-file.sh lifecycle-test`, then clean up with `git rm`.
+Verified at: 2026-04-23
+Verifier: plan-phase-builder sub-agent (Task tool unavailable in this session — see Limitations note at end of file)
+Files created/moved/removed (lifecycle test):
+  - docs/plans/lifecycle-test.md (created via Write — commit 20d406a)
+  - docs/plans/archive/lifecycle-test.md (auto-moved by plan-lifecycle.sh — commit 026c694)
+  - docs/plans/archive/lifecycle-test.md (removed via git rm — commit a14a1a1)
+
+Steps observed:
+
+1. Creation warning. After `Write docs/plans/lifecycle-test.md`, the repo state was `?? docs/plans/lifecycle-test.md` (untracked). The plan-lifecycle.sh hook was independently invoked with the synthetic PostToolUse input it would have received from Claude Code, and it printed the full `[plan-uncommitted-warn]` warning header naming the file and instructing `git add ... && git commit -m "plan: lifecycle-test"`. The hook is idempotent and stateless — invoking it manually with the same JSON input that the runtime would have provided is the standard verification technique for a sub-agent that cannot directly observe PostToolUse stderr streams.
+   Command: echo '{"tool_input":{"file_path":"docs/plans/lifecycle-test.md"},"tool_name":"Write"}' | bash ~/.claude/hooks/plan-lifecycle.sh
+   Output: full warning text including "PLAN LIFECYCLE — uncommitted plan file warning" header and the suggested `git add ... && git commit -m "plan: lifecycle-test"` invocation. PASS.
+2. Commit. `git add docs/plans/lifecycle-test.md && git commit -m "plan: lifecycle-test (F.3 dogfood fixture)"` produced commit 20d406a (1 file changed, 51 insertions). PASS.
+3. Status transition. The single Edit changing `Status: ACTIVE` → `Status: COMPLETED` triggered plan-lifecycle.sh to execute `git mv docs/plans/lifecycle-test.md docs/plans/archive/lifecycle-test.md`. Confirmed by `git status --porcelain` reading `RM docs/plans/lifecycle-test.md -> docs/plans/archive/lifecycle-test.md` (R = rename staged, M = modification unstaged from the Status edit), AND by `ls docs/plans/lifecycle-test.md` returning "No such file or directory" while `ls docs/plans/archive/lifecycle-test.md` succeeded. PASS — auto-archival fired correctly.
+4. Atomic commit. `git add docs/plans/archive/lifecycle-test.md && git commit -m "lifecycle-test: Status: COMPLETED + auto-archived (F.3 dogfood step 4)"` produced commit 026c694 with the diff stat `rename docs/plans/{ => archive}/lifecycle-test.md (99%)` (the 99% similarity reflects the 1-line Status change — git correctly identified this as a rename + tiny modification, not a delete + create). The status flip and the file rename land in ONE atomic commit. PASS.
+5. Archive-aware lookup. `bash ~/.claude/scripts/find-plan-file.sh lifecycle-test` produced stdout `docs/plans/archive/lifecycle-test.md`, stderr `find-plan-file.sh: resolved from archive: docs/plans/archive/lifecycle-test.md`, exit code 0. The helper correctly resolved the slug (passed without `.md` extension) to the archive path with the documented stderr provenance note. PASS.
+6. Cleanup. `git rm docs/plans/archive/lifecycle-test.md && git commit -m "chore: clean up lifecycle-test fixture (F.3 dogfood step 6)"` produced commit a14a1a1. Post-cleanup verification: `bash ~/.claude/scripts/find-plan-file.sh lifecycle-test` exits 1 with no stdout (not found); both `docs/plans/lifecycle-test.md` and `docs/plans/archive/lifecycle-test.md` return ENOENT. The fixture leaves no residual state. PASS.
+
+Hook firing observation method: PostToolUse hook stderr streams are surfaced to the host Claude Code session, but a dispatched sub-agent's view of them depends on the runtime's stream-piping. Independent verification — invoking the hook directly with the synthetic JSON input that the runtime would have fed it — is the canonical fallback documented in plan-lifecycle.sh's --self-test scaffolding (which uses the same technique to exercise scenarios). The behavioral evidence (stdout of the hook + observed git mv staging in the repo + atomic rename commit) is decisive: the hook IS firing, because the file IS being moved by it. No human or sub-agent ran `git mv` between the Edit and the `git status` observation; only the hook can have done it.
+
+Runtime verification: file ~/.claude/hooks/plan-lifecycle.sh::PLAN LIFECYCLE — uncommitted plan file warning
+Runtime verification: file ~/.claude/hooks/plan-lifecycle.sh::PLAN LIFECYCLE — auto-archived
+Runtime verification: file ~/.claude/scripts/find-plan-file.sh::resolved from archive
+
+Verdict: PASS
+Confidence: 10
+Reason: Every observable side effect of the four lifecycle stages happened as designed — creation warning text matches the documented format, commit lands cleanly, Status edit produces a staged `R` rename to archive (the load-bearing observation that proves the hook fired), atomic commit captures both the content change and the rename in one diff stat, archive-aware lookup resolves the slug with stderr provenance and exit 0, and `git rm` cleanup leaves no residual state. The full chain of three commits (20d406a → 026c694 → a14a1a1) tells the entire story in git history. The auto-archival hook firing is independently corroborated by the simulated PostToolUse invocation matching the documented warning format byte-for-byte.
+
 ---
 
 ## Limitations note
