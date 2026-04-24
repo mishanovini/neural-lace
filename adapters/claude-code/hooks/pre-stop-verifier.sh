@@ -49,6 +49,70 @@ for subdir in */*/docs/plans; do
   [[ -d "$subdir" ]] && PLAN_DIRS+=("$subdir")
 done
 
+# ============================================================
+# Pre-check (non-blocking): uncommitted plan files
+# ============================================================
+#
+# Warn — do NOT block — when the session is about to end with
+# uncommitted plan files. Uncommitted plans are vulnerable to being
+# wiped by a concurrent session's git operations, and they won't
+# survive into future sessions if the working tree is reset.
+#
+# This runs BEFORE any of the exit conditions below so it surfaces
+# regardless of plan state. It never affects the exit code.
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  UNCOMMITTED_PLANS=""
+  for dir in "${PLAN_DIRS[@]}"; do
+    # `git status --porcelain` lists modified, added, untracked files.
+    # We want any line whose path is under a plan directory (top-level
+    # only — we don't warn about archived files since archival is
+    # itself a staged rename that the session is expected to commit).
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      # porcelain v1: first 2 chars are status, then space, then path
+      # (rename lines look like "R  old -> new"; we still want the new path).
+      path="${line:3}"
+      # Strip rename arrow if present — keep destination path.
+      case "$path" in
+        *' -> '*) path="${path##* -> }" ;;
+      esac
+      # Only warn for top-level plan files (NOT archive subdirectory).
+      # Bash's case glob `*` matches across `/`, so we have to check
+      # that the suffix after `$dir/` contains no `/` before `.md`.
+      suffix="${path#"$dir"/}"
+      case "$path" in
+        "$dir"/*.md)
+          case "$suffix" in
+            */*) ;;  # has another `/` → in a subdirectory (e.g. archive/)
+            *) UNCOMMITTED_PLANS+="${path}"$'\n' ;;
+          esac
+          ;;
+      esac
+    done < <(git status --porcelain --untracked-files=all -- "$dir" 2>/dev/null)
+  done
+
+  if [[ -n "$UNCOMMITTED_PLANS" ]]; then
+    echo "" >&2
+    echo "================================================================" >&2
+    echo "[uncommitted-plans-warn] PLAN FILES NOT COMMITTED" >&2
+    echo "================================================================" >&2
+    echo "The following plan files have uncommitted changes:" >&2
+    while IFS= read -r p; do
+      [[ -z "$p" ]] && continue
+      echo "  - $p" >&2
+    done <<< "$UNCOMMITTED_PLANS"
+    echo "" >&2
+    echo "Uncommitted plan files can be wiped by concurrent sessions and" >&2
+    echo "will not survive into future sessions if the working tree is" >&2
+    echo "reset. Commit them before ending the session:" >&2
+    echo "" >&2
+    echo "  git add docs/plans/<slug>.md && git commit -m 'plan: <slug>'" >&2
+    echo "" >&2
+    echo "(This is a warning, not a block — session exit is not prevented.)" >&2
+    echo "" >&2
+  fi
+fi
+
 if [[ ${#PLAN_DIRS[@]} -eq 0 ]]; then
   exit 0
 fi

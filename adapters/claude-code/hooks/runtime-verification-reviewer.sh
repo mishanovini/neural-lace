@@ -49,7 +49,15 @@ fi
 # Extract the set of files modified by tasks. We use git log's files-changed
 # list for the plan's execution window. Because we don't know the exact
 # commit range, we use recent commits (last 20) as a heuristic scope.
-MODIFIED_FILES=$(git log --name-only --pretty=format: -20 2>/dev/null | grep -vE '^$|evidence|docs/plans' | sort -u || true)
+#
+# Exclusions:
+#   - blank lines (commit boundaries from --pretty=format:)
+#   - any file with `evidence` in its path (the plan's own evidence file)
+#   - anything under `docs/plans/` including the archive subdirectory
+#     (`docs/plans/archive/*`). Plan files and archived plan files are
+#     NOT runtime-relevant — edits to them don't change application
+#     behavior, so they shouldn't count toward correspondence checks.
+MODIFIED_FILES=$(git log --name-only --pretty=format: -20 2>/dev/null | grep -vE '^$|evidence|docs/plans(/archive)?/' | sort -u || true)
 
 if [[ -z "$MODIFIED_FILES" ]]; then
   # Not a git repo or no modifications — nothing to correspond against

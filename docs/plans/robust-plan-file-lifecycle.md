@@ -197,26 +197,26 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 
 ### Phase E: Targeted Hook Updates
 
-- [ ] E.1 Update `~/.claude/hooks/post-tool-task-verifier-reminder.sh` to use shared helper
+- [x] E.1 Update `~/.claude/hooks/post-tool-task-verifier-reminder.sh` to use shared helper
   - Where the hook currently sets `PLAN_DIR="docs/plans"` and finds the most-recently-modified plan, prefer active-dir lookup but fall back to archive when no active match correlates with the edited source file
   - Source via `~/.claude/scripts/find-plan-file.sh` where applicable
   - Keep default behavior (prefer active) — archive is fallback, not primary
   - **Files:** `~/.claude/hooks/post-tool-task-verifier-reminder.sh`
   - **Done when:** Hook passes its self-test (if one exists); manual verification that active plans still take priority.
 
-- [ ] E.2 Update `~/.claude/hooks/runtime-verification-reviewer.sh` to exclude archive from modified-file analysis
+- [x] E.2 Update `~/.claude/hooks/runtime-verification-reviewer.sh` to exclude archive from modified-file analysis
   - Change the grep exclusion pattern from `docs/plans` to `docs/plans(/archive)?` (or equivalent) so edits to archived plans aren't treated as runtime-relevant
   - Small polish affecting only the rare case of editing an archived plan
   - **Files:** `~/.claude/hooks/runtime-verification-reviewer.sh`
   - **Done when:** Pattern updated; grep behavior verified.
 
-- [ ] E.3 Update `~/.claude/hooks/pre-stop-verifier.sh` to warn (not block) on uncommitted plan files
+- [x] E.3 Update `~/.claude/hooks/pre-stop-verifier.sh` to warn (not block) on uncommitted plan files
   - Before session-end block logic, add a non-blocking check: if `docs/plans/*.md` has uncommitted files, surface a prominent warning that plans should be committed to survive future sessions
   - Do NOT block session exit — this is a reminder, not a gate
   - **Files:** `~/.claude/hooks/pre-stop-verifier.sh`
   - **Done when:** Warning is surfaced on uncommitted plan files; session exit still succeeds.
 
-- [ ] E.4 Mirror hook updates to neural-lace
+- [x] E.4 Mirror hook updates to neural-lace
   - Copy all three updated hooks + `diff -q` verify each
   - Single commit: `feat(harness): hooks — archive awareness + uncommitted-plan warning`
   - **Files:** `neural-lace/adapters/claude-code/hooks/{post-tool-task-verifier-reminder,runtime-verification-reviewer,pre-stop-verifier}.sh`

@@ -373,6 +373,131 @@ Verdict: PASS
 Confidence: 10
 Reason: Per `harness-maintenance.md`, every change to `~/.claude/` must be mirrored to `adapters/claude-code/` with `diff -q` verification. All three mirrors are byte-identical (diff -q clean) and hygiene-scan clean. The mirrored files will land in neural-lace via the same commit that flips D.1-D.4 checkboxes and adds these evidence blocks; the dispatch's planned single commit message is `docs(harness): agents — archive-aware plan path resolution`.
 
+EVIDENCE BLOCK
+==============
+Task ID: E.1
+Task description: Update `~/.claude/hooks/post-tool-task-verifier-reminder.sh` to use archive-aware fallback. Where the hook previously used a single hardcoded `PLAN_DIR="docs/plans"` and ranked plans by mtime, prefer active-dir lookup but fall back to archive when no active match correlates with the edited source file. Resolution order matches the canonical `find-plan-file.sh` helper.
+Verified at: 2026-04-23
+Verifier: plan-phase-builder sub-agent
+Files modified:
+  - adapters/claude-code/hooks/post-tool-task-verifier-reminder.sh
+
+Checks run:
+1. Bash syntax check passes.
+   Command: bash -n adapters/claude-code/hooks/post-tool-task-verifier-reminder.sh
+   Result: PASS (no output)
+2. End-to-end test in a scratch git repo:
+   - Created docs/plans/active-plan.md (Status: ACTIVE) with unchecked task referencing src/foo.ts.
+   - Created docs/plans/archive/old-plan.md (Status: ACTIVE — note: status field on archived plan is intentionally ACTIVE for the test) with unchecked task referencing src/legacy.ts.
+   - Edit on src/foo.ts -> hook output references active-plan.md and does NOT include the archive provenance NOTE.
+   - Edit on src/legacy.ts -> hook output references docs/plans/archive/old-plan.md AND includes the archive provenance NOTE.
+   - Edit on a file no plan mentions (src/unrelated.ts) -> hook produces no output (clean exit).
+   Result: PASS — all three scenarios behave as designed; active-dir is correctly preferred, archive is correctly used as fallback, no-correlation case is correctly silent.
+3. Hygiene scan clean.
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/hooks/post-tool-task-verifier-reminder.sh
+   Result: PASS (no output)
+
+Runtime verification: file adapters/claude-code/hooks/post-tool-task-verifier-reminder.sh::find_correlating_plan
+Runtime verification: file adapters/claude-code/hooks/post-tool-task-verifier-reminder.sh::RESOLVED_FROM_ARCHIVE
+
+Verdict: PASS
+Confidence: 9
+Reason: Hook now consults active dir first (most common case) with archive as a structured fallback only when no active plan correlates with the edited source file. The `find_correlating_plan` helper encapsulates the per-directory selection (latest ACTIVE plan whose unchecked tasks mention the file basename or stem). End-to-end test in a scratch repo exercised all three branches (active-hit, archive-fallback, no-correlation) and all three behave as designed. Confidence is 9 (not 10) because the hook has not yet been exercised by a live Claude Code session against a real downstream-project layout — but every meaningful code path was covered by the scratch-repo tests.
+
+EVIDENCE BLOCK
+==============
+Task ID: E.2
+Task description: Update `~/.claude/hooks/runtime-verification-reviewer.sh` to exclude `docs/plans/archive/` from the modified-file analysis (in addition to active `docs/plans/`). Edits to archived plans are not runtime-relevant and shouldn't count toward correspondence checks.
+Verified at: 2026-04-23
+Verifier: plan-phase-builder sub-agent
+Files modified:
+  - adapters/claude-code/hooks/runtime-verification-reviewer.sh
+
+Checks run:
+1. Bash syntax check passes.
+   Command: bash -n adapters/claude-code/hooks/runtime-verification-reviewer.sh
+   Result: PASS (no output)
+2. Pattern-behavior test in a scratch repo committing a mixture of file paths:
+   - docs/plans/active.md  -> excluded (top-level active plan)
+   - docs/plans/archive/old.md  -> excluded (archived plan, NEW behavior)
+   - src/api/users/route.ts  -> included
+   - supabase/migrations/0001_users.sql  -> included
+   - docs/plans-other/file.md  -> included (NOT excluded — improvement: old pattern over-excluded any path containing `docs/plans`)
+   Command: git log --name-only --pretty=format: -20 | grep -vE '^$|evidence|docs/plans(/archive)?/' | sort -u
+   Result: PASS — output contains only the three included paths; both the active plan and the archived plan are excluded; the `docs/plans-other/` path that the old pattern incorrectly swallowed is now correctly included.
+3. Hygiene scan clean.
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/hooks/runtime-verification-reviewer.sh
+   Result: PASS (no output)
+
+Runtime verification: file adapters/claude-code/hooks/runtime-verification-reviewer.sh::docs/plans\(/archive\)?/
+
+Verdict: PASS
+Confidence: 10
+Reason: One-line grep pattern change with explanatory comment; behavior verified empirically against five distinct file paths. The new pattern `docs/plans(/archive)?/` requires the trailing `/` so it correctly excludes both `docs/plans/foo.md` and `docs/plans/archive/foo.md` while no longer over-excluding unrelated paths like `docs/plans-other/`. This is a strict improvement over the old `docs/plans` substring match.
+
+EVIDENCE BLOCK
+==============
+Task ID: E.3
+Task description: Update `~/.claude/hooks/pre-stop-verifier.sh` — add a non-blocking warning before session-end blocking logic if `docs/plans/*.md` has uncommitted files (modified, untracked, or otherwise dirty). Surface a prominent warning that plans should be committed to survive future sessions. Do NOT block exit (this is a reminder, not a gate). Use clear `[uncommitted-plans-warn]` log prefix.
+Verified at: 2026-04-23
+Verifier: plan-phase-builder sub-agent
+Files modified:
+  - adapters/claude-code/hooks/pre-stop-verifier.sh
+
+Checks run:
+1. Bash syntax check passes.
+   Command: bash -n adapters/claude-code/hooks/pre-stop-verifier.sh
+   Result: PASS (no output)
+2. Five end-to-end scenarios in a scratch git repo:
+   E.3a: untracked plan file (Status: ABANDONED so blocking checks pass) -> hook prints `[uncommitted-plans-warn]` warning naming the file AND exits 0. PASS.
+   E.3b: same plan committed -> hook prints NO warning AND exits 0. PASS.
+   E.3c: plan modified after commit (still uncommitted change) -> warning fires AND exits 0. PASS.
+   E.3d: only an archived plan is dirty (`docs/plans/archive/old.md` untracked) -> hook prints NO warning (archive is intentionally excluded). PASS.
+   E.3e: top-level plan dirty AND archived plan dirty -> warning fires for top-level only, archive path is NOT in the warning body. PASS.
+   E.3-regression: plan committed with unchecked task (Status: ACTIVE) -> hook still BLOCKS with the existing "incomplete tasks" message and exits 1 (the warning logic is additive, not destructive of existing behavior). PASS.
+3. Hygiene scan clean.
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/hooks/pre-stop-verifier.sh
+   Result: PASS (no output)
+
+Runtime verification: file adapters/claude-code/hooks/pre-stop-verifier.sh::\[uncommitted-plans-warn\]
+Runtime verification: file adapters/claude-code/hooks/pre-stop-verifier.sh::This is a warning, not a block
+
+Verdict: PASS
+Confidence: 9
+Reason: Warning logic added before the early-exit on empty PLAN_DIRS so it surfaces regardless of plan state, and before any of the existing blocking checks so it always fires when applicable. Uses `git status --porcelain --untracked-files=all` to surface untracked files individually (verified — without `--untracked-files=all`, an untracked plan directory aggregates as a single `?? docs/plans/` entry, which would mask the per-file warning). Archive subdirectory is excluded via a tightened case-glob check (bash's case `*` matches across `/`, so a literal `*.md` would falsely match archive paths; the suffix check guards against that). Five behavioral scenarios + one regression scenario all pass. Confidence is 9 (not 10) because the warning behavior under a real Stop hook invocation hasn't been observed yet — but the shell-level behavior is exhaustively covered.
+
+EVIDENCE BLOCK
+==============
+Task ID: E.4
+Task description: Mirror all three updated hooks (`post-tool-task-verifier-reminder.sh`, `runtime-verification-reviewer.sh`, `pre-stop-verifier.sh`) from `~/.claude/hooks/` to `adapters/claude-code/hooks/`. Verify each via `diff -q`. Single commit `feat(harness): hooks — archive awareness + uncommitted-plan warning`.
+Verified at: 2026-04-23
+Verifier: plan-phase-builder sub-agent
+Files modified:
+  - adapters/claude-code/hooks/post-tool-task-verifier-reminder.sh (mirror)
+  - adapters/claude-code/hooks/runtime-verification-reviewer.sh (mirror)
+  - adapters/claude-code/hooks/pre-stop-verifier.sh (mirror)
+
+Checks run:
+1. All three mirrors are byte-identical to the maintainer's `~/.claude/` copies.
+   Command: diff -q ~/.claude/hooks/post-tool-task-verifier-reminder.sh adapters/claude-code/hooks/post-tool-task-verifier-reminder.sh && diff -q ~/.claude/hooks/runtime-verification-reviewer.sh adapters/claude-code/hooks/runtime-verification-reviewer.sh && diff -q ~/.claude/hooks/pre-stop-verifier.sh adapters/claude-code/hooks/pre-stop-verifier.sh
+   Output: (no output — all three pairs identical)
+   Result: PASS
+2. Hygiene scan clean across all three files in one batched invocation.
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/hooks/post-tool-task-verifier-reminder.sh adapters/claude-code/hooks/runtime-verification-reviewer.sh adapters/claude-code/hooks/pre-stop-verifier.sh
+   Result: PASS (no output, exit 0)
+3. Bash syntax checks pass on all three mirrored files.
+   Command: bash -n adapters/claude-code/hooks/post-tool-task-verifier-reminder.sh && bash -n adapters/claude-code/hooks/runtime-verification-reviewer.sh && bash -n adapters/claude-code/hooks/pre-stop-verifier.sh
+   Result: PASS (no output)
+4. Single commit `feat(harness): hooks — archive awareness + uncommitted-plan warning` will land in this evidence-bundle commit.
+
+Runtime verification: file adapters/claude-code/hooks/post-tool-task-verifier-reminder.sh::find_correlating_plan
+Runtime verification: file adapters/claude-code/hooks/runtime-verification-reviewer.sh::docs/plans\(/archive\)?/
+Runtime verification: file adapters/claude-code/hooks/pre-stop-verifier.sh::\[uncommitted-plans-warn\]
+
+Verdict: PASS
+Confidence: 10
+Reason: Per `harness-maintenance.md`, every change to `~/.claude/` must be mirrored to `adapters/claude-code/` with `diff -q` verification. All three mirrors are byte-identical (diff -q clean), hygiene-scan clean, and pass `bash -n` syntax verification. The mirrored files will land in neural-lace via the same commit that flips E.1-E.4 checkboxes and adds these evidence blocks; the dispatch's planned single commit message is `feat(harness): hooks — archive awareness + uncommitted-plan warning`.
+
 ---
 
 ## Limitations note
