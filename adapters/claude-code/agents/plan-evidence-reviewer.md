@@ -212,6 +212,51 @@ Every review output — Mode A or Mode B — MUST contain:
 These are the two strings `tool-call-budget.sh --ack` greps for. Missing
 either one means the ack is rejected and the builder remains blocked.
 
+### Output Format Requirements — class-aware feedback (MANDATORY per issue)
+
+When the verdict is INCONSISTENT, INSUFFICIENT, STALE (Mode A), or CONCERNS / BLOCKED (Mode B), every entry under "Specific issues" / "Red flags observed" / "Required follow-ups" MUST be formatted as a six-field class-aware block. The `Class:`, `Sweep query:`, and `Required generalization:` fields shift this reviewer from naming a single evidence-block flaw to naming the **class** of evidence-defect so the builder fixes every sibling instance in the plan, not just the one flagged.
+
+This matters especially in Mode B (session audit): if one task's evidence is fabricated, sibling tasks often have the same fabrication pattern. Naming the class catches the cluster in one pass.
+
+**Per-issue block (required fields — all six must be present):**
+
+```
+- Line(s): <evidence file:line or evidence block heading, e.g., "evidence file line 47" or "evidence block for Task A.3, 'Checks run' field 2">
+  Defect: <one-sentence description of the specific evidence flaw at that location>
+  Class: <one-phrase name for the evidence-defect class, e.g., "missing-runtime-verification-line", "fabricated-git-sha", "claim-without-grep-evidence", "reused-evidence-block-across-tasks", "command-output-too-vague-to-verify", "manual-plain-text-verification-only"; use "instance-only" with a 1-line justification if genuinely unique>
+  Sweep query: <a grep / shell pattern the builder can run on the evidence file or the plan file to surface every sibling instance; if "instance-only", write "n/a — instance-only">
+  Required fix: <one-sentence description of what to add/change in this evidence block>
+  Required generalization: <one-sentence description of the class-level discipline to apply across every sibling evidence block the sweep query surfaces; write "n/a — instance-only" if no generalization applies>
+```
+
+**Why these fields exist:** the `Defect` field names one flawed evidence block. The `Class` + `Sweep query` + `Required generalization` fields force the reviewer to state the pattern, give the builder a mechanical way to find every sibling, and name the class-level fix. Without these, the builder fixes the one flagged evidence block and leaves siblings with the same defect intact, prompting another FAIL pass at session end.
+
+**Worked example (missing-runtime-verification-line class, Mode B):**
+
+```
+- Line(s): evidence blocks for tasks A.2, A.4, A.5 (lines 23, 51, 78 of the evidence file)
+  Defect: Three evidence blocks claim PASS verdicts but contain no `Runtime verification: file:pattern` line — the evidence-first protocol requires every PASS to cite at least one runtime verification.
+  Class: missing-runtime-verification-line (PASS verdict in an evidence block with zero `Runtime verification:` lines)
+  Sweep query: `awk '/^EVIDENCE BLOCK/,/^Verdict:/' docs/plans/<plan-slug>-evidence.md | grep -B 100 '^Verdict: PASS' | grep -L '^Runtime verification:'` (or equivalent: split into blocks, find PASS blocks with no runtime-verification line)
+  Required fix: For each of A.2, A.4, A.5, append a `Runtime verification: <file>::<grep-pattern>` line that the runtime-verification-executor hook can replay.
+  Required generalization: Audit every PASS evidence block in the plan — each one must have at least one Runtime verification line. Re-verify any block where the line is missing before re-submitting.
+```
+
+**Instance-only example (when genuinely no class exists):**
+
+```
+- Line(s): evidence block for Task A.7, line 88
+  Defect: Timestamp uses a non-ISO format (e.g., "2026-04-23 noon ET") in this single block; all other blocks use ISO 8601 correctly.
+  Class: instance-only (single timestamp formatting slip in one block, no sibling pattern)
+  Sweep query: n/a — instance-only
+  Required fix: Reformat the timestamp on line 88 to ISO 8601 (`2026-04-23T16:00:00Z`).
+  Required generalization: n/a — instance-only
+```
+
+**Escape hatch:** `Class: instance-only` is allowed ONLY when you have genuinely considered whether the defect is an instance of a broader pattern and concluded it is unique. Default to naming a class — fabrication patterns and protocol-compliance gaps almost always travel in clusters across a plan's evidence file.
+
+**Where this section integrates:** the six-field blocks go inside the existing "Specific issues" (Mode A) or "Red flags observed" / "Required follow-ups" (Mode B) sections of the output. The sentinel lines (`REVIEW COMPLETE`, `VERDICT:`) and aggregate verdict format are unchanged.
+
 ### File writing step
 
 After producing the review, Write it to a file under `~/.claude/state/reviews/`:

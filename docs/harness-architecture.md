@@ -1,5 +1,5 @@
 # Claude Code Harness — Architecture Overview
-Last updated: 2026-04-24 (failure mode catalog as first-class harness artifact: `docs/failure-modes.md` consulted by diagnosis rule, harness-lesson + why-slipped skills, claim-reviewer + task-verifier agents)
+Last updated: 2026-04-24 (class-aware reviewer feedback: 7 adversarial-review agents — `systems-designer`, `harness-reviewer`, `code-reviewer`, `security-reviewer`, `ux-designer`, `claim-reviewer`, `plan-evidence-reviewer` — now emit per-gap six-field blocks with `Class:` + `Sweep query:` + `Required generalization:`; `rules/diagnosis.md` adds the "Fix the Class, Not the Instance" sub-rule consuming this contract)
 
 ## Strategy & Evolution
 
@@ -230,17 +230,36 @@ git push
 | Agent | Model | Purpose | Key constraint |
 |-------|-------|---------|----------------|
 | `task-verifier.md` | default | Verifies tasks are genuinely complete. **ONLY entity that can mark checkboxes in plan files.** Uses evidence-first protocol: writes evidence file with Runtime verification entries, then `plan-edit-validator.sh` authorizes the checkbox flip. Bans plain-text manual verification. | Has Edit access to plan files via evidence-first authorization |
-| `plan-evidence-reviewer.md` | default | Independent second opinion on evidence blocks. Verdicts: CONSISTENT/INCONSISTENT/INSUFFICIENT/STALE. Invoked by the builder after every 30-call tool-call-budget block. | Read-only |
+| `plan-evidence-reviewer.md` | default | Independent second opinion on evidence blocks. Verdicts: CONSISTENT/INCONSISTENT/INSUFFICIENT/STALE. Invoked by the builder after every 30-call tool-call-budget block. Emits class-aware feedback per the six-field contract (`Line(s):` / `Defect:` / `Class:` / `Sweep query:` / `Required fix:` / `Required generalization:`) for every issue surfaced. | Read-only |
 | `plan-phase-builder.md` **(2026-04-15)** | default | Builds a specific task or tightly-coupled cluster of tasks from an active plan end-to-end. Invoked by the orchestrator (main session) via the Task tool. Supports SERIAL and PARALLEL dispatch modes — PARALLEL builders run in isolated git worktrees to avoid commit races. The main session dispatches build work here instead of doing it directly, keeping the main context lean as an orchestrator. See `~/.claude/rules/orchestrator-pattern.md`. | Full `*` tool access; returns concise verdict under 500 tokens |
 
 ### Quality Gates
 | Agent | Model | Purpose |
 |-------|-------|---------|
-| `code-reviewer.md` | default | Reviews diffs for quality, correctness, user impact, conventions |
-| `security-reviewer.md` | default | Security-focused review: secrets, injection, auth, multi-tenant, rate limiting |
+| `code-reviewer.md` | default | Reviews diffs for quality, correctness, user impact, conventions. Emits class-aware feedback per the six-field contract (`Line(s):` / `Defect:` / `Class:` / `Sweep query:` / `Required fix:` / `Required generalization:`) per finding. |
+| `security-reviewer.md` | default | Security-focused review: secrets, injection, auth, multi-tenant, rate limiting. Emits class-aware feedback per the six-field contract per finding. |
 | `test-writer.md` | default | Generates tests for failure modes, not coverage numbers |
-| `harness-reviewer.md` | default | Adversarial review of harness rule/hook/agent changes. Default verdict is REJECT. Used before landing any `~/.claude/` modification. |
-| `claim-reviewer.md` **(Gen 4)** | default | Adversarial review of draft responses to product Q&A questions. Extracts feature claims and cross-checks against the codebase via `verify-feature` skill. **Self-invoked — residual gap** (Claude Code lacks a PostMessage hook). |
+| `harness-reviewer.md` | default | Adversarial review of harness rule/hook/agent changes. Default verdict is REJECT. Used before landing any `~/.claude/` modification. Emits class-aware feedback per the six-field contract per defect. |
+| `claim-reviewer.md` **(Gen 4)** | default | Adversarial review of draft responses to product Q&A questions. Extracts feature claims and cross-checks against the codebase via `verify-feature` skill. **Self-invoked — residual gap** (Claude Code lacks a PostMessage hook). Emits class-aware feedback per the six-field contract per FAIL reason. |
+
+#### Class-aware feedback contract (2026-04-24)
+
+All seven adversarial-review agents (`systems-designer`, `harness-reviewer`, `code-reviewer`, `security-reviewer`, `ux-designer`, `claim-reviewer`, `plan-evidence-reviewer`) share a common per-gap output contract. Every gap, defect, finding, or FAIL reason MUST be reported as a six-field block:
+
+```
+- Line(s): <location>
+  Defect: <what's wrong here>
+  Class: <one-phrase name for the defect class, or "instance-only">
+  Sweep query: <grep / structural search to find every sibling instance>
+  Required fix: <what to change AT this location>
+  Required generalization: <class-level discipline to apply across siblings>
+```
+
+The `Class:`, `Sweep query:`, and `Required generalization:` fields are the load-bearing additions. They name the defect *class* — not just the named instance — and give the consuming builder the sweep query upfront so the class is fixed in one pass instead of iterating 5+ times to surface siblings. The escape hatch `Class: instance-only` is allowed when the defect is genuinely unique, but defaults expect a class.
+
+`rules/diagnosis.md` consumes this contract via the "Fix the Class, Not the Instance" sub-rule (under "After Every Failure: Encode the Fix") which instructs the builder to read the `Class:` field, run the `Sweep query:`, fix every sibling in the same commit, and document the sweep with `Class-sweep: <pattern> — N matches, M fixed` in the commit message.
+
+This pattern is **prose-layer only** — it is not hook-enforced. A mechanical backstop (`class-sweep-attestation.sh` pre-commit hook that requires a `Class-sweep:` trailer when commits cite reviewer-finding IDs) is held in the backlog as a P1 reserved for the case where prose alone proves insufficient. Rationale: "prose as guidance, hooks as physics" — start with prose, add hook only if pattern persists.
 
 ### UX Testing (3 mandatory after substantial UI builds)
 All three are **audience-aware** — they read the target user from `.claude/audience.md` in the project root, or from the project's `CLAUDE.md`, or infer it from the code.
@@ -250,8 +269,8 @@ All three are **audience-aware** — they read the target user from `.claude/aud
 | `ux-end-user-tester.md` | Sonnet | Generic non-technical user walkthrough (any project) |
 | `domain-expert-tester.md` | Sonnet | Becomes the project's target persona as declared in `.claude/audience.md` and tests workflows from their perspective |
 | `audience-content-reviewer.md` | Sonnet | Reviews all user-facing text against the project's target audience for wrong-audience language, jargon, empty/placeholder content, and vendor names |
-| `ux-designer.md` | default | Pre-build UX review of plans for new UI surfaces |
-| `systems-designer.md` **(Gen 5)** | default | Pre-build systems-engineering review for plans with `Mode: design`. Reviews the 10-section Systems Engineering Analysis (outcome, trace, contracts, environment, auth, observability, FMEA, idempotency, capacity, runbook) for substance. Returns PASS/FAIL with specific gaps. MUST pass before implementation on design-mode plans |
+| `ux-designer.md` | default | Pre-build UX review of plans for new UI surfaces. Emits class-aware feedback per the six-field contract per gap. |
+| `systems-designer.md` **(Gen 5)** | default | Pre-build systems-engineering review for plans with `Mode: design`. Reviews the 10-section Systems Engineering Analysis (outcome, trace, contracts, environment, auth, observability, FMEA, idempotency, capacity, runbook) for substance. Returns PASS/FAIL with specific gaps. MUST pass before implementation on design-mode plans. Emits class-aware feedback per the six-field contract per gap. |
 
 **To define your project's audience:** create `.claude/audience.md` with a description of the persona, their vocabulary, what they care about, and what confuses them.
 

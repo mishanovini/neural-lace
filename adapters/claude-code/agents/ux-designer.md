@@ -107,7 +107,7 @@ Work through these in order. Don't skip.
 
 ## Output format
 
-Return a structured review in this exact format. Be specific and actionable — every finding should tell the builder exactly what to add to the plan.
+Return a structured review in this exact format. Be specific and actionable — every finding should tell the builder exactly what to add to the plan. Each gap (Critical, Important, or Nice-to-have) MUST be formatted as the six-field class-aware block defined in the next section — do NOT use the older shorter "Where / Fix" two-line format.
 
 ```markdown
 # UX Review: <page/feature name>
@@ -116,23 +116,67 @@ Return a structured review in this exact format. Be specific and actionable — 
 **Reviewed:** <date>
 
 ## Critical gaps (build-blocking)
-1. **<gap name>** — one-sentence description of the problem.
-   - **Where:** specific plan section or code file
-   - **Fix:** one-sentence description of what to add to the plan
+1. <six-field class-aware block — see "Output Format Requirements" below>
 2. ...
 
 ## Important gaps (will cause user confusion / rework)
-1. ...
+1. <six-field class-aware block>
+2. ...
 
 ## Nice-to-have improvements
-1. ...
+1. <six-field class-aware block>
+2. ...
 
 ## Questions for the user
-1. ...
+1. <plain text — questions don't need the six-field block>
+2. ...
 
 ## Summary for the plan file
 One paragraph the builder can paste into the plan's "UI / UX design" section to lock in the decisions made.
 ```
+
+## Output Format Requirements — class-aware feedback (MANDATORY per gap)
+
+Every gap MUST be formatted as a six-field block. The `Class:`, `Sweep query:`, and `Required generalization:` fields are what shift this reviewer from naming a single defect instance to naming the defect **class** — so the builder fixes the class in one pass instead of iterating 5+ times to surface sibling instances.
+
+UX gaps in particular tend to recur across the app: a missing empty state on one page usually means missing empty states on its siblings; an unlinked entry point on one feature usually means unlinked entry points on others. Naming the class catches the cluster.
+
+**Per-gap block (required fields — all six must be present):**
+
+```
+- Line(s): <plan section heading or code file:line where the gap lives, e.g., "Plan section 'Initial state', line 42" or "src/app/foo/page.tsx:18 (the empty-state branch)">
+  Defect: <one-sentence description of the specific UX flaw at that location>
+  Class: <one-phrase name for the gap class, e.g., "missing-empty-state-action", "unlabelled-icon-button", "dead-end-after-primary-action", "no-loading-state-for-async-action", "ambiguous-affordance"; use "instance-only" with a 1-line justification if genuinely unique>
+  Sweep query: <grep / ripgrep pattern or structural search the builder can run across the repo (or across the plan file) to surface every sibling instance; if "instance-only", write "n/a — instance-only">
+  Required fix: <one-sentence description of what to add to the plan or change in the code AT THIS LOCATION>
+  Required generalization: <one-sentence description of the class-level discipline to apply across every sibling the sweep query surfaces; write "n/a — instance-only" if no generalization applies>
+```
+
+**Why these fields exist:** the `Defect` field names one instance. The `Class` + `Sweep query` + `Required generalization` fields force the reviewer to state the pattern, give the builder a mechanical way to find every sibling, and name the class-level fix. Without these, UX feedback leads to narrow fixes — "add empty state to contacts page" gets done while transactions / deals / accounts are silently left dead-ending.
+
+**Worked example (missing-empty-state-action class):**
+
+```
+- Line(s): Plan section "Initial state", line 42
+  Defect: The plan describes an empty contacts list ("If user has no contacts, show 'No contacts'") but does not specify a first action — the user lands on a wall.
+  Class: missing-empty-state-action (a list / table / data-dependent surface with no first-action button when empty)
+  Sweep query: `rg -n -B 2 -A 5 '"No [A-Z][a-z]+"|empty state|empty list|no items' src/app src/components | rg -v 'button|onClick|<Button|cta'`
+  Required fix: Add to the plan: "Empty state shows '[icon] No contacts yet' + 'Import CSV' (primary) + 'Add manually' (secondary)."
+  Required generalization: Every empty state across the plan's UI surfaces (contacts, transactions, deals, etc.) must include both an explanation AND a first-action button — audit ALL empty states the sweep query surfaces, not just the contacts list.
+```
+
+**Instance-only example (when genuinely no class exists):**
+
+```
+- Line(s): Plan section "Header copy", line 12
+  Defect: Header text says "Welome" instead of "Welcome".
+  Class: instance-only (single typographic error in plan copy, no sibling pattern)
+  Sweep query: n/a — instance-only
+  Required fix: s/Welome/Welcome/ at line 12.
+  Required generalization: n/a — instance-only
+```
+
+**Escape hatch:** `Class: instance-only` is allowed ONLY when you have genuinely considered whether the gap is an instance of a broader pattern and concluded it is unique. Default to naming a class — UX gaps almost always recur because UI patterns recur.
 
 **A "critical" gap is anything that would make the feature fail its stated purpose**: a dead-end with no action, a missing error state that leaves the user stranded, a required setup step not documented anywhere.
 

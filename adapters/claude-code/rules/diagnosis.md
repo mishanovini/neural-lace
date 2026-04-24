@@ -36,6 +36,22 @@ Don't wait for the user to ask "how do we prevent this?" — that question is yo
 
 **Generalize at encoding time.** When writing a new rule, ask: "what's the general category of this failure?" Write the rule for the category, not just the specific instance. "Verify after syncing harness files" is a specific instance of "verify after any multi-step operation where you assume completeness." Encode the broader principle.
 
+**Fix the Class, Not the Instance.** When a reviewer (or any feedback source — adversarial agent, user correction, test failure, lint error) flags a defect at a specific location, the fix is not done until you have searched the entire artifact for sibling instances of the same defect class. Document the search in the fix commit (e.g., `Class-sweep: <grep pattern> — N matches, M fixed`). The named instance is one example of the class; the class is what gets fixed.
+
+This rule exists because adversarial reviewers and LLM builders interact in a narrow-fix-bias loop: the reviewer names a specific defect at file:line, the builder fixes that one instance, the reviewer's next pass surfaces a sibling instance of the same class, the builder fixes that one, the next pass surfaces another sibling, and so on. Each pass closes a real gap, but each pass also leaves siblings intact — review loops fail to converge in 5+ iterations when one class-sweep would have closed all instances in the first pass.
+
+**Procedure when feedback arrives:**
+
+1. **Read the feedback's `Class:` field** if the source provides one (the seven adversarial-review agents — `systems-designer`, `harness-reviewer`, `code-reviewer`, `security-reviewer`, `ux-designer`, `claim-reviewer`, `plan-evidence-reviewer` — emit class-aware feedback per their Output Format Requirements). If the feedback names a class explicitly, use it. If it doesn't, infer the class yourself before editing anything.
+2. **Run the `Sweep query:` field** if the source provides one. Otherwise, write your own grep / ripgrep / structural search that surfaces every sibling of the named instance across the artifact (the plan file, the source tree, the doc tree — whichever scope the class lives in).
+3. **Triage every match.** Each match is either (a) an actual sibling that needs the same fix, or (b) a false positive (the pattern matched but the context exempts it). Document the count: "N total matches, M needed fixing, N-M were exempt because <reason>."
+4. **Fix all M actual siblings in the same commit** as the named instance. If the fixes naturally split into multiple commits (e.g., siblings in different files belong to different conceptual changes), each commit's message must reference the class-sweep so the audit trail is intact.
+5. **Document the sweep in the fix commit message.** Format: `Class-sweep: <pattern> — N matches, M fixed, N-M exempt (<reason>)`. This makes the class-level discipline visible in git history and lets a reviewer's next pass confirm the sweep happened.
+
+**Why this is not optional:** "I fixed the named instance and the reviewer can flag siblings on the next pass" is the precise pattern this rule prevents. Sibling instances are the same defect by definition — the reviewer named one at random. The cost of one sweep is small; the cost of 5+ review iterations to surface siblings one at a time is large (and erodes user trust as the loop drags on).
+
+**Escape hatch:** if the reviewer's `Class:` field is `instance-only`, the defect is genuinely unique and no sweep is needed. Default assumption is that defects have siblings; treat `instance-only` as the rare case requiring justification, not the default.
+
 **Update the failure mode catalog.** Once the root cause is identified, open `docs/failure-modes.md` and either (a) extend an existing entry whose Symptom matches the phenotype you observed (add to its Example list, refine Detection or Prevention if the new instance reveals something new), or (b) append a new `FM-NNN` entry if the root cause is a new class. If you decide it is NOT a new class, briefly justify the decision in the diagnosis notes — do not skip the catalog step silently. The catalog is the durable, version-controlled record of every known failure class; a session that diagnoses a root cause and does not update the catalog has discovered something the next session will have to rediscover. The `harness-lesson` and `why-slipped` skills check the catalog first when proposing a new mechanism, so a missing entry weakens both skills' starting context.
 
 ## When the User Corrects You

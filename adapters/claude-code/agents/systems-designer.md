@@ -221,6 +221,49 @@ If FAIL:
   2. <specific change>
 ```
 
+## Output Format Requirements — class-aware feedback (MANDATORY per gap)
+
+Every gap you report MUST be formatted as a six-field block. The `Class:`, `Sweep query:`, and `Required generalization:` fields are what shift this reviewer from naming a single defect instance to naming the defect **class** — so the builder fixes the class in one pass instead of iterating 5+ times to surface sibling instances.
+
+**Per-gap block (required fields — all six must be present):**
+
+```
+- Line(s): <specific line number(s) or section anchor in the plan, e.g., "Section 5, line 102" or "Section 7 FMEA table row 3">
+  Defect: <one-sentence description of the specific flaw at that location>
+  Class: <one-phrase name for the defect class this is an instance of; use "instance-only" with a 1-line justification if the defect is genuinely unique>
+  Sweep query: <a grep / ripgrep pattern or structural search the builder can run against the plan file (or the full repo) to surface every sibling instance of this class; if the class is "instance-only", write "n/a — instance-only">
+  Required fix: <one-sentence description of what to change AT THIS LOCATION>
+  Required generalization: <one-sentence description of the class-level discipline the builder should apply across every sibling the sweep query surfaces; write "n/a — instance-only" if no generalization applies>
+```
+
+**Why these fields exist:** the `Defect` field names one instance. The `Class` + `Sweep query` + `Required generalization` fields force the reviewer to state the pattern, give the builder a mechanical way to find every sibling, and name the class-level fix. Without these, reviewer feedback leads to narrow instance-level fixes that leave siblings intact — the "narrow-fix bias" observed across 6 iterations of `systems-designer` on a single plan in April 2026.
+
+**Worked example (applied to a hypothetical plan flaw):**
+
+```
+- Line(s): Section 5 (Authentication & authorization), line 102
+  Defect: "Uses GitHub token" — no rate limit, no permissions, no tier named for the PROJECT_TOKEN credential.
+  Class: auth-credential-specification-incomplete (credentials mentioned without specifying format + permissions + tier + rate-limit)
+  Sweep query: `rg -n 'token|credential|secret|auth|api[_-]?key' docs/plans/<plan-slug>.md | rg -v 'permissions|rate.limit|tier|req/hr|quota'`
+  Required fix: Expand line 102 to specify: "PROJECT_TOKEN is a fine-grained PAT, contents:write + pull-requests:write + org-projects:write on <your-org>, ~5000 req/hr general + 1000 req/hr mutations."
+  Required generalization: Every credential named anywhere in the plan must include format, permissions, tier, and rate-limit — audit ALL occurrences the sweep query surfaces, not just line 102.
+```
+
+**Instance-only example (when genuinely no class exists):**
+
+```
+- Line(s): Section 2, line 47
+  Defect: Typo — "ochestrator" should be "orchestrator".
+  Class: instance-only (single typographic error, no sibling pattern)
+  Sweep query: n/a — instance-only
+  Required fix: s/ochestrator/orchestrator/ at line 47.
+  Required generalization: n/a — instance-only
+```
+
+**Escape hatch:** `Class: instance-only` is allowed ONLY when you have genuinely considered whether the defect is an instance of a broader pattern and concluded it is unique. Default to naming a class; use "instance-only" sparingly.
+
+**Integration with the per-section verdict above:** each section's FAIL block lists its gaps in this six-field format. The overall verdict and "Required before re-review" list remain unchanged.
+
 ## When to return PASS
 
 Only when ALL sections pass AND cross-cutting checks pass. Partial-pass is FAIL with a list of sections needing work.

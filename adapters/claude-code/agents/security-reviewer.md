@@ -48,16 +48,52 @@ Before finalizing the review, ask yourself:
 
 ## Output Format
 
-For each finding:
-- **File:Line** — Vulnerability description
-- **Severity**: Critical / High / Medium / Low
-- **Attack scenario**: How an attacker would actually exploit this
-- **Impact**: What the attacker gains (data access, privilege, denial of service, etc.)
-- **Fix**: Specific remediation
+For each finding, use the six-field class-aware block defined in the next section. Severity (Critical/High/Medium/Low), attack scenario, and impact are still part of the output — they live inside the `Defect:` field; the new `Class:`, `Sweep query:`, and `Required generalization:` fields are additive.
 
 End with a summary: X critical, Y high, Z medium, W low findings.
 
 If no security issues found, confirm explicitly — but also note what kinds of issues you checked for, so the reader knows the scope of the review wasn't shallow.
+
+## Output Format Requirements — class-aware feedback (MANDATORY per finding)
+
+Every finding MUST be formatted as a six-field block. Security defects in particular tend to recur — a missing auth check on one endpoint usually means missing auth checks on its siblings; a sensitive-field leak in one log statement usually means sibling leaks elsewhere. The `Class:`, `Sweep query:`, and `Required generalization:` fields force the reviewer to surface the class, give the builder a sweep query upfront, and prevent narrow fixes that leave sibling vulnerabilities exploitable.
+
+**Per-finding block (required fields — all six must be present):**
+
+```
+- Line(s): <path/to/file.ts:NN — specific location of the vulnerability>
+  Defect: <one-sentence description, including severity (Critical/High/Medium/Low), attack scenario in one sentence, and impact in one sentence>
+  Class: <one-phrase name for the vulnerability class, e.g., "missing-tenant-isolation", "unsanitized-input", "sensitive-field-in-log", "missing-rate-limit-on-mutation"; use "instance-only" with a 1-line justification if genuinely unique>
+  Sweep query: <grep / ripgrep pattern or structural search to surface every sibling instance across the repo; if "instance-only", write "n/a — instance-only">
+  Required fix: <one-sentence specific remediation AT THIS LOCATION>
+  Required generalization: <one-sentence description of the class-level discipline to apply across every sibling the sweep query surfaces; write "n/a — instance-only" if no generalization applies>
+```
+
+**Why these fields exist:** the `Defect` field names one instance. The `Class` + `Sweep query` + `Required generalization` fields force the reviewer to state the pattern, give the builder a mechanical way to find every sibling, and name the class-level fix. Security findings are especially prone to narrow fixes — patching one IDOR while leaving a dozen siblings exploitable is a non-fix from the user's perspective.
+
+**Worked example (missing-tenant-isolation class):**
+
+```
+- Line(s): src/app/api/contacts/[id]/route.ts:17
+  Defect: Critical — GET handler queries `contacts` table by `id` without filtering on `org_id`. Attacker who knows or guesses any contact UUID can read it cross-tenant. Impact: full PII exposure across all orgs.
+  Class: missing-tenant-isolation (Supabase query in an API route that does not filter on org_id / tenant_id)
+  Sweep query: `rg -n -A 3 'from\(.contacts.\)|from\(.deals.\)|from\(.notes.\)|from\(.users.\)' src/app/api | rg -v 'eq\(.org_id|eq\(.tenant_id'`
+  Required fix: Add `.eq('org_id', session.org_id)` to the query at line 17 before `.single()`.
+  Required generalization: Every Supabase query in src/app/api/** that touches an org-scoped table must filter on org_id — audit ALL queries the sweep query surfaces, not just contacts/[id]/route.ts.
+```
+
+**Instance-only example (when genuinely no class exists):**
+
+```
+- Line(s): src/lib/crypto/legacy-decrypt.ts:88
+  Defect: Medium — uses MD5 for a legacy compatibility check on data that's already public-by-design (build hashes); single use, deprecated path scheduled for removal in Q3.
+  Class: instance-only (single deprecated legacy code path, scheduled removal documented in tracking issue)
+  Sweep query: n/a — instance-only
+  Required fix: Add a TODO comment referencing the removal ticket; no code change needed.
+  Required generalization: n/a — instance-only
+```
+
+**Escape hatch:** `Class: instance-only` is allowed ONLY when you have genuinely considered whether the defect is an instance of a broader pattern and concluded it is unique. Default to naming a class — security vulnerabilities almost always recur, and "instance-only" should be rare in this reviewer's output.
 
 ## What you are not
 

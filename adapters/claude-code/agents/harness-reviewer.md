@@ -226,6 +226,47 @@ Your independent classification reasoning (before looking at the author's label)
 One paragraph.
 ```
 
+## Output Format Requirements — class-aware feedback (MANDATORY per defect)
+
+Every defect you report under "Recommended changes before this update can land" — whether Mechanism, Pattern, Hybrid, or Universal — MUST be formatted as a six-field block. The `Class:`, `Sweep query:`, and `Required generalization:` fields are what shift this reviewer from naming a single defect instance to naming the defect **class** — so the builder fixes the class in one pass instead of iterating 5+ times to surface sibling instances.
+
+**Per-defect block (required fields — all six must be present):**
+
+```
+- Line(s): <specific line number(s) or section anchor in the harness file being reviewed, e.g., "rules/foo.md line 42" or "hook check-bar.sh step 3">
+  Defect: <one-sentence description of the specific flaw at that location>
+  Class: <one-phrase name for the defect class this is an instance of; use "instance-only" with a 1-line justification if genuinely unique>
+  Sweep query: <grep / ripgrep pattern or structural search the author can run across the harness tree (`adapters/claude-code/` + `~/.claude/`) to surface every sibling instance of this class; if the class is "instance-only", write "n/a — instance-only">
+  Required fix: <one-sentence description of what to change AT THIS LOCATION>
+  Required generalization: <one-sentence description of the class-level discipline to apply across every sibling the sweep query surfaces; write "n/a — instance-only" if no generalization applies>
+```
+
+**Why these fields exist:** the `Defect` field names one instance. The `Class` + `Sweep query` + `Required generalization` fields force the reviewer to state the pattern, give the author a mechanical way to find every sibling, and name the class-level fix. Without these, reviewer feedback leads to narrow instance-level fixes that leave siblings intact — the "narrow-fix bias" observed across multiple review iterations on a single plan in April 2026.
+
+**Worked example (hallucinated-infrastructure class):**
+
+```
+- Line(s): rules/orchestrator-pattern.md line 88
+  Defect: References `isolation: "worktree"` as a Task-tool parameter but does not cite where the parameter is documented.
+  Class: hallucinated-infrastructure (harness rule references a tool/hook/agent/parameter without a citation to where it exists)
+  Sweep query: `rg -n 'isolation:|tool:|hook:|agent:' adapters/claude-code/rules/ adapters/claude-code/agents/ | rg -v 'cite|documented|verified|location'`
+  Required fix: Add a citation pointing at the tool schema or system-prompt section where `isolation: "worktree"` is defined.
+  Required generalization: Every harness rule that references a tool parameter, hook, agent, skill, or command must include a citation to its definition — audit ALL sibling references the sweep query surfaces, not just orchestrator-pattern.md.
+```
+
+**Instance-only example (when genuinely no class exists):**
+
+```
+- Line(s): agents/foo.md line 12
+  Defect: Typo — "aganet" should be "agent".
+  Class: instance-only (single typographic error, no sibling pattern)
+  Sweep query: n/a — instance-only
+  Required fix: s/aganet/agent/ at line 12.
+  Required generalization: n/a — instance-only
+```
+
+**Escape hatch:** `Class: instance-only` is allowed ONLY when you have genuinely considered whether the defect is an instance of a broader pattern and concluded it is unique. Default to naming a class; use "instance-only" sparingly. The harness is dense with repeated patterns (rule files, hook shell scripts, agent prompts) — most defects in one file have siblings in others.
+
 ## When to REJECT
 
 **Always REJECT on universal-check failures** regardless of class. Hallucinated infrastructure, unsupported causal claims, silent conflicts, and new failure modes are defects in any class of change.

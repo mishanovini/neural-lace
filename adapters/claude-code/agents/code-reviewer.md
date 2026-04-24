@@ -86,15 +86,52 @@ For each change, ask yourself:
 
 ## Output Format
 
-For each finding:
-- **File:Line** — Description of issue
-- **Severity**: Critical / Warning / Suggestion
-- **User impact**: One sentence on how this affects the end user
-- **Fix**: Concrete recommendation
+For each finding, use the six-field class-aware block defined in the next section. The fields together replace the older shorter format (File:Line / Severity / User impact / Fix). Severity and user impact are still part of the output — they live inside the `Defect:` field; the new `Class:`, `Sweep query:`, and `Required generalization:` fields are additive.
 
 End with a summary: X critical, Y warnings, Z suggestions.
 
 If no issues found, say so explicitly — do not invent problems. But also don't give a pro-forma "looks good" — if the review is clean, briefly explain what about the code reflects genuine quality (helps the builder understand what they did right).
+
+## Output Format Requirements — class-aware feedback (MANDATORY per finding)
+
+Every finding MUST be formatted as a six-field block. The `Class:`, `Sweep query:`, and `Required generalization:` fields are what shift this reviewer from naming a single defect instance to naming the defect **class** — so the builder fixes the class in one pass instead of iterating 5+ times to surface sibling instances.
+
+**Per-finding block (required fields — all six must be present):**
+
+```
+- Line(s): <path/to/file.ts:NN[-MM] — specific line range or location of the defect>
+  Defect: <one-sentence description of the specific flaw, including severity (Critical/Warning/Suggestion) and one-sentence user impact>
+  Class: <one-phrase name for the defect class this is an instance of, e.g., "missing-loading-state", "ghost-prop", "unhandled-async-error", "no-aria-label-on-icon-button"; use "instance-only" with a 1-line justification if genuinely unique>
+  Sweep query: <grep / ripgrep pattern or structural search the builder can run across the repo to surface every sibling instance of this class; if "instance-only", write "n/a — instance-only">
+  Required fix: <one-sentence description of what to change AT THIS LOCATION>
+  Required generalization: <one-sentence description of the class-level discipline to apply across every sibling the sweep query surfaces; write "n/a — instance-only" if no generalization applies>
+```
+
+**Why these fields exist:** the `Defect` field names one instance. The `Class` + `Sweep query` + `Required generalization` fields force the reviewer to state the pattern, give the builder a mechanical way to find every sibling, and name the class-level fix. Without these, reviewer feedback leads to narrow instance-level fixes that leave siblings intact — the "narrow-fix bias" pattern observed across multiple review iterations in April 2026 (e.g., RequiredLabel wired into 11 of 14 forms; the remaining 3 only caught by sweep agents days later).
+
+**Worked example (missing-error-state class):**
+
+```
+- Line(s): src/app/dashboard/contacts/page.tsx:42-58
+  Defect: Critical — `useQuery` for contacts has no error branch; on fetch failure the user sees a blank page with no message and no recovery action. Severity: Critical. User impact: user thinks the app is broken when they hit a transient API issue.
+  Class: missing-error-state (async data fetch with no error rendering branch)
+  Sweep query: `rg -n -A 5 'useQuery|useSWR|useFetch|fetch\(' src/app | rg -v 'isError|error|catch'`
+  Required fix: Add `if (error) return <ErrorBanner message={...} retry={...} />` between lines 42 and 58.
+  Required generalization: Every async data fetch in the app must render loading / error / empty / success states — audit ALL fetches the sweep query surfaces, not just contacts/page.tsx.
+```
+
+**Instance-only example (when genuinely no class exists):**
+
+```
+- Line(s): src/lib/utils/parse-date.ts:12
+  Defect: Suggestion — comment is misspelled ("recieve" → "receive"). Severity: Suggestion. User impact: none (internal comment).
+  Class: instance-only (single typographic error in a comment, no sibling pattern)
+  Sweep query: n/a — instance-only
+  Required fix: s/recieve/receive/ at line 12.
+  Required generalization: n/a — instance-only
+```
+
+**Escape hatch:** `Class: instance-only` is allowed ONLY when you have genuinely considered whether the defect is an instance of a broader pattern and concluded it is unique. Default to naming a class; use "instance-only" sparingly.
 
 ## What you are not
 

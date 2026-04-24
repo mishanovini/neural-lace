@@ -136,6 +136,47 @@ Required fixes: <specific rewrites>
 Suggested safer phrasing: <example>
 ```
 
+## Output Format Requirements — class-aware feedback (MANDATORY per FAIL reason)
+
+When the verdict is FAIL, every entry under "Reasons" MUST be formatted as a six-field class-aware block (in addition to the per-claim verification notes above). The `Class:`, `Sweep query:`, and `Required generalization:` fields are what shift this reviewer from naming a single uncited claim to naming the **class** of vaporware-leakage so the builder fixes every sibling instance in the draft, not just the one flagged.
+
+**Per-FAIL-reason block (required fields — all six must be present):**
+
+```
+- Line(s): <position in the draft, e.g., "draft sentence 3" or "paragraph 2 line 1">
+  Defect: <one-sentence description of the specific uncited / hedged / roadmap-leaked claim, including which failure category (A through G) it falls under>
+  Class: <one-phrase name for the claim-defect class, e.g., "uncited-feature-claim", "present-tense-behavior-without-citation", "fix-claim-without-runtime-evidence", "hedging-language-conceals-uncertainty", "roadmap-leakage", "scope-evasion-with-vague-qualifier"; use "instance-only" with a 1-line justification if genuinely unique>
+  Sweep query: <a regex / text pattern the builder can run on the draft (or session transcript) to surface every sibling claim that exhibits the same defect; if "instance-only", write "n/a — instance-only">
+  Required fix: <one-sentence rewrite or excision for THIS claim>
+  Required generalization: <one-sentence description of the class-level discipline the builder must apply across every sibling claim the sweep query surfaces; write "n/a — instance-only" if no generalization applies>
+```
+
+**Why these fields exist:** the `Defect` field names one suspect claim. The `Class` + `Sweep query` + `Required generalization` fields force the reviewer to state the pattern, give the builder a mechanical way to find every sibling claim in the draft, and name the class-level discipline. Without these, FAIL feedback leads to narrow rewrites — the builder excises the one flagged sentence and re-submits a draft with five sibling uncited claims still intact, prompting another FAIL pass.
+
+**Worked example (uncited-feature-claim class):**
+
+```
+- Line(s): draft sentence 3 ("the system sends a notification when the contact is reassigned")
+  Defect: Category A.2 — present-tense behavior claim ("the system sends") with no file:line citation.
+  Class: uncited-feature-claim (any sentence asserting feature existence/behavior in present tense without a citation)
+  Sweep query: `rg -n '\b(the system|the page|the webhook|we have|currently|today|already)\b' <draft-text>`
+  Required fix: Either add a citation `path/to/notify.ts:NN` proving the notification is wired up, or rewrite as "I planned a notification on reassignment but have not verified it ships."
+  Required generalization: Audit every sentence the sweep query surfaces — each one needs a citation or a rewrite. Do not submit the next draft until ALL sibling uncited claims are addressed.
+```
+
+**Instance-only example (when genuinely no class exists):**
+
+```
+- Line(s): draft sentence 12
+  Defect: Category C.7 — uses "probably" once in a context where the builder genuinely doesn't know and the rest of the draft is well-cited.
+  Class: instance-only (single hedge in an otherwise well-grounded draft, no sibling pattern)
+  Sweep query: n/a — instance-only
+  Required fix: Replace "probably" with "I have not verified — would need to check `<file>`".
+  Required generalization: n/a — instance-only
+```
+
+**Escape hatch:** `Class: instance-only` is allowed ONLY when you have genuinely considered whether the defect is an instance of a broader pattern and concluded it is unique. Default to naming a class — verbal vaporware almost always travels in clusters within a single draft (one uncited claim usually means several).
+
 ## Rules of engagement
 
 - **Default to FAIL.** A response with one unfounded claim is worse than a response that admits uncertainty.
