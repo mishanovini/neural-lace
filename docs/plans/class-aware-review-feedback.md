@@ -118,3 +118,39 @@ Mod 2 (pre-commit class-sweep attestation hook) is explicitly OUT of scope and r
 - [ ] SCRATCHPAD.md updated with completion state
 - [ ] Completion report appended to this plan file per `templates/completion-report.md`, including the Backlog items shipped subsection (Mods 1+3 status)
 - [ ] No decision records required — this is Mode: code; all decisions are Tier 1 (reversible prompt edits)
+
+## Completion Report
+
+### 1. Implementation Summary
+
+All 10 tasks shipped across 2 commits on `feat/class-aware-review-feedback`:
+
+- **A.1-A.7** (commit `167a188`): All 7 adversarial-review agents — `systems-designer`, `harness-reviewer`, `code-reviewer`, `security-reviewer`, `ux-designer`, `claim-reviewer`, `plan-evidence-reviewer` — now require a six-field block per identified gap: `Line(s)`, `Defect`, `Class`, `Sweep query`, `Required fix`, `Required generalization`. Each agent has a domain-specific worked example (systems-designer uses an analysis-section gap; code-reviewer uses a missing-auth-check pattern; etc.). Mirrored byte-identical between `adapters/claude-code/agents/` and `~/.claude/agents/`.
+- **A.8** (commit `167a188`): `rules/diagnosis.md` has new "Fix the Class, Not the Instance" sub-rule under "After Every Failure: Encode the Fix." Consumes the new agent output format: when a reviewer flags a defect, the fix is not done until a class-sweep confirms no siblings remain. Documented in the fix commit via `Class-sweep: <pattern> — N matches, M fixed`.
+- **A.9** (commit `167a188`): `docs/harness-architecture.md` notes the class-aware feedback contract in the agents inventory.
+- **A.10** (commit `c110502`): Smoke-test fixture with 4 instances of an obvious defect class (deliberately missing auth checks), plus a sweep-query verification (grep finds all 9 matches). Live agent invocation deferred to next session (agent modifications activate at session start — backlog P2 dynamic-load gap).
+
+Backlog absorbed: "Class-aware reviewer feedback (narrow-fix bias mitigation)" — Mods 1 and 3 shipped by this plan. Mod 2 (pre-commit class-sweep attestation hook) remains in backlog as a standalone P1 entry pending evidence that Mods 1+3 alone don't fully close the narrow-fix-bias pattern.
+
+### 2. Design Decisions & Plan Deviations
+
+No new Tier 2+ decisions. One scope-path correction during build: the plan body referenced `adapters/claude-code/docs/harness-architecture.md` but the canonical path is `docs/harness-architecture.md` (neural-lace's docs live at repo root, not under the adapter). Edit applied to the actual canonical file.
+
+### 3. Known Issues & Gotchas
+
+- **Agent modifications activate at session start** (P2 backlog) — the class-aware feedback format doesn't take effect in this session. The next adversarial-review invocation (Plan #6's `systems-designer` review in Batch 3) will be the real-world test of whether the format is being followed. If the agent output in Plan #6's review doesn't include the six-field block, Mod 1 needs a tightening pass.
+- **Pre-existing harness-mirror drift** (P2 backlog) — 25 files DIFFER, 4 MISSING between `~/.claude/` and `adapters/claude-code/`. Not addressed by this plan; the 7 modified agents in this plan are now back in sync, but the broader drift remains.
+
+### 4. Manual Steps Required
+
+None for activation (session-start handles it). Recommended: after the next session starts, verify one reviewer invocation emits the six-field output. If not, file a Mod 1 tightening task.
+
+### 5. Testing Performed & Recommended
+
+Performed: smoke-test fixture created with 4 defect-class instances; grep-based sweep query produces expected 9-match result; evidence documented. Live agent invocation skipped due to dynamic-load gap.
+
+Recommended for next session: invoke `systems-designer` (or any modified reviewer) on a real plan review. Assert the output includes `Class:` + `Sweep query:` + `Required generalization:` fields for each gap. If it does, Mod 1 is confirmed live. If it doesn't, the prompt needs strengthening ("MUST include" vs "should include" + more emphatic format enforcement).
+
+### 6. Cost Estimates
+
+Zero ongoing cost. Agents now emit slightly more content per gap (~50-100 chars per gap for the three new fields) — negligible context impact.
