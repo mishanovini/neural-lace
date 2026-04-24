@@ -30,6 +30,17 @@ Prioritized order of leverage. Full reasoning in `docs/claude-code-quality-strat
 
 Build a tool that runs synthetic Claude Code sessions against known-bad scenarios and measures whether hooks catch them (unauthorized checkbox flip, mocked integration test, uncited feature claim, budget exhaustion without audit). Runs on demand or weekly via `/schedule`. Produces a report showing which enforcement mechanisms have regressed. This catches silent enforcement regressions — currently invisible.
 
+### P2 — Claude Code doesn't dynamically load new agents added mid-session
+
+Surfaced 2026-04-23. The `plan-phase-builder` agent file exists at both `~/.claude/agents/plan-phase-builder.md` and `adapters/claude-code/agents/plan-phase-builder.md`, but a session that started before the file was added returns "Agent type 'plan-phase-builder' not found" when invoked via the Task tool. Workaround: use `general-purpose` agent with orchestrator-pattern discipline inlined in the prompt.
+
+Mitigation candidates:
+- (a) Document the limitation in `harness-maintenance.md` so future Claude sessions know to restart after adding new agents.
+- (b) SessionStart hook that re-scans `~/.claude/agents/` and writes a "missing agents" warning if any expected agent isn't loaded — surface staleness without forcing a restart.
+- (c) Investigate whether Claude Code has an agent-reload command; if so, document it.
+
+Low priority because the workaround (general-purpose dispatch with inlined discipline) is functional and the issue resolves on next session start.
+
 ### P0 — Class-aware reviewer feedback (narrow-fix bias mitigation)
 
 Surfaced 2026-04-23 across 5 systems-designer iterations on the capture-codify-pr-template plan. Pattern: adversarial reviewers identify named instances; LLM builders fix the named instances; sibling instances of the same defect class slip; next pass surfaces a sibling; loop. Each pass closes real gaps but each fix introduces narrower follow-ons. Affects every adversarial-review loop in the harness, not just plan reviews.
