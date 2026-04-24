@@ -4,6 +4,8 @@
 
 > **Scope.** Failure CLASSES, not individual incidents. Each entry generalizes from one or more concrete observations. Sanitized — no codenames, no personal identifiers, no real incident dates tied to a specific product.
 
+> **Catalog plan.** This file is the artifact produced by the `failure-mode-catalog` plan (see `docs/plans/archive/failure-mode-catalog.md`). The companion `capture-codify-pr-template` plan wires this catalog into PR-time mechanism analysis — every PR's mechanism field references entries here by `FM-NNN` ID under answer form (a), or proposes new entries here under answer form (b).
+
 ## Schema
 
 Every entry uses the same six fields:

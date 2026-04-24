@@ -397,6 +397,62 @@ else
 fi
 
 # ==========================================================================
+# Check 9: Capture-codify operational measurement
+# ==========================================================================
+# Two queries from `docs/plans/capture-codify-pr-template.md` Section 6:
+#   (a) compliance % — fraction of merged PRs in the last 30 days whose body
+#       contains the mechanism section heading. Indicator of whether the
+#       capture-codify discipline is being followed.
+#   (b) catalog growth — number of commits to docs/failure-modes.md in the
+#       last 30 days. Indicator of whether new entries are being captured.
+#
+# Both are informational. The skill records numbers but does NOT FAIL the
+# check on low values — interpretation requires context (e.g., a quiet week
+# may legitimately have 0 catalog commits). Reviewers read the numbers and
+# decide whether they signal drift.
+capture_codify_findings=()
+
+# (a) compliance %
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  THIRTY_DAYS_AGO=$(date -d '30 days ago' +%Y-%m-%d 2>/dev/null \
+                    || date -v-30d +%Y-%m-%d 2>/dev/null \
+                    || echo "")
+  if [[ -n "$THIRTY_DAYS_AGO" ]]; then
+    # Limit to 200 PRs as a sanity cap; adjust if a high-traffic repo overruns.
+    pr_total=$(gh pr list --state merged --limit 200 \
+                 --search "merged:>$THIRTY_DAYS_AGO" \
+                 --json number 2>/dev/null \
+                 | jq 'length' 2>/dev/null || echo 0)
+    pr_with_mech=$(gh pr list --state merged --limit 200 \
+                     --search "merged:>$THIRTY_DAYS_AGO" \
+                     --json body 2>/dev/null \
+                     | jq '[.[] | select(.body | contains("## What mechanism would have caught this?"))] | length' 2>/dev/null \
+                     || echo 0)
+    if [[ "$pr_total" -gt 0 ]]; then
+      pct=$(( pr_with_mech * 100 / pr_total ))
+      capture_codify_findings+=("Compliance: ${pr_with_mech}/${pr_total} merged PRs (${pct}%) include the mechanism section in the last 30 days")
+    else
+      capture_codify_findings+=("Compliance: 0 merged PRs in the last 30 days — nothing to measure")
+    fi
+  else
+    capture_codify_findings+=("Compliance: skipped — could not compute date 30 days ago (date command flavor mismatch)")
+  fi
+else
+  capture_codify_findings+=("Compliance: skipped — gh CLI not installed or not authenticated")
+fi
+
+# (b) catalog growth
+if [[ -f "$REPO_ROOT/docs/failure-modes.md" ]]; then
+  catalog_commits=$(cd "$REPO_ROOT" && git log --oneline --since='30 days ago' -- docs/failure-modes.md 2>/dev/null | wc -l | tr -d ' ')
+  capture_codify_findings+=("Catalog growth: ${catalog_commits} commit(s) to docs/failure-modes.md in the last 30 days")
+else
+  capture_codify_findings+=("Catalog growth: skipped — docs/failure-modes.md not present in this repo")
+fi
+
+# Always PASS — these are informational. Reviewers interpret context.
+write_section "9. Capture-codify operational measurement" "PASS" "${capture_codify_findings[@]}"
+
+# ==========================================================================
 # Summary
 # ==========================================================================
 {

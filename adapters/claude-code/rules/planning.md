@@ -368,6 +368,24 @@ Writing a `Decision:` entry in a plan file's Decisions Log is **not sufficient**
 
 **Why this is strict:** decision records are how future sessions (and future humans) understand *why* the codebase looks the way it does. A short entry in a plan file disappears from context once the plan is completed and archived. A decision record lives forever in `docs/decisions/` as a permanent artifact. Without this, every future session has to re-derive the reasoning from git history and code reading, and often gets it wrong.
 
+## Capture-codify at PR time
+
+Every PR opened against a harness-equipped repo MUST answer the question **"What mechanism would have caught this?"** in its description. This is the structural enforcement of the diagnosis-rule discipline ("After Every Failure: Encode the Fix") — the verbal version is forgotten under time pressure, skipped on small bug-fix PRs, and invisible to reviewers. The PR-template requirement makes the capture-codify analysis happen at the moment of fix shipping, not "when I remember to come back to it later."
+
+**Three answer forms are accepted** (one per PR; pick the first that fits):
+
+- **a) Existing catalog entry.** Cite the `FM-NNN` ID from `docs/failure-modes.md` that names this failure class. Add a one-sentence note explaining how the entry maps to this specific bug. Use this when the failure is already a known class — extend the catalog's `Example` list in the same PR rather than create a new entry.
+- **b) New catalog entry proposed.** When this is a previously-unobserved failure class, propose a new `FM-NNN` entry in `docs/failure-modes.md` (in the same PR) using the six-field schema (ID, Symptom, Root cause, Detection, Prevention, Example). Reference the new entry's ID from the PR body.
+- **c) No mechanism — accepted residual risk.** Use sparingly, only when no realistic mechanism would catch the class without unacceptable false positives (typo fixes in prose, one-off cleanups, rollbacks where the analysis belongs on the rolled-back PR). Requires ≥40 chars of substantive rationale explaining *why* mechanization is not worth it for this class.
+
+**The template lives at** `.github/PULL_REQUEST_TEMPLATE.md` in the neural-lace repo (and downstream repos that have run the rollout script). When you open a PR via `gh pr create` or the GitHub UI, the body is auto-populated with the four required sections (Summary, What changed and why, **What mechanism would have caught this?**, Testing performed). Replace the bracketed placeholder text in the section corresponding to your chosen answer form. The other answer-form sub-headings can stay as placeholders (they document the option set).
+
+**Local pre-push convention.** If your repo has installed the local pre-push hook (`pre-push-pr-template.sh`), the validator runs against either a `.pr-description.md` file in the repo root (preferred — write your PR body locally before push, then `gh pr create --body-file .pr-description.md` to upload), or against the latest commit message body. WIP branches matching `wip-*` or containing `scratch` are auto-skipped; bypass with `git push --no-verify` for non-PR pushes.
+
+**Enforcement (CI-side):** the `.github/workflows/pr-template-check.yml` workflow runs on `pull_request` events (`opened`, `edited`, `synchronize`, `reopened`) and emits a check named `PR Template Check / validate`. The check fails if the mechanism section is missing, still contains placeholder text, has no answer form selected, or selects (c) with under 40 chars of rationale. Branch protection is configured to require this check before merge to master, so the field cannot be skipped.
+
+**Validator library:** the regex patterns and canonical stderr messages live at `.github/scripts/validate-pr-template.sh` (sourced by both the workflow and the local hook) so CI and local feedback are byte-for-byte identical.
+
 ## Session Retrospective
 
 At the end of a significant session (before the user runs `/clear` or the session ends naturally), review the conversation for improvement signals:

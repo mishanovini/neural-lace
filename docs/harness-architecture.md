@@ -437,6 +437,19 @@ Pattern sources merged at push time:
 - `~/.claude/sensitive-patterns.local` — personal patterns
 - `~/.claude/business-patterns.paths` → resolves to team `security-docs/business-patterns.txt`
 
+## Capture-Codify PR Template (2026-04-23)
+
+Structural enforcement of the capture-codify cycle (every failure is a harness opportunity — encode the prevention) at PR-merge time. Every PR must answer "what mechanism would have caught this?" via one of three answer forms (existing catalog entry, new entry proposed, accepted residual risk with rationale). CI blocks the PR if the field is missing or trivially filled. Implements the discipline previously documented only in `rules/diagnosis.md` "After Every Failure: Encode the Fix."
+
+| Artifact | Path | Purpose |
+|----------|------|---------|
+| PR template | `.github/PULL_REQUEST_TEMPLATE.md` | Auto-populates the PR body on `gh pr create` / GitHub UI with four required sections (Summary, What changed and why, **What mechanism would have caught this?**, Testing performed). The mechanism section has three answer-form sub-headings (`### a) Existing catalog entry`, `### b) New catalog entry proposed`, `### c) No mechanism — accepted residual risk`). Bracketed placeholder text uses `<mechanism answer — replace this bracketed text>` so the validator can detect un-filled submissions. |
+| CI workflow | `.github/workflows/pr-template-check.yml` | Workflow `name: PR Template Check`, single job ID `validate`. Triggers on `pull_request` events `[opened, edited, synchronize, reopened]`. Declares `permissions: {}` (reads `${{ github.event.pull_request.body }}` from event context, no API calls). Sources the validator library and emits the auto-check `PR Template Check / validate`. Required by branch protection on master so the field cannot be skipped. |
+| Local pre-push hook | `adapters/claude-code/git-hooks/pre-push-pr-template.sh` | Opt-in per-repo hook (installed by the rollout script, not globally). Reads `.pr-description.md` if present (preferred — write PR body locally, then `gh pr create --body-file .pr-description.md`), otherwise `git log -1 --format=%B`. Auto-skips WIP branches (`wip-*`, `*scratch*`). Same canonical stderr messages as CI (sourced from the shared validator library). |
+| Validator library | `.github/scripts/validate-pr-template.sh` | Bash 3.2+ shared library defining `find_section_heading()`, `extract_section_content()`, `detect_placeholder()`, `detect_answer_form()`, `validate_rationale_length()`, `emit_failure_message()`. Sourced by both the workflow's `run:` step (after `actions/checkout@v4`) and the local pre-push hook. Single source of truth for regex patterns + canonical messages — eliminates CI/local drift. Has `--self-test` flag exercising 6 cases. Lives at `.github/scripts/` (not under `adapters/claude-code/`) per Decision 7 of the capture-codify-pr-template plan, so the rollout script trivially copies `.github/` to downstream repos with no path rewriting. |
+
+The convention is documented in `rules/planning.md` "Capture-codify at PR time" section. The companion `docs/failure-modes.md` catalog (FM-NNN entries) is referenced by answer form (a). See plan `docs/plans/archive/capture-codify-pr-template.md` (or active path during build) for the full systems-engineering analysis.
+
 ## Plugin System
 
 6 plugins enabled in settings.json:
