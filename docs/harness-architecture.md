@@ -1,5 +1,5 @@
 # Claude Code Harness — Architecture Overview
-Last updated: 2026-04-22 (quick-win automation: effort policy, verbose plans, meta-skills)
+Last updated: 2026-04-23 (plan file lifecycle: commit-on-creation warning, auto-archival on terminal status, archive-aware lookup)
 
 ## Strategy & Evolution
 
@@ -25,11 +25,11 @@ Both are reviewed by the `harness-reviewer` agent, which classifies changes firs
 | `outcome-evidence-gate.sh` **(Gen 5)** | Fix tasks (matching fix/bug/broken/etc.) require before/after reproduction evidence — same runtime verification command showing FAIL pre-fix and PASS post-fix. Escape hatch for cases where automated before-state can't be captured: a "Reproduction recipe" block documenting manual repro | Mechanical (PreToolUse) |
 | `systems-design-gate.sh` **(Gen 5)** | Edits to design-mode files (CI/CD workflows, migrations, vercel.json, Dockerfile, etc.) require an active plan with `Mode: design` in `docs/plans/`. Escape hatch: `Mode: design-skip` for trivial edits (version bumps, typos) with a short written justification. Forces systems-engineering thinking before implementation | Mechanical (PreToolUse) |
 | `runtime-verification-executor.sh` | "Runtime verification:" lines must parse as `test`/`playwright`/`curl`/`sql`/`file` and actually execute; `test`/`playwright` entries reject files containing unannotated runtime-conditional skips (silent-skip vaporware guard, 2026-04-15) | Mechanical (Stop hook) |
-| `runtime-verification-reviewer.sh` | Verification commands must correspond to modified files (curl URL, sql table, test imports) | Mechanical (Stop hook) |
+| `runtime-verification-reviewer.sh` | Verification commands must correspond to modified files (curl URL, sql table, test imports). Excludes archived plans (`docs/plans/archive/**`) from modified-file analysis (2026-04-23) | Mechanical (Stop hook) |
 | `plan-reviewer.sh` | Plans must have Scope, DoD, decomposed sweep tasks, Runtime verification specs, and all 7 required sections populated (Goal, Scope, Tasks, Files to Modify/Create, Assumptions, Edge Cases, Testing Strategy — Check 6b, 2026-04-22) | Mechanical (pre-commit) |
 | `effort-policy-warn.sh` **(2026-04-22)** | SessionStart warning when configured effort level is below the project-level (`.claude/effort-policy.json`) or user-level (`~/.claude/local/effort-policy.json`) declared minimum. Ordering: `low < medium < high < xhigh <= max`. Non-blocking. | Mechanical (SessionStart, warn-only) |
 | `tool-call-budget.sh` | Every 30 tool calls blocks until plan-evidence-reviewer is invoked | Mechanical (PreToolUse) |
-| `post-tool-task-verifier-reminder.sh` | Reminds to invoke task-verifier when editing src files matching unchecked plan tasks | Soft (PostToolUse) |
+| `post-tool-task-verifier-reminder.sh` | Reminds to invoke task-verifier when editing src files matching unchecked plan tasks. Uses `scripts/find-plan-file.sh` to fall back to archived plans when no active plan correlates with the edited file (2026-04-23) | Soft (PostToolUse) |
 | `claim-reviewer.md` (agent) | Product Q&A claims must cite file:line | Self-invoked (residual gap) |
 | `verify-feature` skill | Ripgrep-backed citation lookup before making feature claims | Self-invoked |
 | `backlog-plan-atomicity.sh` | New plan with non-empty `Backlog items absorbed:` requires `docs/backlog.md` also staged | Mechanical (pre-commit) |
@@ -121,13 +121,13 @@ Runs `pre-stop-verifier.sh`:
 | `outcome-evidence-gate.sh` **(Gen 5)** | PreToolUse `Edit\|Write` | For fix tasks specifically: blocks checkbox flip unless evidence contains `Runtime verification (before):` + `Runtime verification (after):` with the same command (proof the fix addresses the bug). Escape hatch: `Reproduction recipe:` block for manual-repro cases. Triggered by task descriptions matching fix/bug/broken/regression/etc. Non-fix tasks pass through untouched. |
 | `systems-design-gate.sh` **(Gen 5)** | PreToolUse `Edit\|Write` | Blocks edits to design-mode files (`.github/workflows/*.yml`, migrations, `vercel.json`, `Dockerfile`, deploy/migrate scripts, terraform, nginx config) unless an active plan with `Mode: design` AND `Status: ACTIVE` exists in `docs/plans/`. Escape hatch: `Mode: design-skip` plan with a written justification referencing the target file's basename. Works alongside `plan-reviewer.sh` (which enforces section presence for `Mode: design` plans) and the `systems-designer` agent (which enforces section substance). |
 | `runtime-verification-executor.sh` **(Gen 4)** | `pre-stop-verifier.sh` Check 4b | Parses and executes Runtime verification entries (`test`/`playwright`/`curl`/`sql`/`file`); since 2026-04-15 also rejects cited test files that contain silent-skip patterns (`test.skip(!CRED, ...)`, `test.skipIf(...)`, etc.) unless annotated with `// harness-allow-skip:` |
-| `runtime-verification-reviewer.sh` **(Gen 4)** | `pre-stop-verifier.sh` Check 4c | Correspondence check: verification commands must actually exercise modified files |
+| `runtime-verification-reviewer.sh` **(Gen 4)** | `pre-stop-verifier.sh` Check 4c | Correspondence check: verification commands must actually exercise modified files. Modified-file analysis excludes archived plans (`docs/plans/archive/**`) so historical-record edits don't trigger spurious correspondence demands (2026-04-23). |
 | `tool-call-budget.sh` **(Gen 4)** | PreToolUse `.*` | Blocks after 30 tool calls without ack; `--ack` flag resets |
-| `post-tool-task-verifier-reminder.sh` **(Gen 4)** | PostToolUse `Edit\|Write` | Reminder to invoke task-verifier when src edit matches unchecked plan task |
+| `post-tool-task-verifier-reminder.sh` **(Gen 4)** | PostToolUse `Edit\|Write` | Reminder to invoke task-verifier when src edit matches unchecked plan task. Uses `scripts/find-plan-file.sh` to fall back to archived plans when no active plan matches the edited file (2026-04-23). |
 | `plan-lifecycle.sh` **(2026-04-23)** | PostToolUse `Edit\|Write` | Two responsibilities for files under `docs/plans/` (top-level only — not archive/): (1) on Write of a new plan file, surface a loud "uncommitted plan file" warning; (2) on any edit that transitions `Status:` from non-terminal to terminal (COMPLETED/DEFERRED/ABANDONED/SUPERSEDED), execute `git mv` to move the plan (and its `<slug>-evidence.md` companion if present) into `docs/plans/archive/`. Always advisory (PostToolUse never blocks). Has `--self-test` flag exercising 9 scenarios. |
 | `pre-push-scan.sh` | Global git pre-push hook (NOT a Claude hook) | Scans push diffs for credentials. Loads 18 built-in patterns + `sensitive-patterns.local` + `business-patterns.paths` |
 | `check-harness-sync.sh` | Pre-commit (via gate) | Warns if `~/.claude/` files have diverged from `neural-lace` repo |
-| `pre-stop-verifier.sh` | Stop hook | Blocks session end if active plan has incomplete/unverified tasks. Check 4 calls executor + reviewer. |
+| `pre-stop-verifier.sh` | Stop hook | Blocks session end if active plan has incomplete/unverified tasks. Check 4 calls executor + reviewer. Also surfaces a non-blocking `[uncommitted-plans-warn]` warning when `docs/plans/*.md` (top-level only — archive excluded) has uncommitted files at session end (2026-04-23). |
 | `bug-persistence-gate.sh` | Stop hook | Scans transcript for bug/gap trigger phrases; blocks if no persistence (backlog or review file) happened in this session. |
 | `narrate-and-wait-gate.sh` | Stop hook | When the user has given a keep-going directive, blocks if the final assistant message trails off with a permission-seeking / wait-for-confirmation phrase. |
 | `effort-policy-warn.sh` **(2026-04-22)** | SessionStart hook | Warns (non-blocking) when the configured effort level is below the minimum declared by a project-level `.claude/effort-policy.json` or user-level `~/.claude/local/effort-policy.json`. Ordering: `low < medium < high < xhigh <= max`. Has `--self-test` flag exercising 10 scenarios. |
@@ -266,7 +266,7 @@ Rules are loaded contextually when Claude detects relevant files being edited.
 
 | Rule | Scope | Key enforcement |
 |------|-------|-----------------|
-| `planning.md` | Task planning | Strategy-first for substantial features, UX during design, plan files in `docs/plans/`, task-verifier mandate, reusable component rule, session retrospectives, decision tiers. References `orchestrator-pattern.md` for multi-task plan execution. Distinguishes `Mode: code` vs `Mode: design` and points at `design-mode-planning.md` for systems work. Contains "Verbose Plans Are Mandatory" section (2026-04-22) — all plans must enumerate Goal, Scope, Tasks, Files to Modify/Create, Assumptions, Edge Cases, Testing Strategy regardless of size; enforced by `plan-reviewer.sh` Check 6b. |
+| `planning.md` | Task planning | Strategy-first for substantial features, UX during design, plan files in `docs/plans/`, task-verifier mandate, reusable component rule, session retrospectives, decision tiers. References `orchestrator-pattern.md` for multi-task plan execution. Distinguishes `Mode: code` vs `Mode: design` and points at `design-mode-planning.md` for systems work. Contains "Verbose Plans Are Mandatory" section (2026-04-22) — all plans must enumerate Goal, Scope, Tasks, Files to Modify/Create, Assumptions, Edge Cases, Testing Strategy regardless of size; enforced by `plan-reviewer.sh` Check 6b. Contains "Plan File Lifecycle" section (2026-04-23) documenting the four stages (creation → in-progress → archival → lookup) and the "Status is the last edit" convention; enforced by `plan-lifecycle.sh` and supported by `scripts/find-plan-file.sh`. |
 | `design-mode-planning.md` **(Gen 5)** | System design tasks | The 10-section Systems Engineering Analysis protocol for design-mode plans. When to use design-mode (CI/CD, migrations, infra, multi-service integrations). What each of the 10 sections requires with PASS/FAIL examples. Documents the enforcement chain (template → plan-reviewer → systems-designer agent → systems-design-gate). Escape hatch: `Mode: design-skip` for trivial edits. |
 | `orchestrator-pattern.md` **(2026-04-16)** | Multi-task plans | **Pattern-class** (self-applied, not hook-enforced). Main session dispatches build work to `plan-phase-builder` sub-agents instead of building directly. Parallel dispatch is the preferred mode when tasks touch disjoint files — up to 5 concurrent builders in isolated git worktrees via `isolation: "worktree"`. Build-in-parallel, verify-sequentially. See also Patterns section of this doc. |
 | `testing.md` | All testing | 6-layer tests, pre-commit code review, 3 UX agents mandatory, link validation, deployment validation |
@@ -285,6 +285,19 @@ Rules are loaded contextually when Claude detects relevant files being edited.
 | `harness-maintenance.md` | `~/.claude/**` changes | Global-first, commit to neural-lace repo, update architecture doc, no project-level copies |
 | `deploy-to-production.md` **(2026-04-20)** | Any project where master merge auto-deploys to production (Vercel/similar) | Default: always merge + deploy to production after testing. Never leave work on a preview branch for manual merge. Preview is for the agent's own pre-merge validation only — the user tests in production. Pattern-class (no hook); the user's feedback memory + this rule carry it. |
 
+### Plan File Lifecycle (2026-04-23)
+
+`planning.md` and the `plan-lifecycle.sh` hook together implement a four-stage lifecycle for every plan file in `docs/plans/`. The mechanisms close gaps that have repeatedly bitten in practice (a downstream-project plan was wiped by a concurrent session before commit; 13 terminal-status plans accumulated in active directory because no mechanism moved them on completion).
+
+1. **Creation.** When a new plan file is written, `plan-lifecycle.sh` (PostToolUse on `Write`) detects the new file and surfaces a loud `[plan-uncommitted-warn]` warning instructing the session to commit immediately. Uncommitted plans are vulnerable to concurrent-session wipeout. The pre-stop-verifier reinforces this with a final session-end warning if the plan is still uncommitted.
+2. **In-progress.** Standard mechanics apply: `task-verifier` agent flips checkboxes via the evidence-first protocol enforced by `plan-edit-validator.sh`. No lifecycle-specific hook activity at this stage.
+3. **Status transition (atomic archival).** When a plan's `Status:` field transitions from non-terminal to terminal (`COMPLETED`, `DEFERRED`, `ABANDONED`, `SUPERSEDED`), `plan-lifecycle.sh` immediately stages `git mv docs/plans/<slug>.md docs/plans/archive/<slug>.md` (and the `<slug>-evidence.md` companion if present). The status change and file rename land in the same commit. **Status is the last edit:** completion reports, final decisions log entries, and closing notes must be written BEFORE flipping `Status:` because the file moves in the same edit cycle.
+4. **Post-archival lookup.** `scripts/find-plan-file.sh` resolves a slug transparently across active and archive directories (active preferred, archive as fallback with stderr provenance note). Hooks (`post-tool-task-verifier-reminder.sh`) and agent prompts (`task-verifier`, `plan-evidence-reviewer`, `ux-designer`) use the helper for archive-aware path resolution.
+
+Recovery from accidental terminal-status writes: `git mv docs/plans/archive/<slug>.md docs/plans/<slug>.md` to restore, then edit `Status:` back. The hook does NOT fire on archive→active transitions (only terminal→archive). The cost of the rare mistake is one `git mv`; the benefit of automatic archival in the common case is eliminating an entire class of "forgot to archive" failures.
+
+Hooks intentionally NOT made archive-aware: `pre-commit-gate.sh`, `backlog-plan-atomicity.sh`, `harness-hygiene-scan.sh`, `plan-edit-validator.sh` — these are scoped to active-work enforcement; archived plans are terminal historical records and archive-aware behavior would break their semantics.
+
 ## Templates (`~/.claude/templates/`)
 
 | Template | Used by | Purpose |
@@ -295,14 +308,27 @@ Rules are loaded contextually when Claude detects relevant files being edited.
 
 ## Scripts (`~/.claude/scripts/`)
 
-Copy-in testing utilities that projects install into their own `tests/` or `scripts/` directory. These are framework-agnostic and configurable.
+Two classes of scripts live in `~/.claude/scripts/`:
+
+1. **Harness-internal helpers** — invoked by hooks, agents, and Claude sessions. Not copied into projects. They expect to run from a project repo's root directory and operate on its `docs/`, `src/`, etc.
+2. **Copy-in testing utilities** — projects install them into their own `tests/` or `scripts/` directory. Framework-agnostic and configurable.
+
+### Harness-internal helpers
+
+| Script | Used by | Purpose |
+|--------|---------|---------|
+| `find-plan-file.sh` **(2026-04-23)** | `hooks/post-tool-task-verifier-reminder.sh`, agent prompts (`task-verifier`, `plan-evidence-reviewer`, `ux-designer`), Claude sessions doing plan lookup | Archive-aware plan resolver. Given a plan slug (with or without `.md`), resolves in order `docs/plans/<slug>.md` → `docs/plans/archive/<slug>.md` and prints the relative path. Supports glob patterns. Emits a stderr `resolved from archive: <path>` note when the match comes from the archive subdirectory. Exit 0 on match, 1 on no match, 2 on usage error. Has `--self-test` flag exercising resolution-order, glob, and not-found scenarios. |
+| `read-local-config.sh` | SessionStart hooks | Safely reads keys from `~/.claude/local/*.json` files with default fallback when the local file is absent. |
+| `install-repo-hooks.sh` | One-shot install step | Wires git hooks (e.g., `pre-push-scan.sh`) into the user's global git hook directory. |
+
+### Copy-in testing utilities
 
 | Script | Purpose | Install |
 |--------|---------|---------|
 | `validate-links.ts` | Dead link validator for Next.js/Remix apps. Walks `href` values in source files and verifies routes exist. | `cp ~/.claude/scripts/validate-links.ts tests/` then add `"test:links": "npx tsx tests/validate-links.ts"` to package.json |
 | `audit-consistency.ts` | Code-consistency audit. Flags raw string formatting, unapproved colors, HTML entity arrows, h1 in pages, outline-only buttons, missing loading.tsx, inline fallback chains. Configurable via `.audit-consistency.json`. | `cp ~/.claude/scripts/audit-consistency.ts scripts/` then add `"audit:consistency": "npx tsx scripts/audit-consistency.ts"` to package.json |
 
-Both scripts exit non-zero on failure and print a structured report. They can be wired into CI or git hooks.
+Both copy-in scripts exit non-zero on failure and print a structured report. They can be wired into CI or git hooks.
 
 ## Skills (`~/.claude/skills/`)
 

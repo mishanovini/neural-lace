@@ -224,7 +224,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 
 ### Phase F: Architecture Doc + Verification
 
-- [ ] F.1 Update `~/.claude/docs/harness-architecture.md` to reflect the new hook, helper, and convention
+- [x] F.1 Update `~/.claude/docs/harness-architecture.md` to reflect the new hook, helper, and convention
   - Add `hooks/plan-lifecycle.sh` to the hooks inventory table
   - Add `scripts/find-plan-file.sh` to the scripts inventory
   - Add a paragraph under the planning section explaining the four-stage lifecycle (creation, in-progress, archival, lookup) and the "Status is the last edit" rule
@@ -232,7 +232,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
   - **Files:** `~/.claude/docs/harness-architecture.md`
   - **Done when:** Inventory tables include all new/changed entries; lifecycle paragraph reads clearly.
 
-- [ ] F.2 Mirror architecture doc to neural-lace
+- [x] F.2 Mirror architecture doc to neural-lace
   - Copy + `diff -q` verify
   - Commit: `docs(harness): architecture — plan file lifecycle documented`
   - **Files:** `neural-lace/adapters/claude-code/docs/harness-architecture.md`
