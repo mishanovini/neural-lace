@@ -77,6 +77,65 @@ A plan reaches "acceptance complete" when:
 
 If a scenario keeps failing after multiple build iterations, the loop is a signal — fix the code, narrow the scenario, or move it to `## Out-of-scope scenarios` with explicit rationale (e.g., "feature requires manual auth setup the test environment cannot provide; deferred to manual QA"). Silent skipping is not an option; the test-skip ban (`no-test-skip-gate.sh`) and the bug-persistence rule (`testing.md`) extend to acceptance scenarios.
 
+## Scenario file format specification (the human-authored, machine-extractable contract)
+
+Scenarios live as structured Markdown inside the plan file's `## Acceptance Scenarios` section. The format is human-authorable (a planner or the advocate writes them by hand) AND machine-extractable (the runtime mode parses them deterministically). Both properties are load-bearing — humans need to author / review, the runtime needs to execute.
+
+### Per-scenario structure
+
+Each scenario is a `###`-level sub-section under `## Acceptance Scenarios`. The exact shape:
+
+```
+### <slug> — <one-line description>
+
+**Slug:** `<slug>`
+
+**User flow:**
+1. <step 1 — imperative, user-perspective>
+2. <step 2>
+...
+
+**Success criteria (prose):** <what must be observably true after the flow completes>.
+
+**Artifacts to capture:** <screenshot description, network log expectation, console log expectation>.
+
+**Edge variations (optional):**
+- <variation 1>
+- <variation 2>
+```
+
+### Field rules
+
+| Field | Required | Rule |
+|---|---|---|
+| Heading `### <slug> — <description>` | Yes | One per scenario. Slug appears both in heading and in the `**Slug:**` line — the line is the authoritative parse target. |
+| `**Slug:** \`<slug>\`` | Yes | Kebab-case, ASCII only, ≤ 60 chars, unique within the plan, stable across plan revisions. The runtime mode keys artifacts by slug; renaming a slug breaks artifact correlation. |
+| `**User flow:**` numbered list | Yes | Numbered `1.`, `2.`, … with no skipped numbers. Steps are imperative ("Click Save", "Type 'foo' into the Name field"), USER-PERSPECTIVE. Never IMPLEMENTATION-PERSPECTIVE ("the component re-renders"). |
+| `**Success criteria (prose):**` paragraph | Yes | Prose, one paragraph. Describes what the USER OBSERVABLY SEES after the flow. Prose is intentional — exact strings and selectors live in the advocate's PRIVATE assertions, not here (Goodhart prevention). |
+| `**Artifacts to capture:**` line or list | Yes | Three things: what screenshot to take, what network requests to expect, what console output to expect (or "no console errors"). |
+| `**Edge variations (optional):**` list | No | Use ONLY when one flow has multiple branches sharing most steps. Otherwise write a separate scenario. |
+| `**Target URL (optional):** <url>` | No | Per-scenario URL override. Defaults to caller-provided base URL or `http://localhost:3000`. |
+
+### Caps
+
+- **Soft cap:** 20 scenarios per plan. Above 20, the advocate groups variants under parent scenarios or moves minor cases to `## Out-of-scope scenarios`.
+- **Hard cap:** 50 scenarios per plan. The advocate refuses to author more and surfaces "the plan is too broad; split it" as a Critical gap in plan-time feedback.
+
+### What the runtime parser extracts
+
+The runtime mode parses this section by:
+
+1. Locating the `## Acceptance Scenarios` heading.
+2. Reading every `### ` heading until the next `## ` heading (typically `## Out-of-scope scenarios`).
+3. For each scenario, extracting the slug (from the `**Slug:**` line — authoritative), user flow (from the numbered list under `**User flow:**`), success criteria prose, and artifact expectations.
+4. If the section is missing, empty, or contains only `[populate me]`, the runtime aborts with `[acceptance] no scenarios in plan; invoke plan-time mode first`.
+
+This is the contract the runtime mode depends on. Hand-authored scenarios that don't match the format will fail to parse — and the runtime will surface that failure rather than silently skipping scenarios.
+
+### Scenarios-shared, assertions-private — the format is the discipline
+
+The format above is what's SHARED with builders. The advocate's PRIVATE assertions (exact strings, selectors, regex patterns, JSON paths, computed values) live only in its runtime-mode head, never in the plan file. If a scenario's success criterion drifts from prose ("the user sees their order ID") to a literal assertion string ("the page contains `Order #1234`"), the planner has eroded the discipline. Catch this in plan-time review.
+
 ## Exemption mechanism: `acceptance-exempt: true`
 
 Some plans have NO product user. Skipping the acceptance loop for these plans is legitimate; running browser automation against a Dockerfile change is theatre. The exemption mechanism is a plan-header field plus required justification:
@@ -108,7 +167,7 @@ Both `plan-reviewer.sh` (skips the `## Acceptance Scenarios` requirement) and `p
 ## Cross-references
 
 - **Plan template:** `templates/plan-template.md` introduces `## Acceptance Scenarios` and `## Out-of-scope scenarios` between `## Edge Cases` and `## Testing Strategy`. The template's HTML-comment guidance points at this rule.
-- **Agent:** `agents/end-user-advocate.md` (walking-skeleton form lives in the repo today; production hardening is Phase C of the parent plan). Documents both modes, the scenario format, the artifact schema, and adversarial framing.
+- **Agent:** `agents/end-user-advocate.md` — production-hardened in Phase C of the parent plan. Documents both modes (plan-time paper review with class-aware feedback; runtime browser automation with adversarial probes), the scenario format spec, the artifact schema, the browser MCP fallback chain, and the scenarios-shared / assertions-private discipline.
 - **Hook:** `hooks/product-acceptance-gate.sh` (Phase D — production gate). Today's walking-skeleton equivalent lives in `hooks/pre-stop-verifier.sh` Check 0.
 - **Plan-reviewer:** `hooks/plan-reviewer.sh` enforces `## Acceptance Scenarios` presence on user-facing plans (Phase B.1 / 2.1 of the parent plan extends this; check current state).
 - **Gap-analyzer:** `agents/enforcement-gap-analyzer.md` (Phase E) — proposes harness improvements from runtime FAILs.

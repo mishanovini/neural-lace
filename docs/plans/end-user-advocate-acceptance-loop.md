@@ -67,9 +67,9 @@ The user-observable outcome: plans that pass plan-time advocate review are mater
 
 ### Phase 3 — Production end-user-advocate agent [serial, depends on Phase 1]
 
-- [ ] C.1 Production `adapters/claude-code/agents/end-user-advocate.md` — full plan-time protocol: read Goal / Scope / UI section / Edge Cases, produce scenario list with step-by-step flows, flag underspecified plan sections, return structured feedback to planner.
-- [ ] C.2 Production runtime protocol: load scenarios from plan file → execute each via `mcp__Claude_in_Chrome` (Playwright MCP fallback) → capture screenshots + network logs + console logs → write PASS/FAIL artifact. Adversarial framing explicit in the prompt ("you are trying to find reasons this is not actually delivered; assume bugs until you can't find them").
-- [ ] C.3 Scenario file format specification: structured Markdown within the `## Acceptance Scenarios` section — each scenario has a stable slug ID, numbered user-flow steps, success criteria in prose, optional edge variations. Format is human-authorable and machine-extractable.
+- [x] C.1 Production `adapters/claude-code/agents/end-user-advocate.md` — full plan-time protocol: read Goal / Scope / UI section / Edge Cases, produce scenario list with step-by-step flows, flag underspecified plan sections, return structured feedback to planner.
+- [x] C.2 Production runtime protocol: load scenarios from plan file → execute each via `mcp__Claude_in_Chrome` (Playwright MCP fallback) → capture screenshots + network logs + console logs → write PASS/FAIL artifact. Adversarial framing explicit in the prompt ("you are trying to find reasons this is not actually delivered; assume bugs until you can't find them").
+- [x] C.3 Scenario file format specification: structured Markdown within the `## Acceptance Scenarios` section — each scenario has a stable slug ID, numbered user-flow steps, success criteria in prose, optional edge variations. Format is human-authorable and machine-extractable.
 
 ### Phase 4 — Runtime acceptance gate [serial, depends on Phase 3]
 
