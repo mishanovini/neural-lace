@@ -105,7 +105,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 
 ### Phase A: Lifecycle Hook (the core infrastructure)
 
-- [ ] 1. Write `~/.claude/hooks/plan-lifecycle.sh`
+- [ ] A.1 Write `~/.claude/hooks/plan-lifecycle.sh`
   - PostToolUse hook triggered on Write or Edit tool calls
   - Activates only when `file_path` is under `docs/plans/` (top-level — not archive, since archive edits are rare and don't need lifecycle logic)
   - Two responsibilities:
@@ -118,13 +118,13 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
   - **Files:** `~/.claude/hooks/plan-lifecycle.sh`
   - **Done when:** `--self-test` passes. Manual test: create a dummy plan in a test dir, edit it to `Status: COMPLETED`, verify the file is moved and `git status` shows the rename as staged.
 
-- [ ] 2. Wire the hook into `~/.claude/settings.json`
+- [ ] A.2 Wire the hook into `~/.claude/settings.json`
   - Add `plan-lifecycle.sh` as a PostToolUse hook matching Write and Edit tools
   - Verify settings.json remains valid JSON after the edit
   - **Files:** `~/.claude/settings.json`
   - **Done when:** Settings edit is valid; a dry-run session fires the hook on plan file edits.
 
-- [ ] 3. Mirror hook and settings to neural-lace
+- [ ] A.3 Mirror hook and settings to neural-lace
   - Copy `~/.claude/hooks/plan-lifecycle.sh` to `~/claude-projects/neural-lace/adapters/claude-code/hooks/plan-lifecycle.sh`
   - Update neural-lace's `settings.json` template to include the new hook registration
   - `diff -q` verification on both files
@@ -329,6 +329,10 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 - **Alternatives:** (a) Block the next tool call until plan is committed — too aggressive; a session might legitimately want to edit a plan further before committing. (b) Auto-commit on creation — too magical; users should review what's being committed.
 - **Reasoning:** The risk we're mitigating is concurrent-session wipeout, which is rare. A warning plus user discipline is sufficient for most cases. Blocking would impede legitimate workflows (e.g., creating a plan and immediately editing it multiple times before committing).
 - **To reverse:** Change the warning to a block. Easy; just change the hook exit code.
+
+## Evidence Log
+
+Per-task evidence blocks live in the companion file `robust-plan-file-lifecycle-evidence.md`. The session-end pre-stop-verifier validates each block by re-executing its Runtime verification command. Evidence must be written there BEFORE the corresponding checkbox is flipped (enforced by `~/.claude/hooks/plan-edit-validator.sh`).
 
 ## Definition of Done
 

@@ -124,6 +124,7 @@ Runs `pre-stop-verifier.sh`:
 | `runtime-verification-reviewer.sh` **(Gen 4)** | `pre-stop-verifier.sh` Check 4c | Correspondence check: verification commands must actually exercise modified files |
 | `tool-call-budget.sh` **(Gen 4)** | PreToolUse `.*` | Blocks after 30 tool calls without ack; `--ack` flag resets |
 | `post-tool-task-verifier-reminder.sh` **(Gen 4)** | PostToolUse `Edit\|Write` | Reminder to invoke task-verifier when src edit matches unchecked plan task |
+| `plan-lifecycle.sh` **(2026-04-23)** | PostToolUse `Edit\|Write` | Two responsibilities for files under `docs/plans/` (top-level only — not archive/): (1) on Write of a new plan file, surface a loud "uncommitted plan file" warning; (2) on any edit that transitions `Status:` from non-terminal to terminal (COMPLETED/DEFERRED/ABANDONED/SUPERSEDED), execute `git mv` to move the plan (and its `<slug>-evidence.md` companion if present) into `docs/plans/archive/`. Always advisory (PostToolUse never blocks). Has `--self-test` flag exercising 9 scenarios. |
 | `pre-push-scan.sh` | Global git pre-push hook (NOT a Claude hook) | Scans push diffs for credentials. Loads 18 built-in patterns + `sensitive-patterns.local` + `business-patterns.paths` |
 | `check-harness-sync.sh` | Pre-commit (via gate) | Warns if `~/.claude/` files have diverged from `neural-lace` repo |
 | `pre-stop-verifier.sh` | Stop hook | Blocks session end if active plan has incomplete/unverified tasks. Check 4 calls executor + reviewer. |

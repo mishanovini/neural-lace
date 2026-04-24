@@ -106,6 +106,15 @@
             "command": "bash ~/.claude/hooks/post-tool-task-verifier-reminder.sh"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/plan-lifecycle.sh"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
