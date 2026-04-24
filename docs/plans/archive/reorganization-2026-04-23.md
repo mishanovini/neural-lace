@@ -1,9 +1,11 @@
 # Plan: Harness Build Queue Reorganization — 2026-04-23
 
-Status: PROPOSED
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
+acceptance-exempt: true
+acceptance-exempt-reason: Reorganization meta-plan that orchestrates other plans. No product user; deliverable is an execution sequence + a record of the queue's outcome.
 
 > **This is a reorganization proposal, not an execution plan.** Status is `PROPOSED` to distinguish it from plans awaiting build. On user approval of the sequence below, individual plans transition to execution per their own `Status: ACTIVE` headers; this document is then marked `COMPLETED` and archived. No hook-enforced section is missing — the required sections are present but adapted to the reorg context.
 
@@ -321,3 +323,74 @@ On user approval, the `Status: PROPOSED` flips to `Status: COMPLETED` and this d
 - [ ] If revised: the revision is recorded in Decisions Log; Section 6 is updated; re-commit
 - [ ] On completion of all queued plans: `Status: COMPLETED`, archived to `docs/plans/archive/`
 - [ ] Backlog delta (Section 7) applied to `docs/backlog.md` in a separate commit during or after Batch 1
+
+## Completion Report
+
+**All 7 queued plans shipped + merged + pushed to both remotes (personal + work-account). 100 tasks total.**
+
+### Plans shipped (in approved sequence)
+
+| # | Plan | Tasks | Status | Final commit on master |
+|---|---|---|---|---|
+| 1 | `robust-plan-file-lifecycle` | 18 (A.1-F.3) | COMPLETED + auto-archived | (Batch 1 first) |
+| 2 | `plan-deletion-protection` | 11 (A.1-C.2) + atomicity-gate fix bonus | COMPLETED + auto-archived | (Batch 1 second) |
+| 3 | `failure-mode-catalog` | 9 (A.1-A.9) | COMPLETED + auto-archived | (Batch 2) |
+| 4 | `class-aware-review-feedback` | 10 (A.1-A.10) | COMPLETED + auto-archived | (Batch 2.5, inserted) |
+| 5 | `capture-codify-pr-template` | 15 (A.1-A.15) | COMPLETED + auto-archived; PR #1 merged + branch protection LIVE | (Batch 3 first) |
+| 6 | `end-user-advocate-acceptance-loop` | 27 (A.1-G.5, 7 phases) | COMPLETED + auto-archived; systems-designer PASS-with-nits | (Batch 3 second, sequential) |
+| 7 | `claude-remote-adoption` | 10 (A.1-A.10) | COMPLETED + auto-archived; Decision 011 records hybrid approach | (Batch 4) |
+
+### Sequence adherence
+
+The actual execution order matched the proposed sequence with one insertion:
+- **Batch 1:** plan #5 (robust-plan-file-lifecycle) → plan #1 (plan-deletion-protection) ✓
+- **Batch 2:** plan #2 (failure-mode-catalog) ✓
+- **Batch 2.5 (inserted during execution per user request):** plan #7 (class-aware-review-feedback) — inserted between Batch 2 and Batch 3 to give plan #6's systems-designer review the benefit of class-aware reviewer feedback
+- **Batch 3:** plan #3 (capture-codify-pr-template) → plan #6 (end-user-advocate-acceptance-loop) — executed sequentially rather than parallel to manage context size + because plan #3 was already PASS-with-nits while plan #6 still needed systems-designer review
+- **Batch 4:** plan #4 (claude-remote-adoption) ✓ executed last as planned
+
+### Backlog delta applied
+
+- 7 backlog entries absorbed by individual plans (deleted from open sections atomically with each plan creation)
+- 5+ new backlog entries added during execution (P2 dynamic-load gap for hooks/agents, P2 archival-staging gap, P0 class-aware reviewer feedback before plan #7 absorption, P2 atomicity-gate archival false-positive, P2 cloud-session integration test, etc.)
+- Several P0/P1 entries materially closed by shipped plans:
+  - "Plan file deletion protection" → closed (plan #1)
+  - "Failure mode catalog as a first-class artifact" → closed (plan #2)
+  - "Adversarial pre-mortem pattern for plans" → closed (plan #6)
+  - "Capture-codify cycle at PR level" → closed (plan #3)
+  - "Adopt claude --remote + dotfiles sync" → closed (plan #4 Decision 011)
+  - "Harness portability to claude --remote cloud sessions" → closed (plan #4 Decision 011)
+  - "Class-aware reviewer feedback (Mods 1+3)" → closed (plan #7); Mod 2 remains as standalone P1 backlog entry
+
+### Major mechanisms shipped this session (cross-plan summary)
+
+- **`plan-lifecycle.sh`** — auto-archives plans on Status terminal flip (plan #5)
+- **`plan-deletion-protection.sh`** — blocks destructive ops on plan files (plan #1)
+- **`docs/failure-modes.md`** — 6-entry seed catalog of known failure classes (plan #2)
+- **Class-aware reviewer feedback format** — 7 reviewer agents now require `Class:` + `Sweep query:` + `Required generalization:` per gap (plan #7)
+- **`.github/workflows/pr-template-check.yml` + branch protection** — every PR to neural-lace master now requires "What mechanism would have caught this?" (plan #3)
+- **`product-acceptance-gate.sh` + `end-user-advocate` agent + `enforcement-gap-analyzer` agent** — adversarial-observation gate at session end + automated harness improvement loop (plan #6)
+- **`rules/automation-modes.md` + Decision 011** — formal session-mode decision tree + Approach A harness portability for cloud sessions (plan #4)
+
+All shipped to master across ~50+ commits. Both remotes (both remote-repo names) up to date.
+
+### Activates at next session start (dynamic-load gap, P2 backlog)
+
+- Permission allowlist for harness paths (no more per-file prompts)
+- All 7 reviewer agents emit class-aware feedback per default
+- `plan-deletion-protection.sh` blocks `rm`/`git clean -f`/`git stash -u`/`git checkout .`/`mv` against plan files
+- `product-acceptance-gate.sh` enforces acceptance scenarios at session end (or honors `acceptance-exempt: true`)
+- New agents `end-user-advocate` and `enforcement-gap-analyzer` available via Task tool
+- New rule `acceptance-scenarios.md` consulted by planning workflows
+- Updated `harness-reviewer.md` (Step 5 generalization checks) gates new enforcement-gap proposals
+
+### Known residual issues (deferred to backlog)
+
+- Live empirical validation of `claude --remote` Approach A (P2 — user runs first cloud session in reference project)
+- Live integration test of end-user-advocate runtime mode against a real product (P2 — first downstream-project plan with user-facing acceptance scenarios)
+- Pre-existing harness-mirror drift (25 DIFFERS + 4 MISSING between `~/.claude/` and `adapters/claude-code/`) — separate reconciliation pass needed
+- Class-aware-review-feedback-smoke-test-plan.md leftover fixture from plan #7 — acceptance-exempt declaration needed OR cleanup
+- Pre-existing untracked file `adapters/claude-code/rules/url-conventions.md` from a prior phase — needs commit OR delete
+- A.7 multi-state + fork-PR smoke test for capture-codify (P2 — only PASS state empirically validated)
+
+This reorganization closes successfully. All 7 plans complete, ~100 tasks shipped end-to-end with merges + pushes.
