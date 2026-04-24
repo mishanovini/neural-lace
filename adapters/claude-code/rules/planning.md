@@ -137,6 +137,43 @@ Before any plan task that creates a **new route, new top-level page, new dashboa
 
 **Why this is strict:** UX gaps found in planning take 10 minutes to fix. UX gaps found in testing take 10 hours. UX gaps found in production take 10 days of user complaints. A new UI page that lacks an entry point, or has no empty state, or dead-ends the user, will ship as planned and then be silently abandoned. See the 2026-04-14 AI Conversations page incident: I built a dedicated page with no "start a new conversation" button, so the user had no way to initiate one. The ux-designer agent would have caught this at plan time.
 
+### Mandatory: end-user-advocate review for every plan (skip via `acceptance-exempt: true`)
+
+Every plan undergoes `end-user-advocate` review at plan-time AND at runtime by default. The advocate is the harness's adversarial observer of the running product from the user's perspective — the one agent that does NOT trust what the builder produced. See `~/.claude/rules/acceptance-scenarios.md` for the full plan-time → runtime → gap-analysis loop.
+
+**Plan-time mode (peer planner, parallel to ux-designer and systems-designer):**
+
+1. Draft the plan to a stable shape (Goal / Scope / Edge Cases populated).
+2. Invoke `end-user-advocate` via the Task tool with `mode=plan-time` and the plan path.
+3. Read the advocate's `Plan-Time Advocate Feedback:` block. Every flagged gap must be closed in the plan (resolved in scope, or moved to `## Out-of-scope scenarios` with rationale) before build begins.
+4. The advocate's authored scenarios live in the plan's `## Acceptance Scenarios` section (template-introduced; see `templates/plan-template.md`).
+5. THEN start building.
+
+**Runtime mode (Stop-hook gated):**
+
+After build, before session end, the advocate is invoked again in runtime mode against the live app. It writes a PASS/FAIL JSON artifact to `.claude/state/acceptance/<plan-slug>/`. The Stop-hook gate (walking-skeleton form lives in `pre-stop-verifier.sh` Check 0; production form is `product-acceptance-gate.sh`, Phase D of `docs/plans/end-user-advocate-acceptance-loop.md`) blocks session end when an ACTIVE non-exempt plan lacks a PASS artifact for the current `plan_commit_sha`.
+
+**Skip with justification — `acceptance-exempt: true`:**
+
+Some plans have NO product user (harness-development plans, pure-infrastructure plans, migration-only plans without UI implications). For these:
+
+```
+acceptance-exempt: true
+acceptance-exempt-reason: <one-sentence substantive justification (>= 20 chars)>
+```
+
+Both `plan-reviewer.sh` (skips the `## Acceptance Scenarios` requirement) and the Stop-hook gate (treats exempt plans as no-artifact-needed) honor the exemption. The reason field is required: an unjustified `acceptance-exempt: true` is BLOCKED by the gate.
+
+**When to use the exemption** (full guidance in `acceptance-scenarios.md`):
+- YES: harness-dev plans, pure-infrastructure (Dockerfile, CI workflow), migration-only without UI.
+- NO: backend changes that affect any user-observable response, "small UI tweaks," "tests pass without it," "I'm in a hurry."
+
+**Scenarios-shared, assertions-private — the load-bearing builder discipline:**
+
+When the orchestrator dispatches build work (per `rules/orchestrator-pattern.md`), the dispatch prompt INCLUDES the plan's `## Acceptance Scenarios` (motivation, user flow, success criteria) but does NOT include the advocate's internal assertion list. LLM builders teach-to-the-test extremely easily; sharing the assertions causes the builder to hardcode the string instead of wiring the data path. Build for the user's actual outcome, not for the assertion text. The orchestrator pattern's "Scenarios-shared, assertions-private" sub-section codifies this in the dispatch-prompt template.
+
+**Why this is strict:** every Gen 4 enforcement mechanism except `pre-stop-verifier.sh` and `tool-call-budget.sh` gates on something the BUILDER produces — a plan, an evidence block, a self-report. The builder is the agent that fails at completeness. The end-user advocate is the harness's only adversarial-observer agent; it closes the structural gap that lets incomplete builds ship despite a stack of self-certifying mechanisms. See `acceptance-scenarios.md` for the full motivation.
+
 During planning:
 - Do not rush to start building — thorough > fast
 - Surface all architectural decisions with options, tradeoffs, and your recommendation

@@ -61,9 +61,9 @@ The user-observable outcome: plans that pass plan-time advocate review are mater
 
 ### Phase 2 — Plan template + rule pattern [parallel]
 
-- [ ] B.1 Extend `adapters/claude-code/templates/plan-template.md` with `## Acceptance Scenarios` and `## Out-of-scope scenarios` sections, including guidance comments in the template that explain what each section should contain and how the end-user advocate will author them.
-- [ ] B.2 Write `adapters/claude-code/rules/acceptance-scenarios.md` documenting the full loop: plan-time authoring, scenarios-shared/assertions-private discipline, runtime execution, gap-analysis cycle, convergence criteria, and the skip-with-justification path for non-user-facing plans.
-- [ ] B.3 Update `adapters/claude-code/rules/planning.md` referencing the new rule and clarifying when end-user-advocate is required (every plan by default; skip with justification for docs-only plans).
+- [x] B.1 Extend `adapters/claude-code/templates/plan-template.md` with `## Acceptance Scenarios` and `## Out-of-scope scenarios` sections, including guidance comments in the template that explain what each section should contain and how the end-user advocate will author them.
+- [x] B.2 Write `adapters/claude-code/rules/acceptance-scenarios.md` documenting the full loop: plan-time authoring, scenarios-shared/assertions-private discipline, runtime execution, gap-analysis cycle, convergence criteria, and the skip-with-justification path for non-user-facing plans.
+- [x] B.3 Update `adapters/claude-code/rules/planning.md` referencing the new rule and clarifying when end-user-advocate is required (every plan by default; skip with justification for docs-only plans).
 
 ### Phase 3 — Production end-user-advocate agent [serial, depends on Phase 1]
 

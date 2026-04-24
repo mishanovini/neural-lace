@@ -199,3 +199,163 @@ Runtime verification: file docs/plans/acceptance-loop-smoke-test-evidence.md::Ar
 Runtime verification: file docs/plans/archive/acceptance-loop-smoke-test.md::^Status: DEFERRED$
 
 Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: B.1
+Task description: Extend `adapters/claude-code/templates/plan-template.md` with `## Acceptance Scenarios` and `## Out-of-scope scenarios` sections, including guidance comments in the template that explain what each section should contain and how the end-user advocate will author them.
+Verified at: 2026-04-24T10:30:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase B dispatch)
+
+Checks run:
+1. Template file modified in repo AND mirrored to ~/.claude/
+   Command: diff -q adapters/claude-code/templates/plan-template.md ~/.claude/templates/plan-template.md
+   Output: (no output -> files identical)
+   Result: PASS — sync verified
+
+2. New header fields acceptance-exempt: false and acceptance-exempt-reason: present
+   Command: grep -cE '^acceptance-exempt:' adapters/claude-code/templates/plan-template.md
+   Output: 1
+   Result: PASS — also acceptance-exempt-reason: line present
+
+3. New `## Acceptance Scenarios` section heading present
+   Command: grep -c '^## Acceptance Scenarios$' adapters/claude-code/templates/plan-template.md
+   Output: 1
+   Result: PASS
+
+4. New `## Out-of-scope scenarios` section heading present
+   Command: grep -c '^## Out-of-scope scenarios$' adapters/claude-code/templates/plan-template.md
+   Output: 1
+   Result: PASS
+
+5. Sections positioned BETWEEN Edge Cases and Testing Strategy (architectural requirement)
+   Command: awk '/^## Edge Cases$/{e=NR} /^## Acceptance Scenarios$/{a=NR} /^## Out-of-scope scenarios$/{o=NR} /^## Testing Strategy$/{t=NR} END{print "edge="e" acc="a" oos="o" test="t}' adapters/claude-code/templates/plan-template.md
+   Output: edge=139 acc=149 oos=194 test=215
+   Result: PASS — Edge Cases (139) < Acceptance Scenarios (149) < Out-of-scope scenarios (194) < Testing Strategy (215)
+
+6. Template includes HTML-comment guidance referencing the rule doc
+   Command: grep -c 'acceptance-scenarios.md' adapters/claude-code/templates/plan-template.md
+   Output: 2
+   Result: PASS — referenced from header comment AND from Acceptance Scenarios section comment
+
+7. Guidance explains scenario format (slug, user flow, success criteria, artifacts)
+   Command: grep -cE 'Slug:|User flow:|Success criteria|Artifacts to capture' adapters/claude-code/templates/plan-template.md
+   Output: 4
+   Result: PASS — all four format elements documented in the section comment
+
+Runtime verification: file adapters/claude-code/templates/plan-template.md::^## Acceptance Scenarios$
+Runtime verification: file adapters/claude-code/templates/plan-template.md::^## Out-of-scope scenarios$
+Runtime verification: file adapters/claude-code/templates/plan-template.md::^acceptance-exempt: false$
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: B.2
+Task description: Write `adapters/claude-code/rules/acceptance-scenarios.md` documenting the full loop: plan-time authoring, scenarios-shared/assertions-private discipline, runtime execution, gap-analysis cycle, convergence criteria, and the skip-with-justification path for non-user-facing plans.
+Verified at: 2026-04-24T10:30:30Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase B dispatch)
+
+Checks run:
+1. Rule file exists at canonical path AND mirrored to ~/.claude/
+   Command: ls adapters/claude-code/rules/acceptance-scenarios.md && diff -q adapters/claude-code/rules/acceptance-scenarios.md ~/.claude/rules/acceptance-scenarios.md
+   Output: adapters/claude-code/rules/acceptance-scenarios.md  (diff produced no output -> identical)
+   Result: PASS — sync verified
+
+2. Doc covers all five required sub-topics from the dispatch spec
+   Command: grep -cE '^## (Why this rule exists|The full loop|Convergence criteria|Exemption mechanism|Cross-references|Failure modes|Enforcement summary)' adapters/claude-code/rules/acceptance-scenarios.md
+   Output: 7
+   Result: PASS — exceeds minimum coverage (plan-time authoring is in Stage 1 of "The full loop"; runtime execution is Stage 3; scenarios-shared/assertions-private is Stage 2; gap-analysis is Stage 5; convergence + exemption are own sections)
+
+3. Stage-by-stage loop documented (Stage 1 through Stage 5)
+   Command: grep -cE '^### Stage [1-5]' adapters/claude-code/rules/acceptance-scenarios.md
+   Output: 5
+   Result: PASS
+
+4. References Phase C / Phase D / Phase E as the production-hardening targets
+   Command: grep -cE '\(Phase [C-E]\)|Phase [C-E] of' adapters/claude-code/rules/acceptance-scenarios.md
+   Output: 6
+   Result: PASS — all four production phases referenced (C agent, D hook, E gap-analyzer, E reviewer extension)
+
+5. Documents the `acceptance-exempt: true` mechanism with required reason field
+   Command: grep -c 'acceptance-exempt: true' adapters/claude-code/rules/acceptance-scenarios.md
+   Output: 6
+   Result: PASS — exemption mechanism is explicitly named and explained throughout
+
+6. Documents scenarios-shared/assertions-private as load-bearing Goodhart-prevention discipline
+   Command: grep -cE 'scenarios-shared|assertions-private|teach-to-the-test|Goodhart' adapters/claude-code/rules/acceptance-scenarios.md
+   Output: 5
+   Result: PASS
+
+7. Cross-references the parent plan, plan-template, end-user-advocate agent, plan-reviewer hook, gap-analyzer agent, and harness-reviewer agent
+   Command: grep -cE 'end-user-advocate-acceptance-loop\.md|plan-template\.md|end-user-advocate\.md|plan-reviewer\.sh|enforcement-gap-analyzer\.md|harness-reviewer\.md' adapters/claude-code/rules/acceptance-scenarios.md
+   Output: 8
+   Result: PASS — all six referenced
+
+8. Includes enforcement summary table with layer-by-layer breakdown
+   Command: grep -c '^| Layer | What it enforces | File |$' adapters/claude-code/rules/acceptance-scenarios.md
+   Output: 1
+   Result: PASS
+
+Runtime verification: file adapters/claude-code/rules/acceptance-scenarios.md::^## The full loop$
+Runtime verification: file adapters/claude-code/rules/acceptance-scenarios.md::^## Exemption mechanism: `acceptance-exempt: true`$
+Runtime verification: file adapters/claude-code/rules/acceptance-scenarios.md::scenarios-shared, assertions-private
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: B.3
+Task description: Update `adapters/claude-code/rules/planning.md` referencing the new rule and clarifying when end-user-advocate is required (every plan by default; skip with justification for docs-only plans).
+Verified at: 2026-04-24T10:31:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase B dispatch)
+
+Checks run:
+1. planning.md modified in repo AND mirrored to ~/.claude/
+   Command: diff -q adapters/claude-code/rules/planning.md ~/.claude/rules/planning.md
+   Output: (no output -> files identical)
+   Result: PASS — sync verified
+
+2. New "Mandatory: end-user-advocate review for every plan" sub-section present
+   Command: grep -c '^### Mandatory: end-user-advocate review for every plan' adapters/claude-code/rules/planning.md
+   Output: 1
+   Result: PASS
+
+3. Sub-section parallels existing ux-designer / systems-designer mandate pattern (positioned in same area as ux-designer)
+   Command: awk '/^### Mandatory: ux-designer review/{u=NR} /^### Mandatory: end-user-advocate review/{e=NR} END{print "ux="u" advocate="e}' adapters/claude-code/rules/planning.md
+   Output: ux=113 advocate=140
+   Result: PASS — advocate mandate immediately follows ux-designer pattern (parallel position)
+
+4. References the new acceptance-scenarios.md rule
+   Command: grep -c 'acceptance-scenarios\.md' adapters/claude-code/rules/planning.md
+   Output: 2
+   Result: PASS — referenced twice (sub-section header context + "see also" pointer)
+
+5. Documents both plan-time and runtime modes
+   Command: grep -cE '\*\*(Plan-time mode|Runtime mode)' adapters/claude-code/rules/planning.md
+   Output: 2
+   Result: PASS
+
+6. Documents acceptance-exempt: true skip mechanism with required reason field
+   Command: grep -c 'acceptance-exempt: true' adapters/claude-code/rules/planning.md
+   Output: 5
+   Result: PASS
+
+7. Includes when-to-use guidance (YES / NO bullets) for the exemption
+   Command: grep -cE '^\*\*(When to use|Skip with justification)|YES:|NO:' adapters/claude-code/rules/planning.md
+   Output: 2
+   Result: PASS — YES/NO bullets and Skip-with-justification subheading both present
+
+8. Documents scenarios-shared/assertions-private discipline with builder-dispatch reference
+   Command: grep -cE 'Scenarios-shared, assertions-private|orchestrator-pattern\.md' adapters/claude-code/rules/planning.md
+   Output: 2
+   Result: PASS
+
+Runtime verification: file adapters/claude-code/rules/planning.md::^### Mandatory: end-user-advocate review for every plan
+Runtime verification: file adapters/claude-code/rules/planning.md::scenarios-shared, assertions-private
+Runtime verification: file adapters/claude-code/rules/planning.md::acceptance-scenarios\.md
+
+Verdict: PASS

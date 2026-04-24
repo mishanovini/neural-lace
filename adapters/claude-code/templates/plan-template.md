@@ -3,8 +3,28 @@ Status: ACTIVE
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: [none | slug-1, slug-2]
+acceptance-exempt: false
+acceptance-exempt-reason:
 
 <!--
+acceptance-exempt values:
+  false   Default. The plan undergoes end-user-advocate review at plan-time
+          (scenarios authored into `## Acceptance Scenarios`) AND runtime
+          (browser-automation execution before session end). Required for
+          any plan that affects user-observable product behavior.
+  true    Skip the acceptance loop. Reserved for plans with NO product
+          user — harness-development plans, pure-infrastructure plans
+          (e.g., a Dockerfile change with no user-facing surface), and
+          migration-only plans without UI implications. When `true`, the
+          companion field `acceptance-exempt-reason:` MUST contain a
+          one-sentence substantive justification (>= 20 chars). The
+          `product-acceptance-gate.sh` Stop hook honors the exemption;
+          `harness-reviewer` may audit the rationale.
+
+See `~/.claude/rules/acceptance-scenarios.md` for the full plan-time →
+runtime → gap-analysis loop and explicit when-to-use guidance for the
+exemption.
+
 Execution Mode values:
   orchestrator  Default for multi-task plans. The main session reads this plan,
                 dispatches each task to a `plan-phase-builder` sub-agent via the
@@ -125,6 +145,72 @@ If no edge cases apply, state that explicitly with a one-line
 justification.
 -->
 - [First edge case and how this plan handles it]
+
+## Acceptance Scenarios
+<!--
+The end-user advocate authors this section in plan-time mode. Each
+scenario is a `###`-level sub-section with a stable kebab-case slug,
+numbered user-flow steps (what the USER does, not what the code does),
+prose success criteria (what must be observably true after the flow),
+and a short list of artifacts the runtime mode will capture.
+
+Format per scenario:
+
+  ### <slug> — <one-line description>
+
+  **Slug:** `<slug>`
+
+  **User flow:**
+  1. <step 1 — imperative, user-perspective>
+  2. <step 2>
+  ...
+
+  **Success criteria (prose):** <what must be observably true>.
+
+  **Artifacts to capture:** <screenshot description, network log
+  expectation, console log expectation>.
+
+The runtime mode parses this section, executes each scenario via
+browser automation, and writes a JSON artifact at
+`.claude/state/acceptance/<plan-slug>/<session-id>-<timestamp>.json`
+with sibling screenshot/network/console files. Soft cap 20 scenarios
+per plan; hard cap 50.
+
+Scenarios are SHARED with builders (motivation + what must work).
+Runtime assertions are PRIVATE to the advocate (Goodhart prevention).
+Builders see the user flow and success criteria; they do not see the
+exact assertions the advocate runs. Build for the actual user, not for
+the assertion text.
+
+If `acceptance-exempt: true` is declared in the header, this section
+may contain a single line explaining the exemption (e.g., "n/a —
+harness-dev plan, no product user; see acceptance-exempt-reason
+above").
+
+See `~/.claude/rules/acceptance-scenarios.md` for the full protocol.
+-->
+- [populate me — end-user advocate writes scenarios here in plan-time mode]
+
+## Out-of-scope scenarios
+<!--
+The end-user advocate proposes scenarios from the plan's Goal / Scope.
+Some proposed scenarios may not be reasonable to cover in this plan
+(adjacent flows, future work, deliberate exclusions). Move them HERE
+with a one-line rationale per entry, so the planner's accept/reject
+decision is documented rather than silent.
+
+Format per entry:
+
+  - <one-line scenario description> — <rationale for exclusion>
+
+This prevents "acceptance must pass" from becoming unbounded and
+blocking every plan. Rejected scenarios become documented exclusions,
+not silent omissions; future plans can pick them up explicitly.
+
+If no scenarios were proposed and rejected, state that explicitly:
+"None — all advocate-proposed scenarios are in scope above."
+-->
+- [populate me — accepted-as-out-of-scope scenarios live here, with rationale]
 
 ## Testing Strategy
 <!--
