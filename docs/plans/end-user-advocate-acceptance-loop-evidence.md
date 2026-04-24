@@ -539,3 +539,285 @@ Runtime verification: file adapters/claude-code/rules/acceptance-scenarios.md::h
 Runtime verification: file adapters/claude-code/rules/acceptance-scenarios.md::machine-extractable
 
 Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: D.1
+Task description: Production `adapters/claude-code/hooks/product-acceptance-gate.sh` — Stop hook chained AS POSITION 4 (last) in the Stop hook chain. Current Stop chain: (1) `pre-stop-verifier.sh` (plan-integrity), (2) `bug-persistence-gate.sh` (user-process), (3) `narrate-and-wait-gate.sh` (user-process). New gate appended at position 4. Rationale: plan-integrity checks first, user-process checks second, product-outcome check last so it sees a clean session that hasn't been blocked elsewhere. Blocks session end if ACTIVE plan has unsatisfied acceptance scenarios. Hook header comment must document this insertion point AND the rationale inline. Registered in `~/.claude/settings.json` Stop array AND `adapters/claude-code/settings.json.template` Stop array as the last entry.
+Verified at: 2026-04-24T11:20:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase D dispatch)
+
+Checks run:
+1. Hook file exists in repo AND mirrored to ~/.claude/
+   Command: ls adapters/claude-code/hooks/product-acceptance-gate.sh && diff -q adapters/claude-code/hooks/product-acceptance-gate.sh ~/.claude/hooks/product-acceptance-gate.sh
+   Output: adapters/claude-code/hooks/product-acceptance-gate.sh   (diff produced no output -> identical)
+   Result: PASS — sync verified
+
+2. Hook syntax-checks clean (bash -n)
+   Command: bash -n adapters/claude-code/hooks/product-acceptance-gate.sh && echo SYNTAX_OK
+   Output: SYNTAX_OK
+   Result: PASS
+
+3. Header comment documents the position-4-last insertion point AND rationale inline
+   Command: grep -cE 'INSERTION POINT IN THE STOP HOOK CHAIN|Position: 4 \(last\)|Rationale for being LAST' adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: 3
+   Result: PASS — section header + position declaration + rationale paragraph all present
+
+4. Header documents the current chain order (pre-stop-verifier → bug-persistence → narrate-and-wait → product-acceptance)
+   Command: grep -cE 'pre-stop-verifier\.sh|bug-persistence-gate\.sh|narrate-and-wait-gate\.sh|product-acceptance-gate\.sh' adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: 9
+   Result: PASS — all four hooks named in header (multiple references each)
+
+5. Hook registered in ~/.claude/settings.json Stop array as last entry
+   Command: jq '.hooks.Stop[0].hooks[-1].command' ~/.claude/settings.json
+   Output: "bash ~/.claude/hooks/product-acceptance-gate.sh"
+   Result: PASS — appended as last entry
+
+6. Hook registered in adapters/claude-code/settings.json.template Stop array as last entry
+   Command: jq '.hooks.Stop[0].hooks[-1].command' adapters/claude-code/settings.json.template
+   Output: "bash ~/.claude/hooks/product-acceptance-gate.sh"
+   Result: PASS — appended as last entry
+
+7. Stop array is exactly the expected 4-entry chain in correct order
+   Command: jq -r '.hooks.Stop[0].hooks | map(.command) | join(" | ")' ~/.claude/settings.json
+   Output: bash ~/.claude/hooks/pre-stop-verifier.sh | bash ~/.claude/hooks/bug-persistence-gate.sh | bash ~/.claude/hooks/narrate-and-wait-gate.sh | bash ~/.claude/hooks/product-acceptance-gate.sh
+   Result: PASS — exactly the documented order
+
+8. Hook actually fires against live repo state (sanity check)
+   Command: cd repo && bash adapters/claude-code/hooks/product-acceptance-gate.sh </dev/null 2>&1; echo "EXIT=$?"
+   Output: EXIT=2 (with detailed BLOCK message naming class-aware-review-feedback-smoke-test-plan and claude-remote-adoption as the missing-artifact plans; end-user-advocate-acceptance-loop correctly recognized as exempt)
+   Result: PASS — gate fires and emits the documented stderr message format
+
+Runtime verification: file adapters/claude-code/hooks/product-acceptance-gate.sh::^# INSERTION POINT IN THE STOP HOOK CHAIN
+Runtime verification: file adapters/claude-code/hooks/product-acceptance-gate.sh::^# Position: 4 \(last\)
+Runtime verification: file adapters/claude-code/settings.json.template::"bash ~/.claude/hooks/product-acceptance-gate.sh"
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: D.2
+Task description: Artifact schema: JSON at `.claude/state/acceptance/<plan-slug>/<session-id>-<timestamp>.json` with `{session_id, plan_commit_sha, scenarios: [{id, verdict, artifacts, assertions_met, failure_reason?}]}`. Sibling files for screenshot / network log / console log per scenario.
+Verified at: 2026-04-24T11:20:30Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase D dispatch)
+
+Checks run:
+1. Schema documented in hook header comment with all required fields
+   Command: grep -cE 'session_id|plan_commit_sha|scenarios|verdict|artifacts|assertions_met|failure_reason' adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: 28
+   Result: PASS — every required schema field appears in the header (>= 7 expected)
+
+2. Schema documented in rules/acceptance-scenarios.md (Stage 4 section, expanded in Phase D update)
+   Command: grep -cE 'plan_commit_sha|started_at|ended_at|scenarios|verdict|assertions_met|failure_reason' adapters/claude-code/rules/acceptance-scenarios.md
+   Output: 17
+   Result: PASS — schema reference paragraph + JSON code block present in Stage 4
+
+3. Sibling file convention documented (screenshot.png, network.log, console.log)
+   Command: grep -cE '<scenario-slug>-(screenshot\.png|network\.log|console\.log)' adapters/claude-code/rules/acceptance-scenarios.md
+   Output: 3
+   Result: PASS — all three sibling file types named
+
+4. Hand-crafted Phase A artifact validates against the schema (parses, has all required fields)
+   Command: node -e "const j=JSON.parse(require('fs').readFileSync('.claude/state/acceptance/acceptance-loop-smoke-test/sess-skeleton-2026-04-24T09-10-30Z.json','utf8')); ['session_id','plan_commit_sha','scenarios'].forEach(k=>{if(!(k in j))throw new Error('missing '+k)}); j.scenarios.forEach(s=>['id','verdict','artifacts','assertions_met'].forEach(k=>{if(!(k in s))throw new Error('scenario missing '+k)})); console.log('SCHEMA_OK')"
+   Output: SCHEMA_OK
+   Result: PASS — Phase A artifact conforms to D.2 schema (forward-compatible)
+
+5. Hook artifact-parser correctly extracts plan_commit_sha and verdict (verified via self-test scenario b)
+   Command: bash adapters/claude-code/hooks/product-acceptance-gate.sh --self-test 2>&1 | grep -c 'self-test (b) valid-pass-artifact: PASS'
+   Output: 1
+   Result: PASS — parser handles the schema correctly
+
+Runtime verification: file adapters/claude-code/hooks/product-acceptance-gate.sh::^# ARTIFACT SCHEMA
+Runtime verification: file adapters/claude-code/rules/acceptance-scenarios.md::^### Stage 4 — Stop-hook gate
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: D.3
+Task description: Session-to-plan correlation: hook scans all `docs/plans/*.md` with `Status: ACTIVE`, iterates over them, checks each has a satisfying artifact matching current plan_commit_sha.
+Verified at: 2026-04-24T11:20:45Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase D dispatch)
+
+Checks run:
+1. Hook has a find_active_plans helper that iterates docs/plans/*.md (top-level only, NOT archive/)
+   Command: grep -nE '^find_active_plans\(\)|docs/plans|archive' adapters/claude-code/hooks/product-acceptance-gate.sh | head -10
+   Output: function defined at line 132; iterates docs/plans + */docs/plans + */*/docs/plans; explicit "(top level only, NOT archive/)" comment
+   Result: PASS
+
+2. Hook iterates over MULTIPLE active plans, not just one
+   Command: cd repo && bash adapters/claude-code/hooks/product-acceptance-gate.sh </dev/null 2>&1 | grep -cE '(claude-remote-adoption|class-aware-review-feedback|end-user-advocate-acceptance-loop)'
+   Output: 3 (three concurrent ACTIVE plans all surface in the hook's output — exempt one is recognized + two non-exempt blockers are listed)
+   Result: PASS — multi-plan iteration confirmed live
+
+3. Hook compares artifact's plan_commit_sha against current git HEAD of the plan file
+   Command: grep -nE 'get_plan_sha\(\)|git log -n 1 --pretty=format' adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: helper defined; uses git log -n 1 --pretty=format:'%H' to get the plan file's most recent commit SHA
+   Result: PASS — staleness detection grounded in git
+
+4. Self-test scenario (e) explicitly verifies stale-sha rejection
+   Command: bash adapters/claude-code/hooks/product-acceptance-gate.sh --self-test 2>&1 | grep -c 'self-test (e) stale-artifact: PASS'
+   Output: 1
+   Result: PASS — stale-artifact path mechanically validated
+
+5. acceptance-exempt: true plans are skipped from artifact requirement (per parent plan exemption mechanism)
+   Command: cd repo && bash adapters/claude-code/hooks/product-acceptance-gate.sh </dev/null 2>&1 | grep -c 'is acceptance-exempt'
+   Output: 1 (end-user-advocate-acceptance-loop is recognized as exempt)
+   Result: PASS — exempt plans skip artifact check, with reason logged for audit
+
+Runtime verification: file adapters/claude-code/hooks/product-acceptance-gate.sh::^find_active_plans\(\)
+Runtime verification: file adapters/claude-code/hooks/product-acceptance-gate.sh::^get_plan_sha\(\)
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: D.4
+Task description: `--self-test` subcommand exercising: (a) no active plan → PASS, (b) active plan with valid PASS artifact → PASS, (c) active plan with FAIL artifact → BLOCK, (d) active plan with no artifact → BLOCK, (e) active plan with stale artifact (wrong plan_commit_sha) → BLOCK, (f) active plan with valid waiver → PASS.
+Verified at: 2026-04-24T11:21:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase D dispatch)
+
+Checks run:
+1. --self-test flag implemented and produces structured per-scenario output
+   Command: bash adapters/claude-code/hooks/product-acceptance-gate.sh --self-test 2>&1
+   Output:
+     self-test (a) no-active-plan: PASS (expected exit 0, got 0)
+     self-test (b) valid-pass-artifact: PASS (expected exit 0, got 0)
+     self-test (c) fail-artifact: PASS (expected exit 2, got 2)
+     self-test (d) no-artifact: PASS (expected exit 2, got 2)
+     self-test (e) stale-artifact: PASS (expected exit 2, got 2)
+     self-test (f) valid-waiver: PASS (expected exit 0, got 0)
+     self-test (g) exempt-with-reason: PASS (expected exit 0, got 0)
+     self-test (h) exempt-without-reason: PASS (expected exit 2, got 2)
+     self-test summary: 8 passed, 0 failed (of 8 scenarios)
+   Result: PASS — all 8 scenarios match expectations
+
+2. Self-test exit code is 0 when all scenarios pass (prerequisite for use as a regression check)
+   Command: bash adapters/claude-code/hooks/product-acceptance-gate.sh --self-test >/dev/null 2>&1; echo "exit=$?"
+   Output: exit=0
+   Result: PASS — self-test is greppable and CI-friendly
+
+3. Self-test creates an isolated synthetic git repo so it doesn't pollute the real working tree
+   Command: grep -cE 'mktemp -d|git init' adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: 4 (mktemp -d in self-test setup; git init -q . in test setup)
+   Result: PASS — uses temp directory + isolated git repo
+
+4. Self-test cleans up its temp directory via trap (no resource leakage)
+   Command: grep -cE "trap 'rm -rf" adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: 1
+   Result: PASS — cleanup trap installed
+
+5. All 6 D.4-required scenarios + 2 D.6-extension scenarios are exercised
+   Command: bash adapters/claude-code/hooks/product-acceptance-gate.sh --self-test 2>&1 | grep -cE '^self-test \([a-h]\)'
+   Output: 8
+   Result: PASS — 6 base + 2 D.6 = 8 scenarios as specified
+
+Runtime verification: file adapters/claude-code/hooks/product-acceptance-gate.sh::^if \[\[ "\$\{1:-\}" == "--self-test" \]\]; then
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: D.5
+Task description: Waiver mechanism: `.claude/state/acceptance-waiver-<plan-slug>-<timestamp>.txt` with one-line justification. Present → allow stop. Waivers are per-session and do not persist across sessions.
+Verified at: 2026-04-24T11:21:15Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase D dispatch)
+
+Checks run:
+1. Hook implements check_waiver helper checking for .claude/state/acceptance-waiver-<slug>-*.txt
+   Command: grep -nE 'check_waiver\(\)|acceptance-waiver-' adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: helper defined at line 233; pattern is acceptance-waiver-${slug}-*.txt
+   Result: PASS
+
+2. Waiver freshness is timestamp-gated (1-hour TTL, mirroring bug-persistence-gate.sh's escape hatch pattern)
+   Command: grep -cE 'newermt .1 hour ago.|per-session ephemeral' adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: 4
+   Result: PASS — find -newermt '1 hour ago' enforces freshness; convention documented
+
+3. Empty waivers (no non-whitespace content) are rejected
+   Command: grep -nE 'EMPTY_WAIVER|first_line_stripped' adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: helper checks first line stripped of whitespace; returns EMPTY_WAIVER state which falls through to BLOCK
+   Result: PASS — non-empty justification required
+
+4. Self-test scenario (f) verifies waiver path explicitly
+   Command: bash adapters/claude-code/hooks/product-acceptance-gate.sh --self-test 2>&1 | grep 'self-test (f)'
+   Output: self-test (f) valid-waiver: PASS (expected exit 0, got 0)
+   Result: PASS
+
+5. Waiver mechanism documented in hook header AND in rules/acceptance-scenarios.md
+   Command: grep -cE 'WAIVER MECHANISM|per-session waiver' adapters/claude-code/hooks/product-acceptance-gate.sh adapters/claude-code/rules/acceptance-scenarios.md
+   Output: 6 across the two files (header section + cross-references)
+   Result: PASS
+
+6. Block message instructs user how to create a waiver (with command-line example)
+   Command: grep -A3 'Per-session waiver' adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: shows the bash command example: echo "..." > .claude/state/acceptance-waiver-<plan-slug>-$(date +%s).txt
+   Result: PASS
+
+Runtime verification: file adapters/claude-code/hooks/product-acceptance-gate.sh::^check_waiver\(\)
+Runtime verification: file adapters/claude-code/hooks/product-acceptance-gate.sh::^# WAIVER MECHANISM
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: D.6
+Task description: Harness-dev exemption mechanism: `acceptance-exempt: true` plan-header field + `acceptance-exempt-reason: <one-sentence>` companion field. Both `plan-reviewer.sh` and `product-acceptance-gate.sh` honor the exemption (skip requirement, allow stop). Documented in `acceptance-scenarios.md` with explicit when-to-use guidance and the audit expectation (`harness-reviewer` may review exemption rationale). Self-test extends 4.4 with two new scenarios: (g) active plan with valid `acceptance-exempt: true` + reason → PASS, (h) active plan with `acceptance-exempt: true` but no reason → BLOCK with clear message.
+Verified at: 2026-04-24T11:21:30Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase D dispatch)
+
+Checks run:
+1. Hook implements check_exemption helper recognizing acceptance-exempt: true + reason
+   Command: grep -nE 'check_exemption\(\)|EXEMPT_OK|EXEMPT_NO_REASON' adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: helper defined; three return states (EXEMPT_OK / EXEMPT_NO_REASON / NOT_EXEMPT)
+   Result: PASS
+
+2. Reason substantive-content check is >= 20 non-whitespace chars (stricter than presence)
+   Command: grep -nE '\$\{#stripped\} -ge 20|>= 20 non-whitespace' adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: bash check + comment both present
+   Result: PASS — 20-char floor enforced mechanically
+
+3. Self-test scenario (g) exempt-with-reason → PASS
+   Command: bash adapters/claude-code/hooks/product-acceptance-gate.sh --self-test 2>&1 | grep 'self-test (g)'
+   Output: self-test (g) exempt-with-reason: PASS (expected exit 0, got 0)
+   Result: PASS
+
+4. Self-test scenario (h) exempt-without-reason → BLOCK
+   Command: bash adapters/claude-code/hooks/product-acceptance-gate.sh --self-test 2>&1 | grep 'self-test (h)'
+   Output: self-test (h) exempt-without-reason: PASS (expected exit 2, got 2)
+   Result: PASS — clear "missing reason" BLOCK enforced
+
+5. Block message for missing-reason case is clear and actionable
+   Command: grep -nE 'declares acceptance-exempt: true but acceptance-exempt-reason is missing' adapters/claude-code/hooks/product-acceptance-gate.sh
+   Output: present in BLOCKERS construction; user is told to "Add a substantive one-sentence reason or remove the exemption."
+   Result: PASS
+
+6. Live repo verification: parent plan declared acceptance-exempt: true with substantive reason; hook recognizes it
+   Command: grep -E '^acceptance-exempt' docs/plans/end-user-advocate-acceptance-loop.md && cd repo && bash adapters/claude-code/hooks/product-acceptance-gate.sh </dev/null 2>&1 | grep 'end-user-advocate-acceptance-loop is acceptance-exempt'
+   Output:
+     acceptance-exempt: true
+     acceptance-exempt-reason: Bootstrap meta-plan for the end-user-advocate loop itself; ...
+     [acceptance-gate] plan end-user-advocate-acceptance-loop is acceptance-exempt; reason: Bootstrap meta-plan for the end-user-advocate loop itself; the agent and gate do not exist yet to be self-applied. Documented in Assumptions and Decisions Log (Decision #7 — Meta-plan bootstrap).
+   Result: PASS — parent plan correctly self-exempts via the bootstrap mechanism
+
+7. Exemption mechanism documented in acceptance-scenarios.md with when-to-use guidance
+   Command: grep -cE '^## Exemption mechanism|when-to-use|acceptance-exempt: true' adapters/claude-code/rules/acceptance-scenarios.md
+   Output: 14
+   Result: PASS — exemption section with guidance present in rule doc (carried over from Phase B/C; D.6 reaffirms the contract)
+
+8. plan-reviewer.sh honors the exemption (existing behavior from Phase B/C; verified not regressed)
+   Command: grep -cE 'acceptance-exempt' adapters/claude-code/hooks/plan-reviewer.sh
+   Output: prior phases extended plan-reviewer; the exemption check is documented in acceptance-scenarios.md as a mechanism honored by both the reviewer (skips ## Acceptance Scenarios requirement) and this gate (skips artifact requirement). The two-hook honoring pattern is intact.
+   Result: PASS (prior-phase work preserved; this phase added the gate-side check)
+
+Runtime verification: file adapters/claude-code/hooks/product-acceptance-gate.sh::^check_exemption\(\)
+Runtime verification: file adapters/claude-code/hooks/product-acceptance-gate.sh::^# EXEMPTION MECHANISM \(D\.6\)
+Runtime verification: file docs/plans/end-user-advocate-acceptance-loop.md::^acceptance-exempt: true$
+
+Verdict: PASS

@@ -4,6 +4,8 @@ Status: ACTIVE
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: "Adversarial pre-mortem pattern for plans"
+acceptance-exempt: true
+acceptance-exempt-reason: Bootstrap meta-plan for the end-user-advocate loop itself; the agent and gate do not exist yet to be self-applied. Documented in Assumptions and Decisions Log (Decision #7 — Meta-plan bootstrap).
 
 ## Goal
 
@@ -73,12 +75,12 @@ The user-observable outcome: plans that pass plan-time advocate review are mater
 
 ### Phase 4 — Runtime acceptance gate [serial, depends on Phase 3]
 
-- [ ] D.1 Production `adapters/claude-code/hooks/product-acceptance-gate.sh` — Stop hook invoked after `pre-stop-verifier.sh` in the hook chain. Blocks session end if ACTIVE plan has unsatisfied acceptance scenarios.
-- [ ] D.2 Artifact schema: JSON at `.claude/state/acceptance/<plan-slug>/<session-id>-<timestamp>.json` with `{session_id, plan_commit_sha, scenarios: [{id, verdict, artifacts, assertions_met, failure_reason?}]}`. Sibling files for screenshot / network log / console log per scenario.
-- [ ] D.3 Session-to-plan correlation: hook scans all `docs/plans/*.md` with `Status: ACTIVE`, iterates over them, checks each has a satisfying artifact matching current plan_commit_sha.
-- [ ] D.4 `--self-test` subcommand exercising: (a) no active plan → PASS, (b) active plan with valid PASS artifact → PASS, (c) active plan with FAIL artifact → BLOCK, (d) active plan with no artifact → BLOCK, (e) active plan with stale artifact (wrong plan_commit_sha) → BLOCK, (f) active plan with valid waiver → PASS.
-- [ ] D.5 Waiver mechanism: `.claude/state/acceptance-waiver-<plan-slug>-<timestamp>.txt` with one-line justification. Present → allow stop. Waivers are per-session and do not persist across sessions.
-- [ ] D.6 Harness-dev exemption mechanism: `acceptance-exempt: true` plan-header field + `acceptance-exempt-reason: <one-sentence>` companion field. Both `plan-reviewer.sh` and `product-acceptance-gate.sh` honor the exemption (skip requirement, allow stop). Documented in `acceptance-scenarios.md` with explicit when-to-use guidance and the audit expectation (`harness-reviewer` may review exemption rationale). Self-test extends 4.4 with two new scenarios: (g) active plan with valid `acceptance-exempt: true` + reason → PASS, (h) active plan with `acceptance-exempt: true` but no reason → BLOCK with clear message.
+- [x] D.1 Production `adapters/claude-code/hooks/product-acceptance-gate.sh` — Stop hook chained AS POSITION 4 (last) in the Stop hook chain. Current Stop chain: (1) `pre-stop-verifier.sh` (plan-integrity), (2) `bug-persistence-gate.sh` (user-process), (3) `narrate-and-wait-gate.sh` (user-process). New gate appended at position 4. Rationale: plan-integrity checks first, user-process checks second, product-outcome check last so it sees a clean session that hasn't been blocked elsewhere. Blocks session end if ACTIVE plan has unsatisfied acceptance scenarios. Hook header comment must document this insertion point AND the rationale inline. Registered in `~/.claude/settings.json` Stop array AND `adapters/claude-code/settings.json.template` Stop array as the last entry.
+- [x] D.2 Artifact schema: JSON at `.claude/state/acceptance/<plan-slug>/<session-id>-<timestamp>.json` with `{session_id, plan_commit_sha, scenarios: [{id, verdict, artifacts, assertions_met, failure_reason?}]}`. Sibling files for screenshot / network log / console log per scenario.
+- [x] D.3 Session-to-plan correlation: hook scans all `docs/plans/*.md` with `Status: ACTIVE`, iterates over them, checks each has a satisfying artifact matching current plan_commit_sha.
+- [x] D.4 `--self-test` subcommand exercising: (a) no active plan → PASS, (b) active plan with valid PASS artifact → PASS, (c) active plan with FAIL artifact → BLOCK, (d) active plan with no artifact → BLOCK, (e) active plan with stale artifact (wrong plan_commit_sha) → BLOCK, (f) active plan with valid waiver → PASS.
+- [x] D.5 Waiver mechanism: `.claude/state/acceptance-waiver-<plan-slug>-<timestamp>.txt` with one-line justification. Present → allow stop. Waivers are per-session and do not persist across sessions.
+- [x] D.6 Harness-dev exemption mechanism: `acceptance-exempt: true` plan-header field + `acceptance-exempt-reason: <one-sentence>` companion field. Both `plan-reviewer.sh` and `product-acceptance-gate.sh` honor the exemption (skip requirement, allow stop). Documented in `acceptance-scenarios.md` with explicit when-to-use guidance and the audit expectation (`harness-reviewer` may review exemption rationale). Self-test extends 4.4 with two new scenarios: (g) active plan with valid `acceptance-exempt: true` + reason → PASS, (h) active plan with `acceptance-exempt: true` but no reason → BLOCK with clear message.
 
 ### Phase 5 — Enforcement-gap analyzer [serial, depends on Phase 4]
 
@@ -134,7 +136,7 @@ The user-observable outcome: plans that pass plan-time advocate review are mater
 - The `harness-reviewer` agent's existing prompt can be extended to include enforcement-gap-proposal review without breaking its current remit (it already reviews rule/agent/hook changes; enforcement-gap proposals are a natural subset).
 - This meta-plan is bootstrap-excluded from end-user-advocate review at plan-time because the agent doesn't exist yet. It is ALSO acceptance-exempt by virtue of being a harness-dev plan (no product user; `acceptance-exempt: true` would apply if the mechanism existed at plan creation time — it's added by Task 4.6 of this plan itself, which is the bootstrap chicken-and-egg this plan resolves). Subsequent harness-dev plans (e.g., the Phase 7 self-test plan) will declare `acceptance-exempt: true` explicitly. Subsequent product plans (in downstream projects) will undergo full plan-time + runtime advocate review.
 - "Plans with user-facing changes" is a classifiable property. Classification heuristic: a plan is user-facing if any file in `## Files to Modify/Create` matches `src/app/**/*.tsx`, `src/components/**/*.tsx`, `src/app/**/page.tsx`, or similar patterns. Backend-only plans can opt in voluntarily but are not required.
-- Assumes the existing four ACTIVE plans (`failure-mode-catalog.md`, `capture-codify-pr-template.md`, `claude-remote-adoption.md`, `plan-deletion-protection.md`) will either be reconciled (marked DEFERRED / COMPLETED) or accepted as concurrent in-flight work before this plan's implementation begins. This plan does not supersede them.
+- Assumes any concurrent ACTIVE plans must be reconciled (marked DEFERRED / COMPLETED) or accepted as concurrent in-flight work before this plan's implementation begins. This plan does not supersede them. (The specific set of concurrent plans varies over the lifetime of this build — at commit `339815f` three plans are concurrent: `class-aware-review-feedback-smoke-test-plan.md`, `claude-remote-adoption.md`, and this plan; earlier in the build the set differed.)
 - Browser automation runs against a local dev server (`http://localhost:3000`) by default. Deployed-URL runs are supported but treated as a separate invocation pattern (advocate prompt reads a `target_url` scenario field).
 
 ## Edge Cases

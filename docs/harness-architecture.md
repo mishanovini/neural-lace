@@ -1,5 +1,5 @@
 # Claude Code Harness — Architecture Overview
-Last updated: 2026-04-24 (Gen 5 walking skeleton: new `end-user-advocate` agent for plan-time + runtime adversarial product observation; `pre-stop-verifier.sh` Check 0 recognizes `acceptance-exempt: true` plan-header field and emits `[acceptance-gate]` log lines; production blocking gate is Phase D of `docs/plans/end-user-advocate-acceptance-loop.md`. Earlier 2026-04-24: class-aware reviewer feedback — 7 adversarial-review agents emit per-gap six-field blocks with `Class:` + `Sweep query:` + `Required generalization:`; `rules/diagnosis.md` adds the "Fix the Class, Not the Instance" sub-rule consuming this contract)
+Last updated: 2026-04-24 (Gen 5 production runtime acceptance gate: new `product-acceptance-gate.sh` Stop hook (position 4 — last in chain) blocks session end when ACTIVE plans lack PASS runtime acceptance artifacts at `.claude/state/acceptance/<slug>/*.json` with matching `plan_commit_sha`; honors `acceptance-exempt: true` + reason; per-session waiver mechanism mirrors bug-persistence pattern; 8-scenario `--self-test`. Earlier 2026-04-24: Gen 5 walking skeleton — new `end-user-advocate` agent for plan-time + runtime adversarial product observation; `pre-stop-verifier.sh` Check 0 recognizes `acceptance-exempt: true` plan-header field and emits `[acceptance-gate]` log lines. Earlier 2026-04-24: class-aware reviewer feedback — 7 adversarial-review agents emit per-gap six-field blocks with `Class:` + `Sweep query:` + `Required generalization:`; `rules/diagnosis.md` adds the "Fix the Class, Not the Instance" sub-rule consuming this contract)
 
 ## Strategy & Evolution
 
@@ -39,6 +39,7 @@ Both are reviewed by the `harness-reviewer` agent, which classifies changes firs
 | `review-finding-fix-gate.sh` | Commit message references review finding ID → review file must also be staged | Mechanical (pre-commit) |
 | `no-test-skip-gate.sh` **(2026-04-20)** | Staged `*.spec.ts` / `*.test.ts` diffs are scanned for new `test.skip(`, `it.skip(`, `.skip(` on describe blocks, and `xtest(` / `xdescribe(`. Blocked unless the skip line references an issue number (`#NNN` or `github.com/.*/issues/NNN`). Prevents vaporware testing where data-unavailability was dodged by skipping instead of seeding. | Mechanical (pre-commit) |
 | `bug-persistence-gate.sh` **(2026-04-20)** | Stop hook. Scans session transcript for trigger phrases indicating a bug was identified ("we should also", "for next session", "turns out X doesn't work", "as a follow-up", "known issue", etc.). If matches exist AND no change to `docs/backlog.md` or new `docs/reviews/YYYY-MM-DD-*.md` file exists in working tree / recent commits, blocks session end. Escape hatch: `.claude/state/bugs-attested-YYYY-MM-DD-HHMM.txt` with per-match justification (false positives). Mechanical enforcement of the bug-persistence rule in `testing.md`. | Mechanical (Stop hook) |
+| `product-acceptance-gate.sh` **(Gen 5, 2026-04-24)** | Stop hook (position 4 — chained AFTER pre-stop-verifier + bug-persistence + narrate-and-wait). Walks every ACTIVE plan in `docs/plans/` and blocks session end unless each has either: (a) `acceptance-exempt: true` plan-header field with a substantive `acceptance-exempt-reason:` (>= 20 chars), (b) a per-session waiver at `.claude/state/acceptance-waiver-<slug>-<ts>.txt` younger than 1 hour, or (c) a runtime acceptance JSON artifact at `.claude/state/acceptance/<slug>/*.json` whose `plan_commit_sha` matches the plan file's current git SHA AND whose scenarios are all `verdict: "PASS"`. Production runtime gate for the end-user-advocate loop (Phase D of `docs/plans/end-user-advocate-acceptance-loop.md`). 8-scenario `--self-test` flag. | Mechanical (Stop hook) |
 
 The residual gap (verbal vaporware) is bounded by Claude Code's lack of a PostMessage hook and is mitigated via the `verify-feature` skill + memory priming + user interrupt authority.
 
@@ -131,6 +132,7 @@ Runs `pre-stop-verifier.sh`:
 | `pre-stop-verifier.sh` | Stop hook | Blocks session end if active plan has incomplete/unverified tasks. Check 4 calls executor + reviewer. Also surfaces a non-blocking `[uncommitted-plans-warn]` warning when `docs/plans/*.md` (top-level only — archive excluded) has uncommitted files at session end (2026-04-23). |
 | `bug-persistence-gate.sh` | Stop hook | Scans transcript for bug/gap trigger phrases; blocks if no persistence (backlog or review file) happened in this session. |
 | `narrate-and-wait-gate.sh` | Stop hook | When the user has given a keep-going directive, blocks if the final assistant message trails off with a permission-seeking / wait-for-confirmation phrase. |
+| `product-acceptance-gate.sh` **(Gen 5, 2026-04-24)** | Stop hook (position 4 — last in chain after pre-stop-verifier, bug-persistence, narrate-and-wait) | Blocks session end if any ACTIVE plan in `docs/plans/` lacks a PASS runtime acceptance artifact at `.claude/state/acceptance/<plan-slug>/*.json` whose `plan_commit_sha` matches the plan file's current git SHA. Recognizes `acceptance-exempt: true` plan-header field with required `acceptance-exempt-reason:` (>= 20 non-whitespace chars) — exempt plans skip the artifact check. Per-session waiver via `.claude/state/acceptance-waiver-<plan-slug>-<ts>.txt` (1-hour TTL, mirrors bug-persistence escape hatch). Production gate for the end-user-advocate loop (Phase D of `docs/plans/end-user-advocate-acceptance-loop.md`). Walking-skeleton recognition still lives in `pre-stop-verifier.sh` Check 0 (logs only, no blocking). Has `--self-test` flag exercising 8 scenarios: no-active-plan, valid-PASS, FAIL-artifact, no-artifact, stale-sha, valid-waiver, exempt-with-reason, exempt-without-reason. |
 | `effort-policy-warn.sh` **(2026-04-22)** | SessionStart hook | Warns (non-blocking) when the configured effort level is below the minimum declared by a project-level `.claude/effort-policy.json` or user-level `~/.claude/local/effort-policy.json`. Ordering: `low < medium < high < xhigh <= max`. Has `--self-test` flag exercising 10 scenarios. |
 | `sensitive-patterns.local` | Loaded by `pre-push-scan.sh` | Personal credential patterns (never shared) |
 | `sensitive-patterns.local.example` | Documentation | Template showing the format for personal patterns |
@@ -187,12 +189,14 @@ Claude calls any tool (30th call since last ack)
     → ack file updated → unblocked
 ```
 
-**Session ending (Gen 4):**
+**Session ending (Gen 4 + Gen 5):**
 ```
 Session terminating
-  → Stop hook → pre-stop-verifier.sh
+  → Stop hook chain (in order):
+  → 1. pre-stop-verifier.sh (plan-integrity)
     → Find most recent plan in docs/plans/ (excl -evidence)
     → Skip if ABANDONED/DEFERRED
+    → Check 0: acceptance-loop awareness (logs only — Phase A walking skeleton)
     → Check 1: unchecked tasks on ACTIVE/COMPLETED → BLOCK
     → Check 2: checked tasks without evidence blocks → BLOCK
     → Check 3: evidence block structural integrity → BLOCK
@@ -202,6 +206,18 @@ Session terminating
     → Check 4c: runtime-verification-reviewer.sh correspondence check
                 (curl URL matches modified route, sql queries modified table,
                  test imports modified source) — any mismatch → BLOCK
+  → 2. bug-persistence-gate.sh (user-process)
+    → Scan transcript for trigger phrases; if matches found AND nothing
+      persisted to docs/backlog.md or docs/reviews/ → BLOCK
+  → 3. narrate-and-wait-gate.sh (user-process)
+    → If keep-going directive given AND final assistant message trails
+      off with permission-seeking phrase → BLOCK
+  → 4. product-acceptance-gate.sh (Gen 5, product-outcome — last in chain)
+    → Walk every ACTIVE plan in docs/plans/
+    → For each: exempt? → allow. Per-session waiver? → allow.
+      Otherwise: artifact at .claude/state/acceptance/<slug>/*.json
+      with plan_commit_sha matching current HEAD AND all scenarios
+      verdict=PASS? → allow. Otherwise → BLOCK.
 ```
 
 **git push (any terminal):**

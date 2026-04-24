@@ -1,6 +1,6 @@
 # Neural Lace — Harness Backlog
 
-Last updated: 2026-04-24 (added: capture-codify P2 entries — FM-NNN cite verification, answer-form telemetry, template-validator atomicity gate)
+Last updated: 2026-04-24 (added: P1 — concurrent ACTIVE plans need acceptance-exempt declaration before next session-end. Earlier: capture-codify P2 entries — FM-NNN cite verification, answer-form telemetry, template-validator atomicity gate)
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
@@ -32,6 +32,23 @@ Surfaced 2026-04-23 (during plan #5's own self-archival, commit 93ef15d). When t
 - (c) Hook moves the file via `mv` (filesystem rename) BEFORE the Edit tool's content change reaches disk, then user does `git add -A` which captures both as a single staged change. Requires hook re-architecture.
 
 Workaround pattern (used 2026-04-23): commit twice — first commit captures the rename (zero-content change), second commit captures the Status text update. See plan #5's archival commits 93ef15d + 6f4c057.
+
+### P1 — Concurrent ACTIVE plans need acceptance-exempt declaration before next session-end (2026-04-24)
+
+After Phase D of `docs/plans/end-user-advocate-acceptance-loop.md` registered `product-acceptance-gate.sh` as Stop-hook position 4, two concurrent ACTIVE plans will block session end on the next session unless reconciled:
+
+- `docs/plans/claude-remote-adoption.md`
+- `docs/plans/class-aware-review-feedback-smoke-test-plan.md`
+
+Both are harness-dev plans without a product-user surface. Per `rules/acceptance-scenarios.md`'s exemption guidance, each should declare `acceptance-exempt: true` with a substantive `acceptance-exempt-reason:` (>= 20 chars). The third concurrent plan, `end-user-advocate-acceptance-loop.md` itself, has already been declared exempt in Phase D (bootstrap meta-plan rationale).
+
+**Fix path:** in the next session, edit each plan file's header to add the two fields. Example for `claude-remote-adoption.md`:
+```
+acceptance-exempt: true
+acceptance-exempt-reason: Harness-development plan (Claude Code remote-mode adoption); no product-user surface to verify at runtime — the maintainer exercises the harness in subsequent sessions.
+```
+
+Until done, sessions ending while these plans are ACTIVE will hit a BLOCK with a clear remediation message from `product-acceptance-gate.sh`. Per-session waiver is also available as a fallback (`echo "..." > .claude/state/acceptance-waiver-<slug>-$(date +%s).txt`).
 
 ### P1 — `plan-phase-builder` sub-agent dispatched without Task tool — cannot invoke `task-verifier` (2026-04-23)
 

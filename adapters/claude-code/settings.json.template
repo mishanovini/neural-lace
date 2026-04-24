@@ -163,6 +163,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/narrate-and-wait-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/product-acceptance-gate.sh"
           }
         ]
       }

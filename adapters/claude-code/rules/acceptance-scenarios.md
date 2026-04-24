@@ -46,16 +46,51 @@ After build, before session end, the advocate is invoked again in runtime mode. 
 
 ### Stage 4 — Stop-hook gate
 
-`product-acceptance-gate.sh` (Phase D of the parent plan) runs in the Stop-hook chain after `pre-stop-verifier.sh`. It:
+`product-acceptance-gate.sh` (Phase D of the parent plan, **production as of 2026-04-24**) runs as **position 4 (last)** in the Stop hook chain. The full chain order:
 
-1. Iterates over all plans in `docs/plans/*.md` with `Status: ACTIVE`.
+1. `pre-stop-verifier.sh` — plan-integrity (unchecked tasks, evidence blocks, runtime verification correspondence)
+2. `bug-persistence-gate.sh` — user-process (bugs surfaced in transcript persisted to backlog/reviews)
+3. `narrate-and-wait-gate.sh` — user-process (no permission-seeking trail-off when keep-going was authorized)
+4. `product-acceptance-gate.sh` — product-outcome (acceptance scenarios PASS at runtime)
+
+Rationale for being last: cheap mechanical checks first; expensive runtime exercise last. If the plan is broken (Check 1), bugs weren't persisted (Check 2), or the session is wait-narrating (Check 3), surfacing those issues first is more actionable.
+
+The gate:
+
+1. Iterates over all plans in `docs/plans/*.md` with `Status: ACTIVE` (top-level only — archive subdir excluded).
 2. For each:
-   - If `acceptance-exempt: true` is declared with a substantive `acceptance-exempt-reason:` (>= 20 chars), allow stop for this plan and emit `[acceptance-gate] plan <slug> is acceptance-exempt; reason: <...>`.
-   - Otherwise, look for a JSON artifact under `.claude/state/acceptance/<slug>/` whose `plan_commit_sha` matches the current plan file's HEAD SHA AND whose verdict is PASS for every in-scope scenario.
+   - If `acceptance-exempt: true` is declared with a substantive `acceptance-exempt-reason:` (>= 20 non-whitespace chars), allow stop for this plan and emit `[acceptance-gate] plan <slug> is acceptance-exempt; reason: <...>`.
+   - If `acceptance-exempt: true` is declared but the reason is missing or shorter than 20 chars, BLOCK with a clear "missing reason" message.
+   - If a per-session waiver exists at `.claude/state/acceptance-waiver-<slug>-<ts>.txt` (younger than 1 hour, mirroring `bug-persistence-gate.sh`'s pattern, with at least one non-whitespace line of justification), allow stop for this plan.
+   - Otherwise, look for a JSON artifact under `.claude/state/acceptance/<slug>/` whose `plan_commit_sha` matches the current plan file's HEAD SHA AND whose `verdict` is `PASS` for every in-scope scenario.
    - If found, allow stop. If missing, FAIL, or stale, BLOCK with stderr message naming the missing scenarios and pointing at the runtime advocate invocation command.
-3. If any ACTIVE plan blocks, blocks session end. If all pass (or all are exempt or absent), allow stop.
+3. If any ACTIVE plan blocks, blocks session end (exit 2 + JSON `{"decision": "block", ...}`). If all pass (or all are exempt or all are waivered), allow stop (exit 0).
 
-The walking-skeleton form of this gate already lives in `pre-stop-verifier.sh` Check 0 (Phase A). Production hardening lands in Phase D.
+**Artifact schema** (referenced from `agents/end-user-advocate.md` and the hook header comment):
+
+```json
+{
+  "session_id": "string",
+  "plan_slug": "string",
+  "plan_commit_sha": "string (git SHA of the plan file at run time)",
+  "mode": "runtime",
+  "started_at": "ISO 8601",
+  "ended_at": "ISO 8601",
+  "scenarios": [
+    {
+      "id": "scenario slug from plan",
+      "verdict": "PASS | FAIL | ENVIRONMENT_UNAVAILABLE",
+      "artifacts": { "screenshot": "...", "network_log": "...", "console_log": "..." },
+      "assertions_met": ["list", "of", "passing checks"],
+      "failure_reason": "string | null"
+    }
+  ]
+}
+```
+
+Sibling files: `<scenario-slug>-screenshot.png`, `<scenario-slug>-network.log`, `<scenario-slug>-console.log` in the same directory.
+
+The walking-skeleton form of this gate still lives in `pre-stop-verifier.sh` Check 0 (Phase A) for log-only recognition; the production blocking gate is Phase D. The hook exposes a `--self-test` flag exercising 8 scenarios: no-active-plan, valid-PASS, FAIL-artifact, no-artifact, stale-sha, valid-waiver, exempt-with-reason, exempt-without-reason.
 
 ### Stage 5 — Gap-analysis on FAIL
 
