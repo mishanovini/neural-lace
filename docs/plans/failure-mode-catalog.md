@@ -66,3 +66,36 @@ Establish `docs/failure-modes.md` as a living, referenced catalog of known harne
 - [ ] All changes committed to the neural-lace repo; pre-commit hooks pass without bypass.
 - [ ] SCRATCHPAD.md updated with final state and commit SHAs.
 - [ ] Completion report appended to this plan file per `templates/completion-report.md`.
+
+## Completion Report
+
+### 1. Implementation Summary
+
+All 9 tasks shipped in 4 commits on `feat/failure-mode-catalog`:
+- **A.1** (commit `e14afd0`): `docs/failure-modes.md` seeded with 6 entries — FM-001 concurrent-session plan wipe, FM-002 mysterious effort-level reset, FM-003 bug-persistence trigger fired without persistence, FM-004 verbose plan with placeholder-only sections, FM-005 untracked plan file location ambiguity, FM-006 self-reported task completion without evidence. All entries sanitized (generic terms, no codenames).
+- **A.2-A.6 + A.8** (commit `97e838b`): catalog references wired into `rules/diagnosis.md` (Encode the Fix → catalog directive), `skills/harness-lesson.md` and `skills/why-slipped.md` (check-catalog-first), `agents/claim-reviewer.md` and `agents/task-verifier.md` (consult catalog for known patterns), `docs/harness-architecture.md` (inventoried artifact row).
+- **A.7** (verified during commit `5fe5dd3`): mirror diff loop confirmed; pre-existing unrelated `~/.claude/` ↔ `adapters/claude-code/` drift (25 DIFFERS + 4 MISSING) flagged as a P2 backlog item rather than absorbed into this plan's scope.
+- **A.9** (commit `3de8f6a`): self-referential checkbox flip + final evidence.
+
+Backlog absorbed: "Failure mode catalog as a first-class artifact" — declared at plan creation, will be archived inside this plan rather than returning to backlog.
+
+### 2. Design Decisions & Plan Deviations
+
+No new Tier 2+ decisions. The seed-entry choice (4-6 → 6) used the high end of the range to give downstream plans (capture-codify, end-user-advocate) a richer reference set for the FM-NNN IDs they will cite. No deviations from the approved plan.
+
+### 3. Known Issues & Gotchas
+
+- **Pre-existing harness-mirror drift** (P2 backlog) — 25 files DIFFER and 4 MISSING between `~/.claude/` and `adapters/claude-code/`. Out of scope for this plan; needs a dedicated reconciliation pass to restore zero-baseline diff loop.
+- The catalog is currently a static document. Future plans (capture-codify-pr-template, end-user-advocate-acceptance-loop) will write into it programmatically; the schema is stable so this should be additive.
+
+### 4. Manual Steps Required
+
+None. Catalog is live; references are in place.
+
+### 5. Testing Performed & Recommended
+
+Performed: per-task evidence-first verification (greps confirming references in each modified file; mirror diff confirming sync). Recommended: when the next failure-class is identified during real work, exercise the "add to catalog" directive in `diagnosis.md` end-to-end — that's the canonical user journey for the catalog.
+
+### 6. Cost Estimates
+
+Zero ongoing cost. Catalog is a markdown file; references add ~200 chars to 5 prompt files (negligible context impact).
