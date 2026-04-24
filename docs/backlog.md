@@ -41,16 +41,15 @@ Mitigation candidates:
 
 Low priority because the workaround (general-purpose dispatch with inlined discipline) is functional and the issue resolves on next session start.
 
-### P0 — Class-aware reviewer feedback (narrow-fix bias mitigation)
+### P1 — Class-aware reviewer feedback Mod 2: pre-commit class-sweep attestation hook
 
-Surfaced 2026-04-23 across 5 systems-designer iterations on the capture-codify-pr-template plan. Pattern: adversarial reviewers identify named instances; LLM builders fix the named instances; sibling instances of the same defect class slip; next pass surfaces a sibling; loop. Each pass closes real gaps but each fix introduces narrower follow-ons. Affects every adversarial-review loop in the harness, not just plan reviews.
+Deferred from the original bundled "Class-aware reviewer feedback (narrow-fix bias mitigation)" entry on 2026-04-23. Mods 1 + 3 of that entry are absorbed by the `class-aware-review-feedback` plan. Mod 2 stays in the backlog pending evidence that Mods 1+3 alone don't fully close the narrow-fix-bias pattern.
 
-Three proposed mitigations (in order of leverage):
-1. **Mod 1 (Pattern, ~2 hrs):** Modify reviewer agents (`systems-designer`, `harness-reviewer`, `code-reviewer`, `security-reviewer`, `ux-designer`, future `end-user-advocate`) to require `Class:` + `Sweep query:` + `Required generalization:` fields per gap. Shifts ~5% of reviewer effort to classification, gives the builder the sweep query upfront.
-2. **Mod 2 (Mechanism, ~6 hrs):** New PreToolUse hook `class-sweep-attestation.sh` requiring fix-commits (matching "amend" / "fix" / "address review" + prior FAIL exists) to include `Class-sweep: <pattern> — N matches, M fixed` in the message. Blocks otherwise.
-3. **Mod 3 (Pattern, 30 min):** Add "Fix the Class, Not the Instance" sub-rule to `rules/diagnosis.md` under the existing "After Every Failure: Encode the Fix" section.
+**Pattern this would address:** adversarial reviewers identify named instances; LLM builders fix the named instances; sibling instances of the same defect class slip; next pass surfaces a sibling; loop. Surfaced across 5 `systems-designer` iterations on the `capture-codify-pr-template` plan (2026-04-23). Affects every adversarial-review loop in the harness.
 
-Recommendation: ship Mod 1 + Mod 3 as a single small plan (`class-aware-review-feedback`). Defer Mod 2 unless the pattern recurs after Mod 1+3 are live.
+**Proposal:** New PreToolUse hook `class-sweep-attestation.sh` (matching `git commit`) that detects fix-commits — message contains "amend" / "fix" / "address review" AND a prior reviewer FAIL exists in `~/.claude/state/reviews/`. Requires the commit message to include a `Class-sweep: <pattern> — N matches, M fixed` line. Blocks commit otherwise. Estimated effort: ~6 hrs (with self-test); existing `bug-persistence-gate.sh` is a good template.
+
+**Trigger to revive:** if after `class-aware-review-feedback` ships, an adversarial-review loop still produces 3+ rounds of FAIL where each round surfaces a sibling instance of a defect class the prior round was supposed to address, that's the signal to ship Mod 2. Until then, the prose-layer interventions (Mod 1 + Mod 3) are believed sufficient.
 
 ### P1 — Prompt template library for meta-questions
 

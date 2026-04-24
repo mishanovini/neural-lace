@@ -179,6 +179,13 @@ Different failure-discovery channels. Keeping both is correct.
    - Blocks: plans #3 and #6 (soft — both could run with a stub, but catalog first is cleaner).
    - Success signal: `docs/failure-modes.md` exists with 4-6 seed entries; referenced in `diagnosis.md`, `harness-lesson.md`, `why-slipped.md`, `claim-reviewer.md`, `task-verifier.md`.
 
+**Batch 2.5 — Reviewer-discipline upgrade (serial; just-in-time for Batch 3)**
+
+3.5. **Plan #7 — `class-aware-review-feedback`** (neural-lace, 10 tasks, est. 2-3 hrs) — INSERTED 2026-04-23 PM
+   - Rationale: addresses the narrow-fix-bias pattern observed across 6 `systems-designer` iterations on plan #3. Modifies all adversarial-review agents (Mod 1) + adds "Fix the Class, Not the Instance" sub-rule to `diagnosis.md` (Mod 3). Mod 2 (mechanical hook) deferred to backlog.
+   - Blocks: Plan #6's systems-designer review (RUN THIS BEFORE plan #6's review starts so the agent emits class-aware feedback from the first pass — saves the 5-iteration loop seen on plan #3).
+   - Success signal: smoke test on a synthetic flawed plan returns reviewer output including `Class:` + `Sweep query:` + `Required generalization:` fields.
+
 **Batch 3 — Parallel build (parallel dispatch via worktrees OR sequential if local)**
 
 4a. **Plan #3 — `capture-codify-pr-template`** (neural-lace, 8 tasks, est. 4-8 hrs)
