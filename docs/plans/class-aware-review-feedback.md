@@ -44,16 +44,16 @@ Mod 2 (pre-commit class-sweep attestation hook) is explicitly OUT of scope and r
 
 ## Tasks
 
-- [ ] 1. Update `adapters/claude-code/agents/systems-designer.md` with the required output format. Add a new section "Output Format Requirements" specifying that for each identified gap, the agent must include: `Line(s):`, `Defect:`, `Class:`, `Sweep query:`, `Required fix:`, `Required generalization:`. Provide a worked example. Mirror to `~/.claude/agents/systems-designer.md`. Diff verification.
-- [ ] 2. Update `adapters/claude-code/agents/harness-reviewer.md` with the same output format requirement. Mirror + diff.
-- [ ] 3. Update `adapters/claude-code/agents/code-reviewer.md` with the same. Mirror + diff.
-- [ ] 4. Update `adapters/claude-code/agents/security-reviewer.md` with the same. Mirror + diff.
-- [ ] 5. Update `adapters/claude-code/agents/ux-designer.md` with the same. Mirror + diff.
-- [ ] 6. Update `adapters/claude-code/agents/claim-reviewer.md` with the same. Mirror + diff.
-- [ ] 7. Update `adapters/claude-code/agents/plan-evidence-reviewer.md` with the same. Mirror + diff.
-- [ ] 8. Add "Fix the Class, Not the Instance" sub-rule to `adapters/claude-code/rules/diagnosis.md` under the existing "After Every Failure: Encode the Fix" section. The sub-rule says: "When a reviewer (or any feedback source) flags a defect at a specific location, the fix is not done until you have searched the entire artifact for sibling instances of the same defect class. Document the search in the fix commit (e.g., `Class-sweep: <grep pattern> — N matches, M fixed`). The named instance is one example of the class; the class is what gets fixed." Mirror to `~/.claude/rules/diagnosis.md`. Diff verification.
-- [ ] 9. Update `adapters/claude-code/docs/harness-architecture.md` to note the new contract: in the agents inventory section, add a one-line entry under each modified agent referencing the class-aware feedback format. Mirror to `~/.claude/docs/harness-architecture.md`. Diff verification.
-- [ ] 10. End-to-end smoke test: invoke the modified `systems-designer` agent on a deliberately-flawed test plan (a small throwaway with one obvious defect that has 3 sibling instances in the same file). Verify the agent's output now includes `Class:` + `Sweep query:` + `Required generalization:` fields, and the sweep query if executed actually surfaces the 3 siblings. Document evidence in `docs/plans/class-aware-review-feedback-evidence.md`.
+- [ ] A.1 Update `adapters/claude-code/agents/systems-designer.md` with the required output format. Add a new section "Output Format Requirements" specifying that for each identified gap, the agent must include: `Line(s):`, `Defect:`, `Class:`, `Sweep query:`, `Required fix:`, `Required generalization:`. Provide a worked example. Mirror to `~/.claude/agents/systems-designer.md`. Diff verification.
+- [ ] A.2 Update `adapters/claude-code/agents/harness-reviewer.md` with the same output format requirement. Mirror + diff.
+- [ ] A.3 Update `adapters/claude-code/agents/code-reviewer.md` with the same. Mirror + diff.
+- [ ] A.4 Update `adapters/claude-code/agents/security-reviewer.md` with the same. Mirror + diff.
+- [ ] A.5 Update `adapters/claude-code/agents/ux-designer.md` with the same. Mirror + diff.
+- [ ] A.6 Update `adapters/claude-code/agents/claim-reviewer.md` with the same. Mirror + diff.
+- [ ] A.7 Update `adapters/claude-code/agents/plan-evidence-reviewer.md` with the same. Mirror + diff.
+- [ ] A.8 Add "Fix the Class, Not the Instance" sub-rule to `adapters/claude-code/rules/diagnosis.md` under the existing "After Every Failure: Encode the Fix" section. The sub-rule says: "When a reviewer (or any feedback source) flags a defect at a specific location, the fix is not done until you have searched the entire artifact for sibling instances of the same defect class. Document the search in the fix commit (e.g., `Class-sweep: <grep pattern> — N matches, M fixed`). The named instance is one example of the class; the class is what gets fixed." Mirror to `~/.claude/rules/diagnosis.md`. Diff verification.
+- [ ] A.9 Update `adapters/claude-code/docs/harness-architecture.md` to note the new contract: in the agents inventory section, add a one-line entry under each modified agent referencing the class-aware feedback format. Mirror to `~/.claude/docs/harness-architecture.md`. Diff verification.
+- [ ] A.10 End-to-end smoke test: invoke the modified `systems-designer` agent on a deliberately-flawed test plan (a small throwaway with one obvious defect that has 3 sibling instances in the same file). Verify the agent's output now includes `Class:` + `Sweep query:` + `Required generalization:` fields, and the sweep query if executed actually surfaces the 3 siblings. Document evidence in `docs/plans/class-aware-review-feedback-evidence.md`.
 
 ## Files to Modify/Create
 
