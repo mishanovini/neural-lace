@@ -153,7 +153,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 
 ### Phase C: Documentation — the Unified Convention
 
-- [ ] C.1 Update `~/.claude/rules/planning.md` with the full lifecycle convention
+- [x] C.1 Update `~/.claude/rules/planning.md` with the full lifecycle convention
   - Add a new section: "## Plan File Lifecycle (Creation, Archival, Lookup)"
   - Content:
     - **Creation:** "Commit new plan files immediately. Uncommitted plans are vulnerable to being wiped by concurrent sessions. The plan-lifecycle hook will surface a warning until a plan is committed."
@@ -166,7 +166,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
   - **Files:** `~/.claude/rules/planning.md`
   - **Done when:** New section exists, is clear, covers all four stages, and existing sections are reconciled (no conflicting instructions).
 
-- [ ] C.2 Mirror `planning.md` to neural-lace
+- [x] C.2 Mirror `planning.md` to neural-lace
   - Copy + `diff -q` verify
   - Commit: `docs(harness): planning.md — unified plan file lifecycle convention`
   - **Files:** `neural-lace/adapters/claude-code/rules/planning.md`

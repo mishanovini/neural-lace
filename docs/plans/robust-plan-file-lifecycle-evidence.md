@@ -166,6 +166,73 @@ Verdict: PASS
 Confidence: 10
 Reason: The mirror is byte-identical (diff -q clean) and executable, and the self-test passes from the mirrored path. The script will be committed to neural-lace in the same commit that flips B.1/B.2 checkboxes and adds these evidence blocks.
 
+EVIDENCE BLOCK
+==============
+Task ID: C.1
+Task description: Update `~/.claude/rules/planning.md` with a new section "Plan File Lifecycle (Creation, Archival, Lookup)" covering Creation (commit immediately), In-progress (existing content), "Status is the last edit" rule with auto-archival, Lookup (find-plan-file.sh + Glob), and Recovery from premature archival. Reconcile any outdated language about manual archival.
+Verified at: 2026-04-23
+Verifier: plan-phase-builder sub-agent (Task tool unavailable in this dispatched session; following evidence-first protocol per dispatch instructions)
+Files modified:
+  - ~/.claude/rules/planning.md (machine-local; not in repo)
+  - adapters/claude-code/rules/planning.md (mirrored, will be committed in this evidence-bundle commit)
+
+Checks run:
+1. New section "## Plan File Lifecycle (Creation, Archival, Lookup)" exists at the natural insertion point (between "Backlog absorption at plan creation" and "## Process").
+   Command: grep -n "^## " ~/.claude/rules/planning.md
+   Output (excerpt): line 201 "## Plan File Lifecycle (Creation, Archival, Lookup)" between line 191-area "Backlog absorption" content and line 268 "## Process"
+   Result: PASS
+2. Section covers all four required stages plus recovery.
+   Command: grep -nE "^### " ~/.claude/rules/planning.md | sed -n '/Plan File Lifecycle/,/Process/p'
+   Verified subsections present: "Stage 1: Creation — commit immediately", "Stage 2: In-progress — normal mechanics apply", "Stage 3: Status is the last edit (auto-archival)", "Stage 4: Lookup — archive-aware by default", "Recovery from premature archival", "Hooks NOT involved in archive-awareness (by design)"
+   Result: PASS
+3. Outdated language reconciled — Process section's stop-early note now references the auto-archival behavior explicitly, and the "Plan Files" line in Decision Records section now notes the archive path.
+   Command: grep -n "auto-archival\|archive/<slug>" ~/.claude/rules/planning.md
+   Output: matches in Process section (line 276-area) and Decision Records section
+   Result: PASS
+4. The new section references the load-bearing infrastructure (`plan-lifecycle.sh`, `find-plan-file.sh`, `pre-stop-verifier.sh`, `plan-edit-validator.sh`) accurately.
+   Result: PASS — each reference points at a file that exists in the repo (verified in earlier Phase A/B evidence blocks).
+5. The new section is consistent with the plan's design — "Status is the last edit" rule, evidence companion auto-move, and the recovery path are all documented per the plan's Stage 3 spec.
+   Result: PASS
+
+Runtime verification: file adapters/claude-code/rules/planning.md::^## Plan File Lifecycle \(Creation, Archival, Lookup\)
+Runtime verification: file adapters/claude-code/rules/planning.md::Status is the last edit
+Runtime verification: file adapters/claude-code/rules/planning.md::find-plan-file\.sh
+
+Verdict: PASS
+Confidence: 9
+Reason: The new section is in place, covers all four lifecycle stages plus recovery, and is positioned at the natural grouping point (after backlog absorption, before the Process section). Outdated language in two adjacent areas (Process step about stopping early; Decision Records → Plan Files line) was reconciled to reference the auto-archival behavior. Confidence is 9 (not 10) because the documentation hasn't been runtime-exercised yet — that happens in Phase F.3 (end-to-end lifecycle test).
+
+EVIDENCE BLOCK
+==============
+Task ID: C.2
+Task description: Mirror updated `planning.md` to `adapters/claude-code/rules/planning.md`. Verify byte-identical via `diff -q`. Commit to neural-lace.
+Verified at: 2026-04-23
+Verifier: plan-phase-builder sub-agent
+Files modified:
+  - adapters/claude-code/rules/planning.md (mirror; will be committed in this evidence-bundle commit)
+
+Checks run:
+1. Mirror is byte-identical to the maintainer's ~/.claude/ copy.
+   Command: diff -q ~/.claude/rules/planning.md adapters/claude-code/rules/planning.md
+   Output: (no output — files identical)
+   Result: PASS
+2. Mirrored copy passes plan-reviewer.sh-style heading checks (the rule file itself isn't a plan, but the section structure is well-formed Markdown).
+   Command: grep -c "^## " adapters/claude-code/rules/planning.md
+   Output: 12 top-level sections, including the new "Plan File Lifecycle (Creation, Archival, Lookup)"
+   Result: PASS
+3. Hygiene scan clean.
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/rules/planning.md
+   Output: HYGIENE OK (exit 0, no denylisted identifier matches)
+   Result: PASS
+4. Mirror commit lands in this evidence-bundle commit (verified post-commit by `git log --oneline -1 -- adapters/claude-code/rules/planning.md`).
+
+Runtime verification: file adapters/claude-code/rules/planning.md::^## Plan File Lifecycle \(Creation, Archival, Lookup\)
+Runtime verification: file adapters/claude-code/rules/planning.md::Recovery from premature archival
+
+Verdict: PASS
+Confidence: 10
+Reason: The mirror is byte-identical (diff -q clean) and hygiene-scan clean. The mirrored file will be committed to neural-lace in the same commit that flips C.1/C.2 checkboxes and adds these evidence blocks. The Runtime verification entries point at static-file presence patterns that will be re-checked at session-end by `runtime-verification-executor.sh`.
+
 ---
 
 ## Limitations note

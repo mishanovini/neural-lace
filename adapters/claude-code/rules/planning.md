@@ -198,6 +198,73 @@ When a new plan is created that addresses one or more items currently listed in 
 
 **Rationale:** backlog = "not yet claimed by any plan"; plan = "actively being built." A single source of truth per item prevents the "built but forgot to update backlog" staleness that is common in long-running projects, and prevents duplicate work where two plans both claim the same backlog entry. The enforcing hook makes the deletion-on-absorption atomic with the plan file creation commit, so no plan can exist with absorbed items still listed in the open backlog.
 
+## Plan File Lifecycle (Creation, Archival, Lookup)
+
+Plan files have a four-stage lifecycle. Each stage has a mechanical hook backing it so the lifecycle does not depend on human discipline at any point. The mechanism that holds it together is `~/.claude/hooks/plan-lifecycle.sh` (PostToolUse on Edit/Write under `docs/plans/`).
+
+### Stage 1: Creation — commit immediately
+
+When you write a new plan file at `docs/plans/<slug>.md`, **commit it within the same session** — ideally within minutes of writing it. Uncommitted plan files are vulnerable to being wiped by concurrent sessions performing git operations on the same working tree.
+
+The `plan-lifecycle.sh` hook surfaces a warning every time it sees an edit to an uncommitted plan file, of the form:
+
+> ⚠ Plan file `<slug>.md` was created but is not yet committed. Uncommitted plan files can be wiped by concurrent sessions. Commit now: `git add <path> && git commit -m 'plan: <slug>'`.
+
+If you reach session end with an uncommitted plan file, `pre-stop-verifier.sh` surfaces a final non-blocking warning. Commit before stopping.
+
+### Stage 2: In-progress — normal mechanics apply
+
+Once committed, the plan proceeds through normal build mechanics:
+- The `task-verifier` agent flips checkboxes (per the Verifier Mandate above)
+- Evidence-first protocol is enforced by `plan-edit-validator.sh`
+- Multi-task plans are dispatched to `plan-phase-builder` sub-agents per the orchestrator pattern
+
+No lifecycle hook activity is needed at this stage.
+
+### Stage 3: Status is the last edit (auto-archival)
+
+**The Status field MUST be the final edit made to a plan file in its active life.** Completion reports, final decisions log entries, and any closing notes are written BEFORE flipping `Status:` to a terminal value (COMPLETED, DEFERRED, ABANDONED, SUPERSEDED).
+
+Why: when `Status:` transitions to terminal, `plan-lifecycle.sh` immediately executes `git mv docs/plans/<slug>.md docs/plans/archive/<slug>.md` in the same edit cycle. If a `<slug>-evidence.md` companion exists, it moves with the plan. If you try to append to the plan after flipping Status, the path is already gone and you have to recover.
+
+**The Status change and the file rename land in the same commit.** Marking a plan complete and archiving it are one action, not two — there is no separate "archive this plan" step to remember.
+
+The hook emits a system message after the move:
+
+> 📦 Plan `<slug>` transitioned to [STATUS] and was archived. Subsequent references should use: `docs/plans/archive/<slug>.md`
+
+### Stage 4: Lookup — archive-aware by default
+
+Once a plan is archived, references to it must resolve across both `docs/plans/` and `docs/plans/archive/`. Use one of the following depending on context:
+
+- **Bash contexts (hooks, scripts, manual invocation):** `~/.claude/scripts/find-plan-file.sh <slug>` resolves the slug to a full path. Resolution order is active-first (`docs/plans/<slug>.md`), then archive (`docs/plans/archive/<slug>.md`). Exit 0 with path on stdout if found; exit 1 with no stdout if not found. Stderr emits a `resolved from archive: <path>` note when the archive fallback is used. Glob patterns supported (e.g., `find-plan-file.sh "*release*"`).
+- **Claude tool calls:** use `Glob docs/plans/**/<pattern>.md` to search both directories transparently.
+- **Agent prompts:** the `task-verifier`, `plan-evidence-reviewer`, and `ux-designer` agent files include archive-aware fallback instructions for the plan path argument.
+
+The active directory is searched first by design — archived plans are historical records and should not normally be under active modification.
+
+### Recovery from premature archival
+
+If a session accidentally writes `Status: COMPLETED` (typo, mistaken state, mid-edit confusion) and the hook archives the file:
+
+1. `git mv docs/plans/archive/<slug>.md docs/plans/<slug>.md` to restore the active path
+2. If a companion evidence file moved too: `git mv docs/plans/archive/<slug>-evidence.md docs/plans/<slug>-evidence.md`
+3. Edit `Status:` back to the correct value (e.g., `ACTIVE`)
+4. The hook does NOT fire on archive → active transitions (only terminal transitions trigger archival), so the recovery is safe
+
+The cost of the rare accidental terminal-status flip is one `git mv`. The benefit of automatic archival in the common case (plans never accumulate in `docs/plans/` past their completion) is large. This tradeoff is intentional.
+
+### Hooks NOT involved in archive-awareness (by design)
+
+A few existing hooks are deliberately scoped to the active `docs/plans/` directory only and do NOT search the archive:
+
+- `backlog-plan-atomicity.sh` — only fires on new plan creation
+- `harness-hygiene-scan.sh` — harness-repo-wide, not plan-specific
+- `plan-edit-validator.sh` — its regex matches archive paths too, which is the desired behavior (evidence-first protocol still applies if you edit an archived plan)
+- `pre-commit-gate.sh` — correctly scoped to active-work commits
+
+Edits to archived plans are rare. When they happen (correcting a historical typo, adding a postmortem note), you must use the explicit `docs/plans/archive/<slug>.md` path — the archive is not auto-resolved by hooks that scope themselves to active work.
+
 ## Process
 1. **Explore first.** Read relevant files, understand architecture, identify conventions.
 2. **Surface decisions.** Present choices with pros/cons. Get alignment.
@@ -206,7 +273,7 @@ When a new plan is created that addresses one or more items currently listed in 
 5. **Implement autonomously.** After completing each task, invoke the `task-verifier` agent to check the task — **do NOT check the task's box yourself.** Update SCRATCHPAD.md after each verified task.
 6. **If deviating:** Update plan file with deviation and reasoning BEFORE implementing.
 
-After compaction, read plan file + SCRATCHPAD.md to resume. To stop early, set `Status: ABANDONED` or `Status: DEFERRED`.
+After compaction, read plan file + SCRATCHPAD.md to resume. To stop early, set `Status: ABANDONED` or `Status: DEFERRED` — note that this triggers auto-archival (see "Plan File Lifecycle" above), so write any final notes BEFORE flipping Status.
 
 ## Task Completion — Verifier Mandate
 
@@ -269,7 +336,7 @@ Maintain traceable records in the repo:
 
 **Session Summaries** (`docs/sessions/YYYY-MM-DD-slug.md`): Write at end of every significant session. Include: what was built, decisions made, bugs found, key artifacts, what's left.
 
-**Plan Files** (`docs/plans/<slug>.md`): Permanent records. Never delete. Include final status + completion report.
+**Plan Files** (`docs/plans/<slug>.md`): Permanent records. Never delete. Include final status + completion report. On terminal status, auto-archived to `docs/plans/archive/<slug>.md` (see "Plan File Lifecycle" above).
 
 ### Mandatory: every Tier 2+ decision gets a decision record in the same commit
 
