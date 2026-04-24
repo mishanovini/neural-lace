@@ -821,3 +821,198 @@ Runtime verification: file adapters/claude-code/hooks/product-acceptance-gate.sh
 Runtime verification: file docs/plans/end-user-advocate-acceptance-loop.md::^acceptance-exempt: true$
 
 Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: E.1
+Task description: Create `adapters/claude-code/agents/enforcement-gap-analyzer.md` — reads session transcript + plan + failing scenario + hooks that fired. Required output fields: Title, Date, `Class of failure:`, `Existing rules/hooks that should have caught this:`, `Why current mechanisms missed this:`, `Proposed change (concrete diff or file creation)`, Testing strategy for the new rule.
+Verified at: 2026-04-23T00:00:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase E dispatch)
+
+Checks run:
+1. Agent file exists at canonical path AND mirrored to ~/.claude/
+   Command: ls adapters/claude-code/agents/enforcement-gap-analyzer.md && diff -q adapters/claude-code/agents/enforcement-gap-analyzer.md ~/.claude/agents/enforcement-gap-analyzer.md
+   Output: adapters/claude-code/agents/enforcement-gap-analyzer.md   (diff produced no output -> identical)
+   Result: PASS — sync verified
+
+2. Frontmatter declares the agent name + tools (Read, Grep, Glob, Bash) for transcript+plan+hooks reading
+   Command: head -5 adapters/claude-code/agents/enforcement-gap-analyzer.md | grep -cE 'name: enforcement-gap-analyzer|tools: Read, Grep, Glob, Bash'
+   Output: 2
+   Result: PASS
+
+3. All five required output sections named in the agent prompt
+   Command: grep -cE 'Class of failure|Existing rules/hooks that should have caught this|Why current mechanisms missed this|Proposed change|Testing strategy' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: 11
+   Result: PASS — sections referenced 11 times across the prompt (in inputs/outputs/hard-requirements/etc.)
+
+4. Required-output-format code block present with all five named sections
+   Command: awk '/Required output format/,/Hard requirements/' adapters/claude-code/agents/enforcement-gap-analyzer.md | grep -cE '## (Class of failure|Existing rules/hooks that should have caught this|Why current mechanisms missed this|Proposed change|Testing strategy)'
+   Output: 5
+   Result: PASS — all five required output sections present in the literal output template
+
+5. Title + Date + Triggered-by + Proposal-type metadata fields specified
+   Command: grep -cE 'Date:|Triggered by:|Proposal type:' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: 5
+   Result: PASS — all three metadata fields documented
+
+6. Transcript+plan+failing-scenario+hooks-fired inputs documented as the Inputs contract
+   Command: grep -cE 'Plan file path|Failing scenario|FAIL artifact|Session transcript|Hooks that fired' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: 8
+   Result: PASS — all four input categories explicitly named in the Inputs section
+
+7. Hand-off to harness-reviewer specified
+   Command: grep -cE 'harness-reviewer|Phase E\.3' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: 5
+   Result: PASS — handoff documented in Step 5 + multiple cross-references
+
+8. Output is a draft proposal at docs/harness-improvements/<YYYY-MM-DD>-<class-slug>.md
+   Command: grep -c 'docs/harness-improvements/' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: 7
+   Result: PASS — output path specified in Step 4, Step 5, output verdict shape, and verdicts section
+
+9. Hygiene scanner clean on the new agent file
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/agents/enforcement-gap-analyzer.md; echo $?
+   Output: 0
+   Result: PASS — no denylisted patterns
+
+Runtime verification: file adapters/claude-code/agents/enforcement-gap-analyzer.md::^name: enforcement-gap-analyzer$
+Runtime verification: file adapters/claude-code/agents/enforcement-gap-analyzer.md::^### Required output format$
+Runtime verification: file adapters/claude-code/agents/enforcement-gap-analyzer.md::^## Class of failure$
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: E.2
+Task description: Prompt discipline (within E.1's prompt body): the analyzer MUST review existing rules BEFORE proposing new ones. A missed-catch by an existing rule triggers AMENDMENT, not addition. The agent's prompt explicitly states: "if your proposed rule would only fire on this specific bug's exact conditions, reformulate." This is essentially Mod 3 of the class-aware-review-feedback (which shipped earlier this session as `rules/diagnosis.md` "Fix the Class, Not the Instance"), now applied to the analyzer's own output behavior.
+Verified at: 2026-04-23T00:00:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase E dispatch)
+
+Checks run:
+1. Existing-rule-review-FIRST mandate is the prime directive
+   Command: grep -nE 'Your prime directive|review the existing harness for a rule that already covers this class' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: line declaring "Your prime directive" + content "Before proposing any new rule, hook, or agent: review the existing harness for a rule that already covers this class of failure."
+   Result: PASS — mandate is the prime directive section, not a buried bullet
+
+2. Default outcome is AMENDMENT (not new rule)
+   Command: grep -cE 'default outcome of your analysis should be|AMENDMENT to an existing rule' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: 2
+   Result: PASS — default explicitly stated; NEW rules are reserved for genuinely-uncovered classes
+
+3. Exact spec phrase about reformulation present
+   Command: grep -c 'only fire on this specific bug.*reformulate' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: 1
+   Result: PASS — spec quote literally present in the prime directive section
+
+4. Step 3 (Existing-rule review) is non-skippable and documented before Step 4 (Write the proposal)
+   Command: awk '/^## Step 3/{a=NR} /^## Step 4/{b=NR} END{print "step3="a" step4="b}' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: step3=64 step4=109 (line numbers vary as agent is edited; ordering is what matters)
+   Result: PASS — Step 3 strictly precedes Step 4
+
+5. Step 3 has three sub-stages (sweep, read+ask-three-questions, decide) and a non-skippability gate
+   Command: grep -cE '^### 3\.[1-3]' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: 3
+   Result: PASS — 3.1 sweep, 3.2 three questions, 3.3 decision
+
+6. Three states (AMENDMENT / REPLACE / NEW) enumerated as possible outcomes of Step 3
+   Command: grep -cE 'State A:|State B:|State C:' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: 3
+   Result: PASS — all three states documented with their proposal types
+
+7. Adversarial framing section says "assume your first proposal is too narrow"
+   Command: grep -nE '^## Adversarial framing' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: section present with three "would my proposed rule still fire" forcing questions
+   Result: PASS — narrow-fix bias explicitly named as the failure mode this prompt prevents
+
+8. Cross-reference to Plan #7 (class-aware-review-feedback) and rules/diagnosis.md "Fix the Class, Not the Instance"
+   Command: grep -cE 'Plan #7|class-aware-review-feedback|Fix the Class' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: 3
+   Result: PASS — Plan #7 + diagnosis.md cross-reference both present in the "Why this prompt is strict about generalization" section (E.2 lineage)
+
+9. The analyzer's own discipline mirrors the class-aware feedback discipline (meta-meta-loop)
+   Command: grep -cE 'meta-meta-loop|same discipline to YOUR OWN OUTPUT|class-level discipline' adapters/claude-code/agents/enforcement-gap-analyzer.md
+   Output: 3
+   Result: PASS — discipline is explicit: discipline applied to bugs by builders is the SAME discipline applied to the analyzer's own output
+
+Runtime verification: file adapters/claude-code/agents/enforcement-gap-analyzer.md::^## Your prime directive$
+Runtime verification: file adapters/claude-code/agents/enforcement-gap-analyzer.md::^## Step 3 — Existing-rule review
+Runtime verification: file adapters/claude-code/agents/enforcement-gap-analyzer.md::only fire on this specific bug
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: E.3
+Task description: Extend `adapters/claude-code/agents/harness-reviewer.md` remit — every `enforcement-gap-analyzer` proposal flows through `harness-reviewer` with an explicit generalization check: too narrow? overlaps existing rule? `Class of failure` substantive? Verdicts: PASS / REFORMULATE / REJECT.
+Verified at: 2026-04-23T00:00:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase E dispatch)
+
+Checks run:
+1. harness-reviewer.md modified in repo AND mirrored to ~/.claude/
+   Command: diff -q adapters/claude-code/agents/harness-reviewer.md ~/.claude/agents/harness-reviewer.md
+   Output: (no output -> files identical)
+   Result: PASS — sync verified
+
+2. Frontmatter description updated to mention enforcement-gap proposal review remit
+   Command: head -5 adapters/claude-code/agents/harness-reviewer.md | grep -cE 'enforcement-gap-analyzer|generalization check|Phase E\.3'
+   Output: 1
+   Result: PASS — description references the new remit explicitly (the line is one cohesive description string)
+
+3. New "Step 5 — Enforcement-gap proposal review (extended remit, 2026-04-24)" section present
+   Command: grep -nE '^## Step 5 — Enforcement-gap proposal review' adapters/claude-code/agents/harness-reviewer.md
+   Output: 191:## Step 5 — Enforcement-gap proposal review (extended remit, 2026-04-24)
+   Result: PASS
+
+4. All five generalization checks present (5.1 through 5.5)
+   Command: grep -cE '^#### 5\.[1-5]' adapters/claude-code/agents/harness-reviewer.md
+   Output: 5
+   Result: PASS — 5.1 section presence, 5.2 class-vs-instance, 5.3 existing-rule-review honesty, 5.4 proposal proportionality, 5.5 testing-strategy class coverage
+
+5. Specific generalization-check questions documented (per the dispatch spec: too narrow? overlaps existing rule? Class of failure substantive?)
+   Command: grep -cE 'Class is a class, not an instance|Existing-rule review was honest|narrow-fix bias' adapters/claude-code/agents/harness-reviewer.md
+   Output: 3
+   Result: PASS — all three dispatch-spec checks present in section names
+
+6. Three verdicts (PASS / REFORMULATE / REJECT) defined with action implications
+   Command: grep -nE '^- \*\*PASS\*\*|^- \*\*REFORMULATE\*\*|^- \*\*REJECT\*\*' adapters/claude-code/agents/harness-reviewer.md
+   Output: lines defining each verdict in the "Verdicts (Step 5 vocabulary)" section
+   Result: PASS — three verdicts documented with PASS=land draft, REFORMULATE=re-invoke analyzer with gap, REJECT=log to .claude/state/rejected-proposals.log
+
+7. Step 5 output format provided (parallel to standard Output format)
+   Command: grep -cE 'Enforcement-Gap Proposal Review|Generalization checks' adapters/claude-code/agents/harness-reviewer.md
+   Output: 2
+   Result: PASS — dedicated output template for Step 5 verdicts
+
+8. Worked example present (REFORMULATE case for narrow-class)
+   Command: grep -nE 'Worked example of a REFORMULATE on this check' adapters/claude-code/agents/harness-reviewer.md
+   Output: worked example for the "Duplicate <X> button does not clear scheduled time on copy" case
+   Result: PASS — calibration example provided
+
+9. Cross-reference to enforcement-gap-analyzer.md and docs/harness-improvements/
+   Command: grep -cE 'enforcement-gap-analyzer|docs/harness-improvements' adapters/claude-code/agents/harness-reviewer.md
+   Output: 7
+   Result: PASS — multiple cross-references in Step 5 (when-to-apply, why-this-extension-exists, output format)
+
+10. Step 5 reuses class-aware feedback format (six-field block) for REFORMULATE gap callouts
+    Command: grep -nE 'class-aware feedback format|six-field block per gap' adapters/claude-code/agents/harness-reviewer.md
+    Output: references to the existing "Output Format Requirements — class-aware feedback" section below Step 5
+    Result: PASS — REFORMULATE verdicts use the same per-defect format that the rest of the agent's defects use; consistent with the class-aware-feedback contract adopted across all seven adversarial-review agents
+
+11. harness-architecture.md updated to reflect harness-reviewer's extended remit AND new enforcement-gap-analyzer agent row
+    Command: grep -cE 'enforcement-gap-analyzer\.md|Step 5: enforcement-gap proposal review' docs/harness-architecture.md
+    Output: 2
+    Result: PASS — new agent row added to Quality Gates table; harness-reviewer row updated with extension note
+
+12. Hygiene scanner clean on all three changed files
+    Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/agents/enforcement-gap-analyzer.md adapters/claude-code/agents/harness-reviewer.md docs/harness-architecture.md; echo $?
+    Output: 0
+    Result: PASS
+
+Runtime verification: file adapters/claude-code/agents/harness-reviewer.md::^## Step 5 — Enforcement-gap proposal review
+Runtime verification: file adapters/claude-code/agents/harness-reviewer.md::^#### 5\.1 Section presence
+Runtime verification: file docs/harness-architecture.md::enforcement-gap-analyzer\.md
+
+Verdict: PASS

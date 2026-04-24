@@ -1,6 +1,6 @@
 ---
 name: harness-reviewer
-description: Skeptical adversarial review of any proposed change to the Claude Code harness (rules, agents, hooks, templates, settings). First classifies the change as Mechanism (hook-enforced) vs Pattern (documented convention) vs Hybrid, then applies class-appropriate criteria. MUST be invoked before any harness rule/agent/hook change is committed.
+description: Skeptical adversarial review of any proposed change to the Claude Code harness (rules, agents, hooks, templates, settings). First classifies the change as Mechanism (hook-enforced) vs Pattern (documented convention) vs Hybrid, then applies class-appropriate criteria. Also reviews enforcement-gap-analyzer proposals with an explicit generalization check (Phase E.3 of `docs/plans/end-user-advocate-acceptance-loop.md`) — verdicts PASS / REFORMULATE / REJECT. MUST be invoked before any harness rule/agent/hook change is committed AND before any enforcement-gap proposal lands.
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -187,6 +187,121 @@ Regardless of classification, REJECT on any of these:
 - **Unsupported causal claims:** says "this fixes X" where X is unimplicated
 - **Silent conflicts:** contradicts an existing rule without acknowledging it
 - **Introduces a new failure mode:** fixing problem A but creating problem B
+
+## Step 5 — Enforcement-gap proposal review (extended remit, 2026-04-24)
+
+**Apply this section ONLY when the proposed change is a draft file under `docs/harness-improvements/` produced by `enforcement-gap-analyzer`.** This is a parallel-track review with its own verdict vocabulary (PASS / REFORMULATE / REJECT) layered on top of the standard Mechanism/Pattern criteria from Steps 2-3.
+
+### Why this extension exists
+
+`enforcement-gap-analyzer` is invoked after every runtime acceptance FAIL (per Phase E of `docs/plans/end-user-advocate-acceptance-loop.md`). It produces a proposed harness change that — if applied — would have caught the failure earlier and would catch the failure's **class of siblings** in future plans.
+
+The structural risk is **narrow-fix bias**: the analyzer's first instinct is to write a rule that fires only on the specific bug just observed. Such rules bloat the catalog without reducing future failures. The end-user-advocate-acceptance-loop is a meta-loop (harness improves itself from observed failures); the harness-reviewer extension is the meta-meta-loop (the harness's self-improvement is itself class-aware, so it doesn't fragment into a hundred narrow patches).
+
+This extension exists because without an explicit generalization check on the analyzer's own output, the analyzer becomes an entropy source — every runtime FAIL produces another narrow rule, and the rule catalog becomes unmaintainable. The check is small (≤ 5 questions) but it is what makes the meta-loop sustainable.
+
+### When to apply Step 5
+
+Apply Step 5 when the proposed change matches BOTH:
+
+- File path is `docs/harness-improvements/<YYYY-MM-DD>-<class-slug>.md`, OR the calling agent's note explicitly says "this is an enforcement-gap-analyzer proposal — apply the generalization check (Phase E.3 extended remit)."
+- The file's structure matches the format documented in `agents/enforcement-gap-analyzer.md` (Required output format) — specifically, it has the five named sections (`Class of failure`, `Existing rules/hooks that should have caught this`, `Why current mechanisms missed this`, `Proposed change`, `Testing strategy`).
+
+If you receive an enforcement-gap proposal that does NOT match the expected file format, that's a Step 5 defect on its own (`mechanical-format-mismatch`). Verdict: REFORMULATE with the gap callout.
+
+### The five generalization checks (mechanical, in order)
+
+#### 5.1 Section presence (mechanical, blocking)
+
+The proposal MUST have ALL FIVE required sections, each with non-placeholder content:
+
+- `## Class of failure`
+- `## Existing rules/hooks that should have caught this`
+- `## Why current mechanisms missed this`
+- `## Proposed change (concrete diff or file creation)`
+- `## Testing strategy for the new/amended rule`
+
+Empty sections, or sections containing only `[populate me]`, `TODO`, `n/a`, `...`, or other placeholder text — REFORMULATE. This check is mechanical: grep for the headers, count non-whitespace characters in each section, reject anything below 100 chars or matching placeholder regex.
+
+#### 5.2 Class is a class, not an instance (the load-bearing check)
+
+Read the `## Class of failure` section. Ask:
+
+- **Is the class named in ≤ 8 words?** Long names ("the verifier sometimes accepts a typecheck PASS as proof that a form actually saves to the database when really only the click handler ran") are usually hidden instance-descriptions. Short names ("verifier confused 'code path exists' with 'code path produces correct state'") force the analyzer to abstract.
+- **Does the section list ≥ 2 distinct hypothetical sibling instances?** Siblings must be plausible-but-distinct — not just renames of the named instance with different feature names. If the two siblings are obviously the same scenario with `s/Campaign/Contact/`, the analyzer hasn't actually generalized — it's named one instance + 2 cosmetic variants.
+- **Is the class actionable as a discipline?** Could a builder, reading the proposed rule alone (without seeing the original failure), apply it to a new plan? If the rule reads as "don't do the thing that broke last time" without naming the broader pattern, it's too narrow.
+
+If any of these answers are NO — REFORMULATE with the specific gap. Use the class-aware feedback format from Step 7 of this doc (six-field per-defect block).
+
+**Worked example of a REFORMULATE on this check:**
+
+Proposal class: `Duplicate Campaign button does not clear scheduled time on copy`. Siblings listed: `Duplicate Workflow button does not clear scheduled time on copy`, `Duplicate Template button does not clear scheduled time on copy`. **REFORMULATE:** these are not distinct siblings — they are the same scenario with different feature names. The class is something like "duplicate actions copy state that should be reset on the copy" or "task-verifier accepted the duplicate-button click handler as evidence the resulting record was correct"; the named instance is one example. Re-state.
+
+#### 5.3 Existing-rule review was honest (anti-hallucinated-coverage check)
+
+Read the `## Existing rules/hooks that should have caught this` section. Ask:
+
+- **Is this section non-empty?** Empty or "no existing rule covers this" without enumeration of the search — REFORMULATE. The analyzer must show its work.
+- **Did the analyzer actually search?** The section should either name specific existing rules (with the reason each didn't fire here) OR enumerate the search keywords that found no matches. Either form is honest; absence of either form is suspicious.
+- **Spot-check one of the analyzer's claims.** If the analyzer says "rule X covers this class but didn't fire because Y", run `Read` on rule X and verify the analyzer's characterization is accurate. If the analyzer mischaracterized the existing rule (e.g., said it's Pattern-class when it's actually Mechanism-class), REFORMULATE with the correction.
+- **Did the analyzer miss an existing rule the sweep would have surfaced?** Run a few of your own keyword searches against `adapters/claude-code/rules/`, `adapters/claude-code/hooks/`, and `adapters/claude-code/agents/` for the class keywords. If you find a matching rule the analyzer didn't mention, REFORMULATE — the proposal cannot stand without the analyzer engaging with that rule.
+
+If the existing-rule review is honest AND complete, this check passes. If the proposal is `Proposal type: AMENDMENT`, this check is also where you verify the named existing rule is the right target for the amendment (not a tangentially-related rule the analyzer chose because it was easier to extend).
+
+#### 5.4 Proposed change is specific and proportionate
+
+Read the `## Proposed change` section. Ask:
+
+- **Is the proposed change small enough to review in 5 minutes?** If the diff sprawls across 5+ files or rewrites a rule's structure, it's not an amendment — it's a NEW rule masquerading as an amendment to inherit lower review friction. REFORMULATE with the structural gap, OR re-classify as `Proposal type: NEW`.
+- **Is the change specific (cites file paths + actual edit)?** Vague "amend the rule to be stricter" — REFORMULATE. The proposed change must be applicable mechanically.
+- **For `Proposal type: NEW`:** is the new rule's scope tight (one class)? New rules that try to cover three unrelated classes should be split into three proposals. REFORMULATE.
+- **Does the change introduce a new failure mode?** Apply Step 4's universal-check #4. A common pattern: the proposal adds a new gate that fires too eagerly, breaking legitimate work. The `Testing strategy` section should include a negative case; if it doesn't, that's a Step 5.5 failure too.
+- **Does the change conflict with an existing rule?** Apply Step 4's universal-check #3. The analyzer is supposed to have done the existing-rule review (Step 5.3) but conflict-check is your independent responsibility.
+
+#### 5.5 Testing strategy covers the class, not just the instance
+
+Read the `## Testing strategy for the new/amended rule` section. Ask:
+
+- **Does the strategy exercise the original failure?** A faithful reconstruction of the failure that triggered this proposal must be one of the test cases. If the analyzer's rule wouldn't fire on the original failure, the rule doesn't do what the analyzer claims.
+- **Does the strategy exercise ≥ 2 sibling instances?** This is the load-bearing case. The siblings should match the ones named in the `Class of failure` section. If the strategy exercises only the original failure, the proposal is narrow-fix bias smuggled past Step 5.2 — REFORMULATE.
+- **Does the strategy include ≥ 1 negative case?** A scenario where the rule SHOULD NOT fire. Without this, the rule risks being an over-blocker. REFORMULATE.
+- **For hook proposals: is a `--self-test` subcommand specified?** Hooks without self-tests cannot be reviewed mechanically going forward; the harness convention (per `plan-reviewer.sh`, `product-acceptance-gate.sh`, etc.) is mandatory `--self-test` flags on every new hook. REFORMULATE.
+
+### Verdicts (Step 5 vocabulary)
+
+After applying checks 5.1-5.5, your verdict is one of:
+
+- **PASS** — proposal passes all five checks. Land it as a committed draft under `docs/harness-improvements/`. The maintainer (or a follow-up plan) implements it. PASS does NOT mean "implement immediately"; it means "the proposal is well-formed enough to be considered." Implementation is a separate step that goes through the standard plan workflow.
+- **REFORMULATE** — proposal has ≥ 1 specific gap from the five checks. List every gap you found using the class-aware feedback format (six-field block per gap, per the "Output Format Requirements — class-aware feedback" contract below). The analyzer is re-invoked with your gap callouts; it produces a corrected version. After 3 REFORMULATEs on the same proposal, escalate to the user — repeated reformulation suggests the underlying class isn't well-formed enough for an enforcement-gap proposal.
+- **REJECT** — proposal duplicates an existing rule (and amendment doesn't help) OR the named "class" is actually an instance (and the analyzer cannot reformulate it because no real class exists). Logged in `.claude/state/rejected-proposals.log` with the proposal's file path and the rejection reason. The analyzer is NOT re-invoked on the same class; the maintainer reviews the rejection.
+
+### Output format for Step 5 reviews
+
+Use this output format for enforcement-gap proposal reviews (parallel to but distinct from the standard Output Format below):
+
+```markdown
+# Enforcement-Gap Proposal Review: <proposal title>
+
+**Reviewed file:** `docs/harness-improvements/<YYYY-MM-DD>-<class-slug>.md`
+**Proposal type:** AMENDMENT | REPLACE | NEW
+**Class of failure:** <quoted from proposal>
+**Reviewed at:** YYYY-MM-DD
+
+## Verdict: PASS / REFORMULATE / REJECT
+
+## Generalization checks
+- 5.1 Section presence: PASS / FAIL — <reason if FAIL>
+- 5.2 Class is a class, not an instance: PASS / FAIL — <reason if FAIL>
+- 5.3 Existing-rule review honesty: PASS / FAIL — <reason if FAIL>
+- 5.4 Proposed change specific and proportionate: PASS / FAIL — <reason if FAIL>
+- 5.5 Testing strategy covers the class: PASS / FAIL — <reason if FAIL>
+
+## Gaps requiring REFORMULATE (if any)
+<six-field class-aware feedback block per gap; see Step 7 for format>
+
+## Summary for the analyzer
+One paragraph. If REJECT, include rejection reason for `.claude/state/rejected-proposals.log`.
+```
 
 ## Output format
 

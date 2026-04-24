@@ -84,9 +84,9 @@ The user-observable outcome: plans that pass plan-time advocate review are mater
 
 ### Phase 5 — Enforcement-gap analyzer [serial, depends on Phase 4]
 
-- [ ] E.1 `adapters/claude-code/agents/enforcement-gap-analyzer.md` — reads session transcript + plan + failing scenario + hooks that fired. Required output fields: Title, Date, `Class of failure:`, `Existing rules/hooks that should have caught this:`, `Why current mechanisms missed this:`, `Proposed change (concrete diff or file creation)`, Testing strategy for the new rule.
-- [ ] E.2 Prompt discipline: analyzer must review existing rules BEFORE proposing new ones. A missed-catch by an existing rule triggers amendment, not addition. The agent's prompt explicitly states: "if your proposed rule would only fire on this specific bug's exact conditions, reformulate."
-- [ ] E.3 Extend `adapters/claude-code/agents/harness-reviewer.md` remit — every `enforcement-gap-analyzer` proposal flows through `harness-reviewer` with an explicit generalization check: too narrow? overlaps existing rule? `Class of failure` substantive? Verdicts: PASS / REFORMULATE / REJECT.
+- [x] E.1 `adapters/claude-code/agents/enforcement-gap-analyzer.md` — reads session transcript + plan + failing scenario + hooks that fired. Required output fields: Title, Date, `Class of failure:`, `Existing rules/hooks that should have caught this:`, `Why current mechanisms missed this:`, `Proposed change (concrete diff or file creation)`, Testing strategy for the new rule.
+- [x] E.2 Prompt discipline: analyzer must review existing rules BEFORE proposing new ones. A missed-catch by an existing rule triggers amendment, not addition. The agent's prompt explicitly states: "if your proposed rule would only fire on this specific bug's exact conditions, reformulate."
+- [x] E.3 Extend `adapters/claude-code/agents/harness-reviewer.md` remit — every `enforcement-gap-analyzer` proposal flows through `harness-reviewer` with an explicit generalization check: too narrow? overlaps existing rule? `Class of failure` substantive? Verdicts: PASS / REFORMULATE / REJECT.
 
 ### Phase 6 — Builder discipline (scenarios shared, assertions private) [parallel]
 
