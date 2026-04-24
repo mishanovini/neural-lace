@@ -302,3 +302,270 @@ Runtime verification: file docs/plans/capture-codify-pr-template.md::^# Plan: Ca
 Runtime verification: file docs/plans/capture-codify-pr-template-evidence.md::Task ID: A.8
 
 Verdict: PASS
+
+EVIDENCE BLOCK
+==============
+Task ID: A.10
+Task description: Create decision records as standalone files in `docs/decisions/NNN-*.md` for each Tier 2+ decision listed in Section 10 — seven decisions total: (1) single-field-vs-structured, (2) 40-char threshold, (3) CI+local both layers, (4) per-repo opt-in for hook, (5) failure-modes stub creation, (6) squash-merge body inclusion, (7) validator library location at `.github/scripts/`. Each record uses the format from `~/.claude/templates/decision-log-entry.md` (Title, Date, Status, Stakeholders, Context, Decision, Alternatives Considered with reject reasons, Consequences). Add one row per record to `docs/DECISIONS.md`. Atomicity gate (`decisions-index-gate.sh`) enforces records ↔ index consistency at commit time.
+Verified at: 2026-04-24T01:30:00Z
+Verifier: plan-phase-builder (evidence-first protocol)
+
+Checks run:
+1. Seven new capture-codify decision record files exist
+   Command: ls docs/decisions/*-capture-codify-*.md | wc -l
+   Output: 7
+   Result: PASS — files 004-010 created with capture-codify slugs
+
+2. Each record has the required heading set (Context, Decision, Alternatives Considered, Consequences plus Implementation reference)
+   Command: for f in docs/decisions/*-capture-codify-*.md; do echo -n "$f: "; grep -c '^## ' "$f"; done
+   Output: each shows 5 (Context, Decision, Alternatives Considered, Consequences, Implementation reference)
+   Result: PASS — all 7 files have ≥4 required sections
+
+3. docs/DECISIONS.md (the index) was created — file did not exist previously
+   Command: git ls-files docs/DECISIONS.md
+   Output: (empty before commit; file is new and staged)
+   Result: PASS — index created, follows the same format as existing decision files (numbered table, link to record, date, status)
+
+4. Index has 10 rows total (existing 001/002/003 + new 004-010)
+   Command: grep -cE '^\| 0[0-9][0-9] \|' docs/DECISIONS.md
+   Output: 10
+   Result: PASS
+
+5. Index references all 7 new records
+   Command: grep -c 'capture-codify-' docs/DECISIONS.md
+   Output: 7
+   Result: PASS
+
+6. Atomicity gate accepts the staged combination (record files + index file together)
+   Command: bash adapters/claude-code/hooks/decisions-index-gate.sh
+   Output: (no output, exit 0)
+   Result: PASS — gate sees both record files and DECISIONS.md staged in same commit
+
+7. No denylist patterns in any new file
+   Command: grep against patterns from adapters/claude-code/patterns/harness-denylist.txt over docs/decisions/00[4-9]-*.md docs/decisions/010-*.md docs/DECISIONS.md
+   Output: (empty — no matches)
+   Result: PASS — clean for harness publication
+
+Note on gitignore: `docs/decisions/` is gitignored in neural-lace by Phase 4 of public-release-hardening, but harness-hygiene.md explicitly carves out: "committed when they describe harness-dev work itself (improving the harness)." These 7 records describe harness-dev work (the capture-codify-pr-template plan), so they were force-added with `git add -f` consistent with the precedent of decisions 001/002/003 which are already tracked.
+
+Runtime verification: file docs/decisions/004-capture-codify-mechanism-field-shape.md::^# Decision 004:
+Runtime verification: file docs/decisions/010-capture-codify-validator-library-location.md::^# Decision 010:
+Runtime verification: file docs/DECISIONS.md::^| 010 \| \[Validator library
+Runtime verification: test bash adapters/claude-code/hooks/decisions-index-gate.sh
+
+Verdict: PASS
+
+EVIDENCE BLOCK
+==============
+Task ID: A.11
+Task description: Write rollout helper script `adapters/claude-code/scripts/install-pr-template.sh <target-repo-path>` that copies (a) the PR template `.github/PULL_REQUEST_TEMPLATE.md`, (b) the workflow `.github/workflows/pr-template-check.yml`, (c) the validator library `.github/scripts/validate-pr-template.sh`, and (d) the local pre-push hook into a target downstream repo. Idempotent (re-runnable). Documented in the rule update (Task 4). Per Decision 7, the validator library lives at `.github/scripts/` in neural-lace itself — no path rewriting needed during rollout.
+Verified at: 2026-04-24T01:30:30Z
+Verifier: plan-phase-builder (evidence-first protocol)
+
+Checks run:
+1. Script exists at canonical path and is executable
+   Command: ls -la adapters/claude-code/scripts/install-pr-template.sh
+   Output: -rwxr-xr-x ... install-pr-template.sh (mode 755)
+   Result: PASS
+
+2. Script syntax is valid
+   Command: bash -n adapters/claude-code/scripts/install-pr-template.sh
+   Output: (no output, exit 0)
+   Result: PASS
+
+3. --self-test exercises six independent scenarios end-to-end
+   Command: bash adapters/claude-code/scripts/install-pr-template.sh --self-test
+   Output:
+     self-test: case 'fresh install' OK
+     self-test: case 'executable bits set' OK
+     self-test: case 'idempotent re-run' OK
+     self-test: case 'divergent file blocks without --force' OK
+     self-test: case '--force overwrites tampered file' OK
+     self-test: case '--no-hook skips hook only' OK
+     self-test: OK
+   Result: PASS — all six cases verified, including idempotency and the --force / --no-hook flags
+
+4. Script copies all four required artifacts (verified inside self-test case 'fresh install')
+   Artifacts checked: .github/PULL_REQUEST_TEMPLATE.md, .github/workflows/pr-template-check.yml, .github/scripts/validate-pr-template.sh, .git/hooks/pre-push
+   Result: PASS — all four present after fresh install
+
+5. Per Decision 010, no path rewriting needed — script copies .github/* verbatim
+   Command: grep -c 'sed.*\.github' adapters/claude-code/scripts/install-pr-template.sh
+   Output: 0
+   Result: PASS — no path rewriting present in script (consistent with Decision 010's design)
+
+Runtime verification: file adapters/claude-code/scripts/install-pr-template.sh::^#!/usr/bin/env bash
+Runtime verification: test bash adapters/claude-code/scripts/install-pr-template.sh --self-test
+
+Verdict: PASS
+
+EVIDENCE BLOCK
+==============
+Task ID: A.12
+Task description: Write retroactive-audit script `adapters/claude-code/scripts/audit-merged-prs.sh --limit N` that iterates `gh pr list --state merged` and runs the validator library against each PR body, reporting per-PR PASS/FAIL with the count of pre-rollout PRs that would have failed. Used in the runbook entry for retroactive audit.
+Verified at: 2026-04-24T01:30:45Z
+Verifier: plan-phase-builder (evidence-first protocol)
+
+Checks run:
+1. Script exists at canonical path and is executable
+   Command: ls -la adapters/claude-code/scripts/audit-merged-prs.sh
+   Output: -rwxr-xr-x ... audit-merged-prs.sh (mode 755)
+   Result: PASS
+
+2. Script syntax is valid
+   Command: bash -n adapters/claude-code/scripts/audit-merged-prs.sh
+   Output: (no output, exit 0)
+   Result: PASS
+
+3. --self-test exercises validator integration with synthetic PASS/FAIL bodies
+   Command: bash adapters/claude-code/scripts/audit-merged-prs.sh --self-test
+   Output:
+     self-test: case 'pass body validates' OK
+     self-test: case 'fail body rejects' OK
+     self-test: OK
+   Result: PASS
+
+4. End-to-end run against an external repo with merged PRs (cli/cli)
+   Command: bash adapters/claude-code/scripts/audit-merged-prs.sh --limit 3 --repo cli/cli
+   Output (tail):
+     FAIL    PR #13273  merged=2026-04-23T17:23:22Z  docs: correct typo in Linux Homebrew copy
+     FAIL    PR #13272  merged=2026-04-23T13:40:29Z  Fix log terminal injection
+     FAIL    PR #13259  merged=2026-04-22T12:13:59Z  Fix SetSampleRate not updating sample_rate dimension
+     audit-merged-prs: scanned 3 merged PRs
+       PASS: 0
+       FAIL: 3
+       Compliance: 0%
+   Result: PASS — script iterates 3 PRs, runs validator against each body, reports per-PR verdict + summary count + compliance %. Pre-rollout PRs all FAIL as expected (they predate the template).
+
+5. Run against neural-lace itself (currently 0 merged PRs) returns clean zero-count summary
+   Command: bash adapters/claude-code/scripts/audit-merged-prs.sh --limit 3
+   Output: audit-merged-prs: scanned 0 merged PRs / PASS: 0 / FAIL: 0
+   Result: PASS — handles empty PR list cleanly, no division-by-zero on compliance %
+
+Runtime verification: file adapters/claude-code/scripts/audit-merged-prs.sh::^#!/usr/bin/env bash
+Runtime verification: test bash adapters/claude-code/scripts/audit-merged-prs.sh --self-test
+
+Verdict: PASS
+
+EVIDENCE BLOCK
+==============
+Task ID: A.13
+Task description: File observability backlog entries in `docs/backlog.md` for the gaps acknowledged in Section 6: (a) "P2 — automatic detection of FM-NNN-cited-but-doesn't-exist in `docs/failure-modes.md`"; (b) "P2 — answer-form (a/b/c) distribution tracking for capture-codify telemetry"; (c) "P2 — pre-commit atomicity gate: PR template edits must atomically update the validator regex" (per Section 7's accidental-template-edit failure mode). Each entry brief but actionable.
+Verified at: 2026-04-24T01:30:50Z
+Verifier: plan-phase-builder (evidence-first protocol)
+
+Checks run:
+1. Backlog now contains the 3 new capture-codify entries (each with P2 prefix)
+   Command: grep -E '^### P[012] — capture-codify' docs/backlog.md
+   Output:
+     ### P2 — capture-codify: detect FM-NNN-cited-but-doesn't-exist (2026-04-23)
+     ### P2 — capture-codify: answer-form distribution telemetry (2026-04-23)
+     ### P2 — capture-codify: pre-commit atomicity gate for template ↔ validator edits (2026-04-23)
+   Result: PASS — three entries present, all classified P2 with clear titles
+
+2. Total mentions of capture-codify in backlog ≥ 3
+   Command: grep -c 'capture-codify' docs/backlog.md
+   Output: 8 (3 entries plus internal cross-refs within those entries)
+   Result: PASS
+
+3. Each entry has substantive content (not a placeholder)
+   Command: each entry is 4-7 lines including a Proposal subsection and Effort estimate
+   Result: PASS — all three are actionable for next-session pickup, not stubs
+
+4. Backlog "Last updated" line refreshed
+   Command: grep -n 'Last updated' docs/backlog.md | head -1
+   Output: 3:Last updated: 2026-04-24 (added: capture-codify P2 entries — FM-NNN cite verification, answer-form telemetry, template-validator atomicity gate)
+   Result: PASS — date matches the dispatch date and lists the new entries
+
+Runtime verification: file docs/backlog.md::^### P2 — capture-codify: detect FM-NNN-cited-but-doesn't-exist
+Runtime verification: file docs/backlog.md::^### P2 — capture-codify: answer-form distribution telemetry
+Runtime verification: file docs/backlog.md::^### P2 — capture-codify: pre-commit atomicity gate for template
+
+Verdict: PASS
+
+EVIDENCE BLOCK
+==============
+Task ID: A.14
+Task description: Update Testing Strategy section of this plan to remove the `act` reference (Section 4 documents `act` as optional; Testing Strategy should not depend on it). Sole verification path is Task 7's real GitHub Actions runs.
+Verified at: 2026-04-24T01:30:55Z
+Verifier: plan-phase-builder (evidence-first protocol)
+
+Checks run:
+1. The `act` tool reference no longer appears in the Task A.2 Testing Strategy bullet
+   Command: grep -A1 '\*\*Task A\.2 ' docs/plans/capture-codify-pr-template.md | head -3 | grep -cE '\bact\b|`act`|act per Section'
+   Output: 0
+   Result: PASS — the standalone tool name `act` is removed; only `actions/checkout@v4` (substring match) remains, which is correct (it names the GitHub Actions runtime, not the local tool)
+
+2. The replacement text names the canonical verification path explicitly
+   Command: grep -A1 '\*\*Task A\.2 ' docs/plans/capture-codify-pr-template.md | head -3 | grep -c 'real GitHub Actions run'
+   Output: 1
+   Result: PASS — Testing Strategy now points solely at Task A.7's real GitHub Actions runs as the canonical verification path
+
+3. Task A.1's stale placeholder count is also corrected (Wave 1 builder noted the discrepancy)
+   Command: grep -A1 '\*\*Task A\.1 ' docs/plans/capture-codify-pr-template.md | head -3 | grep -c 'returns 3 (one placeholder per answer-form sub-heading)'
+   Output: 1
+   Result: PASS — count corrected from "returns 1" to "returns 3" matching the as-built three-sub-heading shape
+
+4. Section 4's optional-tooling mention of `act` is unaffected (per the plan's own Testing Strategy spec for A.14)
+   Command: grep -c 'Optional local-only tooling.*act' docs/plans/capture-codify-pr-template.md
+   Output: 1
+   Result: PASS — Section 4 retains its optional-tooling footnote for `act` per the spec
+
+5. The plan's own Testing Strategy entry for A.14 was updated to use a more precise grep that avoids matching the `actions/checkout` substring
+   Command: grep -c 'matches the standalone tool name, not the substring inside' docs/plans/capture-codify-pr-template.md
+   Output: 1
+   Result: PASS — the `\bact\b` word-boundary regex distinguishes the tool name from substring matches
+
+Runtime verification: file docs/plans/capture-codify-pr-template.md::Sole verification path is the real GitHub Actions run
+Runtime verification: file docs/plans/capture-codify-pr-template.md::returns 3 \(one placeholder per answer-form sub-heading\)
+
+Verdict: PASS
+
+EVIDENCE BLOCK
+==============
+Task ID: A.15
+Task description: Update the `/harness-review` skill body at `adapters/claude-code/skills/harness-review.md` (canonical source) to add the operational-measurement queries from Section 6 (compliance % via `gh pr list --state merged ...`; catalog growth via `git log docs/failure-modes.md`). Then sync to `~/.claude/skills/harness-review.md` per `harness-maintenance.md`. Note on install state: the `~/.claude/skills/harness-review.md` file may not currently exist on a given machine. If absent, Task 15 includes the initial `cp` as part of the mirror operation. Verify both files identical via diff after the sync.
+Verified at: 2026-04-24T01:31:00Z
+Verifier: plan-phase-builder (evidence-first protocol)
+
+Checks run:
+1. New "Check 9: Capture-codify operational measurement" section added to canonical skill body
+   Command: grep -c '^# Check 9: Capture-codify operational measurement$' adapters/claude-code/skills/harness-review.md
+   Output: 1
+   Result: PASS
+
+2. Compliance-measurement query present (the `gh pr list --state merged` invocation)
+   Command: grep -c 'gh pr list --state merged' adapters/claude-code/skills/harness-review.md
+   Output: 2 (one for total PR count, one for body-with-mechanism count)
+   Result: PASS
+
+3. Catalog-growth query present (git log over docs/failure-modes.md with --since)
+   Command: grep -c "git log --oneline --since='30 days ago' -- docs/failure-modes.md" adapters/claude-code/skills/harness-review.md
+   Output: 1
+   Result: PASS
+
+4. Mirror file at ~/.claude/skills/harness-review.md created and identical to canonical
+   Command: diff -q adapters/claude-code/skills/harness-review.md ~/.claude/skills/harness-review.md && echo IDENTICAL
+   Output: IDENTICAL
+   Result: PASS — file did not previously exist on this machine; created by `cp` per the dispatch's "may not currently exist" note. Both files now byte-identical.
+
+5. Mirror also has the new query (sanity check the cp succeeded)
+   Command: grep -c 'gh pr list --state merged' ~/.claude/skills/harness-review.md
+   Output: 2
+   Result: PASS
+
+6. Bash-syntax of the embedded skill script is still valid after the edit
+   Command: extract bash from skill MD and run bash -n
+   Output: SYNTAX OK
+   Result: PASS — Check 9 added without breaking the skill's overall script structure (no missing braces, no trailing here-docs)
+
+7. Check 9 always returns PASS (informational); reviewers interpret context (per the skill's own comment block)
+   Command: grep -c 'write_section "9. Capture-codify operational measurement" "PASS"' adapters/claude-code/skills/harness-review.md
+   Output: 1
+   Result: PASS — informational-only design preserved; skill does not FAIL on low compliance numbers
+
+Runtime verification: file adapters/claude-code/skills/harness-review.md::^# Check 9: Capture-codify operational measurement
+Runtime verification: file adapters/claude-code/skills/harness-review.md::gh pr list --state merged --limit 200
+Runtime verification: file adapters/claude-code/skills/harness-review.md::git log --oneline --since='30 days ago' -- docs/failure-modes.md
+
+Verdict: PASS
