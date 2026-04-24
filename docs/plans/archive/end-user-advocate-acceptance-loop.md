@@ -1,9 +1,11 @@
 # Plan: End-User Advocate + Product-Acceptance Loop — Closing the Adversarial-Observation Gap
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: "Adversarial pre-mortem pattern for plans"
+acceptance-exempt: true
+acceptance-exempt-reason: Bootstrap meta-plan that creates the acceptance mechanism itself; harness-dev work has no product user. Decision 7 chicken-and-egg resolution.
 acceptance-exempt: true
 acceptance-exempt-reason: Bootstrap meta-plan for the end-user-advocate loop itself; the agent and gate do not exist yet to be self-applied. Documented in Assumptions and Decisions Log (Decision #7 — Meta-plan bootstrap).
 
@@ -186,6 +188,52 @@ First task: **Task 1.1** — create the stub plan with one acceptance scenario.
 - [ ] `docs/DECISIONS.md` has entries for every Tier 2+ decision from this plan
 - [ ] Completion report appended to this plan file, including absorbed-backlog-item status
 - [ ] `systems-designer` PASS verdict on this plan (required before implementation begins per design-mode protocol)
+
+## Completion Report
+
+### 1. Implementation Summary
+
+All 27 tasks shipped across 7 phases on `feat/end-user-advocate-acceptance-loop` (commits `a6ffebd` → `ec01837`):
+
+- **Phase A (A.1-A.5, walking skeleton):** stub plan + minimal end-user-advocate agent + `.claude/state/acceptance/` convention + hand-crafted PASS artifact + minimal pre-stop-verifier extension + skeleton evidence. Live browser smoke test PARTIAL — substituted with curl assertion (HTTP 200 + body contains "Neural Lace") because Chrome MCP unavailable in dispatched sub-agent. Architectural validation passed.
+- **Phase B (B.1-B.3, template + rule):** plan-template.md gained `## Acceptance Scenarios` + `## Out-of-scope scenarios` + `acceptance-exempt: true` header field. New `rules/acceptance-scenarios.md` documents the full plan-time → runtime → gap-analysis loop with scenarios-shared/assertions-private discipline. planning.md gained mandatory end-user-advocate sub-section parallel to ux-designer/systems-designer.
+- **Phase C (C.1-C.3, production agent):** production `agents/end-user-advocate.md` (469 lines) with class-aware six-field reviewer feedback in plan-time mode + Chrome MCP → Playwright Preview MCP → ENVIRONMENT_UNAVAILABLE fallback chain in runtime mode + scenario format spec.
+- **Phase D (D.1-D.6, runtime acceptance gate hook):** production `hooks/product-acceptance-gate.sh` (470 lines) installed as Stop hook position 4 (last in chain), with 8-scenario `--self-test` all passing. Includes waiver mechanism + harness-dev exemption (`acceptance-exempt: true` + reason). Two systems-designer nits addressed inline: Assumption #7 generalized + Stop-chain insertion point specified.
+- **Phase E (E.1-E.3, gap analyzer):** new `agents/enforcement-gap-analyzer.md` with mandatory existing-rule-review-FIRST discipline, all 5 required output sections (Class of failure, etc.), narrow-fix bias prevention. Extended `agents/harness-reviewer.md` with Step 5 (5 generalization checks, PASS/REFORMULATE/REJECT verdicts).
+- **Phase F (F.1-F.2, builder discipline):** `rules/orchestrator-pattern.md` gained "Scenarios-shared, assertions-private" section with Goodhart rationale. `agents/plan-phase-builder.md` gained "Acceptance scenarios — what you see, what you don't" section.
+- **Phase G (G.1-G.5, self-test + docs):** new `tests/acceptance-loop-self-test.sh` (10/10 PASS validating structure + control flow). harness-review skill gets Check 10. harness-architecture.md gets new "Tests" section. best-practices.md gains "Adversarial observation" principle with worked example. CLAUDE.md transitions Generation 4 → Generation 5 citing all session mechanisms.
+
+Backlog absorbed: "Adversarial pre-mortem pattern for plans" — declared at plan creation, archived inside this plan rather than returning to backlog.
+
+### 2. Design Decisions & Plan Deviations
+
+Seven Tier 2+ decisions captured in plan Section 10 + decision records (added during phase work or referenced existing 008-010 from plan #3). One scope amendment during build: D.6 (harness-dev exemption mechanism) was added during plan amendment before build started.
+
+**Plan #6 itself is acceptance-exempt** (declared `acceptance-exempt: true` with reason "bootstrap meta-plan that creates the acceptance mechanism") — Decision 7's chicken-and-egg resolution.
+
+### 3. Known Issues & Gotchas
+
+- **Live browser smoke test deferred** — Phase A's runtime mode was validated via curl substitute, not live browser. Phase G's self-test validates structure + control flow but doesn't run live agents either. The end-user-advocate's full live invocation (browser automation against a real running app) is FIRST exercised when a real downstream-project plan ships using the new mechanism.
+- **Dynamic-load gap** — both new agents (end-user-advocate, enforcement-gap-analyzer) + the new hook (product-acceptance-gate.sh) activate at NEXT session start. This session won't see them fire.
+- **Two concurrent ACTIVE plans** (claude-remote-adoption.md + class-aware-review-feedback-smoke-test-plan.md) need `acceptance-exempt: true` declarations OR completion before the new gate becomes active. The gate will BLOCK session end on those otherwise. Filed as P1 backlog (per Phase D builder's note).
+
+### 4. Manual Steps Required
+
+- After session restart: end-user-advocate, enforcement-gap-analyzer, and product-acceptance-gate.sh activate.
+- Future plans should declare `acceptance-exempt: true` if harness-dev / non-user-facing.
+- The first real downstream-project plan that ships under the new gate will be the live integration test.
+
+### 5. Testing Performed & Recommended
+
+Performed: per-task evidence-first verification, hook --self-test (8/8 scenarios), acceptance-loop-self-test.sh (10/10 stages), mirror diff verification, architectural-only walking skeleton with curl substitute.
+
+Recommended for next session: (a) declare acceptance-exempt on the two concurrent ACTIVE plans before they hit the new gate; (b) the first real product-acceptance run on a downstream project plan IS the integration test — observe whether the agent's class-aware output materializes and whether the gate blocks correctly on FAIL.
+
+### 6. Cost Estimates
+
+- Browser MCP per scenario: ~5-30s wall-clock × N scenarios per plan. Disk: ~500KB per scenario (screenshot + network log + console log). 10 scenarios ≈ 5MB per artifact.
+- Hook overhead: ~100ms per Stop event (file reads only).
+- Zero ongoing API/external cost.
 
 ## Systems Engineering Analysis
 
