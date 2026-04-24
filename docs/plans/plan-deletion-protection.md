@@ -45,7 +45,7 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
 
 ### Phase A: Hook Implementation
 
-- [ ] A.1 Write the hook skeleton, tool-input parsing, and exit-path contract
+- [x] A.1 Write the hook skeleton, tool-input parsing, and exit-path contract
   - Create `~/.claude/hooks/plan-deletion-protection.sh` with the standard Claude Code hook shebang and header
   - Parse the tool-input command via `jq -r '.tool_input.command // ""'` (with a fallback for older hook contract shapes if relevant)
   - Define a shared `emit_block()` function that prints a structured error message on stderr and exits 1
@@ -53,7 +53,7 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
   - If the command doesn't match any destructive pattern, exit 0 silently
   - **Files:** `~/.claude/hooks/plan-deletion-protection.sh`
 
-- [ ] A.2 Implement `rm` detection with precise path resolution
+- [x] A.2 Implement `rm` detection with precise path resolution
   - Tokenize the command into argv-like fragments (respecting simple shell quoting)
   - For each argv after the `rm` invocation, resolve the target path relative to the current working directory
   - Check if the resolved path falls under any `docs/plans/` directory (excluding `docs/plans/archive/` subpaths)
@@ -62,7 +62,7 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
   - Include edge case: `rm docs/plans/archive/<file>` is allowed (archive cleanup is legitimate)
   - **Files:** same hook
 
-- [ ] A.3 Implement `git clean` detection via dry-run probe
+- [x] A.3 Implement `git clean` detection via dry-run probe
   - Detect when the command is `git clean` (exclude `git clean --help`, `-n`, `--dry-run` which are non-destructive)
   - Before the command runs, invoke `git clean -n -d $FLAGS` with the same destructive flags (substituting `-n` for `-f`) to produce a list of files that would be removed
   - Parse the dry-run output for any path under `docs/plans/` (outside `archive/`)
@@ -70,20 +70,20 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
   - If `git clean` is invoked outside a git repo, pass through (nothing to protect)
   - **Files:** same hook
 
-- [ ] A.4 Implement `git stash` detection
+- [x] A.4 Implement `git stash` detection
   - Detect `git stash -u`, `git stash --include-untracked`, `git stash push -u`, `git stash push --include-untracked`
   - Run `git status --porcelain` and check for untracked entries (`^??`) matching `docs/plans/.*\.md`
   - If any untracked plan files exist, BLOCK with a message suggesting `git add <path>` before stashing
   - Stash invocations WITHOUT `-u`/`--include-untracked` do not affect untracked files; PASS
   - **Files:** same hook
 
-- [ ] A.5 Implement `git checkout` / `git restore` / `git reset --hard` detection
+- [x] A.5 Implement `git checkout` / `git restore` / `git reset --hard` detection
   - For `git checkout .`, `git restore .`, `git checkout -- docs/plans/...`, `git restore docs/plans/...`: check `git status --porcelain` for modified (`^.M` or `^MM`) entries matching `docs/plans/.*\.md`
   - If any modified plan files would be discarded, BLOCK with a message naming them and suggesting `git add` or explicit selective discard
   - For `git reset --hard`: perform the same check but WARN (emit a non-blocking warning) rather than block, because hard reset is commonly used intentionally
   - **Files:** same hook
 
-- [ ] A.6 Implement `mv` restriction for plan files
+- [x] A.6 Implement `mv` restriction for plan files
   - Detect `mv` with a source path under `docs/plans/` (outside `archive/`)
   - Check the destination path: if it is not under `docs/plans/archive/`, BLOCK with a message "Plan files may only move to docs/plans/archive/. Use `git mv docs/plans/<file> docs/plans/archive/<file>` for archival, or override via explicit hook bypass if deletion is genuinely required."
   - Treat `git mv` with the same detection logic (both `mv` and `git mv` should only allow archive destinations)
@@ -91,7 +91,7 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
   - Moves OUT of archive (back to `docs/plans/`) are allowed (restoring a previously-archived plan is legitimate)
   - **Files:** same hook
 
-- [ ] A.7 Write comprehensive self-test covering at least 12 scenarios
+- [x] A.7 Write comprehensive self-test covering at least 12 scenarios
   - Add a `--self-test` flag handler to the hook
   - Construct tool-input JSON for each scenario, invoke the detection logic, and assert the expected block or pass outcome
   - Minimum scenarios:

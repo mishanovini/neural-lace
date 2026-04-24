@@ -86,6 +86,7 @@ Patterns are NOT weaker than Mechanisms — they solve different problems. Mecha
 | Public repo blocker | `Bash` | `gh repo create --public`, `gh repo edit --visibility public` |
 | Pre-commit gate | `Bash` | On `git commit`: runs `check-harness-sync.sh` + `pre-commit-gate.sh` (TDD gate + plan-reviewer + tests + build + API audit) |
 | Account switcher | `Bash` | On `git push`: switches `gh auth` to the account matching the remote URL per `~/.claude/local/accounts.config.json` |
+| **Plan-deletion protection** | `Bash` | Blocks destructive commands targeting `docs/plans/*` (excluding `archive/`): `rm`, `git clean -f` (via dry-run probe), `git stash -u`, `git checkout .` / `git restore .`, `mv` to non-archive destinations. `git reset --hard` warns but doesn't block (commonly intentional). Defense-in-depth companion to the commit-on-creation protection from `plan-lifecycle.sh`. |
 
 ### PostToolUse (1 entry — Gen 4)
 
