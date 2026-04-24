@@ -171,14 +171,30 @@ while [ "$i" -lt "$N" ]; do
   path="${TOKENS[$i]}"
   i=$((i + 1))
 
-  # Renames consume an extra token; treat destination as the effective path
-  # and treat the entry as an ADD at the destination.
+  # Renames consume an extra token. For the archival pattern (rename from
+  # docs/plans/<file>.md to docs/plans/archive/<file>.md, shipped by the
+  # plan-lifecycle.sh hook) we explicitly skip — archived plans are NOT
+  # newly absorbing backlog items; the absorption happened at the original
+  # plan creation time. For non-archival renames, treat destination as the
+  # effective path and treat the entry as an ADD at the destination.
+  src_path="$path"
   case "$status" in
     R*)
       if [ "$i" -lt "$N" ]; then
         path="${TOKENS[$i]}"
         i=$((i + 1))
       fi
+      # Archival: src under docs/plans/, dst under docs/plans/archive/.
+      # Skip — this is the plan-lifecycle.sh self-archival path.
+      case "$src_path" in
+        docs/plans/*.md)
+          case "$path" in
+            docs/plans/archive/*.md)
+              continue
+              ;;
+          esac
+          ;;
+      esac
       status="A"
       ;;
   esac
