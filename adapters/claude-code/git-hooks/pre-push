@@ -6,9 +6,13 @@
 #
 # What it does:
 #   1. Runs the sensitive pattern scanner (blocks on credentials/business IDs)
-#   2. If the repo has a local hook at .git/hooks/pre-push.local, runs that too
+#   2. Runs the test-gate (blocks pushes to master/main without a test-pass
+#      receipt for the current HEAD, for repos that opted in via a
+#      .claude/pre-push-test-gate.enabled marker file)
+#   3. If the repo has a local hook at .git/hooks/pre-push.local, runs that too
 #
-# To bypass: git push --no-verify
+# To bypass everything: git push --no-verify
+# To bypass test-gate only: PT_PUSH_NO_TEST_GATE=1 git push
 
 set -e
 
@@ -26,16 +30,28 @@ if [ ! -f "$SCANNER" ]; then
   fi
 fi
 
+# Capture stdin once so every stage can replay it.
+REF_INPUT=$(cat)
+
 # 1. Run the scanner with the hook args and stdin
 if [ -n "$SCANNER" ] && [ -f "$SCANNER" ]; then
-  # Capture stdin so we can replay it to both scanner and local hook
-  REF_INPUT=$(cat)
   echo "$REF_INPUT" | bash "$SCANNER" "$@"
-else
-  REF_INPUT=$(cat)
 fi
 
-# 2. Run any local repo-specific pre-push hook
+# 2. Run the test-gate (opt-in via .claude/pre-push-test-gate.enabled in the repo)
+TEST_GATE="$HOOK_DIR/../hooks/pre-push-test-gate.sh"
+if [ ! -f "$TEST_GATE" ]; then
+  if [ -f "$HOME/claude-projects/neural-lace/adapters/claude-code/hooks/pre-push-test-gate.sh" ]; then
+    TEST_GATE="$HOME/claude-projects/neural-lace/adapters/claude-code/hooks/pre-push-test-gate.sh"
+  else
+    TEST_GATE=""
+  fi
+fi
+if [ -n "$TEST_GATE" ] && [ -f "$TEST_GATE" ]; then
+  echo "$REF_INPUT" | bash "$TEST_GATE" "$@"
+fi
+
+# 3. Run any local repo-specific pre-push hook
 LOCAL_HOOK="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/pre-push.local"
 if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then
   echo "$REF_INPUT" | "$LOCAL_HOOK" "$@"
