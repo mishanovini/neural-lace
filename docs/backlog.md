@@ -1,6 +1,6 @@
 # Neural Lace — Harness Backlog
 
-Last updated: 2026-04-23
+Last updated: 2026-04-23 (afternoon)
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
@@ -29,6 +29,17 @@ Prioritized order of leverage. Full reasoning in `docs/claude-code-quality-strat
 ### P0 — Harness-tests-itself: synthetic session runner
 
 Build a tool that runs synthetic Claude Code sessions against known-bad scenarios and measures whether hooks catch them (unauthorized checkbox flip, mocked integration test, uncited feature claim, budget exhaustion without audit). Runs on demand or weekly via `/schedule`. Produces a report showing which enforcement mechanisms have regressed. This catches silent enforcement regressions — currently invisible.
+
+### P0 — Class-aware reviewer feedback (narrow-fix bias mitigation)
+
+Surfaced 2026-04-23 across 5 systems-designer iterations on the capture-codify-pr-template plan. Pattern: adversarial reviewers identify named instances; LLM builders fix the named instances; sibling instances of the same defect class slip; next pass surfaces a sibling; loop. Each pass closes real gaps but each fix introduces narrower follow-ons. Affects every adversarial-review loop in the harness, not just plan reviews.
+
+Three proposed mitigations (in order of leverage):
+1. **Mod 1 (Pattern, ~2 hrs):** Modify reviewer agents (`systems-designer`, `harness-reviewer`, `code-reviewer`, `security-reviewer`, `ux-designer`, future `end-user-advocate`) to require `Class:` + `Sweep query:` + `Required generalization:` fields per gap. Shifts ~5% of reviewer effort to classification, gives the builder the sweep query upfront.
+2. **Mod 2 (Mechanism, ~6 hrs):** New PreToolUse hook `class-sweep-attestation.sh` requiring fix-commits (matching "amend" / "fix" / "address review" + prior FAIL exists) to include `Class-sweep: <pattern> — N matches, M fixed` in the message. Blocks otherwise.
+3. **Mod 3 (Pattern, 30 min):** Add "Fix the Class, Not the Instance" sub-rule to `rules/diagnosis.md` under the existing "After Every Failure: Encode the Fix" section.
+
+Recommendation: ship Mod 1 + Mod 3 as a single small plan (`class-aware-review-feedback`). Defer Mod 2 unless the pattern recurs after Mod 1+3 are live.
 
 ### P1 — Prompt template library for meta-questions
 

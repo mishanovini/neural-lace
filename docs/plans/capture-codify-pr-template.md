@@ -33,12 +33,25 @@ Close the single biggest behavioral gap in the harness: the "every failure is a 
 - [ ] 6. Add a one-paragraph stub at `docs/failure-modes.md` declaring the file's purpose and linking forward to the companion `failure-mode-catalog` plan. Rationale: the PR template references the catalog (`catalog entry FM-NNN`), so the catalog file must at minimum exist as a stub so the reference doesn't 404 when reviewers click it. Full catalog content is the companion plan's scope.
 - [ ] 7. Smoke-test the workflow end-to-end by opening throwaway PRs with (a) an empty mechanism section (expect fail), (b) a filled section citing a catalog entry (expect pass), (c) a "residual risk" answer with only "N/A" (expect fail), (d) a "residual risk" answer with substantive rationale (expect pass), AND **(e) a fork-PR scenario** verifying that the auto-emitted check appears for fork-originated PRs without `checks: write` permission. Record the five GitHub Actions run URLs as evidence. The fork-PR scenario is required because Section 5's resolution depends on it; if the auto-check doesn't appear, fall back to documenting the fork-PR limitation honestly in the rule update (Task 4).
 - [ ] 8. Commit the plan file itself in its own commit immediately after creation (satisfies the "commit the plan file immediately" requirement in the dispatch prompt). Subsequent implementation commits reference this plan by path.
-- [ ] 9. **Configure branch protection on neural-lace** to require the `PR Template Check / validate` check. Use `gh api repos/<owner>/neural-lace/branches/master/protection -X PUT --input <protection-config.json>` (see runbook for the exact JSON shape). Verify by attempting a merge on a failing PR — should be blocked. Without this task, Section 1's outcome ("every fix-PR merged to master has a non-empty mechanism field") is not enforceable; the check would be advisory only.
+- [ ] 9. **Configure branch protection on neural-lace** to require the `PR Template Check / validate` check. Use `gh api repos/<owner>/neural-lace/branches/master/protection -X PUT --input -` with the following JSON body:
+  ```json
+  {
+    "required_status_checks": {
+      "strict": true,
+      "contexts": ["PR Template Check / validate"]
+    },
+    "enforce_admins": false,
+    "required_pull_request_reviews": null,
+    "restrictions": null
+  }
+  ```
+  Verify by attempting a merge on a failing PR — should be blocked. Without this task, Section 1's outcome ("every fix-PR merged to master has a non-empty mechanism field") is not enforceable; the check would be advisory only.
 - [ ] 10. **Create decision records** as standalone files in `docs/decisions/NNN-*.md` for each Tier 2+ decision listed in Section 10 — seven decisions total: (1) single-field-vs-structured, (2) 40-char threshold, (3) CI+local both layers, (4) per-repo opt-in for hook, (5) failure-modes stub creation, (6) squash-merge body inclusion, (7) validator library location at `.github/scripts/`. Each record uses the format from `~/.claude/templates/decision-log-entry.md` (Title, Date, Status, Stakeholders, Context, Decision, Alternatives Considered with reject reasons, Consequences). Add one row per record to `docs/DECISIONS.md`. Atomicity gate (`decisions-index-gate.sh`) enforces records ↔ index consistency at commit time.
 - [ ] 11. **Write rollout helper script** `adapters/claude-code/scripts/install-pr-template.sh <target-repo-path>` that copies (a) the PR template `.github/PULL_REQUEST_TEMPLATE.md`, (b) the workflow `.github/workflows/pr-template-check.yml`, (c) the validator library `.github/scripts/validate-pr-template.sh`, and (d) the local pre-push hook into a target downstream repo. Idempotent (re-runnable). Documented in the rule update (Task 4). Per Decision 7, the validator library lives at `.github/scripts/` in neural-lace itself — no path rewriting needed during rollout.
 - [ ] 12. **Write retroactive-audit script** `adapters/claude-code/scripts/audit-merged-prs.sh --limit N` that iterates `gh pr list --state merged` and runs the validator library against each PR body, reporting per-PR PASS/FAIL with the count of pre-rollout PRs that would have failed. Used in the runbook entry for retroactive audit.
 - [ ] 13. **File observability backlog entries** in `docs/backlog.md` for the gaps acknowledged in Section 6: (a) "P2 — automatic detection of FM-NNN-cited-but-doesn't-exist in `docs/failure-modes.md`"; (b) "P2 — answer-form (a/b/c) distribution tracking for capture-codify telemetry"; (c) "P2 — pre-commit atomicity gate: PR template edits must atomically update the validator regex" (per Section 7's accidental-template-edit failure mode). Each entry brief but actionable.
 - [ ] 14. **Update Testing Strategy section** of this plan to remove the `act` reference (Section 4 documents `act` as optional; Testing Strategy should not depend on it). Sole verification path is Task 7's real GitHub Actions runs.
+- [ ] 15. **Update the `/harness-review` skill body** at `adapters/claude-code/skills/harness-review.md` to add the operational-measurement queries from Section 6 (compliance % via `gh pr list --state merged ...`; catalog growth via `git log docs/failure-modes.md`). Mirror to `~/.claude/skills/harness-review.md`. Verify both files identical via diff.
 
 ## Files to Modify/Create
 
@@ -66,6 +79,8 @@ Close the single biggest behavioral gap in the harness: the "every failure is a 
 - `adapters/claude-code/scripts/install-pr-template.sh` — NEW rollout helper. (Task 11)
 - `adapters/claude-code/scripts/audit-merged-prs.sh` — NEW retroactive-audit script. (Task 12)
 - `docs/backlog.md` — append 3 new entries (catalog-cited-but-doesnt-exist gap, answer-form distribution telemetry, template-edit atomicity gate). (Task 13)
+- `adapters/claude-code/skills/harness-review.md` — add operational-measurement queries section (compliance %, catalog growth). (Task 15)
+- `~/.claude/skills/harness-review.md` — mirror of skill body update. (Task 15)
 
 ## Assumptions
 
@@ -103,6 +118,7 @@ Close the single biggest behavioral gap in the harness: the "every failure is a 
 - **Task 12 (audit script):** run `bash adapters/claude-code/scripts/audit-merged-prs.sh --limit 5` and verify it produces per-PR PASS/FAIL output for the last 5 merged PRs. Test against a known-failing PR body and confirm FAIL is reported.
 - **Task 13 (backlog entries):** verify `docs/backlog.md` contains the 3 new entries via `grep -c 'capture-codify' docs/backlog.md` returning ≥ 3, and each entry has a P0/P1/P2 prefix.
 - **Task 14 (Testing Strategy cleanup):** verify the `act` reference no longer appears in the Task 2 Testing Strategy bullet via `grep -A1 '\*\*Task 2 ' docs/plans/capture-codify-pr-template.md | grep -c 'act'` returning 0. (Section 4's optional-tooling mention of `act` is unaffected and remains.)
+- **Task 15 (skill body update):** verify both `adapters/claude-code/skills/harness-review.md` and `~/.claude/skills/harness-review.md` contain the new compliance-measurement queries via `grep -c 'gh pr list --state merged' adapters/claude-code/skills/harness-review.md` returning ≥ 1; same for the `~/.claude/` path. Diff the two files and confirm zero differences.
 
 Each task's evidence block will be written by `task-verifier` after the builder runs the relevant verification command; the builder does NOT write evidence directly.
 
@@ -112,7 +128,7 @@ Each task's evidence block will be written by `task-verifier` after the builder 
 
 ## Definition of Done
 
-- [ ] All tasks 1-14 checked off by `task-verifier`
+- [ ] All tasks 1-15 checked off by `task-verifier`
 - [ ] Plan file committed to neural-lace `master` branch
 - [ ] PR template file live at `.github/PULL_REQUEST_TEMPLATE.md` in the neural-lace repo root
 - [ ] GitHub Actions workflow runs and produces the expected pass/fail verdicts in the smoke test (task 7 evidence attached)
@@ -260,7 +276,7 @@ gh pr list --state merged --limit 200 --search "merged:>$(date -d '30 days ago' 
 git log --oneline --since='30 days ago' docs/failure-modes.md | wc -l
 ```
 
-The existing `/harness-review` skill (shipped 2026-04-18 per SCRATCHPAD's milestone log) already has a weekly cadence; adding these queries to its run is the operational implementation of the metric. Documented in the skill's body as part of Task 5 (architecture-doc update) cross-reference.
+The existing `/harness-review` skill (shipped 2026-04-18 per SCRATCHPAD's milestone log) already has a weekly cadence; adding these queries to its run is the operational implementation of the metric. Skill body updated by Task 15.
 
 **Observability gaps (filed to backlog as P2 entries via Task 13 below):**
 - No automatic detection of "this PR cited FM-NNN, did the cited entry actually exist in `docs/failure-modes.md` at PR open time?" — reviewer responsibility for now. **Backlog entry filed in Task 13.**
