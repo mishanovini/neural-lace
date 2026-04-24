@@ -1,9 +1,11 @@
 # Plan: Smoke Test Fixture for Class-Aware Reviewer Feedback (THROWAWAY)
 
-Status: ACTIVE
+Status: ABANDONED
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none
+acceptance-exempt: true
+acceptance-exempt-reason: Throwaway smoke-test fixture with four intentional defect-class instances. Purpose was to validate Plan #7's class-aware reviewer format. Evidence captured; fixture's job is done.
 
 > **NOTE:** This file is a deliberately-flawed throwaway used to smoke-test the systems-designer agent's class-aware feedback contract (Task A.10 of `class-aware-review-feedback.md`). It is NOT a real plan and is not committed for any production purpose. The four flaws below are intentional examples of a single defect class.
 
