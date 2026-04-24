@@ -1,5 +1,5 @@
 # Claude Code Harness — Architecture Overview
-Last updated: 2026-04-24 (class-aware reviewer feedback: 7 adversarial-review agents — `systems-designer`, `harness-reviewer`, `code-reviewer`, `security-reviewer`, `ux-designer`, `claim-reviewer`, `plan-evidence-reviewer` — now emit per-gap six-field blocks with `Class:` + `Sweep query:` + `Required generalization:`; `rules/diagnosis.md` adds the "Fix the Class, Not the Instance" sub-rule consuming this contract)
+Last updated: 2026-04-24 (Gen 5 walking skeleton: new `end-user-advocate` agent for plan-time + runtime adversarial product observation; `pre-stop-verifier.sh` Check 0 recognizes `acceptance-exempt: true` plan-header field and emits `[acceptance-gate]` log lines; production blocking gate is Phase D of `docs/plans/end-user-advocate-acceptance-loop.md`. Earlier 2026-04-24: class-aware reviewer feedback — 7 adversarial-review agents emit per-gap six-field blocks with `Class:` + `Sweep query:` + `Required generalization:`; `rules/diagnosis.md` adds the "Fix the Class, Not the Instance" sub-rule consuming this contract)
 
 ## Strategy & Evolution
 
@@ -241,6 +241,7 @@ git push
 | `test-writer.md` | default | Generates tests for failure modes, not coverage numbers |
 | `harness-reviewer.md` | default | Adversarial review of harness rule/hook/agent changes. Default verdict is REJECT. Used before landing any `~/.claude/` modification. Emits class-aware feedback per the six-field contract per defect. |
 | `claim-reviewer.md` **(Gen 4)** | default | Adversarial review of draft responses to product Q&A questions. Extracts feature claims and cross-checks against the codebase via `verify-feature` skill. **Self-invoked — residual gap** (Claude Code lacks a PostMessage hook). Emits class-aware feedback per the six-field contract per FAIL reason. |
+| `end-user-advocate.md` **(Gen 5, walking-skeleton 2026-04-24)** | default | Adversarial observer of the running product from the end user's perspective. Two modes: plan-time (paper review — reads plan, authors `## Acceptance Scenarios` into the plan file, flags under-specified user behaviors) and runtime (browser automation via `mcp__Claude_in_Chrome__*` with Playwright MCP fallback — executes scenarios against the live app, writes JSON PASS/FAIL artifact under `.claude/state/acceptance/<plan-slug>/` with screenshot + network + console log siblings). Phase A skeleton supports one scenario type ("navigate URL, observe literal text"); production protocol lands in Phase C of `docs/plans/end-user-advocate-acceptance-loop.md`. |
 
 #### Class-aware feedback contract (2026-04-24)
 

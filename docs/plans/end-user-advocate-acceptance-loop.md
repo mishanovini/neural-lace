@@ -53,11 +53,11 @@ The user-observable outcome: plans that pass plan-time advocate review are mater
 
 ### Phase 1 — Walking skeleton (one scenario, end-to-end) [serial]
 
-- [ ] A.1 Create stub plan `docs/plans/acceptance-loop-smoke-test.md` with ONE acceptance scenario ("the user can navigate to a given URL and see expected text on the page"). Walking-skeleton target is `python -m http.server 3000` serving the neural-lace repo root, so the scenario is "navigate to http://localhost:3000/README.md and observe the text 'Neural Lace'." Zero code dependency, zero project-app dependency.
-- [ ] A.2 Draft minimal `adapters/claude-code/agents/end-user-advocate.md` supporting both modes — just enough to execute the smoke scenario. Production hardening in Phase 3.
-- [ ] A.3 Create `.claude/state/acceptance/` directory convention. Hand-craft a PASS artifact for scenario 1.1 in the schema that Phase 4 will automate.
-- [ ] A.4 Minimal extension to `adapters/claude-code/hooks/pre-stop-verifier.sh` that detects the PASS artifact and allows session end. Not yet the full production gate — just enough to validate the control flow.
-- [ ] A.5 Execute the skeleton end-to-end: invoke the agent in plan-time mode on the stub plan → scenario written → invoke in runtime mode against the target page → PASS artifact written → session ends cleanly. Capture evidence in `docs/plans/acceptance-loop-smoke-test-evidence.md`.
+- [x] A.1 Create stub plan `docs/plans/acceptance-loop-smoke-test.md` with ONE acceptance scenario ("the user can navigate to a given URL and see expected text on the page"). Walking-skeleton target is `python -m http.server 3000` serving the neural-lace repo root, so the scenario is "navigate to http://localhost:3000/README.md and observe the text 'Neural Lace'." Zero code dependency, zero project-app dependency.
+- [x] A.2 Draft minimal `adapters/claude-code/agents/end-user-advocate.md` supporting both modes — just enough to execute the smoke scenario. Production hardening in Phase 3.
+- [x] A.3 Create `.claude/state/acceptance/` directory convention. Hand-craft a PASS artifact for scenario 1.1 in the schema that Phase 4 will automate.
+- [x] A.4 Minimal extension to `adapters/claude-code/hooks/pre-stop-verifier.sh` that detects the PASS artifact and allows session end. Not yet the full production gate — just enough to validate the control flow.
+- [x] A.5 Execute the skeleton end-to-end: invoke the agent in plan-time mode on the stub plan → scenario written → invoke in runtime mode against the target page → PASS artifact written → session ends cleanly. Capture evidence in `docs/plans/acceptance-loop-smoke-test-evidence.md`.
 
 ### Phase 2 — Plan template + rule pattern [parallel]
 

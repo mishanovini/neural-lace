@@ -87,5 +87,11 @@ docs/plans/public-release-hardening-evidence.md
 # ~/.claude/local/ is a user-home path, but shadow any local mirror here:
 .claude-local/
 
+# Acceptance loop runtime artifacts (Phase 1 walking skeleton — Generation 5)
+# .claude/state/acceptance/ holds JSON artifacts + sibling screenshot/log files
+# produced by the end-user-advocate runtime mode. Per-session ephemeral; not
+# committed. Convention documented in adapters/claude-code/agents/end-user-advocate.md.
+.claude/state/acceptance/
+
 # Moved to .example (Phase 4 scrub)
 adapters/claude-code/business-patterns.paths

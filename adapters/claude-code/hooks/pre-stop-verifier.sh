@@ -175,6 +175,44 @@ if grep -qiE '^Status:\s*COMPLETED' "$LATEST_PLAN" 2>/dev/null; then
 fi
 
 # ============================================================
+# Check 0: acceptance-loop awareness (Phase A.4 walking skeleton — Generation 5)
+# ============================================================
+#
+# This is the Phase 1 walking-skeleton extension for the end-user-advocate
+# acceptance loop (see docs/plans/end-user-advocate-acceptance-loop.md).
+# At this stage the hook only RECOGNIZES the new plan-header field
+# `acceptance-exempt: true` and LOGS whether a PASS artifact exists for
+# non-exempt active plans. It does NOT yet block on missing artifacts —
+# the full blocking gate is Phase D's standalone product-acceptance-gate.sh
+# chained after this script. We add the recognition path now so the
+# walking-skeleton smoke test (`docs/plans/acceptance-loop-smoke-test.md`,
+# itself acceptance-exempt) can demonstrate that the control flow reaches
+# this hook, sees the exemption, and exits cleanly.
+#
+# Two cases:
+#   (a) Plan declares `acceptance-exempt: true` → log + skip (no further
+#       acceptance check). Used by harness-dev plans and the bootstrap
+#       skeleton plan that IS the loop.
+#   (b) Plan does NOT declare exemption → look for a JSON artifact under
+#       .claude/state/acceptance/<plan-slug>/ and log presence. NO blocking
+#       at this skeleton stage; production blocking is Phase D.
+
+PLAN_SLUG=$(basename "$LATEST_PLAN" .md)
+ACCEPTANCE_DIR=".claude/state/acceptance/${PLAN_SLUG}"
+
+if grep -qiE '^acceptance-exempt:\s*true' "$LATEST_PLAN" 2>/dev/null; then
+  EXEMPT_REASON=$(grep -iE '^acceptance-exempt-reason:' "$LATEST_PLAN" 2>/dev/null | head -1 | sed 's/^[Aa]cceptance-exempt-reason:[[:space:]]*//')
+  echo "[acceptance-gate] plan ${PLAN_SLUG} is acceptance-exempt; reason: ${EXEMPT_REASON:-<none provided>}" >&2
+  # Note: production gate (Phase D.6) will BLOCK if exempt: true but no
+  # reason. For the skeleton we just log.
+elif [[ -d "$ACCEPTANCE_DIR" ]]; then
+  ARTIFACT_COUNT=$(find "$ACCEPTANCE_DIR" -maxdepth 1 -name '*.json' -type f 2>/dev/null | wc -l | tr -d '[:space:]')
+  echo "[acceptance-gate] plan ${PLAN_SLUG}: ${ARTIFACT_COUNT} artifact(s) under ${ACCEPTANCE_DIR} (skeleton recognition only — production gate is Phase D)" >&2
+else
+  echo "[acceptance-gate] plan ${PLAN_SLUG}: no acceptance directory at ${ACCEPTANCE_DIR} (skeleton recognition only — production gate is Phase D)" >&2
+fi
+
+# ============================================================
 # Check 1: unchecked tasks
 # ============================================================
 #
