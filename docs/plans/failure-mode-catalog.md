@@ -12,15 +12,15 @@ Establish `docs/failure-modes.md` as a living, referenced catalog of known harne
 
 ## Tasks
 
-- [ ] 1. Create `docs/failure-modes.md` with the entry schema (ID, Symptom, Root cause, Detection, Prevention, Example) and seed 4-6 entries covering: concurrent-session plan wipe, mysterious effort-level reset on automation tasks, bug-persistence trigger firing without actual persistence, verbose plans missing required sections, and untracked plan file location ambiguity.
-- [ ] 2. Update `~/.claude/rules/diagnosis.md` to add a directive after the "Encode the Fix" section: when a root cause is identified, add it to `docs/failure-modes.md` or explicitly justify why it is not a new class.
-- [ ] 3. Update `~/.claude/skills/harness-lesson.md` to instruct the skill to consult the catalog first and extend an existing entry rather than duplicate a pattern.
-- [ ] 4. Update `~/.claude/skills/why-slipped.md` with the same check-catalog-first guidance so diagnosis starts from the known-failure corpus.
-- [ ] 5. Update `~/.claude/agents/claim-reviewer.md` to consult the catalog when evaluating claims that match known symptoms.
-- [ ] 6. Update `~/.claude/agents/task-verifier.md` to consult the catalog for known-bad patterns (e.g., self-reported completion without evidence) during verification.
-- [ ] 7. Mirror every modified file from `~/.claude/` into `~/claude-projects/neural-lace/adapters/claude-code/` and run the diff check from `harness-maintenance.md` to confirm zero drift.
-- [ ] 8. Update `~/.claude/docs/harness-architecture.md` to add a row for `docs/failure-modes.md` in the relevant inventory table, then mirror to the repo.
-- [ ] 9. Commit the plan file, catalog, and all wiring changes in a series of logical commits with references back to the catalog entries being introduced. Pre-commit hooks (hygiene scan, plan-reviewer) must pass on every commit.
+- [ ] A.1 Create `docs/failure-modes.md` with the entry schema (ID, Symptom, Root cause, Detection, Prevention, Example) and seed 4-6 entries covering: concurrent-session plan wipe, mysterious effort-level reset on automation tasks, bug-persistence trigger firing without actual persistence, verbose plans missing required sections, and untracked plan file location ambiguity.
+- [ ] A.2 Update `~/.claude/rules/diagnosis.md` to add a directive after the "Encode the Fix" section: when a root cause is identified, add it to `docs/failure-modes.md` or explicitly justify why it is not a new class.
+- [ ] A.3 Update `~/.claude/skills/harness-lesson.md` to instruct the skill to consult the catalog first and extend an existing entry rather than duplicate a pattern.
+- [ ] A.4 Update `~/.claude/skills/why-slipped.md` with the same check-catalog-first guidance so diagnosis starts from the known-failure corpus.
+- [ ] A.5 Update `~/.claude/agents/claim-reviewer.md` to consult the catalog when evaluating claims that match known symptoms.
+- [ ] A.6 Update `~/.claude/agents/task-verifier.md` to consult the catalog for known-bad patterns (e.g., self-reported completion without evidence) during verification.
+- [ ] A.7 Mirror every modified file from `~/.claude/` into `~/claude-projects/neural-lace/adapters/claude-code/` and run the diff check from `harness-maintenance.md` to confirm zero drift.
+- [ ] A.8 Update `~/.claude/docs/harness-architecture.md` to add a row for `docs/failure-modes.md` in the relevant inventory table, then mirror to the repo.
+- [ ] A.9 Commit the plan file, catalog, and all wiring changes in a series of logical commits with references back to the catalog entries being introduced. Pre-commit hooks (hygiene scan, plan-reviewer) must pass on every commit.
 
 ## Files to Modify/Create
 - `docs/failure-modes.md` — NEW. Canonical catalog of known failure classes.
