@@ -53,51 +53,51 @@ The user-observable outcome: plans that pass plan-time advocate review are mater
 
 ### Phase 1 — Walking skeleton (one scenario, end-to-end) [serial]
 
-- [ ] 1.1. Create stub plan `docs/plans/acceptance-loop-smoke-test.md` with ONE acceptance scenario ("the user can navigate to a given URL and see expected text on the page"). Walking-skeleton target is `python -m http.server 3000` serving the neural-lace repo root, so the scenario is "navigate to http://localhost:3000/README.md and observe the text 'Neural Lace'." Zero code dependency, zero project-app dependency.
-- [ ] 1.2. Draft minimal `adapters/claude-code/agents/end-user-advocate.md` supporting both modes — just enough to execute the smoke scenario. Production hardening in Phase 3.
-- [ ] 1.3. Create `.claude/state/acceptance/` directory convention. Hand-craft a PASS artifact for scenario 1.1 in the schema that Phase 4 will automate.
-- [ ] 1.4. Minimal extension to `adapters/claude-code/hooks/pre-stop-verifier.sh` that detects the PASS artifact and allows session end. Not yet the full production gate — just enough to validate the control flow.
-- [ ] 1.5. Execute the skeleton end-to-end: invoke the agent in plan-time mode on the stub plan → scenario written → invoke in runtime mode against the target page → PASS artifact written → session ends cleanly. Capture evidence in `docs/plans/acceptance-loop-smoke-test-evidence.md`.
+- [ ] A.1 Create stub plan `docs/plans/acceptance-loop-smoke-test.md` with ONE acceptance scenario ("the user can navigate to a given URL and see expected text on the page"). Walking-skeleton target is `python -m http.server 3000` serving the neural-lace repo root, so the scenario is "navigate to http://localhost:3000/README.md and observe the text 'Neural Lace'." Zero code dependency, zero project-app dependency.
+- [ ] A.2 Draft minimal `adapters/claude-code/agents/end-user-advocate.md` supporting both modes — just enough to execute the smoke scenario. Production hardening in Phase 3.
+- [ ] A.3 Create `.claude/state/acceptance/` directory convention. Hand-craft a PASS artifact for scenario 1.1 in the schema that Phase 4 will automate.
+- [ ] A.4 Minimal extension to `adapters/claude-code/hooks/pre-stop-verifier.sh` that detects the PASS artifact and allows session end. Not yet the full production gate — just enough to validate the control flow.
+- [ ] A.5 Execute the skeleton end-to-end: invoke the agent in plan-time mode on the stub plan → scenario written → invoke in runtime mode against the target page → PASS artifact written → session ends cleanly. Capture evidence in `docs/plans/acceptance-loop-smoke-test-evidence.md`.
 
 ### Phase 2 — Plan template + rule pattern [parallel]
 
-- [ ] 2.1. Extend `adapters/claude-code/templates/plan-template.md` with `## Acceptance Scenarios` and `## Out-of-scope scenarios` sections, including guidance comments in the template that explain what each section should contain and how the end-user advocate will author them.
-- [ ] 2.2. Write `adapters/claude-code/rules/acceptance-scenarios.md` documenting the full loop: plan-time authoring, scenarios-shared/assertions-private discipline, runtime execution, gap-analysis cycle, convergence criteria, and the skip-with-justification path for non-user-facing plans.
-- [ ] 2.3. Update `adapters/claude-code/rules/planning.md` referencing the new rule and clarifying when end-user-advocate is required (every plan by default; skip with justification for docs-only plans).
+- [ ] B.1 Extend `adapters/claude-code/templates/plan-template.md` with `## Acceptance Scenarios` and `## Out-of-scope scenarios` sections, including guidance comments in the template that explain what each section should contain and how the end-user advocate will author them.
+- [ ] B.2 Write `adapters/claude-code/rules/acceptance-scenarios.md` documenting the full loop: plan-time authoring, scenarios-shared/assertions-private discipline, runtime execution, gap-analysis cycle, convergence criteria, and the skip-with-justification path for non-user-facing plans.
+- [ ] B.3 Update `adapters/claude-code/rules/planning.md` referencing the new rule and clarifying when end-user-advocate is required (every plan by default; skip with justification for docs-only plans).
 
 ### Phase 3 — Production end-user-advocate agent [serial, depends on Phase 1]
 
-- [ ] 3.1. Production `adapters/claude-code/agents/end-user-advocate.md` — full plan-time protocol: read Goal / Scope / UI section / Edge Cases, produce scenario list with step-by-step flows, flag underspecified plan sections, return structured feedback to planner.
-- [ ] 3.2. Production runtime protocol: load scenarios from plan file → execute each via `mcp__Claude_in_Chrome` (Playwright MCP fallback) → capture screenshots + network logs + console logs → write PASS/FAIL artifact. Adversarial framing explicit in the prompt ("you are trying to find reasons this is not actually delivered; assume bugs until you can't find them").
-- [ ] 3.3. Scenario file format specification: structured Markdown within the `## Acceptance Scenarios` section — each scenario has a stable slug ID, numbered user-flow steps, success criteria in prose, optional edge variations. Format is human-authorable and machine-extractable.
+- [ ] C.1 Production `adapters/claude-code/agents/end-user-advocate.md` — full plan-time protocol: read Goal / Scope / UI section / Edge Cases, produce scenario list with step-by-step flows, flag underspecified plan sections, return structured feedback to planner.
+- [ ] C.2 Production runtime protocol: load scenarios from plan file → execute each via `mcp__Claude_in_Chrome` (Playwright MCP fallback) → capture screenshots + network logs + console logs → write PASS/FAIL artifact. Adversarial framing explicit in the prompt ("you are trying to find reasons this is not actually delivered; assume bugs until you can't find them").
+- [ ] C.3 Scenario file format specification: structured Markdown within the `## Acceptance Scenarios` section — each scenario has a stable slug ID, numbered user-flow steps, success criteria in prose, optional edge variations. Format is human-authorable and machine-extractable.
 
 ### Phase 4 — Runtime acceptance gate [serial, depends on Phase 3]
 
-- [ ] 4.1. Production `adapters/claude-code/hooks/product-acceptance-gate.sh` — Stop hook invoked after `pre-stop-verifier.sh` in the hook chain. Blocks session end if ACTIVE plan has unsatisfied acceptance scenarios.
-- [ ] 4.2. Artifact schema: JSON at `.claude/state/acceptance/<plan-slug>/<session-id>-<timestamp>.json` with `{session_id, plan_commit_sha, scenarios: [{id, verdict, artifacts, assertions_met, failure_reason?}]}`. Sibling files for screenshot / network log / console log per scenario.
-- [ ] 4.3. Session-to-plan correlation: hook scans all `docs/plans/*.md` with `Status: ACTIVE`, iterates over them, checks each has a satisfying artifact matching current plan_commit_sha.
-- [ ] 4.4. `--self-test` subcommand exercising: (a) no active plan → PASS, (b) active plan with valid PASS artifact → PASS, (c) active plan with FAIL artifact → BLOCK, (d) active plan with no artifact → BLOCK, (e) active plan with stale artifact (wrong plan_commit_sha) → BLOCK, (f) active plan with valid waiver → PASS.
-- [ ] 4.5. Waiver mechanism: `.claude/state/acceptance-waiver-<plan-slug>-<timestamp>.txt` with one-line justification. Present → allow stop. Waivers are per-session and do not persist across sessions.
-- [ ] 4.6. Harness-dev exemption mechanism: `acceptance-exempt: true` plan-header field + `acceptance-exempt-reason: <one-sentence>` companion field. Both `plan-reviewer.sh` and `product-acceptance-gate.sh` honor the exemption (skip requirement, allow stop). Documented in `acceptance-scenarios.md` with explicit when-to-use guidance and the audit expectation (`harness-reviewer` may review exemption rationale). Self-test extends 4.4 with two new scenarios: (g) active plan with valid `acceptance-exempt: true` + reason → PASS, (h) active plan with `acceptance-exempt: true` but no reason → BLOCK with clear message.
+- [ ] D.1 Production `adapters/claude-code/hooks/product-acceptance-gate.sh` — Stop hook invoked after `pre-stop-verifier.sh` in the hook chain. Blocks session end if ACTIVE plan has unsatisfied acceptance scenarios.
+- [ ] D.2 Artifact schema: JSON at `.claude/state/acceptance/<plan-slug>/<session-id>-<timestamp>.json` with `{session_id, plan_commit_sha, scenarios: [{id, verdict, artifacts, assertions_met, failure_reason?}]}`. Sibling files for screenshot / network log / console log per scenario.
+- [ ] D.3 Session-to-plan correlation: hook scans all `docs/plans/*.md` with `Status: ACTIVE`, iterates over them, checks each has a satisfying artifact matching current plan_commit_sha.
+- [ ] D.4 `--self-test` subcommand exercising: (a) no active plan → PASS, (b) active plan with valid PASS artifact → PASS, (c) active plan with FAIL artifact → BLOCK, (d) active plan with no artifact → BLOCK, (e) active plan with stale artifact (wrong plan_commit_sha) → BLOCK, (f) active plan with valid waiver → PASS.
+- [ ] D.5 Waiver mechanism: `.claude/state/acceptance-waiver-<plan-slug>-<timestamp>.txt` with one-line justification. Present → allow stop. Waivers are per-session and do not persist across sessions.
+- [ ] D.6 Harness-dev exemption mechanism: `acceptance-exempt: true` plan-header field + `acceptance-exempt-reason: <one-sentence>` companion field. Both `plan-reviewer.sh` and `product-acceptance-gate.sh` honor the exemption (skip requirement, allow stop). Documented in `acceptance-scenarios.md` with explicit when-to-use guidance and the audit expectation (`harness-reviewer` may review exemption rationale). Self-test extends 4.4 with two new scenarios: (g) active plan with valid `acceptance-exempt: true` + reason → PASS, (h) active plan with `acceptance-exempt: true` but no reason → BLOCK with clear message.
 
 ### Phase 5 — Enforcement-gap analyzer [serial, depends on Phase 4]
 
-- [ ] 5.1. `adapters/claude-code/agents/enforcement-gap-analyzer.md` — reads session transcript + plan + failing scenario + hooks that fired. Required output fields: Title, Date, `Class of failure:`, `Existing rules/hooks that should have caught this:`, `Why current mechanisms missed this:`, `Proposed change (concrete diff or file creation)`, Testing strategy for the new rule.
-- [ ] 5.2. Prompt discipline: analyzer must review existing rules BEFORE proposing new ones. A missed-catch by an existing rule triggers amendment, not addition. The agent's prompt explicitly states: "if your proposed rule would only fire on this specific bug's exact conditions, reformulate."
-- [ ] 5.3. Extend `adapters/claude-code/agents/harness-reviewer.md` remit — every `enforcement-gap-analyzer` proposal flows through `harness-reviewer` with an explicit generalization check: too narrow? overlaps existing rule? `Class of failure` substantive? Verdicts: PASS / REFORMULATE / REJECT.
+- [ ] E.1 `adapters/claude-code/agents/enforcement-gap-analyzer.md` — reads session transcript + plan + failing scenario + hooks that fired. Required output fields: Title, Date, `Class of failure:`, `Existing rules/hooks that should have caught this:`, `Why current mechanisms missed this:`, `Proposed change (concrete diff or file creation)`, Testing strategy for the new rule.
+- [ ] E.2 Prompt discipline: analyzer must review existing rules BEFORE proposing new ones. A missed-catch by an existing rule triggers amendment, not addition. The agent's prompt explicitly states: "if your proposed rule would only fire on this specific bug's exact conditions, reformulate."
+- [ ] E.3 Extend `adapters/claude-code/agents/harness-reviewer.md` remit — every `enforcement-gap-analyzer` proposal flows through `harness-reviewer` with an explicit generalization check: too narrow? overlaps existing rule? `Class of failure` substantive? Verdicts: PASS / REFORMULATE / REJECT.
 
 ### Phase 6 — Builder discipline (scenarios shared, assertions private) [parallel]
 
-- [ ] 6.1. Update `adapters/claude-code/rules/orchestrator-pattern.md` — builder dispatch prompt template explicitly includes the plan's `## Acceptance Scenarios` as SHARED (motivation and what-must-work) but does NOT include the end-user advocate's internal assertion list. New sub-section "Scenarios-shared, assertions-private" codifies the Goodhart rationale.
-- [ ] 6.2. Update `adapters/claude-code/agents/plan-phase-builder.md` — explicit statement of the discipline in the builder's prompt: "the end-user advocate will execute these flows against the running app before this session can end. You will not see the exact assertions. Build such that the scenarios work for the actual user trying to accomplish them."
+- [ ] F.1 Update `adapters/claude-code/rules/orchestrator-pattern.md` — builder dispatch prompt template explicitly includes the plan's `## Acceptance Scenarios` as SHARED (motivation and what-must-work) but does NOT include the end-user advocate's internal assertion list. New sub-section "Scenarios-shared, assertions-private" codifies the Goodhart rationale.
+- [ ] F.2 Update `adapters/claude-code/agents/plan-phase-builder.md` — explicit statement of the discipline in the builder's prompt: "the end-user advocate will execute these flows against the running app before this session can end. You will not see the exact assertions. Build such that the scenarios work for the actual user trying to accomplish them."
 
 ### Phase 7 — Self-test + docs [parallel]
 
-- [ ] 7.1. Synthetic self-test at `adapters/claude-code/tests/acceptance-loop-self-test.sh` — scripts a known-broken feature scenario, invokes the full pipeline (plan-time advocate catches thin Goal → builder stubs feature → runtime advocate catches broken state → gap-analyzer proposes rule → harness-reviewer verdicts). Asserts each stage fires correctly.
-- [ ] 7.2. Add the self-test to the weekly `/harness-review` skill.
-- [ ] 7.3. Update `docs/harness-architecture.md` with rows for `end-user-advocate`, `enforcement-gap-analyzer`, `product-acceptance-gate.sh`.
-- [ ] 7.4. Update `docs/best-practices.md` with the acceptance-loop principle (adversarial observation, scenarios-shared/assertions-private, gap-analyzer generalization). Include worked example.
-- [ ] 7.5. Update `adapters/claude-code/CLAUDE.md` Generation 4 mention to reference Generation 5 and this loop.
+- [ ] G.1 Synthetic self-test at `adapters/claude-code/tests/acceptance-loop-self-test.sh` — scripts a known-broken feature scenario, invokes the full pipeline (plan-time advocate catches thin Goal → builder stubs feature → runtime advocate catches broken state → gap-analyzer proposes rule → harness-reviewer verdicts). Asserts each stage fires correctly.
+- [ ] G.2 Add the self-test to the weekly `/harness-review` skill.
+- [ ] G.3 Update `docs/harness-architecture.md` with rows for `end-user-advocate`, `enforcement-gap-analyzer`, `product-acceptance-gate.sh`.
+- [ ] G.4 Update `docs/best-practices.md` with the acceptance-loop principle (adversarial observation, scenarios-shared/assertions-private, gap-analyzer generalization). Include worked example.
+- [ ] G.5 Update `adapters/claude-code/CLAUDE.md` Generation 4 mention to reference Generation 5 and this loop.
 
 ## Files to Modify/Create
 
