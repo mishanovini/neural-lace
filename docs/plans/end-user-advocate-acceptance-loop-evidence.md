@@ -1016,3 +1016,131 @@ Runtime verification: file adapters/claude-code/agents/harness-reviewer.md::^###
 Runtime verification: file docs/harness-architecture.md::enforcement-gap-analyzer\.md
 
 Verdict: PASS
+
+---
+
+## Task F.1 — orchestrator-pattern.md scenarios-shared/assertions-private discipline
+
+Verified at: 2026-04-23T00:00:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase F dispatch)
+
+Checks run:
+1. orchestrator-pattern.md modified in repo AND mirrored to ~/.claude/
+   Command: diff -q adapters/claude-code/rules/orchestrator-pattern.md ~/.claude/rules/orchestrator-pattern.md
+   Output: (no output -> files identical)
+   Result: PASS — sync verified post-edit
+
+2. New "Scenarios-shared, assertions-private" section added under "The dispatch protocol"
+   Command: grep -nE '^## Scenarios-shared, assertions-private' adapters/claude-code/rules/orchestrator-pattern.md
+   Output: matched line in section heading
+   Result: PASS — heading present at top-level (## ) so the section is reachable from a TOC
+
+3. Dispatch prompt MUST-include list now references the Acceptance Scenarios section
+   Command: grep -nE 'plan.s `## Acceptance Scenarios` section verbatim' adapters/claude-code/rules/orchestrator-pattern.md
+   Output: matched in the bulleted MUST-include list under "The dispatch protocol"
+   Result: PASS — dispatch prompt template explicitly carries scenarios into the builder's prompt
+
+4. Goodhart's-law rationale documented in the new section
+   Command: grep -cE 'Goodhart|teach.*to.*the.*test' adapters/claude-code/rules/orchestrator-pattern.md
+   Output: 2
+   Result: PASS — Goodhart rationale (LLM builders teach to the test) spelled out as the discipline's reason; the grep counts lines containing either pattern (Goodhart appears in two lines: header rationale + sharpest-form citation)
+
+5. "What counts as a scenario" vs "What counts as an assertion" distinction explicit
+   Command: grep -cE 'What counts as a scenario|What counts as an assertion' adapters/claude-code/rules/orchestrator-pattern.md
+   Output: 2
+   Result: PASS — both lists present with concrete examples
+
+6. Why-share-scenarios complementary failure mode addressed
+   Command: grep -cE 'Why scenarios are shared anyway|complementary failure mode' adapters/claude-code/rules/orchestrator-pattern.md
+   Output: 1
+   Result: PASS — single paragraph contains both phrases on one line; section explains why the symmetric discipline (also withhold scenarios) would be wrong
+
+7. Mechanics paragraph specifies orchestrator copies the section verbatim, does NOT extract assertions
+   Command: grep -nE 'orchestrator does NOT invoke the end-user-advocate to extract' adapters/claude-code/rules/orchestrator-pattern.md
+   Output: matched line in "Mechanics in the dispatch prompt" paragraph
+   Result: PASS — operational clarity: orchestrator never sees assertions either
+
+8. Acceptance-exempt no-op clause present so the discipline does not block scenario-less plans
+   Command: grep -cE 'acceptance-exempt|no-op' adapters/claude-code/rules/orchestrator-pattern.md
+   Output: 1
+   Result: PASS — single line in "Mechanics in the dispatch prompt" mentions both acceptance-exempt and no-op; section explicitly allows scenario-less plans (harness-dev, pure-docs) to skip the clause cleanly
+
+9. Hygiene scanner clean on edited file
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/rules/orchestrator-pattern.md; echo $?
+   Output: 0
+   Result: PASS — no denylist matches in the new content
+
+10. Cross-reference back to acceptance-scenarios.md so the discipline is discoverable from the rule doc
+    Command: grep -cE 'rules/acceptance-scenarios\.md|`rules/acceptance-scenarios\.md`' adapters/claude-code/rules/orchestrator-pattern.md
+    Output: 1
+    Result: PASS — the new section opens with a link back to the canonical rule
+
+Runtime verification: file adapters/claude-code/rules/orchestrator-pattern.md::^## Scenarios-shared, assertions-private
+Runtime verification: file adapters/claude-code/rules/orchestrator-pattern.md::plan.s `## Acceptance Scenarios` section verbatim
+Runtime verification: file adapters/claude-code/rules/orchestrator-pattern.md::Goodhart
+
+Verdict: PASS
+
+---
+
+## Task F.2 — plan-phase-builder.md scenarios-shared/assertions-private discipline
+
+Verified at: 2026-04-23T00:00:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase F dispatch)
+
+Checks run:
+1. plan-phase-builder.md modified in repo AND mirrored to ~/.claude/
+   Command: diff -q adapters/claude-code/agents/plan-phase-builder.md ~/.claude/agents/plan-phase-builder.md
+   Output: (no output -> files identical)
+   Result: PASS — sync verified post-edit
+
+2. New "Acceptance scenarios — what you see, what you don't" section added
+   Command: grep -nE "^## Acceptance scenarios — what you see, what you don't" adapters/claude-code/agents/plan-phase-builder.md
+   Output: matched line in the section heading
+   Result: PASS — section present at top-level so it appears in the agent's TOC
+
+3. Plan-task spec language present verbatim ("the end-user-advocate will execute these flows ... before this session can end. You will not see the exact ... assertions. Build such that the scenarios work for the actual user trying to accomplish them.")
+   Command: grep -cE 'end-user-advocate will execute these flows|will not see the exact runtime assertions|user trying to accomplish them' adapters/claude-code/agents/plan-phase-builder.md
+   Output: 1
+   Result: PASS — all three spec phrases present on a single line (the spec sentence in the section's lead paragraph); count is 1 because grep -c counts matching lines, not match instances; verified as a single sentence reproducing the F.2 task acceptance criterion verbatim
+
+4. "Your prompt will contain" list now includes the Acceptance Scenarios entry
+   Command: grep -nE "plan.s `## Acceptance Scenarios` section verbatim" adapters/claude-code/agents/plan-phase-builder.md
+   Output: matched bullet under the prompt-contents list
+   Result: PASS — agent expects the scenarios in its dispatch prompt and is told what to do with them
+
+5. Workflow step 1 ("Read the plan file") amended to mention Acceptance Scenarios
+   Command: grep -nE 'Acceptance Scenarios. section if present' adapters/claude-code/agents/plan-phase-builder.md
+   Output: matched bullet inside step 1 of the Your-workflow ordered list
+   Result: PASS — scenarios appear as an explicit attention-target during plan reading
+
+6. Discipline statement includes the Goodhart-resistant framing
+   Command: grep -cE 'teach to the test|Goodhart-resistant|cannot teach to the test' adapters/claude-code/agents/plan-phase-builder.md
+   Output: 1
+   Result: PASS — single line in the one-sentence summary contains both "Goodhart-resistant" and "teach to the test"; framing is explicit
+
+7. Explicit "do NOT reverse-engineer the advocate's assertions" guidance present
+   Command: grep -cE 'reverse-engineer the advocate.s assertions|Do not Grep the harness for scenario text|do not invoke the advocate yourself' adapters/claude-code/agents/plan-phase-builder.md
+   Output: 1
+   Result: PASS — all three don't-do instructions appear in the same bulleted line ("Do not try to reverse-engineer the advocate's assertions. Do not Grep the harness for scenario text, do not look for the advocate's prompt, do not invoke the advocate yourself..."); concrete temptations are enumerated
+
+8. Cross-reference to orchestrator-pattern.md rule
+   Command: grep -nE 'orchestrator-pattern\.md' adapters/claude-code/agents/plan-phase-builder.md
+   Output: line 3 (pre-existing frontmatter description), line 29 (new discipline-statement paragraph)
+   Result: PASS — the new discipline section explicitly cites the rule doc that codifies the convention, in addition to the pre-existing frontmatter pointer
+
+9. "If a scenario is unclear" → return BLOCKED guidance present (preserves existing scope-discipline pattern)
+   Command: grep -cE 'a scenario is unclear or contradicts|return BLOCKED with the specific question' adapters/claude-code/agents/plan-phase-builder.md
+   Output: 2
+   Result: PASS — connects scenario ambiguity to existing BLOCKED return contract; no new escape hatch
+
+10. Hygiene scanner clean on edited file
+    Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/agents/plan-phase-builder.md; echo $?
+    Output: 0
+    Result: PASS — no denylist matches
+
+Runtime verification: file adapters/claude-code/agents/plan-phase-builder.md::^## Acceptance scenarios — what you see, what you don't
+Runtime verification: file adapters/claude-code/agents/plan-phase-builder.md::end-user-advocate will execute these flows
+Runtime verification: file adapters/claude-code/agents/plan-phase-builder.md::user trying to accomplish them
+
+Verdict: PASS

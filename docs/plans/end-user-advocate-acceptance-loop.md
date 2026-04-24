@@ -90,8 +90,8 @@ The user-observable outcome: plans that pass plan-time advocate review are mater
 
 ### Phase 6 — Builder discipline (scenarios shared, assertions private) [parallel]
 
-- [ ] F.1 Update `adapters/claude-code/rules/orchestrator-pattern.md` — builder dispatch prompt template explicitly includes the plan's `## Acceptance Scenarios` as SHARED (motivation and what-must-work) but does NOT include the end-user advocate's internal assertion list. New sub-section "Scenarios-shared, assertions-private" codifies the Goodhart rationale.
-- [ ] F.2 Update `adapters/claude-code/agents/plan-phase-builder.md` — explicit statement of the discipline in the builder's prompt: "the end-user advocate will execute these flows against the running app before this session can end. You will not see the exact assertions. Build such that the scenarios work for the actual user trying to accomplish them."
+- [x] F.1 Update `adapters/claude-code/rules/orchestrator-pattern.md` — builder dispatch prompt template explicitly includes the plan's `## Acceptance Scenarios` as SHARED (motivation and what-must-work) but does NOT include the end-user advocate's internal assertion list. New sub-section "Scenarios-shared, assertions-private" codifies the Goodhart rationale.
+- [x] F.2 Update `adapters/claude-code/agents/plan-phase-builder.md` — explicit statement of the discipline in the builder's prompt: "the end-user advocate will execute these flows against the running app before this session can end. You will not see the exact assertions. Build such that the scenarios work for the actual user trying to accomplish them."
 
 ### Phase 7 — Self-test + docs [parallel]
 

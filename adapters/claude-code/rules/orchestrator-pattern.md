@@ -126,6 +126,7 @@ For each batch of tasks (one if serial, up to 5 if parallel):
    - Key ENV vars the builder needs (e.g., `E2E_PLATFORM_ADMIN_EMAIL must be in .env.local`)
    - Explicit "do NOT start the next task" instruction
    - Reference to the acceptance criteria in the plan ("see Done when: section under Task 3.2")
+   - **The plan's `## Acceptance Scenarios` section verbatim** (when the plan has one) — see "Scenarios-shared, assertions-private" below for the discipline
    - For parallel dispatch: "DO NOT invoke task-verifier. Build, commit in your worktree, and return verdict. The orchestrator will run task-verifier sequentially after collecting all parallel results."
    - For serial dispatch: "Invoke task-verifier yourself; it will flip the checkbox and write evidence."
 
@@ -146,6 +147,54 @@ For each batch of tasks (one if serial, up to 5 if parallel):
 6. **On PARTIAL:** decide whether to re-dispatch with scope narrowed, or treat as BLOCKED and stop. If the PARTIAL is a known limitation (e.g., "test coverage is incomplete because a testing library isn't installed"), mark the task DONE with the limitation logged in the evidence block, AND add the limitation to `docs/backlog.md`.
 
 7. **On plan completion:** the orchestrator writes the completion report using `~/.claude/templates/completion-report.md`, updates SCRATCHPAD, and reports to the user.
+
+## Scenarios-shared, assertions-private
+
+**The discipline:** when a plan has a `## Acceptance Scenarios` section authored by the `end-user-advocate` (see `rules/acceptance-scenarios.md`), the orchestrator's dispatch prompt to each builder MUST include those scenarios verbatim — but MUST NOT include the advocate's internal runtime assertion list. Scenarios are shared with the builder so the builder is aligned on the user-observable outcome the build must produce. Assertions are private to the advocate so the builder cannot teach to the test.
+
+**What counts as a scenario (shared with builder):**
+- The numbered user-flow steps a real user would take (e.g., "1. Open campaigns list. 2. Click Duplicate on a campaign. 3. Confirm a copy appears with name suffix '(Copy)' and the original is unchanged.")
+- The prose success criteria (what the user expects to be true when the flow completes)
+- Optional edge variations the plan-time advocate flagged as in-scope
+- Authentication / state preconditions (e.g., "scenario assumes a logged-in user with Manager role")
+
+**What counts as an assertion (private to the advocate):**
+- The exact selectors, DOM queries, network-request URLs, or text fragments the runtime advocate uses to verify a step
+- The semantic checks the advocate runs against the live page (e.g., "after click, the order-total cell equals the sum of the input rows")
+- Any internal heuristics the advocate uses to decide PASS vs FAIL (timing thresholds, retry counts, screenshot diffs)
+- Any failure-class taxonomy the advocate maintains internally for routing FAILs to the gap-analyzer
+
+**The Goodhart rationale.** LLM builders are exceptionally good at teaching-to-the-test. If the builder sees the exact assertion strings ("the page contains the text 'Saved successfully'"), the builder optimizes for the assertion text, not the outcome — it will hardcode the literal string into the page even when the underlying state is wrong. Goodhart's law in its sharpest form: when a measure becomes a target, it ceases to be a good measure. The harness mitigates this by keeping the runtime measure (assertions) out of the builder's optimization surface. Builders see the user-observable scenario; the advocate keeps the verifying assertions private and runs them against the actual user-facing surface.
+
+**Why scenarios are shared anyway.** The complementary failure mode — assertions-private AND scenarios-private — produces a different failure: the builder underspecifies because it doesn't know what the user must accomplish. A builder told only "implement the Duplicate Campaign feature" will produce a button that fires `console.log('duplicate')` and call it done; the runtime advocate will FAIL it; iteration costs are then inflated. Sharing the scenarios closes that gap: the builder knows exactly what user flow must succeed, but does not know which DOM-level checks the advocate will use to verify the success.
+
+**Mechanics in the dispatch prompt.** When constructing the builder's prompt, the orchestrator copies the entire `## Acceptance Scenarios` section from the plan file verbatim into the prompt. The orchestrator does NOT invoke the end-user-advocate to extract the assertion list — the assertion list lives only in the advocate's runtime invocation, in a fresh sub-agent session that the builder cannot inspect. If the plan has no `## Acceptance Scenarios` section (acceptance-exempt plans, pure-docs plans), this clause is a no-op.
+
+**What the builder sees in its prompt** (illustrative excerpt):
+
+```
+## Acceptance Scenarios (verbatim from the plan — these flows must work for the user)
+
+### Scenario 1.1 — duplicate-campaign-happy-path
+1. Logged-in Manager opens the Campaigns list page.
+2. Clicks the Duplicate button on the first listed campaign.
+3. Sees a new row appear at the top of the list, with name suffix "(Copy)".
+4. The original campaign's row is unchanged.
+Success criteria: the new row has the same fields as the original except for name suffix and a cleared scheduled time.
+
+[... additional scenarios ...]
+
+DO NOT attempt to enumerate the runtime assertions the end-user-advocate will use.
+The advocate will execute these scenarios against the running app in a fresh sub-agent
+session before the harness allows session end. Build such that the user flow above
+actually works for a real user, not such that any specific assertion string is satisfied.
+```
+
+**What the builder does NOT see:** the advocate's planning-time draft of "I will check that `[data-testid="campaign-row"]` count increased by 1 within 2s, and that the first row's `[data-testid="campaign-name"]` text matches the regex `.*\(Copy\)$`." Those internal checks live only in the advocate's runtime sub-agent and never enter the builder's prompt or reasoning surface.
+
+**Cross-task signal mode.** If the orchestrator notices a scenario applies to multiple tasks in the same phase (e.g., scenario 1.1 covers both Task 3.2's UI button AND Task 3.3's API endpoint), the orchestrator includes the scenario in BOTH dispatch prompts. Builders may overlap on shared scenarios; the assertion-privacy property is preserved because neither builder sees the assertions regardless.
+
+**Failure mode this discipline addresses.** Without it, builders that know they will be acceptance-tested either (a) under-build because they don't know what success looks like, or (b) over-fit to the test surface because they DO know. Sharing scenarios fixes (a); withholding assertions fixes (b). The two together produce the right alignment: builder optimizes for the user-observable outcome, advocate independently verifies the outcome.
 
 ## Output contract for `plan-phase-builder` sub-agents
 
