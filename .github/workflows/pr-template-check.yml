@@ -1,0 +1,28 @@
+name: PR Template Check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate PR body against capture-codify template
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -eo pipefail
+          # Source the shared validator library so CI and the local pre-push
+          # hook share identical regex + canonical stderr messages.
+          # Library lives at .github/scripts/ (not adapters/claude-code/) so
+          # downstream-repo rollout copies .github/ verbatim with no path
+          # rewriting. See Decision 7 in the capture-codify-pr-template plan.
+          source "$GITHUB_WORKSPACE/.github/scripts/validate-pr-template.sh"
+          validate_pr_body "$PR_BODY"
