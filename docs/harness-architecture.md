@@ -1,5 +1,5 @@
 # Claude Code Harness — Architecture Overview
-Last updated: 2026-04-24 (Gen 5 production runtime acceptance gate: new `product-acceptance-gate.sh` Stop hook (position 4 — last in chain) blocks session end when ACTIVE plans lack PASS runtime acceptance artifacts at `.claude/state/acceptance/<slug>/*.json` with matching `plan_commit_sha`; honors `acceptance-exempt: true` + reason; per-session waiver mechanism mirrors bug-persistence pattern; 8-scenario `--self-test`. Earlier 2026-04-24: Gen 5 walking skeleton — new `end-user-advocate` agent for plan-time + runtime adversarial product observation; `pre-stop-verifier.sh` Check 0 recognizes `acceptance-exempt: true` plan-header field and emits `[acceptance-gate]` log lines. Earlier 2026-04-24: class-aware reviewer feedback — 7 adversarial-review agents emit per-gap six-field blocks with `Class:` + `Sweep query:` + `Required generalization:`; `rules/diagnosis.md` adds the "Fix the Class, Not the Instance" sub-rule consuming this contract)
+Last updated: 2026-04-24 (Gen 5 acceptance-loop Phase G shipped: new `tests/acceptance-loop-self-test.sh` — six-stage structural + control-flow check wired into weekly `/harness-review` as Check 10; Gen 5 production runtime acceptance gate: new `product-acceptance-gate.sh` Stop hook (position 4 — last in chain) blocks session end when ACTIVE plans lack PASS runtime acceptance artifacts at `.claude/state/acceptance/<slug>/*.json` with matching `plan_commit_sha`; honors `acceptance-exempt: true` + reason; per-session waiver mechanism mirrors bug-persistence pattern; 8-scenario `--self-test`. Earlier 2026-04-24: Gen 5 walking skeleton — new `end-user-advocate` agent for plan-time + runtime adversarial product observation; `pre-stop-verifier.sh` Check 0 recognizes `acceptance-exempt: true` plan-header field and emits `[acceptance-gate]` log lines. Earlier 2026-04-24: class-aware reviewer feedback — 7 adversarial-review agents emit per-gap six-field blocks with `Class:` + `Sweep query:` + `Required generalization:`; `rules/diagnosis.md` adds the "Fix the Class, Not the Instance" sub-rule consuming this contract)
 
 ## Strategy & Evolution
 
@@ -371,7 +371,15 @@ Two classes of scripts live in `~/.claude/scripts/`:
 
 Both copy-in scripts exit non-zero on failure and print a structured report. They can be wired into CI or git hooks.
 
-## Skills (`~/.claude/skills/`)
+## Tests (`adapters/claude-code/tests/`)
+
+Harness-internal structural tests. Distinct from per-hook `--self-test` flags (which each hook owns for its own scenarios): these scripts live at the adapter level and exercise cross-component contracts that no single hook fully owns.
+
+| Test | Invoked by | Purpose |
+|------|-----------|---------|
+| `acceptance-loop-self-test.sh` **(Gen 5, 2026-04-24)** | `skills/harness-review.md` Check 10; local devs suspecting loop drift | Structural + control-flow self-test of the end-user-advocate acceptance loop across six stages: (1) plan-time advocate stage — asserts `agents/end-user-advocate.md` declares plan-time mode and `templates/plan-template.md` contains the `## Acceptance Scenarios` + `## Out-of-scope scenarios` sections; (2) builder-discipline stage — asserts the Goodhart-resistant scenarios-shared/assertions-private language is present in both `rules/orchestrator-pattern.md` and `agents/plan-phase-builder.md`; (3) runtime advocate + gate stage — asserts runtime mode is documented AND runs `hooks/product-acceptance-gate.sh --self-test` expecting 8/8 passed; (4) enforcement-gap-analyzer stage — asserts the five required output sections (`Class of failure` / `Existing rules` / `Why current mechanisms missed this` / `Proposed change` / `Testing strategy`) AND the existing-rule-review-first discipline language; (5) harness-reviewer Step 5 stage — asserts extended remit with `PASS / REFORMULATE / REJECT` verdict vocabulary; (6) mirror sync — asserts the repo's acceptance-loop files are byte-identical to `~/.claude/` (skipped silently when `~/.claude/` is absent, e.g. fresh CI). Does NOT invoke live agents — structural assertions only, because Task-tool dispatch requires next-session activation. Exit 0 on all passing, 1 on any structural defect, 2 on environment error. |
+
+
 
 | Skill | Purpose |
 |-------|---------|

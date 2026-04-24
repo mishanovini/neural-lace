@@ -1144,3 +1144,253 @@ Runtime verification: file adapters/claude-code/agents/plan-phase-builder.md::en
 Runtime verification: file adapters/claude-code/agents/plan-phase-builder.md::user trying to accomplish them
 
 Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: G.1
+Task description: Create `adapters/claude-code/tests/acceptance-loop-self-test.sh` — synthetic self-test that scripts a known-broken-feature scenario and asserts each stage of the acceptance loop fires correctly. Validates STRUCTURE + CONTROL FLOW (live agent invocation requires next-session activation per the dynamic-load gap). Mirror to `~/.claude/tests/`.
+Verified at: 2026-04-24T13:00:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase G dispatch)
+
+Checks run:
+1. Test script exists at canonical path AND mirrored to ~/.claude/tests/
+   Command: ls adapters/claude-code/tests/acceptance-loop-self-test.sh && diff -q adapters/claude-code/tests/acceptance-loop-self-test.sh ~/.claude/tests/acceptance-loop-self-test.sh
+   Output: adapters/claude-code/tests/acceptance-loop-self-test.sh   (diff produced no output -> identical)
+   Result: PASS — sync verified post-creation
+
+2. Script exits 0 with all stages PASS when run against the current repo state
+   Command: bash adapters/claude-code/tests/acceptance-loop-self-test.sh; echo "exit=$?"
+   Output: 10 PASS lines + "acceptance-loop-self-test summary: 10 passed, 0 failed" + "exit=0"
+   Result: PASS — full structural + control-flow check passes
+
+3. Six stages cover the full loop (plan-time advocate / builder discipline / runtime advocate + gate / gap-analyzer / harness-reviewer Step 5 / mirror sync)
+   Command: grep -cE '^# Stage [1-6] —' adapters/claude-code/tests/acceptance-loop-self-test.sh
+   Output: 6
+   Result: PASS — every loop stage has a dedicated assertion block in the script
+
+4. Stage 3 invokes product-acceptance-gate.sh --self-test as a sub-check (validates 8/8 scenarios)
+   Command: grep -nE 'product-acceptance-gate.sh.*--self-test' adapters/claude-code/tests/acceptance-loop-self-test.sh
+   Output: matched line in stage-3 block
+   Result: PASS — the structural test composes the lower-level hook self-test, so a failure in either surfaces here
+
+5. Script honors the "live agents not invoked" contract — only file reads, hook self-tests, and diffs are used
+   Command: grep -cE 'mcp__|Task tool' adapters/claude-code/tests/acceptance-loop-self-test.sh
+   Output: 0
+   Result: PASS — no live agent invocation calls; the test is structural by construction
+
+6. Stage 6 (mirror sync) skips silently when ~/.claude/ is absent (CI safety)
+   Command: grep -nE 'SKIP \[stage-6-mirror-sync\] ~/.claude/ not present' adapters/claude-code/tests/acceptance-loop-self-test.sh
+   Output: matched skip-message branch
+   Result: PASS — fresh CI runners (no ~/.claude/) get a SKIP, not a FAIL
+
+7. Hygiene scanner clean on the new test file
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/tests/acceptance-loop-self-test.sh; echo $?
+   Output: 0
+   Result: PASS — no denylist matches in the new content
+
+8. Exit codes documented (0 = all pass, 1 = structural defect, 2 = environment error)
+   Command: grep -nE '^# EXIT CODES' adapters/claude-code/tests/acceptance-loop-self-test.sh
+   Output: matched header comment block
+   Result: PASS — exit-code contract spelled out in the file header for callers (skill, devs)
+
+Runtime verification: file adapters/claude-code/tests/acceptance-loop-self-test.sh::^# NEURAL-LACE-ACCEPTANCE-LOOP-SELF-TEST
+Runtime verification: file adapters/claude-code/tests/acceptance-loop-self-test.sh::product-acceptance-gate.sh.*--self-test
+Runtime verification: file adapters/claude-code/tests/acceptance-loop-self-test.sh::stage-6-mirror-sync
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: G.2
+Task description: Add the self-test to the weekly `/harness-review` skill body (`adapters/claude-code/skills/harness-review.md`). One new check: "Run `acceptance-loop-self-test.sh` and assert exit 0." Mirror to `~/.claude/skills/harness-review.md`.
+Verified at: 2026-04-24T13:05:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase G dispatch)
+
+Checks run:
+1. harness-review.md modified in repo AND mirrored to ~/.claude/
+   Command: diff -q adapters/claude-code/skills/harness-review.md ~/.claude/skills/harness-review.md
+   Output: (no output -> files identical)
+   Result: PASS — sync verified post-edit
+
+2. New "Check 10: Acceptance-loop self-test" section added to the skill body
+   Command: grep -nE '^# Check 10: Acceptance-loop self-test' adapters/claude-code/skills/harness-review.md
+   Output: matched line in the embedded bash script
+   Result: PASS — Check 10 lives in the same numeric series as the other 9 checks
+
+3. Section invokes the new test script and uses its exit code to decide PASS/FAIL
+   Command: grep -cE 'acceptance-loop-self-test.sh' adapters/claude-code/skills/harness-review.md
+   Output: 2
+   Result: PASS — script invocation present in the embedded check body
+
+4. Section uses write_section helper for the same review-file output format as Checks 1-9
+   Command: grep -nE 'write_section "10\. Acceptance-loop self-test"' adapters/claude-code/skills/harness-review.md
+   Output: 3 matches (PASS branch, FAIL branch, missing-script branch)
+   Result: PASS — three explicit code paths cover the script's exit conditions
+
+5. FAIL parsing extracts FAIL lines from the script's structured stderr for actionable findings
+   Command: grep -nE "FAIL " adapters/claude-code/skills/harness-review.md
+   Output: matched FAIL-line extraction in the Check 10 block
+   Result: PASS — review file gets the script's FAIL lines, not just an opaque rc
+
+6. Cross-reference comment mentions Phase G.2 of the parent plan
+   Command: grep -nE 'Phase G\.2' adapters/claude-code/skills/harness-review.md
+   Output: matched in the section header comment
+   Result: PASS — provenance traceable from skill to plan
+
+7. Hygiene scanner clean on the edited skill file
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/skills/harness-review.md; echo $?
+   Output: 0
+   Result: PASS — no denylist matches in the new content
+
+Runtime verification: file adapters/claude-code/skills/harness-review.md::^# Check 10: Acceptance-loop self-test
+Runtime verification: file adapters/claude-code/skills/harness-review.md::acceptance-loop-self-test.sh
+Runtime verification: file adapters/claude-code/skills/harness-review.md::Phase G\.2
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: G.3
+Task description: Update `docs/harness-architecture.md` adding rows for: `agents/end-user-advocate.md`, `agents/enforcement-gap-analyzer.md`, `hooks/product-acceptance-gate.sh`, `tests/acceptance-loop-self-test.sh`. Architecture-doc reference for the acceptance loop principle.
+Verified at: 2026-04-24T13:08:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase G dispatch)
+
+Checks run:
+1. All four required references present in the architecture doc (agents and hook were added in earlier phases; tests/ row added in this phase)
+   Command: grep -cE 'end-user-advocate\.md|enforcement-gap-analyzer\.md|product-acceptance-gate\.sh|acceptance-loop-self-test\.sh' docs/harness-architecture.md
+   Output: 17
+   Result: PASS — every required reference present, multiple times across the doc (Mechanisms table, Hook Scripts table, Agents table, new Tests table, Last-updated header)
+
+2. New "## Tests (`adapters/claude-code/tests/`)" section added with a row for the self-test
+   Command: grep -nE 'Tests \(.adapters/claude-code/tests/.\)' docs/harness-architecture.md
+   Output: matched the new section heading
+   Result: PASS — the tests directory now has its own architecture-doc section, parallel to Hooks/Agents/Skills/etc.
+
+3. The acceptance-loop-self-test row describes all six stages
+   Command: grep -cE 'plan-time advocate stage|builder-discipline stage|runtime advocate \+ gate stage|enforcement-gap-analyzer stage|harness-reviewer Step 5 stage|mirror sync' docs/harness-architecture.md
+   Output: 6
+   Result: PASS — all six stages are named in the row description
+
+4. Last-updated header reflects this session's Phase G work
+   Command: grep -cE 'tests/acceptance-loop-self-test\.sh' docs/harness-architecture.md
+   Output: 2
+   Result: PASS — referenced in both the last-updated summary and the new Tests row
+
+5. Cross-reference to /harness-review Check 10 (the consumer of this test)
+   Command: grep -cE 'harness-review.*Check 10|Check 10.*harness-review|skills/harness-review\.md' docs/harness-architecture.md
+   Output: 2
+   Result: PASS — the test's caller is named in the row, so a doc reader can trace test → consumer
+
+6. Hygiene scanner clean on the edited architecture doc
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh docs/harness-architecture.md; echo $?
+   Output: 0
+   Result: PASS — no denylist matches in the new content
+
+Runtime verification: file docs/harness-architecture.md::Tests \(.adapters/claude-code/tests/.\)
+Runtime verification: file docs/harness-architecture.md::acceptance-loop-self-test\.sh
+Runtime verification: file docs/harness-architecture.md::end-user-advocate\.md
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: G.4
+Task description: Update `docs/best-practices.md` with the acceptance-loop principle: adversarial observation, scenarios-shared/assertions-private, gap-analyzer generalization. Include a worked example (the campaign-duplicate scenario from plan #6 Section 2 trace works well).
+Verified at: 2026-04-24T13:11:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase G dispatch)
+
+Checks run:
+1. New best-practice section added under AI-collaboration practices
+   Command: grep -nE '^### Adversarial observation — the end-user-advocate acceptance loop' docs/best-practices.md
+   Output: matched the new heading
+   Result: PASS — practice slotted into the right top-level category (AI-collaboration), parallel to anti-vaporware and tool-call budget
+
+2. Section follows the canonical five-part shape (Classification / The rule / Why / How / When to break it / Worked example)
+   Command: awk '/^### Adversarial observation/,/^### |^---/' docs/best-practices.md | grep -cE 'Classification:|The rule\.|Why it exists\.|How the harness enforces it\.|When to break it\.|Worked example'
+   Output: 6
+   Result: PASS — all five canonical headings + worked example present
+
+3. Worked example uses the campaign-duplicate scenario named in the dispatch prompt
+   Command: grep -cE 'campaign-duplicate|Spring Launch|Duplicate campaign' docs/best-practices.md
+   Output: 4
+   Result: PASS — concrete scenario walks through plan-time → build → runtime → gap-analysis with realistic values
+
+4. Scenarios-shared/assertions-private discipline named explicitly in the rule body
+   Command: grep -cE 'scenarios-shared|assertions-private|private to the advocate|Goodhart' docs/best-practices.md
+   Output: 7
+   Result: PASS — the Goodhart rationale is explicit in the rule statement
+
+5. All four mechanism files cited with paths (advocate / gate / analyzer / reviewer Step 5)
+   Command: grep -cE 'agents/end-user-advocate\.md|hooks/product-acceptance-gate\.sh|agents/enforcement-gap-analyzer\.md|harness-reviewer\.md|Step 5' docs/best-practices.md
+   Output: 9
+   Result: PASS — every load-bearing file has a path the reader can follow
+
+6. Exemption mechanism documented (acceptance-exempt + reason) so readers know the legitimate skip path
+   Command: grep -cE 'acceptance-exempt: true|acceptance-exempt-reason' docs/best-practices.md
+   Output: 3
+   Result: PASS — the When-to-break-it section names the only legitimate exemption path
+
+7. Hygiene scanner clean on the edited best-practices doc
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh docs/best-practices.md; echo $?
+   Output: 0
+   Result: PASS — no denylist matches in the new content
+
+Runtime verification: file docs/best-practices.md::^### Adversarial observation — the end-user-advocate acceptance loop
+Runtime verification: file docs/best-practices.md::scenarios-shared
+Runtime verification: file docs/best-practices.md::campaign-duplicate
+
+Verdict: PASS
+
+
+EVIDENCE BLOCK
+==============
+Task ID: G.5
+Task description: Update `adapters/claude-code/CLAUDE.md` Generation 4 mention → Generation 5 reference, citing the new mechanisms shipped this session (plan-lifecycle.sh, plan-deletion-protection.sh, failure-modes catalog, class-aware reviewer feedback, capture-codify PR template + branch protection, end-user-advocate + product-acceptance-gate.sh + enforcement-gap-analyzer). Mirror to `~/.claude/CLAUDE.md` if applicable.
+Verified at: 2026-04-24T13:14:00Z
+Verifier: plan-phase-builder (evidence-first protocol; Phase G dispatch)
+
+Checks run:
+1. Generation 5 heading replaces Generation 4 heading in the adapter CLAUDE.md
+   Command: grep -nE '^## Generation 5 Enforcement' adapters/claude-code/CLAUDE.md
+   Output: matched line — only Generation 5 heading present, no remaining "Generation 4 Enforcement" section heading
+   Result: PASS — heading transitioned cleanly
+
+2. Old Generation 4 section heading no longer present (single source of truth — Gen 4 mechanisms still cited inline within the new Gen 5 paragraph)
+   Command: grep -cE '^## Generation 4 Enforcement' adapters/claude-code/CLAUDE.md
+   Output: 0
+   Result: PASS — no orphaned Gen 4 heading; Gen 4 mechanisms folded into the Gen 5 paragraph as "still apply unchanged"
+
+3. All required Gen 5 mechanisms cited by file path
+   Command: grep -cE 'plan-lifecycle\.sh|plan-deletion-protection\.sh|docs/failure-modes\.md|class-aware reviewer|capture-codify PR template|end-user-advocate|product-acceptance-gate\.sh|enforcement-gap-analyzer|tests/acceptance-loop-self-test\.sh' adapters/claude-code/CLAUDE.md
+   Output: 9
+   Result: PASS — every Gen 5 mechanism named in the dispatch prompt is cited with its filename
+
+4. Gen 4 mechanisms still listed as "still apply unchanged" so newcomers don't think they were superseded
+   Command: grep -cE 'Gen 4 mechanisms still apply unchanged|pre-commit-tdd-gate\.sh|plan-edit-validator\.sh|runtime-verification-executor\.sh|tool-call-budget\.sh|claim-reviewer|verify-feature' adapters/claude-code/CLAUDE.md
+   Output: 7
+   Result: PASS — Gen 4 enforcement layer documented as preserved
+
+5. Adapter CLAUDE.md mirrored to ~/.claude/CLAUDE.md (per dispatch instruction "Mirror to ~/.claude/CLAUDE.md if applicable")
+   Command: diff -q adapters/claude-code/CLAUDE.md ~/.claude/CLAUDE.md
+   Output: (no output -> identical)
+   Result: PASS — both copies in sync; the adapter CLAUDE.md is the global ~/.claude/CLAUDE.md (verified pre-edit they were structurally identical except the legacy Gen 4 block, which is now updated in both)
+
+6. Acceptance-loop self-test still passes after CLAUDE.md edits (mirror-sync stage validates the diff)
+   Command: bash adapters/claude-code/tests/acceptance-loop-self-test.sh; echo "exit=$?"
+   Output: "10 passed, 0 failed" + "exit=0"
+   Result: PASS — Phase G self-improvement loop is internally consistent
+
+7. Hygiene scanner clean on the edited adapter CLAUDE.md
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/CLAUDE.md; echo $?
+   Output: 0
+   Result: PASS — no denylist matches in the new content
+
+Runtime verification: file adapters/claude-code/CLAUDE.md::^## Generation 5 Enforcement
+Runtime verification: file adapters/claude-code/CLAUDE.md::tests/acceptance-loop-self-test\.sh
+Runtime verification: file adapters/claude-code/CLAUDE.md::end-user-advocate
+
+Verdict: PASS

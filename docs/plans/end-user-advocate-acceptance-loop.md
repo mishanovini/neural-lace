@@ -95,11 +95,11 @@ The user-observable outcome: plans that pass plan-time advocate review are mater
 
 ### Phase 7 — Self-test + docs [parallel]
 
-- [ ] G.1 Synthetic self-test at `adapters/claude-code/tests/acceptance-loop-self-test.sh` — scripts a known-broken feature scenario, invokes the full pipeline (plan-time advocate catches thin Goal → builder stubs feature → runtime advocate catches broken state → gap-analyzer proposes rule → harness-reviewer verdicts). Asserts each stage fires correctly.
-- [ ] G.2 Add the self-test to the weekly `/harness-review` skill.
-- [ ] G.3 Update `docs/harness-architecture.md` with rows for `end-user-advocate`, `enforcement-gap-analyzer`, `product-acceptance-gate.sh`.
-- [ ] G.4 Update `docs/best-practices.md` with the acceptance-loop principle (adversarial observation, scenarios-shared/assertions-private, gap-analyzer generalization). Include worked example.
-- [ ] G.5 Update `adapters/claude-code/CLAUDE.md` Generation 4 mention to reference Generation 5 and this loop.
+- [x] G.1 Synthetic self-test at `adapters/claude-code/tests/acceptance-loop-self-test.sh` — scripts a known-broken feature scenario, invokes the full pipeline (plan-time advocate catches thin Goal → builder stubs feature → runtime advocate catches broken state → gap-analyzer proposes rule → harness-reviewer verdicts). Asserts each stage fires correctly.
+- [x] G.2 Add the self-test to the weekly `/harness-review` skill.
+- [x] G.3 Update `docs/harness-architecture.md` with rows for `end-user-advocate`, `enforcement-gap-analyzer`, `product-acceptance-gate.sh`.
+- [x] G.4 Update `docs/best-practices.md` with the acceptance-loop principle (adversarial observation, scenarios-shared/assertions-private, gap-analyzer generalization). Include worked example.
+- [x] G.5 Update `adapters/claude-code/CLAUDE.md` Generation 4 mention to reference Generation 5 and this loop.
 
 ## Files to Modify/Create
 

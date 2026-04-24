@@ -453,6 +453,38 @@ fi
 write_section "9. Capture-codify operational measurement" "PASS" "${capture_codify_findings[@]}"
 
 # ==========================================================================
+# Check 10: Acceptance-loop self-test (Phase G.2)
+# ==========================================================================
+# Runs the structural + control-flow self-test for the end-user-advocate
+# acceptance loop. Asserts every loop component (plan-time mode, runtime
+# mode, product-acceptance-gate.sh self-test, enforcement-gap-analyzer
+# sections, harness-reviewer Step 5 remit, plan-template sections, mirror
+# sync) is present and passing. FAIL here means a loop component has
+# drifted, been deleted, or had its required structural patterns mutated
+# in a way that breaks the contract. Triage by reading the failing stage
+# names from the script's stderr in the review file.
+acceptance_loop_findings=()
+loop_test="$REPO_ROOT/adapters/claude-code/tests/acceptance-loop-self-test.sh"
+if [[ -f "$loop_test" ]]; then
+  loop_out=$(bash "$loop_test" 2>&1)
+  loop_rc=$?
+  if [[ $loop_rc -eq 0 ]]; then
+    summary=$(echo "$loop_out" | grep -E '^acceptance-loop-self-test summary' | head -1)
+    [[ -z "$summary" ]] && summary="exit 0"
+    write_section "10. Acceptance-loop self-test" "PASS" "$summary"
+  else
+    # Capture FAIL lines from the script's structured output for the review file.
+    mapfile -t fails < <(echo "$loop_out" | grep -E '^FAIL ' | head -10)
+    if [[ ${#fails[@]} -eq 0 ]]; then
+      fails=("acceptance-loop-self-test exited $loop_rc but no FAIL lines parsed from output")
+    fi
+    write_section "10. Acceptance-loop self-test" "FAIL" "${fails[@]}"
+  fi
+else
+  write_section "10. Acceptance-loop self-test" "FAIL" "Missing test script: adapters/claude-code/tests/acceptance-loop-self-test.sh"
+fi
+
+# ==========================================================================
 # Summary
 # ==========================================================================
 {

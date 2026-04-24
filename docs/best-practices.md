@@ -233,6 +233,83 @@ The 30-call threshold is heuristic. Shorter thresholds add too much friction. Lo
 
 **When to break it.** You don't break this rule; you choose a setting. `full-auto` is appropriate for a long autonomous plan where the user has reviewed the plan in detail and trusts the dispatch. `review-before-deploy` is appropriate for everything else, including bug-hunt sessions, ad-hoc work, and first-time usage of a new plan.
 
+### Adversarial observation — the end-user-advocate acceptance loop
+
+**Classification:** Hybrid. The plan-time authoring workflow is a Pattern the `end-user-advocate` agent self-applies. The runtime-execution gate is a Mechanism: `product-acceptance-gate.sh` blocks session end when an ACTIVE plan lacks a PASS artifact whose `plan_commit_sha` matches current HEAD. The gap-analysis → harness-reviewer verdict pipeline that follows a runtime FAIL is also Mechanism-adjacent — the `harness-reviewer` agent has an explicit Step 5 remit with a five-check generalization gate.
+
+**The rule.** Every non-exempt plan gets a `## Acceptance Scenarios` section authored by the `end-user-advocate` at plan time, and no session may terminate with an ACTIVE plan until the `end-user-advocate` has executed those scenarios against the running product and written a PASS artifact at `.claude/state/acceptance/<plan-slug>/*.json`. The advocate's internal assertions — the exact strings, element selectors, and response fields it checks against — are **private to the advocate**; only the scenarios themselves (the user flows that must work) are shared with the builder. A runtime FAIL triggers the `enforcement-gap-analyzer`, which produces a draft harness-improvement proposal subject to `harness-reviewer` Step 5 generalization checks before landing.
+
+**Why it exists.** Every other mechanism in Gen 4 gates on something the builder itself produced: a plan file, an evidence block, a test assertion, a self-report claim. The builder is the agent that fails at completeness, so self-certification — even via a `task-verifier` running the same model — tends to converge on "the builder thinks it's done." The harness needed an agent whose verdict does NOT trust what the builder produced. The end-user-advocate is that agent: adversarial observation of the running product from outside the builder's context. Runtime verification of the actual user path is the only signal that cannot be faked by a more-plausible evidence block.
+
+The scenarios-shared / assertions-private split prevents Goodhart's law from eating the mechanism. If the builder saw the exact assertion strings, the builder would optimize for those strings rather than for the underlying user outcome — "teach to the test" rather than "build the feature." Keeping assertions private forces the builder to make the scenario work for the actual user; the advocate then probes the running product with its own assertions, which the builder never got to inspect.
+
+The gap-analysis step closes the meta-loop. When a runtime FAIL surfaces a class of failure the harness didn't catch, the harness itself gets upgraded — a new rule, an amended hook, or an extended agent remit — so the class is caught for every future plan. Without this step, each runtime FAIL is a one-off fix; with it, the harness becomes self-improving from its own observed failures.
+
+**How the harness enforces it.** `adapters/claude-code/rules/acceptance-scenarios.md` documents the full plan-time → runtime → gap-analysis loop. `adapters/claude-code/agents/end-user-advocate.md` is the agent with plan-time and runtime modes (Chrome MCP + Playwright MCP fallback for runtime execution). `adapters/claude-code/hooks/product-acceptance-gate.sh` is the Stop hook (position 4 — last in chain) that blocks session end when an ACTIVE plan lacks a PASS artifact with matching `plan_commit_sha`; it honors `acceptance-exempt: true` plan-header fields (with required `acceptance-exempt-reason:`) for harness-dev / pure-infrastructure / migration-only plans without a product user. `adapters/claude-code/agents/enforcement-gap-analyzer.md` produces draft proposals on every runtime FAIL. `adapters/claude-code/agents/harness-reviewer.md` Step 5 applies the five generalization checks (class-vs-instance, existing-rule-review honesty, proposal proportionality, testing-strategy class coverage, mechanical-format-match) and issues PASS / REFORMULATE / REJECT before any proposal lands. `adapters/claude-code/tests/acceptance-loop-self-test.sh` asserts the whole loop is structurally intact and wires into the weekly `/harness-review` as Check 10.
+
+**When to break it.** Plans with `acceptance-exempt: true` and a substantive `acceptance-exempt-reason:` skip runtime acceptance. The exemption is for three classes only: (a) harness-dev plans that modify the harness itself and have no product user to observe, (b) pure-infrastructure plans that touch Dockerfiles, CI workflows, or migration-only schema changes with no user-facing surface, and (c) documentation-only plans. Every exemption carries its justification in the plan file for audit by `harness-reviewer`. The exemption is never a general escape hatch — "runtime verification is expensive" or "I'm in a hurry" are not legitimate reasons.
+
+**Worked example — the campaign-duplicate scenario.**
+
+```
+Setting: plan adds a "Duplicate campaign" action to the campaigns list page.
+
+Plan-time (paper review by end-user-advocate):
+  Reads Goal, Scope, UI section, Edge Cases.
+  Writes into the plan file:
+
+  ## Acceptance Scenarios
+
+  ### sc-campaign-duplicate-happy
+  1. Navigate to /dashboard/campaigns.
+  2. Find an existing campaign with name "Spring Launch".
+  3. Click the row's "Duplicate" action.
+  4. Observe: a new campaign appears in the list named
+     "Spring Launch (copy)" within 3 seconds.
+  5. Observe: the original "Spring Launch" still exists.
+  6. Observe: the new copy has status "Draft" (not "Active").
+
+  ### sc-campaign-duplicate-cancel
+  (cancel mid-flow, verify nothing persisted)
+
+  ## Out-of-scope scenarios
+  - Bulk duplication (not in this plan's scope).
+
+Build phase (dispatched to plan-phase-builder sub-agent):
+  Dispatch prompt includes the full ## Acceptance Scenarios section,
+  verbatim. Does NOT include the advocate's internal assertion list
+  ("the button's data-testid is campaign-duplicate-btn", "the API
+  returns the new row within 800ms p99", "the copy's original_id
+  field points at the source row's id").
+
+  Builder implements the feature. Scenarios give enough context to
+  build correctly; the hidden assertions prevent Goodharting.
+
+Runtime phase (end-user-advocate in runtime mode):
+  - navigate to /dashboard/campaigns on the dev server
+  - click the Duplicate button for "Spring Launch"
+  - await the new row, assert name = "Spring Launch (copy)"
+  - assert original still present
+  - assert status = "Draft"
+  - capture screenshot, network log, console log
+  - write PASS artifact at .claude/state/acceptance/<slug>/*.json
+
+If the builder forgot to set status to Draft, the scenario FAILS —
+the advocate's private assertion on status="Draft" catches it.
+product-acceptance-gate.sh blocks session end.
+
+Gap-analysis (enforcement-gap-analyzer, if FAIL):
+  Reads the FAIL artifact + plan + session transcript.
+  Class of failure: "duplication flows forget to reset status".
+  Existing rules review: none fired; task-verifier doesn't check
+  side-effect fields in copied records.
+  Proposed change: extend UI-component-rule checklist with a
+  "for any duplicate/copy action, enumerate every field that
+   should NOT carry over from the source, verify each is reset
+   in the test" sub-rule.
+  Hands off to harness-reviewer Step 5 for verdict.
+```
+
 ---
 
 ## Security practices
