@@ -134,7 +134,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 
 ### Phase B: Lookup Helper
 
-- [ ] 4. Write `~/.claude/scripts/find-plan-file.sh`
+- [ ] B.1 Write `~/.claude/scripts/find-plan-file.sh`
   - Accepts a plan slug (with or without `.md` extension) and prints the full relative path to the plan file
   - Resolution order: `docs/plans/<slug>.md` → `docs/plans/archive/<slug>.md`
   - Exits 0 with path on stdout if found; exits 1 with no stdout if not found
@@ -144,7 +144,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
   - **Files:** `~/.claude/scripts/find-plan-file.sh`
   - **Done when:** Self-test passes; manual test on a project repo with a known active plan and a known archived plan resolves both correctly.
 
-- [ ] 5. Mirror lookup helper to neural-lace
+- [ ] B.2 Mirror lookup helper to neural-lace
   - Copy to `~/claude-projects/neural-lace/adapters/claude-code/scripts/find-plan-file.sh`
   - `diff -q` verification
   - Commit: `feat(harness): find-plan-file.sh archive-aware plan lookup`
@@ -153,7 +153,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 
 ### Phase C: Documentation — the Unified Convention
 
-- [ ] 6. Update `~/.claude/rules/planning.md` with the full lifecycle convention
+- [ ] C.1 Update `~/.claude/rules/planning.md` with the full lifecycle convention
   - Add a new section: "## Plan File Lifecycle (Creation, Archival, Lookup)"
   - Content:
     - **Creation:** "Commit new plan files immediately. Uncommitted plans are vulnerable to being wiped by concurrent sessions. The plan-lifecycle hook will surface a warning until a plan is committed."
@@ -166,7 +166,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
   - **Files:** `~/.claude/rules/planning.md`
   - **Done when:** New section exists, is clear, covers all four stages, and existing sections are reconciled (no conflicting instructions).
 
-- [ ] 7. Mirror `planning.md` to neural-lace
+- [ ] C.2 Mirror `planning.md` to neural-lace
   - Copy + `diff -q` verify
   - Commit: `docs(harness): planning.md — unified plan file lifecycle convention`
   - **Files:** `neural-lace/adapters/claude-code/rules/planning.md`
@@ -174,22 +174,22 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 
 ### Phase D: Agent Prompt Updates
 
-- [ ] 8. Update `~/.claude/agents/task-verifier.md` with archive-aware path resolution
+- [ ] D.1 Update `~/.claude/agents/task-verifier.md` with archive-aware path resolution
   - Add to the input-handling section: "If the plan path provided does not resolve, check `docs/plans/archive/<slug>.md` as a fallback. Plan files in archive are historical records — treat any verdict-changing edits there with extra skepticism (archived plans should not normally be under active verification)."
   - **Files:** `~/.claude/agents/task-verifier.md`
   - **Done when:** Instruction is present and integrated cleanly.
 
-- [ ] 9. Update `~/.claude/agents/plan-evidence-reviewer.md` with archive-aware path resolution
+- [ ] D.2 Update `~/.claude/agents/plan-evidence-reviewer.md` with archive-aware path resolution
   - Same pattern as task-verifier
   - **Files:** `~/.claude/agents/plan-evidence-reviewer.md`
   - **Done when:** Instruction is present.
 
-- [ ] 10. Update `~/.claude/agents/ux-designer.md` with archive-aware path resolution
+- [ ] D.3 Update `~/.claude/agents/ux-designer.md` with archive-aware path resolution
   - Same pattern
   - **Files:** `~/.claude/agents/ux-designer.md`
   - **Done when:** Instruction is present.
 
-- [ ] 11. Mirror all three agent files to neural-lace
+- [ ] D.4 Mirror all three agent files to neural-lace
   - Copy each + `diff -q` verify
   - Single commit: `docs(harness): agents — archive-aware plan path resolution`
   - **Files:** `neural-lace/adapters/claude-code/agents/{task-verifier,plan-evidence-reviewer,ux-designer}.md`
@@ -197,26 +197,26 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 
 ### Phase E: Targeted Hook Updates
 
-- [ ] 12. Update `~/.claude/hooks/post-tool-task-verifier-reminder.sh` to use shared helper
+- [ ] E.1 Update `~/.claude/hooks/post-tool-task-verifier-reminder.sh` to use shared helper
   - Where the hook currently sets `PLAN_DIR="docs/plans"` and finds the most-recently-modified plan, prefer active-dir lookup but fall back to archive when no active match correlates with the edited source file
   - Source via `~/.claude/scripts/find-plan-file.sh` where applicable
   - Keep default behavior (prefer active) — archive is fallback, not primary
   - **Files:** `~/.claude/hooks/post-tool-task-verifier-reminder.sh`
   - **Done when:** Hook passes its self-test (if one exists); manual verification that active plans still take priority.
 
-- [ ] 13. Update `~/.claude/hooks/runtime-verification-reviewer.sh` to exclude archive from modified-file analysis
+- [ ] E.2 Update `~/.claude/hooks/runtime-verification-reviewer.sh` to exclude archive from modified-file analysis
   - Change the grep exclusion pattern from `docs/plans` to `docs/plans(/archive)?` (or equivalent) so edits to archived plans aren't treated as runtime-relevant
   - Small polish affecting only the rare case of editing an archived plan
   - **Files:** `~/.claude/hooks/runtime-verification-reviewer.sh`
   - **Done when:** Pattern updated; grep behavior verified.
 
-- [ ] 14. Update `~/.claude/hooks/pre-stop-verifier.sh` to warn (not block) on uncommitted plan files
+- [ ] E.3 Update `~/.claude/hooks/pre-stop-verifier.sh` to warn (not block) on uncommitted plan files
   - Before session-end block logic, add a non-blocking check: if `docs/plans/*.md` has uncommitted files, surface a prominent warning that plans should be committed to survive future sessions
   - Do NOT block session exit — this is a reminder, not a gate
   - **Files:** `~/.claude/hooks/pre-stop-verifier.sh`
   - **Done when:** Warning is surfaced on uncommitted plan files; session exit still succeeds.
 
-- [ ] 15. Mirror hook updates to neural-lace
+- [ ] E.4 Mirror hook updates to neural-lace
   - Copy all three updated hooks + `diff -q` verify each
   - Single commit: `feat(harness): hooks — archive awareness + uncommitted-plan warning`
   - **Files:** `neural-lace/adapters/claude-code/hooks/{post-tool-task-verifier-reminder,runtime-verification-reviewer,pre-stop-verifier}.sh`
@@ -224,7 +224,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 
 ### Phase F: Architecture Doc + Verification
 
-- [ ] 16. Update `~/.claude/docs/harness-architecture.md` to reflect the new hook, helper, and convention
+- [ ] F.1 Update `~/.claude/docs/harness-architecture.md` to reflect the new hook, helper, and convention
   - Add `hooks/plan-lifecycle.sh` to the hooks inventory table
   - Add `scripts/find-plan-file.sh` to the scripts inventory
   - Add a paragraph under the planning section explaining the four-stage lifecycle (creation, in-progress, archival, lookup) and the "Status is the last edit" rule
@@ -232,13 +232,13 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
   - **Files:** `~/.claude/docs/harness-architecture.md`
   - **Done when:** Inventory tables include all new/changed entries; lifecycle paragraph reads clearly.
 
-- [ ] 17. Mirror architecture doc to neural-lace
+- [ ] F.2 Mirror architecture doc to neural-lace
   - Copy + `diff -q` verify
   - Commit: `docs(harness): architecture — plan file lifecycle documented`
   - **Files:** `neural-lace/adapters/claude-code/docs/harness-architecture.md`
   - **Done when:** Commit exists; diff is clean.
 
-- [ ] 18. End-to-end verification: complete lifecycle test
+- [ ] F.3 End-to-end verification: complete lifecycle test
   - In a fresh Claude session:
     1. Create a throwaway plan file at `docs/plans/lifecycle-test.md` with `Status: ACTIVE`
     2. Observe the creation warning fires
@@ -289,7 +289,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 - Dry-run the lifecycle hook against a sample plan edit to verify git mv fires correctly
 
 ### End-to-end
-- Task 18's complete lifecycle test in a fresh session
+- Task F.3's complete lifecycle test in a fresh session
 
 ### What we're NOT testing
 - Retroactive fix of historical git commit messages (impossible; those paths are frozen)
@@ -343,7 +343,7 @@ Per-task evidence blocks live in the companion file `robust-plan-file-lifecycle-
 - [ ] All three agent files have archive-aware resolution instructions
 - [ ] All hook changes (lifecycle hook + 3 existing hooks) synced to neural-lace
 - [ ] `harness-architecture.md` inventory includes new hook + helper
-- [ ] End-to-end verification (task 18) passes
+- [ ] End-to-end verification (task F.3) passes
 - [ ] neural-lace has commits for each phase's changes
 - [ ] SCRATCHPAD.md updated with final state
 - [ ] Completion report appended to this plan file
