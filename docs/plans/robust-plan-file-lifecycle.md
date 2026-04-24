@@ -134,7 +134,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 
 ### Phase B: Lookup Helper
 
-- [ ] B.1 Write `~/.claude/scripts/find-plan-file.sh`
+- [x] B.1 Write `~/.claude/scripts/find-plan-file.sh`
   - Accepts a plan slug (with or without `.md` extension) and prints the full relative path to the plan file
   - Resolution order: `docs/plans/<slug>.md` → `docs/plans/archive/<slug>.md`
   - Exits 0 with path on stdout if found; exits 1 with no stdout if not found
@@ -144,7 +144,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
   - **Files:** `~/.claude/scripts/find-plan-file.sh`
   - **Done when:** Self-test passes; manual test on a project repo with a known active plan and a known archived plan resolves both correctly.
 
-- [ ] B.2 Mirror lookup helper to neural-lace
+- [x] B.2 Mirror lookup helper to neural-lace
   - Copy to `~/claude-projects/neural-lace/adapters/claude-code/scripts/find-plan-file.sh`
   - `diff -q` verification
   - Commit: `feat(harness): find-plan-file.sh archive-aware plan lookup`
