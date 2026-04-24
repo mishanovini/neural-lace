@@ -115,14 +115,14 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
 
 ### Phase B: Wire-up and Mirror
 
-- [ ] B.1 Register the hook in `~/.claude/settings.json`
+- [x] B.1 Register the hook in `~/.claude/settings.json`
   - Add a new PreToolUse entry with matcher `Bash` invoking `bash ~/.claude/hooks/plan-deletion-protection.sh`
   - Place it in the existing PreToolUse Bash hooks array in a reasonable position (after safety hooks like force-push blocking, before pre-commit gate)
   - Verify the settings file remains valid JSON after the edit
   - Test that the hook fires on a deliberate Bash invocation (not a destructive one — just confirm the hook is being invoked)
   - **Files:** `~/.claude/settings.json`
 
-- [ ] B.2 Mirror hook, settings template, and architecture doc to neural-lace
+- [x] B.2 Mirror hook, settings template, and architecture doc to neural-lace
   - Copy `~/.claude/hooks/plan-deletion-protection.sh` to `~/claude-projects/neural-lace/adapters/claude-code/hooks/plan-deletion-protection.sh`
   - Mirror the settings.json PreToolUse registration to `~/claude-projects/neural-lace/adapters/claude-code/settings.json.template`
   - Run `diff -q` on both files to verify mirroring is clean

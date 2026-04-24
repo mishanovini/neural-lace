@@ -95,6 +95,15 @@
             "statusMessage": "Ensuring correct GitHub account for push..."
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/plan-deletion-protection.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [

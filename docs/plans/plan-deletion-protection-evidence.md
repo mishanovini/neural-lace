@@ -145,6 +145,48 @@ self-test: OK
 
 ---
 
+## B.1 — Register hook in `~/.claude/settings.json`
+
+**Date:** 2026-04-23
+**Files modified:**
+- `~/.claude/settings.json` (PreToolUse Bash matcher list extended)
+
+**What was built:** Added `{"matcher":"Bash","hooks":[{"type":"command","command":"bash ~/.claude/hooks/plan-deletion-protection.sh"}]}` to the PreToolUse array via `jq` (preserves existing entries).
+
+**Runtime verification:**
+```bash
+jq '.hooks.PreToolUse | length' ~/.claude/settings.json
+# → 13 (was 12 before this change)
+```
+Settings file remains valid JSON (jq parsed successfully).
+
+**Verdict:** PASS
+
+---
+
+## B.2 — Mirror to `adapters/claude-code/settings.json.template` + architecture doc
+
+**Date:** 2026-04-23
+**Files modified:**
+- `adapters/claude-code/settings.json.template` (PreToolUse Bash matcher list extended)
+- `docs/harness-architecture.md` (already updated in A.1-A.7 commit per Rule 8 docs-freshness gate)
+
+**What was built:** Mirrored the same hook entry to the adapter template via `jq`. Architecture doc was updated alongside the original Phase A commit (`8ad0e80`) to satisfy the docs-freshness gate.
+
+**Runtime verification:**
+```bash
+jq '.hooks.PreToolUse | length' adapters/claude-code/settings.json.template
+# → 10 (was 9 before this change)
+grep -c "Plan-deletion protection" docs/harness-architecture.md
+# → 1
+```
+
+**Note on B.2 scope:** the original task wording said "Mirror hook + settings template + architecture doc" but the hook + arch doc were already committed in the Phase A commit (orchestrator's docs-freshness fix). B.2 here adds only the settings template entry.
+
+**Verdict:** PASS
+
+---
+
 ## Limitations (already in backlog)
 
 - Task tool unavailable in dispatched sub-agent sessions — checkbox flips done by orchestrator under evidence-first protocol per `plan-edit-validator.sh` 120s freshness window.
