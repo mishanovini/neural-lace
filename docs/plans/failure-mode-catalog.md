@@ -20,7 +20,7 @@ Establish `docs/failure-modes.md` as a living, referenced catalog of known harne
 - [x] A.6 Update `~/.claude/agents/task-verifier.md` to consult the catalog for known-bad patterns (e.g., self-reported completion without evidence) during verification.
 - [x] A.7 Mirror every modified file from `~/.claude/` into `~/claude-projects/neural-lace/adapters/claude-code/` and run the diff check from `harness-maintenance.md` to confirm zero drift.
 - [x] A.8 Update `~/.claude/docs/harness-architecture.md` to add a row for `docs/failure-modes.md` in the relevant inventory table, then mirror to the repo.
-- [ ] A.9 Commit the plan file, catalog, and all wiring changes in a series of logical commits with references back to the catalog entries being introduced. Pre-commit hooks (hygiene scan, plan-reviewer) must pass on every commit.
+- [x] A.9 Commit the plan file, catalog, and all wiring changes in a series of logical commits with references back to the catalog entries being introduced. Pre-commit hooks (hygiene scan, plan-reviewer) must pass on every commit.
 
 ## Files to Modify/Create
 - `docs/failure-modes.md` — NEW. Canonical catalog of known failure classes.
