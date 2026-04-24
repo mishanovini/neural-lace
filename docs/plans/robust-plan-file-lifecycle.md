@@ -105,7 +105,7 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 
 ### Phase A: Lifecycle Hook (the core infrastructure)
 
-- [ ] A.1 Write `~/.claude/hooks/plan-lifecycle.sh`
+- [x] A.1 Write `~/.claude/hooks/plan-lifecycle.sh`
   - PostToolUse hook triggered on Write or Edit tool calls
   - Activates only when `file_path` is under `docs/plans/` (top-level — not archive, since archive edits are rare and don't need lifecycle logic)
   - Two responsibilities:
@@ -118,13 +118,13 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
   - **Files:** `~/.claude/hooks/plan-lifecycle.sh`
   - **Done when:** `--self-test` passes. Manual test: create a dummy plan in a test dir, edit it to `Status: COMPLETED`, verify the file is moved and `git status` shows the rename as staged.
 
-- [ ] A.2 Wire the hook into `~/.claude/settings.json`
+- [x] A.2 Wire the hook into `~/.claude/settings.json`
   - Add `plan-lifecycle.sh` as a PostToolUse hook matching Write and Edit tools
   - Verify settings.json remains valid JSON after the edit
   - **Files:** `~/.claude/settings.json`
   - **Done when:** Settings edit is valid; a dry-run session fires the hook on plan file edits.
 
-- [ ] A.3 Mirror hook and settings to neural-lace
+- [x] A.3 Mirror hook and settings to neural-lace
   - Copy `~/.claude/hooks/plan-lifecycle.sh` to `~/claude-projects/neural-lace/adapters/claude-code/hooks/plan-lifecycle.sh`
   - Update neural-lace's `settings.json` template to include the new hook registration
   - `diff -q` verification on both files
