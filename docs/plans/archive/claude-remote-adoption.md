@@ -1,7 +1,9 @@
 # Plan: Adopt `claude --remote` + Harness Portability to Cloud Sessions
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Backlog items absorbed: Adopt claude --remote + dotfiles sync as official background-work pattern, Harness portability to claude --remote cloud sessions
+acceptance-exempt: true
+acceptance-exempt-reason: Harness-dev plan that sets cross-cutting cloud-session policy. No product user; the deliverable is a decision tree + reference setup, not a user-facing feature.
 
 ## Goal
 
@@ -102,3 +104,56 @@ _(populated during implementation — see Mid-Build Decision Protocol in `rules/
 - [ ] The two absorbed backlog items are removed from `docs/backlog.md` open sections as of the plan's creation commit
 - [ ] SCRATCHPAD.md updated with plan completion state
 - [ ] Completion report appended to this plan file per `templates/completion-report.md`, including the "Backlog items shipped" subsection listing both absorbed entries with their final status (built with commit SHA, or deferred/abandoned with reason + backlog-return marker)
+
+## Completion Report
+
+### 1. Implementation Summary
+
+All 10 tasks shipped across 2 commits on `feat/claude-remote-adoption`:
+
+- **A.1-A.5 (Phase A research + Decision 011, commit `549f70d`)**: two-round comprehensive doc-based research via `claude-code-guide` agent. Round 1 covered `claude --remote` mechanics + Desktop "+ New session" worktrees + config inheritance + missing-in-cloud harness inventory. Round 2 (per user feedback) added Dispatch + Routines + Managed Agents + Remote Control + DevContainers. Tier 2 decision record `011-claude-remote-harness-approach.md` documents the picked hybrid approach + 4 rejected alternatives with reject reasons.
+
+- **A.6-A.10 (Phase B build, commit `ee2059c`)**:
+  - **A.6** `rules/automation-modes.md` (~280 lines): four-mode decision tree (interactive local / parallel local worktrees / `--remote` cloud / Routines scheduled). Each mode has when-to-use, examples, invocation commands, tradeoffs, and explicit harness-availability notes.
+  - **A.7** `~/.claude/CLAUDE.md`: new "Choosing a Session Mode" section near the top, summarizing the four modes in 3-5 lines + link to `rules/automation-modes.md`.
+  - **A.8** `docs/claude-code-quality-strategy.md`: cloud-portability open caveat REPLACED with a RESOLVED entry pointing at Decision 011.
+  - **A.9** Approach A reference setup completed on a downstream demo repo using committed-copy form (NOT symlink — symlinks may not traverse `claude --remote` bundle mechanism). HARNESS-SYNC.md documentation written explaining the periodic re-copy pattern.
+  - **A.10** All A.6-A.9 changes mirrored to `adapters/claude-code/`. Diff -q confirmed zero drift on touched files. Pre-existing harness-mirror drift (P2 backlog from plan #2) NOT addressed in this plan's scope.
+
+**Backlog items shipped:**
+- "Adopt claude --remote + dotfiles sync as official background-work pattern" — BUILT via Decision 011 + automation-modes.md. Refined: NOT dotfiles sync; instead committed-copy of harness in project `.claude/` (Decision 011 Alternative B "startup script" rejected with reasons; this matches the spirit of the original backlog ask).
+- "Harness portability to claude --remote cloud sessions" — BUILT via Decision 011 Approach A + reference project setup in A.9.
+
+Both items are archived inside this plan's completion report and do NOT return to the backlog.
+
+### 2. Design Decisions & Plan Deviations
+
+- **Tier 2 decision 011** is the load-bearing artifact. Hybrid approach: Approach A (commit harness into project `.claude/`) as primary mechanism, augmented by Routines for scheduled work + DevContainers for interactive isolation. Dispatch out of scope. Managed Agents and self-hosting rejected.
+- **Deviation from plan A.7:** plan said "insert near the top of `~/.claude/CLAUDE.md`" — implemented as a "Choosing a Session Mode" section under the existing "Accounts & Auto-Switching" section. Functionally equivalent.
+- **Deviation from plan A.9:** plan said "set it up on one reference project" — chose a downstream work-account demo repo. The user must run `git add .claude/ && git commit && git push` from their work-account context (deferred because the builder lacked authority to set git identity per harness-maintenance rule).
+
+### 3. Known Issues & Gotchas
+
+- **Live empirical verification of `claude --remote` deferred.** Phase A used research substitute. P2 backlog entry filed for end-to-end validation in a future session when the user runs an actual cloud session.
+- **Pre-existing harness-mirror drift** (P2 backlog from plan #2) persists. NOT addressed by this plan. 25 DIFFERS + 4 MISSING between `~/.claude/` and `adapters/claude-code/`.
+- **Pre-existing untracked file** `adapters/claude-code/rules/url-conventions.md` from a prior phase remains untracked. NOT addressed.
+- **Symlink approach not viable** for cloud-portable contexts. Documented in HARNESS-SYNC.md as a fallback for solo-dev local convenience only.
+- **A.9 reference-project commit deferred to user** — builder set up the files but the user must commit + push from work-account context.
+
+### 4. Manual Steps Required
+
+- User runs `git add .claude/ && git commit -m "feat: adopt Neural Lace harness via Decision 011" && git push` in the reference project from work-account context.
+- When the user has time, run an actual `claude --remote` session against the reference project to validate Decision 011 Approach A end-to-end (P2 backlog).
+- For each ADDITIONAL downstream project that wants cloud-session compatibility, run the install steps documented in HARNESS-SYNC.md.
+
+### 5. Testing Performed & Recommended
+
+- Performed: per-task evidence-first verification (greps, diff -q, file existence checks). Reference-project setup verified via local file-tree inspection.
+- Recommended: run `claude --remote "do something simple"` from the reference project's working dir, observe whether the cloud session uses the committed harness (e.g., does it run hooks? does it execute task-verifier? does plan-edit-validator fire on a checkbox flip attempt?). This is the integration test for Decision 011 Approach A.
+
+### 6. Cost Estimates
+
+- Repo bloat per downstream project: ~50KB committed harness. ~500KB across 10 projects. Acceptable.
+- Cloud session compute: zero additional cost (shared with Claude rate limits).
+- Routines daily quota: 15/day on Max plan; sufficient for nightly verification + a few scheduled jobs.
+- DevContainer overhead (if adopted): Docker runtime ~500MB-1GB image per project. Acceptable for projects that opt in.
