@@ -32,6 +32,16 @@ If the failure is ambiguous or the context has drifted, ask the user one clarify
 
 Execute these steps in order. Do NOT skip steps — each one is load-bearing for the final proposal.
 
+### Step 0. Check the failure mode catalog FIRST
+
+Before identifying the specific failure, read `docs/failure-modes.md` (in the active project repo) end-to-end. The catalog is the durable, version-controlled record of every known failure class. For each entry, ask: does the failure I am about to diagnose match this entry's Symptom phenotype?
+
+- **If yes:** the diagnosis starts from the existing entry's Detection and Prevention fields. Your proposed fix should refine or extend what is already there — typically a stronger detection layer, a tightened prevention mechanism, or an additional Example documenting the new instance. Do NOT propose a parallel mechanism that competes with what the catalog already records as the prevention; if the existing prevention has a gap, name that gap explicitly and propose to close THAT gap, not to add a sibling.
+- **If no:** the failure is a new class. Your final proposal in Step 4 should include creating a new `FM-NNN` entry in `docs/failure-modes.md` capturing the class, alongside the mechanism that catches it.
+- **If the catalog does not exist in the current repo:** note this and propose creating it as a prerequisite work item before the new mechanism can land.
+
+This step exists because diagnosis quality is bounded by the corpus of known failure classes the diagnoser starts from. Without checking the catalog first, every diagnosis re-derives the failure landscape from scratch and misses the specific words, prior art, and existing mitigation that would shape a stronger fix.
+
 ### Step 1. Identify the specific failure
 
 Write down, in one paragraph, exactly what went wrong:
@@ -86,6 +96,8 @@ Acceptable fix shapes:
 - **Skill addition:** `~/.claude/skills/<name>.md` — include the frontmatter and body sketch.
 
 If the fix requires changes in multiple files (e.g., a rule plus a hook that enforces it), list all files.
+
+For new failure classes, ALSO list `docs/failure-modes.md` as a required edit — either a new `FM-NNN` entry capturing the class, or an extension of an existing entry's Example/Detection/Prevention fields if Step 0 surfaced a partial match. The catalog edit is part of the fix, not optional companion work.
 
 ### Step 5. Justify the mechanism
 

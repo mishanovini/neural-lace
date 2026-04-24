@@ -96,14 +96,15 @@ You will be invoked with:
 
 1. **Read the draft response in full.**
 2. **Read the user's question.** Make sure the draft actually answers it.
-3. **Extract every claim about functionality.** Make a numbered list.
-4. **For each claim, check:**
+3. **Consult the failure mode catalog.** Read `docs/failure-modes.md` (in the active project repo) and check whether any catalog Symptom matches a phenotype the draft is claiming is absent or fixed. If a draft claims a class of bug "no longer happens" or "is handled" and the catalog has an entry for that class, the draft must cite the specific Prevention mechanism named in the catalog entry — not just describe the behavior in the abstract. A draft that asserts a known catalog class is solved without citing the catalog's recorded Prevention is a strong signal that the builder has reinvented an answer instead of grounding it in the documented mechanism. FAIL such drafts and require a rewrite that cites the catalog entry's Prevention field.
+4. **Extract every claim about functionality.** Make a numbered list.
+5. **For each claim, check:**
    - Does it have a citation?
    - Does the cited file exist? (grep / Read)
    - Does the cited line contain code matching the claim? (Read the specific line)
    - Is there a caller/writer that makes the claim runtime-true?
-5. **Check for hedging, roadmap leakage, and scope evasion.**
-6. **Produce the review block.**
+6. **Check for hedging, roadmap leakage, and scope evasion.**
+7. **Produce the review block.**
 
 ## Output format
 

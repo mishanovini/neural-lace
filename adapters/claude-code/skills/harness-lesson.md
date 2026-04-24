@@ -29,6 +29,16 @@ If the context is ambiguous, ask the user to describe the failure in one sentenc
 
 ## Procedure
 
+### Step 0. Check the failure mode catalog FIRST
+
+Before writing anything else, read `docs/failure-modes.md` (in the active project repo) end-to-end. For each catalog entry, ask: does the failure I am about to encode match this entry's Symptom phenotype?
+
+- **If yes:** the correct output is to EXTEND the existing entry — add to its Example list, refine Detection if the new instance reveals a new way the class is caught, refine Prevention if the new instance suggests a stronger mechanism. Do NOT propose a duplicate hook, rule, or agent that would compete with whatever is already in Prevention. The whole point of the catalog is that the harness should grow one mechanism per class, not one mechanism per instance.
+- **If no:** proceed to Step 1. The new mechanism you propose should also produce a new `FM-NNN` entry in the catalog as part of the "Companion work required" section in Step 7.
+- **If the catalog does not exist in the current repo:** note this in your output and propose creating it as a separate, prerequisite work item before encoding the failure mechanically.
+
+This step exists because failure classes recur with different surface details. Without checking the catalog first, the same class gets a new hook each time it is encountered, and the harness accumulates parallel mechanisms that all cover the same ground while leaving genuinely new classes uncovered.
+
 ### Step 1. Restate the failure precisely
 
 Write a one-paragraph description that answers:
@@ -132,6 +142,7 @@ Many harness changes need companion edits to be effective:
 - A new rule needs a cross-reference from CLAUDE.md's "Detailed Protocols" section
 - A mirror to `~/claude-projects/neural-lace/adapters/claude-code/` per `harness-maintenance.md`
 - An update to `~/.claude/docs/harness-architecture.md` inventory
+- A new or extended entry in `docs/failure-modes.md` capturing the failure class — required even when the mechanism itself is small. The catalog is what lets future sessions check Step 0 against your work.
 
 List every companion change the user will need to make.
 

@@ -1,5 +1,5 @@
 # Claude Code Harness — Architecture Overview
-Last updated: 2026-04-23 (plan file lifecycle: commit-on-creation warning, auto-archival on terminal status, archive-aware lookup)
+Last updated: 2026-04-24 (failure mode catalog as first-class harness artifact: `docs/failure-modes.md` consulted by diagnosis rule, harness-lesson + why-slipped skills, claim-reviewer + task-verifier agents)
 
 ## Strategy & Evolution
 
@@ -47,6 +47,7 @@ The residual gap (verbal vaporware) is bounded by Claude Code's lack of a PostMe
 | Pattern | What it documents | Enforcement status |
 |---|---|---|
 | `orchestrator-pattern.md` **(2026-04-16)** | Multi-task plans: main session dispatches build work to `plan-phase-builder` sub-agents instead of building directly, preferring parallel dispatch in isolated git worktrees when tasks are independent. Build-in-parallel, verify-sequentially. | Self-applied; `task-verifier` + `tool-call-budget.sh` + `plan-edit-validator.sh` catch correctness regressions indirectly; no mechanism detects direct-build discipline violations. Documented gaps and future-hook candidates listed in the rule. |
+| `docs/failure-modes.md` **(2026-04-24)** | Project-level catalog of known harness failure CLASSES (not individual incidents). Each entry has six fields: ID (`FM-NNN`), Symptom, Root cause, Detection, Prevention, Example. Lives in the downstream project repo. Consulted by `rules/diagnosis.md` ("After Every Failure: Encode the Fix" — update the catalog or justify why not), `skills/harness-lesson.md` + `skills/why-slipped.md` (Step 0 — check catalog first to avoid duplicate mechanisms), `agents/claim-reviewer.md` (consult catalog when claims match known symptoms), `agents/task-verifier.md` (Step 2.5 — cross-check known-bad patterns like FM-006 self-report, FM-004 placeholder sections, FM-001 uncommitted plan). | Self-applied; behavioral enforcement only. No hook detects "session diagnosed a root cause without updating the catalog." Future hook candidate: a Stop-hook scan for diagnosis-language transcript signals AND no `docs/failure-modes.md` edit, blocking session end (parallel design to `bug-persistence-gate.sh`). |
 
 Patterns are NOT weaker than Mechanisms — they solve different problems. Mechanisms block specific failure modes at the moment of temptation; Patterns document workflows that improve quality across time but aren't about blocking a single identifiable failure. Turning every Pattern into a Mechanism would create friction disproportionate to the benefit; leaving every Mechanism as a Pattern reintroduces the self-enforcement failure modes Gen 4 was built to address. Both classes coexist.
 
@@ -86,7 +87,6 @@ Patterns are NOT weaker than Mechanisms — they solve different problems. Mecha
 | Public repo blocker | `Bash` | `gh repo create --public`, `gh repo edit --visibility public` |
 | Pre-commit gate | `Bash` | On `git commit`: runs `check-harness-sync.sh` + `pre-commit-gate.sh` (TDD gate + plan-reviewer + tests + build + API audit) |
 | Account switcher | `Bash` | On `git push`: switches `gh auth` to the account matching the remote URL per `~/.claude/local/accounts.config.json` |
-| **Plan-deletion protection** | `Bash` | Blocks destructive commands targeting `docs/plans/*` (excluding `archive/`): `rm`, `git clean -f` (via dry-run probe), `git stash -u`, `git checkout .` / `git restore .`, `mv` to non-archive destinations. `git reset --hard` warns but doesn't block (commonly intentional). Defense-in-depth companion to the commit-on-creation protection from `plan-lifecycle.sh`. |
 
 ### PostToolUse (1 entry — Gen 4)
 

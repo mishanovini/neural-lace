@@ -171,6 +171,18 @@ Work through these steps in order. Do not skip any.
   - If the file claims to be newly created, verify it exists at the claimed path
 - If a file doesn't appear in git log OR doesn't exist on disk, that's a FAIL signal
 
+### Step 2.5: Cross-check against the failure mode catalog
+
+Read `docs/failure-modes.md` (in the project repo) and scan its entries for any Symptom that matches a known-bad pattern in this task's claimed work. The most common matches are:
+
+- **FM-006 self-reported task completion without evidence.** If the task is being verified by you, the evidence-first protocol should already produce a `Runtime verification:` line in the companion evidence file. If you are about to PASS a task whose evidence block contains only plain-text manual verification or no Runtime verification entry at all, that is exactly the catalog-documented failure class. Verdict is FAIL with a pointer to FM-006's Prevention field.
+- **FM-004 verbose plan with placeholder-only required sections.** If you are verifying a plan-creation task and the plan file under review has any required section (Goal, Scope, Tasks, Files to Modify/Create, Assumptions, Edge Cases, Testing Strategy) consisting solely of placeholder tokens or under 20 non-whitespace characters, that is the FM-004 phenotype. Verdict is FAIL even if the file structurally exists.
+- **FM-001 concurrent-session plan wipe.** If the plan file the task is in has been freshly created but is not yet committed, surface this as a high-confidence risk in the evidence block even if the verdict is otherwise PASS — uncommitted plans are the catalog-documented vulnerability the next concurrent session can wipe.
+
+If a task's claimed work matches a catalog Symptom AND the evidence does not satisfy the catalog's Prevention field, FAIL with a citation: `Catalog match: FM-NNN; Prevention requires X; evidence does not show X`. This grounds your FAIL in the documented class rather than ad-hoc judgment, and gives the builder a stable reference to fix against.
+
+If no catalog entry matches the work being verified, proceed to Step 3 normally.
+
 ### Step 3: Run task-type-specific checks
 
 Categorize the task by type and run the appropriate checks:

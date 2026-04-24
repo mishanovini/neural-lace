@@ -36,6 +36,8 @@ Don't wait for the user to ask "how do we prevent this?" — that question is yo
 
 **Generalize at encoding time.** When writing a new rule, ask: "what's the general category of this failure?" Write the rule for the category, not just the specific instance. "Verify after syncing harness files" is a specific instance of "verify after any multi-step operation where you assume completeness." Encode the broader principle.
 
+**Update the failure mode catalog.** Once the root cause is identified, open `docs/failure-modes.md` and either (a) extend an existing entry whose Symptom matches the phenotype you observed (add to its Example list, refine Detection or Prevention if the new instance reveals something new), or (b) append a new `FM-NNN` entry if the root cause is a new class. If you decide it is NOT a new class, briefly justify the decision in the diagnosis notes — do not skip the catalog step silently. The catalog is the durable, version-controlled record of every known failure class; a session that diagnoses a root cause and does not update the catalog has discovered something the next session will have to rediscover. The `harness-lesson` and `why-slipped` skills check the catalog first when proposing a new mechanism, so a missing entry weakens both skills' starting context.
+
 ## When the User Corrects You
 
 A user correction ("no, don't do that", "why didn't you do X", "that's not what I asked for") is the highest-signal moment for improvement. Respond to every correction with:
