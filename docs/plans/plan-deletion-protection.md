@@ -45,7 +45,7 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
 
 ### Phase A: Hook Implementation
 
-- [ ] 1. Write the hook skeleton, tool-input parsing, and exit-path contract
+- [ ] A.1 Write the hook skeleton, tool-input parsing, and exit-path contract
   - Create `~/.claude/hooks/plan-deletion-protection.sh` with the standard Claude Code hook shebang and header
   - Parse the tool-input command via `jq -r '.tool_input.command // ""'` (with a fallback for older hook contract shapes if relevant)
   - Define a shared `emit_block()` function that prints a structured error message on stderr and exits 1
@@ -53,7 +53,7 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
   - If the command doesn't match any destructive pattern, exit 0 silently
   - **Files:** `~/.claude/hooks/plan-deletion-protection.sh`
 
-- [ ] 2. Implement `rm` detection with precise path resolution
+- [ ] A.2 Implement `rm` detection with precise path resolution
   - Tokenize the command into argv-like fragments (respecting simple shell quoting)
   - For each argv after the `rm` invocation, resolve the target path relative to the current working directory
   - Check if the resolved path falls under any `docs/plans/` directory (excluding `docs/plans/archive/` subpaths)
@@ -62,7 +62,7 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
   - Include edge case: `rm docs/plans/archive/<file>` is allowed (archive cleanup is legitimate)
   - **Files:** same hook
 
-- [ ] 3. Implement `git clean` detection via dry-run probe
+- [ ] A.3 Implement `git clean` detection via dry-run probe
   - Detect when the command is `git clean` (exclude `git clean --help`, `-n`, `--dry-run` which are non-destructive)
   - Before the command runs, invoke `git clean -n -d $FLAGS` with the same destructive flags (substituting `-n` for `-f`) to produce a list of files that would be removed
   - Parse the dry-run output for any path under `docs/plans/` (outside `archive/`)
@@ -70,20 +70,20 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
   - If `git clean` is invoked outside a git repo, pass through (nothing to protect)
   - **Files:** same hook
 
-- [ ] 4. Implement `git stash` detection
+- [ ] A.4 Implement `git stash` detection
   - Detect `git stash -u`, `git stash --include-untracked`, `git stash push -u`, `git stash push --include-untracked`
   - Run `git status --porcelain` and check for untracked entries (`^??`) matching `docs/plans/.*\.md`
   - If any untracked plan files exist, BLOCK with a message suggesting `git add <path>` before stashing
   - Stash invocations WITHOUT `-u`/`--include-untracked` do not affect untracked files; PASS
   - **Files:** same hook
 
-- [ ] 5. Implement `git checkout` / `git restore` / `git reset --hard` detection
+- [ ] A.5 Implement `git checkout` / `git restore` / `git reset --hard` detection
   - For `git checkout .`, `git restore .`, `git checkout -- docs/plans/...`, `git restore docs/plans/...`: check `git status --porcelain` for modified (`^.M` or `^MM`) entries matching `docs/plans/.*\.md`
   - If any modified plan files would be discarded, BLOCK with a message naming them and suggesting `git add` or explicit selective discard
   - For `git reset --hard`: perform the same check but WARN (emit a non-blocking warning) rather than block, because hard reset is commonly used intentionally
   - **Files:** same hook
 
-- [ ] 6. Implement `mv` restriction for plan files
+- [ ] A.6 Implement `mv` restriction for plan files
   - Detect `mv` with a source path under `docs/plans/` (outside `archive/`)
   - Check the destination path: if it is not under `docs/plans/archive/`, BLOCK with a message "Plan files may only move to docs/plans/archive/. Use `git mv docs/plans/<file> docs/plans/archive/<file>` for archival, or override via explicit hook bypass if deletion is genuinely required."
   - Treat `git mv` with the same detection logic (both `mv` and `git mv` should only allow archive destinations)
@@ -91,7 +91,7 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
   - Moves OUT of archive (back to `docs/plans/`) are allowed (restoring a previously-archived plan is legitimate)
   - **Files:** same hook
 
-- [ ] 7. Write comprehensive self-test covering at least 12 scenarios
+- [ ] A.7 Write comprehensive self-test covering at least 12 scenarios
   - Add a `--self-test` flag handler to the hook
   - Construct tool-input JSON for each scenario, invoke the detection logic, and assert the expected block or pass outcome
   - Minimum scenarios:
@@ -115,14 +115,14 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
 
 ### Phase B: Wire-up and Mirror
 
-- [ ] 8. Register the hook in `~/.claude/settings.json`
+- [ ] B.1 Register the hook in `~/.claude/settings.json`
   - Add a new PreToolUse entry with matcher `Bash` invoking `bash ~/.claude/hooks/plan-deletion-protection.sh`
   - Place it in the existing PreToolUse Bash hooks array in a reasonable position (after safety hooks like force-push blocking, before pre-commit gate)
   - Verify the settings file remains valid JSON after the edit
   - Test that the hook fires on a deliberate Bash invocation (not a destructive one — just confirm the hook is being invoked)
   - **Files:** `~/.claude/settings.json`
 
-- [ ] 9. Mirror hook, settings template, and architecture doc to neural-lace
+- [ ] B.2 Mirror hook, settings template, and architecture doc to neural-lace
   - Copy `~/.claude/hooks/plan-deletion-protection.sh` to `~/claude-projects/neural-lace/adapters/claude-code/hooks/plan-deletion-protection.sh`
   - Mirror the settings.json PreToolUse registration to `~/claude-projects/neural-lace/adapters/claude-code/settings.json.template`
   - Run `diff -q` on both files to verify mirroring is clean
@@ -133,7 +133,7 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
 
 ### Phase C: Verification
 
-- [ ] 10. End-to-end live verification
+- [ ] C.1 End-to-end live verification
   - Create a throwaway test plan at `~/claude-projects/neural-lace/docs/plans/deletion-test.md` (temporary; will be removed at end of verification)
   - Leave it uncommitted
   - Attempt each blocked scenario in a real Bash tool call and confirm the hook produces the expected block:
@@ -149,7 +149,7 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
   - Remove the test artifact completely from git history at the end (optional — can be a normal delete since it was only ever a test fixture)
   - **Done when:** all 4 blocked scenarios correctly block and all 3 allowed scenarios pass; evidence recorded
 
-- [ ] 11. Flip plan Status to COMPLETED
+- [ ] C.2 Flip plan Status to COMPLETED
   - After Phase C passes, append a brief completion note to the plan file
   - Change `Status: ACTIVE` → `Status: COMPLETED`
   - Once the robust-plan-file-lifecycle plan ships auto-archival, this plan will move to archive on the status flip; until then, leave it in the active directory
@@ -219,7 +219,7 @@ Recurring pain: uncommitted plan files have been lost to concurrent-session hous
 - [ ] Hook is registered in `~/.claude/settings.json` PreToolUse Bash section
 - [ ] Hook is registered in the neural-lace `settings.json.template`
 - [ ] `harness-architecture.md` inventory (both copies) reflects the new hook
-- [ ] End-to-end verification (Task 10) recorded 4+ blocked scenarios and 3+ allowed scenarios with expected outcomes
+- [ ] End-to-end verification (Task C.1) recorded 4+ blocked scenarios and 3+ allowed scenarios with expected outcomes
 - [ ] Neural-lace has at least two commits for this work (hook/settings + architecture-doc update, or a combined commit)
 - [ ] Plan `Status` flipped to `COMPLETED` after verification
 - [ ] Backlog entry "Plan file deletion protection" removed (absorbed per atomicity rule, which happens at plan-creation commit time)
