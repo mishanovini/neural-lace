@@ -348,3 +348,44 @@ Per-task evidence blocks live in the companion file `robust-plan-file-lifecycle-
 - [ ] SCRATCHPAD.md updated with final state
 - [ ] Completion report appended to this plan file
 - [ ] **Self-consistency check:** flipping THIS plan's Status to COMPLETED should trigger the auto-archival hook and move it to `docs/plans/archive/robust-plan-file-lifecycle.md` — the plan eats its own dogfood at completion time
+
+## Completion Report
+
+### 1. Implementation Summary
+
+All 18 tasks shipped across 6 phases on branch `feat/robust-plan-file-lifecycle` (commits 57cf357 through f416f3d). No backlog items absorbed — plan declared `Backlog items absorbed: none` at creation.
+
+- **Phase A (A.1-A.3):** `~/.claude/hooks/plan-lifecycle.sh` PostToolUse hook — handles commit-on-creation warning + auto-archival on Status terminal transitions. 9-scenario `--self-test` passes. Wired into `~/.claude/settings.json`. Mirrored to `adapters/claude-code/hooks/`.
+- **Phase B (B.1-B.2):** `~/.claude/scripts/find-plan-file.sh` archive-aware resolver. 14-scenario self-test passes. Mirrored.
+- **Phase C (C.1-C.2):** `~/.claude/rules/planning.md` extended with "Plan File Lifecycle (Creation, Archival, Lookup)" section covering all four stages, "Status is the last edit" rule, recovery from premature archival. Mirrored.
+- **Phase D (D.1-D.4):** `task-verifier.md`, `plan-evidence-reviewer.md`, `ux-designer.md` agents extended with archive-aware path resolution pointing at `find-plan-file.sh`. Mirrored.
+- **Phase E (E.1-E.4):** `post-tool-task-verifier-reminder.sh` uses shared resolver; `runtime-verification-reviewer.sh` excludes `docs/plans(/archive)?/`; `pre-stop-verifier.sh` warns on uncommitted plans (non-blocking). Mirrored.
+- **Phase F (F.1-F.3):** `harness-architecture.md` inventory + lifecycle paragraph. Mirrored. End-to-end dogfood test PASSED — auto-archival hook fired correctly on a real Status: ACTIVE → COMPLETED edit, staging the rename to `docs/plans/archive/`.
+
+### 2. Design Decisions & Plan Deviations
+
+Four Tier-1 decisions captured in the Decisions Log section: single hook for creation+archival, status-transition IS the trigger (no separate command), Status is the last edit, commit-on-creation as warning not block. No deviations from the approved plan.
+
+One implementation discovery during Phase A: the `plan-edit-validator.sh` task-ID regex `[A-Z]+\.[0-9]+` requires alphabetic prefixes. Plan tasks were renamed mid-execution from `1./2./.../18.` to `A.1/B.1/.../F.3`. Documented in commit `c098bfb`.
+
+### 3. Known Issues & Gotchas
+
+- **Task tool unavailable in dispatched sub-agent sessions** — discovered during Phase A; documented as P1 in `docs/backlog.md` (entry added by commit `844ce10`/`ca7545e`). Workaround used throughout Phases A-F: evidence-first protocol via direct evidence-file writes + checkbox flips, accepted by `plan-edit-validator.sh`'s 120s freshness window.
+- The plan-lifecycle hook's status-transition detection compares `Status:` lines via shell parsing. Edge cases like Status field appearing in a code block or being commented out are not specifically handled — could cause false positives in pathological plan files.
+
+### 4. Manual Steps Required
+
+None. The hook activates automatically once installed. The shared helper is sourceable from any harness-equipped session.
+
+### 5. Testing Performed & Recommended
+
+- Performed: per-phase `--self-test` invocations + Phase F.3 end-to-end dogfood test (real plan file taken through full lifecycle: create → commit → flip Status → observe auto-archival → verify archive-aware lookup → cleanup). All passed.
+- Recommended: nothing additional. The dogfood test IS the integration test.
+
+### 6. Cost Estimates
+
+Zero ongoing cost. All mechanisms are local hooks/scripts; no external API calls or infrastructure.
+
+### 7. Self-consistency check (the plan eats its own dogfood)
+
+Flipping this plan's `Status:` field from ACTIVE to COMPLETED in the next commit will trigger `plan-lifecycle.sh` to `git mv docs/plans/robust-plan-file-lifecycle.md docs/plans/archive/robust-plan-file-lifecycle.md`. If the file appears in `docs/plans/archive/` after that commit, the plan has shipped successfully. If not, this plan failed its own self-test and must be reverted.
