@@ -1,6 +1,6 @@
 # Plan: Lifecycle Test (F.3 Dogfood)
 
-Status: ACTIVE
+Status: COMPLETED
 Mode: code
 Backlog items absorbed: none
 
