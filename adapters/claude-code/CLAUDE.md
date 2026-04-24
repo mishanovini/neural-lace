@@ -13,6 +13,15 @@
 - NEVER name projects/products without consulting the user first
 - Use placeholder names until the user provides a name
 
+## Choosing a Session Mode
+Every Claude Code session runs in one of four modes — each with a different enforcement substrate and isolation story. Pick the mode whose enforcement matches the task before starting work:
+- **Interactive local** (default) — full `~/.claude/` harness, single session per working tree. Best for tight-loop work, UX decisions, planning.
+- **Parallel local (worktrees)** — full harness, git-tree isolation, but `~/.claude/` state is shared. Best for 2-5 concurrent short builds via Desktop "+ New session" or `isolation: "worktree"`.
+- **Cloud remote (`claude --remote`)** — fully isolated VM per session, but only project `.claude/` enforcement (NOT `~/.claude/`). Requires Decision 011 Approach A (project `.claude/` populated). Best for multi-hour autonomous builds.
+- **Scheduled (`/schedule` Routines)** — same as cloud remote, on a cron or event trigger. Best for nightly verification, CI auto-fix, recurring jobs.
+
+Full decision tree, per-mode invocation, tradeoffs, and pairing rules in `~/.claude/rules/automation-modes.md`. Decision record: `docs/decisions/011-claude-remote-harness-approach.md` (lives in the neural-lace repo).
+
 ## Autonomy
 - Work autonomously with minimal interruptions
 - Ambiguous minor details: make a reasonable choice, state the assumption

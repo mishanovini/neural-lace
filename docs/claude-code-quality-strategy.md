@@ -323,11 +323,19 @@ Multiple Claude Code sessions on the same machine share `~/.claude/` state (memo
 
 **Mitigation:** `claude --remote` for autonomous work (isolated cloud sandboxes); the `robust-plan-file-lifecycle` plan for commit-on-creation protection.
 
-### 4. Harness-portability to cloud sessions
+### 4. Harness-portability to cloud sessions — RESOLVED (2026-04-23)
 
-Cloud-hosted Claude Code sessions don't inherit the user's local `~/.claude/` config unless it's synced via dotfiles or checked into the project. This is an unresolved tension between isolation (cloud wins) and enforcement (local harness wins).
+Cloud-hosted Claude Code sessions don't inherit the user's local `~/.claude/` config — Phase A research (`docs/plans/archive/claude-remote-adoption-evidence.md`) confirmed that `claude --remote` cloud VMs read ONLY the project's `.claude/` directory after cloning the repo, never the user-level `~/.claude/`.
 
-**Mitigation in progress:** investigate Claude Code Web's harness provisioning and Codespaces-style dotfile sync.
+**Resolution:** Decision 011 (`docs/decisions/011-claude-remote-harness-approach.md`) adopts a hybrid approach with three complementary mechanisms:
+
+1. **Primary — Approach A (commit harness into project `.claude/`):** each downstream project's `.claude/` either symlinks to `~/claude-projects/neural-lace/adapters/claude-code/` (solo-dev local convenience) or contains a committed copy (team-shared / cloud-portable). Cloud sessions inherit the harness automatically via the repo clone. This is the only mechanism that gives cloud sessions full harness enforcement.
+2. **Augmentation — Routines via `/schedule`:** scheduled / event-triggered cloud automation that inherits the same project `.claude/` as `--remote` does. Daily quota: 5/Pro, 15/Max, 25/Team-Enterprise.
+3. **Optional layer — DevContainers:** for interactive multi-session local dev where the shared-`~/.claude/` collision risk in worktree-based parallelism (`rules/orchestrator-pattern.md`) is unacceptable. Per-project opt-in; adds Docker as a dependency.
+
+The mode-by-mode operator-facing decision tree lives in `rules/automation-modes.md`. Phase A research deferred live empirical validation of cloud harness inheritance to a P2 backlog item — first real cloud-session build in a downstream project with Approach A adopted will confirm the inheritance behavior end-to-end. Approach A's known caveat: solo-dev symlinks may or may not traverse the CLI's repo-bundle mechanism cleanly; if symlinks don't travel, the committed-copy alternative is the fallback.
+
+Alternatives B (cloud-session startup script that clones neural-lace) and C (restricted task class for cloud sessions) were both considered and rejected — see Decision 011 for the per-alternative rejection reasoning.
 
 ---
 
@@ -472,17 +480,18 @@ Affects hook behavior: interactive mode can be more permissive because the human
 
 **Why:** The same session cadence shouldn't apply to both modes. A user running `claude --remote` overnight wants different gates than a user watching edits in real time. Making the mode explicit lets the harness adapt.
 
-### M. Adopt `claude --remote` + dotfiles sync as the official background-work pattern
+### M. Adopt `claude --remote` + project-`.claude/` harness as the official background-work pattern — SHIPPED (2026-04-23)
 
-Based on the `claude-code-guide` agent's research, `claude --remote` is Anthropic's purpose-built solution for concurrent autonomous sessions. Establish this as the canonical pattern:
+Per Decision 011 (`docs/decisions/011-claude-remote-harness-approach.md`) and the `rules/automation-modes.md` rule shipped in plan #4, the canonical session-mode tree is:
 
-- **Interactive work** → local Claude Code, watching IDE
-- **Autonomous background work** → `claude --remote` with dotfiles-synced harness
-- **Recurring work** → `/schedule`
+- **Interactive work** → Mode 1 (local Claude Code, full `~/.claude/` enforcement)
+- **Parallel local autonomous work** → Mode 2 (worktrees via Desktop "+ New session" or `isolation: "worktree"`)
+- **Unattended autonomous background work** → Mode 3 (`claude --remote` with project `.claude/` populated per Decision 011 Approach A)
+- **Recurring work** → Mode 4 (`/schedule` Routines, same harness inheritance as Mode 3)
 
-Document this in `rules/automation-modes.md` with concrete examples. Resolves the concurrent-session plan-wipe incidents without requiring worktree infrastructure.
+The "dotfiles-synced harness" framing from the original suggestion was superseded by Approach A (commit harness into project `.claude/`) after Phase A research confirmed that cloud sessions inherit the cloned repo's `.claude/` directly without needing a separate dotfiles-sync mechanism.
 
-**Why:** Solves the concurrent-session problem cleanly with official tooling. Eliminates the edge case that has cost us two plan files already.
+**Why:** Solves the concurrent-session problem cleanly with official tooling. Eliminates the edge case that has cost us plan files in the past, and gives cloud sessions full harness enforcement via the repo-clone path.
 
 ---
 

@@ -1,6 +1,6 @@
 # Neural Lace — Harness Backlog
 
-Last updated: 2026-04-24 (added: P1 — concurrent ACTIVE plans need acceptance-exempt declaration before next session-end. Earlier: capture-codify P2 entries — FM-NNN cite verification, answer-form telemetry, template-validator atomicity gate)
+Last updated: 2026-04-23 (added: P2 — validate Decision 011 Approach A end-to-end via real `claude --remote` session against the chosen reference project. Earlier 2026-04-24: P1 — concurrent ACTIVE plans need acceptance-exempt declaration before next session-end; capture-codify P2 entries — FM-NNN cite verification, answer-form telemetry, template-validator atomicity gate)
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
@@ -121,6 +121,20 @@ Lightweight `claude-status` command aggregating active sessions (local + `--remo
 ### P2 — Harness version contracts
 
 Each project declares `harness-version: >=N` in its CLAUDE.md. Breaking harness changes bump the version. SessionStart warns if project version predates current harness. Prevents silent regressions as harness evolves beyond what older projects expected.
+
+### P2 — Validate Decision 011 Approach A end-to-end via real `claude --remote` session (2026-04-23)
+
+Plan #4 (`docs/plans/claude-remote-adoption.md`) Phase B set up Approach A on a reference downstream project (a small work-account demo repo on GitHub) — `.claude/` directory exists in that project's working tree with the harness committed-copy form per Decision 011, but the `git commit` and `git push` were deferred because the reference repo had no configured user identity and the builder did not have authority to set it.
+
+Required user action:
+1. From the reference project's directory: confirm the appropriate git identity is set (one-time per-machine), then `git add .claude/ && git commit -m "chore: adopt Neural Lace harness via project .claude/ (Decision 011 Approach A)" && git push`.
+2. Launch `claude --remote "list every rule loaded for this session and confirm any one hook fires"` against the reference project's pushed branch.
+3. Confirm: (a) cloud session enumerates the rules in `.claude/rules/` matching the local set, (b) at least one hook from `.claude/settings.json` fires during the session, (c) `task-verifier` agent is dispatchable from the cloud session.
+4. If any of (a)/(b)/(c) fails, file the failure mode against Decision 011 — Approach A may need refinement (e.g., symlink fallback, settings.json adjustments for cloud).
+
+This is the integration test referenced in Decision 011's Test Plan section, and the empirical validation deferred from Phase A.
+
+
 
 ### P1 — Mysterious `effortLevel` wipe during session (2026-04-22/23)
 
