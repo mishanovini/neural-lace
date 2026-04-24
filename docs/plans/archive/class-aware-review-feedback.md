@@ -1,6 +1,6 @@
 # Plan: Class-Aware Reviewer Feedback — Mod 1 + Mod 3 of the Narrow-Fix-Bias Mitigation
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: "Class-aware reviewer feedback (narrow-fix bias mitigation)" — Mods 1 and 3 only; Mod 2 (pre-commit class-sweep attestation hook) deferred to standalone backlog entry pending evidence Mods 1+3 are insufficient.
