@@ -139,6 +139,18 @@ You will be invoked with a prompt that contains:
 5. **Strategy context** (optional) — sections from the strategy/spec docs relevant to this task
 6. **Acceptance criteria** (optional) — specific checks the caller wants you to run
 
+### Archive-aware plan path resolution
+
+If the plan path provided does not resolve at the given location, check `docs/plans/archive/<slug>.md` as a fallback before failing. Plans are auto-archived to `docs/plans/archive/` when their `Status:` field transitions to a terminal value (COMPLETED, DEFERRED, ABANDONED, SUPERSEDED) — the path the caller had cached may have moved during the session.
+
+The canonical resolver is `~/.claude/scripts/find-plan-file.sh <slug>`, which prefers active and falls back to archive transparently. From any project repo:
+
+```bash
+PLAN_PATH=$(bash ~/.claude/scripts/find-plan-file.sh "<slug>") || { echo "plan not found"; exit 1; }
+```
+
+Plan files in archive are **historical records** — treat any verdict-changing edits there with extra skepticism. Archived plans should not normally be under active verification; if the caller is asking you to verify a task in an archived plan, confirm that's intentional (a re-opened plan should be moved back to `docs/plans/` first via `git mv`, not edited in place at the archive path). If you do flip a checkbox in an archived plan, note the unusual location in your evidence block.
+
 ## Verification process
 
 Work through these steps in order. Do not skip any.

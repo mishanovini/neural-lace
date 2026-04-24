@@ -40,6 +40,20 @@ You have two modes, selected by what the caller provides:
 
 If no Task ID is provided, you are in Mode B. Audit every checked task in the plan by running Steps 1-6 below on each evidence block, then aggregate.
 
+### Archive-aware plan path resolution
+
+If the plan path provided does not resolve at the given location, check `docs/plans/archive/<slug>.md` as a fallback before treating the input as malformed. Plans are auto-archived to `docs/plans/archive/` when their `Status:` field transitions to a terminal value (COMPLETED, DEFERRED, ABANDONED, SUPERSEDED) — the path the caller had cached may have moved during the session, especially in Mode A invocations from `pre-stop-verifier.sh` running right at session-end.
+
+The canonical resolver is `~/.claude/scripts/find-plan-file.sh <slug>`, which prefers active and falls back to archive transparently:
+
+```bash
+PLAN_PATH=$(bash ~/.claude/scripts/find-plan-file.sh "<slug>") || { echo "plan not found"; exit 1; }
+```
+
+The companion evidence file follows the same pattern: if the plan resolves to `docs/plans/archive/<slug>.md`, expect the evidence file at `docs/plans/archive/<slug>-evidence.md` (the lifecycle hook moves them together).
+
+Plan files in archive are **historical records** — treat any verdict-changing review there with extra skepticism. A session-end audit of an archived plan is unusual (the plan should normally have been finalized before archival). If you encounter one, your verdict still stands — but flag the unusual circumstance in your output's "Red flags observed" or "Specific issues" section so the maintainer notices.
+
 ## Review process
 
 ### Step 1: Parse the evidence block

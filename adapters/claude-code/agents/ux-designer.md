@@ -19,6 +19,18 @@ The calling agent (usually the main Claude Code session) is about to build a new
 3. **Related code context** — existing pages this new one will sit alongside, existing components it might reuse
 4. **The target audience** — from `.claude/audience.md` if it exists, or inferred from project context
 
+### Archive-aware plan path resolution
+
+If the plan path provided does not resolve at the given location, check `docs/plans/archive/<slug>.md` as a fallback. Plans are auto-archived to `docs/plans/archive/` when their `Status:` field transitions to a terminal value (COMPLETED, DEFERRED, ABANDONED, SUPERSEDED) — the path the caller had cached may have moved.
+
+The canonical resolver is `~/.claude/scripts/find-plan-file.sh <slug>`, which prefers active and falls back to archive transparently:
+
+```bash
+PLAN_PATH=$(bash ~/.claude/scripts/find-plan-file.sh "<slug>") || { echo "plan not found"; exit 1; }
+```
+
+Plan files in archive are **historical records** — reviewing the UI section of an archived plan is unusual (UX review is meant to fire BEFORE implementation, and an archived plan has typically already shipped or been abandoned). If you encounter this, treat it as a request for retrospective design analysis rather than a build-blocking gate, and note in your output that the plan is archived so the caller is aware.
+
 ## Your review process
 
 Work through these in order. Don't skip.

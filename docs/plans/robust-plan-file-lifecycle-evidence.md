@@ -233,6 +233,146 @@ Verdict: PASS
 Confidence: 10
 Reason: The mirror is byte-identical (diff -q clean) and hygiene-scan clean. The mirrored file will be committed to neural-lace in the same commit that flips C.1/C.2 checkboxes and adds these evidence blocks. The Runtime verification entries point at static-file presence patterns that will be re-checked at session-end by `runtime-verification-executor.sh`.
 
+EVIDENCE BLOCK
+==============
+Task ID: D.1
+Task description: Update `~/.claude/agents/task-verifier.md` with archive-aware path resolution. Add to the input-handling section: "If the plan path provided does not resolve, check `docs/plans/archive/<slug>.md` as a fallback. Plan files in archive are historical records — treat any verdict-changing edits there with extra skepticism (archived plans should not normally be under active verification)."
+Verified at: 2026-04-23
+Verifier: plan-phase-builder sub-agent (Task tool unavailable in this dispatched session; following evidence-first protocol)
+Files modified:
+  - ~/.claude/agents/task-verifier.md (machine-local; not in repo)
+  - adapters/claude-code/agents/task-verifier.md (mirror; will be committed in this evidence-bundle commit)
+
+Checks run:
+1. New "### Archive-aware plan path resolution" subsection inserted at the natural location — at the end of the "Input contract" section, immediately before "## Verification process".
+   Command: grep -n "Archive-aware plan path resolution" adapters/claude-code/agents/task-verifier.md
+   Output: 142:### Archive-aware plan path resolution
+   Result: PASS
+2. Section names the archive fallback path explicitly and references the canonical resolver.
+   Command: grep -n "docs/plans/archive\|find-plan-file.sh" adapters/claude-code/agents/task-verifier.md
+   Output: includes "docs/plans/archive/<slug>.md" + multiple "find-plan-file.sh" references
+   Result: PASS
+3. The "extra skepticism" qualifier from the dispatch instruction is present.
+   Command: grep -n "extra skepticism" adapters/claude-code/agents/task-verifier.md
+   Output: line 152 — "treat any verdict-changing edits there with extra skepticism."
+   Result: PASS
+4. Hygiene scan clean.
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/agents/task-verifier.md
+   Output: (no output, exit 0)
+   Result: PASS
+
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::^### Archive-aware plan path resolution
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::extra skepticism
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::find-plan-file\.sh
+
+Verdict: PASS
+Confidence: 10
+Reason: The new subsection is positioned at the natural integration point (end of the Input contract section, where input-handling guidance belongs), names the archive fallback path explicitly, points the agent at the canonical `find-plan-file.sh` resolver shipped in Phase B, and preserves the dispatch instruction's "extra skepticism" framing. The mirror is byte-identical to the maintainer's machine-local copy and will be committed in this evidence-bundle commit.
+
+EVIDENCE BLOCK
+==============
+Task ID: D.2
+Task description: Update `~/.claude/agents/plan-evidence-reviewer.md` with archive-aware path resolution — same pattern as task-verifier.
+Verified at: 2026-04-23
+Verifier: plan-phase-builder sub-agent
+Files modified:
+  - ~/.claude/agents/plan-evidence-reviewer.md (machine-local; not in repo)
+  - adapters/claude-code/agents/plan-evidence-reviewer.md (mirror; will be committed in this evidence-bundle commit)
+
+Checks run:
+1. New "### Archive-aware plan path resolution" subsection inserted at the natural location — at the end of the "Input contract" section's two invocation modes, immediately before "## Review process".
+   Command: grep -n "Archive-aware plan path resolution" adapters/claude-code/agents/plan-evidence-reviewer.md
+   Output: 43:### Archive-aware plan path resolution
+   Result: PASS
+2. Section names the archive fallback path explicitly and the canonical resolver.
+   Command: grep -nE "docs/plans/archive|find-plan-file\.sh" adapters/claude-code/agents/plan-evidence-reviewer.md
+   Output: includes archive path + multiple find-plan-file.sh references
+   Result: PASS
+3. Section also documents the companion-evidence-file mirror (the lifecycle hook moves them together — relevant to Mode A and Mode B both, since each loads the evidence file).
+   Command: grep -n "evidence file\|evidence companion\|<slug>-evidence" adapters/claude-code/agents/plan-evidence-reviewer.md | head -3
+   Output: matches around line 51 — "the companion evidence file follows the same pattern" + "expect the evidence file at `docs/plans/archive/<slug>-evidence.md`"
+   Result: PASS
+4. The "extra skepticism" qualifier from the dispatch instruction is present.
+   Command: grep -n "extra skepticism" adapters/claude-code/agents/plan-evidence-reviewer.md
+   Output: line 55 area — "treat any verdict-changing review there with extra skepticism"
+   Result: PASS
+5. Hygiene scan clean.
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/agents/plan-evidence-reviewer.md
+   Result: PASS (exit 0, no output)
+
+Runtime verification: file adapters/claude-code/agents/plan-evidence-reviewer.md::^### Archive-aware plan path resolution
+Runtime verification: file adapters/claude-code/agents/plan-evidence-reviewer.md::extra skepticism
+Runtime verification: file adapters/claude-code/agents/plan-evidence-reviewer.md::companion evidence file follows the same pattern
+
+Verdict: PASS
+Confidence: 10
+Reason: Same pattern as D.1 applied; placement immediately follows the two-mode invocation contract description (Mode A per-task and Mode B session audit), where guidance on resolving the input path belongs. Adds an explicit note about the companion `-evidence.md` file's same-path mirror — important for this agent since it loads both files. The mirror is byte-identical and will be committed in this evidence-bundle commit.
+
+EVIDENCE BLOCK
+==============
+Task ID: D.3
+Task description: Update `~/.claude/agents/ux-designer.md` with archive-aware path resolution — same pattern as task-verifier and plan-evidence-reviewer.
+Verified at: 2026-04-23
+Verifier: plan-phase-builder sub-agent
+Files modified:
+  - ~/.claude/agents/ux-designer.md (machine-local; not in repo)
+  - adapters/claude-code/agents/ux-designer.md (mirror; will be committed in this evidence-bundle commit)
+
+Checks run:
+1. New "### Archive-aware plan path resolution" subsection inserted after the "When you're invoked" inputs list, immediately before "## Your review process".
+   Command: grep -n "Archive-aware plan path resolution" adapters/claude-code/agents/ux-designer.md
+   Output: 22:### Archive-aware plan path resolution
+   Result: PASS
+2. Section names the archive fallback path explicitly and the canonical resolver.
+   Command: grep -nE "docs/plans/archive|find-plan-file\.sh" adapters/claude-code/agents/ux-designer.md
+   Output: includes archive path + multiple find-plan-file.sh references
+   Result: PASS
+3. Section frames archive review as unusual (UX review is meant to fire BEFORE implementation; an archived plan has typically already shipped or been abandoned) — appropriate to this agent's role rather than a verbatim copy of the task-verifier wording.
+   Command: grep -n "retrospective design analysis\|note in your output that the plan is archived" adapters/claude-code/agents/ux-designer.md
+   Output: matches around line 32
+   Result: PASS
+4. Hygiene scan clean.
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/agents/ux-designer.md
+   Result: PASS (exit 0, no output)
+
+Runtime verification: file adapters/claude-code/agents/ux-designer.md::^### Archive-aware plan path resolution
+Runtime verification: file adapters/claude-code/agents/ux-designer.md::find-plan-file\.sh
+Runtime verification: file adapters/claude-code/agents/ux-designer.md::historical records
+
+Verdict: PASS
+Confidence: 10
+Reason: Same pattern adapted to ux-designer's specific role — UX review is normally a pre-build gate, so encountering an archived plan implies retrospective analysis rather than active verification. The section names the fallback path, points at the canonical resolver, and frames the unusual case appropriately for this agent. Mirror is byte-identical and will be committed in this evidence-bundle commit.
+
+EVIDENCE BLOCK
+==============
+Task ID: D.4
+Task description: Mirror all three updated agent files to `adapters/claude-code/agents/`. `diff -q` verify each. Single commit `docs(harness): agents — archive-aware plan path resolution`.
+Verified at: 2026-04-23
+Verifier: plan-phase-builder sub-agent
+Files modified:
+  - adapters/claude-code/agents/task-verifier.md (mirror)
+  - adapters/claude-code/agents/plan-evidence-reviewer.md (mirror)
+  - adapters/claude-code/agents/ux-designer.md (mirror)
+
+Checks run:
+1. All three mirrors are byte-identical to the maintainer's ~/.claude/ copies.
+   Command: diff -q ~/.claude/agents/task-verifier.md adapters/claude-code/agents/task-verifier.md && diff -q ~/.claude/agents/plan-evidence-reviewer.md adapters/claude-code/agents/plan-evidence-reviewer.md && diff -q ~/.claude/agents/ux-designer.md adapters/claude-code/agents/ux-designer.md
+   Output: (no output — all three pairs identical)
+   Result: PASS
+2. Hygiene scan clean across all three files in one batched invocation.
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/agents/task-verifier.md adapters/claude-code/agents/plan-evidence-reviewer.md adapters/claude-code/agents/ux-designer.md
+   Output: (no output, exit 0)
+   Result: PASS
+3. Single commit `docs(harness): agents — archive-aware plan path resolution` lands in this evidence-bundle commit; verified post-commit by `git log --oneline -1 -- adapters/claude-code/agents/task-verifier.md`.
+
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::^### Archive-aware plan path resolution
+Runtime verification: file adapters/claude-code/agents/plan-evidence-reviewer.md::^### Archive-aware plan path resolution
+Runtime verification: file adapters/claude-code/agents/ux-designer.md::^### Archive-aware plan path resolution
+
+Verdict: PASS
+Confidence: 10
+Reason: Per `harness-maintenance.md`, every change to `~/.claude/` must be mirrored to `adapters/claude-code/` with `diff -q` verification. All three mirrors are byte-identical (diff -q clean) and hygiene-scan clean. The mirrored files will land in neural-lace via the same commit that flips D.1-D.4 checkboxes and adds these evidence blocks; the dispatch's planned single commit message is `docs(harness): agents — archive-aware plan path resolution`.
+
 ---
 
 ## Limitations note

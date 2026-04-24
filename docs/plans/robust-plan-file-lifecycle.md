@@ -174,22 +174,22 @@ The cost of the rare mistake is one extra `git mv`. The benefit of automatic arc
 
 ### Phase D: Agent Prompt Updates
 
-- [ ] D.1 Update `~/.claude/agents/task-verifier.md` with archive-aware path resolution
+- [x] D.1 Update `~/.claude/agents/task-verifier.md` with archive-aware path resolution
   - Add to the input-handling section: "If the plan path provided does not resolve, check `docs/plans/archive/<slug>.md` as a fallback. Plan files in archive are historical records — treat any verdict-changing edits there with extra skepticism (archived plans should not normally be under active verification)."
   - **Files:** `~/.claude/agents/task-verifier.md`
   - **Done when:** Instruction is present and integrated cleanly.
 
-- [ ] D.2 Update `~/.claude/agents/plan-evidence-reviewer.md` with archive-aware path resolution
+- [x] D.2 Update `~/.claude/agents/plan-evidence-reviewer.md` with archive-aware path resolution
   - Same pattern as task-verifier
   - **Files:** `~/.claude/agents/plan-evidence-reviewer.md`
   - **Done when:** Instruction is present.
 
-- [ ] D.3 Update `~/.claude/agents/ux-designer.md` with archive-aware path resolution
+- [x] D.3 Update `~/.claude/agents/ux-designer.md` with archive-aware path resolution
   - Same pattern
   - **Files:** `~/.claude/agents/ux-designer.md`
   - **Done when:** Instruction is present.
 
-- [ ] D.4 Mirror all three agent files to neural-lace
+- [x] D.4 Mirror all three agent files to neural-lace
   - Copy each + `diff -q` verify
   - Single commit: `docs(harness): agents — archive-aware plan path resolution`
   - **Files:** `neural-lace/adapters/claude-code/agents/{task-verifier,plan-evidence-reviewer,ux-designer}.md`
