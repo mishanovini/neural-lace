@@ -53,6 +53,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/observed-errors-gate.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
             "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -qiE '(curl|wget).*\\|\\s*(ba)?sh|chmod\\s+-R\\s+777|mkfs\\.|dd\\s+if='; then echo 'BLOCKED: Dangerous command pattern detected' >&2; exit 1; fi"
           }
         ]
