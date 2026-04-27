@@ -189,6 +189,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/deferral-counter.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/transcript-lie-detector.sh"
           }
         ]
       }

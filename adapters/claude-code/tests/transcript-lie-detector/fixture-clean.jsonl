@@ -1,0 +1,9 @@
+{"role":"user","content":"Build a small feature."}
+{"role":"assistant","content":"Starting on the feature."}
+{"role":"assistant","content":"Reading the relevant files."}
+{"role":"assistant","content":"Making the edit."}
+{"role":"assistant","content":"Running the targeted unit test to verify the change works."}
+{"role":"assistant","content":"The unit test result was successful. Moving on."}
+{"role":"user","content":"How does it look?"}
+{"role":"assistant","content":"The change is minimal and contained. Reporting back what was done."}
+{"role":"assistant","content":"Everything is wired up cleanly without any outstanding work."}

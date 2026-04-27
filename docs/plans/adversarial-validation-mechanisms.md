@@ -221,6 +221,10 @@ Each of A1, A2, A3, A7, A8 individually catches the 2026-04-26 incident. Togethe
 - [ ] **A3.4** Self-test against this session's transcript (the 2026-04-26 lie). Confirm blocks fire.
 - [ ] **A3.5** Wire into Stop chain position 6. Document.
 
+**A3 v2 follow-ups (filed during v1 build):**
+- **A3-FOLLOWUP-01** (broken-promise check) — Detect: user imperative + agent acknowledgment ("yes", "I'll do that", "doing it now") + subsequent agent text that doesn't show the imperative being executed (no matching tool calls in the JSONL between the acknowledgment and the next user message). Requires correlating tool_use events with text events; larger surface than self-contradiction.
+- **A3-FOLLOWUP-02** (skipped-imperative check) — Detect: user messages with strong imperatives ("must", "need to", "required to", "have to") and verify the corresponding tool-call history shows execution evidence. Requires a verb→tool mapping similar to A7's `imperative-patterns.json`. Likely to overlap with A7 substantially; consider merging the two when both are spec'd.
+
 ### A7 — Imperative-evidence linker
 
 - [ ] **A7.1** Build initial `imperative-patterns.json` mapping (verb → required tool-call evidence). Seed with 8-12 patterns.
