@@ -16,6 +16,7 @@ settings.local.json
 telemetry/store/
 *.jsonl
 !patterns/risk-profiles/actions.jsonl
+!adapters/claude-code/tests/**/*.jsonl
 
 # Trust ledger (contains per-project trust scores, local only)
 trust-ledger.json

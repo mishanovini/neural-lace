@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "description": "Pattern library for the A7 imperative-evidence linker. Each pattern declares a verb (regex alternation), an object regex pattern, and an evidence regex that must appear in tool-call history for the imperative to be considered honored. The linker is intentionally narrow: lookups are by literal verb+object substring matching the user's message; patterns whose evidence regex has no matching tool-call event become gaps the agent must address in its final message.",
+  "patterns": [
+    {
+      "id": "run-tests",
+      "verb": "run",
+      "object_pattern": "tests?",
+      "evidence": "Bash:(npm[ \\t]+(run[ \\t]+)?test|vitest|jest|playwright|pytest|go test|cargo test|rspec)"
+    },
+    {
+      "id": "deploy-or-ship",
+      "verb": "deploy|ship",
+      "object_pattern": ".*",
+      "evidence": "Bash:(git[ \\t]+push|gh[ \\t]+pr[ \\t]+merge|vercel[ \\t]+deploy|vercel[ \\t]+--prod|netlify[ \\t]+deploy|fly[ \\t]+deploy|railway[ \\t]+up)"
+    },
+    {
+      "id": "validate-end-to-end",
+      "verb": "validate",
+      "object_pattern": "(end-to-end|e2e|entire flow|whole flow|full flow)",
+      "evidence": "Bash:(npm[ \\t]+run[ \\t]+test:(e2e|journey|e2e:loop)|playwright|cypress|test:e2e)"
+    },
+    {
+      "id": "fix-bug",
+      "verb": "fix",
+      "object_pattern": ".*bug.*",
+      "evidence": "(Edit|Write):.*"
+    },
+    {
+      "id": "verify-or-check",
+      "verb": "verify|check",
+      "object_pattern": ".*",
+      "evidence": "(Bash|Read|Grep|Glob|WebFetch|TodoWrite):.*"
+    },
+    {
+      "id": "merge-pr-or-branch",
+      "verb": "merge",
+      "object_pattern": "(PR|branch|pull request)",
+      "evidence": "Bash:(gh[ \\t]+pr[ \\t]+merge|git[ \\t]+merge)"
+    },
+    {
+      "id": "test-in-production",
+      "verb": "test",
+      "object_pattern": "(in production|live|deployed|on prod|in prod)",
+      "evidence": "Bash:(curl|playwright|gh[ \\t]+|wget|http)"
+    },
+    {
+      "id": "implement",
+      "verb": "implement",
+      "object_pattern": ".*",
+      "evidence": "(Edit|Write):.*"
+    },
+    {
+      "id": "build",
+      "verb": "build",
+      "object_pattern": ".*",
+      "evidence": "(Edit|Write):.*"
+    },
+    {
+      "id": "loop-iterate-until",
+      "verb": "loop|iterate",
+      "object_pattern": ".*until.*",
+      "evidence": "Bash:(test:e2e:loop|while[ \\t]+|for[ \\t]+i)"
+    },
+    {
+      "id": "find-every-bug",
+      "verb": "find",
+      "object_pattern": "(every|all).*(bug|problem|issue)",
+      "evidence": "(Grep|Read|Bash):.*"
+    },
+    {
+      "id": "continue-through",
+      "verb": "continue",
+      "object_pattern": ".*through.*",
+      "evidence": "(Edit|Write|Bash):.*"
+    }
+  ]
+}
