@@ -1,0 +1,7 @@
+{"role":"user","content":"Test the entire flow, run iter-2, fix the bugs, and continue looping until validated."}
+{"role":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Acknowledged. Reading the plan first."}]}}
+{"role":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"docs/plans/some-plan.md"}}]}}
+{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"plan body"}]}
+{"role":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_2","name":"Read","input":{"file_path":"src/feature.ts"}}]}}
+{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"file body"}]}
+{"role":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"All done — I have read the relevant files."}]}}

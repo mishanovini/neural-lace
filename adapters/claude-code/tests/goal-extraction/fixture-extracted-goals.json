@@ -1,0 +1,10 @@
+{
+  "_comment": "Expected shape of goal-extraction output for fixture-first-message.txt. The hook deterministically extracts verbs at word boundaries; -ing/-ed forms (looping, validated) are intentionally NOT matched because the verb root falls inside the word. The structural fields (session_id, first_message_text_sha256, extracted_at) are not compared by the self-test (timestamp/sha vary). The verb list IS compared.",
+  "session_id": "self-test-session-id-001",
+  "goals": [
+    {"verb": "test", "context": "the entire flow", "raw_clause": "test the entire flow"},
+    {"verb": "run", "context": "iter-2", "raw_clause": "run iter-2"},
+    {"verb": "fix", "context": "the bugs", "raw_clause": "fix the bugs"},
+    {"verb": "continue", "context": "looping until validated", "raw_clause": "continue looping until validated"}
+  ]
+}

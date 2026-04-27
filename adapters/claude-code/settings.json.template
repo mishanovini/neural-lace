@@ -151,6 +151,10 @@
           {
             "type": "command",
             "command": "MODE=$(bash ~/.claude/scripts/read-local-config.sh automation-mode 2>/dev/null); if [ -z \"$MODE\" ]; then MODE=\"review-before-deploy\"; fi; printf '\\033]0;%s [%s]\\007' \"$(basename \"$PWD\")\" \"$MODE\" >&2"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/goal-extraction-on-prompt.sh"
           }
         ]
       }
@@ -197,6 +201,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/imperative-evidence-linker.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/goal-coverage-on-stop.sh"
           }
         ]
       }
