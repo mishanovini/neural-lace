@@ -250,6 +250,55 @@ user-facing flow), replace this entire block with a single line:
 - [ ] Completion report appended to this plan file
 
 <!--
+## DoD Artifacts (OPTIONAL — A2 of adversarial-validation-mechanisms.md)
+
+When a `## Definition of Done` bullet has a concrete on-disk artifact that
+proves the bullet was satisfied (a convergence JSON, a sign-off Markdown
+file, a test-run log, etc.), declare it here. The pre-stop-verifier.sh
+Check 5 / A2 extension verifies each declared artifact exists and matches
+the requires_* conditions. Marking the DoD bullet `[x]` is not enough —
+the artifact must exist on disk and match.
+
+Schema (parseable Markdown):
+
+  ## DoD Artifacts
+
+  ### bullet: <substring of a DoD bullet from above>
+  - artifact: <path, optionally with `<runId>` glob placeholder>
+  - requires_field: <JSON field name>           (paired with requires_value)
+  - requires_value: <expected value>            (paired with requires_field)
+  - requires_pattern: <ERE regex matched in file>
+  - requires_min_length: <integer min file size in bytes>
+
+A spec may declare any one of: (requires_field+requires_value),
+requires_pattern, or requires_min_length. Multiple may be declared for
+the same artifact and ALL must hold. Paths resolve relative to the plan
+file's directory first, then the current working directory.
+
+Example:
+
+  ## DoD Artifacts
+
+  ### bullet: Loop converges on current master
+  - artifact: tests/journeys/loop-history/<runId>/CONVERGENCE.json
+  - requires_field: verdict
+  - requires_value: CONVERGED
+
+  ### bullet: Human sign-off recorded
+  - artifact: tests/journeys/loop-history/<runId>/SIGNOFF.md
+  - requires_pattern: approved
+  - requires_min_length: 10
+
+When the section is absent or empty, A2 is a no-op and only the base M1
+checkbox check applies. When the section is present, every declared spec
+must pass before `Status: COMPLETED` is allowed. To enable A2 for your
+plan, uncomment the section above and adapt it.
+
+See `~/.claude/rules/vaporware-prevention.md` and the parent plan
+`docs/plans/adversarial-validation-mechanisms.md` (A2) for the rationale.
+-->
+
+<!--
 ================================================================
 Systems Engineering Analysis — REQUIRED when Mode: design
 ================================================================

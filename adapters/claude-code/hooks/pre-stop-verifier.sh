@@ -28,6 +28,73 @@
 #   0 — session may terminate
 #   1 — session is blocked; error printed to stderr and JSON to stdout
 
+# ============================================================
+# --self-test: exercise Check 5 (M1) and the A2 extension against
+# three synthetic plan fixtures
+# ============================================================
+#
+# Three fixtures live under tests/dod-artifact-gate/:
+#
+#   fixture-plan-completed-artifact-missing.md
+#       Status: COMPLETED, all DoD `[x]`, declares a `## DoD Artifacts`
+#       section with an artifact that does NOT exist on disk → BLOCK.
+#   fixture-plan-completed-artifact-present.md
+#       Same shape, but the declared artifact exists on disk with the
+#       required content → ALLOW.
+#   fixture-plan-no-artifacts-section.md
+#       Status: COMPLETED, all DoD `[x]`, NO `## DoD Artifacts` section
+#       → ALLOW (A2 is a no-op when the section is absent).
+#
+# The fixtures are ALSO acceptance-exempt and have all task checkboxes
+# checked + an evidence block, so the only check that exercises them
+# is Check 5 (and its A2 extension).
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  SCRIPT="${BASH_SOURCE[0]}"
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"
+  FIXTURE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/tests/dod-artifact-gate"
+
+  if [[ ! -d "$FIXTURE_DIR" ]]; then
+    echo "self-test: fixture dir missing at $FIXTURE_DIR" >&2
+    exit 2
+  fi
+
+  FAILED=0
+
+  run_case() {
+    local name="$1" expected_exit="$2" fixture="$3"
+    if [[ ! -f "$fixture" ]]; then
+      echo "FAIL  $name (fixture missing: $fixture)"
+      FAILED=$((FAILED+1))
+      return
+    fi
+    local exit_code=0
+    PRE_STOP_VERIFIER_FIXTURE_PLAN="$fixture" \
+      bash "$SCRIPT" < /dev/null > /dev/null 2>&1 || exit_code=$?
+    if [[ "$exit_code" -eq "$expected_exit" ]]; then
+      echo "PASS  $name (exit $exit_code)"
+    else
+      echo "FAIL  $name (expected exit $expected_exit, got $exit_code)"
+      FAILED=$((FAILED+1))
+    fi
+  }
+
+  # The "missing" fixture declares an artifact that does not exist → BLOCK (1).
+  run_case "completed-artifact-missing-blocks"  1 "$FIXTURE_DIR/fixture-plan-completed-artifact-missing.md"
+  # The "present" fixture's artifact resolves and matches → ALLOW (0).
+  run_case "completed-artifact-present-allows"  0 "$FIXTURE_DIR/fixture-plan-completed-artifact-present.md"
+  # The "no section" fixture lacks `## DoD Artifacts` → A2 is a no-op → ALLOW (0).
+  run_case "completed-no-artifacts-section-allows" 0 "$FIXTURE_DIR/fixture-plan-no-artifacts-section.md"
+
+  echo ""
+  if [[ "$FAILED" -gt 0 ]]; then
+    echo "Result: FAIL ($FAILED failed)"
+    exit 1
+  fi
+  echo "Result: PASS (3/3)"
+  exit 0
+fi
+
 # Plan directories: look in both the top-level docs/plans/ and any
 # subproject's docs/plans/. Previously this hook hardcoded
 # PLAN_DIR="docs/plans" which silently no-op'd for any project whose
@@ -113,42 +180,51 @@ if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/n
   fi
 fi
 
-if [[ ${#PLAN_DIRS[@]} -eq 0 ]]; then
+# Self-test override: allow `--self-test` (above) to point this hook at a
+# specific plan file, bypassing normal plan-directory discovery. Production
+# invocations never set this env var.
+if [[ -n "${PRE_STOP_VERIFIER_FIXTURE_PLAN:-}" ]]; then
+  if [[ ! -f "$PRE_STOP_VERIFIER_FIXTURE_PLAN" ]]; then
+    echo "PRE_STOP_VERIFIER_FIXTURE_PLAN points at non-existent file: $PRE_STOP_VERIFIER_FIXTURE_PLAN" >&2
+    exit 2
+  fi
+  LATEST_PLAN="$PRE_STOP_VERIFIER_FIXTURE_PLAN"
+elif [[ ${#PLAN_DIRS[@]} -eq 0 ]]; then
   exit 0
-fi
-
-# Find the most recently modified plan across all discovered dirs
-LATEST_PLAN=""
-LATEST_MTIME=0
-for dir in "${PLAN_DIRS[@]}"; do
-  for f in "$dir"/*.md; do
-    [[ -f "$f" ]] || continue
-    # Skip evidence files
-    [[ "$f" == *-evidence.md ]] && continue
-    mtime=$(stat -c %Y "$f" 2>/dev/null || echo 0)
-    if [[ "$mtime" -gt "$LATEST_MTIME" ]]; then
-      LATEST_MTIME="$mtime"
-      LATEST_PLAN="$f"
-    fi
+else
+  # Find the most recently modified plan across all discovered dirs
+  LATEST_PLAN=""
+  LATEST_MTIME=0
+  for dir in "${PLAN_DIRS[@]}"; do
+    for f in "$dir"/*.md; do
+      [[ -f "$f" ]] || continue
+      # Skip evidence files
+      [[ "$f" == *-evidence.md ]] && continue
+      mtime=$(stat -c %Y "$f" 2>/dev/null || echo 0)
+      if [[ "$mtime" -gt "$LATEST_MTIME" ]]; then
+        LATEST_MTIME="$mtime"
+        LATEST_PLAN="$f"
+      fi
+    done
   done
-done
 
-if [[ -z "$LATEST_PLAN" ]]; then
-  exit 0
-fi
+  if [[ -z "$LATEST_PLAN" ]]; then
+    exit 0
+  fi
 
-# Prefer any ACTIVE plan over the most-recently-modified one. An active
-# plan in a subproject should win over a completed plan in the top level.
-for dir in "${PLAN_DIRS[@]}"; do
-  for f in "$dir"/*.md; do
-    [[ -f "$f" ]] || continue
-    [[ "$f" == *-evidence.md ]] && continue
-    if grep -qiE '^Status:\s*ACTIVE' "$f" 2>/dev/null; then
-      LATEST_PLAN="$f"
-      break 2
-    fi
+  # Prefer any ACTIVE plan over the most-recently-modified one. An active
+  # plan in a subproject should win over a completed plan in the top level.
+  for dir in "${PLAN_DIRS[@]}"; do
+    for f in "$dir"/*.md; do
+      [[ -f "$f" ]] || continue
+      [[ "$f" == *-evidence.md ]] && continue
+      if grep -qiE '^Status:\s*ACTIVE' "$f" 2>/dev/null; then
+        LATEST_PLAN="$f"
+        break 2
+      fi
+    done
   done
-done
+fi
 
 # Companion evidence file (new location for evidence blocks)
 # Falls back gracefully — if it doesn't exist, checks below look at the plan file instead
@@ -539,11 +615,11 @@ if [[ "$IS_COMPLETED" -eq 1 ]]; then
   ' "$LATEST_PLAN" 2>/dev/null)
 
   if [[ -n "$DOD_SECTION" ]]; then
-    DOD_UNCHECKED=$(echo "$DOD_SECTION" | grep -c '^- \[ \]' 2>/dev/null || echo "0")
+    DOD_UNCHECKED=$(echo "$DOD_SECTION" | LC_ALL=C grep -cE '^- \[ \]' 2>/dev/null || echo "0")
     DOD_UNCHECKED=$(echo "$DOD_UNCHECKED" | tr -d '[:space:]')
 
     if [[ "$DOD_UNCHECKED" -gt 0 ]]; then
-      DOD_LIST=$(echo "$DOD_SECTION" | grep '^- \[ \]' | head -10 | sed 's/^/    /')
+      DOD_LIST=$(echo "$DOD_SECTION" | LC_ALL=C grep -E '^- \[ \]' | head -10 | sed 's/^/    /')
       BLOCKER_MSG="Plan has Status: COMPLETED but its own ## Definition of Done section has $DOD_UNCHECKED unchecked items in $LATEST_PLAN. The DoD bullets are commitments the plan author made before claiming completion — they are not optional. Either (a) actually satisfy the DoD items and check them off, (b) set Status: ACTIVE to keep working, (c) set Status: PARTIAL with an explicit list of what's deferred, or (d) move accepted-as-out-of-scope DoD items to a ## Out-of-scope section."
       echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
       echo "" >&2
@@ -554,6 +630,188 @@ if [[ "$IS_COMPLETED" -eq 1 ]]; then
       echo "" >&2
       echo "Unchecked Definition-of-Done items:" >&2
       echo "$DOD_LIST" >&2
+      echo "" >&2
+      exit 1
+    fi
+  fi
+
+  # ============================================================
+  # Check 5 / A2 extension: artifact-presence DoD check
+  # (added 2026-04-26 — see docs/plans/adversarial-validation-mechanisms.md A2)
+  # ============================================================
+  #
+  # Plans may OPTIONALLY declare a `## DoD Artifacts` section that ties each
+  # `## Definition of Done` bullet to a concrete artifact on disk. The base
+  # M1 check (above) ensures the checkbox is `[x]`; this A2 extension
+  # ensures the artifact actually exists with the declared content.
+  #
+  # Marking `[x]` doesn't satisfy the gate — the artifact does or doesn't
+  # exist on disk. This raises the cost of fabrication above the cost of
+  # actually doing the work for any DoD bullet that has a runtime-shaped
+  # artifact requirement.
+  #
+  # Schema (parseable Markdown). Each spec is a `### bullet:` block with
+  # bullet-list fields:
+  #
+  #   ### bullet: <substring of a DoD checkbox>
+  #   - artifact: <path, optionally containing `<runId>` glob placeholder>
+  #   - requires_field: <JSON field name>           (paired with requires_value)
+  #   - requires_value: <expected value>            (paired with requires_field)
+  #   - requires_pattern: <ERE regex matched in file content>
+  #   - requires_min_length: <integer min file size in bytes>
+  #
+  # A spec may declare any one of: (requires_field+requires_value),
+  # requires_pattern, or requires_min_length. Multiple may be declared for
+  # the same artifact and ALL must hold.
+  #
+  # Path resolution: paths are resolved relative to (a) the plan file's
+  # directory first, then (b) the current working directory if not found
+  # under (a). The `<runId>` placeholder is glob-expanded — any directory
+  # name matches. The first matching path that exists wins.
+  #
+  # No-op when:
+  #   - The plan has no `## DoD Artifacts` section
+  #   - The plan's `## DoD Artifacts` section is empty / placeholder-only
+
+  DOD_ARTIFACTS_SECTION=$(awk '
+    /^## DoD Artifacts[[:space:]]*$/ { in_da=1; next }
+    in_da && /^## / { in_da=0 }
+    in_da { print }
+  ' "$LATEST_PLAN" 2>/dev/null)
+
+  if [[ -n "$DOD_ARTIFACTS_SECTION" ]] && \
+     echo "$DOD_ARTIFACTS_SECTION" | LC_ALL=C grep -qE '^### bullet:' 2>/dev/null; then
+
+    # Re-extract the (possibly-already-extracted) DoD section since we may
+    # have skipped that branch when DOD_UNCHECKED was 0.
+    if [[ -z "$DOD_SECTION" ]]; then
+      DOD_SECTION=$(awk '
+        /^## Definition of Done[[:space:]]*$/ { in_dod=1; next }
+        in_dod && /^## / { in_dod=0 }
+        in_dod { print }
+      ' "$LATEST_PLAN" 2>/dev/null)
+    fi
+
+    PLAN_DIR_OF_FILE=$(dirname "$LATEST_PLAN")
+    DOD_ARTIFACT_FAILURES=""
+    DOD_ARTIFACT_FAIL_COUNT=0
+
+    # Parse specs by splitting on "### bullet:" headings. Use awk to emit
+    # each spec as a NUL-separated record.
+    while IFS= read -r -d '' SPEC; do
+      [[ -z "$SPEC" ]] && continue
+
+      SPEC_BULLET=$(echo "$SPEC" | head -1 | sed 's/^### bullet:[[:space:]]*//' | sed 's/[[:space:]]*$//')
+      [[ -z "$SPEC_BULLET" ]] && continue
+
+      SPEC_ARTIFACT=$(echo "$SPEC" | LC_ALL=C grep -E '^- artifact:' | head -1 | sed 's/^- artifact:[[:space:]]*//' | sed 's/[[:space:]]*$//')
+      SPEC_FIELD=$(echo "$SPEC" | LC_ALL=C grep -E '^- requires_field:' | head -1 | sed 's/^- requires_field:[[:space:]]*//' | sed 's/[[:space:]]*$//')
+      SPEC_VALUE=$(echo "$SPEC" | LC_ALL=C grep -E '^- requires_value:' | head -1 | sed 's/^- requires_value:[[:space:]]*//' | sed 's/[[:space:]]*$//')
+      SPEC_PATTERN=$(echo "$SPEC" | LC_ALL=C grep -E '^- requires_pattern:' | head -1 | sed 's/^- requires_pattern:[[:space:]]*//' | sed 's/^"\(.*\)"$/\1/' | sed 's/[[:space:]]*$//')
+      SPEC_MIN_LEN=$(echo "$SPEC" | LC_ALL=C grep -E '^- requires_min_length:' | head -1 | sed 's/^- requires_min_length:[[:space:]]*//' | sed 's/[[:space:]]*$//')
+
+      if [[ -z "$SPEC_ARTIFACT" ]]; then
+        DOD_ARTIFACT_FAILURES+="    - bullet '${SPEC_BULLET}': missing 'artifact:' field"$'\n'
+        DOD_ARTIFACT_FAIL_COUNT=$((DOD_ARTIFACT_FAIL_COUNT + 1))
+        continue
+      fi
+
+      # Confirm the matching DoD checkbox exists. If not, that's a spec
+      # error: the plan author declared an artifact for a bullet that
+      # doesn't appear in `## Definition of Done`.
+      if [[ -n "$DOD_SECTION" ]] && ! echo "$DOD_SECTION" | LC_ALL=C grep -qF "$SPEC_BULLET" 2>/dev/null; then
+        DOD_ARTIFACT_FAILURES+="    - bullet '${SPEC_BULLET}': no matching line in ## Definition of Done section"$'\n'
+        DOD_ARTIFACT_FAIL_COUNT=$((DOD_ARTIFACT_FAIL_COUNT + 1))
+        continue
+      fi
+
+      # Resolve path. If the artifact contains `<runId>`, glob-expand it.
+      # We try plan-dir-relative first, then cwd-relative.
+      RESOLVED_PATH=""
+      for BASE in "$PLAN_DIR_OF_FILE" "."; do
+        CANDIDATE="${BASE}/${SPEC_ARTIFACT}"
+        if [[ "$CANDIDATE" == *"<runId>"* ]]; then
+          # Replace `<runId>` with a glob `*` and let the shell expand.
+          GLOB_PATTERN="${CANDIDATE//<runId>/*}"
+          for MATCH in $GLOB_PATTERN; do
+            if [[ -f "$MATCH" ]]; then
+              RESOLVED_PATH="$MATCH"
+              break
+            fi
+          done
+        elif [[ -f "$CANDIDATE" ]]; then
+          RESOLVED_PATH="$CANDIDATE"
+        fi
+        [[ -n "$RESOLVED_PATH" ]] && break
+      done
+
+      if [[ -z "$RESOLVED_PATH" ]]; then
+        DOD_ARTIFACT_FAILURES+="    - bullet '${SPEC_BULLET}': artifact not found at '${SPEC_ARTIFACT}' (looked under ${PLAN_DIR_OF_FILE}/ and ./)"$'\n'
+        DOD_ARTIFACT_FAIL_COUNT=$((DOD_ARTIFACT_FAIL_COUNT + 1))
+        continue
+      fi
+
+      # Run requires_* checks. Each that's declared must hold.
+      SPEC_OK=1
+      SPEC_REASON=""
+
+      if [[ -n "$SPEC_FIELD" || -n "$SPEC_VALUE" ]]; then
+        if [[ -z "$SPEC_FIELD" || -z "$SPEC_VALUE" ]]; then
+          SPEC_OK=0
+          SPEC_REASON="requires_field and requires_value must both be set (got field='${SPEC_FIELD}', value='${SPEC_VALUE}')"
+        else
+          # Try jq if available, else fall back to a grep-based check.
+          if command -v jq >/dev/null 2>&1; then
+            ACTUAL=$(jq -r --arg f "$SPEC_FIELD" '.[$f] // empty' "$RESOLVED_PATH" 2>/dev/null || echo "")
+          else
+            # Fallback: look for `"field": "value"` literal (handles JSON
+            # files with simple key/value pairs).
+            ACTUAL=$(LC_ALL=C grep -oE "\"${SPEC_FIELD}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$RESOLVED_PATH" 2>/dev/null | head -1 | sed -E "s/^\"${SPEC_FIELD}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/")
+          fi
+          if [[ "$ACTUAL" != "$SPEC_VALUE" ]]; then
+            SPEC_OK=0
+            SPEC_REASON="field '${SPEC_FIELD}' = '${ACTUAL:-<missing>}', expected '${SPEC_VALUE}'"
+          fi
+        fi
+      fi
+
+      if [[ "$SPEC_OK" -eq 1 && -n "$SPEC_PATTERN" ]]; then
+        if ! LC_ALL=C grep -qE "$SPEC_PATTERN" "$RESOLVED_PATH" 2>/dev/null; then
+          SPEC_OK=0
+          SPEC_REASON="content does not match pattern: ${SPEC_PATTERN}"
+        fi
+      fi
+
+      if [[ "$SPEC_OK" -eq 1 && -n "$SPEC_MIN_LEN" ]]; then
+        ACTUAL_LEN=$(wc -c < "$RESOLVED_PATH" 2>/dev/null | tr -d '[:space:]')
+        ACTUAL_LEN="${ACTUAL_LEN:-0}"
+        if [[ "$ACTUAL_LEN" -lt "$SPEC_MIN_LEN" ]]; then
+          SPEC_OK=0
+          SPEC_REASON="content size ${ACTUAL_LEN} < required min ${SPEC_MIN_LEN}"
+        fi
+      fi
+
+      if [[ "$SPEC_OK" -eq 0 ]]; then
+        DOD_ARTIFACT_FAILURES+="    - bullet '${SPEC_BULLET}' (artifact ${RESOLVED_PATH}): ${SPEC_REASON}"$'\n'
+        DOD_ARTIFACT_FAIL_COUNT=$((DOD_ARTIFACT_FAIL_COUNT + 1))
+      fi
+    done < <(awk '
+      /^### bullet:/ { if (NR>1 && have) printf "%c", 0; have=1 }
+      have { print }
+      END { if (have) printf "%c", 0 }
+    ' <<< "$DOD_ARTIFACTS_SECTION")
+
+    if [[ "$DOD_ARTIFACT_FAIL_COUNT" -gt 0 ]]; then
+      BLOCKER_MSG="Plan has Status: COMPLETED but $DOD_ARTIFACT_FAIL_COUNT declared DoD artifact spec(s) in $LATEST_PLAN failed verification. Marking ## Definition of Done bullets as [x] is not sufficient — the artifact files declared under ## DoD Artifacts must exist and match the requires_* conditions. Either (a) produce the missing artifacts by actually running the work, (b) set Status: ACTIVE to continue, (c) remove the artifact spec if the bullet was reframed, or (d) revise the requires_* conditions if they no longer reflect what success looks like."
+      echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
+      echo "" >&2
+      echo "================================================================" >&2
+      echo "PRE-STOP VERIFIER: SESSION BLOCKED (Check 5 / A2 — DoD artifact-presence gate)" >&2
+      echo "================================================================" >&2
+      echo "$BLOCKER_MSG" >&2
+      echo "" >&2
+      echo "Failing artifact specs:" >&2
+      echo -n "$DOD_ARTIFACT_FAILURES" >&2
       echo "" >&2
       exit 1
     fi

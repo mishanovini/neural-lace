@@ -1,0 +1,6 @@
+{
+  "verdict": "CONVERGED",
+  "commit_sha": "abc123def456",
+  "iterations": 3,
+  "notes": "Self-test fixture — synthetic CONVERGENCE.json"
+}
