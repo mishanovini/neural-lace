@@ -500,6 +500,67 @@ if [[ -n "$RUNTIME_TASKS" ]] && [[ -n "$EVIDENCE_SECTION" ]]; then
 fi
 
 # ============================================================
+# Check 5 (M1 — Definition-of-Done gate, added 2026-04-26)
+# ============================================================
+#
+# A plan may declare its own ## Definition of Done section listing
+# acceptance bullets that are NOT individual tasks but ARE conditions
+# the plan author committed to before claiming completion. Examples:
+#   - "Loop converges on current master"
+#   - "Human sign-off on 2 random contacts"
+#   - "User reviews the apparatus end-to-end and confirms"
+# These are real commitments — not just task checkboxes — and historically
+# nothing prevented an agent from flipping Status: COMPLETED while DoD
+# checkboxes remained unchecked.
+#
+# This check fires ONLY when the plan declares Status: COMPLETED. It
+# parses ONLY the lines under "## Definition of Done" up to the next
+# ## heading, looking for unchecked "- [ ]" markers. If any are found,
+# the session is blocked with a remediation message.
+#
+# Rationale: the gap that caused the 2026-04-26 incident where
+# flickering-marinating-pine.md was marked COMPLETED while its own DoD
+# said "Loop converges on current master" was unchecked. The agent had
+# the cognitive dissonance ("I wrote 'deferred to user' three times")
+# but no mechanism stopped the Status flip. This is that mechanism.
+#
+# The check is plan-author-controlled in two senses:
+#  - If a plan has no ## Definition of Done section, this check is a no-op
+#  - If the author wants to mark a DoD item as accepted-but-not-met, they
+#    can move it to a "## Out-of-scope" section or strike it through
+
+if [[ "$IS_COMPLETED" -eq 1 ]]; then
+  # Extract DoD section: from "## Definition of Done" line, up to (but not
+  # including) the next "## " heading or end-of-file
+  DOD_SECTION=$(awk '
+    /^## Definition of Done[[:space:]]*$/ { in_dod=1; next }
+    in_dod && /^## / { in_dod=0 }
+    in_dod { print }
+  ' "$LATEST_PLAN" 2>/dev/null)
+
+  if [[ -n "$DOD_SECTION" ]]; then
+    DOD_UNCHECKED=$(echo "$DOD_SECTION" | grep -c '^- \[ \]' 2>/dev/null || echo "0")
+    DOD_UNCHECKED=$(echo "$DOD_UNCHECKED" | tr -d '[:space:]')
+
+    if [[ "$DOD_UNCHECKED" -gt 0 ]]; then
+      DOD_LIST=$(echo "$DOD_SECTION" | grep '^- \[ \]' | head -10 | sed 's/^/    /')
+      BLOCKER_MSG="Plan has Status: COMPLETED but its own ## Definition of Done section has $DOD_UNCHECKED unchecked items in $LATEST_PLAN. The DoD bullets are commitments the plan author made before claiming completion — they are not optional. Either (a) actually satisfy the DoD items and check them off, (b) set Status: ACTIVE to keep working, (c) set Status: PARTIAL with an explicit list of what's deferred, or (d) move accepted-as-out-of-scope DoD items to a ## Out-of-scope section."
+      echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
+      echo "" >&2
+      echo "================================================================" >&2
+      echo "PRE-STOP VERIFIER: SESSION BLOCKED (Check 5 — DoD-completion gate)" >&2
+      echo "================================================================" >&2
+      echo "$BLOCKER_MSG" >&2
+      echo "" >&2
+      echo "Unchecked Definition-of-Done items:" >&2
+      echo "$DOD_LIST" >&2
+      echo "" >&2
+      exit 1
+    fi
+  fi
+fi
+
+# ============================================================
 # All checks passed
 # ============================================================
 
