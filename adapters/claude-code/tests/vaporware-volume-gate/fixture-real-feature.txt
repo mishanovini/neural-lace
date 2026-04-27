@@ -1,0 +1,5 @@
+120	5	src/lib/reservation/conflict-detector.ts
+80	0	src/lib/reservation/conflict-detector.test.ts
+30	0	docs/reservation-flow.md
+50	0	tests/loop-history/reservation-conflict-2026-04-26.log
+15	0	tests/test-results/conflict-detector-junit.xml

@@ -1,0 +1,4 @@
+450	0	docs/plans/adversarial-validation-mechanisms.md
+174	0	.github/workflows/harness-loop.yml
+180	0	docs/harness-architecture.md
+60	0	rules/vaporware-prevention.md

@@ -24,6 +24,7 @@ single biggest hole in the first Gen 4 pass.
 | Session-end plan integrity sweep | `pre-stop-verifier.sh` + `plan-evidence-reviewer` agent | `~/.claude/hooks/pre-stop-verifier.sh` |
 | Tool-call budget forces periodic audit | `tool-call-budget.sh` PreToolUse blocker (every 30 Edit/Write/Bash calls) | `~/.claude/hooks/tool-call-budget.sh` |
 | Product Q&A claims need file:line citations | `claim-reviewer` agent + `verify-feature` skill (self-invoked, residual risk) | `~/.claude/agents/claim-reviewer.md` + `~/.claude/skills/verify-feature.md` |
+| PRs with high docs/config volume but zero execution evidence are blocked | `vaporware-volume-gate.sh` PreToolUse on `gh pr create` (A8 — Gen 6) | `~/.claude/hooks/vaporware-volume-gate.sh` |
 
 **Missing from the enforcement map (explicitly acknowledged as gaps):**
 - `test-quality-reviewer` as a separate agent does NOT exist. The trivial-assertion ban lives inside `pre-commit-tdd-gate.sh` Layer 4. Test quality is not reviewed adversarially outside the gate.
