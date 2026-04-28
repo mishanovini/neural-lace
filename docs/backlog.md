@@ -1,10 +1,51 @@
 # Neural Lace — Harness Backlog
 
-Last updated: 2026-04-24 (added: HARNESS-GAP-01..07 — seven structural gaps surfaced by a downstream plan-staleness sweep triage; HARNESS-GAP-06 expanded with user-supplied refinements 2026-04-24-evening: must NOT block continued progress, needs roadmap-level + plan-level review dashboard, sign-off discipline, roadmap-aware archival. Earlier 2026-04-23: P2 — validate Decision 011 Approach A end-to-end. Earlier 2026-04-24: P1 — concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.)
+Last updated: 2026-04-27 (two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md` per backlog-plan-atomicity rule; the remaining two harness-drift items stay open below. Earlier 2026-04-27: four harness-drift items added — pre-existing drift surfaced during agent-teams conflict analysis. See `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md` for full context. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.)
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
 Strategy context and reasoning for many entries below lives in [`docs/claude-code-quality-strategy.md`](./claude-code-quality-strategy.md).
+
+## Pre-existing harness drift surfaced 2026-04-27 (during agent-teams conflict analysis)
+
+Items found while doing the Phase 1 ground-truth inventory for Agent Teams integration. These are independent of Agent Teams — they are real drift between documented enforcement and actual settings.json wiring or filesystem state. Full evidence in `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Two items (P2-class) were absorbed into `docs/plans/agent-teams-integration.md` on plan creation; the two remaining items below are out of scope for that plan.
+
+### HARNESS-DRIFT-01 — Six Gen-6 hooks not wired in settings.json (P1)
+
+The following hooks exist on disk at `adapters/claude-code/hooks/` but are not referenced from any `settings.json` callsite (in either the adapter copy or the live `~/.claude/settings.json`):
+
+- `goal-extraction-on-prompt.sh` (UserPromptSubmit, A1 mechanism — captures imperative verbs from user's first prompt)
+- `goal-coverage-on-stop.sh` (Stop, A1 mechanism — verifies goal coverage at session end)
+- `imperative-evidence-linker.sh` (A7 mechanism)
+- `transcript-lie-detector.sh` (A3 mechanism — self-contradiction class)
+- `vaporware-volume-gate.sh` (A8 mechanism — blocks PRs with high docs/config volume but zero execution evidence)
+- `automation-mode-gate.sh` (PreToolUse — was supposed to enforce automation-mode policy)
+
+Recent commits (`0be6526`, `fe64587`, `1e6310c`, `fca7e52`, `d639aae`) reference these as "shipped" but they're inert until wired. Likely cause: the hooks were authored and committed but the corresponding edits to `adapters/claude-code/settings.json` were never made or were reverted.
+
+**Fix path:** audit each hook against its design doc (likely `docs/plans/adversarial-validation-mechanisms.md`), confirm the intended event + matcher, and wire them into the adapter `settings.json`. Sync via `install.sh` to `~/.claude/settings.json`. Verify each by triggering the relevant condition in a fresh test session.
+
+### HARNESS-DRIFT-02 — SessionStart account-switching hook is hardcoded against a literal directory substring (P1)
+
+The deployed SessionStart hook at `adapters/claude-code/settings.json:273-279` reads (paraphrased — actual identifiers redacted from this backlog per harness hygiene; see live `~/.claude/settings.json` for verbatim form):
+
+```bash
+if echo "$PWD" | grep -q '<work-org-substring>'; then
+  gh auth switch --user <work-username> 2>/dev/null
+  ...
+else
+  gh auth switch --user <personal-username> 2>/dev/null
+  ...
+fi
+```
+
+This is drift from the documented contract. Per `docs/harness-architecture.md:81` and `examples/accounts.config.example.json`, the hook is supposed to read account `dir_triggers` from `~/.claude/local/accounts.config.json`. The hardcoded substring is brittle:
+
+- A working directory not containing the literal hardcoded substring falls into `else` (personal account) — including any worktree, clone, or fork under a different parent path.
+- The push-time variant at `settings.json:178` mirrors the same hardcoded substring against the remote URL.
+- Adding new accounts to the user's setup is silently ignored (not in the conditional).
+
+**Fix path:** replace the inline hook body with a call to `~/.claude/scripts/read-local-config.sh accounts` (script already exists in the harness) and pattern-match the result against `$PWD`. The schema and example already exist; only the hook body needs rewriting.
 
 ## Known gaps in current enforcement (from strategy doc, 2026-04-22)
 

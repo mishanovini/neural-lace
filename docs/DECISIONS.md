@@ -19,3 +19,4 @@ commit (enforced by `adapters/claude-code/hooks/decisions-index-gate.sh`).
 | 009 | [Do not change repo squash-merge commit-message setting](decisions/009-capture-codify-squash-merge-body.md) | 2026-04-23 | Implemented |
 | 010 | [Validator library lives at `.github/scripts/` (not `adapters/claude-code/`)](decisions/010-capture-codify-validator-library-location.md) | 2026-04-23 | Implemented |
 | 011 | [Claude `--remote` harness portability — Approach A (commit harness into project) + Routines + DevContainers, Dispatch out of scope](decisions/011-claude-remote-harness-approach.md) | 2026-04-23 | Implemented |
+| 012 | [Agent Teams integration — six design decisions](decisions/012-agent-teams-integration.md) | 2026-04-27 | Active |
