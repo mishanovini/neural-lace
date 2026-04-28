@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-lace.dev/schemas/agent-teams.config.v1.json",
+  "title": "Agent Teams Config (v1)",
+  "description": "Feature-flag config for the experimental Anthropic Agent Teams integration (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS). Lives at ~/.claude/local/agent-teams.config.json (never committed). Honored by teammate-spawn-validator, tool-call-budget (team-aware mode), and product-acceptance-gate. Disabled by default — flip enabled to true after reading rules/agent-teams.md and accepting the upstream-bug surface. See docs/decisions/012-agent-teams-integration.md for the design rationale of each field.",
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently always 1."
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Top-level kill-switch for the Agent Teams integration. When false (default), teammate-spawn-validator rejects every Agent tool spawn that carries a team_name parameter, so Agent Teams is effectively off even if CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 is set. Flip to true only after reading rules/agent-teams.md and accepting the documented upstream-bug surface (#50779, #24175, #24073, #24307, #45329). See Decision 012 sub-section 6 (Feature flag for safe rollout) in docs/decisions/012-agent-teams-integration.md."
+    },
+    "force_in_process": {
+      "type": "boolean",
+      "default": true,
+      "description": "When true (default), teammate-spawn-validator requires teammateMode: in-process and rejects pane-based spawns. Pane-based teammates silently drop SubagentStart/Stop/TeammateIdle/TaskCompleted at the parent process on macOS+tmux per Anthropic issue #24175, breaking plan-integrity, acceptance-gate, and SubagentStop verification. In-process gives reliable hook firing at the cost of caps on parallelism. Reliability is the load-bearing property. Flip to false per machine once #24175 is resolved upstream. See Decision 012 sub-section 2 (teammateMode default)."
+    },
+    "worktree_mandatory_for_write": {
+      "type": "boolean",
+      "default": true,
+      "description": "When true (default), teammate-spawn-validator rejects any Agent spawn that grants write-capable tools (Edit/Write/MultiEdit/Bash) without isolation: \"worktree\". Without worktree isolation, multiple teammates editing the same working tree race at the filesystem level — two simultaneous git commits on the same working directory corrupt index state. Worktree-mandatory turns this from a runtime race into a spawn-time rejection. Read-only teammates do not need worktrees and are unaffected. See Decision 012 sub-section 3 (Worktree-mandatory for write-capable teammates)."
+    },
+    "per_team_budget": {
+      "type": "boolean",
+      "default": true,
+      "description": "When true (default), tool-call-budget keys its counter by team_name resolved from the firing session's membership in ~/.claude/teams/<team>/config.json, falling back to per-session for solo sessions. When false, the budget reverts to per-CLAUDE_SESSION_ID keying — five teammates each accumulate 30 calls before any audit fires, six times the calibrated cadence. The team is the natural unit of cumulative work; multiplying the budget by N teammates breaks the gate's drift-detection property. See Decision 012 sub-section 1 (Tool-call budget scope + audit cadence)."
+    }
+  }
+}

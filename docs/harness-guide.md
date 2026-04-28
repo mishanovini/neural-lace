@@ -113,6 +113,53 @@ To trigger the prompt again, delete `~/.claude/local/automation-mode.json` and s
 
 ---
 
+## Agent Teams configuration (`agent-teams.config.json`)
+
+Anthropic's experimental Agent Teams feature (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, requires Claude Code v2.1.32+) lets a "lead" session spawn long-lived "teammate" sessions via the `Agent` tool. The Neural Lace harness ships an opt-in integration that keeps every hook-enforced quality gate firing correctly across teammate sessions; the integration is off by default and must be explicitly enabled.
+
+You only need this config when you want to enable the Agent Teams integration. Solo sessions and orchestrator-pattern dispatches are unaffected by its presence or absence.
+
+### Where the config lives
+
+`~/.claude/local/agent-teams.config.json` — never committed, per-machine. The file is read by the teammate-spawn-validator hook, the team-aware mode of `tool-call-budget.sh`, and the multi-worktree artifact discovery in `product-acceptance-gate.sh`.
+
+If the file does not exist, every field falls back to its safe default. The integration is effectively off in that case.
+
+### Fields
+
+| Field | Type | Default | Purpose |
+|---|---|---|---|
+| `version` | integer | `1` | Schema version. Currently always 1. |
+| `enabled` | boolean | `false` | Top-level kill-switch. When false, `teammate-spawn-validator` rejects every `Agent` tool spawn that carries a `team_name`. The integration is off until you flip this to true. (Decision 012 §6.) |
+| `force_in_process` | boolean | `true` | Requires `teammateMode: in-process` on every spawn. Pane-based teammates silently drop parent-visible events on macOS+tmux per Anthropic issue #24175, breaking plan-integrity verification. (Decision 012 §2.) |
+| `worktree_mandatory_for_write` | boolean | `true` | Write-capable teammates (Edit/Write/MultiEdit/Bash) must spawn with `isolation: "worktree"`. Without worktrees, concurrent teammates race on the working tree's filesystem state. Read-only teammates are unaffected. (Decision 012 §3.) |
+| `per_team_budget` | boolean | `true` | The tool-call budget counter is keyed by `team_name` (resolved from team membership in `~/.claude/teams/<team>/config.json`) instead of `CLAUDE_SESSION_ID`. Without this, five teammates each accumulate 30 calls before any audit fires — six times the calibrated cadence. (Decision 012 §1.) |
+
+### How to enable
+
+The recommended workflow:
+
+1. Read `~/.claude/rules/agent-teams.md` — covers the five upstream Anthropic bugs you're opting into, the Spawn-Before-Delegate workaround, and the in-process vs pane-based tradeoffs.
+2. Copy the example to your local config:
+   ```bash
+   mkdir -p ~/.claude/local
+   cp adapters/claude-code/examples/agent-teams.config.example.json ~/.claude/local/agent-teams.config.json
+   ```
+3. Edit `~/.claude/local/agent-teams.config.json` and flip `"enabled": true`. Leave the other three fields at their defaults until you have a specific reason to change them.
+4. Set the env flag in your shell or `settings.json`: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`.
+5. Spawn teammates via the `Agent` tool with a `team_name` and `isolation: "worktree"` (for write-capable teammates).
+
+Disable any time by flipping `"enabled": false` — no further cleanup required.
+
+### Cross-reference
+
+- Schema: `adapters/claude-code/schemas/agent-teams.config.schema.json`
+- Example: `adapters/claude-code/examples/agent-teams.config.example.json`
+- Decision record: [`docs/decisions/012-agent-teams-integration.md`](decisions/012-agent-teams-integration.md)
+- Full enable workflow + upstream-bug surface: `adapters/claude-code/rules/agent-teams.md` (lands with Task 11 of the integration plan)
+
+---
+
 ## File Map
 
 ### Global Files (in this repo, symlinked to `~/.claude/`)

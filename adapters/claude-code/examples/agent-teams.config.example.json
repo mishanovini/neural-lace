@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "enabled": false,
+  "force_in_process": true,
+  "worktree_mandatory_for_write": true,
+  "per_team_budget": true
+}
