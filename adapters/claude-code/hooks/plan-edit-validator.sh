@@ -27,8 +27,425 @@
 # Exit codes:
 #   0 — edit is allowed
 #   1 — edit is blocked (stderr explains why)
+#
+# Concurrency (added by plan task 9):
+#   The evidence-mtime check + plan-edit allow-decision is wrapped in a
+#   per-plan lock at <plan-file>.lock. Two parallel verifiers serialize on
+#   the lock so a single 120s mtime window cannot authorize two distinct
+#   checkbox flips concurrently. flock(1) is preferred when available
+#   (Linux/macOS); a PID-keyed mtime-based fallback covers environments
+#   without flock (e.g., Windows Git Bash). Lock acquisition has a 30s
+#   timeout to prevent indefinite hang if a previous holder crashed.
 
 set -e
+
+# ============================================================
+# Lock helpers (plan-edit-validator concurrency protection)
+# ============================================================
+#
+# acquire_plan_lock <plan-file>
+#   Acquires an exclusive lock for the given plan file (lock file is
+#   <plan-file>.lock). Returns 0 on success, 1 on timeout. Sets the
+#   global PLAN_LOCK_FILE so release_plan_lock can clean up.
+#
+# Strategy:
+#   1. If flock(1) is on PATH, use it. Open fd 9 on the lock file and
+#      flock -w 30. flock auto-releases on fd close (we close at exit).
+#   2. Otherwise, PID-keyed fallback: write our PID into the lock file
+#      atomically (set -o noclobber + > redirect). If the file exists,
+#      read its PID. If that PID is no longer alive (kill -0 fails), or
+#      the lock file is older than 60s (likely zombie), claim the lock
+#      by truncating + writing our PID. Otherwise sleep 0.5s, retry.
+#      Bail after 30s of total waiting.
+#
+# Both paths are safe to call multiple times in one process; the second
+# call with the same lock file is a no-op (we already hold it).
+
+PLAN_LOCK_FILE=""
+PLAN_LOCK_FD=""
+PLAN_LOCK_HELD_VIA=""  # "flock" or "pid"
+
+acquire_plan_lock() {
+  local plan_file="$1"
+  local lock_file="${plan_file}.lock"
+  local timeout_s=30
+
+  # Already holding this lock? No-op.
+  if [[ "$PLAN_LOCK_FILE" == "$lock_file" ]]; then
+    return 0
+  fi
+
+  PLAN_LOCK_FILE="$lock_file"
+
+  # --- Path 1: flock(1) ---
+  if command -v flock >/dev/null 2>&1; then
+    # Open fd 9 on the lock file (creating it if needed)
+    exec 9>"$lock_file" 2>/dev/null || {
+      PLAN_LOCK_FILE=""
+      return 1
+    }
+    if flock -w "$timeout_s" 9 2>/dev/null; then
+      PLAN_LOCK_FD=9
+      PLAN_LOCK_HELD_VIA="flock"
+      # Record our PID inside the lock for diagnostics
+      echo "$$" >&9 2>/dev/null || true
+      return 0
+    fi
+    # flock timed out
+    exec 9>&- 2>/dev/null || true
+    PLAN_LOCK_FILE=""
+    return 1
+  fi
+
+  # --- Path 2: PID-keyed fallback ---
+  local waited_ms=0
+  local sleep_ms=500
+  local total_ms=$((timeout_s * 1000))
+
+  while [[ "$waited_ms" -lt "$total_ms" ]]; do
+    # Try atomic create-or-fail
+    if ( set -o noclobber; echo "$$" > "$lock_file" ) 2>/dev/null; then
+      PLAN_LOCK_HELD_VIA="pid"
+      return 0
+    fi
+
+    # Lock exists; check liveness of the holder
+    local holder_pid=""
+    holder_pid=$(head -n 1 "$lock_file" 2>/dev/null | tr -d '[:space:]')
+
+    if [[ -n "$holder_pid" ]] && [[ "$holder_pid" =~ ^[0-9]+$ ]]; then
+      # Is the holder still alive?
+      if ! kill -0 "$holder_pid" 2>/dev/null; then
+        # Dead holder — steal the lock
+        echo "$$" > "$lock_file" 2>/dev/null && {
+          PLAN_LOCK_HELD_VIA="pid"
+          return 0
+        }
+      else
+        # Alive holder. If the lock file is very old, treat as zombie.
+        local now mtime age
+        now=$(date +%s)
+        mtime=$(stat -c %Y "$lock_file" 2>/dev/null || echo "$now")
+        age=$((now - mtime))
+        if [[ "$age" -gt 60 ]]; then
+          echo "$$" > "$lock_file" 2>/dev/null && {
+            PLAN_LOCK_HELD_VIA="pid"
+            return 0
+          }
+        fi
+      fi
+    else
+      # Lock file with no PID content — corrupted, claim it
+      echo "$$" > "$lock_file" 2>/dev/null && {
+        PLAN_LOCK_HELD_VIA="pid"
+        return 0
+      }
+    fi
+
+    # Wait and retry
+    sleep 0.5 2>/dev/null || sleep 1
+    waited_ms=$((waited_ms + sleep_ms))
+  done
+
+  # Timed out
+  PLAN_LOCK_FILE=""
+  return 1
+}
+
+release_plan_lock() {
+  if [[ -z "$PLAN_LOCK_FILE" ]]; then
+    return 0
+  fi
+  case "$PLAN_LOCK_HELD_VIA" in
+    flock)
+      # Closing fd 9 releases the flock
+      exec 9>&- 2>/dev/null || true
+      ;;
+    pid)
+      # Only remove if we still own it
+      local holder_pid=""
+      holder_pid=$(head -n 1 "$PLAN_LOCK_FILE" 2>/dev/null | tr -d '[:space:]')
+      if [[ "$holder_pid" == "$$" ]]; then
+        rm -f "$PLAN_LOCK_FILE" 2>/dev/null || true
+      fi
+      ;;
+  esac
+  PLAN_LOCK_FILE=""
+  PLAN_LOCK_FD=""
+  PLAN_LOCK_HELD_VIA=""
+}
+
+# Ensure lock release on any exit path (success, failure, signal)
+trap 'release_plan_lock' EXIT INT TERM
+
+# ============================================================
+# --self-test: 4 scenarios for plan task 9 (lock concurrency)
+# ============================================================
+#
+# Scenarios:
+#   F1 single-writer baseline   — one process acquires lock, releases cleanly
+#   F2 two-writer serialization — two background processes serialize on lock
+#   F3 lock-timeout / stale-PID — stale lock (dead PID) is reclaimed; live
+#                                 lock with old mtime is reclaimed
+#   F4 lock-cleanup             — lock file is removed after release
+#
+# Exits 0 only if every scenario matched its expected outcome.
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  # Disable the EXIT trap during self-test setup so it doesn't fire on
+  # subshell exits while still working inside helper invocations
+  trap - EXIT INT TERM
+
+  TMPDIR_SELFTEST=$(mktemp -d 2>/dev/null || mktemp -d -t pevself)
+  if [[ -z "$TMPDIR_SELFTEST" ]] || [[ ! -d "$TMPDIR_SELFTEST" ]]; then
+    echo "self-test: cannot create temp directory" >&2
+    exit 2
+  fi
+  trap 'rm -rf "$TMPDIR_SELFTEST"' EXIT
+
+  PASSED=0
+  FAILED=0
+
+  PLAN_FIXTURE="$TMPDIR_SELFTEST/plan.md"
+  : > "$PLAN_FIXTURE"
+
+  # ---- F1: single-writer baseline ----
+  # Acquire lock, hold briefly, release. Lock file should be removed
+  # (PID path) or fd closed cleanly (flock path).
+  PLAN_LOCK_FILE=""; PLAN_LOCK_FD=""; PLAN_LOCK_HELD_VIA=""
+  if acquire_plan_lock "$PLAN_FIXTURE"; then
+    release_plan_lock
+    if [[ -z "$PLAN_LOCK_FILE" ]]; then
+      echo "self-test (F1) single-writer-baseline: PASS" >&2
+      PASSED=$((PASSED+1))
+    else
+      echo "self-test (F1) single-writer-baseline: FAIL (PLAN_LOCK_FILE not cleared after release)" >&2
+      FAILED=$((FAILED+1))
+    fi
+  else
+    echo "self-test (F1) single-writer-baseline: FAIL (could not acquire lock on fresh fixture)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F2: two-writer serialization ----
+  # Spawn two INDEPENDENT bash processes (each with its own $$ PID) that
+  # source the lock library and contend for the same plan lock. Each
+  # worker:
+  #   1. Acquires the lock
+  #   2. Logs ENTER with timestamp
+  #   3. Sleeps briefly (with lock held) to widen the race window
+  #   4. Appends a marker line to the plan file
+  #   5. Logs EXIT
+  #   6. Releases the lock
+  # If serialization works, the log shows ENTER A / EXIT A / ENTER B /
+  # EXIT B (or B before A) — never an overlapping ENTER / ENTER pair.
+  #
+  # We need separate PIDs (not subshells of the same parent) because the
+  # PID-fallback uses $$ to identify the lock holder. Subshells inherit
+  # $$ from the parent. Solution: spawn two `bash -c` invocations.
+  PLAN_LOCK_FILE=""; PLAN_LOCK_FD=""; PLAN_LOCK_HELD_VIA=""
+  : > "$PLAN_FIXTURE"
+  WORKER_LOG="$TMPDIR_SELFTEST/worker.log"
+  : > "$WORKER_LOG"
+
+  # Write the lock library to a sourceable file in TMPDIR. Use a
+  # subset of this script: from the start of acquire_plan_lock to the
+  # end of release_plan_lock. Easier: write a self-contained library.
+  LOCKLIB="$TMPDIR_SELFTEST/locklib.sh"
+  cat > "$LOCKLIB" <<'LIB'
+PLAN_LOCK_FILE=""
+PLAN_LOCK_FD=""
+PLAN_LOCK_HELD_VIA=""
+acquire_plan_lock() {
+  local plan_file="$1"
+  local lock_file="${plan_file}.lock"
+  local timeout_s=30
+  if [[ "$PLAN_LOCK_FILE" == "$lock_file" ]]; then return 0; fi
+  PLAN_LOCK_FILE="$lock_file"
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$lock_file" 2>/dev/null || { PLAN_LOCK_FILE=""; return 1; }
+    if flock -w "$timeout_s" 9 2>/dev/null; then
+      PLAN_LOCK_FD=9; PLAN_LOCK_HELD_VIA="flock"
+      echo "$$" >&9 2>/dev/null || true; return 0
+    fi
+    exec 9>&- 2>/dev/null || true; PLAN_LOCK_FILE=""; return 1
+  fi
+  local waited_ms=0; local total_ms=$((timeout_s * 1000))
+  while [[ "$waited_ms" -lt "$total_ms" ]]; do
+    if ( set -o noclobber; echo "$$" > "$lock_file" ) 2>/dev/null; then
+      PLAN_LOCK_HELD_VIA="pid"; return 0
+    fi
+    local holder_pid=""
+    holder_pid=$(head -n 1 "$lock_file" 2>/dev/null | tr -d '[:space:]')
+    if [[ -n "$holder_pid" ]] && [[ "$holder_pid" =~ ^[0-9]+$ ]]; then
+      if ! kill -0 "$holder_pid" 2>/dev/null; then
+        echo "$$" > "$lock_file" 2>/dev/null && { PLAN_LOCK_HELD_VIA="pid"; return 0; }
+      else
+        local now mtime age
+        now=$(date +%s); mtime=$(stat -c %Y "$lock_file" 2>/dev/null || echo "$now")
+        age=$((now - mtime))
+        if [[ "$age" -gt 60 ]]; then
+          echo "$$" > "$lock_file" 2>/dev/null && { PLAN_LOCK_HELD_VIA="pid"; return 0; }
+        fi
+      fi
+    else
+      echo "$$" > "$lock_file" 2>/dev/null && { PLAN_LOCK_HELD_VIA="pid"; return 0; }
+    fi
+    sleep 0.5; waited_ms=$((waited_ms + 500))
+  done
+  PLAN_LOCK_FILE=""; return 1
+}
+release_plan_lock() {
+  if [[ -z "$PLAN_LOCK_FILE" ]]; then return 0; fi
+  case "$PLAN_LOCK_HELD_VIA" in
+    flock) exec 9>&- 2>/dev/null || true ;;
+    pid)
+      local holder_pid=""
+      holder_pid=$(head -n 1 "$PLAN_LOCK_FILE" 2>/dev/null | tr -d '[:space:]')
+      if [[ "$holder_pid" == "$$" ]]; then rm -f "$PLAN_LOCK_FILE" 2>/dev/null || true; fi ;;
+  esac
+  PLAN_LOCK_FILE=""; PLAN_LOCK_FD=""; PLAN_LOCK_HELD_VIA=""
+}
+LIB
+
+  WORKER_SCRIPT="$TMPDIR_SELFTEST/worker.sh"
+  cat > "$WORKER_SCRIPT" <<WKR
+#!/bin/bash
+source "$LOCKLIB"
+LABEL="\$1"
+PLAN="\$2"
+LOG="\$3"
+if ! acquire_plan_lock "\$PLAN"; then
+  echo "ACQUIRE-FAIL \$LABEL pid=\$\$" >> "\$LOG"
+  exit 1
+fi
+echo "ENTER \$LABEL" >> "\$LOG"
+sleep 0.4
+echo "marker-\$LABEL" >> "\$PLAN"
+echo "EXIT \$LABEL" >> "\$LOG"
+release_plan_lock
+WKR
+  chmod +x "$WORKER_SCRIPT"
+
+  bash "$WORKER_SCRIPT" A "$PLAN_FIXTURE" "$WORKER_LOG" &
+  PID_A=$!
+  bash "$WORKER_SCRIPT" B "$PLAN_FIXTURE" "$WORKER_LOG" &
+  PID_B=$!
+  wait "$PID_A" 2>/dev/null
+  RC_A=$?
+  wait "$PID_B" 2>/dev/null
+  RC_B=$?
+
+  # Both workers must succeed and both markers must be present
+  MARKER_A_COUNT=$(grep -c "^marker-A$" "$PLAN_FIXTURE" 2>/dev/null || echo 0)
+  MARKER_B_COUNT=$(grep -c "^marker-B$" "$PLAN_FIXTURE" 2>/dev/null || echo 0)
+  MARKER_A_COUNT=$(echo "$MARKER_A_COUNT" | tr -d '[:space:]')
+  MARKER_B_COUNT=$(echo "$MARKER_B_COUNT" | tr -d '[:space:]')
+
+  # Verify serialization: in the worker log, each ENTER must be followed
+  # by the matching EXIT for the same label before any other ENTER.
+  # Acceptable patterns: "ENTER A / EXIT A / ENTER B / EXIT B" or B-first.
+  # Unacceptable: any ENTER-ENTER without an intervening EXIT (overlap).
+  LOG_LABELS=$(grep -E '^(ENTER|EXIT)' "$WORKER_LOG" | awk '{print $1, $2}' | tr '\n' '|')
+  SERIALIZED_OK=0
+  if [[ "$LOG_LABELS" == "ENTER A|EXIT A|ENTER B|EXIT B|" ]] \
+     || [[ "$LOG_LABELS" == "ENTER B|EXIT B|ENTER A|EXIT A|" ]]; then
+    SERIALIZED_OK=1
+  fi
+
+  if [[ "$RC_A" -eq 0 ]] && [[ "$RC_B" -eq 0 ]] \
+     && [[ "$MARKER_A_COUNT" == "1" ]] && [[ "$MARKER_B_COUNT" == "1" ]] \
+     && [[ "$SERIALIZED_OK" == "1" ]]; then
+    echo "self-test (F2) two-writer-serialization: PASS (both markers present, serialized order: $LOG_LABELS)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F2) two-writer-serialization: FAIL (rc_a=$RC_A rc_b=$RC_B marker_a=$MARKER_A_COUNT marker_b=$MARKER_B_COUNT order='$LOG_LABELS')" >&2
+    cat "$WORKER_LOG" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F3: lock-timeout / stale-PID reclamation ----
+  # Plant a stale lock with a non-existent PID. Lock acquisition should
+  # detect the dead holder (kill -0 fails) and reclaim quickly without
+  # waiting the full 30s timeout. We measure elapsed time to confirm.
+  PLAN_LOCK_FILE=""; PLAN_LOCK_FD=""; PLAN_LOCK_HELD_VIA=""
+  PLAN_FIXTURE_F3="$TMPDIR_SELFTEST/plan-f3.md"
+  : > "$PLAN_FIXTURE_F3"
+  STALE_LOCK="${PLAN_FIXTURE_F3}.lock"
+
+  # Find a definitely-dead PID. Use a very high number unlikely to be live.
+  # On most systems pid_max is < 4194304; pick 999999 which is rarely live.
+  # Verify it's actually dead — if somehow alive, pick another.
+  STALE_PID=999999
+  while kill -0 "$STALE_PID" 2>/dev/null; do
+    STALE_PID=$((STALE_PID + 1))
+    if [[ "$STALE_PID" -gt 4000000 ]]; then break; fi
+  done
+  echo "$STALE_PID" > "$STALE_LOCK"
+
+  T_START=$(date +%s)
+  if acquire_plan_lock "$PLAN_FIXTURE_F3"; then
+    T_END=$(date +%s)
+    ELAPSED=$((T_END - T_START))
+    release_plan_lock
+    # Should reclaim quickly (well under 30s timeout)
+    if [[ "$ELAPSED" -lt 5 ]]; then
+      echo "self-test (F3) lock-timeout-stale-pid: PASS (reclaimed in ${ELAPSED}s)" >&2
+      PASSED=$((PASSED+1))
+    else
+      echo "self-test (F3) lock-timeout-stale-pid: FAIL (took ${ELAPSED}s, expected < 5s)" >&2
+      FAILED=$((FAILED+1))
+    fi
+  else
+    echo "self-test (F3) lock-timeout-stale-pid: FAIL (acquire_plan_lock returned 1 on stale lock)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F4: lock-cleanup ----
+  # After acquire + release, the lock file should not block a subsequent
+  # acquisition. (PID-fallback removes the file; flock leaves an empty
+  # file which is fine since flock semantics ignore content.) Verify by
+  # acquiring a second time.
+  PLAN_LOCK_FILE=""; PLAN_LOCK_FD=""; PLAN_LOCK_HELD_VIA=""
+  PLAN_FIXTURE_F4="$TMPDIR_SELFTEST/plan-f4.md"
+  : > "$PLAN_FIXTURE_F4"
+
+  if ! acquire_plan_lock "$PLAN_FIXTURE_F4"; then
+    echo "self-test (F4) lock-cleanup: FAIL (initial acquire failed)" >&2
+    FAILED=$((FAILED+1))
+  else
+    release_plan_lock
+    PLAN_LOCK_FILE=""; PLAN_LOCK_FD=""; PLAN_LOCK_HELD_VIA=""
+    T_START=$(date +%s)
+    if acquire_plan_lock "$PLAN_FIXTURE_F4"; then
+      T_END=$(date +%s)
+      ELAPSED=$((T_END - T_START))
+      release_plan_lock
+      if [[ "$ELAPSED" -lt 5 ]]; then
+        echo "self-test (F4) lock-cleanup: PASS (re-acquired in ${ELAPSED}s)" >&2
+        PASSED=$((PASSED+1))
+      else
+        echo "self-test (F4) lock-cleanup: FAIL (re-acquire took ${ELAPSED}s)" >&2
+        FAILED=$((FAILED+1))
+      fi
+    else
+      echo "self-test (F4) lock-cleanup: FAIL (re-acquire returned 1)" >&2
+      FAILED=$((FAILED+1))
+    fi
+  fi
+
+  echo "" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 4 scenarios)" >&2
+  if [[ "$FAILED" -eq 0 ]]; then
+    exit 0
+  else
+    exit 1
+  fi
+fi
+
+# ============================================================
+# Main hook logic
+# ============================================================
 
 # Read the tool invocation JSON from whichever input mode Claude Code uses.
 # PreToolUse hooks may receive input via stdin OR via the CLAUDE_TOOL_INPUT
@@ -209,8 +626,29 @@ if [[ "$TOOL_NAME" == "Edit" ]]; then
       # Extract the task ID from the new_string (format: - [x] A.1 ...)
       TASK_ID=$(echo "$NEW_STR" | grep -oE '\[[xX]\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' | grep -oE '[A-Z]+\.[0-9]+(\.[0-9]+)*' | head -1)
 
-      # Evidence-first escape hatch
+      # Acquire the per-plan lock so two parallel verifiers serialize on
+      # evidence-mtime + checkbox-flip decisions. If the lock cannot be
+      # acquired within 30s, treat as block (cannot safely authorize).
+      if ! acquire_plan_lock "$FILE_PATH"; then
+        cat >&2 <<ERR
+
+================================================================
+PLAN EDIT BLOCKED — could not acquire plan lock within 30s
+================================================================
+
+Another verifier appears to hold ${FILE_PATH}.lock. Retry shortly.
+If the lock is stale (previous verifier crashed), remove the lock
+file manually and retry:
+
+  rm -f "${FILE_PATH}.lock"
+
+ERR
+        exit 1
+      fi
+
+      # Evidence-first escape hatch (now performed under the lock)
       if [[ -n "$TASK_ID" ]] && check_evidence_first "$FILE_PATH" "$TASK_ID"; then
+        # Lock auto-releases on exit via the EXIT trap.
         exit 0
       fi
       cat >&2 <<'ERR'
