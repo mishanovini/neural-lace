@@ -46,14 +46,18 @@ After build, before session end, the advocate is invoked again in runtime mode. 
 
 ### Stage 4 — Stop-hook gate
 
-`product-acceptance-gate.sh` (Phase D of the parent plan, **production as of 2026-04-24**) runs as **position 4 (last)** in the Stop hook chain. The full chain order:
+`product-acceptance-gate.sh` (Phase D of the parent plan, **production as of 2026-04-24**) runs as **position 4** in the Stop hook chain. The full chain order (as of 2026-04-26 — Gen 6 added positions 5-8):
 
 1. `pre-stop-verifier.sh` — plan-integrity (unchecked tasks, evidence blocks, runtime verification correspondence)
 2. `bug-persistence-gate.sh` — user-process (bugs surfaced in transcript persisted to backlog/reviews)
 3. `narrate-and-wait-gate.sh` — user-process (no permission-seeking trail-off when keep-going was authorized)
 4. `product-acceptance-gate.sh` — product-outcome (acceptance scenarios PASS at runtime)
+5. `deferral-counter.sh` — narrative-deferral surfacing (Gen 6 / A5; deferrals in transcript must appear in the user-visible final message)
+6. `transcript-lie-detector.sh` — self-contradiction (Gen 6 / A3; completion-class + deferral-class claims in same session must be reconciled)
+7. `imperative-evidence-linker.sh` — strong-imperative coverage (Gen 6 / A7; user imperatives lacking matching tool-call evidence must surface in the final message)
+8. `goal-coverage-on-stop.sh` — first-message goal coverage (Gen 6 / A1; verbs extracted from the verbatim first user message must each have matching tool-call evidence)
 
-Rationale for being last: cheap mechanical checks first; expensive runtime exercise last. If the plan is broken (Check 1), bugs weren't persisted (Check 2), or the session is wait-narrating (Check 3), surfacing those issues first is more actionable.
+Rationale for the position-4 placement: cheap mechanical checks first; expensive runtime exercise late. If the plan is broken (Check 1), bugs weren't persisted (Check 2), or the session is wait-narrating (Check 3), surfacing those issues first is more actionable than running a browser. The acceptance gate is no longer last in the chain (Gen 6 narrative-integrity hooks at positions 5-8 chain after it), but it remains the most expensive mechanical step and is positioned accordingly.
 
 The gate:
 
