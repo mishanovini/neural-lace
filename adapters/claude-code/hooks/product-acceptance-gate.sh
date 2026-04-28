@@ -89,6 +89,26 @@
 #   3. ALL scenarios in the artifact have verdict == "PASS"
 #
 # ============================================================
+# MULTI-WORKTREE ARTIFACT DISCOVERY (Task 10 of agent-teams-integration)
+# ============================================================
+#
+# Searches .claude/state/acceptance/<plan-slug>/ in the current worktree
+# AND in every other worktree of the current repo (per `git worktree
+# list`). A scenario PASS in any worktree's state dir satisfies the
+# gate, provided plan_commit_sha matches the plan file's HEAD SHA.
+#
+# Rationale: in agent-team / parallel-worktree workflows, a teammate in
+# a separate worktree may be the one who actually ran the runtime
+# advocate and wrote the PASS artifact. The lead's worktree never sees
+# that artifact under its own .claude/state/. Without aggregation, the
+# lead's gate would block session end despite the team having satisfied
+# the scenarios. Aggregating across worktrees closes that gap.
+#
+# Safety: if `git worktree list` fails (cwd is not a git repo, git is
+# not installed, or any other failure), discovery degrades gracefully
+# to cwd-only search — the gate retains its pre-multiworktree behavior.
+#
+# ============================================================
 # WAIVER MECHANISM
 # ============================================================
 #
@@ -198,29 +218,97 @@ check_exemption() {
   fi
 }
 
+# Discover all acceptance artifacts for a plan slug across the current
+# worktree AND every other worktree of the current repo.
+#
+# Echoes one absolute path per line, or nothing if no artifacts found.
+#
+# Search order:
+#   1. .claude/state/acceptance/<slug>/ in $PWD (the current worktree)
+#   2. <wt>/.claude/state/acceptance/<slug>/ for every other worktree
+#      reported by `git worktree list --porcelain`
+#
+# Degrades gracefully: if `git worktree list` fails or returns nothing
+# beyond the primary, only the cwd-relative path is searched.
+discover_acceptance_artifacts() {
+  local plan_slug="$1"
+  local primary=".claude/state/acceptance/${plan_slug}"
+  if [[ -d "$primary" ]]; then
+    find "$primary" -maxdepth 1 -type f -name '*.json' 2>/dev/null
+  fi
+
+  # Enumerate other worktrees of the current repo. Best-effort:
+  # if git is missing or we're not in a repo, this is a no-op and
+  # the cwd-only search above is the only signal.
+  if ! command -v git >/dev/null 2>&1; then
+    return
+  fi
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return
+  fi
+
+  local wt_list
+  wt_list=$(git worktree list --porcelain 2>/dev/null)
+  if [[ -z "$wt_list" ]]; then
+    return
+  fi
+
+  # Parse `worktree <path>` lines. The primary worktree is always the
+  # FIRST `worktree` entry in porcelain output, so we skip it (we already
+  # searched cwd-relative above). Skipping by ordinal avoids the
+  # path-form comparison pitfall when running under msys/cygwin where
+  # `pwd` returns POSIX form (/tmp/...) but `git worktree list` returns
+  # Windows form (C:/...).
+  local wt seen_primary=0
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        wt="${line#worktree }"
+        if [[ $seen_primary -eq 0 ]]; then
+          seen_primary=1
+          continue
+        fi
+        local wt_state="${wt}/.claude/state/acceptance/${plan_slug}"
+        if [[ -d "$wt_state" ]]; then
+          find "$wt_state" -maxdepth 1 -type f -name '*.json' 2>/dev/null
+        fi
+        ;;
+    esac
+  done <<< "$wt_list"
+}
+
 # Check whether a plan has any satisfying acceptance artifact.
 # Echoes one of:
 #   "SATISFIED"            — at least one artifact with matching plan_commit_sha
 #                            and all scenarios PASS
 #   "NO_DIRECTORY"         — .claude/state/acceptance/<slug>/ does not exist
-#   "NO_ARTIFACTS"         — directory exists but no JSON files
+#                            in any worktree
+#   "NO_ARTIFACTS"         — directory exists somewhere but contains no JSON files
 #   "STALE"                — artifacts exist but none match current plan_commit_sha
 #   "FAIL"                 — most recent matching-sha artifact has at least one FAIL
+#
+# Aggregates across worktrees per discover_acceptance_artifacts.
 check_artifact() {
   local plan="$1"
   local slug
   slug=$(basename "$plan" .md)
-  local dir=".claude/state/acceptance/${slug}"
+  local primary_dir=".claude/state/acceptance/${slug}"
 
-  if [[ ! -d "$dir" ]]; then
-    echo "NO_DIRECTORY"
-    return
-  fi
-
-  # List JSON artifacts (any file ending in .json directly under the dir)
+  # List JSON artifacts across all worktrees of the current repo.
   local artifacts
-  artifacts=$(find "$dir" -maxdepth 1 -type f -name '*.json' 2>/dev/null)
+  artifacts=$(discover_acceptance_artifacts "$slug")
+
+  # Disambiguate "no directory anywhere" from "directory exists but
+  # has no JSON". Existence of the cwd dir is the cheap proxy; if the
+  # cwd dir doesn't exist but another worktree's does, we still treat
+  # that as "directory present" (artifacts non-empty case is handled
+  # below; only NO_DIRECTORY vs NO_ARTIFACTS messaging differs).
   if [[ -z "$artifacts" ]]; then
+    if [[ ! -d "$primary_dir" ]]; then
+      # Also no other-worktree dir held artifacts (already inlined above).
+      echo "NO_DIRECTORY"
+      return
+    fi
     echo "NO_ARTIFACTS"
     return
   fi
@@ -289,18 +377,27 @@ check_waiver() {
 }
 
 # ============================================================
-# --self-test: 8 scenarios per parent plan D.4 + D.6
+# --self-test: 10 scenarios
+#   (8 from parent plan D.4 + D.6, plus 2 multi-worktree scenarios
+#    added in agent-teams-integration plan, Task 10)
 # ============================================================
 #
 # Scenarios:
-#   (a) no active plan                                    → PASS (allow stop)
-#   (b) active plan with valid PASS artifact              → PASS
-#   (c) active plan with FAIL artifact                    → BLOCK
-#   (d) active plan with no artifact                      → BLOCK
-#   (e) active plan with stale artifact (wrong sha)       → BLOCK
-#   (f) active plan with valid waiver                     → PASS
-#   (g) active plan with acceptance-exempt: true + reason → PASS
-#   (h) active plan with acceptance-exempt: true, no reason → BLOCK
+#   (a)  no active plan                                    → PASS (allow stop)
+#   (b)  active plan with valid PASS artifact              → PASS
+#   (c)  active plan with FAIL artifact                    → BLOCK
+#   (d)  active plan with no artifact                      → BLOCK
+#   (e)  active plan with stale artifact (wrong sha)       → BLOCK
+#   (f)  active plan with valid waiver                     → PASS
+#   (g)  active plan with acceptance-exempt: true + reason → PASS
+#   (h)  active plan with acceptance-exempt: true, no reason → BLOCK
+#   (W1) PASS artifact ONLY in secondary worktree          → PASS
+#   (W2) FAIL in primary + PASS in secondary worktree      → PASS
+#
+# W1 and W2 exercise multi-worktree artifact aggregation: the gate
+# must enumerate all of the current repo's worktrees and treat a
+# PASS artifact in any of them (with matching plan_commit_sha) as
+# satisfying.
 #
 # Exits 0 only if every scenario matched its expected outcome.
 
@@ -362,7 +459,12 @@ if [[ "${1:-}" == "--self-test" ]]; then
       echo "## Goal"
       echo "Self-test fixture exercising product-acceptance-gate.sh."
     } > "docs/plans/${slug}.md"
-    git add "docs/plans/${slug}.md" 2>/dev/null
+    # Stage all current plan-file state (including deletions of prior
+    # scenarios' plans from reset_repo's rm -rf) so the resulting commit
+    # cleanly reflects only this scenario's plan. Without -A, the commit
+    # accumulates plans across scenarios and the secondary worktree
+    # carries stale plans into its working tree.
+    git add -A docs/plans 2>/dev/null
     git commit -q -m "selftest: $slug" 2>/dev/null
   }
 
@@ -404,9 +506,16 @@ if [[ "${1:-}" == "--self-test" ]]; then
     } > "$artifact_path"
   }
 
-  # Helper: run the script against this temp repo, capture exit code
+  # Helper: run the script against this temp repo, capture exit code.
+  # Set SELFTEST_DEBUG=1 to surface the gate's stderr/stdout for
+  # troubleshooting (otherwise quiet by default to keep the summary
+  # readable).
   run_gate() {
-    bash "$SCRIPT_PATH" </dev/null >/dev/null 2>&1
+    if [[ "${SELFTEST_DEBUG:-}" == "1" ]]; then
+      bash "$SCRIPT_PATH" </dev/null
+    else
+      bash "$SCRIPT_PATH" </dev/null >/dev/null 2>&1
+    fi
     echo $?
   }
 
@@ -429,7 +538,79 @@ if [[ "${1:-}" == "--self-test" ]]; then
   # Reset working repo state between scenarios
   reset_repo() {
     rm -rf docs/plans/*.md .claude/state/acceptance/* .claude/state/acceptance-waiver-*.txt 2>/dev/null || true
-    # Reset git index too — we don't need git commits to track these for the test
+    # Tear down any leftover worktrees from prior W-scenarios.
+    # `git worktree list --porcelain` lists the primary worktree first;
+    # we skip the first `worktree` entry and remove the rest. This avoids
+    # path-form comparison pitfalls (POSIX `/tmp/...` vs Windows `C:/...`)
+    # when running under msys/cygwin.
+    if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      local _line _wt _seen_primary=0
+      git worktree list --porcelain 2>/dev/null | while IFS= read -r _line; do
+        case "$_line" in
+          "worktree "*)
+            _wt="${_line#worktree }"
+            if [[ $_seen_primary -eq 0 ]]; then
+              _seen_primary=1  # skip the primary (always first in porcelain)
+            else
+              git worktree remove --force "$_wt" 2>/dev/null || true
+            fi
+            ;;
+        esac
+      done
+      git worktree prune 2>/dev/null || true
+    fi
+  }
+
+  # Helper: create a secondary worktree of the test repo at <wt-path>
+  # and write a synthetic acceptance artifact under its
+  # .claude/state/acceptance/<slug>/ directory. Used by W1/W2.
+  #   $1 = secondary worktree path (relative to primary)
+  #   $2 = slug
+  #   $3 = sha (or "current" to read current)
+  #   $4 = verdicts (e.g. "PASS PASS")
+  write_artifact_in_worktree() {
+    local wt_path="$1"
+    local slug="$2"
+    local sha="$3"
+    local verdicts="$4"
+    # Create a secondary worktree on a fresh detached branch so we don't
+    # collide with the primary's HEAD ref.
+    local branch="selftest-wt-$(date +%s%N)"
+    git worktree add -q -b "$branch" "$wt_path" 2>/dev/null || {
+      # If branch already exists (rare under date+nano collision), retry
+      # with detached HEAD.
+      git worktree add -q --detach "$wt_path" 2>/dev/null || return 1
+    }
+    if [[ "$sha" == "current" ]]; then
+      sha=$(git log -n 1 --pretty=format:'%H' -- "docs/plans/${slug}.md" 2>/dev/null)
+    fi
+    local dir="${wt_path}/.claude/state/acceptance/${slug}"
+    mkdir -p "$dir"
+    local artifact_path="${dir}/sess-test-wt-$(date +%s%N).json"
+    {
+      echo "{"
+      echo "  \"session_id\": \"sess-test-wt\","
+      echo "  \"plan_slug\": \"${slug}\","
+      echo "  \"plan_commit_sha\": \"${sha}\","
+      echo "  \"mode\": \"runtime\","
+      echo "  \"started_at\": \"2026-04-27T00:00:00Z\","
+      echo "  \"ended_at\": \"2026-04-27T00:00:01Z\","
+      echo "  \"scenarios\": ["
+      local i=0
+      for v in $verdicts; do
+        [[ $i -gt 0 ]] && echo "    ,"
+        echo "    {"
+        echo "      \"id\": \"sc-${i}\","
+        echo "      \"verdict\": \"${v}\","
+        echo "      \"artifacts\": {},"
+        echo "      \"assertions_met\": [\"synthetic-wt\"],"
+        echo "      \"failure_reason\": null"
+        echo "    }"
+        i=$((i+1))
+      done
+      echo "  ]"
+      echo "}"
+    } > "$artifact_path"
   }
 
   # ---- (a) no active plan -> PASS ----
@@ -477,8 +658,41 @@ if [[ "${1:-}" == "--self-test" ]]; then
   write_plan "scenario-h" 1 noreason
   expect_exit "h" 2 "exempt-without-reason"
 
+  # ---- (W1) PASS artifact ONLY in secondary worktree -> PASS ----
+  # Lead's worktree has no artifact; teammate's worktree wrote a PASS.
+  # The gate must aggregate across worktrees and see it.
+  reset_repo
+  write_plan "scenario-w1" 1 false
+  WT1_PATH="${TMPDIR_SELFTEST}/wt-w1"
+  if write_artifact_in_worktree "$WT1_PATH" "scenario-w1" "current" "PASS PASS"; then
+    expect_exit "W1" 0 "aggregates-across-worktrees"
+  else
+    echo "self-test (W1) aggregates-across-worktrees: FAIL (could not create secondary worktree)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- (W2) FAIL artifact in primary, PASS artifact in secondary -> PASS ----
+  # Demonstrates that ANY worktree's PASS artifact (matching plan_commit_sha)
+  # satisfies the gate, not just the primary's.
+  reset_repo
+  write_plan "scenario-w2" 1 false
+  # Primary worktree: write a FAIL artifact at the matching SHA.
+  write_artifact "scenario-w2" "current" "PASS FAIL"
+  # Secondary worktree: write a PASS artifact at the same SHA.
+  WT2_PATH="${TMPDIR_SELFTEST}/wt-w2"
+  if write_artifact_in_worktree "$WT2_PATH" "scenario-w2" "current" "PASS PASS"; then
+    expect_exit "W2" 0 "returns-PASS-when-any-worktree-has-valid-artifact"
+  else
+    echo "self-test (W2) returns-PASS-when-any-worktree-has-valid-artifact: FAIL (could not create secondary worktree)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # Cleanup any worktrees we left behind so the EXIT trap's rm -rf of
+  # TMPDIR_SELFTEST doesn't trip on git's worktree refs.
+  reset_repo
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 8 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 10 scenarios)" >&2
   if [[ $FAILED -eq 0 ]]; then
     exit 0
   else
@@ -505,12 +719,23 @@ if [[ -z "$ACTIVE_PLANS" ]]; then
 fi
 
 # Walk every active plan; collect blockers.
+# Dedupe by slug across worktrees: in a multi-worktree repo,
+# `find_active_plans`'s glob may return the same plan via the primary's
+# `docs/plans/<slug>.md` AND via a sibling worktree's
+# `<wt>/docs/plans/<slug>.md`. Both refer to the same logical plan;
+# processing twice would erroneously block on the secondary path
+# (where `git log -- <secondary>/docs/plans/<slug>.md` returns no SHA).
 BLOCKERS=""
 ALLOWS=""
+SEEN_SLUGS=" "
 
 while IFS= read -r plan; do
   [[ -z "$plan" ]] && continue
   slug=$(basename "$plan" .md)
+  case "$SEEN_SLUGS" in
+    *" $slug "*) continue ;;
+  esac
+  SEEN_SLUGS="${SEEN_SLUGS}${slug} "
 
   # 1. Exemption check
   exempt_status=$(check_exemption "$plan")

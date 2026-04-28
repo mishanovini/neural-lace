@@ -61,14 +61,16 @@ Rationale for the position-4 placement: cheap mechanical checks first; expensive
 
 The gate:
 
-1. Iterates over all plans in `docs/plans/*.md` with `Status: ACTIVE` (top-level only — archive subdir excluded).
+1. Iterates over all plans in `docs/plans/*.md` with `Status: ACTIVE` (top-level only — archive subdir excluded). Plans encountered more than once via worktree-glob siblings are deduplicated by slug.
 2. For each:
    - If `acceptance-exempt: true` is declared with a substantive `acceptance-exempt-reason:` (>= 20 non-whitespace chars), allow stop for this plan and emit `[acceptance-gate] plan <slug> is acceptance-exempt; reason: <...>`.
    - If `acceptance-exempt: true` is declared but the reason is missing or shorter than 20 chars, BLOCK with a clear "missing reason" message.
    - If a per-session waiver exists at `.claude/state/acceptance-waiver-<slug>-<ts>.txt` (younger than 1 hour, mirroring `bug-persistence-gate.sh`'s pattern, with at least one non-whitespace line of justification), allow stop for this plan.
-   - Otherwise, look for a JSON artifact under `.claude/state/acceptance/<slug>/` whose `plan_commit_sha` matches the current plan file's HEAD SHA AND whose `verdict` is `PASS` for every in-scope scenario.
+   - Otherwise, look for a JSON artifact under `.claude/state/acceptance/<slug>/` (aggregated across all worktrees of the current repo — see "Multi-worktree artifact aggregation" below) whose `plan_commit_sha` matches the current plan file's HEAD SHA AND whose `verdict` is `PASS` for every in-scope scenario.
    - If found, allow stop. If missing, FAIL, or stale, BLOCK with stderr message naming the missing scenarios and pointing at the runtime advocate invocation command.
 3. If any ACTIVE plan blocks, blocks session end (exit 2 + JSON `{"decision": "block", ...}`). If all pass (or all are exempt or all are waivered), allow stop (exit 0).
+
+**Multi-worktree artifact aggregation.** The gate enumerates every worktree of the current repo via `git worktree list --porcelain` and searches each worktree's `.claude/state/acceptance/<plan-slug>/` for matching artifacts. A scenario PASS in *any* worktree's state directory satisfies the gate, provided `plan_commit_sha` matches the plan file's HEAD SHA. This handles the common Agent-Teams / parallel-worktree pattern where a teammate in a separate worktree writes the runtime PASS artifact that the lead's gate must observe; without aggregation, the lead's `.claude/state/` would never see the teammate's artifact and the gate would block session end despite the team having satisfied the scenarios. If `git worktree list` is unavailable (cwd is not a git repo, git is not installed, or the command otherwise fails) the gate degrades gracefully to cwd-only artifact discovery — its pre-aggregation behavior. The 10-scenario `--self-test` suite includes two scenarios (W1, W2) that exercise this aggregation path against synthetic secondary worktrees.
 
 **Artifact schema** (referenced from `agents/end-user-advocate.md` and the hook header comment):
 
@@ -94,7 +96,7 @@ The gate:
 
 Sibling files: `<scenario-slug>-screenshot.png`, `<scenario-slug>-network.log`, `<scenario-slug>-console.log` in the same directory.
 
-The walking-skeleton form of this gate still lives in `pre-stop-verifier.sh` Check 0 (Phase A) for log-only recognition; the production blocking gate is Phase D. The hook exposes a `--self-test` flag exercising 8 scenarios: no-active-plan, valid-PASS, FAIL-artifact, no-artifact, stale-sha, valid-waiver, exempt-with-reason, exempt-without-reason.
+The walking-skeleton form of this gate still lives in `pre-stop-verifier.sh` Check 0 (Phase A) for log-only recognition; the production blocking gate is Phase D. The hook exposes a `--self-test` flag exercising 10 scenarios: no-active-plan, valid-PASS, FAIL-artifact, no-artifact, stale-sha, valid-waiver, exempt-with-reason, exempt-without-reason, plus the two multi-worktree aggregation scenarios (aggregates-across-worktrees, returns-PASS-when-any-worktree-has-valid-artifact) added in `docs/plans/agent-teams-integration.md` Task 10.
 
 ### Stage 5 — Gap-analysis on FAIL
 
