@@ -122,6 +122,15 @@
             "command": "bash ~/.claude/hooks/vaporware-volume-gate.sh"
           }
         ]
+      },
+      {
+        "matcher": "Task|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/teammate-spawn-validator.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
