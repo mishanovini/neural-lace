@@ -50,21 +50,21 @@ This plan does NOT enable Agent Teams. It makes enabling Agent Teams safe. The u
 
 ## Tasks
 
-- [ ] 1. **Setup + decision record.** Create `docs/decisions/012-agent-teams-integration.md` recording the 6 design decisions (see Decisions Log). Stage this with the plan-creation commit per decisions-index-gate atomicity rule.
+- [x] 1. **Setup + decision record.** Create `docs/decisions/012-agent-teams-integration.md` recording the 6 design decisions (see Decisions Log). Stage this with the plan-creation commit per decisions-index-gate atomicity rule.
 
-- [ ] 2. **Templates parity (HARNESS-DRIFT-04).** Copy `~/.claude/templates/decision-log-entry.md` and `~/.claude/templates/completion-report.md` into `adapters/claude-code/templates/`. Verify identical content (`diff -q`). Update `rules/harness-maintenance.md` if needed to reflect templates as adapter-tracked.
+- [x] 2. **Templates parity (HARNESS-DRIFT-04).** Copy `~/.claude/templates/decision-log-entry.md` and `~/.claude/templates/completion-report.md` into `adapters/claude-code/templates/`. Verify identical content (`diff -q`). Update `rules/harness-maintenance.md` if needed to reflect templates as adapter-tracked.
 
-- [ ] 3. **Stop chain doc update (HARNESS-DRIFT-03).** Edit `rules/acceptance-scenarios.md:49-55` to reflect 5-position Stop chain (add `deferral-counter.sh`). Audit `docs/harness-architecture.md` for the same staleness; fix if found.
+- [x] 3. **Stop chain doc update (HARNESS-DRIFT-03).** Edit `rules/acceptance-scenarios.md:49-55` to reflect 5-position Stop chain (add `deferral-counter.sh`). Audit `docs/harness-architecture.md` for the same staleness; fix if found.
 
-- [ ] 4. **Feature flag config.** Create `adapters/claude-code/examples/agent-teams.config.example.json` + `schemas/agent-teams.config.schema.json`. Schema fields: `enabled` (bool, default false), `force_in_process` (bool, default true), `worktree_mandatory_for_write` (bool, default true), `per_team_budget` (bool, default true). Document in `docs/harness-guide.md`.
+- [x] 4. **Feature flag config.** Create `adapters/claude-code/examples/agent-teams.config.example.json` + `schemas/agent-teams.config.schema.json`. Schema fields: `enabled` (bool, default false), `force_in_process` (bool, default true), `worktree_mandatory_for_write` (bool, default true), `per_team_budget` (bool, default true). Document in `docs/harness-guide.md`.
 
-- [ ] 5. **`teammate-spawn-validator.sh` — new PreToolUse hook on Agent tool.** Reads `~/.claude/local/agent-teams.config.json` (if exists) + `~/.claude/teams/<team>/config.json` for current team state. Rejects spawn when:
+- [x] 5. **`teammate-spawn-validator.sh` — new PreToolUse hook on Agent tool.** Reads `~/.claude/local/agent-teams.config.json` (if exists) + `~/.claude/teams/<team>/config.json` for current team state. Rejects spawn when:
    - (a) `enabled: false` AND target tool is `Agent` with `team_name` parameter set
    - (b) `worktree_mandatory_for_write: true` AND spawn lacks `isolation: "worktree"` AND spawned agent has write-capable tools (Edit/Write/MultiEdit/Bash)
    - (c) lead is in `--dangerously-skip-permissions` mode AND `force_in_process: true`
    - Includes `--self-test` with 6 scenarios. Wires into `settings.json` PreToolUse `Task|Agent` matcher.
 
-- [ ] 6. **`tool-call-budget.sh` team-aware extension with deferred-audit cadence.** Add team-awareness AND deferred-audit behavior:
+- [x] 6. **`tool-call-budget.sh` team-aware extension with deferred-audit cadence.** Add team-awareness AND deferred-audit behavior:
    - **Counter scope:** at hook fire, derive `effective_session_id`: if `~/.claude/teams/<team>/config.json` lists current `CLAUDE_SESSION_ID` as a member, use `team_name`; else fallback to `CLAUDE_SESSION_ID`. Counter file at `~/.claude/state/tool-call-count.<effective_session_id>` with flock(1)-based read-modify-write protection (PID-keyed fallback if flock unavailable).
    - **Audit cadence — agent-team mode (counter keyed by team):** at counter == 30, instead of blocking, write a flag file at `~/.claude/state/audit-pending.<team>` with the current task_id and a timestamp. Allow the tool call. The flag is consumed by the new TaskCompleted hook (Task 8) which runs `plan-evidence-reviewer` and clears the flag (or blocks completion on FAIL).
    - **Hard ceiling — agent-team mode:** if a single teammate accumulates 90+ tool calls without an intervening TaskCompleted clearing the flag, fall back to mid-stream block. Counter is per-team but the per-teammate accumulation is tracked via a sub-counter at `~/.claude/state/tool-call-since-task.<session_id>`.
@@ -88,9 +88,9 @@ This plan does NOT enable Agent Teams. It makes enabling Agent Teams safe. The u
    - **Deferred-audit enforcement:** checks for `~/.claude/state/audit-pending.<team_name>` flag. If present, invokes `plan-evidence-reviewer` for the team's active plan. PASS verdict → clears flag, counter reset, TaskCompleted allowed. FAIL verdict → flag stays set, TaskCompleted blocked, error message points at audit findings. Coordinates with Task 6's flag-setting behavior.
    - **Self-test with 6 scenarios:** rejects-missing-evidence, allows-evidence-present, allows-explicit-bypass, handles-missing-task-id-gracefully, runs-audit-when-flag-set-and-PASS-clears-flag, runs-audit-when-flag-set-and-FAIL-blocks-completion.
 
-- [ ] 9. **`plan-edit-validator.sh` flock extension.** Wrap the validator's evidence-mtime check + plan-edit allow-decision in `flock` on `<plan>.lock`. Two parallel verifiers each acquire the lock serially. Add a 30s lock timeout to prevent indefinite hang if a previous verifier crashed. Self-test with 4 scenarios (single-writer baseline, two-writer serialization, lock-timeout, lock-cleanup).
+- [x] 9. **`plan-edit-validator.sh` flock extension.** Wrap the validator's evidence-mtime check + plan-edit allow-decision in `flock` on `<plan>.lock`. Two parallel verifiers each acquire the lock serially. Add a 30s lock timeout to prevent indefinite hang if a previous verifier crashed. Self-test with 4 scenarios (single-writer baseline, two-writer serialization, lock-timeout, lock-cleanup).
 
-- [ ] 10. **`product-acceptance-gate.sh` multi-worktree artifact discovery.** Extend the gate to enumerate the current repo's worktrees (via `git worktree list`) and aggregate `.claude/state/acceptance/` artifacts found within them. A scenario PASS in any worktree's state dir satisfies the gate, provided `plan_commit_sha` matches. Documents the new behavior in `rules/acceptance-scenarios.md` and the gate's header comment.
+- [x] 10. **`product-acceptance-gate.sh` multi-worktree artifact discovery.** Extend the gate to enumerate the current repo's worktrees (via `git worktree list`) and aggregate `.claude/state/acceptance/` artifacts found within them. A scenario PASS in any worktree's state dir satisfies the gate, provided `plan_commit_sha` matches. Documents the new behavior in `rules/acceptance-scenarios.md` and the gate's header comment.
 
 - [ ] 11. **New rule: `rules/agent-teams.md`.** Documents:
    - **First sub-section: "How to enable Agent Teams"** — exact config file path (`~/.claude/local/agent-teams.config.json`), the JSON to write (`{"enabled": true}`), the field defaults, and a clear-eyed list of the five upstream bugs the user is opting into ([#50779](https://github.com/anthropics/claude-code/issues/50779), [#24175](https://github.com/anthropics/claude-code/issues/24175), [#43736](https://github.com/anthropics/claude-code/issues/43736), [#24073](https://github.com/anthropics/claude-code/issues/24073), [#24307](https://github.com/anthropics/claude-code/issues/24307)). Visible at the top so a user landing on this rule sees the enable instructions immediately.
