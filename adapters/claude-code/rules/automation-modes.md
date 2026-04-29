@@ -2,13 +2,13 @@
 
 **Classification:** Pattern (self-applied decision discipline). The mode choice is the operator's judgment call; no hook blocks the "wrong" mode. But once a mode is chosen, its specific enforcement substrate is what it is — the Pattern here is picking the mode whose enforcement matches the task.
 
-**Ships with:** Decision 011 (`docs/decisions/011-claude-remote-harness-approach.md`) — read it first. This rule operationalizes Decision 011 as a decision tree. Phase A research evidence (`docs/plans/archive/claude-remote-adoption-evidence.md`) is the factual substrate for every claim below.
+**Ships with:** Decision 011 (`docs/decisions/011-claude-remote-harness-approach.md`) — read it first. This rule operationalizes Decision 011 as a decision tree. Phase A research evidence (`docs/plans/archive/claude-remote-adoption-evidence.md`) is the factual substrate for every claim below. **Mode 5 (Agent Teams)** added per Decision 012 (`docs/decisions/012-agent-teams-integration.md`); see also `rules/agent-teams.md` for the full operational guide.
 
 ---
 
-## The four modes
+## The five modes
 
-A Claude Code session runs in exactly one of four modes. Each has a different enforcement substrate (which hooks/rules/agents actually fire), a different isolation story (what concurrent sessions can or cannot collide on), and a different best-fit task class.
+A Claude Code session runs in exactly one of five modes. Each has a different enforcement substrate (which hooks/rules/agents actually fire), a different isolation story (what concurrent sessions can or cannot collide on), and a different best-fit task class.
 
 | # | Mode | Isolation | Harness enforcement | Best for |
 |---|---|---|---|---|
@@ -16,6 +16,7 @@ A Claude Code session runs in exactly one of four modes. Each has a different en
 | 2 | **Parallel local (worktrees)** | Git worktrees isolate files; `~/.claude/` shared | **Full for rules/hooks/agents; shared state collision risk** | Short parallel builds on disjoint files |
 | 3 | **Cloud remote (`claude --remote`)** | Fresh VM per session; nothing shared | **Project `.claude/` only** (per Decision 011 Approach A) | Multi-hour autonomous builds, tasks that don't need interactive steering |
 | 4 | **Scheduled (Routines via `/schedule`)** | Same as mode 3 — fresh VM per trigger | **Project `.claude/` only** | Nightly / cron / event-triggered recurring work |
+| 5 | **Agent Teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`)** | In-process default (per `force_in_process: true`); pane-based opt-in. Lead and teammates share `~/.claude/state/` but team-aware hooks scope counters by `team_name`. | **Full** for in-process teammates (lead's `~/.claude/` reused; teammates inherit project `.claude/` per Decision 011 Approach A). **Partial** for pane-based teammates on macOS+tmux (some parent-visibility events drop per Anthropic #24175). | Complex multi-agent workflows where direct teammate-to-teammate messaging is needed |
 
 The table is the summary. The per-mode sections below give the concrete invocation, tradeoffs, enforcement surface, and failure modes.
 
@@ -218,6 +219,82 @@ A Routine that assumes a feature exists (e.g., "deploy to staging") but the proj
 
 ---
 
+## Mode 5 — Agent Teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`)
+
+Anthropic's experimental Agent Teams feature lets a "lead" Claude Code session spawn cooperating "teammate" sessions that can directly message each other (without round-tripping through the lead). Status: **feature-flagged in Neural Lace, disabled by default** per Decision 012. The five upstream Anthropic bugs (#50779, #24175, #24073, #24307, #45329) make silent enforcement degradation likely if enabled without the integration work this rule references.
+
+### When to use
+
+- Complex multi-agent workflows where teammate-to-teammate coordination is the load-bearing requirement (vs. orchestrator-pattern, where the main session is the only coordinator and teammates report back through it)
+- Tasks where the structured `TaskCreated` / `TaskCompleted` event surface enables team-attributable enforcement that per-Edit hooks can't provide (per Anthropic #45329, `teammate_name`/`team_name` are observable in TaskCreated/Completed event input but NOT in PreToolUse Edit input)
+- Scenarios where direct messaging between teammates avoids redundant orchestrator round-trips (e.g., a planner teammate handing structured tasks to a builder teammate without the lead reading the entire plan twice)
+
+For most multi-task plans, **prefer the orchestrator pattern (Mode 1 dispatching to Mode 2 builders).** Agent Teams is opt-in for cases where teammate-to-teammate messaging actually matters; the orchestrator pattern is simpler and has fewer upstream bugs.
+
+### Invocation
+
+1. Ensure the harness is at `~/.claude/` (Mode 1 prerequisites).
+2. Enable the feature flag: copy `adapters/claude-code/examples/agent-teams.config.example.json` to `~/.claude/local/agent-teams.config.json` and set `"enabled": true`. Defaults: `force_in_process: true` (until Anthropic #24175 is fixed), `worktree_mandatory_for_write: true`, `per_team_budget: true`.
+3. Set the env var: `export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (in your shell or session settings).
+4. Launch Claude Code (`claude` or IDE extension); the session can now spawn teammates via the `Agent` tool with `team_name` set.
+
+Full enable instructions, including the clear-eyed list of upstream bugs the user opts into, live in `rules/agent-teams.md`. Read that rule before flipping the flag.
+
+### Enforcement available
+
+**In-process teammates (the default per `force_in_process: true`):**
+
+- Full `~/.claude/` harness — lead's settings, hooks, agents, rules all reused by teammates
+- New PreToolUse gate: `teammate-spawn-validator.sh` rejects unsafe spawn configurations (e.g., write-capable teammate without worktree isolation; `--dangerously-skip-permissions` with `force_in_process: true`)
+- New TaskCreated event hook: `task-created-validator.sh` validates teammate task subjects + plan references + acceptance criteria
+- New TaskCompleted event hook: `task-completed-evidence-gate.sh` enforces evidence-block existence + consumes the deferred-audit flag from the team-aware `tool-call-budget.sh`
+- Extended `tool-call-budget.sh` (per-team counter + deferred-audit cadence + 90-call hard ceiling per teammate)
+- Extended `plan-edit-validator.sh` (flock concurrent-write protection so two parallel verifiers serialize safely)
+- Extended `product-acceptance-gate.sh` (multi-worktree artifact aggregation so a teammate's runtime PASS in its own worktree satisfies the lead's gate)
+
+**Pane-based teammates (opt-in, set `force_in_process: false`):**
+
+- Teammate's own `~/.claude/settings.json` loads independently (per Anthropic #24175 source-level analysis), so teammate-side hooks fire correctly
+- BUT some parent-visibility events drop on macOS+tmux (`SubagentStart`, `Stop`, `TeammateIdle`, `TaskCompleted` may not reach the lead) — the lead's gates therefore see degraded coverage
+- Recommended only when teammate-side full enforcement matters more than lead-side aggregate enforcement
+
+### Decision 011 Approach A still applies
+
+**Teammates inherit project `.claude/` the same way as the lead's session.** If the lead is in a project where `.claude/` is symlinked to `~/claude-projects/neural-lace/adapters/claude-code/` (solo-dev path) or contains a committed copy of the harness (team-shared / cloud-portable path), teammates see the same harness. There is no separate per-teammate harness inheritance story — it's one copy of the harness, shared across the lead and every in-process teammate. For pane-based teammates the same constraint applies because each pane reads the same project `.claude/`.
+
+**This is the harness-portability story for Mode 5:** Decision 011 Approach A is unchanged; Agent Teams adds team-aware enforcement on top. If a project has run the rollout to populate `.claude/` (per Decision 011), it is also Agent-Teams-ready once the feature flag is flipped and the new hooks land.
+
+### Concurrency model
+
+In-process: bounded by Anthropic's caps on concurrent teammates per session (currently ~5 in-process; pane-based has higher caps but with the macOS+tmux degradation noted). The team-aware tool-call budget caps a single teammate at 90 tool calls without an intervening TaskCompleted; the per-team deferred-audit fires at 30 cumulative calls across all teammates.
+
+Pane-based: bounded by terminal-multiplexer constraints (tmux/iTerm2). Windows Git Bash lacks tmux entirely, so pane-based mode is effectively macOS+Linux-only.
+
+### Concrete examples
+
+- A planner teammate authors `## Acceptance Scenarios` in plan-time mode while a builder teammate starts on Phase 1 — both report progress directly to each other without the lead arbitrating each handoff.
+- A research teammate enumerates the codebase's existing patterns while a code-reviewer teammate evaluates the lead's proposed change against those patterns — both teammates feed signals to the lead simultaneously.
+- A cluster of read-only teammates (research, explorer, claim-reviewer) querying different parts of a large codebase in parallel, each posting findings into a shared task subject the lead aggregates.
+
+### Tradeoffs
+
+- **Pro:** team-attributable enforcement (`teammate_name`/`team_name` observable in TaskCreated/Completed events) — closes the per-Edit attribution gap from Anthropic #45329
+- **Pro:** direct teammate-to-teammate messaging avoids redundant orchestrator round-trips
+- **Pro:** harness gates extend to multi-agent workflows that the orchestrator pattern handles less elegantly
+- **Con:** **five known upstream Anthropic bugs.** The feature is experimental; flipping the flag is a deliberate opt-in to the specific behaviors documented in `rules/agent-teams.md`.
+- **Con:** in-process teammates share the lead's permission mode — a lead in `--dangerously-skip-permissions` propagates the bypass to every teammate. The spawn validator blocks this when `force_in_process: true` is set.
+- **Con:** pane-based mode has macOS+tmux event-drop degradation (Anthropic #24175). The harness defaults to in-process to side-step this.
+- **Con:** worktree-mandatory writes add cherry-pick overhead to the team's work (mitigated by mandating worktrees only for write-capable teammates, not read-only ones).
+
+### Known failure modes
+
+- **Lead crashes mid-session, teammates orphaned.** Orphaned teammates may continue spawning Edit/Write hooks against their own state directories. Cleanup is per teammate-self-cleanup; flock timeouts mean stale locks self-clear after 30s.
+- **Two teams concurrently on the same project.** `flock` on `<plan>.lock` covers concurrent verification. Two leads creating new plans is out of scope and falls back to existing single-session behavior.
+- **`team_name` containing special characters.** `tool-call-budget.sh` strips non-alphanumeric chars and applies a 64-char length cap; `task-created-validator.sh` rejects disallowed-char team names at TaskCreated time.
+- **Stale `~/.claude/state/audit-pending.<team>` flag.** If a TaskCompleted never fires (lead crashed, team disbanded), the flag persists. Mitigation: the existing 24h auto-cleanup of `~/.claude/state/*` extends to these flags.
+
+---
+
 ## Out-of-scope modes
 
 For completeness, these capabilities exist but are NOT part of the four-mode decision tree (per Decision 011 explicit scope):
@@ -259,10 +336,13 @@ Flowchart form — read top-to-bottom, stop at the first match:
 3. **Is this a multi-hour autonomous build you won't supervise?**
    -> **Mode 3 (Cloud remote)** — requires project `.claude/` to be populated per Decision 011 Approach A; else falls back to unenforced cloud which is strongly discouraged
 
-4. **Do you need 2-5 concurrent builds on disjoint files, each short enough that a cloud cold-start is proportionally expensive?**
+4. **Do you need direct teammate-to-teammate messaging in a multi-agent workflow** (where the orchestrator pattern's lead-as-only-coordinator is the bottleneck)?
+   -> **Mode 5 (Agent Teams)** — only after reading `rules/agent-teams.md` (the five upstream Anthropic bugs are deliberate opt-ins)
+
+5. **Do you need 2-5 concurrent builds on disjoint files, each short enough that a cloud cold-start is proportionally expensive?**
    -> **Mode 2 (Parallel local worktrees)** — via orchestrator pattern with `isolation: "worktree"`, or Desktop "+ New session"
 
-5. **Default:** Mode 1 (Interactive local).
+6. **Default:** Mode 1 (Interactive local).
 
 ---
 
@@ -286,6 +366,7 @@ Do NOT mix Mode 1 and Mode 2 on the same working tree without worktrees (i.e., l
 | 2 | Mode 1 prerequisites + the project is a git repo |
 | 3 | Anthropic Pro/Max/Team/Enterprise subscription with `--remote` entitlement. Project pushed to GitHub (or small enough to bundle, ≤100MB). Project `.claude/` populated per Decision 011 Approach A for enforcement to carry over. |
 | 4 | Mode 3 prerequisites + `/schedule` command availability (requires Pro+). `scheduled-tasks` MCP server optional for programmatic scheduling. |
+| 5 | Mode 1 prerequisites + Claude Code v2.1.32+ + `~/.claude/local/agent-teams.config.json` with `enabled: true` + `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` env var set. The new hooks (`teammate-spawn-validator.sh`, `task-created-validator.sh`, `task-completed-evidence-gate.sh`) must be present in `~/.claude/hooks/` and wired in `~/.claude/settings.json`. Read `rules/agent-teams.md` before flipping the flag. |
 
 The project-`.claude/` adoption for Mode 3 / Mode 4 is a one-time per-project setup. The two supported forms are:
 
@@ -298,10 +379,13 @@ See `docs/decisions/011-claude-remote-harness-approach.md` for the full rational
 
 ## Cross-reference to other harness rules
 
-- `rules/orchestrator-pattern.md` — how to dispatch parallel builders (Mode 2 mechanics)
-- `rules/planning.md` — plan lifecycle and the `Execution Mode: orchestrator` header field
+- `rules/orchestrator-pattern.md` — how to dispatch parallel builders (Mode 2 mechanics); also documents how the orchestrator pattern coexists with Mode 5 Agent Teams
+- `rules/agent-teams.md` — full operational guide for Mode 5 (Agent Teams), including the five upstream Anthropic bugs the user opts into and the workarounds the harness ships
+- `rules/planning.md` — plan lifecycle, `Execution Mode: orchestrator` header field, and `Execution Mode: agent-team` for Mode 5 plans
 - `rules/harness-maintenance.md` — how harness changes propagate from `~/.claude/` to `neural-lace` to downstream project `.claude/`
-- `docs/decisions/011-claude-remote-harness-approach.md` — the decision record this rule operationalizes
+- `docs/decisions/011-claude-remote-harness-approach.md` — the decision record Modes 3 + 4 + 5 (Approach A inheritance) operationalize
+- `docs/decisions/012-agent-teams-integration.md` — the decision record introducing Mode 5
+- `docs/plans/agent-teams-integration.md` — the plan that introduced Mode 5 and the new hooks
 - `docs/plans/archive/claude-remote-adoption-evidence.md` — Phase A empirical research that backs the claims in this rule
 - `docs/claude-code-quality-strategy.md` "Known Gaps and Residual Risks" section 3 and 4 — the concurrent-session and harness-portability problems this rule addresses
 

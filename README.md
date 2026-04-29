@@ -4,6 +4,8 @@
 
 Neural Lace is a harness platform that grows with its host. It wraps AI coding tools (Claude Code, Codex, Cursor, Gemini) with a mechanically-enforced layer of software-engineering + AI-collaboration best practices — so individual developers and teams inherit years of distilled discipline by default, not by self-enforcement.
 
+> **Agent Teams (experimental, feature-flagged).** Compatibility with Anthropic's `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` ships disabled by default. To enable safely (with all harness gates working across teammate sessions), see [`adapters/claude-code/rules/agent-teams.md`](adapters/claude-code/rules/agent-teams.md). Decision record: [`docs/decisions/012-agent-teams-integration.md`](docs/decisions/012-agent-teams-integration.md).
+
 ## What It Does
 
 - **Enforced best practices** (not aspirational): evidence-based task completion, anti-vaporware verification, decision-record atomicity, tool-call budget discipline, and more — each backed by a pre-commit hook or session gate that blocks the anti-pattern mechanically. See [`docs/best-practices.md`](docs/best-practices.md) for the full catalog.
@@ -223,6 +225,7 @@ Trust (0.0-1.0) grows with safe operation and decays with incidents. Higher trus
 | Claude Code Adapter | v1.0 |
 | Pre-commit Security Scanner | v1.0 (credentials + anti-patterns) |
 | Pre-push Security Scanner | v1.0 (credentials) |
+| **Agent Teams** | **feature-flagged (experimental).** To enable: see [`adapters/claude-code/rules/agent-teams.md`](adapters/claude-code/rules/agent-teams.md). |
 | Risk Engine Runtime | Planned (currently using pattern-match hooks) |
 | Telemetry Collectors | Planned |
 | Learning Loop | Planned |
