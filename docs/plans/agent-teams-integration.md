@@ -78,12 +78,12 @@ This plan does NOT enable Agent Teams. It makes enabling Agent Teams safe. The u
      - Team member at counter 90 (single teammate sub-counter) blocks mid-stream as hard ceiling
    - Backward-compatible: solo sessions (no team) get the existing per-session block-at-30 behavior.
 
-- [ ] 7. **`task-created-validator.sh` — new TaskCreated event hook.** Reads `task_subject` and `task_description` from event input. Rejects (exit 2 + JSON `{"continue": false, "stopReason": "..."}`) when:
+- [x] 7. **`task-created-validator.sh` — new TaskCreated event hook.** Reads `task_subject` and `task_description` from event input. Rejects (exit 2 + JSON `{"continue": false, "stopReason": "..."}`) when:
    - (a) `task_description` doesn't reference an active plan file path (regex `docs/plans/[a-z0-9-]+\.md`)
    - (b) `task_description` doesn't reference acceptance criteria or a `Done when:` clause
    - Self-test with 4 scenarios. Wires into `settings.json` TaskCreated matcher (new event type, requires settings.json schema check).
 
-- [ ] 8. **`task-completed-evidence-gate.sh` — new TaskCompleted event hook.** Reads `task_id` and `team_name`. Two enforcement modes layered:
+- [x] 8. **`task-completed-evidence-gate.sh` — new TaskCompleted event hook.** Reads `task_id` and `team_name`. Two enforcement modes layered:
    - **Evidence enforcement:** verifies an evidence block exists at `<plan>-evidence.md` referencing the same task ID (via `task_id`-to-plan-task-ID convention to be established in this hook). Blocks completion if missing.
    - **Deferred-audit enforcement:** checks for `~/.claude/state/audit-pending.<team_name>` flag. If present, invokes `plan-evidence-reviewer` for the team's active plan. PASS verdict → clears flag, counter reset, TaskCompleted allowed. FAIL verdict → flag stays set, TaskCompleted blocked, error message points at audit findings. Coordinates with Task 6's flag-setting behavior.
    - **Self-test with 6 scenarios:** rejects-missing-evidence, allows-evidence-present, allows-explicit-bypass, handles-missing-task-id-gracefully, runs-audit-when-flag-set-and-PASS-clears-flag, runs-audit-when-flag-set-and-FAIL-blocks-completion.

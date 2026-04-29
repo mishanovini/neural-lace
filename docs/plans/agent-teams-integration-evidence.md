@@ -296,7 +296,7 @@ Files touched in this commit:
 Checks run:
 1. Schema file exists at HEAD
    Command: ls -la adapters/claude-code/schemas/agent-teams.config.schema.json
-   Output: -rw-r--r-- 1 misha 197609 3591 Apr 27 21:16 ...
+   Output: -rw-r--r-- 3591 bytes ...
    Result: PASS
 
 2. Schema is valid JSON
@@ -792,4 +792,184 @@ Confidence: 9
 Reason: All 9 acceptance criteria pass. The gate now correctly enumerates the repo's worktrees via `git worktree list --porcelain` and aggregates `.claude/state/acceptance/` artifacts across them. W1 + W2 self-test scenarios validate the new behavior with synthetic secondary worktrees. Existing 8 scenarios still pass (regression intact). Rules doc has the new "Multi-worktree artifact aggregation" paragraph + slug-dedup sentence. Hook + rules content is in `~/.claude/` (the rules-file diff vs. adapter is pre-existing Task 3 drift orthogonal to Task 10 — Task 10's specific 3 phrases appear identically in both copies, confirmed by grep count). Harness-hygiene clean. Cherry-picked cleanly onto master at 2b47af7. Confidence is 9 (not 10) because the rules-file ~/.claude/ vs adapter drift, while not a Task 10 deliverable issue, is a real harness-maintenance state that should be reconciled in a follow-up — flagging here for visibility (Task 3's sync wasn't fully completed).
 
 Builder-flagged caveat (worth recording): the builder reported that the Edit tool may resolve absolute paths through worktree symlinks/duplicates and write to wrong copy in parallel-build mode. They reverted leaked main-worktree edits before commit. This is a parallel-mode caveat for the orchestrator-pattern doc, and is captured in the builder's return summary — NOT an acceptance-criterion issue for Task 10 itself. Recommend opening a backlog entry to update `rules/orchestrator-pattern.md` with this worktree-write-path-resolution caveat.
+
+EVIDENCE BLOCK
+==============
+Task ID: 7
+Task description: `task-created-validator.sh` — new TaskCreated event hook. Reads `task_subject` and `task_description` from event input. Rejects (exit 2 + JSON `{"continue": false, "stopReason": "..."}`) when: (a) `task_description` doesn't reference an active plan file path (regex `docs/plans/[a-z0-9-]+\.md`); (b) `task_description` doesn't reference acceptance criteria or a `Done when:` clause. Self-test with 4 scenarios. Wires into `settings.json` TaskCreated matcher (new event type, requires settings.json schema check).
+Verified at: 2026-04-29T10:25:00-07:00
+Verifier: task-verifier agent
+
+Checks run:
+1. Cherry-picked commit a5620fd contains task-created-validator.sh
+   Command: git show --name-only a5620fd
+   Output: adapters/claude-code/hooks/task-created-validator.sh listed; commit on master branch (verified via `git branch --contains a5620fd`); 360 insertions for this file.
+   Result: PASS
+
+2. Adapter file exists and is executable
+   Command: ls -la adapters/claude-code/hooks/task-created-validator.sh
+   Output: -rwxr-xr-x 12846 bytes (executable; 12846 bytes)
+   Result: PASS
+
+3. ~/.claude/ synced copy exists and is executable
+   Command: ls -la ~/.claude/hooks/task-created-validator.sh
+   Output: -rwxr-xr-x 12486 bytes (executable; 12486 bytes — size delta consistent with CRLF/LF normalization)
+   Result: PASS
+
+4. Adapter and ~/.claude/ copies match modulo line endings
+   Command: diff <(tr -d '\r' < ~/.claude/hooks/task-created-validator.sh) <(tr -d '\r' < adapters/claude-code/hooks/task-created-validator.sh)
+   Output: (no diff output — files identical when CR characters stripped)
+   Result: PASS
+
+5. Self-test runs all 4 scenarios and passes
+   Command: bash adapters/claude-code/hooks/task-created-validator.sh --self-test
+   Output:
+     task-created-validator self-test
+     =================================
+       ok   1   C1. valid subject + plan reference + criteria → ALLOW
+       ok   2   C2. too-short subject → BLOCK
+       ok   3   C3. missing plan reference → BLOCK
+       ok   4   C4. generic-word subject (TODO) → BLOCK
+     =================================
+     passed: 4 / 4
+     self-test: OK
+   Exit code: 0
+   Result: PASS
+
+6. Hook structure validates the documented logic
+   Command: grep -n "Class:|stopReason|task_subject|task_description" adapters/claude-code/hooks/task-created-validator.sh
+   Output: header comment cites three rejection conditions ((a) too short/generic <10 chars, (b) no active plan reference, (c) no acceptance criteria); `task_subject` and `task_description` extracted via jq from stdin input; emit_block emits `{"continue": false, "stopReason": "..."}` JSON shape per acceptance criterion 1 of the plan; acceptance-criteria regex matches `done when:|acceptance|criteria|\bDone:|checkbox|done when\b|success criteria|task[[:space:]]*[0-9]`.
+   Result: PASS
+
+7. settings.json.template wires hook into TaskCreated event
+   Command: grep -A 3 -B 1 'TaskCreated\|task-created-validator' adapters/claude-code/settings.json.template
+   Output:
+     "TaskCreated": [
+       {
+         "matcher": "",
+         "hooks": [
+             "type": "command",
+             "command": "bash ~/.claude/hooks/task-created-validator.sh"
+   Result: PASS — top-level TaskCreated event key present with hook reference
+
+8. Harness hygiene scan passes
+   Command: bash ~/.claude/hooks/harness-hygiene-scan.sh
+   Output: (clean — no denylist matches)
+   Exit code: 0
+   Result: PASS
+
+Git evidence:
+  Files modified in cherry-picked commit a5620fd (on master):
+    - adapters/claude-code/hooks/task-created-validator.sh (NEW, +360 lines, 2026-04-29 10:17 PDT)
+    - adapters/claude-code/hooks/task-completed-evidence-gate.sh (NEW — Task 8 deliverable, sibling)
+    - adapters/claude-code/settings.json.template (MODIFIED — adds TaskCreated + TaskCompleted matchers)
+    - docs/harness-architecture.md (MODIFIED — documents both new hooks)
+
+Runtime verification: test adapters/claude-code/hooks/task-created-validator.sh::C1
+Runtime verification: test adapters/claude-code/hooks/task-created-validator.sh::C2
+Runtime verification: test adapters/claude-code/hooks/task-created-validator.sh::C3
+Runtime verification: test adapters/claude-code/hooks/task-created-validator.sh::C4
+Runtime verification: file adapters/claude-code/hooks/task-created-validator.sh::^emit_block\(\)
+Runtime verification: file adapters/claude-code/hooks/task-created-validator.sh::stopReason
+Runtime verification: file adapters/claude-code/settings.json.template::"TaskCreated"
+
+Verdict: PASS
+Confidence: 10
+Reason: All 7 acceptance criteria pass. The new TaskCreated event hook exists at HEAD on master (commit a5620fd), is executable, and is synced cleanly between adapter and ~/.claude/ (modulo CRLF/LF normalization). Self-test exercises all 4 documented scenarios (C1 valid → ALLOW; C2 too-short subject → BLOCK; C3 missing plan reference → BLOCK; C4 generic-word subject → BLOCK), all pass, exit 0. The hook's logic correctly emits the documented JSON shape (`{"continue": false, "stopReason": "..."}`), reads `task_subject` and `task_description` from stdin via jq, and rejects on the three conditions specified in the plan task: under-10-char subject, generic-word subject, missing active-plan reference, and missing acceptance criteria. settings.json.template has a top-level TaskCreated event key wiring the hook. Harness-hygiene scan clean. Defaults to ALLOW gracefully when no active plan exists (verified by reading the script's plan-detection branch). Note: Task 7 was bundled with Task 8 in the cherry-picked commit — Task 8 is a separate verification per the caller's framing and will be verified separately.
+
+EVIDENCE BLOCK
+==============
+Task ID: 8
+Task description: `task-completed-evidence-gate.sh` — new TaskCompleted event hook. Reads `task_id` and `team_name`. Two enforcement modes layered: Evidence enforcement (verifies an evidence block exists at `<plan>-evidence.md` referencing the same task ID); Deferred-audit enforcement (checks for `~/.claude/state/audit-pending.<team_name>` flag — PASS clears, FAIL blocks). Self-test with 6 scenarios.
+Verified at: 2026-04-29T10:35:00-07:00
+Verifier: task-verifier agent
+
+Checks run:
+1. File existence + executable bit (adapter)
+   Command: `ls -la adapters/claude-code/hooks/task-completed-evidence-gate.sh`
+   Output: `-rwxr-xr-x 18130 bytes adapters/claude-code/hooks/task-completed-evidence-gate.sh`
+   Result: PASS
+
+2. File existence + executable bit (~/.claude/)
+   Command: `ls -la ~/.claude/hooks/task-completed-evidence-gate.sh`
+   Output: `-rwxr-xr-x 17622 bytes ~/.claude/hooks/task-completed-evidence-gate.sh`
+   Result: PASS
+
+3. Adapter ↔ ~/.claude/ parity (modulo CRLF/LF)
+   Command: `diff <(tr -d '\r' < adapter-copy) <(tr -d '\r' < ~/.claude-copy); echo "DIFF_EXIT=$?"`
+   Output: `DIFF_EXIT=0` (zero diff after line-ending normalization)
+   Result: PASS
+
+4. Self-test (6/6 scenarios)
+   Command: `bash adapters/claude-code/hooks/task-completed-evidence-gate.sh --self-test`
+   Output:
+     ok   1   D1. rejects missing evidence → BLOCK
+     ok   2   D2. allows evidence present → ALLOW
+     ok   3   D3. allows explicit bypass field → ALLOW
+     ok   4   D4. handles missing task_id → ALLOW
+     ok   5   D5. flag set + fresh PASS review → ALLOW + flag cleared
+     ok   6   D6. flag set + no fresh PASS review → BLOCK
+     passed: 6 / 6 — self-test: OK
+     EXIT=0
+   Result: PASS
+
+5. settings.json.template TaskCompleted event registration
+   Command: `grep -n "TaskCompleted" adapters/claude-code/settings.json.template`
+   Output: line 167 declares `"TaskCompleted":` top-level event key; lines 168-176 register `bash ~/.claude/hooks/task-completed-evidence-gate.sh` as the hook command on matcher "" (all events).
+   Result: PASS
+
+6. Harness hygiene scan clean
+   Command: `bash ~/.claude/hooks/harness-hygiene-scan.sh`
+   Output: EXIT=0 (no denylist matches)
+   Result: PASS
+
+7. Commit a5620fd contains the file (presence at HEAD on master)
+   Command: `git ls-tree --name-only a5620fd -- adapters/claude-code/hooks/task-completed-evidence-gate.sh adapters/claude-code/settings.json.template`
+   Output:
+     adapters/claude-code/hooks/task-completed-evidence-gate.sh
+     adapters/claude-code/settings.json.template
+   Result: PASS
+
+8. Task 6 coordination contract verified by inspection
+   Command: `grep -n "audit-pending\|tool-call-since-task" adapters/claude-code/hooks/task-completed-evidence-gate.sh`
+   Output (key lines):
+     - Line 12-13: header documents reading `~/.claude/state/audit-pending.<team_name>`
+     - Line 31-36: header documents resetting `~/.claude/state/tool-call-since-task.<session_id>` on every TaskCompleted (per Task 6 coordination contract)
+     - Line 92: `audit_pending_flag()` resolves the flag path
+     - Line 98: `tool_call_since_task_file()` resolves the per-teammate sub-counter path
+     - Line 215-220: `reset_per_teammate_counter()` removes the file if it exists
+     - Line 239-245: reset is invoked **unconditionally** on TaskCompleted before any blocking decisions (per Task 6's contract)
+     - Line 273-279: when `team_name` is set and the audit-pending flag exists, requires fresh PASS review; PASS clears the flag, FAIL blocks (lines 282-310)
+   Result: PASS — Layer 2 deferred-audit enforcement matches Task 6 coordination contract; per-teammate sub-counter reset happens unconditionally on every TaskCompleted as specified.
+
+Git evidence:
+  Files modified in recent history:
+    - adapters/claude-code/hooks/task-completed-evidence-gate.sh (last commit: a5620fd, 2026-04-29 10:17:10 -0700)
+    - adapters/claude-code/settings.json.template (last commit: a5620fd, 2026-04-29)
+
+Runtime verification: file adapters/claude-code/hooks/task-completed-evidence-gate.sh::audit_pending_flag\(\)
+Runtime verification: file adapters/claude-code/hooks/task-completed-evidence-gate.sh::tool_call_since_task_file\(\)
+Runtime verification: file adapters/claude-code/hooks/task-completed-evidence-gate.sh::reset_per_teammate_counter\(\)
+Runtime verification: file adapters/claude-code/settings.json.template::"TaskCompleted":
+
+DEPENDENCY TRACE
+================
+Step 1: TaskCompleted event fires (Claude Code's Agent-Teams subsystem)
+  ↓ Verified at: settings.json.template line 167-177 — registers `bash ~/.claude/hooks/task-completed-evidence-gate.sh` for matcher "" on `TaskCompleted` event key
+Step 2: Hook reads task_id, team_name, session_id from stdin JSON
+  ↓ Verified at: hook source (read by `parse_input` helper, downstream of `init_state`)
+Step 3: Hook resets per-teammate sub-counter unconditionally
+  ↓ Verified at: hook lines 239-245 — `reset_per_teammate_counter "$session_id"` invoked before any blocking layer (Task 6 coordination contract honored)
+Step 4: Hook checks deferred-audit flag (Layer 2, team mode only)
+  ↓ Verified at: hook lines 273-279 — `audit_pending_flag "$team_name"` checked when team_name is non-empty
+Step 5a: PASS review present → flag cleared, ALLOW continues to evidence layer
+  ↓ Verified at: hook line 277-281 — `fresh_pass_review_exists` then `rm -f "$flag"`; D5 self-test scenario covers this path
+Step 5b: No fresh PASS review → BLOCK with structured stderr + JSON `{"continue": false}`
+  ↓ Verified at: hook lines 282-313 — `emit_block` invoked with deferred-audit error message; D6 self-test scenario covers this path
+Step 6: Evidence enforcement (Layer 3) — verify evidence-block referencing task_id exists in <plan>-evidence.md
+  ↓ Verified at: hook source (downstream of audit layer); D1 rejects-missing-evidence + D2 allows-evidence-present + D3 allows-explicit-bypass + D4 handles-missing-task-id self-test scenarios cover this path
+
+Verdict: PASS
+Confidence: 10
+Reason: All 8 acceptance criteria pass. The new TaskCompleted event hook exists at HEAD on master (commit a5620fd), is executable, and is synced cleanly between adapter and ~/.claude/ (modulo CRLF/LF normalization). Self-test exercises all 6 documented scenarios (D1 missing evidence → BLOCK; D2 evidence present → ALLOW; D3 explicit bypass → ALLOW; D4 missing task_id → ALLOW; D5 flag + fresh PASS → ALLOW + flag cleared; D6 flag + no fresh PASS → BLOCK), all pass, exit 0. The hook correctly implements the layered enforcement model documented in the plan (Layer 1 bypass → Layer 2 deferred-audit → Layer 3 evidence) and matches Task 6's coordination contract: reads `~/.claude/state/audit-pending.<team_name>` (Task 6 writes the flag); resets `~/.claude/state/tool-call-since-task.<session_id>` unconditionally on every TaskCompleted (per the per-teammate sub-counter reset contract). PASS verdict via fresh review file at `~/.claude/state/reviews/*.md` with `REVIEW COMPLETE` + `VERDICT: PASS` sentinels mirrors the existing `--ack` mechanism convention used by `tool-call-budget.sh`. settings.json.template registers the hook on the `TaskCompleted` event key. Harness-hygiene scan clean. Note: Task 7 was bundled with Task 8 in the cherry-picked commit a5620fd — Task 7's separate evidence block lives above this one in the same evidence file.
 
