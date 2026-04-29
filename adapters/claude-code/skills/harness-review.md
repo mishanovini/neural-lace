@@ -485,6 +485,43 @@ else
 fi
 
 # ==========================================================================
+# Check 11: Agent Teams integration self-test
+# ==========================================================================
+# Runs adapters/claude-code/tests/agent-teams-self-test.sh which exercises
+# every new/extended hook from the agent-teams-integration plan
+# (Decision 012) with synthetic event input. It does NOT require Agent
+# Teams to be enabled (`enabled: false` in
+# ~/.claude/local/agent-teams.config.json is fine). Layered into:
+#   - Layer A: each new/extended hook's own --self-test (passthrough)
+#   - Layer B: cross-hook integration scenarios (I1..I6) that no single
+#     per-hook self-test can cover (e.g., budget at 30 sets the flag
+#     that task-completed-evidence-gate then consumes).
+# FAIL here surfaces the failed scenario IDs (A1..A6 / I1..I6). Likely
+# causes: a hook was modified without updating its self-test; a config
+# file format changed; the deferred-audit flag-file convention drifted;
+# the multi-worktree artifact aggregation regressed.
+agent_teams_findings=()
+at_test="$REPO_ROOT/adapters/claude-code/tests/agent-teams-self-test.sh"
+if [[ -f "$at_test" ]]; then
+  at_out=$(bash "$at_test" 2>&1)
+  at_rc=$?
+  if [[ $at_rc -eq 0 ]]; then
+    summary=$(echo "$at_out" | grep -E '^RESULT: [0-9]+/[0-9]+' | head -1)
+    [[ -z "$summary" ]] && summary="exit 0"
+    write_section "11. Agent Teams integration self-test" "PASS" "$summary"
+  else
+    # Capture FAIL lines: each scenario logs '— FAIL: <reason>'.
+    mapfile -t at_fails < <(echo "$at_out" | grep -E '— FAIL' | head -10)
+    if [[ ${#at_fails[@]} -eq 0 ]]; then
+      at_fails=("agent-teams-self-test exited $at_rc but no FAIL lines parsed from output")
+    fi
+    write_section "11. Agent Teams integration self-test" "FAIL" "${at_fails[@]}"
+  fi
+else
+  write_section "11. Agent Teams integration self-test" "FAIL" "Missing test script: adapters/claude-code/tests/agent-teams-self-test.sh"
+fi
+
+# ==========================================================================
 # Summary
 # ==========================================================================
 {
