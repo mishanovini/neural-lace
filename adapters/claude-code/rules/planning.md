@@ -58,6 +58,35 @@ Plan files should declare `Execution Mode: orchestrator` in their header (defaul
 
 The `task-verifier` mandate (only task-verifier can flip checkboxes) is unchanged — builders invoke task-verifier, orchestrator trusts the verdict. The anti-vaporware rule, runtime verification requirements, evidence block format, and tool-call-budget all still apply; they now apply to the builder's scope rather than the main session's.
 
+## When to use `Execution Mode: agent-team`
+
+`Execution Mode: orchestrator` is the default and correct choice for the vast majority of multi-task plans. `Execution Mode: agent-team` is a separate value reserved for plans whose work fits Anthropic's experimental **Agent Teams** model — peer-to-peer teammate-to-teammate messaging with a shared task list — and where the user has explicitly enabled the feature flag at `~/.claude/local/agent-teams.config.json` (`{"enabled": true}`).
+
+**Default to `orchestrator`.** It is the more thoroughly battle-tested execution mode, and the harness's hook-enforced anti-vaporware mechanisms have all been validated against the orchestrator's lead-orchestrator + parallel-builder dispatch shape.
+
+### Decision tree — when does `agent-team` add value over `orchestrator`?
+
+Use `agent-team` only when ONE OR MORE of these are true:
+
+- **Continuous multi-agent coordination is required.** The work isn't dispatch-and-collect (orchestrator's strength); teammates need to message each other directly during a task (e.g., a researcher teammate feeding intermediate findings to a builder teammate while the build is still in flight, with the builder asking follow-up questions back). Orchestrator's one-shot dispatch model can't express that loop without each round becoming its own dispatch.
+- **The work involves task negotiation between teammates.** Teammates pull from a shared task list and decide among themselves who takes what next, rather than the orchestrator pre-assigning tasks. This is rare in practice but is the explicit value-add of Agent Teams.
+- **You are explicitly testing or evaluating Agent Teams.** Maintainer-driven evaluation of the integration itself (e.g., exercising the new hooks, measuring upstream-bug behavior) is a legitimate reason to declare `agent-team` even when the work would otherwise fit orchestrator.
+- **Otherwise: use `orchestrator`.** Multi-task parallel build, sweep tasks, sequential phase builds — these are all orchestrator territory. Don't reach for `agent-team` because "we have multiple agents"; orchestrator already gives you parallel builders without the upstream-bug surface.
+
+### Prerequisites for choosing `agent-team`
+
+- The user must have set `enabled: true` in `~/.claude/local/agent-teams.config.json`. This is a hard prerequisite — without it, `teammate-spawn-validator.sh` rejects every `Agent` tool spawn that names a `team_name`. A plan declaring `Execution Mode: agent-team` while the flag is off will not produce any team-mode behavior; the lead session will observe spawn rejections.
+- The user is opting into the upstream-bug list documented in `~/.claude/rules/agent-teams.md` (#50779, #24175, #43736, #24073, #24307). The rule documents the workarounds and the configuration that minimizes their blast radius (`force_in_process: true`, `worktree_mandatory_for_write: true`).
+- Claude Code v2.1.32 or later, with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` set in the session's environment. Older versions do not honor the flag.
+
+### Cross-references
+
+- `~/.claude/rules/agent-teams.md` — full integration documentation: how to enable, the decision tree expanded, the Spawn-Before-Delegate pattern, in-process vs pane-based teammate mode tradeoffs, inbox-deferral bug guidance, and the four upstream-issue workarounds.
+- `~/.claude/rules/orchestrator-pattern.md` "Agent Teams pairing" — describes how the two execution modes coexist and why orchestrator is preferred when both could apply.
+- `docs/decisions/012-agent-teams-integration.md` — the design rationale for the integration, the six approved decisions (per-team budget scope, force-in-process default, worktree-mandatory-for-write, TaskCreated/Completed enforcement, lead-aggregate acceptance, feature flag).
+
+If the plan's work doesn't fit the criteria above, do not declare `agent-team`. The harness gates that protect orchestrator's flow (parallel-write protection, evidence-first checkbox flips, runtime verification) all still apply in `agent-team` mode, but the failure surface is wider — there is more to go wrong, and less collective experience to draw on when something does.
+
 ## Philosophy
 **Planning is where human judgment matters most. Building is where autonomy matters most.** Invest heavily in planning so implementation runs autonomously.
 

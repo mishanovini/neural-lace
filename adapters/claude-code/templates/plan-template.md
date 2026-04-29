@@ -33,10 +33,20 @@ Execution Mode values:
                 ~/.claude/rules/orchestrator-pattern.md for the full protocol.
   direct        Single-task quick fixes (one file, < 15 min). The main session
                 does the work directly. No sub-agent dispatch overhead.
+  agent-team    Uses Anthropic's experimental Agent Teams feature
+                (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1) for peer-to-peer
+                teammate coordination with a shared task list. Gated by
+                `enabled: true` in ~/.claude/local/agent-teams.config.json
+                (default false). See ~/.claude/rules/agent-teams.md for the
+                full protocol, the upstream-bug list, and when to prefer this
+                over orchestrator. Decision record:
+                docs/decisions/012-agent-teams-integration.md.
 
 If unsure, use orchestrator. The overhead of dispatching is small; the cost of
 running a multi-phase plan in one context is large (context accumulates 200+
-tool uses, quality degrades).
+tool uses, quality degrades). agent-team is reserved for plans whose work fits
+the peer-to-peer messaging model and where the user has explicitly enabled the
+Agent Teams flag.
 
 Backlog items absorbed — required. Declares which `docs/backlog.md` open items
 this plan claims. The hook `backlog-plan-atomicity.sh` enforces that absorbed

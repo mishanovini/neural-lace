@@ -277,6 +277,36 @@ This is a Pattern-class harness rule, not a Mechanism. It is NOT hook-enforced a
 
 These are welcome additions. Until they exist, this pattern works on discipline + the existing task-verifier mandate.
 
+## Agent Teams pairing
+
+The orchestrator pattern (`Execution Mode: orchestrator`) and Agent Teams (`Execution Mode: agent-team`) are TWO COEXISTING execution modes for multi-task plans. They are not alternatives that replace each other; a downstream session picks one based on the work's coordination shape, and the harness supports both.
+
+**`Execution Mode: orchestrator` (default).** Everything in this rule applies. The main session reads the plan, dispatches each task to a `plan-phase-builder` sub-agent via the Task tool, collects the result, and moves on. Verification is sequential: `task-verifier` is invoked after the build commit lands, flips the checkbox, and writes the evidence block. Parallel dispatch goes through worktree-isolated builders; the orchestrator cherry-picks back and verifies sequentially. This is the more thoroughly battle-tested mode and is the right choice for ~95% of multi-task plans.
+
+**`Execution Mode: agent-team`.** A lead session uses Anthropic's experimental Agent Teams feature (gated by `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` AND `enabled: true` in `~/.claude/local/agent-teams.config.json`). Teammates spawn into a team, message each other directly, and pull from a shared task list rather than receiving pre-assigned dispatches. The harness gates that protect the orchestrator's flow (`plan-edit-validator.sh` flock, `tool-call-budget.sh` team-aware mode, `task-created-validator.sh`, `task-completed-evidence-gate.sh`, multi-worktree acceptance aggregation) extend into `agent-team` mode, but the coordination shape is fundamentally different — teammate-to-teammate, not lead-to-builder. Documented end-to-end in `~/.claude/rules/agent-teams.md`.
+
+### When BOTH could apply, prefer orchestrator
+
+If the work could be done in either mode (e.g., a multi-task plan where teammates COULD coordinate via shared-task-list but ALSO could be dispatched in parallel), pick orchestrator. Reasons:
+
+- Orchestrator is the more thoroughly battle-tested mode. Every Gen 4 / Gen 5 anti-vaporware mechanism (`pre-commit-tdd-gate.sh`, `runtime-verification-executor.sh`, `plan-edit-validator.sh`, `pre-stop-verifier.sh`, `product-acceptance-gate.sh`) has been validated against orchestrator's lead-dispatch flow. The same gates apply in `agent-team` mode but with a wider failure surface (more teammates, more shared state, upstream-bug exposure).
+- The orchestrator pattern's parallel-builder discipline (`isolation: "worktree"`, build-in-parallel + verify-sequentially via cherry-pick) already covers the common "we have multiple independent tasks" case without the upstream-bug surface that Agent Teams carries (#50779 inbox-deferral, #24175 macOS+tmux event drops, #43736, #24073, #24307).
+- Reach for `agent-team` only when the work genuinely needs continuous teammate-to-teammate coordination, task negotiation between teammates, or maintainer-driven evaluation of the Agent Teams integration itself. See `~/.claude/rules/planning.md` "When to use `Execution Mode: agent-team`" for the full decision tree.
+
+### Anti-pattern — don't mix modes within a single plan
+
+A single plan declares ONE `Execution Mode` in its header. Do not start a plan in `orchestrator` mode and switch to `agent-team` mid-build, or vice-versa. Reasons:
+
+- The plan-time advocate scenarios, evidence-block conventions, task-verifier invocations, and acceptance artifacts are all keyed to the plan's declared execution shape. Switching modes mid-plan invalidates the audit trail and confuses every downstream gate.
+- Mixed-mode plans force the maintainer to mentally context-switch between two coordination shapes, which is exactly the failure mode the "one mode per plan" rule prevents.
+- If you genuinely need to switch (e.g., the plan turned out to need continuous coordination that orchestrator can't express), the correct action is to mark the current plan `Status: DEFERRED` with a one-line reason, then create a new plan with the right `Execution Mode` from the start. The deferred plan returns to the backlog if it had absorbed items, and the new plan picks up where the old one left off with the right coordination shape declared from line 1.
+
+### Cross-references
+
+- `~/.claude/rules/agent-teams.md` — full Agent Teams mechanics, upstream-bug list, configuration knobs, and the Spawn-Before-Delegate pattern.
+- `~/.claude/rules/planning.md` "When to use `Execution Mode: agent-team`" — the decision tree for choosing between modes.
+- `docs/decisions/012-agent-teams-integration.md` — the design rationale: per-team tool-call-budget scope, `force_in_process: true` default, worktree-mandatory-for-write, TaskCreated/TaskCompleted enforcement, lead-aggregate acceptance, feature-flag gating.
+
 ## How this pattern interacts with existing rules
 
 - `planning.md`: unchanged. Orchestrator reads + writes plan files the same way, just dispatches the build.
