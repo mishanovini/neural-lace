@@ -973,3 +973,263 @@ Verdict: PASS
 Confidence: 10
 Reason: All 8 acceptance criteria pass. The new TaskCompleted event hook exists at HEAD on master (commit a5620fd), is executable, and is synced cleanly between adapter and ~/.claude/ (modulo CRLF/LF normalization). Self-test exercises all 6 documented scenarios (D1 missing evidence → BLOCK; D2 evidence present → ALLOW; D3 explicit bypass → ALLOW; D4 missing task_id → ALLOW; D5 flag + fresh PASS → ALLOW + flag cleared; D6 flag + no fresh PASS → BLOCK), all pass, exit 0. The hook correctly implements the layered enforcement model documented in the plan (Layer 1 bypass → Layer 2 deferred-audit → Layer 3 evidence) and matches Task 6's coordination contract: reads `~/.claude/state/audit-pending.<team_name>` (Task 6 writes the flag); resets `~/.claude/state/tool-call-since-task.<session_id>` unconditionally on every TaskCompleted (per the per-teammate sub-counter reset contract). PASS verdict via fresh review file at `~/.claude/state/reviews/*.md` with `REVIEW COMPLETE` + `VERDICT: PASS` sentinels mirrors the existing `--ack` mechanism convention used by `tool-call-budget.sh`. settings.json.template registers the hook on the `TaskCompleted` event key. Harness-hygiene scan clean. Note: Task 7 was bundled with Task 8 in the cherry-picked commit a5620fd — Task 7's separate evidence block lives above this one in the same evidence file.
 
+EVIDENCE BLOCK
+==============
+Task ID: 11
+Task description: New rule: `rules/agent-teams.md`. Documents: First sub-section "How to enable Agent Teams" (config path, JSON, field defaults, five upstream bugs); when to use Agent Teams vs orchestrator-pattern (decision tree); Spawn-Before-Delegate pattern (#24073/#24307 workaround); in-process vs pane-based teammate mode tradeoffs; inbox-deferral bug (#50779) behavioral guidance; the 4 unfixed Anthropic upstream issues with workarounds; cross-references to all hooks and config files in this plan.
+Verified at: 2026-04-29T11:14:00-07:00
+Verifier: task-verifier agent
+
+Files touched (cherry-picked as commit d417429 onto master from builder commit 2bfe037):
+  - adapters/claude-code/rules/agent-teams.md (NEW — 18,366 bytes LF / 18,574 bytes CRLF in working tree)
+  - docs/harness-architecture.md (MODIFIED — added Rules-table row for agent-teams.md per docs-freshness-gate)
+
+Checks run:
+
+1. Adapter file exists at HEAD
+   Command: ls -la adapters/claude-code/rules/agent-teams.md
+   Output: -rw-r--r-- 18574 bytes (CRLF in working tree)
+   Result: PASS
+
+2. Sync to ~/.claude/ verified
+   Command: diff <(tr -d '\r' < adapters/claude-code/rules/agent-teams.md) <(tr -d '\r' < ~/.claude/rules/agent-teams.md) | wc -l
+   Output: 0 (zero diff lines after CRLF normalization — files identical)
+   Result: PASS
+
+3. Required 8 sections present in correct order
+   Command: grep -n '^## \|^# ' adapters/claude-code/rules/agent-teams.md
+   Output:
+     1: # Agent Teams Integration                              (header)
+     9: ## How to enable Agent Teams                           (FIRST sub-section ✓)
+     70: ## When to use Agent Teams vs. orchestrator-pattern   (decision tree)
+     84: ## Spawn-Before-Delegate Pattern                      (#24073/#24307 workaround)
+     124: ## In-process vs pane-based teammate mode            (tradeoffs)
+     151: ## Inbox-deferral guidance (#50779)                  (behavioral guidance)
+     168: ## How the harness gates fire in team mode           (per-hook firing inventory)
+     189: ## Cross-references                                  (cross-references)
+     206: ## Scope                                             (bonus — not in required 8)
+   Result: PASS — all 8 required sections present in the documented order; "How to enable Agent Teams" IS the first sub-section after the header (line 9, immediately after Classification + Ships-with paragraphs)
+
+4. All 5 upstream bug numbers present
+   Command: grep -c '#50779\|#24175\|#43736\|#24073\|#24307' adapters/claude-code/rules/agent-teams.md
+   Output: 11 (>= 5; all five distinct bug numbers cited multiple times — once each in the "Upstream bugs you opt into" subsection plus additional in workaround discussions and cross-references)
+   Result: PASS
+
+5. All 6 hook files referenced in "How harness gates fire" exist at adapter path
+   Command: ls adapters/claude-code/hooks/{teammate-spawn-validator,task-created-validator,task-completed-evidence-gate,tool-call-budget,plan-edit-validator,product-acceptance-gate}.sh
+   Output: all 6 files present
+   Result: PASS
+
+6. Harness hygiene scan passes (no personal identifiers)
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh adapters/claude-code/rules/agent-teams.md
+   Output: (empty); EXIT: 0
+   Result: PASS
+
+7. Cherry-picked commit d417429 contains the expected file
+   Command: git show d417429:adapters/claude-code/rules/agent-teams.md | wc -c
+   Output: 18366
+   Result: PASS — file is in the commit at expected size (LF version)
+
+8. File size is in expected range (~18.4 KB, neither bloated nor too thin)
+   Output: 18,366 bytes LF / 18,574 bytes CRLF — matches builder-reported 18.4 KB
+   Result: PASS
+
+9. Architecture doc updated (docs-freshness-gate satisfaction)
+   Command: git show d417429 -- docs/harness-architecture.md
+   Output: +1 line in Rules table — new row for `agent-teams.md (2026-04-29)` describing the integration, scope (`enabled: true` flag), the five upstream bugs, the inventory of six new/extended hooks
+   Result: PASS
+
+Git evidence:
+  Files modified in recent history:
+    - adapters/claude-code/rules/agent-teams.md  (last commit: d417429, 2026-04-29 11:01:38 -0700)
+    - docs/harness-architecture.md  (last commit: d417429, then again d79e064 from T14; T11 row preserved through subsequent T13 + T14 changes)
+
+Runtime verification: file adapters/claude-code/rules/agent-teams.md::^## How to enable Agent Teams$
+Runtime verification: file adapters/claude-code/rules/agent-teams.md::^## Spawn-Before-Delegate Pattern$
+Runtime verification: file adapters/claude-code/rules/agent-teams.md::^## Inbox-deferral guidance \(#50779\)$
+Runtime verification: file adapters/claude-code/rules/agent-teams.md::^## How the harness gates fire in team mode$
+Runtime verification: file adapters/claude-code/rules/agent-teams.md::#43736
+Runtime verification: file adapters/claude-code/rules/agent-teams.md::#24073
+Runtime verification: file adapters/claude-code/rules/agent-teams.md::#24307
+Runtime verification: file adapters/claude-code/rules/agent-teams.md::#50779
+Runtime verification: file adapters/claude-code/rules/agent-teams.md::#24175
+Runtime verification: file docs/harness-architecture.md::^\| `agent-teams\.md`
+
+Verdict: PASS
+Confidence: 10
+Reason: All 9 acceptance criteria pass. The new rule file exists at adapter path (committed as d417429 on master, 18,366 bytes LF), is byte-for-byte identical to the ~/.claude/ install copy after CRLF normalization, contains all 8 required sections in the documented order with "How to enable Agent Teams" as the first sub-section after the header (placement is load-bearing — a user landing on the rule sees the enable instructions immediately, not buried after decision-tree discussion). All 5 upstream bug numbers (#50779, #24175, #43736, #24073, #24307) are cited 11 times total — once in the "Upstream bugs you opt into" enumeration + multiple times in workaround discussions and the cross-references section. All 6 hook files referenced in the "How the harness gates fire in team mode" inventory table exist at the adapter path; their per-hook firing semantics in team mode are documented accurately against what was built in Tasks 5-10. Harness-hygiene scan returns exit 0 — no personal identifiers, no real domains, no committed secrets in the rule body. Architecture-doc Rules table updated with a row that summarizes the new rule and survives subsequent T13/T14 changes to the same file (auto-merged cleanly per orchestrator's report). The rule's content matches the design recorded in Decision 012 and the 2026-04-27 conflict analysis: it documents the load-bearing feature flag default semantics (`enabled: false` master switch, `force_in_process: true` for #24175 mitigation, `worktree_mandatory_for_write: true` for filesystem-race protection, `per_team_budget: true` for budget scope), the Spawn-Before-Delegate procedure with concrete pseudocode for the #24073/#24307 workaround, the inbox-deferral guidance for #50779 (batch coordination at TaskCreated/TaskCompleted boundaries; never lead-side polling loops), and a clear "when to use orchestrator-pattern instead" decision tree that defaults to orchestrator-pattern when in doubt. The classification line correctly identifies this as Hybrid (Pattern + Mechanism) — the decision tree and procedural workarounds are self-applied Patterns; the spawn validator + budget + TaskCreated/Completed gates + flock-protected plan-edit-validator + multi-worktree acceptance aggregator are the Mechanism layer that fires once the flag is on. File size (18.4 KB) is proportionate to scope — comprehensive enough to cover the integration without padding.
+
+EVIDENCE BLOCK
+==============
+Task ID: 13
+Task description: Documentation updates. docs/harness-architecture.md: add new hooks to the inventory table; describe new event matchers (TaskCreated, TaskCompleted); reference Decision 012; reflect Stop chain corrections from Task 3. README.md: add a row to the status table — Agent Teams: feature-flagged (experimental). To enable: see adapters/claude-code/rules/agent-teams.md. Position the row prominently so it's visible from the repo's first scroll. The user must be able to find the enable instructions without searching. rules/automation-modes.md: add Agent Teams as Mode 5 (or sub-mode) with the harness-portability story (Decision 011 Approach A still applies; teammates inherit project .claude/).
+Verified at: 2026-04-29T18:16:12Z
+Verifier: task-verifier agent
+
+Checks run:
+1. Cherry-pick commit fa28c3c exists on master with expected file set
+   Command: git show --stat fa28c3c
+   Output: 3 files changed, 139 insertions(+), 29 deletions(-) — README.md, adapters/claude-code/rules/automation-modes.md, docs/harness-architecture.md. Subject: "docs: agent-teams integration documentation (plan task 13)".
+   Result: PASS
+
+2. harness-architecture.md mentions all 6 hooks (3 new + 3 extended)
+   Command: grep -c 'teammate-spawn-validator\|task-created-validator\|task-completed-evidence-gate' docs/harness-architecture.md
+   Output: 11 matches (criterion ≥ 3). The 3 extended hooks are also mentioned with explicit "Agent Teams plan task N" annotations: tool-call-budget.sh (line 31, plan task 6), plan-edit-validator.sh (line 24, plan task 9), product-acceptance-gate.sh (line 43, plan task 10).
+   Result: PASS
+
+3. README.md Agent Teams status row present and prominent
+   Command: grep -ni 'agent.teams' README.md ; wc -l README.md
+   Output: 2 matches at lines 7 and 228 (file is 254 lines). Line 7 is a top-of-file callout blockquote immediately after the intro paragraph, visible from first scroll. Line 228 is the long-form status-table row. Both link to adapters/claude-code/rules/agent-teams.md. The line-7 callout also cites Decision 012 inline.
+   Result: PASS
+
+4. README.md Agent Teams link near top of file
+   Command: line 7 of 254 = top 2.7% of file
+   Output: First mention is at line 7, well above the fold. Criterion satisfied.
+   Result: PASS
+
+5. adapters/claude-code/rules/automation-modes.md contains Mode 5 entry for Agent Teams
+   Command: grep -c 'Agent Teams' adapters/claude-code/rules/automation-modes.md
+   Output: 9 matches (criterion ≥ 3). Includes the Mode 5 heading at line 222 ("## Mode 5 — Agent Teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`)"), the comparison-table row at line 19, decision-tree step 5 at line 340, setup-prerequisites row 5 at line 369, and cross-references to rules/agent-teams.md / Decision 012 / docs/plans/agent-teams-integration.md.
+   Result: PASS
+
+6. Comparison table at top of automation-modes.md includes Agent Teams as a row
+   Command: grep -n 'Mode 5\|Agent Teams' adapters/claude-code/rules/automation-modes.md | head -5
+   Output: Line 19 (in the table block starting line 14) contains "| 5 | **Agent Teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`)** | In-process default ... | **Full** for in-process teammates ... | Complex multi-agent workflows where direct teammate-to-teammate messaging is needed |". Table extended from 4→5 modes per the commit message.
+   Result: PASS
+
+7. ~/.claude/rules/automation-modes.md matches adapter copy
+   Command: diff -q ~/.claude/rules/automation-modes.md adapters/claude-code/rules/automation-modes.md
+   Output: FILES MATCH (diff returned no differences; harness-maintenance sync rule satisfied)
+   Result: PASS
+
+8. harness-hygiene-scan passes
+   Command: bash ~/.claude/hooks/harness-hygiene-scan.sh
+   Output: EXIT 0 — no personal identifiers, no real domains, no secrets in the staged or working-tree changes
+   Result: PASS
+
+9. Stop chain enumeration in harness-architecture.md matches rules/acceptance-scenarios.md (8 positions in order)
+   Command: grep -n -A 12 '## Stop (' docs/harness-architecture.md ; grep -E '^[0-9]+\. `(...)' ~/.claude/rules/acceptance-scenarios.md
+   Output: Both files enumerate 8 entries in the same order: 1. pre-stop-verifier.sh, 2. bug-persistence-gate.sh, 3. narrate-and-wait-gate.sh, 4. product-acceptance-gate.sh, 5. deferral-counter.sh, 6. transcript-lie-detector.sh, 7. imperative-evidence-linker.sh, 8. goal-coverage-on-stop.sh. Heading "### Stop (8 entries — chained in order)" at harness-architecture.md line 130 is correct (was previously stale at "1 entry" per HARNESS-DRIFT-03; this commit closes that drift class).
+   Result: PASS
+
+Git evidence:
+  Files modified in cherry-pick fa28c3c (HEAD~3 → HEAD~2 region after T13 + 9c4e4c8 + T14 → d79e064):
+    - README.md (last commit: fa28c3c, 2026-04-29)
+    - adapters/claude-code/rules/automation-modes.md (last commit: fa28c3c, 2026-04-29)
+    - docs/harness-architecture.md (last commit: fa28c3c, 2026-04-29; T11's earlier commit added the agent-teams.md Rules table row, which T13 preserved and extended)
+  Sync receipts:
+    - ~/.claude/rules/automation-modes.md byte-for-byte equal to adapter copy (diff -q FILES MATCH)
+    - ~/.claude/docs/harness-architecture.md updated by builder per commit message; not adapter-tracked (no adapters/claude-code/docs/ directory exists, which is the documented harness layout — docs/ lives at repo root only)
+
+Runtime verification: file docs/harness-architecture.md::teammate-spawn-validator
+Runtime verification: file docs/harness-architecture.md::task-created-validator
+Runtime verification: file docs/harness-architecture.md::task-completed-evidence-gate
+Runtime verification: file docs/harness-architecture.md::Decision 012
+Runtime verification: file docs/harness-architecture.md::Stop \(8 entries
+Runtime verification: file README.md::Agent Teams \(experimental, feature-flagged\)
+Runtime verification: file README.md::adapters/claude-code/rules/agent-teams\.md
+Runtime verification: file adapters/claude-code/rules/automation-modes.md::## Mode 5 — Agent Teams
+Runtime verification: file adapters/claude-code/rules/automation-modes.md::Decision 012
+
+Verdict: PASS
+Confidence: 10
+Reason: All 9 acceptance criteria pass. The cherry-picked commit fa28c3c on master extended docs/harness-architecture.md with the 3 new Agent Teams hooks (teammate-spawn-validator, task-created-validator, task-completed-evidence-gate) AND annotated the 3 extended hooks (tool-call-budget, plan-edit-validator, product-acceptance-gate) with explicit "Agent Teams plan task N" markers tying them to the work product; corrected the Stop chain heading from "1 entry" (stale per HARNESS-DRIFT-03) to "8 entries — chained in order" with all eight hooks enumerated in the canonical order matching rules/acceptance-scenarios.md byte-for-byte. README.md gained two prominent surfaces for Agent Teams: a top-of-file callout blockquote at line 7 (visible from the first scroll, citing Decision 012 inline) and a status-table row at line 228 — both link to adapters/claude-code/rules/agent-teams.md. The user can find the enable instructions without searching, satisfying the load-bearing UX requirement of the task. adapters/claude-code/rules/automation-modes.md gained a complete Mode 5 entry: comparison table extended 4→5 modes with the Agent Teams row at line 19, full Mode 5 section at line 222 covering when to use, invocation, enforcement (in-process default + pane-based opt-in), Decision 011 Approach A harness-portability story, concurrency model, examples, tradeoffs, and known failure modes; decision tree extended to 6 steps with Mode 5 at step 5; setup prerequisites table extended; cross-references updated to point at rules/agent-teams.md, Decision 012, and the originating plan. ~/.claude/rules/automation-modes.md is byte-for-byte identical to the adapter copy (diff -q FILES MATCH), per-machine sync receipt for the harness-maintenance rule. harness-hygiene-scan exit 0 confirms no identifier leakage in committed harness code. The Stop chain correction in harness-architecture.md is the documented closure of failure class HARNESS-DRIFT-03 (one of the two backlog items the plan absorbed) — drift between rules/acceptance-scenarios.md and the architecture doc is now eliminated for the 8-entry Stop chain. No FAIL signals; no INCOMPLETE conditions.
+
+---
+
+EVIDENCE BLOCK
+==============
+Task ID: 14
+Task description: Integration self-test: `tests/agent-teams-self-test.sh`. Synthetic scenario runner that exercises each new hook with mocked event input. Validates spawn-validator scenarios, budget team-counter, task-created/completed gates, plan-edit-validator flock behavior, acceptance-gate worktree aggregation. Pass-fail report. Wired into `/harness-review` Check 11 (next available slot after acceptance-loop-self-test).
+Verified at: 2026-04-29T18:22:03Z
+Verifier: task-verifier agent
+
+Files modified (commit d79e064 on master, cherry-picked from builder commit 51cbb40):
+  - adapters/claude-code/tests/agent-teams-self-test.sh (NEW — 622-line integration runner)
+  - adapters/claude-code/skills/harness-review.md (MODIFIED — added Check 11 block at lines 487-522)
+
+Checks run:
+
+1. Test file presence + executability
+   Command: ls -la adapters/claude-code/tests/agent-teams-self-test.sh
+   Output: -rwxr-xr-x 22695 bytes (executable bit set on owner+group+other)
+   Result: PASS
+
+2. Live integration self-test execution from project root
+   Command: bash adapters/claude-code/tests/agent-teams-self-test.sh; echo "EXIT_CODE=$?"
+   Output:
+     [A1] teammate-spawn-validator --self-test — PASS
+     [A2] tool-call-budget --self-test — PASS
+     [A3] task-created-validator --self-test — PASS
+     [A4] task-completed-evidence-gate --self-test — PASS
+     [A5] plan-edit-validator --self-test — PASS
+     [A6] product-acceptance-gate --self-test — PASS
+     [I1] spawn-validator allow + budget at 30 sets audit flag — PASS
+     [I2] TaskCompleted clears audit flag on fresh PASS review — PASS
+     [I3] TaskCompleted blocks with flag set and no PASS review — PASS
+     [I4] tool-call-budget hard ceiling at sub-counter 90 — PASS
+     [I5] plan-edit-validator flock serializes concurrent verifiers — PASS
+     [I6] product-acceptance-gate aggregates artifacts across worktrees — PASS
+     RESULT: 12/12 integration scenarios passed
+     EXIT_CODE=0
+   Result: PASS
+
+3. Layer A — all 6 hook --self-test passthrough scenarios named by ID
+   Command: grep -nE 'run_hook_selftest "A[1-6]"' adapters/claude-code/tests/agent-teams-self-test.sh
+   Output: 6 matches at lines 162, 164, 166, 168, 170, 172 — each invoking a distinct hook (teammate-spawn-validator, tool-call-budget, task-created-validator, task-completed-evidence-gate, plan-edit-validator, product-acceptance-gate) with --self-test
+   Result: PASS
+
+4. Layer B — all 6 integration scenarios (I1-I6) named in script
+   Command: grep -nE 'scenario_start "I[1-6]"' adapters/claude-code/tests/agent-teams-self-test.sh
+   Output: I1 (line 206), I2 (line 261), I3 (line 316), I4 (line 354), I5 (line 390), I6 (line 509) — all six integration scenarios from the plan are exercised
+   Result: PASS
+
+5. Synthetic team name discipline (no real-team collision risk)
+   Command: grep -nE '_self_test_team|self-test-team|test_team' adapters/claude-code/tests/agent-teams-self-test.sh
+   Output: line 182: SENTINEL_TEAM="_self_test_team_$$" — synthetic with PID suffix; never collides with real team names
+   Result: PASS
+
+6. Test cleanup discipline (no orphan state in real ~/.claude/ directories)
+   Command: grep -nE 'mktemp -d|trap cleanup|SUITE_TMP' adapters/claude-code/tests/agent-teams-self-test.sh
+   Output: line 66 SUITE_TMP=$(mktemp -d ...); line 89 trap cleanup EXIT INT TERM; line 87 rm -rf "$SUITE_TMP"; STATE_DIR_OVERRIDE/TEAMS_DIR_OVERRIDE/CLAUDE_STATE_DIR_OVERRIDE/PLANS_DIR_OVERRIDE used throughout to redirect hook state writes into SUITE_TMP. Live execution verified no files created/modified under ~/.claude/state, ~/.claude/teams, or ~/.claude/local during the test run.
+   Result: PASS
+
+7. /harness-review Check 11 wired in adapter copy
+   Command: grep -n "Check 11" adapters/claude-code/skills/harness-review.md
+   Output: line 488 "# Check 11: Agent Teams integration self-test"; lines 504-522 contain at_test path and PASS/FAIL write_section calls citing adapters/claude-code/tests/agent-teams-self-test.sh
+   Result: PASS
+
+8. ~/.claude/skills/harness-review.md byte-for-byte synced to adapter
+   Command: diff -q ~/.claude/skills/harness-review.md adapters/claude-code/skills/harness-review.md
+   Output: (empty — files match) ; DIFF_EXIT=0
+   Result: PASS
+
+9. Harness hygiene scan passes (no personal identifiers in test or skill changes)
+   Command: bash ~/.claude/hooks/harness-hygiene-scan.sh
+   Output: HYGIENE_EXIT=0 — no denylist matches in committed code
+   Result: PASS
+
+10. Cherry-picked commit d79e064 contains expected 2 files on master
+    Command: git show --name-only d79e064 --pretty=format:"" | grep -v "^$"
+    Output:
+      adapters/claude-code/skills/harness-review.md
+      adapters/claude-code/tests/agent-teams-self-test.sh
+    Branch containment: git branch --contains d79e064 → * master
+    Result: PASS
+
+Runtime verification: file adapters/claude-code/tests/agent-teams-self-test.sh::^# NEURAL-LACE-AGENT-TEAMS-INTEGRATION-SELF-TEST
+Runtime verification: file adapters/claude-code/tests/agent-teams-self-test.sh::SENTINEL_TEAM="_self_test_team_
+Runtime verification: file adapters/claude-code/skills/harness-review.md::# Check 11: Agent Teams integration self-test
+Runtime verification: file adapters/claude-code/skills/harness-review.md::adapters/claude-code/tests/agent-teams-self-test.sh
+
+Git evidence:
+  Files modified in recent history:
+    - adapters/claude-code/tests/agent-teams-self-test.sh (last commit: d79e064, 2026-04-29; first git appearance — new file)
+    - adapters/claude-code/skills/harness-review.md (last commit: d79e064, 2026-04-29; previously last touched by an earlier commit before Check 11 was added)
+  Sync receipts:
+    - ~/.claude/skills/harness-review.md byte-for-byte equal to adapter copy (diff -q FILES MATCH)
+
+Verdict: PASS
+Confidence: 10
+Reason: All 10 acceptance criteria pass. The integration self-test runs cleanly end-to-end from a fresh shell — 12/12 scenarios PASS at the live execution moment of verification, exit 0. Layer A (A1-A6) re-exercises each new/extended hook's own --self-test as a structural prerequisite (regression catch); Layer B (I1-I6) covers cross-hook flows that no single hook self-test can address: the spawn-validator+budget integration that proves the team-counter and audit-flag conventions actually compose (I1), the round-trip TaskCompleted-clears-flag-on-PASS-review behavior (I2), the negative-path TaskCompleted-blocks-with-no-PASS-review behavior (I3), the 90-call hard ceiling that catches runaway tasks (I4), the flock serialization that prevents concurrent plan-edit-validator races (I5), and the multi-worktree acceptance-gate aggregation that satisfies the lead-side gate when a teammate writes the artifact in another worktree (I6) — these six scenarios are the load-bearing integration evidence that the new mechanisms compose correctly, not just function in isolation. The runner uses mktemp -d + EXIT/INT/TERM trap cleanup + STATE_DIR_OVERRIDE / TEAMS_DIR_OVERRIDE / CLAUDE_STATE_DIR_OVERRIDE / PLANS_DIR_OVERRIDE env-var redirection so no real ~/.claude/ state is created or modified during the run; SENTINEL_TEAM and SENTINEL_LEADER use $$ PID suffixes for collision-free identity. Wiring into /harness-review skill Check 11 makes this test part of the weekly harness-review cadence (skill exec invokes the test and writes PASS/FAIL into the review report); ~/.claude/skills/harness-review.md is byte-for-byte equal to the adapter copy, satisfying harness-maintenance.md's per-machine sync receipt. harness-hygiene-scan exit 0 confirms no identifier leakage. This is the final verifiable task in the agent-teams-integration plan; only Task 12 remains, deferred per coordination with another work stream. No FAIL signals; no INCOMPLETE conditions.
+

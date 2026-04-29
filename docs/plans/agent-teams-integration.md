@@ -92,7 +92,7 @@ This plan does NOT enable Agent Teams. It makes enabling Agent Teams safe. The u
 
 - [x] 10. **`product-acceptance-gate.sh` multi-worktree artifact discovery.** Extend the gate to enumerate the current repo's worktrees (via `git worktree list`) and aggregate `.claude/state/acceptance/` artifacts found within them. A scenario PASS in any worktree's state dir satisfies the gate, provided `plan_commit_sha` matches. Documents the new behavior in `rules/acceptance-scenarios.md` and the gate's header comment.
 
-- [ ] 11. **New rule: `rules/agent-teams.md`.** Documents:
+- [x] 11. **New rule: `rules/agent-teams.md`.** Documents:
    - **First sub-section: "How to enable Agent Teams"** — exact config file path (`~/.claude/local/agent-teams.config.json`), the JSON to write (`{"enabled": true}`), the field defaults, and a clear-eyed list of the five upstream bugs the user is opting into ([#50779](https://github.com/anthropics/claude-code/issues/50779), [#24175](https://github.com/anthropics/claude-code/issues/24175), [#43736](https://github.com/anthropics/claude-code/issues/43736), [#24073](https://github.com/anthropics/claude-code/issues/24073), [#24307](https://github.com/anthropics/claude-code/issues/24307)). Visible at the top so a user landing on this rule sees the enable instructions immediately.
    - When to use Agent Teams vs orchestrator-pattern (decision tree)
    - Spawn-Before-Delegate pattern (workaround for #24073/#24307)
@@ -103,12 +103,12 @@ This plan does NOT enable Agent Teams. It makes enabling Agent Teams safe. The u
 
 - [ ] 12. **Plan template `Execution Mode: agent-team`.** Add the new value to `templates/plan-template.md` line 3 alternatives. Add a section to `rules/planning.md` documenting when `agent-team` vs `orchestrator` is appropriate. Add a section to `rules/orchestrator-pattern.md` named "Agent Teams pairing" describing how the two execution modes coexist.
 
-- [ ] 13. **Documentation updates.**
+- [x] 13. **Documentation updates.**
    - `docs/harness-architecture.md`: add new hooks to the inventory table; describe new event matchers (TaskCreated, TaskCompleted); reference Decision 012; reflect Stop chain corrections from Task 3.
    - `README.md`: add a row to the status table — `**Agent Teams:** feature-flagged (experimental). To enable: see [`adapters/claude-code/rules/agent-teams.md`](adapters/claude-code/rules/agent-teams.md).` Position the row prominently so it's visible from the repo's first scroll. The user must be able to find the enable instructions without searching.
    - `rules/automation-modes.md`: add Agent Teams as Mode 5 (or sub-mode) with the harness-portability story (Decision 011 Approach A still applies; teammates inherit project `.claude/`).
 
-- [ ] 14. **Integration self-test: `tests/agent-teams-self-test.sh`.** Synthetic scenario runner that exercises each new hook with mocked event input. Validates spawn-validator scenarios, budget team-counter, task-created/completed gates, plan-edit-validator flock behavior, acceptance-gate worktree aggregation. Pass-fail report. Wired into `/harness-review` Check 11 (next available slot after acceptance-loop-self-test).
+- [x] 14. **Integration self-test: `tests/agent-teams-self-test.sh`.** Synthetic scenario runner that exercises each new hook with mocked event input. Validates spawn-validator scenarios, budget team-counter, task-created/completed gates, plan-edit-validator flock behavior, acceptance-gate worktree aggregation. Pass-fail report. Wired into `/harness-review` Check 11 (next available slot after acceptance-loop-self-test).
 
 ## Files to Modify/Create
 
