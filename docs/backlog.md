@@ -1,10 +1,57 @@
 # Neural Lace — Harness Backlog
 
-Last updated: 2026-04-27 (two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md` per backlog-plan-atomicity rule; the remaining two harness-drift items stay open below. Earlier 2026-04-27: four harness-drift items added — pre-existing drift surfaced during agent-teams conflict analysis. See `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md` for full context. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.)
+Last updated: 2026-04-29 (two new mechanism-extension items added below for the Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md` per backlog-plan-atomicity rule; the remaining two harness-drift items stay open below. Earlier 2026-04-27: four harness-drift items added — pre-existing drift surfaced during agent-teams conflict analysis. See `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md` for full context. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.)
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
 Strategy context and reasoning for many entries below lives in [`docs/claude-code-quality-strategy.md`](./claude-code-quality-strategy.md).
+
+## Mechanism extensions for the Pre-Submission Class-Sweep Audit (added 2026-04-29)
+
+Companion to the Pattern-level rules landed 2026-04-29 in `adapters/claude-code/rules/design-mode-planning.md`, `rules/planning.md`, `templates/plan-template.md`, and `docs/failure-modes.md`. Those rules document the discipline; the items below mechanize the parts that should be hook-enforced rather than self-applied. Source data: an originating 2026-04-28 design-mode review effort (an OAuth+IMAP auth-refactor plan, eight-round `systems-designer` review) surfaced 11 distinct failure classes (FM-007 through FM-017 in `docs/failure-modes.md`); 6+ of them shared a single root cause (`stranded-behavior-change-against-implementation-entry-points`) that the planner could have caught upfront with a class-sweep instead of having the reviewer find sibling instances over multiple rounds.
+
+### HARNESS-AUDIT-EXT-01 — Extend `plan-reviewer.sh` with five Pre-Submission Audit mechanical checks (P1)
+
+The Pre-Submission Class-Sweep Audit rule (`design-mode-planning.md`) currently relies on the planner self-applying five sweep queries (S1 Entry-Point Surfacing, S2 Existing-Code-Claim Verification, S3 Cross-Section Consistency, S4 Numeric-Parameter Sweep, S5 Scope-vs-Analysis Check). Pattern enforcement only — no mechanical backstop today.
+
+**Extension scope:**
+- (A) `## Pre-Submission Audit` section presence check on `Mode: design` plans (FAIL if missing or contains only `[populate me]` placeholder text). Mirrors existing required-section checks.
+- (B) "Either/or" / "TODO" / "decide later" / "OR:" pattern detection in Decisions Log entries — FAIL unless preceded by a `Surfaced to user:` annotation per `rules/planning.md` "Plan-Time Decisions With Interface Impact — Surface To User" (FM-010 prevention).
+- (C) "Stays identical" / "preserved" / "unchanged" claims in Tasks section — WARN unless followed by an enumerated whitelist of what's preserved AND what changes per other sections (FM-012 prevention).
+- (D) Comparative phrases ("under X RPM", "well below Y", "comfortably under Z") in Section 9 (Load/capacity) — WARN unless inline numerics are present in the same paragraph (FM-013 + FM-014 prevention).
+- (E) "Add X" / "Modify Y" / "Replace Z" verbs in Sections 1-10 — cross-check against Scope OUT bullets, FAIL if a target is in Scope OUT but a verb prescribes changing it (FM-016 prevention).
+
+**Acceptance criteria:**
+- All five checks have unit-test fixtures (sample plan files exercising each pass/fail case)
+- Existing `plan-reviewer.sh --self-test` is extended with new test cases
+- Hook invocation latency stays under 1s for typical-size plans (~300 lines)
+- WARN-level checks do not block plan creation; FAIL-level checks do
+
+**Effort:** ~4-6 hours including fixtures + self-test extensions. Bash + grep/ripgrep; no new tools needed.
+
+**Why P1:** without this, the Pre-Submission Audit discipline is purely Pattern-enforced — relies on planner remembering to run the sweeps. The 2026-04-28 review effort happened precisely because the planner skipped the sweep. Mechanical enforcement closes the same gap that produced 8 review rounds.
+
+**Related:** `adapters/claude-code/hooks/plan-reviewer.sh` (existing hook to extend), `adapters/claude-code/rules/design-mode-planning.md` ("Pre-Submission Class-Sweep Audit" section), `docs/failure-modes.md` (FM-007 through FM-017 — the prevention column for each cites this hook extension as the mechanical backstop).
+
+### HARNESS-AUDIT-EXT-02 — Extend `systems-designer` agent to FAIL when `## Pre-Submission Audit` section is missing or sweeps not documented (P1)
+
+The `systems-designer` agent currently reviews plan substance but doesn't gate on the planner having performed the Pre-Submission Audit. With HARNESS-AUDIT-EXT-01 alone, the audit section presence is checked at plan-creation time but a planner could land an empty audit section, then submit to systems-designer, and the agent would still spend rounds finding sibling-class instances the planner should have swept upfront.
+
+**Extension scope:** add an explicit precondition check in `agents/systems-designer.md`:
+
+> Before reviewing the 10 SEA sections, verify the plan's `## Pre-Submission Audit` section contains substantive content for each of the 5 sweeps (S1-S5) — not just placeholder text. If any sweep line is empty, says "TODO", says "skipped", or matches `\[populate me\]`, return FAIL immediately with a clear message: "Pre-Submission Audit not performed — run the 5 class-sweeps before re-submitting. See `~/.claude/rules/design-mode-planning.md` for the sweep queries."
+
+**Acceptance criteria:**
+- The agent's prompt-time precondition check covers S1-S5 individually
+- The agent's failure message names the specific sweep(s) that weren't documented
+- A planner can satisfy the precondition with "n/a — single-task plan, no class-sweep needed" per the rule's carve-out for trivial plans
+- Mode: code plans skip this check entirely
+
+**Effort:** ~1 hour — single agent file edit + manual test against the rules document.
+
+**Why P1:** dependent on HARNESS-AUDIT-EXT-01 for the audit-section template existence at plan-creation time. With both items landed, the discipline becomes mechanical end-to-end (planner can't skip the sweeps without being blocked twice — once at plan creation, once at systems-designer submission).
+
+**Related:** `adapters/claude-code/agents/systems-designer.md`, the new "Pre-Submission Audit" section in `templates/plan-template.md` and `rules/design-mode-planning.md`.
 
 ## Pre-existing harness drift surfaced 2026-04-27 (during agent-teams conflict analysis)
 

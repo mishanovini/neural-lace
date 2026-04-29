@@ -240,7 +240,47 @@ user-facing flow), replace this entire block with a single line:
 -->
 
 ## Decisions Log
-[Populated during implementation — see Mid-Build Decision Protocol]
+[Populated during implementation — see Mid-Build Decision Protocol.
+Plan-time decisions with interface impact: surface to user via
+AskUserQuestion BEFORE recording — see ~/.claude/rules/planning.md
+"Plan-Time Decisions With Interface Impact — Surface To User".
+Each Tier-2+ decision must also have a docs/decisions/NNN-slug.md
+record landed in the same commit.]
+
+## Pre-Submission Audit
+<!--
+REQUIRED for Mode: design plans before invoking systems-designer.
+DELETE this section if Mode: code or Mode: design-skip.
+
+Run the five class-sweeps from ~/.claude/rules/design-mode-planning.md
+"Pre-Submission Class-Sweep Audit". Document one line per sweep with
+the count and result. Fix all gaps found BEFORE submitting to
+systems-designer.
+
+Format:
+  S1 (Entry-Point Surfacing): swept, N matches across Sections 6-9, M cited correctly, K added to Tasks/Files
+  S2 (Existing-Code-Claim Verification): swept, N matches, M verified against file, K corrected
+  S3 (Cross-Section Consistency): swept, N "reliable/unchanged" claims, M reconciled, 0 contradictions remaining
+  S4 (Numeric-Parameter Sweep): swept for params [<list>], all values consistent
+  S5 (Scope-vs-Analysis Check): swept, N "Add/Modify" verbs, all checked against Scope OUT, 0 contradictions
+
+If a sweep returns zero matches, write "swept, 0 matches" — don't omit
+the line. Trivial single-task plans may write "n/a — single-task plan,
+no class-sweep needed" for each line.
+
+Why this exists: prevents the multi-round sibling-instance dance with
+systems-designer that an originating 2026-04-28 review effort (an
+auth-refactor plan, eight rounds to converge) surfaced 11 distinct
+failure classes from. The reviewer is a safety net, not the primary
+discovery mechanism. See ~/.claude/rules/design-mode-planning.md and
+~/.claude/docs/failure-modes.md FM-007 through FM-017 for the
+underlying failure classes.
+-->
+- S1 (Entry-Point Surfacing): [populate me]
+- S2 (Existing-Code-Claim Verification): [populate me]
+- S3 (Cross-Section Consistency): [populate me]
+- S4 (Numeric-Parameter Sweep): [populate me]
+- S5 (Scope-vs-Analysis Check): [populate me]
 
 ## Definition of Done
 - [ ] All tasks checked off
@@ -248,55 +288,6 @@ user-facing flow), replace this entire block with a single line:
 - [ ] Linting/formatting clean
 - [ ] SCRATCHPAD.md updated with final state
 - [ ] Completion report appended to this plan file
-
-<!--
-## DoD Artifacts (OPTIONAL — A2 of adversarial-validation-mechanisms.md)
-
-When a `## Definition of Done` bullet has a concrete on-disk artifact that
-proves the bullet was satisfied (a convergence JSON, a sign-off Markdown
-file, a test-run log, etc.), declare it here. The pre-stop-verifier.sh
-Check 5 / A2 extension verifies each declared artifact exists and matches
-the requires_* conditions. Marking the DoD bullet `[x]` is not enough —
-the artifact must exist on disk and match.
-
-Schema (parseable Markdown):
-
-  ## DoD Artifacts
-
-  ### bullet: <substring of a DoD bullet from above>
-  - artifact: <path, optionally with `<runId>` glob placeholder>
-  - requires_field: <JSON field name>           (paired with requires_value)
-  - requires_value: <expected value>            (paired with requires_field)
-  - requires_pattern: <ERE regex matched in file>
-  - requires_min_length: <integer min file size in bytes>
-
-A spec may declare any one of: (requires_field+requires_value),
-requires_pattern, or requires_min_length. Multiple may be declared for
-the same artifact and ALL must hold. Paths resolve relative to the plan
-file's directory first, then the current working directory.
-
-Example:
-
-  ## DoD Artifacts
-
-  ### bullet: Loop converges on current master
-  - artifact: tests/journeys/loop-history/<runId>/CONVERGENCE.json
-  - requires_field: verdict
-  - requires_value: CONVERGED
-
-  ### bullet: Human sign-off recorded
-  - artifact: tests/journeys/loop-history/<runId>/SIGNOFF.md
-  - requires_pattern: approved
-  - requires_min_length: 10
-
-When the section is absent or empty, A2 is a no-op and only the base M1
-checkbox check applies. When the section is present, every declared spec
-must pass before `Status: COMPLETED` is allowed. To enable A2 for your
-plan, uncomment the section above and adapt it.
-
-See `~/.claude/rules/vaporware-prevention.md` and the parent plan
-`docs/plans/adversarial-validation-mechanisms.md` (A2) for the rationale.
--->
 
 <!--
 ================================================================

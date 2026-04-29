@@ -360,6 +360,48 @@ Assess reversibility:
 
 Use format at @~/.claude/templates/decision-log-entry.md
 
+## Plan-Time Decisions With Interface Impact — Surface To User
+
+**Classification:** Hybrid. Pattern (planner self-applied discipline) backed by Mechanism (planned `plan-reviewer.sh` extension flagging "either/or" / "TODO" / "decide later" patterns in Decisions Log entries unless preceded by a `Surfaced to user:` annotation).
+
+**The rule in one sentence:** when plan-time analysis surfaces an "either/or" choice with **interface impact**, the planner MUST surface the choice to the user with supporting information BEFORE recording the decision in the plan. Do not pick alone.
+
+### What counts as "interface impact"
+
+A choice has interface impact if any of these are true:
+- It changes the shape of an API the plan defines (function signature, endpoint contract, data format)
+- It affects user-observable behavior (UX flow, error messages, recovery paths)
+- It commits to a tradeoff with quantifiable cost (>$X/month, >Y hours of build, >Z% performance impact)
+- The user would have chosen differently if they had the alternatives presented (and they can't override later because the choice is now baked into other decisions)
+- The choice introduces a new external dependency, vendor lock-in, or recurring subscription
+
+If the choice is purely internal (variable naming, code organization, idiomatic style within established conventions), the planner picks alone and notes it briefly. The "interface impact" gate keeps the surface-to-user discipline focused on choices that actually need the user's input.
+
+### Required action when the gate fires
+
+1. **STOP recording the decision in the plan.** Don't pre-commit to one option in the analysis sections.
+2. **Use `AskUserQuestion`** (or the equivalent structured-question mechanism). The question MUST include:
+   - The CHOICE the plan needs (specific, scoped — not "what should we do?")
+   - At least 2-4 options with brief description of each
+   - The TRADEOFFS each option carries (cost, effort, reversibility, what each enables/blocks)
+   - Your RECOMMENDATION (mark with "(Recommended)" — the user is more likely to override an explicit recommendation than to override a silent default)
+   - Any time-pressure context the user should know
+3. **Wait for the user's answer.** Do not proceed with build work until the choice is made.
+4. **Record the decision** in the plan's Decisions Log AND in `docs/decisions/NNN-<slug>.md` (per the Tier 2+ decision-record rule below). The Decisions Log entry MUST include `Surfaced to user: <YYYY-MM-DD HH:MM via AskUserQuestion>` so the audit trail is intact.
+
+### Anti-patterns
+
+- **"I'll pick the obvious one and the user can correct me later."** No. Once the choice is baked into the plan, the user lacks the context to know what was traded off. The reversal cost is high. Surface upfront.
+- **"This is just a small choice."** If it has interface impact, it's not small. The whole point of "interface impact" is that small-looking choices propagate.
+- **"The plan already documents the alternatives."** Documenting alternatives in the plan is necessary but not sufficient. The user must SEE the alternatives at decision time, not after.
+- **"Either approach works fine."** This phrase is a strong signal that the choice has interface impact (otherwise you wouldn't be hesitating). Surface it.
+
+### Why this exists
+
+The originating 2026-04-28 review effort (an auth-refactor plan moving an OAuth-based connector to IMAP) caught Section 9 with "Mitigation: process LLM calls in parallel (Promise.all batches of 5-10). **Or:** cap threads_per_sync at 30 to fit within timeout." The plan deferred the choice to build-time — the orchestrator would pick one alone. The reviewer correctly flagged this as `deferred-design-decision-with-interface-impact` (FM-010): the choice affects the IMAP client's API (does it stream batches? return all-at-once?) and the connector's control flow. A decision left to build-time becomes a decision the builder makes alone, with no user visibility and no audit trail.
+
+The user's correction (2026-04-29): "Any decisions like this that need to be made, especially when found during planning, should be surfaced to me along with supporting information so that I can make an informed decision before we start building." This rule encodes that correction.
+
 ## Completion Report
 After all tasks complete, append handoff report using @~/.claude/templates/completion-report.md
 

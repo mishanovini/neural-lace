@@ -117,6 +117,157 @@ Non-trivial choices (with alternatives considered and why rejected) + for each k
 
 **Bad:** "Chose squash merge." / "Debug by checking logs." (No alternatives, no specific diagnostic steps.)
 
+## Pre-Submission Class-Sweep Audit (mandatory before invoking systems-designer)
+
+**Classification:** Pattern (planner self-applied discipline). Hook-backed presence check planned but not yet implemented — see "Enforcement summary" below for current state.
+
+An eight-round `systems-designer` review effort on a Mode: design plan (an OAuth + IMAP auth-refactor, reviewed 2026-04-28) surfaced 11 distinct failure classes; 6 of them shared a single root cause: **the plan author didn't perform a class-sweep before submitting to the reviewer.** The reviewer ended up finding sibling instances of the same class one round at a time over 4-8 rounds. One thorough upfront sweep would have collapsed the iteration to 1-2 rounds.
+
+This rule is the upfront sweep. **Before invoking `systems-designer` (or any adversarial plan-reviewer agent), the plan author MUST perform a class-sweep audit covering five dimensions, document the result inline in a new `## Pre-Submission Audit` section, and fix all gaps found.** The reviewer is a safety net, not the primary discovery mechanism.
+
+### The five sweeps
+
+For each sweep below, run the `Sweep query`, triage every match, document the count, fix the gaps. Document one line per sweep in the `## Pre-Submission Audit` section of the plan.
+
+#### S1. Entry-Point Surfacing
+
+**Goal:** every behavior change documented in Sections 1-10 (analysis sections) must be cited at the corresponding implementation entry points (Task description + Files-to-Modify entry for each affected file). A builder reading just the entry points should see every change without scanning all 10 sections.
+
+**Sweep query:** `rg -n 'add|emit|log|retry|fall back|skip|replace|advance|store|cap|new behavior|changes from' <plan-file>`
+
+**Triage:** for each match in Sections 1-10, find the corresponding citation in the Tasks section AND the Files-to-Modify entry for the file the change lives in. If absent, ADD the citation (one sentence per behavior change in each entry point, with a back-reference to the section).
+
+**Why it matters:** without this, builders reading just `Tasks` + `Files to Modify/Create` (the natural entry points for execution) will skip behavior changes documented elsewhere. Failure class: `behavior-change-stranded-in-analysis-section` (FM-007).
+
+#### S2. Existing-Code-Claim Verification
+
+**Goal:** every reference to existing code (line numbers, function signatures, current behaviors) must be re-verified against the actual file at audit time. No claims from memory.
+
+**Sweep query:** `rg -n 'line ?\d+|existing.*function|existing.*connector|existing.*at\s+\d+|currently\s+(does|has|returns|reads|writes)' <plan-file>`
+
+**Triage:** for each match, open the cited file at the cited location and confirm the claim. If wrong, fix the claim.
+
+**Why it matters:** plans authored from memory of an earlier exploration drift from the codebase. Builders following stale claims build the wrong thing. Failure class: `stale-existing-code-claim` (FM-008).
+
+#### S3. Cross-Section Consistency
+
+**Goal:** every claim about the same code element across multiple sections must agree.
+
+**Sweep query:** `rg -n 'reliable|unchanged|preserved|stays|protects|catches' <plan-file>`
+
+**Triage:** for each match, check Edge Cases / Failure-mode analysis / Idempotency for any contradictory caveat about the same element. If contradictory, reconcile: pick the more accurate view, update the other section, or commit to a third option that both sections agree on.
+
+**Why it matters:** Sections written at different times by different mental models contradict each other silently. Builders implement one view, the other view fails at runtime. Failure class: `cross-section-contradiction` (FM-009).
+
+#### S4. Numeric-Parameter Sweep
+
+**Goal:** every numeric parameter (caps, batch sizes, timeouts, costs, RPM/TPM limits) must have ONE consistent value across the entire plan.
+
+**Sweep query:** for each numeric parameter the plan defines (e.g., `max_threads_per_sync`, `BATCH_SIZE`, timeout values), run BOTH:
+- Literal-number: `rg -n '\b<value>\b' <plan-file>` (finds every occurrence of the literal number)
+- Prose-context: `rg -n '<parameter-name>|max|cap|limit|threads|batch' <plan-file>` (finds every place the parameter is named)
+
+**Triage:** every match must show the same value. If a parameter changed during plan revision, sweep both queries before declaring the revision complete.
+
+**Why it matters:** numeric parameters get changed in the section that surfaced an issue, but sibling references in unrelated sections retain old values. Cold-start path with old cap blows the rate-limit budget; capacity model with old cap claims false headroom. Failure class: `numeric-parameter-change-not-fully-swept` (FM-015).
+
+#### S5. Scope-vs-Analysis Check
+
+**Goal:** every "Add X" / "Modify Y" / "Replace Z" verb in Sections 1-10 must be checked against the Scope OUT list for contradiction.
+
+**Sweep query:** `rg -n '^[-*]\s+(Add|Insert|Modify|Replace|Emit|Log)\b|prescribes|requires.*to|connector must' <plan-file>`
+
+**Triage:** for each match, check the file/component the change targets against the Scope OUT list. If the target is OUT, EITHER move it IN (and update the analysis to acknowledge the new scope) OR remove the prescription (and replace with a non-code alternative — e.g., "operator records X in SCRATCHPAD instead").
+
+**Why it matters:** Scope is set early; analysis sections evolve later without revisiting Scope. Plans ship with prescriptions for files the plan explicitly excludes. Builders either skip the prescription (intent lost) or violate scope (new bugs). Failure class: `scope-vs-analysis-contradiction` (FM-016).
+
+### The `## Pre-Submission Audit` section
+
+Add this section to the plan between `## Decisions Log` and `## Definition of Done`. Format:
+
+```markdown
+## Pre-Submission Audit
+
+S1 (Entry-Point Surfacing): swept, N matches across Sections 6-9, M cited correctly, K added to Tasks/Files
+S2 (Existing-Code-Claim Verification): swept, N matches, M verified against file, K corrected
+S3 (Cross-Section Consistency): swept, N "reliable/unchanged" claims, M reconciled, 0 contradictions remaining
+S4 (Numeric-Parameter Sweep): swept for params [<list>], all values consistent
+S5 (Scope-vs-Analysis Check): swept, N "Add/Modify" verbs, all checked against Scope OUT, 0 contradictions
+```
+
+If a sweep returns zero matches, write "swept, 0 matches" — don't omit the line.
+
+### When the audit doesn't apply
+
+`Mode: code` plans don't require this audit. Trivial plans (single-task, single-file) may write "n/a — single-task plan, no class-sweep needed" for each line.
+
+`Mode: design-skip` plans skip the audit (per existing escape-hatch rules).
+
+`Mode: design` plans MUST run the audit. The plan-reviewer.sh hook (when extended — see Enforcement summary) will block submission to systems-designer without it.
+
+## Quantitative Claims Must Be Validated, Not Asserted
+
+**Classification:** Hybrid. Pattern in this rule (planner self-applied discipline). Mechanism extension via `plan-reviewer.sh` flagging comparative phrases without inline numerics — planned, not yet implemented; see "Enforcement summary" table at the bottom of this file for current status.
+
+Every quantitative claim in a plan ("under X RPM", "exceeds Y bytes", "costs Z dollars per call", "fits within W timeout", "30% margin") MUST satisfy ALL of:
+
+1. **Inline arithmetic in the same paragraph as the claim.** Show the multiplication, the comparison, the result. Not "60 calls, within tier limits" but "60 calls (15 threads × 2 calls × 2 batches × 1 sync) ÷ 60s sliding window = 60 calls/min < 50 RPM tier limit." Wait — that math is wrong. That's the point: arithmetic shown is arithmetic checked.
+
+2. **Re-validated by the planner before submission.** Do the math by hand, OR — preferred — commit a small re-derivation script (Deno one-liner, bash + bc, etc.) to the plan or evidence file. The script becomes runtime-replayable evidence.
+
+3. **No self-contradicting hedges.** Sentences like "comfortably under X (slight over)" are forbidden. The parenthetical wins, not the comparative phrase. If the math shows the design is over a limit, write the disclosure honestly and pick a mitigation (lower the cap, accept rate-limit retries, upgrade tier). Don't narrate around the math.
+
+4. **Honest "I don't know" acknowledgement when estimates are unmeasured.** If a per-call token estimate is a guess ("~1.5K input tokens average"), say so explicitly and name the mitigation if real averages run higher ("if real averages exceed 2K, lower the cap to 12 to fit ITPM").
+
+**Why it matters:** the originating 2026-04-28 review effort caught Section 9 of the auth-refactor plan saying "60 calls within tier limits" against a 50 RPM cap — false by 20%. Caught again in round 3 saying "comfortably under 50K ITPM (slight over)" — self-contradicting. The math wasn't checked because the comparative phrase was written before the multiplication. Failure classes: `capacity-claim-without-arithmetic-check` (FM-013) + `capacity-claim-contradicts-its-own-math` (FM-014).
+
+## Cold-Start Paths Inherit Steady-State Constraints
+
+**Classification:** Pattern (planner self-applied discipline).
+
+When a steady-state design parameter (cap, batch size, timeout budget, rate-limit envelope) is constrained in the plan, **the cold-start, reset, fallback, and recovery code paths MUST inherit the same constraint UNLESS the capacity model explicitly acknowledges the cold-start path as a separate rate-limit event with its own mitigation.**
+
+Concrete patterns:
+
+- If `max_threads_per_sync = 15` for steady-state syncs, the "wipe state and re-scan from scratch" path also caps at 15 (inherits config), not the original hardcoded 50.
+- If a batch size is constrained to fit within a 50s timeout, the "retry after partial failure" path also obeys the same batch size, not "process all remaining items at once to catch up."
+- If an initial-sync cap exists for the user-driven first run, the "reset state and re-initialize" path obeys the same cap.
+
+**Why it matters:** authors think of "the happy path" as where the cap applies and forget that recovery paths execute the same code under the same rate limits. A 50-thread cold-start fallback after `last_synced_uid` reset bursts 100 LLM calls (2× the rate-limit cap) on first sync after the reset, even though the steady-state cap was lowered to 15. Failure class: `cold-start-path-violates-steady-state-envelope` (FM-017).
+
+**How to verify in the plan:** Section 8 (idempotency & restart semantics) explicitly states which constraint each cold-start / reset / fallback path inherits, and Section 9 (capacity) confirms the inherited value is within budget. If a cold-start path needs a HIGHER cap than steady-state (legitimate use case: catching up after extended outage), Section 9 must model it as a separate rate-limit event with its own rate-shaping mitigation (e.g., "first sync after reset throttles batches over multiple syncs").
+
+## Numeric-Precision Spec for ID Encoders
+
+**Classification:** Pattern (planner self-applied discipline applied during plan authoring).
+
+Any plan that introduces or modifies an ID encoder/decoder (source_ref encoding, dedup key computation, content-addressed hashing, any function that converts integer or string IDs between formats) MUST address numeric precision explicitly:
+
+1. **State whether inputs may exceed `Number.MAX_SAFE_INTEGER` (2^53 ≈ 9×10^15).** Many real-world IDs do — Gmail X-GM-THRID is 64-bit unsigned (up to 2^64), Twitter snowflake IDs, Discord snowflake IDs, UUID v7 timestamps. If yes, specify BigInt parsing AND BigInt rendering end-to-end. Naive `parseInt(...).toString(16)` silently produces wrong output for any value above 2^53 — no exception thrown, just wrong output.
+
+2. **Acceptance test required.** The plan's Tasks section MUST include an acceptance test that:
+   - (a) Round-trips a known existing value through the encoder and confirms byte-identical output
+   - (b) Demonstrates the precision trap exists if naive Number-based encoding is used (an `assertNotEquals(naiveEncoder(input), correctOutput)` style assertion that locks the trap closed)
+   - (c) Confirms the helper accepts both string AND bigint inputs (matching the source format from APIs that deliver IDs as base-10 strings)
+
+3. **Public API rejects raw `number` inputs to prevent reintroduction.** The encoder's TypeScript signature should be `string | bigint` — never `number`. This prevents future callers from passing a JS Number that lost precision before the encoder is called.
+
+**Why it matters:** the auth-refactor plan's ID-encoder decision originally specified `xGmThridInt.toString(16).padStart(16, "0")` without BigInt for a 64-bit Gmail X-GM-THRID value. The example threadId `19d08d90e074b50a` decodes to decimal `1860142299484566794`, which is ~207× `Number.MAX_SAFE_INTEGER`. Without BigInt, the resulting hex would have been wrong by the last digit, silently breaking dedup against all 56 existing entities. Failure class: `numeric-precision-spec-incomplete` (FM-011).
+
+## "Stays Identical" Must Enumerate
+
+**Classification:** Pattern (planner self-applied discipline).
+
+Any task description claiming a function's internals "stay identical" / "preserved" / "unchanged" MUST list **specifically** what's preserved AND **specifically** what changes per other sections. Blanket claims are forbidden.
+
+**Bad:** "Internal logic of `processThread` stays identical." (But Section 8 requires changes inside `processThread`. Builder follows the task description literally and skips the changes. Bug.)
+
+**Good:** "`processThread` internals: subject/from/to/date extraction, body extraction, summarize+classify+embed+upsert calls all UNCHANGED. CHANGED inside processThread (see Section 8): line-74 `message_count` early-exit replaced with UID-set subset check; upsert payload at lines 117-134 adds `message_uids` field."
+
+**Sweep query during pre-submission audit (S6, optional):** `rg -n 'stays identical|unchanged|preserved|same as today|no changes? to' <plan-file>` — for each match, verify the surrounding text enumerates BOTH preserved and changed parts.
+
+**Why it matters:** the auth-refactor plan's round-2 review caught a Task description saying "internal logic of `processThread` stays identical" while Section 8 of the same plan prescribed three specific changes inside that function. Builder following only the task description would have shipped the wrong implementation. Failure class: `task-acceptance-criteria-incomplete-vs-section` (FM-012).
+
 ## The gate: `systems-design-gate.sh`
 
 The PreToolUse hook blocks Edit/Write operations on design-mode files unless an active plan with `Mode: design` exists and has passed `plan-reviewer.sh`.
@@ -171,12 +322,13 @@ The agent reviews each section for substance (not just presence), verifies claim
 
 ## Enforcement summary
 
-| Layer | What it enforces | File |
-|---|---|---|
-| Template | Shape of a correct design-mode plan | `templates/plan-template.md` |
-| Rule (this doc) | When to use design-mode, what each section requires | `rules/design-mode-planning.md` |
-| plan-reviewer.sh | 10 sections present, non-empty, no placeholder text | `hooks/plan-reviewer.sh` |
-| systems-designer agent | 10 sections are substantive and task-specific | `agents/systems-designer.md` |
-| systems-design-gate.sh | No design-mode file edits without a valid plan | `hooks/systems-design-gate.sh` |
+| Layer | What it enforces | File | Status |
+|---|---|---|---|
+| Template | Shape of a correct design-mode plan | `templates/plan-template.md` | landed |
+| Rule (this doc) | When to use design-mode, what each section requires, pre-submission audit, math validation, cold-start inheritance, ID precision, "stays identical" enumeration | `rules/design-mode-planning.md` | landed |
+| plan-reviewer.sh | 10 sections present, non-empty, no placeholder text | `hooks/plan-reviewer.sh` | landed |
+| plan-reviewer.sh extension | `## Pre-Submission Audit` section presence; "either/or" / "TODO" detection in capacity sections; "stays identical" without enumeration; comparative phrases without inline numerics; "Add/Modify" cross-check against Scope OUT | `hooks/plan-reviewer.sh` | **planned, not yet implemented** — tracked as `HARNESS-AUDIT-EXT-01` in `~/claude-projects/neural-lace/docs/backlog.md` |
+| systems-designer agent | 10 sections are substantive and task-specific; pre-submission audit was actually performed (returns FAIL if section missing or sweeps not documented) | `agents/systems-designer.md` | substance-check landed; audit-section-required check **planned, not yet implemented** — tracked as `HARNESS-AUDIT-EXT-02` in `~/claude-projects/neural-lace/docs/backlog.md` |
+| systems-design-gate.sh | No design-mode file edits without a valid plan | `hooks/systems-design-gate.sh` | landed |
 
 The first two are documentation (pattern-level). The last three are mechanisms (hook-enforced + agent-enforced). Together they close the loop: can't write a bad plan (reviewer), can't approve a shallow plan (agent), can't implement without a plan (gate).
