@@ -101,7 +101,7 @@ This plan does NOT enable Agent Teams. It makes enabling Agent Teams safe. The u
    - The 4 unfixed Anthropic upstream issues with workarounds
    - Cross-references to all hooks and config files in this plan
 
-- [ ] 12. **Plan template `Execution Mode: agent-team`.** Add the new value to `templates/plan-template.md` line 3 alternatives. Add a section to `rules/planning.md` documenting when `agent-team` vs `orchestrator` is appropriate. Add a section to `rules/orchestrator-pattern.md` named "Agent Teams pairing" describing how the two execution modes coexist.
+- [x] 12. **Plan template `Execution Mode: agent-team`.** Add the new value to `templates/plan-template.md` line 3 alternatives. Add a section to `rules/planning.md` documenting when `agent-team` vs `orchestrator` is appropriate. Add a section to `rules/orchestrator-pattern.md` named "Agent Teams pairing" describing how the two execution modes coexist.
 
 - [x] 13. **Documentation updates.**
    - `docs/harness-architecture.md`: add new hooks to the inventory table; describe new event matchers (TaskCreated, TaskCompleted); reference Decision 012; reflect Stop chain corrections from Task 3.

@@ -1233,3 +1233,83 @@ Verdict: PASS
 Confidence: 10
 Reason: All 10 acceptance criteria pass. The integration self-test runs cleanly end-to-end from a fresh shell — 12/12 scenarios PASS at the live execution moment of verification, exit 0. Layer A (A1-A6) re-exercises each new/extended hook's own --self-test as a structural prerequisite (regression catch); Layer B (I1-I6) covers cross-hook flows that no single hook self-test can address: the spawn-validator+budget integration that proves the team-counter and audit-flag conventions actually compose (I1), the round-trip TaskCompleted-clears-flag-on-PASS-review behavior (I2), the negative-path TaskCompleted-blocks-with-no-PASS-review behavior (I3), the 90-call hard ceiling that catches runaway tasks (I4), the flock serialization that prevents concurrent plan-edit-validator races (I5), and the multi-worktree acceptance-gate aggregation that satisfies the lead-side gate when a teammate writes the artifact in another worktree (I6) — these six scenarios are the load-bearing integration evidence that the new mechanisms compose correctly, not just function in isolation. The runner uses mktemp -d + EXIT/INT/TERM trap cleanup + STATE_DIR_OVERRIDE / TEAMS_DIR_OVERRIDE / CLAUDE_STATE_DIR_OVERRIDE / PLANS_DIR_OVERRIDE env-var redirection so no real ~/.claude/ state is created or modified during the run; SENTINEL_TEAM and SENTINEL_LEADER use $$ PID suffixes for collision-free identity. Wiring into /harness-review skill Check 11 makes this test part of the weekly harness-review cadence (skill exec invokes the test and writes PASS/FAIL into the review report); ~/.claude/skills/harness-review.md is byte-for-byte equal to the adapter copy, satisfying harness-maintenance.md's per-machine sync receipt. harness-hygiene-scan exit 0 confirms no identifier leakage. This is the final verifiable task in the agent-teams-integration plan; only Task 12 remains, deferred per coordination with another work stream. No FAIL signals; no INCOMPLETE conditions.
 
+EVIDENCE BLOCK
+==============
+Task ID: 12
+Task description: Plan template `Execution Mode: agent-team`. Add the new value to `templates/plan-template.md` line 3 alternatives. Add a section to `rules/planning.md` documenting when `agent-team` vs `orchestrator` is appropriate. Add a section to `rules/orchestrator-pattern.md` named "Agent Teams pairing" describing how the two execution modes coexist.
+Verified at: 2026-04-29T13:35:48-07:00
+Verifier: task-verifier agent
+
+Files touched (commit 4d94940 cherry-picked from builder commit db0db2b):
+  - adapters/claude-code/templates/plan-template.md (+11/-1)
+  - adapters/claude-code/rules/planning.md (+29/-0)
+  - adapters/claude-code/rules/orchestrator-pattern.md (+30/-0)
+  Total: 70 insertions, 1 deletion across 3 files.
+
+Checks run:
+
+1. Plan template documents agent-team as third Execution Mode value
+   File: adapters/claude-code/templates/plan-template.md, lines 36-43 (HTML-comment block describing Execution Mode values)
+   Content: `agent-team    Uses Anthropic's experimental Agent Teams feature` followed by gating instructions referencing `~/.claude/local/agent-teams.config.json` and Decision 012.
+   Result: PASS
+
+2. planning.md documents when to choose agent-team vs orchestrator
+   File: adapters/claude-code/rules/planning.md, new section at lines 61-92 titled "When to use `Execution Mode: agent-team`"
+   `grep -c 'agent-team' planning.md` returned 12 (criterion required >= 2).
+   Section includes: default-to-orchestrator, decision tree (continuous coordination / task negotiation / explicit Agent Teams testing), prerequisites (config flag, upstream-bug list, Claude Code v2.1.32+), cross-references to agent-teams.md / orchestrator-pattern.md / Decision 012.
+   Result: PASS
+
+3. orchestrator-pattern.md contains "Agent Teams pairing" section
+   File: adapters/claude-code/rules/orchestrator-pattern.md, line 280 onward
+   `grep -c 'Agent Teams pairing' orchestrator-pattern.md` returned 1 (criterion required >= 1).
+   Section content: describes both modes coexist; orchestrator is default; "When BOTH could apply, prefer orchestrator" sub-section; "Anti-pattern — don't mix modes within a single plan" sub-section; cross-references.
+   Result: PASS
+
+4. ~/.claude/ harness copies match adapter copies (CRLF/LF tolerant)
+   `diff -q ~/.claude/templates/plan-template.md adapters/.../plan-template.md` → no output (files match)
+   `diff -q ~/.claude/rules/planning.md adapters/.../planning.md` → no output (files match)
+   `diff -q ~/.claude/rules/orchestrator-pattern.md adapters/.../orchestrator-pattern.md` → no output (files match)
+   All three syncs are byte-identical, satisfying harness-maintenance.md's per-machine sync receipt.
+   Result: PASS
+
+5. Hygiene scan
+   `bash ~/.claude/hooks/harness-hygiene-scan.sh` exit 0; no denylist matches.
+   Result: PASS
+
+6. 9c4e4c8 in-flight Pre-Submission Audit / lessons-learned work preserved
+   `grep -c 'Pre-Submission Audit' adapters/.../plan-template.md` → 1 (the `## Pre-Submission Audit` section added by 9c4e4c8 to plan-template.md is intact).
+   `grep -c 'Pre-Submission Audit' adapters/.../planning.md` → 0 — but this is the historical baseline from before T12, not a regression. Inspection of commit 9c4e4c8 confirms it added "Plan-Time Decisions With Interface Impact — Surface To User" (NOT a "Pre-Submission Audit" header) to planning.md. The criterion's literal grep underspecifies what 9c4e4c8 actually wrote into planning.md.
+   The actual concern (preservation of in-flight work) was checked via `git diff 9c4e4c8 HEAD -- adapters/claude-code/rules/planning.md`: T12's 29-line addition is strictly additive at lines 58-92 and the "Plan-Time Decisions With Interface Impact — Surface To User" section at line 392 of planning.md is intact. `git diff 9c4e4c8 HEAD -- adapters/claude-code/templates/plan-template.md`: T12's 11-line addition is strictly additive at lines 33-50; the `## Pre-Submission Audit` section the 9c4e4c8 commit added is unchanged.
+   Result: PASS (criterion's stated intent — survival of 9c4e4c8 work — is fully met; literal grep imprecision noted but does not indicate a regression)
+
+7. Cross-references resolve to real files
+   `ls -la adapters/claude-code/rules/agent-teams.md` → 18574 bytes (Task 11's deliverable, exists)
+   `ls -la docs/decisions/012-agent-teams-integration.md` → 12700 bytes (Task 1's deliverable, exists)
+   Both cross-references in T12's new content resolve to real on-disk files.
+   Result: PASS
+
+8. Cherry-picked commit 4d94940 contains expected files
+   `git show --stat 4d94940` shows exactly 3 files: plan-template.md, planning.md, orchestrator-pattern.md. Subject matches builder report. Insertion count (70) and deletion count (1) match builder report.
+   Result: PASS
+
+9. Strictly additive — no important content removed
+   `git diff 9c4e4c8 HEAD -- <file>` for both planning.md and plan-template.md shows ONLY additions (the only `-` line in plan-template.md's diff is the joined-paragraph reformat at the "If unsure, use orchestrator" sentence which gains a follow-on clause — same prose continues). Pre-9c4e4c8 prose, the 9c4e4c8 additions, and the prior-task additions are all intact.
+   Result: PASS
+
+Git evidence:
+  4d94940 docs(plan-mode): Execution Mode: agent-team value + cross-references (plan task 12)
+    adapters/claude-code/rules/orchestrator-pattern.md | 30 ++++++++++++++++++++++
+    adapters/claude-code/rules/planning.md             | 29 +++++++++++++++++++++
+    adapters/claude-code/templates/plan-template.md    | 12 ++++++++-
+    3 files changed, 70 insertions(+), 1 deletion(-)
+
+Runtime verification: file adapters/claude-code/templates/plan-template.md::^  agent-team    Uses Anthropic's experimental Agent Teams feature$
+Runtime verification: file adapters/claude-code/rules/planning.md::^## When to use `Execution Mode: agent-team`$
+Runtime verification: file adapters/claude-code/rules/orchestrator-pattern.md::^## Agent Teams pairing$
+Runtime verification: file adapters/claude-code/templates/plan-template.md::^## Pre-Submission Audit$
+Runtime verification: file adapters/claude-code/rules/planning.md::^## Plan-Time Decisions With Interface Impact — Surface To User$
+
+Verdict: PASS
+Confidence: 10
+Reason: T12 cleanly completes the documentation half of the agent-teams integration. All three target files received the planned additive edits; no removals impact the 9c4e4c8 in-flight Pre-Submission Audit / lessons-learned work, which is verified intact by both file-pattern checks (`## Pre-Submission Audit` section in plan-template.md, `## Plan-Time Decisions With Interface Impact — Surface To User` section at line 392 of planning.md). All cross-references resolve to real on-disk files (rules/agent-teams.md from T11, decisions/012 from T1). Adapter and ~/.claude/ copies are byte-identical for all three changed files. harness-hygiene-scan exits 0. Acceptance criterion 6's literal grep on planning.md returns 0, but inspection of commit 9c4e4c8 confirms it added "Plan-Time Decisions" not "Pre-Submission Audit" to planning.md — so the grep value is the historical baseline, not a regression. Marking PASS based on the criterion's stated intent ("9c4e4c8 work survived") which is fully satisfied. This is the final task in the agent-teams-integration plan; on this PASS the plan transitions Status: ACTIVE → Status: COMPLETED in a follow-on edit by the orchestrator.
+
