@@ -6,6 +6,32 @@ Outstanding improvements to the Claude Code harness (rules, agents, hooks, skill
 
 Strategy context and reasoning for many entries below lives in [`docs/claude-code-quality-strategy.md`](./claude-code-quality-strategy.md).
 
+## HARNESS-GAP-08 — `spawn_task` should support optional report-back (added 2026-04-30)
+
+**Observation.** `mcp__ccd_session__spawn_task` is documented as fire-and-forget — the orchestrator session spawns a task, the spawned session runs independently with its own full harness, and there is no callback channel. The orchestrator only learns the result by either (a) reading git artifacts the spawned session committed, or (b) the user manually telling the orchestrator the spawned task is done.
+
+**Why this is a gap.** For genuinely independent work (CI migration, code audits, one-shot doc generation), fire-and-forget is correct — that's the whole point of context hygiene. But for **sequenced fix work** where the orchestrator drives a punchlist (e.g., "fix P0-1 → assess result → fix P0-2 → ..."), the orchestrator must coordinate. Currently the user mediates: they tell the orchestrator "the spawned task completed," and the orchestrator manually fetches the resulting branch via git. This:
+- Adds friction every time the orchestrator wants to chain fixes through spawn_task
+- Pushes orchestrators toward Agent-tool-only patterns (which keep all build context in the orchestrator's window) when spawn_task would otherwise be a better fit
+- Has no mechanical signal at all if the user forgets to tell the orchestrator (or tells the wrong session)
+
+**Proposed mechanism.** `spawn_task` accepts an optional `report_back: true` param. When set:
+1. The spawned session, on stop, writes a structured JSON file at `.claude/state/spawned-task-results/<task-id>.json` with: `{task_id, started_at, ended_at, branch, pr_url, exit_status, summary, commits: [<sha>], artifacts: [<path>]}`.
+2. The orchestrator's `SessionStart`-equivalent hook (or a per-turn check) scans `.claude/state/spawned-task-results/` for new entries since its last turn and surfaces them in the system reminder.
+3. The orchestrator can then act on the result on its very next turn — cherry-pick, run task-verifier, plan the next fix — without user mediation.
+
+**Cleanup semantics.** Result files older than 7 days get pruned by the same hook. Or move them to `archive/` after the orchestrator acknowledges them (mirroring `plan-lifecycle.sh`'s archive pattern).
+
+**Fallback.** Spawn_task without `report_back: true` keeps current fire-and-forget behavior. Backward compatible.
+
+**Originating context.** Surfaced 2026-04-30 during a downstream-project session arc that chained multiple `spawn_task` invocations as a fix punchlist. The user asked: "Shouldn't each of these spawned tasks send their data back to you when they're done so you can review and know when to kick off the following tasks?" The orchestrator (correctly) had to acknowledge that no callback exists today and manual user mediation was the workaround. This pattern recurred multiple times across the session arc.
+
+**Effort estimate.** S-M (~4-6 hr). One JSON-write helper, one hook to scan and surface. Tests for: result file written on terminal exit, multiple spawned tasks don't collide, hook surfaces only unread results, archive on acknowledgment.
+
+**Class.** `harness-coordination-channel-missing` — orchestrator-to-spawned-task lacks a return path; user becomes the channel.
+
+---
+
 ## Mechanism extensions for the Pre-Submission Class-Sweep Audit (added 2026-04-29)
 
 Companion to the Pattern-level rules landed 2026-04-29 in `adapters/claude-code/rules/design-mode-planning.md`, `rules/planning.md`, `templates/plan-template.md`, and `docs/failure-modes.md`. Those rules document the discipline; the items below mechanize the parts that should be hook-enforced rather than self-applied. Source data: an originating 2026-04-28 design-mode review effort (an OAuth+IMAP auth-refactor plan, eight-round `systems-designer` review) surfaced 11 distinct failure classes (FM-007 through FM-017 in `docs/failure-modes.md`); 6+ of them shared a single root cause (`stranded-behavior-change-against-implementation-entry-points`) that the planner could have caught upfront with a class-sweep instead of having the reviewer find sibling instances over multiple rounds.
