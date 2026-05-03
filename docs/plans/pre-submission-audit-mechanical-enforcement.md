@@ -63,7 +63,7 @@ Close the Pattern-only gap left by commit `9c4e4c8` (which landed the Pre-Submis
 
 ## Assumptions
 
-- The bash regex syntax used by `plan-reviewer.sh`'s existing checks (extended grep with `-nE`) is sufficient for the new checks. Specifically: word-boundary detection for "either/or" tokens, paragraph-context windowing for comparative-phrase + numeric pairing, and Scope OUT bullet extraction for the Scope-vs-analysis cross-check. None of the new checks need a real parser.
+- The bash regex syntax and awk-based body extraction used by `plan-reviewer.sh`'s existing checks (notably `check_required_section`'s pattern at lines 357-416) are sufficient for Check 8A. Section-presence + substance-via-non-whitespace-char-count + placeholder-token stripping is the same shape Check 6b uses today.
 - The `## Pre-Submission Audit` section's format established in commit 9c4e4c8 — five lines starting with `S1`, `S2`, `S3`, `S4`, `S5` followed by `(` and a description — is stable and is what the precondition checker keys on. If the format changes later, both the hook AND the agent prompt need updating; this plan does not propose changing the format.
 - `systems-designer` agents are invoked with the plan file path as the first argument or via prompt-injected context — the agent can `Read` the plan file from disk to inspect the audit section. (Verified by reading the existing agent prompt: it expects file path inputs.)
 - The four remaining unmechanized classes (FM-008, FM-009, FM-011, FM-015) are accepted as "Pattern-only" for now. Further mechanization (e.g., calling out to an LLM-driven sub-check, or building a numeric-parameter-aware mini-parser) is out of scope here and tracked separately.
@@ -71,12 +71,11 @@ Close the Pattern-only gap left by commit `9c4e4c8` (which landed the Pre-Submis
 
 ## Edge Cases
 
-- A `Mode: design` plan with all five sweep lines populated but with bodies like "ran sweep, no findings" — accepted by both gates. The discipline is "ran the sweep AND documented the result," not "found zero gaps."
-- A plan that mixes `Mode: design` and a substantive `## Pre-Submission Audit` section but where Section 9's comparative-phrase Check 8D fires WARN-level — the plan still advances (WARN doesn't block), but the WARN appears in stderr where the planner sees it.
-- A `Mode: code` plan that happens to have a `## Pre-Submission Audit` section (e.g., the planner copied the design-mode template) — the new checks are gated on `Mode: design` so they no-op cleanly. The section's presence in a `Mode: code` plan is harmless.
-- A plan with `acceptance-exempt: true` AND `Mode: design` (this very plan would be one if it were design-mode) — the audit gates still apply. The acceptance loop is independent of the design-mode review chain. Documented carve-out only applies to acceptance scenarios, not to the systems-engineering review.
-- A plan submitted to `systems-designer` that is `Mode: design` but the Pre-Submission Audit section was added LATER than the rest of the plan (legitimate — planner may run sweeps after the analysis sections are drafted) — the agent still accepts, since the precondition checks substance, not authoring order.
-- A multi-task design-mode plan where the Decisions Log contains "either/or" inside a Decision entry that ALREADY carries a `Surfaced to user:` annotation — Check 8B must NOT fire. The annotation IS the legitimate-deferred-with-user-input signal.
+- A `Mode: design` plan with all five sweep lines populated but with bodies like "ran sweep, no findings" — accepted by Check 8A. The discipline 8A enforces is "documented all five sweeps OR explicitly carved out," not "found zero gaps." Whether the documented sweep was actually run is a separate question that would need different mechanization (out of scope here per D-3).
+- A `Mode: code` plan that happens to have a `## Pre-Submission Audit` section (e.g., the planner copied the design-mode template) — Check 8A is gated on `MODE_VALUE == "design"` so it no-ops cleanly. The section's presence in a `Mode: code` plan is harmless and doesn't trigger the new gate.
+- A plan with `acceptance-exempt: true` AND `Mode: design` — Check 8A still applies. The acceptance loop is independent of the design-mode review chain; `acceptance-exempt: true` only bypasses the runtime acceptance gate, not the systems-engineering pre-submission audit.
+- A plan submitted to `systems-designer` that is `Mode: design` but the `## Pre-Submission Audit` section was added LATER than the rest of the plan — Check 8A still accepts, since presence + substance is checked at any point, not gated on authoring order.
+- The canonical full-sentence carve-out (`n/a — single-task plan, no class-sweep needed`) must match exactly. A planner who writes `n/a` alone, or `n/a, single-task` (different punctuation), or paraphrases the sentence, FAILs Check 8A. This is intentional — the canonical phrase is the explicit acknowledgment that the planner has read the rule's "When the audit doesn't apply" sub-section and is choosing the carve-out deliberately.
 - The `--self-test` flag's existing test fixtures must not regress. New scenarios are added; existing ones are unchanged.
 
 ## Acceptance Scenarios
@@ -90,11 +89,9 @@ Close the Pattern-only gap left by commit `9c4e4c8` (which landed the Pre-Submis
 
 ## Testing Strategy
 
-- **Per-check unit tests** via `plan-reviewer.sh --self-test`: each new check (8A-E) gets one synthetic plan that should PASS and one that should FAIL/WARN. The existing self-test framework is extended with these new scenarios; running it produces "all scenarios matched expectations" or names the failing scenario.
-- **Integration replay**: take the originating 8-round design-mode plan (its commit-tagged content from neural-lace's recent history), re-run `plan-reviewer.sh` against round-1 / round-2 / round-3 versions, confirm the new checks would have surfaced the documented round-N gaps before that round's `systems-designer` invocation.
-- **Negative case**: a clean Mode: code plan exercises Check 8A's gate and confirms it does NOT fire (since `Mode: design` is the trigger).
-- **Agent precondition replay**: feed `systems-designer` a synthetic Mode: design plan with an empty `## Pre-Submission Audit` section; confirm the agent returns the canonical FAIL message naming the specific empty sweep lines, NOT a substance review.
-- **Sync verification**: after copying changed files to `~/.claude/`, run the diff loop from `harness-maintenance.md` and confirm zero output.
+- **Check 8A unit tests** via `plan-reviewer.sh --self-test`: 4 new fixture scenarios (PASS-substantive, PASS-carve-out, FAIL-missing, FAIL-placeholder) plus the existing 4 scenarios = 8 total. Running `--self-test` produces "all scenarios matched expectations" or names the failing scenario.
+- **Negative case (Mode: code)**: a clean Mode: code plan exercises Check 8A's gate and confirms it does NOT fire (since `MODE_VALUE == "design"` is the trigger). Already covered by the existing self-test fixture-a (Mode: code) which must continue to PASS.
+- **Sync verification**: after copying changed files to `~/.claude/`, run the diff loop from `harness-maintenance.md` and confirm zero output across `hooks/plan-reviewer.sh`, `rules/design-mode-planning.md`, and the new `~/.claude/docs/failure-modes.md`.
 
 ## Walking Skeleton
 
