@@ -9,49 +9,57 @@ acceptance-exempt-reason: Harness-development plan; no product user. Verificatio
 
 ## Goal
 
-Close the Pattern-only gap left by commit `9c4e4c8` (which landed the Pre-Submission Class-Sweep Audit rule + 11 FM catalog entries + plan-template addition) by mechanizing the audit at the **single load-bearing gate** that has real friction: `plan-reviewer.sh` refuses `Mode: design` plans whose `## Pre-Submission Audit` section is missing or placeholder, and refuses plans whose analysis sections prescribe work targeting Scope OUT items, and refuses plans whose capacity-section numeric parameters appear inconsistently across sibling references. Outcome: a future Mode: design plan cannot reach `systems-designer`'s substance review without the planner having (or claimed to have) performed at minimum sweeps S1, S4, and S5. The 8-round → 1-2-round improvement target becomes mechanically supported, not just culturally aspirational.
+Close the Pattern-only gap left by commit `9c4e4c8` (which landed the Pre-Submission Class-Sweep Audit rule + 11 FM catalog entries + plan-template addition) by mechanizing the **single audit gate that has cleanly-binding teeth without depending on an unenforced upstream format**: `plan-reviewer.sh` refuses `Mode: design` plans whose `## Pre-Submission Audit` section is missing or placeholder. Outcome: a future Mode: design plan cannot reach `systems-designer`'s substance review without the planner having (or claimed to have via the canonical carve-out) at minimum acknowledged the five sweeps. The 8-round → 1-2-round improvement target requires this floor; it does NOT require 8E/8F today.
 
-**Reformulated 2026-05-03 from harness-reviewer feedback** (verdict REFORMULATE on initial draft) — the original plan included three checks (8B, 8C, 8D) that were either prose-regex with high false-positive rate or that taught a one-line bypass that was cheaper than compliance. Those are now out of scope (logged in Decisions Log entry D-1). FM-015 was promoted from out-of-scope to in-scope as Check 8F per reviewer's "cheap-and-high-value" classification. The systems-designer agent precondition (originally Task 7) was dropped as ceremony-not-mechanism — an agent reading "S1: swept, 0 matches" cannot distinguish real from faked work.
+**Reformulated twice (2026-05-03)**:
+
+- **Round 1 (REFORMULATE):** original plan included Checks 8B/8C/8D and a systems-designer agent precondition. Reviewer rejected: 8B taught a one-line annotation bypass (worse than no gate); 8C/8D were WARN-on-prose-regex (presumed noise); the agent precondition was ceremony, not friction. Documented in Decisions Log D-1.
+- **Round 2 (REFORMULATE):** revised plan added Check 8F (FM-015 mechanization) and Check 8E (Scope OUT cross-check). Reviewer rejected both as `prose-regex-pretending-to-be-mechanism` AND `hook-depends-on-unenforced-upstream-format`: Check 8F's grep cannot map prose digit-tokens to manifest parameter names without either tightening the audit S4 format to `name=value` pairs (with an upstream Check 8F.0 enforcing the format) or accepting WARN-level. Check 8E has the symmetric flaw — its awk extraction assumes a backtick-path format that Scope OUT bullets are not required to use. Both 8E and 8F are deferred (Decisions Log D-3).
+
+**Final scope:** Check 8A only. The other classes stay Pattern-only until either (a) format-enforcement upstream gates land, or (b) an LLM-driven check tooling proves out. The plan ships ONE mechanical gate that genuinely binds, rather than three gates with hidden bypasses.
 
 ## Scope
 
 - IN:
-  - `adapters/claude-code/hooks/plan-reviewer.sh` — three new mechanical checks gated on `Mode: design`:
-    - **Check 8A** — Pre-Submission Audit section presence + substance (mirrors Check 6b pattern; FAIL on missing section, placeholder-only, or fewer than 5 substantive sweep lines for design-mode plans). Carve-out for the canonical exemption phrase `n/a — single-task plan, no class-sweep needed` (FM-007 prevention).
-    - **Check 8E** — `Add X` / `Modify Y` / `Replace Z` / `prescribes` / `requires.*to` verbs in analysis sections (Sections 1-10) cross-checked against Scope OUT bullets. FAIL when a verb prescribes work targeting a file path or component listed in Scope OUT (FM-016 prevention).
-    - **Check 8F** — numeric-parameter sweep manifest validation. Plan's audit S4 line must enumerate which numeric parameters were swept; check then greps Section 9 (Load/capacity) for digit-tokens (≥ 3 chars, with capacity-context tokens like RPM/ITPM/threads/calls/batch/cap/max/timeout) and FAILs when any such token does not appear in the sweep manifest (FM-015 prevention).
-  - Self-test extension in `plan-reviewer.sh --self-test` covering the three new check paths (one PASS + one FAIL scenario per check = 6 new scenarios).
+  - `adapters/claude-code/hooks/plan-reviewer.sh` — ONE new mechanical check gated on `Mode: design`:
+    - **Check 8A** — Pre-Submission Audit section presence + substance (mirrors Check 6b pattern; FAIL on: missing `## Pre-Submission Audit` section, OR section body containing fewer than 5 lines starting with `S1`/`S2`/`S3`/`S4`/`S5`, OR section body whose substantive content is dominated by `[populate me]` / `TODO` / bare `n/a` / bare `skipped` placeholder tokens). Accept exactly one carve-out: the canonical full-sentence exemption `n/a — single-task plan, no class-sweep needed`. FM-007 prevention layer.
+  - Self-test extension in `plan-reviewer.sh --self-test` covering the new check (one PASS + three FAIL scenarios = 4 new scenarios: substantive audit; missing section; placeholder-only audit; canonical carve-out accepted).
   - Sync from neural-lace adapter directory to `~/.claude/` (manual copy per Windows install convention).
-  - `docs/failure-modes.md` — update FM-007, FM-015, FM-016 Detection/Prevention fields to cite the new mechanical layer with commit SHA. The remaining FM entries (FM-008, FM-009, FM-010, FM-011, FM-012, FM-013, FM-014, FM-017) stay Pattern-only.
-  - Cross-reference update in `rules/design-mode-planning.md` Enforcement summary: flip Status of `plan-reviewer.sh extension` from "planned, not yet implemented" to "landed (partial: 8A + 8E + 8F; 8B/8C/8D and agent precondition deferred — see plan `pre-submission-audit-mechanical-enforcement.md` Decisions Log)".
+  - `docs/failure-modes.md` — update FM-007 Detection/Prevention fields to cite Check 8A with commit SHA. Other FM entries unchanged (still Pattern-only or deferred).
+  - Cross-reference update in `rules/design-mode-planning.md` Enforcement summary: flip Status of `plan-reviewer.sh extension` from "planned, not yet implemented" to "landed (partial: 8A; 8B/8C/8D/8E/8F and agent precondition deferred — see plan `pre-submission-audit-mechanical-enforcement.md` Decisions Log D-1 and D-3)".
 - OUT:
-  - **Check 8B** (deferred-decision detection in Decisions Log via "either/or" / "OR:" regex with `Surfaced to user:` annotation skip). Reviewer-rejected: the annotation-skip logic teaches a one-line bypass that is cheaper than compliance, making the gate WORSE than the current Pattern-only state. See Decisions Log D-1.
-  - **Check 8C** (WARN on "stays identical" / "preserved" / "unchanged" without enumeration). Reviewer-rejected: WARN-level on loose prose-regex is logging, not enforcement; the Pattern-rule in `design-mode-planning.md` already covers this and a WARN-level mechanism doesn't add force. See Decisions Log D-1.
-  - **Check 8D** (WARN on comparative phrases without inline numerics). Reviewer-rejected: cannot mechanically detect missing arithmetic via grep. The originating FM-013/FM-014 failures need either an LLM-driven check or a math-extraction parser. See Decisions Log D-1.
-  - **Agent precondition** in `systems-designer.md` (originally Task 7). Reviewer-rejected: trust-on-substance precondition is ceremony, not friction — bypass cost = 4 seconds typing five fake sweep lines. Either redundant with Check 8A or requires a non-trivial redesign (agent independently runs at least one sweep query and compares documented count to actual). Redesign is out of scope here. See Decisions Log D-1.
-  - The remaining unmechanized classes (FM-008 stale-existing-code-claim, FM-009 cross-section-contradiction, FM-011 numeric-precision-spec-incomplete, FM-012 stays-identical-without-enumeration, FM-013 capacity-claim-without-arithmetic, FM-014 capacity-claim-self-contradicts-math, FM-017 cold-start-violates-steady-state-envelope, FM-010 deferred-design-decision-with-interface-impact). These are content-specific and require either an LLM-driven check, a domain-specific parser, or a redesign of the agent precondition mechanism. Documented as Pattern-only in the rule's existing Enforcement summary.
-  - A separate `plan-pre-flight-auditor` agent. The single-gate enforcement (Check 8A + 8E + 8F) is sufficient for the highest-leverage classes; an additional agent would duplicate work.
-  - Any change to `~/.claude/rules/design-mode-planning.md`'s sweep query specifications. Those landed in 9c4e4c8 and are not changing.
+  - **Check 8B** (deferred-decision detection). Reviewer-rejected round 1 — annotation-skip teaches a one-line bypass cheaper than compliance. See D-1.
+  - **Check 8C** (stays-identical WARN). Reviewer-rejected round 1 — WARN-on-prose-regex is logging, not enforcement. See D-1.
+  - **Check 8D** (comparative-phrase WARN). Reviewer-rejected round 1 — cannot detect missing arithmetic via grep. See D-1.
+  - **Check 8E** (Scope OUT cross-check). Reviewer-rejected round 2 — the awk extraction assumes a backtick-path format that Scope OUT bullets are not required to use, AND the verb-target match cannot distinguish "OUT-targeted prescription" from "OUT-mentioned-as-context." Needs format-enforcement upstream (require Scope OUT to use a stable backtick-path format) before this can land. See D-3.
+  - **Check 8F** (numeric-parameter sweep manifest). Reviewer-rejected round 2 — `prose-regex-pretending-to-be-mechanism`. The grep cannot reliably map prose digit-tokens to manifest parameter names. Needs either (a) tightened audit S4 format to `name=value` pairs with an upstream Check 8F.0 enforcing the format, or (b) accept WARN-level (and accept that WARN-level is noise per D-1's principle). Both options require updates to `rules/design-mode-planning.md`'s audit format spec, which is out of scope here. See D-3.
+  - **Agent precondition** in `systems-designer.md`. Reviewer-rejected round 1 — ceremony, not friction. See D-1.
+  - The eight remaining unmechanized classes (FM-008/009/010/011/012/013/014/015/016/017 — note FM-015 and FM-016 also remain Pattern-only after Check 8E/8F deferral). Documented as Pattern-only in the rule's existing Enforcement summary.
+  - A separate `plan-pre-flight-auditor` agent.
+  - Changes to `~/.claude/rules/design-mode-planning.md`'s sweep query specifications. Those landed in 9c4e4c8 and remain stable.
 
 ## Tasks
 
-- [ ] 1. Extend `plan-reviewer.sh` with **Check 8A** (Pre-Submission Audit section presence + substance on Mode: design plans). FAIL on missing `## Pre-Submission Audit` section, on a section with fewer than 5 lines starting with `S1`/`S2`/`S3`/`S4`/`S5`, or on a section whose body is dominated by `[populate me]` / `TODO` / `skipped` / `n/a` placeholder tokens (single-token bypass). Accept the canonical full-sentence carve-out `n/a — single-task plan, no class-sweep needed` (full string match).
-- [ ] 2. Extend `plan-reviewer.sh` with **Check 8E** (Scope-OUT-vs-analysis cross-check). Sketched regex: extract Scope OUT bullets via `awk '/^- \*\*OUT:\*\*$|^- OUT:/,/^[^- ]/' | rg -oP '`[^`]+`'` → list of file paths and component names. For each, scan analysis sections (lines after `## Systems Engineering Analysis`) for verb tokens `(Add|Insert|Modify|Replace|Emit|Log|prescribes|requires.*to|connector must)\s+.*(<extracted-target>)`. FAIL when match found.
-- [ ] 3. Extend `plan-reviewer.sh` with **Check 8F** (numeric-parameter sweep manifest validation). Read the plan's `S4 (Numeric-Parameter Sweep):` line; require it to either say `swept, 0 matches` or list parameters in the form `swept for params [<list>], all values consistent` per the rule's specified format. If the latter, extract the parameter list and grep Section 9 (Load/capacity) for digit-tokens ≥ 3 chars adjacent to capacity-context tokens (`RPM|ITPM|OTPM|threads|calls|batch|cap|max|timeout|retries`). FAIL when any such digit-token's accompanying parameter name does not appear in the sweep manifest.
-- [ ] 4. Extend `plan-reviewer.sh --self-test` with three new fixture pairs (PASS + FAIL per check = 6 new scenarios) covering 8A / 8E / 8F.
-- [ ] 5. Update `docs/failure-modes.md` Detection / Prevention fields for FM-007, FM-015, FM-016 to cite the new checks with commit SHA. Leave FM-008/009/010/011/012/013/014/017 unchanged (still Pattern-only — see Decisions Log D-1 for why).
-- [ ] 6. Update `rules/design-mode-planning.md` Enforcement summary table: flip the `plan-reviewer.sh extension` Status from "planned, not yet implemented" to a partial-landed status pointing at this plan's commit. Note explicitly which sweeps are mechanized (S1, S5, S4) and which remain Pattern-only (S2, S3, plus the FM-010/012/013/014/017 prevention).
-- [ ] 7. Sync changed files from neural-lace adapter directory to `~/.claude/` per `harness-maintenance.md` Windows manual-sync rule. Verify with the diff loop. Commit, dual-remote push.
+- [ ] 1. Extend `plan-reviewer.sh` with **Check 8A** (Pre-Submission Audit section presence + substance on Mode: design plans). Implementation: gate on `MODE_VALUE == "design"`. Required-section lookup using the existing `check_required_section`-style awk + body-extraction. FAIL conditions:
+    - Section heading `## Pre-Submission Audit` is missing
+    - Section body, after stripping HTML comments and bullet markers, is empty or under 30 non-whitespace chars
+    - Section body, after stripping placeholder tokens (`[populate me]`, `TODO`, bare `n/a`, bare `skipped`), is empty
+    - Section body does NOT contain at least one of: (a) the canonical full-sentence carve-out `n/a — single-task plan, no class-sweep needed`, OR (b) at least 5 lines that begin with `S1` / `S2` / `S3` / `S4` / `S5` (one per sweep, in any order, optionally bullet-prefixed)
+- [ ] 2. Extend `plan-reviewer.sh --self-test` with 4 new fixture scenarios:
+    - **PASS:** Mode: design plan with 5 substantive sweep lines (each cites a sweep query + a count or finding); confirm exit 0
+    - **PASS-carve-out:** Mode: design plan whose `## Pre-Submission Audit` section contains only the canonical full-sentence carve-out; confirm exit 0
+    - **FAIL-missing:** Mode: design plan with NO `## Pre-Submission Audit` section; confirm exit 1 + finding cites missing section
+    - **FAIL-placeholder:** Mode: design plan whose audit body is `[populate me]` only; confirm exit 1 + finding cites placeholder content
+- [ ] 3. Update `docs/failure-modes.md` FM-007 Detection / Prevention fields to cite Check 8A with the implementing commit SHA. Other FM entries unchanged.
+- [ ] 4. Update `rules/design-mode-planning.md` Enforcement summary table: flip `plan-reviewer.sh extension` Status from "planned, not yet implemented" to a partial-landed status. Cite this plan's commit SHA. Document explicitly that 8A is the only mechanized check; 8B/8C/8D/8E/8F and agent precondition are deferred per D-1 and D-3.
+- [ ] 5. Sync changed files from neural-lace adapter directory to `~/.claude/` per `harness-maintenance.md` Windows manual-sync rule. Verify with the diff loop. Commit, dual-remote push.
 
 ## Files to Modify/Create
 
-- `adapters/claude-code/hooks/plan-reviewer.sh` — extend with Checks 8A, 8E, 8F (Tasks 1-3) and self-test scenarios (Task 4). One bash file, ~150 added lines. Each check is a self-contained function so they're individually disable-able if any produces false-positive churn after live use. Specifically:
-  - **Check 8A** behavior changes: section-presence + substance gate. Single-token bypass (`n/a` alone, `TODO` alone, etc.) FAILs; only the canonical full-sentence carve-out is accepted.
-  - **Check 8E** behavior changes: extracts Scope OUT bullets, scans analysis sections for prescription verbs targeting OUT items.
-  - **Check 8F** behavior changes: parses the audit's S4 line for the swept-parameter manifest, cross-references Section 9 numeric tokens against the manifest.
-- `docs/failure-modes.md` — Detection/Prevention field updates on three entries (Task 5): FM-007 (cite Check 8A), FM-015 (cite Check 8F), FM-016 (cite Check 8E). All three updates include the implementing commit SHA. ~10 lines edited per entry.
-- `adapters/claude-code/rules/design-mode-planning.md` — Enforcement summary table status update (Task 6). ~10 added lines documenting which sweeps are now mechanized (S1, S4, S5) vs Pattern-only (S2, S3).
-- `~/.claude/hooks/plan-reviewer.sh`, `~/.claude/docs/failure-modes.md`, `~/.claude/rules/design-mode-planning.md` — copies synced from the adapter directory after Task 6 completes (Task 7). The `~/.claude/docs/failure-modes.md` file does not currently exist — Task 7 creates it as part of the sync (it's referenced from `~/.claude/rules/diagnosis.md` so the harness expects it to exist locally).
+- `adapters/claude-code/hooks/plan-reviewer.sh` — extend with Check 8A and self-test scenarios. ~80 added lines. Single self-contained function `check_pre_submission_audit_8a()` callable conditionally on `MODE_VALUE == "design"`.
+- `docs/failure-modes.md` — Detection/Prevention field update on FM-007 only (cite Check 8A with implementing commit SHA). ~5 lines edited.
+- `adapters/claude-code/rules/design-mode-planning.md` — Enforcement summary table status update. ~10 added lines documenting that S1 is mechanized via Check 8A and S2-S5 remain Pattern-only with explicit links to D-1 and D-3 for the deferral reasoning.
+- `~/.claude/hooks/plan-reviewer.sh`, `~/.claude/rules/design-mode-planning.md` — copies synced from the adapter directory after Task 4 completes. The `~/.claude/docs/failure-modes.md` file does not currently exist locally — sync also creates it as part of the harness-maintenance discipline (the diagnosis rule references it).
 
 ## Assumptions
 
@@ -90,13 +98,7 @@ Close the Pattern-only gap left by commit `9c4e4c8` (which landed the Pre-Submis
 
 ## Walking Skeleton
 
-The thinnest end-to-end slice that exercises the full enforcement chain on one synthetic plan:
-1. Build Check 8A (audit-section-presence) only — minimum viable gate
-2. Add Mode: design plan fixture with an empty audit section to `--self-test`
-3. Run `plan-reviewer.sh --self-test`; confirm the new fail scenario produces exit 1 with a clear message
-4. Then iterate: add 8B-E one at a time, then the agent precondition, each with its own self-test scenario.
-
-This validates the hook-extension pattern works before investing in all five checks.
+n/a — single mechanical check. The plan IS the skeleton: implement Check 8A, exercise via `--self-test`, sync to `~/.claude/`, ship.
 
 ## Decisions Log
 
@@ -112,15 +114,24 @@ This validates the hook-extension pattern works before investing in all five che
 - **Checkpoint:** plan revision committed at <SHA TBD via Task 7 commit>.
 - **To reverse:** restore the deleted Tasks 2/3/4/7 from this plan's git history (commit immediately before the reformulation), re-apply to plan-reviewer.sh and systems-designer.md. Cost ~30 minutes; the original plan revision is preserved in git history.
 
-### D-2: FM-015 promoted from out-of-scope to in-scope as Check 8F (2026-05-03)
+### D-2: FM-015 promoted to in-scope as Check 8F — REVERSED in D-3 (2026-05-03)
 
 - **Tier:** 2
-- **Status:** proceeded with reviewer recommendation
-- **Chosen:** Mechanize FM-015 (numeric-parameter-not-fully-swept) as Check 8F. The audit's S4 line already specifies the format (`swept for params [<list>], all values consistent`); the hook parses that manifest, then greps Section 9 for digit-tokens not in the manifest.
-- **Alternatives considered:** Leave FM-015 as Pattern-only alongside FM-008/009/011. Rejected: the rule already specifies the sweep query (`rg -n '\b<value>\b'`) and the audit format requires the planner to enumerate swept parameters — the data needed to mechanize is already required. Triaging as out-of-scope was a wrong call corrected by the reviewer.
-- **Reasoning:** the harness's three-axis discipline-mechanism-feedback model (per `docs/best-practices.md`) prefers mechanizing whenever the data is already structured. FM-015's data IS structured by the audit format; the cost of the check is small and the value is high (it's the one of the four "out-of-scope" classes that produced a real round-4 review failure in the originating effort).
-- **Checkpoint:** plan revision committed at <SHA TBD via Task 7 commit>.
-- **To reverse:** delete Check 8F from plan-reviewer.sh; remove the corresponding self-test scenarios. Cost ~15 minutes.
+- **Status:** SUPERSEDED by D-3 below. Originally adopted from harness-reviewer round 1 recommendation; reversed in round 2 after the same reviewer flagged Check 8F's design as `prose-regex-pretending-to-be-mechanism`.
+- This entry is preserved as part of the audit trail; the substantive choice is documented in D-3.
+
+### D-3: Drop Check 8E and Check 8F (defer with format-enforcement prerequisite) (2026-05-03)
+
+- **Tier:** 2
+- **Status:** proceeded with reviewer round-2 recommendation
+- **Chosen:** Reduce in-scope checks from {8A, 8E, 8F} to {8A only}. Defer 8E and 8F until the rule-level format requirements they depend on are themselves enforced upstream.
+- **Alternatives considered:**
+  - Tighten audit S4 format to `swept for params [name=value, name=value, ...]` AND tighten Scope OUT format to require backtick-delimited paths AND add upstream Check 8F.0 enforcing the audit format AND add upstream Check 8E.0 enforcing the Scope OUT format. Rejected: scope creep — the original plan's IN-scope explicitly excluded changes to `~/.claude/rules/design-mode-planning.md`'s sweep query specifications. Tightening the formats requires updating the rule, which then propagates to every Mode: design plan author. That's a large enough change to warrant its own plan with its own systems-designer review.
+  - Demote 8E and 8F to WARN-level. Rejected by D-1's principle: WARN-on-prose-regex is noise, not enforcement; the harness has explicit precedent (Check 4b) showing WARN-level findings get ignored.
+- **Reasoning:** the reviewer's `prose-regex-pretending-to-be-mechanism` finding applies to BOTH 8E and 8F. Both depend on plan-section formats (Scope OUT bullet format for 8E; audit S4 manifest format for 8F) that the rule recommends but does not enforce. A check whose correctness depends on an unenforced upstream format is fragile: planners can satisfy the format inconsistently, the hook silently fires false-positives or false-negatives, and trust in the gate erodes. The honest path is to ship Check 8A alone (which has no upstream format dependency — it gates on section presence and explicit substance markers) and defer 8E/8F until the format question is resolved properly.
+- **Consequence:** Check 8A is the only mechanical layer landing in this plan. FM-007 cites it; FM-008/009/010/011/012/013/014/015/016/017 stay Pattern-only. The originally-promised "8-round → 1-2-round" outcome will require additional mechanization once the format-enforcement design lands; this plan establishes the floor, not the ceiling.
+- **Checkpoint:** plan revision committed at <SHA TBD via Task 5 commit>.
+- **To reverse / promote 8E / 8F later:** create a follow-up plan that (a) updates `rules/design-mode-planning.md` to require canonical `name=value` audit S4 format and backtick-path Scope OUT format, (b) adds Check 8F.0 / 8E.0 enforcing those formats, (c) re-implements the original Check 8E / 8F against the now-enforced formats. The work is straightforward once the format question is settled.
 
 ## Pre-Submission Audit
 
@@ -128,9 +139,9 @@ n/a — Mode: code plan, no class-sweep needed. (The audit discipline is require
 
 ## Definition of Done
 
-- [ ] All 7 tasks above are checked by the `task-verifier` agent (per harness rule, only task-verifier flips checkboxes).
-- [ ] `plan-reviewer.sh --self-test` exits 0 with all scenarios matching expectations (existing 4 + 6 new = 10 total).
-- [ ] The three affected `failure-modes.md` entries (FM-007, FM-015, FM-016) cite the implementing commit SHA in their Detection / Prevention fields. The other eight FM entries stay Pattern-only with text reflecting that the originally-planned mechanism is deferred.
-- [ ] `~/.claude/` and `~/claude-projects/neural-lace/adapters/claude-code/` show zero diff for the four changed files (plan-reviewer.sh, design-mode-planning.md, failure-modes.md, plus the new `~/.claude/docs/failure-modes.md` symlink-or-copy).
+- [ ] All 5 tasks above are checked by the `task-verifier` agent (per harness rule, only task-verifier flips checkboxes).
+- [ ] `plan-reviewer.sh --self-test` exits 0 with all scenarios matching expectations (existing 4 + 4 new = 8 total).
+- [ ] FM-007 cites Check 8A's implementing commit SHA. FM-015 and FM-016 stay Pattern-only (deferred per D-3) with text reflecting the deferral.
+- [ ] `~/.claude/` and `~/claude-projects/neural-lace/adapters/claude-code/` show zero diff for the changed files (plan-reviewer.sh, design-mode-planning.md), and `~/.claude/docs/failure-modes.md` exists as a copy of the neural-lace `docs/failure-modes.md`.
 - [ ] Backlog items HARNESS-AUDIT-EXT-01 and HARNESS-AUDIT-EXT-02 are deleted from `docs/backlog.md` (already done atomically with the initial plan-file creation commit `428dbef`, per backlog-plan-atomicity hook).
 - [ ] Completion report appended to this plan file per `~/.claude/templates/completion-report.md`.
