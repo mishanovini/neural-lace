@@ -134,6 +134,199 @@ PLAN_TAIL
     FAILED=1
   fi
 
+  # ============================================================
+  # Check 8A scenarios (e, f, g, h) — Mode: design Pre-Submission
+  # Audit section presence + substance gate
+  # ============================================================
+  #
+  # All four use the same Mode: design fixture, varying only the
+  # ## Pre-Submission Audit section's content. The fixture also
+  # populates the 10 Systems Engineering Analysis sub-sections so
+  # Check 7 (design-mode SEA section enforcement) passes — otherwise
+  # we cannot test Check 8A in isolation.
+
+  write_design_plan_base() {
+    # $1 = output path, $2 = audit_mode ("5_sweeps" | "carveout" | "placeholder" | "missing")
+    local out="$1"
+    local audit_mode="$2"
+    cat > "$out" <<'DESIGN_HEAD'
+# Plan: Self-test design-mode fixture
+Status: ACTIVE
+Mode: design
+Backlog items absorbed: none
+
+## Goal
+Exercise Check 8A by varying the Pre-Submission Audit section while
+keeping every other check satisfied. The fixture deliberately
+includes substantive content for Check 6b's required sections AND
+the 10 Systems Engineering Analysis sub-sections so Check 7 passes
+in isolation.
+
+## Scope
+- IN: the Pre-Submission Audit gate in plan-reviewer.sh
+- OUT: anything else; the fixture is single-purpose
+
+## Tasks
+- [ ] 1. Synthetic task with a runtime test reference: tests/foo.spec.ts
+  covers the user flow.
+
+## Files to Modify/Create
+- `hooks/plan-reviewer.sh` — extend with Check 8A self-test scenarios
+
+## Assumptions
+- Assumes Check 7 passes for this fixture so Check 8A's outcome
+  is the only variable across scenarios e/f/g/h.
+
+## Edge Cases
+- The fixture must not regress Check 6b's required-section gates;
+  if any required section is missing or placeholder, the test result
+  is ambiguous between Check 6b and Check 8A.
+
+## Testing Strategy
+- Run plan-reviewer.sh against this fixture in each variant; observe
+  the exit code matches expectation per scenario.
+
+Walking Skeleton: n/a — self-test fixture, no runtime user-facing slice.
+
+## Definition of Done
+- [ ] Self-test reports the expected verdict per scenario.
+
+## Systems Engineering Analysis
+
+### 1. Outcome (measurable user outcome, not output)
+Within zero seconds of running plan-reviewer.sh against this fixture,
+the script exits with the expected code per scenario.
+A future planner reading this fixture sees the canonical shape of a
+passing design-mode plan for Check 8A specifically.
+The exit code is the only assertion the self-test makes.
+
+### 2. End-to-end trace with a concrete example
+At T=0 the self-test invokes `bash plan-reviewer.sh /tmp/<scenario>.md`.
+plan-reviewer reads the file, sets MODE_VALUE=design from the header.
+It runs Check 6b required sections, then Check 7 SEA sections,
+then Check 8A audit section.
+Exits 0 on PASS, 1 on any FAIL.
+
+### 3. Interface contracts between components
+plan-reviewer.sh receives a file path argument from the self-test runner.
+It emits exit 0 on PASS, exit 1 on findings (stderr details).
+self-test invokes via `bash $SCRIPT $path` and keys on the exit status.
+Stderr findings are captured but not asserted in the self-test.
+
+### 4. Environment & execution context
+Bash 4+ shell with GNU or BSD awk and GNU or BSD grep available.
+Temporary fixture file under a `mktemp -d` directory.
+No persistent state — trap removes the tmpdir on exit.
+Working directory is the user's CWD; PLAN_FILE is read absolute.
+
+### 5. Authentication & authorization map
+None — the fixture is offline.
+No network or auth boundaries are crossed.
+The hook reads only the local plan file and writes only stderr findings.
+
+### 6. Observability plan (built before the feature)
+Self-test prints one line per scenario to stderr.
+Format: `self-test (X) name: PASS (expected)` or `FAIL (expected)`.
+A final summary line indicates whether all expectations matched.
+Failures localize to the named scenario via the prefix letter.
+
+### 7. Failure-mode analysis per step
+| Step | Failure | Symptom | Recovery |
+|------|---------|---------|----------|
+| Fixture write | Disk full | mktemp fails with ENOSPC | Bash exits with the mktemp error |
+| Hook invocation | Bash syntax error in plan-reviewer.sh | Non-zero exit with parse error on stderr | Self-test reports unexpected verdict; author inspects |
+| Verdict comparison | Off-by-one in expected exit code | Scenario flagged as failed | Author reads stderr and fixes the scenario expectation |
+
+### 8. Idempotency & restart semantics
+Each invocation is idempotent — creates a fresh tmpdir.
+Runs all scenarios sequentially, cleans up via trap on exit.
+No persistent state between runs.
+Re-running mid-run is safe — the prior tmpdir is independent.
+
+### 9. Load / capacity model
+Four Check-8A scenarios per self-test pass.
+Plus the existing 4 scenarios (a/b/c/d) = 8 total.
+Total runtime ~1s on a typical machine; no bottleneck.
+Memory footprint: a few KB of fixture text per scenario.
+
+### 10. Decision records & runbook
+Decision: use four scenarios (e/f/g/h) for Check 8A.
+Alternative: one combined scenario interleaving all four cases.
+Rejected because the four-scenario form makes failures localizable
+to the specific gate (presence vs substance vs carve-out).
+Runbook: if any scenario produces unexpected verdict, capture the
+fixture file via TMPDIR_SELFTEST inspection during a debug run.
+
+DESIGN_HEAD
+
+    case "$audit_mode" in
+      "5_sweeps")
+        cat >> "$out" <<'AUDIT_5SWEEPS'
+## Pre-Submission Audit
+
+S1 (Entry-Point Surfacing): swept, 0 matches in self-test fixture
+S2 (Existing-Code-Claim Verification): swept, 0 matches
+S3 (Cross-Section Consistency): swept, 0 contradictions remaining
+S4 (Numeric-Parameter Sweep): swept, 0 matches
+S5 (Scope-vs-Analysis Check): swept, 0 contradictions
+AUDIT_5SWEEPS
+        ;;
+      "carveout")
+        cat >> "$out" <<'AUDIT_CARVEOUT'
+## Pre-Submission Audit
+
+n/a — single-task plan, no class-sweep needed
+AUDIT_CARVEOUT
+        ;;
+      "placeholder")
+        cat >> "$out" <<'AUDIT_PLACEHOLDER'
+## Pre-Submission Audit
+
+[populate me]
+AUDIT_PLACEHOLDER
+        ;;
+      "missing")
+        # No section emitted — gate must FAIL on absence
+        ;;
+    esac
+  }
+
+  # Scenario (e): Mode: design + 5 substantive sweep lines — expect PASS
+  write_design_plan_base "$TMPDIR_SELFTEST/e.md" "5_sweeps"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/e.md" > /dev/null 2>&1; then
+    echo "self-test (e) design-mode-with-5-sweeps: PASS (expected)" >&2
+  else
+    echo "self-test (e) design-mode-with-5-sweeps: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Scenario (f): Mode: design + canonical carve-out — expect PASS
+  write_design_plan_base "$TMPDIR_SELFTEST/f.md" "carveout"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/f.md" > /dev/null 2>&1; then
+    echo "self-test (f) design-mode-with-carveout: PASS (expected)" >&2
+  else
+    echo "self-test (f) design-mode-with-carveout: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Scenario (g): Mode: design + missing Pre-Submission Audit section — expect FAIL
+  write_design_plan_base "$TMPDIR_SELFTEST/g.md" "missing"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/g.md" > /dev/null 2>&1; then
+    echo "self-test (g) design-mode-missing-audit-section: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (g) design-mode-missing-audit-section: FAIL (expected)" >&2
+  fi
+
+  # Scenario (h): Mode: design + audit-section-placeholder-only — expect FAIL
+  write_design_plan_base "$TMPDIR_SELFTEST/h.md" "placeholder"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/h.md" > /dev/null 2>&1; then
+    echo "self-test (h) design-mode-audit-placeholder-only: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (h) design-mode-audit-placeholder-only: FAIL (expected)" >&2
+  fi
+
   if [[ $FAILED -eq 0 ]]; then
     echo "plan-reviewer --self-test: all scenarios matched expectations" >&2
     exit 0
@@ -508,6 +701,91 @@ if [[ "$MODE_VALUE" == "design" ]]; then
 
     if [[ -n "$SHALLOW_SECTIONS" ]]; then
       add_finding "Check 7 (design-mode): sections are too shallow to pass systems review. Each section needs specific content (typically 5+ lines), not one-line placeholders:"$'\n'"$SHALLOW_SECTIONS    Then invoke the systems-designer agent for substantive review."
+    fi
+  fi
+fi
+
+# ============================================================
+# Check 8A (Gen 5+): Mode: design plans must have a substantive
+# Pre-Submission Audit section
+# ============================================================
+#
+# When a plan declares Mode: design, the planner must perform the
+# 5-sweep Pre-Submission Class-Sweep Audit (S1-S5) before invoking
+# systems-designer. The discipline is documented in
+# ~/.claude/rules/design-mode-planning.md "Pre-Submission Class-Sweep
+# Audit (mandatory before invoking systems-designer)" — landed in
+# commit 9c4e4c8 as a Pattern; this check is the Mechanism layer.
+#
+# Why this exists: an originating 2026-04-28 design-mode review effort
+# (an OAuth+IMAP auth-refactor plan) required eight rounds of
+# systems-designer review to reach PASS. Each round caught real
+# implementation gaps but the same root cause produced 9+ sibling
+# instances over rounds 5-8: the planner did not perform a class-sweep
+# before submitting to the reviewer. The Pattern rule documents the
+# discipline; this check enforces that the discipline was at minimum
+# acknowledged.
+#
+# What this check gates on: STRUCTURE only — section presence + at
+# least 5 distinct sweep tokens (S1/S2/S3/S4/S5) OR the canonical
+# full-sentence carve-out. It does NOT verify whether the documented
+# sweeps were honestly performed (that would require LLM-grade reading
+# or format-enforcement upstream — both deferred per
+# docs/plans/pre-submission-audit-mechanical-enforcement.md
+# Decisions Log D-3).
+#
+# Bypass surface (acknowledged residual risk): a planner who wants to
+# satisfy the gate without doing the sweeps can write 5 fake
+# "S<N>: swept, 0 matches" lines (~30s) vs honest sweeps (~30min).
+# The 60× friction ratio plus the structural requirement of writing
+# five distinct sweep declarations is meaningful (typing five sweep-
+# shaped lines is a cognitive pause where typing one annotation is
+# not — see why Check 8B was rejected for comparison). Closing this
+# bypass requires either an LLM-driven check or per-sweep substance
+# verification; both are out of scope here. See FM-007 in
+# docs/failure-modes.md for the class this prevents.
+
+if [[ "$MODE_VALUE" == "design" ]]; then
+  AUDIT_LN=$(grep -nE '^## Pre-Submission Audit\s*$' "$PLAN_FILE" 2>/dev/null | head -1 | cut -d: -f1)
+
+  if [[ -z "$AUDIT_LN" ]]; then
+    add_finding "Check 8A (design-mode): plan declares Mode: design but lacks '## Pre-Submission Audit' section. The planner must perform the 5-sweep audit (S1 Entry-Point Surfacing, S2 Existing-Code-Claim Verification, S3 Cross-Section Consistency, S4 Numeric-Parameter Sweep, S5 Scope-vs-Analysis Check) before invoking the systems-designer agent. Add the section per the template at ~/.claude/templates/plan-template.md, OR if the plan is genuinely a single-task design-mode change with no analysis surface for sweeps to apply to, use the canonical carve-out: 'n/a — single-task plan, no class-sweep needed'. See ~/.claude/rules/design-mode-planning.md, 'Pre-Submission Class-Sweep Audit'."
+  else
+    # Extract the section body up to the next '## ' heading.
+    # Strip HTML comments so prompts inside <!-- --> don't count
+    # toward substance.
+    AUDIT_BODY=$(awk -v start="$AUDIT_LN" '
+      NR == start { next }
+      NR > start {
+        if ($0 ~ /^## /) exit
+        print
+      }
+    ' "$PLAN_FILE" 2>/dev/null | awk '
+      /<!--/ { in_comment = 1 }
+      !in_comment { print }
+      /-->/ { in_comment = 0 }
+    ')
+
+    # Path (a): canonical full-sentence carve-out present?
+    # Use grep -F (fixed string) to match the em-dash literally.
+    HAS_CARVEOUT=0
+    if printf '%s' "$AUDIT_BODY" | grep -qF "n/a — single-task plan, no class-sweep needed" 2>/dev/null; then
+      HAS_CARVEOUT=1
+    fi
+
+    # Path (b): all 5 distinct sweep tokens (S1, S2, S3, S4, S5) present?
+    # Tolerate optional list-bullet ("- ", "* ", "+ ") and optional
+    # bold ("**S1**" etc). We require DISTINCT tokens so writing "S1"
+    # five times does not satisfy — must see one line each for S1..S5.
+    SWEEP_TOKENS_FOUND=0
+    for s in S1 S2 S3 S4 S5; do
+      if printf '%s' "$AUDIT_BODY" | grep -qE "^\s*([-*+]\s+)?(\*\*)?${s}\b" 2>/dev/null; then
+        SWEEP_TOKENS_FOUND=$((SWEEP_TOKENS_FOUND + 1))
+      fi
+    done
+
+    if [[ $HAS_CARVEOUT -eq 0 ]] && [[ $SWEEP_TOKENS_FOUND -lt 5 ]]; then
+      add_finding "Check 8A (design-mode): plan's '## Pre-Submission Audit' section has neither (a) the canonical full-sentence carve-out 'n/a — single-task plan, no class-sweep needed', nor (b) at least one line each starting with S1/S2/S3/S4/S5 (found $SWEEP_TOKENS_FOUND of 5 distinct sweep tokens). The planner must document each of the 5 sweeps (or use the canonical carve-out) before invoking systems-designer. Format per sweep: 'S1 (Entry-Point Surfacing): swept, N matches, M cited correctly, K added to Tasks/Files'. See ~/.claude/rules/design-mode-planning.md, 'The \`## Pre-Submission Audit\` section'."
     fi
   fi
 fi

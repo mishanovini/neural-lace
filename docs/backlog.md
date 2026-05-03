@@ -32,6 +32,24 @@ Strategy context and reasoning for many entries below lives in [`docs/claude-cod
 
 ---
 
+## HARNESS-GAP-09 — `plan-reviewer.sh` Check 1 + Check 5 false-positive on meta-plans (added 2026-05-03)
+
+**Symptom.** When the plan-reviewer hook runs against a plan that itself is ABOUT plan-reviewer.sh (a meta-plan editing the hook), the hook produces false positives:
+- Check 1 (undecomposed sweep) trips on "all scenarios", "every scenario" in `## Definition of Done` — the regex matches the DoD's own plural language even though the DoD is not a task list.
+- Check 5 (runtime task without test spec) trips on the word `table` (matched by the runtime-keyword regex `\btable\b` for database tables) when a task says "Enforcement summary table" referring to a Markdown table in a docs file.
+
+**Discovered.** During implementation of `docs/plans/pre-submission-audit-mechanical-enforcement.md` Check 8A. The plan rephrased "Enforcement summary table" → "Enforcement summary listing" and "all scenarios matching" → "each report the expected verdict" to dodge the false positives, but the underlying noise remains.
+
+**Fix scope.** Two narrow regex tightenings in `plan-reviewer.sh`:
+- Check 1 should not fire on lines under `## Definition of Done` (or under any non-Tasks section).
+- Check 5's runtime-keyword regex should be context-aware: `table` should only match when adjacent to database-context tokens (`column`, `migration`, `INSERT`, `SELECT`, etc.), not when adjacent to documentation-context tokens (`Markdown`, `Enforcement summary`, `template`).
+
+**Effort.** ~30 minutes for both fixes, including self-test scenarios that exercise the new section-context filtering.
+
+**Why P3 (not P1):** workaround is trivial (rephrase the plan); no security or correctness implications. The class is "documentation-context regex matches database-context vocabulary," which is the same class as FM-009 (cross-section-contradiction) but at the hook-implementation level rather than plan-content level.
+
+---
+
 ## Pre-existing harness drift surfaced 2026-04-27 (during agent-teams conflict analysis)
 
 Items found while doing the Phase 1 ground-truth inventory for Agent Teams integration. These are independent of Agent Teams — they are real drift between documented enforcement and actual settings.json wiring or filesystem state. Full evidence in `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Two items (P2-class) were absorbed into `docs/plans/agent-teams-integration.md` on plan creation; the two remaining items below are out of scope for that plan.

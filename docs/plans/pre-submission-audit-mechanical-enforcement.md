@@ -51,7 +51,7 @@ Close the Pattern-only gap left by commit `9c4e4c8` (which landed the Pre-Submis
     - **FAIL-missing:** Mode: design plan with NO `## Pre-Submission Audit` section; confirm exit 1 + finding cites missing section
     - **FAIL-placeholder:** Mode: design plan whose audit body is `[populate me]` only; confirm exit 1 + finding cites placeholder content
 - [ ] 3. Update `docs/failure-modes.md` FM-007 Detection / Prevention fields to cite Check 8A with the implementing commit SHA. Other FM entries unchanged.
-- [ ] 4. Update `rules/design-mode-planning.md` Enforcement summary table: flip `plan-reviewer.sh extension` Status from "planned, not yet implemented" to a partial-landed status. Cite this plan's commit SHA. Document explicitly that 8A is the only mechanized check; 8B/8C/8D/8E/8F and agent precondition are deferred per D-1 and D-3.
+- [ ] 4. Update `rules/design-mode-planning.md` Enforcement summary listing: flip `plan-reviewer.sh extension` Status from "planned, not yet implemented" to a partial-landed status. Cite this plan's commit SHA. Document explicitly that 8A is the only mechanized check; 8B/8C/8D/8E/8F and agent precondition are deferred per D-1 and D-3.
 - [ ] 5. Sync changed files from neural-lace adapter directory to `~/.claude/` per `harness-maintenance.md` Windows manual-sync rule. Verify with the diff loop. Commit, dual-remote push.
 
 ## Files to Modify/Create
@@ -137,7 +137,7 @@ n/a — Mode: code plan, no class-sweep needed. (The audit discipline is require
 ## Definition of Done
 
 - [ ] All 5 tasks above are checked by the `task-verifier` agent (per harness rule, only task-verifier flips checkboxes).
-- [ ] `plan-reviewer.sh --self-test` exits 0 with all scenarios matching expectations (existing 4 + 4 new = 8 total).
+- [ ] `plan-reviewer.sh --self-test` exits 0; the 4 existing scenarios plus 4 new Check-8A scenarios (8 total) each report the expected verdict.
 - [ ] FM-007 cites Check 8A's implementing commit SHA. FM-015 and FM-016 stay Pattern-only (deferred per D-3) with text reflecting the deferral.
 - [ ] `~/.claude/` and `~/claude-projects/neural-lace/adapters/claude-code/` show zero diff for the changed files (plan-reviewer.sh, design-mode-planning.md), and `~/.claude/docs/failure-modes.md` exists as a copy of the neural-lace `docs/failure-modes.md`.
 - [ ] Backlog items HARNESS-AUDIT-EXT-01 and HARNESS-AUDIT-EXT-02 are deleted from `docs/backlog.md` (already done atomically with the initial plan-file creation commit `428dbef`, per backlog-plan-atomicity hook).
