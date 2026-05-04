@@ -161,6 +161,26 @@ The boundary is sharper than it sounds: if the worst-case correction is "git rev
 
 5. **Capture for retrospective review.** Every auto-applied decision is recorded in its discovery file (`Decision` section names the choice and cites the reversibility justification). Every auto-applied decision is also surfaced in the conclusion-of-work summary at the end of the autonomous run. The user reviews these at session end (or at their convenience) and may amend or reject any auto-applied decision retroactively — the file's `Status` may be flipped to `rejected` post-hoc, with the rejection's downstream effects captured in a follow-up discovery.
 
+### Educational format — required when surfacing decisions to the user
+
+The retrospective review only works if the user can EVALUATE each auto-applied decision. A list of decisions without context doesn't enable evaluation; it requires the user to remember the situation, infer the alternatives, and re-derive the tradeoffs. That defeats the purpose.
+
+When surfacing decisions to the user — whether at session end, mid-session, or in any retrospective summary — each decision MUST be presented in the educational format below. Tabular shorthand is allowed only for trivially-no-options decisions (e.g., "the canonical doc said X, the derivative doc said Y; cleaned up the derivative" — no real options to debate). Substantive decisions get the full format:
+
+**For each substantive decision:**
+
+1. **What happened.** One paragraph of concrete context. What situation surfaced the decision? What constraint forced action?
+2. **Options that exist.** At least two; ideally three or four. Each option includes its **cost** and its **benefit** in concrete terms. Reject the temptation to list only the chosen option as if it were the only one.
+3. **My recommendation, with the principle behind it.** Not just "I picked A." Name the principle: reversibility, blast radius, alignment with prior decisions, cost/benefit ratio, etc.
+4. **Tradeoff acknowledgment.** What does the chosen option give up? Honest about cost.
+5. **What changes if you redirect.** Specific, actionable description of what reverting or amending looks like — not "let me know."
+
+**The litmus test:** if the user, reading the surfaced decision, would have to ASK "what were the alternatives?" or "what would breaking the other way cost?", the surfacing failed. The point of the format is to give the user enough to make an educated decision without follow-up questions, while still allowing follow-up if they want to dig deeper.
+
+**Why this is structurally required, not pattern-only.** Pattern-only disciplines drift under context pressure — exactly the case where surfacing decisions matters most. Encoding the educational format as a structural requirement of every surfacing means it's harder to skip when the orchestrator is at its most-tired and most-likely-to-take-shortcuts.
+
+**Trivially-no-options decisions** are flagged separately — typically as a one-line bullet — so the user knows they were considered but warrant no judgment. Examples: a typo fix; a sanitization mandated by the harness-hygiene rule; a cleanup of a duplicate file with verified-byte-identical content. The boundary: if a reasonable reviewer might say "I would have chosen differently," the decision is substantive and gets the full format.
+
 ## Propagation per discovery type
 
 Once a discovery is `Status: decided`, the orchestrator routes the decided outcome to the appropriate artifact. In Phase 1d-D-1 this routing is **manual** (the orchestrator updates the target artifact when applying the decision); Phase 1d-D-2 will automate the routing via PostToolUse hooks.
