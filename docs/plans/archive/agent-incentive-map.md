@@ -1,6 +1,6 @@
 # Plan: Agent Incentive Map — Document Predicted Stray-Patterns and Counter-Incentives
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -45,10 +45,10 @@ Three deliverables that shift the harness from reactive failure-correction to pr
 
 Tasks dispatched per orchestrator-pattern. T1, T2, T3 touch different files and run in parallel. T4 is the sequential commit.
 
-- [ ] **T1.** Create `docs/agent-incentive-map.md` covering all 17 NL agents in the structured format described in Goal section #1.
-- [ ] **T2.** Extend the four agent prompts (task-verifier, code-reviewer, plan-phase-builder, end-user-advocate) with explicit counter-incentive sections per Goal section #2. Edit both `adapters/claude-code/agents/<name>.md` AND mirror to `~/.claude/agents/<name>.md` (8 files total).
-- [ ] **T3.** Add HARNESS-GAP-11 entry to `docs/backlog.md` documenting the reviewer-accountability one-way gap.
-- [ ] **T4.** Update `docs/harness-architecture.md` preface to cite the new incentive-map doc; commit all changes in a single thematic commit on `build-doctrine-integration`; push to `origin`.
+- [x] **T1.** Create `docs/agent-incentive-map.md` covering all 17 NL agents in the structured format described in Goal section #1.
+- [x] **T2.** Extend the four agent prompts (task-verifier, code-reviewer, plan-phase-builder, end-user-advocate) with explicit counter-incentive sections per Goal section #2. Edit both `adapters/claude-code/agents/<name>.md` AND mirror to `~/.claude/agents/<name>.md` (8 files total).
+- [x] **T3.** Add HARNESS-GAP-11 entry to `docs/backlog.md` documenting the reviewer-accountability one-way gap.
+- [x] **T4.** Update `docs/harness-architecture.md` preface to cite the new incentive-map doc; commit all changes in a single thematic commit on `build-doctrine-integration`; push to `origin`.
 
 ## Files to Modify/Create
 
