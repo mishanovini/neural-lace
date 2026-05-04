@@ -51,6 +51,11 @@ if [[ "${1:-}" == "--self-test" ]]; then
 Status: ACTIVE
 Mode: code
 Backlog items absorbed: none
+tier: 1
+rung: 0
+architecture: coding-harness
+frozen: false
+prd-ref: n/a — harness-development
 
 ## Goal
 Exercise the plan-reviewer required-section check with substantive
@@ -154,6 +159,11 @@ PLAN_TAIL
 Status: ACTIVE
 Mode: design
 Backlog items absorbed: none
+tier: 1
+rung: 0
+architecture: coding-harness
+frozen: false
+prd-ref: n/a — harness-development
 
 ## Goal
 Exercise Check 8A by varying the Pre-Submission Audit section while
@@ -352,6 +362,11 @@ AUDIT_PLACEHOLDER
 Status: ACTIVE
 Mode: code
 Backlog items absorbed: none
+tier: 1
+rung: 0
+architecture: coding-harness
+frozen: false
+prd-ref: n/a — harness-development
 
 ## Goal
 This plan describes a small refactor that should fit comfortably under
@@ -455,6 +470,317 @@ CHECK9_L
     FAILED=1
   else
     echo "self-test (l) check9-self-contradicting-hedge: FAIL (expected)" >&2
+  fi
+
+  # ============================================================
+  # Check 10 scenarios (m, n, o, p, q) — 5-field plan-header schema
+  # ============================================================
+  #
+  # Each fixture keeps Check 6b/7/8A/9 satisfied so the only variable
+  # is the plan-header schema. Mode: code is used (simpler — no SEA
+  # sections required) except where Status is non-ACTIVE to test the
+  # Status gate.
+  #
+  # write_schema_plan: parameterized writer that emits a Mode: code,
+  # Status: ACTIVE plan with the 5 header fields configurable per
+  # scenario. Unset fields are omitted from the output.
+
+  write_schema_plan() {
+    # $1 = output path
+    # $2 = status (default ACTIVE)
+    # $3 = tier value (or empty to omit field)
+    # $4 = rung value (or empty to omit)
+    # $5 = architecture value (or empty to omit)
+    # $6 = frozen value (or empty to omit)
+    # $7 = prd-ref value (or empty to omit)
+    local out="$1"
+    local status="${2:-ACTIVE}"
+    local tier_val="${3:-}"
+    local rung_val="${4:-}"
+    local arch_val="${5:-}"
+    local frozen_val="${6:-}"
+    local prd_val="${7:-}"
+
+    {
+      echo "# Plan: Self-test Check 10 schema fixture"
+      echo "Status: $status"
+      echo "Mode: code"
+      echo "Backlog items absorbed: none"
+      [[ -n "$tier_val" ]] && echo "tier: $tier_val"
+      [[ -n "$rung_val" ]] && echo "rung: $rung_val"
+      [[ -n "$arch_val" ]] && echo "architecture: $arch_val"
+      [[ -n "$frozen_val" ]] && echo "frozen: $frozen_val"
+      [[ -n "$prd_val" ]] && echo "prd-ref: $prd_val"
+      cat <<'SCHEMA_BODY'
+
+## Goal
+Exercise the 5-field plan-header schema check by varying header fields
+while keeping every other check satisfied. The fixture is intentionally
+minimal in scope to keep test output focused.
+
+## Scope
+- IN: Check 10 5-field plan-header schema enforcement
+- OUT: anything else; the fixture is single-purpose
+
+## Tasks
+- [ ] 1. Synthetic task placeholder; Test: covered by self-test runner
+  invocation observing the exit code.
+
+## Files to Modify/Create
+- `hooks/plan-reviewer.sh` — schema check under exercise
+
+## Assumptions
+- Assumes the plan-reviewer schema check fires only on Status: ACTIVE
+  plans, so DEFERRED fixtures bypass Check 10 entirely.
+
+## Edge Cases
+- The fixture must satisfy Check 6b's required sections so the only
+  failing path is Check 10 itself.
+
+## Testing Strategy
+- Run plan-reviewer.sh against this fixture; observe the exit code
+  matches the scenario expectation.
+
+Walking Skeleton: n/a — self-test fixture, no runtime user-facing slice.
+
+## Definition of Done
+- [ ] Self-test reports the expected verdict per scenario.
+SCHEMA_BODY
+    } > "$out"
+  }
+
+  # Scenario (m): ACTIVE plan with all 5 fields valid — expect PASS
+  write_schema_plan "$TMPDIR_SELFTEST/m.md" "ACTIVE" "2" "1" "coding-harness" "false" "n/a — harness-development"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/m.md" > /dev/null 2>&1; then
+    echo "self-test (m) check10-pass-all-fields-active: PASS (expected)" >&2
+  else
+    echo "self-test (m) check10-pass-all-fields-active: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Scenario (n): ACTIVE plan missing tier — expect FAIL
+  write_schema_plan "$TMPDIR_SELFTEST/n.md" "ACTIVE" "" "1" "coding-harness" "false" "n/a — harness-development"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/n.md" > /dev/null 2>&1; then
+    echo "self-test (n) check10-fail-missing-tier: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (n) check10-fail-missing-tier: FAIL (expected)" >&2
+  fi
+
+  # Scenario (o): ACTIVE plan with rung: 7 (out of range) — expect FAIL
+  write_schema_plan "$TMPDIR_SELFTEST/o.md" "ACTIVE" "2" "7" "coding-harness" "false" "n/a — harness-development"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/o.md" > /dev/null 2>&1; then
+    echo "self-test (o) check10-fail-invalid-rung: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (o) check10-fail-invalid-rung: FAIL (expected)" >&2
+  fi
+
+  # Scenario (p): ACTIVE plan with architecture: invalid-value — expect FAIL
+  write_schema_plan "$TMPDIR_SELFTEST/p.md" "ACTIVE" "2" "1" "invalid-value" "false" "n/a — harness-development"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/p.md" > /dev/null 2>&1; then
+    echo "self-test (p) check10-fail-invalid-architecture: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (p) check10-fail-invalid-architecture: FAIL (expected)" >&2
+  fi
+
+  # Scenario (q): DEFERRED plan missing tier — expect PASS
+  # (Status gate early-exits Check 10 for non-ACTIVE plans)
+  write_schema_plan "$TMPDIR_SELFTEST/q.md" "DEFERRED" "" "1" "coding-harness" "false" "n/a — harness-development"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/q.md" > /dev/null 2>&1; then
+    echo "self-test (q) check10-pass-deferred-skips-check10: PASS (expected)" >&2
+  else
+    echo "self-test (q) check10-pass-deferred-skips-check10: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # ============================================================
+  # Check 11 scenarios (r, s, t, u, v) — C16 Behavioral Contracts
+  # at rung >= 3
+  # ============================================================
+  #
+  # Fixtures vary rung value and Behavioral Contracts section content
+  # while keeping every other check satisfied. write_bc_plan generates
+  # a Mode: code, Status: ACTIVE plan with the 5 header fields valid
+  # (so Check 10 passes), parameterizing rung and the optional
+  # Behavioral Contracts section.
+
+  write_bc_plan() {
+    # $1 = output path
+    # $2 = rung value (0-5)
+    # $3 = bc_mode ("none" | "all_substantive" | "missing_subentry" | "placeholder_subentry")
+    local out="$1"
+    local rung_val="$2"
+    local bc_mode="$3"
+
+    cat > "$out" <<BC_HEAD
+# Plan: Self-test Check 11 behavioral-contracts fixture
+Status: ACTIVE
+Mode: code
+Backlog items absorbed: none
+tier: 2
+rung: $rung_val
+architecture: coding-harness
+frozen: false
+prd-ref: n/a — harness-development
+
+## Goal
+Exercise Check 11 (C16 Behavioral Contracts) by varying the
+Behavioral Contracts section content and the rung value while
+keeping every other check satisfied.
+
+## Scope
+- IN: Check 11 sub-section presence + substance enforcement
+- OUT: anything else; fixture is single-purpose
+
+## Tasks
+- [ ] 1. Synthetic task placeholder; Test: covered by self-test runner
+  invocation observing the exit code.
+
+## Files to Modify/Create
+- \`hooks/plan-reviewer.sh\` — Check 11 implementation under exercise
+
+## Assumptions
+- Assumes Check 10 passes for this fixture so Check 11 outcome is
+  the only variable across r/s/t/u/v scenarios.
+
+## Edge Cases
+- The fixture must satisfy Check 6b's required sections so the only
+  failing path is Check 11 itself.
+
+## Testing Strategy
+- Run plan-reviewer.sh against this fixture in each variant; observe
+  the exit code matches the scenario expectation.
+
+Walking Skeleton: n/a — self-test fixture, no runtime user-facing slice.
+
+## Definition of Done
+- [ ] Self-test reports the expected verdict per scenario.
+BC_HEAD
+
+    case "$bc_mode" in
+      "all_substantive")
+        cat >> "$out" <<'BC_ALL'
+
+## Behavioral Contracts
+
+### Idempotency
+The implementation must produce identical observable state when invoked
+twice with the same inputs. Re-runs after partial failures resume from
+the next unprocessed step rather than restarting from scratch.
+
+### Performance budget
+Per-invocation latency budget is 200ms p50 and 1s p99. The end-to-end
+flow must complete within a 30s wall-clock window even when downstream
+services exercise their own retry policies.
+
+### Retry semantics
+Transient failures (network timeouts, 5xx responses) trigger exponential
+backoff with three retries and a 30s cap. Permanent failures (4xx
+client errors) skip retry and surface the error to the caller.
+
+### Failure modes
+Documented failure phenotypes include (a) downstream service unavailable
+producing a breaker-and-skip path, (b) partial-write inconsistency
+where the database has the row but the index does not yet, surfaced via
+a reconciliation pass on next sync.
+BC_ALL
+        ;;
+      "missing_subentry")
+        # Only Idempotency + Performance budget present; Retry semantics
+        # and Failure modes missing.
+        cat >> "$out" <<'BC_MISSING'
+
+## Behavioral Contracts
+
+### Idempotency
+The implementation must produce identical observable state when invoked
+twice with the same inputs. Re-runs resume from the next unprocessed
+step rather than restarting from scratch entirely.
+
+### Performance budget
+Per-invocation latency budget is 200ms p50 and 1s p99. The end-to-end
+flow must complete within a 30s wall-clock window even when downstream
+services exercise their own retry policies.
+BC_MISSING
+        ;;
+      "placeholder_subentry")
+        cat >> "$out" <<'BC_PLACEHOLDER'
+
+## Behavioral Contracts
+
+### Idempotency
+[populate me]
+
+### Performance budget
+Per-invocation latency budget is 200ms p50 and 1s p99. The end-to-end
+flow must complete within a 30s wall-clock window even when downstream
+services exercise their own retry policies.
+
+### Retry semantics
+Transient failures (network timeouts, 5xx responses) trigger exponential
+backoff with three retries and a 30s cap. Permanent failures (4xx
+client errors) skip retry and surface the error to the caller.
+
+### Failure modes
+Documented failure phenotypes include (a) downstream service unavailable
+producing a breaker-and-skip path, (b) partial-write inconsistency
+where the database has the row but the index does not yet, surfaced via
+a reconciliation pass on next sync.
+BC_PLACEHOLDER
+        ;;
+      "none")
+        # Behavioral Contracts section omitted entirely
+        ;;
+    esac
+  }
+
+  # Scenario (r): rung 0, no Behavioral Contracts section — expect PASS
+  # (Check 11 doesn't fire below rung 3)
+  write_bc_plan "$TMPDIR_SELFTEST/r.md" "0" "none"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/r.md" > /dev/null 2>&1; then
+    echo "self-test (r) check11-pass-rung0-no-section-needed: PASS (expected)" >&2
+  else
+    echo "self-test (r) check11-pass-rung0-no-section-needed: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Scenario (s): rung 3 with all 4 sub-entries substantive — expect PASS
+  write_bc_plan "$TMPDIR_SELFTEST/s.md" "3" "all_substantive"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/s.md" > /dev/null 2>&1; then
+    echo "self-test (s) check11-pass-rung3-substantive: PASS (expected)" >&2
+  else
+    echo "self-test (s) check11-pass-rung3-substantive: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Scenario (t): rung 3 with no Behavioral Contracts section — expect FAIL
+  write_bc_plan "$TMPDIR_SELFTEST/t.md" "3" "none"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/t.md" > /dev/null 2>&1; then
+    echo "self-test (t) check11-fail-rung3-section-missing: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (t) check11-fail-rung3-section-missing: FAIL (expected)" >&2
+  fi
+
+  # Scenario (u): rung 3 with only 2 of 4 sub-entries — expect FAIL
+  write_bc_plan "$TMPDIR_SELFTEST/u.md" "3" "missing_subentry"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/u.md" > /dev/null 2>&1; then
+    echo "self-test (u) check11-fail-rung3-subentry-missing: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (u) check11-fail-rung3-subentry-missing: FAIL (expected)" >&2
+  fi
+
+  # Scenario (v): rung 3 with all 4 sub-entries but Idempotency body
+  # is "[populate me]" — expect FAIL
+  write_bc_plan "$TMPDIR_SELFTEST/v.md" "3" "placeholder_subentry"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/v.md" > /dev/null 2>&1; then
+    echo "self-test (v) check11-fail-rung3-subentry-placeholder: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (v) check11-fail-rung3-subentry-placeholder: FAIL (expected)" >&2
   fi
 
   if [[ $FAILED -eq 0 ]]; then
@@ -1025,6 +1351,203 @@ if [[ "$MODE_VALUE" == "design" ]]; then
         add_finding "Check 9 (design-mode comparative claim without inline arithmetic): line $ln has a comparative quantitative claim without arithmetic in the same paragraph — \"$phrase\". Required: show the math in the same paragraph (e.g., \"60 calls (15 threads × 2 calls × 2 batches × 1 sync) ÷ 60s = 60 calls/min < 50 RPM tier limit\"). Reason: FM-013 / FM-014 — capacity claims without arithmetic are unverified. See ~/.claude/rules/design-mode-planning.md, 'Quantitative Claims Must Be Validated, Not Asserted'."
       fi
     done <<< "$COMPARATIVE_LINES"
+  fi
+fi
+
+# ============================================================
+# Check 10 (Phase 1d-C-2): 5-field plan-header schema
+# ============================================================
+#
+# Per Decision 017 (plan-header-schema-locked) + Build Doctrine §9 Q4-A,
+# every plan with `Status: ACTIVE` must declare all five header fields:
+#
+#   tier:         must be 1, 2, 3, 4, or 5
+#   rung:         must be 0, 1, 2, 3, 4, or 5
+#   architecture: must be one of {coding-harness, dark-factory,
+#                 auto-research, orchestration, hybrid}
+#   frozen:       must be true or false
+#   prd-ref:      must be non-empty (semantic validation belongs to C1
+#                 prd-validity-gate.sh, not this schema check)
+#
+# Mode-agnostic — fires on Mode: code AND Mode: design AND Mode: design-skip.
+# Status-gated: only ACTIVE plans need fresh schema. The hook early-exits
+# on COMPLETED/ABANDONED/DEFERRED at the top of the script (line 484), so
+# we only see ACTIVE (or empty) plans here.
+#
+# Each missing or invalid field produces ONE finding. The findings list
+# all problems for the planner so the fix is one round-trip rather than
+# five.
+
+# Re-extract Status using awk (more portable than grep -P, which fails on
+# some locales — notably Windows Git Bash). The original $STATUS extraction
+# at line ~483 may be empty on these systems; using awk here keeps Check 10
+# robust against that failure mode without modifying pre-existing code.
+STATUS_AWK=$(awk -F: '/^Status:/ { sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2; exit }' "$PLAN_FILE" 2>/dev/null)
+
+# Extract the 5 schema fields unconditionally so Check 11 (which keys on
+# RUNG_VALUE) sees a defined value even when Check 10 early-exits on
+# non-ACTIVE Status. Required for `set -u` compatibility — referencing an
+# unset variable below would otherwise abort the script.
+TIER_VALUE=$(awk -F: '/^tier:/ { sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2; exit }' "$PLAN_FILE" 2>/dev/null)
+RUNG_VALUE=$(awk -F: '/^rung:/ { sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2; exit }' "$PLAN_FILE" 2>/dev/null)
+ARCH_VALUE=$(awk -F: '/^architecture:/ { sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2; exit }' "$PLAN_FILE" 2>/dev/null)
+FROZEN_VALUE=$(awk -F: '/^frozen:/ { sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2; exit }' "$PLAN_FILE" 2>/dev/null)
+# prd-ref may contain colons in its value (e.g., "n/a — harness-development"),
+# so we capture everything after the first colon.
+PRD_REF_VALUE=$(awk '/^prd-ref:/ { sub(/^prd-ref:[ \t]*/, ""); sub(/[ \t]+$/, ""); print; exit }' "$PLAN_FILE" 2>/dev/null)
+
+if [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; then
+  # tier ∈ {1,2,3,4,5}
+  if [[ -z "$TIER_VALUE" ]]; then
+    add_finding "Check 10 (plan-header schema): required field 'tier:' is missing. Add 'tier: <1-5>' to the plan header. See Decision 017 in docs/decisions/."
+  elif ! [[ "$TIER_VALUE" =~ ^(1|2|3|4|5)$ ]]; then
+    add_finding "Check 10 (plan-header schema): field 'tier:' has invalid value '$TIER_VALUE'. Must be one of: 1, 2, 3, 4, 5. See Decision 017."
+  fi
+
+  # rung ∈ {0,1,2,3,4,5}
+  if [[ -z "$RUNG_VALUE" ]]; then
+    add_finding "Check 10 (plan-header schema): required field 'rung:' is missing. Add 'rung: <0-5>' to the plan header. See Decision 017."
+  elif ! [[ "$RUNG_VALUE" =~ ^(0|1|2|3|4|5)$ ]]; then
+    add_finding "Check 10 (plan-header schema): field 'rung:' has invalid value '$RUNG_VALUE'. Must be one of: 0, 1, 2, 3, 4, 5. See Decision 017."
+  fi
+
+  # architecture ∈ {coding-harness, dark-factory, auto-research, orchestration, hybrid}
+  if [[ -z "$ARCH_VALUE" ]]; then
+    add_finding "Check 10 (plan-header schema): required field 'architecture:' is missing. Add 'architecture: <coding-harness|dark-factory|auto-research|orchestration|hybrid>' to the plan header. See Decision 017."
+  elif ! [[ "$ARCH_VALUE" =~ ^(coding-harness|dark-factory|auto-research|orchestration|hybrid)$ ]]; then
+    add_finding "Check 10 (plan-header schema): field 'architecture:' has invalid value '$ARCH_VALUE'. Must be one of: coding-harness, dark-factory, auto-research, orchestration, hybrid. See Decision 017."
+  fi
+
+  # frozen ∈ {true, false}
+  if [[ -z "$FROZEN_VALUE" ]]; then
+    add_finding "Check 10 (plan-header schema): required field 'frozen:' is missing. Add 'frozen: <true|false>' to the plan header. See Decision 016 (spec-freeze) and Decision 017 (schema)."
+  elif ! [[ "$FROZEN_VALUE" =~ ^(true|false)$ ]]; then
+    add_finding "Check 10 (plan-header schema): field 'frozen:' has invalid value '$FROZEN_VALUE'. Must be 'true' or 'false'. See Decision 016."
+  fi
+
+  # prd-ref non-empty (semantic validation by prd-validity-gate.sh / C1)
+  if [[ -z "$PRD_REF_VALUE" ]]; then
+    add_finding "Check 10 (plan-header schema): required field 'prd-ref:' is missing or empty. For harness-development plans use 'prd-ref: n/a — harness-development'; otherwise reference a PRD slug resolving to docs/prd.md. See Decision 015 (PRD format) and Decision 017 (schema)."
+  fi
+fi
+
+# ============================================================
+# Check 11 (Phase 1d-C-2 / C16): Behavioral Contracts at rung >= 3
+# ============================================================
+#
+# Per Build Doctrine §6 C16, plans operating at Rung 3+ (where the
+# integration touches multi-component coordination) MUST declare a
+# `## Behavioral Contracts` section with four named sub-entries:
+#
+#   ### Idempotency
+#   ### Performance budget
+#   ### Retry semantics
+#   ### Failure modes
+#
+# Each sub-entry must have >= 30 non-whitespace chars after stripping
+# HTML comments and standard placeholder tokens (mirrors Check 6b's
+# substance check, but with a slightly higher threshold for the more
+# specific behavioral commitments).
+#
+# Mode-agnostic. Status-gated to ACTIVE (or empty, treated as nascent
+# plan-in-creation): terminal-Status plans don't need behavioral-contract
+# review. The pre-existing line-484 early-exit covers this on Linux
+# but may fall through on Windows Git Bash where grep -P fails — so we
+# defensively gate on STATUS_AWK here too.
+# Rung-gated: rung 0/1/2 → no behavioral contracts required.
+
+if { [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; } && [[ "$RUNG_VALUE" =~ ^(3|4|5)$ ]]; then
+  # Required parent section
+  BC_LN=$(grep -nE '^## Behavioral Contracts\s*$' "$PLAN_FILE" 2>/dev/null | head -1 | cut -d: -f1)
+
+  if [[ -z "$BC_LN" ]]; then
+    add_finding "Check 11 (C16 behavioral contracts): plan declares 'rung: $RUNG_VALUE' but lacks '## Behavioral Contracts' section. Required at rung 3+. The section must contain four sub-headings: '### Idempotency', '### Performance budget', '### Retry semantics', '### Failure modes', each with >= 30 non-whitespace chars of substance. See Build Doctrine §6 C16."
+  else
+    # Required sub-headings (case-insensitive variants tolerated for
+    # human-author flexibility: "Performance budget" / "Performance Budget").
+    BC_REQUIRED_SUBS=(
+      "Idempotency"
+      "Performance budget"
+      "Retry semantics"
+      "Failure modes"
+    )
+
+    # check_bc_subsection: extract body of '### <name>' under the parent
+    # section and assert >= 30 non-ws chars after HTML-comment + placeholder
+    # stripping. Mirrors check_required_section's body-extraction shape.
+    check_bc_subsection() {
+      local sub="$1"
+      local sub_pattern
+      sub_pattern="$(printf '%s' "$sub" | sed 's/[][\/.^$*]/\\&/g')"
+      # Locate the sub-heading within the Behavioral Contracts section only.
+      # We find the line number of the sub-heading; if absent, finding.
+      # The match is case-insensitive on the heading text to allow
+      # "Performance Budget" or "Performance budget" variants.
+      local sub_ln
+      sub_ln=$(awk -v start="$BC_LN" -v pat="^### ${sub_pattern}\\s*\$" '
+        BEGIN { IGNORECASE = 1 }
+        NR == start { in_bc = 1; next }
+        in_bc && /^## / { exit }
+        in_bc && $0 ~ pat { print NR; exit }
+      ' "$PLAN_FILE" 2>/dev/null)
+
+      if [[ -z "$sub_ln" ]]; then
+        add_finding "Check 11 (C16 behavioral contracts): required sub-heading '### $sub' is missing from '## Behavioral Contracts' section. All four sub-headings (Idempotency, Performance budget, Retry semantics, Failure modes) are required at rung 3+."
+        return
+      fi
+
+      # Extract the sub-section body up to the next '### ' or '## '
+      local body
+      body=$(awk -v start="$sub_ln" '
+        NR == start { next }
+        NR > start {
+          if ($0 ~ /^### / || $0 ~ /^## /) exit
+          print
+        }
+      ' "$PLAN_FILE" 2>/dev/null | awk '
+        /<!--/ { in_comment = 1 }
+        !in_comment { print }
+        /-->/ { in_comment = 0 }
+      ')
+
+      # Normalize for placeholder-token check
+      local normalized
+      normalized=$(printf '%s' "$body" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
+
+      # Count non-whitespace chars
+      local non_ws_count
+      non_ws_count=$(printf '%s' "$body" | tr -d '[:space:]' | wc -c | tr -cd '[:digit:]')
+      non_ws_count=${non_ws_count:-0}
+
+      if [[ $non_ws_count -lt 30 ]]; then
+        add_finding "Check 11 (C16 behavioral contracts): sub-section '### $sub' is empty or too short (only $non_ws_count non-whitespace chars; needs >= 30). Document the concrete invariant the implementation must uphold. See Build Doctrine §6 C16."
+        return
+      fi
+
+      # Placeholder-only check: strip placeholder tokens and re-test
+      local stripped="$normalized"
+      for pat in "${PLACEHOLDER_PATTERNS[@]}"; do
+        stripped=$(printf '%s' "$stripped" | sed -E "s|${pat}||g")
+      done
+      stripped=$(printf '%s' "$stripped" | sed -E 's|[[:space:]]*[-*][[:space:]]*||g; s|[][(){}:;,.!?"`'"'"']||g')
+      stripped=$(printf '%s' "$stripped" | tr -d '[:space:]')
+
+      if [[ -z "$stripped" ]]; then
+        add_finding "Check 11 (C16 behavioral contracts): sub-section '### $sub' contains only placeholder text (e.g., '[populate me]', 'TODO', or template prompt). Replace with the concrete behavioral invariant. See Build Doctrine §6 C16."
+        return
+      fi
+    }
+
+    # Run the check for each required sub-heading. Report first offender
+    # and break (mirrors the pattern of check_required_section invocation
+    # at line 744).
+    for sub in "${BC_REQUIRED_SUBS[@]}"; do
+      PREV_COUNT=$FINDING_COUNT
+      check_bc_subsection "$sub"
+      if [[ $FINDING_COUNT -gt $PREV_COUNT ]]; then
+        break
+      fi
+    done
   fi
 fi
 
