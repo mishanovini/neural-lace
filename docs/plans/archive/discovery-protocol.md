@@ -1,6 +1,6 @@
 # Plan: Phase 1d-D — Discovery Protocol (Capture, Surface, Decide-and-Apply, Track)
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: HARNESS-GAP-10 sub-gap H (refining docs/reviews gitignore — partial; the discovery protocol provides the durable-capture path that sub-gap H sought).
@@ -71,15 +71,15 @@ Tasks dispatched per orchestrator-pattern. T1, T2, T3, T4 touch different files 
 
 ### Batch 1 (parallel, 4 builders)
 
-- [ ] **T1.** Write `~/.claude/rules/discovery-protocol.md` (and adapter mirror at `adapters/claude-code/rules/discovery-protocol.md`). The rule documents: typology of 7 discovery types, file format with frontmatter spec, three capture pathways (orchestrator-initiated, builder-return-derived (Phase 1d-D-2 deferred), bug-persistence-gate-extended), surfacing mechanism (SessionStart hook), decision protocol with auto-apply-vs-pause boundary (reversible auto-applied per user directive 2026-05-03; irreversible pauses), propagation routing per discovery type, lifecycle (pending → decided → implemented → archived OR rejected), versioning. Length target: 1500-2500 words. Cross-references existing rules (planning.md decision tiers, vaporware-prevention.md, diagnosis.md).
+- [x] **T1.** Write `~/.claude/rules/discovery-protocol.md` (and adapter mirror at `adapters/claude-code/rules/discovery-protocol.md`). The rule documents: typology of 7 discovery types, file format with frontmatter spec, three capture pathways (orchestrator-initiated, builder-return-derived (Phase 1d-D-2 deferred), bug-persistence-gate-extended), surfacing mechanism (SessionStart hook), decision protocol with auto-apply-vs-pause boundary (reversible auto-applied per user directive 2026-05-03; irreversible pauses), propagation routing per discovery type, lifecycle (pending → decided → implemented → archived OR rejected), versioning. Length target: 1500-2500 words. Cross-references existing rules (planning.md decision tiers, vaporware-prevention.md, diagnosis.md).
 
-- [ ] **T2.** Extend `~/claude-projects/neural-lace/adapters/claude-code/hooks/bug-persistence-gate.sh` to accept `docs/discoveries/YYYY-MM-DD-*.md` as legitimate persistence. Three places to update:
+- [x] **T2.** Extend `~/claude-projects/neural-lace/adapters/claude-code/hooks/bug-persistence-gate.sh` to accept `docs/discoveries/YYYY-MM-DD-*.md` as legitimate persistence. Three places to update:
   - The `check_persisted_for()` function adds a third detection clause looking for new untracked files matching `docs/discoveries/[0-9]{4}-[0-9]{2}-[0-9]{2}-*.md` (mirrors the existing `docs/reviews/` clause exactly).
   - The block message body adds a fourth bullet describing the discoveries-path option.
   - Self-test gets one new scenario: trigger phrase present + new discovery file matching the pattern → PASS (no block).
   - Mirror to `~/.claude/hooks/bug-persistence-gate.sh`. Run `--self-test` on both copies.
 
-- [ ] **T3.** Create `~/claude-projects/neural-lace/adapters/claude-code/hooks/discovery-surfacer.sh` (new SessionStart hook). Logic:
+- [x] **T3.** Create `~/claude-projects/neural-lace/adapters/claude-code/hooks/discovery-surfacer.sh` (new SessionStart hook). Logic:
   - Locate the working-directory's `docs/discoveries/` directory; if absent, exit 0 silently.
   - Scan for files matching `[0-9]{4}-[0-9]{2}-[0-9]{2}-*.md` with `Status: pending` in their frontmatter (top 30 lines).
   - For each pending discovery, output a system-reminder block with: title, type, date, decision_needed, originating_context, recommendation (extracted from body or marked "see file").
@@ -87,7 +87,7 @@ Tasks dispatched per orchestrator-pattern. T1, T2, T3, T4 touch different files 
   - Provide `--self-test` with 4 scenarios: no directory, empty directory, all-decided, ≥1 pending.
   - Mirror to `~/.claude/hooks/discovery-surfacer.sh`.
 
-- [ ] **T4.** Create `docs/discoveries/` directory with 6 initial-population files capturing this session's discoveries. Each file has the format defined in this plan's "Discovery file format" section. All 6 start at `Status: decided` and `auto_applied: true` since each was resolved during the work that surfaced it. Files:
+- [x] **T4.** Create `docs/discoveries/` directory with 6 initial-population files capturing this session's discoveries. Each file has the format defined in this plan's "Discovery file format" section. All 6 start at `Status: decided` and `auto_applied: true` since each was resolved during the work that surfaced it. Files:
   1. `2026-05-03-nl-impl-plans-belong-in-docs-plans.md` (architectural-learning) — surfaced when scope-enforcement-gate blocked a commit because the governing plan was at `~/.claude/plans/` not `docs/plans/`. Decision: future NL-implementation plans live at NL's `docs/plans/`. Applied via the agent-incentive-map plan being placed there.
   2. `2026-05-03-settings-template-vs-live-divergence.md` (process) — surfaced when settings.json wiring was missed because settings.json is gitignored and settings.json.template is the committed source. Decision: always update both. Applied via the C10/C7-DAG-waiver wiring touching both.
   3. `2026-05-03-spine-stage-count-cross-doc-drift.md` (process) — surfaced when T6 of the doctrine-restructure plan ran cross-doc consistency check and found 04-gates and 05-implementation said "11-stage" while 03/09 said "10-stage". Decision: standardize on 10-stage canonical naming. Applied via 5-location class-sweep.
@@ -99,9 +99,9 @@ Each file: 200-400 words covering the format's required sections.
 
 ### Batch 2 (sequential, single builder) — Wiring + Documentation + Phase 1d-G Plan Capture
 
-- [ ] **T5.** Wire `discovery-surfacer.sh` into both `adapters/claude-code/settings.json.template` and `~/.claude/settings.json` as a SessionStart hook (the SessionStart hook chain pattern mirrors existing entries). Update `~/.claude/rules/vaporware-prevention.md` enforcement map with two new rows (discovery-protocol persistence, discovery-surfacer surfacing) AND mirror to adapter copy. Update `docs/harness-architecture.md` preface to cite the new rule + hooks. Update `docs/backlog.md` Last-updated header line to chain the new annotation.
+- [x] **T5.** Wire `discovery-surfacer.sh` into both `adapters/claude-code/settings.json.template` and `~/.claude/settings.json` as a SessionStart hook (the SessionStart hook chain pattern mirrors existing entries). Update `~/.claude/rules/vaporware-prevention.md` enforcement map with two new rows (discovery-protocol persistence, discovery-surfacer surfacing) AND mirror to adapter copy. Update `docs/harness-architecture.md` preface to cite the new rule + hooks. Update `docs/backlog.md` Last-updated header line to chain the new annotation.
 
-- [ ] **T7.** Write `docs/plans/phase-1d-g-calibration-mimicry.md` capturing the user's confirmed decisions on the calibration-mimicry mechanism (2026-05-03 confirmation). The plan ships at `Status: DEFERRED` since its dependencies (telemetry from HARNESS-GAP-10 sub-gap D; findings ledger from C9 in Phase 1d-C-3) have not yet shipped. The plan must encode these confirmed user decisions as design constraints:
+- [x] **T7.** Write `docs/plans/phase-1d-g-calibration-mimicry.md` capturing the user's confirmed decisions on the calibration-mimicry mechanism (2026-05-03 confirmation). The plan ships at `Status: DEFERRED` since its dependencies (telemetry from HARNESS-GAP-10 sub-gap D; findings ledger from C9 in Phase 1d-C-3) have not yet shipped. The plan must encode these confirmed user decisions as design constraints:
   - **Decision G-1 (acceptable approximation):** RL-shaped via prompt conditioning is acceptable. No fine-tuning of any model. The mechanism produces calibration adjustment via injected prompts, not weight updates.
   - **Decision G-2 (scope of independent grading):** Start with high-stakes agents first — task-verifier, harness-reviewer, end-user-advocate runtime. Expand based on empirical drift evidence. Lower-stakes agents (explorer, research) deferred unless evidence justifies.
   - **Decision G-3 (visibility):** All three channels — internal-to-NL state, agents-see-it (calibration profiles in agent prompts), public visibility. Plus: a dashboard surface (mentioned by user as eventual expansion to provide harness-stats per project).
@@ -111,7 +111,7 @@ Each file: 200-400 words covering the format's required sections.
 
 ### Batch 3 (sequential after Batch 2) — Commit + Push
 
-- [ ] **T6.** Stage all changes; write scope-waiver against the still-active pre-submission-audit-mechanical-enforcement.md plan; commit thematically; push to `origin/build-doctrine-integration`.
+- [x] **T6.** Stage all changes; write scope-waiver against the still-active pre-submission-audit-mechanical-enforcement.md plan; commit thematically; push to `origin/build-doctrine-integration`.
 
 ## Files to Modify/Create
 
