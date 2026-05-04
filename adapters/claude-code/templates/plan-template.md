@@ -135,6 +135,31 @@ change without opening each one.
 -->
 - `path/to/file` — [what changes and why]
 
+## In-flight scope updates
+<!--
+Plans aren't omniscient predictions of the future. When something
+unexpected surfaces during execution that requires touching files not
+listed in `## Files to Modify/Create` above, document it here rather
+than writing a waiver against the scope-enforcement-gate.
+
+Format: `- <YYYY-MM-DD>: <file path> — <one-line reason>`
+
+If the in-flight change represents an architectural learning (not just
+"I forgot to list this file"), ALSO write a discovery file at
+`docs/discoveries/<YYYY-MM-DD>-<slug>.md` so the insight propagates
+beyond this plan. Cross-reference here.
+
+This section is checked by `scope-enforcement-gate.sh` alongside
+`## Files to Modify/Create`. Updating this section (with a substantive
+reason) is the structurally-correct response to an out-of-scope file
+surfacing during execution; waivers are reserved for genuinely
+cross-plan work.
+
+If no in-flight changes have occurred, leave empty or state `n/a` —
+empty is fine and common.
+-->
+(no in-flight changes yet)
+
 ## Assumptions
 <!--
 Every premise this plan relies on — explicit, not implied. If you can't

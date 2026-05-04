@@ -1,6 +1,6 @@
 # Neural Lace — Harness Backlog
 
-Last updated: 2026-05-03 v5: HARNESS-GAP-12 added — neural-lace dual-remote sync requires manual gh-auth dance; multi-push remote config proposed. Earlier 2026-05-03 v4: Discovery Protocol shipped — `docs/discoveries/` directory live; `bug-persistence-gate.sh` accepts discoveries; new `discovery-surfacer.sh` SessionStart hook. Earlier 2026-05-03 v3: HARNESS-GAP-11 added — reviewer accountability one-way gap surfaced during incentive-map analysis. Earlier 2026-05-03: HARNESS-GAP-10 added — Build Doctrine integration analysis surfaced 7 sub-gaps; see entry below. Earlier 2026-05-03: HARNESS-AUDIT-EXT-01 + HARNESS-AUDIT-EXT-02 absorbed into `docs/plans/pre-submission-audit-mechanical-enforcement.md` and removed from the open list per backlog-plan-atomicity rule. Earlier 2026-04-29: two mechanism-extension items added for Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md`; remaining two harness-drift items stay open. Earlier 2026-04-27: four harness-drift items added — see `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.
+Last updated: 2026-05-04 v6: HARNESS-GAP-12 IMPLEMENTED via SSH multi-push config; HARNESS-GAP-13 added — harness-hygiene-scan expansion (D5 reframe). Earlier 2026-05-03 v5: HARNESS-GAP-12 added — neural-lace dual-remote sync requires manual gh-auth dance; multi-push remote config proposed. Earlier 2026-05-03 v4: Discovery Protocol shipped — `docs/discoveries/` directory live; `bug-persistence-gate.sh` accepts discoveries; new `discovery-surfacer.sh` SessionStart hook. Earlier 2026-05-03 v3: HARNESS-GAP-11 added — reviewer accountability one-way gap surfaced during incentive-map analysis. Earlier 2026-05-03: HARNESS-GAP-10 added — Build Doctrine integration analysis surfaced 7 sub-gaps; see entry below. Earlier 2026-05-03: HARNESS-AUDIT-EXT-01 + HARNESS-AUDIT-EXT-02 absorbed into `docs/plans/pre-submission-audit-mechanical-enforcement.md` and removed from the open list per backlog-plan-atomicity rule. Earlier 2026-04-29: two mechanism-extension items added for Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md`; remaining two harness-drift items stay open. Earlier 2026-04-27: four harness-drift items added — see `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
@@ -106,7 +106,36 @@ This is the reviewer-side analogue of the documented `claim-reviewer` self-invoc
 
 ---
 
-## HARNESS-GAP-12 — Neural-lace dual-remote sync requires manual gh-auth dance (added 2026-05-03)
+## HARNESS-GAP-13 — Expand harness-hygiene-scan to detect more project-specific shapes (added 2026-05-04)
+
+**Source.** D5 of the D1-D5 educational re-do dialogue (2026-05-03/04). User raised the structural question: with builders working in their own project's directory (`~/claude-projects/<project>/`), project-specific decisions/reviews automatically end up in the project's repo, not in NL's. The gitignore protecting `docs/decisions/` etc. was a belt-and-suspenders against an unlikely failure mode. The primary defense is `harness-hygiene-scan.sh` checking against a denylist of project-specific terms.
+
+**Why this is a gap.** The current denylist catches specific terms (project codenames, internal jargon, customer/business names). Each pattern is a known-bad shape. But the denylist is reactive — it grows as new project-specific shapes are observed. There's no periodic full-tree audit that surfaces new project-specific content the denylist hasn't yet learned to detect. Plus the denylist's pattern-matching is literal — it doesn't catch project-specific content that uses unusual terminology or paraphrases known terms.
+
+User question (D5): "Should we expand harness-hygiene-scan to also check for any project-specific details that might be trying to make their way into the harness documents?"
+
+**Proposed mechanism — multi-layer expansion:**
+
+1. **Denylist additions for common tech-stack identifiers** that frequently leak in: third-party service names commonly used by downstream projects, common database technologies, framework-specific terms.
+2. **Heuristic detection layer** for content shapes that suggest project-specific origin: file paths matching project-internal patterns (e.g., `app/api/v\d+/[\w-]+/`, `src/components/[A-Z][\w]+\.tsx`), repeated capitalized terms that don't appear in NL's own vocabulary, customer/business-specific term clusters.
+3. **Periodic full-tree audit** as part of `/harness-review` weekly skill: scan ALL committed files (not just staged diff) against denylist + heuristics. Surface candidates for denylist addition or content sanitization.
+4. **Sanitization helper** that proposes replacements for detected matches (e.g., "this file references `<project-name>` 8 times — suggest sanitizing to `<your-project>`").
+
+**Why this matters.** Without expansion, project-specific content slowly accumulates in NL through paths the current scanner doesn't detect. The harness-hygiene rule is supposed to be the structural defense; if the scanner has blind spots, the rule's protection is illusory. The user's reframe in D5 is correct: directory separation does most of the work, but harness-hygiene-scan is the explicit defense and should match its claim.
+
+**Effort estimate.** M (~6-10 hours). Denylist additions are quick (~1 hour); heuristic detection is the bulk (~4-6 hours including pattern design + self-tests); full-tree audit + sanitization helper add another ~2-3 hours.
+
+**Why P3 (not P1).** The current scanner caught 4 leaks this session correctly. The expansion adds layered protection but the current floor is functioning. Schedule for Phase 1d-E alongside HARNESS-GAP-10 sub-gaps. Would land alongside the discovery-protocol gate-redesign and other harness-cleanup work.
+
+**Originating context.** User's D5 framing (2026-05-04): "Building of everything [is] performed within that repo's own directory... PT decisions automatically [are] contained within that project's directory, keeping the Neural Lace project from absorbing it... Should we expand harness-hygiene-scan?" Affirmed: the directory separation does most of the work; harness-hygiene-scan is the explicit defense and benefits from expansion to match its claim.
+
+---
+
+## HARNESS-GAP-12 — Neural-lace dual-remote sync requires manual gh-auth dance (added 2026-05-03; STATUS: IMPLEMENTED 2026-05-04)
+
+**Resolution.** Closed 2026-05-04 via SSH multi-push configuration on origin remote. See `docs/discoveries/2026-05-04-multi-push-ssh-config-implemented.md` for the full implementation log. `git push origin <branch>` now pushes to BOTH GitHub accounts atomically via per-Host SSH keys; auth-switch hook is irrelevant for neural-lace pushes.
+
+
 
 **Source.** Surfaced 2026-05-03 during autonomous-delivery work. The harness's `git push` PreToolUse hook in `settings.json.template` calls `read-local-config.sh match-dir "$PWD"` and switches the active gh account based on directory pattern matching. For neural-lace specifically (dual-hosted: `origin = <personal-account>/neural-lace`, `pt = <work-org>/neural-lace`), the pattern matching switches to the wrong account on push, producing 403 errors. This recurred 2+ times in the same session.
 
