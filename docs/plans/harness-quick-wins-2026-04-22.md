@@ -1,8 +1,15 @@
 # Plan: Harness Quick-Win Automation — Effort, Verbose Plans, Meta-Question Skills
 
-Status: COMPLETED
+Status: ACTIVE
+Status-history:
+  - 2026-04-22: created
+  - ~2026-04-22: marked COMPLETED (premature — see 2026-05-04 audit note below)
+  - 2026-05-04: SessionStart-sweep auto-archived to docs/plans/archive/
+  - 2026-05-04: un-archived + flipped to ACTIVE per audit findings
 Execution Mode: orchestrator
 Backlog items absorbed: "Effort-level enforcement at project level", "Verbose plans → Level 3", "Prompt template library for meta-questions"
+
+> **2026-05-04 audit note (orchestrator):** This plan was prematurely marked COMPLETED. Phases B (verbose plans), C (skills), and D (architecture doc) genuinely shipped — artifacts verified, hooks pass --self-test today. **Phase A Task 1 (set `effortLevel` in live `~/.claude/settings.json`) was never executed**: `jq '.effortLevel' ~/.claude/settings.json` returns `null`. The template was edited; the live mirror was not. The plan's DoD line "`~/.claude/settings.json` contains `\"effortLevel\": \"xhigh\"`" is provably false. Flipped back to ACTIVE so the actual gap is visible. **Resolution path:** either complete Task 1 (one-line edit + commit) or formally defer with a "Phase A partial" note. Bundled into Phase 1d-E follow-ups per `docs/backlog.md`.
 
 ## Goal
 
