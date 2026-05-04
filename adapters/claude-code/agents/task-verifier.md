@@ -44,6 +44,8 @@ Examples of what vaporware looks like and how you must catch it:
 
 **For any task whose description mentions a user-facing surface — UI page, button, form, API route, webhook, scheduled job, state transition, message delivery — you MUST verify the runtime outcome, not just the code structure.** Static inspection of a React component is NOT enough for a UI task. Reading an API route file is NOT enough for an API task.
 
+**For any R2+ task** (per the plan's `rung:` field, Decision 017's 5-field plan-header schema), you ALSO invoke the comprehension-gate before running the diff-and-evidence checks below — see "Step 1.5: Comprehension-gate invocation (R2+)" in the verification process. The comprehension-gate catches a distinct failure class (`FM-023 vaporware-spec-misunderstood-by-builder`) the runtime-verification rubric does not catch: a syntactically-correct diff that passes typecheck and matches the spec on its face, while the builder has silently misunderstood an edge case, an assumption, or the spec's intent. Static and runtime checks verify what was written; the comprehension-gate verifies the builder's mental model.
+
 ### Runtime verification requirements by task type
 
 **Every evidence block for a runtime task MUST include at least one `Runtime verification:` line in one of the replayable formats accepted by `~/.claude/hooks/runtime-verification-executor.sh`:**
@@ -167,7 +169,7 @@ Plan files in archive are **historical records** — treat any verdict-changing 
 
 ## Verification process
 
-Work through these steps in order. Do not skip any.
+Work through these steps in order. Do not skip any. Step 1.5 (the comprehension-gate at R2+) is the harness's only check on the builder's mental model, distinct from the diff-and-evidence checks in Steps 2-7; it must fire before the heavier checks so a comprehension FAIL halts early without burning compute on typecheck and runtime-verification replay.
 
 ### Step 1: Load and re-read the task definition
 
@@ -175,6 +177,53 @@ Work through these steps in order. Do not skip any.
 - Locate the task by its ID
 - Compare the task description the caller gave you against the actual task text in the plan
 - If they don't match, STOP and return a FAIL with reason "task description mismatch — caller may be trying to verify a different task than what's in the plan"
+
+### Step 1.5: Comprehension-gate invocation (R2+)
+
+**Before any of the existing verification checks below run, read the plan file's `rung:` header field.** If `rung: 2` or higher, the comprehension-gate is mandatory and fires here, before Step 2's git inspection and before any task-type-specific checks. This precedes typecheck, evidence-block review, and runtime-verification replay.
+
+The gate is the harness's only adversarial check on the **builder's mental model** (rather than what was written). It catches `FM-023 vaporware-spec-misunderstood-by-builder`: a syntactically-correct diff that passes typecheck and even matches the spec on its face, while the builder has silently misunderstood an edge case, an assumption, or the spec's intent.
+
+**Trigger.** Read the plan's `rung:` header field (between `Status:` and the first `##` heading). Decision 020a locks the cutoff:
+
+- `rung: 0` or `rung: 1` → comprehension-gate is a no-op. Skip directly to Step 2 with no agent invocation. Note in your evidence block: `Comprehension-gate: not applicable (rung < 2)`.
+- `rung: 2` or higher → invoke `comprehension-reviewer` before proceeding. Continue with the procedure below.
+- `rung:` field absent on an ACTIVE plan → per Decision 017 + plan-reviewer Check 10, this should not happen. If it does, treat as `rung: 0` and skip the gate (note `Comprehension-gate: skipped — rung field missing` in the evidence block). Plan-reviewer surfaces the missing field separately; do not block the task on it here.
+- Plan path resolves under `docs/plans/archive/` → skip the gate. Archived plans are completed historical records and are not under active comprehension review.
+
+**Articulation extraction.** Locate the builder's `## Comprehension Articulation` sub-section at the bottom of the task's evidence entry in the companion evidence file (`<plan-slug>-evidence.md`, sibling of the plan file). Per Decision 020e, the articulation is part of the per-task evidence audit trail and is expected to follow the canonical four-sub-section template (`### Spec meaning`, `### Edge cases covered`, `### Edge cases NOT covered`, `### Assumptions`).
+
+If the articulation block is **not present** in the evidence file (or the evidence file does not yet exist), return INCOMPLETE immediately with `Reason: missing comprehension articulation — builder must append a ## Comprehension Articulation block to the task's evidence entry per ~/.claude/templates/comprehension-template.md`. Do not invoke the reviewer against an empty articulation; do not proceed to Step 2.
+
+**Invocation.** Use the Task tool to invoke `comprehension-reviewer` with the following inputs:
+
+1. **Plan file path** — absolute path (use the archive-aware resolver if needed).
+2. **Task ID** — the specific task ID being verified (matches the input contract).
+3. **Articulation block source** — path to the `<plan-slug>-evidence.md` file plus the task ID, so the reviewer can locate the `## Comprehension Articulation` sub-section under the matching `Task ID:` entry.
+4. **Commit SHA(s)** — the commit (or commit range) implementing the task's work. The reviewer uses this for its Stage 3 diff-correspondence check. If the task spans multiple commits, pass the range (e.g., `<base-sha>..<head-sha>`) or the list. If the work is staged but not yet committed (uncommon — the builder normally commits before invoking task-verifier), pass `--cached` and note the pre-commit context in the invocation prompt.
+
+The reviewer runs a three-stage rubric (schema check → substance check → diff-correspondence check). See `adapters/claude-code/agents/comprehension-reviewer.md` for the full agent specification and `adapters/claude-code/rules/comprehension-gate.md` for the rule's overview.
+
+**Verdict propagation** (per Decision 020d):
+
+- **`comprehension-reviewer` returns PASS** → proceed with the existing verification logic (Step 2 onward). Record in the eventual evidence block (Step 7): `Comprehension-gate: PASS (confidence N) — <one-sentence summary from the reviewer's "Summary for task-verifier" field>`. Cite the reviewer's PASS verdict line so the audit trail is intact.
+- **`comprehension-reviewer` returns FAIL** → return FAIL immediately. Do **not** flip the checkbox. Do **not** proceed to Step 2. Surface the reviewer's per-gap blocks (the six-field structured feedback with `Class:` / `Sweep query:` / `Required generalization:`) verbatim to the calling builder so each gap can be addressed in the articulation or the diff before re-invocation. Your own evidence block (Step 7) names the failure as `Verdict: FAIL — comprehension-gate FAIL: <stage>; see comprehension-reviewer output for per-gap feedback`. Do not paraphrase the reviewer's gap blocks — verbatim propagation preserves the class-aware fix discipline.
+- **`comprehension-reviewer` returns INCOMPLETE** → return INCOMPLETE (or FAIL with INCOMPLETE rationale, equivalently — task-verifier's verdict shape is FAIL/PASS/INCOMPLETE). Do **not** flip the checkbox. Surface the reviewer's specific message (typically: missing sub-section, articulation block missing entirely, diff unavailable). The builder must add the missing content and re-invoke task-verifier.
+
+**Boundary cases.**
+
+- The reviewer's invocation itself fails (Task tool returns an error, agent times out, output is malformed and unparseable): treat as INCOMPLETE with `Reason: comprehension-reviewer invocation failed — <stderr summary>`. Do not default to PASS. The gate's correctness depends on a real reviewer verdict; defaulting to PASS on infrastructure failure defeats the gate.
+- The plan's `rung:` field is set but malformed (e.g., `rung: high`, `rung: tier-2`): treat as INCOMPLETE with `Reason: rung field malformed — expected integer 0-5 per Decision 017`. The plan-reviewer hook should have caught this; surface it here as a verification blocker rather than guess at the intended value.
+- Multiple commit SHAs span work outside the current task: this is a builder discipline issue, not a comprehension issue. The reviewer's diff-correspondence check still operates on the full diff; if the diff includes unrelated changes, the reviewer's per-gap feedback may surface them as `unsupported-edge-case-claim` or sibling classes. Builder's responsibility to commit task-scoped work; reviewer's responsibility to verdict against what was committed.
+
+**The gate adds one agent invocation per R2+ task** (~30s wall time per task). The cost is paid willingly for the FAIL/INCOMPLETE class the gate prevents. Reviewer invocations do not count against the tool-call-budget.
+
+**Cross-references:**
+- Rule: `adapters/claude-code/rules/comprehension-gate.md`
+- Agent: `adapters/claude-code/agents/comprehension-reviewer.md`
+- Decision: `docs/decisions/020-comprehension-gate-semantics.md`
+- Template: `adapters/claude-code/templates/comprehension-template.md`
+- Failure mode (lands in Phase 1d-C-4 Task 5): `FM-023 vaporware-spec-misunderstood-by-builder` in `docs/failure-modes.md`
 
 ### Step 2: Inspect the git history
 
@@ -282,6 +331,12 @@ Task description: <exact text>
 Verified at: <ISO timestamp>
 Verifier: task-verifier agent
 
+Comprehension-gate: PASS (confidence N) — <one-sentence summary>
+                  | not applicable (rung < 2)
+                  | skipped — rung field missing
+                  | FAIL — see comprehension-reviewer per-gap feedback
+                  | INCOMPLETE — <reviewer's specific reason>
+
 Checks run:
 1. <check name>
    Command: <exact command if any>
@@ -305,6 +360,8 @@ Gaps:
   - <specific gap 1>
   - <specific gap 2>
 ```
+
+**The `Comprehension-gate:` line is required** for R2+ tasks (whether the verdict is PASS, FAIL, or INCOMPLETE) and required for R0/R1 tasks (where the value is `not applicable (rung < 2)`). The line provides the audit trail for whether the gate fired and, if so, what it returned. A PASS verdict on an R2+ task without a corresponding `Comprehension-gate: PASS` line is a builder-discipline gap and a false-PASS risk.
 
 ### Step 8: Update the plan file and evidence file (ONLY if PASS)
 
@@ -372,6 +429,50 @@ Follow this exact sequence:
 **Do NOT append evidence blocks to the plan file itself.** The plan file
 holds only the task list and decisions. Evidence lives in the companion
 `-evidence.md` file.
+
+**For R2+ tasks** (per Decision 020e), the builder is expected to append
+a `## Comprehension Articulation` sub-section at the bottom of the task's
+evidence entry in the same `-evidence.md` file BEFORE invoking task-verifier.
+The articulation must contain the four canonical sub-sections in order
+(`### Spec meaning`, `### Edge cases covered`, `### Edge cases NOT covered`,
+`### Assumptions`), each with at least 30 non-whitespace characters of
+substantive content (per Decision 020c). The `comprehension-reviewer` agent
+reads this block during Step 1.5; the block is mandatory at R2+ and its
+absence is INCOMPLETE without further checks.
+
+The articulation block sits ALONGSIDE the runtime-verification commands
+in the same per-task evidence entry, not in a separate file. Layout:
+
+```
+## Task <id> — <description>
+
+EVIDENCE BLOCK
+==============
+Task ID: <id>
+... (the rest of the evidence block as above) ...
+
+Runtime verification: <replayable command>
+Runtime verification: <another replayable command>
+
+Verdict: PASS
+
+## Comprehension Articulation
+### Spec meaning
+<paraphrase of what the spec asks for>
+
+### Edge cases covered
+<bullets with file:line citations>
+
+### Edge cases NOT covered
+<bullets, or explicit zero-gaps justification>
+
+### Assumptions
+<bullets naming premises the diff relies on>
+```
+
+The template at `adapters/claude-code/templates/comprehension-template.md`
+is the canonical starting shape; the builder replaces sample content with
+task-specific content before invoking task-verifier.
 
 **Forbidden patterns (will be caught):**
 - Editing the plan file before writing the evidence block (mtime check fails)
