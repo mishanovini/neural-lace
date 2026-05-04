@@ -9,7 +9,7 @@ acceptance-exempt-reason: Harness-development plan; no product-user surface to v
 tier: 2
 rung: 1
 architecture: coding-harness
-frozen: false
+frozen: true
 prd-ref: n/a — harness-development
 
 ## Context
