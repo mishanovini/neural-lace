@@ -84,7 +84,7 @@ Patterns are NOT weaker than Mechanisms — they solve different problems. Mecha
 - Detects the current directory against configured account `dir_triggers` in `~/.claude/local/accounts.config.json` and switches GitHub + Supabase accounts accordingly
 - Checks for `orchestrate.sh` or `evidence.md` → reports pipeline status
 
-### PreToolUse (11 entries)
+### PreToolUse (12 entries)
 
 | Hook | Matcher | What it blocks / does |
 |------|---------|----------------------|
@@ -99,6 +99,7 @@ Patterns are NOT weaker than Mechanisms — they solve different problems. Mecha
 | Force-push / --no-verify blocker | `Bash` | `git push --force`, `--no-verify` |
 | Public repo blocker | `Bash` | `gh repo create --public`, `gh repo edit --visibility public` |
 | Pre-commit gate | `Bash` | On `git commit`: runs `check-harness-sync.sh` + `pre-commit-gate.sh` (TDD gate + plan-reviewer + tests + build + API audit) |
+| **Findings-ledger schema gate (Phase 1d-C-3 / C9, 2026-05-04)** | `Bash` | Self-detects `git commit` (allows other Bash invocations). When the commit stages `docs/findings.md`, parses every entry and validates the locked six-field schema (ID + Severity / Scope / Source / Location / Status enum-locked, plus non-empty Description body); BLOCKs with stderr message naming the failing entry + reason on any violation. No-op when `docs/findings.md` is not staged. Wired AFTER `plan-deletion-protection.sh` and BEFORE `vaporware-volume-gate.sh` in both `settings.json.template` and `~/.claude/settings.json`. Hook script: `~/.claude/hooks/findings-ledger-schema-gate.sh` (mirror of the committed `adapters/claude-code/hooks/findings-ledger-schema-gate.sh`). |
 | Account switcher | `Bash` | On `git push`: switches `gh auth` to the account matching the remote URL per `~/.claude/local/accounts.config.json` |
 
 ### PostToolUse (1 entry — Gen 4)
