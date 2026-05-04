@@ -29,6 +29,8 @@ single biggest hole in the first Gen 4 pass.
 | Builder commits cannot extend scope beyond plan's declared `## Files to Modify/Create` section | `scope-enforcement-gate.sh` PreToolUse Bash blocker on `git commit` | `~/.claude/hooks/scope-enforcement-gate.sh` |
 | Mode: design plans must show inline arithmetic for any comparative quantitative claim | `plan-reviewer.sh` Check 9 — comparative-phrase + paragraph-window arithmetic detection (FM-013 / FM-014) | `~/.claude/hooks/plan-reviewer.sh` |
 | Tier 3+ plans cannot dispatch first Task invocation without DAG-approval waiver | `dag-review-waiver-gate.sh` PreToolUse Task blocker (per-session marker after first allow) | `~/.claude/hooks/dag-review-waiver-gate.sh` |
+| Mid-process discovery capture | `bug-persistence-gate.sh` extended Stop hook accepts `docs/discoveries/YYYY-MM-DD-*.md` | `~/.claude/hooks/bug-persistence-gate.sh` + `~/.claude/rules/discovery-protocol.md` |
+| Pending discoveries surfaced at session start | `discovery-surfacer.sh` SessionStart hook | `~/.claude/hooks/discovery-surfacer.sh` |
 
 **Missing from the enforcement map (explicitly acknowledged as gaps):**
 - `test-quality-reviewer` as a separate agent does NOT exist. The trivial-assertion ban lives inside `pre-commit-tdd-gate.sh` Layer 4. Test quality is not reviewed adversarially outside the gate.

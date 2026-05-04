@@ -157,6 +157,16 @@ check_persisted_for() {
     PERSISTED=1
     return
   fi
+  # New discovery file (untracked) — see ~/.claude/rules/discovery-protocol.md
+  if git -C "$root" ls-files --others --exclude-standard docs/discoveries/ 2>/dev/null | grep -qE '^docs/discoveries/[0-9]{4}-[0-9]{2}-[0-9]{2}-'; then
+    PERSISTED=1
+    return
+  fi
+  # Modified/added discovery file in working tree
+  if git -C "$root" status --porcelain docs/discoveries/ 2>/dev/null | grep -qE 'docs/discoveries/[0-9]{4}-[0-9]{2}-[0-9]{2}-'; then
+    PERSISTED=1
+    return
+  fi
   # Commits ANY branch touched these paths in the last ~6 hours (the
   # session window). This catches the case where persistence was done
   # on a feature branch that isn't the current HEAD — the bugs are
@@ -164,7 +174,7 @@ check_persisted_for() {
   # separately. `--all` picks up every ref, not just current branch.
   local recent_touches
   recent_touches=$(git -C "$root" log --all --since="6 hours ago" \
-    --pretty=format:'%H' -- docs/backlog.md 'docs/reviews/*' 2>/dev/null | head -1)
+    --pretty=format:'%H' -- docs/backlog.md 'docs/reviews/*' 'docs/discoveries/*' 2>/dev/null | head -1)
   if [[ -n "$recent_touches" ]]; then
     PERSISTED=1
     return
@@ -177,7 +187,7 @@ check_persisted_for() {
     while read -r sha; do
       [[ -z "$sha" ]] && continue
       if git -C "$root" diff-tree --no-commit-id --name-only -r "$sha" 2>/dev/null | \
-         grep -qE '^docs/backlog\.md$|^docs/reviews/[0-9]{4}-[0-9]{2}-[0-9]{2}-'; then
+         grep -qE '^docs/backlog\.md$|^docs/reviews/[0-9]{4}-[0-9]{2}-[0-9]{2}-|^docs/discoveries/[0-9]{4}-[0-9]{2}-[0-9]{2}-'; then
         echo "$sha"
         break
       fi
@@ -219,8 +229,9 @@ BUG-PERSISTENCE GATE — BLOCKED
 ================================================================
 
 This session mentioned bugs / gaps / deficiencies using trigger
-phrases, but did NOT persist any of them to docs/backlog.md or
-docs/reviews/YYYY-MM-DD-<slug>.md. See rule in
+phrases, but did NOT persist any of them to docs/backlog.md,
+docs/reviews/YYYY-MM-DD-<slug>.md, or
+docs/discoveries/YYYY-MM-DD-<slug>.md. See rule in
 ~/.claude/rules/testing.md (Bug Persistence section).
 
 Trigger phrases detected (up to 10):
@@ -237,7 +248,15 @@ Before the session can end, do ONE of:
      evidence + fix path. Use this for batches of findings from a
      testing / audit pass.
 
-  3. If the matches are false positives (quoted examples, rhetorical,
+  3. Create docs/discoveries/YYYY-MM-DD-<slug>.md with the discovery
+     protocol format (see ~/.claude/rules/discovery-protocol.md). Use
+     this for mid-process realizations that aren't bug-shaped:
+     architectural learnings, scope expansions, dependency surprises,
+     performance/failure-mode/process/user-experience discoveries.
+     The discovery file structure (frontmatter type, status, auto_applied,
+     etc.) is documented in the rule.
+
+  4. If the matches are false positives (quoted examples, rhetorical,
      etc.), create .claude/state/bugs-attested-YYYY-MM-DD-HHMM.txt
      with one line per false-positive justifying why. Create the
      state directory if it doesn't exist; it's gitignored.
@@ -251,7 +270,7 @@ MSG
 
 # JSON decision for Claude Code
 cat <<'JSON'
-{"decision": "block", "reason": "Bug-persistence gate: trigger phrases detected without corresponding edit to docs/backlog.md or docs/reviews/YYYY-MM-DD-*.md. See stderr for details and escape hatches."}
+{"decision": "block", "reason": "Bug-persistence gate: trigger phrases detected without corresponding edit to docs/backlog.md, docs/reviews/YYYY-MM-DD-*.md, or docs/discoveries/YYYY-MM-DD-*.md. See stderr for details and escape hatches."}
 JSON
 
 exit 2
