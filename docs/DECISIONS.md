@@ -22,3 +22,7 @@ commit (enforced by `adapters/claude-code/hooks/decisions-index-gate.sh`).
 | 012 | [Agent Teams integration — six design decisions](decisions/012-agent-teams-integration.md) | 2026-04-27 | Active |
 | 013 | [Default git push policy — auto-push (safe methods); customer-tier branching for real-user projects](decisions/013-default-push-policy.md) | 2026-05-03 | Active |
 | 014 | [Calibration mimicry design — RL-shaped via prompt conditioning (G-1 through G-4)](decisions/014-calibration-mimicry-design.md) | 2026-05-03 | Active |
+| 015 | [PRD-validity gate (C1): single `docs/prd.md` per project + 7 required sections + harness-development carve-out](decisions/015-prd-validity-gate-c1.md) | 2026-05-04 | Active |
+| 016 | [Spec-freeze gate (C2): `frozen: true|false` semantics, freeze-by-commit-SHA, freeze-thaw protocol](decisions/016-spec-freeze-gate-c2.md) | 2026-05-04 | Active |
+| 017 | [Plan-header schema locked: 5 required fields, no defaults, gated on `Status: ACTIVE`](decisions/017-plan-header-schema-locked.md) | 2026-05-04 | Active |
+| 018 | [Spec-section divergence from SCRATCHPAD: Build Doctrine §6 chosen as authoritative; `## Provides`/`## Consumes`/`## Dependencies` deferred](decisions/018-spec-section-divergence-from-scratchpad.md) | 2026-05-04 | Open |

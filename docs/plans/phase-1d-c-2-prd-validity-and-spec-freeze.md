@@ -123,7 +123,7 @@ Plus enabling work:
 
 ## In-flight scope updates
 
-(no in-flight changes yet)
+- 2026-05-04: `docs/DECISIONS.md` — Task 1 builder discovered the canonical decisions index lives at `docs/DECISIONS.md` (uppercase), not `docs/decisions/index` as the original Files to Modify/Create bullet listed. Updated 4 new rows (decisions 015-018) in the existing index file.
 
 ## Assumptions
 

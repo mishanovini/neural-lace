@@ -5,6 +5,107 @@ Mode: code
 Backlog items absorbed: [none | slug-1, slug-2]
 acceptance-exempt: false
 acceptance-exempt-reason:
+tier: <1-5>
+<!--
+tier values (Build Doctrine `03-work-sizing.md`):
+  1  Contained        Single file or small isolated change; no schema or
+                      contract impact; reversible in minutes.
+  2  Schema-Bound     Touches a schema or persistent shape; revertible
+                      via migration; contained blast radius.
+  3  Cross-Module     Spans modules / services; integration testing
+                      required; revertible via coordinated change.
+  4  Contract         Modifies a public API, external interface, or
+                      cross-team contract; requires architecture review.
+  5  Novel            New architectural pattern, new external dependency,
+                      irreversible production data effects, or research
+                      work without prior precedent.
+
+Required by `plan-reviewer.sh` Check 10 on `Status: ACTIVE` plans.
+See `~/.claude/rules/planning.md` and Decision 017.
+-->
+
+rung: <0-5>
+<!--
+rung values (autonomy / sophistication tier):
+  0  read-only-context        Plan informs other plans; produces no
+                              executable artifacts.
+  1  knowledge-integrator     Plan integrates known patterns; minimal
+                              novel design.
+  2  early-stage              Plan introduces a small new mechanism in
+                              a well-understood area.
+  3  formalized               Plan formalizes a behavior with explicit
+                              contracts; requires `## Behavioral
+                              Contracts` section (C16, plan-reviewer
+                              Check 11).
+  4  autonomous               Plan ships a mechanism that operates
+                              autonomously after deploy; requires
+                              behavioral contracts + runbook.
+  5  meta                     Plan modifies the harness's own
+                              meta-rules or governance.
+
+Required by `plan-reviewer.sh` Check 10. At `rung: 3+`, Check 11
+requires `## Behavioral Contracts` with four sub-entries
+(idempotency, performance budget, retry semantics, failure modes).
+-->
+
+architecture: <coding-harness | dark-factory | auto-research | orchestration | hybrid>
+<!--
+architecture values (Build Doctrine §9 Q4-A):
+  coding-harness    Work targets the coding-harness family (Claude Code
+                    rules, hooks, agents, templates).
+  dark-factory      Work targets the dark-factory family (autonomous
+                    background workflows operating without interactive
+                    steering).
+  auto-research     Work targets the auto-research family (research and
+                    knowledge-integration pipelines).
+  orchestration     Work targets the orchestration layer (plan
+                    dispatch, multi-agent coordination, lifecycle
+                    management).
+  hybrid            Work spans two or more families; cite which in the
+                    plan body.
+
+Required by `plan-reviewer.sh` Check 10.
+-->
+
+frozen: false
+<!--
+frozen values (spec-freeze gate, Decision 016):
+  false   Default for new plans. Spec is still being authored. The
+          plan cannot govern edits yet — spec-freeze-gate.sh BLOCKS
+          edits to files declared in `## Files to Modify/Create`
+          while frozen is false.
+  true    Spec is settled; declared scope is committed. The gate
+          ALLOWS edits to declared files. To amend a frozen spec,
+          flip back to false, record a Decisions Log entry naming
+          the amendment + rationale, make the amendment, then
+          re-flip true.
+
+Required by `plan-reviewer.sh` Check 10.
+See `~/.claude/rules/spec-freeze.md` for the freeze-thaw protocol.
+-->
+
+prd-ref: <slug | n/a — harness-development>
+<!--
+prd-ref values (PRD-validity gate, Decision 015):
+  <slug>                          Refers to a feature documented in
+                                  the project's `docs/prd.md`. The
+                                  prd-validity-gate.sh hook resolves
+                                  the reference to docs/prd.md and
+                                  verifies all 7 required sections
+                                  (problem, scenarios, functional,
+                                  non-functional, success metrics,
+                                  out-of-scope, open-questions) are
+                                  present and substantive.
+  n/a — harness-development      Carve-out for plans whose work
+                                  product IS the harness itself
+                                  (rules, hooks, agents, templates,
+                                  decision records). Bypasses C1
+                                  entirely. Exact phrasing required
+                                  (em-dash). Auditable via grep.
+
+Required by `plan-reviewer.sh` Check 10.
+See `~/.claude/rules/prd-validity.md` and `adapters/claude-code/templates/prd-template.md`.
+-->
 
 <!--
 acceptance-exempt values:
