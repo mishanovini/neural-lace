@@ -26,3 +26,4 @@ commit (enforced by `adapters/claude-code/hooks/decisions-index-gate.sh`).
 | 016 | [Spec-freeze gate (C2): `frozen: true|false` semantics, freeze-by-commit-SHA, freeze-thaw protocol](decisions/016-spec-freeze-gate-c2.md) | 2026-05-04 | Active |
 | 017 | [Plan-header schema locked: 5 required fields, no defaults, gated on `Status: ACTIVE`](decisions/017-plan-header-schema-locked.md) | 2026-05-04 | Active |
 | 018 | [Spec-section divergence from SCRATCHPAD: Build Doctrine §6 chosen as authoritative; `## Provides`/`## Consumes`/`## Dependencies` deferred](decisions/018-spec-section-divergence-from-scratchpad.md) | 2026-05-04 | Open |
+| 019 | [Findings-ledger format (C9): 6-field schema, single `docs/findings.md` per project, dispositioning lifecycle](decisions/019-findings-ledger-format.md) | 2026-05-04 | Active |
