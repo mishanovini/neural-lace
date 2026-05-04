@@ -1,6 +1,6 @@
 # Neural Lace — Harness Backlog
 
-Last updated: 2026-05-03 (HARNESS-GAP-10 added — Build Doctrine integration analysis surfaced 7 sub-gaps; see entry below. Earlier 2026-05-03: HARNESS-AUDIT-EXT-01 + HARNESS-AUDIT-EXT-02 absorbed into `docs/plans/pre-submission-audit-mechanical-enforcement.md` and removed from the open list per backlog-plan-atomicity rule. Earlier 2026-04-29: two mechanism-extension items added for Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md`; remaining two harness-drift items stay open. Earlier 2026-04-27: four harness-drift items added — see `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.)
+Last updated: 2026-05-03 v3: HARNESS-GAP-11 added — reviewer accountability one-way gap surfaced during incentive-map analysis. Earlier 2026-05-03: HARNESS-GAP-10 added — Build Doctrine integration analysis surfaced 7 sub-gaps; see entry below. Earlier 2026-05-03: HARNESS-AUDIT-EXT-01 + HARNESS-AUDIT-EXT-02 absorbed into `docs/plans/pre-submission-audit-mechanical-enforcement.md` and removed from the open list per backlog-plan-atomicity rule. Earlier 2026-04-29: two mechanism-extension items added for Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md`; remaining two harness-drift items stay open. Earlier 2026-04-27: four harness-drift items added — see `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
@@ -75,6 +75,34 @@ Strategy context and reasoning for many entries below lives in [`docs/claude-cod
 - Originating analysis: `~/claude-projects/Build Doctrine/outputs/analysis/03-comparative-analysis.md`
 - Methodology recommendation: `~/claude-projects/Build Doctrine/outputs/unified-methodology-recommendation.md`
 - Recovery point for the integration: tag `pre-build-doctrine-integration` at NL master HEAD, branch `build-doctrine-integration` for Phase 1d work.
+
+---
+
+## HARNESS-GAP-11 — Reviewer accountability is one-way (added 2026-05-03)
+
+**Source.** Surfaced during agent-incentive-map work (`docs/agent-incentive-map.md`, plan `docs/plans/agent-incentive-map.md`). Identified as a structural weakness in NL's adversarial-pairing architecture: when a reviewer agent (code-reviewer, task-verifier, end-user-advocate, harness-reviewer, systems-designer, ux-designer, claim-reviewer, plan-evidence-reviewer) PASSes work that subsequently fails at runtime acceptance OR fails in the next session OR fails in production, no signal flows back to the agent (or to a meta-tracker) for calibration.
+
+**Why this is a gap.** Each reviewer's incentive to be careful is purely intrinsic — there is no consequence to PASSing too easily. Over time this creates calibration drift: reviewers pass borderline work because no penalty arrives when borderline work later fails. The user observed this pattern explicitly: "I don't trust the builder agents because they seem the most willing to find workarounds in order to call their work done." The same dynamic applies to reviewers — they have a structural incentive to take builders at their word because doing so is faster and friction-free.
+
+This is the reviewer-side analogue of the documented `claim-reviewer` self-invocation gap in `~/.claude/rules/vaporware-prevention.md` ("the single unclosed gap from Generation 4"). Both are unaccountability gaps; both reduce the harness's actual quality below its nominal quality.
+
+**Proposed mechanism.** Reviewer-calibration tracker — a new mechanism that:
+
+1. Records every reviewer PASS verdict to `.claude/state/reviewer-passes/<reviewer-name>-<task-id>-<timestamp>.json` with: reviewer agent name, task ID, plan path, verdict, claimed-substance summary, file:line citations made.
+2. When `enforcement-gap-analyzer` fires on a runtime acceptance FAIL OR `bug-persistence-gate` fires on a session-end with bug observations OR a future production-failure signal lands, it cross-references the reviewer-passes log to identify which reviewer last said PASS on the now-failed work. Surfaces the (reviewer, failed-work) pair to a per-reviewer calibration log at `.claude/state/reviewer-calibration-<reviewer-name>.md`.
+3. Periodic audit: `/harness-review` weekly self-audit (a new check) reads each reviewer's calibration log and surfaces patterns: which reviewer's PASS verdicts most often precede later failures? That reviewer's prompt or rubric needs sharpening.
+
+**Why this is a meaty mechanism (not first-pass).** Three implementation gates:
+
+1. The mechanism depends on `enforcement-gap-analyzer` being able to attribute the failure to specific prior reviewer verdicts. That attribution requires Phase 1d-D telemetry (see HARNESS-GAP-10 sub-gap D — telemetry not yet shipped, blocks dependent mechanisms).
+2. The mechanism depends on `findings-ledger schema` (C9) shipping so that "later failure" has a structured comparable form to the PASS verdict.
+3. The mechanism's value compounds with TIME — a single PASS-then-FAIL pair is noise; a pattern of N PASS-then-FAIL pairs is signal. So the mechanism needs to ship and run for weeks before the audit produces actionable findings.
+
+**Effort estimate.** L (~12-20 hours). One JSON-write helper for reviewer-pass logging, extension to `enforcement-gap-analyzer` for cross-reference, calibration-log format design, `/harness-review` audit extension, self-test scenarios.
+
+**Why P2 (not P1).** Calibration drift is a slow-moving structural risk; it doesn't cause individual session failures. The first-pass C-mechanisms (C10 scope-enforcement, C22 quantitative-claims, C7-DAG-waiver — already shipped) catch immediate failure modes. C1/C2/C9/C15/C16 catch upstream failure modes. The reviewer-calibration mechanism catches drift across many sessions, which only matters once the harness is running stably enough to accumulate the pattern data. Sequence after Phase 1d-C-4 (C15 ships).
+
+**Originating context.** The user posed (2026-05-03): "Show me the incentive and I'll show you the outcome — applied to AI agents." The agent-incentive-map document catalogued each agent's stray-from patterns; this gap is the most consequential unaddressed weakness across the catalogue.
 
 ---
 
