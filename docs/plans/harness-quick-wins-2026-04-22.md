@@ -8,6 +8,8 @@ Status-history:
   - 2026-05-04: un-archived + flipped to ACTIVE per audit findings
 Execution Mode: orchestrator
 Backlog items absorbed: "Effort-level enforcement at project level", "Verbose plans → Level 3", "Prompt template library for meta-questions"
+acceptance-exempt: true
+acceptance-exempt-reason: Harness-development plan; no product user. Verification is via per-hook --self-test invocations and a manual round-trip exercising the effort-policy + plan-reviewer + skill flows. Re-opened 2026-05-04 per audit; resolution path is Phase 1d-E (HARNESS-GAP-15 sub-item F).
 
 > **2026-05-04 audit note (orchestrator):** This plan was prematurely marked COMPLETED. Phases B (verbose plans), C (skills), and D (architecture doc) genuinely shipped — artifacts verified, hooks pass --self-test today. **Phase A Task 1 (set `effortLevel` in live `~/.claude/settings.json`) was never executed**: `jq '.effortLevel' ~/.claude/settings.json` returns `null`. The template was edited; the live mirror was not. The plan's DoD line "`~/.claude/settings.json` contains `\"effortLevel\": \"xhigh\"`" is provably false. Flipped back to ACTIVE so the actual gap is visible. **Resolution path:** either complete Task 1 (one-line edit + commit) or formally defer with a "Phase A partial" note. Bundled into Phase 1d-E follow-ups per `docs/backlog.md`.
 
