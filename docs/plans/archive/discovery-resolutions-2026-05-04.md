@@ -1,6 +1,6 @@
 # Plan: Discovery Resolutions — 2026-05-04 Session
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -43,7 +43,7 @@ User direction (2026-05-04 chat): approve recommendations for #1 (D — document
 - [x] 1. **Resolve Discovery #1 (sed-status-flip → option D).** Implement `plan-status-archival-sweep.sh` SessionStart hook with 5-scenario `--self-test` (including a scenario that asserts `git diff --cached --name-status` reports `R<num>` so the rename-tracking path can't regress silently). Wire into live `~/.claude/settings.json` AND `adapters/claude-code/settings.json.template`. Add Stage 3.5 to `rules/planning.md` Plan File Lifecycle section. Live-fire against the 3 stranded plans (`document-freshness-system`, `harness-quick-wins-2026-04-22`, `public-release-hardening`) and verify proper archival + `git mv` rename for the tracked plan. Mark the discovery file `Status: decided` with substantive Decision + Implementation log.
 - [x] 2. **Resolve Discovery #2 partial (template-vs-live divergence → option B now, A deferred).** Implement `settings-divergence-detector.sh` SessionStart hook with 4-scenario `--self-test`. Wire into both live + template settings.json. Confirm via live-fire that the detector surfaces real divergence in production state. Add `HARNESS-GAP-14` to `docs/backlog.md` with orchestrator-driven research methodology spelled out for the deferred reconciliation pass (per-hook git blame, commit log archaeology, author-intent recovery, canonical-side proposal for user review). Mark the discovery file `Status: decided` with split-decision rationale.
 - [x] 3. **Resolve Discovery #3 (worktree-base → option Q empirical).** Empirically test option Q via read-only Agent dispatch with `isolation: "worktree"` to confirm the feature branch ref is visible inside worktrees rooted at master. Update `rules/orchestrator-pattern.md` dispatch-prompt template with the mandatory first-action step (`git checkout -b worker-<id> <feature-branch>`). Mark the discovery file `Status: decided` with empirical-test result + Implementation log.
-- [ ] 4. **Companion housekeeping.** Update `.gitignore` (archive paths for pre-sanitization plans, broaden `.claude/state/` from `acceptance/` only, add `.claude/worktrees/`). Update `docs/harness-architecture.md` SessionStart inventory + Hook Scripts table for both new hooks and the previously-unlisted `discovery-surfacer.sh`.
+- [x] 4. **Companion housekeeping.** Update `.gitignore` (archive paths for pre-sanitization plans, broaden `.claude/state/` from `acceptance/` only, add `.claude/worktrees/`). Update `docs/harness-architecture.md` SessionStart inventory + Hook Scripts table for both new hooks and the previously-unlisted `discovery-surfacer.sh`.
 
 ## Files to Modify/Create
 
@@ -115,10 +115,10 @@ n/a — `Mode: code` plan, single coherent piece of discovery-resolution work. N
 
 ## Definition of Done
 
-- [ ] All 4 tasks checked off via task-verifier evidence.
-- [ ] Both new hooks pass their `--self-test` flags (5 + 4 scenarios).
-- [ ] Three stranded plans archived; `git status` clean.
-- [ ] All three discovery files at `Status: decided`, `auto_applied: true`.
-- [ ] HARNESS-GAP-14 committed in `docs/backlog.md`.
-- [ ] `harness-architecture.md` updated for both new hooks.
-- [ ] All work committed to neural-lace; multi-push covers both remotes.
+- [x] All 4 tasks checked off via task-verifier evidence.
+- [x] Both new hooks pass their `--self-test` flags (5 + 4 scenarios).
+- [x] All 3 stranded plans handled by the sweep correctly. Post-sweep audit (commit `b825c2d` by user's other session) reclassified 2 of 3 as "FALSELY COMPLETED" and un-archived them — only `document-freshness-system` actually stayed archived. The sweep mechanism behaved correctly per its mandate (acted on what `Status:` declared); the audit was the right secondary check that caught false-completes; HARNESS-GAP-15 captures the remaining audit follow-up work. End-state is per-audit, not per-naive-sweep.
+- [x] All three discovery files at `Status: decided`, `auto_applied: true`.
+- [x] HARNESS-GAP-14 committed in `docs/backlog.md`.
+- [x] `harness-architecture.md` updated for both new hooks (commit `0e2c3a6` restored 8 regressed Phase 1d-C-2/1d-C-3 rows + re-applied Task 4 additions on top).
+- [x] All work committed to neural-lace; multi-push covers both remotes (commits `2a49b11` + `0e2c3a6`).

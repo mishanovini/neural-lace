@@ -212,3 +212,83 @@ Verdict: PASS
 Confidence: 9
 Reason: All 5 acceptance criteria verified empirically against the working tree at HEAD 2a49b11. The new section heading "Worktree base is master HEAD — builders MUST switch to feature branch first" is present in adapters/claude-code/rules/orchestrator-pattern.md at line 57. The mandatory builder first-action command template (`git checkout -b worker-<task-id> <feature-branch-name>`) appears verbatim at line 69 inside a fenced dispatch-prompt code block, embedded in a substantive ~32-line section explaining the empirical confirmation, the why-it-works mechanism (worktrees share .git/refs with parent repo), what the workaround does NOT solve (uncommitted orchestrator state, requiring commit-before-dispatch discipline), and the auto-cleanup interaction with the cherry-pick protocol. The same content is byte-identical in ~/.claude/rules/orchestrator-pattern.md (confirmed via `diff` returning empty). The discovery file `2026-05-04-worktree-base-points-at-master-not-branch-head.md` shows `status: decided` and `auto_applied: true` in frontmatter (lines 5-6); its Decision section is substantive (~24 lines, well over the 20-char threshold) and cites the empirical test result with concrete commit SHAs (worktree at 10adac2, feature ref visible in .git/refs, post-checkout HEAD at 866a8d6) and explicitly enumerates rejected options A/B/C/D/M/N with rationale; its Implementation log section cites the empirical test's agentId (`af323f2b20494375a`) at line 78.
 Caveat / catalog cross-check: the user is correct that this resolution updates a documentation rule, not a hook-enforced gate. The class-of-failure here is "parallel-mode dispatch silently broken on feature branches with commits ahead of master" — that class is closed via Pattern (builder dispatch-prompt template) rather than Mechanism (no hook detects "builder forgot to checkout feature branch"). This is consistent with the orchestrator-pattern.md rule's existing classification as Pattern-not-Mechanism. No FM-NNN catalog entry is created because the failure class is now documented as a known-and-mitigated workaround within the rule itself rather than an open failure mode.
+
+EVIDENCE BLOCK
+==============
+Task ID: 4
+Task description: Companion housekeeping. Update .gitignore (archive paths for pre-sanitization plans, broaden .claude/state/ from acceptance/ only, add .claude/worktrees/). Update docs/harness-architecture.md SessionStart inventory + Hook Scripts table for both new hooks and the previously-unlisted discovery-surfacer.sh.
+Verified at: 2026-05-04T22:10:00Z
+Verifier: task-verifier agent
+Re-verification: YES — this is a re-verification of Task 4 after a regression-fix landed. Prior verification at commit 2a49b11 returned FAIL because that commit inadvertently overwrote 8 rows of pre-existing Phase 1d-C-2/1d-C-3 documentation in docs/harness-architecture.md (root cause: live ~/.claude/docs/harness-architecture.md was missing entries the user's other session had added to the repo file; when this session edited the live file and copied to repo, it overwrote the user's work — confirms the value of shipping settings-divergence-detector.sh). Followup commit 0e2c3a6 (now at HEAD) restored all 8 rows from canonical state at e95313b AND re-applied the Task 4 additions on top.
+
+Checks run:
+1. AC1 — .gitignore contains all 4 archive paths for pre-sanitization plans
+   Command: grep -n "archive/document-freshness-system\|archive/public-release-hardening" .gitignore
+   Output: lines 101-104 show all 4 paths present:
+     docs/plans/archive/document-freshness-system.md
+     docs/plans/archive/document-freshness-system-evidence.md
+     docs/plans/archive/public-release-hardening.md
+     docs/plans/archive/public-release-hardening-evidence.md
+   Result: PASS
+
+2. AC2 — .gitignore broadened from .claude/state/acceptance/ to .claude/state/
+   Command: grep -n "^\.claude/state/" .gitignore
+   Output: line 118 shows broadened ".claude/state/" (no /acceptance/ suffix)
+   Result: PASS
+
+3. AC3 — .gitignore contains .claude/worktrees/
+   Command: grep -n "^\.claude/worktrees/" .gitignore
+   Output: line 125 shows ".claude/worktrees/"
+   Result: PASS
+
+4. AC4 — SessionStart subsection enumerates 6 default-matcher hooks
+   Command: sed -n '75,90p' docs/harness-architecture.md
+   Output: line 75 heading "SessionStart (2 matcher entries; multiple hooks per matcher)" — corrected from prior "(2 entries)"; lines 84-89 enumerate all 6 hooks: account switcher (84), pipeline detector (85), effort-policy-warn.sh (86), discovery-surfacer.sh (87), plan-status-archival-sweep.sh (88), settings-divergence-detector.sh (89).
+   Result: PASS
+
+5. AC5 — Hook Scripts table contains rows for all 3 new hooks
+   Command: grep -n "discovery-surfacer\.sh\|plan-status-archival-sweep\.sh\|settings-divergence-detector\.sh" docs/harness-architecture.md
+   Output: line 178 (discovery-surfacer.sh row in Hook Scripts table); lines 179-180 (the other 2 new hooks). Plus the SessionStart subsection enumeration at lines 87-89.
+   Result: PASS
+
+6. AC6 — Live ~/.claude/docs/harness-architecture.md byte-identical to repo
+   Command: diff "$HOME/.claude/docs/harness-architecture.md" "$(pwd)/docs/harness-architecture.md"
+   Output: empty (BYTE-IDENTICAL)
+   Result: PASS
+
+7. AC7 — Regression check: 8 previously-overwritten Phase 1d-C-2/1d-C-3 rows restored
+   Command: grep -cE "prd-validity-gate|spec-freeze-gate|findings-ledger-schema-gate|prd-validity-reviewer\.md|prd-validity\.md|spec-freeze\.md|findings-ledger\.md|findings-template\.md" docs/harness-architecture.md
+   Output: 9 (matches canonical e95313b count of 9 — verified by `git show e95313b:docs/harness-architecture.md | grep -cE ...` returning 9)
+   Result: PASS — regression fully restored
+
+8. AC8 — Last-updated banner has 2026-05-04 entry for discovery resolutions, AND the prior chain of "Earlier 2026-05-04 (Scope-enforcement-gate ..." entries preserved (not erased)
+   Command: head -2 docs/harness-architecture.md
+   Output: Line 2 begins with "Last updated: 2026-05-04 (Discovery resolutions for sed-status-flip bypass + template-vs-live divergence + worktree-base-at-master ..." THEN chains backward through "Earlier 2026-05-04 (Scope-enforcement-gate second-pass redesign ...", "Earlier 2026-05-04 (Scope-enforcement-gate redesign ...", "Earlier 2026-05-03 (Discovery Protocol ...", "Earlier 2026-05-03 (Agent Incentive Map ...", "Earlier 2026-05-03: Phase 1d-C-1 ...", "Earlier 2026-04-28 (Agent Teams integration ...", and back further to 2026-04-26, 2026-04-24 entries.
+   Result: PASS — chain preserved end-to-end
+
+Git evidence:
+  Files modified at HEAD (0e2c3a6):
+    - docs/harness-architecture.md (regression-restored + Task 4 additions reapplied)
+    - docs/plans/discovery-resolutions-2026-05-04-evidence.md (Task 1/2/3 evidence staged)
+    - docs/plans/discovery-resolutions-2026-05-04.md (in-flight scope updates entries)
+  Earlier Task 4 work commit:
+    - 2a49b11 — feat(harness): resolve 3 pending discoveries (introduced regression in harness-architecture.md)
+  Regression-fix commit:
+    - 0e2c3a6 — fix(harness-architecture): restore 8 regressed Phase 1d-C-2/1d-C-3 doc rows + Task 1-3 evidence
+
+Runtime verification: file .gitignore::docs/plans/archive/document-freshness-system.md
+Runtime verification: file .gitignore::docs/plans/archive/public-release-hardening.md
+Runtime verification: file .gitignore::^\.claude/state/$
+Runtime verification: file .gitignore::^\.claude/worktrees/
+Runtime verification: file docs/harness-architecture.md::SessionStart \(2 matcher entries; multiple hooks per matcher\)
+Runtime verification: file docs/harness-architecture.md::discovery-surfacer\.sh
+Runtime verification: file docs/harness-architecture.md::plan-status-archival-sweep\.sh
+Runtime verification: file docs/harness-architecture.md::settings-divergence-detector\.sh
+Runtime verification: file docs/harness-architecture.md::prd-validity-gate
+Runtime verification: file docs/harness-architecture.md::findings-ledger-schema-gate
+Runtime verification: file docs/harness-architecture.md::Last updated: 2026-05-04 \(Discovery resolutions
+
+Verdict: PASS
+Confidence: 9
+Reason: All 8 acceptance criteria verified at HEAD 0e2c3a6. The regression that caused the prior FAIL has been fully resolved: the canonical e95313b count of 9 references for Phase 1d-C-2/1d-C-3 mechanisms is restored byte-identically (`prd-validity-gate`, `spec-freeze-gate`, `findings-ledger-schema-gate`, `prd-validity-reviewer.md`, `prd-validity.md`, `spec-freeze.md`, `findings-ledger.md`, `findings-template.md` — total 9 matches at HEAD vs 9 at e95313b). The Task 4 additions are correctly re-applied on top: the SessionStart heading is rewritten from "(2 entries)" to "(2 matcher entries; multiple hooks per matcher)" and enumerates all 6 default-matcher hooks (account switcher, pipeline detector, effort-policy-warn.sh, discovery-surfacer.sh, plan-status-archival-sweep.sh, settings-divergence-detector.sh) at lines 84-89; the Hook Scripts table contains rows for all 3 new hooks at lines 178-180; the Last-updated banner at line 2 has a fresh 2026-05-04 entry for the discovery resolutions AND preserves the backward chain through prior 2026-05-04 / 2026-05-03 / 2026-04-28 / 2026-04-26 / 2026-04-24 entries (not erased). The `.gitignore` file contains all 4 archive paths (lines 101-104), the broadened `.claude/state/` (line 118), and `.claude/worktrees/` (line 125). Live `~/.claude/docs/harness-architecture.md` is byte-identical to the repo file (`diff` returns empty). All acceptance criteria pass; the regression-fix is verified.
+Caveat / lessons-from-the-regression: the root cause of the prior FAIL was the very template-vs-live divergence Discovery #2 surfaced — the live `~/.claude/docs/harness-architecture.md` was missing 8 rows the user's other session had added to the repo file. When this session edited the live file and copied to repo, it overwrote the user's uncommitted work. This confirms the value of shipping `settings-divergence-detector.sh` (Task 2 work): going forward, the next session's SessionStart will surface this class of divergence before any work begins. A natural follow-up would be a similar "doc divergence detector" for `~/.claude/docs/*` files — logged as a candidate HARNESS-GAP in the next session's discovery sweep. No new FM-NNN catalog entry is created because the failure class ("live config / live doc edits overwrite uncommitted user-side changes from the other repo copy") is now structurally surfaced by `settings-divergence-detector.sh` for settings.json; an analogous detector for harness docs would close the doc side of the same class.
