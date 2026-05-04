@@ -26,6 +26,9 @@ single biggest hole in the first Gen 4 pass.
 | Product Q&A claims need file:line citations | `claim-reviewer` agent + `verify-feature` skill (self-invoked, residual risk) | `~/.claude/agents/claim-reviewer.md` + `~/.claude/skills/verify-feature.md` |
 | PRs with high docs/config volume but zero execution evidence are blocked | `vaporware-volume-gate.sh` PreToolUse on `gh pr create` (A8 — Gen 6) | `~/.claude/hooks/vaporware-volume-gate.sh` |
 | First-message goal extraction with checksummed integrity (tamper-detected; covers UNHONORED user goals) | `goal-extraction-on-prompt.sh` UserPromptSubmit + `goal-coverage-on-stop.sh` Stop hook (A1 — Gen 6) | `~/.claude/hooks/goal-extraction-on-prompt.sh` + `~/.claude/hooks/goal-coverage-on-stop.sh` |
+| Builder commits cannot extend scope beyond plan's declared `## Files to Modify/Create` section | `scope-enforcement-gate.sh` PreToolUse Bash blocker on `git commit` | `~/.claude/hooks/scope-enforcement-gate.sh` |
+| Mode: design plans must show inline arithmetic for any comparative quantitative claim | `plan-reviewer.sh` Check 9 — comparative-phrase + paragraph-window arithmetic detection (FM-013 / FM-014) | `~/.claude/hooks/plan-reviewer.sh` |
+| Tier 3+ plans cannot dispatch first Task invocation without DAG-approval waiver | `dag-review-waiver-gate.sh` PreToolUse Task blocker (per-session marker after first allow) | `~/.claude/hooks/dag-review-waiver-gate.sh` |
 
 **Missing from the enforcement map (explicitly acknowledged as gaps):**
 - `test-quality-reviewer` as a separate agent does NOT exist. The trivial-assertion ban lives inside `pre-commit-tdd-gate.sh` Layer 4. Test quality is not reviewed adversarially outside the gate.

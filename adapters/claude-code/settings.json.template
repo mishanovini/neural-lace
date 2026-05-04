@@ -124,11 +124,29 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/scope-enforcement-gate.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Task|Agent",
         "hooks": [
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/teammate-spawn-validator.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/dag-review-waiver-gate.sh"
           }
         ]
       }

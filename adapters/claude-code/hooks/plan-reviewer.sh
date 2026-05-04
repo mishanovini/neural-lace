@@ -327,6 +327,136 @@ AUDIT_PLACEHOLDER
     echo "self-test (h) design-mode-audit-placeholder-only: FAIL (expected)" >&2
   fi
 
+  # ============================================================
+  # Check 9 scenarios (i, j, k, l) — Mode-gated comparative-claim
+  # arithmetic check (FM-013 / FM-014)
+  # ============================================================
+  #
+  # (i) Mode: code plan with comparative phrases — expect PASS (Check 9 is
+  #     design-mode-only, so Mode: code plans are exempt from Check 9.
+  #     The fixture must still pass all OTHER checks).
+  # (j) Mode: design plan with comparative phrases AND visible arithmetic
+  #     in the same paragraph — expect PASS.
+  # (k) Mode: design plan with comparative phrase but NO arithmetic in
+  #     the same paragraph — expect FAIL.
+  # (l) Mode: design plan with self-contradicting hedge ("comfortably
+  #     under X (slight over)") — expect FAIL.
+
+  # Fixture (i): Mode: code plan with comparative phrases. The fixture
+  # must reuse the standard required-section shape; we extend the
+  # base writer to inject a paragraph containing comparative phrases
+  # without arithmetic, so the only thing distinguishing this from a
+  # FAIL is the mode-gating.
+  cat > "$TMPDIR_SELFTEST/i.md" <<'CHECK9_I'
+# Plan: Self-test Check 9 mode-code fixture
+Status: ACTIVE
+Mode: code
+Backlog items absorbed: none
+
+## Goal
+This plan describes a small refactor that should fit comfortably under
+50 RPM at peak load, with no concerns about exceeding 100 calls per
+minute since the integration only fires on user-driven events. The
+typical usage stays well below 30 RPM observed in production.
+
+## Scope
+- IN: refactor a small helper for under 200 lines of churn
+- OUT: anything outside the helper
+
+## Tasks
+- [ ] 1. Refactor the helper module per the goal above.
+
+## Files to Modify/Create
+- `src/helper.ts` — refactor target
+
+## Assumptions
+- Assumes the existing test suite covers the helper's contract so
+  the refactor is verified by re-running the tests.
+
+## Edge Cases
+- The refactor must preserve behavior for all callers; if any caller
+  relies on a side-effect, document it and keep the side-effect.
+
+## Testing Strategy
+- Run the existing test suite; manual smoke check is not required since
+  the refactor is contract-preserving.
+
+Walking Skeleton: n/a — pure refactor, no new end-to-end slice.
+
+## Definition of Done
+- [ ] Tests pass after refactor.
+CHECK9_I
+
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/i.md" > /dev/null 2>&1; then
+    echo "self-test (i) check9-mode-code-exempt: PASS (expected)" >&2
+  else
+    echo "self-test (i) check9-mode-code-exempt: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Fixture (j): Mode: design plan with comparative phrases AND visible
+  # arithmetic in the same paragraph. Reuse write_design_plan_base for
+  # the structural shape (10 SEA sections + audit section), then append
+  # a paragraph with both a comparative claim and the arithmetic that
+  # validates it.
+  write_design_plan_base "$TMPDIR_SELFTEST/j.md" "5_sweeps"
+  cat >> "$TMPDIR_SELFTEST/j.md" <<'CHECK9_J'
+
+## Capacity Notes
+
+The proposed sync cadence stays under 50 RPM at peak. Computation:
+60 calls (15 threads × 2 calls × 2 batches × 1 sync) ÷ 60s = 60 calls/min.
+Wait, that exceeds 50 — the actual budget is 30 calls per sync because
+the per-thread call count is 1 in steady state, giving 15 < 50 RPM.
+CHECK9_J
+
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/j.md" > /dev/null 2>&1; then
+    echo "self-test (j) check9-design-mode-with-arithmetic: PASS (expected)" >&2
+  else
+    echo "self-test (j) check9-design-mode-with-arithmetic: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Fixture (k): Mode: design plan with comparative phrase but NO
+  # arithmetic in the same paragraph. The base passes all other checks;
+  # the appended paragraph asserts a quantitative claim without showing
+  # the math.
+  write_design_plan_base "$TMPDIR_SELFTEST/k.md" "5_sweeps"
+  cat >> "$TMPDIR_SELFTEST/k.md" <<'CHECK9_K'
+
+## Capacity Notes
+
+The integration produces 60 calls per minute, well under 50 RPM at
+peak load based on prior production observation that the rate has
+never approached the documented ceiling for similar integrations.
+CHECK9_K
+
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/k.md" > /dev/null 2>&1; then
+    echo "self-test (k) check9-design-mode-without-arithmetic: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (k) check9-design-mode-without-arithmetic: FAIL (expected)" >&2
+  fi
+
+  # Fixture (l): Mode: design plan with a self-contradicting hedge.
+  # The phrase "comfortably under 50K ITPM (slight over)" is the
+  # canonical FM-014 example.
+  write_design_plan_base "$TMPDIR_SELFTEST/l.md" "5_sweeps"
+  cat >> "$TMPDIR_SELFTEST/l.md" <<'CHECK9_L'
+
+## Capacity Notes
+
+The token budget sits comfortably under 50K ITPM (slight over)
+in worst-case bursts. The integration is otherwise within tier.
+CHECK9_L
+
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/l.md" > /dev/null 2>&1; then
+    echo "self-test (l) check9-self-contradicting-hedge: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (l) check9-self-contradicting-hedge: FAIL (expected)" >&2
+  fi
+
   if [[ $FAILED -eq 0 ]]; then
     echo "plan-reviewer --self-test: all scenarios matched expectations" >&2
     exit 0
@@ -787,6 +917,114 @@ if [[ "$MODE_VALUE" == "design" ]]; then
     if [[ $HAS_CARVEOUT -eq 0 ]] && [[ $SWEEP_TOKENS_FOUND -lt 5 ]]; then
       add_finding "Check 8A (design-mode): plan's '## Pre-Submission Audit' section has neither (a) the canonical full-sentence carve-out 'n/a — single-task plan, no class-sweep needed', nor (b) at least one line each starting with S1/S2/S3/S4/S5 (found $SWEEP_TOKENS_FOUND of 5 distinct sweep tokens). The planner must document each of the 5 sweeps (or use the canonical carve-out) before invoking systems-designer. Format per sweep: 'S1 (Entry-Point Surfacing): swept, N matches, M cited correctly, K added to Tasks/Files'. See ~/.claude/rules/design-mode-planning.md, 'The \`## Pre-Submission Audit\` section'."
     fi
+  fi
+fi
+
+# ============================================================
+# Check 9 (C22): Mode: design plans must show inline arithmetic
+# for quantitative comparative claims (FM-013 / FM-014)
+# ============================================================
+#
+# The "Quantitative Claims Must Be Validated, Not Asserted" rule in
+# ~/.claude/rules/design-mode-planning.md requires that every comparative
+# quantitative claim ("under 50 RPM", "fits within 30s timeout",
+# "30% margin") in a design-mode plan be accompanied by inline arithmetic
+# in the same paragraph that demonstrates the math has been checked.
+#
+# Comparative phrases without arithmetic are unverified assertions and
+# cause real planning failures: the originating 2026-04-28 review caught
+# Section 9 of an auth-refactor plan saying "60 calls within tier limits"
+# against a 50 RPM cap — false by 20%.
+#
+# Detection: regex-match comparative phrases. For each match, scan a
+# paragraph window (5 lines before + 5 lines after, bounded by blank
+# lines) for inline arithmetic operators (multiplication, division,
+# comparison, computed-value markers).
+#
+# Self-contradicting hedges ("comfortably under X (slight over)") are
+# flagged as a separate failure class because the parenthetical
+# contradiction is a stronger signal than absent arithmetic.
+#
+# Mode-gating: only fires on Mode: design. Mode: code and Mode: design-skip
+# are exempt. The check is a no-op when the plan is not design-mode.
+
+if [[ "$MODE_VALUE" == "design" ]]; then
+  # Self-contradicting hedge patterns: a comparative phrase followed by a
+  # parenthetical concession in the same line. These are detected first
+  # because they're a stronger signal than missing arithmetic.
+  HEDGE_LINES=$(grep -niE '\b(comfortably|well|fits|under|over|exceeds|below|above|at most|at least)\b[^()]{0,80}\((slight|slightly|barely|close call|just|almost)\b[^)]{0,80}(over|under|above|below|exceeds|short|past)' "$PLAN_FILE" 2>/dev/null || true)
+  if [[ -n "$HEDGE_LINES" ]]; then
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      ln=$(echo "$line" | cut -d: -f1)
+      phrase=$(echo "$line" | cut -d: -f2- | head -c 140 | tr -d '\n')
+      add_finding "Check 9 (design-mode self-contradicting hedge): line $ln has a comparative claim contradicting its own caveat — \"$phrase\". Reason: FM-014 — capacity claim contradicts its own math. Resolve to a single position (lower the cap, accept the rate-limit retry, upgrade the tier) and rewrite the claim without the parenthetical hedge."
+    done <<< "$HEDGE_LINES"
+  fi
+
+  # Comparative-phrase detection. We collect all match line numbers and
+  # then validate each match's surrounding paragraph for arithmetic.
+  # The pattern groups cover the canonical forms documented in
+  # ~/.claude/rules/design-mode-planning.md "Quantitative Claims Must Be
+  # Validated, Not Asserted".
+  COMPARATIVE_PATTERN='(\bunder [0-9]+\b|\bover [0-9]+\b|\bexceeds [0-9]+\b|\bfits within [0-9]+\b|\bbelow [0-9]+\b|\babove [0-9]+\b|\bat most [0-9]+\b|\bat least [0-9]+\b|\bwell (above|below) [0-9]+\b|\bcomfortably (under|within|below|above)\b|[0-9]+%[[:space:]]+(margin|headroom|over|under)\b|\b[0-9]+x\b[[:space:]]+(faster|slower|larger|smaller|more|less)\b)'
+
+  COMPARATIVE_LINES=$(grep -nEi "$COMPARATIVE_PATTERN" "$PLAN_FILE" 2>/dev/null || true)
+
+  if [[ -n "$COMPARATIVE_LINES" ]]; then
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      ln=$(echo "$line" | cut -d: -f1)
+      [[ -z "$ln" ]] && continue
+      phrase=$(echo "$line" | cut -d: -f2- | head -c 120 | tr -d '\n')
+
+      # Skip if this line is already flagged as a self-contradicting hedge
+      # (the hedge check above is more specific and preferred).
+      if echo "$HEDGE_LINES" | grep -qE "^$ln:" 2>/dev/null; then
+        continue
+      fi
+
+      # Compute the paragraph window: walk backward from $ln until a blank
+      # line or 5-line cap, then forward from $ln until a blank line or
+      # 5-line cap. Intent: a "paragraph" is a contiguous block of
+      # non-blank lines bounded by blank lines.
+      start=$((ln - 5))
+      [[ $start -lt 1 ]] && start=1
+      end=$((ln + 5))
+
+      # Walk back from ln-1 to start, stopping at the first blank line.
+      i=$((ln - 1))
+      while [[ $i -ge $start ]]; do
+        if [[ -z "$(sed -n "${i}p" "$PLAN_FILE" | tr -d '[:space:]')" ]]; then
+          start=$((i + 1))
+          break
+        fi
+        i=$((i - 1))
+      done
+
+      # Walk forward from ln+1 to end, stopping at the first blank line.
+      i=$((ln + 1))
+      while [[ $i -le $end ]]; do
+        if [[ -z "$(sed -n "${i}p" "$PLAN_FILE" | tr -d '[:space:]')" ]]; then
+          end=$((i - 1))
+          break
+        fi
+        i=$((i + 1))
+      done
+
+      paragraph=$(sed -n "${start},${end}p" "$PLAN_FILE" 2>/dev/null)
+
+      # Inline arithmetic = at least one of:
+      #   - multiplication / division: "N × M", "N * M", "N / M", "N ÷ M"
+      #   - comparison: "N < M", "N > M", "N ≤ M", "N ≥ M", "N <= M", "N >= M"
+      #   - computed value: "= N" or "→ N" or ":= N"
+      # The patterns require digits on at least one side to keep noise low.
+      ARITH_PATTERN='[0-9]+[[:space:]]*[×*/÷][[:space:]]*[0-9]+|[0-9]+[[:space:]]*[<>][=]?[[:space:]]*[0-9]+|[0-9]+[[:space:]]*[≤≥][[:space:]]*[0-9]+|[=→][[:space:]]*[0-9]+|[0-9]+[[:space:]]*=[[:space:]]*[0-9]+'
+
+      if ! echo "$paragraph" | grep -qE "$ARITH_PATTERN" 2>/dev/null; then
+        add_finding "Check 9 (design-mode comparative claim without inline arithmetic): line $ln has a comparative quantitative claim without arithmetic in the same paragraph — \"$phrase\". Required: show the math in the same paragraph (e.g., \"60 calls (15 threads × 2 calls × 2 batches × 1 sync) ÷ 60s = 60 calls/min < 50 RPM tier limit\"). Reason: FM-013 / FM-014 — capacity claims without arithmetic are unverified. See ~/.claude/rules/design-mode-planning.md, 'Quantitative Claims Must Be Validated, Not Asserted'."
+      fi
+    done <<< "$COMPARATIVE_LINES"
   fi
 fi
 
