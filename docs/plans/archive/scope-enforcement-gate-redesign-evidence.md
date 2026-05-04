@@ -22,7 +22,7 @@ Git evidence:
   Files modified in recent history (uncommitted, staged for T5):
     - docs/harness-architecture.md
 
-Runtime verification: file /c/Users/misha/claude-projects/neural-lace/docs/harness-architecture.md::Scope-enforcement-gate second-pass redesign
+Runtime verification: file ~/claude-projects/neural-lace/docs/harness-architecture.md::Scope-enforcement-gate second-pass redesign
 
 Verdict: PASS
 Confidence: 10
