@@ -157,3 +157,117 @@ Runtime verification: file docs/harness-architecture.md::comprehension-gate.md
 Verdict: PASS
 Confidence: 9
 Reason: All ten acceptance criteria satisfied. Rule file at declared path is 184 lines (within 150-300), documents the gate's R2+ trigger and task-verifier auto-invocation, names all four articulation sub-sections in order, walks the three-stage agent rubric (schema → substance → diff correspondence), includes worked PASS / FAIL (×2) / INCOMPLETE examples with rubric-driven reasoning, justifies the rung-2 cutoff with explicit cost/benefit analysis, cross-references all six required artifacts (Decision 020, agent, template, FM-023, enforcement-map row, task-verifier extension), includes a 7-row enforcement summary table, single commit (1a878a5), and the harness-architecture.md inventory row is for the legitimately-in-scope new rule file.
+
+EVIDENCE BLOCK
+==============
+Task ID: 3
+Task description: Agent — comprehension-reviewer.md. NEW agent file. Front-matter declaring tools (Read, Grep, Glob — no write tools). Output Format Requirements section per the class-aware feedback contract (Class:, Sweep query:, Required generalization: where applicable). Three-stage rubric: (a) parse the builder's articulation block; (b) verify each sub-section meets the ≥ 30-char substance threshold + non-placeholder content; (c) cross-check articulation against staged diff (read changed files; verify each claimed edge-case-covered actually has corresponding diff content; verify edge-cases-NOT-covered is honest about gaps). Returns PASS / FAIL / INCOMPLETE. Single commit.
+Verified at: 2026-05-04T23:55:00Z
+Verifier: task-verifier agent
+
+Plan rung: 1 (comprehension-gate does NOT fire on this plan's tasks; standard verification rubric applied)
+
+Checks run:
+
+1. Commit landed (single commit per acceptance criterion 8)
+   Command: git show --stat da26120
+   Output: commit da26120 dated 2026-05-04, 2 files changed, +372 insertions.
+   Files: adapters/claude-code/agents/comprehension-reviewer.md (NEW, 371 lines), docs/harness-architecture.md (EDIT, +1 line minimal row).
+   Result: PASS
+
+2. Agent file exists and is substantial (acceptance criterion 1: ~250-400 lines)
+   Command: wc -l adapters/claude-code/agents/comprehension-reviewer.md
+   Output: 371 adapters/claude-code/agents/comprehension-reviewer.md
+   Result: PASS — 371 lines is squarely within the 250-400 expected range.
+
+3. Frontmatter declares correct agent name, description, and read-only tools (acceptance criterion 2)
+   Command: head -5 adapters/claude-code/agents/comprehension-reviewer.md
+   Output (lines 1-5):
+     ---
+     name: comprehension-reviewer
+     description: LLM-assisted comprehension audit of builder articulations on R2+ plan tasks...
+     tools: Read, Grep, Glob, Bash
+     ---
+   Result: PASS — name matches, description present and substantive, tools list is read-only (Read/Grep/Glob plus Bash for read-only `git show`/`git diff`/`git log` invocations as documented at line 282; explicitly NO Edit/Write/MultiEdit).
+
+4. Three-stage rubric documented with the right structure (acceptance criterion 3)
+   Command: grep -n "^### Stage" adapters/claude-code/agents/comprehension-reviewer.md
+   Output:
+     63:### Stage 1 — Schema check
+     82:### Stage 2 — Substance check
+     98:### Stage 3 — Diff correspondence
+   Stage 1 (lines 63-80): schema check parses for the four required headings (`### Spec meaning`, `### Edge cases covered`, `### Edge cases NOT covered`, `### Assumptions`); INCOMPLETE on missing heading; PASS to Stage 2 on all four present.
+   Stage 2 (lines 82-96): substance check enforces ≥ 30 non-whitespace chars per sub-section AND non-placeholder content; FAIL with `vacuous-sub-section` class on placeholder dodges (None/n/a/TBD/see code/etc.).
+   Stage 3 (lines 98-128): diff correspondence in three sub-checks — 3a (file:line citations under `### Edge cases covered` map to actual diff content), 3b (assumptions plausibility — diff doesn't actively contradict), 3c (NOT-covered list is honest — empty list paired with no defensive coding is `dishonestly-empty-not-covered-list` FAIL).
+   Halting semantics documented: "Each stage halts on first failure: a Stage 1 failure does NOT proceed to Stage 2; a Stage 2 failure does NOT proceed to Stage 3" (line 61).
+   Result: PASS — all three stages present, in order, with the correct rubric.
+
+5. Class-aware feedback contract with six canonical classes (acceptance criterion 4)
+   Command: grep -n "^- \`" adapters/claude-code/agents/comprehension-reviewer.md | head -10
+   Output:
+     197:- `missing-sub-section` — Stage 1: a required heading...
+     198:- `vacuous-sub-section` — Stage 2: a sub-section's body is below the 30-char threshold OR consists entirely of placeholder content
+     199:- `unsupported-edge-case-claim` — Stage 3a: a bullet under `### Edge cases covered` cites file:line content the diff does not provide
+     200:- `contradicted-assumption` — Stage 3b: a bullet under `### Assumptions` is actively contradicted by the diff
+     201:- `dishonestly-empty-not-covered-list` — Stage 3c: `### Edge cases NOT covered` is empty AND the diff contains no defensive coding
+     202:- `misclassified-edge-case` — Stage 3c: a bullet under `### Edge cases NOT covered` cites an edge the diff actually DOES handle
+     203:- `instance-only` — used with a 1-line justification only when the gap is genuinely unique
+   Result: PASS — six canonical classes present (the prompt asks for at least 4-6; agent ships 6 plus instance-only escape hatch). Each class is mapped to the stage that surfaces it.
+   Six-field per-gap block confirmed at lines 178-193 (Location / Defect / Class / Sweep query / Required fix / Required generalization).
+
+6. Worked examples for PASS, FAIL, INCOMPLETE (acceptance criterion 5)
+   Command: grep -n "^### Example " adapters/claude-code/agents/comprehension-reviewer.md
+   Output:
+     286:### Example PASS
+     296:### Example FAIL — vacuous sub-section
+     324:### Example INCOMPLETE — missing heading
+   Each example walks through the rubric stages and shows the per-gap block format that would emit. The FAIL example shows the vacuous-sub-section class with sweep query and generalization; the INCOMPLETE example shows missing-sub-section.
+   Result: PASS — three worked examples present, one per verdict.
+
+7. Boundary behaviors documented (acceptance criterion 6)
+   Command: grep -n "Rung < 2\|Articulation block missing entirely\|Diff unavailable" adapters/claude-code/agents/comprehension-reviewer.md
+   Output:
+     54:- **Rung < 2.** If you read the plan file's `rung:` header field and it is 0 or 1, immediately return PASS with note `comprehension-gate not applicable below rung 2`.
+     55:- **Articulation block missing entirely.** No `## Comprehension Articulation` heading found in the task's evidence entry. Return INCOMPLETE with `articulation block missing`.
+     56:- **Diff unavailable.** If `git show <sha>` or `git diff <range>` fails, return INCOMPLETE with `diff unavailable: <stderr summary>`.
+   Result: PASS — all three boundary behaviors documented with explicit verdicts (PASS for rung<2, INCOMPLETE for missing articulation, INCOMPLETE for unavailable diff). Plus a fourth boundary (line 57: articulation references file not in diff → FAIL with `unsupported-edge-case-claim`).
+
+8. Cross-references to rule, decision, template, task-verifier, FM-023 (acceptance criterion 7)
+   Command: grep -n "^- \`task-verifier\|^- \`comprehension-gate\|^- \`comprehension-template\|^- Decision 020\|^- \`FM-023\|^- Enforcement-map row" adapters/claude-code/agents/comprehension-reviewer.md
+   Output (lines 354-361 inclusive):
+     356:- `task-verifier` (`adapters/claude-code/agents/task-verifier.md`) — invokes you at `rung: 2+` BEFORE flipping the checkbox. Propagates your verdict per Decision 020d. The Task 4 extension to `task-verifier.md` lands the auto-invocation block.
+     357:- `comprehension-gate.md` rule (`adapters/claude-code/rules/comprehension-gate.md`) — documents when the gate fires, the four required articulation fields, and the three-stage rubric.
+     358:- `comprehension-template.md` template (`adapters/claude-code/templates/comprehension-template.md`) — canonical articulation shape with a worked example.
+     359:- Decision 020 (`docs/decisions/020-comprehension-gate-semantics.md`) — locks the five sub-decisions: rung-2 cutoff, four required fields, ≥ 30-char threshold, FAIL/INCOMPLETE blocks the checkbox flip, articulation lives in the Evidence Log.
+     360:- `FM-023 vaporware-spec-misunderstood-by-builder` (in `docs/failure-modes.md`, lands in Task 5 of the parent plan)
+     361:- Enforcement-map row (in `adapters/claude-code/rules/vaporware-prevention.md`, lands in Task 5)
+   Result: PASS — all six expected cross-references present (rule, decision, template, task-verifier with Task 4 note, FM-023 with Task 5 note, enforcement-map row with Task 5 note).
+
+9. harness-architecture.md row added is minimal and in scope (acceptance criterion 9)
+   Command: git show da26120 -- docs/harness-architecture.md
+   Output: a single +1 line addition under the agents table at line 326, describing comprehension-reviewer.md in one row with the Phase tag (Phase 1d-C-4, 2026-05-04). The row explicitly notes "The task-verifier auto-invocation block lands in Phase 1d-C-4 Task 4; FM-023, the full inventory prose, and the vaporware-prevention enforcement-map row land in Task 5."
+   Result: PASS — minimal table row to satisfy docs-freshness-gate (commit message documents this); full inventory prose deferred to Task 5 per plan.
+
+Git evidence:
+  Files modified in commit da26120:
+    - adapters/claude-code/agents/comprehension-reviewer.md (NEW, 371 lines)
+    - docs/harness-architecture.md (EDIT, +1 line)
+
+Counter-incentive discipline check: file exists at declared path; frontmatter is correct; three-stage rubric is rigorous; six canonical classes present; worked examples are concrete (not boilerplate); boundary behaviors handle the three corner cases the prompt called out; cross-references all six required artifacts; single commit; harness-architecture.md row is appropriately minimal. The agent's substance check enforces non-placeholder content per its own rubric, and the agent file itself does not contain placeholder content. The class-aware feedback contract is correctly structured with all six fields per gap. No vaporware indicators detected.
+
+Runtime verification: file adapters/claude-code/agents/comprehension-reviewer.md::name: comprehension-reviewer
+Runtime verification: file adapters/claude-code/agents/comprehension-reviewer.md::tools: Read, Grep, Glob, Bash
+Runtime verification: file adapters/claude-code/agents/comprehension-reviewer.md::### Stage 1 — Schema check
+Runtime verification: file adapters/claude-code/agents/comprehension-reviewer.md::### Stage 2 — Substance check
+Runtime verification: file adapters/claude-code/agents/comprehension-reviewer.md::### Stage 3 — Diff correspondence
+Runtime verification: file adapters/claude-code/agents/comprehension-reviewer.md::missing-sub-section
+Runtime verification: file adapters/claude-code/agents/comprehension-reviewer.md::vacuous-sub-section
+Runtime verification: file adapters/claude-code/agents/comprehension-reviewer.md::unsupported-edge-case-claim
+Runtime verification: file adapters/claude-code/agents/comprehension-reviewer.md::contradicted-assumption
+Runtime verification: file adapters/claude-code/agents/comprehension-reviewer.md::dishonestly-empty-not-covered-list
+Runtime verification: file adapters/claude-code/agents/comprehension-reviewer.md::misclassified-edge-case
+Runtime verification: file docs/harness-architecture.md::comprehension-reviewer.md
+
+Verdict: PASS
+Confidence: 9
+Reason: All nine acceptance criteria satisfied. Agent file at declared path is 371 lines (within 250-400), frontmatter declares correct name and read-only tools (Read/Grep/Glob/Bash with no Edit/Write/MultiEdit), documents the three-stage rubric (schema → substance → diff correspondence) with halting semantics, ships six canonical class values plus instance-only escape hatch in the six-field per-gap feedback block (Location/Defect/Class/Sweep query/Required fix/Required generalization), includes worked PASS / FAIL / INCOMPLETE examples with rubric-driven reasoning, documents three boundary behaviors (rung<2 → PASS, missing articulation → INCOMPLETE, diff unavailable → INCOMPLETE), cross-references all six required artifacts (rule, Decision 020, template, task-verifier with Task 4 note, FM-023 with Task 5 note, enforcement-map row with Task 5 note), single commit (da26120), and the harness-architecture.md row is minimal and in scope per Task 3 / Task 5 split.
