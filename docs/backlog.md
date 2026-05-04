@@ -1,6 +1,6 @@
 # Neural Lace — Harness Backlog
 
-Last updated: 2026-05-03 (HARNESS-AUDIT-EXT-01 + HARNESS-AUDIT-EXT-02 absorbed into `docs/plans/pre-submission-audit-mechanical-enforcement.md` and removed from the open list per backlog-plan-atomicity rule. Earlier 2026-04-29: two mechanism-extension items added for Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md`; remaining two harness-drift items stay open. Earlier 2026-04-27: four harness-drift items added — see `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.)
+Last updated: 2026-05-03 (HARNESS-GAP-10 added — Build Doctrine integration analysis surfaced 7 sub-gaps; see entry below. Earlier 2026-05-03: HARNESS-AUDIT-EXT-01 + HARNESS-AUDIT-EXT-02 absorbed into `docs/plans/pre-submission-audit-mechanical-enforcement.md` and removed from the open list per backlog-plan-atomicity rule. Earlier 2026-04-29: two mechanism-extension items added for Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md`; remaining two harness-drift items stay open. Earlier 2026-04-27: four harness-drift items added — see `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.)
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
@@ -47,6 +47,34 @@ Strategy context and reasoning for many entries below lives in [`docs/claude-cod
 **Effort.** ~30 minutes for both fixes, including self-test scenarios that exercise the new section-context filtering.
 
 **Why P3 (not P1):** workaround is trivial (rephrase the plan); no security or correctness implications. The class is "documentation-context regex matches database-context vocabulary," which is the same class as FM-009 (cross-section-contradiction) but at the hook-implementation level rather than plan-content level.
+
+---
+
+## HARNESS-GAP-10 — Seven gaps surfaced during Build Doctrine integration analysis (added 2026-05-03)
+
+**Source.** Build Doctrine + Neural Lace deep comparative review (plan `~/.claude/plans/build-doctrine-cheerful-hearth.md`, completed 2026-05-03). Full evidence in `docs/reviews/2026-05-03-build-doctrine-integration-gaps.md` (gitignored — content is local-only; this entry is the public pointer). Seven sub-gaps named below; each is a candidate for Phase 1d-E (harness cleanup) per the unified methodology recommendation at `~/claude-projects/Build Doctrine/outputs/unified-methodology-recommendation.md`.
+
+**Sub-gap A — Stop-hook overlap analysis (P2).** Five Stop hooks (`narrate-and-wait-gate`, `transcript-lie-detector`, `goal-coverage-on-stop`, `imperative-evidence-linker`, `deferral-counter`) all detect narrative-integrity failures with adjacent classes. Need a written orthogonality matrix: for each pair, name one example the first catches that the second misses. If any pair has no clear separation, consolidate.
+
+**Sub-gap B — `pipeline-agents.md` is project-specific in global rules (P2).** `~/.claude/rules/pipeline-agents.md` references roles and failure patterns that are clearly specific to one downstream project rather than universal harness concerns. Should be relocated to that project's `.claude/rules/` or merged into the project's CLAUDE.md.
+
+**Sub-gap C — `claim-reviewer` post-Gen6 reassessment (P2).** `claim-reviewer` was the residual mitigation for verbal vaporware. Gen 6 narrative-integrity hooks may have superseded most or all of it. For each class `claim-reviewer` was meant to catch, identify whether a Gen 6 hook now catches it. If yes for all, deprecate the agent. If some uncovered, mechanize as a Stop-hook variant rather than self-invoked.
+
+**Sub-gap D — Telemetry not shipped, blocks dependent mechanisms (P1).** `docs/harness-strategy.md` lists telemetry collection as a 2026-08 target. The Build Doctrine's findings-ledger (mechanism proposal C9) and the future process-improvement-observer agent (Phase 1d-E) both require telemetry as a primary data source. If telemetry slips past 2026-08, dependent mechanisms slip. Action: explicitly flag telemetry as a prerequisite in the methodology recommendation's dependency section, and confirm the 2026-08 target is on track. If at risk, decide between (a) implementing a minimal telemetry collector earlier or (b) deferring dependent mechanisms.
+
+**Sub-gap E — C16 behavioral-contracts validator must require concrete invariants (P2).** Build Doctrine mechanism proposal C16 (behavioral-contracts validator) can be gamed by superficial conformance — a builder marks a spec "frozen" with `idempotency: true` as vacuous prose, schema check passes, but the contract is meaningless. Action: when implementing C16, require concrete invariants per category (idempotency = explicit invariant statement mapping inputs to post-condition; failure modes = named modes from project-defined enum, not free-text; retry semantics = numeric backoff parameters). Reject vacuous fillers.
+
+**Sub-gap F — Rules possibly superseded by hooks need audit (P2).** `vaporware-prevention.md` is now a stub pointing at hooks. Other rules may have similarly migrated mechanism content into hooks while prose remains as-if-authoritative — candidates: portions of `testing.md` (TDD discipline mostly enforced by `pre-commit-tdd-gate.sh`), portions of `diagnosis.md` (post-Gen6 hooks may cover the "encode the fix" loop), portions of `git.md` (force-push and `--no-verify` blocked by inline PreToolUse blockers). Action: for each rule in `~/.claude/rules/`, identify which sections are operationalized by hooks. Rules where >70% of content is hook-enforced should follow `vaporware-prevention.md`'s pattern (stub pointing at enforcement map).
+
+**Sub-gap G — Definition-on-first-use enforcement hook (Phase 1d-F proposal) (P3).** Build Doctrine + NL docs use ~50+ acronyms heavily; user requested a glossary, which now lives at `~/claude-projects/Build Doctrine/outputs/glossary.md`. To prevent recurring drift, definition-on-first-use should be enforced mechanically. Proposed mechanism: pre-commit hook that scans every `*.md` under `neural-lace/build-doctrine/` for first-use acronyms (regex-detected), requiring either a definition-in-context or a cross-reference to `glossary.md`. Blocks commits introducing undefined terms. Phase 1d-F per Q7 of the unified methodology recommendation.
+
+**Sub-gap H — `docs/reviews/` gitignore is overly broad (P3, meta-finding).** This very session surfaced that `docs/reviews/` is gitignored to prevent downstream-project reviews from leaking into NL, but the gitignore also makes legitimate NL-self-reviews invisible to `bug-persistence-gate.sh` (which uses `git ls-files --exclude-standard`). The harness-hygiene rule's guidance "what does NOT belong in the harness repo: plan/decision/review/session files that were produced while USING the harness to build a DIFFERENT project" implies NL-self-reviews ARE legitimate to commit, but the broad gitignore prevents that. Action: refine `.gitignore` to exclude downstream-project reviews specifically (e.g., by naming convention) while allowing NL-self-reviews. OR: move NL-self-reviews to a non-ignored subdirectory like `docs/self-reviews/`.
+
+**Cross-references.**
+- Full review (gitignored, local-only): `docs/reviews/2026-05-03-build-doctrine-integration-gaps.md`
+- Originating analysis: `~/claude-projects/Build Doctrine/outputs/analysis/03-comparative-analysis.md`
+- Methodology recommendation: `~/claude-projects/Build Doctrine/outputs/unified-methodology-recommendation.md`
+- Recovery point for the integration: tag `pre-build-doctrine-integration` at NL master HEAD, branch `build-doctrine-integration` for Phase 1d work.
 
 ---
 
