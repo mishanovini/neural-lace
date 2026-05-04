@@ -2,14 +2,15 @@
 title: Pre-existing template-vs-live divergence across hooks not in Phase 1d-C-2 scope
 date: 2026-05-04
 type: process
-status: pending
-auto_applied: false
+status: decided
+auto_applied: true
 originating_context: Phase 1d-C-2 Task 9 builder noted divergence while wiring prd-validity-gate + spec-freeze-gate; carried forward through Phase 1d-C-3
-decision_needed: Whether to schedule a dedicated reconciliation pass or accept the divergence as low-priority drift
+decision_needed: n/a — split-decision applied 2026-05-04 (B now; A deferred to Phase 1d-E)
 predicted_downstream:
   - adapters/claude-code/settings.json.template
   - ~/.claude/settings.json
   - the SessionStart settings-divergence detector (if any)
+  - docs/backlog.md (Phase 1d-E reconciliation entry)
 ---
 
 ## What was discovered
@@ -53,8 +54,26 @@ C. The reconciliation pass (A) is needed because the gap is large and accumulate
 
 ## Decision
 
-Pending. Surface to user at next SessionStart. May want to bundle into Phase 1d-E (harness cleanup) rather than its own phase.
+**Split decision (2026-05-04):** ship B now, defer A to Phase 1d-E.
+
+The discovery file's original recommendation was C (both A and B). The user accepted B but pushed back on the framing of A as "user judgment per hook." Their reasoning: the orchestrator (Claude) is better positioned than the user to research drift origins via git blame + commit log archaeology, and to propose canonical state with rationale per hook, rather than asking the user to decide cold.
+
+**B — SessionStart divergence-detector — auto-applied now (2026-05-04).** Reversible: one revert removes the hook. Reasoning principle: drift in the Mechanism layer should be observable, not assumed-not-present. The detector's first runs become the worklist for A.
+
+**A — One-shot reconciliation pass — deferred to Phase 1d-E with a methodology change.** When A is taken up:
+
+1. The orchestrator (not the user) runs the research pass per divergent hook:
+   - `git log --all --follow adapters/claude-code/hooks/<hook>.sh` to find when each hook entered the repo
+   - `git blame adapters/claude-code/settings.json.template` on the relevant lines to find when the template wired the hook
+   - Diff the live `~/.claude/settings.json` line against template — note shape of divergence (matcher-different, command-different, present-here-not-there)
+   - Re-read the originating commit's message + plan + decision record (if any) to recover author intent
+   - Cross-reference with `docs/harness-architecture.md` to see which form is documented as canonical
+2. Output: a per-hook proposal — "live is canonical because X" or "template is canonical because Y" or "this divergence is intentional, document it as such" — each with cited evidence (commit SHAs, doc references).
+3. User reviews proposals and either accepts them en masse or course-corrects the ones that look wrong.
+
+The user's role is **review the proposals**, not "decide cold which side is right." This is the educational-format principle — give the decision-maker enough substantive context to evaluate, not raw choices.
 
 ## Implementation log
 
-(Empty until decided.)
+- 2026-05-04 — B (SessionStart divergence-detector) ships in this session. Backlog entry for A added under Phase 1d-E with the research-pass methodology specified above.
+- (A's implementation log will be populated during Phase 1d-E.)

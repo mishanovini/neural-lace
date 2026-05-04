@@ -91,21 +91,38 @@ docs/sessions/*
 # Pre-sanitization plan files (committed before the "track our own plans"
 # convention was settled; contain test data / denylist patterns that the
 # scanner flags). These remain local-only. Sanitize first if you want to
-# commit them.
+# commit them. Both active and archive paths are excluded — the
+# plan-status-archival-sweep hook (2026-05-04) moves terminal-status plans
+# into archive/, but unsanitized content stays local regardless.
 docs/plans/document-freshness-system.md
 docs/plans/document-freshness-system-evidence.md
 docs/plans/public-release-hardening.md
 docs/plans/public-release-hardening-evidence.md
+docs/plans/archive/document-freshness-system.md
+docs/plans/archive/document-freshness-system-evidence.md
+docs/plans/archive/public-release-hardening.md
+docs/plans/archive/public-release-hardening-evidence.md
 
 # Local user config surface (new in Phase 3)
 # ~/.claude/local/ is a user-home path, but shadow any local mirror here:
 .claude-local/
 
-# Acceptance loop runtime artifacts (Phase 1 walking skeleton — Generation 5)
-# .claude/state/acceptance/ holds JSON artifacts + sibling screenshot/log files
-# produced by the end-user-advocate runtime mode. Per-session ephemeral; not
-# committed. Convention documented in adapters/claude-code/agents/end-user-advocate.md.
-.claude/state/acceptance/
+# Session ephemera written by hooks at runtime (2026-05-04). Includes:
+# - .claude/state/acceptance/ (Generation 5 end-user-advocate runtime artifacts)
+# - .claude/state/autonomous-done-*.txt (narrate-and-wait-gate session-end attestations)
+# - .claude/state/scope-waiver-*.txt (per-session scope-enforcement-gate waivers)
+# - .claude/state/user-goals/ (UserPromptSubmit goal extraction artifacts)
+# - .claude/state/reviews/ (plan-evidence-reviewer audit trails)
+# All per-session ephemeral; never committed. Specific subdirs (acceptance/)
+# are documented in adapters/claude-code/agents/end-user-advocate.md.
+.claude/state/
+
+# Agent tool's isolated-worktree storage (per `isolation: "worktree"` in
+# the orchestrator pattern). Each parallel-mode dispatch creates a worktree
+# under .claude/worktrees/agent-<id>/ that contains a full repo checkout.
+# Never committed; cleaned up by the Agent tool when the spawned agent
+# makes no changes (worktrees with commits persist until cherry-pick).
+.claude/worktrees/
 
 # Moved to .example (Phase 4 scrub)
 adapters/claude-code/business-patterns.paths

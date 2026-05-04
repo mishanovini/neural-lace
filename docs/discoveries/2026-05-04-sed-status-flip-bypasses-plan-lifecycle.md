@@ -2,13 +2,14 @@
 title: Bash sed-based Status flips bypass plan-lifecycle.sh auto-archive
 date: 2026-05-04
 type: process
-status: pending
-auto_applied: false
+status: decided
+auto_applied: true
 originating_context: Phase 1d-C-3 completion — flipped Status: ACTIVE → COMPLETED via Bash heredoc + sed -i; plan-lifecycle.sh did not fire; manual git mv required
-decision_needed: Whether to extend plan-lifecycle.sh to also react on PostToolUse Bash sed patterns, OR document the convention that Status flips MUST use Edit/Write tools
+decision_needed: n/a — option D applied 2026-05-04 (document convention + SessionStart safety-net sweep)
 predicted_downstream:
   - hooks/plan-lifecycle.sh
-  - rules/planning.md (Plan File Lifecycle section)
+  - hooks/plan-status-archival-sweep.sh (NEW SessionStart hook landing 2026-05-04)
+  - rules/planning.md (Plan File Lifecycle section — Stage 3.5 added)
   - any future automation that flips plan Status programmatically
 ---
 
@@ -50,8 +51,18 @@ D. Documentation alone is fragile (this very session forgot it); a SessionStart 
 
 ## Decision
 
-Pending. Surface to user at next SessionStart.
+**Option D applied 2026-05-04 (document + SessionStart sweep).** User accepted the recommendation as auto-applyable per discovery-protocol's reversibility test.
+
+**Reasoning principle:** `plan-lifecycle.sh` is a Mechanism. Its post-condition (terminal-status plans live in `docs/plans/archive/`) should hold regardless of HOW the flip happened. Documentation alone is fragile (this very session forgot the convention); a SessionStart sweep restores the invariant for every Status-flip path — Edit, Write, Bash sed, future automation.
+
+**Auto-applied: yes.** Reversible — one revert removes the new hook + the doc note.
+
+**Tradeoff acknowledgment:** archival now happens at NEXT session start, not at flip time. A COMPLETED plan can sit in `docs/plans/` for the rest of the current session. Acceptable because archival is housekeeping; the Edit-tool path (recommended convention) keeps zero-latency archival via `plan-lifecycle.sh`, and the sweep is the safety net for everything else.
 
 ## Implementation log
 
-(Empty until decided.)
+- 2026-05-04 — `hooks/plan-status-archival-sweep.sh` shipped (5 self-test scenarios PASS). SessionStart hook scans `docs/plans/*.md` for terminal-Status (COMPLETED / DEFERRED / ABANDONED / SUPERSEDED), `git mv`s matches into `docs/plans/archive/` (plus sibling `<slug>-evidence.md`).
+- 2026-05-04 — `rules/planning.md` Plan File Lifecycle section extended with Stage 3.5 documenting the safety-net + the "use Edit/Write not Bash sed" convention reminder.
+- 2026-05-04 — Hook wired into both `~/.claude/settings.json` AND `adapters/claude-code/settings.json.template`.
+- 2026-05-04 — Live-fired the new hook against 3 stranded plans from prior sessions: `document-freshness-system.md`, `harness-quick-wins-2026-04-22.md`, `public-release-hardening.md` (and their evidence siblings) all now in archive/. Verified `git mv` rename tracking for the one tracked plan (harness-quick-wins).
+- 2026-05-04 — Hook bug discovered + fixed during real-world archival: original `git -C "$plans_dir/.."` resolved to `docs/`, not the repo root, so `git mv` always silently fell through to plain `mv` (losing rename history). Fixed to use `git -C "$plans_dir" rev-parse --show-toplevel` for correct repo-root resolution. Self-test scenario 3 extended to assert `git diff --cached --name-status` reports `R<num>` so this bug can't regress silently.

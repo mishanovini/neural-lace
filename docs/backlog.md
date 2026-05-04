@@ -1,6 +1,6 @@
 # Neural Lace — Harness Backlog
 
-Last updated: 2026-05-04 v8: HARNESS-GAP-10 sub-gap D PARTIALLY absorbed into `docs/plans/phase-1d-c-3-findings-ledger.md` — C9 ships the findings-ledger substrate that telemetry will populate; the manual-write path is operational while telemetry remains a 2026-08 target. Earlier 2026-05-04 v7: HARNESS-GAP-10 sub-gap E absorbed into `docs/plans/phase-1d-c-2-prd-validity-and-spec-freeze.md` (C16 behavioral-contracts validator implementation includes the concrete-invariants requirement). Earlier 2026-05-04 v6: HARNESS-GAP-12 IMPLEMENTED via SSH multi-push config; HARNESS-GAP-13 added — harness-hygiene-scan expansion (D5 reframe). Earlier 2026-05-03 v5: HARNESS-GAP-12 added — neural-lace dual-remote sync requires manual gh-auth dance; multi-push remote config proposed. Earlier 2026-05-03 v4: Discovery Protocol shipped — `docs/discoveries/` directory live; `bug-persistence-gate.sh` accepts discoveries; new `discovery-surfacer.sh` SessionStart hook. Earlier 2026-05-03 v3: HARNESS-GAP-11 added — reviewer accountability one-way gap surfaced during incentive-map analysis. Earlier 2026-05-03: HARNESS-GAP-10 added — Build Doctrine integration analysis surfaced 7 sub-gaps; see entry below. Earlier 2026-05-03: HARNESS-AUDIT-EXT-01 + HARNESS-AUDIT-EXT-02 absorbed into `docs/plans/pre-submission-audit-mechanical-enforcement.md` and removed from the open list per backlog-plan-atomicity rule. Earlier 2026-04-29: two mechanism-extension items added for Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md`; remaining two harness-drift items stay open. Earlier 2026-04-27: four harness-drift items added — see `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.
+Last updated: 2026-05-04 v9: HARNESS-GAP-14 added — template-vs-live settings.json reconciliation pass deferred from discovery `2026-05-04-template-vs-live-divergence-across-other-hooks`; detector half (B) ships in this session, reconciliation half (A) deferred to Phase 1d-E with orchestrator-driven research methodology specified per user direction. Earlier 2026-05-04 v8: HARNESS-GAP-10 sub-gap D PARTIALLY absorbed into `docs/plans/phase-1d-c-3-findings-ledger.md` — C9 ships the findings-ledger substrate that telemetry will populate; the manual-write path is operational while telemetry remains a 2026-08 target. Earlier 2026-05-04 v7: HARNESS-GAP-10 sub-gap E absorbed into `docs/plans/phase-1d-c-2-prd-validity-and-spec-freeze.md` (C16 behavioral-contracts validator implementation includes the concrete-invariants requirement). Earlier 2026-05-04 v6: HARNESS-GAP-12 IMPLEMENTED via SSH multi-push config; HARNESS-GAP-13 added — harness-hygiene-scan expansion (D5 reframe). Earlier 2026-05-03 v5: HARNESS-GAP-12 added — neural-lace dual-remote sync requires manual gh-auth dance; multi-push remote config proposed. Earlier 2026-05-03 v4: Discovery Protocol shipped — `docs/discoveries/` directory live; `bug-persistence-gate.sh` accepts discoveries; new `discovery-surfacer.sh` SessionStart hook. Earlier 2026-05-03 v3: HARNESS-GAP-11 added — reviewer accountability one-way gap surfaced during incentive-map analysis. Earlier 2026-05-03: HARNESS-GAP-10 added — Build Doctrine integration analysis surfaced 7 sub-gaps; see entry below. Earlier 2026-05-03: HARNESS-AUDIT-EXT-01 + HARNESS-AUDIT-EXT-02 absorbed into `docs/plans/pre-submission-audit-mechanical-enforcement.md` and removed from the open list per backlog-plan-atomicity rule. Earlier 2026-04-29: two mechanism-extension items added for Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md`; remaining two harness-drift items stay open. Earlier 2026-04-27: four harness-drift items added — see `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
@@ -161,6 +161,34 @@ Alternative simpler approach: explicit `neural-lace/` → `<personal-account>` m
 **Why P2.** Friction is meaningful but not a correctness threat — pushes still happen, just with extra steps. Schedule for Phase 1d-E (harness cleanup) alongside HARNESS-GAP-10 sub-gaps.
 
 **Originating context.** Recurred during D4-discussion of the D1-D5 educational re-do (2026-05-03). The user pushed back on the recurrence: "I thought we set things up so that you're always aware of which account to use for each repo." The setup was correct for single-hosted projects; neural-lace's dual-hosting wasn't accounted for.
+
+---
+
+## HARNESS-GAP-14 — Template-vs-live settings.json reconciliation pass (added 2026-05-04; deferred from discovery 2026-05-04-template-vs-live-divergence-across-other-hooks)
+
+**Source.** Discovery `docs/discoveries/2026-05-04-template-vs-live-divergence-across-other-hooks.md` decided 2026-05-04. Detector half (B) ships now; reconciliation half (A) deferred here.
+
+**The gap.** Five hooks have pre-existing divergence between `adapters/claude-code/settings.json.template` (committed source-of-truth for `install.sh`) and `~/.claude/settings.json` (gitignored live config the running session reads): `outcome-evidence-gate`, `systems-design-gate`, `no-test-skip-gate`, `automation-mode-gate`, `public-repo-blocker` variants. Some are present in template but not live (the hook never fires on this machine); some are present in live but not template (a fresh install via `install.sh` won't get the hook). The harness's *claimed* enforcement may not match its *actual* enforcement on this machine.
+
+**Methodology when this work is taken up (orchestrator-driven, not user-judgment).** The user explicitly pushed back on framing this as "user picks canonical side per hook" and asked for orchestrator-driven research. Per-hook research procedure:
+
+1. `git log --all --follow adapters/claude-code/hooks/<hook>.sh` — when did each hook enter the repo, what was its originating commit + plan + decision record?
+2. `git blame adapters/claude-code/settings.json.template` on the relevant lines — when did the template wire (or fail to wire) the hook?
+3. Diff the live `~/.claude/settings.json` line against template — note shape of divergence (matcher-different, command-different, present-here-not-there).
+4. Re-read originating commit messages, plan files, and decision records to recover author intent.
+5. Cross-reference `docs/harness-architecture.md` to see which form is documented as canonical.
+6. **Output: a per-hook proposal** — "live is canonical because X" or "template is canonical because Y" or "this divergence is intentional, document it as such" — each citing evidence (commit SHAs, doc references, intent statements).
+7. User reviews the proposals and accepts en masse or course-corrects the ones that look wrong.
+
+The user's role is **review the proposals**, not "decide cold which side is right."
+
+**Companion mechanism (already shipping in this session).** SessionStart divergence-detector hook (per discovery's option B) — diffs template vs live every session start, surfaces unexpected divergences. Its first runs become the worklist for this reconciliation pass.
+
+**Effort estimate.** M (~2-4 hours when taken up). Per-hook research is ~15-30 min × 5 hooks = ~2 hours; writing up proposals + user review = another ~1-2 hours.
+
+**Why P2 (Phase 1d-E).** The divergence is real but the detector makes the gap observable in the meantime. The reconciliation closes the gap durably; the detector keeps it from re-opening. Both are needed; sequencing detector-now-then-reconcile-later is the safe split.
+
+**Originating context.** Phase 1d-C-2 Task 9 builder noted the divergence while wiring three new gates. Carried forward through Phase 1d-C-3. Surfaced at SessionStart 2026-05-04 via discovery-protocol's pending-discovery surfacer; user split the discovery's recommendation into B-now + A-later.
 
 ---
 

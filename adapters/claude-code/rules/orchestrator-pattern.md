@@ -54,6 +54,38 @@ Parallel builders MUST run in isolated git worktrees. Use the Task tool's `isola
 
 The Task tool auto-cleans up worktrees that made no changes. Worktrees that DID make commits persist until the orchestrator merges them back.
 
+### Worktree base is master HEAD — builders MUST switch to feature branch first
+
+**Empirically confirmed 2026-05-04:** the Agent tool's `isolation: "worktree"` creates each worktree rooted at **master HEAD**, not the orchestrator's current branch HEAD. On feature branches with commits ahead of master (the common case), this means the worktree's working directory does NOT contain the orchestrator's recent commits — including, critically, the active plan file in many cases. Without correction, `scope-enforcement-gate.sh` blocks the builder's commit because no ACTIVE plan claiming the modified files is visible inside the worktree.
+
+**The correction is mandatory: every parallel-mode dispatch prompt MUST include a first-action instruction for the builder to checkout a worker branch from the orchestrator's feature branch.** The feature branch ref IS visible inside the worktree (worktrees share `.git/refs` with the parent repo); the builder just needs to land HEAD there.
+
+Concrete first-action instruction to embed in the dispatch prompt:
+
+```
+Before doing any work, run this command first to land your worktree on the orchestrator's
+feature branch:
+
+    git checkout -b worker-<task-id> <feature-branch-name>
+
+Replace <task-id> with the task you're building (e.g., "worker-3.2") and
+<feature-branch-name> with the orchestrator's branch (e.g., "build-doctrine-integration").
+
+After this command, your worktree HEAD is at the feature branch tip; all plan files,
+recent commits, and uncommitted-but-tracked work are visible. Confirm by running
+`git log --oneline -3` and verifying the latest commit matches what the orchestrator
+told you in this prompt.
+
+Then proceed with your task. Your work commits land on `worker-<task-id>`. The
+orchestrator will cherry-pick them back onto the feature branch in Phase B.
+```
+
+**Why this works:** worktrees share `.git/objects` and `.git/refs` with the parent repo. The feature branch ref is therefore in the worktree's view. The worktree just initializes its working directory at master HEAD; `git checkout -b <worker-id> <feature-branch>` creates a NEW branch from the feature branch's tip (no conflict with the parent's checkout) and updates the working directory accordingly.
+
+**What this does NOT solve:** if the orchestrator's feature branch has truly uncommitted changes (i.e., not yet committed at the time of dispatch), the worker branch will not see them. Mitigation: the orchestrator MUST commit any plan-file edits, evidence blocks, or other state needed by parallel builders BEFORE dispatching them. This is the discipline already in place (commit at every milestone) — the worktree-base behavior just makes it strictly required for parallel dispatch.
+
+**Auto-cleanup interaction:** worktrees that made commits persist until the orchestrator cleans them up (per the cherry-pick protocol below). The worker branch (`worker-<task-id>`) and the worktree-internal branch (`worktree-agent-<id>`) are both deleted in step e of the cherry-pick protocol.
+
 ### Build-in-parallel, verify-sequentially
 
 This is the critical discipline. Parallel builders can race on build work (tests, file edits, commits in their own worktrees). But the **plan file + evidence file** are shared resources that CANNOT be updated in parallel safely:

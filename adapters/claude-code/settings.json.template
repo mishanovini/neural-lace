@@ -326,6 +326,16 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/discovery-surfacer.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/plan-status-archival-sweep.sh",
+            "statusMessage": "Sweeping terminal-status plans into archive..."
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/settings-divergence-detector.sh",
+            "statusMessage": "Checking template-vs-live settings divergence..."
           }
         ]
       }
