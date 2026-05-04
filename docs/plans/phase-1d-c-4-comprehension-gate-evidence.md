@@ -271,3 +271,81 @@ Runtime verification: file docs/harness-architecture.md::comprehension-reviewer.
 Verdict: PASS
 Confidence: 9
 Reason: All nine acceptance criteria satisfied. Agent file at declared path is 371 lines (within 250-400), frontmatter declares correct name and read-only tools (Read/Grep/Glob/Bash with no Edit/Write/MultiEdit), documents the three-stage rubric (schema → substance → diff correspondence) with halting semantics, ships six canonical class values plus instance-only escape hatch in the six-field per-gap feedback block (Location/Defect/Class/Sweep query/Required fix/Required generalization), includes worked PASS / FAIL / INCOMPLETE examples with rubric-driven reasoning, documents three boundary behaviors (rung<2 → PASS, missing articulation → INCOMPLETE, diff unavailable → INCOMPLETE), cross-references all six required artifacts (rule, Decision 020, template, task-verifier with Task 4 note, FM-023 with Task 5 note, enforcement-map row with Task 5 note), single commit (da26120), and the harness-architecture.md row is minimal and in scope per Task 3 / Task 5 split.
+
+EVIDENCE BLOCK
+==============
+Task ID: 4
+Task description: task-verifier extension. EDIT `task-verifier.md` to add the comprehension-gate invocation block: when the plan's `rung:` field is ≥ 2, task-verifier MUST invoke `comprehension-reviewer` via Task tool with the plan path, task ID, and the builder's articulation block. comprehension-reviewer FAIL or INCOMPLETE → task-verifier returns FAIL (do not flip checkbox); comprehension-reviewer PASS → task-verifier proceeds with its existing verification logic. The articulation block is expected at the bottom of the task's Evidence Log entry per the template. Single commit.
+Verified at: 2026-05-04T23:55:00Z
+Verifier: task-verifier agent
+
+Plan rung: 1 (comprehension-gate does NOT fire on this plan's tasks; standard verification rubric applied. Self-application would be circular: the plan ships C15, which would be invoked here if rung were 2+.)
+Comprehension-gate: not applicable (rung < 2)
+
+Checks run:
+
+1. Single commit and scope (acceptance criterion 1)
+   Command: git show --stat bfadcbb
+   Output: 1 file changed, 102 insertions(+), 1 deletion(-) — only adapters/claude-code/agents/task-verifier.md modified.
+   Result: PASS — single commit, sole file modified is exactly the file declared in `## Files to Modify/Create`.
+
+2. New "Step 1.5: Comprehension-gate invocation (R2+)" section added (acceptance criterion 2)
+   Command: grep -n "Step 1.5: Comprehension-gate invocation" adapters/claude-code/agents/task-verifier.md
+   Output: line 181 contains `### Step 1.5: Comprehension-gate invocation (R2+)`. The new step is positioned between Step 1 (load task) and Step 2 (git history) as committed, satisfying the "before Step 2" ordering requirement of the spec.
+   Result: PASS
+
+3. Trigger documented as `rung >= 2` with all four boundary cases (acceptance criteria 3 + 6)
+   Command: read adapters/claude-code/agents/task-verifier.md lines 187-192
+   Output: four bullets explicitly enumerate `rung: 0` or `rung: 1` → no-op (skip to Step 2), `rung: 2` or higher → invoke, `rung:` absent on ACTIVE plan → treat as 0 + skip, archived plan path → skip. Each case has explicit evidence-block annotation guidance.
+   Result: PASS — all four boundary cases (rung<2, rung absent, archived, rung>=2) covered explicitly.
+
+4. Invocation documented via Task tool with required inputs (acceptance criterion 4)
+   Command: read adapters/claude-code/agents/task-verifier.md lines 198-203
+   Output: "Use the Task tool to invoke `comprehension-reviewer` with the following inputs:" followed by four numbered inputs — (1) Plan file path, (2) Task ID, (3) Articulation block source (path to evidence file plus task ID), (4) Commit SHA(s) with multi-commit handling guidance.
+   Result: PASS — all four required invocation inputs (plan path, task ID, articulation source, commit SHA) explicitly named per the acceptance criterion.
+
+5. Verdict propagation per Decision 020d (acceptance criterion 5)
+   Command: read adapters/claude-code/agents/task-verifier.md lines 207-211 ("Verdict propagation (per Decision 020d):")
+   Output: three explicit bullets — PASS → proceed with Step 2 onward + record `Comprehension-gate: PASS` line; FAIL → return FAIL immediately, do NOT flip checkbox, do NOT proceed to Step 2, surface verbatim per-gap blocks; INCOMPLETE → return INCOMPLETE, do NOT flip checkbox, surface specific reason. Each verdict path documents its evidence-block annotation.
+   Result: PASS — all three verdict paths covered with the correct semantics (PASS continue, FAIL halt + verbatim per-gap, INCOMPLETE halt + reason).
+
+6. Boundary cases for invocation failures (acceptance criterion 6 — second pass)
+   Command: read adapters/claude-code/agents/task-verifier.md lines 213-217 ("Boundary cases.")
+   Output: three explicit boundary bullets covering reviewer-invocation infrastructure failure (treat as INCOMPLETE; "Do not default to PASS. The gate's correctness depends on a real reviewer verdict; defaulting to PASS on infrastructure failure defeats the gate."), malformed rung field (INCOMPLETE with rung-malformed message), and multi-commit scope (builder discipline issue, reviewer's diff-correspondence still operates).
+   Result: PASS — invocation-failure path explicitly does NOT default to PASS; this closes the silent-bypass risk.
+
+7. Cross-references to rule, agent, decision, template, FM (acceptance criterion 7)
+   Command: read adapters/claude-code/agents/task-verifier.md lines 221-226 ("Cross-references:")
+   Output: five bullets pointing at adapters/claude-code/rules/comprehension-gate.md, adapters/claude-code/agents/comprehension-reviewer.md, docs/decisions/020-comprehension-gate-semantics.md, adapters/claude-code/templates/comprehension-template.md, and FM-023 (with Task 5 note). All five files exist on disk per ls verification (sizes: 17444, 29108, 14251, 4232, plus FM-023 deferred to Task 5 per the in-line note).
+   Result: PASS — all four currently-shipped artifacts cited; FM-023 correctly deferred to Task 5.
+
+8. Existing task-verifier content preserved — no regressions (acceptance criterion 8)
+   Command: git show bfadcbb -- adapters/claude-code/agents/task-verifier.md (full diff inspection); wc -l on pre/post versions.
+   Output: pre-commit 431 lines; post-commit 532 lines; delta = +101 (matches +102/-1 stat). All chunks in the diff are pure additions in three locations: anti-vaporware preamble (line 47, +2 lines bridging "For any UI task" → "For any R2+ task"), Step 1.5 block (lines 181-227, +47 lines new section), Verification process intro (line 172, +1 line tail clause about Step 1.5 ordering), Step 7 evidence block format (lines 334-338, +6 lines for Comprehension-gate row + line 364 +2 lines for the "required" reminder), Step 8 articulation-block layout (lines 433-475, +44 lines documenting builder responsibility + canonical layout). The single deletion is the trailing-period change on the "Do not skip any" line where the new clause was appended. Original behavioral text (Counter-Incentive Discipline, Anti-vaporware enforcement, runtime-verification table, FIX-task reproduction rule, Correspondence rule, Dependency trace, Input contract, Steps 2-7, Rules of engagement, Output format) is byte-for-byte preserved.
+   Result: PASS — diff is purely additive; no behavioral content removed.
+
+9. Evidence block format updated to mention `## Comprehension Articulation` for R2+ tasks (acceptance criterion 9)
+   Command: grep -n "Comprehension-gate:\|Comprehension Articulation" adapters/claude-code/agents/task-verifier.md
+   Output:
+     line 334: `Comprehension-gate: PASS (confidence N) — <one-sentence summary>` row added to the canonical evidence block format with all five possible values shown.
+     line 364: "**The `Comprehension-gate:` line is required** for R2+ tasks ... and required for R0/R1 tasks (where the value is `not applicable (rung < 2)`)" — making the line mandatory regardless of rung.
+     line 433-475: full Step 8 sub-section "For R2+ tasks (per Decision 020e), the builder is expected to append a `## Comprehension Articulation` sub-section ..." documenting the four canonical sub-sections (### Spec meaning, ### Edge cases covered, ### Edge cases NOT covered, ### Assumptions), the ≥ 30-char substance threshold (per Decision 020c), the alongside-runtime-verification layout, and the template cross-reference.
+   Result: PASS — both Step 7 evidence-block format AND Step 8 articulation-block layout are updated; mention is present, complete, and consistent with Decision 020e.
+
+Git evidence:
+  Files modified in recent history:
+    - adapters/claude-code/agents/task-verifier.md  (last commit: bfadcbb, 2026-05-04)
+
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::Step 1.5: Comprehension-gate invocation
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::Comprehension-gate: PASS
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::comprehension-reviewer
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::rung: 2
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::Decision 020d
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::FM-023 vaporware-spec-misunderstood-by-builder
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::## Comprehension Articulation
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::do not flip the checkbox
+Runtime verification: file adapters/claude-code/agents/task-verifier.md::Do not default to PASS
+
+Verdict: PASS
+Confidence: 9
+Reason: All nine acceptance criteria satisfied. Single commit bfadcbb modifies only adapters/claude-code/agents/task-verifier.md (102/-1 lines), adding Step 1.5 between Step 1 and Step 2 with the four boundary cases enumerated (rung<2 no-op, rung absent skipped, archived skipped, rung>=2 invoke), the four invocation inputs (plan path, task ID, articulation source from companion -evidence.md, commit SHA(s)), the three verdict paths (PASS continue, FAIL halt + verbatim per-gap, INCOMPLETE halt + reason) per Decision 020d, the three additional invocation-failure boundary cases (Task tool failure → INCOMPLETE not default-PASS, malformed rung → INCOMPLETE, multi-commit-scope), all five cross-references (rule, agent, decision, template, FM-023 with Task 5 deferral note), and the evidence block format (Step 7 Comprehension-gate row + Step 8 articulation block layout). Existing 431-line file is byte-for-byte preserved with only pure additions in five locations. Note: live ~/.claude/agents/task-verifier.md is NOT yet synced with the repo edit; per harness-maintenance.md the maintainer must copy the updated file to ~/.claude/ to take effect — this is a separate sync task and does not block Task 4's PASS verdict (Task 4's scope is the repo edit, which is correct). Plan rung is 1 so the gate did not self-apply; the builder appropriately scoped the change to the repo agent file with no removals.
