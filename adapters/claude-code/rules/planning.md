@@ -48,6 +48,17 @@ See `~/.claude/rules/design-mode-planning.md` for the full protocol, the 10 requ
 - Template: `~/.claude/templates/plan-template.md` includes all seven required sections with placeholder prompts explaining what each should contain.
 - Validator: `~/.claude/hooks/plan-reviewer.sh` performs the mechanical check at plan-edit time. Run with `--self-test` to exercise pass/fail scenarios.
 
+## Plan-header schema (5 required fields beyond `Status` and `Mode`)
+
+Every plan with `Status: ACTIVE` declares five additional plan-header fields beyond `Status` and `Mode`: `tier:` (1-5), `rung:` (0-5), `architecture:` (one of `coding-harness | dark-factory | auto-research | orchestration | hybrid`), `frozen:` (`true` or `false`), and `prd-ref:` (a slug naming the relevant PRD section, OR the exact carve-out string `n/a — harness-development`). The five fields are required with no defaults; missing or invalid values FAIL `plan-reviewer.sh` Check 10. The plan template at `~/.claude/templates/plan-template.md` ships the fields with placeholder values and inline guidance.
+
+Two of the five fields drive their own enforcement substrate:
+
+- **`prd-ref:`** — referenced PRD must exist with seven required sections (per Decision 015). See `~/.claude/rules/prd-validity.md` for the full rule, the `prd-validity-gate.sh` hook, the `prd-validity-reviewer` agent, and the harness-development carve-out semantics.
+- **`frozen:`** — when `frozen: false`, edits to files declared in the plan's `## Files to Modify/Create` section are blocked by `spec-freeze-gate.sh` (per Decision 016). See `~/.claude/rules/spec-freeze.md` for when to freeze, when to thaw, and the freeze-thaw protocol that documents amendments via the Decisions Log.
+
+The other three fields (`tier:`, `rung:`, `architecture:`) drive downstream enforcement that is described elsewhere in this rule and in `~/.claude/rules/design-mode-planning.md` (the `## Behavioral Contracts` requirement at `rung: 3+` is plan-reviewer Check 11; the architecture taxonomy comes from Build Doctrine §9 Q4-A).
+
 ## How multi-task plans execute: orchestrator pattern
 
 **For any plan with more than one task, the main session orchestrates and dispatches build work to `plan-phase-builder` sub-agents — it does NOT do the build work itself.** This keeps the main session's context from accumulating 200+ tool uses of raw build detail across a long plan, which is a quality-of-life improvement for extended autonomous work. (Historical note: the 2026-04-14 vaporware failures were caused by self-enforcement gaps in verification, not by context accumulation — those are addressed by the hook-enforced Gen 4 mechanisms. The orchestrator pattern is a separate improvement.)
