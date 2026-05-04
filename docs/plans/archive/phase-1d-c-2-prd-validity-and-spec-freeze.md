@@ -1,6 +1,6 @@
 # Plan: Phase 1d-C-2 — PRD-validity gate (C1) + spec-freeze gate (C2) + plan-header schema + behavioral contracts (C16)
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: HARNESS-GAP-10 sub-gap E (C16 behavioral-contracts validator must require concrete invariants — partially addressed)
@@ -72,27 +72,27 @@ Plus enabling work:
 
 ## Tasks
 
-- [ ] **1. Decisions and template upstream** — Land all four decision records (015/016/017/018), the discovery file, and the new PRD template + extended plan template. No hooks yet; this is the substrate that Tasks 2-7 build on. Single commit. **Files:** `docs/decisions/015-018.md`, `docs/decisions/index`, `docs/discoveries/2026-05-04-spec-section-divergence-from-scratchpad.md`, `adapters/claude-code/templates/prd-template.md`, `adapters/claude-code/templates/plan-template.md`. **Acceptance:** all 4 decisions have substantive Context/Decision/Alternatives/Consequences sections; PRD template has the 7 named sections with placeholder guidance; plan template's header includes all 5 new fields with inline `<!-- -->` guidance.
+- [x] **1. Decisions and template upstream** — Land all four decision records (015/016/017/018), the discovery file, and the new PRD template + extended plan template. No hooks yet; this is the substrate that Tasks 2-7 build on. Single commit. **Files:** `docs/decisions/015-018.md`, `docs/decisions/index`, `docs/discoveries/2026-05-04-spec-section-divergence-from-scratchpad.md`, `adapters/claude-code/templates/prd-template.md`, `adapters/claude-code/templates/plan-template.md`. **Acceptance:** all 4 decisions have substantive Context/Decision/Alternatives/Consequences sections; PRD template has the 7 named sections with placeholder guidance; plan template's header includes all 5 new fields with inline `<!-- -->` guidance.
 
-- [ ] **2. New rule docs** — `prd-validity.md` and `spec-freeze.md`. Cross-reference into `planning.md`, `vaporware-prevention.md`, and `design-mode-planning.md`. Single commit. **Files:** `adapters/claude-code/rules/prd-validity.md`, `adapters/claude-code/rules/spec-freeze.md`, plus 3 cross-reference edits. **Acceptance:** new rules each name their hook + agent partners, document the harness-dev carve-out (PRD) and the freeze-thaw protocol (spec), and follow the Classification: Hybrid pattern from existing rules.
+- [x] **2. New rule docs** — `prd-validity.md` and `spec-freeze.md`. Cross-reference into `planning.md`, `vaporware-prevention.md`, and `design-mode-planning.md`. Single commit. **Files:** `adapters/claude-code/rules/prd-validity.md`, `adapters/claude-code/rules/spec-freeze.md`, plus 3 cross-reference edits. **Acceptance:** new rules each name their hook + agent partners, document the harness-dev carve-out (PRD) and the freeze-thaw protocol (spec), and follow the Classification: Hybrid pattern from existing rules.
 
-- [ ] **3. C1 — `prd-validity-gate.sh`** — PreToolUse `Write` matcher on `docs/plans/.*\.md`. Reads `prd-ref:` field from the new plan's header. If `prd-ref:` is `n/a — harness-development`, allow. Else resolve to `docs/prd.md`; verify file exists; verify all 7 required sections (problem / scenarios / functional / non-functional / success metrics / out-of-scope / open-questions) present with ≥ 30 non-ws chars each. Block on any failure with a clear message naming the failing section(s) + a pointer to the PRD template. `--self-test`: 6 scenarios (PASS-with-PRD, PASS-with-harness-dev-carveout, FAIL-no-prd-ref, FAIL-prd-file-missing, FAIL-prd-section-missing, FAIL-prd-section-placeholder). Single commit. **Files:** `adapters/claude-code/hooks/prd-validity-gate.sh`. **Acceptance:** all 6 self-test scenarios PASS; hook is idempotent against re-runs; harness-dev carve-out works.
+- [x] **3. C1 — `prd-validity-gate.sh`** — PreToolUse `Write` matcher on `docs/plans/.*\.md`. Reads `prd-ref:` field from the new plan's header. If `prd-ref:` is `n/a — harness-development`, allow. Else resolve to `docs/prd.md`; verify file exists; verify all 7 required sections (problem / scenarios / functional / non-functional / success metrics / out-of-scope / open-questions) present with ≥ 30 non-ws chars each. Block on any failure with a clear message naming the failing section(s) + a pointer to the PRD template. `--self-test`: 6 scenarios (PASS-with-PRD, PASS-with-harness-dev-carveout, FAIL-no-prd-ref, FAIL-prd-file-missing, FAIL-prd-section-missing, FAIL-prd-section-placeholder). Single commit. **Files:** `adapters/claude-code/hooks/prd-validity-gate.sh`. **Acceptance:** all 6 self-test scenarios PASS; hook is idempotent against re-runs; harness-dev carve-out works.
 
-- [ ] **4. C2 — `spec-freeze-gate.sh`** — PreToolUse `Edit|Write` matcher. Reads tool_input file path. Iterates every `Status: ACTIVE` plan in `docs/plans/*.md`. For each, parses the `## Files to Modify/Create` section into a path list. If the tool_input file matches any path AND that plan's header has `frozen: false` or missing, BLOCK with a message: "File `<path>` is declared in plan `<plan-slug>` whose spec is not frozen. Either flip `frozen: true` in the plan header (after a final spec review), OR move the file out of the plan's `## Files to Modify/Create` list." Allow if no plan claims the file, OR all claiming plans are frozen, OR the file is in `docs/plans/` (the plan file itself — circular dependency avoidance). `--self-test`: 6 scenarios (PASS-no-plan-claims, PASS-frozen-plan, FAIL-unfrozen-plan, PASS-multiple-plans-all-frozen, FAIL-multiple-plans-one-unfrozen, PASS-plan-file-itself). Single commit. **Files:** `adapters/claude-code/hooks/spec-freeze-gate.sh`. **Acceptance:** all 6 scenarios PASS; gate degrades to allow if any parsing error (don't block on hook bugs); concurrent plan parsing tolerated.
+- [x] **4. C2 — `spec-freeze-gate.sh`** — PreToolUse `Edit|Write` matcher. Reads tool_input file path. Iterates every `Status: ACTIVE` plan in `docs/plans/*.md`. For each, parses the `## Files to Modify/Create` section into a path list. If the tool_input file matches any path AND that plan's header has `frozen: false` or missing, BLOCK with a message: "File `<path>` is declared in plan `<plan-slug>` whose spec is not frozen. Either flip `frozen: true` in the plan header (after a final spec review), OR move the file out of the plan's `## Files to Modify/Create` list." Allow if no plan claims the file, OR all claiming plans are frozen, OR the file is in `docs/plans/` (the plan file itself — circular dependency avoidance). `--self-test`: 6 scenarios (PASS-no-plan-claims, PASS-frozen-plan, FAIL-unfrozen-plan, PASS-multiple-plans-all-frozen, FAIL-multiple-plans-one-unfrozen, PASS-plan-file-itself). Single commit. **Files:** `adapters/claude-code/hooks/spec-freeze-gate.sh`. **Acceptance:** all 6 scenarios PASS; gate degrades to allow if any parsing error (don't block on hook bugs); concurrent plan parsing tolerated.
 
-- [ ] **5. plan-reviewer.sh Check 10 — 5-field plan-header schema** — Extend `plan-reviewer.sh` with Check 10. Required fields: `tier:`, `rung:`, `architecture:`, `frozen:`, `prd-ref:`. Required values: `tier ∈ {1,2,3,4,5}`, `rung ∈ {0,1,2,3,4,5}`, `architecture ∈ {coding-harness, dark-factory, auto-research, orchestration, hybrid}`, `frozen ∈ {true, false}`, `prd-ref` is non-empty (any string; semantic validation belongs to C1, not the schema check). FAIL on missing field, invalid value, or empty. Gate on `Status: ACTIVE` only (DEFERRED/COMPLETED/ABANDONED/SUPERSEDED plans don't need fresh schema). Add 5 new self-test scenarios. **Files:** `adapters/claude-code/hooks/plan-reviewer.sh` (extension only; Checks 1-9 untouched). **Acceptance:** new self-tests pass; existing Checks 1-9 self-tests still pass (regression check).
+- [x] **5. plan-reviewer.sh Check 10 — 5-field plan-header schema** — Extend `plan-reviewer.sh` with Check 10. Required fields: `tier:`, `rung:`, `architecture:`, `frozen:`, `prd-ref:`. Required values: `tier ∈ {1,2,3,4,5}`, `rung ∈ {0,1,2,3,4,5}`, `architecture ∈ {coding-harness, dark-factory, auto-research, orchestration, hybrid}`, `frozen ∈ {true, false}`, `prd-ref` is non-empty (any string; semantic validation belongs to C1, not the schema check). FAIL on missing field, invalid value, or empty. Gate on `Status: ACTIVE` only (DEFERRED/COMPLETED/ABANDONED/SUPERSEDED plans don't need fresh schema). Add 5 new self-test scenarios. **Files:** `adapters/claude-code/hooks/plan-reviewer.sh` (extension only; Checks 1-9 untouched). **Acceptance:** new self-tests pass; existing Checks 1-9 self-tests still pass (regression check).
 
-- [ ] **6. plan-reviewer.sh Check 11 — C16 `## Behavioral Contracts`** — Extend `plan-reviewer.sh` with Check 11. Gates on `rung ∈ {3, 4, 5}`. Requires `## Behavioral Contracts` section with four named sub-entries (`### Idempotency`, `### Performance budget`, `### Retry semantics`, `### Failure modes`), each with ≥ 30 non-ws chars and no placeholder-only content (mirrors Check 6b's substance check, including HTML-comment stripping and placeholder-token stripping). Add 5 new self-test scenarios (PASS-rung3-substantive, PASS-rung0-no-section-needed, FAIL-rung3-section-missing, FAIL-rung3-subentry-missing, FAIL-rung3-subentry-placeholder). **Files:** `adapters/claude-code/hooks/plan-reviewer.sh` (extension). **Acceptance:** all new self-tests pass; Checks 1-10 unchanged.
+- [x] **6. plan-reviewer.sh Check 11 — C16 `## Behavioral Contracts`** — Extend `plan-reviewer.sh` with Check 11. Gates on `rung ∈ {3, 4, 5}`. Requires `## Behavioral Contracts` section with four named sub-entries (`### Idempotency`, `### Performance budget`, `### Retry semantics`, `### Failure modes`), each with ≥ 30 non-ws chars and no placeholder-only content (mirrors Check 6b's substance check, including HTML-comment stripping and placeholder-token stripping). Add 5 new self-test scenarios (PASS-rung3-substantive, PASS-rung0-no-section-needed, FAIL-rung3-section-missing, FAIL-rung3-subentry-missing, FAIL-rung3-subentry-placeholder). **Files:** `adapters/claude-code/hooks/plan-reviewer.sh` (extension). **Acceptance:** all new self-tests pass; Checks 1-10 unchanged.
 
-- [ ] **7. `prd-validity-reviewer` agent** — New agent file at `adapters/claude-code/agents/prd-validity-reviewer.md`. Reads the plan file path + the resolved `docs/prd.md`. Adversarially reviews the PRD's substance: are problem and scenarios concrete? Are success metrics measurable (numeric targets, not adjectives)? Are out-of-scope items explicit? Does the PRD answer "what would success look like at T+30 days"? Returns PASS/FAIL/REFORMULATE with class-aware findings (per the 7 adversarial-review agents pattern). Invocable manually OR via the `prd-validity-gate.sh` recommend-invoke message on PASS-mechanical. **Files:** `adapters/claude-code/agents/prd-validity-reviewer.md`. **Acceptance:** agent definition follows the existing adversarial-reviewer template; class-aware Output Format Requirements section present; invocation guidance documented.
+- [x] **7. `prd-validity-reviewer` agent** — New agent file at `adapters/claude-code/agents/prd-validity-reviewer.md`. Reads the plan file path + the resolved `docs/prd.md`. Adversarially reviews the PRD's substance: are problem and scenarios concrete? Are success metrics measurable (numeric targets, not adjectives)? Are out-of-scope items explicit? Does the PRD answer "what would success look like at T+30 days"? Returns PASS/FAIL/REFORMULATE with class-aware findings (per the 7 adversarial-review agents pattern). Invocable manually OR via the `prd-validity-gate.sh` recommend-invoke message on PASS-mechanical. **Files:** `adapters/claude-code/agents/prd-validity-reviewer.md`. **Acceptance:** agent definition follows the existing adversarial-reviewer template; class-aware Output Format Requirements section present; invocation guidance documented.
 
-- [ ] **8. Backfill 5 header fields on existing ACTIVE plans** — Three plans need backfill: `pre-submission-audit-mechanical-enforcement.md` (still ACTIVE per SCRATCHPAD; will be COMPLETED via separate session per user) AND any new plan files created during this work. Each gets: `tier: 1`, `rung: 0`, `architecture: coding-harness`, `frozen: false`, `prd-ref: n/a — harness-development`. Single commit. **Files:** every `docs/plans/*.md` with `Status: ACTIVE`. **Acceptance:** every active plan passes the new Check 10; no regression of existing checks.
+- [x] **8. Backfill 5 header fields on existing ACTIVE plans** — Three plans need backfill: `pre-submission-audit-mechanical-enforcement.md` (still ACTIVE per SCRATCHPAD; will be COMPLETED via separate session per user) AND any new plan files created during this work. Each gets: `tier: 1`, `rung: 0`, `architecture: coding-harness`, `frozen: false`, `prd-ref: n/a — harness-development`. Single commit. **Files:** every `docs/plans/*.md` with `Status: ACTIVE`. **Acceptance:** every active plan passes the new Check 10; no regression of existing checks.
 
-- [ ] **9. Wire hooks into `settings.json.template` AND `~/.claude/settings.json`** — Per the `2026-05-03-settings-template-vs-live-divergence` discovery, BOTH files must be updated in the same commit. Add `prd-validity-gate.sh` to PreToolUse Write chain (after `plan-deletion-protection.sh`, before `plan-edit-validator.sh`). Add `spec-freeze-gate.sh` to PreToolUse Edit/Write chain (after `plan-edit-validator.sh`, before `tool-call-budget.sh`). Update `harness-architecture.md` inventory. **Files:** `adapters/claude-code/settings.json.template`, `~/.claude/settings.json`, `docs/harness-architecture.md`. **Acceptance:** SessionStart's settings-divergence detector finds zero divergence; new hooks fire on a synthetic Edit attempt; `harness-architecture.md` lists both new hooks and the new agent.
+- [x] **9. Wire hooks into `settings.json.template` AND `~/.claude/settings.json`** — Per the `2026-05-03-settings-template-vs-live-divergence` discovery, BOTH files must be updated in the same commit. Add `prd-validity-gate.sh` to PreToolUse Write chain (after `plan-deletion-protection.sh`, before `plan-edit-validator.sh`). Add `spec-freeze-gate.sh` to PreToolUse Edit/Write chain (after `plan-edit-validator.sh`, before `tool-call-budget.sh`). Update `harness-architecture.md` inventory. **Files:** `adapters/claude-code/settings.json.template`, `~/.claude/settings.json`, `docs/harness-architecture.md`. **Acceptance:** SessionStart's settings-divergence detector finds zero divergence; new hooks fire on a synthetic Edit attempt; `harness-architecture.md` lists both new hooks and the new agent.
 
-- [ ] **10. Failure modes catalog extension** — Add 4 new FM entries to `docs/failure-modes.md`: `FM-NNN unfrozen-spec-edit`, `FM-NNN missing-PRD-on-plan-creation`, `FM-NNN missing-plan-header-field`, `FM-NNN missing-behavioral-contracts-at-r3+`. Each with the 6-field schema (ID, Symptom, Root cause, Detection, Prevention, Example). Cross-reference each from the originating decision record (015/016/017). **Files:** `docs/failure-modes.md`. **Acceptance:** 4 new entries with substantive content; `harness-reviewer` finds them when reviewing this plan.
+- [x] **10. Failure modes catalog extension** — Add 4 new FM entries to `docs/failure-modes.md`: `FM-NNN unfrozen-spec-edit`, `FM-NNN missing-PRD-on-plan-creation`, `FM-NNN missing-plan-header-field`, `FM-NNN missing-behavioral-contracts-at-r3+`. Each with the 6-field schema (ID, Symptom, Root cause, Detection, Prevention, Example). Cross-reference each from the originating decision record (015/016/017). **Files:** `docs/failure-modes.md`. **Acceptance:** 4 new entries with substantive content; `harness-reviewer` finds them when reviewing this plan.
 
-- [ ] **11. Migrate plan to canonical location** — `git mv ~/.claude/plans/what-do-we-have-elegant-pudding.md docs/plans/phase-1d-c-2-prd-validity-and-spec-freeze.md`. Update SCRATCHPAD's "Active Plan" section to point at the new path. **Files:** the plan file itself; `SCRATCHPAD.md`. **Acceptance:** `scope-enforcement-gate.sh` finds the plan; `plan-lifecycle.sh` archives it correctly when Status flips to COMPLETED.
+- [x] **11. Migrate plan to canonical location** — `git mv ~/.claude/plans/what-do-we-have-elegant-pudding.md docs/plans/phase-1d-c-2-prd-validity-and-spec-freeze.md`. Update SCRATCHPAD's "Active Plan" section to point at the new path. **Files:** the plan file itself; `SCRATCHPAD.md`. **Acceptance:** `scope-enforcement-gate.sh` finds the plan; `plan-lifecycle.sh` archives it correctly when Status flips to COMPLETED.
 
 ## Files to Modify/Create
 
@@ -400,3 +400,70 @@ Plus inline decision-log entries above for the 5th decision (C16 bundled with C1
 | C2 fires too slowly | Check `git ls-files docs/plans/*.md \| wc -l` | If > 50 plans, archive completed/deferred ones via `plan-lifecycle.sh` |
 | `~/.claude/settings.json` divergence flagged at SessionStart | Diff template vs live | Apply the template to live (or vice versa, depending on which is correct) |
 | Hook crashes with exit 2 | Stderr names parse error | Read the offending file; fix syntax |
+
+---
+
+# Completion Report
+
+## 1. Implementation Summary
+
+All 11 tasks shipped across 10 commits (`aa15c99`..`0658758`). Each task verified PASS by `task-verifier`; evidence at [`phase-1d-c-2-prd-validity-and-spec-freeze-evidence.md`](phase-1d-c-2-prd-validity-and-spec-freeze-evidence.md).
+
+| Task | Description | Commit | task-verifier verdict |
+|------|-------------|--------|------------------------|
+| 1 | Decisions 015-018 + discovery + PRD template + plan-template extension (9 files) | `dc97f33` | PASS (9/10) |
+| 2 | Rule docs `prd-validity.md` + `spec-freeze.md` + 4 cross-refs (6 files) | `b4406c8` | PASS (9/10) |
+| 3 | C1 `prd-validity-gate.sh` (PreToolUse Write; 6/6 self-tests) | `d929261` | PASS (10/10) |
+| 4 | C2 `spec-freeze-gate.sh` (PreToolUse Edit/Write/MultiEdit; 6/6 self-tests) | `ffd7e2c` | PASS (9/10) |
+| 5 | `plan-reviewer.sh` Check 10 — 5-field plan-header schema (5 new self-test scenarios) | `8ff6a0c` | PASS (10/10) |
+| 6 | `plan-reviewer.sh` Check 11 — `## Behavioral Contracts` at rung ≥ 3 (5 new scenarios; 22/22 total) | `8ff6a0c` | PASS (10/10) |
+| 7 | `prd-validity-reviewer` agent — adversarial PRD substance review | `9350d87` | PASS (9/10) |
+| 8 | Backfilled 5 header fields on `pre-submission-audit-mechanical-enforcement.md` | `8123d39` | PASS (9/10) |
+| 9 | Wired both hooks into `settings.json.template` + live `~/.claude/settings.json` | `099d4e2` | PASS (10/10) |
+| 10 | Failure-mode catalog +4 entries (FM-018..FM-021) | `0658758` | PASS (10/10) |
+| 11 | Plan migrated from `~/.claude/plans/...` to canonical `docs/plans/...` | `aa15c99` | PASS (10/10) |
+
+**Backlog items shipped:** HARNESS-GAP-10 sub-gap E (C16 behavioral-contracts validator concrete-invariants requirement). Built and shipped via Check 11 + FM-021. Substance check (>= 30 non-ws chars + placeholder-token stripping) covers vacuous-filler rejection. Deeper semantic validation (e.g., "idempotency must reference a specific input -> output mapping") is paper-only at C16; flagged as a follow-up note in FM-021 if substance check proves insufficient in practice.
+
+## 2. Design Decisions & Plan Deviations
+
+**Decisions:**
+
+- **Decision 018 — Build Doctrine §6 authoritative; SCRATCHPAD's `## Provides`/`## Consumes`/`## Dependencies` deferred** (Tier 2 reversible). The SCRATCHPAD note proved unsourced. Auto-applied per discovery-protocol decide-and-apply discipline. **Confirmed by user** in their 2026-05-04 SCRATCHPAD edit: "That was an unsourced proposal I made conversationally and propagated to SCRATCHPAD treating silence-as-confirmation. The source-spec'd content is C16's `## Behavioral Contracts`. Removed."
+- **Decision 015 — Single `docs/prd.md` per project** (Tier 3, SCRATCHPAD-locked). Diverges from Build Doctrine §6 C1's `docs/prd/<slug>.md` default; SCRATCHPAD lock honored. Confirmed by user.
+- **Decision 015 — Harness-dev carve-out via `prd-ref: n/a — harness-development`** (Tier 1). NL plans bypass C1 with this exact-string declaration. Confirmed by user.
+- **Decision 017 — 5-field plan-header schema locked, no defaults** (Tier 2, SCRATCHPAD-locked + Build Doctrine §9 Q4-A).
+- **C16 bundled with C1+C2** (Tier 2, inline). C16 needs the rung field; bundling avoids two plan-reviewer.sh extension passes.
+
+**Plan deviations:**
+- **Worktree-base bug.** Parallel-mode dispatch via `isolation: "worktree"` created worktrees at master (`10adac2`) instead of branching from current HEAD (`aa15c99`). Builder B (Task 7) was BLOCKED because the plan file wasn't visible inside its worktree. Recovered by copying the staged agent file to the main repo. Subsequent tasks ran sequentially in the main repo.
+- **`docs/decisions/index` actually at `docs/DECISIONS.md`.** Builder A discovered during Task 1; noted as in-flight scope update.
+- **Pre-existing generic codename in self-test fixtures (Tasks 5+6).** harness-hygiene-scan blocked initial commit; builder rephrased to generic terms.
+
+## 3. Known Issues & Gotchas
+
+- **Pre-existing template-vs-live divergence for OTHER hooks** (NOT introduced by Phase 1d-C-2): `outcome-evidence-gate`, `systems-design-gate`, `no-test-skip-gate`, `automation-mode-gate`, `public-repo-blocker` variants. Reconcile in a follow-up. Not blocking.
+- **plan-reviewer Check 1 / Check 7 noise on this plan file itself.** 6 pre-existing findings (5× Check 1 sweep-language + 1× Check 7 design-mode shallowness). Tracked as HARNESS-GAP-09. Pre-existing.
+- **Locked worktrees** at `.claude/worktrees/agent-a71e77d16bccba12a` and `.claude/worktrees/agent-a2ed8e5e0db4208d2`. Claude Code worktree manager handles cleanup. Not blocking.
+
+## 4. Manual Steps Required
+
+- None for the harness itself. The gates are LIVE on next session start.
+- Downstream-project rollout is its own series of plans; opt-in per project.
+
+## 5. Testing Performed & Recommended
+
+**Performed:**
+- C1 `--self-test`: 6/6 PASS.
+- C2 `--self-test`: 6/6 PASS.
+- `plan-reviewer.sh --self-test`: 22/22 PASS (zero regression).
+- Live-repo end-to-end exercise of C2 against a synthetic file claim — PASS.
+- Both gates wired byte-identically in template AND live settings.json.
+
+**Recommended:**
+- Run plan-reviewer.sh against EVERY plan in `docs/plans/*.md` (active + archive) to confirm no surprise regressions.
+- Exercise the gates on a real PRD authoring flow during the first downstream-project rollout.
+
+## 6. Cost Estimates
+
+Zero ongoing cost. Local-only bash hooks + one local-only agent prompt. No cloud services, third-party APIs, or infrastructure spend. Per-invocation latency: <= 200ms per the C2 capacity model in §9.
