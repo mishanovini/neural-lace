@@ -84,13 +84,15 @@ Patterns are NOT weaker than Mechanisms — they solve different problems. Mecha
 - Detects the current directory against configured account `dir_triggers` in `~/.claude/local/accounts.config.json` and switches GitHub + Supabase accounts accordingly
 - Checks for `orchestrate.sh` or `evidence.md` → reports pipeline status
 
-### PreToolUse (9 entries)
+### PreToolUse (11 entries)
 
 | Hook | Matcher | What it blocks / does |
 |------|---------|----------------------|
 | Sensitive file blocker | `Edit\|Write` | `.env`, `credentials.json`, `secrets.yaml` |
 | Lock file blocker | `Edit\|Write` | `package-lock.json`, `bun.lock`, `yarn.lock`, `pnpm-lock.yaml` |
+| **PRD-validity gate (Phase 1d-C-2 / C1, 2026-05-04)** | `Write` | On `Write` of a `docs/plans/<slug>.md` file: reads the plan's `prd-ref:` header field; if not the harness-dev carve-out (`n/a — harness-development`), resolves to `docs/prd.md` and verifies all 7 required sections (Problem, Scenarios, Functional, Non-functional, Success metrics, Out-of-scope, Open questions) are present with ≥ 30 non-whitespace chars each. Blocks plan creation on missing/incomplete PRD. Pass-through on non-plan-file Write calls. Wired BEFORE `plan-edit-validator.sh` so PRD-validity is checked at plan-creation time before evidence-first protocol applies. |
 | **Plan-edit validator (Gen 4)** | `Edit\|Write` | Blocks casual `[ ]`→`[x]` flips on `docs/plans/*.md`. Requires fresh evidence file with matching Task ID + Runtime verification entry (evidence-first authorization). Also blocks `Status: ACTIVE`→`COMPLETED` without an evidence file. (Agent Teams plan task 9: extended with `flock` concurrent-write protection on `<plan>.lock`, 30s timeout.) |
+| **Spec-freeze gate (Phase 1d-C-2 / C2, 2026-05-04)** | `Edit\|Write\|MultiEdit` | Iterates every top-level `docs/plans/*.md` with `Status: ACTIVE`; for each, parses `## Files to Modify/Create` into a path list. If the target file is declared in any active plan whose header has `frozen: false` (or missing `frozen:`), BLOCKS with a message naming the unfrozen plan(s) and the freeze-or-remove options. Self-bypasses on `docs/plans/.*\.md` paths so plans can edit themselves. Wired AFTER `plan-edit-validator.sh` (so plan-file edits flow through plan-edit-validator first) and BEFORE `tool-call-budget.sh`. Degrades gracefully on plan-parse errors. |
 | **Tool-call budget (Gen 4)** | `.*` | After 30 tool calls since last `--ack`, blocks further tool calls until plan-evidence-reviewer is invoked and `tool-call-budget.sh --ack` is run. Mitigates attention decay in long sessions. (Agent Teams plan task 6: counter is per-team in agent-team mode; deferred-audit cadence sets a flag at counter==30 instead of mid-stream block; per-teammate sub-counter blocks at 90 as hard ceiling.) |
 | **Teammate-spawn validator (Agent Teams plan task 5)** | `Task\|Agent` | Reads `~/.claude/local/agent-teams.config.json` and rejects: (a) `enabled: false` AND `team_name` set; (b) `worktree_mandatory_for_write: true` AND spawn lacks `isolation: "worktree"` for write-capable teammates; (c) `force_in_process: true` AND lead is in `--dangerously-skip-permissions`. Defaults to ALLOW when ambiguous. |
 | Dangerous command blocker | `Bash` | `curl\|sh`, `chmod -R 777`, `mkfs.`, `dd if=` |
