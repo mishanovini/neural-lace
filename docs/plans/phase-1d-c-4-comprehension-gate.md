@@ -64,7 +64,7 @@ Plus enabling work:
 
 ## Tasks
 
-- [ ] **1. Decision 020 + comprehension-template.md.** Land Decision 020 (comprehension-gate semantics: rung-2 cutoff, four required articulation fields, ≥ 30-char substance threshold per field, FAIL/INCOMPLETE blocks task-verifier's checkbox flip, agent invokes via Task tool). Create `comprehension-template.md` showing the markdown shape: top-of-file schema-spec block + a sample articulation with each of the four sub-sections populated for a synthetic R2 task. Update `docs/DECISIONS.md` with the row. Single commit.
+- [x] **1. Decision 020 + comprehension-template.md.** Land Decision 020 (comprehension-gate semantics: rung-2 cutoff, four required articulation fields, ≥ 30-char substance threshold per field, FAIL/INCOMPLETE blocks task-verifier's checkbox flip, agent invokes via Task tool). Create `comprehension-template.md` showing the markdown shape: top-of-file schema-spec block + a sample articulation with each of the four sub-sections populated for a synthetic R2 task. Update `docs/DECISIONS.md` with the row. Single commit.
 
 - [ ] **2. Rule docs — comprehension-gate.md.** NEW rule documenting: when the gate fires (R2+ tasks; task-verifier auto-invokes), what the builder must articulate (the four sub-sections per Decision 020), the articulation format (template at `comprehension-template.md`), the agent rubric (each sub-section graded for substance + diff-correspondence; PASS requires the four sub-sections valid; FAIL on any vacuous; INCOMPLETE on missing sub-section), examples of each verdict, and the rung-2 cutoff rationale. Cross-references to Decision 020, the agent, the failure-mode entry, the enforcement-map row. Single commit.
 
@@ -88,7 +88,7 @@ Plus enabling work:
 
 ## In-flight scope updates
 
-(none yet)
+- `docs/plans/phase-1d-c-4-comprehension-gate-evidence.md` — added 2026-05-04 by orchestrator. The evidence file is the standard task-verifier companion and is created automatically on the first task verification. Adding here to satisfy scope-enforcement-gate without spec-thaw.
 
 ## Assumptions
 
