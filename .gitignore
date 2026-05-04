@@ -71,9 +71,22 @@ id_ed25519.pub
 # produced while USING neural-lace to build something else — those belong
 # in the downstream project's own repo, not here.
 SCRATCHPAD.md
-docs/decisions/
-docs/reviews/
-docs/sessions/
+
+# docs/{decisions,reviews,sessions}: ignore content that doesn't follow the
+# established NL-self conventions. Decision records are NNN-*.md; reviews
+# and sessions are YYYY-MM-DD-*.md. Anything else under these paths is
+# treated as downstream-project artifact and gitignored. This closes
+# HARNESS-GAP-10 sub-gap H — legitimate NL-self artifacts commit normally
+# without `git add -f`, while downstream-project content remains protected.
+# (Per git's gitignore quirk: cannot re-include files if their parent
+# directory is excluded; therefore we exclude file patterns inside each
+# directory rather than the directories themselves.)
+docs/decisions/*
+!docs/decisions/[0-9][0-9][0-9]-*.md
+docs/reviews/*
+!docs/reviews/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
+docs/sessions/*
+!docs/sessions/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
 
 # Pre-sanitization plan files (committed before the "track our own plans"
 # convention was settled; contain test data / denylist patterns that the

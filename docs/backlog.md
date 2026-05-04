@@ -1,6 +1,6 @@
 # Neural Lace — Harness Backlog
 
-Last updated: 2026-05-03 v4: Discovery Protocol shipped — `docs/discoveries/` directory live; `bug-persistence-gate.sh` accepts discoveries; new `discovery-surfacer.sh` SessionStart hook. Earlier 2026-05-03 v3: HARNESS-GAP-11 added — reviewer accountability one-way gap surfaced during incentive-map analysis. Earlier 2026-05-03: HARNESS-GAP-10 added — Build Doctrine integration analysis surfaced 7 sub-gaps; see entry below. Earlier 2026-05-03: HARNESS-AUDIT-EXT-01 + HARNESS-AUDIT-EXT-02 absorbed into `docs/plans/pre-submission-audit-mechanical-enforcement.md` and removed from the open list per backlog-plan-atomicity rule. Earlier 2026-04-29: two mechanism-extension items added for Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md`; remaining two harness-drift items stay open. Earlier 2026-04-27: four harness-drift items added — see `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.
+Last updated: 2026-05-03 v5: HARNESS-GAP-12 added — neural-lace dual-remote sync requires manual gh-auth dance; multi-push remote config proposed. Earlier 2026-05-03 v4: Discovery Protocol shipped — `docs/discoveries/` directory live; `bug-persistence-gate.sh` accepts discoveries; new `discovery-surfacer.sh` SessionStart hook. Earlier 2026-05-03 v3: HARNESS-GAP-11 added — reviewer accountability one-way gap surfaced during incentive-map analysis. Earlier 2026-05-03: HARNESS-GAP-10 added — Build Doctrine integration analysis surfaced 7 sub-gaps; see entry below. Earlier 2026-05-03: HARNESS-AUDIT-EXT-01 + HARNESS-AUDIT-EXT-02 absorbed into `docs/plans/pre-submission-audit-mechanical-enforcement.md` and removed from the open list per backlog-plan-atomicity rule. Earlier 2026-04-29: two mechanism-extension items added for Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md`; remaining two harness-drift items stay open. Earlier 2026-04-27: four harness-drift items added — see `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
@@ -103,6 +103,35 @@ This is the reviewer-side analogue of the documented `claim-reviewer` self-invoc
 **Why P2 (not P1).** Calibration drift is a slow-moving structural risk; it doesn't cause individual session failures. The first-pass C-mechanisms (C10 scope-enforcement, C22 quantitative-claims, C7-DAG-waiver — already shipped) catch immediate failure modes. C1/C2/C9/C15/C16 catch upstream failure modes. The reviewer-calibration mechanism catches drift across many sessions, which only matters once the harness is running stably enough to accumulate the pattern data. Sequence after Phase 1d-C-4 (C15 ships).
 
 **Originating context.** The user posed (2026-05-03): "Show me the incentive and I'll show you the outcome — applied to AI agents." The agent-incentive-map document catalogued each agent's stray-from patterns; this gap is the most consequential unaddressed weakness across the catalogue.
+
+---
+
+## HARNESS-GAP-12 — Neural-lace dual-remote sync requires manual gh-auth dance (added 2026-05-03)
+
+**Source.** Surfaced 2026-05-03 during autonomous-delivery work. The harness's `git push` PreToolUse hook in `settings.json.template` calls `read-local-config.sh match-dir "$PWD"` and switches the active gh account based on directory pattern matching. For neural-lace specifically (dual-hosted: `origin = <personal-account>/neural-lace`, `pt = <work-org>/neural-lace`), the pattern matching switches to the wrong account on push, producing 403 errors. This recurred 2+ times in the same session.
+
+**Why this is a gap.** Neural Lace is dual-hosted by design — pushes should reach BOTH GitHub accounts so the harness stays in sync across personal and work-org. The current setup has TWO distinct problems:
+
+1. **Auth-switch fires wrong for neural-lace.** The local config's directory→account mapping doesn't have a tiebreaker for the dual-hosted case; the matcher picks one account, but if the push targets the other account's URL, it 403s.
+2. **No automated dual-sync.** Even when one push succeeds, the OTHER remote isn't updated. The maintainer must remember to manually push to both, or accept that one remote drifts.
+
+User stated requirement (2026-05-03): "Neural Lace needs to always be kept up to date in both GH accounts. They need to stay in sync. What's the best solution that automates this and keeps us from continuing to run into this issue?"
+
+**Proposed mechanism.** Multi-push remote configuration plus per-host credential differentiation:
+
+1. Configure `origin` as a multi-push remote: `git remote set-url --add --push origin <pt-url>` so a single `git push origin` sends to BOTH URLs.
+2. Use SSH for one URL (typically the work-org), HTTPS for the other. SSH key auth bypasses the gh-active-account dependency entirely; HTTPS auth uses gh credentials for whichever active account.
+3. The auth-switch hook becomes irrelevant for neural-lace pushes (both URLs auth independently).
+
+Alternative simpler approach: explicit `neural-lace/` → `<personal-account>` mapping in `~/.claude/local/accounts.config.json` to fix the auth-switch. Doesn't solve dual-sync; manual `git push <work-org-remote>` still needed.
+
+**Why this matters now.** Three commits this session hit the auth-switch failure, requiring manual `gh auth switch --user <personal-account>` + retry. This is recurring friction that should be fixed structurally rather than worked around.
+
+**Effort estimate.** S (~30-60 minutes for multi-push + SSH config). Or XS (~5 minutes) for the local-config-only patch.
+
+**Why P2.** Friction is meaningful but not a correctness threat — pushes still happen, just with extra steps. Schedule for Phase 1d-E (harness cleanup) alongside HARNESS-GAP-10 sub-gaps.
+
+**Originating context.** Recurred during D4-discussion of the D1-D5 educational re-do (2026-05-03). The user pushed back on the recurrence: "I thought we set things up so that you're always aware of which account to use for each repo." The setup was correct for single-hosted projects; neural-lace's dual-hosting wasn't accounted for.
 
 ---
 
