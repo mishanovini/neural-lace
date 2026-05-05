@@ -1,6 +1,6 @@
 # Plan: Phase 1d-E-4 — GAP-15 cleanup + un-archived plans resolution
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: HARNESS-GAP-15
@@ -50,17 +50,17 @@ Sub-item C (codename scrub) is OUT of this plan's scope (deferred to next master
 
 ## Tasks
 
-- [ ] **1. Fix harness-hygiene-scan.sh self-test (Sub-item A).** Read existing self-test scaffold. Identify the failing exemption assertion (referencing `docs/plans/foo.md`). Update the assertion to match current exemption logic. Run `bash harness-hygiene-scan.sh --self-test` until PASS. Sync to live. Single commit.
+- [x] **1. Fix harness-hygiene-scan.sh self-test (Sub-item A).** Read existing self-test scaffold. Identify the failing exemption assertion (referencing `docs/plans/foo.md`). Update the assertion to match current exemption logic. Run `bash harness-hygiene-scan.sh --self-test` until PASS. Sync to live. Single commit.
 
-- [ ] **2. Tighten scanner exemption + reconcile with gitignore (Sub-item B).** EDIT scanner so directory-level exemptions for `docs/decisions/`, `docs/reviews/`, `docs/sessions/` only apply to gitignored paths within those directories — NOT to committed (allow-listed) files. Re-run full-tree scan after fix. If new findings surface, address them in the SAME commit (sanitize identifiers in committed decision/review/session files). Sync to live. Single commit.
+- [x] **2. Tighten scanner exemption + reconcile with gitignore (Sub-item B).** EDIT scanner so directory-level exemptions for `docs/decisions/`, `docs/reviews/`, `docs/sessions/` only apply to gitignored paths within those directories — NOT to committed (allow-listed) files. Re-run full-tree scan after fix. If new findings surface, address them in the SAME commit (sanitize identifiers in committed decision/review/session files). Sync to live. Single commit.
 
-- [ ] **3. Schema file decision + creation/removal (Sub-item D).** Read `docs/plans/public-release-hardening.md` Task 6.1 to confirm the schema reference. Decide: (a) author the schema file, OR (b) remove from plan's claimed scope (the example.json + gate hook are sufficient without strict schema validation). Document the choice. Single commit.
+- [x] **3. Schema file decision + creation/removal (Sub-item D).** Read `docs/plans/public-release-hardening.md` Task 6.1 to confirm the schema reference. Decide: (a) author the schema file, OR (b) remove from plan's claimed scope (the example.json + gate hook are sufficient without strict schema validation). Document the choice. Single commit.
 
-- [ ] **4. Close public-release-hardening.md (Sub-item E).** Per unchecked task (1.2, 4.2, 5.3, 6.1 per backlog), either complete OR document explicit deferral with rationale. Flip Status: COMPLETED with a corrected completion report stating actual scope honestly. Auto-archive. Single commit.
+- [x] **4. Close public-release-hardening.md (Sub-item E).** Per unchecked task (1.2, 4.2, 5.3, 6.1 per backlog), either complete OR document explicit deferral with rationale. Flip Status: COMPLETED with a corrected completion report stating actual scope honestly. Auto-archive. Single commit.
 
-- [ ] **5. Close harness-quick-wins-2026-04-22.md (Sub-item F).** Phase A Task 1 needs `effortLevel` field in settings.json. Either add it (one-line edit + verification) OR defer with rationale citing per-project effort-policy-warn.sh covers most of the value. Flip Status: COMPLETED. Auto-archive. Single commit.
+- [x] **5. Close harness-quick-wins-2026-04-22.md (Sub-item F).** Phase A Task 1 needs `effortLevel` field in settings.json. Either add it (one-line edit + verification) OR defer with rationale citing per-project effort-policy-warn.sh covers most of the value. Flip Status: COMPLETED. Auto-archive. Single commit.
 
-- [ ] **6. Backlog cleanup + GAP-15 closure.** Mark sub-items A/B/D/E/F IMPLEMENTED in `docs/backlog.md` "Recently implemented" section with commit SHAs. Note Sub-item C deferred (still tracked). Update front-matter Last updated. Single commit.
+- [x] **6. Backlog cleanup + GAP-15 closure.** Mark sub-items A/B/D/E/F IMPLEMENTED in `docs/backlog.md` "Recently implemented" section with commit SHAs. Note Sub-item C deferred (still tracked). Update front-matter Last updated. Single commit.
 
 ## Files to Modify/Create
 
@@ -76,7 +76,7 @@ Sub-item C (codename scrub) is OUT of this plan's scope (deferred to next master
 
 ## In-flight scope updates
 
-(none yet)
+- `docs/plans/phase-1d-e-4-gap-15-cleanup-evidence.md` — added 2026-05-04 by orchestrator. Standard task-verifier companion.
 
 ## Assumptions
 
