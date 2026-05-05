@@ -101,9 +101,38 @@ Fixtures used in automated tests, example inputs, demo payloads, and documentati
 
 A fixture that looks like real data because it once was real data is a silent leak waiting to happen. The test passes, the fixture ships, and a real identifier goes public with it.
 
+## Layer 2 heuristic detection
+
+In addition to the literal denylist (Layer 1), `harness-hygiene-scan.sh` runs a heuristic pass (Layer 2) that catches project-specific content shapes the denylist cannot enumerate exhaustively. The heuristic layer is invoked per file via `check_heuristics()` after the denylist scan; matches are reported with a `[heuristic]` prefix to distinguish them from literal-denylist hits.
+
+### What Layer 2 catches
+
+- **Project-internal file-path shapes.** Three high-signal regexes targeting paths typical of downstream-consumer codebases that should not appear in harness prose: `app/api/v<digits>/<slug>/` (versioned API route hierarchies), `src/components/<PascalCase>.tsx` (React component file references), and `supabase/migrations/<14-digit>_<slug>.sql` (Supabase migration file references). A harness rule mentioning one of these path shapes is a strong signal that downstream-project content has leaked into a kit-level file.
+- **Repeated capitalized-term clusters.** Tokens matching `[A-Z][a-z]{4,15}` that appear 3+ times in a single file, where the token is NOT in the NL vocabulary allowlist (case-insensitive). This catches downstream-project codenames, vendor names, or product nouns that recur in prose, while letting harness primitives (`Plan`, `Phase`, `Promise`, `Acceptance`, etc.) pass.
+
+Both sub-checks are SKIPPED for files inside known NL-prefix paths (`adapters/`, `principles/`, `patterns/`, `templates/`, `evals/`, `.github/`, `docs/`, `~/.claude/` mirror, and well-known root prose files like `README.md`). NL's own documentation legitimately cites path-shapes in prose AND repeats domain vocabulary, so the path-prefix exemption is the cleaner mechanism than maintaining an exhaustive vocabulary allowlist for every doc-domain term.
+
+### How to add false-positive exemptions
+
+Two paths, depending on the kind of false positive:
+
+1. **Path-prefix exemption** — extend `is_path_shape_exempt()` in `adapters/claude-code/hooks/harness-hygiene-scan.sh`. Use this when an entire directory's content legitimately mentions internal-style paths or repeats domain terms (e.g., a new top-level docs directory, a new harness-internal subtree). One added `case` clause covers the whole subtree.
+2. **Vocabulary allowlist** — extend `NL_VOCAB_ALLOWLIST` (pipe-separated, case-insensitive) in the same file. Use this when a single token like `Promise`, `Object`, or `Pattern` is a legitimate harness primitive that downstream consumer code can also use heavily without it being a leak. Note: NL's own documentation files are already exempt via the path-prefix rule, so the vocabulary allowlist primarily protects scans that hit downstream consumer code (the scanner's actual target audience) where common JS/TS built-ins might recur 3+ times legitimately.
+
+Pick the path-prefix exemption when the issue is structural (a directory of files the scanner shouldn't scrutinize); pick the vocabulary allowlist when the issue is lexical (a specific token recurs in many otherwise-unrelated files).
+
+### Override at commit-time
+
+When the planner is certain a heuristic match is a legitimate one-off false positive AND the case does not warrant a permanent allowlist entry, `git commit --no-verify` bypasses the gate. Use sparingly: a recurring false positive should always be encoded as an exemption (path-prefix or allowlist) rather than repeatedly bypassed, otherwise the gate erodes via accumulated bypasses.
+
+### Self-test scenarios
+
+`harness-hygiene-scan.sh --self-test` exercises five Layer 2 scenarios — h1 (path-shape positive match outside NL-prefix paths), h2 (cluster positive match for `Examplecorp` x5+), h3 (NL-prefix path NEGATIVE — path-shape mention is exempt), h4 (vocabulary allowlist NEGATIVE — `Promise` x5 does not fire), h5 (clean-prose NEGATIVE — no false positives). When adding new exemptions, extend the corresponding self-test fixture to lock the behavior in.
+
 ## Enforcement
 
-- **Hook-enforced:** `adapters/claude-code/hooks/harness-hygiene-scan.sh` runs as a pre-commit hook in the harness repo. It reads `adapters/claude-code/patterns/harness-denylist.txt` and rejects any commit whose staged diff matches a denylisted pattern. This is the mechanical layer and cannot be bypassed by forgetting a rule.
+- **Hook-enforced (Layer 1 — literal denylist):** `adapters/claude-code/hooks/harness-hygiene-scan.sh` runs as a pre-commit hook in the harness repo. It reads `adapters/claude-code/patterns/harness-denylist.txt` and rejects any commit whose staged diff matches a denylisted pattern. This is the mechanical layer and cannot be bypassed by forgetting a rule.
+- **Hook-enforced (Layer 2 — heuristic detection):** the same scanner runs `check_heuristics()` per file, catching project-internal path shapes and repeated capitalized-term clusters that the literal denylist cannot enumerate. See "Layer 2 heuristic detection" above for what it catches and how to add exemptions.
 - **Pattern-enforced:** the `harness-reviewer` agent checks for hygiene violations on every rule, agent, or hook change before commit. This catches cases the denylist patterns don't cover, such as stylistic leakage and overly-specific incident citations.
 - **Runtime-enforced (planned — not yet implemented):** a `/harness-review` skill will run weekly across the full tree (not just the staged diff), catching any drift that slipped through pre-commit and producing a dated review under `docs/reviews/`. See Phase 7 of `docs/plans/public-release-hardening.md` for the implementation plan. Until it lands, full-tree scans can be run manually via `adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree`.
 
