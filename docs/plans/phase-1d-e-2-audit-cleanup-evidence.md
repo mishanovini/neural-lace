@@ -310,3 +310,63 @@ Verdict: PASS
 Confidence: 8
 Reason: Audit document exists at declared path with substantive content (84 lines). 24-row per-rule table covers the rule-file inventory; methodology explains threshold-based recommendation logic; verdicts cleanly split 1 convert / 4 split / 19 keep verbose, matching the recommendations summary aggregation. Out-of-scope section is honest about audit limitations (project-level rules, comprehension-gate as TBD, hook-existence not exhaustively verified, hook-correctness vs existence). Minor accuracy caveat: the url-conventions.md row in the table treats a file that does not currently exist in ~/.claude/rules/ or adapters/claude-code/rules/ as part of the audit scope; this is a single-row inaccuracy but does not change the overall outcome (the verdict for that row is "keep verbose" which is harmless) — confidence reduced to 8 to acknowledge. The audit's primary deliverable (a per-rule table with thresholded recommendations) is achieved; downstream restructuring decisions can proceed with the document as input.
 
+
+EVIDENCE BLOCK
+==============
+Task ID: 6
+Task description: Decision + DECISIONS index + backlog cleanup. Land Decision 022 if any structural decision was made (likely from Sub-gap B's relocation choice or Sub-gap H's gitignore refinement). Update `docs/DECISIONS.md`. Update `docs/backlog.md` "Recently implemented" section with the 5 sub-gap closures. Single commit.
+Verified at: 2026-05-05T01:44:01Z
+Verifier: task-verifier agent
+
+Checks run:
+1. Builder commit exists, single commit, expected files
+   Command: git show --stat 6d30d7b
+   Output: commit 6d30d7bfb9d52fc681b9a1e36354400e49f1cc48 — "docs: Decision 022 + audit-batch backlog cleanup (Phase 1d-E-2 Task 6)" — 3 files changed: docs/DECISIONS.md (+1), docs/backlog.md (+10/-1), docs/decisions/022-pipeline-agents-md-deletion.md (NEW, +153 lines).
+   Result: PASS
+
+2. Decision 022 file exists with all required sections
+   Command: Read docs/decisions/022-pipeline-agents-md-deletion.md (153 lines)
+   Output: File contains Title ("Decision 022 — `pipeline-agents.md` deleted from global rules"), Date (2026-05-04), Status (Implemented (commit d8b30f3)), Stakeholders (Maintainer (sole)), Related plan + backlog refs, Context (3 numbered findings), Decision (delete from both layers, final), Alternatives considered (Alt 1/2/3 with reject rationales), Consequences (Enables / Costs / Depends on / Propagates downstream / Blocks), Cross-references (6 entries).
+   Result: PASS
+
+3. DECISIONS.md updated with row for entry 022
+   Command: git show 6d30d7b -- docs/DECISIONS.md
+   Output: diff adds line `| 022 | [pipeline-agents.md deleted from global rules](decisions/022-pipeline-agents-md-deletion.md) | 2026-05-04 | Implemented |` immediately after row 021. Pipe-table format consistent with rows 019-021.
+   Result: PASS
+
+4. backlog.md "Recently implemented" section has 5 entries for Phase 1d-E-2 sub-gaps
+   Command: grep -n 'Sub-gap [ABCFH]' docs/backlog.md
+   Output:
+     Line 19: Sub-gap A of the Build Doctrine integration audit batch — Stop-hook orthogonality audit shipped (commit fd9f663)
+     Line 20: Sub-gap B of the audit batch — pipeline-agents.md deleted from global rules (commit d8b30f3)
+     Line 21: Sub-gap C of the audit batch — claim-reviewer post-Gen6 reassessment shipped (commit d8b30f3)
+     Line 22: Sub-gap F of the audit batch — Rules-vs-hooks audit shipped (commit d8b30f3)
+     Line 23: Sub-gap H of the audit batch — docs/reviews/ gitignore convention documented (commit 7abe23e)
+   All 5 entries present (A, B, C, F, H), each with a commit SHA citation.
+   Result: PASS
+
+5. backlog.md "Last updated" header refreshed to v14
+   Command: head -3 docs/backlog.md
+   Output: line 3 begins "Last updated: 2026-05-04 v14: HARNESS-GAP-10 sub-gaps A, B, C, F, H IMPLEMENTED via Phase 1d-E-2 (`docs/plans/phase-1d-e-2-audit-cleanup.md`); see "Recently implemented" section below for commit SHAs and audit document paths. Decision 022 records the structural choice (pipeline-agents.md deleted from global rules)."
+   Bumped from v13 → v14; new entry chains the prior version notes.
+   Result: PASS
+
+6. Single commit (no batched siblings)
+   Command: git log --oneline 6d30d7b^..6d30d7b
+   Output: only 6d30d7b in the range; no follow-up amendment commits before HEAD touch the same files.
+   Result: PASS
+
+Git evidence:
+  Files modified in commit 6d30d7b:
+    - docs/decisions/022-pipeline-agents-md-deletion.md (NEW, 153 lines)
+    - docs/DECISIONS.md (1 line added — index row for 022)
+    - docs/backlog.md (10 added / 1 removed — "Last updated" v13→v14 + 5 sub-gap closure entries appended to "Recently implemented in Phase 1d-E series" section)
+
+Runtime verification: file <repo>/claude-projects/neural-lace/docs/decisions/022-pipeline-agents-md-deletion.md::pipeline-agents.md deleted from global rules
+Runtime verification: file <repo>/claude-projects/neural-lace/docs/DECISIONS.md::022-pipeline-agents-md-deletion.md
+Runtime verification: file <repo>/claude-projects/neural-lace/docs/backlog.md::Sub-gap A of the Build Doctrine integration audit batch
+Runtime verification: file <repo>/claude-projects/neural-lace/docs/backlog.md::Sub-gap H of the audit batch
+
+Verdict: PASS
+Confidence: 9
+Reason: All four acceptance criteria met. Decision 022 file is substantive (153 lines) with every required ADR section populated (Title, Date 2026-05-04, Status Implemented, Stakeholders, Context, Decision, Alternatives, Consequences, Cross-references). DECISIONS.md row 022 lands correctly in the index table. backlog.md "Recently implemented" section gains all 5 sub-gap entries (A/B/C/F/H), each with a commit SHA and audit document path where applicable. Single commit 6d30d7b contains exactly the expected file set. Last-updated header bumped v13 → v14 with consistent chained-history format. No defects observed; this is the closing-out task of Phase 1d-E-2 and it lands cleanly.

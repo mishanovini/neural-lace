@@ -73,7 +73,7 @@ Five small audits / cleanups ship in one coherent unit, each with a deliverable 
 
 - [x] **5. Sub-gap H — `docs/reviews/` gitignore refinement.** Edit `.gitignore` to exclude downstream-project reviews specifically (by codename naming convention) while allowing NL-self-reviews (e.g., `docs/reviews/2026-*-stop-hook-*.md`, `docs/reviews/2026-*-rules-vs-hooks-*.md`). Document the naming convention in a brief comment in `.gitignore` AND in `harness-hygiene.md`. Test: `git status` after running — confirm the audit docs from Tasks 1, 3, 4 ARE tracked (visible to git) under the refined gitignore. Single commit.
 
-- [ ] **6. Decision + DECISIONS index + backlog cleanup.** Land Decision 022 if any structural decision was made (likely from Sub-gap B's relocation choice or Sub-gap H's gitignore refinement). Update `docs/DECISIONS.md`. Update `docs/backlog.md` "Recently implemented" section with the 5 sub-gap closures. Single commit.
+- [x] **6. Decision + DECISIONS index + backlog cleanup.** Land Decision 022 if any structural decision was made (likely from Sub-gap B's relocation choice or Sub-gap H's gitignore refinement). Update `docs/DECISIONS.md`. Update `docs/backlog.md` "Recently implemented" section with the 5 sub-gap closures. Single commit.
 
 ## Files to Modify/Create
 
