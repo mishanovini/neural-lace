@@ -178,6 +178,10 @@ Alternative simpler approach: explicit `neural-lace/` → `<personal-account>` m
 
 ---
 
+## HARNESS-GAP-14 — ABSORBED 2026-05-04 into `docs/plans/phase-1d-e-3-gap-14-reconciliation.md`
+
+(Historical entry preserved below for context.)
+
 ## HARNESS-GAP-14 — Template-vs-live settings.json reconciliation pass (added 2026-05-04; deferred from discovery 2026-05-04-template-vs-live-divergence-across-other-hooks)
 
 **Source.** Discovery `docs/discoveries/2026-05-04-template-vs-live-divergence-across-other-hooks.md` decided 2026-05-04. Detector half (B) ships now; reconciliation half (A) deferred here.
