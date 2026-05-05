@@ -31,3 +31,4 @@ commit (enforced by `adapters/claude-code/hooks/decisions-index-gate.sh`).
 | 021 | [DRIFT-02 resolution: SessionStart account-switching hook is config-driven](decisions/021-drift-02-account-switch-config-driven.md) | 2026-05-04 | Active |
 | 022 | [`pipeline-agents.md` deleted from global rules](decisions/022-pipeline-agents-md-deletion.md) | 2026-05-04 | Implemented |
 | 023 | [Definition-on-first-use enforcement: acronym regex + stopword allowlist + scope-prefix + glossary/in-diff semantics](decisions/023-definition-on-first-use-enforcement.md) | 2026-05-04 | Active |
+| 024 | [GAP-14 template-vs-live reconciliation outcomes (six per-hook verdicts; all REVERSIBLE; auto-applied)](decisions/024-gap-14-reconciliation.md) | 2026-05-04 | Implemented |
