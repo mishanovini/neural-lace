@@ -1,6 +1,6 @@
 # Plan: Pre-Submission Audit — Mechanical Enforcement
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: HARNESS-AUDIT-EXT-01, HARNESS-AUDIT-EXT-02
@@ -57,7 +57,7 @@ Close the Pattern-only gap left by commit `9c4e4c8` (which landed the Pre-Submis
     - **FAIL-placeholder:** Mode: design plan whose audit body is `[populate me]` only; confirm exit 1 + finding cites placeholder content
 - [x] 3. Update `docs/failure-modes.md` FM-007 Detection / Prevention fields to cite Check 8A with the implementing commit SHA. Other FM entries unchanged.
 - [x] 4. Update `rules/design-mode-planning.md` Enforcement summary listing: flip `plan-reviewer.sh extension` Status from "planned, not yet implemented" to a partial-landed status. Cite this plan's commit SHA. Document explicitly that 8A is the only mechanized check; 8B/8C/8D/8E/8F and agent precondition are deferred per D-1 and D-3.
-- [ ] 5. Sync changed files from neural-lace adapter directory to `~/.claude/` per `harness-maintenance.md` Windows manual-sync rule. Verify with the diff loop. Commit, dual-remote push.
+- [x] 5. Sync changed files from neural-lace adapter directory to `~/.claude/` per `harness-maintenance.md` Windows manual-sync rule. Verify with the diff loop. Commit, dual-remote push.
 
 ## Files to Modify/Create
 
@@ -146,9 +146,60 @@ n/a — Mode: code plan, no class-sweep needed. (The audit discipline is require
 
 ## Definition of Done
 
-- [ ] All 5 tasks above are checked by the `task-verifier` agent (per harness rule, only task-verifier flips checkboxes).
-- [ ] `plan-reviewer.sh --self-test` exits 0; the 4 existing scenarios plus 4 new Check-8A scenarios (8 total) each report the expected verdict.
-- [ ] FM-007 cites Check 8A's implementing commit SHA. FM-015 and FM-016 stay Pattern-only (deferred per D-3) with text reflecting the deferral.
-- [ ] `~/.claude/` and `~/claude-projects/neural-lace/adapters/claude-code/` show zero diff for the changed files (plan-reviewer.sh, design-mode-planning.md), and `~/.claude/docs/failure-modes.md` exists as a copy of the neural-lace `docs/failure-modes.md`.
-- [ ] Backlog items HARNESS-AUDIT-EXT-01 and HARNESS-AUDIT-EXT-02 are deleted from `docs/backlog.md` (already done atomically with the initial plan-file creation commit `428dbef`, per backlog-plan-atomicity hook).
-- [ ] Completion report appended to this plan file per `~/.claude/templates/completion-report.md`.
+- [x] All 5 tasks above are checked by the `task-verifier` agent (per harness rule, only task-verifier flips checkboxes).
+- [x] `plan-reviewer.sh --self-test` exits 0; the 4 existing scenarios plus 4 new Check-8A scenarios (8 total) each report the expected verdict.
+- [x] FM-007 cites Check 8A's implementing commit SHA. FM-015 and FM-016 stay Pattern-only (deferred per D-3) with text reflecting the deferral.
+- [x] `~/.claude/` and `~/claude-projects/neural-lace/adapters/claude-code/` show zero diff for the changed files (plan-reviewer.sh, design-mode-planning.md), and `~/.claude/docs/failure-modes.md` exists as a copy of the neural-lace `docs/failure-modes.md`.
+- [x] Backlog items HARNESS-AUDIT-EXT-01 and HARNESS-AUDIT-EXT-02 are deleted from `docs/backlog.md` (already done atomically with the initial plan-file creation commit `428dbef`, per backlog-plan-atomicity hook).
+- [x] Completion report appended to this plan file per `~/.claude/templates/completion-report.md`.
+
+## Completion Report
+
+### 1. Implementation Summary
+
+All 5 plan tasks shipped in master-merged commits:
+
+| Task | Description | Commit | Status |
+|---|---|---|---|
+| 1 | Check 8A in `plan-reviewer.sh` | `10adac2` | shipped |
+| 2 | Self-test scenarios e/f/g/h | `10adac2` | shipped |
+| 3 | FM-007 Detection field cites Check 8A + commit SHA | `10adac2` (initial) + `588b6db` (SHA citation fix) | shipped |
+| 4 | `design-mode-planning.md` Enforcement summary updated | `10adac2` (and adjacent docs commit) | shipped |
+| 5 | Sync to `~/.claude/`, commit, dual-remote push | `588b6db` (this session's recovery commit on `verify/pre-submission-audit-reconcile`) | shipped |
+
+**Backlog items shipped.** Plan header declares `Backlog items absorbed: HARNESS-AUDIT-EXT-01, HARNESS-AUDIT-EXT-02`. Both were removed from `docs/backlog.md` open sections at plan-file-creation commit `428dbef` (May 3) per the backlog-plan-atomicity rule. No items return to the backlog.
+
+**Recovery context.** This plan was authored on 2026-05-03 and Task 1's code shipped same day in commit `10adac2`. The session that built it ended without running task-verifier; the bookkeeping (checkbox flips, evidence blocks, Status: COMPLETED) was stranded across ~7 subsequent sessions. Recovered 2026-05-05 by dispatching task-verifier on each task in sequence and committing the audit trail.
+
+### 2. Design Decisions & Plan Deviations
+
+Three Tier-2 decisions documented in the Decisions Log:
+- **D-1** (2026-05-03): Drop Checks 8B/8C/8D and the `systems-designer` agent precondition. Reviewer rejected as cheap-evasion (8B's annotation-skip) / WARN-on-prose-regex (8C/8D) / ceremony-not-mechanism (agent precondition).
+- **D-2** (SUPERSEDED by D-3): Promote FM-015 to Check 8F. Reversed in round 2.
+- **D-3** (2026-05-03): Drop Checks 8E and 8F as `prose-regex-pretending-to-be-mechanism` until upstream format-enforcement gates land.
+
+**Final scope:** Check 8A only. The 8-round → 1-2-round improvement target requires this floor; the ceiling (full FM-007..FM-017 mechanization) requires separate plans gated on format-enforcement design.
+
+### 3. Known Issues & Gotchas
+
+- **Eight unmechanized failure classes remain Pattern-only** (FM-008/009/010/011/012/013/014/015/016/017). Documented in `rules/design-mode-planning.md` Enforcement summary with explicit deferral rationale. Future mechanization of S2-S5 sweeps requires LLM-grade reading or upstream format-enforcement gates per D-3.
+- **`systems-designer` agent precondition not enforced.** A Mode: design plan can theoretically reach systems-designer with a fake `## Pre-Submission Audit` section consisting of five `S<N>: swept, 0 matches` lines. Check 8A enforces presence + structure, not honesty. Acknowledged residual risk; bypass cost is ~30s of fake-line typing vs. ~30min of honest sweeps (60× friction ratio).
+
+### 4. Manual Steps Required
+
+None. All work is in code; the recovery committed and pushed.
+
+### 5. Testing Performed & Recommended
+
+**Performed:**
+- `plan-reviewer.sh --self-test`: 8/8 scenarios pass (4 pre-existing + 4 Check 8A).
+- task-verifier dispatched on each of Tasks 1-5; all return PASS (Task 3 required one round of cleanup to add the implementing commit SHA per FM-018+ convention).
+- `diff -q` between `~/.claude/` live and adapter-source for `plan-reviewer.sh`, `design-mode-planning.md`: byte-identical.
+
+**Recommended (deferred to separate plans):**
+- LLM-driven S2-S5 sweep verification (out of scope per D-3).
+- Format-enforcement gates upstream (Check 8F.0 / 8E.0) to enable promotion of 8E / 8F (out of scope per D-3).
+
+### 6. Cost Estimates
+
+n/a — harness-development plan, no runtime / infrastructure costs.

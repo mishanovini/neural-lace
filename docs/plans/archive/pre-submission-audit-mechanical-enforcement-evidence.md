@@ -296,3 +296,80 @@ Confidence: 9
 Reason: ACs 1, 2, 4 are fully satisfied. The Enforcement summary table flips Check 8A's row from "planned, not yet implemented" to "**landed**" (AC 1) and adds a separate row for Checks 8B/8C/8D/8E/8F with Status "**deferred**" and explicit citations to D-1 and D-3 (AC 2). The deferral rationales are cited in the canonical shorthand: "cheap-evasion / WARN-on-prose-regex" for D-1 and "deferred until upstream format-enforcement gates land" for D-3 (AC 4). The agent precondition deferral is independently documented in the systems-designer row with the "ceremony-not-mechanism" rationale referencing D-1. The "Mechanization status by sweep" subsection (lines 338-343) makes "8A is the only mechanized check" unambiguous by per-sweep status. AC 3 is partially satisfied: the Status text cites the plan path (`docs/plans/pre-submission-audit-mechanical-enforcement.md`) rather than the literal commit SHA `10adac2`; the convention matches every other row in the table (none cite raw SHAs), and the audit trail resolves through the plan path's git log to 10adac2. The cross-confirming SHA citation lives in FM-007 (verified in Task 3). Confidence reduced from 10 to 9 due to the AC 3 partial: a strict reading of the task instruction ("Cite this plan's commit SHA") would expect a literal SHA inline. The deviation is minor and aligned with the existing table's convention; auditability is preserved.
 Gaps (minor, non-blocking):
   - The Status text on rows 330-331 cites the plan path rather than the literal commit SHA `10adac2`. AC 3 acknowledges flexibility on this ("preferably `10adac2`... OR an adjacent commit"); the chosen citation form is consistent with the table's pre-existing convention. No rework recommended.
+
+## Task 5 — Sync, commit, dual-remote push
+
+EVIDENCE BLOCK
+==============
+Task ID: 5
+Task description: Sync changed files from neural-lace adapter directory to ~/.claude/ per harness-maintenance.md Windows manual-sync rule. Verify with the diff loop. Commit, dual-remote push.
+Verified at: 2026-05-05T18:39:14Z
+Verifier: task-verifier agent
+
+Comprehension-gate: not applicable (rung < 2)
+
+Checks run:
+
+1. AC1 — plan-reviewer.sh sync byte-identical
+   Command: diff -q adapters/claude-code/hooks/plan-reviewer.sh ~/.claude/hooks/plan-reviewer.sh
+   Output: (empty — files byte-identical)
+   Result: PASS
+
+2. AC2 — design-mode-planning.md live copy matches state at commit 10adac2 (this plan's implementing commit)
+   Command: git show 10adac2:adapters/claude-code/rules/design-mode-planning.md > /tmp/dmp-at-10adac2.md && diff /tmp/dmp-at-10adac2.md ~/.claude/rules/design-mode-planning.md
+   Output: (empty — live copy is byte-identical to the file as it stood at commit 10adac2; both are 342 lines)
+   Note: A later commit b4406c8 (Phase 1d-C-2 Task 2, May 4) added a Check 11 row to the repo copy, creating divergence between current repo HEAD (343 lines) and live (342 lines). That divergence is NOT this plan's responsibility — it's a Phase 1d-C-2 Task 2 sync gap (separate plan). AC2 explicitly scopes the comparison to "the state at this plan's implementing commit 10adac2", which is satisfied.
+   Result: PASS
+
+3. AC3 — ~/.claude/docs/failure-modes.md exists
+   Command: test -f ~/.claude/docs/failure-modes.md && wc -l ~/.claude/docs/failure-modes.md
+   Output: 167 ~/.claude/docs/failure-modes.md
+   Live FM-007 contains: "**Detection.** `plan-reviewer.sh` Check 8A (landed via `docs/plans/pre-submission-audit-mechanical-enforcement.md`)..."
+   Result: PASS
+
+4. AC4 — commit 588b6db landed with FM-007 SHA fix + Tasks 1-4 evidence
+   Command: git log --oneline -- docs/failure-modes.md docs/plans/pre-submission-audit-mechanical-enforcement.md docs/plans/pre-submission-audit-mechanical-enforcement-evidence.md | head -1
+   Output: 588b6db verify(pre-submission-audit): reconcile stranded plan — Tasks 1-4 evidence + FM-007 SHA fix
+   Commit subject confirms scope: "Tasks 1-4 evidence + FM-007 SHA fix". The commit modifies all three expected files (308 insertions / 5 deletions, per git show --stat).
+   Result: PASS
+
+5. AC5a — branch is on origin
+   Command: git ls-remote origin verify/pre-submission-audit-reconcile
+   Output: 588b6dbb6c90133d00d6071ceba9497a94132eea	refs/heads/verify/pre-submission-audit-reconcile
+   Remote SHA matches local HEAD (588b6db); push succeeded.
+   Result: PASS
+
+6. AC5b — multi-push remote configuration verified (HARNESS-GAP-12 resolution)
+   Command: git remote -v
+   Output (URLs sanitized for harness-hygiene):
+     origin	<personal-account-url> (fetch)
+     origin	<work-org-url> (push)
+     origin	<personal-account-url> (push)
+     pt	<work-org-url> (fetch)
+     pt	<work-org-url> (push)
+   The `origin` remote has TWO push URLs configured (personal account + work-org), satisfying the dual-remote multi-push convention. A single `git push origin <branch>` writes to both remotes atomically.
+   Result: PASS
+
+7. Plan file In-flight scope updates section authorizes evidence file edit
+   Command: sed -n '69,73p' docs/plans/pre-submission-audit-mechanical-enforcement.md
+   Observed: Lines 71-72 explicitly declare both the plan file and the evidence file in scope per scope-enforcement-gate Option 1. The current verifier evidence-file edit is consistent with that declaration.
+   Result: PASS
+
+Git evidence:
+  Files modified in recent history:
+    - adapters/claude-code/hooks/plan-reviewer.sh — last touched in 10adac2 (May 3); synced to live byte-identical
+    - adapters/claude-code/rules/design-mode-planning.md — at 10adac2 state synced to live byte-identical (later b4406c8 update is separate plan's responsibility)
+    - docs/failure-modes.md — last touched in 588b6db (May 5, this session)
+    - docs/plans/pre-submission-audit-mechanical-enforcement.md — last touched in 588b6db (May 5, this session)
+    - docs/plans/pre-submission-audit-mechanical-enforcement-evidence.md — last touched in 588b6db (May 5, this session)
+  Branch verify/pre-submission-audit-reconcile is at SHA 588b6db on both local and origin remote.
+
+Runtime verification: file docs/plans/pre-submission-audit-mechanical-enforcement.md::5\. Sync changed files from neural-lace adapter directory
+Runtime verification: file docs/failure-modes.md::Check 8A \(landed via .docs/plans/pre-submission-audit-mechanical-enforcement.md
+Runtime verification: file ~/.claude/hooks/plan-reviewer.sh::check_pre_submission_audit_8a
+Runtime verification: file ~/.claude/rules/design-mode-planning.md::plan-reviewer.sh extension \(Check 8A\)
+Runtime verification: file ~/.claude/docs/failure-modes.md::FM-007 — Behavior change stranded in plan analysis section
+
+Verdict: PASS
+Confidence: 10
+Reason: All five acceptance criteria are satisfied. The sync is byte-identical for plan-reviewer.sh; the live design-mode-planning.md is byte-identical to its state at the implementing commit 10adac2 (the AC's scoping clause); ~/.claude/docs/failure-modes.md exists with the FM-007 Check 8A citation. Commit 588b6db lands the FM-007 SHA fix, the Tasks 1-4 evidence file, and the plan-file checkbox flips, and the commit is pushed to origin/verify/pre-submission-audit-reconcile. The origin remote has two push URLs (github.com personal + github-pt PT org), confirming the HARNESS-GAP-12 multi-push configuration is operational. Task 5 — the final task of this plan — is complete.
