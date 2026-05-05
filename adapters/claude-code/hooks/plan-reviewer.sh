@@ -783,6 +783,148 @@ BC_PLACEHOLDER
     echo "self-test (v) check11-fail-rung3-subentry-placeholder: FAIL (expected)" >&2
   fi
 
+  # ============================================================
+  # Phase 1d-E-1 Task 1 scenarios (w, x, y, z) — Check 1
+  # section-awareness + Check 5 context-awareness narrowing
+  # ============================================================
+  #
+  # (w) Plan with `## Definition of Done` containing a checkbox using the
+  #     word "all" — expect PASS (Check 1 must skip non-Tasks sections).
+  # (x) Plan with `## Tasks` containing a documentation-context use of
+  #     `table` (e.g., "add row to harness-architecture.md inventory
+  #     table") — expect PASS (Check 5 Tier B keyword without DB /
+  #     runtime context must NOT flag).
+  # (y) Plan with `## Tasks` containing a real undecomposed sweep
+  #     ("Wire RequiredLabel into all forms") — expect FAIL
+  #     (regression check — genuine sweeps are still caught).
+  # (z) Plan with `## Tasks` containing a real database-context runtime
+  #     task ("Add new column to org_settings table via migration")
+  #     without a Test:/Runtime verification: spec — expect FAIL
+  #     (regression check — legitimate runtime tasks are still caught).
+
+  # write_check15_plan: minimal Mode: code, Status: ACTIVE plan with
+  # all required sections satisfied; the Tasks block and the Definition
+  # of Done block are parameterized per scenario.
+  write_check15_plan() {
+    # $1 = output path
+    # $2 = tasks_block (full multi-line content under `## Tasks`)
+    # $3 = dod_block (full multi-line content under `## Definition of Done`)
+    local out="$1"
+    local tasks_block="$2"
+    local dod_block="$3"
+
+    cat > "$out" <<'CHECK15_HEAD'
+# Plan: Self-test Phase 1d-E-1 Task 1 fixture
+Status: ACTIVE
+Mode: code
+Backlog items absorbed: none
+tier: 1
+rung: 0
+architecture: coding-harness
+frozen: false
+prd-ref: n/a — harness-development
+
+## Goal
+Exercise the Check 1 section-awareness + Check 5 context-awareness
+narrowing introduced for HARNESS-GAP-09. The fixture parameterizes
+the Tasks and Definition of Done sections so the false-positive and
+true-positive cases are each covered.
+
+## Scope
+- IN: Check 1 + Check 5 narrowing under Phase 1d-E-1 Task 1
+- OUT: anything else; the fixture is single-purpose
+
+CHECK15_HEAD
+
+    {
+      echo "## Tasks"
+      echo ""
+      echo "$tasks_block"
+      echo ""
+    } >> "$out"
+
+    cat >> "$out" <<'CHECK15_MID'
+## Files to Modify/Create
+- `hooks/plan-reviewer.sh` — Check 1 + Check 5 narrowing under exercise
+
+## Assumptions
+- Assumes Check 6b passes for this fixture so the Check 1 + Check 5
+  outcomes are the only variables across w/x/y/z scenarios.
+
+## Edge Cases
+- The fixture must satisfy Check 6b's required sections so the only
+  failing path is Check 1 or Check 5 itself.
+
+## Testing Strategy
+- Run plan-reviewer.sh against this fixture in each variant; observe
+  the exit code matches the scenario expectation.
+
+Walking Skeleton: n/a — self-test fixture, no runtime user-facing slice.
+
+CHECK15_MID
+
+    {
+      echo "## Definition of Done"
+      echo ""
+      echo "$dod_block"
+    } >> "$out"
+  }
+
+  # Scenario (w): DoD checkbox uses "All" — must NOT trigger Check 1.
+  # The DoD bullet "All tests pass" is the canonical example of plural
+  # language outside a task list.
+  write_check15_plan "$TMPDIR_SELFTEST/w.md" \
+    "- [ ] 1. Refactor a single helper module to use the new pattern." \
+    "- [ ] All tests pass after refactor."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/w.md" > /dev/null 2>&1; then
+    echo "self-test (w) check1-section-aware-dod-with-all-keyword: PASS (expected)" >&2
+  else
+    echo "self-test (w) check1-section-aware-dod-with-all-keyword: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Scenario (x): Tasks line contains the Tier B keyword `table` in a
+  # documentation context with NO database / runtime context tokens
+  # nearby. Must NOT trigger Check 5.
+  write_check15_plan "$TMPDIR_SELFTEST/x.md" \
+    "- [ ] 1. Add a row to harness-architecture.md inventory table documenting the new hook." \
+    "- [ ] Inventory row added."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/x.md" > /dev/null 2>&1; then
+    echo "self-test (x) check5-context-aware-doc-table-no-db-context: PASS (expected)" >&2
+  else
+    echo "self-test (x) check5-context-aware-doc-table-no-db-context: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Scenario (y): Tasks line is a genuine undecomposed sweep ("all
+  # forms") under `## Tasks` — Check 1 MUST still flag this. Regression
+  # check confirming we didn't break true-positive detection.
+  write_check15_plan "$TMPDIR_SELFTEST/y.md" \
+    "- [ ] 1. Wire RequiredLabel into all forms across the codebase." \
+    "- [ ] Forms updated."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/y.md" > /dev/null 2>&1; then
+    echo "self-test (y) check1-real-sweep-still-caught: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (y) check1-real-sweep-still-caught: FAIL (expected)" >&2
+  fi
+
+  # Scenario (z): Tasks line contains a Tier A keyword (`migration`)
+  # AND Tier B keywords (`column`, `table`) WITH database-context
+  # tokens (`migration`, `schema`-ish via "table" wording) — Check 5
+  # MUST still flag this because there's no Test:/Runtime verification:
+  # spec. Regression check confirming legitimate runtime tasks are
+  # still caught.
+  write_check15_plan "$TMPDIR_SELFTEST/z.md" \
+    "- [ ] 1. Add new column to org_settings table via migration." \
+    "- [ ] Schema change applied."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/z.md" > /dev/null 2>&1; then
+    echo "self-test (z) check5-real-database-task-still-caught: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (z) check5-real-database-task-still-caught: FAIL (expected)" >&2
+  fi
+
   if [[ $FAILED -eq 0 ]]; then
     echo "plan-reviewer --self-test: all scenarios matched expectations" >&2
     exit 0
@@ -827,8 +969,40 @@ add_finding() {
 # Look for task lines that use plural language without per-file decomp.
 # "All", "every", "throughout", "across" followed by a bare task description
 # (no sub-items listed) is a sweep.
+#
+# Section-aware (Phase 1d-E-1 Task 1): only flag sweep language when the
+# matching line is under a `## ` heading whose title contains "Task" (case
+# -insensitive — matches "## Tasks", "## Implementation Tasks", etc.).
+# Headings like `## Definition of Done`, `## Acceptance Scenarios`,
+# `## Out-of-scope scenarios`, `## Pre-Submission Audit`, etc. are NOT
+# task-list sections; sweep-style language there is documentation, not
+# undecomposed work, and false-positive findings on those headings have
+# blocked legitimate plans (HARNESS-GAP-09).
 
-SWEEP_LINES=$(grep -nE '^- \[[ xX]\]\s+.*(all\s+\w+|every\s+\w+|throughout|across\s+the\s+codebase|in\s+every)' "$PLAN_FILE" 2>/dev/null || true)
+# Walk the file with awk, emitting "<lineno>:<task-line>" only for sweep
+# matches that fall under a Tasks-class heading. The state machine resets
+# in_tasks_section to 0 on every `## ` heading and to 1 only when the
+# heading title contains "Task" (case-insensitive). Sub-headings (`### `,
+# `#### `) inherit the parent `## ` section's classification — they don't
+# change the mode.
+SWEEP_LINES=$(awk '
+  BEGIN { in_tasks_section = 0 }
+  /^## / {
+    # Top-level section heading. Reset state, then check the title.
+    title = $0
+    sub(/^## +/, "", title)
+    if (tolower(title) ~ /task/) {
+      in_tasks_section = 1
+    } else {
+      in_tasks_section = 0
+    }
+    next
+  }
+  in_tasks_section && /^- \[[ xX]\][[:space:]]+.*(all[[:space:]]+[[:alnum:]_]+|every[[:space:]]+[[:alnum:]_]+|throughout|across[[:space:]]+the[[:space:]]+codebase|in[[:space:]]+every)/ {
+    print NR ":" $0
+  }
+' "$PLAN_FILE" 2>/dev/null || true)
+
 if [[ -n "$SWEEP_LINES" ]]; then
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
@@ -920,11 +1094,30 @@ fi
 # form, webhook, cron, migration, API) should have a test spec nearby.
 # Heuristic: scan each runtime task, look at the following 10 lines for
 # a "Test:" or "Runtime verification:" reference.
+#
+# Context-aware (Phase 1d-E-1 Task 1): the keyword list is split into two
+# tiers. Tier A keywords are unambiguously runtime — finding any of them
+# in an unchecked task always demands a test spec. Tier B keywords are
+# context-dependent: words like `column`, `table`, `notification`,
+# `trigger`, `component`, `UI` show up in documentation contexts (e.g.,
+# "add a row to the inventory table", "wire RequiredLabel into the
+# template column") just as often as they show up in runtime contexts.
+# A Tier B keyword counts as runtime ONLY if a database / runtime
+# context token is on the SAME line OR the NEXT line. Otherwise the
+# task is treated as documentation work and is not flagged.
+#
+# This narrowing closes HARNESS-GAP-09 false-positives where harness-
+# development plans referencing "the column in harness-architecture.md
+# inventory table" tripped the runtime-keyword regex.
 
-RUNTIME_KEYWORDS='(\b(page|route|button|form|component|UI|webhook|cron|scheduled|trigger|endpoint|API|migration|column|table|notification)\b)'
+RUNTIME_KEYWORDS_TIER_A='(\b(page|route|button|form|webhook|cron|scheduled|endpoint|API|migration|RLS[[:space:]]+policy|auth[[:space:]]+flow)\b)'
+RUNTIME_KEYWORDS_TIER_B='(\b(column|table|notification|trigger|component|UI)\b)'
+DB_RUNTIME_CONTEXT='(\b(INSERT|SELECT|UPDATE|DELETE|migration|enum|schema|RLS|database|Supabase|SQL|click|render|screen|viewport)\b)'
 
 UNSPEC_RUNTIME=""
 UNSPEC_COUNT=0
+
+# Pass 1: Tier A — always treated as runtime.
 while IFS= read -r task_match; do
   [[ -z "$task_match" ]] && continue
   ln=$(echo "$task_match" | cut -d: -f1)
@@ -935,7 +1128,40 @@ while IFS= read -r task_match; do
     UNSPEC_RUNTIME+="    line $ln: $(echo "$task_text" | head -c 80)"$'\n'
     UNSPEC_COUNT=$((UNSPEC_COUNT + 1))
   fi
-done < <(grep -nE "^- \[ \].*${RUNTIME_KEYWORDS}" "$PLAN_FILE" 2>/dev/null)
+done < <(grep -nE "^- \[ \].*${RUNTIME_KEYWORDS_TIER_A}" "$PLAN_FILE" 2>/dev/null)
+
+# Pass 2: Tier B — only count if a DB / runtime context token is on the
+# same line as the Tier B keyword OR on the next line. The match is
+# treated as runtime only when both conditions hold: the unchecked task
+# line contains a Tier B keyword AND adjacency-context check passes.
+while IFS= read -r task_match; do
+  [[ -z "$task_match" ]] && continue
+  ln=$(echo "$task_match" | cut -d: -f1)
+  task_text=$(echo "$task_match" | cut -d: -f2-)
+
+  # Skip if the line was already counted via Tier A (avoid double-flag
+  # when both Tier A and Tier B keywords appear).
+  if echo "$task_text" | grep -qE "${RUNTIME_KEYWORDS_TIER_A}"; then
+    continue
+  fi
+
+  # Adjacency check: does the same line OR the next line contain a
+  # database / runtime context token?
+  same_line="$task_text"
+  next_line=$(sed -n "$((ln+1))p" "$PLAN_FILE")
+  if ! echo "$same_line"$'\n'"$next_line" | grep -qiE "${DB_RUNTIME_CONTEXT}"; then
+    # Tier B keyword without DB / runtime context — treat as documentation,
+    # not runtime. Skip.
+    continue
+  fi
+
+  # Look at the next 10 lines for test spec language
+  context=$(sed -n "$ln,$((ln+10))p" "$PLAN_FILE")
+  if ! echo "$context" | grep -qiE 'Test(\s*file)?:|Runtime verification:|tests/[a-z]+/[a-z]'; then
+    UNSPEC_RUNTIME+="    line $ln: $(echo "$task_text" | head -c 80)"$'\n'
+    UNSPEC_COUNT=$((UNSPEC_COUNT + 1))
+  fi
+done < <(grep -nE "^- \[ \].*${RUNTIME_KEYWORDS_TIER_B}" "$PLAN_FILE" 2>/dev/null)
 
 if [[ "$UNSPEC_COUNT" -gt 0 ]]; then
   add_finding "Check 5: $UNSPEC_COUNT unchecked runtime task(s) without Test:/Runtime verification: specs"
