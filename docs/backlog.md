@@ -1,6 +1,6 @@
 # Neural Lace — Harness Backlog
 
-Last updated: 2026-05-04 v10: HARNESS-GAP-15 added — Phase 1d-E public-release-hardening + harness-quick-wins audit-cleanup (5 sub-items). Plans 2 + 3 from the 2026-05-04 stale-plan audit un-archived and flipped to ACTIVE; Phase 1d-E now covers their resolution paths plus the codename scrub before next master merge. Earlier 2026-05-04 v9: HARNESS-GAP-14 added — template-vs-live settings.json reconciliation pass deferred from discovery `2026-05-04-template-vs-live-divergence-across-other-hooks`; detector half (B) ships in this session, reconciliation half (A) deferred to Phase 1d-E with orchestrator-driven research methodology specified per user direction. Earlier 2026-05-04 v8: HARNESS-GAP-10 sub-gap D PARTIALLY absorbed into `docs/plans/phase-1d-c-3-findings-ledger.md` — C9 ships the findings-ledger substrate that telemetry will populate; the manual-write path is operational while telemetry remains a 2026-08 target. Earlier 2026-05-04 v7: HARNESS-GAP-10 sub-gap E absorbed into `docs/plans/phase-1d-c-2-prd-validity-and-spec-freeze.md` (C16 behavioral-contracts validator implementation includes the concrete-invariants requirement). Earlier 2026-05-04 v6: HARNESS-GAP-12 IMPLEMENTED via SSH multi-push config; HARNESS-GAP-13 added — harness-hygiene-scan expansion (D5 reframe). Earlier 2026-05-03 v5: HARNESS-GAP-12 added — neural-lace dual-remote sync requires manual gh-auth dance; multi-push remote config proposed. Earlier 2026-05-03 v4: Discovery Protocol shipped — `docs/discoveries/` directory live; `bug-persistence-gate.sh` accepts discoveries; new `discovery-surfacer.sh` SessionStart hook. Earlier 2026-05-03 v3: HARNESS-GAP-11 added — reviewer accountability one-way gap surfaced during incentive-map analysis. Earlier 2026-05-03: HARNESS-GAP-10 added — Build Doctrine integration analysis surfaced 7 sub-gaps; see entry below. Earlier 2026-05-03: HARNESS-AUDIT-EXT-01 + HARNESS-AUDIT-EXT-02 absorbed into `docs/plans/pre-submission-audit-mechanical-enforcement.md` and removed from the open list per backlog-plan-atomicity rule. Earlier 2026-04-29: two mechanism-extension items added for Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md`; remaining two harness-drift items stay open. Earlier 2026-04-27: four harness-drift items added — see `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.
+Last updated: 2026-05-04 v11: HARNESS-GAP-09, HARNESS-DRIFT-01, HARNESS-DRIFT-02 absorbed into `docs/plans/phase-1d-e-1-p1-drift-fixes.md`. Earlier 2026-05-04 v10: HARNESS-GAP-15 added — Phase 1d-E public-release-hardening + harness-quick-wins audit-cleanup (5 sub-items). Plans 2 + 3 from the 2026-05-04 stale-plan audit un-archived and flipped to ACTIVE; Phase 1d-E now covers their resolution paths plus the codename scrub before next master merge. Earlier 2026-05-04 v9: HARNESS-GAP-14 added — template-vs-live settings.json reconciliation pass deferred from discovery `2026-05-04-template-vs-live-divergence-across-other-hooks`; detector half (B) ships in this session, reconciliation half (A) deferred to Phase 1d-E with orchestrator-driven research methodology specified per user direction. Earlier 2026-05-04 v8: HARNESS-GAP-10 sub-gap D PARTIALLY absorbed into `docs/plans/phase-1d-c-3-findings-ledger.md` — C9 ships the findings-ledger substrate that telemetry will populate; the manual-write path is operational while telemetry remains a 2026-08 target. Earlier 2026-05-04 v7: HARNESS-GAP-10 sub-gap E absorbed into `docs/plans/phase-1d-c-2-prd-validity-and-spec-freeze.md` (C16 behavioral-contracts validator implementation includes the concrete-invariants requirement). Earlier 2026-05-04 v6: HARNESS-GAP-12 IMPLEMENTED via SSH multi-push config; HARNESS-GAP-13 added — harness-hygiene-scan expansion (D5 reframe). Earlier 2026-05-03 v5: HARNESS-GAP-12 added — neural-lace dual-remote sync requires manual gh-auth dance; multi-push remote config proposed. Earlier 2026-05-03 v4: Discovery Protocol shipped — `docs/discoveries/` directory live; `bug-persistence-gate.sh` accepts discoveries; new `discovery-surfacer.sh` SessionStart hook. Earlier 2026-05-03 v3: HARNESS-GAP-11 added — reviewer accountability one-way gap surfaced during incentive-map analysis. Earlier 2026-05-03: HARNESS-GAP-10 added — Build Doctrine integration analysis surfaced 7 sub-gaps; see entry below. Earlier 2026-05-03: HARNESS-AUDIT-EXT-01 + HARNESS-AUDIT-EXT-02 absorbed into `docs/plans/pre-submission-audit-mechanical-enforcement.md` and removed from the open list per backlog-plan-atomicity rule. Earlier 2026-04-29: two mechanism-extension items added for Pre-Submission Class-Sweep Audit work. Earlier 2026-04-27: two pre-existing harness-drift items absorbed into `docs/plans/agent-teams-integration.md`; remaining two harness-drift items stay open. Earlier 2026-04-27: four harness-drift items added — see `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Earlier 2026-04-24: HARNESS-GAP-01..07; concurrent ACTIVE plans need acceptance-exempt declaration; capture-codify P2 entries.
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
@@ -29,24 +29,6 @@ Strategy context and reasoning for many entries below lives in [`docs/claude-cod
 **Effort estimate.** S-M (~4-6 hr). One JSON-write helper, one hook to scan and surface. Tests for: result file written on terminal exit, multiple spawned tasks don't collide, hook surfaces only unread results, archive on acknowledgment.
 
 **Class.** `harness-coordination-channel-missing` — orchestrator-to-spawned-task lacks a return path; user becomes the channel.
-
----
-
-## HARNESS-GAP-09 — `plan-reviewer.sh` Check 1 + Check 5 false-positive on meta-plans (added 2026-05-03)
-
-**Symptom.** When the plan-reviewer hook runs against a plan that itself is ABOUT plan-reviewer.sh (a meta-plan editing the hook), the hook produces false positives:
-- Check 1 (undecomposed sweep) trips on "all scenarios", "every scenario" in `## Definition of Done` — the regex matches the DoD's own plural language even though the DoD is not a task list.
-- Check 5 (runtime task without test spec) trips on the word `table` (matched by the runtime-keyword regex `\btable\b` for database tables) when a task says "Enforcement summary table" referring to a Markdown table in a docs file.
-
-**Discovered.** During implementation of `docs/plans/pre-submission-audit-mechanical-enforcement.md` Check 8A. The plan rephrased "Enforcement summary table" → "Enforcement summary listing" and "all scenarios matching" → "each report the expected verdict" to dodge the false positives, but the underlying noise remains.
-
-**Fix scope.** Two narrow regex tightenings in `plan-reviewer.sh`:
-- Check 1 should not fire on lines under `## Definition of Done` (or under any non-Tasks section).
-- Check 5's runtime-keyword regex should be context-aware: `table` should only match when adjacent to database-context tokens (`column`, `migration`, `INSERT`, `SELECT`, etc.), not when adjacent to documentation-context tokens (`Markdown`, `Enforcement summary`, `template`).
-
-**Effort.** ~30 minutes for both fixes, including self-test scenarios that exercise the new section-context filtering.
-
-**Why P3 (not P1):** workaround is trivial (rephrase the plan); no security or correctness implications. The class is "documentation-context regex matches database-context vocabulary," which is the same class as FM-009 (cross-section-contradiction) but at the hook-implementation level rather than plan-content level.
 
 ---
 
@@ -194,44 +176,7 @@ The user's role is **review the proposals**, not "decide cold which side is righ
 
 ## Pre-existing harness drift surfaced 2026-04-27 (during agent-teams conflict analysis)
 
-Items found while doing the Phase 1 ground-truth inventory for Agent Teams integration. These are independent of Agent Teams — they are real drift between documented enforcement and actual settings.json wiring or filesystem state. Full evidence in `docs/reviews/2026-04-27-agent-teams-conflict-analysis.md`. Two items (P2-class) were absorbed into `docs/plans/agent-teams-integration.md` on plan creation; the two remaining items below are out of scope for that plan.
-
-### HARNESS-DRIFT-01 — Six Gen-6 hooks not wired in settings.json (P1)
-
-The following hooks exist on disk at `adapters/claude-code/hooks/` but are not referenced from any `settings.json` callsite (in either the adapter copy or the live `~/.claude/settings.json`):
-
-- `goal-extraction-on-prompt.sh` (UserPromptSubmit, A1 mechanism — captures imperative verbs from user's first prompt)
-- `goal-coverage-on-stop.sh` (Stop, A1 mechanism — verifies goal coverage at session end)
-- `imperative-evidence-linker.sh` (A7 mechanism)
-- `transcript-lie-detector.sh` (A3 mechanism — self-contradiction class)
-- `vaporware-volume-gate.sh` (A8 mechanism — blocks PRs with high docs/config volume but zero execution evidence)
-- `automation-mode-gate.sh` (PreToolUse — was supposed to enforce automation-mode policy)
-
-Recent commits (`0be6526`, `fe64587`, `1e6310c`, `fca7e52`, `d639aae`) reference these as "shipped" but they're inert until wired. Likely cause: the hooks were authored and committed but the corresponding edits to `adapters/claude-code/settings.json` were never made or were reverted.
-
-**Fix path:** audit each hook against its design doc (likely `docs/plans/adversarial-validation-mechanisms.md`), confirm the intended event + matcher, and wire them into the adapter `settings.json`. Sync via `install.sh` to `~/.claude/settings.json`. Verify each by triggering the relevant condition in a fresh test session.
-
-### HARNESS-DRIFT-02 — SessionStart account-switching hook is hardcoded against a literal directory substring (P1)
-
-The deployed SessionStart hook at `adapters/claude-code/settings.json:273-279` reads (paraphrased — actual identifiers redacted from this backlog per harness hygiene; see live `~/.claude/settings.json` for verbatim form):
-
-```bash
-if echo "$PWD" | grep -q '<work-org-substring>'; then
-  gh auth switch --user <work-username> 2>/dev/null
-  ...
-else
-  gh auth switch --user <personal-username> 2>/dev/null
-  ...
-fi
-```
-
-This is drift from the documented contract. Per `docs/harness-architecture.md:81` and `examples/accounts.config.example.json`, the hook is supposed to read account `dir_triggers` from `~/.claude/local/accounts.config.json`. The hardcoded substring is brittle:
-
-- A working directory not containing the literal hardcoded substring falls into `else` (personal account) — including any worktree, clone, or fork under a different parent path.
-- The push-time variant at `settings.json:178` mirrors the same hardcoded substring against the remote URL.
-- Adding new accounts to the user's setup is silently ignored (not in the conditional).
-
-**Fix path:** replace the inline hook body with a call to `~/.claude/scripts/read-local-config.sh accounts` (script already exists in the harness) and pattern-match the result against `$PWD`. The schema and example already exist; only the hook body needs rewriting.
+Items found while doing the Phase 1 ground-truth inventory for Agent Teams integration. Two items (P2-class) were absorbed into `docs/plans/agent-teams-integration.md` on plan creation; HARNESS-DRIFT-01 and HARNESS-DRIFT-02 were absorbed into `docs/plans/phase-1d-e-1-p1-drift-fixes.md` on 2026-05-04.
 
 ## Known gaps in current enforcement (from strategy doc, 2026-04-22)
 
