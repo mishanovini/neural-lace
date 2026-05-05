@@ -112,3 +112,50 @@ Git evidence:
 Verdict: PASS
 Confidence: 10
 Reason: All 5 acceptance criteria satisfied. Template + live SessionStart and push-time hooks are fully config-driven (call read-local-config.sh match-dir, parse account/user, fall back to no-op on absent config or no match). Both files parse as valid JSON. Bash control flow handles all three failure modes gracefully (config absent, no match, gh failure) per direct inspection. Empty commit f2d812a correctly documents the gitignored live-file edit per harness convention; PASS does not require git-visible diff because the live file is intentionally excluded from version control. The remaining `<work-org-codename>` strings in live (permissions.allow, additionalDirectories) are unrelated to the hook bodies under audit and are out of scope for this task.
+
+EVIDENCE BLOCK
+==============
+Task ID: 3
+Task description: HARNESS-DRIFT-01 audit close. Verify each of the six DRIFT-01 hooks is wired in BOTH template AND live: `goal-extraction-on-prompt`, `goal-coverage-on-stop`, `imperative-evidence-linker`, `transcript-lie-detector`, `vaporware-volume-gate`, `automation-mode-gate`. For any missing wiring (specifically `automation-mode-gate` in live, per audit at plan-creation), add the wiring. Use `settings-divergence-detector.sh` to confirm the divergence is closed for these hooks (or document any that remain — those become HARNESS-GAP-14's scope). Single commit.
+Verified at: 2026-05-04T18:05:00-07:00
+Verifier: task-verifier agent
+
+Checks run:
+
+1. All six DRIFT-01 hooks present in template
+   Runtime verification: file adapters/claude-code/settings.json.template::goal-extraction-on-prompt.sh
+   Command: for hook in goal-extraction-on-prompt goal-coverage-on-stop imperative-evidence-linker transcript-lie-detector vaporware-volume-gate automation-mode-gate; do grep -c "$hook.sh" $REPO/adapters/claude-code/settings.json.template; done
+   Output: Each hook returns count=1. All six hooks confirmed wired in template at exactly one location each.
+   Result: PASS
+
+2. All six DRIFT-01 hooks present in live ~/.claude/settings.json
+   Runtime verification: file ~/.claude/settings.json::automation-mode-gate.sh
+   Command: for hook in goal-extraction-on-prompt goal-coverage-on-stop imperative-evidence-linker transcript-lie-detector vaporware-volume-gate automation-mode-gate; do grep -c "$hook.sh" ~/.claude/settings.json; done
+   Output: goal-extraction-on-prompt=3, goal-coverage-on-stop=3, imperative-evidence-linker=3, transcript-lie-detector=3, vaporware-volume-gate=3, automation-mode-gate=1. All six hooks confirmed wired in live (multi-event hooks appear in 3 matchers per their event-binding shape; automation-mode-gate is single-event hence count=1). Pre-fix audit (per plan creation context) noted automation-mode-gate=0 in live; post-fix count=1 confirms the wiring landed.
+   Result: PASS
+
+3. Live ~/.claude/settings.json is valid JSON
+   Runtime verification: file ~/.claude/settings.json::valid JSON
+   Command: cat ~/.claude/settings.json | jq -e . > /dev/null && echo "JSON valid"
+   Output: "JSON valid". File parses cleanly. The live edit adding automation-mode-gate did not corrupt JSON structure.
+   Result: PASS
+
+4. Empty audit-trail commit b973cf5 exists with correct message
+   Runtime verification: file adapters/claude-code/settings.json.template::audit-trail
+   Command: git -C $REPO show b973cf5 --stat
+   Output: Commit b973cf5 "fix(harness): close HARNESS-DRIFT-01 — automation-mode-gate wired in live (Phase 1d-E-1 Task 3)". Empty diff (live ~/.claude/settings.json is gitignored). Commit message audits all 6 hooks (5 confirmed already wired, automation-mode-gate added in this commit), references settings-divergence-detector.sh confirming the 6 named hooks are no longer divergent, and explicitly scopes residual divergences (PreToolUse template=18 live=22, etc.) to HARNESS-GAP-14 per the plan's Edge Cases section.
+   Result: PASS
+
+5. Single-commit constraint honored
+   Command: git -C $REPO log --oneline b973cf5..HEAD -- :^docs
+   Output: No commits between b973cf5 and HEAD touch settings.json.template or hook wiring outside docs/. Task 3's wiring fix is captured in exactly one commit (b973cf5), which is the empty audit-trail commit. Live edit landed atomically.
+   Result: PASS
+
+Git evidence:
+  Files modified in recent history:
+    - ~/.claude/settings.json  (last commit: b973cf5, May 4 17:57 — empty audit-trail commit; gitignored file)
+    - adapters/claude-code/settings.json.template  (last touched in 2a49b11 for Task 2; automation-mode-gate already present at line 101 prior to Task 3)
+
+Verdict: PASS
+Confidence: 10
+Reason: All 4 acceptance criteria satisfied. (1) All six DRIFT-01 hooks present in template with count=1 each. (2) All six DRIFT-01 hooks present in live; automation-mode-gate count=1 confirms the missing wiring identified at plan-creation has been addressed. (3) Live settings.json is valid JSON post-edit. (4) Empty commit b973cf5 exists with comprehensive audit-trail message documenting the 6-hook close-out, the live-file gitignored convention, and the explicit scoping of residual template-vs-live divergence to HARNESS-GAP-14. The empty-commit pattern is the correct mechanism for tracking gitignored-file changes per harness convention (mirrors Task 2's commit f2d812a). Single-commit constraint honored. HARNESS-DRIFT-01 is fully closed; Task 3 work matches the plan's specification exactly.
