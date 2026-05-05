@@ -26,11 +26,17 @@
 #
 # EXEMPT PATHS (never scanned)
 #   - The denylist file itself (would match infinitely)
-#   - docs/plans/, docs/decisions/, docs/reviews/, docs/sessions/
-#     (gitignored in the harness repo; defense-in-depth if force-added)
 #   - SCRATCHPAD.md (gitignored working memory)
 #   - Any file matching *.example, *.example.json, *.example.sh
 #     (placeholders are supposed to look placeholder-ish)
+#   - docs/decisions/, docs/reviews/, docs/sessions/ ONLY for non-allow-listed
+#     paths within those directories. Committed (allow-listed) files
+#     (e.g., `docs/decisions/NNN-*.md`, `docs/reviews/YYYY-MM-DD-*.md`,
+#     `docs/sessions/YYYY-MM-DD-*.md`) ARE scanned because they ship in the
+#     harness repo and must follow the same hygiene rules. Other paths under
+#     those directories are gitignored instance artifacts and are exempt.
+#   - docs/plans/ is NOT exempt — Neural Lace now commits its own
+#     development plans (subject to hygiene like any other committed file).
 #
 # EXIT CODES
 #   0 — no matches (or denylist missing / not in a git repo — silent no-op)
@@ -64,16 +70,32 @@ if [ "${1:-}" = "--self-test" ]; then
   CLEAN="$TMPDIR_ST/clean.txt"
   printf '%s\n' 'nothing bad here' 'just words' > "$CLEAN"
 
-  # Case 3: dirty content in an exempt directory (docs/plans/) should NOT match.
-  # Closes harness-reviewer finding F5 — verify exemption logic actually runs.
+  # Case 3: dirty content in docs/plans/ SHOULD match (no longer exempt — NL
+  # commits its own plans now, so they're subject to hygiene like any other
+  # committed file).
   mkdir -p "$TMPDIR_ST/docs/plans"
-  EXEMPT_PLAN="$TMPDIR_ST/docs/plans/foo.md"
-  printf '%s\n' 'this plan mentions FORBIDDEN_TOKEN as part of documenting it' > "$EXEMPT_PLAN"
+  PLAN_FILE="$TMPDIR_ST/docs/plans/foo.md"
+  printf '%s\n' 'this plan mentions FORBIDDEN_TOKEN as part of documenting it' > "$PLAN_FILE"
 
   # Case 4: dirty content in an exempt rule file should NOT match.
   mkdir -p "$TMPDIR_ST/adapters/claude-code/rules"
   EXEMPT_RULE="$TMPDIR_ST/adapters/claude-code/rules/harness-hygiene.md"
   printf '%s\n' 'harness-hygiene rule documents FORBIDDEN_TOKEN as a denylist example' > "$EXEMPT_RULE"
+
+  # Case 5: allow-listed decision file (NNN-*.md) SHOULD be scanned (not exempt).
+  mkdir -p "$TMPDIR_ST/docs/decisions"
+  DECISION_ALLOWED="$TMPDIR_ST/docs/decisions/001-foo.md"
+  printf '%s\n' 'decision NNN-* with FORBIDDEN_TOKEN must be caught' > "$DECISION_ALLOWED"
+
+  # Case 6: non-allow-listed decision file (e.g., draft.md) is gitignored
+  # instance artifact — still exempt to support drafts that never ship.
+  DECISION_DRAFT="$TMPDIR_ST/docs/decisions/draft.md"
+  printf '%s\n' 'draft mentions FORBIDDEN_TOKEN; gitignored, never ships' > "$DECISION_DRAFT"
+
+  # Case 7: allow-listed review file (YYYY-MM-DD-*.md) SHOULD be scanned.
+  mkdir -p "$TMPDIR_ST/docs/reviews"
+  REVIEW_ALLOWED="$TMPDIR_ST/docs/reviews/2026-05-04-foo.md"
+  printf '%s\n' 'review with FORBIDDEN_TOKEN must be caught' > "$REVIEW_ALLOWED"
 
   SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
@@ -85,10 +107,16 @@ if [ "${1:-}" = "--self-test" ]; then
   ST_DIRTY_RC=$?
   ST_CLEAN_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "clean.txt" 2>&1)
   ST_CLEAN_RC=$?
-  ST_EXEMPT_PLAN_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/plans/foo.md" 2>&1)
-  ST_EXEMPT_PLAN_RC=$?
+  ST_PLAN_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/plans/foo.md" 2>&1)
+  ST_PLAN_RC=$?
   ST_EXEMPT_RULE_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "adapters/claude-code/rules/harness-hygiene.md" 2>&1)
   ST_EXEMPT_RULE_RC=$?
+  ST_DECISION_ALLOWED_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/decisions/001-foo.md" 2>&1)
+  ST_DECISION_ALLOWED_RC=$?
+  ST_DECISION_DRAFT_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/decisions/draft.md" 2>&1)
+  ST_DECISION_DRAFT_RC=$?
+  ST_REVIEW_ALLOWED_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/reviews/2026-05-04-foo.md" 2>&1)
+  ST_REVIEW_ALLOWED_RC=$?
   set -e
 
   FAIL=0
@@ -110,11 +138,11 @@ if [ "${1:-}" = "--self-test" ]; then
     echo "$ST_CLEAN_OUT" >&2
     FAIL=1
   fi
-  if [ "$ST_EXEMPT_PLAN_RC" -ne 0 ]; then
-    echo "self-test: FAIL — expected exit 0 on exempt docs/plans/ file, got $ST_EXEMPT_PLAN_RC" >&2
-    echo "(exemption logic did not trigger; scanner would have blocked a docs/plans/ file)" >&2
+  if [ "$ST_PLAN_RC" -ne 1 ]; then
+    echo "self-test: FAIL — expected exit 1 on docs/plans/foo.md (no longer exempt), got $ST_PLAN_RC" >&2
+    echo "(NL commits its own plans now; docs/plans/ is subject to hygiene)" >&2
     echo "output was:" >&2
-    echo "$ST_EXEMPT_PLAN_OUT" >&2
+    echo "$ST_PLAN_OUT" >&2
     FAIL=1
   fi
   if [ "$ST_EXEMPT_RULE_RC" -ne 0 ]; then
@@ -122,6 +150,27 @@ if [ "${1:-}" = "--self-test" ]; then
     echo "(exemption logic did not trigger; scanner would have blocked a harness-hygiene rule file)" >&2
     echo "output was:" >&2
     echo "$ST_EXEMPT_RULE_OUT" >&2
+    FAIL=1
+  fi
+  if [ "$ST_DECISION_ALLOWED_RC" -ne 1 ]; then
+    echo "self-test: FAIL — expected exit 1 on allow-listed docs/decisions/001-foo.md, got $ST_DECISION_ALLOWED_RC" >&2
+    echo "(committed decision files MUST be scanned; only gitignored drafts are exempt)" >&2
+    echo "output was:" >&2
+    echo "$ST_DECISION_ALLOWED_OUT" >&2
+    FAIL=1
+  fi
+  if [ "$ST_DECISION_DRAFT_RC" -ne 0 ]; then
+    echo "self-test: FAIL — expected exit 0 on non-allow-listed docs/decisions/draft.md (gitignored), got $ST_DECISION_DRAFT_RC" >&2
+    echo "(non-NNN-prefixed files in docs/decisions/ are instance artifacts, still exempt)" >&2
+    echo "output was:" >&2
+    echo "$ST_DECISION_DRAFT_OUT" >&2
+    FAIL=1
+  fi
+  if [ "$ST_REVIEW_ALLOWED_RC" -ne 1 ]; then
+    echo "self-test: FAIL — expected exit 1 on allow-listed docs/reviews/2026-05-04-foo.md, got $ST_REVIEW_ALLOWED_RC" >&2
+    echo "(committed review files MUST be scanned)" >&2
+    echo "output was:" >&2
+    echo "$ST_REVIEW_ALLOWED_OUT" >&2
     FAIL=1
   fi
 
@@ -192,12 +241,22 @@ is_exempt() {
   # development plans (not downstream-project plans), so plan files
   # are subject to the same hygiene checks as any other committed file.
   #
-  # Still exempt: decisions/reviews/sessions/SCRATCHPAD remain
-  # gitignored (instance artifacts), and SCRATCHPAD.md is ephemeral
-  # working state.
+  # decisions/reviews/sessions: directory-level exempt ONLY for paths
+  # that are NOT allow-listed by .gitignore. Allow-listed paths are:
+  #   - docs/decisions/NNN-*.md  (3-digit prefix)
+  #   - docs/reviews/YYYY-MM-DD-*.md
+  #   - docs/sessions/YYYY-MM-DD-*.md
+  # Allow-listed files ship in the harness repo and must pass hygiene.
+  # Non-allow-listed paths (instance artifacts, drafts) remain exempt.
   case "$path" in
+    docs/decisions/[0-9][0-9][0-9]-*.md) ;; # NOT exempt — fall through
+    docs/reviews/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md) ;; # NOT exempt
+    docs/sessions/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md) ;; # NOT exempt
     docs/decisions/*|docs/decisions) return 0 ;;
     docs/reviews/*|docs/reviews|docs/sessions/*|docs/sessions) return 0 ;;
+  esac
+
+  case "$path" in
     SCRATCHPAD.md|*/SCRATCHPAD.md) return 0 ;;
   esac
 
