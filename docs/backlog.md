@@ -186,6 +186,10 @@ Alternative simpler approach: explicit `neural-lace/` → `<personal-account>` m
 
 See "Recently implemented" section above for commit SHAs + Decision 024. Follow-up entry below covers out-of-scope SessionStart / UserPromptSubmit divergences.
 
+## HARNESS-GAP-14-followups — ABSORBED 2026-05-04 into `docs/plans/phase-1d-g-final-cleanup.md`
+
+(Historical entry preserved below.)
+
 ## HARNESS-GAP-14-followups — Out-of-scope settings divergences from GAP-14 audit (added 2026-05-04)
 
 **Source.** Audit `docs/reviews/2026-05-04-gap-14-reconciliation-proposals.md` "Out-of-scope divergences" section. Phase 1d-E-3 reconciled the named PreToolUse hooks; the divergence-detector still surfaces remaining items in SessionStart and UserPromptSubmit hook chains.
