@@ -71,7 +71,7 @@ Five small audits / cleanups ship in one coherent unit, each with a deliverable 
 
 - [ ] **4. Sub-gap F — Rules-superseded-by-hooks audit.** Author audit document at `docs/reviews/2026-05-04-rules-vs-hooks-audit.md`. For each rule file in `~/.claude/rules/` (skip already-stub `vaporware-prevention.md`), produce: rule name, % content hook-enforced, recommendation (keep verbose / convert to stub / split into stub + extension). Single commit.
 
-- [ ] **5. Sub-gap H — `docs/reviews/` gitignore refinement.** Edit `.gitignore` to exclude downstream-project reviews specifically (by codename naming convention) while allowing NL-self-reviews (e.g., `docs/reviews/2026-*-stop-hook-*.md`, `docs/reviews/2026-*-rules-vs-hooks-*.md`). Document the naming convention in a brief comment in `.gitignore` AND in `harness-hygiene.md`. Test: `git status` after running — confirm the audit docs from Tasks 1, 3, 4 ARE tracked (visible to git) under the refined gitignore. Single commit.
+- [x] **5. Sub-gap H — `docs/reviews/` gitignore refinement.** Edit `.gitignore` to exclude downstream-project reviews specifically (by codename naming convention) while allowing NL-self-reviews (e.g., `docs/reviews/2026-*-stop-hook-*.md`, `docs/reviews/2026-*-rules-vs-hooks-*.md`). Document the naming convention in a brief comment in `.gitignore` AND in `harness-hygiene.md`. Test: `git status` after running — confirm the audit docs from Tasks 1, 3, 4 ARE tracked (visible to git) under the refined gitignore. Single commit.
 
 - [ ] **6. Decision + DECISIONS index + backlog cleanup.** Land Decision 022 if any structural decision was made (likely from Sub-gap B's relocation choice or Sub-gap H's gitignore refinement). Update `docs/DECISIONS.md`. Update `docs/backlog.md` "Recently implemented" section with the 5 sub-gap closures. Single commit.
 
@@ -91,7 +91,7 @@ Five small audits / cleanups ship in one coherent unit, each with a deliverable 
 
 ## In-flight scope updates
 
-(none yet)
+- `docs/plans/phase-1d-e-2-audit-cleanup-evidence.md` — added 2026-05-04 by orchestrator. Standard task-verifier companion.
 
 ## Assumptions
 
