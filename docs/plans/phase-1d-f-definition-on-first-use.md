@@ -56,13 +56,13 @@ Plus enabling work:
 
 ## Tasks
 
-- [ ] **1. Decision 023 + rule documentation.** Land Decision 023 (acronym regex `\b[A-Z]{2,6}\b`; stopword allowlist for common English uppercase words; scope-prefix is initially `neural-lace/build-doctrine/`; failure message format names offending term + suggests glossary entry or in-context definition). Create `adapters/claude-code/rules/definition-on-first-use.md` documenting when the gate fires and how authors should respond. Update `docs/DECISIONS.md`. Single commit.
+- [x] **1. Decision 023 + rule documentation.** Land Decision 023 (acronym regex `\b[A-Z]{2,6}\b`; stopword allowlist for common English uppercase words; scope-prefix is initially `neural-lace/build-doctrine/`; failure message format names offending term + suggests glossary entry or in-context definition). Create `adapters/claude-code/rules/definition-on-first-use.md` documenting when the gate fires and how authors should respond. Update `docs/DECISIONS.md`. Single commit.
 
-- [ ] **2. Hook implementation `definition-on-first-use-gate.sh`.** NEW pre-commit hook (PreToolUse Bash on `git commit`). On commit modifying `*.md` files in scope, parse the staged diff via `git diff --cached`, extract new acronyms, look up each in glossary.md OR confirm defined in the same diff. Block if any new acronym is undefined. `--self-test` with 5+ scenarios (PASS-no-md-changes, PASS-defined-in-glossary, PASS-defined-in-diff, FAIL-undefined-acronym, PASS-stopword-not-flagged). Test before commit. Sync to live. Single commit.
+- [x] **2. Hook implementation `definition-on-first-use-gate.sh`.** NEW pre-commit hook (PreToolUse Bash on `git commit`). On commit modifying `*.md` files in scope, parse the staged diff via `git diff --cached`, extract new acronyms, look up each in glossary.md OR confirm defined in the same diff. Block if any new acronym is undefined. `--self-test` with 5+ scenarios (PASS-no-md-changes, PASS-defined-in-glossary, PASS-defined-in-diff, FAIL-undefined-acronym, PASS-stopword-not-flagged). Test before commit. Sync to live. Single commit.
 
-- [ ] **3. Wire hook + glossary path resolution.** EDIT `adapters/claude-code/settings.json.template` to add the hook to PreToolUse Bash chain, position after `harness-hygiene-scan.sh`. The hook reads glossary path from a configured location (e.g., `~/.claude/local/personal.config.json` for the user's glossary path; falls back to `${REPO}/build-doctrine/outputs/glossary.md` if found). Mirror to live. Single commit.
+- [x] **3. Wire hook + glossary path resolution.** EDIT `adapters/claude-code/settings.json.template` to add the hook to PreToolUse Bash chain, position after `harness-hygiene-scan.sh`. The hook reads glossary path from a configured location (e.g., `~/.claude/local/personal.config.json` for the user's glossary path; falls back to `${REPO}/build-doctrine/outputs/glossary.md` if found). Mirror to live. Single commit.
 
-- [ ] **4. Inventory + enforcement-map + backlog cleanup.** Add inventory row to `docs/harness-architecture.md` for the new hook + new rule. Add row to `vaporware-prevention.md` enforcement map. Mark sub-gap G as IMPLEMENTED in `docs/backlog.md` "Recently implemented" section with commit SHA. Single commit.
+- [x] **4. Inventory + enforcement-map + backlog cleanup.** Add inventory row to `docs/harness-architecture.md` for the new hook + new rule. Add row to `vaporware-prevention.md` enforcement map. Mark sub-gap G as IMPLEMENTED in `docs/backlog.md` "Recently implemented" section with commit SHA. Single commit.
 
 ## Files to Modify/Create
 
@@ -80,7 +80,7 @@ Plus enabling work:
 
 ## In-flight scope updates
 
-(none yet)
+- `docs/plans/phase-1d-f-definition-on-first-use-evidence.md` — added 2026-05-04 by orchestrator. Standard task-verifier companion.
 
 ## Assumptions
 
