@@ -56,13 +56,13 @@ Outcome: harness-hygiene-scan stops being purely reactive. The structural defens
     - Excludes NL's own paths from path-shape detection: `~/.claude/`, `adapters/`, `docs/plans/archive/` paths are not flagged
     - BLOCKS on match (exit 1) with stderr labeled `[heuristic]` (denylist matches stay labeled `[denylist]`)
     - Self-test scenarios: 4-6 new — positive heuristic match (file with `app/api/v1/` path), positive cluster match (file mentioning a fake project name 3+ times), negative case (NL's own `~/.claude/hooks/...` path NOT flagged), negative case (vocabulary allowlist tokens NOT flagged)
-- [ ] 3. **Layer 3 — `/harness-review` skill extension.** Add a new check section to `adapters/claude-code/skills/harness-review.md` that:
+- [x] 3. **Layer 3 — `/harness-review` skill extension.** Add a new check section to `adapters/claude-code/skills/harness-review.md` that:
     - Runs `bash adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree`
     - Reports total match count
     - Lists each match with file path + line + matched pattern
     - Labels each match as `[denylist]` or `[heuristic]`
     - PASS if zero matches; FAIL otherwise (with the matches as findings)
-- [ ] 4. **Layer 4 — Sanitization helper.** Write `adapters/claude-code/scripts/harness-hygiene-sanitize.sh` (~80-150 lines):
+- [x] 4. **Layer 4 — Sanitization helper.** Write `adapters/claude-code/scripts/harness-hygiene-sanitize.sh` (~80-150 lines):
     - Reads scanner output (parsing the standard `<file>:<line>:<text>` format)
     - For each match, proposes a replacement based on pattern class:
         - Project codename → `<your-project>`
@@ -73,7 +73,7 @@ Outcome: harness-hygiene-scan stops being purely reactive. The structural defens
     - Emits a unified diff to stdout showing proposed changes (does NOT apply them)
     - User reviews and applies via `git apply` workflow
     - Self-test with 4-5 scenarios covering each replacement class
-- [ ] 5. **Documentation.** Extend `adapters/claude-code/rules/harness-hygiene.md` with a new "Layer 2 heuristic detection" section briefly explaining what the heuristics catch and how to add false-positive exemptions (e.g., add to the NL vocabulary allowlist in the hook).
+- [x] 5. **Documentation.** Extend `adapters/claude-code/rules/harness-hygiene.md` with a new "Layer 2 heuristic detection" section briefly explaining what the heuristics catch and how to add false-positive exemptions (e.g., add to the NL vocabulary allowlist in the hook).
 - [ ] 6. **Sync.** Copy changed files from `adapters/claude-code/` to `~/.claude/` per Windows manual-sync rule. Verify with the diff loop. Files: `hooks/harness-hygiene-scan.sh`, `scripts/harness-hygiene-sanitize.sh`, `patterns/harness-denylist.txt`, `rules/harness-hygiene.md`, `skills/harness-review.md`.
 - [ ] 7. **Manual full-tree scan.** After all changes land, run `bash adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree` against the current repo. Expected: ZERO matches (the codename scrub from Phase 1d-G left the tree clean per HARNESS-GAP-15 sub-item C). If matches surface, classify as legitimate findings (sanitize) OR false-positives (add allowlist exemption), then re-scan until clean.
 - [ ] 8. **Commit on feature branch + push.** Commit on a fresh branch `feat/gap-13-hygiene-scan-expansion`. Push to origin (multi-push covers both remotes per HARNESS-GAP-12 resolution).

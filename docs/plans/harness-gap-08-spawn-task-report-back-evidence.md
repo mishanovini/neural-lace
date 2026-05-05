@@ -222,3 +222,82 @@ Runtime verification: file adapters/claude-code/rules/vaporware-prevention.md::s
 Verdict: PASS
 Confidence: 10
 Reason: All three acceptance criteria are met exactly as specified. (1) The enforcement-map table now contains a new row referencing the spawn_task report-back convention with title "Spawn_task results surfaced at session start". (2) The row's middle and right columns reference both `spawned-task-result-surfacer.sh` (the SessionStart hook) and `spawn-task-report-back.md` (the rule), and adds useful descriptor text ("convention sentinel + JSON schema + ack marker") that summarizes the substrate. (3) The diff is a one-line addition with no other rows touched — `git diff master 47d567f` confirms one `+` and zero `-` lines on this file. Both referenced files exist on disk (landed in commits 440a2d9 and a7002e7 respectively per Tasks 1 and 2). The row is placed adjacent to the parallel "Pending discoveries surfaced at session start" row, preserving logical grouping of SessionStart surfacers.
+
+## Task 3 — Wire surfacer hook in settings.json.template
+
+EVIDENCE BLOCK
+==============
+Task ID: 3
+Task description: Wire the new hook into `adapters/claude-code/settings.json.template` SessionStart chain (immediately after the existing `discovery-surfacer.sh` line at line 373). Mirror the change to `~/.claude/settings.json`.
+Verified at: 2026-05-05T16:00:00Z
+Verifier: task-verifier agent
+
+Comprehension-gate: not applicable (rung < 2)
+
+Checks run:
+
+1. Implementing commit exists and is targeted to the right file
+   Command: git show 4627e01 --stat
+   Output: commit 4627e01027ca8568ab88b6c39af6c9bea2224338 ("feat(settings): wire spawned-task-result-surfacer SessionStart hook (GAP-08 Task 3)") modifies exactly one file: `adapters/claude-code/settings.json.template` with 4 insertions (no other changes).
+   Result: PASS
+
+2. Template has the new entry immediately after discovery-surfacer.sh
+   Runtime verification: file adapters/claude-code/settings.json.template::bash ~/.claude/hooks/spawned-task-result-surfacer.sh
+   Output: Line 373 contains `"command": "bash ~/.claude/hooks/discovery-surfacer.sh"`. Line 377 contains `"command": "bash ~/.claude/hooks/spawned-task-result-surfacer.sh"`. The new entry is the very next hook block (lines 375-378 form the JSON object) immediately after the discovery-surfacer block (lines 371-374).
+   Result: PASS
+
+3. Live ~/.claude/settings.json has the same entry shape
+   Runtime verification: bash -c 'jq -S ".hooks.SessionStart[] | .hooks[]? | select(.command | test(\"spawned-task-result-surfacer\"))" ~/.claude/settings.json'
+   Output:
+     {
+       "command": "bash ~/.claude/hooks/spawned-task-result-surfacer.sh",
+       "type": "command"
+     }
+   Result: PASS
+
+4. Template entry shape matches live entry shape (identical JSON object)
+   Runtime verification: bash -c 'jq -S ".hooks.SessionStart[] | .hooks[]? | select(.command | test(\"spawned-task-result-surfacer\"))" adapters/claude-code/settings.json.template'
+   Output:
+     {
+       "command": "bash ~/.claude/hooks/spawned-task-result-surfacer.sh",
+       "type": "command"
+     }
+   Identical to the live ~/.claude/settings.json shape from Check 3. Both fields (command + type) match byte-for-byte.
+   Result: PASS
+
+5. Ordering relative to discovery-surfacer is preserved in both files
+   Command: jq -r '.hooks.SessionStart[] | .hooks[]? | .command' ~/.claude/settings.json | grep -n -E 'discovery-surfacer|spawned-task-result-surfacer'
+   Output (live):
+     6:bash ~/.claude/hooks/discovery-surfacer.sh
+     7:bash ~/.claude/hooks/spawned-task-result-surfacer.sh
+   Command: jq -r '.hooks.SessionStart[] | .hooks[]? | .command' adapters/claude-code/settings.json.template | grep -n -E 'discovery-surfacer|spawned-task-result-surfacer'
+   Output (template):
+     6:bash ~/.claude/hooks/discovery-surfacer.sh
+     7:bash ~/.claude/hooks/spawned-task-result-surfacer.sh
+   Both files have spawned-task-result-surfacer at chain position 7, immediately after discovery-surfacer at position 6. Position numbering identical between template and live.
+   Result: PASS
+
+6. Template JSON parses cleanly (no syntax errors introduced by the edit)
+   Command: jq empty adapters/claude-code/settings.json.template
+   Output: (no output, exit 0 — clean parse)
+   Result: PASS
+
+7. Live JSON parses cleanly
+   Command: jq empty ~/.claude/settings.json
+   Output: (no output, exit 0 — clean parse)
+   Result: PASS
+
+Git evidence:
+  Files modified in recent history:
+    - adapters/claude-code/settings.json.template  (last commit: 4627e01, "feat(settings): wire spawned-task-result-surfacer SessionStart hook (GAP-08 Task 3)")
+    - cherry-picked from f05b52e per the dispatch instruction; verified via `git log --oneline -5 adapters/claude-code/settings.json.template`
+    - ~/.claude/settings.json (live, gitignored) — synchronized in same workstream per the commit message; verified via jq inspection
+
+Runtime verification: file adapters/claude-code/settings.json.template::bash ~/.claude/hooks/spawned-task-result-surfacer.sh
+Runtime verification: file adapters/claude-code/settings.json.template::bash ~/.claude/hooks/discovery-surfacer.sh
+Runtime verification: bash -c 'jq -S ".hooks.SessionStart[] | .hooks[]? | select(.command | test(\"spawned-task-result-surfacer\"))" ~/.claude/settings.json'
+Runtime verification: bash -c 'jq -S ".hooks.SessionStart[] | .hooks[]? | select(.command | test(\"spawned-task-result-surfacer\"))" adapters/claude-code/settings.json.template'
+
+Verdict: PASS
+Confidence: 10
+Reason: All three acceptance criteria pass. (1) The template has a new SessionStart entry for `spawned-task-result-surfacer.sh` at line 377, in the JSON block immediately following `discovery-surfacer.sh` at line 373. (2) The live `~/.claude/settings.json` has the same entry as confirmed by the user-supplied jq command, returning the identical `{"command": "bash ~/.claude/hooks/spawned-task-result-surfacer.sh", "type": "command"}` object. (3) Template and live shapes match byte-for-byte (same command string, same type field, no extra fields). Chain ordering also matches (position 7 in both, immediately after discovery-surfacer at position 6). Both JSON files parse cleanly with `jq empty`, confirming no syntax regressions. Implementing commit 4627e01 (cherry-picked from f05b52e) is scope-clean: a single file with a 4-line insertion and no collateral edits.
