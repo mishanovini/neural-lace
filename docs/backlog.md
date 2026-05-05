@@ -12,7 +12,7 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 
 ## Open work — substantive deferrals
 
-- **HARNESS-GAP-13** — harness-hygiene-scan expansion (~9-10 hr; full original scope per user 2026-05-05; denylist additions + heuristic detection + periodic full-tree audit + sanitization helper)
+- **HARNESS-GAP-13** — ABSORBED 2026-05-05 into `docs/plans/harness-gap-13-hygiene-scan-expansion.md`. Building this session per Option B.
 - **HARNESS-GAP-16** — Plan-closure validation gate + `/close-plan` skill (~4-5 hr; deterministic pre-flight gate on Status: ACTIVE → COMPLETED transition, plus skill that automates closure path; surfaces from 2026-05-05 stranding incident — root-cause fix for plan-bookkeeping discipline gap. Scheduled next-after GAP-13 per user 2026-05-05). See HARNESS-GAP-16 entry below for full proposal.
 - **HARNESS-GAP-14-followups** — IMPLEMENTED 2026-05-04 via Phase 1d-G (entry below preserved as the audit trail).
 - **Rules-vs-hooks 4 remaining splits** (per Phase 1d-E-2 audit) — acceptance-scenarios.md, agent-teams.md, design-mode-planning.md, testing.md. Each is substantial restructuring per rule. Per Option B 2026-05-05, dispatched via `spawn_task` with the new GAP-08 report-back convention once GAP-08 ships.
@@ -130,28 +130,9 @@ This is the reviewer-side analogue of the documented `claim-reviewer` self-invoc
 
 ---
 
-## HARNESS-GAP-13 — Expand harness-hygiene-scan to detect more project-specific shapes (added 2026-05-04)
+## HARNESS-GAP-13 — ABSORBED 2026-05-05 into `docs/plans/harness-gap-13-hygiene-scan-expansion.md`
 
-**Source.** D5 of the D1-D5 educational re-do dialogue (2026-05-03/04). User raised the structural question: with builders working in their own project's directory (`~/claude-projects/<project>/`), project-specific decisions/reviews automatically end up in the project's repo, not in NL's. The gitignore protecting `docs/decisions/` etc. was a belt-and-suspenders against an unlikely failure mode. The primary defense is `harness-hygiene-scan.sh` checking against a denylist of project-specific terms.
-
-**Why this is a gap.** The current denylist catches specific terms (project codenames, internal jargon, customer/business names). Each pattern is a known-bad shape. But the denylist is reactive — it grows as new project-specific shapes are observed. There's no periodic full-tree audit that surfaces new project-specific content the denylist hasn't yet learned to detect. Plus the denylist's pattern-matching is literal — it doesn't catch project-specific content that uses unusual terminology or paraphrases known terms.
-
-User question (D5): "Should we expand harness-hygiene-scan to also check for any project-specific details that might be trying to make their way into the harness documents?"
-
-**Proposed mechanism — multi-layer expansion:**
-
-1. **Denylist additions for common tech-stack identifiers** that frequently leak in: third-party service names commonly used by downstream projects, common database technologies, framework-specific terms.
-2. **Heuristic detection layer** for content shapes that suggest project-specific origin: file paths matching project-internal patterns (e.g., `app/api/v\d+/[\w-]+/`, `src/components/[A-Z][\w]+\.tsx`), repeated capitalized terms that don't appear in NL's own vocabulary, customer/business-specific term clusters.
-3. **Periodic full-tree audit** as part of `/harness-review` weekly skill: scan ALL committed files (not just staged diff) against denylist + heuristics. Surface candidates for denylist addition or content sanitization.
-4. **Sanitization helper** that proposes replacements for detected matches (e.g., "this file references `<project-name>` 8 times — suggest sanitizing to `<your-project>`").
-
-**Why this matters.** Without expansion, project-specific content slowly accumulates in NL through paths the current scanner doesn't detect. The harness-hygiene rule is supposed to be the structural defense; if the scanner has blind spots, the rule's protection is illusory. The user's reframe in D5 is correct: directory separation does most of the work, but harness-hygiene-scan is the explicit defense and should match its claim.
-
-**Effort estimate.** M (~6-10 hours). Denylist additions are quick (~1 hour); heuristic detection is the bulk (~4-6 hours including pattern design + self-tests); full-tree audit + sanitization helper add another ~2-3 hours.
-
-**Why P3 (not P1).** The current scanner caught 4 leaks this session correctly. The expansion adds layered protection but the current floor is functioning. Schedule for Phase 1d-E alongside HARNESS-GAP-10 sub-gaps. Would land alongside the discovery-protocol gate-redesign and other harness-cleanup work.
-
-**Originating context.** User's D5 framing (2026-05-04): "Building of everything [is] performed within that repo's own directory... <work-org-codename> decisions automatically [are] contained within that project's directory, keeping the Neural Lace project from absorbing it... Should we expand harness-hygiene-scan?" Affirmed: the directory separation does most of the work; harness-hygiene-scan is the explicit defense and benefits from expansion to match its claim.
+Per backlog-plan-atomicity rule, the full entry is removed from open sections at the same commit as plan creation. Audit trail of the original entry preserved in git history at the commit prior to plan creation.
 
 ---
 
