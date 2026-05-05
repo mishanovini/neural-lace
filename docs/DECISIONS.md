@@ -30,3 +30,4 @@ commit (enforced by `adapters/claude-code/hooks/decisions-index-gate.sh`).
 | 020 | [Comprehension-gate semantics (C15): rung-2 cutoff, four articulation fields, FAIL/INCOMPLETE blocks task-verifier](decisions/020-comprehension-gate-semantics.md) | 2026-05-04 | Active |
 | 021 | [DRIFT-02 resolution: SessionStart account-switching hook is config-driven](decisions/021-drift-02-account-switch-config-driven.md) | 2026-05-04 | Active |
 | 022 | [`pipeline-agents.md` deleted from global rules](decisions/022-pipeline-agents-md-deletion.md) | 2026-05-04 | Implemented |
+| 023 | [Definition-on-first-use enforcement: acronym regex + stopword allowlist + scope-prefix + glossary/in-diff semantics](decisions/023-definition-on-first-use-enforcement.md) | 2026-05-04 | Active |
