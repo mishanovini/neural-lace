@@ -6,6 +6,11 @@ Mode: code
 Backlog items absorbed: HARNESS-AUDIT-EXT-01, HARNESS-AUDIT-EXT-02
 acceptance-exempt: true
 acceptance-exempt-reason: Harness-development plan; no product user. Verification is via hook --self-test invocations and a manual round-trip of an example Mode: design plan through the extended reviewer chain.
+tier: 1
+rung: 0
+architecture: coding-harness
+frozen: false
+prd-ref: n/a — harness-development
 
 ## Goal
 

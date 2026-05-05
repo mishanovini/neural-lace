@@ -42,8 +42,33 @@ What does NOT belong in the harness repo: plan/decision/review/session files tha
 ### Rules by file type
 
 - **`templates/`** — shipped: these are generic, identifier-free templates.
-- **`docs/plans/`, `docs/decisions/`, `docs/reviews/`, `docs/sessions/`** — committed when they describe harness-dev work itself (improving the harness). Enforcement is via the denylist scanner, which catches identifier leakage in any committed file regardless of directory. These are NOT gitignored in the harness repo.
+- **`docs/plans/`, `docs/decisions/`, `docs/reviews/`, `docs/sessions/`** — committed when they describe harness-dev work itself (improving the harness). Enforcement is layered: the harness-hygiene scanner catches identifier leakage in any committed file regardless of directory, AND the `.gitignore` uses naming-convention allowlists (see "Reviews / decisions / sessions naming convention" below) so non-conforming downstream-project artifacts cannot be committed by accident.
 - **`SCRATCHPAD.md`** — gitignored (ephemeral session state, not a permanent record).
+
+### Reviews / decisions / sessions naming convention
+
+NL-self-artifacts (audits / decisions / sessions about the harness itself) and downstream-project artifacts share the same `docs/{reviews,decisions,sessions}/` directories but follow different naming conventions so the `.gitignore` can distinguish them mechanically:
+
+- **NL-self-artifacts** follow the established date / number prefix pattern at the top level of the directory:
+  - `docs/reviews/YYYY-MM-DD-<topic>.md`
+  - `docs/decisions/NNN-<slug>.md`
+  - `docs/sessions/YYYY-MM-DD-<slug>.md`
+  These ARE tracked by git and committed normally — no `git add -f` needed.
+- **Downstream-project artifacts** typically arrive as nested directories (e.g., `docs/reviews/some-codename-research-YYYY-MM-DD/`) or as filenames that don't match the date-prefix convention (e.g., `docs/reviews/some-codename-internal.md`). These remain gitignored.
+
+The `.gitignore` enforces this with a per-directory denylist + allowlist pair (paraphrased):
+```
+docs/reviews/*
+!docs/reviews/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
+docs/decisions/*
+!docs/decisions/[0-9][0-9][0-9]-*.md
+docs/sessions/*
+!docs/sessions/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
+```
+
+Adding a new harness-self review or decision? Use the date-prefix or numbered-slug naming convention and it will be tracked automatically. Working on a downstream project's review and putting it in the harness repo by accident? It won't match the convention, and `.gitignore` will silently exclude it — defense-in-depth alongside the denylist scanner.
+
+This closes HARNESS-GAP-10 sub-gap H.
 
 ### For downstream projects using the harness
 

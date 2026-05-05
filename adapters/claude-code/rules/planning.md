@@ -299,6 +299,20 @@ The hook emits a system message after the move:
 
 > 📦 Plan `<slug>` transitioned to [STATUS] and was archived. Subsequent references should use: `docs/plans/archive/<slug>.md`
 
+**Bash sed-based Status flips do NOT trigger this hook** (it's a PostToolUse Edit/Write hook; Bash doesn't fire those events). Always flip `Status:` via the Edit or Write tool, never via `sed -i` or other Bash file-mutation. If you do flip via Bash, the plan will be stranded in `docs/plans/` until the next session-start sweep catches it (see "Stage 3.5" below). Recovery in the current session: manually `git mv docs/plans/<slug>.md docs/plans/archive/<slug>.md` (and any sibling evidence file).
+
+### Stage 3.5: Session-start safety-net sweep
+
+`plan-status-archival-sweep.sh` is a SessionStart hook that scans `docs/plans/*.md` (top-level only, not `docs/plans/archive/`) for any plan whose `Status:` is at a terminal value (COMPLETED / DEFERRED / ABANDONED / SUPERSEDED) and `git mv`s it (plus any sibling `<slug>-evidence.md`) into `docs/plans/archive/`. It restores the post-condition that Stage 3's `plan-lifecycle.sh` is supposed to enforce, but without depending on HOW the Status flip happened — Edit, Write, Bash sed, or any future automation.
+
+Latency: archival happens at the NEXT session start, not at flip time. A COMPLETED plan can sit in `docs/plans/` for the rest of the current session. This is acceptable because archival is housekeeping; the Edit-tool path (recommended) keeps zero-latency archival via `plan-lifecycle.sh`, and the sweep is the safety net for everything else.
+
+The sweep is silent when there's nothing to archive. If it does archive plans, it emits one line per plan:
+
+> [plan-archival-sweep] auto-archived '<slug>.md' (Status: <STATUS>) → docs/plans/archive/
+
+Originating context: `docs/discoveries/2026-05-04-sed-status-flip-bypasses-plan-lifecycle.md` decided 2026-05-04 (option D — document + sweep).
+
 ### Stage 4: Lookup — archive-aware by default
 
 Once a plan is archived, references to it must resolve across both `docs/plans/` and `docs/plans/archive/`. Use one of the following depending on context:

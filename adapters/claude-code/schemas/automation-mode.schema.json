@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-lace.dev/schemas/automation-mode.v1.json",
+  "title": "Automation Mode Config (v1)",
+  "description": "Controls Claude Code's automation behavior for this user (or this project, if placed at <project>/.claude/automation-mode.json). The gate hook reads this config to decide whether to block deploy-class commands and require explicit confirmation. Resolution order: project-local <project>/.claude/automation-mode.json -> user-global ~/.claude/local/automation-mode.json -> hardcoded default of review-before-deploy. Lives at ~/.claude/local/automation-mode.json by default; example at adapters/claude-code/examples/automation-mode.example.json. Schema version 1.",
+  "type": "object",
+  "required": ["version", "mode"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently always 1."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["full-auto", "review-before-deploy"],
+      "description": "Automation mode. 'review-before-deploy' (default) blocks deploy-class commands until the user confirms in chat. 'full-auto' allows deploy-class commands without intermediate confirmation. The slash command /automation-mode flips this value; the first-run SessionStart prompt seeds it."
+    },
+    "deploy_matchers": {
+      "type": "array",
+      "description": "Command-prefix patterns the gate hook checks against in 'review-before-deploy' mode. When the matched prefix is present in a Bash invocation, the hook blocks until confirmation. Defaults are listed in adapters/claude-code/examples/automation-mode.example.json. Override only to add project-specific deploy commands; do not narrow defaults.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": [
+        "git push",
+        "gh pr merge",
+        "gh repo create",
+        "supabase db push",
+        "vercel deploy",
+        "npm publish"
+      ]
+    }
+  }
+}
