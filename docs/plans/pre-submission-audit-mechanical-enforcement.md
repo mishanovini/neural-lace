@@ -45,18 +45,18 @@ Close the Pattern-only gap left by commit `9c4e4c8` (which landed the Pre-Submis
 
 ## Tasks
 
-- [ ] 1. Extend `plan-reviewer.sh` with **Check 8A** (Pre-Submission Audit section presence + substance on Mode: design plans). Implementation: gate on `MODE_VALUE == "design"`. Required-section lookup using the existing `check_required_section`-style awk + body-extraction. FAIL conditions:
+- [x] 1. Extend `plan-reviewer.sh` with **Check 8A** (Pre-Submission Audit section presence + substance on Mode: design plans). Implementation: gate on `MODE_VALUE == "design"`. Required-section lookup using the existing `check_required_section`-style awk + body-extraction. FAIL conditions:
     - Section heading `## Pre-Submission Audit` is missing
     - Section body, after stripping HTML comments and bullet markers, is empty or under 30 non-whitespace chars
     - Section body, after stripping placeholder tokens (`[populate me]`, `TODO`, bare `n/a`, bare `skipped`), is empty
     - Section body does NOT contain at least one of: (a) the canonical full-sentence carve-out `n/a — single-task plan, no class-sweep needed`, OR (b) at least 5 lines that begin with `S1` / `S2` / `S3` / `S4` / `S5` (one per sweep, in any order, optionally bullet-prefixed)
-- [ ] 2. Extend `plan-reviewer.sh --self-test` with 4 new fixture scenarios:
+- [x] 2. Extend `plan-reviewer.sh --self-test` with 4 new fixture scenarios:
     - **PASS:** Mode: design plan with 5 substantive sweep lines (each cites a sweep query + a count or finding); confirm exit 0
     - **PASS-carve-out:** Mode: design plan whose `## Pre-Submission Audit` section contains only the canonical full-sentence carve-out; confirm exit 0
     - **FAIL-missing:** Mode: design plan with NO `## Pre-Submission Audit` section; confirm exit 1 + finding cites missing section
     - **FAIL-placeholder:** Mode: design plan whose audit body is `[populate me]` only; confirm exit 1 + finding cites placeholder content
-- [ ] 3. Update `docs/failure-modes.md` FM-007 Detection / Prevention fields to cite Check 8A with the implementing commit SHA. Other FM entries unchanged.
-- [ ] 4. Update `rules/design-mode-planning.md` Enforcement summary listing: flip `plan-reviewer.sh extension` Status from "planned, not yet implemented" to a partial-landed status. Cite this plan's commit SHA. Document explicitly that 8A is the only mechanized check; 8B/8C/8D/8E/8F and agent precondition are deferred per D-1 and D-3.
+- [x] 3. Update `docs/failure-modes.md` FM-007 Detection / Prevention fields to cite Check 8A with the implementing commit SHA. Other FM entries unchanged.
+- [x] 4. Update `rules/design-mode-planning.md` Enforcement summary listing: flip `plan-reviewer.sh extension` Status from "planned, not yet implemented" to a partial-landed status. Cite this plan's commit SHA. Document explicitly that 8A is the only mechanized check; 8B/8C/8D/8E/8F and agent precondition are deferred per D-1 and D-3.
 - [ ] 5. Sync changed files from neural-lace adapter directory to `~/.claude/` per `harness-maintenance.md` Windows manual-sync rule. Verify with the diff loop. Commit, dual-remote push.
 
 ## Files to Modify/Create
@@ -65,6 +65,11 @@ Close the Pattern-only gap left by commit `9c4e4c8` (which landed the Pre-Submis
 - `docs/failure-modes.md` — Detection/Prevention field update on FM-007 only (cite Check 8A with implementing commit SHA). ~5 lines edited.
 - `adapters/claude-code/rules/design-mode-planning.md` — Enforcement summary table status update. ~10 added lines documenting that S1 is mechanized via Check 8A and S2-S5 remain Pattern-only with explicit links to D-1 and D-3 for the deferral reasoning.
 - `~/.claude/hooks/plan-reviewer.sh`, `~/.claude/rules/design-mode-planning.md` — copies synced from the adapter directory after Task 4 completes. The `~/.claude/docs/failure-modes.md` file does not currently exist locally — sync also creates it as part of the harness-maintenance discipline (the diagnosis rule references it).
+
+## In-flight scope updates
+
+- 2026-05-05: `docs/plans/pre-submission-audit-mechanical-enforcement.md` — bookkeeping recovery: original Phase 1d-C-2 session built Check 8A in commit `10adac2` (May 3) but ended without running task-verifier; this session recovers the audit trail (Tasks 1-5 evidence + checkbox flips + Status: COMPLETED).
+- 2026-05-05: `docs/plans/pre-submission-audit-mechanical-enforcement-evidence.md` — evidence file companion to the plan, never committed by the original session; landed during this recovery session via task-verifier dispatches.
 
 ## Assumptions
 
