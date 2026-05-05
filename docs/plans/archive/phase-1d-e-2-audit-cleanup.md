@@ -1,6 +1,6 @@
 # Plan: Phase 1d-E-2 — Audit + cleanup batch (GAP-10 sub-gaps A/B/C/F/H)
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: HARNESS-GAP-10 sub-gap A, HARNESS-GAP-10 sub-gap B, HARNESS-GAP-10 sub-gap C, HARNESS-GAP-10 sub-gap F, HARNESS-GAP-10 sub-gap H
@@ -144,9 +144,13 @@ Sub-gap A's audit document is the smallest unit and the most independent — it 
 
 ## Definition of Done
 
-- [ ] All 6 tasks task-verified PASS.
-- [ ] Three audit documents shipped under `docs/reviews/`.
-- [ ] `pipeline-agents.md` relocated / restructured / deleted per Sub-gap B's analysis.
-- [ ] `.gitignore` refined; legitimate NL-self-reviews visible to git.
-- [ ] Backlog "Recently implemented" updated with the 5 sub-gap closures.
-- [ ] Plan archived (Status: COMPLETED → auto-archive).
+- [x] All 6 tasks task-verified PASS (commits fd9f663, d8b30f3, 7abe23e, 6d30d7b).
+- [x] Three audit documents shipped under `docs/reviews/`.
+- [x] `pipeline-agents.md` deleted per Sub-gap B's analysis (Decision 022).
+- [x] `.gitignore` already correctly designed via date-prefix allowlist; convention now documented in harness-hygiene.md.
+- [x] Backlog "Recently implemented" updated with the 5 sub-gap closures.
+- [x] Plan archived (this Status flip triggers auto-archive).
+
+## Completion Report
+
+All 6 tasks shipped. Decision 022 (pipeline-agents.md deletion) landed. Three audit docs in `docs/reviews/`. Single coherent batch closing 5 sub-gaps from the Build Doctrine integration analysis.
