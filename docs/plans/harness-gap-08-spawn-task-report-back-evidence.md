@@ -301,3 +301,62 @@ Runtime verification: bash -c 'jq -S ".hooks.SessionStart[] | .hooks[]? | select
 Verdict: PASS
 Confidence: 10
 Reason: All three acceptance criteria pass. (1) The template has a new SessionStart entry for `spawned-task-result-surfacer.sh` at line 377, in the JSON block immediately following `discovery-surfacer.sh` at line 373. (2) The live `~/.claude/settings.json` has the same entry as confirmed by the user-supplied jq command, returning the identical `{"command": "bash ~/.claude/hooks/spawned-task-result-surfacer.sh", "type": "command"}` object. (3) Template and live shapes match byte-for-byte (same command string, same type field, no extra fields). Chain ordering also matches (position 7 in both, immediately after discovery-surfacer at position 6). Both JSON files parse cleanly with `jq empty`, confirming no syntax regressions. Implementing commit 4627e01 (cherry-picked from f05b52e) is scope-clean: a single file with a 4-line insertion and no collateral edits.
+
+## Task 5 — Sync rules + hooks to ~/.claude/
+
+EVIDENCE BLOCK
+==============
+Task ID: 5
+Task description: Sync `adapters/claude-code/{rules,hooks}/` files to `~/.claude/{rules,hooks}/`. Run `--self-test` on both copies. Verify with the diff loop from `harness-maintenance.md`.
+Verified at: 2026-05-05T21:03:08Z
+Verifier: task-verifier agent
+
+Comprehension-gate: not applicable (rung < 2)
+
+Checks run:
+
+1. Plan rung field check
+   Read: docs/plans/harness-gap-08-spawn-task-report-back.md (header line 11)
+   Output: rung: 1
+   Result: PASS — comprehension-gate skipped per Decision 020a (rung < 2)
+
+2. Diff verification — rule file
+   Command: diff -q adapters/claude-code/rules/spawn-task-report-back.md ~/.claude/rules/spawn-task-report-back.md
+   Output: (no output — files identical)
+   Result: PASS — synced copy is byte-identical to adapter source
+
+3. Diff verification — hook file
+   Command: diff -q adapters/claude-code/hooks/spawned-task-result-surfacer.sh ~/.claude/hooks/spawned-task-result-surfacer.sh
+   Output: (no output — files identical)
+   Result: PASS — synced copy is byte-identical to adapter source
+
+4. Self-test on synced (~/.claude/) hook copy
+   Command: bash ~/.claude/hooks/spawned-task-result-surfacer.sh --self-test
+   Output:
+     PASS: [no-directory] silent as expected
+     PASS: [empty-directory] silent as expected
+     PASS: [all-acked] silent as expected
+     PASS: [has-unread] surfaced and named 'task-099-needs-review'
+     PASS: [malformed-and-valid] surfaced valid result
+     PASS: [malformed-and-valid] emitted stderr warning for malformed file
+     SELF-TEST: all scenarios passed (5/5 required)
+   Result: PASS — 5/5 scenarios PASS in synced copy
+
+5. Self-test on adapter source hook copy (parity check)
+   Command: bash adapters/claude-code/hooks/spawned-task-result-surfacer.sh --self-test
+   Output: (identical to ~/.claude/ copy — same 5/5 PASS)
+   Result: PASS — both copies produce identical self-test results
+
+Git evidence:
+  Files compared (synced + adapter):
+    - adapters/claude-code/rules/spawn-task-report-back.md ↔ ~/.claude/rules/spawn-task-report-back.md (diff-clean)
+    - adapters/claude-code/hooks/spawned-task-result-surfacer.sh ↔ ~/.claude/hooks/spawned-task-result-surfacer.sh (diff-clean)
+
+Runtime verification: bash -c "diff -q adapters/claude-code/rules/spawn-task-report-back.md ~/.claude/rules/spawn-task-report-back.md"
+Runtime verification: bash -c "diff -q adapters/claude-code/hooks/spawned-task-result-surfacer.sh ~/.claude/hooks/spawned-task-result-surfacer.sh"
+Runtime verification: bash -c "bash ~/.claude/hooks/spawned-task-result-surfacer.sh --self-test"
+Runtime verification: bash -c "bash adapters/claude-code/hooks/spawned-task-result-surfacer.sh --self-test"
+
+Verdict: PASS
+Confidence: 10
+Reason: All three acceptance criteria explicitly satisfied. (1) `diff -q` on the rule file produces no output — synced copy is byte-identical. (2) `diff -q` on the hook file produces no output — synced copy is byte-identical. (3) Synced `~/.claude/hooks/spawned-task-result-surfacer.sh --self-test` reports `SELF-TEST: all scenarios passed (5/5 required)` with all six PASS lines. Adapter source self-test produces identical results, confirming no copy-time drift. The two-layer Windows manual-sync rule from harness-maintenance.md is satisfied: changes propagated from adapter to ~/.claude/, both copies tested independently, both diff-clean.

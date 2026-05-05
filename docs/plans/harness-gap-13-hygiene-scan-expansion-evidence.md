@@ -471,3 +471,102 @@ Runtime verification: file adapters/claude-code/rules/harness-hygiene.md::Hook-e
 Verdict: PASS
 Confidence: 9
 Reason: Task 5 documentation ships per spec and exceeds the minimum bar. New "Layer 2 heuristic detection" section at line 104 contains four subsections: (1) What Layer 2 catches — names all three path-shape regexes and the cluster heuristic; (2) How to add false-positive exemptions — two paths (path-prefix exemption via is_path_shape_exempt, vocabulary allowlist via NL_VOCAB_ALLOWLIST) with decision guidance; (3) Override at commit-time — bonus operational guidance for one-off bypass via git commit --no-verify with anti-erosion caveat; (4) Self-test scenarios — bonus cross-reference to h1-h5. Existing Enforcement section extended with separate Layer 1 vs Layer 2 hook-enforced rows. Every code citation (check_heuristics, is_path_shape_exempt, NL_VOCAB_ALLOWLIST) cross-checks against the actual hook implementation verified in Task 2's evidence block — zero doc/code drift. Implementing commit e03d96b is the cherry-pick of original a09636e.
+
+## Task 6 — Sync changed files from adapters/claude-code/ to ~/.claude/
+
+EVIDENCE BLOCK
+==============
+Task ID: 6
+Task description: Sync. Copy changed files from `adapters/claude-code/` to `~/.claude/` per Windows manual-sync rule. Verify with the diff loop. Files: `hooks/harness-hygiene-scan.sh`, `scripts/harness-hygiene-sanitize.sh`, `patterns/harness-denylist.txt`, `rules/harness-hygiene.md`, `skills/harness-review.md`.
+Verified at: 2026-05-05T21:03:08Z
+Verifier: task-verifier agent
+
+Comprehension-gate: not applicable (rung < 2)
+
+Checks run:
+
+1. Plan rung field check
+   Read: docs/plans/harness-gap-13-hygiene-scan-expansion.md (header line 11)
+   Output: rung: 1
+   Result: PASS — comprehension-gate skipped per Decision 020a (rung < 2)
+
+2. Diff loop across all 5 files (per harness-maintenance.md)
+   Command: for f in hooks/harness-hygiene-scan.sh scripts/harness-hygiene-sanitize.sh patterns/harness-denylist.txt rules/harness-hygiene.md skills/harness-review.md; do diff -q "adapters/claude-code/$f" "$HOME/.claude/$f" || echo "DIFFERS: $f"; done
+   Output: (no DIFFERS lines emitted — all 5 files diff-clean)
+   Result: PASS — all 5 files byte-identical between adapter and ~/.claude/ mirror
+     - adapters/claude-code/hooks/harness-hygiene-scan.sh ↔ ~/.claude/hooks/harness-hygiene-scan.sh: diff-clean
+     - adapters/claude-code/scripts/harness-hygiene-sanitize.sh ↔ ~/.claude/scripts/harness-hygiene-sanitize.sh: diff-clean
+     - adapters/claude-code/patterns/harness-denylist.txt ↔ ~/.claude/patterns/harness-denylist.txt: diff-clean
+     - adapters/claude-code/rules/harness-hygiene.md ↔ ~/.claude/rules/harness-hygiene.md: diff-clean
+     - adapters/claude-code/skills/harness-review.md ↔ ~/.claude/skills/harness-review.md: diff-clean
+
+3. Self-test on synced harness-hygiene-scan.sh (Layer 1 + Layer 2)
+   Command: bash ~/.claude/hooks/harness-hygiene-scan.sh --self-test
+   Output: self-test: OK (exit code 0)
+   Result: PASS — all assertions satisfied. Source code at adapters/claude-code/hooks/harness-hygiene-scan.sh lines 195-302 shows the script asserts: existing 8 denylist scenarios (clean/dirty/plan/exempt-rule/decision-allowed/decision-draft/review-allowed plus dirty-token-mention) AND 5 new heuristic scenarios (h1: positive path-shape, h2: positive cluster, h3: NEGATIVE NL-prefix path, h4: NEGATIVE vocabulary token, h5: NEGATIVE clean prose). Script only emits "self-test: OK" if FAIL=0 across every assertion (script line 304-306). All 13 scenarios PASS.
+
+4. Self-test on synced harness-hygiene-sanitize.sh
+   Command: bash ~/.claude/scripts/harness-hygiene-sanitize.sh --self-test
+   Output:
+     s1 (cloud-bucket): PASS
+     s2 (oauth-client-id): PASS
+     s3 (project-internal-path): PASS
+     s4 (capitalized-cluster): PASS
+     s5 (clean-input): PASS
+     5/5 scenarios passed (0 failed)
+   Result: PASS — 5/5 scenarios PASS in synced copy
+
+Git evidence:
+  Files compared (synced + adapter), all diff-clean:
+    - adapters/claude-code/hooks/harness-hygiene-scan.sh ↔ ~/.claude/hooks/harness-hygiene-scan.sh
+    - adapters/claude-code/scripts/harness-hygiene-sanitize.sh ↔ ~/.claude/scripts/harness-hygiene-sanitize.sh
+    - adapters/claude-code/patterns/harness-denylist.txt ↔ ~/.claude/patterns/harness-denylist.txt
+    - adapters/claude-code/rules/harness-hygiene.md ↔ ~/.claude/rules/harness-hygiene.md
+    - adapters/claude-code/skills/harness-review.md ↔ ~/.claude/skills/harness-review.md
+
+Runtime verification: bash -c "diff -q adapters/claude-code/hooks/harness-hygiene-scan.sh ~/.claude/hooks/harness-hygiene-scan.sh"
+Runtime verification: bash -c "diff -q adapters/claude-code/scripts/harness-hygiene-sanitize.sh ~/.claude/scripts/harness-hygiene-sanitize.sh"
+Runtime verification: bash -c "diff -q adapters/claude-code/patterns/harness-denylist.txt ~/.claude/patterns/harness-denylist.txt"
+Runtime verification: bash -c "diff -q adapters/claude-code/rules/harness-hygiene.md ~/.claude/rules/harness-hygiene.md"
+Runtime verification: bash -c "diff -q adapters/claude-code/skills/harness-review.md ~/.claude/skills/harness-review.md"
+Runtime verification: bash -c "bash ~/.claude/hooks/harness-hygiene-scan.sh --self-test"
+Runtime verification: bash -c "bash ~/.claude/scripts/harness-hygiene-sanitize.sh --self-test"
+
+Verdict: PASS
+Confidence: 10
+Reason: All sync acceptance criteria pass. (1) `diff -q` between adapter and ~/.claude/ produces no output for ALL 5 files — every synced copy is byte-identical. (2) Synced `~/.claude/hooks/harness-hygiene-scan.sh --self-test` returns `self-test: OK` with exit code 0; the script's source enforces this success message only when ALL assertions (8 existing denylist + 5 heuristic h1-h5) pass — confirmed by reading lines 195-306 of the adapter copy. (3) Synced `~/.claude/scripts/harness-hygiene-sanitize.sh --self-test` reports `5/5 scenarios passed (0 failed)` covering each of the four replacement classes plus the clean-input negative case. The Windows manual-sync rule from harness-maintenance.md is fully satisfied across all 5 files.
+
+## Task 7 — Manual full-tree scan
+
+EVIDENCE BLOCK
+==============
+Task ID: 7
+Task description: Manual full-tree scan. After all changes land, run `bash adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree` against the current repo. Expected: ZERO matches.
+Verified at: 2026-05-05T21:03:08Z
+Verifier: task-verifier agent
+
+Comprehension-gate: not applicable (rung < 2)
+
+Checks run:
+
+1. Plan rung field check
+   Read: docs/plans/harness-gap-13-hygiene-scan-expansion.md (header line 11)
+   Output: rung: 1
+   Result: PASS — comprehension-gate skipped per Decision 020a (rung < 2)
+
+2. Full-tree scan against current repo
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree
+   Output: (no matches emitted to stderr)
+   Exit code: 0
+   Result: PASS — exit 0 with zero matches against current repo state
+
+Git evidence:
+  Hook source: adapters/claude-code/hooks/harness-hygiene-scan.sh (commit history extends through Tasks 1-2 implementing Layer 1 + Layer 2 detection)
+  Repo state: master @ 8cbe5bb (verify(batch-2): GAP-08 T3 + GAP-13 T3/T4/T5 task-verifier PASS)
+  All Phase 1d-G codename scrub effects from commit 6881712 still in effect.
+
+Runtime verification: bash adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree
+
+Verdict: PASS
+Confidence: 10
+Reason: Full-tree scan returns exit 0 with zero stderr output against the current repo state. The plan's assumption (per line 107) that "the repo is currently clean of harness-hygiene violations after the Phase 1d-G codename scrub" is empirically confirmed. No matches surfaced from either the existing denylist OR the new Layer 2 heuristic detection (path-shapes + capitalized clusters), confirming both that (a) the codebase is clean of project-specific identity leaks, AND (b) the new Layer 2 heuristic does not false-positive on NL's own legitimate content (paths under `~/.claude/`, `adapters/`, `docs/plans/archive/` are correctly excluded; vocabulary allowlist absorbs common technical terms). The task's stated acceptance criterion ("command exits 0 with no matches in stderr") is precisely met.

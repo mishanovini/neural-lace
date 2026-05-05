@@ -41,7 +41,7 @@ Pattern parallels: this hook mirrors `discovery-surfacer.sh` exactly in shape (S
 - [x] 2. Write `adapters/claude-code/hooks/spawned-task-result-surfacer.sh` (~150-200 lines mirroring discovery-surfacer.sh): SessionStart hook that scans `.claude/state/spawned-task-results/*.json`, filters out files with sibling `.acked`, surfaces unread results with task_id, summary, branch, commits as a system-reminder block. Self-test with 5 scenarios using temp-dir fixtures.
 - [x] 3. Wire the new hook into `adapters/claude-code/settings.json.template` SessionStart chain (immediately after the existing `discovery-surfacer.sh` line at line 373). Mirror the change to `~/.claude/settings.json`.
 - [x] 4. Update `adapters/claude-code/rules/vaporware-prevention.md` enforcement map with one new row: "Spawn_task results surfaced at session start" → `spawned-task-result-surfacer.sh` SessionStart hook + `spawn-task-report-back.md` rule.
-- [ ] 5. Sync `adapters/claude-code/{rules,hooks}/` files to `~/.claude/{rules,hooks}/`. Run `--self-test` on both copies. Verify with the diff loop from `harness-maintenance.md`.
+- [x] 5. Sync `adapters/claude-code/{rules,hooks}/` files to `~/.claude/{rules,hooks}/`. Run `--self-test` on both copies. Verify with the diff loop from `harness-maintenance.md`.
 - [ ] 6. Commit on feature branch `feat/gap-08-spawn-task-report-back`. Push to origin (multi-push covers both remotes per HARNESS-GAP-12 resolution).
 
 ## Files to Modify/Create

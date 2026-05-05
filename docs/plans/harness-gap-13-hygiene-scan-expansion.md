@@ -74,8 +74,8 @@ Outcome: harness-hygiene-scan stops being purely reactive. The structural defens
     - User reviews and applies via `git apply` workflow
     - Self-test with 4-5 scenarios covering each replacement class
 - [x] 5. **Documentation.** Extend `adapters/claude-code/rules/harness-hygiene.md` with a new "Layer 2 heuristic detection" section briefly explaining what the heuristics catch and how to add false-positive exemptions (e.g., add to the NL vocabulary allowlist in the hook).
-- [ ] 6. **Sync.** Copy changed files from `adapters/claude-code/` to `~/.claude/` per Windows manual-sync rule. Verify with the diff loop. Files: `hooks/harness-hygiene-scan.sh`, `scripts/harness-hygiene-sanitize.sh`, `patterns/harness-denylist.txt`, `rules/harness-hygiene.md`, `skills/harness-review.md`.
-- [ ] 7. **Manual full-tree scan.** After all changes land, run `bash adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree` against the current repo. Expected: ZERO matches (the codename scrub from Phase 1d-G left the tree clean per HARNESS-GAP-15 sub-item C). If matches surface, classify as legitimate findings (sanitize) OR false-positives (add allowlist exemption), then re-scan until clean.
+- [x] 6. **Sync.** Copy changed files from `adapters/claude-code/` to `~/.claude/` per Windows manual-sync rule. Verify with the diff loop. Files: `hooks/harness-hygiene-scan.sh`, `scripts/harness-hygiene-sanitize.sh`, `patterns/harness-denylist.txt`, `rules/harness-hygiene.md`, `skills/harness-review.md`.
+- [x] 7. **Manual full-tree scan.** After all changes land, run `bash adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree` against the current repo. Expected: ZERO matches (the codename scrub from Phase 1d-G left the tree clean per HARNESS-GAP-15 sub-item C). If matches surface, classify as legitimate findings (sanitize) OR false-positives (add allowlist exemption), then re-scan until clean.
 - [ ] 8. **Commit on feature branch + push.** Commit on a fresh branch `feat/gap-13-hygiene-scan-expansion`. Push to origin (multi-push covers both remotes per HARNESS-GAP-12 resolution).
 
 ## Files to Modify/Create
