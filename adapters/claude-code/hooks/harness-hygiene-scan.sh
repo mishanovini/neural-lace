@@ -40,7 +40,22 @@
 #
 # EXIT CODES
 #   0 — no matches (or denylist missing / not in a git repo — silent no-op)
-#   1 — one or more matches detected
+#   1 — one or more matches detected (denylist or heuristic)
+#
+# DETECTION LAYERS
+#   Layer 1 (denylist) — literal/regex patterns from harness-denylist.txt.
+#                         Matches are labeled `[denylist]` in stderr output.
+#   Layer 2 (heuristic) — project-specific shape detection inside
+#                         `check_heuristics()`. Catches patterns the literal
+#                         denylist cannot (project-internal file paths,
+#                         repeated capitalized term clusters outside NL
+#                         vocabulary). Matches are labeled `[heuristic]`.
+#                         Files in NL-prefix paths (`adapters/`, `docs/`,
+#                         the synced `~/.claude/` mirror) are exempt from
+#                         path-shape detection because plans, decisions,
+#                         and rules legitimately cite paths in prose.
+#                         Plan files under `docs/plans/*.md` are exempt
+#                         from path-shape detection for the same reason.
 
 set -u
 
@@ -97,6 +112,52 @@ if [ "${1:-}" = "--self-test" ]; then
   REVIEW_ALLOWED="$TMPDIR_ST/docs/reviews/2026-05-04-foo.md"
   printf '%s\n' 'review with FORBIDDEN_TOKEN must be caught' > "$REVIEW_ALLOWED"
 
+  # ---- Layer 2 heuristic test fixtures ----
+
+  # Case h1: positive path-shape match. File outside any NL-prefix path
+  # mentions a project-internal API path. Should BLOCK with [heuristic] label.
+  HEUR_PATH_DIRTY="$TMPDIR_ST/some-doc.md"
+  printf '%s\n' 'See the route at app/api/v1/users/ for details.' > "$HEUR_PATH_DIRTY"
+
+  # Case h2: positive cluster match. File mentions a fake project name 5x,
+  # not in the NL vocabulary allowlist. Should BLOCK with [heuristic] label.
+  HEUR_CLUSTER_DIRTY="$TMPDIR_ST/cluster-doc.md"
+  printf '%s\n' \
+    'Examplecorp ships a thing.' \
+    'Examplecorp also ships another thing.' \
+    'Why Examplecorp does this is unclear.' \
+    'The Examplecorp engineering team made it work.' \
+    'Examplecorp customers are happy.' \
+    > "$HEUR_CLUSTER_DIRTY"
+
+  # Case h3: NEGATIVE — NL-prefix path containing a project-internal-looking
+  # path-shape should NOT trigger the heuristic (path-shape detection is
+  # SKIPPED inside NL-prefix paths because they legitimately cite paths).
+  mkdir -p "$TMPDIR_ST/adapters/claude-code/hooks"
+  HEUR_NL_PATH="$TMPDIR_ST/adapters/claude-code/hooks/foo.sh"
+  printf '%s\n' '# This hook references app/api/v1/users/ as an example.' > "$HEUR_NL_PATH"
+
+  # Case h4: NEGATIVE — vocabulary allowlist token (Promise) appearing 5x
+  # should NOT trigger cluster heuristic. Note: this file ALSO must not
+  # match the path-shape heuristic, so we keep it path-free.
+  HEUR_VOCAB="$TMPDIR_ST/vocab-doc.md"
+  printf '%s\n' \
+    'Promise me one thing.' \
+    'A Promise is a contract.' \
+    'Promise resolution is deterministic.' \
+    'When a Promise rejects we handle the error.' \
+    'Promise.all is the classic combinator.' \
+    > "$HEUR_VOCAB"
+
+  # Case h5: NEGATIVE — a clean file with no project-internal shapes and
+  # no repeated non-allowlisted clusters should pass cleanly.
+  HEUR_CLEAN="$TMPDIR_ST/clean-prose.md"
+  printf '%s\n' \
+    'This is just some prose.' \
+    'Nothing dramatic happens.' \
+    'Words appear and then leave.' \
+    > "$HEUR_CLEAN"
+
   SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
   # Invoke from the tmp repo so REPO_ROOT resolves to $TMPDIR_ST.
@@ -117,6 +178,18 @@ if [ "${1:-}" = "--self-test" ]; then
   ST_DECISION_DRAFT_RC=$?
   ST_REVIEW_ALLOWED_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/reviews/2026-05-04-foo.md" 2>&1)
   ST_REVIEW_ALLOWED_RC=$?
+
+  # ---- Layer 2 heuristic invocations ----
+  ST_HEUR_PATH_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "some-doc.md" 2>&1)
+  ST_HEUR_PATH_RC=$?
+  ST_HEUR_CLUSTER_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "cluster-doc.md" 2>&1)
+  ST_HEUR_CLUSTER_RC=$?
+  ST_HEUR_NL_PATH_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "adapters/claude-code/hooks/foo.sh" 2>&1)
+  ST_HEUR_NL_PATH_RC=$?
+  ST_HEUR_VOCAB_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "vocab-doc.md" 2>&1)
+  ST_HEUR_VOCAB_RC=$?
+  ST_HEUR_CLEAN_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "clean-prose.md" 2>&1)
+  ST_HEUR_CLEAN_RC=$?
   set -e
 
   FAIL=0
@@ -174,6 +247,60 @@ if [ "${1:-}" = "--self-test" ]; then
     FAIL=1
   fi
 
+  # ---- Layer 2 heuristic assertions ----
+  # h1: positive path-shape match outside NL-prefix paths must BLOCK with [heuristic] label
+  if [ "$ST_HEUR_PATH_RC" -ne 1 ]; then
+    echo "self-test: FAIL (h1) — expected exit 1 on path-shape match in some-doc.md, got $ST_HEUR_PATH_RC" >&2
+    echo "(file mentions app/api/v1/users/ outside NL-prefix paths and should be blocked)" >&2
+    echo "output was:" >&2
+    echo "$ST_HEUR_PATH_OUT" >&2
+    FAIL=1
+  fi
+  if ! printf '%s' "$ST_HEUR_PATH_OUT" | grep -q '\[heuristic\]'; then
+    echo "self-test: FAIL (h1) — path-shape match output did not carry [heuristic] label" >&2
+    echo "output was:" >&2
+    echo "$ST_HEUR_PATH_OUT" >&2
+    FAIL=1
+  fi
+  # h2: positive cluster match (Examplecorp x5) must BLOCK with [heuristic] label
+  if [ "$ST_HEUR_CLUSTER_RC" -ne 1 ]; then
+    echo "self-test: FAIL (h2) — expected exit 1 on cluster match in cluster-doc.md, got $ST_HEUR_CLUSTER_RC" >&2
+    echo "(file mentions 'Examplecorp' 5+ times, not in NL vocabulary allowlist)" >&2
+    echo "output was:" >&2
+    echo "$ST_HEUR_CLUSTER_OUT" >&2
+    FAIL=1
+  fi
+  if ! printf '%s' "$ST_HEUR_CLUSTER_OUT" | grep -q 'Examplecorp'; then
+    echo "self-test: FAIL (h2) — cluster output did not mention the matched token Examplecorp" >&2
+    echo "output was:" >&2
+    echo "$ST_HEUR_CLUSTER_OUT" >&2
+    FAIL=1
+  fi
+  # h3: NEGATIVE — NL-prefix path with project-internal-looking path-shape must NOT fire path-shape heuristic
+  if [ "$ST_HEUR_NL_PATH_RC" -ne 0 ]; then
+    echo "self-test: FAIL (h3) — expected exit 0 on NL-prefix file mentioning a path, got $ST_HEUR_NL_PATH_RC" >&2
+    echo "(adapters/claude-code/hooks/foo.sh is NL-prefix exempt for path-shape detection)" >&2
+    echo "output was:" >&2
+    echo "$ST_HEUR_NL_PATH_OUT" >&2
+    FAIL=1
+  fi
+  # h4: NEGATIVE — vocabulary token Promise x5 must NOT fire cluster heuristic
+  if [ "$ST_HEUR_VOCAB_RC" -ne 0 ]; then
+    echo "self-test: FAIL (h4) — expected exit 0 on vocab-doc.md (Promise in allowlist), got $ST_HEUR_VOCAB_RC" >&2
+    echo "(Promise appears 5x but is in NL_VOCAB_ALLOWLIST — should not fire)" >&2
+    echo "output was:" >&2
+    echo "$ST_HEUR_VOCAB_OUT" >&2
+    FAIL=1
+  fi
+  # h5: NEGATIVE — clean prose must produce no heuristic matches
+  if [ "$ST_HEUR_CLEAN_RC" -ne 0 ]; then
+    echo "self-test: FAIL (h5) — expected exit 0 on clean-prose.md, got $ST_HEUR_CLEAN_RC" >&2
+    echo "(no project-internal shapes and no repeated non-allowlist clusters)" >&2
+    echo "output was:" >&2
+    echo "$ST_HEUR_CLEAN_OUT" >&2
+    FAIL=1
+  fi
+
   if [ "$FAIL" -eq 0 ]; then
     echo "self-test: OK"
     exit 0
@@ -211,6 +338,152 @@ awk '
 if [ ! -s "$PATTERNS_TMP" ]; then
   exit 0
 fi
+
+# ---------- Layer 2: heuristic detection ---------------------------------
+#
+# check_heuristics() — invoked per file after the denylist scan. Detects
+# project-specific content shapes the literal denylist cannot catch.
+#
+# Two sub-checks:
+#   (a) project-internal file-path shapes (e.g., `app/api/v1/users/`,
+#       `src/components/MyComponent.tsx`, `supabase/migrations/<14>_<slug>.sql`)
+#   (b) repeated capitalized-term clusters: 3+ occurrences of the same
+#       `[A-Z][a-z]{4,15}` token within a single file, EXCLUDING tokens in
+#       the NL-vocabulary allowlist
+#
+# Both sub-checks are SKIPPED for files inside known NL-prefix paths.
+# See `is_path_shape_exempt` below for the authoritative list — broadly:
+# `adapters/`, `principles/`, `patterns/`, `templates/`, `evals/`,
+# `.github/`, `docs/`, the synced `~/.claude/` mirror, and well-known
+# root prose files (README, CONTRIBUTING, LICENSE, etc.).
+#
+# Rationale: NL's own documentation legitimately (a) cites path-shapes
+# in prose AND (b) discusses domain vocabulary terms repeatedly in the
+# same file (e.g., a doc about Acceptance Scenarios says "Acceptance"
+# many times). Maintaining an exhaustive vocabulary allowlist for every
+# doc-domain term would not converge; the path-prefix exemption is the
+# cleaner mechanism. Files OUTSIDE these prefixes (project-instance
+# content, downstream consumer code, instance fixtures) face full
+# scrutiny.
+#
+# Args: $1 = repo-relative path, $2 = absolute path
+# Side-effects: appends matches to $MATCHES_TMP, increments $MATCH_COUNT
+# Returns: 0 always (caller continues regardless).
+
+# NL vocabulary allowlist for cluster detection. Tokens here will not
+# trigger the cluster heuristic even if they appear 3+ times in a single
+# file. Case-insensitive match. Add new tokens here if a legitimate term
+# triggers false positives in practice (typically a JS/TS built-in or
+# harness primitive that downstream consumer code uses heavily).
+#
+# Note: NL's own documentation files are exempted from cluster detection
+# entirely via the path-prefix exemption in check_heuristics(); this
+# allowlist is for the surviving scan surface (downstream consumer code,
+# instance project files), where common JS/TS built-ins might still
+# legitimately appear 3+ times.
+NL_VOCAB_ALLOWLIST="Neural|Lace|Claude|Anthropic|Build|Doctrine|Generation|Pattern|Mechanism|Status|Mode|Plan|Phase|Hook|Agent|Skill|Decision|Discovery|Backlog|Promise|Object|Array|String|Boolean|Number|Function|Component|Module|Project|Session|Source|Target|Update|Create|Action|Result|Verdict|Worker|Builder|Reviewer|Verifier|Method|Output|Input|Origin|Master|Branch|Commit"
+
+# Returns 0 if the heuristic checks should be SKIPPED for this file
+# (file lives inside an NL-prefix path where prose mentions of paths
+# AND repeated domain vocabulary are legitimate). Returns 1 if the
+# heuristic should run.
+#
+# Rationale: NL's harness repo is documentation-dense. A doc about
+# "Acceptance Scenarios" mentions "Acceptance" 16 times; a rule about
+# "Trust" mentions Trust dozens of times; a plan about kanban mentions
+# "Kanban" repeatedly. Maintaining an exhaustive vocabulary allowlist
+# would not converge. The path-prefix exemption is the cleaner mechanism:
+# NL-internal directories are exempt; downstream consumer code (the
+# scanner's actual target audience) faces full scrutiny.
+is_path_shape_exempt() {
+  local path="$1"
+  case "$path" in
+    # NL-internal harness directories — these legitimately cite paths
+    # AND discuss domain vocabulary repeatedly in prose.
+    adapters/*|adapters) return 0 ;;
+    principles/*|principles) return 0 ;;
+    patterns/*|patterns) return 0 ;;
+    templates/*|templates) return 0 ;;
+    evals/*|evals) return 0 ;;
+    .github/*|.github) return 0 ;;
+    docs/*|docs) return 0 ;;
+    # The synced `~/.claude/` mirror (when scanning that tree directly).
+    *.claude/*|*/.claude/*) return 0 ;;
+    # NL-root prose files (README, CONTRIBUTING, LICENSE, CODE_OF_CONDUCT,
+    # CHANGELOG) — these are documentation, not project-instance content.
+    README.md|README|CONTRIBUTING.md|LICENSE|LICENSE.md|CODE_OF_CONDUCT.md|CHANGELOG.md|SECURITY.md) return 0 ;;
+  esac
+  return 1
+}
+
+check_heuristics() {
+  local rel_path="$1"
+  local abs_path="$2"
+
+  # NL-prefix paths are exempt from BOTH heuristic sub-checks. NL prose
+  # legitimately cites path-shapes AND discusses domain vocabulary
+  # repeatedly. See the function-header comment for the full rationale.
+  if is_path_shape_exempt "$rel_path"; then
+    return 0
+  fi
+
+  # ---- (a) project-internal file-path shapes ----
+  # Three high-signal path-shape regexes (POSIX ERE — no \d / \w):
+  #   - app/api/v<digits>/<slug>/
+  #   - src/components/<PascalCase>.tsx
+  #   - supabase/migrations/<14-digit>_<slug>.sql
+  local heur_pattern='(app/api/v[0-9]+/[a-zA-Z0-9_-]+/)|(src/components/[A-Z][a-zA-Z0-9_]+\.tsx)|(supabase/migrations/[0-9]{14}_[a-zA-Z0-9_-]+\.sql)'
+  if heur_out=$(grep -EnIH "$heur_pattern" "$abs_path" 2>/dev/null); then
+    while IFS= read -r match_line; do
+      [ -z "$match_line" ] && continue
+      rest="${match_line#$abs_path:}"
+      lineno="${rest%%:*}"
+      content="${rest#*:}"
+      if [ "${#content}" -gt 120 ]; then
+        content="${content:0:117}..."
+      fi
+      printf '[heuristic] %s\n' "$rel_path:$lineno: $content" >> "$MATCHES_TMP"
+      MATCH_COUNT=$((MATCH_COUNT + 1))
+    done <<< "$heur_out"
+  fi
+
+  # ---- (b) repeated capitalized-term clusters ----
+  # Find tokens [A-Z][a-z]{4,15} appearing 3+ times in this file, where
+  # NONE of the occurrences match the NL vocabulary allowlist (case-insensitive).
+  # Strategy:
+  #   1. Extract all [A-Z][a-z]{4,15} tokens from the file.
+  #   2. Filter out allowlisted tokens (case-insensitive).
+  #   3. Sort + uniq -c to count each remaining token.
+  #   4. Keep tokens with count >= 3.
+  #   5. For each, find the first line in the file where it appears and
+  #      report it.
+  local tokens
+  tokens=$(grep -oE '[A-Z][a-z]{4,15}' "$abs_path" 2>/dev/null \
+    | grep -ivE "^($NL_VOCAB_ALLOWLIST)$" \
+    | sort \
+    | uniq -c \
+    | awk '$1 >= 3 { print $2 }')
+
+  if [ -n "$tokens" ]; then
+    while IFS= read -r tok; do
+      [ -z "$tok" ] && continue
+      # Locate first occurrence of the token (use word-boundary-ish match).
+      first_hit=$(grep -nE "\\b$tok\\b" "$abs_path" 2>/dev/null | head -n 1)
+      [ -z "$first_hit" ] && continue
+      lineno="${first_hit%%:*}"
+      content="${first_hit#*:}"
+      if [ "${#content}" -gt 120 ]; then
+        content="${content:0:117}..."
+      fi
+      count=$(grep -oE "\\b$tok\\b" "$abs_path" 2>/dev/null | wc -l | tr -d ' ')
+      printf '[heuristic] %s:%s: repeated term "%s" (x%s): %s\n' \
+        "$rel_path" "$lineno" "$tok" "$count" "$content" >> "$MATCHES_TMP"
+      MATCH_COUNT=$((MATCH_COUNT + 1))
+    done <<< "$tokens"
+  fi
+
+  return 0
+}
 
 # ---------- exemption check ----------------------------------------------
 
@@ -324,6 +597,7 @@ while IFS= read -r -d '' rel_path; do
     continue
   fi
 
+  # ---- Layer 1: denylist scan ----
   # Run grep with:
   #   -i   case-insensitive
   #   -E   extended regex
@@ -348,10 +622,13 @@ while IFS= read -r -d '' rel_path; do
       if [ "${#content}" -gt 120 ]; then
         content="${content:0:117}..."
       fi
-      printf '%s\n' "$check_path:$lineno: $content" >> "$MATCHES_TMP"
+      printf '[denylist] %s\n' "$check_path:$lineno: $content" >> "$MATCHES_TMP"
       MATCH_COUNT=$((MATCH_COUNT + 1))
     done <<< "$grep_out"
   fi
+
+  # ---- Layer 2: heuristic detection ----
+  check_heuristics "$check_path" "$abs_path"
 done < "$FILE_LIST_TMP"
 
 # ---------- report -------------------------------------------------------
