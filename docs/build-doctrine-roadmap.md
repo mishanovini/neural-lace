@@ -14,7 +14,7 @@
 | Tranche | Description | Status | Plan file (when active) | Completed in |
 |---|---|---|---|---|
 | **0a** | Doctrine drafts (Phase 2a-2d, 1a, 1b, 1c, 1d-A, 1d-B) — produced 8 integrated-v1 docs + 4 analysis artifacts | ✅ DONE | n/a (Build Doctrine repo) | 2026-04-29 to 2026-05-03 |
-| **0b** | Phase 0 — migrate doctrine docs into NL + create `build-doctrine-templates/` directory + activate definition-on-first-use scope | 🔄 IN PROGRESS | [`docs/plans/build-doctrine-phase-0-migration.md`](plans/build-doctrine-phase-0-migration.md) | — |
+| **0b** | Phase 0 — migrate doctrine docs into NL + create `build-doctrine-templates/` directory + activate definition-on-first-use scope | ✅ CODE LANDED (closure pending) | [`docs/plans/build-doctrine-phase-0-migration.md`](plans/build-doctrine-phase-0-migration.md) | 2026-05-05 (commit `a4f55e6`); plan still ACTIVE pending task-verifier sweep + closure |
 | **1** | Phase 1d-C — 8 first-pass C-mechanisms (C1, C2, C7, C9, C10, C15, C16, C22) | ✅ DONE | (archived) | 2026-05-03 to 2026-05-04 |
 | **2** | Phase 4a — Layer B-shape: 7 template schemas | ❌ NOT STARTED | (TBD: `docs/plans/build-doctrine-phase-4a-template-schemas.md`) | — |
 | **3** | Phase 4b — Layer B-content: seed `build-doctrine-templates/` with default content for 11 universal floors × 3 depths | ❌ NOT STARTED | (TBD) | — |
@@ -270,6 +270,7 @@ The remaining mechanisms beyond the first-pass 8. Per T4 §6, these are:
 
 ## Recent updates
 
+- **2026-05-05** — Tranche 0b (Phase 0 migration) + HARNESS-GAP-16 (closure-validation gate) CODE LANDED in parallel. Both shipped on master via parallel-builder dispatch + sequential cherry-pick. GAP-16: commit `120593c` (plan-closure-validator + /close-plan skill + 10 self-test scenarios PASS). Tranche 0b: commit `a4f55e6` (8 doctrine docs migrated to `build-doctrine/doctrine/`, `build-doctrine-templates/` scaffolded, ADR 025 landed). Hygiene-scan unblock for doctrine paths shipped first as commit `b5cdccb`. Both plans remain Status: ACTIVE pending task-verifier sweep + closure-report authoring (mechanical bookkeeping deferred — code is live).
 - **2026-05-05** — Tranche 0b (Phase 0 migration) + HARNESS-GAP-16 (closure-validation gate) STARTED in parallel. Plan files: `docs/plans/build-doctrine-phase-0-migration.md` + `docs/plans/harness-gap-16-closure-validation.md`. Both dispatched as parallel builders in isolated git worktrees per orchestrator-pattern rule. Build-in-parallel, verify-sequentially.
 - **2026-05-05** — Roadmap created (this file). Decision: keep `build-doctrine-templates` in same repo as NL (rejecting the original three-repo architecture). Decision: this file is the persistent source-of-truth for tracking; per-phase plan files come and go as work happens.
 - **2026-05-05** — HARNESS-GAP-17 Part A (narrative doc sweep) completed. README, harness-strategy, best-practices, claude-code-quality-strategy, CLAUDE.md updated to reflect Gen 5/6 + Build Doctrine arc. Numbering conflict between two GAP-16 entries resolved (closure-validation kept as 16; docs-stale renumbered to 17).
