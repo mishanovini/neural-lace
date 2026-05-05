@@ -14,7 +14,7 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 
 - **HARNESS-GAP-08** — IMPLEMENTED 2026-05-05 via `docs/plans/archive/harness-gap-08-spawn-task-report-back.md`. spawn_task report-back convention shipped: rule, surfacer hook, settings wiring, vaporware-prevention map row, sync to ~/.claude/, multi-push to both remotes. 6/6 tasks PASS, 5/5 self-test scenarios PASS. Commits: `440a2d9`, `a7002e7`, `4627e01`, `343d5c6`, `606c70e`.
 - **HARNESS-GAP-13** — IMPLEMENTED 2026-05-05 via `docs/plans/archive/harness-gap-13-hygiene-scan-expansion.md`. Full original 4-layer scope: denylist additions (Layer 1), heuristic detection (Layer 2 BLOCK), `/harness-review` skill extension (Layer 3), sanitization helper (Layer 4). 8/8 tasks PASS, 13/13 hygiene-scan self-test PASS, 5/5 sanitize self-test PASS, full-tree scan ZERO matches. Commits: `2a0488a`, `517b6b6`, `6e4672c`, `2371e97`, `e03d96b`, `606c70e`.
-- **HARNESS-GAP-16** — Plan-closure validation gate + `/close-plan` skill (~4-5 hr; deterministic pre-flight gate on Status: ACTIVE → COMPLETED transition, plus skill that automates closure path; surfaces from 2026-05-05 stranding incident — root-cause fix for plan-bookkeeping discipline gap. Scheduled next-after GAP-13 per user 2026-05-05). See HARNESS-GAP-16 entry below for full proposal.
+- **HARNESS-GAP-16** — ABSORBED 2026-05-05 into `docs/plans/harness-gap-16-closure-validation.md`. Building this session in parallel with Build Doctrine Tranche 0b per user directive 2026-05-05.
 - **HARNESS-GAP-17 Part A** — User-facing narrative docs stale post-Build-Doctrine-integration (~3-5 hr doc sweep). **IMPLEMENTED 2026-05-05 (this session)** — see HARNESS-GAP-17 entry below for the per-doc summary. Part B (gate extension preventing recurrence, ~6-10 hr) remains DEFERRED per original P2 estimate.
 - **HARNESS-GAP-14-followups** — IMPLEMENTED 2026-05-04 via Phase 1d-G (entry below preserved as the audit trail).
 - **Rules-vs-hooks 4 remaining splits** (per Phase 1d-E-2 audit) — acceptance-scenarios.md, agent-teams.md, design-mode-planning.md, testing.md. Each is substantial restructuring per rule. Per Option B 2026-05-05, now eligible to dispatch via `spawn_task` with the new GAP-08 report-back convention.
@@ -138,7 +138,11 @@ Per backlog-plan-atomicity rule, the full entry is removed from open sections at
 
 ---
 
-## HARNESS-GAP-16 — Plan-closure validation gate + `/close-plan` skill (added 2026-05-05)
+## HARNESS-GAP-16 — ABSORBED 2026-05-05 into `docs/plans/harness-gap-16-closure-validation.md`
+
+Per backlog-plan-atomicity rule, the full entry is removed from open sections at the same commit as plan creation. Audit trail of the original entry preserved in git history at the commit prior to plan creation (`e9985be`).
+
+## HARNESS-GAP-16 — Plan-closure validation gate + `/close-plan` skill (historical entry — added 2026-05-05, absorbed into plan same day)
 
 **Source.** Surfaced 2026-05-05 from the pre-submission-audit-mechanical-enforcement plan stranding incident. The plan was Status: ACTIVE since 2026-05-03 with all 5 task checkboxes empty despite all 5 tasks' code work being shipped on master. Recovery took ~2 hours of task-verifier dispatches + commit + closure. Root cause per user: bookkeeping discipline was not followed at session end; existing pre-stop-verifier did not catch it.
 

@@ -14,7 +14,7 @@
 | Tranche | Description | Status | Plan file (when active) | Completed in |
 |---|---|---|---|---|
 | **0a** | Doctrine drafts (Phase 2a-2d, 1a, 1b, 1c, 1d-A, 1d-B) — produced 8 integrated-v1 docs + 4 analysis artifacts | ✅ DONE | n/a (Build Doctrine repo) | 2026-04-29 to 2026-05-03 |
-| **0b** | Phase 0 — migrate doctrine docs into NL + create `build-doctrine-templates/` directory + activate definition-on-first-use scope | ❌ NOT STARTED | (next: `docs/plans/build-doctrine-phase-0-migration.md`) | — |
+| **0b** | Phase 0 — migrate doctrine docs into NL + create `build-doctrine-templates/` directory + activate definition-on-first-use scope | 🔄 IN PROGRESS | [`docs/plans/build-doctrine-phase-0-migration.md`](plans/build-doctrine-phase-0-migration.md) | — |
 | **1** | Phase 1d-C — 8 first-pass C-mechanisms (C1, C2, C7, C9, C10, C15, C16, C22) | ✅ DONE | (archived) | 2026-05-03 to 2026-05-04 |
 | **2** | Phase 4a — Layer B-shape: 7 template schemas | ❌ NOT STARTED | (TBD: `docs/plans/build-doctrine-phase-4a-template-schemas.md`) | — |
 | **3** | Phase 4b — Layer B-content: seed `build-doctrine-templates/` with default content for 11 universal floors × 3 depths | ❌ NOT STARTED | (TBD) | — |
@@ -66,12 +66,14 @@ When this file is in scope at session start (e.g., user references it, or `Statu
 
 ### How tranches relate to NL plan files
 
-Each tranche corresponds to a focused work effort. When a tranche starts:
+Each tranche corresponds to a focused work effort. The plan-creation + status-flip + roadmap-update flow is **deterministic — part of starting any work on a tranche, not a separate prerequisite**:
 
 1. Create a plan file at `docs/plans/build-doctrine-phase-<n>-<slug>.md` per the standard plan template.
-2. The plan file is `Status: ACTIVE` until the tranche completes.
-3. Update Quick status from NOT STARTED → IN PROGRESS, populate the Plan file column.
-4. When the tranche completes, the plan auto-archives; update Quick status to DONE with the completion date.
+2. The plan file ships `Status: ACTIVE` from the moment of creation.
+3. Roadmap Quick status flips from NOT STARTED → IN PROGRESS in the same commit as plan creation; populate the Plan file column.
+4. When the tranche completes, the plan auto-archives; Quick status flips to DONE with the completion date in the same commit as the closure work.
+
+There is no "wait for status flip" step — status follows work, not the other way around.
 
 This gives the work two layers:
 - **The roadmap** (this file) tracks the multi-tranche arc — survives across phases.
@@ -268,6 +270,7 @@ The remaining mechanisms beyond the first-pass 8. Per T4 §6, these are:
 
 ## Recent updates
 
+- **2026-05-05** — Tranche 0b (Phase 0 migration) + HARNESS-GAP-16 (closure-validation gate) STARTED in parallel. Plan files: `docs/plans/build-doctrine-phase-0-migration.md` + `docs/plans/harness-gap-16-closure-validation.md`. Both dispatched as parallel builders in isolated git worktrees per orchestrator-pattern rule. Build-in-parallel, verify-sequentially.
 - **2026-05-05** — Roadmap created (this file). Decision: keep `build-doctrine-templates` in same repo as NL (rejecting the original three-repo architecture). Decision: this file is the persistent source-of-truth for tracking; per-phase plan files come and go as work happens.
 - **2026-05-05** — HARNESS-GAP-17 Part A (narrative doc sweep) completed. README, harness-strategy, best-practices, claude-code-quality-strategy, CLAUDE.md updated to reflect Gen 5/6 + Build Doctrine arc. Numbering conflict between two GAP-16 entries resolved (closure-validation kept as 16; docs-stale renumbered to 17).
 - **2026-05-04** — Phase 1d-C-4 (comprehension gate) shipped. ALL 8 first-pass C-mechanisms now complete.
