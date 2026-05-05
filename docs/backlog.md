@@ -13,6 +13,7 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 ## Open work — substantive deferrals
 
 - **HARNESS-GAP-13** — harness-hygiene-scan expansion (~9-10 hr; full original scope per user 2026-05-05; denylist additions + heuristic detection + periodic full-tree audit + sanitization helper)
+- **HARNESS-GAP-16** — Plan-closure validation gate + `/close-plan` skill (~4-5 hr; deterministic pre-flight gate on Status: ACTIVE → COMPLETED transition, plus skill that automates closure path; surfaces from 2026-05-05 stranding incident — root-cause fix for plan-bookkeeping discipline gap. Scheduled next-after GAP-13 per user 2026-05-05). See HARNESS-GAP-16 entry below for full proposal.
 - **HARNESS-GAP-14-followups** — IMPLEMENTED 2026-05-04 via Phase 1d-G (entry below preserved as the audit trail).
 - **Rules-vs-hooks 4 remaining splits** (per Phase 1d-E-2 audit) — acceptance-scenarios.md, agent-teams.md, design-mode-planning.md, testing.md. Each is substantial restructuring per rule. Per Option B 2026-05-05, dispatched via `spawn_task` with the new GAP-08 report-back convention once GAP-08 ships.
 
@@ -150,7 +151,49 @@ User question (D5): "Should we expand harness-hygiene-scan to also check for any
 
 **Why P3 (not P1).** The current scanner caught 4 leaks this session correctly. The expansion adds layered protection but the current floor is functioning. Schedule for Phase 1d-E alongside HARNESS-GAP-10 sub-gaps. Would land alongside the discovery-protocol gate-redesign and other harness-cleanup work.
 
-**Originating context.** User's D5 framing (2026-05-04): "Building of everything [is] performed within that repo's own directory... PT decisions automatically [are] contained within that project's directory, keeping the Neural Lace project from absorbing it... Should we expand harness-hygiene-scan?" Affirmed: the directory separation does most of the work; harness-hygiene-scan is the explicit defense and benefits from expansion to match its claim.
+**Originating context.** User's D5 framing (2026-05-04): "Building of everything [is] performed within that repo's own directory... <work-org-codename> decisions automatically [are] contained within that project's directory, keeping the Neural Lace project from absorbing it... Should we expand harness-hygiene-scan?" Affirmed: the directory separation does most of the work; harness-hygiene-scan is the explicit defense and benefits from expansion to match its claim.
+
+---
+
+## HARNESS-GAP-16 — Plan-closure validation gate + `/close-plan` skill (added 2026-05-05)
+
+**Source.** Surfaced 2026-05-05 from the pre-submission-audit-mechanical-enforcement plan stranding incident. The plan was Status: ACTIVE since 2026-05-03 with all 5 task checkboxes empty despite all 5 tasks' code work being shipped on master. Recovery took ~2 hours of task-verifier dispatches + commit + closure. Root cause per user: bookkeeping discipline was not followed at session end; existing pre-stop-verifier did not catch it.
+
+**Why this is a gap.** The harness has multiple Pattern-level rules requiring closure bookkeeping (verifier mandate, "update status documents when work completes", planning.md's plan-completion checklist) but no Mechanism that REFUSES the irreversible Status: COMPLETED transition until closure is mechanically complete. Sessions can flip Status without checking all bases, and once flipped + auto-archived, the audit trail is in a final state regardless of whether bookkeeping was done.
+
+**Proposed mechanism — two layers:**
+
+1. **Layer 1 (~2 hr): Extend `plan-lifecycle.sh` with closure-validation gate.** When an Edit changes Status from ACTIVE to COMPLETED, run mechanical checks BEFORE the auto-archive runs:
+   - All task checkboxes are `[x]` in `## Tasks`
+   - For each task ID, an evidence block exists in `## Evidence Log` with `Verdict: PASS`
+   - `## Completion Report` section is present with non-empty Implementation Summary, Design Decisions, Known Issues sub-sections
+   - For each `Backlog items absorbed:` entry in plan header, the backlog has been reconciled (item not in open sections)
+   - SCRATCHPAD.md mtime within last hour AND mentions plan slug
+   
+   If any check fails, refuse the Status flip with specific error listing unmet items. Pre-flight gate, not backstop — refuses forward progress until closure work is real.
+
+2. **Layer 2 (~1.5 hr): `/close-plan <slug>` skill.** Walks the orchestrator through closure mechanically:
+   - Validates which Layer 1 checks currently pass; surfaces gaps with specific actions ("invoke task-verifier on Task 3", "update SCRATCHPAD")
+   - Writes the completion report from `~/.claude/templates/completion-report.md`
+   - Updates SCRATCHPAD + backlog
+   - Flips Status (which triggers Layer 1 + auto-archive)
+   - Commits + offers to push
+   
+   Makes the right path easier than the wrong path.
+
+3. **Layer 3 (already landed 2026-05-05):** `feedback_complete_plan_bookkeeping_in_session.md` memory in `~/.claude/projects/.../memory/`. Behavioral reinforcement only.
+
+**Why pre-flight gate (Layer 1) is different from a backstop.** This isn't a mechanism catching mistakes after the fact — it's a deterministic pre-condition gate. It runs BEFORE the irreversible action (Status flip + auto-archive). It refuses forward progress until closure work is satisfied. Compare: `pre-commit-tdd-gate.sh` is a pre-flight gate (refuses bad commits), not a backstop. Same shape.
+
+**What it doesn't catch.** Terminal-killed sessions where Stop hook never fires. For those, `plan-status-archival-sweep.sh` already catches terminal-status plans at next session start. Could also extend that sweep to flag "ACTIVE plans whose tasks are all `[x]` but Status hasn't flipped" — half-closed plans visible at next session start (~30 min add).
+
+**Effort estimate.** ~4-5 hr for Layers 1+2. Optional half-closed-detection extension ~30 min.
+
+**Why scheduled next-after GAP-13** (per user 2026-05-05 sequencing decision): GAP-08 + GAP-13 ship user-facing improvements (orchestrator coordination + scanner expansion). GAP-16 is structural protection against the failure mode that just consumed effort to recover. Per user: "continue with GAP-08 + GAP-13 as planned per Option B, schedule this as next-after."
+
+**Originating context.** Stranded plan recovery 2026-05-05 (commits `588b6db` + `4e8f658` on `verify/pre-submission-audit-reconcile` branch). User's framing: "the root cause of the problem is that you're not doing your due diligence and properly updating all the documentation when you complete a plan. That's what needs to be fixed." Discipline + memory landed (Layer 3); deterministic mechanism (Layers 1+2) deferred to this entry.
+
+**Class.** `plan-closure-not-mechanically-gated` — irreversible terminal-status transition allowed without verified closure work.
 
 ---
 
