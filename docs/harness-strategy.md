@@ -2,11 +2,15 @@
 
 **Status:** ACTIVE
 **Created:** 2026-04-12
-**Last reviewed:** 2026-04-15
+**Last reviewed:** 2026-05-05
 **Owner:** Misha
 **Repo:** `~/claude-projects/neural-lace/` (absorbs claude-config)
 
 ## Recent milestones
+- **2026-05-05:** HARNESS-GAP-08 (spawn_task report-back convention) and HARNESS-GAP-13 (hygiene-scan expansion Layers 1-2) shipped. HARNESS-GAP-17 (this doc-sweep) updates the user-facing narrative layer to match the Gen 5/6 + Build Doctrine integration arc. Numbering conflict between two GAP-16 entries resolved (closure-validation kept as 16; docs-stale renumbered to 17).
+- **2026-05-04 — May 2026 (Build Doctrine Phase 1d arc):** Build Doctrine integration shipped seven mechanism families addressing gaps in the Gen 4-6 substrate: **Discovery Protocol** (capture-and-decide for mid-process learnings; surfacing at session start), **Comprehension Gate** (R2+ builders articulate Spec / Edges-covered / Edges-NOT-covered / Assumptions; agent applies three-stage rubric), **PRD Validity + Spec Freeze** (plan creation requires valid `prd-ref:`; edits to declared files require `frozen: true`; 5-field plan-header schema), **Findings Ledger** (`docs/findings.md` with six-field entries; bug-persistence accepts as fourth durable target), **Definition-on-First-Use** (acronym-must-be-defined gate for doctrine docs), **Scope-Enforcement Gate redesign** (plans become living artifacts via `## In-flight scope updates` section; three structural options replace waiver model), **DAG Review Waiver Gate** (Tier 3+ plans require substantive waiver before first Task invocation). Settings-template-vs-live divergence reconciled (HARNESS-GAP-14 + Phase 1d-G followups). Decision records 013-024 land. Validates G6 (Progressive Autonomy) further: more judgment encoded into mechanical gates rather than self-applied prose.
+- **2026-04-26:** Generation 6 narrative-integrity hooks landed — six new Stop/PreToolUse hooks read `$TRANSCRIPT_PATH` JSONL (which the agent cannot edit) to close the gap between agent claims and transcript evidence: A1 first-message goal extraction with checksummed integrity, A3 self-contradiction detection, A5 deferral surfacing, A7 strong-imperative coverage, A8 vaporware-volume gate on PR creation. Originating incident: agent shipped a PR with 800 lines of docs + 174 lines of CI YAML and ZERO execution evidence while the plan's DoD was unchecked. Validates G3 (Comprehensive Security) by moving enforcement from "agent should self-report honestly" to "agent's own transcript is the witness."
+- **2026-04-24:** Generation 5 harness extension landed — adversarial observation of the running product, plan-lifecycle integrity, self-improvement meta-loop. Key Gen 5 additions: end-user-advocate acceptance loop (plan-time + runtime), `product-acceptance-gate.sh` Stop hook position 4, `plan-lifecycle.sh` PostToolUse archival, `plan-deletion-protection.sh`, `docs/failure-modes.md` six-field catalog, class-aware reviewer feedback (7 adversarial agents emit `Class:` + `Sweep query:` + `Required generalization:`), capture-codify PR template + branch-protection. Validates G1 (Self-Evaluation) by ensuring every runtime FAIL produces a generalized harness-improvement proposal via `enforcement-gap-analyzer`.
 - **2026-04-15:** Generation 4 harness hardening landed — mechanical hooks replace self-enforced rules to prevent vaporware. Additions: pre-commit TDD gate with 4 layers, plan-edit-validator with evidence-first authorization, runtime-verification executor + correspondence reviewer, blocking tool-call-budget, plan-reviewer, verify-feature skill. Validates G3 (Comprehensive Security) and G6 (Progressive Autonomy) by moving enforcement from prose to hook-executed gates — the system refuses broken work at commit and session-end without requiring the builder to remember rules.
 
 ## Vision
@@ -297,16 +301,20 @@ Continuous monitoring feeds the learning loop described in the Dedicated Harness
 
 Current state and targets (aggressive timeline — reviewed weekly):
 
-| Dimension | Current (Apr 12) | Target (May 31) | Target (Jul 31) | Target (Oct 31) |
+| Dimension | Current (May 5) | Target (May 31) | Target (Jul 31) | Target (Oct 31) |
 |-----------|------------------|------------------|------------------|------------------|
 | Credential scanning | 5/5 | 5/5 | 5/5 | 5/5 |
-| Destructive op blocking | 4/5 | 5/5 | 5/5 | 5/5 |
+| Destructive op blocking | 5/5 | 5/5 | 5/5 | 5/5 |
 | Dependency safety | 2/5 | 3/5 | 4/5 | 5/5 |
 | Supply chain verification | 1/5 | 2/5 | 3/5 | 4/5 |
 | Data flow monitoring | 1/5 | 2/5 | 3/5 | 4/5 |
 | Prompt injection defense | 1/5 | 2/5 | 3/5 | 4/5 |
-| Centralized audit trail | 2/5 | 3/5 | 4/5 | 5/5 |
-| Security self-evaluation | 0/5 | 2/5 | 3/5 | 4/5 |
+| Centralized audit trail | 3/5 | 4/5 | 4/5 | 5/5 |
+| Security self-evaluation | 2/5 | 3/5 | 4/5 | 4/5 |
+| Anti-vaporware enforcement | 4/5 | 4/5 | 5/5 | 5/5 |
+| Narrative integrity (transcript-vs-claim) | 4/5 | 5/5 | 5/5 | 5/5 |
+| Spec-discipline + plan integrity | 4/5 | 4/5 | 5/5 | 5/5 |
+| Hygiene scanner coverage | 3/5 | 4/5 | 5/5 | 5/5 |
 
 ### Security improvement cadence:
 

@@ -14,13 +14,14 @@
 - Use placeholder names until the user provides a name
 
 ## Choosing a Session Mode
-Every Claude Code session runs in one of four modes — each with a different enforcement substrate and isolation story. Pick the mode whose enforcement matches the task before starting work:
+Every Claude Code session runs in one of FIVE modes — each with a different enforcement substrate and isolation story. Pick the mode whose enforcement matches the task before starting work:
 - **Interactive local** (default) — full `~/.claude/` harness, single session per working tree. Best for tight-loop work, UX decisions, planning.
 - **Parallel local (worktrees)** — full harness, git-tree isolation, but `~/.claude/` state is shared. Best for 2-5 concurrent short builds via Desktop "+ New session" or `isolation: "worktree"`.
 - **Cloud remote (`claude --remote`)** — fully isolated VM per session, but only project `.claude/` enforcement (NOT `~/.claude/`). Requires Decision 011 Approach A (project `.claude/` populated). Best for multi-hour autonomous builds.
 - **Scheduled (`/schedule` Routines)** — same as cloud remote, on a cron or event trigger. Best for nightly verification, CI auto-fix, recurring jobs.
+- **Agent Teams** *(experimental, feature-flagged)* — lead session spawns peer teammates that message each other directly via `TaskCreated` / `TaskCompleted` events. Disabled by default per Decision 012. Enable only when continuous teammate-to-teammate coordination is the load-bearing requirement (vs. orchestrator's lead-dispatch model).
 
-Full decision tree, per-mode invocation, tradeoffs, and pairing rules in `~/.claude/rules/automation-modes.md`. Decision record: `docs/decisions/011-claude-remote-harness-approach.md` (lives in the neural-lace repo).
+Full decision tree, per-mode invocation, tradeoffs, and pairing rules in `~/.claude/rules/automation-modes.md`. Decision records: `docs/decisions/011-claude-remote-harness-approach.md` (cloud-remote inheritance), `docs/decisions/012-agent-teams-integration.md` (Agent Teams).
 
 ## Autonomy
 - Work autonomously with minimal interruptions
@@ -127,15 +128,49 @@ The compact SessionStart hook checks SCRATCHPAD, backlog, and plan freshness —
 The harness config lives in `~/claude-projects/neural-lace` (git repo, dual remotes: personal + PT org). On Windows, `install.sh` copies files to `~/.claude/` (no symlinks). Changes to `~/.claude/` must be synced back to the repo — see `rules/harness-maintenance.md`. A SessionStart hook warns when files in `~/.claude/` don't exist in the repo.
 
 ## Generation 5 Enforcement (2026-04-24)
-Generation 5 builds on the Gen 4 hook-executed anti-vaporware foundation by adding adversarial observation of the running product, plan-lifecycle integrity, and a self-improvement meta-loop. Key Gen 5 mechanisms shipped this session: `plan-lifecycle.sh` (PostToolUse — uncommitted-plan warning + auto-archive on terminal status), `plan-deletion-protection.sh` (PreToolUse — blocks unauthorised plan deletes), `docs/failure-modes.md` (project-level catalog of failure CLASSES with six-field schema), class-aware reviewer feedback (7 adversarial-review agents emit per-gap blocks with `Class:` + `Sweep query:` + `Required generalization:`), the capture-codify PR template + branch-protection guardrails, and the end-user-advocate acceptance loop: `agents/end-user-advocate.md` (plan-time + runtime modes), `hooks/product-acceptance-gate.sh` (Stop hook position 4 — blocks session end without PASS artifact whose `plan_commit_sha` matches), `agents/enforcement-gap-analyzer.md` (drafts harness-improvement proposals on every runtime FAIL), and `tests/acceptance-loop-self-test.sh` (six-stage structural check wired into weekly `/harness-review` Check 10). Gen 4 mechanisms still apply unchanged: `pre-commit-tdd-gate.sh` (4 layers), `plan-edit-validator.sh` (evidence-first checkbox auth), `runtime-verification-executor.sh` + `runtime-verification-reviewer.sh` (pre-stop Check 4b/4c), `plan-reviewer.sh`, `tool-call-budget.sh` (blocks every 30 calls), `claim-reviewer` agent (self-invoked residual gap), `verify-feature` skill. See `docs/harness-architecture.md` for the full inventory and `~/.claude/rules/vaporware-prevention.md` for the enforcement map.
+Generation 5 builds on the Gen 4 hook-executed anti-vaporware foundation by adding adversarial observation of the running product, plan-lifecycle integrity, and a self-improvement meta-loop. Key Gen 5 mechanisms: `plan-lifecycle.sh` (PostToolUse — uncommitted-plan warning + auto-archive on terminal status), `plan-deletion-protection.sh` (PreToolUse — blocks unauthorised plan deletes), `docs/failure-modes.md` (project-level catalog of failure CLASSES with six-field schema), class-aware reviewer feedback (7 adversarial-review agents emit per-gap blocks with `Class:` + `Sweep query:` + `Required generalization:`), the capture-codify PR template + branch-protection guardrails, and the end-user-advocate acceptance loop: `agents/end-user-advocate.md` (plan-time + runtime modes), `hooks/product-acceptance-gate.sh` (Stop hook position 4 — blocks session end without PASS artifact whose `plan_commit_sha` matches), `agents/enforcement-gap-analyzer.md` (drafts harness-improvement proposals on every runtime FAIL), and `tests/acceptance-loop-self-test.sh` (six-stage structural check wired into weekly `/harness-review` Check 10).
+
+## Generation 6 Enforcement — Narrative Integrity (2026-04-26)
+Gen 6 closes the gap between what the agent CLAIMS in user-facing messages and what its OWN transcript reveals about deferred / contradicted / skipped work. Six new Stop hooks (positions 5-8 plus PreToolUse A8) read `$TRANSCRIPT_PATH` JSONL — which the agent cannot edit — and force gaps into the user-visible final message:
+
+- **A1 (`goal-extraction-on-prompt.sh` + `goal-coverage-on-stop.sh`)** — extracts imperative verbs from the user's verbatim FIRST message at UserPromptSubmit time, SHA-checksums the prompt, and at Stop time blocks if any extracted goal lacks matching tool-call evidence. Tamper-detected: agent cannot edit the user's first message.
+- **A3 (`transcript-lie-detector.sh`)** — pairs completion-class claims (`Status: COMPLETED`, `tests pass`, `shipped`) with deferral-class claims (`PHASE\d+-FOLLOWUP`, `awaiting user`, `did not execute`) within the same session; blocks unless reconciled.
+- **A5 (`deferral-counter.sh`)** — pattern-matches a comprehensive synonym list of deferral phrases against the JSONL transcript; blocks unless the user-visible final message has `## Deferrals not executed in this session` with at least one bullet.
+- **A7 (`imperative-evidence-linker.sh`)** — links each strong imperative in the user's last K substantive messages (`must`, `need to`, `please`) to specific tool-call evidence; blocks if any imperative was silently skipped.
+- **A8 (`vaporware-volume-gate.sh`)** — PreToolUse on `gh pr create`; blocks PRs with > 200 lines of describing files (docs, YAML, source) AND ZERO behavior-executing artifact files (logs, screenshots, test results, evidence files). Escape hatch: PR title prefix `[docs-only]` or `[no-execution]`.
+
+## Build Doctrine Integration (May 2026)
+Phase 1d of the Build Doctrine arc shipped seven mechanisms to address gaps in the Gen 4-6 substrate:
+
+- **Discovery Protocol** (`rules/discovery-protocol.md` + `hooks/discovery-surfacer.sh` SessionStart + `bug-persistence-gate.sh` extension) — proactive capture-and-decide for mid-process learnings; pending discoveries surface at session start with educational option/recommendation summaries; reversible decisions auto-apply, irreversible decisions pause-and-wait.
+- **Comprehension Gate** (`rules/comprehension-gate.md` + `agents/comprehension-reviewer.md` + `task-verifier` extension) — at plan rung >= 2, builders articulate Spec meaning / Edge cases covered / Edge cases NOT covered / Assumptions in their evidence entry; the agent applies a three-stage rubric (schema / substance / diff correspondence); FAIL or INCOMPLETE blocks the checkbox flip.
+- **Scope-Enforcement Gate redesign** (`hooks/scope-enforcement-gate.sh`) — blocks builder commits that touch files outside the active plan's `## Files to Modify/Create` OR `## In-flight scope updates` sections. Three structural options (update plan / open new plan / defer to backlog) replace the old waiver model. The plan template ships an `## In-flight scope updates` section by default.
+- **PRD Validity + Spec Freeze** (`rules/prd-validity.md` + `rules/spec-freeze.md` + `hooks/prd-validity-gate.sh` + `hooks/spec-freeze-gate.sh` + `agents/prd-validity-reviewer.md`) — plan creation requires a valid `prd-ref:` in the header; edits to declared files are blocked unless the plan declares `frozen: true`; 5-field plan-header schema (`tier`, `rung`, `architecture`, `frozen`, `prd-ref`) on `Status: ACTIVE` plans.
+- **Findings Ledger** (`rules/findings-ledger.md` + `hooks/findings-ledger-schema-gate.sh` + `bug-persistence-gate.sh` extension) — `docs/findings.md` carries six-field entries (ID, Severity, Scope, Source, Location, Status); accepted as the fourth durable-storage target alongside backlog / reviews / discoveries.
+- **Definition-on-First-Use** (`rules/definition-on-first-use.md` + `hooks/definition-on-first-use-gate.sh`) — uppercase 2-6-char acronyms in doctrine docs must be defined either in the glossary or via an in-diff parenthetical; pre-commit gate blocks otherwise.
+- **DAG Review Waiver Gate** (`hooks/dag-review-waiver-gate.sh`) — Tier 3+ active plans require a substantive (>= 40 chars) waiver at `.claude/state/dag-approved-<slug>-*.txt` before the first Task invocation in a session.
+
+Gen 4 mechanisms still apply unchanged: `pre-commit-tdd-gate.sh` (4 layers), `plan-edit-validator.sh` (evidence-first checkbox auth), `runtime-verification-executor.sh` + `runtime-verification-reviewer.sh` (pre-stop Check 4b/4c), `plan-reviewer.sh` (now extended with Check 9 quantitative-arithmetic, Check 10 5-field schema, Check 11 behavioral contracts), `tool-call-budget.sh` (blocks every 30 calls; team-aware mode for Agent Teams), `claim-reviewer` agent (self-invoked residual gap), `verify-feature` skill. See `docs/harness-architecture.md` for the full inventory and `~/.claude/rules/vaporware-prevention.md` for the enforcement map.
+
+## Counter-Incentive Discipline (2026-05-03)
+Four highest-leverage agent prompts (`task-verifier`, `code-reviewer`, `plan-phase-builder`, `end-user-advocate`) carry `## Counter-Incentive Discipline` sections priming each agent against its own training-induced bias toward call-it-done shortcuts. Builder agents are primed against finding-workarounds-to-mark-complete; reviewers are primed against trust-the-builder-by-default. Reviewer-accountability tracker (HARNESS-GAP-11) is the structural follow-up gated on telemetry.
 
 ## Detailed Protocols (in ~/.claude/rules/)
 - `planning.md` — task planning, mid-build decisions, completion reports, decision records, session history
 - `testing.md` — test discipline, E2E, pre-commit review, UX validation, deployment validation, purpose validation
-- `vaporware-prevention.md` — Gen 4 enforcement map (hook-backed anti-vaporware)
-- `diagnosis.md` — exhaustive diagnosis before fixing, full-chain tracing
+- `vaporware-prevention.md` — Gen 4-6 enforcement map (hook-backed anti-vaporware) + Build Doctrine extensions
+- `diagnosis.md` — exhaustive diagnosis before fixing, full-chain tracing, "Fix the Class, Not the Instance" sub-rule
+- `discovery-protocol.md` — proactive capture-and-decide for mid-process learnings (Build Doctrine)
+- `comprehension-gate.md` — articulate-before-checkbox-flip at plan rung >= 2 (Build Doctrine)
+- `prd-validity.md` + `spec-freeze.md` — plan-PRD link requirement + frozen-spec-before-edit gate (Build Doctrine)
+- `findings-ledger.md` — six-field finding entries in `docs/findings.md` (Build Doctrine)
+- `definition-on-first-use.md` — acronym-must-be-defined gate for doctrine docs (Build Doctrine)
+- `acceptance-scenarios.md` — plan-time + runtime end-user-advocate loop (Gen 5)
+- `agent-teams.md` — five-mode framework, feature flag, Spawn-Before-Delegate workaround, upstream-bug list
+- `automation-modes.md` — five session modes and the decision tree for choosing one
+- `orchestrator-pattern.md` — multi-task plan dispatch + parallel builders in worktrees
 - `security.md` — credentials, destructive ops, software installation safety
-- `git.md` — commit practices, branch strategy
+- `git.md` — commit practices, branch strategy, customer-tier branching
 - `harness-hygiene.md` — no sensitive data / personal identifiers in harness code; two-layer config; instances never ship in harness repos
 - `harness-maintenance.md` — global-first rule changes, commit to neural-lace, update architecture doc
 - `ux-design.md` — error messages, empty states, loading states, destructive actions

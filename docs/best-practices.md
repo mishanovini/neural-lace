@@ -310,6 +310,78 @@ Gap-analysis (enforcement-gap-analyzer, if FAIL):
   Hands off to harness-reviewer Step 5 for verdict.
 ```
 
+### Discovery Protocol — capture mid-process learnings durably
+
+**Classification:** Hybrid. The typology, file format, decide-and-apply discipline, and propagation routing are Patterns the orchestrator self-applies. The durable-capture extension to `bug-persistence-gate.sh` (which now accepts `docs/discoveries/YYYY-MM-DD-*.md` as legitimate persistence) and the new `discovery-surfacer.sh` SessionStart hook are Mechanisms.
+
+**The rule.** Mid-session realizations that aren't bug-shaped (architectural learnings, scope expansions, dependency surprises, performance discoveries, new failure modes, process gaps, UX discoveries) land in `docs/discoveries/YYYY-MM-DD-<slug>.md` with frontmatter declaring `type:`, `status: pending|decided|implemented|rejected|superseded`, and `auto_applied: true|false`. Pending discoveries surface at the next session start. Reversible decisions auto-apply with educational option/recommendation summaries; irreversible decisions pause and wait for the user.
+
+**Why it exists.** The harness has been overwhelmingly reactive — `diagnosis.md`'s "After Every Failure: Encode the Fix" loop turns *observed failures* into mechanisms; `docs/failure-modes.md` is the durable catalog. But sessions repeatedly surface mid-process *proactive* learnings that aren't failures yet — "this rule needs an adapter mirror that wasn't in the plan", "the hook can't read the file because it's gitignored", "the planned approach won't fit in the rate-limit envelope". Without a durable substrate these get reasoned about in commit messages, narrated in chat, and then evaporate. The Discovery Protocol turns the proactive layer into first-class artifacts: durable capture on a single canonical surface, surfacing to the decision-maker without depending on agent recall, decide-and-apply autonomous flow for reversible decisions, audit-trail tracking with conclusion-summary visibility for retrospective review.
+
+**How the harness enforces it.** `~/.claude/rules/discovery-protocol.md` documents the protocol and the seven discovery types. `~/.claude/hooks/discovery-surfacer.sh` is a SessionStart hook that scans `docs/discoveries/` for `Status: pending` entries and emits a system-reminder block with title, type, decision-needed, and recommendation excerpt. `~/.claude/hooks/bug-persistence-gate.sh` accepts `docs/discoveries/YYYY-MM-DD-*.md` as the third legitimate durable-storage target alongside `docs/backlog.md` and `docs/reviews/`. The decide-and-apply discipline (with the educational format required when surfacing decisions to the user) is Pattern-only; mechanism cannot enforce that the orchestrator wrote a substantive recommendation, only that the file exists.
+
+**When to break it.** You don't break it; you choose `Status: rejected` with rationale (user explicitly rejected the recommendation) or `Status: superseded` (a later discovery replaced this one). Both preserve the audit trail. The substrate is project-local — projects without a `docs/discoveries/` directory see the surfacer exit silently and the bug-persistence gate's behavior is unchanged.
+
+### Comprehension gate — articulate before checkbox flip
+
+**Classification:** Hybrid. The gate's invocation point (task-verifier reads `rung:` at >= 2 → invokes comprehension-reviewer agent → propagates verdict) is a Mechanism. The substance review of the four articulation fields is LLM-assisted (Pattern + agent judgment). The schema spec (four required sub-sections, ≥ 30-char threshold per field) is mechanically checked by the agent during invocation.
+
+**The rule.** Plans declaring `rung: 2` or higher require builders to write a `## Comprehension Articulation` block inside their evidence entry, populating four required sub-sections (in order): `### Spec meaning` / `### Edge cases covered` / `### Edge cases NOT covered` / `### Assumptions`. Each sub-section must contain ≥ 30 non-whitespace characters of substantive content (no placeholders). The `comprehension-reviewer` agent applies a three-stage rubric (schema → substance → diff correspondence). FAIL or INCOMPLETE blocks the checkbox flip; PASS allows `task-verifier` to proceed with normal verification.
+
+**Why it exists.** Every adversarial reviewer the harness ships verifies what was *written* — the diff, the evidence block, the runtime command. None verify that the **builder understood what was supposed to be written**. A builder can produce a syntactically-correct diff that passes typecheck and even matches the spec on its face — while having silently misunderstood an edge case, an assumption, or the spec's intent. The diff is correct; the builder's mental model isn't. The gate makes the builder articulate their model in writing before commit; the agent verifies the articulation matches the diff. Mental-model verification becomes part of the audit trail, not just code-correctness verification.
+
+**How the harness enforces it.** `~/.claude/rules/comprehension-gate.md` documents the protocol; `~/.claude/agents/comprehension-reviewer.md` is the three-stage rubric agent; `~/.claude/agents/task-verifier.md` is extended to auto-invoke the reviewer at `rung: 2+` and propagate FAIL/INCOMPLETE as task-verifier FAIL (no checkbox flip). The articulation block lives in the Evidence Log per Decision 020e. The 30-char threshold is shared with the spec-freeze Check 11 substance bar across mechanisms.
+
+**When to break it.** Below R2, the gate is a no-op — small single-file diffs surface misunderstanding directly in code review and the gate's overhead exceeds the reliability gain. R2+ work where the diff is multi-file or the behavioral-contract scope is wide enough to hide a model mismatch is exactly where the gate becomes load-bearing.
+
+### Plans as living artifacts — in-flight scope updates
+
+**Classification:** Hybrid. The plan template ships an `## In-flight scope updates` section by default (Pattern). The `scope-enforcement-gate.sh` PreToolUse Bash blocker on `git commit` is a Mechanism that reads BOTH `## Files to Modify/Create` AND `## In-flight scope updates` when deciding whether the staged files are in-scope.
+
+**The rule.** Builder commits cannot extend scope beyond the plan's declared `## Files to Modify/Create` OR `## In-flight scope updates` sections. When the gate fires, the block message presents three tiered options: (1) update the plan's in-flight-scope-updates section to legitimize the change, (2) open a new plan if the work is genuinely separate, (3) defer to backlog. System-managed paths (`docs/plans/archive/*` for the `plan-lifecycle.sh` archival operations) are exempt. Emergency override remains `git commit --no-verify`.
+
+**Why it exists.** The original scope gate used a 1-hour-window per-plan waiver as the escape hatch. In practice, waivers became the default — every drive-by fix or hotfix produced a waiver file, and the gate stopped distinguishing legitimate scope changes from sloppiness. The redesign (per Decision 1d-C-1's reframe) made plans living artifacts: when scope genuinely needs to expand, the structurally-correct response is to update the plan, not to create a one-shot waiver. The three-tiered block message surfaces the right action first, with waiver-via-`--no-verify` reserved for true emergencies. Decision 1d-C-1's deep-dive removed the waiver path entirely; the second-pass redesign added the system-managed-path allowlist for archival operations.
+
+**How the harness enforces it.** `~/.claude/hooks/scope-enforcement-gate.sh` reads the active plan's `## Files to Modify/Create` and `## In-flight scope updates` sections, compares against `git diff --cached --name-only`, and blocks with the three-tiered options message when staged files fall outside both lists. Multiple-active-plan intersection logic is preserved from the original design. The plan template at `~/.claude/templates/plan-template.md` ships the `## In-flight scope updates` section between `## Files to Modify/Create` and `## Assumptions`.
+
+**When to break it.** The "open a new plan" path is the right answer for hotfixes, drive-by fixes, and pre-existing-untracked files that don't belong to the active plan's logical scope. The "defer to backlog" path is the right answer when the discovered work is genuinely separate but doesn't yet warrant a dedicated plan. The `git commit --no-verify` emergency override remains for cases where neither structural option fits — e.g., a recovery-from-stranding cleanup commit where the work to be committed pre-dates the active plans.
+
+### PRD validity + spec freeze — plan-PRD link required, no edits before frozen
+
+**Classification:** Hybrid. The 5-field plan-header schema (`tier`, `rung`, `architecture`, `frozen`, `prd-ref`) is enforced by `plan-reviewer.sh` Check 10 (Mechanism). The `prd-validity-gate.sh` PreToolUse Write blocker on plan creation and the `spec-freeze-gate.sh` PreToolUse Edit/Write blocker on declared files are Mechanisms. The `prd-validity-reviewer` agent's substance check is LLM-assisted.
+
+**The rule.** Plans with `Status: ACTIVE` declare five header fields with no defaults: `tier:` (1-3 reversibility), `rung:` (R0-R4 architectural depth), `architecture: prd-ref | adr-only | dialogue-only`, `frozen: true|false`, `prd-ref: docs/prd.md | n/a — harness-development`. Plan creation is blocked when `prd-ref` resolves to a missing-or-incomplete `docs/prd.md`; substance is verified by the `prd-validity-reviewer` agent. Edit/Write on any file in an ACTIVE plan's `## Files to Modify/Create` is blocked unless the plan declares `frozen: true`. R3+ plans require a `## Behavioral Contracts` section with four sub-entries (`### Idempotency`, `### Performance budget`, `### Retry semantics`, `### Failure modes`), each ≥ 30 non-whitespace chars and non-placeholder.
+
+**Why it exists.** The 2026-04-28 review effort that produced these gates surfaced 11 distinct failure classes; the most consequential were specs drifting between sections (FM-009 cross-section contradictions), existing-code claims being asserted without verification (FM-008 stale-existing-code-claim), and quantitative claims being asserted without arithmetic (FM-013/FM-014). PRD validity ties the plan's stated outcome to a verifiable upstream artifact; spec freeze prevents the builder from editing the plan's declared files while the spec itself is still in flux. The combined effect is that build cannot start until the spec is stable enough that all of `## Files to Modify/Create`, `## Assumptions`, `## Edge Cases`, `## Behavioral Contracts` (R3+), and the analysis sections agree with each other.
+
+**How the harness enforces it.** `~/.claude/rules/prd-validity.md` and `~/.claude/rules/spec-freeze.md` document the contracts. `~/.claude/hooks/prd-validity-gate.sh` runs at plan-file Write time. `~/.claude/hooks/spec-freeze-gate.sh` runs at Edit/Write on declared files. `~/.claude/agents/prd-validity-reviewer.md` is the substance reviewer. `~/.claude/hooks/plan-reviewer.sh` Check 10 enforces the 5-field schema; Check 11 enforces the `## Behavioral Contracts` section at R3+. Decisions 015-018 and 020 lock the semantics.
+
+**When to break it.** Harness-development plans declare `prd-ref: n/a — harness-development` (exact-string carve-out honored by both the gate and the reviewer). Plans below R3 don't need behavioral contracts. Plans below `Status: ACTIVE` are not gated. The `frozen: false → true` transition is the explicit "spec is stable, build can start" signal — until you set it, you're still in spec-development phase.
+
+### Findings ledger — every audit finding lands in `docs/findings.md`
+
+**Classification:** Hybrid. The schema (six fields: ID / Severity / Scope / Source / Location / Status + non-empty Description body) is locked by Decision 019. The `findings-ledger-schema-gate.sh` PreToolUse Bash blocker on `git commit` validates every staged entry mechanically.
+
+**The rule.** Every harness audit finding (from `harness-reviewer`, `task-verifier`, adversarial-review agents, manual sweeps, gap-analysis runs) lands in `docs/findings.md` with the six-field entry shape. The ledger is the project-level audit substrate; findings live there as long as they are open. `bug-persistence-gate.sh` accepts `docs/findings.md` as the fourth legitimate durable-storage target alongside `docs/backlog.md`, `docs/reviews/YYYY-MM-DD-*.md`, and `docs/discoveries/YYYY-MM-DD-*.md`.
+
+**Why it exists.** Findings have historically been scattered across backlog entries, review files, and inline conversation. Consolidating them into a single canonical surface lets future sessions and reviewers see the open audit landscape at a glance, and lets the schema gate verify that every entry is actually structured (not "fix this thing some day"). The class-aware-finding flavor (entries that record the *defect class* and the sweep query, not just the named instance) is the version of the ledger the seven adversarial-review agents emit into.
+
+**How the harness enforces it.** `~/.claude/rules/findings-ledger.md` documents the schema and the four severity levels. `~/.claude/hooks/findings-ledger-schema-gate.sh` runs as a PreToolUse Bash blocker on `git commit`; when `docs/findings.md` is staged it validates every entry against the six-field schema and rejects malformed entries with a clear error. `~/.claude/hooks/bug-persistence-gate.sh` accepts findings as the fourth durable-storage target. Decision 019 locks the format.
+
+**When to break it.** You don't. The schema is the contract. If a finding is truly trivial (typo fix, single-line cleanup), it doesn't need to be in the ledger at all — but if it's in the ledger, it follows the schema.
+
+### Definition-on-first-use — define acronyms before using them
+
+**Classification:** Mechanism (hook-enforced). The `definition-on-first-use-gate.sh` PreToolUse Bash blocker on `git commit` enforces the rule for `*.md` files under `neural-lace/build-doctrine/`.
+
+**The rule.** Uppercase 2-6 character acronyms (matching `\b[A-Z]{2,6}\b`) introduced in doctrine documents (`neural-lace/build-doctrine/**/*.md`) must be defined either (a) in the glossary at `~/claude-projects/Build Doctrine/outputs/glossary.md`, or (b) via a parenthetical definition within the same staged diff (`<TERM>\s*\(.{2,40}\)` where the parenthetical contains at least 2 words). A stopword allowlist exempts universally-understood tokens (URL, API, JSON, YAML, etc.).
+
+**Why it exists.** Build Doctrine and NL doctrine docs use ~50+ acronyms heavily. Without enforcement, future docs introduce undefined acronyms again — the same drift the glossary was meant to close. The user-trust rationale: a reader of any doctrine doc can trust that every uppercase 2-6 char token IS a defined acronym, not a typo, not a random capitalization, not an undocumented internal codename.
+
+**How the harness enforces it.** `~/.claude/rules/definition-on-first-use.md` documents the regex, stopword list, and the two definition paths. `~/.claude/hooks/definition-on-first-use-gate.sh` runs as a PreToolUse Bash blocker on `git commit`. Decision 023 locks the five sub-decisions (regex, stopword allowlist, scope-prefix, "defined" semantics, failure message format). Graceful degradation when the glossary file is missing — the gate emits a warning and ALLOWS the commit (the author shouldn't be blocked because the glossary path is misconfigured).
+
+**When to break it.** The scope is hard-coded to `neural-lace/build-doctrine/**/*.md` in v1; commits that touch zero in-scope files are a no-op. The two recovery paths (add to glossary OR define in-context) are both fast.
+
 ---
 
 ## Security practices
@@ -907,16 +979,25 @@ Even solo-developer force-pushes are dangerous: if you've pushed a branch to a p
 - `principles/core-values.md` — the underlying values the harness optimizes for
 - `adapters/claude-code/rules/planning.md` — decisions, scope, mid-build protocol, completion reports
 - `adapters/claude-code/rules/testing.md` — E2E discipline, UX validation, deployment validation, purpose validation
-- `adapters/claude-code/rules/vaporware-prevention.md` — anti-vaporware enforcement map (Gen 4)
+- `adapters/claude-code/rules/vaporware-prevention.md` — anti-vaporware enforcement map (Gen 4-6 + Build Doctrine extensions)
 - `adapters/claude-code/rules/orchestrator-pattern.md` — sub-agent dispatch for long plans
-- `adapters/claude-code/rules/diagnosis.md` — full-chain diagnosis, mandatory diagnostic loop, root-cause requirement
-- `adapters/claude-code/rules/git.md` — commit style, branch strategy, force-push policy
+- `adapters/claude-code/rules/diagnosis.md` — full-chain diagnosis, mandatory diagnostic loop, root-cause requirement, "Fix the Class, Not the Instance" sub-rule
+- `adapters/claude-code/rules/discovery-protocol.md` — proactive capture-and-decide for mid-process learnings
+- `adapters/claude-code/rules/comprehension-gate.md` — articulate Spec/Edges/Assumptions before checkbox flip at R2+
+- `adapters/claude-code/rules/prd-validity.md` + `spec-freeze.md` — plan-PRD link + frozen-spec-before-edit gate
+- `adapters/claude-code/rules/findings-ledger.md` — six-field finding entries in `docs/findings.md`
+- `adapters/claude-code/rules/definition-on-first-use.md` — acronym-must-be-defined gate for doctrine docs
+- `adapters/claude-code/rules/acceptance-scenarios.md` — plan-time + runtime end-user-advocate loop
+- `adapters/claude-code/rules/agent-teams.md` — five-mode framework, feature flag, upstream-bug list
+- `adapters/claude-code/rules/automation-modes.md` — five session modes and the decision tree
+- `adapters/claude-code/rules/git.md` — commit style, branch strategy, force-push policy, customer-tier branching
 - `adapters/claude-code/rules/ux-design.md` — error messages, empty states, destructive actions
 - `adapters/claude-code/rules/ux-standards.md` — color rules, contrast, state handling, AI features
 - `adapters/claude-code/rules/harness-maintenance.md` — global-first rule changes, commit atomicity, sync discipline
 - `docs/harness-architecture.md` — detailed enforcement map + per-file purpose
 - `docs/harness-guide.md` — file-by-file reference
 - `docs/SETUP.md` — two-layer config walkthrough
+- `docs/decisions/` — Tier 2+ decision records (013-024 from the Build Doctrine integration arc)
 
 ## Contributing
 

@@ -4,6 +4,8 @@
 
 Neural Lace is a harness platform that grows with its host. It wraps AI coding tools (Claude Code, Codex, Cursor, Gemini) with a mechanically-enforced layer of software-engineering + AI-collaboration best practices — so individual developers and teams inherit years of distilled discipline by default, not by self-enforcement.
 
+> **Generation 6 (Apr–May 2026).** Six narrative-integrity Stop hooks now block sessions that try to end while the agent's own transcript reveals deferred work, self-contradiction, skipped user imperatives, or unfulfilled first-message goals. Layered on top: the **Build Doctrine integration arc** (May 2026) shipping the Discovery Protocol, comprehension gate, PRD validity + spec freeze, findings ledger, definition-on-first-use enforcement, and a redesigned scope-enforcement gate that treats plans as living artifacts. See [`docs/harness-architecture.md`](docs/harness-architecture.md) for the full mechanism inventory.
+
 > **Agent Teams (experimental, feature-flagged).** Compatibility with Anthropic's `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` ships disabled by default. To enable safely (with all harness gates working across teammate sessions), see [`adapters/claude-code/rules/agent-teams.md`](adapters/claude-code/rules/agent-teams.md). Decision record: [`docs/decisions/012-agent-teams-integration.md`](docs/decisions/012-agent-teams-integration.md).
 
 ## What It Does
@@ -14,6 +16,8 @@ Neural Lace is a harness platform that grows with its host. It wraps AI coding t
 - **Two-layer configuration**: shareable harness code never contains identity, credentials, or machine-specific paths. Personal config lives in `~/.claude/local/` (gitignored). Hygiene scanner mechanically enforces this at pre-commit time.
 - **Self-evaluation**: A weekly `/harness-review` skill audits the harness itself — dead doc links, stale references, drift between installed and source copies, hygiene violations.
 - **Defense in depth**: Credentials scanned at commit time AND push time. Security anti-patterns common in AI-generated code flagged before they ship. Public-repo creation blocked per-account via `public_blocked` flag.
+- **Narrative integrity** *(Gen 6)*: The agent cannot end a session whose transcript reveals deferred work, self-contradiction, skipped user imperatives, or unfulfilled first-message goals — six Stop hooks read the JSONL transcript (which the agent cannot edit) and force these gaps into the user-visible final message.
+- **Proactive learning capture** *(Build Doctrine, May 2026)*: Mid-process realizations land as durable artifacts (`docs/discoveries/`), not chat-only narrative. Pending discoveries surface at next session start; reversible decisions auto-apply with educational summaries; irreversible decisions pause and wait for the user.
 - **Forward-compatible**: Universal principles (Layer 0) and abstract patterns (Layer 1) survive tool changes. Only thin adapters (Layer 2) need to be rewritten per tool.
 
 ## Architecture
@@ -74,6 +78,12 @@ This harness is as much about **encoded best practices** as it is about AI auton
 - **Anti-vaporware enforcement** — runtime features require a replayable runtime-verification command; "code exists" isn't done.
 - **Two-layer config separation** — no identity in shareable code; everything personal lives in `~/.claude/local/`. Pre-commit scanner blocks accidental leaks.
 - **Automation-mode default is safe** — `review-before-deploy` pauses before `git push`, `gh pr merge`, `supabase db push`, etc. Users opt IN to `full-auto`.
+- **Discovery Protocol** *(Build Doctrine, May 2026)* — mid-process learnings (architectural surprises, scope expansions, dependency surprises, performance discoveries, new failure modes, process gaps, UX discoveries) land in `docs/discoveries/YYYY-MM-DD-<slug>.md`, surface at next session start, and route to ADRs / plan edits / failure-mode catalog updates per type. `bug-persistence-gate.sh` accepts discovery files as legitimate durable storage; `discovery-surfacer.sh` SessionStart hook enumerates pending discoveries with educational option/recommendation summaries.
+- **Comprehension gate** *(Build Doctrine, May 2026)* — at plan rung 2 or higher, builders articulate Spec meaning / Edge cases covered / Edge cases NOT covered / Assumptions in their evidence entry. The `comprehension-reviewer` agent applies a three-stage rubric (schema / substance / diff correspondence) and blocks the checkbox flip on FAIL or INCOMPLETE.
+- **Plans as living artifacts** *(Build Doctrine, May 2026)* — `scope-enforcement-gate.sh` blocks builder commits that touch files outside the plan's `## Files to Modify/Create` OR `## In-flight scope updates` sections. Three structural options replace the old waiver model: (1) update the plan's in-flight-scope-updates section, (2) open a new plan if work is genuinely separate, (3) defer to backlog. The plan template ships an `## In-flight scope updates` section by default.
+- **PRD validity + spec freeze** *(Build Doctrine, May 2026)* — `Status: ACTIVE` plans require a valid `prd-ref:` (verified by `prd-validity-gate.sh` + `prd-validity-reviewer` agent) and a 5-field plan-header schema (`tier`, `rung`, `architecture`, `frozen`, `prd-ref`). Edits to declared files are blocked unless the plan declares `frozen: true`.
+- **Findings ledger** *(Build Doctrine, May 2026)* — `docs/findings.md` carries six-field entries (ID, Severity, Scope, Source, Location, Status) validated by `findings-ledger-schema-gate.sh` on every commit. Bug-persistence accepts findings as the fourth durable-storage target.
+- **Definition-on-first-use** *(Build Doctrine, May 2026)* — uppercase 2-6-char acronyms in doctrine docs (`neural-lace/build-doctrine/**/*.md`) must be defined either in the glossary or via a parenthetical definition within the same diff. Pre-commit gate blocks otherwise.
 
 Full catalog of 25+ practices, their rationale, and where each is enforced: **[`docs/best-practices.md`](docs/best-practices.md)**.
 
@@ -225,6 +235,10 @@ Trust (0.0-1.0) grows with safe operation and decays with incidents. Higher trus
 | Claude Code Adapter | v1.0 |
 | Pre-commit Security Scanner | v1.0 (credentials + anti-patterns) |
 | Pre-push Security Scanner | v1.0 (credentials) |
+| Generation 4 (anti-vaporware mechanisms) | v1.0 (2026-04-15) |
+| Generation 5 (acceptance loop, plan lifecycle, class-aware feedback) | v1.0 (2026-04-24) |
+| Generation 6 (narrative-integrity Stop hooks A1/A3/A5/A7/A8) | v1.0 (2026-04-26) |
+| Build Doctrine integration (Phase 1d-A through 1d-G) | v1.0 (May 2026) — Discovery Protocol, comprehension gate, PRD validity + spec freeze, findings ledger, definition-on-first-use, scope-enforcement redesign |
 | **Agent Teams** | **feature-flagged (experimental).** To enable: see [`adapters/claude-code/rules/agent-teams.md`](adapters/claude-code/rules/agent-teams.md). |
 | Risk Engine Runtime | Planned (currently using pattern-match hooks) |
 | Telemetry Collectors | Planned |
