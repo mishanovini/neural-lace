@@ -69,7 +69,7 @@ After this tranche, every doctrine reference in NL has a real path to resolve to
 
 ## In-flight scope updates
 
-(none yet)
+- 2026-05-05 (orchestrator pre-builder-resume): `adapters/claude-code/hooks/harness-hygiene-scan.sh` — MODIFY. Add `build-doctrine/*` and `build-doctrine-templates/*` to `is_path_shape_exempt()`. Discovered when Builder B's first commit attempt was blocked by the heuristic-cluster detector firing ~190 hits on legitimate doctrine vocabulary (Tranche, Engineering, Catalog, Curator, Adversarial, Findings, Mechanical, Orchestrator, Architecture, etc.) that aren't in `NL_VOCAB_ALLOWLIST`. The structural fix matches the existing pattern: NL-internal harness directories like `adapters/`, `principles/`, `patterns/` are already exempt because their prose legitimately cites paths and uses domain vocabulary repeatedly; `build-doctrine/` and `build-doctrine-templates/` belong to the same class. Sync to live `~/.claude/hooks/harness-hygiene-scan.sh`. Self-test: PASS.
 
 ## Assumptions
 

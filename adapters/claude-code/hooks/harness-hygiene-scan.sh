@@ -407,6 +407,16 @@ is_path_shape_exempt() {
     evals/*|evals) return 0 ;;
     .github/*|.github) return 0 ;;
     docs/*|docs) return 0 ;;
+    # Build Doctrine integration directories (added 2026-05-05 per
+    # Tranche 0b migration). The doctrine layer's vocabulary (Tranche,
+    # Engineering, Catalog, Curator, Adversarial, Findings, Mechanical,
+    # Orchestrator, Architecture, etc.) is repetitive prose by design;
+    # exempting these directories matches the same logic as exempting
+    # adapters/ and principles/. Templates dir holds default content
+    # that ships with NL and is part of the harness layer, not
+    # project-instance content.
+    build-doctrine/*|build-doctrine) return 0 ;;
+    build-doctrine-templates/*|build-doctrine-templates) return 0 ;;
     # The synced `~/.claude/` mirror (when scanning that tree directly).
     *.claude/*|*/.claude/*) return 0 ;;
     # NL-root prose files (README, CONTRIBUTING, LICENSE, CODE_OF_CONDUCT,
