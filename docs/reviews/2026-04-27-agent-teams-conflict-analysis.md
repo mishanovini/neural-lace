@@ -35,7 +35,7 @@ This document is the synthesis. Specific evidence lives in the research files; t
 
 **Soft blockers** (can ship behind feature flags or be deferred):
 
-6. SessionStart account-switching hook is hardcoded `grep -q 'Pocket-Technician'` against `$PWD`, not config-driven — drift from documented `dir_triggers` model. A teammate worktree under a different path silently switches to the personal account.
+6. SessionStart account-switching hook is hardcoded `grep -q '<work-org-codename>'` against `$PWD`, not config-driven — drift from documented `dir_triggers` model. A teammate worktree under a different path silently switches to the personal account.
 
 7. Templates `decision-log-entry.md` and `completion-report.md` exist only in `~/.claude/templates/`, not mirrored to `adapters/claude-code/templates/`. Teammates that inherit only project `.claude/` (per Decision 011 Approach A) won't see them.
 
@@ -186,11 +186,11 @@ For each item, I report: what I checked, what I found (file:line evidence), seve
 
 **What I checked:** SessionStart hook in `settings.json:273-279`. Compared to documented contract in `harness-architecture.md:81` and `examples/accounts.config.example.json`.
 
-**Finding:** the deployed hook is hardcoded `grep -q 'Pocket-Technician'` against `$PWD`. Not config-driven. A teammate's worktree under any path NOT containing the literal substring `Pocket-Technician` falls into the `else` branch (personal account). [`rules-architecture-inventory.md` Section 2 has the verbatim hook body.]
+**Finding:** the deployed hook is hardcoded `grep -q '<work-org-codename>'` against `$PWD`. Not config-driven. A teammate's worktree under any path NOT containing the literal substring `<work-org-codename>` falls into the `else` branch (personal account). [`rules-architecture-inventory.md` Section 2 has the verbatim hook body.]
 
 **Worktree teammate scenario:** if Anthropic's Agent Teams spawns a pane-based teammate in `<root>/.claude/worktrees/<branch>/` or any sibling path, the hook silently switches to the personal account. Push-time variant (`settings.json:178`) mirrors the bug for `git push`.
 
-**Severity:** PARTIAL → HARD if teammates push to a work-org repo from a worktree without `Pocket-Technician` in the path.
+**Severity:** PARTIAL → HARD if teammates push to a work-org repo from a worktree without `<work-org-codename>` in the path.
 
 **Action:** replace inline hook with config-driven `dir_triggers` lookup as documented in `harness-architecture.md`. Pre-existing harness drift, surfaced by this analysis but separate work item.
 

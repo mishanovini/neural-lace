@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-03
 **Status:** Active
-**Stakeholders:** Misha (sole maintainer)
+**Stakeholders:** Maintainer
 
 ## Context
 
@@ -12,7 +12,7 @@ The current state of pushes in the harness:
 
 - **Mechanical gates protect against unsafe pushes:** `pre-push-scan.sh` blocks credential leaks before push reaches GitHub; PreToolUse Bash hooks block `--no-verify`, force-push to master, public-repo creation under work-account directories.
 - **The `Do not push without asking` rule was prose-only** — it could be (and frequently was) waived per-action by the user saying "go ahead."
-- **The user's project mix:** all currently-active projects (Pocket Technician + Circuit, Cortex One, Foresight, AI Helm, eisy-admin, Neural Lace itself) are pre-customer. There are no real users whose data could be impacted by a bad push to production.
+- **The user's project mix:** all currently-active projects (across work-org and personal codename suites, plus Neural Lace itself) are pre-customer. There are no real users whose data could be impacted by a bad push to production.
 
 ## Decision
 

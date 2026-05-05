@@ -3,7 +3,7 @@
 **Date:** 2026-04-18
 **Status:** Active
 **Tier:** 2
-**Stakeholders:** Misha (maintainer)
+**Stakeholders:** Maintainer
 
 ## Context
 
@@ -11,13 +11,13 @@ During scrub of harness files, every reference to personal name, business org, p
 
 ## Decision
 
-**Keep attribution-only.** Preserve the maintainer's first name (`**Owner:** Misha` in strategy doc, README) as professional attribution. Strip everything else:
+**Keep attribution-only.** Preserve the maintainer's first name (`**Owner:** <maintainer>` in strategy doc, README) as professional attribution. Strip everything else:
 
-- All business/org names (Pocket-Technician, pt-leads, pocket-technician-*)
-- All product codenames (Circuit, Foresight)
-- All incident-specific details tied to real products ("HVAC contractor lead management", "personal finance", "the impersonation bug on 12 dashboards", specific feature names like `simulate-turn` / `A5d hold-for-review`)
-- All OneDrive / Windows-user / home-directory paths containing a username
-- All GitHub username hardcoding (mishanovini, MishaPT)
+- All business/org names (`<work-org-codename>`, `<work-org-internal>`)
+- All product codenames (`<product-codename-A>`, `<product-codename-B>`)
+- All incident-specific details tied to real products (specific industry references, specific feature names)
+- All cloud-storage / Windows-user / home-directory paths containing a username
+- All GitHub username hardcoding (`<personal-account>`, `<work-org-account>`)
 
 Anonymize technical incidents by replacing with generic language: "a production Next.js app", "a prior incident", "an impersonation bug" (no product name).
 

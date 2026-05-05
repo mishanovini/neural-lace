@@ -21,11 +21,11 @@ While conducting the deep review of Build Doctrine vs Neural Lace (plan `build-d
 
 ### NL-GAP-B — `pipeline-agents.md` is project-specific in the global rules directory
 
-**Observation.** `~/.claude/rules/pipeline-agents.md` references roles named "BUILDER", "VERIFIER", "DECOMPOSER" that are not part of the global harness role inventory. The naming convention and the failure-pattern list (ghost props, conditional invisibility, stale org data, missing RLS, Trigger.dev registration, API route in middleware) are clearly Pocket Technician-specific.
+**Observation.** `~/.claude/rules/pipeline-agents.md` references multi-agent pipeline roles (builder, verifier, decomposer) that are not part of the global harness role inventory. The naming convention and the failure-pattern list (ghost props, conditional invisibility, stale org data, missing RLS, Trigger.dev registration, API route in middleware) are clearly project-specific to a downstream consumer.
 
 **Why this is a gap.** A project-specific rule in `~/.claude/rules/` runs against every project the harness sees, including projects where these patterns don't apply. Pollutes the rule set and confuses new readers (per Q7 doc-clarity concern).
 
-**Proposed action.** Phase 1d-E task — relocate `pipeline-agents.md` to Pocket Technician's project `.claude/rules/` (or merge into the project's CLAUDE.md). Verify no other rules reference it.
+**Proposed action.** Phase 1d-E task — relocate `pipeline-agents.md` to the consuming project's `.claude/rules/` (or merge into that project's CLAUDE.md). Verify no other rules reference it.
 
 ### NL-GAP-C — `claim-reviewer` agent post-Gen6 reassessment
 
