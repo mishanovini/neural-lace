@@ -47,11 +47,11 @@ For each divergent hook, produce a per-hook proposal citing evidence (commit SHA
 
 ## Tasks
 
-- [ ] **1. Per-hook research + proposals.** Author audit doc at `docs/reviews/2026-05-04-gap-14-reconciliation-proposals.md`. For each of the 4 divergent hooks (plus public-repo-blocker variants if relevant): run `git log --all --follow adapters/claude-code/hooks/<hook>.sh`, find originating commit + plan + decision; check `git blame adapters/claude-code/settings.json.template` for relevant lines; cross-reference `docs/harness-architecture.md`; produce per-hook proposal with `template canonical / live canonical / intentional divergence` verdict + evidence. Single commit.
+- [x] **1. Per-hook research + proposals.** Author audit doc at `docs/reviews/2026-05-04-gap-14-reconciliation-proposals.md`. For each of the 4 divergent hooks (plus public-repo-blocker variants if relevant): run `git log --all --follow adapters/claude-code/hooks/<hook>.sh`, find originating commit + plan + decision; check `git blame adapters/claude-code/settings.json.template` for relevant lines; cross-reference `docs/harness-architecture.md`; produce per-hook proposal with `template canonical / live canonical / intentional divergence` verdict + evidence. Single commit.
 
-- [ ] **2. Reconcile hooks per proposals.** For each proposal verdict, apply the reconciliation: most likely "live → template" (add the hook to template + sync). EDIT settings.json.template + sync to live. Verify JSON validity. Run settings-divergence-detector after — confirm zero (or only intentional) divergence. Single commit.
+- [x] **2. Reconcile hooks per proposals.** For each proposal verdict, apply the reconciliation: most likely "live → template" (add the hook to template + sync). EDIT settings.json.template + sync to live. Verify JSON validity. Run settings-divergence-detector after — confirm zero (or only intentional) divergence. Single commit.
 
-- [ ] **3. Decision 024 + cleanup.** Land Decision 024 (per-hook reconciliation outcomes; cite each verdict). Update DECISIONS.md. Mark HARNESS-GAP-14 IMPLEMENTED in backlog "Recently implemented" with commit SHAs. Single commit.
+- [x] **3. Decision 024 + cleanup.** Land Decision 024 (per-hook reconciliation outcomes; cite each verdict). Update DECISIONS.md. Mark HARNESS-GAP-14 IMPLEMENTED in backlog "Recently implemented" with commit SHAs. Single commit.
 
 ## Files to Modify/Create
 
@@ -116,9 +116,9 @@ Task 1's audit doc is the smallest unit and the most independent — proposals c
 
 ## Definition of Done
 
-- [ ] All 3 tasks task-verified PASS.
-- [ ] Per-hook proposals authored with evidence.
-- [ ] settings-divergence-detector reports clean (or documented divergence).
-- [ ] Decision 024 landed.
-- [ ] Backlog reflects GAP-14 IMPLEMENTED.
-- [ ] Plan archived.
+- [x] All 3 tasks task-verified PASS.
+- [x] Per-hook proposals authored with evidence.
+- [x] settings-divergence-detector reports clean (or documented divergence).
+- [x] Decision 024 landed.
+- [x] Backlog reflects GAP-14 IMPLEMENTED.
+- [x] Plan archived.
