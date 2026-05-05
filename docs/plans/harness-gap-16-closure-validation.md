@@ -49,7 +49,7 @@ The gate is a deterministic pre-condition — it runs BEFORE the irreversible ac
 
 ## In-flight scope updates
 
-(none yet)
+- 2026-05-05 (worker-gap16-build): `docs/harness-architecture.md` MODIFY — required by docs-freshness-gate (rule 8) when adding a new hook + skill. One row added to the Hooks (`~/.claude/hooks/`) table for `plan-closure-validator.sh` and one row added to the Skills (`~/.claude/skills/`) table for `close-plan.md`. Plan author omitted this from the original Files-to-Modify list; surfaced by the gate at first commit attempt.
 
 ## Assumptions
 
