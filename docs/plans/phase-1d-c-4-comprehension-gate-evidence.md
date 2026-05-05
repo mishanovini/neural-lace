@@ -349,3 +349,91 @@ Runtime verification: file adapters/claude-code/agents/task-verifier.md::Do not 
 Verdict: PASS
 Confidence: 9
 Reason: All nine acceptance criteria satisfied. Single commit bfadcbb modifies only adapters/claude-code/agents/task-verifier.md (102/-1 lines), adding Step 1.5 between Step 1 and Step 2 with the four boundary cases enumerated (rung<2 no-op, rung absent skipped, archived skipped, rung>=2 invoke), the four invocation inputs (plan path, task ID, articulation source from companion -evidence.md, commit SHA(s)), the three verdict paths (PASS continue, FAIL halt + verbatim per-gap, INCOMPLETE halt + reason) per Decision 020d, the three additional invocation-failure boundary cases (Task tool failure → INCOMPLETE not default-PASS, malformed rung → INCOMPLETE, multi-commit-scope), all five cross-references (rule, agent, decision, template, FM-023 with Task 5 deferral note), and the evidence block format (Step 7 Comprehension-gate row + Step 8 articulation block layout). Existing 431-line file is byte-for-byte preserved with only pure additions in five locations. Note: live ~/.claude/agents/task-verifier.md is NOT yet synced with the repo edit; per harness-maintenance.md the maintainer must copy the updated file to ~/.claude/ to take effect — this is a separate sync task and does not block Task 4's PASS verdict (Task 4's scope is the repo edit, which is correct). Plan rung is 1 so the gate did not self-apply; the builder appropriately scoped the change to the repo agent file with no removals.
+
+---
+
+EVIDENCE BLOCK
+==============
+Task ID: 5
+Task description: FM catalog + harness-architecture inventory + vaporware-prevention enforcement map. Add FM-023 `vaporware-spec-misunderstood-by-builder` to `docs/failure-modes.md` with the six-field schema (ID, Symptom, Root cause, Detection, Prevention, Example). Add inventory entries to `docs/harness-architecture.md` for the new agent + new rule + new template + modified task-verifier. Update `vaporware-prevention.md` enforcement map with 1 new row pointing at `comprehension-reviewer.md` + task-verifier extension. Single commit.
+Verified at: 2026-05-04T16:59:46-07:00
+Verifier: task-verifier agent
+
+Checks run:
+
+1. Single-commit constraint
+   Command: git show --stat 82fdde0
+   Output: Three files modified in one commit (82fdde0): adapters/claude-code/rules/vaporware-prevention.md (+1), docs/failure-modes.md (+8), docs/harness-architecture.md (+2/-1). Commit message names "Phase 1d-C-4 Task 5 of 5 (final task)."
+   Result: PASS
+
+2. FM-023 six-field schema present in docs/failure-modes.md
+   Command: grep -c '^- \*\*\(Symptom\|Root cause\|Detection\|Prevention\|Example\)\.\*\*' docs/failure-modes.md (scoped to the FM-023 block at lines 209-215)
+   Output: All five bold-labeled bullets present (Symptom, Root cause, Detection, Prevention, Example). The ID is the heading line "## FM-023 — Vaporware: spec misunderstood by builder" (line 209). Total six fields satisfied.
+   Result: PASS
+
+3. FM-023 follows convention from FM-018 through FM-022
+   Command: grep -n '^## FM-0(18|19|20|21|22|23)' docs/failure-modes.md
+   Output: All six entries (FM-018 line 169, FM-019 line 177, FM-020 line 185, FM-021 line 193, FM-022 line 201, FM-023 line 209) use identical heading shape "## FM-NNN — <name>" and identical bullet labeling pattern. FM-023 mirrors the structural conventions of its siblings.
+   Result: PASS
+
+4. harness-architecture.md inventory: comprehension-reviewer.md (Agents)
+   Command: grep -n 'comprehension-reviewer.md' docs/harness-architecture.md
+   Output: Line 326 — `comprehension-reviewer.md` **(Phase 1d-C-4, 2026-05-04)** in Agents/Planning System table with Model="default" and substantive description (three-stage rubric, four required headings, auto-invocation by task-verifier at rung: 2+).
+   Result: PASS (already shipped in Task 3; row resolves to existing file at adapters/claude-code/agents/comprehension-reviewer.md)
+
+5. harness-architecture.md inventory: comprehension-gate.md (Rules)
+   Command: grep -n 'comprehension-gate.md' docs/harness-architecture.md
+   Output: Line 398 — `comprehension-gate.md` **(Phase 1d-C-4, 2026-05-04)** in Rules table with applies-to + description (Hybrid Pattern + Mechanism, Decision 020 reference, four sub-sections, three-stage rubric, rung-2 cutoff).
+   Result: PASS (already shipped in Task 2; row resolves to existing file)
+
+6. harness-architecture.md inventory: comprehension-template.md (Templates) — NEW in this commit
+   Command: grep -n 'comprehension-template.md' docs/harness-architecture.md
+   Output: Line 421 — `comprehension-template.md` **(Phase 1d-C-4 / C15, 2026-05-04)** in Templates table with linked-rule="comprehension-gate.md rule + task-verifier evidence-block discipline" and description naming all four required sub-headings (### Spec meaning, ### Edge cases covered, ### Edge cases NOT covered, ### Assumptions). Resolves to adapters/claude-code/templates/comprehension-template.md (verified to exist on disk, 4232 bytes).
+   Result: PASS
+
+7. harness-architecture.md task-verifier.md row annotated with C15 extension — NEW in this commit
+   Command: grep -n '^| `task-verifier.md`' docs/harness-architecture.md
+   Output: Line 313 — task-verifier.md row updated with **(extended Phase 1d-C-4 / C15, 2026-05-04)** badge in the file-name cell and an additional sentence in the description starting "Comprehension-gate extension (Phase 1d-C-4):" that names the rung 2/3/4/5 trigger condition, the auto-invocation of comprehension-reviewer BEFORE flipping the checkbox, the FAIL/INCOMPLETE blocking semantics, and the "below R2 the auto-invocation is a no-op" carve-out.
+   Result: PASS
+
+8. vaporware-prevention.md enforcement map: new row added — NEW in this commit
+   Command: grep -n 'Comprehension articulation required' adapters/claude-code/rules/vaporware-prevention.md
+   Output: Line 40 — new enforcement-map row reading "Comprehension articulation required at rung >= 2 (builders must articulate `Spec meaning` / `Edge cases covered` / `Edge cases NOT covered` / `Assumptions` inside their evidence entry; `comprehension-reviewer` agent verifies match-to-diff via three-stage rubric — schema / substance / diff correspondence — before `task-verifier` flips the checkbox; FAIL or INCOMPLETE blocks the flip; below R2 the gate is a no-op)" with hook/agent column citing "`comprehension-reviewer` agent + `task-verifier` extension (auto-invokes at rung >= 2; Phase 1d-C-4 / C15, 2026-05-04)" and File column citing "`~/.claude/agents/comprehension-reviewer.md` + `~/.claude/agents/task-verifier.md`".
+   Result: PASS
+
+9. vaporware-prevention.md enforcement-map File column resolves to existing artifacts
+   Command: ls -la adapters/claude-code/agents/comprehension-reviewer.md adapters/claude-code/agents/task-verifier.md
+   Output: Both files exist on disk: comprehension-reviewer.md (29108 bytes, mtime 16:40) and task-verifier.md (37542 bytes, mtime 16:49). The `~/.claude/...` path convention used in the enforcement-map column matches the convention used by all other rows in that table; the corresponding adapter-tree files at adapters/claude-code/agents/* resolve correctly.
+   Result: PASS
+
+10. Plan rung gate semantics: comprehension-gate is a no-op for this verification
+    Command: grep -n '^rung:' docs/plans/phase-1d-c-4-comprehension-gate.md
+    Output: Line 10 — `rung: 1`. Per Edge Cases section of the plan: "Plan with `rung: 0` or `rung: 1`. Comprehension-gate is a no-op. task-verifier proceeds with its existing logic." This confirms the comprehension-reviewer auto-invocation does NOT fire for this Task 5 verification, as expected.
+    Result: PASS
+
+Git evidence:
+  Commit: 82fdde0 (Mon May 4 16:58:04 2026 -0700)
+  Author: maintainer
+  Message: "feat(harness): FM-023 + harness-architecture inventory + vaporware-prevention map (Phase 1d-C-4 Task 5)"
+  Files modified:
+    - adapters/claude-code/rules/vaporware-prevention.md (+1, -0)
+    - docs/failure-modes.md (+8, -0)
+    - docs/harness-architecture.md (+2, -1)
+  Total: 11 insertions(+), 1 deletion(-)
+
+Runtime verification: file docs/failure-modes.md::## FM-023 — Vaporware: spec misunderstood by builder
+Runtime verification: file docs/failure-modes.md::- **Symptom.**
+Runtime verification: file docs/failure-modes.md::- **Root cause.**
+Runtime verification: file docs/failure-modes.md::- **Detection.**
+Runtime verification: file docs/failure-modes.md::- **Prevention.**
+Runtime verification: file docs/failure-modes.md::- **Example.**
+Runtime verification: file docs/harness-architecture.md::comprehension-template.md
+Runtime verification: file docs/harness-architecture.md::extended Phase 1d-C-4 / C15
+Runtime verification: file docs/harness-architecture.md::Comprehension-gate extension
+Runtime verification: file adapters/claude-code/rules/vaporware-prevention.md::Comprehension articulation required at rung >= 2
+Runtime verification: file adapters/claude-code/rules/vaporware-prevention.md::comprehension-reviewer.md
+Runtime verification: file adapters/claude-code/rules/vaporware-prevention.md::task-verifier.md
+
+Verdict: PASS
+Confidence: 9
+Reason: All five acceptance criteria satisfied in a single commit (82fdde0). (1) FM-023 ships in docs/failure-modes.md at lines 209-215 with the heading-as-ID plus all five bold-labeled fields (Symptom, Root cause, Detection, Prevention, Example). (2) FM-023 mirrors the structural convention of FM-018 through FM-022 — identical heading shape, identical bullet pattern, six fields. (3) harness-architecture.md inventory has all four expected entries: comprehension-reviewer.md row in Agents (line 326, from Task 3), comprehension-gate.md row in Rules (line 398, from Task 2), comprehension-template.md row in Templates (line 421, NEW in this commit), and task-verifier.md row annotated with the C15 extension badge + additional Comprehension-gate-extension sentence (line 313, NEW in this commit). (4) vaporware-prevention.md enforcement map has a new row at line 40 referencing the comprehension-reviewer agent + task-verifier extension; the File column resolves to actual artifacts that exist in the adapter tree (verified by ls). (5) Single commit constraint satisfied — all three file changes landed in 82fdde0 with a coherent message. Plan rung is 1 so comprehension-gate did not self-fire, as expected per the plan's own Edge Cases. This closes Phase 1d-C-4 Task 5 of 5; the plan is now ready to flip Status: COMPLETED.

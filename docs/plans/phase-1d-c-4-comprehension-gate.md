@@ -72,7 +72,7 @@ Plus enabling work:
 
 - [x] **4. task-verifier extension.** EDIT `task-verifier.md` to add the comprehension-gate invocation block: when the plan's `rung:` field is ≥ 2, task-verifier MUST invoke `comprehension-reviewer` via Task tool with the plan path, task ID, and the builder's articulation block. comprehension-reviewer FAIL or INCOMPLETE → task-verifier returns FAIL (do not flip checkbox); comprehension-reviewer PASS → task-verifier proceeds with its existing verification logic. The articulation block is expected at the bottom of the task's Evidence Log entry per the template. Single commit.
 
-- [ ] **5. FM catalog + harness-architecture inventory + vaporware-prevention enforcement map.** Add FM-023 `vaporware-spec-misunderstood-by-builder` to `docs/failure-modes.md` with the six-field schema (ID, Symptom, Root cause, Detection, Prevention, Example). Add inventory entries to `docs/harness-architecture.md` for the new agent + new rule + new template + modified task-verifier. Update `vaporware-prevention.md` enforcement map with 1 new row pointing at `comprehension-reviewer.md` + task-verifier extension. Single commit.
+- [x] **5. FM catalog + harness-architecture inventory + vaporware-prevention enforcement map.** Add FM-023 `vaporware-spec-misunderstood-by-builder` to `docs/failure-modes.md` with the six-field schema (ID, Symptom, Root cause, Detection, Prevention, Example). Add inventory entries to `docs/harness-architecture.md` for the new agent + new rule + new template + modified task-verifier. Update `vaporware-prevention.md` enforcement map with 1 new row pointing at `comprehension-reviewer.md` + task-verifier extension. Single commit.
 
 ## Files to Modify/Create
 
