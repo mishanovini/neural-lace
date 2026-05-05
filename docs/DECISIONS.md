@@ -28,3 +28,4 @@ commit (enforced by `adapters/claude-code/hooks/decisions-index-gate.sh`).
 | 018 | [Spec-section divergence from SCRATCHPAD: Build Doctrine §6 chosen as authoritative; `## Provides`/`## Consumes`/`## Dependencies` deferred](decisions/018-spec-section-divergence-from-scratchpad.md) | 2026-05-04 | Open |
 | 019 | [Findings-ledger format (C9): 6-field schema, single `docs/findings.md` per project, dispositioning lifecycle](decisions/019-findings-ledger-format.md) | 2026-05-04 | Active |
 | 020 | [Comprehension-gate semantics (C15): rung-2 cutoff, four articulation fields, FAIL/INCOMPLETE blocks task-verifier](decisions/020-comprehension-gate-semantics.md) | 2026-05-04 | Active |
+| 021 | [DRIFT-02 resolution: SessionStart account-switching hook is config-driven](decisions/021-drift-02-account-switch-config-driven.md) | 2026-05-04 | Active |
