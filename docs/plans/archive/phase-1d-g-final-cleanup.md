@@ -1,6 +1,6 @@
 # Plan: Phase 1d-G — Final cleanup + master merge prep
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: HARNESS-GAP-14 sub-item C, HARNESS-GAP-14-followups, rules-vs-hooks restructuring (observed-errors-first.md convert)
@@ -57,13 +57,13 @@ After this phase ships, the branch is master-merge-ready.
 
 ## Tasks
 
-- [ ] **1. Codename scrub of 5 committed files.** Sanitize identifiers per harness-hygiene-scan denylist patterns. Replace specific business codenames + GitHub usernames + product codenames with generic placeholders (e.g., `<personal-account>`, `<work-org>`, `<product-codename-A>`). Preserve audit-trail context — the documents stay readable. Run full-tree scan after; expect zero matches. Single commit.
+- [x] **1. Codename scrub of 5 committed files.** Sanitize identifiers per harness-hygiene-scan denylist patterns. Replace specific business codenames + GitHub usernames + product codenames with generic placeholders (e.g., `<personal-account>`, `<work-org>`, `<product-codename-A>`). Preserve audit-trail context — the documents stay readable. Run full-tree scan after; expect zero matches. Single commit.
 
-- [ ] **2. GAP-14-followups — investigate and fix-or-defer 4 items.** Per item: audit current state, decide fix-vs-defer, apply or document. If any are quick fixes, apply. If any need substantive work, defer with explicit rationale. Document in commit message. Run settings-divergence-detector after to confirm the followups are addressed (or remaining divergences are intentional). Single commit.
+- [x] **2. GAP-14-followups — investigate and fix-or-defer 4 items.** Per item: audit current state, decide fix-vs-defer, apply or document. If any are quick fixes, apply. If any need substantive work, defer with explicit rationale. Document in commit message. Run settings-divergence-detector after to confirm the followups are addressed (or remaining divergences are intentional). Single commit.
 
-- [ ] **3. observed-errors-first.md stub conversion.** REWRITE the rule mirroring vaporware-prevention.md's stub format: short opening + enforcement-map table pointing at the relevant hook. Per Phase 1d-E-2 audit, the rule is ~80% hook-enforced. Single commit.
+- [x] **3. observed-errors-first.md stub conversion.** REWRITE the rule mirroring vaporware-prevention.md's stub format: short opening + enforcement-map table pointing at the relevant hook. Per Phase 1d-E-2 audit, the rule is ~80% hook-enforced. Single commit.
 
-- [ ] **4. Backlog cleanup with deferral rationale.** Mark Phase 1d-G items as IMPLEMENTED in backlog "Recently implemented" section. Add explicit rationale entries for truly-deferred items: GAP-08 (substantive new mechanism warrants fresh-session attention), GAP-13 (same), 4 remaining rule splits (each is substantial restructuring). Bump Last updated to v18. Single commit.
+- [x] **4. Backlog cleanup with deferral rationale.** Mark Phase 1d-G items as IMPLEMENTED in backlog "Recently implemented" section. Add explicit rationale entries for truly-deferred items: GAP-08 (substantive new mechanism warrants fresh-session attention), GAP-13 (same), 4 remaining rule splits (each is substantial restructuring). Bump Last updated to v18. Single commit.
 
 ## Files to Modify/Create
 
@@ -131,10 +131,10 @@ Codename scrub (Task 1) is the most independent and unblocks master merge. Start
 
 ## Definition of Done
 
-- [ ] All 4 tasks task-verified PASS.
-- [ ] Full-tree scanner returns zero matches.
-- [ ] settings-divergence-detector reports clean output.
-- [ ] observed-errors-first.md stub-converted.
-- [ ] Backlog reflects deferred items with explicit rationale.
+- [x] All 4 tasks task-verified PASS.
+- [x] Full-tree scanner returns zero matches.
+- [x] settings-divergence-detector reports clean output.
+- [x] observed-errors-first.md stub-converted.
+- [x] Backlog reflects deferred items with explicit rationale.
 - [ ] Plan archived (Status: COMPLETED → auto-archive).
 - [ ] Master merge prep validated (post-archive: branch ready for merge).
