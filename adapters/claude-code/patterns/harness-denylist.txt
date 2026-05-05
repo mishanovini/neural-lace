@@ -60,3 +60,27 @@ sk-[A-Za-z0-9]{40,}
 service_role
 # Claude API keys
 sk-ant-api[A-Za-z0-9_-]{20,}
+
+# === Cloud-bucket URLs with environment fragment ===
+# S3/GCS bucket paths whose name embeds prod/dev/staging — these typically
+# leak operational infrastructure references. Generic bucket URLs without
+# an environment suffix are NOT matched (too high a false-positive rate
+# in tutorials and docs).
+s3://[a-z0-9-]+-(prod|dev|staging)/
+gs://[a-z0-9-]+-(prod|dev|staging)/
+
+# === OAuth client-id shapes ===
+# Google OAuth client ID format: 12 digits, dash, 32 alphanum, .apps.googleusercontent.com
+[0-9]{12}-[a-z0-9]{32}\.apps\.googleusercontent\.com
+# GitHub App client ID format: Iv1. + 16 hex chars
+Iv1\.[a-f0-9]{16}
+
+# === Database connection strings with embedded credentials ===
+# postgres://, mysql://, mongodb://, mongodb+srv:// with user:password@host
+(postgres|mysql|mongodb)(\+srv)?://[^/[:space:]]+:[^@[:space:]]+@
+
+# === Additional service keys ===
+# SendGrid API key: SG. + 22+ chars + . + 43+ chars
+SG\.[A-Za-z0-9_-]{22,}\.[A-Za-z0-9_-]{43,}
+# Stripe restricted keys (live + test)
+rk_(live|test)_[A-Za-z0-9]{20,}
