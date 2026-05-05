@@ -491,6 +491,10 @@ still working?" questions.
 
 ---
 
+## HARNESS-GAP-15 — ABSORBED 2026-05-04 into `docs/plans/phase-1d-e-4-gap-15-cleanup.md` (sub-items A/B/D/E/F; sub-item C deferred to next master merge)
+
+(Historical entry preserved below for context.)
+
 ## HARNESS-GAP-15 — Phase 1d-E public-release-hardening + harness-quick-wins audit-cleanup (added 2026-05-04)
 
 **Source.** 2026-05-04 stale-plan audit. Three plans were marked COMPLETED but two had falsely-complete state (the third — `document-freshness-system.md` — verified ACTUALLY COMPLETE and stays archived). The two that were prematurely marked are now flipped back to ACTIVE; this gap aggregates their resolution paths with related Phase 1d-E hygiene work into a single rollup so they ship as one focused phase.
