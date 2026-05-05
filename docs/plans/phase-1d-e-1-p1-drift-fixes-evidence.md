@@ -159,3 +159,64 @@ Git evidence:
 Verdict: PASS
 Confidence: 10
 Reason: All 4 acceptance criteria satisfied. (1) All six DRIFT-01 hooks present in template with count=1 each. (2) All six DRIFT-01 hooks present in live; automation-mode-gate count=1 confirms the missing wiring identified at plan-creation has been addressed. (3) Live settings.json is valid JSON post-edit. (4) Empty commit b973cf5 exists with comprehensive audit-trail message documenting the 6-hook close-out, the live-file gitignored convention, and the explicit scoping of residual template-vs-live divergence to HARNESS-GAP-14. The empty-commit pattern is the correct mechanism for tracking gitignored-file changes per harness convention (mirrors Task 2's commit f2d812a). Single-commit constraint honored. HARNESS-DRIFT-01 is fully closed; Task 3 work matches the plan's specification exactly.
+
+EVIDENCE BLOCK
+==============
+Task ID: 4
+Task description: Decision 021 + DECISIONS index + backlog cleanup + inventory updates. Land Decision 021 (DRIFT-02 resolution: SessionStart account-switching hook is config-driven, falls back to no-op when config is absent or no match; the literal-substring approach is rejected per its brittleness). Update `docs/DECISIONS.md` with the row. Move HARNESS-GAP-09, HARNESS-DRIFT-01, HARNESS-DRIFT-02 in `docs/backlog.md` to a "Recently implemented" section with their resolution commit SHAs. Update `docs/harness-architecture.md` inventory if any rows need adjustment. Single commit.
+Verified at: 2026-05-04T18:10:00-07:00
+Verifier: task-verifier agent
+
+Checks run:
+
+1. Commit scope and metadata
+   Command: git show --stat 17db609
+   Output: Single commit. Four files changed: docs/decisions/021-drift-02-account-switch-config-driven.md (NEW, 165 insertions), docs/DECISIONS.md (1 insertion), docs/backlog.md (12 changed), docs/harness-architecture.md (2 changed; one row updated). Commit message documents the four-part change and notes "Phase 1d-E-1 Task 4 of 4 (final task). Plan ready to flip Status: COMPLETED."
+   Result: PASS
+
+2. Decision 021 file structure and required sections
+   Command: Read docs/decisions/021-drift-02-account-switch-config-driven.md
+   Output: File present (165 lines). Required harness-convention sections all present: Title (line 1 — "Decision 021 — DRIFT-02 resolution: SessionStart account-switching hook is config-driven"), **Date:** 2026-05-04 (line 3), **Status:** Active (line 4), **Stakeholders:** Maintainer (sole) (line 5), Plan + backlog cross-references (lines 6-7), ## Context (line 9 — substantive, names HARNESS-DRIFT-02 surfacing, the four brittleness modes, and the existing read-local-config.sh infrastructure), ## Decision (line 56 — concrete shell snippet showing the new hook body + fallback semantics), ## Alternatives considered (line 82 — four numbered alternatives with rationale for rejection, including Alt 4 "literal-substring approach rejected per its brittleness" matching task description verbatim), ## Consequences (line 105 — Enables/Costs/Depends on/Propagates downstream/Blocks subsections). All required harness-convention fields present and substantive.
+   Result: PASS
+
+3. DECISIONS.md row for entry 021
+   Command: grep -n "^\| 021 \|" docs/DECISIONS.md
+   Output: Line 31 — `| 021 | [DRIFT-02 resolution: SessionStart account-switching hook is config-driven](decisions/021-drift-02-account-switch-config-driven.md) | 2026-05-04 | Active |`. Link target matches the actual filename. Date and Status match the decision file. Row appended cleanly after entry 020.
+   Result: PASS
+
+4. backlog.md "Recently implemented" section presence and content
+   Command: grep -n "## Recently implemented" docs/backlog.md ; grep -nA10 "## Recently implemented" docs/backlog.md
+   Output: Section heading at line 9 ("## Recently implemented (2026-05-04)"). Body credits Phase 1d-E-1 explicitly via plan path. Three bulleted entries — HARNESS-GAP-09 (commit b3951ba), HARNESS-DRIFT-01 (commit b973cf5), HARNESS-DRIFT-02 (commits f2d812a + 430365c) — each with a one-paragraph summary of the resolution and references to Decision 021 where relevant. The "Last updated" line at line 3 was bumped to v12 with a new note pointing at the implemented status. All three backlog item slugs from the plan header's `Backlog items absorbed: HARNESS-DRIFT-01, HARNESS-DRIFT-02, HARNESS-GAP-09` are accounted for in the new section.
+   Result: PASS
+
+5. harness-architecture.md inventory adjustment
+   Command: grep -n "Phase 1d-E-1 narrowing 2026-05-04" docs/harness-architecture.md ; git show 17db609 -- docs/harness-architecture.md
+   Output: Line 156 — the `plan-reviewer.sh` Stop-chain inventory row was updated. Old row described "4 scenarios" self-test; new row reflects "26 scenarios" and adds annotations for Check 1 section-awareness and Check 5 Tier-A/Tier-B context-awareness. Diff is minimal (one row touched, +1/-1). Update is consistent with the Task 1 b3951ba commit's substantive change to plan-reviewer.sh and matches the evidence-block content for Task 1.
+   Result: PASS
+
+6. Single-commit constraint
+   Command: git log --oneline 17db609 ^17db609~1
+   Output: One commit. The commit message footer states "Phase 1d-E-1 Task 4 of 4 (final task)." Constraint honored.
+   Result: PASS
+
+7. Backlog absorption discipline (plan-header `Backlog items absorbed`)
+   Command: grep -n "Backlog items absorbed:" docs/plans/phase-1d-e-1-p1-drift-fixes.md
+   Output: Plan header (line 6) declares `Backlog items absorbed: HARNESS-DRIFT-01, HARNESS-DRIFT-02, HARNESS-GAP-09`. All three are now in the backlog's "Recently implemented" section with commit SHAs. The deletion-on-absorption was performed on the plan-creation commit; this Task 4 commit is the completion-reporting half (Implementation Summary equivalent on the backlog side, prior to plan flip to COMPLETED).
+   Result: PASS
+
+Git evidence:
+  Files modified in 17db609:
+    - docs/decisions/021-drift-02-account-switch-config-driven.md  (NEW, 165 lines)
+    - docs/DECISIONS.md  (+1 row at line 31)
+    - docs/backlog.md  (Recently implemented section added; Last updated bumped to v12)
+    - docs/harness-architecture.md  (1 inventory row refreshed at line 156)
+  Files NOT touched (correctly out of scope for this task): every other file in the repo.
+
+Runtime verification: file docs/decisions/021-drift-02-account-switch-config-driven.md::Decision 021 — DRIFT-02 resolution
+Runtime verification: file docs/DECISIONS.md::021-drift-02-account-switch-config-driven\.md
+Runtime verification: file docs/backlog.md::## Recently implemented \(2026-05-04\)
+Runtime verification: file docs/harness-architecture.md::Phase 1d-E-1 narrowing 2026-05-04
+
+Verdict: PASS
+Confidence: 10
+Reason: All 5 acceptance criteria satisfied in a single commit. (1) Decision 021 file exists with all harness-convention required sections populated substantively. (2) DECISIONS.md has a clean row at entry 021 pointing at the new file. (3) backlog.md has a "Recently implemented (2026-05-04)" section crediting Phase 1d-E-1 with closing all three absorbed items, each with commit SHAs. (4) harness-architecture.md plan-reviewer.sh row was updated to reflect Task 1's narrowing + the 26-scenario self-test count, consistent with shipped state. (5) Single commit 17db609 honored. The task wraps up the plan cleanly: Decisions Log + DECISIONS index + backlog implemented-section + inventory all reflect the shipped state. Phase 1d-E-1 Task 4 of 4 is complete; the plan's Definition of Done is now satisfied (4/4 tasks PASS, plan-reviewer self-test PASS [Task 1 evidence], settings-divergence-detector reports no DRIFT-01 divergence [Task 3 evidence], DRIFT-02 fix exercised end-to-end [Task 2 evidence], Decision 021 landed and indexed [this task], backlog reflects three items as IMPLEMENTED [this task]; only the Status: COMPLETED auto-archive flip remains as a separate orchestrator action).

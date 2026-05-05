@@ -69,7 +69,7 @@ Plus enabling work:
 
 - [x] **3. HARNESS-DRIFT-01 audit close.** Verify each of the six DRIFT-01 hooks is wired in BOTH template AND live: `goal-extraction-on-prompt`, `goal-coverage-on-stop`, `imperative-evidence-linker`, `transcript-lie-detector`, `vaporware-volume-gate`, `automation-mode-gate`. For any missing wiring (specifically `automation-mode-gate` in live, per audit at plan-creation), add the wiring. Use `settings-divergence-detector.sh` to confirm the divergence is closed for these hooks (or document any that remain — those become HARNESS-GAP-14's scope). Single commit.
 
-- [ ] **4. Decision 021 + DECISIONS index + backlog cleanup + inventory updates.** Land Decision 021 (DRIFT-02 resolution: SessionStart account-switching hook is config-driven, falls back to no-op when config is absent or no match; the literal-substring approach is rejected per its brittleness). Update `docs/DECISIONS.md` with the row. Move HARNESS-GAP-09, HARNESS-DRIFT-01, HARNESS-DRIFT-02 in `docs/backlog.md` to a "Recently implemented" section with their resolution commit SHAs. Update `docs/harness-architecture.md` inventory if any rows need adjustment. Single commit.
+- [x] **4. Decision 021 + DECISIONS index + backlog cleanup + inventory updates.** Land Decision 021 (DRIFT-02 resolution: SessionStart account-switching hook is config-driven, falls back to no-op when config is absent or no match; the literal-substring approach is rejected per its brittleness). Update `docs/DECISIONS.md` with the row. Move HARNESS-GAP-09, HARNESS-DRIFT-01, HARNESS-DRIFT-02 in `docs/backlog.md` to a "Recently implemented" section with their resolution commit SHAs. Update `docs/harness-architecture.md` inventory if any rows need adjustment. Single commit.
 
 ## Files to Modify/Create
 
