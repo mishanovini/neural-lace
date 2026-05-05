@@ -1,11 +1,21 @@
 # Plan: Adversarial Validation Mechanisms (Generation 6)
 
-Status: PROPOSED
+Status: SUPERSEDED
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none
 acceptance-exempt: true
 acceptance-exempt-reason: This is a harness-design plan. Acceptance is "user reviews and approves which mechanisms to build" — no product user, no runtime UI surface, just hook code + rules. The plan-time review and implementation will produce per-mechanism PRs each with their own self-tests.
+
+> **Superseded 2026-05-05.** The mechanisms this plan proposed (A1/A3/A7/A8) shipped piecemeal during Phase 1d-A through Phase 1d-G work rather than as a single design pass:
+>
+> - **A1** (goal-extraction-on-prompt + goal-coverage-on-stop) — wired live + template; reconciled in Phase 1d-E-1.
+> - **A3** (transcript-lie-detector) — wired live + template.
+> - **A7** (imperative-evidence-linker) — wired live + template.
+> - **A8** (vaporware-volume-gate) — wired live + template.
+> - **A2** (was the never-fully-specified item) — covered by the broader Gen-6 narrative-integrity hook chain (deferral-counter at Stop position 5, etc.).
+>
+> The plan's single-design-pass framing didn't match how the work actually shipped (one mechanism at a time alongside other harness phases). Archived as SUPERSEDED rather than COMPLETED because no single deliverable here matches its scope claim.
 
 ## User's Original Ask (Verbatim)
 
