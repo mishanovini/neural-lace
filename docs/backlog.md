@@ -66,7 +66,7 @@ Older closed items live in plan completion reports under `docs/plans/archive/`.
 
 **Sub-gap F — ABSORBED 2026-05-04 into `docs/plans/phase-1d-e-2-audit-cleanup.md`** (Rules-superseded-by-hooks audit).
 
-**Sub-gap G — Definition-on-first-use enforcement hook (Phase 1d-F proposal) (P3).** Build Doctrine + NL docs use ~50+ acronyms heavily; user requested a glossary, which now lives at `~/claude-projects/Build Doctrine/outputs/glossary.md`. To prevent recurring drift, definition-on-first-use should be enforced mechanically. Proposed mechanism: pre-commit hook that scans every `*.md` under `neural-lace/build-doctrine/` for first-use acronyms (regex-detected), requiring either a definition-in-context or a cross-reference to `glossary.md`. Blocks commits introducing undefined terms. Phase 1d-F per Q7 of the unified methodology recommendation.
+**Sub-gap G — ABSORBED 2026-05-04 into `docs/plans/phase-1d-f-definition-on-first-use.md`** (Definition-on-first-use enforcement).
 
 **Sub-gap H — ABSORBED 2026-05-04 into `docs/plans/phase-1d-e-2-audit-cleanup.md`** (`docs/reviews/` gitignore refinement).
 
