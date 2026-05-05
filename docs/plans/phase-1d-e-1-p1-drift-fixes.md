@@ -63,7 +63,7 @@ Plus enabling work:
 
 ## Tasks
 
-- [ ] **1. plan-reviewer.sh Check 1 + Check 5 narrowing.** EDIT `adapters/claude-code/hooks/plan-reviewer.sh` to add: (a) Check 1 section-awareness — track current `## ` heading as we scan; only flag sweep language when the line is under the `## Tasks` heading (or any heading containing "Task"); (b) Check 5 context-awareness — the runtime-keyword regex narrowed so the documentation-context tokens only match when adjacent (within the same line or the next line) to database-context tokens. Add 4 new self-test scenarios. Test:/Runtime verification: run `bash plan-reviewer.sh --self-test` after each edit; the 4 new scenarios must PASS and existing scenarios must not regress. Mirror to `~/.claude/hooks/`. Single commit.
+- [x] **1. plan-reviewer.sh Check 1 + Check 5 narrowing.** EDIT `adapters/claude-code/hooks/plan-reviewer.sh` to add: (a) Check 1 section-awareness — track current `## ` heading as we scan; only flag sweep language when the line is under the `## Tasks` heading (or any heading containing "Task"); (b) Check 5 context-awareness — the runtime-keyword regex narrowed so the documentation-context tokens only match when adjacent (within the same line or the next line) to database-context tokens. Add 4 new self-test scenarios. Test:/Runtime verification: run `bash plan-reviewer.sh --self-test` after each edit; the 4 new scenarios must PASS and existing scenarios must not regress. Mirror to `~/.claude/hooks/`. Single commit.
 
 - [ ] **2. HARNESS-DRIFT-02 — SessionStart account-switch reads from config.** EDIT `adapters/claude-code/settings.json.template` to replace the hardcoded SessionStart hook body with a config-driven version: source `read-local-config.sh`, call `nl_accounts_match_dir "$PWD"` (or the equivalent `bash read-local-config.sh match-dir "$PWD"`), parse the account-tag + username, run `gh auth switch --user <name>`. Falls back to no-op when config is absent or no match. Same edit applied to the push-time variant if present. Mirror to live `~/.claude/settings.json`. Single commit.
 
@@ -84,7 +84,7 @@ Plus enabling work:
 
 ## In-flight scope updates
 
-(none yet — orchestrator may add the evidence file companion as in 1d-C-4)
+- `docs/plans/phase-1d-e-1-p1-drift-fixes-evidence.md` — added 2026-05-04 by orchestrator. Standard task-verifier companion; created on first task verification.
 
 ## Assumptions
 
