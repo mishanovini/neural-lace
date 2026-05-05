@@ -49,6 +49,7 @@ The mechanism-tracking layer (`docs/harness-architecture.md`) was current via `d
 ## In-flight scope updates
 
 - 2026-05-05: `docs/build-doctrine-roadmap.md` — NEW. User-requested persistent roadmap document for tracking end-to-end completion of the Build Doctrine integration into NL. Surfaced during the same session as the doc sweep when the user observed the lack of a single tracker for the multi-phase work. Scope-adjacent to GAP-17 because both are user-facing-narrative-layer fixes; bundled with this plan rather than a separate plan to avoid adding a fourth ACTIVE plan to the branch.
+- 2026-05-05: `adapters/claude-code/rules/git.md` — MODIFY. User-authorized softening of the master-commit prohibition for pre-customer projects ("please disable the rule that prohibits master pushes"). Replaces the absolute "Never commit directly to main or master" line with a pre-customer carve-out aligned with the existing customer-tier branching policy. Companion edit to `~/.claude/settings.json` (gitignored — adds `Bash(git push origin master)` to allow list). Scope-adjacent to GAP-17 because both are user-facing-rule-layer changes surfaced in the same conversation; bundled here per the user's full-auto + minimize-friction directive.
 
 ## Assumptions
 
