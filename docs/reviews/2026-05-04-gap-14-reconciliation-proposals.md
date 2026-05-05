@@ -122,3 +122,22 @@ After Task 2 applies these proposals:
 - `settings-divergence-detector.sh` reports remaining divergences only in the six "out-of-scope" buckets above.
 - A follow-up backlog entry should be opened to absorb those into a future cleanup pass.
 - The plan-named four hooks + public-repo variants are reconciled.
+
+## Phase 1d-G addendum (2026-05-04)
+
+The four out-of-scope SessionStart / UserPromptSubmit divergences flagged
+above were resolved in Phase 1d-G Task 2. The template was canonical for
+all four; live `~/.claude/settings.json` was updated to match:
+
+1. **Compact-recovery hook** — removed hardcoded per-project subdirectory paths (project-specific backlog and plans paths). The global hook should not enumerate downstream-project paths.
+2. **Automation-mode initializer** — added missing SessionStart block (template line 348 form).
+3. **Legacy `claude-config` harness-sync hook** — removed (referenced pre-rename path; template correctly omits it).
+4. **UserPromptSubmit title-bar** — upgraded to automation-mode-aware form (template line 274 form).
+
+After these edits, `jq -S '.hooks'` output of live and template is byte-
+identical. Remaining file-level divergence is confined to the
+`permissions` array (per-machine local config — intentional, not subject
+to reconciliation).
+
+The fifth out-of-scope item (`tool-call-budget.sh` matcher: live
+canonical) remains as documented; no change needed.

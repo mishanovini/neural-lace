@@ -81,7 +81,8 @@ After this phase ships, the branch is master-merge-ready.
 
 ## In-flight scope updates
 
-(none yet)
+- 2026-05-04 (Task 2): `docs/reviews/2026-05-04-gap-14-reconciliation-proposals.md` — EDIT. Added Phase 1d-G addendum documenting that the four out-of-scope SessionStart/UserPromptSubmit divergences from the original audit were resolved in this phase. Audit doc is the natural home for the resolution record.
+- 2026-05-04 (Task 1): `docs/DECISIONS.md` — EDIT (footnote). Decisions-index gate requires the index to be staged in the same commit when decision records are modified; added a footnote acknowledging the in-place codename scrub of records 001, 002, 013 (no status or substance changes).
 
 ## Assumptions
 
