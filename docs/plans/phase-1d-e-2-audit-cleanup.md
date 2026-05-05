@@ -63,7 +63,7 @@ Five small audits / cleanups ship in one coherent unit, each with a deliverable 
 
 ## Tasks
 
-- [ ] **1. Sub-gap A — Stop-hook orthogonality matrix.** Author the audit document. Read each of the five Stop hooks; write a 5x5 orthogonality matrix where each cell `(row=A, col=B)` names ONE specific example A catches but B does NOT. Recommendation per pair. If any pair has no clear separation, list as "candidate for consolidation". Single commit.
+- [x] **1. Sub-gap A — Stop-hook orthogonality matrix.** Author the audit document. Read each of the five Stop hooks; write a 5x5 orthogonality matrix where each cell `(row=A, col=B)` names ONE specific example A catches but B does NOT. Recommendation per pair. If any pair has no clear separation, list as "candidate for consolidation". Single commit.
 
 - [ ] **2. Sub-gap B — `pipeline-agents.md` relocation/restructure.** Read the rule. Identify project-specific content vs general-purpose content. Take the action that fits the analysis: relocate project-specific content (back-stop: delete the file when its content is wholly project-specific). Update any references. Sync to live. Single commit.
 

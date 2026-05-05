@@ -76,3 +76,59 @@ Verdict: PASS
 Confidence: 9
 Reason: Builder correctly recognized the existing .gitignore already implemented the naming-convention allowlist (cleaner than authoring a topic-by-topic ban); the only outstanding work was documenting the convention in harness-hygiene.md, which the commit does in both layers (committed adapter copy + live mirror). All round-trip tests pass: date-prefix reviews are tracked, downstream-project-style names are ignored, NNN-prefix decisions are tracked, non-conforming decision names are ignored. Live mirror matches committed copy byte-for-byte. The deviation from the task wording is justified (the test in the task description was satisfied without further .gitignore edits because the prior state already conformed).
 
+EVIDENCE BLOCK
+==============
+Task ID: 1
+Task description: Sub-gap A — Stop-hook orthogonality matrix. Author the audit document. Read each of the five Stop hooks; write a 5x5 orthogonality matrix where each cell `(row=A, col=B)` names ONE specific example A catches but B does NOT. Recommendation per pair. If any pair has no clear separation, list as "candidate for consolidation". Single commit.
+Verified at: 2026-05-05T01:25:00Z
+Verifier: task-verifier agent
+
+Checks run:
+1. Audit document exists at the declared path
+   Command: Read docs/reviews/2026-05-04-stop-hook-orthogonality.md
+   Output: 121 lines; markdown document with sections Purpose, Hook summaries, Pairwise orthogonality matrix, Per-pair recommendation, Conclusion, Followups.
+   Result: PASS
+
+2. Document has substantive size (~150 lines target — 121 actual; "~" tolerates this)
+   Command: wc -l on file
+   Output: 121 lines. Plan said "(~150 lines)"; tolerance acceptable as content is dense and complete (no padding).
+   Result: PASS
+
+3. 5x5 orthogonality matrix is populated with 20 off-diagonal cells, each a concrete example
+   Command: grep -oE '\([0-9]+\)' docs/reviews/2026-05-04-stop-hook-orthogonality.md | sort -u | wc -l
+   Output: 20 unique numbered examples (1)-(20). Matrix has 5 row labels (narrate-and-wait, transcript-lie-detector, goal-coverage, imperative-evidence, deferral-counter), 5 column labels matching, diagonal is "—". Each off-diagonal cell describes a specific session shape where the row hook blocks and the column hook does not.
+   Result: PASS
+
+4. Per-pair recommendations exist with KEEP SEPARATE / CLARIFY BOUNDARY / CONSOLIDATE verdicts
+   Command: read "Per-pair recommendation" section
+   Output: 10 unordered pairs reviewed. 8 verdicts KEEP SEPARATE, 2 verdicts CLARIFY BOUNDARY (transcript-lie-detector × deferral-counter; goal-coverage × imperative-evidence). 0 CONSOLIDATE. Each verdict has a one-paragraph reasoning citing the asymmetry or overlap source.
+   Result: PASS
+
+5. Overall assessment present
+   Command: read "Conclusion" section (lines 75-112)
+   Output: Conclusion paragraph explicitly states "All five Stop hooks are sufficiently orthogonal to retain", articulates three separation axes (tone vs. content; trigger-source separation; action-surface separation), names confidence as "medium-high", and proposes a post-maturity firing-frequency audit follow-up.
+   Result: PASS
+
+6. Single commit confirmed
+   Command: git log --all --oneline -- docs/reviews/2026-05-04-stop-hook-orthogonality.md
+   Output: fd9f663 docs(1d-E-2): stop-hook orthogonality audit (Phase 1d-E-2 Task 1) — only commit touching the file.
+   Result: PASS
+
+7. Builder commit modifies only the expected file
+   Command: git show --stat fd9f663
+   Output: 1 file changed, 121 insertions(+); only docs/reviews/2026-05-04-stop-hook-orthogonality.md added. Commit message references HARNESS-GAP-10 sub-gap A and Phase 1d-E-2 Task 1.
+   Result: PASS
+
+Git evidence:
+  Files modified in recent history:
+    - docs/reviews/2026-05-04-stop-hook-orthogonality.md  (last commit: fd9f663, 2026-05-04)
+
+Runtime verification: file docs/reviews/2026-05-04-stop-hook-orthogonality.md::Pairwise orthogonality matrix
+Runtime verification: file docs/reviews/2026-05-04-stop-hook-orthogonality.md::All five Stop hooks are sufficiently orthogonal to retain
+Runtime verification: file docs/reviews/2026-05-04-stop-hook-orthogonality.md::CLARIFY BOUNDARY
+Runtime verification: file docs/reviews/2026-05-04-stop-hook-orthogonality.md::transcript-lie-detector
+
+Verdict: PASS
+Confidence: 9
+Reason: Audit document exists at the declared path with substantive content; 5x5 matrix has all 20 off-diagonal cells populated with concrete blocking-scenario examples (each citing a specific session shape, not restated mission statements); 10 unordered pairs have explicit KEEP SEPARATE / CLARIFY BOUNDARY verdicts with one-paragraph reasoning; overall assessment names the conclusion (all five orthogonal, retain), articulates three separation axes, and proposes a post-maturity follow-up audit; single commit fd9f663 with HARNESS-GAP-10 sub-gap A reference. The 121-line actual length vs. the plan's "~150 lines" target is acceptable — the content is dense and complete with no padding; brevity here is a feature.
+
