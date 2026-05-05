@@ -1,6 +1,6 @@
 # Plan: HARNESS-GAP-08 — spawn_task report-back convention
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: HARNESS-GAP-08
@@ -42,7 +42,7 @@ Pattern parallels: this hook mirrors `discovery-surfacer.sh` exactly in shape (S
 - [x] 3. Wire the new hook into `adapters/claude-code/settings.json.template` SessionStart chain (immediately after the existing `discovery-surfacer.sh` line at line 373). Mirror the change to `~/.claude/settings.json`.
 - [x] 4. Update `adapters/claude-code/rules/vaporware-prevention.md` enforcement map with one new row: "Spawn_task results surfaced at session start" → `spawned-task-result-surfacer.sh` SessionStart hook + `spawn-task-report-back.md` rule.
 - [x] 5. Sync `adapters/claude-code/{rules,hooks}/` files to `~/.claude/{rules,hooks}/`. Run `--self-test` on both copies. Verify with the diff loop from `harness-maintenance.md`.
-- [ ] 6. Commit on feature branch `feat/gap-08-spawn-task-report-back`. Push to origin (multi-push covers both remotes per HARNESS-GAP-12 resolution).
+- [x] 6. Commit on feature branch `feat/gap-08-spawn-task-report-back`. Push to origin (multi-push covers both remotes per HARNESS-GAP-12 resolution).
 
 ## Files to Modify/Create
 
@@ -127,9 +127,53 @@ n/a — `Mode: code` plan; class-sweep audit applies to `Mode: design` plans onl
 
 ## Definition of Done
 
-- [ ] All 6 tasks task-verified
-- [ ] All hook self-tests PASS (5/5 scenarios)
-- [ ] Synced files diff-clean against adapter source (per harness-maintenance.md diff loop)
-- [ ] Plan flipped to Status: COMPLETED (auto-archives via plan-lifecycle.sh)
-- [ ] backlog.md updated: HARNESS-GAP-08 moved from "Open work" to "Recently implemented" with commit SHA
-- [ ] SCRATCHPAD.md updated to reflect new state
+- [x] All 6 tasks task-verified
+- [x] All hook self-tests PASS (5/5 scenarios)
+- [x] Synced files diff-clean against adapter source (per harness-maintenance.md diff loop)
+- [x] Plan flipped to Status: COMPLETED (auto-archives via plan-lifecycle.sh)
+- [x] backlog.md updated: HARNESS-GAP-08 moved from "Open work" to "Recently implemented" with commit SHA
+- [x] SCRATCHPAD.md updated to reflect new state
+
+## Completion Report
+
+### 1. Implementation Summary
+
+All 6 tasks shipped on `verify/pre-submission-audit-reconcile`:
+
+| Task | Description | Commit |
+|---|---|---|
+| 1 | Rule `spawn-task-report-back.md` (~200 lines, Hybrid) | `440a2d9` |
+| 2 | Hook `spawned-task-result-surfacer.sh` (5/5 self-test PASS) | `a7002e7` |
+| 3 | Settings.json wiring after discovery-surfacer | `4627e01` |
+| 4 | Vaporware-prevention.md enforcement-map row | `343d5c6` |
+| 5 | Sync 7 files to `~/.claude/` (diff-clean) | `606c70e` |
+| 6 | Final commit + multi-push to both remotes | `606c70e` |
+
+**Backlog item HARNESS-GAP-08** absorbed at plan-creation `f41980b` per atomicity rule.
+
+### 2. Design Decisions & Plan Deviations
+
+Two AskUserQuestion decisions 2026-05-05 (both Tier 1):
+- Ack mechanism: explicit `.acked` marker (no silent loss).
+- Skill wrapper: deferred — convention-only v1.
+
+Branch deviation: declared `feat/gap-08-...`; actual `verify/pre-submission-audit-reconcile` (shared with GAP-13 + pre-submission-audit reconciliation). Documented in Task 6 evidence.
+
+### 3. Known Issues & Gotchas
+
+- Convention relies on spawned session honoring the `Report-back: task-id=<X>` sentinel. If ignored, surfacer is silent — same fallback as fire-and-forget today.
+- No age-based prune; results re-surface until `.acked`. User's chosen tradeoff.
+
+### 4. Manual Steps Required
+
+None.
+
+### 5. Testing Performed & Recommended
+
+Performed: hook self-test 5/5 PASS; sync byte-clean; jq confirms settings entry.
+
+Recommended (deferred): end-to-end round-trip via real `spawn_task` — first usage validates.
+
+### 6. Cost Estimates
+
+n/a — harness-dev; no runtime cost.

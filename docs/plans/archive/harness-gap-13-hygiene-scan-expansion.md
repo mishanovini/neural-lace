@@ -1,6 +1,6 @@
 # Plan: HARNESS-GAP-13 — Expand harness-hygiene-scan to detect more project-specific shapes
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: HARNESS-GAP-13
@@ -76,7 +76,7 @@ Outcome: harness-hygiene-scan stops being purely reactive. The structural defens
 - [x] 5. **Documentation.** Extend `adapters/claude-code/rules/harness-hygiene.md` with a new "Layer 2 heuristic detection" section briefly explaining what the heuristics catch and how to add false-positive exemptions (e.g., add to the NL vocabulary allowlist in the hook).
 - [x] 6. **Sync.** Copy changed files from `adapters/claude-code/` to `~/.claude/` per Windows manual-sync rule. Verify with the diff loop. Files: `hooks/harness-hygiene-scan.sh`, `scripts/harness-hygiene-sanitize.sh`, `patterns/harness-denylist.txt`, `rules/harness-hygiene.md`, `skills/harness-review.md`.
 - [x] 7. **Manual full-tree scan.** After all changes land, run `bash adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree` against the current repo. Expected: ZERO matches (the codename scrub from Phase 1d-G left the tree clean per HARNESS-GAP-15 sub-item C). If matches surface, classify as legitimate findings (sanitize) OR false-positives (add allowlist exemption), then re-scan until clean.
-- [ ] 8. **Commit on feature branch + push.** Commit on a fresh branch `feat/gap-13-hygiene-scan-expansion`. Push to origin (multi-push covers both remotes per HARNESS-GAP-12 resolution).
+- [x] 8. **Commit on feature branch + push.** Commit on a fresh branch `feat/gap-13-hygiene-scan-expansion`. Push to origin (multi-push covers both remotes per HARNESS-GAP-12 resolution).
 
 ## Files to Modify/Create
 
@@ -165,11 +165,62 @@ n/a — Mode: code plan, no class-sweep needed (per `rules/design-mode-planning.
 
 ## Definition of Done
 
-- [ ] All 8 tasks task-verified PASS
-- [ ] All hook + script self-tests PASS (existing scenarios + new Layer 1 + new Layer 2 + new Layer 4)
-- [ ] Manual full-tree scan returns ZERO matches against current repo
-- [ ] Synced files diff-clean against adapter source (5 files)
-- [ ] Plan flipped to Status: COMPLETED (auto-archives via plan-lifecycle.sh)
-- [ ] backlog.md updated: HARNESS-GAP-13 moved from "Open work" to "Recently implemented" with commit SHA(s)
-- [ ] SCRATCHPAD.md updated to reflect new state
-- [ ] Completion report appended to this plan file per `~/.claude/templates/completion-report.md`
+- [x] All 8 tasks task-verified PASS
+- [x] All hook + script self-tests PASS (existing scenarios + new Layer 1 + new Layer 2 + new Layer 4)
+- [x] Manual full-tree scan returns ZERO matches against current repo
+- [x] Synced files diff-clean against adapter source (5 files)
+- [x] Plan flipped to Status: COMPLETED (auto-archives via plan-lifecycle.sh)
+- [x] backlog.md updated: HARNESS-GAP-13 moved from "Open work" to "Recently implemented" with commit SHA(s)
+- [x] SCRATCHPAD.md updated to reflect new state
+- [x] Completion report appended to this plan file per `~/.claude/templates/completion-report.md`
+
+## Completion Report
+
+### 1. Implementation Summary
+
+All 8 tasks shipped on `verify/pre-submission-audit-reconcile`:
+
+| Task | Description | Commit |
+|---|---|---|
+| 1 | Layer 1: 7 denylist additions (cloud-buckets, OAuth, conn-strings, SendGrid, Stripe-rk) | `2a0488a` |
+| 2 | Layer 2: heuristic detection (`check_heuristics()` + 5 new self-test scenarios) | `517b6b6` |
+| 3 | Layer 3: `/harness-review` Check 1 extended to parse `[denylist]`/`[heuristic]` labels | `6e4672c` |
+| 4 | Layer 4: `harness-hygiene-sanitize.sh` (~325 lines, 5/5 self-test PASS) | `2371e97` |
+| 5 | Documentation: `harness-hygiene.md` Layer 2 section (~30 lines) | `e03d96b` |
+| 6 | Sync 5 files to `~/.claude/` (diff-clean) | `606c70e` |
+| 7 | Manual full-tree scan: ZERO matches | `606c70e` (evidence) |
+| 8 | Final commit + multi-push to both remotes | `606c70e` |
+
+**Backlog item HARNESS-GAP-13** absorbed at plan-creation `aacca63` per atomicity rule.
+
+### 2. Design Decisions & Plan Deviations
+
+Two AskUserQuestion decisions 2026-05-05:
+- **Layer scope:** full original (Layers 1+2+3+4, ~9-10 hr) — Tier 1.
+- **Heuristic action:** BLOCK on match (consistent with current scanner) — Tier 2.
+
+**Builder-discretion deviations:**
+- T2 broadened path-shape exemption from 3 to ~10 prefixes to manage 1688 cluster-FPs in NL's doc-dense repo. Final full-tree returns ZERO matches.
+- T3 modified existing Check 1 of `/harness-review` in-place (Check 1 already wrapped `--full-tree`).
+
+**Branch deviation:** declared `feat/gap-13-...`; actual `verify/pre-submission-audit-reconcile` (shared with GAP-08 + reconciliation, all this session).
+
+### 3. Known Issues & Gotchas
+
+- Vocabulary allowlist is hand-curated. New tokens that legitimately repeat 3+ times in NL prose may need to be added over time.
+- Sanitization helper is propose-only — user reviews diff and applies via `git apply`.
+- First-week tuning may surface false-positives. Override path: `git commit --no-verify`.
+
+### 4. Manual Steps Required
+
+None.
+
+### 5. Testing Performed & Recommended
+
+Performed: hygiene-scan 13/13 PASS, sanitize 5/5 PASS, full-tree ZERO matches, sync byte-clean.
+
+Recommended (deferred): first-week FP-rate observation; LLM-driven detection (out of scope per OUT clause).
+
+### 6. Cost Estimates
+
+n/a — harness-development; no runtime cost.
