@@ -1,23 +1,23 @@
 # Neural Lace — Harness Backlog
 
-**Last updated:** 2026-05-05 v19 — backlog header restructured for legibility; full version log moved to bottom of file. Phase 1d-G shipped 2026-05-04 (codename scrub + GAP-14-followups + observed-errors-first stub conversion all IMPLEMENTED). Two stale plans archived: `adversarial-validation-mechanisms.md` SUPERSEDED (mechanisms shipped piecemeal), `acceptance-loop-smoke-test-evidence.md` moved to archive (orphan evidence file).
+**Last updated:** 2026-05-05 v24 — HARNESS-GAP-08 (spawn_task report-back) + HARNESS-GAP-13 (hygiene-scan 4-layer expansion) BOTH IMPLEMENTED + auto-archived this session per Option B. 14 task-verifier PASS commits on `verify/pre-submission-audit-reconcile`. Also reconciled stranded pre-submission-audit-mechanical-enforcement plan; HARNESS-GAP-16 added as next-after pickup (closure-validation gate). v23 — HARNESS-GAP-17 Part A IMPLEMENTED in this session: all 5 user-facing narrative docs (README, harness-strategy, best-practices, quality-strategy, CLAUDE.md) updated to reflect Gen 5/6 + Build Doctrine integration arc; live `~/.claude/CLAUDE.md` synced. Part B (docs-freshness-gate narrative-doc extension) remains deferred per original P2 estimate. Earlier v22 — duplicate-numbering conflict resolved: narrative-docs-stale entry (originally tagged GAP-16 in v21) renumbered to **HARNESS-GAP-17**. GAP-16 is the closure-validation gate per the "Open work" pickup list. Both entries were added 2026-05-05 within 40 minutes; the v21 header tagged the docs-stale one GAP-16 first, then the closure-validation entry duplicated the number 40 min later — closure-validation kept as GAP-16 since the "Open work" section treats it as such. v21 — HARNESS-GAP-16 added — user-facing narrative docs (README, harness-strategy, best-practices, quality-strategy, CLAUDE.md) stale post-integration; docs-freshness-gate has narrative-doc blind spot. Earlier 2026-05-05 v20 — HARNESS-GAP-08 absorbed into `docs/plans/harness-gap-08-spawn-task-report-back.md` (per backlog-plan-atomicity rule). pre-submission-audit-mechanical-enforcement plan reconciled and auto-archived this session (was stranded ACTIVE since 2026-05-03 with all 5 tasks shipped but bookkeeping never run; see commits `588b6db` + `4e8f658` on `verify/pre-submission-audit-reconcile` branch). Earlier 2026-05-05 v19 — backlog header restructured for legibility; full version log moved to bottom of file. Phase 1d-G shipped 2026-05-04 (codename scrub + GAP-14-followups + observed-errors-first stub conversion all IMPLEMENTED). Two stale plans archived: `adversarial-validation-mechanisms.md` SUPERSEDED (mechanisms shipped piecemeal), `acceptance-loop-smoke-test-evidence.md` moved to archive (orphan evidence file).
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
 ## Next pickup (recommended)
 
-**HARNESS-GAP-08 — `spawn_task` optional report-back.** Cleanest fresh-session pickup: well-scoped (~4-6 hr), proposed mechanism already drafted in the backlog entry, unblocks orchestrator-coordinated punchlist work going forward. The other two big deferred items (GAP-13, the 4 rule splits) are larger and more design-intensive — pick when you have the budget.
+**HARNESS-GAP-13 — harness-hygiene-scan expansion** is the next-cleanest pickup once GAP-08 ships. Full original scope per user 2026-05-05: ~9-10 hr; layers 1-4 (denylist additions + heuristic detection + periodic full-tree audit + sanitization helper).
 
-Active plan in another session: `docs/plans/pre-submission-audit-mechanical-enforcement.md` — don't touch.
+In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-back.md`) + reconciliation of stranded pre-submission-audit plan.
 
 ## Open work — substantive deferrals
 
-These were explicitly deferred to fresh sessions during the 2026-05-04 autonomous run because they're new-mechanism design or substantial restructuring:
-
-- **HARNESS-GAP-08** — `spawn_task` report-back (~4-6 hr; substantive new mechanism)
-- **HARNESS-GAP-13** — harness-hygiene-scan expansion (~6-10 hr; heuristic detection layer + denylist additions + periodic full-tree audit)
+- **HARNESS-GAP-08** — IMPLEMENTED 2026-05-05 via `docs/plans/archive/harness-gap-08-spawn-task-report-back.md`. spawn_task report-back convention shipped: rule, surfacer hook, settings wiring, vaporware-prevention map row, sync to ~/.claude/, multi-push to both remotes. 6/6 tasks PASS, 5/5 self-test scenarios PASS. Commits: `440a2d9`, `a7002e7`, `4627e01`, `343d5c6`, `606c70e`.
+- **HARNESS-GAP-13** — IMPLEMENTED 2026-05-05 via `docs/plans/archive/harness-gap-13-hygiene-scan-expansion.md`. Full original 4-layer scope: denylist additions (Layer 1), heuristic detection (Layer 2 BLOCK), `/harness-review` skill extension (Layer 3), sanitization helper (Layer 4). 8/8 tasks PASS, 13/13 hygiene-scan self-test PASS, 5/5 sanitize self-test PASS, full-tree scan ZERO matches. Commits: `2a0488a`, `517b6b6`, `6e4672c`, `2371e97`, `e03d96b`, `606c70e`.
+- **HARNESS-GAP-16** — Plan-closure validation gate + `/close-plan` skill (~4-5 hr; deterministic pre-flight gate on Status: ACTIVE → COMPLETED transition, plus skill that automates closure path; surfaces from 2026-05-05 stranding incident — root-cause fix for plan-bookkeeping discipline gap. Scheduled next-after GAP-13 per user 2026-05-05). See HARNESS-GAP-16 entry below for full proposal.
+- **HARNESS-GAP-17 Part A** — User-facing narrative docs stale post-Build-Doctrine-integration (~3-5 hr doc sweep). **IMPLEMENTED 2026-05-05 (this session)** — see HARNESS-GAP-17 entry below for the per-doc summary. Part B (gate extension preventing recurrence, ~6-10 hr) remains DEFERRED per original P2 estimate.
 - **HARNESS-GAP-14-followups** — IMPLEMENTED 2026-05-04 via Phase 1d-G (entry below preserved as the audit trail).
-- **Rules-vs-hooks 4 remaining splits** (per Phase 1d-E-2 audit) — acceptance-scenarios.md, agent-teams.md, design-mode-planning.md, testing.md. Each is substantial restructuring per rule.
+- **Rules-vs-hooks 4 remaining splits** (per Phase 1d-E-2 audit) — acceptance-scenarios.md, agent-teams.md, design-mode-planning.md, testing.md. Each is substantial restructuring per rule. Per Option B 2026-05-05, now eligible to dispatch via `spawn_task` with the new GAP-08 report-back convention.
 
 ## Open work — telemetry-gated (don't pick up yet)
 
@@ -70,29 +70,9 @@ These items shipped in Phase 1d-G (`docs/plans/phase-1d-g-final-cleanup.md`):
 
 Older closed items live in plan completion reports under `docs/plans/archive/`.
 
-## HARNESS-GAP-08 — `spawn_task` should support optional report-back (added 2026-04-30)
+## HARNESS-GAP-08 — ABSORBED 2026-05-05 into `docs/plans/harness-gap-08-spawn-task-report-back.md`
 
-**Observation.** `mcp__ccd_session__spawn_task` is documented as fire-and-forget — the orchestrator session spawns a task, the spawned session runs independently with its own full harness, and there is no callback channel. The orchestrator only learns the result by either (a) reading git artifacts the spawned session committed, or (b) the user manually telling the orchestrator the spawned task is done.
-
-**Why this is a gap.** For genuinely independent work (CI migration, code audits, one-shot doc generation), fire-and-forget is correct — that's the whole point of context hygiene. But for **sequenced fix work** where the orchestrator drives a punchlist (e.g., "fix P0-1 → assess result → fix P0-2 → ..."), the orchestrator must coordinate. Currently the user mediates: they tell the orchestrator "the spawned task completed," and the orchestrator manually fetches the resulting branch via git. This:
-- Adds friction every time the orchestrator wants to chain fixes through spawn_task
-- Pushes orchestrators toward Agent-tool-only patterns (which keep all build context in the orchestrator's window) when spawn_task would otherwise be a better fit
-- Has no mechanical signal at all if the user forgets to tell the orchestrator (or tells the wrong session)
-
-**Proposed mechanism.** `spawn_task` accepts an optional `report_back: true` param. When set:
-1. The spawned session, on stop, writes a structured JSON file at `.claude/state/spawned-task-results/<task-id>.json` with: `{task_id, started_at, ended_at, branch, pr_url, exit_status, summary, commits: [<sha>], artifacts: [<path>]}`.
-2. The orchestrator's `SessionStart`-equivalent hook (or a per-turn check) scans `.claude/state/spawned-task-results/` for new entries since its last turn and surfaces them in the system reminder.
-3. The orchestrator can then act on the result on its very next turn — cherry-pick, run task-verifier, plan the next fix — without user mediation.
-
-**Cleanup semantics.** Result files older than 7 days get pruned by the same hook. Or move them to `archive/` after the orchestrator acknowledges them (mirroring `plan-lifecycle.sh`'s archive pattern).
-
-**Fallback.** Spawn_task without `report_back: true` keeps current fire-and-forget behavior. Backward compatible.
-
-**Originating context.** Surfaced 2026-04-30 during a downstream-project session arc that chained multiple `spawn_task` invocations as a fix punchlist. The user asked: "Shouldn't each of these spawned tasks send their data back to you when they're done so you can review and know when to kick off the following tasks?" The orchestrator (correctly) had to acknowledge that no callback exists today and manual user mediation was the workaround. This pattern recurred multiple times across the session arc.
-
-**Effort estimate.** S-M (~4-6 hr). One JSON-write helper, one hook to scan and surface. Tests for: result file written on terminal exit, multiple spawned tasks don't collide, hook surfaces only unread results, archive on acknowledgment.
-
-**Class.** `harness-coordination-channel-missing` — orchestrator-to-spawned-task lacks a return path; user becomes the channel.
+Per backlog-plan-atomicity rule, the full entry is removed from open sections at the same commit as plan creation. Audit trail of the original entry preserved in git history at the commit prior to plan creation.
 
 ---
 
@@ -152,28 +132,51 @@ This is the reviewer-side analogue of the documented `claim-reviewer` self-invoc
 
 ---
 
-## HARNESS-GAP-13 — Expand harness-hygiene-scan to detect more project-specific shapes (added 2026-05-04)
+## HARNESS-GAP-13 — ABSORBED 2026-05-05 into `docs/plans/harness-gap-13-hygiene-scan-expansion.md`
 
-**Source.** D5 of the D1-D5 educational re-do dialogue (2026-05-03/04). User raised the structural question: with builders working in their own project's directory (`~/claude-projects/<project>/`), project-specific decisions/reviews automatically end up in the project's repo, not in NL's. The gitignore protecting `docs/decisions/` etc. was a belt-and-suspenders against an unlikely failure mode. The primary defense is `harness-hygiene-scan.sh` checking against a denylist of project-specific terms.
+Per backlog-plan-atomicity rule, the full entry is removed from open sections at the same commit as plan creation. Audit trail of the original entry preserved in git history at the commit prior to plan creation.
 
-**Why this is a gap.** The current denylist catches specific terms (project codenames, internal jargon, customer/business names). Each pattern is a known-bad shape. But the denylist is reactive — it grows as new project-specific shapes are observed. There's no periodic full-tree audit that surfaces new project-specific content the denylist hasn't yet learned to detect. Plus the denylist's pattern-matching is literal — it doesn't catch project-specific content that uses unusual terminology or paraphrases known terms.
+---
 
-User question (D5): "Should we expand harness-hygiene-scan to also check for any project-specific details that might be trying to make their way into the harness documents?"
+## HARNESS-GAP-16 — Plan-closure validation gate + `/close-plan` skill (added 2026-05-05)
 
-**Proposed mechanism — multi-layer expansion:**
+**Source.** Surfaced 2026-05-05 from the pre-submission-audit-mechanical-enforcement plan stranding incident. The plan was Status: ACTIVE since 2026-05-03 with all 5 task checkboxes empty despite all 5 tasks' code work being shipped on master. Recovery took ~2 hours of task-verifier dispatches + commit + closure. Root cause per user: bookkeeping discipline was not followed at session end; existing pre-stop-verifier did not catch it.
 
-1. **Denylist additions for common tech-stack identifiers** that frequently leak in: third-party service names commonly used by downstream projects, common database technologies, framework-specific terms.
-2. **Heuristic detection layer** for content shapes that suggest project-specific origin: file paths matching project-internal patterns (e.g., `app/api/v\d+/[\w-]+/`, `src/components/[A-Z][\w]+\.tsx`), repeated capitalized terms that don't appear in NL's own vocabulary, customer/business-specific term clusters.
-3. **Periodic full-tree audit** as part of `/harness-review` weekly skill: scan ALL committed files (not just staged diff) against denylist + heuristics. Surface candidates for denylist addition or content sanitization.
-4. **Sanitization helper** that proposes replacements for detected matches (e.g., "this file references `<project-name>` 8 times — suggest sanitizing to `<your-project>`").
+**Why this is a gap.** The harness has multiple Pattern-level rules requiring closure bookkeeping (verifier mandate, "update status documents when work completes", planning.md's plan-completion checklist) but no Mechanism that REFUSES the irreversible Status: COMPLETED transition until closure is mechanically complete. Sessions can flip Status without checking all bases, and once flipped + auto-archived, the audit trail is in a final state regardless of whether bookkeeping was done.
 
-**Why this matters.** Without expansion, project-specific content slowly accumulates in NL through paths the current scanner doesn't detect. The harness-hygiene rule is supposed to be the structural defense; if the scanner has blind spots, the rule's protection is illusory. The user's reframe in D5 is correct: directory separation does most of the work, but harness-hygiene-scan is the explicit defense and should match its claim.
+**Proposed mechanism — two layers:**
 
-**Effort estimate.** M (~6-10 hours). Denylist additions are quick (~1 hour); heuristic detection is the bulk (~4-6 hours including pattern design + self-tests); full-tree audit + sanitization helper add another ~2-3 hours.
+1. **Layer 1 (~2 hr): Extend `plan-lifecycle.sh` with closure-validation gate.** When an Edit changes Status from ACTIVE to COMPLETED, run mechanical checks BEFORE the auto-archive runs:
+   - All task checkboxes are `[x]` in `## Tasks`
+   - For each task ID, an evidence block exists in `## Evidence Log` with `Verdict: PASS`
+   - `## Completion Report` section is present with non-empty Implementation Summary, Design Decisions, Known Issues sub-sections
+   - For each `Backlog items absorbed:` entry in plan header, the backlog has been reconciled (item not in open sections)
+   - SCRATCHPAD.md mtime within last hour AND mentions plan slug
+   
+   If any check fails, refuse the Status flip with specific error listing unmet items. Pre-flight gate, not backstop — refuses forward progress until closure work is real.
 
-**Why P3 (not P1).** The current scanner caught 4 leaks this session correctly. The expansion adds layered protection but the current floor is functioning. Schedule for Phase 1d-E alongside HARNESS-GAP-10 sub-gaps. Would land alongside the discovery-protocol gate-redesign and other harness-cleanup work.
+2. **Layer 2 (~1.5 hr): `/close-plan <slug>` skill.** Walks the orchestrator through closure mechanically:
+   - Validates which Layer 1 checks currently pass; surfaces gaps with specific actions ("invoke task-verifier on Task 3", "update SCRATCHPAD")
+   - Writes the completion report from `~/.claude/templates/completion-report.md`
+   - Updates SCRATCHPAD + backlog
+   - Flips Status (which triggers Layer 1 + auto-archive)
+   - Commits + offers to push
+   
+   Makes the right path easier than the wrong path.
 
-**Originating context.** User's D5 framing (2026-05-04): "Building of everything [is] performed within that repo's own directory... PT decisions automatically [are] contained within that project's directory, keeping the Neural Lace project from absorbing it... Should we expand harness-hygiene-scan?" Affirmed: the directory separation does most of the work; harness-hygiene-scan is the explicit defense and benefits from expansion to match its claim.
+3. **Layer 3 (already landed 2026-05-05):** `feedback_complete_plan_bookkeeping_in_session.md` memory in `~/.claude/projects/.../memory/`. Behavioral reinforcement only.
+
+**Why pre-flight gate (Layer 1) is different from a backstop.** This isn't a mechanism catching mistakes after the fact — it's a deterministic pre-condition gate. It runs BEFORE the irreversible action (Status flip + auto-archive). It refuses forward progress until closure work is satisfied. Compare: `pre-commit-tdd-gate.sh` is a pre-flight gate (refuses bad commits), not a backstop. Same shape.
+
+**What it doesn't catch.** Terminal-killed sessions where Stop hook never fires. For those, `plan-status-archival-sweep.sh` already catches terminal-status plans at next session start. Could also extend that sweep to flag "ACTIVE plans whose tasks are all `[x]` but Status hasn't flipped" — half-closed plans visible at next session start (~30 min add).
+
+**Effort estimate.** ~4-5 hr for Layers 1+2. Optional half-closed-detection extension ~30 min.
+
+**Why scheduled next-after GAP-13** (per user 2026-05-05 sequencing decision): GAP-08 + GAP-13 ship user-facing improvements (orchestrator coordination + scanner expansion). GAP-16 is structural protection against the failure mode that just consumed effort to recover. Per user: "continue with GAP-08 + GAP-13 as planned per Option B, schedule this as next-after."
+
+**Originating context.** Stranded plan recovery 2026-05-05 (commits `588b6db` + `4e8f658` on `verify/pre-submission-audit-reconcile` branch). User's framing: "the root cause of the problem is that you're not doing your due diligence and properly updating all the documentation when you complete a plan. That's what needs to be fixed." Discipline + memory landed (Layer 3); deterministic mechanism (Layers 1+2) deferred to this entry.
+
+**Class.** `plan-closure-not-mechanically-gated` — irreversible terminal-status transition allowed without verified closure work.
 
 ---
 
@@ -235,6 +238,40 @@ See "Recently implemented" section above for commit SHA (b27ab7e). All four out-
 **Why P3.** Real divergence but the in-scope reconciliation closed the higher-impact PreToolUse drift. Each remaining item is a single-line fix with an obvious canonical side.
 
 **Originating context.** Surfaced during Phase 1d-E-3 audit as out-of-scope drift not covered by the plan's named four hooks.
+
+---
+
+## HARNESS-GAP-17 — User-facing narrative docs stale; docs-freshness-gate has narrative-doc blind spot (added 2026-05-05; renumbered from GAP-16 to GAP-17 on 2026-05-05 — duplicate-numbering conflict with closure-validation entry above)
+
+**Status (2026-05-05):** Part A IMPLEMENTED in this session. All 5 narrative docs updated to reflect Gen 5/6 + Build Doctrine integration arc — README.md (Gen 5/6 + Build Doctrine highlights, Status table extended), `adapters/claude-code/CLAUDE.md` (5-mode framework + Gen 5/6 sections + Build Doctrine integration block + Counter-Incentive Discipline + Detailed Protocols expanded; live mirror synced), `docs/harness-strategy.md` (milestones for Gen 5/6 + Build Doctrine arc, security maturity table extended with anti-vaporware / narrative-integrity / spec-discipline / hygiene rows), `docs/best-practices.md` (six new pattern entries: Discovery Protocol, comprehension gate, plans as living artifacts, PRD validity + spec freeze, findings ledger, definition-on-first-use; References section expanded with all new rules + decision records), `docs/claude-code-quality-strategy.md` (Build Doctrine arc framing, generation arc up to Gen 6, mechanism stack tables extended for "Adversarial separation" / "Determinism via mechanism" with Gen 5/6 + Build Doctrine entries, Known Gaps section updated to reflect Gen 6 partial closure of verbal-vaporware gap and explicit GAP-16 plan-closure-discipline gap, References section lists decision records 011-024). Part B (gate extension) remains deferred per the original P2 estimate. Originating commit on this branch.
+
+**Source.** Surfaced 2026-05-05 when user asked "Have we updated the documentation to reflect these updates?" Investigation revealed substantial drift between mechanism-tracking layer (current via docs-freshness-gate enforcement) and narrative/orientation layer (stale, no enforcement).
+
+**Why this is a gap (two-part).**
+
+**Part A — content drift.** After ~11 phases of Build Doctrine + NL integration work shipping new mechanisms (scope-gate redesign, discovery protocol, comprehension-gate, definition-on-first-use, multi-push, push-policy change, plus 12 new decision records 013-024), the user-facing narrative docs are stale by 1-2+ weeks:
+
+- `README.md` (last touched 2026-04-29) — pre-dates entire integration arc
+- `docs/harness-strategy.md` (last touched 2026-04-18) — pre-dates Build Doctrine entirely
+- `docs/best-practices.md` (last touched 2026-04-27) — missing all new patterns (educational decision format, in-flight scope updates, no-waiver gate model, calibration mimicry framing, discovery protocol)
+- `docs/claude-code-quality-strategy.md` (2026-04-24) — pre-Build Doctrine
+- `adapters/claude-code/CLAUDE.md` (2026-04-24) — missing Counter-Incentive Discipline patterns, discovery protocol, educational-format requirement
+
+**Part B — structural blind spot.** `docs-freshness-gate.sh` only fires on Add/Delete/Rename of hooks/rules/agents/skills. It catches structural surface-area changes but doesn't require updates to narrative docs that should propagate from those changes. The harness gained 11 mechanisms; the gate dutifully required `harness-architecture.md` preface annotations for each but didn't require the same propagation to `README.md` or `best-practices.md` because those aren't in its detection set. This is the documentation analogue of FM-023 (vaporware-spec-misunderstood-by-builder) — gates that look right on the surface but miss a class of drift.
+
+**Proposed action — two parts.**
+
+1. **Documentation sweep** (~3-5 hours, dedicated plan). Update the 5 stale narrative docs to reflect current mechanism state. README.md gets the highest priority since it's the public-facing first-impression artifact. Best-practices.md needs the most additions (new patterns and rationales). Strategy.md and quality-strategy.md need milestone updates. CLAUDE.md needs the Counter-Incentive Discipline + educational-format additions.
+
+2. **Extend `docs-freshness-gate.sh` to require narrative-doc updates** when N or more hooks/rules/agents/skills change in a defined window OR when major decision records (Tier 2+) land. Mechanism: a periodic full-tree audit (could compose with `/harness-review` weekly skill) that diffs the harness-architecture.md preface chain against the README's claimed-features section and surfaces stale narrative.
+
+**Effort estimate.**
+- Part 1 (sweep): M (~3-5 hours). Pure docs work, no mechanism changes, low risk.
+- Part 2 (gate extension): M-L (~6-10 hours). Heuristic detection design + integration with /harness-review.
+
+**Why P1 for Part 1, P2 for Part 2.** Part 1 is content drift that affects every fresh user/session's first orientation; high reach, fixable with focused effort. Part 2 prevents recurrence but is structural mechanism work that should land after the initial sweep produces empirical data on what kinds of changes the gate should detect.
+
+**Originating context.** User asked 2026-05-05: "These updates to NL are substantial. Have we updated the documentation to reflect these updates?" Quick verification confirmed the gap.
 
 ---
 

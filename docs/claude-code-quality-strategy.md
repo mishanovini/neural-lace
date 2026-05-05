@@ -1,9 +1,11 @@
 # Getting Quality Out of Claude Code — Strategy and Harness Design
 
-**Last updated:** 2026-04-22
-**Source material:** Transcript of a 2026-04-22 strategy discussion between the harness maintainer and a collaborating engineer; Neural Lace harness design docs.
+**Last updated:** 2026-05-05 (Build Doctrine integration arc + Gen 6 narrative-integrity hooks added)
+**Source material:** Transcript of a 2026-04-22 strategy discussion between the harness maintainer and a collaborating engineer; Neural Lace harness design docs; Build Doctrine integration synthesis (May 2026).
 
 This document codifies the strategy the maintainer has developed for extracting maximum quality from Claude Code, and maps each principle to its concrete manifestation in the Neural Lace harness. It exists so the strategy is legible to (a) the maintainer in future sessions, (b) collaborating engineers working with the harness, and (c) anyone who adopts Neural Lace externally and wants to understand the "why" behind its choices.
+
+> **Generation arc as of May 2026.** Gen 4 (2026-04-15) shipped the core anti-vaporware mechanism layer. Gen 5 (2026-04-24) added adversarial observation of the running product (end-user-advocate acceptance loop), plan-lifecycle integrity, and a self-improvement meta-loop. Gen 6 (2026-04-26) closed the gap between agent claims and transcript evidence with six narrative-integrity Stop hooks (A1, A3, A5, A7, A8). The **Build Doctrine integration arc** (May 2026) shipped seven mechanism families addressing structural gaps the prior generations didn't cover: Discovery Protocol (proactive learning capture), comprehension gate (R2+ articulate-before-checkbox), PRD validity + spec freeze, findings ledger, definition-on-first-use, scope-enforcement-gate redesign (plans as living artifacts), DAG review waiver gate. See `docs/harness-architecture.md` for the full mechanism inventory and `docs/decisions/013-024` for the integration arc's decision records.
 
 ---
 
@@ -115,8 +117,20 @@ This is how Neural Lace turns the four core beliefs into executable code. Every 
 | **Pre-commit TDD gate** | `hooks/pre-commit-tdd-gate.sh` | 5-layer enforcement: new files need tests; modified files need full-path imports; integration tests can't mock; trivial assertions banned; silent-skip patterns rejected |
 | **Pre-stop verifier** | `hooks/pre-stop-verifier.sh` | Blocks session end if plan has unverified tasks |
 | **Credential scanner** | `git-hooks/pre-commit` + `hooks/pre-push-scan.sh` | Two-layer mechanical block on credential leaks — the pattern the maintainer brought from a prior defense-industry role with rigorous QA practices |
-| **Bug persistence gate** | `hooks/bug-persistence-gate.sh` | Scans transcript for bug-trigger phrases ("we should also", "known issue"); blocks if no persistence happened |
+| **Bug persistence gate** | `hooks/bug-persistence-gate.sh` | Scans transcript for bug-trigger phrases ("we should also", "known issue"); blocks if no persistence happened. *Build Doctrine extension:* now also accepts `docs/discoveries/YYYY-MM-DD-*.md` and `docs/findings.md` as legitimate durable-storage targets |
 | **Systems design gate** | `hooks/systems-design-gate.sh` | Blocks design-mode file edits without an active plan |
+| **Product acceptance gate** *(Gen 5)* | `hooks/product-acceptance-gate.sh` | Stop hook position 4: blocks session end when an ACTIVE non-exempt plan lacks a runtime PASS artifact whose `plan_commit_sha` matches HEAD |
+| **Narrative-integrity Stop hooks A1/A3/A5/A7** *(Gen 6)* | `hooks/{goal-coverage-on-stop,transcript-lie-detector,deferral-counter,imperative-evidence-linker}.sh` | Read `$TRANSCRIPT_PATH` JSONL (which the agent cannot edit) and force gaps between agent claims and transcript evidence into the user-visible final message |
+| **Vaporware-volume gate A8** *(Gen 6)* | `hooks/vaporware-volume-gate.sh` | PreToolUse on `gh pr create`: blocks PRs with > 200 lines of describing files AND ZERO behavior-executing artifact files |
+| **Scope-enforcement gate** *(Build Doctrine, redesigned)* | `hooks/scope-enforcement-gate.sh` | Blocks builder commits that touch files outside the active plan's `## Files to Modify/Create` OR `## In-flight scope updates` sections; three structural options replace the old waiver model |
+| **PRD validity gate** *(Build Doctrine)* | `hooks/prd-validity-gate.sh` | Plan creation blocked when `prd-ref:` resolves to a missing-or-incomplete `docs/prd.md` |
+| **Spec freeze gate** *(Build Doctrine)* | `hooks/spec-freeze-gate.sh` | Edit/Write on declared files blocked unless plan declares `frozen: true` |
+| **Findings-ledger schema gate** *(Build Doctrine)* | `hooks/findings-ledger-schema-gate.sh` | Validates every `docs/findings.md` entry against the locked six-field schema on every commit |
+| **Definition-on-first-use gate** *(Build Doctrine)* | `hooks/definition-on-first-use-gate.sh` | Blocks commits that introduce uppercase 2-6-char acronyms in doctrine docs without a glossary entry or in-diff parenthetical definition |
+| **Discovery surfacer** *(Build Doctrine)* | `hooks/discovery-surfacer.sh` | SessionStart hook: scans `docs/discoveries/` for `Status: pending` and emits a system-reminder block for each |
+| **Plan-status archival sweep** *(Build Doctrine)* | `hooks/plan-status-archival-sweep.sh` | SessionStart safety-net for terminal-Status flips that bypass `plan-lifecycle.sh` (e.g., Bash `sed`-based edits don't fire PostToolUse Edit/Write) |
+| **Settings divergence detector** *(Build Doctrine)* | `hooks/settings-divergence-detector.sh` | SessionStart surfacing of hook-entry-count divergence between live `~/.claude/settings.json` and committed `settings.json.template` |
+| **DAG review waiver gate** *(Build Doctrine)* | `hooks/dag-review-waiver-gate.sh` | Tier 3+ active plans require a substantive (>= 40 char) waiver before the first Task invocation in a session |
 
 ### From "Adversarial context separation" →
 
@@ -127,8 +141,12 @@ This is how Neural Lace turns the four core beliefs into executable code. Every 
 | **Harness-reviewer** | `agents/harness-reviewer.md` | Adversarial review of any proposed harness change before commit |
 | **Code-reviewer** | `agents/code-reviewer.md` | Independent review of code quality pre-commit |
 | **Security-reviewer** | `agents/security-reviewer.md` | Adversarial security pass on diffs |
+| **End-user-advocate** *(Gen 5)* | `agents/end-user-advocate.md` | Plan-time + runtime adversarial observation of the running product; the only agent whose verdict does NOT trust what the builder produced |
+| **Comprehension-reviewer** *(Build Doctrine)* | `agents/comprehension-reviewer.md` | At plan rung >= 2, applies three-stage rubric (schema / substance / diff correspondence) to the builder's articulated mental model; FAIL or INCOMPLETE blocks the checkbox flip |
+| **PRD-validity-reviewer** *(Build Doctrine)* | `agents/prd-validity-reviewer.md` | Substance review of the upstream PRD a plan claims to implement; pairs with `prd-validity-gate.sh` PreToolUse Write blocker |
 | **UX testers** | `agents/ux-end-user-tester.md`, `domain-expert-tester.md`, `audience-content-reviewer.md` | Persona-based adversarial user testing |
 | **Orchestrator pattern** | `rules/orchestrator-pattern.md` | Main session dispatches to `plan-phase-builder` sub-agents in isolated worktrees; main session stays lean as pure orchestrator |
+| **Counter-Incentive Discipline** *(2026-05-03)* | Sections in `agents/{task-verifier,code-reviewer,plan-phase-builder,end-user-advocate}.md` | Explicit prompts priming each agent against its own training-induced bias toward call-it-done shortcuts (builders) or trust-the-builder-by-default (reviewers) |
 
 ### From "Ask, don't tell" →
 
@@ -305,11 +323,13 @@ When a practice causes repeated failures despite being documented, that's the si
 
 The harness is honest about what it can't enforce. Knowing the gaps is part of the strategy.
 
-### 1. Verbal vaporware in conversation
+### 1. Verbal vaporware in conversation — narrowed but not closed (Gen 6 partial)
 
-Claude Code has no PostMessage hook. The `claim-reviewer` agent is self-invoked and can be skipped. The user retains interrupt authority when they see an uncited claim, but mechanical enforcement doesn't exist.
+Claude Code has no PostMessage hook. The `claim-reviewer` agent is self-invoked and can be skipped. **Gen 6 narrowed this gap substantially:** A1 (`goal-coverage-on-stop.sh`) checks the user's verbatim first message against tool-call evidence; A3 (`transcript-lie-detector.sh`) catches completion-class claims contradicted by deferral-class claims in the same session; A5 (`deferral-counter.sh`) forces deferred work into the user-visible final message; A7 (`imperative-evidence-linker.sh`) catches silently-skipped user imperatives. These hooks read `$TRANSCRIPT_PATH` JSONL — which the agent cannot edit — so the integrity is tamper-proof.
 
-**Mitigation:** train the reflex to ask for file:line citations on any claim of feature existence.
+**Residual gap:** mid-session uncited feature claims (e.g., "X is wired up" with no file:line) still aren't caught at the moment of the claim — the Gen 6 hooks fire at session end, not on every assistant message. Closing this fully requires a PostMessage hook event that Claude Code does not currently emit.
+
+**Mitigation:** Gen 6 hooks at session end + `claim-reviewer` agent self-invoked + user reflex to ask for file:line citations on any feature claim. Reviewer-accountability tracker (HARNESS-GAP-11) is the structural follow-up gated on telemetry.
 
 ### 2. Tool-call-budget `--ack` bypass
 
@@ -321,7 +341,15 @@ The hook looks for sentinel lines in a review file under `~/.claude/state/review
 
 Multiple Claude Code sessions on the same machine share `~/.claude/` state (memory, SCRATCHPAD, tool-call budgets). They also share the git working tree, leading to uncommitted-file wipes — this failure mode has been observed repeatedly in practice, with uncommitted plan files lost when concurrent sessions run `git stash` or `git clean` operations.
 
-**Mitigation:** `claude --remote` for autonomous work (isolated cloud sandboxes); the `robust-plan-file-lifecycle` plan for commit-on-creation protection.
+**Mitigation:** `claude --remote` for autonomous work (isolated cloud sandboxes); the `plan-lifecycle.sh` PostToolUse uncommitted-plan warning emits whenever an edit lands on an uncommitted plan; `pre-stop-verifier.sh` flags uncommitted plans at session end. **Open follow-up:** the multi-active-plan stranding discovery (`docs/discoveries/2026-05-05-multi-active-plan-stranding.md`) is pending decision — should a SessionStart hook surface ALL `Status: ACTIVE` plans (not just the most-recently-edited) with a warning when count > 1?
+
+### 4. Plan-closure discipline — open gap (HARNESS-GAP-16)
+
+The harness has multiple Pattern-level rules requiring closure bookkeeping (verifier mandate, "update status documents when work completes", planning.md's plan-completion checklist) but no Mechanism that REFUSES the irreversible Status: COMPLETED transition until closure is mechanically complete. Sessions can flip Status without checking all bases (all task checkboxes flipped, evidence blocks present with PASS, completion report populated, backlog reconciled, SCRATCHPAD updated), and once flipped + auto-archived, the audit trail is in a final state regardless of whether bookkeeping was done. Surfaced from the 2026-05-05 stranding incident where `pre-submission-audit-mechanical-enforcement.md` sat ACTIVE since 2026-05-03 with all 5 task checkboxes empty despite all 5 tasks' code work shipped on master.
+
+**Proposed mechanism (HARNESS-GAP-16, ~4-5 hr).** Layer 1: extend `plan-lifecycle.sh` with closure-validation gate that runs mechanical checks BEFORE the auto-archive on Status: ACTIVE → COMPLETED transition (all checkboxes `[x]`, evidence blocks with PASS verdict per task ID, completion report populated, backlog absorbed-items reconciled, SCRATCHPAD mtime fresh and mentions plan slug). Layer 2: `/close-plan <slug>` skill that walks the orchestrator through closure mechanically and makes the right path easier than the wrong path. Layer 3 (already landed): `feedback_complete_plan_bookkeeping_in_session.md` memory — behavioral reinforcement only.
+
+**Mitigation today:** Pattern-level rules + the auto-memory feedback entry. The mechanism is scheduled next-after HARNESS-GAP-13 ships.
 
 ### 4. Harness-portability to cloud sessions — RESOLVED (2026-04-23)
 
@@ -505,20 +533,34 @@ The "dotfiles-synced harness" framing from the original suggestion was supersede
 
 The harness is how these principles get enforced without human discipline. The discipline that remains — planning verbosity, meta-questions, SRE-style oscillation — is what the human contributes. The goal over time is to automate even this residual discipline, so that best practices are invoked by default rather than memorized.
 
+The Build Doctrine integration arc (May 2026) extends this with proactive mechanisms — capture-and-decide for mid-process learnings (Discovery Protocol) and articulate-before-checkbox-flip for R2+ tasks (comprehension gate) — beyond the reactive failure-correction loop the prior generations focused on.
+
 ---
 
 ## References
 
-**Source transcript:** 2026-04-22 strategy discussion between the harness maintainer and a collaborating engineer.
+**Source transcripts:** 2026-04-22 strategy discussion between the harness maintainer and a collaborating engineer; Build Doctrine integration arc decisions 013-024 (May 2026).
 
 **Neural Lace structural docs:**
 - `README.md` — architectural overview
 - `SETUP.md` — installation + customization
 - `docs/harness-strategy.md` — vision + roadmap
-- `docs/best-practices.md` — 25+ encoded practices
-- `docs/harness-architecture.md` — Gen 4 enforcement map
+- `docs/best-practices.md` — 30+ encoded practices (including Build Doctrine extensions)
+- `docs/harness-architecture.md` — Gen 4-6 + Build Doctrine enforcement map
 - `principles/` — tool-agnostic philosophy (core-values, permission-model, progressive-autonomy, evaluation-discipline, security-posture, harness-hygiene, ux-philosophy, diagnosis-protocol, forward-compatibility)
 - `patterns/` — tool-family-agnostic patterns (hooks, pipelines, agents)
+- `docs/decisions/` — Tier 2+ decision records, including:
+  - 011 (claude --remote harness approach) — cloud-mode inheritance via project `.claude/`
+  - 012 (Agent Teams integration) — feature-flagged five-mode framework
+  - 013 (default push policy) — auto-push safe methods
+  - 014 (calibration mimicry design) — telemetry-gated reviewer-accountability
+  - 015-018 (PRD validity, spec freeze, plan-header schema, scratchpad divergence)
+  - 019 (findings ledger format)
+  - 020 (comprehension gate semantics)
+  - 021 (DRIFT-02 account-switch config-driven)
+  - 022 (pipeline-agents.md deletion)
+  - 023 (definition-on-first-use enforcement)
+  - 024 (GAP-14 reconciliation)
 - `adapters/claude-code/` — Claude Code-specific implementation
 
 **Key Neural Lace artifacts:**

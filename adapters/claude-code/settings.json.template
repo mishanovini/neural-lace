@@ -374,6 +374,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/spawned-task-result-surfacer.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/plan-status-archival-sweep.sh",
             "statusMessage": "Sweeping terminal-status plans into archive..."
           },

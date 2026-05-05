@@ -105,19 +105,60 @@ write_section() {
 }
 
 # ==========================================================================
-# Check 1: Full-tree hygiene scan
+# Check 1: Full-tree hygiene scan (denylist + heuristic, GAP-13 Layer 3)
 # ==========================================================================
+# Runs adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree, which
+# scans every tracked file in the repo for two classes of violation:
+#   - [denylist] — exact-pattern matches against
+#     adapters/claude-code/patterns/harness-denylist.txt (Phase 1d-E-4 + GAP-13
+#     Task 1 additions: cloud buckets, OAuth client IDs, connection strings,
+#     service account keys, etc.)
+#   - [heuristic] — project-internal file-path shapes (e.g., `app/api/v1/...`,
+#     `src/components/PascalCase.tsx`, `supabase/migrations/<14-digit>_<slug>.sql`)
+#     plus repeated capitalized-term clusters not in the NL vocabulary
+#     allowlist (GAP-13 Task 2 / Layer 2)
+#
+# Scanner output format: one match per line, prefixed `[denylist]` or
+# `[heuristic]`, followed by `<path>:<lineno>: <content>`. Exit code: 0 if
+# zero matches, 1 otherwise. PASS if total match count is zero; FAIL with
+# the per-match list (label preserved) otherwise.
 scan_output=$(bash "$REPO_ROOT/adapters/claude-code/hooks/harness-hygiene-scan.sh" --full-tree 2>&1)
 scan_rc=$?
 if [[ $scan_rc -eq 0 ]]; then
   write_section "1. Full-tree hygiene scan" "PASS"
 else
-  # Capture the matching lines; keep first 20 for brevity.
-  mapfile -t matches < <(echo "$scan_output" | grep -E '^[^[:space:]].+:[0-9]+:' | head -20)
-  if [[ ${#matches[@]} -eq 0 ]]; then
-    matches=("Scanner exited $scan_rc but no structured matches parsed from output")
+  # Parse the labeled match lines emitted by the scanner. Each match line
+  # starts with either `[denylist]` or `[heuristic]`. Count total + per-label.
+  mapfile -t labeled_matches < <(echo "$scan_output" | grep -E '^\[(denylist|heuristic)\] ')
+  denylist_count=$(printf '%s\n' "${labeled_matches[@]}" | grep -c '^\[denylist\] ' || true)
+  heuristic_count=$(printf '%s\n' "${labeled_matches[@]}" | grep -c '^\[heuristic\] ' || true)
+  total_count=${#labeled_matches[@]}
+
+  findings=()
+  if [[ $total_count -eq 0 ]]; then
+    # Defensive: scanner exited non-zero but emitted no labeled lines. Surface
+    # the exit code and the head of stderr so the reviewer can triage.
+    findings+=("Scanner exited $scan_rc but no labeled matches parsed from output")
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      findings+=("Output: $line")
+    done < <(echo "$scan_output" | head -5)
+  else
+    findings+=("Total matches: $total_count ([denylist]: $denylist_count, [heuristic]: $heuristic_count)")
+    # Cap at 30 to keep the review file readable; full output lives in stderr
+    # if the user re-runs the scanner directly.
+    if [[ $total_count -gt 30 ]]; then
+      while IFS= read -r mline; do
+        findings+=("$mline")
+      done < <(printf '%s\n' "${labeled_matches[@]}" | head -30)
+      findings+=("... and $((total_count - 30)) more — re-run \`bash adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree\` for the full list")
+    else
+      for mline in "${labeled_matches[@]}"; do
+        findings+=("$mline")
+      done
+    fi
   fi
-  write_section "1. Full-tree hygiene scan" "FAIL" "${matches[@]}"
+  write_section "1. Full-tree hygiene scan" "FAIL" "${findings[@]}"
 fi
 
 # ==========================================================================
@@ -564,8 +605,16 @@ enough context to fix directly.
 
 Priority order for triage:
 
-1. **Check 1 (hygiene scan)** — FAIL here means a denylist pattern leaked into
-   the tree. Treat as a security issue. Fix before the next commit.
+1. **Check 1 (hygiene scan)** — FAIL here means a `[denylist]` pattern (exact
+   match) or `[heuristic]` pattern (project-internal path shape, repeated
+   non-NL-vocab term cluster) leaked into the tree. The check distinguishes
+   the two classes in its output (`Total matches: N ([denylist]: X,
+   [heuristic]: Y)`). Treat `[denylist]` as a security issue — fix before the
+   next commit. `[heuristic]` matches are usually scrubbing-leftovers or new
+   project-internal references; sanitize via
+   `adapters/claude-code/scripts/harness-hygiene-sanitize.sh` (GAP-13 Layer 4)
+   or, if a false positive, add an exemption to the NL vocabulary allowlist
+   in `harness-hygiene-scan.sh`.
 2. **Check 2 (enforcement map integrity)** — FAIL means documentation claims a
    hook/agent/skill exists but it doesn't. Either create the referenced file or
    delete the row in the documentation. Advertising hallucinated enforcement
