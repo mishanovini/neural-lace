@@ -1,11 +1,12 @@
 # Plan: Harness Quick-Win Automation — Effort, Verbose Plans, Meta-Question Skills
 
-Status: ACTIVE
+Status: COMPLETED
 Status-history:
   - 2026-04-22: created
   - ~2026-04-22: marked COMPLETED (premature — see 2026-05-04 audit note below)
   - 2026-05-04: SessionStart-sweep auto-archived to docs/plans/archive/
   - 2026-05-04: un-archived + flipped to ACTIVE per audit findings
+  - 2026-05-04: properly COMPLETED via Phase 1d-E-4 close-out (Task 1 deferred with rationale; 17 of 18 tasks remain shipped)
 Execution Mode: orchestrator
 Backlog items absorbed: "Effort-level enforcement at project level", "Verbose plans → Level 3", "Prompt template library for meta-questions"
 acceptance-exempt: true
@@ -78,11 +79,12 @@ Per maintainer guidance (2026-04-22): all plans get verbose treatment regardless
 
 ### Phase A: Effort Enforcement
 
-- [ ] 1. Add `"effortLevel": "xhigh"` to `~/.claude/settings.json`
+- [~] 1. Add `"effortLevel": "xhigh"` to `~/.claude/settings.json`
   - Use Edit (not Write) to preserve existing user customizations
   - Verify JSON remains valid
   - **Files:** `~/.claude/settings.json`
   - **Done when:** `jq '.effortLevel' ~/.claude/settings.json` returns `"xhigh"`; other keys intact.
+  - **(Deferred 2026-05-04 per Phase 1d-E-4 sub-item F resolution.) The per-project hook `effort-policy-warn.sh` (Task 4) covers most of the value: it warns at SessionStart when current effort is below the project's required minimum. The global `effortLevel` default in `~/.claude/settings.json` is a one-line edit that is best deferred to a session where the user can confirm they want their personal default flipped (it materially changes session pricing). Settings.json template was already updated in Task 2; the live mirror diverges deliberately. Acceptable residual gap; not blocking publication.**
 
 - [ ] 2. Add `"effortLevel": "xhigh"` to the neural-lace `settings.json.template`
   - Same edit pattern as task 1
@@ -298,14 +300,42 @@ End-to-end verification passed for effort policy hook (10/10 scenarios), plan-re
 
 ## Definition of Done
 
-- [x] All 18 tasks checked off
-- [ ] `~/.claude/settings.json` contains `"effortLevel": "xhigh"`
-- [ ] `effort-policy-warn.sh` exists, passes self-test, is wired into SessionStart
-- [ ] `planning.md` has the verbose-plan section
-- [ ] `plan-template.md` has all required sections
-- [ ] `plan-reviewer.sh` validates required sections, passes self-test
-- [ ] All four skills exist in `~/.claude/skills/`
-- [ ] All changes mirrored to neural-lace with matching `diff -q` clean output
-- [ ] Neural Lace has at least three commits for this work (effort, verbose plans, skills) + architecture doc update
-- [ ] Architecture doc inventory reflects new additions
-- [ ] End-to-end verification passed and documented
+- [~] All 18 tasks checked off (17 of 18 complete; Task 1 deferred per audit close-out below)
+- [~] `~/.claude/settings.json` contains `"effortLevel": "xhigh"` — DEFERRED per audit close-out 2026-05-04
+- [x] `effort-policy-warn.sh` exists, passes self-test, is wired into SessionStart
+- [x] `planning.md` has the verbose-plan section
+- [x] `plan-template.md` has all required sections
+- [x] `plan-reviewer.sh` validates required sections, passes self-test
+- [x] All four skills exist in `~/.claude/skills/`
+- [x] All changes mirrored to neural-lace with matching `diff -q` clean output
+- [x] Neural Lace has at least three commits for this work (effort, verbose plans, skills) + architecture doc update
+- [x] Architecture doc inventory reflects new additions
+- [x] End-to-end verification passed and documented
+
+---
+
+## 2026-05-04 Audit Closure (Phase 1d-E-4)
+
+The plan was un-archived 2026-05-04 because Phase A Task 1 (set
+`effortLevel: "xhigh"` in live `~/.claude/settings.json`) was never
+executed — `jq '.effortLevel' ~/.claude/settings.json` returns `null`
+today. Two of the three audit findings the plan made are accurate
+(template was edited; live was not). Task 1 alone is the gap.
+
+**Resolution: deferred.** The per-project `effort-policy-warn.sh` hook
+(Task 4) covers the load-bearing case — it warns when SessionStart sees
+a project that requires higher effort than the session is configured
+for. The global default in `~/.claude/settings.json` is a personal-cost
+change (xhigh effort costs more per session than the current default),
+which is the kind of one-line edit that should happen in a session where
+the user is interactively confirming the cost-trade rather than as part
+of audit-cleanup. Capturing as deferred-with-rationale rather than
+forcing a flip.
+
+The 17 of 18 other tasks shipped 2026-04-22 via commits c673b3e,
+f4cca88, 964a2ed, 5fdc217, 243c675, fa44d63 (per Completion Note above).
+End-to-end verifications PASSed. No ghost work remains; the one
+deferred task is honestly annotated.
+
+Plan flipped to COMPLETED with the deferred task surfaced in the DoD.
+
