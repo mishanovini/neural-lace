@@ -179,8 +179,7 @@ Disable any time by flipping `"enabled": false` — no further cleanup required.
 │   ├── ux-design.md                   # Error messages, empty states, loading
 │   ├── ux-standards.md                # UI design principles, attention hierarchy
 │   ├── vaporware-prevention.md        # Gen 4 stub — points at hooks that enforce anti-vaporware
-│   ├── harness-maintenance.md         # Global-first rule, sync to neural-lace repo
-│   └── pipeline-agents.md             # BUILDER/VERIFIER/DECOMPOSER roles for pipeline mode
+│   └── harness-maintenance.md         # Global-first rule, sync to neural-lace repo
 ├── agents/
 │   ├── audience-content-reviewer.md   # Reviews user-facing text against project's target audience
 │   ├── claim-reviewer.md              # Gen 4: adversarial review of product Q&A claims (self-invoked)
