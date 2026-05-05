@@ -58,11 +58,38 @@
         ]
       },
       {
-        "matcher": ".*",
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/outcome-evidence-gate.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/systems-design-gate.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|Bash",
         "hooks": [
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/tool-call-budget.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/no-test-skip-gate.sh"
           }
         ]
       },
@@ -81,6 +108,15 @@
           {
             "type": "command",
             "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -qiE '(curl|wget).*\\|\\s*(ba)?sh|chmod\\s+-R\\s+777|mkfs\\.|dd\\s+if='; then echo 'BLOCKED: Dangerous command pattern detected' >&2; exit 1; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CMD=$(echo \"$CLAUDE_TOOL_INPUT\" | jq -r '.command // \"\"' 2>/dev/null); if echo \"$CMD\" | grep -qE 'git\\s+push\\s+.*--force|git\\s+push\\s+-f\\b'; then echo 'BLOCKED: Force push requires explicit user authorization. Ask the user first.' >&2; exit 1; fi; if echo \"$CMD\" | grep -qE '--no-verify'; then echo 'BLOCKED: Skipping hooks (--no-verify) requires explicit user authorization. Fix the hook failure instead.' >&2; exit 1; fi"
           }
         ]
       },
@@ -108,8 +144,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -q 'git commit' && bash ~/.claude/hooks/pre-commit-gate.sh || true",
-            "statusMessage": "Running pre-commit gate (tests + build + API audit)..."
+            "command": "CMD=$(jq -r '.tool_input.command // \"\"'); if echo \"$CMD\" | grep -qE '(^|[[:space:];&|])git[[:space:]]+commit([[:space:]]|$)' && ! echo \"$CMD\" | grep -qE 'git[[:space:]]+commit-tree'; then bash ~/.claude/hooks/check-harness-sync.sh || exit 1; bash ~/.claude/hooks/pre-commit-gate.sh || exit 1; fi",
+            "statusMessage": "Running pre-commit gate (harness sync + tests + build)..."
           }
         ]
       },
