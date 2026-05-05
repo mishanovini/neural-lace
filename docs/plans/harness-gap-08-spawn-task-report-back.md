@@ -37,10 +37,10 @@ Pattern parallels: this hook mirrors `discovery-surfacer.sh` exactly in shape (S
 
 ## Tasks
 
-- [ ] 1. Write `adapters/claude-code/rules/spawn-task-report-back.md` (~150-220 lines): Classification (Hybrid — Pattern + Mechanism), Why this rule exists, JSON schema, lifecycle (orchestrator generates task-id → includes sentinel in prompt → spawned session writes result → surfacer surfaces → orchestrator acts → orchestrator writes .acked marker), worked example with sample prompt + sample result JSON, ack semantics, edge cases, cross-references to discovery-protocol.md and orchestrator-pattern.md.
-- [ ] 2. Write `adapters/claude-code/hooks/spawned-task-result-surfacer.sh` (~150-200 lines mirroring discovery-surfacer.sh): SessionStart hook that scans `.claude/state/spawned-task-results/*.json`, filters out files with sibling `.acked`, surfaces unread results with task_id, summary, branch, commits as a system-reminder block. Self-test with 5 scenarios using temp-dir fixtures.
+- [x] 1. Write `adapters/claude-code/rules/spawn-task-report-back.md` (~150-220 lines): Classification (Hybrid — Pattern + Mechanism), Why this rule exists, JSON schema, lifecycle (orchestrator generates task-id → includes sentinel in prompt → spawned session writes result → surfacer surfaces → orchestrator acts → orchestrator writes .acked marker), worked example with sample prompt + sample result JSON, ack semantics, edge cases, cross-references to discovery-protocol.md and orchestrator-pattern.md.
+- [x] 2. Write `adapters/claude-code/hooks/spawned-task-result-surfacer.sh` (~150-200 lines mirroring discovery-surfacer.sh): SessionStart hook that scans `.claude/state/spawned-task-results/*.json`, filters out files with sibling `.acked`, surfaces unread results with task_id, summary, branch, commits as a system-reminder block. Self-test with 5 scenarios using temp-dir fixtures.
 - [ ] 3. Wire the new hook into `adapters/claude-code/settings.json.template` SessionStart chain (immediately after the existing `discovery-surfacer.sh` line at line 373). Mirror the change to `~/.claude/settings.json`.
-- [ ] 4. Update `adapters/claude-code/rules/vaporware-prevention.md` enforcement map with one new row: "Spawn_task results surfaced at session start" → `spawned-task-result-surfacer.sh` SessionStart hook + `spawn-task-report-back.md` rule.
+- [x] 4. Update `adapters/claude-code/rules/vaporware-prevention.md` enforcement map with one new row: "Spawn_task results surfaced at session start" → `spawned-task-result-surfacer.sh` SessionStart hook + `spawn-task-report-back.md` rule.
 - [ ] 5. Sync `adapters/claude-code/{rules,hooks}/` files to `~/.claude/{rules,hooks}/`. Run `--self-test` on both copies. Verify with the diff loop from `harness-maintenance.md`.
 - [ ] 6. Commit on feature branch `feat/gap-08-spawn-task-report-back`. Push to origin (multi-push covers both remotes per HARNESS-GAP-12 resolution).
 
@@ -58,6 +58,9 @@ Pattern parallels: this hook mirrors `discovery-surfacer.sh` exactly in shape (S
 
 - 2026-05-05: `docs/discoveries/2026-05-05-multi-active-plan-stranding.md` — process discovery surfaced during this plan's authoring, captured per discovery-protocol. Not part of GAP-08's deliverables but bundled with this plan's commits as related session-context.
 - 2026-05-05: `docs/backlog.md` — atomicity-driven update: HARNESS-GAP-08 absorbed (entry removed from open sections per backlog-plan-atomicity rule), and HARNESS-GAP-16 (plan-closure validation gate + /close-plan skill) added as next-after-GAP-13 per user sequencing decision 2026-05-05.
+- 2026-05-05: `docs/plans/harness-gap-08-spawn-task-report-back.md` — plan file itself (task-verifier-flipped checkboxes for Tasks 1, 2, 4).
+- 2026-05-05: `docs/plans/harness-gap-08-spawn-task-report-back-evidence.md` — evidence file (task-verifier evidence blocks for Tasks 1, 2, 4).
+- 2026-05-05: `docs/harness-architecture.md` — one-line entries forced by `docs-freshness-gate.sh` Rule 8 when Tasks 1 and 2 created new rule + new hook files; mandatory ancillary edit per harness-maintenance.md.
 
 ## Assumptions
 

@@ -43,14 +43,14 @@ Outcome: harness-hygiene-scan stops being purely reactive. The structural defens
 
 ## Tasks
 
-- [ ] 1. **Layer 1 — Denylist additions.** Add to `adapters/claude-code/patterns/harness-denylist.txt`:
+- [x] 1. **Layer 1 — Denylist additions.** Add to `adapters/claude-code/patterns/harness-denylist.txt`:
     - Cloud-bucket-URL-with-project-fragment patterns: `s3://[a-z0-9-]+-(prod|dev|staging)/`, `gs://[a-z0-9-]+-(prod|dev|staging)/`
     - Additional OAuth client-id shapes: Google `\d{12}-[a-z0-9]{32}\.apps\.googleusercontent\.com`, GitHub OAuth app `Iv1\.[a-f0-9]{16}`
     - Database connection strings with embedded credentials: `(postgres|mysql|mongodb)(\+srv)?://[^/\s]+:[^@\s]+@`
     - SendGrid: `SG\.[A-Za-z0-9_-]{22,}\.[A-Za-z0-9_-]{43,}`
     - Stripe restricted keys: `rk_(live|test)_[A-Za-z0-9]{20,}`
     - NO generic tech terms (PostgreSQL-as-word, React-as-word, etc.). Each addition must be high-signal — false-positive risk near zero on prose mentions.
-- [ ] 2. **Layer 2 — Heuristic detection in `harness-hygiene-scan.sh`.** New sub-function `check_heuristics()`:
+- [x] 2. **Layer 2 — Heuristic detection in `harness-hygiene-scan.sh`.** New sub-function `check_heuristics()`:
     - Scans for project-internal file-path shapes: `app/api/v\d+/[\w-]+/`, `src/components/[A-Z][\w]+\.tsx`, `supabase/migrations/\d{14}_[\w-]+\.sql`
     - Scans for repeated capitalized term clusters: 3+ occurrences of the same `[A-Z][a-z]{4,15}` token within a single file, excluding NL vocabulary allowlist (`Neural`, `Lace`, `Claude`, `Anthropic`, `Build`, `Doctrine`, `Generation`, `Pattern`, `Mechanism`, `Status`, `Mode`, etc.)
     - Excludes NL's own paths from path-shape detection: `~/.claude/`, `adapters/`, `docs/plans/archive/` paths are not flagged
@@ -94,6 +94,8 @@ Outcome: harness-hygiene-scan stops being purely reactive. The structural defens
 ## In-flight scope updates
 
 - 2026-05-05: `docs/backlog.md` — atomicity-driven update: HARNESS-GAP-13 absorbed (full historical entry removed from open sections per backlog-plan-atomicity rule). Pointer added to plan path.
+- 2026-05-05: `docs/plans/harness-gap-13-hygiene-scan-expansion.md` — plan file itself (task-verifier-flipped checkboxes for Tasks 1, 2).
+- 2026-05-05: `docs/plans/harness-gap-13-hygiene-scan-expansion-evidence.md` — evidence file (task-verifier evidence blocks for Tasks 1, 2).
 
 ## Assumptions
 
