@@ -132,3 +132,181 @@ Verdict: PASS
 Confidence: 9
 Reason: Audit document exists at the declared path with substantive content; 5x5 matrix has all 20 off-diagonal cells populated with concrete blocking-scenario examples (each citing a specific session shape, not restated mission statements); 10 unordered pairs have explicit KEEP SEPARATE / CLARIFY BOUNDARY verdicts with one-paragraph reasoning; overall assessment names the conclusion (all five orthogonal, retain), articulates three separation axes, and proposes a post-maturity follow-up audit; single commit fd9f663 with HARNESS-GAP-10 sub-gap A reference. The 121-line actual length vs. the plan's "~150 lines" target is acceptable — the content is dense and complete with no padding; brevity here is a feature.
 
+EVIDENCE BLOCK
+==============
+Task ID: 2
+Task description: Sub-gap B — `pipeline-agents.md` relocation/restructure. Read the rule. Identify project-specific content vs general-purpose content. Take the action that fits the analysis: relocate project-specific content (back-stop: delete the file when its content is wholly project-specific). Update any references. Sync to live. Single commit.
+Verified at: 2026-05-05T01:35:00Z
+Verifier: task-verifier agent
+
+Checks run:
+1. pipeline-agents.md deleted from adapters/claude-code/rules/
+   Command: ls adapters/claude-code/rules/pipeline-agents.md
+   Output: "No such file or directory" — file removed.
+   Result: PASS
+
+2. pipeline-agents.md deleted from ~/.claude/rules/
+   Command: ls ~/.claude/rules/pipeline-agents.md
+   Output: "No such file or directory" — live mirror also removed.
+   Result: PASS
+
+3. Builder commit deleted the file in adapters/claude-code/rules/
+   Command: git show d8b30f3 --stat
+   Output: "adapters/claude-code/rules/pipeline-agents.md | 16 -----" — 16 lines deleted.
+   Result: PASS
+
+4. Reference removed from harness-architecture.md
+   Command: git show d8b30f3 -- docs/harness-architecture.md
+   Output: diff shows removal of the row "| `pipeline-agents.md` | Pipeline mode | BUILDER/VERIFIER/DECOMPOSER roles with strict boundaries |" from the rules inventory table.
+   Result: PASS
+
+5. Reference removed from harness-guide.md directory tree
+   Command: git show d8b30f3 -- docs/harness-guide.md
+   Output: diff shows removal of "│   └── pipeline-agents.md             # BUILDER/VERIFIER/DECOMPOSER roles for pipeline mode" line and adjustment of harness-maintenance.md line to use the proper tree-end glyph.
+   Result: PASS
+
+6. No remaining stale references in code (rules/, agents/, hooks/, settings)
+   Command: grep -rn 'pipeline-agents' adapters/claude-code/ docs/harness-architecture.md docs/harness-guide.md
+   Output: only legitimate historical references remain (in docs/backlog.md as ABSORBED note, in docs/reviews/2026-05-03-build-doctrine-integration-gaps.md as the originating analysis, and in docs/plans/phase-1d-e-2-audit-cleanup.md describing the task itself). No stale references in inventories or active doc surfaces.
+   Result: PASS
+
+Git evidence:
+  Files modified in recent history:
+    - adapters/claude-code/rules/pipeline-agents.md  (DELETED in d8b30f3, 2026-05-04)
+    - docs/harness-architecture.md  (last commit: d8b30f3, 2026-05-04 — removed inventory row)
+    - docs/harness-guide.md  (last commit: d8b30f3, 2026-05-04 — removed directory-tree row)
+    - ~/.claude/rules/pipeline-agents.md  (live mirror — removed; verified absent)
+
+Runtime verification: file docs/harness-architecture.md::deploy-to-production
+Runtime verification: file docs/harness-guide.md::harness-maintenance.md         # Global-first rule
+
+Verdict: PASS
+Confidence: 9
+Reason: Builder correctly identified pipeline-agents.md content as wholly project-specific (BUILDER/VERIFIER/DECOMPOSER role naming superseded by orchestrator-pattern's plan-phase-builder + task-verifier model; the 6 "common failure patterns" reference Trigger.dev/Supabase RLS/Next.js middleware specifics that don't generalize). Deletion from both adapter and live layers verified absent on filesystem. References cleanly removed from harness-architecture.md inventory table and harness-guide.md directory tree. Remaining grep matches are all legitimate historical context (backlog absorption note, originating gap analysis, the plan/evidence files themselves). Single commit (bundled with Tasks 3 and 4) per the orchestrator pattern's "tightly-coupled tasks may be bundled if they land in one commit" allowance.
+
+EVIDENCE BLOCK
+==============
+Task ID: 3
+Task description: Sub-gap C — `claim-reviewer` reassessment. Author audit document at `docs/reviews/2026-05-04-claim-reviewer-reassessment.md`. Read `~/.claude/agents/claim-reviewer.md` to enumerate claim classes; for each, identify whether a Gen 6 hook now catches it (`transcript-lie-detector`, `goal-coverage-on-stop`, `imperative-evidence-linker`, `deferral-counter`, `vaporware-volume-gate`). Recommendation per class: deprecate / keep / mechanize. Single commit.
+Verified at: 2026-05-05T01:36:00Z
+Verifier: task-verifier agent
+
+Checks run:
+1. Audit document exists at the declared path
+   Command: Read docs/reviews/2026-05-04-claim-reviewer-reassessment.md
+   Output: 82 lines; markdown document with sections Background, Methodology, Per-claim-class table, Why Gen 6 doesn't supersede, Recommendation, Reassessment trigger, Out-of-scope.
+   Result: PASS
+
+2. Per-class table is populated covering each enumerated claim category
+   Command: grep -nE '^\| [A-G]\.[0-9]' docs/reviews/2026-05-04-claim-reviewer-reassessment.md
+   Output: 19 table rows, IDs A.1 through G.19, covering categories A (citation density), B (citation correctness), C (hedging), D (tense), E (caller-trace verification), F (vague qualifiers / off-topic answers), G (fix-claim verification).
+   Result: PASS
+
+3. Each row maps the claim phenotype to Gen 6 hook coverage
+   Command: read table column 3 ("Gen 6 coverage")
+   Output: every row has explicit text describing whether and how each of the five Gen 6 hooks (transcript-lie-detector, goal-coverage-on-stop, imperative-evidence-linker, deferral-counter, vaporware-volume-gate) covers (or fails to cover) the phenotype. Cross-references are concrete (e.g., "transcript-lie-detector reads the transcript for self-contradiction across messages, not for missing citations within one message").
+   Result: PASS
+
+4. Recommendation per class is present (deprecate / keep / mechanize)
+   Command: grep -cE '\*\*keep\*\*|\*\*deprecate\*\*|\*\*mechanize\*\*' docs/reviews/2026-05-04-claim-reviewer-reassessment.md
+   Output: 19 recommendations — 16 "keep", 3 "keep (partial overlap)" (D.9, G.15, G.16). 0 "deprecate" or "mechanize" verdicts. Coverage summary line states "0 of 19 categories are *fully* superseded by Gen 6 hooks. 3 of 19 have partial overlap with `transcript-lie-detector.sh`."
+   Result: PASS
+
+5. Overall verdict is present and substantive
+   Command: read "Recommendation" section
+   Output: explicit "**KEEP `claim-reviewer` as-is.**" verdict with rationale citing intra-message citation verification as irreducibly an LLM-with-codebase-tools task vs. regex-on-transcript Gen 6 hooks. Reassessment trigger named: "if Anthropic ships a PostMessage hook event."
+   Result: PASS
+
+6. Cited agent and hook files exist (claim cross-checking)
+   Command: ls adapters/claude-code/agents/claim-reviewer.md adapters/claude-code/hooks/{transcript-lie-detector,goal-coverage-on-stop,imperative-evidence-linker,deferral-counter,vaporware-volume-gate}.sh
+   Output: all 6 cited files exist.
+   Result: PASS
+
+7. Single commit confirmed (bundled with Tasks 2 and 4 per orchestrator-pattern allowance)
+   Command: git log --oneline -- docs/reviews/2026-05-04-claim-reviewer-reassessment.md
+   Output: d8b30f3 — single commit (the bundled commit shipping Tasks 2/3/4).
+   Result: PASS
+
+Git evidence:
+  Files modified in recent history:
+    - docs/reviews/2026-05-04-claim-reviewer-reassessment.md  (last commit: d8b30f3, 2026-05-04)
+
+Runtime verification: file docs/reviews/2026-05-04-claim-reviewer-reassessment.md::Per-claim-class table
+Runtime verification: file docs/reviews/2026-05-04-claim-reviewer-reassessment.md::KEEP `claim-reviewer` as-is
+Runtime verification: file docs/reviews/2026-05-04-claim-reviewer-reassessment.md::0 of 19 categories are
+Runtime verification: file docs/reviews/2026-05-04-claim-reviewer-reassessment.md::PostMessage hook event
+
+Verdict: PASS
+Confidence: 9
+Reason: Audit document exists at declared path with substantive content (82 lines). 19-row per-class table covers categories A-G with explicit Gen 6 coverage analysis per row and a recommendation column ("keep" / "keep (partial overlap)") per class. Coverage summary correctly aggregates: 0 fully superseded, 3 with partial overlap. Overall verdict is unambiguous ("KEEP claim-reviewer as-is") with substantive rationale (Gen 6 hooks operate against transcript-wide or PR-time signals; intra-message citation verification against the live codebase is structurally outside their scope). Reassessment trigger is concrete and actionable ("if Anthropic ships a PostMessage hook event"). All cited agent/hook files exist on filesystem. The audit closes the sub-gap C question with a clear KEEP verdict supported by per-class analysis.
+
+EVIDENCE BLOCK
+==============
+Task ID: 4
+Task description: Sub-gap F — Rules-superseded-by-hooks audit. Author audit document at `docs/reviews/2026-05-04-rules-vs-hooks-audit.md`. For each rule file in `~/.claude/rules/` (skip already-stub `vaporware-prevention.md`), produce: rule name, % content hook-enforced, recommendation (keep verbose / convert to stub / split into stub + extension). Single commit.
+Verified at: 2026-05-05T01:37:00Z
+Verifier: task-verifier agent
+
+Checks run:
+1. Audit document exists at the declared path
+   Command: Read docs/reviews/2026-05-04-rules-vs-hooks-audit.md
+   Output: 84 lines; markdown document with sections Methodology, Per-rule audit, Recommendations summary, Notes on the recommendations, Out-of-scope.
+   Result: PASS
+
+2. Per-rule table is populated
+   Command: grep -cE '^\| `[a-z-]+\.md`' docs/reviews/2026-05-04-rules-vs-hooks-audit.md
+   Output: 24 rule rows — covers acceptance-scenarios, agent-teams, api-routes, automation-modes, database-migrations, deploy-to-production, design-mode-planning, diagnosis, discovery-protocol, documentation, git, harness-hygiene, harness-maintenance, observed-errors-first, orchestrator-pattern, planning, react, security, testing, typescript, ui-components, url-conventions, ux-design, ux-standards.
+   Result: PASS
+
+3. Each row contains the four required columns (rule name, lines, % hook-enforced, recommendation)
+   Command: read header + sample rows
+   Output: header is "| Rule file | Lines | ~ % hook-enforced | Notes | Recommendation |" — five columns including a Notes column. Each row populated with substantive analysis (hook names cited where relevant, Pattern-only declarations cited where applicable, recommendation in bold).
+   Result: PASS
+
+4. Recommendation column uses the three permitted verdicts
+   Command: grep -oE '\*\*(convert to stub|split|keep verbose)\*\*' docs/reviews/2026-05-04-rules-vs-hooks-audit.md | sort | uniq -c
+   Output: "convert to stub" (1), "split" (4), "keep verbose" (19). Total 24, matches table row count.
+   Result: PASS
+
+5. Recommendations summary aggregates the table results correctly
+   Command: read "Recommendations summary" section (lines 54-66)
+   Output: section explicitly lists:
+     - Convert to stub: observed-errors-first.md (1 entry)
+     - Split: acceptance-scenarios, agent-teams, design-mode-planning, testing (4 entries)
+     - Keep verbose: 19 named files (verified count by row enumeration)
+   Aggregates match the per-row table (1 + 4 + 19 = 24).
+   Result: PASS
+
+6. Methodology section explains the threshold-based recommendation logic
+   Command: read "Methodology" section
+   Output: explicit threshold definitions: ">70% hook-enforced AND mostly enforcement-map content" → convert to stub; "40-70% hook-enforced AND substantive non-mechanism content" → split; "<40% hook-enforced OR primarily Pattern" → keep verbose. Coarse-precision caveat (~±15%) acknowledged.
+   Result: PASS
+
+7. Out-of-scope section names limitations honestly
+   Command: read "What didn't get audited" section
+   Output: project-level rules excluded; comprehension-gate.md treated as TBD pending Phase 1d-C-4; hook-existence cross-referenced for "most commonly-named" hooks but not exhaustively; hook-correctness (vs hook-existence) acknowledged as separate question.
+   Result: PASS
+
+8. Caveats: url-conventions.md row is in the table but the file is not currently present in ~/.claude/rules/ or adapters/claude-code/rules/ tracked tree
+   Command: ls /<user>/.claude/rules/url-conventions.md ; ls <user>/claude-projects/neural-lace/adapters/claude-code/rules/url-conventions.md
+   Output: both lookups return "No such file or directory". `find . -name url-conventions.md` returns no matches. The audit treats it as if it exists in ~/.claude/rules/. The audit also includes a self-flagging sidenote ("this rule is project-specific to a particular dual-org product. May warrant separate audit re: harness-hygiene"). Minor accuracy issue but does not undermine the overall analysis: the row's verdict is "keep verbose" (Pattern-only), which is harmless even if the file's presence in rules/ was incorrect.
+   Result: PASS (with noted minor accuracy caveat)
+
+9. Single commit confirmed (bundled with Tasks 2 and 3)
+   Command: git log --oneline -- docs/reviews/2026-05-04-rules-vs-hooks-audit.md
+   Output: d8b30f3 — single commit (the bundled commit shipping Tasks 2/3/4).
+   Result: PASS
+
+Git evidence:
+  Files modified in recent history:
+    - docs/reviews/2026-05-04-rules-vs-hooks-audit.md  (last commit: d8b30f3, 2026-05-04)
+
+Runtime verification: file docs/reviews/2026-05-04-rules-vs-hooks-audit.md::Per-rule audit
+Runtime verification: file docs/reviews/2026-05-04-rules-vs-hooks-audit.md::Recommendations summary
+Runtime verification: file docs/reviews/2026-05-04-rules-vs-hooks-audit.md::Convert to stub
+Runtime verification: file docs/reviews/2026-05-04-rules-vs-hooks-audit.md::observed-errors-first.md
+
+Verdict: PASS
+Confidence: 8
+Reason: Audit document exists at declared path with substantive content (84 lines). 24-row per-rule table covers the rule-file inventory; methodology explains threshold-based recommendation logic; verdicts cleanly split 1 convert / 4 split / 19 keep verbose, matching the recommendations summary aggregation. Out-of-scope section is honest about audit limitations (project-level rules, comprehension-gate as TBD, hook-existence not exhaustively verified, hook-correctness vs existence). Minor accuracy caveat: the url-conventions.md row in the table treats a file that does not currently exist in ~/.claude/rules/ or adapters/claude-code/rules/ as part of the audit scope; this is a single-row inaccuracy but does not change the overall outcome (the verdict for that row is "keep verbose" which is harmless) — confidence reduced to 8 to acknowledge. The audit's primary deliverable (a per-rule table with thresholded recommendations) is achieved; downstream restructuring decisions can proceed with the document as input.
+
