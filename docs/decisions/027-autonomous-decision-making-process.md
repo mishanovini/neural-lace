@@ -71,6 +71,7 @@ Specifically, before the final summary is composed:
 3. **Discovery files (`docs/discoveries/*.md`)** whose underlying decisions were acted on must have `Status:` flipped from `pending` → `decided`/`implemented`/`rejected`/`superseded`. Stale `pending` status on a discovery whose decision shipped is a handoff defect.
 4. **Decision queue files (`docs/decisions/queued-*.md`)** must show overrides applied where the orchestrator deviated from recommendations.
 5. **`docs/backlog.md`** Last-updated stamp must be current and reflect the session's substantive impact.
+6. **`SCRATCHPAD.md`'s `## What's Next` section content** must NOT reference plans archived this session as future actions. Stale-pointer detection added 2026-05-06 after user caught a What's Next listing already-completed work despite mtime + plan-mention signals being fresh. Mtime + mention freshness is necessary but not sufficient — content must reflect actual pending state.
 
 The discipline: **Layer 4's summary is the last action, not the next-to-last.** Refresh artifacts first, then compose the summary that describes them.
 

@@ -162,6 +162,26 @@ cmd_verify() {
     fi
   fi
 
+  # Signal 6: SCRATCHPAD "What's Next" doesn't reference plans archived this session
+  # Catches content-level staleness — pointers at next-actions that are already done.
+  # Surfaced 2026-05-06 by user catching stale What's Next content despite mtime fresh.
+  if [ -f "$scratchpad" ] && [ -n "$touched" ]; then
+    # Extract content of "## What's Next" section (until next ## heading).
+    # Use awk that emits AFTER the start match and stops BEFORE next ## (not inclusive).
+    local whats_next
+    whats_next=$(awk '/^## What.*Next/{flag=1; next} /^## /{flag=0} flag' "$scratchpad" 2>/dev/null | head -100)
+    if [ -n "$whats_next" ]; then
+      while IFS= read -r slug; do
+        [ -n "$slug" ] || continue
+        # If What's Next references an archived-this-session plan as a future action
+        # (heuristic: bullet/numbered line containing the slug), flag as stale-pointer.
+        if echo "$whats_next" | grep -E "^[0-9]+\.|^- " | grep -qF "$slug"; then
+          stale+=("SCRATCHPAD What's Next references plan archived this session as future action: $slug — rewrite What's Next to remove already-completed items")
+        fi
+      done <<< "$touched"
+    fi
+  fi
+
   if [ "${#stale[@]}" -eq 0 ]; then
     echo "[session-wrap] all freshness signals PASS"
     return 0
@@ -281,6 +301,25 @@ EOF
     FAILED=$((FAILED + 1))
   else
     echo "self-test (S5) pending-with-impl-log: PASS"
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- scenario 6: SCRATCHPAD What's Next references archived-this-session plan -> STALE
+  rm -f docs/discoveries/*.md 2>/dev/null  # remove S5 fixture
+  rm -f SCRATCHPAD.md
+  cat > SCRATCHPAD.md <<'EOF'
+# SCRATCHPAD
+
+## What's Next (next session)
+
+1. Close test-plan-1 via close-plan.sh
+2. Run live acceptance test
+EOF
+  if cmd_verify "$TMPROOT" >/dev/null 2>&1; then
+    echo "self-test (S6) whats-next-references-archived: FAIL (should have detected stale-pointer)"
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (S6) whats-next-references-archived: PASS"
     PASSED=$((PASSED + 1))
   fi
 
