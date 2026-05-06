@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "46616ba6744a32d61431f84c145803ee4f91b292",
+  "files_modified": [
+    ".gitignore",
+    "adapters/claude-code/hooks/propagation-trigger-router.sh",
+    "adapters/claude-code/rules/vaporware-prevention.md",
+    "adapters/claude-code/schemas/propagation-rules.schema.json",
+    "build-doctrine/CHANGELOG.md",
+    "build-doctrine/propagation/README.md",
+    "build-doctrine/propagation/propagation-rules.json",
+    "build-doctrine/telemetry/.gitkeep",
+    "docs/build-doctrine-roadmap.md",
+    "docs/harness-architecture.md"
+  ],
+  "mechanical_checks": {
+    "files-in-commit": {
+      "passed": true,
+      "detail": "10 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-06T09:46:09Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/build-doctrine-tranche-6a-propagation-engine-framework.md"
+}
