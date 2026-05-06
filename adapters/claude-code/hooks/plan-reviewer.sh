@@ -925,6 +925,55 @@ CHECK15_MID
     echo "self-test (z) check5-real-database-task-still-caught: FAIL (expected)" >&2
   fi
 
+  # ============================================================
+  # Check 12 scenarios (vd1, vd2, vd3) — risk-tiered verification
+  # field (Tranche D of architecture-simplification, 2026-05-05)
+  # ============================================================
+  #
+  # (vd1) Plan with valid `Verification: mechanical` declaration on a
+  #       task line — expect PASS (legal level).
+  # (vd2) Plan with unmarked tasks (no Verification: field) — expect
+  #       PASS (default `full` applies; backward-compatible behavior).
+  # (vd3) Plan with invalid `Verification: bogus` declaration on a task
+  #       line — expect FAIL (only mechanical/full/contract are legal).
+  #
+  # Fixtures reuse the `write_check15_plan` writer because it already
+  # produces a plan that passes every other check. We vary only the
+  # task-block content to isolate Check 12's outcome.
+
+  # Scenario (vd1): legal `mechanical` level
+  write_check15_plan "$TMPDIR_SELFTEST/vd1.md" \
+    "- [ ] 1. Author the new helper module per the goal — Verification: mechanical" \
+    "- [ ] Helper authored."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/vd1.md" > /dev/null 2>&1; then
+    echo "self-test (vd1) check12-valid-mechanical-level: PASS (expected)" >&2
+  else
+    echo "self-test (vd1) check12-valid-mechanical-level: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Scenario (vd2): no Verification field (default-full backward compat)
+  write_check15_plan "$TMPDIR_SELFTEST/vd2.md" \
+    "- [ ] 1. Refactor a single helper module to use the new pattern." \
+    "- [ ] Helper refactored."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/vd2.md" > /dev/null 2>&1; then
+    echo "self-test (vd2) check12-default-full-no-field: PASS (expected)" >&2
+  else
+    echo "self-test (vd2) check12-default-full-no-field: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Scenario (vd3): illegal level value
+  write_check15_plan "$TMPDIR_SELFTEST/vd3.md" \
+    "- [ ] 1. Author the new helper module per the goal — Verification: bogus" \
+    "- [ ] Helper authored."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/vd3.md" > /dev/null 2>&1; then
+    echo "self-test (vd3) check12-illegal-level-rejected: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (vd3) check12-illegal-level-rejected: FAIL (expected)" >&2
+  fi
+
   if [[ $FAILED -eq 0 ]]; then
     echo "plan-reviewer --self-test: all scenarios matched expectations" >&2
     exit 0
@@ -1775,6 +1824,63 @@ if { [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; } && [[ "$RUNG_V
       fi
     done
   fi
+fi
+
+# ============================================================
+# Check 12 (Tranche D of architecture-simplification, 2026-05-05):
+# Risk-tiered Verification field validation
+# ============================================================
+#
+# Each `## Tasks` checkbox line MAY end with `Verification: <level>`
+# where <level> ∈ {mechanical, full, contract}. The default for unmarked
+# tasks is `full` (backward-compatible — every existing plan in
+# docs/plans/ predates this rule and tasks there are implicitly `full`).
+#
+# This check fires on every plan regardless of Mode/rung/Status. It scans
+# task-checkbox lines for the `Verification:` token and rejects any token
+# value that isn't one of the three legal levels.
+#
+# Mode-agnostic. Status-agnostic for new-plan creation: even DEFERRED
+# plans benefit from a quick syntax check on their task list.
+#
+# See ~/.claude/rules/risk-tiered-verification.md for level semantics.
+
+# Scan task-checkbox lines under any heading whose title contains "Task"
+# (case-insensitive — matches "## Tasks", "## Implementation Tasks", etc.).
+# Reuses the section-aware awk pattern from Check 1.
+VERIFICATION_LINES=$(awk '
+  BEGIN { in_tasks_section = 0 }
+  /^## / {
+    title = $0
+    sub(/^## +/, "", title)
+    if (tolower(title) ~ /task/) {
+      in_tasks_section = 1
+    } else {
+      in_tasks_section = 0
+    }
+    next
+  }
+  in_tasks_section && /^- \[[ xX]\]/ && /Verification:/ {
+    print NR ":" $0
+  }
+' "$PLAN_FILE" 2>/dev/null || true)
+
+if [[ -n "$VERIFICATION_LINES" ]]; then
+  while IFS= read -r vline; do
+    [[ -z "$vline" ]] && continue
+    vln=$(echo "$vline" | cut -d: -f1)
+    vtext=$(echo "$vline" | cut -d: -f2-)
+    # Extract the token immediately after `Verification:`. Strip any
+    # surrounding whitespace and trailing punctuation/markers.
+    vlevel=$(echo "$vtext" | sed -nE 's/.*Verification:[[:space:]]+([A-Za-z][A-Za-z_-]*).*/\1/p' | head -1)
+    if [[ -z "$vlevel" ]]; then
+      add_finding "Check 12 (risk-tiered verification): line $vln has 'Verification:' but no readable level token. Use one of: mechanical, full, contract. See ~/.claude/rules/risk-tiered-verification.md."
+      continue
+    fi
+    if ! [[ "$vlevel" =~ ^(mechanical|full|contract)$ ]]; then
+      add_finding "Check 12 (risk-tiered verification): line $vln declares 'Verification: $vlevel' but the only legal levels are: mechanical, full, contract (case-sensitive, lowercase). See ~/.claude/rules/risk-tiered-verification.md."
+    fi
+  done <<< "$VERIFICATION_LINES"
 fi
 
 # ============================================================

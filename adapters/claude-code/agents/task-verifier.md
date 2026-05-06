@@ -185,6 +185,51 @@ Plan files in archive are **historical records** — treat any verdict-changing 
 
 Work through these steps in order. Do not skip any. Step 1.5 (the comprehension-gate at R2+) is the harness's only check on the builder's mental model, distinct from the diff-and-evidence checks in Steps 2-7; it must fire before the heavier checks so a comprehension FAIL halts early without burning compute on typecheck and runtime-verification replay.
 
+### Step 0: Risk-tiered verification level — early-return when level is not `full`
+
+**Read the plan task line for a `Verification: <level>` declaration before doing anything else** (Tranche D of architecture-simplification, 2026-05-05). If the level declared is `mechanical` or `contract`, the agent dispatch is unnecessary — the mechanical or contract check IS the verification, and `plan-edit-validator.sh` has already routed the evidence-freshness gate accordingly.
+
+**The three levels:**
+
+- `Verification: mechanical` — the task's correctness is attested by deterministic bash checks. Structured `.evidence.json` artifact (per Tranche B) OR a one-line `Commit:` evidence block is the verification.
+- `Verification: contract` — the task ships an artifact whose correctness is a match against a locked shape (JSON Schema, golden fixture, reference output). A schema-validation invocation OR golden-file diff that exits 0 is the verification.
+- `Verification: full` — default. Existing rubric applies. Used for novel runtime work, UI / API / webhook / migration changes, anything where mechanical or contract checks cannot fully attest the user-observable outcome.
+
+**If the task is unmarked (no `Verification:` field), the level defaults to `full`.** This preserves backward compatibility with existing plans.
+
+**Early-return procedure for `mechanical` and `contract`:**
+
+1. Confirm a fresh structured `.evidence.json` artifact exists at `<plan-dir>/<plan-slug>-evidence/<task-id>.evidence.json` (mtime < 120s, `task_id` matches, `verdict == "PASS"`). If absent, fall back to the legacy one-line prose evidence path: a fresh `EVIDENCE BLOCK` in `<plan>-evidence.md` with `Task ID: <id>` and at least one `Commit:` line.
+2. If the structured artifact OR the legacy one-line block is present and fresh, return PASS immediately citing the level and the evidence path. Do NOT run typecheck. Do NOT walk dependency-trace. Do NOT replay runtime-verification commands. Do NOT invoke comprehension-reviewer (the gate's R2+ trigger still applies — see Step 1.5 — but the comprehension articulation is part of the structured artifact's `prose_supplement` field for R2+ mechanical/contract tasks).
+3. If neither path produces fresh evidence, return INCOMPLETE with `Reason: Verification: <level> declared but no fresh evidence artifact found at <expected-path>; builder must run write-evidence.sh capture before re-invoking task-verifier`.
+
+**Evidence-block shape for early-return PASS verdicts:**
+
+```
+EVIDENCE BLOCK
+==============
+Task ID: <id>
+Task description: <exact text>
+Verified at: <ISO timestamp>
+Verifier: task-verifier agent (Verification: <mechanical|contract> early-return)
+
+Verification level: <mechanical|contract>
+Evidence path: <plan-dir>/<plan-slug>-evidence/<task-id>.evidence.json
+              | <plan>-evidence.md (legacy one-line prose path)
+
+Verdict: PASS
+Confidence: 8
+Reason: structured evidence artifact authorizes per Tranche D risk-tiered routing.
+```
+
+**Why the early-return exists.** The agent dispatch is expensive (~30-60s wall time, real LLM tokens). For mechanical and contract work, the deterministic checks already produced by `write-evidence.sh capture` are the verification — re-running them under the agent's prose-narration shell would just narrate what bash already confirmed, and trains builders to skip verification entirely on small tasks because "it's obvious." Reserving full-cost agent dispatch for `full`-level tasks rebalances the harness's verification spend to risk.
+
+**Counter-incentive note for the early-return path.** Your training incentive when given a early-return path is to early-return aggressively — to read the level field and PASS without verifying the evidence artifact exists. Resist this. The early-return returns PASS only when (a) the level is mechanical or contract, AND (b) the evidence artifact passes the freshness + task_id + PASS-verdict check. Confirm both before early-returning; otherwise return INCOMPLETE.
+
+**For `Verification: full` (or unmarked, defaulting to full): proceed to Step 1.** The full rubric below is unchanged.
+
+See `~/.claude/rules/risk-tiered-verification.md` for the full protocol. See `~/.claude/rules/mechanical-evidence.md` for the structured-evidence substrate (Tranche B) the early-return consumes.
+
 ### Step 1: Load and re-read the task definition
 
 - Read the plan file at the given path

@@ -586,8 +586,179 @@ JSON
     FAILED=$((FAILED+1))
   fi
 
+  # ============================================================
+  # F8/F9/F10 — risk-tiered Verification field routing
+  # (Tranche D of architecture-simplification, 2026-05-05)
+  # ============================================================
+  #
+  # F8  mechanical-evidence-recognized — task line declares
+  #     `Verification: mechanical`; structured `.evidence.json`
+  #     authorizes WITHOUT a runtime-verification line.
+  # F9  contract-evidence-recognized — task line declares
+  #     `Verification: contract`; structured `.evidence.json`
+  #     containing a `schema-valid` mechanical_check authorizes.
+  # F10 unmarked-defaults-to-full — task line has no field; the
+  #     existing prose-with-runtime-verification path is used.
+  #
+  # Inline replicas of the routing helpers are used so the test works
+  # without sourcing the full hook.
+
+  selftest_extract_verification_level() {
+    # $1 = task line text. Echoes "mechanical", "full", or "contract".
+    # Defaults to "full" when no field present or token unrecognized.
+    local task_line="$1"
+    local lvl
+    lvl=$(echo "$task_line" | sed -nE 's/.*Verification:[[:space:]]+([A-Za-z][A-Za-z_-]*).*/\1/p' | head -1)
+    if [[ "$lvl" =~ ^(mechanical|full|contract)$ ]]; then
+      echo "$lvl"
+    else
+      echo "full"
+    fi
+  }
+
+  selftest_check_mechanical_or_contract_evidence() {
+    # Mechanical/contract: accept fresh structured `.evidence.json` whose
+    # task_id matches AND verdict is PASS. No runtime-verification line
+    # required; the structured artifact is the verification.
+    # $1 = plan_file, $2 = task_id, $3 = level (mechanical|contract)
+    local plan_file="$1"
+    local task_id="$2"
+    local level="$3"
+    local plan_dir plan_slug structured_dir structured_file
+    plan_dir=$(dirname "$plan_file")
+    plan_slug=$(basename "$plan_file" .md)
+    structured_dir="$plan_dir/${plan_slug}-evidence"
+    structured_file="$structured_dir/${task_id}.evidence.json"
+    if [[ -f "$structured_file" ]]; then
+      local now mtime age
+      now=$(date +%s)
+      mtime=$(stat -c %Y "$structured_file" 2>/dev/null || echo 0)
+      age=$((now - mtime))
+      if [[ "$age" -le 120 ]]; then
+        if jq -e --arg id "$task_id" '.task_id == $id and .verdict == "PASS"' "$structured_file" >/dev/null 2>&1; then
+          if [[ "$level" == "contract" ]]; then
+            # Additional contract requirement: at least one mechanical_check
+            # whose name starts with "schema-valid" or is a "command:"
+            # check whose detail mentions diff/schema. We accept any PASS
+            # mechanical_check as evidence since the task author is
+            # responsible for the right check; the gate's role is freshness
+            # + verdict + task-id match.
+            if jq -e '.mechanical_checks | type == "object" and (length > 0)' "$structured_file" >/dev/null 2>&1; then
+              return 0
+            fi
+            return 1
+          fi
+          return 0
+        fi
+      fi
+    fi
+    # Fallback to legacy prose with one-line commit-SHA citation
+    local evidence_file="${plan_file%.md}-evidence.md"
+    if [[ -f "$evidence_file" ]]; then
+      local now2 mtime2 age2
+      now2=$(date +%s)
+      mtime2=$(stat -c %Y "$evidence_file" 2>/dev/null || echo 0)
+      age2=$((now2 - mtime2))
+      if [[ "$age2" -le 120 ]]; then
+        local result
+        result=$(awk -v wanted_id="$task_id" '
+          BEGIN { in_block = 0; t = ""; has_commit = 0; }
+          /^EVIDENCE BLOCK/ {
+            if (in_block && t == wanted_id && has_commit) { print "MATCH"; exit 0 }
+            in_block = 1; t = ""; has_commit = 0; next
+          }
+          /^Task ID:/ {
+            if (in_block) {
+              sub(/^Task ID:[[:space:]]*/, "", $0); sub(/[[:space:]].*$/, "", $0); t = $0
+            }
+            next
+          }
+          /^Commit:/ { if (in_block) has_commit = 1; next }
+          END { if (in_block && t == wanted_id && has_commit) print "MATCH" }
+        ' "$evidence_file")
+        if [[ "$result" == "MATCH" ]]; then return 0; fi
+      fi
+    fi
+    return 1
+  }
+
+  # ---- F8: mechanical-evidence-recognized ----
+  PLAN_F8="$TMPDIR_SELFTEST/plan-f8.md"
+  cat > "$PLAN_F8" <<'PLAN_F8_BODY'
+# Plan: F8 fixture
+## Tasks
+- [ ] D.1. Edit a hook file — Verification: mechanical
+PLAN_F8_BODY
+  STRUCTURED_DIR_F8="$TMPDIR_SELFTEST/plan-f8-evidence"
+  mkdir -p "$STRUCTURED_DIR_F8"
+  cat > "$STRUCTURED_DIR_F8/D.1.evidence.json" <<JSON
+{
+  "schema_version": 1,
+  "task_id": "D.1",
+  "verdict": "PASS",
+  "commit_sha": "abc1234",
+  "files_modified": ["hooks/foo.sh"],
+  "mechanical_checks": {"exists:hooks/foo.sh": {"passed": true, "detail": "ok"}},
+  "timestamp": "2026-05-05T13:42:00Z",
+  "verifier": "write-evidence.sh"
+}
+JSON
+  TASK_LINE_F8="- [ ] D.1. Edit a hook file — Verification: mechanical"
+  LVL_F8=$(selftest_extract_verification_level "$TASK_LINE_F8")
+  if [[ "$LVL_F8" == "mechanical" ]] \
+     && selftest_check_mechanical_or_contract_evidence "$PLAN_F8" "D.1" "mechanical"; then
+    echo "self-test (F8) mechanical-evidence-recognized: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F8) mechanical-evidence-recognized: FAIL (lvl=$LVL_F8)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F9: contract-evidence-recognized ----
+  PLAN_F9="$TMPDIR_SELFTEST/plan-f9.md"
+  cat > "$PLAN_F9" <<'PLAN_F9_BODY'
+# Plan: F9 fixture
+## Tasks
+- [ ] D.2. Extend the JSON schema — Verification: contract
+PLAN_F9_BODY
+  STRUCTURED_DIR_F9="$TMPDIR_SELFTEST/plan-f9-evidence"
+  mkdir -p "$STRUCTURED_DIR_F9"
+  cat > "$STRUCTURED_DIR_F9/D.2.evidence.json" <<JSON
+{
+  "schema_version": 1,
+  "task_id": "D.2",
+  "verdict": "PASS",
+  "commit_sha": "abc5678",
+  "files_modified": ["schemas/foo.schema.json"],
+  "mechanical_checks": {"schema-valid:schemas/foo.schema.json": {"passed": true, "detail": "validates against meta-schema"}},
+  "timestamp": "2026-05-05T13:42:00Z",
+  "verifier": "write-evidence.sh"
+}
+JSON
+  TASK_LINE_F9="- [ ] D.2. Extend the JSON schema — Verification: contract"
+  LVL_F9=$(selftest_extract_verification_level "$TASK_LINE_F9")
+  if [[ "$LVL_F9" == "contract" ]] \
+     && selftest_check_mechanical_or_contract_evidence "$PLAN_F9" "D.2" "contract"; then
+    echo "self-test (F9) contract-evidence-recognized: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F9) contract-evidence-recognized: FAIL (lvl=$LVL_F9)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F10: unmarked-defaults-to-full ----
+  TASK_LINE_F10="- [ ] D.3. Implement the runtime feature end-to-end."
+  LVL_F10=$(selftest_extract_verification_level "$TASK_LINE_F10")
+  if [[ "$LVL_F10" == "full" ]]; then
+    echo "self-test (F10) unmarked-defaults-to-full: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F10) unmarked-defaults-to-full: FAIL (lvl=$LVL_F10)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 7 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 10 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -697,6 +868,130 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)
 # Now the Task ID line and the Runtime verification line must appear in
 # the SAME block, which means a single evidence block authorizes exactly
 # one checkbox flip.
+# ============================================================
+# extract_verification_level — Tranche D risk-tiered routing
+# ============================================================
+#
+# Reads the plan file, locates the task line whose ID matches $task_id,
+# and extracts the `Verification: <level>` token if present. Returns one
+# of: "mechanical", "full", "contract". Defaults to "full" when no field
+# is present or the token is unrecognized (backward-compatible per
+# Decision queued-tranche-1.5.md D.2).
+#
+# See ~/.claude/rules/risk-tiered-verification.md for level semantics.
+
+extract_verification_level() {
+  local plan_file="$1"
+  local task_id="$2"
+  if [[ ! -f "$plan_file" ]] || [[ -z "$task_id" ]]; then
+    echo "full"
+    return 0
+  fi
+  # Locate the task line. Supports `- [ ] <id>. <desc>` and
+  # `- [x] <id>. <desc>`. The task ID match is anchored at start of the
+  # checkbox marker so multi-character IDs (e.g., "B.1.2") work.
+  local task_line
+  task_line=$(grep -E "^- \[[ xX]\][[:space:]]+${task_id}\b" "$plan_file" 2>/dev/null | head -1)
+  if [[ -z "$task_line" ]]; then
+    echo "full"
+    return 0
+  fi
+  local lvl
+  lvl=$(echo "$task_line" | sed -nE 's/.*Verification:[[:space:]]+([A-Za-z][A-Za-z_-]*).*/\1/p' | head -1)
+  if [[ "$lvl" =~ ^(mechanical|full|contract)$ ]]; then
+    echo "$lvl"
+  else
+    echo "full"
+  fi
+}
+
+# ============================================================
+# check_mechanical_or_contract_evidence — Tranche D routing
+# ============================================================
+#
+# For tasks declaring `Verification: mechanical` or `Verification:
+# contract`, the evidence freshness check is RELAXED relative to `full`:
+# a structured `.evidence.json` artifact (per Tranche B) with verdict
+# PASS and matching task_id is sufficient. No `Runtime verification:`
+# line is required — the structured artifact's `mechanical_checks` map
+# IS the verification.
+#
+# Falls back to legacy prose evidence with one-line `Commit:` citation
+# (a less-strict variant of the existing prose path) for builders not
+# yet using the structured substrate.
+#
+# Returns 0 if evidence authorizes the flip, non-zero otherwise.
+
+check_mechanical_or_contract_evidence() {
+  local plan_file="$1"
+  local task_id="$2"
+  local level="$3"
+
+  # Path A — structured `.evidence.json` (preferred)
+  local plan_dir plan_slug structured_dir structured_file
+  plan_dir=$(dirname "$plan_file")
+  plan_slug=$(basename "$plan_file" .md)
+  structured_dir="$plan_dir/${plan_slug}-evidence"
+  structured_file="$structured_dir/${task_id}.evidence.json"
+
+  if [[ -f "$structured_file" ]]; then
+    local now mtime age
+    now=$(date +%s)
+    mtime=$(stat -c %Y "$structured_file" 2>/dev/null || echo 0)
+    age=$((now - mtime))
+    if [[ "$age" -le 120 ]]; then
+      if jq -e --arg id "$task_id" '.task_id == $id and .verdict == "PASS"' "$structured_file" >/dev/null 2>&1; then
+        # For contract level, additionally require at least one mechanical_check
+        # to be present (the schema-valid / golden-diff outcome). The author
+        # picks the right check name; the gate's role is freshness + verdict
+        # + task-id match + non-empty mechanical_checks.
+        if [[ "$level" == "contract" ]]; then
+          if jq -e '.mechanical_checks | type == "object" and (length > 0)' "$structured_file" >/dev/null 2>&1; then
+            return 0
+          fi
+        else
+          return 0
+        fi
+      fi
+    fi
+  fi
+
+  # Path B — legacy prose with one-line `Commit:` citation
+  # The evidence block must contain Task ID matching plus at least one
+  # `Commit:` line citing the SHA where the work landed. This is a
+  # weaker form than the `full`-level prose-with-runtime-verification
+  # but is appropriate for mechanical/contract work where a commit SHA
+  # IS the verification anchor.
+  local evidence_file="${plan_file%.md}-evidence.md"
+  if [[ -f "$evidence_file" ]]; then
+    local now2 mtime2 age2
+    now2=$(date +%s)
+    mtime2=$(stat -c %Y "$evidence_file" 2>/dev/null || echo 0)
+    age2=$((now2 - mtime2))
+    if [[ "$age2" -le 120 ]]; then
+      local result
+      result=$(awk -v wanted_id="$task_id" '
+        BEGIN { in_block = 0; t = ""; has_commit = 0; }
+        /^EVIDENCE BLOCK/ {
+          if (in_block && t == wanted_id && has_commit) { print "MATCH"; exit 0 }
+          in_block = 1; t = ""; has_commit = 0; next
+        }
+        /^Task ID:/ {
+          if (in_block) {
+            sub(/^Task ID:[[:space:]]*/, "", $0); sub(/[[:space:]].*$/, "", $0); t = $0
+          }
+          next
+        }
+        /^Commit:/ { if (in_block) has_commit = 1; next }
+        END { if (in_block && t == wanted_id && has_commit) print "MATCH" }
+      ' "$evidence_file")
+      if [[ "$result" == "MATCH" ]]; then return 0; fi
+    fi
+  fi
+
+  return 1
+}
+
 check_evidence_first() {
   local plan_file="$1"
   local task_id="$2"
@@ -838,10 +1133,32 @@ ERR
         exit 1
       fi
 
-      # Evidence-first escape hatch (now performed under the lock)
-      if [[ -n "$TASK_ID" ]] && check_evidence_first "$FILE_PATH" "$TASK_ID"; then
-        # Lock auto-releases on exit via the EXIT trap.
-        exit 0
+      # Risk-tiered routing (Tranche D, 2026-05-05):
+      # Read the per-task `Verification:` declaration from the plan file
+      # and route the evidence-freshness check accordingly.
+      #   - mechanical: structured `.evidence.json` (PASS verdict, fresh
+      #     mtime, matching task_id) OR fresh one-line `Commit:` block
+      #   - contract: structured `.evidence.json` with non-empty
+      #     mechanical_checks (e.g., schema-valid:) OR fresh one-line
+      #     `Commit:` block
+      #   - full (default): existing prose-with-runtime-verification or
+      #     structured `.evidence.json` per Tranche B's check_evidence_first
+      VERIFICATION_LEVEL=""
+      if [[ -n "$TASK_ID" ]]; then
+        VERIFICATION_LEVEL=$(extract_verification_level "$FILE_PATH" "$TASK_ID")
+      fi
+
+      if [[ "$VERIFICATION_LEVEL" == "mechanical" ]] || [[ "$VERIFICATION_LEVEL" == "contract" ]]; then
+        if [[ -n "$TASK_ID" ]] && check_mechanical_or_contract_evidence "$FILE_PATH" "$TASK_ID" "$VERIFICATION_LEVEL"; then
+          # Lock auto-releases on exit via the EXIT trap.
+          exit 0
+        fi
+      else
+        # Default `full` behavior: existing evidence-first escape hatch
+        if [[ -n "$TASK_ID" ]] && check_evidence_first "$FILE_PATH" "$TASK_ID"; then
+          # Lock auto-releases on exit via the EXIT trap.
+          exit 0
+        fi
       fi
       cat >&2 <<'ERR'
 

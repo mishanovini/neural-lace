@@ -223,6 +223,39 @@ group them under a batch header. Default is serial. Examples:
 The orchestrator reads these markers to decide dispatch batching. When in
 doubt, leave unmarked (serial). See ~/.claude/rules/orchestrator-pattern.md
 for the full safety rules on parallelization.
+
+Per-task `Verification:` declaration (Tranche D of architecture-simplification,
+2026-05-05). Each task description MAY end with `Verification: <level>`
+where <level> is one of:
+
+  mechanical   Deterministic bash check OR a structured `.evidence.json`
+               artifact authored via `write-evidence.sh capture` (Tranche B).
+               Use for: file edits, hook updates, prompt updates, schema
+               authoring, sync-to-mirror, doc-only changes — anything where
+               the verification is exists/grep/diff/typecheck/run-self-test.
+               No agent dispatch needed.
+
+  contract     Golden-file comparison or schema-validation match. Use for:
+               schema work where output must conform to a locked shape, or
+               where a reference fixture is the truth-target.
+
+  full         Existing prose-evidence + task-verifier mandate. Use for:
+               novel runtime work, UI / API / webhook / migration changes,
+               anything where mechanical or contract checks cannot fully
+               attest the user-observable outcome. This is the DEFAULT for
+               unmarked tasks (backward compatibility).
+
+If the field is omitted, `full` applies. The plan-edit-validator routes
+checkbox-flip authorization per level. See
+~/.claude/rules/risk-tiered-verification.md for the full protocol and
+when to use each level.
+
+Format examples:
+
+  - [ ] 1. Author the new hook file at hooks/foo.sh — Verification: mechanical
+  - [ ] 2. Migrate the doctrine docs to canonical glossary — Verification: contract
+  - [ ] 3. Implement the runtime feature end-to-end — Verification: full
+  - [ ] 4. Legacy task without declaration   (defaults to full)
 -->
 
 - [ ] 1. [First task — specific enough to verify completion]
