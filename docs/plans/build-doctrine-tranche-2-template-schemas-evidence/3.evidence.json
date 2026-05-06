@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "task_id": "3",
+  "verdict": "PASS",
+  "commit_sha": "4ef51d66307677ccd563deaa8c1f54299c1dbe57",
+  "files_modified": [
+    "build-doctrine/CHANGELOG.md",
+    "build-doctrine/template-schemas/README.md",
+    "build-doctrine/template-schemas/adr.schema.yaml",
+    "build-doctrine/template-schemas/conventions.schema.yaml",
+    "build-doctrine/template-schemas/design-system.schema.yaml",
+    "build-doctrine/template-schemas/engineering-catalog.schema.yaml",
+    "build-doctrine/template-schemas/examples/adr.example.yaml",
+    "build-doctrine/template-schemas/examples/conventions.example.yaml",
+    "build-doctrine/template-schemas/examples/design-system.example.yaml",
+    "build-doctrine/template-schemas/examples/engineering-catalog.example.yaml",
+    "build-doctrine/template-schemas/examples/observability.example.yaml",
+    "build-doctrine/template-schemas/examples/prd.example.yaml",
+    "build-doctrine/template-schemas/examples/spec.example.yaml",
+    "build-doctrine/template-schemas/observability.schema.yaml",
+    "build-doctrine/template-schemas/prd.schema.yaml",
+    "build-doctrine/template-schemas/spec.schema.yaml"
+  ],
+  "mechanical_checks": {
+    "files-in-commit": {
+      "passed": true,
+      "detail": "16 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-06T08:12:03Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/build-doctrine-tranche-2-template-schemas.md"
+}

@@ -17,7 +17,7 @@
 | **0b** | Phase 0 — migrate doctrine docs into NL + create `build-doctrine-templates/` directory + activate definition-on-first-use scope | ✅ DONE | (archived) | 2026-05-05 |
 | **1** | Phase 1d-C — 8 first-pass C-mechanisms (C1, C2, C7, C9, C10, C15, C16, C22) | ✅ DONE | (archived) | 2026-05-03 to 2026-05-04 |
 | **1.5** | **Architecture simplification — apply doctrine to harness self-development.** 7 sub-tranches: A (incentive redesign), B (mechanical evidence), C (work-shape library), D (risk-tiered verification), E (deterministic close-plan), F (failsafe audit), G (calibration loop). | ✅ DONE | (archived) | 2026-05-05; closure-validator retired; full audit at `docs/reviews/2026-05-05-failsafe-audit.md` |
-| **2** | Phase 4a — Layer B-shape: 7 template schemas | ❌ NOT STARTED | (TBD: `docs/plans/build-doctrine-phase-4a-template-schemas.md`) | — |
+| **2** | Phase 4a — Layer B-shape: 7 template schemas | ✅ DONE | (archived) `docs/plans/archive/build-doctrine-tranche-2-template-schemas.md` | 2026-05-06 |
 | **3** | Phase 4b — Layer B-content: seed `build-doctrine-templates/` with default content for 11 universal floors × 3 depths | ❌ NOT STARTED | (TBD) | — |
 | **4** | Phase 6 — canonical pilot project pilot | ❌ NOT STARTED | (TBD; plan lives in the pilot project's repo, references doctrine in NL) | — |
 | **5** | Phase 5 — Author `07-knowledge-integration.md` (gated on Phase 6 per Q9) | ❌ NOT STARTED | (TBD) | — |
