@@ -119,6 +119,18 @@ A decision made in chat, in a PR comment, or in a spec draft must graduate to th
 
 Every issue identified during build — by a builder, a reviewer, a mechanical gate, a propagation trigger, or a drift detection — is captured in the structured findings ledger with severity, scope, and ownership. Findings are surfaced to the user; the user can act, defer, or accept-with-rationale. What the user cannot do is silently fail to decide. Undecided findings remain visible until decided. Persistent undecided findings flag for knowledge integrator review (the doctrine or the spec may be the issue, not the work). The principle is simple: nothing the system noticed gets quietly dropped.
 
+### 16. We do not allow reactive enforcement stacking *(N1 — added 2026-05-05 from harness self-application)*
+
+When a failure repeats despite an existing gate, the response is to fix the underlying structure or incentive — NOT to add another gate on top of the leaking one. Adding a gate without removing or restructuring at least one upstream cause is technical debt that compounds. Verification overhead grows; agent incentives stay misaligned; gates accumulate even when the underlying agent could be fixed. The harness has empirical evidence of this pattern: two months of reactive failsafe stacking produced a verification stack that costs more than the work it gates. The discipline: failsafes only after incentive design AND structural foundation have been tried. **Cross-reference: ADR 026 ("harness catches up to doctrine"); discovery `2026-05-05-verification-overhead-vs-structural-foundation.md`.**
+
+### 17. We do not put LLM judgment where mechanical checks suffice *(N2 — added 2026-05-05 from harness self-application)*
+
+LLM judgment is excellent at: reading natural-language requirements, generating draft code, surfacing edge cases the human did not think of, classifying ambiguous inputs, writing prose. LLM judgment is poor at: counting, applying rules consistently, remembering state across sessions, refusing shortcuts under pressure, catching its own contradictions. **The decision rubric for any new gate or validator: "is this work mechanical (deterministic procedure with one right answer) or judgment (genuinely ambiguous case requiring synthesis)?" Mechanical work goes to bash scripts, schema validation, type checks, golden-file comparison. Judgment work goes to adversarial-review agents.** Mixing the two is a category error that produces overhead without proportionate benefit. Cross-reference: `04-gates.md` six-category split (categories 1-3 mechanical, category 4 LLM-judgment, categories 5-6 mixed); ADR 026.
+
+### 18. The harness itself is a project under this doctrine *(N3 — added 2026-05-05 from harness self-application)*
+
+The doctrine governs how human + AI collaboration is structured at the project level for designing and building applications. The harness — Neural Lace itself — is a project that designs and builds the infrastructure that enables that collaboration. Therefore, the harness's own development is governed by this doctrine in the same way downstream projects are. The harness's spec freezes apply to harness specs; the harness's adversarial review applies to harness changes; the harness's findings ledger captures harness failures. When the harness diverges from the doctrine, the harness is the side that catches up (per ADR 026). This closes the meta-loop: the same doctrine that produces high-reliability applications also produces a high-reliability harness. Without this principle, the harness can drift into reactive enforcement (Anti-Principle 16) while believing it is enforcing the doctrine on others.
+
 ---
 
 ## Open during fresh-draft phase
