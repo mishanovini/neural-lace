@@ -75,6 +75,28 @@ Each layer system answers one question. Together they describe the harness's ful
 
 Each transition is gated by a hook. The agent cannot skip a step.
 
+## Documentation
+
+Each doc serves a different audience tier — pick the row that matches what you're doing.
+
+| Document | Audience | Covers |
+|----------|----------|--------|
+| **README.md** (this file) | Anyone | Front door — what + why + structure-as-shape + install |
+| [`SETUP.md`](SETUP.md) | First-time installers | Fresh-install walkthrough, two-layer config customization |
+| [`docs/architecture-overview.md`](docs/architecture-overview.md) | Fresh adopters wanting depth | Full team-role mapping + layered architectures cross-walked + end-to-end flow |
+| [`docs/doc-writing-patterns.md`](docs/doc-writing-patterns.md) | Anyone writing docs in this repo | The 10 principles for user-facing documentation |
+| [`docs/best-practices.md`](docs/best-practices.md) | Adopters + maintainers | Full catalog of 25+ practices + rationale + enforcement |
+| [`docs/harness-architecture.md`](docs/harness-architecture.md) | Maintainers | Hook chains, agent table, credential layers, mechanism inventory |
+| [`docs/harness-strategy.md`](docs/harness-strategy.md) | Strategy readers | Vision, milestones, layer model, security maturity |
+| [`docs/harness-guide.md`](docs/harness-guide.md) | Adopters | File-by-file reference, setup instructions |
+| [`docs/build-doctrine-roadmap.md`](docs/build-doctrine-roadmap.md) | Following Build Doctrine work | Tranche-by-tranche status table |
+| [`docs/agent-incentive-map.md`](docs/agent-incentive-map.md) | Maintainers | Per-agent failure-mode analysis |
+| [`docs/business-patterns-workflow.md`](docs/business-patterns-workflow.md) | Teams | Sharing credential patterns across a team |
+| [`principles/permission-model.md`](principles/permission-model.md) | Anyone | Risk dimensions, scoring, tiers |
+| [`principles/progressive-autonomy.md`](principles/progressive-autonomy.md) | Anyone | Trust model, autonomy ladder |
+| [`principles/harness-hygiene.md`](principles/harness-hygiene.md) | Contributors | No sensitive data in harness code; two-layer config |
+| [`docs/ux-guidelines.md`](docs/ux-guidelines.md) + [`docs/ux-checklist.md`](docs/ux-checklist.md) | UI builders | Design principles + 22-domain audit checklist |
+
 ## What it does
 
 - **Enforced best practices** (not aspirational): evidence-based task completion, anti-vaporware verification, decision-record atomicity, tool-call budget discipline — each backed by a pre-commit hook or session gate that blocks the anti-pattern mechanically.
@@ -278,26 +300,6 @@ Trust (0.0-1.0) grows with safe operation and decays with incidents. Higher trus
 | Telemetry Collectors | Planned |
 | Learning Loop | Planned |
 | Codex / Cursor adapters | Planned (v1.5+) |
-
-## Documentation
-
-| Document | Audience | Covers |
-|----------|----------|--------|
-| **README.md** (this file) | Anyone | Front door — what + why + structure-as-shape + install |
-| [`SETUP.md`](SETUP.md) | First-time installers | Fresh-install walkthrough, two-layer config customization |
-| [`docs/architecture-overview.md`](docs/architecture-overview.md) | Fresh adopters wanting depth | Full team-role mapping + layered architectures cross-walked + end-to-end flow |
-| [`docs/doc-writing-patterns.md`](docs/doc-writing-patterns.md) | Anyone writing docs in this repo | The 10 principles for user-facing documentation |
-| [`docs/best-practices.md`](docs/best-practices.md) | Adopters + maintainers | Full catalog of 25+ practices + rationale + enforcement |
-| [`docs/harness-architecture.md`](docs/harness-architecture.md) | Maintainers | Hook chains, agent table, credential layers, mechanism inventory |
-| [`docs/harness-strategy.md`](docs/harness-strategy.md) | Strategy readers | Vision, milestones, layer model, security maturity |
-| [`docs/harness-guide.md`](docs/harness-guide.md) | Adopters | File-by-file reference, setup instructions |
-| [`docs/build-doctrine-roadmap.md`](docs/build-doctrine-roadmap.md) | Following Build Doctrine work | Tranche-by-tranche status table |
-| [`docs/agent-incentive-map.md`](docs/agent-incentive-map.md) | Maintainers | Per-agent failure-mode analysis |
-| [`docs/business-patterns-workflow.md`](docs/business-patterns-workflow.md) | Teams | Sharing credential patterns across a team |
-| [`principles/permission-model.md`](principles/permission-model.md) | Anyone | Risk dimensions, scoring, tiers |
-| [`principles/progressive-autonomy.md`](principles/progressive-autonomy.md) | Anyone | Trust model, autonomy ladder |
-| [`principles/harness-hygiene.md`](principles/harness-hygiene.md) | Contributors | No sensitive data in harness code; two-layer config |
-| [`docs/ux-guidelines.md`](docs/ux-guidelines.md) + [`docs/ux-checklist.md`](docs/ux-checklist.md) | UI builders | Design principles + 22-domain audit checklist |
 
 ## License
 
