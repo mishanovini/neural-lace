@@ -491,6 +491,38 @@ Both copy-in scripts exit non-zero on failure and print a structured report. The
 | `verbose-plan.md` | Plan expander. Fills gaps in thin plan files (Assumptions, Edge Cases, Testing Strategy) so they meet the mandatory verbose-plan standard. |
 | `harness-lesson.md` | Failure-to-mechanism encoder. Takes a recent failure and proposes a concrete harness change (full file path + actual content) to prevent the class. |
 | `close-plan.md` **(HARNESS-GAP-16, Phase 1d-H, 2026-05-05)** | Plan-closure mechanical assistant. Pairs with `plan-closure-validator.sh`. Walks the orchestrator through the five closure checks (every checkbox flipped, every task has PASS evidence, Completion Report populated, backlog reconciled, SCRATCHPAD fresh) and surfaces unmet gaps with specific actions, then flips `Status: ACTIVE → COMPLETED` (which triggers the closure-validator gate plus auto-archive). Makes the right closure path easier than the wrong one. |
+| `calibrate.md` **(Tranche G, 2026-05-05)** | Manual-entry calibration capture. Writes structured per-agent observations to `.claude/state/calibration/<agent-name>.md` (gitignored). Five canonical observation classes: `shortcut`, `hallucination`, `pass-by-default`, `format-drift`, `scope-drift`. Bootstraps the Knowledge Integrator role (Build Doctrine Principle 9 + Role 9) ahead of telemetry. Roll-up consumed by `/harness-review` Check 12. Discipline in `~/.claude/rules/calibration-loop.md`. |
+
+## Calibration Loop (Tranche G, 2026-05-05)
+
+Manual bootstrap of the Build Doctrine Knowledge Integrator role
+(`build-doctrine/doctrine/02-roles.md` Role 9) until telemetry-driven
+mechanization lands (HARNESS-GAP-11, gated 2026-08). Per Decision G.1
+(`docs/decisions/queued-tranche-1.5.md`), calibration entries live as
+gitignored per-machine operational state at `.claude/state/calibration/<agent-name>.md`.
+
+Three components:
+
+- **Capture skill** (`~/.claude/skills/calibrate.md`) — `/calibrate <agent>
+  <observation-class> <details>` appends a structured entry to the
+  per-agent file. Five canonical observation classes (`shortcut`,
+  `hallucination`, `pass-by-default`, `format-drift`, `scope-drift`);
+  `new-class:<label>` prefix to propose a sixth.
+- **Roll-up consumer** (`~/.claude/skills/harness-review.md` Check 12) —
+  weekly audit reads all per-agent files and surfaces total entry count,
+  top-3 observation classes, and most-recent entry per class. Pattern
+  recognition is then human-mediated (Knowledge Integrator decides which
+  patterns warrant prompt updates, work-shape extensions, or
+  telemetry-deferral).
+- **Discipline rule** (`~/.claude/rules/calibration-loop.md`) — when to
+  invoke, what NOT to calibrate (codebase bugs go to backlog/findings,
+  not calibration), and the routing logic from observation patterns to
+  remediation type.
+
+This is the harness's first reactive-to-proactive transition: every
+agent-behavior failure observed during build becomes a candidate doctrine
+update, not a forgotten frustration. Telemetry mechanization upgrades
+the substrate but does not change the discipline.
 
 ## Docs (`~/.claude/docs/`)
 

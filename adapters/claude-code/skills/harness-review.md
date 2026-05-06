@@ -563,6 +563,68 @@ else
 fi
 
 # ==========================================================================
+# Check 12: Calibration roll-up (Tranche G, 2026-05-05)
+# ==========================================================================
+# Reads `.claude/state/calibration/*.md` files (per-agent observations
+# captured via /calibrate) and emits a section per agent summarizing:
+#   - Total entry count
+#   - Top-3 most-frequent observation classes (with counts)
+#   - Most-recent entry per class
+#
+# Always PASS — these are informational. Reviewers interpret context and
+# decide which patterns warrant a prompt update, work-shape library
+# extension, or defer to telemetry (HARNESS-GAP-11). See
+# ~/.claude/rules/calibration-loop.md for the discipline.
+#
+# Volume warning: if any agent has > 100 entries, surface a finding so the
+# operator considers archival to a sub-directory.
+calibration_findings=()
+calib_dir="$REPO_ROOT/.claude/state/calibration"
+
+if [[ ! -d "$calib_dir" ]]; then
+  calibration_findings+=("No calibration directory present — invoke /calibrate to start the loop")
+else
+  # Iterate per-agent file
+  found_any=0
+  while IFS= read -r -d '' afile; do
+    found_any=1
+    agent=$(basename "$afile" .md)
+    # Count entries (each entry starts with `## <ISO-timestamp>`)
+    entry_count=$(grep -cE '^## [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' "$afile" 2>/dev/null || echo 0)
+    if [[ "$entry_count" -eq 0 ]]; then
+      continue
+    fi
+    # Extract observation classes from heading lines: `## <ts> — <class>`
+    # Match any timestamped heading; sed strips the `## <ts> — ` prefix to
+    # leave just the class. The em-dash separator is multibyte (U+2014); we
+    # avoid matching it inline in the grep regex (locale-dependent) and rely
+    # on sed to split.
+    top3=$(grep -E '^## [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' "$afile" 2>/dev/null \
+            | sed -E 's/^## [^ ]+ — //' \
+            | sort | uniq -c | sort -rn | head -3 \
+            | awk '{cls=$2; cnt=$1; if(NR>1) printf ", "; printf "%s (%d)", cls, cnt}')
+    # Most-recent entry's class
+    recent_class=$(grep -E '^## [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' "$afile" 2>/dev/null \
+                    | tail -1 \
+                    | sed -E 's/^## [^ ]+ — //')
+    recent_ts=$(grep -E '^## [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' "$afile" 2>/dev/null \
+                  | tail -1 \
+                  | sed -E 's/^## ([^ ]+) .*$/\1/')
+    line="**${agent}**: ${entry_count} entries; top classes: ${top3}; most-recent: ${recent_class} (${recent_ts})"
+    calibration_findings+=("$line")
+    if [[ "$entry_count" -gt 100 ]]; then
+      calibration_findings+=("  ⚠ ${agent}: > 100 entries — consider archival to .claude/state/calibration/archive/${agent}.md")
+    fi
+  done < <(find "$calib_dir" -maxdepth 1 -type f -name '*.md' -print0 2>/dev/null)
+
+  if [[ $found_any -eq 0 ]]; then
+    calibration_findings+=("Calibration directory present but no per-agent files yet — invoke /calibrate to capture observations")
+  fi
+fi
+
+write_section "12. Calibration roll-up" "PASS" "${calibration_findings[@]}"
+
+# ==========================================================================
 # Summary
 # ==========================================================================
 {
