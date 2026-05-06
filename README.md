@@ -4,7 +4,34 @@
 
 **Last verified:** 2026-05-06.
 
-Neural Lace makes the AI a reliable collaborator in production work. It does this by giving the AI a **structured team to operate within**, not a single-agent prompt: an orchestrator dispatches builders, builders ship code, verifiers gate completion, advocates check user-observable outcomes, and reviewers catch what the others miss. The team's discipline is enforced by hooks, not relied on as agent self-discipline.
+**Concretely, Neural Lace is** a set of rules, hooks, agent definitions, scripts, and templates installed into `~/.claude/` (Claude Code's config directory) plus global git hooks that scan every commit and push. Once installed, every Claude Code session inherits the discipline — no per-session opt-in, no self-applied rules. The harness makes the AI a reliable collaborator in production work by giving it a **structured team to operate within**, not a single-agent prompt: an orchestrator dispatches builders, builders ship code, verifiers gate completion, advocates check user-observable outcomes, and reviewers catch what the others miss.
+
+**Hooks here means Claude Code lifecycle hooks** (PreToolUse, PostToolUse, Stop, SessionStart) — scripts the harness runs at session events, with the power to block actions before they execute or refuse to let a session end. Plus standard git pre-commit / pre-push hooks for credential scanning. The discipline is enforced at these enforcement points, not relied on as agent self-discipline.
+
+## Is this for you?
+
+You'll get the most value from Neural Lace if:
+
+- You're a solo developer or small team building production code with Claude Code.
+- You've shipped vaporware at least once (code that compiles but doesn't actually work end-to-end) and want enforcement, not aspirations.
+- You can install bash hooks and don't mind a `~/.claude/` directory growing to ~50 files.
+- You want the AI to operate autonomously on multi-task plans without losing quality.
+
+**This differs from project-only `CLAUDE.md`** by adding hook-enforced gates — the AI cannot skip verification by not noticing the rule. **It differs from cursor rules / aider** by being tool-portable (Claude Code adapter shipping; Codex / Cursor / Gemini adapters planned via the Layer 0/1/2 model below).
+
+## What it does
+
+- **Enforced best practices** (not aspirational): evidence-based task completion, anti-vaporware verification, decision-record atomicity, tool-call budget discipline — each backed by a pre-commit hook or session gate that blocks the anti-pattern mechanically.
+- **Risk-based permissions**: actions classified by 6 risk dimensions (reversibility, blast radius, sensitivity, authority escalation, novelty, velocity). Unknown actions handled gracefully.
+- **Progressive autonomy**: trust accumulates through safe operation. Hard blocks (credential exposure, public access) never relax.
+- **Two-layer configuration**: shareable harness code never contains identity, credentials, or machine-specific paths. Personal config in `~/.claude/local/` (gitignored). Hygiene scanner blocks accidental leaks at pre-commit.
+- **Self-evaluation**: weekly `/harness-review` skill audits the harness itself — dead doc links, stale references, drift between installed and source copies, hygiene violations.
+- **Defense in depth**: credentials scanned at commit AND push. Security anti-patterns common in AI-generated code flagged before they ship.
+- **Narrative integrity**: agent cannot end a session whose transcript reveals deferred work, self-contradiction, skipped user imperatives, or unfulfilled first-message goals.
+- **Proactive learning capture**: mid-process realizations land as durable artifacts (`docs/discoveries/`), not chat-only narrative.
+- **Forward-compatible**: universal principles (Layer 0) and abstract patterns (Layer 1) survive tool changes. Only thin adapters (Layer 2) need to be rewritten per tool.
+
+Full catalog of 25+ practices, rationale, and where each is enforced: [`docs/best-practices.md`](docs/best-practices.md).
 
 This is the front door. For depth → [`docs/architecture-overview.md`](docs/architecture-overview.md). For install → the Quick Start below. For the catalog of mechanisms → [`docs/harness-architecture.md`](docs/harness-architecture.md). For best-practice rationale → [`docs/best-practices.md`](docs/best-practices.md).
 
@@ -31,49 +58,35 @@ Each agent in the harness plays a real-world tech-team role. The orchestrator is
 
 Plus 9 additional specialists (UX designers, audience reviewers, comprehension reviewers, harness reviewers, claim reviewers, exploration agents, PRD validity reviewers, domain experts). Full mapping in [`docs/architecture-overview.md`](docs/architecture-overview.md).
 
-### Three layered architectures, each answering a different question
+### The architecture is layered for tool-portability
 
-The harness has three independent layer systems. Each answers a different question; they compose orthogonally.
-
-**Layer 0/1/2/3 — *Where does code live?***
 ```
 Layer 0  PRINCIPLES  (universal, tool-agnostic)     Risk model, autonomy ladder
-Layer 1  PATTERNS    (tool-family-agnostic)         Rules, hooks, agents shapes
+Layer 1  PATTERNS    (tool-family-agnostic)         Rules, hooks, agents — abstract shapes
 Layer 2  ADAPTERS    (tool-specific)                Claude Code, Codex, Cursor, Gemini
 Layer 3  PROJECT     (per-repo)                     Project rules, audience, context
 ```
 
-**Generation 1-6 — *When was each enforcement class added, and why?***
-- Gen 4 (Apr 2026) — anti-vaporware mechanisms (evidence-based completion, runtime verification, plan-edit validation, tool-call budget)
-- Gen 5 (Apr 2026) — acceptance loop, plan lifecycle, class-aware feedback
-- Gen 6 (Apr-May 2026) — narrative-integrity Stop hooks (block sessions whose transcripts reveal deferred work, self-contradiction, skipped imperatives, unfulfilled goals)
-- Build Doctrine integration (May 2026) — discovery protocol, comprehension gate, PRD validity + spec freeze, findings ledger, definition-on-first-use, scope-enforcement redesign, deterministic close-plan procedure
-
-**ADR-027 Layer 1-5 — *How is handoff state verified at session boundary?***
-- Layer 1: SCRATCHPAD as authored summary
-- Layer 2: derived state-summary from primary sources
-- Layer 3: session-wrap.sh handoff verification (auto-runs at Stop)
-- Layer 4: stale-pointer detection signals
-- Layer 5: handoff-freshness as precondition for session end
-
-Each layer system answers one question. Together they describe the harness's full structure. Full per-layer cross-walk in [`docs/architecture-overview.md`](docs/architecture-overview.md).
+This is the layer system that affects "is this useful for me?" — it tells you what changes if you want the harness to work with a different AI tool. (Two other layer systems exist for different questions: Generation 1-6 for *when each enforcement class was added*, and ADR-027 Layer 1-5 — Architecture Decision Record #027 — for *how handoff state is verified at session boundary*. Both are documented in [`docs/architecture-overview.md`](docs/architecture-overview.md) Section III.)
 
 ### How a feature ships through the team
 
-```
-1. Planner drafts plan → start-plan.sh creates scaffold
-2. ux-designer + systems-designer + end-user-advocate review at plan-time
-3. Orchestrator dispatches plan-phase-builder(s) in worktrees
-4. Builders build + commit on worker branches
-5. task-verifier flips checkboxes (only mechanism that can; never self-report)
-6. code-reviewer + security-reviewer pre-commit
-7. end-user-advocate runs runtime acceptance scenarios against the live app
-8. On FAIL: enforcement-gap-analyzer proposes a harness improvement
-9. On PASS: close-plan.sh deterministically closes (auto-archives plan + evidence)
-10. Auto-merge to master per the verified-complete rule in `~/.claude/rules/git.md`
-```
+Here's what happens after you type "build feature X" in a Claude Code session — every transition is gated by a hook; the agent cannot skip a step:
 
-Each transition is gated by a hook. The agent cannot skip a step.
+| # | Step | Who does it |
+|---|---|---|
+| 1 | Plan drafted → `start-plan.sh` creates scaffold | You + AI orchestrator (the main session) |
+| 2 | Plan-time review: UX, systems-design, acceptance scenarios | `ux-designer`, `systems-designer`, `end-user-advocate` agents |
+| 3 | Orchestrator dispatches builders in isolated worktrees | The main session (calling out to `plan-phase-builder` agents) |
+| 4 | Builders build + commit on worker branches | `plan-phase-builder` agents |
+| 5 | Each task verified before its checkbox flips | `task-verifier` agent (only mechanism that can flip checkboxes) |
+| 6 | Pre-commit security + code review | `code-reviewer`, `security-reviewer` agents + pre-commit hooks |
+| 7 | Runtime acceptance scenarios run against the live app | `end-user-advocate` agent |
+| 8 | On FAIL → harness-improvement proposal | `enforcement-gap-analyzer` agent |
+| 9 | On PASS → `close-plan.sh` deterministic closure | `close-plan.sh` script (auto-archives plan + evidence) |
+| 10 | Auto-merge to master per the verified-complete rule | The main session, per `~/.claude/rules/git.md` |
+
+The `start-plan.sh` and `close-plan.sh` scripts are bash; you can run them by hand or the AI invokes them. The agents are spawned by the main Claude Code session via the Task tool. The hooks fire automatically at Claude Code lifecycle events. Full step-by-step expansion with PASS/FAIL paths in [`docs/architecture-overview.md`](docs/architecture-overview.md) Section II.
 
 ## Documentation
 
@@ -89,27 +102,14 @@ Each doc serves a different audience tier — pick the row that matches what you
 | [`docs/harness-architecture.md`](docs/harness-architecture.md) | Maintainers | Hook chains, agent table, credential layers, mechanism inventory |
 | [`docs/harness-strategy.md`](docs/harness-strategy.md) | Strategy readers | Vision, milestones, layer model, security maturity |
 | [`docs/harness-guide.md`](docs/harness-guide.md) | Adopters | File-by-file reference, setup instructions |
-| [`docs/build-doctrine-roadmap.md`](docs/build-doctrine-roadmap.md) | Following Build Doctrine work | Tranche-by-tranche status table |
+| [`docs/build-doctrine-roadmap.md`](docs/build-doctrine-roadmap.md) | Following Build Doctrine work | Tranche-by-tranche status of the **Build Doctrine** integration (a separate methodology covering failsafe-first, work-shapes, and risk-tiered verification — integrated into Neural Lace in May 2026) |
+| [`build-doctrine/doctrine/07-knowledge-integration.md`](build-doctrine/doctrine/07-knowledge-integration.md) | Doctrine maintainers | The **Knowledge Integration Ritual** — how the doctrine itself evolves on cadence + 7 KIT triggers (calibration patterns, findings, discoveries, ADR-staleness, `/harness-review`, propagation-engine audit log, drift). Composes with [`adapters/claude-code/scripts/analyze-propagation-audit-log.sh`](adapters/claude-code/scripts/analyze-propagation-audit-log.sh) (KIT-6 consumer) and `/harness-review` Check 13 (KIT-1..KIT-7 sweep). |
 | [`docs/agent-incentive-map.md`](docs/agent-incentive-map.md) | Maintainers | Per-agent failure-mode analysis |
 | [`docs/business-patterns-workflow.md`](docs/business-patterns-workflow.md) | Teams | Sharing credential patterns across a team |
 | [`principles/permission-model.md`](principles/permission-model.md) | Anyone | Risk dimensions, scoring, tiers |
 | [`principles/progressive-autonomy.md`](principles/progressive-autonomy.md) | Anyone | Trust model, autonomy ladder |
 | [`principles/harness-hygiene.md`](principles/harness-hygiene.md) | Contributors | No sensitive data in harness code; two-layer config |
 | [`docs/ux-guidelines.md`](docs/ux-guidelines.md) + [`docs/ux-checklist.md`](docs/ux-checklist.md) | UI builders | Design principles + 22-domain audit checklist |
-
-## What it does
-
-- **Enforced best practices** (not aspirational): evidence-based task completion, anti-vaporware verification, decision-record atomicity, tool-call budget discipline — each backed by a pre-commit hook or session gate that blocks the anti-pattern mechanically.
-- **Risk-based permissions**: actions classified by 6 risk dimensions (reversibility, blast radius, sensitivity, authority escalation, novelty, velocity). Unknown actions handled gracefully.
-- **Progressive autonomy**: trust accumulates through safe operation. Hard blocks (credential exposure, public access) never relax.
-- **Two-layer configuration**: shareable harness code never contains identity, credentials, or machine-specific paths. Personal config in `~/.claude/local/` (gitignored). Hygiene scanner blocks accidental leaks at pre-commit.
-- **Self-evaluation**: weekly `/harness-review` skill audits the harness itself — dead doc links, stale references, drift between installed and source copies, hygiene violations.
-- **Defense in depth**: credentials scanned at commit AND push. Security anti-patterns common in AI-generated code flagged before they ship.
-- **Narrative integrity** *(Gen 6)*: agent cannot end a session whose transcript reveals deferred work, self-contradiction, skipped user imperatives, or unfulfilled first-message goals.
-- **Proactive learning capture**: mid-process realizations land as durable artifacts (`docs/discoveries/`), not chat-only narrative.
-- **Forward-compatible**: universal principles (Layer 0) and abstract patterns (Layer 1) survive tool changes. Only thin adapters (Layer 2) need to be rewritten per tool.
-
-Full catalog of 25+ practices, rationale, and where each is enforced: [`docs/best-practices.md`](docs/best-practices.md).
 
 ## Quick Start (Claude Code)
 

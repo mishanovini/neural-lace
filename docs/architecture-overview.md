@@ -16,6 +16,13 @@ You're reading the unified architectural narrative — the doc that ties the who
 - For the doc-writing principles this doc follows → [`docs/doc-writing-patterns.md`](doc-writing-patterns.md).
 - For Build Doctrine integration arc status → [`docs/build-doctrine-roadmap.md`](build-doctrine-roadmap.md).
 
+**Glossary (terms used throughout):**
+- **Build Doctrine** — a separate methodology repository at `~/claude-projects/Build Doctrine/` whose principles (failsafe-first, work-shapes, risk-tiered verification, knowledge-integration ritual) were integrated into Neural Lace beginning May 2026.
+- **ADR** — Architecture Decision Record. Stored at `docs/decisions/NNN-<slug>.md`; indexed by `docs/DECISIONS.md`. Required for every Tier 2+ decision.
+- **rung** — the diff complexity score declared in a plan's header. R0 = single-file trivial. R1 = mostly-isolated. R2+ = multi-file with behavioral contracts. The harness gates more substance review at higher rungs.
+- **A1 / A3 / A5 / A7 / A8** — labels for the five Generation-6 narrative-integrity Stop hooks: A1 first-message goal extraction, A3 self-contradiction detection, A5 deferral surfacing, A7 strong-imperative coverage, A8 vaporware-volume gate. Each reads the session JSONL transcript (which the agent cannot edit) to close a gap between claims and evidence.
+- **FM-NNN** — failure-mode catalog entry. Stored at `docs/failure-modes.md`. Six-field schema (ID, Severity, Scope, Source, Location, Status).
+
 ## What this doc is — and isn't
 
 **Is:** the unified narrative. A 15-minute read for a developer who wants to understand how the harness fits together end-to-end.
@@ -28,7 +35,7 @@ You're reading the unified architectural narrative — the doc that ties the who
 
 A harness platform that wraps an AI coding tool (Claude Code today; Codex / Cursor / Gemini planned) with three things composed together:
 
-1. **A structured team of specialized agents** — 19 of them at this writing — each playing a real-world tech-team role with bounded scope and constrained authority.
+1. **A structured team of specialized agents** — 20 at this writing (19 sub-agents + the orchestrator main session) — each playing a real-world tech-team role with bounded scope and constrained authority.
 2. **A layered architecture** — universal principles, tool-family patterns, tool-specific adapters, per-project overrides — so improvements compose rather than fork.
 3. **An enforcement substrate** — ~40 hooks, contextual rules, and deterministic scripts that mechanically gate the work the team does.
 
@@ -79,7 +86,7 @@ That's one feature. Eight agents fired, plus the orchestrator. The principle the
 | Cheap codebase explorer | `explorer` | Fast Haiku-powered lookups for "where does X live" without filling main context. | On demand |
 | Deep researcher | `research` | Structured architecture analysis with curated output for the caller. | On demand |
 
-The 19 agents above plus the orchestrator are not the whole team. Several **load-bearing hooks** play team roles too — they're not LLMs, but they're the auditors and gate-keepers without which the LLMs' self-discipline would fail.
+**The team comprises 20 agents** — 19 sub-agents (the entries above) plus the orchestrator (the main Claude Code session, listed at the top of the table). Several **load-bearing hooks** play team roles too — they're not LLMs, but they're the auditors and gate-keepers without which the LLMs' self-discipline would fail.
 
 | Real-world role | Hook / mechanism | What it does |
 |---|---|---|
@@ -395,6 +402,33 @@ Separate from the source-of-truth tree above. `install.sh` symlinks (Linux/macOS
     ├── reviews/                  plan-evidence-reviewer outputs.
     └── user-goals/               First-message goal extraction (Gen 6 / A1).
 ```
+
+### Find by topic
+
+The tree above shows where things live by directory. The table below shows where to look up by topic — useful when you know what you want but not where it lives.
+
+| Topic | Where to look |
+|---|---|
+| Anti-vaporware enforcement (rules + hooks + map) | `adapters/claude-code/rules/vaporware-prevention.md` |
+| Failure-mode catalog (FM-NNN entries) | `docs/failure-modes.md` |
+| Per-agent failure-mode analysis (incentive map) | `docs/agent-incentive-map.md` |
+| Plan-closure procedure (deterministic) | `adapters/claude-code/scripts/close-plan.sh` |
+| Plan-creation scaffolding | `adapters/claude-code/scripts/start-plan.sh` |
+| Mechanical evidence schema + helper | `adapters/claude-code/schemas/evidence.schema.json` + `scripts/write-evidence.sh` |
+| Handoff-freshness verification (Layer 5) | `adapters/claude-code/scripts/session-wrap.sh` + `docs/decisions/027-*` |
+| State-summary derivation (SCRATCHPAD freshness) | `adapters/claude-code/scripts/state-summary.sh` |
+| spawn_task report-back convention | `adapters/claude-code/rules/spawn-task-report-back.md` |
+| Discovery protocol (mid-process learnings) | `adapters/claude-code/rules/discovery-protocol.md` + `hooks/discovery-surfacer.sh` |
+| Comprehension gate (rung-2+ articulation) | `adapters/claude-code/rules/comprehension-gate.md` + `agents/comprehension-reviewer.md` |
+| Acceptance-loop (plan-time + runtime) | `adapters/claude-code/rules/acceptance-scenarios.md` + `agents/end-user-advocate.md` |
+| Risk model (6 dimensions, 4 tiers) | `principles/permission-model.md` |
+| Progressive autonomy (trust ladder) | `principles/progressive-autonomy.md` |
+| Two-layer config (no identity in shareable code) | `principles/harness-hygiene.md` + `hooks/harness-hygiene-scan.sh` |
+| Multi-account auto-switching | `adapters/claude-code/scripts/read-local-config.sh` + `examples/accounts.config.example.json` |
+| Build Doctrine integration arc status | `docs/build-doctrine-roadmap.md` |
+| Decision records (ADRs) index | `docs/DECISIONS.md` (entries at `docs/decisions/NNN-*.md`) |
+| Findings ledger (six-field entries) | `docs/findings.md` (validated by `findings-ledger-schema-gate.sh`) |
+| Doc-writing principles (this doc tree) | `docs/doc-writing-patterns.md` |
 
 The two trees are connected only by `install.sh`. The repo is the source of truth; `~/.claude/` is the cache. `settings-divergence-detector.sh` (SessionStart hook) surfaces drift between the two.
 
