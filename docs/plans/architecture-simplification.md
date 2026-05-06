@@ -1,6 +1,6 @@
 # Plan: Architecture Simplification — Tranche 1.5 of the Build Doctrine Roadmap
 
-Status: COMPLETED
+Status: ACTIVE
 Execution Mode: orchestrator
 Mode: design
 tier: 3

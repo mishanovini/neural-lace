@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "task_id": "3",
+  "verdict": "PASS",
+  "commit_sha": "be0946d599847ce29445e181349695c0b7596541",
+  "files_modified": [
+    "docs/backlog.md",
+    "docs/plans/architecture-simplification-tranche-e-deterministic-close-plan.md",
+    "docs/plans/architecture-simplification-tranche-f-failsafe-audit.md",
+    "docs/plans/architecture-simplification.md",
+    "docs/plans/archive/architecture-simplification-tranche-e-deterministic-close-plan.md",
+    "docs/plans/archive/architecture-simplification-tranche-f-failsafe-audit.md",
+    "docs/plans/archive/architecture-simplification.md",
+    "docs/plans/archive/harness-gap-17-narrative-doc-sweep.md",
+    "docs/plans/harness-gap-17-narrative-doc-sweep.md"
+  ],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/skills/close-plan.md": {
+      "passed": true,
+      "detail": "adapters/claude-code/skills/close-plan.md exists",
+      "command": "test -e adapters/claude-code/skills/close-plan.md",
+      "exit_code": 0
+    },
+    "command:test -e ~/.claude/skills/close-plan.md": {
+      "passed": true,
+      "detail": "",
+      "command": "test -e ~/.claude/skills/close-plan.md",
+      "exit_code": 0
+    },
+    "command:diff -q adapters/claude-code/skills/close-plan.md ~/.claude/skills/close-plan.md": {
+      "passed": true,
+      "detail": "",
+      "command": "diff -q adapters/claude-code/skills/close-plan.md ~/.claude/skills/close-plan.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'close-plan.sh' adapters/claude-code/skills/close-plan.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'close-plan.sh' adapters/claude-code/skills/close-plan.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-06T06:47:02Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/architecture-simplification-tranche-e-deterministic-close-plan.md"
+}

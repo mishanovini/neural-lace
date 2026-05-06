@@ -1,6 +1,6 @@
 # Plan: HARNESS-GAP-17 Part A — Narrative Documentation Sweep
 
-Status: COMPLETED
+Status: ACTIVE
 Execution Mode: orchestrator
 Mode: code
 tier: 1

@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "be0946d599847ce29445e181349695c0b7596541",
+  "files_modified": [
+    "docs/backlog.md",
+    "docs/plans/architecture-simplification-tranche-e-deterministic-close-plan.md",
+    "docs/plans/architecture-simplification-tranche-f-failsafe-audit.md",
+    "docs/plans/architecture-simplification.md",
+    "docs/plans/archive/architecture-simplification-tranche-e-deterministic-close-plan.md",
+    "docs/plans/archive/architecture-simplification-tranche-f-failsafe-audit.md",
+    "docs/plans/archive/architecture-simplification.md",
+    "docs/plans/archive/harness-gap-17-narrative-doc-sweep.md",
+    "docs/plans/harness-gap-17-narrative-doc-sweep.md"
+  ],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/scripts/close-plan.sh": {
+      "passed": true,
+      "detail": "adapters/claude-code/scripts/close-plan.sh exists",
+      "command": "test -e adapters/claude-code/scripts/close-plan.sh",
+      "exit_code": 0
+    },
+    "command:test -e ~/.claude/scripts/close-plan.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "test -e ~/.claude/scripts/close-plan.sh",
+      "exit_code": 0
+    },
+    "command:diff -q adapters/claude-code/scripts/close-plan.sh ~/.claude/scripts/close-plan.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "diff -q adapters/claude-code/scripts/close-plan.sh ~/.claude/scripts/close-plan.sh",
+      "exit_code": 0
+    },
+    "command:bash adapters/claude-code/scripts/close-plan.sh --self-test 2>&1 | grep -q 'self-test summary: 13 passed'": {
+      "passed": true,
+      "detail": "",
+      "command": "bash adapters/claude-code/scripts/close-plan.sh --self-test 2>&1 | grep -q 'self-test summary: 13 passed'",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-06T06:46:46Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/architecture-simplification-tranche-e-deterministic-close-plan.md"
+}
