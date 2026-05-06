@@ -2,7 +2,7 @@
 title: Verification overhead is a symptom of weak structural foundation
 date: 2026-05-05
 type: architectural-learning
-status: pending
+status: decided
 auto_applied: false
 originating_context: Closing the GAP-16 (closure-validation gate) + Tranche 0b (Build Doctrine Phase 0 migration) parallel build session. After shipping both tranches' code, the orchestrator faced a 13-task-verifier-dispatch closure dance estimated at ~65K tokens. User pushed back: "Why do you call closing a plan a 'dance'? Have we over-engineered this?" Conversation deepened into "show me the incentive and I'll show you the outcome" framing recall + structural critique of why verification is so heavy.
 decision_needed: Should we treat verification overhead as the primary harness-architecture problem and pause new failsafe work in favor of a multi-tranche structural redesign? Specifically: (a) freeze additions to the gate stack, (b) open a multi-tranche `architecture-simplification` plan, (c) start with the work-shape library as the highest-leverage missing piece, (d) revise the existing closure mechanisms (task-verifier mandate, plan-edit-validator, plan-closure-validator) once the structural layer is in place rather than as another patch.
@@ -307,11 +307,19 @@ For nearly every gate we have shipped in the last two months, at least one of th
 
 ## Decision
 
-(populated once user reviews and approves a path forward)
+User authorized full architecture-simplification redesign 2026-05-05 ("Yes, move forward with all these"). All five recommendations approved: Tranche 1.5 redesign as next pickup; doctrine extensions N1+N2+N3; ADR 026; close GAP-16 + Tranche 0b with lightweight evidence; tag closure-validator for retirement.
 
 ## Implementation log
 
-(empty until decision is made and Tranches begin)
+- 2026-05-05 — ADR 026 (`docs/decisions/026-harness-catches-up-to-doctrine.md`) shipped. Establishes precedent.
+- 2026-05-05 — ADR 027 (`docs/decisions/027-autonomous-decision-making-process.md`) shipped. Adds the autonomous-decision-making process per user directive same day.
+- 2026-05-05 — Parent plan `docs/plans/architecture-simplification.md` shipped. Tranche 1.5 of Build Doctrine roadmap.
+- 2026-05-05 — Selective gate-relaxation policy `docs/plans/architecture-simplification-gate-relaxation.md` shipped. Closure-validator advisory mode for Tranche 1.5 work.
+- 2026-05-05 — `docs/decisions/queued-tranche-1.5.md` shipped. 14 pre-emptive decisions across Tranches C/D/E/F/G with options + recommendations.
+- 2026-05-05 — Tranches A, B, C, D, E, G shipped (6 of 7 sub-tranches; commits `e352556`, `35ee3df`, `419c902`, `f4b818f`, `5938a69`, `f83b56a`). Tranche F (failsafe audit) deferred to next session.
+- 2026-05-05 — Closure benchmark: 2.8 sec for synthetic 3-task plan via `close-plan.sh` vs ~65K tokens / 13 dispatches baseline. Verification overhead structurally eliminated.
+- 2026-05-05 — Doctrine extensions N1+N2+N3 landed as Anti-Principle 16, Principle 17, Principle 18 in `build-doctrine/doctrine/01-principles.md` (commit `73f841d`).
+- 2026-05-05 — Live acceptance test for close-plan.sh deferred to next session (closing the architecture-simplification plans themselves via the new procedure).
 
 ## Cross-references
 

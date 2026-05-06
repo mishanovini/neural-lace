@@ -60,6 +60,10 @@ This is a Mode: design plan; the full file inventory lives in each sub-tranche's
 - 2026-05-05: `docs/decisions/queued-tranche-1.5.md` — NEW. Pre-emptively-surfaced decisions for Tranches C/D/E/F/G with options + tradeoffs + recommendations. User reviews asynchronously; orchestrator applies overrides as user answers, otherwise proceeds with recommendations on reversible decisions per ADR 027.
 - 2026-05-05: `.gitignore` — MODIFY (one allow-pattern added: `!docs/decisions/queued-*.md`). Required for the queued-decisions file to be tracked alongside numbered ADRs.
 - 2026-05-05: `build-doctrine/doctrine/01-principles.md` — MODIFY (Task 10 — three doctrine extensions N1, N2, N3 added as Anti-Principle 16 + Principle 17 + Principle 18). Originally listed in parent plan Task 10 but the file path wasn't in `## Files to Modify/Create`; surfaced and added here per scope-enforcement-gate.
+- 2026-05-05: `docs/discoveries/2026-05-05-verification-overhead-vs-structural-foundation.md` — MODIFY (Status flip from `pending` to `decided` + Implementation log populated per ADR 027 Layer 3). Originating discovery for this entire arc; status update is part of the handoff.
+- 2026-05-05: `SCRATCHPAD.md` — MODIFY (rewrite with current state of Tranche 1.5 + next-session pickup pointer; gitignored, not committed but updated for next-session continuity).
+- 2026-05-05: `docs/backlog.md` — MODIFY (header v25 stamp summarizing Tranche 1.5 substantive completion).
+- 2026-05-05: `docs/build-doctrine-roadmap.md` — MODIFY (Quick status row update + Recent updates entry per ADR 027 Layer 4 final-summary discipline).
 
 ## Assumptions
 
