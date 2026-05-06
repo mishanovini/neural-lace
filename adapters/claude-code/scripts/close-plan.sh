@@ -16,18 +16,23 @@
 # auto-pushes per user's full-auto preference (per E.2).
 #
 # Subcommands:
-#   close <plan-slug> [--no-push] [--force]   Close the plan
+#   close <plan-slug> [--no-push]              Close the plan
 #   --self-test                               Run internal test scenarios
 #   --help                                    Show usage
 #
 # Flags:
 #   --no-push   Commit only; do NOT auto-push to origin.
-#   --force     Bypass mechanical-check failures (logged as audit override).
+#
+# When verification fails, close-plan.sh prints a remediation guide:
+#   1. Happy path: generate missing structured evidence via write-evidence.sh capture
+#   2. Substantive emergency: CLOSE_PLAN_EMERGENCY_OVERRIDE="<rationale>=40 chars>" env var
+# The legacy --force flag is REMOVED — it became the orchestrator's reflexive bypass.
+# See docs/reviews/2026-05-06-force-usage-honest-accounting.md.
 #
 # Exit codes:
 #   0 — plan closed and Status flipped to COMPLETED
 #   1 — generic failure
-#   2 — usage error or hard block (failed mechanical verification, no --force)
+#   2 — usage error or hard block (failed mechanical verification, no override)
 #
 # Build Doctrine reference: queued-tranche-1.5.md E.1-E.3, plan
 # docs/plans/architecture-simplification-tranche-e-deterministic-close-plan.md.
@@ -43,7 +48,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: close-plan.sh close <plan-slug> [--no-push] [--force]
+Usage: close-plan.sh close <plan-slug> [--no-push]
        close-plan.sh --self-test
        close-plan.sh --help
 
@@ -56,7 +61,10 @@ commits, and auto-pushes (unless --no-push).
 Examples:
   close-plan.sh close my-plan-slug
   close-plan.sh close my-plan --no-push
-  close-plan.sh close my-plan --force   # bypass failed checks (audit-logged)
+
+When verification blocks, follow the printed remediation guide:
+  - Happy path: generate the missing structured evidence
+  - Emergency: CLOSE_PLAN_EMERGENCY_OVERRIDE env var (>=40-char rationale required)
 EOF
 }
 
@@ -526,13 +534,17 @@ verify_backlog_reconciled() {
 cmd_close() {
   local slug=""
   local no_push=false
-  local force=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-push) no_push=true; shift ;;
-      --force)   force=true;   shift ;;
       --help|-h) usage; return 0 ;;
+      --force)
+        printf '%s: --force flag REMOVED (2026-05-06).\n' "$SCRIPT_NAME" >&2
+        printf 'Reason: see docs/reviews/2026-05-06-force-usage-honest-accounting.md\n' >&2
+        printf 'When verification blocks, satisfy the check or use CLOSE_PLAN_EMERGENCY_OVERRIDE env var.\n' >&2
+        return 2
+        ;;
       --*) printf '%s: unknown flag: %s\n' "$SCRIPT_NAME" "$1" >&2; return 2 ;;
       *)
         if [[ -z "$slug" ]]; then
@@ -614,32 +626,56 @@ cmd_close() {
     failed_tasks+=("backlog-reconciliation")
   fi
 
-  # Block if any failure unless --force.
+  # Block if any failure. Remediation paths:
+  #   1. Generate missing structured evidence (happy path; uses write-evidence.sh capture).
+  #   2. CLOSE_PLAN_EMERGENCY_OVERRIDE env var with ≥40-char rationale (substantive emergency only).
+  # The legacy --force flag is REMOVED — it became the orchestrator's reflexive bypass during
+  # the 2026-05-05 architecture-simplification arc (see docs/reviews/2026-05-06-force-usage-honest-accounting.md).
   if [[ ${#failed_tasks[@]} -gt 0 ]]; then
     printf '\n[close-plan] BLOCKED — %d failure(s):\n' "${#failed_tasks[@]}" >&2
     local f
     for f in "${failed_tasks[@]}"; do
       printf '  - %s\n' "$f" >&2
     done
-    if [[ "$force" != true ]]; then
-      printf '\n[close-plan] use --force to bypass (audit-logged), OR remediate the failures.\n' >&2
+
+    # Substantive emergency override path.
+    if [[ -n "${CLOSE_PLAN_EMERGENCY_OVERRIDE:-}" ]]; then
+      local reason="$CLOSE_PLAN_EMERGENCY_OVERRIDE"
+      local reason_len=$(printf '%s' "$reason" | tr -d '[:space:]' | wc -c)
+      if [[ "$reason_len" -lt 40 ]]; then
+        printf '\n[close-plan] CLOSE_PLAN_EMERGENCY_OVERRIDE rejected: rationale must be >=40 non-whitespace chars (got %d)\n' "$reason_len" >&2
+        return 2
+      fi
+      local repo_root
+      repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root="."
+      mkdir -p "$repo_root/.claude/state"
+      local audit="$repo_root/.claude/state/close-plan-emergency-overrides.log"
+      {
+        printf '\n--- %s ---\n' "$(iso_timestamp)"
+        printf 'Plan: %s\n' "$plan_file"
+        printf 'User: %s\n' "${USER:-unknown}"
+        printf 'Rationale: %s\n' "$reason"
+        printf 'Failures bypassed:\n'
+        for f in "${failed_tasks[@]}"; do
+          printf '  - %s\n' "$f"
+        done
+      } >> "$audit"
+      printf '\n[close-plan] EMERGENCY OVERRIDE applied (audit log: %s)\n' "$audit" >&2
+      printf '[close-plan] reason: %s\n' "$reason" >&2
+      printf '[close-plan] surfaced as warning in next session SCRATCHPAD.\n' >&2
+    else
+      # Happy path: offer generate-evidence-and-retry.
+      printf '\n[close-plan] To remediate (happy path):\n' >&2
+      printf '  Generate missing structured evidence per task and re-run close-plan.\n' >&2
+      printf '\n  For each failing mechanical/contract task, run:\n' >&2
+      printf '    bash ~/.claude/scripts/write-evidence.sh capture --task <id> --plan %s --check files-in-commit\n' "$slug" >&2
+      printf '\n  For full-tier tasks, ensure prose evidence-block has Verdict: PASS in evidence file.\n' >&2
+      printf '\n[close-plan] To override (substantive emergency only):\n' >&2
+      printf '  CLOSE_PLAN_EMERGENCY_OVERRIDE="<rationale, >=40 non-ws chars>" close-plan.sh close %s\n' "$slug" >&2
+      printf '  (overrides logged to .claude/state/close-plan-emergency-overrides.log\n' >&2
+      printf '   and surfaced as warning in next session SCRATCHPAD)\n' >&2
       return 2
     fi
-    # Force-bypass: log to audit file.
-    local repo_root
-    repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root="."
-    mkdir -p "$repo_root/.claude/state"
-    local audit="$repo_root/.claude/state/close-plan-force-overrides.log"
-    {
-      printf '\n--- %s ---\n' "$(iso_timestamp)"
-      printf 'Plan: %s\n' "$plan_file"
-      printf 'User: %s\n' "${USER:-unknown}"
-      printf 'Failures bypassed:\n'
-      for f in "${failed_tasks[@]}"; do
-        printf '  - %s\n' "$f"
-      done
-    } >> "$audit"
-    printf '[close-plan] --force: bypassing failures; audit log: %s\n' "$audit" >&2
   fi
 
   # 3. Generate completion report.
@@ -1046,14 +1082,56 @@ test force bypass
 EOF
     # Note: no evidence file — mechanical check WILL FAIL
     git add . && git commit -q -m "init"
-    bash "$SELF_PATH" close p-force --no-push --force >/dev/null 2>&1
   )
-  if [[ -f "$D7/docs/plans/archive/p-force.md" ]] \
-     && [[ -f "$D7/.claude/state/close-plan-force-overrides.log" ]]; then
-    printf 'self-test (S7) --force-bypass: PASS\n' >&2
+
+  # S7a: --force flag is REJECTED (rejected message + exit 2)
+  local s7a_out s7a_rc
+  s7a_out=$(cd "$D7" && bash "$SELF_PATH" close p-force --no-push --force 2>&1)
+  s7a_rc=$?
+  if [[ $s7a_rc -eq 2 ]] && printf '%s' "$s7a_out" | grep -qF "REMOVED"; then
+    printf 'self-test (S7a) --force-flag-rejected: PASS\n' >&2
     PASSED=$((PASSED+1))
   else
-    printf 'self-test (S7) --force-bypass: FAIL\n' >&2
+    printf 'self-test (S7a) --force-flag-rejected: FAIL (rc=%s)\n' "$s7a_rc" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # S7b: blocked closure prints remediation guide (NOT --force suggestion)
+  local s7b_out s7b_rc
+  s7b_out=$(cd "$D7" && bash "$SELF_PATH" close p-force --no-push 2>&1)
+  s7b_rc=$?
+  if [[ $s7b_rc -eq 2 ]] \
+     && printf '%s' "$s7b_out" | grep -q 'write-evidence.sh capture' \
+     && printf '%s' "$s7b_out" | grep -q 'CLOSE_PLAN_EMERGENCY_OVERRIDE' \
+     && ! printf '%s' "$s7b_out" | grep -qE 'use --force'; then
+    printf 'self-test (S7b) remediation-guide-printed: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S7b) remediation-guide-printed: FAIL (rc=%s)\n' "$s7b_rc" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # S7c: short emergency rationale rejected (<40 non-ws chars)
+  local s7c_out s7c_rc
+  s7c_out=$(cd "$D7" && CLOSE_PLAN_EMERGENCY_OVERRIDE="too short" bash "$SELF_PATH" close p-force --no-push 2>&1)
+  s7c_rc=$?
+  if [[ $s7c_rc -eq 2 ]] && printf '%s' "$s7c_out" | grep -q 'rationale must be'; then
+    printf 'self-test (S7c) short-rationale-rejected: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S7c) short-rationale-rejected: FAIL (rc=%s)\n' "$s7c_rc" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # S7d: substantive emergency rationale ACCEPTED + audit-logged
+  rm -rf "$D7/docs/plans/archive" 2>/dev/null
+  (cd "$D7" && CLOSE_PLAN_EMERGENCY_OVERRIDE="legitimate emergency: production deploy is blocking on this; mechanical evidence backfill deferred per sec-incident response" bash "$SELF_PATH" close p-force --no-push >/dev/null 2>&1)
+  if [[ -f "$D7/docs/plans/archive/p-force.md" ]] \
+     && [[ -f "$D7/.claude/state/close-plan-emergency-overrides.log" ]]; then
+    printf 'self-test (S7d) emergency-override-logged: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S7d) emergency-override-logged: FAIL\n' >&2
     FAILED=$((FAILED+1))
   fi
   rm -rf "$D7"
