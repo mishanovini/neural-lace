@@ -24,19 +24,19 @@
 | **6** | Phase 7 — Minimal orchestrator (~300-500 LOC Python) + propagation engine (C12 generalized router) | ❌ NOT STARTED | (TBD) | — |
 | **7** | The remaining 14 second-pass C-mechanisms (C3-C8, C11-C14, C17-C21) | ❌ NOT STARTED | (TBD; many subsumed by Tranche 6) | — |
 
-**Headline status (2026-05-05):** the *enforcement substrate* (Tranche 1) is complete. The *foundation step* (Tranche 0b — migrating the doctrine docs into NL) is overdue and is the next pickup. The *content layer + pilot + orchestrator* (Tranches 2-6) is future work and represents the bulk of remaining effort.
+**Headline status (2026-05-05 v2):** Tranches 0a, 0b, 1, and 1.5 are all DONE. The *enforcement substrate* + *architecture-simplification redesign* are complete. Master is clean (zero ACTIVE plans). The *content layer + pilot + orchestrator* (Tranches 2-6) is the remaining work and represents the bulk of effort going forward.
 
 ---
 
 ## Current focus
 
-**Next pickup: Tranche 0b — Phase 0 migration.** Foundation step that should have shipped weeks ago. Closing it activates `definition-on-first-use-gate.sh` (currently scoped to `neural-lace/build-doctrine/**/*.md` but with no in-scope files) and gives every doctrine reference in NL a real path to resolve to.
+**Next pickup: Tranche 2 — Phase 4a Layer B-shape (7 template schemas).** With the foundation (0a, 0b, 1, 1.5) all closed and master clean, Tranche 2 is the first content-layer step.
 
-**Why this is next, not Tranche 2:** every later tranche references the doctrine. If the doctrine docs aren't accessible from inside NL, every reference is a broken link or a cross-repo lookup. Migration is also the cheapest tranche — ~1-2 hr — and unblocks everything else.
+**Why Tranche 2 (template schemas) before Tranche 3 (template content):** the schemas define what each template-floor's structure is; content seeding fills those structures. Schemas first means every per-floor seed has a target shape to validate against.
 
-**Concurrent / blocked work:**
-- HARNESS-GAP-08 (spawn-task-report-back convention) — currently in flight on `verify/pre-submission-audit-reconcile` branch. Tasks 1-4 shipped; Tasks 5-6 (sync to `~/.claude/`, commit) remaining. Should be closed before Tranche 0b starts so the branch isn't carrying two concurrent multi-task efforts.
-- HARNESS-GAP-13 (hygiene-scan expansion Layers 1-4) — currently in flight on same branch. Layers 1-4 shipped; closure bookkeeping remaining (task-verifier on each, completion report, Status: COMPLETED).
+**Estimated effort:** ~1-2 days for the 7 schemas. Authored as JSON Schema files alongside the existing `evidence.schema.json` substrate; consumed by future template-validation gates (deferred until templates ship).
+
+**Concurrent / blocked work:** none. Master is clean; no in-flight branches carrying multi-task efforts.
 - HARNESS-GAP-17 Part A (this session's narrative doc sweep) — work done, plan file authored, closure bookkeeping deferred to a future session.
 - HARNESS-GAP-16 (closure-validation gate) — scheduled next-after-GAP-13. Specifically addresses the closure-bookkeeping discipline gap that produced the three open ACTIVE plans above.
 
