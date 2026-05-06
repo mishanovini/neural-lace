@@ -266,6 +266,8 @@ When a new plan is created that addresses one or more items currently listed in 
 
 ## Plan File Lifecycle (Creation, Archival, Lookup)
 
+**A plan is in flight from creation through closure. There is no "I built it but bookkeeping is later."** The plan's life ends with `Status: COMPLETED` (or DEFERRED / ABANDONED / SUPERSEDED) and auto-archival — not when the last builder commits. Closure follows builds deterministically (per Tranche E of `docs/plans/architecture-simplification.md` once it ships); until that procedure lands, closure is still the orchestrator's deliverable, just executed by hand. Treating closure as a separate phase from build is the failure mode this lifecycle exists to prevent.
+
 Plan files have a four-stage lifecycle. Each stage has a mechanical hook backing it so the lifecycle does not depend on human discipline at any point. The mechanism that holds it together is `~/.claude/hooks/plan-lifecycle.sh` (PostToolUse on Edit/Write under `docs/plans/`).
 
 ### Stage 1: Creation — commit immediately
@@ -358,6 +360,8 @@ After compaction, read plan file + SCRATCHPAD.md to resume. To stop early, set `
 ## Task Completion — Verifier Mandate
 
 **As of 2026-04-09, task checkboxes in plan files may only be marked complete (`- [x]`) by the `task-verifier` agent.** Self-reporting is forbidden because it has failed in practice — it is too easy to edit checkboxes without doing the work.
+
+**A task is not "done" when the builder returns a verdict; a task is done when its checkbox is flipped by `task-verifier` and its evidence block has landed.** The builder's reward signal is the verifier's PASS verdict, not the message it returns to the orchestrator. A returned-DONE-but-unverified task is in flight, not complete. This is the per-builder consequence of the orchestrator's "done = plan closed" reframing — closure follows builds deterministically (per Tranche E of `docs/plans/architecture-simplification.md` once it ships), and the deterministic closure depends on every checkbox being authentically flipped by a verifier verdict that holds up.
 
 ### How it works
 

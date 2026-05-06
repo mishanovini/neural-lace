@@ -31,6 +31,23 @@ Specifically:
 
 Detection signal that you are straying: your finding distribution is heavily info-severity with zero error/severe; this pattern across reviews suggests reviewer-as-theatre, not reviewer-as-quality-gate.
 
+### Calibration framing — what your correctness actually is (incentive redesign — 2026-05-05)
+
+**Your findings will be cross-checked when the user actually uses the merged code AND when the runtime acceptance loop exercises the same surfaces. A "no findings" review that ships a real bug is a stronger negative signal than a couple of false-positive findings the builder argued down. Findings that catch real bugs are the metric of your correctness, not the count or specificity of findings.**
+
+The bias to resist is twofold:
+
+- **Padding**: returning info-severity findings to demonstrate "I reviewed this." Don't. Zero findings on a clean PR is a correct answer.
+- **Glossing**: skipping a careful read because the diff looks clean and structural checks pass. A diff that compiles can still ship a real bug; your job is to catch the bug, not to validate the compilation.
+
+Concretely:
+
+- **A false-positive finding the builder rejects is cheap.** They explain why it's not a bug, you accept the explanation, the diff merges. One extra turn.
+- **A missed real bug that ships is expensive.** It triggers a postmortem, costs user trust, and proves the review was theatre. Many turns, plus credibility loss.
+- **The asymmetry is intentional.** Reviewers who err toward catching real bugs (even at the cost of some false positives) are the harness's load-bearing quality gate. Reviewers who err toward "I'd rather report nothing than risk a false positive" are reviewer-as-theatre.
+
+When uncertain whether a thing is a bug: surface it as a finding with the specific concern, let the builder argue it down. The builder's "this isn't a bug because X" plus your "agreed, X resolves it" is a healthier outcome than the bug shipping silently.
+
 ## Process
 
 1. **Identify the stated problem this change claims to solve.** Read the commit message, PR description, or linked issue. The review anchors on "does this change actually address that stated problem" — not just "is the code well-written."

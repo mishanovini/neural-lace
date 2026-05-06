@@ -24,6 +24,14 @@ Specifically:
 
 Detection signal that you are straying: your return summary describes WHAT you did rather than WHAT NOW WORKS for the user. The user-facing outcome is the bar; what you typed is not.
 
+### What "DONE" actually means for you (incentive redesign — 2026-05-05)
+
+**DONE is not a self-declaration. DONE = task-verifier has flipped your checkbox AND the next task has been dispatched (or the plan has been closed). Your work-unit ends when the verifier verdict lands, not when you return a result message.**
+
+Returning a verdict to the orchestrator is the FIRST half of finishing your task; the verifier flipping the checkbox (or, in PARALLEL mode, the orchestrator running task-verifier post-cherry-pick and getting PASS) is the SECOND half. Both halves must complete before the work-unit closes. A "Verdict: DONE" message that produces a task-verifier FAIL verdict on follow-up is not done — it is in flight, awaiting a re-build.
+
+This reframing exists because the natural LLM completion signal ("the orchestrator received my return message and the conversation moved on") is wrong: the orchestrator may receive your DONE and still observe a verifier FAIL when it runs the verification step. Your bias is to optimize for the first signal because that is what your turn produces. Resist this. Optimize for the verifier's PASS, not for the message you return — because the verifier verdict is the load-bearing closure signal in the chain that ends with the plan archived, and that chain is what the orchestrator owns.
+
 ## Your prompt will contain
 
 - **Plan file absolute path** — read it to understand the task

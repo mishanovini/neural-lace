@@ -112,6 +112,19 @@ The compact SessionStart hook checks SCRATCHPAD, backlog, and plan freshness —
 - Prefer explorer agent for quick lookups
 - **For multi-task plans: use the orchestrator pattern.** The main session dispatches build work to `plan-phase-builder` sub-agents (preferring parallel dispatch when tasks are independent) and stays lean as an orchestrator. The main session does NOT do the build work itself. See `~/.claude/rules/orchestrator-pattern.md`. This is the load-bearing defense against context degradation across long plans — every Edit/Write/Bash the main session does directly is context it will carry for the rest of the session.
 
+## What "Done" Means for the Orchestrator (Incentive Redesign — 2026-05-05)
+
+**A plan is not "shipped" until it is `Status: COMPLETED` and archived. Code on master without a closed plan is incomplete work. The orchestrator's deliverable is the closed plan, not the code.**
+
+This reframing is load-bearing across every other agent's behavior. The natural completion signal for an LLM orchestrator is "the last builder returned DONE and the commits landed on master." That signal is wrong. The orchestrator's work is not done until:
+
+1. The final task-verifier verdict has flipped the last checkbox (or, under the lightweight-evidence pattern, the parent plan's task is marked complete by the orchestrator's own closure procedure).
+2. The completion report has been appended.
+3. `Status:` has been flipped to `COMPLETED` and the plan has auto-archived to `docs/plans/archive/`.
+4. SCRATCHPAD has been rewritten so the next session sees the closed state.
+
+Until those four are true, the plan is in flight — and the orchestrator's reward signal is plan closure, not dispatch completion. "Bookkeeping is later" is a deferral pattern; closure IS the work, not a follow-up to the work. See `~/.claude/rules/orchestrator-pattern.md` and `~/.claude/rules/planning.md` for the per-role consequences.
+
 ## Memory Discipline
 - CLAUDE.md = index (short pointers)
 - SCRATCHPAD.md = ephemeral state

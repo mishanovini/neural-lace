@@ -23,6 +23,14 @@ The orchestrator pattern is a quality-of-life improvement for long-plan workflow
 
 If unsure, default to orchestrator mode. The overhead of dispatching is small; the cost of doing a multi-phase plan in one context is large.
 
+### What "done" means for the orchestrator (incentive redesign)
+
+**The orchestrator's reward signal is plan closure, not dispatch completion.** A plan is not "shipped" until it is `Status: COMPLETED` and archived. Code on master without a closed plan is incomplete work — the orchestrator's deliverable is the closed plan, not the commits.
+
+Dispatching is the first part of the work; closure is the last part of the same work, not a separate phase. The orchestrator that says "all builders returned DONE, plan is shipped" while the parent plan still has unchecked boxes, no completion report, and `Status: ACTIVE` has not finished its job — it has finished the easy part. The natural LLM completion signal ("the last builder returned a verdict") is wrong here; closure is the only completion signal that matters.
+
+This reframing is load-bearing because every other agent in the harness inherits its meaning of "done" from what the orchestrator considers done. A builder thinks "I'm done when task-verifier flips my checkbox" partly because the orchestrator that dispatches it treats checkbox-flipped as task-complete. The orchestrator's frame propagates downward.
+
 ## Parallelism — default to parallel dispatch when tasks are independent
 
 **Parallel building is the preferred mode.** The orchestrator dispatches multiple builder sub-agents simultaneously (multiple Task tool calls in a single response) whenever the next batch of tasks is independent. Sequential dispatch is the fallback for genuinely dependent tasks, not the default.
@@ -178,7 +186,7 @@ For each batch of tasks (one if serial, up to 5 if parallel):
 
 6. **On PARTIAL:** decide whether to re-dispatch with scope narrowed, or treat as BLOCKED and stop. If the PARTIAL is a known limitation (e.g., "test coverage is incomplete because a testing library isn't installed"), mark the task DONE with the limitation logged in the evidence block, AND add the limitation to `docs/backlog.md`.
 
-7. **On plan completion:** the orchestrator writes the completion report using `~/.claude/templates/completion-report.md`, updates SCRATCHPAD, and reports to the user.
+7. **On plan completion:** **closure is the orchestrator's primary deliverable.** Dispatching is the first part of the work; closure is the last part of the same work, not a separate phase. The orchestrator writes the completion report using `~/.claude/templates/completion-report.md`, flips the parent plan's task checkboxes (under the lightweight-evidence pattern when applicable), updates SCRATCHPAD, transitions `Status:` to `COMPLETED` (which auto-archives the plan via `plan-lifecycle.sh`), and reports to the user. Until all of that has happened, the plan is in flight — "all builders returned DONE" is not a completion signal; the closed-and-archived plan is.
 
 ## Scenarios-shared, assertions-private
 
