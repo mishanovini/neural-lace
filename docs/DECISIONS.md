@@ -33,5 +33,6 @@ commit (enforced by `adapters/claude-code/hooks/decisions-index-gate.sh`).
 | 023 | [Definition-on-first-use enforcement: acronym regex + stopword allowlist + scope-prefix + glossary/in-diff semantics](decisions/023-definition-on-first-use-enforcement.md) | 2026-05-04 | Active |
 | 024 | [GAP-14 template-vs-live reconciliation outcomes (six per-hook verdicts; all REVERSIBLE; auto-applied)](decisions/024-gap-14-reconciliation.md) | 2026-05-04 | Implemented |
 | 025 | [Build Doctrine same-repo placement: `build-doctrine/` and `build-doctrine-templates/` as sibling top-level directories in NL, rejecting the original three-repo architecture](decisions/025-build-doctrine-same-repo-placement.md) | 2026-05-05 | Active |
+| 026 | [Harness catches up to doctrine: when the harness diverges from the Build Doctrine, the harness is the side that catches up; reactive enforcement paused; Tranche 1.5 of the roadmap operationalizes this](decisions/026-harness-catches-up-to-doctrine.md) | 2026-05-05 | Active |
 
 <!-- 2026-05-04: Records 001, 002, 013 received in-place codename scrub (Phase 1d-G Task 1). Content unchanged in substance; identifiers replaced with generic placeholders to satisfy harness-hygiene scanner. No status changes. -->
