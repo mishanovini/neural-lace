@@ -23,10 +23,12 @@
 # Flags:
 #   --no-push   Commit only; do NOT auto-push to origin.
 #
-# When verification fails, close-plan.sh prints a remediation guide:
-#   1. Happy path: generate missing structured evidence via write-evidence.sh capture
-#   2. Substantive emergency: CLOSE_PLAN_EMERGENCY_OVERRIDE="<rationale>=40 chars>" env var
-# The legacy --force flag is REMOVED — it became the orchestrator's reflexive bypass.
+# When verification fails, close-plan.sh prints the only remediation path:
+# generate the missing structured evidence via write-evidence.sh capture and
+# re-run. No script-level override exists. Both the legacy --force flag (removed
+# 2026-05-05) and a brief CLOSE_PLAN_EMERGENCY_OVERRIDE env var experiment
+# (removed 2026-05-06) became reflexive agent bypasses; "loud" is not "rare"
+# for an LLM. Genuine emergencies use manual git ops (visible, several steps).
 # See docs/reviews/2026-05-06-force-usage-honest-accounting.md.
 #
 # Exit codes:
@@ -62,9 +64,11 @@ Examples:
   close-plan.sh close my-plan-slug
   close-plan.sh close my-plan --no-push
 
-When verification blocks, follow the printed remediation guide:
-  - Happy path: generate the missing structured evidence
-  - Emergency: CLOSE_PLAN_EMERGENCY_OVERRIDE env var (>=40-char rationale required)
+When verification blocks, the only remediation is to generate the missing
+structured evidence via write-evidence.sh capture, then re-run. There is no
+script-level override (--force removed 2026-05-05; CLOSE_PLAN_EMERGENCY_OVERRIDE
+removed 2026-05-06 — both became reflexive agent bypasses). Genuine emergencies
+use manual git ops (edit Status, git mv to archive, git rm stale state, commit).
 EOF
 }
 
@@ -626,56 +630,31 @@ cmd_close() {
     failed_tasks+=("backlog-reconciliation")
   fi
 
-  # Block if any failure. Remediation paths:
-  #   1. Generate missing structured evidence (happy path; uses write-evidence.sh capture).
-  #   2. CLOSE_PLAN_EMERGENCY_OVERRIDE env var with ≥40-char rationale (substantive emergency only).
-  # The legacy --force flag is REMOVED — it became the orchestrator's reflexive bypass during
-  # the 2026-05-05 architecture-simplification arc (see docs/reviews/2026-05-06-force-usage-honest-accounting.md).
+  # Block if any failure. The ONLY remediation path is to satisfy the check by
+  # generating the missing structured evidence via write-evidence.sh. There is
+  # no script-level escape hatch — neither --force (removed 2026-05-06) nor an
+  # env-var override (removed 2026-05-06 after correctly being identified as
+  # theater for an LLM agent: "loud" is not "rare", and a 40-char rationale is
+  # not friction the agent experiences).
+  #
+  # Genuine emergencies (lost evidence files, substrate bugs) require manual
+  # git operations: edit Status by hand, git mv to archive, git rm any stale
+  # state, git commit. Several deliberate visible steps. Appropriately rare.
   if [[ ${#failed_tasks[@]} -gt 0 ]]; then
     printf '\n[close-plan] BLOCKED — %d failure(s):\n' "${#failed_tasks[@]}" >&2
     local f
     for f in "${failed_tasks[@]}"; do
       printf '  - %s\n' "$f" >&2
     done
-
-    # Substantive emergency override path.
-    if [[ -n "${CLOSE_PLAN_EMERGENCY_OVERRIDE:-}" ]]; then
-      local reason="$CLOSE_PLAN_EMERGENCY_OVERRIDE"
-      local reason_len=$(printf '%s' "$reason" | tr -d '[:space:]' | wc -c)
-      if [[ "$reason_len" -lt 40 ]]; then
-        printf '\n[close-plan] CLOSE_PLAN_EMERGENCY_OVERRIDE rejected: rationale must be >=40 non-whitespace chars (got %d)\n' "$reason_len" >&2
-        return 2
-      fi
-      local repo_root
-      repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root="."
-      mkdir -p "$repo_root/.claude/state"
-      local audit="$repo_root/.claude/state/close-plan-emergency-overrides.log"
-      {
-        printf '\n--- %s ---\n' "$(iso_timestamp)"
-        printf 'Plan: %s\n' "$plan_file"
-        printf 'User: %s\n' "${USER:-unknown}"
-        printf 'Rationale: %s\n' "$reason"
-        printf 'Failures bypassed:\n'
-        for f in "${failed_tasks[@]}"; do
-          printf '  - %s\n' "$f"
-        done
-      } >> "$audit"
-      printf '\n[close-plan] EMERGENCY OVERRIDE applied (audit log: %s)\n' "$audit" >&2
-      printf '[close-plan] reason: %s\n' "$reason" >&2
-      printf '[close-plan] surfaced as warning in next session SCRATCHPAD.\n' >&2
-    else
-      # Happy path: offer generate-evidence-and-retry.
-      printf '\n[close-plan] To remediate (happy path):\n' >&2
-      printf '  Generate missing structured evidence per task and re-run close-plan.\n' >&2
-      printf '\n  For each failing mechanical/contract task, run:\n' >&2
-      printf '    bash ~/.claude/scripts/write-evidence.sh capture --task <id> --plan %s --check files-in-commit\n' "$slug" >&2
-      printf '\n  For full-tier tasks, ensure prose evidence-block has Verdict: PASS in evidence file.\n' >&2
-      printf '\n[close-plan] To override (substantive emergency only):\n' >&2
-      printf '  CLOSE_PLAN_EMERGENCY_OVERRIDE="<rationale, >=40 non-ws chars>" close-plan.sh close %s\n' "$slug" >&2
-      printf '  (overrides logged to .claude/state/close-plan-emergency-overrides.log\n' >&2
-      printf '   and surfaced as warning in next session SCRATCHPAD)\n' >&2
-      return 2
-    fi
+    printf '\n[close-plan] To remediate:\n' >&2
+    printf '  Generate the missing structured evidence per task and re-run close-plan.\n' >&2
+    printf '\n  For each failing mechanical/contract task, run:\n' >&2
+    printf '    bash ~/.claude/scripts/write-evidence.sh capture --task <id> --plan %s --check files-in-commit\n' "$slug" >&2
+    printf '\n  For full-tier tasks, ensure the prose evidence-block has Verdict: PASS in the evidence file.\n' >&2
+    printf '\n[close-plan] No script-level override exists. If genuinely necessary,\n' >&2
+    printf '  perform the close manually via git: edit Status, git mv to archive,\n' >&2
+    printf '  git rm stale state, git commit. Visible in history. Appropriately rare.\n' >&2
+    return 2
   fi
 
   # 3. Generate completion report.
@@ -1096,42 +1075,48 @@ EOF
     FAILED=$((FAILED+1))
   fi
 
-  # S7b: blocked closure prints remediation guide (NOT --force suggestion)
+  # S7b: blocked closure prints remediation guide. Critically:
+  #   - mentions write-evidence.sh capture (the only happy path)
+  #   - does NOT suggest --force, --no-verify, or any env-var override
+  #   - does NOT mention a CLOSE_PLAN_*_OVERRIDE env var (removed 2026-05-06)
   local s7b_out s7b_rc
   s7b_out=$(cd "$D7" && bash "$SELF_PATH" close p-force --no-push 2>&1)
   s7b_rc=$?
   if [[ $s7b_rc -eq 2 ]] \
      && printf '%s' "$s7b_out" | grep -q 'write-evidence.sh capture' \
-     && printf '%s' "$s7b_out" | grep -q 'CLOSE_PLAN_EMERGENCY_OVERRIDE' \
-     && ! printf '%s' "$s7b_out" | grep -qE 'use --force'; then
-    printf 'self-test (S7b) remediation-guide-printed: PASS\n' >&2
+     && ! printf '%s' "$s7b_out" | grep -qE 'use --force' \
+     && ! printf '%s' "$s7b_out" | grep -qE 'CLOSE_PLAN_[A-Z_]*OVERRIDE'; then
+    printf 'self-test (S7b) remediation-guide-no-escape-hatch: PASS\n' >&2
     PASSED=$((PASSED+1))
   else
-    printf 'self-test (S7b) remediation-guide-printed: FAIL (rc=%s)\n' "$s7b_rc" >&2
+    printf 'self-test (S7b) remediation-guide-no-escape-hatch: FAIL (rc=%s)\n' "$s7b_rc" >&2
     FAILED=$((FAILED+1))
   fi
 
-  # S7c: short emergency rationale rejected (<40 non-ws chars)
+  # S7c: env-var "override" is NOT honored. The script blocks even when an
+  # arbitrary CLOSE_PLAN_EMERGENCY_OVERRIDE is set (the variable was removed
+  # 2026-05-06; setting it must have no effect — the gate still blocks).
   local s7c_out s7c_rc
-  s7c_out=$(cd "$D7" && CLOSE_PLAN_EMERGENCY_OVERRIDE="too short" bash "$SELF_PATH" close p-force --no-push 2>&1)
+  s7c_out=$(cd "$D7" && CLOSE_PLAN_EMERGENCY_OVERRIDE="legitimate-looking emergency rationale that would have satisfied the prior 40-char gate" bash "$SELF_PATH" close p-force --no-push 2>&1)
   s7c_rc=$?
-  if [[ $s7c_rc -eq 2 ]] && printf '%s' "$s7c_out" | grep -q 'rationale must be'; then
-    printf 'self-test (S7c) short-rationale-rejected: PASS\n' >&2
+  if [[ $s7c_rc -eq 2 ]] \
+     && printf '%s' "$s7c_out" | grep -q 'BLOCKED' \
+     && [[ ! -f "$D7/docs/plans/archive/p-force.md" ]]; then
+    printf 'self-test (S7c) env-var-override-not-honored: PASS\n' >&2
     PASSED=$((PASSED+1))
   else
-    printf 'self-test (S7c) short-rationale-rejected: FAIL (rc=%s)\n' "$s7c_rc" >&2
+    printf 'self-test (S7c) env-var-override-not-honored: FAIL (rc=%s)\n' "$s7c_rc" >&2
     FAILED=$((FAILED+1))
   fi
 
-  # S7d: substantive emergency rationale ACCEPTED + audit-logged
-  rm -rf "$D7/docs/plans/archive" 2>/dev/null
-  (cd "$D7" && CLOSE_PLAN_EMERGENCY_OVERRIDE="legitimate emergency: production deploy is blocking on this; mechanical evidence backfill deferred per sec-incident response" bash "$SELF_PATH" close p-force --no-push >/dev/null 2>&1)
-  if [[ -f "$D7/docs/plans/archive/p-force.md" ]] \
-     && [[ -f "$D7/.claude/state/close-plan-emergency-overrides.log" ]]; then
-    printf 'self-test (S7d) emergency-override-logged: PASS\n' >&2
+  # S7d: no audit-log file is created on a blocked closure (no override happened
+  # → no override to log). Confirms the env-var path is fully removed, not just
+  # silently ignored while still writing a stale audit entry.
+  if [[ ! -f "$D7/.claude/state/close-plan-emergency-overrides.log" ]]; then
+    printf 'self-test (S7d) no-override-audit-log-written: PASS\n' >&2
     PASSED=$((PASSED+1))
   else
-    printf 'self-test (S7d) emergency-override-logged: FAIL\n' >&2
+    printf 'self-test (S7d) no-override-audit-log-written: FAIL\n' >&2
     FAILED=$((FAILED+1))
   fi
   rm -rf "$D7"
