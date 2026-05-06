@@ -1,5 +1,23 @@
 # Build Doctrine Changelog
 
+## 2026-05-06 — v0.6 (Tranche 5a-integration: ritual wired in + audit-log analyzer + pilot-friction template)
+
+- 5a doctrine doc (`build-doctrine/doctrine/07-knowledge-integration.md`, shipped earlier today) now wired into the harness mechanism stack:
+  - Enforcement-map row in `adapters/claude-code/rules/vaporware-prevention.md` (synced to `~/.claude/rules/`).
+  - New "Knowledge Integration Ritual" section in `docs/harness-architecture.md`.
+  - One-line citations + sub-sections in `README.md`, `docs/best-practices.md`, `docs/harness-strategy.md`, `docs/claude-code-quality-strategy.md`, `adapters/claude-code/CLAUDE.md`.
+  - `/harness-review` skill extended with **Check 13** — KIT-1..KIT-7 sweep against existing capture substrates (calibration / findings / discoveries / ADR ledger) plus the new audit-log analyzer (KIT-6); KIT-7 is a no-op pending Tranche 5c.
+- Audit-log analyzer at `adapters/claude-code/scripts/analyze-propagation-audit-log.sh` (synced to `~/.claude/scripts/`):
+  - Subcommands: `summary`, `cadence`, `unmatched`, `slow`.
+  - Reads `build-doctrine/telemetry/propagation.jsonl` produced by Tranche 6a's engine.
+  - Surfaces: rule-fire frequency, conjectural-rule promotion candidates (>= 3 matched events — itself a hypothesis), unmatched-event-type negative-space, slow-rule report, top-level summary.
+  - Self-test: 7/7 PASS scenarios (missing log graceful, empty graceful, fired-only counts, unmatched event types, cadence promotion candidate, corrupt-line continues, slow-rule report).
+- Pilot-friction template at `adapters/claude-code/templates/pilot-friction.md` (synced to `~/.claude/templates/`):
+  - Standardizes Tranche-4 (canonical pilot) friction notes — per-floor, per-canon-artifact, per-propagation-rule, per-KIT-trigger sections.
+  - Pilot sessions write `<pilot-repo>/docs/sessions/<date>-pilot-friction.md` from this template.
+  - Structured input for Tranches 5b (cadence calibration), 6b (per-canon rules), 7 (residual C-mechanisms).
+- **Pre-pilot infrastructure now complete.** The pilot consumes a fully-wired substrate: doctrine + templates + propagation engine + audit log + ritual + sweep + analyzer + friction template. Without this integration, the pilot would generate operator memory rather than counted observations.
+
 ## 2026-05-06 — v0.5 (Tranche 6a: propagation engine framework + audit log + 8 starter rules)
 
 - Engine: `adapters/claude-code/hooks/propagation-trigger-router.sh` (~700 LOC bash) reading `propagation-rules.json`, evaluating triggers + conditions + actions, writing audit-log entries to `build-doctrine/telemetry/propagation.jsonl` (one JSONL line per rule evaluation, matched OR unmatched).

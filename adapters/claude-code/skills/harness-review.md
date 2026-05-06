@@ -625,6 +625,70 @@ fi
 write_section "12. Calibration roll-up" "PASS" "${calibration_findings[@]}"
 
 # ==========================================================================
+# Check 13: Knowledge Integration Ritual — KIT-1..KIT-7 sweep (Tranche 5a + 5a-integration, 2026-05-06)
+#
+# Sweeps each KIT trigger from build-doctrine/doctrine/07-knowledge-integration.md
+# against the existing capture substrate. Surfaces ritual-trigger evidence
+# the doctrine curator reviews on cadence (5a hypothesis: monthly).
+# ==========================================================================
+kit_findings=()
+
+# KIT-1: Calibration patterns — read summary from Check 12's calibration roll-up.
+if [[ "$found_any" -eq 1 ]] 2>/dev/null; then
+  kit_findings+=("KIT-1 (calibration patterns): see Check 12 above for per-agent observation roll-up")
+else
+  kit_findings+=("KIT-1 (calibration patterns): no calibration entries yet")
+fi
+
+# KIT-2: Findings patterns — count entries in docs/findings.md.
+findings_file="${REPO_ROOT}/docs/findings.md"
+if [[ -f "$findings_file" ]]; then
+  finding_count=$(grep -cE '^## (FND|F)-[0-9]' "$findings_file" 2>/dev/null || echo 0)
+  kit_findings+=("KIT-2 (findings patterns): ${finding_count} findings in docs/findings.md")
+else
+  kit_findings+=("KIT-2 (findings patterns): docs/findings.md not present (project has no findings ledger yet)")
+fi
+
+# KIT-3: Discovery accumulation — count files in docs/discoveries/.
+discoveries_dir="${REPO_ROOT}/docs/discoveries"
+if [[ -d "$discoveries_dir" ]]; then
+  discovery_count=$(find "$discoveries_dir" -maxdepth 1 -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
+  kit_findings+=("KIT-3 (discovery accumulation): ${discovery_count} discovery files in docs/discoveries/")
+else
+  kit_findings+=("KIT-3 (discovery accumulation): docs/discoveries/ not present")
+fi
+
+# KIT-4: ADR-cross-reference staleness — informational; structural staleness check is a future
+# extension that compares ADR `Status:` to the doctrine doc dates referenced.
+adr_count=$(find "${REPO_ROOT}/docs/decisions" -maxdepth 1 -type f -name '[0-9]*-*.md' 2>/dev/null | wc -l | tr -d ' ')
+kit_findings+=("KIT-4 (ADR-cross-reference staleness): ${adr_count} ADRs in docs/decisions/ — staleness analyzer pending; review manually for now")
+
+# KIT-5: This skill's cadence — informational signal that Check 13 has run.
+kit_findings+=("KIT-5 (/harness-review cadence): this run is the trigger; review captured to docs/reviews/")
+
+# KIT-6: Propagation engine audit log — invoke analyze-propagation-audit-log.sh summary.
+audit_log="${REPO_ROOT}/build-doctrine/telemetry/propagation.jsonl"
+analyzer="${HOME}/.claude/scripts/analyze-propagation-audit-log.sh"
+if [[ -x "$analyzer" ]]; then
+  if [[ -f "$audit_log" ]]; then
+    audit_summary=$("$analyzer" summary --audit-log "$audit_log" 2>&1 | head -10)
+    kit_findings+=("KIT-6 (propagation-engine audit log): summary follows")
+    while IFS= read -r line; do
+      kit_findings+=("    ${line}")
+    done <<< "$audit_summary"
+  else
+    kit_findings+=("KIT-6 (propagation-engine audit log): audit log absent — engine not yet wired into PostToolUse")
+  fi
+else
+  kit_findings+=("KIT-6 (propagation-engine audit log): analyzer script not found at ${analyzer}")
+fi
+
+# KIT-7: Drift signal — gated on Tranche 5c (HARNESS-GAP-11 telemetry, 2026-08).
+kit_findings+=("KIT-7 (drift signal): no-op — Tranche 5c not yet shipped (gated on HARNESS-GAP-11 telemetry, 2026-08)")
+
+write_section "13. Knowledge Integration Ritual sweep (KIT-1..KIT-7)" "PASS" "${kit_findings[@]}"
+
+# ==========================================================================
 # Summary
 # ==========================================================================
 {

@@ -382,6 +382,16 @@ Gap-analysis (enforcement-gap-analyzer, if FAIL):
 
 **When to break it.** The scope is hard-coded to `neural-lace/build-doctrine/**/*.md` in v1; commits that touch zero in-scope files are a no-op. The two recovery paths (add to glossary OR define in-context) are both fast.
 
+### Knowledge integration ritual — the doctrine evolves on cadence + triggers
+
+**Classification:** Hybrid (Pattern + Mechanism). The 7-trigger taxonomy (KIT-1..KIT-7) is documented as Pattern in `build-doctrine/doctrine/07-knowledge-integration.md`. The mechanism layer is `~/.claude/skills/harness-review.md` Check 13 (KIT sweep) + `~/.claude/scripts/analyze-propagation-audit-log.sh` (KIT-6 consumer) + `~/.claude/templates/pilot-friction.md` (Tranche-4 capture standardization).
+
+**The rule.** The doctrine itself is a living artifact whose updates propagate on observed signals from running projects, not on imagined cadence. 7 triggers — calibration patterns, findings patterns, discovery accumulation, ADR-cross-reference staleness, `/harness-review` cadence, propagation-engine audit-log evidence, drift signal — collectively decide when the doctrine needs revision. `/harness-review` Check 13 sweeps each KIT against existing capture substrates and emits a structured ritual-trigger summary. `analyze-propagation-audit-log.sh` consumes the propagation engine's JSONL audit log and produces rule-fire frequency, conjectural-rule promotion candidates, unmatched-event-type negative-space, and slow-rule reports.
+
+**Why it exists.** Build Doctrine Principle 9 ("Documents are living; updates propagate on trigger") + Role 9 (Knowledge Integrator) describe a self-improving doctrine loop. Without explicit triggers + a mechanical sweep, doctrine evolution depends on operator memory — the failure mode AP16 critiques. The ritual operationalizes the loop: structured triggers, mechanical sweep, audit-log evidence, hypothesis tagging for cadence + threshold values pending pilot evidence.
+
+**How the harness enforces it.** Cadence + threshold numbers in 5a are tagged `(hypothesis, pending pilot evidence)` per the AP16 mitigation discipline — refused to lock in numbers from imagination. Tranche 5b refines the numbers using audit-log evidence + Tranche-4 (canonical pilot) friction notes. Tranche 5c (KIT-7 drift detection + cross-project pattern detection) waits for HARNESS-GAP-11 telemetry (2026-08).
+
 ---
 
 ## Security practices
