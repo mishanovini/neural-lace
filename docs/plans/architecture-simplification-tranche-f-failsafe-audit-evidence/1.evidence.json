@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "bf124cc38f06ca6bd1a1b61933ca873c0f817fef",
+  "files_modified": [
+    "docs/plans/archive/architecture-simplification-tranche-e-deterministic-close-plan.md",
+    "docs/plans/archive/harness-gap-17-narrative-doc-sweep-evidence.md",
+    "docs/plans/archive/harness-gap-17-narrative-doc-sweep.md",
+    "docs/plans/harness-gap-17-narrative-doc-sweep.md"
+  ],
+  "mechanical_checks": {
+    "exists:docs/reviews/2026-05-05-failsafe-audit.md": {
+      "passed": true,
+      "detail": "docs/reviews/2026-05-05-failsafe-audit.md exists",
+      "command": "test -e docs/reviews/2026-05-05-failsafe-audit.md",
+      "exit_code": 0
+    },
+    "command:grep -qE '## Per-gate classification' docs/reviews/2026-05-05-failsafe-audit.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -qE '## Per-gate classification' docs/reviews/2026-05-05-failsafe-audit.md",
+      "exit_code": 0
+    },
+    "command:grep -qE 'Updated summary' docs/reviews/2026-05-05-failsafe-audit.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -qE 'Updated summary' docs/reviews/2026-05-05-failsafe-audit.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-06T06:56:43Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/architecture-simplification-tranche-f-failsafe-audit.md"
+}

@@ -84,8 +84,54 @@ This validates the principle behind ADR 026: "the harness catches up to doctrine
 
 A focused next-session audit can:
 
-1. Execute the SCOPE-DOWN candidates (task-verifier mandate scope reduction; plan-evidence-reviewer narrowing)
-2. Analyze claim-reviewer firing patterns post-Gen-6 to determine if it should be further scope-reduced
-3. Periodic re-audit (per Build Doctrine Principle 9 — documents are living) to catch new accumulation
+1. ~~Execute the SCOPE-DOWN candidates (task-verifier mandate scope reduction; plan-evidence-reviewer narrowing)~~ — **ADDRESSED 2026-05-06 in Task 3 deeper-audit pass below.**
+2. ~~Analyze claim-reviewer firing patterns post-Gen-6 to determine if it should be further scope-reduced~~ — **ADDRESSED 2026-05-06 below.**
+3. Periodic re-audit (per Build Doctrine Principle 9 — documents are living) to catch new accumulation.
 
 These are not blocking; the architecture-simplification arc is substantively complete.
+
+## Deeper-audit pass — 3 deferred candidates (added 2026-05-06)
+
+Per user directive 2026-05-06: the original first-pass audit deferred 3 candidates without scheduling. This deeper-audit pass closes them.
+
+### task-verifier (full mandate) — verdict: SCOPE-DOWN already executed
+
+`adapters/claude-code/agents/task-verifier.md` was extended in Tranche D (commit `f1291c2`) with Step 0 — "Risk-tiered verification level — early-return when level is not full." The agent now reads the task's `Verification:` declaration and PASS-returns immediately for mechanical and contract levels, citing the structured `.evidence.json` artifact. Only `Verification: full` (or unmarked, defaulting to full) tasks invoke the full rubric. The scope-down is in-place; no further action this pass. Verified by `grep -nE 'rung|risk-tier|mechanical|full|contract' ~/.claude/agents/task-verifier.md` showing 25+ references to the substrate.
+
+### plan-evidence-reviewer — verdict: SCOPE-DOWN executed this pass
+
+The agent had no awareness of the structured evidence substrate (Tranche B); its prompt assumed prose evidence was the only form. With mechanical/contract tasks emitting structured `.evidence.json` validated deterministically by `close-plan.sh`, plan-evidence-reviewer's prose-judgment work is unnecessary for those tasks.
+
+**Action taken (2026-05-06):** Added a `## Scope (post-Tranche-D, post-Tranche-B substrate — 2026-05-06)` section to the agent prompt. It instructs:
+- Mechanical/contract tasks: PASS by reference to the structured artifact, citing the JSON verdict + evidence path. No prose-style re-judgment.
+- Prose-evidence tasks (full-tier): apply the full rubric unchanged.
+- The agent's role narrows; it does not retire — prose evidence remains the surface where fabrication and drift can hide.
+
+Synced to both canonical (`adapters/claude-code/agents/plan-evidence-reviewer.md`) and live (`~/.claude/agents/plan-evidence-reviewer.md`).
+
+### claim-reviewer — verdict: KEEP with documented narrowed scope
+
+Gen 6 narrative-integrity hooks (transcript-lie-detector, deferral-counter, imperative-evidence-linker, goal-coverage-on-stop, vaporware-volume-gate) detect specific structural patterns deterministically:
+- Completion + deferral pairs in the same session (transcript-lie-detector)
+- Permission-trail-off after keep-going (narrate-and-wait-gate)
+- Strong imperatives without tool-call evidence (imperative-evidence-linker)
+- First-message goals without coverage (goal-coverage-on-stop)
+- High-volume describing files with zero behavior-executing artifacts (vaporware-volume-gate)
+
+claim-reviewer's residual scope is **stylistic claim-without-citation in pre-response text** — claims in the orchestrator's draft response that no Gen 6 hook structurally checks. Examples: "yes it works" without file:line citation; "the X feature exists" claim made conversationally. These are not deferral-shaped or completion-claim-shaped; they're affirmation-shaped. Gen 6 hooks don't pattern-match them.
+
+claim-reviewer is also self-invoked (residual gap acknowledged in `vaporware-prevention.md`). Mechanical structural enforcement is impossible without a Claude Code PostMessage hook, which doesn't exist. claim-reviewer remains the only defense for stylistic claims in pre-response text.
+
+**Action taken (2026-05-06):** documenting the narrowed scope here in the audit doc. No prompt change required — claim-reviewer's prompt already says "Extracts feature claims and cross-checks each against the codebase" which is consistent with the narrowed remit. The Gen 6 hooks fill the structural gap; claim-reviewer fills the stylistic gap; both are needed.
+
+## Updated summary (post-deeper-audit, 2026-05-06)
+
+| Category | Count | Action |
+|---|---|---|
+| RETIRE (executed) | 1 (closure-validator) | Done |
+| SCOPE-DOWN (executed) | 2 (task-verifier scope-down already shipped in Tranche D; plan-evidence-reviewer scope-down shipped 2026-05-06 in this audit) | Done |
+| KEEP with narrowed-scope-documented | 1 (claim-reviewer) | Done — documented above |
+| KEEP (validated load-bearing) | 28 | No action |
+| Feature-flagged / out-of-scope | 3 (Agent Teams gates) | Tracked elsewhere |
+
+The 3 originally-deferred candidates are now resolved. Periodic re-audits remain on the cadence; no in-flight deferrals.
