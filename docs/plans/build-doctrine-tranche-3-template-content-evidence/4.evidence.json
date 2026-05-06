@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "task_id": "4",
+  "verdict": "PASS",
+  "commit_sha": "a125053e06fe79270e77ff4f8962f4ba414a910a",
+  "files_modified": [
+    "build-doctrine-templates/conventions/README.md",
+    "build-doctrine-templates/conventions/architectural-defaults/api-style.md",
+    "build-doctrine-templates/conventions/branching-and-commits.md",
+    "build-doctrine-templates/conventions/naming/go.md",
+    "build-doctrine-templates/conventions/naming/javascript-typescript.md",
+    "build-doctrine-templates/conventions/naming/python.md",
+    "build-doctrine-templates/conventions/naming/rust.md",
+    "build-doctrine-templates/conventions/universal-floors/01-logging/express.md",
+    "build-doctrine-templates/conventions/universal-floors/01-logging/standard.md",
+    "build-doctrine-templates/conventions/universal-floors/02-error-handling/express.md",
+    "build-doctrine-templates/conventions/universal-floors/02-error-handling/standard.md",
+    "build-doctrine-templates/conventions/universal-floors/03-secrets-handling/express.md",
+    "build-doctrine-templates/conventions/universal-floors/03-secrets-handling/standard.md",
+    "build-doctrine-templates/conventions/universal-floors/04-input-validation/express.md",
+    "build-doctrine-templates/conventions/universal-floors/04-input-validation/standard.md",
+    "build-doctrine-templates/conventions/universal-floors/05-auth-and-authorization/express.md",
+    "build-doctrine-templates/conventions/universal-floors/05-auth-and-authorization/standard.md",
+    "build-doctrine-templates/conventions/universal-floors/06-observability-beyond-logs/express.md",
+    "build-doctrine-templates/conventions/universal-floors/06-observability-beyond-logs/standard.md",
+    "build-doctrine-templates/conventions/universal-floors/07-testing/express.md",
+    "build-doctrine-templates/conventions/universal-floors/07-testing/standard.md",
+    "build-doctrine-templates/conventions/universal-floors/08-documentation-in-code/express.md",
+    "build-doctrine-templates/conventions/universal-floors/08-documentation-in-code/standard.md",
+    "build-doctrine-templates/conventions/universal-floors/09-dependency-policy/express.md",
+    "build-doctrine-templates/conventions/universal-floors/09-dependency-policy/standard.md",
+    "build-doctrine-templates/conventions/universal-floors/10-versioning/express.md",
+    "build-doctrine-templates/conventions/universal-floors/10-versioning/standard.md",
+    "build-doctrine-templates/conventions/universal-floors/11-ux-standards/express.md",
+    "build-doctrine-templates/conventions/universal-floors/11-ux-standards/standard.md",
+    "build-doctrine/CHANGELOG.md"
+  ],
+  "mechanical_checks": {
+    "files-in-commit": {
+      "passed": true,
+      "detail": "30 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-06T08:29:27Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/build-doctrine-tranche-3-template-content.md"
+}
