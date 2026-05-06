@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "b0f3c8ebaf5941a3c9e78053964401aca51794e1",
+  "files_modified": [
+    "docs/plans/architecture-simplification-tranche-f-failsafe-audit-evidence/1.evidence.json",
+    "docs/plans/architecture-simplification-tranche-f-failsafe-audit-evidence/2.evidence.json",
+    "docs/plans/archive/architecture-simplification-tranche-f-failsafe-audit-evidence/1.evidence.json",
+    "docs/plans/archive/architecture-simplification-tranche-f-failsafe-audit-evidence/2.evidence.json"
+  ],
+  "mechanical_checks": {
+    "exists:docs/plans/archive/architecture-simplification-gate-relaxation.md": {
+      "passed": true,
+      "detail": "docs/plans/archive/architecture-simplification-gate-relaxation.md exists",
+      "command": "test -e docs/plans/archive/architecture-simplification-gate-relaxation.md",
+      "exit_code": 0
+    },
+    "command:grep -qE 'STAY ON|TEMPORARILY EXEMPT' docs/plans/archive/architecture-simplification-gate-relaxation.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -qE 'STAY ON|TEMPORARILY EXEMPT' docs/plans/archive/architecture-simplification-gate-relaxation.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-06T06:59:57Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/architecture-simplification.md"
+}

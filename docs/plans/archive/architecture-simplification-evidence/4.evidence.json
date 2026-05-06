@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "task_id": "4",
+  "verdict": "PASS",
+  "commit_sha": "b0f3c8ebaf5941a3c9e78053964401aca51794e1",
+  "files_modified": [
+    "docs/plans/architecture-simplification-tranche-f-failsafe-audit-evidence/1.evidence.json",
+    "docs/plans/architecture-simplification-tranche-f-failsafe-audit-evidence/2.evidence.json",
+    "docs/plans/archive/architecture-simplification-tranche-f-failsafe-audit-evidence/1.evidence.json",
+    "docs/plans/archive/architecture-simplification-tranche-f-failsafe-audit-evidence/2.evidence.json"
+  ],
+  "mechanical_checks": {
+    "exists:docs/plans/archive/architecture-simplification-tranche-d-risk-tiered-verification.md": {
+      "passed": true,
+      "detail": "docs/plans/archive/architecture-simplification-tranche-d-risk-tiered-verification.md exists",
+      "command": "test -e docs/plans/archive/architecture-simplification-tranche-d-risk-tiered-verification.md",
+      "exit_code": 0
+    },
+    "exists:adapters/claude-code/rules/risk-tiered-verification.md": {
+      "passed": true,
+      "detail": "adapters/claude-code/rules/risk-tiered-verification.md exists",
+      "command": "test -e adapters/claude-code/rules/risk-tiered-verification.md",
+      "exit_code": 0
+    },
+    "command:grep -qE 'mechanical|full|contract' adapters/claude-code/rules/risk-tiered-verification.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -qE 'mechanical|full|contract' adapters/claude-code/rules/risk-tiered-verification.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-06T06:59:58Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/architecture-simplification.md"
+}
