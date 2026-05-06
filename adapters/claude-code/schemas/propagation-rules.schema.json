@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-lace.dev/schemas/propagation-rules.v1.json",
+  "title": "Propagation Engine Rules (v1)",
+  "description": "Canonical structural shape for the propagation engine's rule set. The engine at adapters/claude-code/hooks/propagation-trigger-router.sh loads a single rules file (build-doctrine/propagation/propagation-rules.json), evaluates each rule's trigger against the input event, runs the condition evaluator, dispatches the action on match, and writes an audit-log entry to build-doctrine/telemetry/propagation.jsonl regardless of match outcome (so the audit log captures both fired and unfired evaluations — the negative space is itself measurement data). Authored by Tranche 6a (2026-05-06) per the build-doctrine roadmap. Companion doc at build-doctrine/propagation/README.md.",
+  "type": "object",
+  "required": ["schema_version", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently always 1. Validators accept current + N-1 for graceful migration."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Optional metadata describing the rule set as a whole (authoring, versioning, last-revision date).",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "last_updated": { "type": "string", "format": "date" },
+        "owner": { "type": "string" }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "description": "The rule set. Each rule is independently evaluated against every input event in the rule order; engine evaluates rules in the order they appear in the JSON array (lex-stable for the audit log).",
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "required": ["id", "trigger", "condition", "action"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]+$",
+          "description": "Kebab-case unique identifier. Audit-log entries reference this for tuning. Conventionally prefixed with PT-N for trigger-taxonomy alignment (e.g., 'pt-3-adr-adoption-fanout', 'pt-6-findings-pattern')."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 10,
+          "description": "One-paragraph human-readable description of what the rule does + when it fires. Required; substance review is the rule-author's discipline."
+        },
+        "conjectural": {
+          "type": "boolean",
+          "default": false,
+          "description": "True for rules whose thresholds or fan-out targets are hypotheses pending audit-log evidence (e.g., '≥3 similar findings within 7 days' for PT-6). The README's conjectural-rule disposition section documents how these get tuned."
+        },
+        "pending_evidence": {
+          "type": "string",
+          "description": "When conjectural is true, names the kind of evidence that would resolve the conjecture (e.g., 'audit-log-tuning', 'pilot-friction-notes', 'cross-project-comparison'). Optional; absent for proven rules."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warning", "critical"],
+          "default": "info",
+          "description": "How loud the audit-log entry should be when this rule fires. 'info' = pure observation; 'warning' = surfaces in the next session-wrap summary; 'critical' = immediate stderr message."
+        },
+        "owner": {
+          "type": "string",
+          "description": "Logical role responsible for the rule's correctness (e.g., 'doctrine-curator', 'plan-lifecycle-maintainer'). Optional; informs which calibration roll-up surfaces drift."
+        },
+        "trigger": {
+          "type": "object",
+          "description": "Specifies which events the rule responds to. The engine matches an input event against a rule's trigger; non-matches skip to the next rule.",
+          "required": ["event_type"],
+          "additionalProperties": false,
+          "properties": {
+            "event_type": {
+              "type": "string",
+              "enum": [
+                "file-created",
+                "file-modified",
+                "file-deleted",
+                "plan-status-flip",
+                "plan-edit",
+                "decision-record-created",
+                "decision-record-modified",
+                "doctrine-doc-modified",
+                "finding-added",
+                "narrative-doc-modified",
+                "doc-cross-reference-changed",
+                "session-end",
+                "session-start"
+              ],
+              "description": "The kind of event the rule responds to. Engine matches input event's event_type against this string."
+            },
+            "path_pattern": {
+              "type": "string",
+              "description": "Optional glob or regex pattern restricting the trigger to specific paths (e.g., 'docs/decisions/NNN-*.md', 'build-doctrine/doctrine/*.md'). When absent, the rule matches every event of the named event_type."
+            },
+            "metadata_match": {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "Optional event-metadata constraints (e.g., {'status_to': 'COMPLETED'} for plan-status-flip rules)."
+            }
+          }
+        },
+        "condition": {
+          "type": "object",
+          "description": "Optional gating logic evaluated AFTER trigger match but BEFORE action dispatch. Allows expressing 'fire when X AND Y' without proliferating event_type values.",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["always", "script", "command"],
+              "default": "always",
+              "description": "'always' (default): action fires whenever trigger matches. 'script': runs a bash script with event JSON on stdin; non-zero exit = condition fails, skip action. 'command': runs an inline bash command; same convention."
+            },
+            "script_path": {
+              "type": "string",
+              "description": "Required when type is 'script'. Path to the script that evaluates the condition. Receives the event JSON on stdin."
+            },
+            "command": {
+              "type": "string",
+              "description": "Required when type is 'command'. Bash command line; placeholders <event.path>, <event.metadata.X> substituted before exec."
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 100,
+              "description": "Per-condition timeout in ms. Default 100ms enforces the per-rule budget."
+            }
+          }
+        },
+        "action": {
+          "type": "object",
+          "description": "What the rule does when trigger matches AND condition succeeds.",
+          "required": ["type"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["log-only", "script", "command", "open-finding"],
+              "description": "'log-only': no side effect; useful for measurement-only rules. 'script': runs a bash script with event JSON on stdin. 'command': runs an inline bash command. 'open-finding': appends an entry to docs/findings.md (action.finding_template required)."
+            },
+            "script_path": {
+              "type": "string",
+              "description": "Required when type is 'script'."
+            },
+            "command": {
+              "type": "string",
+              "description": "Required when type is 'command'. Bash command line."
+            },
+            "finding_template": {
+              "type": "object",
+              "description": "Required when type is 'open-finding'. Template for the finding entry; placeholders <event.path>, <event.metadata.X>, <rule.id> substituted before append.",
+              "additionalProperties": true
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 400,
+              "description": "Per-action timeout in ms. Default 400ms; combined with condition's 100ms = 500ms per-rule total budget."
+            }
+          }
+        }
+      }
+    }
+  }
+}

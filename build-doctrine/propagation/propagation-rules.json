@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "name": "Build Doctrine Propagation Engine — v1 starter rules",
+    "version": "0.1.0",
+    "last_updated": "2026-05-06",
+    "owner": "doctrine-curator + plan-lifecycle-maintainer"
+  },
+  "rules": [
+    {
+      "id": "pt-proven-plan-lifecycle-archive",
+      "description": "Generalizes adapters/claude-code/hooks/plan-lifecycle.sh: when a plan's Status: header transitions to a terminal value (COMPLETED, DEFERRED, ABANDONED, SUPERSEDED), surface the transition for archival. Proven rule — the existing narrow hook has been firing this pattern reliably; engine version produces audit-log evidence for tuning.",
+      "conjectural": false,
+      "severity": "info",
+      "owner": "plan-lifecycle-maintainer",
+      "trigger": {
+        "event_type": "plan-status-flip",
+        "path_pattern": "docs/plans/*.md",
+        "metadata_match": {}
+      },
+      "condition": {
+        "type": "always"
+      },
+      "action": {
+        "type": "log-only"
+      }
+    },
+    {
+      "id": "pt-proven-plan-edit-evidence-first",
+      "description": "Generalizes adapters/claude-code/hooks/plan-edit-validator.sh: when a checkbox flip is staged on a plan file, the audit log records the evidence-state (mtime-fresh structured artifact, mtime-fresh prose evidence block, or none) so the engine produces evidence about how often each evidence form is used. Proven rule.",
+      "conjectural": false,
+      "severity": "info",
+      "owner": "plan-lifecycle-maintainer",
+      "trigger": {
+        "event_type": "plan-edit",
+        "path_pattern": "docs/plans/*.md"
+      },
+      "condition": {
+        "type": "always"
+      },
+      "action": {
+        "type": "log-only"
+      }
+    },
+    {
+      "id": "pt-proven-decisions-index-update",
+      "description": "Generalizes adapters/claude-code/hooks/decisions-index-gate.sh: when a docs/decisions/NNN-*.md file is created or modified, the engine logs that the docs/DECISIONS.md index should reflect the change. The narrow hook enforces atomicity at the file-system level; this rule adds the audit-log signal so we can measure ADR-creation frequency. Proven rule.",
+      "conjectural": false,
+      "severity": "info",
+      "owner": "doctrine-curator",
+      "trigger": {
+        "event_type": "decision-record-created",
+        "path_pattern": "docs/decisions/*.md"
+      },
+      "condition": {
+        "type": "always"
+      },
+      "action": {
+        "type": "log-only"
+      }
+    },
+    {
+      "id": "pt-proven-narrative-doc-staleness",
+      "description": "Generalizes adapters/claude-code/hooks/docs-freshness-gate.sh: when a narrative doc (README.md, harness-strategy.md, best-practices.md, claude-code-quality-strategy.md, CLAUDE.md) is modified, the engine logs the change so audit-log accumulates a measure of doc-update frequency vs. doctrine-update frequency. Proven rule.",
+      "conjectural": false,
+      "severity": "info",
+      "owner": "doctrine-curator",
+      "trigger": {
+        "event_type": "narrative-doc-modified"
+      },
+      "condition": {
+        "type": "always"
+      },
+      "action": {
+        "type": "log-only"
+      }
+    },
+    {
+      "id": "pt-3-adr-adoption-fanout",
+      "description": "PT-3 (ADR adoption): when an ADR transitions from 'proposed' to 'accepted' (or 'accepted' to 'superseded'), the engine logs that downstream artifacts may need updating — engineering catalog, design system, integration map, dependent ADRs. Conjectural: the threshold for 'fan-out worth surfacing' is uncertain until audit-log accumulates evidence. Tuning happens once we see how often ADR transitions actually correlate with downstream-doc updates.",
+      "conjectural": true,
+      "pending_evidence": "audit-log-tuning",
+      "severity": "warning",
+      "owner": "doctrine-curator",
+      "trigger": {
+        "event_type": "decision-record-modified",
+        "path_pattern": "docs/decisions/*.md",
+        "metadata_match": {}
+      },
+      "condition": {
+        "type": "always"
+      },
+      "action": {
+        "type": "log-only"
+      }
+    },
+    {
+      "id": "pt-4-doctrine-change-finding-routing",
+      "description": "PT-4 (doctrine change): when a build-doctrine/doctrine/*.md file is modified, the engine logs that downstream projects' canon (PRD, conventions, design-system, etc.) may need re-validation against the new doctrine. Conjectural: the severity threshold for 'route to findings' vs. 'log only' is uncertain. v1 is log-only; tuning to open-finding happens once we see how often doctrine edits correlate with downstream drift.",
+      "conjectural": true,
+      "pending_evidence": "audit-log-tuning",
+      "severity": "warning",
+      "owner": "doctrine-curator",
+      "trigger": {
+        "event_type": "doctrine-doc-modified",
+        "path_pattern": "build-doctrine/doctrine/*.md"
+      },
+      "condition": {
+        "type": "always"
+      },
+      "action": {
+        "type": "log-only"
+      }
+    },
+    {
+      "id": "pt-6-findings-pattern-detection",
+      "description": "PT-6 (findings pattern): when a finding is added to docs/findings.md, log the event with the finding's severity + scope. The detection-of-pattern logic (≥3 similar findings within 7 days surfaces a meta-finding) is conjectural; v1 logs every finding-add event so a follow-up analyzer can run against audit-log evidence and propose threshold values. Conjectural threshold pending audit-log evidence.",
+      "conjectural": true,
+      "pending_evidence": "audit-log-tuning",
+      "severity": "info",
+      "owner": "doctrine-curator",
+      "trigger": {
+        "event_type": "finding-added",
+        "path_pattern": "docs/findings.md"
+      },
+      "condition": {
+        "type": "always"
+      },
+      "action": {
+        "type": "log-only"
+      }
+    },
+    {
+      "id": "docs-coupling-cross-reference-change",
+      "description": "Docs-coupling: when a doc with cross-references to other docs is modified (e.g., README.md links to harness-strategy.md), log the cross-reference change so the engine can fan-out check to cited docs in a later commit. v1 is log-only; the actual cited-docs-need-review action is post-pilot work. Useful for tuning: audit log shows which docs accumulate the most cross-reference churn.",
+      "conjectural": true,
+      "pending_evidence": "audit-log-tuning",
+      "severity": "info",
+      "owner": "doctrine-curator",
+      "trigger": {
+        "event_type": "doc-cross-reference-changed"
+      },
+      "condition": {
+        "type": "always"
+      },
+      "action": {
+        "type": "log-only"
+      }
+    }
+  ]
+}

@@ -127,3 +127,6 @@ docs/plans/archive/public-release-hardening-evidence.md
 
 # Moved to .example (Phase 4 scrub)
 adapters/claude-code/business-patterns.paths
+
+# Build Doctrine propagation engine audit log (per-event data, gitignored)
+build-doctrine/telemetry/propagation.jsonl

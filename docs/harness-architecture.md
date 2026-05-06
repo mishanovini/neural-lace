@@ -527,6 +527,20 @@ agent-behavior failure observed during build becomes a candidate doctrine
 update, not a forgotten frustration. Telemetry mechanization upgrades
 the substrate but does not change the discipline.
 
+## Propagation Engine (Tranche 6a, 2026-05-06)
+
+| Component | File | Purpose |
+|---|---|---|
+| Engine | `adapters/claude-code/hooks/propagation-trigger-router.sh` (~700 LOC bash) | Reads `propagation-rules.json`, evaluates each rule's trigger + condition + action against an input event, writes JSONL audit-log entry to `build-doctrine/telemetry/propagation.jsonl` for every rule evaluation (matched OR unmatched). 14-scenario `--self-test`. v1 performance budget: 1000ms per-rule / 5000ms per-event (doctrine target 100ms / 500ms is v2 optimization). |
+| Schema | `adapters/claude-code/schemas/propagation-rules.schema.json` | JSON Schema draft 2020-12 defining the rule format: id, trigger (event_type + path_pattern + metadata_match), condition (always / script / command), action (log-only / script / command / open-finding), severity, owner, conjectural flag, pending_evidence. |
+| Rule set | `build-doctrine/propagation/propagation-rules.json` | 8 starter rules in v1: 4 PROVEN generalizing existing narrow hooks (`plan-lifecycle.sh`, `plan-edit-validator.sh`, `decisions-index-gate.sh`, `docs-freshness-gate.sh`) + 3 CONJECTURAL covering existing canon (PT-3 ADR-adoption fan-out, PT-4 doctrine-change finding-routing, PT-6 findings-pattern detection) + 1 docs-coupling rule. Conjectural rules tagged `conjectural: true` + `pending_evidence: audit-log-tuning` for disposition once audit log accumulates evidence. |
+| Audit log | `build-doctrine/telemetry/propagation.jsonl` (gitignored; `.gitkeep` tracks the directory) | The measurement substrate. Each line is one JSON event with: schema_version, timestamp, event_id, rule_id, severity, conjectural, verdict (`fired`/`unmatched`/`condition-not-met`/`action-failed`/`event-budget-exceeded`/`no-rules-matched`), duration_ms, event. Optional `slow_rule` flag, `action_exit_code`. |
+| Docs | `build-doctrine/propagation/README.md` | Engine overview, audit-log query examples, conjectural-rule disposition path, performance-budget hypothesis, list of 8 starter rules. |
+
+**Why ships ahead of canonical pilot:** the audit log IS the measurement substrate. Without the engine, pilot evidence is operator memory rather than counted data. Per the teaching example at `docs/teaching-examples/2026-05-06-starter-rules-vs-wait-for-pilot.md`, the corrected position decomposed Tranche 6 into 6-orch (scaffolding — DONE), **6a (framework + audit log + starter rules — DONE 2026-05-06; this row)**, 6b (per-canon-category rules — gated on pilot), 6c (PT-5 drift + telemetry-driven refinement — gated on HARNESS-GAP-11).
+
+**Real-time hook wiring deferred:** the engine is currently standalone-runnable. Integration with the existing PostToolUse / Stop chain happens in a follow-up commit. The 4 generalized narrow hooks remain in place; consolidation only happens after the engine is proven to handle every case the narrow hook did.
+
 ## Docs (`~/.claude/docs/`)
 
 | Doc | Referenced by | Purpose |

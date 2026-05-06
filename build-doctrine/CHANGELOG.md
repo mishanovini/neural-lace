@@ -1,5 +1,20 @@
 # Build Doctrine Changelog
 
+## 2026-05-06 — v0.5 (Tranche 6a: propagation engine framework + audit log + 8 starter rules)
+
+- Engine: `adapters/claude-code/hooks/propagation-trigger-router.sh` (~700 LOC bash) reading `propagation-rules.json`, evaluating triggers + conditions + actions, writing audit-log entries to `build-doctrine/telemetry/propagation.jsonl` (one JSONL line per rule evaluation, matched OR unmatched).
+- Schema: `adapters/claude-code/schemas/propagation-rules.schema.json` — JSON Schema draft 2020-12 defining the rule format (id, trigger, condition, action, severity, owner, conjectural, pending_evidence).
+- Rules: `build-doctrine/propagation/propagation-rules.json` ships 8 starter rules:
+  - **4 proven** generalizing existing narrow hooks: plan-lifecycle archive, plan-edit evidence-first, decisions-index update, narrative-doc staleness.
+  - **3 conjectural** covering existing canon: PT-3 ADR-adoption fan-out, PT-4 doctrine-change finding-routing, PT-6 findings-pattern detection. Each tagged `conjectural: true` + `pending_evidence: audit-log-tuning`.
+  - **1 docs-coupling** rule fanning out doc-cross-reference changes.
+- Audit log at `build-doctrine/telemetry/propagation.jsonl` (gitignored; per-event data). `.gitkeep` tracks the directory.
+- README at `build-doctrine/propagation/README.md` documenting engine, audit-log format, conjectural-rule disposition path, performance budget hypothesis.
+- Self-test: 14/14 PASS scenarios covering schema-validity, rules-validity, matching events fire rules, unmatched events record negative-space, metadata-match filters, path-pattern matching, malformed-config rejection, missing-config rejection, audit-log JSONL format, required-fields presence, failed-action recording, condition-not-met skip-action, production-rules load.
+- **Performance budget** is v1 hypothesis: 1000ms per-rule / 5000ms per-event (doctrine target is 100ms / 500ms). Bash + jq on Windows Git Bash measures ~300ms per rule due to subprocess overhead; v2 optimization deferred.
+- **Real-time hook wiring deferred** to a follow-up commit. Engine is standalone-runnable; the existing 4 narrow hooks (plan-lifecycle, plan-edit-validator, decisions-index-gate, docs-freshness-gate) remain in place; consolidation only happens after engine is proven.
+- **Per the teaching example**: the audit log IS the measurement substrate for the canonical pilot. Without this engine, pilot evidence is operator memory rather than counted data. Tranche 6a ships ahead of the pilot to bootstrap the measurement loop.
+
 ## 2026-05-06 — v0.4 (Tranche 6 scaffolding: orchestrator project structure)
 
 - Python orchestrator scaffolding at `build-doctrine-orchestrator/`: pyproject.toml,
