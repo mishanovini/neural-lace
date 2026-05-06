@@ -417,6 +417,7 @@ is_path_shape_exempt() {
     # project-instance content.
     build-doctrine/*|build-doctrine) return 0 ;;
     build-doctrine-templates/*|build-doctrine-templates) return 0 ;;
+    build-doctrine-orchestrator/*|build-doctrine-orchestrator) return 0 ;;
     # The synced `~/.claude/` mirror (when scanning that tree directly).
     *.claude/*|*/.claude/*) return 0 ;;
     # NL-root prose files (README, CONTRIBUTING, LICENSE, CODE_OF_CONDUCT,

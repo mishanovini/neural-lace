@@ -1,5 +1,26 @@
 # Build Doctrine Changelog
 
+## 2026-05-06 — v0.4 (Tranche 6 scaffolding: orchestrator project structure)
+
+- Python orchestrator scaffolding at `build-doctrine-orchestrator/`: pyproject.toml,
+  package layout (`src/build_doctrine_orchestrator/`), DAG state machine
+  (nodes + edges + topological iteration + cycle detection), state types
+  + transition rules (TaskState, DispatchState), Dispatcher protocol +
+  NoopDispatcher reference impl, pytest test harness with ~32 tests across
+  state and DAG.
+- **Validation deferred** to first Python-equipped session (current session
+  has no Python locally; scaffolding is correct-by-inspection only). Every
+  Python file marked with `_TODO_PILOT_VALIDATE_` sentinel + README documents
+  the required validation steps prominently.
+- **Propagation engine (C12) deliberately deferred** until canonical-pilot
+  empirical signal informs which PT-1..PT-7 trigger router slots actually
+  fire most. The doctrine explicitly warns against authoring all 7 cold.
+- Real builder-spawn integration deferred — `Dispatcher` protocol exists,
+  the `plan-phase-builder` integration is post-pilot work.
+- Cross-tranche integration (with state-summary.sh, close-plan.sh,
+  start-plan.sh, session-wrap.sh) deferred — orchestrator is standalone
+  scaffolding in v1.
+
 ## 2026-05-06 — v0.3 (Tranche 3: template content)
 
 - Default content for the 11 universal floors at Express + Standard

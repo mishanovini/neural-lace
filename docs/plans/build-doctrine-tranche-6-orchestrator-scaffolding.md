@@ -50,7 +50,7 @@ Author the Python orchestrator project structure: package layout, DAG state mach
 - `docs/decisions/queued-build-doctrine-tranche-6-orchestrator-scaffolding.md` — CREATE (companion queue)
 
 ## In-flight scope updates
-(no in-flight changes yet)
+- 2026-05-06: `adapters/claude-code/hooks/harness-hygiene-scan.sh` + `~/.claude/hooks/harness-hygiene-scan.sh` — extend `is_path_shape_exempt()` to cover `build-doctrine-orchestrator/*`. Common Python identifiers (Dispatcher, False, etc.) repeat in legitimate use and trip the heuristic-cluster check; same logic as existing `build-doctrine/` and `build-doctrine-templates/` exemptions. One-line edit per file.
 
 ## Assumptions
 - Python 3.11+ is the target runtime (modern Python; matches doctrine reference).
