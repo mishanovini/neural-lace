@@ -426,6 +426,21 @@ Hooks intentionally NOT made archive-aware: `pre-commit-gate.sh`, `backlog-plan-
 | `findings-template.md` **(Phase 1d-C-3, 2026-05-04)** | `findings-ledger.md` rule | Canonical shape for `docs/findings.md`. Top-of-file schema specification block (six fields with enum values + lifecycle definition + severity/scope ordering) plus three sample entries demonstrating `open` / `dispositioned-defer` / `closed` statuses. Validated at commit time by `findings-ledger-schema-gate.sh` (Phase 1d-C-3 Task 3). |
 | `comprehension-template.md` **(Phase 1d-C-4 / C15, 2026-05-04)** | `comprehension-gate.md` rule + `task-verifier` evidence-block discipline | Canonical four-heading articulation block builders paste into a `## Comprehension Articulation` section inside their evidence entry on `rung: 2+` plans. The four required sub-headings: `### Spec meaning` (the builder's interpretation of what the spec asks for, in the builder's own words), `### Edge cases covered` (each with a `file:line` citation in the diff that handles it), `### Edge cases NOT covered` (each with rationale — explicit out-of-scope vs deferred vs assumed-by-caller), `### Assumptions` (every premise the diff relies on, made explicit). Substance prompts in each sub-section explain what to write so placeholder-only content cannot satisfy the schema. Validated at task-verification time by `comprehension-reviewer` agent (auto-invoked by `task-verifier` at `rung: 2+`). Cross-references Decision 020. |
 
+## Work-Shapes (`~/.claude/work-shapes/`) — Tranche C of architecture-simplification, 2026-05-05
+
+The engineering catalog Build Doctrine Principle 2 calls for, applied to harness-dev work. Each shape declares YAML frontmatter (`shape_id`, `category`, `required_files`, `mechanical_checks`, `worked_example`) and prose body (when-to-use, structure, common pitfalls, worked-example walk-through). The mechanical checks become the verification rubric task-verifier (or the builder in self-verification contexts) runs at evidence-block time. Library is documentation in v1; mechanical compliance enforcement at commit time deferred per Tranche C scope.
+
+| Shape | Category | Worked example | When to use |
+|---|---|---|---|
+| `build-hook.md` | hook | `adapters/claude-code/hooks/harness-hygiene-scan.sh` | Creating or modifying a Claude Code hook script under `adapters/claude-code/hooks/`. Composes `write-self-test` inline. |
+| `build-rule.md` | rule | `adapters/claude-code/rules/harness-hygiene.md` | Creating or modifying a doctrine file under `adapters/claude-code/rules/`. |
+| `build-agent.md` | agent | `adapters/claude-code/agents/task-verifier.md` | Creating or modifying a sub-agent prompt under `adapters/claude-code/agents/`. |
+| `author-ADR.md` | decision | `docs/decisions/026-harness-catches-up-to-doctrine.md` | Recording a Tier 2+ decision under `docs/decisions/NNN-<slug>.md` plus an index row in `docs/DECISIONS.md`. |
+| `write-self-test.md` | test | `harness-hygiene-scan.sh --self-test` block | Adding a `--self-test` block to a bash mechanism (composes inline with `build-hook`). |
+| `doc-migration.md` | migration | build-doctrine Tranche 0b migration | Moving doctrine content between locations with byte-identical or anonymization-only diff. |
+
+The `README.md` in the same directory enumerates v1 shapes, format spec, and how-to-use. The rule documenting when to use a shape, how to add one, and the escalation path for novel work lives at `~/.claude/rules/work-shapes.md`. Cross-referenced from `~/.claude/rules/orchestrator-pattern.md` and the enforcement map in `~/.claude/rules/vaporware-prevention.md`.
+
 ## Schemas (`~/.claude/schemas/`)
 
 JSON Schemas (draft 2020-12) lock the shape of harness-controlled artifacts. Each schema validates against the meta-schema; helper scripts and hooks cross-reference the schema by `$id`.

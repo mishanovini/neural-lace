@@ -347,6 +347,19 @@ A single plan declares ONE `Execution Mode` in its header. Do not start a plan i
 - `~/.claude/rules/planning.md` "When to use `Execution Mode: agent-team`" — the decision tree for choosing between modes.
 - `docs/decisions/012-agent-teams-integration.md` — the design rationale: per-team tool-call-budget scope, `force_in_process: true` default, worktree-mandatory-for-write, TaskCreated/TaskCompleted enforcement, lead-aggregate acceptance, feature-flag gating.
 
+## Use a work-shape when one applies
+
+Before dispatching builder work, scan `adapters/claude-code/work-shapes/` (live mirror at `~/.claude/work-shapes/`) for a canonical task shape that matches. The library catalogs the recurring task classes in harness-dev work — Build Doctrine Principle 2 (engineering catalog) applied to the harness itself. Six v1 shapes:
+
+- `build-hook` — creating or modifying a Claude Code hook script under `adapters/claude-code/hooks/`.
+- `build-rule` — creating or modifying a doctrine file under `adapters/claude-code/rules/`.
+- `build-agent` — creating or modifying a sub-agent prompt under `adapters/claude-code/agents/`.
+- `author-ADR` — recording a Tier 2+ decision under `docs/decisions/NNN-<slug>.md` plus the index row.
+- `write-self-test` — adding a `--self-test` block to a bash mechanism (composes inline with `build-hook`).
+- `doc-migration` — moving doctrine content with byte-identical or anonymization-only diff.
+
+When a shape applies, cite the `shape_id` in the dispatch prompt's task description; the shape's `mechanical_checks` frontmatter becomes the verification rubric the builder runs (and task-verifier cross-checks) before commit. When no shape fits, the work is novel — escalate via the plan template's `## Walking Skeleton` discipline; if the pattern recurs across three or more harness-dev tasks, propose a new shape per `~/.claude/rules/work-shapes.md` "How to add a new shape." The library is documentation in v1; mechanical compliance enforcement at commit time is deferred per Tranche C scope.
+
 ## How this pattern interacts with existing rules
 
 - `planning.md`: unchanged. Orchestrator reads + writes plan files the same way, just dispatches the build.
