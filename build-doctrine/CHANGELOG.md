@@ -1,5 +1,25 @@
 # Build Doctrine Changelog
 
+## 2026-05-06 — v0.3 (Tranche 3: template content)
+
+- Default content for the 11 universal floors at Express + Standard
+  depths under `build-doctrine-templates/conventions/universal-floors/`.
+  22 floor templates total (Floor 11 / UX standards is UI-projects-only).
+- Naming-convention defaults for the 4 named languages: JavaScript/TypeScript,
+  Python, Go, Rust at `build-doctrine-templates/conventions/naming/`.
+- Branch + commit conventions at
+  `build-doctrine-templates/conventions/branching-and-commits.md`
+  (Conventional Commits format + branch-prefix taxonomy + PR workflow).
+- API-style architectural default at
+  `build-doctrine-templates/conventions/architectural-defaults/api-style.md`
+  as the worked example. Other architectural defaults (state management,
+  async patterns, database access, frontend framework) deferred until
+  canonical-pilot friction informs which to author next.
+- README at `build-doctrine-templates/conventions/README.md` documenting
+  the layout + depth tiers + how downstream projects consume.
+- Templates are prose; no schema-validation. Schema-validation gates at
+  commit time deferred until project bootstraps produce friction.
+
 ## 2026-05-06 — v0.2 (Tranche 2: template schemas)
 
 - 7 canonical template schemas at `build-doctrine/template-schemas/`:
