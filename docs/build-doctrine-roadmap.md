@@ -21,16 +21,16 @@
 | **3** | Phase 4b — Layer B-content: seed `build-doctrine-templates/` with default content for 11 universal floors × 2 depths (Express + Standard) + 4 language naming defaults + branching/commits + API-style architectural default | ✅ DONE | (archived) `docs/plans/archive/build-doctrine-tranche-3-template-content.md` | 2026-05-06 — Deep depth deferred per scope; other architectural defaults deferred until pilot friction informs |
 | **4** | Phase 6 — canonical pilot project pilot | ❌ NOT STARTED | (TBD; plan lives in the pilot project's repo, references doctrine in NL) | — |
 | **5** | Phase 5 — Author `07-knowledge-integration.md` (gated on Phase 6 per Q9) | ❌ NOT STARTED | (TBD) | — |
-| **6** | Phase 7 — Minimal orchestrator (~300-500 LOC Python) + propagation engine (C12 generalized router) | ❌ NOT STARTED | (TBD) | — |
+| **6** | Phase 7 — Minimal orchestrator (~300-500 LOC Python) + propagation engine (C12 generalized router) | 🟡 SCAFFOLDING DONE; PROPAGATION ENGINE PENDING PILOT | (archived) `docs/plans/archive/build-doctrine-tranche-6-orchestrator-scaffolding.md`. Propagation engine deferred until Tranche 4 (canonical pilot) empirical signal informs which PT-1..PT-7 trigger router slots actually fire most. | scaffolding 2026-05-06; full Tranche 6 pending pilot |
 | **7** | The remaining 14 second-pass C-mechanisms (C3-C8, C11-C14, C17-C21) | ❌ NOT STARTED | (TBD; many subsumed by Tranche 6) | — |
 
-**Headline status (2026-05-05 v2):** Tranches 0a, 0b, 1, and 1.5 are all DONE. The *enforcement substrate* + *architecture-simplification redesign* are complete. Master is clean (zero ACTIVE plans). The *content layer + pilot + orchestrator* (Tranches 2-6) is the remaining work and represents the bulk of effort going forward.
+**Headline status (2026-05-06 v3):** Tranches 0a, 0b, 1, 1.5, **2, 3, and 6-scaffolding** are all DONE. The *enforcement substrate* + *architecture-simplification redesign* + *content layer (schemas + templates)* + *orchestrator scaffolding* are complete. Master is clean. Remaining: Tranche 4 (canonical pilot) is the wall — needs your pilot-project decision; Tranche 5 (knowledge integration ritual), Tranche 6 propagation engine (C12), and Tranche 7 (residual C-mechanisms) all gate on Tranche 4 empirical signal per doctrine.
 
 ---
 
 ## Current focus
 
-**Next pickup: Tranche 2 — Phase 4a Layer B-shape (7 template schemas).** With the foundation (0a, 0b, 1, 1.5) all closed and master clean, Tranche 2 is the first content-layer step.
+**Next pickup: Tranche 4 — canonical pilot project pilot.** Tranches 2 + 3 + 6-scaffolding all shipped 2026-05-06 in one autonomous push. Tranche 4 is the structural wall that needs your involvement: the pilot-project identity (which project), readiness assessment, access to the pilot's repo from a session that can write to it, and a Python-equipped session to validate Tranche 6's scaffolding (`pytest` against `build-doctrine-orchestrator/`). See [`docs/plans/tranche-4-canonical-pilot-handoff.md`](plans/tranche-4-canonical-pilot-handoff.md) for the concrete handoff prerequisites.
 
 **Why Tranche 2 (template schemas) before Tranche 3 (template content):** the schemas define what each template-floor's structure is; content seeding fills those structures. Schemas first means every per-floor seed has a target shape to validate against.
 

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "task_id": "4",
+  "verdict": "PASS",
+  "commit_sha": "8e843fb3638138279fc12ee28a07d17eabe6baf2",
+  "files_modified": [
+    "adapters/claude-code/hooks/harness-hygiene-scan.sh",
+    "build-doctrine-orchestrator/README.md",
+    "build-doctrine-orchestrator/pyproject.toml",
+    "build-doctrine-orchestrator/src/build_doctrine_orchestrator/__init__.py",
+    "build-doctrine-orchestrator/src/build_doctrine_orchestrator/dag.py",
+    "build-doctrine-orchestrator/src/build_doctrine_orchestrator/dispatcher.py",
+    "build-doctrine-orchestrator/src/build_doctrine_orchestrator/state.py",
+    "build-doctrine-orchestrator/tests/__init__.py",
+    "build-doctrine-orchestrator/tests/test_dag.py",
+    "build-doctrine-orchestrator/tests/test_state.py",
+    "build-doctrine/CHANGELOG.md",
+    "docs/plans/build-doctrine-tranche-6-orchestrator-scaffolding.md"
+  ],
+  "mechanical_checks": {
+    "files-in-commit": {
+      "passed": true,
+      "detail": "12 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-06T08:41:32Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/build-doctrine-tranche-6-orchestrator-scaffolding.md"
+}
