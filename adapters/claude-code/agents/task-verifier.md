@@ -377,6 +377,28 @@ Gaps:
 
 **The `Comprehension-gate:` line is required** for R2+ tasks (whether the verdict is PASS, FAIL, or INCOMPLETE) and required for R0/R1 tasks (where the value is `not applicable (rung < 2)`). The line provides the audit trail for whether the gate fired and, if so, what it returned. A PASS verdict on an R2+ task without a corresponding `Comprehension-gate: PASS` line is a builder-discipline gap and a false-PASS risk.
 
+### Helper-script preference: `write-evidence.sh capture` (Tranche B, 2026-05-05)
+
+**When the task's verification level is `mechanical` (per Tranche D's risk-tiered verification field) OR the work is purely structural (file edits, hook updates, schema authoring, prompt updates, sync-to-mirror operations), prefer `adapters/claude-code/scripts/write-evidence.sh capture` over writing prose evidence by hand.** The helper captures mechanical-check outcomes deterministically (typecheck, lint, test, exists, schema-valid, files-in-commit, command:); your role becomes invocation + outcome interpretation, not evidence authorship.
+
+A typical invocation:
+
+```bash
+bash ~/.claude/scripts/write-evidence.sh capture \
+  --task <id> \
+  --plan <plan-path> \
+  --check exists:<file> --check files-in-commit --check command:<cmd>
+```
+
+The helper writes a structured artifact at `<plan-dir>/<plan-slug>-evidence/<task-id>.evidence.json` validating against `~/.claude/schemas/evidence.schema.json` (six required fields: task_id, verdict, commit_sha, files_modified, mechanical_checks, timestamp). The `plan-edit-validator.sh` hook recognizes this artifact alongside legacy prose `-evidence.md` blocks; the freshness window (120s) and task-id match still apply.
+
+**Use prose evidence (the existing `-evidence.md` flow) when:**
+- The task involves novel judgment that mechanical checks cannot fully express.
+- The task has runtime-verification entries the helper script cannot auto-replay (e.g., complex Playwright assertions whose output you've already captured).
+- You're verifying a task that already has prose evidence and adding to it would mix formats unnecessarily.
+
+For all other cases, the helper-script path is preferred — it eliminates prose-narration drift and makes evidence machine-readable for the closure-validator (Tranche E). See `~/.claude/rules/mechanical-evidence.md` for the substrate's full documentation.
+
 ### Step 8: Update the plan file and evidence file (ONLY if PASS)
 
 **Only if the verdict is PASS:**

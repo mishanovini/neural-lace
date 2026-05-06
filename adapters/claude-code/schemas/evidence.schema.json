@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-lace.dev/schemas/evidence.v1.json",
+  "title": "Mechanical Evidence Artifact (v1)",
+  "description": "Canonical structured-evidence shape for Build Doctrine Principle 7 ('Visibility lives in artifacts, not narration'). One file per task verification, written by adapters/claude-code/scripts/write-evidence.sh OR equivalent tooling. Replaces the prose evidence-block convention with machine-written human-readable artifacts: each mechanical check (typecheck, lint, test, schema-validate, files-in-commit) records its outcome deterministically. Prose evidence remains the escalation path for genuinely-novel work via the optional prose_supplement field. The plan-edit-validator.sh hook accepts either format. File location convention: <plan-dir>/<plan-slug>-evidence/<task-id>.evidence.json (sibling-directory variant) OR <plan-dir>/<plan-slug>-evidence.json (single-file plan-aggregate variant — emitted only when the helper writes to an aggregate). Schema version 1 (initial).",
+  "type": "object",
+  "required": ["task_id", "verdict", "commit_sha", "files_modified", "mechanical_checks", "timestamp"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "default": 1,
+      "description": "Schema version. Currently always 1. Validators accept current + N-1 versions for graceful migration."
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "description": "Plan task identifier (e.g., '3.2', 'A.1', '7'). Must match the task ID used in the plan file's checkbox line. plan-edit-validator.sh greps for this when authorizing checkbox flips."
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "INCOMPLETE"],
+      "description": "Aggregate verdict. PASS only when every entry in mechanical_checks is true (or contains a passing detail-string). FAIL when any check failed. INCOMPLETE when a check could not be run (missing dependency, environment unavailable). Mirrors the prose evidence-block 'Verdict:' line."
+    },
+    "commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{7,40}$",
+      "description": "Git commit SHA (7-40 hex chars) the evidence pertains to. Typically HEAD at the time of capture. Empty string permitted ONLY when verdict is INCOMPLETE and no commit has landed yet."
+    },
+    "files_modified": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Repo-relative paths of files modified in the commit (or, when commit_sha is empty + verdict is INCOMPLETE, the working-tree files staged or about to be staged). Empty array is valid only for purely procedural tasks (e.g., 'review the plan') with verdict INCOMPLETE or FAIL."
+    },
+    "mechanical_checks": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "boolean",
+            "description": "True = check passed; false = check failed."
+          },
+          {
+            "type": "object",
+            "required": ["passed"],
+            "additionalProperties": false,
+            "properties": {
+              "passed": {
+                "type": "boolean",
+                "description": "Pass/fail outcome."
+              },
+              "detail": {
+                "type": "string",
+                "description": "Free-form detail string (output excerpt, error summary, schema name, etc.)."
+              },
+              "command": {
+                "type": "string",
+                "description": "The exact command that produced this outcome (replayable)."
+              },
+              "exit_code": {
+                "type": "integer",
+                "description": "Exit code of the command, when applicable."
+              }
+            }
+          }
+        ]
+      },
+      "description": "Map of check-name → outcome. Check names are domain-specific (typecheck, lint, test:<name>, schema-valid:<name>, files-in-commit, etc.). Each entry is either a boolean (terse) or an object with passed + optional detail/command/exit_code (rich). The helper script defaults to the rich form so detail strings are captured."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the evidence was captured. Example: '2026-05-05T13:42:00Z'. Used by plan-edit-validator.sh as a freshness signal alongside the file's mtime."
+    },
+    "runtime_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["format", "command"],
+        "additionalProperties": false,
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": ["test", "playwright", "curl", "sql", "file"],
+            "description": "Replayable format matching runtime-verification-executor.sh's accepted shapes. Mirrors the prose evidence-block 'Runtime verification: <format> <command>' convention."
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The replayable command body (e.g., 'tests/foo.spec.ts::test name', 'curl -fsS http://localhost:3000/api/foo', 'SELECT 1 FROM bar')."
+          },
+          "expected": {
+            "type": "string",
+            "description": "Expected outcome (PASS / 200 OK / row count >= 1). Optional but strongly recommended."
+          },
+          "observed": {
+            "type": "string",
+            "description": "Actual outcome from the most recent replay. May be a short string ('exit 0') or a longer captured excerpt."
+          },
+          "before_after": {
+            "type": "string",
+            "enum": ["before", "after"],
+            "description": "For fix-class tasks: marks this entry as the pre-fix reproduction (before) or the post-fix verification (after). Both required for fix-class tasks per task-verifier's reproduction-based-verification rule."
+          }
+        }
+      },
+      "description": "Optional runtime-verification entries for tasks with observable runtime behavior (UI, API, webhook, migration, state machine). Empty for purely structural tasks (file edits, hook updates, prompt updates). When present, must satisfy task-verifier's runtime-verification requirements table."
+    },
+    "prose_supplement": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional escalation path for genuinely-novel work where mechanical checks cannot fully express the verification rationale. Free-form prose — read by human reviewers + the plan-evidence-reviewer agent. Use sparingly: most tasks should be fully expressible via mechanical_checks + runtime_evidence."
+    },
+    "verifier": {
+      "type": "string",
+      "default": "write-evidence.sh",
+      "description": "Identifier for the entity that wrote the evidence (e.g., 'write-evidence.sh', 'task-verifier-agent', 'manual'). Defaults to 'write-evidence.sh' when emitted by the helper script."
+    },
+    "plan_path": {
+      "type": "string",
+      "description": "Repo-relative path to the plan file this evidence pertains to. Captured for cross-reference at session-end and during plan-evidence-reviewer audits."
+    }
+  }
+}

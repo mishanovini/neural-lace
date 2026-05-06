@@ -434,8 +434,160 @@ WKR
     fi
   fi
 
+  # ============================================================
+  # F5/F6/F7 — evidence recognition (Tranche B, 2026-05-05)
+  # ============================================================
+  #
+  # The check_evidence_first function below recognizes both prose
+  # evidence (legacy) and structured evidence (new). These three
+  # scenarios verify that:
+  #   F5 structured-evidence-recognized — JSON artifact authorizes
+  #   F6 prose-evidence-still-recognized — legacy block authorizes
+  #   F7 mixed-format-plan-validates    — both formats coexist
+  #
+  # We define an inline replica of check_evidence_first so the test
+  # works without sourcing the full script body.
+
+  selftest_check_evidence_first() {
+    local plan_file="$1"
+    local task_id="$2"
+
+    # Path A — prose
+    local evidence_file="${plan_file%.md}-evidence.md"
+    if [[ -f "$evidence_file" ]]; then
+      local now mtime age
+      now=$(date +%s)
+      mtime=$(stat -c %Y "$evidence_file" 2>/dev/null || echo 0)
+      age=$((now - mtime))
+      if [[ "$age" -le 120 ]]; then
+        local result
+        result=$(awk -v wanted_id="$task_id" '
+          BEGIN { in_block = 0; t = ""; has_runtime = 0; }
+          /^EVIDENCE BLOCK/ {
+            if (in_block && t == wanted_id && has_runtime) { print "MATCH"; exit 0 }
+            in_block = 1; t = ""; has_runtime = 0; next
+          }
+          /^Task ID:/ {
+            if (in_block) {
+              sub(/^Task ID:[[:space:]]*/, "", $0); sub(/[[:space:]].*$/, "", $0); t = $0
+            }
+            next
+          }
+          /^Runtime verification:/ { if (in_block) has_runtime = 1; next }
+          END { if (in_block && t == wanted_id && has_runtime) print "MATCH" }
+        ' "$evidence_file")
+        if [[ "$result" == "MATCH" ]]; then return 0; fi
+      fi
+    fi
+
+    # Path B — structured
+    local plan_dir plan_slug structured_dir structured_file
+    plan_dir=$(dirname "$plan_file")
+    plan_slug=$(basename "$plan_file" .md)
+    structured_dir="$plan_dir/${plan_slug}-evidence"
+    structured_file="$structured_dir/${task_id}.evidence.json"
+    if [[ -f "$structured_file" ]]; then
+      local now2 mtime2 age2
+      now2=$(date +%s)
+      mtime2=$(stat -c %Y "$structured_file" 2>/dev/null || echo 0)
+      age2=$((now2 - mtime2))
+      if [[ "$age2" -le 120 ]]; then
+        if jq -e --arg id "$task_id" '.task_id == $id' "$structured_file" >/dev/null 2>&1; then
+          return 0
+        fi
+      fi
+    fi
+    return 1
+  }
+
+  # ---- F5: structured-evidence-recognized ----
+  PLAN_F5="$TMPDIR_SELFTEST/plan-f5.md"
+  : > "$PLAN_F5"
+  STRUCTURED_DIR_F5="$TMPDIR_SELFTEST/plan-f5-evidence"
+  mkdir -p "$STRUCTURED_DIR_F5"
+  cat > "$STRUCTURED_DIR_F5/B.1.evidence.json" <<JSON
+{
+  "schema_version": 1,
+  "task_id": "B.1",
+  "verdict": "PASS",
+  "commit_sha": "abc1234",
+  "files_modified": ["foo.md"],
+  "mechanical_checks": {"exists:foo.md": {"passed": true, "detail": "ok"}},
+  "timestamp": "2026-05-05T13:42:00Z",
+  "verifier": "write-evidence.sh"
+}
+JSON
+  if selftest_check_evidence_first "$PLAN_F5" "B.1"; then
+    echo "self-test (F5) structured-evidence-recognized: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F5) structured-evidence-recognized: FAIL" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F6: prose-evidence-still-recognized ----
+  PLAN_F6="$TMPDIR_SELFTEST/plan-f6.md"
+  : > "$PLAN_F6"
+  PROSE_F6="$TMPDIR_SELFTEST/plan-f6-evidence.md"
+  cat > "$PROSE_F6" <<'PROSE'
+# Evidence
+
+EVIDENCE BLOCK
+==============
+Task ID: B.6
+Task description: legacy
+Verified at: 2026-05-05
+
+Runtime verification: command true
+
+Verdict: PASS
+PROSE
+  if selftest_check_evidence_first "$PLAN_F6" "B.6"; then
+    echo "self-test (F6) prose-evidence-still-recognized: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F6) prose-evidence-still-recognized: FAIL" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F7: mixed-format-plan-validates ----
+  # One plan with BOTH prose evidence (for task B.7-prose) and structured
+  # evidence (for task B.7-struct). Both should authorize independently.
+  PLAN_F7="$TMPDIR_SELFTEST/plan-f7.md"
+  : > "$PLAN_F7"
+  PROSE_F7="$TMPDIR_SELFTEST/plan-f7-evidence.md"
+  cat > "$PROSE_F7" <<'PROSE'
+EVIDENCE BLOCK
+==============
+Task ID: B.7-prose
+Verified at: 2026-05-05
+Runtime verification: command true
+Verdict: PASS
+PROSE
+  STRUCTURED_DIR_F7="$TMPDIR_SELFTEST/plan-f7-evidence"
+  mkdir -p "$STRUCTURED_DIR_F7"
+  cat > "$STRUCTURED_DIR_F7/B.7-struct.evidence.json" <<JSON
+{
+  "schema_version": 1,
+  "task_id": "B.7-struct",
+  "verdict": "PASS",
+  "commit_sha": "abc1234",
+  "files_modified": [],
+  "mechanical_checks": {"x": true},
+  "timestamp": "2026-05-05T13:42:00Z"
+}
+JSON
+  if selftest_check_evidence_first "$PLAN_F7" "B.7-prose" \
+     && selftest_check_evidence_first "$PLAN_F7" "B.7-struct"; then
+    echo "self-test (F7) mixed-format-plan-validates: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F7) mixed-format-plan-validates: FAIL" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 4 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 7 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -548,64 +700,104 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)
 check_evidence_first() {
   local plan_file="$1"
   local task_id="$2"
+
+  # ============================================================
+  # Path A — prose evidence (legacy): <plan>-evidence.md
+  # ============================================================
   local evidence_file="${plan_file%.md}-evidence.md"
 
-  [[ -f "$evidence_file" ]] || return 1
+  if [[ -f "$evidence_file" ]]; then
+    # Evidence file must be recent (modified in last 120 seconds)
+    local now mtime age
+    now=$(date +%s)
+    mtime=$(stat -c %Y "$evidence_file" 2>/dev/null || echo 0)
+    age=$((now - mtime))
+    if [[ "$age" -le 120 ]]; then
 
-  # Evidence file must be recent (modified in last 120 seconds)
-  local now mtime age
-  now=$(date +%s)
-  mtime=$(stat -c %Y "$evidence_file" 2>/dev/null || echo 0)
-  age=$((now - mtime))
-  if [[ "$age" -gt 120 ]]; then
-    return 1
+      # Parse the evidence file into per-block sections. A block starts
+      # with a line containing "EVIDENCE BLOCK" and ends at the next one
+      # or EOF. For each block: extract its Task ID line and its Runtime
+      # verification lines. If any block has Task ID matching $task_id
+      # AND has at least one Runtime verification line, the authorization
+      # succeeds.
+      #
+      # The per-block parsing closes the replay attack where one legitimate
+      # verification for task A.1 authorized all subsequent edits within
+      # 120s. Now the Task ID line and the Runtime verification line must
+      # appear in the SAME block, which means a single evidence block
+      # authorizes exactly one checkbox flip.
+      local result
+      result=$(awk -v wanted_id="$task_id" '
+        BEGIN { in_block = 0; task_id = ""; has_runtime = 0; }
+        /^EVIDENCE BLOCK/ {
+          if (in_block && task_id == wanted_id && has_runtime) {
+            print "MATCH"
+            exit 0
+          }
+          in_block = 1
+          task_id = ""
+          has_runtime = 0
+          next
+        }
+        /^Task ID:/ {
+          if (in_block) {
+            sub(/^Task ID:[[:space:]]*/, "", $0)
+            sub(/[[:space:]].*$/, "", $0)
+            task_id = $0
+          }
+          next
+        }
+        /^Runtime verification:/ {
+          if (in_block) has_runtime = 1
+          next
+        }
+        END {
+          if (in_block && task_id == wanted_id && has_runtime) {
+            print "MATCH"
+          }
+        }
+      ' "$evidence_file")
+
+      if [[ "$result" == "MATCH" ]]; then
+        return 0
+      fi
+    fi
   fi
 
-  # Parse the evidence file into per-block sections. A block starts with
-  # a line containing "EVIDENCE BLOCK" and ends at the next one or EOF.
-  # For each block: extract its Task ID line and its Runtime verification
-  # lines. If any block has Task ID matching $task_id AND has at least
-  # one Runtime verification line, the authorization succeeds.
+  # ============================================================
+  # Path B — structured evidence (Tranche B, 2026-05-05):
+  #   <plan-dir>/<plan-slug>-evidence/<task-id>.evidence.json
+  # ============================================================
   #
-  # We use awk for a single-pass parse that handles multiple blocks.
-  local result
-  result=$(awk -v wanted_id="$task_id" '
-    BEGIN { in_block = 0; task_id = ""; has_runtime = 0; }
-    /^EVIDENCE BLOCK/ {
-      # Starting a new block — check if the previous one matched
-      if (in_block && task_id == wanted_id && has_runtime) {
-        print "MATCH"
-        exit 0
-      }
-      in_block = 1
-      task_id = ""
-      has_runtime = 0
-      next
-    }
-    /^Task ID:/ {
-      if (in_block) {
-        # Extract task ID (strip prefix and trailing whitespace)
-        sub(/^Task ID:[[:space:]]*/, "", $0)
-        sub(/[[:space:]].*$/, "", $0)
-        task_id = $0
-      }
-      next
-    }
-    /^Runtime verification:/ {
-      if (in_block) has_runtime = 1
-      next
-    }
-    END {
-      # Final block at EOF
-      if (in_block && task_id == wanted_id && has_runtime) {
-        print "MATCH"
-      }
-    }
-  ' "$evidence_file")
+  # Falls through from prose; either path may authorize.
+  #
+  # Schema: adapters/claude-code/schemas/evidence.schema.json. The hook
+  # checks (a) the JSON file exists and is mtime-fresh (< 120s), (b) it
+  # parses as JSON, and (c) its `task_id` field matches the task being
+  # checked. The structured artifact does NOT require a Runtime verification
+  # entry to authorize the flip — `mechanical_checks` is the equivalent
+  # signal for non-runtime tasks. Runtime tasks should still populate
+  # `runtime_evidence`; task-verifier enforces the runtime-replayability
+  # mandate at verdict-decision time.
+  local plan_dir plan_slug structured_dir structured_file
+  plan_dir=$(dirname "$plan_file")
+  plan_slug=$(basename "$plan_file" .md)
+  structured_dir="$plan_dir/${plan_slug}-evidence"
+  structured_file="$structured_dir/${task_id}.evidence.json"
 
-  if [[ "$result" == "MATCH" ]]; then
-    return 0
+  if [[ -f "$structured_file" ]]; then
+    local now2 mtime2 age2
+    now2=$(date +%s)
+    mtime2=$(stat -c %Y "$structured_file" 2>/dev/null || echo 0)
+    age2=$((now2 - mtime2))
+    if [[ "$age2" -le 120 ]]; then
+      # Parse with jq; require well-formed JSON whose task_id matches.
+      if jq -e --arg id "$task_id" '.task_id == $id' "$structured_file" >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
   fi
+
   return 1
 }
 
