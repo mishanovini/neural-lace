@@ -144,3 +144,9 @@ The Build Doctrine roadmap currently does not bind the harness's own development
 The discovery surfaced an architectural critique. The Build Doctrine already contains the answer. The recommendation is therefore not "extend the doctrine" — it's "apply the doctrine to harness self-development, beginning immediately, as Tranche 1.5 of the roadmap."
 
 This is a more useful finding than expected. The path forward is shorter and more concrete than a new architectural design exercise. The harness already has its blueprint; the work is execution.
+
+---
+
+## Update — 2026-05-05 closure phase
+
+User authorized all five recommendations in the "Open questions" section. GAP-16 and Tranche 0b plans closed with lightweight evidence in this same session and auto-archived. ADR 026, Tranche 1.5 parent plan, and roadmap update are the next artifacts. Hard freeze on new failsafes is in effect from this point forward until Tranches A-E of architecture-simplification land.
