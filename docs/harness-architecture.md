@@ -541,6 +541,21 @@ the substrate but does not change the discipline.
 
 **Real-time hook wiring deferred:** the engine is currently standalone-runnable. Integration with the existing PostToolUse / Stop chain happens in a follow-up commit. The 4 generalized narrow hooks remain in place; consolidation only happens after the engine is proven to handle every case the narrow hook did.
 
+## Knowledge Integration Ritual (Tranche 5a + 5a-integration, 2026-05-06)
+
+The doctrine-evolution ritual at `build-doctrine/doctrine/07-knowledge-integration.md` operationalizes Build Doctrine Principle 9 ("Documents are living; updates propagate on trigger") and Role 9 (Knowledge Integrator). Whereas the propagation engine evolves *project canon* (per-project artifacts via PT-1..PT-7), this ritual evolves the *doctrine itself* — the universal layer above project canon — via 7 KIT triggers.
+
+| Component | File | Purpose |
+|---|---|---|
+| Doctrine doc (5a) | `build-doctrine/doctrine/07-knowledge-integration.md` | The ritual: process shape (propose → review → land), 7-trigger taxonomy (KIT-1 calibration / KIT-2 findings / KIT-3 discoveries / KIT-4 ADR-cross-reference staleness / KIT-5 `/harness-review` cadence / KIT-6 propagation-engine audit log / KIT-7 drift signal), monthly-default cadence tagged `(hypothesis, pending pilot evidence)`, semver versioning policy for `build-doctrine-templates/`. |
+| Sweep mechanism | `~/.claude/skills/harness-review.md` Check 13 (5a-integration) | Periodic invocation of `/harness-review` runs Check 13 — KIT-1..KIT-7 sweep against existing capture substrates: calibration loop (KIT-1), findings ledger (KIT-2), discovery files (KIT-3), ADR ledger vs. doctrine docs (KIT-4), itself (KIT-5), audit-log analyzer (KIT-6), no-op until 5c lands (KIT-7). |
+| Audit-log analyzer | `~/.claude/scripts/analyze-propagation-audit-log.sh` (5a-integration) | Reads `build-doctrine/telemetry/propagation.jsonl` and emits rule-fire frequency (`cadence`), conjectural-rule promotion candidates (rules with ≥3 matched events — itself a hypothesis), unmatched-event-type negative-space (`unmatched`), slow-rule report (`slow`), top-level summary (`summary`). 7-scenario `--self-test`. Consumed by KIT-6 trigger and Check 13. |
+| Pilot-friction template | `~/.claude/templates/pilot-friction.md` (5a-integration) | Standardizes Tranche-4 (canonical pilot) friction notes — per-floor, per-canon-artifact, per-rule-fire, per-KIT-trigger sections. Pilot sessions write `<pilot-repo>/docs/sessions/<date>-pilot-friction.md` from this template. Structured input for Tranches 5b / 6b / 7. |
+
+**Why ships before the canonical pilot:** the ritual + analyzer + template are pre-pilot infrastructure. Without them, pilot evidence is operator memory rather than counted observations. The structure parallels Tranche 6a's reasoning: build the measurement substrate first; the pilot consumes it.
+
+**5b / 5c gating:** 5b (cadence calibration) waits for pilot evidence to revise the monthly-default hypothesis; 5c (cross-project ritual extensions, KIT-7 drift detection) waits for HARNESS-GAP-11 telemetry (2026-08).
+
 ## Docs (`~/.claude/docs/`)
 
 | Doc | Referenced by | Purpose |
