@@ -83,6 +83,7 @@ SCRATCHPAD.md
 # directory rather than the directories themselves.)
 docs/decisions/*
 !docs/decisions/[0-9][0-9][0-9]-*.md
+!docs/decisions/queued-*.md
 docs/reviews/*
 !docs/reviews/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
 docs/sessions/*
