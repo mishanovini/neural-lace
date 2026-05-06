@@ -1,8 +1,10 @@
 # Neural Lace — Evolution Strategy
 
+> **Looking for the unified architectural narrative?** This doc covers strategy, milestones, and the L0/L1/L2/L3 Layer Model. For the Tier-3 narrative that cross-walks the Layer Model with the Generation 1-6 evolution and the ADR-027 Layer 1-5 handoff-freshness model — plus the team-role analogy and end-to-end product-delivery flow — see [`architecture-overview.md`](architecture-overview.md).
+
 **Status:** ACTIVE
 **Created:** 2026-04-12
-**Last reviewed:** 2026-05-05
+**Last reviewed:** 2026-05-06
 **Owner:** Misha
 **Repo:** `~/claude-projects/neural-lace/` (absorbs claude-config)
 
