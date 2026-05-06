@@ -107,14 +107,15 @@ n/a — pure documentation work; no runtime layers to slice through.
 - **Reasoning:** README has to serve four audiences (skim-reader / first-time installer / fresh adopter / maintainer). Folding the deep architecture doc in crowds out install/quick-start/security and forces all audiences to wade. Separated structure lets each audience tier get what it needs. Per principle #1 (audience layering / progressive disclosure) and principle #2 (single source of truth — README is index) of the patterns doc landing in Task 1.
 - **To reverse:** delete `docs/architecture-overview.md`; merge its content into README. Cost: ~30-60 minutes.
 
-### Decision: No new "tech writer" agent — patterns doc as substrate
-- **Tier:** 1 (reversible — agent can be added later if discipline fails)
+### Decision: No new "tech writer" agent for v1 — patterns doc as substrate, agent reversibly deferred
+- **Tier:** 1 (reversible — agent can be added later if patterns prove insufficient)
 - **Surfaced to user:** 2026-05-06 in this conversation
-- **Status:** chosen by orchestrator based on stated reasoning
-- **Chosen:** Build `docs/doc-writing-patterns.md` as the universal substrate. Future doc work follows the patterns. No new agent.
-- **Alternatives:** Build a `tech-writer` agent that owns doc quality. Build a `/refresh-docs` skill.
-- **Reasoning:** Tranche F just retired closure-validator with explicit "Hard freeze on new failsafes." Adding agents goes the wrong direction. Existing `audience-content-reviewer` covers some of this ground. The patterns doc is the lighter, longer-lived substrate; agents/skills can be added later if needed.
-- **To reverse:** create the agent file; reference the patterns doc from its prompt. Cost: ~1-2 hours.
+- **Status:** chosen by orchestrator based on revised reasoning after user correction
+- **Chosen:** Build `docs/doc-writing-patterns.md` as the universal substrate. Use it via carefully-crafted dispatch prompts (or inline writing) to produce the README + architecture-overview. No new agent in v1.
+- **Alternatives:** Build a `tech-writer` agent that bakes in the substrate + audience perspective; dispatch it for doc work.
+- **Reasoning (corrected):** my earlier reasoning conflated "failsafe" (a mechanism that backstops missing discipline) with "job" (a role producing primary work). User correctly pointed out the Tranche F retirement spirit applies to failsafes, not jobs. A tech-writer agent IS a job — it produces docs when dispatched, not when the orchestrator forgets something. So the Tranche F objection doesn't apply. The current decision to defer the agent is now based on a different argument: the patterns doc + careful prompts should suffice for v1; if the resulting docs read as generic-AI prose despite the substrate, the agent becomes necessary in v2. Build the lighter thing first; graduate based on evidence.
+- **Public-repo context:** repo is now public (user, 2026-05-06). Audience tier mapping is firm: Tier 1 README serves public GitHub readers (highest quality bar). Tier 2-3 docs serve adopters and developers wanting depth. The quality bar for the README in particular argues for careful writing regardless of substrate; agent-vs-no-agent is about reusability for future doc work, not about whether the v1 docs need to be high-craft (they do).
+- **To reverse:** create `adapters/claude-code/agents/tech-writer.md` that references `docs/doc-writing-patterns.md` and bakes in audience-tier perspective. Estimated cost: ~30-45 min for the agent file + dispatch wiring.
 
 ## Pre-Submission Audit
 
