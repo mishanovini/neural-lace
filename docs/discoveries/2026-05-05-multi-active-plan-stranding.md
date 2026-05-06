@@ -2,8 +2,8 @@
 title: Multi-active-plan stranding bypasses pre-stop-verifier
 date: 2026-05-05
 type: process
-status: pending
-auto_applied: false
+status: superseded
+auto_applied: true
 originating_context: GAP-08+13 dispatch session — discovered pre-submission-audit-mechanical-enforcement.md stranded ACTIVE despite all 5 tasks being shipped in code
 decision_needed: Should we add a SessionStart hook that surfaces ALL Status:ACTIVE plans (not just the most-recently-edited), with a warning when count > 1?
 predicted_downstream:
@@ -101,9 +101,40 @@ adding a new SessionStart hook. User decision needed.
 
 ## Decision
 
-(To be populated by user when surfaced at next session start, or now if
-addressed inline.)
+**Superseded by Tranche E (deterministic close-plan procedure, shipped
+2026-05-05 commit `5938a69`).** The original failure mode this discovery
+named — multi-active plans accumulating silently because the bookkeeping
+was hard — is now structurally addressed by `close-plan.sh`: closure runs
+in ~3 seconds (vs. the 65K-token agent-dispatch baseline), is idempotent,
+and updates SCRATCHPAD + plan Status + auto-archives in a single
+deterministic procedure.
+
+The architecture-simplification arc itself is the empirical proof point:
+8 simultaneously-ACTIVE plans (parent + 6 sub-tranches + GAP-17) were
+all closed via close-plan.sh in commits `03f2a8e` and `33d2c54`. Plan
+stranding is now both (a) less likely (closure is mechanical, not
+agent-dispatched) and (b) trivially fixable when it happens (run the
+script).
+
+The original options A/B/C/D proposed adding a SessionStart surfacer +
+extending pre-stop-verifier to iterate over all active plans. That
+would have been a Mechanism-on-top-of-Mechanism response. The Tranche E
+substrate solves the underlying problem more cleanly by making the
+bookkeeping cheap rather than detecting when it's missing. Per the
+Build Doctrine principle "prefer structural simplification over
+detection mechanisms" (encoded in ADR 026), this discovery's
+recommendation is superseded — not rejected. The original analysis
+remains valid; the response shifted.
+
+If multi-active stranding recurs after Tranche E is battle-tested, the
+mechanism can be revisited; the Discovery Protocol's original
+recommendation is preserved here for that contingency.
 
 ## Implementation log
 
-(empty — pending decision)
+- 2026-05-05: superseded by Tranche E (`close-plan.sh` shipped commit
+  `5938a69`). Architecture-simplification arc closed 8 plans
+  simultaneously via the new procedure as the live acceptance test
+  (commits `03f2a8e`, `33d2c54`). No new mechanism added per this
+  discovery's original options A/B/C; the underlying problem is
+  structurally addressed by Tranche E rather than detected.

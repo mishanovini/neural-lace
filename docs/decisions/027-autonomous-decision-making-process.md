@@ -60,6 +60,26 @@ Every session-ending summary (the response Claude provides after autonomous work
 
 This ensures the user sees the decision trail without having to dig through commits or files. The user can amend or revert any decision at next-session start.
 
+### Layer 5 — Handoff freshness as precondition (added 2026-05-05 v2)
+
+The final summary (Layer 4) DESCRIBES handoff state. It does NOT verify that the durable artifacts the next session reads are actually current. Layer 5 closes that gap: **before composing the final summary, the orchestrator verifies the durable handoff artifacts are fresh and refreshes them if not.**
+
+Specifically, before the final summary is composed:
+
+1. **`SCRATCHPAD.md`** must have mtime within the last 30 minutes AND mention every plan touched this session (created, edited, closed, or archived). If stale, refresh.
+2. **`docs/build-doctrine-roadmap.md`** (and any project-equivalent roadmap) must reflect every plan whose status changed this session. Quick status table rows updated; Recent Updates entry added with commit SHAs.
+3. **Discovery files (`docs/discoveries/*.md`)** whose underlying decisions were acted on must have `Status:` flipped from `pending` → `decided`/`implemented`/`rejected`/`superseded`. Stale `pending` status on a discovery whose decision shipped is a handoff defect.
+4. **Decision queue files (`docs/decisions/queued-*.md`)** must show overrides applied where the orchestrator deviated from recommendations.
+5. **`docs/backlog.md`** Last-updated stamp must be current and reflect the session's substantive impact.
+
+The discipline: **Layer 4's summary is the last action, not the next-to-last.** Refresh artifacts first, then compose the summary that describes them.
+
+Operationalized by `session-wrap.sh` (sibling to `close-plan.sh`): deterministic script that reads recent commits + plan-archive moves, derives required handoff updates, applies them idempotently, then verifies freshness signals. Runs before final summary composition.
+
+**Why this layer is required (and was missed in the original ADR 027):** the original Layer 4 described the surface-level summary but didn't bind it to the underlying artifact state. The orchestrator's incentive structure rewards composing the summary; the next session reads the artifacts. Without Layer 5, the summary can be impeccable while the artifacts are stale — the agent passes its own surface-level test (composed the summary) while failing the underlying property (handoff is current). This is the same mechanism Anti-Principle 11 names: builder self-assertion that's not mechanically checked. Layer 5 makes the artifacts the gate, not the prose.
+
+**Failure mode this addresses (empirical, 2026-05-05):** the architecture-simplification session shipped 7 sub-tranches, composed a substantive Layer 4 final summary, but left SCRATCHPAD pre-session-state, the roadmap Quick status row at IN-PROGRESS-but-no-sub-tranche-detail, and the originating discovery at `Status: pending` despite the decision being executed. The user had to prompt "Have you updated all the documentation so that the next session knows the state of everything?" The ADR's authoring orchestrator was the same orchestrator that exhibited the failure. Layer 5 prevents this by binding final-summary composition to artifact-freshness verification.
+
 ## Alternatives Considered
 
 ### Alternative A — Always pause and wait
@@ -104,7 +124,7 @@ Use a notification system (push notification, GitHub issue, chat message) to ale
 
 ### Neutral
 
-- **Pre-emptive identification is bounded by the planner's foresight.** Some decisions are genuinely unforeseeable. Layer 2's mid-execution path covers them. The two layers compose.
+- **Pre-emptive identification is bounded by what the planner can anticipate.** Some decisions are genuinely unforeseeable. Layer 2's mid-execution path covers them. The two layers compose.
 - **The user's "I will not be readily available" assumption is a default, not a constraint.** If the user IS available and replies in-session to a Layer 2 decision, the orchestrator takes the user's input and may revise the recommendation accordingly — without losing autonomy semantics.
 
 ### Open

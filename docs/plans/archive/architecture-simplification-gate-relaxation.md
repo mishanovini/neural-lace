@@ -1,8 +1,21 @@
 # Architecture Simplification — Selective Gate-Relaxation Policy
 
 **Date:** 2026-05-05
-**Parent plan:** `docs/plans/architecture-simplification.md` (Tranche 1.5 of the Build Doctrine roadmap)
-**Status:** Active
+**Parent plan:** `docs/plans/archive/architecture-simplification.md` (Tranche 1.5 of the Build Doctrine roadmap — closed 2026-05-05)
+**Status:** SUPERSEDED — parent plan closed 2026-05-05; relaxation expired with it.
+
+## Status note (2026-05-05)
+
+This policy was scoped to Tranche 1.5 work. With the parent plan closed
+(commits `03f2a8e` for Tranches A-G + parent + GAP-17, then `33d2c54` for
+Tranche F), the relaxation no longer applies — there is no longer in-flight
+work matching the policy's scope-prefix criteria.
+
+Standard gate behavior is restored automatically via the path-prefix checks
+each gate performs; no harness change is required. The policy is preserved
+here for future reference: if a similar architecture-redesign tranche is
+opened later, this document is the template for selectively relaxing
+disproportionate gates.
 
 ## Why this policy exists
 

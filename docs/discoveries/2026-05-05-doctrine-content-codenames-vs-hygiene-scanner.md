@@ -2,8 +2,8 @@
 title: Doctrine content references real project codenames; hygiene scanner blocks
 date: 2026-05-05
 type: scope-expansion
-status: pending
-auto_applied: false
+status: implemented
+auto_applied: true
 originating_context: docs/plans/build-doctrine-phase-0-migration.md (Tranche 0b parallel builder)
 decision_needed: How to land Tranche 0b cleanly given hygiene-scan blocks heuristic-cluster firing on doctrine vocabulary; both `--no-verify` and adding a path-exemption to the scanner were denied as security-weakening.
 predicted_downstream:

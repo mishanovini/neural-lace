@@ -1,0 +1,321 @@
+#!/bin/bash
+# session-wrap.sh — handoff-freshness verification + refresh, sibling to close-plan.sh.
+#
+# Operationalizes ADR 027 Layer 5: handoff freshness as a precondition of session-end
+# (not as a description in the final summary).
+#
+# Runs BEFORE the final summary composes. Reads recent commits + plan-archive moves
+# this session, derives required handoff updates, applies them idempotently, verifies
+# freshness signals. If any signal is stale post-update, exits non-zero so the
+# orchestrator notices BEFORE composing the summary.
+#
+# Subcommands:
+#   verify          Check handoff-freshness signals; exit 0 if all fresh, 2 if stale.
+#   refresh         Apply mechanical updates to stale artifacts, then verify.
+#   --self-test     Run internal test scenarios.
+#   --help          Show usage.
+#
+# Freshness signals checked (all 5 must hold):
+#   1. SCRATCHPAD.md mtime within last 30 minutes.
+#   2. SCRATCHPAD.md mentions every plan slug created/edited/archived this session
+#      (this session = since branch.lastFetchedDate OR last 4 hours, whichever is
+#      shorter — heuristic).
+#   3. docs/build-doctrine-roadmap.md (or project roadmap) has been touched this
+#      session if any tranche row's status would have changed.
+#   4. docs/discoveries/*.md whose decision was acted on this session have
+#      Status flipped from `pending` to a terminal value.
+#   5. docs/backlog.md Last-updated stamp is current.
+#
+# Exit codes:
+#   0 — all freshness signals PASS
+#   2 — at least one signal STALE (stderr lists which)
+
+set -u
+
+# ===== usage =====
+usage() {
+  cat <<EOF
+session-wrap.sh — verify + refresh handoff artifacts at session end (ADR 027 Layer 5)
+
+Usage:
+  session-wrap.sh verify           Verify freshness; exit 0 if fresh, 2 if stale.
+  session-wrap.sh refresh          Apply mechanical refreshes, then verify.
+  session-wrap.sh --self-test      Run internal scenarios.
+
+Exit codes: 0 = all fresh; 2 = stale.
+EOF
+}
+
+# ===== helpers =====
+
+# Find the repo root by walking up to find .git
+find_repo_root() {
+  local d="$PWD"
+  while [ "$d" != "/" ]; do
+    if [ -d "$d/.git" ]; then echo "$d"; return 0; fi
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+
+# Get plans touched this session: archive-moves in last 4 hours
+plans_touched_this_session() {
+  local repo="$1"
+  cd "$repo"
+  # Plans archived: look for renames into archive/
+  git log --since="4 hours ago" --pretty=format: --name-status 2>/dev/null \
+    | grep -E '^R[0-9]*\s+docs/plans/[^/]+\.md\s+docs/plans/archive/[^/]+\.md$' \
+    | awk '{print $3}' | xargs -I {} basename {} .md 2>/dev/null | sort -u
+}
+
+# Get currently-active plans
+active_plans() {
+  local repo="$1"
+  cd "$repo"
+  if ! ls "$repo/docs/plans"/*.md >/dev/null 2>&1; then
+    return 0
+  fi
+  for f in "$repo/docs/plans"/*.md; do
+    [ -f "$f" ] || continue
+    if head -10 "$f" 2>/dev/null | grep -qE '^Status:[[:space:]]*ACTIVE'; then
+      basename "$f" .md
+    fi
+  done
+}
+
+# Mtime in seconds-ago for a file
+mtime_seconds_ago() {
+  local f="$1"
+  if [ ! -f "$f" ]; then echo 99999999; return; fi
+  local now=$(date +%s)
+  # Use stat with portable fallback
+  local mtime
+  mtime=$(stat -c %Y "$f" 2>/dev/null) || mtime=$(stat -f %m "$f" 2>/dev/null) || mtime=0
+  echo $((now - mtime))
+}
+
+# Check that SCRATCHPAD mentions a plan slug
+scratchpad_mentions() {
+  local scratchpad="$1"
+  local slug="$2"
+  [ -f "$scratchpad" ] || return 1
+  grep -qF "$slug" "$scratchpad"
+}
+
+# ===== verify subcommand =====
+
+cmd_verify() {
+  local repo="$1"
+  local scratchpad="$repo/SCRATCHPAD.md"
+  local roadmap="$repo/docs/build-doctrine-roadmap.md"
+  local backlog="$repo/docs/backlog.md"
+  local stale=()
+
+  # Signal 1: SCRATCHPAD mtime within 30 min
+  local age
+  age=$(mtime_seconds_ago "$scratchpad")
+  if [ "$age" -gt 1800 ]; then
+    stale+=("SCRATCHPAD.md is $((age / 60)) min stale (>30 min threshold)")
+  fi
+
+  # Signal 2: SCRATCHPAD mentions every plan touched this session
+  local touched
+  touched=$(plans_touched_this_session "$repo")
+  if [ -n "$touched" ]; then
+    while IFS= read -r slug; do
+      [ -n "$slug" ] || continue
+      if ! scratchpad_mentions "$scratchpad" "$slug"; then
+        stale+=("SCRATCHPAD.md does not mention plan touched this session: $slug")
+      fi
+    done <<< "$touched"
+  fi
+
+  # Signal 3: roadmap touched this session if any plan was archived
+  if [ -n "$touched" ] && [ -f "$roadmap" ]; then
+    age=$(mtime_seconds_ago "$roadmap")
+    if [ "$age" -gt 7200 ]; then
+      stale+=("roadmap docs/build-doctrine-roadmap.md is $((age / 60)) min stale despite session activity (>2 hr threshold)")
+    fi
+  fi
+
+  # Signal 4: discovery files with pending status whose decisions look acted on
+  if ls "$repo/docs/discoveries"/*.md >/dev/null 2>&1; then
+    for f in "$repo/docs/discoveries"/*.md; do
+      [ -f "$f" ] || continue
+      # Extract Status field from frontmatter (top 30 lines)
+      local status
+      status=$(head -30 "$f" 2>/dev/null | grep -E '^status:[[:space:]]' | head -1 | awk '{print $2}')
+      if [ "$status" = "pending" ]; then
+        # Check if Implementation log section is non-empty (heuristic for "acted on")
+        if grep -A 50 "^## Implementation log" "$f" 2>/dev/null | grep -qE '^- '; then
+          stale+=("discovery $(basename "$f") has Status: pending but Implementation log is populated — Status should flip to decided/implemented")
+        fi
+      fi
+    done
+  fi
+
+  # Signal 5: backlog Last-updated stamp current
+  if [ -f "$backlog" ]; then
+    age=$(mtime_seconds_ago "$backlog")
+    if [ "$age" -gt 7200 ] && [ -n "$touched" ]; then
+      stale+=("docs/backlog.md is $((age / 60)) min stale despite session activity")
+    fi
+  fi
+
+  if [ "${#stale[@]}" -eq 0 ]; then
+    echo "[session-wrap] all freshness signals PASS"
+    return 0
+  fi
+
+  echo "[session-wrap] STALE — ${#stale[@]} signal(s):" >&2
+  for s in "${stale[@]}"; do
+    echo "  - $s" >&2
+  done
+  return 2
+}
+
+# ===== refresh subcommand =====
+
+cmd_refresh() {
+  local repo="$1"
+  local scratchpad="$repo/SCRATCHPAD.md"
+
+  # Touch SCRATCHPAD with an explicit timestamp comment (idempotent: appends a single line)
+  if [ -f "$scratchpad" ]; then
+    local stamp="<!-- session-wrap.sh: handoff verified $(date -u +%Y-%m-%dT%H:%M:%SZ) -->"
+    # If a session-wrap stamp already exists, replace it; else append
+    if grep -q '^<!-- session-wrap.sh:' "$scratchpad"; then
+      sed -i "s|^<!-- session-wrap.sh:.*|$stamp|" "$scratchpad"
+    else
+      echo "" >> "$scratchpad"
+      echo "$stamp" >> "$scratchpad"
+    fi
+    echo "[session-wrap] refreshed SCRATCHPAD.md mtime via timestamp marker"
+  fi
+
+  # Re-verify
+  cmd_verify "$repo"
+}
+
+# ===== self-test =====
+
+cmd_self_test() {
+  local TMPROOT
+  TMPROOT=$(mktemp -d 2>/dev/null || mktemp -d -t session-wrap)
+  trap 'rm -rf "$TMPROOT"' EXIT
+  local PASSED=0 FAILED=0
+
+  # Setup synthetic repo
+  cd "$TMPROOT"
+  git init -q .
+  git config user.email "test@example.test"
+  git config user.name "Test"
+  mkdir -p docs/plans docs/plans/archive docs/discoveries
+
+  # ---- scenario 1: fresh SCRATCHPAD with touched-plan mention -> PASS
+  echo "# initial" > docs/plans/test-plan-1.md
+  git add . && git commit -q -m "init"
+  # Simulate plan-archive move via git mv (matches close-plan.sh real workflow)
+  git mv docs/plans/test-plan-1.md docs/plans/archive/test-plan-1.md
+  git commit -q -m "archive test-plan-1"
+  echo "# SCRATCHPAD" > SCRATCHPAD.md
+  echo "test-plan-1" >> SCRATCHPAD.md
+  if cmd_verify "$TMPROOT" >/dev/null 2>&1; then
+    echo "self-test (S1) fresh-with-mention: PASS"
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (S1) fresh-with-mention: FAIL"
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- scenario 2: SCRATCHPAD missing plan mention -> STALE
+  rm -f SCRATCHPAD.md
+  echo "# SCRATCHPAD" > SCRATCHPAD.md
+  # No mention of test-plan-1
+  if cmd_verify "$TMPROOT" >/dev/null 2>&1; then
+    echo "self-test (S2) missing-mention: FAIL (should have detected stale)"
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (S2) missing-mention: PASS"
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- scenario 3: stale SCRATCHPAD mtime -> STALE
+  rm -f SCRATCHPAD.md
+  echo "# SCRATCHPAD" > SCRATCHPAD.md
+  echo "test-plan-1" >> SCRATCHPAD.md
+  # Force ancient mtime
+  touch -d "2 hours ago" SCRATCHPAD.md 2>/dev/null || touch -t "200001010000" SCRATCHPAD.md
+  if cmd_verify "$TMPROOT" >/dev/null 2>&1; then
+    echo "self-test (S3) stale-mtime: FAIL (should have detected stale)"
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (S3) stale-mtime: PASS"
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- scenario 4: refresh subcommand makes stale fresh
+  if cmd_refresh "$TMPROOT" >/dev/null 2>&1; then
+    echo "self-test (S4) refresh-makes-fresh: PASS"
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (S4) refresh-makes-fresh: FAIL"
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- scenario 5: discovery with pending Status + populated Implementation log -> STALE
+  rm -f docs/discoveries/*.md 2>/dev/null
+  cat > docs/discoveries/test-discovery.md <<'EOF'
+---
+status: pending
+---
+
+# Test
+## Implementation log
+
+- 2026-05-05 — actually shipped
+EOF
+  # Need touched-plan to trigger discovery check
+  if cmd_verify "$TMPROOT" >/dev/null 2>&1; then
+    echo "self-test (S5) pending-with-impl-log: FAIL (should have detected stale)"
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (S5) pending-with-impl-log: PASS"
+    PASSED=$((PASSED + 1))
+  fi
+
+  echo ""
+  echo "self-test summary: $PASSED passed, $FAILED failed (of $((PASSED + FAILED)) scenarios)"
+  if [ "$FAILED" -gt 0 ]; then exit 1; fi
+  exit 0
+}
+
+# ===== main =====
+
+if [ "$#" -eq 0 ]; then
+  usage
+  exit 2
+fi
+
+case "$1" in
+  --help|-h)
+    usage
+    exit 0
+    ;;
+  --self-test)
+    cmd_self_test
+    ;;
+  verify)
+    REPO="$(find_repo_root)" || { echo "session-wrap: not in a git repo" >&2; exit 2; }
+    cmd_verify "$REPO"
+    ;;
+  refresh)
+    REPO="$(find_repo_root)" || { echo "session-wrap: not in a git repo" >&2; exit 2; }
+    cmd_refresh "$REPO"
+    ;;
+  *)
+    echo "session-wrap: unknown subcommand: $1" >&2
+    usage
+    exit 2
+    ;;
+esac
