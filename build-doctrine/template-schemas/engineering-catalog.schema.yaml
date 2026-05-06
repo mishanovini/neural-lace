@@ -1,0 +1,106 @@
+# yaml-language-server: $schema=https://json-schema.org/draft/2020-12/schema
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://neural-lace.dev/build-doctrine/template-schemas/engineering-catalog.v1.schema.yaml
+title: Engineering Catalog — v1
+description: >-
+  Canonical structural shape for a per-project Engineering Catalog —
+  the inventory of recurring task shapes the project's engineers fill in
+  rather than re-derive from scratch each time. Source: Build Doctrine
+  Principle 2 ("the engineering catalog") + ~/.claude/rules/work-shapes.md
+  (the harness's own catalog applied to harness-dev).
+
+  Path convention: docs/engineering-catalog.md (or per-project equivalent).
+  One catalog per project; cross-project shape inheritance deferred beyond v1.
+
+  Each shape declares: when to use it, the required files / structure, the
+  mechanical-compliance checks (bash one-liners), and a worked-example pointer.
+  Shapes are added when a recurrence of three or more is observed (per the
+  rule); below three, work uses the plan template's Walking Skeleton discipline.
+type: object
+required: [project, shapes]
+additionalProperties: false
+properties:
+  schema_version:
+    type: integer
+    const: 1
+    default: 1
+  project:
+    type: string
+    minLength: 1
+    description: Project name this catalog belongs to.
+  version:
+    type: string
+    description: Catalog version (semver-style or date-based; project's choice).
+  shapes:
+    type: array
+    minItems: 0
+    description: >-
+      Inventory of work shapes. Empty array is valid for a brand-new project
+      that hasn't observed three recurrences of any shape yet.
+    items:
+      type: object
+      required: [shape_id, category, when_to_use, required_files, mechanical_checks]
+      additionalProperties: false
+      properties:
+        shape_id:
+          type: string
+          pattern: "^[a-z][a-z0-9-]+$"
+          description: Kebab-case identifier referenced in plan task descriptions.
+        category:
+          type: string
+          minLength: 1
+          description: High-level grouping (e.g., "build-mechanism", "author-doc", "data-migration").
+        when_to_use:
+          type: string
+          minLength: 30
+          description: Trigger conditions describing when this shape applies vs. neighboring shapes.
+        required_files:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [path_pattern, purpose]
+            additionalProperties: false
+            properties:
+              path_pattern:
+                type: string
+                description: 'Path pattern or glob (e.g., "src/lib/<name>.ts", "tests/<name>.test.ts").'
+              purpose:
+                type: string
+                minLength: 5
+                description: One-line role of this file in the shape.
+        mechanical_checks:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [check, command]
+            additionalProperties: false
+            properties:
+              check:
+                type: string
+                minLength: 5
+                description: One-line description of what this check asserts.
+              command:
+                type: string
+                minLength: 5
+                description: 'Bash one-liner. Use <name> placeholders the verifier substitutes (e.g., "test -f src/lib/<name>.ts").'
+              exit_zero_means:
+                type: string
+                description: What it means when the command exits 0 (PASS or specific PASS condition).
+                default: PASS
+        worked_example:
+          type: object
+          required: [shape_instance_path, why_canonical]
+          additionalProperties: false
+          properties:
+            shape_instance_path:
+              type: string
+              description: Repo-relative path to the canonical worked example of this shape.
+            why_canonical:
+              type: string
+              minLength: 10
+              description: One-sentence rationale for why this is the canonical example.
+        notes:
+          type: string
+          description: Free-form notes (gotchas, common pitfalls, neighboring-shape disambiguation).

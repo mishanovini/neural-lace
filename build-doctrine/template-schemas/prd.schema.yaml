@@ -1,0 +1,79 @@
+# yaml-language-server: $schema=https://json-schema.org/draft/2020-12/schema
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://neural-lace.dev/build-doctrine/template-schemas/prd.v1.schema.yaml
+title: PRD (Product Requirements Document) — v1
+description: >-
+  Canonical structural shape for a per-project Product Requirements Document.
+  ONE PRD per project at docs/prd.md. Source: adapters/claude-code/templates/prd-template.md
+  + Build Doctrine 04-gates §PRD-validity. Validates structural presence of seven
+  required sections; substance review is the prd-validity-reviewer agent's job.
+  Schema validates SHAPE, not content quality — placeholder-only sections must be
+  caught by the substance reviewer, not by this schema.
+type: object
+required: [title, sections]
+additionalProperties: false
+properties:
+  schema_version:
+    type: integer
+    const: 1
+    default: 1
+    description: Schema version. Currently always 1.
+  title:
+    type: string
+    minLength: 1
+    description: One-line product / feature name (the H1 of the PRD).
+  sections:
+    type: object
+    description: >-
+      The seven required PRD sections. Each section is a string body with at
+      least 30 non-whitespace characters of substantive content. Substance
+      review is the prd-validity-reviewer agent's job; this schema enforces
+      structural presence and a minimum substance threshold (the same 30-char
+      threshold the prd-validity-gate hook uses).
+    required: [problem, scenarios, functional_requirements, non_functional_requirements, success_metrics, out_of_scope, open_questions]
+    additionalProperties: false
+    properties:
+      problem:
+        type: string
+        minLength: 30
+        description: User pain or business gap. Non-solution-language; describes the problem state.
+      scenarios:
+        type: string
+        minLength: 30
+        description: Concrete user stories or end-to-end flows. One per substantive flow.
+      functional_requirements:
+        type: string
+        minLength: 30
+        description: Numbered FR-N statements; what the product DOES. Falsifiable, with acceptance criteria.
+      non_functional_requirements:
+        type: string
+        minLength: 30
+        description: Numbered NFR-N statements; HOW the product behaves. Numeric or measurable targets.
+      success_metrics:
+        type: string
+        minLength: 30
+        description: Numbered SM-N statements; numeric targets with measurement methods + dates.
+      out_of_scope:
+        type: string
+        minLength: 30
+        description: Explicit list of adjacent things the product is NOT, with rationale per entry.
+      open_questions:
+        type: string
+        minLength: 30
+        description: Known unknowns; numbered OQ-N statements with current direction + decision process.
+  metadata:
+    type: object
+    description: Optional metadata for the PRD instance.
+    additionalProperties: true
+    properties:
+      version:
+        type: string
+        description: PRD version (e.g., "1.0", "1.1-draft").
+      last_updated:
+        type: string
+        format: date
+        description: ISO 8601 date the PRD was last revised.
+      stakeholders:
+        type: array
+        items: { type: string }
+        description: Named stakeholders / decision-makers for this product.

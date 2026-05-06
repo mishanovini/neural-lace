@@ -1,0 +1,100 @@
+# yaml-language-server: $schema=https://json-schema.org/draft/2020-12/schema
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://neural-lace.dev/build-doctrine/template-schemas/design-system.v1.schema.yaml
+title: Design System — v1
+description: >-
+  Canonical structural shape for a per-project Design System artifact. Captures
+  the design tokens, components, states, and patterns the project's UI commits
+  to. Source: Build Doctrine 04-gates §design-system + ~/.claude/rules/ux-design.md
+  + ~/.claude/rules/ux-standards.md.
+
+  Path convention: docs/design-system.md (or per-project equivalent). One
+  design-system per project; cross-project sharing via inheritance is deferred
+  beyond v1 scope.
+
+  Tokens are the LOAD-BEARING layer — every component refers to a token name
+  rather than a literal value. A change to a token propagates everywhere it's
+  used. The schema requires tokens at minimum; components, states, and patterns
+  are recommended but not strictly required (small projects may launch with
+  tokens-only and grow the rest).
+type: object
+required: [name, version, tokens]
+additionalProperties: false
+properties:
+  schema_version:
+    type: integer
+    const: 1
+    default: 1
+  name:
+    type: string
+    minLength: 1
+    description: Project name this design system belongs to.
+  version:
+    type: string
+    description: Design-system version string (e.g., "0.1", "1.0-rc1").
+  tokens:
+    type: object
+    description: >-
+      Design tokens — named values components reference. Required token
+      categories: color, spacing, typography, motion. Each category contains
+      a flat map of token name → value (or token name → object with value +
+      semantics).
+    required: [color, spacing, typography, motion]
+    additionalProperties: false
+    properties:
+      color:
+        type: object
+        description: >-
+          Color tokens (semantic + raw). Recommended: provide both raw
+          palette tokens (e.g., "blue-500") and semantic aliases (e.g.,
+          "color.primary" → "blue-500"). Light + dark variants required for
+          customer-facing projects per ~/.claude/rules/ux-standards.md.
+        minProperties: 1
+        additionalProperties:
+          oneOf:
+            - { type: string }
+            - { type: object, properties: { light: { type: string }, dark: { type: string } } }
+      spacing:
+        type: object
+        description: Named spacing scale (e.g., "space.xs" through "space.5xl"). Recommend 4px or 8px base unit.
+        minProperties: 1
+        additionalProperties: { type: [string, number] }
+      typography:
+        type: object
+        description: "Font families, sizes, weights, line-heights. Required: font.body, font.heading."
+        minProperties: 1
+        additionalProperties: true
+      motion:
+        type: object
+        description: Animation durations + easing curves. Required for any non-trivial UI.
+        properties:
+          durations: { type: object, additionalProperties: { type: string } }
+          easings: { type: object, additionalProperties: { type: string } }
+        additionalProperties: true
+  components:
+    type: array
+    description: Catalog of named components with prop contracts and visual specs.
+    items:
+      type: object
+      required: [name, purpose]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1 }
+        purpose: { type: string, minLength: 10 }
+        props: { type: array, items: { type: object } }
+        variants: { type: array, items: { type: string } }
+        accessibility_notes: { type: string }
+  states:
+    type: array
+    description: Named UI states (default, hover, focus, active, disabled, loading, error, empty, success). Per ux-design.md "Every async data fetch must handle loading/error/empty states."
+    items: { type: string }
+  patterns:
+    type: array
+    description: Cross-component patterns (form layouts, navigation, modals, etc.).
+    items:
+      type: object
+      required: [name, description]
+      additionalProperties: true
+      properties:
+        name: { type: string }
+        description: { type: string }

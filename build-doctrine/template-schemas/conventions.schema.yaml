@@ -1,0 +1,118 @@
+# yaml-language-server: $schema=https://json-schema.org/draft/2020-12/schema
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://neural-lace.dev/build-doctrine/template-schemas/conventions.v1.schema.yaml
+title: Conventions — v1
+description: >-
+  Canonical structural shape for a per-project Conventions document. Captures
+  the project's stable answers to the 'how do we name / branch / commit / lay
+  out files' questions. Source: Build Doctrine 04-gates §conventions +
+  ~/.claude/rules/git.md + ~/.claude/rules/typescript.md + ~/.claude/rules/react.md
+  + per-language harness rules.
+
+  Path convention: docs/conventions.md (or per-project equivalent). One
+  conventions doc per project.
+
+  Each project picks a subset of convention categories to populate; not all
+  categories apply to all projects (e.g., a Python-only project won't have a
+  React-component-naming section). Empty categories should be omitted rather
+  than left as TODO placeholders.
+type: object
+required: [project]
+additionalProperties: false
+properties:
+  schema_version:
+    type: integer
+    const: 1
+    default: 1
+  project:
+    type: string
+    minLength: 1
+  naming:
+    type: object
+    description: Per-language and per-artifact naming conventions.
+    additionalProperties: false
+    properties:
+      languages:
+        type: object
+        description: 'Per-language naming: identifier case, file naming, module naming.'
+        additionalProperties:
+          type: object
+          properties:
+            identifier_case:
+              type: string
+              enum: [snake_case, camelCase, PascalCase, kebab-case, SCREAMING_SNAKE_CASE, mixed]
+            file_naming:
+              type: string
+              description: How files are named (e.g., "kebab-case.ts", "snake_case.py").
+            test_file_pattern:
+              type: string
+              description: 'Pattern for test files (e.g., "<name>.test.ts", "test_<name>.py").'
+            constant_case:
+              type: string
+              description: 'How constants are named (e.g., "SCREAMING_SNAKE_CASE").'
+          additionalProperties: true
+      artifacts:
+        type: object
+        description: Naming for non-code artifacts (docs, decisions, plans, etc.).
+        additionalProperties: { type: string }
+  branch_and_commit:
+    type: object
+    description: Branch naming + commit message conventions.
+    additionalProperties: false
+    properties:
+      branch_naming:
+        type: string
+        description: 'Pattern (e.g., "feat/<slug>", "fix/<slug>", "<author>/<slug>").'
+      commit_message_format:
+        type: string
+        description: 'Format (e.g., "<type>: <description>", "<type>(<scope>): <description>").'
+      commit_types:
+        type: array
+        items: { type: string }
+        description: 'Allowed type prefixes (e.g., feat, fix, refactor, test, docs, chore).'
+      pr_title_format:
+        type: string
+        description: PR title pattern (often same as commit message format).
+      protected_branches:
+        type: array
+        items: { type: string }
+        description: 'Branches with protection rules (e.g., main, master, release/*).'
+  project_layout:
+    type: object
+    description: Directory and file layout conventions.
+    additionalProperties: false
+    properties:
+      source_root:
+        type: string
+        description: 'Root of source code (e.g., "src/", "app/", "lib/").'
+      tests_location:
+        type: string
+        description: 'Where tests live (e.g., "tests/", "src/<module>/__tests__/", co-located).'
+      docs_location:
+        type: string
+        description: 'Where project docs live (e.g., "docs/").'
+      configuration_files:
+        type: array
+        items: { type: string }
+        description: Standard config files at repo root.
+  imports_and_modules:
+    type: object
+    description: Import-style conventions (absolute vs relative, alias setup, barrel files).
+    additionalProperties: true
+  testing:
+    type: object
+    description: Test framework + organizational conventions.
+    additionalProperties: true
+    properties:
+      framework: { type: string }
+      coverage_target: { type: string }
+      naming_pattern: { type: string }
+  formatting:
+    type: object
+    description: Formatter + linter setup.
+    additionalProperties: true
+    properties:
+      formatter: { type: string }
+      linter: { type: string }
+      indent: { type: string }
+      max_line_length: { type: integer }

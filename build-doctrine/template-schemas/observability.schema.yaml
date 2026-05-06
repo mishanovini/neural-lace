@@ -1,0 +1,137 @@
+# yaml-language-server: $schema=https://json-schema.org/draft/2020-12/schema
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://neural-lace.dev/build-doctrine/template-schemas/observability.v1.schema.yaml
+title: Observability — v1
+description: >-
+  Canonical structural shape for a per-project Observability document. Captures
+  what the project emits (logs / metrics / traces), where signals go (storage,
+  dashboards, alerts), and how the team detects + investigates incidents.
+  Source: Build Doctrine 04-gates §observability + 06-propagation §incidents +
+  ~/.claude/rules/design-mode-planning.md §6 (observability plan built before
+  the feature).
+
+  Path convention: docs/observability.md (or per-project equivalent). One
+  observability doc per project.
+
+  Theme: every step emits what signal? How would I reconstruct what happened
+  from logs alone if everything else fails? Built BEFORE the feature, not
+  after first incident.
+type: object
+required: [project, signals]
+additionalProperties: false
+properties:
+  schema_version:
+    type: integer
+    const: 1
+    default: 1
+  project:
+    type: string
+    minLength: 1
+  signals:
+    type: object
+    description: >-
+      What the project emits. Required: at least one of logs / metrics / traces
+      must be populated (a project that emits nothing is unobservable by
+      definition).
+    anyOf:
+      - { required: [logs] }
+      - { required: [metrics] }
+      - { required: [traces] }
+    additionalProperties: false
+    properties:
+      logs:
+        type: object
+        description: Structured log emission.
+        additionalProperties: false
+        properties:
+          format:
+            type: string
+            enum: [json, logfmt, plaintext, mixed]
+          required_fields:
+            type: array
+            items: { type: string }
+            description: 'Fields every log line must include (e.g., timestamp, level, request_id, user_id).'
+          levels:
+            type: array
+            items: { type: string }
+            description: 'Allowed levels (e.g., debug, info, warn, error, fatal).'
+          destinations:
+            type: array
+            items: { type: string }
+            description: 'Where logs go (e.g., stdout, file, Datadog, CloudWatch).'
+          retention:
+            type: string
+            description: 'How long logs are retained (e.g., "30 days hot, 1 year cold").'
+      metrics:
+        type: object
+        description: Numeric time-series metrics.
+        additionalProperties: false
+        properties:
+          system:
+            type: string
+            description: 'Backend (e.g., Prometheus, Datadog, CloudWatch, OpenTelemetry).'
+          golden_signals:
+            type: array
+            items: { type: string }
+            description: 'The 4 golden signals (latency, traffic, errors, saturation) — at minimum, document which are tracked.'
+          custom_metrics:
+            type: array
+            items:
+              type: object
+              required: [name, type, description]
+              properties:
+                name: { type: string }
+                type: { type: string, enum: [counter, gauge, histogram, summary] }
+                description: { type: string }
+                unit: { type: string }
+                labels: { type: array, items: { type: string } }
+      traces:
+        type: object
+        description: Distributed tracing.
+        additionalProperties: false
+        properties:
+          system: { type: string, description: 'OpenTelemetry, Jaeger, Zipkin, etc.' }
+          sample_rate: { type: string, description: '"1%" or "100%" or "head=10%, tail=100%-on-error".' }
+          propagation_headers:
+            type: array
+            items: { type: string }
+  dashboards:
+    type: array
+    description: Named dashboards + their purpose.
+    items:
+      type: object
+      required: [name, purpose, link]
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        purpose: { type: string, minLength: 10 }
+        link: { type: string, description: URL or path to the dashboard config. }
+        primary_audience: { type: string }
+  alerts:
+    type: array
+    description: Named alert rules + escalation paths.
+    items:
+      type: object
+      required: [name, condition, severity, escalation]
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        condition: { type: string, description: 'Threshold or query (e.g., "p95 latency > 500ms for 5m").' }
+        severity: { type: string, enum: [info, warning, critical, page] }
+        escalation: { type: string, description: 'Who is notified, via what channel, with what cadence.' }
+        runbook_link: { type: string }
+  runbook:
+    type: object
+    description: Per-known-failure-mode diagnostic + remediation steps.
+    additionalProperties: true
+    properties:
+      entries:
+        type: array
+        items:
+          type: object
+          required: [symptom, diagnostic_steps, remediation]
+          properties:
+            symptom: { type: string, minLength: 10 }
+            diagnostic_steps: { type: array, items: { type: string } }
+            remediation: { type: string }
+            escalation: { type: string }

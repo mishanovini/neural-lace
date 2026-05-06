@@ -1,0 +1,70 @@
+# Example spec instance (synthetic). Validates against spec.schema.yaml.
+schema_version: 1
+title: "Add Duplicate-Submission Detection to Invoicing Buddy"
+header:
+  status: ACTIVE
+  mode: code
+  execution_mode: orchestrator
+  backlog_items_absorbed: "none"
+  acceptance_exempt: false
+  tier: 2
+  rung: 2
+  architecture: orchestration
+  frozen: true
+  prd_ref: "duplicate-detection"
+sections:
+  goal: >-
+    Detect when a user is about to submit an invoice that's a near-duplicate
+    of one they submitted in the last 90 days. Warn before submission and offer
+    to either confirm-as-intentional or cancel. Closes PRD scenario 3.
+  scope:
+    in:
+      - "duplicate-detection logic in the submission API endpoint"
+      - "client-side confirmation dialog when duplicate detected"
+      - "logging events: duplicate-detected, duplicate-confirmed, duplicate-cancelled"
+    out:
+      - "ML-based duplicate detection (using exact-match + fuzzy-line-item-match for v1)"
+      - "duplicate detection across users (single-user scope only for v1)"
+      - "automatic merge of duplicates (out of scope; v2 candidate)"
+  tasks:
+    - id: "1"
+      description: "Add duplicate-detection check at submission time"
+      status: "pending"
+      verification: "full"
+    - id: "2"
+      description: "Add confirmation dialog UI"
+      status: "pending"
+      verification: "full"
+    - id: "3"
+      description: "Wire telemetry for duplicate events"
+      status: "pending"
+      verification: "mechanical"
+  files_to_modify_or_create:
+    - path: "src/api/invoices/submit.ts"
+      action: MODIFY
+      reason: "Insert duplicate check before persistence"
+    - path: "src/components/DuplicateWarning.tsx"
+      action: CREATE
+      reason: "New UI component for the dialog"
+    - path: "src/lib/telemetry.ts"
+      action: MODIFY
+      reason: "Add the three duplicate-related events"
+  assumptions:
+    - "The existing submit.ts endpoint has access to the user's last-90-days submissions via a cached query"
+    - "The dialog component renders inside the existing modal stack"
+  edge_cases:
+    - "User submits 100 invoices/day (legitimate use); detection must not block — confirm dialog only"
+    - "Network drop after duplicate-detected event but before user confirms; treat as cancellation, retry on next session"
+  acceptance_scenarios: >-
+    Per the PRD's Scenario 3: a user submitting a duplicate invoice must see a
+    confirmation prompt with the prior submission ID + date, with options to
+    confirm or cancel.
+  testing_strategy: >-
+    Unit tests for the duplicate-detection function (exact + fuzzy match cases).
+    Integration test for the submit endpoint with a mock cached submissions
+    query. Playwright E2E test for the dialog flow (open, confirm, cancel).
+  walking_skeleton: >-
+    Task 1 implements the API check returning a flag; Task 2 wires the dialog
+    to that flag; Task 3 adds telemetry. Walking skeleton: a single hardcoded
+    duplicate triggers the dialog, the dialog confirms, the submission proceeds,
+    the user sees the success state.

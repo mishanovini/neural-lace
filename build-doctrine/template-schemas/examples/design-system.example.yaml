@@ -1,0 +1,75 @@
+# Example design-system instance (synthetic). Validates against design-system.schema.yaml.
+schema_version: 1
+name: "Invoicing Buddy"
+version: "0.1"
+tokens:
+  color:
+    primary:
+      light: "#2563eb"
+      dark: "#60a5fa"
+    background:
+      light: "#ffffff"
+      dark: "#0f172a"
+    text:
+      light: "#0f172a"
+      dark: "#f1f5f9"
+    error:
+      light: "#dc2626"
+      dark: "#f87171"
+    warning:
+      light: "#d97706"
+      dark: "#fbbf24"
+    success:
+      light: "#16a34a"
+      dark: "#4ade80"
+  spacing:
+    xs: 4
+    sm: 8
+    md: 16
+    lg: 24
+    xl: 32
+    "2xl": 48
+    "3xl": 64
+  typography:
+    font.body: "Inter, system-ui, sans-serif"
+    font.heading: "Inter, system-ui, sans-serif"
+    font.mono: "JetBrains Mono, monospace"
+    size.body: "14px"
+    size.h1: "32px"
+    size.h2: "24px"
+    size.h3: "18px"
+    weight.regular: 400
+    weight.medium: 500
+    weight.bold: 700
+  motion:
+    durations:
+      fast: "150ms"
+      normal: "250ms"
+      slow: "400ms"
+    easings:
+      default: "cubic-bezier(0.4, 0, 0.2, 1)"
+      enter: "cubic-bezier(0, 0, 0.2, 1)"
+      exit: "cubic-bezier(0.4, 0, 1, 1)"
+components:
+  - name: "Button"
+    purpose: "Primary action affordance with filled background; never outline-only (per ux-standards.md)."
+    variants: ["primary", "secondary", "destructive", "ai"]
+    accessibility_notes: "ARIA label required for icon-only variants; min 44x44px touch target."
+  - name: "DuplicateWarning"
+    purpose: "Modal dialog shown when a user attempts to submit a near-duplicate invoice."
+    accessibility_notes: "Focus trapped while open; ESC closes; restores focus on dismiss."
+states:
+  - default
+  - hover
+  - focus
+  - active
+  - disabled
+  - loading
+  - error
+  - empty
+  - success
+patterns:
+  - name: "Form layout"
+    description: "Labels above inputs; required indicators (asterisk + 'required' aria); errors below input in red."
+  - name: "Async data loading"
+    description: "Skeleton placeholders matching layout shape + descriptive 'Loading X...' text. Never bare spinners."

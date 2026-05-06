@@ -1,0 +1,61 @@
+# Example PRD instance (synthetic). Validates against prd.schema.yaml.
+# Project: a fictional invoicing tool used for round-trip schema validation only.
+schema_version: 1
+title: "Invoicing Buddy — Field Tech Billing Companion"
+sections:
+  problem: >-
+    Field technicians today copy invoice details from email into a spreadsheet,
+    then re-key into the billing portal. The double-entry produces ~3% error
+    rate; corrections take 2-3 hours per error. The team's senior tech estimates
+    they lose 6 billable hours a week to rework alone.
+  scenarios: >-
+    Scenario 1 — Tech receives photo'd invoice from a customer; opens app;
+    points camera at invoice; system extracts line items; tech reviews + edits;
+    submits to billing portal in one tap.
+    Scenario 2 — Tech corrects an extracted line item that misread a quantity;
+    correction propagates to the audit trail with the original OCR + the user's
+    edit visible.
+    Scenario 3 — Tech submits a duplicate of an already-submitted invoice; system
+    detects duplicate and prompts to confirm or cancel.
+  functional_requirements: >-
+    FR-1. The system supports image-based invoice extraction with line items
+    parsed into editable fields. Acceptance: a 10-line-item paper invoice photo
+    extracts within 5 seconds with ≥ 90% field-level accuracy.
+    FR-2. The system supports duplicate-detection across the user's last 90 days
+    of submissions. Acceptance: a re-submission of an identical invoice produces
+    a confirmation prompt with the prior submission ID + date.
+    FR-3. The system supports submission to the billing portal via API.
+    Acceptance: a submitted invoice appears in the billing portal within 30 seconds.
+  non_functional_requirements: >-
+    NFR-1. p95 extraction latency: < 5s on 4G mobile.
+    NFR-2. Accessibility: WCAG 2.1 AA conformance for all customer-facing views.
+    NFR-3. Data retention: invoice images preserved for 7 years (regulatory).
+    NFR-4. Offline support: extracted invoices queue and sync on next connection.
+  success_metrics: >-
+    SM-1. Adoption: ≥ 80% of techs submit ≥ 3 invoices via the app per week
+    within 60 days of launch. Measured via product analytics.
+    SM-2. Error rate: < 1% line-item correction rate on submitted invoices
+    (vs. baseline 3%). Measured via correction event logs.
+    SM-3. Time saved: ≥ 5 billable hours per tech per week recovered.
+    Measured via billing-time-tracking tags.
+  out_of_scope: >-
+    Multi-tenant org hierarchy — single-org assumption simplifies auth model;
+    revisit when first 10-user org appears.
+    Real-time collaborative editing of invoices — async editing model is
+    sufficient for the workflows in scope; real-time is 10x complexity.
+    Integration with non-billing portals — out of scope for v1; deferred to v2
+    if customer demand surfaces.
+  open_questions: >-
+    OQ-1. Should the trial period be 14 or 30 days? Leaning 14; will A/B test
+    in week 3 of beta.
+    OQ-2. Should we offer a free tier? Alternatives are forever-free vs.
+    14-day-trial-then-paid. Deciding after first 50 paying customers.
+    OQ-3. Which OCR provider? Comparing two on accuracy + cost; deciding
+    after a 30-day pilot.
+metadata:
+  version: "0.1-draft"
+  last_updated: "2026-05-06"
+  stakeholders:
+    - "Field Operations team"
+    - "Engineering team"
+    - "Product team"

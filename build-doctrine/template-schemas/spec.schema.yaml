@@ -1,0 +1,136 @@
+# yaml-language-server: $schema=https://json-schema.org/draft/2020-12/schema
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://neural-lace.dev/build-doctrine/template-schemas/spec.v1.schema.yaml
+title: Spec (Plan / Specification) — v1
+description: >-
+  Canonical structural shape for a per-task or per-feature specification (a
+  "plan" in NL terminology). Source: adapters/claude-code/templates/plan-template.md
+  + Build Doctrine 04-gates §spec-validity. Validates the seven required sections
+  enforced by plan-reviewer.sh + the 5-field plan-header schema enforced by
+  plan-reviewer.sh Check 10.
+
+  Path convention: docs/plans/<kebab-slug>.md (active) or docs/plans/archive/<kebab-slug>.md
+  (archived after Status terminal transition).
+type: object
+required: [title, header, sections]
+additionalProperties: false
+properties:
+  schema_version:
+    type: integer
+    const: 1
+    default: 1
+  title:
+    type: string
+    minLength: 5
+    description: One-line plan title (the H1 of the plan file).
+  header:
+    type: object
+    description: >-
+      The 5-field plan-header schema enforced by plan-reviewer.sh Check 10
+      on Status: ACTIVE plans (tier, rung, architecture, frozen, prd-ref).
+      Plus core lifecycle fields (Status, Mode, Execution Mode) and acceptance-loop
+      configuration (acceptance-exempt + acceptance-exempt-reason) and backlog-absorption.
+    required: [status, mode, execution_mode, backlog_items_absorbed, tier, rung, architecture, frozen, prd_ref]
+    additionalProperties: false
+    properties:
+      status:
+        type: string
+        enum: [ACTIVE, COMPLETED, DEFERRED, ABANDONED, SUPERSEDED]
+      mode:
+        type: string
+        enum: [code, design, design-skip]
+      execution_mode:
+        type: string
+        enum: [orchestrator, direct, agent-team]
+      backlog_items_absorbed:
+        type: string
+        description: '"none" or comma-separated kebab-case slugs from docs/backlog.md.'
+      acceptance_exempt:
+        type: boolean
+        default: false
+      acceptance_exempt_reason:
+        type: string
+        description: Required (>=20 chars) when acceptance_exempt is true.
+      tier:
+        type: integer
+        minimum: 1
+        maximum: 5
+        description: Build Doctrine work-sizing tier (1=Contained, 5=Novel).
+      rung:
+        type: integer
+        minimum: 0
+        maximum: 5
+        description: Autonomy rung (0=read-only-context, 5=meta).
+      architecture:
+        type: string
+        enum: [coding-harness, dark-factory, auto-research, orchestration, hybrid]
+      frozen:
+        type: boolean
+        description: Spec-freeze gate; when true, edits to declared files are allowed; when false, blocked.
+      prd_ref:
+        type: string
+        description: Slug referencing a feature in docs/prd.md, OR exact string "n/a — harness-development" for harness-dev plans.
+  sections:
+    type: object
+    description: The seven required body sections enforced by plan-reviewer.sh.
+    required: [goal, scope, tasks, files_to_modify_or_create, assumptions, edge_cases, testing_strategy]
+    additionalProperties: false
+    properties:
+      goal:
+        type: string
+        minLength: 30
+      scope:
+        type: object
+        required: [in, out]
+        additionalProperties: false
+        properties:
+          in:  { type: array, minItems: 1, items: { type: string, minLength: 5 } }
+          out: { type: array, minItems: 1, items: { type: string, minLength: 5 } }
+      tasks:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          required: [id, description, status]
+          additionalProperties: false
+          properties:
+            id: { type: string, pattern: "^[0-9]+(\\.[0-9]+)?$|^[A-Z]\\.[0-9]+$" }
+            description: { type: string, minLength: 5 }
+            status: { type: string, enum: [pending, in_progress, completed, blocked, deferred] }
+            verification: { type: string, enum: [mechanical, contract, full], default: full }
+            parallel: { type: boolean, default: false }
+      files_to_modify_or_create:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          required: [path, action]
+          additionalProperties: false
+          properties:
+            path: { type: string, minLength: 1 }
+            action: { type: string, enum: [CREATE, MODIFY, DELETE] }
+            reason: { type: string }
+      assumptions:
+        type: array
+        minItems: 1
+        items: { type: string, minLength: 10 }
+      edge_cases:
+        type: array
+        minItems: 1
+        items: { type: string, minLength: 10 }
+      acceptance_scenarios:
+        description: Required when acceptance_exempt is false; absent or "n/a" when true.
+        oneOf:
+          - { type: string }
+          - { type: array, items: { type: object } }
+      testing_strategy:
+        type: string
+        minLength: 20
+      walking_skeleton:
+        type: string
+        description: Thinnest end-to-end slice OR explicit "n/a — <justification>" opt-out.
+      decisions_log:
+        type: array
+        items:
+          type: object
+          additionalProperties: true

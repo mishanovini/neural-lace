@@ -1,0 +1,88 @@
+# yaml-language-server: $schema=https://json-schema.org/draft/2020-12/schema
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://neural-lace.dev/build-doctrine/template-schemas/adr.v1.schema.yaml
+title: ADR (Architectural Decision Record) — v1
+description: >-
+  Canonical structural shape for an Architectural Decision Record. Source:
+  ~/.claude/rules/planning.md "Decision Records & Session History" + Build
+  Doctrine 04-gates §ADR. ADRs are immutable once decided; superseding ADRs
+  reference the prior ADR by ID and explain the supersession.
+
+  Path convention: docs/decisions/NNN-<kebab-slug>.md where NNN is the
+  zero-padded sequential index.
+type: object
+required: [id, title, date, status, context, decision, alternatives, consequences]
+additionalProperties: false
+properties:
+  schema_version:
+    type: integer
+    const: 1
+    default: 1
+  id:
+    type: string
+    pattern: "^[0-9]{3}-[a-z][a-z0-9-]+$"
+    description: ADR identifier of the form "NNN-kebab-slug" (e.g., "025-build-doctrine-same-repo-placement").
+  title:
+    type: string
+    minLength: 5
+    description: One-line title of the decision (matches the H1 of the ADR file).
+  date:
+    type: string
+    format: date
+    description: ISO 8601 date the decision was recorded (YYYY-MM-DD).
+  status:
+    type: string
+    enum: [Active, Implemented, Deferred, Reverted, Superseded]
+    description: Lifecycle status. Implemented → Reverted is allowed if the decision turned out wrong; mark with a follow-up ADR.
+  superseded_by:
+    type: string
+    pattern: "^[0-9]{3}-[a-z][a-z0-9-]+$"
+    description: When status is Superseded, the ADR ID that supersedes this one.
+  stakeholders:
+    type: array
+    items: { type: string }
+    description: Named decision-makers and consulted parties.
+    default: []
+  context:
+    type: string
+    minLength: 30
+    description: What problem drove the decision; the situation that needed resolution.
+  decision:
+    type: string
+    minLength: 30
+    description: What was chosen, in concrete terms.
+  alternatives:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required: [option, reason_rejected]
+      additionalProperties: false
+      properties:
+        option:
+          type: string
+          minLength: 3
+          description: One-line description of the alternative considered.
+        reason_rejected:
+          type: string
+          minLength: 10
+          description: One-to-two-sentence rationale for rejecting this alternative.
+    description: At least one alternative must be cited with reason for rejection. "Decided arbitrarily" or "no alternatives considered" fails the substance bar.
+  consequences:
+    type: object
+    description: What this decision enables, costs, and blocks.
+    required: [enables, costs]
+    additionalProperties: false
+    properties:
+      enables:
+        type: string
+        minLength: 10
+        description: What new capability or path this decision opens.
+      costs:
+        type: string
+        minLength: 10
+        description: What this decision costs (effort, complexity, optionality, etc.).
+      blocks:
+        type: string
+        description: What this decision rules out or makes harder. Empty string is acceptable when nothing is materially blocked.
+        default: ""

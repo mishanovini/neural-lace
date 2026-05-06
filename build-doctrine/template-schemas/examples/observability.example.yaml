@@ -1,0 +1,72 @@
+# Example observability instance (synthetic). Validates against observability.schema.yaml.
+schema_version: 1
+project: "Invoicing Buddy"
+signals:
+  logs:
+    format: json
+    required_fields:
+      - timestamp
+      - level
+      - request_id
+      - user_id
+      - service
+      - message
+    levels: [debug, info, warn, error, fatal]
+    destinations:
+      - stdout (captured by container runtime)
+      - external log aggregator (Datadog or equivalent)
+    retention: "30 days hot in aggregator; 1 year cold in S3"
+  metrics:
+    system: Datadog
+    golden_signals:
+      - latency (p50, p95, p99 per endpoint)
+      - traffic (rps per endpoint)
+      - errors (4xx + 5xx rate per endpoint)
+      - saturation (CPU + memory per process)
+    custom_metrics:
+      - name: invoice.submitted
+        type: counter
+        description: Count of successful invoice submissions
+        labels: [user_id, source]
+      - name: invoice.duplicate_detected
+        type: counter
+        description: Count of duplicate-detection events
+        labels: [user_id, action]  # action: confirmed | cancelled
+      - name: ocr.extraction.duration_ms
+        type: histogram
+        description: Time spent in the OCR extraction step
+        unit: milliseconds
+  traces:
+    system: OpenTelemetry → Datadog APM
+    sample_rate: "head=10%, tail=100%-on-error"
+    propagation_headers:
+      - traceparent
+      - tracestate
+dashboards:
+  - name: Service Health
+    purpose: Top-level health view; latency, traffic, error-rate per endpoint; live updates
+    link: "https://app.datadoghq.com/dashboards/<id>"
+    primary_audience: on-call
+  - name: Invoice Funnel
+    purpose: Per-step conversion through invoice extraction → review → submission
+    link: "https://app.datadoghq.com/dashboards/<id>"
+    primary_audience: product
+alerts:
+  - name: high-error-rate
+    condition: "p95 latency > 2s for 5m OR 5xx rate > 1% for 5m"
+    severity: page
+    escalation: PagerDuty rotation; first responder; 15-min escalation to backup
+    runbook_link: "docs/runbooks/high-error-rate.md"
+  - name: duplicate-detection-spike
+    condition: "duplicate.detected counter > 5x baseline for 30m"
+    severity: warning
+    escalation: Slack #ops channel; investigate during business hours
+runbook:
+  entries:
+    - symptom: "5xx rate spike on /api/invoices/submit"
+      diagnostic_steps:
+        - "Check Datadog APM for error stacks"
+        - "Check OCR extraction queue depth"
+        - "Check downstream billing portal API status"
+      remediation: "If OCR queue is the bottleneck, scale OCR workers; if billing portal is down, enable graceful queuing"
+      escalation: "If unresolved in 15min, escalate to engineering lead"

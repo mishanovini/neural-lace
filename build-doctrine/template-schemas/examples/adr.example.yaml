@@ -1,0 +1,47 @@
+# Example ADR instance (synthetic). Validates against adr.schema.yaml.
+schema_version: 1
+id: "001-yaml-as-config-format"
+title: "Use YAML as the canonical config format for project-canon artifacts"
+date: "2026-05-06"
+status: Active
+stakeholders:
+  - "Engineering team"
+  - "Project lead"
+context: >-
+  We need a single canonical format for the seven per-project canon artifacts
+  (PRD, ADR, spec, design-system, engineering-catalog, conventions,
+  observability). The format must be human-authorable, machine-validatable,
+  and consistent across artifacts. Both YAML and TOML are reasonable; JSON is
+  too noisy for prose-heavy docs.
+decision: >-
+  Adopt YAML as the canonical config format for all seven artifacts.
+  Schemas are authored in YAML (matching the artifact format); validation
+  uses JSON Schema draft 2020-12 via jsonschema (Python) or ajv (Node).
+alternatives:
+  - option: "TOML"
+    reason_rejected: >-
+      TOML is excellent for flat config but verbose for nested structures
+      (the PRD's seven sections + scenarios + alternatives), which is the
+      shape most artifacts have.
+  - option: "JSON"
+    reason_rejected: >-
+      JSON requires escaping multi-line prose, which the PRD and ADR sections
+      contain heavily. Mandatory quote characters reduce readability.
+  - option: "Markdown with frontmatter"
+    reason_rejected: >-
+      Markdown is what we currently use for plans; for the per-project canon
+      artifacts the structured fields outweigh the prose narrative; YAML
+      matches the schema-validate workflow better.
+consequences:
+  enables: >-
+    Single canonical validation tooling (jsonschema / ajv) across all seven
+    artifact types. Editor support is mature (yaml-language-server in VS Code,
+    JetBrains, etc.).
+  costs: >-
+    YAML's whitespace sensitivity occasionally surfaces hard-to-debug
+    indentation errors. Mitigation: every artifact is round-trip-validated
+    on commit by a future schema-validation gate.
+  blocks: >-
+    Migrating to a different format later requires an automated converter
+    (one-time cost, ~1 day of engineering work). Tracked as a known cost,
+    not a current blocker.

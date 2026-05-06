@@ -1,0 +1,50 @@
+# Example conventions instance (synthetic). Validates against conventions.schema.yaml.
+schema_version: 1
+project: "Invoicing Buddy"
+naming:
+  languages:
+    typescript:
+      identifier_case: camelCase
+      file_naming: "kebab-case.ts (modules) / PascalCase.tsx (components)"
+      test_file_pattern: "<name>.test.ts"
+      constant_case: SCREAMING_SNAKE_CASE
+    python:
+      identifier_case: snake_case
+      file_naming: "snake_case.py"
+      test_file_pattern: "test_<name>.py"
+      constant_case: SCREAMING_SNAKE_CASE
+  artifacts:
+    plan_file: "docs/plans/<kebab-slug>.md"
+    decision_record: "docs/decisions/NNN-<kebab-slug>.md"
+    review: "docs/reviews/YYYY-MM-DD-<kebab-slug>.md"
+    discovery: "docs/discoveries/YYYY-MM-DD-<kebab-slug>.md"
+branch_and_commit:
+  branch_naming: "feat/<kebab-slug> | fix/<kebab-slug> | chore/<kebab-slug>"
+  commit_message_format: "<type>: <description>  (or <type>(<scope>): <description>)"
+  commit_types: [feat, fix, refactor, test, docs, chore, plan, close]
+  pr_title_format: "<type>: <description>"
+  protected_branches: [master, main]
+project_layout:
+  source_root: "src/"
+  tests_location: "co-located with source as <name>.test.ts"
+  docs_location: "docs/"
+  configuration_files:
+    - "package.json"
+    - "tsconfig.json"
+    - ".eslintrc.json"
+    - ".prettierrc"
+    - "vitest.config.ts"
+imports_and_modules:
+  style: "absolute (with @/ alias for src root)"
+  alias_setup:
+    "@/*": "src/*"
+  barrel_files: "discouraged (exception: src/types/index.ts for shared type re-exports)"
+testing:
+  framework: vitest
+  coverage_target: ">=80% line coverage on new code"
+  naming_pattern: "describe('<feature>', ...) > it('<behavior>', ...)"
+formatting:
+  formatter: prettier
+  linter: eslint
+  indent: "2 spaces"
+  max_line_length: 100

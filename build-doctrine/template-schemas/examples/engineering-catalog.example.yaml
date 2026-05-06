@@ -1,0 +1,63 @@
+# Example engineering-catalog instance (synthetic). Validates against engineering-catalog.schema.yaml.
+schema_version: 1
+project: "Invoicing Buddy"
+version: "0.1"
+shapes:
+  - shape_id: add-api-endpoint
+    category: build-feature
+    when_to_use: >-
+      Adding a new HTTP endpoint to the existing Express server. Triggers when
+      a feature spec calls for a request/response surface the client will hit.
+      Use ONLY when the new endpoint follows the existing REST conventions; if
+      a new pattern emerges (e.g., GraphQL), open an ADR first and possibly a
+      new shape.
+    required_files:
+      - path_pattern: "src/api/<resource>/<action>.ts"
+        purpose: "Route handler implementing the endpoint logic."
+      - path_pattern: "src/api/<resource>/<action>.test.ts"
+        purpose: "Integration test exercising the endpoint with a real DB fixture."
+      - path_pattern: "docs/api/<resource>.md"
+        purpose: "OpenAPI section documenting the new endpoint."
+    mechanical_checks:
+      - check: "Route handler file exists"
+        command: "test -f src/api/<resource>/<action>.ts"
+        exit_zero_means: "PASS"
+      - check: "Test file exists with at least one test() call"
+        command: "test -f src/api/<resource>/<action>.test.ts && grep -q '^test(' src/api/<resource>/<action>.test.ts"
+        exit_zero_means: "PASS"
+      - check: "OpenAPI doc references the new endpoint"
+        command: "grep -q '/<resource>/<action>' docs/api/<resource>.md"
+        exit_zero_means: "PASS"
+    worked_example:
+      shape_instance_path: "src/api/invoices/submit.ts"
+      why_canonical: "Uses every required substrate piece (handler, test, docs) and is the most-recently-shipped instance."
+    notes: >-
+      Common pitfall: forgetting to register the route in src/api/index.ts. The
+      route handler exports correctly but the server never mounts it. Future
+      mechanical check candidate.
+  - shape_id: add-react-component
+    category: build-feature
+    when_to_use: >-
+      Adding a new React component to the existing UI. Triggers when a
+      feature requires a new visual surface or interactive control that doesn't
+      compose from existing components.
+    required_files:
+      - path_pattern: "src/components/<Name>.tsx"
+        purpose: "Component implementation."
+      - path_pattern: "src/components/<Name>.test.tsx"
+        purpose: "Component test with at least the default-render case."
+      - path_pattern: "src/components/<Name>.stories.tsx"
+        purpose: "Storybook story showcasing the component variants."
+    mechanical_checks:
+      - check: "Component file exists with default export"
+        command: "test -f src/components/<Name>.tsx && grep -q 'export default' src/components/<Name>.tsx"
+        exit_zero_means: "PASS"
+      - check: "Test exists with at least one render assertion"
+        command: "test -f src/components/<Name>.test.tsx && grep -q 'render(' src/components/<Name>.test.tsx"
+        exit_zero_means: "PASS"
+      - check: "Story file exists"
+        command: "test -f src/components/<Name>.stories.tsx"
+        exit_zero_means: "PASS"
+    worked_example:
+      shape_instance_path: "src/components/Button.tsx"
+      why_canonical: "Implements all token references + variants documented in design-system.md."
