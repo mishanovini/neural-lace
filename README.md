@@ -1,20 +1,46 @@
 # Neural Lace
 
-> A harness platform that wraps AI coding tools with mechanically-enforced software-engineering and AI-collaboration best practices — so individual developers and teams inherit years of distilled discipline by default, not by self-enforcement.
+> An intelligent, self-improving harness that gives AI coding tools the discipline of an entire engineering team — enforced mechanically, not by hoping the AI follows instructions.
 
 **Last verified:** 2026-05-06.
 
-**Concretely, Neural Lace is** a set of rules, hooks, agent definitions, scripts, and templates installed into `~/.claude/` (Claude Code's config directory) plus global git hooks that scan every commit and push. Once installed, every Claude Code session inherits the discipline — no per-session opt-in, no self-applied rules. The harness makes the AI a reliable collaborator in production work by giving it a **structured team to operate within**, not a single-agent prompt: an orchestrator dispatches builders, builders ship code, verifiers gate completion, advocates check user-observable outcomes, and reviewers catch what the others miss.
+## The problem
 
-**Hooks here means Claude Code lifecycle hooks** (PreToolUse, PostToolUse, Stop, SessionStart) — scripts the harness runs at session events, with the power to block actions before they execute or refuse to let a session end. Plus standard git pre-commit / pre-push hooks for credential scanning. The discipline is enforced at these enforcement points, not relied on as agent self-discipline.
+AI coding tools are powerful but unreliable at production-grade work. They skip verification, hallucinate completion, drift from the plan, forget constraints mid-session, and ship code that compiles but doesn't actually work end-to-end. The more autonomy you give them, the worse these problems get. Telling an AI "always verify your work" in a prompt is like telling a junior engineer "always write tests" — it works until it doesn't.
+
+The deeper problem is that AI agents are amnesiac. Each session starts from zero. The architectural decisions from last week, the discoveries from yesterday's debugging session, the plan state across a multi-day feature build — all of it lives in chat transcripts that vanish when the session ends. There's no institutional memory, no structured handoff, no way to accumulate organizational knowledge.
+
+Neural Lace exists because we got tired of catching these failures manually.
+
+## What Neural Lace is
+
+Neural Lace is a discipline and memory layer that sits between you and your AI coding tool. It implements industry best practices automatically by giving the AI a structured team to operate within — an orchestrator, developers, verifiers, reviewers, and an end-user advocate — and enforces engineering standards through hooks that the AI cannot bypass. The AI doesn't need to remember to verify its work; the harness blocks the session from ending if it hasn't.
+
+Concretely, it's a set of rules, hooks, agent definitions, scripts, and templates that install into your AI tool's config directory, plus global git hooks that scan every commit and push. Once installed, every session inherits the discipline — no per-session opt-in, no self-applied rules.
+
+The key insight: **AI discipline should be mechanically enforced, not self-applied.** Pre-commit gates, session lifecycle hooks, evidence requirements, and scope constraints fire automatically at enforcement points. The harness doesn't ask the AI to be disciplined — it makes undisciplined behavior structurally impossible.
+
+### What makes it different
+
+**Self-improving.** The harness audits itself weekly, captures mid-session discoveries as permanent artifacts, and has a dedicated agent that proposes improvements every time something slips through. It gets better from its own failures.
+
+**Persistent memory across sessions.** Vanilla AI coding tools are amnesiac — each session starts from zero. Neural Lace adds structured handoffs between sessions, permanent discovery capture, decision records (ADRs), a findings ledger, cross-session plan state with evidence, and calibration data that tracks how the AI itself behaves over time. The AI goes from amnesiac to having genuine institutional memory.
+
+**Defense in depth for AI-generated code.** Credential scanning at commit AND push, security anti-patterns flagged before they ship, OWASP-class issues caught by a dedicated security reviewer agent. AI-generated code is particularly vulnerable to these patterns and Neural Lace is built specifically to catch them.
+
+**Narrative integrity.** The AI cannot claim it's done when it isn't. Sessions literally cannot end if the transcript shows deferred work, self-contradiction, skipped user directives, or unfulfilled goals.
+
+**Progressive autonomy.** Trust accumulates through safe operation. The AI earns more freedom by demonstrating reliability — fewer interruptions, more autonomous multi-task execution. Hard blocks (credential exposure, public access changes) never relax.
+
+**Tool-portable.** Universal principles and abstract patterns survive tool changes. Only thin adapters need rewriting. Today it ships for Claude Code; the architecture supports Codex, Cursor, and Gemini adapters.
 
 ## Is this for you?
 
 You'll get the most value from Neural Lace if:
 
-- You're a solo developer or small team building production code with Claude Code.
+- You're a solo developer or small team building production code with AI coding tools.
 - You've shipped vaporware at least once (code that compiles but doesn't actually work end-to-end) and want enforcement, not aspirations.
-- You can install bash hooks and don't mind a `~/.claude/` directory growing to ~50 files.
+- You can install bash hooks and don't mind a config directory growing to ~50 files.
 - You want the AI to operate autonomously on multi-task plans without losing quality.
 
 **This differs from project-only `CLAUDE.md`** by adding hook-enforced gates — the AI cannot skip verification by not noticing the rule. **It differs from cursor rules / aider** by being tool-portable (Claude Code adapter shipping; Codex / Cursor / Gemini adapters planned via the Layer 0/1/2 model below).
@@ -39,14 +65,14 @@ This is the front door. For depth → [`docs/architecture-overview.md`](docs/arc
 
 Three things happen at once: a team of specialized agents, a layered architecture, and a structured product-delivery flow.
 
-### The agents are a tech team
+### The agents make up an entire tech team
 
-Each agent in the harness plays a real-world tech-team role. The orchestrator is the engineering manager; builders are ICs; verifiers are QA; reviewers are senior engineers and security/UX specialists; the advocate is the PM checking that the user actually got what they asked for.
+Each agent in the harness plays a real-world tech-team role. The orchestrator is the engineering manager; developers write the code; verifiers are QA; reviewers are senior engineers and security/UX specialists; the advocate is the PM checking that the user actually got what they asked for.
 
 | Role on a tech team | Agent in the harness | What it does |
 |---|---|---|
-| Engineering manager / tech lead | The main session (orchestrator) | Reads plan, dispatches builders, collects results, stays lean |
-| IC engineer | `plan-phase-builder` | Builds one task at a time in an isolated worktree |
+| Engineering manager / tech lead | The main session (orchestrator) | Reads plan, dispatches developers, collects results, stays lean |
+| Developer | `plan-phase-builder` | Builds one task at a time in an isolated worktree |
 | QA engineer | `task-verifier` | Verifies each task before its checkbox flips |
 | Product manager / UX advocate | `end-user-advocate` | Authors acceptance scenarios; verifies user-observable outcome at runtime |
 | Senior engineer (code review) | `code-reviewer` | Reads diffs for quality, security, and consistency |
