@@ -35,6 +35,8 @@ commit (enforced by `adapters/claude-code/hooks/decisions-index-gate.sh`).
 | 025 | [Build Doctrine same-repo placement: `build-doctrine/` and `build-doctrine-templates/` as sibling top-level directories in NL, rejecting the original three-repo architecture](decisions/025-build-doctrine-same-repo-placement.md) | 2026-05-05 | Active |
 | 026 | [Harness catches up to doctrine: when the harness diverges from the Build Doctrine, the harness is the side that catches up; reactive enforcement paused; Tranche 1.5 of the roadmap operationalizes this](decisions/026-harness-catches-up-to-doctrine.md) | 2026-05-05 | Active |
 | 027 | [Autonomous decision-making process: pre-emptive decision queues at plan kickoff + autonomous proceed on reversible mid-execution decisions + mandatory ADR documentation + final-summary surfacing](decisions/027-autonomous-decision-making-process.md) | 2026-05-05 | Active |
+| 028 | [`session-wrap.sh` falls back to parent repo's SCRATCHPAD when run from a worktree](decisions/028-session-wrap-worktree-fallback.md) | 2026-05-09 | Active |
+| 029 | [Local-edit authorization mechanism (skill + hook + per-file marker) replaces broad `permissions.deny` on `~/.claude/local/**`](decisions/029-local-edit-authorization-mechanism.md) | 2026-05-09 | Active |
 
 <!-- 2026-05-04: Records 001, 002, 013 received in-place codename scrub (Phase 1d-G Task 1). Content unchanged in substance; identifiers replaced with generic placeholders to satisfy harness-hygiene scanner. No status changes. -->
 <!-- 2026-05-05 v3: ADR 027 extended with Layer 5 (handoff freshness as precondition). No row change to the index — same row 027 covers v1 + v2 + v3. -->

@@ -48,14 +48,28 @@ EOF
 
 # ===== helpers =====
 
-# Find the repo root by walking up to find .git
+# Find the repo root via git rev-parse, falling back to the parent repo when run
+# from a git worktree. SCRATCHPAD lives in the parent repo by convention
+# (orchestrator-pattern.md: worktrees are short-lived build isolation, not
+# branch-lifetime contexts that warrant their own state). See ADR 028.
 find_repo_root() {
-  local d="$PWD"
-  while [ "$d" != "/" ]; do
-    if [ -d "$d/.git" ]; then echo "$d"; return 0; fi
-    d="$(dirname "$d")"
-  done
-  return 1
+  local toplevel
+  toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+
+  local git_dir git_common_dir
+  git_dir=$(git rev-parse --git-dir 2>/dev/null) || { echo "$toplevel"; return 0; }
+  git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || { echo "$toplevel"; return 0; }
+
+  # Resolve to absolute paths for reliable comparison
+  git_dir=$(cd "$git_dir" 2>/dev/null && pwd) || { echo "$toplevel"; return 0; }
+  git_common_dir=$(cd "$git_common_dir" 2>/dev/null && pwd) || { echo "$toplevel"; return 0; }
+
+  if [ "$git_dir" != "$git_common_dir" ]; then
+    # We're in a worktree. Parent repo's toplevel is dirname of the common .git dir.
+    dirname "$git_common_dir"
+  else
+    echo "$toplevel"
+  fi
 }
 
 # Get plans touched this session: archive-moves in last 4 hours
@@ -321,6 +335,37 @@ EOF
   else
     echo "self-test (S6) whats-next-references-archived: PASS"
     PASSED=$((PASSED + 1))
+  fi
+
+  # ---- scenario 7: find_repo_root falls back to parent when called from a worktree
+  # Setup: create a worktree off the synthetic repo, cd into it, call find_repo_root,
+  # confirm it returns the parent (TMPROOT) not the worktree path.
+  rm -f docs/discoveries/*.md 2>/dev/null
+  rm -f SCRATCHPAD.md
+  echo "# SCRATCHPAD" > SCRATCHPAD.md
+  echo "test-plan-1" >> SCRATCHPAD.md
+  # mtime is fresh from the previous touch
+  touch SCRATCHPAD.md
+
+  WT_PATH="$TMPROOT/wt-7"
+  if git worktree add -q -b worktree-test-7 "$WT_PATH" >/dev/null 2>&1; then
+    cd "$WT_PATH"
+    DETECTED_ROOT=$(find_repo_root)
+    # Resolve both to absolute paths for comparison (handles symlinks / case)
+    EXPECTED_ROOT=$(cd "$TMPROOT" && pwd)
+    DETECTED_ABS=$(cd "$DETECTED_ROOT" 2>/dev/null && pwd)
+    if [ "$DETECTED_ABS" = "$EXPECTED_ROOT" ]; then
+      echo "self-test (S7) worktree-fallback: PASS"
+      PASSED=$((PASSED + 1))
+    else
+      echo "self-test (S7) worktree-fallback: FAIL (expected $EXPECTED_ROOT, got $DETECTED_ABS)"
+      FAILED=$((FAILED + 1))
+    fi
+    cd "$TMPROOT"
+    git worktree remove --force "$WT_PATH" >/dev/null 2>&1
+    git branch -D worktree-test-7 >/dev/null 2>&1
+  else
+    echo "self-test (S7) worktree-fallback: SKIP (git worktree add failed in test env)"
   fi
 
   echo ""

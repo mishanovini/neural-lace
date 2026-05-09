@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "task_id": "11",
+  "verdict": "PASS",
+  "commit_sha": "51016b94fe3c882ef9d66963041e44d33dd16c02",
+  "files_modified": [
+    "adapters/claude-code/hooks/local-edit-gate.sh",
+    "adapters/claude-code/rules/local-edit-authorization.md",
+    "adapters/claude-code/rules/vaporware-prevention.md",
+    "adapters/claude-code/scripts/session-wrap.sh",
+    "adapters/claude-code/settings.json.template",
+    "adapters/claude-code/skills/grant-local-edit.md",
+    "docs/DECISIONS.md",
+    "docs/decisions/028-session-wrap-worktree-fallback.md",
+    "docs/decisions/029-local-edit-authorization-mechanism.md",
+    "docs/discoveries/2026-05-09-local-edit-authorization-mechanism.md",
+    "docs/discoveries/2026-05-09-session-wrap-worktree-blind.md",
+    "docs/harness-architecture.md"
+  ],
+  "mechanical_checks": {
+    "files-in-commit": {
+      "passed": true,
+      "detail": "12 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-09T21:31:23Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/context-aware-permission-gates.md"
+}
