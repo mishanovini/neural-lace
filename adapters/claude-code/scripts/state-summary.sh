@@ -45,14 +45,9 @@ between demarcation markers untouched.
 EOF
 }
 
-# Find repo root
+# Find repo root via git rev-parse (handles worktrees, where .git is a file not a dir)
 find_repo_root() {
-  local d="$PWD"
-  while [ "$d" != "/" ]; do
-    if [ -d "$d/.git" ]; then echo "$d"; return 0; fi
-    d="$(dirname "$d")"
-  done
-  return 1
+  git rev-parse --show-toplevel 2>/dev/null
 }
 
 # ----- Primary-source extractors -----

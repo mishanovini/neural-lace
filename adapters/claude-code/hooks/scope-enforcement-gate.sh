@@ -520,7 +520,7 @@ fi
 if [[ -z "$REPO_ROOT" ]]; then
   CURRENT="$PWD"
   while [[ -n "$CURRENT" ]] && [[ "$CURRENT" != "/" ]]; do
-    if [[ -d "$CURRENT/.git" ]] || [[ -d "$CURRENT/docs/plans" ]]; then
+    if [[ -e "$CURRENT/.git" ]] || [[ -d "$CURRENT/docs/plans" ]]; then
       REPO_ROOT="$CURRENT"
       break
     fi

@@ -15,8 +15,8 @@ LIVE="$HOME/.claude"
 REPO="$HOME/claude-projects/neural-lace/adapters/claude-code"
 NL_ROOT="$HOME/claude-projects/neural-lace"
 
-# Only run if the neural-lace repo exists
-[ -d "$NL_ROOT/.git" ] || exit 0
+# Only run if the neural-lace repo exists (-e accepts both .git directory and worktree .git file)
+[ -e "$NL_ROOT/.git" ] || exit 0
 
 # Skip if we're committing inside neural-lace itself — avoids infinite loop
 CURRENT_REPO=$(git rev-parse --show-toplevel 2>/dev/null || echo "")

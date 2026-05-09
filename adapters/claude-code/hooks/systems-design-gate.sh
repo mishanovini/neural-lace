@@ -155,7 +155,7 @@ SEARCH_DIR=$(dirname "$NORM_PATH")
 REPO_ROOT=""
 CURRENT="$SEARCH_DIR"
 while [[ "$CURRENT" != "/" && "$CURRENT" != "." && -n "$CURRENT" ]]; do
-  if [[ -d "$CURRENT/.git" ]] || [[ -d "$CURRENT/docs/plans" ]]; then
+  if [[ -e "$CURRENT/.git" ]] || [[ -d "$CURRENT/docs/plans" ]]; then
     REPO_ROOT="$CURRENT"
     break
   fi

@@ -100,7 +100,7 @@ _find_repo_root() {
   local start_dir="$1"
   local current="$start_dir"
   while [[ -n "$current" ]] && [[ "$current" != "/" ]] && [[ "$current" != "." ]]; do
-    if [[ -d "$current/.git" ]] || [[ -d "$current/docs/plans" ]]; then
+    if [[ -e "$current/.git" ]] || [[ -d "$current/docs/plans" ]]; then
       printf '%s' "$current"
       return 0
     fi
