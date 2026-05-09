@@ -125,10 +125,15 @@ if [[ "${1:-}" = "--self-test" ]]; then
   exit 0
 fi
 
+# Shared retry-guard library — see lib/stop-hook-retry-guard.sh.
+# shellcheck disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
+
 INPUT=""
 if [[ ! -t 0 ]]; then
   INPUT=$(cat 2>/dev/null || echo "")
 fi
+RG_SESSION_ID=$(retry_guard_session_id "$INPUT")
 
 TRANSCRIPT_PATH=""
 if [[ -n "$INPUT" ]]; then
@@ -337,7 +342,6 @@ PAIR_COUNT=$((COMPLETION_COUNT < DEFERRAL_COUNT ? COMPLETION_COUNT : DEFERRAL_CO
 
 BLOCKER_MSG="Session contains $COMPLETION_COUNT completion-class claims AND $DEFERRAL_COUNT deferral-class claims — at minimum $PAIR_COUNT contradiction pair(s). Your final user-facing message does NOT include the required '$REQUIRED_HEADING' section. Self-contradiction within a session is the lie that destroys user trust: claiming 'done' while the same session admits 'not done'. Either (a) reconcile the contradictions (flip Status back to ACTIVE, surface the deferrals, and re-attempt Stop), or (b) add the resolution section explaining each contradiction. Suppress with TRANSCRIPT_LIE_DETECTOR_DISABLE=1 only for harness-dev sessions where editing the pattern lists self-triggers."
 
-echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
 echo "" >&2
 echo "================================================================" >&2
 echo "TRANSCRIPT LIE DETECTOR (A3): SESSION BLOCKED" >&2
@@ -358,4 +362,12 @@ echo "    - <claim X (event N) says 'done', claim Y (event M) says 'deferred' �
 echo "    - <next contradiction>" >&2
 echo "    ..." >&2
 echo "" >&2
-exit 1
+
+RG_FAILURE_SIG="transcript-lie:${COMPLETION_COUNT}:${DEFERRAL_COUNT}:${COMPLETIONS_DISPLAY}:${DEFERRALS_DISPLAY}"
+retry_guard_block_or_exit \
+  "transcript-lie-detector" \
+  "$RG_SESSION_ID" \
+  "$RG_FAILURE_SIG" \
+  "$BLOCKER_MSG" \
+  "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}" \
+  1

@@ -198,6 +198,10 @@ JSONL
   fi
 fi
 
+# Shared retry-guard library — see lib/stop-hook-retry-guard.sh.
+# shellcheck disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
+
 # Read stdin JSON (Claude Code provides it)
 INPUT=""
 if [[ ! -t 0 ]]; then
@@ -449,9 +453,14 @@ bugs surfaced during execution.
 ================================================================
 MSG
 
-# JSON decision for Claude Code
-cat <<'JSON'
-{"decision": "block", "reason": "Bug-persistence gate: trigger phrases detected without corresponding edit to docs/backlog.md, docs/reviews/YYYY-MM-DD-*.md, docs/discoveries/YYYY-MM-DD-*.md, or docs/findings.md. See stderr for details and escape hatches."}
-JSON
+RG_SESSION_ID=$(retry_guard_session_id "$INPUT")
+RG_FAILURE_SIG="bug-persistence:$(cat "$MATCHES_FILE" 2>/dev/null || echo no-matches)"
+RG_ERROR_ONELINE="Bug-persistence gate: trigger phrases detected with no corresponding edit to docs/backlog.md, docs/reviews/, docs/discoveries/, or docs/findings.md."
 
-exit 2
+retry_guard_block_or_exit \
+  "bug-persistence-gate" \
+  "$RG_SESSION_ID" \
+  "$RG_FAILURE_SIG" \
+  "$RG_ERROR_ONELINE" \
+  '{"decision": "block", "reason": "Bug-persistence gate: trigger phrases detected without corresponding edit to docs/backlog.md, docs/reviews/YYYY-MM-DD-*.md, docs/discoveries/YYYY-MM-DD-*.md, or docs/findings.md. See stderr for details and escape hatches."}' \
+  2

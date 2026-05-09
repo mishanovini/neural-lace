@@ -153,6 +153,13 @@ set -u
 
 SCRIPT_NAME="product-acceptance-gate.sh"
 
+# Shared retry-guard library — see lib/stop-hook-retry-guard.sh.
+# Downgrades the block to a warn after RETRY_GUARD_THRESHOLD identical
+# failures with no new commits between, so the session can exit when
+# the gate is failing for reasons the session cannot resolve in-loop.
+# shellcheck disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
+
 # ---------- helpers ----------------------------------------------------
 
 # Find all ACTIVE plan files (top level only, NOT archive/).
@@ -704,11 +711,14 @@ fi
 # Main: production execution
 # ============================================================
 
-# Read stdin (Claude Code provides JSON). We don't currently need
-# anything from it but consume it to avoid SIGPIPE on the producer.
+# Read stdin (Claude Code provides JSON). We capture it so the retry
+# guard can resolve session_id / transcript_path; we don't otherwise
+# consume any field today.
+INPUT=""
 if [[ ! -t 0 ]]; then
-  cat >/dev/null 2>&1 || true
+  INPUT=$(cat 2>/dev/null || echo "")
 fi
+RG_SESSION_ID=$(retry_guard_session_id "$INPUT")
 
 # Find ACTIVE plans.
 ACTIVE_PLANS=$(find_active_plans)
@@ -841,8 +851,17 @@ See also:
 ================================================================
 MSG
 
-cat <<'JSON'
-{"decision": "block", "reason": "Product-acceptance gate: one or more ACTIVE plans lack a PASS runtime acceptance artifact for the current plan_commit_sha. See stderr for per-plan details and remediation paths."}
-JSON
+# The failure signature is the per-plan blocker list — if the same
+# plans are blocking with the same reasons across retries (and no new
+# commits land), the retry-guard downgrades to a warn so the session
+# can exit. The unresolved gap is logged for the next session to pick up.
+RG_FAILURE_SIG="product-acceptance:${BLOCKERS}"
+RG_ERROR_ONELINE=$(printf '%s' "$BLOCKERS" | tr '\n' ' ' | tr -s ' ' | cut -c1-500)
 
-exit 2
+retry_guard_block_or_exit \
+  "product-acceptance-gate" \
+  "$RG_SESSION_ID" \
+  "$RG_FAILURE_SIG" \
+  "$RG_ERROR_ONELINE" \
+  '{"decision": "block", "reason": "Product-acceptance gate: one or more ACTIVE plans lack a PASS runtime acceptance artifact for the current plan_commit_sha. See stderr for per-plan details and remediation paths."}' \
+  2
