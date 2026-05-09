@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task_id": "10",
+  "verdict": "PASS",
+  "commit_sha": "51016b94fe3c882ef9d66963041e44d33dd16c02",
+  "files_modified": [
+    "adapters/claude-code/hooks/local-edit-gate.sh",
+    "adapters/claude-code/rules/local-edit-authorization.md",
+    "adapters/claude-code/rules/vaporware-prevention.md",
+    "adapters/claude-code/scripts/session-wrap.sh",
+    "adapters/claude-code/settings.json.template",
+    "adapters/claude-code/skills/grant-local-edit.md",
+    "docs/DECISIONS.md",
+    "docs/decisions/028-session-wrap-worktree-fallback.md",
+    "docs/decisions/029-local-edit-authorization-mechanism.md",
+    "docs/discoveries/2026-05-09-local-edit-authorization-mechanism.md",
+    "docs/discoveries/2026-05-09-session-wrap-worktree-blind.md",
+    "docs/harness-architecture.md"
+  ],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/hooks/local-edit-gate.sh": {
+      "passed": true,
+      "detail": "adapters/claude-code/hooks/local-edit-gate.sh exists",
+      "command": "test -e adapters/claude-code/hooks/local-edit-gate.sh",
+      "exit_code": 0
+    },
+    "command:bash adapters/claude-code/hooks/local-edit-gate.sh --self-test": {
+      "passed": true,
+      "detail": "PASS\nself-test (S6) wrong-filename-marker-block: PASS\nself-test (S7) multiedit-fires-gate: PASS\nself-test (S8) malformed-input-fail-closed: PASS\n\nself-test summary: 8 passed, 0 failed (of 8 scenarios)",
+      "command": "bash adapters/claude-code/hooks/local-edit-gate.sh --self-test",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-09T21:37:24Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/archive/context-aware-permission-gates.md"
+}
