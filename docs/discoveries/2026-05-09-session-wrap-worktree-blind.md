@@ -2,10 +2,10 @@
 title: session-wrap.sh worktree-blind on SCRATCHPAD freshness
 date: 2026-05-09
 type: process
-status: pending
+status: implemented
 auto_applied: false
 originating_context: ad-hoc cleanup session in worktree neural-lace/stupefied-brattain-94152b
-decision_needed: should session-wrap.sh fall back to parent repo's SCRATCHPAD when run from a worktree, OR should every worktree get its own SCRATCHPAD by convention?
+decision_needed: n/a — user authorized recommendation A (hook falls back to parent repo when in worktree)
 predicted_downstream:
   - adapters/claude-code/scripts/session-wrap.sh
   - adapters/claude-code/rules/orchestrator-pattern.md (worktree convention)
@@ -104,8 +104,34 @@ non-trivial to keep fresh manually.
 
 ## Decision
 
-(pending — surface to user before applying)
+A — `session-wrap.sh`'s `find_repo_root` falls back to the parent repo's
+toplevel when invoked from inside a worktree. Detection via
+`git rev-parse --git-common-dir` ≠ `--git-dir`; parent toplevel is
+`dirname` of the common .git directory. User authorized this option in
+the 2026-05-09 session ("let's go with your recommendations") after
+seeing options A/B/C with rationale.
+
+Documented as ADR 028
+(`docs/decisions/028-session-wrap-worktree-fallback.md`).
 
 ## Implementation log
 
-(empty)
+- `~/.claude/scripts/session-wrap.sh` — `find_repo_root` extended to
+  detect worktree context via `--git-common-dir` ≠ `--git-dir` and
+  return `dirname` of the common .git when they differ; preserves
+  prior behavior in primary-repo case (commit pending).
+- `adapters/claude-code/scripts/session-wrap.sh` — synced from live
+  copy; byte-identical (commit pending).
+- Self-test extended with scenario S7 (worktree-fallback): creates a
+  worktree against a synthetic repo, calls `find_repo_root` from
+  inside, confirms it returns the parent's toplevel. All 7 scenarios
+  pass.
+- Verified end-to-end in this real worktree
+  (`stupefied-brattain-94152b`): `session-wrap.sh verify` from the
+  worktree now reports "all freshness signals PASS" against the
+  parent repo's SCRATCHPAD.
+- Worktree-local SCRATCHPAD created earlier as immediate workaround
+  (at `stupefied-brattain-94152b/SCRATCHPAD.md`) deleted as part of
+  this fix — redundant once the hook honors the parent's SCRATCHPAD.
+- Cross-referenced in `~/.claude/rules/vaporware-prevention.md`
+  enforcement map.
