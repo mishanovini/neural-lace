@@ -12,10 +12,16 @@
 #   2. Auto-archival on terminal status. When an Edit or Write
 #      changes the plan's `Status:` field from a non-terminal value
 #      (ACTIVE / DEFERRED, etc.) to a terminal value (COMPLETED /
-#      DEFERRED / ABANDONED / SUPERSEDED), execute `git mv` to move
-#      the plan file (and its `<slug>-evidence.md` companion if it
-#      exists) into `docs/plans/archive/`. Emit a system message
-#      pointing readers at the new path.
+#      ABANDONED / SUPERSEDED), execute `git mv` to move the plan
+#      file (and its `<slug>-evidence.md` companion if it exists)
+#      into `docs/plans/archive/`. Emit a system message pointing
+#      readers at the new path.
+#
+#      DEFERRED is NOT a terminal status. DEFERRED means "paused,
+#      will resume" — auto-archiving would hide the plan from the
+#      next session that's supposed to pick it back up. Terminal
+#      means "the plan's life is over": COMPLETED / ABANDONED /
+#      SUPERSEDED only.
 #
 # This is a PostToolUse hook. PostToolUse runs AFTER the tool already
 # completed; we therefore never block, only annotate. Exit code is
@@ -61,7 +67,8 @@ normalize_path() {
 
 # Extract the Status value from a content blob (stdin). Returns
 # uppercase token (ACTIVE / COMPLETED / DEFERRED / ABANDONED /
-# SUPERSEDED / etc.) or empty if no Status line.
+# SUPERSEDED / etc.) or empty if no Status line. Note: DEFERRED is
+# a recognized status value but is NOT terminal (see is_terminal_status).
 #
 # We only look at the first matching line (plan files have one Status
 # field at the top).
@@ -77,10 +84,12 @@ extract_status() {
 }
 
 # Returns 0 if the given status string is a terminal status, else 1.
-# Terminal statuses trigger archival.
+# Terminal statuses trigger archival. DEFERRED is intentionally NOT
+# terminal — DEFERRED means "paused, will resume", and auto-archiving
+# would hide the plan from the next session that picks it back up.
 is_terminal_status() {
   case "$1" in
-    COMPLETED|DEFERRED|ABANDONED|SUPERSEDED) return 0 ;;
+    COMPLETED|ABANDONED|SUPERSEDED) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -468,7 +477,7 @@ EOP
   PRE5=$(git show HEAD:docs/plans/case5.md)
   cat > docs/plans/case5.md <<'EOP'
 # Plan: Case 5
-Status: DEFERRED
+Status: ABANDONED
 EOP
   POST5=$(cat docs/plans/case5.md)
   OUT5=$(process_lifecycle_event "$TMP/docs/plans/case5.md" "Edit" "$PRE5" "$POST5" 2>&1 || true)
@@ -547,6 +556,32 @@ EOP
   if [ -n "$OUT9" ]; then
     echo "FAIL scenario 9: archive-dir file should be a no-op. Got:" >&2
     echo "$OUT9" >&2
+    exit 1
+  fi
+
+  # ---- Scenario 10: ACTIVE -> DEFERRED does NOT archive ----
+  # DEFERRED means "paused, will resume", not terminal. Auto-archiving
+  # would hide the plan from the next session that picks it back up.
+  cat > docs/plans/case10.md <<'EOP'
+# Plan: Case 10
+Status: ACTIVE
+EOP
+  git add docs/plans/case10.md
+  git commit -q -m "plan: case10 active"
+  PRE10=$(git show HEAD:docs/plans/case10.md)
+  cat > docs/plans/case10.md <<'EOP'
+# Plan: Case 10
+Status: DEFERRED
+EOP
+  POST10=$(cat docs/plans/case10.md)
+  OUT10=$(process_lifecycle_event "$TMP/docs/plans/case10.md" "Edit" "$PRE10" "$POST10" 2>&1 || true)
+  if printf '%s' "$OUT10" | grep -q "auto-archived"; then
+    echo "FAIL scenario 10: DEFERRED is not terminal; should NOT archive. Got:" >&2
+    echo "$OUT10" >&2
+    exit 1
+  fi
+  if [ ! -f docs/plans/case10.md ] || [ -f docs/plans/archive/case10.md ]; then
+    echo "FAIL scenario 10: DEFERRED plan should remain in active dir, not archive." >&2
     exit 1
   fi
 

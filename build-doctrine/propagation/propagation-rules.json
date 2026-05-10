@@ -9,7 +9,7 @@
   "rules": [
     {
       "id": "pt-proven-plan-lifecycle-archive",
-      "description": "Generalizes adapters/claude-code/hooks/plan-lifecycle.sh: when a plan's Status: header transitions to a terminal value (COMPLETED, DEFERRED, ABANDONED, SUPERSEDED), surface the transition for archival. Proven rule — the existing narrow hook has been firing this pattern reliably; engine version produces audit-log evidence for tuning.",
+      "description": "Generalizes adapters/claude-code/hooks/plan-lifecycle.sh: when a plan's Status: header transitions to a terminal value (COMPLETED, ABANDONED, SUPERSEDED — DEFERRED is paused-not-terminal and excluded), surface the transition for archival. Proven rule — the existing narrow hook has been firing this pattern reliably; engine version produces audit-log evidence for tuning.",
       "conjectural": false,
       "severity": "info",
       "owner": "plan-lifecycle-maintainer",

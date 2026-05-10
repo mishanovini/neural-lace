@@ -3,9 +3,14 @@
 #
 # SessionStart hook that scans `docs/plans/*.md` (top-level only, not
 # `docs/plans/archive/`) for plan files whose `Status:` field is at a
-# terminal value (COMPLETED / DEFERRED / ABANDONED / SUPERSEDED). For
-# each match, performs a `git mv` (or plain `mv` for untracked files)
-# to `docs/plans/archive/`, including any sibling `<slug>-evidence.md`.
+# terminal value (COMPLETED / ABANDONED / SUPERSEDED). For each match,
+# performs a `git mv` (or plain `mv` for untracked files) to
+# `docs/plans/archive/`, including any sibling `<slug>-evidence.md`.
+#
+# DEFERRED is intentionally NOT terminal. DEFERRED means "paused, will
+# resume" — auto-archiving a DEFERRED plan would hide it from the next
+# session that's supposed to pick it back up. Terminal = "the plan's
+# life is over"; that's COMPLETED, ABANDONED, SUPERSEDED only.
 #
 # Why this exists. `plan-lifecycle.sh` is a PostToolUse hook on Edit/
 # Write. Bash-based Status flips (e.g. `sed -i 's/^Status: ACTIVE$/
@@ -134,7 +139,7 @@ sweep_plans() {
     [ -n "$status_val" ] || continue
 
     case "$status_val" in
-      COMPLETED|DEFERRED|ABANDONED|SUPERSEDED|completed|deferred|abandoned|superseded)
+      COMPLETED|ABANDONED|SUPERSEDED|completed|abandoned|superseded)
         archive_plan "$plan" "$archive_dir"
         rc=$?
         if [ "$rc" -eq 0 ]; then
@@ -230,13 +235,13 @@ EOF
     failures=$((failures + 1))
   fi
 
-  # ---- Scenario 4: DEFERRED plan + sibling evidence both move ----
+  # ---- Scenario 4: ABANDONED plan + sibling evidence both move ----
   local s4="$tmp/with-evidence"
   mkdir -p "$s4/docs/plans"
   init_git_repo "$s4"
   cat > "$s4/docs/plans/sibling-plan.md" <<'EOF'
 # Plan: Sibling
-Status: DEFERRED
+Status: ABANDONED
 
 ## Goal
 Test fixture.
@@ -277,13 +282,38 @@ EOF
     failures=$((failures + 1))
   fi
 
+  # ---- Scenario 6: DEFERRED plan stays put (not terminal) ----
+  local s6="$tmp/deferred-stays"
+  mkdir -p "$s6/docs/plans"
+  init_git_repo "$s6"
+  cat > "$s6/docs/plans/paused-plan.md" <<'EOF'
+# Plan: Paused
+Status: DEFERRED
+
+## Goal
+Test fixture — DEFERRED is "paused, will resume", not terminal.
+EOF
+  git -C "$s6" add docs/plans/paused-plan.md && git -C "$s6" commit -q -m "test"
+  local out6
+  out6=$(sweep_plans "$s6" 2>&1)
+  if [ -f "$s6/docs/plans/paused-plan.md" ] \
+     && [ ! -f "$s6/docs/plans/archive/paused-plan.md" ] \
+     && [ -z "$out6" ]; then
+    echo "PASS: [deferred-stays] DEFERRED plan untouched (not terminal)"
+  else
+    echo "FAIL: [deferred-stays] DEFERRED plan was archived; should remain in active dir" >&2
+    echo "  output: $out6" >&2
+    echo "  files: $(ls -la "$s6/docs/plans/" 2>/dev/null)" >&2
+    failures=$((failures + 1))
+  fi
+
   if [ "$failures" -gt 0 ]; then
     echo ""
     echo "$failures self-test scenario(s) FAILED" >&2
     return 1
   fi
   echo ""
-  echo "All 5 self-test scenarios PASSED"
+  echo "All 6 self-test scenarios PASSED"
   return 0
 }
 

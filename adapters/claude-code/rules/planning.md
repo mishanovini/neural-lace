@@ -266,7 +266,7 @@ When a new plan is created that addresses one or more items currently listed in 
 
 ## Plan File Lifecycle (Creation, Archival, Lookup)
 
-**A plan is in flight from creation through closure. There is no "I built it but bookkeeping is later."** The plan's life ends with `Status: COMPLETED` (or DEFERRED / ABANDONED / SUPERSEDED) and auto-archival — not when the last builder commits. Closure follows builds deterministically (per Tranche E of `docs/plans/architecture-simplification.md` once it ships); until that procedure lands, closure is still the orchestrator's deliverable, just executed by hand. Treating closure as a separate phase from build is the failure mode this lifecycle exists to prevent.
+**A plan is in flight from creation through closure. There is no "I built it but bookkeeping is later."** The plan's life ends with `Status: COMPLETED` (or ABANDONED / SUPERSEDED) and auto-archival — not when the last builder commits. (`Status: DEFERRED` means "paused, will resume" and is NOT terminal: the plan stays in `docs/plans/` so the next session can pick it back up.) Closure follows builds deterministically (per Tranche E of `docs/plans/architecture-simplification.md` once it ships); until that procedure lands, closure is still the orchestrator's deliverable, just executed by hand. Treating closure as a separate phase from build is the failure mode this lifecycle exists to prevent.
 
 Plan files have a four-stage lifecycle. Each stage has a mechanical hook backing it so the lifecycle does not depend on human discipline at any point. The mechanism that holds it together is `~/.claude/hooks/plan-lifecycle.sh` (PostToolUse on Edit/Write under `docs/plans/`).
 
@@ -291,7 +291,7 @@ No lifecycle hook activity is needed at this stage.
 
 ### Stage 3: Status is the last edit (auto-archival)
 
-**The Status field MUST be the final edit made to a plan file in its active life.** Completion reports, final decisions log entries, and any closing notes are written BEFORE flipping `Status:` to a terminal value (COMPLETED, DEFERRED, ABANDONED, SUPERSEDED).
+**The Status field MUST be the final edit made to a plan file in its active life.** Completion reports, final decisions log entries, and any closing notes are written BEFORE flipping `Status:` to a terminal value (COMPLETED, ABANDONED, SUPERSEDED). DEFERRED is NOT terminal — it means "paused, will resume", so a DEFERRED plan stays in `docs/plans/` and is not archived; if you flip a plan to DEFERRED, you can keep editing it later without recovering it from the archive.
 
 Why: when `Status:` transitions to terminal, `plan-lifecycle.sh` immediately executes `git mv docs/plans/<slug>.md docs/plans/archive/<slug>.md` in the same edit cycle. If a `<slug>-evidence.md` companion exists, it moves with the plan. If you try to append to the plan after flipping Status, the path is already gone and you have to recover.
 
@@ -305,7 +305,7 @@ The hook emits a system message after the move:
 
 ### Stage 3.5: Session-start safety-net sweep
 
-`plan-status-archival-sweep.sh` is a SessionStart hook that scans `docs/plans/*.md` (top-level only, not `docs/plans/archive/`) for any plan whose `Status:` is at a terminal value (COMPLETED / DEFERRED / ABANDONED / SUPERSEDED) and `git mv`s it (plus any sibling `<slug>-evidence.md`) into `docs/plans/archive/`. It restores the post-condition that Stage 3's `plan-lifecycle.sh` is supposed to enforce, but without depending on HOW the Status flip happened — Edit, Write, Bash sed, or any future automation.
+`plan-status-archival-sweep.sh` is a SessionStart hook that scans `docs/plans/*.md` (top-level only, not `docs/plans/archive/`) for any plan whose `Status:` is at a terminal value (COMPLETED / ABANDONED / SUPERSEDED — DEFERRED is intentionally excluded) and `git mv`s it (plus any sibling `<slug>-evidence.md`) into `docs/plans/archive/`. It restores the post-condition that Stage 3's `plan-lifecycle.sh` is supposed to enforce, but without depending on HOW the Status flip happened — Edit, Write, Bash sed, or any future automation.
 
 Latency: archival happens at the NEXT session start, not at flip time. A COMPLETED plan can sit in `docs/plans/` for the rest of the current session. This is acceptable because archival is housekeeping; the Edit-tool path (recommended) keeps zero-latency archival via `plan-lifecycle.sh`, and the sweep is the safety net for everything else.
 
