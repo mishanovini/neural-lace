@@ -53,6 +53,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/wire-check-gate.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/spec-freeze-gate.sh"
           }
         ]
