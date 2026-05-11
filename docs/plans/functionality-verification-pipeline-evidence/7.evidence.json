@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "task_id": "7",
+  "verdict": "PASS",
+  "commit_sha": "91b4bb4af68f4cb51d4189e853f7d6a65da4ef96",
+  "files_modified": [
+    "adapters/claude-code/agents/claim-reviewer.md",
+    "adapters/claude-code/agents/domain-expert-tester.md",
+    "adapters/claude-code/agents/end-user-advocate.md",
+    "adapters/claude-code/agents/functionality-verifier.md",
+    "adapters/claude-code/agents/task-verifier.md",
+    "adapters/claude-code/pipeline-templates/verify-functionality.sh",
+    "adapters/claude-code/rules/verification-pipeline.md",
+    "docs/harness-architecture.md"
+  ],
+  "mechanical_checks": {
+    "command:diff -q adapters/claude-code/agents/functionality-verifier.md \"$HOME/.claude/agents/functionality-verifier.md\" >/dev/null": {
+      "passed": true,
+      "detail": "",
+      "command": "diff -q adapters/claude-code/agents/functionality-verifier.md \"$HOME/.claude/agents/functionality-verifier.md\" >/dev/null",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "8 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-11T20:54:12Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/functionality-verification-pipeline.md"
+}
