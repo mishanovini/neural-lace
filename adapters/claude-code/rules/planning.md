@@ -48,6 +48,79 @@ See `~/.claude/rules/design-mode-planning.md` for the full protocol, the 10 requ
 - Template: `~/.claude/templates/plan-template.md` includes all seven required sections with placeholder prompts explaining what each should contain.
 - Validator: `~/.claude/hooks/plan-reviewer.sh` performs the mechanical check at plan-edit time. Run with `--self-test` to exercise pass/fail scenarios.
 
+## Integration Verification — Every Full-Level Task Must Prove It Works
+
+**Classification:** Hybrid. The per-task sub-block authoring discipline is Pattern (the planner and the `plan-phase-builder` agent self-apply). The plan-time presence + substance check is Mechanism (`plan-reviewer.sh` Check 13). The build-time **static trace + additive runtime** verification is Mechanism (`wire-check-gate.sh` PreToolUse on plan-file Edit/Write).
+
+**Why this rule exists.** "Tests pass" is the easiest exit for an LLM builder; "the user-observable integration actually fires" is the bar. Builders ship code that compiles and unit tests that pass while the wires between components silently never get connected — Goodhart's law applied to the verification surface. The existing `Verification: full` declaration says "this task carries integration risk"; this rule operationalizes what that declaration means by requiring the plan to declare a STATICALLY-VERIFIABLE chain and running a mechanical chain check on every task completion.
+
+### Two verification modes (composed, not alternatives)
+
+1. **STATIC TRACE — mandatory, always runs.** At every checkbox flip, the gate parses the plan task's `**Wire checks:**` block and verifies the declared code chain exists at the source level: every backtick-quoted file path exists relative to repo root, and every backtick-quoted non-file token (function name, SQL fragment, API route) appears in at least one of the linked files. The chain is a `grep`-checkable sequence of arrows: `src/components/X.tsx` → `/api/y` → `src/lib/y.ts:yHandler` → `INSERT INTO z`. Static trace catches "built but not wired" (renamed function, moved endpoint, deleted import, broken refactor) WITHOUT needing a running server. It is the regression detector: a future commit that breaks a chain link is caught at the NEXT task completion because the broken arrow grep-misses.
+
+2. **RUNTIME TEST — additive, logged when available.** When a running instance was used to exercise the "Prove it works" scenario, the builder captures the evidence either as a prose `Wire check executed:` block in `<plan>-evidence.md` OR as a structured `<plan-slug>-evidence/<task-id>.evidence.json` artifact (runtime_evidence + passed mechanical_check). The gate logs the runtime evidence as additive proof but does NOT require it. Static trace alone is sufficient to allow the flip.
+
+Static trace is the baseline; runtime is the bonus. Both run when possible, static always runs regardless. This way the gate also acts as a regression detector — if a future commit breaks a chain, the next task completion in the same plan catches it.
+
+### The plan-time contract
+
+Every task whose `Verification:` level is `full` (or unmarked, which defaults to full) MUST have these three sub-blocks directly under the task line:
+
+1. **`**Prove it works:**`** — a numbered multi-step scenario a real user takes. NOT "tests pass." Concrete UI clicks, API calls, DB queries with real values. Minimum 2 numbered steps; ≥ 30 chars substantive content.
+2. **`**Wire checks:**`** — declared code chain in `→` arrow notation. Each arrow line MUST contain at least one backtick-quoted file path that exists relative to repo root. Additional backtick-quoted tokens (function names, SQL fragments, string literals, API routes) are cross-checked: each must appear via `grep -F` in at least one of the file paths on the SAME arrow. Minimum 2 statically-verifiable arrows. OR the carve-out path: `- n/a — <reason ≥ 30 chars>` for tasks with genuinely no code chain (pure-config change, no-UI task promoted to full for runtime-significance reasons).
+3. **`**Integration points:**`** — every other component this task must integrate with, and a concrete `curl` / `psql` / `playwright` / log-grep command that verifies the interface. If the task is genuinely standalone: `Integration points: n/a — standalone task with no cross-component coupling.`
+
+Tasks declaring `Verification: mechanical` or `Verification: contract` are exempt — those levels are reserved for deterministic structural work where the mechanical-evidence substrate attests correctness, and no runtime integration claim is being made.
+
+### Plan-time enforcement (Check 13)
+
+`plan-reviewer.sh` Check 13 scans every checkbox line under any `## Tasks` heading. For each line that EITHER declares `Verification: full` explicitly OR is unmarked AND contains a Tier A runtime keyword (page, route, button, form, webhook, cron, endpoint, API, migration, RLS policy, auth flow), the check verifies:
+
+- All three sub-blocks exist with ≥ 30 chars substantive non-placeholder content
+- `**Prove it works:**` has numbered steps (1., 2., ...)
+- `**Wire checks:**` has either (a) ≥ 2 arrow lines each containing at least one backtick-quoted path containing `/` (statically-verifiable chain), OR (b) the carve-out line `- n/a — <reason ≥ 30 chars>`
+- `**Integration points:**` has content OR the canonical carve-out
+
+Mechanical and contract tasks are skipped. Findings are emitted per-task, naming each missing or substandard sub-block.
+
+### Build-time enforcement (wire-check-gate.sh)
+
+When the plan-file checkbox is about to flip (Edit tool with `- [ ]` → `- [x]`), `wire-check-gate.sh` runs as a PreToolUse hook. For tasks subject to the gate (Verification: full and a `**Prove it works:**` sub-block exists in the plan), the gate:
+
+1. Resolves the repo root from the plan file's directory via `git rev-parse --show-toplevel` (with `.git`-search fallback).
+2. Parses the `**Wire checks:**` block. If a `- n/a — <reason ≥ 30 chars>` carve-out is present, static trace is skipped (with an audit-log line emitted to stderr).
+3. Runs static trace: for each `→` arrow line, classifies backtick-quoted tokens as either file-paths-relative-to-repo-root or non-file-identifiers (anything starting with `/` is treated as an API route / URL path, NOT a file path), verifies each file path exists, and for each non-file token grep-verifies it appears in at least one of the file paths on the same arrow.
+4. Decision:
+   - Any arrow with a missing file or unresolved cross-reference token → BLOCK with specifics (which file is missing OR which token isn't found in which file).
+   - Fewer than 2 verified arrows AND no carve-out → BLOCK (the chain is too thin to detect breakage).
+   - ≥ 2 verified arrows → static trace PASS; emit `[wire-check] static trace PASS — N arrow(s) verified` to stderr.
+5. Look for additive runtime evidence (prose `Wire check executed:` block in `<plan>-evidence.md`, OR structured `.evidence.json` with runtime_evidence + passed mechanical_check). When found, emit `[wire-check] runtime evidence (additive): <path>` to stderr. Never required.
+6. ALLOW the flip.
+
+### Builder discipline (`plan-phase-builder` agent)
+
+Builders receive the three sub-blocks in their dispatch prompt. The agent's `## Integration verification` section codifies:
+
+- Read the sub-blocks first — they are the real `Done when:` criteria.
+- Build such that the declared chain holds at the source level. Static trace will verify every backtick-quoted file path exists and every identifier appears in the linked file.
+- When a running instance is available, execute the "Prove it works" scenario and capture the output in `<plan>-evidence.md` under `Wire check executed:`. This is additive evidence, not required for the gate to allow the flip, but valuable because it transforms the chain from "links exist" to "behavior verified."
+- If you refactor a chain mid-build (rename a function, move an endpoint), UPDATE the plan's Wire checks block in the same commit. The gate will block the flip otherwise.
+- If a sub-block is missing in the dispatched plan, return BLOCKED — don't silently patch the plan; that defeats the plan-time author check.
+- Don't promote a runtime task to `Verification: mechanical` to dodge the requirement. Surface BLOCKED instead.
+
+### When the rule applies
+
+Any task that touches a runtime surface (UI route, API endpoint, webhook, scheduled job, migration, auth flow) is subject. Pure refactors, doc-only changes, and harness-internal mechanical work are exempt via the `Verification: mechanical` declaration.
+
+### Cross-references
+
+- Template: `~/.claude/templates/plan-template.md` documents the per-task sub-block format with a worked example including the backtick-quoted file paths the gate parses.
+- Builder agent: `~/.claude/agents/plan-phase-builder.md` "Integration verification" section.
+- Plan-time validator: `~/.claude/hooks/plan-reviewer.sh` Check 13. Self-test with `--self-test` (scenarios iv1-iv7).
+- Build-time gate: `~/.claude/hooks/wire-check-gate.sh` (static trace + additive runtime). Self-test with `--self-test` (scenarios w1-w9).
+- Wired in PreToolUse Edit/Write/MultiEdit chain in `~/.claude/settings.json` after `plan-edit-validator.sh`.
+- Composes with the risk-tiered Verification field (`~/.claude/rules/risk-tiered-verification.md`).
+
 ## How multi-task plans execute: orchestrator pattern
 
 **For any plan with more than one task, the main session orchestrates and dispatches build work to `plan-phase-builder` sub-agents — it does NOT do the build work itself.** This keeps the main session's context from accumulating 200+ tool uses of raw build detail across a long plan, which is a quality-of-life improvement for extended autonomous work. (Historical note: the 2026-04-14 vaporware failures were caused by self-enforcement gaps in verification, not by context accumulation — those are addressed by the hook-enforced Gen 4 mechanisms. The orchestrator pattern is a separate improvement.)

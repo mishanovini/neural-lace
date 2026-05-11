@@ -44,6 +44,49 @@ This reframing exists because the natural LLM completion signal ("the orchestrat
 - **Dispatch mode** — either SERIAL or PARALLEL (see next section)
 - **The plan's `## Acceptance Scenarios` section verbatim** (when the plan has one) — see "Acceptance scenarios — what you see, what you don't" below
 
+## Integration verification — required for every `Verification: full` task
+
+Every task whose `Verification:` level is `full` (or unmarked, which defaults to full) MUST have three sub-blocks under the task line in the plan file:
+
+1. **`**Prove it works:**`** — a numbered multi-step scenario you (or a user) would execute against the running app to demonstrate the user-observable outcome. NOT "tests pass." Concrete UI clicks, API calls, DB queries with real values.
+2. **`**Wire checks:**`** — declared code chain in `→` arrow notation, with at least one backtick-quoted file path per arrow. Each arrow declares a link in the chain (UI component → API endpoint → handler → DB → response → UI). The harness's wire-check-gate runs a **static trace** on every task completion — it parses each arrow, verifies the files exist relative to repo root, and grep-verifies each backtick-quoted identifier appears in the linked file. This catches "built but not wired" without needing a running server.
+3. **`**Integration points:**`** — every other component this task must integrate with, and a concrete `curl` / `psql` / `playwright` / log-grep command that verifies the interface.
+
+### Two modes the wire-check-gate runs
+
+- **STATIC TRACE (always runs).** The gate parses your plan task's Wire checks block at checkbox-flip time. For each `→` arrow line, it checks that every backtick-quoted file path exists relative to the repo root AND every other backtick-quoted token appears (via `grep -F`) in at least one of those files. If a file is missing, or an identifier doesn't appear in the linked file (renamed function, moved endpoint, deleted import), the gate BLOCKS the flip with the specific broken link.
+- **RUNTIME EVIDENCE (additive).** When you have a running instance and execute the "Prove it works" scenario, capture the output in `<plan>-evidence.md` under `Wire check executed:` (or as a structured `<plan-slug>-evidence/<task-id>.evidence.json` artifact with `runtime_evidence` + a passing `mechanical_checks` entry). The gate logs this as additive proof but does NOT require it. Static trace alone is sufficient to allow the flip.
+
+### Your duty before building
+
+- **Read these sub-blocks first.** They are your real `Done when:` — they describe the user-observable outcome you must produce AND the code-level chain you must build.
+- **Build such that the declared chain holds at the source level.** Every backtick-quoted file path in Wire checks must exist by the time you commit. Every backtick-quoted identifier must appear in the linked file. This is the static-trace contract — the gate parses it and runs it on every flip.
+- **If any sub-block is missing, empty, or placeholder-only (e.g., `[populate me]`, `TODO`, single-line vacuous content), return BLOCKED.** Do not silently fix the plan; plan-reviewer Check 13 should have caught it. If it didn't, escalating it is how it gets fixed at the right layer.
+- **Do not invent your own scenario** to unblock yourself. Scenarios are a plan-time contract; the static-trace identifiers were chosen by the planner to match the expected code shape. Inventing your own defeats the structural intent.
+
+### Your duty during build
+
+- **If you refactor a chain link mid-build** (rename a function, move an endpoint, delete an import that the chain referenced), UPDATE the plan's Wire checks block in the same commit. The static trace runs at flip time and will detect the mismatch otherwise.
+- **When a running instance is available, execute the "Prove it works" scenario** and capture the runtime evidence (additive). This transforms the chain from "links exist" to "behavior verified." Capture in `<plan>-evidence.md` under `Wire check executed:`.
+- **For each integration point, run the verification command and capture its output.** A passing `curl` is evidence the contract holds; a passing component-level unit test is not.
+
+### Why static trace catches what tests miss
+
+Unit tests typically mock at the seam between components — exactly the seam where "built but not wired" happens. The mock makes the test pass even when the real wire is severed. Static trace doesn't run the code; it asserts that the chain of identifiers the plan declared still exists at the source level. This catches:
+
+- A function that was renamed in `src/lib/foo.ts` but the caller in `src/components/Foo.tsx` still references the old name.
+- An API endpoint that was moved from `/api/foo` to `/api/v2/foo` but the component still posts to the old path.
+- An import that was deleted because "tests pass without it" but the runtime path actually needed it.
+- A SQL identifier that was changed (table renamed, column dropped) but a handler still references the old name in a string literal.
+
+None of those need a running server. Both pure-grep mechanics and a plan-declared chain are sufficient.
+
+### For `Verification: mechanical` or `Verification: contract` tasks
+
+The integration verification sub-blocks are optional. Those levels are reserved for deterministic structural work where mechanical checks attest correctness; no runtime integration is being claimed. The gate exits silently for those tasks.
+
+If you are tempted to promote a runtime task to `Verification: mechanical` to dodge the integration-verification requirement: that's the exact failure mode the gate exists to prevent. Surface to the orchestrator as BLOCKED with the specific reason ("task X needs a real wire check but the chain link `src/lib/foo.ts` is missing") rather than narrowing the verification level.
+
 ## Acceptance scenarios — what you see, what you don't
 
 The orchestrator will (when the plan has them) include the plan's `## Acceptance Scenarios` section verbatim in your dispatch prompt. These are the user flows the build must make work. The end-user-advocate will execute these flows against the running app in a fresh sub-agent session before this session can end. **You will not see the exact runtime assertions.** Build such that the scenarios work for the actual user trying to accomplish them — not such that a specific assertion string is satisfied.

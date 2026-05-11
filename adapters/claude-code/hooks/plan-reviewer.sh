@@ -974,6 +974,130 @@ CHECK15_MID
     echo "self-test (vd3) check12-illegal-level-rejected: FAIL (expected)" >&2
   fi
 
+  # ============================================================
+  # Check 13 scenarios (iv1, iv2, iv3, iv4, iv5) — integration
+  # verification sub-blocks (2026-05-11)
+  # ============================================================
+  #
+  # (iv1) Full-level task WITH all three sub-blocks substantive — PASS
+  # (iv2) Full-level task MISSING "Prove it works" sub-block — FAIL
+  # (iv3) Full-level task with placeholder-only Wire checks — FAIL
+  # (iv4) Mechanical-level runtime task (Tier A keyword) — PASS (exempt)
+  # (iv5) Unmarked non-runtime task (no Tier A keyword) — PASS (exempt)
+
+  write_check15_plan "$TMPDIR_SELFTEST/iv1.md" \
+'- [ ] 1. Build the campaign duplicate button end-to-end — Verification: full
+  **Prove it works:**
+  1. Open /campaigns in the browser as a logged-in Manager.
+  2. Click the Duplicate button on the first campaign row.
+  3. Confirm a new row appears at top with name suffix "(Copy)".
+  **Wire checks:**
+  - `src/components/CampaignList.tsx` button → POST `/api/campaigns/duplicate`
+  - `src/app/api/campaigns/duplicate/route.ts` → `duplicateCampaign` in `src/lib/campaigns.ts`
+  - `src/lib/campaigns.ts` → `INSERT INTO campaigns`
+  **Integration points:**
+  - /api/campaigns/duplicate endpoint — verify with curl POST returns 200 + JSON.
+  - campaigns table schema — verify name column accepts (Copy) suffix.' \
+    "- [ ] Integration verified."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/iv1.md" > /dev/null 2>&1; then
+    echo "self-test (iv1) check13-full-task-with-all-subblocks: PASS (expected)" >&2
+  else
+    echo "self-test (iv1) check13-full-task-with-all-subblocks: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/iv1.md" >&2 || true
+    FAILED=1
+  fi
+
+  write_check15_plan "$TMPDIR_SELFTEST/iv2.md" \
+'- [ ] 1. Build the campaign duplicate button end-to-end — Verification: full
+  **Wire checks:**
+  - `src/components/CampaignList.tsx` button → POST `/api/campaigns/duplicate`
+  - `src/app/api/campaigns/duplicate/route.ts` → `duplicateCampaign` in `src/lib/campaigns.ts`
+  **Integration points:**
+  - /api/campaigns/duplicate endpoint — verify with curl POST returns 200.' \
+    "- [ ] Integration verified."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/iv2.md" > /dev/null 2>&1; then
+    echo "self-test (iv2) check13-missing-prove-it-works: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (iv2) check13-missing-prove-it-works: FAIL (expected)" >&2
+  fi
+
+  write_check15_plan "$TMPDIR_SELFTEST/iv3.md" \
+'- [ ] 1. Build the campaign duplicate button end-to-end — Verification: full
+  **Prove it works:**
+  1. Open /campaigns in the browser as a logged-in Manager.
+  2. Click Duplicate on the first row and confirm the copy appears.
+  **Wire checks:**
+  [populate me]
+  **Integration points:**
+  - /api/campaigns/duplicate endpoint — verify via curl returns 200.' \
+    "- [ ] Integration verified."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/iv3.md" > /dev/null 2>&1; then
+    echo "self-test (iv3) check13-placeholder-wire-checks: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (iv3) check13-placeholder-wire-checks: FAIL (expected)" >&2
+  fi
+
+  write_check15_plan "$TMPDIR_SELFTEST/iv4.md" \
+    "- [ ] 1. Add new column to org_settings via migration — Verification: mechanical" \
+    "- [ ] Schema applied."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/iv4.md" > /dev/null 2>&1; then
+    echo "self-test (iv4) check13-mechanical-level-runtime-exempt: PASS (expected)" >&2
+  else
+    echo "self-test (iv4) check13-mechanical-level-runtime-exempt: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  write_check15_plan "$TMPDIR_SELFTEST/iv5.md" \
+    "- [ ] 1. Refactor a single helper module to use the new pattern." \
+    "- [ ] Refactor complete."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/iv5.md" > /dev/null 2>&1; then
+    echo "self-test (iv5) check13-no-runtime-keyword-unmarked-exempt: PASS (expected)" >&2
+  else
+    echo "self-test (iv5) check13-no-runtime-keyword-unmarked-exempt: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # (iv6) Carve-out in Wire checks (>= 30-char reason) — PASS
+  write_check15_plan "$TMPDIR_SELFTEST/iv6.md" \
+'- [ ] 1. Bump vercel.json build command to use Node 20 for the cron endpoint — Verification: full
+  **Prove it works:**
+  1. Trigger the cron endpoint via gh workflow run.
+  2. Confirm logs show Node 20 in the runtime line.
+  **Wire checks:**
+  - n/a — config-only task affecting build runtime; no UI→DB code chain.
+  **Integration points:**
+  - n/a — standalone configuration task.' \
+    "- [ ] Config applied."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/iv6.md" > /dev/null 2>&1; then
+    echo "self-test (iv6) check13-wire-checks-carveout-passes: PASS (expected)" >&2
+  else
+    echo "self-test (iv6) check13-wire-checks-carveout-passes: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/iv6.md" >&2 || true
+    FAILED=1
+  fi
+
+  # (iv7) Wire checks has arrows but NO backtick file paths — FAIL
+  write_check15_plan "$TMPDIR_SELFTEST/iv7.md" \
+'- [ ] 1. Build the campaign duplicate button end-to-end — Verification: full
+  **Prove it works:**
+  1. Open /campaigns in the browser as a logged-in Manager.
+  2. Click Duplicate on the first row and confirm the copy appears.
+  **Wire checks:**
+  - Click Duplicate button → POST /api/campaigns/duplicate fires
+  - API → INSERT into campaigns table
+  - 200 response → list refetches
+  **Integration points:**
+  - /api/campaigns/duplicate endpoint — verify via curl returns 200.' \
+    "- [ ] Integration verified."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/iv7.md" > /dev/null 2>&1; then
+    echo "self-test (iv7) check13-wire-checks-no-backtick-paths-rejected: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (iv7) check13-wire-checks-no-backtick-paths-rejected: FAIL (expected)" >&2
+  fi
+
   if [[ $FAILED -eq 0 ]]; then
     echo "plan-reviewer --self-test: all scenarios matched expectations" >&2
     exit 0
@@ -1171,9 +1295,18 @@ while IFS= read -r task_match; do
   [[ -z "$task_match" ]] && continue
   ln=$(echo "$task_match" | cut -d: -f1)
   task_text=$(echo "$task_match" | cut -d: -f2-)
+  # Exempt tasks declaring Verification: mechanical or Verification: contract.
+  # Those levels are reserved for deterministic structural work where the
+  # mechanical-evidence substrate attests correctness — no runtime spec is
+  # claimed and Check 5 should respect that. Check 12 enforces the level
+  # token is one of the legal values; Check 13 verifies full-level tasks
+  # carry the integration-verification sub-blocks.
+  if echo "$task_text" | grep -qE 'Verification:[[:space:]]+(mechanical|contract)\b'; then
+    continue
+  fi
   # Look at the next 10 lines for test spec language
   context=$(sed -n "$ln,$((ln+10))p" "$PLAN_FILE")
-  if ! echo "$context" | grep -qiE 'Test(\s*file)?:|Runtime verification:|tests/[a-z]+/[a-z]'; then
+  if ! echo "$context" | grep -qiE 'Test(\s*file)?:|Runtime verification:|tests/[a-z]+/[a-z]|\*\*Prove it works:\*\*'; then
     UNSPEC_RUNTIME+="    line $ln: $(echo "$task_text" | head -c 80)"$'\n'
     UNSPEC_COUNT=$((UNSPEC_COUNT + 1))
   fi
@@ -1194,6 +1327,11 @@ while IFS= read -r task_match; do
     continue
   fi
 
+  # Same Verification: mechanical/contract exemption applies to Tier B.
+  if echo "$task_text" | grep -qE 'Verification:[[:space:]]+(mechanical|contract)\b'; then
+    continue
+  fi
+
   # Adjacency check: does the same line OR the next line contain a
   # database / runtime context token?
   same_line="$task_text"
@@ -1206,7 +1344,7 @@ while IFS= read -r task_match; do
 
   # Look at the next 10 lines for test spec language
   context=$(sed -n "$ln,$((ln+10))p" "$PLAN_FILE")
-  if ! echo "$context" | grep -qiE 'Test(\s*file)?:|Runtime verification:|tests/[a-z]+/[a-z]'; then
+  if ! echo "$context" | grep -qiE 'Test(\s*file)?:|Runtime verification:|tests/[a-z]+/[a-z]|\*\*Prove it works:\*\*'; then
     UNSPEC_RUNTIME+="    line $ln: $(echo "$task_text" | head -c 80)"$'\n'
     UNSPEC_COUNT=$((UNSPEC_COUNT + 1))
   fi
@@ -1881,6 +2019,200 @@ if [[ -n "$VERIFICATION_LINES" ]]; then
       add_finding "Check 12 (risk-tiered verification): line $vln declares 'Verification: $vlevel' but the only legal levels are: mechanical, full, contract (case-sensitive, lowercase). See ~/.claude/rules/risk-tiered-verification.md."
     fi
   done <<< "$VERIFICATION_LINES"
+fi
+
+# ============================================================
+# Check 13 (2026-05-11): Integration verification for full-level tasks
+# ============================================================
+#
+# Every task whose `Verification:` level is `full` (or unmarked, defaulting
+# to `full`) MUST declare three integration-verification sub-blocks
+# directly under the task line in the `## Tasks` section:
+#
+#   **Prove it works:**     — a multi-step scenario the builder will execute
+#                              against the running app (≥ 2 numbered steps)
+#   **Wire checks:**        — explicit verify steps in arrow notation
+#                              (click → API → DB → UI), ≥ 1 entry
+#   **Integration points:** — components this task integrates with + how
+#                              to verify, ≥ 1 entry OR the canonical
+#                              "n/a — standalone task" carve-out
+#
+# Rationale: tasks ship with code that compiles and tests that pass while
+# the actual user-observable integration silently never gets wired
+# (Goodhart-pattern: "tests pass" is the easiest exit, not the
+# user-observable outcome). The wire-check-gate.sh PreToolUse hook
+# verifies the scenario was EXECUTED at checkbox-flip time; this Check 13
+# verifies the scenario was AUTHORED at plan-creation time. Both layers
+# are required: without the plan-time author check, builders are blocked
+# at flip time by a gate whose contract they cannot satisfy.
+#
+# Scope: tasks under any heading whose title contains "Task". A task is
+# considered runtime-bearing (and therefore subject to Check 13) when
+# EITHER:
+#   (a) its line explicitly declares `Verification: full`, OR
+#   (b) it has no `Verification:` field AND contains at least one
+#       Tier A runtime keyword (the same Tier A list Check 5 uses)
+#
+# Tasks declaring `Verification: mechanical` or `Verification: contract`
+# are exempt — those levels are reserved for deterministic structural
+# work with no integration claim.
+#
+# Substance: each sub-block must have ≥ 30 non-whitespace chars of
+# non-placeholder content (mirrors Check 6b + Check 11 substance bars).
+
+CHECK13_FINDINGS=""
+CHECK13_RUNTIME_KEYWORDS='(\b(page|route|button|form|webhook|cron|scheduled|endpoint|API|migration|RLS[[:space:]]+policy|auth[[:space:]]+flow)\b)'
+
+# Collect every task-checkbox line under a Task-class heading along with
+# its line number. We then post-process each to decide if it's subject to
+# Check 13 and to extract its three required sub-blocks.
+ALL_TASK_LINES=$(awk '
+  BEGIN { in_tasks_section = 0 }
+  /^## / {
+    title = $0
+    sub(/^## +/, "", title)
+    if (tolower(title) ~ /task/) {
+      in_tasks_section = 1
+    } else {
+      in_tasks_section = 0
+    }
+    next
+  }
+  in_tasks_section && /^- \[[ xX]\]/ {
+    print NR ":" $0
+  }
+' "$PLAN_FILE" 2>/dev/null || true)
+
+while IFS= read -r task_line; do
+  [[ -z "$task_line" ]] && continue
+  task_ln=$(echo "$task_line" | cut -d: -f1)
+  task_text=$(echo "$task_line" | cut -d: -f2-)
+
+  # Determine the task's Verification level (default full).
+  vlevel=""
+  if echo "$task_text" | grep -qE 'Verification:[[:space:]]+(mechanical|full|contract)\b'; then
+    vlevel=$(echo "$task_text" | sed -nE 's/.*Verification:[[:space:]]+(mechanical|full|contract).*/\1/p' | head -1)
+  fi
+
+  # Exempt mechanical / contract tasks
+  if [[ "$vlevel" == "mechanical" ]] || [[ "$vlevel" == "contract" ]]; then
+    continue
+  fi
+
+  # If unmarked and no runtime keyword, treat as non-integration-bearing
+  if [[ -z "$vlevel" ]] && ! echo "$task_text" | grep -qE "$CHECK13_RUNTIME_KEYWORDS"; then
+    continue
+  fi
+
+  # Extract the task body: lines after the task line up to the next
+  # checkbox line at the same indent OR the next `## ` heading OR EOF.
+  task_body=$(awk -v start="$task_ln" '
+    NR == start { next }
+    NR > start {
+      if ($0 ~ /^## /) exit
+      if ($0 ~ /^- \[[ xX]\]/) exit
+      print
+    }
+  ' "$PLAN_FILE" 2>/dev/null)
+
+  # Helper: extract one sub-block's body from $task_body. Returns the
+  # lines between `**<heading>:**` and the next `**<heading>:**` or EOB.
+  extract_subblock() {
+    local heading="$1"
+    printf '%s\n' "$task_body" | awk -v h="$heading" '
+      BEGIN { in_block = 0 }
+      {
+        if ($0 ~ "^[[:space:]]*\\*\\*" h ":\\*\\*") { in_block = 1; next }
+        if (in_block && $0 ~ /^[[:space:]]*\*\*[A-Za-z][^*]+:\*\*/) { exit }
+        if (in_block) print
+      }
+    '
+  }
+
+  # Substance check: return 0 (true) if body has >= 30 non-ws chars and
+  # is not solely placeholder.
+  is_substantive() {
+    local body="$1"
+    local non_ws
+    non_ws=$(printf '%s' "$body" | tr -d '[:space:]' | wc -c | tr -cd '[:digit:]')
+    non_ws=${non_ws:-0}
+    if [[ $non_ws -lt 30 ]]; then return 1; fi
+    # Strip common placeholder tokens; if nothing substantive remains, fail.
+    local normalized
+    normalized=$(printf '%s' "$body" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
+    for pat in '\[populate me\]' '\[todo\]' '\btodo\b' 'n/a' 'tbd'; do
+      normalized=$(printf '%s' "$normalized" | sed -E "s|${pat}||g")
+    done
+    normalized=$(printf '%s' "$normalized" | sed -E 's|[[:space:]]*[-*][[:space:]]*||g; s|[][(){}:;,.!?"`'"'"']||g')
+    normalized=$(printf '%s' "$normalized" | tr -d '[:space:]')
+    [[ -n "$normalized" ]]
+  }
+
+  task_id=$(echo "$task_text" | sed -nE 's/^- \[[ xX]\][[:space:]]+([A-Z0-9]+(\.[0-9]+)*)\.?.*/\1/p' | head -1)
+  task_id_display="${task_id:-line $task_ln}"
+
+  # Prove it works
+  prove_body=$(extract_subblock "Prove it works")
+  if [[ -z "$(printf '%s' "$prove_body" | tr -d '[:space:]')" ]]; then
+    CHECK13_FINDINGS+="    - Task $task_id_display: missing '**Prove it works:**' sub-block (line $task_ln). Required for every Verification: full task. See ~/.claude/rules/planning.md 'Integration Verification'."$'\n'
+  elif ! is_substantive "$prove_body"; then
+    CHECK13_FINDINGS+="    - Task $task_id_display: '**Prove it works:**' is empty / placeholder / too short (< 30 chars substantive content). Provide >= 2 numbered scenario steps a real user would take."$'\n'
+  elif ! printf '%s' "$prove_body" | grep -qE '^[[:space:]]*[12]\.' ; then
+    CHECK13_FINDINGS+="    - Task $task_id_display: '**Prove it works:**' must contain numbered steps (1., 2., ...). Found prose without numbered steps."$'\n'
+  fi
+
+  # Wire checks — must be statically traceable for wire-check-gate static trace.
+  # Either: (a) the carve-out line `n/a — <reason >= 30 chars>` for tasks with
+  # no code chain, OR (b) at least 2 arrow lines, each containing at least one
+  # backtick-quoted token that is parseable as a file path (contains `/`).
+  wire_body=$(extract_subblock "Wire checks")
+  if [[ -z "$(printf '%s' "$wire_body" | tr -d '[:space:]')" ]]; then
+    CHECK13_FINDINGS+="    - Task $task_id_display: missing '**Wire checks:**' sub-block (line $task_ln). Required: at least 2 arrow lines with backtick-quoted file paths (UI → API → DB → UI). Or the carve-out 'n/a — <reason>'."$'\n'
+  elif ! is_substantive "$wire_body"; then
+    CHECK13_FINDINGS+="    - Task $task_id_display: '**Wire checks:**' is empty / placeholder / too short. Document each arrow (\`src/file.tsx\` → \`src/other.ts\`) where wiring can break silently."$'\n'
+  else
+    # Check for carve-out path (Wire checks: n/a — <reason ≥ 30 chars>)
+    carveout_line=$(printf '%s' "$wire_body" | grep -iE '^[[:space:]]*-[[:space:]]+n/a[[:space:]]+(—|--)' | head -1)
+    if [[ -n "$carveout_line" ]]; then
+      carveout_reason=$(printf '%s' "$carveout_line" | sed -E 's/^[[:space:]]*-[[:space:]]+n\/a[[:space:]]+(—|--)[[:space:]]*//')
+      carveout_non_ws=$(printf '%s' "$carveout_reason" | tr -d '[:space:]' | wc -c | tr -cd '[:digit:]')
+      carveout_non_ws=${carveout_non_ws:-0}
+      if [[ $carveout_non_ws -lt 30 ]]; then
+        CHECK13_FINDINGS+="    - Task $task_id_display: '**Wire checks:**' uses carve-out 'n/a — <reason>' but reason is < 30 chars. Justify why no UI→DB chain applies to this task."$'\n'
+      fi
+    else
+      # Normal path: count arrow lines containing at least one backtick path
+      verifiable_arrows=0
+      while IFS= read -r ar_line; do
+        if printf '%s' "$ar_line" | grep -qE '(→|->)'; then
+          # Look for at least one backtick-quoted token containing '/'
+          if printf '%s' "$ar_line" | grep -qE '`[^`]*/[^`]+`'; then
+            verifiable_arrows=$((verifiable_arrows + 1))
+          fi
+        fi
+      done <<< "$wire_body"
+
+      if [[ $verifiable_arrows -lt 2 ]]; then
+        if ! printf '%s' "$wire_body" | grep -qE '(→|->)'; then
+          CHECK13_FINDINGS+="    - Task $task_id_display: '**Wire checks:**' contains no '→' (or '->') arrows. Required: at least 2 arrow lines with backtick-quoted file paths."$'\n'
+        else
+          CHECK13_FINDINGS+="    - Task $task_id_display: '**Wire checks:**' has $verifiable_arrows arrow(s) with backtick-quoted file paths; need >= 2 for the static-trace gate to verify the chain. Format example: '- \`src/components/Foo.tsx\` button → POST \`/api/foo/bar\`' where backtick tokens with '/' identify code chain elements."$'\n'
+        fi
+      fi
+    fi
+  fi
+
+  # Integration points
+  integ_body=$(extract_subblock "Integration points")
+  if [[ -z "$(printf '%s' "$integ_body" | tr -d '[:space:]')" ]]; then
+    CHECK13_FINDINGS+="    - Task $task_id_display: missing '**Integration points:**' sub-block (line $task_ln). Required: list every component this integrates with + how to verify, OR state 'n/a — standalone task' with one-line justification."$'\n'
+  elif ! is_substantive "$integ_body"; then
+    CHECK13_FINDINGS+="    - Task $task_id_display: '**Integration points:**' is empty / placeholder / too short. Either list integration points with verify commands, or use the canonical carve-out 'n/a — standalone task with no cross-component coupling'."$'\n'
+  fi
+done <<< "$ALL_TASK_LINES"
+
+if [[ -n "$CHECK13_FINDINGS" ]]; then
+  add_finding "Check 13 (integration verification): one or more Verification: full tasks lack required integration-verification sub-blocks:"$'\n'"$CHECK13_FINDINGS"
 fi
 
 # ============================================================

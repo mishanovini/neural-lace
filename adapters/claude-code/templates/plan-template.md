@@ -256,6 +256,91 @@ Format examples:
   - [ ] 2. Migrate the doctrine docs to canonical glossary — Verification: contract
   - [ ] 3. Implement the runtime feature end-to-end — Verification: full
   - [ ] 4. Legacy task without declaration   (defaults to full)
+
+INTEGRATION VERIFICATION — REQUIRED FOR EVERY `Verification: full` TASK
+(or unmarked task, which defaults to full).
+
+Every full-level task MUST include three sub-blocks immediately under the
+task line, each populated with substantive task-specific content. The
+plan-reviewer.sh Check 13 enforces presence + substance; the
+wire-check-gate.sh PreToolUse hook blocks checkbox flip unless the
+session's evidence file shows the "Prove it works" scenario was actually
+executed.
+
+  - [ ] 1. Build the campaign duplicate flow end-to-end — Verification: full
+    **Prove it works:**
+    1. Open /campaigns in the browser as a logged-in Manager
+    2. Click the Duplicate button on the first campaign row
+    3. Confirm a new row appears at the top with suffix "(Copy)"
+    4. Confirm the original campaign is unchanged
+    5. Reload the page and confirm the duplicate persists
+    **Wire checks:**
+    - `src/components/CampaignList.tsx` `Duplicate` button → `POST /api/campaigns/duplicate`
+    - `src/app/api/campaigns/duplicate/route.ts` → imports `duplicateCampaign` from `src/lib/campaigns.ts`
+    - `src/lib/campaigns.ts` `duplicateCampaign` function → `INSERT INTO campaigns` SQL
+    - `src/app/api/campaigns/duplicate/route.ts` JSON response → `src/components/CampaignList.tsx` calls `setCampaigns`
+    **Integration points:**
+    - /api/campaigns/duplicate endpoint (Task 2 prerequisite) — verify with `curl -X POST /api/campaigns/duplicate -d '{"id":<existing>}'` returns 200 + JSON `{id, name}`
+    - campaigns table schema — verify `name` column accepts suffix without unique-constraint violation
+    - If the task is standalone (no integration dependencies), state explicitly: "Integration points: n/a — standalone task with no cross-component coupling."
+
+WIRE CHECKS FORMAT — load-bearing for static trace verification.
+
+Each `→` arrow line in the Wire checks block declares ONE link in the
+code-level chain (UI → API → business logic → DB → response → UI). The
+wire-check-gate runs a STATIC TRACE on every task completion: it
+parses each arrow, extracts backtick-quoted file paths and other
+identifiers, verifies the files exist, and grep-verifies each non-file
+token appears in at least one of the linked files. This catches the
+"built but not wired" failure mode (renamed function, moved endpoint,
+deleted import) without running the app.
+
+Format rules:
+- Each arrow line MUST contain at least one backtick-quoted file path
+  that exists relative to the repo root.
+- Additional backtick-quoted tokens (function names, SQL fragments,
+  string literals, API routes) are cross-checked: each must appear
+  via `grep -F` in at least one of the file paths on the SAME arrow.
+- An identifier appearing only in prose between arrows is decorative —
+  only backtick-quoted tokens are checked.
+- Minimum 2 statically-verifiable arrow lines per task. Below that,
+  the chain is too thin to detect breakage.
+
+Carve-out (use sparingly — only for tasks with genuinely no code chain
+to trace, e.g., a pure-config change to vercel.json, a comment-only
+docs update promoted to full for runtime-significance reasons):
+
+  **Wire checks:**
+  - n/a — <one-sentence justification ≥ 30 chars explaining why no
+    UI→DB chain applies to this task>
+
+The static trace runs every time — that is the point. Even if no live
+server is available to exercise the "Prove it works" scenario at task
+completion, the gate still verifies the chain exists at the source level.
+A future commit that breaks a chain link (renames a function, moves an
+endpoint, deletes an import) is caught at the NEXT task completion
+because the broken arrow grep-misses.
+
+Runtime evidence (an actually-executed "Prove it works" scenario captured
+in the evidence file or structured `.evidence.json` artifact) is
+ADDITIVE: when present, the gate logs it as a stronger proof, but does
+NOT require it. Static trace is the mandatory baseline; runtime is the
+bonus when a running instance is available.
+
+Each sub-block is mandatory; an empty or placeholder-only sub-block FAILS
+Check 13. For tasks with `Verification: mechanical` or
+`Verification: contract` (deterministic structural work — file edits,
+schema authoring, doc migrations), the sub-blocks may be omitted.
+
+If the work genuinely has no integration surface (pure refactor that
+preserves all behavior, doc-only change marked Verification: mechanical,
+etc.), promote the task to mechanical/contract level rather than
+papering over the integration verification with placeholders.
+
+See ~/.claude/rules/planning.md "Integration Verification — Every
+Full-Level Task Must Prove It Works" for the full rule and the
+~/.claude/hooks/wire-check-gate.sh self-test for worked PASS/FAIL
+fixtures.
 -->
 
 - [ ] 1. [First task — specific enough to verify completion]
