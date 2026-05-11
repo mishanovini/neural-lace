@@ -275,13 +275,57 @@ executed.
     4. Confirm the original campaign is unchanged
     5. Reload the page and confirm the duplicate persists
     **Wire checks:**
-    - Click "Duplicate" button → POST /api/campaigns/duplicate fires (verify in network tab)
-    - API handler → INSERT into campaigns table with name suffix (verify with `psql` or service log)
-    - 200 response → list refetches and renders new row (verify the DOM update)
+    - `src/components/CampaignList.tsx` `Duplicate` button → `POST /api/campaigns/duplicate`
+    - `src/app/api/campaigns/duplicate/route.ts` → imports `duplicateCampaign` from `src/lib/campaigns.ts`
+    - `src/lib/campaigns.ts` `duplicateCampaign` function → `INSERT INTO campaigns` SQL
+    - `src/app/api/campaigns/duplicate/route.ts` JSON response → `src/components/CampaignList.tsx` calls `setCampaigns`
     **Integration points:**
     - /api/campaigns/duplicate endpoint (Task 2 prerequisite) — verify with `curl -X POST /api/campaigns/duplicate -d '{"id":<existing>}'` returns 200 + JSON `{id, name}`
     - campaigns table schema — verify `name` column accepts suffix without unique-constraint violation
     - If the task is standalone (no integration dependencies), state explicitly: "Integration points: n/a — standalone task with no cross-component coupling."
+
+WIRE CHECKS FORMAT — load-bearing for static trace verification.
+
+Each `→` arrow line in the Wire checks block declares ONE link in the
+code-level chain (UI → API → business logic → DB → response → UI). The
+wire-check-gate runs a STATIC TRACE on every task completion: it
+parses each arrow, extracts backtick-quoted file paths and other
+identifiers, verifies the files exist, and grep-verifies each non-file
+token appears in at least one of the linked files. This catches the
+"built but not wired" failure mode (renamed function, moved endpoint,
+deleted import) without running the app.
+
+Format rules:
+- Each arrow line MUST contain at least one backtick-quoted file path
+  that exists relative to the repo root.
+- Additional backtick-quoted tokens (function names, SQL fragments,
+  string literals, API routes) are cross-checked: each must appear
+  via `grep -F` in at least one of the file paths on the SAME arrow.
+- An identifier appearing only in prose between arrows is decorative —
+  only backtick-quoted tokens are checked.
+- Minimum 2 statically-verifiable arrow lines per task. Below that,
+  the chain is too thin to detect breakage.
+
+Carve-out (use sparingly — only for tasks with genuinely no code chain
+to trace, e.g., a pure-config change to vercel.json, a comment-only
+docs update promoted to full for runtime-significance reasons):
+
+  **Wire checks:**
+  - n/a — <one-sentence justification ≥ 30 chars explaining why no
+    UI→DB chain applies to this task>
+
+The static trace runs every time — that is the point. Even if no live
+server is available to exercise the "Prove it works" scenario at task
+completion, the gate still verifies the chain exists at the source level.
+A future commit that breaks a chain link (renames a function, moves an
+endpoint, deletes an import) is caught at the NEXT task completion
+because the broken arrow grep-misses.
+
+Runtime evidence (an actually-executed "Prove it works" scenario captured
+in the evidence file or structured `.evidence.json` artifact) is
+ADDITIVE: when present, the gate logs it as a stronger proof, but does
+NOT require it. Static trace is the mandatory baseline; runtime is the
+bonus when a running instance is available.
 
 Each sub-block is mandatory; an empty or placeholder-only sub-block FAILS
 Check 13. For tasks with `Verification: mechanical` or

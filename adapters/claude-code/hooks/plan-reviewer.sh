@@ -986,18 +986,18 @@ CHECK15_MID
   # (iv5) Unmarked non-runtime task (no Tier A keyword) — PASS (exempt)
 
   write_check15_plan "$TMPDIR_SELFTEST/iv1.md" \
-"- [ ] 1. Build the campaign duplicate button end-to-end — Verification: full
+'- [ ] 1. Build the campaign duplicate button end-to-end — Verification: full
   **Prove it works:**
   1. Open /campaigns in the browser as a logged-in Manager.
   2. Click the Duplicate button on the first campaign row.
-  3. Confirm a new row appears at top with name suffix '(Copy)'.
+  3. Confirm a new row appears at top with name suffix "(Copy)".
   **Wire checks:**
-  - Click Duplicate → POST /api/campaigns/duplicate fires (verify in network tab)
-  - API → INSERT into campaigns table (verify via psql)
-  - 200 response → list refetches and renders new row
+  - `src/components/CampaignList.tsx` button → POST `/api/campaigns/duplicate`
+  - `src/app/api/campaigns/duplicate/route.ts` → `duplicateCampaign` in `src/lib/campaigns.ts`
+  - `src/lib/campaigns.ts` → `INSERT INTO campaigns`
   **Integration points:**
   - /api/campaigns/duplicate endpoint — verify with curl POST returns 200 + JSON.
-  - campaigns table schema — verify name column accepts (Copy) suffix." \
+  - campaigns table schema — verify name column accepts (Copy) suffix.' \
     "- [ ] Integration verified."
   if bash "$SCRIPT" "$TMPDIR_SELFTEST/iv1.md" > /dev/null 2>&1; then
     echo "self-test (iv1) check13-full-task-with-all-subblocks: PASS (expected)" >&2
@@ -1008,11 +1008,12 @@ CHECK15_MID
   fi
 
   write_check15_plan "$TMPDIR_SELFTEST/iv2.md" \
-"- [ ] 1. Build the campaign duplicate button end-to-end — Verification: full
+'- [ ] 1. Build the campaign duplicate button end-to-end — Verification: full
   **Wire checks:**
-  - Click Duplicate → POST /api/campaigns/duplicate fires
+  - `src/components/CampaignList.tsx` button → POST `/api/campaigns/duplicate`
+  - `src/app/api/campaigns/duplicate/route.ts` → `duplicateCampaign` in `src/lib/campaigns.ts`
   **Integration points:**
-  - /api/campaigns/duplicate endpoint — verify with curl POST returns 200." \
+  - /api/campaigns/duplicate endpoint — verify with curl POST returns 200.' \
     "- [ ] Integration verified."
   if bash "$SCRIPT" "$TMPDIR_SELFTEST/iv2.md" > /dev/null 2>&1; then
     echo "self-test (iv2) check13-missing-prove-it-works: PASS (expected FAIL)" >&2
@@ -1022,14 +1023,14 @@ CHECK15_MID
   fi
 
   write_check15_plan "$TMPDIR_SELFTEST/iv3.md" \
-"- [ ] 1. Build the campaign duplicate button end-to-end — Verification: full
+'- [ ] 1. Build the campaign duplicate button end-to-end — Verification: full
   **Prove it works:**
   1. Open /campaigns in the browser as a logged-in Manager.
   2. Click Duplicate on the first row and confirm the copy appears.
   **Wire checks:**
   [populate me]
   **Integration points:**
-  - /api/campaigns/duplicate endpoint — verify via curl returns 200." \
+  - /api/campaigns/duplicate endpoint — verify via curl returns 200.' \
     "- [ ] Integration verified."
   if bash "$SCRIPT" "$TMPDIR_SELFTEST/iv3.md" > /dev/null 2>&1; then
     echo "self-test (iv3) check13-placeholder-wire-checks: PASS (expected FAIL)" >&2
@@ -1056,6 +1057,45 @@ CHECK15_MID
   else
     echo "self-test (iv5) check13-no-runtime-keyword-unmarked-exempt: FAIL (expected PASS)" >&2
     FAILED=1
+  fi
+
+  # (iv6) Carve-out in Wire checks (>= 30-char reason) — PASS
+  write_check15_plan "$TMPDIR_SELFTEST/iv6.md" \
+'- [ ] 1. Bump vercel.json build command to use Node 20 for the cron endpoint — Verification: full
+  **Prove it works:**
+  1. Trigger the cron endpoint via gh workflow run.
+  2. Confirm logs show Node 20 in the runtime line.
+  **Wire checks:**
+  - n/a — config-only task affecting build runtime; no UI→DB code chain.
+  **Integration points:**
+  - n/a — standalone configuration task.' \
+    "- [ ] Config applied."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/iv6.md" > /dev/null 2>&1; then
+    echo "self-test (iv6) check13-wire-checks-carveout-passes: PASS (expected)" >&2
+  else
+    echo "self-test (iv6) check13-wire-checks-carveout-passes: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/iv6.md" >&2 || true
+    FAILED=1
+  fi
+
+  # (iv7) Wire checks has arrows but NO backtick file paths — FAIL
+  write_check15_plan "$TMPDIR_SELFTEST/iv7.md" \
+'- [ ] 1. Build the campaign duplicate button end-to-end — Verification: full
+  **Prove it works:**
+  1. Open /campaigns in the browser as a logged-in Manager.
+  2. Click Duplicate on the first row and confirm the copy appears.
+  **Wire checks:**
+  - Click Duplicate button → POST /api/campaigns/duplicate fires
+  - API → INSERT into campaigns table
+  - 200 response → list refetches
+  **Integration points:**
+  - /api/campaigns/duplicate endpoint — verify via curl returns 200.' \
+    "- [ ] Integration verified."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/iv7.md" > /dev/null 2>&1; then
+    echo "self-test (iv7) check13-wire-checks-no-backtick-paths-rejected: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (iv7) check13-wire-checks-no-backtick-paths-rejected: FAIL (expected)" >&2
   fi
 
   if [[ $FAILED -eq 0 ]]; then
@@ -2121,14 +2161,45 @@ while IFS= read -r task_line; do
     CHECK13_FINDINGS+="    - Task $task_id_display: '**Prove it works:**' must contain numbered steps (1., 2., ...). Found prose without numbered steps."$'\n'
   fi
 
-  # Wire checks
+  # Wire checks — must be statically traceable for wire-check-gate static trace.
+  # Either: (a) the carve-out line `n/a — <reason >= 30 chars>` for tasks with
+  # no code chain, OR (b) at least 2 arrow lines, each containing at least one
+  # backtick-quoted token that is parseable as a file path (contains `/`).
   wire_body=$(extract_subblock "Wire checks")
   if [[ -z "$(printf '%s' "$wire_body" | tr -d '[:space:]')" ]]; then
-    CHECK13_FINDINGS+="    - Task $task_id_display: missing '**Wire checks:**' sub-block (line $task_ln). Required: at least one '→' arrow showing data flowing between components."$'\n'
+    CHECK13_FINDINGS+="    - Task $task_id_display: missing '**Wire checks:**' sub-block (line $task_ln). Required: at least 2 arrow lines with backtick-quoted file paths (UI → API → DB → UI). Or the carve-out 'n/a — <reason>'."$'\n'
   elif ! is_substantive "$wire_body"; then
-    CHECK13_FINDINGS+="    - Task $task_id_display: '**Wire checks:**' is empty / placeholder / too short. Document each arrow (click → API → DB → UI) where wiring can break silently."$'\n'
-  elif ! printf '%s' "$wire_body" | grep -qE '(→|->)'; then
-    CHECK13_FINDINGS+="    - Task $task_id_display: '**Wire checks:**' must contain '→' (or '->') arrow notation. Found no arrow — a wire check that doesn't name a flow boundary isn't a wire check."$'\n'
+    CHECK13_FINDINGS+="    - Task $task_id_display: '**Wire checks:**' is empty / placeholder / too short. Document each arrow (\`src/file.tsx\` → \`src/other.ts\`) where wiring can break silently."$'\n'
+  else
+    # Check for carve-out path (Wire checks: n/a — <reason ≥ 30 chars>)
+    carveout_line=$(printf '%s' "$wire_body" | grep -iE '^[[:space:]]*-[[:space:]]+n/a[[:space:]]+(—|--)' | head -1)
+    if [[ -n "$carveout_line" ]]; then
+      carveout_reason=$(printf '%s' "$carveout_line" | sed -E 's/^[[:space:]]*-[[:space:]]+n\/a[[:space:]]+(—|--)[[:space:]]*//')
+      carveout_non_ws=$(printf '%s' "$carveout_reason" | tr -d '[:space:]' | wc -c | tr -cd '[:digit:]')
+      carveout_non_ws=${carveout_non_ws:-0}
+      if [[ $carveout_non_ws -lt 30 ]]; then
+        CHECK13_FINDINGS+="    - Task $task_id_display: '**Wire checks:**' uses carve-out 'n/a — <reason>' but reason is < 30 chars. Justify why no UI→DB chain applies to this task."$'\n'
+      fi
+    else
+      # Normal path: count arrow lines containing at least one backtick path
+      verifiable_arrows=0
+      while IFS= read -r ar_line; do
+        if printf '%s' "$ar_line" | grep -qE '(→|->)'; then
+          # Look for at least one backtick-quoted token containing '/'
+          if printf '%s' "$ar_line" | grep -qE '`[^`]*/[^`]+`'; then
+            verifiable_arrows=$((verifiable_arrows + 1))
+          fi
+        fi
+      done <<< "$wire_body"
+
+      if [[ $verifiable_arrows -lt 2 ]]; then
+        if ! printf '%s' "$wire_body" | grep -qE '(→|->)'; then
+          CHECK13_FINDINGS+="    - Task $task_id_display: '**Wire checks:**' contains no '→' (or '->') arrows. Required: at least 2 arrow lines with backtick-quoted file paths."$'\n'
+        else
+          CHECK13_FINDINGS+="    - Task $task_id_display: '**Wire checks:**' has $verifiable_arrows arrow(s) with backtick-quoted file paths; need >= 2 for the static-trace gate to verify the chain. Format example: '- \`src/components/Foo.tsx\` button → POST \`/api/foo/bar\`' where backtick tokens with '/' identify code chain elements."$'\n'
+        fi
+      fi
+    fi
   fi
 
   # Integration points
