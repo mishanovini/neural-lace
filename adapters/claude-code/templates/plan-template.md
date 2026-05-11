@@ -256,6 +256,47 @@ Format examples:
   - [ ] 2. Migrate the doctrine docs to canonical glossary — Verification: contract
   - [ ] 3. Implement the runtime feature end-to-end — Verification: full
   - [ ] 4. Legacy task without declaration   (defaults to full)
+
+INTEGRATION VERIFICATION — REQUIRED FOR EVERY `Verification: full` TASK
+(or unmarked task, which defaults to full).
+
+Every full-level task MUST include three sub-blocks immediately under the
+task line, each populated with substantive task-specific content. The
+plan-reviewer.sh Check 13 enforces presence + substance; the
+wire-check-gate.sh PreToolUse hook blocks checkbox flip unless the
+session's evidence file shows the "Prove it works" scenario was actually
+executed.
+
+  - [ ] 1. Build the campaign duplicate flow end-to-end — Verification: full
+    **Prove it works:**
+    1. Open /campaigns in the browser as a logged-in Manager
+    2. Click the Duplicate button on the first campaign row
+    3. Confirm a new row appears at the top with suffix "(Copy)"
+    4. Confirm the original campaign is unchanged
+    5. Reload the page and confirm the duplicate persists
+    **Wire checks:**
+    - Click "Duplicate" button → POST /api/campaigns/duplicate fires (verify in network tab)
+    - API handler → INSERT into campaigns table with name suffix (verify with `psql` or service log)
+    - 200 response → list refetches and renders new row (verify the DOM update)
+    **Integration points:**
+    - /api/campaigns/duplicate endpoint (Task 2 prerequisite) — verify with `curl -X POST /api/campaigns/duplicate -d '{"id":<existing>}'` returns 200 + JSON `{id, name}`
+    - campaigns table schema — verify `name` column accepts suffix without unique-constraint violation
+    - If the task is standalone (no integration dependencies), state explicitly: "Integration points: n/a — standalone task with no cross-component coupling."
+
+Each sub-block is mandatory; an empty or placeholder-only sub-block FAILS
+Check 13. For tasks with `Verification: mechanical` or
+`Verification: contract` (deterministic structural work — file edits,
+schema authoring, doc migrations), the sub-blocks may be omitted.
+
+If the work genuinely has no integration surface (pure refactor that
+preserves all behavior, doc-only change marked Verification: mechanical,
+etc.), promote the task to mechanical/contract level rather than
+papering over the integration verification with placeholders.
+
+See ~/.claude/rules/planning.md "Integration Verification — Every
+Full-Level Task Must Prove It Works" for the full rule and the
+~/.claude/hooks/wire-check-gate.sh self-test for worked PASS/FAIL
+fixtures.
 -->
 
 - [ ] 1. [First task — specific enough to verify completion]

@@ -48,6 +48,48 @@ See `~/.claude/rules/design-mode-planning.md` for the full protocol, the 10 requ
 - Template: `~/.claude/templates/plan-template.md` includes all seven required sections with placeholder prompts explaining what each should contain.
 - Validator: `~/.claude/hooks/plan-reviewer.sh` performs the mechanical check at plan-edit time. Run with `--self-test` to exercise pass/fail scenarios.
 
+## Integration Verification — Every Full-Level Task Must Prove It Works
+
+**Classification:** Hybrid. The per-task sub-block authoring discipline is Pattern (the planner and the `plan-phase-builder` agent self-apply). The plan-time presence + substance check is Mechanism (`plan-reviewer.sh` Check 13). The build-time evidence-of-execution check is Mechanism (`wire-check-gate.sh` PreToolUse on plan-file Edit/Write).
+
+**Why this rule exists.** "Tests pass" is the easiest exit for an LLM builder; "the user-observable integration actually fires" is the bar. Builders ship code that compiles and unit tests that pass while the wires between components silently never get connected — Goodhart's law applied to the verification surface. The existing `Verification: full` declaration says "this task carries integration risk"; this rule operationalizes what that declaration means by requiring the plan to declare three sub-blocks per full-level task, and requiring the builder to execute the documented scenario before the checkbox can flip.
+
+**The contract.** Every task whose `Verification:` level is `full` (or unmarked, which defaults to full) MUST have these three sub-blocks directly under the task line:
+
+1. **`**Prove it works:**`** — a numbered multi-step scenario a real user takes. NOT "tests pass." Concrete UI clicks, API calls, DB queries with real values. Minimum 2 numbered steps; ≥ 30 chars substantive content.
+2. **`**Wire checks:**`** — explicit verify steps in `→` arrow notation (`click → API → DB → UI`). Each arrow is a place where wiring can break silently. Minimum 1 arrow entry.
+3. **`**Integration points:**`** — every other component this task must integrate with, and a concrete `curl` / `psql` / `playwright` / log-grep command that verifies the interface. If the task is genuinely standalone, use the canonical carve-out: `Integration points: n/a — standalone task with no cross-component coupling.`
+
+Tasks declaring `Verification: mechanical` or `Verification: contract` are exempt — those levels are reserved for deterministic structural work where the mechanical-evidence substrate attests correctness, and no runtime integration claim is being made.
+
+**Plan-time enforcement (Check 13).** `plan-reviewer.sh` Check 13 scans every checkbox line under any `## Tasks` heading. For each line that EITHER declares `Verification: full` explicitly OR is unmarked AND contains a Tier A runtime keyword (page, route, button, form, webhook, cron, endpoint, API, migration, RLS policy, auth flow), the check verifies all three sub-blocks exist, have ≥ 30 chars substantive content, and pass the structural validation (`Prove it works:` has numbered steps; `Wire checks:` has at least one `→` or `->` arrow; `Integration points:` has content OR the carve-out). Mechanical and contract tasks are skipped. Findings are emitted per-task, naming each missing or substandard sub-block.
+
+**Build-time enforcement (wire-check-gate.sh).** When the plan-file checkbox is about to flip (Edit tool with `- [ ]` → `- [x]`), `wire-check-gate.sh` runs as a PreToolUse hook. For tasks subject to the gate (Verification: full and a `**Prove it works:**` sub-block exists in the plan), the gate requires acceptable proof in the evidence substrate:
+
+- **Proof shape 1 (prose):** the companion `<plan>-evidence.md` file has a `Wire check executed:` or `Prove-it-works run:` block under the task's `Task ID:` section with ≥ 80 chars substantive content.
+- **Proof shape 2 (structured):** the structured artifact at `<plan-dir>/<plan-slug>-evidence/<task-id>.evidence.json` has at least one `runtime_evidence` entry AND at least one `mechanical_checks` entry with `passed: true`.
+- **Proof shape 3 (carve-out):** the prose evidence file has `Wire check: n/a — <one-sentence justification ≥ 30 chars>` under the task's section. Use ONLY when the scenario is genuinely impossible at build time (e.g., third-party OAuth callback gated by environment).
+
+If none of the three shapes is present, the checkbox flip is blocked with a message naming the missing proof and pointing at the scenario the builder should have executed.
+
+**Builder discipline (`plan-phase-builder` agent).** Builders receive the three sub-blocks in their dispatch prompt. The agent's `## Integration verification` section codifies:
+- Read the sub-blocks first — they are the real `Done when:` criteria.
+- Execute the "Prove it works" scenario before claiming completion. Not a unit test that mocks the integration — the actual scenario.
+- Document each wire-check step's outcome in the evidence file (under `Wire check executed:`). The gate blocks the flip otherwise.
+- For each integration point, run the verify command and capture output.
+- If a sub-block is missing in the dispatched plan, return BLOCKED — don't silently patch the plan; that defeats the plan-time author check.
+- Don't promote a runtime task to `Verification: mechanical` to dodge the requirement. Surface BLOCKED instead.
+
+**When the rule applies.** Any task that touches a runtime surface (UI route, API endpoint, webhook, scheduled job, migration, auth flow) is subject. Pure refactors, doc-only changes, and harness-internal mechanical work are exempt via the `Verification: mechanical` declaration.
+
+**Cross-references:**
+- Template: `~/.claude/templates/plan-template.md` documents the per-task sub-block format with a worked example.
+- Builder agent: `~/.claude/agents/plan-phase-builder.md` "Integration verification" section.
+- Plan-time validator: `~/.claude/hooks/plan-reviewer.sh` Check 13. Self-test with `--self-test` (scenarios iv1-iv5).
+- Build-time gate: `~/.claude/hooks/wire-check-gate.sh`. Self-test with `--self-test` (scenarios w1-w6).
+- Wired in PreToolUse Edit/Write chain in `~/.claude/settings.json` after `plan-edit-validator.sh`.
+- Composes with the risk-tiered Verification field (`~/.claude/rules/risk-tiered-verification.md`).
+
 ## How multi-task plans execute: orchestrator pattern
 
 **For any plan with more than one task, the main session orchestrates and dispatches build work to `plan-phase-builder` sub-agents — it does NOT do the build work itself.** This keeps the main session's context from accumulating 200+ tool uses of raw build detail across a long plan, which is a quality-of-life improvement for extended autonomous work. (Historical note: the 2026-04-14 vaporware failures were caused by self-enforcement gaps in verification, not by context accumulation — those are addressed by the hook-enforced Gen 4 mechanisms. The orchestrator pattern is a separate improvement.)

@@ -44,6 +44,30 @@ This reframing exists because the natural LLM completion signal ("the orchestrat
 - **Dispatch mode** — either SERIAL or PARALLEL (see next section)
 - **The plan's `## Acceptance Scenarios` section verbatim** (when the plan has one) — see "Acceptance scenarios — what you see, what you don't" below
 
+## Integration verification — required for every `Verification: full` task
+
+Every task whose `Verification:` level is `full` (or unmarked, which defaults to full) MUST have three sub-blocks under the task line in the plan file:
+
+1. **`**Prove it works:**`** — a numbered multi-step scenario you execute against the running app to demonstrate the user-observable outcome. NOT "tests pass." Concrete UI clicks, API calls, DB queries with real values.
+2. **`**Wire checks:**`** — explicit verify steps in `→` arrow notation showing data flowing between components (click → API → DB → UI). Each arrow is a place where wiring can break silently.
+3. **`**Integration points:**`** — every other component this task must integrate with, and a concrete `curl` / `psql` / `playwright` / log-grep command that verifies the interface.
+
+**Your duty before building:**
+
+- **Read these sub-blocks first.** They are your real `Done when:` — they describe the user-observable outcome you must produce, not just the code you must write.
+- **If any sub-block is missing, empty, or placeholder-only (e.g., `[populate me]`, `TODO`, single-line vacuous content), return BLOCKED.** Do not silently fix the plan; the plan-reviewer Check 13 should have caught this at plan-creation time. If it didn't, that's a planner-side miss, and you escalating it is how it gets fixed at the right layer.
+- **Do not invent your own "prove it works" scenario** to unblock yourself. The scenario is a contract authored at plan time so the wire-check-gate can verify the right thing was exercised. Inventing one mid-build defeats the structural intent of the gate.
+
+**Your duty during build:**
+
+- **Execute the "Prove it works" scenario before claiming completion.** Not a unit test that mocks the integration — the actual scenario with the actual user clicks and the actual data path. Capture the output (screenshot, network log, DB row count, console log).
+- **Document each wire-check step's outcome in the evidence file** (under `Wire check executed:` — see the wire-check-gate.sh header for the schema). The gate will block your checkbox flip if the evidence file lacks this section.
+- **For each integration point, run the verification command and capture its output.** A passing `curl` is evidence the contract holds; a passing component-level unit test is not.
+
+**For `Verification: mechanical` or `Verification: contract` tasks:** the integration verification sub-blocks are optional. Those levels are reserved for deterministic structural work where mechanical checks attest correctness; no runtime integration is being claimed.
+
+If you are tempted to promote a runtime task to `Verification: mechanical` to dodge the integration-verification requirement: that's the exact failure mode the gate exists to prevent. Surface to the orchestrator as BLOCKED with the specific reason ("task X needs a real wire check but no time/setup to run the scenario") rather than narrowing the verification level.
+
 ## Acceptance scenarios — what you see, what you don't
 
 The orchestrator will (when the plan has them) include the plan's `## Acceptance Scenarios` section verbatim in your dispatch prompt. These are the user flows the build must make work. The end-user-advocate will execute these flows against the running app in a fresh sub-agent session before this session can end. **You will not see the exact runtime assertions.** Build such that the scenarios work for the actual user trying to accomplish them — not such that a specific assertion string is satisfied.
