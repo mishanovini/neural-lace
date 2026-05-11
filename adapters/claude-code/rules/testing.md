@@ -1,5 +1,35 @@
 # Testing & Verification Standards
 
+## FUNCTIONALITY OVER COMPONENTS — The most important rule in this harness (MANDATORY)
+
+**Every test verifies functionality, not components.** The harness-wide principle is codified in `~/.claude/rules/planning.md`; this section operationalizes it for the testing surface specifically.
+
+The three test layers in this harness are NOT interchangeable, and the third is required for completion of any user-facing task:
+
+- **Unit tests verify components.** Function returns expected value for given input. Necessary baseline; **not sufficient** evidence of completion. A passing unit test against a stub or mock proves only that the stub is correct, not that any user-observable behavior exists.
+- **Integration tests verify wiring.** Component A calls component B and the data shape contract holds. Necessary; **not sufficient**. Two correctly-wired components can still fail to produce a user-observable outcome if a third component in the chain was never built.
+- **Functionality tests verify the user experience.** A user-flow scenario executes end-to-end against the running system and produces the user-observable outcome the task describes. **Required for completion of any user-facing task.** Examples: a Playwright spec that drives the UI through the task's user flow; a `curl` against the live endpoint that returns the expected user-observable response; a database query that confirms the side effect a user action would produce.
+
+**"All tests pass" does not mean "the feature works."** Tests passing is evidence about the tests, not evidence about the feature. The feature works when a user can exercise it end-to-end and observe the expected outcome. If unit and integration tests pass but no functionality test exercises the user flow, the feature is not verified — it is vaporware behind a green test bar.
+
+### Mocking discipline by test layer
+
+- **Mocked LLM responses, mocked external APIs, mocked database connections, and mocked time** are acceptable for component (unit) tests. The unit's job is to verify behavior given an input; the mock is the input.
+- **Mocked LLM responses, mocked external APIs, mocked databases, and mocked time are NOT acceptable for functionality tests of AI features.** The whole point of a functionality test for an AI feature is to verify the user-observable behavior the LLM actually produces — mocking the LLM defeats the test. If the LLM cost is the friction, use the smallest viable real model and the smallest realistic prompt; do not substitute the mock and claim the feature works.
+- **Mocking the system under test is forbidden at every layer.** `pre-commit-tdd-gate.sh` Layer 3 already catches integration tests that mock the SUT; the rule extends here for clarity. A test that mocks the thing it claims to verify is not a test; it is theater.
+
+### Concrete examples — same failure shape across three contexts
+
+- **Schema task.** Unit test: "`createStateCard` function returns the expected shape." Integration test: "the API route calls `createStateCard` and persists." Functionality test: "a customer message arriving via the live webhook produces a state card with populated fields that the AI sees on the next response." First two are insufficient evidence of completion; third is required.
+- **UI button fix.** Unit test: "the `launchCampaign` API returns 200 given valid payload." Integration test: "the API endpoint correctly inserts into `messages` table." Functionality test: "clicking the Launch button in the UI as a logged-in user produces messages sent to the listed contacts." First two pass while users still cannot launch a campaign; third is what proves the fix.
+- **Conflict detection.** Unit test: "the `detectConflict` helper returns true for overlapping rules." Integration test: "the rule-save endpoint calls `detectConflict` before insert." Functionality test: "creating a conflicting rule in the UI shows the user a visible warning before saving." First two satisfy structural review while leaving the user un-warned; third is the feature.
+
+### How this rule composes with the runtime-verification mandate
+
+The task-verifier agent's `Runtime verification:` format requirement (`test <file>`, `playwright <spec>`, `curl`, `sql`, `file <path>`) is the lower-level mechanical check that lands functionality evidence on disk. The functionality-over-components principle is the higher-level decision rule: WHEN choosing between formats, prefer the one that exercises the user-observable outcome. A `test <file>::<unit-name>` line is mechanically valid format but is component-level evidence; a `playwright <spec>::<test-name>` or `curl <command>` line is the same format slot filled with functionality evidence.
+
+Component-only evidence (only `test <file>` lines, only `file <path>` greps, only "typecheck clean" / "lint clean" / "compiles successfully") trips the warning emitted by `task-completed-evidence-gate.sh` and FAILs `task-verifier`'s primary verification axis. See `~/.claude/agents/task-verifier.md` "FUNCTIONALITY OVER COMPONENTS — your primary verification axis" for the verifier's rubric.
+
 ## Keep Going When Keep-Going Is Authorized (MANDATORY)
 
 **When the user has given a keep-going / autonomous directive, don't narrate-and-wait between work units.** The directive is standing; it does not expire at a phase boundary, a commit, or an "end of task." If the plan, backlog, or standing instruction authorizes more work, pick the next concrete item and keep working.
