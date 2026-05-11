@@ -974,6 +974,103 @@ CHECK15_MID
     echo "self-test (vd3) check12-illegal-level-rejected: FAIL (expected)" >&2
   fi
 
+  # ============================================================
+  # Check 4b harness-internal carve-out scenarios (hi1, hi2, hi3)
+  # ============================================================
+  #
+  # (hi1) Plan with every file under `adapters/claude-code/`, NO
+  #       `## Walking Skeleton` section — expect PASS. Check 4b is
+  #       advisory for harness-internal scope per
+  #       work-shapes/build-harness-infrastructure.md.
+  # (hi2) Plan with one file under `adapters/claude-code/` AND one
+  #       file under `src/`, NO `## Walking Skeleton` — expect FAIL.
+  #       A single non-harness path flips the plan back to blocking.
+  # (hi3) Plan with every file under `~/.claude/` live-mirror path,
+  #       NO `## Walking Skeleton` — expect PASS. Live-mirror paths
+  #       are recognized as harness scope identically.
+
+  write_harness_carveout_plan() {
+    # $1 = output path, $2 = files-section content (verbatim bullets)
+    local out="$1"
+    local files_content="$2"
+    cat > "$out" <<HARNESS_HEAD
+# Plan: Self-test Check-4b harness-internal carve-out fixture
+Status: ACTIVE
+Mode: code
+Backlog items absorbed: none
+tier: 1
+rung: 0
+architecture: coding-harness
+frozen: false
+prd-ref: n/a — harness-development
+
+## Goal
+Exercise Check 4b's harness-internal carve-out by varying the
+\`## Files to Modify/Create\` section's path prefixes. The fixture
+deliberately omits the \`## Walking Skeleton\` section so the carve-out
+is what determines pass/fail.
+
+## Scope
+- IN: the harness-internal detection logic in plan-reviewer.sh Check 4b
+- OUT: anything outside the carve-out path-prefix check
+
+## Tasks
+- [ ] 1. Add the new helper function to plan-reviewer.sh per the goal.
+
+## Files to Modify/Create
+${files_content}
+
+## Assumptions
+- Assumes the awk-based section extractor handles a single trailing
+  newline at end-of-section identically to no trailing newline.
+
+## Edge Cases
+- Empty section body must not trigger harness-internal detection;
+  with no paths at all, the carve-out cannot fire.
+
+## Testing Strategy
+- Run plan-reviewer.sh against each fixture variant; observe the exit
+  code matches expectation. Stderr is captured but not asserted on
+  beyond confirming the advisory message appears when expected.
+
+## Definition of Done
+- [ ] Self-test reports the expected verdict per scenario.
+HARNESS_HEAD
+  }
+
+  # Scenario (hi1): every file under adapters/claude-code/ — expect PASS
+  write_harness_carveout_plan "$TMPDIR_SELFTEST/hi1.md" \
+    "- \`adapters/claude-code/hooks/plan-reviewer.sh\` — extend Check 4b
+- \`adapters/claude-code/work-shapes/build-harness-infrastructure.md\` — document carve-out"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/hi1.md" > /dev/null 2>&1; then
+    echo "self-test (hi1) check4b-harness-internal-pass: PASS (expected)" >&2
+  else
+    echo "self-test (hi1) check4b-harness-internal-pass: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
+  # Scenario (hi2): one harness path + one product path — expect FAIL
+  write_harness_carveout_plan "$TMPDIR_SELFTEST/hi2.md" \
+    "- \`adapters/claude-code/hooks/plan-reviewer.sh\` — extend Check 4b
+- \`src/components/Dashboard.tsx\` — wire the new behavior into the dashboard UI"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/hi2.md" > /dev/null 2>&1; then
+    echo "self-test (hi2) check4b-mixed-scope-blocks: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (hi2) check4b-mixed-scope-blocks: FAIL (expected)" >&2
+  fi
+
+  # Scenario (hi3): live-mirror ~/.claude/ paths recognized — expect PASS
+  write_harness_carveout_plan "$TMPDIR_SELFTEST/hi3.md" \
+    "- \`~/.claude/hooks/plan-reviewer.sh\` — live-mirror edit
+- \`~/.claude/rules/planning.md\` — live-mirror rule update"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/hi3.md" > /dev/null 2>&1; then
+    echo "self-test (hi3) check4b-live-mirror-recognized: PASS (expected)" >&2
+  else
+    echo "self-test (hi3) check4b-live-mirror-recognized: FAIL (expected PASS)" >&2
+    FAILED=1
+  fi
+
   if [[ $FAILED -eq 0 ]]; then
     echo "plan-reviewer --self-test: all scenarios matched expectations" >&2
     exit 0
@@ -1119,6 +1216,18 @@ fi
 # new end-to-end slice being added"). This keeps the forcing function
 # while allowing pragmatic edge cases. Plans covering only test-harness
 # or docs-only changes are auto-exempt.
+#
+# Harness-internal carve-out (2026-05-11, see
+# adapters/claude-code/work-shapes/build-harness-infrastructure.md):
+# when every backtick-delimited path in `## Files to Modify/Create`
+# starts with `adapters/claude-code/` or `~/.claude/`, the plan is
+# harness-internal and Check 4b is ADVISORY. Findings still surface on
+# stderr but do not increment FINDING_COUNT, so the gate does not block.
+# Rationale: harness mechanisms have no user-observable runtime; the
+# "thinnest end-to-end slice through every layer" is incoherent when
+# the layer-count is one (the hook itself) and the slice IS the
+# self-test. A single non-harness path in `## Files to Modify/Create`
+# flips the plan back to blocking-mode for this check.
 
 IS_DOCS_ONLY=0
 if grep -qiE '^# Plan: .*(docs?|documentation|readme|changelog)' "$PLAN_FILE" 2>/dev/null; then
@@ -1129,9 +1238,40 @@ if grep -qiE 'tests/.*harness|journey.harness|test.infrastructure' "$PLAN_FILE" 
   IS_TEST_HARNESS=1
 fi
 
+# Harness-internal scope detection. Extract every backtick-delimited
+# path from `## Files to Modify/Create`; if at least one path is
+# declared AND every declared path starts with one of the harness
+# prefixes, the plan is harness-internal.
+IS_HARNESS_INTERNAL=0
+FILES_SECTION_BODY=$(awk '
+  /^## Files to Modify\/Create/ { in_section=1; next }
+  in_section && /^## / { exit }
+  in_section { print }
+' "$PLAN_FILE" 2>/dev/null)
+
+if [[ -n "$FILES_SECTION_BODY" ]]; then
+  HARNESS_PATHS=$(echo "$FILES_SECTION_BODY" | grep -oE '`[^`]+`' | sed 's/`//g' || true)
+  if [[ -n "$HARNESS_PATHS" ]]; then
+    TOTAL_PATH_COUNT=$(echo "$HARNESS_PATHS" | wc -l | tr -d ' ')
+    NON_HARNESS_COUNT=$(echo "$HARNESS_PATHS" | grep -cvE '^(adapters/claude-code/|~/\.claude/)' || true)
+    if [[ "$TOTAL_PATH_COUNT" -gt 0 ]] && [[ "$NON_HARNESS_COUNT" -eq 0 ]]; then
+      IS_HARNESS_INTERNAL=1
+    fi
+  fi
+fi
+
 if [[ $IS_DOCS_ONLY -eq 0 ]] && [[ $IS_TEST_HARNESS -eq 0 ]]; then
   if ! grep -qiE '^## Walking Skeleton|^Walking Skeleton:' "$PLAN_FILE" 2>/dev/null; then
-    add_finding "Check 4b: missing '## Walking Skeleton' section. Plans that add new user-facing functionality must identify the thinnest end-to-end slice touching every architectural layer (UI → API → worker → DB → notification) as the first task. Build the skeleton first, then add flesh. Use 'Walking Skeleton: n/a' with a one-sentence justification if this plan is a pure refactor or other exempt case."
+    if [[ $IS_HARNESS_INTERNAL -eq 1 ]]; then
+      # Advisory — emit to stderr but do not increment FINDING_COUNT.
+      # Per work-shapes/build-harness-infrastructure.md, harness-internal
+      # plans (all files under adapters/claude-code/ or ~/.claude/) get
+      # this check made advisory: the integration-vaporware contract is
+      # incoherent for harness mechanisms, and the self-test is the slice.
+      echo "  [advisory] Check 4b: missing '## Walking Skeleton' section. Plan is harness-internal (every path in '## Files to Modify/Create' is under adapters/claude-code/ or ~/.claude/); the check is advisory per work-shapes/build-harness-infrastructure.md. To make the carve-out explicit, add 'Walking Skeleton: n/a — harness-internal work; self-test is the end-to-end slice' to the plan." >&2
+    else
+      add_finding "Check 4b: missing '## Walking Skeleton' section. Plans that add new user-facing functionality must identify the thinnest end-to-end slice touching every architectural layer (UI → API → worker → DB → notification) as the first task. Build the skeleton first, then add flesh. Use 'Walking Skeleton: n/a' with a one-sentence justification if this plan is a pure refactor or other exempt case."
+    fi
   fi
 fi
 

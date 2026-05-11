@@ -20,7 +20,7 @@ The body documents when to use the shape, structural pattern, and common pitfall
 2. **The plan file's task description** cites the shape by `shape_id` (e.g., "Verification: build-hook shape compliance"). The mechanical checks become the verification rubric.
 3. **If no shape fits**, the work is novel — escalate via the plan template's `## Walking Skeleton` discipline. If the pattern recurs, propose a new shape via the path documented in `rules/work-shapes.md`.
 
-## v1 shape inventory (6)
+## v1 shape inventory (7)
 
 - `build-hook.md` — PreToolUse / PostToolUse / Stop / SessionStart hook scripts in `adapters/claude-code/hooks/`.
 - `build-rule.md` — Pattern-class or Mechanism-class doctrine in `adapters/claude-code/rules/`.
@@ -28,6 +28,7 @@ The body documents when to use the shape, structural pattern, and common pitfall
 - `author-ADR.md` — Architecture decision records in `docs/decisions/NNN-<slug>.md`.
 - `write-self-test.md` — `--self-test` block convention for hooks and bash mechanisms.
 - `doc-migration.md` — Doctrine / canonical-doc moves between repos with byte-identical or anonymization-only diff.
+- `build-harness-infrastructure.md` — meta-shape covering multi-task harness-development work; declares the carve-out vs. product-code discipline (Mode: code always, Check 4b advisory, spec-freeze not required, self-test PASS as acceptance artifact) and composes with the sub-shapes above for per-artifact conventions.
 
 ## Cross-references
 

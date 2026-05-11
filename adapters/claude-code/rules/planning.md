@@ -26,6 +26,50 @@ See `~/.claude/rules/design-mode-planning.md` for the full protocol, the 10 requ
 - `systems-design-gate.sh` PreToolUse hook blocks edits to design-mode files (workflows, migrations, etc.) unless an active `Mode: design` plan exists.
 - Escape hatch: `Mode: design-skip` with a short justification allows trivial edits (version bumps, typo fixes) without the full 10-section treatment, while leaving an auditable record.
 
+## Work-shape: `build-harness-infrastructure` — the lighter process for harness work itself
+
+When EVERY file the plan touches is under `adapters/claude-code/` (or its live mirror `~/.claude/`), the work is harness-infrastructure and qualifies for the **`build-harness-infrastructure`** work-shape (`adapters/claude-code/work-shapes/build-harness-infrastructure.md`). The shape relaxes several disciplines that exist to protect product-code shipping, on the grounds that harness mechanisms have no user-observable runtime to advocate for and self-tests are the harness's native verification idiom.
+
+**The harness paradox this shape solves:** the harness's product-code discipline (plan-reviewer + systems-designer + spec-freeze + acceptance gates) is correct for product work but creates a bootstrap paradox when applied to the harness itself — sessions trying to improve the harness hit the same ceremony as a downstream product team, and the harness effectively blocks itself from being improved. The work-shape codifies the carve-out so harness-improvement work happens with proportionate friction.
+
+### When to use the shape
+
+Use `build-harness-infrastructure` when ALL of these are true:
+
+- Every entry in `## Files to Modify/Create` resolves to a path under `adapters/claude-code/` or `~/.claude/`.
+- The work has no user-observable runtime behavior; the "user" is a hook firing at an event boundary, not a person clicking a button.
+- Verification is structural: file exists, self-test passes, live mirror is byte-identical to canonical.
+
+Do NOT use this shape when:
+
+- The plan touches downstream product files (`src/`, `app/`, etc.) even partially — mixed-scope plans default back to product-code discipline.
+- The change introduces a third-party dependency, recurring cost, or external service binding — still requires an ADR.
+- The change introduces a user-facing CLI surface that downstream maintainers invoke directly — that's product-shaped even if it lives under `adapters/`.
+
+### What's relaxed
+
+- **`Mode: code` is always correct** — no `Mode: design` invocation, no `systems-designer` review. The work-shape's mechanical-check rubric replaces the 10-section Systems Engineering Analysis.
+- **`plan-reviewer.sh` Check 4b (walking-skeleton integration-vaporware defense) is advisory** — findings are surfaced on stderr but do not block. Rationale: the contract Check 4b enforces (thinnest end-to-end slice through every architectural layer) is incoherent for harness mechanisms whose layer-count is one (the hook itself) and whose slice IS the self-test.
+- **Spec-freeze is not required** — harness work iterates rapidly and the `## In-flight scope updates` section absorbs additions without thaw cycles.
+- **`acceptance-exempt: true` is the canonical default**, with `acceptance-exempt-reason: harness-internal work; self-tests are the acceptance artifact`. The `end-user-advocate` is not invoked.
+- **`prd-ref: n/a — harness-development`** is the canonical PRD reference (Decision 015c carve-out).
+- **Plan file optional for narrow single-purpose changes** — a single-hook edit with a self-test extension can ship without a plan file. Multi-task harness work (≥ 2 tasks, multiple files) still warrants a lightweight plan referencing this shape.
+
+### What's still enforced
+
+These layers do NOT relax — harness work doesn't get to bypass safety perimeters:
+
+- **`pre-commit-tdd-gate.sh`** credential scanning runs identically.
+- **`harness-hygiene-scan.sh`** (Layer 1 denylist + Layer 2 heuristics) — no project-specific identifiers, no real emails, no employer names, no absolute paths with usernames. This is the load-bearing perimeter that keeps the harness a generic kit.
+- **`docs-freshness-gate.sh`** — adding a hook means updating `docs/harness-architecture.md` in the same commit. Adding a rule means updating the rules-table reference.
+- **`pre-push-scan.sh`** credential pattern scanning at push time.
+- **All existing `--self-test` blocks must still pass.** This is the harness's native verification rubric.
+- **Two-layer-config discipline** — every change to `adapters/claude-code/` is mirrored to `~/.claude/`, verified byte-identical via `diff -q`.
+- **`scope-enforcement-gate.sh`** — when a plan is open, commits respect its declared scope (just like product code).
+- **Tier 2+ decisions require an ADR** — `author-ADR` sub-shape applies; the lighter process does NOT dodge the ADR requirement.
+
+See `adapters/claude-code/work-shapes/build-harness-infrastructure.md` for the full shape definition, the worked example walk-through, and the per-discipline carve-out table.
+
 ## Verbose Plans Are Mandatory
 
 **Every plan file must include all seven required sections, populated with substantive, plan-specific content.** The required sections are:
