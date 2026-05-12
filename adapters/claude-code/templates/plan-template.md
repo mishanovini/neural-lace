@@ -204,6 +204,48 @@ of plan size.
 [What we're building/changing and why. One or two paragraphs. State the
 user-observable outcome this plan produces, not just the mechanism.]
 
+## User-facing Outcome
+<!--
+REQUIRED. Operationalizes FUNCTIONALITY OVER COMPONENTS — the harness's
+most important rule (~/.claude/rules/planning.md).
+
+State concretely what a user can DO after this plan ships that they
+could not do before. Not what code exists; what action becomes possible.
+
+Bad (component-shaped):
+  - "The state card schema exists and the migration has run."
+  - "The /api/campaigns/launch endpoint returns 200."
+  - "The detectConflict helper passes unit tests."
+
+Good (functionality-shaped):
+  - "When a customer sends a message, an AI response is generated that
+    references a populated state card and stays within the rules the
+    card encodes."
+  - "A logged-in Manager clicking Launch on a campaign causes messages
+    to be sent to every listed contact within 60 seconds; the Manager
+    sees a 'sent N messages' confirmation."
+  - "A user creating a rule that conflicts with an existing rule sees
+    a visible warning in the UI before they can save, naming which
+    existing rule it conflicts with."
+
+The test for completion is always: can a user do the thing? If you
+cannot demonstrate the user-facing outcome end-to-end against the
+running system, the plan is not done — regardless of how clean the
+code looks or how green the unit tests are.
+
+Per-task user-facing outcomes live in each task's `**Prove it works:**`
+sub-block (see Tasks section below). This section captures the
+plan-level commitment: what does the whole plan deliver to the user?
+
+If this plan genuinely has no user-facing outcome (acceptance-exempt:
+true plans — harness-internal work, pure-infrastructure changes), say
+so explicitly with a one-line justification:
+    "n/a — harness-internal: the user is the maintainer; the
+     `--self-test` of the new hook is the deliverable outcome."
+-->
+[What a user can do after this plan ships that they could not before.
+Concrete, observable, demonstrable.]
+
 ## Scope
 - IN: [what's included — be explicit about every file, feature, or change
   this plan covers]
@@ -473,6 +515,22 @@ verification commands. Prefer concrete command lines ("run
 `npm run test:links`") or file paths ("new Playwright test at
 tests/e2e/foo.spec.ts") over vague statements ("test manually"). See
 ~/.claude/rules/vaporware-prevention.md.
+
+AI-output features (any feature whose user-observable behavior is determined
+by an LLM's generated text — chatbot replies, AI-drafted summaries, AI
+suggestions shown to a user) MUST include LIVE-MODEL evidence, not just
+mock-test evidence. Mock tests verify the pipeline plumbs values into the
+right places; they cannot verify the AI's generated text obeys product
+rules (no scarcity, no jumping from symptom to solution, calm tone,
+single question per turn, etc).
+
+For any AI-output task, the `Prove it works:` block MUST cite a live-model
+run: project-specific scripts under `scripts/` (e.g.
+`live-conversation-test.<ext>` in your project) that send scripted inputs
+through the real LLM and evaluate the actual response against the rules.
+Real API tokens — cheap insurance against the mock-tests-green-but-prod-
+broken failure mode. See the project's own .claude/rules/ for the live-test
+conventions specific to this codebase.
 -->
 - [How each task will be verified]
 
