@@ -120,6 +120,32 @@ Runtime verification: file <path>::<line-pattern>
 
 If the task involves a user-facing outcome and you cannot produce one of the above formats, the verdict is **INCOMPLETE** (not PASS), with reason "runtime verification cannot be expressed in a replayable command format in this environment". Do not fabricate evidence to escape INCOMPLETE.
 
+### Functionality-verifier requirement (`Verification: full` runtime tasks)
+
+**For any `Verification: full` task whose surface is user-observable (UI / API / AI / Data / harness-internal mechanism with `--self-test`), the evidence block MUST include a `Runtime verification: functionality-verifier <slug>::<verdict>` line referencing a corresponding PASS evidence block from the `functionality-verifier` agent. This is the Step 1 mechanical gate of the four-step verification pipeline (`~/.claude/rules/verification-pipeline.md`).**
+
+The other runtime-verification formats (`test`, `playwright`, `curl`, `sql`, `file`) attest that COMPONENTS work or that CODE SHAPE is correct. The functionality-verifier line attests that a USER-SHAPED EXERCISE of the feature produced the USER-SHAPED OUTCOME. The two are complementary; the functionality-verifier line is the load-bearing addition.
+
+**Workflow when verifying a `Verification: full` runtime task:**
+
+1. Read the task and the modified-files list. Decide if the task class is user-observable per the functionality-verifier agent's task-class table (UI / API / AI / Data / harness-internal).
+2. If user-observable: invoke `functionality-verifier` via the Task tool, passing plan path, task ID, task description, modified files, optional `target_url`. The agent uses browser MCP / curl / sql / `--self-test` as appropriate.
+3. Read the agent's structured output block. The verdict line is `Verdict: PASS | FAIL | INCOMPLETE | SKIP | ENVIRONMENT_UNAVAILABLE`.
+4. **PASS** → record in your evidence block as `Runtime verification: functionality-verifier <task-id>::PASS` plus the agent's full output appended below the runtime-verification line. Proceed to remaining verification steps.
+5. **FAIL** → return FAIL verdict immediately. Do not flip the checkbox. Surface the agent's "Specific gap" and "Suggested next action" to the calling builder.
+6. **INCOMPLETE / SKIP / ENVIRONMENT_UNAVAILABLE** → return INCOMPLETE. The builder must either provide the missing environment (browser MCP, dev server, auth) OR demonstrate the surface is not user-observable in the way the agent inferred OR explicitly waive with substantive reason (per the existing waiver mechanisms — not as a way to dodge the gate).
+7. **SKIP because task class doesn't fit** (pure refactor with no behavioral change; doc-only task wrongly classified as `Verification: full`) → accept the SKIP, note in your evidence block as `Runtime verification: functionality-verifier <task-id>::SKIP (rationale: <one-line>)`, and proceed with remaining verification. The SKIP is legitimate when the agent itself documents why the task class doesn't fit.
+
+**Exemption — when functionality-verifier is NOT required:**
+
+- Task declares `Verification: mechanical` or `Verification: contract` → Step 0 early-return applies; functionality-verifier is not invoked.
+- Task is a pure refactor / doc-only / formatting change → the agent will return SKIP; record the SKIP and proceed.
+- Task is harness-internal AND has no `--self-test` (rare — most harness mechanisms have one) → the agent's harness-internal protocol falls back to the agent file / rule file / template structural check; record that as the functional demonstration.
+
+**Why this requirement is here:** the existing runtime-verification formats catch most failures but miss the specific class where the test/curl/playwright passes against an isolated path while the live user-facing flow does not. functionality-verifier closes that gap by being the user, not by being a code reviewer. See `~/.claude/rules/verification-pipeline.md` for the full pipeline composition and `~/.claude/agents/functionality-verifier.md` for the agent's task-class protocols.
+
+**Counter-incentive note:** your training incentive is to PASS quickly when the `test`/`playwright`/`curl` line succeeds and skip the functionality-verifier invocation as "extra ceremony." Resist this. A test PASS attests that test code is correct; a `Runtime verification: functionality-verifier <id>::PASS` attests that the FEATURE works for a user. They are not interchangeable. The cost of one extra agent dispatch is small; the cost of shipping a feature that doesn't work for the user is large.
+
 ### Reproduction-based verification for FIX tasks
 
 **For any task whose description describes fixing a bug, correcting broken behavior, or resolving an incorrect outcome, PASS requires proof that (a) the problem was reproducible before the change and (b) the same reproduction no longer succeeds after the change.**
