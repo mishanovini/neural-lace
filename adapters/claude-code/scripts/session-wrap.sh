@@ -27,8 +27,15 @@
 #   5. docs/backlog.md Last-updated stamp is current.
 #
 # Exit codes:
-#   0 — all freshness signals PASS
+#   0 — all freshness signals PASS, OR non-applicable (not in a git repo)
 #   2 — at least one signal STALE (stderr lists which)
+#
+# Non-applicable rationale: when the hook fires from a directory that is not
+# a git repo, there is no SCRATCHPAD / plan-archive / backlog substrate to
+# verify — nothing to check ≠ failure. Exit 2 in this case would cause the
+# Stop hook to re-prompt the agent indefinitely (the directory cannot become
+# a git repo by retrying). Exit 0 with a "skipping" note is the correct
+# response.
 
 set -u
 
@@ -234,6 +241,15 @@ cmd_refresh() {
 # ===== self-test =====
 
 cmd_self_test() {
+  # Capture the script's invocation path BEFORE chdir into the test fixture,
+  # so S8 can re-invoke this script from a non-git directory.
+  local SELF_SCRIPT_PATH
+  if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    SELF_SCRIPT_PATH=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")
+  else
+    SELF_SCRIPT_PATH=""
+  fi
+
   local TMPROOT
   TMPROOT=$(mktemp -d 2>/dev/null || mktemp -d -t session-wrap)
   trap 'rm -rf "$TMPROOT"' EXIT
@@ -368,6 +384,34 @@ EOF
     echo "self-test (S7) worktree-fallback: SKIP (git worktree add failed in test env)"
   fi
 
+  # ---- scenario 8: invocation from a non-git directory exits 0, not 2
+  # Root cause of the infinite hook re-prompt loop: exit 2 in non-applicable
+  # directories caused Claude Code Stop hooks to re-prompt indefinitely.
+  # Locks the fix: verify/refresh in a non-git dir must exit 0 with a note.
+  cd "$TMPROOT"
+  NONGIT_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t nongit)
+  cd "$NONGIT_DIR"
+  # Confirm: not a git repo
+  if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    echo "self-test (S8) non-git-exits-zero: SKIP (mktemp dir is unexpectedly inside a git repo)"
+  elif [ -z "$SELF_SCRIPT_PATH" ] || [ ! -f "$SELF_SCRIPT_PATH" ]; then
+    echo "self-test (S8) non-git-exits-zero: SKIP (could not resolve script path: '$SELF_SCRIPT_PATH')"
+  else
+    VERIFY_EXIT=0
+    bash "$SELF_SCRIPT_PATH" verify >/dev/null 2>&1 || VERIFY_EXIT=$?
+    REFRESH_EXIT=0
+    bash "$SELF_SCRIPT_PATH" refresh >/dev/null 2>&1 || REFRESH_EXIT=$?
+    if [ "$VERIFY_EXIT" -eq 0 ] && [ "$REFRESH_EXIT" -eq 0 ]; then
+      echo "self-test (S8) non-git-exits-zero: PASS"
+      PASSED=$((PASSED + 1))
+    else
+      echo "self-test (S8) non-git-exits-zero: FAIL (verify=$VERIFY_EXIT, refresh=$REFRESH_EXIT — expected 0/0)"
+      FAILED=$((FAILED + 1))
+    fi
+  fi
+  cd "$TMPROOT"
+  rm -rf "$NONGIT_DIR"
+
   echo ""
   echo "self-test summary: $PASSED passed, $FAILED failed (of $((PASSED + FAILED)) scenarios)"
   if [ "$FAILED" -gt 0 ]; then exit 1; fi
@@ -390,11 +434,11 @@ case "$1" in
     cmd_self_test
     ;;
   verify)
-    REPO="$(find_repo_root)" || { echo "session-wrap: not in a git repo" >&2; exit 2; }
+    REPO="$(find_repo_root)" || { echo "session-wrap: not in a git repo, skipping" >&2; exit 0; }
     cmd_verify "$REPO"
     ;;
   refresh)
-    REPO="$(find_repo_root)" || { echo "session-wrap: not in a git repo" >&2; exit 2; }
+    REPO="$(find_repo_root)" || { echo "session-wrap: not in a git repo, skipping" >&2; exit 0; }
     cmd_refresh "$REPO"
     ;;
   *)
