@@ -1,5 +1,31 @@
 # Planning & Decision Protocol
 
+## FUNCTIONALITY OVER COMPONENTS — The most important rule in this harness
+
+**Every task builds functionality, not components. Every test verifies functionality, not components.**
+
+A task is not done when the code compiles and unit tests pass. A task is done when a user can perform the action the task describes and get the expected result. This rule supersedes every other "done" signal in the harness — when default LLM completion signals ("tests pass", "code compiles", "function exported", "migration ran", "endpoint returns 200") conflict with "the user can do the thing the task describes," the user-facing outcome wins, every time.
+
+Concrete examples — each of these is the same failure shape:
+
+- "Build the state card schema" is NOT done when the migration runs. It's done when a customer message produces a card with populated fields that constrain the AI's response.
+- "Fix the campaign launch button" is NOT done when the API endpoint returns 200. It's done when clicking Launch in the UI actually sends messages to contacts.
+- "Add conflict detection" is NOT done when the helper function passes unit tests. It's done when creating a conflicting rule in the UI shows the user a warning.
+
+The test for "done" is always: **can a user do the thing?** If you cannot demonstrate the user-facing outcome end-to-end against the running system, the task is not complete — you have built a component, not functionality. A component that exists and compiles but does not connect to user-observable functionality is vaporware regardless of how clean its code looks.
+
+**Why this is the most important rule.** Every other discipline in the harness — anti-vaporware gates, runtime verification, comprehension gate, integration verification, acceptance scenarios — exists to enforce this single principle at different boundaries. If the principle is internalized, the other gates are belt-and-suspenders. If the principle is missed, no number of structural gates will save you, because a builder optimizing for component behavior will produce evidence that satisfies every structural check while shipping nothing the user can use.
+
+**Per-role consequences:**
+
+- **Plans** declare `## User-facing Outcome` as a required top-level section — what a user can do after the plan ships that they could not before. Per-task sub-blocks (`**Prove it works:**`) name the per-task outcome.
+- **Builders** (`~/.claude/agents/plan-phase-builder.md`) optimize for the user-observable outcome, not for the code they wrote. Returning DONE because "all the pieces exist" without exercising the user path is the canonical failure shape this rule prevents.
+- **The verifier** (`~/.claude/agents/task-verifier.md`) FAILs any task whose evidence only demonstrates component behavior. The first rubric question is: "did the session demonstrate the user-facing outcome, or did it only verify component behavior?"
+- **Tests** (`~/.claude/rules/testing.md`) escalate from unit (verifies components) → integration (verifies wiring) → functionality (verifies user experience). The last is required for completion of any user-facing task.
+- **Hooks** — `task-completed-evidence-gate.sh` emits a non-blocking warning when a task's evidence consists only of unit / integration test results with no functionality demonstration.
+
+This rule applies to ALL work, not just conversation features. It applies to backend tasks ("the schema is done when a user-observable behavior depends on it and works"), CLI changes ("the command is done when a user running it sees the expected effect"), and harness-development tasks ("the hook is done when it fires under the expected conditions and produces the documented outcome — its `--self-test` passing IS the harness's user-facing outcome, since the harness's user is the maintainer running it").
+
 ## When to Plan
 For tasks involving architectural decisions, non-obvious multi-file interactions, or work > ~15 minutes: enter plan mode. For simple single-file changes, bug fixes with obvious solutions, or docs: proceed directly.
 

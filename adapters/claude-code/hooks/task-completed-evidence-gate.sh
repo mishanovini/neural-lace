@@ -2,7 +2,7 @@
 # task-completed-evidence-gate.sh
 #
 # TaskCompleted event hook for Anthropic's Agent Teams feature.
-# Two layered enforcement modes:
+# Three layered modes (two blocking, one warning):
 #
 #   1. Evidence enforcement: verifies that an evidence block exists
 #      (in <plan>-evidence.md or in the plan's ## Evidence Log
@@ -26,6 +26,23 @@
 #      (sub-agents cannot be spawned from hook scripts — see
 #      backlog HARNESS-GAP). Instead, it surfaces an actionable
 #      stderr message instructing the user to invoke the agent.
+#
+#   3. Functionality demonstration warning (non-blocking):
+#      operationalizes the harness's most important rule —
+#      FUNCTIONALITY OVER COMPONENTS (~/.claude/rules/planning.md).
+#      After Layer 1 passes, inspects the task's evidence section
+#      for at least one functionality marker (playwright, curl,
+#      Wire check executed, runtime_evidence, Prove it works,
+#      Runtime verification (after), Runtime verification: sql).
+#      If the evidence contains only component-level markers
+#      (`test <file>` lines, file-existence greps, typecheck/lint),
+#      emits a WARNING to stderr but does NOT block.
+#
+#      Non-blocking because some legitimate tasks (pure refactors,
+#      harness-internal config edits, doc-only changes) have no
+#      user-facing surface to demonstrate. The warning is the
+#      auditable signal that the verifier and the human reader
+#      should look closer.
 #
 # Coordination with Task 6 (tool-call-budget):
 #   Task 6 writes ~/.claude/state/audit-pending.<team_name> at
@@ -179,6 +196,147 @@ evidence_exists_for_task() {
   done < <(list_active_plans)
 
   return 1
+}
+
+# ============================================================
+# Extract the evidence section text for a given task_id across
+# active plans. Returns the section text on stdout (lines from the
+# matching task header up to the next task header or EOF). Returns
+# empty stdout if no section found.
+#
+# Handles two header forms:
+#   - "## Task <id>"
+#   - "Task ID: <id>" / "Task: <id>"
+#
+# Used by the non-blocking FUNCTIONALITY OVER COMPONENTS warning.
+# ============================================================
+extract_task_evidence_section() {
+  local task_id="$1"
+  [[ -z "$task_id" ]] && return 0
+
+  local esc
+  esc=$(printf '%s' "$task_id" | sed 's/[][\\/.^$*+?(){}|]/\\&/g')
+
+  local plan
+  while IFS= read -r plan; do
+    [[ -z "$plan" ]] && continue
+    local ev="${plan%.md}-evidence.md"
+    local src
+    for src in "$ev" "$plan"; do
+      [[ -f "$src" ]] || continue
+      # Find first line matching this task's header
+      local start_line
+      start_line=$(grep -nEi "(^##[[:space:]]+Task[[:space:]]+${esc}([[:space:]]|$)|Task[[:space:]]*(ID)?[[:space:]]*[:#][[:space:]]*${esc}([[:space:]]|$))" "$src" 2>/dev/null | head -1 | cut -d: -f1)
+      [[ -z "$start_line" ]] && continue
+      # Find next task header after start_line for a DIFFERENT task
+      # id. The current task may have continuation lines like
+      # "Task ID: <id>" right after the "## Task <id>" heading; those
+      # are NOT section boundaries. Boundary = next "## Task <other>"
+      # heading or "Task ID: <other>" / "Task: <other>" line whose id
+      # differs from this task.
+      local next_line
+      next_line=$(awk -v start="$start_line" -v id="$esc" '
+        function is_any_task_header(line) {
+          return (line ~ /^##[[:space:]]+Task[[:space:]]+[A-Za-z0-9]/) ||
+                 (line ~ /^Task[[:space:]]*(ID)?[[:space:]]*[:#][[:space:]]*[A-Za-z0-9]/)
+        }
+        function is_self_task_header(line, id) {
+          return (line ~ ("^##[[:space:]]+Task[[:space:]]+" id "([[:space:]]|$)")) ||
+                 (line ~ ("^Task[[:space:]]*(ID)?[[:space:]]*[:#][[:space:]]*" id "([[:space:]]|$)"))
+        }
+        NR > start && is_any_task_header($0) && !is_self_task_header($0, id) { print NR; exit }
+      ' "$src" 2>/dev/null || true)
+      local end_line
+      if [[ -n "$next_line" ]]; then
+        end_line=$((next_line - 1))
+      else
+        end_line=$(wc -l < "$src" 2>/dev/null | tr -d '[:space:]')
+        [[ -z "$end_line" || "$end_line" == "0" ]] && end_line="$start_line"
+      fi
+      sed -n "${start_line},${end_line}p" "$src" 2>/dev/null || true
+      return 0
+    done
+  done < <(list_active_plans)
+
+  return 0
+}
+
+# ============================================================
+# Returns 0 if the evidence section contains at least one
+# functionality marker (i.e. demonstrates user-observable
+# behavior), 1 if only component-level signals are present.
+#
+# Functionality markers (any one is sufficient):
+#   - "playwright" (E2E driving the UI)
+#   - "curl " (live endpoint hit with real payload)
+#   - "Wire check executed" (end-to-end trace captured)
+#   - "runtime_evidence" (structured .evidence.json with runtime check)
+#   - "Prove it works" (per-task scenario block executed)
+#   - "Runtime verification (after)" (fix-task after-state)
+#   - "Runtime verification: sql" (DB-state confirmation of a side effect)
+#
+# Component-only signals (these alone trigger the warning):
+#   - "test <file>::<unit-name>" (unit test in isolation)
+#   - "file <path>::<pattern>" (existence/regex grep)
+#   - "typecheck" / "lint" / "compiles"
+# ============================================================
+evidence_has_functionality_demonstration() {
+  local section="$1"
+  [[ -z "$section" ]] && return 1
+  if printf '%s\n' "$section" | grep -qiE '(playwright|curl[[:space:]]|Wire[[:space:]]+check[[:space:]]+executed|runtime_evidence|Prove[[:space:]]+it[[:space:]]+works|Runtime[[:space:]]+verification[[:space:]]+\(after\)|Runtime[[:space:]]+verification:[[:space:]]*sql)'; then
+    return 0
+  fi
+  return 1
+}
+
+# ============================================================
+# Non-blocking warning emitter. Calls extract + functionality
+# check; if the evidence is component-only, emits a stderr
+# warning. Always returns 0 — never blocks.
+# ============================================================
+check_functionality_demonstration() {
+  local task_id="$1"
+  [[ -z "$task_id" ]] && return 0
+  local section
+  section=$(extract_task_evidence_section "$task_id" 2>/dev/null || echo "")
+  [[ -z "$section" ]] && return 0
+  if evidence_has_functionality_demonstration "$section"; then
+    return 0
+  fi
+  cat >&2 <<MSG
+
+================================================================
+WARNING: task-completed-evidence-gate — functionality demonstration not detected
+================================================================
+Task ${task_id} has an evidence block, but the evidence appears to
+demonstrate only component behavior (unit tests, file existence,
+typecheck/lint, "compiles successfully") — NOT user-facing
+functionality.
+
+The harness's most important rule
+(~/.claude/rules/planning.md "FUNCTIONALITY OVER COMPONENTS")
+says: a task is done when a user can perform the action the task
+describes and get the expected result, not when the components
+compile and unit tests pass.
+
+Functionality demonstration would include at least one of:
+  - playwright <spec>::<test-name>    UI flow against running app
+  - curl <command>                    live endpoint hit with real payload
+  - sql SELECT/INSERT/UPDATE/DELETE   DB-state confirmation
+  - "Wire check executed:" line       end-to-end trace
+  - Runtime verification (after):     fix-task after-state
+  - runtime_evidence array            structured .evidence.json
+
+If the task is genuinely component-only (harness-internal refactor
+with no user-facing surface, doc-only change, pure config edit),
+this warning is informational. Otherwise, re-substantiate with
+functionality evidence before relying on this completion.
+
+This is a WARNING, not a BLOCK. TaskCompleted is allowed to
+proceed — but the verifier and any human reader should look closer.
+================================================================
+MSG
+  return 0
 }
 
 # ============================================================
@@ -354,6 +512,11 @@ load-bearing anti-vaporware mechanism (see
 ~/.claude/rules/vaporware-prevention.md)."
   fi
 
+  # ---------- Layer 3: FUNCTIONALITY OVER COMPONENTS warning
+  # Evidence exists. Check whether it demonstrates user-facing
+  # functionality or only component behavior. NON-BLOCKING.
+  check_functionality_demonstration "$task_id"
+
   return 0
 }
 
@@ -383,6 +546,13 @@ PLAN
 Task ID: 3.2
 Verdict: PASS
 Notes: did the work
+Runtime verification: curl http://localhost:3000/api/foo
+
+## Task 3.3 — Component-only fixture
+Task ID: 3.3
+Verdict: PASS
+Notes: typecheck clean, lint clean
+Runtime verification: test src/foo.spec.ts::should compute correctly
 EV
 
   # run_scenario <name> <expect-exit> <event-json> [pre-setup-bash] [post-checks-bash]
@@ -474,6 +644,25 @@ EOF
     '{"hook_event_name":"TaskCompleted","task_id":"3.2","team_name":"demo","session_id":"s6"}' \
     'echo "pending t1 timestamp" > "$scratch/state/audit-pending.demo"' \
     '[[ -f "$scratch/state/audit-pending.demo" ]]'
+
+  # D7 — FUNCTIONALITY OVER COMPONENTS: component-only evidence emits
+  # warning to stderr but does NOT block. Task 3.3 has only
+  # "Runtime verification: test ..." — a unit test reference with no
+  # functionality marker.
+  run_scenario "D7. component-only evidence → ALLOW + warning emitted" \
+    0 \
+    '{"hook_event_name":"TaskCompleted","task_id":"3.3","team_name":"demo","session_id":"s7"}' \
+    '' \
+    'grep -q "functionality demonstration not detected" "$scratch/err-$total.log"'
+
+  # D8 — FUNCTIONALITY OVER COMPONENTS: evidence with functionality
+  # marker (curl) suppresses the warning. Task 3.2 has a curl line
+  # in its evidence.
+  run_scenario "D8. functionality marker present → ALLOW + no warning" \
+    0 \
+    '{"hook_event_name":"TaskCompleted","task_id":"3.2","team_name":"demo","session_id":"s8"}' \
+    '' \
+    '! grep -q "functionality demonstration not detected" "$scratch/err-$total.log"'
 
   echo "======================================="
   echo "passed: $passed / $total"
