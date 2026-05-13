@@ -95,6 +95,41 @@ if [[ "${1:-}" == "--self-test" ]]; then
   exit 0
 fi
 
+# Shared retry-guard library — see lib/stop-hook-retry-guard.sh.
+# shellcheck disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
+
+# Read stdin to derive session_id; we don't otherwise consume INPUT.
+PSV_INPUT=""
+if [[ ! -t 0 ]]; then
+  PSV_INPUT=$(cat 2>/dev/null || echo "")
+fi
+RG_SESSION_ID=$(retry_guard_session_id "$PSV_INPUT")
+
+# Wrapper: each Check's block path calls this with a unique check label
+# and a per-check signature snippet. The retry-guard library decides
+# block-vs-downgrade. Function never returns.
+#
+# Args:
+#   $1 = check label (e.g., "check1-pending"). Combined with $2 to form
+#        the failure signature so different checks have different sigs.
+#   $2 = signature data (e.g., "${PENDING}:${LATEST_PLAN}").
+#   $3 = one-line error message used in the unresolved-stop-hooks log.
+#   $4 = JSON envelope to stdout on block.
+_pre_stop_block() {
+  local check="$1"
+  local sig="$2"
+  local err_msg="$3"
+  local block_json="$4"
+  retry_guard_block_or_exit \
+    "pre-stop-verifier" \
+    "$RG_SESSION_ID" \
+    "pre-stop:${check}:${sig}" \
+    "$err_msg" \
+    "$block_json" \
+    1
+}
+
 # Plan directories: look in both the top-level docs/plans/ and any
 # subproject's docs/plans/. Previously this hook hardcoded
 # PLAN_DIR="docs/plans" which silently no-op'd for any project whose
@@ -306,14 +341,13 @@ if [[ "$PENDING" -gt 0 ]]; then
   else
     BLOCKER_MSG="Cannot finish: $PENDING incomplete tasks remain in $LATEST_PLAN. Complete all tasks, or set 'Status: ABANDONED' in the plan file to stop early."
   fi
-  echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
   echo "" >&2
   echo "================================================================" >&2
   echo "PRE-STOP VERIFIER: SESSION BLOCKED" >&2
   echo "================================================================" >&2
   echo "$BLOCKER_MSG" >&2
   echo "" >&2
-  exit 1
+  _pre_stop_block "check1-pending" "${PENDING}:${LATEST_PLAN}" "$BLOCKER_MSG" "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
 fi
 
 # ============================================================
@@ -350,7 +384,6 @@ grep -q '^## Evidence Log' "$LATEST_PLAN" 2>/dev/null && HAS_EVIDENCE_SECTION=1
 
 if [[ "$HAS_EVIDENCE_FILE" -eq 0 && "$HAS_EVIDENCE_SECTION" -eq 0 ]]; then
   BLOCKER_MSG="Plan has checked tasks but no evidence found. Expected companion file ${EVIDENCE_FILE} or an ## Evidence Log section in the plan file. Run the task-verifier agent on each task to generate evidence."
-  echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
   echo "" >&2
   echo "================================================================" >&2
   echo "PRE-STOP VERIFIER: SESSION BLOCKED" >&2
@@ -362,7 +395,7 @@ if [[ "$HAS_EVIDENCE_FILE" -eq 0 && "$HAS_EVIDENCE_SECTION" -eq 0 ]]; then
     echo "  - $id" >&2
   done <<< "$CHECKED_IDS"
   echo "" >&2
-  exit 1
+  _pre_stop_block "check2-no-evidence" "${LATEST_PLAN}:${CHECKED_IDS}" "$BLOCKER_MSG" "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
 fi
 
 # For each checked ID, verify an evidence block exists that references it.
@@ -388,7 +421,6 @@ done <<< "$CHECKED_IDS"
 
 if [[ "$MISSING_COUNT" -gt 0 ]]; then
   BLOCKER_MSG="Plan has $MISSING_COUNT checked task(s) without matching evidence blocks. Every completed task must be verified by the task-verifier agent, which generates an evidence block. Self-checking boxes without verification is not allowed."
-  echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
   echo "" >&2
   echo "================================================================" >&2
   echo "PRE-STOP VERIFIER: SESSION BLOCKED" >&2
@@ -403,7 +435,7 @@ if [[ "$MISSING_COUNT" -gt 0 ]]; then
   echo "  2. It will produce an evidence block and append it to ${EVIDENCE_FILE}" >&2
   echo "  3. If a task was checked by mistake, uncheck it manually" >&2
   echo "" >&2
-  exit 1
+  _pre_stop_block "check2-missing-task-evidence" "${LATEST_PLAN}:${MISSING_EVIDENCE}" "$BLOCKER_MSG" "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
 fi
 
 # ============================================================
@@ -437,7 +469,6 @@ if [[ -n "$EVIDENCE_SECTION" ]]; then
 
   if [[ "$BLOCK_COUNT" -ne "$ID_COUNT" ]] || [[ "$BLOCK_COUNT" -ne "$VERDICT_COUNT" ]]; then
     BLOCKER_MSG="Evidence Log has malformed blocks. Found $BLOCK_COUNT block markers, $ID_COUNT Task ID lines, $VERDICT_COUNT Verdict lines. These counts should match."
-    echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
     echo "" >&2
     echo "================================================================" >&2
     echo "PRE-STOP VERIFIER: SESSION BLOCKED" >&2
@@ -447,7 +478,7 @@ if [[ -n "$EVIDENCE_SECTION" ]]; then
     echo "To resolve: re-generate malformed evidence blocks by re-invoking" >&2
     echo "the task-verifier agent on affected tasks." >&2
     echo "" >&2
-    exit 1
+    _pre_stop_block "check3-malformed-evidence" "${LATEST_PLAN}:${BLOCK_COUNT}:${ID_COUNT}:${VERDICT_COUNT}" "$BLOCKER_MSG" "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
   fi
 
   # Ensure every evidence block has a PASS verdict (failures shouldn't be
@@ -457,14 +488,13 @@ if [[ -n "$EVIDENCE_SECTION" ]]; then
 
   if [[ "$FAIL_VERDICTS" -gt 0 ]]; then
     BLOCKER_MSG="Evidence Log contains $FAIL_VERDICTS FAIL or INCOMPLETE verdict(s). Tasks with failing evidence should not be checked. Either resolve the issues and re-verify, or remove the failing evidence blocks and uncheck the tasks."
-    echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
     echo "" >&2
     echo "================================================================" >&2
     echo "PRE-STOP VERIFIER: SESSION BLOCKED" >&2
     echo "================================================================" >&2
     echo "$BLOCKER_MSG" >&2
     echo "" >&2
-    exit 1
+    _pre_stop_block "check3-fail-verdicts" "${LATEST_PLAN}:${FAIL_VERDICTS}" "$BLOCKER_MSG" "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
   fi
 fi
 
@@ -499,7 +529,6 @@ if [[ -n "$RUNTIME_TASKS" ]] && [[ -n "$EVIDENCE_SECTION" ]]; then
 
   if [[ "$RUNTIME_VERIF_COUNT" -eq 0 ]] && [[ "$BLOCK_COUNT" -gt 0 ]]; then
     BLOCKER_MSG="Plan contains runtime-feature tasks (UI/API/webhook/cron/migration), but the evidence log has ZERO 'Runtime verification:' entries. Runtime features must be verified at runtime, not just by static code inspection. Add a 'Runtime verification:' line to each evidence block."
-    echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
     echo "" >&2
     echo "================================================================" >&2
     echo "PRE-STOP VERIFIER: SESSION BLOCKED (Check 4a — zero runtime verif)" >&2
@@ -516,7 +545,7 @@ if [[ -n "$RUNTIME_TASKS" ]] && [[ -n "$EVIDENCE_SECTION" ]]; then
     echo "  Runtime verification: sql <SELECT statement>" >&2
     echo "  Runtime verification: file <path>::<line-pattern>" >&2
     echo "" >&2
-    exit 1
+    _pre_stop_block "check4a-zero-runtime-verif" "${LATEST_PLAN}:${BLOCK_COUNT}" "$BLOCKER_MSG" "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
   fi
 
   # 4b: execute every runtime verification line via the executor
@@ -529,7 +558,6 @@ if [[ -n "$RUNTIME_TASKS" ]] && [[ -n "$EVIDENCE_SECTION" ]]; then
     rm -f "$EXEC_TMP" /tmp/rve-errors
 
     BLOCKER_MSG="One or more 'Runtime verification:' entries failed to execute. Fake/unparseable strings are no longer accepted. See stderr for details."
-    echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
     echo "" >&2
     echo "================================================================" >&2
     echo "PRE-STOP VERIFIER: SESSION BLOCKED (Check 4b — executor failures)" >&2
@@ -547,7 +575,7 @@ if [[ -n "$RUNTIME_TASKS" ]] && [[ -n "$EVIDENCE_SECTION" ]]; then
     echo "  sql <SELECT>              — runs against test DB, must not error" >&2
     echo "  file <path>::<pattern>    — file must exist, pattern must match (min 5 literal chars)" >&2
     echo "" >&2
-    exit 1
+    _pre_stop_block "check4b-executor-failure" "${LATEST_PLAN}:${EXEC_ERRORS}" "$BLOCKER_MSG" "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
   fi
   rm -f "$EXEC_TMP" /tmp/rve-errors
 
@@ -561,7 +589,6 @@ if [[ -n "$RUNTIME_TASKS" ]] && [[ -n "$EVIDENCE_SECTION" ]]; then
     rm -f /tmp/rvr-errors
 
     BLOCKER_MSG="Runtime verification entries execute successfully but do not correspond to the tasks they claim to verify (e.g., curl hits a different route, SQL queries an unrelated table, test file imports no modified source)."
-    echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
     echo "" >&2
     echo "================================================================" >&2
     echo "PRE-STOP VERIFIER: SESSION BLOCKED (Check 4c — correspondence)" >&2
@@ -570,7 +597,7 @@ if [[ -n "$RUNTIME_TASKS" ]] && [[ -n "$EVIDENCE_SECTION" ]]; then
     echo "" >&2
     echo "$RVR_ERRORS" >&2
     echo "" >&2
-    exit 1
+    _pre_stop_block "check4c-correspondence" "${LATEST_PLAN}:${RVR_ERRORS}" "$BLOCKER_MSG" "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
   fi
   rm -f /tmp/rvr-errors
 fi
@@ -621,7 +648,6 @@ if [[ "$IS_COMPLETED" -eq 1 ]]; then
     if [[ "$DOD_UNCHECKED" -gt 0 ]]; then
       DOD_LIST=$(echo "$DOD_SECTION" | LC_ALL=C grep -E '^- \[ \]' | head -10 | sed 's/^/    /')
       BLOCKER_MSG="Plan has Status: COMPLETED but its own ## Definition of Done section has $DOD_UNCHECKED unchecked items in $LATEST_PLAN. The DoD bullets are commitments the plan author made before claiming completion — they are not optional. Either (a) actually satisfy the DoD items and check them off, (b) set Status: ACTIVE to keep working, (c) set Status: PARTIAL with an explicit list of what's deferred, or (d) move accepted-as-out-of-scope DoD items to a ## Out-of-scope section."
-      echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
       echo "" >&2
       echo "================================================================" >&2
       echo "PRE-STOP VERIFIER: SESSION BLOCKED (Check 5 — DoD-completion gate)" >&2
@@ -631,7 +657,7 @@ if [[ "$IS_COMPLETED" -eq 1 ]]; then
       echo "Unchecked Definition-of-Done items:" >&2
       echo "$DOD_LIST" >&2
       echo "" >&2
-      exit 1
+      _pre_stop_block "check5-dod-unchecked" "${LATEST_PLAN}:${DOD_UNCHECKED}" "$BLOCKER_MSG" "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
     fi
   fi
 
@@ -803,7 +829,6 @@ if [[ "$IS_COMPLETED" -eq 1 ]]; then
 
     if [[ "$DOD_ARTIFACT_FAIL_COUNT" -gt 0 ]]; then
       BLOCKER_MSG="Plan has Status: COMPLETED but $DOD_ARTIFACT_FAIL_COUNT declared DoD artifact spec(s) in $LATEST_PLAN failed verification. Marking ## Definition of Done bullets as [x] is not sufficient — the artifact files declared under ## DoD Artifacts must exist and match the requires_* conditions. Either (a) produce the missing artifacts by actually running the work, (b) set Status: ACTIVE to continue, (c) remove the artifact spec if the bullet was reframed, or (d) revise the requires_* conditions if they no longer reflect what success looks like."
-      echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
       echo "" >&2
       echo "================================================================" >&2
       echo "PRE-STOP VERIFIER: SESSION BLOCKED (Check 5 / A2 — DoD artifact-presence gate)" >&2
@@ -813,7 +838,7 @@ if [[ "$IS_COMPLETED" -eq 1 ]]; then
       echo "Failing artifact specs:" >&2
       echo -n "$DOD_ARTIFACT_FAILURES" >&2
       echo "" >&2
-      exit 1
+      _pre_stop_block "check5-dod-artifacts" "${LATEST_PLAN}:${DOD_ARTIFACT_FAIL_COUNT}:${DOD_ARTIFACT_FAILURES}" "$BLOCKER_MSG" "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
     fi
   fi
 fi

@@ -48,10 +48,15 @@
 
 set -u
 
+# Shared retry-guard library — see lib/stop-hook-retry-guard.sh.
+# shellcheck disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
+
 INPUT=""
 if [[ ! -t 0 ]]; then
   INPUT=$(cat 2>/dev/null || echo "")
 fi
+RG_SESSION_ID=$(retry_guard_session_id "$INPUT")
 
 TRANSCRIPT_PATH=""
 if [[ -n "$INPUT" ]]; then
@@ -217,7 +222,9 @@ fi
 
 BLOCKER_MSG="Session has $TOTAL_COUNT deferral references but your final user-facing message does NOT include the required '$REQUIRED_HEADING' section. The user only reliably reads end-of-effort text — middle-of-work deferrals get buried. Add the section to your next response with one bullet per deferral, then re-attempt Stop. Suppress with DEFERRAL_COUNTER_DISABLE=1 if this is a harness-development session where deferrals are inherent (e.g., editing the synonym list itself)."
 
-echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
+# Print the human-readable diagnostic stanza to stderr first; the
+# retry-guard prints either the JSON envelope (if blocking) or the
+# downgrade-warning stanza (if downgrading) and exits.
 echo "" >&2
 echo "================================================================" >&2
 echo "DEFERRAL COUNTER (A5): SESSION BLOCKED" >&2
@@ -236,4 +243,12 @@ echo "    - <verbatim deferral 1 — what you didn't do, and why>" >&2
 echo "    - <verbatim deferral 2>" >&2
 echo "    ..." >&2
 echo "" >&2
-exit 1
+
+RG_FAILURE_SIG="deferral-counter:${TOTAL_COUNT}:${DEFERRAL_LIST}"
+retry_guard_block_or_exit \
+  "deferral-counter" \
+  "$RG_SESSION_ID" \
+  "$RG_FAILURE_SIG" \
+  "$BLOCKER_MSG" \
+  "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}" \
+  1

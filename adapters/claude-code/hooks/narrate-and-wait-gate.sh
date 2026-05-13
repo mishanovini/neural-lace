@@ -33,10 +33,18 @@
 
 set -u
 
+# Shared retry-guard: detects identical-failure loops and downgrades
+# the block to a warning after the threshold (default 3 retries with
+# no progress / no new commits between).
+# shellcheck disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
+
 INPUT=""
 if [[ ! -t 0 ]]; then
   INPUT=$(cat 2>/dev/null || echo "")
 fi
+
+RG_SESSION_ID=$(retry_guard_session_id "$INPUT")
 
 TRANSCRIPT_PATH=""
 if [[ -n "$INPUT" ]]; then
@@ -242,8 +250,10 @@ memory about narrate-and-wait as a failure mode.
 ================================================================
 MSG
 
-cat <<'JSON'
-{"decision": "block", "reason": "Narrate-and-wait gate: user established a keep-going directive but the final message trails off with a permission-seeking / wait-for-confirmation phrase. Continue, explicitly report completion, or describe a concrete blocker. See stderr for details."}
-JSON
-
-exit 2
+retry_guard_block_or_exit \
+  "narrate-and-wait-gate" \
+  "$RG_SESSION_ID" \
+  "narrate-and-wait:${MATCHED_PHRASE}" \
+  "Narrate-and-wait phrase '${MATCHED_PHRASE}' detected at end of last assistant message; user had established keep-going directive." \
+  '{"decision": "block", "reason": "Narrate-and-wait gate: user established a keep-going directive but the final message trails off with a permission-seeking / wait-for-confirmation phrase. Continue, explicitly report completion, or describe a concrete blocker. See stderr for details."}' \
+  2
