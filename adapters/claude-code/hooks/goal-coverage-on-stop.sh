@@ -198,6 +198,11 @@ fi
 # ============================================================
 # Normal path
 # ============================================================
+
+# Shared retry-guard library — see lib/stop-hook-retry-guard.sh.
+# shellcheck disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
+
 INPUT=""
 if [[ ! -t 0 ]]; then
   INPUT=$(cat 2>/dev/null || echo "")
@@ -275,14 +280,20 @@ DERIVED_SHA=$(printf '%s' "$FIRST_USER_MSG" | sha256sum | awk '{print $1}')
 
 if [[ "$DERIVED_SHA" != "$STORED_SHA" ]]; then
   TAMPER_MSG="GOAL FILE TAMPERED. The SHA-256 of the user's first message in the transcript ($DERIVED_SHA) does NOT match the SHA stored in the goal file ($STORED_SHA) at $GOAL_FILE. Either the goal file was modified after creation, or the transcript first-message extraction differs from the prompt hook's view. This is a hard block: the goal-coverage gate cannot trust a tampered file. To recover: delete $GOAL_FILE and let the next session re-run goal extraction; investigate why the file was modified."
-  echo "{\"result\": \"error\", \"message\": \"$TAMPER_MSG\"}"
   echo "" >&2
   echo "================================================================" >&2
   echo "GOAL-COVERAGE GATE (A1): SESSION BLOCKED (TAMPER DETECTED)" >&2
   echo "================================================================" >&2
   echo "$TAMPER_MSG" >&2
   echo "" >&2
-  exit 1
+  RG_SESSION_ID_TAMPER=$(retry_guard_session_id "$INPUT")
+  retry_guard_block_or_exit \
+    "goal-coverage-on-stop" \
+    "$RG_SESSION_ID_TAMPER" \
+    "goal-coverage-tamper:${DERIVED_SHA}:${STORED_SHA}" \
+    "$TAMPER_MSG" \
+    "{\"result\": \"error\", \"message\": \"$TAMPER_MSG\"}" \
+    1
 fi
 
 # ============================================================
@@ -425,7 +436,6 @@ GAPS_DISPLAY=$(echo "$UNIQUE_GAPS" | head -10 | display_gap)
 
 BLOCKER_MSG="Session contains $GAP_COUNT unmet user goal(s) (extracted from the user's verbatim FIRST message and stored at $GOAL_FILE). For each unmet goal, the verb maps to a required tool-call evidence regex; no matching tool-call event exists in this session's transcript. Your final user-facing message does NOT include the required '$REQUIRED_HEADING' section. The user's first message is the highest-signal authorization in the session — silently skipping a goal is a broken contract. Either (a) actually run the missing tool calls now and re-attempt Stop, or (b) add the coverage section to your final message explaining each gap (why it was skipped, what the user should do, what the agent will do next). Suppress with GOAL_EXTRACTION_DISABLE=1 only for harness-dev sessions where editing the verb list itself self-triggers."
 
-echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
 echo "" >&2
 echo "================================================================" >&2
 echo "GOAL-COVERAGE GATE (A1): SESSION BLOCKED" >&2
@@ -443,4 +453,13 @@ echo "    - <user said \"X\" -> mapped to evidence /<regex>/. I did/did not hono
 echo "    - <next gap>" >&2
 echo "    ..." >&2
 echo "" >&2
-exit 1
+
+RG_SESSION_ID_GAP=$(retry_guard_session_id "$INPUT")
+RG_FAILURE_SIG="goal-coverage:${UNIQUE_COUNT}:${GAPS_DISPLAY}"
+retry_guard_block_or_exit \
+  "goal-coverage-on-stop" \
+  "$RG_SESSION_ID_GAP" \
+  "$RG_FAILURE_SIG" \
+  "$BLOCKER_MSG" \
+  "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}" \
+  1

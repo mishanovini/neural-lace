@@ -125,10 +125,15 @@ if [[ "${1:-}" = "--self-test" ]]; then
   exit 0
 fi
 
+# Shared retry-guard library — see lib/stop-hook-retry-guard.sh.
+# shellcheck disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
+
 INPUT=""
 if [[ ! -t 0 ]]; then
   INPUT=$(cat 2>/dev/null || echo "")
 fi
+RG_SESSION_ID=$(retry_guard_session_id "$INPUT")
 
 TRANSCRIPT_PATH=""
 if [[ -n "$INPUT" ]]; then
@@ -400,7 +405,6 @@ GAPS_DISPLAY=$(echo "$UNIQUE_GAPS" | head -10 | display_gap)
 
 BLOCKER_MSG="Session contains $GAP_COUNT user-imperative gap(s) (at least $UNIQUE_COUNT distinct). The user issued strong imperatives (must / need to / please / have to / etc.) that map to specific tool-call evidence in the pattern library, but no matching tool-call event exists in this session's transcript. Your final user-facing message does NOT include the required '$REQUIRED_HEADING' section. Skipping a user imperative is the sharpest form of broken contract — the user explicitly asked, and the agent never even tried. Either (a) actually run the missing tool calls now and re-attempt Stop, or (b) add the coverage section explaining each gap (why it was skipped, what the user should do, what the agent will do next). Suppress with IMPERATIVE_LINKER_DISABLE=1 only for harness-dev sessions where editing the pattern library self-triggers."
 
-echo "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}"
 echo "" >&2
 echo "================================================================" >&2
 echo "IMPERATIVE-EVIDENCE LINKER (A7): SESSION BLOCKED" >&2
@@ -418,4 +422,12 @@ echo "    - <user said \"X\" -> mapped to evidence /<regex>/. I did/did not hono
 echo "    - <next gap>" >&2
 echo "    ..." >&2
 echo "" >&2
-exit 1
+
+RG_FAILURE_SIG="imperative-evidence:${UNIQUE_COUNT}:${GAPS_DISPLAY}"
+retry_guard_block_or_exit \
+  "imperative-evidence-linker" \
+  "$RG_SESSION_ID" \
+  "$RG_FAILURE_SIG" \
+  "$BLOCKER_MSG" \
+  "{\"result\": \"error\", \"message\": \"$BLOCKER_MSG\"}" \
+  1
