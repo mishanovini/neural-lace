@@ -37,6 +37,7 @@ commit (enforced by `adapters/claude-code/hooks/decisions-index-gate.sh`).
 | 027 | [Autonomous decision-making process: pre-emptive decision queues at plan kickoff + autonomous proceed on reversible mid-execution decisions + mandatory ADR documentation + final-summary surfacing](decisions/027-autonomous-decision-making-process.md) | 2026-05-05 | Active |
 | 028 | [`session-wrap.sh` falls back to parent repo's SCRATCHPAD when run from a worktree](decisions/028-session-wrap-worktree-fallback.md) | 2026-05-09 | Active |
 | 029 | [Local-edit authorization mechanism (skill + hook + per-file marker) replaces broad `permissions.deny` on `~/.claude/local/**`](decisions/029-local-edit-authorization-mechanism.md) | 2026-05-09 | Active |
+| 030 | [`scope-enforcement-gate.sh` union-of-plans approach for merge commits — DEFERRED behind the shipped lightweight migration-allowlist; ADR captures the more-general design for future implementation](decisions/030-scope-enforcement-gate-merge-aware-union-of-plans.md) | 2026-05-14 | Deferred |
 
 <!-- 2026-05-04: Records 001, 002, 013 received in-place codename scrub (Phase 1d-G Task 1). Content unchanged in substance; identifiers replaced with generic placeholders to satisfy harness-hygiene scanner. No status changes. -->
 <!-- 2026-05-05 v3: ADR 027 extended with Layer 5 (handoff freshness as precondition). No row change to the index — same row 027 covers v1 + v2 + v3. -->

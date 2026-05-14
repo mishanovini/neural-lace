@@ -22,6 +22,22 @@
 #   unconditionally with a brief stderr note. If a mix, do the normal
 #   scope-check on the non-system files only.
 #
+# Merge-context allowlist (HARNESS-GAP-27, 2026-05-14):
+#   When `$GIT_DIR/MERGE_HEAD` exists (commit is resolving a merge),
+#   commit-numbered migration paths are additionally exempt:
+#     - `supabase/migrations/*.sql`
+#     - `prisma/migrations/**`
+#     - `db/migrations/**`
+#   Rationale: these are temporally-numbered artifacts that master
+#   creates procedurally; a merge-resolution-plan author cannot
+#   anticipate which numbered files master will have generated since
+#   the divergence. Outside a merge, the same paths are NOT
+#   automatically system-managed (legitimate plan-scoped work).
+#   The merge-context exemption is detected via
+#   `[ -e $(git rev-parse --git-dir)/MERGE_HEAD ]`.
+#   Companion "union of plans active on either side" approach is
+#   tracked as a separate ADR (see backlog HARNESS-GAP-27).
+#
 # Active-plan discovery:
 #   Iterates docs/plans/*.md (top-level only — excludes archive/). For
 #   each, reads first ~50 lines for `Status: ACTIVE`. If no active plan,
@@ -64,14 +80,35 @@
 
 # ============================================================
 # Helper: is this path system-managed (exempt from scope-check)?
-# Returns 0 (true) for docs/plans/archive/* paths.
+#
+# Always exempt:
+#   - docs/plans/archive/* (moved by plan-lifecycle.sh)
+#
+# Additionally exempt when IN_MERGE=1 (per HARNESS-GAP-27):
+#   - supabase/migrations/*.sql
+#   - prisma/migrations/**
+#   - db/migrations/**
+#
+# Reads global IN_MERGE (set by main flow). Self-test scenarios that
+# need merge-context behavior write a $GIT_DIR/MERGE_HEAD file in their
+# scenario repo before invoking the hook; the spawned hook process
+# then detects merge-context from the filesystem.
 # ============================================================
 _is_system_managed_path() {
   local p="$1"
   case "$p" in
     docs/plans/archive/*) return 0 ;;
-    *) return 1 ;;
   esac
+  if [[ "${IN_MERGE:-0}" == "1" ]]; then
+    case "$p" in
+      supabase/migrations/*.sql) return 0 ;;
+      prisma/migrations/*) return 0 ;;
+      prisma/migrations/*/*) return 0 ;;
+      db/migrations/*) return 0 ;;
+      db/migrations/*/*) return 0 ;;
+    esac
+  fi
+  return 1
 }
 
 # ============================================================
@@ -450,8 +487,170 @@ Drive-by hotfix for unrelated.md.
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 13: PASS — MERGE_HEAD exists, supabase migration is system-managed in merge context ----
+  # Plan claims src/foo.ts only. We stage a supabase/migrations/*.sql file
+  # plus write .git/MERGE_HEAD to simulate a merge resolution. The migration
+  # is NOT in the plan's scope, but the merge-context allowlist (GAP-27)
+  # should treat it as system-managed and allow the commit.
+  PLAN_MERGE_BASIC='# Plan: merge-test
+Status: ACTIVE
+
+## Goal
+Test merge-context allowlist.
+
+## Files to Modify/Create
+- `src/foo.ts` — only claimed file
+
+## Tasks
+- [ ] 1. test
+'
+  S13_REPO="$TMPROOT/s13"
+  mkdir -p "$S13_REPO"
+  (
+    cd "$S13_REPO" || exit 99
+    git init -q 2>/dev/null || true
+    git config user.email "test@example.com" 2>/dev/null
+    git config user.name "Test" 2>/dev/null
+    git config commit.gpgsign false 2>/dev/null
+    mkdir -p docs/plans
+    printf '%s' "$PLAN_MERGE_BASIC" > "docs/plans/test-scope-plan.md"
+    git add docs/plans/test-scope-plan.md 2>/dev/null
+    git commit -q -m "init plan" 2>/dev/null
+    # Simulate merge-resolution context by writing .git/MERGE_HEAD
+    echo "0000000000000000000000000000000000000000" > .git/MERGE_HEAD
+    # Stage a supabase migration (not in plan)
+    mkdir -p supabase/migrations
+    echo "-- migration" > "supabase/migrations/20260514120000_add_index.sql"
+    git add "supabase/migrations/20260514120000_add_index.sql" 2>/dev/null
+    s13_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"merge\""}}'
+    printf '%s' "$s13_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    echo $? > rc.txt
+  )
+  S13_RC=$(cat "$S13_REPO/rc.txt" 2>/dev/null || echo 99)
+  if [[ "$S13_RC" == "0" ]]; then
+    echo "self-test (13) merge-context-supabase-migration-allowed: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (13) merge-context-supabase-migration-allowed: FAIL (rc=$S13_RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 14: FAIL — NO MERGE_HEAD, supabase migration is NOT magic ----
+  # Same setup as s13 but without writing .git/MERGE_HEAD. The migration
+  # is out-of-scope and the gate must block — merge-context exemption
+  # does NOT apply outside an actual merge.
+  S14_REPO="$TMPROOT/s14"
+  mkdir -p "$S14_REPO"
+  (
+    cd "$S14_REPO" || exit 99
+    git init -q 2>/dev/null || true
+    git config user.email "test@example.com" 2>/dev/null
+    git config user.name "Test" 2>/dev/null
+    git config commit.gpgsign false 2>/dev/null
+    mkdir -p docs/plans
+    printf '%s' "$PLAN_MERGE_BASIC" > "docs/plans/test-scope-plan.md"
+    git add docs/plans/test-scope-plan.md 2>/dev/null
+    git commit -q -m "init plan" 2>/dev/null
+    # NO .git/MERGE_HEAD — normal commit context
+    mkdir -p supabase/migrations
+    echo "-- migration" > "supabase/migrations/20260514120000_add_index.sql"
+    git add "supabase/migrations/20260514120000_add_index.sql" 2>/dev/null
+    s14_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"normal\""}}'
+    printf '%s' "$s14_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    echo $? > rc.txt
+  )
+  S14_RC=$(cat "$S14_REPO/rc.txt" 2>/dev/null || echo 99)
+  if [[ "$S14_RC" == "2" ]]; then
+    echo "self-test (14) no-merge-context-supabase-migration-blocked: PASS (correctly blocked)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (14) no-merge-context-supabase-migration-blocked: FAIL (rc=$S14_RC, expected 2)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 15: FAIL — MERGE_HEAD exists, but a non-migration file is still scope-checked ----
+  # Migration is allowed via merge-context exemption, but an unrelated
+  # file (foo.ts not in plan) is still rejected. Merge-context exemption
+  # is narrowly targeted at migration paths; it does NOT make the entire
+  # commit pass.
+  S15_REPO="$TMPROOT/s15"
+  mkdir -p "$S15_REPO"
+  (
+    cd "$S15_REPO" || exit 99
+    git init -q 2>/dev/null || true
+    git config user.email "test@example.com" 2>/dev/null
+    git config user.name "Test" 2>/dev/null
+    git config commit.gpgsign false 2>/dev/null
+    mkdir -p docs/plans
+    printf '%s' "$PLAN_MERGE_BASIC" > "docs/plans/test-scope-plan.md"
+    git add docs/plans/test-scope-plan.md 2>/dev/null
+    git commit -q -m "init plan" 2>/dev/null
+    echo "0000000000000000000000000000000000000000" > .git/MERGE_HEAD
+    # Stage both: allowed migration AND unrelated file
+    mkdir -p supabase/migrations src
+    echo "-- migration" > "supabase/migrations/20260514120000_add_index.sql"
+    echo "stub" > "src/unrelated.ts"
+    git add "supabase/migrations/20260514120000_add_index.sql" "src/unrelated.ts" 2>/dev/null
+    s15_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"merge\""}}'
+    printf '%s' "$s15_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    echo $? > rc.txt
+  )
+  S15_RC=$(cat "$S15_REPO/rc.txt" 2>/dev/null || echo 99)
+  S15_STDERR=$(cat "$S15_REPO/stderr.txt" 2>/dev/null || echo "")
+  S15_OK=1
+  if [[ "$S15_RC" != "2" ]]; then
+    S15_OK=0
+    echo "self-test (15) merge-context-narrow-targeting: FAIL (rc=$S15_RC, expected 2)" >&2
+  fi
+  # The blocked file should be src/unrelated.ts, NOT the migration
+  if [[ "$S15_STDERR" != *"src/unrelated.ts"* ]]; then
+    S15_OK=0
+    echo "self-test (15) merge-context-narrow-targeting: FAIL (stderr missing 'src/unrelated.ts' as blocked file)" >&2
+  fi
+  if [[ "$S15_STDERR" == *"supabase/migrations/20260514120000_add_index.sql"* ]]; then
+    S15_OK=0
+    echo "self-test (15) merge-context-narrow-targeting: FAIL (stderr should NOT mention the migration; it was exempt)" >&2
+  fi
+  if [[ "$S15_OK" -eq 1 ]]; then
+    echo "self-test (15) merge-context-narrow-targeting: PASS (migration exempt, unrelated file blocked)" >&2
+    PASSED=$((PASSED+1))
+  else
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 16: PASS — MERGE_HEAD exists, prisma migration is system-managed ----
+  # Confirms the merge-context allowlist covers prisma/migrations/** too.
+  S16_REPO="$TMPROOT/s16"
+  mkdir -p "$S16_REPO"
+  (
+    cd "$S16_REPO" || exit 99
+    git init -q 2>/dev/null || true
+    git config user.email "test@example.com" 2>/dev/null
+    git config user.name "Test" 2>/dev/null
+    git config commit.gpgsign false 2>/dev/null
+    mkdir -p docs/plans
+    printf '%s' "$PLAN_MERGE_BASIC" > "docs/plans/test-scope-plan.md"
+    git add docs/plans/test-scope-plan.md 2>/dev/null
+    git commit -q -m "init plan" 2>/dev/null
+    echo "0000000000000000000000000000000000000000" > .git/MERGE_HEAD
+    mkdir -p prisma/migrations/20260514120000_add_index
+    echo "-- migration" > "prisma/migrations/20260514120000_add_index/migration.sql"
+    git add "prisma/migrations/20260514120000_add_index/migration.sql" 2>/dev/null
+    s16_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"merge\""}}'
+    printf '%s' "$s16_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    echo $? > rc.txt
+  )
+  S16_RC=$(cat "$S16_REPO/rc.txt" 2>/dev/null || echo 99)
+  if [[ "$S16_RC" == "0" ]]; then
+    echo "self-test (16) merge-context-prisma-migration-allowed: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (16) merge-context-prisma-migration-allowed: FAIL (rc=$S16_RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 12 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 16 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -534,6 +733,28 @@ if [[ -z "$REPO_ROOT" ]] || [[ ! -d "$REPO_ROOT/docs/plans" ]]; then
   exit 0
 fi
 
+# --- Detect merge-resolution context (HARNESS-GAP-27, 2026-05-14) ---
+# When `$GIT_DIR/MERGE_HEAD` exists, this commit is resolving a merge.
+# Migration paths from the merged-in branch are then exempt from
+# scope-check (the merge-resolution plan author can't predict which
+# commit-numbered migrations master generated since divergence).
+IN_MERGE=0
+if command -v git >/dev/null 2>&1; then
+  GIT_DIR_PATH=$(git -C "$REPO_ROOT" rev-parse --git-dir 2>/dev/null || echo "")
+  if [[ -n "$GIT_DIR_PATH" ]]; then
+    # git rev-parse --git-dir may return a relative path; resolve it
+    # relative to REPO_ROOT if not absolute.
+    case "$GIT_DIR_PATH" in
+      /*) ;;
+      *) GIT_DIR_PATH="$REPO_ROOT/$GIT_DIR_PATH" ;;
+    esac
+    if [[ -e "$GIT_DIR_PATH/MERGE_HEAD" ]]; then
+      IN_MERGE=1
+    fi
+  fi
+fi
+export IN_MERGE
+
 # --- Get staged files ---
 STAGED=()
 if command -v git >/dev/null 2>&1; then
@@ -592,7 +813,11 @@ for sf in "${STAGED[@]}"; do
 done
 
 if [[ "$ALL_SYSTEM_MANAGED" -eq 1 ]]; then
-  echo "[scope-enforcement-gate] All staged files are system-managed (docs/plans/archive/* or self-claiming Status: ACTIVE plan files). Allowed without scope-check." >&2
+  if [[ "$IN_MERGE" == "1" ]]; then
+    echo "[scope-enforcement-gate] All staged files are system-managed (docs/plans/archive/*, self-claiming Status: ACTIVE plan files, or merge-context migration paths). Allowed without scope-check." >&2
+  else
+    echo "[scope-enforcement-gate] All staged files are system-managed (docs/plans/archive/* or self-claiming Status: ACTIVE plan files). Allowed without scope-check." >&2
+  fi
   exit 0
 fi
 
