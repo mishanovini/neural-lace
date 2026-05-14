@@ -189,6 +189,7 @@ Four highest-leverage agent prompts (`task-verifier`, `code-reviewer`, `plan-pha
 - `security.md` — credentials, destructive ops, software installation safety
 - `git.md` — commit practices, branch strategy, customer-tier branching
 - `git-discipline.md` — force-push prohibition (absolute, no exceptions), post-merge sync of user's main checkout, Stop-hook waivers-before-retry-guard
+- `gate-respect.md` — diagnose-before-bypass when any gate blocks; read stderr first, apply the gate's named remediation, bypass only with explicit current-chat user authorization
 - `harness-hygiene.md` — no sensitive data / personal identifiers in harness code; two-layer config; instances never ship in harness repos
 - `harness-maintenance.md` — global-first rule changes, commit to neural-lace, update architecture doc
 - `ux-design.md` — error messages, empty states, loading states, destructive actions
