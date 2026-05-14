@@ -8,7 +8,9 @@
 
 The user has stated repeatedly that they do not use Vercel preview URLs to test. They test in production. Leaving work on a feature branch, telling them "here's the preview URL," and waiting for them to merge is wasted latency — they'll have to remind the agent to actually merge. This directive removes the friction.
 
-**Documented in user's feedback memory** (`feedback_full_auto_deploy.md`): "Always full-auto mode; always deploy immediately after building; never wait for manual merge/review gates."
+**Mechanism:** the per-project `automation-mode.json` config. Projects opt into `mode: full-auto` (auto-approve deploy-class Bash commands) or `mode: review-before-deploy` (pause for human authorization). Resolution order: `<project>/.claude/automation-mode.json` (per-project override) → `~/.claude/local/automation-mode.config.json` (user-global) → hardcoded fallback (`review-before-deploy`). The `automation-mode-gate.sh` PreToolUse Bash hook reads the effective mode and blocks/passes deploy commands accordingly. Switch via `/automation-mode <full-auto|review> [--project]`.
+
+Pre-customer projects (no real users) typically run `mode: full-auto`. Once a project crosses the customer-tier boundary, flip back to `review-before-deploy` (or delete the per-project file to inherit the user-global default).
 
 ## What this means in practice
 
@@ -42,7 +44,7 @@ After merging, the user should receive:
 
 ## Enforcement
 
-This is a Pattern rule, not hook-backed. The user's memory and this rule carry it. The behavioral signal: if the agent finishes testing and says "PR is ready for you to merge," the agent has violated this rule. The correct action is to merge it.
+**Hybrid.** The "default to deploy" Pattern is documented in this rule (the agent self-applies). The mechanical layer is `automation-mode-gate.sh` (PreToolUse Bash) — when the effective mode is `full-auto`, deploy-class commands (`git push`, `gh pr merge`, `vercel deploy`, etc.) pass through without per-action authorization; when the effective mode is `review-before-deploy`, those commands BLOCK with a review prompt. Per-project config at `<project>/.claude/automation-mode.json` overrides user-global at `~/.claude/local/automation-mode.config.json`. The behavioral signal: if the agent finishes testing in a `full-auto` project and says "PR is ready for you to merge," the agent has violated this rule. The correct action is to merge it.
 
 ## Scope
 
