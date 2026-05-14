@@ -195,6 +195,22 @@ bash adapters/claude-code/hooks/automation-mode-gate.sh --self-test   # expect "
 ls -la .git/hooks/pre-commit   # should be executable, contain NEURAL-LACE-HYGIENE-HOOK
 ```
 
+## Optional: host performance tuning (Windows)
+
+On Windows, `Antimalware Service Executable` real-time-scans every file Claude Code touches — worktree creation, `node_modules` churn, bash subprocess output, JSONL transcripts. On busy machines this regularly burns 15-25% CPU even at idle.
+
+A setup script adds the development paths and processes to Defender's exclusion list so they are skipped by real-time scanning:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File adapters\claude-code\scripts\host-setup\setup-defender-exclusions.ps1
+```
+
+The script is idempotent, self-elevates via UAC, and reports exactly what changed. Run `-DryRun` first to preview without modifying state.
+
+Full rationale, list of exclusions, verification commands, removal commands, and the security tradeoff: [`docs/host-setup/windows-defender-exclusions.md`](docs/host-setup/windows-defender-exclusions.md).
+
+Skip this step on macOS/Linux — they don't have Windows Defender.
+
 ## Changing automation mode
 
 ```bash

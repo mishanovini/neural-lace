@@ -420,9 +420,10 @@ is_path_shape_exempt() {
     build-doctrine-orchestrator/*|build-doctrine-orchestrator) return 0 ;;
     # The synced `~/.claude/` mirror (when scanning that tree directly).
     *.claude/*|*/.claude/*) return 0 ;;
-    # NL-root prose files (README, CONTRIBUTING, LICENSE, CODE_OF_CONDUCT,
-    # CHANGELOG) — these are documentation, not project-instance content.
-    README.md|README|CONTRIBUTING.md|LICENSE|LICENSE.md|CODE_OF_CONDUCT.md|CHANGELOG.md|SECURITY.md) return 0 ;;
+    # NL-root prose files (README, CONTRIBUTING, LICENSE, SETUP,
+    # CODE_OF_CONDUCT, CHANGELOG) — these are documentation, not
+    # project-instance content.
+    README.md|README|CONTRIBUTING.md|LICENSE|LICENSE.md|SETUP.md|CODE_OF_CONDUCT.md|CHANGELOG.md|SECURITY.md) return 0 ;;
   esac
   return 1
 }
