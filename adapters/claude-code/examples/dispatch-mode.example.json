@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy this file to ~/.claude/local/dispatch-mode.json. Set running_under_dispatch to true when your sessions are spawned via mcp__ccd_session_mgmt__start_code_task (Dispatch / remote orchestration); set to false (or omit the file entirely) when you typically run Claude Code standalone (Desktop / IDE / terminal). The env var CLAUDE_CODE_DISPATCH=1 takes precedence over this file when set. See ~/.claude/CLAUDE.md Autonomy section for the full detection priority and MC-widget conditional behavior.",
+  "version": 1,
+  "running_under_dispatch": false
+}

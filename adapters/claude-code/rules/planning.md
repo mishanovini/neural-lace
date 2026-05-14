@@ -570,7 +570,12 @@ If the choice is purely internal (variable naming, code organization, idiomatic 
 ### Required action when the gate fires
 
 1. **STOP recording the decision in the plan.** Don't pre-commit to one option in the analysis sections.
-2. **Surface the choice to the user as plain-text prose in the normal response** (NOT via `AskUserQuestion` — the multiple-choice tool does NOT relay answers back through remote-Dispatch clients, see `~/.claude/CLAUDE.md` Autonomy section + `~/.claude/rules/git-discipline.md`). The surfacing MUST include:
+2. **Surface the choice to the user.** The medium is Dispatch-conditional (see `~/.claude/CLAUDE.md` Autonomy section for detection priority — env var `CLAUDE_CODE_DISPATCH=1`, `~/.claude/local/dispatch-mode.json`, explicit user signal, or default to standalone):
+   - **Under Dispatch** (remote client where MC widget doesn't relay): plain-text prose in the normal response. NO `AskUserQuestion`.
+   - **Standalone** (Desktop / IDE / terminal where MC widget renders interactively): `AskUserQuestion` is fine and idiomatic for option-with-tradeoffs surfacing. Plain-text prose is also acceptable if you prefer.
+   - **Unknown**: default to plain-text prose (safer fallback — plain text never breaks).
+
+   In all cases, the surfacing MUST include:
    - The CHOICE the plan needs (specific, scoped — not "what should we do?")
    - At least 2-4 options with brief description of each
    - The TRADEOFFS each option carries (cost, effort, reversibility, what each enables/blocks)
