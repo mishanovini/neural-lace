@@ -191,6 +191,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/env-local-protection.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/findings-ledger-schema-gate.sh"
           }
         ]
