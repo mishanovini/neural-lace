@@ -9,6 +9,9 @@
 - Supabase tokens stored under `~/.supabase/tokens/<account-name>`
 - Project IDs and org IDs are configured in per-machine settings, not committed here
 
+## Credentials Inventory (machine-local source of truth)
+**Before invoking any CLI tool or talking to an external service, consult `~/.claude/local/credentials-inventory.md`** — it lists every authenticated CLI on this machine (`gh`, Trigger.dev, Supabase, Claude Code, git/SSH, etc.), where each credential lives, what commands work without env, and the canonical export line for tools that need `SUPABASE_ACCESS_TOKEN`-style injection. Never assume a tool is unauthenticated without checking the inventory first; never ask the user to re-authenticate if the inventory says the credential is already on this machine. If you discover a new credential or find an inventory entry is stale, update the inventory in the same response. Template: `adapters/claude-code/examples/credentials-inventory.example.md`.
+
 ## Naming & Identity
 - NEVER name projects/products without consulting the user first
 - Use placeholder names until the user provides a name
