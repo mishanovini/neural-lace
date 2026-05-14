@@ -134,7 +134,7 @@ When a discovery requires a decision, the orchestrator follows this protocol:
 3. **Alert the user.** Surface the discovery via the surfacing channels — SessionStart for next session if the work is paused; orchestrator's end-of-batch summary or conclusion-of-work summary for in-session visibility.
 4. **Determine reversibility.**
    - **Reversible:** Auto-apply the recommendation. Mark `Status: decided` with `auto_applied: true`. Continue autonomous delivery without waiting. The decision is captured in the file so the user can review (and amend) at session end or later.
-   - **Irreversible:** PAUSE. Surface to user via `AskUserQuestion` (or equivalent structured-question mechanism) with the same option/tradeoff/recommendation block from the file. Wait for explicit decision before proceeding.
+   - **Irreversible:** PAUSE. Surface to user with the same option/tradeoff/recommendation block from the file. Wait for explicit decision before proceeding. **Default to plain-text prose in the normal response** — the `AskUserQuestion` / multiple-choice tool does NOT relay answers back through remote-Dispatch clients and is prohibited under those conditions (see `~/.claude/CLAUDE.md` Autonomy section + `~/.claude/rules/git-discipline.md` cross-reference). When in doubt about client type, assume remote-Dispatch and use plain text.
 
 ### What counts as reversible vs irreversible
 
