@@ -437,6 +437,18 @@ if [ "$MODE" = "dry-run" ]; then
         changes=$((changes + 1))
       fi
     done
+    for example in "$ADAPTER_DIR/examples"/*.example.md; do
+      [ -f "$example" ] || continue
+      base=$(basename "$example")
+      target_name="${base%.example.md}.md"
+      target="$CLAUDE_DIR/local/$target_name"
+      if [ -e "$target" ]; then
+        echo "  [WOULD SKIP -- already exists]     $target"
+      else
+        echo "  [WOULD CREATE]                     $target (from $base)"
+        changes=$((changes + 1))
+      fi
+    done
     shopt -u nullglob 2>/dev/null || true
   else
     echo "  (no examples/ directory in adapter)"
@@ -746,6 +758,21 @@ if [ -d "$ADAPTER_DIR/examples" ]; then
     [ -f "$example" ] || continue
     base=$(basename "$example")          # e.g. foo.example.json
     target_name="${base%.example.json}.json"  # e.g. foo.json
+    target="$CLAUDE_DIR/local/$target_name"
+
+    if [ -e "$target" ]; then
+      echo "  $CLAUDE_DIR/local/$target_name exists (not overwritten)"
+    else
+      cp "$example" "$target"
+      echo "  created $CLAUDE_DIR/local/$target_name from example"
+      seeded_any=1
+    fi
+  done
+  # Also seed markdown templates (e.g., credentials-inventory.example.md)
+  for example in "$ADAPTER_DIR/examples"/*.example.md; do
+    [ -f "$example" ] || continue
+    base=$(basename "$example")          # e.g. credentials-inventory.example.md
+    target_name="${base%.example.md}.md"  # e.g. credentials-inventory.md
     target="$CLAUDE_DIR/local/$target_name"
 
     if [ -e "$target" ]; then
