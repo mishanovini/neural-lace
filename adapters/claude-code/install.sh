@@ -781,5 +781,25 @@ echo ""
 echo "Pre-push security scanner active on all repos."
 echo "Telemetry data directory: $NEURAL_LACE_DATA/telemetry/"
 echo ""
+
+# ============================================================
+# Windows-only: host performance tuning notice
+# ============================================================
+# Defender real-time scanning of Claude Code's file churn (worktrees,
+# node_modules, bash subprocess output, JSONL transcripts) regularly burns
+# 15-25% CPU on idle Windows machines. The host-setup script adds the dev
+# paths and processes to Defender's exclusion list. Surface it here so a
+# fresh install picks it up.
+
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    echo "Optional (Windows): reduce Defender CPU overhead from dev file scanning:"
+    echo "  powershell -ExecutionPolicy Bypass -File \\"
+    echo "    $ADAPTER_DIR/scripts/host-setup/setup-defender-exclusions.ps1"
+    echo "  See: $NEURAL_LACE_ROOT/docs/host-setup/windows-defender-exclusions.md"
+    echo ""
+    ;;
+esac
+
 echo "Update: cd $NEURAL_LACE_ROOT && git pull && $0"
 echo ""
