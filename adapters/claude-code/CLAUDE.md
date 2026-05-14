@@ -9,8 +9,8 @@
 - Supabase tokens stored under `~/.supabase/tokens/<account-name>`
 - Project IDs and org IDs are configured in per-machine settings, not committed here
 
-## Credentials Inventory (machine-local source of truth)
-**Before invoking any CLI tool or talking to an external service, consult `~/.claude/local/credentials-inventory.md`** — it lists every authenticated CLI on this machine (`gh`, Trigger.dev, Supabase, Claude Code, git/SSH, etc.), where each credential lives, what commands work without env, and the canonical export line for tools that need `SUPABASE_ACCESS_TOKEN`-style injection. Never assume a tool is unauthenticated without checking the inventory first; never ask the user to re-authenticate if the inventory says the credential is already on this machine. If you discover a new credential or find an inventory entry is stale, update the inventory in the same response. Template: `adapters/claude-code/examples/credentials-inventory.example.md`.
+## Credentials Reference
+**Before assuming a credential is missing, consult `~/.claude/local/credentials-reference.md`** — a thin pointer to the established conventions for THIS machine (which CLI auth lives where, and what env-file workflow each project uses). The doc is intentionally short: the credentials live in their canonical places (Vercel Env for production, per-repo `.env.local` for dev, per-repo `.env.example` for schema, standard CLI auth caches for global tools), and the reference doc just tells sessions which conventions are in play so they don't reinvent or ask the user to re-auth tools that are already authenticated. Template: `adapters/claude-code/examples/credentials-reference.example.md`.
 
 ## Naming & Identity
 - NEVER name projects/products without consulting the user first
@@ -36,7 +36,18 @@ Full decision tree, per-mode invocation, tradeoffs, and pairing rules in `~/.cla
 - Business logic/user intent unclear: ask — don't guess on user-facing behavior
 - Pre-authorized actions: file creation, folder creation, cd, ls, mkdir
 - **Drive to completion. Do not end the turn between sub-tasks if there is more work to do.** A code session ends its turn only when (a) all assigned work is complete and pushed, (b) you hit a genuine blocker requiring user input (Tier 3 per `planning.md` — irreversible op, ambiguous product decision, missing credentials), or (c) the user has explicitly said "stop" / "pause" / "that's enough" in their most-recent message. Stopping for any other reason — "natural breakpoint," "good place to check in," "ready for the next phase" — is narrate-and-wait behavior and is prohibited when autonomous execution was authorized. If you must stop, tag the final response with `WHY I STOPPED:` plus a concrete reason so the orchestrator (or the next session) can diagnose. Cross-reference: `~/.claude/rules/testing.md` "Keep Going When Keep-Going Is Authorized" + `narrate-and-wait-gate.sh` Stop hook.
-- **No `AskUserQuestion` / multiple-choice tool when running under a remote-Dispatch client.** The MC widget does not relay answers back through the Dispatch UI; questions asked via that tool block the session with no path forward. All clarifying questions and multi-option surfacing MUST be plain text in a normal response. The user reads and replies in their next message. This applies to ALL clarifying-question flows including the plan-time decision-surfacing protocol (`~/.claude/rules/planning.md` "Plan-Time Decisions With Interface Impact"): surface the choice + options + tradeoffs + recommendation as plain prose, NOT via `AskUserQuestion`. When in doubt about client type, assume remote-Dispatch.
+- **`AskUserQuestion` / multiple-choice tool is Dispatch-conditional.** The MC widget renders interactively on standalone Claude Code clients (Desktop, IDE extension, terminal) — there it's fine and useful per normal Claude Code conventions. The MC widget does NOT relay answers back through remote-Dispatch clients (`mcp__ccd_session_mgmt__start_code_task` orchestrated sessions where the user reads from a phone, web UI, or another device); under Dispatch, the MC tool blocks the session with no path forward. Rule:
+  - **Under Dispatch:** plain text only. Surface choice + options + tradeoffs + recommendation as plain prose in a normal response. The user reads and replies in their next message. NO `AskUserQuestion`.
+  - **Standalone:** MC widget is fine per normal conventions.
+  - **Unknown:** ask the user in the first turn ("Are you on standalone Claude Code or remote Dispatch?") OR default to plain text (the safer fallback — plain text never breaks; MC under Dispatch does break).
+
+  **Detection priority** (use the first signal that resolves):
+  1. **Env var `CLAUDE_CODE_DISPATCH=1`** — target convention. The Dispatch spawner should set this; until that lands, the user may set it manually in their session config.
+  2. **Config file `~/.claude/local/dispatch-mode.json`** — `{"running_under_dispatch": true}` or `false`. Interim manual signal; useful when the spawner doesn't set the env var.
+  3. **Explicit user signal in the conversation** — the user says "I'm on Dispatch" / "I'm at the desktop" / "running standalone." Honor it.
+  4. **Default** — when no signal exists, assume standalone (MC widget OK). Rationale: the standalone case is the more common one; defaulting to plain text universally was overcorrection.
+
+  Applies to ALL clarifying-question flows including the plan-time decision-surfacing protocol (`~/.claude/rules/planning.md` "Plan-Time Decisions With Interface Impact") — under Dispatch surface as plain prose; standalone may use MC widget.
 
 ## Context Persistence (SCRATCHPAD.md)
 Maintain `SCRATCHPAD.md` in project root as working memory (add to .gitignore). On session start: read SCRATCHPAD.md FIRST.
