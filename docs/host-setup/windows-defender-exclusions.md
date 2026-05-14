@@ -23,9 +23,9 @@ Adding the relevant paths and processes to Defender's exclusion list means Defen
 
 ## What gets excluded
 
-The setup script adds three folder exclusions and four process exclusions.
+The setup script adds exclusions in two tiers — **CORE** (Claude Code's own paths and processes) and **ADDITIONAL** (broader dev-tooling caches and processes that the parent folder exclusions miss).
 
-### Folder exclusions (recursive)
+### CORE — folder exclusions (recursive)
 
 | Path | What it covers |
 |---|---|
@@ -35,7 +35,7 @@ The setup script adds three folder exclusions and four process exclusions.
 
 Defender folder exclusions are recursive by default — excluding `~/claude-projects` automatically covers every subdirectory, every worktree, every `node_modules` tree, every build artifact.
 
-### Process exclusions
+### CORE — process exclusions
 
 | Process | Why |
 |---|---|
@@ -46,7 +46,41 @@ Defender folder exclusions are recursive by default — excluding `~/claude-proj
 
 Process exclusions match by executable name only (no path), so they apply wherever the process runs from. A file written by `bash.exe` to `%TEMP%` is skipped even though `%TEMP%` is not in the folder list.
 
-### Why both?
+### ADDITIONAL — folder exclusions
+
+These catch dev-tooling file churn that the parent-folder exclusions miss — package manager caches (which live OUTSIDE any specific repo), language server state, IDE program files. Per-user caches in particular are scanned aggressively because they sit under `%USERPROFILE%` and don't get the per-repo exemption that build folders inside `claude-projects` do.
+
+| Path | What it covers |
+|---|---|
+| `%USERPROFILE%\.cache` | Generic dev tool cache used by Yarn classic and several other CLIs. |
+| `%USERPROFILE%\.npm` | npm package cache (per-user). Touched on every `npm install` even when packages are already cached. |
+| `%LOCALAPPDATA%\npm-cache` | Windows alternate npm cache location (newer npm versions). |
+| `%APPDATA%\npm` | Global npm install dir and `npm.cmd` / `npx.cmd` shims. Read on every CLI invocation. |
+| `%LOCALAPPDATA%\Yarn` | Yarn (modern) cache. |
+| `%LOCALAPPDATA%\pnpm` | pnpm cache + content-addressed package store. pnpm's deduplication writes thousands of hardlinks. |
+| `%LOCALAPPDATA%\Microsoft\TypeScript` | TypeScript language server cache. The TS server reads + writes constantly during dev. |
+| `%USERPROFILE%\.vscode\extensions` | VS Code extensions (TS, ESLint, Prettier, etc.). Heavy file readers loaded on every editor start. |
+| `%LOCALAPPDATA%\Programs\Microsoft VS Code` | VS Code program files. Read heavily on startup. |
+| `%USERPROFILE%\.gitconfig` | The git config FILE (not a folder). Read on every git invocation — and git invocations are constant in a Claude Code session. |
+
+### ADDITIONAL — process exclusions
+
+| Process | Why |
+|---|---|
+| `Code.exe` | VS Code main process. |
+| `tsserver.exe` | TypeScript language server. Watches every `.ts` / `.tsx` file in scope. Among the biggest single file-touch offenders during dev. |
+| `tsc.exe` | TypeScript compiler. |
+| `eslint.exe` | ESLint runner. |
+| `prisma.exe` | Prisma ORM CLI (schema generation, migrations). |
+| `next.exe` | Next.js dev server / build. |
+| `python.exe` / `python3.exe` | Python interpreter (project scripts, tooling). Both names covered. |
+| `cmd.exe` | Windows command shell. Frequently spawned as a subprocess by other tools. |
+| `powershell.exe` | Windows PowerShell. Same — subprocess spawning. |
+| `pwsh.exe` | PowerShell 7+ cross-platform. |
+
+Some of these processes may not be installed on every machine (e.g., `prisma.exe`, `pwsh.exe`). Defender accepts process-name exclusions regardless of whether the executable currently exists — the exclusion applies whenever the process IS spawned, including after a later install.
+
+### Why both folders AND processes?
 
 Folder exclusions cover the static dev surface (known paths). Process exclusions cover the dynamic surface (tempfiles, pipe buffers, transient writes elsewhere). Together they catch both "bash reads this directory" and "bash creates a tempfile somewhere unexpected" — with neither alone, real-time scan overhead remains.
 
@@ -79,28 +113,49 @@ The script is idempotent. Running it twice produces identical state — the seco
 ## How to verify exclusions are in place
 
 ```powershell
-# List all current folder exclusions:
-Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
+# List all current folder exclusions (sorted):
+Get-MpPreference | Select-Object -ExpandProperty ExclusionPath | Sort-Object
 
-# List all current process exclusions:
-Get-MpPreference | Select-Object -ExpandProperty ExclusionProcess
+# List all current process exclusions (sorted):
+Get-MpPreference | Select-Object -ExpandProperty ExclusionProcess | Sort-Object
 ```
 
-Expected paths after first successful run:
+Expected paths after first successful run (folder exclusions, sorted; paths that don't exist on your machine will be reported `[SKIP]` and not added):
 
 ```
-C:\Users\<you>\claude-projects
+C:\Users\<you>\.cache
 C:\Users\<you>\.claude
+C:\Users\<you>\.gitconfig
+C:\Users\<you>\.npm
+C:\Users\<you>\.vscode\extensions
+C:\Users\<you>\AppData\Local\Microsoft\TypeScript
+C:\Users\<you>\AppData\Local\npm-cache
+C:\Users\<you>\AppData\Local\pnpm
+C:\Users\<you>\AppData\Local\Programs\Microsoft VS Code
+C:\Users\<you>\AppData\Local\Yarn
 C:\Users\<you>\AppData\Roaming\Claude
+C:\Users\<you>\AppData\Roaming\npm
+C:\Users\<you>\claude-projects
 ```
 
-Expected processes:
+Expected processes (sorted):
 
 ```
 bash.exe
-node.exe
-git.exe
 claude.exe
+cmd.exe
+Code.exe
+eslint.exe
+git.exe
+next.exe
+node.exe
+powershell.exe
+prisma.exe
+pwsh.exe
+python.exe
+python3.exe
+tsc.exe
+tsserver.exe
 ```
 
 If any are missing, re-run the script — it will add the missing ones and leave the rest alone.
@@ -122,14 +177,33 @@ Remove-MpPreference -ExclusionProcess "bash.exe"
 Remove every exclusion this script added at once:
 
 ```powershell
+# Folders (CORE + ADDITIONAL):
 @(
+    # CORE
     "$env:USERPROFILE\claude-projects",
     "$env:USERPROFILE\.claude",
-    "$env:APPDATA\Claude"
-) | ForEach-Object { Remove-MpPreference -ExclusionPath $_ }
+    "$env:APPDATA\Claude",
+    # ADDITIONAL
+    "$env:USERPROFILE\.cache",
+    "$env:USERPROFILE\.npm",
+    "$env:LOCALAPPDATA\npm-cache",
+    "$env:APPDATA\npm",
+    "$env:LOCALAPPDATA\Yarn",
+    "$env:LOCALAPPDATA\pnpm",
+    "$env:LOCALAPPDATA\Microsoft\TypeScript",
+    "$env:USERPROFILE\.vscode\extensions",
+    "$env:LOCALAPPDATA\Programs\Microsoft VS Code",
+    "$env:USERPROFILE\.gitconfig"
+) | ForEach-Object { Remove-MpPreference -ExclusionPath $_ -ErrorAction SilentlyContinue }
 
-@("bash.exe","node.exe","git.exe","claude.exe") |
-    ForEach-Object { Remove-MpPreference -ExclusionProcess $_ }
+# Processes (CORE + ADDITIONAL):
+@(
+    # CORE
+    "bash.exe","node.exe","git.exe","claude.exe",
+    # ADDITIONAL
+    "Code.exe","tsserver.exe","tsc.exe","eslint.exe","prisma.exe",
+    "next.exe","python.exe","python3.exe","cmd.exe","powershell.exe","pwsh.exe"
+) | ForEach-Object { Remove-MpPreference -ExclusionProcess $_ -ErrorAction SilentlyContinue }
 ```
 
 These commands also require admin. They are non-destructive — they only remove the named exclusion, leaving any other custom exclusions you set up separately intact.

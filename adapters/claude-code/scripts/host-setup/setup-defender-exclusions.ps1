@@ -9,17 +9,29 @@
     Cowork session storage. On busy machines this regularly burns 15-25%
     CPU even when the user is idle.
 
-    This script adds the development paths and processes to Defender's
-    exclusion list so they are skipped by real-time scanning. The script is:
+    This script adds two tiers of exclusions:
+
+      CORE — Claude Code's own paths and processes. Always relevant when
+      Claude Code is installed.
+
+      ADDITIONAL — broader dev-tooling exclusions (package manager caches,
+      language servers, common shells). Catches file churn that the
+      parent-folder exclusions miss (e.g., npm's per-user cache at
+      ~/.npm, TypeScript's language-server cache, VS Code extensions).
+
+    The script is:
 
       - Idempotent. Re-running checks existing exclusions and only adds
         what is missing.
       - Self-elevating. Re-launches under UAC if not already running as
         administrator. Defender Add-MpPreference requires admin.
-      - Path-portable. Uses $env:USERPROFILE / $env:APPDATA so the script
-        works for any Windows user (not hardcoded to one home dir).
+        The parent waits (-Wait) for the elevated child to complete.
+      - Path-portable. Uses $env:USERPROFILE / $env:APPDATA /
+        $env:LOCALAPPDATA so the script works for any Windows user.
       - Honest in reporting. Prints exactly what was added vs already
         present vs skipped (and why).
+      - Transcript-logged. When elevated, writes a Start-Transcript log
+        to %TEMP%\neural-lace-host-setup\ for after-the-fact review.
 
     SECURITY TRADEOFF: excluded paths are NOT scanned by Defender's
     real-time protection. Files written into those paths could carry
@@ -31,11 +43,17 @@
     Print what would be added; do not modify Defender state. Skips the
     elevation check (read-only operations don't need admin).
 
+.PARAMETER LogFile
+    Path to a transcript log file. When set, the admin-context run will
+    Start-Transcript to that file. Automatically generated and passed
+    through during self-elevation so the parent can read the elevated
+    child's output.
+
 .PARAMETER Help
     Print usage and exit.
 
 .EXAMPLE
-    # Normal run (auto-elevates):
+    # Normal run (auto-elevates via UAC):
     powershell -ExecutionPolicy Bypass -File .\setup-defender-exclusions.ps1
 
     # Preview without modifying state:
@@ -55,7 +73,8 @@
 [CmdletBinding()]
 param(
     [switch]$DryRun,
-    [switch]$Help
+    [switch]$Help,
+    [string]$LogFile
 )
 
 # ============================================================
@@ -71,28 +90,67 @@ if ($Help) {
 # Self-elevate via UAC if not running as administrator
 # ============================================================
 # Add-MpPreference requires admin. Get-MpPreference does not, so DryRun
-# can run without elevation.
+# can run without elevation. The parent uses -Wait so a Bash caller
+# blocks until the elevated child completes.
 
 $isAdmin = ([Security.Principal.WindowsPrincipal] `
     [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole( `
     [Security.Principal.WindowsBuiltInRole] "Administrator")
 
 if (-not $isAdmin -and -not $DryRun) {
+    # Generate a default log file path if one wasn't passed in
+    if (-not $LogFile) {
+        $logDir = "$env:TEMP\neural-lace-host-setup"
+        if (-not (Test-Path -LiteralPath $logDir)) {
+            New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+        }
+        $LogFile = "$logDir\setup-defender-exclusions-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+    }
+
     Write-Host ""
     Write-Host "This script needs administrator privileges to modify Defender." -ForegroundColor Yellow
-    Write-Host "Re-launching with UAC elevation prompt..." -ForegroundColor Yellow
+    Write-Host "Re-launching with UAC elevation prompt. Output will be logged to:" -ForegroundColor Yellow
+    Write-Host "  $LogFile" -ForegroundColor Yellow
     Write-Host ""
 
-    $argString = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    $argString = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -LogFile `"$LogFile`""
     if ($DryRun) { $argString += " -DryRun" }
 
     try {
-        Start-Process -FilePath PowerShell.exe -ArgumentList $argString -Verb RunAs -ErrorAction Stop
+        Start-Process -FilePath PowerShell.exe -ArgumentList $argString -Verb RunAs -Wait -ErrorAction Stop
     } catch {
         Write-Host "User declined elevation or UAC failed. Aborting." -ForegroundColor Red
         exit 1
     }
+
+    # After the elevated child completes, surface its log content so any
+    # non-interactive caller (a Bash subprocess capturing this output) can
+    # see what happened in the elevated session.
+    if (Test-Path -LiteralPath $LogFile) {
+        Write-Host ""
+        Write-Host "Elevated run complete. Log content follows:" -ForegroundColor Cyan
+        Write-Host "==========================================" -ForegroundColor Cyan
+        Get-Content -LiteralPath $LogFile -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host $_
+        }
+        Write-Host "==========================================" -ForegroundColor Cyan
+        Write-Host "Log saved at: $LogFile" -ForegroundColor DarkGray
+    }
     exit 0
+}
+
+# ============================================================
+# Start transcript (admin context only, when LogFile is set)
+# ============================================================
+
+$transcriptStarted = $false
+if ($LogFile -and -not $DryRun) {
+    try {
+        Start-Transcript -Path $LogFile -Force | Out-Null
+        $transcriptStarted = $true
+    } catch {
+        Write-Host "WARN: Failed to start transcript at $LogFile : $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
 }
 
 # ============================================================
@@ -100,8 +158,9 @@ if (-not $isAdmin -and -not $DryRun) {
 # ============================================================
 # Folder exclusions are recursive in Defender by default.
 # Process exclusions match by executable name only (no path).
+# Add-MpPreference -ExclusionPath accepts files too (e.g., .gitconfig).
 
-$folderExclusions = @(
+$coreFolderExclusions = @(
     @{
         Path = "$env:USERPROFILE\claude-projects"
         Reason = "Worktree churn + node_modules I/O + dev file edits"
@@ -116,12 +175,161 @@ $folderExclusions = @(
     }
 )
 
-$processExclusions = @(
+$coreProcessExclusions = @(
     @{ Name = "bash.exe";   Reason = "Git Bash subprocess churn" },
     @{ Name = "node.exe";   Reason = "Node-based tooling, npm install, tsc" },
     @{ Name = "git.exe";    Reason = "Frequent staging/diff/status calls" },
     @{ Name = "claude.exe"; Reason = "Claude Code CLI's own file I/O" }
 )
+
+# Additional dev-tooling exclusions — package manager caches, language
+# servers, common shells. Catch the file churn the parent-folder
+# exclusions above miss (e.g., npm's per-user cache outside any project).
+$additionalFolderExclusions = @(
+    @{ Path = "$env:USERPROFILE\.cache";                                   Reason = "Generic dev tool cache (Yarn classic, others)" },
+    @{ Path = "$env:USERPROFILE\.npm";                                     Reason = "npm package cache (per-user)" },
+    @{ Path = "$env:LOCALAPPDATA\npm-cache";                               Reason = "Windows alternate npm cache" },
+    @{ Path = "$env:APPDATA\npm";                                          Reason = "Global npm install dir + npm.cmd/npx.cmd shims" },
+    @{ Path = "$env:LOCALAPPDATA\Yarn";                                    Reason = "Yarn package manager cache" },
+    @{ Path = "$env:LOCALAPPDATA\pnpm";                                    Reason = "pnpm package manager cache + content-addressed store" },
+    @{ Path = "$env:LOCALAPPDATA\Microsoft\TypeScript";                    Reason = "TypeScript language server cache" },
+    @{ Path = "$env:USERPROFILE\.vscode\extensions";                       Reason = "VS Code extensions (TS / ESLint / Prettier are heavy file readers)" },
+    @{ Path = "$env:LOCALAPPDATA\Programs\Microsoft VS Code";              Reason = "VS Code program files (heavy I/O on startup)" },
+    @{ Path = "$env:USERPROFILE\.gitconfig";                               Reason = "Git config file (read on every git invocation)" }
+)
+
+$additionalProcessExclusions = @(
+    @{ Name = "Code.exe";       Reason = "VS Code main process" },
+    @{ Name = "tsserver.exe";   Reason = "TypeScript language server (heavy file watching)" },
+    @{ Name = "tsc.exe";        Reason = "TypeScript compiler" },
+    @{ Name = "eslint.exe";     Reason = "ESLint runner" },
+    @{ Name = "prisma.exe";     Reason = "Prisma ORM CLI (schema gen, migrations)" },
+    @{ Name = "next.exe";       Reason = "Next.js dev server / build" },
+    @{ Name = "python.exe";     Reason = "Python interpreter (project scripts, tooling)" },
+    @{ Name = "python3.exe";    Reason = "Python 3 interpreter (alternate name)" },
+    @{ Name = "cmd.exe";        Reason = "Windows command shell (subprocess spawner)" },
+    @{ Name = "powershell.exe"; Reason = "Windows PowerShell (subprocess spawner)" },
+    @{ Name = "pwsh.exe";       Reason = "PowerShell 7+ cross-platform" }
+)
+
+# ============================================================
+# Processing functions
+# ============================================================
+
+function Invoke-FolderExclusionSet {
+    param(
+        [Parameter(Mandatory)][string]$SectionLabel,
+        [Parameter(Mandatory)][array]$Entries,
+        [Parameter(Mandatory)][AllowEmptyCollection()][array]$ExistingPaths,
+        [bool]$IsDryRun
+    )
+
+    Write-Host ""
+    Write-Host $SectionLabel -ForegroundColor Cyan
+    Write-Host ""
+
+    $added = 0
+    $already = 0
+    $skipped = 0
+    $failed = 0
+
+    foreach ($entry in $Entries) {
+        $path = $entry.Path
+        $reason = $entry.Reason
+        $normalized = $path.TrimEnd('\').ToLower()
+
+        if (-not (Test-Path -LiteralPath $path)) {
+            Write-Host "  [SKIP]    $path" -ForegroundColor DarkYellow
+            Write-Host "            path does not exist on this machine; skipping" -ForegroundColor DarkGray
+            $skipped++
+            continue
+        }
+
+        if ($ExistingPaths -contains $normalized) {
+            Write-Host "  [EXISTS]  $path" -ForegroundColor DarkGreen
+            Write-Host "            already excluded; no change needed" -ForegroundColor DarkGray
+            $already++
+            continue
+        }
+
+        if ($IsDryRun) {
+            Write-Host "  [WOULD ADD] $path" -ForegroundColor Yellow
+            Write-Host "              reason: $reason" -ForegroundColor DarkGray
+            $added++
+        } else {
+            try {
+                Add-MpPreference -ExclusionPath $path -ErrorAction Stop
+                Write-Host "  [ADDED]   $path" -ForegroundColor Green
+                Write-Host "            reason: $reason" -ForegroundColor DarkGray
+                $added++
+            } catch {
+                Write-Host "  [FAIL]    $path" -ForegroundColor Red
+                Write-Host "            $($_.Exception.Message)" -ForegroundColor Red
+                $failed++
+            }
+        }
+    }
+
+    return [PSCustomObject]@{
+        Added   = $added
+        Already = $already
+        Skipped = $skipped
+        Failed  = $failed
+    }
+}
+
+function Invoke-ProcessExclusionSet {
+    param(
+        [Parameter(Mandatory)][string]$SectionLabel,
+        [Parameter(Mandatory)][array]$Entries,
+        [Parameter(Mandatory)][AllowEmptyCollection()][array]$ExistingProcesses,
+        [bool]$IsDryRun
+    )
+
+    Write-Host ""
+    Write-Host $SectionLabel -ForegroundColor Cyan
+    Write-Host ""
+
+    $added = 0
+    $already = 0
+    $failed = 0
+
+    foreach ($entry in $Entries) {
+        $name = $entry.Name
+        $reason = $entry.Reason
+        $normalized = $name.ToLower()
+
+        if ($ExistingProcesses -contains $normalized) {
+            Write-Host "  [EXISTS]  $name" -ForegroundColor DarkGreen
+            Write-Host "            already excluded; no change needed" -ForegroundColor DarkGray
+            $already++
+            continue
+        }
+
+        if ($IsDryRun) {
+            Write-Host "  [WOULD ADD] $name" -ForegroundColor Yellow
+            Write-Host "              reason: $reason" -ForegroundColor DarkGray
+            $added++
+        } else {
+            try {
+                Add-MpPreference -ExclusionProcess $name -ErrorAction Stop
+                Write-Host "  [ADDED]   $name" -ForegroundColor Green
+                Write-Host "            reason: $reason" -ForegroundColor DarkGray
+                $added++
+            } catch {
+                Write-Host "  [FAIL]    $name" -ForegroundColor Red
+                Write-Host "            $($_.Exception.Message)" -ForegroundColor Red
+                $failed++
+            }
+        }
+    }
+
+    return [PSCustomObject]@{
+        Added   = $added
+        Already = $already
+        Failed  = $failed
+    }
+}
 
 # ============================================================
 # Read current Defender state
@@ -141,103 +349,60 @@ try {
     Write-Host "ERROR: Get-MpPreference failed. Is Windows Defender available on this system?" -ForegroundColor Red
     Write-Host "       (On non-Windows or systems without Defender, this script is a no-op.)" -ForegroundColor Red
     Write-Host "       Underlying error: $($_.Exception.Message)" -ForegroundColor Red
+    if ($transcriptStarted) { try { Stop-Transcript | Out-Null } catch {} }
     exit 1
 }
 
 # Defender stores paths case-insensitively. Normalize for comparison.
 $existingPaths = @()
 if ($mp.ExclusionPath) {
-    $existingPaths = $mp.ExclusionPath | ForEach-Object { $_.TrimEnd('\').ToLower() }
+    $existingPaths = @($mp.ExclusionPath | ForEach-Object { $_.TrimEnd('\').ToLower() })
 }
 $existingProcesses = @()
 if ($mp.ExclusionProcess) {
-    $existingProcesses = $mp.ExclusionProcess | ForEach-Object { $_.ToLower() }
+    $existingProcesses = @($mp.ExclusionProcess | ForEach-Object { $_.ToLower() })
 }
 
 # ============================================================
-# Process folder exclusions
+# Apply exclusion sets (core + additional)
 # ============================================================
 
-Write-Host "Folder exclusions:" -ForegroundColor Cyan
-Write-Host ""
+$coreFolderStats = Invoke-FolderExclusionSet `
+    -SectionLabel "Folder exclusions (CORE Claude Code paths):" `
+    -Entries $coreFolderExclusions `
+    -ExistingPaths $existingPaths `
+    -IsDryRun $DryRun
 
-$added = 0
-$already = 0
-$skipped = 0
+$coreProcessStats = Invoke-ProcessExclusionSet `
+    -SectionLabel "Process exclusions (CORE Claude Code subprocesses):" `
+    -Entries $coreProcessExclusions `
+    -ExistingProcesses $existingProcesses `
+    -IsDryRun $DryRun
 
-foreach ($entry in $folderExclusions) {
-    $path = $entry.Path
-    $reason = $entry.Reason
-    $normalized = $path.TrimEnd('\').ToLower()
-
-    if (-not (Test-Path -LiteralPath $path)) {
-        Write-Host "  [SKIP]    $path" -ForegroundColor DarkYellow
-        Write-Host "            path does not exist on this machine; skipping" -ForegroundColor DarkGray
-        $skipped++
-        continue
-    }
-
-    if ($existingPaths -contains $normalized) {
-        Write-Host "  [EXISTS]  $path" -ForegroundColor DarkGreen
-        Write-Host "            already excluded; no change needed" -ForegroundColor DarkGray
-        $already++
-        continue
-    }
-
-    if ($DryRun) {
-        Write-Host "  [WOULD ADD] $path" -ForegroundColor Yellow
-        Write-Host "              reason: $reason" -ForegroundColor DarkGray
-    } else {
-        try {
-            Add-MpPreference -ExclusionPath $path -ErrorAction Stop
-            Write-Host "  [ADDED]   $path" -ForegroundColor Green
-            Write-Host "            reason: $reason" -ForegroundColor DarkGray
-            $added++
-        } catch {
-            Write-Host "  [FAIL]    $path" -ForegroundColor Red
-            Write-Host "            $($_.Exception.Message)" -ForegroundColor Red
-        }
-    }
+# Re-read Defender state between sections so the "additional" pass sees
+# what the "core" pass just added. (Avoids spurious [ADDED] reports if the
+# two sets ever overlap in the future.)
+if (-not $DryRun) {
+    try {
+        $mp = Get-MpPreference -ErrorAction Stop
+        $existingPaths = @()
+        if ($mp.ExclusionPath) { $existingPaths = @($mp.ExclusionPath | ForEach-Object { $_.TrimEnd('\').ToLower() }) }
+        $existingProcesses = @()
+        if ($mp.ExclusionProcess) { $existingProcesses = @($mp.ExclusionProcess | ForEach-Object { $_.ToLower() }) }
+    } catch {}
 }
 
-# ============================================================
-# Process executable exclusions
-# ============================================================
+$addFolderStats = Invoke-FolderExclusionSet `
+    -SectionLabel "Folder exclusions (ADDITIONAL dev-tooling caches + tools):" `
+    -Entries $additionalFolderExclusions `
+    -ExistingPaths $existingPaths `
+    -IsDryRun $DryRun
 
-Write-Host ""
-Write-Host "Process exclusions:" -ForegroundColor Cyan
-Write-Host ""
-
-$procAdded = 0
-$procAlready = 0
-
-foreach ($entry in $processExclusions) {
-    $name = $entry.Name
-    $reason = $entry.Reason
-    $normalized = $name.ToLower()
-
-    if ($existingProcesses -contains $normalized) {
-        Write-Host "  [EXISTS]  $name" -ForegroundColor DarkGreen
-        Write-Host "            already excluded; no change needed" -ForegroundColor DarkGray
-        $procAlready++
-        continue
-    }
-
-    if ($DryRun) {
-        Write-Host "  [WOULD ADD] $name" -ForegroundColor Yellow
-        Write-Host "              reason: $reason" -ForegroundColor DarkGray
-    } else {
-        try {
-            Add-MpPreference -ExclusionProcess $name -ErrorAction Stop
-            Write-Host "  [ADDED]   $name" -ForegroundColor Green
-            Write-Host "            reason: $reason" -ForegroundColor DarkGray
-            $procAdded++
-        } catch {
-            Write-Host "  [FAIL]    $name" -ForegroundColor Red
-            Write-Host "            $($_.Exception.Message)" -ForegroundColor Red
-        }
-    }
-}
+$addProcessStats = Invoke-ProcessExclusionSet `
+    -SectionLabel "Process exclusions (ADDITIONAL dev-tooling processes):" `
+    -Entries $additionalProcessExclusions `
+    -ExistingProcesses $existingProcesses `
+    -IsDryRun $DryRun
 
 # ============================================================
 # Summary
@@ -247,24 +412,34 @@ Write-Host ""
 Write-Host "Summary:" -ForegroundColor Cyan
 if ($DryRun) {
     Write-Host "  (dry-run: state unchanged)"
+    Write-Host ("  Core folders:        would-add={0}, exists={1}, skipped={2}" -f $coreFolderStats.Added, $coreFolderStats.Already, $coreFolderStats.Skipped)
+    Write-Host ("  Core processes:      would-add={0}, exists={1}" -f $coreProcessStats.Added, $coreProcessStats.Already)
+    Write-Host ("  Additional folders:  would-add={0}, exists={1}, skipped={2}" -f $addFolderStats.Added, $addFolderStats.Already, $addFolderStats.Skipped)
+    Write-Host ("  Additional processes:would-add={0}, exists={1}" -f $addProcessStats.Added, $addProcessStats.Already)
 } else {
-    Write-Host "  Folder exclusions:  added=$added, already-present=$already, skipped=$skipped"
-    Write-Host "  Process exclusions: added=$procAdded, already-present=$procAlready"
+    Write-Host ("  Core folders:        added={0}, already-present={1}, skipped={2}, failed={3}" -f $coreFolderStats.Added, $coreFolderStats.Already, $coreFolderStats.Skipped, $coreFolderStats.Failed)
+    Write-Host ("  Core processes:      added={0}, already-present={1}, failed={2}" -f $coreProcessStats.Added, $coreProcessStats.Already, $coreProcessStats.Failed)
+    Write-Host ("  Additional folders:  added={0}, already-present={1}, skipped={2}, failed={3}" -f $addFolderStats.Added, $addFolderStats.Already, $addFolderStats.Skipped, $addFolderStats.Failed)
+    Write-Host ("  Additional processes:added={0}, already-present={1}, failed={2}" -f $addProcessStats.Added, $addProcessStats.Already, $addProcessStats.Failed)
 }
 Write-Host ""
 Write-Host "Verify state:"
-Write-Host "  Get-MpPreference | Select-Object -Expand ExclusionPath"
-Write-Host "  Get-MpPreference | Select-Object -Expand ExclusionProcess"
+Write-Host "  Get-MpPreference | Select-Object -Expand ExclusionPath | Sort-Object"
+Write-Host "  Get-MpPreference | Select-Object -Expand ExclusionProcess | Sort-Object"
 Write-Host ""
 Write-Host "Remove a single exclusion (if you change your mind):"
 Write-Host "  Remove-MpPreference -ExclusionPath '<path>'"
 Write-Host "  Remove-MpPreference -ExclusionProcess '<name>'"
 Write-Host ""
 
+if ($transcriptStarted) {
+    try { Stop-Transcript | Out-Null } catch {}
+}
+
 # ============================================================
 # OPTIONAL: Granular per-repo node_modules exclusions
 # ============================================================
-# The parent-folder exclusion above ($env:USERPROFILE\claude-projects) is
+# The CORE folder exclusion above ($env:USERPROFILE\claude-projects) is
 # recursive and already covers every node_modules directory underneath it.
 # You do NOT need the granular block below as long as the parent exclusion
 # is in place.
@@ -307,7 +482,7 @@ function Add-NodeModulesExclusions {
     $mp2 = Get-MpPreference
     $existing = @()
     if ($mp2.ExclusionPath) {
-        $existing = $mp2.ExclusionPath | ForEach-Object { $_.TrimEnd('\').ToLower() }
+        $existing = @($mp2.ExclusionPath | ForEach-Object { $_.TrimEnd('\').ToLower() })
     }
 
     $paths = Get-ClaudeProjectsNodeModulesPaths
