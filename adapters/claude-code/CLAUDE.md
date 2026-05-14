@@ -32,6 +32,8 @@ Full decision tree, per-mode invocation, tradeoffs, and pairing rules in `~/.cla
 - Builds/tests fail: investigate and fix (up to 3 attempts) before escalating
 - Business logic/user intent unclear: ask — don't guess on user-facing behavior
 - Pre-authorized actions: file creation, folder creation, cd, ls, mkdir
+- **Drive to completion. Do not end the turn between sub-tasks if there is more work to do.** A code session ends its turn only when (a) all assigned work is complete and pushed, (b) you hit a genuine blocker requiring user input (Tier 3 per `planning.md` — irreversible op, ambiguous product decision, missing credentials), or (c) the user has explicitly said "stop" / "pause" / "that's enough" in their most-recent message. Stopping for any other reason — "natural breakpoint," "good place to check in," "ready for the next phase" — is narrate-and-wait behavior and is prohibited when autonomous execution was authorized. If you must stop, tag the final response with `WHY I STOPPED:` plus a concrete reason so the orchestrator (or the next session) can diagnose. Cross-reference: `~/.claude/rules/testing.md` "Keep Going When Keep-Going Is Authorized" + `narrate-and-wait-gate.sh` Stop hook.
+- **No `AskUserQuestion` / multiple-choice tool when running under a remote-Dispatch client.** The MC widget does not relay answers back through the Dispatch UI; questions asked via that tool block the session with no path forward. All clarifying questions and multi-option surfacing MUST be plain text in a normal response. The user reads and replies in their next message. This applies to ALL clarifying-question flows including the plan-time decision-surfacing protocol (`~/.claude/rules/planning.md` "Plan-Time Decisions With Interface Impact"): surface the choice + options + tradeoffs + recommendation as plain prose, NOT via `AskUserQuestion`. When in doubt about client type, assume remote-Dispatch.
 
 ## Context Persistence (SCRATCHPAD.md)
 Maintain `SCRATCHPAD.md` in project root as working memory (add to .gitignore). On session start: read SCRATCHPAD.md FIRST.
@@ -186,6 +188,7 @@ Four highest-leverage agent prompts (`task-verifier`, `code-reviewer`, `plan-pha
 - `orchestrator-pattern.md` — multi-task plan dispatch + parallel builders in worktrees
 - `security.md` — credentials, destructive ops, software installation safety
 - `git.md` — commit practices, branch strategy, customer-tier branching
+- `git-discipline.md` — force-push prohibition (absolute, no exceptions), post-merge sync of user's main checkout, Stop-hook waivers-before-retry-guard
 - `harness-hygiene.md` — no sensitive data / personal identifiers in harness code; two-layer config; instances never ship in harness repos
 - `harness-maintenance.md` — global-first rule changes, commit to neural-lace, update architecture doc
 - `ux-design.md` — error messages, empty states, loading states, destructive actions

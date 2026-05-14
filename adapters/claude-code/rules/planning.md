@@ -570,14 +570,14 @@ If the choice is purely internal (variable naming, code organization, idiomatic 
 ### Required action when the gate fires
 
 1. **STOP recording the decision in the plan.** Don't pre-commit to one option in the analysis sections.
-2. **Use `AskUserQuestion`** (or the equivalent structured-question mechanism). The question MUST include:
+2. **Surface the choice to the user as plain-text prose in the normal response** (NOT via `AskUserQuestion` — the multiple-choice tool does NOT relay answers back through remote-Dispatch clients, see `~/.claude/CLAUDE.md` Autonomy section + `~/.claude/rules/git-discipline.md`). The surfacing MUST include:
    - The CHOICE the plan needs (specific, scoped — not "what should we do?")
    - At least 2-4 options with brief description of each
    - The TRADEOFFS each option carries (cost, effort, reversibility, what each enables/blocks)
    - Your RECOMMENDATION (mark with "(Recommended)" — the user is more likely to override an explicit recommendation than to override a silent default)
    - Any time-pressure context the user should know
 3. **Wait for the user's answer.** Do not proceed with build work until the choice is made.
-4. **Record the decision** in the plan's Decisions Log AND in `docs/decisions/NNN-<slug>.md` (per the Tier 2+ decision-record rule below). The Decisions Log entry MUST include `Surfaced to user: <YYYY-MM-DD HH:MM via AskUserQuestion>` so the audit trail is intact.
+4. **Record the decision** in the plan's Decisions Log AND in `docs/decisions/NNN-<slug>.md` (per the Tier 2+ decision-record rule below). The Decisions Log entry MUST include `Surfaced to user: <YYYY-MM-DD HH:MM in plain-text response>` so the audit trail is intact.
 
 ### Anti-patterns
 
