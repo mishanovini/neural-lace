@@ -9,8 +9,8 @@
 - Supabase tokens stored under `~/.supabase/tokens/<account-name>`
 - Project IDs and org IDs are configured in per-machine settings, not committed here
 
-## Credentials Inventory (machine-local source of truth)
-**Before invoking any CLI tool or talking to an external service, consult `~/.claude/local/credentials-inventory.md`** — it lists every authenticated CLI on this machine (`gh`, Trigger.dev, Supabase, Claude Code, git/SSH, etc.), where each credential lives, what commands work without env, and the canonical export line for tools that need `SUPABASE_ACCESS_TOKEN`-style injection. Never assume a tool is unauthenticated without checking the inventory first; never ask the user to re-authenticate if the inventory says the credential is already on this machine. If you discover a new credential or find an inventory entry is stale, update the inventory in the same response. Template: `adapters/claude-code/examples/credentials-inventory.example.md`.
+## Credentials Reference
+**Before assuming a credential is missing, consult `~/.claude/local/credentials-reference.md`** — a thin pointer to the established conventions for THIS machine (which CLI auth lives where, and what env-file workflow each project uses). The doc is intentionally short: the credentials live in their canonical places (Vercel Env for production, per-repo `.env.local` for dev, per-repo `.env.example` for schema, standard CLI auth caches for global tools), and the reference doc just tells sessions which conventions are in play so they don't reinvent or ask the user to re-auth tools that are already authenticated. Template: `adapters/claude-code/examples/credentials-reference.example.md`.
 
 ## Naming & Identity
 - NEVER name projects/products without consulting the user first
