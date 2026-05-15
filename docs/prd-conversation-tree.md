@@ -1,0 +1,169 @@
+# PRD: Conversation Tree Management UI
+
+<!--
+Working name only. Per ~/.claude/CLAUDE.md "Naming & Identity", the product
+is NOT named until Misha names it; "Conversation Tree Management UI" is a
+descriptive placeholder, not a brand.
+
+Optional Neural Lace harness module. Placed at docs/prd-conversation-tree.md
+(NOT docs/prd.md) per Decision A surfaced in the Phase 0 checkpoint:
+neural-lace is a harness repo whose own work uses the
+`prd-ref: n/a — harness-development` carve-out; this module is the first
+genuine user-facing product surface inside it and warrants honest artifact
+naming over gaming the one-PRD path so the shape-gate auto-fires. Substance
+review is via the `prd-validity-reviewer` agent. The deviation from the
+one-PRD-per-project convention is recorded in ADR-031.
+
+Produced via the Build Doctrine guided-PRD-intake protocol
+(build-doctrine/doctrine/05-implementation-process.md, Stages A–F). Stage
+provenance is annotated inline so the process is visible, not a black box.
+-->
+
+## Problem
+
+<!-- Stage A — Problem framing. -->
+
+Conversations between Misha and Dispatch (the remote Claude Code orchestration he drives) generate a **tree of work**, not a linear thread. A single request — "look into X" — routinely branches: a decision is surfaced, Misha goes deep on a subset of the options, doesn't answer all of them, a sub-investigation spawns, a follow-up question arrives from a running session. Each branch is a coherent unit of work roughly the size of a separate code session.
+
+Today that tree exists in exactly two places, both volatile: **Misha's head**, and **the agent's ephemeral context**. Neither survives a session boundary intact. The concrete costs:
+
+- **Lost threads.** When a session closes, open branches that weren't explicitly resumed evaporate. Misha has no durable surface that says "these 4 branches are still open and waiting on you."
+- **Stale decisions.** A decision Misha was asked to make three sessions ago is still pending, but nothing surfaces it; it silently rots until the work it gated is irrelevant.
+- **Half-built efforts pile up.** A branch gets 70% done, the session ends, and the remaining 30% is invisible until someone re-derives it by reading scrollback — which is exactly the failure mode the harness's own SCRATCHPAD/plan/backlog discipline exists to fight, but at the *conversation-tree* level there is no equivalent durable artifact.
+- **No "waiting on me" surface.** Misha cannot answer "what decisions are blocked on my input?" or "what actions are blocked on me?" without manually reconstructing the tree from memory and chat history. The information exists but is not *surfaced* and not *linked back to the structure that produced it*.
+
+Misha explicitly does not do manual git/code work — the system and Dispatch drive execution. So the problem is not "give Misha tools to manage code"; it is "give Misha a durable, visible, navigable model of the *decision-and-action tree* that his collaboration with Dispatch produces, with the two things he is the bottleneck on — decisions and actions — surfaced and linked back to where they came from."
+
+**Invisible-knowledge surfaces (N-R-B — mandatory intake prompt).** Three pieces of institutional knowledge shape what "good" means here and would be missed by a naive design:
+
+1. **Node granularity is a tacit heuristic, not a rule.** "A node is roughly the same criteria I'd use to spawn a separate code session" — a coherent piece of work, not a per-message unit. New branches form specifically when Dispatch presents decisions and Misha goes deep on a *subset* OR doesn't answer all of them. This branching trigger is invisible institutional knowledge; the model must encode it, not invent its own granularity.
+2. **Implicit Dispatch check-offs are currently untrusted, and that distrust is the feature.** The friction isn't "Dispatch doesn't track completion"; it's "when Dispatch silently considers something done, Misha has no way to see it or contest it." The agree/disagree-both-directions requirement exists *because* implicit completion is invisible and unilateral today.
+3. **The stale-and-forgotten friction is real but the wanted remedy is far narrower than a naive design would build.** A naive design would build an aggressive nag/alert engine. The actual need is minimal: alert a parent branch *only* when one of its children concludes (so the parent can resume), plus let Misha defer his own action items with an optional condition. Over-building alerting here is a known anti-pattern Misha pre-empted.
+
+## Scenarios
+
+<!-- Stage B — Scenarios and stories. Primary + edge + explicit not-scenarios. -->
+
+### Scenario 1 — A request branches and the branches persist (primary)
+
+Misha asks Dispatch to investigate a harness gap. Dispatch works, then surfaces three decisions. Misha answers two and goes deep on the third. The tree now shows: a parent node (the original request), an open child branch for the deep-dive on decision 3, and the two answered decisions auto-checked on the parent. The session ends. Next session, Misha opens the GUI and immediately sees the open deep-dive branch without reading any scrollback.
+
+### Scenario 2 — "What's waiting on me?" (primary)
+
+Misha opens the decision-list side surface. It shows every unanswered decision across the entire tree, each linked back to the node that raised it. He clicks one; the GUI focuses the conversation at that node with that branch's context reloaded. He answers. The decision auto-checks and disappears from the list.
+
+### Scenario 3 — Click a node to resume a cold branch (primary)
+
+A branch has been idle for two sessions. Misha clicks its node. The branch's context reloads (the parent question, the decisions raised, the work done). He types a follow-up at that node. The previously-focused leaf auto-concludes (with the ability to re-open it). The clicked branch is now the active conversation context.
+
+### Scenario 4 — A branch auto-collapses when complete (primary)
+
+A branch has a checklist of 3 decisions and 2 actions. As Dispatch completes actions and Misha answers decisions, items auto-check. When the last item checks, the branch visually collapses (still expandable). Its parent receives a single alert: "child branch *Y* concluded — resume?"
+
+### Scenario 5 — Agree/disagree on a check-off, both directions (primary)
+
+(a) Dispatch implicitly marks "wire the hook" done. Misha disagrees: he un-checks it and annotates "not done — the live mirror wasn't synced." The item reopens with his note attached. (b) Misha explicitly marks "Phase 2 complete." Dispatch disagrees and surfaces "you marked Phase 2 complete but the acceptance scenario for FR-7 was never exercised." The conflict is visible, not silently resolved either way.
+
+### Scenario 6 — Conclude a branch, kick off a session (primary)
+
+A branch's decisions are all answered. Misha concludes it. The gathered decisions become the prompt for a new Dispatch session that the branch spawns. A question raised by that running session appears as a new child node under the branch that spawned it.
+
+### Scenario 7 — Defer my own action item with a condition (edge)
+
+Misha has an action item "decide on hosting provider." He can't decide yet — it depends on a quote arriving. He defers it with the condition "after 2026-05-20." It disappears from the active action list and reappears (or is re-surfaced) when the condition resolves.
+
+### Scenario 8 — Dispatch writes the state while Misha is editing it (edge)
+
+Dispatch is mid-session writing branch annotations to the JSON state file. Simultaneously, Misha drags a node to re-parent it in the GUI. Both writes target the same state file. The system must not corrupt the tree or silently drop either change.
+
+### Explicitly NOT scenarios
+
+- **Misha hand-edits the JSON.** The JSON is an internal representation. Every manipulation Misha does is through the GUI (drag-drop, check-off, promote-to-branch). He never opens the file.
+- **Multiple humans collaborating on one tree.** Single-user. No presence, no shared cursors, no per-user permissions.
+- **The GUI as a code editor / git client.** Misha does not do manual git/code work; the GUI never shows a diff editor or a commit UI.
+- **A general project-management tool.** This models *one specific thing* — the Misha↔Dispatch conversation tree — not arbitrary tasks, sprints, or tickets.
+
+## Functional requirements
+
+<!-- Stage C — Functional requirements. Each FR is falsifiable. Bracketed
+items marked (GAP) are requirements the scenarios imply that Misha did NOT
+state — surfaced per the intake protocol's "AI surfaces what users miss." -->
+
+- **FR-1. Tree model.** The system maintains a strict tree (each node has exactly one parent). The root is a top-level Misha request. Acceptance: any node has a single resolvable parent path to the root; no node has two parents.
+- **FR-2. Node granularity.** A node represents a coherent unit of work at roughly "would I spawn a separate code session for this?" granularity — never per-message. A new child branch is created when Dispatch presents a set of decisions and Misha (a) goes deep on a subset, or (b) does not answer all of them. Acceptance: a single message exchange that does not branch a decision-set produces zero new nodes; a decision-set where ≥1 decision is taken deep or left unanswered produces exactly one child branch for the divergent subset.
+- **FR-3. Manual cross-links.** Beyond the strict parent tree, Misha can create non-hierarchical cross-links between nodes via tags. Acceptance: a tag applied to two nodes renders a visible non-tree association without changing either node's parent.
+- **FR-4. Decision-list side surface.** A view listing every unanswered decision across the whole tree, each linked back to its originating node. Acceptance: answering a decision (anywhere) removes it from this list within one state refresh; clicking an entry focuses the conversation at its node.
+- **FR-5. Action-list side surface.** A view listing every open action item across the whole tree, each linked back to its node. Acceptance: completing an action removes it from this list within one state refresh.
+- **FR-6. Click-to-focus.** Clicking any node makes that node's branch the active conversation context and reloads that branch's context (format per OQ-3). Acceptance: after a click, a follow-up the user types is threaded under the clicked node, not under the previously-active node.
+- **FR-7. Auto-conclude on navigate-away.** When Misha navigates focus away from the current leaf, that leaf auto-concludes, with an explicit affordance to re-open it. Acceptance: navigating away marks the leaf concluded; a re-open control restores it to active without data loss.
+- **FR-8. Branch checklist + auto-collapse.** Each branch carries a checklist of its decisions and actions. Items auto-check when answered/done. When all items are checked, the branch collapses visually but remains expandable. Acceptance: checking the final item collapses the branch; expanding it shows full history.
+- **FR-9. Bidirectional check-off override.** (a) An implicit Dispatch check-off can be un-checked or contested by Misha with an attached note. (b) An explicit Misha check-off can be contested by Dispatch, which surfaces a specific "X marked complete but Y may not be covered" message. Acceptance: both override paths produce a visible contested state that neither side silently resolves.
+- **FR-10. Return-to-parent.** A concluded child branch surfaces a single alert on its parent ("child *Y* concluded — resume?"). Misha can also navigate to any parent manually via the tree. Acceptance: child conclusion produces exactly one parent alert (not a stream); manual tree navigation to a parent always works regardless of alerts.
+- **FR-11. JSON state as source of truth, bidirectional.** Dispatch writes a structured JSON state file as it works. The GUI reads it and lets Misha modify it (drag-drop re-parent, check-off, promote-node-to-branch). Misha never edits JSON directly. Acceptance: a GUI edit is reflected in the JSON; a Dispatch JSON write is reflected in the GUI; the JSON is never shown to or hand-edited by Misha.
+- **FR-12. Dispatch state-author annotations.** Dispatch emits explicit lifecycle markers as it works: "opening child node: X", "concluding branch: Y, returning to Z". These are the model's authorship trail. Acceptance: every node creation and branch conclusion the system performs has a corresponding Dispatch annotation; a session's annotations reconstruct the tree changes it made.
+- **FR-13. Defer-my-action with condition.** Misha can defer one of his own action items with an optional condition (date/time/event). Deferred items leave the active action list and return when the condition resolves. Acceptance: a deferred item is absent from the active list while deferred and present again after the condition resolves (resolution mechanism per OQ-5).
+- **FR-14. Conclude-branch-spawns-session.** Concluding a branch can kick off a Dispatch session whose prompt is the branch's gathered decisions. A question from a running session appears as a new child node under the branch that spawned it. Acceptance: branch conclusion with the spawn option produces a session whose prompt contains the gathered decisions; a session question creates exactly one child node under the correct parent.
+- **FR-15. (GAP) Session ↔ branch binding.** Every branch is bound to one or more harness sessions; clicking a node loads that branch's conversation context. Acceptance: a branch with zero bound sessions is a valid (not-yet-started) state; a branch with bound sessions resolves each to a loadable context.
+- **FR-16. (GAP) Optional-module enable/disable.** The module is installable and removable without affecting harness behavior. Disabling it leaves no required hook, no broken reference, and no orphaned state read. Acceptance: with the module disabled, a normal harness session runs identically to a harness without the module ever installed.
+- **FR-17. (GAP) Empty / first-run state.** On first run with no tree yet, the GUI shows a coherent empty state explaining what populates the tree, not a blank screen. Acceptance: a fresh install with no state file renders an informative empty state, not an error.
+- **FR-18. (GAP) Tree scope.** The system defines whether a tree is per-project (one tree per repo) or global across all Dispatch work. (Surfaced as OQ-6; the FR is that the answer is explicit and the model enforces it, not that a particular answer is chosen here.)
+- **FR-19. (GAP) Spawn guardrail.** Because FR-14 can auto-create Dispatch sessions, the system requires an explicit Misha confirmation before a branch-conclusion spawns a session, unless Misha has pre-authorized auto-spawn for that branch. Acceptance: no session is spawned by branch conclusion without either a per-spawn confirmation or a recorded pre-authorization.
+
+## Non-functional requirements
+
+<!-- Stage D — every category gets a stated requirement, an explicit N/A
+with rationale, or a deferred-with-rationale open question. -->
+
+- **NFR-1. State durability.** The JSON state file is the crown-jewel artifact. Every write is atomic (write-temp-then-rename) and the prior version is recoverable. Target: zero observed tree-corruption events; last-N versions retained for rollback. A corrupt or unparseable state file degrades to "show last good version + surface the corruption", never to data loss or a blank tree.
+- **NFR-2. Co-edit safety.** Concurrent Dispatch-write + Misha-GUI-edit to the same state must not corrupt the tree or silently drop a change (the FR-11/Scenario-8 case). Target: last-write-wins per *field* with optimistic concurrency; a clobbered field surfaces a visible "Dispatch also changed this" notice rather than silently overwriting. (Mechanism is OQ-1; the NFR is the safety property, not the mechanism.)
+- **NFR-3. Tree-render performance.** The tree remains interactive (pan/zoom/expand/collapse, click-to-focus) at the scale a year of Dispatch work produces. Target: p95 interaction latency < 150 ms at ≥ 500 nodes; the design must state a node-count ceiling and a pruning/archival story (see OQ-7).
+- **NFR-4. State read/write latency.** A Dispatch annotation write and the GUI reflecting it: target < 1 s end-to-end for the snapshot model, or < 250 ms for the real-time model (the choice is OQ-2; the NFR is that whichever is chosen has a stated, testable bound).
+- **NFR-5. Security / locality.** The module is single-user and local. The GUI binds to localhost only; no remote network surface is exposed. The JSON state contains no credentials, tokens, or secrets — only conversation-tree structure and references. Acceptance: a port scan from another host on the LAN finds no listening GUI port; a scan of the state file matches zero credential patterns.
+- **NFR-6. Accessibility.** Single-user personal tool, but the tree and lists must be keyboard-navigable (tab/arrow to traverse nodes, enter to focus, escape to collapse) and not rely on color alone to convey state (concluded/contested/deferred each have a non-color signal). Full WCAG-AA conformance is **explicitly N/A** (rationale: single known user, no external/public surface) — keyboard + non-color-signal is the scoped subset that matters.
+- **NFR-7. Observability.** The Dispatch annotation trail (FR-12) *is* the primary observability surface — the tree's change history is reconstructable from annotations alone. Additionally, every state mutation (GUI or Dispatch) appends to an append-only audit log. Acceptance: given only the audit log + annotation trail, the current tree state is reconstructable.
+- **NFR-8. Harness coupling ceiling.** The module touches the harness only through a documented, minimal integration surface (session-binding, context-load, session-spawn, question-injection). It introduces no required hook into the core Stop/PreToolUse chains. Acceptance: the integration points are enumerable on one page; removing the module removes exactly those points and nothing else.
+- **NFR-9. Reliability of session integration.** If a harness session the tree references no longer exists (cleaned up, crashed, archived), the node degrades to "session unavailable — context may be partial" rather than erroring. Acceptance: a node bound to a missing session still renders and still allows manual navigation.
+- **NFR-10. Internationalization.** Explicitly **N/A** — single English-speaking user, no localization requirement. Stated to close the category, per intake protocol (no silent skips).
+
+## Success metrics
+
+<!-- Stage E — every metric passes the plate test (outcome, not output).
+"Is Misha's plate lighter when this finishes?" -->
+
+- **SM-1. Zero lost threads across session boundaries.** Of all branches open at a session's end, 100% are visible and resumable at the next session's start without reading scrollback. Measured via: at session N+1 start, every branch the audit log shows open at session N end is present in the tree and click-to-focus-able. Plate test: Misha's plate is lighter because no open work silently disappears. (Outcome, not "we built a tree view.")
+- **SM-2. Time-to-resume a cold branch.** Resuming a branch idle ≥ 2 sessions takes ≤ 3 GUI interactions (find it → click → it's focused with context) and zero scrollback reading. Measured via: instrumented interaction count + a self-report that no chat history was manually re-read. Baseline today: unbounded (often a full scrollback re-read). Plate test: lighter — the re-derivation cost is eliminated.
+- **SM-3. Decision latency visibility.** 100% of decisions Dispatch raises appear in the decision-list surface within one state refresh of being raised, and carry a visible age. Measured via: audit-log timestamp of decision-raised vs. decision-appearing-in-list. Plate test: lighter — Misha sees the stale-decision pile instead of discovering it by accident three sessions late.
+- **SM-4. Contested-state never silently resolves.** Of all bidirectional-override events (FR-9), 100% produce a visible contested state until Misha explicitly resolves it; 0% are silently auto-resolved by either side. Measured via: audit log — every override event has a corresponding explicit-resolution event, never an implicit one. Plate test: lighter — Misha stops re-discovering "Dispatch thought this was done and it wasn't."
+- **SM-5. Module is genuinely optional.** With the module disabled, a standard harness regression session is byte-for-byte identical in hook behavior to a harness that never had the module. Measured via: hook-firing diff between module-absent and module-disabled runs = empty. Plate test: lighter for *future Misha* — the module can be turned off without becoming a maintenance liability. (Counterbalancing metric: guards against the module's value coming at the cost of harness coupling.)
+- **SM-6. (Counterbalancing) No new always-on friction.** Number of new mandatory prompts/confirmations the module injects into a normal Dispatch session that does not use the tree = 0. Measured via: a Dispatch session run with the module installed-but-unused fires zero module-originated interruptions. Plate test: ensures SM-1..SM-4's value doesn't arrive as a tax on every session.
+
+## Out-of-scope
+
+<!-- Stage E continued — things a reasonable reader might assume are
+included but explicitly are not, each with rationale. -->
+
+- **Multi-user / collaboration** — single known user; presence, shared cursors, and per-user permissions are 10x the model complexity for zero current value.
+- **Real-time collaborative editing** — only one human and one Dispatch write the tree; the co-edit case is narrow (NFR-2), not a general CRDT/OT problem.
+- **Mobile-native client** — Misha drives Dispatch from desktop; a mobile tree client is not in the friction path. Revisit only if Dispatch usage moves to mobile primarily.
+- **JSON hand-editing surface / schema docs for the user** — the JSON is internal; exposing it as an editable surface contradicts FR-11. The schema is an engineering artifact, not a user-facing one.
+- **Replacing the full Claude desktop app feature set** — whether the GUI subsumes the chat interface at all is the architecture decision (ADR-031); even in the most ambitious option, parity with every desktop-app convenience feature is explicitly not a goal of the first release.
+- **Arbitrary task/project management** — this models the Misha↔Dispatch conversation tree specifically. It is not a Jira/Linear/Asana. Generic task fields, sprints, and estimates are excluded by construction.
+- **Aggressive nag/alert engine** — per invisible-knowledge surface #3, alerting is intentionally minimal (parent-on-child-conclude + Misha's own deferrals). A notification/reminder system beyond that is explicitly excluded.
+- **Automatic conflict *resolution* of contested check-offs** — the system surfaces contested state; it does not decide who is right. Auto-resolution would destroy the exact signal SM-4 protects.
+
+## Open questions
+
+<!-- Stage F — decisions that must be made before the product finalizes.
+Each has a current lean + a decision process. The architecture choice is
+the largest and is deferred to ADR-031 by design (Tier-5 → ADR is the
+deliverable, per the work-sizing rubric). -->
+
+- **OQ-1. Co-edit conflict resolution mechanism.** Optimistic concurrency, last-write-wins per field (Misha's stated lean). Open sub-question: what is the conflict *unit* — per JSON field, per node, per subtree? Leaning per-field with a visible "Dispatch also touched this" notice. Decide in: ADR-031 or a sibling ADR if it proves independently load-bearing.
+- **OQ-2. Real-time updates vs. end-of-turn snapshots.** Real-time = the GUI reflects Dispatch writes mid-turn; snapshot = the GUI updates at turn boundaries. Real-time is more responsive but multiplies the co-edit surface (OQ-1) and the latency budget (NFR-4). Leaning **snapshot for v1** (smaller co-edit surface, simpler NFR), real-time as a later enhancement. Decide in: ADR-031.
+- **OQ-3. Branch-context-reload format.** When Misha clicks a node, what loads? Options: full message range / a summary / just the parent question / **all of the above as expandable layers**. Leaning the layered option (summary by default, expandable to full). Decide in: the plan's UX section + ux-designer review.
+- **OQ-4. Action-item typing.** Generic actions, or typed (decision / manual-action / awaiting-deploy / awaiting-third-party / …)? Typed enables better side-surface filtering and the OQ-5 deferral conditions; generic is simpler. Leaning a **small fixed enum** (decision, manual-action, awaiting-external, deferred). Decide in: ADR-031 (it shapes the JSON schema, which is a contract → Tier-4-ish, ADR-worthy).
+- **OQ-5. "Deferred until [condition]" resolution mechanism.** Polling a condition, a harness hook firing on the event, or manual unhide. Leaning: date/time conditions resolve by a lightweight scheduled check; event conditions resolve via the harness's existing surfacing hooks; manual unhide always available as the floor. Decide in: ADR-031 or sibling ADR.
+- **OQ-6. (GAP) Tree scope: per-project or global?** Is there one tree per repo, or one global tree spanning all Dispatch work across projects? This materially shapes the state-file location, the session-binding model, and FR-18. No stated lean — genuinely open and surfaced as a gap Misha did not address. Decide in: ADR-031 (it is an architecture-level decision, not a UI detail).
+- **OQ-7. (GAP) Concluded-branch lifecycle / tree growth.** Over months a tree could reach thousands of nodes. Does a concluded branch ever archive/prune, or does the tree grow unbounded (collapse-only)? Affects NFR-3's node ceiling. Leaning: collapse-by-default, with an archival tier for branches concluded > N days, recoverable. Decide in: the plan's data-model section + systems-designer review.
+- **OQ-8. (GAP) Architecture choice — the load-bearing one.** Custom GUI as full chat replacement (Agent SDK) vs. parallel observer alongside the desktop app vs. hybrid control-surface. Deliberately **not answered in this PRD** — per the work-sizing rubric this is a Tier-5 architecture decision whose deliverable is ADR-031 with full options analysis, prior-art research (Claude Agent SDK capabilities, desktop-app bridge investigation), and a recommendation Misha decides on. Decide in: **ADR-031** (Phase 3).
+- **OQ-9. PRD location / one-PRD-convention deviation.** This PRD lives at `docs/prd-conversation-tree.md`, not `docs/prd.md`. Recorded as a deliberate deviation in ADR-031. Open only in the sense that Misha may redirect to `docs/prd.md` to make the shape-gate auto-fire as part of the process demonstration. Decide in: Misha's PRD-checkpoint feedback.
