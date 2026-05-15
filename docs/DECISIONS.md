@@ -44,3 +44,4 @@ commit (enforced by `adapters/claude-code/hooks/decisions-index-gate.sh`).
 <!-- 2026-05-05 v3: ADR 027 extended with Layer 5 (handoff freshness as precondition). No row change to the index — same row 027 covers v1 + v2 + v3. -->
 <!-- 2026-05-06: ADR 027 Layer 5 signal-set extended from 5 to 6 (added stale-pointer detection in What's Next). No row change. -->
 <!-- 2026-05-15: ADR 031 hardened to r2 after systems-designer Phase-3 FAIL (4 findings addressed by honest restatement; Option-4 recommendation unchanged). Status stays Proposed pending Misha's decision. No row change. -->
+<!-- 2026-05-15: ADR 031 r3 — OQ-9/Decision-A resolved to canonical docs/prd.md (forced by prd-validity-gate + gate-respect; PRD git-mv'd from docs/prd-conversation-tree.md). No row change. -->

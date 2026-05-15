@@ -5,14 +5,20 @@ Working name only. Per ~/.claude/CLAUDE.md "Naming & Identity", the product
 is NOT named until Misha names it; "Conversation Tree Management UI" is a
 descriptive placeholder, not a brand.
 
-Optional Neural Lace harness module. Placed at docs/prd-conversation-tree.md
-(NOT docs/prd.md) per Decision A surfaced in the Phase 0 checkpoint:
-neural-lace is a harness repo whose own work uses the
-`prd-ref: n/a — harness-development` carve-out; this module is the first
-genuine user-facing product surface inside it and warrants honest artifact
-naming over gaming the one-PRD path so the shape-gate auto-fires. Substance
-review is via the `prd-validity-reviewer` agent. The deviation from the
-one-PRD-per-project convention is recorded in ADR-031.
+Optional Neural Lace harness module. Canonical PRD at docs/prd.md
+(Decision A RESOLVED to option (a), 2026-05-15). Phase-0 initially leaned
+toward docs/prd-conversation-tree.md (honest naming over gaming the path).
+That reversed when the prd-validity-gate became mechanically live at
+plan-write time: the gate resolves any non-carve-out `prd-ref:` to
+docs/prd.md, the harness-development carve-out would be a FALSE claim for a
+user-facing product, and `gate-respect` forbids both gaming the carve-out
+and `--no-verify` bypass. Conforming to the single-PRD-per-project
+convention is the gate's own named remediation AND makes the mechanism
+genuinely fire — which is the explicit point of this exercise. This module
+is the first genuine user-facing product surface inside the harness repo;
+that one-product-PRD framing is accepted. Substance review via the
+`prd-validity-reviewer` agent (passed at 8b1453e). Resolution recorded in
+ADR-031 (OQ-9 / Consequences).
 
 Produced via the Build Doctrine guided-PRD-intake protocol
 (build-doctrine/doctrine/05-implementation-process.md, Stages A–F). Stage
@@ -166,4 +172,4 @@ deliverable, per the work-sizing rubric). -->
 - **OQ-6. (GAP) Tree scope: per-project or global?** Is there one tree per repo, or one global tree spanning all Dispatch work across projects? This materially shapes the state-file location, the session-binding model, and FR-18. No stated lean — genuinely open and surfaced as a gap Misha did not address. Decide in: ADR-031 (it is an architecture-level decision, not a UI detail).
 - **OQ-7. (GAP) Concluded-branch lifecycle / tree growth.** Over months a tree could reach thousands of nodes. Does a concluded branch ever archive/prune, or does the tree grow unbounded (collapse-only)? Affects NFR-3's node ceiling. Leaning: collapse-by-default, with an archival tier for branches concluded > N days, recoverable. Decide in: the plan's data-model section + systems-designer review.
 - **OQ-8. (GAP) Architecture choice — the load-bearing one.** Custom GUI as full chat replacement (Agent SDK) vs. parallel observer alongside the desktop app vs. hybrid control-surface. Deliberately **not answered in this PRD** — per the work-sizing rubric this is a Tier-5 architecture decision whose deliverable is ADR-031 with full options analysis, prior-art research (Claude Agent SDK capabilities, desktop-app bridge investigation), and a recommendation Misha decides on. Decide in: **ADR-031** (Phase 3).
-- **OQ-9. PRD location / one-PRD-convention deviation.** This PRD lives at `docs/prd-conversation-tree.md`, not `docs/prd.md`. Recorded as a deliberate deviation in ADR-031. Open only in the sense that Misha may redirect to `docs/prd.md` to make the shape-gate auto-fire as part of the process demonstration. Decide in: Misha's PRD-checkpoint feedback.
+- **OQ-9. PRD location — RESOLVED 2026-05-15.** This PRD is at the canonical `docs/prd.md`. Resolution forced by the prd-validity-gate becoming mechanically live + `gate-respect` (carve-out would be false; bypass forbidden); conforming to the single-PRD convention is the gate's named remediation and makes the mechanism genuinely fire. Full rationale in ADR-031 Consequences. Reversible (one `git mv`) but not recommended to reverse. **Closed** — no longer pending Misha feedback (Misha may still override; default is conform).
