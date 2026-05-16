@@ -1,8 +1,16 @@
 # ADR 031 — Conversation Tree Management UI: Architecture
 
-**Date:** 2026-05-15
-**Status:** Proposed — pending stakeholder (Misha) decision
+**Date:** 2026-05-15 (last revised 2026-05-16, r6)
+**Status:** Proposed — **converged on Option 2 (passive observer)** per Misha's r6 scope clarification + the 2026-05-16 readability research; pending the mandatory `systems-designer` Tier-5 pass and Misha's final acknowledgment.
 **Stakeholders:** Misha (decision authority — per the Tier-5 work-sizing rubric the architecture choice is non-delegable and AI participates as sounding-board only); future build-session orchestrators (downstream consumers of the decided design).
+
+**Revision r6 (2026-05-16) — SCOPE CLARIFICATION COLLAPSED THE DECISION → Option 2.** Misha clarified verbatim: *"I expect the GUI to be primarily passive. my primary interface would still be the Claude chat. the main purpose of the GUI is to make it easy for me to keep track of the conversation flow and make sure that things you need from me do not go unanswered and that every thread I initiate continues to completion and doesn't get forgotten."* This is a **scope decision by the stakeholder**, not an AI synthesis, and it resolves the architecture:
+- **The GUI is a passive, read-mostly tracker. Dispatch (the Claude desktop app) remains Misha's primary chat surface. The GUI is NOT a chat replacement.**
+- **Options 1 and 1b (own-the-surface / chat replacement) are OVER-SCOPED** for the stated need — Misha explicitly does not want to replace the chat surface. Retained in Alternatives as rejected-with-rationale (Tier-5 keeps the option history), not struck.
+- **Option 3 (active control via Channels) is OVER-SCOPED** — it adds *command* capability the passive purpose does not need. Retained as rejected-with-rationale.
+- **Option 2 (passive observer that reads local session transcripts) is the architecture**, subject to the systems-designer pass.
+- The 2026-05-16 readability research **verified on Misha's own machine** that Dispatch-triggered sessions write the standard local `~/.claude/projects/.../<uuid>.jsonl` transcript (with subagent files) — so a passive local reader covers his actual workflow (terminal + Remote-Control + Dispatch all locally readable). **One documented blind spot:** genuinely-cloud products (Claude-Code-on-web, `--remote`, unattended Routines) write NO local file — those threads are invisible to a pure local reader unless teleported. This is the single open risk the systems-designer pass and Misha must weigh.
+- **FR-24 reinterpreted (feeds a PRD revision shown to Misha before commit):** the *persistence* property holds (tree/backlog state survives arbitrary elapsed time). The *"no user-visible session boundary / seamless continuation"* sub-text is **dropped** — it was based on a misread of Misha's needs; continuation happens in Dispatch as normal, sessions are visibly sessions. **FR-6 reinterpreted:** clicking a node *surfaces that branch's context* (parent chain + sub-branches); it does NOT have to be where continuation happens.
 
 **Revision r2 (2026-05-15):** hardened after `systems-designer` Phase-3 FAIL (4 findings). Changes were honest restatement of what Option 4 delivered in v1, not a re-decision. (Superseded by r3 — see below. The r2 Phase-3 hardening section is retained near the end as a historical audit record; its Option-4-specific per-scenario table is obsolete.)
 
@@ -57,7 +65,9 @@ NFR-11 (persistence/continuity — no user-visible session boundary, seamless co
 
 The Claude Agent SDK (Python + TS) provides every orchestration primitive first-class: the autonomous tool-use loop, sub-agents, ~18 lifecycle hooks, MCP, session resume/fork, streaming-input with `interrupt()`, and a `SessionStore` adapter that is a clean near-real-time event tap for an external observer. Official prior art exists (`anthropics/claude-agent-sdk-demos`: a ~27 KB React/WS chat UI; a Python multi-agent orchestrator). **But:** building on the SDK means re-implementing the product shell (chat UI, permission UX, durable persistence) and — critically — **Dispatch is not in the SDK at all** (the phone↔desktop remote-orchestration layer is a desktop/Cowork product feature). Commercial: from 2026-06-15, SDK usage draws a **separate metered Agent SDK credit** and **claude.ai-login auth is not permitted for third-party agents — API-key only** (`https://code.claude.com/docs/en/agent-sdk/overview`). Building on the SDK therefore changes Misha's billing and auth model and forfeits the Dispatch UX he relies on. There is **no out-of-process mid-run control channel**: to steer an SDK agent the GUI must *be* the `query()` host process.
 
-## Decision (open — r4 supersedes the r3 lean)
+## Decision (r6 — CONVERGED on Option 2; r3/r4/r5 below are superseded historical reasoning)
+
+> **r6 decision:** **Option 2 — a passive, read-mostly GUI that observes local session transcripts** — is the architecture, by Misha's explicit scope clarification (the GUI is a passive tracker; Dispatch stays the primary chat) + the 2026-05-16 research verifying Dispatch sessions are locally readable on his machine. Options 1/1b (chat replacement) and Option 3 (active control) are over-scoped vs the stated need and are recorded as rejected-with-rationale below. **Still required before this ADR is *adopted* (Tier-5):** the mandatory `systems-designer` adversarial pass on the Option-2 candidate, and Misha's final acknowledgment. The single open risk for that pass: the cloud-only blind spot (web/`--remote`/Routines sessions have no local transcript). Everything from `## Decision (open — r4 …)` downward is retained as the audit trail of how the option space narrowed; it is **not** the decision — this r6 block is.
 
 > **r4 status:** No option is recommended-settled. Options 1, 2, 3 are all genuinely live. The text below is the **r3 analysis, retained as input but downgraded** — Option 1 is a *leading candidate, not the decision*. Misha explicitly reopened 2 and 3 by rejecting the premise that an overlay/observer posture disqualifies them (he frames the whole product as "an abstraction layer on top of Dispatch," and notes Dispatch is itself an abstraction layer on top of Claude Code — so layering is the model, not a disqualifier). The architecture is decided at the post-Stage-F pass with a fresh `systems-designer` review, against the *fully expanded* PRD (backlog manager, multi-project + global tree, partial-answer parallelization, FR-24 persistence, symmetric interface).
 
@@ -81,7 +91,7 @@ The honest cost of Option 1 (unchanged from r1/r2, not minimized): it re-impleme
 
 The surviving option space is 1/2/3, each weighed against the "built into Dispatch" ideal (approximation of one-place) and NFR-11 (can session boundaries be made invisible?), with "what it loses vs desktop Dispatch" and "what it gains in built-in tree/backlog management" called out explicitly.
 
-### Option 1 — Custom orchestrator on the Claude Agent SDK ("Dispatch++") — recommended r3
+### Option 1 — Custom orchestrator on the Claude Agent SDK ("Dispatch++") — [r6: REJECTED — over-scoped; Misha does not want a chat replacement]
 - **What:** Build the chat + tree + backlog as one program hosting the Agent SDK `query()` loop. The GUI *is* the orchestrator; the tree/backlog are authored from inside the loop. There is no external surface to bridge to.
 - **Approximation of "built in": highest of the three.** One place — tree, backlog, conversation, continuity all in the program Misha drives. This is the only option that is not structurally "a second tool beside Dispatch."
 - **NFR-11: satisfiable.** Because it owns the surface, it can make session boundaries invisible (no "resume," no perceptible startup, seamless continuation) — the only option that can.
@@ -89,7 +99,7 @@ The surviving option space is 1/2/3, each weighed against the "built into Dispat
 - **Gains in built-in tree/backlog:** total — the tree model and the agent loop are the same program; partial-answer parallelization, backlog→session activation, and persistence are native, not bridged.
 - **Cost (not minimized):** largest build (product shell + durable persistence + permission UX); a standing maintenance liability; **billing/auth change** (metered Agent SDK credit 2026-06-15, API-key auth not subscription). r3's stance: these costs are the stakeholder's to accept, and his stated ideal implies he may; r1/r2's "disqualifying for v1" judgment is explicitly revised, not silently dropped.
 
-### Option 1b — GUI owns tree/continuity AND spawns its own Agent-SDK Claude Code child sessions (NEW r5; the only buildable form of the "narrower variant")
+### Option 1b — GUI owns tree/continuity AND spawns its own Agent-SDK Claude Code child sessions — [r6: REJECTED — over-scoped; same chat-replacement objection as Option 1]
 - **What:** the GUI is the tree/backlog/continuity surface AND the orchestrator that **spawns its own Claude Code child sessions via the Agent SDK** (`query()` per work-thread, `resume`/`fork` for continuity, native subagents for decomposition — all documented, Q-B). **Dispatch is not in the execution path at all.** This is what the r4 "launch real Dispatch sessions" variant *becomes* once Q-A (external software cannot launch Dispatch) is applied.
 - **Approximation of "built in": high** — like Option 1, one place; the distinction from full Option 1 is mostly framing/scope, not mechanism (both host the SDK and own the surface). In practice **Option 1 and Option 1b largely converge**: once Dispatch can't be in the loop, "Dispatch++" *is* "GUI spawns its own SDK sessions." Option 1b is the honest name for it.
 - **NFR-11/FR-24: satisfiable** — owns the surface, so seamless continuation is achievable.
@@ -97,14 +107,14 @@ The surviving option space is 1/2/3, each weighed against the "built into Dispat
 - **Gains:** total tree/backlog/continuity nativeness; multi-project + global tree + partial-answer parallelization are in-process, not bridged. For *cloud-hosted* execution specifically, the **Managed Agents REST API** is the documented external-create path — but it is a **separate Anthropic product, not Dispatch/Cowork**, with its own session model and the same billing/auth caveats.
 - **Cost:** same magnitude as Option 1 (full product shell + persistence + permission UX + standing maintenance + billing/auth model change).
 
-### Option 2 — Parallel observer alongside the desktop app
+### Option 2 — Passive observer reading local session transcripts — [r6: SELECTED (pending systems-designer pass + Misha final ack)]
 - **What:** GUI tails session JSONL to observe; relays follow-ups via a Channels MCP server. Two loosely-coupled interfaces.
 - **Approximation of "built in": low.** Structurally two places — a tree tool beside Dispatch. The opposite of Misha's "one place" intent.
 - **FR-24: hard for Option 2 to fully satisfy** — it doesn't own the chat surface, so making continuation perfectly seamless across a surface it only observes is the structural objection (a real cost; whether it's *disqualifying* is for the systems-designer pass + Misha, given FR-24 is a hard constraint).
 - **Research verdict (CORRECTED r5):** **Dispatch executes locally**, and the research shows an external GUI **can** observe a local session (JSONL tail) and inject via **Channels** (localhost MCP broker). So Option 2 is **VIABLE for Misha's actual (local Dispatch) usage** — *not* ruled out as r3/r4 claimed (that was the cloud-conflation error). Real caveats remain: transcript format undocumented/unversioned; Channels is research-preview; injected input is a queued turn not a true interrupt (#35072 open).
 - **Approximation of "built in": low** — structurally two places, a tree tool beside the Claude app. **Preserves Misha's normal Dispatch workflow entirely** (its main advantage vs Option 1/1b: it's a true overlay, not a replacement). Lowest build cost.
 
-### Option 3 — Hybrid: GUI as control surface for Dispatch via a bridge
+### Option 3 — Hybrid: GUI as control surface for Dispatch via a bridge — [r6: REJECTED — over-scoped; adds active-command capability the passive purpose does not need]
 - **What:** Tree + backlog in the GUI; chat still in the desktop app; GUI sends "focus node X" via the Channels bridge.
 - **Approximation of "built in": low-to-medium.** Still two places; the bridge makes it feel slightly more connected than Option 2 but the conversation surface is not owned.
 - **FR-24: same structural objection as Option 2** (doesn't own the continuation surface) — a real cost to weigh, not auto-disqualifying; systems-designer pass + Misha decide given FR-24 is hard.
