@@ -73,7 +73,7 @@ A branch has not been touched in a while (the elapsed time is irrelevant — a m
 
 ### Scenario 4 — A branch auto-collapses when complete (primary)
 
-A branch has a checklist of 3 decisions and 2 actions. As Dispatch completes actions and Misha answers decisions, items auto-check. When the last item checks, the branch visually collapses (still expandable). Its parent receives a single alert: "child branch *Y* concluded — resume?"
+A branch has a checklist of 3 decisions and 2 actions. As Dispatch completes actions and Misha answers decisions, items auto-check. When the last item checks, the branch auto-concludes (FR-7) and visually collapses (still expandable). Its parent receives **a single notification** (FR-10, not an alert stream): "child branch *Y* concluded — resume?"
 
 ### Scenario 5 — Override a check-off, either direction (secondary safety net)
 
@@ -85,11 +85,11 @@ A branch's decisions are answered. Misha concludes it. Concluding **does not nec
 
 ### Scenario 7 — Defer my own action item with a condition (edge)
 
-Misha has an action item "decide on hosting provider." He can't decide yet — it depends on a quote arriving. He defers it with the condition "after 2026-05-20." It disappears from the active action list and reappears (or is re-surfaced) when the condition resolves.
+Misha has an action item "decide on hosting provider." He can't decide yet — it depends on a quote arriving. He defers it with a scheduled time ("2026-05-20"). **It stays on the action list, visibly tagged "deferred"** (it does not disappear — OQ-5/FR-13). At the scheduled time the system highlights it and notifies Misha — and does nothing else. When the quote arrives Misha **manually clears the deferred tag** and acts on it. *(Reconciled at Stage F to match the OQ-5/FR-13 resolution; the earlier "disappears and reappears" wording was superseded by Misha's decision that deferred items stay visible and are never auto-moved.)*
 
 ### Scenario 8 — Dispatch writes the state while Misha is editing it (edge)
 
-Dispatch is mid-work writing branch annotations to the JSON state file. Simultaneously, Misha drags a node to re-parent it in the GUI. Both writes target the same state file. The system must not corrupt the tree or silently drop either change.
+Claude is mid-work writing branch annotations to the persistent shared state (FR-11). Simultaneously, Misha drags a node to re-parent it in the GUI. Both writes target the same shared state. The system must not corrupt the tree or silently drop either change (NFR-2 safety property; the conflict-resolution *mechanism* is ADR-032's per OQ-1).
 
 ### Scenario 9 — Backlog item → start a session (primary; Stage B, Misha-confirmed)
 
@@ -202,9 +202,9 @@ as success — they are means, not ends; no SM for them (Misha-confirmed). -->
 included but explicitly are not, each with rationale. -->
 
 - **Multi-user / collaboration** — single known user; presence, shared cursors, and per-user permissions are 10x the model complexity for zero current value.
-- **Real-time collaborative editing** — only one human and one Dispatch write the tree; the co-edit case is narrow (NFR-2), not a general CRDT/OT problem.
+- **Real-time collaborative editing** — only one human (Misha) and Claude write the shared state; the co-edit case is narrow (NFR-2), not a general CRDT/OT problem.
 - **Mobile-native client** — Misha drives Dispatch from desktop; a mobile tree client is not in the friction path. Revisit only if Dispatch usage moves to mobile primarily.
-- **JSON hand-editing surface / schema docs for the user** — the JSON is internal; exposing it as an editable surface contradicts FR-11. The schema is an engineering artifact, not a user-facing one.
+- **Raw-state hand-editing surface / schema docs for the user** — the persistent shared state (FR-11) is internal; exposing it as an editable surface contradicts FR-11. Its schema is an engineering artifact (ADR-032), not a user-facing one.
 - **Replacing the full Claude desktop app feature set** — whether the GUI subsumes the chat interface at all is the architecture decision (ADR-031); even in the most ambitious option, parity with every desktop-app convenience feature is explicitly not a goal of the first release.
 - **Generic project-management tooling** — *(reconciled at Stage B — see note).* The system **IS** a to-do/backlog for items Misha wants to work on with Claude Code (Stage B scope expansion: capture, contextualize, move into sessions, track per-item goals/progress in the tree). What remains out of scope is *generic* PM: sprints, story points/estimates, arbitrary ticket types, assignees, due-date workflows, and any field not in service of "a thing to work on with Claude Code and its conversation tree." It is not a Jira/Linear/Asana; it is a Claude-Code-work backlog whose items become conversation-tree roots.
 - **Aggressive nag/alert engine** — per invisible-knowledge surface #2, notification is intentionally minimal (parent-on-child-conclude + Misha's own deferrals). A notification/reminder system beyond that is explicitly excluded.
