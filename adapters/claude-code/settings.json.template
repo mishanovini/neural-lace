@@ -356,10 +356,6 @@
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/continuation-enforcer.sh"
-          },
-          {
-            "type": "command",
             "command": "bash ~/.claude/scripts/session-wrap.sh refresh"
           }
         ]
