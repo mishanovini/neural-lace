@@ -1,0 +1,3 @@
+# Runtime-generated state (the file-mediated contract is written at runtime, not source)
+tree-state.json
+tree-state.json.tmp.*
