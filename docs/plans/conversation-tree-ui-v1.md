@@ -82,7 +82,7 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
 
 ### Phase 0 — Walking Skeleton (built FIRST; Tier 2)
 
-- [ ] 0.1 Minimal state writer + minimal localhost GUI proving the file-mediated read/write spine end-to-end (one `branch-opened` event + one snapshot → Node server + one HTML page reads + renders one node; SSE push-on-change). — Verification: full — **Reviewer: functionality-verifier.**
+- [x] 0.1 Minimal state writer + minimal localhost GUI proving the file-mediated read/write spine end-to-end (one `branch-opened` event + one snapshot → Node server + one HTML page reads + renders one node; SSE push-on-change). — Verification: full — **Reviewer: functionality-verifier.**
   **Prove it works:**
   1. Run the minimal writer; confirm a well-known JSON state file appears with one event + one snapshot.
   2. Start the Node localhost server; open `http://localhost:<port>` in a browser.

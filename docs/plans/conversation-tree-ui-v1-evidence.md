@@ -136,3 +136,64 @@ it.
   within that window so it coalesces to one `broadcastState`. Both hold on
   the local OS the single-user tracker runs on; cross-platform fs.watch
   quirks are out of Phase-0 scope.
+
+---
+
+EVIDENCE BLOCK
+==============
+Task ID: 0.1
+Task description: Minimal state writer + minimal localhost GUI proving the file-mediated read/write spine end-to-end (one `branch-opened` event + one snapshot → Node server + one HTML page reads + renders one node; SSE push-on-change). — Verification: full
+Verified at: 2026-05-17T18:44:00Z
+Verifier: task-verifier agent (third pass — environment blockers from passes 1-2 resolved)
+
+Comprehension-gate: PASS (confidence 8) — orchestrator-mediated comprehension-reviewer dispatch (Task tool unavailable in sub-agents per Anthropic no-nested-subagents; documented orchestrator-mediated path). Stage 1 schema PASS, Stage 2 substance PASS, Stage 3 diff-correspondence PASS. All four canonical sub-sections (`### Spec meaning` / `### Edge cases covered` / `### Edge cases NOT covered` / `### Assumptions`) present, ordered, substantive, task-specific; ~30 file:line citations verified to resolve in 952c9d6; no Assumptions premise contradicted by the diff; heading-depth note resolved in 55b8689. Verifier independently re-confirmed a representative citation sample (state.js:77-79, server.js:45-49, server.js:79-80, app.js:17-20, app.js:44) resolves to the claimed content.
+
+Checks run:
+1. Branch state confirmation
+   Command: git log --oneline -5
+   Output: 55b8689 (heading normalization) / 4d5c08b (comprehension articulation) / 952c9d6 (Phase 0 skeleton) present in order on claude/kind-faraday-c5fe05
+   Result: PASS
+
+2. Skeleton byte-identical at branch tip
+   Command: git diff 952c9d6 HEAD -- neural-lace/conversation-tree-ui/
+   Output: (empty) — skeleton files unchanged since 952c9d6; only the evidence file changed in 4d5c08b/55b8689
+   Result: PASS
+
+3. Comprehension articulation schema + substance
+   Command: read docs/plans/conversation-tree-ui-v1-evidence.md
+   Output: canonical `## Comprehension Articulation` + four ordered `### ` sub-sections, all substantive and task-specific with file:line citations; matches supplied comprehension-reviewer PASS
+   Result: PASS
+
+4. Live functional spine — Step 1 (minimal writer)
+   Command: node state/state.js seed "Root branch"  (cwd = neural-lace/conversation-tree-ui)
+   Output: tree-state.json written with schema_version:1, 1 branch-opened event, derived 1-node snapshot; readState() confirms events=1 nodes=1 schema_version=1
+   Result: PASS
+
+5. Live functional spine — Step 2 (localhost server serves page + state)
+   Command: CTREE_PORT=8842 node server/server.js & ; curl -s http://127.0.0.1:8842/ ; curl -s http://127.0.0.1:8842/api/state
+   Output: server bound 127.0.0.1:8842; GET / returned index.html (<!DOCTYPE html>); GET /api/state returned the 1-node baseline snapshot
+   Result: PASS
+
+6. Live functional spine — Step 3 + Integration points (SSE push-on-change over ONE connection, no reload)
+   Command: curl -sN http://127.0.0.1:8842/api/events (single connection held open) ; node state/state.js seed "Second branch" mid-stream
+   Output: frame 1 = initial-frame-on-connect (1 node "Root branch"); appended 2nd branch-opened while SSE connection stayed open; frame 2 arrived over the SAME connection = 2 nodes ("Root branch","Second branch"). No reconnect, no manual reload. Satisfies Integration points (2-event state → rendered node count = 2). Pin 3b corroborated: state.js:77-79 write-temp-then-renameSync; server survived inode swap (frame 2 delivered post atomic rename) confirming server.js:45-49 directory-watch + 40ms debounce.
+   Result: PASS
+
+7. Working tree integrity
+   Command: git status --porcelain ; git check-ignore -v neural-lace/conversation-tree-ui/state/tree-state.json
+   Output: skeleton + plan + evidence files clean; only unrelated untracked .claude/launch.json present (editor config, not this task, not staged); tree-state.json correctly gitignored so live test left no trace
+   Result: PASS
+
+Git evidence:
+  Files modified in recent history:
+    - neural-lace/conversation-tree-ui/{state/state.js,server/server.js,web/app.js,web/index.html,web/app.css,state/.gitignore}  (952c9d6, Phase 0 skeleton)
+    - docs/plans/conversation-tree-ui-v1-evidence.md  (4d5c08b comprehension articulation; 55b8689 heading normalization)
+
+Runtime verification: test neural-lace/conversation-tree-ui/state/state.js::seed-produces-1-node-snapshot — `node state/state.js seed "Root branch"` → tree-state.json with schema_version:1, 1 branch-opened event, 1-node derived snapshot (Step 1, re-executed live this pass)
+Runtime verification: curl http://127.0.0.1:8842/api/state — returns the current 1-node snapshot JSON from the file-mediated contract; GET / returns index.html (Step 2, re-executed live this pass)
+Runtime verification: curl -sN http://127.0.0.1:8842/api/events — over ONE held-open SSE connection: frame 1 (1 node), then after a mid-stream `node state/state.js seed "Second branch"` append, frame 2 (2 nodes) pushed without reconnect or reload (Step 3 + Integration points, re-executed live this pass; Pin 3b atomic-rename / inode-swap survival corroborated)
+Runtime verification: file neural-lace/conversation-tree-ui/state/state.js::fs\.renameSync\(tmp, STATE_FILE\) — atomic single-fs publish primitive (Pin 3b) present at state.js:79
+
+Verdict: PASS
+Confidence: 9
+Reason: All three "Prove it works" steps + Integration points executed live end-to-end this pass (resolving the prior two passes' environment-only INCOMPLETE); rung-2 comprehension-gate SATISFIED (comprehension-reviewer PASS supplied, citations independently re-spot-checked); skeleton byte-identical at branch tip; working tree clean.
