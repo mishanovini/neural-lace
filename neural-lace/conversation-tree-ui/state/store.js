@@ -146,6 +146,64 @@ function dedupeById(events) {
   return out;
 }
 
+// ---- §7c (DEC-D 2026-05-17) general gate-relevant-still-live retention -----
+// The ADR-032 §7c general principle (NL-FINDING-003 resolution): compaction
+// MUST NOT drop any event that is still live AND gate-relevant. A reader/gate
+// that consumes an event-class from events[] (not the snapshot) must still find
+// the most-recent such event per still-live entity AFTER the covered prefix is
+// truncated. This is stated GENERALLY so a future gate consuming a new
+// event-class inherits the rule with no further §7c change — branch-opened
+// per still-live node is merely v1's ONLY instance.
+//
+// GATE_RELEVANT_EVENT_CLASSES is the registry of (event-class -> entity-key)
+// pairs that some gate consumes from events[]. Adding a future gate = adding
+// one entry here; the retention logic generalizes with zero other edits.
+const GATE_RELEVANT_EVENT_CLASSES = [
+  // §8 conversation-tree-state-gate.sh consumes `branch-opened`, keyed by the
+  // node it opens. v1's sole instance of the general rule.
+  { type: 'branch-opened', entityKey: function (ev) { return ev.node_id; } },
+];
+
+// A node is "live" iff it survives reduction into snapshot.nodes AND its state
+// is not the terminal `archived` (the reducer's own liveness notion: a
+// `concluded` node stays live because `re-opened` reverses it with no data
+// loss, so it remains gate-relevant; only `archived` is "no longer active").
+function liveEntityIds(snapshot) {
+  const live = new Set();
+  const nodes = (snapshot && Array.isArray(snapshot.nodes)) ? snapshot.nodes : [];
+  for (const n of nodes) {
+    if (!n || n.node_id == null) continue;
+    if (n.state === 'archived') continue;          // terminal — not gate-relevant
+    live.add(n.node_id);
+  }
+  return live;
+}
+
+// Given the FULL pre-truncation log + the post-reduction snapshot, return the
+// set of events[] that MUST be retained even though they fall inside the
+// covered prefix: for every gate-relevant event-class, the most-recent event
+// per still-live entity. Iterating newest-first and taking the first hit per
+// (class,entity) yields "most recent". Bounded by live-entity count
+// (NFR-3 <100), never the full history.
+function gateRelevantRetention(events, snapshot) {
+  const live = liveEntityIds(snapshot);
+  const keptIds = new Set();
+  for (const cls of GATE_RELEVANT_EVENT_CLASSES) {
+    const seenEntities = new Set();
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      if (!ev || ev.type !== cls.type) continue;
+      const entity = cls.entityKey(ev);
+      if (entity == null || !live.has(entity)) continue;   // entity not live ⇒ not gate-relevant
+      if (seenEntities.has(entity)) continue;              // already kept the most-recent for this entity
+      seenEntities.add(entity);
+      keptIds.add(ev.event_id);
+    }
+  }
+  // Preserve original chronological order among the retained subset.
+  return events.filter(function (e) { return keptIds.has(e.event_id); });
+}
+
 // ---- NFR-7 append-only audit log -------------------------------------------
 // One JSON object per line, append-only, NEVER truncated (survives §7c
 // compaction so the full history is always recoverable).
@@ -218,20 +276,34 @@ function appendEvent(eventInput, opts) {
 
   events.push(ev);
 
-  // §7c compaction: when the log exceeds the threshold, fold a full snapshot,
-  // mark its coverage, and truncate ONLY the provably-covered prefix. The
-  // audit log (above) is never touched, so nothing is actually lost.
+  // §7c compaction (DEC-D 2026-05-17 revision — NL-FINDING-003 resolution):
+  // when the log exceeds the threshold, fold a full snapshot, mark its
+  // coverage, and truncate the provably-covered prefix — EXCEPT the general
+  // gate-relevant-still-live retention set: the most-recent event of every
+  // gate-consumed event-class for every still-live entity is KEPT in events[]
+  // even though it falls inside the covered prefix. This closes the §7c↔§8
+  // cross-clause gap at the producing clause: §8 reads events[] only (its
+  // torn-snapshot-immune design is preserved unchanged), and finds what it
+  // needs because §7c no longer drops it. The audit log (above) is never
+  // touched, so nothing is ever actually lost. The retained set is bounded by
+  // the live-entity count (NFR-3 <100), not the full history.
   let publishedEvents = events;
   let snapshot;
+  let didCompact = false;
   if (events.length > threshold) {
+    didCompact = true;
     const fullSnap = deriveSnapshot(events, treeId);
     const coverId = events[events.length - 1].event_id;
     fullSnap.valid = true;
     fullSnap.covers_through_event_id = coverId;
-    // Retain ONLY events strictly after the covered point. Here the snapshot
-    // covers ALL events, so the post-compaction log is empty but the marker
-    // proves coverage — a reader replays from "nothing after coverId".
-    publishedEvents = [];
+    // The snapshot covers ALL events; the post-compaction log retains EXACTLY
+    // the gate-relevant-still-live subset (most-recent gate-consumed event per
+    // still-live entity — v1: most-recent branch-opened per non-archived node)
+    // so the §8 events[]-only branch-presence gate still resolves every live
+    // branch. covers_through_event_id still marks the last covered event, so
+    // §7a's reader-replay contract is unchanged (a reader replays whatever
+    // events[] holds — now the small live set rather than possibly-empty).
+    publishedEvents = gateRelevantRetention(events, fullSnap);
     snapshot = fullSnap;
   } else {
     snapshot = deriveSnapshot(events, treeId);
@@ -261,7 +333,7 @@ function appendEvent(eventInput, opts) {
   fs.writeFileSync(tmp, JSON.stringify(nextState, null, 2), 'utf8');
   fs.renameSync(tmp, statePath); // atomic single-fs publish (Pin 3b / §7b)
 
-  return { state: readState(opts), appended: true, event: ev, compacted: publishedEvents.length === 0 && events.length > threshold };
+  return { state: readState(opts), appended: true, event: ev, compacted: didCompact };
 }
 
 // Simulate a torn snapshot: write a state file whose snapshot block is present

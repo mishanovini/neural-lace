@@ -15,6 +15,12 @@
 //   P6 event_id idempotency — a re-applied append is a no-op  (§2)
 //   P7 FR-2 N=3 fixture — 3 items one thread => 0 extra branches; divergence => exactly 1
 //   P8 strict-tree invariant (FR-1) — cycle / second-parent re-parent rejected, retained
+//   P9 DEC-D §7c↔§8 gap CLOSED — post-compaction the §8 events[]-only jq
+//      branch-presence filter still resolves EVERY still-live branch (Phase-B
+//      gate would ALLOW; the long-lived-tree spawn DoS is closed)  (NL-FINDING-003)
+//   P10 DEC-D retained-events[] bound — post-compaction events[] size is
+//      bounded by the still-live-node count (not 0, not the full history); an
+//      archived node's branch-opened is correctly NOT retained  (NL-FINDING-003)
 
 const fs = require('fs');
 const os = require('os');
@@ -96,16 +102,26 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
       last = state.appendEvent({ type: 'branch-opened', node_id: 'n' + i, parent_id: null, title: 'T' + i }, o);
     }
     const after = state.readState(o);
-    // Post-compaction the on-disk events[] is truncated to the provably-
-    // covered prefix (here: empty, with a coverage marker proving it), yet
-    // the reconstructed snapshot still has all 8 nodes (marker => trust cache).
-    const onDiskEvents = JSON.parse(fs.readFileSync(o.statePath, 'utf8')).events.length;
+    // Post-compaction (DEC-D §7c revision — NL-FINDING-003) the on-disk
+    // events[] is truncated of the provably-covered prefix EXCEPT the
+    // gate-relevant-still-live retention set: the most-recent branch-opened
+    // per still-live node. All 8 nodes are live (none archived) and each has
+    // exactly one branch-opened, so events[] retains exactly 8 — NOT 0 (the
+    // pre-DEC-D behavior that produced the §8 Phase-B DoS), NOT >8 (the
+    // covered non-gate-relevant prefix is still dropped). Snapshot still has
+    // all 8 nodes (marker => trust cache).
+    const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    const onDiskEvents = onDisk.events.length;
+    const onDiskAllBranchOpened = onDisk.events.every(function (e) { return e.type === 'branch-opened'; });
     const snapNodes = after.snapshot.nodes.length;
     // Audit log (NFR-7) is never truncated: all 8 events still replayable.
     const audit = store.replayAuditLog(store.auditPathFor(o.statePath));
     check('P3 compaction-truncation-correctness + audit-never-truncated',
-      last.compacted === true && onDiskEvents === 0 && snapNodes === 8 && audit.length === 8,
-      'compacted=' + last.compacted + ' onDiskEvents=' + onDiskEvents + ' snapNodes=' + snapNodes + ' audit=' + audit.length);
+      last.compacted === true && onDiskEvents === 8 && onDiskAllBranchOpened
+        && snapNodes === 8 && audit.length === 8,
+      'compacted=' + last.compacted + ' onDiskEvents=' + onDiskEvents
+        + ' allBranchOpened=' + onDiskAllBranchOpened
+        + ' snapNodes=' + snapNodes + ' audit=' + audit.length);
   } catch (e) { check('P3 compaction-truncation-correctness + audit-never-truncated', false, e.message); }
   finally { cleanup(dir); }
 })();
@@ -212,6 +228,94 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
       cycleRejected && eventRetained,
       'cycleRejected=' + cycleRejected + ' eventRetained=' + eventRetained);
   } catch (e) { check('P8 strict-tree invariant (FR-1)', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
+// ---- P9 DEC-D §7c↔§8 gap CLOSED — post-compaction §8 jq still resolves -----
+// (NL-FINDING-003) Open many branches so compaction fires, then run the EXACT
+// ADR-032 §8 events[]-only jq branch-presence filter against the on-disk
+// post-compaction state file for EVERY still-live branch. Pre-DEC-D this
+// returned non-zero for all of them (events[] emptied) ⇒ Phase-B gate BLOCKs
+// every legitimate spawn ⇒ silent orchestrator DoS. Post-DEC-D every still-live
+// branch must resolve (exit 0 ⇒ gate ALLOWs).
+(function P9() {
+  const cp = require('child_process');
+  const dir = freshDir(); const o = Object.assign(optsFor(dir), { compactionThreshold: 5 });
+  try {
+    let last;
+    const N = 12;
+    for (let i = 0; i < N; i++) {
+      last = state.appendEvent({ type: 'branch-opened', node_id: 'n' + i, parent_id: null, title: 'branch ' + i }, o);
+    }
+    // Archive one node: its branch-opened must NOT be required to resolve
+    // (not gate-relevant once terminal) — but every still-live one MUST.
+    state.appendEvent({ type: 'archived', node_id: 'n3' }, o);
+    const compacted = last.compacted === true;
+    // The exact §8 filter (ADR-032 §8): events[]-only, no snapshot read.
+    function gateAllows(branchArg) {
+      const r = cp.spawnSync('jq', ['-e', '--arg', 'b', branchArg,
+        '.events[] | select(.type=="branch-opened" and (.title==$b or .node_id==$b))',
+        o.statePath], { stdio: ['ignore', 'ignore', 'ignore'] });
+      return r.status === 0;
+    }
+    let allLiveResolve = true;
+    for (let i = 0; i < N; i++) {
+      if (i === 3) continue;                       // n3 archived — not gate-relevant
+      if (!gateAllows('branch ' + i)) { allLiveResolve = false; break; }
+      if (!gateAllows('n' + i)) { allLiveResolve = false; break; } // node_id form too
+    }
+    // The archived node's branch-opened is correctly dropped (terminal, not
+    // gate-relevant): the §8 filter returns non-zero ⇒ gate would BLOCK a
+    // spawn naming it, which is correct (you should not spawn on an archived
+    // branch). This proves the retention is the LIVE set, not "everything".
+    const archivedDropped = !gateAllows('branch 3') && !gateAllows('n3');
+    check('P9 DEC-D §7c↔§8 gap CLOSED — post-compaction §8 jq resolves every still-live branch',
+      compacted && allLiveResolve && archivedDropped,
+      'compacted=' + compacted + ' allLiveResolve=' + allLiveResolve + ' archivedDropped=' + archivedDropped);
+  } catch (e) { check('P9 DEC-D §7c↔§8 gap CLOSED', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
+// ---- P10 DEC-D retained-events[] bound — still-live-node-bounded -----------
+// (NL-FINDING-003) Post-compaction the on-disk events[] is bounded by the
+// live-node count: exactly one branch-opened per still-live node, none for
+// archived nodes, none of the covered non-gate-relevant prefix — i.e. NOT 0
+// (the DoS-causing pre-DEC-D behavior), NOT the full history (unbounded).
+(function P10() {
+  const dir = freshDir(); const o = Object.assign(optsFor(dir), { compactionThreshold: 5 });
+  try {
+    let last;
+    const N = 10;
+    for (let i = 0; i < N; i++) {
+      last = state.appendEvent({ type: 'branch-opened', node_id: 'n' + i, parent_id: null, title: 'T' + i }, o);
+    }
+    // Also append non-gate-relevant covered events (decisions): they are NOT a
+    // §8-consumed class ⇒ must NOT be retained (only the live-set bound counts).
+    state.appendEvent({ type: 'decision-raised', node_id: 'n0', item_id: 'd1', text: 'D' }, o);
+    last = state.appendEvent({ type: 'decision-raised', node_id: 'n1', item_id: 'd2', text: 'D' }, o);
+    // Archive 2 nodes ⇒ live-node count drops to N-2; their branch-opened
+    // must NOT be retained.
+    state.appendEvent({ type: 'archived', node_id: 'n8' }, o);
+    last = state.appendEvent({ type: 'archived', node_id: 'n9' }, o);
+    const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    const after = state.readState(o);
+    const liveNodeCount = after.snapshot.nodes.filter(function (n) { return n.state !== 'archived'; }).length;
+    const evs = onDisk.events;
+    const branchOpened = evs.filter(function (e) { return e.type === 'branch-opened'; });
+    // Exactly one retained branch-opened per still-live node, and none for the
+    // archived ones, and zero non-gate-relevant (decision) events retained.
+    const liveIds = new Set(after.snapshot.nodes.filter(function (n) { return n.state !== 'archived'; }).map(function (n) { return n.node_id; }));
+    const oneBoPerLive = branchOpened.length === liveNodeCount
+      && branchOpened.every(function (e) { return liveIds.has(e.node_id); });
+    const noArchivedBo = !branchOpened.some(function (e) { return e.node_id === 'n8' || e.node_id === 'n9'; });
+    const noNonGateRelevant = !evs.some(function (e) { return e.type !== 'branch-opened'; });
+    const boundedNotZeroNotFull = evs.length === liveNodeCount && evs.length > 0 && evs.length < (N + 4);
+    check('P10 DEC-D retained-events[] bound — still-live-node-bounded',
+      last.compacted === true && oneBoPerLive && noArchivedBo && noNonGateRelevant && boundedNotZeroNotFull,
+      'liveNodeCount=' + liveNodeCount + ' evs=' + evs.length + ' branchOpened=' + branchOpened.length
+        + ' oneBoPerLive=' + oneBoPerLive + ' noArchivedBo=' + noArchivedBo
+        + ' noNonGateRelevant=' + noNonGateRelevant + ' boundedNotZeroNotFull=' + boundedNotZeroNotFull);
+  } catch (e) { check('P10 DEC-D retained-events[] bound', false, e.message); }
   finally { cleanup(dir); }
 })();
 
