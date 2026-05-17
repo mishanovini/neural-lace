@@ -15,7 +15,23 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { STATE_FILE, readState } = require('../state/state.js');
+const { STATE_FILE, readState, SchemaTooNewError, SCHEMA_TOO_NEW_MESSAGE } = require('../state/state.js');
+
+// §1/Pin 2 reader-glue: the ADR-032 reader REFUSES an unknown major by
+// throwing SchemaTooNewError and reading NOTHING (never a partial mis-parse).
+// The passive GUI must surface that distinctly, not crash. safeRead() returns
+// a normal snapshot OR a one-shot "schema too new" marker the client renders
+// as a refuse banner — never a best-effort guess at a newer file.
+function safeRead() {
+  try {
+    return { snapshot: readState().snapshot };
+  } catch (err) {
+    if (err instanceof SchemaTooNewError) {
+      return { snapshot: { nodes: [], schema_too_new: true, message: SCHEMA_TOO_NEW_MESSAGE } };
+    }
+    throw err;
+  }
+}
 
 const WEB_DIR = path.join(__dirname, '..', 'web');
 const HOST = '127.0.0.1';
@@ -27,7 +43,7 @@ var CT = 'Content-Ty' + 'pe'; // HTTP header name; split-literal keeps the hygie
 const sseClients = new Set();
 
 function sendState(res) {
-  const snap = readState().snapshot;
+  const snap = safeRead().snapshot;
   res.write('event: state\n');
   res.write('data: ' + JSON.stringify(snap) + '\n\n');
 }
@@ -68,7 +84,7 @@ const server = http.createServer((req, res) => {
   if (url === '/api/state') {
     var hj = {}; hj[CT] = 'application/json';
     res.writeHead(200, hj);
-    res.end(JSON.stringify(readState().snapshot));
+    res.end(JSON.stringify(safeRead().snapshot));
     return;
   }
 

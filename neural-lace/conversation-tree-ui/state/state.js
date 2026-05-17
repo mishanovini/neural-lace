@@ -1,99 +1,103 @@
 'use strict';
-// Minimal-but-real state contract for the Conversation Tree UI Walking Skeleton
-// (ADR-031 Option 2, Phase 0 / Task 0.1). Forward-shaped toward ADR-032/Phase A;
-// the full event-type enum + node shape is deliberately NOT pre-built here.
-//
-// Shape: one JSON file with
-//   schema_version : int (starts at 1; ADR-032 will own the real layout)
-//   events         : append-only array; Phase 0 has ONE type: "branch-opened"
-//   snapshot       : derived { nodes: [...] } reduced from events
-//
-// Atomicity (ADR-031 r7 Pin 3b): every state mutation is ONE write-temp-then-
-// rename. fs.renameSync is atomic on a single filesystem, so a concurrent
-// reader of the well-known path always sees a whole file with N or N+1 whole
-// events, never a half-written event. (Chosen over append+fsync because the
-// snapshot must be recomputed and rewritten on every append anyway, so the
-// whole file is replaced atomically in one rename — the simplest correct
-// primitive for "reader sees N or N+1 whole events, never half".)
+// Public facade for the Conversation Tree UI state library (ADR-032 §1–§7).
+// Phase 0 shipped a minimal-but-real spine here; A2 evolves it ADDITIVELY
+// within schema major 1 to the frozen ADR-032 contract. The Phase-0 public
+// surface (STATE_FILE, readState, deriveSnapshot, appendBranchOpened, the
+// `seed` CLI) is preserved so server.js / web/app.js keep working unchanged
+// (the Walking Skeleton 3-step regression baseline). New surface: appendEvent
+// (the general §2 enum), resolveStatePath (§5), SchemaTooNewError (§1/Pin 2).
 
-const fs = require('fs');
 const path = require('path');
+const schema = require('./schema.js');
+const reducer = require('./reducer.js');
+const store = require('./store.js');
 
-// Well-known path resolution (Phase 0: single global file; per-project +
-// global-tree path resolution is ADR-032 / FR-18 / FR-25, NOT decided here).
-const STATE_DIR = __dirname;
-const STATE_FILE = path.join(STATE_DIR, 'tree-state.json');
+const SCHEMA_VERSION = schema.SCHEMA_VERSION;
 
-const SCHEMA_VERSION = 1;
+// Phase-0 well-known path compatibility: the skeleton used a single file at
+// state/tree-state.json. Keep that exact path as the DEFAULT so server.js
+// (which destructures STATE_FILE) and the seed CLI behave identically. The
+// real §5 per-project + global resolver is available via resolveStatePath /
+// the opts.statePath / opts.treeId knobs on the new API.
+const STATE_FILE = path.join(__dirname, 'tree-state.json');
+const DEFAULT_OPTS = { statePath: STATE_FILE, treeId: 'global' };
 
-function emptyState() {
-  return { schema_version: SCHEMA_VERSION, events: [], snapshot: { nodes: [] } };
+// Backward-compatible reader. Returns { schema_version, tree_id, events,
+// snapshot } where snapshot is torn-recovery-safe (§7a) AND carries the
+// Phase-0 alias fields (node.id / node.opened_at) via the reducer so the
+// unmodified web/app.js renderer still works (regression baseline).
+// Pin 2 (§1): an unknown MAJOR throws SchemaTooNewError — callers that want
+// the Phase-0 "treat as empty" leniency must catch it explicitly; the GUI
+// glue in server.js does (distinct refuse, never a mis-parse).
+function readState(opts) {
+  return store.readState(Object.assign({}, DEFAULT_OPTS, opts || {}));
 }
 
-function readState() {
-  try {
-    const raw = fs.readFileSync(STATE_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (typeof parsed.schema_version !== 'number') return emptyState();
-    return parsed;
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return emptyState();
-    // Torn/corrupt file: Phase 0 returns empty; real torn-snapshot recovery
-    // via log replay is Phase A (Pin 3a). Surface, do not silently swallow.
-    process.stderr.write('[state] could not parse state file, treating as empty: ' + err.message + '\n');
-    return emptyState();
-  }
+// Pure events[] -> snapshot (the §7a recovery primitive; also what the
+// reducer uses internally). Kept exported for compatibility with any Phase-0
+// caller + the property suite.
+function deriveSnapshot(events, treeId) {
+  return reducer.deriveSnapshot(events, treeId || 'global');
 }
 
-// Reduce events -> snapshot. Phase 0 reducer handles only "branch-opened".
-function deriveSnapshot(events) {
-  const nodes = [];
-  for (const ev of events) {
-    if (ev.type === 'branch-opened') {
-      nodes.push({
-        id: ev.id,
-        parent_id: ev.parent_id,
-        title: ev.title,
-        opened_at: ev.timestamp,
-      });
-    }
-  }
-  return { nodes };
+// General §2 append: one event, atomic single-fs publish, idempotent on
+// event_id, compaction-aware, audit-logged. The envelope (event_id/ts/actor)
+// is auto-filled when omitted.
+function appendEvent(eventInput, opts) {
+  return store.appendEvent(eventInput, Object.assign({}, DEFAULT_OPTS, opts || {}));
 }
 
-// Append ONE branch-opened event + rewrite snapshot, in ONE atomic rename.
-function appendBranchOpened({ id, parentId = null, title }) {
-  if (!id || !title) throw new Error('appendBranchOpened requires id and title');
-  const state = readState();
-  state.events.push({
+// Phase-0 convenience preserved verbatim in behavior: append ONE
+// branch-opened. Maps the old { id, parentId, title } shape onto the §2
+// envelope (node_id/parent_id/title + event_id/ts/actor auto-filled).
+function appendBranchOpened(input, opts) {
+  input = input || {};
+  const nodeId = input.node_id || input.id;
+  const title = input.title;
+  if (!nodeId || !title) throw new Error('appendBranchOpened requires id/node_id and title');
+  const parentId = (input.parentId === undefined ? input.parent_id : input.parentId);
+  const r = appendEvent({
     type: 'branch-opened',
-    id: String(id),
-    parent_id: parentId === null ? null : String(parentId),
+    node_id: String(nodeId),
+    parent_id: parentId == null ? null : String(parentId),
     title: String(title),
-    timestamp: new Date().toISOString(),
-  });
-  state.snapshot = deriveSnapshot(state.events);
-
-  const tmp = STATE_FILE + '.tmp.' + process.pid + '.' + Date.now();
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8');
-  fs.renameSync(tmp, STATE_FILE); // atomic single-fs publish (Pin 3b)
-  return state;
+    actor: input.actor || 'dispatch',
+  }, opts);
+  return r.state; // Phase-0 callers expect the resulting state object
 }
 
-module.exports = { STATE_FILE, SCHEMA_VERSION, emptyState, readState, deriveSnapshot, appendBranchOpened };
+module.exports = {
+  STATE_FILE,
+  SCHEMA_VERSION,
+  SCHEMA_TOO_NEW_MESSAGE: schema.SCHEMA_TOO_NEW_MESSAGE,
+  SchemaTooNewError: store.SchemaTooNewError,
+  EVENT_TYPES: schema.EVENT_TYPES,
+  resolveStatePath: store.resolveStatePath,
+  auditPathFor: store.auditPathFor,
+  replayAuditLog: store.replayAuditLog,
+  generateEventId: schema.generateEventId,
+  validateEvent: schema.validateEvent,
+  emptyState: function (treeId) { return store.emptyState(treeId); },
+  readState,
+  deriveSnapshot,
+  appendEvent,
+  appendBranchOpened,
+  __writeTornForTest: store.__writeTornForTest,
+};
 
-// CLI: `node state.js seed "Title"`  -> append a root branch-opened.
-//      `node state.js seed "Title" <parentId>` -> append a child.
+// CLI preserved (Phase-0 Walking Skeleton step 1 + step 3 driver):
+//   node state.js seed "Title"            -> append a root branch-opened
+//   node state.js seed "Title" <parentId> -> append a child
 if (require.main === module) {
   const [, , cmd, title, parentId] = process.argv;
   if (cmd === 'seed') {
     if (!title) { process.stderr.write('usage: node state.js seed "<title>" [parentId]\n'); process.exit(2); }
     const id = 'n-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e4);
-    const s = appendBranchOpened({ id, parentId: parentId || null, title });
-    process.stdout.write('appended branch-opened id=' + id + '; total events=' + s.events.length +
+    const s = appendBranchOpened({ id: id, parentId: parentId || null, title: title });
+    process.stdout.write('appended branch-opened node_id=' + id + '; total events=' + s.events.length +
       '; snapshot nodes=' + s.snapshot.nodes.length + '\n');
   } else {
-    process.stderr.write('unknown command: ' + cmd + '\n');
+    process.stderr.write('unknown command: ' + String(cmd) + '\n');
     process.exit(2);
   }
 }
