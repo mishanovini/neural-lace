@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "task_id": "3",
+  "verdict": "PASS",
+  "commit_sha": "b77ea74e7c7d76b3495986c41c7974aea29b1b50",
+  "files_modified": [
+    "adapters/claude-code/CLAUDE.md",
+    "adapters/claude-code/hooks/continuation-enforcer.sh",
+    "adapters/claude-code/rules/session-end-protocol.md",
+    "adapters/claude-code/settings.json.template",
+    "docs/harness-architecture.md"
+  ],
+  "mechanical_checks": {
+    "command:jq -r \".hooks.Stop[0].hooks[].command\" adapters/claude-code/settings.json.template | grep -qx \"bash ~/.claude/hooks/continuation-enforcer.sh\"": {
+      "passed": true,
+      "detail": "",
+      "command": "jq -r \".hooks.Stop[0].hooks[].command\" adapters/claude-code/settings.json.template | grep -qx \"bash ~/.claude/hooks/continuation-enforcer.sh\"",
+      "exit_code": 0
+    },
+    "command:jq -r \".hooks.Stop[0].hooks[].command\" \"$HOME/.claude/settings.json\" | grep -qx \"bash ~/.claude/hooks/continuation-enforcer.sh\"": {
+      "passed": true,
+      "detail": "",
+      "command": "jq -r \".hooks.Stop[0].hooks[].command\" \"$HOME/.claude/settings.json\" | grep -qx \"bash ~/.claude/hooks/continuation-enforcer.sh\"",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "5 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-17T18:22:48Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/session-end-protocol-enforcer.md"
+}
