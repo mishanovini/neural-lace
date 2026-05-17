@@ -14,9 +14,9 @@ spine was independently corroborated by task-verifier (1-node baseline → SSE
 push → 2 nodes, no reload). This entry supplies the comprehension articulation
 the rung-2 gate requires; no checkbox is flipped here.
 
-### Comprehension Articulation
+## Comprehension Articulation
 
-#### Spec meaning
+### Spec meaning
 
 The Walking Skeleton has to prove, end-to-end and for real, the *passive
 file-mediated tracker spine* that ADR-031 Option 2 commits the whole v1 to —
@@ -39,7 +39,7 @@ toward ADR-032 but the full event-type enum / node layout is explicitly NOT
 pre-built — Phase 0 ships exactly one event type and the minimal reducer for
 it.
 
-#### Edge cases covered
+### Edge cases covered
 
 - **Atomic publish (Pin 3b).** Every mutation writes to a unique temp path
   then `renameSync`s it over the well-known file in one step:
@@ -74,7 +74,7 @@ it.
   watcher. The client treats a zero-node snapshot as the empty state
   (`web/app.js:17-20`) rather than rendering nothing ambiguous.
 
-#### Edge cases NOT covered
+### Edge cases NOT covered
 
 - **Torn-snapshot recovery by log replay (Pin 3a).** Phase 0 deliberately
   degrades a corrupt/torn file to `emptyState()` (`state/state.js:41-44`
@@ -104,7 +104,7 @@ it.
   ADR-032 / Phase A; this skeleton does not exercise two simultaneous
   writers.
 
-#### Assumptions
+### Assumptions
 
 - **Same-filesystem `rename()` atomicity.** The Pin-3b guarantee at
   `state/state.js:79` holds only because the temp file
