@@ -95,7 +95,12 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
 ### Phase A — State contract (freezes before any consumer builds; Tier 4)
 
 - [ ] A1. Author ADR-032: JSON tree-state schema field layout — `schema_version`, event-type enum (branch-opened / decision-raised / question-raised / answered / action-added / action-done / concluded / re-opened / archived / deferred / draft-saved / cross-linked / re-parented / promoted / backlog-added / backlog-activated …), node shape, FR-2 conversational-divergence cardinality rule, OQ-4 typed item set {decision, question, action}, well-known path resolution for per-project trees (FR-18) + the global tree (FR-25), NFR-2 conflict-unit. The 3 viability properties (torn-snapshot recovery, single-event-atomic append, compaction trigger) are **inputs from ADR-031 r7 Pin 3**, not re-decided here. — Verification: contract — **Reviewer: systems-designer (Tier-4 contract review).**
-- [ ] A2. Implement the state library against ADR-032: atomic single-event append (Pin 3b), periodic snapshot write, compaction trigger (fresh snapshot supersedes+truncates the covered log prefix — Pin 3c), torn-snapshot recovery (detect partial/stale snapshot via a validity/coverage marker, fall back to event-log replay — Pin 3a), versioned-reader-refuses-unknown-major (distinct "schema too new" message — Pin 2), last-N-version retention + append-only audit log (NFR-1/NFR-7). — Verification: full — **Reviewer: code-reviewer + task-verifier.**
+- [ ] A2. Implement the state library against ADR-032 (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: code-reviewer + task-verifier.**
+  - [ ] A2a. Atomic single-event append (Pin 3b) — a reader observes N or N+1 whole events, never a half event.
+  - [ ] A2b. Periodic snapshot write + compaction trigger (Pin 3c) — a fresh snapshot supersedes and truncates only the log prefix it provably covers.
+  - [ ] A2c. Torn-snapshot recovery (Pin 3a) — validity/coverage-marker detection + deterministic event-log replay fallback.
+  - [ ] A2d. Versioned reader refuses an unknown major `schema_version` (Pin 2) with a distinct "schema too new" message, never a mis-parse.
+  - [ ] A2e. Last-N-version retention + append-only audit log (NFR-1/NFR-7).
   **Prove it works:**
   1. Append N events; kill the writer mid-snapshot-write (simulated torn snapshot); re-read.
   2. Observe the reader detects the torn snapshot and reconstructs state by replaying the event log — no data loss, no blank tree.
@@ -108,7 +113,11 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
 ### Phase B — Enforcement substrate (Option-2-specific; harness infrastructure; Tier 3)
 
 - [ ] B0. Empirically verify Claude Code populates `tool_name` for the MCP spawn tools (`mcp__ccd_session__spawn_task`, `mcp__ccd_session_mgmt__start_code_task`) the same way it does for built-in `Task`/`Agent` — the ADR-031 r7 explicitly-flagged build-phase assumption. Record the observed event JSON shape. — Verification: mechanical — **Reviewer: task-verifier.**
-- [ ] B1. `conversation-tree-state-gate.sh` PreToolUse, matcher `mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent`. Implements the Pin-2 error partition **exactly**: JSON-parse-fail → closed; missing-file with prior-spawn-this-session → closed; missing-file with no prior spawn → **open (bootstrap exemption)**; stale-mtime → closed (with the waiver release-valve); unknown-schema-major → closed with the distinct "schema too new — upgrade the GUI/gate" message; hook-internal error (own jq/IO) → open. Branch-name-as-required-key check (the spawn `tool_input` supplies the branch independently — raises the bar from "wrote anything" to "wrote an entry naming this branch"). PreToolUse justification escape-hatch: a fresh `.claude/state/conv-tree-spawn-waiver-*.txt` (≥1 substantive line, <1h) allows the spawn. `--self-test` covering every partition cell + bootstrap + waiver. — Verification: full — **Reviewer: harness-reviewer.**
+- [ ] B1. `conversation-tree-state-gate.sh` PreToolUse gate (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: harness-reviewer.**
+  - [ ] B1a. Matcher `mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent` + branch-name-as-required-key check (the spawn `tool_input` supplies the branch independently — raises the bar from "wrote anything" to "wrote an entry naming this branch").
+  - [ ] B1b. Pin-2 error partition exactly: JSON-parse-fail → closed; missing-file with prior-spawn-this-session → closed; missing-file with no prior spawn → open (bootstrap exemption); stale-mtime → closed; unknown-schema-major → closed with the distinct "schema too new — upgrade" message; hook-internal jq/IO error → open.
+  - [ ] B1c. PreToolUse justification escape-hatch — a fresh `.claude/state/conv-tree-spawn-waiver-*.txt` (≥1 substantive line, <1h) permits the spawn (mirrors `bug-persistence-gate.sh`).
+  - [ ] B1d. `--self-test` exercising each partition cell + the bootstrap exemption + the waiver release-valve.
   **Prove it works:**
   1. Run `conversation-tree-state-gate.sh --self-test`; observe every error-partition cell + bootstrap + waiver scenario PASS.
   2. With a stale state file, attempt a matched spawn; observe BLOCK with the remediation message; drop a fresh waiver; observe ALLOW.
@@ -138,7 +147,11 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
 
 ### Phase C — Three-pane GUI core (new top-level UI surface; Tier 3)
 
-- [ ] C1. Three-pane layout shell — tree pane + actions-list pane + backlog-list pane **all visible simultaneously on one screen** (Misha directive; supersedes the old plan's UX-C3 main/secondary recommendation). Three never-conflated data states: loading (skeleton + "Loading conversation tree…"), first-run empty (FR-17 explainer of what populates each pane), corruption (persistent banner `⚠ State file unreadable — showing last good version from <ts>; <N> newer versions could not be parsed`; all-versions-bad → explicit "could not load from any saved version" + audit-log path, never blank — UX-I4). — Verification: full — **Reviewer: ux-designer (mandatory, new UI surface) + functionality-verifier.**
+- [ ] C1. Three-pane layout shell + three never-conflated data states (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: ux-designer (mandatory, new UI surface) + functionality-verifier.**
+  - [ ] C1a. Three-pane simultaneous layout — tree pane + actions-list pane + backlog-list pane rendered together on one normal desktop viewport, no tab/scroll to reach any pane (Misha directive; supersedes the old plan's UX-C3 main/secondary recommendation).
+  - [ ] C1b. Loading state — skeleton + "Loading conversation tree…".
+  - [ ] C1c. First-run empty state — FR-17 per-pane explainer of what populates each pane, not an error/blank.
+  - [ ] C1d. Corruption state — persistent banner `⚠ State file unreadable — showing last good version from <ts>; <N> newer versions could not be parsed`; all-versions-bad → explicit "could not load from any saved version" + audit-log path, never blank (UX-I4).
   **Prove it works:**
   1. Open the GUI with a seeded multi-node state file; observe all three panes rendered simultaneously, no scroll/tab to reach any pane on a normal desktop viewport.
   2. Point at a missing state file → first-run empty state per pane, not an error/blank.
@@ -156,7 +169,10 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
   - n/a — paths from C1/A2; static chain authored in C2 evidence.
   **Integration points:**
   Reads A2 state; verify selecting a node renders the exact parent-chain + sub-branch + open-item set for a seeded fixture (functionality-verifier).
-- [ ] C3. Actions/decision surfacing in the actions-list pane — every unanswered decision + question + open action across the tree(s), each with an originating-node breadcrumb; click an entry → focus + reveal that node in the tree pane (FR-4/FR-5/FR-6; answered/done item leaves within one state refresh — SM-3). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
+- [ ] C3. Actions/decision surfacing in the actions-list pane (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
+  - [ ] C3a. Surface each unanswered decision + each open question + each open action from the tree(s), each entry carrying an originating-node breadcrumb (FR-4/FR-5).
+  - [ ] C3b. Clicking an entry focuses + reveals that node in the tree pane (FR-6).
+  - [ ] C3c. An answered/done item leaves the list within one state refresh (SM-3).
   **Prove it works:**
   1. Seed N unanswered items; observe the actions-list pane lists exactly N, each with a node breadcrumb.
   2. Click one → the tree pane focuses + reveals that node.
@@ -186,7 +202,11 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
 
 ### Phase D — Tracker behaviors (Tier 2/3)
 
-- [ ] D1. Branch checklist (FR-8: contains exactly the branch's open decisions + open actions + unanswered questions, nothing already-addressed) + auto-conclude **only when all items checked** (FR-7 reframed — navigate-away changes nothing) + persistent on-node `↩ auto-concluded — re-open` marker, not a transient toast (UX-C2) + animated auto-collapse leaving a labeled in-place stub `▸ <branch> ✓ concluded` (UX-N8) + exactly one parent notification on child conclude (FR-10). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
+- [ ] D1. Branch checklist + conclude/collapse/notify behaviors (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
+  - [ ] D1a. Checklist contains exactly the branch's open decisions + open actions + unanswered questions, nothing already-addressed (FR-8).
+  - [ ] D1b. Auto-conclude only when the full checklist is checked; navigate-away changes no branch state (FR-7 reframed).
+  - [ ] D1c. Persistent on-node `↩ auto-concluded — re-open` marker (not a transient toast, UX-C2) + animated collapse leaving a labeled in-place stub `▸ <branch> ✓ concluded` (UX-N8).
+  - [ ] D1d. Exactly one parent notification on child conclude (FR-10).
   **Prove it works:**
   1. Open a branch with 3 unchecked items; navigate away and back — still open, unchanged (FR-7 reframe).
   2. Check the final item — branch auto-concludes, animates to a labeled collapsed stub, parent shows exactly one notification.
@@ -508,7 +528,7 @@ S5 (Scope-vs-Analysis Check): swept Add/Implement/Build/Write verbs against Scop
 - A partially-written Dispatch event is never observed (atomic append); a partially-written snapshot is never trusted (validity marker).
 
 ### 9. Load / capacity model
-- Scale ceiling per PRD NFR-3: well under 100 branches total across all per-project trees + the global tree; backlog/action lists trivially small at that scale. PRD NFR-3 target p95 interaction latency 150 ms with generous headroom at this scale; no pruning tier required at v1 scale (PRD NFR-3 supersedes the old ≥500-node framing).
+- Scale is a PRD-given assumption, not a derived capacity bound: PRD NFR-3 fixes the realistic ceiling at fewer than one hundred branches total across all per-project trees + the global tree, with backlog/action lists trivially small at that scale. No arithmetic applies here because nothing is computed against a budget — the FM-013/FM-014 concern (asserting a capacity comparison without showing the math) is N/A; this is a stated input quoted from the PRD, not an asserted comparison. PRD NFR-3 also sets the p95 interaction-latency target at 150 ms and requires no pruning tier at v1 scale (NFR-3 supersedes the prior larger-node framing).
 - Bottleneck: the GUI tree render — bounded by the <100-branch ceiling, hand-rolled SVG/DOM is viable at that bound (minimal-dependency principle; one focused vetted dependency surfaced as an in-flight decision only if a specific interaction proves a time-sink).
 - State-file growth bounded by the compaction trigger (Pin 3c) across the FR-24 "a minute or a month" horizon; the audit log is retained separately (NFR-7).
 - No network/API rate concern: localhost, no external calls, no spawn path (Option 2 passive).
