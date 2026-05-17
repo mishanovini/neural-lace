@@ -285,6 +285,8 @@ layout. Declared so scope-enforcement-gate has a surface once ACTIVE. -->
 ## In-flight scope updates
 
 <!-- Populated during build per spec-freeze/scope-enforcement protocol. Empty at DRAFT. -->
+- 2026-05-17: docs/DECISIONS.md — A1 ADR-032 requires its index row in the same commit (decisions-index-gate); previously listed only inside the ADR-032 Files-to-Modify bullet, not as a discrete gate-parseable path.
+- 2026-05-17: docs/plans/conversation-tree-ui-v1-evidence.md — A1 front-loads the rung-2 comprehension articulation into the plan's evidence companion (dispatch directive); the plan listed conversation-tree-ui-v1.md for evidence bookkeeping but not the -evidence.md sibling explicitly.
 
 ## Assumptions
 

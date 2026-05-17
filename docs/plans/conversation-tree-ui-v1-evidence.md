@@ -197,3 +197,25 @@ Runtime verification: file neural-lace/conversation-tree-ui/state/state.js::fs\.
 Verdict: PASS
 Confidence: 9
 Reason: All three "Prove it works" steps + Integration points executed live end-to-end this pass (resolving the prior two passes' environment-only INCOMPLETE); rung-2 comprehension-gate SATISFIED (comprehension-reviewer PASS supplied, citations independently re-spot-checked); skeleton byte-identical at branch tip; working tree clean.
+
+## Task A1 — ADR-032 state-schema contract
+
+Authored docs/decisions/032-conversation-tree-state-schema.md (the Tier-4 JSON tree-state field-layout contract every later phase consumes) + the docs/DECISIONS.md index row. Verification: contract — reviewer = systems-designer (Tier-4 contract review), dispatched by the orchestrator after this build.
+
+## Comprehension Articulation
+
+### Spec meaning
+
+Task A1 freezes ONLY the state-file field layout + the NFR-2 conflict-unit; the three Pin-3 viability properties (torn-snapshot recovery, single-event-atomic append, compaction trigger) and the Pin-2 unknown-major refuse are FIXED inputs from ADR-031 r7 that I restate as constraints and express as concrete fields, never re-decide. The ADR must formalize+extend the Phase-0 skeleton's exact shape (int schema_version, append-only events, derived snapshot, atomic renameSync publish) — not contradict it — and must make the most semantically-meaningful enforcement property (Pin 1: an entry naming branch X exists) reduce to a single jq key-presence check against the append-only events array, with the branch name supplied independently by the spawn tool_input so the bar is non-gameable.
+
+### Edge cases covered
+
+FR-2 conversational-divergence cardinality is encoded structurally by putting items ON a node (node.items[]) not as nodes, with the explicit N=3 fixture (docs/decisions/032-...md §3: 3 items same node_id ⇒ 0 extra branch-opened ⇒ 0 extra branches; divergence ⇒ exactly 1 branch-opened; per-item split opt-in only via `promoted`). Torn snapshot ⇒ §7a coverage-marker (snapshot.valid + covers_through_event_id) forces event-log replay. Unknown major ⇒ §1 distinct "schema too new — upgrade" refuse, never mis-parse (Pin 2). Concurrent GUI+Dispatch write ⇒ §6 conflict-unit = single event record, union-by-event_id, reducer-invariant rejection (nothing silently dropped — NFR-2 safety). Cross-tree FR-3 ⇒ §5 qualified `<tree_id>::<node_id>` cross_links, zero multi-parenting (FR-1 strict-tree preserved). Compaction across "a minute or a month" ⇒ §7c truncates only the provably-covered log prefix; audit log never truncated. concluded-with-unchecked-item rejected by the reducer (FR-7 invariant, §2).
+
+### Edge cases NOT covered
+
+(1) Cross-file referential integrity for a foreign `tree_id::node_id` whose target was deleted — §5/Consequences explicitly accepts NFR-9 degrade (render + "unavailable" flag, never a crash) over hard FK enforcement, because cross-file FK at <100-branch scale is disproportionate; this is a stated accepted ceiling, not an unhandled gap. (2) A general adversarial multi-writer CRDT/OT merge — §6 explicitly scopes the mechanism to two cooperating writers per PRD out-of-scope; the general case is deliberately excluded, not missed. (3) Semantic correctness of the tree itself — §8 states honestly this is the documented ADR-031 ceiling (mechanical layer verifies branch-record presence only); semantic truth is the B3 rule-class + Misha's interrupt authority, by design not by omission. (4) A *major* schema change discovered during A2 — Consequences routes this to a schema_version bump + ADR revision, not a silent in-flight edit; that path is named, the change itself is future work.
+
+### Assumptions
+
+Assumes ADR-031 r7 is the binding accepted architecture and its 3 pins are inputs not subject to re-decision in A1 (verified: ADR Status ACCEPTED r7, pins folded @ 8275d31; restated as fixed in §1/§7/§8). Assumes the Phase-0 skeleton at 68d598e is forward-shaped toward this contract and its evolution to the §2/§3/§7 shapes is additive within major 1 (Phase 0 is pre-freeze, no consumer of the frozen contract exists yet, so the skeleton's `schema_version: 1` is unchanged — verified by reading state.js/server.js at the branch tip). Assumes `jq` is available to the Phase-B gates (consistent with every existing harness hook precedent — bug-persistence-gate.sh / teammate-spawn-validator.sh use jq). Assumes PRD OQ-1 genuinely delegated the conflict mechanism + conflict-unit to this ADR (verified: PRD OQ-1 "DEFERRED to ADR-032", NFR-2 carries only the safety property). Assumes the spawn `tool_input` supplies the branch identifier independently of the state file (ADR-031 r7 Pin 1 explicit — the non-gameability of §8 depends on it; B0 empirically re-verifies the tool_name-for-MCP sub-assumption before B1 relies on it).
