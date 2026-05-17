@@ -1,9 +1,21 @@
 # Plan: Conversation Tree Management UI — v1 (proposed DAG for ADR-031 Option 4)
 
-Status: DRAFT
+Status: SUPERSEDED
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none
+
+<!--
+SUPERSEDED 2026-05-17 by docs/plans/conversation-tree-ui-v1.md. This plan
+decomposes the STRUCK ADR-031 Option 4 (fire-and-forget spawn-orchestration
+via spawn-task-report-back). ADR-031 r7 ACCEPTED Option 2 (file-mediated
+passive tracker) and explicitly directs this plan be "re-authored, not
+patched — it is now materially divergent." The re-authored Option-2 plan
+is the live one. Reversible by: git mv docs/plans/archive/conversation-tree-ui.md
+docs/plans/conversation-tree-ui.md + flip Status back. Retained as the
+audit record of the Option-4 decomposition + its folded UX/systems reviews.
+-->
+
 tier: 4
 rung: 2
 architecture: coding-harness
