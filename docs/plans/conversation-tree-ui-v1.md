@@ -1,13 +1,13 @@
 # Plan: Conversation Tree Management UI — v1 (ADR-031 Option 2: file-mediated passive tracker)
 
-Status: DRAFT
+Status: ACTIVE
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none
 tier: 4
 rung: 2
 architecture: coding-harness
-frozen: false
+frozen: true
 prd-ref: conversation-tree-management-ui
 
 <!--
