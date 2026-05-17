@@ -219,3 +219,60 @@ FR-2 conversational-divergence cardinality is encoded structurally by putting it
 ### Assumptions
 
 Assumes ADR-031 r7 is the binding accepted architecture and its 3 pins are inputs not subject to re-decision in A1 (verified: ADR Status ACCEPTED r7, pins folded @ 8275d31; restated as fixed in §1/§7/§8). Assumes the Phase-0 skeleton at 68d598e is forward-shaped toward this contract and its evolution to the §2/§3/§7 shapes is additive within major 1 (Phase 0 is pre-freeze, no consumer of the frozen contract exists yet, so the skeleton's `schema_version: 1` is unchanged — verified by reading state.js/server.js at the branch tip). Assumes `jq` is available to the Phase-B gates (consistent with every existing harness hook precedent — bug-persistence-gate.sh / teammate-spawn-validator.sh use jq). Assumes PRD OQ-1 genuinely delegated the conflict mechanism + conflict-unit to this ADR (verified: PRD OQ-1 "DEFERRED to ADR-032", NFR-2 carries only the safety property). Assumes the spawn `tool_input` supplies the branch identifier independently of the state file (ADR-031 r7 Pin 1 explicit — the non-gameability of §8 depends on it; B0 empirically re-verifies the tool_name-for-MCP sub-assumption before B1 relies on it).
+
+EVIDENCE BLOCK
+==============
+Task ID: A1
+Task description: Author ADR-032 — the JSON tree-state schema field-layout contract (`docs/decisions/032-conversation-tree-state-schema.md` + `docs/DECISIONS.md` index row).
+Verified at: 2026-05-17T00:00:00Z
+Verifier: task-verifier agent (Verification: contract early-return)
+
+Comprehension-gate: PASS (confidence 8) — comprehension-reviewer rung-2 verdict supplied final by orchestrator (Task tool unavailable in sub-agents this env, Anthropic no-nested-subagents — documented orchestrator-mediated workaround). Stage 1 schema PASS (four canonical sub-sections, ordered), Stage 2 substance PASS (each well over threshold, ADR-032-specific), Stage 3 diff-correspondence PASS (every "Edge cases covered" citation resolves to specific ADR-032 sections in 0c1c4d8; four NOT-covered items are honest accepted ceilings; no Assumption contradicted). rung-2 comprehension-gate SATISFIED.
+
+Verification level: contract
+Plan-mandated reviewer: systems-designer (Tier-4 contract review)
+Evidence path: docs/plans/conversation-tree-ui-v1-evidence.md (this block) + docs/decisions/032-conversation-tree-state-schema.md (the contract artifact)
+
+Checks run:
+1. Branch + commit confirmation
+   Command: git log --oneline -4
+   Output: 7c67033 (plan: A1 non-blocking finding capture), 0c1c4d8 (docs(adr): ADR-032 — Task A1 deliverable), on branch claude/kind-faraday-c5fe05
+   Result: PASS
+
+2. A1 deliverable commit shape
+   Command: git show --stat 0c1c4d8
+   Output: docs/DECISIONS.md +1, docs/decisions/032-conversation-tree-state-schema.md +189, docs/plans/conversation-tree-ui-v1-evidence.md +22, docs/plans/conversation-tree-ui-v1.md +2 (214 insertions) — matches the described deliverable exactly
+   Result: PASS
+
+3. ADR-032 contract artifact presence + section structure
+   Command: grep -nE '^#{1,3} ' docs/decisions/032-conversation-tree-state-schema.md
+   Output: all eight mandated sections present — §1 schema_version int major-semantics; §2 finalized event-type enum + per-event required fields; §3 node shape + strict-tree invariant + FR-2 N=3 fixture; §4 typed item set {decision,question,action} (defer is a state); §5 well-known path resolution FR-18/FR-25 + cross-tree FR-3 zero multi-parenting; §6 NFR-2 conflict-unit + mechanism boundary; §7 Pin-3 restated as fixed input; §8 enforcement-shaped layout (branch-presence single jq key check) — plus Context/Decision/Alternatives/Consequences/Cross-references
+   Result: PASS
+
+4. DECISIONS.md index row
+   Command: grep -n '032' docs/DECISIONS.md
+   Output: line 42 — | 032 | [Conversation Tree state schema — JSON field-layout contract …](decisions/032-conversation-tree-state-schema.md) | 2026-05-17 | Active |
+   Result: PASS
+
+5. Comprehension Articulation block presence (R2 — rung-2)
+   Command: grep -nE '^#{2,3} ' docs/plans/conversation-tree-ui-v1-evidence.md (Task A1 entry)
+   Output: ## Task A1 entry (line 201) carries ## Comprehension Articulation (line 205) with all four canonical sub-sections ordered: ### Spec meaning (207), ### Edge cases covered (211), ### Edge cases NOT covered (215), ### Assumptions (219); each substantive and ADR-032-specific
+   Result: PASS
+
+Runtime verification: file docs/decisions/032-conversation-tree-state-schema.md::^### §8\. Enforcement-shaped layout — contract artifact present at 0c1c4d8 with the load-bearing Pin-1 enforcement section (branch-presence = single jq key-check vs events[]), the highest-risk claim systems-designer verified concretely
+Runtime verification: file docs/DECISIONS.md::decisions/032-conversation-tree-state-schema.md — index row present at 0c1c4d8
+
+Upstream verdicts (orchestrator-mediated, final, supplied):
+- systems-designer (plan-mandated A1 Tier-4 contract reviewer): PASS. All eight adversarial checks (a)–(i) passed on substance — event-type enum complete w/ stable event_id; FR-2 cardinality structurally representable w/ N=3 fixture; branch-name-presence non-gameable single jq key-check (Pin-1 / Phase-B load-bearing); Pin-3's three properties restated-as-fixed not re-decided; NFR-2 conflict-unit + mechanism genuinely decided within ADR-032's PRD-OQ-1-delegated authority; FR-18+FR-25 path resolution + cross-tree links zero multi-parenting; Pin-2 unknown-major distinct-refuse; no blocking internal contradiction; forward-compatible with the committed Phase-0 skeleton. One NON-BLOCKING finding (bound_sessions[]/FR-15 has no populating event — additively closable within major 1) captured as an A2/C in-flight-scope-update note in 7c67033; systems-designer explicitly stated it does NOT gate A1.
+- comprehension-reviewer (rung-2 gate): PASS (Confidence 8). Articulation source docs/plans/conversation-tree-ui-v1-evidence.md ## Task A1 ## Comprehension Articulation. Three-stage rubric PASS (schema / substance / diff-correspondence).
+
+Git evidence:
+  Files modified in recent history:
+    - docs/decisions/032-conversation-tree-state-schema.md  (last commit: 0c1c4d8, 2026-05-17)
+    - docs/DECISIONS.md  (last commit: 0c1c4d8, 2026-05-17)
+    - docs/plans/conversation-tree-ui-v1-evidence.md  (last commit: 0c1c4d8, 2026-05-17 — articulation block)
+    - docs/plans/conversation-tree-ui-v1.md  (last commit: 7c67033, 2026-05-17 — A2/C in-flight-scope note)
+
+Verdict: PASS
+Confidence: 9
+Reason: Verification: contract early-return — the contract artifact (ADR-032) is present at 0c1c4d8 with all eight mandated sections §1–§8, the docs/DECISIONS.md index row exists, and the rung-2 comprehension articulation block is present and well-formed. Both plan-mandated upstream verdicts supplied final: systems-designer (Tier-4 contract substance) PASS with one explicitly-non-gating finding captured at 7c67033; comprehension-reviewer (rung-2 gate) PASS Confidence 8. Spot-check confirms the deliverable matches the contract claim. No runtime rubric applies (an ADR has no runtime).
