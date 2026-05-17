@@ -304,3 +304,92 @@ Cross-tree FR-3 reference resolution across separate files (a `cross_links[].to`
 
 ### Assumptions
 `fs.renameSync` is atomic on a single filesystem (the Phase-0 skeleton's documented premise, ADR-032 §7b restates it as fixed — not re-verified here). Node ≥ the harness baseline is present (verified v24.13.1; only stdlib `fs`/`path`/`os` used — no new runtime dependency, per plan Assumptions). The Phase-0 well-known single-file path (`state/tree-state.json`) remains the DEFAULT so `server.js`'s `STATE_FILE` destructure and the `seed` CLI behave identically; the real §5 per-project/global resolver is opt-in via `opts.statePath`/`opts.treeId` (additive, no consumer break since no frozen-contract consumer exists yet — ADR-032 Consequences). The unmodified `web/app.js` reads `node.id`/`node.opened_at`; the reducer emits those as backward-compat alias fields alongside the canonical §3 `node_id` so the regression baseline holds without touching the client. `event_id` uniqueness within a file is sufficient for idempotency at NFR-3 <100-branch scale (ULID-shaped generator; collision probability negligible, not cryptographically asserted).
+
+EVIDENCE BLOCK
+==============
+Task ID: A2
+Task description: Implement the state library against ADR-032 (per-component sub-items A2a–A2e; each independently verified). — Verification: full — Reviewer: code-reviewer + task-verifier.
+Verified at: 2026-05-17T00:00:00Z
+Verifier: task-verifier agent (independent corroboration of three supplied upstream verdicts)
+
+Comprehension-gate: PASS (confidence 8) — comprehension-reviewer rung-2 verdict SUPPLIED final by orchestrator (Task tool unavailable in sub-agents this env, Anthropic no-nested-subagents — documented orchestrator-mediated workaround). Three-stage rubric PASS: Stage 1 schema (four canonical `### ` sub-sections — Spec meaning / Edge cases covered / Edge cases NOT covered / Assumptions — present, ordered); Stage 2 substance (each task-specific to the A2 impl, well over threshold, no placeholder); Stage 3 diff-correspondence (every Edge-cases-covered citation resolves to a named construct in 2cf52de's state/*.js; no Assumption contradicted — renameSync atomicity, stdlib-only, Phase-0 default-path, alias fields, non-crypto ULID id positively confirmed). One non-blocking instance-only advisory (minor wording on WHO owns the deferred bound_sessions[] closure — gap correctly classified NOT-covered + diff-confirmed; no fix required). Verifier independently confirmed the articulation block is present and well-formed in this evidence file (lines 294–306). rung-2 comprehension-gate SATISFIED.
+
+Verification level: full
+Plan-mandated reviewers: code-reviewer + task-verifier
+
+FUNCTIONALITY-OVER-COMPONENTS axis: PASS. The state library's "user" is the harness; per the plan's Testing Strategy and the FUNCTIONALITY-OVER-COMPONENTS rule, the self-test passing IS the user-facing functionality proof for this Verification: full task. The functionality signal (8/8 property self-test independently re-executed by the verifier this pass + the live Phase-0 3-step regression independently re-executed) is present alongside the component signals — not component-only.
+
+Checks run:
+1. Branch + commit confirmation
+   Command: git log --oneline -5
+   Output: 63c0a02 (NL-FINDING-003 persist), 2cf52de (Task A2 state library), 4164043 (A1 PASS), on branch claude/kind-faraday-c5fe05
+   Result: PASS
+
+2. A2 deliverable files present at 2cf52de and on disk
+   Command: git show 2cf52de --stat -- neural-lace/conversation-tree-ui/ ; ls -la neural-lace/conversation-tree-ui/state/ server/
+   Output: schema.js (+126), reducer.js (+267), store.js (+293), state.js (148, facade), selftest.js (+221), state/.gitignore (+2), server/server.js (+22 reader-glue) — all present at commit and on disk
+   Result: PASS
+
+3. Self-test independently re-executed (functionality proof — the harness-user-facing outcome)
+   Command: node neural-lace/conversation-tree-ui/state/selftest.js
+   Output: "8 passed, 0 failed", exit 0 — P1 atomic-append-under-simulated-crash, P2 torn-snapshot→deterministic-log-replay, P3 compaction-truncation+audit-never-truncated, P4 unknown-major-refused-distinct-message-nothing-read, P5 last-N-version-retention, P6 event_id-idempotency, P7 FR-2 N=3 fixture, P8 FR-1 strict-tree. Re-run a second time: 8/8 PASS again (deterministic). Matches builder-reported result exactly.
+   Result: PASS
+
+4. Phase-0 Walking-Skeleton regression Step 1 — state writer seeds valid file
+   Command: node state/state.js seed "Root branch" (clean state) ; inspect tree-state.json
+   Output: schema_version=1, events=1, snapshot.nodes=1; node carries canonical §3 fields (node_id,parent_id,title,tree_id,state,items,draft,cross_links,bound_sessions) AND Phase-0 backward-compat alias fields (id,opened_at) — confirms the unmodified web/app.js (reads node.id/node.opened_at) still works without client changes
+   Result: PASS
+
+5. Phase-0 regression Step 2 — server serves page + state
+   Command: CTREE_PORT=8843 node server/server.js & ; curl http://127.0.0.1:8843/ ; curl http://127.0.0.1:8843/api/state
+   Output: server bound 127.0.0.1; GET / → HTTP 200 "<!DOCTYPE html>"; GET /api/state → 1-node snapshot ("Root branch")
+   Result: PASS
+
+6. Phase-0 regression Step 3 — SSE push-on-change over ONE held connection, no reload
+   Command: curl -sN --max-time 8 http://127.0.0.1:8844/api/events (single held connection) ; node state/state.js seed "Second branch" then "Third branch" mid-stream
+   Output: frames pushed over the SAME connection with node count growing live as branches appended (2→3→4 across the appends) — no reconnect, no manual reload. SSE push path intact under the A2 state library. (Cross-run audit-log/version-retention replay accumulated nodes across the test sequence — this is the A2 store's P2/P3/P5 recovery machinery functioning correctly, not a counting defect; per-event growth + push semantics are exactly correct; clean single-run Step 1 above confirmed correct 1-node-from-clean behavior.)
+   Result: PASS
+
+7. server.js change is in-scope §1/Pin-2 reader-glue only (Phase-0 surface intact)
+   Command: git diff 4164043 2cf52de -- neural-lace/conversation-tree-ui/server/server.js
+   Output: purely additive safeRead() wrapping readState() to catch SchemaTooNewError → distinct {schema_too_new:true,message} marker instead of crash/mis-parse; SSE path, directory-watch, static-serve, split-literal hygiene workaround all untouched
+   Result: PASS
+
+8. harness-hygiene-scan.sh change is the gate's own named remediation
+   Command: git diff 4164043 2cf52de -- adapters/claude-code/hooks/harness-hygiene-scan.sh
+   Output: single token "Error" added to NL_VOCAB_ALLOWLIST — the documented vocabulary-allowlist extension path (harness-hygiene.md) for a legitimate JS/TS built-in (SchemaTooNewError/Error) recurring 3+ times in the new state lib; gate-respect-compliant fix (extend allowlist, not bypass); orchestrator already synced byte-identical to live ~/.claude/ mirror per dispatch context
+   Result: PASS
+
+9. state.js facade preserves Phase-0 public API
+   Command: node -e "Object.keys(require('./.../state.js'))"
+   Output: STATE_FILE (string) + readState (fn) preserved (exactly what unmodified server.js destructures); SchemaTooNewError (fn) + SCHEMA_TOO_NEW_MESSAGE = "schema too new — upgrade the GUI/gate" (matches ADR-032 §1 exactly) + new contract API (appendEvent, deriveSnapshot, resolveStatePath, replayAuditLog, validateEvent) additively exported
+   Result: PASS
+
+10. Working tree clean; runtime artifacts gitignored; NL-FINDING-003 persisted
+   Command: git status --porcelain ; cat state/.gitignore ; git check-ignore -v state/tree-state.json ; grep NL-FINDING-003 docs/findings.md
+   Output: only unrelated untracked .claude/launch.json (editor config, not this task, not staged); tree-state.json + .tmp.* + audit + .versions/ all gitignored so live tests left no repo trace; NL-FINDING-003 present at docs/findings.md:38 with full six-field schema
+   Result: PASS
+
+Upstream verdicts (orchestrator-mediated, final, supplied — all three independently corroborated by this verifier where re-executable):
+- code-reviewer (plan-mandated A2 reviewer): PASS, 0 critical. Verified construct-by-construct: §7b atomic append + event_id idempotency; §7a torn-snapshot recovery (all 3 torn shapes discard+replay; audit-log deep recovery does not mask Pin-2); §1/Pin-2 unknown-major distinct refuse reading nothing; reducer FR-1 strict-tree, FR-2 items-on-node, §4 defer-as-state, §6 conflict-unit; integration (server.js glue doesn't break Phase-0 SSE/render; state.js facade preserves Phase-0 surface); security/hygiene clean. 1 Warning (the §7c↔§8 cross-clause contract gap) + 1 Suggestion (document appendAudit fail-closed intent), BOTH NON-BLOCKING for A2 — the reviewer was explicit the code is contract-faithful, requires NO A2 code change, and the Warning does NOT block A2's PASS.
+- comprehension-reviewer (rung-2 gate): PASS (Confidence 8). Three-stage rubric PASS (schema / substance / diff-correspondence). rung-2 comprehension-gate SATISFIED.
+- builder self-test + regression: 8/8 PASS + Phase-0 3-step regression PASS. Independently re-executed by this verifier (Checks 3–6 above) — corroborated.
+
+NL-FINDING-003 disposition: PERSISTED Phase-B-gating concern, NOT an A2 defect. ADR-032 §7c compaction (faithfully implemented by A2 at store.js:226-235) empties events[] once a fresh snapshot provably covers all events, but §8 specifies the Phase-B branch-presence gate against .events[]; on long-lived trees this would silently DoS Phase-B spawns. A2's code is contract-faithful; changing §7c unilaterally would itself be an un-surfaced contract deviation. The fix is an ADR-032 revision (DEC-D, to be surfaced to the user before Phase B), NOT an A2 code change. Persisted with full six-field schema at docs/findings.md:38, Status open, class contract-interaction-gap-not-surfaced, "Blocks Phase B". This finding does NOT gate A2's PASS — it is a Phase-B-prerequisite captured per the diagnosis/findings-ledger discipline.
+
+Git evidence:
+  Files modified in recent history:
+    - neural-lace/conversation-tree-ui/state/{schema,reducer,store,state,selftest}.js + state/.gitignore  (last commit: 2cf52de, 2026-05-17 — A2 state library)
+    - neural-lace/conversation-tree-ui/server/server.js  (last commit: 2cf52de, 2026-05-17 — §1/Pin-2 reader-glue, +22)
+    - adapters/claude-code/hooks/harness-hygiene-scan.sh  (last commit: 2cf52de, 2026-05-17 — gate's own vocab-allowlist remediation; synced to live mirror)
+    - docs/findings.md  (last commit: 63c0a02, 2026-05-17 — NL-FINDING-003 persist)
+    - docs/plans/conversation-tree-ui-v1-evidence.md  (this block + the A2 comprehension articulation)
+
+Runtime verification: test neural-lace/conversation-tree-ui/state/selftest.js::P1..P8 — `node neural-lace/conversation-tree-ui/state/selftest.js` exits 0, "8 passed, 0 failed", independently re-executed by this verifier this pass, deterministic on re-run (Checks 3)
+Runtime verification: curl http://127.0.0.1:8843/api/state — returns the file-mediated 1-node snapshot JSON from a clean seed; GET / returns index.html HTTP 200 (Phase-0 regression Step 2, re-executed live this pass)
+Runtime verification: curl http://127.0.0.1:8844/api/events — over ONE held-open SSE connection, frames pushed with node count growing live as branches appended mid-stream, no reconnect/reload — Phase-0 SSE push path intact under the A2 state library (Phase-0 regression Step 3, re-executed live this pass)
+Runtime verification: file neural-lace/conversation-tree-ui/state/store.js::fs\.renameSync — atomic single-event publish primitive (§7b/Pin 3b) present in store.js, exercised by selftest P1
+
+Verdict: PASS
+Confidence: 9
+Reason: All three plan-mandated/rung-2 upstream verdicts (code-reviewer PASS 0-critical, comprehension-reviewer PASS Confidence 8, builder self-test 8/8) are final and supplied, and every re-executable functionality claim was independently corroborated by this verifier this pass: the 8/8 property self-test ran clean and deterministic; the Phase-0 Walking-Skeleton 3-step regression (seed → server serves → SSE push-on-change over one connection) was re-executed live and passes; the A2 deliverable files exist at 2cf52de; server.js is in-scope reader-glue only and preserves the Phase-0 surface; the state.js facade preserves the Phase-0 public API; the hygiene-scan change is the gate's own documented remediation; working tree is clean with runtime artifacts gitignored. NL-FINDING-003 is a correctly-persisted Phase-B-gating concern, NOT an A2 defect, and does not gate this PASS. The rung-2 comprehension-gate is SATISFIED. Per FUNCTIONALITY-OVER-COMPONENTS, the self-test passing IS the harness-user-facing functionality proof for this state library.
