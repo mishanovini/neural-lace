@@ -24,7 +24,7 @@
   /* v1.1.1 item 14: urgency-at-a-glance type palette. The deep hexes are the
      badge background + accent stripe + ~5% card tint; near-black text on each
      clears WCAG AA (≥5:1 on the saturated bg). Cyan = neutral/untyped. */
-  --type-action: #dc2626;     /* "must do"        */
+  --type-action: #ef4444;     /* "must do" (red-500: near-black text = 6:1, AA) */
   --type-decision: #f59e0b;   /* "needs judgment" */
   --type-question: #3b82f6;   /* "needs your info"*/
   --type-on: #0b0b0f;         /* near-black badge text — AA on all three */
@@ -268,7 +268,7 @@ button:active { transform: scale(0.98); }
 .li-text { flex: 1; }                                  /* item 15: title owns row width */
 /* v1.1.1 item 14: per-card left accent stripe + ~5% type tint over the panel.
    The gradient overlay is a deterministic 5% tint (no color-mix dependency). */
-.li.kind-action   { border-left: 5px solid var(--type-action);   background-image: linear-gradient(rgba(220,38,38,0.05),  rgba(220,38,38,0.05)); }
+.li.kind-action   { border-left: 5px solid var(--type-action);   background-image: linear-gradient(rgba(239,68,68,0.05),  rgba(239,68,68,0.05)); }
 .li.kind-decision { border-left: 5px solid var(--type-decision); background-image: linear-gradient(rgba(245,158,11,0.05), rgba(245,158,11,0.05)); }
 .li.kind-question { border-left: 5px solid var(--type-question); background-image: linear-gradient(rgba(59,130,246,0.05), rgba(59,130,246,0.05)); }
 /* item 15: fixed-width icon "jump to tree" button (replaces the text crumb). */
@@ -282,7 +282,7 @@ button:active { transform: scale(0.98); }
 /* item 17: bidirectional interior highlight — full wash + 4px solid left bar.
    Action cards wash in their type colour; untyped tree rows wash neutral cyan. */
 .li.hl, .tnode-row.hl { background-image: linear-gradient(rgba(34,211,238,0.18), rgba(34,211,238,0.18)); border-left: 4px solid var(--type-neutral); }
-.li.kind-action.hl   { background-image: linear-gradient(rgba(220,38,38,0.20), rgba(220,38,38,0.20)); border-left-color: var(--type-action); }
+.li.kind-action.hl   { background-image: linear-gradient(rgba(239,68,68,0.20), rgba(239,68,68,0.20)); border-left-color: var(--type-action); }
 .li.kind-decision.hl { background-image: linear-gradient(rgba(245,158,11,0.20),rgba(245,158,11,0.20)); border-left-color: var(--type-decision); }
 .li.kind-question.hl { background-image: linear-gradient(rgba(59,130,246,0.20),rgba(59,130,246,0.20)); border-left-color: var(--type-question); }
 .li-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }

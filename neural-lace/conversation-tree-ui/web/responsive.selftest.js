@@ -148,7 +148,7 @@ const backfill = fs.readFileSync(path.join(D, '..', 'state', 'backfill-details.j
 
 // item 14 — type-colour palette: 3 vars + filled badge + per-card accent/tint
 ok('R34 item14 type palette vars + filled .li-kind + .li.kind-* accent/tint',
-  /--type-action:\s*#dc2626/i.test(C) && /--type-decision:\s*#f59e0b/i.test(C)
+  /--type-action:\s*#ef4444/i.test(C) && /--type-decision:\s*#f59e0b/i.test(C)
   && /--type-question:\s*#3b82f6/i.test(C)
   && /\.li-kind\.action\s*\{\s*background:\s*var\(--type-action\)/.test(C)
   && /\.li\.kind-action\s*\{\s*border-left:\s*5px solid var\(--type-action\)/.test(C)
