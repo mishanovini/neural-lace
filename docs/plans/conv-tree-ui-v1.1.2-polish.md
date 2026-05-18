@@ -21,15 +21,15 @@ Immediately after v1.1.1 (items 14–23) merged (master `759923d`), the maintain
 
 ## Tasks
 
-- [ ] 20R. Revert item 20: restore `'promote to branch'` button label + `'promoted to branch'` toast in app.js; keep the `btn-up` semantic class + the `type:'promoted'` event unchanged — Verification: full
+- [x] 20R. Revert item 20: restore `'promote to branch'` button label + `'promoted to branch'` toast in app.js; keep the `btn-up` semantic class + the `type:'promoted'` event unchanged — Verification: full
   **Prove it works:** 1. Open ctx panel on a node with open items → the per-item button reads "promote to branch" (not "expand"). 2. `grep -n "expand to branch\|expanded to branch" web/app.js` → 0 hits. 3. Event still `type:'promoted'`; button still purple `btn-up`.
   **Wire checks:** `web/app.js` (`'expand to branch'`→`'promote to branch'`, `'expanded to branch'`→`'promoted to branch'`; `btn-up` + `type:'promoted'` untouched) → `web/responsive.selftest.js` (R40 inverted)
   **Integration points:** responsive.selftest R40 asserts the "promote to branch" label is present, no "expand to branch" remains, `promoted` event preserved.
-- [ ] 25. Top-level project nodes render as H1/H2-style headers: larger font (~1.18×), bolder weight, larger padding, subtle ~5% white tint + thin top separator, larger/distinct disclosure twist — applied ONLY to root-level nodes (immediate children of the forest root), not nested ones — Verification: full
+- [x] 25. Top-level project nodes render as H1/H2-style headers: larger font (~1.18×), bolder weight, larger padding, subtle ~5% white tint + thin top separator, larger/distinct disclosure twist — applied ONLY to root-level nodes (immediate children of the forest root), not nested ones — Verification: full
   **Prove it works:** 1. Every forest-root branch the maintainer sees (the immediate children of the tree root) is visibly larger/bolder with more breathing room + a separator above each. 2. Nested sub-nodes are unchanged (normal size). 3. Hierarchy is instantly readable: top-level = header, indented = detail.
   **Wire checks:** `web/app.js` (`renderTreeNode` gains a `depth` arg — 0 for forest roots, +1 per recursion; depth 0 → add `tnode-root` class + larger twist glyph) → `web/app.css` (`.tnode-row.tnode-root` font-size ~1.18rem-equiv, font-weight 700, padding bump, `background` 5% white tint, `border-top` separator, `.tnode-root .twist` larger)
   **Integration points:** responsive.selftest R44 asserts `.tnode-root` CSS rule (font-weight + size + tint/separator) + the `renderTreeNode` depth-0 wiring token.
-- [ ] 26. Invert R40 + add R44 in `web/responsive.selftest.js`; full six-suite regression sweep green — Verification: full
+- [x] 26. Invert R40 + add R44 in `web/responsive.selftest.js`; full six-suite regression sweep green — Verification: full
   **Prove it works:** responsive.selftest passes with R40 inverted + new R44; state 15 / responsive (44) / backfill 15 / conv-tree state-gate 18 / stop-gate 8 / emit 17 all green.
   **Wire checks:** `web/responsive.selftest.js` → the six suites
   **Integration points:** re-run all suites; counts in the completion report.
