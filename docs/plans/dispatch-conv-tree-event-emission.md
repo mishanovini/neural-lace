@@ -6,7 +6,7 @@ Mode: code
 tier: 2
 rung: 1
 architecture: single-hook writer (PreToolUse spawn + Stop) over the frozen A2 state-library facade
-frozen: false
+frozen: true
 prd-ref: n/a — harness-development
 acceptance-exempt: true
 acceptance-exempt-reason: harness-internal writer hook; the --self-test block + the documented end-to-end spawn verification ARE the acceptance artifact. No product user surface; the operator running the harness is the user.
@@ -42,6 +42,7 @@ Wire the Claude side of the Conversation-Tree UI file-mediated contract (ADR-031
 - `docs/findings.md` — v1-limitation finding (parent-session conclusion vs precise child-DONE) + the writer-path/GUI-path/§5-gate-path divergence note.
 
 ## In-flight scope updates
+- 2026-05-18: `docs/harness-architecture.md` — `docs-freshness-gate.sh` requires a commit that adds a hook to also stage the architecture doc (hook-scripts table + conv-tree component map rows). Anticipated, light-case addition; no thaw needed.
 
 ## Assumptions
 - The `state.js` facade `appendEvent(ev, {statePath})` is stable and idempotent on `event_id` per file (confirmed by reading `state/state.js` + `state/store.js` + `selftest.js` P5/P6).

@@ -245,6 +245,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/conversation-tree-emit.sh --on-spawn"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent",
+        "hooks": [
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/conversation-tree-state-gate.sh"
           }
         ]
@@ -350,6 +359,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/conversation-tree-stop-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/conversation-tree-emit.sh --on-stop"
           },
           {
             "type": "command",
