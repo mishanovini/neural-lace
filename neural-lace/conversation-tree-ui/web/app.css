@@ -21,6 +21,21 @@
   --warn: #fbbf24;
   --err: #f87171;
   --info: #60a5fa;
+  /* v1.1.1 item 14: urgency-at-a-glance type palette. The deep hexes are the
+     badge background + accent stripe + ~5% card tint; near-black text on each
+     clears WCAG AA (≥5:1 on the saturated bg). Cyan = neutral/untyped. */
+  --type-action: #dc2626;     /* "must do"        */
+  --type-decision: #f59e0b;   /* "needs judgment" */
+  --type-question: #3b82f6;   /* "needs your info"*/
+  --type-on: #0b0b0f;         /* near-black badge text — AA on all three */
+  --type-neutral: #22d3ee;    /* untyped highlight (cyan)               */
+  /* v1.1.1 item 22: semantic button palette. */
+  --btn-go: #22c55e;          /* positive/commit  */
+  --btn-wait: #f59e0b;        /* caution/postpone */
+  --btn-info: #3b82f6;        /* info/utility     */
+  --btn-up: #a855f7;           /* elevation/scope-up */
+  --btn-del: #b91c1c;         /* destructive      */
+  --btn-neutral: #475569;     /* neutral/secondary*/
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -84,8 +99,10 @@ button:active { transform: scale(0.98); }
 }
 .note .dismiss { float: right; margin-left: 0.5rem; }
 .note.hot { border-color: var(--warn); border-left-color: var(--warn); }
+/* v1.1.1 item 18: toasts move to bottom-RIGHT so they never overlap the
+   right-docked ctx/details pane. Narrow viewport → bottom-centre. */
 .toast {
-  position: fixed; left: 50%; bottom: 1.2rem; transform: translateX(-50%);
+  position: fixed; right: 1.2rem; bottom: 1.2rem;
   background: var(--panel); border: 1px solid var(--border2);
   border-radius: 6px; padding: 0.4rem 0.6rem 0.4rem 0.9rem; font-size: 0.8rem; z-index: 50;
   box-shadow: 0 6px 18px rgba(0,0,0,0.45);
@@ -243,13 +260,31 @@ button:active { transform: scale(0.98); }
 }
 .li.hot { border-color: var(--warn); }
 .li-top { display: flex; align-items: center; gap: 0.45rem; }
-.li-kind { font-size: 0.7rem; padding: 0.04rem 0.35rem; border-radius: 4px; border: 1px solid var(--border2); color: var(--muted); }
-.li-kind.decision { color: var(--info); border-color: var(--info); }
-.li-kind.question { color: var(--accent); border-color: var(--accent); }
-.li-kind.action { color: var(--ok); border-color: #065f46; }
-.li-text { flex: 1; }
-.li-crumb { font-size: 0.7rem; color: var(--muted); cursor: pointer; }
-.li-crumb:hover { color: var(--accent); text-decoration: underline; }
+/* v1.1.1 item 14: filled type-coloured badges (near-black text = AA on dark). */
+.li-kind { font-size: 0.7rem; font-weight: 700; padding: 0.05rem 0.4rem; border-radius: 4px; border: 1px solid var(--border2); color: var(--type-on); text-transform: uppercase; letter-spacing: 0.02em; }
+.li-kind.action   { background: var(--type-action);   border-color: var(--type-action); }
+.li-kind.decision { background: var(--type-decision); border-color: var(--type-decision); }
+.li-kind.question { background: var(--type-question); border-color: var(--type-question); }
+.li-text { flex: 1; }                                  /* item 15: title owns row width */
+/* v1.1.1 item 14: per-card left accent stripe + ~5% type tint over the panel.
+   The gradient overlay is a deterministic 5% tint (no color-mix dependency). */
+.li.kind-action   { border-left: 5px solid var(--type-action);   background-image: linear-gradient(rgba(220,38,38,0.05),  rgba(220,38,38,0.05)); }
+.li.kind-decision { border-left: 5px solid var(--type-decision); background-image: linear-gradient(rgba(245,158,11,0.05), rgba(245,158,11,0.05)); }
+.li.kind-question { border-left: 5px solid var(--type-question); background-image: linear-gradient(rgba(59,130,246,0.05), rgba(59,130,246,0.05)); }
+/* item 15: fixed-width icon "jump to tree" button (replaces the text crumb). */
+.li-jump {
+  flex: 0 0 24px; width: 24px; height: 24px; padding: 0; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--panel2); color: var(--info); border: 1px solid var(--border2);
+  border-radius: 5px; cursor: pointer; font-size: 0.85rem;
+}
+.li-jump:hover { color: var(--type-question); border-color: var(--type-question); }
+/* item 17: bidirectional interior highlight — full wash + 4px solid left bar.
+   Action cards wash in their type colour; untyped tree rows wash neutral cyan. */
+.li.hl, .tnode-row.hl { background-image: linear-gradient(rgba(34,211,238,0.18), rgba(34,211,238,0.18)); border-left: 4px solid var(--type-neutral); }
+.li.kind-action.hl   { background-image: linear-gradient(rgba(220,38,38,0.20), rgba(220,38,38,0.20)); border-left-color: var(--type-action); }
+.li.kind-decision.hl { background-image: linear-gradient(rgba(245,158,11,0.20),rgba(245,158,11,0.20)); border-left-color: var(--type-decision); }
+.li.kind-question.hl { background-image: linear-gradient(rgba(59,130,246,0.20),rgba(59,130,246,0.20)); border-left-color: var(--type-question); }
 .li-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
 .li-actions button { padding: 0.15rem 0.45rem; font-size: 0.72rem; }
 .li.contested { border-color: var(--err); }
@@ -348,8 +383,95 @@ button:active { transform: scale(0.98); }
   display: flex; flex-direction: column; gap: 0.3rem;
 }
 
-/* accessibility: honour reduced-motion (harness UX standard) */
+/* ===================== v1.1.1 polish (items 18 / 22) ===================== */
+/* item 18: narrow viewport → toast bottom-CENTRE (matches the existing
+   699.98px stacked breakpoint). */
+@media (max-width: 699.98px) {
+  .toast { right: 50%; transform: translateX(50%); }
+}
+/* item 18: arrival flash = a 600ms colour WASH → fade, on any newly-arrived
+   action/backlog card OR new tree node OR state-changed item. So even if the
+   bottom-right toast is missed, the operator sees WHERE the change landed. */
+@keyframes arrive {
+  0%   { background-color: rgba(34,211,238,0.34); }
+  100% { background-color: transparent; }
+}
+.list-body .li.arrive, .tnode-row.arrive { animation: arrive 0.6s ease-out 1; }
+/* item 18: reduced-motion → a single persistent ~1.5s highlight instead of a
+   fade (JS adds .arrive-static, removes it after 1500ms). */
+.arrive-static { background-image: linear-gradient(rgba(34,211,238,0.30), rgba(34,211,238,0.30)) !important; }
+
+/* item 22: semantic button palette. Filled (primary) + outlined (secondary).
+   Near-black text on the saturated fills clears WCAG AA on the dark bg. */
+.btn-go      { background: var(--btn-go);      color: #052e13; border-color: var(--btn-go);      font-weight: 600; }
+.btn-wait    { background: var(--btn-wait);    color: #3a2a05; border-color: var(--btn-wait);    font-weight: 600; }
+.btn-info    { background: var(--btn-info);    color: #07182f; border-color: var(--btn-info);    font-weight: 600; }
+.btn-up      { background: var(--btn-up);      color: #2a0a3f; border-color: var(--btn-up);      font-weight: 600; }
+.btn-del     { background: var(--btn-del);     color: #fee2e2; border-color: var(--btn-del);     font-weight: 600; }
+.btn-neutral { background: var(--btn-neutral); color: #e2e8f0; border-color: var(--btn-neutral); font-weight: 600; }
+/* outlined secondary variant: coloured text + border, panel bg */
+.btn-go.outline,.btn-wait.outline,.btn-info.outline,.btn-up.outline,.btn-del.outline,.btn-neutral.outline { background: var(--panel2); }
+.btn-go.outline      { color: var(--ok);    border-color: var(--btn-go); }
+.btn-wait.outline    { color: var(--warn);  border-color: var(--btn-wait); }
+.btn-info.outline    { color: var(--info);  border-color: var(--btn-info); }
+.btn-up.outline      { color: var(--accent);border-color: var(--btn-up); }
+.btn-del.outline     { color: var(--err);   border-color: var(--btn-del); }
+.btn-neutral.outline { color: var(--muted); border-color: var(--btn-neutral); }
+
+/* item 16: prominent hide-concluded "View" toggle in the tree pane-head. */
+.viewtoggle {
+  display: flex; align-items: center; gap: 0.35rem; font-size: 0.8rem;
+  color: var(--text); cursor: pointer; user-select: none;
+  background: var(--panel2); border: 1px solid var(--border2);
+  border-radius: 5px; padding: 0.18rem 0.5rem;
+}
+.viewtoggle input { accent-color: var(--accent); }
+.viewtoggle .eye { font-size: 0.95rem; }
+
+/* item 19: clickable doc link token + inline doc modal + docs browser panel. */
+.doc-link { color: var(--type-question); border: 1px solid var(--type-question);
+  background: var(--panel2); border-radius: 4px; padding: 0.02rem 0.4rem;
+  font-size: 0.72rem; cursor: pointer; }
+.doc-link:hover { background: var(--type-question); color: var(--type-on); }
+#docScrim { position: fixed; inset: 0; z-index: 59; background: rgba(0,0,0,0.55); }
+#docScrim[hidden], #docModal[hidden], #docsPanel[hidden] { display: none !important; }
+#docModal {
+  position: fixed; z-index: 60; top: 4vh; left: 50%; transform: translateX(-50%);
+  width: min(60rem, 92vw); max-height: 92vh; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--border2); border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+}
+.doc-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border); }
+.doc-head .doc-title { font-weight: 700; flex: 1; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-body { overflow: auto; padding: 1rem 1.2rem; font-size: 0.86rem; line-height: 1.6; }
+.doc-body h1 { font-size: 1.25rem; } .doc-body h2 { font-size: 1.08rem; border-bottom: 1px solid var(--border); padding-bottom: 0.2rem; }
+.doc-body h3 { font-size: 0.96rem; color: var(--accent); }
+.doc-body code { background: var(--panel2); padding: 0.05rem 0.3rem; border-radius: 3px; font: 12px/1.4 ui-monospace, monospace; }
+.doc-body pre { background: var(--panel2); padding: 0.6rem; border-radius: 5px; overflow: auto; }
+.doc-body pre code { background: none; padding: 0; }
+.doc-body a { color: var(--info); }
+.doc-body hr { border: none; border-top: 1px solid var(--border); margin: 0.8rem 0; }
+.doc-body ul, .doc-body ol { padding-left: 1.4rem; }
+#docsPanel {
+  position: fixed; z-index: 60; top: 0; right: 0; bottom: 0; width: min(26rem, 90vw);
+  background: var(--panel); border-left: 1px solid var(--border2);
+  box-shadow: -8px 0 24px rgba(0,0,0,0.5); display: flex; flex-direction: column;
+}
+#docsPanel .dp-head { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); display: flex; gap: 0.5rem; align-items: center; }
+#docsPanel .dp-head input { flex: 1; }
+#docsPanel .dp-body { flex: 1 1 auto; overflow: auto; padding: 0.5rem 0.7rem; }
+.dp-proj { font-weight: 700; font-size: 0.78rem; color: var(--accent); margin: 0.6rem 0 0.2rem; cursor: pointer; }
+.dp-proj .twist { display: inline-block; width: 1rem; }
+.dp-file { font-size: 0.78rem; padding: 0.16rem 0.3rem 0.16rem 1.2rem; cursor: pointer; color: var(--text); border-radius: 4px; }
+.dp-file:hover { background: var(--panel2); color: var(--type-question); }
+.dp-missing { font-size: 0.74rem; color: var(--muted); padding-left: 1.2rem; }
+
+/* accessibility: honour reduced-motion (harness UX standard). The arrival
+   wash animation is suppressed; the persistent .arrive-static highlight (set
+   + cleared by JS at ~1.5s) is the reduced-motion equivalent (item 18). */
 @media (prefers-reduced-motion: reduce) {
   .list-body .li, .list-body .li.flash, .list-body .li.leaving,
+  .list-body .li.arrive, .tnode-row.arrive,
   .tree-canvas { animation: none !important; transition: none !important; }
 }
