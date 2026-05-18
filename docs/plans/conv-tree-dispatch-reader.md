@@ -59,6 +59,15 @@ as `additionalContext`.
 - `docs/plans/conv-tree-dispatch-reader.md` — this plan.
 
 ## In-flight scope updates
+- 2026-05-18: `docs/harness-architecture.md` — the canonical architecture doc
+  is at `docs/harness-architecture.md` (the plan's Files list wrongly named a
+  non-existent `adapters/claude-code/docs/harness-architecture.md`); the
+  "Claude-side reader" inventory row was added there. The live mirror
+  `~/.claude/docs/harness-architecture.md` is pre-existingly stale (missing
+  ALL conv-tree content from master — HARNESS-GAP-14 / settings-divergence
+  drift); full live-mirror resync is out of scope for this plan and is
+  surfaced as a friction-reflexion note in the completion report rather than
+  conflated here.
 
 ## Assumptions
 - The v1.1 inline-response UI POSTs via the existing `/api/event` endpoint,
