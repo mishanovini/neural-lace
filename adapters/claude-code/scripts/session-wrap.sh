@@ -175,8 +175,17 @@ cmd_verify() {
     done <<< "$touched"
   fi
 
-  # Signal 3: roadmap touched this session if any plan was archived
-  if [ -n "$touched" ] && [ -f "$roadmap" ]; then
+  # Signal 3: the build-doctrine roadmap is only relevant when a BUILD-
+  # DOCTRINE plan/tranche was touched this session. Archiving an unrelated
+  # plan (e.g. conversation-tree-ui-v1) must NOT demand the doctrine roadmap
+  # be fresh - that conflation is the documented Signal-3 transitive
+  # false-fire (docs/discoveries/2026-05-17-session-wrap-signal3-transitive-
+  # false-fire.md). Scope the trigger to doctrine-related touched slugs.
+  local bd_touched=""
+  if [ -n "$touched" ]; then
+    bd_touched=$(printf "%s\n" "$touched" | grep -iE "build-doctrine|tranche" || true)
+  fi
+  if [ -n "$bd_touched" ] && [ -f "$roadmap" ]; then
     age=$(mtime_seconds_ago "$roadmap")
     if [ "$age" -gt 7200 ]; then
       stale+=("roadmap docs/build-doctrine-roadmap.md is $((age / 60)) min stale despite session activity (>2 hr threshold)")
