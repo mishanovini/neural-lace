@@ -21,14 +21,14 @@ Wire the Claude side of the Conversation-Tree UI file-mediated contract (ADR-031
 
 ## Tasks
 
-- [ ] 1. Build `adapters/claude-code/hooks/conversation-tree-emit.sh`: `--on-spawn` (classify spawn from stdin `tool_name`+`tool_input`, ensure project/global root node, emit `branch-opened` for the child branch, record to per-session ledger) and `--on-stop` (read this session's ledger, emit `concluded` per open node, clear ledger). Dual-sink via facade with deterministic idempotent `event_id`. Always `exit 0`; errors logged to `~/.claude/logs/conversation-tree-emit.log`. — Verification: full
+- [x] 1. Build `adapters/claude-code/hooks/conversation-tree-emit.sh`: `--on-spawn` (classify spawn from stdin `tool_name`+`tool_input`, ensure project/global root node, emit `branch-opened` for the child branch, record to per-session ledger) and `--on-stop` (read this session's ledger, emit `concluded` per open node, clear ledger). Dual-sink via facade with deterministic idempotent `event_id`. Always `exit 0`; errors logged to `~/.claude/logs/conversation-tree-emit.log`. — Verification: full
   - **Prove it works:** 1. Pipe a synthetic `mcp__ccd_session_mgmt__start_code_task` JSON to the hook `--on-spawn` with `CONV_TREE_STATE_PATH` set to a temp file. 2. Read the temp file: assert a `branch-opened` event whose `title` equals the spawn title and a project/global root node exists. 3. Pipe a synthetic Stop JSON for the same session to `--on-stop`. 4. Read the temp file: assert a `concluded` event for the same `node_id`.
   - **Wire checks:** `adapters/claude-code/hooks/conversation-tree-emit.sh` → `appendEvent` in `neural-lace/conversation-tree-ui/state/state.js` → `branch-opened` written to `tree-state.json`
   - **Integration points:** the frozen `state.js` facade — verified by `node -e "require('<repo>/neural-lace/conversation-tree-ui/state/state.js').appendEvent" ` resolving; the conv-tree gates' `_resolve_state_path` logic (re-implemented identically) — verified by the §5-sink path matching the gate's resolver for the same cwd.
-- [ ] 2. Add `--self-test`: spawn-classification for each of the 4 enumerated tools (+ a non-spawn no-op), stop-conclusion delta, idempotent re-fire (no double-write), project-root autodetect (cwd under `claude-projects/<p>/` → `proj-<p>` root; else `global`), and failure isolation (broken state-lib path → exit 0 + log line). Prints `self-test: OK`. — Verification: mechanical
-- [ ] 3. Wire the hook: `adapters/claude-code/settings.json.template` (canonical) — new PreToolUse matcher block (same spawn matcher) immediately before `conversation-tree-state-gate.sh`, and `conversation-tree-emit.sh --on-stop` appended to the Stop chain after `conversation-tree-stop-gate.sh`; mirror the same two edits into live `~/.claude/settings.json`. — Verification: mechanical
-- [ ] 4. Sync canonical → live mirror (`~/.claude/hooks/conversation-tree-emit.sh`), verify `diff -q` byte-identical; run the new self-test + regression `conversation-tree-state-gate.sh --self-test` (18/18) and `conversation-tree-stop-gate.sh --self-test` (8/8). — Verification: mechanical
-- [ ] 5. End-to-end: with the GUI server running on :7733, spawn a dummy `start_code_task` "Hello world", confirm `branch-opened` (title "Hello world") then `concluded` reach the GUI-watched state file and render live; document evidence. — Verification: full
+- [x] 2. Add `--self-test`: spawn-classification for each of the 4 enumerated tools (+ a non-spawn no-op), stop-conclusion delta, idempotent re-fire (no double-write), project-root autodetect (cwd under `claude-projects/<p>/` → `proj-<p>` root; else `global`), and failure isolation (broken state-lib path → exit 0 + log line). Prints `self-test: OK`. — Verification: mechanical
+- [x] 3. Wire the hook: `adapters/claude-code/settings.json.template` (canonical) — new PreToolUse matcher block (same spawn matcher) immediately before `conversation-tree-state-gate.sh`, and `conversation-tree-emit.sh --on-stop` appended to the Stop chain after `conversation-tree-stop-gate.sh`; mirror the same two edits into live `~/.claude/settings.json`. — Verification: mechanical
+- [x] 4. Sync canonical → live mirror (`~/.claude/hooks/conversation-tree-emit.sh`), verify `diff -q` byte-identical; run the new self-test + regression `conversation-tree-state-gate.sh --self-test` (18/18) and `conversation-tree-stop-gate.sh --self-test` (8/8). — Verification: mechanical
+- [x] 5. End-to-end: with the GUI server running on :7733, spawn a dummy `start_code_task` "Hello world", confirm `branch-opened` (title "Hello world") then `concluded` reach the GUI-watched state file and render live; document evidence. — Verification: full
   - **Prove it works:** 1. Start `node neural-lace/conversation-tree-ui/server/server.js`. 2. From this Dispatch session, `start_code_task` a trivial child. 3. `curl -s http://127.0.0.1:7733/api/state` shows a node titled "Hello world". 4. After this session's Stop emitter runs, the node's state is `concluded`.
   - **Wire checks:** `adapters/claude-code/hooks/conversation-tree-emit.sh` → `neural-lace/conversation-tree-ui/state/state.js` → `neural-lace/conversation-tree-ui/server/server.js` → `/api/state`
   - **Integration points:** the shipped GUI server's `fs.watch` on the module `STATE_FILE` dir — verified by `curl http://127.0.0.1:7733/api/state` reflecting the write within the 40ms debounce.
@@ -85,10 +85,32 @@ Thinnest end-to-end slice: `printf '<spawn-json>' | CONV_TREE_STATE_PATH=/tmp/t.
 - **Reasoning:** Satisfies all four explicit verification steps deterministically tonight without overreach; the v1 boundary is documented honestly as a finding.
 
 ## Definition of Done
-- [ ] All tasks checked off (task-verifier)
-- [ ] `conversation-tree-emit.sh --self-test` prints `self-test: OK`
-- [ ] `conversation-tree-state-gate.sh --self-test` 18/18, `conversation-tree-stop-gate.sh --self-test` 8/8 (regression)
-- [ ] canonical and live mirror byte-identical (`diff -q`)
-- [ ] End-to-end: dummy spawn → `branch-opened` + `concluded` in the GUI-watched state file and rendered live at :7733
-- [ ] SCRATCHPAD updated; v1-limitation finding filed in `docs/findings.md`
-- [ ] One PR merged to neural-lace master; main checkout synced
+- [x] All tasks checked off (task-verifier — 5/5 PASS, evidence in `dispatch-conv-tree-event-emission-evidence.md`)
+- [x] `conversation-tree-emit.sh --self-test` prints `self-test: OK` (17/17)
+- [x] `conversation-tree-state-gate.sh --self-test` 18/18, `conversation-tree-stop-gate.sh --self-test` 8/8 (regression)
+- [x] canonical and live mirror byte-identical (`diff -q`)
+- [x] End-to-end: dummy spawn → `branch-opened` + `concluded` in the GUI-watched state file and rendered live at :7733
+- [x] SCRATCHPAD updated; findings filed in `docs/findings.md` (NL-FINDING-008/009/010)
+- [x] One PR merged to neural-lace master; main checkout synced
+
+## Completion Report
+
+### 1. Implementation Summary
+Shipped `adapters/claude-code/hooks/conversation-tree-emit.sh` (+ byte-identical live mirror) — the Claude-side writer for the Conversation-Tree UI file-mediated contract (ADR-031 r7 / ADR-032 / PRD FR-11/FR-12). Task 1: `--on-spawn` emits `branch-opened` under an auto-detected `proj-<slug>`/`global` root, titled with the conv-tree-state-gate's primary Pin-1 candidate; `--on-stop` emits `concluded` for branches the dispatching session opened (per-session ledger); dual-sink via the frozen A2 `state.js appendEvent` facade (main-checkout module file the GUI fs.watches, resolved via `git --git-common-dir`; + the §5 gate path); deterministic idempotent event_id; failure-isolated (always exit 0). Task 2: `--self-test` 17 scenarios. Task 3: wired in `settings.json.template` + live `~/.claude/settings.json` (PreToolUse before the state-gate; Stop after the stop-gate). Task 4: mirror synced byte-identical; regressions 18/18 + 8/8. Task 5: live e2e against the running :7733 GUI (open→concluded rendered). `Backlog items absorbed: none`.
+
+### 2. Design Decisions & Plan Deviations
+Two locked decisions (Decisions Log): dual-sink with the GUI sink resolved to the **main checkout** (not the worktree — corrected after the live e2e exposed the divergence, NL-FINDING-009); v1 concludes on the dispatching session's Stop (NL-FINDING-008, deferred to a v2 `Report-back: task-id=` correlation). In-flight scope addition: `docs/harness-architecture.md` (docs-freshness-gate). Beyond-plan improvement landed in commit `89b3429`: the emitter now titles the branch with the gate's exact Pin-1 primary candidate so candidate-bearing spawns *genuinely* satisfy `conversation-tree-state-gate.sh` (the ADR-031 r7 writer-satisfies-gate architecture) — proven live (`[conv-tree-gate] ALLOW: verified snapshot names live branch node`, independently re-confirmed by task-verifier after disproving a waiver-mask).
+
+### 3. Known Issues & Gotchas
+- NL-FINDING-008 (dispositioned-defer): a spawn branch concludes when the *dispatching* session ends, not at precise child-DONE. v2: `Report-back: task-id=` sentinel correlation.
+- NL-FINDING-010 (dispositioned-defer): the pre-existing `conversation-tree-state-gate.sh` blocks bare `Task`/`Agent` sub-agent dispatches that carry no Pin-1 token (no `title`/`worker-`/`task-id=`/backtick-branch) — NO writer can satisfy that; the gate's documented substantive-waiver valve is the sanctioned path until a gate-side fix (candidates documented in the finding). Out of scope to change the gate here.
+- The GUI sink targets the main checkout via `git --git-common-dir`; if the operator runs the GUI server from a *non-main* directory, point it at that module file or run from the main checkout (the common case, verified).
+
+### 4. Manual Steps Required
+None for the harness itself (install.sh syncs the mirror; wiring is in `settings.json.template`). Operator action: the live `~/.claude/settings.json` was updated this session so it is already active; future installs inherit it from the template. The verification left two concluded test branches ("Hello world …" / "task-verifier e2e …") + a `proj-neural-lace` root in the operator's live tree — the project root is correct/desirable for real auto-population; the test branches are archivable from the GUI.
+
+### 5. Testing Performed & Recommended
+Performed: `conversation-tree-emit.sh --self-test` 17/17 (classification ×4, non-spawn no-op, stop-conclude, idempotent re-fire, project autodetect ×2, failure isolation, title fallback, stop-without-ledger, gate-Pin-1 candidate ×3, real-git-worktree GUI-sink-vs-§5-gate-sink ×2); regression `conversation-tree-state-gate.sh` 18/18 + `conversation-tree-stop-gate.sh` 8/8; live e2e vs the running :7733 server (open→concluded); live gate-satisfaction (verified-snapshot ALLOW). Recommended: a future harness self-test piping a bare-Agent tool_input through the gate to lock NL-FINDING-010's waiver-only path; the v2 child-DONE correlation.
+
+### 6. Cost Estimates
+Zero recurring cost. Per spawn/stop: a few `node`/`jq` subprocesses + two small JSON-file appends via the facade (sub-second; failure-isolated). No external services, no network, no new dependencies (node + jq already assumed by every conv-tree hook).
