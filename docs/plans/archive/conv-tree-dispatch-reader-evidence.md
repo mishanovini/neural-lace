@@ -168,3 +168,45 @@ Verdict: PASS
 Confidence: 9
 Reason: the new reader hook introduced zero regressions — emit hook 17/17, state-gate 18/18, stop-gate 8/8 all green.
 
+
+---
+
+EVIDENCE BLOCK
+==============
+Task ID: 7
+Task description: One PR to neural-lace master, drive to merge, sync the ~/claude-projects/neural-lace main checkout — Verification: mechanical
+Verified at: 2026-05-18T17:30:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Comprehension-gate: not applicable (rung < 2)
+
+Checks run:
+1. PR #6 merge state
+   Command: gh pr view 6 --json state,mergedAt -q '{s:.state,m:.mergedAt}'
+   Output: {"m":"2026-05-18T17:11:19Z","s":"MERGED"}
+   Result: PASS — state == MERGED, mergedAt non-null
+
+2. Merged artifacts present on origin/master
+   Command: cd ~/claude-projects/neural-lace && git fetch origin master -q && git show origin/master:adapters/claude-code/hooks/conversation-tree-read.sh | head -1; git show origin/master:docs/conv-tree-dispatch-reader.md | head -1; git log origin/master --oneline -1
+   Output: read.sh first line = "#!/bin/bash"; doc H1 = "# Conversation-Tree Dispatch Reader — Closing the GUI Loop"; origin/master HEAD line included "Merge pull request #6 from <owner>/claude/agitated-thompson-84c93e" (481de18, in history)
+   Result: PASS — hook + doc shipped to master; PR #6 merge commit 481de18 confirmed in origin/master history
+
+3. Reader hook registered in settings template on master
+   Command: cd ~/claude-projects/neural-lace && git show origin/master:adapters/claude-code/settings.json.template | jq -e '.hooks.UserPromptSubmit[0].hooks[-1].command'
+   Output: "bash ~/.claude/hooks/conversation-tree-read.sh"
+   Result: PASS — reader is the last UserPromptSubmit hook in the merged template
+
+4. Main checkout synced to current origin/master, PR #6 deliverable present
+   Command: cd ~/claude-projects/neural-lace && git rev-parse --abbrev-ref HEAD; git log --oneline -1; git rev-list --left-right --count HEAD...origin/master; git merge-base --is-ancestor 481de18 HEAD
+   Output: branch=fix/conv-tree-launcher-node-resolution (tip byte-identical to master — `git rev-list --left-right --count HEAD...origin/master` == "0 0"); HEAD=12cddc2 (PR #7 merge, unrelated v1.1 launcher work); 481de18 (PR #6) IS an ancestor of local HEAD; local HEAD == origin/master EXACTLY (0 ahead, 0 behind)
+   Result: PASS — main checkout fully synced to current origin/master (0/0 divergence); PR #6's merge commit is present in the synced tree. Branch-name = fix/conv-tree-launcher-node-resolution and HEAD = PR #7 merge are the DOCUMENTED out-of-scope condition (v1.1 GUI/launcher session's independent work advanced master past PR #6); the substantive Task-7 requirement "PR merged + main checkout on synced master" is satisfied. stash@{0} "On master: auto-pre-pull-20260518T171142Z" confirms the git-discipline.md Rule 2 post-merge sync ran and preserved the operator's pre-existing launch-gui.ps1 edits (surfaced, not auto-resolved — explicitly out of scope per caller note).
+
+Git evidence:
+  - PR #6 merged 2026-05-18T17:11:19Z; merge commit 481de18 ("Merge pull request #6 from <owner>/claude/agitated-thompson-84c93e")
+  - origin/master HEAD = 12cddc2 (PR #7, unrelated); 481de18 is an ancestor (git merge-base --is-ancestor 481de18 HEAD == true)
+  - Main checkout ~/claude-projects/neural-lace synced: HEAD == origin/master, divergence 0/0
+  - Post-merge sync evidenced by stash@{0}: On master: auto-pre-pull-20260518T171142Z (operator's launch-gui.ps1 edits preserved)
+
+Verdict: PASS
+Confidence: 9
+Reason: PR #6 MERGED with non-null mergedAt; reader hook + architecture doc + settings-template registration all present on origin/master; main checkout fully synced to current origin/master (0/0 divergence) with PR #6's merge commit as an ancestor; the branch-name detail and PR #7 advance are the caller-documented out-of-scope v1.1 condition, not a Task-7 failure.
