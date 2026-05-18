@@ -1,5 +1,5 @@
 # Plan: Conversation Tree UI v1.1 — responsive layout + popup + tree fixes
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 tier: 2
