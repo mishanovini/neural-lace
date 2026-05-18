@@ -1,6 +1,6 @@
 # Plan: Dispatch → Conversation-Tree event emission (Claude-side writer)
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 tier: 2
