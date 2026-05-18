@@ -14,6 +14,7 @@
     </label>
     <button id="addProjBtn" class="ghost" title="add a project tree">+ project</button>
     <label class="archtoggle"><input type="checkbox" id="showArchived"> show archived</label>
+    <label class="archtoggle"><input type="checkbox" id="showConcluded"> show concluded</label>
     <span class="spacer"></span>
     <span id="lastRead" class="lastread" aria-live="polite">—</span>
     <span id="status" class="status" aria-live="polite">connecting…</span>
@@ -27,6 +28,14 @@
   <div id="noteStack" class="note-stack" aria-live="polite"></div>
   <!-- Transient saved/error feedback (BF-5). -->
   <div id="toast" class="toast" role="status" hidden></div>
+
+  <!-- Single-pane tab bar (layout C only — w<1024 AND h<1024). Outside
+       #layout so it is not a grid item; CSS shows it only in mode C. -->
+  <nav id="tabBar" aria-label="pane tabs">
+    <button data-tab="tree" class="active">Tree</button>
+    <button data-tab="actions">Waiting</button>
+    <button data-tab="backlog">Backlog</button>
+  </nav>
 
   <main id="layout">
     <!-- LEFT: tree pane (~57%, full height, internally scrollable). -->
@@ -93,8 +102,10 @@
     </div>
   </main>
 
-  <!-- Selected-node context surface (FR-6 / C2) — slides over the right
-       column; passive, no continue/resume affordance anywhere. -->
+  <!-- Selected-node context surface (FR-6 / C2) — v1.1 dismissible overlay;
+       passive, no continue/resume affordance anywhere. #ctxScrim is the
+       click-outside backdrop (narrow viewports). -->
+  <div id="ctxScrim" hidden></div>
   <aside id="ctxPanel" class="ctx-panel" hidden aria-label="node context"></aside>
 
   <script src="/app.js"></script>

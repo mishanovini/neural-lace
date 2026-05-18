@@ -1,0 +1,166 @@
+# Conversation Tree UI — launcher & autostart scripts
+
+One-click launch for the Conversation Tree GUI, plus an optional logon
+autostart so the server is always ready. No terminal required.
+
+All three scripts derive their paths at runtime (`$PSScriptRoot`,
+`$env:USERPROFILE`, Windows special folders). **Nothing is hardcoded to a
+specific machine or user** — the scripts are portable and contain no absolute
+paths, which is why they are safe to commit to the harness repo.
+
+| Script | What it does |
+|---|---|
+| `launch-gui.ps1` | Starts the server (hidden, detached) if port 7733 is free, waits for it, opens the browser. Re-running while up just opens the browser. |
+| `install-shortcuts.ps1` | Creates "Conversation Tree" `.lnk` shortcuts on the Desktop and in the Start Menu that run `launch-gui.ps1`. |
+| `register-autostart.ps1` | Registers a scheduled task that starts the server (no browser) at logon. |
+
+## Quick start
+
+From this `scripts/` directory, in PowerShell:
+
+```powershell
+# 1. Create the desktop + Start Menu shortcuts
+powershell -ExecutionPolicy Bypass -File .\install-shortcuts.ps1
+
+# 2. (optional) Make the server auto-start at every logon
+powershell -ExecutionPolicy Bypass -File .\register-autostart.ps1
+```
+
+After step 1, double-click the **Conversation Tree** icon on the Desktop.
+The server starts in the background if needed and the GUI opens in your
+default browser at `http://127.0.0.1:7733`.
+
+## launch-gui.ps1
+
+```
+powershell -ExecutionPolicy Bypass -File .\launch-gui.ps1
+powershell -ExecutionPolicy Bypass -File .\launch-gui.ps1 -NoBrowser   # start server only
+```
+
+Behavior:
+
+- **Port 7733 in use** → assumes the server is already running, skips the
+  start, just opens the browser.
+- **Port free** → starts `node server\server.js` from the
+  `conversation-tree-ui` directory as a **detached, window-less** process
+  (survives after the script exits), polls the port for up to 5 seconds,
+  then opens the browser.
+- **`node` not on PATH** → logs a clear error and shows a desktop notification
+  (BurntToast if installed, otherwise a message box) telling you to install
+  Node.js. The shortcut does not silently do nothing.
+- **`-NoBrowser`** → start the server if needed but do not open the browser
+  (used by the autostart task).
+
+Log file (created automatically):
+
+```
+%USERPROFILE%\.claude\logs\conv-tree-launcher.log
+```
+
+Check this file first if a launch ever misbehaves — every run appends a
+timestamped trace.
+
+## install-shortcuts.ps1
+
+Creates two shortcuts named **Conversation Tree**:
+
+- Desktop: `[Desktop]\Conversation Tree.lnk`
+- Start Menu: `[Start Menu Programs]\Conversation Tree.lnk`
+
+Each runs:
+
+```
+powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "<...>\launch-gui.ps1"
+```
+
+The shortcut window style is "minimized" as defence-in-depth; the launcher
+also hides itself, so no console flashes.
+
+Remove the shortcuts:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-shortcuts.ps1 -Remove
+```
+
+### Why the `.lnk` files are not committed
+
+`.lnk` files embed absolute paths that are specific to this machine and user
+account (the Desktop path, the launcher path, the powershell.exe path). They
+are intentionally **not** committed to the repo. Only the script that
+*creates* them (`install-shortcuts.ps1`) is committed. After cloning/pulling
+the repo on any machine, run `install-shortcuts.ps1` once to (re)generate the
+shortcuts for that machine.
+
+### Custom icon
+
+Windows ships no standard "tree" icon, so the shortcut uses the default
+PowerShell icon. To use a custom icon, drop a `conv-tree.ico` next to the
+scripts and uncomment the `$sc.IconLocation` line in `install-shortcuts.ps1`,
+then re-run it.
+
+## register-autostart.ps1
+
+Registers a scheduled task **`ConversationTreeUI-AutoStart`** that starts the
+server at every logon of the current user, with **no browser**.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\register-autostart.ps1
+powershell -ExecutionPolicy Bypass -File .\register-autostart.ps1 -RunNow      # register + start now to verify
+powershell -ExecutionPolicy Bypass -File .\register-autostart.ps1 -Unregister  # remove the task
+```
+
+Task properties:
+
+- **Trigger**: at logon of the current user.
+- **Action**: `launch-gui.ps1 -NoBrowser` (see note below).
+- **Run as**: current user, interactive, non-elevated.
+- **Window**: hidden.
+- **Multiple instances**: `IgnoreNew` — if you already started the server
+  manually, the task will not disturb it.
+- **On failure**: restart up to 3 times, 1 minute apart.
+- **Time limit**: none (the server is long-running).
+
+### Why the task runs the launcher (`-NoBrowser`) and not `node` directly
+
+The intent of "run the server, not the launcher" is *no browser window at
+logon*. `launch-gui.ps1 -NoBrowser` satisfies that exactly **and** reuses the
+launcher's port-7733 guard, so a logon start and a later manual desktop-icon
+launch can never double-bind the port. This keeps a single, verified
+server-start code path instead of duplicating port-check + node-spawn logic
+in two places that could drift apart.
+
+### Verify it works without waiting for next logon
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\register-autostart.ps1 -RunNow
+```
+
+This registers the task and immediately triggers it once, printing
+`LastTaskResult` (0 = success). You can also open **Task Scheduler**
+(`taskschd.msc`) → Task Scheduler Library → `ConversationTreeUI-AutoStart`.
+
+## Uninstall everything
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-shortcuts.ps1 -Remove
+powershell -ExecutionPolicy Bypass -File .\register-autostart.ps1 -Unregister
+```
+
+This removes both shortcuts and the scheduled task. It does not touch the
+log file or the repo.
+
+## Troubleshooting
+
+- **Nothing happens when I double-click the icon** — open
+  `%USERPROFILE%\.claude\logs\conv-tree-launcher.log`; the last lines say
+  what happened. The most common cause is Node.js not on PATH.
+- **Browser opens but page won't load** — the server may still be starting;
+  refresh after a second. If it persists, check the log; the launcher waits
+  up to 5 s for the port and logs if it timed out.
+- **Port 7733 already used by something else** — the launcher assumes our
+  server owns it and just opens the browser. If a different process holds
+  7733, stop that process (the server port is fixed at 7733 unless you set
+  the `CTREE_PORT` environment variable before the server starts).
+- **Autostart task shows `LastTaskResult` non-zero** — run
+  `launch-gui.ps1 -NoBrowser` by hand and read the log; the task runs the
+  same code path, so the log explains the failure.

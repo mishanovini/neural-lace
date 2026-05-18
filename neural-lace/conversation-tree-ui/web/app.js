@@ -21,8 +21,9 @@
       backlogCapture = $('backlogCapture'), blText = $('blText'),
       blPriority = $('blPriority'), blContext = $('blContext'),
       blSave = $('blSave'), blCancel = $('blCancel'),
-      ctxPanel = $('ctxPanel'), zoomIn = $('zoomIn'), zoomOut = $('zoomOut'),
-      fitSel = $('fitSel');
+      ctxPanel = $('ctxPanel'), ctxScrim = $('ctxScrim'), zoomIn = $('zoomIn'),
+      zoomOut = $('zoomOut'), fitSel = $('fitSel'),
+      showConcluded = $('showConcluded'), tabBar = $('tabBar');
 
   // ---- client view state ----------------------------------------------
   var S = null;                 // latest snapshot
@@ -36,6 +37,10 @@
   var seenConcluded = new Set(); // nodes already known concluded (notify once)
   var primed = false;           // suppress conclude-notifications on first frame
   var ctxExpanded = false;      // FR-6 layered: summary -> full
+  // v1.1 item 3: hide-concluded. localStorage UI-pref convention (same as
+  // zoom/collapsed/activeTree/projects/drafts). Default OFF = hide concluded
+  // (Misha's preferred default). '1' = show concluded.
+  var showConcludedPref = localStorage.getItem('ctree-show-concluded') === '1';
 
   // ---- tiny DOM helpers ------------------------------------------------
   function el(tag, cls, txt) {
@@ -155,12 +160,46 @@
   }
 
   // ---- TREE PANE (C2) --------------------------------------------------
+  // v1.1 item 3: node_ids whose ENTIRE subtree is concluded (concluded leaf,
+  // or a branch all of whose descendants are concluded). When hide is on,
+  // these drop out — but a concluded ancestor with any non-concluded
+  // descendant stays so the open work underneath remains reachable.
+  function concludedHiddenSet() {
+    if (showConcludedPref) return null;            // showing all -> hide nothing
+    var same = nodes().filter(function (n) { return treeOf(n) === activeTree; });
+    var kids = {};
+    same.forEach(function (n) { if (n.parent_id) (kids[n.parent_id] = kids[n.parent_id] || []).push(n); });
+    var memo = {}, hide = {};
+    function allConcluded(n) {
+      if (n.node_id in memo) return memo[n.node_id];
+      memo[n.node_id] = false;                      // cycle guard
+      if (n.state !== 'concluded') return (memo[n.node_id] = false);
+      var ch = kids[n.node_id] || [];
+      var res = ch.every(allConcluded);
+      memo[n.node_id] = res;
+      if (res) hide[n.node_id] = 1;
+      return res;
+    }
+    same.forEach(allConcluded);
+    return hide;
+  }
   function visibleNodes() {
+    var hidden = concludedHiddenSet();
     return nodes().filter(function (n) {
       if (treeOf(n) !== activeTree) return false;
       if (n.state === 'archived' && !showArchived.checked) return false;
+      if (hidden && hidden[n.node_id]) return false;   // item 3: drop fully-concluded subtrees
       return true;
     });
+  }
+  // True when the active tree HAS branches but the concluded filter hid all
+  // of them (drives a tailored steady-empty, never a blank canvas).
+  function allHiddenByConcluded() {
+    if (showConcludedPref) return false;
+    var same = nodes().filter(function (n) {
+      return treeOf(n) === activeTree && !(n.state === 'archived' && !showArchived.checked);
+    });
+    return same.length > 0 && visibleNodes().length === 0;
   }
   function forest(vis) {
     var ids = {}; vis.forEach(function (n) { ids[n.node_id] = n; });
@@ -259,6 +298,15 @@
       return;
     }
     if (vis.length === 0) {
+      if (allHiddenByConcluded()) {
+        var aff = el('button', 'ghost', 'Show concluded');
+        aff.addEventListener('click', function () { showConcluded.checked = true; applyShowConcluded(); });
+        paneState(treeState, treeScroll, 'steady-empty', {
+          steady: 'All branches in "' + activeTree + '" are concluded — hidden by your "show concluded" preference.',
+          affordance: aff,
+        });
+        return;
+      }
       paneState(treeState, treeScroll, 'steady-empty', {
         steady: activeTree === 'global'
           ? 'This tree has no branches yet.'
@@ -268,7 +316,10 @@
     }
     paneState(treeState, treeScroll, 'populated');
     clear(treeCanvas);
+    // item 5: fluid zoom — scale visually AND widen/narrow the layout box so
+    // rows reflow to fill the freed width (no dead horizontal space).
     treeCanvas.style.transform = 'scale(' + zoom + ')';
+    treeCanvas.style.width = (100 / zoom) + '%';
     var f = forest(vis);
     var orderedRoots = applyOrder(f.roots, order('tree:' + activeTree), 'node_id');
     orderedRoots.forEach(function (r) { renderTreeNode(r, f.kids, treeCanvas); });
@@ -553,14 +604,25 @@
     }, 30);
   }
   function cssEsc(s) { return String(s).replace(/"/g, '\\"'); }
+  // v1.1 item 2: single dismiss path. Hides panel + backdrop scrim and
+  // clears selection so a later render()/SSE frame does not re-open it.
+  function closeCtx() {
+    ctxPanel.hidden = true;
+    ctxScrim.hidden = true;
+    sel = null;
+    render();
+  }
   function openCtx(id) {
     var n = byId(id);
-    if (!n) { ctxPanel.hidden = true; return; }
-    ctxPanel.hidden = false; clear(ctxPanel);
+    if (!n) { closeCtx(); return; }
+    ctxPanel.hidden = false;
+    ctxScrim.hidden = false;          // CSS hides the scrim at >=1440 (docked)
+    clear(ctxPanel);
     var head = el('div', 'ctx-head');
     head.appendChild(el('span', 'pane-title', n.title || n.node_id));
     var x = el('button', 'ghost x', '✕');
-    x.addEventListener('click', function () { ctxPanel.hidden = true; });
+    x.title = 'close (Esc / click outside also close)';
+    x.addEventListener('click', closeCtx);
     head.appendChild(x);
     ctxPanel.appendChild(head);
     var body = el('div', 'ctx-body');
@@ -659,7 +721,7 @@
     } else {
       var arch = el('button', 'ghost', 'archive');
       arch.title = 'archival never closes a Claude Code session (FR-28)';
-      arch.addEventListener('click', function () { post({ type: 'archived', node_id: id }, 'archived'); ctxPanel.hidden = true; });
+      arch.addEventListener('click', function () { post({ type: 'archived', node_id: id }, 'archived'); closeCtx(); });
       r6.appendChild(arch);
     }
     var note = el('button', 'ghost', 'annotate');
@@ -747,7 +809,7 @@
   }
   treeSelect.addEventListener('change', function () {
     activeTree = treeSelect.value; localStorage.setItem('ctree-active', activeTree);
-    sel = null; ctxPanel.hidden = true; render();
+    closeCtx();
   });
   addProjBtn.addEventListener('click', function () {
     var name = prompt('New project tree name (user-directed; no auto-discovery):');
@@ -763,13 +825,56 @@
   actionsSort.addEventListener('change', renderActions);
   backlogSort.addEventListener('change', renderBacklog);
 
+  // ---- item 3: hide-concluded toggle (localStorage UI-pref) ------------
+  function applyShowConcluded() {
+    showConcludedPref = !!showConcluded.checked;
+    localStorage.setItem('ctree-show-concluded', showConcludedPref ? '1' : '0');
+    render();
+  }
+  showConcluded.checked = showConcludedPref;       // default OFF = hide
+  showConcluded.addEventListener('change', applyShowConcluded);
+
+  // ---- item 2: ctx overlay dismiss — click-outside + Esc ---------------
+  ctxScrim.addEventListener('click', closeCtx);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !ctxPanel.hidden) closeCtx();
+  });
+
+  // ---- item 1: single-pane tab bar (layout C only) ---------------------
+  // CSS shows #tabBar only when w<1024 AND h<1024; JS just flips
+  // body[data-tab]. Default tab = tree (matches the CSS :not([data-tab])).
+  if (!document.body.dataset.tab) document.body.dataset.tab = 'tree';
+  tabBar.addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-tab]');
+    if (!b) return;
+    document.body.dataset.tab = b.dataset.tab;
+    [].forEach.call(tabBar.querySelectorAll('button'), function (x) {
+      x.classList.toggle('active', x === b);
+    });
+  });
+
   // ---- pan/zoom (C2) ---------------------------------------------------
   zoomIn.addEventListener('click', function () { zoom = Math.min(2, zoom + 0.1); renderTree(); });
   zoomOut.addEventListener('click', function () { zoom = Math.max(0.4, zoom - 0.1); renderTree(); });
+  // item 4: true fit-to-viewport. Measure the tree's NATURAL (zoom==1)
+  // bounding box, derive the scale that fits it inside the visible tree-pane
+  // area with a small padding margin, apply scale + scroll to origin. Works
+  // with no node selected (the old impl no-op'd without a selection).
   fitSel.addEventListener('click', function () {
-    if (!sel) return;
-    var r = treeCanvas.querySelector('[data-node="' + cssEsc(sel) + '"]');
-    if (r) r.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+    if (!loaded || visibleNodes().length === 0) return;
+    var pT = treeCanvas.style.transform, pW = treeCanvas.style.width;
+    treeCanvas.style.transform = 'scale(1)';
+    treeCanvas.style.width = '100%';
+    // read layout metrics at natural scale (transform does not affect them)
+    var cw = treeCanvas.scrollWidth, ch = treeCanvas.scrollHeight;
+    var vw = treeScroll.clientWidth, vh = treeScroll.clientHeight;
+    if (!cw || !ch || !vw || !vh) { treeCanvas.style.transform = pT; treeCanvas.style.width = pW; return; }
+    var z = Math.min(vw / cw, vh / ch) * 0.96;          // 4% padding
+    z = Math.max(0.15, Math.min(2, z));                 // fit may zoom further out than +/-
+    zoom = z;
+    renderTree();                                       // applies scale + width:(100/zoom)%
+    treeScroll.scrollLeft = 0; treeScroll.scrollTop = 0;
+    showToast('fit to view (' + Math.round(z * 100) + '%)', 'ok');
   });
   (function () { // drag-to-pan on empty tree space
     var down = false, sx, sy, sl, st;

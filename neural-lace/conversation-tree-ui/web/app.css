@@ -1,8 +1,13 @@
 /* Conversation Tree UI — Phase C/D styles.
    Vanilla CSS, no framework, no build step. Dark-mode-first (harness UX
-   standards). DEC-A LOCKED layout: tree pane left ~57% full-height; actions
-   + backlog stacked right ~43%, each internally scrollable with a pinned
-   header; the page itself NEVER scrolls (BF-3); minimum viewport 1440x900. */
+   standards). DEC-A (revised v1.1 — additive responsive clause): at
+   width >= 1440px the original three-pane side-by-side is UNCHANGED (tree
+   left ~57% full-height; actions + backlog stacked right ~43%). Below that,
+   responsive breakpoints kick in (CSS Grid template-areas + @media, zero JS
+   layout math): the middle band vertical-stacks (tree top / actions+backlog
+   bottom); a small window (w<1024 AND h<1024) collapses to single-pane with
+   top tabs. Each pane is always internally scrollable with a pinned header;
+   the page itself NEVER scrolls (BF-3) in ANY layout. */
 :root {
   --bg: #111827;
   --panel: #1f2937;
@@ -26,9 +31,8 @@ body {
   color: var(--text);
   display: flex;
   flex-direction: column;
-  overflow: hidden;                 /* BF-3: the page never scrolls */
-  min-width: 1440px;                /* DEC-A min viewport width */
-  min-height: 900px;                /* DEC-A min viewport height */
+  overflow: hidden;                 /* BF-3: the page never scrolls — in ANY layout */
+  min-width: 320px;                 /* v1.1: floor only; layout is responsive (DEC-A revised) */
 }
 
 header {
@@ -89,18 +93,81 @@ button:active { transform: scale(0.98); }
 .toast.ok { border-color: #065f46; color: var(--ok); }
 .toast.err { border-color: #b91c1c; color: var(--err); }
 
-/* Three-pane layout (DEC-A) --------------------------------------------- */
+/* Responsive layout (DEC-A revised v1.1) --------------------------------
+   CSS Grid template-areas + @media only; NO JS layout math (JS only flips
+   body[data-tab] in the small single-pane mode). Three layouts:
+
+   (A) width >= 1440px  -> three-pane side-by-side  (DEC-A ORIGINAL, unchanged)
+   (B) the middle band  -> vertical stack (tree top / actions+backlog bottom)
+   (C) w<1024 AND h<1024 -> single-pane with top tabs
+
+   The .right-col wrapper div is no longer a layout container — every pane is
+   a direct grid item placed by grid-area, so the SAME DOM serves all three
+   layouts with zero JS. .right-col just passes through (display:contents). */
 #layout {
-  flex: 1 1 auto; display: flex; min-height: 0;   /* min-height:0 lets children scroll */
-  gap: 1px; background: var(--border);
+  flex: 1 1 auto; min-height: 0; min-width: 0;
+  display: grid; gap: 1px; background: var(--border);
+  /* default = (B) vertical stack: tree on top half, actions|backlog bottom */
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 50% 50%;
+  grid-template-areas:
+    "tree    tree"
+    "actions backlog";
 }
-.tree-pane { flex: 0 0 57%; }                      /* DEC-A: tree ~55-60% L */
-.right-col {
-  flex: 1 1 43%; display: flex; flex-direction: column;
-  gap: 1px; background: var(--border); min-width: 0;
+.right-col { display: contents; }     /* wrapper is layout-transparent */
+.tree-pane    { grid-area: tree; }
+.actions-pane { grid-area: actions; }
+.backlog-pane { grid-area: backlog; }
+#tabBar { display: none; }            /* shown only in layout (C) */
+
+/* (B) narrow bottom region: if the stacked region is < 700px wide, stack
+   actions ABOVE backlog instead of side-by-side. */
+@media (max-width: 699.98px) {
+  #layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: 44% 28% 28%;
+    grid-template-areas: "tree" "actions" "backlog";
+  }
 }
-.actions-pane { flex: 1 1 55%; }
-.backlog-pane { flex: 1 1 45%; }
+
+/* (A) width >= 1440px — DEC-A ORIGINAL three-pane, provably unchanged:
+   tree ~57% full-height left; actions (55%) over backlog (45%) right. */
+@media (min-width: 1440px) {
+  #layout {
+    grid-template-columns: 57% 43%;
+    grid-template-rows: 55% 45%;
+    grid-template-areas:
+      "tree actions"
+      "tree backlog";
+  }
+}
+
+/* (C) small window (w<1024 AND h<1024) — single pane + top tabs.
+   One pane visible at a time; #tabBar drives body[data-tab]. */
+@media (max-width: 1023.98px) and (max-height: 1023.98px) {
+  #layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+    grid-template-areas: "pane";
+  }
+  .tree-pane, .actions-pane, .backlog-pane { grid-area: pane; }
+  body:not([data-tab="tree"])    .tree-pane    { display: none; }
+  body:not([data-tab="actions"]) .actions-pane { display: none; }
+  body:not([data-tab="backlog"]) .backlog-pane { display: none; }
+  /* default tab when none chosen yet = tree */
+  body:not([data-tab]) .actions-pane,
+  body:not([data-tab]) .backlog-pane { display: none; }
+  #tabBar { display: flex; }
+}
+#tabBar {
+  flex: 0 0 auto; gap: 1px; background: var(--border);
+  border-bottom: 1px solid var(--border);
+}
+#tabBar button {
+  flex: 1; border-radius: 0; border: none; background: var(--panel2);
+  color: var(--muted); padding: 0.5rem; font-weight: 600;
+}
+#tabBar button.active { background: var(--panel); color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
 .pane {
   background: var(--bg); display: flex; flex-direction: column;
   min-height: 0; min-width: 0; overflow: hidden;
@@ -123,7 +190,11 @@ button:active { transform: scale(0.98); }
 
 /* Tree pane ------------------------------------------------------------- */
 .tree-scroll { position: relative; }
-.tree-canvas { transform-origin: top left; transition: transform 80ms ease; }
+/* v1.1 fluid zoom (item 5): JS sets width:(100/zoom)% so a scaled-down
+   canvas still LAYS OUT at full visual width — node rows reflow to fill the
+   freed horizontal space instead of leaving dead space on the right.
+   Symmetric for zoom-in. width:100% is the zoom==1 default. */
+.tree-canvas { transform-origin: top left; transition: transform 80ms ease; width: 100%; }
 .tnode { margin: 0.25rem 0; }
 .tnode-row {
   display: flex; align-items: center; gap: 0.4rem;
@@ -179,12 +250,32 @@ button:active { transform: scale(0.98); }
 .li[draggable=true] { cursor: grab; }
 .li.dragover { outline: 2px dashed var(--info); }
 
-/* Context panel (FR-6 surface) ------------------------------------------ */
+/* Context panel (FR-6 surface) — v1.1 dismissible overlay ----------------
+   Always position:fixed so it NEVER pushes the grid (it overlays, it does
+   not occupy layout real estate). Wide (>=1440): docks to the right edge,
+   30rem. Narrow (<1440): becomes a semi-modal overlay with a dimmed
+   backdrop scrim. Dismiss via the ✕, click-outside (#ctxScrim), or Esc
+   (all wired in app.js). The [hidden] rule is load-bearing: without it the
+   .ctx-panel display:flex beats the UA [hidden]{display:none} and the ✕
+   "does nothing" — that was the reported bug. */
+.ctx-panel[hidden] { display: none !important; }
+#ctxScrim {
+  position: fixed; inset: 0; z-index: 29; background: rgba(0,0,0,0.45);
+  -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px);
+}
+#ctxScrim[hidden] { display: none !important; }
 .ctx-panel {
   position: fixed; right: 0; top: 2.6rem; bottom: 0; width: 30rem; max-width: 46vw;
   background: var(--panel); border-left: 1px solid var(--border2);
   box-shadow: -8px 0 24px rgba(0,0,0,0.45); z-index: 30;
   display: flex; flex-direction: column; overflow: hidden;
+}
+/* Narrow: overlay near-full width with the scrim behind it (semi-modal). */
+@media (max-width: 1439.98px) {
+  .ctx-panel { width: min(34rem, 92vw); max-width: 92vw; top: 0; }
+}
+@media (min-width: 1440px) {
+  #ctxScrim { display: none !important; }   /* docked at wide — no scrim */
 }
 .ctx-head { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 0.5rem; }
 .ctx-head .x { margin-left: auto; }
