@@ -78,7 +78,32 @@ Add a failing R44 assertion for the `.tnode-root` rule; implement the CSS rule +
 - `.tnode-root` + `.hl` (item 17 selection wash) on the same root row: both apply (header size/weight + selection wash) — separate property sets, no clobber.
 
 ## Definition of Done
-- [ ] Tasks 20R, 25, 26 task-verified PASS
-- [ ] Six regression suites green (state 15, responsive ≥44, backfill 15, state-gate 18, stop-gate 8, emit 17)
-- [ ] PR to master merged; main checkout synced; `:7733` restarted
-- [ ] Status → COMPLETED (auto-archived); completion report appended
+- [x] Tasks 20R, 25, 26 task-verified PASS (3/3)
+- [x] Six regression suites green (state 15, responsive 44, backfill 15, state-gate 18, stop-gate 8, emit 17)
+- [x] PR to master merged; main checkout synced; `:7733` restarted
+- [x] Status → COMPLETED (auto-archived); completion report appended
+
+## Completion Report
+
+### 1. Implementation Summary
+- **20R** (drop item 20): `web/app.js` per-item button reverted to `el('button','btn-up','promote to branch')`, toast `'promoted to branch'`; `btn-up` purple (item 22) + `type:'promoted'` event unchanged; zero "expand to branch" in `web/`. `b418f5c`.
+- **25** (top-level headers): `renderTreeNode` gained a `depth` arg (0 for forest roots via `renderTree`'s `orderedRoots`, +1 per recursion); depth-0 rows get `.tnode-root` + a larger/distinct twist (▶/▼/◆). `.tnode-row.tnode-root` CSS: 1.18rem, padding bump, 5px left, 5% white tint, top separator (first-child exempt), title font-weight 800, larger accent twist. Nested rows unchanged. `b418f5c`.
+- **26** (selftest + sweep): R40 inverted (asserts "promote to branch" retained, no "expand", `btn-up`+`promoted` kept); new R44 (six `.tnode-root` CSS invariants + three `renderTreeNode` depth wiring tokens). responsive 43→44. `b418f5c`.
+- In-flight: B15 path-fragility fix — repointed from the v1.1.1-closure-archived plan path to the permanent `docs/DECISIONS.md`; backfill restored 15/15. `b418f5c`.
+No backlog items absorbed.
+
+### 2. Design Decisions & Plan Deviations
+Two Decisions-Log entries (label-only revert keeping btn-up/promoted; "top-level" = forest-root depth-0 via a `renderTreeNode` depth param). One in-flight scope update (B15 path fragility — a real test-design defect surfaced by the v1.1.1 closure renaming the file B15 hard-coded; designed out by pointing at a never-archived index).
+
+### 3. Known Issues & Gotchas
+- `.tnode-root` is depth-0 only — correct for the maintainer's listed top-level branches. If a future change introduces a synthetic always-present root wrapper, depth-0 would shift; the forest already excludes synthetic roots so this is not a current risk.
+- Same cross-repo doc caveat as v1.1.1 (per-machine `config/projects.json` for non-self projects) is unchanged here.
+
+### 4. Manual Steps Required
+- Post-merge `:7733` restart (done as the final delivery step) so the maintainer sees the reverted label + the header-styled top-level nodes on refresh.
+
+### 5. Testing Performed & Recommended
+state 15/0 · responsive 44/0 (R40 inverted PASS, R44 PASS) · backfill 15/0 (B15 stable) · conv-tree state-gate 18/0 · stop-gate 8/0 · emit 17/OK · `node --check` clean · `SCHEMA_VERSION`=1 unchanged. task-verifier PASS 3/3 with committed evidence log. Recommended: live browser refresh on `:7733`.
+
+### 6. Cost Estimates
+Zero incremental cost (label/CSS/JS-only; no dependency, no build step, no service).
