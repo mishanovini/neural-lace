@@ -20,23 +20,23 @@ Items 1–13 shipped & merged (PR #4 items 1–6, PR #9 items 7–13, master `5c
 
 ## Tasks
 
-- [ ] 1. Item 14: type-coded palette — action=red, decision=amber, question=blue — on the `[type]` label + a 4–6px left-border stripe on the item card (+ optional ≤6% bg wash), in the Waiting pane; WCAG AA on dark — Verification: full
+- [x] 1. Item 14: type-coded palette — action=red, decision=amber, question=blue — on the `[type]` label + a 4–6px left-border stripe on the item card (+ optional ≤6% bg wash), in the Waiting pane; WCAG AA on dark — Verification: full
   **Prove it works:** 1. An action item shows a red `[action]` label + red left stripe; decision = amber; question = blue. 2. Label text passes AA contrast on the dark bg. 3. Consistent (same vars) wherever the type label/stripe appears.
   **Wire checks:** `web/app.css` (`--ty-action/-decision/-question` + `-rgb` vars; `.li-kind.action/.decision/.question`; `.li.kind-*` left stripe) → `web/app.js` (`renderActions` adds `kind-<kind>` class to the li)
   **Integration points:** preview_eval reads computed color of `.li-kind.action` etc. + asserts the left-border color per kind.
-- [ ] 2. Item 15: title owns row width (`flex:1`); right-side text crumb → fixed ~24px icon-button "→" with tooltip "Jump to in tree"; same click→focusNode — Verification: full
+- [x] 2. Item 15: title owns row width (`flex:1`); right-side text crumb → fixed ~24px icon-button "→" with tooltip "Jump to in tree"; same click→focusNode — Verification: full
   **Prove it works:** 1. `.li-text` is flex:1 and not crushed. 2. The jump affordance is a ~24px square icon-button (not a width-greedy text link), tooltip "Jump to in tree", click still navigates to the tree node.
   **Wire checks:** `web/app.js` (`renderActions` crumb → icon-button `.li-jump`) → `web/app.css` (`.li-jump` fixed 24px; `.li-text` flex:1)
   **Integration points:** preview_eval asserts `.li-jump` ~24px, title flex-grows, click focuses the node.
-- [ ] 3. Item 16: hide-concluded default UNCHECKED (hide concluded on first load) + make the toggle prominent (eye icon, larger label, grouped near + project in a "View" group) — Verification: full
+- [x] 3. Item 16: hide-concluded default UNCHECKED (hide concluded on first load) + make the toggle prominent (eye icon, larger label, grouped near + project in a "View" group) — Verification: full
   **Prove it works:** 1. Fresh load (no localStorage key) → concluded hidden by default. 2. The toggle is visibly prominent (eye glyph + larger label, in a delineated View group near + project), discoverable. 3. Behavior (hide concluded leaves AND fully-concluded subtrees) unchanged from item 3.
   **Wire checks:** `web/index.html` (toggle moved into a `.view-filters` group near `#addProjBtn`, eye glyph, larger) → `web/app.css` (`.view-filters`/`.toggle-prom`) → `web/app.js` (default already false; unchanged filter logic)
   **Integration points:** preview_eval: localStorage cleared → reload → 0 concluded rows; toggle element bigger/grouped.
-- [ ] 4. Item 17: bidirectional item↔tree highlight — full interior type-color tint (~15–20%) + 3–4px solid left accent; both directions (item→node AND node→item/backlog); smooth scroll-into-view of the other side — Verification: full
+- [x] 4. Item 17: bidirectional item↔tree highlight — full interior type-color tint (~15–20%) + 3–4px solid left accent; both directions (item→node AND node→item/backlog); smooth scroll-into-view of the other side — Verification: full
   **Prove it works:** 1. Click a Waiting item → its tree node gets a full interior tint (type color ~18%) + left bar AND scrolls into view. 2. Click a tree node → the corresponding Waiting item(s) get the same tint + scroll into view. 3. Tint color matches the item's type (action/decision/question palette).
   **Wire checks:** `web/app.js` (shared `selNodeId`; `renderActions` tints items whose node===selNodeId; `renderTreeNode` tints the selected node by its dominant item kind; both call `scrollIntoView`) → `web/app.css` (`.li.sel-link`, `.tnode-row.sel-tint` per-kind tints)
   **Integration points:** preview_eval clicks an item → asserts tree node tinted + the reverse (click node → item tinted) + scroll.
-- [ ] 5. Item 18: toast → bottom-right (bottom-center on narrow) + arrival-flash (600ms type-color tint, reduced-motion = single-frame persist ~1.5s) on the affected item/backlog/tree-node on toast OR SSE arrival OR state change; + DEC log + extend responsive.selftest.js + full regression — Verification: full
+- [x] 5. Item 18: toast → bottom-right (bottom-center on narrow) + arrival-flash (600ms type-color tint, reduced-motion = single-frame persist ~1.5s) on the affected item/backlog/tree-node on toast OR SSE arrival OR state change; + DEC log + extend responsive.selftest.js + full regression — Verification: full
   **Prove it works:** 1. A toast appears bottom-right (bottom-center < ~700px). 2. mark-done / new SSE item / conclude → a 600ms type-tinted flash on the affected location. 3. prefers-reduced-motion → single-frame highlight persisting ~1.5s (no fade). 4. responsive.selftest.js extended + all green; gates 18/8/17, state selftest 15/15 unchanged.
   **Wire checks:** `web/app.css` (`.toast` bottom-right + narrow media; `@keyframes arrival-flash`; reduced-motion variant) → `web/app.js` (flash the affected node/li on post-success + SSE diff) → `web/responsive.selftest.js` (new R34+ assertions)
   **Integration points:** preview_eval asserts toast right-anchored at wide; flash class applied on a state change; regression suite green.
@@ -96,6 +96,36 @@ Thinnest slice proving the shared mechanism the rest builds on: define the `--ty
 - [ ] WCAG AA intent held (type colors = established AA-on-dark semantic palette)
 - [ ] Items 1–13 behavior + responsive layout intact under the restyle
 - [ ] `web/responsive.selftest.js` extended + all green; gates 18/8/17; state selftest 15/15; backfill 11/11
-- [ ] Live state file unchanged (no events emitted by this plan)
-- [ ] One PR merged to neural-lace master; main checkout synced; :7733 restarted
-- [ ] Completion report appended; SCRATCHPAD regenerated
+- [x] Live state file unchanged (no events emitted by this plan — pure client polish)
+- [x] One PR merged to neural-lace master; main checkout synced; :7733 restarted
+- [x] Completion report appended; SCRATCHPAD regenerated
+
+## Completion Report
+
+### 1. Implementation Summary
+Items 14–18 shipped in one commit `e7393bc` (4 files, all under `web/` — zero schema change, mechanically confirmed). 5/5 task-verified PASS.
+- **14** type palette: `--ty-action/-decision/-question(+-rgb)` aliasing the AA-on-dark semantic colors; `[type]` label + 5px left stripe + ≤5% wash, per-kind. Live: action rgb(248,113,113) / decision rgb(251,191,36) / question rgb(96,165,250).
+- **15** `.li-text{flex:1}` + the text crumb replaced by a fixed 24×24 "→" icon-button (tooltip "Jump to in tree", same focusNode).
+- **16** hide-concluded grouped into a prominent `.view-filters` block (👁 glyph + larger label near + project); default stays hide (localStorage absent → false); filter logic unchanged.
+- **17** bidirectional item↔tree link-select (`selNodeLink` + `dominantKind` action>decision>question); full interior type-tint ~18% + accent on BOTH sides; smooth `scrollIntoView` of the other side; tree-row click linkSelects. Both directions proven live.
+- **18** toast → bottom-right (bottom-center on narrow single-pane); `arrivalFlash()` 600ms type-color wash on new actions/backlog/tree-nodes + on state-change (flashes the affected tree node since the item slides out); `prefers-reduced-motion` → single-frame highlight persisting 1.5s, no fade.
+
+`Backlog items absorbed: none`.
+
+### 2. Design Decisions & Plan Deviations
+Two Decisions-Log entries: palette aliases the established AA-safe semantic colors (the spec's raw #DC2626 is borderline on #111827 small text; the spec explicitly permitted lighten/tint — chosen the AA-safe family used consistently elsewhere); selected-node tint uses dominant-kind precedence (action>decision>question) for a stable color in both highlight directions. No deviations from scope.
+
+### 3. Known Issues & Gotchas
+- A parent/container node with no direct waiting item (e.g. `root-sprint`) gets the node highlight only on tree-click — no item to tint (graceful, by design).
+- `.li.responded` (item 10) left-border overrides the item-14 kind stripe for responded items (later rule wins) — intentional: responded de-emphasis takes precedence.
+- Smooth-scroll-into-view is wired via `linkSelect`; headless verification confirms the call path + the tint it drives, not sub-pixel scroll smoothness.
+- Preview screenshot/Promise-eval still time out on this SSE app (tooling limit) — verified via sequential synchronous evals (stronger for computed-style/behavior).
+
+### 4. Manual Steps Required
+None — pure client polish; reload (or the post-merge :7733 restart) shows it. No state mutation, no migration.
+
+### 5. Testing Performed & Recommended
+Live headless walk-through (preview :7744, real backfilled state, 960×2160) of all 5 items + items 1–13 regression intact. `web/responsive.selftest.js` 33→**38/38**; `state/selftest.js` **15/15** (untouched); `backfill-details.js --self-test` **11/11**; conv-tree state-gate **18/18**, stop-gate **8/8**, emit **17/17**. Recommended: a wide-viewport (≥1440) + narrow (<1024²) pass of the toast position on Misha's next live use; v1.2 dispatch-reader (NL-FINDING-011) already in a separate session.
+
+### 6. Cost Estimates
+Zero ongoing cost — client-only CSS/JS/HTML in an existing localhost Node-stdlib tool. No deps, no build step, no schema change, no state mutation, no external services.
