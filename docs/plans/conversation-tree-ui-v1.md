@@ -125,11 +125,11 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
   **Integration points:**
   ADR-032 is the contract every later phase consumes; B1's §8 gate consumes the attestation primitive (verify snapshot via most-recent `snapshot-committed` hash, then read `snapshot.nodes`). Verify via the (d) selftest proofs + systems-designer re-review of the §7c/§8 r2 revision + code-reviewer of store.js/state.js.
 - [x] B0. Empirically verify Claude Code populates `tool_name` for the MCP spawn tools (`mcp__ccd_session__spawn_task`, `mcp__ccd_session_mgmt__start_code_task`) the same way it does for built-in `Task`/`Agent` — the ADR-031 r7 explicitly-flagged build-phase assumption. Record the observed event JSON shape. — Verification: mechanical — **Reviewer: task-verifier.**
-- [ ] B1. `conversation-tree-state-gate.sh` PreToolUse gate (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: harness-reviewer.**
-  - [ ] B1a. Matcher `mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent` + branch-name-as-required-key check (the spawn `tool_input` supplies the branch independently — raises the bar from "wrote anything" to "wrote an entry naming this branch").
-  - [ ] B1b. Pin-2 error partition exactly: JSON-parse-fail → closed; missing-file with prior-spawn-this-session → closed; missing-file with no prior spawn → open (bootstrap exemption); stale-mtime → closed; unknown-schema-major → closed with the distinct "schema too new — upgrade" message; hook-internal jq/IO error → open.
-  - [ ] B1c. PreToolUse justification escape-hatch — a fresh `.claude/state/conv-tree-spawn-waiver-*.txt` (≥1 substantive line, <1h) permits the spawn (mirrors `bug-persistence-gate.sh`).
-  - [ ] B1d. `--self-test` exercising each partition cell + the bootstrap exemption + the waiver release-valve.
+- [x] B1. `conversation-tree-state-gate.sh` PreToolUse gate (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: harness-reviewer.**
+  - [x] B1a. Matcher `mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent` + branch-name-as-required-key check (the spawn `tool_input` supplies the branch independently — raises the bar from "wrote anything" to "wrote an entry naming this branch").
+  - [x] B1b. Pin-2 error partition exactly: JSON-parse-fail → closed; missing-file with prior-spawn-this-session → closed; missing-file with no prior spawn → open (bootstrap exemption); stale-mtime → closed; unknown-schema-major → closed with the distinct "schema too new — upgrade" message; hook-internal jq/IO error → open.
+  - [x] B1c. PreToolUse justification escape-hatch — a fresh `.claude/state/conv-tree-spawn-waiver-*.txt` (≥1 substantive line, <1h) permits the spawn (mirrors `bug-persistence-gate.sh`).
+  - [x] B1d. `--self-test` exercising each partition cell + the bootstrap exemption + the waiver release-valve.
   **Prove it works:**
   1. Run `conversation-tree-state-gate.sh --self-test`; observe every error-partition cell + bootstrap + waiver scenario PASS.
   2. With a stale state file, attempt a matched spawn; observe BLOCK with the remediation message; drop a fresh waiver; observe ALLOW.

@@ -678,3 +678,57 @@ No live `mcp__ccd_session__spawn_task` PreToolUse event fixture is captured (ccd
 Runtime verification: command bash adapters/claude-code/hooks/conversation-tree-state-gate.sh --self-test ::18 passed, 0 failed
 Runtime verification: file adapters/claude-code/hooks/conversation-tree-state-gate.sh::mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent
 Runtime verification: file adapters/claude-code/hooks/conversation-tree-state-gate.sh::s.verifySnapshotAttested(parsed)
+
+---
+
+EVIDENCE BLOCK
+==============
+Task ID: B1 (sub-items B1a, B1b, B1c, B1d)
+Task description: conversation-tree-state-gate.sh PreToolUse gate (B1a enumerated matcher + independent-branch-key; B1b Pin-2 error partition; B1c fresh-substantive-waiver release-valve; B1d --self-test)
+Verified at: 2026-05-18T01:46:58Z
+Verifier: task-verifier agent
+
+Comprehension-gate: PASS (Confidence 8) — comprehension-reviewer (rung-2 gate) supplied as FINAL: Stage 1 schema PASS (four canonical sub-sections ordered), Stage 2 substance PASS (task-specific; NOT-covered names concrete justified gaps), Stage 3 diff-correspondence PASS (Pin-2 articulated cell-for-cell with resolving line citations; §8 r2.1 node -e verifySnapshotAttested present + forbidden jq absent; five Assumptions consistent with the diff). Articulation block present in this evidence file under "## Task B1 — ## Comprehension Articulation". rung-2 gate SATISFIED.
+
+Upstream verdicts (orchestrator-mediated, no-nested-subagents env — plan-mandated B1 reviewers):
+1. harness-reviewer (plan-mandated B1 hard reviewer) — PASS. Independently classified Mechanism; all 7 mechanism-checklist + 4 universal checks PASS. Verified Pin-1 (branch extracted independently from tool_input, non-gameable live-node bar, no-identifier⇒visible-BLOCK, shell-injection-safe, _touch_marker fires before every _block), Pin-2 partition every cell, §8 r2.1 honored (node -e verifySnapshotAttested, no bash canonicalization, forbidden jq -cS|sha256sum absent), waiver mirrors+hardens bug-persistence-gate.sh. Ran --self-test itself: 18 passed, 0 failed against real state-library-attested fixtures. Adversarial probing found NO false-ALLOW. Two NON-BLOCKING doc-only notes. Verdict: PASS, B1 hard gate cleared.
+2. comprehension-reviewer (rung-2 gate) — PASS (Confidence 8). See Comprehension-gate line above.
+
+Checks run (independent task-verifier corroboration):
+1. Git tip + B1 deliverable presence
+   Command: git log --oneline -3 ; git show --stat 69d7e38
+   Output: tip 6bf6907 "feat: Task B1 — conversation-tree-state-gate.sh PreToolUse gate"; B1 commit 69d7e38 in history with 3 files changed — adapters/claude-code/hooks/conversation-tree-state-gate.sh (+547), docs/harness-architecture.md (+3/-1), docs/plans/conversation-tree-ui-v1-evidence.md (+26).
+   Result: PASS
+
+2. Self-test corroboration (B1d — the harness-user-facing functionality outcome)
+   Command: bash adapters/claude-code/hooks/conversation-tree-state-gate.sh --self-test
+   Output: 18 passed, 0 failed (EXIT=0). Covers B1a matcher (m1-m6: 4 enumerated tools fire exit 2, Edit/Bash no-op exit 0), B1b Pin-2 (p1 parse-fail→CLOSED, p2 missing+prior→CLOSED, p3 missing+noprior→OPEN bootstrap, p4 torn-attest→CLOSED, p5 unknown-major→CLOSED), B1c waiver (w1 fresh-substantive→ALLOW, w2 whitespace-only→no-help BLOCK), plus h1-h3 verified-ALLOW and b1-b2 branch-absent/archived→BLOCK. Fixtures produced via the real state library (_mk_attested) so the node -e verifySnapshotAttested path is genuinely end-to-end, not stubbed.
+   Result: PASS
+
+3. Spot-check (a) — B1a matcher exactness
+   Command: read hook line 276
+   Output: `mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent) ;;` followed by `*) exit 0` (no-op for any non-covered tool).
+   Result: PASS — matcher is exactly the enumerated set as supplied.
+
+4. Spot-check (b) — snapshot-trust path
+   Command: read hook lines 442-462 + grep jq -cS|sha256sum
+   Output: trust computed ONLY by shelling `node -e` requiring state.js and calling `s.verifySnapshotAttested(parsed)` (lines 447-454). The forbidden `jq -cS … sha256sum` shell-recompute path is ABSENT — `jq -cS|sha256sum` appears only inside prohibitory header comments (lines 26-30, 437-440), never in an executable trust path.
+   Result: PASS — §8 r2.1 SOLE-NORMATIVE verifier honored; forbidden path absent.
+
+5. Spot-check (c) — two Pin-2 cells coded as supplied
+   Command: read hook lines 394-435
+   Output: missing+no-prior-spawn → OPEN bootstrap (lines 395-407: _block iff [[ -f "$SPAWN_MARKER" ]], else "bootstrap exemption" ALLOW exit 0). unknown-major → CLOSED with distinct message (lines 426-433: FILE_MAJOR -gt KNOWN_MAJOR ⇒ _block "schema too new — upgrade the GUI/gate", distinct from parse-fail/torn messages). Both cells in the LIVE gate logic, not just the self-test harness.
+   Result: PASS — both Pin-2 cells coded exactly as the supplied verdicts describe.
+
+Git evidence:
+  Files modified in recent history:
+    - adapters/claude-code/hooks/conversation-tree-state-gate.sh  (commit 69d7e38, created, 547 lines, +x)
+    - docs/harness-architecture.md  (commit 69d7e38, +1 row -1)
+
+Runtime verification: command bash adapters/claude-code/hooks/conversation-tree-state-gate.sh --self-test ::18 passed, 0 failed
+Runtime verification: file adapters/claude-code/hooks/conversation-tree-state-gate.sh::mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent
+Runtime verification: file adapters/claude-code/hooks/conversation-tree-state-gate.sh::s.verifySnapshotAttested(parsed)
+
+Verdict: PASS
+Confidence: 9
+Reason: Verification: full runtime task (the gate's "user" is the harness; --self-test passing IS the user-facing functionality outcome per FUNCTIONALITY-OVER-COMPONENTS). Both plan-mandated B1 reviewers (harness-reviewer hard gate; comprehension-reviewer rung-2 gate, Confidence 8) returned PASS, supplied as final. Independent task-verifier corroboration reproduced the self-test 18 passed/0 failed (EXIT=0) against real state-library-attested fixtures (node -e verifySnapshotAttested genuinely end-to-end), and spot-confirmed all three named checks against the live gate source: (a) matcher exactly the enumerated set, (b) trust via the SOLE-NORMATIVE node -e verifySnapshotAttested with the forbidden jq -cS|sha256sum path absent, (c) two Pin-2 cells (missing+no-prior→OPEN bootstrap; unknown-major→CLOSED distinct message) coded as described. B1 deliverable files present at 69d7e38. All four sub-items (B1a/B1b/B1c/B1d) exercised and passing. findings.md untouched (B3 wiring + findings = orchestrator/later-task scope, correctly out of B1).
