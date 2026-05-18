@@ -1,5 +1,5 @@
 # Plan: Conversation Tree UI v1.1 — UX interactivity (items 7–13)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 tier: 2
