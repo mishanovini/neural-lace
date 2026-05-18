@@ -273,3 +273,61 @@ Runtime verification: file neural-lace/conversation-tree-ui/web/app.js::dti.type
 Verdict: PASS
 Confidence: 9
 Reason: All four acceptance criteria verified against actual repo state — item-backlogged is in EVENT_TYPES (schema.js:57) and EVENT_REQUIRED_FIELDS (schema.js:96) with SCHEMA_VERSION unchanged at 1 (schema.js:11); the reducer's item-backlogged case sets backlogged (reducer.js:333-339), the deferred case persists local fields only when present while keeping canonical scheduled_for (reducer.js:134-147), and item-unchecked clears backlogged (reducer.js:325); openDeferPop ships all 5 presets plus a native datetime-local with the old ISO prompt() removed, isWaiting excludes backlogged, and to-Backlog posts item-backlogged then backlog-added with treeOf(n) (web/app.js:316/775-853); the "Next week" math `((1-d.getDay()+7)%7)||7` is correct in every weekday case including the Monday→following-Monday(+7) edge; and P16 (state 16/16) + R42 + R43 (responsive 43/43) — the gate-honored acceptance artifact for this acceptance-exempt harness-internal plan — pass cleanly.
+
+## Task 5 — Selftests + full regression + Decisions Log + Completion Report
+
+EVIDENCE BLOCK
+==============
+Task ID: 5
+Task description: Extend `state/selftest.js` (P16) + `web/responsive.selftest.js` (R39–R43) + full regression (state 16/16, responsive 43/43, backfill 11/11, conv-tree gates 18/8 unchanged) + DEC log + completion report — Verification: full
+Verified at: 2026-05-18T19:34:00Z
+Verifier: task-verifier agent
+
+Comprehension-gate: not applicable (rung < 2)
+
+Checks run:
+1. state self-test suite
+   Command: cd neural-lace/conversation-tree-ui && node state/selftest.js
+   Output: "16 passed, 0 failed"; P16 line PASS — "v1.1.2 item 28 additive: item-backlogged(park, !checked) + deferred local-time fields + plain-defer unchanged + unpark round-trip + unknown rejected + schema_version still 1"
+   Result: PASS
+
+2. responsive self-test suite
+   Command: cd neural-lace/conversation-tree-ui && node web/responsive.selftest.js
+   Output: "43 passed, 0 failed"; R39 PASS (six filled semantic button classes), R40 PASS (Details toggles in place), R41 PASS (Respond-only resolve), R42 PASS (friendly Defer popover), R43 PASS (item-backlogged additive + SCHEMA_VERSION still 1)
+   Result: PASS
+
+3. backfill self-test (regression)
+   Command: cd neural-lace/conversation-tree-ui && node state/backfill-details.js --self-test
+   Output: "11 passed, 0 failed"
+   Result: PASS
+
+4. conv-tree gate self-tests (schema major unchanged → gates unaffected)
+   Command: bash adapters/claude-code/hooks/conversation-tree-state-gate.sh --self-test ; bash adapters/claude-code/hooks/conversation-tree-stop-gate.sh --self-test
+   Output: state-gate "18 passed, 0 failed"; stop-gate "8 passed, 0 failed"
+   Result: PASS
+
+5. Decisions Log + Completion Report presence + substance
+   Command: read docs/plans/conv-tree-ui-v1.1.2-polish.md lines 85-138
+   Output: ## Decisions Log has two substantive entries — Tier-2 "item-backlogged is an ADDITIVE event ..." (Chosen/Alternatives/Reasoning/To-reverse all populated) and Tier-1 "two existing-shape events; no dedicated undo"; NOT "[Populated during implementation]". ## Completion Report present with all 6 numbered subsections (1. Implementation Summary table, 2. Design Decisions & Plan Deviations, 3. Known Issues & Gotchas, 4. Manual Steps Required, 5. Testing Performed & Recommended, 6. Cost Estimates).
+   Result: PASS
+
+6. P16 correspondence (self-test exercises the claimed behavior, not a stub)
+   Command: grep -n 'P16|item-backlogged|scheduled_for_local|SCHEMA_VERSION' state/selftest.js
+   Output: P16 (selftest.js:597-647) appends item-backlogged then asserts item parked + NOT checked, asserts deferred-with-local-fields persists scheduled_for_local/tz_offset_min while plain-defer leaves them undefined, asserts unknown item_id rejected (retained not applied), asserts schema_version still 1
+   Result: PASS
+
+Git evidence:
+  Files modified in recent history:
+    - neural-lace/conversation-tree-ui/state/selftest.js  (impl commit: 71ad016)
+    - neural-lace/conversation-tree-ui/web/responsive.selftest.js  (impl commit: 71ad016)
+    - docs/plans/conv-tree-ui-v1.1.2-polish.md  (Decisions Log + Completion Report: 822eab4)
+    - docs/plans/conv-tree-ui-v1.1.2-polish-evidence.md  (evidence: 822eab4)
+
+Runtime verification: test neural-lace/conversation-tree-ui/state/selftest.js::P16
+Runtime verification: test neural-lace/conversation-tree-ui/web/responsive.selftest.js::R43
+Runtime verification: test neural-lace/conversation-tree-ui/state/backfill-details.js::--self-test
+Runtime verification: file docs/plans/conv-tree-ui-v1.1.2-polish.md::## Completion Report
+
+Verdict: PASS
+Confidence: 9
+Reason: All five acceptance criteria pass with the exact required counts run against actual repo state — state 16/16 (P16 PASS), responsive 43/43 (R39–R43 all PASS), backfill 11/11, conv-tree-state-gate 18/0, conv-tree-stop-gate 8/0 (schema major unchanged, gates unaffected); the Decisions Log carries two substantive Tier-2/Tier-1 entries (not the placeholder) and the Completion Report is present with all 6 numbered subsections. P16 corresponds to the task: it exercises item-backlogged round-trip, deferred local-time field persistence, plain-defer-unchanged, unpark, unknown-rejection, and SCHEMA_VERSION==1 — not a stub. This is the gate-honored acceptance artifact for the acceptance-exempt harness-internal plan.
