@@ -35,10 +35,21 @@
 //               + §8 reads the verified snapshot)
 //   P13 (d-v)   the latest snapshot-committed SURVIVES compaction naturally
 //               (DEC-D rule 2: appended post-truncation, always freshest)
+//   P14 (r2.1)  the ACTUAL sanctioned §8 gate path, end-to-end: a REAL `node`
+//               subprocess (child_process) — the exact `node -e …
+//               require("./state.js") … verifySnapshotAttested` shape the
+//               corrected §8 r2.1 text sanctions — reading the on-disk file
+//               reports verified===true + digest === on-disk
+//               snapshot-committed.hash on the untampered file, and NOT
+//               verified on a byte-tampered file. Proves writer↔verifier
+//               equivalence via the REAL path (not the in-process call P9–P13
+//               use), closing the §8-contract-vs-implemented-path false-signal
+//               gap systems-designer FAILed r2 on (same shape as NL-FINDING-004).
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const cp = require('child_process');
 const state = require('./state.js');
 const store = require('./store.js');
 
@@ -462,6 +473,71 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
         + ' domainOnDisk=' + domainOnDisk.length + ' lastIsAtt=' + lastIsAttestation
         + ' verified=' + v.verified);
   } catch (e) { check('P13 (d-v) latest snapshot-committed survives compaction', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
+// ---- P14 (r2.1) real-subprocess sanctioned §8 gate path --------------------
+// systems-designer FAILed r2 because the §8 text presented a jq-shell hash
+// shape and CLAIMED it was canonicalJSON-equivalent (it is NOT). P9–P13 are
+// green only because they call the in-process Node verifier, never the path
+// the §8 contract hands a gate builder. P14 closes that false-signal gap by
+// exercising the ACTUAL sanctioned path: a REAL `node` subprocess (the exact
+// `node -e … require(state.js) … verifySnapshotAttested` shape the corrected
+// §8 r2.1 text sanctions) reads the on-disk file. Assert: (i) verified===true
+// on the untampered file, (ii) its computed digest === on-disk most-recent
+// snapshot-committed.hash, (iii) on a byte-tampered snapshot the SAME real-path
+// command reports NOT verified. Writer↔verifier equivalence proven via the
+// real path — verified, not asserted.
+(function P14() {
+  const dir = freshDir(); const o = optsFor(dir);
+  // The exact node -e the §8 r2.1 text sanctions: require the state library by
+  // absolute path (cwd-independent), verify the on-disk file, print the digest,
+  // exit 0 iff verified. argv[1] = state file.
+  const MODULE = path.resolve(__dirname, 'state.js').replace(/\\/g, '\\\\');
+  const SCRIPT =
+    'const s=require("' + MODULE + '");const fs=require("fs");' +
+    'const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));' +
+    'const r=s.verifySnapshotAttested(p);' +
+    'process.stdout.write(JSON.stringify({verified:r.verified,hash:r.hash||""}));' +
+    'process.exit(r.verified?0:1)';
+  function runGate(stateFile) {
+    try {
+      const out = cp.execFileSync(process.execPath, ['-e', SCRIPT, stateFile],
+        { encoding: 'utf8' });
+      return { code: 0, parsed: JSON.parse(out) };
+    } catch (e) {
+      // non-zero exit ⇒ not verified. stdout still captured on execFileSync err.
+      let parsed = null;
+      try { parsed = JSON.parse((e.stdout || '').toString()); } catch (_) {}
+      return { code: e.status == null ? -1 : e.status, parsed: parsed };
+    }
+  }
+  try {
+    state.appendEvent({ type: 'branch-opened', node_id: 'rp1', parent_id: null, title: 'RealPathBranch' }, o);
+    state.appendEvent({ type: 'branch-opened', node_id: 'rp2', parent_id: 'rp1', title: 'RealPathSub' }, o);
+    const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    const att = onDisk.events.filter(function (e) { return e.type === store.SNAPSHOT_COMMITTED_TYPE; });
+    const onDiskHash = att.length ? att[att.length - 1].hash : null;
+
+    // (i)+(ii): untampered file via REAL subprocess ⇒ verified + digest match.
+    const ok = runGate(o.statePath);
+    const verifiedTrue = ok.code === 0 && ok.parsed && ok.parsed.verified === true;
+    const digestMatchesOnDisk = !!ok.parsed && ok.parsed.hash === onDiskHash && !!onDiskHash;
+
+    // (iii): byte-tamper the snapshot WITHOUT updating attestation; SAME real
+    // command must report NOT verified (non-zero exit, verified:false).
+    const tampered = JSON.parse(JSON.stringify(onDisk));
+    tampered.snapshot.nodes[0].title = 'TAMPERED-REALPATH';
+    fs.writeFileSync(o.statePath, JSON.stringify(tampered, null, 2), 'utf8');
+    const bad = runGate(o.statePath);
+    const tamperRefused = bad.code !== 0 && (!bad.parsed || bad.parsed.verified === false);
+
+    check('P14 (r2.1) REAL node subprocess on sanctioned §8 path: untampered ⇒ verified + digest==on-disk hash; byte-tampered ⇒ NOT verified',
+      verifiedTrue && digestMatchesOnDisk && tamperRefused,
+      'verifiedTrue=' + verifiedTrue + ' digestMatch=' + digestMatchesOnDisk
+        + ' (gate=' + (ok.parsed && ok.parsed.hash) + ' onDisk=' + onDiskHash + ')'
+        + ' tamperRefused=' + tamperRefused + ' tamperCode=' + bad.code);
+  } catch (e) { check('P14 (r2.1) real-subprocess sanctioned §8 gate path', false, e.message); }
   finally { cleanup(dir); }
 })();
 
