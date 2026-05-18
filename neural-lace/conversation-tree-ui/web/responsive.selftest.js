@@ -196,11 +196,24 @@ ok('R39 item19 server endpoints + projects two-layer + mdRender + modal/panel',
   && /function openDocsPanel\s*\(/.test(js) && /function linkifyDocs\s*\(/.test(js)
   && /id="docModal"/.test(html) && /id="docsPanel"/.test(html) && /id="docsBtn"/.test(html));
 
-// item 20 — "promote"→"expand to branch"; event type stays `promoted`
-ok('R40 item20 expand-to-branch rename; promoted event type preserved',
-  !/promote to branch/i.test(js) && !/promoted to branch/i.test(js)
-  && /'expand to branch'/.test(js) && /'expanded to branch'/.test(js)
+// item 20 DROPPED in v1.1.2 (maintainer is fine with "promote to branch"):
+// label reverted; btn-up purple (item 22) + `promoted` event preserved.
+ok('R40 item20-dropped: "promote to branch" label retained, no "expand", promoted+btn-up kept',
+  /'promote to branch'/.test(js) && /'promoted to branch'/.test(js)
+  && !/'expand to branch'/.test(js) && !/'expanded to branch'/.test(js)
+  && /el\('button',\s*'btn-up',\s*'promote to branch'\)/.test(js)
   && /type:\s*'promoted'/.test(js));
+
+// v1.1.2 item 25 — top-level project nodes render as H1/H2-style headers
+ok('R44 item25 .tnode-root header CSS + renderTreeNode depth-0 wiring',
+  /\.tnode-row\.tnode-root\s*\{/.test(C)
+  && /\.tnode-row\.tnode-root\s*\{[^}]*font-size:\s*1\.18rem/.test(C)
+  && /\.tnode-row\.tnode-root\s*\{[^}]*border-top:\s*1px solid/.test(C)
+  && /\.tnode-row\.tnode-root\s*\{[^}]*linear-gradient\(rgba\(255,255,255,0\.05\)/.test(C)
+  && /\.tnode-row\.tnode-root \.tnode-title\s*\{[^}]*font-weight:\s*800/.test(C)
+  && /function renderTreeNode\s*\(n,\s*kids,\s*container,\s*depth\)/.test(js)
+  && /depth\s*===\s*0\s*\?\s*' tnode-root'/.test(js)
+  && /renderTreeNode\(k,\s*kids,\s*kc,\s*depth \+ 1\)/.test(js));
 
 // item 21 — robust priority sort: execute the extracted prioRank logic
 (function () {
