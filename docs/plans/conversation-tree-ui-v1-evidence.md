@@ -817,3 +817,71 @@ Confidence: 9
 Reason: Independent 8/0 self-test corroboration plus all four mandated spot-checks confirmed against the hook source; both plan-mandated reviewers (harness-reviewer + comprehension-reviewer rung-2) supplied PASS; both B2 deliverables present at the branch tip; the gate's user-facing outcome (the harness — `--self-test` 8/0) is genuinely demonstrated, not component-only.
 
 Note: prompt cited B2 commit as 5c98574 (cherry-picked); the B2 work is present at branch tip a4b335e ("feat: Task B2 …") with identical content — evidence cites the actual landed SHA a4b335e. B3 settings.json wiring is the next task (out of B2 scope); `docs/findings.md` not edited per instruction.
+
+
+---
+
+## Task B3 — Pattern rule + canonical hook wiring + arch-doc (live-`~/.claude/` activation DEFERRED)
+
+Files: `adapters/claude-code/rules/conversation-tree-state.md` (created), `adapters/claude-code/settings.json.template` (both gates wired: PreToolUse + Stop), `docs/harness-architecture.md` (Pattern-rule row + PreToolUse row + Stop-chain entry + counts 14→15 / 8→9 + new "Conversation-Tree UI Module" section), `docs/plans/conversation-tree-ui-v1.md` (one `## In-flight scope updates` deferral line — bookkeeping-exempt).
+
+## Comprehension Articulation
+
+### Spec meaning
+
+Task B3 ships the THIRD leg of ADR-031 r7's "Enforcement design": the Pattern-class rule documenting what the two B1/B2 gates (the Mechanism) cannot mechanize, plus the CANONICAL two-layer wiring of both gates. `adapters/claude-code/rules/conversation-tree-state.md` follows the canonical Hybrid sibling-rule shape (`spec-freeze.md`): a Classification header naming the Mechanism (the two gates enforce freshness / JSON-shape / attestation-verified-snapshot / branch-name-presence / "spawned⇒wrote-before-Stop") and the Pattern (the orchestrator self-applies "write the *semantically true* tree, not just any well-shaped branch-naming tree" — §8 attestation verifies snapshot *integrity*, never *truth*), a Why section, the three accepted gaps lifted verbatim from ADR-031 r7 (genuine cloud web/`--remote`/Routines invisible+unenforced per Decision 011; `Bash(claude…)`/`/schedule` un-enumerated spawn surfaces; the documented semantic-correctness ceiling — ADR-032 §8 "Costs/accepted ceilings (a)"), an Enforcement table, Cross-references (ADR-031 r7, ADR-032 §8 r2.1, both hooks, the precedent gates), and a Scope section. Both gates are wired into `adapters/claude-code/settings.json.template` — the canonical source of truth that `install.sh` propagates template→live: `conversation-tree-state-gate.sh` into the PreToolUse chain with the exact ADR-031 r7 Pin-1 four-tool matcher `mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent` (mirroring the template's existing `Task|Agent` entry object shape), `conversation-tree-stop-gate.sh` into the single `"matcher":""` Stop chain after `product-acceptance-gate.sh` (mirroring how `bug-persistence-gate.sh` — the gate it copies its Stop machinery from — sits in that chain). `docs/harness-architecture.md` gets the Pattern-rule row, a PreToolUse table row, the Stop-chain ordered-list entry, the entry-count bumps, and a new "Conversation-Tree UI Module" section per `harness-maintenance.md` §3.
+
+### Edge cases covered
+
+`jq . adapters/claude-code/settings.json.template` parses (JSON validity preserved through both inserts — verified). The PreToolUse `conversation-tree-state-gate.sh` matcher is the verbatim Pin-1 four-tool string (NOT the narrower `Task|Agent` of `teammate-spawn-validator.sh`) so MCP spawn surfaces are covered; positioned AFTER `teammate-spawn-validator.sh` and BEFORE `dag-review-waiver-gate.sh`. The Stop `conversation-tree-stop-gate.sh` is inserted into the single `"matcher":""` Stop array (NOT a new matcher object — Stop hooks chain within one matcher block) after `product-acceptance-gate.sh` and before `deferral-counter.sh`. The CRITICAL sequencing constraint is honored: the live `~/.claude/settings.json` is NOT edited and the gate hook files are NOT copied into `~/.claude/hooks/` — activating live mid-session would make the PreToolUse gate fire on this orchestrator's own remaining harness-dev `Agent` dispatches and the Stop gate block this session's Stop (this harness-dev session is not the conv-tree workflow the gates govern; no conv-tree state file exists for it). The deferral is recorded in BOTH this evidence entry (with the ready-to-apply recipe below) AND a `## In-flight scope updates` line in the plan, classed `deferred-by-locked-execution-mode-decision` (the Misha-locked `Execution-mode = Option 3` mandates the live activation at the controlled Phase-B→Phase-C clean-confirm boundary). arch-doc counts bumped (PreToolUse 14→15, Stop 8→9) so the listing stays consistent with the wired template.
+
+### Edge cases NOT covered
+
+No live Claude Code session exercises the wired gates end-to-end in this build — the canonical template is the source of truth and `install.sh` propagation + the deferred Option-3 boundary activation is the validation path (the gates' own `--self-test` green-ness was already proven in B1=18/0 and B2=8/0). The live-`~/.claude/` two-layer mirror (the plan's Files-to-Modify lists `~/.claude/settings.json` + `~/.claude/rules/conversation-tree-state.md`) is explicitly DEFERRED — honored at the controlled Option-3 boundary, not skipped; the deterministic recipe is provided below so the standalone Phase-C session / operator can apply it without re-deriving anything. `docs/findings.md` untouched (out of B3 scope per dispatch). The accepted cloud / `Bash(claude…)` / `/schedule` gaps are documented in the rule as ceilings, not closed here (ADR-031 r7 accepted v1 limitations with Misha's interrupt authority as backstop, by design).
+
+### Assumptions
+
+(1) `adapters/claude-code/settings.json.template` is the canonical source of truth and `install.sh` propagates template→live (per `harness-maintenance.md` two-layer-config discipline + the plan's B3 task text). (2) The Stop chain is a single `"matcher":""` array of sequential hooks (verified by reading the template lines 321–362) — a Stop hook is added as an element of that array, not a new matcher object. (3) The PreToolUse matcher syntax for spawn-class gates is a per-matcher object with a `hooks[]` array (verified against the existing `teammate-spawn-validator.sh` `Task|Agent` entry — mirrored exactly). (4) The two gate hook scripts already exist at the branch tip (`332338a` "plan: Task B2 PASS"); B3 wires them, it does not author them. (5) The live-activation deferral is plan-consistent because the Misha-locked `Execution-mode = Option 3` Decisions Log entry already mandates a controlled Phase-B→Phase-C clean-confirm boundary for exactly this kind of standalone/operator step — deferring the single live bundle honors the locked decision, not scope drift.
+
+### Ready-to-apply live-`~/.claude/` activation recipe (DEFERRED — apply at the Option-3 Phase-B→Phase-C clean-confirm boundary, from a standalone non-Dispatch session / by the operator)
+
+This is the SINGLE deferred bundle. Apply ALL steps together at the boundary.
+
+1. Copy the two gate hook scripts into the live hooks dir (preserve +x):
+   - `cp adapters/claude-code/hooks/conversation-tree-state-gate.sh ~/.claude/hooks/conversation-tree-state-gate.sh`
+   - `cp adapters/claude-code/hooks/conversation-tree-stop-gate.sh ~/.claude/hooks/conversation-tree-stop-gate.sh`
+   - `chmod +x ~/.claude/hooks/conversation-tree-state-gate.sh ~/.claude/hooks/conversation-tree-stop-gate.sh`
+2. Mirror the Pattern rule: `cp adapters/claude-code/rules/conversation-tree-state.md ~/.claude/rules/conversation-tree-state.md`
+3. Edit `~/.claude/settings.json` — add the PreToolUse entry. Insert this object into `.hooks.PreToolUse[]` immediately AFTER the `teammate-spawn-validator.sh` `"matcher":"Task|Agent"` object and BEFORE the `dag-review-waiver-gate.sh` `"matcher":"Task"` object:
+   `{ "matcher": "mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent", "hooks": [ { "type": "command", "command": "bash ~/.claude/hooks/conversation-tree-state-gate.sh" } ] }`
+4. Edit `~/.claude/settings.json` — add the Stop entry. Insert this object into the single `.hooks.Stop[0].hooks[]` array immediately AFTER the `product-acceptance-gate.sh` element and BEFORE the `deferral-counter.sh` element:
+   `{ "type": "command", "command": "bash ~/.claude/hooks/conversation-tree-stop-gate.sh" }`
+5. Validate: `jq . ~/.claude/settings.json >/dev/null && echo OK` — must print `OK`.
+6. Sanity (optional, recommended): `bash ~/.claude/hooks/conversation-tree-state-gate.sh --self-test` (expect 18/0) and `bash ~/.claude/hooks/conversation-tree-stop-gate.sh --self-test` (expect 8/0) against the live mirror.
+
+After step 5 the canonical template (already wired by B3) and the live `~/.claude/settings.json` are two-layer-consistent for the two new entries (the plan's B3 "Prove it works" check #1 — byte-equivalent modulo the shared `~/.claude/`-vs-template path convention).
+
+### Mechanical-check command set (replayable; run from repo root)
+
+```
+jq . adapters/claude-code/settings.json.template >/dev/null && echo "TEMPLATE_JSON_OK"
+jq -e '.hooks.PreToolUse[] | select(.matcher=="mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent") | .hooks[] | select(.command|test("conversation-tree-state-gate.sh"))' adapters/claude-code/settings.json.template >/dev/null && echo "PRETOOLUSE_WIRED_OK"
+jq -e '.hooks.Stop[0].hooks[] | select(.command|test("conversation-tree-stop-gate.sh"))' adapters/claude-code/settings.json.template >/dev/null && echo "STOP_WIRED_OK"
+test -f adapters/claude-code/rules/conversation-tree-state.md && grep -q '^## Enforcement' adapters/claude-code/rules/conversation-tree-state.md && grep -q 'Accepted gaps' adapters/claude-code/rules/conversation-tree-state.md && grep -q '^## Cross-references' adapters/claude-code/rules/conversation-tree-state.md && grep -q '^## Scope' adapters/claude-code/rules/conversation-tree-state.md && echo "RULE_OK"
+grep -q 'conversation-tree-state.md.*conversation-tree-ui v1 Task B3' docs/harness-architecture.md && grep -q '### PreToolUse (15 entries)' docs/harness-architecture.md && grep -q '### Stop (9 entries' docs/harness-architecture.md && grep -q '## Conversation-Tree UI Module' docs/harness-architecture.md && echo "ARCHDOC_OK"
+grep -q 'live-.*activation DEFERRED' docs/plans/conversation-tree-ui-v1.md && grep -q 'Ready-to-apply live' docs/plans/conversation-tree-ui-v1-evidence.md && echo "DEFERRAL_DOCUMENTED_OK"
+```
+
+Runtime verification: command jq . adapters/claude-code/settings.json.template ::TEMPLATE_JSON_OK
+Runtime verification: file adapters/claude-code/settings.json.template::conversation-tree-state-gate.sh
+Runtime verification: file adapters/claude-code/settings.json.template::conversation-tree-stop-gate.sh
+Runtime verification: file adapters/claude-code/rules/conversation-tree-state.md::write the *semantically true* tree
+
+---
+
+EVIDENCE BLOCK
+==============
+Task ID: B3
+Task description: Pattern rule `adapters/claude-code/rules/conversation-tree-state.md` (Mechanism+Pattern split; orchestrator self-applies "write the *true* tree"; accepted gaps verbatim from ADR-031 r7). Wire both hooks in `adapters/claude-code/settings.json.template` (canonical source of truth). Update `docs/harness-architecture.md`. Live `~/.claude/` activation DEFERRED to the Option-3 Phase-B→Phase-C clean-confirm boundary (recipe in this entry; deferral in plan In-flight scope updates). — Verification: mechanical
+Verified at: 2026-05-17T00:00:00Z
+
