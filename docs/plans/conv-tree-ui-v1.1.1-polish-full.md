@@ -1,4 +1,16 @@
-# Plan: Conversation Tree UI v1.1.1 — visible-from-first-load polish (items 14–23)
+# Plan: Conversation Tree UI v1.1.1 (FULL) — visible-from-first-load polish (items 14–23)
+
+> **Concurrent-session reconciliation note.** A parallel session shipped
+> `docs/plans/archive/conv-tree-ui-v1.1.1-polish.md` (PR #10, master `9a3f8da`,
+> closed `301a5b7`) covering ONLY items **14–18** with a divergent
+> implementation (`--ty-*` vars, `.sel-tint`). This plan is the FULL **14–23**
+> superset (independent 14–18 impl + 19–23 + the WCAG-AA fix), task-verified
+> 11/11, all six suites green. Reconciled via a non-force merge of
+> `origin/master` (their commits preserved in history; conflicting web files
+> resolved to this verified superset since their 14–18 spec is fully subsumed).
+> Their archived 14–18 plan is left intact as the historical record of that
+> partial closure; this `-full` plan supersedes it as the authoritative
+> v1.1.1 record. Renamed slug → `-full` so closure-archival does not collide.
 
 Status: ACTIVE
 Execution Mode: orchestrator
@@ -76,6 +88,12 @@ Items 1–13 (responsive + UX-interactivity) shipped & merged at master `1a99d0f
 - `neural-lace/conversation-tree-ui/state/backfill-details.js` — cross-repo doc-sourced payload extraction (`resolveDocPath`, `extractFromDoc`); self-test doc-extraction case.
 - `neural-lace/conversation-tree-ui/web/responsive.selftest.js` — one invariant assertion per item 14–22 + the priority-sort logic test.
 - `docs/plans/conv-tree-ui-v1.1.1-polish.md` — this plan + Decisions Log.
+
+## In-flight scope updates
+- 2026-05-18: docs/plans/conv-tree-ui-v1.1.1-polish-full.md — this plan, renamed from the …-polish slug during concurrent-session reconciliation (a parallel session shipped+archived a 14–18-only plan at the original slug; rename avoids closure-archival collision). Same-content rename, light case, not a spec thaw.
+- 2026-05-18: docs/plans/conv-tree-ui-v1.1.1-polish-full-evidence.md — this plan's evidence log, renamed with the plan (see above).
+- 2026-05-18: docs/plans/archive/conv-tree-ui-v1.1.1-polish.md — the parallel session's archived 14–18 plan, pulled in by the non-force git merge origin/master reconciliation; kept intact as the historical record (also system-managed-exempt).
+- 2026-05-18: docs/plans/archive/conv-tree-ui-v1.1.1-polish-evidence.md — the parallel session's archived 14–18 evidence, pulled in by the same merge (also system-managed-exempt).
 
 ## Testing Strategy
 Each item is locked by a `web/responsive.selftest.js` assertion (the established v1.1 pattern: deterministic source-invariant guard, no headless-browser dep). Server endpoints (item 19) verified by live `curl` against `:7733`. Item 23 verified by `backfill-details.js --self-test` extended with a doc-extraction fixture case. Full regression sweep of all six suites is Task 24's gate. Live browser verification is the post-merge delivery step (server restart on `:7733`), exactly as v1.1 did.
