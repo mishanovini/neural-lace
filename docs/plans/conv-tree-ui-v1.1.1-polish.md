@@ -133,7 +133,42 @@ Thinnest end-to-end slice that proves the architecture: extend `responsive.selft
 - Doc-extraction on a doc with no `## ` headings / no recommendation → description from the first non-heading paragraph; options/recommendation left null (no fabrication — honesty contract preserved).
 
 ## Definition of Done
-- [ ] Tasks 14–24 checked off by task-verifier
-- [ ] All six regression suites green (state 15, responsive ≥33, backfill ≥11, state-gate 18, stop-gate 8, emit 17)
-- [ ] One PR to neural-lace master, merged; `~/claude-projects/neural-lace` synced; server restarted on `:7733`
-- [ ] SCRATCHPAD.md updated; completion report appended; Status → COMPLETED
+- [x] Tasks 14–24 checked off by task-verifier (11/11 PASS)
+- [x] All six regression suites green (state 15, responsive 43, backfill 15, state-gate 18, stop-gate 8, emit 17/OK)
+- [x] One PR to neural-lace master (#11), merged; `~/claude-projects/neural-lace` synced; server restarted on `:7733`
+- [x] SCRATCHPAD.md updated; completion report appended; Status → COMPLETED
+
+## Completion Report
+
+### 1. Implementation Summary
+All 10 punch-list items (14–23) shipped + item 24 (selftest lock & regression). Mapping:
+- **14** type palette — `--type-action/decision/question` (`#ef4444/#f59e0b/#3b82f6`), filled near-black badges (AA: 5.22 / 9.15 / 5.34 on `#111827`), `.li.kind-*` 5px accent + 5% tint. Commits `e10dae7`, `23f39c0` (AA bump).
+- **15** title `flex:1` + 24px `.li-jump` `→` icon (text crumb removed). `e10dae7`.
+- **16** hide-concluded relocated into the tree pane-head `.viewtoggle` (👁), default = hide. `e10dae7`.
+- **17** `.li.hl`/`.tnode-row.hl` interior wash + 4px bar; bidirectional select + smooth scrollIntoView both ways. `e10dae7`.
+- **18** toast → bottom-right (bottom-centre narrow); `@keyframes arrive` flash on new action/backlog/tree nodes; reduced-motion → 1.5s persistent highlight. `e10dae7`.
+- **19** server `/api/doc`,`/api/docs`,`/api/doc/open`; two-layer `config/projects.{js,example.json}` + gitignored real `projects.json`; dependency-free `mdRender`; inline doc modal + searchable cross-project docs browser; clickable `docs/…` link tokens. `2f2f3c9`.
+- **20** "promote"→"expand to branch" / "expanded to branch"; `promoted` event type unchanged (ADR-032 frozen). `e10dae7`.
+- **21** `prioRank` — fixed the `0||9` falsy-fallback (the actual "sorting backwards" root cause: `high` ranked 9, sank to the bottom); handles high/p1/1, medium/p2/2, low/p3/3, unknown→9, id tiebreak. `e10dae7`.
+- **22** six semantic button classes `.btn-go/-wait/-info/-up/-del/-neutral` (+ `.outline`) applied across app.js/index.html, AA-safe fills. `e10dae7`.
+- **23** `backfill-details.js` `resolveDocPath` (cross-repo via projects.js) + `extractFromDoc` (section/option/recommendation/blocking-input parser); description stays verbatim (honesty); nothing fabricated when absent. `a78ac23`.
+- **24** `responsive.selftest.js` 33→43 (R34–R43; R41 *executes* the prioRank logic on `[P3,P1,P2]→[P1,P2,P3]`); backfill 11→15. `bc5ed47`.
+No backlog items absorbed (`Backlog items absorbed: none`).
+
+### 2. Design Decisions & Plan Deviations
+Four Decisions-Log entries (in-session sequential build vs sub-agent dispatch; dependency-free `mdRender`; cross-repo paths as gitignored per-machine config — the gate-respect-compliant hygiene fix after `harness-hygiene-scan` correctly blocked a downstream-project codename in the committed plan; doc-sourced extraction over hand-keyed enrich.json). One in-flight refinement: item 14 action red `#dc2626`→`#ef4444` to clear WCAG AA 4.5:1 (was 4.07, surfaced by task-verifier, fixed in `23f39c0`).
+
+### 3. Known Issues & Gotchas
+- The GUI server's `STATE_FILE` is the Phase-0 well-known `state/tree-state.json` (gitignored, runtime-written) — unchanged here. Item 23's *live* enrichment is a post-merge delivery step run on the maintainer's machine against the live state with a real per-machine `config/projects.json`.
+- `config/projects.json` is gitignored by design; cross-repo doc browsing for non-self projects requires the maintainer to copy `projects.example.json`→`projects.json` and fill real roots (the conv-tree-ui's own repo auto-resolves with no config).
+- "Open in editor" (`/api/doc/open`) is Windows `cmd /c start`; macOS/Linux fall back to `open`/`xdg-open`; unsupported OS degrades with a clear message.
+
+### 4. Manual Steps Required
+- Post-merge: restart the GUI server on `:7733` (done as the final delivery step) so the maintainer sees the changes on browser refresh.
+- Optional: create `neural-lace/conversation-tree-ui/config/projects.json` (from `.example`) on the maintainer's machine to enable cross-repo doc browsing for external projects, then run `node state/backfill-details.js --apply` to layer doc-sourced rich details onto live actions.
+
+### 5. Testing Performed & Recommended
+state 15/0 · responsive 43/0 · backfill 15/0 · conv-tree state-gate 18/0 · stop-gate 8/0 · emit 17/OK · `node --check` all clean · live `curl` `/api/doc` returns content + `../../etc` → 400 · WCAG AA recomputed (5.22/9.15/5.34). task-verifier PASS 11/11 with committed evidence log. Recommended: live browser walkthrough on `:7733` after restart (the established v1.1 delivery pattern).
+
+### 6. Cost Estimates
+Zero incremental runtime cost: no new dependency, no build step, no external service; doc endpoints are localhost read-only file serving. No recurring cost.
