@@ -239,6 +239,36 @@ _spawn_title() {
   printf '%s' "$t"
 }
 
+# Primary branch identifier the conv-tree-state-gate will look for, derived
+# from tool_input with the SAME Pin-1 extraction + priority order the gate
+# uses (task-id= sentinel → worker-<tok> → backtick-after-"branch" → the
+# .title field verbatim). Returning the gate's first candidate and titling
+# the emitted node with it makes a candidate-bearing spawn genuinely satisfy
+# the gate (ADR-031 r7: the writer writes the true tree the gate checks for,
+# before the gate checks). Empty when tool_input carries none of the four
+# patterns (bare Task/Agent prompt) — the gate blocks those regardless of
+# what any writer writes; that is a gate-design gap (NL-FINDING-010), not a
+# writer bug, and its documented waiver valve is the sanctioned path.
+_gate_primary_candidate() {
+  local input="$1"
+  _have jq || { printf '%s' ""; return 0; }
+  local txt ti_title
+  txt=$(printf '%s' "$input" | jq -r '[(.tool_input.prompt//""),(.tool_input.description//""),(.tool_input.title//""),(.tool_input.content//"")]|join("\n")' 2>/dev/null || echo "")
+  ti_title=$(printf '%s' "$input" | jq -r '.tool_input.title // ""' 2>/dev/null || echo "")
+  # (1) task-id=<tok> — the gate adds <tok> first
+  local c
+  c=$(printf '%s' "$txt" | grep -oE 'task-id=[A-Za-z0-9._/-]+' | head -n1 | sed 's/^task-id=//')
+  [[ -n "$c" ]] && { printf '%s' "$c"; return 0; }
+  # (2) worker-<token>
+  c=$(printf '%s' "$txt" | grep -oE 'worker-[A-Za-z0-9._/-]+' | head -n1)
+  [[ -n "$c" ]] && { printf '%s' "$c"; return 0; }
+  # (3) backtick-quoted token following the word "branch"
+  c=$(printf '%s' "$txt" | grep -oE 'branch[^`]*`[A-Za-z0-9._/-]+`' | head -n1 | grep -oE '`[A-Za-z0-9._/-]+`' | tr -d '`')
+  [[ -n "$c" ]] && { printf '%s' "$c"; return 0; }
+  # (4) the title field verbatim
+  printf '%s' "$ti_title"
+}
+
 # ============================================================================
 # Mode: --on-spawn  (PreToolUse on the enumerated spawn surface)
 # ============================================================================
@@ -253,8 +283,22 @@ _run_on_spawn() {
     *) exit 0 ;;  # not a covered spawn surface -> no-op
   esac
 
-  local title; title=$(_spawn_title "$input")
-  [[ -z "$title" ]] && { _log "spawn ($tool) had no extractable title — skipped"; exit 0; }
+  # Title the emitted branch with the conv-tree-state-gate's PRIMARY Pin-1
+  # candidate when tool_input carries one — so the writer genuinely satisfies
+  # the gate that runs immediately after (the ADR-031 r7 intended design).
+  # For mcp__ccd_session__spawn_task the primary candidate IS the .title
+  # field (human-readable). When no candidate exists (bare Task/Agent
+  # prompt), fall back to a readable first-line title — the gate blocks that
+  # spawn regardless (NL-FINDING-010 gate-design gap, waiver-valve territory)
+  # but the branch is still recorded for the GUI.
+  local title gate_cand
+  gate_cand=$(_gate_primary_candidate "$input")
+  if [[ -n "$gate_cand" ]]; then
+    title="$gate_cand"
+  else
+    title=$(_spawn_title "$input")
+  fi
+  [[ -z "$title" ]] && { _log "spawn ($tool) had no extractable title/candidate — skipped"; exit 0; }
 
   local sid; sid=$(_session_id "$input")
   local rootline; rootline=$(_project_root)
@@ -405,6 +449,25 @@ _self_test() {
     bash "$SELF" --on-stop <<<'{"session_id":"sess-st-12-never-spawned"}' >/dev/null 2>&1
   rc=$?
   if [[ $rc -eq 0 && ! -f "$sp12" ]]; then echo "PASS: ST12 stop-without-ledger no-op"; pass=$((pass+1)); else echo "FAIL: ST12 stop-without-ledger (rc=$rc)"; fail=$((fail+1)); fi
+
+  # ST15-17: the emitted branch title MUST equal the conv-tree-state-gate's
+  # primary Pin-1 candidate so a candidate-bearing spawn genuinely satisfies
+  # the gate (writer-satisfies-gate, ADR-031 r7). Mirrors the gate's priority
+  # order: task-id= (1) > worker- (2) > backtick-branch (3) > .title (4).
+  local sp15="$tmp/st-15.json"
+  CONV_TREE_STATE_PATH="$sp15" CLAUDE_SESSION_ID="sess-st-15" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Feat X"},"session_id":"sess-st-15"}' >/dev/null 2>&1
+  if node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});process.exit(st.snapshot.nodes.some(function(n){return n.title==="Feat X"})?0:1)' "$LIB" "$sp15" 2>/dev/null; then echo "PASS: ST15 spawn_task .title -> node title == gate candidate (4)"; pass=$((pass+1)); else echo "FAIL: ST15 spawn_task title not the gate candidate"; fail=$((fail+1)); fi
+
+  local sp16="$tmp/st-16.json"
+  CONV_TREE_STATE_PATH="$sp16" CLAUDE_SESSION_ID="sess-st-16" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"Task","tool_input":{"prompt":"do work on branch worker-feat-y now"},"session_id":"sess-st-16"}' >/dev/null 2>&1
+  if node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});process.exit(st.snapshot.nodes.some(function(n){return n.title==="worker-feat-y"})?0:1)' "$LIB" "$sp16" 2>/dev/null; then echo "PASS: ST16 worker-<tok> -> node title == gate candidate (2)"; pass=$((pass+1)); else echo "FAIL: ST16 worker- candidate not matched"; fail=$((fail+1)); fi
+
+  local sp17="$tmp/st-17.json"
+  CONV_TREE_STATE_PATH="$sp17" CLAUDE_SESSION_ID="sess-st-17" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"Agent","tool_input":{"prompt":"Report-back: task-id=abc.123\nbody worker-zzz","title":"ignored-because-taskid-wins"},"session_id":"sess-st-17"}' >/dev/null 2>&1
+  if node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});process.exit(st.snapshot.nodes.some(function(n){return n.title==="abc.123"})?0:1)' "$LIB" "$sp17" 2>/dev/null; then echo "PASS: ST17 task-id= wins over worker-/title (gate priority 1)"; pass=$((pass+1)); else echo "FAIL: ST17 task-id priority not honored"; fail=$((fail+1)); fi
 
   # ST13/ST14: worktree topology — the operator runs ONE GUI server from the
   # MAIN checkout while Dispatch/Code sessions run in worktrees. The GUI sink
