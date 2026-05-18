@@ -1,6 +1,6 @@
 # Plan: Conversation Tree Management UI — v1 (ADR-031 Option 2: file-mediated passive tracker)
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none
@@ -618,3 +618,106 @@ S5 (Scope-vs-Analysis Check): swept Add/Implement/Build/Write verbs against Scop
 - Runbook — *spawn unexpectedly blocked*: (1) read the gate's stderr decision line, (2) match it to the Pin-2 partition cell, (3) apply the named remediation (fresh state write, or a substantive <1h waiver) — diagnose before bypass per gate-respect.
 - Runbook — *branch didn't auto-conclude*: (1) verify ALL checklist items checked in state, (2) check for a contested item (contested counts as NOT checked by design — D2).
 - Escalation: recurring corruption-banner or gate-block events become `docs/findings.md` entries per the diagnosis "encode the fix" loop.
+
+## Completion Report
+
+### 1. Implementation Summary
+All 13 plan tasks complete and task-verified PASS (task-verifier, confidence 9):
+Phase 0 (0.1 Walking Skeleton), Phase A (A1 ADR-032, A2 state library),
+Phase B (B-DEC-D, B0, B1, B2, B3), Phase C (C1-C5), Phase D (D1-D5),
+Phase E (E1 runtime acceptance, E2 close-out). `Backlog items absorbed: none`
+— no backlog reconciliation required.
+
+Phase C delivered the full three-pane Conversation Tree GUI (vanilla
+HTML/CSS/JS + the existing Node localhost server, no new runtime dep) wired
+against the frozen A2 file-mediated state contract: DEC-A locked layout
+(tree ~57% L / actions+backlog stacked ~43% R, internal scroll, page never
+scrolls, min 1440x900); 4 never-conflated data states per pane + a global
+corruption banner; FR-6 click-to-surface-context; the actions-list pane;
+the backlog pane with capture/sort/activate; and the GUI-write half of the
+symmetric file contract (POST /api/event — every GUI mutation is a single
+appended event Dispatch reads next time it reads the file; the GUI never
+spawns/feeds/steers a Claude Code session). Phase D delivered the tracker
+behaviors: D1 checklist + auto-conclude-only-on-all-checked + concluded stub
++ re-open + exactly-one parent notification; D2 contested check-off safety
+net; D3 defer-as-visible-tag; D4 per-branch staged note; D5 multi-project
+trees + global + cross-tree links + NFR-5 isolation. Phase E ran the in-scope
+acceptance scenario set against the live module.
+
+Additive state-library extensions (no schema major bump, ADR-032 §1):
+event types `session-bound`/`session-unbound` (FR-15 — closes the A1
+systems-designer non-blocking note), `contested`/`contest-resolved` (D2),
+and `branch-opened` honoring an OPTIONAL `tree_id` (DEC-G single-file
+per-project partition). state-library selftest 14/0 GREEN throughout.
+
+### 2. Design Decisions & Plan Deviations
+- DEC-A/B/C built to the LOCKED values (Misha 2026-05-17 = rec), not
+  re-synthesized.
+- DEC-G (new, locked, reversible): v1 multi-project = tree_id partition
+  within the single state file (reducer honors an optional `tree_id` on
+  branch-opened; backlog-added/-activated already carry tree_id). The
+  ADR-032 §5 multi-FILE per-project resolver is NOT used in v1. Rationale:
+  delivers FR-18/FR-25/NFR-5 + FR-3 cross-tree links as user-observable
+  behavior without the multi-file path-resolution machinery; reversible by
+  one reducer line. Documented in evidence + this report.
+- DEC-H (new, locked): D2 contested modeled via additive `contested`/
+  `contest-resolved` event types (ADR-032 §1 additive rule — no major
+  bump); reducer derives `item.contested` and treats contested as NOT
+  checked for FR-7.
+- Commit-shape note: the Phase C/D source landed bundled with the
+  harness-hygiene path-prefix-exemption gate-remediation in e1b60ed
+  (leftover staging after the hygiene gate's first BLOCK). Content correct
+  and on-branch; history NOT rewritten (force-push prohibited). The diff is
+  the authoritative record.
+- harness-hygiene path-prefix exemption added for
+  `neural-lace/conversation-tree-ui/` (the module legitimately repeats its
+  own domain vocabulary Dispatch/State/Context/Node by design). The gate's
+  own named remediation; same precedent as the A2 `Error` allowlist add.
+- B3 live-`~/.claude/` activation applied at the Option-3
+  Phase-B->Phase-C boundary (the deferred single bundle): both gates copied
+  to ~/.claude/hooks/, genericized rule mirrored, both wired into live
+  ~/.claude/settings.json at the exact recipe anchors, jq-validated, live
+  self-tests 18/0 + 8/0. Pre-activation hygiene done: 0 literal "Misha" in
+  shipped kit artifacts (genericized to "the operator").
+
+### 3. Known Issues & Gotchas
+- prompt()-based GUI sub-flows (defer note, dispute note, cross-link,
+  annotate, add-project, +context) use window.prompt(). Functional for a
+  single-user localhost tracker in a real desktop browser; not driveable by
+  a headless evaluator. v1.5 polish: replace with inline form UI
+  (NL-FINDING-006, filed to backlog).
+- Claude Preview screenshot capture timed out in this headless env (a
+  tooling artifact; preview_eval/preview_snapshot — the tool-documented
+  PREFERRED verification surface — were used). No JPEG artifacts; the
+  acceptance artifact records DOM/a11y assertions instead.
+- C5 mouse drag-drop re-parent: the re-parented EVENT path is API +
+  reducer/selftest-proven; a literal mouse-drag gesture was not
+  script-driven (NFR-6 v1 mouse-only is the accepted ceiling).
+
+### 4. Manual Steps Required
+- None for the GUI itself (Node stdlib only; `node server/server.js` from
+  `neural-lace/conversation-tree-ui/`, open http://127.0.0.1:7733).
+- The B3 live-`~/.claude/` gate activation is DONE this session; it takes
+  effect at the NEXT Claude Code session start (hooks load at SessionStart).
+  No further operator action required; the deferred Option-3 bundle is
+  applied.
+
+### 5. Testing Performed & Recommended
+- state-library property selftest: 14/0 GREEN (regression baseline held
+  through all additive extensions).
+- Both enforcement gates --self-test against the live mirror: 18/0
+  (state-gate) + 8/0 (stop-gate).
+- Runtime acceptance: 10/10 in-scope scenarios PASS against the live module
+  in a real Chromium (Claude Preview, 1440x900) against the real
+  file-mediated state contract (s1-s10 + DEC-A/B/C + BF-1/2/4/5 + D1-D5).
+- Recommended next: a standalone non-Dispatch `end-user-advocate` runtime
+  pass once HARNESS-GAP-34 is remediated (the Decision-5 default bar; the
+  functionality-verifier-substitute was applied and the gap surfaced, not
+  hidden). Replace prompt() flows with inline forms (v1.5).
+
+### 6. Cost Estimates
+Zero ongoing cost. Localhost-only Node server, no external network egress,
+no third-party API, no credentials, no new runtime dependency. Disk: the
+append-only state log + periodic snapshot, bounded by the compaction
+trigger across the FR-24 "a minute or a month" horizon (PRD NFR-3 ceiling:
+< 100 branches). No usage-based pricing surface anywhere.
