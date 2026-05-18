@@ -8,6 +8,8 @@
 # The effective config is sourced via read-local-config.sh, which applies the
 # following resolution order:
 #   1. $PWD/.claude/automation-mode.json (per-project override)
+#   1b. <parent-checkout>/.claude/automation-mode.json when $PWD is a git
+#       worktree whose branch predates the config commit (HARNESS-GAP-37)
 #   2. ~/.claude/local/automation-mode.config.json (user-global via helper)
 #   3. Hardcoded fallback (mode=review-before-deploy + default matcher list)
 #
@@ -77,6 +79,34 @@ npm publish'
     proj_override="$PWD/.claude/automation-mode.json"
   elif [ -f "$PWD/.claude/automation-mode.config.json" ]; then
     proj_override="$PWD/.claude/automation-mode.config.json"
+  fi
+
+  # Worktree fallback (HARNESS-GAP-37): a git worktree branched from a master
+  # that predates the project's automation-mode config commit cannot see the
+  # override in its own working tree, so the $PWD/.claude/ probe misses and the
+  # gate silently falls back to the user-global review-before-deploy default —
+  # blocking deploy-class actions in a project that IS configured full-auto.
+  # Resolve the parent checkout via the git-common-dir and read its .claude/
+  # (the same parent-resolution ADR 028 applied to session-wrap.sh's SCRATCHPAD
+  # lookup). The parent checkout is the canonical project root and carries the
+  # committed-and-checked-out config regardless of how old the worktree branch is.
+  if [ -z "$proj_override" ] && command -v git >/dev/null 2>&1; then
+    local _amg_gd _amg_gcd
+    _amg_gd="$(git rev-parse --git-dir 2>/dev/null)"
+    _amg_gcd="$(git rev-parse --git-common-dir 2>/dev/null)"
+    if [ -n "$_amg_gd" ] && [ -n "$_amg_gcd" ]; then
+      _amg_gd="$(cd "$_amg_gd" 2>/dev/null && pwd)"
+      _amg_gcd="$(cd "$_amg_gcd" 2>/dev/null && pwd)"
+      if [ -n "$_amg_gcd" ] && [ "$_amg_gd" != "$_amg_gcd" ]; then
+        local _amg_parent
+        _amg_parent="$(dirname "$_amg_gcd")"
+        if [ -f "$_amg_parent/.claude/automation-mode.json" ]; then
+          proj_override="$_amg_parent/.claude/automation-mode.json"
+        elif [ -f "$_amg_parent/.claude/automation-mode.config.json" ]; then
+          proj_override="$_amg_parent/.claude/automation-mode.config.json"
+        fi
+      fi
+    fi
   fi
 
   local mode=""
@@ -355,6 +385,62 @@ JSON
   _run_with_cmd "git push origin main"
   if [ $? -ne 1 ]; then
     _fail "after removing per-project override: 'git push' should BLOCK again"
+  fi
+
+  # --- Scenario 5: git worktree branched from a pre-config commit (HARNESS-GAP-37) ---
+  # A worktree whose branch predates the project's automation-mode config commit
+  # has no .claude/automation-mode.json in its own working tree. Pre-fix, the gate
+  # fell back to user-global (review-before-deploy) and wrongly BLOCKED deploy
+  # commands in a project that IS configured full-auto. The fix resolves the
+  # parent checkout via git-common-dir and reads its committed config.
+  local wt_parent wt_child
+  wt_parent="$(mktemp -d 2>/dev/null || mktemp -d -t 'nl-amg-wt-parent')"
+  wt_child="${wt_parent}.wt"
+  if [ -n "$wt_parent" ] && [ -d "$wt_parent" ] && command -v git >/dev/null 2>&1; then
+    # User-global = review-before-deploy, so an unfixed gate would BLOCK here.
+    cat > "$tmp_home/.claude/local/automation-mode.config.json" <<'JSON'
+{ "version": 1, "mode": "review-before-deploy", "deploy_matchers": ["git push"] }
+JSON
+    (
+      cd "$wt_parent" || exit 0
+      git init -q .
+      git config user.email "test@example.test"
+      git config user.name "Test"
+      echo "seed" > seed.txt
+      git add seed.txt && git commit -q -m "initial (pre-config)"
+      # Branch a worktree off the pre-config commit BEFORE the config lands.
+      git worktree add -q -b nl-amg-old-branch "$wt_child" >/dev/null 2>&1
+      # Project now opts into full-auto on the parent's main branch.
+      mkdir -p "$wt_parent/.claude"
+      cat > "$wt_parent/.claude/automation-mode.json" <<'JSON'
+{ "version": 1, "mode": "full-auto", "deploy_matchers": ["git push"] }
+JSON
+      git add .claude/automation-mode.json && git commit -q -m "config: full-auto"
+    )
+    if [ -d "$wt_child" ] && [ -e "$wt_child/.git" ]; then
+      # Inside the worktree (no .claude/ of its own): deploy command must PASS
+      # because the parent checkout's full-auto config is resolved via
+      # git-common-dir. Pre-fix this BLOCKED.
+      cd "$wt_child" || true
+      _run_with_cmd "git push origin main"
+      if [ $? -ne 0 ]; then
+        _fail "worktree fallback: 'git push' should PASS (parent is full-auto via git-common-dir)"
+      fi
+      # Negative control: remove the parent config -> user-global
+      # review-before-deploy re-applies -> must BLOCK. Proves the PASS above
+      # came from the parent-config fallback, not from an unrelated pass-through.
+      rm -f "$wt_parent/.claude/automation-mode.json"
+      _run_with_cmd "git push origin main"
+      if [ $? -ne 1 ]; then
+        _fail "worktree fallback negative-control: 'git push' should BLOCK once parent config is gone"
+      fi
+      cd "$tmp_pwd" || true
+      git -C "$wt_parent" worktree remove --force "$wt_child" >/dev/null 2>&1
+    else
+      echo "self-test: NOTE — Scenario 5 skipped (git worktree add unavailable in test env)" >&2
+    fi
+    cd "$tmp_pwd" || true
+    rm -rf "$wt_parent" "$wt_child" 2>/dev/null
   fi
 
   # --- Restore state ---
