@@ -14,7 +14,7 @@
 # mechanical proxy for "the orchestrator wrote the *true* tree before
 # spawning" — raised from "wrote anything" to "wrote a live node naming this
 # branch" (ADR-031 r7 Pin-1). Semantic tree-correctness is the B3 rule-class
-# layer + Misha's interrupt authority; this gate is the freshness/shape/
+# layer + the operator's interrupt authority; this gate is the freshness/shape/
 # branch-presence floor.
 #
 # Matcher (ADR-031 r7 Pin-1 enumerated set; B0-verified all four carry the

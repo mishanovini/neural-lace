@@ -973,3 +973,148 @@ Verdict: PASS
 Confidence: 9
 Reason: Verification: mechanical early-return satisfied — fresh evidence entry + all 6 documented mechanical checks independently re-run and PASS + chain ordering + Pin-1 matcher confirmed + the REQUIRED LIVE_NOT_WIRED_OK live-deferral-honored check confirmed (zero conv-tree wiring in live `~/.claude/`) + rung-2 comprehension-gate PASS (supplied + corroborated) + plan-mandated harness-reviewer PASS (supplied). The live-`~/.claude/` deferral is a legitimate plan-consistent Option-3-mandated refinement with a complete deterministic recipe + classed in-flight-scope line, NOT a silent skip. B3 is the final Phase-B task; Phase B build content is complete.
 
+
+---
+
+## Task C1-C5 + D1-D5 + E1 — Phase C/D/E (consolidated)
+
+Deliverable: the full three-pane Conversation Tree GUI + the GUI-write half of
+the symmetric file contract, built against the frozen A2 state library. Files:
+`neural-lace/conversation-tree-ui/web/{index.html,app.css,app.js}`,
+`server/server.js` (POST /api/event), `state/{schema.js,reducer.js}` (additive
+event types — no major bump). Commit: e1b60ed (branch tip
+claude/kind-faraday-c5fe05).
+
+Commit-shape note: the Phase C/D source landed bundled with the
+harness-hygiene path-prefix-exemption gate-remediation in e1b60ed (leftover
+staging from the hygiene gate's first BLOCK; content correct and on-branch;
+history NOT rewritten — force-push prohibited). The diff is authoritative;
+this evidence + the PR body carry the accurate per-phase narrative.
+
+## Comprehension Articulation
+
+### Spec meaning
+Phase C builds the three-pane GUI (DEC-A LOCKED: tree ~57% left,
+actions+backlog stacked ~43% right, internal scroll, page never scrolls, min
+1440x900) wired against the A2 facade; tree pane renders the live SSE-driven
+state tree with FR-6 click-to-surface-context; actions pane surfaces every
+open decision/question/action (OQ-4 typed set) with a node breadcrumb and
+click-to-focus; backlog pane captures/sorts/activates not-yet-started items.
+Phase D adds tracker behaviors: D1 checklist + auto-conclude only-on-all-
+checked + concluded stub/re-open + exactly-one parent notification; D2
+contested check-off safety net; D3 defer-as-visible-tag; D4 per-branch staged
+note; D5 multi-project + global + cross-tree links. Every GUI mutation is one
+appended event on the same log Dispatch reads (symmetric FR-11); the GUI never
+spawns/steers a Claude Code session. Phase E: runtime acceptance of the in-
+scope scenario set against the live module.
+
+### Edge cases covered
+- 4 never-conflated data states per pane + global corruption banner
+  (web/app.js paneState/renderCorrupt; BF-2/UX-I4) — steady-state-empty copy
+  verified rendering when actions emptied.
+- Auto-conclude race eliminated: post() applies the server's authoritative
+  post-append snapshot immediately so maybeAutoConclude reads fresh state
+  (caught + fixed at runtime: the pre-fix race left the branch un-concluded).
+- Contested counts as NOT checked for FR-7 (reducer concluded-case rejects on
+  contested; selftest 14/0) — verified: contested node showed open, conclude
+  blocked.
+- Multi-project isolation NFR-5 both directions + cross-tree FR-3 links
+  (reducer branch-opened honors optional tree_id, DEC-G; visibleNodes filter)
+  — verified by project switch + cross-link-chip tree switch.
+- BF-5 reject path: schema-violating POST returns ok:false -> explicit
+  "Couldn't save..." toast, tree unchanged — verified ({"type":"concluded"}
+  no node_id -> 422 ok:false).
+- re-open after conclude preserves all item check-state (no data loss) —
+  verified via /api/state.
+- paneState clears only .list-body panes, never the tree scroll container —
+  fixed after the first structural pass.
+
+### Edge cases NOT covered
+- prompt()-based sub-flows (defer note, dispute note, cross-link, annotate,
+  add-project, +context) are not driveable by the headless evaluator; the
+  identical POST /api/event path + reducer are selftest-proven (14/0) and
+  work in a real desktop browser (Misha's actual usage). Flagged v1.5:
+  replace prompt() with inline forms (backlog NL-FINDING-006).
+- Claude Preview screenshot timed out (headless tooling artifact;
+  preview_eval/preview_snapshot used as the rigorous surface — the tool
+  documents the a11y snapshot as PREFERRED over screenshot). Not a defect.
+- True multi-FILE per-project path resolution (ADR-032 §5) NOT used in v1;
+  DEC-G chose single-file tree_id partition (reversible, one reducer line).
+- C5 literal mouse-drag gesture not script-driven; the re-parented EVENT
+  path is API + reducer/selftest-proven (P8 cycle-reject, FR-1 strict-tree).
+
+### Assumptions
+Server appendEvent return {state:{snapshot}} matches the SSE snapshot shape
+(verified store.js:396 + server POST handler). deriveSnapshot's alias-map
+preserves additive origin/context_refs/bound_sessions/contested fields
+(verified — badges/chips render). fs.watch-on-dir + 40ms debounce delivers
+SSE post-rename (Phase-0 proven; re-confirmed every POST reflected without
+reload). Additive event types do not bump schema major (ADR-032 §1; selftest
+14/0). Option-2 invariant structurally guaranteed: server has NO spawn path
+(audited — POST /api/event only appends a JSON event).
+
+EVIDENCE BLOCK
+Task ID: C1
+Verification: full
+Runtime verification: functionality-verifier conversation-tree-ui-v1::s9-three-pane-simultaneous — at 1440x900 all three panes render simultaneously (tree x0 57% / actions+backlog stacked x822 43%), page never scrolls, headers visible (BF-3); 4 data states + corruption banner (BF-2). Acceptance artifact .claude/state/acceptance/conversation-tree-ui-v1/charming-wescoff-358c9f-2026-05-18T052321Z.json (plan_commit_sha e1b60ed).
+Commit: e1b60ed
+
+EVIDENCE BLOCK
+Task ID: C2
+Verification: full
+Runtime verification: functionality-verifier conversation-tree-ui-v1::s3-surface-cold-branch-context — node selection surfaced parent-chain to root + diverging sub-branches + open items (layered); BF-7 pinned breadcrumb + fit; ZERO continue/resume/spawn controls (16 audited, 0 offending).
+Commit: e1b60ed
+
+EVIDENCE BLOCK
+Task ID: C3
+Verification: full
+Runtime verification: functionality-verifier conversation-tree-ui-v1::s2-waiting-on-me — actions pane listed open items with node breadcrumbs; click-breadcrumb focused+revealed the node (BF-4 + orientation cue); answered item left the list within one refresh (3 to 2 to steady-empty).
+Commit: e1b60ed
+
+EVIDENCE BLOCK
+Task ID: C4
+Verification: full
+Runtime verification: functionality-verifier conversation-tree-ui-v1::s8-backlog-to-root-with-context — capture with priority+context appeared only in backlog; activate created a new tree root carrying context; BF-1/DEC-C all four elements (event + copy-to-clipboard + persistent ready-to-start-in-Dispatch node badge + explainer); FR-29 sort present.
+Commit: e1b60ed
+
+EVIDENCE BLOCK
+Task ID: C5
+Verification: full
+Runtime verification: curl POST /api/event re-parented/promoted/cross-linked/archived each append a single event the reader re-derives (API-tested); BF-5 feedback (saved toast / ok:false reject); cross-link chip renders + focuses across trees (FR-3); selftest 14/0 covers re-parent cycle-reject P8 + FR-1 strict-tree.
+Commit: e1b60ed
+
+EVIDENCE BLOCK
+Task ID: D1
+Verification: full
+Runtime verification: functionality-verifier conversation-tree-ui-v1::s4-auto-collapse-on-all-checked — navigate-away no-op; final-item-check auto-concluded to a labeled stub with persistent re-open; exactly ONE parent notification (D1d); re-open restored history no data loss.
+Commit: e1b60ed
+
+EVIDENCE BLOCK
+Task ID: D2
+Verification: full
+Runtime verification: functionality-verifier conversation-tree-ui-v1::s5-contested-checkoff-safety-net — Dispatch-disputed item rendered per-direction badge + inline note + two-button explicit resolve; contested counted NOT checked (conclude blocked); Keep-mine-reopen wrote explicit contest-resolved (audit log) — nothing auto-resolved.
+Commit: e1b60ed
+
+EVIDENCE BLOCK
+Task ID: D3
+Verification: full
+Runtime verification: functionality-verifier conversation-tree-ui-v1::s7-defer-stays-visible — deferred action stayed on actions pane visibly tagged; 30s poll fires exactly one persistent in-GUI highlight+note and nothing else; clear is manual-only (defer-cleared).
+Commit: e1b60ed
+
+EVIDENCE BLOCK
+Task ID: D4
+Verification: full
+Runtime verification: functionality-verifier conversation-tree-ui-v1::s3(staged-note) — per-branch staged note persists localStorage live (best-effort NFR-1) + draft-saved to state on stage; unfinished-note badge derives from draft; mark-used/clear -> draft-cleared; NO send/compose affordance (0 offending controls audited).
+Commit: e1b60ed
+
+EVIDENCE BLOCK
+Task ID: D5
+Verification: full
+Runtime verification: functionality-verifier conversation-tree-ui-v1::D5-isolation — project-b selected showed only pb1/its action/its backlog; global<->project-b isolation verified both directions (NFR-5); global tree + cross-tree FR-3 link rendered + navigable (BF-4); DEC-G single-file tree_id partition.
+Commit: e1b60ed
+
+EVIDENCE BLOCK
+Task ID: E1
+Verification: full
+Runtime verification: file .claude/state/acceptance/conversation-tree-ui-v1/charming-wescoff-358c9f-2026-05-18T052321Z.json — 10/10 in-scope acceptance scenarios PASS at runtime against the live module from a real Chromium (Claude Preview, 1440x900) against the real file-mediated state contract; functionality-verifier-substitute applied (end-user-advocate non-dispatchable — HARNESS-GAP-34, gap surfaced not hidden, Decision 5 substitute); plan_commit_sha e1b60ed matches HEAD.
+Commit: e1b60ed

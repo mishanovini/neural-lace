@@ -159,12 +159,12 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
 
 ### Phase C — Three-pane GUI core (new top-level UI surface; Tier 3)
 
-- [ ] C1. Three-pane layout shell + three never-conflated data states (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: ux-designer (mandatory, new UI surface) + functionality-verifier.**
-  - [ ] C1a. Three-pane simultaneous layout — tree pane + actions-list pane + backlog-list pane rendered together on one normal desktop viewport, no tab/scroll to reach any pane (Misha directive; supersedes the old plan's UX-C3 main/secondary recommendation).
-  - [ ] C1b. Loading state — skeleton + "Loading conversation tree…".
-  - [ ] C1c. First-run empty state — FR-17 per-pane explainer of what populates each pane, not an error/blank.
-  - [ ] C1d. Corruption state — persistent banner `⚠ State file unreadable — showing last good version from <ts>; <N> newer versions could not be parsed`; all-versions-bad → explicit "could not load from any saved version" + audit-log path, never blank (UX-I4).
-  - [ ] C1e. Steady-state-empty per pane (BF-2) — healthy-but-currently-empty, success-framed, distinct from loading/first-run/corruption: actions pane "Nothing waiting on you right now — items appear here when Dispatch raises a decision/question or an action needs you"; backlog pane "No backlog items — capture one with [+]" + capture affordance; tree pane all-concluded renders concluded stubs (UX-N8), never blank.
+- [x] C1. Three-pane layout shell + three never-conflated data states (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: ux-designer (mandatory, new UI surface) + functionality-verifier.**
+  - [x] C1a. Three-pane simultaneous layout — tree pane + actions-list pane + backlog-list pane rendered together on one normal desktop viewport, no tab/scroll to reach any pane (Misha directive; supersedes the old plan's UX-C3 main/secondary recommendation).
+  - [x] C1b. Loading state — skeleton + "Loading conversation tree…".
+  - [x] C1c. First-run empty state — FR-17 per-pane explainer of what populates each pane, not an error/blank.
+  - [x] C1d. Corruption state — persistent banner `⚠ State file unreadable — showing last good version from <ts>; <N> newer versions could not be parsed`; all-versions-bad → explicit "could not load from any saved version" + audit-log path, never blank (UX-I4).
+  - [x] C1e. Steady-state-empty per pane (BF-2) — healthy-but-currently-empty, success-framed, distinct from loading/first-run/corruption: actions pane "Nothing waiting on you right now — items appear here when Dispatch raises a decision/question or an action needs you"; backlog pane "No backlog items — capture one with [+]" + capture affordance; tree pane all-concluded renders concluded stubs (UX-N8), never blank.
   **Prove it works:**
   1. Open the GUI with a seeded multi-node state file; observe all three panes rendered simultaneously, no scroll/tab to reach any pane on a normal desktop viewport.
   2. Point at a missing state file → first-run empty state per pane, not an error/blank.
@@ -173,7 +173,7 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
   - n/a — GUI paths created here; static chain (server route → page → 3 pane DOM containers → state-lib reader) authored in C1 evidence.
   **Integration points:**
   Consumes the A2 reader; verify by seeding known states (good / missing / corrupt) and asserting the correct one of the three states renders (functionality-verifier, browser).
-- [ ] C2. Tree pane — render, pan/zoom, expand/collapse, click-to-surface-context (FR-6: selecting a node surfaces its parent chain to root + the sub-branches that diverge from it + that node's open decisions/questions/actions; layered — summary by default, expandable to fuller context per OQ-3). The GUI makes **no claim** to be where the conversation continues; no session-lifecycle UI. — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
+- [x] C2. Tree pane — render, pan/zoom, expand/collapse, click-to-surface-context (FR-6: selecting a node surfaces its parent chain to root + the sub-branches that diverge from it + that node's open decisions/questions/actions; layered — summary by default, expandable to fuller context per OQ-3). The GUI makes **no claim** to be where the conversation continues; no session-lifecycle UI. — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
   **Prove it works:**
   1. Seed a multi-level tree; pan/zoom/expand/collapse.
   2. Click a deep node; observe its parent chain to root + its diverging sub-branches + its open items surfaced (summary, expandable).
@@ -182,10 +182,10 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
   - n/a — paths from C1/A2; static chain authored in C2 evidence.
   **Integration points:**
   Reads A2 state; verify selecting a node renders the exact parent-chain + sub-branch + open-item set for a seeded fixture (functionality-verifier).
-- [ ] C3. Actions/decision surfacing in the actions-list pane (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
-  - [ ] C3a. Surface each unanswered decision + each open question + each open action from the tree(s), each entry carrying an originating-node breadcrumb (FR-4/FR-5).
-  - [ ] C3b. Clicking an entry focuses + reveals that node in the tree pane (FR-6).
-  - [ ] C3c. An answered/done item leaves the list within one state refresh (SM-3).
+- [x] C3. Actions/decision surfacing in the actions-list pane (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
+  - [x] C3a. Surface each unanswered decision + each open question + each open action from the tree(s), each entry carrying an originating-node breadcrumb (FR-4/FR-5).
+  - [x] C3b. Clicking an entry focuses + reveals that node in the tree pane (FR-6).
+  - [x] C3c. An answered/done item leaves the list within one state refresh (SM-3).
   **Prove it works:**
   1. Seed N unanswered items; observe the actions-list pane lists exactly N, each with a node breadcrumb.
   2. Click one → the tree pane focuses + reveals that node.
@@ -194,7 +194,7 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
   - n/a — paths from C1/A2; static chain authored in C3 evidence.
   **Integration points:**
   Consumes A2 state; cross-links to C2 tree focus; verify count=N → answer one → N-1 (functionality-verifier).
-- [ ] C4. Backlog pane — capture a not-yet-started item with priority {high, medium, low} (FR-20, OQ-11), attach/modify context (notes/files/prior-decisions — FR-21, both Misha and Claude per symmetric principle), activate → becomes a root node of a new tree carrying its context (FR-22); sort by priority/date/effort/tag + mouse drag-reorder in priority view (FR-29). Distinct surface from the actions list (OQ-10). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
+- [x] C4. Backlog pane — capture a not-yet-started item with priority {high, medium, low} (FR-20, OQ-11), attach/modify context (notes/files/prior-decisions — FR-21, both Misha and Claude per symmetric principle), activate → becomes a root node of a new tree carrying its context (FR-22); sort by priority/date/effort/tag + mouse drag-reorder in priority view (FR-29). Distinct surface from the actions list (OQ-10). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
   **Prove it works:**
   1. Capture a backlog item with priority + a context note; confirm it appears only in the backlog pane, not the actions pane.
   2. Re-sort by each key; drag-reorder in priority view; reload — order persists.
@@ -203,7 +203,7 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
   - n/a — paths from C1/A2; static chain authored in C4 evidence.
   **Integration points:**
   Writes/reads A2 state as appended events; verify capture→activate round-trip + sort/reorder persistence (functionality-verifier).
-- [ ] C5. GUI-side mutations as appended events (FR-11 GUI-write half — symmetric interface): drag-drop re-parent, promote-node-to-branch, tag cross-links incl. cross-tree (FR-3), node/branch archival (FR-28, never closes a Claude Code session). Every GUI mutation is a single appended event Dispatch reads next time it reads the file. — Verification: full — **Reviewer: functionality-verifier.**
+- [x] C5. GUI-side mutations as appended events (FR-11 GUI-write half — symmetric interface): drag-drop re-parent, promote-node-to-branch, tag cross-links incl. cross-tree (FR-3), node/branch archival (FR-28, never closes a Claude Code session). Every GUI mutation is a single appended event Dispatch reads next time it reads the file. — Verification: full — **Reviewer: functionality-verifier.**
   **Prove it works:**
   1. Drag a node to a new parent → a `re-parented` event appends → re-read shows the new parent; no node gains two parents (FR-1).
   2. Promote a node to a branch; tag-link two nodes across two trees → visible non-tree cross-link, neither parent changed.
@@ -215,11 +215,11 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
 
 ### Phase D — Tracker behaviors (Tier 2/3)
 
-- [ ] D1. Branch checklist + conclude/collapse/notify behaviors (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
-  - [ ] D1a. Checklist contains exactly the branch's open decisions + open actions + unanswered questions, nothing already-addressed (FR-8).
-  - [ ] D1b. Auto-conclude only when the full checklist is checked; navigate-away changes no branch state (FR-7 reframed).
-  - [ ] D1c. Persistent on-node `↩ auto-concluded — re-open` marker (not a transient toast, UX-C2) + animated collapse leaving a labeled in-place stub `▸ <branch> ✓ concluded` (UX-N8).
-  - [ ] D1d. Exactly one parent notification on child conclude (FR-10).
+- [x] D1. Branch checklist + conclude/collapse/notify behaviors (per-component sub-items below; each independently verified). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
+  - [x] D1a. Checklist contains exactly the branch's open decisions + open actions + unanswered questions, nothing already-addressed (FR-8).
+  - [x] D1b. Auto-conclude only when the full checklist is checked; navigate-away changes no branch state (FR-7 reframed).
+  - [x] D1c. Persistent on-node `↩ auto-concluded — re-open` marker (not a transient toast, UX-C2) + animated collapse leaving a labeled in-place stub `▸ <branch> ✓ concluded` (UX-N8).
+  - [x] D1d. Exactly one parent notification on child conclude (FR-10).
   **Prove it works:**
   1. Open a branch with 3 unchecked items; navigate away and back — still open, unchanged (FR-7 reframe).
   2. Check the final item — branch auto-concludes, animates to a labeled collapsed stub, parent shows exactly one notification.
@@ -228,7 +228,7 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
   - n/a — paths from Phase C; static chain authored in D1 evidence.
   **Integration points:**
   Reads/writes A2 state; verify all-checked⇒concluded, navigate-away⇒no-op, parent-notification-count=1 (functionality-verifier).
-- [ ] D2. Check-off override safety-net (FR-9 — low UI emphasis, explicitly NOT a distrust mechanism): a check-off either side disagrees with is un-checkable/flaggable with a note; per-direction badge (`⚠ Dispatch marked done · you disputed` vs `⚠ You marked done · Dispatch disputed`), the note inline, a two-button resolve (`Accept their position` / `Keep mine, re-open`); the note can itself become a conversation thread; a contested item counts as NOT checked for FR-7 auto-conclude; resolution is explicit-only, never silent/auto (UX-C1, SM-4). The "Accept their position" resolution is itself an appended event (symmetric log — resolved-by-architecture per Decisions Log). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
+- [x] D2. Check-off override safety-net (FR-9 — low UI emphasis, explicitly NOT a distrust mechanism): a check-off either side disagrees with is un-checkable/flaggable with a note; per-direction badge (`⚠ Dispatch marked done · you disputed` vs `⚠ You marked done · Dispatch disputed`), the note inline, a two-button resolve (`Accept their position` / `Keep mine, re-open`); the note can itself become a conversation thread; a contested item counts as NOT checked for FR-7 auto-conclude; resolution is explicit-only, never silent/auto (UX-C1, SM-4). The "Accept their position" resolution is itself an appended event (symmetric log — resolved-by-architecture per Decisions Log). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
   **Prove it works:**
   1. State shows a Dispatch-checked item; Misha un-checks with a note → per-direction contested badge + note inline, item counts as unchecked for auto-conclude.
   2. Misha checks an item; state carries a Dispatch dispute → the specific contested message renders.
@@ -237,7 +237,7 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
   - n/a — paths from Phase C; static chain authored in D2 evidence.
   **Integration points:**
   Reads/writes A2 state; verify audit log shows explicit-only resolution, never implicit (SM-4) (functionality-verifier).
-- [ ] D3. Defer-as-visible-tag (FR-13 reframed): deferring an action **tags it "deferred" and it stays on the actions-list pane**, optionally with a scheduled time. At the scheduled time the system **highlights it and notifies Misha — and does nothing else** (no auto-clear, no auto-act, no auto-move). The tag clears **only by explicit Misha action**. — Verification: full — **Reviewer: functionality-verifier.**
+- [x] D3. Defer-as-visible-tag (FR-13 reframed): deferring an action **tags it "deferred" and it stays on the actions-list pane**, optionally with a scheduled time. At the scheduled time the system **highlights it and notifies Misha — and does nothing else** (no auto-clear, no auto-act, no auto-move). The tag clears **only by explicit Misha action**. — Verification: full — **Reviewer: functionality-verifier.**
   **Prove it works:**
   1. Defer an action with a scheduled time → it remains on the actions list, visibly tagged "deferred".
   2. Advance to the scheduled time → exactly one highlight + notification fires; no other state change (tag not cleared, item not moved/acted).
@@ -246,7 +246,7 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
   - n/a — paths from Phase C; static chain authored in D3 evidence.
   **Integration points:**
   Reads/writes A2 state + a lightweight scheduled check; verify stays-visible-throughout + exactly-one-highlight + manual-clear-only (functionality-verifier).
-- [ ] D4. Per-branch draft persistence + node draft-pending indicator (FR-27): an unsent draft tied to a branch is preserved on branch-switch and restored on return; the node shows a persistent draft-pending badge until the draft is sent or cleared; best-effort durability (NFR-1 — draft loss on abrupt crash acceptable; tree/backlog never); an archived branch's draft is preserved best-effort and restored on un-archive (OQ-13). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
+- [x] D4. Per-branch draft persistence + node draft-pending indicator (FR-27): an unsent draft tied to a branch is preserved on branch-switch and restored on return; the node shows a persistent draft-pending badge until the draft is sent or cleared; best-effort durability (NFR-1 — draft loss on abrupt crash acceptable; tree/backlog never); an archived branch's draft is preserved best-effort and restored on un-archive (OQ-13). — Verification: full — **Reviewer: ux-designer + functionality-verifier.**
   **Prove it works:**
   1. Type a draft on branch A, switch to B, return to A → exact draft restored; node A shows the draft-pending badge throughout.
   2. Clear the draft → badge removed.
@@ -255,7 +255,7 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
   - n/a — paths from Phase C; static chain authored in D4 evidence.
   **Integration points:**
   Reads/writes A2 state (drafts best-effort tier); verify switch-away-return preserves+restores + badge lifecycle (functionality-verifier).
-- [ ] D5. Multi-project trees (FR-18 — separate tree per project) + global tree (FR-25 — cross-cutting work) + cross-tree FR-3 cross-links; project discovery is **user-directed only, no auto-discovery** (OQ-12); project isolation — no cross-project leakage except via explicit cross-links / the global tree (NFR-5). — Verification: full — **Reviewer: functionality-verifier.**
+- [x] D5. Multi-project trees (FR-18 — separate tree per project) + global tree (FR-25 — cross-cutting work) + cross-tree FR-3 cross-links; project discovery is **user-directed only, no auto-discovery** (OQ-12); project isolation — no cross-project leakage except via explicit cross-links / the global tree (NFR-5). — Verification: full — **Reviewer: functionality-verifier.**
   **Prove it works:**
   1. Create work under project A and project B → each appears only in its own tree; switching projects switches trees.
   2. Add cross-cutting work to the global tree; cross-link a global node to a project-A node → visible non-tree association, no multi-parenting.
@@ -267,7 +267,7 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
 
 ### Phase E — Acceptance + close-out
 
-- [ ] E1. `end-user-advocate` runtime mode against the running GUI for the in-scope Acceptance Scenario set, **run from a non-Dispatch standalone Claude Code session** (Decision 5 default — the GUI is the entire user-facing surface; a substitute is weakest exactly there). If standalone is impractical, the documented substitute (self-applied advocate checklist + the systems-designer/ux-designer cross-check used in the design phase) is the interim gate, and the gap is surfaced, not hidden (HARNESS-GAP-34). — Verification: full — **Reviewer: end-user-advocate (runtime).**
+- [x] E1. `end-user-advocate` runtime mode against the running GUI for the in-scope Acceptance Scenario set, **run from a non-Dispatch standalone Claude Code session** (Decision 5 default — the GUI is the entire user-facing surface; a substitute is weakest exactly there). If standalone is impractical, the documented substitute (self-applied advocate checklist + the systems-designer/ux-designer cross-check used in the design phase) is the interim gate, and the gap is surfaced, not hidden (HARNESS-GAP-34). — Verification: full — **Reviewer: end-user-advocate (runtime).**
   **Prove it works:**
   1. From a standalone session, the advocate opens the running GUI and executes each in-scope scenario.
   2. It captures per-scenario artifacts (screenshots, network/console logs).
