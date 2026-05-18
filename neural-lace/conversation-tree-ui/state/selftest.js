@@ -541,6 +541,57 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
   finally { cleanup(dir); }
 })();
 
+// ---- P15 v1.1-ux additive events (item-details-set / action-responded /
+//      item-unchecked) — ADDITIVE within schema major 1 (ADR-032 §1) --------
+(function P15() {
+  const dir = freshDir(); const o = optsFor(dir);
+  try {
+    state.appendEvent({ type: 'branch-opened', node_id: 'n1', parent_id: null, title: 'T' }, o);
+    state.appendEvent({ type: 'action-added', node_id: 'n1', item_id: 'a1', text: 'do X' }, o);
+    state.appendEvent({ type: 'decision-raised', node_id: 'n1', item_id: 'd1', text: 'pick' }, o);
+
+    const s0 = state.readState(o);
+    const majorStill1 = s0.schema_version === 1;   // no major bump
+
+    state.appendEvent({ type: 'item-details-set', node_id: 'n1', item_id: 'a1',
+      details: { description: 'd', context: 'c', instructions: 'i' } }, o);
+    let it = state.readState(o).snapshot.nodes[0].items.find(function (x) { return x.item_id === 'a1'; });
+    const detailsSet = it.details && it.details.description === 'd' && it.details.instructions === 'i';
+
+    state.appendEvent({ type: 'item-details-set', node_id: 'n1', item_id: 'a1',
+      details: { description: 'd2' } }, o);
+    it = state.readState(o).snapshot.nodes[0].items.find(function (x) { return x.item_id === 'a1'; });
+    const detailsLWW = it.details.description === 'd2'
+      && state.readState(o).snapshot.nodes[0].items.length === 2;   // no duplicate item
+
+    state.appendEvent({ type: 'action-responded', node_id: 'n1', item_id: 'd1',
+      response_text: 'my answer' }, o);
+    it = state.readState(o).snapshot.nodes[0].items.find(function (x) { return x.item_id === 'd1'; });
+    const respondedSet = it.responded && it.responded.text === 'my answer' && it.checked === false;
+
+    state.appendEvent({ type: 'action-done', node_id: 'n1', item_id: 'a1' }, o);
+    const checkedAfterDone = state.readState(o).snapshot.nodes[0].items
+      .find(function (x) { return x.item_id === 'a1'; }).checked === true;
+    state.appendEvent({ type: 'item-unchecked', node_id: 'n1', item_id: 'a1' }, o);
+    const uncheckedRoundTrip = state.readState(o).snapshot.nodes[0].items
+      .find(function (x) { return x.item_id === 'a1'; }).checked === false;
+
+    let rejectedUnknown = true;
+    try {
+      state.appendEvent({ type: 'item-unchecked', node_id: 'n1', item_id: 'nope' }, o);
+      rejectedUnknown = state.readState(o).snapshot.nodes[0].items.length === 2;
+    } catch (_) { rejectedUnknown = true; }
+
+    check('P15 v1.1-ux additive events: details-set(LWW) + action-responded(stays !checked) + item-unchecked(round-trip) + schema_version still 1 + unknown-item rejected',
+      majorStill1 && detailsSet && detailsLWW && respondedSet && checkedAfterDone
+        && uncheckedRoundTrip && rejectedUnknown,
+      'major1=' + majorStill1 + ' detailsSet=' + detailsSet + ' LWW=' + detailsLWW
+        + ' responded=' + respondedSet + ' done=' + checkedAfterDone
+        + ' uncheck=' + uncheckedRoundTrip + ' rejUnknown=' + rejectedUnknown);
+  } catch (e) { check('P15 v1.1-ux additive events', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
 process.stdout.write('\nADR-032 state library — property self-test\n');
 process.stdout.write(RESULTS.join('\n') + '\n');
 process.stdout.write('\n' + PASS + ' passed, ' + FAIL + ' failed\n');

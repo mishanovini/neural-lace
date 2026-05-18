@@ -290,6 +290,34 @@ function applyEvent(snap, ev, treeId) {
       else if (ev.resolution === 'keep-mine-reopen') it.checked = false;
       return;
     }
+    // v1.1-ux item 9 — rich item content. ADDITIVE (ADR-032 §1). Sets the
+    // optional `it.details` payload; last-writer-wins (idempotent backfill).
+    case 'item-details-set': {
+      const node = findNode(snap, ev.node_id);
+      const it = node && findItem(node, ev.item_id);
+      if (!it) { reject(snap, ev, 'item not found'); return; }
+      it.details = (ev.details && typeof ev.details === 'object') ? ev.details : null;
+      return;
+    }
+    // v1.1-ux item 10 — inline response. ADDITIVE. The item stays !checked
+    // (still "waiting") but carries `it.responded`; the GUI derives the
+    // "responded — awaiting confirmation" de-emphasis. NOT a conclude.
+    case 'action-responded': {
+      const node = findNode(snap, ev.node_id);
+      const it = node && findItem(node, ev.item_id);
+      if (!it) { reject(snap, ev, 'item not found'); return; }
+      it.responded = { text: String(ev.response_text), ts: ev.ts };
+      return;
+    }
+    // v1.1-ux item 7 — Undo of mark-done/answered. ADDITIVE inverse event
+    // (the append-only log has no built-in uncheck). Re-surfaces the item.
+    case 'item-unchecked': {
+      const node = findNode(snap, ev.node_id);
+      const it = node && findItem(node, ev.item_id);
+      if (!it) { reject(snap, ev, 'item not found'); return; }
+      it.checked = false;
+      return;
+    }
     default:
       // §1 forward-tolerance: unknown type within the same major is skipped,
       // never an error, never a major bump.

@@ -50,18 +50,161 @@
     return e;
   }
   function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
-  function showToast(msg, kind) {
-    toast.textContent = msg; toast.className = 'toast ' + (kind || '');
-    toast.hidden = false;
+  // v1.1-ux items 7/12/13: snackbar. opts.undo = fn → renders an "Undo"
+  // button + uses the 10s timer (item 12). A ✕ is ALWAYS present (item 13):
+  // pressing it closes immediately AND cancels the pending Undo (the action
+  // stays in its post-action state — undo only fires on the Undo click).
+  function closeToast() {
     clearTimeout(toast._t);
-    toast._t = setTimeout(function () { toast.hidden = true; }, 2600);
+    toast._pendingUndo = null;
+    toast.hidden = true;
+    clear(toast);
+  }
+  function snackbar(msg, opts) {
+    opts = opts || {};
+    clearTimeout(toast._t);
+    clear(toast);
+    toast.className = 'toast ' + (opts.kind || '');
+    toast.hidden = false;
+    toast.appendChild(el('span', 'sb-msg', msg));
+    toast._pendingUndo = (typeof opts.undo === 'function') ? opts.undo : null;
+    if (toast._pendingUndo) {
+      var u = el('button', 'sb-undo', 'Undo');
+      u.addEventListener('click', function () {
+        var fn = toast._pendingUndo; closeToast(); if (fn) fn();
+      });
+      toast.appendChild(u);
+    }
+    var x = el('button', 'sb-x', '✕');
+    x.title = 'dismiss (cancels Undo)';
+    x.addEventListener('click', closeToast);     // item 13: ✕ cancels the pending undo
+    toast.appendChild(x);
+    // item 12: undo-bearing snackbar lingers 10s; plain feedback stays 2.6s
+    var dur = opts.duration || (toast._pendingUndo ? 10000 : 2600);
+    toast._t = setTimeout(closeToast, dur);
+  }
+  // Back-compat: every existing showToast(msg,kind) caller = plain snackbar.
+  function showToast(msg, kind) { snackbar(msg, { kind: kind }); }
+
+  // v1.1-ux item 7: respect reduced-motion (harness UX/accessibility std).
+  function reducedMotion() {
+    try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+    catch (_) { return false; }
+  }
+  // item 7: slide+fade the row OUT (~200ms) before the mutation posts, so a
+  // state change is felt, not just "vanished". Then run `then`.
+  function animateLeave(li, then) {
+    if (!li || reducedMotion()) { then(); return; }
+    li.classList.add('leaving');
+    setTimeout(then, 210);
+  }
+  // item 7: optimistic post + undo snackbar. `undoFn` posts the inverse
+  // event. post() is silenced (3rd arg) so only the undo snackbar shows.
+  function actWithUndo(li, postEv, okMsg, undoFn, afterOk) {
+    animateLeave(li, function () {
+      post(postEv, okMsg, true).then(function (ok) {
+        if (!ok) return;                       // post() surfaced the error
+        if (afterOk) afterOk();
+        snackbar(okMsg + ' — Undo?', { kind: 'ok', undo: undoFn });
+      });
+    });
+  }
+  // items 7+8: which action/backlog item ids are NEW since the last render
+  // (drives the entrance flash + the per-pane "+N new" badge). Primed on the
+  // first frame so nothing flashes/badges on initial load.
+  var seenActionIds = null, seenBacklogIds = null;
+  var newActionIds = {}, newBacklogIds = {};
+  var newActionsCount = 0, newBacklogCount = 0;
+  function diffNewIds(curIds, prevSet, kind) {
+    var fresh = {};
+    if (prevSet == null) {            // first frame — prime, badge nothing
+      var prime = {}; curIds.forEach(function (id) { prime[id] = 1; });
+      if (kind === 'a') seenActionIds = prime; else seenBacklogIds = prime;
+      return { fresh: {}, count: 0 };
+    }
+    var cnt = 0;
+    curIds.forEach(function (id) { if (!prevSet[id]) { fresh[id] = 1; cnt++; } });
+    var next = {}; curIds.forEach(function (id) { next[id] = 1; });
+    if (kind === 'a') seenActionIds = next; else seenBacklogIds = next;
+    return { fresh: fresh, count: cnt };
+  }
+
+  // item 9: rich-details disclosure (collapsed by default; per-item toggle).
+  var expandedItems = new Set();
+  function detailRow(label, val) {
+    if (val == null || val === '') return null;
+    var d = el('div', 'det-row');
+    d.appendChild(el('span', 'det-k', label));
+    d.appendChild(el('span', 'det-v', String(val)));
+    return d;
+  }
+  function renderItemDetails(de) {
+    var box = el('div', 'li-details');
+    var add = function (node) { if (node) box.appendChild(node); };
+    add(detailRow('What', de.description));
+    add(detailRow('Why / context', de.context));
+    if (Array.isArray(de.options) && de.options.length) {
+      var ow = el('div', 'det-row');
+      ow.appendChild(el('span', 'det-k', 'Options'));
+      var ol = el('div', 'det-v');
+      de.options.forEach(function (op) {
+        if (typeof op === 'string') { ol.appendChild(el('div', 'det-opt', op)); return; }
+        var o = el('div', 'det-opt');
+        o.appendChild(el('div', 'det-opt-l', op.label || ''));
+        if (op.pros) o.appendChild(el('div', 'muted', '+ ' + op.pros));
+        if (op.cons) o.appendChild(el('div', 'muted', '− ' + op.cons));
+        ol.appendChild(o);
+      });
+      ow.appendChild(ol); box.appendChild(ow);
+    }
+    add(detailRow('Instructions', de.instructions));
+    add(detailRow('Recommendation', de.recommendation));
+    add(detailRow('Blocking input needed', de.blocking_input));
+    if (Array.isArray(de.links) && de.links.length) {
+      var lw = el('div', 'det-row');
+      lw.appendChild(el('span', 'det-k', 'Links'));
+      var lv = el('div', 'det-v');
+      de.links.forEach(function (lk) {
+        var c = el('span', 'det-link', String(lk));
+        c.title = 'repo path / reference';
+        lv.appendChild(c); lv.appendChild(document.createTextNode(' '));
+      });
+      lw.appendChild(lv); box.appendChild(lw);
+    }
+    return box;
+  }
+  // item 10: a decision/question (or an action whose details flag it as
+  // needing input) can be answered inline without context-switching.
+  function respondable(it) {
+    return it.kind === 'decision' || it.kind === 'question'
+      || (it.details && it.details.blocking_input);
+  }
+  function copyResponseForDispatch(it, text) {
+    var blob = '[action ' + it.item_id + '] ' + it.text + '\nResponse: ' + text + '\n' +
+      '(captured in the Conversation Tree GUI — paste to close the loop in Dispatch)';
+    try {
+      navigator.clipboard.writeText(blob).then(
+        function () { showToast('response copied — paste into Dispatch', 'ok'); },
+        function () { fallbackCopy(blob); });
+    } catch (_) { fallbackCopy(blob); }
+  }
+  // item 8: per-pane "+N new" badge. Set from the SSE-driven diff; cleared
+  // when the user looks at that pane (focus / scroll / click within it).
+  function updateNewBadges() {
+    var ab = $('actionsNewBadge'), bb = $('backlogNewBadge');
+    if (ab) { ab.textContent = newActionsCount ? '+' + newActionsCount + ' new' : ''; ab.hidden = !newActionsCount; }
+    if (bb) { bb.textContent = newBacklogCount ? '+' + newBacklogCount + ' new' : ''; bb.hidden = !newBacklogCount; }
+  }
+  function clearNewBadge(which) {
+    if (which === 'a' && newActionsCount) { newActionsCount = 0; updateNewBadges(); }
+    if (which === 'b' && newBacklogCount) { newBacklogCount = 0; updateNewBadges(); }
   }
 
   // ---- write path (BF-5 mutation-feedback contract) --------------------
   // Optimistic intent + explicit saved/error. The crown-jewel tree is never
   // shown as saved when the append failed: on failure we re-sync from SSE
   // (server is the source of truth) and surface an explicit revert toast.
-  function post(ev, okMsg) {
+  function post(ev, okMsg, silent) {
     return fetch('/api/event', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -78,7 +221,7 @@
             S = o.j.snapshot; loaded = true;
             detectConcludeNotifications(); checkDefers(); render();
           }
-          showToast(okMsg || 'saved', 'ok');
+          if (!silent) showToast(okMsg || 'saved', 'ok');
           return o.j;
         }
         var why = o.j && (o.j.error || (o.j.schema_too_new && 'schema too new'));
@@ -362,9 +505,15 @@
     }
     paneState(actionsState, actionsBody, 'populated');
     clear(actionsBody);
+    // items 7+8: detect newly-arrived action items (flash + "+N new" badge)
+    var dN = diffNewIds(entries.map(function (e) { return e.it.item_id; }), seenActionIds, 'a');
+    newActionIds = dN.fresh;
+    if (dN.count) { newActionsCount += dN.count; updateNewBadges(); }
     entries.forEach(function (en, ix) {
       var n = en.n, it = en.it;
-      var li = el('div', 'li' + (it.contested ? ' contested' : ''));
+      var li = el('div', 'li' + (it.contested ? ' contested' : '')
+        + (it.responded ? ' responded' : '')
+        + (newActionIds[it.item_id] ? ' flash' : ''));
       li.setAttribute('draggable', actionsSort.value === 'manual' ? 'true' : 'false');
       var top = el('div', 'li-top');
       top.appendChild(el('span', 'li-kind ' + it.kind, it.kind));
@@ -378,6 +527,29 @@
       cr.addEventListener('click', function () { focusNode(n.node_id); });
       top.appendChild(cr);
       li.appendChild(top);
+
+      // item 9: rich-details disclosure (collapsed by default)
+      if (it.details && typeof it.details === 'object') {
+        var expanded = expandedItems.has(it.item_id);
+        var disc = el('button', 'ghost det-toggle', (expanded ? '▾' : '▸') + ' details');
+        disc.addEventListener('click', function () {
+          if (expandedItems.has(it.item_id)) expandedItems.delete(it.item_id);
+          else expandedItems.add(it.item_id);
+          renderActions();
+        });
+        li.appendChild(disc);
+        if (expanded) li.appendChild(renderItemDetails(it.details));
+      }
+      // item 10: responded — awaiting confirmation (visible, de-emphasised)
+      if (it.responded) {
+        var rn = el('div', 'responded-note');
+        rn.appendChild(el('span', 'badge', 'responded — awaiting confirmation'));
+        rn.appendChild(el('div', 'muted', it.responded.text));
+        var cp = el('button', 'ghost', '⧉ Copy to Dispatch →');
+        cp.addEventListener('click', function () { copyResponseForDispatch(it, it.responded.text); });
+        rn.appendChild(cp);
+        li.appendChild(rn);
+      }
 
       if (it.contested) {
         var label = it.contested.direction === 'dispatch-done-you-disputed'
@@ -404,8 +576,18 @@
         var done = el('button', 'ghost', it.kind === 'action' ? 'mark done' : 'mark answered');
         done.addEventListener('click', function () {
           var type = it.kind === 'action' ? 'action-done' : 'answered';
-          post({ type: type, node_id: n.node_id, item_id: it.item_id }, 'checked')
-            .then(function (ok) { if (ok) maybeAutoConclude(n.node_id); });
+          var label = it.kind === 'action' ? 'Marked done' : 'Marked answered';
+          actWithUndo(li,
+            { type: type, node_id: n.node_id, item_id: it.item_id }, label,
+            function () {   // item 7 undo: re-surface the item (+ re-open node if it auto-concluded)
+              post({ type: 'item-unchecked', node_id: n.node_id, item_id: it.item_id }, 'undone', true)
+                .then(function (ok) {
+                  if (!ok) return;
+                  var nd = byId(n.node_id);
+                  if (nd && nd.state === 'concluded') post({ type: 're-opened', node_id: n.node_id }, 're-opened', true);
+                });
+            },
+            function () { maybeAutoConclude(n.node_id); });
         });
         acts.appendChild(done);
         // D2: dispute a state-checked item (low-emphasis safety net).
@@ -429,9 +611,37 @@
           dfr.addEventListener('click', function () {
             var when = prompt('Defer until (ISO time, or blank for no schedule):', new Date(Date.now() + 36e5).toISOString());
             if (when == null) return;
-            post({ type: 'deferred', node_id: n.node_id, item_id: it.item_id, scheduled_for: when.trim() || null }, 'deferred');
+            actWithUndo(li,
+              { type: 'deferred', node_id: n.node_id, item_id: it.item_id, scheduled_for: when.trim() || null }, 'Deferred',
+              function () { post({ type: 'defer-cleared', node_id: n.node_id, item_id: it.item_id }, 'defer cleared', true); });
           });
           acts.appendChild(dfr);
+        }
+        // item 10: inline Respond on decisions/questions/needs-input (only
+        // when not yet responded — the responded note above takes over then)
+        if (respondable(it) && !it.responded) {
+          var rsp = el('button', 'ghost', 'Respond');
+          rsp.addEventListener('click', function () {
+            if (li.querySelector('.respond-box')) return;   // one open at a time
+            var rb2 = el('div', 'respond-box');
+            var ta = el('textarea', 'draft-area');
+            ta.placeholder = 'Your response — captured here; Copy to Dispatch closes the loop (v1.1).';
+            var row = el('div', 'row');
+            var submit = el('button', 'primary', 'Submit response');
+            submit.addEventListener('click', function () {
+              var txt = ta.value.trim();
+              if (!txt) { ta.focus(); return; }
+              post({ type: 'action-responded', node_id: n.node_id, item_id: it.item_id, response_text: txt }, 'response captured')
+                .then(function (ok) { if (ok) copyResponseForDispatch(it, txt); });
+            });
+            var cancel = el('button', 'ghost', 'cancel');
+            cancel.addEventListener('click', function () { rb2.remove(); });
+            row.appendChild(submit); row.appendChild(cancel);
+            rb2.appendChild(ta); rb2.appendChild(row);
+            li.appendChild(rb2);
+            ta.focus();
+          });
+          acts.appendChild(rsp);
         }
         li.appendChild(acts);
       }
@@ -468,8 +678,11 @@
     }
     paneState(backlogState, backlogBody, 'populated');
     clear(backlogBody);
+    var dB = diffNewIds(entries.map(function (x) { return x.item_id; }), seenBacklogIds, 'b');
+    newBacklogIds = dB.fresh;
+    if (dB.count) { newBacklogCount += dB.count; updateNewBadges(); }
     entries.forEach(function (b) {
-      var li = el('div', 'li');
+      var li = el('div', 'li' + (newBacklogIds[b.item_id] ? ' flash' : ''));
       li.setAttribute('draggable', backlogSort.value === 'manual' ? 'true' : 'false');
       var top = el('div', 'li-top');
       top.appendChild(el('span', 'prio ' + b.priority, b.priority));
@@ -530,6 +743,11 @@
           '▸ ready to start in Dispatch — "' + b.text + '" is now a tracked tree root. ' +
           'This tracker doesn’t run Claude — open Dispatch and continue there; this node now tracks it. ' +
           '(Context copied to clipboard.)', false);
+        // item 7 undo (partial, documented): reverses the user-visible effect
+        // by archiving the just-created node (no un-activate event exists).
+        snackbar('Activated — Undo?', { kind: 'ok', undo: function () {
+          post({ type: 'archived', node_id: newId }, 'undone — node archived', true);
+        } });
       });
   }
   function copyHandoff(text, ctx, nodeId) {
@@ -721,7 +939,15 @@
     } else {
       var arch = el('button', 'ghost', 'archive');
       arch.title = 'archival never closes a Claude Code session (FR-28)';
-      arch.addEventListener('click', function () { post({ type: 'archived', node_id: id }, 'archived'); closeCtx(); });
+      arch.addEventListener('click', function () {
+        post({ type: 'archived', node_id: id }, 'Archived', true).then(function (ok) {
+          if (!ok) return;
+          snackbar('Archived — Undo?', { kind: 'ok', undo: function () {
+            post({ type: 're-opened', node_id: id }, 'undone — restored', true);
+          } });
+        });
+        closeCtx();
+      });
       r6.appendChild(arch);
     }
     var note = el('button', 'ghost', 'annotate');
@@ -851,7 +1077,14 @@
     [].forEach.call(tabBar.querySelectorAll('button'), function (x) {
       x.classList.toggle('active', x === b);
     });
+    if (b.dataset.tab === 'actions') clearNewBadge('a');   // item 8: looked at it
+    if (b.dataset.tab === 'backlog') clearNewBadge('b');
   });
+  // item 8: looking at a pane (scroll or click within it) clears its badge.
+  actionsBody.addEventListener('scroll', function () { clearNewBadge('a'); });
+  actionsBody.addEventListener('click', function () { clearNewBadge('a'); });
+  backlogBody.addEventListener('scroll', function () { clearNewBadge('b'); });
+  backlogBody.addEventListener('click', function () { clearNewBadge('b'); });
 
   // ---- pan/zoom (C2) ---------------------------------------------------
   zoomIn.addEventListener('click', function () { zoom = Math.min(2, zoom + 0.1); renderTree(); });

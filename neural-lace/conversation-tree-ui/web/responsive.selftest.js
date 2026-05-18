@@ -84,5 +84,63 @@ ok('R21 zoom reflow sets width:(100/zoom)% (item 5)',
 ok('R22 tab bar flips body[data-tab] (item 1 mode C, JS only flips a class)',
   /document\.body\.dataset\.tab\s*=\s*b\.dataset\.tab/.test(js));
 
+// --- v1.1-ux items 7/8/9/10/12/13 ------------------------------------------
+const schema = fs.readFileSync(path.join(D, '..', 'state', 'schema.js'), 'utf8');
+const reducer = fs.readFileSync(path.join(D, '..', 'state', 'reducer.js'), 'utf8');
+
+// item 7/12/13 — snackbar + undo + ✕
+ok('R23 snackbar(): undo button + ✕, 10s vs 2.6s timer (items 7/12/13)',
+  /function snackbar\s*\(/.test(js)
+  && /sb-undo/.test(js) && /sb-x/.test(js)
+  && /_pendingUndo\s*\?\s*10000\s*:\s*2600/.test(js));
+ok('R24 ✕ → closeToast clears timer + cancels pending undo (item 13)',
+  /function closeToast\s*\(\)/.test(js)
+  && /toast\._pendingUndo\s*=\s*null/.test(js)
+  && /x\.addEventListener\('click',\s*closeToast\)/.test(js));
+ok('R25 actWithUndo: leave-anim → silent post → undo snackbar (item 7)',
+  /function actWithUndo\s*\(/.test(js)
+  && /function animateLeave\s*\(/.test(js)
+  && /reducedMotion\s*\(\)/.test(js));
+ok('R26 list enter/leave/flash keyframes + reduced-motion guard (item 7)',
+  /@keyframes li-enter/.test(C) && /@keyframes li-leave/.test(C) && /@keyframes li-flash/.test(C)
+  && /@media \(prefers-reduced-motion: reduce\)/.test(C));
+
+// item 8 — +N new badge
+ok('R27 per-pane "+N new" badge: spans + diff + clear-on-look (item 8)',
+  /id="actionsNewBadge"/.test(html) && /id="backlogNewBadge"/.test(html)
+  && /function diffNewIds\s*\(/.test(js) && /function updateNewBadges\s*\(/.test(js)
+  && /clearNewBadge\('a'\)/.test(js) && /\.new-badge/.test(C));
+
+// item 9 — rich details (additive schema + UI)
+ok('R28 item-details-set additive event (schema enum+required+reducer case)',
+  /'item-details-set'/.test(schema)
+  && /'item-details-set':\s*\['node_id',\s*'item_id',\s*'details'\]/.test(schema)
+  && /case 'item-details-set'/.test(reducer));
+ok('R29 rich-details disclosure UI: renderItemDetails + .li-details (item 9)',
+  /function renderItemDetails\s*\(/.test(js) && /det-toggle/.test(js)
+  && /\.li-details\s*\{/.test(C));
+
+// item 10 — inline response (additive schema + UI)
+ok('R30 action-responded additive event (schema enum+required+reducer case)',
+  /'action-responded'/.test(schema)
+  && /'action-responded':\s*\['node_id',\s*'item_id',\s*'response_text'\]/.test(schema)
+  && /case 'action-responded'/.test(reducer));
+ok('R31 inline Respond UI + responded state + Copy-to-Dispatch (item 10)',
+  /function respondable\s*\(/.test(js)
+  && /function copyResponseForDispatch\s*\(/.test(js)
+  && /respond-box/.test(js) && /responded — awaiting confirmation/.test(js)
+  && /\.li\.responded\s*\{/.test(C));
+
+// undo inverse event for done/answered
+ok('R32 item-unchecked additive inverse event (schema+reducer+undo wiring)',
+  /'item-unchecked'/.test(schema)
+  && /'item-unchecked':\s*\['node_id',\s*'item_id'\]/.test(schema)
+  && /case 'item-unchecked'/.test(reducer)
+  && /type:\s*'item-unchecked'/.test(js));
+
+// additive proof: schema_version constant unchanged (still 1, no major bump)
+ok('R33 ADR-032 additive: SCHEMA_VERSION still 1 (3 new event types, no bump)',
+  /const SCHEMA_VERSION\s*=\s*1\s*;/.test(schema));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
