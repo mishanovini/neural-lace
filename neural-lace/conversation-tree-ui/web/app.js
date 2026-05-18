@@ -23,7 +23,11 @@
       blSave = $('blSave'), blCancel = $('blCancel'),
       ctxPanel = $('ctxPanel'), ctxScrim = $('ctxScrim'), zoomIn = $('zoomIn'),
       zoomOut = $('zoomOut'), fitSel = $('fitSel'),
-      showConcluded = $('showConcluded'), tabBar = $('tabBar');
+      showConcluded = $('showConcluded'), tabBar = $('tabBar'),
+      docsBtn = $('docsBtn'), docScrim = $('docScrim'), docModal = $('docModal'),
+      docTitle = $('docTitle'), docBody = $('docBody'), docClose = $('docClose'),
+      docOpenEditor = $('docOpenEditor'), docsPanel = $('docsPanel'),
+      docsBody = $('docsBody'), docsFilter = $('docsFilter'), docsClose = $('docsClose');
 
   // ---- client view state ----------------------------------------------
   var S = null;                 // latest snapshot
@@ -144,18 +148,20 @@
 
   // item 9: rich-details disclosure (collapsed by default; per-item toggle).
   var expandedItems = new Set();
-  function detailRow(label, val) {
+  function detailRow(label, val, projectKey) {
     if (val == null || val === '') return null;
     var d = el('div', 'det-row');
     d.appendChild(el('span', 'det-k', label));
-    d.appendChild(el('span', 'det-v', String(val)));
+    var v = el('div', 'det-v');
+    linkifyDocs(v, String(val), projectKey);   // item 19: docs/… → clickable
+    d.appendChild(v);
     return d;
   }
-  function renderItemDetails(de) {
+  function renderItemDetails(de, projectKey) {
     var box = el('div', 'li-details');
     var add = function (node) { if (node) box.appendChild(node); };
-    add(detailRow('What', de.description));
-    add(detailRow('Why / context', de.context));
+    add(detailRow('What', de.description, projectKey));
+    add(detailRow('Why / context', de.context, projectKey));
     if (Array.isArray(de.options) && de.options.length) {
       var ow = el('div', 'det-row');
       ow.appendChild(el('span', 'det-k', 'Options'));
@@ -170,17 +176,25 @@
       });
       ow.appendChild(ol); box.appendChild(ow);
     }
-    add(detailRow('Instructions', de.instructions));
-    add(detailRow('Recommendation', de.recommendation));
-    add(detailRow('Blocking input needed', de.blocking_input));
+    add(detailRow('Instructions', de.instructions, projectKey));
+    add(detailRow('Recommendation', de.recommendation, projectKey));
+    add(detailRow('Blocking input needed', de.blocking_input, projectKey));
     if (Array.isArray(de.links) && de.links.length) {
       var lw = el('div', 'det-row');
       lw.appendChild(el('span', 'det-k', 'Links'));
       var lv = el('div', 'det-v');
       de.links.forEach(function (lk) {
-        var c = el('span', 'det-link', String(lk));
-        c.title = 'repo path / reference';
-        lv.appendChild(c); lv.appendChild(document.createTextNode(' '));
+        var s = String(lk);
+        // item 19: a docs/… link becomes a clickable .doc-link → inline modal;
+        // a non-doc reference (e.g. "(see branch: X)") stays a plain chip.
+        if (/docs\/[A-Za-z0-9._\/-]+/.test(s)) {
+          linkifyDocs(lv, s, projectKey);
+        } else {
+          var c = el('span', 'det-link', s);
+          c.title = 'repo path / reference';
+          lv.appendChild(c);
+        }
+        lv.appendChild(document.createTextNode(' '));
       });
       lw.appendChild(lv); box.appendChild(lw);
     }
@@ -247,6 +261,139 @@
       });
   }
   function uid(p) { return (p || 'g') + '-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e5).toString(36); }
+
+  // ---- item 19: tiny self-contained markdown renderer (NO runtime dep) ----
+  // Covers the internal-doc subset: headings, bold/italic, inline + fenced
+  // code, links, ordered/unordered lists, hr, paragraphs. HTML-escaped first
+  // so doc content can never inject markup.
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function inlineMd(s) {
+    return esc(s)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  }
+  function mdRender(src) {
+    var lines = String(src == null ? '' : src).split(/\r?\n/);
+    var html = '', i = 0, inList = false, listTag = '';
+    function closeList() { if (inList) { html += '</' + listTag + '>'; inList = false; listTag = ''; } }
+    while (i < lines.length) {
+      var ln = lines[i];
+      var fence = ln.match(/^```/);
+      if (fence) {
+        closeList(); i++;
+        var code = '';
+        while (i < lines.length && !/^```/.test(lines[i])) { code += lines[i] + '\n'; i++; }
+        i++; html += '<pre><code>' + esc(code) + '</code></pre>'; continue;
+      }
+      var h = ln.match(/^(#{1,6})\s+(.*)$/);
+      if (h) { closeList(); html += '<h' + h[1].length + '>' + inlineMd(h[2]) + '</h' + h[1].length + '>'; i++; continue; }
+      if (/^\s*([-*])\s+/.test(ln)) {
+        if (!inList || listTag !== 'ul') { closeList(); html += '<ul>'; inList = true; listTag = 'ul'; }
+        html += '<li>' + inlineMd(ln.replace(/^\s*[-*]\s+/, '')) + '</li>'; i++; continue;
+      }
+      if (/^\s*\d+\.\s+/.test(ln)) {
+        if (!inList || listTag !== 'ol') { closeList(); html += '<ol>'; inList = true; listTag = 'ol'; }
+        html += '<li>' + inlineMd(ln.replace(/^\s*\d+\.\s+/, '')) + '</li>'; i++; continue;
+      }
+      if (/^\s*(---+|\*\*\*+)\s*$/.test(ln)) { closeList(); html += '<hr>'; i++; continue; }
+      if (/^\s*$/.test(ln)) { closeList(); i++; continue; }
+      closeList(); html += '<p>' + inlineMd(ln) + '</p>'; i++;
+    }
+    closeList();
+    return html;
+  }
+  // item 19: open one doc inline (rendered markdown). projectKey defaults to
+  // the active tree (the project tag); the server resolves it cross-repo.
+  var curDoc = null;
+  function openDocModal(project, relPath) {
+    project = project || activeTree;
+    curDoc = { project: project, path: relPath };
+    docTitle.textContent = project + ' › ' + relPath;
+    docBody.innerHTML = '<p class="muted">Loading…</p>';
+    docModal.hidden = false; docScrim.hidden = false;
+    fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(relPath))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok) { docBody.innerHTML = mdRender(j.content); }
+        else { docBody.innerHTML = '<p class="muted">Could not load this doc: ' + esc((j && j.error) || 'unknown') + '</p>'; }
+      })
+      .catch(function () { docBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
+  }
+  function closeDocModal() { docModal.hidden = true; docScrim.hidden = true; curDoc = null; }
+  // item 19: linkify any docs/…(.md) token inside a text node into a clickable
+  // .doc-link button (so doc references in item text/details are not dead text).
+  var DOCRE = /docs\/[A-Za-z0-9._\/-]+\.md|docs\/[A-Za-z0-9._\/-]+/g;
+  function linkifyDocs(container, text, projectKey) {
+    var s = String(text == null ? '' : text), last = 0, m;
+    DOCRE.lastIndex = 0;
+    while ((m = DOCRE.exec(s)) !== null) {
+      if (m.index > last) container.appendChild(document.createTextNode(s.slice(last, m.index)));
+      var b = el('button', 'doc-link', m[0]);
+      b.title = 'open ' + m[0] + ' (project: ' + (projectKey || activeTree) + ')';
+      (function (p) { b.addEventListener('click', function () { openDocModal(projectKey, p); }); })(m[0]);
+      container.appendChild(b);
+      last = m.index + m[0].length;
+    }
+    if (last < s.length) container.appendChild(document.createTextNode(s.slice(last)));
+  }
+  // item 19: cross-project docs browser (searchable, collapsible per project).
+  var docsCache = null, docsCollapsed = {};
+  function openDocsPanel() {
+    docsPanel.hidden = false; docScrim.hidden = false;
+    if (docsCache) { renderDocsPanel(); return; }
+    docsBody.innerHTML = '<p class="muted">Loading docs…</p>';
+    fetch('/api/docs').then(function (r) { return r.json(); }).then(function (j) {
+      docsCache = (j && j.projects) || {}; renderDocsPanel();
+    }).catch(function () { docsBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
+  }
+  function closeDocsPanel() { docsPanel.hidden = true; if (docModal.hidden) docScrim.hidden = true; }
+  function renderDocsPanel() {
+    var f = (docsFilter.value || '').trim().toLowerCase();
+    clear(docsBody);
+    Object.keys(docsCache).forEach(function (key) {
+      var info = docsCache[key];
+      var files = (info.files || []).filter(function (p) { return !f || p.toLowerCase().indexOf(f) !== -1; });
+      if (f && files.length === 0) return;
+      var head = el('div', 'dp-proj');
+      head.appendChild(el('span', 'twist', docsCollapsed[key] ? '▸' : '▾'));
+      head.appendChild(document.createTextNode(key + ' (' + (info.missing ? 'root not found on this machine' : files.length) + ')'));
+      head.addEventListener('click', function () { docsCollapsed[key] = !docsCollapsed[key]; renderDocsPanel(); });
+      docsBody.appendChild(head);
+      if (docsCollapsed[key] || info.missing) {
+        if (info.missing) docsBody.appendChild(el('div', 'dp-missing', info.root));
+        return;
+      }
+      files.forEach(function (p) {
+        var fe = el('div', 'dp-file', p);
+        fe.addEventListener('click', function () { openDocModal(key, p); });
+        docsBody.appendChild(fe);
+      });
+    });
+    if (!docsBody.firstChild) docsBody.appendChild(el('p', 'muted', 'No docs match.'));
+  }
+  if (docsBtn) docsBtn.addEventListener('click', openDocsPanel);
+  if (docsClose) docsClose.addEventListener('click', closeDocsPanel);
+  if (docsFilter) docsFilter.addEventListener('input', function () { if (docsCache) renderDocsPanel(); });
+  if (docClose) docClose.addEventListener('click', closeDocModal);
+  if (docOpenEditor) docOpenEditor.addEventListener('click', function () {
+    if (!curDoc) return;
+    fetch('/api/doc/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(curDoc) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { showToast(j && j.ok ? 'opened in editor' : ('open failed: ' + ((j && j.error) || '')), j && j.ok ? 'ok' : 'err'); })
+      .catch(function () { showToast('open failed — server unreachable', 'err'); });
+  });
+  if (docScrim) docScrim.addEventListener('click', function () { closeDocModal(); closeDocsPanel(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      if (!docModal.hidden) closeDocModal();
+      else if (!docsPanel.hidden) closeDocsPanel();
+    }
+  });
 
   // ---- snapshot helpers ------------------------------------------------
   function nodes() { return (S && Array.isArray(S.nodes)) ? S.nodes : []; }
@@ -568,7 +715,7 @@
           renderActions();
         });
         li.appendChild(disc);
-        if (expanded) li.appendChild(renderItemDetails(it.details));
+        if (expanded) li.appendChild(renderItemDetails(it.details, treeOf(n)));
       }
       // item 10: responded — awaiting confirmation (visible, de-emphasised)
       if (it.responded) {

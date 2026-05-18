@@ -1,0 +1,4 @@
+# Per-machine project→root map (item 19). Real absolute paths / product
+# codenames must NEVER ship in the kit (harness-hygiene). The generic
+# projects.example.json + the projects.js resolver ARE tracked.
+projects.json
