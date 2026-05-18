@@ -241,6 +241,15 @@
         ]
       },
       {
+        "matcher": "mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/conversation-tree-state-gate.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Task",
         "hooks": [
           {
@@ -337,6 +346,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/product-acceptance-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/conversation-tree-stop-gate.sh"
           },
           {
             "type": "command",

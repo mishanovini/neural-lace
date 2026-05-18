@@ -381,7 +381,7 @@ fi
 # allowlist is for the surviving scan surface (downstream consumer code,
 # instance project files), where common JS/TS built-ins might still
 # legitimately appear 3+ times.
-NL_VOCAB_ALLOWLIST="Neural|Lace|Claude|Anthropic|Build|Doctrine|Generation|Pattern|Mechanism|Status|Mode|Plan|Phase|Hook|Agent|Skill|Decision|Discovery|Backlog|Promise|Object|Array|String|Boolean|Number|Function|Component|Module|Project|Session|Source|Target|Update|Create|Action|Result|Verdict|Worker|Builder|Reviewer|Verifier|Method|Output|Input|Origin|Master|Branch|Commit"
+NL_VOCAB_ALLOWLIST="Neural|Lace|Claude|Anthropic|Build|Doctrine|Generation|Pattern|Mechanism|Status|Mode|Plan|Phase|Hook|Agent|Skill|Decision|Discovery|Backlog|Promise|Object|Array|String|Boolean|Number|Function|Error|Component|Module|Project|Session|Source|Target|Update|Create|Action|Result|Verdict|Worker|Builder|Reviewer|Verifier|Method|Output|Input|Origin|Master|Branch|Commit"
 
 # Returns 0 if the heuristic checks should be SKIPPED for this file
 # (file lives inside an NL-prefix path where prose mentions of paths
@@ -418,6 +418,14 @@ is_path_shape_exempt() {
     build-doctrine/*|build-doctrine) return 0 ;;
     build-doctrine-templates/*|build-doctrine-templates) return 0 ;;
     build-doctrine-orchestrator/*|build-doctrine-orchestrator) return 0 ;;
+    # Conversation-Tree UI module (NL's own product code under neural-lace/).
+    # Its domain vocabulary (Dispatch, State, Context, Content, Node, Branch)
+    # is repetitive BY DESIGN — the module is literally a tracker of the
+    # Dispatch conversation-tree state, so the Layer-2 cluster heuristic
+    # false-positives on every file. Structural path-prefix exemption per
+    # harness-hygiene.md "How to add false-positive exemptions"; same logic
+    # as adapters/ and build-doctrine/. (conversation-tree-ui-v1 Phase C/D.)
+    neural-lace/conversation-tree-ui/*|neural-lace/conversation-tree-ui) return 0 ;;
     # The synced `~/.claude/` mirror (when scanning that tree directly).
     *.claude/*|*/.claude/*) return 0 ;;
     # NL-root prose files (README, CONTRIBUTING, LICENSE, SETUP,

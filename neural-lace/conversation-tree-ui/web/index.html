@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Conversation Tree</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header>
+    <h1>Conversation Tree</h1>
+    <label class="proj-wrap">tree
+      <select id="treeSelect" aria-label="active project tree"></select>
+    </label>
+    <button id="addProjBtn" class="ghost" title="add a project tree">+ project</button>
+    <label class="archtoggle"><input type="checkbox" id="showArchived"> show archived</label>
+    <span class="spacer"></span>
+    <span id="lastRead" class="lastread" aria-live="polite">—</span>
+    <span id="status" class="status" aria-live="polite">connecting…</span>
+  </header>
+
+  <!-- Global corruption banner (UX-I4 / C1d) — hidden unless the reader
+       surfaces a torn/unreadable state. Never blanks the panes. -->
+  <div id="corruptBanner" class="banner corrupt" role="alert" hidden></div>
+  <!-- Persistent in-GUI notification stack (BF-6 / DEC-B): parent-conclude,
+       defer-time. Survives until acted on; v1 has no OS notification. -->
+  <div id="noteStack" class="note-stack" aria-live="polite"></div>
+  <!-- Transient saved/error feedback (BF-5). -->
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <main id="layout">
+    <!-- LEFT: tree pane (~57%, full height, internally scrollable). -->
+    <section id="treePane" class="pane tree-pane" aria-label="conversation tree">
+      <div class="pane-head">
+        <span class="pane-title">Tree</span>
+        <span id="treeCrumb" class="crumb" aria-live="polite">no selection</span>
+        <span class="pane-tools">
+          <button id="zoomOut" class="ghost" title="zoom out">−</button>
+          <button id="zoomIn" class="ghost" title="zoom in">+</button>
+          <button id="fitSel" class="ghost" title="center on selection">⊙ fit</button>
+        </span>
+      </div>
+      <div id="treeScroll" class="pane-body tree-scroll">
+        <div id="treeCanvas" class="tree-canvas"></div>
+      </div>
+      <div id="treeState" class="pane-state" hidden></div>
+    </section>
+
+    <!-- RIGHT: actions (top) + backlog (bottom), stacked, each scrollable. -->
+    <div class="right-col">
+      <section id="actionsPane" class="pane actions-pane" aria-label="waiting on you">
+        <div class="pane-head">
+          <span class="pane-title">Waiting on you</span>
+          <label class="sortlbl">sort
+            <select id="actionsSort" aria-label="sort actions">
+              <option value="kind">kind</option>
+              <option value="node">branch</option>
+              <option value="deferred">deferred last</option>
+              <option value="manual">manual</option>
+            </select>
+          </label>
+        </div>
+        <div id="actionsBody" class="pane-body list-body"></div>
+        <div id="actionsState" class="pane-state" hidden></div>
+      </section>
+
+      <section id="backlogPane" class="pane backlog-pane" aria-label="backlog">
+        <div class="pane-head">
+          <span class="pane-title">Backlog</span>
+          <label class="sortlbl">sort
+            <select id="backlogSort" aria-label="sort backlog">
+              <option value="priority">priority</option>
+              <option value="date">date</option>
+              <option value="manual">manual</option>
+            </select>
+          </label>
+          <button id="addBacklogBtn" class="ghost" title="capture a backlog item">+</button>
+        </div>
+        <div id="backlogCapture" class="capture" hidden>
+          <input id="blText" type="text" placeholder="What's the not-yet-started work?" aria-label="backlog item text">
+          <select id="blPriority" aria-label="priority">
+            <option value="high">high</option>
+            <option value="medium" selected>medium</option>
+            <option value="low">low</option>
+          </select>
+          <input id="blContext" type="text" placeholder="context note (optional)" aria-label="context note">
+          <button id="blSave" class="primary">Add</button>
+          <button id="blCancel" class="ghost">cancel</button>
+        </div>
+        <div id="backlogBody" class="pane-body list-body"></div>
+        <div id="backlogState" class="pane-state" hidden></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Selected-node context surface (FR-6 / C2) — slides over the right
+       column; passive, no continue/resume affordance anywhere. -->
+  <aside id="ctxPanel" class="ctx-panel" hidden aria-label="node context"></aside>
+
+  <script src="/app.js"></script>
+</body>
+</html>
