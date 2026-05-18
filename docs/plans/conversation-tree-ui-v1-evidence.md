@@ -760,3 +760,60 @@ No live captured Claude Code Stop-hook transcript fixture (real Dispatch session
 Runtime verification: command bash adapters/claude-code/hooks/conversation-tree-stop-gate.sh --self-test ::8 passed, 0 failed
 Runtime verification: file adapters/claude-code/hooks/conversation-tree-stop-gate.sh::mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent
 Runtime verification: file adapters/claude-code/hooks/conversation-tree-stop-gate.sh::s.verifySnapshotAttested(parsed)
+
+---
+
+EVIDENCE BLOCK
+==============
+Task ID: B2
+Task description: `conversation-tree-stop-gate.sh` Stop. Scans `$TRANSCRIPT_PATH` (agent-uneditable) for spawn / Task / Agent dispatch this session; if any occurred without a corresponding state-file write, BLOCK session end with a remediation message + a justification escape-hatch marker (mirrors `bug-persistence-gate.sh` exactly). `--self-test`. — Verification: full
+Verified at: 2026-05-17T00:00:00Z
+Verifier: task-verifier agent
+
+Comprehension-gate: PASS (confidence 8) — comprehension-reviewer (rung-2 gate) PASS supplied orchestrator-mediated; Stage 1 schema PASS (four canonical `### ` sub-sections ordered), Stage 2 substance PASS (densely task-specific), Stage 3 diff-correspondence PASS — every s1–s8 self-test claim + every Assumption maps to verified content in the B2 commit (SOLE-NORMATIVE `verifySnapshotAttested` path present, forbidden `jq -cS|sha256sum` genuinely absent, Pin-1 independent branch extraction, bug-persistence-gate mirror). Articulation present at `## Task B2` → `## Comprehension Articulation` (four sub-sections, ordered).
+
+Checks run:
+1. Self-test corroboration (independent re-run)
+   Command: bash adapters/claude-code/hooks/conversation-tree-stop-gate.sh --self-test
+   Output: s1-spawn-no-state-BLOCK (exit 2) PASS; s2-spawn-verified-named-ALLOW (exit 0) PASS; s3-spawn-torn-state-BLOCK (exit 2) PASS; s4-no-spawn-ALLOW-silent (exit 0) PASS; s5-fresh-waiver-ALLOW (exit 0) PASS; s6-whitespace-waiver-BLOCK (exit 2) PASS; s7-stale-waiver-BLOCK (exit 2) PASS; s8-transcript-missing-failopen (exit 0) PASS; "8 passed, 0 failed"
+   Result: PASS — independently corroborated 8/0 (FUNCTIONALITY-OVER-COMPONENTS: the gate's "user" is the harness; `--self-test` 8/0 IS the user-facing outcome)
+
+2. Spot-check (a): enumerated spawn tool_names scanned from $TRANSCRIPT_PATH
+   Command: read hook lines 282-308
+   Output: line 264 extracts TRANSCRIPT_PATH from stdin `.transcript_path // .session.transcript_path`; lines 288-296 `jq` extracts every plausible tool-name token (`.tool_name`, `.message.tool_name`, `.content[].name`, `.message.content[].name`); line 303 `case` matches exactly `mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent`
+   Result: PASS — scans the agent-uneditable transcript for the enumerated set across both flat and `.message.content[]` envelopes
+
+3. Spot-check (b): verified-write check shells node -e verifySnapshotAttested; forbidden jq -cS|sha256sum trust path absent
+   Command: grep -nE 'sha256sum|jq -cS|jq -S' (whole file)
+   Output: lines 400-412 shell `node -e` requiring the state-library and calling `s.verifySnapshotAttested(parsed)` as the SOLE-NORMATIVE §8 r2.1 verifier (5 references); the only `jq -cS` / `sha256sum` occurrence is the prohibition COMMENT at line 24 — zero executable occurrences
+   Result: PASS — verifySnapshotAttested is the sole trust primitive; forbidden shell-recompute path genuinely absent
+
+4. Spot-check (c): no-spawn-this-session ⇒ clean ALLOW (exit 0, no spurious BLOCK)
+   Command: read hook lines 310-314
+   Output: `if [[ "$SPAWN_SEEN" -eq 0 ]]; then exit 0; fi` — silent exit 0, no stderr, no `{"decision":"block"}` (compose-safe: invisible to other Stop hooks, cannot deadlock product-acceptance / bug-persistence / narrate-and-wait); corroborated by self-test s4 PASS
+   Result: PASS — no-trigger ⇒ silent ALLOW, mirrors bug-persistence-gate.sh
+
+5. Spot-check (d): fresh-substantive-waiver uses -newermt '1 hour ago' + non-whitespace-line check (bug-persistence-gate mirror)
+   Command: read hook lines 359-373
+   Output: `_has_fresh_waiver` uses `find "$STATE_DIR" -maxdepth 1 -type f -name "$WAIVER_GLOB" -newermt '1 hour ago'` + `grep -q '[^[:space:]]'` per candidate; whitespace-only OR stale>1h both still BLOCK (corroborated by self-test s6 + s7 PASS)
+   Result: PASS — waiver semantics mirror bug-persistence-gate.sh exactly
+
+6. Deliverable files present at commit
+   Command: git show --stat a4b335e; grep harness-architecture.md
+   Output: `adapters/claude-code/hooks/conversation-tree-stop-gate.sh` (+524) and `docs/harness-architecture.md` (+row at line 176, table entry + "Last updated" note) both present at the B2 commit; hook is 524 lines, executable
+   Result: PASS — both B2 deliverables landed
+
+Git evidence:
+  Files modified in B2 commit:
+    - adapters/claude-code/hooks/conversation-tree-stop-gate.sh  (commit a4b335e, 2026-05-17 — "feat: Task B2 — conversation-tree-stop-gate.sh Stop gate"; B2 work cherry-picked from 5c98574, landed at branch tip a4b335e)
+    - docs/harness-architecture.md  (commit a4b335e — new Stop-hook table row + Last-updated note)
+
+Upstream supplied verdicts (orchestrator-mediated, no-nested-subagents env):
+  - harness-reviewer (plan-mandated B2 reviewer): PASS — classified Mechanism (agrees); 7 mechanism-checklist + 4 universal checks PASS against REAL transcript shapes; fail-closed empirically confirmed; shell-injection probe did NOT execute; forged named-but-unattested state still BLOCKed via SOLE-NORMATIVE verifySnapshotAttested; waiver + retry-guard mirror bug-persistence-gate exactly; ran --self-test itself 8/0; two NON-BLOCKING observations correctly out-of-B2-scope (B3 wiring; superior intentional retry-guard divergence). B2 cleared.
+  - comprehension-reviewer (rung-2 gate): PASS (Confidence 8) — Stage 1/2/3 all PASS; rung-2 gate SATISFIED.
+
+Verdict: PASS
+Confidence: 9
+Reason: Independent 8/0 self-test corroboration plus all four mandated spot-checks confirmed against the hook source; both plan-mandated reviewers (harness-reviewer + comprehension-reviewer rung-2) supplied PASS; both B2 deliverables present at the branch tip; the gate's user-facing outcome (the harness — `--self-test` 8/0) is genuinely demonstrated, not component-only.
+
+Note: prompt cited B2 commit as 5c98574 (cherry-picked); the B2 work is present at branch tip a4b335e ("feat: Task B2 …") with identical content — evidence cites the actual landed SHA a4b335e. B3 settings.json wiring is the next task (out of B2 scope); `docs/findings.md` not edited per instruction.

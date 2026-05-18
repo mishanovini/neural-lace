@@ -138,7 +138,7 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
   - n/a — hook path is created in this task; static chain (settings.json matcher → hook script → state-file path) authored in B1's evidence block + verified by `--self-test`.
   **Integration points:**
   Mirrors `bug-persistence-gate.sh` / `teammate-spawn-validator.sh` precedents; verify via `--self-test` (mechanical) + one real matched spawn against a fresh vs stale state file.
-- [ ] B2. `conversation-tree-stop-gate.sh` Stop. Scans `$TRANSCRIPT_PATH` (agent-uneditable) for spawn / Task / Agent dispatch this session; if any occurred without a corresponding state-file write, BLOCK session end with a remediation message + a justification escape-hatch marker (mirrors `bug-persistence-gate.sh` exactly). `--self-test`. — Verification: full — **Reviewer: harness-reviewer.**
+- [x] B2. `conversation-tree-stop-gate.sh` Stop. Scans `$TRANSCRIPT_PATH` (agent-uneditable) for spawn / Task / Agent dispatch this session; if any occurred without a corresponding state-file write, BLOCK session end with a remediation message + a justification escape-hatch marker (mirrors `bug-persistence-gate.sh` exactly). `--self-test`. — Verification: full — **Reviewer: harness-reviewer.**
   **Prove it works:**
   1. `conversation-tree-stop-gate.sh --self-test` — spawn-without-write BLOCKs; spawn-with-write ALLOWs; no-spawn ALLOWs; waiver-present ALLOWs.
   2. Simulate a transcript with a Task dispatch and no state write; observe BLOCK + remediation.
