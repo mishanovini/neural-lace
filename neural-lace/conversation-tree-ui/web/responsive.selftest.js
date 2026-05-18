@@ -142,5 +142,100 @@ ok('R32 item-unchecked additive inverse event (schema+reducer+undo wiring)',
 ok('R33 ADR-032 additive: SCHEMA_VERSION still 1 (3 new event types, no bump)',
   /const SCHEMA_VERSION\s*=\s*1\s*;/.test(schema));
 
+// ===================== v1.1.1 polish invariants (14–23) =====================
+const server = fs.readFileSync(path.join(D, '..', 'server', 'server.js'), 'utf8');
+const backfill = fs.readFileSync(path.join(D, '..', 'state', 'backfill-details.js'), 'utf8');
+
+// item 14 — type-colour palette: 3 vars + filled badge + per-card accent/tint
+ok('R34 item14 type palette vars + filled .li-kind + .li.kind-* accent/tint',
+  /--type-action:\s*#dc2626/i.test(C) && /--type-decision:\s*#f59e0b/i.test(C)
+  && /--type-question:\s*#3b82f6/i.test(C)
+  && /\.li-kind\.action\s*\{\s*background:\s*var\(--type-action\)/.test(C)
+  && /\.li\.kind-action\s*\{\s*border-left:\s*5px solid var\(--type-action\)/.test(C)
+  && /'li kind-' \+ it\.kind/.test(js));
+
+// item 15 — title flex:1 + fixed-width icon jump button (text crumb removed)
+ok('R35 item15 .li-text flex:1 + .li-jump 24px icon (no .li-crumb in renderActions)',
+  /\.li-text\s*\{\s*flex:\s*1/.test(C) && /\.li-jump\s*\{[^}]*24px/.test(C)
+  && /el\('button',\s*'li-jump',\s*'→'\)/.test(js)
+  && /Jump to in tree/.test(js)
+  && !/el\('span',\s*'li-crumb'/.test(js));
+
+// item 16 — hide-concluded relocated into the tree pane-head + default=hide
+ok('R36 item16 #showConcluded inside tree pane-head .viewtoggle + default OFF=hide',
+  /class="viewtoggle"[\s\S]{0,140}id="showConcluded"/.test(html)
+  && !/id="showConcluded"[^>]*>\s*show concluded\s*<\/label>\s*<span class="spacer"/.test(html)
+  && /ctree-show-concluded'\)\s*===\s*'1'/.test(js)
+  && /\.viewtoggle\s*\{/.test(C));
+
+// item 17 — bidirectional interior wash + auto-scroll both directions
+ok('R37 item17 .li.hl/.tnode-row.hl interior wash + bidirectional scroll wiring',
+  /\.li\.hl,\s*\.tnode-row\.hl\s*\{[^}]*linear-gradient/.test(C)
+  && /row\.classList\.add\('hl'\)/.test(js)
+  && /selItem\s*=\s*it\.item_id;\s*focusNode/.test(js)
+  && /actionsBody\.querySelector\('\.li\[data-node="'/.test(js)
+  && /scrollIntoView\(\{\s*block:\s*'center',\s*behavior:\s*'smooth'/.test(js));
+
+// item 18 — toast bottom-right (no left:50% in base) + arrive flash + RM clause
+ok('R38 item18 toast bottom-right + @keyframes arrive + reduced-motion variant',
+  /\.toast\s*\{\s*position:\s*fixed;\s*right:\s*1\.2rem;\s*bottom:\s*1\.2rem;/.test(C)
+  && !/\.toast\s*\{[^}]*left:\s*50%/.test(C)
+  && /@keyframes arrive/.test(C)
+  && /\.arrive-static/.test(C)
+  && /prefers-reduced-motion: reduce\)\s*\{[^}]*\.li\.arrive/.test(C)
+  && /function arriveCls\s*\(\)/.test(js) && /function sweepArriveStatic\s*\(\)/.test(js));
+
+// item 19 — cross-repo doc viewer end-to-end tokens
+ok('R39 item19 server endpoints + projects two-layer + mdRender + modal/panel',
+  /url === '\/api\/doc'/.test(server) && /url === '\/api\/docs'/.test(server)
+  && /url === '\/api\/doc\/open'/.test(server)
+  && /path traversal rejected/.test(fs.readFileSync(path.join(D,'..','config','projects.js'),'utf8'))
+  && fs.existsSync(path.join(D,'..','config','projects.example.json'))
+  && fs.existsSync(path.join(D,'..','config','.gitignore'))
+  && /function mdRender\s*\(/.test(js) && /function openDocModal\s*\(/.test(js)
+  && /function openDocsPanel\s*\(/.test(js) && /function linkifyDocs\s*\(/.test(js)
+  && /id="docModal"/.test(html) && /id="docsPanel"/.test(html) && /id="docsBtn"/.test(html));
+
+// item 20 — "promote"→"expand to branch"; event type stays `promoted`
+ok('R40 item20 expand-to-branch rename; promoted event type preserved',
+  !/promote to branch/i.test(js) && !/promoted to branch/i.test(js)
+  && /'expand to branch'/.test(js) && /'expanded to branch'/.test(js)
+  && /type:\s*'promoted'/.test(js));
+
+// item 21 — robust priority sort: execute the extracted prioRank logic
+(function () {
+  var a = js.indexOf('function prioRank');
+  var b = js.indexOf('function sortBacklog');
+  var ok21 = false;
+  if (a !== -1 && b !== -1 && b > a) {
+    try {
+      // eslint-disable-next-line no-eval
+      var prioRank = eval('(' + js.slice(a, b).replace(/^function prioRank/, 'function') + ')');
+      var input = ['P3', 'P1', 'P2'];
+      var out = input.slice().sort(function (x, y) { return prioRank(x) - prioRank(y); });
+      var mixed = ['low', 'high', 'medium'].slice().sort(function (x, y) { return prioRank(x) - prioRank(y); });
+      ok21 = out.join(',') === 'P1,P2,P3'
+        && mixed.join(',') === 'high,medium,low'
+        && prioRank('high') === 0 && prioRank('1') === 0 && prioRank('zzz') === 9;
+    } catch (e) { ok21 = false; }
+  }
+  ok('R41 item21 prioRank([P3,P1,P2]) → [P1,P2,P3] (and high/p1/1→0, unknown→9)', ok21);
+})();
+
+// item 22 — semantic button palette: 6 classes defined + applied in app.js
+ok('R42 item22 six semantic btn classes defined + applied',
+  /\.btn-go\s*\{/.test(C) && /\.btn-wait\s*\{/.test(C) && /\.btn-info\s*\{/.test(C)
+  && /\.btn-up\s*\{/.test(C) && /\.btn-del\s*\{/.test(C) && /\.btn-neutral\s*\{/.test(C)
+  && /\.outline\b/.test(C)
+  && /'btn-go'/.test(js) && /'btn-wait'/.test(js) && /'btn-info'/.test(js)
+  && /'btn-up'/.test(js) && /'btn-del outline'/.test(js) && /'btn-neutral/.test(js));
+
+// item 23 — cross-repo doc-sourced enrichment present (no fabrication path)
+ok('R43 item23 backfill resolveDocPath + extractFromDoc wired into payloadFor',
+  /function resolveDocPath\s*\(/.test(backfill)
+  && /function extractFromDoc\s*\(/.test(backfill)
+  && /require\('\.\.\/config\/projects\.js'\)/.test(backfill)
+  && /links\.find\(function \(l\) \{ return \/\^docs\\\//.test(backfill));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
