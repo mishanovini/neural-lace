@@ -40,6 +40,9 @@ Immediately after v1.1.1 (items 14–23) merged (master `759923d`), the maintain
 - `neural-lace/conversation-tree-ui/web/responsive.selftest.js` — invert R40, add R44.
 - `docs/plans/conv-tree-ui-v1.1.2-polish.md` — this plan + Decisions Log.
 
+## In-flight scope updates
+- 2026-05-18: neural-lace/conversation-tree-ui/state/backfill-details.js — B15 selftest path-fragility fix: it referenced `docs/plans/conv-tree-ui-v1.1.1-polish.md`, which the v1.1.1 closure renamed+archived, so the case regressed (14/1). Repointed B15 at the permanent `docs/DECISIONS.md` (never archived). In-scope under Task 26 "all six suites green"; light case, not a spec thaw.
+
 ## Testing Strategy
 Each change locked by a `web/responsive.selftest.js` source-invariant assertion (the established pattern). Full six-suite regression sweep is Task 26's gate. Live browser verification is the post-merge `:7733` restart step.
 

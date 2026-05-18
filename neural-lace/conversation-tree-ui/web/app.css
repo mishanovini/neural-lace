@@ -238,6 +238,22 @@ button:active { transform: scale(0.98); }
 .twist { width: 1rem; text-align: center; color: var(--muted); user-select: none; }
 .tnode-title { font-weight: 600; flex: 1; }
 .tnode-title.concluded::before { content: "✓ "; color: var(--ok); }
+/* v1.1.2 item 25: top-level project nodes read as document H1/H2 headers —
+   bigger, bolder, more breathing room, a subtle 5% white tint, and a thin
+   separator above each so the "these are top-level branches" hierarchy is
+   instant. Only depth-0 (forest-root) rows; nested rows are unchanged. */
+.tnode-row.tnode-root {
+  font-size: 1.18rem;
+  padding: 0.62rem 0.7rem;
+  border-left-width: 5px;
+  background-image: linear-gradient(rgba(255,255,255,0.05), rgba(255,255,255,0.05));
+  margin-top: 0.7rem;
+  border-top: 1px solid var(--border2);
+}
+.tnode-row.tnode-root .tnode-title { font-weight: 800; letter-spacing: 0.01em; }
+.tnode-row.tnode-root .twist { font-size: 1.05rem; width: 1.3rem; color: var(--accent); }
+/* the very first top-level node needs no separator gap above it */
+.tree-canvas > .tnode:first-child > .tnode-row.tnode-root { margin-top: 0.1rem; border-top: none; }
 .tkids { margin-left: 1.4rem; border-left: 1px dashed var(--border); padding-left: 0.5rem; }
 .collapsed > .tkids { display: none; }
 .badge {

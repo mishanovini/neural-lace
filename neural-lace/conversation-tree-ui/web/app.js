@@ -533,14 +533,15 @@
     if (openCt) frag.appendChild(el('span', 'badge count', openCt + ' open'));
     return frag;
   }
-  function renderTreeNode(n, kids, container) {
+  function renderTreeNode(n, kids, container, depth) {
+    depth = depth || 0;                       // item 25: forest roots = depth 0
     var wrap = el('div', 'tnode');
     var kidList = kids[n.node_id] || [];
     var hasKids = kidList.length > 0;
     var isCollapsed = collapsed.has(n.node_id) || n.state === 'concluded';
     if (isCollapsed) wrap.classList.add('collapsed');
 
-    var row = el('div', 'tnode-row');
+    var row = el('div', 'tnode-row' + (depth === 0 ? ' tnode-root' : '')); // item 25: top-level = H1/H2-style header
     if (n.node_id === sel) { row.classList.add('sel'); row.classList.add('hl'); } // item 17: interior wash
     if (seenTreeIds && !seenTreeIds[n.node_id]) row.classList.add(arriveCls());    // item 18: new node flash
     if (n.state === 'concluded') row.classList.add('concluded');
@@ -548,7 +549,8 @@
     row.setAttribute('data-node', n.node_id);
     row.setAttribute('draggable', 'true'); // C5 mouse drag re-parent
 
-    var tw = el('span', 'twist', hasKids ? (isCollapsed ? '▸' : '▾') : '·');
+    // item 25: top-level nodes get a larger, distinct disclosure glyph.
+    var tw = el('span', 'twist', hasKids ? (isCollapsed ? (depth === 0 ? '▶' : '▸') : (depth === 0 ? '▼' : '▾')) : (depth === 0 ? '◆' : '·'));
     tw.addEventListener('click', function (e) {
       e.stopPropagation();
       if (!hasKids) return;
@@ -586,7 +588,7 @@
     wrap.appendChild(row);
     if (hasKids) {
       var kc = el('div', 'tkids');
-      kidList.forEach(function (k) { renderTreeNode(k, kids, kc); });
+      kidList.forEach(function (k) { renderTreeNode(k, kids, kc, depth + 1); });
       wrap.appendChild(kc);
     }
     container.appendChild(wrap);
@@ -1073,14 +1075,14 @@
     open.slice(0, showN).forEach(function (it) {
       var d = el('div', 'ctx-item', '[' + it.kind + '] ' + it.text +
         (it.deferred ? '  (deferred)' : '') + (it.contested ? '  (contested)' : ''));
-      // item 20: "promote" reads as git jargon — the user's mental model is
-      // "this checklist item EXPANDS into its own branch". Event type stays
-      // `promoted` (ADR-032 schema is frozen); only the label/toast change.
-      // item 22: scope-up action → purple (.btn-up).
-      var pr = el('button', 'btn-up', 'expand to branch');
+      // v1.1.2 item 20 DROPPED: the maintainer is comfortable with "promote
+      // to branch" now that the affordance is understood — label reverted to
+      // the original wording. item 22's scope-up purple (.btn-up) STAYS;
+      // event type stays `promoted` (ADR-032 schema frozen).
+      var pr = el('button', 'btn-up', 'promote to branch');
       pr.style.marginLeft = '0.4rem';
       pr.addEventListener('click', function () {
-        post({ type: 'promoted', node_id: n.node_id, item_id: it.item_id, new_node_id: uid('n') }, 'expanded to branch');
+        post({ type: 'promoted', node_id: n.node_id, item_id: it.item_id, new_node_id: uid('n') }, 'promoted to branch');
       });
       d.appendChild(pr);
       s3.appendChild(d);
