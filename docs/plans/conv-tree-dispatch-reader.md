@@ -41,12 +41,12 @@ as `additionalContext`.
 
 ## Tasks
 
-- [ ] 1. Build `conversation-tree-read.sh` (reader hook + ≥15-scenario `--self-test`) — Verification: mechanical
-- [ ] 2. Scripted end-to-end: append a GUI `answered`+response event via the facade into a temp state file, fire the hook with synthetic UserPromptSubmit stdin, assert stdout `additionalContext` contains the response text — Verification: mechanical
-- [ ] 3. Register the hook in live `~/.claude/settings.json` UserPromptSubmit chain + mirror into `adapters/claude-code/settings.json.template` — Verification: mechanical
-- [ ] 4. Dual-mirror sync: live `~/.claude/hooks/conversation-tree-read.sh` byte-identical to `adapters/claude-code/hooks/conversation-tree-read.sh` — Verification: mechanical
-- [ ] 5. Architecture doc `docs/conv-tree-dispatch-reader.md` + one-line row in `~/.claude/docs/harness-architecture.md` — Verification: mechanical
-- [ ] 6. Regression: emit hook `--self-test` 17/17; `conversation-tree-state-gate.sh --self-test` + `conversation-tree-stop-gate.sh --self-test` still green — Verification: mechanical
+- [x] 1. Build `conversation-tree-read.sh` (reader hook + ≥15-scenario `--self-test`) — Verification: mechanical
+- [x] 2. Scripted end-to-end: append a GUI `answered`+response event via the facade into a temp state file, fire the hook with synthetic UserPromptSubmit stdin, assert stdout `additionalContext` contains the response text — Verification: mechanical
+- [x] 3. Register the hook in live `~/.claude/settings.json` UserPromptSubmit chain + mirror into `adapters/claude-code/settings.json.template` — Verification: mechanical
+- [x] 4. Dual-mirror sync: live `~/.claude/hooks/conversation-tree-read.sh` byte-identical to `adapters/claude-code/hooks/conversation-tree-read.sh` — Verification: mechanical
+- [x] 5. Architecture doc `docs/conv-tree-dispatch-reader.md` + one-line row in `~/.claude/docs/harness-architecture.md` — Verification: mechanical
+- [x] 6. Regression: emit hook `--self-test` 17/17; `conversation-tree-state-gate.sh --self-test` + `conversation-tree-stop-gate.sh --self-test` still green — Verification: mechanical
 - [ ] 7. One PR to neural-lace master, drive to merge, sync the `~/claude-projects/neural-lace` main checkout — Verification: mechanical
 
 ## Files to Modify/Create
