@@ -52,6 +52,7 @@ Misha opened the Conv Tree UI live (master `ce216ad`, server on `127.0.0.1:7733`
 - `docs/plans/conv-tree-ui-v1.1-responsive.md` — this plan; Decisions Log carries the additive DEC-A revision.
 
 ## In-flight scope updates
+- 2026-05-18: `neural-lace/conversation-tree-ui/web/responsive.selftest.js` — the dependency-free headless responsive regression test the plan's Testing Strategy + the user's "add regression tests" instruction require. New file (light case, one file → in-flight per spec-freeze, not a thaw). Asserts the breakpoint/overlay/zoom CSS+HTML+JS invariants; 22/22 PASS.
 
 ## Assumptions
 - The backfilled 45-node tree-state.json (sha256 `8a403e54…`) copied into the worktree's gitignored `state/` dir faithfully represents what Misha sees live; rendering it correctly at each viewport is the render-correctness proof.
