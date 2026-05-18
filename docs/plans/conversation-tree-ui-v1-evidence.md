@@ -601,3 +601,54 @@ B0 is the empirical gate that de-risks B1's enforcement substrate before any pro
 - `mcp__ccd_session__spawn_task` / `mcp__ccd_session_mgmt__start_code_task` are the exact tool identities at invocation time. Taken from this session's deferred-tools system-reminder list and `~/.claude/rules/spawn-task-report-back.md` (which titles itself "Convention-Based Callback Channel for `mcp__ccd_session__spawn_task`" and repeatedly names the full string as the dispatch tool). The matcher must contain these exact literals (it does, per plan:129) — assumed stable for v1.
 - The B1 hook body will read tool identity via the established `jq -r '.tool_name // ""'` precedent. Plan B1a + ADR Pin-1 describe a matcher; the body-read mechanism is the universal harness convention (verified across ~15 hooks). Assuming B1 follows that convention (it should, per `~/.claude/rules/harness-maintenance.md` global-consistency), the full-string MCP `tool_name` flows through unchanged and the four-way alternation discriminates correctly.
 - Documented matcher semantics imply event-field semantics. The inference "`matcher: mcp__.*` matching MCP tools implies PreToolUse `tool_name` IS the full `mcp__…` string" assumes the matcher is applied to the `tool_name` field (not some hidden separate identifier). hook-development SKILL.md:316 + the matcher section jointly support this (the only tool-identity field documented for PreToolUse is `tool_name`); assumed sound and the same assumption every existing harness PreToolUse matcher already relies on.
+
+---
+
+EVIDENCE BLOCK
+==============
+Task ID: B0
+Task description: Empirically verify Claude Code populates the PreToolUse hook `tool_name` for the MCP spawn tools (`mcp__ccd_session__spawn_task`, `mcp__ccd_session_mgmt__start_code_task`) identically to built-in `Task`/`Agent` — the ADR-031 r7 explicitly-flagged build-phase assumption. Record the observed event JSON shape + the B1-matcher implication.
+Verified at: 2026-05-17T00:00:00Z
+Verifier: task-verifier agent (Verification: mechanical early-return)
+
+Verification level: mechanical
+Evidence path: docs/plans/conversation-tree-ui-v1-evidence.md (## Task B0 entry, lines 544-575) + ## Comprehension Articulation (lines 577-603)
+
+Comprehension-gate: PASS (confidence 8) — comprehension-reviewer (orchestrator-mediated, no-nested-subagents env) returned PASS on the ## Task B0 ## Comprehension Articulation: Stage 1 schema PASS (four canonical ### sub-sections, ordered); Stage 2 substance PASS (each task-specific to the tool_name investigation, no vacuous content); Stage 3 diff-correspondence PASS (reviewer independently resolved every cited evidence source verbatim; YES determination is evidence-backed not asserted; the single inferential link matcher-semantics⇒event-field-semantics is honestly surfaced as an Assumption). rung-2 gate SATISFIED. Verdict supplied as final; not re-dispatched (cannot — no-nested-subagents environment).
+
+Checks run:
+1. Verification-level early-return precondition (Verification: mechanical)
+   Command: rg -n 'B0' docs/plans/conversation-tree-ui-v1.md
+   Output: plan line 127 declares "B0. ... — Verification: mechanical — **Reviewer: task-verifier.**"; rung 2 per plan header.
+   Result: PASS — mechanical level confirmed; early-return path applies (documented-evidence investigation, no runtime-replay).
+
+2. Evidence artifact present + records a definitive answer
+   Command: grep -n '## Task B0' docs/plans/conversation-tree-ui-v1-evidence.md ; read lines 544-575
+   Output: ## Task B0 entry at line 544 (commit e7a7706; B0 work commit 07cd38e cherry-picked). Line 550 states the definitive answer: YES — MCP tool_name = full `mcp__<server>__<tool>` namespaced string, identical to built-ins. Per-tool table (564-569) gives exact tool_name + YES match for all four surfaces (mcp__ccd_session__spawn_task, mcp__ccd_session_mgmt__start_code_task, Task, Agent). B1 implication (573-575): matcher OK as-planned, ADR-031 r7 build-phase pin RESOLVED, NO re-plan trigger (the FAIL condition "MCP tool_name differs from built-ins" is NOT met); no flagged-risk finding for the orchestrator.
+   Result: PASS — definitive answer + B1 implication both recorded.
+
+3. Spot-corroboration that cited sources resolve (evidence is real, not fabricated)
+   Command: rg -n 'tool_name' ~/.claude/hooks/teammate-spawn-validator.sh ; rg -n 'PreToolUse.*tool_name|mcp__.*delete' ~/.claude/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/SKILL.md
+   Output:
+     - teammate-spawn-validator.sh:174 → `tool_name=$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null || echo "")` — uniform .tool_name read, exactly as cited (evidence Evidence#4).
+     - hook-development/SKILL.md:316 → `**PreToolUse/PostToolUse:** \`tool_name\`, \`tool_input\`, \`tool_result\`` — verbatim match to evidence cite (Evidence#1).
+     - hook-development/SKILL.md:406 → `"matcher": "mcp__.*__delete.*"  // All MCP delete tools` — the discriminator the argument hinges on, present within the cited :404-409 range (Evidence#1).
+   Result: PASS — three independent cited sources resolve verbatim against the live files.
+
+4. Comprehension-gate (rung 2) propagation
+   Command: (orchestrator-mediated; comprehension-reviewer PASS supplied as final)
+   Output: PASS confidence 8 (schema PASS / substance PASS / diff-correspondence PASS).
+   Result: PASS — rung-2 gate satisfied; checkbox flip authorized.
+
+Git evidence:
+  - docs/plans/conversation-tree-ui-v1-evidence.md  (## Task B0 entry committed at e7a7706; B0 work cherry-picked at 07cd38e)
+  - ~/.claude/hooks/teammate-spawn-validator.sh:174  (uniform .tool_name read — spot-corroborated)
+  - ~/.claude/plugins/.../hook-development/SKILL.md:316,406  (authoritative hooks-input + matcher schema — spot-corroborated)
+
+Runtime verification: file docs/plans/conversation-tree-ui-v1-evidence.md::Definitive answer: YES — Claude Code populates the PreToolUse `tool_name` field for MCP tools identically to built-ins
+Runtime verification: file ~/.claude/hooks/teammate-spawn-validator.sh::jq -r '.tool_name // ""'
+Runtime verification: file ~/.claude/plugins/marketplaces/claude-plugins-official/plugins/plugin-dev/skills/hook-development/SKILL.md::PreToolUse/PostToolUse:
+
+Verdict: PASS
+Confidence: 8
+Reason: Verification: mechanical early-return — the ## Task B0 evidence artifact is present and records a definitive answer (MCP tool_name = full `mcp__<server>__<tool>` string for both spawn tools, identical to built-in Task/Agent; B1 matcher OK as-planned; ADR-031 r7 build-phase pin resolved with NO re-plan trigger); the rung-2 comprehension-gate is satisfied (comprehension-reviewer PASS confidence 8, supplied as final); and spot-corroboration confirms three independent cited sources resolve verbatim against the live files (evidence is real, not fabricated). B0 is a documented-evidence investigation (no production code) — the early-return PASS authorizes per Tranche D risk-tiered routing. ADR-031 r7 build-phase pin RESOLVED; no orchestrator re-plan trigger.
