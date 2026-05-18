@@ -147,7 +147,7 @@ plan-reviewer PASS + systems-designer PASS + ux-designer findings folded
   - n/a — hook path created here; static chain (Stop wiring → hook → transcript scan → state-file mtime check) authored in B2 evidence + `--self-test`.
   **Integration points:**
   Reads `$TRANSCRIPT_PATH`; verify via `--self-test` + one real session with/without a state write.
-- [ ] B3. Pattern rule `~/.claude/rules/conversation-tree-state.md` (orchestrator self-applies "write the *true* tree"; schema-design-for-key-presence guidance — the ceiling of the mechanical layer is honestly documented). Wire both hooks in `adapters/claude-code/settings.json.template` AND the live `~/.claude/settings.json` (two-layer-config discipline). Update `docs/harness-architecture.md` (docs-freshness-gate). — Verification: mechanical — **Reviewer: harness-reviewer.**
+- [x] B3. Pattern rule `~/.claude/rules/conversation-tree-state.md` (orchestrator self-applies "write the *true* tree"; schema-design-for-key-presence guidance — the ceiling of the mechanical layer is honestly documented). Wire both hooks in `adapters/claude-code/settings.json.template` AND the live `~/.claude/settings.json` (two-layer-config discipline). Update `docs/harness-architecture.md` (docs-freshness-gate). — Verification: mechanical — **Reviewer: harness-reviewer.**
   **Prove it works:**
   1. `diff -q` the wired matcher in `settings.json.template` vs live `~/.claude/settings.json` — byte-identical for the two new hook entries.
   2. Grep `docs/harness-architecture.md` for both hook rows present.

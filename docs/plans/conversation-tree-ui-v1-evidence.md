@@ -885,3 +885,91 @@ Task ID: B3
 Task description: Pattern rule `adapters/claude-code/rules/conversation-tree-state.md` (Mechanism+Pattern split; orchestrator self-applies "write the *true* tree"; accepted gaps verbatim from ADR-031 r7). Wire both hooks in `adapters/claude-code/settings.json.template` (canonical source of truth). Update `docs/harness-architecture.md`. Live `~/.claude/` activation DEFERRED to the Option-3 Phase-B→Phase-C clean-confirm boundary (recipe in this entry; deferral in plan In-flight scope updates). — Verification: mechanical
 Verified at: 2026-05-17T00:00:00Z
 
+---
+
+EVIDENCE BLOCK
+==============
+Task ID: B3
+Task description: Pattern rule `adapters/claude-code/rules/conversation-tree-state.md` (Mechanism+Pattern split; orchestrator self-applies "write the *semantically true* tree"; three accepted gaps verbatim from ADR-031 r7) + wire BOTH gates into the canonical `adapters/claude-code/settings.json.template` (PreToolUse `conversation-tree-state-gate.sh` with the Pin-1 four-tool matcher; Stop `conversation-tree-stop-gate.sh`) + `docs/harness-architecture.md` updates. Live `~/.claude/` activation DEFERRED to the Misha-locked Option-3 Phase-B→Phase-C clean-confirm boundary (documented recipe + classed `## In-flight scope updates` line — NOT a silent skip). — Verification: mechanical
+Verified at: 2026-05-17T15:00:00Z
+Verifier: task-verifier agent (Verification: mechanical early-return — risk-tiered-verification.md)
+
+Comprehension-gate: PASS (confidence 8) — supplied: comprehension-reviewer rung-2 gate satisfied; Stage 1 schema PASS (four canonical `### ` sub-sections, ordered, under `## Task B3`), Stage 2 substance PASS (densely task-specific; NOT-covered names real gaps), Stage 3 diff-correspondence PASS (every covered-edge citation resolves; the load-bearing live-deferral claim adversarially verified TRUE — commit touches no `~/.claude/` live files). Independently corroborated: the four sub-sections (`### Spec meaning` / `### Edge cases covered` / `### Edge cases NOT covered` / `### Assumptions`) are present in order under `## Task B3`.
+
+Verification level: mechanical
+Evidence path: docs/plans/conversation-tree-ui-v1-evidence.md `## Task B3` (mechanical-check command set ~lines 866-873)
+Commit: 71db5d5 (cherry-picked; branch tip 4901f42 "feat: Task B3 — conversation-tree-state Pattern rule + canonical hook wiring + arch-doc")
+
+Checks run (independently re-executed by task-verifier from repo root):
+
+1. Git provenance
+   Command: git log --oneline -3; git show --stat 71db5d5
+   Output: tip 4901f42 confirmed; B3 commit 71db5d5 touches exactly 5 files (rules/conversation-tree-state.md created, settings.json.template, docs/harness-architecture.md, plan + evidence) — ZERO files under `~/.claude/`.
+   Result: PASS
+
+2. TEMPLATE_JSON_OK
+   Command: jq . adapters/claude-code/settings.json.template >/dev/null && echo TEMPLATE_JSON_OK
+   Output: TEMPLATE_JSON_OK
+   Result: PASS
+
+3. PRETOOLUSE_WIRED_OK
+   Command: jq -e '.hooks.PreToolUse[] | select(.matcher=="mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent") | .hooks[] | select(.command|test("conversation-tree-state-gate.sh"))' adapters/claude-code/settings.json.template
+   Output: PRETOOLUSE_WIRED_OK — matcher is the verbatim Pin-1 four-tool string; entry shape mirrors the existing teammate-spawn-validator.sh object.
+   Result: PASS
+
+4. STOP_WIRED_OK
+   Command: jq -e '.hooks.Stop[0].hooks[] | select(.command|test("conversation-tree-stop-gate.sh"))' adapters/claude-code/settings.json.template
+   Output: STOP_WIRED_OK — inserted as an element of the single `"matcher":""` Stop array (not a new matcher object).
+   Result: PASS
+
+5. Chain ordering
+   Command: jq -r '.hooks.PreToolUse[]|.hooks[].command' / '.hooks.Stop[0].hooks[].command' (grep teammate-spawn/conv-tree/dag-review and product-acceptance/conv-tree/deferral-counter)
+   Output: PreToolUse — teammate-spawn-validator(25) → conversation-tree-state-gate(26) → dag-review-waiver-gate(27). Stop — product-acceptance-gate(4) → conversation-tree-stop-gate(5) → deferral-counter(6). Both orderings exactly as documented.
+   Result: PASS
+
+6. RULE_OK
+   Command: test -f adapters/claude-code/rules/conversation-tree-state.md && grep -q '^## Enforcement' && grep -q 'Accepted gaps' && grep -q '^## Cross-references' && grep -q '^## Scope'
+   Output: RULE_OK — rule read end-to-end: canonical Hybrid Classification header, Mechanism+Pattern split, the THREE accepted gaps lifted verbatim from ADR-031 r7 (cloud invisible+unenforced; `Bash(claude…)`/`/schedule` un-enumerated; documented semantic-correctness ceiling) — not softened, not overclaimed; Enforcement table, Cross-references, Scope present. Claims no enforcement the two gates do not actually provide.
+   Result: PASS
+
+7. ARCHDOC_OK
+   Command: grep -q 'conversation-tree-state.md.*conversation-tree-ui v1 Task B3' && grep -q '### PreToolUse (15 entries)' && grep -q '### Stop (9 entries' && grep -q '## Conversation-Tree UI Module'
+   Output: ARCHDOC_OK — Pattern-rule row (L429), PreToolUse rows (L112/L177), Stop-chain entry (L157/L178), count bumps PreToolUse 14→15 (L100) / Stop 8→9 (L149), new `## Conversation-Tree UI Module` section (L672). Deltas accurate per harness-maintenance.md §3.
+   Result: PASS
+
+8. DEFERRAL_DOCUMENTED_OK
+   Command: grep -q 'live-.*activation DEFERRED' docs/plans/conversation-tree-ui-v1.md && grep -q 'Ready-to-apply live' docs/plans/conversation-tree-ui-v1-evidence.md
+   Output: DEFERRAL_DOCUMENTED_OK — plan L309 classed `## In-flight scope updates` line (class: deferred-by-locked-execution-mode-decision; Option-3 rationale; sweep query); evidence L846-862 complete deterministic ready-to-apply recipe (exact cp/chmod, exact JSON insert objects, exact anchors, jq validation, optional --self-test sanity). Plan L520 confirms the Misha-locked Option-3 Tier-2 Decisions Log entry mandating the Phase-B→Phase-C clean-confirm boundary.
+   Result: PASS
+
+9. LIVE_NOT_WIRED_OK (REQUIRED — live deferral must be HONORED)
+   Command: grep -c 'conversation-tree-state' ~/.claude/settings.json; test -f ~/.claude/hooks/conversation-tree-state-gate.sh; test -f ~/.claude/hooks/conversation-tree-stop-gate.sh; test -f ~/.claude/rules/conversation-tree-state.md
+   Output: 0 matches in `~/.claude/settings.json` (grep exit 1); LIVE_STATE_GATE_ABSENT; LIVE_STOP_GATE_ABSENT; LIVE_RULE_ABSENT — the live `~/.claude/` activation bundle is correctly NOT present. The Option-3 deferral is honored exactly. (Activating live mid-session would self-brick this harness-dev orchestrator: the PreToolUse gate would fire on its own remaining `Agent` dispatches and the Stop gate would block this non-conv-tree session's Stop.)
+   Result: PASS
+
+Runtime verification: command jq . adapters/claude-code/settings.json.template ::TEMPLATE_JSON_OK
+Runtime verification: command jq -e '.hooks.PreToolUse[]|select(.matcher=="mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent")|.hooks[]|select(.command|test("conversation-tree-state-gate.sh"))' adapters/claude-code/settings.json.template ::PRETOOLUSE_WIRED_OK
+Runtime verification: command jq -e '.hooks.Stop[0].hooks[]|select(.command|test("conversation-tree-stop-gate.sh"))' adapters/claude-code/settings.json.template ::STOP_WIRED_OK
+Runtime verification: file adapters/claude-code/rules/conversation-tree-state.md::write the *semantically true* tree
+Runtime verification: file docs/harness-architecture.md::## Conversation-Tree UI Module
+Runtime verification: command grep -c 'conversation-tree-state' ~/.claude/settings.json ::0 (LIVE_NOT_WIRED_OK — deferral honored)
+
+Git evidence:
+  Files modified in B3 commit 71db5d5 (none under ~/.claude/):
+    - adapters/claude-code/rules/conversation-tree-state.md (created)
+    - adapters/claude-code/settings.json.template (both gates wired)
+    - docs/harness-architecture.md (Pattern row + PreToolUse + Stop + counts + Module section)
+    - docs/plans/conversation-tree-ui-v1.md (classed in-flight scope line)
+    - docs/plans/conversation-tree-ui-v1-evidence.md (evidence + recipe + articulation)
+
+Upstream verdicts (orchestrator-mediated, no-nested-subagents env — supplied, not re-dispatchable):
+  - harness-reviewer (plan-mandated B3 reviewer): PASS. All 7 adversarial + 4 universal checks PASS. One NON-BLOCKING CONDITIONAL: genericize literal "Misha"→role-noun in the kit-level rule body — explicitly deferrable to a pre-activation hardening pass, NOT a B3 blocker (Layer-1 denylist does not flag bare "Misha"; ADR-031/plan establish pervasive precedent; reviewer's own generalization = sweep at activation time). Independently corroborated: the rule body does contain literal "Misha" (L11/L32/L36/L71) — recorded here as the deferred pre-activation hygiene note.
+  - comprehension-reviewer (rung-2 gate): PASS (Confidence 8). Three-stage rubric all PASS; load-bearing live-deferral claim adversarially verified TRUE.
+
+Deferred Option-3 Phase-B→Phase-C handoff step (NOT done in B3, by locked decision):
+  The single live-`~/.claude/` activation bundle — `cp` both gate hooks → `~/.claude/hooks/` (+x), mirror `conversation-tree-state.md` → `~/.claude/rules/`, insert the PreToolUse + Stop JSON entries into `~/.claude/settings.json`, `jq` validate, optional `--self-test` (expect 18/0 + 8/0) — is the deferred Phase-B→Phase-C clean-confirm handoff step (recipe at evidence L846-862). Apply at the boundary from a standalone non-Dispatch session / by the operator. Pre-activation hygiene note: harness-reviewer recommends genericizing literal "Misha"→role-noun in the rule body at that time (non-blocking for B3). `docs/findings.md` deliberately NOT edited (out of B3 scope per dispatch).
+
+Verdict: PASS
+Confidence: 9
+Reason: Verification: mechanical early-return satisfied — fresh evidence entry + all 6 documented mechanical checks independently re-run and PASS + chain ordering + Pin-1 matcher confirmed + the REQUIRED LIVE_NOT_WIRED_OK live-deferral-honored check confirmed (zero conv-tree wiring in live `~/.claude/`) + rung-2 comprehension-gate PASS (supplied + corroborated) + plan-mandated harness-reviewer PASS (supplied). The live-`~/.claude/` deferral is a legitimate plan-consistent Option-3-mandated refinement with a complete deterministic recipe + classed in-flight-scope line, NOT a silent skip. B3 is the final Phase-B task; Phase B build content is complete.
+
