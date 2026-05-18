@@ -21,6 +21,14 @@
   --warn: #fbbf24;
   --err: #f87171;
   --info: #60a5fa;
+  /* v1.1.1 item 14 — type palette. Aliases the established AA-on-dark
+     semantic colors (action=red, decision=amber, question=blue). The
+     -rgb tuples drive low-opacity washes/tints (items 17/18) via
+     rgb(var(--ty-x-rgb) / <a>). One source of truth → identical
+     type-coding everywhere (Decisions Log). */
+  --ty-action: #f87171;        --ty-action-rgb: 248 113 113;
+  --ty-decision: #fbbf24;      --ty-decision-rgb: 251 191 36;
+  --ty-question: #60a5fa;      --ty-question-rgb: 96 165 250;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -84,12 +92,17 @@ button:active { transform: scale(0.98); }
 }
 .note .dismiss { float: right; margin-left: 0.5rem; }
 .note.hot { border-color: var(--warn); border-left-color: var(--warn); }
+/* item 18: toast bottom-RIGHT (standard; clear of the ctx popup). */
 .toast {
-  position: fixed; left: 50%; bottom: 1.2rem; transform: translateX(-50%);
+  position: fixed; right: 1rem; bottom: 1.2rem; left: auto; transform: none;
   background: var(--panel); border: 1px solid var(--border2);
   border-radius: 6px; padding: 0.4rem 0.6rem 0.4rem 0.9rem; font-size: 0.8rem; z-index: 50;
   box-shadow: 0 6px 18px rgba(0,0,0,0.45);
   display: flex; align-items: center; gap: 0.6rem;          /* v1.1-ux snackbar */
+}
+/* item 18: bottom-CENTER on a narrow / single-pane viewport (no clip). */
+@media (max-width: 1023.98px) and (max-height: 1023.98px) {
+  .toast { right: auto; left: 50%; transform: translateX(-50%); }
 }
 .toast.ok { border-color: #065f46; color: var(--ok); }
 .toast.err { border-color: #b91c1c; color: var(--err); }
@@ -243,11 +256,23 @@ button:active { transform: scale(0.98); }
 }
 .li.hot { border-color: var(--warn); }
 .li-top { display: flex; align-items: center; gap: 0.45rem; }
-.li-kind { font-size: 0.7rem; padding: 0.04rem 0.35rem; border-radius: 4px; border: 1px solid var(--border2); color: var(--muted); }
-.li-kind.decision { color: var(--info); border-color: var(--info); }
-.li-kind.question { color: var(--accent); border-color: var(--accent); }
-.li-kind.action { color: var(--ok); border-color: #065f46; }
-.li-text { flex: 1; }
+/* item 14: type-coded label + 5px left stripe + ≤6% wash. AA-safe
+   (established semantic palette). action=red / decision=amber / question=blue. */
+.li-kind { font-size: 0.7rem; padding: 0.04rem 0.35rem; border-radius: 4px; border: 1px solid var(--border2); color: var(--muted); font-weight: 700; }
+.li-kind.action   { color: var(--ty-action);   border-color: var(--ty-action); }
+.li-kind.decision { color: var(--ty-decision); border-color: var(--ty-decision); }
+.li-kind.question { color: var(--ty-question); border-color: var(--ty-question); }
+.li.kind-action   { border-left: 5px solid var(--ty-action);   background: rgb(var(--ty-action-rgb) / 0.05); }
+.li.kind-decision { border-left: 5px solid var(--ty-decision); background: rgb(var(--ty-decision-rgb) / 0.05); }
+.li.kind-question { border-left: 5px solid var(--ty-question); background: rgb(var(--ty-question-rgb) / 0.05); }
+.li-text { flex: 1; min-width: 0; }                /* item 15: title owns the row width */
+/* item 15: compact fixed icon-button replaces the width-greedy text crumb */
+.li-jump {
+  flex: 0 0 auto; width: 24px; height: 24px; padding: 0; line-height: 22px;
+  text-align: center; border-radius: 5px; background: var(--panel2);
+  color: var(--muted); border: 1px solid var(--border2); cursor: pointer; font-size: 0.85rem;
+}
+.li-jump:hover { color: var(--accent); border-color: var(--accent); }
 .li-crumb { font-size: 0.7rem; color: var(--muted); cursor: pointer; }
 .li-crumb:hover { color: var(--accent); text-decoration: underline; }
 .li-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
@@ -348,8 +373,44 @@ button:active { transform: scale(0.98); }
   display: flex; flex-direction: column; gap: 0.3rem;
 }
 
-/* accessibility: honour reduced-motion (harness UX standard) */
+/* v1.1.1 items 16/17/18 ------------------------------------------------- */
+/* item 16: prominent, grouped View-filters toggle */
+.view-filters {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.2rem 0.55rem; border: 1px solid var(--border2);
+  border-radius: 6px; background: var(--panel2);
+}
+.toggle-prom { font-size: 0.82rem; color: var(--text); display: flex; align-items: center; gap: 0.35rem; cursor: pointer; font-weight: 600; }
+.toggle-prom input { width: 1rem; height: 1rem; cursor: pointer; }
+.toggle-prom .eye { font-size: 1rem; }
+
+/* item 17: bidirectional item<->tree highlight — full interior type-color
+   tint (~18%) + 3px solid left accent. Per-kind so the tint carries the
+   type signal both directions. */
+.li.sel-link { box-shadow: inset 3px 0 0 0 currentColor; }
+.li.sel-link.kind-action,   .tnode-row.sel-tint.tint-action   { background: rgb(var(--ty-action-rgb) / 0.18);   border-left-color: var(--ty-action); }
+.li.sel-link.kind-decision, .tnode-row.sel-tint.tint-decision { background: rgb(var(--ty-decision-rgb) / 0.18); border-left-color: var(--ty-decision); }
+.li.sel-link.kind-question, .tnode-row.sel-tint.tint-question { background: rgb(var(--ty-question-rgb) / 0.18); border-left-color: var(--ty-question); }
+.tnode-row.sel-tint { border-left-width: 4px; border-left-style: solid; }
+/* fallback tint when the node has no typed open item (neutral accent) */
+.tnode-row.sel-tint:not(.tint-action):not(.tint-decision):not(.tint-question) { background: rgb(167 139 250 / 0.16); }
+
+/* item 18: arrival-flash — 600ms type-color wash on the affected
+   item/backlog/tree-node on toast OR SSE arrival OR state change. */
+@keyframes arrival-flash {
+  0%   { background: rgb(var(--af-rgb, 167 139 250) / 0.45); }
+  100% { background: transparent; }
+}
+.arrival-flash { animation: arrival-flash 0.6s ease-out 1; }
+.arrival-flash.af-action   { --af-rgb: var(--ty-action-rgb); }
+.arrival-flash.af-decision { --af-rgb: var(--ty-decision-rgb); }
+.arrival-flash.af-question { --af-rgb: var(--ty-question-rgb); }
+
+/* accessibility: honour reduced-motion (harness UX standard). Arrival-flash
+   becomes a single-frame highlight that persists ~1.5s then is removed by
+   JS — no fade animation. */
 @media (prefers-reduced-motion: reduce) {
   .list-body .li, .list-body .li.flash, .list-body .li.leaving,
   .tree-canvas { animation: none !important; transition: none !important; }
+  .arrival-flash { animation: none !important; background: rgb(var(--af-rgb, 167 139 250) / 0.30) !important; }
 }

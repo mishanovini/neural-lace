@@ -13,8 +13,15 @@
       <select id="treeSelect" aria-label="active project tree"></select>
     </label>
     <button id="addProjBtn" class="ghost" title="add a project tree">+ project</button>
-    <label class="archtoggle"><input type="checkbox" id="showArchived"> show archived</label>
-    <label class="archtoggle"><input type="checkbox" id="showConcluded"> show concluded</label>
+    <!-- item 16: prominent, grouped View filters (hide-concluded defaults
+         to OFF = hide; concluded hidden on first load). -->
+    <span class="view-filters" aria-label="view filters">
+      <label class="toggle-prom" title="Show branches that are concluded (off = hide them — the default)">
+        <span class="eye" aria-hidden="true">👁</span>
+        <input type="checkbox" id="showConcluded"> Show concluded
+      </label>
+      <label class="archtoggle"><input type="checkbox" id="showArchived"> archived</label>
+    </span>
     <span class="spacer"></span>
     <span id="lastRead" class="lastread" aria-live="polite">—</span>
     <span id="status" class="status" aria-live="polite">connecting…</span>

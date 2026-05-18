@@ -30,6 +30,7 @@
   var loaded = false;           // first frame received yet?
   var activeTree = localStorage.getItem('ctree-active') || 'global';
   var sel = null;               // selected node_id
+  var selNodeLink = null;       // v1.1.1 item 17: bidirectional item<->node link selection
   var collapsed = new Set();    // node_ids the user collapsed (default expanded)
   var zoom = 1;
   var firedDefers = new Set(JSON.parse(localStorage.getItem('ctree-fired') || '[]'));
@@ -105,6 +106,12 @@
       post(postEv, okMsg, true).then(function (ok) {
         if (!ok) return;                       // post() surfaced the error
         if (afterOk) afterOk();
+        // item 18: flash WHERE the state change happened (the tree node),
+        // since the affected item itself just slid out of the list.
+        if (postEv && postEv.node_id) setTimeout(function () {
+          var r = treeCanvas.querySelector('[data-node="' + cssEsc(postEv.node_id) + '"]');
+          if (r) arrivalFlash(r, dominantKind(byId(postEv.node_id)));
+        }, 40);
         snackbar(okMsg + ' — Undo?', { kind: 'ok', undo: undoFn });
       });
     });
@@ -112,21 +119,67 @@
   // items 7+8: which action/backlog item ids are NEW since the last render
   // (drives the entrance flash + the per-pane "+N new" badge). Primed on the
   // first frame so nothing flashes/badges on initial load.
-  var seenActionIds = null, seenBacklogIds = null;
+  var seenActionIds = null, seenBacklogIds = null, seenNodeIds = null;
   var newActionIds = {}, newBacklogIds = {};
   var newActionsCount = 0, newBacklogCount = 0;
   function diffNewIds(curIds, prevSet, kind) {
+    var store = function (v) {
+      if (kind === 'a') seenActionIds = v;
+      else if (kind === 'n') seenNodeIds = v;          // item 18: tree-node arrivals
+      else seenBacklogIds = v;
+    };
     var fresh = {};
-    if (prevSet == null) {            // first frame — prime, badge nothing
+    if (prevSet == null) {            // first frame — prime, flash/badge nothing
       var prime = {}; curIds.forEach(function (id) { prime[id] = 1; });
-      if (kind === 'a') seenActionIds = prime; else seenBacklogIds = prime;
+      store(prime);
       return { fresh: {}, count: 0 };
     }
     var cnt = 0;
     curIds.forEach(function (id) { if (!prevSet[id]) { fresh[id] = 1; cnt++; } });
     var next = {}; curIds.forEach(function (id) { next[id] = 1; });
-    if (kind === 'a') seenActionIds = next; else seenBacklogIds = next;
+    store(next);
     return { fresh: fresh, count: cnt };
+  }
+
+  // v1.1.1 item 17: a node's dominant open-item kind (urgency precedence
+  // action > decision > question) — drives the bidirectional tint color.
+  function dominantKind(node) {
+    var ks = (node && node.items || []).filter(function (it) { return isWaiting(it); })
+      .map(function (it) { return it.kind; });
+    if (ks.indexOf('action') !== -1) return 'action';
+    if (ks.indexOf('decision') !== -1) return 'decision';
+    if (ks.indexOf('question') !== -1) return 'question';
+    return null;
+  }
+  // v1.1.1 item 18: arrival-flash. 600ms type-color wash (animated), or a
+  // single-frame persistent highlight under prefers-reduced-motion. Safe to
+  // re-trigger (clears the class first, removes it after).
+  function arrivalFlash(node, kind) {
+    if (!node) return;
+    node.classList.remove('arrival-flash', 'af-action', 'af-decision', 'af-question');
+    void node.offsetWidth;                       // restart the animation
+    node.classList.add('arrival-flash');
+    if (kind) node.classList.add('af-' + kind);
+    var dur = reducedMotion() ? 1500 : 700;
+    clearTimeout(node._af);
+    node._af = setTimeout(function () {
+      node.classList.remove('arrival-flash', 'af-action', 'af-decision', 'af-question');
+    }, dur);
+  }
+  // v1.1.1 item 17: bidirectional link-select. Sets the shared link, re-renders
+  // (both panes pick up the tint), then scrolls the OTHER side into view.
+  function linkSelect(nodeId, src) {
+    selNodeLink = nodeId;
+    sel = nodeId; ctxExpanded = false;
+    render();
+    // scroll the tree node into view
+    setTimeout(function () {
+      var r = treeCanvas.querySelector('[data-node="' + cssEsc(nodeId) + '"]');
+      if (r && src === 'fromItem') r.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      var li = actionsBody.querySelector('[data-li-node="' + cssEsc(nodeId) + '"]');
+      if (li && src === 'fromTree') li.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 30);
+    openCtx(nodeId);
   }
 
   // item 9: rich-details disclosure (collapsed by default; per-item toggle).
@@ -382,6 +435,11 @@
 
     var row = el('div', 'tnode-row');
     if (n.node_id === sel) row.classList.add('sel');
+    if (n.node_id === selNodeLink) {           // item 17: bidirectional interior tint
+      row.classList.add('sel-tint');
+      var dk = dominantKind(n);
+      if (dk) row.classList.add('tint-' + dk);
+    }
     if (n.state === 'concluded') row.classList.add('concluded');
     if (n.state === 'archived') row.classList.add('archived');
     row.setAttribute('data-node', n.node_id);
@@ -409,7 +467,7 @@
     }
     row.appendChild(nodeBadges(n));
 
-    row.addEventListener('click', function () { selectNode(n.node_id); });
+    row.addEventListener('click', function () { linkSelect(n.node_id, 'fromTree'); });
     // C5: drag-drop re-parent (mouse-only, NFR-6 v1).
     row.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/node', n.node_id); });
     row.addEventListener('dragover', function (e) { e.preventDefault(); row.classList.add('dragover'); });
@@ -467,6 +525,12 @@
     var orderedRoots = applyOrder(f.roots, order('tree:' + activeTree), 'node_id');
     orderedRoots.forEach(function (r) { renderTreeNode(r, f.kids, treeCanvas); });
     treeCrumb.textContent = sel ? crumb(sel) : 'no selection';
+    // item 18: arrival-flash newly-arrived tree nodes (primed on first frame)
+    var nd = diffNewIds(vis.map(function (x) { return x.node_id; }), seenNodeIds, 'n');
+    if (nd.count) Object.keys(nd.fresh).forEach(function (nid) {
+      var r = treeCanvas.querySelector('[data-node="' + cssEsc(nid) + '"]');
+      if (r) arrivalFlash(r, dominantKind(byId(nid)));
+    });
   }
 
   // ---- ACTIONS PANE (C3) ----------------------------------------------
@@ -511,10 +575,13 @@
     if (dN.count) { newActionsCount += dN.count; updateNewBadges(); }
     entries.forEach(function (en, ix) {
       var n = en.n, it = en.it;
-      var li = el('div', 'li' + (it.contested ? ' contested' : '')
+      var li = el('div', 'li kind-' + it.kind          // item 14: type stripe/wash
+        + (it.contested ? ' contested' : '')
         + (it.responded ? ' responded' : '')
+        + (n.node_id === selNodeLink ? ' sel-link' : '')   // item 17: bidirectional tint
         + (newActionIds[it.item_id] ? ' flash' : ''));
       li.setAttribute('draggable', actionsSort.value === 'manual' ? 'true' : 'false');
+      li.setAttribute('data-li-node', n.node_id);          // item 17: scroll target
       var top = el('div', 'li-top');
       top.appendChild(el('span', 'li-kind ' + it.kind, it.kind));
       top.appendChild(el('span', 'li-text', it.text));
@@ -522,10 +589,17 @@
         var d = el('span', 'badge deferred', 'deferred' + (it.scheduled_for ? ' · ' + fmtTime(it.scheduled_for) : ''));
         top.appendChild(d);
       }
-      var cr = el('span', 'li-crumb', crumb(n.node_id));
-      cr.title = 'reveal in tree';
-      cr.addEventListener('click', function () { focusNode(n.node_id); });
+      // item 15: compact fixed icon-button (was a width-greedy text crumb)
+      var cr = el('button', 'li-jump', '→');
+      cr.title = 'Jump to in tree';
+      cr.setAttribute('aria-label', 'Jump to in tree');
+      cr.addEventListener('click', function (e) { e.stopPropagation(); focusNode(n.node_id); });
       top.appendChild(cr);
+      // item 17: clicking the item (not a button) links-selects its node
+      li.addEventListener('click', function (e) {
+        if (e.target.closest('button') || e.target.closest('textarea')) return;
+        linkSelect(n.node_id, 'fromItem');
+      });
       li.appendChild(top);
 
       // item 9: rich-details disclosure (collapsed by default)
@@ -648,6 +722,7 @@
       // manual drag-reorder (FR-29)
       if (actionsSort.value === 'manual') wireReorder(li, it.item_id, 'actions:' + activeTree, function () { return actionEntries().map(function (e) { return e.it.item_id; }); });
       actionsBody.appendChild(li);
+      if (newActionIds[it.item_id]) arrivalFlash(li, it.kind);   // item 18: type-tinted arrival flash
     });
   }
 
@@ -712,6 +787,7 @@
       li.appendChild(acts);
       if (backlogSort.value === 'manual') wireReorder(li, b.item_id, 'backlog:' + activeTree, function () { return backlogEntries().map(function (x) { return x.item_id; }); });
       backlogBody.appendChild(li);
+      if (newBacklogIds[b.item_id]) arrivalFlash(li, null);     // item 18: arrival flash (neutral — backlog has no kind)
     });
   }
   function openCapture() {
