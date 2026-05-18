@@ -12,17 +12,10 @@
     <label class="proj-wrap">tree
       <select id="treeSelect" aria-label="active project tree"></select>
     </label>
-    <button id="addProjBtn" class="ghost" title="add a project tree">+ project</button>
-    <!-- item 16: prominent, grouped View filters (hide-concluded defaults
-         to OFF = hide; concluded hidden on first load). -->
-    <span class="view-filters" aria-label="view filters">
-      <label class="toggle-prom" title="Show branches that are concluded (off = hide them — the default)">
-        <span class="eye" aria-hidden="true">👁</span>
-        <input type="checkbox" id="showConcluded"> Show concluded
-      </label>
-      <label class="archtoggle"><input type="checkbox" id="showArchived"> archived</label>
-    </span>
+    <button id="addProjBtn" class="btn-neutral outline" title="add a project tree">+ project</button>
+    <label class="archtoggle"><input type="checkbox" id="showArchived"> show archived</label>
     <span class="spacer"></span>
+    <button id="docsBtn" class="ghost" title="browse docs across projects">📁 Docs</button>
     <span id="lastRead" class="lastread" aria-live="polite">—</span>
     <span id="status" class="status" aria-live="polite">connecting…</span>
   </header>
@@ -51,6 +44,10 @@
         <span class="pane-title">Tree</span>
         <span id="treeCrumb" class="crumb" aria-live="polite">no selection</span>
         <span class="pane-tools">
+          <label class="viewtoggle" title="show/hide concluded branches">
+            <span class="eye">👁</span>
+            <input type="checkbox" id="showConcluded"> Show concluded
+          </label>
           <button id="zoomOut" class="ghost" title="zoom out">−</button>
           <button id="zoomIn" class="ghost" title="zoom in">+</button>
           <button id="fitSel" class="ghost" title="center on selection">⊙ fit</button>
@@ -102,7 +99,7 @@
             <option value="low">low</option>
           </select>
           <input id="blContext" type="text" placeholder="context note (optional)" aria-label="context note">
-          <button id="blSave" class="primary">Add</button>
+          <button id="blSave" class="btn-go">Add</button>
           <button id="blCancel" class="ghost">cancel</button>
         </div>
         <div id="backlogBody" class="pane-body list-body"></div>
@@ -116,6 +113,25 @@
        click-outside backdrop (narrow viewports). -->
   <div id="ctxScrim" hidden></div>
   <aside id="ctxPanel" class="ctx-panel" hidden aria-label="node context"></aside>
+
+  <!-- v1.1.1 item 19: inline doc viewer (markdown rendered client-side, no
+       runtime dep) + cross-project docs browser. Both passive read surfaces. -->
+  <div id="docScrim" hidden></div>
+  <div id="docModal" hidden role="dialog" aria-label="document viewer">
+    <div class="doc-head">
+      <span class="doc-title" id="docTitle">document</span>
+      <button id="docOpenEditor" class="ghost" title="open in your OS default editor">⧉ Open in editor</button>
+      <button id="docClose" class="ghost" title="close (Esc)">✕</button>
+    </div>
+    <div class="doc-body" id="docBody"></div>
+  </div>
+  <aside id="docsPanel" hidden aria-label="docs browser">
+    <div class="dp-head">
+      <input id="docsFilter" type="text" placeholder="filter by filename…" aria-label="filter docs">
+      <button id="docsClose" class="ghost" title="close">✕</button>
+    </div>
+    <div class="dp-body" id="docsBody"></div>
+  </aside>
 
   <script src="/app.js"></script>
 </body>

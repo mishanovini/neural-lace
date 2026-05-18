@@ -1,0 +1,5 @@
+{
+  "_comment": "Per-machine project -> absolute repo-root map for the cross-repo doc viewer (item 19). COPY this file to `projects.json` (same dir) and edit the paths to your machine. `projects.json` is gitignored — it never ships in the kit (harness-hygiene: no machine paths / product codenames in committed files). Keys are the project tags you use in the conversation tree; values are absolute repo roots. The conv-tree-ui's OWN repo is auto-detected even with no config, so same-repo docs work out of the box.",
+  "example-project": "/absolute/path/to/example-project",
+  "another-project": "/absolute/path/to/another-project"
+}

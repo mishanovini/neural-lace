@@ -37,6 +37,105 @@
 const fs = require('fs');
 const path = require('path');
 const state = require('./state.js');
+const projects = require('../config/projects.js'); // item 19/23 cross-repo map
+
+// ---- v1.1.1 item 23: cross-repo doc-sourced extraction ---------------------
+// The v1.1 honesty contract deferred deep enrichment because the source docs
+// were not on the machine. They ARE now (in the mapped external repos), so the
+// honest move is to READ them and extract real content — never fabricate.
+//
+// resolveDocPath: given a node's project tag + a docs/… path, find the doc in
+// ANY mapped project (try the node's own tag first, then every other root).
+function resolveDocPath(projectTag, docRel) {
+  var tries = [];
+  if (projectTag) tries.push(projectTag);
+  var map = projects.loadProjects();
+  Object.keys(map).forEach(function (k) { if (tries.indexOf(k) === -1) tries.push(k); });
+  for (var i = 0; i < tries.length; i++) {
+    var r = projects.resolveDoc(tries[i], docRel);
+    if (r.ok) return r.abs;
+  }
+  return null;
+}
+// extractFromDoc: pull real description/options/recommendation/blocking_input
+// out of a markdown doc. Section-aware: if a `## ` heading shares tokens with
+// the item text, that section is the source; else the whole doc. Anything not
+// present in the doc stays NULL (no fabrication — honesty contract preserved).
+function extractFromDoc(abs, itemText) {
+  var raw;
+  try { raw = fs.readFileSync(abs, 'utf8'); } catch (_) { return null; }
+  var lines = raw.split(/\r?\n/);
+  // index ## / ### sections
+  var secs = [], cur = null;
+  lines.forEach(function (ln) {
+    var h = ln.match(/^(#{2,3})\s+(.*)$/);
+    if (h) { if (cur) secs.push(cur); cur = { title: h[2].trim(), body: [] }; }
+    else if (cur) cur.body.push(ln);
+    else { /* preamble */ }
+  });
+  if (cur) secs.push(cur);
+  function toks(s) { return String(s).toLowerCase().match(/[a-z0-9]{3,}/g) || []; }
+  var itTok = toks(itemText), best = null, bestScore = 0;
+  secs.forEach(function (s) {
+    var st = toks(s.title), hit = 0;
+    st.forEach(function (t) { if (itTok.indexOf(t) !== -1) hit++; });
+    if (hit > bestScore) { bestScore = hit; best = s; }
+  });
+  var scopeLines = best ? best.body : lines;
+  var scopeText = scopeLines.join('\n').trim();
+  if (best && bestScore === 0) { best = null; }
+  // description = the matched section's first real content. Prefer a plain
+  // paragraph; fall back to the first bullet (many sections are bullet-only);
+  // final fallback = the section body, joined + capped (still real doc text,
+  // never fabricated).
+  var desc = null;
+  for (var i = 0; i < scopeLines.length; i++) {
+    var t = scopeLines[i].trim();
+    if (t && !/^#{1,6}\s/.test(t) && !/^[-*]\s/.test(t)) { desc = t.replace(/\*\*/g, ''); break; }
+  }
+  if (!desc) {
+    for (var j = 0; j < scopeLines.length; j++) {
+      var b = scopeLines[j].trim();
+      if (/^[-*]\s+/.test(b)) { desc = b.replace(/^[-*]\s+/, '').replace(/\*\*/g, ''); break; }
+    }
+  }
+  if (!desc) {
+    var joined = scopeLines.join(' ').replace(/\s+/g, ' ').trim();
+    if (joined) desc = joined.slice(0, 400);
+  }
+  // options: `Option A`, `**Option A**`, `### Option`, or `pick A / B / C`
+  var options = [];
+  scopeLines.forEach(function (ln) {
+    var mo = ln.match(/^[-*\s>]*(?:\*\*|###\s*)?Option\s+([A-Z0-9][\w-]*)\s*[:.\-—)]*\s*(.*)$/i);
+    if (mo) options.push({ label: ('Option ' + mo[1] + (mo[2] ? ' — ' + mo[2].replace(/\*\*/g, '').trim() : '')).trim() });
+  });
+  if (options.length === 0) {
+    var pk = scopeText.match(/pick\s+([A-Z](?:\s*\/\s*[A-Z])+)/i);
+    if (pk) options = pk[1].split('/').map(function (x) { return { label: 'Option ' + x.trim() }; });
+  }
+  // recommendation: a "## Recommendation" section, or a line with "recommend"
+  var rec = null;
+  for (var r = 0; r < secs.length; r++) {
+    if (/^recommend/i.test(secs[r].title)) { rec = secs[r].body.join(' ').replace(/\s+/g, ' ').trim(); break; }
+  }
+  if (!rec) {
+    var rl = scopeText.split(/\n/).find(function (x) { return /recommend(ed|ation)?:/i.test(x); });
+    if (rl) rec = rl.replace(/\*\*/g, '').trim();
+  }
+  // blocking_input: "What you need from <person>", "you need from", "need to ship"
+  var bi = null;
+  var bl = scopeText.split(/\n/).find(function (x) {
+    return /\*\*what you need from|you need from|need(s|ed)? (you|the operator|to ship)/i.test(x);
+  });
+  if (bl) bi = bl.replace(/\*\*/g, '').trim();
+  return {
+    description: desc,
+    section: best ? best.title : null,
+    options: options.length ? options : null,
+    recommendation: rec || null,
+    blocking_input: bi || null,
+  };
+}
 
 function extractDocLinks(text) {
   // grab docs/...md, docs/reviews/..., docs/plans/... tokens embedded in the
@@ -65,7 +164,27 @@ function payloadFor(node, it, enrichMap) {
     blocking_input: deriveBlockingInput(it.text),
     links: links.length ? links : ['(see branch: ' + (node.title || node.node_id) + ')'],
   };
-  // optional doc-sourced enrichment (deep-merge over the honest base)
+  // item 23: cross-repo doc-sourced enrichment. If the item names a docs/…
+  // path resolvable in any mapped project, READ it and fill the rich fields
+  // from the actual doc (no fabrication — anything absent stays as-is/null).
+  var docRel = links.find(function (l) { return /^docs\//.test(l); });
+  if (docRel) {
+    var abs = resolveDocPath(node.tree_id || node.project || null, docRel);
+    if (abs) {
+      var ex2 = extractFromDoc(abs, it.text);
+      if (ex2) {
+        // description stays the verbatim item text (honesty + back-compat);
+        // the doc's content enriches context/instructions/options/rec/blocking.
+        base.context = 'Branch: "' + (node.title || node.node_id) + '" (' + node.state + '). '
+          + 'Sourced from ' + docRel + (ex2.section ? ' § "' + ex2.section + '"' : '') + '.';
+        if (ex2.description) base.instructions = ex2.description;
+        if (ex2.options) base.options = ex2.options;
+        if (ex2.recommendation) base.recommendation = ex2.recommendation;
+        if (ex2.blocking_input) base.blocking_input = ex2.blocking_input;
+      }
+    }
+  }
+  // optional explicit enrichment override (deep-merge LAST — highest priority)
   var ex = enrichMap && (enrichMap[it.item_id] || enrichMap[node.node_id + ':' + it.item_id]);
   if (ex && typeof ex === 'object') {
     Object.keys(ex).forEach(function (k) { if (ex[k] != null) base[k] = ex[k]; });
@@ -147,6 +266,42 @@ function selfTest() {
     ok('B10 --enrich supersedes (recommendation+options now set; desc preserved)',
       ap3.emitted >= 1 && it2.details.recommendation === 'Adopt option A'
       && Array.isArray(it2.details.options) && it2.details.description.indexOf('TCPA:') === 0);
+
+    // ---- item 23: cross-repo doc-sourced extraction ----------------------
+    var fxDir = path.join(tmp, 'fx');
+    fs.mkdirSync(fxDir, { recursive: true });
+    var fxDoc = path.join(fxDir, 'rich.md');
+    fs.writeFileSync(fxDoc,
+      '# Doc Title\n\n' +
+      '## QUIET-HOURS — wrong timezone on every send\n\n' +
+      'Quiet-hours are computed against the org timezone, not the recipient.\n\n' +
+      '- Option A: use the recipient-resolved timezone\n' +
+      '- Option B: fail closed and block marketing on unknown TZ\n\n' +
+      '**What you need from the operator to ship:** pick A or B and confirm fail-closed.\n\n' +
+      '## Recommendation\n\nBlock marketing on unknown TZ; transactional still sends.\n\n' +
+      '## UNRELATED — nothing matches here\n\nFiller.\n');
+    var ex23 = extractFromDoc(fxDoc, 'quiet-hours wrong timezone on send');
+    ok('B12 extractFromDoc matched the right section',
+      ex23 && /QUIET-HOURS/.test(ex23.section));
+    ok('B13 options + recommendation + blocking_input doc-sourced (not null)',
+      ex23 && Array.isArray(ex23.options) && ex23.options.length === 2
+      && /recipient-resolved/.test(ex23.options[0].label)
+      && /Block marketing/.test(ex23.recommendation || '')
+      && /pick A or B/.test(ex23.blocking_input || '')
+      && ex23.description && /Quiet-hours/.test(ex23.description));
+    var fxBare = path.join(fxDir, 'bare.md');
+    fs.writeFileSync(fxBare, '# Plain\n\nJust prose, no options, no recommendation section.\n');
+    var ex23b = extractFromDoc(fxBare, 'plain prose');
+    ok('B14 NOT fabricated: no options/recommendation in a bare doc -> null',
+      ex23b && ex23b.options === null && ex23b.recommendation === null);
+    // payloadFor integration: a same-repo doc resolvable via projects.js gets
+    // doc-sourced instructions/context (no external project needed).
+    var selfDocRel = 'docs/plans/conv-tree-ui-v1.1.1-polish.md';
+    var pf = payloadFor({ node_id: 'nz', title: 'plan work', state: 'open', tree_id: 'neural-lace' },
+      { item_id: 'iz', text: 'see ' + selfDocRel + ' for the polish punch list' }, null);
+    ok('B15 payloadFor enriches from a resolvable same-repo doc',
+      pf.instructions != null && /conv-tree-ui-v1\.1\.1-polish\.md/.test(pf.context)
+      && pf.description === 'see ' + selfDocRel + ' for the polish punch list');
 
     // tree integrity: node count unchanged by the backfill (append-only)
     ok('B11 append-only: node count unchanged (1)', afterSnap.nodes.length === 1
