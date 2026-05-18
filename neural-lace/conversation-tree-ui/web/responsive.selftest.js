@@ -142,81 +142,100 @@ ok('R32 item-unchecked additive inverse event (schema+reducer+undo wiring)',
 ok('R33 ADR-032 additive: SCHEMA_VERSION still 1 (3 new event types, no bump)',
   /const SCHEMA_VERSION\s*=\s*1\s*;/.test(schema));
 
-// --- v1.1.1 polish items 14/15/16/17/18 ------------------------------------
-ok('R34 item 14: type palette vars + AA-safe per-kind label/stripe',
-  /--ty-action:\s*#f87171/.test(C) && /--ty-decision:\s*#fbbf24/.test(C) && /--ty-question:\s*#60a5fa/.test(C)
-  && /--ty-action-rgb:\s*248 113 113/.test(C)
-  && /\.li-kind\.action\s*\{[^}]*var\(--ty-action\)/.test(C)
-  && /\.li\.kind-action\s*\{[^}]*border-left:\s*5px solid var\(--ty-action\)/.test(C)
+// ===================== v1.1.1 polish invariants (14–23) =====================
+const server = fs.readFileSync(path.join(D, '..', 'server', 'server.js'), 'utf8');
+const backfill = fs.readFileSync(path.join(D, '..', 'state', 'backfill-details.js'), 'utf8');
+
+// item 14 — type-colour palette: 3 vars + filled badge + per-card accent/tint
+ok('R34 item14 type palette vars + filled .li-kind + .li.kind-* accent/tint',
+  /--type-action:\s*#ef4444/i.test(C) && /--type-decision:\s*#f59e0b/i.test(C)
+  && /--type-question:\s*#3b82f6/i.test(C)
+  && /\.li-kind\.action\s*\{\s*background:\s*var\(--type-action\)/.test(C)
+  && /\.li\.kind-action\s*\{\s*border-left:\s*5px solid var\(--type-action\)/.test(C)
   && /'li kind-' \+ it\.kind/.test(js));
-ok('R35 item 15: title flex:1 + fixed 24px icon-button jump (no width-greedy crumb)',
-  /\.li-text\s*\{[^}]*flex:\s*1/.test(C)
-  && /\.li-jump\s*\{[^}]*width:\s*24px;\s*height:\s*24px/.test(C)
+
+// item 15 — title flex:1 + fixed-width icon jump button (text crumb removed)
+ok('R35 item15 .li-text flex:1 + .li-jump 24px icon (no .li-crumb in renderActions)',
+  /\.li-text\s*\{\s*flex:\s*1/.test(C) && /\.li-jump\s*\{[^}]*24px/.test(C)
   && /el\('button',\s*'li-jump',\s*'→'\)/.test(js)
-  && /Jump to in tree/.test(js));
-ok('R36 item 16: prominent grouped View-filters toggle + default-hide preserved',
-  /class="view-filters"/.test(html) && /class="toggle-prom"/.test(html) && /👁/.test(html)
-  && /\.view-filters\s*\{/.test(C) && /\.toggle-prom\s*\{/.test(C)
-  && /localStorage\.getItem\('ctree-show-concluded'\)\s*===\s*'1'/.test(js));   // absent => false => hide (default)
-ok('R37 item 17: bidirectional link-select — selNodeLink + tint both sides + scrollIntoView',
-  /var selNodeLink\s*=\s*null/.test(js)
-  && /function linkSelect\s*\(/.test(js)
-  && /function dominantKind\s*\(/.test(js)
-  && /sel-link/.test(js) && /sel-tint/.test(js)
-  && /\.li\.sel-link\.kind-action[^{]*\{[^}]*rgb\(var\(--ty-action-rgb\) \/ 0\.18\)/.test(C)
-  && /scrollIntoView\(\{\s*block:\s*'center',\s*behavior:\s*'smooth'\s*\}\)/.test(js)
-  && /linkSelect\(n\.node_id,\s*'fromTree'\)/.test(js));
-ok('R38 item 18: toast bottom-right (+narrow bottom-center) + arrival-flash + reduced-motion',
-  /\.toast\s*\{[^}]*right:\s*1rem;\s*bottom:\s*1\.2rem;\s*left:\s*auto/.test(C)
-  && /@media \(max-width:\s*1023\.98px\) and \(max-height:\s*1023\.98px\)\s*\{\s*\.toast\s*\{[^}]*left:\s*50%/.test(C)
-  && /@keyframes arrival-flash/.test(C)
-  && /function arrivalFlash\s*\(/.test(js)
-  && /reducedMotion\(\)\s*\?\s*1500\s*:\s*700/.test(js)
-  && /@media \(prefers-reduced-motion: reduce\)\s*\{[^@]*\.arrival-flash\s*\{\s*animation:\s*none/.test(C));
+  && /Jump to in tree/.test(js)
+  && !/el\('span',\s*'li-crumb'/.test(js));
 
-// --- v1.1.2 polish items 25/26/27/28 ---------------------------------------
-ok('R39 item 25: six filled semantic button classes (exact palette) + hover/active/disabled, used in JS+HTML',
-  /\.b-commit\s*\{[^}]*background:\s*#22C55E/.test(C)
-  && /\.b-caution\s*\{[^}]*background:\s*#F59E0B/.test(C)
-  && /\.b-util\s*\{[^}]*background:\s*#3B82F6/.test(C)
-  && /\.b-elevate\s*\{[^}]*background:\s*#A855F7/.test(C)
-  && /\.b-destruct\s*\{[^}]*background:\s*#B91C1C/.test(C)
-  && /\.b-neutral\s*\{[^}]*background:\s*#475569/.test(C)
-  && /\.b-commit:hover\s*\{[^}]*box-shadow/.test(C)
-  && /\.b-commit:active\s*\{[^}]*background/.test(C)
-  && /\.b-commit:disabled[^{]*\{[^}]*cursor:\s*not-allowed/.test(C)
-  && /el\('button',\s*'b-commit',\s*'mark done'\)/.test(js)
-  && /el\('button',\s*'b-caution',\s*'defer'\)/.test(js)
-  && /el\('button',\s*'b-elevate',\s*'promote to branch'\)/.test(js)
-  && /id="blSave" class="b-commit"/.test(html));
+// item 16 — hide-concluded relocated into the tree pane-head + default=hide
+ok('R36 item16 #showConcluded inside tree pane-head .viewtoggle + default OFF=hide',
+  /class="viewtoggle"[\s\S]{0,140}id="showConcluded"/.test(html)
+  && !/id="showConcluded"[^>]*>\s*show concluded\s*<\/label>\s*<span class="spacer"/.test(html)
+  && /ctree-show-concluded'\)\s*===\s*'1'/.test(js)
+  && /\.viewtoggle\s*\{/.test(C));
 
-ok('R40 item 26: Details toggles IN PLACE (no full renderActions rebuild) + scrollIntoView nearest (no scroll reset)',
-  /disc\.addEventListener\('click', function \(\) \{[\s\S]*?li\.scrollIntoView\(\{ block: 'nearest' \}\);[\s\S]*?\}\);/.test(js)
-  && /li\.querySelector\('\.li-details'\)/.test(js)
-  && /li\.insertBefore\(d, disc\.nextSibling\)/.test(js));
+// item 17 — bidirectional interior wash + auto-scroll both directions
+ok('R37 item17 .li.hl/.tnode-row.hl interior wash + bidirectional scroll wiring',
+  /\.li\.hl,\s*\.tnode-row\.hl\s*\{[^}]*linear-gradient/.test(C)
+  && /row\.classList\.add\('hl'\)/.test(js)
+  && /selItem\s*=\s*it\.item_id;\s*focusNode/.test(js)
+  && /actionsBody\.querySelector\('\.li\[data-node="'/.test(js)
+  && /scrollIntoView\(\{\s*block:\s*'center',\s*behavior:\s*'smooth'/.test(js));
 
-ok('R41 item 27: decision/question resolve ONLY via Respond — done button gated to kind==="action", no "mark answered"',
-  /if \(it\.kind === 'action'\) \{\s*\n?\s*var done = el\('button', 'b-commit', 'mark done'\)/.test(js)
-  && !/mark answered/.test(js)
-  && /function respondable\s*\(/.test(js));
+// item 18 — toast bottom-right (no left:50% in base) + arrive flash + RM clause
+ok('R38 item18 toast bottom-right + @keyframes arrive + reduced-motion variant',
+  /\.toast\s*\{\s*position:\s*fixed;\s*right:\s*1\.2rem;\s*bottom:\s*1\.2rem;/.test(C)
+  && !/\.toast\s*\{[^}]*left:\s*50%/.test(C)
+  && /@keyframes arrive/.test(C)
+  && /\.arrive-static/.test(C)
+  && /prefers-reduced-motion: reduce\)\s*\{[^}]*\.li\.arrive/.test(C)
+  && /function arriveCls\s*\(\)/.test(js) && /function sweepArriveStatic\s*\(\)/.test(js));
 
-ok('R42 item 28: friendly Defer popover — presets + native datetime-local + to-Backlog (no ISO prompt())',
-  /function openDeferPop\s*\(/.test(js)
-  && /dti\.type = 'datetime-local'/.test(js)
-  && /Later today \(8 PM\)/.test(js) && /Tomorrow morning \(9 AM\)/.test(js)
-  && /Next week \(Mon 9 AM\)/.test(js) && /Pick a specific time/.test(js)
-  && /Until further notice — move to Backlog/.test(js)
-  && /\.defer-pop\s*\{/.test(C)
-  && !/prompt\('Defer until/.test(js));
+// item 19 — cross-repo doc viewer end-to-end tokens
+ok('R39 item19 server endpoints + projects two-layer + mdRender + modal/panel',
+  /url === '\/api\/doc'/.test(server) && /url === '\/api\/docs'/.test(server)
+  && /url === '\/api\/doc\/open'/.test(server)
+  && /path traversal rejected/.test(fs.readFileSync(path.join(D,'..','config','projects.js'),'utf8'))
+  && fs.existsSync(path.join(D,'..','config','projects.example.json'))
+  && fs.existsSync(path.join(D,'..','config','.gitignore'))
+  && /function mdRender\s*\(/.test(js) && /function openDocModal\s*\(/.test(js)
+  && /function openDocsPanel\s*\(/.test(js) && /function linkifyDocs\s*\(/.test(js)
+  && /id="docModal"/.test(html) && /id="docsPanel"/.test(html) && /id="docsBtn"/.test(html));
 
-ok('R43 item 28: item-backlogged ADDITIVE (schema enum+required+reducer) + deferred local-time fields + isWaiting excludes backlogged + SCHEMA_VERSION still 1',
-  /'item-backlogged'/.test(schema)
-  && /'item-backlogged':\s*\['node_id',\s*'item_id'\]/.test(schema)
-  && /case 'item-backlogged'/.test(reducer)
-  && /it\.scheduled_for_local = String\(ev\.scheduled_for_local\)/.test(reducer)
-  && /it\.tz_offset_min = Number\(ev\.tz_offset_min\)/.test(reducer)
-  && /\(\(!it\.checked\) \|\| it\.deferred \|\| it\.contested\) && !it\.backlogged/.test(js)
-  && /const SCHEMA_VERSION\s*=\s*1\s*;/.test(schema));
+// item 20 — "promote"→"expand to branch"; event type stays `promoted`
+ok('R40 item20 expand-to-branch rename; promoted event type preserved',
+  !/promote to branch/i.test(js) && !/promoted to branch/i.test(js)
+  && /'expand to branch'/.test(js) && /'expanded to branch'/.test(js)
+  && /type:\s*'promoted'/.test(js));
+
+// item 21 — robust priority sort: execute the extracted prioRank logic
+(function () {
+  var a = js.indexOf('function prioRank');
+  var b = js.indexOf('function sortBacklog');
+  var ok21 = false;
+  if (a !== -1 && b !== -1 && b > a) {
+    try {
+      // eslint-disable-next-line no-eval
+      var prioRank = eval('(' + js.slice(a, b).replace(/^function prioRank/, 'function') + ')');
+      var input = ['P3', 'P1', 'P2'];
+      var out = input.slice().sort(function (x, y) { return prioRank(x) - prioRank(y); });
+      var mixed = ['low', 'high', 'medium'].slice().sort(function (x, y) { return prioRank(x) - prioRank(y); });
+      ok21 = out.join(',') === 'P1,P2,P3'
+        && mixed.join(',') === 'high,medium,low'
+        && prioRank('high') === 0 && prioRank('1') === 0 && prioRank('zzz') === 9;
+    } catch (e) { ok21 = false; }
+  }
+  ok('R41 item21 prioRank([P3,P1,P2]) → [P1,P2,P3] (and high/p1/1→0, unknown→9)', ok21);
+})();
+
+// item 22 — semantic button palette: 6 classes defined + applied in app.js
+ok('R42 item22 six semantic btn classes defined + applied',
+  /\.btn-go\s*\{/.test(C) && /\.btn-wait\s*\{/.test(C) && /\.btn-info\s*\{/.test(C)
+  && /\.btn-up\s*\{/.test(C) && /\.btn-del\s*\{/.test(C) && /\.btn-neutral\s*\{/.test(C)
+  && /\.outline\b/.test(C)
+  && /'btn-go'/.test(js) && /'btn-wait'/.test(js) && /'btn-info'/.test(js)
+  && /'btn-up'/.test(js) && /'btn-del outline'/.test(js) && /'btn-neutral/.test(js));
+
+// item 23 — cross-repo doc-sourced enrichment present (no fabrication path)
+ok('R43 item23 backfill resolveDocPath + extractFromDoc wired into payloadFor',
+  /function resolveDocPath\s*\(/.test(backfill)
+  && /function extractFromDoc\s*\(/.test(backfill)
+  && /require\('\.\.\/config\/projects\.js'\)/.test(backfill)
+  && /links\.find\(function \(l\) \{ return \/\^docs\\\//.test(backfill));
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

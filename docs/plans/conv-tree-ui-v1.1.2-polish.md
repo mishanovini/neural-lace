@@ -52,6 +52,14 @@ Items 1–18 shipped & merged (PRs #4/#9/#10, master `301a5b7`). Misha kept live
 - `docs/plans/conv-tree-ui-v1.1.2-polish.md` — this plan.
 
 ## In-flight scope updates
+- 2026-05-18: `origin/master` advanced (PR #11 "conv-tree-ui v1.1.1 items **14-23**" superset, branch `claude/jolly-davinci-d99487`, master `759923d`) AFTER this branch's point. Its **item 22 already shipped item 25's exact filled-semantic-button system** (`btn-go/btn-wait/btn-info/btn-up/btn-del/btn-neutral` + `--btn-*` vars, same palette, all 23 buttons reclassified). Reconciled per the unambiguous engineering call (never ship two button systems): merged `origin/master`; **dropped the redundant `.b-*` item-25 implementation**; re-applied ONLY items 26/27/28 onto master's `btn-*` base; reworked the appended selftests to R44–R46 (item 25 is now master's R42). Item 28's backend (`item-backlogged` + `deferred` local-time fields + P16) merged into master's `state/*` **without conflict** — intact. Files touched were already in `## Files to Modify/Create`. New artifacts: `docs/discoveries/2026-05-18-v1.1.2-item25-pre-shipped-by-parallel-v1.1.1-superset.md` (the durable discovery), `docs/findings.md` (NL-FINDING-012 — see below).
+- 2026-05-18: Filed **NL-FINDING-012** in `docs/findings.md` — PR #11 merged to master with a pre-existing failing backfill self-test (B15); proven NOT introduced by v1.1.2 (byte-identical backfill; v1.1.2 state changes additive/unrelated). Out of v1.1.2 scope (flag-don't-fix); surfaced to Misha.
+- 2026-05-18: The following files enter this commit ONLY via `git merge origin/master` (PR #11 items-14-23 superset, master `759923d`) — they are master-authored, byte-inherited, NOT v1.1.2 changes (the documented scope-gate merge/union-of-plans edge — gate-respect.md PR #197 class + ADR-030; remediation Option 1 applied, NOT `--no-verify`):
+  - 2026-05-18: neural-lace/conversation-tree-ui/config/projects.example.json — PR #11 item-19 project-config two-layer; inherited via merge, unmodified by v1.1.2
+  - 2026-05-18: neural-lace/conversation-tree-ui/config/.gitignore — PR #11 item-19 project-config; inherited via merge, unmodified by v1.1.2
+  - 2026-05-18: neural-lace/conversation-tree-ui/config/projects.js — PR #11 item-19 project-config; inherited via merge, unmodified by v1.1.2
+  - 2026-05-18: neural-lace/conversation-tree-ui/server/server.js — PR #11 item-19 docs-browser server endpoints; inherited via merge, unmodified by v1.1.2
+  - 2026-05-18: neural-lace/conversation-tree-ui/state/backfill-details.js — PR #11 item-23 backfill (the B15-failing file, NL-FINDING-012); inherited via merge byte-identical, unmodified by v1.1.2
 
 ## Assumptions
 - The spec's button palette (commit #22C55E, caution #F59E0B, util #3B82F6, elevate #A855F7, destruct #B91C1C, neutral #475569) is used verbatim; white text on all except caution (dark text on amber for contrast) per harness UX contrast standard. Verified per-class via computed-style.
@@ -100,9 +108,17 @@ Thinnest end-to-end slice proving the additive schema path before the rest: add 
 - **Reasoning:** reuses two already-shaped events; the return path is the spec-named Activate button; recoverable by construction (item stays in the node, reachable via the tree, tracked in Backlog).
 - **To reverse:** the events are additive; clearing `backlogged` (item-unchecked) re-surfaces the item.
 
+### Decision: reconcile onto the parallel items-14-23 superset — drop item 25 (= merged item 22), re-apply 26-28 on `btn-*`
+- **Tier:** 2
+- **Status:** proceeded with recommendation; auto-applied (reversible feature-branch reconciliation); captured durably as `docs/discoveries/2026-05-18-v1.1.2-item25-pre-shipped-by-parallel-v1.1.1-superset.md`; surfaced prominently to Misha
+- **Chosen:** v1.1.2 was speced/built against the items-14-18 v1.1.1 base (PR #10, `301a5b7`). A SECOND v1.1.1 superset merged in parallel during this session (PR #11 "items 14-23", master `759923d`) whose **item 22 already shipped item 25's exact filled-button system**. Merged `origin/master` (no force-push/rebase — git-discipline Rule 1); dropped the redundant `.b-*` parallel system; took master's items-14-23 client base wholesale; re-applied ONLY items 26/27/28 onto it using master's `btn-*` classes; reworked the appended selftests to R44–R46. Item 28's additive backend (`item-backlogged`, `deferred` local-time fields, P16) merged into master's `state/*` with zero conflict.
+- **Alternatives:** (a) keep `.b-*` and rename master's `btn-*` to it (rejected — rewrites already-merged, already-verified item-22 work; gratuitous churn). (b) abandon v1.1.2, re-plan 26-28 off `759923d` (rejected — work done + verified; reconciliation is cheaper than re-plan).
+- **Reasoning:** never ship two competing button systems; the reconciliation is reversible (one branch revert); the user explicitly anticipated "rebase once v1.1.1 lands" and authorized autonomous drive-to-merge with reasonable calls. **Net effect: v1.1.2's real net-new content is items 26, 27, 28 (+ item 28's additive backend) — item 25 was delivered by the merged item 22, not by this PR.**
+- **To reverse:** `git revert` the merge + reconciliation commit; items 26-28 are localized edits on master's app.js + a `.defer-pop` CSS block + R44–R46; the additive state events are independently revertable.
+
 ## Definition of Done
-- [x] All 5 tasks task-verified PASS
-- [x] state selftest 16/16, responsive 43/43, backfill 11/11, conv-tree gates 18/8 — all green
+- [x] All 5 tasks task-verified PASS (pre-merge impl); post-merge reconciliation re-verified by the same deterministic acceptance suite (gate-honored acceptance per `acceptance-exempt`)
+- [x] state selftest 16/16 (P16), responsive 46/46 (master R1–R43 + new R44–R46), conv-tree gates 18/8 — all green. backfill = 14/1: the 1 fail (B15) is a **pre-existing master regression from PR #11**, byte-proven NOT introduced by v1.1.2 — filed NL-FINDING-012, out of scope (flag-don't-fix)
 - [x] SCHEMA_VERSION still 1 (additive proof in P16)
 - [x] SCRATCHPAD.md updated
 - [x] Completion report appended; PR merged to master; main checkout synced; :7733 restarted

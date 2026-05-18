@@ -23,14 +23,18 @@
       blSave = $('blSave'), blCancel = $('blCancel'),
       ctxPanel = $('ctxPanel'), ctxScrim = $('ctxScrim'), zoomIn = $('zoomIn'),
       zoomOut = $('zoomOut'), fitSel = $('fitSel'),
-      showConcluded = $('showConcluded'), tabBar = $('tabBar');
+      showConcluded = $('showConcluded'), tabBar = $('tabBar'),
+      docsBtn = $('docsBtn'), docScrim = $('docScrim'), docModal = $('docModal'),
+      docTitle = $('docTitle'), docBody = $('docBody'), docClose = $('docClose'),
+      docOpenEditor = $('docOpenEditor'), docsPanel = $('docsPanel'),
+      docsBody = $('docsBody'), docsFilter = $('docsFilter'), docsClose = $('docsClose');
 
   // ---- client view state ----------------------------------------------
   var S = null;                 // latest snapshot
   var loaded = false;           // first frame received yet?
   var activeTree = localStorage.getItem('ctree-active') || 'global';
   var sel = null;               // selected node_id
-  var selNodeLink = null;       // v1.1.1 item 17: bidirectional item<->node link selection
+  var selItem = null;           // item 17: selected item_id (bidirectional hl)
   var collapsed = new Set();    // node_ids the user collapsed (default expanded)
   var zoom = 1;
   var firedDefers = new Set(JSON.parse(localStorage.getItem('ctree-fired') || '[]'));
@@ -92,6 +96,17 @@
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
     catch (_) { return false; }
   }
+  // item 18: arrival-flash class. Normal = animated wash (.arrive); reduced
+  // motion = a single persistent highlight (.arrive-static) cleared after
+  // ~1.5s by sweepArriveStatic() so the operator still sees WHERE it landed.
+  function arriveCls() { return reducedMotion() ? 'arrive-static' : 'arrive'; }
+  function sweepArriveStatic() {
+    if (!reducedMotion()) return;
+    setTimeout(function () {
+      [].forEach.call(document.querySelectorAll('.arrive-static'),
+        function (n) { n.classList.remove('arrive-static'); });
+    }, 1500);
+  }
   // item 7: slide+fade the row OUT (~200ms) before the mutation posts, so a
   // state change is felt, not just "vanished". Then run `then`.
   function animateLeave(li, then) {
@@ -106,12 +121,6 @@
       post(postEv, okMsg, true).then(function (ok) {
         if (!ok) return;                       // post() surfaced the error
         if (afterOk) afterOk();
-        // item 18: flash WHERE the state change happened (the tree node),
-        // since the affected item itself just slid out of the list.
-        if (postEv && postEv.node_id) setTimeout(function () {
-          var r = treeCanvas.querySelector('[data-node="' + cssEsc(postEv.node_id) + '"]');
-          if (r) arrivalFlash(r, dominantKind(byId(postEv.node_id)));
-        }, 40);
         snackbar(okMsg + ' — Undo?', { kind: 'ok', undo: undoFn });
       });
     });
@@ -119,83 +128,40 @@
   // items 7+8: which action/backlog item ids are NEW since the last render
   // (drives the entrance flash + the per-pane "+N new" badge). Primed on the
   // first frame so nothing flashes/badges on initial load.
-  var seenActionIds = null, seenBacklogIds = null, seenNodeIds = null;
+  var seenTreeIds = null;       // item 18: prime tree nodes on first frame
+  var seenActionIds = null, seenBacklogIds = null;
   var newActionIds = {}, newBacklogIds = {};
   var newActionsCount = 0, newBacklogCount = 0;
   function diffNewIds(curIds, prevSet, kind) {
-    var store = function (v) {
-      if (kind === 'a') seenActionIds = v;
-      else if (kind === 'n') seenNodeIds = v;          // item 18: tree-node arrivals
-      else seenBacklogIds = v;
-    };
     var fresh = {};
-    if (prevSet == null) {            // first frame — prime, flash/badge nothing
+    if (prevSet == null) {            // first frame — prime, badge nothing
       var prime = {}; curIds.forEach(function (id) { prime[id] = 1; });
-      store(prime);
+      if (kind === 'a') seenActionIds = prime; else seenBacklogIds = prime;
       return { fresh: {}, count: 0 };
     }
     var cnt = 0;
     curIds.forEach(function (id) { if (!prevSet[id]) { fresh[id] = 1; cnt++; } });
     var next = {}; curIds.forEach(function (id) { next[id] = 1; });
-    store(next);
+    if (kind === 'a') seenActionIds = next; else seenBacklogIds = next;
     return { fresh: fresh, count: cnt };
-  }
-
-  // v1.1.1 item 17: a node's dominant open-item kind (urgency precedence
-  // action > decision > question) — drives the bidirectional tint color.
-  function dominantKind(node) {
-    var ks = (node && node.items || []).filter(function (it) { return isWaiting(it); })
-      .map(function (it) { return it.kind; });
-    if (ks.indexOf('action') !== -1) return 'action';
-    if (ks.indexOf('decision') !== -1) return 'decision';
-    if (ks.indexOf('question') !== -1) return 'question';
-    return null;
-  }
-  // v1.1.1 item 18: arrival-flash. 600ms type-color wash (animated), or a
-  // single-frame persistent highlight under prefers-reduced-motion. Safe to
-  // re-trigger (clears the class first, removes it after).
-  function arrivalFlash(node, kind) {
-    if (!node) return;
-    node.classList.remove('arrival-flash', 'af-action', 'af-decision', 'af-question');
-    void node.offsetWidth;                       // restart the animation
-    node.classList.add('arrival-flash');
-    if (kind) node.classList.add('af-' + kind);
-    var dur = reducedMotion() ? 1500 : 700;
-    clearTimeout(node._af);
-    node._af = setTimeout(function () {
-      node.classList.remove('arrival-flash', 'af-action', 'af-decision', 'af-question');
-    }, dur);
-  }
-  // v1.1.1 item 17: bidirectional link-select. Sets the shared link, re-renders
-  // (both panes pick up the tint), then scrolls the OTHER side into view.
-  function linkSelect(nodeId, src) {
-    selNodeLink = nodeId;
-    sel = nodeId; ctxExpanded = false;
-    render();
-    // scroll the tree node into view
-    setTimeout(function () {
-      var r = treeCanvas.querySelector('[data-node="' + cssEsc(nodeId) + '"]');
-      if (r && src === 'fromItem') r.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      var li = actionsBody.querySelector('[data-li-node="' + cssEsc(nodeId) + '"]');
-      if (li && src === 'fromTree') li.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }, 30);
-    openCtx(nodeId);
   }
 
   // item 9: rich-details disclosure (collapsed by default; per-item toggle).
   var expandedItems = new Set();
-  function detailRow(label, val) {
+  function detailRow(label, val, projectKey) {
     if (val == null || val === '') return null;
     var d = el('div', 'det-row');
     d.appendChild(el('span', 'det-k', label));
-    d.appendChild(el('span', 'det-v', String(val)));
+    var v = el('div', 'det-v');
+    linkifyDocs(v, String(val), projectKey);   // item 19: docs/… → clickable
+    d.appendChild(v);
     return d;
   }
-  function renderItemDetails(de) {
+  function renderItemDetails(de, projectKey) {
     var box = el('div', 'li-details');
     var add = function (node) { if (node) box.appendChild(node); };
-    add(detailRow('What', de.description));
-    add(detailRow('Why / context', de.context));
+    add(detailRow('What', de.description, projectKey));
+    add(detailRow('Why / context', de.context, projectKey));
     if (Array.isArray(de.options) && de.options.length) {
       var ow = el('div', 'det-row');
       ow.appendChild(el('span', 'det-k', 'Options'));
@@ -210,17 +176,25 @@
       });
       ow.appendChild(ol); box.appendChild(ow);
     }
-    add(detailRow('Instructions', de.instructions));
-    add(detailRow('Recommendation', de.recommendation));
-    add(detailRow('Blocking input needed', de.blocking_input));
+    add(detailRow('Instructions', de.instructions, projectKey));
+    add(detailRow('Recommendation', de.recommendation, projectKey));
+    add(detailRow('Blocking input needed', de.blocking_input, projectKey));
     if (Array.isArray(de.links) && de.links.length) {
       var lw = el('div', 'det-row');
       lw.appendChild(el('span', 'det-k', 'Links'));
       var lv = el('div', 'det-v');
       de.links.forEach(function (lk) {
-        var c = el('span', 'det-link', String(lk));
-        c.title = 'repo path / reference';
-        lv.appendChild(c); lv.appendChild(document.createTextNode(' '));
+        var s = String(lk);
+        // item 19: a docs/… link becomes a clickable .doc-link → inline modal;
+        // a non-doc reference (e.g. "(see branch: X)") stays a plain chip.
+        if (/docs\/[A-Za-z0-9._\/-]+/.test(s)) {
+          linkifyDocs(lv, s, projectKey);
+        } else {
+          var c = el('span', 'det-link', s);
+          c.title = 'repo path / reference';
+          lv.appendChild(c);
+        }
+        lv.appendChild(document.createTextNode(' '));
       });
       lw.appendChild(lv); box.appendChild(lw);
     }
@@ -288,6 +262,139 @@
   }
   function uid(p) { return (p || 'g') + '-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e5).toString(36); }
 
+  // ---- item 19: tiny self-contained markdown renderer (NO runtime dep) ----
+  // Covers the internal-doc subset: headings, bold/italic, inline + fenced
+  // code, links, ordered/unordered lists, hr, paragraphs. HTML-escaped first
+  // so doc content can never inject markup.
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function inlineMd(s) {
+    return esc(s)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  }
+  function mdRender(src) {
+    var lines = String(src == null ? '' : src).split(/\r?\n/);
+    var html = '', i = 0, inList = false, listTag = '';
+    function closeList() { if (inList) { html += '</' + listTag + '>'; inList = false; listTag = ''; } }
+    while (i < lines.length) {
+      var ln = lines[i];
+      var fence = ln.match(/^```/);
+      if (fence) {
+        closeList(); i++;
+        var code = '';
+        while (i < lines.length && !/^```/.test(lines[i])) { code += lines[i] + '\n'; i++; }
+        i++; html += '<pre><code>' + esc(code) + '</code></pre>'; continue;
+      }
+      var h = ln.match(/^(#{1,6})\s+(.*)$/);
+      if (h) { closeList(); html += '<h' + h[1].length + '>' + inlineMd(h[2]) + '</h' + h[1].length + '>'; i++; continue; }
+      if (/^\s*([-*])\s+/.test(ln)) {
+        if (!inList || listTag !== 'ul') { closeList(); html += '<ul>'; inList = true; listTag = 'ul'; }
+        html += '<li>' + inlineMd(ln.replace(/^\s*[-*]\s+/, '')) + '</li>'; i++; continue;
+      }
+      if (/^\s*\d+\.\s+/.test(ln)) {
+        if (!inList || listTag !== 'ol') { closeList(); html += '<ol>'; inList = true; listTag = 'ol'; }
+        html += '<li>' + inlineMd(ln.replace(/^\s*\d+\.\s+/, '')) + '</li>'; i++; continue;
+      }
+      if (/^\s*(---+|\*\*\*+)\s*$/.test(ln)) { closeList(); html += '<hr>'; i++; continue; }
+      if (/^\s*$/.test(ln)) { closeList(); i++; continue; }
+      closeList(); html += '<p>' + inlineMd(ln) + '</p>'; i++;
+    }
+    closeList();
+    return html;
+  }
+  // item 19: open one doc inline (rendered markdown). projectKey defaults to
+  // the active tree (the project tag); the server resolves it cross-repo.
+  var curDoc = null;
+  function openDocModal(project, relPath) {
+    project = project || activeTree;
+    curDoc = { project: project, path: relPath };
+    docTitle.textContent = project + ' › ' + relPath;
+    docBody.innerHTML = '<p class="muted">Loading…</p>';
+    docModal.hidden = false; docScrim.hidden = false;
+    fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(relPath))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok) { docBody.innerHTML = mdRender(j.content); }
+        else { docBody.innerHTML = '<p class="muted">Could not load this doc: ' + esc((j && j.error) || 'unknown') + '</p>'; }
+      })
+      .catch(function () { docBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
+  }
+  function closeDocModal() { docModal.hidden = true; docScrim.hidden = true; curDoc = null; }
+  // item 19: linkify any docs/…(.md) token inside a text node into a clickable
+  // .doc-link button (so doc references in item text/details are not dead text).
+  var DOCRE = /docs\/[A-Za-z0-9._\/-]+\.md|docs\/[A-Za-z0-9._\/-]+/g;
+  function linkifyDocs(container, text, projectKey) {
+    var s = String(text == null ? '' : text), last = 0, m;
+    DOCRE.lastIndex = 0;
+    while ((m = DOCRE.exec(s)) !== null) {
+      if (m.index > last) container.appendChild(document.createTextNode(s.slice(last, m.index)));
+      var b = el('button', 'doc-link', m[0]);
+      b.title = 'open ' + m[0] + ' (project: ' + (projectKey || activeTree) + ')';
+      (function (p) { b.addEventListener('click', function () { openDocModal(projectKey, p); }); })(m[0]);
+      container.appendChild(b);
+      last = m.index + m[0].length;
+    }
+    if (last < s.length) container.appendChild(document.createTextNode(s.slice(last)));
+  }
+  // item 19: cross-project docs browser (searchable, collapsible per project).
+  var docsCache = null, docsCollapsed = {};
+  function openDocsPanel() {
+    docsPanel.hidden = false; docScrim.hidden = false;
+    if (docsCache) { renderDocsPanel(); return; }
+    docsBody.innerHTML = '<p class="muted">Loading docs…</p>';
+    fetch('/api/docs').then(function (r) { return r.json(); }).then(function (j) {
+      docsCache = (j && j.projects) || {}; renderDocsPanel();
+    }).catch(function () { docsBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
+  }
+  function closeDocsPanel() { docsPanel.hidden = true; if (docModal.hidden) docScrim.hidden = true; }
+  function renderDocsPanel() {
+    var f = (docsFilter.value || '').trim().toLowerCase();
+    clear(docsBody);
+    Object.keys(docsCache).forEach(function (key) {
+      var info = docsCache[key];
+      var files = (info.files || []).filter(function (p) { return !f || p.toLowerCase().indexOf(f) !== -1; });
+      if (f && files.length === 0) return;
+      var head = el('div', 'dp-proj');
+      head.appendChild(el('span', 'twist', docsCollapsed[key] ? '▸' : '▾'));
+      head.appendChild(document.createTextNode(key + ' (' + (info.missing ? 'root not found on this machine' : files.length) + ')'));
+      head.addEventListener('click', function () { docsCollapsed[key] = !docsCollapsed[key]; renderDocsPanel(); });
+      docsBody.appendChild(head);
+      if (docsCollapsed[key] || info.missing) {
+        if (info.missing) docsBody.appendChild(el('div', 'dp-missing', info.root));
+        return;
+      }
+      files.forEach(function (p) {
+        var fe = el('div', 'dp-file', p);
+        fe.addEventListener('click', function () { openDocModal(key, p); });
+        docsBody.appendChild(fe);
+      });
+    });
+    if (!docsBody.firstChild) docsBody.appendChild(el('p', 'muted', 'No docs match.'));
+  }
+  if (docsBtn) docsBtn.addEventListener('click', openDocsPanel);
+  if (docsClose) docsClose.addEventListener('click', closeDocsPanel);
+  if (docsFilter) docsFilter.addEventListener('input', function () { if (docsCache) renderDocsPanel(); });
+  if (docClose) docClose.addEventListener('click', closeDocModal);
+  if (docOpenEditor) docOpenEditor.addEventListener('click', function () {
+    if (!curDoc) return;
+    fetch('/api/doc/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(curDoc) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { showToast(j && j.ok ? 'opened in editor' : ('open failed: ' + ((j && j.error) || '')), j && j.ok ? 'ok' : 'err'); })
+      .catch(function () { showToast('open failed — server unreachable', 'err'); });
+  });
+  if (docScrim) docScrim.addEventListener('click', function () { closeDocModal(); closeDocsPanel(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      if (!docModal.hidden) closeDocModal();
+      else if (!docsPanel.hidden) closeDocsPanel();
+    }
+  });
+
   // ---- snapshot helpers ------------------------------------------------
   function nodes() { return (S && Array.isArray(S.nodes)) ? S.nodes : []; }
   function backlog() { return (S && Array.isArray(S.backlog)) ? S.backlog : []; }
@@ -310,10 +417,7 @@
   function crumb(nodeId) {
     return chain(nodeId).reverse().map(function (n) { return n.title || n.node_id; }).join(' › ');
   }
-  // item 28: a backlogged item ("Defer → until further notice — move to
-  // Backlog") leaves "Waiting on you" even though it is not checked — it was
-  // parked, not resolved. The Backlog "Activate" button is the return path.
-  function isWaiting(it) { return ((!it.checked) || it.deferred || it.contested) && !it.backlogged; }
+  function isWaiting(it) { return (!it.checked) || it.deferred || it.contested; }
 
   // ---- per-pane data-state rendering (C1b/c/d/e + BF-2) ----------------
   // Four never-conflated states: loading | first-run-empty | steady-state-empty
@@ -437,12 +541,8 @@
     if (isCollapsed) wrap.classList.add('collapsed');
 
     var row = el('div', 'tnode-row');
-    if (n.node_id === sel) row.classList.add('sel');
-    if (n.node_id === selNodeLink) {           // item 17: bidirectional interior tint
-      row.classList.add('sel-tint');
-      var dk = dominantKind(n);
-      if (dk) row.classList.add('tint-' + dk);
-    }
+    if (n.node_id === sel) { row.classList.add('sel'); row.classList.add('hl'); } // item 17: interior wash
+    if (seenTreeIds && !seenTreeIds[n.node_id]) row.classList.add(arriveCls());    // item 18: new node flash
     if (n.state === 'concluded') row.classList.add('concluded');
     if (n.state === 'archived') row.classList.add('archived');
     row.setAttribute('data-node', n.node_id);
@@ -460,7 +560,7 @@
     if (n.state === 'concluded') {
       var stub = el('span', 'tnode-title concluded stub', n.title + '  — concluded');
       row.appendChild(stub);
-      var reopen = el('button', 'b-neutral', '↩ re-open');
+      var reopen = el('button', 'btn-neutral outline', '↩ re-open');
       reopen.title = 'auto-concluded — re-open (no data loss)';
       reopen.addEventListener('click', function (e) { e.stopPropagation(); post({ type: 're-opened', node_id: n.node_id }, 're-opened'); });
       row.appendChild(reopen);
@@ -470,7 +570,7 @@
     }
     row.appendChild(nodeBadges(n));
 
-    row.addEventListener('click', function () { linkSelect(n.node_id, 'fromTree'); });
+    row.addEventListener('click', function () { selectNode(n.node_id); });
     // C5: drag-drop re-parent (mouse-only, NFR-6 v1).
     row.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/node', n.node_id); });
     row.addEventListener('dragover', function (e) { e.preventDefault(); row.classList.add('dragover'); });
@@ -503,7 +603,7 @@
     }
     if (vis.length === 0) {
       if (allHiddenByConcluded()) {
-        var aff = el('button', 'b-neutral', 'Show concluded');
+        var aff = el('button', 'ghost', 'Show concluded');
         aff.addEventListener('click', function () { showConcluded.checked = true; applyShowConcluded(); });
         paneState(treeState, treeScroll, 'steady-empty', {
           steady: 'All branches in "' + activeTree + '" are concluded — hidden by your "show concluded" preference.',
@@ -528,12 +628,11 @@
     var orderedRoots = applyOrder(f.roots, order('tree:' + activeTree), 'node_id');
     orderedRoots.forEach(function (r) { renderTreeNode(r, f.kids, treeCanvas); });
     treeCrumb.textContent = sel ? crumb(sel) : 'no selection';
-    // item 18: arrival-flash newly-arrived tree nodes (primed on first frame)
-    var nd = diffNewIds(vis.map(function (x) { return x.node_id; }), seenNodeIds, 'n');
-    if (nd.count) Object.keys(nd.fresh).forEach(function (nid) {
-      var r = treeCanvas.querySelector('[data-node="' + cssEsc(nid) + '"]');
-      if (r) arrivalFlash(r, dominantKind(byId(nid)));
-    });
+    // item 18: after rendering, snapshot the now-seen node ids so the NEXT
+    // frame flashes only genuinely-new nodes (first frame primes silently).
+    var seenNow = {}; vis.forEach(function (v) { seenNow[v.node_id] = 1; });
+    seenTreeIds = seenNow;
+    sweepArriveStatic();   // reduced-motion: clear persistent highlights ~1.5s
   }
 
   // ---- ACTIONS PANE (C3) ----------------------------------------------
@@ -578,70 +677,52 @@
     if (dN.count) { newActionsCount += dN.count; updateNewBadges(); }
     entries.forEach(function (en, ix) {
       var n = en.n, it = en.it;
-      var li = el('div', 'li kind-' + it.kind          // item 14: type stripe/wash
-        + (it.contested ? ' contested' : '')
+      // item 14: kind-<k> drives the type-colour accent/tint. item 17: .hl
+      // when this item is the active selection (bidirectional highlight).
+      var li = el('div', 'li kind-' + it.kind + (it.contested ? ' contested' : '')
         + (it.responded ? ' responded' : '')
-        + (n.node_id === selNodeLink ? ' sel-link' : '')   // item 17: bidirectional tint
-        + (newActionIds[it.item_id] ? ' flash' : ''));
+        + ((sel === n.node_id || selItem === it.item_id) ? ' hl' : '')
+        + (newActionIds[it.item_id] ? ' ' + arriveCls() : ''));
+      li.setAttribute('data-item', it.item_id);
+      li.setAttribute('data-node', n.node_id);
       li.setAttribute('draggable', actionsSort.value === 'manual' ? 'true' : 'false');
-      li.setAttribute('data-li-node', n.node_id);          // item 17: scroll target
       var top = el('div', 'li-top');
       top.appendChild(el('span', 'li-kind ' + it.kind, it.kind));
-      top.appendChild(el('span', 'li-text', it.text));
+      top.appendChild(el('span', 'li-text', it.text));   // item 15: flex:1, owns row width
       if (it.deferred) {
         var d = el('span', 'badge deferred', 'deferred' + (it.scheduled_for ? ' · ' + fmtTime(it.scheduled_for) : ''));
         top.appendChild(d);
       }
-      // item 15: compact fixed icon-button (was a width-greedy text crumb)
-      var cr = el('button', 'li-jump', '→');
-      cr.title = 'Jump to in tree';
-      cr.setAttribute('aria-label', 'Jump to in tree');
-      cr.addEventListener('click', function (e) { e.stopPropagation(); focusNode(n.node_id); });
-      top.appendChild(cr);
-      // item 17: clicking the item (not a button) links-selects its node
-      li.addEventListener('click', function (e) {
-        if (e.target.closest('button') || e.target.closest('textarea')) return;
-        linkSelect(n.node_id, 'fromItem');
+      // item 15: replace the width-eating text crumb with a fixed 24px icon.
+      var jump = el('button', 'li-jump', '→');
+      jump.title = 'Jump to in tree';
+      jump.addEventListener('click', function (e) { e.stopPropagation(); focusNode(n.node_id); });
+      top.appendChild(jump);
+      // item 17: clicking the row (not a control) highlights the tree node.
+      top.addEventListener('click', function (e) {
+        if (e.target.closest('button')) return;
+        selItem = it.item_id; focusNode(n.node_id);
       });
       li.appendChild(top);
 
       // item 9: rich-details disclosure (collapsed by default)
       if (it.details && typeof it.details === 'object') {
         var expanded = expandedItems.has(it.item_id);
-        var disc = el('button', 'b-util det-toggle', (expanded ? '▾' : '▸') + ' details');
-        // item 26: toggle IN PLACE — never call the full renderActions()
-        // (clear(actionsBody) + rebuild collapses the list height, which
-        // resets the scroll to the top and makes the clicked item vanish).
-        // Add/remove just this item's details box; keep expandedItems in
-        // sync so a later SSE-driven full render still shows it expanded.
+        var disc = el('button', 'ghost det-toggle', (expanded ? '▾' : '▸') + ' details');
         disc.addEventListener('click', function () {
-          var nowExpanded;
-          if (expandedItems.has(it.item_id)) {
-            expandedItems.delete(it.item_id);
-            var box = li.querySelector('.li-details');
-            if (box) box.remove();
-            disc.textContent = '▸ details';
-            nowExpanded = false;
-          } else {
-            expandedItems.add(it.item_id);
-            var d = renderItemDetails(it.details);
-            li.insertBefore(d, disc.nextSibling);
-            disc.textContent = '▾ details';
-            nowExpanded = true;
-          }
-          // If expanding pushed the item partly out of view, scroll the
-          // MINIMUM needed to keep it visible — never a full reset to top.
-          if (nowExpanded) li.scrollIntoView({ block: 'nearest' });
+          if (expandedItems.has(it.item_id)) expandedItems.delete(it.item_id);
+          else expandedItems.add(it.item_id);
+          renderActions();
         });
         li.appendChild(disc);
-        if (expanded) li.appendChild(renderItemDetails(it.details));
+        if (expanded) li.appendChild(renderItemDetails(it.details, treeOf(n)));
       }
       // item 10: responded — awaiting confirmation (visible, de-emphasised)
       if (it.responded) {
         var rn = el('div', 'responded-note');
         rn.appendChild(el('span', 'badge', 'responded — awaiting confirmation'));
         rn.appendChild(el('div', 'muted', it.responded.text));
-        var cp = el('button', 'b-util', '⧉ Copy to Dispatch →');
+        var cp = el('button', 'btn-info', '⧉ Copy to Dispatch →');
         cp.addEventListener('click', function () { copyResponseForDispatch(it, it.responded.text); });
         rn.appendChild(cp);
         li.appendChild(rn);
@@ -655,12 +736,12 @@
         cn.appendChild(el('div', null, label));
         cn.appendChild(el('div', 'muted', it.contested.note || ''));
         var rb = el('div', 'li-actions');
-        var accept = el('button', 'b-commit', 'Accept their position');
+        var accept = el('button', 'btn-neutral', 'Accept their position');
         accept.addEventListener('click', function () {
           post({ type: 'contest-resolved', node_id: n.node_id, item_id: it.item_id, resolution: 'accept-theirs' }, 'resolved')
             .then(function (ok) { if (ok) maybeAutoConclude(n.node_id); });
         });
-        var keep = el('button', 'b-neutral', 'Keep mine, re-open');
+        var keep = el('button', 'btn-neutral outline', 'Keep mine, re-open');
         keep.addEventListener('click', function () {
           post({ type: 'contest-resolved', node_id: n.node_id, item_id: it.item_id, resolution: 'keep-mine-reopen' }, 'resolved');
         });
@@ -669,31 +750,26 @@
         li.appendChild(cn);
       } else {
         var acts = el('div', 'li-actions');
-        // item 27: a decision/question resolves ONLY via Respond — there is
-        // no quiet mark-as-resolved button for them (that would leave
-        // Dispatch with no response captured). Actions keep "mark done"
-        // (there is no response to capture; mark-done is correct there).
-        if (it.kind === 'action') {
-          var done = el('button', 'b-commit', 'mark done');
-          done.addEventListener('click', function () {
-            actWithUndo(li,
-              { type: 'action-done', node_id: n.node_id, item_id: it.item_id }, 'Marked done',
-              function () {   // item 7 undo: re-surface the item (+ re-open node if it auto-concluded)
-                post({ type: 'item-unchecked', node_id: n.node_id, item_id: it.item_id }, 'undone', true)
-                  .then(function (ok) {
-                    if (!ok) return;
-                    var nd = byId(n.node_id);
-                    if (nd && nd.state === 'concluded') post({ type: 're-opened', node_id: n.node_id }, 're-opened', true);
-                  });
-              },
-              function () { maybeAutoConclude(n.node_id); });
-          });
-          acts.appendChild(done);
-        }
-        // D2: dispute a state-checked item (low-emphasis safety net). Only
-        // appears on an already-checked item — never a quiet-resolve path.
+        var done = el('button', 'btn-go', it.kind === 'action' ? 'mark done' : 'mark answered');
+        done.addEventListener('click', function () {
+          var type = it.kind === 'action' ? 'action-done' : 'answered';
+          var label = it.kind === 'action' ? 'Marked done' : 'Marked answered';
+          actWithUndo(li,
+            { type: type, node_id: n.node_id, item_id: it.item_id }, label,
+            function () {   // item 7 undo: re-surface the item (+ re-open node if it auto-concluded)
+              post({ type: 'item-unchecked', node_id: n.node_id, item_id: it.item_id }, 'undone', true)
+                .then(function (ok) {
+                  if (!ok) return;
+                  var nd = byId(n.node_id);
+                  if (nd && nd.state === 'concluded') post({ type: 're-opened', node_id: n.node_id }, 're-opened', true);
+                });
+            },
+            function () { maybeAutoConclude(n.node_id); });
+        });
+        acts.appendChild(done);
+        // D2: dispute a state-checked item (low-emphasis safety net).
         if (it.checked) {
-          var dis = el('button', 'b-neutral', 'dispute');
+          var dis = el('button', 'btn-up outline', 'dispute');
           dis.title = 'safety net — not a distrust mechanism';
           dis.addEventListener('click', function () {
             var note = prompt('Why do you dispute this being done? (a note; can become a thread in Dispatch)');
@@ -702,36 +778,40 @@
           });
           acts.appendChild(dis);
         }
-        // D3: defer / clear-defer. item 28: defer opens a friendly popover
-        // (presets + native datetime-local + "until further notice → Backlog"),
-        // all in the user's LOCAL timezone — no ISO prompt().
+        // D3: defer / clear-defer.
         if (it.deferred) {
-          var clr = el('button', 'b-util', 'clear defer');
+          var clr = el('button', 'btn-del outline', 'clear defer');
           clr.addEventListener('click', function () { post({ type: 'defer-cleared', node_id: n.node_id, item_id: it.item_id }, 'defer cleared'); });
           acts.appendChild(clr);
         } else {
-          var dfr = el('button', 'b-caution', 'defer');
-          dfr.addEventListener('click', function () { openDeferPop(li, n, it); });
+          var dfr = el('button', 'btn-wait', 'defer');
+          dfr.addEventListener('click', function () {
+            var when = prompt('Defer until (ISO time, or blank for no schedule):', new Date(Date.now() + 36e5).toISOString());
+            if (when == null) return;
+            actWithUndo(li,
+              { type: 'deferred', node_id: n.node_id, item_id: it.item_id, scheduled_for: when.trim() || null }, 'Deferred',
+              function () { post({ type: 'defer-cleared', node_id: n.node_id, item_id: it.item_id }, 'defer cleared', true); });
+          });
           acts.appendChild(dfr);
         }
         // item 10: inline Respond on decisions/questions/needs-input (only
         // when not yet responded — the responded note above takes over then)
         if (respondable(it) && !it.responded) {
-          var rsp = el('button', 'b-commit', 'Respond');
+          var rsp = el('button', 'btn-info', 'Respond');
           rsp.addEventListener('click', function () {
             if (li.querySelector('.respond-box')) return;   // one open at a time
             var rb2 = el('div', 'respond-box');
             var ta = el('textarea', 'draft-area');
             ta.placeholder = 'Your response — captured here; Copy to Dispatch closes the loop (v1.1).';
             var row = el('div', 'row');
-            var submit = el('button', 'b-commit', 'Submit response');
+            var submit = el('button', 'btn-go', 'Submit response');
             submit.addEventListener('click', function () {
               var txt = ta.value.trim();
               if (!txt) { ta.focus(); return; }
               post({ type: 'action-responded', node_id: n.node_id, item_id: it.item_id, response_text: txt }, 'response captured')
                 .then(function (ok) { if (ok) copyResponseForDispatch(it, txt); });
             });
-            var cancel = el('button', 'b-neutral', 'cancel');
+            var cancel = el('button', 'ghost', 'cancel');
             cancel.addEventListener('click', function () { rb2.remove(); });
             row.appendChild(submit); row.appendChild(cancel);
             rb2.appendChild(ta); rb2.appendChild(row);
@@ -745,123 +825,32 @@
       // manual drag-reorder (FR-29)
       if (actionsSort.value === 'manual') wireReorder(li, it.item_id, 'actions:' + activeTree, function () { return actionEntries().map(function (e) { return e.it.item_id; }); });
       actionsBody.appendChild(li);
-      if (newActionIds[it.item_id]) arrivalFlash(li, it.kind);   // item 18: type-tinted arrival flash
     });
-  }
-
-  // ---- item 28: friendly Defer popover --------------------------------
-  // Presets + native datetime-local + "until further notice — move to
-  // Backlog". ALL times the user's LOCAL timezone (display via fmtTime =
-  // toLocaleString; input via <input type=datetime-local> which is local +
-  // tz-aware on Windows out of the box). The state file stores the canonical
-  // ISO `scheduled_for` (cross-machine) PLUS additive `scheduled_for_local`
-  // + `tz_offset_min` so re-display anywhere is unambiguous (no version bump).
-  function pad2(x) { return (x < 10 ? '0' : '') + x; }
-  function toLocalInput(d) {            // Date -> "YYYY-MM-DDTHH:MM" (local)
-    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
-      'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
-  }
-  function closeDeferPop() {
-    var p = document.querySelector('.defer-pop');
-    if (p) p.remove();
-    document.removeEventListener('keydown', deferEsc, true);
-    document.removeEventListener('click', deferOutside, true);
-  }
-  function deferEsc(e) { if (e.key === 'Escape') closeDeferPop(); }
-  function deferOutside(e) {
-    var p = document.querySelector('.defer-pop');
-    if (p && !p.contains(e.target) && !(e.target.closest && e.target.closest('.li-actions'))) closeDeferPop();
-  }
-  function openDeferPop(li, n, it) {
-    closeDeferPop();                                   // one open at a time
-    function commit(d) {
-      closeDeferPop();
-      actWithUndo(li,
-        { type: 'deferred', node_id: n.node_id, item_id: it.item_id,
-          scheduled_for: d.toISOString(),
-          scheduled_for_local: toLocalInput(d),
-          tz_offset_min: d.getTimezoneOffset() },
-        'Deferred to ' + fmtTime(d.toISOString()),
-        function () { post({ type: 'defer-cleared', node_id: n.node_id, item_id: it.item_id }, 'defer cleared', true); });
-    }
-    var pop = el('div', 'defer-pop');
-    pop.appendChild(el('div', 'dp-title', 'Defer until'));
-
-    var later = el('button', 'b-caution', 'Later today (8 PM)');
-    later.addEventListener('click', function () {
-      var d = new Date(); d.setHours(20, 0, 0, 0);
-      if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);   // already past 8 PM → tomorrow
-      commit(d);
-    });
-    var tmrw = el('button', 'b-caution', 'Tomorrow morning (9 AM)');
-    tmrw.addEventListener('click', function () {
-      var d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); commit(d);
-    });
-    var week = el('button', 'b-caution', 'Next week (Mon 9 AM)');
-    week.addEventListener('click', function () {
-      var d = new Date();
-      var add = ((1 - d.getDay() + 7) % 7) || 7;   // days to NEXT Monday (today-Mon → +7)
-      d.setDate(d.getDate() + add); d.setHours(9, 0, 0, 0); commit(d);
-    });
-    var pick = el('button', 'b-caution', 'Pick a specific time…');
-    var whenRow = el('div', 'dp-when'); whenRow.style.display = 'none';
-    var dti = el('input'); dti.type = 'datetime-local';
-    var pre = new Date(); pre.setDate(pre.getDate() + 1); pre.setHours(9, 0, 0, 0);
-    dti.value = toLocalInput(pre);
-    var setBtn = el('button', 'b-caution', 'Set');
-    setBtn.addEventListener('click', function () {
-      if (!dti.value) { dti.focus(); return; }
-      var d = new Date(dti.value);                  // datetime-local parses as LOCAL
-      if (isNaN(d.getTime())) { dti.focus(); return; }
-      commit(d);
-    });
-    pick.addEventListener('click', function () {
-      whenRow.style.display = whenRow.style.display === 'none' ? 'flex' : 'none';
-      if (whenRow.style.display === 'flex') dti.focus();
-    });
-    whenRow.appendChild(dti); whenRow.appendChild(setBtn);
-
-    var toBl = el('button', 'b-util', 'Until further notice — move to Backlog');
-    toBl.title = 'Parks this out of "Waiting on you" and tracks it in Backlog; the Backlog "Activate" button brings it back.';
-    toBl.addEventListener('click', function () {
-      closeDeferPop();
-      post({ type: 'item-backlogged', node_id: n.node_id, item_id: it.item_id }, null, true)
-        .then(function (ok) {
-          if (!ok) return;
-          var blId = uid('bl');
-          post({ type: 'backlog-added', item_id: blId, tree_id: treeOf(n),
-            priority: 'medium', text: it.text }, 'moved to Backlog')
-            .then(function (ok2) {
-              if (ok2) post({ type: 'context-attached', target: blId,
-                context_ref: 'parked from tree: ' + crumb(n.node_id) }, null, true);
-            });
-        });
-    });
-
-    var cancel = el('button', 'b-neutral', 'cancel');
-    cancel.addEventListener('click', closeDeferPop);
-
-    [later, tmrw, week, pick].forEach(function (b) { pop.appendChild(b); });
-    pop.appendChild(whenRow);
-    pop.appendChild(toBl);
-    pop.appendChild(cancel);
-    li.appendChild(pop);
-    setTimeout(function () {
-      document.addEventListener('keydown', deferEsc, true);
-      document.addEventListener('click', deferOutside, true);
-    }, 0);
   }
 
   // ---- BACKLOG PANE (C4) ----------------------------------------------
   function backlogEntries() {
     return backlog().filter(function (b) { return (b.tree_id || 'global') === activeTree; });
   }
-  var PRIO_RANK = { high: 0, medium: 1, low: 2 };
+  // item 21: robust priority rank. The OLD `PRIO_RANK[p] || 9` was the bug —
+  // `0 || 9` is 9, so `high` (rank 0) sorted to the BOTTOM (the "backwards"
+  // report). prioRank normalises high|p1|1 → 0, medium|p2|2 → 1, low|p3|3 → 2,
+  // anything unknown → 9, and never uses a falsy-OR fallback.
+  function prioRank(p) {
+    var k = String(p == null ? '' : p).trim().toLowerCase();
+    if (k === 'high' || k === 'p1' || k === '1') return 0;
+    if (k === 'medium' || k === 'med' || k === 'p2' || k === '2') return 1;
+    if (k === 'low' || k === 'p3' || k === '3') return 2;
+    return 9;
+  }
   function sortBacklog(arr) {
     var mode = backlogSort.value;
     if (mode === 'manual') return applyOrderObj(arr, order('backlog:' + activeTree), function (b) { return b.item_id; });
     var c = arr.slice();
-    if (mode === 'priority') c.sort(function (a, b) { return (PRIO_RANK[a.priority] || 9) - (PRIO_RANK[b.priority] || 9); });
+    if (mode === 'priority') c.sort(function (a, b) {
+      var d = prioRank(a.priority) - prioRank(b.priority);   // P1→P2→P3 top→bottom
+      return d !== 0 ? d : String(a.item_id).localeCompare(String(b.item_id)); // deterministic tiebreak
+    });
     else c.sort(function (a, b) { return String(a.item_id).localeCompare(String(b.item_id)); }); // date (ULID-ish id is time-sortable)
     return c;
   }
@@ -869,7 +858,7 @@
     if (!loaded) { paneState(backlogState, backlogBody, 'loading'); return; }
     var entries = sortBacklog(backlogEntries());
     if (entries.length === 0) {
-      var aff = el('button', 'b-commit', '+ capture one');
+      var aff = el('button', 'btn-go', '+ capture one');
       aff.addEventListener('click', openCapture);
       paneState(backlogState, backlogBody, 'steady-empty', {
         steady: 'No backlog items in "' + activeTree + '" — capture one with [+].',
@@ -883,7 +872,7 @@
     newBacklogIds = dB.fresh;
     if (dB.count) { newBacklogCount += dB.count; updateNewBadges(); }
     entries.forEach(function (b) {
-      var li = el('div', 'li' + (newBacklogIds[b.item_id] ? ' flash' : ''));
+      var li = el('div', 'li' + (newBacklogIds[b.item_id] ? ' ' + arriveCls() : ''));
       li.setAttribute('draggable', backlogSort.value === 'manual' ? 'true' : 'false');
       var top = el('div', 'li-top');
       top.appendChild(el('span', 'prio ' + b.priority, b.priority));
@@ -895,10 +884,10 @@
       }
       var acts = el('div', 'li-actions');
       if (!b.activated) {
-        var act = el('button', 'b-commit', 'Activate → new tree root');
+        var act = el('button', 'btn-go', 'Activate → new tree root');
         act.addEventListener('click', function () { activateBacklog(b); });
         acts.appendChild(act);
-        var addc = el('button', 'b-util', '+ context');
+        var addc = el('button', 'btn-info outline', '+ context');
         addc.addEventListener('click', function () {
           var note = prompt('Attach a context note / file ref / prior-decision:');
           if (note == null || !note.trim()) return;
@@ -906,14 +895,13 @@
         });
         acts.appendChild(addc);
       } else {
-        var copy = el('button', 'b-util', '⧉ copy context for Dispatch');
+        var copy = el('button', 'btn-info', '⧉ copy context for Dispatch');
         copy.addEventListener('click', function () { copyHandoff(b.text, b.context_refs, b.activated_node); });
         acts.appendChild(copy);
       }
       li.appendChild(acts);
       if (backlogSort.value === 'manual') wireReorder(li, b.item_id, 'backlog:' + activeTree, function () { return backlogEntries().map(function (x) { return x.item_id; }); });
       backlogBody.appendChild(li);
-      if (newBacklogIds[b.item_id]) arrivalFlash(li, null);     // item 18: arrival flash (neutral — backlog has no kind)
     });
   }
   function openCapture() {
@@ -1009,7 +997,16 @@
   }
 
   // ---- node selection + FR-6 context surface (C2) ----------------------
-  function selectNode(id) { sel = id; ctxExpanded = false; render(); openCtx(id); }
+  function selectNode(id) {
+    sel = id; selItem = null; ctxExpanded = false; render(); openCtx(id);
+    // item 17: bidirectional — selecting a tree node scrolls the matching
+    // "Waiting on you" item(s) into view (the tree node itself is already
+    // in view since the click originated there).
+    setTimeout(function () {
+      var m = actionsBody.querySelector('.li[data-node="' + cssEsc(id) + '"]');
+      if (m) m.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 30);
+  }
   function focusNode(id) {                          // BF-4 cross-surface nav
     var n = byId(id); if (!n) return;
     if (treeOf(n) !== activeTree) {
@@ -1076,10 +1073,14 @@
     open.slice(0, showN).forEach(function (it) {
       var d = el('div', 'ctx-item', '[' + it.kind + '] ' + it.text +
         (it.deferred ? '  (deferred)' : '') + (it.contested ? '  (contested)' : ''));
-      var pr = el('button', 'b-elevate', 'promote to branch');
+      // item 20: "promote" reads as git jargon — the user's mental model is
+      // "this checklist item EXPANDS into its own branch". Event type stays
+      // `promoted` (ADR-032 schema is frozen); only the label/toast change.
+      // item 22: scope-up action → purple (.btn-up).
+      var pr = el('button', 'btn-up', 'expand to branch');
       pr.style.marginLeft = '0.4rem';
       pr.addEventListener('click', function () {
-        post({ type: 'promoted', node_id: n.node_id, item_id: it.item_id, new_node_id: uid('n') }, 'promoted to branch');
+        post({ type: 'promoted', node_id: n.node_id, item_id: it.item_id, new_node_id: uid('n') }, 'expanded to branch');
       });
       d.appendChild(pr);
       s3.appendChild(d);
@@ -1098,7 +1099,7 @@
       chip.addEventListener('click', function () { if (byId(cl.to)) focusNode(cl.to); });
       s4.appendChild(chip); s4.appendChild(document.createTextNode(' '));
     });
-    var addL = el('button', 'b-util', '+ cross-link');
+    var addL = el('button', 'btn-info outline', '+ cross-link');
     addL.addEventListener('click', function () {
       var to = prompt('Link to which node_id? (cross-tree allowed)');
       if (!to) return;
@@ -1118,11 +1119,11 @@
     ta.addEventListener('input', function () { localStorage.setItem('ctree-draft-' + id, ta.value); });
     s5.appendChild(ta);
     var dr = el('div', 'row');
-    var stage = el('button', 'b-util', 'stage (persist)');
+    var stage = el('button', 'btn-info', 'stage (persist)');
     stage.addEventListener('click', function () { post({ type: 'draft-saved', node_id: id, draft_text: ta.value }, 'note staged'); });
-    var copyD = el('button', 'b-util', '⧉ copy');
+    var copyD = el('button', 'btn-info outline', '⧉ copy');
     copyD.addEventListener('click', function () { copyHandoff(n.title, [ta.value], id); });
-    var used = el('button', 'b-destruct', 'mark used / clear');
+    var used = el('button', 'btn-del outline', 'mark used / clear');
     used.addEventListener('click', function () {
       localStorage.removeItem('ctree-draft-' + id);
       post({ type: 'draft-cleared', node_id: id }, 'note cleared');
@@ -1135,11 +1136,11 @@
     var s6 = el('div', 'ctx-sec'); s6.appendChild(el('h4', null, 'Node'));
     var r6 = el('div', 'row');
     if (n.state === 'archived') {
-      var rest = el('button', 'b-util', 'restore from archive');
+      var rest = el('button', 'btn-info', 'restore from archive');
       rest.addEventListener('click', function () { post({ type: 're-opened', node_id: id }, 'restored'); });
       r6.appendChild(rest);
     } else {
-      var arch = el('button', 'b-destruct', 'archive');
+      var arch = el('button', 'btn-del outline', 'archive');
       arch.title = 'archival never closes a Claude Code session (FR-28)';
       arch.addEventListener('click', function () {
         post({ type: 'archived', node_id: id }, 'Archived', true).then(function (ok) {
@@ -1152,7 +1153,7 @@
       });
       r6.appendChild(arch);
     }
-    var note = el('button', 'b-neutral', 'annotate');
+    var note = el('button', 'btn-neutral outline', 'annotate');
     note.addEventListener('click', function () {
       var t = prompt('Annotation (lifecycle trail / FR-12):'); if (!t) return;
       post({ type: 'annotated', node_id: id, text: t }, 'annotated');

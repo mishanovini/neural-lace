@@ -20,6 +20,8 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
+const projects = require('../config/projects.js'); // item 19: cross-repo doc map
 const stateLib = require('../state/state.js');
 const { STATE_FILE, readState, appendEvent, SchemaTooNewError, SCHEMA_TOO_NEW_MESSAGE } = stateLib;
 
@@ -134,6 +136,54 @@ const server = http.createServer((req, res) => {
         }
         res.writeHead(422, hj);
         res.end(JSON.stringify({ ok: false, error: String(err && err.message || err) }));
+      }
+    });
+    return;
+  }
+
+  // ---- v1.1.1 item 19: cross-repo doc viewer (read-only, traversal-guarded).
+  // Passive READ surfaces only — they serve file bytes / open a local file in
+  // the OS editor; they never spawn/feed/steer a Claude session.
+  if (url === '/api/docs') {
+    var hd = {}; hd[CT] = 'application/json';
+    res.writeHead(200, hd);
+    try { res.end(JSON.stringify({ ok: true, projects: projects.listDocs() })); }
+    catch (e) { res.end(JSON.stringify({ ok: false, error: String(e && e.message || e), projects: {} })); }
+    return;
+  }
+  if (url === '/api/doc') {
+    var q = require('url').parse(req.url, true).query || {};
+    var hd2 = {}; hd2[CT] = 'application/json';
+    var r = projects.resolveDoc(q.project, q.path);
+    if (!r.ok) { res.writeHead(r.code || 400, hd2); res.end(JSON.stringify({ ok: false, error: r.error })); return; }
+    fs.readFile(r.abs, 'utf8', function (err, txt) {
+      if (err) { res.writeHead(500, hd2); res.end(JSON.stringify({ ok: false, error: 'read failed' })); return; }
+      res.writeHead(200, hd2);
+      res.end(JSON.stringify({ ok: true, project: q.project, path: q.path, content: txt }));
+    });
+    return;
+  }
+  if (url === '/api/doc/open' && req.method === 'POST') {
+    let ob = '';
+    req.on('data', function (c) { ob += c; if (ob.length > 1e5) req.destroy(); });
+    req.on('end', function () {
+      var hd3 = {}; hd3[CT] = 'application/json';
+      let inp; try { inp = JSON.parse(ob); } catch (_) { res.writeHead(400, hd3); res.end(JSON.stringify({ ok: false, error: 'bad json' })); return; }
+      var rr = projects.resolveDoc(inp.project, inp.path);
+      if (!rr.ok) { res.writeHead(rr.code || 400, hd3); res.end(JSON.stringify({ ok: false, error: rr.error })); return; }
+      // OS default-open. Windows: `cmd /c start "" <file>`. macOS: `open`.
+      // Linux: `xdg-open`. Feature-detect; degrade with a clear message.
+      var plat = process.platform, child;
+      try {
+        if (plat === 'win32') child = spawn('cmd', ['/c', 'start', '', rr.abs], { detached: true, stdio: 'ignore' });
+        else if (plat === 'darwin') child = spawn('open', [rr.abs], { detached: true, stdio: 'ignore' });
+        else child = spawn('xdg-open', [rr.abs], { detached: true, stdio: 'ignore' });
+        child.on('error', function () {});
+        if (child.unref) child.unref();
+        res.writeHead(200, hd3); res.end(JSON.stringify({ ok: true, opened: rr.abs }));
+      } catch (e) {
+        res.writeHead(200, hd3);
+        res.end(JSON.stringify({ ok: false, error: 'open-in-editor unavailable on this OS (' + plat + ')' }));
       }
     });
     return;
