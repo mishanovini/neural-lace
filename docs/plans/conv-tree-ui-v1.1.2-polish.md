@@ -1,0 +1,81 @@
+# Plan: Conversation Tree UI v1.1.2 — live-feedback follow-up (drop item 20, add item 25)
+
+Status: ACTIVE
+Execution Mode: orchestrator
+Mode: code
+tier: 2
+rung: 1
+architecture: existing
+frozen: true
+prd-ref: n/a — harness-development
+acceptance-exempt: true
+acceptance-exempt-reason: Harness-internal Dispatch conversation-tracker tooling; the maintainer is the live user verifying via the running GUI; the extended responsive self-test + the six conv-tree regression suites are the acceptance artifact; no separate product end-user.
+Backlog items absorbed: none
+
+## Goal
+Immediately after v1.1.1 (items 14–23) merged (master `759923d`), the maintainer surfaced two live-use corrections: (a) the "promote → expand to branch" rename (item 20) is unwanted — "promote to branch is fine now that I understand what it is" — revert the label; (b) NEW item 25 — top-level project nodes (immediate children of root) must read as document-style H1/H2 headers so the tree hierarchy is instantly scannable. Ship as a small focused follow-up PR on the same branch.
+
+## Scope
+- IN: `neural-lace/conversation-tree-ui/web/app.js` (revert the item-20 label to "promote to branch"/"promoted to branch"; add depth tracking + a `.tnode-root` class for top-level nodes), `web/app.css` (`.tnode-row.tnode-root` header styling: larger/bolder font, more padding, subtle tint, top separator, larger twist), `web/responsive.selftest.js` (invert R40 to assert "promote to branch" retained + `promoted` event preserved; add R44 for the top-level header invariants), this plan.
+- OUT: ADR-032 schema change (none — `promoted` event type unchanged; no new event). Item 22's `btn-up` purple class on the promote button STAYS (only the label text reverts; the maintainer asked for no label change, not a colour revert). Any change to items 14–19, 21–24 (all remain as shipped in v1.1.1).
+
+## Tasks
+
+- [ ] 20R. Revert item 20: restore `'promote to branch'` button label + `'promoted to branch'` toast in app.js; keep the `btn-up` semantic class + the `type:'promoted'` event unchanged — Verification: full
+  **Prove it works:** 1. Open ctx panel on a node with open items → the per-item button reads "promote to branch" (not "expand"). 2. `grep -n "expand to branch\|expanded to branch" web/app.js` → 0 hits. 3. Event still `type:'promoted'`; button still purple `btn-up`.
+  **Wire checks:** `web/app.js` (`'expand to branch'`→`'promote to branch'`, `'expanded to branch'`→`'promoted to branch'`; `btn-up` + `type:'promoted'` untouched) → `web/responsive.selftest.js` (R40 inverted)
+  **Integration points:** responsive.selftest R40 asserts the "promote to branch" label is present, no "expand to branch" remains, `promoted` event preserved.
+- [ ] 25. Top-level project nodes render as H1/H2-style headers: larger font (~1.18×), bolder weight, larger padding, subtle ~5% white tint + thin top separator, larger/distinct disclosure twist — applied ONLY to root-level nodes (immediate children of the forest root), not nested ones — Verification: full
+  **Prove it works:** 1. Every forest-root branch the maintainer sees (the immediate children of the tree root) is visibly larger/bolder with more breathing room + a separator above each. 2. Nested sub-nodes are unchanged (normal size). 3. Hierarchy is instantly readable: top-level = header, indented = detail.
+  **Wire checks:** `web/app.js` (`renderTreeNode` gains a `depth` arg — 0 for forest roots, +1 per recursion; depth 0 → add `tnode-root` class + larger twist glyph) → `web/app.css` (`.tnode-row.tnode-root` font-size ~1.18rem-equiv, font-weight 700, padding bump, `background` 5% white tint, `border-top` separator, `.tnode-root .twist` larger)
+  **Integration points:** responsive.selftest R44 asserts `.tnode-root` CSS rule (font-weight + size + tint/separator) + the `renderTreeNode` depth-0 wiring token.
+- [ ] 26. Invert R40 + add R44 in `web/responsive.selftest.js`; full six-suite regression sweep green — Verification: full
+  **Prove it works:** responsive.selftest passes with R40 inverted + new R44; state 15 / responsive (44) / backfill 15 / conv-tree state-gate 18 / stop-gate 8 / emit 17 all green.
+  **Wire checks:** `web/responsive.selftest.js` → the six suites
+  **Integration points:** re-run all suites; counts in the completion report.
+
+## Files to Modify/Create
+- `neural-lace/conversation-tree-ui/web/app.js` — revert item-20 label; add `depth` param to `renderTreeNode` + `tnode-root` class at depth 0 + larger root twist glyph.
+- `neural-lace/conversation-tree-ui/web/app.css` — `.tnode-row.tnode-root` header styling + `.tnode-root .twist` sizing.
+- `neural-lace/conversation-tree-ui/web/responsive.selftest.js` — invert R40, add R44.
+- `docs/plans/conv-tree-ui-v1.1.2-polish.md` — this plan + Decisions Log.
+
+## Testing Strategy
+Each change locked by a `web/responsive.selftest.js` source-invariant assertion (the established pattern). Full six-suite regression sweep is Task 26's gate. Live browser verification is the post-merge `:7733` restart step.
+
+## Walking Skeleton
+Add a failing R44 assertion for the `.tnode-root` rule; implement the CSS rule + the depth-0 class in `renderTreeNode`; confirm the GUI still renders the tree. Item 20R is a pure label revert + R40 inversion.
+
+## Decisions Log
+### Decision: revert label only, keep btn-up purple + promoted event
+- **Tier:** 1 (reversible)
+- **Status:** proceeded with recommendation
+- **Chosen:** revert ONLY the item-20 label text. The maintainer said "no label changes needed" (i.e., keep the original "promote to branch"); they did NOT ask to revert item 22's semantic colouring. The `btn-up` purple class (scope-up semantics) and the frozen `type:'promoted'` event are unchanged.
+- **Alternatives:** also revert btn-up→ghost — REJECTED: out of the maintainer's stated ask; item 22 (semantic palette) shipped and stands.
+- **Reasoning:** minimal change matching the exact correction; no scope creep.
+- **To reverse:** N/A.
+
+### Decision: "top-level" = forest-root depth 0, via a renderTreeNode depth param
+- **Tier:** 1
+- **Status:** proceeded with recommendation
+- **Chosen:** thread a `depth` argument through `renderTreeNode` (0 for the roots `renderTree` iterates, +1 per recursion). Depth 0 → `.tnode-root`. This is exact and robust regardless of `parent_id` shape.
+- **Alternatives:** detect "no parent / parent is synthetic root" inline — REJECTED: the forest already computes roots; a depth param is simpler and unambiguous than re-deriving root-ness inside the recursive renderer.
+- **Reasoning:** the renderer already recurses; a depth counter is one added arg and zero ambiguity.
+- **To reverse:** drop the class + CSS rule.
+
+## Assumptions
+- No ADR-032 change (label/CSS/JS-only; `promoted` event + schema untouched; `SCHEMA_VERSION` stays 1).
+- "Top-level project nodes" = the forest roots `renderTree` already iterates (`orderedRoots`), i.e. depth 0 — matches the maintainer's listed examples.
+- localStorage UI-pref substrate unchanged; no new pref.
+
+## Edge Cases
+- A root node that is also `concluded` (renders the concluded stub branch): the `.tnode-root` header styling still applies to its row; the concluded stub/✓ treatment composes (separator + size on the row, concluded colour on the title) without conflict.
+- Single-root tree: still gets the header treatment (consistent), separator above the only root is harmless.
+- Deeply nested trees: only depth 0 is a header; depth ≥ 1 unchanged (no regression to existing sub-node rendering, animations, drag-drop, badges).
+- `.tnode-root` + `.hl` (item 17 selection wash) on the same root row: both apply (header size/weight + selection wash) — separate property sets, no clobber.
+
+## Definition of Done
+- [ ] Tasks 20R, 25, 26 task-verified PASS
+- [ ] Six regression suites green (state 15, responsive ≥44, backfill 15, state-gate 18, stop-gate 8, emit 17)
+- [ ] PR to master merged; main checkout synced; `:7733` restarted
+- [ ] Status → COMPLETED (auto-archived); completion report appended
