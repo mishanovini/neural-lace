@@ -321,6 +321,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/goal-extraction-on-prompt.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/conversation-tree-read.sh"
           }
         ]
       }
