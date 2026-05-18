@@ -1,5 +1,5 @@
 # Plan: Conv Tree Dispatch-Reader Hook
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 tier: 2
@@ -47,7 +47,7 @@ as `additionalContext`.
 - [x] 4. Dual-mirror sync: live `~/.claude/hooks/conversation-tree-read.sh` byte-identical to `adapters/claude-code/hooks/conversation-tree-read.sh` — Verification: mechanical
 - [x] 5. Architecture doc `docs/conv-tree-dispatch-reader.md` + one-line row in `~/.claude/docs/harness-architecture.md` — Verification: mechanical
 - [x] 6. Regression: emit hook `--self-test` 17/17; `conversation-tree-state-gate.sh --self-test` + `conversation-tree-stop-gate.sh --self-test` still green — Verification: mechanical
-- [ ] 7. One PR to neural-lace master, drive to merge, sync the `~/claude-projects/neural-lace` main checkout — Verification: mechanical
+- [x] 7. One PR to neural-lace master, drive to merge, sync the `~/claude-projects/neural-lace` main checkout — Verification: mechanical
 
 ## Files to Modify/Create
 - `adapters/claude-code/hooks/conversation-tree-read.sh` — NEW. The reader hook (canonical).
@@ -177,3 +177,97 @@ every file is under `adapters/claude-code/` or `~/.claude/`, no user-observable
 runtime, self-test is the verification idiom. The 10-section Systems
 Engineering Analysis is for `Mode: design` plans; this is a single-hook
 addition mirroring an already-shipped sibling (`conversation-tree-emit.sh`).
+
+## Completion Report
+
+### 1. Implementation Summary
+All 7 tasks shipped and task-verified PASS. The Conversation-Tree GUI loop is
+closed: `conversation-tree-read.sh` (UserPromptSubmit) reads operator-authored
+GUI events (`actor=="gui"`, response-allowlist) NEW since a per-session cursor
+via the frozen A2 `readState` facade, resolves node/item titles from the
+snapshot, and injects them as a `hookSpecificOutput.additionalContext` JSON so
+the orchestrator sees the operator's GUI responses as if typed in chat.
+- Tasks 1–6: shipped in commit `e383a2e`; task-verified PASS (6-block evidence
+  log). PR #6 merged to master at 2026-05-18T17:11:19Z (merge commit `481de18`).
+- Task 7: PR #6 merged + main checkout synced to current origin/master (PR #6
+  an ancestor; 0/0 divergence); task-verified PASS.
+- `Backlog items absorbed: none` — no backlog subsection required.
+
+### 2. Design Decisions & Plan Deviations
+- Keyed off the REAL ADR-032 §2 enum (`answered`/`action-done`/`annotated`/
+  `contested`/…) + speculative forward-compat names, NOT the brief's
+  speculative `action-responded` names (those aren't in the frozen enum;
+  `validateEvent` would reject them on write). Decisions Log D-1.
+- Cursor tracks last-seen `event_id` by append-array position (dispatch
+  event_ids are content hashes, not sortable). Decisions Log D-2.
+- Added an mtime fast-path not in the original plan: skip node entirely when
+  the cursor is strictly newer than the state file. In-flight, reversible —
+  pure perf, behavior-identical. Self-test R19/R20 lock it.
+- One in-flight scope correction: canonical architecture doc is
+  `docs/harness-architecture.md` (plan named a non-existent
+  `adapters/claude-code/docs/...`). Recorded in `## In-flight scope updates`.
+
+### 3. Known Issues & Gotchas
+- **Performance vs the brief's `<50ms`:** NOT met and not meetable for a bash
+  hook on Windows git-bash (bash startup alone ~150ms). Measured: steady-state
+  no-op turn ~300–390ms (mtime fast-path skips node); turn where the operator
+  responded ~430–500ms (node + facade reduction — paid only when the injected
+  context is valuable). Consistent with the sibling per-prompt hook
+  `goal-extraction-on-prompt.sh`. The fast-path's real win is removing the
+  *extra* ~140ms of node work on no-op turns. Friction-reflexion item (1).
+- **Stale live mirror `~/.claude/docs/harness-architecture.md`:** missing ALL
+  conv-tree content from master (pre-existing HARNESS-GAP-14 / settings-
+  divergence drift). The canonical repo doc IS updated (source of truth).
+  Full live-mirror resync was out of scope. Friction-reflexion item (2).
+- **Unrelated `launch-gui.ps1` stash collision in the main checkout:** the
+  post-merge `auto-pre-pull` sync stashed the operator's pre-existing
+  uncommitted edits to `neural-lace/conversation-tree-ui/scripts/launch-gui.ps1`
+  (intact in `stash@{0}: auto-pre-pull-20260518T171142Z`), colliding with the
+  v1.1 GUI session's independent rewrite of that same file on master. Per
+  git-discipline.md Rule 2 SURFACED, not auto-resolved — operator's work
+  preserved (stash + working tree). Unrelated to conv-tree-reader. Recovery in
+  "Manual Steps".
+- **Recurring conv-tree-state-gate friction on orthogonal read-only spawns:**
+  the gate blocked 4+ benign read-only Agent spawns this session, each needing
+  a substantive waiver (NL-FINDING-010 class). Friction-reflexion item (3).
+
+### 4. Manual Steps Required
+- **Reconcile the operator's `launch-gui.ps1` stash (operator decision —
+  unrelated to this feature).** In `~/claude-projects/neural-lace`:
+  `git stash show -p stash@{0}` to inspect; compare vs
+  `git show origin/master:neural-lace/conversation-tree-ui/scripts/launch-gui.ps1`.
+  Then either `git stash pop` and resolve deliberately, OR
+  `git checkout -- neural-lace/conversation-tree-ui/scripts/launch-gui.ps1`
+  (safe — edits remain in `stash@{0}`) and reconcile later. Do NOT commit the
+  half-state unreviewed.
+- No env vars, migrations, or services. The reader is live in the main
+  checkout's `~/.claude/settings.json` (registered + verified).
+
+### 5. Testing Performed & Recommended
+- `conversation-tree-read.sh --self-test`: 37/37 (cursor / actor-exclusion /
+  type-allowlist / cold-start / truncation / text-extraction / mtime fast-path
+  / end-to-end walking-skeleton). Live mirror byte-identical, self-test OK.
+- Smoke test vs a copy of the real 110-event state file: surfaced the one real
+  GUI `action-done`, excluded all dispatch events, idempotent re-fire empty.
+- Regression: emit 17/17, conv-tree state-gate 18/18, stop-gate 8/8 — unchanged
+  (re-confirmed post master-merge).
+- Recommended next: organic end-to-end once the v1.1 inline-response UI ships.
+
+### 6. Cost Estimates
+Zero recurring cost. One extra bash+node invocation per UserPromptSubmit turn,
+only when the operator interacted with the GUI since the last turn (mtime
+fast-path skips node otherwise). No cloud/API/storage.
+
+### Friction-reflexion suggestions (for discussion — not unilaterally filed)
+1. The `<50ms` per-hook target is unachievable for any bash hook on Windows
+   git-bash; harness perf expectations for per-prompt hooks should be set
+   against the bash-startup floor (~150ms+), not an absolute small target.
+2. `~/.claude/docs/harness-architecture.md` is badly stale vs the repo
+   canonical (missing all conv-tree work on master) — HARNESS-GAP-14
+   live-mirror resync is overdue.
+3. `conversation-tree-state-gate.sh` structurally false-fires on orthogonal
+   read-only Agent spawns (claude-code-guide, task-verifier) that represent no
+   conversation branch — NL-FINDING-010 class; the per-spawn substantive-waiver
+   tax recurs every session that dispatches read-only review agents. Worth a
+   gate-design fix (e.g., exempt the read-only agent allowlist
+   teammate-spawn-validator already maintains).
