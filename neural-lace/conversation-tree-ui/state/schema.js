@@ -41,6 +41,13 @@ const EVENT_TYPES = Object.freeze([
   'session-unbound',
   'contested',
   'contest-resolved',
+  // v1.1-ux (items 9/10/7) — ADDITIVE within schema major 1 (ADR-032 §1:
+  // "Adding a new event type to EVENT_TYPES is additive (no bump)"). None
+  // changes/removes a required field of an existing event; schema_version
+  // stays 1; the conv-tree gates key off the major and are unaffected.
+  'item-details-set',
+  'action-responded',
+  'item-unchecked',
 ]);
 
 // §2 — per-event required fields IN ADDITION TO the envelope
@@ -71,6 +78,10 @@ const EVENT_REQUIRED_FIELDS = Object.freeze({
   'session-unbound': ['node_id', 'session_id'],
   'contested': ['node_id', 'item_id', 'direction', 'note'],
   'contest-resolved': ['node_id', 'item_id', 'resolution'],
+  // v1.1-ux additive (see EVENT_TYPES note above)
+  'item-details-set': ['node_id', 'item_id', 'details'],
+  'action-responded': ['node_id', 'item_id', 'response_text'],
+  'item-unchecked': ['node_id', 'item_id'],
 });
 
 const ACTORS = Object.freeze(['dispatch', 'gui']);

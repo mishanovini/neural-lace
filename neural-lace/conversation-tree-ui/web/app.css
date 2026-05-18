@@ -87,11 +87,22 @@ button:active { transform: scale(0.98); }
 .toast {
   position: fixed; left: 50%; bottom: 1.2rem; transform: translateX(-50%);
   background: var(--panel); border: 1px solid var(--border2);
-  border-radius: 6px; padding: 0.4rem 0.9rem; font-size: 0.8rem; z-index: 50;
+  border-radius: 6px; padding: 0.4rem 0.6rem 0.4rem 0.9rem; font-size: 0.8rem; z-index: 50;
   box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+  display: flex; align-items: center; gap: 0.6rem;          /* v1.1-ux snackbar */
 }
 .toast.ok { border-color: #065f46; color: var(--ok); }
 .toast.err { border-color: #b91c1c; color: var(--err); }
+.toast .sb-msg { white-space: nowrap; }
+.toast .sb-undo {
+  background: var(--accent); color: #1a1030; border-color: var(--accent);
+  font-weight: 700; padding: 0.18rem 0.6rem;
+}
+.toast .sb-x {
+  background: transparent; border: none; color: var(--muted);
+  font-size: 0.95rem; line-height: 1; padding: 0.1rem 0.25rem; cursor: pointer;
+}
+.toast .sb-x:hover { color: var(--text); }
 
 /* Responsive layout (DEC-A revised v1.1) --------------------------------
    CSS Grid template-areas + @media only; NO JS layout math (JS only flips
@@ -297,3 +308,48 @@ button:active { transform: scale(0.98); }
 .muted { color: var(--muted); font-size: 0.78rem; }
 .xlink-chip { font-size: 0.72rem; color: var(--info); border: 1px solid var(--info); border-radius: 999px; padding: 0.05rem 0.45rem; cursor: pointer; }
 .sr { position: absolute; left: -9999px; }
+
+/* v1.1-ux items 7/8/9/10 ------------------------------------------------- */
+/* item 7: list-item enter (slide+fade) + leave + new-arrival flash */
+@keyframes li-enter { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+@keyframes li-leave { to { opacity: 0; transform: translateX(14px); height: 0; margin: 0; padding-top: 0; padding-bottom: 0; } }
+@keyframes li-flash { 0% { box-shadow: 0 0 0 0 var(--accent); } 35% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.list-body .li { animation: li-enter 0.2s ease both; }
+.list-body .li.flash { animation: li-enter 0.2s ease both, li-flash 1.1s ease 0.2s 1; }
+.list-body .li.leaving { animation: li-leave 0.2s ease both; pointer-events: none; overflow: hidden; }
+
+/* item 8: per-pane "+N new" badge in the pane head */
+.new-badge {
+  font-size: 0.68rem; font-weight: 700; color: #1a1030; background: var(--accent);
+  border-radius: 999px; padding: 0.05rem 0.45rem; margin-left: 0.4rem;
+}
+.new-badge[hidden] { display: none; }
+
+/* item 9: rich-details disclosure */
+.det-toggle { align-self: flex-start; font-size: 0.72rem; padding: 0.1rem 0.4rem; margin-top: 0.1rem; }
+.li-details {
+  background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 5px; padding: 0.5rem 0.6rem; margin-top: 0.35rem;
+  display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.8rem;
+}
+.det-row { display: flex; gap: 0.5rem; align-items: flex-start; }
+.det-k { flex: 0 0 8.5rem; color: var(--muted); text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.04em; padding-top: 0.1rem; }
+.det-v { flex: 1; white-space: pre-wrap; word-break: break-word; }
+.det-opt { border-left: 2px solid var(--border2); padding-left: 0.5rem; margin: 0.2rem 0; }
+.det-opt-l { font-weight: 600; }
+.det-link { font-size: 0.72rem; color: var(--info); border: 1px solid var(--info); border-radius: 4px; padding: 0.03rem 0.35rem; }
+
+/* item 10: inline response + "responded — awaiting confirmation" */
+.respond-box { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.35rem; }
+.li.responded { opacity: 0.78; border-left: 3px solid var(--info); }
+.responded-note {
+  margin-top: 0.35rem; background: var(--panel2); border: 1px dashed var(--info);
+  border-radius: 5px; padding: 0.45rem 0.55rem; font-size: 0.78rem;
+  display: flex; flex-direction: column; gap: 0.3rem;
+}
+
+/* accessibility: honour reduced-motion (harness UX standard) */
+@media (prefers-reduced-motion: reduce) {
+  .list-body .li, .list-body .li.flash, .list-body .li.leaving,
+  .tree-canvas { animation: none !important; transition: none !important; }
+}
