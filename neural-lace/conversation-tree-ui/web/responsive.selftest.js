@@ -142,5 +142,37 @@ ok('R32 item-unchecked additive inverse event (schema+reducer+undo wiring)',
 ok('R33 ADR-032 additive: SCHEMA_VERSION still 1 (3 new event types, no bump)',
   /const SCHEMA_VERSION\s*=\s*1\s*;/.test(schema));
 
+// --- v1.1.1 polish items 14/15/16/17/18 ------------------------------------
+ok('R34 item 14: type palette vars + AA-safe per-kind label/stripe',
+  /--ty-action:\s*#f87171/.test(C) && /--ty-decision:\s*#fbbf24/.test(C) && /--ty-question:\s*#60a5fa/.test(C)
+  && /--ty-action-rgb:\s*248 113 113/.test(C)
+  && /\.li-kind\.action\s*\{[^}]*var\(--ty-action\)/.test(C)
+  && /\.li\.kind-action\s*\{[^}]*border-left:\s*5px solid var\(--ty-action\)/.test(C)
+  && /'li kind-' \+ it\.kind/.test(js));
+ok('R35 item 15: title flex:1 + fixed 24px icon-button jump (no width-greedy crumb)',
+  /\.li-text\s*\{[^}]*flex:\s*1/.test(C)
+  && /\.li-jump\s*\{[^}]*width:\s*24px;\s*height:\s*24px/.test(C)
+  && /el\('button',\s*'li-jump',\s*'→'\)/.test(js)
+  && /Jump to in tree/.test(js));
+ok('R36 item 16: prominent grouped View-filters toggle + default-hide preserved',
+  /class="view-filters"/.test(html) && /class="toggle-prom"/.test(html) && /👁/.test(html)
+  && /\.view-filters\s*\{/.test(C) && /\.toggle-prom\s*\{/.test(C)
+  && /localStorage\.getItem\('ctree-show-concluded'\)\s*===\s*'1'/.test(js));   // absent => false => hide (default)
+ok('R37 item 17: bidirectional link-select — selNodeLink + tint both sides + scrollIntoView',
+  /var selNodeLink\s*=\s*null/.test(js)
+  && /function linkSelect\s*\(/.test(js)
+  && /function dominantKind\s*\(/.test(js)
+  && /sel-link/.test(js) && /sel-tint/.test(js)
+  && /\.li\.sel-link\.kind-action[^{]*\{[^}]*rgb\(var\(--ty-action-rgb\) \/ 0\.18\)/.test(C)
+  && /scrollIntoView\(\{\s*block:\s*'center',\s*behavior:\s*'smooth'\s*\}\)/.test(js)
+  && /linkSelect\(n\.node_id,\s*'fromTree'\)/.test(js));
+ok('R38 item 18: toast bottom-right (+narrow bottom-center) + arrival-flash + reduced-motion',
+  /\.toast\s*\{[^}]*right:\s*1rem;\s*bottom:\s*1\.2rem;\s*left:\s*auto/.test(C)
+  && /@media \(max-width:\s*1023\.98px\) and \(max-height:\s*1023\.98px\)\s*\{\s*\.toast\s*\{[^}]*left:\s*50%/.test(C)
+  && /@keyframes arrival-flash/.test(C)
+  && /function arrivalFlash\s*\(/.test(js)
+  && /reducedMotion\(\)\s*\?\s*1500\s*:\s*700/.test(js)
+  && /@media \(prefers-reduced-motion: reduce\)\s*\{[^@]*\.arrival-flash\s*\{\s*animation:\s*none/.test(C));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
