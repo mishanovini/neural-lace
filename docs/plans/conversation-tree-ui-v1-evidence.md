@@ -489,3 +489,54 @@ Runtime verification: test neural-lace/conversation-tree-ui/state/selftest.js::P
 Runtime verification: file docs/decisions/032-conversation-tree-state-schema.md::§7c — r2 reverts to original A2 truncate-covered-prefix + "NO per-gate compaction carve-out, ever" (line 153); §8 r2 attestation general-primitive clause present (line 172); verify-then-read-snapshot.nodes branch-presence (line 159); r2 revision note supersedes-(b) (line 9); `§180` dangling citation fixed → "§1 major-bump rule"; no schema_version bump
 Runtime verification: file neural-lace/conversation-tree-ui/state/store.js::attestSnapshot — canonicalJSON (store.js:38), hashSnapshot (:54), attestSnapshot (:65), verifySnapshotAttested (:83), domainEvents (:103), trustCache=markerOk&&att.verified (:224), original-behavior truncate publishedEvents=[] (:355), atomic snapshot-committed append publishedEvents.concat([attestation]) (:372); gateRelevantRetention REMOVED
 Runtime verification: file neural-lace/conversation-tree-ui/state/state.js::attestSnapshot — facade attestSnapshot (state.js:75) + verifySnapshotAttested (:83) delegate to store; attestation surface exported
+
+---
+
+EVIDENCE BLOCK
+==============
+Task ID: B-DEC-D
+Task description: DEC-D = option (d) snapshot-integrity attestation — resolve NL-FINDING-003 (ADR-032 §7c↔§8 gap) and dissolve NL-FINDING-004 (the (b)-attempt §7a regression). Sub-items B-DEC-Da / B-DEC-Db / B-DEC-Dc. `Verification: full`; rung 2; plan-mandated reviewers = systems-designer + code-reviewer + task-verifier.
+Verified at: 2026-05-17T00:00:00Z
+Verifier: task-verifier agent
+
+Comprehension-gate: PASS (confidence 8) — comprehension-reviewer (supplied, orchestrator-mediated, no-nested-subagents env) returned PASS on `19bb3fc` and PASS on r2.1 re-review `4ae6f46`; Stage 1 schema PASS (four canonical ordered `### ` sub-sections), Stage 2 substance PASS (task-specific to (d)+r2.1, non-vacuous), Stage 3 diff-correspondence PASS (every citation resolves at `4ae6f46`; the updated articulation explicitly disavows the stale pre-r2.1 byte-identical-jq model; no Assumption contradicted). rung-2 comprehension-gate SATISFIED.
+
+Checks run:
+1. Independent selftest re-run (functionality proof — the state library's "user" is the harness; per FUNCTIONALITY-OVER-COMPONENTS the selftest passing IS the user-observable outcome)
+   Command: node neural-lace/conversation-tree-ui/state/selftest.js
+   Output: "14 passed, 0 failed" — P1 P2 P3 P4 P5 P6 P7 P8 (A2 regression intact) + P9 (d-i snapshot-committed.hash == canonical-JSON sha256 of on-disk snapshot) + P10 (d-ii verified snapshot resolves re-opened/promoted/backlog-activated — DEC-E/DEC-F moot) + P11 (d-iii byte-tamper ⇒ hash-mismatch ⇒ refuse + §7a torn-recovery) + P12 (d-iv NL-FINDING-004 FR-24 trace — non-branch-opened final event, compaction fires — items/checked/draft/concluded preserved post-compaction; the (b) regression is GONE) + P13 (d-v latest snapshot-committed survives compaction naturally) + P14 (r2.1 REAL node subprocess on the sanctioned §8 path: untampered ⇒ verified + subprocess-digest == on-disk snapshot-committed.hash; byte-tampered ⇒ NOT verified)
+   Result: PASS
+
+2. ADR-032 §8 r2.1 NON-NORMATIVE jq caveat + sole-normative library verifier
+   Command: Read docs/decisions/032-conversation-tree-state-schema.md §8 (lines 156-179) + grep for byte-equivalence assertions
+   Output: line 174 explicit "NON-NORMATIVE illustrative shape only — `jq -cS '.snapshot' | sha256sum` is NOT hash-equivalent to the writer's `canonicalJSON` and MUST NOT be used to compute the trust hash"; lines 160/163-169/175 mandate the state-library `verifySnapshotAttested`/`hashSnapshot` primitive as the SOLE NORMATIVE verifier (the `node -e` step labelled "Step 1 (NORMATIVE)"); determinism rebound to single `store.canonicalJSON` implementation. Grep for `byte-equivalent|byte equivalence` across ADR-032: no matches (false shell↔JS byte-equivalence assertion removed).
+   Result: PASS
+
+3. (b) code removal + store.js/server.js stability + Phase-0 surface unchanged
+   Command: git diff 91c86f8 4ae6f46 --stat -- store.js ; git diff 19bb3fc 4ae6f46 --stat -- store.js server/server.js ; git log --oneline -- server/server.js
+   Output: store.js net-rewritten 91c86f8→4ae6f46 (154 ins / 88 del — (b) `gateRelevantRetention`/`liveEntityIds`/`GATE_RELEVANT_EVENT_CLASSES` deleted, not commented); store.js + server/server.js UNCHANGED 19bb3fc→4ae6f46 (r2.1 was docs+selftest only — consistent with code-reviewer's "in-process verifier already correct"); server/server.js last touched at the A2/Phase-0 baseline commits (2cf52de / 952c9d6) — Phase-0 spine stable.
+   Result: PASS
+
+4. Supplied plan-mandated reviewer verdicts (orchestrator-mediated; final, not re-dispatchable)
+   Output: code-reviewer PASS (merge-ready, 0 error/severe) on (d) `19bb3fc`; systems-designer FAIL on `19bb3fc` → PASS on r2.1 re-review `4ae6f46` (all three stated PASS criteria genuinely met — sole-normative library verifier; false-equivalence wording removed; P14 genuine OS-process boundary); comprehension-reviewer PASS on `19bb3fc` and PASS on r2.1 `4ae6f46` (confidence 8).
+   Result: PASS
+
+Git evidence:
+  Files modified in cumulative B-DEC-D (d) state:
+    - neural-lace/conversation-tree-ui/state/store.js   (19bb3fc — (d) attestSnapshot/verifySnapshotAttested; (b) removed)
+    - neural-lace/conversation-tree-ui/state/state.js    (19bb3fc — facade attestation surface)
+    - neural-lace/conversation-tree-ui/state/selftest.js (19bb3fc P9-P13; 8b77035/4ae6f46 P14)
+    - docs/decisions/032-conversation-tree-state-schema.md (19bb3fc §7c/§8 r2; 8b77035/4ae6f46 §8 r2.1 + §1 citation fix)
+    - docs/DECISIONS.md, docs/plans/conversation-tree-ui-v1-evidence.md (19bb3fc + 8b77035/4ae6f46)
+  Relevant commits: 19bb3fc (DEC-D (d), REPLACES failed (b) 91c86f8) + 8b77035 (r2.1 corrective; cherry-picked, tip 4ae6f46)
+
+Runtime verification: test neural-lace/conversation-tree-ui/state/selftest.js::P1..P14 — `node neural-lace/conversation-tree-ui/state/selftest.js` independently re-run by task-verifier; exits 0, "14 passed, 0 failed", deterministic on re-run (supersedes the pre-P14 "13 passed" wording in the prior block above — P14 r2.1 real-subprocess digest-equality now in-suite and green)
+Runtime verification: test neural-lace/conversation-tree-ui/state/selftest.js::P12 — NL-FINDING-004 FR-24 regression GONE (independently corroborated: post-compaction readState() preserves items/checked/draft/concluded under (d))
+Runtime verification: test neural-lace/conversation-tree-ui/state/selftest.js::P13 — attestation survives repeated compaction naturally (independently corroborated)
+Runtime verification: test neural-lace/conversation-tree-ui/state/selftest.js::P14 — REAL node subprocess on sanctioned §8 path: untampered ⇒ verified + digest == on-disk snapshot-committed.hash; byte-tampered ⇒ NOT verified (independently corroborated)
+Runtime verification: file docs/decisions/032-conversation-tree-state-schema.md::§8 — line 174 jq snippet marked NON-NORMATIVE + "MUST NOT be used to compute the trust hash"; lines 160/163/175 mandate the state-library verifier as SOLE NORMATIVE; determinism rebound to single implementation (independently spot-confirmed)
+Runtime verification: file neural-lace/conversation-tree-ui/server/server.js::phase-0-surface — UNCHANGED 19bb3fc→4ae6f46 and untouched since the A2/Phase-0 baseline (git diff/log corroborated — Phase-0 3-step regression surface stable)
+
+Verdict: PASS
+Confidence: 9
+Reason: All three plan-mandated reviewer verdicts (code-reviewer PASS, systems-designer FAIL→PASS re-review, comprehension-reviewer rung-2 PASS) are final and converge; independent corroboration confirms 14/14 selftest PASS including P12 (NL-FINDING-004 regression gone), P13 (attestation survives compaction), P14 (real-subprocess digest-equality), the §8 r2.1 NON-NORMATIVE jq caveat + sole-normative library verifier, (b) code fully removed, and Phase-0 surface stable. Functionality-over-components satisfied (the state library's user is the harness; the green selftest IS the user-observable outcome). NL-FINDING-003/004 closure + the findings.md §180→§1 mirror are explicitly the orchestrator's post-verification bookkeeping (not edited here per instruction).
