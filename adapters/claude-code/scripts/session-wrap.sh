@@ -79,6 +79,26 @@ find_repo_root() {
   fi
 }
 
+# Worktree-aware root for the TRACKED freshness artifacts (HARNESS-GAP-38).
+# SCRATCHPAD lives in the parent repo (ADR 028 — gitignored ephemeral state,
+# one per repo). But docs/backlog.md, the roadmap, and docs/discoveries/ are
+# version-controlled files the session legitimately edits in its OWN worktree
+# and ships via PR; the parent checkout's copy is correctly untouched until
+# that PR merges. Reading the parent's copy for the freshness check makes the
+# agent's correct action (edit the worktree copy, open a PR) structurally
+# unable to clear the signal — the check reads the other checkout. So the
+# tracked-file signals and plans_touched read the worktree's own toplevel,
+# while the SCRATCHPAD signals keep reading the parent root. When NOT in a
+# worktree, this returns the same path as find_repo_root, so non-worktree
+# sessions (the common main-checkout case + all S1-S8 self-tests) are
+# unchanged. This complements — it does NOT resolve — the still-pending
+# Signal-3 4h-window false-attribution discovery (2026-05-17); that is a
+# separate root cause (which COMMITS count) orthogonal to this one (which
+# CHECKOUT's copy is read).
+find_worktree_root() {
+  git rev-parse --show-toplevel 2>/dev/null || return 1
+}
+
 # Get plans touched this session: archive-moves in last 4 hours
 plans_touched_this_session() {
   local repo="$1"
@@ -127,9 +147,13 @@ scratchpad_mentions() {
 
 cmd_verify() {
   local repo="$1"
-  local scratchpad="$repo/SCRATCHPAD.md"
-  local roadmap="$repo/docs/build-doctrine-roadmap.md"
-  local backlog="$repo/docs/backlog.md"
+  # wt_repo defaults to repo when omitted, so direct callers (the self-test's
+  # `cmd_verify "$TMPROOT"`) and non-worktree sessions are unchanged.
+  local wt_repo="${2:-$1}"
+  local scratchpad="$repo/SCRATCHPAD.md"               # parent (ADR 028)
+  local roadmap="$wt_repo/docs/build-doctrine-roadmap.md"  # tracked → worktree
+  local backlog="$wt_repo/docs/backlog.md"                 # tracked → worktree
+  local disc_dir="$wt_repo/docs/discoveries"               # tracked → worktree
   local stale=()
 
   # Signal 1: SCRATCHPAD mtime within 30 min
@@ -141,7 +165,7 @@ cmd_verify() {
 
   # Signal 2: SCRATCHPAD mentions every plan touched this session
   local touched
-  touched=$(plans_touched_this_session "$repo")
+  touched=$(plans_touched_this_session "$wt_repo")
   if [ -n "$touched" ]; then
     while IFS= read -r slug; do
       [ -n "$slug" ] || continue
@@ -160,8 +184,8 @@ cmd_verify() {
   fi
 
   # Signal 4: discovery files with pending status whose decisions look acted on
-  if ls "$repo/docs/discoveries"/*.md >/dev/null 2>&1; then
-    for f in "$repo/docs/discoveries"/*.md; do
+  if ls "$disc_dir"/*.md >/dev/null 2>&1; then
+    for f in "$disc_dir"/*.md; do
       [ -f "$f" ] || continue
       # Extract Status field from frontmatter (top 30 lines)
       local status
@@ -219,6 +243,7 @@ cmd_verify() {
 
 cmd_refresh() {
   local repo="$1"
+  local wt_repo="${2:-$1}"
   local scratchpad="$repo/SCRATCHPAD.md"
 
   # Touch SCRATCHPAD with an explicit timestamp comment (idempotent: appends a single line)
@@ -235,7 +260,7 @@ cmd_refresh() {
   fi
 
   # Re-verify
-  cmd_verify "$repo"
+  cmd_verify "$repo" "$wt_repo"
 }
 
 # ===== self-test =====
@@ -412,6 +437,64 @@ EOF
   cd "$TMPROOT"
   rm -rf "$NONGIT_DIR"
 
+  # ---- scenario 9: tracked-file freshness reads the WORKTREE copy, not parent
+  # HARNESS-GAP-38: in a worktree the agent edits the worktree's docs/backlog.md
+  # and ships via PR; the parent checkout's copy is correctly stale until merge.
+  # Pre-fix, cmd_verify read the parent's stale copy → Signal 5 was structurally
+  # unclearable from a worktree. Post-fix it reads the worktree's own copy.
+  cd "$TMPROOT"
+  rm -f docs/discoveries/*.md 2>/dev/null
+  WT9="$TMPROOT/wt-9"
+  if git worktree add -q -b worktree-test-9 "$WT9" >/dev/null 2>&1; then
+    # Worktree: create + archive a plan on the worktree branch so
+    # plans_touched(wt) is non-empty, and write a FRESH worktree backlog.
+    ( cd "$WT9"
+      mkdir -p docs/plans docs/plans/archive docs
+      echo "# wt plan" > docs/plans/wt-plan-9.md
+      git add docs/plans/wt-plan-9.md && git commit -q -m "wt: add wt-plan-9"
+      git mv docs/plans/wt-plan-9.md docs/plans/archive/wt-plan-9.md
+      git commit -q -m "wt: archive wt-plan-9"
+      echo "# Backlog (worktree, fresh)" > docs/backlog.md
+      touch docs/backlog.md )
+    # Parent SCRATCHPAD fresh + mentions EVERY plan in the 4h window
+    # (Signals 1+2). The worktree branch inherits master's history, so
+    # plans_touched(wt) also sees S1's `test-plan-1` archive — mention both
+    # so Signal 2 is satisfied and S9b cleanly isolates Signal 5.
+    rm -f SCRATCHPAD.md
+    printf '# SCRATCHPAD\ntest-plan-1\nwt-plan-9\n' > SCRATCHPAD.md
+    touch SCRATCHPAD.md
+    # Parent backlog STALE (pre-fix this is what Signal 5 wrongly read).
+    mkdir -p docs
+    echo "# Backlog (parent, stale)" > docs/backlog.md
+    touch -d "3 hours ago" docs/backlog.md 2>/dev/null || touch -t "200001010000" docs/backlog.md
+
+    # Post-fix: cmd_verify(parent, wt) reads the worktree's FRESH backlog → PASS.
+    if cmd_verify "$TMPROOT" "$WT9" >/dev/null 2>&1; then
+      echo "self-test (S9a) worktree-backlog-fresh: PASS"
+      PASSED=$((PASSED + 1))
+    else
+      echo "self-test (S9a) worktree-backlog-fresh: FAIL (read parent's stale copy instead of worktree's fresh one)"
+      FAILED=$((FAILED + 1))
+    fi
+
+    # Negative control: make the WORKTREE backlog genuinely stale → must STALE.
+    # Proves the fix did NOT mask real staleness; it just reads the right copy.
+    touch -d "3 hours ago" "$WT9/docs/backlog.md" 2>/dev/null || touch -t "200001010000" "$WT9/docs/backlog.md"
+    if cmd_verify "$TMPROOT" "$WT9" >/dev/null 2>&1; then
+      echo "self-test (S9b) worktree-backlog-stale: FAIL (should STALE on a genuinely stale worktree backlog)"
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (S9b) worktree-backlog-stale: PASS"
+      PASSED=$((PASSED + 1))
+    fi
+
+    cd "$TMPROOT"
+    git worktree remove --force "$WT9" >/dev/null 2>&1
+    git branch -D worktree-test-9 >/dev/null 2>&1
+  else
+    echo "self-test (S9) worktree-tracked-file: SKIP (git worktree add failed in test env)"
+  fi
+
   echo ""
   echo "self-test summary: $PASSED passed, $FAILED failed (of $((PASSED + FAILED)) scenarios)"
   if [ "$FAILED" -gt 0 ]; then exit 1; fi
@@ -435,11 +518,13 @@ case "$1" in
     ;;
   verify)
     REPO="$(find_repo_root)" || { echo "session-wrap: not in a git repo, skipping" >&2; exit 0; }
-    cmd_verify "$REPO"
+    WT_REPO="$(find_worktree_root)" || WT_REPO="$REPO"
+    cmd_verify "$REPO" "$WT_REPO"
     ;;
   refresh)
     REPO="$(find_repo_root)" || { echo "session-wrap: not in a git repo, skipping" >&2; exit 0; }
-    cmd_refresh "$REPO"
+    WT_REPO="$(find_worktree_root)" || WT_REPO="$REPO"
+    cmd_refresh "$REPO" "$WT_REPO"
     ;;
   *)
     echo "session-wrap: unknown subcommand: $1" >&2
