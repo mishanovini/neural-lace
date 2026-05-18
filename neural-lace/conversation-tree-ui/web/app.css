@@ -67,6 +67,56 @@ button.primary { background: var(--info); color: #06121f; border-color: var(--in
 button.ghost { background: var(--panel2); color: var(--text); }
 button.danger { background: #7f1d1d; color: #fee2e2; border-color: #b91c1c; }
 button:active { transform: scale(0.98); }
+
+/* v1.1.2 item 25 — filled semantic action buttons. At-a-glance hierarchy:
+   buttons look like buttons, not text links. Six semantics, exact palette
+   from the spec. White text on all except caution (dark text on amber for
+   AA contrast — harness UX contrast standard). Hover = lighter + ring,
+   active = darker, disabled = muted. The chrome buttons (.ghost / .primary
+   / .danger / sb-* / dismiss ✕ / icon .li-jump) keep their styles — these
+   classes are for the pane / ctx / backlog ACTION buttons. */
+.b-commit, .b-caution, .b-util, .b-elevate, .b-destruct, .b-neutral {
+  font-weight: 600; border-style: solid;
+}
+.b-commit   { background: #22C55E; color: #fff;     border-color: #22C55E; }
+.b-caution  { background: #F59E0B; color: #1a1505;  border-color: #F59E0B; }
+.b-util     { background: #3B82F6; color: #fff;     border-color: #3B82F6; }
+.b-elevate  { background: #A855F7; color: #fff;     border-color: #A855F7; }
+.b-destruct { background: #B91C1C; color: #fff;     border-color: #B91C1C; }
+.b-neutral  { background: #475569; color: #fff;     border-color: #475569; }
+.b-commit:hover   { background: #34D77A; box-shadow: 0 0 0 2px rgba(34,197,94,0.45); }
+.b-caution:hover  { background: #FBB236; box-shadow: 0 0 0 2px rgba(245,158,11,0.45); }
+.b-util:hover     { background: #5C9BF8; box-shadow: 0 0 0 2px rgba(59,130,246,0.45); }
+.b-elevate:hover  { background: #BB73F9; box-shadow: 0 0 0 2px rgba(168,85,247,0.45); }
+.b-destruct:hover { background: #D32B2B; box-shadow: 0 0 0 2px rgba(185,28,28,0.45); }
+.b-neutral:hover  { background: #586A82; box-shadow: 0 0 0 2px rgba(71,85,105,0.45); }
+.b-commit:active   { background: #1BA350; }
+.b-caution:active  { background: #D98707; }
+.b-util:active     { background: #2C6FDE; }
+.b-elevate:active  { background: #9442E0; }
+.b-destruct:active { background: #9F1818; }
+.b-neutral:active  { background: #3A4658; }
+.b-commit:disabled, .b-caution:disabled, .b-util:disabled,
+.b-elevate:disabled, .b-destruct:disabled, .b-neutral:disabled {
+  opacity: 0.5; cursor: not-allowed; box-shadow: none;
+}
+
+/* v1.1.2 item 28 — Defer popover (replaces the ISO prompt()). One open at a
+   time; closes on choose / outside-click / Esc. Anchored within the li. */
+.defer-pop {
+  margin-top: 0.4rem; background: var(--panel2);
+  border: 1px solid var(--border2); border-radius: 6px;
+  padding: 0.5rem; display: flex; flex-direction: column; gap: 0.3rem;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+}
+.defer-pop .dp-title { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.defer-pop button { text-align: left; }
+.defer-pop .dp-when { display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; }
+.defer-pop input[type=datetime-local] {
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border2); border-radius: 5px;
+  padding: 0.22rem 0.4rem; font: inherit; font-size: 0.8rem;
+}
 .lastread { font-size: 0.72rem; color: var(--muted); }
 .status {
   font-size: 0.75rem; color: var(--muted);

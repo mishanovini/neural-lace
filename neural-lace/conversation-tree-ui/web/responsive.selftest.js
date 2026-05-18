@@ -174,5 +174,49 @@ ok('R38 item 18: toast bottom-right (+narrow bottom-center) + arrival-flash + re
   && /reducedMotion\(\)\s*\?\s*1500\s*:\s*700/.test(js)
   && /@media \(prefers-reduced-motion: reduce\)\s*\{[^@]*\.arrival-flash\s*\{\s*animation:\s*none/.test(C));
 
+// --- v1.1.2 polish items 25/26/27/28 ---------------------------------------
+ok('R39 item 25: six filled semantic button classes (exact palette) + hover/active/disabled, used in JS+HTML',
+  /\.b-commit\s*\{[^}]*background:\s*#22C55E/.test(C)
+  && /\.b-caution\s*\{[^}]*background:\s*#F59E0B/.test(C)
+  && /\.b-util\s*\{[^}]*background:\s*#3B82F6/.test(C)
+  && /\.b-elevate\s*\{[^}]*background:\s*#A855F7/.test(C)
+  && /\.b-destruct\s*\{[^}]*background:\s*#B91C1C/.test(C)
+  && /\.b-neutral\s*\{[^}]*background:\s*#475569/.test(C)
+  && /\.b-commit:hover\s*\{[^}]*box-shadow/.test(C)
+  && /\.b-commit:active\s*\{[^}]*background/.test(C)
+  && /\.b-commit:disabled[^{]*\{[^}]*cursor:\s*not-allowed/.test(C)
+  && /el\('button',\s*'b-commit',\s*'mark done'\)/.test(js)
+  && /el\('button',\s*'b-caution',\s*'defer'\)/.test(js)
+  && /el\('button',\s*'b-elevate',\s*'promote to branch'\)/.test(js)
+  && /id="blSave" class="b-commit"/.test(html));
+
+ok('R40 item 26: Details toggles IN PLACE (no full renderActions rebuild) + scrollIntoView nearest (no scroll reset)',
+  /disc\.addEventListener\('click', function \(\) \{[\s\S]*?li\.scrollIntoView\(\{ block: 'nearest' \}\);[\s\S]*?\}\);/.test(js)
+  && /li\.querySelector\('\.li-details'\)/.test(js)
+  && /li\.insertBefore\(d, disc\.nextSibling\)/.test(js));
+
+ok('R41 item 27: decision/question resolve ONLY via Respond — done button gated to kind==="action", no "mark answered"',
+  /if \(it\.kind === 'action'\) \{\s*\n?\s*var done = el\('button', 'b-commit', 'mark done'\)/.test(js)
+  && !/mark answered/.test(js)
+  && /function respondable\s*\(/.test(js));
+
+ok('R42 item 28: friendly Defer popover — presets + native datetime-local + to-Backlog (no ISO prompt())',
+  /function openDeferPop\s*\(/.test(js)
+  && /dti\.type = 'datetime-local'/.test(js)
+  && /Later today \(8 PM\)/.test(js) && /Tomorrow morning \(9 AM\)/.test(js)
+  && /Next week \(Mon 9 AM\)/.test(js) && /Pick a specific time/.test(js)
+  && /Until further notice — move to Backlog/.test(js)
+  && /\.defer-pop\s*\{/.test(C)
+  && !/prompt\('Defer until/.test(js));
+
+ok('R43 item 28: item-backlogged ADDITIVE (schema enum+required+reducer) + deferred local-time fields + isWaiting excludes backlogged + SCHEMA_VERSION still 1',
+  /'item-backlogged'/.test(schema)
+  && /'item-backlogged':\s*\['node_id',\s*'item_id'\]/.test(schema)
+  && /case 'item-backlogged'/.test(reducer)
+  && /it\.scheduled_for_local = String\(ev\.scheduled_for_local\)/.test(reducer)
+  && /it\.tz_offset_min = Number\(ev\.tz_offset_min\)/.test(reducer)
+  && /\(\(!it\.checked\) \|\| it\.deferred \|\| it\.contested\) && !it\.backlogged/.test(js)
+  && /const SCHEMA_VERSION\s*=\s*1\s*;/.test(schema));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

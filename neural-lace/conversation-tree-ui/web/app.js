@@ -310,7 +310,10 @@
   function crumb(nodeId) {
     return chain(nodeId).reverse().map(function (n) { return n.title || n.node_id; }).join(' › ');
   }
-  function isWaiting(it) { return (!it.checked) || it.deferred || it.contested; }
+  // item 28: a backlogged item ("Defer → until further notice — move to
+  // Backlog") leaves "Waiting on you" even though it is not checked — it was
+  // parked, not resolved. The Backlog "Activate" button is the return path.
+  function isWaiting(it) { return ((!it.checked) || it.deferred || it.contested) && !it.backlogged; }
 
   // ---- per-pane data-state rendering (C1b/c/d/e + BF-2) ----------------
   // Four never-conflated states: loading | first-run-empty | steady-state-empty
@@ -457,7 +460,7 @@
     if (n.state === 'concluded') {
       var stub = el('span', 'tnode-title concluded stub', n.title + '  — concluded');
       row.appendChild(stub);
-      var reopen = el('button', 'ghost', '↩ re-open');
+      var reopen = el('button', 'b-neutral', '↩ re-open');
       reopen.title = 'auto-concluded — re-open (no data loss)';
       reopen.addEventListener('click', function (e) { e.stopPropagation(); post({ type: 're-opened', node_id: n.node_id }, 're-opened'); });
       row.appendChild(reopen);
@@ -500,7 +503,7 @@
     }
     if (vis.length === 0) {
       if (allHiddenByConcluded()) {
-        var aff = el('button', 'ghost', 'Show concluded');
+        var aff = el('button', 'b-neutral', 'Show concluded');
         aff.addEventListener('click', function () { showConcluded.checked = true; applyShowConcluded(); });
         paneState(treeState, treeScroll, 'steady-empty', {
           steady: 'All branches in "' + activeTree + '" are concluded — hidden by your "show concluded" preference.',
@@ -605,11 +608,30 @@
       // item 9: rich-details disclosure (collapsed by default)
       if (it.details && typeof it.details === 'object') {
         var expanded = expandedItems.has(it.item_id);
-        var disc = el('button', 'ghost det-toggle', (expanded ? '▾' : '▸') + ' details');
+        var disc = el('button', 'b-util det-toggle', (expanded ? '▾' : '▸') + ' details');
+        // item 26: toggle IN PLACE — never call the full renderActions()
+        // (clear(actionsBody) + rebuild collapses the list height, which
+        // resets the scroll to the top and makes the clicked item vanish).
+        // Add/remove just this item's details box; keep expandedItems in
+        // sync so a later SSE-driven full render still shows it expanded.
         disc.addEventListener('click', function () {
-          if (expandedItems.has(it.item_id)) expandedItems.delete(it.item_id);
-          else expandedItems.add(it.item_id);
-          renderActions();
+          var nowExpanded;
+          if (expandedItems.has(it.item_id)) {
+            expandedItems.delete(it.item_id);
+            var box = li.querySelector('.li-details');
+            if (box) box.remove();
+            disc.textContent = '▸ details';
+            nowExpanded = false;
+          } else {
+            expandedItems.add(it.item_id);
+            var d = renderItemDetails(it.details);
+            li.insertBefore(d, disc.nextSibling);
+            disc.textContent = '▾ details';
+            nowExpanded = true;
+          }
+          // If expanding pushed the item partly out of view, scroll the
+          // MINIMUM needed to keep it visible — never a full reset to top.
+          if (nowExpanded) li.scrollIntoView({ block: 'nearest' });
         });
         li.appendChild(disc);
         if (expanded) li.appendChild(renderItemDetails(it.details));
@@ -619,7 +641,7 @@
         var rn = el('div', 'responded-note');
         rn.appendChild(el('span', 'badge', 'responded — awaiting confirmation'));
         rn.appendChild(el('div', 'muted', it.responded.text));
-        var cp = el('button', 'ghost', '⧉ Copy to Dispatch →');
+        var cp = el('button', 'b-util', '⧉ Copy to Dispatch →');
         cp.addEventListener('click', function () { copyResponseForDispatch(it, it.responded.text); });
         rn.appendChild(cp);
         li.appendChild(rn);
@@ -633,12 +655,12 @@
         cn.appendChild(el('div', null, label));
         cn.appendChild(el('div', 'muted', it.contested.note || ''));
         var rb = el('div', 'li-actions');
-        var accept = el('button', 'ghost', 'Accept their position');
+        var accept = el('button', 'b-commit', 'Accept their position');
         accept.addEventListener('click', function () {
           post({ type: 'contest-resolved', node_id: n.node_id, item_id: it.item_id, resolution: 'accept-theirs' }, 'resolved')
             .then(function (ok) { if (ok) maybeAutoConclude(n.node_id); });
         });
-        var keep = el('button', 'ghost', 'Keep mine, re-open');
+        var keep = el('button', 'b-neutral', 'Keep mine, re-open');
         keep.addEventListener('click', function () {
           post({ type: 'contest-resolved', node_id: n.node_id, item_id: it.item_id, resolution: 'keep-mine-reopen' }, 'resolved');
         });
@@ -647,26 +669,31 @@
         li.appendChild(cn);
       } else {
         var acts = el('div', 'li-actions');
-        var done = el('button', 'ghost', it.kind === 'action' ? 'mark done' : 'mark answered');
-        done.addEventListener('click', function () {
-          var type = it.kind === 'action' ? 'action-done' : 'answered';
-          var label = it.kind === 'action' ? 'Marked done' : 'Marked answered';
-          actWithUndo(li,
-            { type: type, node_id: n.node_id, item_id: it.item_id }, label,
-            function () {   // item 7 undo: re-surface the item (+ re-open node if it auto-concluded)
-              post({ type: 'item-unchecked', node_id: n.node_id, item_id: it.item_id }, 'undone', true)
-                .then(function (ok) {
-                  if (!ok) return;
-                  var nd = byId(n.node_id);
-                  if (nd && nd.state === 'concluded') post({ type: 're-opened', node_id: n.node_id }, 're-opened', true);
-                });
-            },
-            function () { maybeAutoConclude(n.node_id); });
-        });
-        acts.appendChild(done);
-        // D2: dispute a state-checked item (low-emphasis safety net).
+        // item 27: a decision/question resolves ONLY via Respond — there is
+        // no quiet mark-as-resolved button for them (that would leave
+        // Dispatch with no response captured). Actions keep "mark done"
+        // (there is no response to capture; mark-done is correct there).
+        if (it.kind === 'action') {
+          var done = el('button', 'b-commit', 'mark done');
+          done.addEventListener('click', function () {
+            actWithUndo(li,
+              { type: 'action-done', node_id: n.node_id, item_id: it.item_id }, 'Marked done',
+              function () {   // item 7 undo: re-surface the item (+ re-open node if it auto-concluded)
+                post({ type: 'item-unchecked', node_id: n.node_id, item_id: it.item_id }, 'undone', true)
+                  .then(function (ok) {
+                    if (!ok) return;
+                    var nd = byId(n.node_id);
+                    if (nd && nd.state === 'concluded') post({ type: 're-opened', node_id: n.node_id }, 're-opened', true);
+                  });
+              },
+              function () { maybeAutoConclude(n.node_id); });
+          });
+          acts.appendChild(done);
+        }
+        // D2: dispute a state-checked item (low-emphasis safety net). Only
+        // appears on an already-checked item — never a quiet-resolve path.
         if (it.checked) {
-          var dis = el('button', 'ghost', 'dispute');
+          var dis = el('button', 'b-neutral', 'dispute');
           dis.title = 'safety net — not a distrust mechanism';
           dis.addEventListener('click', function () {
             var note = prompt('Why do you dispute this being done? (a note; can become a thread in Dispatch)');
@@ -675,40 +702,36 @@
           });
           acts.appendChild(dis);
         }
-        // D3: defer / clear-defer.
+        // D3: defer / clear-defer. item 28: defer opens a friendly popover
+        // (presets + native datetime-local + "until further notice → Backlog"),
+        // all in the user's LOCAL timezone — no ISO prompt().
         if (it.deferred) {
-          var clr = el('button', 'ghost', 'clear defer');
+          var clr = el('button', 'b-util', 'clear defer');
           clr.addEventListener('click', function () { post({ type: 'defer-cleared', node_id: n.node_id, item_id: it.item_id }, 'defer cleared'); });
           acts.appendChild(clr);
         } else {
-          var dfr = el('button', 'ghost', 'defer');
-          dfr.addEventListener('click', function () {
-            var when = prompt('Defer until (ISO time, or blank for no schedule):', new Date(Date.now() + 36e5).toISOString());
-            if (when == null) return;
-            actWithUndo(li,
-              { type: 'deferred', node_id: n.node_id, item_id: it.item_id, scheduled_for: when.trim() || null }, 'Deferred',
-              function () { post({ type: 'defer-cleared', node_id: n.node_id, item_id: it.item_id }, 'defer cleared', true); });
-          });
+          var dfr = el('button', 'b-caution', 'defer');
+          dfr.addEventListener('click', function () { openDeferPop(li, n, it); });
           acts.appendChild(dfr);
         }
         // item 10: inline Respond on decisions/questions/needs-input (only
         // when not yet responded — the responded note above takes over then)
         if (respondable(it) && !it.responded) {
-          var rsp = el('button', 'ghost', 'Respond');
+          var rsp = el('button', 'b-commit', 'Respond');
           rsp.addEventListener('click', function () {
             if (li.querySelector('.respond-box')) return;   // one open at a time
             var rb2 = el('div', 'respond-box');
             var ta = el('textarea', 'draft-area');
             ta.placeholder = 'Your response — captured here; Copy to Dispatch closes the loop (v1.1).';
             var row = el('div', 'row');
-            var submit = el('button', 'primary', 'Submit response');
+            var submit = el('button', 'b-commit', 'Submit response');
             submit.addEventListener('click', function () {
               var txt = ta.value.trim();
               if (!txt) { ta.focus(); return; }
               post({ type: 'action-responded', node_id: n.node_id, item_id: it.item_id, response_text: txt }, 'response captured')
                 .then(function (ok) { if (ok) copyResponseForDispatch(it, txt); });
             });
-            var cancel = el('button', 'ghost', 'cancel');
+            var cancel = el('button', 'b-neutral', 'cancel');
             cancel.addEventListener('click', function () { rb2.remove(); });
             row.appendChild(submit); row.appendChild(cancel);
             rb2.appendChild(ta); rb2.appendChild(row);
@@ -724,6 +747,109 @@
       actionsBody.appendChild(li);
       if (newActionIds[it.item_id]) arrivalFlash(li, it.kind);   // item 18: type-tinted arrival flash
     });
+  }
+
+  // ---- item 28: friendly Defer popover --------------------------------
+  // Presets + native datetime-local + "until further notice — move to
+  // Backlog". ALL times the user's LOCAL timezone (display via fmtTime =
+  // toLocaleString; input via <input type=datetime-local> which is local +
+  // tz-aware on Windows out of the box). The state file stores the canonical
+  // ISO `scheduled_for` (cross-machine) PLUS additive `scheduled_for_local`
+  // + `tz_offset_min` so re-display anywhere is unambiguous (no version bump).
+  function pad2(x) { return (x < 10 ? '0' : '') + x; }
+  function toLocalInput(d) {            // Date -> "YYYY-MM-DDTHH:MM" (local)
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
+      'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+  function closeDeferPop() {
+    var p = document.querySelector('.defer-pop');
+    if (p) p.remove();
+    document.removeEventListener('keydown', deferEsc, true);
+    document.removeEventListener('click', deferOutside, true);
+  }
+  function deferEsc(e) { if (e.key === 'Escape') closeDeferPop(); }
+  function deferOutside(e) {
+    var p = document.querySelector('.defer-pop');
+    if (p && !p.contains(e.target) && !(e.target.closest && e.target.closest('.li-actions'))) closeDeferPop();
+  }
+  function openDeferPop(li, n, it) {
+    closeDeferPop();                                   // one open at a time
+    function commit(d) {
+      closeDeferPop();
+      actWithUndo(li,
+        { type: 'deferred', node_id: n.node_id, item_id: it.item_id,
+          scheduled_for: d.toISOString(),
+          scheduled_for_local: toLocalInput(d),
+          tz_offset_min: d.getTimezoneOffset() },
+        'Deferred to ' + fmtTime(d.toISOString()),
+        function () { post({ type: 'defer-cleared', node_id: n.node_id, item_id: it.item_id }, 'defer cleared', true); });
+    }
+    var pop = el('div', 'defer-pop');
+    pop.appendChild(el('div', 'dp-title', 'Defer until'));
+
+    var later = el('button', 'b-caution', 'Later today (8 PM)');
+    later.addEventListener('click', function () {
+      var d = new Date(); d.setHours(20, 0, 0, 0);
+      if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);   // already past 8 PM → tomorrow
+      commit(d);
+    });
+    var tmrw = el('button', 'b-caution', 'Tomorrow morning (9 AM)');
+    tmrw.addEventListener('click', function () {
+      var d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); commit(d);
+    });
+    var week = el('button', 'b-caution', 'Next week (Mon 9 AM)');
+    week.addEventListener('click', function () {
+      var d = new Date();
+      var add = ((1 - d.getDay() + 7) % 7) || 7;   // days to NEXT Monday (today-Mon → +7)
+      d.setDate(d.getDate() + add); d.setHours(9, 0, 0, 0); commit(d);
+    });
+    var pick = el('button', 'b-caution', 'Pick a specific time…');
+    var whenRow = el('div', 'dp-when'); whenRow.style.display = 'none';
+    var dti = el('input'); dti.type = 'datetime-local';
+    var pre = new Date(); pre.setDate(pre.getDate() + 1); pre.setHours(9, 0, 0, 0);
+    dti.value = toLocalInput(pre);
+    var setBtn = el('button', 'b-caution', 'Set');
+    setBtn.addEventListener('click', function () {
+      if (!dti.value) { dti.focus(); return; }
+      var d = new Date(dti.value);                  // datetime-local parses as LOCAL
+      if (isNaN(d.getTime())) { dti.focus(); return; }
+      commit(d);
+    });
+    pick.addEventListener('click', function () {
+      whenRow.style.display = whenRow.style.display === 'none' ? 'flex' : 'none';
+      if (whenRow.style.display === 'flex') dti.focus();
+    });
+    whenRow.appendChild(dti); whenRow.appendChild(setBtn);
+
+    var toBl = el('button', 'b-util', 'Until further notice — move to Backlog');
+    toBl.title = 'Parks this out of "Waiting on you" and tracks it in Backlog; the Backlog "Activate" button brings it back.';
+    toBl.addEventListener('click', function () {
+      closeDeferPop();
+      post({ type: 'item-backlogged', node_id: n.node_id, item_id: it.item_id }, null, true)
+        .then(function (ok) {
+          if (!ok) return;
+          var blId = uid('bl');
+          post({ type: 'backlog-added', item_id: blId, tree_id: treeOf(n),
+            priority: 'medium', text: it.text }, 'moved to Backlog')
+            .then(function (ok2) {
+              if (ok2) post({ type: 'context-attached', target: blId,
+                context_ref: 'parked from tree: ' + crumb(n.node_id) }, null, true);
+            });
+        });
+    });
+
+    var cancel = el('button', 'b-neutral', 'cancel');
+    cancel.addEventListener('click', closeDeferPop);
+
+    [later, tmrw, week, pick].forEach(function (b) { pop.appendChild(b); });
+    pop.appendChild(whenRow);
+    pop.appendChild(toBl);
+    pop.appendChild(cancel);
+    li.appendChild(pop);
+    setTimeout(function () {
+      document.addEventListener('keydown', deferEsc, true);
+      document.addEventListener('click', deferOutside, true);
+    }, 0);
   }
 
   // ---- BACKLOG PANE (C4) ----------------------------------------------
@@ -743,7 +869,7 @@
     if (!loaded) { paneState(backlogState, backlogBody, 'loading'); return; }
     var entries = sortBacklog(backlogEntries());
     if (entries.length === 0) {
-      var aff = el('button', 'primary', '+ capture one');
+      var aff = el('button', 'b-commit', '+ capture one');
       aff.addEventListener('click', openCapture);
       paneState(backlogState, backlogBody, 'steady-empty', {
         steady: 'No backlog items in "' + activeTree + '" — capture one with [+].',
@@ -769,10 +895,10 @@
       }
       var acts = el('div', 'li-actions');
       if (!b.activated) {
-        var act = el('button', 'primary', 'Activate → new tree root');
+        var act = el('button', 'b-commit', 'Activate → new tree root');
         act.addEventListener('click', function () { activateBacklog(b); });
         acts.appendChild(act);
-        var addc = el('button', 'ghost', '+ context');
+        var addc = el('button', 'b-util', '+ context');
         addc.addEventListener('click', function () {
           var note = prompt('Attach a context note / file ref / prior-decision:');
           if (note == null || !note.trim()) return;
@@ -780,7 +906,7 @@
         });
         acts.appendChild(addc);
       } else {
-        var copy = el('button', 'ghost', '⧉ copy context for Dispatch');
+        var copy = el('button', 'b-util', '⧉ copy context for Dispatch');
         copy.addEventListener('click', function () { copyHandoff(b.text, b.context_refs, b.activated_node); });
         acts.appendChild(copy);
       }
@@ -950,7 +1076,7 @@
     open.slice(0, showN).forEach(function (it) {
       var d = el('div', 'ctx-item', '[' + it.kind + '] ' + it.text +
         (it.deferred ? '  (deferred)' : '') + (it.contested ? '  (contested)' : ''));
-      var pr = el('button', 'ghost', 'promote to branch');
+      var pr = el('button', 'b-elevate', 'promote to branch');
       pr.style.marginLeft = '0.4rem';
       pr.addEventListener('click', function () {
         post({ type: 'promoted', node_id: n.node_id, item_id: it.item_id, new_node_id: uid('n') }, 'promoted to branch');
@@ -972,7 +1098,7 @@
       chip.addEventListener('click', function () { if (byId(cl.to)) focusNode(cl.to); });
       s4.appendChild(chip); s4.appendChild(document.createTextNode(' '));
     });
-    var addL = el('button', 'ghost', '+ cross-link');
+    var addL = el('button', 'b-util', '+ cross-link');
     addL.addEventListener('click', function () {
       var to = prompt('Link to which node_id? (cross-tree allowed)');
       if (!to) return;
@@ -992,11 +1118,11 @@
     ta.addEventListener('input', function () { localStorage.setItem('ctree-draft-' + id, ta.value); });
     s5.appendChild(ta);
     var dr = el('div', 'row');
-    var stage = el('button', 'ghost', 'stage (persist)');
+    var stage = el('button', 'b-util', 'stage (persist)');
     stage.addEventListener('click', function () { post({ type: 'draft-saved', node_id: id, draft_text: ta.value }, 'note staged'); });
-    var copyD = el('button', 'ghost', '⧉ copy');
+    var copyD = el('button', 'b-util', '⧉ copy');
     copyD.addEventListener('click', function () { copyHandoff(n.title, [ta.value], id); });
-    var used = el('button', 'ghost', 'mark used / clear');
+    var used = el('button', 'b-destruct', 'mark used / clear');
     used.addEventListener('click', function () {
       localStorage.removeItem('ctree-draft-' + id);
       post({ type: 'draft-cleared', node_id: id }, 'note cleared');
@@ -1009,11 +1135,11 @@
     var s6 = el('div', 'ctx-sec'); s6.appendChild(el('h4', null, 'Node'));
     var r6 = el('div', 'row');
     if (n.state === 'archived') {
-      var rest = el('button', 'ghost', 'restore from archive');
+      var rest = el('button', 'b-util', 'restore from archive');
       rest.addEventListener('click', function () { post({ type: 're-opened', node_id: id }, 'restored'); });
       r6.appendChild(rest);
     } else {
-      var arch = el('button', 'ghost', 'archive');
+      var arch = el('button', 'b-destruct', 'archive');
       arch.title = 'archival never closes a Claude Code session (FR-28)';
       arch.addEventListener('click', function () {
         post({ type: 'archived', node_id: id }, 'Archived', true).then(function (ok) {
@@ -1026,7 +1152,7 @@
       });
       r6.appendChild(arch);
     }
-    var note = el('button', 'ghost', 'annotate');
+    var note = el('button', 'b-neutral', 'annotate');
     note.addEventListener('click', function () {
       var t = prompt('Annotation (lifecycle trail / FR-12):'); if (!t) return;
       post({ type: 'annotated', node_id: id, text: t }, 'annotated');
