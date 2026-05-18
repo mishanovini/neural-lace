@@ -13,10 +13,96 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const {
   SCHEMA_VERSION, SCHEMA_TOO_NEW_MESSAGE, generateEventId, validateEvent,
 } = require('./schema.js');
 const { deriveSnapshot } = require('./reducer.js');
+
+// ---- DEC-D (d) snapshot-integrity attestation ------------------------------
+// ADR-032 §8 r2 GENERAL PRIMITIVE (Misha-confirmed 2026-05-17; supersedes the
+// earlier (b)): a snapshot is trustworthy iff its canonical-JSON sha256 equals
+// the `hash` of the most-recent `snapshot-committed` record in `events[]`.
+// Every snapshot write atomically appends that record as part of the SAME
+// write-temp-then-rename publish (NOT a separate step). Any future gate gets
+// snapshot-trust for free via the same attestation — there are NO per-gate
+// compaction carve-outs, ever. This replaces the (b) gateRelevantRetention
+// approach entirely (it dissolved NL-FINDING-004 by removing the marker-vs-
+// published-subset invariant the (b) attempt broke).
+const SNAPSHOT_COMMITTED_TYPE = 'snapshot-committed';
+
+// Deterministic serialization: recursively emit object keys in sorted order so
+// the writer (here) and the §8 verifier produce byte-identical input to
+// sha256. This determinism is LOAD-BEARING — if the two ever canonicalize
+// differently the hashes never match and every snapshot reads as torn.
+function canonicalJSON(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return '[' + value.map(canonicalJSON).join(',') + ']';
+  }
+  const keys = Object.keys(value).sort();
+  const parts = [];
+  for (const k of keys) {
+    if (value[k] === undefined) continue; // JSON.stringify drops undefined; mirror it
+    parts.push(JSON.stringify(k) + ':' + canonicalJSON(value[k]));
+  }
+  return '{' + parts.join(',') + '}';
+}
+
+// sha256 of the snapshot serialized with canonical key ordering. Prefixed
+// `sha256:` so the algorithm is self-describing in the on-disk record.
+function hashSnapshot(snapshot) {
+  const digest = crypto.createHash('sha256')
+    .update(canonicalJSON(snapshot), 'utf8')
+    .digest('hex');
+  return 'sha256:' + digest;
+}
+
+// Build the attestation meta-record for a snapshot. Called as part of any
+// commit that updates the snapshot (see appendEvent's atomic publish). It is
+// NOT a domain event: it is absent from EVENT_TYPES, the reducer skips it
+// (forward-tolerant default branch), and the §7a coverage marker ignores it.
+function attestSnapshot(snapshot) {
+  return {
+    event_id: generateEventId(),
+    type: SNAPSHOT_COMMITTED_TYPE,
+    hash: hashSnapshot(snapshot),
+    at: Date.now(),
+    ts: new Date().toISOString(),
+    actor: 'system',
+  };
+}
+
+// §8 r2 verify-then-read primitive. Given a parsed on-disk state, recompute the
+// snapshot's canonical-JSON hash and compare it to the hash of the MOST-RECENT
+// `snapshot-committed` record in events[]. Match ⇒ the snapshot is verified-
+// trustworthy and a gate may read `snapshot.nodes` for branch-presence.
+// Mismatch / no attestation / no snapshot ⇒ torn ⇒ the gate refuses and the
+// existing §7a torn-snapshot-recovery engages. This is the general primitive:
+// any future gate calls this once and gets snapshot-trust for free.
+function verifySnapshotAttested(parsed) {
+  if (!parsed || !parsed.snapshot || parsed.snapshot.valid !== true) {
+    return { verified: false, reason: 'no-valid-snapshot' };
+  }
+  const events = Array.isArray(parsed.events) ? parsed.events : [];
+  let latest = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i] && events[i].type === SNAPSHOT_COMMITTED_TYPE) { latest = events[i]; break; }
+  }
+  if (!latest) return { verified: false, reason: 'no-attestation' };
+  const expected = hashSnapshot(parsed.snapshot);
+  if (latest.hash !== expected) {
+    return { verified: false, reason: 'hash-mismatch', expected: expected, found: latest.hash };
+  }
+  return { verified: true, hash: expected };
+}
+
+// The §7a coverage marker tracks the last DOMAIN event, never the attestation
+// meta-record. This helper returns the events[] with snapshot-committed
+// records stripped — used for the reducer, dedupe, and the marker comparison.
+function domainEvents(events) {
+  return events.filter(function (e) { return e && e.type !== SNAPSHOT_COMMITTED_TYPE; });
+}
 
 // Distinguishable error class so callers (A2d, B1b, the GUI) can branch on the
 // Pin-2 unknown-major partition specifically vs. a generic parse error.
@@ -108,30 +194,52 @@ function readState(opts) {
   }
 
   // Source of truth = events[], deduped by event_id (idempotency / §2).
-  let events = Array.isArray(parsed.events) ? parsed.events : [];
-  if (parsed.__corrupt || events.length === 0) {
+  let rawEvents = Array.isArray(parsed.events) ? parsed.events : [];
+  // domain events (no snapshot-committed meta-records) feed the reducer +
+  // the §7a marker. A fully-torn / empty DOMAIN log triggers audit replay.
+  let domain = dedupeById(domainEvents(rawEvents));
+  if (parsed.__corrupt || domain.length === 0) {
     // Fully-torn state file: reconstruct from the append-only audit log
     // (NFR-7 — never truncated, so it is the deepest recoverable truth).
     const fromAudit = replayAuditLog(auditPathFor(statePath));
-    if (fromAudit.length > 0) events = fromAudit;
+    if (fromAudit.length > 0) domain = dedupeById(domainEvents(fromAudit));
   }
-  events = dedupeById(events);
 
   const snap = parsed.snapshot;
-  const lastId = events.length ? events[events.length - 1].event_id : null;
+  const lastId = domain.length ? domain[domain.length - 1].event_id : null;
+  // §7a marker check (unchanged in spirit): the cached snapshot may be trusted
+  // only if valid AND its coverage marker equals the last DOMAIN event's id
+  // (the snapshot-committed meta-record is never the marker target).
   const markerOk = snap && snap.valid === true
     && snap.covers_through_event_id === lastId;
+  // DEC-D (d) STRENGTHENING: the §7a marker alone cannot detect a snapshot
+  // whose CONTENT was corrupted without touching the marker (a torn / tampered
+  // snapshot block). The attestation closes that — trust the cache only if the
+  // marker holds AND the snapshot's canonical-JSON hash matches the most-recent
+  // snapshot-committed record. Mismatch ⇒ torn ⇒ discard + replay (§7a). This
+  // is the general primitive: §8 (and any future gate) calls
+  // verifySnapshotAttested on the RAW file; readState applies the same check so
+  // a tampered cache is never silently trusted via the bare marker.
+  const att = verifySnapshotAttested(parsed);
+  const trustCache = markerOk && att.verified === true;
 
   let snapshot;
-  if (markerOk) {
-    snapshot = snap;                       // trust the cache — marker proves it
+  if (trustCache) {
+    snapshot = snap;                       // marker + attestation prove it
   } else {
-    // §7a mandatory: discard the snapshot, deterministically replay the log.
-    snapshot = deriveSnapshot(events, treeId);
+    // §7a mandatory: discard the (untrustworthy / torn / tampered) snapshot
+    // and deterministically replay the DOMAIN log.
+    snapshot = deriveSnapshot(domain, treeId);
     snapshot.valid = true;
     snapshot.covers_through_event_id = lastId;
   }
-  return { schema_version: SCHEMA_VERSION, tree_id: treeId, events: events, snapshot: snapshot };
+  // The returned events[] is DOMAIN-only — the snapshot-committed attestation
+  // is an on-disk meta-record, never part of the consumer-facing event log
+  // (web/app.js, the property suite, FR-2 cardinality all count domain
+  // events). The §8 verifier reads the RAW on-disk file (jq /
+  // verifySnapshotAttested over `parsed`), not this return shape, so trust
+  // re-derivation is unaffected by stripping the meta-record here.
+  return { schema_version: SCHEMA_VERSION, tree_id: treeId, events: domain, snapshot: snapshot };
 }
 
 function dedupeById(events) {
@@ -144,64 +252,6 @@ function dedupeById(events) {
     out.push(ev);
   }
   return out;
-}
-
-// ---- §7c (DEC-D 2026-05-17) general gate-relevant-still-live retention -----
-// The ADR-032 §7c general principle (NL-FINDING-003 resolution): compaction
-// MUST NOT drop any event that is still live AND gate-relevant. A reader/gate
-// that consumes an event-class from events[] (not the snapshot) must still find
-// the most-recent such event per still-live entity AFTER the covered prefix is
-// truncated. This is stated GENERALLY so a future gate consuming a new
-// event-class inherits the rule with no further §7c change — branch-opened
-// per still-live node is merely v1's ONLY instance.
-//
-// GATE_RELEVANT_EVENT_CLASSES is the registry of (event-class -> entity-key)
-// pairs that some gate consumes from events[]. Adding a future gate = adding
-// one entry here; the retention logic generalizes with zero other edits.
-const GATE_RELEVANT_EVENT_CLASSES = [
-  // §8 conversation-tree-state-gate.sh consumes `branch-opened`, keyed by the
-  // node it opens. v1's sole instance of the general rule.
-  { type: 'branch-opened', entityKey: function (ev) { return ev.node_id; } },
-];
-
-// A node is "live" iff it survives reduction into snapshot.nodes AND its state
-// is not the terminal `archived` (the reducer's own liveness notion: a
-// `concluded` node stays live because `re-opened` reverses it with no data
-// loss, so it remains gate-relevant; only `archived` is "no longer active").
-function liveEntityIds(snapshot) {
-  const live = new Set();
-  const nodes = (snapshot && Array.isArray(snapshot.nodes)) ? snapshot.nodes : [];
-  for (const n of nodes) {
-    if (!n || n.node_id == null) continue;
-    if (n.state === 'archived') continue;          // terminal — not gate-relevant
-    live.add(n.node_id);
-  }
-  return live;
-}
-
-// Given the FULL pre-truncation log + the post-reduction snapshot, return the
-// set of events[] that MUST be retained even though they fall inside the
-// covered prefix: for every gate-relevant event-class, the most-recent event
-// per still-live entity. Iterating newest-first and taking the first hit per
-// (class,entity) yields "most recent". Bounded by live-entity count
-// (NFR-3 <100), never the full history.
-function gateRelevantRetention(events, snapshot) {
-  const live = liveEntityIds(snapshot);
-  const keptIds = new Set();
-  for (const cls of GATE_RELEVANT_EVENT_CLASSES) {
-    const seenEntities = new Set();
-    for (let i = events.length - 1; i >= 0; i--) {
-      const ev = events[i];
-      if (!ev || ev.type !== cls.type) continue;
-      const entity = cls.entityKey(ev);
-      if (entity == null || !live.has(entity)) continue;   // entity not live ⇒ not gate-relevant
-      if (seenEntities.has(entity)) continue;              // already kept the most-recent for this entity
-      seenEntities.add(entity);
-      keptIds.add(ev.event_id);
-    }
-  }
-  // Preserve original chronological order among the retained subset.
-  return events.filter(function (e) { return keptIds.has(e.event_id); });
 }
 
 // ---- NFR-7 append-only audit log -------------------------------------------
@@ -258,9 +308,14 @@ function appendEvent(eventInput, opts) {
 
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
 
-  // Read current truth (torn-snapshot-safe).
+  // Read current truth (torn-snapshot-safe). Strip prior snapshot-committed
+  // attestation meta-records: only DOMAIN events accumulate / feed the
+  // reducer / count toward the compaction threshold. Exactly one fresh
+  // attestation is re-appended at publish time below (it is never carried
+  // forward — a stale attestation hash would no longer match the new
+  // snapshot anyway).
   const cur = readState(opts);
-  const events = cur.events.slice();
+  const events = domainEvents(cur.events.slice());
 
   // Envelope-complete the input (caller may omit event_id/ts/actor; we fill).
   const ev = Object.assign({}, eventInput);
@@ -276,17 +331,15 @@ function appendEvent(eventInput, opts) {
 
   events.push(ev);
 
-  // §7c compaction (DEC-D 2026-05-17 revision — NL-FINDING-003 resolution):
+  // §7c compaction (DEC-D (d) 2026-05-17 — ORIGINAL A2 behavior restored):
   // when the log exceeds the threshold, fold a full snapshot, mark its
-  // coverage, and truncate the provably-covered prefix — EXCEPT the general
-  // gate-relevant-still-live retention set: the most-recent event of every
-  // gate-consumed event-class for every still-live entity is KEPT in events[]
-  // even though it falls inside the covered prefix. This closes the §7c↔§8
-  // cross-clause gap at the producing clause: §8 reads events[] only (its
-  // torn-snapshot-immune design is preserved unchanged), and finds what it
-  // needs because §7c no longer drops it. The audit log (above) is never
-  // touched, so nothing is ever actually lost. The retained set is bounded by
-  // the live-entity count (NFR-3 <100), not the full history.
+  // coverage, and truncate ONLY the provably-covered prefix. There is NO
+  // per-gate compaction carve-out (the (b) gateRelevantRetention is removed):
+  // the snapshot covers ALL events, so the post-compaction domain log is
+  // empty and the marker proves coverage — a reader replays from "nothing
+  // after coverId". The audit log (above) is never touched, so nothing is
+  // ever actually lost. §8 trust comes from the snapshot-integrity
+  // attestation appended below, NOT from retaining events[].
   let publishedEvents = events;
   let snapshot;
   let didCompact = false;
@@ -296,20 +349,27 @@ function appendEvent(eventInput, opts) {
     const coverId = events[events.length - 1].event_id;
     fullSnap.valid = true;
     fullSnap.covers_through_event_id = coverId;
-    // The snapshot covers ALL events; the post-compaction log retains EXACTLY
-    // the gate-relevant-still-live subset (most-recent gate-consumed event per
-    // still-live entity — v1: most-recent branch-opened per non-archived node)
-    // so the §8 events[]-only branch-presence gate still resolves every live
-    // branch. covers_through_event_id still marks the last covered event, so
-    // §7a's reader-replay contract is unchanged (a reader replays whatever
-    // events[] holds — now the small live set rather than possibly-empty).
-    publishedEvents = gateRelevantRetention(events, fullSnap);
+    // Retain ONLY events strictly after the covered point. The snapshot
+    // covers ALL events, so the post-compaction domain log is empty but the
+    // marker proves coverage (original A2 §7c semantics — Pin-3a unchanged).
+    publishedEvents = [];
     snapshot = fullSnap;
   } else {
     snapshot = deriveSnapshot(events, treeId);
     snapshot.valid = true;
     snapshot.covers_through_event_id = ev.event_id;
   }
+
+  // DEC-D (d): atomically append the snapshot-integrity attestation as part
+  // of THIS publish (NOT a separate write). The hash is over the final
+  // snapshot object exactly as it will be written. Appending it AFTER the
+  // compaction-truncation decision means the freshest snapshot-committed is
+  // always the last events[] element and SURVIVES compaction naturally — it
+  // is never inside the covered prefix because it is appended post-truncation.
+  // It is NOT a domain event (absent from EVENT_TYPES; reducer skips it; the
+  // §7a marker tracks the last DOMAIN event id, set above).
+  const attestation = attestSnapshot(snapshot);
+  publishedEvents = publishedEvents.concat([attestation]);
 
   const nextState = {
     schema_version: SCHEMA_VERSION,
@@ -362,4 +422,10 @@ module.exports = {
   DEFAULT_COMPACTION_THRESHOLD,
   DEFAULT_RETENTION,
   __writeTornForTest,
+  // DEC-D (d) snapshot-integrity attestation primitive (ADR-032 §8 r2):
+  SNAPSHOT_COMMITTED_TYPE,
+  canonicalJSON,
+  hashSnapshot,
+  attestSnapshot,
+  verifySnapshotAttested,
 };

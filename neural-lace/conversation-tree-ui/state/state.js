@@ -66,6 +66,24 @@ function appendBranchOpened(input, opts) {
   return r.state; // Phase-0 callers expect the resulting state object
 }
 
+// DEC-D (d) snapshot-integrity attestation facade (ADR-032 §8 r2). Any commit
+// that updates the snapshot produces an attestation via store.attestSnapshot
+// during the atomic publish; this facade method exposes that primitive
+// directly so a caller can attest an out-of-band snapshot. The §8 gate (and
+// any FUTURE gate) verifies snapshot trust via verifySnapshotAttested — a
+// general primitive, NOT a per-gate carve-out.
+function attestSnapshot(snapshot) {
+  return store.attestSnapshot(snapshot);
+}
+
+// §8 r2 verify-then-read primitive: returns { verified, ... } for a parsed
+// state object (the shape store.readState/readRawState produces). verified
+// true ⇒ a gate may trust snapshot.nodes for branch-presence; false ⇒ torn ⇒
+// the gate refuses and §7a torn-snapshot-recovery engages.
+function verifySnapshotAttested(parsed) {
+  return store.verifySnapshotAttested(parsed);
+}
+
 module.exports = {
   STATE_FILE,
   SCHEMA_VERSION,
@@ -83,6 +101,12 @@ module.exports = {
   appendEvent,
   appendBranchOpened,
   __writeTornForTest: store.__writeTornForTest,
+  // DEC-D (d) attestation primitive surface:
+  SNAPSHOT_COMMITTED_TYPE: store.SNAPSHOT_COMMITTED_TYPE,
+  canonicalJSON: store.canonicalJSON,
+  hashSnapshot: store.hashSnapshot,
+  attestSnapshot,
+  verifySnapshotAttested,
 };
 
 // CLI preserved (Phase-0 Walking Skeleton step 1 + step 3 driver):

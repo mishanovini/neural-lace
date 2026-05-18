@@ -9,18 +9,32 @@
 // Properties:
 //   P1 atomic-append-under-simulated-crash  (Pin 3b / §7b)
 //   P2 torn-snapshot -> deterministic log-replay  (Pin 3a / §7a)
-//   P3 compaction-truncation-correctness  (Pin 3c / §7c) + audit never truncated (NFR-7)
+//   P3 compaction-truncation-correctness  (Pin 3c / §7c — ORIGINAL A2
+//      truncate-covered-prefix behavior, DEC-D (d): the post-compaction
+//      on-disk events[] holds EXACTLY the freshest snapshot-committed
+//      attestation, NO domain events; audit never truncated (NFR-7))
 //   P4 unknown-major-refused, distinct message, NOTHING read  (Pin 2 / §1 / A2d)
 //   P5 last-N-version retention  (NFR-1 / A2e)
 //   P6 event_id idempotency — a re-applied append is a no-op  (§2)
 //   P7 FR-2 N=3 fixture — 3 items one thread => 0 extra branches; divergence => exactly 1
 //   P8 strict-tree invariant (FR-1) — cycle / second-parent re-parent rejected, retained
-//   P9 DEC-D §7c↔§8 gap CLOSED — post-compaction the §8 events[]-only jq
-//      branch-presence filter still resolves EVERY still-live branch (Phase-B
-//      gate would ALLOW; the long-lived-tree spawn DoS is closed)  (NL-FINDING-003)
-//   P10 DEC-D retained-events[] bound — post-compaction events[] size is
-//      bounded by the still-live-node count (not 0, not the full history); an
-//      archived node's branch-opened is correctly NOT retained  (NL-FINDING-003)
+//
+//   --- DEC-D (d) snapshot-integrity attestation proofs (ADR-032 §8 r2;
+//       supersede the deleted (b) P9/P10) ---
+//   P9  (d-i)   after a snapshot commit, the most-recent snapshot-committed
+//               .hash equals the canonical-JSON sha256 of the ON-DISK snapshot
+//   P10 (d-ii)  §8-gate simulation: a VERIFIED snapshot resolves branch-
+//               presence from snapshot.nodes for a re-opened, a promoted, AND
+//               a backlog-activated node (DEC-E/DEC-F moot under (d))
+//   P11 (d-iii) a byte-tampered snapshot ⇒ canonical-hash mismatch ⇒ §8 gate
+//               REFUSES + the existing A2 torn-snapshot-recovery engages
+//   P12 (d-iv)  the NL-FINDING-004 FR-24 trace — 7-event tree, non-branch-
+//               opened final event, compaction fires: post-compaction
+//               readState() PRESERVES items/checked-states/drafts/conclusions
+//               (the (b) regression is GONE — compaction is original-behavior
+//               + §8 reads the verified snapshot)
+//   P13 (d-v)   the latest snapshot-committed SURVIVES compaction naturally
+//               (DEC-D rule 2: appended post-truncation, always freshest)
 
 const fs = require('fs');
 const os = require('os');
@@ -102,26 +116,39 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
       last = state.appendEvent({ type: 'branch-opened', node_id: 'n' + i, parent_id: null, title: 'T' + i }, o);
     }
     const after = state.readState(o);
-    // Post-compaction (DEC-D §7c revision — NL-FINDING-003) the on-disk
-    // events[] is truncated of the provably-covered prefix EXCEPT the
-    // gate-relevant-still-live retention set: the most-recent branch-opened
-    // per still-live node. All 8 nodes are live (none archived) and each has
-    // exactly one branch-opened, so events[] retains exactly 8 — NOT 0 (the
-    // pre-DEC-D behavior that produced the §8 Phase-B DoS), NOT >8 (the
-    // covered non-gate-relevant prefix is still dropped). Snapshot still has
-    // all 8 nodes (marker => trust cache).
+    // DEC-D (d) — ORIGINAL A2 compaction restored (the (b) gateRelevantRetention
+    // is REMOVED; no per-gate carve-out). Post-compaction the on-disk events[]
+    // is truncated of the entire provably-covered prefix, so it holds EXACTLY
+    // ONE record: the freshest snapshot-committed attestation appended AFTER
+    // truncation (DEC-D rule 1/2 — same atomic publish, survives naturally).
+    // ZERO domain events remain on disk; the snapshot still has all 8 nodes
+    // (its hash matches the attestation ⇒ §8 would verify-then-read it).
     const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
     const onDiskEvents = onDisk.events.length;
-    const onDiskAllBranchOpened = onDisk.events.every(function (e) { return e.type === 'branch-opened'; });
+    const onlyAttestation = onDiskEvents === 1
+      && onDisk.events[0].type === store.SNAPSHOT_COMMITTED_TYPE;
+    const noDomainEvents = !onDisk.events.some(function (e) {
+      return e.type !== store.SNAPSHOT_COMMITTED_TYPE;
+    });
     const snapNodes = after.snapshot.nodes.length;
+    // §8 verify-then-read: the on-disk snapshot is attestation-verified.
+    const v = store.verifySnapshotAttested(onDisk);
+    // readState() returns DOMAIN-only events (attestation is an on-disk
+    // meta-record, never consumer-facing). The full prefix was covered + the
+    // on-disk domain log truncated, so consumer-facing state is reconstructed
+    // via the never-truncated audit log (original A2 §7a deep-recovery):
+    // all 8 domain events + 8 nodes are recovered (Pin-3a unchanged).
+    const recovered = after.events.length === 8 && after.snapshot.nodes.length === 8;
     // Audit log (NFR-7) is never truncated: all 8 events still replayable.
     const audit = store.replayAuditLog(store.auditPathFor(o.statePath));
     check('P3 compaction-truncation-correctness + audit-never-truncated',
-      last.compacted === true && onDiskEvents === 8 && onDiskAllBranchOpened
-        && snapNodes === 8 && audit.length === 8,
+      last.compacted === true && onlyAttestation && noDomainEvents
+        && snapNodes === 8 && v.verified === true && recovered
+        && audit.length === 8,
       'compacted=' + last.compacted + ' onDiskEvents=' + onDiskEvents
-        + ' allBranchOpened=' + onDiskAllBranchOpened
-        + ' snapNodes=' + snapNodes + ' audit=' + audit.length);
+        + ' onlyAttestation=' + onlyAttestation + ' noDomainEvents=' + noDomainEvents
+        + ' snapNodes=' + snapNodes + ' verified=' + v.verified
+        + ' recovered=' + recovered + ' audit=' + audit.length);
   } catch (e) { check('P3 compaction-truncation-correctness + audit-never-truncated', false, e.message); }
   finally { cleanup(dir); }
 })();
@@ -231,91 +258,210 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
   finally { cleanup(dir); }
 })();
 
-// ---- P9 DEC-D §7c↔§8 gap CLOSED — post-compaction §8 jq still resolves -----
-// (NL-FINDING-003) Open many branches so compaction fires, then run the EXACT
-// ADR-032 §8 events[]-only jq branch-presence filter against the on-disk
-// post-compaction state file for EVERY still-live branch. Pre-DEC-D this
-// returned non-zero for all of them (events[] emptied) ⇒ Phase-B gate BLOCKs
-// every legitimate spawn ⇒ silent orchestrator DoS. Post-DEC-D every still-live
-// branch must resolve (exit 0 ⇒ gate ALLOWs).
+
+// ============================================================================
+// DEC-D (d) snapshot-integrity attestation proofs (ADR-032 §8 r2).
+// These SUPERSEDE the deleted (b) P9/P10 (gateRelevantRetention / events[]-only
+// jq). The (b) approach is GONE: compaction is original-behavior + §8 reads the
+// attestation-VERIFIED snapshot. (b) superseded by (d) per Misha 2026-05-17.
+// ============================================================================
+
+// ---- P9 (d-i) attestation hash == canonical-JSON sha256 of on-disk snapshot -
+// Once a snapshot commit lands (no compaction; small tree), the most-recent
+// snapshot-committed.hash MUST equal store.hashSnapshot(on-disk snapshot) — the
+// determinism that makes the §8 verifier able to trust the cache (DEC-D rule
+// 1/4). Also assert the §8 verify primitive returns verified:true.
 (function P9() {
-  const cp = require('child_process');
-  const dir = freshDir(); const o = Object.assign(optsFor(dir), { compactionThreshold: 5 });
+  const dir = freshDir(); const o = optsFor(dir);
   try {
-    let last;
-    const N = 12;
-    for (let i = 0; i < N; i++) {
-      last = state.appendEvent({ type: 'branch-opened', node_id: 'n' + i, parent_id: null, title: 'branch ' + i }, o);
+    state.appendEvent({ type: 'branch-opened', node_id: 'n1', parent_id: null, title: 'Root' }, o);
+    state.appendEvent({ type: 'branch-opened', node_id: 'n2', parent_id: 'n1', title: 'Sub' }, o);
+    state.appendEvent({ type: 'decision-raised', node_id: 'n1', item_id: 'd1', text: 'pick X' }, o);
+    const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    // most-recent snapshot-committed record
+    let att = null;
+    for (let i = onDisk.events.length - 1; i >= 0; i--) {
+      if (onDisk.events[i].type === store.SNAPSHOT_COMMITTED_TYPE) { att = onDisk.events[i]; break; }
     }
-    // Archive one node: its branch-opened must NOT be required to resolve
-    // (not gate-relevant once terminal) — but every still-live one MUST.
-    state.appendEvent({ type: 'archived', node_id: 'n3' }, o);
-    const compacted = last.compacted === true;
-    // The exact §8 filter (ADR-032 §8): events[]-only, no snapshot read.
-    function gateAllows(branchArg) {
-      const r = cp.spawnSync('jq', ['-e', '--arg', 'b', branchArg,
-        '.events[] | select(.type=="branch-opened" and (.title==$b or .node_id==$b))',
-        o.statePath], { stdio: ['ignore', 'ignore', 'ignore'] });
-      return r.status === 0;
-    }
-    let allLiveResolve = true;
-    for (let i = 0; i < N; i++) {
-      if (i === 3) continue;                       // n3 archived — not gate-relevant
-      if (!gateAllows('branch ' + i)) { allLiveResolve = false; break; }
-      if (!gateAllows('n' + i)) { allLiveResolve = false; break; } // node_id form too
-    }
-    // The archived node's branch-opened is correctly dropped (terminal, not
-    // gate-relevant): the §8 filter returns non-zero ⇒ gate would BLOCK a
-    // spawn naming it, which is correct (you should not spawn on an archived
-    // branch). This proves the retention is the LIVE set, not "everything".
-    const archivedDropped = !gateAllows('branch 3') && !gateAllows('n3');
-    check('P9 DEC-D §7c↔§8 gap CLOSED — post-compaction §8 jq resolves every still-live branch',
-      compacted && allLiveResolve && archivedDropped,
-      'compacted=' + compacted + ' allLiveResolve=' + allLiveResolve + ' archivedDropped=' + archivedDropped);
-  } catch (e) { check('P9 DEC-D §7c↔§8 gap CLOSED', false, e.message); }
+    const expected = store.hashSnapshot(onDisk.snapshot);
+    const hashMatches = att && att.hash === expected && /^sha256:[0-9a-f]{64}$/.test(att.hash);
+    const v = store.verifySnapshotAttested(onDisk);
+    // Determinism cross-check: re-hash the SAME object twice => identical.
+    const stable = store.hashSnapshot(onDisk.snapshot) === store.hashSnapshot(onDisk.snapshot);
+    check('P9 (d-i) snapshot-committed.hash == canonical-JSON sha256 of on-disk snapshot',
+      !!hashMatches && v.verified === true && stable,
+      'hashMatches=' + !!hashMatches + ' verified=' + v.verified + ' stable=' + stable
+        + ' att.hash=' + (att && att.hash));
+  } catch (e) { check('P9 (d-i) attestation hash == canonical sha256', false, e.message); }
   finally { cleanup(dir); }
 })();
 
-// ---- P10 DEC-D retained-events[] bound — still-live-node-bounded -----------
-// (NL-FINDING-003) Post-compaction the on-disk events[] is bounded by the
-// live-node count: exactly one branch-opened per still-live node, none for
-// archived nodes, none of the covered non-gate-relevant prefix — i.e. NOT 0
-// (the DoS-causing pre-DEC-D behavior), NOT the full history (unbounded).
+// ---- P10 (d-ii) §8-gate sim: verified snapshot resolves branch-presence -----
+// from snapshot.nodes for a re-opened node, a promoted node, AND a backlog-
+// activated node — proving DEC-E (archive→compact→re-open) and DEC-F
+// (promoted/backlog-activated) are MOOT under (d): §8 reads snapshot.nodes,
+// which already contains every still-live node, AFTER verifying the snapshot.
 (function P10() {
-  const dir = freshDir(); const o = Object.assign(optsFor(dir), { compactionThreshold: 5 });
+  const dir = freshDir(); const o = Object.assign(optsFor(dir), { compactionThreshold: 6 });
+  try {
+    // re-opened path: open -> conclude -> re-open (must end up live in snapshot)
+    state.appendEvent({ type: 'branch-opened', node_id: 'reop', parent_id: null, title: 'ReopenedBranch' }, o);
+    state.appendEvent({ type: 'concluded', node_id: 'reop' }, o);
+    state.appendEvent({ type: 're-opened', node_id: 'reop' }, o);
+    // promoted path: an item on a host node promoted to its own branch
+    state.appendEvent({ type: 'branch-opened', node_id: 'host', parent_id: null, title: 'Host' }, o);
+    state.appendEvent({ type: 'action-added', node_id: 'host', item_id: 'i1', text: 'do thing' }, o);
+    state.appendEvent({ type: 'promoted', node_id: 'host', item_id: 'i1', new_node_id: 'prom' }, o);
+    // backlog-activated path: backlog item -> activated as a root node
+    state.appendEvent({ type: 'backlog-added', item_id: 'b1', tree_id: 'global', priority: 'P1', text: 'BacklogBranch' }, o);
+    let last = state.appendEvent({ type: 'backlog-activated', item_id: 'b1', new_node_id: 'bka' }, o);
+    // force compaction with extra events so the prefix is covered + truncated
+    for (let i = 0; i < 6; i++) {
+      last = state.appendEvent({ type: 'branch-opened', node_id: 'x' + i, parent_id: null, title: 'X' + i }, o);
+    }
+    const compacted = last.compacted === true;
+    const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    // §8 r2: verify the snapshot FIRST, then read snapshot.nodes for presence.
+    const v = store.verifySnapshotAttested(onDisk);
+    function gateResolves(idOrTitle) {
+      if (!v.verified) return false;                // mismatch => gate refuses
+      return onDisk.snapshot.nodes.some(function (n) {
+        return (n.node_id === idOrTitle || n.title === idOrTitle) && n.state !== 'archived';
+      });
+    }
+    const reopResolves = gateResolves('reop') && gateResolves('ReopenedBranch');
+    const promResolves = gateResolves('prom');           // DEC-F: promoted node present
+    const bkaResolves = gateResolves('bka') && gateResolves('BacklogBranch'); // DEC-F: backlog-activated
+    check('P10 (d-ii) §8 verified snapshot resolves re-opened + promoted + backlog-activated (DEC-E/DEC-F moot)',
+      compacted && v.verified === true && reopResolves && promResolves && bkaResolves,
+      'compacted=' + compacted + ' verified=' + v.verified
+        + ' reop=' + reopResolves + ' prom=' + promResolves + ' bka=' + bkaResolves);
+  } catch (e) { check('P10 (d-ii) §8 verified-snapshot branch-presence', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
+// ---- P11 (d-iii) byte-tamper ⇒ hash mismatch ⇒ gate refuses + torn-recovery -
+// Tamper a single byte of the on-disk snapshot. The canonical-JSON hash no
+// longer matches the most-recent snapshot-committed ⇒ verifySnapshotAttested
+// returns verified:false (gate REFUSES) AND the existing A2 §7a torn-snapshot-
+// recovery still reconstructs correct state from the domain log (Pin-3a).
+(function P11() {
+  const dir = freshDir(); const o = optsFor(dir);
+  try {
+    state.appendEvent({ type: 'branch-opened', node_id: 'n1', parent_id: null, title: 'Trusted' }, o);
+    state.appendEvent({ type: 'branch-opened', node_id: 'n2', parent_id: 'n1', title: 'Sub' }, o);
+    const before = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    const vPre = store.verifySnapshotAttested(before);
+    // Byte-tamper: mutate a node title inside the snapshot WITHOUT updating the
+    // attestation (simulates a torn / corrupted snapshot block).
+    const tampered = JSON.parse(JSON.stringify(before));
+    tampered.snapshot.nodes[0].title = 'TAMPERED';
+    fs.writeFileSync(o.statePath, JSON.stringify(tampered, null, 2), 'utf8');
+    const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    const vPost = store.verifySnapshotAttested(onDisk);
+    const gateRefuses = vPost.verified === false && vPost.reason === 'hash-mismatch';
+    // §7a torn-recovery: readState() must DISCARD the tampered snapshot and
+    // replay the domain log => the original (un-tampered) titles are restored.
+    const recovered = state.readState(o);
+    const n1 = recovered.snapshot.nodes.find(function (n) { return n.node_id === 'n1'; });
+    const tornRecoveryEngaged = !!n1 && n1.title === 'Trusted'
+      && recovered.snapshot.nodes.length === 2;
+    check('P11 (d-iii) byte-tamper ⇒ §8 refuses (hash-mismatch) + §7a torn-recovery engages',
+      vPre.verified === true && gateRefuses && tornRecoveryEngaged,
+      'vPre=' + vPre.verified + ' gateRefuses=' + gateRefuses
+        + ' reason=' + vPost.reason + ' tornRecovery=' + tornRecoveryEngaged);
+  } catch (e) { check('P11 (d-iii) byte-tamper ⇒ refuse + torn-recovery', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
+// ---- P12 (d-iv) NL-FINDING-004 FR-24 trace — regression GONE under (d) ------
+// The exact (b)-regression fixture: a 7-DOMAIN-event tree (1 branch-opened + 3
+// items + answer/done + a conclusion) whose FINAL pre-compaction event is NOT a
+// branch-opened, with compaction firing. With (b) the marker pointed past the
+// published subset ⇒ readState() discarded the valid snapshot ⇒ items/checked/
+// drafts/conclusions silently lost. With (d): compaction is original-behavior,
+// the snapshot is attestation-verified, the §7a marker tracks the last DOMAIN
+// event ⇒ post-compaction readState() PRESERVES all node state. Regression GONE.
+(function P12() {
+  const dir = freshDir(); const o = Object.assign(optsFor(dir), { compactionThreshold: 6 });
+  try {
+    // The EXACT NL-FINDING-004 FR-24 trace: a 7-DOMAIN-event tree =
+    // 1 branch-opened + 3 items + 3 answer/done on ONE live node, the FINAL
+    // event being a non-branch-opened (action-done) — plus a draft (FR-27)
+    // mid-trace. With (b) the marker pointed past the published subset so
+    // readState() discarded the valid snapshot and re-derived from the lossy
+    // 1-event-per-live-node subset → items/checked/draft silently destroyed.
+    // With (d) this CANNOT arise: compaction is original-behavior, the §7a
+    // marker tracks the last DOMAIN event, the snapshot is attestation-verified.
+    state.appendEvent({ type: 'branch-opened', node_id: 'n1', parent_id: null, title: 'LiveThread' }, o); // 1
+    state.appendEvent({ type: 'decision-raised', node_id: 'n1', item_id: 'i1', text: 'D1' }, o);          // 2
+    state.appendEvent({ type: 'question-raised', node_id: 'n1', item_id: 'i2', text: 'Q1' }, o);          // 3
+    state.appendEvent({ type: 'action-added', node_id: 'n1', item_id: 'i3', text: 'A1' }, o);             // 4
+    state.appendEvent({ type: 'draft-saved', node_id: 'n1', draft_text: 'FR-27 work in progress' }, o);   // 5 (FR-27 draft)
+    state.appendEvent({ type: 'answered', node_id: 'n1', item_id: 'i1' }, o);                             // 6
+    state.appendEvent({ type: 'answered', node_id: 'n1', item_id: 'i2' }, o);                             // 7
+    const last = state.appendEvent({ type: 'action-done', node_id: 'n1', item_id: 'i3' }, o);            // 8 non-branch-opened FINAL
+    const compacted = last.compacted === true; // threshold 6 < 8 ⇒ compaction fired
+    // Post-compaction read MUST preserve every piece of node state (the (b)
+    // regression discarded exactly these).
+    const after = state.readState(o);
+    const n1 = after.snapshot.nodes.find(function (n) { return n.node_id === 'n1'; });
+    const itemsPreserved = !!n1 && n1.items.length === 3;
+    const allChecked = !!n1 && n1.items.every(function (it) { return it.checked === true; });
+    const draftPreserved = !!n1 && (n1.draft === 'FR-27 work in progress' || n1.draft_text === 'FR-27 work in progress');
+    // Separately prove a CONCLUDED node's state survives compaction too: all
+    // items checked above, so a conclude now applies (FR-7) and must persist.
+    const cc = state.appendEvent({ type: 'concluded', node_id: 'n1' }, o);
+    const after2 = state.readState(o);
+    const n1b = after2.snapshot.nodes.find(function (n) { return n.node_id === 'n1'; });
+    const concludedPreserved = !!n1b && n1b.state === 'concluded'
+      && n1b.items.length === 3
+      && (n1b.draft === 'FR-27 work in progress' || n1b.draft_text === 'FR-27 work in progress');
+    // And the on-disk snapshot is attestation-verified (the §8 path the gate uses).
+    const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    const v = store.verifySnapshotAttested(onDisk);
+    check('P12 (d-iv) NL-FINDING-004 FR-24 trace — items/checked/draft/concluded preserved post-compaction (regression GONE)',
+      compacted && itemsPreserved && allChecked && draftPreserved
+        && concludedPreserved && v.verified === true,
+      'compacted=' + compacted + ' items=' + (n1 && n1.items.length)
+        + ' allChecked=' + allChecked + ' draft=' + draftPreserved
+        + ' concluded=' + concludedPreserved + ' verified=' + v.verified
+        + ' cc.compacted=' + cc.compacted);
+  } catch (e) { check('P12 (d-iv) NL-FINDING-004 FR-24 regression-gone', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
+// ---- P13 (d-v) latest snapshot-committed survives compaction naturally ------
+// DEC-D rule 2: the attestation is appended AFTER the compaction-truncation
+// decision, so it is never inside the covered prefix — it is always the
+// freshest events[] record and survives compaction with NO carve-out. Prove:
+// after many compactions, on-disk events[] holds EXACTLY ONE snapshot-committed
+// (the freshest) and ZERO domain events, and each compaction's attestation
+// matches that round's snapshot.
+(function P13() {
+  const dir = freshDir(); const o = Object.assign(optsFor(dir), { compactionThreshold: 4 });
   try {
     let last;
-    const N = 10;
-    for (let i = 0; i < N; i++) {
+    for (let i = 0; i < 15; i++) {                 // many compactions across rounds
       last = state.appendEvent({ type: 'branch-opened', node_id: 'n' + i, parent_id: null, title: 'T' + i }, o);
     }
-    // Also append non-gate-relevant covered events (decisions): they are NOT a
-    // §8-consumed class ⇒ must NOT be retained (only the live-set bound counts).
-    state.appendEvent({ type: 'decision-raised', node_id: 'n0', item_id: 'd1', text: 'D' }, o);
-    last = state.appendEvent({ type: 'decision-raised', node_id: 'n1', item_id: 'd2', text: 'D' }, o);
-    // Archive 2 nodes ⇒ live-node count drops to N-2; their branch-opened
-    // must NOT be retained.
-    state.appendEvent({ type: 'archived', node_id: 'n8' }, o);
-    last = state.appendEvent({ type: 'archived', node_id: 'n9' }, o);
     const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
-    const after = state.readState(o);
-    const liveNodeCount = after.snapshot.nodes.filter(function (n) { return n.state !== 'archived'; }).length;
-    const evs = onDisk.events;
-    const branchOpened = evs.filter(function (e) { return e.type === 'branch-opened'; });
-    // Exactly one retained branch-opened per still-live node, and none for the
-    // archived ones, and zero non-gate-relevant (decision) events retained.
-    const liveIds = new Set(after.snapshot.nodes.filter(function (n) { return n.state !== 'archived'; }).map(function (n) { return n.node_id; }));
-    const oneBoPerLive = branchOpened.length === liveNodeCount
-      && branchOpened.every(function (e) { return liveIds.has(e.node_id); });
-    const noArchivedBo = !branchOpened.some(function (e) { return e.node_id === 'n8' || e.node_id === 'n9'; });
-    const noNonGateRelevant = !evs.some(function (e) { return e.type !== 'branch-opened'; });
-    const boundedNotZeroNotFull = evs.length === liveNodeCount && evs.length > 0 && evs.length < (N + 4);
-    check('P10 DEC-D retained-events[] bound — still-live-node-bounded',
-      last.compacted === true && oneBoPerLive && noArchivedBo && noNonGateRelevant && boundedNotZeroNotFull,
-      'liveNodeCount=' + liveNodeCount + ' evs=' + evs.length + ' branchOpened=' + branchOpened.length
-        + ' oneBoPerLive=' + oneBoPerLive + ' noArchivedBo=' + noArchivedBo
-        + ' noNonGateRelevant=' + noNonGateRelevant + ' boundedNotZeroNotFull=' + boundedNotZeroNotFull);
-  } catch (e) { check('P10 DEC-D retained-events[] bound', false, e.message); }
+    const att = onDisk.events.filter(function (e) { return e.type === store.SNAPSHOT_COMMITTED_TYPE; });
+    const domainOnDisk = onDisk.events.filter(function (e) { return e.type !== store.SNAPSHOT_COMMITTED_TYPE; });
+    const exactlyOneFreshAttestation = att.length === 1;
+    const zeroDomainOnDisk = domainOnDisk.length === 0;
+    const lastIsAttestation = onDisk.events.length > 0
+      && onDisk.events[onDisk.events.length - 1].type === store.SNAPSHOT_COMMITTED_TYPE;
+    // The surviving attestation matches the current snapshot (still trustworthy
+    // after every compaction round — survived naturally, not via a carve-out).
+    const v = store.verifySnapshotAttested(onDisk);
+    check('P13 (d-v) latest snapshot-committed survives compaction naturally (DEC-D rule 2)',
+      last.compacted === true && exactlyOneFreshAttestation && zeroDomainOnDisk
+        && lastIsAttestation && v.verified === true,
+      'compacted=' + last.compacted + ' attCount=' + att.length
+        + ' domainOnDisk=' + domainOnDisk.length + ' lastIsAtt=' + lastIsAttestation
+        + ' verified=' + v.verified);
+  } catch (e) { check('P13 (d-v) latest snapshot-committed survives compaction', false, e.message); }
   finally { cleanup(dir); }
 })();
 
