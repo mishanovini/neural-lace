@@ -418,6 +418,14 @@ is_path_shape_exempt() {
     build-doctrine/*|build-doctrine) return 0 ;;
     build-doctrine-templates/*|build-doctrine-templates) return 0 ;;
     build-doctrine-orchestrator/*|build-doctrine-orchestrator) return 0 ;;
+    # Conversation-Tree UI module (NL's own product code under neural-lace/).
+    # Its domain vocabulary (Dispatch, State, Context, Content, Node, Branch)
+    # is repetitive BY DESIGN — the module is literally a tracker of the
+    # Dispatch conversation-tree state, so the Layer-2 cluster heuristic
+    # false-positives on every file. Structural path-prefix exemption per
+    # harness-hygiene.md "How to add false-positive exemptions"; same logic
+    # as adapters/ and build-doctrine/. (conversation-tree-ui-v1 Phase C/D.)
+    neural-lace/conversation-tree-ui/*|neural-lace/conversation-tree-ui) return 0 ;;
     # The synced `~/.claude/` mirror (when scanning that tree directly).
     *.claude/*|*/.claude/*) return 0 ;;
     # NL-root prose files (README, CONTRIBUTING, LICENSE, SETUP,

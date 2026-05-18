@@ -8,14 +8,20 @@
 //   GET /api/state       -> current snapshot JSON (GUI READ of the file contract)
 //   GET /api/events      -> SSE stream; pushes "state" on every state-file change
 //
-// The server NEVER writes state, NEVER spawns/steers any Claude Code session.
-// It is a passive reader of the file-mediated contract (ADR-031 Option 2).
-// Binds to 127.0.0.1 only (NFR-5: localhost-only).
+//   POST /api/event      -> append ONE GUI-originated event (symmetric FR-11);
+//                           actor is forced to "gui"; returns {ok,snapshot}
+//
+// Phase C adds the GUI-write half of the symmetric file contract (FR-11): the
+// server appends single atomic events on the GUI's behalf to the SAME log
+// Dispatch reads. It STILL never spawns/feeds/steers any Claude Code session
+// (Option-2 passive-tracker invariant) — appending an event to a JSON file is
+// the symmetric-log design, not orchestration. Binds to 127.0.0.1 only (NFR-5).
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { STATE_FILE, readState, SchemaTooNewError, SCHEMA_TOO_NEW_MESSAGE } = require('../state/state.js');
+const stateLib = require('../state/state.js');
+const { STATE_FILE, readState, appendEvent, SchemaTooNewError, SCHEMA_TOO_NEW_MESSAGE } = stateLib;
 
 // §1/Pin 2 reader-glue: the ADR-032 reader REFUSES an unknown major by
 // throwing SchemaTooNewError and reading NOTHING (never a partial mis-parse).
@@ -96,6 +102,40 @@ const server = http.createServer((req, res) => {
     sendState(res); // push current state immediately on connect
     const ka = setInterval(() => { try { res.write(': keep-alive\n\n'); } catch (_) {} }, 15000);
     req.on('close', () => { clearInterval(ka); sseClients.delete(res); });
+    return;
+  }
+
+  // GUI-write half of the symmetric file contract (FR-11). One event per
+  // request, actor forced to "gui". BF-5: a failed append returns ok:false so
+  // the client reverts its optimistic update; the crown-jewel tree never shows
+  // an unpersisted change as saved.
+  if (url === '/api/event' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => {
+      body += c;
+      if (body.length > 1e6) { req.destroy(); } // localhost; cap absurd payloads
+    });
+    req.on('end', () => {
+      var hj = {}; hj[CT] = 'application/json';
+      let input;
+      try { input = JSON.parse(body); }
+      catch (_) { res.writeHead(400, hj); res.end(JSON.stringify({ ok: false, error: 'malformed JSON body' })); return; }
+      try {
+        input.actor = 'gui'; // symmetric log: GUI mutations are actor=gui
+        const r = appendEvent(input);
+        res.writeHead(200, hj);
+        res.end(JSON.stringify({ ok: true, event_id: r.event && r.event.event_id, snapshot: r.state && r.state.snapshot }));
+        // SSE fan-out happens via the fs.watch path on the atomic rename.
+      } catch (err) {
+        if (err instanceof SchemaTooNewError) {
+          res.writeHead(409, hj);
+          res.end(JSON.stringify({ ok: false, schema_too_new: true, error: SCHEMA_TOO_NEW_MESSAGE }));
+          return;
+        }
+        res.writeHead(422, hj);
+        res.end(JSON.stringify({ ok: false, error: String(err && err.message || err) }));
+      }
+    });
     return;
   }
 

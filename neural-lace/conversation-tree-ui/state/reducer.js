@@ -76,7 +76,11 @@ function applyEvent(snap, ev, treeId) {
         if (!parent) { reject(snap, ev, 'parent_id does not resolve'); return; }
         if (wouldCycle(snap, ev.node_id, ev.parent_id)) { reject(snap, ev, 'would create a cycle'); return; }
       }
-      snap.nodes.push(newNode(ev.node_id, ev.parent_id, ev.title, treeId));
+      // D5/FR-18: a branch-opened MAY carry an optional `tree_id` to partition
+      // per-project trees within the single v1 state file (DEC-G). Optional
+      // field, reducer-read only — additive, no required-field change, no major
+      // bump. Absent ⇒ the file/global tree (Phase-0 behavior unchanged).
+      snap.nodes.push(newNode(ev.node_id, ev.parent_id, ev.title, ev.tree_id || treeId));
       return;
     }
     case 'decision-raised':
@@ -89,7 +93,7 @@ function applyEvent(snap, ev, treeId) {
         : ev.type === 'question-raised' ? 'question' : 'action';
       node.items.push({
         item_id: ev.item_id, kind: kind, text: String(ev.text),
-        checked: false, deferred: false, scheduled_for: null,
+        checked: false, deferred: false, scheduled_for: null, contested: null,
       });
       return;
     }
@@ -110,6 +114,8 @@ function applyEvent(snap, ev, treeId) {
       // FR-7 invariant enforced in the reducer, not the writer.
       const hasUnchecked = node.items.some(function (it) { return !it.checked; });
       if (hasUnchecked) { reject(snap, ev, 'concluded while node has an unchecked item (FR-7)'); return; }
+      const hasContested = node.items.some(function (it) { return it.contested; });
+      if (hasContested) { reject(snap, ev, 'concluded while node has a contested item (D2/FR-7)'); return; }
       node.state = 'concluded';
       return;
     }
@@ -202,8 +208,14 @@ function applyEvent(snap, ev, treeId) {
       if (!b) { reject(snap, ev, 'backlog item not found'); return; }
       if (findNode(snap, ev.new_node_id)) { reject(snap, ev, 'new_node_id already exists'); return; }
       b.activated = true;
-      // FR-22: emits the equivalent of a branch-opened root.
-      snap.nodes.push(newNode(ev.new_node_id, null, b.text, b.tree_id));
+      b.activated_node = ev.new_node_id;
+      // FR-22: emits the equivalent of a branch-opened root, carrying the
+      // backlog item's context. `origin` drives the BF-1 persistent on-node
+      // `▸ ready to start in Dispatch` handoff badge until Dispatch acts on it.
+      var an = newNode(ev.new_node_id, null, b.text, b.tree_id);
+      an.origin = 'backlog-activated';
+      an.context_refs = (b.context_refs || []).slice();
+      snap.nodes.push(an);
       return;
     }
     case 'context-attached': {
@@ -237,6 +249,45 @@ function applyEvent(snap, ev, treeId) {
       if (!node) { reject(snap, ev, 'node_id does not resolve'); return; }
       node.annotations = node.annotations || [];
       node.annotations.push({ text: String(ev.text), ts: ev.ts });
+      return;
+    }
+    case 'session-bound': {
+      // FR-15: a node may track many Claude Code sessions (many-to-many).
+      // Additive within schema major 1 (no contract break) — closes the
+      // systems-designer A1 non-blocking finding (in-flight note 2026-05-17).
+      const node = findNode(snap, ev.node_id);
+      if (!node) { reject(snap, ev, 'node_id does not resolve'); return; }
+      if (node.bound_sessions.indexOf(ev.session_id) === -1) {
+        node.bound_sessions.push(String(ev.session_id));
+      }
+      return;
+    }
+    case 'session-unbound': {
+      const node = findNode(snap, ev.node_id);
+      if (!node) { reject(snap, ev, 'node_id does not resolve'); return; }
+      const ix = node.bound_sessions.indexOf(ev.session_id);
+      if (ix !== -1) node.bound_sessions.splice(ix, 1);
+      return;
+    }
+    case 'contested': {
+      // D2 / FR-9 low-emphasis safety net. Additive event type (ADR-032 §1
+      // additive rule — no major bump). A contested item is a derived
+      // `it.contested` annotation; it counts as NOT checked for FR-7
+      // auto-conclude (enforced in the `concluded` case below).
+      const node = findNode(snap, ev.node_id);
+      const it = findItem(node, ev.item_id);
+      if (!it) { reject(snap, ev, 'item not found'); return; }
+      it.contested = { direction: String(ev.direction), note: String(ev.note), ts: ev.ts };
+      return;
+    }
+    case 'contest-resolved': {
+      const node = findNode(snap, ev.node_id);
+      const it = findItem(node, ev.item_id);
+      if (!it) { reject(snap, ev, 'item not found'); return; }
+      // Resolution is explicit-only, never silent/auto (UX-C1, SM-4).
+      it.contested = null;
+      if (ev.resolution === 'accept-theirs') it.checked = true;
+      else if (ev.resolution === 'keep-mine-reopen') it.checked = false;
       return;
     }
     default:

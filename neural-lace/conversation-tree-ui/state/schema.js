@@ -37,6 +37,10 @@ const EVENT_TYPES = Object.freeze([
   'context-attached',
   'reordered',
   'annotated',
+  'session-bound',
+  'session-unbound',
+  'contested',
+  'contest-resolved',
 ]);
 
 // §2 — per-event required fields IN ADDITION TO the envelope
@@ -63,6 +67,10 @@ const EVENT_REQUIRED_FIELDS = Object.freeze({
   'context-attached': ['target', 'context_ref'],
   'reordered': ['scope', 'ordered_ids'],
   'annotated': ['node_id', 'text'],
+  'session-bound': ['node_id', 'session_id'],
+  'session-unbound': ['node_id', 'session_id'],
+  'contested': ['node_id', 'item_id', 'direction', 'note'],
+  'contest-resolved': ['node_id', 'item_id', 'resolution'],
 });
 
 const ACTORS = Object.freeze(['dispatch', 'gui']);
