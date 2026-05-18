@@ -61,6 +61,8 @@ Items 1–6 (responsive layout etc.) shipped & merged (PR #4, master `6dfbc7e`, 
 - `docs/plans/conv-tree-ui-v1.1-ux-interactivity.md` — this plan; Decisions Log.
 
 ## In-flight scope updates
+- 2026-05-18: `docs/discoveries/2026-05-18-conv-tree-backfill-source-docs-not-on-machine.md` — discovery-protocol dependency-surprise record (backfill source docs absent on this machine; mechanism+grounded payloads shipped, enrichment deferred). New file (light case, spec-freeze in-flight, not a thaw).
+- 2026-05-18: `docs/findings.md` — NL-FINDING-011 appended (item 11, v1.2 Dispatch-side reader, OUT of v1.1) — committed `d3480a1`.
 
 ## Assumptions
 - ADR-032 §1 + `state/schema.js` header are authoritative: adding a new event type to `EVENT_TYPES` (and its `EVENT_REQUIRED_FIELDS` row) is ADDITIVE — no MAJOR bump — and adding an optional derived field (`details`/`responded`) to an item does not change any required field of an existing event. `schema_version` stays `1`; `conversation-tree-state-gate.sh`/`-stop-gate.sh`/`-emit.sh` key off the major and are unaffected (re-run their self-tests to confirm, not to fix).
@@ -113,13 +115,52 @@ Thinnest end-to-end slice proving the riskiest layer (the additive schema): add 
 - **Reasoning:** the items already name their source docs; sourcing from them yields accurate, non-placeholder payloads; idempotency makes re-running safe.
 - **To reverse:** the events are additive; a later `item-details-set` with empty payload (or simply ignoring the field in the UI) neutralises them.
 
+### Decision: backfill source docs absent on this machine — ship mechanism + grounded payloads, enrichment deferred
+- **Tier:** 1
+- **Status:** proceeded with recommendation — surfaced loudly (friction-reflexion + discovery 2026-05-18-conv-tree-backfill-source-docs-not-on-machine)
+- **Chosen:** the docs item 9 names (`docs/reviews/tcpa-decision-options-2026-05-17`, `docs/plans/phase-6-preventive-controls.md`, Phase 7 audit docs) do NOT exist in any repo under `~/claude-projects` (verified). Rather than fabricate "sourced" content (vaporware), `backfill-details.js` grounds each payload ONLY in verifiable state (item text → description; owning branch → context; embedded `docs/*` path → links, else a branch pointer; derived blocking_input where unambiguous; options/recommendation LEFT NULL). A documented `--enrich <json>` path layers real doc-sourced payloads later (idempotent last-writer-wins).
+- **Alternatives:** (a) block Phase C until docs provided (rejected — the mechanism + grounded payloads are independently valuable and item 9's mechanism is the deliverable); (b) fabricate from codenames (rejected — vaporware, explicitly banned + item 9 says "not placeholder").
+- **Reasoning:** honest non-fabricated content + a pointer to each item's source doc; full enrichment is a clean reversible follow-up when the source docs are accessible.
+- **To reverse:** re-run with a richer `--enrich` map; last-writer-wins supersedes.
+
 ## Definition of Done
-- [ ] All 7 tasks task-verified PASS
-- [ ] Items 7,8,9,10,12,13 demonstrated live at Misha's viewport (960×2160) + a wide viewport
-- [ ] `state/selftest.js`: existing 14 green + new event coverage green; `schema_version` still 1
-- [ ] conv-tree state-gate 18/18, stop-gate 8/8, emit 17/17 — no regression (gates untouched)
-- [ ] Extended `web/responsive.selftest.js` all-pass; items 1–6 responsive behavior intact
-- [ ] Backfill: live state still 52 nodes + tree intact, details populated, idempotent
-- [ ] item 11 filed (NL-FINDING-011 ✓ done)
-- [ ] One PR merged to neural-lace master; main checkout synced; LIVE backfill run; :7733 restarted on new code
-- [ ] Completion report appended; SCRATCHPAD regenerated
+- [x] All 7 tasks task-verified PASS
+- [x] Items 7,8,9,10,12,13 demonstrated live at Misha's viewport (960×2160) + wide (1920×1080)
+- [x] `state/selftest.js`: existing 14 green + new P15 green (15/15); `schema_version` still 1
+- [x] conv-tree state-gate 18/18, stop-gate 8/8, emit 17/17 — no regression (gates untouched)
+- [x] Extended `web/responsive.selftest.js` 33/33; items 1–6 responsive behavior intact
+- [x] Backfill: live state nodes-before==after + tree intact, 17 details populated, idempotent (re-run=0)
+- [x] item 11 filed (NL-FINDING-011)
+- [x] One PR merged to neural-lace master; main checkout synced; LIVE backfill run; :7733 restarted on new code
+- [x] Completion report appended; SCRATCHPAD regenerated
+
+## Completion Report
+
+### 1. Implementation Summary
+Items 7,8,9,10,12,13 shipped across two commits on `conv-tree-ui-v1.1-ux` (`aafbdc7` schema+UI, backfill commit, plan/discovery commit); item 11 filed as NL-FINDING-011. 7/7 plan tasks task-verified PASS.
+- **Walking Skeleton first:** 3 ADDITIVE ADR-032 event types (`item-details-set`, `action-responded`, `item-unchecked`) — `schema_version` stays 1, conv-tree gates 18/8/17 unaffected (proven), `state/selftest.js` P15 added (15/15; existing 14 green).
+- **Item 7/12/13:** list enter/leave slide+fade (~200ms) + new-arrival flash; undo snackbar on mark-done/answered/defer/archive/activate; 10s timer for undo-bearing (2.6s plain); always-present ✕ that cancels the pending undo (item 13). Reduced-motion honoured. Live-verified: mark-done→snackbar→Undo restores the item; ✕ cancels; defer/archive/activate undo paths wired (archive→re-opened, defer→defer-cleared, activate→archive-new-node documented partial).
+- **Item 8:** per-pane "+N new" badge from an SSE id-diff (primed first frame); live-verified +1 appears on a new action and clears on pane look.
+- **Item 9:** rich-details disclosure (collapsed default) — description/context/options(+pros-cons)/instructions/recommendation/blocking-input/links. Live-verified expand renders all fields.
+- **Item 10:** inline Respond on decisions/questions/blocking-input → `action-responded` → "responded — awaiting confirmation" (visible, de-emphasised, NOT concluded) + "Copy to Dispatch →". Live-verified full flow.
+- **Phase C backfill:** `backfill-details.js` (self-test 11/11) emitted 17 `item-details-set` for the live open actions; tree integrity nodes-before==after; idempotent (re-run=0); GUI renders the disclosure on all 17.
+
+`Backlog items absorbed: none`.
+
+### 2. Design Decisions & Plan Deviations
+Three Decisions-Log entries: additive-schema (Tier 2), undo-inverse-events (Tier 1, backlog-activate undo is a documented partial), backfill-source-docs-absent (Tier 1). **Deviation surfaced (friction-reflexion + discovery 2026-05-18):** the docs item 9 said to source backfill content from (`tcpa-decision-options-2026-05-17`, `phase-6-preventive-controls.md`, Phase 7 audit docs) do NOT exist in any repo on this machine. I did NOT fabricate "sourced" payloads (vaporware). Shipped: the backfill mechanism + payloads grounded only in verifiable state (item text, owning branch, embedded doc-path links) + a documented `--enrich <json>` path. **The deep doc-sourced enrichment (TCPA 8-card pros/cons, Phase 6 ratification specifics) is a follow-up for when those source docs are accessible** — run `node state/backfill-details.js --apply --enrich <doc-sourced.json>`. This is your call to flag if you want me to chase the source docs from elsewhere.
+
+### 3. Known Issues & Gotchas
+- Backfill payloads are state-grounded, not yet doc-enriched (see §2 + the discovery file) — every item has real description/context + a pointer to its source doc; options/recommendation deliberately null (not fabricated).
+- backlog-activate Undo is a documented partial: it archives the just-created node (visible reversal); no un-activate event exists (would need a non-additive change).
+- Preview screenshot tool still times out on this SSE app (tooling limit; verification is eval-asserted, stronger for behavior). Promise-based evals also time out → verified via sequential synchronous evals.
+- item-unchecked undo of an auto-concluded node also posts re-opened; if the SSE frame races, worst case is a transient concluded node the user re-opens manually (reducer stays consistent).
+
+### 4. Manual Steps Required
+None for the code. Optional follow-up: provide the source docs (or their location) to run the `--enrich` pass for the deep TCPA/Phase-6 payloads.
+
+### 5. Testing Performed & Recommended
+Live headless-browser walk-through (preview :7744 on the real backfilled state) of items 7/8/9/10/12/13 at 960×2160 + 1920×1080; `state/selftest.js` 15/15; `backfill-details.js --self-test` 11/11; `web/responsive.selftest.js` 33/33; conv-tree state-gate 18/18, stop-gate 8/8, emit 17/17; tree-integrity nodes-before==after + idempotent backfill. Recommended: the `--enrich` pass once source docs are accessible; v1.2 Dispatch-side reader (NL-FINDING-011).
+
+### 6. Cost Estimates
+Zero ongoing cost — client CSS/JS/HTML + an additive within-major schema extension + a one-shot/idempotent Node backfill script in an existing localhost-only Node-stdlib tool. No new deps, no build step, no external services.
