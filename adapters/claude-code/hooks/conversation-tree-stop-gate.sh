@@ -27,10 +27,16 @@
 # with B1's conversation-tree-state-gate.sh (same trust primitive; do not
 # diverge).
 #
-# Spawn enumeration (ADR-031 r7 Pin-1; B0-verified literal tool_name values,
-# same enumerated set as B1):
+# SCOPE (ADR-031 r7 Pin-1, amended r8 / ADR-034 2026-05-19): this gate
+# detects ONLY the Dispatch orchestrator's spawn tools in the transcript.
+# Sub-agent Task/Agent invocations are AI-internal mechanics (peer review,
+# verification, internal helpers) — NOT branches of the user↔AI conversation
+# the tree models — so a session whose only spawns were Task/Agent does NOT
+# trip this Stop gate.
+#
+# Spawn enumeration (the Dispatch-only set; B0-verified literal tool_name
+# values, same set as B1's PreToolUse gate):
 #   mcp__ccd_session__spawn_task | mcp__ccd_session_mgmt__start_code_task
-#   | Task | Agent
 #
 # Decision matrix:
 #   no matched spawn this session              -> ALLOW (silent)
@@ -161,12 +167,22 @@ if [[ "${1:-}" == "--self-test" ]]; then
   # When spawn=1 the transcript contains a real tool-call line whose
   # tool_name is one of the enumerated spawn surfaces and whose prompt
   # names branch worker-feat-x (so the verified-fixture happy path matches).
+  # $2: 1 = a Dispatch spawn (trips the gate); 0 = no spawn; "taskonly" =
+  # ONLY sub-agent Task/Agent tool_use lines (must NOT trip the gate — they
+  # are AI-internal mechanics, ADR-031 r7 Pin-1 amended r8 / ADR-034).
   _mk_transcript() {
     local out="$1" spawn="$2"
     if [[ "$spawn" == "1" ]]; then
       cat > "$out" <<'JSONL'
 {"role":"user","content":"please build feat x"}
-{"role":"assistant","content":[{"type":"tool_use","name":"Task","input":{"description":"build feat x","prompt":"git checkout -b worker-feat-x claude/base"}}]}
+{"role":"assistant","content":[{"type":"tool_use","name":"mcp__ccd_session__spawn_task","input":{"title":"Build feat x","prompt":"do work on branch worker-feat-x"}}]}
+JSONL
+    elif [[ "$spawn" == "taskonly" ]]; then
+      cat > "$out" <<'JSONL'
+{"role":"user","content":"build the feature and review it"}
+{"role":"assistant","content":[{"type":"tool_use","name":"Task","input":{"subagent_type":"code-reviewer","prompt":"review the diff for correctness"}}]}
+{"role":"assistant","content":[{"type":"tool_use","name":"Agent","input":{"subagent_type":"task-verifier","prompt":"verify task 3 on branch worker-x"}}]}
+{"role":"assistant","content":[{"type":"tool_use","name":"Task","input":{"subagent_type":"ux-designer","prompt":"review the UI plan"}}]}
 JSONL
     else
       cat > "$out" <<'JSONL'
@@ -217,8 +233,9 @@ JSONL
   node -e 'const fs=require("fs");const p=process.argv[1];const o=JSON.parse(fs.readFileSync(p,"utf8"));o.snapshot.nodes[0].title="TAMPERED";fs.writeFileSync(p,JSON.stringify(o));' "$TORN"
   MISSING="$TMP/does-not-exist.json"
 
-  TR_SPAWN="$TMP/tr-spawn.jsonl"     ; _mk_transcript "$TR_SPAWN" 1
-  TR_NOSPAWN="$TMP/tr-nospawn.jsonl" ; _mk_transcript "$TR_NOSPAWN" 0
+  TR_SPAWN="$TMP/tr-spawn.jsonl"       ; _mk_transcript "$TR_SPAWN" 1
+  TR_NOSPAWN="$TMP/tr-nospawn.jsonl"   ; _mk_transcript "$TR_NOSPAWN" 0
+  TR_TASKONLY="$TMP/tr-taskonly.jsonl" ; _mk_transcript "$TR_TASKONLY" taskonly
   TR_MISSING="$TMP/tr-missing.jsonl"   # deliberately not created
 
   # 1. spawn this session, NO state file -> BLOCK
@@ -237,6 +254,12 @@ JSONL
   _run "s7-stale-waiver-BLOCK"          2 "$MISSING"  "$TR_SPAWN"   "this justification is substantive but stale" stale "conversation-tree state"
   # 8. transcript missing (gate-internal limitation) -> fail-open ALLOW
   _run "s8-transcript-missing-failopen" 0 "$GOOD"     "$TR_MISSING" ""  ""      ""
+  # 9. REGRESSION (ADR-034): a session whose ONLY spawns were sub-agent
+  # Task/Agent must ALLOW session-end SILENTLY even with NO state file —
+  # sub-agent dispatch is AI-internal, not a conversation branch. This is
+  # the Stop-side of the friction Misha identified (a Code session that ran
+  # parallel reviewers must not be Stop-blocked or forced to write a waiver).
+  _run "s9-taskonly-no-spawn-ALLOW"     0 "$MISSING"  "$TR_TASKONLY" ""  ""      ""
 
   echo ""
   echo "$PASSED passed, $FAILED failed"
@@ -300,7 +323,7 @@ SPAWN_LIST=""
 while IFS= read -r nm; do
   [[ -z "$nm" ]] && continue
   case "$nm" in
-    mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent)
+    mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task)
       SPAWN_SEEN=1
       case "  $SPAWN_LIST  " in *"  $nm  "*) ;; *) SPAWN_LIST="${SPAWN_LIST:+$SPAWN_LIST, }$nm" ;; esac
       ;;
@@ -472,7 +495,7 @@ cat >&2 <<MSG
 CONVERSATION-TREE STOP GATE — SESSION END BLOCKED
 ================================================================
 
-This session dispatched at least one spawn / Task / Agent
+This session dispatched at least one Dispatch orchestrator spawn
 ($SPAWN_LIST), but $WHY.
 
 ADR-031 r7 enforcement: a session that spawned a child MUST have
