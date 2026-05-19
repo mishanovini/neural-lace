@@ -250,5 +250,42 @@ ok('R43 item23 backfill resolveDocPath + extractFromDoc wired into payloadFor',
   && /require\('\.\.\/config\/projects\.js'\)/.test(backfill)
   && /links\.find\(function \(l\) \{ return \/\^docs\\\//.test(backfill));
 
+// item 37 — docs panel cross-repo auto-discovery + nested collapsible tree.
+// v1.1.2 *claimed* to ship this with ZERO test proving it, and it silently
+// didn't work (flat list, neural-lace only). These assertions lock both
+// halves so the regression cannot recur unobserved.
+const projJs = fs.readFileSync(path.join(D, '..', 'config', 'projects.js'), 'utf8');
+ok('R45 item37 server: filesystem auto-discovery + worktree-pool exclusion',
+  /function discoverProjects\s*\(/.test(projJs)
+  && /function isWorktreeName\s*\(/.test(projJs)
+  && /\^\[a-z0-9\]\+-\[a-z0-9\]\+-\[0-9a-f\]\{6,\}\$/.test(projJs)
+  && /os\.homedir\(\)/.test(projJs)
+  && /claude-projects/.test(projJs));
+ok('R46 item37 UI: nested project→folder→file tree + persisted expansion',
+  /function buildDocTree\s*\(/.test(js)
+  && /function renderDocNode\s*\(/.test(js)
+  && /ctree-docs-expanded/.test(js)
+  && /localStorage\.setItem\(DOCS_EXP_KEY/.test(js)
+  && /'dp-dir'/.test(js) && /openDocModal\(projKey, file\.full\)/.test(js)
+  && /\.dp-dir\s*\{/.test(C) && /\.dp-count\s*\{/.test(C));
+// Functional guard (deterministic on any machine): the self repo is always
+// present and NO discovered key is a worktree moniker — the exact pollution
+// the v1.1.2 build would have produced had it scanned naively.
+(function () {
+  let funcOk = false;
+  try {
+    const proj = require(path.join(D, '..', 'config', 'projects.js'));
+    const listing = proj.listDocs();
+    const keys = Object.keys(listing);
+    const wt = /^[a-z0-9]+-[a-z0-9]+-[0-9a-f]{6,}$/;
+    const hasSelf = keys.indexOf('neural-lace') !== -1;
+    const noPollution = keys.every(function (k) {
+      return !k.split('/').some(function (seg) { return wt.test(seg); });
+    });
+    funcOk = hasSelf && noPollution && keys.length >= 1;
+  } catch (_) { funcOk = false; }
+  ok('R47 item37 functional: self present, zero worktree-named keys leak', funcOk);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
