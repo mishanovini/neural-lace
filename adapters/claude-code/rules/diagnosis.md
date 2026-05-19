@@ -4,6 +4,18 @@
 
 **Exhaustive by default.** When the user reports any problem, trace the entire chain: user action → frontend → API → backend → external services → response. Check every step. Report ALL issues in a single diagnosis. Assume multiple problems until proven otherwise.
 
+## Check the Failure-Mode Catalog Before Forming a Hypothesis
+
+**This is the FIRST step of any investigation / debug / root-cause session — before mapping the chain, before forming a single hypothesis.**
+
+Run `grep -in '<keywords from the reported symptom>' docs/failure-modes.md` (the project's Failure-Mode catalog — `FM` = Failure Mode). For each match, read its `Symptom`, `Discriminator`, and `Recovery` fields:
+
+- **If a `Discriminator` confirms the match:** you have likely identified a *known class*. Apply its `Recovery` steps. You may have just turned a multi-hour investigation into a multi-minute one — this is the entire reason the catalog exists.
+- **If matches exist but their `Discriminator`s rule them out:** note which known classes you have *excluded* (that is itself diagnostic signal) and proceed to "## Process".
+- **If no matches, or `docs/failure-modes.md` does not exist in this project:** proceed to "## Process". When you find the root cause, the "## After Every Failure: Encode the Fix" step below requires you to add the new class so the *next* session pays one cost, not N. (If the project has no catalog at all, bootstrapping one is itself the encode-the-fix step — see `docs/conventions/failure-mode-catalogs.md`.)
+
+This is the investigation-first reflex. The catalog was historically consulted only at *encode* time; consulting it *first* is what closes the failure class where the same root cause is re-diagnosed from scratch at full cost in session after session (catalogued as FM-028 in the harness's own `docs/failure-modes.md`). Doctrine-that-relies-on-memory drifts under exactly the context pressure — a long, frustrating investigation — where this reflex matters most: when you notice you are more than ~30 minutes into hypothesis-chasing and have NOT run this grep, stop and run it now. The cross-project standard this implements is `docs/conventions/failure-mode-catalogs.md` (Decision 033); a SessionStart hook to surface candidate matches automatically is proposed at `docs/proposals/fm-catalog-auto-search-harness-integration.md`.
+
 ## Process
 1. **Map the full chain.** "Save fails" → read form + API route + response consumer together.
 2. **Trace a concrete example end-to-end.** Walk a real value through each layer.

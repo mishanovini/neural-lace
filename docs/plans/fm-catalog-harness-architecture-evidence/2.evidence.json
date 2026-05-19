@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "task_id": "2",
+  "verdict": "PASS",
+  "commit_sha": "f241c3194fe70cfd5f55dbef8c6442b20a961580",
+  "files_modified": [
+    "docs/failure-modes.md"
+  ],
+  "mechanical_checks": {
+    "exists:docs/conventions/failure-mode-catalogs.md": {
+      "passed": true,
+      "detail": "docs/conventions/failure-mode-catalogs.md exists",
+      "command": "test -e docs/conventions/failure-mode-catalogs.md",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "1 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-19T20:03:49Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/fm-catalog-harness-architecture.md"
+}
