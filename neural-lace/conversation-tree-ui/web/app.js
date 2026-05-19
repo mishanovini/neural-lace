@@ -341,8 +341,25 @@
     }
     if (last < s.length) container.appendChild(document.createTextNode(s.slice(last)));
   }
-  // item 19: cross-project docs browser (searchable, collapsible per project).
-  var docsCache = null, docsCollapsed = {};
+  // item 19 / 37: cross-project docs browser. Server returns a FLAT per-project
+  // file list; the UI builds a nested project → folder → file tree, each level
+  // collapsible. Projects start COLLAPSED by default; an active
+  // filter auto-expands every path that contains a match. Expansion state is
+  // remembered across opens (and sessions) in localStorage.
+  var docsCache = null;
+  var DOCS_EXP_KEY = 'ctree-docs-expanded-v1';
+  var docsExpanded = (function () {
+    try {
+      var raw = JSON.parse(localStorage.getItem(DOCS_EXP_KEY) || '[]');
+      return Array.isArray(raw) ? raw : [];
+    } catch (_) { return []; }
+  })();
+  function isExp(k) { return docsExpanded.indexOf(k) !== -1; }
+  function toggleExp(k) {
+    var i = docsExpanded.indexOf(k);
+    if (i === -1) docsExpanded.push(k); else docsExpanded.splice(i, 1);
+    try { localStorage.setItem(DOCS_EXP_KEY, JSON.stringify(docsExpanded)); } catch (_) {}
+  }
   function openDocsPanel() {
     docsPanel.hidden = false; docScrim.hidden = false;
     if (docsCache) { renderDocsPanel(); return; }
@@ -352,27 +369,78 @@
     }).catch(function () { docsBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
   }
   function closeDocsPanel() { docsPanel.hidden = true; if (docModal.hidden) docScrim.hidden = true; }
+  // Build { dirs:{name:node}, files:[{name,full}] } from flat "docs/a/b.md".
+  function buildDocTree(files) {
+    var root = { dirs: {}, files: [] };
+    files.forEach(function (full) {
+      var parts = String(full).split('/');
+      var fname = parts.pop();
+      var node = root;
+      parts.forEach(function (seg) {
+        if (!node.dirs[seg]) node.dirs[seg] = { dirs: {}, files: [] };
+        node = node.dirs[seg];
+      });
+      node.files.push({ name: fname, full: full });
+    });
+    return root;
+  }
+  function countDocs(node) {
+    var n = node.files.length;
+    Object.keys(node.dirs).forEach(function (d) { n += countDocs(node.dirs[d]); });
+    return n;
+  }
+  // Render one tree node's children into parent. expandAll forces every
+  // folder open (used while a filter is active so matches are visible).
+  function renderDocNode(parent, node, projKey, pathPrefix, depth, expandAll) {
+    Object.keys(node.dirs).sort().forEach(function (dname) {
+      var child = node.dirs[dname];
+      var folderPath = pathPrefix ? pathPrefix + '/' + dname : dname;
+      var fkey = projKey + '' + folderPath;
+      var open = expandAll || isExp(fkey);
+      var row = el('div', 'dp-dir');
+      row.style.paddingLeft = (0.6 + depth * 0.9) + 'rem';
+      row.appendChild(el('span', 'twist', open ? '▾' : '▸'));
+      row.appendChild(el('span', 'dp-name', dname));
+      row.appendChild(el('span', 'dp-count', String(countDocs(child))));
+      row.addEventListener('click', function () { toggleExp(fkey); renderDocsPanel(); });
+      parent.appendChild(row);
+      if (open) renderDocNode(parent, child, projKey, folderPath, depth + 1, expandAll);
+    });
+    node.files.forEach(function (file) {
+      var fe = el('div', 'dp-file');
+      fe.style.paddingLeft = (1.3 + depth * 0.9) + 'rem';
+      fe.appendChild(el('span', 'dp-fileicon', '📄'));
+      fe.appendChild(el('span', 'dp-name', file.name));
+      fe.title = file.full;
+      fe.addEventListener('click', function () { openDocModal(projKey, file.full); });
+      parent.appendChild(fe);
+    });
+  }
   function renderDocsPanel() {
     var f = (docsFilter.value || '').trim().toLowerCase();
+    var filterActive = f.length > 0;
     clear(docsBody);
-    Object.keys(docsCache).forEach(function (key) {
+    Object.keys(docsCache).sort().forEach(function (key) {
       var info = docsCache[key];
-      var files = (info.files || []).filter(function (p) { return !f || p.toLowerCase().indexOf(f) !== -1; });
-      if (f && files.length === 0) return;
-      var head = el('div', 'dp-proj');
-      head.appendChild(el('span', 'twist', docsCollapsed[key] ? '▸' : '▾'));
-      head.appendChild(document.createTextNode(key + ' (' + (info.missing ? 'root not found on this machine' : files.length) + ')'));
-      head.addEventListener('click', function () { docsCollapsed[key] = !docsCollapsed[key]; renderDocsPanel(); });
-      docsBody.appendChild(head);
-      if (docsCollapsed[key] || info.missing) {
-        if (info.missing) docsBody.appendChild(el('div', 'dp-missing', info.root));
-        return;
-      }
-      files.forEach(function (p) {
-        var fe = el('div', 'dp-file', p);
-        fe.addEventListener('click', function () { openDocModal(key, p); });
-        docsBody.appendChild(fe);
+      var files = (info.files || []).filter(function (p) {
+        return !filterActive || p.toLowerCase().indexOf(f) !== -1;
       });
+      if (filterActive && files.length === 0) return;
+      var projOpen = info.missing ? false
+        : (filterActive ? true : isExp(key));
+      var head = el('div', 'dp-proj');
+      head.appendChild(el('span', 'twist', info.missing ? '⚠' : (projOpen ? '▾' : '▸')));
+      head.appendChild(el('span', 'dp-name', key));
+      head.appendChild(el('span', 'dp-count',
+        info.missing ? 'root not found' : String(files.length)));
+      if (!info.missing) {
+        head.addEventListener('click', function () { toggleExp(key); renderDocsPanel(); });
+      }
+      docsBody.appendChild(head);
+      if (info.missing) { docsBody.appendChild(el('div', 'dp-missing', info.root)); return; }
+      if (!projOpen) return;
+      if (files.length === 0) { docsBody.appendChild(el('div', 'dp-missing', '(no docs)')); return; }
+      renderDocNode(docsBody, buildDocTree(files), key, '', 1, filterActive);
     });
     if (!docsBody.firstChild) docsBody.appendChild(el('p', 'muted', 'No docs match.'));
   }

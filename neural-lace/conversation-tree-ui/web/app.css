@@ -476,11 +476,28 @@ button:active { transform: scale(0.98); }
 #docsPanel .dp-head { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); display: flex; gap: 0.5rem; align-items: center; }
 #docsPanel .dp-head input { flex: 1; }
 #docsPanel .dp-body { flex: 1 1 auto; overflow: auto; padding: 0.5rem 0.7rem; }
-.dp-proj { font-weight: 700; font-size: 0.78rem; color: var(--accent); margin: 0.6rem 0 0.2rem; cursor: pointer; }
-.dp-proj .twist { display: inline-block; width: 1rem; }
-.dp-file { font-size: 0.78rem; padding: 0.16rem 0.3rem 0.16rem 1.2rem; cursor: pointer; color: var(--text); border-radius: 4px; }
+.dp-proj { font-weight: 700; font-size: 0.8rem; color: var(--accent);
+  margin: 0.55rem 0 0.1rem; cursor: pointer; display: flex; align-items: center;
+  gap: 0.35rem; padding: 0.2rem 0.3rem; border-radius: 4px; }
+.dp-proj:hover { background: var(--panel2); }
+.dp-dir { font-size: 0.78rem; color: var(--text); cursor: pointer;
+  display: flex; align-items: center; gap: 0.35rem; padding: 0.14rem 0.3rem;
+  border-radius: 4px; }
+.dp-dir:hover { background: var(--panel2); }
+.dp-dir .dp-name { font-weight: 600; }
+.dp-file { font-size: 0.78rem; cursor: pointer; color: var(--text);
+  display: flex; align-items: center; gap: 0.35rem; padding: 0.14rem 0.3rem;
+  border-radius: 4px; }
 .dp-file:hover { background: var(--panel2); color: var(--type-question); }
-.dp-missing { font-size: 0.74rem; color: var(--muted); padding-left: 1.2rem; }
+.dp-proj .twist, .dp-dir .twist { display: inline-block; width: 0.9rem;
+  text-align: center; flex: 0 0 auto; color: var(--muted); }
+.dp-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.dp-count { flex: 0 0 auto; font-size: 0.68rem; color: var(--muted);
+  font-weight: 400; padding: 0 0.3rem; }
+.dp-fileicon { flex: 0 0 auto; font-size: 0.7rem; opacity: 0.7; }
+.dp-missing { font-size: 0.74rem; color: var(--muted); padding-left: 1.4rem;
+  font-style: italic; }
 
 /* accessibility: honour reduced-motion (harness UX standard). The arrival
    wash animation is suppressed; the persistent .arrive-static highlight (set
