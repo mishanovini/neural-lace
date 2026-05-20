@@ -11,6 +11,21 @@
 # Claude side: as the Dispatch orchestrator works, it emits the ADR-032 §2
 # lifecycle events so the GUI auto-populates live.
 #
+# Optional rich-details sentinels (v1.1.4 item 41, 2026-05-20):
+#   The orchestrator MAY include any/all of these line-prefixed sentinels in
+#   the spawn prompt body — they're parsed for observability and (future)
+#   propagation to GUI detail-pane content. The presence/absence is purely
+#   advisory; no spawn is ever blocked for missing them.
+#       Instructions: <one-line summary of what the spawned session is doing>
+#       Recommendation: <one-line guidance for the operator>
+#       Links: <doc/path-1.md>, <doc/path-2.md>
+#   Today: when a spawn has a substantive prompt (>200 chars) but NONE of
+#   these sentinels, the hook logs a WARNING to the audit log so a human
+#   auditor can spot branches that shipped without rich detail. The
+#   conversation-tree GUI already renders a "incomplete metadata" badge on
+#   items lacking the same fields (renderItemDetails fallback). See
+#   `_extract_rich_details` and `_warn_no_rich_details` below.
+#
 # Invocation modes:
 #   --on-spawn   PreToolUse on the Dispatch-only spawn surface
 #                (mcp__ccd_session__spawn_task | mcp__ccd_session_mgmt__start_code_task).
@@ -247,6 +262,71 @@ _spawn_title() {
   printf '%s' "$t"
 }
 
+# ---------------------------------------------------------------------------
+# Rich-details sentinel extraction (v1.1.4 item 41 — Misha bug 2026-05-20).
+#
+# Optional sentinels the orchestrator MAY include in a Dispatch spawn prompt
+# so the resulting tree branch carries actionable detail (instead of just a
+# title). The format is line-prefix-based, mirroring the existing
+# `Report-back: task-id=…` and `worker-…` sentinels the gate already parses.
+# All sentinels are OPTIONAL — a spawn without them works exactly as today.
+#
+#   Instructions: <one-line summary of what the spawned session is doing>
+#   Recommendation: <one-line guidance for the operator>
+#   Links: <doc/path-1.md>, <doc/path-2.md>
+#
+# These do NOT (yet) propagate to a rich-details item on the branch — that
+# requires a follow-up `item-details-set` emission against a known item_id,
+# which is out of scope for this writer hook (items belong to the GUI/human
+# side). What they DO power:
+#   (a) An observability WARNING in the audit log when a spawn carries a
+#       substantive prompt (>200 chars) but NONE of the sentinels — so a
+#       human auditing the log can spot branches that shipped without rich
+#       detail. NEVER blocks the spawn (writer, not gate).
+#   (b) A future hook can read the parsed sentinels via _extract_rich_details
+#       and emit annotation/details events accordingly.
+#
+# The functions below are PURE — they extract from input, never write state.
+_extract_rich_details() {
+  # Echo a single newline-separated triple: instructions\nrecommendation\nlinks
+  # (any/all may be empty). Caller splits by line.
+  local input="$1"
+  _have jq || { printf '\n\n\n'; return 0; }
+  local prompt
+  prompt=$(printf '%s' "$input" | jq -r '
+    (.tool_input.prompt // .tool_input.description // .tool_input.content // "")' 2>/dev/null || echo "")
+  local instr rec links
+  instr=$(printf '%s' "$prompt" | grep -iE '^[[:space:]]*Instructions:[[:space:]]' | head -n1 \
+    | sed -E 's/^[[:space:]]*Instructions:[[:space:]]*//I' | cut -c1-400)
+  rec=$(printf '%s' "$prompt" | grep -iE '^[[:space:]]*Recommendation:[[:space:]]' | head -n1 \
+    | sed -E 's/^[[:space:]]*Recommendation:[[:space:]]*//I' | cut -c1-400)
+  links=$(printf '%s' "$prompt" | grep -iE '^[[:space:]]*Links:[[:space:]]' | head -n1 \
+    | sed -E 's/^[[:space:]]*Links:[[:space:]]*//I' | cut -c1-400)
+  printf '%s\n%s\n%s\n' "$instr" "$rec" "$links"
+}
+
+# Warn (audit log only — NEVER blocks) when a Dispatch spawn carries a
+# substantive prompt but no rich-detail sentinels. The audit log is the
+# observability surface a human auditor reads to spot branches shipped
+# without rich detail. Threshold: 200 chars. Anything shorter is ad-hoc
+# and rich-detail sentinels would be overhead.
+_warn_no_rich_details() {
+  local input="$1" title="$2"
+  _have jq || return 0
+  local prompt_len
+  prompt_len=$(printf '%s' "$input" | jq -r '
+    ((.tool_input.prompt // .tool_input.description // .tool_input.content // "") | length)' 2>/dev/null || echo 0)
+  [[ "$prompt_len" -lt 200 ]] && return 0
+  local triple instr rec links
+  triple=$(_extract_rich_details "$input")
+  instr=$(printf '%s' "$triple" | sed -n '1p')
+  rec=$(printf '%s' "$triple"   | sed -n '2p')
+  links=$(printf '%s' "$triple" | sed -n '3p')
+  if [[ -z "$instr" && -z "$rec" && -z "$links" ]]; then
+    _log "WARN: spawn branch \"$title\" has substantive prompt ($prompt_len chars) but NO rich-details sentinels (Instructions:/Recommendation:/Links:) — branch will render the GUI's 'No detailed instructions recorded' fallback. Future orchestrators should include the sentinels for better operator UX."
+  fi
+}
+
 # Primary branch identifier the conv-tree-state-gate will look for, derived
 # from tool_input with the SAME Pin-1 extraction + priority order the gate
 # uses (task-id= sentinel → worker-<tok> → backtick-after-"branch" → the
@@ -343,6 +423,16 @@ JSON
   local ledger="$LEDGER_DIR/opened-${sid}.jsonl"
   printf '%s\t%s\t%s\n' "$child_id" "$title" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null || true
   _log "branch-opened child=$child_id title=\"$title\" root=$root_id session=$sid"
+
+  # v1.1.4 item 41 — observability for the GUI detail-pane content quality.
+  # Non-blocking warning when a substantive Dispatch prompt ships without
+  # rich-detail sentinels (Instructions:/Recommendation:/Links:). See the
+  # _warn_no_rich_details + _extract_rich_details definitions above for the
+  # schema. The warning lives ONLY in the audit log — never blocks. Future
+  # iteration: parse sentinels into a follow-up annotation/item-details-set
+  # emission so the GUI auto-populates detail fields from the spawn prompt.
+  _warn_no_rich_details "$input" "$title"
+
   exit 0
 }
 
@@ -525,6 +615,72 @@ _self_test() {
   else
     echo "PASS: ST13 (skipped: git unavailable)"; pass=$((pass+1))
     echo "PASS: ST14 (skipped: git unavailable)"; pass=$((pass+1))
+  fi
+
+  # ST18 — v1.1.4 item 41: rich-details sentinel extraction. The hook must
+  # parse `Instructions:` / `Recommendation:` / `Links:` lines from a spawn
+  # prompt body so future iterations can propagate them. PURE function, no
+  # state side effects — assertion is over the function's output triple.
+  local triple instr rec links
+  triple=$(_extract_rich_details \
+'{"tool_input":{"prompt":"do stuff\nInstructions: edit foo.ts and run tests\nRecommendation: ship as a single commit\nLinks: docs/spec.md, docs/api.md\nmore body"}}')
+  instr=$(printf '%s' "$triple" | sed -n '1p')
+  rec=$(printf '%s' "$triple"   | sed -n '2p')
+  links=$(printf '%s' "$triple" | sed -n '3p')
+  if [[ "$instr" == "edit foo.ts and run tests" \
+        && "$rec" == "ship as a single commit" \
+        && "$links" == "docs/spec.md, docs/api.md" ]]; then
+    echo "PASS: ST18 _extract_rich_details parses Instructions:/Recommendation:/Links: sentinels"
+    pass=$((pass+1))
+  else
+    echo "FAIL: ST18 (instr='$instr' rec='$rec' links='$links')"
+    fail=$((fail+1))
+  fi
+
+  # ST19 — no sentinels + short prompt: warning does NOT fire (under threshold).
+  local LOG_BEFORE LOG_AFTER
+  LOG_BEFORE=$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)
+  local sp19="$tmp/st-19.json"
+  CONV_TREE_STATE_PATH="$sp19" CLAUDE_SESSION_ID="sess-st-19" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Tiny","prompt":"short"},"session_id":"sess-st-19"}' >/dev/null 2>&1
+  LOG_AFTER=$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)
+  if ! tail -n $((LOG_AFTER - LOG_BEFORE)) "$LOG_FILE" 2>/dev/null | grep -q 'WARN: spawn branch "Tiny"'; then
+    echo "PASS: ST19 short prompt -> no rich-details warning (under 200-char threshold)"
+    pass=$((pass+1))
+  else
+    echo "FAIL: ST19 warning fired on short prompt"
+    fail=$((fail+1))
+  fi
+
+  # ST20 — substantive prompt + NO sentinels -> warning DOES fire.
+  LOG_BEFORE=$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)
+  local sp20="$tmp/st-20.json"
+  local LONG_PROMPT
+  LONG_PROMPT=$(printf 'spawn body without rich-detail sentinels. %.0s' {1..15})
+  CONV_TREE_STATE_PATH="$sp20" CLAUDE_SESSION_ID="sess-st-20" \
+    bash "$SELF" --on-spawn <<<"{\"tool_name\":\"mcp__ccd_session__spawn_task\",\"tool_input\":{\"title\":\"NoSentinels\",\"prompt\":\"$LONG_PROMPT\"},\"session_id\":\"sess-st-20\"}" >/dev/null 2>&1
+  LOG_AFTER=$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)
+  if tail -n $((LOG_AFTER - LOG_BEFORE + 1)) "$LOG_FILE" 2>/dev/null | grep -q 'WARN: spawn branch "NoSentinels" has substantive prompt'; then
+    echo "PASS: ST20 substantive prompt without sentinels -> WARN logged"
+    pass=$((pass+1))
+  else
+    echo "FAIL: ST20 substantive prompt without sentinels (expected WARN in audit log)"
+    fail=$((fail+1))
+  fi
+
+  # ST21 — substantive prompt WITH at least one sentinel -> warning does NOT fire.
+  LOG_BEFORE=$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)
+  local sp21="$tmp/st-21.json"
+  local LONG_WITH_SENT="${LONG_PROMPT}\nInstructions: handle the work"
+  CONV_TREE_STATE_PATH="$sp21" CLAUDE_SESSION_ID="sess-st-21" \
+    bash "$SELF" --on-spawn <<<"{\"tool_name\":\"mcp__ccd_session__spawn_task\",\"tool_input\":{\"title\":\"WithSentinel\",\"prompt\":\"$LONG_WITH_SENT\"},\"session_id\":\"sess-st-21\"}" >/dev/null 2>&1
+  LOG_AFTER=$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)
+  if ! tail -n $((LOG_AFTER - LOG_BEFORE + 1)) "$LOG_FILE" 2>/dev/null | grep -q 'WARN: spawn branch "WithSentinel"'; then
+    echo "PASS: ST21 sentinel present -> NO warning (branch carries rich detail)"
+    pass=$((pass+1))
+  else
+    echo "FAIL: ST21 warning fired despite Instructions: sentinel present"
+    fail=$((fail+1))
   fi
 
   rm -rf "$tmp" 2>/dev/null || true
