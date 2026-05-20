@@ -237,5 +237,33 @@ ok('R43 item23 backfill resolveDocPath + extractFromDoc wired into payloadFor',
   && /require\('\.\.\/config\/projects\.js'\)/.test(backfill)
   && /links\.find\(function \(l\) \{ return \/\^docs\\\//.test(backfill));
 
+// --- v1.1.2 polish items 26/27/28 (item 25 = merged item 22, covered by R42)
+ok('R44 item26: Details toggles IN PLACE (no renderActions rebuild) + scrollIntoView nearest (no scroll reset)',
+  /disc\.addEventListener\('click', function \(\) \{[\s\S]*?li\.scrollIntoView\(\{ block: 'nearest' \}\);[\s\S]*?\}\);/.test(js)
+  && /li\.querySelector\('\.li-details'\)/.test(js)
+  && /li\.insertBefore\(d, disc\.nextSibling\)/.test(js)
+  && /el\('button', 'ghost det-toggle',/.test(js));   // item-22 chose ghost; item 26 fixes scroll only
+
+ok('R45 item27: decision/question resolve ONLY via Respond — done button gated to kind==="action", no "mark answered"',
+  /if \(it\.kind === 'action'\) \{\s*\n?\s*var done = el\('button', 'btn-go', 'mark done'\)/.test(js)
+  && !/mark answered/.test(js)
+  && /function respondable\s*\(/.test(js));
+
+ok('R46 item28: friendly Defer popover (presets + native datetime-local + to-Backlog) + item-backlogged ADDITIVE + deferred local-time fields + isWaiting excludes backlogged + SCHEMA_VERSION still 1',
+  /function openDeferPop\s*\(/.test(js)
+  && /dti\.type = 'datetime-local'/.test(js)
+  && /Later today \(8 PM\)/.test(js) && /Tomorrow morning \(9 AM\)/.test(js)
+  && /Next week \(Mon 9 AM\)/.test(js) && /Pick a specific time/.test(js)
+  && /Until further notice — move to Backlog/.test(js)
+  && /\.defer-pop\s*\{/.test(C)
+  && !/prompt\('Defer until/.test(js)
+  && /\(\(!it\.checked\) \|\| it\.deferred \|\| it\.contested\) && !it\.backlogged/.test(js)
+  && /'item-backlogged'/.test(schema)
+  && /'item-backlogged':\s*\['node_id',\s*'item_id'\]/.test(schema)
+  && /case 'item-backlogged'/.test(reducer)
+  && /it\.scheduled_for_local = String\(ev\.scheduled_for_local\)/.test(reducer)
+  && /it\.tz_offset_min = Number\(ev\.tz_offset_min\)/.test(reducer)
+  && /const SCHEMA_VERSION\s*=\s*1\s*;/.test(schema));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

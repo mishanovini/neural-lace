@@ -287,6 +287,23 @@ button:active { transform: scale(0.98); }
 .li.kind-question.hl { background-image: linear-gradient(rgba(59,130,246,0.20),rgba(59,130,246,0.20)); border-left-color: var(--type-question); }
 .li-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
 .li-actions button { padding: 0.15rem 0.45rem; font-size: 0.72rem; }
+
+/* v1.1.2 item 28 — Defer popover (replaces the ISO prompt()). One open at a
+   time; closes on choose / outside-click / Esc. Anchored within the li. */
+.defer-pop {
+  margin-top: 0.4rem; background: var(--panel2);
+  border: 1px solid var(--border2); border-radius: 6px;
+  padding: 0.5rem; display: flex; flex-direction: column; gap: 0.3rem;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+}
+.defer-pop .dp-title { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.defer-pop button { text-align: left; }
+.defer-pop .dp-when { display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; }
+.defer-pop input[type=datetime-local] {
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border2); border-radius: 5px;
+  padding: 0.22rem 0.4rem; font: inherit; font-size: 0.8rem;
+}
 .li.contested { border-color: var(--err); }
 .contest-note { font-size: 0.76rem; color: var(--warn); background: var(--panel2); border-radius: 4px; padding: 0.3rem 0.4rem; }
 .prio { font-size: 0.66rem; padding: 0.05rem 0.4rem; border-radius: 999px; border: 1px solid var(--border2); }
