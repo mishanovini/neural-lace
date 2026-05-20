@@ -48,6 +48,13 @@ const EVENT_TYPES = Object.freeze([
   'item-details-set',
   'action-responded',
   'item-unchecked',
+  // v1.1.2 item 28 — "Defer → until further notice — move to Backlog".
+  // ADDITIVE within schema major 1 (same rule/precedent as the v1.1-ux trio
+  // above): a new event type, no required-field change to any existing
+  // event, schema_version stays 1, conv-tree gates key off the major and are
+  // unaffected. Parks an item out of "Waiting on you" without checking it
+  // (NOT a quiet-resolve); the Backlog "Activate" button is the return path.
+  'item-backlogged',
 ]);
 
 // §2 — per-event required fields IN ADDITION TO the envelope
@@ -82,6 +89,11 @@ const EVENT_REQUIRED_FIELDS = Object.freeze({
   'item-details-set': ['node_id', 'item_id', 'details'],
   'action-responded': ['node_id', 'item_id', 'response_text'],
   'item-unchecked': ['node_id', 'item_id'],
+  // v1.1.2 item 28 additive (see EVENT_TYPES note above). The `deferred`
+  // event additionally accepts OPTIONAL `scheduled_for_local` + `tz_offset_min`
+  // for unambiguous local re-display — those are NOT added here (optional, no
+  // contract change). `item-backlogged` requires only the item locator.
+  'item-backlogged': ['node_id', 'item_id'],
 });
 
 const ACTORS = Object.freeze(['dispatch', 'gui']);
