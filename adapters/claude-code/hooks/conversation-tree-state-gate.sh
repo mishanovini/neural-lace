@@ -17,10 +17,16 @@
 # layer + the operator's interrupt authority; this gate is the freshness/shape/
 # branch-presence floor.
 #
-# Matcher (ADR-031 r7 Pin-1 enumerated set; B0-verified all four carry the
-# full tool_name string identically):
+# SCOPE (ADR-031 r7 Pin-1, amended r8 / ADR-034 2026-05-19): this gate fires
+# ONLY on the Dispatch orchestrator's spawn tools. Sub-agent Task/Agent
+# invocations are OUT of scope — they are AI-internal mechanics (peer review,
+# verification, internal helpers), NOT branches of the user↔AI conversation
+# the tree models. A Code session's reviewer/verifier sub-agents never belong
+# in the operator's conversation tree, so the gate must not fire on them.
+#
+# Matcher (the Dispatch-only enumerated set; B0-verified both carry the full
+# tool_name string identically):
 #   mcp__ccd_session__spawn_task | mcp__ccd_session_mgmt__start_code_task
-#   | Task | Agent
 #
 # Snapshot trust (ADR-032 §8 r2.1 — LOAD-BEARING): the SOLE NORMATIVE
 # verifier is the state-library primitive `verifySnapshotAttested`. The gate
@@ -216,35 +222,73 @@ if [[ "${1:-}" == "--self-test" ]]; then
   TI_ARCH='{"prompt":"branch worker-arch"}'
   TI_NONMATCH='{"file_path":"/tmp/x"}'
 
-  # --- Matcher: fires for the 4 enumerated tools, no-ops otherwise ---
+  # --- Matcher: fires for the 2 Dispatch tools; Task/Agent + everything
+  # else no-op (ADR-031 r7 Pin-1, amended r8 / ADR-034 — sub-agent Task/
+  # Agent are AI-internal mechanics, NOT conversation branches). ---
   _run "m1-spawn_task-fires"        2 "$MISSING" "mcp__ccd_session__spawn_task"        "$TI_GOOD" s-m1 1 "" "BLOCK:"
   _run "m2-start_code_task-fires"   2 "$MISSING" "mcp__ccd_session_mgmt__start_code_task" "$TI_GOOD" s-m2 1 "" "BLOCK:"
-  _run "m3-Task-fires"              2 "$MISSING" "Task"                                 "$TI_TASK" s-m3 1 "" "BLOCK:"
-  _run "m4-Agent-fires"             2 "$MISSING" "Agent"                                "$TI_AGENT" s-m4 1 "" "BLOCK:"
+  # Task/Agent must NO-OP even with a prior-spawn marker AND a missing state
+  # file (the exact friction config that used to force a waiver): exit 0, and
+  # the absence of any BLOCK is asserted by the parallel regression below.
+  _run "m3-Task-noop"              0 "$MISSING" "Task"                                 "$TI_TASK"  s-m3 1 "" ""
+  _run "m4-Agent-noop"             0 "$MISSING" "Agent"                                "$TI_AGENT" s-m4 1 "" ""
   _run "m5-Edit-noop"              0 "$MISSING" "Edit"                                 "$TI_NONMATCH" s-m5 1 "" ""
   _run "m6-Bash-noop"             0 "$MISSING" "Bash"                                 "$TI_NONMATCH" s-m6 1 "" ""
 
-  # --- Pin-2 error partition (cell-for-cell) ---
-  _run "p1-json-parse-fail-CLOSED" 2 "$BADJSON" "Task" "$TI_TASK" s-p1 0 "" "not valid JSON"
-  _run "p2-missing+prior-CLOSED"   2 "$MISSING" "Task" "$TI_TASK" s-p2 1 "" "prior spawn occurred this session"
-  _run "p3-missing+noprior-OPEN"   0 "$MISSING" "Task" "$TI_TASK" s-p3 0 "" ""
-  _run "p4-torn-attest-CLOSED"     2 "$TORN"    "Task" "$TI_TASK" s-p4 0 "" "NOT integrity-verified"
-  _run "p5-unknown-major-CLOSED"   2 "$NEWMAJOR" "Task" "$TI_TASK" s-p5 0 "" "schema too new"
+  # --- Pin-2 error partition (cell-for-cell) — exercised via a Dispatch
+  # tool (spawn_task), since Task no longer reaches the state logic. ---
+  _run "p1-json-parse-fail-CLOSED" 2 "$BADJSON" "mcp__ccd_session__spawn_task" "$TI_GOOD" s-p1 0 "" "not valid JSON"
+  _run "p2-missing+prior-CLOSED"   2 "$MISSING" "mcp__ccd_session__spawn_task" "$TI_GOOD" s-p2 1 "" "prior spawn occurred this session"
+  _run "p3-missing+noprior-OPEN"   0 "$MISSING" "mcp__ccd_session__spawn_task" "$TI_GOOD" s-p3 0 "" ""
+  _run "p4-torn-attest-CLOSED"     2 "$TORN"    "mcp__ccd_session__spawn_task" "$TI_GOOD" s-p4 0 "" "NOT integrity-verified"
+  _run "p5-unknown-major-CLOSED"   2 "$NEWMAJOR" "mcp__ccd_session__spawn_task" "$TI_GOOD" s-p5 0 "" "schema too new"
 
-  # --- Happy path: verified snapshot naming the branch -> ALLOW ---
-  _run "h1-verified-named-ALLOW"   0 "$GOOD" "mcp__ccd_session__spawn_task" "$TI_GOOD" s-h1 0 "" ""
-  _run "h2-verified-Task-ALLOW"    0 "$GOOD" "Task"  "$TI_TASK"  s-h2 0 "" ""
-  _run "h3-verified-Agent-ALLOW"   0 "$GOOD" "Agent" "$TI_AGENT" s-h3 0 "" ""
+  # --- Happy path: verified snapshot naming the branch -> ALLOW (both
+  # Dispatch tools). h3 doubles as proof that Task no-ops even when a fully
+  # valid tree exists (matcher exits before the verified-path is reached). ---
+  _run "h1-verified-spawn_task-ALLOW"      0 "$GOOD" "mcp__ccd_session__spawn_task"        "$TI_GOOD" s-h1 0 "" ""
+  _run "h2-verified-start_code_task-ALLOW" 0 "$GOOD" "mcp__ccd_session_mgmt__start_code_task" "$TI_GOOD" s-h2 0 "" ""
+  _run "h3-Task-noop-even-with-good-state"  0 "$GOOD" "Task"                                "$TI_TASK" s-h3 0 "" ""
 
-  # --- Branch named but not in snapshot -> BLOCK ---
-  _run "b1-branch-absent-BLOCK"    2 "$GOOD" "Task" "$TI_ABSENT" s-b1 0 "" "no live node"
+  # --- Branch named but not in snapshot -> BLOCK (via Dispatch tool) ---
+  _run "b1-branch-absent-BLOCK"    2 "$GOOD" "mcp__ccd_session__spawn_task" "$TI_ABSENT" s-b1 0 "" "no live node"
   # --- Branch present but archived -> BLOCK (state!=archived required) ---
-  _run "b2-branch-archived-BLOCK"  2 "$ARCHIVED" "Task" "$TI_ARCH" s-b2 0 "" "no live node"
+  _run "b2-branch-archived-BLOCK"  2 "$ARCHIVED" "mcp__ccd_session__spawn_task" "$TI_ARCH" s-b2 0 "" "no live node"
 
   # --- Waiver release-valve: torn state + fresh waiver -> ALLOW ---
-  _run "w1-waiver-overrides-torn"  0 "$TORN" "Task" "$TI_TASK" s-w1 0 "fresh substantive justification line" ""
+  _run "w1-waiver-overrides-torn"  0 "$TORN" "mcp__ccd_session__spawn_task" "$TI_GOOD" s-w1 0 "fresh substantive justification line" ""
   # --- Empty/whitespace-only waiver does NOT help: torn still -> CLOSED ---
-  _run "w2-empty-waiver-no-help"   2 "$TORN" "Task" "$TI_TASK" s-w2 0 "   " "NOT integrity-verified"
+  _run "w2-empty-waiver-no-help"   2 "$TORN" "mcp__ccd_session__spawn_task" "$TI_GOOD" s-w2 0 "   " "NOT integrity-verified"
+
+  # --- REGRESSION (ADR-034): a Code session doing 4 parallel sub-agent
+  # Task dispatches must NOT be gated. Asserts exit 0 AND zero BLOCK output
+  # for every one — this is the exact friction Misha identified (3-of-4
+  # parallel reviewers blocked, forcing per-session waivers). ---
+  par_fail=0
+  for n in 1 2 3 4; do
+    pin='{"description":"parallel reviewer '"$n"'","prompt":"review the diff for correctness"}'
+    pout=$(cd "$TMP" && CLAUDE_SESSION_ID="s-par-$n" \
+            CONV_TREE_STATE_PATH="$MISSING" CONV_TREE_STATE_LIB="$ST_LIB" \
+            CLAUDE_STATE_DIR="$TMP/par-$n-state" \
+            CLAUDE_TOOL_INPUT="$(printf '{"tool_name":"Task","tool_input":%s}' "$pin")" \
+            bash "$SELF" 2>"$TMP/par-$n.err")
+    pcode=$?
+    perr=$(cat "$TMP/par-$n.err" 2>/dev/null || echo "")
+    if [[ "$pcode" -ne 0 ]] || printf '%s' "$perr" | grep -qF 'BLOCK:' \
+       || printf '%s' "$pout" | grep -qF '"decision": "block"'; then
+      par_fail=1
+      echo "        par-$n: exit=$pcode err='$(printf '%s' "$perr" | tail -1)'"
+    fi
+  done
+  if [[ "$par_fail" -eq 0 ]]; then
+    PASSED=$((PASSED+1)); echo "  PASS  r1-4x-parallel-Task-not-gated (all exit 0, zero BLOCK)"
+  else
+    FAILED=$((FAILED+1)); echo "  FAIL  r1-4x-parallel-Task-not-gated (a parallel Task dispatch was gated)"
+  fi
+  # --- REGRESSION: bare Agent with NO branch identifier (the case that
+  # previously hit the 'could not extract any branch identifier' BLOCK and
+  # forced a waiver) must now silently no-op. ---
+  _run "r2-bare-Agent-no-identifier-noop" 0 "$MISSING" "Agent" '{"subagent_type":"code-reviewer","prompt":"review"}' s-r2 1 "" ""
 
   echo ""
   echo "$PASSED passed, $FAILED failed"
@@ -271,10 +315,13 @@ fi
 
 TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null || echo "")
 
-# --- B1a matcher: enumerated set only (ADR-031 r7 Pin-1) ---
+# --- B1a matcher: Dispatch-only enumerated set (ADR-031 r7 Pin-1, amended
+# r8 / ADR-034). Sub-agent Task/Agent invocations are AI-internal mechanics,
+# not conversation branches — they are deliberately NOT in this set and the
+# gate no-ops on them. ---
 case "$TOOL_NAME" in
-  mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent) ;;
-  *) exit 0 ;;   # not a covered spawn surface -> no-op
+  mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task) ;;
+  *) exit 0 ;;   # not a Dispatch spawn surface (incl. Task/Agent) -> no-op
 esac
 
 STATE_DIR="${CLAUDE_STATE_DIR:-.claude/state}"

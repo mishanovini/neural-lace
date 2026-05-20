@@ -12,11 +12,19 @@
 # lifecycle events so the GUI auto-populates live.
 #
 # Invocation modes:
-#   --on-spawn   PreToolUse on the enumerated spawn surface
-#                (mcp__ccd_session__spawn_task | mcp__ccd_session_mgmt__start_code_task
-#                 | Task | Agent). Emits `branch-opened` for the spawned child
-#                branch (parented under an auto-detected project/global root
-#                node) and records it to a per-session correlation ledger.
+#   --on-spawn   PreToolUse on the Dispatch-only spawn surface
+#                (mcp__ccd_session__spawn_task | mcp__ccd_session_mgmt__start_code_task).
+#                Emits `branch-opened` for the spawned child branch (parented
+#                under an auto-detected project/global root node) and records
+#                it to a per-session correlation ledger.
+#                SCOPE (ADR-031 r7 Pin-1, amended r8 / ADR-034 2026-05-19):
+#                sub-agent Task/Agent invocations are AI-internal mechanics
+#                (peer review, verification, internal helpers), NOT branches
+#                of the user↔AI conversation the tree models — emitting nodes
+#                for them would pollute the operator's tree with workflow
+#                noise. The hook deliberately no-ops on Task/Agent so the two
+#                Dispatch gates (state-gate, stop-gate) stay consistent with
+#                what the tree actually contains.
 #   --on-stop    Stop hook. Emits `concluded` for every branch this session
 #                opened (read from the ledger), then clears the ledger.
 #   --self-test  Exercises every classification + idempotency + autodetect +
@@ -279,18 +287,20 @@ _run_on_spawn() {
 
   local tool; tool=$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null || echo "")
   case "$tool" in
-    mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent) ;;
-    *) exit 0 ;;  # not a covered spawn surface -> no-op
+    mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task) ;;
+    # Sub-agent Task/Agent are AI-internal mechanics, not conversation
+    # branches (ADR-031 r7 Pin-1, amended r8 / ADR-034) -> no node emitted.
+    *) exit 0 ;;  # not a Dispatch spawn surface (incl. Task/Agent) -> no-op
   esac
 
   # Title the emitted branch with the conv-tree-state-gate's PRIMARY Pin-1
   # candidate when tool_input carries one — so the writer genuinely satisfies
   # the gate that runs immediately after (the ADR-031 r7 intended design).
   # For mcp__ccd_session__spawn_task the primary candidate IS the .title
-  # field (human-readable). When no candidate exists (bare Task/Agent
-  # prompt), fall back to a readable first-line title — the gate blocks that
-  # spawn regardless (NL-FINDING-010 gate-design gap, waiver-valve territory)
-  # but the branch is still recorded for the GUI.
+  # field (human-readable). When no candidate exists (a bare Dispatch prompt
+  # with no title/sentinel), fall back to a readable first-line title — the
+  # gate blocks that spawn regardless (NL-FINDING-010 gate-design gap,
+  # waiver-valve territory) but the branch is still recorded for the GUI.
   local title gate_cand
   gate_cand=$(_gate_primary_candidate "$input")
   if [[ -n "$gate_cand" ]]; then
@@ -385,14 +395,27 @@ _self_test() {
   _has_root() { node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});process.stdout.write(st.snapshot.nodes.some(function(x){return x.node_id===process.argv[3]&&x.parent_id===null})?"Y":"N")}catch(e){process.stdout.write("ERR")}' "$LIB" "$1" "$2" 2>/dev/null; }
   _ck() { if [[ "$2" == "$3" ]]; then echo "PASS: $1"; pass=$((pass+1)); else echo "FAIL: $1 (got '$2' want '$3')"; fail=$((fail+1)); fi; }
 
-  # ST1-ST4: each enumerated spawn tool emits a branch-opened titled by the spawn title
+  # ST1-ST2: each Dispatch spawn tool emits a branch-opened titled by the
+  # spawn title. ST3-ST4: sub-agent Task/Agent are AI-internal mechanics
+  # (ADR-031 r7 Pin-1, amended r8 / ADR-034) -> NO node emitted, NO file
+  # written (the exact tree-pollution Misha's Option-A rationale removes).
   local i=0
-  for tn in mcp__ccd_session__spawn_task mcp__ccd_session_mgmt__start_code_task Task Agent; do
+  for tn in mcp__ccd_session__spawn_task mcp__ccd_session_mgmt__start_code_task; do
     i=$((i+1)); local sp="$tmp/st-$i.json"
     CONV_TREE_STATE_PATH="$sp" CLAUDE_SESSION_ID="sess-st-$i" \
       bash "$SELF" --on-spawn <<<"{\"tool_name\":\"$tn\",\"tool_input\":{\"title\":\"Hello $tn\"},\"session_id\":\"sess-st-$i\"}" >/dev/null 2>&1
     _ck "ST$i spawn($tn) -> branch-opened titled 'Hello $tn'" "$(_node_state "$sp" "Hello $tn")" "open"
   done
+  # ST3: sub-agent Task -> no-op, no state file written
+  local sp3="$tmp/st-3.json"
+  CONV_TREE_STATE_PATH="$sp3" CLAUDE_SESSION_ID="sess-st-3" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"Task","tool_input":{"subagent_type":"code-reviewer","prompt":"review the diff","title":"Reviewer"},"session_id":"sess-st-3"}' >/dev/null 2>&1
+  if [[ -f "$sp3" ]]; then echo "FAIL: ST3 sub-agent Task must emit NO node (AI-internal, ADR-034)"; fail=$((fail+1)); else echo "PASS: ST3 sub-agent Task -> no-op (no tree node)"; pass=$((pass+1)); fi
+  # ST4: sub-agent Agent -> no-op, no state file written
+  local sp4="$tmp/st-4.json"
+  CONV_TREE_STATE_PATH="$sp4" CLAUDE_SESSION_ID="sess-st-4" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"Agent","tool_input":{"subagent_type":"task-verifier","prompt":"verify task 3","title":"Verifier"},"session_id":"sess-st-4"}' >/dev/null 2>&1
+  if [[ -f "$sp4" ]]; then echo "FAIL: ST4 sub-agent Agent must emit NO node (AI-internal, ADR-034)"; fail=$((fail+1)); else echo "PASS: ST4 sub-agent Agent -> no-op (no tree node)"; pass=$((pass+1)); fi
 
   # ST5: non-spawn tool -> no-op (no file written)
   local sp5="$tmp/st-5.json"
@@ -403,7 +426,7 @@ _self_test() {
   # ST6: --on-stop concludes the opened branch
   local sp6="$tmp/st-6.json"
   CONV_TREE_STATE_PATH="$sp6" CLAUDE_SESSION_ID="sess-st-6" \
-    bash "$SELF" --on-spawn <<<'{"tool_name":"Task","tool_input":{"title":"Branch Six"},"session_id":"sess-st-6"}' >/dev/null 2>&1
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Branch Six"},"session_id":"sess-st-6"}' >/dev/null 2>&1
   CONV_TREE_STATE_PATH="$sp6" CLAUDE_SESSION_ID="sess-st-6" \
     bash "$SELF" --on-stop <<<'{"session_id":"sess-st-6"}' >/dev/null 2>&1
   _ck "ST6 --on-stop -> branch concluded" "$(_node_state "$sp6" "Branch Six")" "concluded"
@@ -412,7 +435,7 @@ _self_test() {
   local sp7="$tmp/st-7.json"
   for _r in 1 2 3; do
     CONV_TREE_STATE_PATH="$sp7" CLAUDE_SESSION_ID="sess-st-7" \
-      bash "$SELF" --on-spawn <<<'{"tool_name":"Agent","tool_input":{"title":"Idem"},"session_id":"sess-st-7"}' >/dev/null 2>&1
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Idem"},"session_id":"sess-st-7"}' >/dev/null 2>&1
   done
   _ck "ST7 idempotent: 3 re-fires -> exactly 1 child branch-opened (+1 root = 2)" "$(_count "$sp7" branch-opened)" "2"
 
@@ -420,20 +443,20 @@ _self_test() {
   local sp8="$tmp/st-8.json" pdir="$tmp/claude-projects/demoproj/wt"
   mkdir -p "$pdir"
   ( cd "$pdir" && CONV_TREE_STATE_PATH="$sp8" CLAUDE_SESSION_ID="sess-st-8" \
-      bash "$SELF" --on-spawn <<<'{"tool_name":"Task","tool_input":{"title":"PA"},"session_id":"sess-st-8"}' >/dev/null 2>&1 )
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"PA"},"session_id":"sess-st-8"}' >/dev/null 2>&1 )
   _ck "ST8 autodetect project root proj-demoproj" "$(_has_root "$sp8" "proj-demoproj")" "Y"
 
   # ST9: no claude-projects in cwd -> global root
   local sp9="$tmp/st-9.json" gdir="$tmp/elsewhere"
   mkdir -p "$gdir"
   ( cd "$gdir" && CONV_TREE_STATE_PATH="$sp9" CLAUDE_SESSION_ID="sess-st-9" \
-      bash "$SELF" --on-spawn <<<'{"tool_name":"Task","tool_input":{"title":"GA"},"session_id":"sess-st-9"}' >/dev/null 2>&1 )
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"GA"},"session_id":"sess-st-9"}' >/dev/null 2>&1 )
   _ck "ST9 autodetect global root" "$(_has_root "$sp9" "global")" "Y"
 
   # ST10: failure isolation — broken state-lib path -> exit 0, log line written
   local sp10="$tmp/st-10.json" rc
   CONV_TREE_STATE_PATH="$sp10" CONV_TREE_STATE_LIB="$tmp/does-not-exist.js" CLAUDE_SESSION_ID="sess-st-10" \
-    bash "$SELF" --on-spawn <<<'{"tool_name":"Task","tool_input":{"title":"Iso"},"session_id":"sess-st-10"}' >/dev/null 2>&1
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Iso"},"session_id":"sess-st-10"}' >/dev/null 2>&1
   rc=$?
   _ck "ST10 failure isolation -> exit 0" "$rc" "0"
 
@@ -461,12 +484,12 @@ _self_test() {
 
   local sp16="$tmp/st-16.json"
   CONV_TREE_STATE_PATH="$sp16" CLAUDE_SESSION_ID="sess-st-16" \
-    bash "$SELF" --on-spawn <<<'{"tool_name":"Task","tool_input":{"prompt":"do work on branch worker-feat-y now"},"session_id":"sess-st-16"}' >/dev/null 2>&1
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session_mgmt__start_code_task","tool_input":{"prompt":"do work on branch worker-feat-y now"},"session_id":"sess-st-16"}' >/dev/null 2>&1
   if node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});process.exit(st.snapshot.nodes.some(function(n){return n.title==="worker-feat-y"})?0:1)' "$LIB" "$sp16" 2>/dev/null; then echo "PASS: ST16 worker-<tok> -> node title == gate candidate (2)"; pass=$((pass+1)); else echo "FAIL: ST16 worker- candidate not matched"; fail=$((fail+1)); fi
 
   local sp17="$tmp/st-17.json"
   CONV_TREE_STATE_PATH="$sp17" CLAUDE_SESSION_ID="sess-st-17" \
-    bash "$SELF" --on-spawn <<<'{"tool_name":"Agent","tool_input":{"prompt":"Report-back: task-id=abc.123\nbody worker-zzz","title":"ignored-because-taskid-wins"},"session_id":"sess-st-17"}' >/dev/null 2>&1
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"prompt":"Report-back: task-id=abc.123\nbody worker-zzz","title":"ignored-because-taskid-wins"},"session_id":"sess-st-17"}' >/dev/null 2>&1
   if node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});process.exit(st.snapshot.nodes.some(function(n){return n.title==="abc.123"})?0:1)' "$LIB" "$sp17" 2>/dev/null; then echo "PASS: ST17 task-id= wins over worker-/title (gate priority 1)"; pass=$((pass+1)); else echo "FAIL: ST17 task-id priority not honored"; fail=$((fail+1)); fi
 
   # ST13/ST14: worktree topology — the operator runs ONE GUI server from the

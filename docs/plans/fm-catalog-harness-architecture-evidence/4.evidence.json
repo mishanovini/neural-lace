@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "task_id": "4",
+  "verdict": "PASS",
+  "commit_sha": "f241c3194fe70cfd5f55dbef8c6442b20a961580",
+  "files_modified": [
+    "docs/failure-modes.md"
+  ],
+  "mechanical_checks": {
+    "exists:docs/templates/project-failure-modes/README.md": {
+      "passed": true,
+      "detail": "docs/templates/project-failure-modes/README.md exists",
+      "command": "test -e docs/templates/project-failure-modes/README.md",
+      "exit_code": 0
+    },
+    "exists:docs/templates/project-failure-modes/failure-modes.md": {
+      "passed": true,
+      "detail": "docs/templates/project-failure-modes/failure-modes.md exists",
+      "command": "test -e docs/templates/project-failure-modes/failure-modes.md",
+      "exit_code": 0
+    },
+    "exists:docs/templates/project-failure-modes/FM-template.md": {
+      "passed": true,
+      "detail": "docs/templates/project-failure-modes/FM-template.md exists",
+      "command": "test -e docs/templates/project-failure-modes/FM-template.md",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "1 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-19T20:03:51Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/fm-catalog-harness-architecture.md"
+}

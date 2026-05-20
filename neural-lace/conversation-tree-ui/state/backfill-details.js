@@ -296,12 +296,15 @@ function selfTest() {
       ex23b && ex23b.options === null && ex23b.recommendation === null);
     // payloadFor integration: a same-repo doc resolvable via projects.js gets
     // doc-sourced instructions/context (no external project needed).
-    var selfDocRel = 'docs/plans/conv-tree-ui-v1.1.1-polish.md';
+    // Use a PERMANENT same-repo docs/ file (the decisions index is never
+    // archived/renamed — unlike plan files, which move on closure; that
+    // fragility caused a v1.1.2 B15 regression and is now designed out).
+    var selfDocRel = 'docs/DECISIONS.md';
     var pf = payloadFor({ node_id: 'nz', title: 'plan work', state: 'open', tree_id: 'neural-lace' },
-      { item_id: 'iz', text: 'see ' + selfDocRel + ' for the polish punch list' }, null);
+      { item_id: 'iz', text: 'see ' + selfDocRel + ' for the decisions index' }, null);
     ok('B15 payloadFor enriches from a resolvable same-repo doc',
-      pf.instructions != null && /conv-tree-ui-v1\.1\.1-polish\.md/.test(pf.context)
-      && pf.description === 'see ' + selfDocRel + ' for the polish punch list');
+      pf.instructions != null && /DECISIONS\.md/.test(pf.context)
+      && pf.description === 'see ' + selfDocRel + ' for the decisions index');
 
     // tree integrity: node count unchanged by the backfill (append-only)
     ok('B11 append-only: node count unchanged (1)', afterSnap.nodes.length === 1

@@ -241,7 +241,7 @@
         ]
       },
       {
-        "matcher": "mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent",
+        "matcher": "mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task",
         "hooks": [
           {
             "type": "command",
@@ -250,7 +250,7 @@
         ]
       },
       {
-        "matcher": "mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task|Task|Agent",
+        "matcher": "mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task",
         "hooks": [
           {
             "type": "command",

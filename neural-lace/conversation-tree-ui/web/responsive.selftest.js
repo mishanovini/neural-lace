@@ -196,11 +196,36 @@ ok('R39 item19 server endpoints + projects two-layer + mdRender + modal/panel',
   && /function openDocsPanel\s*\(/.test(js) && /function linkifyDocs\s*\(/.test(js)
   && /id="docModal"/.test(html) && /id="docsPanel"/.test(html) && /id="docsBtn"/.test(html));
 
-// item 20 — "promote"→"expand to branch"; event type stays `promoted`
-ok('R40 item20 expand-to-branch rename; promoted event type preserved',
-  !/promote to branch/i.test(js) && !/promoted to branch/i.test(js)
-  && /'expand to branch'/.test(js) && /'expanded to branch'/.test(js)
+// item 20 DROPPED in v1.1.2 (maintainer is fine with "promote to branch"):
+// label reverted; btn-up purple (item 22) + `promoted` event preserved.
+ok('R40 item20-dropped: "promote to branch" label retained, no "expand", promoted+btn-up kept',
+  /'promote to branch'/.test(js) && /'promoted to branch'/.test(js)
+  && !/'expand to branch'/.test(js) && !/'expanded to branch'/.test(js)
+  && /el\('button',\s*'btn-up',\s*'promote to branch'\)/.test(js)
   && /type:\s*'promoted'/.test(js));
+
+// v1.1.3 (supersedes v1.1.2 item 25, commit 5f030e1) — top-level project
+// nodes differentiated from sub-rows by a subtle whole-row background tint
+// + font-weight:700 ONLY. Identical font-family / font-size / row height as
+// sub-rows (the prior enlargement faux-bolded as a fallback face on
+// Segoe UI). Lock the new contract, not the superseded one.
+ok('R44 item25 v1.1.3 .tnode-root subtle-tint header + renderTreeNode depth-0 wiring',
+  /\.tnode-row\.tnode-root\s*\{/.test(C)
+  // MUST NOT enlarge — same row height as sub-rows is the whole point.
+  && !/\.tnode-row\.tnode-root\s*\{[^}]*font-size:/.test(C)
+  // Subtle bg tint via linear-gradient at 0.06 alpha (v1.1.3 value).
+  && /\.tnode-row\.tnode-root\s*\{[^}]*linear-gradient\(rgba\(255,255,255,0\.06\)/.test(C)
+  // Separator above each root row (with first-child override below).
+  && /\.tnode-row\.tnode-root\s*\{[^}]*border-top:\s*1px solid/.test(C)
+  // Title bold at 700, NOT 800 (Segoe UI has no real 800 face).
+  && /\.tnode-row\.tnode-root \.tnode-title\s*\{[^}]*font-weight:\s*700/.test(C)
+  && !/\.tnode-row\.tnode-root \.tnode-title\s*\{[^}]*font-weight:\s*800/.test(C)
+  // First root row drops the separator gap.
+  && /\.tree-canvas\s*>\s*\.tnode:first-child\s*>\s*\.tnode-row\.tnode-root/.test(C)
+  // JS wiring: depth-0 forest roots get the .tnode-root class.
+  && /function renderTreeNode\s*\(n,\s*kids,\s*container,\s*depth\)/.test(js)
+  && /depth\s*===\s*0\s*\?\s*' tnode-root'/.test(js)
+  && /renderTreeNode\(k,\s*kids,\s*kc,\s*depth \+ 1\)/.test(js));
 
 // item 21 — robust priority sort: execute the extracted prioRank logic
 (function () {
@@ -237,19 +262,57 @@ ok('R43 item23 backfill resolveDocPath + extractFromDoc wired into payloadFor',
   && /require\('\.\.\/config\/projects\.js'\)/.test(backfill)
   && /links\.find\(function \(l\) \{ return \/\^docs\\\//.test(backfill));
 
+// item 37 (merged via origin/master from jolly-davinci) — docs panel cross-repo
+// auto-discovery + nested collapsible tree. R45/R46/R47 retained verbatim.
+// v1.1.2 *claimed* to ship this with ZERO test proving it, and it silently
+// didn't work (flat list, neural-lace only). These assertions lock both
+// halves so the regression cannot recur unobserved.
+const projJs = fs.readFileSync(path.join(D, '..', 'config', 'projects.js'), 'utf8');
+ok('R45 item37 server: filesystem auto-discovery + worktree-pool exclusion',
+  /function discoverProjects\s*\(/.test(projJs)
+  && /function isWorktreeName\s*\(/.test(projJs)
+  && /\^\[a-z0-9\]\+-\[a-z0-9\]\+-\[0-9a-f\]\{6,\}\$/.test(projJs)
+  && /os\.homedir\(\)/.test(projJs)
+  && /claude-projects/.test(projJs));
+ok('R46 item37 UI: nested project→folder→file tree + persisted expansion',
+  /function buildDocTree\s*\(/.test(js)
+  && /function renderDocNode\s*\(/.test(js)
+  && /ctree-docs-expanded/.test(js)
+  && /localStorage\.setItem\(DOCS_EXP_KEY/.test(js)
+  && /'dp-dir'/.test(js) && /openDocModal\(projKey, file\.full\)/.test(js)
+  && /\.dp-dir\s*\{/.test(C) && /\.dp-count\s*\{/.test(C));
+// Functional guard (deterministic on any machine): the self repo is always
+// present and NO discovered key is a worktree moniker — the exact pollution
+// the v1.1.2 build would have produced had it scanned naively.
+(function () {
+  let funcOk = false;
+  try {
+    const proj = require(path.join(D, '..', 'config', 'projects.js'));
+    const listing = proj.listDocs();
+    const keys = Object.keys(listing);
+    const wt = /^[a-z0-9]+-[a-z0-9]+-[0-9a-f]{6,}$/;
+    const hasSelf = keys.indexOf('neural-lace') !== -1;
+    const noPollution = keys.every(function (k) {
+      return !k.split('/').some(function (seg) { return wt.test(seg); });
+    });
+    funcOk = hasSelf && noPollution && keys.length >= 1;
+  } catch (_) { funcOk = false; }
+  ok('R47 item37 functional: self present, zero worktree-named keys leak', funcOk);
+})();
+
 // --- v1.1.2 polish items 26/27/28 (item 25 = merged item 22, covered by R42)
-ok('R44 item26: Details toggles IN PLACE (no renderActions rebuild) + scrollIntoView nearest (no scroll reset)',
+ok('R48 item26: Details toggles IN PLACE (no renderActions rebuild) + scrollIntoView nearest (no scroll reset)',
   /disc\.addEventListener\('click', function \(\) \{[\s\S]*?li\.scrollIntoView\(\{ block: 'nearest' \}\);[\s\S]*?\}\);/.test(js)
   && /li\.querySelector\('\.li-details'\)/.test(js)
   && /li\.insertBefore\(d, disc\.nextSibling\)/.test(js)
   && /el\('button', 'ghost det-toggle',/.test(js));   // item-22 chose ghost; item 26 fixes scroll only
 
-ok('R45 item27: decision/question resolve ONLY via Respond — done button gated to kind==="action", no "mark answered"',
+ok('R49 item27: decision/question resolve ONLY via Respond — done button gated to kind==="action", no "mark answered"',
   /if \(it\.kind === 'action'\) \{\s*\n?\s*var done = el\('button', 'btn-go', 'mark done'\)/.test(js)
   && !/mark answered/.test(js)
   && /function respondable\s*\(/.test(js));
 
-ok('R46 item28: friendly Defer popover (presets + native datetime-local + to-Backlog) + item-backlogged ADDITIVE + deferred local-time fields + isWaiting excludes backlogged + SCHEMA_VERSION still 1',
+ok('R50 item28: friendly Defer popover (presets + native datetime-local + to-Backlog) + item-backlogged ADDITIVE + deferred local-time fields + isWaiting excludes backlogged + SCHEMA_VERSION still 1',
   /function openDeferPop\s*\(/.test(js)
   && /dti\.type = 'datetime-local'/.test(js)
   && /Later today \(8 PM\)/.test(js) && /Tomorrow morning \(9 AM\)/.test(js)

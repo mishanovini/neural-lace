@@ -12,6 +12,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const CFG = path.join(__dirname, 'projects.json'); // gitignored per-machine
 
@@ -22,13 +23,99 @@ function selfRepoRoot() {
   return path.resolve(__dirname, '..', '..', '..');
 }
 
+// A git-worktree / Dispatch-sandbox dir is named `<adjective>-<surname>-<hex>`
+// (Docker-style moniker, e.g. `cool-banzai-41ea8a`, `clever-lewin-8c4b2f`).
+// Dozens accumulate under the per-org worktree pools; they are ephemeral
+// build isolation, NOT projects, and must never pollute the doc browser. The
+// trailing segment is 6+ lowercase-hex; the first two are lowercase-alnum
+// words. Deliberately does NOT match ordinary repo names: 2-segment names
+// (`<word>-<word>`) have no hex tail, and longer names whose final segment
+// is not 6+ hex (e.g. ending in `-v2`) also fail — only the exact
+// three-part Docker-moniker shape with a hex suffix is treated as a pool.
+function isWorktreeName(name) {
+  return /^[a-z0-9]+-[a-z0-9]+-[0-9a-f]{6,}$/.test(name);
+}
+
+function isSkippedDir(name) {
+  if (!name || name.charAt(0) === '.') return true;       // dotfiles / .git
+  if (name === '_archived') return true;                  // archived repos
+  if (name === 'node_modules') return true;
+  if (isWorktreeName(name)) return true;                  // worktree pool
+  return false;
+}
+
+// True if some key already points at this absolute root, so an explicit
+// projects.json entry or the self/neural-lace alias is never shadowed by a
+// duplicate auto-discovered key.
+function hasRoot(map, root) {
+  const target = path.resolve(root);
+  return Object.keys(map).some(function (k) {
+    try { return path.resolve(map[k]) === target; } catch (_) { return false; }
+  });
+}
+
+// Auto-discover sibling projects: scan the parent of the conv-tree-ui repo
+// (the claude-projects root, computed at runtime — NO machine path in source)
+// two levels deep for any directory containing a `docs/` subdir. L1 keys are
+// the bare basename; L2 keys are `<parent>/<child>` so they stay unique and
+// readable. Worktree pools, `_archived`, dotdirs, node_modules are excluded so
+// the ~80 sandbox dirs never surface. Cheap: one readdir per level, a regex
+// filter before each existsSync, fully wrapped so a scan failure degrades to
+// the explicit map rather than crashing the passive read surface.
+// The projects root is `~/claude-projects` by documented convention
+// (CLAUDE.md: "Directory-based: ~/claude-projects/<org>/"). Anchoring on
+// os.homedir() (runtime-computed, NOT a committed machine path) makes
+// discovery layout-independent: it works identically whether the server runs
+// from the main checkout or from a git worktree (where selfRepoRoot() would
+// otherwise resolve into the worktree pool, one level too deep). Falls back
+// to the parent of the repo root if the conventional dir is absent.
+function projectsScanRoot() {
+  try {
+    const conv = path.join(os.homedir(), 'claude-projects');
+    if (fs.existsSync(conv) && fs.statSync(conv).isDirectory()) return conv;
+  } catch (_) { /* fall through */ }
+  return path.dirname(selfRepoRoot());
+}
+
+function discoverProjects(map) {
+  const scanRoot = projectsScanRoot();
+  let l1;
+  try { l1 = fs.readdirSync(scanRoot, { withFileTypes: true }); } catch (_) { return; }
+  l1.forEach(function (e1) {
+    if (!e1.isDirectory() || isSkippedDir(e1.name)) return;
+    const p1 = path.join(scanRoot, e1.name);
+    try {
+      if (fs.existsSync(path.join(p1, 'docs')) && !hasRoot(map, p1)) {
+        map[e1.name] = p1;
+      }
+    } catch (_) { /* ignore */ }
+    let l2;
+    try { l2 = fs.readdirSync(p1, { withFileTypes: true }); } catch (_) { return; }
+    l2.forEach(function (e2) {
+      if (!e2.isDirectory() || isSkippedDir(e2.name)) return;
+      const p2 = path.join(p1, e2.name);
+      try {
+        if (fs.existsSync(path.join(p2, 'docs')) && !hasRoot(map, p2)) {
+          map[e1.name + '/' + e2.name] = p2;
+        }
+      } catch (_) { /* ignore */ }
+    });
+  });
+}
+
 // { key: absoluteRoot }. Always includes the conv-tree-ui repo under a key
 // derived from its basename AND a stable `neural-lace` alias; the per-machine
-// projects.json adds/overrides everything else (cross-repo roots).
+// projects.json adds/overrides; filesystem auto-discovery then fills in every
+// sibling project that has a docs/ dir (worktree pools excluded).
 function loadProjects() {
   const map = {};
   const self = selfRepoRoot();
-  map[path.basename(self)] = self;
+  // Stable alias always present so same-repo docs work out of the box. The
+  // basename key is added too for readability — UNLESS the server was launched
+  // from a git worktree (selfRepoRoot() would then be `<pool>/<adjective-
+  // surname-hex>`); a worktree is not a project, so only the stable alias is
+  // kept in that case.
+  if (!isWorktreeName(path.basename(self))) map[path.basename(self)] = self;
   map['neural-lace'] = self;
   try {
     if (fs.existsSync(CFG)) {
@@ -39,6 +126,8 @@ function loadProjects() {
       });
     }
   } catch (_) { /* malformed instance config → fall back to auto-detected self */ }
+  // Explicit config + self aliases win; discovery only ADDS new roots.
+  try { discoverProjects(map); } catch (_) { /* discovery is best-effort */ }
   return map;
 }
 

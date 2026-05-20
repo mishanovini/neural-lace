@@ -60,6 +60,38 @@ Items 1–18 shipped & merged (PRs #4/#9/#10, master `301a5b7`). Misha kept live
   - 2026-05-18: neural-lace/conversation-tree-ui/config/projects.js — PR #11 item-19 project-config; inherited via merge, unmodified by v1.1.2
   - 2026-05-18: neural-lace/conversation-tree-ui/server/server.js — PR #11 item-19 docs-browser server endpoints; inherited via merge, unmodified by v1.1.2
   - 2026-05-18: neural-lace/conversation-tree-ui/state/backfill-details.js — PR #11 item-23 backfill (the B15-failing file, NL-FINDING-012); inherited via merge byte-identical, unmodified by v1.1.2
+- 2026-05-19: Misha reaffirmed v1.1.2 scope expansion to items 25–39 ("Keep driving"); items 25, 37 already shipped on master via parallel sessions (PR #11 item 22 / PR #15 docs nested-tree + B15 fix) and are SKIPPED locally; net-new = items 26–36, 38–39. Second `git merge origin/master` (now `6a7f20d`+) brings additional parallel-session work inherited byte-identical, NOT v1.1.2 changes (the same merge/union-of-plans edge — gate-respect.md PR #197 class + ADR-030; remediation Option 1 applied, NOT `--no-verify`):
+  - 2026-05-19: .github/scripts/validate-pr-template.sh — parallel-session pr-template-check fix; inherited via merge
+  - 2026-05-19: .github/workflows/pr-template-check.yml — parallel-session pr-template-check fix; inherited via merge
+  - 2026-05-19: adapters/claude-code/CLAUDE.md — parallel-session harness doc updates; inherited via merge
+  - 2026-05-19: adapters/claude-code/hooks/conversation-tree-emit.sh — parallel-session conv-tree-emit improvements; inherited via merge
+  - 2026-05-19: adapters/claude-code/hooks/conversation-tree-state-gate.sh — parallel-session gate updates; inherited via merge
+  - 2026-05-19: adapters/claude-code/hooks/conversation-tree-stop-gate.sh — parallel-session gate updates; inherited via merge
+  - 2026-05-19: adapters/claude-code/rules/conversation-tree-state.md — parallel-session rule updates; inherited via merge
+  - 2026-05-19: adapters/claude-code/rules/diagnosis.md — parallel-session rule updates; inherited via merge
+  - 2026-05-19: adapters/claude-code/settings.json.template — parallel-session settings updates; inherited via merge
+  - 2026-05-19: build-doctrine/doctrine/08-project-bootstrapping.md — parallel-session doctrine; inherited via merge
+  - 2026-05-19: docs/DECISIONS.md — parallel-session decisions-index updates (ADR 033/034); inherited via merge
+  - 2026-05-19: docs/conventions/failure-mode-catalogs.md — parallel-session FM-catalog convention; inherited via merge
+  - 2026-05-19: docs/decisions/031-conversation-tree-ui-architecture.md — parallel-session ADR-031 revision; inherited via merge
+  - 2026-05-19: docs/decisions/032-conversation-tree-state-schema.md — parallel-session ADR-032 revision; inherited via merge
+  - 2026-05-19: docs/decisions/033-failure-mode-catalog-cross-project-convention.md — parallel-session new ADR; inherited via merge
+  - 2026-05-19: docs/decisions/034-conversation-tree-scope-dispatch-only.md — parallel-session new ADR; inherited via merge
+  - 2026-05-19: docs/failure-modes.md — parallel-session FM-catalog updates; inherited via merge
+  - 2026-05-19: docs/harness-architecture.md — parallel-session architecture-doc updates; inherited via merge
+  - 2026-05-19: docs/plans/archive/conv-tree-ui-v1.1.2-polish.md — the OTHER parallel-session v1.1.2 plan (PR #13, jolly-davinci), inherited via merge as archived (NL-FINDING-013 collision)
+  - 2026-05-19: docs/plans/archive/conv-tree-ui-v1.1.2-polish-evidence.md — companion evidence for the OTHER v1.1.2 plan; inherited via merge as archived
+  - 2026-05-19: docs/plans/fm-catalog-harness-architecture-evidence/1.evidence.json — parallel-session plan evidence; inherited via merge
+  - 2026-05-19: docs/plans/fm-catalog-harness-architecture-evidence/2.evidence.json — parallel-session plan evidence; inherited via merge
+  - 2026-05-19: docs/plans/fm-catalog-harness-architecture-evidence/3.evidence.json — parallel-session plan evidence; inherited via merge
+  - 2026-05-19: docs/plans/fm-catalog-harness-architecture-evidence/4.evidence.json — parallel-session plan evidence; inherited via merge
+  - 2026-05-19: docs/plans/fm-catalog-harness-architecture-evidence/5.evidence.json — parallel-session plan evidence; inherited via merge
+  - 2026-05-19: docs/plans/fm-catalog-harness-architecture-evidence/6.evidence.json — parallel-session plan evidence; inherited via merge
+  - 2026-05-19: docs/plans/fm-catalog-harness-architecture-evidence/7.evidence.json — parallel-session plan evidence; inherited via merge
+  - 2026-05-19: docs/templates/project-failure-modes/FM-template.md — parallel-session FM-catalog template; inherited via merge
+  - 2026-05-19: docs/templates/project-failure-modes/failure-modes.md — parallel-session FM-catalog template; inherited via merge
+  - 2026-05-19: docs/templates/project-failure-modes/README.md — parallel-session FM-catalog template README; inherited via merge
+  - 2026-05-19: docs/proposals/fm-catalog-auto-search-harness-integration.md — parallel-session proposal doc; inherited via merge
 
 ## Assumptions
 - The spec's button palette (commit #22C55E, caution #F59E0B, util #3B82F6, elevate #A855F7, destruct #B91C1C, neutral #475569) is used verbatim; white text on all except caution (dark text on amber for contrast) per harness UX contrast standard. Verified per-class via computed-style.

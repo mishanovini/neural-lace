@@ -190,7 +190,7 @@ Four highest-leverage agent prompts (`task-verifier`, `code-reviewer`, `plan-pha
 - `planning.md` — task planning, mid-build decisions, completion reports, decision records, session history
 - `testing.md` — test discipline, E2E, pre-commit review, UX validation, deployment validation, purpose validation
 - `vaporware-prevention.md` — Gen 4-6 enforcement map (hook-backed anti-vaporware) + Build Doctrine extensions
-- `diagnosis.md` — exhaustive diagnosis before fixing, full-chain tracing, "Fix the Class, Not the Instance" sub-rule
+- `diagnosis.md` — exhaustive diagnosis before fixing, full-chain tracing, the investigation-first Failure-Mode-catalog reflex (grep `docs/failure-modes.md` before forming a hypothesis), "Fix the Class, Not the Instance" sub-rule. Cross-project FM-catalog standard: `docs/conventions/failure-mode-catalogs.md` (Decision 033)
 - `discovery-protocol.md` — proactive capture-and-decide for mid-process learnings (Build Doctrine)
 - `comprehension-gate.md` — articulate-before-checkbox-flip at plan rung >= 2 (Build Doctrine)
 - `prd-validity.md` + `spec-freeze.md` — plan-PRD link requirement + frozen-spec-before-edit gate (Build Doctrine)
