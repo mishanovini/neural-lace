@@ -147,11 +147,13 @@ const server = fs.readFileSync(path.join(D, '..', 'server', 'server.js'), 'utf8'
 const backfill = fs.readFileSync(path.join(D, '..', 'state', 'backfill-details.js'), 'utf8');
 
 // item 14 — type-colour palette: 3 vars + filled badge + per-card accent/tint
-ok('R34 item14 type palette vars + filled .li-kind + .li.kind-* accent/tint',
+// R34 updated by v1.1.2 item 36: .li-kind is now a SUBDUED TAG (tinted bg +
+// type-color text), no longer a solid filled badge. The .li.kind-* card
+// accent/tint via border-left remains. Item 36's contract is locked by R56.
+ok('R34 item14 type palette vars present + .li.kind-* card accent/tint (item-36 .li-kind contract locked by R56)',
   /--type-action:\s*#ef4444/i.test(C) && /--type-decision:\s*#f59e0b/i.test(C)
   && /--type-question:\s*#3b82f6/i.test(C)
-  && /\.li-kind\.action\s*\{\s*background:\s*var\(--type-action\)/.test(C)
-  && /\.li\.kind-action\s*\{\s*border-left:\s*5px solid var\(--type-action\)/.test(C)
+  && /\.li\.kind-action\s*\{[^}]*border-left:\s*5px solid var\(--type-action\)/.test(C)
   && /'li kind-' \+ it\.kind/.test(js));
 
 // item 15 — title flex:1 + fixed-width icon jump button (text crumb removed)
@@ -327,6 +329,72 @@ ok('R50 item28: friendly Defer popover (presets + native datetime-local + to-Bac
   && /it\.scheduled_for_local = String\(ev\.scheduled_for_local\)/.test(reducer)
   && /it\.tz_offset_min = Number\(ev\.tz_offset_min\)/.test(reducer)
   && /const SCHEMA_VERSION\s*=\s*1\s*;/.test(schema));
+
+// --- v1.1.2 polish items 29–39 (item 37 = master's R45-R47; item 32 covered
+//     by the conv-tree-read.sh --self-test 37/37; item 34 by backfill-priorities.js --self-test)
+ok('R51 item29: branch-group headers in WOU when sort=node (\'branch\') — .wou-group-header + crumb-change detection',
+  /\.wou-group-header\s*\{/.test(C)
+  && /var groupBy = actionsSort\.value === 'node'/.test(js)
+  && /el\('div', 'wou-group-header'\)/.test(js));
+
+ok('R52 item30: priority sort dropdown option + priority sort branch (effectivePrio + typeRank fallback + recency)',
+  /<option value="priority">priority<\/option>/.test(html)
+  && /function effectivePrio\s*\(/.test(js)
+  && /function typeRank\s*\(/.test(js)
+  && /if \(mode === 'priority'\)/.test(js));
+
+ok('R53 item31: type-color on description in details modal (CSS descendant selector on .li.kind-* .li-details .det-row:first-child .det-v)',
+  /\.li\.kind-action\s+\.li-details\s+\.det-row:first-child\s+\.det-v\s*\{[^}]*var\(--type-action\)/.test(C)
+  && /\.li\.kind-decision\s+\.li-details\s+\.det-row:first-child\s+\.det-v\s*\{[^}]*var\(--type-decision\)/.test(C)
+  && /\.li\.kind-question\s+\.li-details\s+\.det-row:first-child\s+\.det-v\s*\{[^}]*var\(--type-question\)/.test(C));
+
+ok('R54 items33+34: priority-assignment popover + P-badge UI + priority-assigned event wired',
+  /function openPrioPop\s*\(/.test(js)
+  && /type: 'priority-assigned'/.test(js)
+  && /\.p-badge\.p1\s*\{/.test(C) && /\.p-badge\.p2\s*\{/.test(C)
+  && /\.p-badge\.p3\s*\{/.test(C) && /\.p-badge\.p4\s*\{/.test(C)
+  && /el\('span', 'p-badge p' \+ ep, 'P' \+ ep\)/.test(js)
+  && /el\('button', 'prio-assign btn-neutral outline', '⚑'\)/.test(js)
+  && /'priority-assigned'/.test(schema)
+  && /'priority-assigned':\s*\['target_id',\s*'priority'\]/.test(schema)
+  && /case 'priority-assigned'/.test(reducer));
+
+ok('R55 item35: Staged Note IS a message channel — drop "NOT A MESSAGE CHANNEL" warning + add Send to Dispatch button emitting branch-note-add + reducer notes_sent history + last_sent_note indicator',
+  !/not a message channel/i.test(js)
+  && /el\('button', 'btn-go', 'Send to Dispatch'\)/.test(js)
+  && /type: 'branch-note-add'/.test(js)
+  && /'branch-note-add'/.test(schema)
+  && /'branch-note-add':\s*\['target',\s*'note_text'\]/.test(schema)
+  && /case 'branch-note-add'/.test(reducer)
+  && /node\.notes_sent = node\.notes_sent \|\| \[\]/.test(reducer)
+  && /last_sent_note/.test(reducer));
+
+ok('R56 item36: type label is SUBDUED TAG (tinted bg ~22%, type-color text, smaller font, no hover/pointer) — NOT a solid filled button',
+  /\.li-kind \{[^}]*font-size:\s*0\.62rem/.test(C)
+  && /\.li-kind \{[^}]*cursor:\s*default/.test(C)
+  && /\.li-kind\.action\s*\{[^}]*rgba\(239,68,68,0\.22\)/.test(C)
+  && /\.li-kind\.action\s*\{[^}]*color:\s*var\(--type-action\)/.test(C)
+  && /\.li-kind\.decision\s*\{[^}]*rgba\(245,158,11,0\.22\)/.test(C)
+  && /\.li-kind\.question\s*\{[^}]*rgba\(59,130,246,0\.22\)/.test(C));
+
+ok('R57 item38: doc preview is a resizable RIGHT side pane (NOT a centered modal) + shrinks #layout via margin-right + resize handle persists width',
+  /#docModal \{[^}]*right:\s*0/.test(C)
+  && /#docModal \{[^}]*width:\s*var\(--doc-pane-w/.test(C)
+  && /\.doc-resize \{[^}]*cursor:\s*ew-resize/.test(C)
+  && /body\[data-doc-pane="open"\] #layout \{[^}]*margin-right:\s*var\(--doc-pane-w/.test(C)
+  && /function ensureDocResizeHandle\s*\(/.test(js)
+  && /document\.body\.dataset\.docPane = 'open'/.test(js)
+  && /DOC_PANE_W_KEY/.test(js)
+  && !/top:\s*4vh;\s*left:\s*50%/.test(C));   // old centered-modal positioning gone
+
+ok('R58 item39: 50%-opacity button TRIAL (rgba ~0.50 backgrounds + brighter saturated text + hover brightness)',
+  /\.btn-go\s*\{[^}]*rgba\(34,197,94,0\.50\)/.test(C)
+  && /\.btn-wait\s*\{[^}]*rgba\(245,158,11,0\.50\)/.test(C)
+  && /\.btn-info\s*\{[^}]*rgba\(59,130,246,0\.50\)/.test(C)
+  && /\.btn-up\s*\{[^}]*rgba\(168,85,247,0\.50\)/.test(C)
+  && /\.btn-del\s*\{[^}]*rgba\(185,28,28,0\.50\)/.test(C)
+  && /\.btn-neutral\s*\{[^}]*rgba\(71,85,105,0\.50\)/.test(C)
+  && /:hover[^{]*\{[^}]*filter:\s*brightness\(1\.15\)/.test(C));
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

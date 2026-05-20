@@ -337,6 +337,38 @@ function applyEvent(snap, ev, treeId) {
       it.backlogged = true;
       return;
     }
+    // v1.1.2 items 33+34 — priority assignment on any item (actions on a
+    // node OR backlog entries) by `target_id`. P1..P5 integer; P5 = default
+    // unassigned (display: no badge). Last-writer-wins; same target_id
+    // re-emission is idempotent. Both GUI (actor='gui') and Dispatch
+    // (actor='dispatch') can assign — same event shape, actor differs.
+    case 'priority-assigned': {
+      const p = Number(ev.priority);
+      if (!(p >= 1 && p <= 5)) { reject(snap, ev, 'priority must be integer 1..5'); return; }
+      // Resolve target: node item first, then backlog entry.
+      for (const node of snap.nodes) {
+        const it = findItem(node, ev.target_id);
+        if (it) { it.priority = p; return; }
+      }
+      for (const b of snap.backlog) {
+        if (b.item_id === ev.target_id) { b.priority_num = p; return; }
+      }
+      reject(snap, ev, 'priority-assigned target_id does not resolve');
+      return;
+    }
+    // v1.1.2 item 35 — explicit "Send to Dispatch" of a staged note.
+    // Appends to the node's notes_sent history (preserves audit trail);
+    // exposes last_sent_note for the GUI's ✓-sent indicator. The reader
+    // hook surfaces these events to Dispatch (additive filter).
+    case 'branch-note-add': {
+      const node = findNode(snap, ev.target);
+      if (!node) { reject(snap, ev, 'branch-note-add target does not resolve'); return; }
+      node.notes_sent = node.notes_sent || [];
+      const entry = { text: String(ev.note_text), ts: ev.ts, actor: ev.actor };
+      node.notes_sent.push(entry);
+      node.last_sent_note = entry;          // GUI badge target
+      return;
+    }
     default:
       // §1 forward-tolerance: unknown type within the same major is skipped,
       // never an error, never a major bump.

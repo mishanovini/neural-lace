@@ -310,12 +310,44 @@
   // item 19: open one doc inline (rendered markdown). projectKey defaults to
   // the active tree (the project tag); the server resolves it cross-repo.
   var curDoc = null;
+  // v1.1.2 item 38 — doc preview is a resizable RIGHT side pane (not a centred
+  // modal); persists width across opens; rest of GUI stays interactive.
+  var DOC_PANE_W_KEY = 'ctree-doc-pane-w';
+  function applyDocPaneWidth() {
+    var stored = localStorage.getItem(DOC_PANE_W_KEY);
+    var w = stored && /^\d+px$/.test(stored) ? stored : '32rem';
+    document.documentElement.style.setProperty('--doc-pane-w', w);
+  }
+  applyDocPaneWidth();
+  function ensureDocResizeHandle() {
+    if (!docModal || docModal.querySelector('.doc-resize')) return;
+    var h = el('div', 'doc-resize'); h.title = 'drag to resize';
+    docModal.appendChild(h);
+    h.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+      function onMove(ev) {
+        var w = Math.max(240, Math.min(window.innerWidth * 0.90, window.innerWidth - ev.clientX));
+        var px = Math.round(w) + 'px';
+        document.documentElement.style.setProperty('--doc-pane-w', px);
+        localStorage.setItem(DOC_PANE_W_KEY, px);
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
   function openDocModal(project, relPath) {
     project = project || activeTree;
     curDoc = { project: project, path: relPath };
     docTitle.textContent = project + ' › ' + relPath;
     docBody.innerHTML = '<p class="muted">Loading…</p>';
-    docModal.hidden = false; docScrim.hidden = false;
+    docModal.hidden = false;
+    document.body.dataset.docPane = 'open';        // item 38: shrink #layout
+    docScrim.hidden = true;                        // no scrim for side pane (rest of GUI interactive)
+    ensureDocResizeHandle();
     fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(relPath))
       .then(function (r) { return r.json(); })
       .then(function (j) {
@@ -324,7 +356,10 @@
       })
       .catch(function () { docBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
   }
-  function closeDocModal() { docModal.hidden = true; docScrim.hidden = true; curDoc = null; }
+  function closeDocModal() {
+    docModal.hidden = true; docScrim.hidden = true; curDoc = null;
+    delete document.body.dataset.docPane;
+  }
   // item 19: linkify any docs/…(.md) token inside a text node into a clickable
   // .doc-link button (so doc references in item text/details are not dead text).
   var DOCRE = /docs\/[A-Za-z0-9._\/-]+\.md|docs\/[A-Za-z0-9._\/-]+/g;
@@ -719,6 +754,13 @@
     });
     return out;
   }
+  // v1.1.2 items 30+33: priority sort with type-intrinsic + recency fallback.
+  // P1=1 best, P5=5 (unassigned) worst. Within same priority: type-intrinsic
+  // urgency (action > decision > question) — Misha's rule: action="must do",
+  // decision="needs judgment", question="needs info". Within same type:
+  // recency, newest first (item_id is ULID-ish → reverse-lex).
+  function typeRank(k) { return k === 'action' ? 1 : k === 'decision' ? 2 : k === 'question' ? 3 : 9; }
+  function effectivePrio(it) { var p = Number(it && it.priority); return (p >= 1 && p <= 5) ? p : 5; }
   function sortActions(arr) {
     var mode = actionsSort.value;
     if (mode === 'manual') {
@@ -727,11 +769,54 @@
     }
     var c = arr.slice();
     c.sort(function (a, b) {
+      if (mode === 'priority') {
+        var pa = effectivePrio(a.it), pb = effectivePrio(b.it);
+        if (pa !== pb) return pa - pb;                           // P1..P5 ascending
+        var ta = typeRank(a.it.kind), tb = typeRank(b.it.kind);
+        if (ta !== tb) return ta - tb;                           // action > decision > question
+        return a.it.item_id < b.it.item_id ? 1                   // newest first (reverse-lex on ULID-ish id)
+             : a.it.item_id > b.it.item_id ? -1 : 0;
+      }
       if (mode === 'deferred') return (a.it.deferred ? 1 : 0) - (b.it.deferred ? 1 : 0);
       if (mode === 'node') return crumb(a.n.node_id).localeCompare(crumb(b.n.node_id));
       return a.it.kind.localeCompare(b.it.kind); // 'kind' default
     });
     return c;
+  }
+
+  // v1.1.2 item 33 — priority assignment popover (P1..P5; P5 = clear).
+  // Emits a `priority-assigned` event with actor=gui. One open at a time.
+  function closePrioPop() {
+    var p = document.querySelector('.prio-pop');
+    if (p) p.remove();
+    document.removeEventListener('keydown', prioEsc, true);
+    document.removeEventListener('click', prioOutside, true);
+  }
+  function prioEsc(e) { if (e.key === 'Escape') closePrioPop(); }
+  function prioOutside(e) {
+    var p = document.querySelector('.prio-pop');
+    if (p && !p.contains(e.target) && !(e.target.classList && e.target.classList.contains('prio-assign'))) closePrioPop();
+  }
+  function openPrioPop(anchorLi, targetId) {
+    closePrioPop();
+    var pop = el('div', 'prio-pop');
+    var row = el('div', 'pp-row');
+    [1, 2, 3, 4, 5].forEach(function (p) {
+      var label = (p === 5) ? 'Clear / unassigned' : 'P' + p;
+      var cls = (p === 5) ? 'btn-neutral outline' : 'p-badge p' + p;
+      var b = el('button', cls, label);
+      b.addEventListener('click', function () {
+        closePrioPop();
+        post({ type: 'priority-assigned', target_id: targetId, priority: p }, p === 5 ? 'priority cleared' : 'priority P' + p + ' set');
+      });
+      row.appendChild(b);
+    });
+    pop.appendChild(row);
+    anchorLi.appendChild(pop);
+    setTimeout(function () {
+      document.addEventListener('keydown', prioEsc, true);
+      document.addEventListener('click', prioOutside, true);
+    }, 0);
   }
   function renderActions() {
     if (!loaded) { paneState(actionsState, actionsBody, 'loading'); return; }
@@ -748,8 +833,23 @@
     var dN = diffNewIds(entries.map(function (e) { return e.it.item_id; }), seenActionIds, 'a');
     newActionIds = dN.fresh;
     if (dN.count) { newActionsCount += dN.count; updateNewBadges(); }
+    // v1.1.2 item 29 — branch-group headers (only when sort=branch).
+    // Insert a header div above each contiguous group of items sharing the
+    // same crumb (full branch path). Style consistent with .tnode-root.
+    var groupBy = actionsSort.value === 'node';
+    var lastGroup = null;
     entries.forEach(function (en, ix) {
       var n = en.n, it = en.it;
+      if (groupBy) {
+        var cur = crumb(n.node_id);
+        if (cur !== lastGroup) {
+          var hdr = el('div', 'wou-group-header');
+          // Render the breadcrumb with subtle '›' separators (matches existing crumb format).
+          hdr.textContent = cur;
+          actionsBody.appendChild(hdr);
+          lastGroup = cur;
+        }
+      }
       // item 14: kind-<k> drives the type-colour accent/tint. item 17: .hl
       // when this item is the active selection (bidirectional highlight).
       var li = el('div', 'li kind-' + it.kind + (it.contested ? ' contested' : '')
@@ -762,6 +862,19 @@
       var top = el('div', 'li-top');
       top.appendChild(el('span', 'li-kind ' + it.kind, it.kind));
       top.appendChild(el('span', 'li-text', it.text));   // item 15: flex:1, owns row width
+      // v1.1.2 items 33+34 — P-badge (P1..P4 visible; P5 = unassigned, no badge)
+      var ep = effectivePrio(it);
+      if (ep >= 1 && ep <= 4) {
+        top.appendChild(el('span', 'p-badge p' + ep, 'P' + ep));
+      }
+      // v1.1.2 item 33 — "Assign priority" affordance (small flag) opens popover
+      var assignBtn = el('button', 'prio-assign btn-neutral outline', '⚑');
+      assignBtn.title = 'Assign priority (P1–P5; P5 = unassigned)';
+      assignBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openPrioPop(li, it.item_id);
+      });
+      top.appendChild(assignBtn);
       if (it.deferred) {
         var d = el('span', 'badge deferred', 'deferred' + (it.scheduled_for ? ' · ' + fmtTime(it.scheduled_for) : ''));
         top.appendChild(d);
@@ -1075,6 +1188,15 @@
       var top = el('div', 'li-top');
       top.appendChild(el('span', 'prio ' + b.priority, b.priority));
       top.appendChild(el('span', 'li-text', b.text));
+      // v1.1.2 items 33+34 — numeric P-badge from priority-assigned events
+      // (separate from the legacy text priority high/medium/low). Visible only
+      // when P1..P4; P5/unassigned shows no extra badge.
+      var bp = Number(b.priority_num);
+      if (bp >= 1 && bp <= 4) top.appendChild(el('span', 'p-badge p' + bp, 'P' + bp));
+      var bAssign = el('button', 'prio-assign btn-neutral outline', '⚑');
+      bAssign.title = 'Assign numeric priority (P1–P5; P5 = unassigned)';
+      bAssign.addEventListener('click', function (e) { e.stopPropagation(); openPrioPop(li, b.item_id); });
+      top.appendChild(bAssign);
       if (b.activated) top.appendChild(el('span', 'badge', 'activated ✓'));
       li.appendChild(top);
       if (b.context_refs && b.context_refs.length) {
@@ -1307,17 +1429,51 @@
     s4.appendChild(document.createElement('br')); s4.appendChild(addL);
     body.appendChild(s4);
 
-    // D4 per-branch draft (a STAGED note to paste into Dispatch — BF-1; no
-    // send/compose affordance). Live-persist to localStorage (best-effort,
-    // NFR-1); "stage" persists to state; "mark used" clears.
-    var s5 = el('div', 'ctx-sec'); s5.appendChild(el('h4', null, 'Staged note (paste into Dispatch — not a message channel)'));
+    // v1.1.2 item 35 — Staged Note IS now a real (opt-in) message-relay
+    // channel (the v1.1 reader hook surfaces branch-note-add events to
+    // Dispatch on the next prompt). Keep the scratchpad: "stage and save"
+    // still works for in-progress thoughts. The old warning label is dropped
+    // (no longer accurate now that the reader is live). Add explicit
+    // "Send to Dispatch" button (emits branch-note-add).
+    var s5 = el('div', 'ctx-sec'); s5.appendChild(el('h4', null, 'Staged note · send to Dispatch'));
     var ta = el('textarea', 'draft-area');
     ta.value = (localStorage.getItem('ctree-draft-' + id) != null)
       ? localStorage.getItem('ctree-draft-' + id) : (n.draft || '');
     ta.addEventListener('input', function () { localStorage.setItem('ctree-draft-' + id, ta.value); });
     s5.appendChild(ta);
+    // "✓ sent at <ts>" indicator (item 35) — shows the most recent send for
+    // this branch if any. Misha can amend + Send again; latest is what the
+    // reader surfaces on the next Dispatch turn.
+    if (n.last_sent_note) {
+      var sentInd = el('div', 'muted');
+      sentInd.textContent = '✓ last sent at ' + fmtTime(n.last_sent_note.ts);
+      sentInd.style.fontSize = '0.72rem';
+      s5.appendChild(sentInd);
+    }
     var dr = el('div', 'row');
-    var stage = el('button', 'btn-info', 'stage (persist)');
+    var send = el('button', 'btn-go', 'Send to Dispatch');
+    send.title = 'Emit a branch-note-add event — the reader hook surfaces it to the orchestrator on the next Dispatch turn.';
+    // "Clear after send" checkbox (default unchecked per spec — keeps note visible).
+    var clearLbl = el('label');
+    clearLbl.style.fontSize = '0.72rem'; clearLbl.style.display = 'flex';
+    clearLbl.style.alignItems = 'center'; clearLbl.style.gap = '0.25rem';
+    var clearCb = el('input'); clearCb.type = 'checkbox';
+    clearLbl.appendChild(clearCb); clearLbl.appendChild(document.createTextNode(' clear after send'));
+    send.addEventListener('click', function () {
+      var txt = (ta.value || '').trim();
+      if (!txt) { ta.focus(); return; }
+      post({ type: 'branch-note-add', target: id, note_text: txt }, 'sent to Dispatch')
+        .then(function (ok) {
+          if (!ok) return;
+          if (clearCb.checked) {
+            localStorage.removeItem('ctree-draft-' + id);
+            ta.value = '';
+            post({ type: 'draft-cleared', node_id: id }, null, true);
+          }
+        });
+    });
+    var stage = el('button', 'btn-info', 'stage (save draft)');
+    stage.title = 'Persist the staged note WITHOUT sending — useful for in-progress thoughts.';
     stage.addEventListener('click', function () { post({ type: 'draft-saved', node_id: id, draft_text: ta.value }, 'note staged'); });
     var copyD = el('button', 'btn-info outline', '⧉ copy');
     copyD.addEventListener('click', function () { copyHandoff(n.title, [ta.value], id); });
@@ -1326,7 +1482,7 @@
       localStorage.removeItem('ctree-draft-' + id);
       post({ type: 'draft-cleared', node_id: id }, 'note cleared');
     });
-    dr.appendChild(stage); dr.appendChild(copyD); dr.appendChild(used);
+    dr.appendChild(send); dr.appendChild(clearLbl); dr.appendChild(stage); dr.appendChild(copyD); dr.appendChild(used);
     s5.appendChild(dr);
     body.appendChild(s5);
 

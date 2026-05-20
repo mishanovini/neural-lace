@@ -55,6 +55,12 @@ const EVENT_TYPES = Object.freeze([
   // unaffected. Parks an item out of "Waiting on you" without checking it
   // (NOT a quiet-resolve); the Backlog "Activate" button is the return path.
   'item-backlogged',
+  // v1.1.2 items 33+34+35 — ADDITIVE within schema major 1 (same precedent
+  // as the v1.1-ux trio + item 28's item-backlogged). All three are
+  // last-writer-wins on the target's optional fields; reducer treats
+  // re-emission for the same target as idempotent.
+  'priority-assigned',          // item 33+34: P1–P5 on action/decision/question/backlog
+  'branch-note-add',            // item 35: explicit "Send to Dispatch" send of a staged note
 ]);
 
 // §2 — per-event required fields IN ADDITION TO the envelope
@@ -94,6 +100,9 @@ const EVENT_REQUIRED_FIELDS = Object.freeze({
   // for unambiguous local re-display — those are NOT added here (optional, no
   // contract change). `item-backlogged` requires only the item locator.
   'item-backlogged': ['node_id', 'item_id'],
+  // v1.1.2 items 33+34+35
+  'priority-assigned': ['target_id', 'priority'],   // P1=1..P5=5; both GUI and Dispatch emit (actor differs)
+  'branch-note-add':   ['target', 'note_text'],     // explicit Send of a staged note to Dispatch (target=node_id)
 });
 
 const ACTORS = Object.freeze(['dispatch', 'gui']);

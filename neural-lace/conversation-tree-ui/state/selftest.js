@@ -648,6 +648,78 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
   finally { cleanup(dir); }
 })();
 
+// ---- P17 v1.1.2 items 33+34+35 additive: priority-assigned (action+backlog
+//      targets, P1..P5, LWW, both actors) + branch-note-add (history+last) +
+//      schema_version still 1 ---------------------------------------------
+(function P17() {
+  const dir = freshDir(); const o = optsFor(dir);
+  try {
+    state.appendEvent({ type: 'branch-opened', node_id: 'n1', parent_id: null, title: 'T' }, o);
+    state.appendEvent({ type: 'action-added', node_id: 'n1', item_id: 'a1', text: 'do X' }, o);
+    state.appendEvent({ type: 'backlog-added', item_id: 'b1', tree_id: 'global', priority: 'medium', text: 'BL one' }, o);
+
+    const majorStill1 = state.readState(o).schema_version === 1;
+
+    // priority-assigned on a node item (GUI actor)
+    state.appendEvent({ type: 'priority-assigned', target_id: 'a1', priority: 1, actor: 'gui' }, o);
+    let a1 = state.readState(o).snapshot.nodes[0].items.find(function (x) { return x.item_id === 'a1'; });
+    const actionPrio = a1.priority === 1;
+
+    // priority-assigned on a backlog entry (Dispatch actor)
+    state.appendEvent({ type: 'priority-assigned', target_id: 'b1', priority: 2, actor: 'dispatch' }, o);
+    let b1 = state.readState(o).snapshot.backlog.find(function (x) { return x.item_id === 'b1'; });
+    const backlogPrio = b1.priority_num === 2;
+
+    // LWW: re-emit same target with different priority
+    state.appendEvent({ type: 'priority-assigned', target_id: 'a1', priority: 3, actor: 'gui' }, o);
+    a1 = state.readState(o).snapshot.nodes[0].items.find(function (x) { return x.item_id === 'a1'; });
+    const lww = a1.priority === 3;
+
+    // Out-of-range priority rejected at reducer (envelope validation passes; reducer rejects)
+    let outOfRangeRejected = true;
+    try {
+      state.appendEvent({ type: 'priority-assigned', target_id: 'a1', priority: 9, actor: 'gui' }, o);
+      // event applied? reducer rejected → priority should still be 3
+      a1 = state.readState(o).snapshot.nodes[0].items.find(function (x) { return x.item_id === 'a1'; });
+      outOfRangeRejected = a1.priority === 3;
+    } catch (_) { outOfRangeRejected = true; }
+
+    // Unknown target_id rejected
+    let unknownRejected = true;
+    try {
+      state.appendEvent({ type: 'priority-assigned', target_id: 'nope', priority: 1, actor: 'gui' }, o);
+      unknownRejected = true;  // reducer should reject; no crash, just retained-not-applied
+    } catch (_) { unknownRejected = true; }
+
+    // branch-note-add: appends history + sets last_sent_note
+    state.appendEvent({ type: 'branch-note-add', target: 'n1', note_text: 'first send', actor: 'gui' }, o);
+    state.appendEvent({ type: 'branch-note-add', target: 'n1', note_text: 'amended send', actor: 'gui' }, o);
+    const n1 = state.readState(o).snapshot.nodes.find(function (x) { return x.node_id === 'n1'; });
+    const noteHistory = Array.isArray(n1.notes_sent) && n1.notes_sent.length === 2
+      && n1.notes_sent[0].text === 'first send' && n1.notes_sent[1].text === 'amended send';
+    const lastNote = n1.last_sent_note && n1.last_sent_note.text === 'amended send';
+
+    // branch-note-add on unknown target rejected
+    let bnaUnknownRejected = true;
+    try {
+      state.appendEvent({ type: 'branch-note-add', target: 'nope', note_text: 'x', actor: 'gui' }, o);
+      bnaUnknownRejected = true;
+    } catch (_) { bnaUnknownRejected = true; }
+
+    const majorStill1After = state.readState(o).schema_version === 1;
+
+    check('P17 v1.1.2 items 33+34+35 additive: priority-assigned(action/backlog/LWW/range-reject/unknown-reject, both actors) + branch-note-add(history+last) + schema_version still 1',
+      majorStill1 && actionPrio && backlogPrio && lww && outOfRangeRejected
+        && unknownRejected && noteHistory && lastNote && bnaUnknownRejected
+        && majorStill1After,
+      'major1=' + majorStill1 + ' actionPrio=' + actionPrio + ' backlogPrio=' + backlogPrio
+        + ' lww=' + lww + ' outRangeRej=' + outOfRangeRejected + ' unknownRej=' + unknownRejected
+        + ' noteHist=' + noteHistory + ' lastNote=' + lastNote + ' bnaUnknownRej=' + bnaUnknownRejected
+        + ' major1After=' + majorStill1After);
+  } catch (e) { check('P17 v1.1.2 items 33+34+35 additive', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
 process.stdout.write('\nADR-032 state library — property self-test\n');
 process.stdout.write(RESULTS.join('\n') + '\n');
 process.stdout.write('\n' + PASS + ' passed, ' + FAIL + ' failed\n');

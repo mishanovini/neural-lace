@@ -65,8 +65,9 @@
         <div class="pane-head">
           <span class="pane-title">Waiting on you</span>
           <span id="actionsNewBadge" class="new-badge" aria-live="polite" hidden></span>
-          <label class="sortlbl">sort
+          <label class="sortlbl" title="priority: explicit P1-P5 first; within same priority falls back to type-intrinsic urgency (action > decision > question) then recency. P5 always at bottom.">sort
             <select id="actionsSort" aria-label="sort actions">
+              <option value="priority">priority</option>
               <option value="kind">kind</option>
               <option value="node">branch</option>
               <option value="deferred">deferred last</option>
