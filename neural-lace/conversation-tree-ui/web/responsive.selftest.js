@@ -206,19 +206,21 @@ ok('R40 item20-dropped: "promote to branch" label retained, no "expand", promote
   && /el\('button',\s*'btn-up',\s*'promote to branch'\)/.test(js)
   && /type:\s*'promoted'/.test(js));
 
-// v1.1.3 (supersedes v1.1.2 item 25, commit 5f030e1) — top-level project
-// nodes differentiated from sub-rows by a subtle whole-row background tint
-// + font-weight:700 ONLY. Identical font-family / font-size / row height as
-// sub-rows (the prior enlargement faux-bolded as a fallback face on
-// Segoe UI). Lock the new contract, not the superseded one.
-ok('R44 item25 v1.1.3 .tnode-root subtle-tint header + renderTreeNode depth-0 wiring',
+// v1.1.4 (supersedes v1.1.3 subtle-tint) — top-level project/repo nodes are
+// differentiated from sub-rows by a CLEARLY DISTINCT FILLED background
+// (--panel2 + accent overlay + accent left bar) + font-weight:700. Same
+// font-family / row height as sub-rows (the differentiation is colour +
+// weight only). Lock the new "filled fill" contract.
+ok('R44 item25 v1.1.4 .tnode-root filled-fill header + renderTreeNode depth-0 wiring',
   /\.tnode-row\.tnode-root\s*\{/.test(C)
   // MUST NOT enlarge — same row height as sub-rows is the whole point.
   && !/\.tnode-row\.tnode-root\s*\{[^}]*font-size:/.test(C)
-  // Subtle bg tint via linear-gradient at 0.06 alpha (v1.1.3 value).
-  && /\.tnode-row\.tnode-root\s*\{[^}]*linear-gradient\(rgba\(255,255,255,0\.06\)/.test(C)
-  // Separator above each root row (with first-child override below).
-  && /\.tnode-row\.tnode-root\s*\{[^}]*border-top:\s*1px solid/.test(C)
+  // Filled background via solid panel2 color (the clearly-distinct fill).
+  && /\.tnode-row\.tnode-root\s*\{[^}]*background-color:\s*var\(--panel2\)/.test(C)
+  // Accent overlay on top of the solid bg — distinct from row default.
+  && /\.tnode-row\.tnode-root\s*\{[^}]*linear-gradient\(rgba\(167,139,250,0\.10\)/.test(C)
+  // Accent left bar so headers read as project headers at a glance.
+  && /\.tnode-row\.tnode-root\s*\{[^}]*border-left:\s*3px solid var\(--accent\)/.test(C)
   // Title bold at 700, NOT 800 (Segoe UI has no real 800 face).
   && /\.tnode-row\.tnode-root \.tnode-title\s*\{[^}]*font-weight:\s*700/.test(C)
   && !/\.tnode-row\.tnode-root \.tnode-title\s*\{[^}]*font-weight:\s*800/.test(C)
@@ -395,6 +397,16 @@ ok('R58 item39: 50%-opacity button TRIAL (rgba ~0.50 backgrounds + brighter satu
   && /\.btn-del\s*\{[^}]*rgba\(185,28,28,0\.50\)/.test(C)
   && /\.btn-neutral\s*\{[^}]*rgba\(71,85,105,0\.50\)/.test(C)
   && /:hover[^{]*\{[^}]*filter:\s*brightness\(1\.15\)/.test(C));
+
+// R59 — preserve master's parallel-session v1.1.3-item-39 check (ctx pane
+// shows full per-item details for selected item). NOTE: master's parallel
+// v1.1.3-item-38 check (.li-kind without uppercase) is INTENTIONALLY NOT
+// included here — it contradicts Misha's item 36 spec (tinted bg + type
+// color text + uppercase per Misha), which is what R56 locks.
+ok('R59 v1.1.3-item-39 (preserved from master): ctx pane shows full per-item details for the selected item',
+  /if \(selItem\) \{[\s\S]*?renderItemDetails\(selIt\.details/.test(js)
+  && /'Selected item'/.test(js)
+  && /\.ctx-sel-hdr\s*\{/.test(C));
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -1386,6 +1386,29 @@
     });
     body.appendChild(s2);
 
+    // v1.1.3 item 39: when an item is currently selected (clicked from the
+    // "Waiting on you" list), the pane MUST show at least as much detail as
+    // the inline `▾ details` disclosure does — full What/Why/Options/etc.
+    // Without this, clicking an item to open the pane gave the user LESS
+    // information than clicking the inline ▾, which was the wrong direction.
+    if (selItem) {
+      var selIt = (n.items || []).filter(function (x) { return x.item_id === selItem; })[0];
+      if (selIt) {
+        var ss = el('div', 'ctx-sec');
+        ss.appendChild(el('h4', null, 'Selected item'));
+        var hdr = el('div', 'ctx-sel-hdr');
+        hdr.appendChild(el('span', 'li-kind ' + selIt.kind, selIt.kind));
+        hdr.appendChild(el('span', 'ctx-sel-text', selIt.text));
+        ss.appendChild(hdr);
+        if (selIt.details && typeof selIt.details === 'object') {
+          ss.appendChild(renderItemDetails(selIt.details, treeOf(n)));
+        } else {
+          ss.appendChild(el('div', 'muted', 'no rich details on this item yet'));
+        }
+        body.appendChild(ss);
+      }
+    }
+
     // open items (summary -> full, OQ-3 layered)
     var open = (n.items || []).filter(function (it) { return isWaiting(it); });
     var s3 = el('div', 'ctx-sec'); s3.appendChild(el('h4', null, 'Open items (' + open.length + ')'));

@@ -238,19 +238,23 @@ button:active { transform: scale(0.98); }
 .twist { width: 1rem; text-align: center; color: var(--muted); user-select: none; }
 .tnode-title { font-weight: 600; flex: 1; }
 .tnode-title.concluded::before { content: "✓ "; color: var(--ok); }
-/* v1.1.3 (supersedes v1.1.2 item 25): top-level project nodes are
-   differentiated from sub-rows by a subtle whole-row background tint plus
-   bold weight ONLY. Same font-family and same row height as sub-rows — the
-   prior enlargement (font-size 1.18rem + extra padding + synthesized
-   800-weight) read as a different, uglier font because Segoe UI has no real
-   800 face and the browser faux-bolded it. Only depth-0 (forest-root) rows;
-   nested rows inherit .tnode-row unchanged. */
+/* v1.1.4 (supersedes v1.1.3 subtle gradient): top-level project/repo nodes
+   are differentiated from sub-rows by a CLEARLY DISTINCT FILLED background
+   (not a subtle 6% white overlay) plus bold weight. Same font-family and
+   same row height as sub-rows — the differentiation is colour + weight only.
+   The fill uses --panel2 with an accent-tinted left bar so the header reads
+   as a "project header" at a glance, not as just-another-row. Only depth-0
+   (forest-root) rows; nested rows inherit .tnode-row unchanged. */
 .tnode-row.tnode-root {
-  background-image: linear-gradient(rgba(255,255,255,0.06), rgba(255,255,255,0.06));
-  margin-top: 0.3rem;
-  border-top: 1px solid var(--border);
+  background-color: var(--panel2);
+  background-image: linear-gradient(rgba(167,139,250,0.10), rgba(167,139,250,0.10));
+  margin-top: 0.45rem;
+  border-top: 1px solid var(--border2);
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  padding-left: 0.3rem;
 }
-.tnode-row.tnode-root .tnode-title { font-weight: 700; }
+.tnode-row.tnode-root .tnode-title { font-weight: 700; color: var(--text); }
 /* the very first top-level node needs no separator gap above it */
 .tree-canvas > .tnode:first-child > .tnode-row.tnode-root { margin-top: 0.1rem; border-top: none; }
 .tkids { margin-left: 1.4rem; border-left: 1px dashed var(--border); padding-left: 0.5rem; }
@@ -289,7 +293,9 @@ button:active { transform: scale(0.98); }
 
 /* v1.1.2 item 36 — type label is a SUBDUED TAG, not a button. Tinted bg at
    ~22% opacity + type-color text + slimmer padding/font + no hover/pointer.
-   Visually subordinate to actual buttons; clearly informational, not interactive. */
+   Misha's spec verbatim: "use the type-color at ~20-30% opacity with the
+   type-color as text, instead of solid fill with white text". Supersedes
+   master's parallel v1.1.3-item-38 interpretation (solid bg + near-black). */
 .li-kind { font-size: 0.62rem; font-weight: 600; padding: 0.02rem 0.4rem; border-radius: 999px; border: 1px solid transparent; text-transform: uppercase; letter-spacing: 0.04em; cursor: default; user-select: none; }
 .li-kind.action   { background: rgba(239,68,68,0.22);  color: var(--type-action); }
 .li-kind.decision { background: rgba(245,158,11,0.22); color: var(--type-decision); }
@@ -396,6 +402,10 @@ button:active { transform: scale(0.98); }
 .ctx-chain .seg { color: var(--accent); cursor: pointer; }
 .ctx-chain .seg:hover { text-decoration: underline; }
 .ctx-item { font-size: 0.82rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); }
+/* v1.1.3 item 39: Selected-item section in the context pane (matches or
+   exceeds the inline ▾ details disclosure on each Waiting-on-you item). */
+.ctx-sel-hdr { display: flex; gap: 0.4rem; align-items: baseline; margin-bottom: 0.4rem; }
+.ctx-sel-text { font-size: 0.86rem; font-weight: 600; }
 .ctx-more { color: var(--accent); cursor: pointer; font-size: 0.78rem; }
 .handoff-box {
   background: var(--panel2); border: 1px dashed var(--accent);
