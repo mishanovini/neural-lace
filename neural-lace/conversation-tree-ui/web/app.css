@@ -368,13 +368,16 @@ button:active { transform: scale(0.98); }
 .li.dragover { outline: 2px dashed var(--info); }
 
 /* Context panel (FR-6 surface) — v1.1 dismissible overlay ----------------
-   Always position:fixed so it NEVER pushes the grid (it overlays, it does
-   not occupy layout real estate). Wide (>=1440): docks to the right edge,
-   30rem. Narrow (<1440): becomes a semi-modal overlay with a dimmed
-   backdrop scrim. Dismiss via the ✕, click-outside (#ctxScrim), or Esc
-   (all wired in app.js). The [hidden] rule is load-bearing: without it the
-   .ctx-panel display:flex beats the UA [hidden]{display:none} and the ✕
-   "does nothing" — that was the reported bug. */
+   Always position:fixed. At wide (>=1440): docks to the right edge, 30rem,
+   AND `body[data-ctx-pane="open"]` shifts #layout's right margin by the
+   same width so the underlying Waiting/Backlog panes SHRINK proportionally
+   instead of being obscured (v1.1.4 item 41 — Misha bug 2026-05-20). At
+   narrow (<1440): keeps the semi-modal overlay + scrim (not enough room
+   for 3 columns). The `data-ctx-pane` body attribute is set/cleared in
+   openCtx()/closeCtx() in app.js (mirrors the `data-doc-pane` pattern
+   already used by the docs side pane at line 574 below).
+   The [hidden] rule is load-bearing: without it the .ctx-panel display:flex
+   beats the UA [hidden]{display:none} and the ✕ "does nothing" — old bug. */
 .ctx-panel[hidden] { display: none !important; }
 #ctxScrim {
   position: fixed; inset: 0; z-index: 29; background: rgba(0,0,0,0.45);
@@ -382,17 +385,41 @@ button:active { transform: scale(0.98); }
 }
 #ctxScrim[hidden] { display: none !important; }
 .ctx-panel {
-  position: fixed; right: 0; top: 2.6rem; bottom: 0; width: 30rem; max-width: 46vw;
+  position: fixed; right: 0; top: 2.6rem; bottom: 0;
+  width: var(--ctx-pane-w, 30rem); max-width: 46vw;
   background: var(--panel); border-left: 1px solid var(--border2);
   box-shadow: -8px 0 24px rgba(0,0,0,0.45); z-index: 30;
   display: flex; flex-direction: column; overflow: hidden;
 }
-/* Narrow: overlay near-full width with the scrim behind it (semi-modal). */
+/* Narrow: overlay near-full width with the scrim behind it (semi-modal).
+   At narrow widths the layout-shift would crowd Waiting/Backlog into
+   unreadability, so we keep the original overlay behavior — Misha's bug
+   was about the WIDE case where 3 columns clearly fit. */
 @media (max-width: 1439.98px) {
   .ctx-panel { width: min(34rem, 92vw); max-width: 92vw; top: 0; }
 }
 @media (min-width: 1440px) {
   #ctxScrim { display: none !important; }   /* docked at wide — no scrim */
+  /* v1.1.4 item 41 — wide-mode: shrink the layout grid so the right-region
+     panes (Waiting + Backlog) STAY VISIBLE next to the ctx-pane instead of
+     being covered. Same pattern as #docModal (line 574). When both ctx-pane
+     AND doc-pane are open, doc-pane's right:0 stays and ctx-pane stacks
+     onto the layout's right edge inside the doc-pane's offset (margins are
+     additive on body[data-doc-pane=open][data-ctx-pane=open] below). */
+  body[data-ctx-pane="open"] #layout {
+    margin-right: var(--ctx-pane-w, 30rem);
+    transition: margin-right 0.12s ease;
+  }
+  /* When BOTH side panes are open, additive margins keep both fully
+     visible alongside the (now-much-narrower) main layout. */
+  body[data-doc-pane="open"][data-ctx-pane="open"] #layout {
+    margin-right: calc(var(--doc-pane-w, 32rem) + var(--ctx-pane-w, 30rem));
+  }
+  /* And the ctx-pane shifts left of the doc-pane when both are open, so
+     they sit side-by-side without overlap. */
+  body[data-doc-pane="open"][data-ctx-pane="open"] .ctx-panel {
+    right: var(--doc-pane-w, 32rem);
+  }
 }
 .ctx-head { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 0.5rem; }
 .ctx-head .x { margin-left: auto; }

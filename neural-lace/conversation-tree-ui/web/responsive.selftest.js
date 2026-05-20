@@ -453,5 +453,32 @@ ok('R65 item40: BOTH call sites (inline ▾ details + ctx-pane selected item) pa
   /renderItemDetails\(it\.details, treeOf\(n\), it\.text\)/.test(js)
   && /renderItemDetails\(selIt\.details, treeOf\(n\), selIt\.text\)/.test(js));
 
+// ----- v1.1.4 item 41 — detail pane does NOT obscure Waiting on you ---------
+// Misha bug report 2026-05-20: clicking an item to open the detail pane
+// covered the Waiting on you list behind it. Fix mirrors the existing
+// `data-doc-pane` pattern: at >=1440, body[data-ctx-pane=open] shrinks
+// #layout via margin-right so the right-region panes stay visible alongside
+// the docked ctx-pane.
+ok('R66 item41: openCtx sets body.dataset.ctxPane="open" so CSS can shrink #layout',
+  /document\.body\.dataset\.ctxPane\s*=\s*['"]open['"]/.test(js)
+  && /openCtx\(id\)\s*\{[\s\S]{0,500}document\.body\.dataset\.ctxPane\s*=\s*['"]open['"]/.test(js));
+
+ok('R67 item41: closeCtx clears body.dataset.ctxPane (Waiting/Backlog reclaim full width)',
+  /delete document\.body\.dataset\.ctxPane;/.test(js)
+  && /closeCtx\(\)\s*\{[\s\S]{0,400}delete document\.body\.dataset\.ctxPane;/.test(js));
+
+ok('R68 item41: CSS shrinks #layout via margin-right when ctx-pane is open at wide widths',
+  /body\[data-ctx-pane="open"\]\s*#layout\s*\{[\s\S]*?margin-right:\s*var\(--ctx-pane-w,\s*30rem\)/.test(C)
+  // The shrink rule lives INSIDE the >=1440 media block (narrow keeps overlay)
+  && /@media\s*\(min-width:\s*1440px\)\s*\{[\s\S]*?body\[data-ctx-pane="open"\]\s*#layout/.test(C));
+
+ok('R69 item41: ctx-pane width is a CSS variable (parity with --doc-pane-w)',
+  /\.ctx-panel[^}]*width:\s*var\(--ctx-pane-w,\s*30rem\)/.test(C));
+
+ok('R70 item41: when BOTH doc-pane AND ctx-pane are open, margins are additive (neither overlaps the other)',
+  /body\[data-doc-pane="open"\]\[data-ctx-pane="open"\]\s*#layout\s*\{[\s\S]*?calc\(\s*var\(--doc-pane-w[^)]*\)\s*\+\s*var\(--ctx-pane-w[^)]*\)/.test(C)
+  // and ctx-pane shifts left by doc-pane width so it sits beside (not under) the doc-pane
+  && /body\[data-doc-pane="open"\]\[data-ctx-pane="open"\]\s*\.ctx-panel\s*\{[\s\S]*?right:\s*var\(--doc-pane-w/.test(C));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

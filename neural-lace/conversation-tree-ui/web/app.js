@@ -1433,6 +1433,9 @@
   function closeCtx() {
     ctxPanel.hidden = true;
     ctxScrim.hidden = true;
+    // v1.1.4 item 41: clear the layout-shift attribute so #layout reclaims its
+    // full right margin and the Waiting/Backlog panes spring back to full width.
+    delete document.body.dataset.ctxPane;
     sel = null;
     render();
   }
@@ -1441,6 +1444,10 @@
     if (!n) { closeCtx(); return; }
     ctxPanel.hidden = false;
     ctxScrim.hidden = false;          // CSS hides the scrim at >=1440 (docked)
+    // v1.1.4 item 41: at wide widths, this flag tells CSS to shrink #layout
+    // by var(--ctx-pane-w) so the right-region panes stay visible NEXT TO the
+    // ctx-pane instead of being obscured by it (mirrors `data-doc-pane`).
+    document.body.dataset.ctxPane = 'open';
     clear(ctxPanel);
     var head = el('div', 'ctx-head');
     head.appendChild(el('span', 'pane-title', n.title || n.node_id));
