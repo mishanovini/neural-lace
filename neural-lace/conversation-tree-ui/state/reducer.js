@@ -137,6 +137,12 @@ function applyEvent(snap, ev, treeId) {
       if (!it) { reject(snap, ev, 'item not found'); return; }
       it.deferred = true;                        // §4 state tag (NOT a kind)
       it.scheduled_for = ev.scheduled_for == null ? null : String(ev.scheduled_for);
+      // v1.1.2 item 28 — OPTIONAL additive local-time fields so a deferred
+      // time re-displays unambiguously on any machine (scheduled_for stays
+      // the canonical cross-machine ISO value; checkDefers still keys off it).
+      // Absent ⇒ left undefined (Phase-0/v1.1 events unchanged).
+      if (ev.scheduled_for_local != null) it.scheduled_for_local = String(ev.scheduled_for_local);
+      if (ev.tz_offset_min != null) it.tz_offset_min = Number(ev.tz_offset_min);
       return;
     }
     case 'defer-cleared': {
@@ -316,6 +322,19 @@ function applyEvent(snap, ev, treeId) {
       const it = node && findItem(node, ev.item_id);
       if (!it) { reject(snap, ev, 'item not found'); return; }
       it.checked = false;
+      it.backlogged = false;                     // un-park too (round-trip)
+      return;
+    }
+    // v1.1.2 item 28 — "Defer → until further notice — move to Backlog".
+    // ADDITIVE. Parks the item out of "Waiting on you" WITHOUT checking it
+    // (it is not done — the GUI also posts a backlog-added so the work is
+    // tracked; the Backlog "Activate" button is the return path). The GUI's
+    // isWaiting() treats a backlogged item as not-waiting.
+    case 'item-backlogged': {
+      const node = findNode(snap, ev.node_id);
+      const it = node && findItem(node, ev.item_id);
+      if (!it) { reject(snap, ev, 'item not found'); return; }
+      it.backlogged = true;
       return;
     }
     default:

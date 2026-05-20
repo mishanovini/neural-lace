@@ -485,7 +485,10 @@
   function crumb(nodeId) {
     return chain(nodeId).reverse().map(function (n) { return n.title || n.node_id; }).join(' › ');
   }
-  function isWaiting(it) { return (!it.checked) || it.deferred || it.contested; }
+  // v1.1.2 item 28: a backlogged item ("Defer → until further notice — move
+  // to Backlog") leaves "Waiting on you" even though it is not checked — it
+  // was parked, not resolved. The Backlog "Activate" button is the return path.
+  function isWaiting(it) { return ((!it.checked) || it.deferred || it.contested) && !it.backlogged; }
 
   // ---- per-pane data-state rendering (C1b/c/d/e + BF-2) ----------------
   // Four never-conflated states: loading | first-run-empty | steady-state-empty
@@ -779,10 +782,29 @@
       if (it.details && typeof it.details === 'object') {
         var expanded = expandedItems.has(it.item_id);
         var disc = el('button', 'ghost det-toggle', (expanded ? '▾' : '▸') + ' details');
+        // v1.1.2 item 26: toggle IN PLACE — never call the full renderActions()
+        // (clear(actionsBody) + rebuild collapses the list height, which resets
+        // the pane scroll to the top and makes the clicked item vanish). Add or
+        // remove just this item's details box; keep expandedItems in sync so a
+        // later SSE-driven full render still shows it expanded.
         disc.addEventListener('click', function () {
-          if (expandedItems.has(it.item_id)) expandedItems.delete(it.item_id);
-          else expandedItems.add(it.item_id);
-          renderActions();
+          var nowExpanded;
+          if (expandedItems.has(it.item_id)) {
+            expandedItems.delete(it.item_id);
+            var box = li.querySelector('.li-details');
+            if (box) box.remove();
+            disc.textContent = '▸ details';
+            nowExpanded = false;
+          } else {
+            expandedItems.add(it.item_id);
+            var d = renderItemDetails(it.details, treeOf(n));
+            li.insertBefore(d, disc.nextSibling);
+            disc.textContent = '▾ details';
+            nowExpanded = true;
+          }
+          // If expanding pushed the item partly out of view, scroll the
+          // MINIMUM needed to keep it visible — never a full reset to top.
+          if (nowExpanded) li.scrollIntoView({ block: 'nearest' });
         });
         li.appendChild(disc);
         if (expanded) li.appendChild(renderItemDetails(it.details, treeOf(n)));
@@ -820,23 +842,27 @@
         li.appendChild(cn);
       } else {
         var acts = el('div', 'li-actions');
-        var done = el('button', 'btn-go', it.kind === 'action' ? 'mark done' : 'mark answered');
-        done.addEventListener('click', function () {
-          var type = it.kind === 'action' ? 'action-done' : 'answered';
-          var label = it.kind === 'action' ? 'Marked done' : 'Marked answered';
-          actWithUndo(li,
-            { type: type, node_id: n.node_id, item_id: it.item_id }, label,
-            function () {   // item 7 undo: re-surface the item (+ re-open node if it auto-concluded)
-              post({ type: 'item-unchecked', node_id: n.node_id, item_id: it.item_id }, 'undone', true)
-                .then(function (ok) {
-                  if (!ok) return;
-                  var nd = byId(n.node_id);
-                  if (nd && nd.state === 'concluded') post({ type: 're-opened', node_id: n.node_id }, 're-opened', true);
-                });
-            },
-            function () { maybeAutoConclude(n.node_id); });
-        });
-        acts.appendChild(done);
+        // v1.1.2 item 27: a decision/question resolves ONLY via Respond —
+        // there is no quiet mark-as-resolved button for them (that would
+        // leave Dispatch with no response captured). Actions keep "mark
+        // done" (there is no response to capture; mark-done is correct there).
+        if (it.kind === 'action') {
+          var done = el('button', 'btn-go', 'mark done');
+          done.addEventListener('click', function () {
+            actWithUndo(li,
+              { type: 'action-done', node_id: n.node_id, item_id: it.item_id }, 'Marked done',
+              function () {   // item 7 undo: re-surface the item (+ re-open node if it auto-concluded)
+                post({ type: 'item-unchecked', node_id: n.node_id, item_id: it.item_id }, 'undone', true)
+                  .then(function (ok) {
+                    if (!ok) return;
+                    var nd = byId(n.node_id);
+                    if (nd && nd.state === 'concluded') post({ type: 're-opened', node_id: n.node_id }, 're-opened', true);
+                  });
+              },
+              function () { maybeAutoConclude(n.node_id); });
+          });
+          acts.appendChild(done);
+        }
         // D2: dispute a state-checked item (low-emphasis safety net).
         if (it.checked) {
           var dis = el('button', 'btn-up outline', 'dispute');
@@ -854,14 +880,11 @@
           clr.addEventListener('click', function () { post({ type: 'defer-cleared', node_id: n.node_id, item_id: it.item_id }, 'defer cleared'); });
           acts.appendChild(clr);
         } else {
+          // v1.1.2 item 28: friendly Defer popover (presets + native
+          // datetime-local + "until further notice — move to Backlog"),
+          // all in the user's LOCAL timezone — no ISO prompt().
           var dfr = el('button', 'btn-wait', 'defer');
-          dfr.addEventListener('click', function () {
-            var when = prompt('Defer until (ISO time, or blank for no schedule):', new Date(Date.now() + 36e5).toISOString());
-            if (when == null) return;
-            actWithUndo(li,
-              { type: 'deferred', node_id: n.node_id, item_id: it.item_id, scheduled_for: when.trim() || null }, 'Deferred',
-              function () { post({ type: 'defer-cleared', node_id: n.node_id, item_id: it.item_id }, 'defer cleared', true); });
-          });
+          dfr.addEventListener('click', function () { openDeferPop(li, n, it); });
           acts.appendChild(dfr);
         }
         // item 10: inline Respond on decisions/questions/needs-input (only
@@ -896,6 +919,109 @@
       if (actionsSort.value === 'manual') wireReorder(li, it.item_id, 'actions:' + activeTree, function () { return actionEntries().map(function (e) { return e.it.item_id; }); });
       actionsBody.appendChild(li);
     });
+  }
+
+  // ---- v1.1.2 item 28: friendly Defer popover -------------------------
+  // Presets + native datetime-local + "until further notice — move to
+  // Backlog". ALL times the user's LOCAL timezone (display via fmtTime =
+  // toLocaleString; input via <input type=datetime-local> which is local +
+  // tz-aware on Windows out of the box). The state file stores the canonical
+  // ISO `scheduled_for` (cross-machine) PLUS additive `scheduled_for_local`
+  // + `tz_offset_min` so re-display anywhere is unambiguous (no version bump).
+  function pad2(x) { return (x < 10 ? '0' : '') + x; }
+  function toLocalInput(d) {            // Date -> "YYYY-MM-DDTHH:MM" (local)
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
+      'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+  function closeDeferPop() {
+    var p = document.querySelector('.defer-pop');
+    if (p) p.remove();
+    document.removeEventListener('keydown', deferEsc, true);
+    document.removeEventListener('click', deferOutside, true);
+  }
+  function deferEsc(e) { if (e.key === 'Escape') closeDeferPop(); }
+  function deferOutside(e) {
+    var p = document.querySelector('.defer-pop');
+    if (p && !p.contains(e.target) && !(e.target.closest && e.target.closest('.li-actions'))) closeDeferPop();
+  }
+  function openDeferPop(li, n, it) {
+    closeDeferPop();                                   // one open at a time
+    function commit(d) {
+      closeDeferPop();
+      actWithUndo(li,
+        { type: 'deferred', node_id: n.node_id, item_id: it.item_id,
+          scheduled_for: d.toISOString(),
+          scheduled_for_local: toLocalInput(d),
+          tz_offset_min: d.getTimezoneOffset() },
+        'Deferred to ' + fmtTime(d.toISOString()),
+        function () { post({ type: 'defer-cleared', node_id: n.node_id, item_id: it.item_id }, 'defer cleared', true); });
+    }
+    var pop = el('div', 'defer-pop');
+    pop.appendChild(el('div', 'dp-title', 'Defer until'));
+
+    var later = el('button', 'btn-wait', 'Later today (8 PM)');
+    later.addEventListener('click', function () {
+      var d = new Date(); d.setHours(20, 0, 0, 0);
+      if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);   // already past 8 PM → tomorrow
+      commit(d);
+    });
+    var tmrw = el('button', 'btn-wait', 'Tomorrow morning (9 AM)');
+    tmrw.addEventListener('click', function () {
+      var d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); commit(d);
+    });
+    var week = el('button', 'btn-wait', 'Next week (Mon 9 AM)');
+    week.addEventListener('click', function () {
+      var d = new Date();
+      var add = ((1 - d.getDay() + 7) % 7) || 7;   // days to NEXT Monday (today-Mon → +7)
+      d.setDate(d.getDate() + add); d.setHours(9, 0, 0, 0); commit(d);
+    });
+    var pick = el('button', 'btn-wait', 'Pick a specific time…');
+    var whenRow = el('div', 'dp-when'); whenRow.style.display = 'none';
+    var dti = el('input'); dti.type = 'datetime-local';
+    var pre = new Date(); pre.setDate(pre.getDate() + 1); pre.setHours(9, 0, 0, 0);
+    dti.value = toLocalInput(pre);
+    var setBtn = el('button', 'btn-wait', 'Set');
+    setBtn.addEventListener('click', function () {
+      if (!dti.value) { dti.focus(); return; }
+      var d = new Date(dti.value);                  // datetime-local parses as LOCAL
+      if (isNaN(d.getTime())) { dti.focus(); return; }
+      commit(d);
+    });
+    pick.addEventListener('click', function () {
+      whenRow.style.display = whenRow.style.display === 'none' ? 'flex' : 'none';
+      if (whenRow.style.display === 'flex') dti.focus();
+    });
+    whenRow.appendChild(dti); whenRow.appendChild(setBtn);
+
+    var toBl = el('button', 'btn-info', 'Until further notice — move to Backlog');
+    toBl.title = 'Parks this out of "Waiting on you" and tracks it in Backlog; the Backlog "Activate" button brings it back.';
+    toBl.addEventListener('click', function () {
+      closeDeferPop();
+      post({ type: 'item-backlogged', node_id: n.node_id, item_id: it.item_id }, null, true)
+        .then(function (ok) {
+          if (!ok) return;
+          var blId = uid('bl');
+          post({ type: 'backlog-added', item_id: blId, tree_id: treeOf(n),
+            priority: 'medium', text: it.text }, 'moved to Backlog')
+            .then(function (ok2) {
+              if (ok2) post({ type: 'context-attached', target: blId,
+                context_ref: 'parked from tree: ' + crumb(n.node_id) }, null, true);
+            });
+        });
+    });
+
+    var cancel = el('button', 'btn-neutral', 'cancel');
+    cancel.addEventListener('click', closeDeferPop);
+
+    [later, tmrw, week, pick].forEach(function (b) { pop.appendChild(b); });
+    pop.appendChild(whenRow);
+    pop.appendChild(toBl);
+    pop.appendChild(cancel);
+    li.appendChild(pop);
+    setTimeout(function () {
+      document.addEventListener('keydown', deferEsc, true);
+      document.addEventListener('click', deferOutside, true);
+    }, 0);
   }
 
   // ---- BACKLOG PANE (C4) ----------------------------------------------
@@ -1135,6 +1261,29 @@
       s2.appendChild(d);
     });
     body.appendChild(s2);
+
+    // v1.1.3 item 39: when an item is currently selected (clicked from the
+    // "Waiting on you" list), the pane MUST show at least as much detail as
+    // the inline `▾ details` disclosure does — full What/Why/Options/etc.
+    // Without this, clicking an item to open the pane gave the user LESS
+    // information than clicking the inline ▾, which was the wrong direction.
+    if (selItem) {
+      var selIt = (n.items || []).filter(function (x) { return x.item_id === selItem; })[0];
+      if (selIt) {
+        var ss = el('div', 'ctx-sec');
+        ss.appendChild(el('h4', null, 'Selected item'));
+        var hdr = el('div', 'ctx-sel-hdr');
+        hdr.appendChild(el('span', 'li-kind ' + selIt.kind, selIt.kind));
+        hdr.appendChild(el('span', 'ctx-sel-text', selIt.text));
+        ss.appendChild(hdr);
+        if (selIt.details && typeof selIt.details === 'object') {
+          ss.appendChild(renderItemDetails(selIt.details, treeOf(n)));
+        } else {
+          ss.appendChild(el('div', 'muted', 'no rich details on this item yet'));
+        }
+        body.appendChild(ss);
+      }
+    }
 
     // open items (summary -> full, OQ-3 layered)
     var open = (n.items || []).filter(function (it) { return isWaiting(it); });

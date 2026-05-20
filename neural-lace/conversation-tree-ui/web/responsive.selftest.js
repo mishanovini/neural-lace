@@ -204,19 +204,21 @@ ok('R40 item20-dropped: "promote to branch" label retained, no "expand", promote
   && /el\('button',\s*'btn-up',\s*'promote to branch'\)/.test(js)
   && /type:\s*'promoted'/.test(js));
 
-// v1.1.3 (supersedes v1.1.2 item 25, commit 5f030e1) — top-level project
-// nodes differentiated from sub-rows by a subtle whole-row background tint
-// + font-weight:700 ONLY. Identical font-family / font-size / row height as
-// sub-rows (the prior enlargement faux-bolded as a fallback face on
-// Segoe UI). Lock the new contract, not the superseded one.
-ok('R44 item25 v1.1.3 .tnode-root subtle-tint header + renderTreeNode depth-0 wiring',
+// v1.1.4 (supersedes v1.1.3 subtle-tint) — top-level project/repo nodes are
+// differentiated from sub-rows by a CLEARLY DISTINCT FILLED background
+// (--panel2 + accent overlay + accent left bar) + font-weight:700. Same
+// font-family / row height as sub-rows (the differentiation is colour +
+// weight only). Lock the new "filled fill" contract.
+ok('R44 item25 v1.1.4 .tnode-root filled-fill header + renderTreeNode depth-0 wiring',
   /\.tnode-row\.tnode-root\s*\{/.test(C)
   // MUST NOT enlarge — same row height as sub-rows is the whole point.
   && !/\.tnode-row\.tnode-root\s*\{[^}]*font-size:/.test(C)
-  // Subtle bg tint via linear-gradient at 0.06 alpha (v1.1.3 value).
-  && /\.tnode-row\.tnode-root\s*\{[^}]*linear-gradient\(rgba\(255,255,255,0\.06\)/.test(C)
-  // Separator above each root row (with first-child override below).
-  && /\.tnode-row\.tnode-root\s*\{[^}]*border-top:\s*1px solid/.test(C)
+  // Filled background via solid panel2 color (the clearly-distinct fill).
+  && /\.tnode-row\.tnode-root\s*\{[^}]*background-color:\s*var\(--panel2\)/.test(C)
+  // Accent overlay on top of the solid bg — distinct from row default.
+  && /\.tnode-row\.tnode-root\s*\{[^}]*linear-gradient\(rgba\(167,139,250,0\.10\)/.test(C)
+  // Accent left bar so headers read as project headers at a glance.
+  && /\.tnode-row\.tnode-root\s*\{[^}]*border-left:\s*3px solid var\(--accent\)/.test(C)
   // Title bold at 700, NOT 800 (Segoe UI has no real 800 face).
   && /\.tnode-row\.tnode-root \.tnode-title\s*\{[^}]*font-weight:\s*700/.test(C)
   && !/\.tnode-row\.tnode-root \.tnode-title\s*\{[^}]*font-weight:\s*800/.test(C)
@@ -298,6 +300,49 @@ ok('R46 item37 UI: nested project→folder→file tree + persisted expansion',
   } catch (_) { funcOk = false; }
   ok('R47 item37 functional: self present, zero worktree-named keys leak', funcOk);
 })();
+
+// --- v1.1.2 polish items 26/27/28 + v1.1.3 items 38/39 ---------------------
+ok('R48 item26: Details toggles IN PLACE (no renderActions rebuild) + scrollIntoView nearest (no scroll reset)',
+  /disc\.addEventListener\('click', function \(\) \{[\s\S]*?li\.scrollIntoView\(\{ block: 'nearest' \}\);[\s\S]*?\}\);/.test(js)
+  && /li\.querySelector\('\.li-details'\)/.test(js)
+  && /li\.insertBefore\(d, disc\.nextSibling\)/.test(js)
+  && /el\('button', 'ghost det-toggle',/.test(js));
+
+ok('R49 item27: decision/question resolve ONLY via Respond — done button gated to kind==="action", no "mark answered"',
+  /if \(it\.kind === 'action'\) \{\s*\n?\s*var done = el\('button', 'btn-go', 'mark done'\)/.test(js)
+  && !/mark answered/.test(js)
+  && /function respondable\s*\(/.test(js));
+
+ok('R50 item28: friendly Defer popover (presets + native datetime-local + to-Backlog) + item-backlogged ADDITIVE + deferred local-time fields + isWaiting excludes backlogged + SCHEMA_VERSION still 1',
+  /function openDeferPop\s*\(/.test(js)
+  && /dti\.type = 'datetime-local'/.test(js)
+  && /Later today \(8 PM\)/.test(js) && /Tomorrow morning \(9 AM\)/.test(js)
+  && /Next week \(Mon 9 AM\)/.test(js) && /Pick a specific time/.test(js)
+  && /Until further notice — move to Backlog/.test(js)
+  && /\.defer-pop\s*\{/.test(C)
+  && !/prompt\('Defer until/.test(js)
+  && /\(\(!it\.checked\) \|\| it\.deferred \|\| it\.contested\) && !it\.backlogged/.test(js)
+  && /'item-backlogged'/.test(schema)
+  && /'item-backlogged':\s*\['node_id',\s*'item_id'\]/.test(schema)
+  && /case 'item-backlogged'/.test(reducer)
+  && /it\.scheduled_for_local = String\(ev\.scheduled_for_local\)/.test(reducer)
+  && /it\.tz_offset_min = Number\(ev\.tz_offset_min\)/.test(reducer)
+  && /const SCHEMA_VERSION\s*=\s*1\s*;/.test(schema));
+
+// v1.1.3 item 38 — .li-kind reads as a LABEL (no border, no uppercase, no
+// rounded button radius, cursor:default). Type colour comes from filled bg.
+ok('R51 item38 .li-kind label (not button-styled): no border, no uppercase, cursor:default',
+  /\.li-kind\s*\{[^}]*cursor:\s*default/.test(C)
+  && !/\.li-kind\s*\{[^}]*border:\s*1px solid var\(--border2\)/.test(C)
+  && !/\.li-kind\s*\{[^}]*text-transform:\s*uppercase/.test(C));
+
+// v1.1.3 item 39 — clicking a Waiting-on-you item opens the ctx pane with at
+// least as much detail as the inline ▾ details disclosure. The pane must
+// render a "Selected item" section that calls renderItemDetails for selIt.
+ok('R52 item39: ctx pane shows full per-item details for the selected item (matches inline ▾)',
+  /if \(selItem\) \{[\s\S]*?renderItemDetails\(selIt\.details/.test(js)
+  && /'Selected item'/.test(js)
+  && /\.ctx-sel-hdr\s*\{/.test(C));
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

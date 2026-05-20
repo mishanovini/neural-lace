@@ -592,6 +592,62 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
   finally { cleanup(dir); }
 })();
 
+// ---- P16 v1.1.2 item 28 additive: item-backlogged + deferred local-time
+//      fields — ADDITIVE within schema major 1 (ADR-032 §1) -----------------
+(function P16() {
+  const dir = freshDir(); const o = optsFor(dir);
+  try {
+    state.appendEvent({ type: 'branch-opened', node_id: 'n1', parent_id: null, title: 'T' }, o);
+    state.appendEvent({ type: 'action-added', node_id: 'n1', item_id: 'a1', text: 'do X' }, o);
+    state.appendEvent({ type: 'decision-raised', node_id: 'n1', item_id: 'd1', text: 'pick' }, o);
+
+    const majorStill1 = state.readState(o).schema_version === 1;   // no major bump
+
+    // deferred carries OPTIONAL additive local-time fields; scheduled_for
+    // stays the canonical cross-machine ISO value (unchanged contract).
+    const iso = '2026-06-01T13:00:00.000Z';
+    state.appendEvent({ type: 'deferred', node_id: 'n1', item_id: 'a1',
+      scheduled_for: iso, scheduled_for_local: '2026-06-01T15:00', tz_offset_min: -120 }, o);
+    let a1 = state.readState(o).snapshot.nodes[0].items.find(function (x) { return x.item_id === 'a1'; });
+    const deferLocal = a1.deferred === true && a1.scheduled_for === iso
+      && a1.scheduled_for_local === '2026-06-01T15:00' && a1.tz_offset_min === -120;
+
+    // a plain deferred (no local fields) is unchanged — fields stay absent.
+    state.appendEvent({ type: 'deferred', node_id: 'n1', item_id: 'd1', scheduled_for: null }, o);
+    let d1 = state.readState(o).snapshot.nodes[0].items.find(function (x) { return x.item_id === 'd1'; });
+    const deferPlainUnchanged = d1.deferred === true && d1.scheduled_for === null
+      && d1.scheduled_for_local === undefined && d1.tz_offset_min === undefined;
+
+    // item-backlogged parks the item WITHOUT checking it (NOT a quiet-resolve).
+    state.appendEvent({ type: 'item-backlogged', node_id: 'n1', item_id: 'a1' }, o);
+    a1 = state.readState(o).snapshot.nodes[0].items.find(function (x) { return x.item_id === 'a1'; });
+    const parked = a1.backlogged === true && a1.checked === false;
+
+    // item-unchecked un-parks too (round-trip).
+    state.appendEvent({ type: 'item-unchecked', node_id: 'n1', item_id: 'a1' }, o);
+    a1 = state.readState(o).snapshot.nodes[0].items.find(function (x) { return x.item_id === 'a1'; });
+    const unparkRoundTrip = a1.backlogged === false && a1.checked === false;
+
+    // item-backlogged on an unknown item is rejected (retained, not applied).
+    let rejectedUnknown = true;
+    try {
+      state.appendEvent({ type: 'item-backlogged', node_id: 'n1', item_id: 'nope' }, o);
+      rejectedUnknown = state.readState(o).snapshot.nodes[0].items.length === 2;
+    } catch (_) { rejectedUnknown = true; }
+
+    const majorStill1After = state.readState(o).schema_version === 1;
+
+    check('P16 v1.1.2 item 28 additive: item-backlogged(park, !checked) + deferred local-time fields + plain-defer unchanged + unpark round-trip + unknown rejected + schema_version still 1',
+      majorStill1 && deferLocal && deferPlainUnchanged && parked && unparkRoundTrip
+        && rejectedUnknown && majorStill1After,
+      'major1=' + majorStill1 + ' deferLocal=' + deferLocal
+        + ' plainUnchanged=' + deferPlainUnchanged + ' parked=' + parked
+        + ' unpark=' + unparkRoundTrip + ' rejUnknown=' + rejectedUnknown
+        + ' major1After=' + majorStill1After);
+  } catch (e) { check('P16 v1.1.2 item 28 additive', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
 process.stdout.write('\nADR-032 state library — property self-test\n');
 process.stdout.write(RESULTS.join('\n') + '\n');
 process.stdout.write('\n' + PASS + ' passed, ' + FAIL + ' failed\n');

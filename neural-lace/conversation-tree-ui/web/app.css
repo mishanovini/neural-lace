@@ -238,19 +238,23 @@ button:active { transform: scale(0.98); }
 .twist { width: 1rem; text-align: center; color: var(--muted); user-select: none; }
 .tnode-title { font-weight: 600; flex: 1; }
 .tnode-title.concluded::before { content: "✓ "; color: var(--ok); }
-/* v1.1.3 (supersedes v1.1.2 item 25): top-level project nodes are
-   differentiated from sub-rows by a subtle whole-row background tint plus
-   bold weight ONLY. Same font-family and same row height as sub-rows — the
-   prior enlargement (font-size 1.18rem + extra padding + synthesized
-   800-weight) read as a different, uglier font because Segoe UI has no real
-   800 face and the browser faux-bolded it. Only depth-0 (forest-root) rows;
-   nested rows inherit .tnode-row unchanged. */
+/* v1.1.4 (supersedes v1.1.3 subtle gradient): top-level project/repo nodes
+   are differentiated from sub-rows by a CLEARLY DISTINCT FILLED background
+   (not a subtle 6% white overlay) plus bold weight. Same font-family and
+   same row height as sub-rows — the differentiation is colour + weight only.
+   The fill uses --panel2 with an accent-tinted left bar so the header reads
+   as a "project header" at a glance, not as just-another-row. Only depth-0
+   (forest-root) rows; nested rows inherit .tnode-row unchanged. */
 .tnode-row.tnode-root {
-  background-image: linear-gradient(rgba(255,255,255,0.06), rgba(255,255,255,0.06));
-  margin-top: 0.3rem;
-  border-top: 1px solid var(--border);
+  background-color: var(--panel2);
+  background-image: linear-gradient(rgba(167,139,250,0.10), rgba(167,139,250,0.10));
+  margin-top: 0.45rem;
+  border-top: 1px solid var(--border2);
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  padding-left: 0.3rem;
 }
-.tnode-row.tnode-root .tnode-title { font-weight: 700; }
+.tnode-row.tnode-root .tnode-title { font-weight: 700; color: var(--text); }
 /* the very first top-level node needs no separator gap above it */
 .tree-canvas > .tnode:first-child > .tnode-row.tnode-root { margin-top: 0.1rem; border-top: none; }
 .tkids { margin-left: 1.4rem; border-left: 1px dashed var(--border); padding-left: 0.5rem; }
@@ -275,11 +279,21 @@ button:active { transform: scale(0.98); }
 }
 .li.hot { border-color: var(--warn); }
 .li-top { display: flex; align-items: center; gap: 0.45rem; }
-/* v1.1.1 item 14: filled type-coloured badges (near-black text = AA on dark). */
-.li-kind { font-size: 0.7rem; font-weight: 700; padding: 0.05rem 0.4rem; border-radius: 4px; border: 1px solid var(--border2); color: var(--type-on); text-transform: uppercase; letter-spacing: 0.02em; }
-.li-kind.action   { background: var(--type-action);   border-color: var(--type-action); }
-.li-kind.decision { background: var(--type-decision); border-color: var(--type-decision); }
-.li-kind.question { background: var(--type-question); border-color: var(--type-question); }
+/* v1.1.1 item 14 / v1.1.3 item 38: type label. Reads as a LABEL, not a
+   button — no border, no uppercase, no rounded button radius, cursor:default.
+   Type colour shows via a thin left bar + tinted background; near-black text
+   keeps WCAG AA contrast. */
+.li-kind {
+  font-size: 0.68rem; font-weight: 600;
+  padding: 0.04rem 0.4rem 0.04rem 0.3rem;
+  color: var(--type-on);
+  border-left: 3px solid var(--border2); border-radius: 2px;
+  letter-spacing: 0.01em; cursor: default;
+  display: inline-flex; align-items: center;
+}
+.li-kind.action   { background: var(--type-action);   border-left-color: rgba(0,0,0,0.35); }
+.li-kind.decision { background: var(--type-decision); border-left-color: rgba(0,0,0,0.35); }
+.li-kind.question { background: var(--type-question); border-left-color: rgba(0,0,0,0.35); }
 .li-text { flex: 1; }                                  /* item 15: title owns row width */
 /* v1.1.1 item 14: per-card left accent stripe + ~5% type tint over the panel.
    The gradient overlay is a deterministic 5% tint (no color-mix dependency). */
@@ -302,6 +316,23 @@ button:active { transform: scale(0.98); }
 .li.kind-question.hl { background-image: linear-gradient(rgba(59,130,246,0.20),rgba(59,130,246,0.20)); border-left-color: var(--type-question); }
 .li-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
 .li-actions button { padding: 0.15rem 0.45rem; font-size: 0.72rem; }
+
+/* v1.1.2 item 28 — Defer popover (replaces the ISO prompt()). One open at a
+   time; closes on choose / outside-click / Esc. Anchored within the li. */
+.defer-pop {
+  margin-top: 0.4rem; background: var(--panel2);
+  border: 1px solid var(--border2); border-radius: 6px;
+  padding: 0.5rem; display: flex; flex-direction: column; gap: 0.3rem;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+}
+.defer-pop .dp-title { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.defer-pop button { text-align: left; }
+.defer-pop .dp-when { display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; }
+.defer-pop input[type=datetime-local] {
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border2); border-radius: 5px;
+  padding: 0.22rem 0.4rem; font: inherit; font-size: 0.8rem;
+}
 .li.contested { border-color: var(--err); }
 .contest-note { font-size: 0.76rem; color: var(--warn); background: var(--panel2); border-radius: 4px; padding: 0.3rem 0.4rem; }
 .prio { font-size: 0.66rem; padding: 0.05rem 0.4rem; border-radius: 999px; border: 1px solid var(--border2); }
@@ -346,6 +377,10 @@ button:active { transform: scale(0.98); }
 .ctx-chain .seg { color: var(--accent); cursor: pointer; }
 .ctx-chain .seg:hover { text-decoration: underline; }
 .ctx-item { font-size: 0.82rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); }
+/* v1.1.3 item 39: Selected-item section in the context pane (matches or
+   exceeds the inline ▾ details disclosure on each Waiting-on-you item). */
+.ctx-sel-hdr { display: flex; gap: 0.4rem; align-items: baseline; margin-bottom: 0.4rem; }
+.ctx-sel-text { font-size: 0.86rem; font-weight: 600; }
 .ctx-more { color: var(--accent); cursor: pointer; font-size: 0.78rem; }
 .handoff-box {
   background: var(--panel2); border: 1px dashed var(--accent);
