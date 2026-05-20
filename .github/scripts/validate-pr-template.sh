@@ -91,22 +91,49 @@ extract_section_content() {
   '
 }
 
-# detect_placeholder <section_content>
+# detect_placeholder <content>
 # Returns 0 if the literal placeholder substring is found in the content,
 # 1 otherwise.
 #
-# Note: extract_section_content already scopes to the mechanism section, so
-# placeholder text under (b) or (c) sub-headings (which is expected when the
-# author chose (a) and left the other sub-heading placeholders intact) IS
-# caught by this check. The current convention is: the author replaces the
-# placeholder text under their chosen sub-heading only. To pass, every
-# `<mechanism answer ...>` placeholder in the whole mechanism section must
-# be removed. This is intentional — leaving stale placeholders in the
-# unselected sub-sections is sloppy, and removing them costs three deletes.
+# Per the template's documented contract (PULL_REQUEST_TEMPLATE.md line 11 and
+# ~/.claude/rules/planning.md): "leave the other sub-headings present (they
+# document the option set) but their bracketed placeholder text may stay."
+# Callers must scope `content` to the SELECTED sub-section only — leftover
+# placeholders under the two unselected sub-headings are expected and OK.
 detect_placeholder() {
   local content="$1"
   # Use grep -F for literal (no regex) substring match.
   printf '%s\n' "$content" | grep -Fq "$PR_TEMPLATE_PLACEHOLDER"
+}
+
+# extract_selected_subsection <section_content> <form>
+# Prints content under the selected ### a) / ### b) / ### c) sub-heading,
+# stopping at the next ### sub-heading or EOF. Used to scope the
+# placeholder check to the sub-section the author claimed to fill in.
+extract_selected_subsection() {
+  local content="$1"
+  local form="$2"
+  local pattern
+  case "$form" in
+    a) pattern='^### a[)] Existing catalog entry' ;;
+    b) pattern='^### b[)] New catalog entry proposed' ;;
+    c) pattern='^### c[)] No mechanism' ;;
+    *) return 0 ;;
+  esac
+  printf '%s\n' "$content" | awk -v pat="$pattern" '
+    BEGIN { in_sub = 0 }
+    {
+      if (in_sub && $0 ~ /^### /) {
+        exit 0
+      }
+      if (in_sub) {
+        print
+      }
+      if ($0 ~ pat) {
+        in_sub = 1
+      }
+    }
+  '
 }
 
 # detect_answer_form <section_content>
@@ -193,14 +220,6 @@ validate_pr_body() {
   local section_chars=${#section_content}
   printf '[pr-template] extracted %d chars of mechanism content\n' "$section_chars"
 
-  if detect_placeholder "$section_content"; then
-    emit_failure_message placeholder_present
-    printf '[pr-template] placeholder detection: PRESENT\n'
-    printf '[pr-template] verdict: FAIL\n'
-    return 1
-  fi
-  printf '[pr-template] placeholder detection: ABSENT\n'
-
   local form
   form=$(detect_answer_form "$section_content")
   printf '[pr-template] answer form: %s\n' "$form"
@@ -210,6 +229,20 @@ validate_pr_body() {
     printf '[pr-template] verdict: FAIL\n'
     return 1
   fi
+
+  # Per the template's contract, residual placeholder text under the two
+  # unselected sub-headings is OK ("they document the option set"). Only
+  # check the SELECTED sub-section for residual placeholder text — that's
+  # where the author was supposed to replace it.
+  local selected_content
+  selected_content=$(extract_selected_subsection "$section_content" "$form")
+  if detect_placeholder "$selected_content"; then
+    emit_failure_message placeholder_present
+    printf '[pr-template] placeholder detection: PRESENT in selected sub-section (%s)\n' "$form"
+    printf '[pr-template] verdict: FAIL\n'
+    return 1
+  fi
+  printf '[pr-template] placeholder detection: ABSENT in selected sub-section (%s)\n' "$form"
 
   if [[ "$form" == "c" ]]; then
     local rationale_chars
@@ -273,8 +306,36 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     fails=$((fails + 1))
   fi
 
+  # Case 7: (c) filled with substantive content, (a) and (b) sub-headings
+  # present with their bracketed placeholders intact → PASS.
+  # Locks in the fix for the PR #14 scenario: the template explicitly
+  # allows leaving placeholders under unselected sub-headings.
+  case7=$(printf '## What mechanism would have caught this?\n\n### a) Existing catalog entry\n\n<mechanism answer — replace this bracketed text>\n\n### b) New catalog entry proposed\n\n<mechanism answer — replace this bracketed text>\n\n### c) No mechanism — accepted residual risk\n\nThis is a scoping-judgment correction; no realistic automated gate catches "an enumerated set broader than purpose" without unacceptable false positives.\n')
+  if ! validate_pr_body "$case7" >/dev/null 2>&1; then
+    echo "FAIL: (c) filled with placeholders under unselected (a)/(b) should have passed" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 8: (a) "selected" via substantive content BUT placeholder still
+  # present under (a) sub-heading → FAIL placeholder_present. Negative
+  # test ensuring we still catch un-deleted placeholders in the CHOSEN
+  # sub-section (the case the original validator was guarding against).
+  case8=$(printf '## What mechanism would have caught this?\n\n### a) Existing catalog entry\n\n<mechanism answer — replace this bracketed text>\nFM-006 self-reported task completion without evidence — caught by plan-edit-validator.\n')
+  if validate_pr_body "$case8" >/dev/null 2>&1; then
+    echo "FAIL: placeholder remaining in selected sub-section should have failed" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 9: (a) filled with substantive content, (b) and (c) sub-headings
+  # present with placeholders → PASS. Mirror of case 7 with (a) selected.
+  case9=$(printf '## What mechanism would have caught this?\n\n### a) Existing catalog entry\n\nFM-006 self-reported task completion without evidence — caught by plan-edit-validator.\n\n### b) New catalog entry proposed\n\n<mechanism answer — replace this bracketed text>\n\n### c) No mechanism — accepted residual risk\n\n<mechanism answer — replace this bracketed text>\n')
+  if ! validate_pr_body "$case9" >/dev/null 2>&1; then
+    echo "FAIL: (a) filled with placeholders under unselected (b)/(c) should have passed" >&2
+    fails=$((fails + 1))
+  fi
+
   if [[ $fails -eq 0 ]]; then
-    echo "Self-test passed (6 cases)" >&2
+    echo "Self-test passed (9 cases)" >&2
     exit 0
   else
     echo "Self-test failed: $fails case(s) failed" >&2
