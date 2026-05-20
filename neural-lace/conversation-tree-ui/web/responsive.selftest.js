@@ -204,13 +204,25 @@ ok('R40 item20-dropped: "promote to branch" label retained, no "expand", promote
   && /el\('button',\s*'btn-up',\s*'promote to branch'\)/.test(js)
   && /type:\s*'promoted'/.test(js));
 
-// v1.1.2 item 25 — top-level project nodes render as H1/H2-style headers
-ok('R44 item25 .tnode-root header CSS + renderTreeNode depth-0 wiring',
+// v1.1.3 (supersedes v1.1.2 item 25, commit 5f030e1) — top-level project
+// nodes differentiated from sub-rows by a subtle whole-row background tint
+// + font-weight:700 ONLY. Identical font-family / font-size / row height as
+// sub-rows (the prior enlargement faux-bolded as a fallback face on
+// Segoe UI). Lock the new contract, not the superseded one.
+ok('R44 item25 v1.1.3 .tnode-root subtle-tint header + renderTreeNode depth-0 wiring',
   /\.tnode-row\.tnode-root\s*\{/.test(C)
-  && /\.tnode-row\.tnode-root\s*\{[^}]*font-size:\s*1\.18rem/.test(C)
+  // MUST NOT enlarge — same row height as sub-rows is the whole point.
+  && !/\.tnode-row\.tnode-root\s*\{[^}]*font-size:/.test(C)
+  // Subtle bg tint via linear-gradient at 0.06 alpha (v1.1.3 value).
+  && /\.tnode-row\.tnode-root\s*\{[^}]*linear-gradient\(rgba\(255,255,255,0\.06\)/.test(C)
+  // Separator above each root row (with first-child override below).
   && /\.tnode-row\.tnode-root\s*\{[^}]*border-top:\s*1px solid/.test(C)
-  && /\.tnode-row\.tnode-root\s*\{[^}]*linear-gradient\(rgba\(255,255,255,0\.05\)/.test(C)
-  && /\.tnode-row\.tnode-root \.tnode-title\s*\{[^}]*font-weight:\s*800/.test(C)
+  // Title bold at 700, NOT 800 (Segoe UI has no real 800 face).
+  && /\.tnode-row\.tnode-root \.tnode-title\s*\{[^}]*font-weight:\s*700/.test(C)
+  && !/\.tnode-row\.tnode-root \.tnode-title\s*\{[^}]*font-weight:\s*800/.test(C)
+  // First root row drops the separator gap.
+  && /\.tree-canvas\s*>\s*\.tnode:first-child\s*>\s*\.tnode-row\.tnode-root/.test(C)
+  // JS wiring: depth-0 forest roots get the .tnode-root class.
   && /function renderTreeNode\s*\(n,\s*kids,\s*container,\s*depth\)/.test(js)
   && /depth\s*===\s*0\s*\?\s*' tnode-root'/.test(js)
   && /renderTreeNode\(k,\s*kids,\s*kc,\s*depth \+ 1\)/.test(js));
