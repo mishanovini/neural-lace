@@ -408,5 +408,50 @@ ok('R59 v1.1.3-item-39 (preserved from master): ctx pane shows full per-item det
   && /'Selected item'/.test(js)
   && /\.ctx-sel-hdr\s*\{/.test(C));
 
+// --- v1.1.4 item 40 — detail-pane info-hierarchy + linkified branch refs +
+//     graceful fallback when only redundant boilerplate is available. The
+//     six checks below lock the renderer contract documented in app.js
+//     above `function renderItemDetails(de, projectKey, itemText)`.
+
+ok('R60 item40: renderItemDetails signature accepts itemText 3rd arg (redundancy detection)',
+  /function renderItemDetails\(de, projectKey, itemText\)/.test(js)
+  && /var descRedundant = \(\s*itemText != null && de\.description != null/.test(js)
+  && /String\(de\.description\)\.trim\(\) === String\(itemText\)\.trim\(\)/.test(js));
+
+ok('R61 item40: actionable fields rendered ABOVE Context (info-hierarchy fix)',
+  /add\(detailRow\('Instructions', de\.instructions, projectKey\)\);[\s\S]*?add\(detailRow\('Recommendation', de\.recommendation, projectKey\)\);[\s\S]*?add\(detailRow\('Blocking input needed', de\.blocking_input, projectKey\)\);[\s\S]*?if \(!descRedundant\) add\(detailRow\('Description'[\s\S]*?add\(detailRow\('Context', de\.context, projectKey\)\);/.test(js)
+  // critical: "What" label (the cramped uppercase that read as "WAIT") is gone
+  && !/detailRow\('What',/.test(js)
+  // critical: "Why / context" label (the cramped uppercase that read as
+  // "JIRT/CONTEXT") is gone — clarified to plain "Context"
+  && !/detailRow\('Why \/ context'/.test(js));
+
+ok('R62 item40: (see branch: X) renders as clickable button → focusNode(node_id)',
+  /var bm = s\.match\(\/see\\s\+branch:\\s\*\(\.\+\?\)\\s\*\\\)\?\\s\*\$\/i\);/.test(js)
+  && /var match = nodes\(\)\.find\(function \(n\) \{[\s\S]*?String\(n\.title\)\.trim\(\) === wanted/.test(js)
+  && /var jb = el\('button', 'det-link det-link-branch',/.test(js)
+  && /jb\.addEventListener\('click', function \(\) \{ focusNode\(match\.node_id\); \}\);/.test(js)
+  && /\.det-link-branch\s*\{/.test(C)
+  // button-shape consistent with .det-link family (still discoverable as a link chip)
+  && /\.det-link-branch[^{]*\{[^}]*cursor:\s*pointer/.test(C));
+
+ok('R63 item40: graceful fallback when no actionable fields AND description is redundant',
+  /var hasActionable = !!\(\s*de\.instructions \|\| de\.recommendation \|\| de\.blocking_input/.test(js)
+  && /var descIsSubstantive = \(\s*de\.description != null && !descRedundant/.test(js)
+  && /var incomplete = !hasActionable && !descIsSubstantive;/.test(js)
+  && /if \(incomplete\) \{[\s\S]*?'No detailed instructions recorded — see linked branch \/ Dispatch doc for context\.'/.test(js)
+  && /\.det-fallback\s*\{/.test(C));
+
+ok('R64 item40: incomplete-metadata badge surfaced when item lacks actionable detail',
+  /var fbBadge = el\('span', 'det-incomplete-badge', 'incomplete metadata'\);/.test(js)
+  && /\.det-incomplete-badge\s*\{/.test(C)
+  // badge uses the same amber/warning palette as the existing decision-type
+  // signal — keeps the page visually coherent
+  && /\.det-incomplete-badge[^{]*\{[^}]*var\(--type-decision\)/.test(C));
+
+ok('R65 item40: BOTH call sites (inline ▾ details + ctx-pane selected item) pass it.text for redundancy detection',
+  /renderItemDetails\(it\.details, treeOf\(n\), it\.text\)/.test(js)
+  && /renderItemDetails\(selIt\.details, treeOf\(n\), selIt\.text\)/.test(js));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

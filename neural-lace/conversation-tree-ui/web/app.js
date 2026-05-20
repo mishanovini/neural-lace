@@ -157,11 +157,72 @@
     d.appendChild(v);
     return d;
   }
-  function renderItemDetails(de, projectKey) {
+  // v1.1.4 item 40 — detail-pane info-hierarchy + linkified branch refs +
+  // graceful fallback when only redundant boilerplate is available.
+  //
+  // CONTRACT (drives selftest R60..R65 and state P18):
+  //   1. ACTIONABLE FIELDS FIRST.  Instructions / Options / Recommendation /
+  //      Blocking input are rendered ABOVE Context, because the operator's
+  //      first question is "what do I do?" — context is supporting detail,
+  //      not the answer.
+  //   2. NO REDUNDANT "What" ROW.  When `description === itemText` (the
+  //      verbatim-text case the backfill produces by the honesty contract,
+  //      `backfill-details.js:158`), suppress the row — it would just repeat
+  //      what the item header already shows. When `description` differs
+  //      from itemText (a real distinct doc-sourced description), surface it.
+  //   3. BRANCH-LINK PARSING.  `(see branch: <Title>)` becomes a clickable
+  //      jump-to-branch button, looking the branch up by title in nodes().
+  //      Falls back to plain chip when no match. Docs/... links continue to
+  //      use linkifyDocs (preserved from item 19).
+  //   4. GRACEFUL FALLBACK.  When no actionable fields are present (no
+  //      instructions/options/recommendation/blocking_input AND description
+  //      is redundant), prepend a single muted line — "No detailed
+  //      instructions recorded — see linked branch / Dispatch doc for
+  //      context." — so the pane is never blank-but-with-empty-labels.
+  //   5. INCOMPLETE-METADATA BADGE.  When the item has none of the actionable
+  //      fields, surface a small "incomplete metadata" badge so old
+  //      backfilled items can be retro-populated by hand if needed (per
+  //      Misha's Phase 4 ask).
+  //
+  // Signature backward-compat: `itemText` is the 3rd arg, OPTIONAL — older
+  // call sites that didn't pass it still work (redundancy check just no-ops).
+  function renderItemDetails(de, projectKey, itemText) {
     var box = el('div', 'li-details');
+    if (!de || typeof de !== 'object') return box;
     var add = function (node) { if (node) box.appendChild(node); };
-    add(detailRow('What', de.description, projectKey));
-    add(detailRow('Why / context', de.context, projectKey));
+
+    // --- contract item 2: redundancy detection -------------------------------
+    var descRedundant = (
+      itemText != null && de.description != null
+      && String(de.description).trim() === String(itemText).trim()
+    );
+
+    // --- contract item 5: incomplete-metadata signal -------------------------
+    var hasActionable = !!(
+      de.instructions || de.recommendation || de.blocking_input
+      || (Array.isArray(de.options) && de.options.length)
+    );
+    var descIsSubstantive = (
+      de.description != null && !descRedundant
+      && String(de.description).trim().length > 20
+    );
+    var incomplete = !hasActionable && !descIsSubstantive;
+
+    // --- contract item 4: graceful fallback ----------------------------------
+    if (incomplete) {
+      var fb = el('div', 'det-fallback');
+      var fbLine = el('div', 'muted',
+        'No detailed instructions recorded — see linked branch / Dispatch doc for context.');
+      fb.appendChild(fbLine);
+      var fbBadge = el('span', 'det-incomplete-badge', 'incomplete metadata');
+      fbBadge.title = 'This item lacks actionable instructions/options/recommendation. '
+        + 'Re-run backfill-details.js with --enrich or paste fuller detail when raising the item.';
+      fb.appendChild(fbBadge);
+      box.appendChild(fb);
+    }
+
+    // --- contract item 1: ACTIONABLE FIELDS FIRST ----------------------------
+    add(detailRow('Instructions', de.instructions, projectKey));
     if (Array.isArray(de.options) && de.options.length) {
       var ow = el('div', 'det-row');
       ow.appendChild(el('span', 'det-k', 'Options'));
@@ -176,20 +237,46 @@
       });
       ow.appendChild(ol); box.appendChild(ow);
     }
-    add(detailRow('Instructions', de.instructions, projectKey));
     add(detailRow('Recommendation', de.recommendation, projectKey));
     add(detailRow('Blocking input needed', de.blocking_input, projectKey));
+
+    // --- supporting detail (only when distinct from the item header) ---------
+    if (!descRedundant) add(detailRow('Description', de.description, projectKey));
+    add(detailRow('Context', de.context, projectKey));
+
+    // --- contract item 3: links (last, but with branch-link parsing) ---------
     if (Array.isArray(de.links) && de.links.length) {
       var lw = el('div', 'det-row');
       lw.appendChild(el('span', 'det-k', 'Links'));
       var lv = el('div', 'det-v');
       de.links.forEach(function (lk) {
         var s = String(lk);
-        // item 19: a docs/… link becomes a clickable .doc-link → inline modal;
-        // a non-doc reference (e.g. "(see branch: X)") stays a plain chip.
+        // item 19 preserved: a docs/… link becomes a clickable .doc-link.
         if (/docs\/[A-Za-z0-9._\/-]+/.test(s)) {
           linkifyDocs(lv, s, projectKey);
         } else {
+          // v1.1.4 item 40 NEW: parse `(see branch: TITLE)` → clickable jump.
+          // Match the title against nodes() (substring match — the backfill
+          // emits the full title verbatim, but be lenient about wrapping
+          // parens / trailing punctuation).
+          var bm = s.match(/see\s+branch:\s*(.+?)\s*\)?\s*$/i);
+          if (bm) {
+            var wanted = bm[1].trim();
+            var match = nodes().find(function (n) {
+              return n && n.title && String(n.title).trim() === wanted;
+            });
+            if (match) {
+              var jb = el('button', 'det-link det-link-branch',
+                '→ branch: ' + (match.title || match.node_id));
+              jb.title = 'Jump to branch in tree';
+              jb.setAttribute('data-jump-node', match.node_id);
+              jb.addEventListener('click', function () { focusNode(match.node_id); });
+              lv.appendChild(jb);
+              lv.appendChild(document.createTextNode(' '));
+              return;
+            }
+          }
+          // Fallback: plain chip (preserved from prior behavior).
           var c = el('span', 'det-link', s);
           c.title = 'repo path / reference';
           lv.appendChild(c);
@@ -910,7 +997,7 @@
             nowExpanded = false;
           } else {
             expandedItems.add(it.item_id);
-            var d = renderItemDetails(it.details, treeOf(n));
+            var d = renderItemDetails(it.details, treeOf(n), it.text);
             li.insertBefore(d, disc.nextSibling);
             disc.textContent = '▾ details';
             nowExpanded = true;
@@ -920,7 +1007,7 @@
           if (nowExpanded) li.scrollIntoView({ block: 'nearest' });
         });
         li.appendChild(disc);
-        if (expanded) li.appendChild(renderItemDetails(it.details, treeOf(n)));
+        if (expanded) li.appendChild(renderItemDetails(it.details, treeOf(n), it.text));
       }
       // item 10: responded — awaiting confirmation (visible, de-emphasised)
       if (it.responded) {
@@ -1401,7 +1488,7 @@
         hdr.appendChild(el('span', 'ctx-sel-text', selIt.text));
         ss.appendChild(hdr);
         if (selIt.details && typeof selIt.details === 'object') {
-          ss.appendChild(renderItemDetails(selIt.details, treeOf(n)));
+          ss.appendChild(renderItemDetails(selIt.details, treeOf(n), selIt.text));
         } else {
           ss.appendChild(el('div', 'muted', 'no rich details on this item yet'));
         }
