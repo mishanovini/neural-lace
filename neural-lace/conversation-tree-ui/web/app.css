@@ -279,21 +279,28 @@ button:active { transform: scale(0.98); }
 }
 .li.hot { border-color: var(--warn); }
 .li-top { display: flex; align-items: center; gap: 0.45rem; }
-/* v1.1.1 item 14 / v1.1.3 item 38: type label. Reads as a LABEL, not a
-   button — no border, no uppercase, no rounded button radius, cursor:default.
-   Type colour shows via a thin left bar + tinted background; near-black text
-   keeps WCAG AA contrast. */
-.li-kind {
-  font-size: 0.68rem; font-weight: 600;
-  padding: 0.04rem 0.4rem 0.04rem 0.3rem;
-  color: var(--type-on);
-  border-left: 3px solid var(--border2); border-radius: 2px;
-  letter-spacing: 0.01em; cursor: default;
-  display: inline-flex; align-items: center;
+/* v1.1.2 item 29 — branch-group header in the WOU pane when sort=branch.
+   Visually consistent with the .tnode-root project-node header from item 24:
+   subtle white bg tint, larger semibold title, separator line above. */
+.wou-group-header {
+  margin: 0.6rem 0 0.2rem; padding: 0.3rem 0.5rem;
+  font-size: 0.85rem; font-weight: 600; color: var(--text);
+  background-image: linear-gradient(rgba(255,255,255,0.06), rgba(255,255,255,0.06));
+  border-top: 1px solid var(--border); border-radius: 4px;
 }
-.li-kind.action   { background: var(--type-action);   border-left-color: rgba(0,0,0,0.35); }
-.li-kind.decision { background: var(--type-decision); border-left-color: rgba(0,0,0,0.35); }
-.li-kind.question { background: var(--type-question); border-left-color: rgba(0,0,0,0.35); }
+.wou-group-header:first-child { margin-top: 0.1rem; border-top: none; }
+.wou-group-header .wgh-sep { color: var(--muted); font-weight: 400; padding: 0 0.2rem; }
+
+/* v1.1.2 item 36 — type label is a SUBDUED TAG, not a button. Tinted bg at
+   ~22% opacity + type-color text + slimmer padding/font + no hover/pointer.
+   Misha's spec verbatim: "use the type-color at ~20-30% opacity with the
+   type-color as text, instead of solid fill with white text". Supersedes
+   master's parallel v1.1.3-item-38 interpretation (solid bg + near-black). */
+.li-kind { font-size: 0.62rem; font-weight: 600; padding: 0.02rem 0.4rem; border-radius: 999px; border: 1px solid transparent; text-transform: uppercase; letter-spacing: 0.04em; cursor: default; user-select: none; }
+.li-kind.action   { background: rgba(239,68,68,0.22);  color: var(--type-action); }
+.li-kind.decision { background: rgba(245,158,11,0.22); color: var(--type-decision); }
+.li-kind.question { background: rgba(59,130,246,0.22); color: var(--type-question); }
+.li-kind:hover { background-color: inherit; }   /* no hover state */
 .li-text { flex: 1; }                                  /* item 15: title owns row width */
 /* v1.1.1 item 14: per-card left accent stripe + ~5% type tint over the panel.
    The gradient overlay is a deterministic 5% tint (no color-mix dependency). */
@@ -339,6 +346,24 @@ button:active { transform: scale(0.98); }
 .prio.high { color: var(--err); border-color: var(--err); }
 .prio.medium { color: var(--warn); border-color: var(--warn); }
 .prio.low { color: var(--muted); }
+/* v1.1.2 items 33+34 — numeric P-badge (P1..P4 visible; P5 = unassigned, no
+   badge). Colour scale: P1=red urgent → P4=muted. Same pill shape/size as
+   .prio for visual parity with backlog. */
+.p-badge { font-size: 0.62rem; font-weight: 700; padding: 0.02rem 0.45rem; border-radius: 999px; border: 1px solid currentColor; }
+.p-badge.p1 { color: #ef4444; background: rgba(239,68,68,0.15); }
+.p-badge.p2 { color: #f59e0b; background: rgba(245,158,11,0.15); }
+.p-badge.p3 { color: #60a5fa; background: rgba(96,165,250,0.15); }
+.p-badge.p4 { color: #94a3b8; background: rgba(148,163,184,0.12); }
+/* priority assignment popover (item 33) — small inline picker. */
+.prio-pop {
+  position: relative; display: inline-flex; flex-direction: column; gap: 0.25rem;
+  margin-top: 0.3rem; background: var(--panel2); border: 1px solid var(--border2);
+  border-radius: 6px; padding: 0.4rem; box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+}
+.prio-pop .pp-row { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+.prio-pop button { font-size: 0.7rem; padding: 0.1rem 0.5rem; }
+/* small flag affordance for "Assign priority" button — keep subdued */
+.prio-assign { font-size: 0.66rem; padding: 0.05rem 0.4rem; border-radius: 4px; }
 .li[draggable=true] { cursor: grab; }
 .li.dragover { outline: 2px dashed var(--info); }
 
@@ -420,6 +445,13 @@ button:active { transform: scale(0.98); }
 .det-row { display: flex; gap: 0.5rem; align-items: flex-start; }
 .det-k { flex: 0 0 8.5rem; color: var(--muted); text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.04em; padding-top: 0.1rem; }
 .det-v { flex: 1; white-space: pre-wrap; word-break: break-word; }
+/* v1.1.2 item 31 — apply the type color to the FIRST detail row's value
+   (the description / "What" line) so the rich-details disclosure visibly
+   carries the item's type signal at every level of zoom. Reinforces what
+   .li-kind tag + left-stripe already telegraph on the card. */
+.li.kind-action   .li-details .det-row:first-child .det-v { color: var(--type-action);   font-weight: 600; }
+.li.kind-decision .li-details .det-row:first-child .det-v { color: var(--type-decision); font-weight: 600; }
+.li.kind-question .li-details .det-row:first-child .det-v { color: var(--type-question); font-weight: 600; }
 .det-opt { border-left: 2px solid var(--border2); padding-left: 0.5rem; margin: 0.2rem 0; }
 .det-opt-l { font-weight: 600; }
 .det-link { font-size: 0.72rem; color: var(--info); border: 1px solid var(--info); border-radius: 4px; padding: 0.03rem 0.35rem; }
@@ -468,6 +500,19 @@ button:active { transform: scale(0.98); }
 .btn-del.outline     { color: var(--err);   border-color: var(--btn-del); }
 .btn-neutral.outline { color: var(--muted); border-color: var(--btn-neutral); }
 
+/* v1.1.2 item 39 — TRIAL: btn-* solid fills softened to ~50% opacity bg with
+   brighter saturated text so contrast holds. If the trial doesn't land,
+   bump alpha back toward 1.0. Same palette, just visually toned down. */
+.btn-go      { background: rgba(34,197,94,0.50);   color: #86efac; border-color: rgba(34,197,94,0.55); }
+.btn-wait    { background: rgba(245,158,11,0.50);  color: #fde68a; border-color: rgba(245,158,11,0.55); }
+.btn-info    { background: rgba(59,130,246,0.50);  color: #bfdbfe; border-color: rgba(59,130,246,0.55); }
+.btn-up      { background: rgba(168,85,247,0.50);  color: #e9d5ff; border-color: rgba(168,85,247,0.55); }
+.btn-del     { background: rgba(185,28,28,0.50);   color: #fecaca; border-color: rgba(185,28,28,0.55); }
+.btn-neutral { background: rgba(71,85,105,0.50);   color: #e2e8f0; border-color: rgba(71,85,105,0.55); }
+/* hover: ~70% opacity to give a clear "pressable" affordance */
+.btn-go:hover, .btn-wait:hover, .btn-info:hover,
+.btn-up:hover, .btn-del:hover, .btn-neutral:hover { filter: brightness(1.15); }
+
 /* item 16: prominent hide-concluded "View" toggle in the tree pane-head. */
 .viewtoggle {
   display: flex; align-items: center; gap: 0.35rem; font-size: 0.8rem;
@@ -485,12 +530,29 @@ button:active { transform: scale(0.98); }
 .doc-link:hover { background: var(--type-question); color: var(--type-on); }
 #docScrim { position: fixed; inset: 0; z-index: 59; background: rgba(0,0,0,0.55); }
 #docScrim[hidden], #docModal[hidden], #docsPanel[hidden] { display: none !important; }
+/* v1.1.2 item 38 — doc preview is a resizable RIGHT side pane (not modal).
+   The three primary panes (#layout) shrink proportionally via margin-right
+   while the side pane is open. Drag the left-edge handle to resize; width
+   persists in localStorage. Multiple docs can't be open at once — opening a
+   new doc replaces the current one (width-resize stays consistent). */
 #docModal {
-  position: fixed; z-index: 60; top: 4vh; left: 50%; transform: translateX(-50%);
-  width: min(60rem, 92vw); max-height: 92vh; display: flex; flex-direction: column;
-  background: var(--panel); border: 1px solid var(--border2); border-radius: 8px;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  position: fixed; z-index: 60; top: 0; right: 0; bottom: 0;
+  width: var(--doc-pane-w, 32rem); min-width: 16rem; max-width: 90vw;
+  display: flex; flex-direction: column;
+  background: var(--panel); border-left: 1px solid var(--border2);
+  box-shadow: -8px 0 24px rgba(0,0,0,0.5);
 }
+.doc-resize {
+  position: absolute; left: -3px; top: 0; bottom: 0; width: 6px;
+  cursor: ew-resize; background: transparent; z-index: 61;
+}
+.doc-resize:hover { background: rgba(168,139,250,0.25); }
+/* Shrink the underlying layout when the side pane is open (Misha's spec:
+   "the three primary panes shrink proportionally to make room"). */
+body[data-doc-pane="open"] #layout { margin-right: var(--doc-pane-w, 32rem); transition: margin-right 0.12s ease; }
+/* When the doc side pane is open, suppress the dim scrim — the rest of the
+   GUI must remain fully interactive (Misha's spec). */
+body[data-doc-pane="open"] #docScrim { display: none !important; }
 .doc-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem;
   border-bottom: 1px solid var(--border); }
 .doc-head .doc-title { font-weight: 700; flex: 1; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

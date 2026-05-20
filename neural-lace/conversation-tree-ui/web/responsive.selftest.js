@@ -147,11 +147,13 @@ const server = fs.readFileSync(path.join(D, '..', 'server', 'server.js'), 'utf8'
 const backfill = fs.readFileSync(path.join(D, '..', 'state', 'backfill-details.js'), 'utf8');
 
 // item 14 — type-colour palette: 3 vars + filled badge + per-card accent/tint
-ok('R34 item14 type palette vars + filled .li-kind + .li.kind-* accent/tint',
+// R34 updated by v1.1.2 item 36: .li-kind is now a SUBDUED TAG (tinted bg +
+// type-color text), no longer a solid filled badge. The .li.kind-* card
+// accent/tint via border-left remains. Item 36's contract is locked by R56.
+ok('R34 item14 type palette vars present + .li.kind-* card accent/tint (item-36 .li-kind contract locked by R56)',
   /--type-action:\s*#ef4444/i.test(C) && /--type-decision:\s*#f59e0b/i.test(C)
   && /--type-question:\s*#3b82f6/i.test(C)
-  && /\.li-kind\.action\s*\{\s*background:\s*var\(--type-action\)/.test(C)
-  && /\.li\.kind-action\s*\{\s*border-left:\s*5px solid var\(--type-action\)/.test(C)
+  && /\.li\.kind-action\s*\{[^}]*border-left:\s*5px solid var\(--type-action\)/.test(C)
   && /'li kind-' \+ it\.kind/.test(js));
 
 // item 15 — title flex:1 + fixed-width icon jump button (text crumb removed)
@@ -264,7 +266,8 @@ ok('R43 item23 backfill resolveDocPath + extractFromDoc wired into payloadFor',
   && /require\('\.\.\/config\/projects\.js'\)/.test(backfill)
   && /links\.find\(function \(l\) \{ return \/\^docs\\\//.test(backfill));
 
-// item 37 — docs panel cross-repo auto-discovery + nested collapsible tree.
+// item 37 (merged via origin/master from jolly-davinci) — docs panel cross-repo
+// auto-discovery + nested collapsible tree. R45/R46/R47 retained verbatim.
 // v1.1.2 *claimed* to ship this with ZERO test proving it, and it silently
 // didn't work (flat list, neural-lace only). These assertions lock both
 // halves so the regression cannot recur unobserved.
@@ -301,12 +304,12 @@ ok('R46 item37 UI: nested project→folder→file tree + persisted expansion',
   ok('R47 item37 functional: self present, zero worktree-named keys leak', funcOk);
 })();
 
-// --- v1.1.2 polish items 26/27/28 + v1.1.3 items 38/39 ---------------------
+// --- v1.1.2 polish items 26/27/28 (item 25 = merged item 22, covered by R42)
 ok('R48 item26: Details toggles IN PLACE (no renderActions rebuild) + scrollIntoView nearest (no scroll reset)',
   /disc\.addEventListener\('click', function \(\) \{[\s\S]*?li\.scrollIntoView\(\{ block: 'nearest' \}\);[\s\S]*?\}\);/.test(js)
   && /li\.querySelector\('\.li-details'\)/.test(js)
   && /li\.insertBefore\(d, disc\.nextSibling\)/.test(js)
-  && /el\('button', 'ghost det-toggle',/.test(js));
+  && /el\('button', 'ghost det-toggle',/.test(js));   // item-22 chose ghost; item 26 fixes scroll only
 
 ok('R49 item27: decision/question resolve ONLY via Respond — done button gated to kind==="action", no "mark answered"',
   /if \(it\.kind === 'action'\) \{\s*\n?\s*var done = el\('button', 'btn-go', 'mark done'\)/.test(js)
@@ -329,17 +332,78 @@ ok('R50 item28: friendly Defer popover (presets + native datetime-local + to-Bac
   && /it\.tz_offset_min = Number\(ev\.tz_offset_min\)/.test(reducer)
   && /const SCHEMA_VERSION\s*=\s*1\s*;/.test(schema));
 
-// v1.1.3 item 38 — .li-kind reads as a LABEL (no border, no uppercase, no
-// rounded button radius, cursor:default). Type colour comes from filled bg.
-ok('R51 item38 .li-kind label (not button-styled): no border, no uppercase, cursor:default',
-  /\.li-kind\s*\{[^}]*cursor:\s*default/.test(C)
-  && !/\.li-kind\s*\{[^}]*border:\s*1px solid var\(--border2\)/.test(C)
-  && !/\.li-kind\s*\{[^}]*text-transform:\s*uppercase/.test(C));
+// --- v1.1.2 polish items 29–39 (item 37 = master's R45-R47; item 32 covered
+//     by the conv-tree-read.sh --self-test 37/37; item 34 by backfill-priorities.js --self-test)
+ok('R51 item29: branch-group headers in WOU when sort=node (\'branch\') — .wou-group-header + crumb-change detection',
+  /\.wou-group-header\s*\{/.test(C)
+  && /var groupBy = actionsSort\.value === 'node'/.test(js)
+  && /el\('div', 'wou-group-header'\)/.test(js));
 
-// v1.1.3 item 39 — clicking a Waiting-on-you item opens the ctx pane with at
-// least as much detail as the inline ▾ details disclosure. The pane must
-// render a "Selected item" section that calls renderItemDetails for selIt.
-ok('R52 item39: ctx pane shows full per-item details for the selected item (matches inline ▾)',
+ok('R52 item30: priority sort dropdown option + priority sort branch (effectivePrio + typeRank fallback + recency)',
+  /<option value="priority">priority<\/option>/.test(html)
+  && /function effectivePrio\s*\(/.test(js)
+  && /function typeRank\s*\(/.test(js)
+  && /if \(mode === 'priority'\)/.test(js));
+
+ok('R53 item31: type-color on description in details modal (CSS descendant selector on .li.kind-* .li-details .det-row:first-child .det-v)',
+  /\.li\.kind-action\s+\.li-details\s+\.det-row:first-child\s+\.det-v\s*\{[^}]*var\(--type-action\)/.test(C)
+  && /\.li\.kind-decision\s+\.li-details\s+\.det-row:first-child\s+\.det-v\s*\{[^}]*var\(--type-decision\)/.test(C)
+  && /\.li\.kind-question\s+\.li-details\s+\.det-row:first-child\s+\.det-v\s*\{[^}]*var\(--type-question\)/.test(C));
+
+ok('R54 items33+34: priority-assignment popover + P-badge UI + priority-assigned event wired',
+  /function openPrioPop\s*\(/.test(js)
+  && /type: 'priority-assigned'/.test(js)
+  && /\.p-badge\.p1\s*\{/.test(C) && /\.p-badge\.p2\s*\{/.test(C)
+  && /\.p-badge\.p3\s*\{/.test(C) && /\.p-badge\.p4\s*\{/.test(C)
+  && /el\('span', 'p-badge p' \+ ep, 'P' \+ ep\)/.test(js)
+  && /el\('button', 'prio-assign btn-neutral outline', '⚑'\)/.test(js)
+  && /'priority-assigned'/.test(schema)
+  && /'priority-assigned':\s*\['target_id',\s*'priority'\]/.test(schema)
+  && /case 'priority-assigned'/.test(reducer));
+
+ok('R55 item35: Staged Note IS a message channel — drop "NOT A MESSAGE CHANNEL" warning + add Send to Dispatch button emitting branch-note-add + reducer notes_sent history + last_sent_note indicator',
+  !/not a message channel/i.test(js)
+  && /el\('button', 'btn-go', 'Send to Dispatch'\)/.test(js)
+  && /type: 'branch-note-add'/.test(js)
+  && /'branch-note-add'/.test(schema)
+  && /'branch-note-add':\s*\['target',\s*'note_text'\]/.test(schema)
+  && /case 'branch-note-add'/.test(reducer)
+  && /node\.notes_sent = node\.notes_sent \|\| \[\]/.test(reducer)
+  && /last_sent_note/.test(reducer));
+
+ok('R56 item36: type label is SUBDUED TAG (tinted bg ~22%, type-color text, smaller font, no hover/pointer) — NOT a solid filled button',
+  /\.li-kind \{[^}]*font-size:\s*0\.62rem/.test(C)
+  && /\.li-kind \{[^}]*cursor:\s*default/.test(C)
+  && /\.li-kind\.action\s*\{[^}]*rgba\(239,68,68,0\.22\)/.test(C)
+  && /\.li-kind\.action\s*\{[^}]*color:\s*var\(--type-action\)/.test(C)
+  && /\.li-kind\.decision\s*\{[^}]*rgba\(245,158,11,0\.22\)/.test(C)
+  && /\.li-kind\.question\s*\{[^}]*rgba\(59,130,246,0\.22\)/.test(C));
+
+ok('R57 item38: doc preview is a resizable RIGHT side pane (NOT a centered modal) + shrinks #layout via margin-right + resize handle persists width',
+  /#docModal \{[^}]*right:\s*0/.test(C)
+  && /#docModal \{[^}]*width:\s*var\(--doc-pane-w/.test(C)
+  && /\.doc-resize \{[^}]*cursor:\s*ew-resize/.test(C)
+  && /body\[data-doc-pane="open"\] #layout \{[^}]*margin-right:\s*var\(--doc-pane-w/.test(C)
+  && /function ensureDocResizeHandle\s*\(/.test(js)
+  && /document\.body\.dataset\.docPane = 'open'/.test(js)
+  && /DOC_PANE_W_KEY/.test(js)
+  && !/top:\s*4vh;\s*left:\s*50%/.test(C));   // old centered-modal positioning gone
+
+ok('R58 item39: 50%-opacity button TRIAL (rgba ~0.50 backgrounds + brighter saturated text + hover brightness)',
+  /\.btn-go\s*\{[^}]*rgba\(34,197,94,0\.50\)/.test(C)
+  && /\.btn-wait\s*\{[^}]*rgba\(245,158,11,0\.50\)/.test(C)
+  && /\.btn-info\s*\{[^}]*rgba\(59,130,246,0\.50\)/.test(C)
+  && /\.btn-up\s*\{[^}]*rgba\(168,85,247,0\.50\)/.test(C)
+  && /\.btn-del\s*\{[^}]*rgba\(185,28,28,0\.50\)/.test(C)
+  && /\.btn-neutral\s*\{[^}]*rgba\(71,85,105,0\.50\)/.test(C)
+  && /:hover[^{]*\{[^}]*filter:\s*brightness\(1\.15\)/.test(C));
+
+// R59 — preserve master's parallel-session v1.1.3-item-39 check (ctx pane
+// shows full per-item details for selected item). NOTE: master's parallel
+// v1.1.3-item-38 check (.li-kind without uppercase) is INTENTIONALLY NOT
+// included here — it contradicts Misha's item 36 spec (tinted bg + type
+// color text + uppercase per Misha), which is what R56 locks.
+ok('R59 v1.1.3-item-39 (preserved from master): ctx pane shows full per-item details for the selected item',
   /if \(selItem\) \{[\s\S]*?renderItemDetails\(selIt\.details/.test(js)
   && /'Selected item'/.test(js)
   && /\.ctx-sel-hdr\s*\{/.test(C));

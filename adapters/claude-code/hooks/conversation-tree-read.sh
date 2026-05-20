@@ -178,6 +178,8 @@ var nodes = (snapshot && Array.isArray(snapshot.nodes)) ? snapshot.nodes : [];
 var RESPONSE_TYPES = {
   'answered': 1, 'action-done': 1, 'annotated': 1, 'contested': 1,
   'contest-resolved': 1, 'deferred': 1, 'defer-cleared': 1, 'backlog-added': 1,
+  // v1.1.2 item 35: explicit "Send to Dispatch" from the GUI's staged-note pane.
+  'branch-note-add': 1,
   // forward-compat (not in the frozen enum today):
   'action-responded': 1, 'action-noted-via-gui': 1, 'question-answered': 1,
   'decision-made': 1
@@ -273,7 +275,7 @@ function responseText(e, item) {
   if (e.type === 'annotated') return (typeof e.text === 'string' && e.text) ? e.text : '(annotation, no text)';
   if (e.type === 'contested') return (typeof e.note === 'string' && e.note) ? e.note
     : (typeof e.text === 'string' && e.text ? e.text : '(contested — no note)');
-  var cands = ['response', 'text', 'note', 'answer', 'comment', 'body', 'message'];
+  var cands = ['response', 'text', 'note_text', 'note', 'answer', 'comment', 'body', 'message'];
   for (var i = 0; i < cands.length; i++) {
     var v = e[cands[i]];
     if (typeof v === 'string' && v.trim()) return v;
@@ -286,6 +288,7 @@ function responseText(e, item) {
     case 'defer-cleared':     return '(cleared the deferral)';
     case 'contest-resolved':  return '(resolved' + (e.resolution ? ': ' + e.resolution : '') + ')';
     case 'backlog-added':     return (typeof e.text === 'string' && e.text) ? e.text : '(added a backlog item)';
+    case 'branch-note-add':   return (typeof e.note_text === 'string' && e.note_text) ? e.note_text : '(sent an empty branch note)';
     default:                  return '(' + e.type + ')';
   }
 }
