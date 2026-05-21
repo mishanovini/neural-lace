@@ -528,6 +528,25 @@ is_exempt() {
     adapters/claude-code/hooks/decisions-index-gate.sh) return 0 ;;
   esac
 
+  # Instance-specific operations tooling exemptions.
+  #
+  # These files are intentionally named after the specific downstream product
+  # they monitor. They live in neural-lace per the operator's placement
+  # directive (orchestrator integration via the generic external-monitor
+  # SessionStart surfacer requires the probe + runbook + plan to be
+  # co-located with the harness mirror). They are NOT generic harness-kit
+  # files; they ARE operations tooling for one specific deployment.
+  #
+  # The surfacer hook itself (`external-monitor-alert-surfacer.sh`) is generic
+  # by design and does NOT need exemption — it reads alerts from any
+  # configured directory.
+  case "$path" in
+    tools/circuit-health-probe.sh) return 0 ;;
+    docs/operations/circuit-health-monitor-*.md) return 0 ;;
+    docs/plans/circuit-prod-health-monitor.md) return 0 ;;
+    docs/plans/archive/circuit-prod-health-monitor.md) return 0 ;;
+  esac
+
   # Directory-prefix exemptions
   #
   # NOTE: docs/plans/ is NOT exempt. Neural Lace now commits its own
