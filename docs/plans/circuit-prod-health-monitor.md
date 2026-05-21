@@ -22,9 +22,9 @@ The user-facing outcome: when a Circuit-prod route regresses, the NEXT interacti
 
 - IN:
   - `tools/circuit-health-probe.sh` — the probe (24 critical routes, JSON output, history log, alert marker emission, `--self-test`).
-  - `adapters/claude-code/hooks/circuit-anomaly-alert-surfacer.sh` — SessionStart hook that surfaces unacked alert markers (mirrors `spawned-task-result-surfacer.sh` pattern).
+  - `adapters/claude-code/hooks/external-monitor-alert-surfacer.sh` — SessionStart hook that surfaces unacked alert markers (mirrors `spawned-task-result-surfacer.sh` pattern).
   - `adapters/claude-code/settings.json.template` — wires the surfacer into the SessionStart chain.
-  - Live mirror sync to `~/.claude/hooks/circuit-anomaly-alert-surfacer.sh` and `~/.claude/settings.json` (per two-layer config discipline).
+  - Live mirror sync to `~/.claude/hooks/external-monitor-alert-surfacer.sh` and `~/.claude/settings.json` (per two-layer config discipline).
   - `docs/operations/circuit-health-monitor-2026-05-20.md` — runbook (what's monitored, alert file format, how to enable schedule via Option A / B / C, pause mechanism, route-catalog update procedure, failure-mode disclosure).
   - `docs/plans/circuit-prod-health-monitor.md` — this plan.
 - OUT:
@@ -38,17 +38,17 @@ The user-facing outcome: when a Circuit-prod route regresses, the NEXT interacti
 - [x] 1. Author `tools/circuit-health-probe.sh` with 24-route catalog, JSON output schema, history log, alert marker emission, maintenance pause, `--self-test`. Verification: mechanical
   **Prove it works:** `bash tools/circuit-health-probe.sh --self-test` exits 0 with 6/6 PASS.
   **Wire checks:** n/a — single-purpose script.
-  **Integration points:** writes to `~/.claude/state/circuit-health-log/` and `~/.claude/state/circuit-prod-anomaly-alerts/`; reads `~/.claude/state/circuit-health-monitor-paused` (pause marker).
+  **Integration points:** writes to `~/.claude/state/circuit-health-log/` and `~/.claude/state/external-monitor-alerts/`; reads `~/.claude/state/circuit-health-monitor-paused` (pause marker).
 
 - [x] 2. Run initial seed probe against current Circuit prod. Verification: mechanical
-  **Prove it works:** `bash tools/circuit-health-probe.sh` returned exit 1 with 18/24 healthy + 6 TIMEOUT_OR_NETWORK anomalies; alert file written to `~/.claude/state/circuit-prod-anomaly-alerts/2026-05-21T13-57-45Z.json`.
+  **Prove it works:** `bash tools/circuit-health-probe.sh` returned exit 1 with 18/24 healthy + 6 TIMEOUT_OR_NETWORK anomalies; alert file written to `~/.claude/state/external-monitor-alerts/2026-05-21T13-57-45Z.json`.
   **Wire checks:** n/a.
   **Integration points:** confirms the probe correctly classifies real-world anomalies (the supabase-js fetch deadlock matches Circuit's own documented incident in `circuit/src/app/api/health/route.ts`).
 
-- [x] 3. Author `adapters/claude-code/hooks/circuit-anomaly-alert-surfacer.sh` and wire into `settings.json.template` + live mirror. Verification: mechanical
-  **Prove it works:** `bash adapters/claude-code/hooks/circuit-anomaly-alert-surfacer.sh --self-test` exits 0 with 6/6 PASS; live mirror at `~/.claude/hooks/circuit-anomaly-alert-surfacer.sh` also passes self-test; `settings.json.template` and `~/.claude/settings.json` both contain the new hook entry between `spawned-task-result-surfacer` and `plan-status-archival-sweep`.
+- [x] 3. Author `adapters/claude-code/hooks/external-monitor-alert-surfacer.sh` (generic — surfaces alerts from a configured external-monitor dir) and wire into live `~/.claude/settings.json` only. Verification: mechanical
+  **Prove it works:** `bash adapters/claude-code/hooks/external-monitor-alert-surfacer.sh --self-test` exits 0 with 6/6 PASS; live mirror at `~/.claude/hooks/external-monitor-alert-surfacer.sh` also passes self-test; live `~/.claude/settings.json` contains the new hook entry between `spawned-task-result-surfacer` and `plan-status-archival-sweep`. The kit template `adapters/claude-code/settings.json.template` is intentionally NOT modified — this hook is generic-shaped but its instance-specific wiring (alert dir, monitor name) is per-machine.
   **Wire checks:** n/a — single-purpose hook composes with existing SessionStart chain.
-  **Integration points:** SessionStart chain in both `settings.json.template` and `~/.claude/settings.json`.
+  **Integration points:** live `~/.claude/settings.json` SessionStart chain only.
 
 - [x] 4. Author runbook `docs/operations/circuit-health-monitor-2026-05-20.md` (single document). Verification: mechanical
   **Prove it works:** file exists, ≥ 200 lines, names every artifact created by this plan and the exact commands needed to enable a 30-min schedule via MCP scheduled-tasks (Option A) or Windows Task Scheduler (Option B).
@@ -58,10 +58,10 @@ The user-facing outcome: when a Circuit-prod route regresses, the NEXT interacti
 ## Files to Modify/Create
 
 - `tools/circuit-health-probe.sh` — the probe (NEW).
-- `adapters/claude-code/hooks/circuit-anomaly-alert-surfacer.sh` — the SessionStart surfacer (NEW).
-- `adapters/claude-code/settings.json.template` — wire the surfacer into the SessionStart chain.
-- `~/.claude/hooks/circuit-anomaly-alert-surfacer.sh` — live mirror of the surfacer (per harness two-layer config discipline; not under git in `neural-lace/` proper but referenced).
-- `~/.claude/settings.json` — live mirror of the settings change (per harness two-layer config; not in git).
+- `adapters/claude-code/hooks/external-monitor-alert-surfacer.sh` — the SessionStart surfacer (NEW).
+- `adapters/claude-code/hooks/harness-hygiene-scan.sh` — extends `is_exempt()` with file-path exemptions for the intentionally-instance-specific Circuit-named files (the probe, the surfacer, the runbook, this plan).
+- `~/.claude/hooks/external-monitor-alert-surfacer.sh` — live mirror of the surfacer (per harness two-layer config discipline; not under git in `neural-lace/` proper but referenced).
+- `~/.claude/settings.json` — wires the surfacer into SessionStart (instance-specific; the kit template at `adapters/claude-code/settings.json.template` is INTENTIONALLY NOT modified — Circuit wiring is per-machine ops tooling).
 - `docs/operations/circuit-health-monitor-2026-05-20.md` — runbook (NEW).
 - `docs/plans/circuit-prod-health-monitor.md` — this plan (NEW).
 
@@ -72,7 +72,7 @@ The user-facing outcome: when a Circuit-prod route regresses, the NEXT interacti
 ## Assumptions
 
 - Circuit prod URL is `https://circuit.pocket-technician.com` (verified from Circuit's `tests/e2e.js`).
-- The Dispatch orchestrator runs on the same machine as the scheduled task; alert files in `~/.claude/state/circuit-prod-anomaly-alerts/` are visible to both.
+- The Dispatch orchestrator runs on the same machine as the scheduled task; alert files in `~/.claude/state/external-monitor-alerts/` are visible to both.
 - `curl` is available on the host (required for the probe; pre-flight check enforced).
 - The user has standing authorization (this session) to commit, push, open a PR, and merge to master autonomously.
 - The MCP `scheduled-tasks` integration requires interactive approval per call — this is observed empirically (the autonomous call returned "requires user interaction"). The runbook captures the exact follow-up the user runs once to enable Option A.
@@ -82,7 +82,7 @@ The user-facing outcome: when a Circuit-prod route regresses, the NEXT interacti
 - **Probe runs while Circuit prod is fully down (DNS, TLS, all routes fail):** every route classifies as TIMEOUT_OR_NETWORK; the alert file is one large list of failures. Surfacer caps display at 5 newest entries — acceptable; the user-visible message says `N unacked Circuit-prod anomaly alert(s)` even when many.
 - **Maintenance pause marker present:** probe runs, history log is still written, alert file is NOT written. Suppression noted in stderr. Removing the marker resumes alert emission.
 - **Probe writes alert file but next session never starts:** alert file persists indefinitely (no expiry). Next session-start surfacer will pick it up. Sorted reverse-chrono so newest surfaces first.
-- **Multiple alert files stack up while pause marker is active or while orchestrator isn't running:** displayed five newest; older files are still inspectable via `ls -la ~/.claude/state/circuit-prod-anomaly-alerts/`.
+- **Multiple alert files stack up while pause marker is active or while orchestrator isn't running:** displayed five newest; older files are still inspectable via `ls -la ~/.claude/state/external-monitor-alerts/`.
 - **Alert file becomes malformed (truncated write, disk full):** surfacer detects via `jq empty` (or fallback bracket heuristic) and skips with a stderr warning rather than crashing the SessionStart chain.
 - **Route catalog needs update after a Circuit deploy that renames an endpoint:** documented procedure in runbook ("Updating the route catalog"); per-route format keeps the change to a one-line edit.
 - **A route's expected response intentionally changes** (e.g., a public route that was 200 becomes 307): the probe will flag it as UNEXPECTED_STATUS until the catalog is updated. This is the intended behavior — false positives surface immediately and force catalog maintenance.
@@ -98,11 +98,11 @@ The user-facing outcome: when a Circuit-prod route regresses, the NEXT interacti
 Smallest end-to-end vertical slice:
 1. Probe hits `https://example.com` (vendor-independent canary used in the probe's self-test scenarios 4/5).
 2. Probe emits JSON with one route's verdict.
-3. Probe writes that JSON to a temp `~/.claude/state/circuit-prod-anomaly-alerts/` (test-scope dir).
+3. Probe writes that JSON to a temp `~/.claude/state/external-monitor-alerts/` (test-scope dir).
 4. Surfacer reads the temp dir and emits a system-reminder.
 5. Marking the file with a `.acked` sibling silences the surfacer.
 
-Self-tests s3-s6 in `circuit-anomaly-alert-surfacer.sh` exercise this end-to-end (with synthetic JSON, not via the live probe — but the schema is identical, so production probe output composes correctly). The full real path was exercised by the seed run + first surfacer self-test.
+Self-tests s3-s6 in `external-monitor-alert-surfacer.sh` exercise this end-to-end (with synthetic JSON, not via the live probe — but the schema is identical, so production probe output composes correctly). The full real path was exercised by the seed run + first surfacer self-test.
 
 ## Decisions Log
 
