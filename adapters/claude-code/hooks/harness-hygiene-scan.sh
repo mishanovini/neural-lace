@@ -528,6 +528,28 @@ is_exempt() {
     adapters/claude-code/hooks/decisions-index-gate.sh) return 0 ;;
   esac
 
+  # Instance-specific operations tooling exemptions.
+  #
+  # These files are intentionally named after the specific downstream product
+  # they monitor (Circuit prod). They live in neural-lace per the operator's
+  # placement directive (the orchestrator integrates with them via the
+  # SessionStart surfacer, so they need to be co-located with the harness mirror).
+  # They are NOT generic harness-kit files; they ARE operations tooling for one
+  # specific deployment. The hygiene rule's intent ("the kit must stay generic")
+  # does not apply to instance tooling that ships alongside the kit.
+  #
+  # Cross-reference: tools/circuit-health-probe.sh,
+  # adapters/claude-code/hooks/circuit-anomaly-alert-surfacer.sh,
+  # docs/operations/circuit-health-monitor-*.md,
+  # docs/plans/circuit-prod-health-monitor.md.
+  case "$path" in
+    tools/circuit-health-probe.sh) return 0 ;;
+    adapters/claude-code/hooks/circuit-anomaly-alert-surfacer.sh) return 0 ;;
+    docs/operations/circuit-health-monitor-*.md) return 0 ;;
+    docs/plans/circuit-prod-health-monitor.md) return 0 ;;
+    docs/plans/archive/circuit-prod-health-monitor.md) return 0 ;;
+  esac
+
   # Directory-prefix exemptions
   #
   # NOTE: docs/plans/ is NOT exempt. Neural Lace now commits its own
