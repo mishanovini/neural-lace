@@ -1,6 +1,6 @@
 # Plan: Circuit Production Health Monitor
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: direct
 Mode: code
 tier: 1
@@ -144,6 +144,38 @@ Self-tests s3-s6 in `external-monitor-alert-surfacer.sh` exercise this end-to-en
 - [x] Initial seed run completed; behavior recorded (6 real anomalies detected — the system found exactly what it was built to find on first run).
 - [x] Runbook authored.
 - [x] Plan-level files match `## Files to Modify/Create`.
-- [ ] Committed to feature branch.
-- [ ] PR opened, merged to master.
-- [ ] Plan flipped to `Status: COMPLETED` (which triggers auto-archive via `plan-lifecycle.sh`).
+- [x] Committed to feature branch.
+- [x] PR opened, merged to master.
+- [x] Plan flipped to `Status: COMPLETED` (which triggers auto-archive via `plan-lifecycle.sh`).
+
+## Completion Report
+
+### 1. Implementation Summary
+All four tasks landed across two commits on branch `claude/focused-morse-31938d`:
+- **Task 1** (probe): `tools/circuit-health-probe.sh`, 6/6 self-test PASS.
+- **Task 2** (seed): probe run against `https://circuit.pocket-technician.com` returned exit 1 with 18/24 healthy + 6 TIMEOUT_OR_NETWORK anomalies (`/api/health`, `/api/auth/session`, `/api/webhooks/twilio` POST, `/api/webhooks/retell` POST, `/api/webhooks/resend` POST, `/api/leads` POST). Matches the active 2026-05-18 supabase-js fetch-deadlock incident.
+- **Task 3** (surfacer + wiring): `adapters/claude-code/hooks/external-monitor-alert-surfacer.sh` (generic-shaped — reads alerts from any configured dir). 6/6 self-test PASS. Wired in live `~/.claude/settings.json` (not the kit template — instance-tooling preference).
+- **Task 4** (runbook): `docs/operations/circuit-health-monitor-2026-05-20.md` documents both scheduling options with ready-to-run commands.
+
+Backlog items absorbed: none.
+
+### 2. Design Decisions & Plan Deviations
+The original design wired the surfacer into `adapters/claude-code/settings.json.template` (per harness two-layer config discipline). During build, the harness-hygiene scanner correctly identified Circuit-named references in the template as kit-pollution. Pivoted to: (a) make the surfacer fully generic (no Circuit references in the hook), (b) rename the alert directory to `external-monitor-alerts/`, and (c) wire ONLY in the live `~/.claude/settings.json`, leaving the kit template clean. The generic surfacer is reusable for any future instance monitor.
+
+### 3. Known Issues & Gotchas
+- The seed alert at `~/.claude/state/external-monitor-alerts/2026-05-21T13-57-45Z.json` is deliberately left UNACKED so the next session-start observably surfaces it via the new hook.
+- Schedule wiring (Option A or B in the runbook) requires one manual step from the operator and is NOT yet active. Until then, the probe runs only when invoked manually.
+- The 6 detected anomalies are real prod regressions; their resolution is out of this plan's scope (separate work in the Circuit repo per `circuit/src/app/api/health/route.ts` incident notes).
+
+### 4. Manual Steps Required
+- Approve Option A (MCP `create_scheduled_task` — exact prompt body in the runbook), OR run the PowerShell command for Option B (Windows Task Scheduler) — both fully documented in `docs/operations/circuit-health-monitor-2026-05-20.md`.
+- Resolve the seed alert once the surfacing path is observed (or fix the underlying Circuit incident, then re-probe and ack).
+
+### 5. Testing Performed & Recommended
+- Probe self-test: 6/6 PASS (mechanical + smoke against `example.com`).
+- Surfacer self-test: 6/6 PASS (six scenarios: missing dir / empty dir / unacked-surfaces / acked-suppressed / malformed-JSON-skipped / cap-at-5).
+- Live seed run against real Circuit prod: correctly classified 6 anomalies matching the documented active incident.
+- Recommended: once scheduling is enabled, observe at least one full run cycle to confirm the cron path works end-to-end.
+
+### 6. Cost Estimates
+Zero recurring cost. The probe runs on the operator's local machine (Option A via MCP scheduled-tasks within Claude Code, or Option B via Windows Task Scheduler). 24 HTTP requests every 30 min = ~1,150 requests/day against Circuit prod, all of which exercise paths that don't perform expensive work (health endpoint + middleware redirects + webhook signature checks). Negligible load on Circuit; no third-party billing.
