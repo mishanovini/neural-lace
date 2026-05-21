@@ -683,18 +683,330 @@ _self_test() {
     fail=$((fail+1))
   fi
 
+  # ST22-ST31: orchestrator-emit modes (v1.1.5 — 2026-05-21).
+  # The conversation tree captures conversation-shape data, not just spawns.
+  # These tests lock the contract: items raised via --emit-item land in the
+  # state file as the matching ADR-032 §2 event with actor='dispatch'.
+
+  # ST22 — --emit-branch creates a logical thread (no Dispatch spawn).
+  local sp22="$tmp/st-22.json"
+  CONV_TREE_STATE_PATH="$sp22" CLAUDE_SESSION_ID="sess-st-22" \
+    bash "$SELF" --emit-branch <<<'{"node_id":"st22-root","parent_id":null,"title":"ST22 Root"}' >/dev/null 2>&1
+  _ck "ST22 --emit-branch creates root node" "$(_node_state "$sp22" "ST22 Root")" "open"
+
+  # ST23 — --emit-item raises a decision under an existing branch.
+  local sp23="$tmp/st-23.json"
+  CONV_TREE_STATE_PATH="$sp23" CLAUDE_SESSION_ID="sess-st-23" \
+    bash "$SELF" --emit-branch <<<'{"node_id":"st23-root","parent_id":null,"title":"ST23 Root"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp23" CLAUDE_SESSION_ID="sess-st-23" \
+    bash "$SELF" --emit-item <<<'{"kind":"decision","node_id":"st23-root","item_id":"i-st23-a","text":"Pick A or B?"}' >/dev/null 2>&1
+  local has_dec
+  has_dec=$(node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var n=st.snapshot.nodes.find(function(x){return x.node_id==="st23-root"});process.stdout.write(n && n.items && n.items.find(function(i){return i.item_id==="i-st23-a" && i.kind==="decision"})?"Y":"N")' "$LIB" "$sp23" 2>/dev/null)
+  _ck "ST23 --emit-item decision lands on branch" "$has_dec" "Y"
+
+  # ST24 — --emit-item with details emits both the item and item-details-set.
+  local sp24="$tmp/st-24.json"
+  CONV_TREE_STATE_PATH="$sp24" CLAUDE_SESSION_ID="sess-st-24" \
+    bash "$SELF" --emit-branch <<<'{"node_id":"st24-root","parent_id":null,"title":"ST24 Root"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp24" CLAUDE_SESSION_ID="sess-st-24" \
+    bash "$SELF" --emit-item <<<'{"kind":"action","node_id":"st24-root","item_id":"i-st24-a","text":"Click signup","details":{"instructions":"Sign up at example.com","recommendation":"do it today","links":["docs/example.md"]}}' >/dev/null 2>&1
+  local has_det
+  has_det=$(node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var n=st.snapshot.nodes.find(function(x){return x.node_id==="st24-root"});var it=n&&n.items&&n.items.find(function(i){return i.item_id==="i-st24-a"});process.stdout.write(it&&it.details&&it.details.instructions==="Sign up at example.com"?"Y":"N")' "$LIB" "$sp24" 2>/dev/null)
+  _ck "ST24 --emit-item with details populates item.details" "$has_det" "Y"
+
+  # ST25 — --emit-item idempotent: 3 emits of same (kind, node_id, item_id)
+  # → exactly ONE item, ONE branch-opened, ONE decision-raised.
+  local sp25="$tmp/st-25.json"
+  CONV_TREE_STATE_PATH="$sp25" CLAUDE_SESSION_ID="sess-st-25" \
+    bash "$SELF" --emit-branch <<<'{"node_id":"st25-root","parent_id":null,"title":"ST25 Root"}' >/dev/null 2>&1
+  for _r in 1 2 3; do
+    CONV_TREE_STATE_PATH="$sp25" CLAUDE_SESSION_ID="sess-st-25" \
+      bash "$SELF" --emit-item <<<'{"kind":"question","node_id":"st25-root","item_id":"i-st25-q","text":"Which way?"}' >/dev/null 2>&1
+  done
+  _ck "ST25 --emit-item idempotent on (kind,node,item)" "$(_count "$sp25" question-raised)" "1"
+
+  # ST26 — --emit-details populates / replaces existing item.details.
+  local sp26="$tmp/st-26.json"
+  CONV_TREE_STATE_PATH="$sp26" CLAUDE_SESSION_ID="sess-st-26" \
+    bash "$SELF" --emit-branch <<<'{"node_id":"st26-root","parent_id":null,"title":"ST26 Root"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp26" CLAUDE_SESSION_ID="sess-st-26" \
+    bash "$SELF" --emit-item <<<'{"kind":"action","node_id":"st26-root","item_id":"i-st26-a","text":"Do thing"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp26" CLAUDE_SESSION_ID="sess-st-26" \
+    bash "$SELF" --emit-details <<<'{"node_id":"st26-root","item_id":"i-st26-a","details":{"instructions":"Updated instructions","recommendation":"do A"}}' >/dev/null 2>&1
+  local det26
+  det26=$(node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var n=st.snapshot.nodes.find(function(x){return x.node_id==="st26-root"});var it=n&&n.items&&n.items.find(function(i){return i.item_id==="i-st26-a"});process.stdout.write(it&&it.details&&it.details.recommendation==="do A"?"Y":"N")' "$LIB" "$sp26" 2>/dev/null)
+  _ck "ST26 --emit-details applied after item raised" "$det26" "Y"
+
+  # ST27 — --resolve-item with resolution=answered checks a decision/question.
+  local sp27="$tmp/st-27.json"
+  CONV_TREE_STATE_PATH="$sp27" CLAUDE_SESSION_ID="sess-st-27" \
+    bash "$SELF" --emit-branch <<<'{"node_id":"st27-root","parent_id":null,"title":"ST27 Root"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp27" CLAUDE_SESSION_ID="sess-st-27" \
+    bash "$SELF" --emit-item <<<'{"kind":"decision","node_id":"st27-root","item_id":"i-st27-d","text":"choose"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp27" CLAUDE_SESSION_ID="sess-st-27" \
+    bash "$SELF" --resolve-item <<<'{"node_id":"st27-root","item_id":"i-st27-d","resolution":"answered"}' >/dev/null 2>&1
+  local checked27
+  checked27=$(node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var n=st.snapshot.nodes.find(function(x){return x.node_id==="st27-root"});var it=n&&n.items&&n.items.find(function(i){return i.item_id==="i-st27-d"});process.stdout.write(it&&it.checked?"Y":"N")' "$LIB" "$sp27" 2>/dev/null)
+  _ck "ST27 --resolve-item answered -> item.checked" "$checked27" "Y"
+
+  # ST28 — --resolve-item with resolution=done marks an action complete.
+  local sp28="$tmp/st-28.json"
+  CONV_TREE_STATE_PATH="$sp28" CLAUDE_SESSION_ID="sess-st-28" \
+    bash "$SELF" --emit-branch <<<'{"node_id":"st28-root","parent_id":null,"title":"ST28 Root"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp28" CLAUDE_SESSION_ID="sess-st-28" \
+    bash "$SELF" --emit-item <<<'{"kind":"action","node_id":"st28-root","item_id":"i-st28-a","text":"act"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp28" CLAUDE_SESSION_ID="sess-st-28" \
+    bash "$SELF" --resolve-item <<<'{"node_id":"st28-root","item_id":"i-st28-a","resolution":"done"}' >/dev/null 2>&1
+  local checked28
+  checked28=$(node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var n=st.snapshot.nodes.find(function(x){return x.node_id==="st28-root"});var it=n&&n.items&&n.items.find(function(i){return i.item_id==="i-st28-a"});process.stdout.write(it&&it.checked?"Y":"N")' "$LIB" "$sp28" 2>/dev/null)
+  _ck "ST28 --resolve-item done -> action.checked" "$checked28" "Y"
+
+  # ST29 — malformed --emit-item (missing required key) -> no-op, exit 0.
+  local sp29="$tmp/st-29.json"
+  CONV_TREE_STATE_PATH="$sp29" CLAUDE_SESSION_ID="sess-st-29" \
+    bash "$SELF" --emit-item <<<'{"kind":"decision","node_id":"st29-root"}' >/dev/null 2>&1
+  local rc29=$?
+  if [[ $rc29 -eq 0 && ! -f "$sp29" ]]; then echo "PASS: ST29 malformed --emit-item -> no-op + exit 0"; pass=$((pass+1)); else echo "FAIL: ST29 malformed payload (rc=$rc29, file=$([ -f "$sp29" ] && echo present || echo absent))"; fail=$((fail+1)); fi
+
+  # ST30 — --emit-item with unknown kind -> no-op, exit 0.
+  local sp30="$tmp/st-30.json"
+  CONV_TREE_STATE_PATH="$sp30" CLAUDE_SESSION_ID="sess-st-30" \
+    bash "$SELF" --emit-item <<<'{"kind":"nonsense","node_id":"st30-root","item_id":"i","text":"x"}' >/dev/null 2>&1
+  local rc30=$?
+  if [[ $rc30 -eq 0 && ! -f "$sp30" ]]; then echo "PASS: ST30 unknown kind -> no-op + exit 0"; pass=$((pass+1)); else echo "FAIL: ST30 unknown kind (rc=$rc30)"; fail=$((fail+1)); fi
+
+  # ST31 — --emit-branch idempotent: 3 re-fires -> exactly 1 branch-opened.
+  local sp31="$tmp/st-31.json"
+  for _r in 1 2 3; do
+    CONV_TREE_STATE_PATH="$sp31" CLAUDE_SESSION_ID="sess-st-31" \
+      bash "$SELF" --emit-branch <<<'{"node_id":"st31-root","parent_id":null,"title":"ST31 Root"}' >/dev/null 2>&1
+  done
+  _ck "ST31 --emit-branch idempotent on node_id" "$(_count "$sp31" branch-opened)" "1"
+
   rm -rf "$tmp" 2>/dev/null || true
   echo "self-test: $pass passed, $fail failed"
   if [[ $fail -eq 0 ]]; then echo "self-test: OK"; exit 0; else echo "self-test: FAIL"; exit 1; fi
 }
 
 # ============================================================================
+# Orchestrator-emit modes (the Dispatch-orchestrator surface for raising
+# user-visible items into the conversation tree).
+#
+# The conversation tree models what flows BETWEEN Misha and the orchestrator —
+# branches (spawns) capture the containers; items capture decisions Misha needs
+# to make, questions awaiting his input, and actions only he can take. Without
+# these modes, the tree only ever shows containers; items would only ever land
+# via the GUI's own "Add" UI, never via the Dispatch orchestrator that surfaces
+# them in conversation.
+#
+# Every emit call shares the SAME write path the spawn hook uses (`_emit_dual`
+# → state-library `appendEvent`), so idempotency, atomic publish, attestation,
+# and worktree→main-checkout sink resolution are all reused — no parallel
+# write path to maintain.
+#
+# Invocation convention: every mode reads a JSON payload from stdin. The
+# orchestrator constructs the JSON inline and pipes it in via a here-doc.
+#
+#   --emit-branch        (re-opens or creates a logical conversation thread
+#                         under a parent — used when the orchestrator wants a
+#                         new branch that did NOT come from a Dispatch spawn.
+#                         No-ops if node_id already exists.)
+#     stdin: {"node_id":"<id>","parent_id":"<parent>|null","title":"<…>"}
+#
+#   --emit-item          (raises ONE item under an existing branch — the
+#                         primary "now-Misha-has-something-to-act-on" hook.)
+#     stdin: {"kind":"decision|question|action","node_id":"<branch>",
+#             "item_id":"<id>","text":"<one-liner>",
+#             "details":{...optional rich-detail payload...}}
+#     `details` is optional — when present, a follow-up `item-details-set`
+#     event is emitted in the same batch.
+#
+#   --emit-details       (sets / replaces rich details on an existing item.)
+#     stdin: {"node_id":"<branch>","item_id":"<id>","details":{...}}
+#
+#   --resolve-item       (closes an existing item with answered / action-done /
+#                         item-backlogged. The orchestrator uses this when
+#                         Misha's reply resolves a previously-raised item.)
+#     stdin: {"node_id":"<branch>","item_id":"<id>",
+#             "resolution":"answered|done|backlogged"}
+#
+# All emit modes are idempotent on a deterministic event_id derived from the
+# (type, node_id, item_id) tuple — re-firing the same emit is a per-file no-op.
+# All emit modes are non-blocking: a malformed payload logs and exits 0 (writer
+# hook, never breaks the orchestrator).
+# ============================================================================
+
+# Validate that a JSON payload supplied via stdin contains the given top-level
+# keys (all required, non-empty). Returns 0 if valid, non-zero on missing keys
+# (caller logs and skips emission — non-fatal).
+_validate_keys() {
+  local input="$1"; shift
+  _have jq || { _log "jq unavailable — cannot validate emit payload"; return 1; }
+  local k missing=""
+  for k in "$@"; do
+    local v
+    v=$(printf '%s' "$input" | jq -r --arg k "$k" '.[$k] // empty' 2>/dev/null)
+    if [[ -z "$v" || "$v" == "null" ]]; then missing="$missing $k"; fi
+  done
+  if [[ -n "$missing" ]]; then _log "emit-mode missing required keys:$missing"; return 1; fi
+  return 0
+}
+
+# Emit a one-or-more-event batch (events_file is a JSON array). Wraps
+# _emit_dual so callers stay uniform.
+_emit_batch_from_payload() {
+  local events_json="$1"
+  local lib; lib=$(_resolve_state_lib)
+  local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-emit-$$.json")
+  printf '%s' "$events_json" >"$ef"
+  _emit_dual "$lib" "$ef"
+  rm -f "$ef" 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------------
+# --emit-branch — create a logical conversation thread under a parent.
+# Idempotent (event_id derived from node_id; reducer rejects duplicate node_id).
+# ----------------------------------------------------------------------------
+_run_emit_branch() {
+  local input; input=$(_read_stdin)
+  [[ -z "$input" ]] && { _log "emit-branch: empty stdin"; exit 0; }
+  _validate_keys "$input" node_id title || exit 0
+
+  local node_id parent_id title
+  node_id=$(printf '%s' "$input" | jq -r '.node_id' 2>/dev/null)
+  parent_id=$(printf '%s' "$input" | jq -r '.parent_id // empty' 2>/dev/null)
+  title=$(printf '%s' "$input" | jq -r '.title' 2>/dev/null)
+
+  local ev_id; ev_id="cte-bo-$(printf '%s' "$node_id" | _sha1 | cut -c1-32)"
+  local parent_json
+  if [[ -z "$parent_id" || "$parent_id" == "null" ]]; then
+    parent_json="null"
+  else
+    parent_json=$(jq -Rn --arg p "$parent_id" '$p')
+  fi
+  local title_json; title_json=$(jq -Rn --arg t "$title" '$t')
+
+  local events
+  events=$(printf '[{"event_id":"%s","type":"branch-opened","node_id":"%s","parent_id":%s,"title":%s,"actor":"dispatch"}]' \
+    "$ev_id" "$node_id" "$parent_json" "$title_json")
+  _emit_batch_from_payload "$events"
+  _log "emit-branch node_id=$node_id parent_id=${parent_id:-null} title=\"$title\""
+  exit 0
+}
+
+# ----------------------------------------------------------------------------
+# --emit-item — raise ONE item (decision|question|action) on a branch.
+# Optional .details triggers a follow-up item-details-set in the same batch.
+# Idempotent on (kind, node_id, item_id) — reducer rejects duplicate item_id.
+# ----------------------------------------------------------------------------
+_run_emit_item() {
+  local input; input=$(_read_stdin)
+  [[ -z "$input" ]] && { _log "emit-item: empty stdin"; exit 0; }
+  _validate_keys "$input" kind node_id item_id text || exit 0
+
+  local kind node_id item_id text details
+  kind=$(printf '%s' "$input" | jq -r '.kind' 2>/dev/null)
+  node_id=$(printf '%s' "$input" | jq -r '.node_id' 2>/dev/null)
+  item_id=$(printf '%s' "$input" | jq -r '.item_id' 2>/dev/null)
+  text=$(printf '%s' "$input" | jq -r '.text' 2>/dev/null)
+  details=$(printf '%s' "$input" | jq -c '.details // empty' 2>/dev/null)
+
+  local ev_type
+  case "$kind" in
+    decision) ev_type="decision-raised" ;;
+    question) ev_type="question-raised" ;;
+    action)   ev_type="action-added" ;;
+    *) _log "emit-item: unknown kind '$kind'"; exit 0 ;;
+  esac
+
+  local ev_id; ev_id="cte-${ev_type:0:6}-$(printf '%s|%s' "$node_id" "$item_id" | _sha1 | cut -c1-32)"
+  local text_json; text_json=$(jq -Rn --arg t "$text" '$t')
+
+  local events
+  if [[ -n "$details" && "$details" != "null" ]]; then
+    local det_ev_id; det_ev_id="cte-detset-$(printf '%s|%s' "$node_id" "$item_id" | _sha1 | cut -c1-32)"
+    events=$(printf '[{"event_id":"%s","type":"%s","node_id":"%s","item_id":"%s","text":%s,"actor":"dispatch"},{"event_id":"%s","type":"item-details-set","node_id":"%s","item_id":"%s","details":%s,"actor":"dispatch"}]' \
+      "$ev_id" "$ev_type" "$node_id" "$item_id" "$text_json" \
+      "$det_ev_id" "$node_id" "$item_id" "$details")
+  else
+    events=$(printf '[{"event_id":"%s","type":"%s","node_id":"%s","item_id":"%s","text":%s,"actor":"dispatch"}]' \
+      "$ev_id" "$ev_type" "$node_id" "$item_id" "$text_json")
+  fi
+  _emit_batch_from_payload "$events"
+  _log "emit-item kind=$kind node_id=$node_id item_id=$item_id text=\"$text\""
+  exit 0
+}
+
+# ----------------------------------------------------------------------------
+# --emit-details — set rich details on an existing item (last-writer-wins).
+# Useful for backfilling content the orchestrator obtained AFTER raising the
+# item, or for refining detail content over time.
+# ----------------------------------------------------------------------------
+_run_emit_details() {
+  local input; input=$(_read_stdin)
+  [[ -z "$input" ]] && { _log "emit-details: empty stdin"; exit 0; }
+  _validate_keys "$input" node_id item_id details || exit 0
+
+  local node_id item_id details
+  node_id=$(printf '%s' "$input" | jq -r '.node_id' 2>/dev/null)
+  item_id=$(printf '%s' "$input" | jq -r '.item_id' 2>/dev/null)
+  details=$(printf '%s' "$input" | jq -c '.details' 2>/dev/null)
+
+  # event_id is deterministic on (node_id, item_id) so a re-emit replaces the
+  # previous details (last-writer-wins) without producing duplicate events.
+  local ev_id; ev_id="cte-detset-$(printf '%s|%s' "$node_id" "$item_id" | _sha1 | cut -c1-32)"
+  local events
+  events=$(printf '[{"event_id":"%s","type":"item-details-set","node_id":"%s","item_id":"%s","details":%s,"actor":"dispatch"}]' \
+    "$ev_id" "$node_id" "$item_id" "$details")
+  _emit_batch_from_payload "$events"
+  _log "emit-details node_id=$node_id item_id=$item_id"
+  exit 0
+}
+
+# ----------------------------------------------------------------------------
+# --resolve-item — close an existing item.
+#   resolution=answered    -> answered (decision/question)
+#   resolution=done        -> action-done (action)
+#   resolution=backlogged  -> item-backlogged (moves out of "Waiting on you")
+# ----------------------------------------------------------------------------
+_run_resolve_item() {
+  local input; input=$(_read_stdin)
+  [[ -z "$input" ]] && { _log "resolve-item: empty stdin"; exit 0; }
+  _validate_keys "$input" node_id item_id resolution || exit 0
+
+  local node_id item_id resolution
+  node_id=$(printf '%s' "$input" | jq -r '.node_id' 2>/dev/null)
+  item_id=$(printf '%s' "$input" | jq -r '.item_id' 2>/dev/null)
+  resolution=$(printf '%s' "$input" | jq -r '.resolution' 2>/dev/null)
+
+  local ev_type
+  case "$resolution" in
+    answered)   ev_type="answered" ;;
+    done)       ev_type="action-done" ;;
+    backlogged) ev_type="item-backlogged" ;;
+    *) _log "resolve-item: unknown resolution '$resolution'"; exit 0 ;;
+  esac
+  local ev_id; ev_id="cte-${ev_type:0:8}-$(printf '%s|%s' "$node_id" "$item_id" | _sha1 | cut -c1-32)"
+  local events
+  events=$(printf '[{"event_id":"%s","type":"%s","node_id":"%s","item_id":"%s","actor":"dispatch"}]' \
+    "$ev_id" "$ev_type" "$node_id" "$item_id")
+  _emit_batch_from_payload "$events"
+  _log "resolve-item resolution=$resolution node_id=$node_id item_id=$item_id"
+  exit 0
+}
+
+# ============================================================================
 # Dispatch
 # ============================================================================
 case "$MODE" in
-  --on-spawn)  _run_on_spawn ;;
-  --on-stop)   _run_on_stop ;;
-  --self-test) _self_test ;;
+  --on-spawn)      _run_on_spawn ;;
+  --on-stop)       _run_on_stop ;;
+  --self-test)     _self_test ;;
+  # Orchestrator-emit surface (v1.1.5 — 2026-05-21):
+  --emit-branch)   _run_emit_branch ;;
+  --emit-item)     _run_emit_item ;;
+  --emit-details)  _run_emit_details ;;
+  --resolve-item)  _run_resolve_item ;;
   # Read-only introspection (no side effects) — used by --self-test to assert
   # worktree→main-checkout sink resolution without a live GUI server.
   --resolve-gui-sink)  trap - ERR; _resolve_gui_state_path; printf '\n'; exit 0 ;;
