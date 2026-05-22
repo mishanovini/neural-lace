@@ -136,6 +136,66 @@ extract_selected_subsection() {
   '
 }
 
+# detect_ai_prose_form <section_content>
+# Echoes one of: a, b, c, NONE
+# Detects the AI-natural prose form where the author writes the answer as
+# a paragraph beginning with "(a)", "(b)", or "(c)" (optionally wrapped in
+# **bold**), instead of using the strict "### a)" / "### b)" / "### c)"
+# sub-heading scaffold.
+#
+# Examples that match:
+#   (b) New catalog entry proposed. This is a new failure-class candidate...
+#   **(c) No mechanism — accepted residual risk.** The original DEC-A...
+#   **(b) New catalog entries proposed.** NL-FINDING-009/010 in...
+#
+# The first such line in the section wins (mirrors detect_answer_form's
+# first-sub-heading-with-content semantics). For the form to count, the
+# section must also have substantive non-placeholder content (≥ 30 chars
+# after the form-marker line is stripped), guarding against a body that
+# contains just "(b)" with nothing after.
+detect_ai_prose_form() {
+  local content="$1"
+  local letter
+  # First line starting with optional whitespace, optional **, then (a|b|c),
+  # then whitespace OR end-of-line. Bash 3.2 compatible — no PCRE.
+  letter=$(printf '%s\n' "$content" | awk '
+    /^[[:space:]]*\**\([abc]\)([[:space:]]|$)/ {
+      # Strip leading whitespace + optional ** then capture letter.
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/^\*+/, "", line)
+      # line now starts with (x)...
+      letter = substr(line, 2, 1)
+      print letter
+      exit 0
+    }
+  ')
+  if [[ -z "$letter" ]]; then
+    echo "NONE"
+    return
+  fi
+  # Verify substantive content in the section beyond the form-marker line.
+  local substantive_chars
+  substantive_chars=$(printf '%s\n' "$content" | awk -v placeholder="$PR_TEMPLATE_PLACEHOLDER" '
+    BEGIN { total = 0 }
+    {
+      line = $0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      # Skip empty lines, placeholder lines, and lines that are JUST the
+      # form-marker like "(b)" or "**(b)**" with no surrounding content.
+      if (line == "") next
+      if (index(line, placeholder) > 0) next
+      total += length(line)
+    }
+    END { print total }
+  ')
+  if [[ "$substantive_chars" -lt 30 ]]; then
+    echo "NONE"
+    return
+  fi
+  echo "$letter"
+}
+
 # detect_answer_form <section_content>
 # Echoes one of: a, b, c, NONE
 # Detects which `### a)`, `### b)`, or `### c)` sub-heading has substantive
@@ -200,6 +260,26 @@ validate_rationale_length() {
   '
 }
 
+# validate_rationale_length_prose <section_content>
+# Prose-form variant for the (c) answer when written as natural paragraphs
+# instead of under a "### c)" sub-heading. Counts all substantive non-
+# placeholder non-empty chars in the section (since prose form has no
+# sub-section boundary to scope to). Echoes the count.
+validate_rationale_length_prose() {
+  local content="$1"
+  printf '%s\n' "$content" | awk -v placeholder="$PR_TEMPLATE_PLACEHOLDER" '
+    BEGIN { total = 0 }
+    {
+      line = $0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line == "") next
+      if (index(line, placeholder) > 0) next
+      total += length(line)
+    }
+    END { print total }
+  '
+}
+
 # validate_pr_body <pr_body>
 # Top-level validator. Returns 0 if the body passes all checks, 1 otherwise.
 # Emits stdout progress logs and stderr canonical failure messages.
@@ -220,9 +300,19 @@ validate_pr_body() {
   local section_chars=${#section_content}
   printf '[pr-template] extracted %d chars of mechanism content\n' "$section_chars"
 
-  local form
+  # Try the strict "### a)/b)/c)" heading form first; fall back to the
+  # AI-natural prose form ("(b) Label phrase. ...content...") that AI-
+  # spawned PRs typically produce. Either is acceptable — the strict form
+  # is for humans filling the template scaffold, the prose form is for
+  # natural-paragraph answers. Both must select exactly one of a/b/c.
+  local form form_source
   form=$(detect_answer_form "$section_content")
-  printf '[pr-template] answer form: %s\n' "$form"
+  form_source=heading
+  if [[ "$form" == "NONE" ]]; then
+    form=$(detect_ai_prose_form "$section_content")
+    form_source=prose
+  fi
+  printf '[pr-template] answer form: %s (source: %s)\n' "$form" "$form_source"
 
   if [[ "$form" == "NONE" ]]; then
     emit_failure_message no_answer_form
@@ -230,23 +320,54 @@ validate_pr_body() {
     return 1
   fi
 
-  # Per the template's contract, residual placeholder text under the two
-  # unselected sub-headings is OK ("they document the option set"). Only
-  # check the SELECTED sub-section for residual placeholder text — that's
-  # where the author was supposed to replace it.
-  local selected_content
-  selected_content=$(extract_selected_subsection "$section_content" "$form")
-  if detect_placeholder "$selected_content"; then
-    emit_failure_message placeholder_present
-    printf '[pr-template] placeholder detection: PRESENT in selected sub-section (%s)\n' "$form"
-    printf '[pr-template] verdict: FAIL\n'
-    return 1
+  # Placeholder check is scoped to the SELECTED sub-section when the
+  # author used the strict heading form (residual placeholders under the
+  # two unselected sub-headings are OK — they document the option set per
+  # PULL_REQUEST_TEMPLATE.md line 11). When the author used the prose
+  # form, there are no sub-section boundaries to scope to — placeholders
+  # under untouched sub-headings would be a legitimate concern only if
+  # the prose-form author ALSO left an unused scaffold in place. To match
+  # the heading-form's contract, the prose-form check scopes to the
+  # whole section EXCLUDING any text under sub-headings the prose author
+  # did not select; in practice prose-form PRs omit the scaffold entirely
+  # so the difference rarely matters.
+  if [[ "$form_source" == "heading" ]]; then
+    local selected_content
+    selected_content=$(extract_selected_subsection "$section_content" "$form")
+    if detect_placeholder "$selected_content"; then
+      emit_failure_message placeholder_present
+      printf '[pr-template] placeholder detection: PRESENT in selected sub-section (%s)\n' "$form"
+      printf '[pr-template] verdict: FAIL\n'
+      return 1
+    fi
+    printf '[pr-template] placeholder detection: ABSENT in selected sub-section (%s)\n' "$form"
+  else
+    # Prose form — scope placeholder check to the whole section minus any
+    # text inside unselected ### sub-headings (so a prose author who left
+    # the scaffold partially in place isn't double-penalized for residual
+    # placeholders under the unselected scaffolds).
+    local prose_check_content
+    prose_check_content=$(printf '%s\n' "$section_content" | awk '
+      BEGIN { skip = 0 }
+      /^### / { skip = 1; next }
+      { if (!skip) print }
+    ')
+    if detect_placeholder "$prose_check_content"; then
+      emit_failure_message placeholder_present
+      printf '[pr-template] placeholder detection: PRESENT in prose-form content (%s)\n' "$form"
+      printf '[pr-template] verdict: FAIL\n'
+      return 1
+    fi
+    printf '[pr-template] placeholder detection: ABSENT in prose-form content (%s)\n' "$form"
   fi
-  printf '[pr-template] placeholder detection: ABSENT in selected sub-section (%s)\n' "$form"
 
   if [[ "$form" == "c" ]]; then
     local rationale_chars
-    rationale_chars=$(validate_rationale_length "$section_content")
+    if [[ "$form_source" == "heading" ]]; then
+      rationale_chars=$(validate_rationale_length "$section_content")
+    else
+      rationale_chars=$(validate_rationale_length_prose "$section_content")
+    fi
     printf '[pr-template] rationale length: %s chars (threshold: %d)\n' "$rationale_chars" "$PR_TEMPLATE_RATIONALE_MIN_CHARS"
     if [[ "$rationale_chars" -lt "$PR_TEMPLATE_RATIONALE_MIN_CHARS" ]]; then
       emit_failure_message rationale_short "$rationale_chars"
@@ -334,8 +455,62 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     fails=$((fails + 1))
   fi
 
+  # Case 10: AI-natural prose form with bold-marker (b) selection and
+  # substantive content (no ### scaffolds at all) → PASS. This is the
+  # dominant shape AI-spawned PRs produce; previously failed with
+  # `answer form: NONE` despite substantive content.
+  case10=$(printf '## What mechanism would have caught this?\n\n**(b) New catalog entry proposed.** This is a new failure-class candidate: FM-N orchestrator-surfacing-content has no emit path — when a writer hook only emits container events, the tree drifts stale.\n')
+  if ! validate_pr_body "$case10" >/dev/null 2>&1; then
+    echo "FAIL: prose-form (b) with substantive content should have passed" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 11: AI-natural prose form (c) without bold markup, substantive
+  # rationale exceeding the 40-char threshold → PASS.
+  case11=$(printf '## What mechanism would have caught this?\n\n(c) No mechanism — accepted residual risk. The original DEC-A choice was a deliberate spec, not a defect a gate could catch; the new responsive.selftest.js is itself the codified guard against regressing the contract going forward.\n')
+  if ! validate_pr_body "$case11" >/dev/null 2>&1; then
+    echo "FAIL: prose-form (c) with substantive rationale should have passed" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 12: AI-natural prose form (c) with too-short rationale → FAIL.
+  # Locks in that the rationale-length check still applies to prose form.
+  case12=$(printf '## What mechanism would have caught this?\n\n(c) None.\n')
+  if validate_pr_body "$case12" >/dev/null 2>&1; then
+    echo "FAIL: prose-form (c) with too-short rationale should have failed" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 13: AI-prose form-marker with NO substantive content beyond
+  # the marker itself → FAIL no_answer_form (the prose detector requires
+  # ≥30 chars of substantive content to register as a valid selection).
+  case13=$(printf '## What mechanism would have caught this?\n\n(b)\n')
+  if validate_pr_body "$case13" >/dev/null 2>&1; then
+    echo "FAIL: prose-form (b) with no substantive content should have failed" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 14: heading form takes precedence over prose form when both are
+  # present. Body has `### a)` filled AND a `(b)` prose line — heading
+  # form wins, verdict is PASS based on (a). Confirms fallback ordering.
+  case14=$(printf '## What mechanism would have caught this?\n\n### a) Existing catalog entry\n\nFM-006 self-reported task completion without evidence — caught by plan-edit-validator.\n\n### b) New catalog entry proposed\n\n<mechanism answer — replace this bracketed text>\n\n### c) No mechanism — accepted residual risk\n\n<mechanism answer — replace this bracketed text>\n\n(b) Also writing prose form which should not override the heading-form selection.\n')
+  if ! validate_pr_body "$case14" >/dev/null 2>&1; then
+    echo "FAIL: heading-form should take precedence when both forms present" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 15: prose-form author who happens to also paste in placeholder
+  # text from the template (e.g., copy-paste of the bracketed text into
+  # their prose) → FAIL placeholder_present. Catches the regression
+  # where a prose-form PR ships with the placeholder string embedded.
+  case15=$(printf '## What mechanism would have caught this?\n\n(b) New catalog entry proposed. <mechanism answer — replace this bracketed text> some other prose follows here too.\n')
+  if validate_pr_body "$case15" >/dev/null 2>&1; then
+    echo "FAIL: prose-form with placeholder text embedded should have failed" >&2
+    fails=$((fails + 1))
+  fi
+
   if [[ $fails -eq 0 ]]; then
-    echo "Self-test passed (9 cases)" >&2
+    echo "Self-test passed (15 cases)" >&2
     exit 0
   else
     echo "Self-test failed: $fails case(s) failed" >&2
