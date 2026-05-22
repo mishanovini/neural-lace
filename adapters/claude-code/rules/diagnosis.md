@@ -4,6 +4,48 @@
 
 **Exhaustive by default.** When the user reports any problem, trace the entire chain: user action → frontend → API → backend → external services → response. Check every step. Report ALL issues in a single diagnosis. Assume multiple problems until proven otherwise.
 
+## DIAGNOSTIC-FIRST PROTOCOL — Pull Runtime Logs Before Theorizing
+
+**This is the FIRST tool call of any production-failure investigation. It is upstream of every other diagnostic step in this rule, including the failure-mode catalog grep below.**
+
+When investigating a production failure (anything where a deployed system is misbehaving — a 504/5xx, a hang, a silent failure, a wrong output, a regression that customers can observe), the FIRST tool call MUST be retrieval of runtime / error logs from the affected system. Concretely, by class:
+
+- **Web app on Vercel:** `vercel logs <deployment-id> --no-follow --since <window> --limit <N> --json` (or `vercel logs <project>` for the current production deployment). Pull at least 1000–2000 lines covering the time window of the reported failure.
+- **Web app on Fly.io / Railway / Render / Cloud Run / Lambda:** the platform's runtime/function log API (`fly logs`, `railway logs`, etc.).
+- **API or service with Sentry / Datadog / Honeycomb:** query the error-tracker for actual error messages, stack traces, and event volumes in the failure window. Don't trust the dashboard summary — open the full error body.
+- **Database (Postgres / Supabase / RDS):** the platform's slow-query log, error log, or audit log. For Supabase: `supabase logs --project-ref <ref> --type postgres` or the dashboard logs page.
+- **External integration (Twilio / Stripe / SendGrid / GitHub webhook / OAuth provider):** the provider's webhook delivery log, event log, or audit log. These are usually accessible via the provider's dashboard or API.
+- **Background job / queue (Trigger.dev / Inngest / SQS / Celery):** the job runner's execution log including failed-task error bodies.
+- **Self-hosted / on-prem:** journalctl, container logs, application log files at their canonical paths.
+
+**Inferential evidence is PERMITTED ONLY AFTER actual logs have been examined OR after explicit acknowledgment in the response of "logs are inaccessible because X" with a concrete reason.** "Logs are hard to access" is not a concrete reason. Concrete reasons look like: "the deployment ID is unknown and the project's run history is gated behind SSO I don't have," "the platform's log retention is 1h and the failure was 6h ago," "the production environment uses a self-hosted log shipper that requires VPN access not available in this session."
+
+Inferential evidence includes: probe behavior (curl returning 504 with no body), code reading, git history, bisect correlation, dependency graph analysis, build manifest inspection, schema reads, configuration diffs. All of these are useful. None of them is a substitute for the actual error message the system emitted at the moment of failure.
+
+**Confidence-sounding diagnoses ("the X is caused by Y") without log evidence are PROHIBITED.** They create false certainty that propagates through subsequent investigation sessions. Even when the inferential evidence looks overwhelming, treat the diagnosis as `HYPOTHESIZED` per `~/.claude/rules/claims.md` until logs corroborate. The labeling discipline is in claims.md; the upstream pull-logs-first discipline is here.
+
+**Case study — the originating downstream project's `docs/reviews/fm-001-rigorous-diagnosis-2026-05-22.md`** (and the harness-side recap at `docs/lessons/2026-05-22-fm-001-misdiagnosis.md`) documents 8+ days of misdiagnosis caused by violating this rule. The orchestrator chased a "Lambda 10s INIT cap cold-init deadlock" hypothesis through bisect + code reading + dependency analysis — building a multi-day Fly.io migration plan on top — without ever pulling Vercel runtime logs. The actual error (`You cannot use different slug names for the same dynamic path ('id' !== 'orgId')`) was sitting in `vercel logs` the whole time, appearing 1760 times in 2000 lines on the broken deployment. A friend running `vercel logs --no-follow --since 24h --limit 2000 --json` found it in ~30 seconds. The class is catalogued at FM-029.
+
+**Concrete examples — the same failure shape across contexts:**
+
+- **Web app reporting 5xx.** Don't bisect commits, don't theorize about middleware. First call: pull the function's runtime logs at the failure window. Read the actual exception body.
+- **API returning wrong data.** Don't trace the code path from memory. First call: query Sentry / the equivalent error-tracker for any error in the handler's recent window. Then read the SQL log if a DB is involved.
+- **Customer reports "the feature stopped working yesterday."** Don't read PRs from yesterday looking for the regression. First call: pull error-tracker events for the route from the failure window; if zero errors are recorded, pull request logs and look at the response shape; only THEN start theorizing about what changed.
+- **Webhook from third-party seems to drop events.** Don't audit your own handler first. First call: the provider's webhook delivery dashboard — it will say "delivery failed, response was 504 in 5.2s" and you immediately know whether the problem is your handler timing out vs the provider not sending.
+- **Cron job didn't fire.** Don't audit the cron-schedule code. First call: the platform's scheduled-task execution log — it will say whether the job was triggered, whether it ran, what its exit code was.
+
+In every case, the inferential evidence is downstream of the log evidence. Build the inferential picture WITH the log message in hand; do not build it BEFORE.
+
+**Distinguish this rule from the FM-catalog reflex below.** Logs reveal the symptom signature precisely. The FM-catalog grep then keys on that precise signature. The two compose in this order:
+
+1. Pull runtime logs → observe the actual error string / status code distribution / timing pattern (THIS rule).
+2. Grep `docs/failure-modes.md` with the precise keywords from the observed log signature (the next section below).
+3. If a `Discriminator` confirms a match, apply the `Recovery`. If no match, proceed to "## Process" with logs in hand.
+
+Running step 2 before step 1 means grepping with approximations of the symptom rather than the symptom itself — and approximations miss matches. The 30-min trigger encoded in the FM-catalog reflex below ("when you notice you are more than ~30 minutes into hypothesis-chasing and have NOT run this grep, stop and run it now") applies equally to this rule: if you are more than 30 minutes into hypothesis-chasing on a production failure and you have NOT pulled runtime logs, stop and pull them now. The case-study session burned 8 days exactly because this trigger was never honored.
+
+**Cross-references:** `~/.claude/rules/claims.md` (hypothesis-vs-proof labeling + refutation criteria — the per-claim discipline that pairs with this per-investigation discipline); `docs/lessons/2026-05-22-fm-001-misdiagnosis.md` (the full case study including the 6 root causes the orchestrator exhibited); `docs/decisions/035-diagnostic-first-protocol.md` (the ADR locking the protocol).
+
 ## Check the Failure-Mode Catalog Before Forming a Hypothesis
 
 **This is the FIRST step of any investigation / debug / root-cause session — before mapping the chain, before forming a single hypothesis.**
