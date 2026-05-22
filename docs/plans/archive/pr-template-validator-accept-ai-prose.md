@@ -1,5 +1,5 @@
 # Plan: PR Template Validator — Accept AI-Natural Prose Answer Form
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 tier: 1
@@ -131,3 +131,61 @@ same slice with edge-case coverage.
 - [x] Live mirror sync verified byte-identical
 - [x] SCRATCHPAD.md not applicable (harness-internal narrow fix)
 - [x] Completion report appended below
+
+## Completion Report
+
+### 1. Implementation Summary
+
+Shipped in commit `e1f471e` (validator + rule + template + plan) + merge
+`3e3098c` (master into branch). Merged to master via `gh pr merge --merge` at
+commit `f70e1e6` on 2026-05-22T01:48:44Z (PR #21).
+
+Backlog items absorbed: none (header declared `none`).
+
+### 2. Design Decisions & Plan Deviations
+
+Two decisions in the Decisions Log above:
+
+1. prose-form is fallback, not replacement (heading detector remains primary)
+2. prose-form placeholder check scopes to whole section minus unselected `###`
+   sub-headings
+
+No deviations from the original plan; tasks executed in declared order.
+
+### 3. Known Issues & Gotchas
+
+- AI-prose form detector is permissive on the label-phrase after `(x)`. It only
+  requires the leading `(a)`, `(b)`, or `(c)` marker; the rest of the line
+  could in principle be arbitrary prose. The substantive-content threshold
+  (≥30 chars non-placeholder in section) and the (c)-rationale threshold
+  (≥40 chars) are the substance guardrails. In practice AI sessions write a
+  recognizable label phrase after `(x)` anyway.
+- The fix accepts both forms uniformly across all PRs. Future PRs (human or AI)
+  may use either form; both pass the validator.
+
+### 4. Manual Steps Required
+
+None. The fix took effect the moment PR #21 merged. The next PR opened against
+neural-lace will use the patched validator.
+
+### 5. Testing Performed & Recommended
+
+Performed:
+
+- `bash .github/scripts/validate-pr-template.sh --self-test` → 15/15 PASS
+- Replay of 3 reconstructed failing PR bodies → all PASS via `source: prose`
+- Live mirror sync via `diff -q ... ... && echo MIRRORED OK`
+- **End-to-end integration test**: PR #21's own body used AI-prose form; CI run
+  `26263692560` returned `[pr-template] answer form: b (source: prose)` →
+  `verdict: PASS`
+
+Recommended (not blocking):
+
+- Periodic review of `gh run list --status failure --workflow "PR Template Check"`
+  to confirm the failure rate has dropped. If a new failure pattern emerges,
+  the diagnosis-rule's "After Every Failure: Encode the Fix" loop applies.
+
+### 6. Cost Estimates
+
+Zero recurring cost. The fix is a bash regex addition in a validator script
+that runs on every PR. CI minute usage is unchanged.
