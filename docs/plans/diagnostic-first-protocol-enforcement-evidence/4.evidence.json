@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "task_id": "4",
+  "verdict": "PASS",
+  "commit_sha": "ec46fcf8bcc6f24fa0927bbbb4a78715b287e69e",
+  "files_modified": [
+    "adapters/claude-code/CLAUDE.md",
+    "adapters/claude-code/agents/plan-phase-builder.md",
+    "adapters/claude-code/rules/claims.md",
+    "adapters/claude-code/rules/diagnosis.md",
+    "adapters/claude-code/rules/vaporware-prevention.md",
+    "docs/DECISIONS.md",
+    "docs/decisions/035-diagnostic-first-protocol.md",
+    "docs/failure-modes.md",
+    "docs/harness-architecture.md",
+    "docs/lessons/2026-05-22-fm-001-misdiagnosis.md",
+    "docs/plans/diagnostic-first-protocol-enforcement.md"
+  ],
+  "mechanical_checks": {
+    "files-in-commit": {
+      "passed": true,
+      "detail": "11 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-22T23:51:53Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/diagnostic-first-protocol-enforcement.md"
+}
