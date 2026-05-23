@@ -10,6 +10,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var treeSelect = $('treeSelect'), addProjBtn = $('addProjBtn'),
       showArchived = $('showArchived'), lastRead = $('lastRead'),
+      freshnessEl = $('freshness'),
       statusEl = $('status'), corruptBanner = $('corruptBanner'),
       noteStack = $('noteStack'), toast = $('toast'),
       treeCanvas = $('treeCanvas'), treeScroll = $('treeScroll'),
@@ -1828,5 +1829,40 @@
     };
   }
   setInterval(checkDefers, 30000); // D3 scheduled-time poll
+
+  // Freshness badge: polls /api/health every 30s and shows two ages:
+  //   • state age   — how long since the tree-state file changed
+  //   • heartbeat   — how long since the scheduled heartbeat task last ran
+  // If heartbeat is stale (>10 min, per server's heartbeat_stale flag) the
+  // badge turns red so the operator immediately sees that the auto-update
+  // mechanism has stopped. This is the load-bearing "can I trust this tree?"
+  // signal — without it, the tree can sit silently broken for days.
+  function fmtAge(sec) {
+    if (sec == null) return '—';
+    if (sec < 60) return sec + 's';
+    if (sec < 3600) return Math.round(sec / 60) + 'm';
+    if (sec < 86400) return Math.round(sec / 3600) + 'h';
+    return Math.round(sec / 86400) + 'd';
+  }
+  function pollHealth() {
+    if (!freshnessEl) return;
+    fetch('/api/health', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (h) {
+      if (!h || !h.ok) { freshnessEl.textContent = 'health?'; freshnessEl.className = 'freshness stale'; return; }
+      var sAge = fmtAge(h.state_age_seconds);
+      var hAge = fmtAge(h.heartbeat_age_seconds);
+      freshnessEl.textContent = 'tree ' + sAge + ' • hb ' + hAge;
+      freshnessEl.className = 'freshness' + (h.heartbeat_stale ? ' stale' : '');
+      freshnessEl.title = (h.heartbeat_stale
+        ? 'WARNING: heartbeat has not fired in over 10 minutes — the tree may be missing recent activity. '
+        : 'Tree state file: changed ' + sAge + ' ago. Heartbeat: ran ' + hAge + ' ago. ')
+        + 'Heartbeat scheduled task: ConversationTreeUI-Heartbeat (every 5 min).';
+    }).catch(function () {
+      freshnessEl.textContent = 'health err';
+      freshnessEl.className = 'freshness stale';
+    });
+  }
+  setInterval(pollHealth, 30000);
+  pollHealth();
+
   connect();
 })();
