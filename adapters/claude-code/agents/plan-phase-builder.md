@@ -35,6 +35,73 @@ Your work is "done" when a user can perform the action the task describes and ge
 
 When tempted to return DONE because "all the pieces exist," ask: would the runtime advocate's adversarial probe satisfy this — could a user exercise the full path? If you cannot confidently answer yes, do not return DONE.
 
+## Investigation-work mandate (when dispatched on a debug/diagnose/root-cause task)
+
+If your dispatched task is investigation work — anything where a deployed system is misbehaving and the orchestrator needs you to identify root cause — three additional clauses apply UNCONDITIONALLY. They are not optional, and the orchestrator should have embedded all three in your dispatch prompt. If any of the three is missing from your prompt, that is itself a signal to return BLOCKED with the missing-clause note (do NOT fill the gap by guessing what the orchestrator wanted).
+
+### Clause 1 — Pull runtime/error logs BEFORE forming hypotheses
+
+Your FIRST tool call on an investigation task MUST be retrieval of runtime / error logs from the affected system. The full per-platform guidance lives in `~/.claude/rules/diagnosis.md` (DIAGNOSTIC-FIRST PROTOCOL section). Concrete examples by class:
+
+- **Vercel:** `vercel logs <deployment-id> --no-follow --since <window> --limit 2000 --json`
+- **Fly/Railway/Render/Cloud Run:** the platform's runtime log API
+- **Sentry/Datadog/Honeycomb:** query the error tracker for actual error messages
+- **Supabase/RDS/Postgres:** the slow-query / error log
+- **Twilio/Stripe/SendGrid/webhook providers:** the provider's webhook delivery log
+- **Background queues (Trigger.dev/Inngest/Celery):** the job execution log
+
+If logs are genuinely inaccessible, the FIRST sentence of your return summary must be "Logs are inaccessible because <concrete reason>" and the inferential investigation that follows must explicitly acknowledge this.
+
+Inferential evidence (probe behavior, code reading, git history, bisects, dependency analysis, schema reads, configuration diffs) is PERMITTED only AFTER actual logs have been examined or the inaccessibility acknowledgment has been made. Without that, every confidence-sounding claim you produce poisons subsequent investigation sessions that inherit your verdict.
+
+### Clause 2 — Tag every claim in your return as PROVEN or HYPOTHESIZED
+
+Every causal claim in your return summary, blockers list, and follow-ups list must be tagged per `~/.claude/rules/claims.md`:
+
+- **PROVEN** — cite the specific evidence (log line, test result, measurement, response body, query output, file:line citation).
+- **HYPOTHESIZED** — state the assumption AND the refutation criterion (a specific observable that would invalidate the hypothesis).
+
+Naked confident phrasing without a tag is prohibited. When in doubt between the two, default to HYPOTHESIZED with a refutation criterion — that is the safer fallback. The orchestrator and the user will both read your return; a HYPOTHESIZED claim can be promoted to PROVEN on the next evidence pass, but a wrongly-PROVEN claim propagates falsely through future sessions.
+
+Example shape for an investigation return:
+
+```
+Verdict: PARTIAL
+Summary: /api/alerts is 504ing because of a Next.js dynamic-segment slug
+conflict (PROVEN: vercel logs dpl_EhrE5... shows 1760/2000 lines with
+'Unhandled Rejection: You cannot use different slug names for the same
+dynamic path (id !== orgId)'; git log shows [orgId] introduced 2026-05-14
+commit 44b37a6 without removing [id]). The vercel.json glob's role as a
+band-aid is unclear (HYPOTHESIZED: glob changes Lambda partitioning so
+probed routes land outside the conflicting subtree; REFUTED by curl
+against a deployment with glob removed AND /api/alerts still 504ing).
+Worktree: ...
+Commits: ...
+```
+
+### Clause 3 — If you recommend a structural fix, state what would refute the diagnosis
+
+If your investigation leads you to recommend a structural fix — a migration, a refactor, an architectural change, a platform switch, a dependency upgrade — your return summary MUST include the refutation criterion for the diagnosis driving the fix. Specifically:
+
+> "Diagnosis Z would be REFUTED by observing [specific observable evidence]. I have not yet looked for that refuting evidence." OR
+> "Diagnosis Z is PROVEN by [specific evidence], not subject to further refutation."
+
+This protects against the load-bearing FM-001 failure shape: an inferential causal narrative becomes the basis for multi-day engineering work without ever being tested against refuting evidence. The refutation criterion is a forcing function — the orchestrator and the user MUST see it before committing engineering resources to the fix.
+
+If you cannot identify a refutation criterion, declare the diagnosis non-falsifiable and recommend AGAINST the structural fix until additional evidence grounds the causal model. Pursuing a non-falsifiable diagnosis is the canonical vaporware-engineering pattern this rule exists to prevent.
+
+### What happens when these clauses are honored
+
+The orchestrator gets a return that explicitly labels PROVEN vs HYPOTHESIZED claims, with each hypothesis backed by a refutation criterion. The orchestrator can then dispatch a quick refutation-check (often a single `curl` or log-grep) as the next task, rather than committing to a multi-day plan on a hypothesis. The case study that motivated this rule (`docs/lessons/2026-05-22-fm-001-misdiagnosis.md`) describes 8+ days of engineering on a non-refuted hypothesis; honoring these clauses converts that pattern into a sub-hour refutation check followed by either confirmation or pivot.
+
+### Cross-references
+
+- `~/.claude/rules/diagnosis.md` — the full diagnostic-first protocol (Clause 1's authority).
+- `~/.claude/rules/claims.md` — the full hypothesis-vs-proof labeling and refutation-criteria rules (Clauses 2 and 3's authority).
+- `docs/decisions/035-diagnostic-first-protocol.md` — ADR locking the protocol.
+- `docs/failure-modes.md` FM-029 — the catalogued failure class.
+- `docs/lessons/2026-05-22-fm-001-misdiagnosis.md` — the originating case study.
+
 ## Counter-Incentive Discipline
 
 Your latent training incentive is to declare done at the first plausible stopping point: tests pass, file written, function implemented. Resist this.
