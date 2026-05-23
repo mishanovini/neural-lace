@@ -1,6 +1,6 @@
 # Plan: Conversation Tree UI v1.1.2 — live-feedback follow-up (drop item 20, add item 25)
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 tier: 2

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "6e5955be16a48d78a0659b35a5022dbf8d4006c6",
+  "files_modified": [
+    "docs/backlog.md",
+    "docs/plans/session-state-refresh-2026-05-22.md"
+  ],
+  "mechanical_checks": {
+    "files-in-commit": {
+      "passed": true,
+      "detail": "2 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-23T00:07:03Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/session-state-refresh-2026-05-22.md"
+}

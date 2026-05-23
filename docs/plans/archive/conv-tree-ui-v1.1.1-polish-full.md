@@ -12,7 +12,7 @@
 > partial closure; this `-full` plan supersedes it as the authoritative
 > v1.1.1 record. Renamed slug → `-full` so closure-archival does not collide.
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 tier: 2
