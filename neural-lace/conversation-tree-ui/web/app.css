@@ -75,6 +75,14 @@ button.ghost { background: var(--panel2); color: var(--text); }
 button.danger { background: #7f1d1d; color: #fee2e2; border-color: #b91c1c; }
 button:active { transform: scale(0.98); }
 .lastread { font-size: 0.72rem; color: var(--muted); }
+.freshness {
+  font-size: 0.72rem; color: var(--muted);
+  border: 1px solid var(--border); padding: 0.1rem 0.5rem; border-radius: 999px;
+  cursor: help;
+}
+.freshness.stale {
+  color: #fecaca; background: #7f1d1d; border-color: #b91c1c;
+}
 .status {
   font-size: 0.75rem; color: var(--muted);
   border: 1px solid var(--border); padding: 0.1rem 0.5rem; border-radius: 999px;
