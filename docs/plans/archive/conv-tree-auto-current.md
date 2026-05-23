@@ -88,3 +88,55 @@ Single-file walk-through: SessionStart fires → emit hook reads stdin (session_
 - [x] Heartbeat task registered and LastTaskResult=0
 - [x] /api/health returns valid JSON after server restart
 - [x] Tree visibly updating live in the GUI
+
+## Evidence Log
+
+EVIDENCE BLOCK
+Task ID: 1
+Verdict: PASS
+Task: Add --on-session-start mode to conversation-tree-emit.sh
+Commit: 02f3ad9905e6b23fb5b9f2c7bf7b3fca9305a0e2 (merge), b4fdf3b (impl)
+Runtime verification: bash ~/.claude/hooks/conversation-tree-emit.sh --self-test → 31/31 PASS
+Files: adapters/claude-code/hooks/conversation-tree-emit.sh
+Notes: Mode is idempotent on deterministic event_id; tested with synthetic SessionStart input — both sinks received events (log timestamp 2026-05-22T23:52:36Z).
+
+EVIDENCE BLOCK
+Task ID: 2
+Verdict: PASS
+Task: Add --heartbeat mode
+Commit: 02f3ad9905e6b23fb5b9f2c7bf7b3fca9305a0e2
+Runtime verification: bash ~/.claude/hooks/conversation-tree-emit.sh --heartbeat → exit 0, "refreshed 7 live marker(s)" (log timestamp 2026-05-22T23:56:55Z); subsequent heartbeats at 00:01:54, 00:06:56, 00:11 — confirming the 5-min cadence.
+Files: adapters/claude-code/hooks/conversation-tree-emit.sh
+
+EVIDENCE BLOCK
+Task ID: 3
+Verdict: PASS
+Task: Wire --on-session-start into SessionStart hooks
+Commit: 02f3ad9905e6b23fb5b9f2c7bf7b3fca9305a0e2
+Runtime verification: grep -c "conversation-tree-emit.sh --on-session-start" both files → 1 and 1
+Files: ~/.claude/settings.json (live), adapters/claude-code/settings.json.template (canonical)
+
+EVIDENCE BLOCK
+Task ID: 4
+Verdict: PASS
+Task: Add /api/health endpoint to server.js
+Commit: 02f3ad9905e6b23fb5b9f2c7bf7b3fca9305a0e2
+Runtime verification: curl http://127.0.0.1:7733/api/health returns valid JSON with ok=true, state_age_seconds, heartbeat_age_seconds, heartbeat_stale=false (confirmed end-to-end post-merge after server restart).
+Files: neural-lace/conversation-tree-ui/server/server.js
+
+EVIDENCE BLOCK
+Task ID: 5
+Verdict: PASS
+Task: Add freshness badge to GUI
+Commit: 02f3ad9905e6b23fb5b9f2c7bf7b3fca9305a0e2
+Runtime verification: grep "freshness" web/index.html → 1; grep "pollHealth" web/app.js → 2; grep ".freshness" web/app.css → 2 matches.
+Files: neural-lace/conversation-tree-ui/web/index.html, app.js, app.css
+
+EVIDENCE BLOCK
+Task ID: 6
+Verdict: PASS
+Task: Register-heartbeat.ps1 Windows scheduled task
+Commit: 02f3ad9905e6b23fb5b9f2c7bf7b3fca9305a0e2
+Runtime verification: powershell Get-ScheduledTask 'ConversationTreeUI-Heartbeat' → State=Ready, LastTaskResult=0, NextRunTime advancing every 5 min.
+Files: neural-lace/conversation-tree-ui/scripts/register-heartbeat.ps1
+
