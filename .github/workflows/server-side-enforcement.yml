@@ -1,0 +1,243 @@
+name: Server-side enforcement
+
+# The reviewer's biggest critique was: "The `--no-verify` bypass is the
+# biggest security gap. The hook chain is only as strong as its non-
+# bypassability." This workflow runs the same local hooks server-side
+# so a `git commit --no-verify` or `git push --no-verify` can no longer
+# slip past the perimeter — branch-protection requires this check to
+# pass before merge.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  credential-scan:
+    name: Credential / sensitive-pattern scan (mirrors pre-push-scan.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository (with PR base for diff)
+        uses: actions/checkout@v5
+        with:
+          # Fetch enough history to compute the PR's base-vs-head diff.
+          # For push events, fetch-depth: 2 is enough to diff against
+          # the previous commit; PR events need the base branch.
+          fetch-depth: 0
+
+      - name: Determine diff range (base..head)
+        id: range
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+          else
+            # Push event: diff against the immediate previous commit.
+            base_sha="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse --verify "HEAD" || true)"
+            head_sha="${GITHUB_SHA}"
+          fi
+          if [[ -z "$base_sha" ]] || [[ -z "$head_sha" ]]; then
+            echo "::error::could not determine base..head range (base=$base_sha head=$head_sha)"
+            exit 1
+          fi
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "Diff range: $base_sha..$head_sha"
+          git log --oneline "$base_sha".."$head_sha" | head -20 || true
+
+      - name: Run pre-push-scan.sh on the diff range
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.range.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.range.outputs.head_sha }}
+        run: |
+          set -uo pipefail
+          # The scanner reads stdin in git pre-push format:
+          #   <local_ref> <local_sha> <remote_ref> <remote_sha>
+          # We synthesize one line representing the PR's diff range.
+          # local_sha = PR head; remote_sha = PR base (what the remote
+          # already has). The scanner walks the commits between them
+          # and greps every change against the credential patterns.
+          local_ref="refs/heads/${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          remote_ref="refs/heads/${GITHUB_BASE_REF:-master}"
+          line="${local_ref} ${HEAD_SHA} ${remote_ref} ${BASE_SHA}"
+          echo "Synthesized stdin: $line"
+          set +e
+          printf '%s\n' "$line" | bash adapters/claude-code/hooks/pre-push-scan.sh origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          code=$?
+          set -e
+          if [[ $code -ne 0 ]]; then
+            echo "::error::pre-push-scan.sh blocked the diff (exit $code) — credential or sensitive-pattern match detected"
+            exit "$code"
+          fi
+          echo "credential-scan: PASS"
+
+  harness-hygiene:
+    name: Harness-hygiene scan (mirrors pre-commit harness-hygiene-scan.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@neural-lace.invalid"
+          git config --global user.name  "Neural Lace CI"
+
+      - name: Run harness-hygiene-scan.sh on changed files
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+          else
+            base_sha="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse --verify HEAD)"
+            head_sha="${GITHUB_SHA}"
+          fi
+          # Files added or modified in the diff range. Deleted files are
+          # not scanned (they're going away).
+          mapfile -t changed < <(git diff --name-only --diff-filter=AM "${base_sha}..${head_sha}" 2>/dev/null || true)
+          if [[ ${#changed[@]} -eq 0 ]]; then
+            echo "no added/modified files in diff range — nothing to scan"
+            exit 0
+          fi
+          echo "Files to scan (${#changed[@]}):"
+          printf '  %s\n' "${changed[@]}"
+          set +e
+          bash adapters/claude-code/hooks/harness-hygiene-scan.sh "${changed[@]}"
+          code=$?
+          set -e
+          if [[ $code -ne 0 ]]; then
+            echo "::error::harness-hygiene-scan.sh blocked the diff (exit $code) — denylist or heuristic match in added/modified files"
+            exit "$code"
+          fi
+          echo "harness-hygiene: PASS"
+
+  no-test-skip:
+    name: No-skipped-tests scan (mirrors pre-commit no-test-skip-gate.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@neural-lace.invalid"
+          git config --global user.name  "Neural Lace CI"
+
+      - name: Run no-test-skip-gate.sh self-test
+        shell: bash
+        run: |
+          # The hook scans staged files at commit time; in CI we exercise
+          # its self-test (which seeds a synthetic staging state) so a
+          # broken hook can't silently degrade the perimeter even when
+          # no diff happens to contain test files.
+          bash adapters/claude-code/hooks/no-test-skip-gate.sh --self-test
+
+      - name: Diff-grep for newly-introduced .skip() / xtest() / xit() in *.spec.* / *.test.*
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+          else
+            base_sha="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse --verify HEAD)"
+            head_sha="${GITHUB_SHA}"
+          fi
+          # Find lines added in the diff that introduce skip patterns
+          # inside test files. The local hook scans staged files; here
+          # we scan added lines in the diff range. Match the local
+          # hook's pattern semantics: `.skip(`, `xtest(`, `xit(`, or a
+          # `describe.skip(`. Per testing.md the only legitimate skip
+          # references an issue (`#NNN`), so an added skip lacking that
+          # marker is a finding.
+          set +e
+          added=$(git diff --diff-filter=AM "${base_sha}..${head_sha}" -- '*.spec.ts' '*.spec.tsx' '*.spec.js' '*.test.ts' '*.test.tsx' '*.test.js' 2>/dev/null \
+            | grep -E '^\+' \
+            | grep -vE '^\+\+\+ ' \
+            | grep -E '(test|it|describe)\.skip\(|xtest\(|xit\(' \
+            | grep -vE '#[0-9]+|github.com/.*/issues/[0-9]+')
+          set -e
+          if [[ -n "$added" ]]; then
+            echo "::error::Newly-introduced .skip() / xtest() / xit() without issue reference:"
+            printf '%s\n' "$added"
+            exit 1
+          fi
+          echo "no-test-skip diff-grep: PASS"
+
+  plan-edit-validator:
+    name: Plan-edit validator self-test (mirrors plan-edit-validator.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@neural-lace.invalid"
+          git config --global user.name  "Neural Lace CI"
+
+      - name: Run plan-edit-validator.sh --self-test
+        shell: bash
+        run: bash adapters/claude-code/hooks/plan-edit-validator.sh --self-test
+
+  pr-template-redundancy:
+    name: PR-template validator (already wired separately; re-run here for atomicity)
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Validate PR body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        shell: bash
+        run: |
+          set -eo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/validate-pr-template.sh"
+          validate_pr_body "$PR_BODY"
+
+  summary:
+    name: All-checks summary
+    runs-on: ubuntu-latest
+    needs:
+      - credential-scan
+      - harness-hygiene
+      - no-test-skip
+      - plan-edit-validator
+    if: always()
+    steps:
+      - name: Report aggregate verdict
+        shell: bash
+        run: |
+          echo "Server-side enforcement results:"
+          echo "  credential-scan:        ${{ needs.credential-scan.result }}"
+          echo "  harness-hygiene:        ${{ needs.harness-hygiene.result }}"
+          echo "  no-test-skip:           ${{ needs.no-test-skip.result }}"
+          echo "  plan-edit-validator:    ${{ needs.plan-edit-validator.result }}"
+          if [[ "${{ needs.credential-scan.result }}" != "success" ]] \
+             || [[ "${{ needs.harness-hygiene.result }}" != "success" ]] \
+             || [[ "${{ needs.no-test-skip.result }}" != "success" ]] \
+             || [[ "${{ needs.plan-edit-validator.result }}" != "success" ]]; then
+            echo "::error::one or more server-side enforcement checks failed"
+            exit 1
+          fi
+          echo "all server-side enforcement checks PASSED"
