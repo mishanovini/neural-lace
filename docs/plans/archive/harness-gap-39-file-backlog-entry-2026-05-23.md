@@ -1,5 +1,5 @@
 # Plan: File HARNESS-GAP-39 — cloud-orchestrator hook-detector lint
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -62,5 +62,39 @@ This plan IS the walking skeleton: a single backlog bullet, no implementation, n
 - [x] HARNESS-GAP-39 bullet present in `docs/backlog.md` under `## Open work — substantive deferrals`
 - [x] v45 header summary mentions HARNESS-GAP-39
 - [x] This plan committed alongside the backlog edit
-- [ ] Plan flipped to `Status: COMPLETED` in a follow-up commit (triggers auto-archive via `plan-lifecycle.sh`)
-- [ ] Branch pushed; PR opened against master
+- [x] Plan flipped to `Status: COMPLETED` in a follow-up commit (triggers auto-archive via `plan-lifecycle.sh`)
+- [x] Branch pushed; PR opened against master
+
+## Completion Report
+
+### 1. Implementation Summary
+
+- **Task 1 (single):** HARNESS-GAP-39 bullet filed in `docs/backlog.md` under `## Open work — substantive deferrals`, with full problem statement / evidence (1463 self-test entries in `~/.claude/logs/conversation-tree-emit.log` since 2026-05-18, zero production firings) / proposed lint behavior / implementation sketch / out-of-scope notes / effort estimate / priority / companion links / failure-class label. v45 header summary added. Commit: `2759344`.
+
+No backlog items absorbed (`Backlog items absorbed: none` per the plan header).
+
+### 2. Design Decisions & Plan Deviations
+
+- Used the `_is_self_claiming_active_plan` scope-enforcement-gate exemption to bundle this plan + the backlog edit in a single commit, avoiding the heavier path of opening a multi-step plan for a one-bullet docs change. Closure follows immediately to keep the plan-state lean.
+
+### 3. Known Issues & Gotchas
+
+- The HARNESS-GAP-39 entry proposes a P2 lint; implementation is deferred to a separate plan if/when the gap is picked up.
+- The audit-log convention this lint relies on (`~/.claude/logs/<hook>.log` per hook) is followed by `conversation-tree-emit.sh` and `propagation-trigger-router.sh` but is not yet universally enforced; the lint design notes this as a separate finding worth enumerating.
+
+### 4. Manual Steps Required
+
+None. The bullet is a queued P2 item; it will be picked up via the normal backlog-grooming cadence.
+
+### 5. Testing Performed & Recommended
+
+Mechanical:
+- `grep -c "HARNESS-GAP-39" docs/backlog.md` → 2+ (header summary + bullet heading). PASS.
+- `head -3 docs/backlog.md | grep -c "v45"` → 1+ (header). PASS.
+- Plan file auto-archived to `docs/plans/archive/` on Status: COMPLETED flip via `plan-lifecycle.sh`. PASS.
+
+No runtime testing — docs-only.
+
+### 6. Cost Estimates
+
+Zero ongoing cost — single backlog bullet, no infra changes.
