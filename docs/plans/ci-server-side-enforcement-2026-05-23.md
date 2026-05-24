@@ -65,6 +65,16 @@ branch-protection's required-checks list.
 
 - `.github/workflows/server-side-enforcement.yml` — five-job CI workflow
   mirroring the local hook chain.
+- `adapters/claude-code/scripts/git-no-verify-friction.sh` — local
+  `git` shell-function wrapper intercepting `commit --no-verify` /
+  `-n`, requiring a literal confirmation string, logging every attempt
+  (added 2026-05-23 per in-flight scope update).
+- `adapters/claude-code/scripts/install-git-friction.sh` — installer
+  that wires the wrapper into the user's bash/zsh rc files. Idempotent;
+  ships `--check` and `--uninstall` modes plus a 6-case `--self-test`.
+- `docs/no-verify-friction.md` — operator-facing documentation of the
+  wrapper, the install/uninstall procedure, what gets logged, and the
+  three-layer defense story.
 - `docs/plans/ci-server-side-enforcement-2026-05-23.md` — this plan file.
 
 ## Assumptions
@@ -114,7 +124,20 @@ branch-protection's required-checks list.
 
 ## In-flight scope updates
 
-(none yet)
+- 2026-05-23: Misha follow-up to the original Task 2 brief added a
+  local-shell `--no-verify` friction wrapper as the complement to the
+  server-side gate. Three new files land on this branch:
+  `adapters/claude-code/scripts/git-no-verify-friction.sh` (the wrapper —
+  intercepts `git commit --no-verify` / `-n`, requires literal
+  `I-AM-BYPASSING-SAFETY-DELIBERATELY` confirmation, logs every
+  attempt to `~/.claude/logs/no-verify-attempts.log`, 10-case
+  `--self-test`); `adapters/claude-code/scripts/install-git-friction.sh`
+  (one-time installer that wires the wrapper into the user's bash/zsh
+  rc files; idempotent; 6-case `--self-test`); `docs/no-verify-friction.md`
+  (operator docs + three-layer defense diagram). Path-of-least-resistance
+  principle: the server-side gate is the actual floor; the local
+  friction makes the floor a rare-fire safety net rather than the
+  only line of defense.
 
 ## Decisions Log
 
