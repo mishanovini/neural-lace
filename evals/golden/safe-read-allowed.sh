@@ -27,10 +27,10 @@ DANGEROUS_PATTERNS='(--force|-f\s|--no-verify|--public|chmod -R 777|mkfs\.|dd if
 for op in "${safe_operations[@]}"; do
   if echo "$op" | grep -qE "$DANGEROUS_PATTERNS"; then
     echo "FAIL: Safe operation incorrectly flagged: $op"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   else
     echo "PASS: Correctly allowed: $op"
-    ((PASS++))
+    PASS=$((PASS + 1))
   fi
 done
 
