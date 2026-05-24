@@ -1,0 +1,72 @@
+name: Evals
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  golden:
+    name: Golden behavioral tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Show shell + tool versions
+        run: |
+          bash --version | head -1
+          git --version
+          jq --version || true
+
+      - name: Run golden tests (evals/golden/*.sh)
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pass=0
+          fail=0
+          failed_tests=()
+          tests=(evals/golden/*.sh)
+          if [[ ${#tests[@]} -eq 0 ]]; then
+            echo "::warning::no golden tests found under evals/golden/"
+            exit 0
+          fi
+          for t in "${tests[@]}"; do
+            echo "::group::$t"
+            if bash "$t"; then
+              pass=$((pass + 1))
+              echo "::endgroup::"
+            else
+              fail=$((fail + 1))
+              failed_tests+=("$t")
+              echo "::endgroup::"
+              echo "::error file=$t::Golden test FAILED"
+            fi
+          done
+          echo
+          echo "Golden suite: $pass passed, $fail failed (total ${#tests[@]})"
+          if [[ $fail -gt 0 ]]; then
+            echo "Failed tests:"
+            for ft in "${failed_tests[@]}"; do
+              echo "  - $ft"
+            done
+            exit 1
+          fi
+
+  pr-template-validator:
+    name: PR-template validator self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Run validate-pr-template.sh --self-test
+        shell: bash
+        run: bash .github/scripts/validate-pr-template.sh --self-test

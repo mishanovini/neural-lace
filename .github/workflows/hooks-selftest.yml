@@ -1,0 +1,135 @@
+name: Hooks self-test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  hooks:
+    name: Bash hooks --self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Show shell + tool versions
+        run: |
+          bash --version | head -1
+          git --version
+          jq --version
+
+      # Hooks routinely shell out to `git`; some self-tests `git init` a
+      # temporary repo and then commit/push. A configured identity prevents
+      # spurious failures inside those sub-repos.
+      - name: Configure git identity (required by some hook self-tests)
+        run: |
+          git config --global user.email "ci@neural-lace.invalid"
+          git config --global user.name  "Neural Lace CI"
+
+      - name: Discover hooks with --self-test support
+        id: discover
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A hook "supports --self-test" if the literal token appears in
+          # its source. We use this same heuristic in the local devloop.
+          mapfile -t hooks < <(
+            grep -lZ -- "--self-test" adapters/claude-code/hooks/*.sh 2>/dev/null \
+              | tr '\0' '\n'
+          )
+          printf '%s\n' "${hooks[@]}" > /tmp/hook-list.txt
+          wc -l < /tmp/hook-list.txt | tr -d ' ' > /tmp/hook-count.txt
+          echo "Found $(cat /tmp/hook-count.txt) hooks with --self-test support"
+
+      - name: Run --self-test on every supporting hook
+        shell: bash
+        run: |
+          set -uo pipefail
+          pass=0
+          fail=0
+          skipped=0
+          failed_hooks=()
+          while IFS= read -r hook; do
+            [[ -z "$hook" ]] && continue
+            name="$(basename "$hook")"
+            echo "::group::$name"
+            # Some hooks expect to be cwd'd at the repo root; we already are.
+            # Capture output so a failing hook surfaces its diagnostic.
+            if output="$(bash "$hook" --self-test 2>&1)"; then
+              printf '%s\n' "$output"
+              pass=$((pass + 1))
+              echo "::endgroup::"
+            else
+              code=$?
+              printf '%s\n' "$output"
+              echo "::endgroup::"
+              echo "::error file=$hook::Hook self-test FAILED (exit $code)"
+              fail=$((fail + 1))
+              failed_hooks+=("$name (exit $code)")
+            fi
+          done < /tmp/hook-list.txt
+
+          echo
+          echo "Hook self-test suite: $pass passed, $fail failed, $skipped skipped"
+          if [[ $fail -gt 0 ]]; then
+            echo "Failed hooks:"
+            for fh in "${failed_hooks[@]}"; do
+              echo "  - $fh"
+            done
+            exit 1
+          fi
+
+  test-scripts:
+    name: Standalone test scripts (adapters/claude-code/tests/*.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@neural-lace.invalid"
+          git config --global user.name  "Neural Lace CI"
+
+      - name: Run *.sh tests under adapters/claude-code/tests/
+        shell: bash
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          tests=(adapters/claude-code/tests/*.sh)
+          if [[ ${#tests[@]} -eq 0 ]]; then
+            echo "no standalone test scripts found"
+            exit 0
+          fi
+          pass=0
+          fail=0
+          failed=()
+          for t in "${tests[@]}"; do
+            echo "::group::$(basename "$t")"
+            if bash "$t"; then
+              pass=$((pass + 1))
+              echo "::endgroup::"
+            else
+              code=$?
+              echo "::endgroup::"
+              echo "::error file=$t::Test FAILED (exit $code)"
+              fail=$((fail + 1))
+              failed+=("$(basename "$t") (exit $code)")
+            fi
+          done
+          echo
+          echo "Standalone tests: $pass passed, $fail failed"
+          if [[ $fail -gt 0 ]]; then
+            echo "Failed:"
+            for f in "${failed[@]}"; do
+              echo "  - $f"
+            done
+            exit 1
+          fi
