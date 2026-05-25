@@ -1,5 +1,5 @@
 # Plan: drift-backlog followups — System 3 (CI watcher) + daily cadence
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 tier: 2
