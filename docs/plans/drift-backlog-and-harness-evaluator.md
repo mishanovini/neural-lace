@@ -117,6 +117,61 @@ The smallest end-to-end vertical slice that proves the structure works:
 
 Once that slice runs end-to-end, expand to full history.
 
+## Evidence Log
+
+### Task 1: Create feature branch + plan file
+Task ID: 1
+Commit: f900096 (the prior commit on this branch)
+Branch: `feat/drift-backlog-and-harness-evaluator` created from master
+Plan file: `docs/plans/drift-backlog-and-harness-evaluator.md` exists with 7-field header + 7 required sections + walking skeleton + decisions log + pre-submission audit.
+Verdict: PASS
+
+### Task 2: Build mine-misha-asked.sh + classifier lib
+Task ID: 2
+Commit: f900096
+Files created:
+- `adapters/claude-code/scripts/mine-misha-asked.sh` (5-pass JSONL extraction + classification + dedup + artifact-search)
+- `adapters/claude-code/scripts/lib/imperative-classifier.sh` (3 helper functions: imperative_match, classify_ask, normalize_ask)
+Self-test: `bash adapters/claude-code/scripts/mine-misha-asked.sh --self-test` returns "all checks passed" (5/5)
+Verdict: PASS
+
+### Task 3: Run first scan, commit populated backlog
+Task ID: 3
+Commit: f900096 (script committed); backlog file at `.claude/state/drift-backlog/misha-asked-for.json` (gitignored, not committed)
+Scan invocation: `bash adapters/claude-code/scripts/mine-misha-asked.sh --recent-days 60 --project-filter neural-lace`
+Output summary: drift=66, satisfied=2, recent_pending=20, non_task_class=94 (out of 182 unique asks)
+Verdict: PASS
+
+### Task 4: Build harness-evaluator.sh + agent file
+Task ID: 4
+Commit: 52354c7
+Files created:
+- `adapters/claude-code/scripts/harness-evaluator.sh` (7-section weekly packet generator)
+- `adapters/claude-code/agents/harness-evaluator.md` (sub-agent prompt with hard rules)
+- `adapters/claude-code/scripts/schedule-weekly-eval.md` (cron/Routine/manual options)
+Self-test: `bash adapters/claude-code/scripts/harness-evaluator.sh --self-test` returns "all checks passed" (4/4)
+Verdict: PASS
+
+### Task 5: Run first evaluation
+Task ID: 5
+Commit: 52354c7
+File: `docs/reviews/2026-05-25-harness-self-eval.md` (232 lines with Section 8 honesty audit)
+Real findings surfaced: see commit message.
+Verdict: PASS
+
+### Task 6: Schedule stub
+Task ID: 6
+Commit: 52354c7
+File: `adapters/claude-code/scripts/schedule-weekly-eval.md` documents 3 wiring options (Routine / cron / manual).
+Actual registration deferred to Misha per design (final report names this as needs-Misha decision).
+Verdict: PASS
+
+### Task 7: Self-test honesty
+Task ID: 7
+Commit: 52354c7 (Section 8 of weekly packet)
+Confirmed: at least 2 drift items are real deferred asks (Misha's "continue until completed entire plan" recurring directive); at least 3 known-weak rules cited correctly from vaporware-prevention.md; 8 v1 gaps surfaced as candidate followups (F1-F8).
+Verdict: PASS
+
 ## Decisions Log
 
 (populated during build for Tier 2+ choices)
