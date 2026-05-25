@@ -67,7 +67,7 @@ The first scan must surface real drift items (not just placeholder rows); the fi
 ## Files to Modify/Create
 
 - `docs/plans/drift-backlog-and-harness-evaluator.md` — this plan file (already created)
-- `docs/backlog/misha-asked-for.json` — System 1 output (NEW file + parent directory)
+- `.claude/state/drift-backlog/misha-asked-for.json` — System 1 output (NEW path; gitignored per harness-hygiene — the JSON contains raw user-message content with machine-local paths and usernames that must not ship in a generic harness kit; moved here from the original `docs/backlog/` location after harness-hygiene-scan blocked the commit)
 - `docs/reviews/harness-self-eval-2026-05-24.md` — System 2 first weekly packet (NEW file)
 - `adapters/claude-code/scripts/mine-misha-asked.sh` — System 1 miner script (NEW file)
 - `adapters/claude-code/scripts/harness-evaluator.sh` — System 2 analyzer script (NEW file)
@@ -77,7 +77,7 @@ The first scan must surface real drift items (not just placeholder rows); the fi
 
 ## In-flight scope updates
 
-(reserved for additions during build)
+- 2026-05-24: `.claude/state/drift-backlog/misha-asked-for.json` — moved System 1 output to gitignored state dir after harness-hygiene-scan blocked the original `docs/backlog/` path (raw user-message content carries machine-local paths and usernames that must not ship in a generic harness kit). Per-machine operational state convention applied; weekly packet from System 2 remains the shareable committed artifact.
 
 ## Assumptions
 
