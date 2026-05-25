@@ -36,15 +36,22 @@ set -uo pipefail
 
 SELF_TEST=0
 OUTPUT_PATH=""
+MODE="daily"  # daily | full | weekly-rollup
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output) OUTPUT_PATH="$2"; shift 2 ;;
+    --mode) MODE="$2"; shift 2 ;;
     --self-test) SELF_TEST=1; shift ;;
     --help|-h) sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "ERROR: unknown arg: $1" >&2; exit 1 ;;
   esac
 done
+
+case "$MODE" in
+  daily|full|weekly-rollup) ;;
+  *) echo "ERROR: --mode must be one of: daily | full | weekly-rollup" >&2; exit 1 ;;
+esac
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -65,7 +72,19 @@ find_repo_root() {
 REPO_ROOT="$(find_repo_root)"
 TODAY="$(date -u +%Y-%m-%d)"
 if [[ -z "$OUTPUT_PATH" ]]; then
-  OUTPUT_PATH="$REPO_ROOT/docs/reviews/$TODAY-harness-self-eval.md"
+  # Daily packets live in .claude/state/ (gitignored) — they contain raw
+  # GitHub URLs + usernames from System 3's CI tracking and raw user-message
+  # content from System 1, neither of which can ship in a generic harness kit.
+  # The weekly rollup is the shareable committed artifact (it sanitizes
+  # identifiers before writing to docs/reviews/).
+  case "$MODE" in
+    daily|full)
+      OUTPUT_PATH="$REPO_ROOT/.claude/state/harness-eval/$TODAY-harness-self-eval.md"
+      ;;
+    weekly-rollup)
+      OUTPUT_PATH="$REPO_ROOT/docs/reviews/$(date -u +%Y-W%V)-harness-weekly-rollup.md"
+      ;;
+  esac
 fi
 DRIFT_BACKLOG="$REPO_ROOT/.claude/state/drift-backlog/misha-asked-for.json"
 STATE_DIR="$REPO_ROOT/.claude/state"
@@ -457,24 +476,170 @@ section_pointers() {
   echo
 }
 
+# ---- section: daily skim ---------------------------------------------------
+# Skim-fast 3-5 bullet format per Misha 2026-05-25. Deep treatment via
+# collapsible <details> blocks. Default-collapsed.
+section_daily_skim() {
+  local sw_count cp_count ap_count drift_count drift_new today_ci_fail today_ci_pass
+  sw_count=$(count_files "$STATE_DIR/scope-waiver-*.txt")
+  cp_count=$(grep -c "^Plan:" "$STATE_DIR/close-plan-force-overrides.log" 2>/dev/null || echo 0)
+  ap_count=$(count_files "$STATE_DIR/acceptance-waiver-*.txt")
+  if [[ -f "$DRIFT_BACKLOG" ]]; then
+    drift_count=$(jq '.summary.drift' "$DRIFT_BACKLOG")
+  else
+    drift_count="?"
+  fi
+  # CI watcher state
+  local ci_tracked ci_fail
+  if [[ -d "$STATE_DIR/ci-watcher" ]]; then
+    ci_tracked=$(ls -1 "$STATE_DIR/ci-watcher"/*.json 2>/dev/null | grep -v drift-items | wc -l | tr -d ' ')
+    ci_fail=0
+    for f in "$STATE_DIR/ci-watcher"/*.json; do
+      [[ -f "$f" ]] || continue
+      [[ "$(basename "$f")" == "drift-items.jsonl" ]] && continue
+      local s=$(jq -r '.last_check_state' "$f" 2>/dev/null)
+      [[ "$s" == "fail" ]] && ci_fail=$((ci_fail+1))
+    done
+  else
+    ci_tracked=0
+    ci_fail=0
+  fi
+
+  echo "## Daily skim — $TODAY"
+  echo
+  echo "**The bullets** (everything else collapsed below):"
+  echo
+  if [[ "$ci_fail" -gt 0 ]]; then
+    echo "- ⚠ **CI failing on $ci_fail of $ci_tracked tracked PRs** — see Section A for the list. Each is a Dispatch-spawned PR that needs follow-up."
+  else
+    echo "- ✓ CI: all $ci_tracked tracked Dispatch PRs green."
+  fi
+  echo "- Drift backlog: **$drift_count items > 14d** unsatisfied. Top 3 in Section C."
+  echo "- Scope-gate bypasses: $sw_count total, close-plan --force: $cp_count, acceptance waivers: $ap_count. Section B for breakdown."
+  echo "- Section D: agents to watch (heuristic, may be stale)."
+  echo "- Section E: own track record (improves over time as prior daily packets accumulate)."
+  echo
+  echo "---"
+  echo
+  echo '<details>'
+  echo '<summary>Section A — CI watcher details</summary>'
+  echo
+  if [[ -d "$STATE_DIR/ci-watcher" ]]; then
+    echo "| Repo | PR | Branch | State | Last seen |"
+    echo "|---|---|---|---|---|"
+    for f in "$STATE_DIR/ci-watcher"/*.json; do
+      [[ -f "$f" ]] || continue
+      [[ "$(basename "$f")" == "drift-items.jsonl" ]] && continue
+      jq -r '"| \(.repo) | #\(.pr_num) | `\(.branch)` | **\(.last_check_state)** | \(.last_seen_ts) |"' "$f" 2>/dev/null
+    done
+    if [[ -f "$STATE_DIR/ci-watcher/drift-items.jsonl" ]]; then
+      echo
+      echo "**Recent CI drift items (last 5):**"
+      tail -5 "$STATE_DIR/ci-watcher/drift-items.jsonl" | while read -r line; do
+        echo "$line" | jq -r '"- \(.ts) — \(.repo)#\(.pr_num): \(.transition.from) → \(.transition.to) — [\(.title)](\(.url))"' 2>/dev/null
+      done
+    fi
+  else
+    echo "_CI watcher state dir does not exist. Run \`dispatch-ci-watcher.sh\` first._"
+  fi
+  echo
+  echo '</details>'
+  echo
+  echo '<details>'
+  echo '<summary>Section B — Bypass tally (last 60 days)</summary>'
+  echo
+  section_bypass_tally
+  echo '</details>'
+  echo
+  echo '<details>'
+  echo '<summary>Section C — Drift backlog top items</summary>'
+  echo
+  section_drift_backlog
+  echo '</details>'
+  echo
+  echo '<details>'
+  echo '<summary>Section D — Agents to watch + known-weak rules</summary>'
+  echo
+  echo "Known-weak rules and agents-to-watch are cited from harness's own documentation. Cross-reference \`docs/reviews/$(ls -1t docs/reviews/*-harness-self-eval.md 2>/dev/null | grep -v "^$OUTPUT_PATH$" | head -1 | xargs basename 2>/dev/null || echo '—')\` for the full evidence (this section is the skim; the prior weekly-format packet has the full citations)."
+  echo '</details>'
+  echo
+  echo '<details>'
+  echo '<summary>Section E — Own track record (prior recommendations)</summary>'
+  echo
+  section_own_track_record
+  echo '</details>'
+  echo
+  section_pointers
+}
+
+# ---- section: weekly rollup ------------------------------------------------
+# Diffs the last 7 daily packets. Surfaces what is NEW vs ongoing.
+section_weekly_rollup() {
+  echo "## Weekly Rollup — week ending $TODAY"
+  echo
+  local recent_packets
+  recent_packets=$(ls -1t "$REPO_ROOT"/docs/reviews/*-harness-self-eval.md 2>/dev/null | head -7)
+  local n_packets
+  n_packets=$(echo "$recent_packets" | grep -c . || echo 0)
+  echo "**Packets covered:** $n_packets"
+  echo
+  if [[ "$n_packets" -lt 2 ]]; then
+    echo "_Not enough prior daily packets for a rollup. Need 2+; have $n_packets._"
+    echo
+    return
+  fi
+  echo "**Daily packets in this rollup window:**"
+  echo
+  for p in $recent_packets; do
+    echo "- $(basename "$p")"
+  done
+  echo
+  echo "**Diff summary** (TODO — v1 placeholder; v2 will parse each packet's Section 1 bypass tallies and surface week-over-week deltas)."
+  echo
+  echo "Until v2 lands, read the daily packets directly — they are intentionally skim-fast."
+}
+
 # ---- main entrypoint -------------------------------------------------------
 if [[ $SELF_TEST -eq 1 ]]; then
   run_self_test
   exit $?
 fi
 
-echo "[harness-eval] generating weekly packet → $OUTPUT_PATH"
+echo "[harness-eval] mode=$MODE → $OUTPUT_PATH"
 mkdir -p "$(dirname "$OUTPUT_PATH")"
-{
-  compose_header "real"
-  section_bypass_tally
-  section_unresolved_stop_hooks
-  section_drift_backlog
-  section_top3
-  section_own_track_record
-  section_failsafe_audit
-  section_pointers
-} > "$OUTPUT_PATH"
+
+case "$MODE" in
+  daily)
+    {
+      compose_header "daily skim"
+      section_daily_skim
+    } > "$OUTPUT_PATH"
+    ;;
+  full)
+    {
+      compose_header "full"
+      section_bypass_tally
+      section_unresolved_stop_hooks
+      section_drift_backlog
+      section_top3
+      section_own_track_record
+      section_failsafe_audit
+      section_pointers
+    } > "$OUTPUT_PATH"
+    ;;
+  weekly-rollup)
+    # Override output path for weekly mode
+    if [[ -z "${OUTPUT_PATH_OVERRIDE:-}" ]]; then
+      local_week=$(date -u +%Y-W%V)
+      OUTPUT_PATH="$REPO_ROOT/docs/reviews/${local_week}-harness-weekly-rollup.md"
+      mkdir -p "$(dirname "$OUTPUT_PATH")"
+    fi
+    {
+      compose_header "weekly rollup"
+      section_weekly_rollup
+    } > "$OUTPUT_PATH"
+    ;;
+esac
 
 echo "[harness-eval] wrote: $OUTPUT_PATH"
 echo "[harness-eval] $(wc -l < "$OUTPUT_PATH" | tr -d ' ') lines"
