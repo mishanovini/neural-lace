@@ -370,6 +370,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/conv-tree-emit-reconciler.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/deferral-counter.sh"
           },
           {
