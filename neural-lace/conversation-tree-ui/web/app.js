@@ -24,11 +24,21 @@
       blSave = $('blSave'), blCancel = $('blCancel'),
       ctxPanel = $('ctxPanel'), ctxScrim = $('ctxScrim'), zoomIn = $('zoomIn'),
       zoomOut = $('zoomOut'), fitSel = $('fitSel'),
-      showConcluded = $('showConcluded'), tabBar = $('tabBar'),
+      showConcluded = $('showConcluded'),
+      // v2 redesign 2026-05-23 — right-panel tabs + drawer toggle
+      paneTabs = $('paneTabs'),
+      paneToggle = $('paneToggle'), rightClose = $('rightClose'),
+      panePeek = $('panePeek'), panePeekLabel = $('panePeekLabel'),
       docsBtn = $('docsBtn'), docScrim = $('docScrim'), docModal = $('docModal'),
       docTitle = $('docTitle'), docBody = $('docBody'), docClose = $('docClose'),
       docOpenEditor = $('docOpenEditor'), docsPanel = $('docsPanel'),
-      docsBody = $('docsBody'), docsFilter = $('docsFilter'), docsClose = $('docsClose');
+      docsBody = $('docsBody'), docsFilter = $('docsFilter'), docsClose = $('docsClose'),
+      // v2 redesign 2026-05-23 — dedicated Send-to-Dispatch composer modal
+      dispatchScrim = $('dispatchScrim'), dispatchModal = $('dispatchModal'),
+      dispatchTarget = $('dispatchTarget'), dispatchText = $('dispatchText'),
+      dispatchClearAfter = $('dispatchClearAfter'),
+      dispatchSend = $('dispatchSend'), dispatchStage = $('dispatchStage'),
+      dispatchCancel = $('dispatchCancel'), dispatchClose = $('dispatchClose');
 
   // ---- client view state ----------------------------------------------
   var S = null;                 // latest snapshot
@@ -398,44 +408,17 @@
   // item 19: open one doc inline (rendered markdown). projectKey defaults to
   // the active tree (the project tag); the server resolves it cross-repo.
   var curDoc = null;
-  // v1.1.2 item 38 — doc preview is a resizable RIGHT side pane (not a centred
-  // modal); persists width across opens; rest of GUI stays interactive.
-  var DOC_PANE_W_KEY = 'ctree-doc-pane-w';
-  function applyDocPaneWidth() {
-    var stored = localStorage.getItem(DOC_PANE_W_KEY);
-    var w = stored && /^\d+px$/.test(stored) ? stored : '32rem';
-    document.documentElement.style.setProperty('--doc-pane-w', w);
-  }
-  applyDocPaneWidth();
-  function ensureDocResizeHandle() {
-    if (!docModal || docModal.querySelector('.doc-resize')) return;
-    var h = el('div', 'doc-resize'); h.title = 'drag to resize';
-    docModal.appendChild(h);
-    h.addEventListener('mousedown', function (e) {
-      e.preventDefault();
-      function onMove(ev) {
-        var w = Math.max(240, Math.min(window.innerWidth * 0.90, window.innerWidth - ev.clientX));
-        var px = Math.round(w) + 'px';
-        document.documentElement.style.setProperty('--doc-pane-w', px);
-        localStorage.setItem(DOC_PANE_W_KEY, px);
-      }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-  }
+  // v2 redesign 2026-05-23 — doc viewer is a CENTERED MODAL (was a resizable
+  // right side pane). Reading long-form content should not shift the
+  // persistent #layout (tree + side panel stay put). The scrim is shown
+  // alongside the modal; the docsPanel drawer shares the same scrim.
   function openDocModal(project, relPath) {
     project = project || activeTree;
     curDoc = { project: project, path: relPath };
     docTitle.textContent = project + ' › ' + relPath;
     docBody.innerHTML = '<p class="muted">Loading…</p>';
     docModal.hidden = false;
-    document.body.dataset.docPane = 'open';        // item 38: shrink #layout
-    docScrim.hidden = true;                        // no scrim for side pane (rest of GUI interactive)
-    ensureDocResizeHandle();
+    docScrim.hidden = false;                       // centred modal — scrim is on
     fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(relPath))
       .then(function (r) { return r.json(); })
       .then(function (j) {
@@ -445,8 +428,9 @@
       .catch(function () { docBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
   }
   function closeDocModal() {
-    docModal.hidden = true; docScrim.hidden = true; curDoc = null;
-    delete document.body.dataset.docPane;
+    docModal.hidden = true; curDoc = null;
+    // only drop the shared scrim if no sibling overlay still needs it
+    if (docsPanel.hidden) docScrim.hidden = true;
   }
   // item 19: linkify any docs/…(.md) token inside a text node into a clickable
   // .doc-link button (so doc references in item text/details are not dead text).
@@ -581,7 +565,9 @@
   if (docScrim) docScrim.addEventListener('click', function () { closeDocModal(); closeDocsPanel(); });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
-      if (!docModal.hidden) closeDocModal();
+      // v2 redesign 2026-05-23 — dismiss top-most overlay first
+      if (!dispatchModal.hidden) closeDispatchModal();
+      else if (!docModal.hidden) closeDocModal();
       else if (!docsPanel.hidden) closeDocsPanel();
     }
   });
@@ -1287,24 +1273,86 @@
       top.appendChild(bAssign);
       if (b.activated) top.appendChild(el('span', 'badge', 'activated ✓'));
       li.appendChild(top);
+      // v2 redesign 2026-05-23 — UX-VR-13 context-as-textarea: every backlog
+      // item exposes a context disclosure. Read mode if present; click to
+      // edit in a textarea. Empty items show "Add context →" as a clear
+      // affordance. Legacy context_refs (file refs / cross-links) still
+      // render as before — they're a different kind of attached context.
+      var hasContext = typeof b.context_text === 'string' && b.context_text.trim().length > 0;
+      var ctxToggle = el('button', 'li-context-toggle' + (hasContext ? '' : ' empty'),
+        hasContext ? '▾ context' : '+ Add context →');
+      ctxToggle.title = hasContext
+        ? 'show / edit this backlog item\'s context (multi-line)'
+        : 'this item has no context yet — click to add one (multi-line textarea)';
+      var ctxBox = el('div'); ctxBox.style.display = 'none';
+      function renderCtxRead() {
+        ctxBox.innerHTML = '';
+        ctxBox.style.display = '';
+        if (hasContext) {
+          var rd = el('div', 'li-context-render', b.context_text);
+          var ed = el('button', 'btn-info outline', '✎ edit');
+          ed.style.marginTop = '0.35rem';
+          ed.addEventListener('click', function () { renderCtxEdit(b.context_text); });
+          ctxBox.appendChild(rd); ctxBox.appendChild(ed);
+        } else {
+          var empty = el('div', 'li-context-empty', 'no context recorded — click "Add context →" to add one.');
+          ctxBox.appendChild(empty);
+          renderCtxEdit('');
+        }
+      }
+      function renderCtxEdit(initial) {
+        ctxBox.innerHTML = '';
+        ctxBox.style.display = '';
+        var wrap = el('div', 'li-context-edit');
+        var ta = el('textarea', 'context-area');
+        ta.value = (initial == null ? '' : initial);
+        ta.placeholder = 'context — what you know about this, why it matters, prior decisions, related docs (multi-line, supports markdown-ish prose)';
+        wrap.appendChild(ta);
+        var row = el('div', 'row');
+        var save = el('button', 'btn-go', 'Save context');
+        var cancel = el('button', 'btn-neutral outline', 'cancel');
+        save.addEventListener('click', function () {
+          var nv = ta.value || '';
+          post({ type: 'backlog-context-set', item_id: b.item_id, context_text: nv },
+            nv.trim() ? 'context saved' : 'context cleared');
+        });
+        cancel.addEventListener('click', function () {
+          if (hasContext) renderCtxRead();
+          else { ctxBox.style.display = 'none'; ctxToggle.textContent = '+ Add context →'; }
+        });
+        row.appendChild(save); row.appendChild(cancel);
+        wrap.appendChild(row);
+        ctxBox.appendChild(wrap);
+      }
+      ctxToggle.addEventListener('click', function () {
+        if (ctxBox.style.display === 'none') {
+          if (hasContext) renderCtxRead(); else renderCtxEdit('');
+        } else {
+          ctxBox.style.display = 'none';
+        }
+      });
+      li.appendChild(ctxToggle);
+      li.appendChild(ctxBox);
+      // legacy context_refs (file/doc cross-links) — still surfaced
       if (b.context_refs && b.context_refs.length) {
-        li.appendChild(el('div', 'muted', 'context: ' + b.context_refs.join(' | ')));
+        li.appendChild(el('div', 'muted', 'attached refs: ' + b.context_refs.join(' | ')));
       }
       var acts = el('div', 'li-actions');
       if (!b.activated) {
         var act = el('button', 'btn-go', 'Activate → new tree root');
         act.addEventListener('click', function () { activateBacklog(b); });
         acts.appendChild(act);
-        var addc = el('button', 'btn-info outline', '+ context');
-        addc.addEventListener('click', function () {
-          var note = prompt('Attach a context note / file ref / prior-decision:');
+        var addRef = el('button', 'btn-info outline', '+ attach ref');
+        addRef.title = 'attach a file/doc reference (separate from the prose context above)';
+        addRef.addEventListener('click', function () {
+          var note = prompt('Attach a file ref / doc path / prior-decision link:');
           if (note == null || !note.trim()) return;
-          post({ type: 'context-attached', target: b.item_id, context_ref: note.trim() }, 'context attached');
+          post({ type: 'context-attached', target: b.item_id, context_ref: note.trim() }, 'ref attached');
         });
-        acts.appendChild(addc);
+        acts.appendChild(addRef);
       } else {
         var copy = el('button', 'btn-info', '⧉ copy context for Dispatch');
-        copy.addEventListener('click', function () { copyHandoff(b.text, b.context_refs, b.activated_node); });
+        copy.addEventListener('click', function () { copyHandoff(b.text, (b.context_refs || []).concat(b.context_text ? ['CONTEXT:\n' + b.context_text] : []), b.activated_node); });
         acts.appendChild(copy);
       }
       li.appendChild(acts);
@@ -1322,11 +1370,15 @@
     var txt = blText.value.trim();
     if (!txt) { blText.focus(); return; }
     var itemId = uid('bl');
-    post({ type: 'backlog-added', item_id: itemId, tree_id: activeTree, priority: blPriority.value, text: txt }, 'backlog item added')
+    // v2 redesign 2026-05-23 — UX-VR-13: capture-time context_text rides on
+    // the same backlog-added event so it's persisted atomically with the
+    // item itself. Previously context was sent as a separate
+    // context-attached event (which the reducer dropped silently). Empty
+    // string is preserved as empty string.
+    var ctx = blContext.value;
+    post({ type: 'backlog-added', item_id: itemId, tree_id: activeTree, priority: blPriority.value, text: txt, context_text: ctx }, 'backlog item added')
       .then(function (ok) {
         if (!ok) return;
-        var ctx = blContext.value.trim();
-        if (ctx) post({ type: 'context-attached', target: itemId, context_ref: ctx }, 'context attached');
         backlogCapture.hidden = true;
       });
   });
@@ -1429,14 +1481,12 @@
     }, 30);
   }
   function cssEsc(s) { return String(s).replace(/"/g, '\\"'); }
-  // v1.1 item 2: single dismiss path. Hides panel + backdrop scrim and
-  // clears selection so a later render()/SSE frame does not re-open it.
+  // v2 redesign 2026-05-23: ctxPanel is a centred MODAL (was a docked side
+  // pane). It NEVER shifts the persistent #layout — tree + side panel stay
+  // put. Dismiss via Esc / scrim click / ✕.
   function closeCtx() {
     ctxPanel.hidden = true;
     ctxScrim.hidden = true;
-    // v1.1.4 item 41: clear the layout-shift attribute so #layout reclaims its
-    // full right margin and the Waiting/Backlog panes spring back to full width.
-    delete document.body.dataset.ctxPane;
     sel = null;
     render();
   }
@@ -1444,11 +1494,7 @@
     var n = byId(id);
     if (!n) { closeCtx(); return; }
     ctxPanel.hidden = false;
-    ctxScrim.hidden = false;          // CSS hides the scrim at >=1440 (docked)
-    // v1.1.4 item 41: at wide widths, this flag tells CSS to shrink #layout
-    // by var(--ctx-pane-w) so the right-region panes stay visible NEXT TO the
-    // ctx-pane instead of being obscured by it (mirrors `data-doc-pane`).
-    document.body.dataset.ctxPane = 'open';
+    ctxScrim.hidden = false;          // always show scrim — this is a modal
     clear(ctxPanel);
     var head = el('div', 'ctx-head');
     head.appendChild(el('span', 'pane-title', n.title || n.node_id));
@@ -1600,7 +1646,12 @@
       localStorage.removeItem('ctree-draft-' + id);
       post({ type: 'draft-cleared', node_id: id }, 'note cleared');
     });
-    dr.appendChild(send); dr.appendChild(clearLbl); dr.appendChild(stage); dr.appendChild(copyD); dr.appendChild(used);
+    // v2 redesign 2026-05-23 — open the focused composer modal pre-filled
+    // with the currently staged note. Cleaner for long-form composition.
+    var openComp = el('button', 'btn-up outline', '⤴ open composer');
+    openComp.title = 'open the dedicated Send-to-Dispatch composer modal';
+    openComp.addEventListener('click', function () { openDispatchModal(id, n.title, ta.value); });
+    dr.appendChild(send); dr.appendChild(clearLbl); dr.appendChild(stage); dr.appendChild(copyD); dr.appendChild(used); dr.appendChild(openComp);
     s5.appendChild(dr);
     body.appendChild(s5);
 
@@ -1741,25 +1792,163 @@
     if (e.key === 'Escape' && !ctxPanel.hidden) closeCtx();
   });
 
-  // ---- item 1: single-pane tab bar (layout C only) ---------------------
-  // CSS shows #tabBar only when w<1024 AND h<1024; JS just flips
-  // body[data-tab]. Default tab = tree (matches the CSS :not([data-tab])).
-  if (!document.body.dataset.tab) document.body.dataset.tab = 'tree';
-  tabBar.addEventListener('click', function (e) {
-    var b = e.target.closest('button[data-tab]');
-    if (!b) return;
-    document.body.dataset.tab = b.dataset.tab;
-    [].forEach.call(tabBar.querySelectorAll('button'), function (x) {
-      x.classList.toggle('active', x === b);
+  // ---- v2 redesign 2026-05-23: right-panel tabs + drawer toggle --------
+  // The right panel hosts Waiting and Backlog as TABS that swap inside the
+  // same persistent column at >=1024px, OR inside an off-canvas drawer at
+  // <1024px. State is class-based on <body> (`.pane-tab-waiting` /
+  // `.pane-tab-backlog`, `.side-open` / `.side-hidden`) — class state
+  // cascades cleanly without specificity puzzles AND is trivially queryable
+  // in selftests. Active tab + side-state persist via localStorage so the
+  // operator's choice survives reload (UX-VR-11 fix).
+  var PANE_TAB_KEY = 'ctree-pane-tab';
+  var SIDE_KEY = 'ctree-side';
+  function applyPaneTab(name) {
+    if (name !== 'waiting' && name !== 'backlog') name = 'waiting';
+    document.body.classList.remove('pane-tab-waiting', 'pane-tab-backlog');
+    document.body.classList.add('pane-tab-' + name);
+    localStorage.setItem(PANE_TAB_KEY, name);
+    [].forEach.call(paneTabs.querySelectorAll('button[data-pane-tab]'), function (x) {
+      var on = x.dataset.paneTab === name;
+      x.classList.toggle('active', on);
+      x.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
-    if (b.dataset.tab === 'actions') clearNewBadge('a');   // item 8: looked at it
-    if (b.dataset.tab === 'backlog') clearNewBadge('b');
+    if (name === 'waiting') clearNewBadge('a');
+    if (name === 'backlog') clearNewBadge('b');
+    // when peek pill is visible, keep its label in sync with active tab
+    if (panePeek && !panePeek.hidden) {
+      panePeekLabel.textContent = (name === 'backlog') ? 'Backlog' : 'Waiting';
+    }
+  }
+  applyPaneTab(localStorage.getItem(PANE_TAB_KEY) || 'waiting');
+  paneTabs.addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-pane-tab]');
+    if (!b) return;
+    applyPaneTab(b.dataset.paneTab);
   });
+
+  // Side panel open / close / drawer state. Class-based:
+  //   .side-open   — drawer is slid in (meaningful only at <1024px width)
+  //   .side-hidden — explicitly hidden at wide widths (peek pill returns it)
+  // Default: at wide widths the panel is in the persistent grid (no class);
+  // at narrow widths the drawer starts closed (peek visible). Persisted
+  // 'hidden' state is honored on reload at any width.
+  function applySideState(state) {
+    if (state !== 'hidden' && state !== 'open') state = 'visible';
+    document.body.classList.remove('side-open', 'side-hidden');
+    if (state === 'hidden') {
+      document.body.classList.add('side-hidden');
+      panePeek.hidden = false;
+      panePeekLabel.textContent = (document.body.classList.contains('pane-tab-backlog')) ? 'Backlog' : 'Waiting';
+    } else if (state === 'open') {
+      document.body.classList.add('side-open');
+      panePeek.hidden = true;
+    } else {
+      // visible — wide-mode default (no class needed, persistent grid column)
+      panePeek.hidden = true;
+    }
+    localStorage.setItem(SIDE_KEY, state === 'hidden' ? 'hidden' : 'visible');
+  }
+  // Boot the side state. Saved 'hidden' wins everywhere; otherwise at
+  // narrow widths start with the drawer closed (peek pill is the way in),
+  // and at wide widths show the persistent column.
+  var savedSide = localStorage.getItem(SIDE_KEY);
+  if (savedSide === 'hidden') applySideState('hidden');
+  else if (window.innerWidth < 1024) {
+    // narrow: drawer closed → no .side-open class, peek visible
+    panePeek.hidden = false;
+    panePeekLabel.textContent = (document.body.classList.contains('pane-tab-backlog')) ? 'Backlog' : 'Waiting';
+  } else {
+    applySideState('visible');
+  }
+  paneToggle.addEventListener('click', function () {
+    if (window.innerWidth >= 1024) {
+      applySideState(document.body.classList.contains('side-hidden') ? 'visible' : 'hidden');
+    } else {
+      // narrow: toggle drawer open/closed
+      if (document.body.classList.contains('side-open')) {
+        document.body.classList.remove('side-open');
+        panePeek.hidden = false;
+      } else {
+        document.body.classList.add('side-open');
+        panePeek.hidden = true;
+      }
+    }
+  });
+  rightClose.addEventListener('click', function () {
+    if (window.innerWidth >= 1024) applySideState('hidden');
+    else {
+      document.body.classList.remove('side-open');
+      panePeek.hidden = false;
+      panePeekLabel.textContent = (document.body.classList.contains('pane-tab-backlog')) ? 'Backlog' : 'Waiting';
+    }
+  });
+  panePeek.addEventListener('click', function () {
+    if (window.innerWidth >= 1024) applySideState('visible');
+    else { document.body.classList.add('side-open'); panePeek.hidden = true; }
+  });
+  // re-evaluate on viewport-width crossing the 1024 threshold so the user
+  // does not get stuck in a state that no longer makes sense.
+  window.addEventListener('resize', function () {
+    if (window.innerWidth < 1024) {
+      // entering narrow: if not explicitly open as drawer, ensure peek shows
+      if (!document.body.classList.contains('side-open')) {
+        panePeek.hidden = false;
+      }
+    } else {
+      // entering wide: re-apply persisted hidden/visible
+      var s = localStorage.getItem(SIDE_KEY);
+      applySideState(s === 'hidden' ? 'hidden' : 'visible');
+    }
+  });
+
   // item 8: looking at a pane (scroll or click within it) clears its badge.
   actionsBody.addEventListener('scroll', function () { clearNewBadge('a'); });
   actionsBody.addEventListener('click', function () { clearNewBadge('a'); });
   backlogBody.addEventListener('scroll', function () { clearNewBadge('b'); });
   backlogBody.addEventListener('click', function () { clearNewBadge('b'); });
+
+  // ---- v2 redesign 2026-05-23: Send-to-Dispatch composer modal ---------
+  var dispatchTargetId = null;
+  function openDispatchModal(nodeId, title, prefill) {
+    dispatchTargetId = nodeId;
+    dispatchTarget.textContent = title || nodeId;
+    dispatchText.value = (prefill != null && prefill !== '')
+      ? prefill
+      : (localStorage.getItem('ctree-draft-' + nodeId) || '');
+    dispatchClearAfter.checked = false;
+    dispatchScrim.hidden = false;
+    dispatchModal.hidden = false;
+    setTimeout(function () { dispatchText.focus(); }, 0);
+  }
+  function closeDispatchModal() {
+    dispatchModal.hidden = true;
+    dispatchScrim.hidden = true;
+    dispatchTargetId = null;
+  }
+  dispatchClose.addEventListener('click', closeDispatchModal);
+  dispatchCancel.addEventListener('click', closeDispatchModal);
+  dispatchScrim.addEventListener('click', closeDispatchModal);
+  dispatchSend.addEventListener('click', function () {
+    if (!dispatchTargetId) return;
+    var txt = (dispatchText.value || '').trim();
+    if (!txt) { dispatchText.focus(); return; }
+    var clearAfter = !!dispatchClearAfter.checked;
+    var nid = dispatchTargetId;
+    post({ type: 'branch-note-add', target: nid, note_text: txt }, 'sent to Dispatch')
+      .then(function (ok) {
+        if (!ok) return;
+        if (clearAfter) {
+          localStorage.removeItem('ctree-draft-' + nid);
+          post({ type: 'draft-cleared', node_id: nid }, null, true);
+        }
+        closeDispatchModal();
+      });
+  });
+  dispatchStage.addEventListener('click', function () {
+    if (!dispatchTargetId) return;
+    post({ type: 'draft-saved', node_id: dispatchTargetId, draft_text: dispatchText.value }, 'note staged')
+      .then(function (ok) { if (ok) closeDispatchModal(); });
+  });
 
   // ---- pan/zoom (C2) ---------------------------------------------------
   zoomIn.addEventListener('click', function () { zoom = Math.min(2, zoom + 0.1); renderTree(); });

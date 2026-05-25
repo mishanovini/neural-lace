@@ -61,6 +61,13 @@ const EVENT_TYPES = Object.freeze([
   // re-emission for the same target as idempotent.
   'priority-assigned',          // item 33+34: P1–P5 on action/decision/question/backlog
   'branch-note-add',            // item 35: explicit "Send to Dispatch" send of a staged note
+  // v2 redesign 2026-05-23 — UX-VR-13 context-as-textarea: edit the context
+  // text of an existing backlog item. ADDITIVE within schema major 1
+  // (same precedent as the other v1.1/v1.1.2 additions above): no
+  // required-field change to any existing event, schema_version stays 1.
+  // Last-writer-wins on the target's context_text field. Idempotent on
+  // event_id per the standard envelope.
+  'backlog-context-set',
 ]);
 
 // §2 — per-event required fields IN ADDITION TO the envelope
@@ -103,6 +110,8 @@ const EVENT_REQUIRED_FIELDS = Object.freeze({
   // v1.1.2 items 33+34+35
   'priority-assigned': ['target_id', 'priority'],   // P1=1..P5=5; both GUI and Dispatch emit (actor differs)
   'branch-note-add':   ['target', 'note_text'],     // explicit Send of a staged note to Dispatch (target=node_id)
+  // v2 redesign 2026-05-23 — UX-VR-13: edit context_text on a backlog item.
+  'backlog-context-set': ['item_id', 'context_text'],
 });
 
 const ACTORS = Object.freeze(['dispatch', 'gui']);

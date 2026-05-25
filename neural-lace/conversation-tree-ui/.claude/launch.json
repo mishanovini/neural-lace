@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "conv-tree-ui-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/server.js"],
+      "env": { "CTREE_PORT": "7799" },
+      "port": 7799
+    }
+  ]
+}

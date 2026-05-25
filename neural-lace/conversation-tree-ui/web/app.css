@@ -1,13 +1,24 @@
-/* Conversation Tree UI — Phase C/D styles.
-   Vanilla CSS, no framework, no build step. Dark-mode-first (harness UX
-   standards). DEC-A (revised v1.1 — additive responsive clause): at
-   width >= 1440px the original three-pane side-by-side is UNCHANGED (tree
-   left ~57% full-height; actions + backlog stacked right ~43%). Below that,
-   responsive breakpoints kick in (CSS Grid template-areas + @media, zero JS
-   layout math): the middle band vertical-stacks (tree top / actions+backlog
-   bottom); a small window (w<1024 AND h<1024) collapses to single-pane with
-   top tabs. Each pane is always internally scrollable with a pinned header;
-   the page itself NEVER scrolls (BF-3) in ANY layout. */
+/* Conversation Tree UI — v2 redesign (2026-05-23) styles.
+   Vanilla CSS, no framework, no build step. Dark-mode-first.
+
+   V2 LAYOUT REWRITE (per Misha 2026-05-23 feedback):
+     * Two PERSISTENT surfaces only: Tree (fixed narrow column) and Side
+       Panel (tabbed Waiting / Backlog). Tree always claims the full
+       vertical real estate; nothing ever stacks BELOW it.
+     * Detail / doc / dispatch composer are CENTERED MODALS — they do not
+       shift the persistent layout.
+     * At < 1024px wide, the side panel collapses to a slide-in drawer
+       (overlay + scrim) with a peek pill so the operator still sees that
+       items are waiting.
+     * The old Layout A/B/C system is retired; there's ONE responsive
+       template that scales smoothly from 1920 down to ~480 px.
+
+   STATE MODEL — class-based on <body>:
+     `.pane-tab-waiting` / `.pane-tab-backlog`  : which side-panel tab is active
+     `.side-open`                                : drawer open (only meaningful at < 1024px)
+     `.side-hidden`                              : explicitly hidden at wide widths (peek pill returns it)
+   Class state cascades cleanly (no specificity puzzles) and is trivially
+   queryable in tests. */
 :root {
   --bg: #111827;
   --panel: #1f2937;
@@ -16,38 +27,35 @@
   --border2: #4b5563;
   --text: #e5e7eb;
   --muted: #9ca3af;
-  --accent: #a78bfa;     /* purple = the tracker's own surface accent */
+  --accent: #a78bfa;
   --ok: #34d399;
   --warn: #fbbf24;
   --err: #f87171;
   --info: #60a5fa;
-  /* v1.1.1 item 14: urgency-at-a-glance type palette. The deep hexes are the
-     badge background + accent stripe + ~5% card tint; near-black text on each
-     clears WCAG AA (≥5:1 on the saturated bg). Cyan = neutral/untyped. */
-  --type-action: #ef4444;     /* "must do" (red-500: near-black text = 6:1, AA) */
-  --type-decision: #f59e0b;   /* "needs judgment" */
-  --type-question: #3b82f6;   /* "needs your info"*/
-  --type-on: #0b0b0f;         /* near-black badge text — AA on all three */
-  --type-neutral: #22d3ee;    /* untyped highlight (cyan)               */
-  /* v1.1.1 item 22: semantic button palette. */
-  --btn-go: #22c55e;          /* positive/commit  */
-  --btn-wait: #f59e0b;        /* caution/postpone */
-  --btn-info: #3b82f6;        /* info/utility     */
-  --btn-up: #a855f7;           /* elevation/scope-up */
-  --btn-del: #b91c1c;         /* destructive      */
-  --btn-neutral: #475569;     /* neutral/secondary*/
+  --type-action: #ef4444;
+  --type-decision: #f59e0b;
+  --type-question: #3b82f6;
+  --type-on: #0b0b0f;
+  --type-neutral: #22d3ee;
+  --btn-go: #22c55e;
+  --btn-wait: #f59e0b;
+  --btn-info: #3b82f6;
+  --btn-up: #a855f7;
+  --btn-del: #b91c1c;
+  --btn-neutral: #475569;
+  /* v2 layout tokens */
+  --tree-col: clamp(260px, 22vw, 340px);
+  --side-panel-w: clamp(380px, 32vw, 520px);
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
   margin: 0;
   font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;                 /* BF-3: the page never scrolls — in ANY layout */
-  min-width: 320px;                 /* v1.1: floor only; layout is responsive (DEC-A revised) */
+  background: var(--bg); color: var(--text);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  min-width: 320px;
 }
 
 header {
@@ -89,7 +97,6 @@ button:active { transform: scale(0.98); }
 }
 .status.live { color: var(--ok); border-color: #065f46; }
 
-/* Banners / notifications / toast --------------------------------------- */
 .banner {
   padding: 0.5rem 1rem; font-size: 0.82rem; flex: 0 0 auto;
   border-bottom: 1px solid var(--border);
@@ -107,14 +114,12 @@ button:active { transform: scale(0.98); }
 }
 .note .dismiss { float: right; margin-left: 0.5rem; }
 .note.hot { border-color: var(--warn); border-left-color: var(--warn); }
-/* v1.1.1 item 18: toasts move to bottom-RIGHT so they never overlap the
-   right-docked ctx/details pane. Narrow viewport → bottom-centre. */
 .toast {
   position: fixed; right: 1.2rem; bottom: 1.2rem;
   background: var(--panel); border: 1px solid var(--border2);
   border-radius: 6px; padding: 0.4rem 0.6rem 0.4rem 0.9rem; font-size: 0.8rem; z-index: 50;
   box-shadow: 0 6px 18px rgba(0,0,0,0.45);
-  display: flex; align-items: center; gap: 0.6rem;          /* v1.1-ux snackbar */
+  display: flex; align-items: center; gap: 0.6rem;
 }
 .toast.ok { border-color: #065f46; color: var(--ok); }
 .toast.err { border-color: #b91c1c; color: var(--err); }
@@ -129,81 +134,69 @@ button:active { transform: scale(0.98); }
 }
 .toast .sb-x:hover { color: var(--text); }
 
-/* Responsive layout (DEC-A revised v1.1) --------------------------------
-   CSS Grid template-areas + @media only; NO JS layout math (JS only flips
-   body[data-tab] in the small single-pane mode). Three layouts:
-
-   (A) width >= 1440px  -> three-pane side-by-side  (DEC-A ORIGINAL, unchanged)
-   (B) the middle band  -> vertical stack (tree top / actions+backlog bottom)
-   (C) w<1024 AND h<1024 -> single-pane with top tabs
-
-   The .right-col wrapper div is no longer a layout container — every pane is
-   a direct grid item placed by grid-area, so the SAME DOM serves all three
-   layouts with zero JS. .right-col just passes through (display:contents). */
+/* ================= v2 LAYOUT (2026-05-23 redesign) ===================== */
 #layout {
   flex: 1 1 auto; min-height: 0; min-width: 0;
   display: grid; gap: 1px; background: var(--border);
-  /* default = (B) vertical stack: tree on top half, actions|backlog bottom */
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 50% 50%;
-  grid-template-areas:
-    "tree    tree"
-    "actions backlog";
+  grid-template-columns: var(--tree-col) 1fr;
+  grid-template-rows: 1fr;
+  grid-template-areas: "tree side";
 }
-.right-col { display: contents; }     /* wrapper is layout-transparent */
 .tree-pane    { grid-area: tree; }
-.actions-pane { grid-area: actions; }
-.backlog-pane { grid-area: backlog; }
-#tabBar { display: none; }            /* shown only in layout (C) */
+#layout .side-panel { grid-area: side; }
 
-/* (B) narrow bottom region: if the stacked region is < 700px wide, stack
-   actions ABOVE backlog instead of side-by-side. */
-@media (max-width: 699.98px) {
+/* Side panel — base look (always-on declarations live here; positioning
+   for drawer mode is in a more-specific .side-open / max-width selector). */
+#layout .side-panel {
+  background: var(--panel);
+  display: flex; flex-direction: column;
+  min-height: 0; min-width: 0; overflow: hidden;
+}
+
+/* DRAWER MODE: <1024px wide. Side panel becomes off-canvas; tree gets the
+   full column. Slide via `right` (single-value property, no specificity
+   puzzles vs base layout declarations). */
+@media (max-width: 1023.98px) {
   #layout {
     grid-template-columns: 1fr;
-    grid-template-rows: 44% 28% 28%;
-    grid-template-areas: "tree" "actions" "backlog";
+    grid-template-areas: "tree";
+  }
+  #layout .side-panel {
+    position: fixed; top: 2.6rem; bottom: 0;
+    width: min(var(--side-panel-w), 92vw);
+    z-index: 32;
+    right: calc(-1 * min(var(--side-panel-w), 92vw));
+    transition: right 160ms ease;
+    box-shadow: -8px 0 24px rgba(0,0,0,0.45);
+    border-left: 1px solid var(--border2);
+  }
+  body.side-open #layout .side-panel { right: 0; }
+  body.side-open::before {
+    content: ""; position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+    z-index: 31; -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px);
   }
 }
 
-/* (A) width >= 1440px — DEC-A ORIGINAL three-pane, provably unchanged:
-   tree ~57% full-height left; actions (55%) over backlog (45%) right. */
-@media (min-width: 1440px) {
-  #layout {
-    grid-template-columns: 57% 43%;
-    grid-template-rows: 55% 45%;
-    grid-template-areas:
-      "tree actions"
-      "tree backlog";
-  }
-}
-
-/* (C) small window (w<1024 AND h<1024) — single pane + top tabs.
-   One pane visible at a time; #tabBar drives body[data-tab]. */
-@media (max-width: 1023.98px) and (max-height: 1023.98px) {
-  #layout {
+/* EXPLICIT-HIDE MODE: user clicked #paneToggle / #rightClose at wide widths. */
+@media (min-width: 1024px) {
+  body.side-hidden #layout {
     grid-template-columns: 1fr;
-    grid-template-rows: 1fr;
-    grid-template-areas: "pane";
+    grid-template-areas: "tree";
   }
-  .tree-pane, .actions-pane, .backlog-pane { grid-area: pane; }
-  body:not([data-tab="tree"])    .tree-pane    { display: none; }
-  body:not([data-tab="actions"]) .actions-pane { display: none; }
-  body:not([data-tab="backlog"]) .backlog-pane { display: none; }
-  /* default tab when none chosen yet = tree */
-  body:not([data-tab]) .actions-pane,
-  body:not([data-tab]) .backlog-pane { display: none; }
-  #tabBar { display: flex; }
+  body.side-hidden #layout .side-panel { display: none; }
 }
-#tabBar {
-  flex: 0 0 auto; gap: 1px; background: var(--border);
-  border-bottom: 1px solid var(--border);
+
+/* PEEK PILL — visible only when side panel is hidden or drawer-closed. */
+.pane-peek {
+  position: fixed; top: 3.1rem; right: 0.8rem; z-index: 30;
+  background: var(--accent); color: #1a1030; border-color: var(--accent);
+  font-weight: 700; padding: 0.3rem 0.8rem; border-radius: 999px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
 }
-#tabBar button {
-  flex: 1; border-radius: 0; border: none; background: var(--panel2);
-  color: var(--muted); padding: 0.5rem; font-weight: 600;
-}
-#tabBar button.active { background: var(--panel); color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.pane-peek:hover { filter: brightness(1.05); }
+.pane-peek[hidden] { display: none; }
+
+/* Panes (tree + side-panel internals) */
 .pane {
   background: var(--bg); display: flex; flex-direction: column;
   min-height: 0; min-width: 0; overflow: hidden;
@@ -215,8 +208,8 @@ button:active { transform: scale(0.98); }
 }
 .pane-title { font-weight: 700; font-size: 0.85rem; }
 .pane-tools { margin-left: auto; display: flex; gap: 0.3rem; }
-.crumb { font-size: 0.74rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 22rem; }
-.pane-body { flex: 1 1 auto; overflow: auto; padding: 0.6rem; }   /* internal scroll */
+.crumb { font-size: 0.74rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 18rem; }
+.pane-body { flex: 1 1 auto; overflow: auto; padding: 0.6rem; }
 .list-body { display: flex; flex-direction: column; gap: 0.4rem; }
 .pane-state { padding: 1.2rem; color: var(--muted); font-size: 0.85rem; }
 .pane-state.skel .bar { height: 0.7rem; background: var(--panel2); border-radius: 4px; margin: 0.4rem 0; animation: pulse 1.2s ease-in-out infinite; }
@@ -224,12 +217,37 @@ button:active { transform: scale(0.98); }
 @keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:.9} }
 .pane-state .hint { color: var(--accent); }
 
-/* Tree pane ------------------------------------------------------------- */
+/* Side-panel tab nav (#paneTabs) */
+#paneTabs {
+  flex: 0 0 auto; display: flex; align-items: stretch; gap: 1px;
+  background: var(--border); border-bottom: 1px solid var(--border);
+}
+#paneTabs button[data-pane-tab] {
+  flex: 1; border-radius: 0; border: none; background: var(--panel2);
+  color: var(--muted); padding: 0.55rem 0.6rem; font-weight: 600;
+  font-size: 0.82rem; display: flex; align-items: center; justify-content: center;
+  gap: 0.4rem;
+}
+#paneTabs button[data-pane-tab].active {
+  background: var(--panel); color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+#paneTabs button[data-pane-tab]:hover { color: var(--text); }
+#paneTabs .rp-close {
+  flex: 0 0 auto; border-radius: 0; border: none;
+  background: var(--panel2); color: var(--muted);
+  padding: 0.55rem 0.7rem; font-size: 0.95rem; line-height: 1;
+}
+#paneTabs .rp-close:hover { color: var(--err); }
+
+/* Tab visibility — body.pane-tab-waiting / body.pane-tab-backlog. Default
+   is waiting (set in JS at boot). */
+body:not(.pane-tab-backlog) .backlog-pane { display: none; }
+body:not(.pane-tab-waiting) .actions-pane { display: none; }
+body:not(.pane-tab-waiting):not(.pane-tab-backlog) .backlog-pane { display: none; }
+
+/* Tree pane */
 .tree-scroll { position: relative; }
-/* v1.1 fluid zoom (item 5): JS sets width:(100/zoom)% so a scaled-down
-   canvas still LAYS OUT at full visual width — node rows reflow to fill the
-   freed horizontal space instead of leaving dead space on the right.
-   Symmetric for zoom-in. width:100% is the zoom==1 default. */
 .tree-canvas { transform-origin: top left; transition: transform 80ms ease; width: 100%; }
 .tnode { margin: 0.25rem 0; }
 .tnode-row {
@@ -244,15 +262,8 @@ button:active { transform: scale(0.98); }
 .tnode-row.archived { border-left-color: var(--muted); opacity: 0.6; }
 .tnode-row.dragover { outline: 2px dashed var(--info); }
 .twist { width: 1rem; text-align: center; color: var(--muted); user-select: none; }
-.tnode-title { font-weight: 600; flex: 1; }
+.tnode-title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tnode-title.concluded::before { content: "✓ "; color: var(--ok); }
-/* v1.1.4 (supersedes v1.1.3 subtle gradient): top-level project/repo nodes
-   are differentiated from sub-rows by a CLEARLY DISTINCT FILLED background
-   (not a subtle 6% white overlay) plus bold weight. Same font-family and
-   same row height as sub-rows — the differentiation is colour + weight only.
-   The fill uses --panel2 with an accent-tinted left bar so the header reads
-   as a "project header" at a glance, not as just-another-row. Only depth-0
-   (forest-root) rows; nested rows inherit .tnode-row unchanged. */
 .tnode-row.tnode-root {
   background-color: var(--panel2);
   background-image: linear-gradient(rgba(167,139,250,0.10), rgba(167,139,250,0.10));
@@ -263,9 +274,8 @@ button:active { transform: scale(0.98); }
   padding-left: 0.3rem;
 }
 .tnode-row.tnode-root .tnode-title { font-weight: 700; color: var(--text); }
-/* the very first top-level node needs no separator gap above it */
 .tree-canvas > .tnode:first-child > .tnode-row.tnode-root { margin-top: 0.1rem; border-top: none; }
-.tkids { margin-left: 1.4rem; border-left: 1px dashed var(--border); padding-left: 0.5rem; }
+.tkids { margin-left: 1.1rem; border-left: 1px dashed var(--border); padding-left: 0.5rem; }
 .collapsed > .tkids { display: none; }
 .badge {
   font-size: 0.66rem; padding: 0.05rem 0.4rem; border-radius: 999px;
@@ -279,7 +289,7 @@ button:active { transform: scale(0.98); }
 .badge.count { color: var(--muted); }
 .stub { font-style: italic; color: var(--muted); }
 
-/* List items (actions + backlog) ---------------------------------------- */
+/* List items (Waiting + Backlog) */
 .li {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 6px; padding: 0.45rem 0.55rem;
@@ -287,9 +297,6 @@ button:active { transform: scale(0.98); }
 }
 .li.hot { border-color: var(--warn); }
 .li-top { display: flex; align-items: center; gap: 0.45rem; }
-/* v1.1.2 item 29 — branch-group header in the WOU pane when sort=branch.
-   Visually consistent with the .tnode-root project-node header from item 24:
-   subtle white bg tint, larger semibold title, separator line above. */
 .wou-group-header {
   margin: 0.6rem 0 0.2rem; padding: 0.3rem 0.5rem;
   font-size: 0.85rem; font-weight: 600; color: var(--text);
@@ -299,23 +306,15 @@ button:active { transform: scale(0.98); }
 .wou-group-header:first-child { margin-top: 0.1rem; border-top: none; }
 .wou-group-header .wgh-sep { color: var(--muted); font-weight: 400; padding: 0 0.2rem; }
 
-/* v1.1.2 item 36 — type label is a SUBDUED TAG, not a button. Tinted bg at
-   ~22% opacity + type-color text + slimmer padding/font + no hover/pointer.
-   Misha's spec verbatim: "use the type-color at ~20-30% opacity with the
-   type-color as text, instead of solid fill with white text". Supersedes
-   master's parallel v1.1.3-item-38 interpretation (solid bg + near-black). */
 .li-kind { font-size: 0.62rem; font-weight: 600; padding: 0.02rem 0.4rem; border-radius: 999px; border: 1px solid transparent; text-transform: uppercase; letter-spacing: 0.04em; cursor: default; user-select: none; }
 .li-kind.action   { background: rgba(239,68,68,0.22);  color: var(--type-action); }
 .li-kind.decision { background: rgba(245,158,11,0.22); color: var(--type-decision); }
 .li-kind.question { background: rgba(59,130,246,0.22); color: var(--type-question); }
-.li-kind:hover { background-color: inherit; }   /* no hover state */
-.li-text { flex: 1; }                                  /* item 15: title owns row width */
-/* v1.1.1 item 14: per-card left accent stripe + ~5% type tint over the panel.
-   The gradient overlay is a deterministic 5% tint (no color-mix dependency). */
+.li-kind:hover { background-color: inherit; }
+.li-text { flex: 1; }
 .li.kind-action   { border-left: 5px solid var(--type-action);   background-image: linear-gradient(rgba(239,68,68,0.05),  rgba(239,68,68,0.05)); }
 .li.kind-decision { border-left: 5px solid var(--type-decision); background-image: linear-gradient(rgba(245,158,11,0.05), rgba(245,158,11,0.05)); }
 .li.kind-question { border-left: 5px solid var(--type-question); background-image: linear-gradient(rgba(59,130,246,0.05), rgba(59,130,246,0.05)); }
-/* item 15: fixed-width icon "jump to tree" button (replaces the text crumb). */
 .li-jump {
   flex: 0 0 24px; width: 24px; height: 24px; padding: 0; line-height: 1;
   display: flex; align-items: center; justify-content: center;
@@ -323,8 +322,6 @@ button:active { transform: scale(0.98); }
   border-radius: 5px; cursor: pointer; font-size: 0.85rem;
 }
 .li-jump:hover { color: var(--type-question); border-color: var(--type-question); }
-/* item 17: bidirectional interior highlight — full wash + 4px solid left bar.
-   Action cards wash in their type colour; untyped tree rows wash neutral cyan. */
 .li.hl, .tnode-row.hl { background-image: linear-gradient(rgba(34,211,238,0.18), rgba(34,211,238,0.18)); border-left: 4px solid var(--type-neutral); }
 .li.kind-action.hl   { background-image: linear-gradient(rgba(239,68,68,0.20), rgba(239,68,68,0.20)); border-left-color: var(--type-action); }
 .li.kind-decision.hl { background-image: linear-gradient(rgba(245,158,11,0.20),rgba(245,158,11,0.20)); border-left-color: var(--type-decision); }
@@ -332,8 +329,6 @@ button:active { transform: scale(0.98); }
 .li-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
 .li-actions button { padding: 0.15rem 0.45rem; font-size: 0.72rem; }
 
-/* v1.1.2 item 28 — Defer popover (replaces the ISO prompt()). One open at a
-   time; closes on choose / outside-click / Esc. Anchored within the li. */
 .defer-pop {
   margin-top: 0.4rem; background: var(--panel2);
   border: 1px solid var(--border2); border-radius: 6px;
@@ -354,15 +349,11 @@ button:active { transform: scale(0.98); }
 .prio.high { color: var(--err); border-color: var(--err); }
 .prio.medium { color: var(--warn); border-color: var(--warn); }
 .prio.low { color: var(--muted); }
-/* v1.1.2 items 33+34 — numeric P-badge (P1..P4 visible; P5 = unassigned, no
-   badge). Colour scale: P1=red urgent → P4=muted. Same pill shape/size as
-   .prio for visual parity with backlog. */
 .p-badge { font-size: 0.62rem; font-weight: 700; padding: 0.02rem 0.45rem; border-radius: 999px; border: 1px solid currentColor; }
 .p-badge.p1 { color: #ef4444; background: rgba(239,68,68,0.15); }
 .p-badge.p2 { color: #f59e0b; background: rgba(245,158,11,0.15); }
 .p-badge.p3 { color: #60a5fa; background: rgba(96,165,250,0.15); }
 .p-badge.p4 { color: #94a3b8; background: rgba(148,163,184,0.12); }
-/* priority assignment popover (item 33) — small inline picker. */
 .prio-pop {
   position: relative; display: inline-flex; flex-direction: column; gap: 0.25rem;
   margin-top: 0.3rem; background: var(--panel2); border: 1px solid var(--border2);
@@ -370,66 +361,74 @@ button:active { transform: scale(0.98); }
 }
 .prio-pop .pp-row { display: flex; gap: 0.25rem; flex-wrap: wrap; }
 .prio-pop button { font-size: 0.7rem; padding: 0.1rem 0.5rem; }
-/* small flag affordance for "Assign priority" button — keep subdued */
 .prio-assign { font-size: 0.66rem; padding: 0.05rem 0.4rem; border-radius: 4px; }
 .li[draggable=true] { cursor: grab; }
 .li.dragover { outline: 2px dashed var(--info); }
 
-/* Context panel (FR-6 surface) — v1.1 dismissible overlay ----------------
-   Always position:fixed. At wide (>=1440): docks to the right edge, 30rem,
-   AND `body[data-ctx-pane="open"]` shifts #layout's right margin by the
-   same width so the underlying Waiting/Backlog panes SHRINK proportionally
-   instead of being obscured (v1.1.4 item 41 — Misha bug 2026-05-20). At
-   narrow (<1440): keeps the semi-modal overlay + scrim (not enough room
-   for 3 columns). The `data-ctx-pane` body attribute is set/cleared in
-   openCtx()/closeCtx() in app.js (mirrors the `data-doc-pane` pattern
-   already used by the docs side pane at line 574 below).
-   The [hidden] rule is load-bearing: without it the .ctx-panel display:flex
-   beats the UA [hidden]{display:none} and the ✕ "does nothing" — old bug. */
-.ctx-panel[hidden] { display: none !important; }
-#ctxScrim {
-  position: fixed; inset: 0; z-index: 29; background: rgba(0,0,0,0.45);
-  -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px);
+/* ======== UX-VR-13 v2: Context-as-textarea pattern (2026-05-23) =========
+   Backlog capture form switches from single-line input → autoresize textarea.
+   Each backlog item exposes a context disclosure: read render OR edit mode
+   with a textarea. Empty items show "Add context →" as a clear affordance. */
+.context-area {
+  width: 100%; min-height: 4rem; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border2); border-radius: 5px;
+  padding: 0.45rem 0.55rem; font: inherit; font-size: 0.82rem;
+  line-height: 1.45; resize: vertical; box-sizing: border-box;
 }
-#ctxScrim[hidden] { display: none !important; }
-.ctx-panel {
-  position: fixed; right: 0; top: 2.6rem; bottom: 0;
-  width: var(--ctx-pane-w, 30rem); max-width: 46vw;
-  background: var(--panel); border-left: 1px solid var(--border2);
-  box-shadow: -8px 0 24px rgba(0,0,0,0.45); z-index: 30;
+.context-area:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.li-context-toggle {
+  align-self: flex-start; font-size: 0.72rem;
+  padding: 0.1rem 0.45rem; background: var(--panel2);
+  color: var(--info); border: 1px solid var(--border2);
+  border-radius: 4px; cursor: pointer;
+}
+.li-context-toggle.empty { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.li-context-toggle:hover { color: var(--text); border-color: var(--info); }
+.li-context-render {
+  margin-top: 0.35rem; background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 5px; padding: 0.45rem 0.55rem; font-size: 0.82rem;
+  line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+  color: var(--text); border-left: 3px solid var(--info);
+}
+.li-context-edit {
+  margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.35rem;
+}
+.li-context-edit .row { display: flex; gap: 0.4rem; align-items: center; }
+.li-context-empty {
+  font-size: 0.76rem; color: var(--muted); font-style: italic;
+  padding: 0.25rem 0;
+}
+/* The capture form needs to allow its #blContext textarea to grow vertically.
+   We give it block layout when a textarea is present. */
+.capture textarea#blContext {
+  width: 100%; min-height: 3.6rem; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border2); border-radius: 5px;
+  padding: 0.4rem 0.55rem; font: inherit; font-size: 0.82rem;
+  resize: vertical; box-sizing: border-box;
+}
+.capture { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.4rem 0.55rem; background: var(--panel2); border-bottom: 1px solid var(--border); }
+.capture-row { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+
+/* ======================= MODAL OVERLAYS (v2) ============================ */
+.modal-scrim {
+  position: fixed; inset: 0; z-index: 59; background: rgba(0,0,0,0.55);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+}
+.modal-scrim[hidden] { display: none !important; }
+.modal-card {
+  position: fixed; z-index: 60;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  background: var(--panel); border: 1px solid var(--border2);
+  border-radius: 10px; box-shadow: 0 24px 64px rgba(0,0,0,0.7);
   display: flex; flex-direction: column; overflow: hidden;
+  max-width: 92vw; max-height: 88vh;
 }
-/* Narrow: overlay near-full width with the scrim behind it (semi-modal).
-   At narrow widths the layout-shift would crowd Waiting/Backlog into
-   unreadability, so we keep the original overlay behavior — Misha's bug
-   was about the WIDE case where 3 columns clearly fit. */
-@media (max-width: 1439.98px) {
-  .ctx-panel { width: min(34rem, 92vw); max-width: 92vw; top: 0; }
-}
-@media (min-width: 1440px) {
-  #ctxScrim { display: none !important; }   /* docked at wide — no scrim */
-  /* v1.1.4 item 41 — wide-mode: shrink the layout grid so the right-region
-     panes (Waiting + Backlog) STAY VISIBLE next to the ctx-pane instead of
-     being covered. Same pattern as #docModal (line 574). When both ctx-pane
-     AND doc-pane are open, doc-pane's right:0 stays and ctx-pane stacks
-     onto the layout's right edge inside the doc-pane's offset (margins are
-     additive on body[data-doc-pane=open][data-ctx-pane=open] below). */
-  body[data-ctx-pane="open"] #layout {
-    margin-right: var(--ctx-pane-w, 30rem);
-    transition: margin-right 0.12s ease;
-  }
-  /* When BOTH side panes are open, additive margins keep both fully
-     visible alongside the (now-much-narrower) main layout. */
-  body[data-doc-pane="open"][data-ctx-pane="open"] #layout {
-    margin-right: calc(var(--doc-pane-w, 32rem) + var(--ctx-pane-w, 30rem));
-  }
-  /* And the ctx-pane shifts left of the doc-pane when both are open, so
-     they sit side-by-side without overlap. */
-  body[data-doc-pane="open"][data-ctx-pane="open"] .ctx-panel {
-    right: var(--doc-pane-w, 32rem);
-  }
-}
-.ctx-head { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 0.5rem; }
+.modal-card[hidden] { display: none !important; }
+.ctx-modal { width: min(640px, 92vw); height: min(82vh, 880px); }
+.doc-modal { width: min(820px, 92vw); height: min(86vh, 1000px); }
+.dispatch-modal { width: min(520px, 92vw); height: auto; max-height: 80vh; }
+
+.ctx-head { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 0.5rem; flex: 0 0 auto; }
 .ctx-head .x { margin-left: auto; }
 .ctx-body { flex: 1 1 auto; overflow: auto; padding: 0.8rem; display: flex; flex-direction: column; gap: 0.7rem; }
 .ctx-sec h4 { margin: 0 0 0.3rem; font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
@@ -437,8 +436,6 @@ button:active { transform: scale(0.98); }
 .ctx-chain .seg { color: var(--accent); cursor: pointer; }
 .ctx-chain .seg:hover { text-decoration: underline; }
 .ctx-item { font-size: 0.82rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); }
-/* v1.1.3 item 39: Selected-item section in the context pane (matches or
-   exceeds the inline ▾ details disclosure on each Waiting-on-you item). */
 .ctx-sel-hdr { display: flex; gap: 0.4rem; align-items: baseline; margin-bottom: 0.4rem; }
 .ctx-sel-text { font-size: 0.86rem; font-weight: 600; }
 .ctx-more { color: var(--accent); cursor: pointer; font-size: 0.78rem; }
@@ -448,14 +445,12 @@ button:active { transform: scale(0.98); }
 }
 .handoff-box pre { white-space: pre-wrap; word-break: break-word; margin: 0.4rem 0; font: 12px/1.4 ui-monospace, monospace; color: var(--text); }
 .handoff-explain { color: var(--muted); font-size: 0.76rem; margin-top: 0.4rem; }
-.draft-area { width: 100%; min-height: 5rem; background: var(--panel2); color: var(--text); border: 1px solid var(--border2); border-radius: 5px; padding: 0.4rem; font: inherit; resize: vertical; }
+.draft-area { width: 100%; min-height: 5rem; background: var(--panel2); color: var(--text); border: 1px solid var(--border2); border-radius: 5px; padding: 0.4rem; font: inherit; resize: vertical; box-sizing: border-box; }
 .row { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
 .muted { color: var(--muted); font-size: 0.78rem; }
 .xlink-chip { font-size: 0.72rem; color: var(--info); border: 1px solid var(--info); border-radius: 999px; padding: 0.05rem 0.45rem; cursor: pointer; }
 .sr { position: absolute; left: -9999px; }
 
-/* v1.1-ux items 7/8/9/10 ------------------------------------------------- */
-/* item 7: list-item enter (slide+fade) + leave + new-arrival flash */
 @keyframes li-enter { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 @keyframes li-leave { to { opacity: 0; transform: translateX(14px); height: 0; margin: 0; padding-top: 0; padding-bottom: 0; } }
 @keyframes li-flash { 0% { box-shadow: 0 0 0 0 var(--accent); } 35% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
@@ -463,14 +458,12 @@ button:active { transform: scale(0.98); }
 .list-body .li.flash { animation: li-enter 0.2s ease both, li-flash 1.1s ease 0.2s 1; }
 .list-body .li.leaving { animation: li-leave 0.2s ease both; pointer-events: none; overflow: hidden; }
 
-/* item 8: per-pane "+N new" badge in the pane head */
 .new-badge {
   font-size: 0.68rem; font-weight: 700; color: #1a1030; background: var(--accent);
   border-radius: 999px; padding: 0.05rem 0.45rem; margin-left: 0.4rem;
 }
 .new-badge[hidden] { display: none; }
 
-/* item 9: rich-details disclosure */
 .det-toggle { align-self: flex-start; font-size: 0.72rem; padding: 0.1rem 0.4rem; margin-top: 0.1rem; }
 .li-details {
   background: var(--panel2); border: 1px solid var(--border);
@@ -480,27 +473,18 @@ button:active { transform: scale(0.98); }
 .det-row { display: flex; gap: 0.5rem; align-items: flex-start; }
 .det-k { flex: 0 0 8.5rem; color: var(--muted); text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.04em; padding-top: 0.1rem; }
 .det-v { flex: 1; white-space: pre-wrap; word-break: break-word; }
-/* v1.1.2 item 31 — apply the type color to the FIRST detail row's value
-   (the description / "What" line) so the rich-details disclosure visibly
-   carries the item's type signal at every level of zoom. Reinforces what
-   .li-kind tag + left-stripe already telegraph on the card. */
 .li.kind-action   .li-details .det-row:first-child .det-v { color: var(--type-action);   font-weight: 600; }
 .li.kind-decision .li-details .det-row:first-child .det-v { color: var(--type-decision); font-weight: 600; }
 .li.kind-question .li-details .det-row:first-child .det-v { color: var(--type-question); font-weight: 600; }
 .det-opt { border-left: 2px solid var(--border2); padding-left: 0.5rem; margin: 0.2rem 0; }
 .det-opt-l { font-weight: 600; }
 .det-link { font-size: 0.72rem; color: var(--info); border: 1px solid var(--info); border-radius: 4px; padding: 0.03rem 0.35rem; }
-/* v1.1.4 item 40: branch-jump link inside the detail-pane Links row. Rendered
-   as a button (clickable, focusable) but visually consistent with .det-link. */
 .det-link-branch {
   font-size: 0.72rem; color: var(--info); background: rgba(59,130,246,0.10);
   border: 1px solid var(--info); border-radius: 4px;
   padding: 0.05rem 0.45rem; cursor: pointer; font-family: inherit;
 }
 .det-link-branch:hover { background: rgba(59,130,246,0.22); }
-/* v1.1.4 item 40: graceful fallback when an item has no actionable detail —
-   keeps the pane explicit ("no detail recorded; see linked branch") rather
-   than rendering only opaque uppercase labels over redundant values. */
 .det-fallback {
   display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
   padding: 0.25rem 0; border-bottom: 1px dashed var(--border);
@@ -513,7 +497,6 @@ button:active { transform: scale(0.98); }
   padding: 0.02rem 0.4rem; font-weight: 600;
 }
 
-/* item 10: inline response + "responded — awaiting confirmation" */
 .respond-box { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.35rem; }
 .li.responded { opacity: 0.78; border-left: 3px solid var(--info); }
 .responded-note {
@@ -522,33 +505,22 @@ button:active { transform: scale(0.98); }
   display: flex; flex-direction: column; gap: 0.3rem;
 }
 
-/* ===================== v1.1.1 polish (items 18 / 22) ===================== */
-/* item 18: narrow viewport → toast bottom-CENTRE (matches the existing
-   699.98px stacked breakpoint). */
 @media (max-width: 699.98px) {
   .toast { right: 50%; transform: translateX(50%); }
 }
-/* item 18: arrival flash = a 600ms colour WASH → fade, on any newly-arrived
-   action/backlog card OR new tree node OR state-changed item. So even if the
-   bottom-right toast is missed, the operator sees WHERE the change landed. */
 @keyframes arrive {
   0%   { background-color: rgba(34,211,238,0.34); }
   100% { background-color: transparent; }
 }
 .list-body .li.arrive, .tnode-row.arrive { animation: arrive 0.6s ease-out 1; }
-/* item 18: reduced-motion → a single persistent ~1.5s highlight instead of a
-   fade (JS adds .arrive-static, removes it after 1500ms). */
 .arrive-static { background-image: linear-gradient(rgba(34,211,238,0.30), rgba(34,211,238,0.30)) !important; }
 
-/* item 22: semantic button palette. Filled (primary) + outlined (secondary).
-   Near-black text on the saturated fills clears WCAG AA on the dark bg. */
 .btn-go      { background: var(--btn-go);      color: #052e13; border-color: var(--btn-go);      font-weight: 600; }
 .btn-wait    { background: var(--btn-wait);    color: #3a2a05; border-color: var(--btn-wait);    font-weight: 600; }
 .btn-info    { background: var(--btn-info);    color: #07182f; border-color: var(--btn-info);    font-weight: 600; }
 .btn-up      { background: var(--btn-up);      color: #2a0a3f; border-color: var(--btn-up);      font-weight: 600; }
 .btn-del     { background: var(--btn-del);     color: #fee2e2; border-color: var(--btn-del);     font-weight: 600; }
 .btn-neutral { background: var(--btn-neutral); color: #e2e8f0; border-color: var(--btn-neutral); font-weight: 600; }
-/* outlined secondary variant: coloured text + border, panel bg */
 .btn-go.outline,.btn-wait.outline,.btn-info.outline,.btn-up.outline,.btn-del.outline,.btn-neutral.outline { background: var(--panel2); }
 .btn-go.outline      { color: var(--ok);    border-color: var(--btn-go); }
 .btn-wait.outline    { color: var(--warn);  border-color: var(--btn-wait); }
@@ -557,22 +529,17 @@ button:active { transform: scale(0.98); }
 .btn-del.outline     { color: var(--err);   border-color: var(--btn-del); }
 .btn-neutral.outline { color: var(--muted); border-color: var(--btn-neutral); }
 
-/* v1.1.2 item 39 — TRIAL: btn-* solid fills softened to ~50% opacity bg with
-   brighter saturated text so contrast holds. If the trial doesn't land,
-   bump alpha back toward 1.0. Same palette, just visually toned down. */
 .btn-go      { background: rgba(34,197,94,0.50);   color: #86efac; border-color: rgba(34,197,94,0.55); }
 .btn-wait    { background: rgba(245,158,11,0.50);  color: #fde68a; border-color: rgba(245,158,11,0.55); }
 .btn-info    { background: rgba(59,130,246,0.50);  color: #bfdbfe; border-color: rgba(59,130,246,0.55); }
 .btn-up      { background: rgba(168,85,247,0.50);  color: #e9d5ff; border-color: rgba(168,85,247,0.55); }
 .btn-del     { background: rgba(185,28,28,0.50);   color: #fecaca; border-color: rgba(185,28,28,0.55); }
 .btn-neutral { background: rgba(71,85,105,0.50);   color: #e2e8f0; border-color: rgba(71,85,105,0.55); }
-/* hover: ~70% opacity to give a clear "pressable" affordance */
 .btn-go:hover, .btn-wait:hover, .btn-info:hover,
 .btn-up:hover, .btn-del:hover, .btn-neutral:hover { filter: brightness(1.15); }
 
-/* item 16: prominent hide-concluded "View" toggle in the tree pane-head. */
 .viewtoggle {
-  display: flex; align-items: center; gap: 0.35rem; font-size: 0.8rem;
+  display: flex; align-items: center; gap: 0.35rem; font-size: 0.78rem;
   color: var(--text); cursor: pointer; user-select: none;
   background: var(--panel2); border: 1px solid var(--border2);
   border-radius: 5px; padding: 0.18rem 0.5rem;
@@ -580,40 +547,15 @@ button:active { transform: scale(0.98); }
 .viewtoggle input { accent-color: var(--accent); }
 .viewtoggle .eye { font-size: 0.95rem; }
 
-/* item 19: clickable doc link token + inline doc modal + docs browser panel. */
 .doc-link { color: var(--type-question); border: 1px solid var(--type-question);
   background: var(--panel2); border-radius: 4px; padding: 0.02rem 0.4rem;
   font-size: 0.72rem; cursor: pointer; }
 .doc-link:hover { background: var(--type-question); color: var(--type-on); }
-#docScrim { position: fixed; inset: 0; z-index: 59; background: rgba(0,0,0,0.55); }
-#docScrim[hidden], #docModal[hidden], #docsPanel[hidden] { display: none !important; }
-/* v1.1.2 item 38 — doc preview is a resizable RIGHT side pane (not modal).
-   The three primary panes (#layout) shrink proportionally via margin-right
-   while the side pane is open. Drag the left-edge handle to resize; width
-   persists in localStorage. Multiple docs can't be open at once — opening a
-   new doc replaces the current one (width-resize stays consistent). */
-#docModal {
-  position: fixed; z-index: 60; top: 0; right: 0; bottom: 0;
-  width: var(--doc-pane-w, 32rem); min-width: 16rem; max-width: 90vw;
-  display: flex; flex-direction: column;
-  background: var(--panel); border-left: 1px solid var(--border2);
-  box-shadow: -8px 0 24px rgba(0,0,0,0.5);
-}
-.doc-resize {
-  position: absolute; left: -3px; top: 0; bottom: 0; width: 6px;
-  cursor: ew-resize; background: transparent; z-index: 61;
-}
-.doc-resize:hover { background: rgba(168,139,250,0.25); }
-/* Shrink the underlying layout when the side pane is open (Misha's spec:
-   "the three primary panes shrink proportionally to make room"). */
-body[data-doc-pane="open"] #layout { margin-right: var(--doc-pane-w, 32rem); transition: margin-right 0.12s ease; }
-/* When the doc side pane is open, suppress the dim scrim — the rest of the
-   GUI must remain fully interactive (Misha's spec). */
-body[data-doc-pane="open"] #docScrim { display: none !important; }
+
 .doc-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem;
-  border-bottom: 1px solid var(--border); }
+  border-bottom: 1px solid var(--border); flex: 0 0 auto; }
 .doc-head .doc-title { font-weight: 700; flex: 1; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.doc-body { overflow: auto; padding: 1rem 1.2rem; font-size: 0.86rem; line-height: 1.6; }
+.doc-body { overflow: auto; padding: 1rem 1.2rem; font-size: 0.86rem; line-height: 1.6; flex: 1 1 auto; min-height: 0; }
 .doc-body h1 { font-size: 1.25rem; } .doc-body h2 { font-size: 1.08rem; border-bottom: 1px solid var(--border); padding-bottom: 0.2rem; }
 .doc-body h3 { font-size: 0.96rem; color: var(--accent); }
 .doc-body code { background: var(--panel2); padding: 0.05rem 0.3rem; border-radius: 3px; font: 12px/1.4 ui-monospace, monospace; }
@@ -622,11 +564,13 @@ body[data-doc-pane="open"] #docScrim { display: none !important; }
 .doc-body a { color: var(--info); }
 .doc-body hr { border: none; border-top: 1px solid var(--border); margin: 0.8rem 0; }
 .doc-body ul, .doc-body ol { padding-left: 1.4rem; }
+
 #docsPanel {
   position: fixed; z-index: 60; top: 0; right: 0; bottom: 0; width: min(26rem, 90vw);
   background: var(--panel); border-left: 1px solid var(--border2);
   box-shadow: -8px 0 24px rgba(0,0,0,0.5); display: flex; flex-direction: column;
 }
+#docsPanel[hidden] { display: none !important; }
 #docsPanel .dp-head { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); display: flex; gap: 0.5rem; align-items: center; }
 #docsPanel .dp-head input { flex: 1; }
 #docsPanel .dp-body { flex: 1 1 auto; overflow: auto; padding: 0.5rem 0.7rem; }
@@ -653,11 +597,9 @@ body[data-doc-pane="open"] #docScrim { display: none !important; }
 .dp-missing { font-size: 0.74rem; color: var(--muted); padding-left: 1.4rem;
   font-style: italic; }
 
-/* accessibility: honour reduced-motion (harness UX standard). The arrival
-   wash animation is suppressed; the persistent .arrive-static highlight (set
-   + cleared by JS at ~1.5s) is the reduced-motion equivalent (item 18). */
 @media (prefers-reduced-motion: reduce) {
   .list-body .li, .list-body .li.flash, .list-body .li.leaving,
   .list-body .li.arrive, .tnode-row.arrive,
-  .tree-canvas { animation: none !important; transition: none !important; }
+  .tree-canvas, .side-panel
+  { animation: none !important; transition: none !important; }
 }
