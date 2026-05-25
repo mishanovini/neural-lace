@@ -1,0 +1,518 @@
+#!/usr/bin/env bash
+# pr-template-inline-gate.sh
+#
+# Closes HARNESS-GAP-40 — local-side validation of inline PR bodies passed
+# to `gh pr create` / `gh pr edit` via `--body`, `--body=`, or `--body-file`.
+#
+# Why this hook exists.
+#   The existing `pre-push-pr-template.sh` (git pre-push hook) validates a
+#   developer-authored `.pr-description.md` OR the latest commit message
+#   body — never the inline `--body` argument an AI session typically uses
+#   via `gh pr create --body "$(cat <<'EOF' ... EOF)"`. The first push
+#   therefore reaches GitHub, the server-side `PR Template Check` workflow
+#   fires, fails, emails the operator, and the AI session has to amend the
+#   PR body with a second push. Misha logged ~19 such failures across ~12
+#   branches in the past week — pure email spam with no signal value, and
+#   a constant 2-push cycle for every AI-spawned PR.
+#
+# What this hook does.
+#   Fires as a PreToolUse hook on `Bash`. Self-detects whether the command
+#   being run is `gh pr create` or `gh pr edit` (and a body source is
+#   present). Parses the inline body content from `--body`, `--body=`, or
+#   `--body-file`, pipes it into `.github/scripts/validate-pr-template.sh`
+#   (the canonical validator already used by the CI workflow + the local
+#   pre-push hook — same regex, same canonical stderr), and blocks the
+#   tool call when validation fails. Same diagnostic in all three places.
+#
+# Body-source recognition.
+#   --body "<literal>"
+#   --body '<literal>'
+#   --body=<value>          (both quoted + bare-token shapes)
+#   --body "$(cat <<EOF ... EOF)" and <<'EOF' / <<"EOF" / arbitrary tag
+#   --body-file <path>      (relative path resolves vs repo root)
+#   --body-file -           (stdin — not supported; BLOCKS with hint)
+#   --fill                  (gh derives body from commit messages) → PASS
+#                           through (the existing pre-push hook handles
+#                           commit-message validation when push happens).
+#   No body source at all   → PASS through (gh's default behaviour;
+#                           validation will happen at push time if at all).
+#
+# Decision: sibling to `vaporware-volume-gate.sh`, not an extension.
+#   The vaporware-volume gate is a different concern (volume heuristic for
+#   describes-vs-executes file ratio). Conflating template-content
+#   validation with volume-shape validation would make both checks harder
+#   to reason about, harder to self-test in isolation, and would push
+#   `vaporware-volume-gate.sh` past 500 lines. Sibling preserves clean
+#   separation; both wire on the same `Bash` matcher.
+#
+# Exit codes.
+#   0 — command allowed (not a `gh pr create/edit` body call, or template
+#       validation PASSED, or no body source present, or `--fill` used)
+#   1 — command blocked (stderr explains the failing validation, names
+#       the missing section / placeholder / answer form, and points at
+#       remediation)
+#   2 — internal error (validator library missing, parse failure on
+#       malformed input — fails closed)
+#
+# Rule:  rules/planning.md "Capture-codify at PR time"
+# Plan:  N/A (build-harness-infrastructure work-shape; single-purpose hook)
+# Cross: vaporware-volume-gate.sh (sibling on `gh pr create`)
+#        pre-push-pr-template.sh  (git-side, validates .pr-description.md
+#                                  + commit messages; this hook is the
+#                                  inline-body-side complement)
+#        .github/scripts/validate-pr-template.sh (canonical validator;
+#                                  sourced here, same as the two siblings)
+
+set -eo pipefail
+
+# ============================================================
+# extract_body_from_command — parse the inline body from the
+# tokenized `gh pr create/edit` invocation.
+#
+# Echoes the body content to stdout. Returns 0 on successful
+# extraction OR 0 with empty stdout when no body source is present.
+# Returns 2 on a body-file path that does not exist or stdin (`-`).
+#
+# Implementation note: uses bash parameter expansion (not sed) because
+# `sed` operates line-by-line and cannot capture multi-line `"..."`
+# strings. PR bodies are virtually always multi-line.
+# ============================================================
+extract_body_from_command() {
+  local cmd="$1"
+  local repo_root="$2"
+  local rest body_file body
+
+  # --- Path 1: --body-file <path>  or  --body-file=<path>
+  body_file=""
+  if [[ "$cmd" == *"--body-file="* ]]; then
+    # --body-file=<value>  : value runs to next whitespace or quote
+    rest="${cmd#*--body-file=}"
+    # Strip leading optional quote
+    if [[ "${rest:0:1}" == '"' ]]; then
+      rest="${rest:1}"
+      body_file="${rest%%\"*}"
+    elif [[ "${rest:0:1}" == "'" ]]; then
+      rest="${rest:1}"
+      body_file="${rest%%\'*}"
+    else
+      # bare token - up to first whitespace
+      body_file="${rest%%[[:space:]]*}"
+    fi
+  elif [[ "$cmd" == *"--body-file "* ]] || [[ "$cmd" == *"--body-file"$'\t'* ]]; then
+    # --body-file <value>  : space-separated
+    rest="${cmd#*--body-file}"
+    # Strip leading whitespace
+    rest="${rest#"${rest%%[![:space:]]*}"}"
+    if [[ "${rest:0:1}" == '"' ]]; then
+      rest="${rest:1}"
+      body_file="${rest%%\"*}"
+    elif [[ "${rest:0:1}" == "'" ]]; then
+      rest="${rest:1}"
+      body_file="${rest%%\'*}"
+    else
+      body_file="${rest%%[[:space:]]*}"
+    fi
+  fi
+
+  if [[ -n "$body_file" ]]; then
+    if [[ "$body_file" == "-" ]]; then
+      # Stdin body not supported by this gate — the Bash tool's stdin
+      # is the hook-input JSON, not the user's PR body. Block with hint.
+      printf 'STDIN_NOT_SUPPORTED\n'
+      return 2
+    fi
+    # Resolve relative to repo root if not absolute (POSIX or Windows-style).
+    local resolved="$body_file"
+    if [[ "${resolved:0:1}" != "/" ]] && [[ ! "${resolved:1:1}" == ":" ]]; then
+      resolved="$repo_root/$body_file"
+    fi
+    if [[ ! -f "$resolved" ]]; then
+      printf 'BODY_FILE_MISSING\t%s\n' "$resolved"
+      return 2
+    fi
+    cat "$resolved"
+    return 0
+  fi
+
+  # --- Path 2: --body "$(cat <<TAG ... TAG)" form (heredoc).
+  # Detect the heredoc tag (quoted or unquoted) and extract the body
+  # between the opening `<<TAG` and the closing TAG line.
+  if printf '%s' "$cmd" | grep -qE '<<[[:space:]]*['"'"'"]*[A-Za-z_][A-Za-z0-9_]*'; then
+    # Extract the tag itself (strip optional quotes).
+    local tag
+    tag=$(printf '%s' "$cmd" | sed -nE "s/.*<<[[:space:]]*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?.*/\\1/p" | head -1)
+    if [[ -n "$tag" ]]; then
+      # The heredoc body is everything between `<<TAG\n` (or `<<'TAG'\n`)
+      # and the line that is exactly `TAG`. Use awk to extract.
+      printf '%s' "$cmd" | awk -v tag="$tag" '
+        BEGIN { in_heredoc = 0 }
+        {
+          if (!in_heredoc) {
+            # Look for the heredoc opener on this line.
+            if (match($0, "<<[[:space:]]*[\x27\"]?" tag "[\x27\"]?")) {
+              in_heredoc = 1
+              # Rest of this line after the heredoc operator is not the body.
+              next
+            }
+            next
+          }
+          # in_heredoc == 1
+          # Closing tag line: line is exactly TAG (allow trailing whitespace)
+          if ($0 ~ "^[[:space:]]*" tag "[[:space:]]*$") {
+            in_heredoc = 0
+            exit 0
+          }
+          print
+        }
+      '
+      return 0
+    fi
+  fi
+
+  # --- Path 3: --body=<value>  (equals form)
+  # Forms in priority: --body="..."  -->  --body='...'  -->  --body=<bare>
+  body=""
+  if [[ "$cmd" == *'--body="'* ]]; then
+    rest="${cmd#*--body=\"}"
+    body="${rest%%\"*}"
+    printf '%s' "$body"
+    return 0
+  fi
+  if [[ "$cmd" == *"--body='"* ]]; then
+    rest="${cmd#*--body=\'}"
+    body="${rest%%\'*}"
+    printf '%s' "$body"
+    return 0
+  fi
+  if [[ "$cmd" == *"--body="* ]]; then
+    rest="${cmd#*--body=}"
+    body="${rest%%[[:space:]]*}"
+    if [[ -n "$body" ]]; then
+      printf '%s' "$body"
+      return 0
+    fi
+  fi
+
+  # --- Path 4: --body "..." (space-separated, double-quoted)
+  if [[ "$cmd" == *'--body "'* ]]; then
+    rest="${cmd#*--body \"}"
+    body="${rest%%\"*}"
+    printf '%s' "$body"
+    return 0
+  fi
+  # --body '...' (space-separated, single-quoted)
+  if [[ "$cmd" == *"--body '"* ]]; then
+    rest="${cmd#*--body \'}"
+    body="${rest%%\'*}"
+    printf '%s' "$body"
+    return 0
+  fi
+
+  # No body source recognised — return empty.
+  return 0
+}
+
+# ============================================================
+# --self-test
+# ============================================================
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  SCRIPT="${BASH_SOURCE[0]}"
+
+  # Resolve validator library (used by all self-test cases).
+  # In the worktree where this script lives, .github/ is at the repo root.
+  REPO_ROOT="$(cd "$(dirname "$SCRIPT")/../../.." && pwd)"
+  VALIDATOR_LIB="$REPO_ROOT/.github/scripts/validate-pr-template.sh"
+  if [[ ! -f "$VALIDATOR_LIB" ]]; then
+    echo "self-test: validator library missing at $VALIDATOR_LIB" >&2
+    exit 2
+  fi
+
+  TMPDIR_TEST=$(mktemp -d)
+  trap 'rm -rf "$TMPDIR_TEST"' EXIT
+
+  VALID_BODY='## Summary
+
+A valid PR body.
+
+## What changed and why
+
+Some changes.
+
+## What mechanism would have caught this?
+
+### a) Existing catalog entry
+
+FM-006 self-reported task completion without evidence — caught by plan-edit-validator.
+
+## Testing performed
+
+Self-tested.'
+
+  INVALID_BODY_NO_SUMMARY='## Some random body
+
+No template sections at all here.'
+
+  # Write fixture body files
+  echo "$VALID_BODY" > "$TMPDIR_TEST/valid-body.md"
+  echo "$INVALID_BODY_NO_SUMMARY" > "$TMPDIR_TEST/invalid-body.md"
+
+  FAILED=0
+
+  run_scenario() {
+    local name="$1"
+    local command_str="$2"
+    local expected_block="$3"   # 1=expect block, 0=expect allow
+    local label="$4"
+
+    local input
+    input=$(jq -nc --arg cmd "$command_str" '{tool_input: {command: $cmd}}')
+
+    local exit_code=0
+    PR_TEMPLATE_INLINE_GATE_TEST_REPO_ROOT="$REPO_ROOT" \
+      bash "$SCRIPT" <<<"$input" >/dev/null 2>&1 || exit_code=$?
+
+    if [[ "$expected_block" == "1" ]]; then
+      if [[ $exit_code -ne 0 ]]; then
+        echo "self-test ($name) [$label]: BLOCK (expected, exit=$exit_code)" >&2
+      else
+        echo "self-test ($name) [$label]: ALLOW (expected BLOCK)" >&2
+        FAILED=1
+      fi
+    else
+      if [[ $exit_code -eq 0 ]]; then
+        echo "self-test ($name) [$label]: ALLOW (expected)" >&2
+      else
+        echo "self-test ($name) [$label]: BLOCK (expected ALLOW, exit=$exit_code)" >&2
+        FAILED=1
+      fi
+    fi
+  }
+
+  # T1: Valid inline --body with all sections → PASS
+  run_scenario "T1-valid-inline-body" \
+    "gh pr create --title \"test\" --body \"$VALID_BODY\"" \
+    0 "valid --body with all sections → ALLOW"
+
+  # T2: --body missing required sections → BLOCKS
+  run_scenario "T2-invalid-inline-body" \
+    "gh pr create --title \"test\" --body \"$INVALID_BODY_NO_SUMMARY\"" \
+    1 "--body missing mechanism section → BLOCK"
+
+  # T3: --body via heredoc form → parses correctly, validates valid body
+  # Note: command is delivered as the literal string the shell would receive
+  # PRE-execution; we test the parser against the heredoc form directly.
+  HEREDOC_CMD='gh pr create --title test --body "$(cat <<EOF
+'"$VALID_BODY"'
+EOF
+)"'
+  run_scenario "T3-heredoc-valid" \
+    "$HEREDOC_CMD" \
+    0 "valid --body via heredoc → ALLOW"
+
+  # T4: --body-file with valid content → PASSES
+  run_scenario "T4-body-file-valid" \
+    "gh pr create --title test --body-file $TMPDIR_TEST/valid-body.md" \
+    0 "--body-file <valid> → ALLOW"
+
+  # T5: --body-file with invalid content → BLOCKS
+  run_scenario "T5-body-file-invalid" \
+    "gh pr create --title test --body-file $TMPDIR_TEST/invalid-body.md" \
+    1 "--body-file <invalid> → BLOCK"
+
+  # T6: --body-file - (stdin) → BLOCKS with stdin-not-supported message
+  run_scenario "T6-body-file-stdin" \
+    "gh pr create --title test --body-file -" \
+    1 "--body-file - (stdin) → BLOCK with stdin-not-supported"
+
+  # T7: gh pr create with NO --body/--body-file/--fill → PASS through
+  run_scenario "T7-no-body-source" \
+    "gh pr create --title test" \
+    0 "no body source → ALLOW (pass-through)"
+
+  # T8: gh pr create --fill → PASS through (commit messages used)
+  run_scenario "T8-fill-flag" \
+    "gh pr create --title test --fill" \
+    0 "--fill flag → ALLOW (pass-through)"
+
+  # T9: gh pr edit <N> --body missing sections → BLOCKS
+  run_scenario "T9-edit-invalid" \
+    "gh pr edit 42 --body \"$INVALID_BODY_NO_SUMMARY\"" \
+    1 "gh pr edit with invalid --body → BLOCK"
+
+  # T10: --body='inline with equals' form → parses correctly (passes)
+  # Build a body that uses the equals form; use single quotes to avoid
+  # shell expansion issues in the synthetic test command.
+  run_scenario "T10-body-equals-form" \
+    "gh pr create --title test --body='$VALID_BODY'" \
+    0 "--body='<valid>' equals-form → ALLOW"
+
+  # T11 (bonus): non-gh Bash command → PASS through silently
+  run_scenario "T11-non-gh-bash" \
+    "ls -la /tmp" \
+    0 "non-gh Bash → ALLOW (pass-through silent)"
+
+  if [[ $FAILED -eq 0 ]]; then
+    echo "all 11 self-tests passed" >&2
+    exit 0
+  else
+    echo "self-test failures detected" >&2
+    exit 1
+  fi
+fi
+
+# ============================================================
+# Main hook entry
+# ============================================================
+
+INPUT="${CLAUDE_TOOL_INPUT:-}"
+if [[ -z "$INPUT" ]]; then
+  if [[ ! -t 0 ]]; then
+    INPUT=$(cat 2>/dev/null || echo "")
+  fi
+fi
+
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // .command // empty' 2>/dev/null || echo "")
+if [[ -z "$COMMAND" ]]; then
+  exit 0
+fi
+
+# Only fire on `gh pr create` or `gh pr edit`.
+IS_PR_CREATE=0
+IS_PR_EDIT=0
+if echo "$COMMAND" | grep -qE '(^|[[:space:]])gh[[:space:]]+pr[[:space:]]+create\b'; then
+  IS_PR_CREATE=1
+fi
+if echo "$COMMAND" | grep -qE '(^|[[:space:]])gh[[:space:]]+pr[[:space:]]+edit\b'; then
+  IS_PR_EDIT=1
+fi
+if [[ $IS_PR_CREATE -eq 0 ]] && [[ $IS_PR_EDIT -eq 0 ]]; then
+  exit 0
+fi
+
+# Check for --fill (gh derives body from commit messages). Pass through —
+# the pre-push hook handles commit-message validation at push time.
+if echo "$COMMAND" | grep -qE '(^|[[:space:]])--fill(\b|=)'; then
+  exit 0
+fi
+
+# Resolve repo root for body-file path resolution AND validator-library
+# location. Allow test-override via PR_TEMPLATE_INLINE_GATE_TEST_REPO_ROOT.
+REPO_ROOT=""
+if [[ -n "${PR_TEMPLATE_INLINE_GATE_TEST_REPO_ROOT:-}" ]]; then
+  REPO_ROOT="$PR_TEMPLATE_INLINE_GATE_TEST_REPO_ROOT"
+else
+  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+fi
+if [[ -z "$REPO_ROOT" ]]; then
+  # Cannot determine repo root — fail open (consistent with sibling
+  # vaporware-volume-gate.sh behavior on the same condition).
+  exit 0
+fi
+
+VALIDATOR_LIB="$REPO_ROOT/.github/scripts/validate-pr-template.sh"
+if [[ ! -f "$VALIDATOR_LIB" ]]; then
+  # Validator library not found — this is a project that hasn't opted into
+  # the capture-codify PR-template convention. Pass through silently.
+  exit 0
+fi
+
+# Extract the body content.
+EXTRACT_RESULT=""
+EXTRACT_EXIT=0
+EXTRACT_RESULT=$(extract_body_from_command "$COMMAND" "$REPO_ROOT") || EXTRACT_EXIT=$?
+
+# Handle parser-recognized error sentinels.
+if [[ $EXTRACT_EXIT -eq 2 ]]; then
+  case "$EXTRACT_RESULT" in
+    STDIN_NOT_SUPPORTED*)
+      cat >&2 <<'ERR_MSG'
+[pr-template-inline-gate] BLOCKED
+
+The `--body-file -` (stdin) form is not supported by the local inline-body validator. The Bash tool's stdin is the hook-input JSON, not your PR body; the gate cannot read your intended PR body content.
+
+Remediation: write your PR body to a file first, then use `--body-file <path>`:
+
+  gh pr create --title "..." --body-file .pr-description.md
+
+Rule: rules/planning.md "Capture-codify at PR time"
+Related: HARNESS-GAP-40 (inline-body validation)
+ERR_MSG
+      exit 1
+      ;;
+    BODY_FILE_MISSING*)
+      missing_path="${EXTRACT_RESULT#BODY_FILE_MISSING	}"
+      cat >&2 <<ERR_MSG
+[pr-template-inline-gate] BLOCKED
+
+The --body-file path does not exist: $missing_path
+
+The gate cannot validate a non-existent body file. gh pr create would itself fail downstream, but we surface the failure locally so you don't waste a push.
+
+Remediation: confirm the path is correct (relative to the repo root or use an absolute path).
+
+Rule: rules/planning.md "Capture-codify at PR time"
+ERR_MSG
+      exit 1
+      ;;
+  esac
+fi
+
+# No recognised body source AND no --fill → gh's default body behavior.
+# Pass through silently; if the resulting PR body is empty, gh itself
+# will prompt or use the commit message.
+if [[ -z "$EXTRACT_RESULT" ]]; then
+  exit 0
+fi
+
+# Source the validator library and run validate_pr_body on the extracted body.
+# shellcheck disable=SC1090
+source "$VALIDATOR_LIB"
+
+# Capture validator output (stdout + stderr) for surfacing.
+VALIDATOR_STDOUT_FILE=$(mktemp)
+VALIDATOR_STDERR_FILE=$(mktemp)
+trap 'rm -f "$VALIDATOR_STDOUT_FILE" "$VALIDATOR_STDERR_FILE"' EXIT
+
+VALIDATOR_EXIT=0
+validate_pr_body "$EXTRACT_RESULT" >"$VALIDATOR_STDOUT_FILE" 2>"$VALIDATOR_STDERR_FILE" || VALIDATOR_EXIT=$?
+
+if [[ $VALIDATOR_EXIT -eq 0 ]]; then
+  # PASS — allow the tool call.
+  exit 0
+fi
+
+# FAIL — surface the validator's own stderr verbatim, prepend a header
+# naming the gate + the failing command class, and exit 1 (BLOCK).
+ACTION_LABEL="gh pr create"
+if [[ $IS_PR_EDIT -eq 1 ]]; then
+  ACTION_LABEL="gh pr edit"
+fi
+
+cat >&2 <<HEADER
+[pr-template-inline-gate] BLOCKED
+
+Inline PR body passed to \`$ACTION_LABEL\` failed the capture-codify template validator. The same validator runs server-side as \`PR Template Check\` — blocking here saves a push, an email, and the second-push amendment cycle.
+
+----- validator output (stderr) -----
+HEADER
+cat "$VALIDATOR_STDERR_FILE" >&2
+cat >&2 <<'FOOTER'
+----- end validator output -----
+
+Remediation:
+  - Fix the PR body to address the failure above (add the missing section,
+    fill the placeholder, or extend the rationale to ≥40 chars for (c)).
+  - For complex bodies, author `.pr-description.md` locally and use
+    `gh pr create --body-file .pr-description.md` — the file can be
+    validated repeatedly via the validator-script CLI by invoking the
+    validator directly:
+      bash .github/scripts/validate-pr-template.sh --self-test
+
+Rule:    rules/planning.md "Capture-codify at PR time"
+Sibling: vaporware-volume-gate.sh (PR volume-shape check on same matcher)
+Sibling: pre-push-pr-template.sh  (git pre-push side; validates .pr-description.md + commit msgs)
+Related: HARNESS-GAP-40 (inline-body validation; this gate closes it)
+FOOTER
+
+exit 1

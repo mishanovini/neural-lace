@@ -432,6 +432,13 @@ is_path_shape_exempt() {
     # CODE_OF_CONDUCT, CHANGELOG) — these are documentation, not
     # project-instance content.
     README.md|README|CONTRIBUTING.md|LICENSE|LICENSE.md|SETUP.md|CODE_OF_CONDUCT.md|CHANGELOG.md|SECURITY.md) return 0 ;;
+    # `.pr-description.md` is a per-PR transient file consumed by
+    # `gh pr create --body-file` (canonical convention per
+    # `adapters/claude-code/git-hooks/pre-push-pr-template.sh`). It
+    # naturally repeats PR-shape domain vocabulary (Template, Inline,
+    # Check, Summary, Mechanism) and discusses paths inside the PR. Same
+    # logic as the other root-level prose-file exemptions above.
+    .pr-description.md) return 0 ;;
   esac
   return 1
 }
