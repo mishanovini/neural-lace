@@ -68,7 +68,8 @@ The first scan must surface real drift items (not just placeholder rows); the fi
 
 - `docs/plans/drift-backlog-and-harness-evaluator.md` — this plan file (already created)
 - `.claude/state/drift-backlog/misha-asked-for.json` — System 1 output (NEW path; gitignored per harness-hygiene — the JSON contains raw user-message content with machine-local paths and usernames that must not ship in a generic harness kit; moved here from the original `docs/backlog/` location after harness-hygiene-scan blocked the commit)
-- `docs/reviews/harness-self-eval-2026-05-24.md` — System 2 first weekly packet (NEW file)
+- `docs/reviews/2026-05-25-harness-self-eval.md` — System 2 first weekly packet (NEW file; date-first naming required by .gitignore allowlist `[0-9]{4}-[0-9]{2}-[0-9]{2}-*.md`)
+- `adapters/claude-code/scripts/schedule-weekly-eval.md` — wiring options doc for weekly schedule (Routine / cron / manual)
 - `adapters/claude-code/scripts/mine-misha-asked.sh` — System 1 miner script (NEW file)
 - `adapters/claude-code/scripts/harness-evaluator.sh` — System 2 analyzer script (NEW file)
 - `adapters/claude-code/agents/harness-evaluator.md` — System 2 agent prompt (NEW file)
@@ -78,6 +79,8 @@ The first scan must surface real drift items (not just placeholder rows); the fi
 ## In-flight scope updates
 
 - 2026-05-24: `.claude/state/drift-backlog/misha-asked-for.json` — moved System 1 output to gitignored state dir after harness-hygiene-scan blocked the original `docs/backlog/` path (raw user-message content carries machine-local paths and usernames that must not ship in a generic harness kit). Per-machine operational state convention applied; weekly packet from System 2 remains the shareable committed artifact.
+- 2026-05-25: weekly-packet filename renamed to `YYYY-MM-DD-harness-self-eval.md` (date-first) to satisfy `.gitignore` allowlist for `docs/reviews/` (only files matching `[0-9]{4}-[0-9]{2}-[0-9]{2}-*.md` are tracked). Script's OUTPUT_PATH default updated accordingly.
+- 2026-05-25: added `adapters/claude-code/scripts/schedule-weekly-eval.md` — documents three scheduling-wire-up options (Claude `/schedule` Routine, Windows Task Scheduler, on-demand). Task 6 of the plan deferred actual registration to Misha's review-cadence preference; this doc is the placeholder.
 
 ## Assumptions
 
