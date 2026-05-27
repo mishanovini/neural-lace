@@ -9,11 +9,89 @@
 #   1. TDD gate — new runtime-feature files must have matching test files
 #      (anti-vaporware; still runs before tests/build because it's fast)
 #   2. Plan-reviewer — adversarial review of any staged plan files
-#   3. Unit tests pass (npm test)
-#   4. Build succeeds (npm run build)
+#   3. Unit tests pass (npm test — skipped if the project has no "test" script)
+#   4. Build succeeds (npm run build:gate if declared, else npm run build —
+#      skipped if neither script exists; see the build-script-selection note below)
 #   5. API consumer audit (no unstaged consumers of changed API routes)
 
 set -eo pipefail
+
+# --- Build-script selection (DB-free gate validation) ----------------------
+# A project's pre-commit build can couple code-correctness validation with
+# DB-touching steps (e.g. `prisma migrate`, or build-time data fetching that
+# needs DATABASE_URL). In a worktree with no DB connection those steps fail and
+# the gate false-fires on an ENVIRONMENTAL problem, not a code defect. To
+# validate compilation without a DB, a project may declare a `build:gate` npm
+# script (a DB-free build subset — typically `tsc --noEmit` / `next build`
+# without the migrate/seed steps); this gate prefers it over `build`. The full
+# `build` still runs in CI. When neither script exists (a non-npm repo, or the
+# harness repo itself), the build step is SKIPPED rather than 127-failed — the
+# same "run only if the project defines it" convention the audit steps below
+# already use. This narrows false-firing without weakening signal: a project
+# that defines a normal `build` (and no `build:gate`) gets the full build
+# exactly as before.
+
+# _has_npm_script <name> — 0 if package.json defines the named npm script.
+_has_npm_script() {
+  [ -f package.json ] || return 1
+  jq -e --arg s "$1" '.scripts[$s] // empty' package.json >/dev/null 2>&1
+}
+
+# _select_build_script — echo the build script the gate should run:
+#   "build:gate" if declared (DB-free subset), else "build" if declared,
+#   else "" (nothing buildable — skip).
+_select_build_script() {
+  if _has_npm_script "build:gate"; then
+    echo "build:gate"
+  elif _has_npm_script "build"; then
+    echo "build"
+  else
+    echo ""
+  fi
+}
+
+# --- Self-test (run only on explicit --self-test; no-op in the commit chain) -
+if [[ "${1:-}" == "--self-test" ]]; then
+  ST_TMP="$(mktemp -d)"
+  trap 'rm -rf "$ST_TMP"' EXIT
+  st_fails=0
+  _st_expect() { # <label> <expected> <actual>
+    if [[ "$2" == "$3" ]]; then
+      echo "self-test ($1): PASS" >&2
+    else
+      echo "self-test ($1): FAIL (expected '$2', got '$3')" >&2
+      st_fails=$((st_fails + 1))
+    fi
+  }
+  _st_select() { ( cd "$1" && _select_build_script ) 2>/dev/null || true; }
+  _st_test_state() { if ( cd "$1" && _has_npm_script test ); then echo defined; else echo absent; fi; }
+
+  mkdir -p "$ST_TMP/s1"; printf '{"scripts":{"build":"next build"}}' > "$ST_TMP/s1/package.json"
+  _st_expect s1-only-build-selects-build "build" "$(_st_select "$ST_TMP/s1")"
+
+  mkdir -p "$ST_TMP/s2"; printf '{"scripts":{"build":"next build","build:gate":"tsc --noEmit"}}' > "$ST_TMP/s2/package.json"
+  _st_expect s2-gate-and-build-prefers-gate "build:gate" "$(_st_select "$ST_TMP/s2")"
+
+  mkdir -p "$ST_TMP/s3"; printf '{"scripts":{"test":"vitest"}}' > "$ST_TMP/s3/package.json"
+  _st_expect s3-neither-build-skips "" "$(_st_select "$ST_TMP/s3")"
+
+  mkdir -p "$ST_TMP/s4"
+  _st_expect s4-no-package-json-skips "" "$(_st_select "$ST_TMP/s4")"
+  _st_expect s4-no-package-json-test-absent "absent" "$(_st_test_state "$ST_TMP/s4")"
+
+  mkdir -p "$ST_TMP/s5"; printf '{"scripts":{"build:gate":"tsc --noEmit"}}' > "$ST_TMP/s5/package.json"
+  _st_expect s5-gate-only-selects-gate "build:gate" "$(_st_select "$ST_TMP/s5")"
+
+  _st_expect s6-test-absent-when-no-test-script "absent" "$(_st_test_state "$ST_TMP/s1")"
+  _st_expect s6b-test-present-when-declared "defined" "$(_st_test_state "$ST_TMP/s3")"
+
+  if [[ "$st_fails" -eq 0 ]]; then
+    echo "ALL SELF-TESTS PASSED (8/8)" >&2
+    exit 0
+  fi
+  echo "$st_fails SELF-TEST(S) FAILED" >&2
+  exit 1
+fi
 
 echo "" >&2
 echo "╔══════════════════════════════════════════╗" >&2
@@ -73,24 +151,37 @@ if [[ -x "$PLAN_REVIEWER" ]]; then
   fi
 fi
 
-# 1. Unit tests
-echo "[1/4] Running unit tests..." >&2
-if ! npm test 2>&1 | tail -3 >&2; then
-  echo "" >&2
-  echo "✗ BLOCKED: Unit tests failed. Fix tests before committing." >&2
-  exit 1
+# 1. Unit tests (run only if the project defines a "test" script — a non-npm
+#    repo or one without tests is skipped rather than 127-failed).
+if _has_npm_script test; then
+  echo "[1/4] Running unit tests..." >&2
+  if ! npm test 2>&1 | tail -3 >&2; then
+    echo "" >&2
+    echo "✗ BLOCKED: Unit tests failed. Fix tests before committing." >&2
+    exit 1
+  fi
+  echo "✓ Tests passed" >&2
+else
+  echo "[1/4] No \"test\" script defined — skipping unit tests." >&2
 fi
-echo "✓ Tests passed" >&2
 echo "" >&2
 
-# 2. Build
-echo "[2/4] Running build..." >&2
-if ! npm run build 2>&1 | tail -5 >&2; then
-  echo "" >&2
-  echo "✗ BLOCKED: Build failed. Fix build errors before committing." >&2
-  exit 1
+# 2. Build — prefer a DB-free `build:gate` subset when the project declares one
+#    (see the build-script-selection note at the top of this file). Skip when
+#    neither `build:gate` nor `build` exists, instead of 127-failing on a
+#    non-npm repo.
+BUILD_SCRIPT="$(_select_build_script)"
+if [ -n "$BUILD_SCRIPT" ]; then
+  echo "[2/4] Running build ($BUILD_SCRIPT)..." >&2
+  if ! npm run "$BUILD_SCRIPT" 2>&1 | tail -5 >&2; then
+    echo "" >&2
+    echo "✗ BLOCKED: Build ($BUILD_SCRIPT) failed. Fix build errors before committing." >&2
+    exit 1
+  fi
+  echo "✓ Build passed ($BUILD_SCRIPT)" >&2
+else
+  echo "[2/4] No \"build\" or \"build:gate\" script defined — skipping build." >&2
 fi
-echo "✓ Build passed" >&2
 echo "" >&2
 
 # 3. API consumer audit
