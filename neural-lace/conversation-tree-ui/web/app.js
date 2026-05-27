@@ -25,8 +25,13 @@
       ctxPanel = $('ctxPanel'), ctxScrim = $('ctxScrim'), zoomIn = $('zoomIn'),
       zoomOut = $('zoomOut'), fitSel = $('fitSel'),
       showConcluded = $('showConcluded'),
-      // v2 redesign 2026-05-23 — right-panel tabs + drawer toggle
-      paneTabs = $('paneTabs'),
+      // v3 accordion 2026-05-27 — right-panel stacked accordion + drawer toggle
+      paneStack = $('paneStack'),
+      // v3 accordion 2026-05-27 — filtered subview body containers
+      decisionsBody = $('decisionsBody'), decisionsState = $('decisionsState'),
+      decisionsCount = $('decisionsCount'),
+      questionsBody = $('questionsBody'), questionsState = $('questionsState'),
+      questionsCount = $('questionsCount'),
       paneToggle = $('paneToggle'), rightClose = $('rightClose'),
       panePeek = $('panePeek'), panePeekLabel = $('panePeekLabel'),
       docsBtn = $('docsBtn'), docScrim = $('docScrim'), docModal = $('docModal'),
@@ -892,6 +897,65 @@
       document.addEventListener('click', prioOutside, true);
     }, 0);
   }
+  // v3 accordion 2026-05-27 — filtered subviews: Decisions / Questions
+  // panels show a lightweight quick-glance index of items whose kind matches
+  // the filter, sourced from the same actionEntries() pool as Waiting. Each
+  // row is one line: kind badge + text + jump button. Clicking the row jumps
+  // to the node in the tree AND highlights the item (selItem). The full
+  // interaction surface (mark-done / respond / defer) lives in Waiting; the
+  // filtered panels are deliberately read-mostly to keep them scannable.
+  function renderFilteredKind(kindFilter, bodyEl, stateEl, countEl, emptyMsg) {
+    if (!loaded) { paneState(stateEl, bodyEl, 'loading'); if (countEl) countEl.hidden = true; return; }
+    var all = actionEntries();
+    var entries = all.filter(function (e) { return e.it.kind === kindFilter; });
+    // count badge in panel header
+    if (countEl) {
+      if (entries.length > 0) { countEl.textContent = String(entries.length); countEl.hidden = false; }
+      else { countEl.textContent = ''; countEl.hidden = true; }
+    }
+    if (entries.length === 0) {
+      paneState(stateEl, bodyEl, 'steady-empty', { steady: emptyMsg });
+      return;
+    }
+    paneState(stateEl, bodyEl, 'populated');
+    clear(bodyEl);
+    entries.forEach(function (en) {
+      var n = en.n, it = en.it;
+      var li = el('div', 'li kind-' + it.kind
+        + ((sel === n.node_id || selItem === it.item_id) ? ' hl' : ''));
+      li.setAttribute('data-item', it.item_id);
+      li.setAttribute('data-node', n.node_id);
+      var top = el('div', 'li-top');
+      top.appendChild(el('span', 'li-kind ' + it.kind, it.kind));
+      top.appendChild(el('span', 'li-text', it.text));
+      var ep = effectivePrio(it);
+      if (ep >= 1 && ep <= 4) top.appendChild(el('span', 'p-badge p' + ep, 'P' + ep));
+      var jump = el('button', 'li-jump', '→');
+      jump.title = 'Jump to in tree';
+      jump.addEventListener('click', function (e) {
+        e.stopPropagation();
+        selItem = it.item_id;
+        focusNode(n.node_id);
+      });
+      top.appendChild(jump);
+      top.addEventListener('click', function (e) {
+        if (e.target.closest('button')) return;
+        selItem = it.item_id;
+        focusNode(n.node_id);
+      });
+      li.appendChild(top);
+      bodyEl.appendChild(li);
+    });
+  }
+  function renderDecisions() {
+    renderFilteredKind('decision', decisionsBody, decisionsState, decisionsCount,
+      'No decisions waiting right now — items appear here when Dispatch raises a `decision-raised` event.');
+  }
+  function renderQuestions() {
+    renderFilteredKind('question', questionsBody, questionsState, questionsCount,
+      'No questions waiting right now — items appear here when Dispatch raises a `question-raised` event.');
+  }
+
   function renderActions() {
     if (!loaded) { paneState(actionsState, actionsBody, 'loading'); return; }
     var entries = sortActions(actionEntries());
@@ -1882,39 +1946,51 @@
     if (e.key === 'Escape' && !ctxPanel.hidden) closeCtx();
   });
 
-  // ---- v2 redesign 2026-05-23: right-panel tabs + drawer toggle --------
-  // The right panel hosts Waiting and Backlog as TABS that swap inside the
-  // same persistent column at >=1024px, OR inside an off-canvas drawer at
-  // <1024px. State is class-based on <body> (`.pane-tab-waiting` /
-  // `.pane-tab-backlog`, `.side-open` / `.side-hidden`) — class state
-  // cascades cleanly without specificity puzzles AND is trivially queryable
-  // in selftests. Active tab + side-state persist via localStorage so the
-  // operator's choice survives reload (UX-VR-11 fix).
-  var PANE_TAB_KEY = 'ctree-pane-tab';
+  // ---- v3 accordion 2026-05-27: stacked-panel collapse + drawer toggle --
+  // The right panel hosts Waiting / Backlog / Decisions / Questions as a
+  // vertical accordion. Each .apanel has a clickable header (.apanel-head)
+  // that toggles the panel's .collapsed class. Per-panel collapse state
+  // persists via localStorage so the operator's layout survives reload.
+  // Drawer state (whole-panel show/hide) remains class-based on <body>:
+  // `.side-open` / `.side-hidden`.
+  var PANEL_KEY_PREFIX = 'ctree-panel-';     // per-panel collapse key (e.g. ctree-panel-waiting-collapsed)
   var SIDE_KEY = 'ctree-side';
-  function applyPaneTab(name) {
-    if (name !== 'waiting' && name !== 'backlog') name = 'waiting';
-    document.body.classList.remove('pane-tab-waiting', 'pane-tab-backlog');
-    document.body.classList.add('pane-tab-' + name);
-    localStorage.setItem(PANE_TAB_KEY, name);
-    [].forEach.call(paneTabs.querySelectorAll('button[data-pane-tab]'), function (x) {
-      var on = x.dataset.paneTab === name;
-      x.classList.toggle('active', on);
-      x.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
-    if (name === 'waiting') clearNewBadge('a');
-    if (name === 'backlog') clearNewBadge('b');
-    // when peek pill is visible, keep its label in sync with active tab
-    if (panePeek && !panePeek.hidden) {
-      panePeekLabel.textContent = (name === 'backlog') ? 'Backlog' : 'Waiting';
+  function panelCollapseKey(name) { return PANEL_KEY_PREFIX + name + '-collapsed'; }
+  function applyPanelCollapse(section, name, collapsed) {
+    section.classList.toggle('collapsed', !!collapsed);
+    var head = section.querySelector('.apanel-head');
+    if (head) head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    localStorage.setItem(panelCollapseKey(name), collapsed ? '1' : '0');
+  }
+  function togglePanel(name) {
+    var section = paneStack && paneStack.querySelector('section.apanel[data-panel="' + name + '"]');
+    if (!section) return;
+    var nowCollapsed = !section.classList.contains('collapsed');
+    applyPanelCollapse(section, name, nowCollapsed);
+    // clear "+N new" badges when the operator looks at the relevant panel
+    if (!nowCollapsed) {
+      if (name === 'waiting') clearNewBadge('a');
+      if (name === 'backlog') clearNewBadge('b');
     }
   }
-  applyPaneTab(localStorage.getItem(PANE_TAB_KEY) || 'waiting');
-  paneTabs.addEventListener('click', function (e) {
-    var b = e.target.closest('button[data-pane-tab]');
-    if (!b) return;
-    applyPaneTab(b.dataset.paneTab);
-  });
+  // Boot: read persisted per-panel collapse state; default to expanded.
+  if (paneStack) {
+    [].forEach.call(paneStack.querySelectorAll('section.apanel[data-panel]'), function (section) {
+      var name = section.getAttribute('data-panel');
+      var saved = localStorage.getItem(panelCollapseKey(name));
+      applyPanelCollapse(section, name, saved === '1');
+    });
+    // Click on the .apanel-head (or any descendant non-control) toggles the panel.
+    paneStack.addEventListener('click', function (e) {
+      var head = e.target.closest('.apanel-head[data-panel-toggle]');
+      if (!head) return;
+      // Inline controls (selects, buttons inside the header) stop propagation
+      // via their own onclick="event.stopPropagation()" attributes — but
+      // defensive guard here too in case any control is added without that.
+      if (e.target.closest('select, .apanel-action, .apanel-sort')) return;
+      togglePanel(head.getAttribute('data-panel-toggle'));
+    });
+  }
 
   // Side panel open / close / drawer state. Class-based:
   //   .side-open   — drawer is slid in (meaningful only at <1024px width)
@@ -1928,7 +2004,7 @@
     if (state === 'hidden') {
       document.body.classList.add('side-hidden');
       panePeek.hidden = false;
-      panePeekLabel.textContent = (document.body.classList.contains('pane-tab-backlog')) ? 'Backlog' : 'Waiting';
+      panePeekLabel.textContent = 'Panels';
     } else if (state === 'open') {
       document.body.classList.add('side-open');
       panePeek.hidden = true;
@@ -1946,7 +2022,7 @@
   else if (window.innerWidth < 1024) {
     // narrow: drawer closed → no .side-open class, peek visible
     panePeek.hidden = false;
-    panePeekLabel.textContent = (document.body.classList.contains('pane-tab-backlog')) ? 'Backlog' : 'Waiting';
+    panePeekLabel.textContent = 'Panels';
   } else {
     applySideState('visible');
   }
@@ -1969,7 +2045,7 @@
     else {
       document.body.classList.remove('side-open');
       panePeek.hidden = false;
-      panePeekLabel.textContent = (document.body.classList.contains('pane-tab-backlog')) ? 'Backlog' : 'Waiting';
+      panePeekLabel.textContent = 'Panels';
     }
   });
   panePeek.addEventListener('click', function () {
@@ -2087,6 +2163,8 @@
     }
     renderTree();
     renderActions();
+    renderDecisions();
+    renderQuestions();
     renderBacklog();
     if (sel && !ctxPanel.hidden) openCtx(sel);
   }

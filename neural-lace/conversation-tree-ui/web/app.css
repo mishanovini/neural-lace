@@ -1,10 +1,15 @@
-/* Conversation Tree UI — v2 redesign (2026-05-23) styles.
+/* Conversation Tree UI — v3 accordion redesign (2026-05-27) styles.
    Vanilla CSS, no framework, no build step. Dark-mode-first.
 
-   V2 LAYOUT REWRITE (per Misha 2026-05-23 feedback):
+   V3 ACCORDION REWRITE (per Misha 2026-05-27 feedback):
      * Two PERSISTENT surfaces only: Tree (fixed narrow column) and Side
-       Panel (tabbed Waiting / Backlog). Tree always claims the full
-       vertical real estate; nothing ever stacks BELOW it.
+       Panel (vertically-stacked accordion of Waiting / Backlog /
+       Decisions / Questions). Tree always claims the full vertical real
+       estate; nothing ever stacks BELOW it.
+     * The right column's panels are STACKED ACCORDION, not tabs. Each
+       panel has a clickable header with a chevron; click to collapse to
+       header-only. All panels start expanded. Per-panel collapse state
+       persists across reload via localStorage.
      * Detail / doc / dispatch composer are CENTERED MODALS — they do not
        shift the persistent layout.
      * At < 1024px wide, the side panel collapses to a slide-in drawer
@@ -13,12 +18,12 @@
      * The old Layout A/B/C system is retired; there's ONE responsive
        template that scales smoothly from 1920 down to ~480 px.
 
-   STATE MODEL — class-based on <body>:
-     `.pane-tab-waiting` / `.pane-tab-backlog`  : which side-panel tab is active
+   STATE MODEL — class-based on <body> for drawer state; per-panel state
+   lives on the <section.apanel> via the .collapsed class:
      `.side-open`                                : drawer open (only meaningful at < 1024px)
      `.side-hidden`                              : explicitly hidden at wide widths (peek pill returns it)
-   Class state cascades cleanly (no specificity puzzles) and is trivially
-   queryable in tests. */
+     `.apanel.collapsed`                         : panel collapsed (header only, body hidden)
+   Per-panel collapse keys: ctree-panel-<name>-collapsed in localStorage. */
 :root {
   --bg: #111827;
   --panel: #1f2937;
@@ -217,34 +222,83 @@ button:active { transform: scale(0.98); }
 @keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:.9} }
 .pane-state .hint { color: var(--accent); }
 
-/* Side-panel tab nav (#paneTabs) */
-#paneTabs {
-  flex: 0 0 auto; display: flex; align-items: stretch; gap: 1px;
-  background: var(--border); border-bottom: 1px solid var(--border);
-}
-#paneTabs button[data-pane-tab] {
-  flex: 1; border-radius: 0; border: none; background: var(--panel2);
-  color: var(--muted); padding: 0.55rem 0.6rem; font-weight: 600;
-  font-size: 0.82rem; display: flex; align-items: center; justify-content: center;
-  gap: 0.4rem;
-}
-#paneTabs button[data-pane-tab].active {
-  background: var(--panel); color: var(--accent);
-  box-shadow: inset 0 -2px 0 var(--accent);
-}
-#paneTabs button[data-pane-tab]:hover { color: var(--text); }
-#paneTabs .rp-close {
-  flex: 0 0 auto; border-radius: 0; border: none;
-  background: var(--panel2); color: var(--muted);
-  padding: 0.55rem 0.7rem; font-size: 0.95rem; line-height: 1;
-}
-#paneTabs .rp-close:hover { color: var(--err); }
+/* v3 accordion 2026-05-27 — stacked panel layout for the right column.
+   Replaces the prior #paneTabs nav. Each .apanel has a clickable header
+   (.apanel-head) with a chevron + title + per-panel controls. Body
+   (.apanel-body) flex-grows to fill remaining space when expanded; hidden
+   when the panel is collapsed (.apanel.collapsed). The accordion stack
+   itself scrolls vertically when total content exceeds the column. */
 
-/* Tab visibility — body.pane-tab-waiting / body.pane-tab-backlog. Default
-   is waiting (set in JS at boot). */
-body:not(.pane-tab-backlog) .backlog-pane { display: none; }
-body:not(.pane-tab-waiting) .actions-pane { display: none; }
-body:not(.pane-tab-waiting):not(.pane-tab-backlog) .backlog-pane { display: none; }
+#rightPanel .rp-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.4rem 0.7rem; background: var(--panel2);
+  border-bottom: 1px solid var(--border);
+}
+#rightPanel .rp-title {
+  font-size: 0.78rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+#rightPanel .rp-close {
+  margin-left: auto; background: transparent; border: 1px solid transparent;
+  color: var(--muted); padding: 0.2rem 0.45rem; font-size: 0.95rem; line-height: 1;
+}
+#rightPanel .rp-close:hover { color: var(--err); border-color: var(--err); }
+
+#paneStack {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 0;
+  background: var(--border);
+}
+
+.apanel {
+  display: flex; flex-direction: column;
+  background: var(--bg); min-height: 0;
+  border-bottom: 1px solid var(--border);
+}
+.apanel:last-child { border-bottom: none; }
+.apanel.collapsed { flex: 0 0 auto; }
+.apanel:not(.collapsed) { flex: 1 1 auto; min-height: 8rem; }
+
+.apanel-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.55rem 0.7rem; background: var(--panel);
+  border: none; border-bottom: 1px solid var(--border);
+  color: var(--text); cursor: pointer;
+  font: inherit; font-size: 0.85rem; font-weight: 700;
+  text-align: left; width: 100%; border-radius: 0;
+  position: sticky; top: 0; z-index: 5;
+}
+.apanel-head:hover { background: var(--panel2); }
+.apanel-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.apanel-chevron {
+  flex: 0 0 auto; display: inline-block; width: 0.9rem; text-align: center;
+  color: var(--muted); font-size: 0.8rem; transition: transform 150ms ease;
+}
+.apanel.collapsed .apanel-chevron { transform: rotate(-90deg); }
+
+.apanel-title { font-weight: 700; }
+.apanel-spacer { flex: 1 1 auto; }
+.apanel-sort { font-size: 0.74rem; color: var(--muted); margin-left: auto; cursor: default; }
+.apanel-sort select { font-size: 0.76rem; padding: 0.12rem 0.3rem; }
+.apanel-action {
+  padding: 0.15rem 0.5rem; font-size: 0.8rem; line-height: 1; cursor: pointer;
+}
+
+.apanel-body {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.apanel.collapsed .apanel-body { display: none; }
+
+/* Count badge for filtered panels (Decisions / Questions). */
+.count-badge {
+  font-size: 0.66rem; font-weight: 700;
+  color: var(--text); background: var(--panel2);
+  border: 1px solid var(--border2); border-radius: 999px;
+  padding: 0.05rem 0.45rem; margin-left: 0.4rem;
+}
+.count-badge[hidden] { display: none; }
 
 /* Tree pane */
 .tree-scroll { position: relative; }

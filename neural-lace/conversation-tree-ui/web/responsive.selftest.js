@@ -1,21 +1,24 @@
 'use strict';
-/* Conversation Tree UI — v2 responsive-layout regression self-test.
+/* Conversation Tree UI — v3 responsive-layout regression self-test.
  * Dependency-free (Node stdlib only, no build step, no headless-browser dep).
  *
- * V2 redesign (2026-05-23) — per Misha's feedback:
+ * V3 accordion redesign (2026-05-27) — per Misha's feedback:
  *   - Tree pane FIXED narrow width (clamp 260-340px), full vertical height,
  *     always visible. Never has content stacked below it.
- *   - ONE side panel right of the tree, hosting Waiting + Backlog as TABS.
- *     Persistent column at >=1024px; off-canvas DRAWER at <1024px.
+ *   - ONE side panel right of the tree, hosting Waiting / Backlog /
+ *     Decisions / Questions as a VERTICAL ACCORDION (no longer tabs).
+ *     Each panel has a clickable header with a chevron; click to collapse to
+ *     header-only. All panels start expanded. Per-panel collapse state
+ *     persists via localStorage (key prefix: ctree-panel-<name>-collapsed).
+ *   - Persistent column at >=1024px; off-canvas DRAWER at <1024px.
  *   - Detail (ex-ctxPanel), Doc viewer, Dispatch composer are CENTERED
  *     MODALS — they NEVER shift the persistent #layout.
- *   - Active tab persists across reload (localStorage key ctree-pane-tab).
  *   - UX-VR-13: backlog context is a multi-line TEXTAREA (not single-line).
  *
- * State model is class-based on <body> to avoid CSS specificity puzzles
- * with dataset attributes:
- *   .pane-tab-waiting / .pane-tab-backlog
- *   .side-open (drawer open at <1024px) / .side-hidden (explicit hide at wide)
+ * State model:
+ *   .apanel.collapsed                — per-panel collapse state on the section
+ *   body.side-open                   — drawer open (only meaningful at <1024px)
+ *   body.side-hidden                 — explicitly hidden at wide widths (peek pill returns it)
  *
  * Run: `node web/responsive.selftest.js`. */
 const fs = require('fs');
@@ -61,11 +64,13 @@ ok('R6 v2: @media (max-width:1023.98px) collapses to single column + drawer slid
   && /@media \(max-width:\s*1023\.98px\)\s*\{[\s\S]*?#layout \.side-panel\s*\{[^}]*right:\s*calc\(-1 \* min\(var\(--side-panel-w\)/.test(C)
   && /body\.side-open\s*#layout \.side-panel\s*\{\s*right:\s*0/.test(C));
 
-// v2: old tabBar gone; new always-visible #paneTabs in its place
-ok('R7 v2: legacy #tabBar removed from HTML; #paneTabs is the right-panel tab nav',
+// v3: tabs replaced by accordion; #paneStack contains stacked .apanel sections
+ok('R7 v3: legacy #tabBar AND #paneTabs removed from HTML; #paneStack hosts the accordion',
   !/id="tabBar"/.test(html)
-  && /#paneTabs\s*\{/.test(C)
-  && /#paneTabs button\[data-pane-tab\]\.active/.test(C));
+  && !/id="paneTabs"/.test(html)
+  && /id="paneStack"/.test(html)
+  && /\.apanel-head\s*\{/.test(C)
+  && /\.apanel\.collapsed\s+\.apanel-body\s*\{\s*display:\s*none/.test(C));
 
 // v2: no <700 stacking rule (single side panel now, tabs swap)
 ok('R8 v2: no @media max-width:699.98px stacking-actions-over-backlog rule',
@@ -90,10 +95,15 @@ ok('R12 .tree-canvas width:100% base (fluid zoom)',
 
 // --- HTML structural hooks ----------------------------------------------
 ok('R13 #showConcluded toggle in header', /id="showConcluded"/.test(html));
-ok('R14 v2: #paneTabs with data-pane-tab="waiting" / "backlog" buttons',
-  /id="paneTabs"/.test(html)
-  && /data-pane-tab="waiting"/.test(html)
-  && /data-pane-tab="backlog"/.test(html));
+ok('R14 v3: accordion panels with data-panel-toggle for waiting/backlog/decisions/questions',
+  /data-panel-toggle="waiting"/.test(html)
+  && /data-panel-toggle="backlog"/.test(html)
+  && /data-panel-toggle="decisions"/.test(html)
+  && /data-panel-toggle="questions"/.test(html)
+  && /data-panel="waiting"/.test(html)
+  && /data-panel="backlog"/.test(html)
+  && /data-panel="decisions"/.test(html)
+  && /data-panel="questions"/.test(html));
 ok('R15 #ctxScrim element present', /id="ctxScrim"/.test(html));
 
 // --- JS behavior hooks --------------------------------------------------
@@ -111,11 +121,12 @@ ok('R20 Fit measures natural bbox + applies scale + scroll origin',
   && /treeScroll\.scrollLeft\s*=\s*0;\s*treeScroll\.scrollTop\s*=\s*0/.test(js));
 ok('R21 zoom reflow sets width:(100/zoom)%',
   /treeCanvas\.style\.width\s*=\s*\(100\s*\/\s*zoom\)\s*\+\s*'%'/.test(js));
-ok('R22 v2: applyPaneTab uses class-based state (.pane-tab-*) and persists to ctree-pane-tab',
-  /function applyPaneTab\s*\(/.test(js)
-  && /classList\.add\('pane-tab-' \+ name\)/.test(js)
-  && /localStorage\.setItem\(PANE_TAB_KEY,\s*name\)/.test(js)
-  && /paneTabs\.addEventListener\('click'/.test(js));
+ok('R22 v3: togglePanel uses .collapsed class on .apanel section + persists per-panel collapse to localStorage',
+  /function togglePanel\s*\(\s*name\s*\)/.test(js)
+  && /function applyPanelCollapse\s*\(/.test(js)
+  && /section\.classList\.toggle\(['"]collapsed['"]/.test(js)
+  && /localStorage\.setItem\(panelCollapseKey\(name\),/.test(js)
+  && /paneStack\.addEventListener\(['"]click['"]/.test(js));
 ok('R22b v2: drawer toggles use class-based state (.side-open / .side-hidden) + paneToggle/rightClose/panePeek wired + resize listener',
   /function applySideState\s*\(/.test(js)
   && /classList\.add\('side-(open|hidden)'\)/.test(js)
@@ -216,9 +227,10 @@ ok('R73 v2: #panePeek peek pill exists + click handler wired',
   /id="panePeek"/.test(html)
   && /\.pane-peek\s*\{/.test(C)
   && /panePeek\.addEventListener\('click'/.test(js));
-ok('R74 v2: active right-panel tab persists across reload via ctree-pane-tab',
-  /PANE_TAB_KEY\s*=\s*'ctree-pane-tab'/.test(js)
-  && /localStorage\.getItem\(PANE_TAB_KEY\)\s*\|\|\s*'waiting'/.test(js));
+ok('R74 v3: per-panel collapse state persists via ctree-panel-<name>-collapsed and reads on boot',
+  /PANEL_KEY_PREFIX\s*=\s*['"]ctree-panel-['"]/.test(js)
+  && /function panelCollapseKey\s*\(\s*name\s*\)/.test(js)
+  && /localStorage\.getItem\(panelCollapseKey\(name\)\)/.test(js));
 
 // ----- v2 redesign UX-VR-13 — context-as-textarea pattern ---------------
 ok('R75 UX-VR-13: schema has additive backlog-context-set event + reducer case',
