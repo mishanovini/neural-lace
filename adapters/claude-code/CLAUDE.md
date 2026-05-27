@@ -141,6 +141,36 @@ This reframing is load-bearing across every other agent's behavior. The natural 
 
 Until those four are true, the plan is in flight — and the orchestrator's reward signal is plan closure, not dispatch completion. "Bookkeeping is later" is a deferral pattern; closure IS the work, not a follow-up to the work. See `~/.claude/rules/orchestrator-pattern.md` and `~/.claude/rules/planning.md` for the per-role consequences.
 
+### Mechanical closure is the target — closure becomes automatic, not remembered (ADR 036, DESIGNED, landing per the roadmap)
+
+The four manual steps above are the *current* reality and remain authoritative
+**until the mechanical-closure redesign lands**. The redesign (ADR 036
+`docs/decisions/036-plan-lifecycle-mechanical-closure.md`, plan
+`docs/plans/plan-lifecycle-redesign.md`) replaces "remember to flip Status" with
+"the system auto-flips Status," on the principle that *mechanical beats advisory*.
+Once it ships:
+
+- A plan's **closure machine is defined at creation, not at closure time**: a
+  `## Closure Contract` section declares — before any work starts — the commands
+  that verify completion, their expected outputs, the on-disk PASS-artifact
+  location, and a "done when…" sentence. Acceptance scenarios are populated (not
+  just present) before a non-exempt plan can reach `Status: ACTIVE`; the
+  `acceptance-exempt` carve-out is preserved and its closure target is self-test
+  PASS.
+- **Closure is automatic.** When `task-verifier` flips the final task checkbox AND
+  the predefined Closure Contract artifact exists (verdict PASS, matching
+  `plan_commit_sha`), `plan-auto-closure.sh` flips `Status: COMPLETED` and archives
+  — no manual flip. `close-plan.sh` becomes the explicit path for abandonment /
+  deferral / supersession and manual recovery, not the routine close.
+- **Staleness is prevented structurally, not surfaced as a nag.** Plans declare
+  `owner:` + `target-completion-date:` at creation; a plan past its target with
+  zero in-scope commits is a *breached commitment* that forces the owner's
+  renew / abandon / convert decision — never auto-defer.
+
+Until `plan-auto-closure.sh` and the creation gates ship, **continue performing the
+four manual closure steps above.** This subsection forward-points; it does not
+claim the automation exists yet.
+
 ## Memory Discipline
 - CLAUDE.md = index (short pointers)
 - SCRATCHPAD.md = ephemeral state
