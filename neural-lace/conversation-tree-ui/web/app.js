@@ -1700,17 +1700,94 @@
   }
 
   // ---- persistent in-GUI notifications (BF-6 / DEC-B) ------------------
-  function pushNote(key, msg, hot) {
+  // v1.1.3+ (2026-05-23): auto-dismiss for non-hot notes, cap-3 visible
+  // non-hot, group similar (e.g., "5 branches under 'X' concluded"). Hot
+  // notes (action-due, deferred-due) always persist and never count against
+  // the cap — they represent things the user must act on.
+  //
+  // Signature backward-compat: pushNote(key, msg, hotBool)  →  legacy.
+  //                            pushNote(key, msg, opts)     →  options:
+  //   { hot: bool, groupKey: string, groupRender: fn(count, latest) }
+  // When groupKey is set, multiple pushNote calls sharing the same groupKey
+  // collapse into a single note whose body is groupRender(count, latestMsg).
+  var NOTE_AUTO_DISMISS_MS = 5000;
+  var NOTE_VISIBLE_CAP = 3;
+  function pushNote(key, msg, optsOrHot) {
+    var opts = (typeof optsOrHot === 'object' && optsOrHot !== null)
+      ? optsOrHot : { hot: !!optsOrHot };
+    var hot = !!opts.hot;
+    var groupKey = opts.groupKey || null;
+    var groupRender = typeof opts.groupRender === 'function' ? opts.groupRender : null;
+    var durationMs = typeof opts.durationMs === 'number' ? opts.durationMs : NOTE_AUTO_DISMISS_MS;
+
     if (dismissed.has(key)) return;
+    // Grouping: if this note has a groupKey and the group node already exists,
+    // bump its counter + refresh content + reset auto-dismiss timer.
+    if (groupKey) {
+      if (dismissed.has(groupKey)) return;
+      var groupNd = noteStack.querySelector('[data-group="' + cssEsc(groupKey) + '"]');
+      if (groupNd) {
+        var count = (parseInt(groupNd.getAttribute('data-count'), 10) || 1) + 1;
+        groupNd.setAttribute('data-count', String(count));
+        var body = groupNd.querySelector('.note-body');
+        if (body) body.textContent = groupRender ? groupRender(count, msg) : (count + 'x: ' + msg);
+        _scheduleAutoDismiss(groupNd, hot, durationMs);
+        return;
+      }
+    }
+    // Idempotency on key.
     var existing = noteStack.querySelector('[data-k="' + cssEsc(key) + '"]');
     if (existing) return;
+
     var nd = el('div', 'note' + (hot ? ' hot' : ''));
     nd.setAttribute('data-k', key);
+    if (groupKey) {
+      nd.setAttribute('data-group', groupKey);
+      nd.setAttribute('data-count', '1');
+    }
     var x = el('button', 'ghost dismiss', '✕');
-    x.addEventListener('click', function () { dismissed.add(key); nd.remove(); });
+    x.addEventListener('click', function () {
+      if (nd._t) { clearTimeout(nd._t); nd._t = null; }
+      dismissed.add(key);
+      if (groupKey) dismissed.add(groupKey);
+      nd.remove();
+    });
     nd.appendChild(x);
-    nd.appendChild(document.createTextNode(msg));
+    var bodySpan = el('span', 'note-body');
+    bodySpan.textContent = msg;
+    nd.appendChild(bodySpan);
     noteStack.appendChild(nd);
+
+    _enforceCap();
+    _scheduleAutoDismiss(nd, hot, durationMs);
+  }
+  // Reset (or set) the auto-dismiss timer on a note. Hot notes never auto-dismiss.
+  function _scheduleAutoDismiss(nd, hot, durationMs) {
+    if (hot) return;
+    if (nd._t) { clearTimeout(nd._t); }
+    nd._t = setTimeout(function () {
+      // Auto-dismiss: do NOT add to `dismissed` Set (we want the underlying
+      // event to be able to re-surface later if it recurs — though the
+      // seenConcluded / firedDefers Sets at the call site already prevent
+      // re-firing for the same node, this keeps the auto-dismiss path from
+      // permanently suppressing genuinely-new events).
+      if (nd.parentNode) nd.parentNode.removeChild(nd);
+    }, durationMs);
+  }
+  // Cap visible non-hot notes. Hot notes persist regardless.
+  function _enforceCap() {
+    var notes = noteStack.querySelectorAll('.note');
+    var nonHot = [];
+    for (var i = 0; i < notes.length; i++) {
+      if (!notes[i].classList.contains('hot')) nonHot.push(notes[i]);
+    }
+    // Remove oldest non-hot notes until at-or-below the cap. Oldest = first
+    // in DOM order (appendChild order).
+    while (nonHot.length > NOTE_VISIBLE_CAP) {
+      var victim = nonHot.shift();
+      if (victim._t) { clearTimeout(victim._t); victim._t = null; }
+      if (victim.parentNode) victim.parentNode.removeChild(victim);
+    }
   }
   function detectConcludeNotifications() {
     nodes().forEach(function (n) {
@@ -1718,9 +1795,22 @@
         seenConcluded.add(n.node_id);
         if (primed && n.parent_id) {
           var p = byId(n.parent_id);
+          var parentTitle = p ? p.title : n.parent_id;
+          var branchTitle = n.title || n.node_id;
+          // Group concluded notifications by parent so a burst of sibling
+          // branches concluding shows as "5 branches under 'X' concluded —
+          // most recent: 'Y'" rather than 5 separate toasts.
           pushNote('concl-' + n.node_id,
-            'Branch "' + (n.title || n.node_id) + '" concluded — parent "' +
-            (p ? p.title : n.parent_id) + '" notified.', false);
+            'Branch "' + branchTitle + '" concluded — parent "' +
+            parentTitle + '" notified.',
+            { hot: false, groupKey: 'concl-parent-' + n.parent_id,
+              groupRender: function (parentTitleCaptured) {
+                return function (count, latest) {
+                  if (count === 1) return latest;
+                  return count + ' branches under "' + parentTitleCaptured +
+                    '" concluded — most recent: "' + branchTitle + '"';
+                };
+              }(parentTitle) });
         }
       }
     });

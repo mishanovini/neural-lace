@@ -239,5 +239,44 @@ ok('R78 UX-VR-13: per-item context disclosure + edit textarea + "Add context →
   && /\.context-area\s*\{[^}]*resize:\s*vertical/.test(C)
   && /post\(\{\s*type:\s*'backlog-context-set',\s*item_id:\s*b\.item_id,\s*context_text:\s*nv\s*\}/.test(js));
 
+// --- 2026-05-23 toast-stacking fix ------------------------------------------
+// Locks the four invariants of the pushNote refactor: auto-dismiss timer for
+// non-hot notes, visible-cap helper, group-by-key collapse, and backward-
+// compat with the legacy boolean third-arg.
+
+ok('R71 toast-fix: NOTE_AUTO_DISMISS_MS and NOTE_VISIBLE_CAP constants present',
+  /var\s+NOTE_AUTO_DISMISS_MS\s*=\s*\d+/.test(js)
+  && /var\s+NOTE_VISIBLE_CAP\s*=\s*\d+/.test(js));
+
+ok('R72 toast-fix: pushNote signature accepts opts object OR legacy hot boolean',
+  /function pushNote\s*\(\s*key\s*,\s*msg\s*,\s*optsOrHot\s*\)/.test(js)
+  && /typeof\s+optsOrHot\s*===\s*'object'/.test(js)
+  && /opts\.hot/.test(js)
+  && /opts\.groupKey/.test(js));
+
+ok('R73 toast-fix: _scheduleAutoDismiss schedules setTimeout for non-hot, no-op for hot',
+  /function _scheduleAutoDismiss\s*\(\s*nd\s*,\s*hot\s*,\s*durationMs\s*\)\s*\{[\s\S]*?if\s*\(\s*hot\s*\)\s*return;/.test(js)
+  && /nd\._t\s*=\s*setTimeout\s*\(\s*function\s*\(\s*\)\s*\{[\s\S]*?nd\.parentNode\.removeChild\(nd\)/.test(js));
+
+ok('R74 toast-fix: _enforceCap walks .note children, removes oldest non-hot when over cap',
+  /function _enforceCap\s*\(\s*\)/.test(js)
+  && /noteStack\.querySelectorAll\(\s*['"]\.note['"]\s*\)/.test(js)
+  && /nonHot\.length\s*>\s*NOTE_VISIBLE_CAP/.test(js)
+  && /clearTimeout\(victim\._t\)/.test(js));
+
+ok('R75 toast-fix: group-by-key collapse — querySelector data-group, bump data-count, refresh body via groupRender',
+  /noteStack\.querySelector\(\s*['"]\[data-group="['"]\s*\+\s*cssEsc\(groupKey\)/.test(js)
+  && /data-count/.test(js)
+  && /groupRender\s*\?\s*groupRender\(count,\s*msg\)/.test(js));
+
+ok('R76 toast-fix: concluded notifications use groupKey="concl-parent-<parent_id>" + groupRender producing "N branches under" message',
+  /groupKey:\s*['"]concl-parent-['"]\s*\+\s*n\.parent_id/.test(js)
+  && /branches under "/.test(js)
+  && /concluded — most recent:/.test(js));
+
+ok('R77 toast-fix: note body lives in a .note-body child so group-refresh can replace it without touching the dismiss button',
+  /el\(['"]span['"],\s*['"]note-body['"]\)/.test(js)
+  && /querySelector\(['"]\.note-body['"]\)/.test(js));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
