@@ -143,6 +143,42 @@ scratchpad_mentions() {
   grep -qF "$slug" "$scratchpad"
 }
 
+# Emit the canonical SCRATCHPAD stub (the CLAUDE.md SCRATCHPAD format, <=30 lines)
+# to stdout. Used by cmd_refresh's create-on-missing path. Content is deterministic
+# per repo+day so the RC1 concurrent-create race is harmless (two sessions writing
+# the same stub is last-writer-wins on identical bytes); the handoff marker is
+# appended separately by cmd_refresh.
+write_scratchpad_template() {
+  local repo="$1"
+  local project
+  project=$(basename "$repo" 2>/dev/null) || project="project"
+  [ -n "$project" ] || project="project"
+  local today
+  today=$(date -u +%Y-%m-%d)
+  cat <<EOF
+# SCRATCHPAD — $project
+
+## Current State ($today)
+Branch: (unknown) | Deployed: (unknown) | Migrations: (unknown)
+
+## Latest Milestone
+(auto-created by session-wrap.sh — no prior SCRATCHPAD existed; replace with a
+ real 2-3 line summary of what just shipped or was verified)
+
+## Active Plan
+None — populate with the active plan file path + Status, or "None".
+
+## Backlog Pointer
+docs/backlog.md
+
+## What's Next
+(populate with 3-5 immediate priorities for the next session)
+
+## Blocking / Known Issues
+None
+EOF
+}
+
 # ===== verify subcommand =====
 
 cmd_verify() {
@@ -254,6 +290,26 @@ cmd_refresh() {
   local repo="$1"
   local wt_repo="${2:-$1}"
   local scratchpad="$repo/SCRATCHPAD.md"
+
+  # Create-on-missing (R1 / RC1 fix). Before this branch existed, a missing
+  # SCRATCHPAD made cmd_refresh a silent no-op: the file stayed absent, and the
+  # downstream cmd_verify Signal 1 read the missing-file sentinel from
+  # mtime_seconds_ago (99999999s = "1666666 min stale"). That staleness is
+  # UNRESOLVABLE by retrying — there is no file to freshen — so the Stop hook
+  # re-fired indefinitely (435x in one observed session). Creating the canonical
+  # stub here makes Signal 1 resolvable on the first try. Atomic temp-then-rename
+  # + create-only-when-absent so two concurrent sessions can't clobber each other
+  # (identical static stub → last-writer-wins is harmless). See ADR 028 (parent
+  # root is the SCRATCHPAD home) and docs/plans/file-lifecycle-redesign.md R1.
+  if [ ! -f "$scratchpad" ]; then
+    local tmp="$scratchpad.tmp.$$"
+    if write_scratchpad_template "$repo" > "$tmp" 2>/dev/null && mv "$tmp" "$scratchpad" 2>/dev/null; then
+      echo "[session-wrap] created SCRATCHPAD.md from template (was missing)"
+    else
+      rm -f "$tmp" 2>/dev/null
+      echo "[session-wrap] WARNING: could not create SCRATCHPAD.md at $scratchpad (disk write failed)" >&2
+    fi
+  fi
 
   # Touch SCRATCHPAD with an explicit timestamp comment (idempotent: appends a single line)
   if [ -f "$scratchpad" ]; then
@@ -503,6 +559,54 @@ EOF
   else
     echo "self-test (S9) worktree-tracked-file: SKIP (git worktree add failed in test env)"
   fi
+
+  # ---- scenario 10 (R1): missing SCRATCHPAD + refresh -> created from template, verify PASS, no sentinel
+  # RC1 fix: pre-R1 a missing SCRATCHPAD made cmd_refresh a no-op, cmd_verify read the
+  # 99999999s missing-file sentinel ("1666666 min stale"), and the Stop hook looped (435x).
+  # Use a SEPARATE fresh repo with no archive history so plans_touched is empty — this
+  # isolates Signal 1 (the sentinel) from Signal 2 (touched-plan mention).
+  cd "$TMPROOT"
+  R1ROOT=$(mktemp -d 2>/dev/null || mktemp -d -t sw-r1)
+  ( cd "$R1ROOT" \
+    && git init -q . \
+    && git config user.email "test@example.test" \
+    && git config user.name "Test" \
+    && echo "x" > f && git add f && git commit -q -m init ) >/dev/null 2>&1
+  rm -f "$R1ROOT/SCRATCHPAD.md"   # precondition: absent
+  S10_OUT=$(cmd_refresh "$R1ROOT" 2>&1); S10_EXIT=$?
+  S10_VERIFY=$(cmd_verify "$R1ROOT" 2>&1)   # explicit re-verify for the no-sentinel assertion
+  if [ "$S10_EXIT" -eq 0 ] \
+     && [ -f "$R1ROOT/SCRATCHPAD.md" ] \
+     && grep -q '^# SCRATCHPAD' "$R1ROOT/SCRATCHPAD.md" \
+     && grep -q '## What.*Next' "$R1ROOT/SCRATCHPAD.md" \
+     && echo "$S10_OUT" | grep -q 'created SCRATCHPAD.md from template' \
+     && ! echo "$S10_VERIFY" | grep -q '1666666'; then
+    echo "self-test (S10) missing-scratchpad-create-then-fresh: PASS"
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (S10) missing-scratchpad-create-then-fresh: FAIL (refresh-exit=$S10_EXIT, file-exists=$([ -f "$R1ROOT/SCRATCHPAD.md" ] && echo y || echo n))"
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- scenario 11 (R1): refresh twice does NOT clobber the created stub (idempotent create)
+  # Create once, inject a user edit into the body, refresh again -> the user edit must
+  # survive (create-only-when-absent: the second run freshens the marker, it does NOT
+  # recreate from template). Also exercises file-present -> mtime-updated -> verify PASS.
+  rm -f "$R1ROOT/SCRATCHPAD.md"
+  cmd_refresh "$R1ROOT" >/dev/null 2>&1                       # first: creates stub
+  echo "USER-EDIT-SENTINEL-XYZ" >> "$R1ROOT/SCRATCHPAD.md"    # operator edits the body
+  S11_OUT=$(cmd_refresh "$R1ROOT" 2>&1); S11_EXIT=$?          # second: must NOT clobber
+  if [ "$S11_EXIT" -eq 0 ] \
+     && grep -q 'USER-EDIT-SENTINEL-XYZ' "$R1ROOT/SCRATCHPAD.md" \
+     && ! echo "$S11_OUT" | grep -q 'created SCRATCHPAD.md from template'; then
+    echo "self-test (S11) refresh-idempotent-no-clobber: PASS"
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (S11) refresh-idempotent-no-clobber: FAIL (exit=$S11_EXIT, user-edit-survived=$(grep -q 'USER-EDIT-SENTINEL-XYZ' "$R1ROOT/SCRATCHPAD.md" && echo y || echo n), recreated=$(echo "$S11_OUT" | grep -q 'created SCRATCHPAD.md from template' && echo y || echo n))"
+    FAILED=$((FAILED + 1))
+  fi
+  cd "$TMPROOT"
+  rm -rf "$R1ROOT"
 
   echo ""
   echo "self-test summary: $PASSED passed, $FAILED failed (of $((PASSED + FAILED)) scenarios)"
