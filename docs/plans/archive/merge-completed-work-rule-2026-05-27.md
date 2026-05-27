@@ -1,5 +1,5 @@
 # Plan: Ship merge-completed-work rule + auto-merge design doc
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
