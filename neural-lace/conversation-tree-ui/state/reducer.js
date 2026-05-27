@@ -201,11 +201,27 @@ function applyEvent(snap, ev, treeId) {
     }
     case 'backlog-added': {
       for (const b of snap.backlog) if (b.item_id === ev.item_id) { reject(snap, ev, 'backlog item_id exists'); return; }
+      // v2 redesign 2026-05-23 — UX-VR-13: persist the optional context_text
+      // (or legacy `context` field) so capture-time context is no longer
+      // silently dropped. Empty string is preserved as empty string.
+      var ctxOnAdd = '';
+      if (typeof ev.context_text === 'string') ctxOnAdd = ev.context_text;
+      else if (typeof ev.context === 'string') ctxOnAdd = ev.context;
       snap.backlog.push({
         item_id: ev.item_id, tree_id: String(ev.tree_id),
         priority: String(ev.priority), text: String(ev.text),
         activated: false,
+        context_text: ctxOnAdd,
       });
+      return;
+    }
+    case 'backlog-context-set': {
+      // v2 redesign 2026-05-23 — UX-VR-13. LWW on context_text. Idempotent
+      // by event_id at the envelope layer; semantically the LAST one wins.
+      let bx = null;
+      for (const x of snap.backlog) if (x.item_id === ev.item_id) bx = x;
+      if (!bx) { reject(snap, ev, 'backlog item not found'); return; }
+      bx.context_text = String(ev.context_text == null ? '' : ev.context_text);
       return;
     }
     case 'backlog-activated': {
