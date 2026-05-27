@@ -43,6 +43,26 @@
 #       was NOT caught by the existing playwright suite that appeared to
 #       cover it.
 #
+# Per-project exemption: routes-tested-via-e2e
+#   A project that tests its HTTP routes exclusively through end-to-end
+#   tests (browser / journey) — rather than co-located tests/api/<route>
+#   integration tests — opts in by declaring in package.json:
+#       { "harness": { "routesTestedVia": "e2e" } }
+#   When that field is "e2e", API route files (src/app/api/.../route.ts)
+#   are exempted from the Layer 1 tests/api co-location requirement (and,
+#   transitively, Layer 2 — route files are scored exclusively by the
+#   Layer 1 path). NOTHING else relaxes: lib/component/migration coverage,
+#   the mock ban (Layer 3), the trivial-assertion ban (Layer 4), and the
+#   silent-skip ban (Layer 5) all still apply in full. The motivating case:
+#   a NextAuth-protected route cannot be exercised from tests/api/ without
+#   mocking the auth layer, but Layer 3 bans mocks in the integration tier —
+#   so such a route is architecturally unable to satisfy tests/api at
+#   pre-commit time and must be covered by E2E instead.
+#   Default (field absent, or any value != "e2e"): unchanged. The only
+#   behavior change is for projects that explicitly opt in. Every exemption
+#   that fires is logged to stderr AND appended to
+#   .claude/state/tdd-gate-exemptions.log so the relaxation is auditable.
+#
 # Escape hatch: --no-verify is blocked by the Bash PreToolUse hook in
 # settings.json, so this gate cannot be bypassed under the normal
 # workflow.
@@ -54,6 +74,85 @@
 set -e
 
 # ============================================================
+# Self-test (run only on explicit --self-test; no-op in the commit chain)
+# ============================================================
+#
+# Each scenario builds a throwaway git repo, stages files, runs THIS gate
+# as a subprocess from inside that repo (so package.json + git state are
+# read exactly as in a real commit), and asserts the resulting exit code.
+if [[ "${1:-}" == "--self-test" ]]; then
+  set +e
+  # Resolve to an absolute path: scenarios `cd` into temp repos before
+  # invoking the gate, so a relative $0 would no longer resolve.
+  SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  st_fails=0
+  _st_expect() { # <label> <expected-rc> <actual-rc>
+    if [[ "$2" == "$3" ]]; then
+      echo "self-test ($1): PASS" >&2
+    else
+      echo "self-test ($1): FAIL (expected rc=$2, got rc=$3)" >&2
+      st_fails=$((st_fails + 1))
+    fi
+  }
+  # _st_mkrepo <dir> — init a throwaway repo
+  _st_mkrepo() { git init -q "$1" >/dev/null 2>&1; }
+  # _st_run <dir> — run the gate from inside <dir>, echo its exit code
+  _st_run() { local rc=0; ( cd "$1" && bash "$SELF" ) >/dev/null 2>&1 || rc=$?; echo "$rc"; }
+
+  ST_TMP="$(mktemp -d)"
+  trap 'rm -rf "$ST_TMP"' EXIT
+
+  # Scenario A: routesTestedVia=e2e + new route.ts, no tests/api → EXEMPT (rc 0)
+  A="$ST_TMP/a"; _st_mkrepo "$A"
+  printf '{"harness":{"routesTestedVia":"e2e"}}' > "$A/package.json"
+  mkdir -p "$A/src/app/api/widgets"
+  printf 'export async function GET() { return new Response("ok"); }\n' > "$A/src/app/api/widgets/route.ts"
+  ( cd "$A" && git add -A ) >/dev/null 2>&1
+  _st_expect "A-e2e-route-exempt" "0" "$(_st_run "$A")"
+  # Scenario A also asserts the exemption was logged (auditable, not silent)
+  if [[ -f "$A/.claude/state/tdd-gate-exemptions.log" ]] && \
+     grep -q 'src/app/api/widgets/route.ts' "$A/.claude/state/tdd-gate-exemptions.log" 2>/dev/null; then
+    echo "self-test (A-exemption-logged): PASS" >&2
+  else
+    echo "self-test (A-exemption-logged): FAIL (no log entry for the exempted route)" >&2
+    st_fails=$((st_fails + 1))
+  fi
+
+  # Scenario B: NO harness field + new route.ts, no tests/api → BLOCKED (rc 1)
+  B="$ST_TMP/b"; _st_mkrepo "$B"
+  printf '{"name":"b"}' > "$B/package.json"
+  mkdir -p "$B/src/app/api/widgets"
+  printf 'export async function GET() { return new Response("ok"); }\n' > "$B/src/app/api/widgets/route.ts"
+  ( cd "$B" && git add -A ) >/dev/null 2>&1
+  _st_expect "B-default-route-still-blocked" "1" "$(_st_run "$B")"
+
+  # Scenario C: routesTestedVia=co-located-unit (non-e2e value) → NOT exempt (rc 1)
+  C="$ST_TMP/c"; _st_mkrepo "$C"
+  printf '{"harness":{"routesTestedVia":"co-located-unit"}}' > "$C/package.json"
+  mkdir -p "$C/src/app/api/widgets"
+  printf 'export async function GET() { return new Response("ok"); }\n' > "$C/src/app/api/widgets/route.ts"
+  ( cd "$C" && git add -A ) >/dev/null 2>&1
+  _st_expect "C-nondefault-value-not-exempt" "1" "$(_st_run "$C")"
+
+  # Scenario D: routesTestedVia=e2e BUT a tests/api file uses a mock → Layer 3
+  #             still BLOCKS (the exemption must not weaken other layers).
+  D="$ST_TMP/d"; _st_mkrepo "$D"
+  printf '{"harness":{"routesTestedVia":"e2e"}}' > "$D/package.json"
+  mkdir -p "$D/src/app/api/widgets" "$D/tests/api"
+  printf 'export async function GET() { return new Response("ok"); }\n' > "$D/src/app/api/widgets/route.ts"
+  printf "import { vi } from 'vitest';\nvi.mock('../../src/lib/db');\nit('x', () => { expect(1).toEqual(1); });\n" > "$D/tests/api/widgets.test.ts"
+  ( cd "$D" && git add -A ) >/dev/null 2>&1
+  _st_expect "D-mock-ban-still-fires-under-e2e" "1" "$(_st_run "$D")"
+
+  if [[ "$st_fails" -eq 0 ]]; then
+    echo "ALL SELF-TESTS PASSED (5/5)" >&2
+    exit 0
+  fi
+  echo "$st_fails SELF-TEST(S) FAILED" >&2
+  exit 1
+fi
+
+# ============================================================
 # Environment
 # ============================================================
 
@@ -63,6 +162,32 @@ RUNTIME_DIRS_REGEX='^src/(app|lib|trigger|components|middleware)'
 
 # Test directories where mocks are BANNED.
 INTEGRATION_TEST_DIRS_REGEX='^tests/(api|integration|journey|playwright)/'
+
+# Per-project exemption (see header): a project declares
+#   { "harness": { "routesTestedVia": "e2e" } }
+# in package.json to exempt API route files from the tests/api co-location
+# requirement. Read once here; default empty (no exemption). package.json is
+# already this gate's per-project config surface (pre-commit-gate.sh reads npm
+# scripts via jq the same way).
+ROUTES_TESTED_VIA=""
+if [[ -f package.json ]] && command -v jq >/dev/null 2>&1; then
+  ROUTES_TESTED_VIA=$(jq -r '.harness.routesTestedVia // empty' package.json 2>/dev/null || true)
+fi
+
+# Append-only audit trail for every exemption that fires. Logs to stderr (so
+# it shows in the commit output) AND to .claude/state/tdd-gate-exemptions.log
+# (so it survives the session) — the relaxation is never silent.
+log_routes_e2e_exemption() {
+  local file="$1"
+  local root logdir logfile ts
+  root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  logdir="$root/.claude/state"
+  logfile="$logdir/tdd-gate-exemptions.log"
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown-time")
+  mkdir -p "$logdir" 2>/dev/null || true
+  echo "$ts  exemption=routes-tested-via-e2e  value=$ROUTES_TESTED_VIA  file=$file  source=package.json:harness.routesTestedVia" >> "$logfile" 2>/dev/null || true
+  echo "[tdd-gate] EXEMPTION routes-tested-via-e2e: '$file' skips the tests/api co-location requirement (package.json harness.routesTestedVia=$ROUTES_TESTED_VIA)" >&2
+}
 
 # ============================================================
 # Pre-flight
@@ -166,8 +291,16 @@ while IFS= read -r file; do
     is_new=1
   fi
 
-  # New API route handlers
+  # API route handlers (new OR modified — route files are scored here, not in
+  # the Layer 2 modified-file path, because this branch `continue`s first).
   if [[ "$file" =~ ^src/app/api/.+/route\.ts$ ]]; then
+    # Per-project exemption: projects that test routes via E2E (e.g. NextAuth-
+    # protected routes that cannot be exercised from tests/api/ without mocking
+    # auth, which Layer 3 bans) skip the tests/api co-location requirement.
+    if [[ "$ROUTES_TESTED_VIA" == "e2e" ]]; then
+      log_routes_e2e_exemption "$file"
+      continue
+    fi
     NEW_FILES+="$file"$'\n'
     continue
   fi

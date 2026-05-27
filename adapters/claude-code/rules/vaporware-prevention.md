@@ -13,7 +13,7 @@ single biggest hole in the first Gen 4 pass.
 
 | Rule | Hook / agent that enforces it | File |
 |---|---|---|
-| Runtime files require tests (new + modified) | `pre-commit-tdd-gate.sh` diff-symbol scan (Layer 1-2) | `~/.claude/hooks/pre-commit-tdd-gate.sh` |
+| Runtime files require tests (new + modified) | `pre-commit-tdd-gate.sh` diff-symbol scan (Layer 1-2). Per-project exemption: a project declaring `{"harness":{"routesTestedVia":"e2e"}}` in `package.json` exempts API route files (`src/app/api/.../route.ts`) from the Layer 1 `tests/api` co-location requirement — for projects that test routes via E2E (e.g. NextAuth-protected routes unable to run in `tests/api` without mocking auth, which Layer 3 bans). Default unchanged; only `"e2e"` exempts; every exemption logged to `.claude/state/tdd-gate-exemptions.log`. Doc: `docs/guides/tdd-gate-e2e-exemption.md`. | `~/.claude/hooks/pre-commit-tdd-gate.sh` |
 | Integration tests cannot mock | `pre-commit-tdd-gate.sh` mock ban (Layer 3) | same |
 | Tests cannot use trivial assertions alone | `pre-commit-tdd-gate.sh` trivial-assertion ban (Layer 4) | same |
 | Plan checkboxes cannot be self-flipped | `plan-edit-validator.sh` evidence-first protocol | `~/.claude/hooks/plan-edit-validator.sh` |
