@@ -22,21 +22,32 @@
 #   unconditionally with a brief stderr note. If a mix, do the normal
 #   scope-check on the non-system files only.
 #
-# Merge-context allowlist (HARNESS-GAP-27, 2026-05-14):
-#   When `$GIT_DIR/MERGE_HEAD` exists (commit is resolving a merge),
-#   commit-numbered migration paths are additionally exempt:
-#     - `supabase/migrations/*.sql`
-#     - `prisma/migrations/**`
-#     - `db/migrations/**`
-#   Rationale: these are temporally-numbered artifacts that master
-#   creates procedurally; a merge-resolution-plan author cannot
-#   anticipate which numbered files master will have generated since
-#   the divergence. Outside a merge, the same paths are NOT
-#   automatically system-managed (legitimate plan-scoped work).
-#   The merge-context exemption is detected via
-#   `[ -e $(git rev-parse --git-dir)/MERGE_HEAD ]`.
-#   Companion "union of plans active on either side" approach is
-#   tracked as a separate ADR (see backlog HARNESS-GAP-27).
+# Rebase / merge full-skip (HARNESS-GAP-29, 2026-05-27):
+#   A `git commit` created WHILE a rebase or merge is in progress stages
+#   files that git's replay/merge brought in — e.g. origin/master's files
+#   applied to a PR branch during conflict resolution — NOT files the
+#   author chose per the plan. Scope-checking author-uncontrolled files is
+#   meaningless and produces false blocks on the routine "rebase/merge
+#   master into a PR branch" operation. So when a rebase- or
+#   merge-in-progress is detected, the ENTIRE scope check is skipped and
+#   the exemption is logged to `~/.claude/state/scope-gate-exemptions.log`
+#   (commit context + reason) for audit.
+#
+#   Detection (any sufficient):
+#     - rebase:  `$GIT_DIR/rebase-apply` or `$GIT_DIR/rebase-merge` exists
+#     - merge:   `$GIT_DIR/MERGE_HEAD` exists, OR the `git commit -m`
+#                message begins with "Merge branch" (a true merge commit
+#                where MERGE_HEAD may already be absent).
+#
+#   This SUPERSEDES the narrower HARNESS-GAP-27 behavior (which exempted
+#   only commit-numbered migration paths during a merge and still
+#   scope-checked everything else). That was insufficient: a master
+#   merge/rebase stages app code, configs, and docs too, not just
+#   migrations. The migration-path allowlist below (`_is_system_managed_path`
+#   under IN_MERGE) is retained as documented defense-in-depth but is
+#   subsumed by the earlier full-skip whenever MERGE_HEAD is present.
+#   Companion "union of plans active on either side" approach is tracked
+#   as a separate ADR (see backlog HARNESS-GAP-27).
 #
 # Active-plan discovery:
 #   Iterates docs/plans/*.md (top-level only — excludes archive/). For
@@ -112,7 +123,7 @@ _is_system_managed_path() {
 }
 
 # ============================================================
-# --self-test handler (twelve scenarios)
+# --self-test handler (nineteen scenarios)
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
   # We need this script's path for re-invocation under different cwds
@@ -568,11 +579,15 @@ Test merge-context allowlist.
     FAILED=$((FAILED+1))
   fi
 
-  # ---- Scenario 15: FAIL — MERGE_HEAD exists, but a non-migration file is still scope-checked ----
-  # Migration is allowed via merge-context exemption, but an unrelated
-  # file (foo.ts not in plan) is still rejected. Merge-context exemption
-  # is narrowly targeted at migration paths; it does NOT make the entire
-  # commit pass.
+  # ---- Scenario 15: PASS — MERGE_HEAD exists; full-skip even for a non-migration out-of-scope file ----
+  # BEHAVIOR CHANGE (HARNESS-GAP-29, 2026-05-27): supersedes the prior
+  # HARNESS-GAP-27 "narrow targeting" property (where a non-migration file
+  # was still blocked during a merge). A merge stages files git's merge
+  # brought in — app code, configs, docs — not just migrations, and not
+  # author-chosen plan scope. Scope-checking them is meaningless, so a
+  # merge-resolution commit now FULL-skips. Here both an out-of-scope
+  # migration AND an out-of-scope src/unrelated.ts are staged with
+  # MERGE_HEAD present; the gate must allow (exit 0), not block.
   S15_REPO="$TMPROOT/s15"
   mkdir -p "$S15_REPO"
   (
@@ -586,7 +601,7 @@ Test merge-context allowlist.
     git add docs/plans/test-scope-plan.md 2>/dev/null
     git commit -q -m "init plan" 2>/dev/null
     echo "0000000000000000000000000000000000000000" > .git/MERGE_HEAD
-    # Stage both: allowed migration AND unrelated file
+    # Stage both an out-of-scope migration AND an out-of-scope source file.
     mkdir -p supabase/migrations src
     echo "-- migration" > "supabase/migrations/20260514120000_add_index.sql"
     echo "stub" > "src/unrelated.ts"
@@ -598,21 +613,16 @@ Test merge-context allowlist.
   S15_RC=$(cat "$S15_REPO/rc.txt" 2>/dev/null || echo 99)
   S15_STDERR=$(cat "$S15_REPO/stderr.txt" 2>/dev/null || echo "")
   S15_OK=1
-  if [[ "$S15_RC" != "2" ]]; then
+  if [[ "$S15_RC" != "0" ]]; then
     S15_OK=0
-    echo "self-test (15) merge-context-narrow-targeting: FAIL (rc=$S15_RC, expected 2)" >&2
+    echo "self-test (15) merge-resolution-full-skip: FAIL (rc=$S15_RC, expected 0)" >&2
   fi
-  # The blocked file should be src/unrelated.ts, NOT the migration
-  if [[ "$S15_STDERR" != *"src/unrelated.ts"* ]]; then
+  if [[ "$S15_STDERR" != *"merge-resolution detected"* ]]; then
     S15_OK=0
-    echo "self-test (15) merge-context-narrow-targeting: FAIL (stderr missing 'src/unrelated.ts' as blocked file)" >&2
-  fi
-  if [[ "$S15_STDERR" == *"supabase/migrations/20260514120000_add_index.sql"* ]]; then
-    S15_OK=0
-    echo "self-test (15) merge-context-narrow-targeting: FAIL (stderr should NOT mention the migration; it was exempt)" >&2
+    echo "self-test (15) merge-resolution-full-skip: FAIL (stderr missing 'merge-resolution detected' note)" >&2
   fi
   if [[ "$S15_OK" -eq 1 ]]; then
-    echo "self-test (15) merge-context-narrow-targeting: PASS (migration exempt, unrelated file blocked)" >&2
+    echo "self-test (15) merge-resolution-full-skip: PASS (merge context full-skips scope-check)" >&2
     PASSED=$((PASSED+1))
   else
     FAILED=$((FAILED+1))
@@ -649,8 +659,112 @@ Test merge-context allowlist.
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 17: PASS — rebase-in-progress (rebase-apply) full-skips a clearly out-of-scope file ----
+  # Simulate `git am`/`git rebase` (apply backend) by creating
+  # .git/rebase-apply. The staged file is NOT in the plan's scope; the
+  # gate must allow because a rebase replays author-chosen commits and
+  # stages files git's replay brought in.
+  S17_REPO="$TMPROOT/s17"
+  mkdir -p "$S17_REPO"
+  (
+    cd "$S17_REPO" || exit 99
+    git init -q 2>/dev/null || true
+    git config user.email "test@example.com" 2>/dev/null
+    git config user.name "Test" 2>/dev/null
+    git config commit.gpgsign false 2>/dev/null
+    mkdir -p docs/plans
+    printf '%s' "$PLAN_MERGE_BASIC" > "docs/plans/test-scope-plan.md"
+    git add docs/plans/test-scope-plan.md 2>/dev/null
+    git commit -q -m "init plan" 2>/dev/null
+    # Simulate rebase-in-progress (apply backend).
+    mkdir -p .git/rebase-apply
+    mkdir -p src
+    echo "stub" > "src/way-out-of-scope.ts"
+    git add "src/way-out-of-scope.ts" 2>/dev/null
+    s17_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"replayed commit\""}}'
+    printf '%s' "$s17_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    echo $? > rc.txt
+  )
+  S17_RC=$(cat "$S17_REPO/rc.txt" 2>/dev/null || echo 99)
+  S17_STDERR=$(cat "$S17_REPO/stderr.txt" 2>/dev/null || echo "")
+  if [[ "$S17_RC" == "0" ]] && [[ "$S17_STDERR" == *"rebase-in-progress detected"* ]]; then
+    echo "self-test (17) rebase-apply-full-skip: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (17) rebase-apply-full-skip: FAIL (rc=$S17_RC, expected 0 with 'rebase-in-progress detected')" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 18: PASS — mid-rebase (rebase-merge) takes precedence over bad scope ----
+  # The interactive/merge rebase backend uses .git/rebase-merge. Out-of-
+  # scope file present; rebase precedence => full-skip (exit 0).
+  S18_REPO="$TMPROOT/s18"
+  mkdir -p "$S18_REPO"
+  (
+    cd "$S18_REPO" || exit 99
+    git init -q 2>/dev/null || true
+    git config user.email "test@example.com" 2>/dev/null
+    git config user.name "Test" 2>/dev/null
+    git config commit.gpgsign false 2>/dev/null
+    mkdir -p docs/plans
+    printf '%s' "$PLAN_MERGE_BASIC" > "docs/plans/test-scope-plan.md"
+    git add docs/plans/test-scope-plan.md 2>/dev/null
+    git commit -q -m "init plan" 2>/dev/null
+    # Simulate rebase-in-progress (merge backend).
+    mkdir -p .git/rebase-merge
+    mkdir -p src
+    echo "stub" > "src/another-out-of-scope.ts"
+    git add "src/another-out-of-scope.ts" 2>/dev/null
+    s18_input='{"tool_name":"Bash","tool_input":{"command":"git commit"}}'
+    printf '%s' "$s18_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    echo $? > rc.txt
+  )
+  S18_RC=$(cat "$S18_REPO/rc.txt" 2>/dev/null || echo 99)
+  S18_STDERR=$(cat "$S18_REPO/stderr.txt" 2>/dev/null || echo "")
+  if [[ "$S18_RC" == "0" ]] && [[ "$S18_STDERR" == *"rebase-in-progress detected"* ]]; then
+    echo "self-test (18) rebase-merge-precedence: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (18) rebase-merge-precedence: FAIL (rc=$S18_RC, expected 0 with 'rebase-in-progress detected')" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 19: PASS — "Merge branch" commit message full-skips (no MERGE_HEAD on disk) ----
+  # A true merge commit committed via `-m "Merge branch ..."` where
+  # MERGE_HEAD is absent (e.g. re-running the commit). The message
+  # fallback must trigger the merge-resolution full-skip.
+  S19_REPO="$TMPROOT/s19"
+  mkdir -p "$S19_REPO"
+  (
+    cd "$S19_REPO" || exit 99
+    git init -q 2>/dev/null || true
+    git config user.email "test@example.com" 2>/dev/null
+    git config user.name "Test" 2>/dev/null
+    git config commit.gpgsign false 2>/dev/null
+    mkdir -p docs/plans
+    printf '%s' "$PLAN_MERGE_BASIC" > "docs/plans/test-scope-plan.md"
+    git add docs/plans/test-scope-plan.md 2>/dev/null
+    git commit -q -m "init plan" 2>/dev/null
+    # NO .git/MERGE_HEAD, NO rebase dir — rely on the commit-message fallback.
+    mkdir -p src
+    echo "stub" > "src/merged-in.ts"
+    git add "src/merged-in.ts" 2>/dev/null
+    s19_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"Merge branch '"'"'master'"'"' into feature\""}}'
+    printf '%s' "$s19_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    echo $? > rc.txt
+  )
+  S19_RC=$(cat "$S19_REPO/rc.txt" 2>/dev/null || echo 99)
+  S19_STDERR=$(cat "$S19_REPO/stderr.txt" 2>/dev/null || echo "")
+  if [[ "$S19_RC" == "0" ]] && [[ "$S19_STDERR" == *"merge-resolution detected"* ]]; then
+    echo "self-test (19) merge-branch-message-full-skip: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (19) merge-branch-message-full-skip: FAIL (rc=$S19_RC, expected 0 with 'merge-resolution detected')" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 16 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 19 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -730,6 +844,50 @@ if [[ -z "$REPO_ROOT" ]]; then
 fi
 
 if [[ -z "$REPO_ROOT" ]] || [[ ! -d "$REPO_ROOT/docs/plans" ]]; then
+  exit 0
+fi
+
+# --- Full-skip: rebase or merge-resolution context (HARNESS-GAP-29, 2026-05-27) ---
+# A commit created WHILE a rebase or merge is in progress stages files
+# git's replay/merge brought in (not author-chosen plan scope). Scope-
+# checking those is meaningless and false-blocks the routine "rebase/merge
+# master into a PR branch" operation. Detect the in-progress state from
+# the per-worktree git dir, full-skip the scope check, and log for audit.
+# This supersedes the narrower migration-only merge exemption below.
+GIT_DIR_PATH=$(git -C "$REPO_ROOT" rev-parse --git-dir 2>/dev/null || echo "")
+case "$GIT_DIR_PATH" in
+  /*) ;;                                   # already absolute
+  "") ;;                                   # couldn't resolve; leave empty
+  *) GIT_DIR_PATH="$REPO_ROOT/$GIT_DIR_PATH" ;;  # relative -> resolve vs REPO_ROOT
+esac
+
+SKIP_REASON=""
+if [[ -n "$GIT_DIR_PATH" ]]; then
+  if [[ -d "$GIT_DIR_PATH/rebase-apply" ]] || [[ -d "$GIT_DIR_PATH/rebase-merge" ]]; then
+    SKIP_REASON="rebase-in-progress"
+  elif [[ -e "$GIT_DIR_PATH/MERGE_HEAD" ]]; then
+    SKIP_REASON="merge-resolution"
+  fi
+fi
+# Fallback: explicit "Merge branch …" commit message (a true merge commit
+# where MERGE_HEAD may already be absent — e.g. re-running the commit).
+if [[ -z "$SKIP_REASON" ]] \
+   && echo "$CMD" | grep -Eq "(^|[[:space:]])-m[[:space:]]+[\"']?Merge[[:space:]]+branch"; then
+  SKIP_REASON="merge-resolution"
+fi
+
+if [[ -n "$SKIP_REASON" ]]; then
+  # Audit log (best-effort; never fail the hook on a logging error). At
+  # PreToolUse time the new commit's SHA does not exist yet, so we log the
+  # current HEAD (the parent) for context.
+  EXEMPT_LOG="$HOME/.claude/state/scope-gate-exemptions.log"
+  HEAD_SHA=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  CUR_BRANCH=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+  TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
+  { mkdir -p "$(dirname "$EXEMPT_LOG")" 2>/dev/null \
+      && printf '%s\treason=%s\thead=%s\tbranch=%s\trepo=%s\n' \
+         "$TS" "$SKIP_REASON" "$HEAD_SHA" "$CUR_BRANCH" "$REPO_ROOT" >> "$EXEMPT_LOG"; } 2>/dev/null || true
+  echo "[scope-enforcement-gate] $SKIP_REASON detected — scope-check skipped (commit stages files from git's replay/merge, not author-chosen plan scope). Logged to ~/.claude/state/scope-gate-exemptions.log" >&2
   exit 0
 fi
 
