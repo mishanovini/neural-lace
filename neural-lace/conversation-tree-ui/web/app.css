@@ -235,6 +235,11 @@ button:active { transform: scale(0.98); }
 .tnode-row.concluded { border-left-color: var(--ok); opacity: 0.85; }
 .tnode-row.archived { border-left-color: var(--muted); opacity: 0.6; }
 .tnode-row.dragover { outline: 2px dashed var(--info); }
+/* REFRAME (2026-05-27): project-grouped pending-item leaves under each project root. */
+.tnode-row.tpending { border-left-width: 2px; padding: 0.3rem 0.5rem; }
+.tpending-text { flex: 1; }
+.tpending-prov { font-size: 0.8em; opacity: 0.7; white-space: nowrap; }
+.tpending-empty { padding: 0.3rem 0.55rem 0.5rem 1.4rem; font-size: 0.85em; }
 .twist { width: 1rem; text-align: center; color: var(--muted); user-select: none; }
 .tnode-title { font-weight: 600; flex: 1; }
 .tnode-title.concluded::before { content: "✓ "; color: var(--ok); }

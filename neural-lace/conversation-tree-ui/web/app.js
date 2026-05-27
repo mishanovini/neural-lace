@@ -786,6 +786,101 @@
     }
     container.appendChild(wrap);
   }
+
+  // ---- REFRAME (2026-05-27): Tree pane = PROJECTS (roots) -> their OPEN pending
+  // items (decisions/questions/actions still waiting on Misha), collected from
+  // each project's whole subtree. Session / sub-agent nodes are agent bookkeeping
+  // and are NOT rendered as rows — they stay in snapshot.nodes for provenance +
+  // the conv-tree-state-gate (hidden at RENDER only, no reducer/state change).
+  // The tree shows ACTIVE backlog, not history: resolved items (isWaiting=false)
+  // drop out automatically. Full resolve controls live in the "Waiting on you"
+  // pane; each leaf links there and offers inline "mark done" for actions.
+  function collectWaitingItems(rootNode, kids) {
+    var out = [], seen = {};
+    (function walk(node) {
+      if (node.state !== 'archived') {
+        (node.items || []).forEach(function (it) {
+          if (isWaiting(it) && !seen[it.item_id]) { seen[it.item_id] = 1; out.push({ n: node, it: it }); }
+        });
+      }
+      (kids[node.node_id] || []).forEach(walk);
+    })(rootNode);
+    return out;
+  }
+  function renderPendingLeaf(group, en) {
+    var n = en.n, it = en.it;
+    var leaf = el('div', 'tnode-row tpending kind-' + it.kind
+      + (selItem === it.item_id ? ' hl' : '')
+      + (it.deferred ? ' deferred' : '') + (it.contested ? ' contested' : ''));
+    leaf.setAttribute('data-item', it.item_id);
+    leaf.setAttribute('data-node', n.node_id);
+    leaf.appendChild(el('span', 'li-kind ' + it.kind, it.kind));
+    leaf.appendChild(el('span', 'tpending-text', it.text));
+    var ep = effectivePrio(it);
+    if (ep >= 1 && ep <= 4) leaf.appendChild(el('span', 'p-badge p' + ep, 'P' + ep));
+    if (it.deferred) leaf.appendChild(el('span', 'badge deferred', 'deferred'));
+    if (it.contested) leaf.appendChild(el('span', 'badge contested', '⚠ contested'));
+    // Provenance: which branch/session surfaced it (de-emphasised, NOT a node row).
+    if (n.node_id !== group.node_id && n.title) {
+      leaf.appendChild(el('span', 'tpending-prov muted', 'from: ' + n.title));
+    }
+    // Inline "mark done" for actions (single post; full controls in Waiting-on-you).
+    if (it.kind === 'action' && !it.checked) {
+      var done = el('button', 'btn-go', '✓ done');
+      done.addEventListener('click', function (e) {
+        e.stopPropagation();
+        post({ type: 'action-done', node_id: n.node_id, item_id: it.item_id }, 'Marked done')
+          .then(function (ok) { if (ok) maybeAutoConclude(n.node_id); });
+      });
+      leaf.appendChild(done);
+    }
+    // Jump to the full controls in the "Waiting on you" pane.
+    var jump = el('button', 'li-jump', '→');
+    jump.title = 'Open in "Waiting on you" for full controls';
+    jump.addEventListener('click', function (e) {
+      e.stopPropagation();
+      selItem = it.item_id;
+      var row = actionsBody.querySelector('[data-item="' + it.item_id + '"]');
+      if (row) row.scrollIntoView({ block: 'nearest' });
+      render();
+    });
+    leaf.appendChild(jump);
+    leaf.addEventListener('click', function (e) {
+      if (e.target.closest('button')) return;
+      selItem = it.item_id; selectNode(n.node_id);
+    });
+    return leaf;
+  }
+  function renderProjectGroup(root, kids, container) {
+    var wrap = el('div', 'tnode');
+    var isCollapsed = collapsed.has(root.node_id);
+    if (isCollapsed) wrap.classList.add('collapsed');
+    var items = collectWaitingItems(root, kids);
+    var row = el('div', 'tnode-row tnode-root');
+    if (root.node_id === sel) { row.classList.add('sel'); row.classList.add('hl'); }
+    if (seenTreeIds && !seenTreeIds[root.node_id]) row.classList.add(arriveCls());
+    row.setAttribute('data-node', root.node_id);
+    var tw = el('span', 'twist', items.length ? (isCollapsed ? '▶' : '▼') : '◆');
+    tw.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (!items.length) return;
+      if (collapsed.has(root.node_id)) collapsed.delete(root.node_id); else collapsed.add(root.node_id);
+      render();
+    });
+    row.appendChild(tw);
+    row.appendChild(el('span', 'tnode-title', root.title || root.node_id));
+    if (items.length) row.appendChild(el('span', 'badge count', items.length + ' waiting'));
+    row.addEventListener('click', function () { selectNode(root.node_id); });
+    wrap.appendChild(row);
+    var kc = el('div', 'tkids');
+    if (items.length === 0) {
+      kc.appendChild(el('div', 'tpending-empty muted', 'Nothing waiting on you here.'));
+    } else {
+      items.forEach(function (en) { kc.appendChild(renderPendingLeaf(root, en)); });
+    }
+    wrap.appendChild(kc);
+    container.appendChild(wrap);
+  }
   function renderTree() {
     var vis = visibleNodes();
     if (!loaded) { paneState(treeState, treeScroll, 'loading'); return; }
@@ -821,7 +916,9 @@
     treeCanvas.style.width = (100 / zoom) + '%';
     var f = forest(vis);
     var orderedRoots = applyOrder(f.roots, order('tree:' + activeTree), 'node_id');
-    orderedRoots.forEach(function (r) { renderTreeNode(r, f.kids, treeCanvas); });
+    // REFRAME: render each root project as a group of its open pending items;
+    // session/sub nodes (kids) contribute their items but are not drawn as rows.
+    orderedRoots.forEach(function (r) { renderProjectGroup(r, f.kids, treeCanvas); });
     treeCrumb.textContent = sel ? crumb(sel) : 'no selection';
     // item 18: after rendering, snapshot the now-seen node ids so the NEXT
     // frame flashes only genuinely-new nodes (first frame primes silently).
