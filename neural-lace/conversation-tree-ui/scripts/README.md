@@ -1,9 +1,16 @@
-# Conversation Tree UI — launcher & autostart scripts
+# Conversation Tree UI — scripts
 
-One-click launch for the Conversation Tree GUI, plus an optional logon
-autostart so the server is always ready. No terminal required.
+Two families of scripts live here:
 
-All three scripts derive their paths at runtime (`$PSScriptRoot`,
+1. **Launcher / autostart** (PowerShell) — one-click launch for the GUI plus an
+   optional logon autostart so the server is always ready. No terminal required.
+2. **State population** (Node) — populate the tree-state file the GUI reads, by
+   replaying real Claude Code session history and today's pending items through
+   the legitimate `appendEvent` state primitive.
+
+## Launcher / autostart scripts
+
+All three launcher scripts derive their paths at runtime (`$PSScriptRoot`,
 `$env:USERPROFILE`, Windows special folders). **Nothing is hardcoded to a
 specific machine or user** — the scripts are portable and contain no absolute
 paths, which is why they are safe to commit to the harness repo.
@@ -13,6 +20,39 @@ paths, which is why they are safe to commit to the harness repo.
 | `launch-gui.ps1` | Starts the server (hidden, detached) if port 7733 is free, waits for it, opens the browser. Re-running while up just opens the browser. |
 | `install-shortcuts.ps1` | Creates "Conversation Tree" `.lnk` shortcuts on the Desktop and in the Start Menu that run `launch-gui.ps1`. |
 | `register-autostart.ps1` | Registers a scheduled task that starts the server (no browser) at logon. |
+
+## State-population scripts (Node)
+
+These two scripts are what currently keep the tree populated. Both write only
+through the frozen state-library facade (`../state/state.js` `appendEvent`) —
+never hand-written state — and both are **idempotent**: every emitted event has
+a deterministic `event_id`, so re-running a script is a per-file no-op (the
+state library dedupes). Run them from this `scripts/` directory with `node`.
+
+| Script | What it does | When to run |
+|---|---|---|
+| `backfill-from-sessions.js` | One-shot backfill of Claude Code / Cowork session history into the tree. Reads `~/.claude/projects/<encoded>/<session>.jsonl` (+ sibling `subagents/agent-*.jsonl`), extracts only what the JSONL verifiably contains (session id, first task, timestamps, Stop fires, cwd), and replays the equivalent `branch-opened` / `concluded` events. Honest by construction: titles come from the Dispatch-injected task body or the first real user message, never invented; sessions group by project (cross-session parentage is not recoverable from JSONL alone). | After a fresh install, or whenever you want the GUI to reflect recent session history. Safe to re-run. |
+| `add-pending-items.js` | Appends a curated set of pending items (decisions / questions / actions) and harness-gap backlog entries to the tree, anchored to the matching project nodes (cross-cutting items attach to the day node; orphan gaps go to the backlog pane). The item list is **a hand-maintained snapshot** baked into the script — edit the `DECISIONS` / `ACTIONS` / `QUESTIONS` / `BACKLOG` arrays to change what it emits. | When you want today's known pending items surfaced in the GUI's "Waiting on you" / "Backlog" panes. Edit the arrays first, then run. |
+
+```powershell
+# Backfill today's sessions (or --since YYYY-MM-DD for a wider window)
+node .\backfill-from-sessions.js
+node .\backfill-from-sessions.js --since 2026-05-19
+node .\backfill-from-sessions.js --dry-run            # preview, no writes
+
+# Append the curated pending items
+node .\add-pending-items.js
+node .\add-pending-items.js --dry-run                 # preview, no writes
+```
+
+Both accept `--sink <path>` to target a tree-state file other than the default
+`../state/tree-state.json`.
+
+> **Note on `add-pending-items.js`:** it is a one-shot snapshot tool, not a live
+> feed — the items it emits are hardcoded in the script. The live, automatic
+> path for surfacing pending items from normal assistant output is the
+> `conversation-tree-extract-pending.sh` Stop hook (see the harness `hooks/`
+> directory); this script remains for manual / curated population.
 
 ## Quick start
 
