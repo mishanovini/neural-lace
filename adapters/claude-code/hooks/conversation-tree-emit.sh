@@ -94,6 +94,25 @@ _sha1() {
   else cksum | tr -d ' ' ; fi
 }
 
+# Config-driven last-resort checkout root for the conv-tree state files. Only
+# reached when the git-based resolvers below fail (cwd outside any repo). The
+# base is overridable via CONV_TREE_MAIN_CHECKOUT (per-machine config — the
+# two-layer-config rule keeps machine-specific absolute paths out of committed
+# harness code); the generic default is the historical convention location.
+# `<leaf>` is a conversation-tree-ui-relative path (e.g. state/state.js); both
+# the nested (`<root>/neural-lace/conversation-tree-ui/`) and flat
+# (`<root>/conversation-tree-ui/`) repo layouts are probed, mirroring the
+# git-based resolvers, before defaulting to the nested form.
+_fallback_conv_tree_path() {
+  local leaf="$1"
+  local base="${CONV_TREE_MAIN_CHECKOUT:-$HOME/claude-projects/neural-lace}"
+  local nested="$base/neural-lace/conversation-tree-ui/$leaf"
+  local flat="$base/conversation-tree-ui/$leaf"
+  if [[ -e "$nested" ]]; then printf '%s' "$nested"; return 0; fi
+  if [[ -e "$flat" ]]; then printf '%s' "$flat"; return 0; fi
+  printf '%s' "$nested"
+}
+
 # Resolve the state-library entry module (state.js). Mirrors the conv-tree
 # gates' _resolve_state_lib resolution order so writer and gate agree.
 _resolve_state_lib() {
@@ -105,7 +124,7 @@ _resolve_state_lib() {
     cand="$root/conversation-tree-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   fi
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/conversation-tree-ui/state/state.js"
+  _fallback_conv_tree_path "state/state.js"
 }
 
 # The MAIN repo checkout (NOT a worktree). `git rev-parse --git-common-dir`
@@ -138,7 +157,7 @@ _resolve_gui_state_path() {
     c="$mr/conversation-tree-ui/state/tree-state.json"
     if [[ -f "$mr/conversation-tree-ui/state/state.js" ]]; then printf '%s' "$c"; return 0; fi
   fi
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/conversation-tree-ui/state/tree-state.json"
+  _fallback_conv_tree_path "state/tree-state.json"
 }
 
 # ADR-032 §5 path resolution — byte-identical logic to the conv-tree gates'

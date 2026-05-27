@@ -59,7 +59,6 @@ function sha1Hex(...parts) {
 function safeId(prefix, ...parts) {
   return prefix + '-' + sha1Hex(...parts).slice(0, 24);
 }
-function nodeIdForToday() { return 'today-' + SINCE_ISO.slice(0, 10).replace(/-/g, ''); }
 function nodeIdForProject(label) {
   return 'proj-' + label.toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
@@ -200,9 +199,11 @@ console.log('[backfill] sink:', SINK);
 console.log('[backfill] since:', SINCE_ISO, '(epoch_ms ' + SINCE_MS + ')');
 console.log('[backfill] dry-run:', DRY_RUN);
 
-const todayNode = nodeIdForToday();
-emitBranch(todayNode, null, 'Today — ' + SINCE_ISO.slice(0, 10), SINCE_ISO, 'today');
-
+// Project nodes are top-level roots (parent_id: null). Dispatch is
+// single-threaded, so per-project chronological order is implicit — no date
+// grouping. (Was: projects parented under a `today-<date>` node, which pinned
+// each project under the FIRST date that created it and rendered later-date
+// sessions under an old day node.)
 const projectDirs = fs.readdirSync(PROJECTS_DIR).filter(d =>
   fs.statSync(path.join(PROJECTS_DIR, d)).isDirectory()
 );
@@ -240,7 +241,7 @@ for (const dirName of projectDirs) {
     worktree = r.worktree;
   }
   const projNode = nodeIdForProject(project);
-  emitBranch(projNode, todayNode, project, SINCE_ISO, 'proj');
+  emitBranch(projNode, null, project, SINCE_ISO, 'proj');
 
   for (const { file: f, meta } of parsedSessions) {
     const fp = path.join(dirPath, f);
