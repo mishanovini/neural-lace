@@ -1,7 +1,7 @@
 # ADR 044 — Neural Lace cross-repo mirror automation
 
 - **Date:** 2026-05-27
-- **Status:** Accepted (staged, not enabled — enabling gates on the unification cutover)
+- **Status:** Reverted (2026-05-28) — workflow file removed via PR after MIRROR_PAT cross-account scope proved over-engineered for the actual use case (Misha never pushes via web UI; all pushes go through Claude Code with `~/.claude/` harness loaded, so the cross-repo PAT operational burden isn't worth the edge-case coverage). Superseded by harness-internal drift detection (sync.sh post-push verification + scheduled-task drift poller + SessionStart drift warning). The URL-based `sync.sh` rewrite this ADR introduced is **kept** — it remains the right primitive for "push to both repos on every push." Historical record preserved here for traceability.
 - **Stakeholders:** Misha (owner of both repos)
 - **Supersedes / relates to:** the deep-dive `docs/discoveries/2026-05-27-neural-lace-fork-deep-dive-and-sync-strategy.md` (Option B in §2b); design plan `docs/plans/neural-lace-mirror-automation.md` (full 10-section Systems Engineering Analysis).
 
