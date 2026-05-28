@@ -20,8 +20,8 @@ Pocket-Technician
 pocket-technician
 pt-leads
 Pocket\sTechnician
-Circuit(?:\s|$|[^A-Za-z])
-Foresight(?:\s|$|[^A-Za-z])
+(^|[^-A-Za-z0-9])Circuit(?:\s|$|[^A-Za-z])
+(^|[^-A-Za-z0-9])Foresight(?:\s|$|[^A-Za-z])
 
 # === Filesystem markers revealing personal setup ===
 OneDrive
