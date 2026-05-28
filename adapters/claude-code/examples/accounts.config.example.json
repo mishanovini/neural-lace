@@ -1,14 +1,17 @@
 {
   "version": 1,
-  "personal": {
-    "user": "alice-example",
-    "dir_triggers": ["~/code", "~/personal"]
-  },
   "work": [
     {
-      "user": "alice-at-acme",
+      "gh_user": "alice-at-acme",
       "dir_triggers": ["~/work/acme-corp", "~/code/acme"],
       "public_blocked": true
+    }
+  ],
+  "personal": [
+    {
+      "gh_user": "alice-example",
+      "dir_triggers": ["~/code", "~/personal"],
+      "public_blocked": false
     }
   ]
 }
