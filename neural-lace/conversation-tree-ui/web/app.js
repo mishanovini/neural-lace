@@ -10,6 +10,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var treeSelect = $('treeSelect'), addProjBtn = $('addProjBtn'),
       showArchived = $('showArchived'), lastRead = $('lastRead'),
+      freshnessEl = $('freshness'),
       statusEl = $('status'), corruptBanner = $('corruptBanner'),
       noteStack = $('noteStack'), toast = $('toast'),
       treeCanvas = $('treeCanvas'), treeScroll = $('treeScroll'),
@@ -23,11 +24,26 @@
       blSave = $('blSave'), blCancel = $('blCancel'),
       ctxPanel = $('ctxPanel'), ctxScrim = $('ctxScrim'), zoomIn = $('zoomIn'),
       zoomOut = $('zoomOut'), fitSel = $('fitSel'),
-      showConcluded = $('showConcluded'), tabBar = $('tabBar'),
+      showConcluded = $('showConcluded'),
+      // v3 accordion 2026-05-27 — right-panel stacked accordion + drawer toggle
+      paneStack = $('paneStack'),
+      // v3 accordion 2026-05-27 — filtered subview body containers
+      decisionsBody = $('decisionsBody'), decisionsState = $('decisionsState'),
+      decisionsCount = $('decisionsCount'),
+      questionsBody = $('questionsBody'), questionsState = $('questionsState'),
+      questionsCount = $('questionsCount'),
+      paneToggle = $('paneToggle'), rightClose = $('rightClose'),
+      panePeek = $('panePeek'), panePeekLabel = $('panePeekLabel'),
       docsBtn = $('docsBtn'), docScrim = $('docScrim'), docModal = $('docModal'),
       docTitle = $('docTitle'), docBody = $('docBody'), docClose = $('docClose'),
       docOpenEditor = $('docOpenEditor'), docsPanel = $('docsPanel'),
-      docsBody = $('docsBody'), docsFilter = $('docsFilter'), docsClose = $('docsClose');
+      docsBody = $('docsBody'), docsFilter = $('docsFilter'), docsClose = $('docsClose'),
+      // v2 redesign 2026-05-23 — dedicated Send-to-Dispatch composer modal
+      dispatchScrim = $('dispatchScrim'), dispatchModal = $('dispatchModal'),
+      dispatchTarget = $('dispatchTarget'), dispatchText = $('dispatchText'),
+      dispatchClearAfter = $('dispatchClearAfter'),
+      dispatchSend = $('dispatchSend'), dispatchStage = $('dispatchStage'),
+      dispatchCancel = $('dispatchCancel'), dispatchClose = $('dispatchClose');
 
   // ---- client view state ----------------------------------------------
   var S = null;                 // latest snapshot
@@ -397,44 +413,17 @@
   // item 19: open one doc inline (rendered markdown). projectKey defaults to
   // the active tree (the project tag); the server resolves it cross-repo.
   var curDoc = null;
-  // v1.1.2 item 38 — doc preview is a resizable RIGHT side pane (not a centred
-  // modal); persists width across opens; rest of GUI stays interactive.
-  var DOC_PANE_W_KEY = 'ctree-doc-pane-w';
-  function applyDocPaneWidth() {
-    var stored = localStorage.getItem(DOC_PANE_W_KEY);
-    var w = stored && /^\d+px$/.test(stored) ? stored : '32rem';
-    document.documentElement.style.setProperty('--doc-pane-w', w);
-  }
-  applyDocPaneWidth();
-  function ensureDocResizeHandle() {
-    if (!docModal || docModal.querySelector('.doc-resize')) return;
-    var h = el('div', 'doc-resize'); h.title = 'drag to resize';
-    docModal.appendChild(h);
-    h.addEventListener('mousedown', function (e) {
-      e.preventDefault();
-      function onMove(ev) {
-        var w = Math.max(240, Math.min(window.innerWidth * 0.90, window.innerWidth - ev.clientX));
-        var px = Math.round(w) + 'px';
-        document.documentElement.style.setProperty('--doc-pane-w', px);
-        localStorage.setItem(DOC_PANE_W_KEY, px);
-      }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-  }
+  // v2 redesign 2026-05-23 — doc viewer is a CENTERED MODAL (was a resizable
+  // right side pane). Reading long-form content should not shift the
+  // persistent #layout (tree + side panel stay put). The scrim is shown
+  // alongside the modal; the docsPanel drawer shares the same scrim.
   function openDocModal(project, relPath) {
     project = project || activeTree;
     curDoc = { project: project, path: relPath };
     docTitle.textContent = project + ' › ' + relPath;
     docBody.innerHTML = '<p class="muted">Loading…</p>';
     docModal.hidden = false;
-    document.body.dataset.docPane = 'open';        // item 38: shrink #layout
-    docScrim.hidden = true;                        // no scrim for side pane (rest of GUI interactive)
-    ensureDocResizeHandle();
+    docScrim.hidden = false;                       // centred modal — scrim is on
     fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(relPath))
       .then(function (r) { return r.json(); })
       .then(function (j) {
@@ -444,8 +433,9 @@
       .catch(function () { docBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
   }
   function closeDocModal() {
-    docModal.hidden = true; docScrim.hidden = true; curDoc = null;
-    delete document.body.dataset.docPane;
+    docModal.hidden = true; curDoc = null;
+    // only drop the shared scrim if no sibling overlay still needs it
+    if (docsPanel.hidden) docScrim.hidden = true;
   }
   // item 19: linkify any docs/…(.md) token inside a text node into a clickable
   // .doc-link button (so doc references in item text/details are not dead text).
@@ -580,7 +570,9 @@
   if (docScrim) docScrim.addEventListener('click', function () { closeDocModal(); closeDocsPanel(); });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
-      if (!docModal.hidden) closeDocModal();
+      // v2 redesign 2026-05-23 — dismiss top-most overlay first
+      if (!dispatchModal.hidden) closeDispatchModal();
+      else if (!docModal.hidden) closeDocModal();
       else if (!docsPanel.hidden) closeDocsPanel();
     }
   });
@@ -786,101 +778,6 @@
     }
     container.appendChild(wrap);
   }
-
-  // ---- REFRAME (2026-05-27): Tree pane = PROJECTS (roots) -> their OPEN pending
-  // items (decisions/questions/actions still waiting on Misha), collected from
-  // each project's whole subtree. Session / sub-agent nodes are agent bookkeeping
-  // and are NOT rendered as rows — they stay in snapshot.nodes for provenance +
-  // the conv-tree-state-gate (hidden at RENDER only, no reducer/state change).
-  // The tree shows ACTIVE backlog, not history: resolved items (isWaiting=false)
-  // drop out automatically. Full resolve controls live in the "Waiting on you"
-  // pane; each leaf links there and offers inline "mark done" for actions.
-  function collectWaitingItems(rootNode, kids) {
-    var out = [], seen = {};
-    (function walk(node) {
-      if (node.state !== 'archived') {
-        (node.items || []).forEach(function (it) {
-          if (isWaiting(it) && !seen[it.item_id]) { seen[it.item_id] = 1; out.push({ n: node, it: it }); }
-        });
-      }
-      (kids[node.node_id] || []).forEach(walk);
-    })(rootNode);
-    return out;
-  }
-  function renderPendingLeaf(group, en) {
-    var n = en.n, it = en.it;
-    var leaf = el('div', 'tnode-row tpending kind-' + it.kind
-      + (selItem === it.item_id ? ' hl' : '')
-      + (it.deferred ? ' deferred' : '') + (it.contested ? ' contested' : ''));
-    leaf.setAttribute('data-item', it.item_id);
-    leaf.setAttribute('data-node', n.node_id);
-    leaf.appendChild(el('span', 'li-kind ' + it.kind, it.kind));
-    leaf.appendChild(el('span', 'tpending-text', it.text));
-    var ep = effectivePrio(it);
-    if (ep >= 1 && ep <= 4) leaf.appendChild(el('span', 'p-badge p' + ep, 'P' + ep));
-    if (it.deferred) leaf.appendChild(el('span', 'badge deferred', 'deferred'));
-    if (it.contested) leaf.appendChild(el('span', 'badge contested', '⚠ contested'));
-    // Provenance: which branch/session surfaced it (de-emphasised, NOT a node row).
-    if (n.node_id !== group.node_id && n.title) {
-      leaf.appendChild(el('span', 'tpending-prov muted', 'from: ' + n.title));
-    }
-    // Inline "mark done" for actions (single post; full controls in Waiting-on-you).
-    if (it.kind === 'action' && !it.checked) {
-      var done = el('button', 'btn-go', '✓ done');
-      done.addEventListener('click', function (e) {
-        e.stopPropagation();
-        post({ type: 'action-done', node_id: n.node_id, item_id: it.item_id }, 'Marked done')
-          .then(function (ok) { if (ok) maybeAutoConclude(n.node_id); });
-      });
-      leaf.appendChild(done);
-    }
-    // Jump to the full controls in the "Waiting on you" pane.
-    var jump = el('button', 'li-jump', '→');
-    jump.title = 'Open in "Waiting on you" for full controls';
-    jump.addEventListener('click', function (e) {
-      e.stopPropagation();
-      selItem = it.item_id;
-      var row = actionsBody.querySelector('[data-item="' + it.item_id + '"]');
-      if (row) row.scrollIntoView({ block: 'nearest' });
-      render();
-    });
-    leaf.appendChild(jump);
-    leaf.addEventListener('click', function (e) {
-      if (e.target.closest('button')) return;
-      selItem = it.item_id; selectNode(n.node_id);
-    });
-    return leaf;
-  }
-  function renderProjectGroup(root, kids, container) {
-    var wrap = el('div', 'tnode');
-    var isCollapsed = collapsed.has(root.node_id);
-    if (isCollapsed) wrap.classList.add('collapsed');
-    var items = collectWaitingItems(root, kids);
-    var row = el('div', 'tnode-row tnode-root');
-    if (root.node_id === sel) { row.classList.add('sel'); row.classList.add('hl'); }
-    if (seenTreeIds && !seenTreeIds[root.node_id]) row.classList.add(arriveCls());
-    row.setAttribute('data-node', root.node_id);
-    var tw = el('span', 'twist', items.length ? (isCollapsed ? '▶' : '▼') : '◆');
-    tw.addEventListener('click', function (e) {
-      e.stopPropagation();
-      if (!items.length) return;
-      if (collapsed.has(root.node_id)) collapsed.delete(root.node_id); else collapsed.add(root.node_id);
-      render();
-    });
-    row.appendChild(tw);
-    row.appendChild(el('span', 'tnode-title', root.title || root.node_id));
-    if (items.length) row.appendChild(el('span', 'badge count', items.length + ' waiting'));
-    row.addEventListener('click', function () { selectNode(root.node_id); });
-    wrap.appendChild(row);
-    var kc = el('div', 'tkids');
-    if (items.length === 0) {
-      kc.appendChild(el('div', 'tpending-empty muted', 'Nothing waiting on you here.'));
-    } else {
-      items.forEach(function (en) { kc.appendChild(renderPendingLeaf(root, en)); });
-    }
-    wrap.appendChild(kc);
-    container.appendChild(wrap);
-  }
   function renderTree() {
     var vis = visibleNodes();
     if (!loaded) { paneState(treeState, treeScroll, 'loading'); return; }
@@ -916,9 +813,7 @@
     treeCanvas.style.width = (100 / zoom) + '%';
     var f = forest(vis);
     var orderedRoots = applyOrder(f.roots, order('tree:' + activeTree), 'node_id');
-    // REFRAME: render each root project as a group of its open pending items;
-    // session/sub nodes (kids) contribute their items but are not drawn as rows.
-    orderedRoots.forEach(function (r) { renderProjectGroup(r, f.kids, treeCanvas); });
+    orderedRoots.forEach(function (r) { renderTreeNode(r, f.kids, treeCanvas); });
     treeCrumb.textContent = sel ? crumb(sel) : 'no selection';
     // item 18: after rendering, snapshot the now-seen node ids so the NEXT
     // frame flashes only genuinely-new nodes (first frame primes silently).
@@ -1002,6 +897,65 @@
       document.addEventListener('click', prioOutside, true);
     }, 0);
   }
+  // v3 accordion 2026-05-27 — filtered subviews: Decisions / Questions
+  // panels show a lightweight quick-glance index of items whose kind matches
+  // the filter, sourced from the same actionEntries() pool as Waiting. Each
+  // row is one line: kind badge + text + jump button. Clicking the row jumps
+  // to the node in the tree AND highlights the item (selItem). The full
+  // interaction surface (mark-done / respond / defer) lives in Waiting; the
+  // filtered panels are deliberately read-mostly to keep them scannable.
+  function renderFilteredKind(kindFilter, bodyEl, stateEl, countEl, emptyMsg) {
+    if (!loaded) { paneState(stateEl, bodyEl, 'loading'); if (countEl) countEl.hidden = true; return; }
+    var all = actionEntries();
+    var entries = all.filter(function (e) { return e.it.kind === kindFilter; });
+    // count badge in panel header
+    if (countEl) {
+      if (entries.length > 0) { countEl.textContent = String(entries.length); countEl.hidden = false; }
+      else { countEl.textContent = ''; countEl.hidden = true; }
+    }
+    if (entries.length === 0) {
+      paneState(stateEl, bodyEl, 'steady-empty', { steady: emptyMsg });
+      return;
+    }
+    paneState(stateEl, bodyEl, 'populated');
+    clear(bodyEl);
+    entries.forEach(function (en) {
+      var n = en.n, it = en.it;
+      var li = el('div', 'li kind-' + it.kind
+        + ((sel === n.node_id || selItem === it.item_id) ? ' hl' : ''));
+      li.setAttribute('data-item', it.item_id);
+      li.setAttribute('data-node', n.node_id);
+      var top = el('div', 'li-top');
+      top.appendChild(el('span', 'li-kind ' + it.kind, it.kind));
+      top.appendChild(el('span', 'li-text', it.text));
+      var ep = effectivePrio(it);
+      if (ep >= 1 && ep <= 4) top.appendChild(el('span', 'p-badge p' + ep, 'P' + ep));
+      var jump = el('button', 'li-jump', '→');
+      jump.title = 'Jump to in tree';
+      jump.addEventListener('click', function (e) {
+        e.stopPropagation();
+        selItem = it.item_id;
+        focusNode(n.node_id);
+      });
+      top.appendChild(jump);
+      top.addEventListener('click', function (e) {
+        if (e.target.closest('button')) return;
+        selItem = it.item_id;
+        focusNode(n.node_id);
+      });
+      li.appendChild(top);
+      bodyEl.appendChild(li);
+    });
+  }
+  function renderDecisions() {
+    renderFilteredKind('decision', decisionsBody, decisionsState, decisionsCount,
+      'No decisions waiting right now — items appear here when Dispatch raises a `decision-raised` event.');
+  }
+  function renderQuestions() {
+    renderFilteredKind('question', questionsBody, questionsState, questionsCount,
+      'No questions waiting right now — items appear here when Dispatch raises a `question-raised` event.');
+  }
+
   function renderActions() {
     if (!loaded) { paneState(actionsState, actionsBody, 'loading'); return; }
     var entries = sortActions(actionEntries());
@@ -1383,24 +1337,86 @@
       top.appendChild(bAssign);
       if (b.activated) top.appendChild(el('span', 'badge', 'activated ✓'));
       li.appendChild(top);
+      // v2 redesign 2026-05-23 — UX-VR-13 context-as-textarea: every backlog
+      // item exposes a context disclosure. Read mode if present; click to
+      // edit in a textarea. Empty items show "Add context →" as a clear
+      // affordance. Legacy context_refs (file refs / cross-links) still
+      // render as before — they're a different kind of attached context.
+      var hasContext = typeof b.context_text === 'string' && b.context_text.trim().length > 0;
+      var ctxToggle = el('button', 'li-context-toggle' + (hasContext ? '' : ' empty'),
+        hasContext ? '▾ context' : '+ Add context →');
+      ctxToggle.title = hasContext
+        ? 'show / edit this backlog item\'s context (multi-line)'
+        : 'this item has no context yet — click to add one (multi-line textarea)';
+      var ctxBox = el('div'); ctxBox.style.display = 'none';
+      function renderCtxRead() {
+        ctxBox.innerHTML = '';
+        ctxBox.style.display = '';
+        if (hasContext) {
+          var rd = el('div', 'li-context-render', b.context_text);
+          var ed = el('button', 'btn-info outline', '✎ edit');
+          ed.style.marginTop = '0.35rem';
+          ed.addEventListener('click', function () { renderCtxEdit(b.context_text); });
+          ctxBox.appendChild(rd); ctxBox.appendChild(ed);
+        } else {
+          var empty = el('div', 'li-context-empty', 'no context recorded — click "Add context →" to add one.');
+          ctxBox.appendChild(empty);
+          renderCtxEdit('');
+        }
+      }
+      function renderCtxEdit(initial) {
+        ctxBox.innerHTML = '';
+        ctxBox.style.display = '';
+        var wrap = el('div', 'li-context-edit');
+        var ta = el('textarea', 'context-area');
+        ta.value = (initial == null ? '' : initial);
+        ta.placeholder = 'context — what you know about this, why it matters, prior decisions, related docs (multi-line, supports markdown-ish prose)';
+        wrap.appendChild(ta);
+        var row = el('div', 'row');
+        var save = el('button', 'btn-go', 'Save context');
+        var cancel = el('button', 'btn-neutral outline', 'cancel');
+        save.addEventListener('click', function () {
+          var nv = ta.value || '';
+          post({ type: 'backlog-context-set', item_id: b.item_id, context_text: nv },
+            nv.trim() ? 'context saved' : 'context cleared');
+        });
+        cancel.addEventListener('click', function () {
+          if (hasContext) renderCtxRead();
+          else { ctxBox.style.display = 'none'; ctxToggle.textContent = '+ Add context →'; }
+        });
+        row.appendChild(save); row.appendChild(cancel);
+        wrap.appendChild(row);
+        ctxBox.appendChild(wrap);
+      }
+      ctxToggle.addEventListener('click', function () {
+        if (ctxBox.style.display === 'none') {
+          if (hasContext) renderCtxRead(); else renderCtxEdit('');
+        } else {
+          ctxBox.style.display = 'none';
+        }
+      });
+      li.appendChild(ctxToggle);
+      li.appendChild(ctxBox);
+      // legacy context_refs (file/doc cross-links) — still surfaced
       if (b.context_refs && b.context_refs.length) {
-        li.appendChild(el('div', 'muted', 'context: ' + b.context_refs.join(' | ')));
+        li.appendChild(el('div', 'muted', 'attached refs: ' + b.context_refs.join(' | ')));
       }
       var acts = el('div', 'li-actions');
       if (!b.activated) {
         var act = el('button', 'btn-go', 'Activate → new tree root');
         act.addEventListener('click', function () { activateBacklog(b); });
         acts.appendChild(act);
-        var addc = el('button', 'btn-info outline', '+ context');
-        addc.addEventListener('click', function () {
-          var note = prompt('Attach a context note / file ref / prior-decision:');
+        var addRef = el('button', 'btn-info outline', '+ attach ref');
+        addRef.title = 'attach a file/doc reference (separate from the prose context above)';
+        addRef.addEventListener('click', function () {
+          var note = prompt('Attach a file ref / doc path / prior-decision link:');
           if (note == null || !note.trim()) return;
-          post({ type: 'context-attached', target: b.item_id, context_ref: note.trim() }, 'context attached');
+          post({ type: 'context-attached', target: b.item_id, context_ref: note.trim() }, 'ref attached');
         });
-        acts.appendChild(addc);
+        acts.appendChild(addRef);
       } else {
         var copy = el('button', 'btn-info', '⧉ copy context for Dispatch');
-        copy.addEventListener('click', function () { copyHandoff(b.text, b.context_refs, b.activated_node); });
+        copy.addEventListener('click', function () { copyHandoff(b.text, (b.context_refs || []).concat(b.context_text ? ['CONTEXT:\n' + b.context_text] : []), b.activated_node); });
         acts.appendChild(copy);
       }
       li.appendChild(acts);
@@ -1418,11 +1434,15 @@
     var txt = blText.value.trim();
     if (!txt) { blText.focus(); return; }
     var itemId = uid('bl');
-    post({ type: 'backlog-added', item_id: itemId, tree_id: activeTree, priority: blPriority.value, text: txt }, 'backlog item added')
+    // v2 redesign 2026-05-23 — UX-VR-13: capture-time context_text rides on
+    // the same backlog-added event so it's persisted atomically with the
+    // item itself. Previously context was sent as a separate
+    // context-attached event (which the reducer dropped silently). Empty
+    // string is preserved as empty string.
+    var ctx = blContext.value;
+    post({ type: 'backlog-added', item_id: itemId, tree_id: activeTree, priority: blPriority.value, text: txt, context_text: ctx }, 'backlog item added')
       .then(function (ok) {
         if (!ok) return;
-        var ctx = blContext.value.trim();
-        if (ctx) post({ type: 'context-attached', target: itemId, context_ref: ctx }, 'context attached');
         backlogCapture.hidden = true;
       });
   });
@@ -1525,14 +1545,12 @@
     }, 30);
   }
   function cssEsc(s) { return String(s).replace(/"/g, '\\"'); }
-  // v1.1 item 2: single dismiss path. Hides panel + backdrop scrim and
-  // clears selection so a later render()/SSE frame does not re-open it.
+  // v2 redesign 2026-05-23: ctxPanel is a centred MODAL (was a docked side
+  // pane). It NEVER shifts the persistent #layout — tree + side panel stay
+  // put. Dismiss via Esc / scrim click / ✕.
   function closeCtx() {
     ctxPanel.hidden = true;
     ctxScrim.hidden = true;
-    // v1.1.4 item 41: clear the layout-shift attribute so #layout reclaims its
-    // full right margin and the Waiting/Backlog panes spring back to full width.
-    delete document.body.dataset.ctxPane;
     sel = null;
     render();
   }
@@ -1540,11 +1558,7 @@
     var n = byId(id);
     if (!n) { closeCtx(); return; }
     ctxPanel.hidden = false;
-    ctxScrim.hidden = false;          // CSS hides the scrim at >=1440 (docked)
-    // v1.1.4 item 41: at wide widths, this flag tells CSS to shrink #layout
-    // by var(--ctx-pane-w) so the right-region panes stay visible NEXT TO the
-    // ctx-pane instead of being obscured by it (mirrors `data-doc-pane`).
-    document.body.dataset.ctxPane = 'open';
+    ctxScrim.hidden = false;          // always show scrim — this is a modal
     clear(ctxPanel);
     var head = el('div', 'ctx-head');
     head.appendChild(el('span', 'pane-title', n.title || n.node_id));
@@ -1696,7 +1710,12 @@
       localStorage.removeItem('ctree-draft-' + id);
       post({ type: 'draft-cleared', node_id: id }, 'note cleared');
     });
-    dr.appendChild(send); dr.appendChild(clearLbl); dr.appendChild(stage); dr.appendChild(copyD); dr.appendChild(used);
+    // v2 redesign 2026-05-23 — open the focused composer modal pre-filled
+    // with the currently staged note. Cleaner for long-form composition.
+    var openComp = el('button', 'btn-up outline', '⤴ open composer');
+    openComp.title = 'open the dedicated Send-to-Dispatch composer modal';
+    openComp.addEventListener('click', function () { openDispatchModal(id, n.title, ta.value); });
+    dr.appendChild(send); dr.appendChild(clearLbl); dr.appendChild(stage); dr.appendChild(copyD); dr.appendChild(used); dr.appendChild(openComp);
     s5.appendChild(dr);
     body.appendChild(s5);
 
@@ -1745,17 +1764,94 @@
   }
 
   // ---- persistent in-GUI notifications (BF-6 / DEC-B) ------------------
-  function pushNote(key, msg, hot) {
+  // v1.1.3+ (2026-05-23): auto-dismiss for non-hot notes, cap-3 visible
+  // non-hot, group similar (e.g., "5 branches under 'X' concluded"). Hot
+  // notes (action-due, deferred-due) always persist and never count against
+  // the cap — they represent things the user must act on.
+  //
+  // Signature backward-compat: pushNote(key, msg, hotBool)  →  legacy.
+  //                            pushNote(key, msg, opts)     →  options:
+  //   { hot: bool, groupKey: string, groupRender: fn(count, latest) }
+  // When groupKey is set, multiple pushNote calls sharing the same groupKey
+  // collapse into a single note whose body is groupRender(count, latestMsg).
+  var NOTE_AUTO_DISMISS_MS = 5000;
+  var NOTE_VISIBLE_CAP = 3;
+  function pushNote(key, msg, optsOrHot) {
+    var opts = (typeof optsOrHot === 'object' && optsOrHot !== null)
+      ? optsOrHot : { hot: !!optsOrHot };
+    var hot = !!opts.hot;
+    var groupKey = opts.groupKey || null;
+    var groupRender = typeof opts.groupRender === 'function' ? opts.groupRender : null;
+    var durationMs = typeof opts.durationMs === 'number' ? opts.durationMs : NOTE_AUTO_DISMISS_MS;
+
     if (dismissed.has(key)) return;
+    // Grouping: if this note has a groupKey and the group node already exists,
+    // bump its counter + refresh content + reset auto-dismiss timer.
+    if (groupKey) {
+      if (dismissed.has(groupKey)) return;
+      var groupNd = noteStack.querySelector('[data-group="' + cssEsc(groupKey) + '"]');
+      if (groupNd) {
+        var count = (parseInt(groupNd.getAttribute('data-count'), 10) || 1) + 1;
+        groupNd.setAttribute('data-count', String(count));
+        var body = groupNd.querySelector('.note-body');
+        if (body) body.textContent = groupRender ? groupRender(count, msg) : (count + 'x: ' + msg);
+        _scheduleAutoDismiss(groupNd, hot, durationMs);
+        return;
+      }
+    }
+    // Idempotency on key.
     var existing = noteStack.querySelector('[data-k="' + cssEsc(key) + '"]');
     if (existing) return;
+
     var nd = el('div', 'note' + (hot ? ' hot' : ''));
     nd.setAttribute('data-k', key);
+    if (groupKey) {
+      nd.setAttribute('data-group', groupKey);
+      nd.setAttribute('data-count', '1');
+    }
     var x = el('button', 'ghost dismiss', '✕');
-    x.addEventListener('click', function () { dismissed.add(key); nd.remove(); });
+    x.addEventListener('click', function () {
+      if (nd._t) { clearTimeout(nd._t); nd._t = null; }
+      dismissed.add(key);
+      if (groupKey) dismissed.add(groupKey);
+      nd.remove();
+    });
     nd.appendChild(x);
-    nd.appendChild(document.createTextNode(msg));
+    var bodySpan = el('span', 'note-body');
+    bodySpan.textContent = msg;
+    nd.appendChild(bodySpan);
     noteStack.appendChild(nd);
+
+    _enforceCap();
+    _scheduleAutoDismiss(nd, hot, durationMs);
+  }
+  // Reset (or set) the auto-dismiss timer on a note. Hot notes never auto-dismiss.
+  function _scheduleAutoDismiss(nd, hot, durationMs) {
+    if (hot) return;
+    if (nd._t) { clearTimeout(nd._t); }
+    nd._t = setTimeout(function () {
+      // Auto-dismiss: do NOT add to `dismissed` Set (we want the underlying
+      // event to be able to re-surface later if it recurs — though the
+      // seenConcluded / firedDefers Sets at the call site already prevent
+      // re-firing for the same node, this keeps the auto-dismiss path from
+      // permanently suppressing genuinely-new events).
+      if (nd.parentNode) nd.parentNode.removeChild(nd);
+    }, durationMs);
+  }
+  // Cap visible non-hot notes. Hot notes persist regardless.
+  function _enforceCap() {
+    var notes = noteStack.querySelectorAll('.note');
+    var nonHot = [];
+    for (var i = 0; i < notes.length; i++) {
+      if (!notes[i].classList.contains('hot')) nonHot.push(notes[i]);
+    }
+    // Remove oldest non-hot notes until at-or-below the cap. Oldest = first
+    // in DOM order (appendChild order).
+    while (nonHot.length > NOTE_VISIBLE_CAP) {
+      var victim = nonHot.shift();
+      if (victim._t) { clearTimeout(victim._t); victim._t = null; }
+      if (victim.parentNode) victim.parentNode.removeChild(victim);
+    }
   }
   function detectConcludeNotifications() {
     nodes().forEach(function (n) {
@@ -1763,9 +1859,22 @@
         seenConcluded.add(n.node_id);
         if (primed && n.parent_id) {
           var p = byId(n.parent_id);
+          var parentTitle = p ? p.title : n.parent_id;
+          var branchTitle = n.title || n.node_id;
+          // Group concluded notifications by parent so a burst of sibling
+          // branches concluding shows as "5 branches under 'X' concluded —
+          // most recent: 'Y'" rather than 5 separate toasts.
           pushNote('concl-' + n.node_id,
-            'Branch "' + (n.title || n.node_id) + '" concluded — parent "' +
-            (p ? p.title : n.parent_id) + '" notified.', false);
+            'Branch "' + branchTitle + '" concluded — parent "' +
+            parentTitle + '" notified.',
+            { hot: false, groupKey: 'concl-parent-' + n.parent_id,
+              groupRender: function (parentTitleCaptured) {
+                return function (count, latest) {
+                  if (count === 1) return latest;
+                  return count + ' branches under "' + parentTitleCaptured +
+                    '" concluded — most recent: "' + branchTitle + '"';
+                };
+              }(parentTitle) });
         }
       }
     });
@@ -1837,25 +1946,175 @@
     if (e.key === 'Escape' && !ctxPanel.hidden) closeCtx();
   });
 
-  // ---- item 1: single-pane tab bar (layout C only) ---------------------
-  // CSS shows #tabBar only when w<1024 AND h<1024; JS just flips
-  // body[data-tab]. Default tab = tree (matches the CSS :not([data-tab])).
-  if (!document.body.dataset.tab) document.body.dataset.tab = 'tree';
-  tabBar.addEventListener('click', function (e) {
-    var b = e.target.closest('button[data-tab]');
-    if (!b) return;
-    document.body.dataset.tab = b.dataset.tab;
-    [].forEach.call(tabBar.querySelectorAll('button'), function (x) {
-      x.classList.toggle('active', x === b);
+  // ---- v3 accordion 2026-05-27: stacked-panel collapse + drawer toggle --
+  // The right panel hosts Waiting / Backlog / Decisions / Questions as a
+  // vertical accordion. Each .apanel has a clickable header (.apanel-head)
+  // that toggles the panel's .collapsed class. Per-panel collapse state
+  // persists via localStorage so the operator's layout survives reload.
+  // Drawer state (whole-panel show/hide) remains class-based on <body>:
+  // `.side-open` / `.side-hidden`.
+  var PANEL_KEY_PREFIX = 'ctree-panel-';     // per-panel collapse key (e.g. ctree-panel-waiting-collapsed)
+  var SIDE_KEY = 'ctree-side';
+  function panelCollapseKey(name) { return PANEL_KEY_PREFIX + name + '-collapsed'; }
+  function applyPanelCollapse(section, name, collapsed) {
+    section.classList.toggle('collapsed', !!collapsed);
+    var head = section.querySelector('.apanel-head');
+    if (head) head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    localStorage.setItem(panelCollapseKey(name), collapsed ? '1' : '0');
+  }
+  function togglePanel(name) {
+    var section = paneStack && paneStack.querySelector('section.apanel[data-panel="' + name + '"]');
+    if (!section) return;
+    var nowCollapsed = !section.classList.contains('collapsed');
+    applyPanelCollapse(section, name, nowCollapsed);
+    // clear "+N new" badges when the operator looks at the relevant panel
+    if (!nowCollapsed) {
+      if (name === 'waiting') clearNewBadge('a');
+      if (name === 'backlog') clearNewBadge('b');
+    }
+  }
+  // Boot: read persisted per-panel collapse state; default to expanded.
+  if (paneStack) {
+    [].forEach.call(paneStack.querySelectorAll('section.apanel[data-panel]'), function (section) {
+      var name = section.getAttribute('data-panel');
+      var saved = localStorage.getItem(panelCollapseKey(name));
+      applyPanelCollapse(section, name, saved === '1');
     });
-    if (b.dataset.tab === 'actions') clearNewBadge('a');   // item 8: looked at it
-    if (b.dataset.tab === 'backlog') clearNewBadge('b');
+    // Click on the .apanel-head (or any descendant non-control) toggles the panel.
+    paneStack.addEventListener('click', function (e) {
+      var head = e.target.closest('.apanel-head[data-panel-toggle]');
+      if (!head) return;
+      // Inline controls (selects, buttons inside the header) stop propagation
+      // via their own onclick="event.stopPropagation()" attributes — but
+      // defensive guard here too in case any control is added without that.
+      if (e.target.closest('select, .apanel-action, .apanel-sort')) return;
+      togglePanel(head.getAttribute('data-panel-toggle'));
+    });
+  }
+
+  // Side panel open / close / drawer state. Class-based:
+  //   .side-open   — drawer is slid in (meaningful only at <1024px width)
+  //   .side-hidden — explicitly hidden at wide widths (peek pill returns it)
+  // Default: at wide widths the panel is in the persistent grid (no class);
+  // at narrow widths the drawer starts closed (peek visible). Persisted
+  // 'hidden' state is honored on reload at any width.
+  function applySideState(state) {
+    if (state !== 'hidden' && state !== 'open') state = 'visible';
+    document.body.classList.remove('side-open', 'side-hidden');
+    if (state === 'hidden') {
+      document.body.classList.add('side-hidden');
+      panePeek.hidden = false;
+      panePeekLabel.textContent = 'Panels';
+    } else if (state === 'open') {
+      document.body.classList.add('side-open');
+      panePeek.hidden = true;
+    } else {
+      // visible — wide-mode default (no class needed, persistent grid column)
+      panePeek.hidden = true;
+    }
+    localStorage.setItem(SIDE_KEY, state === 'hidden' ? 'hidden' : 'visible');
+  }
+  // Boot the side state. Saved 'hidden' wins everywhere; otherwise at
+  // narrow widths start with the drawer closed (peek pill is the way in),
+  // and at wide widths show the persistent column.
+  var savedSide = localStorage.getItem(SIDE_KEY);
+  if (savedSide === 'hidden') applySideState('hidden');
+  else if (window.innerWidth < 1024) {
+    // narrow: drawer closed → no .side-open class, peek visible
+    panePeek.hidden = false;
+    panePeekLabel.textContent = 'Panels';
+  } else {
+    applySideState('visible');
+  }
+  paneToggle.addEventListener('click', function () {
+    if (window.innerWidth >= 1024) {
+      applySideState(document.body.classList.contains('side-hidden') ? 'visible' : 'hidden');
+    } else {
+      // narrow: toggle drawer open/closed
+      if (document.body.classList.contains('side-open')) {
+        document.body.classList.remove('side-open');
+        panePeek.hidden = false;
+      } else {
+        document.body.classList.add('side-open');
+        panePeek.hidden = true;
+      }
+    }
   });
+  rightClose.addEventListener('click', function () {
+    if (window.innerWidth >= 1024) applySideState('hidden');
+    else {
+      document.body.classList.remove('side-open');
+      panePeek.hidden = false;
+      panePeekLabel.textContent = 'Panels';
+    }
+  });
+  panePeek.addEventListener('click', function () {
+    if (window.innerWidth >= 1024) applySideState('visible');
+    else { document.body.classList.add('side-open'); panePeek.hidden = true; }
+  });
+  // re-evaluate on viewport-width crossing the 1024 threshold so the user
+  // does not get stuck in a state that no longer makes sense.
+  window.addEventListener('resize', function () {
+    if (window.innerWidth < 1024) {
+      // entering narrow: if not explicitly open as drawer, ensure peek shows
+      if (!document.body.classList.contains('side-open')) {
+        panePeek.hidden = false;
+      }
+    } else {
+      // entering wide: re-apply persisted hidden/visible
+      var s = localStorage.getItem(SIDE_KEY);
+      applySideState(s === 'hidden' ? 'hidden' : 'visible');
+    }
+  });
+
   // item 8: looking at a pane (scroll or click within it) clears its badge.
   actionsBody.addEventListener('scroll', function () { clearNewBadge('a'); });
   actionsBody.addEventListener('click', function () { clearNewBadge('a'); });
   backlogBody.addEventListener('scroll', function () { clearNewBadge('b'); });
   backlogBody.addEventListener('click', function () { clearNewBadge('b'); });
+
+  // ---- v2 redesign 2026-05-23: Send-to-Dispatch composer modal ---------
+  var dispatchTargetId = null;
+  function openDispatchModal(nodeId, title, prefill) {
+    dispatchTargetId = nodeId;
+    dispatchTarget.textContent = title || nodeId;
+    dispatchText.value = (prefill != null && prefill !== '')
+      ? prefill
+      : (localStorage.getItem('ctree-draft-' + nodeId) || '');
+    dispatchClearAfter.checked = false;
+    dispatchScrim.hidden = false;
+    dispatchModal.hidden = false;
+    setTimeout(function () { dispatchText.focus(); }, 0);
+  }
+  function closeDispatchModal() {
+    dispatchModal.hidden = true;
+    dispatchScrim.hidden = true;
+    dispatchTargetId = null;
+  }
+  dispatchClose.addEventListener('click', closeDispatchModal);
+  dispatchCancel.addEventListener('click', closeDispatchModal);
+  dispatchScrim.addEventListener('click', closeDispatchModal);
+  dispatchSend.addEventListener('click', function () {
+    if (!dispatchTargetId) return;
+    var txt = (dispatchText.value || '').trim();
+    if (!txt) { dispatchText.focus(); return; }
+    var clearAfter = !!dispatchClearAfter.checked;
+    var nid = dispatchTargetId;
+    post({ type: 'branch-note-add', target: nid, note_text: txt }, 'sent to Dispatch')
+      .then(function (ok) {
+        if (!ok) return;
+        if (clearAfter) {
+          localStorage.removeItem('ctree-draft-' + nid);
+          post({ type: 'draft-cleared', node_id: nid }, null, true);
+        }
+        closeDispatchModal();
+      });
+  });
+  dispatchStage.addEventListener('click', function () {
+    if (!dispatchTargetId) return;
+    post({ type: 'draft-saved', node_id: dispatchTargetId, draft_text: dispatchText.value }, 'note staged')
+      .then(function (ok) { if (ok) closeDispatchModal(); });
+  });
 
   // ---- pan/zoom (C2) ---------------------------------------------------
   zoomIn.addEventListener('click', function () { zoom = Math.min(2, zoom + 0.1); renderTree(); });
@@ -1904,6 +2163,8 @@
     }
     renderTree();
     renderActions();
+    renderDecisions();
+    renderQuestions();
     renderBacklog();
     if (sel && !ctxPanel.hidden) openCtx(sel);
   }
@@ -1925,5 +2186,40 @@
     };
   }
   setInterval(checkDefers, 30000); // D3 scheduled-time poll
+
+  // Freshness badge: polls /api/health every 30s and shows two ages:
+  //   • state age   — how long since the tree-state file changed
+  //   • heartbeat   — how long since the scheduled heartbeat task last ran
+  // If heartbeat is stale (>10 min, per server's heartbeat_stale flag) the
+  // badge turns red so the operator immediately sees that the auto-update
+  // mechanism has stopped. This is the load-bearing "can I trust this tree?"
+  // signal — without it, the tree can sit silently broken for days.
+  function fmtAge(sec) {
+    if (sec == null) return '—';
+    if (sec < 60) return sec + 's';
+    if (sec < 3600) return Math.round(sec / 60) + 'm';
+    if (sec < 86400) return Math.round(sec / 3600) + 'h';
+    return Math.round(sec / 86400) + 'd';
+  }
+  function pollHealth() {
+    if (!freshnessEl) return;
+    fetch('/api/health', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (h) {
+      if (!h || !h.ok) { freshnessEl.textContent = 'health?'; freshnessEl.className = 'freshness stale'; return; }
+      var sAge = fmtAge(h.state_age_seconds);
+      var hAge = fmtAge(h.heartbeat_age_seconds);
+      freshnessEl.textContent = 'tree ' + sAge + ' • hb ' + hAge;
+      freshnessEl.className = 'freshness' + (h.heartbeat_stale ? ' stale' : '');
+      freshnessEl.title = (h.heartbeat_stale
+        ? 'WARNING: heartbeat has not fired in over 10 minutes — the tree may be missing recent activity. '
+        : 'Tree state file: changed ' + sAge + ' ago. Heartbeat: ran ' + hAge + ' ago. ')
+        + 'Heartbeat scheduled task: ConversationTreeUI-Heartbeat (every 5 min).';
+    }).catch(function () {
+      freshnessEl.textContent = 'health err';
+      freshnessEl.className = 'freshness stale';
+    });
+  }
+  setInterval(pollHealth, 30000);
+  pollHealth();
+
   connect();
 })();

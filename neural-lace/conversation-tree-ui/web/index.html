@@ -16,29 +16,24 @@
     <label class="archtoggle"><input type="checkbox" id="showArchived"> show archived</label>
     <span class="spacer"></span>
     <button id="docsBtn" class="ghost" title="browse docs across projects">📁 Docs</button>
+    <!-- v3 accordion 2026-05-27: explicit toggle to open/close the right side panel.
+         Always visible; the panel itself collapses to a drawer at <1024px wide. -->
+    <button id="paneToggle" class="ghost" aria-label="toggle side panel" title="show / hide the side panel (drawer at narrow widths)">⇆ panel</button>
     <span id="lastRead" class="lastread" aria-live="polite">—</span>
+    <span id="freshness" class="freshness" aria-live="polite" title="How recently the tree state file changed AND when the heartbeat last ran. Red if heartbeat is stale (&gt;10min).">—</span>
     <span id="status" class="status" aria-live="polite">connecting…</span>
   </header>
 
-  <!-- Global corruption banner (UX-I4 / C1d) — hidden unless the reader
-       surfaces a torn/unreadable state. Never blanks the panes. -->
+  <!-- Global corruption banner (UX-I4 / C1d). -->
   <div id="corruptBanner" class="banner corrupt" role="alert" hidden></div>
-  <!-- Persistent in-GUI notification stack (BF-6 / DEC-B): parent-conclude,
-       defer-time. Survives until acted on; v1 has no OS notification. -->
+  <!-- Persistent in-GUI notification stack (BF-6 / DEC-B). -->
   <div id="noteStack" class="note-stack" aria-live="polite"></div>
   <!-- Transient saved/error feedback (BF-5). -->
   <div id="toast" class="toast" role="status" hidden></div>
 
-  <!-- Single-pane tab bar (layout C only — w<1024 AND h<1024). Outside
-       #layout so it is not a grid item; CSS shows it only in mode C. -->
-  <nav id="tabBar" aria-label="pane tabs">
-    <button data-tab="tree" class="active">Tree</button>
-    <button data-tab="actions">Waiting</button>
-    <button data-tab="backlog">Backlog</button>
-  </nav>
-
   <main id="layout">
-    <!-- LEFT: tree pane (~57%, full height, internally scrollable). -->
+    <!-- LEFT: tree pane. Always visible, fixed narrow width, full vertical
+         height, internally scrollable. -->
     <section id="treePane" class="pane tree-pane" aria-label="conversation tree">
       <div class="pane-head">
         <span class="pane-title">Tree</span>
@@ -59,66 +54,125 @@
       <div id="treeState" class="pane-state" hidden></div>
     </section>
 
-    <!-- RIGHT: actions (top) + backlog (bottom), stacked, each scrollable. -->
-    <div class="right-col">
-      <section id="actionsPane" class="pane actions-pane" aria-label="waiting on you">
-        <div class="pane-head">
-          <span class="pane-title">Waiting on you</span>
-          <span id="actionsNewBadge" class="new-badge" aria-live="polite" hidden></span>
-          <label class="sortlbl" title="priority: explicit P1-P5 first; within same priority falls back to type-intrinsic urgency (action > decision > question) then recency. P5 always at bottom.">sort
-            <select id="actionsSort" aria-label="sort actions">
-              <option value="priority">priority</option>
-              <option value="kind">kind</option>
-              <option value="node">branch</option>
-              <option value="deferred">deferred last</option>
-              <option value="manual">manual</option>
-            </select>
-          </label>
-        </div>
-        <div id="actionsBody" class="pane-body list-body"></div>
-        <div id="actionsState" class="pane-state" hidden></div>
-      </section>
+    <!-- RIGHT: stacked-accordion side panel hosting Waiting / Backlog /
+         Decisions / Questions vertically. Each panel collapses to its header
+         on click; per-panel collapse state persists via localStorage.
+         Persistent column at >=1024px; off-canvas DRAWER at <1024px. -->
+    <aside id="rightPanel" class="side-panel" aria-label="stacked accordion side panel">
+      <div class="rp-head">
+        <span class="rp-title">Panels</span>
+        <button id="rightClose" class="ghost rp-close" aria-label="close side panel" title="hide side panel">✕</button>
+      </div>
+      <div id="paneStack" class="pane-stack">
 
-      <section id="backlogPane" class="pane backlog-pane" aria-label="backlog">
-        <div class="pane-head">
-          <span class="pane-title">Backlog</span>
-          <span id="backlogNewBadge" class="new-badge" aria-live="polite" hidden></span>
-          <label class="sortlbl">sort
-            <select id="backlogSort" aria-label="sort backlog">
-              <option value="priority">priority</option>
-              <option value="date">date</option>
-              <option value="manual">manual</option>
-            </select>
-          </label>
-          <button id="addBacklogBtn" class="ghost" title="capture a backlog item">+</button>
-        </div>
-        <div id="backlogCapture" class="capture" hidden>
-          <input id="blText" type="text" placeholder="What's the not-yet-started work?" aria-label="backlog item text">
-          <select id="blPriority" aria-label="priority">
-            <option value="high">high</option>
-            <option value="medium" selected>medium</option>
-            <option value="low">low</option>
-          </select>
-          <input id="blContext" type="text" placeholder="context note (optional)" aria-label="context note">
-          <button id="blSave" class="btn-go">Add</button>
-          <button id="blCancel" class="ghost">cancel</button>
-        </div>
-        <div id="backlogBody" class="pane-body list-body"></div>
-        <div id="backlogState" class="pane-state" hidden></div>
-      </section>
-    </div>
+        <!-- Waiting on You panel -->
+        <section id="actionsPane" class="pane apanel" data-panel="waiting" aria-label="waiting on you">
+          <button class="apanel-head" data-panel-toggle="waiting" aria-expanded="true" type="button">
+            <span class="apanel-chevron" aria-hidden="true">▾</span>
+            <span class="apanel-title">Waiting on you</span>
+            <span id="actionsNewBadge" class="new-badge" aria-live="polite" hidden></span>
+            <span class="apanel-spacer"></span>
+            <label class="sortlbl apanel-sort" title="priority: explicit P1-P5 first; within same priority falls back to type-intrinsic urgency (action > decision > question) then recency. P5 always at bottom." onclick="event.stopPropagation();">sort
+              <select id="actionsSort" aria-label="sort actions" onclick="event.stopPropagation();">
+                <option value="priority">priority</option>
+                <option value="kind">kind</option>
+                <option value="node">branch</option>
+                <option value="deferred">deferred last</option>
+                <option value="manual">manual</option>
+              </select>
+            </label>
+          </button>
+          <div class="apanel-body">
+            <div id="actionsBody" class="pane-body list-body"></div>
+            <div id="actionsState" class="pane-state" hidden></div>
+          </div>
+        </section>
+
+        <!-- Backlog panel -->
+        <section id="backlogPane" class="pane apanel" data-panel="backlog" aria-label="backlog">
+          <button class="apanel-head" data-panel-toggle="backlog" aria-expanded="true" type="button">
+            <span class="apanel-chevron" aria-hidden="true">▾</span>
+            <span class="apanel-title">Backlog</span>
+            <span id="backlogNewBadge" class="new-badge" aria-live="polite" hidden></span>
+            <span class="apanel-spacer"></span>
+            <label class="sortlbl apanel-sort" onclick="event.stopPropagation();">sort
+              <select id="backlogSort" aria-label="sort backlog" onclick="event.stopPropagation();">
+                <option value="priority">priority</option>
+                <option value="date">date</option>
+                <option value="manual">manual</option>
+              </select>
+            </label>
+            <button id="addBacklogBtn" class="ghost apanel-action" title="capture a backlog item" onclick="event.stopPropagation();">+</button>
+          </button>
+          <div class="apanel-body">
+            <div id="backlogCapture" class="capture" hidden>
+              <div class="capture-row">
+                <input id="blText" type="text" placeholder="What's the not-yet-started work?" aria-label="backlog item text">
+                <select id="blPriority" aria-label="priority">
+                  <option value="high">high</option>
+                  <option value="medium" selected>medium</option>
+                  <option value="low">low</option>
+                </select>
+              </div>
+              <!-- v2 redesign UX-VR-13 (2026-05-23): context is now a multi-line
+                   TEXTAREA, not a one-line input. Misha: "Just a title isn't very
+                   useful. The context is critical, and it should open into a
+                   larger textbox, not a single line." -->
+              <textarea id="blContext" placeholder="context — what you know about this, why it matters, any prior decisions or related docs (multi-line, supports markdown-ish prose)" aria-label="context note"></textarea>
+              <div class="capture-row">
+                <button id="blSave" class="btn-go">Add</button>
+                <button id="blCancel" class="ghost">cancel</button>
+              </div>
+            </div>
+            <div id="backlogBody" class="pane-body list-body"></div>
+            <div id="backlogState" class="pane-state" hidden></div>
+          </div>
+        </section>
+
+        <!-- Decisions panel — filtered view of Waiting items where kind=decision -->
+        <section id="decisionsPane" class="pane apanel" data-panel="decisions" aria-label="decisions waiting">
+          <button class="apanel-head" data-panel-toggle="decisions" aria-expanded="true" type="button">
+            <span class="apanel-chevron" aria-hidden="true">▾</span>
+            <span class="apanel-title">Decisions</span>
+            <span id="decisionsCount" class="count-badge" aria-live="polite" hidden></span>
+          </button>
+          <div class="apanel-body">
+            <div id="decisionsBody" class="pane-body list-body"></div>
+            <div id="decisionsState" class="pane-state" hidden></div>
+          </div>
+        </section>
+
+        <!-- Questions panel — filtered view of Waiting items where kind=question -->
+        <section id="questionsPane" class="pane apanel" data-panel="questions" aria-label="questions waiting">
+          <button class="apanel-head" data-panel-toggle="questions" aria-expanded="true" type="button">
+            <span class="apanel-chevron" aria-hidden="true">▾</span>
+            <span class="apanel-title">Questions</span>
+            <span id="questionsCount" class="count-badge" aria-live="polite" hidden></span>
+          </button>
+          <div class="apanel-body">
+            <div id="questionsBody" class="pane-body list-body"></div>
+            <div id="questionsState" class="pane-state" hidden></div>
+          </div>
+        </section>
+
+      </div>
+    </aside>
+
+    <!-- Drawer-collapsed peek pill (visible only when side panel is closed
+         in drawer mode or via explicit close). -->
+    <button id="panePeek" class="pane-peek" hidden aria-label="open side panel">
+      <span id="panePeekLabel">Panels</span>
+    </button>
   </main>
 
-  <!-- Selected-node context surface (FR-6 / C2) — v1.1 dismissible overlay;
-       passive, no continue/resume affordance anywhere. #ctxScrim is the
-       click-outside backdrop (narrow viewports). -->
-  <div id="ctxScrim" hidden></div>
-  <aside id="ctxPanel" class="ctx-panel" hidden aria-label="node context"></aside>
+  <!-- v2 2026-05-23: Detail surface is a centered MODAL. Modal never shifts
+       the persistent #layout. Dismissible. -->
+  <div id="ctxScrim" class="modal-scrim" hidden></div>
+  <aside id="ctxPanel" class="modal-card ctx-modal" hidden aria-label="node context" role="dialog" aria-modal="true"></aside>
 
-  <!-- v1.1.1 item 19: inline doc viewer (markdown rendered client-side, no
-       runtime dep) + cross-project docs browser. Both passive read surfaces. -->
-  <div id="docScrim" hidden></div>
-  <div id="docModal" hidden role="dialog" aria-label="document viewer">
+  <!-- Doc viewer: centered modal. -->
+  <div id="docScrim" class="modal-scrim" hidden></div>
+  <div id="docModal" class="modal-card doc-modal" hidden role="dialog" aria-label="document viewer" aria-modal="true">
     <div class="doc-head">
       <span class="doc-title" id="docTitle">document</span>
       <button id="docOpenEditor" class="ghost" title="open in your OS default editor">⧉ Open in editor</button>
@@ -126,6 +180,9 @@
     </div>
     <div class="doc-body" id="docBody"></div>
   </div>
+
+  <!-- Cross-project docs browser: side drawer (navigator, not reading
+       surface — drawer is the right idiom). -->
   <aside id="docsPanel" hidden aria-label="docs browser">
     <div class="dp-head">
       <input id="docsFilter" type="text" placeholder="filter by filename…" aria-label="filter docs">
@@ -133,6 +190,27 @@
     </div>
     <div class="dp-body" id="docsBody"></div>
   </aside>
+
+  <!-- v2 2026-05-23: dedicated Send-to-Dispatch composer modal. -->
+  <div id="dispatchScrim" class="modal-scrim" hidden></div>
+  <div id="dispatchModal" class="modal-card dispatch-modal" hidden role="dialog" aria-label="send to dispatch composer" aria-modal="true">
+    <div class="doc-head">
+      <span class="doc-title">Send to Dispatch · <span id="dispatchTarget">—</span></span>
+      <button id="dispatchClose" class="ghost" title="close (Esc)">✕</button>
+    </div>
+    <div class="doc-body">
+      <p class="muted" style="margin-top: 0;">Compose a note to surface on the next Dispatch turn for this branch. The reader hook will deliver it as a <code>branch-note-add</code> event.</p>
+      <textarea id="dispatchText" class="draft-area" style="min-height: 12rem;" aria-label="dispatch message body"></textarea>
+      <label style="display: flex; align-items: center; gap: 0.4rem; margin-top: 0.6rem; font-size: 0.78rem; color: var(--muted);">
+        <input type="checkbox" id="dispatchClearAfter"> clear staged draft after send
+      </label>
+      <div class="row" style="margin-top: 0.8rem;">
+        <button id="dispatchSend" class="btn-go">Send to Dispatch</button>
+        <button id="dispatchStage" class="btn-info outline">Save as staged draft</button>
+        <button id="dispatchCancel" class="btn-neutral outline">Cancel</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>

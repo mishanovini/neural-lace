@@ -488,6 +488,200 @@ _run_on_stop() {
 }
 
 # ============================================================================
+# Mode: --on-session-start  (SessionStart hook — child-side self-registration)
+#
+# Why this mode exists: the Dispatch orchestrator runs in the cloud (or in a
+# remote process that does not have ~/.claude/ loaded), so PreToolUse hooks on
+# `mcp__ccd_session_mgmt__start_code_task` NEVER fire for real production
+# spawns — only for the self-test against the local stub. The conversation
+# tree consequently stays stale: real children spawn, but no branch-opened
+# event ever reaches the GUI's state file.
+#
+# This mode closes the gap from the CHILD's side. When a code session starts
+# locally on Misha's machine (SessionStart hook), it emits a branch-opened
+# event under the auto-detected project root with the child's own session_id
+# as the node_id. The orchestrator never needs to participate — the local
+# session writes its own existence into the tree.
+#
+# Source = SessionStart event JSON (Claude Code provides session_id, cwd,
+# source, hook_event_name on stdin). Idempotent on event_id derived from
+# session_id, so SessionStart firing multiple times for the same session
+# (resume, compact) is a per-file no-op after the first.
+# ============================================================================
+_run_on_session_start() {
+  local input; input=$(_read_stdin)
+  _have jq || { _log "session-start: jq unavailable"; exit 0; }
+
+  # Pull session_id from event JSON or env. Source distinguishes startup vs
+  # resume vs compact — all of them register the same branch (idempotent).
+  local sid source cwd transcript_path
+  if [[ -n "$input" ]]; then
+    sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || echo "")
+    source=$(printf '%s' "$input" | jq -r '.source // empty' 2>/dev/null || echo "")
+    cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || echo "")
+    transcript_path=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null || echo "")
+  fi
+  [[ -z "$sid" ]] && sid="${CLAUDE_SESSION_ID:-}"
+  [[ -z "$sid" ]] && { _log "session-start: no session_id available — skipped"; exit 0; }
+  [[ -z "$cwd" ]] && cwd="$(pwd 2>/dev/null || echo)"
+
+  # Sanitize session_id for use as a node-id token.
+  local sid_safe
+  sid_safe=$(printf '%s' "$sid" | tr -c 'A-Za-z0-9._-' '-' | sed 's/-\+/-/g; s/^-//; s/-$//')
+
+  # Project root resolution (reuse the spawn-side logic for consistency).
+  local rootline; rootline=$(cd "$cwd" 2>/dev/null && _project_root || _project_root)
+  local root_id="${rootline%%$'\t'*}"
+  local root_title="${rootline##*$'\t'}"
+
+  # Derive a branch title. Preference order:
+  #   1. CLAUDE_TASK_TITLE env (orchestrator can set this when spawning)
+  #   2. Worktree basename (e.g. "vibrant-fermi-acf761")
+  #   3. cwd basename
+  #   4. fallback: "session <sid-short>"
+  local title=""
+  if [[ -n "${CLAUDE_TASK_TITLE:-}" ]]; then
+    title="$CLAUDE_TASK_TITLE"
+  else
+    local cwd_base
+    cwd_base=$(basename "$cwd" 2>/dev/null || echo "")
+    if [[ -n "$cwd_base" && "$cwd_base" != "/" ]]; then
+      title="$cwd_base"
+    else
+      title="session ${sid_safe:0:12}"
+    fi
+  fi
+  title=$(printf '%s' "$title" | cut -c1-80)
+
+  # Deterministic node id = sid-prefixed so the child branch is stable across
+  # SessionStart re-fires (resume/compact). Distinct across sessions.
+  local nhash; nhash=$(printf '%s' "$sid_safe" | _sha1 | cut -c1-12)
+  local child_id="ss-${nhash}"
+
+  local lib; lib=$(_resolve_state_lib)
+
+  # Deterministic event ids → per-file idempotency on SessionStart re-fire.
+  local ev_root ev_child
+  ev_root="cte-bo-$(printf '%s' "$root_id" | _sha1 | cut -c1-32)"
+  ev_child="cte-bo-$(printf '%s' "$child_id" | _sha1 | cut -c1-32)"
+
+  local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-sstart-$$.json")
+  cat >"$ef" <<JSON
+[
+  {"event_id":"$ev_root","type":"branch-opened","node_id":"$root_id","parent_id":null,"title":$(jq -Rn --arg t "$root_title" '$t'),"actor":"dispatch"},
+  {"event_id":"$ev_child","type":"branch-opened","node_id":"$child_id","parent_id":"$root_id","title":$(jq -Rn --arg t "$title" '$t'),"actor":"dispatch"}
+]
+JSON
+  _emit_dual "$lib" "$ef"
+  rm -f "$ef" 2>/dev/null || true
+
+  # Correlation ledger so --on-stop (Stop hook) can later conclude this
+  # branch. Same format as the --on-spawn ledger (one line per opened branch:
+  # node_id\ttitle\ttimestamp). Indexed by sid so the Stop hook finds it.
+  mkdir -p "$LEDGER_DIR" 2>/dev/null || true
+  local ledger="$LEDGER_DIR/opened-${sid_safe}.jsonl"
+  # Idempotency: only append if this child_id isn't already in the ledger.
+  if [[ ! -f "$ledger" ]] || ! grep -q "^${child_id}	" "$ledger" 2>/dev/null; then
+    printf '%s\t%s\t%s\n' "$child_id" "$title" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null || true
+  fi
+
+  # Heartbeat tracker: record this session as live so --heartbeat can detect
+  # staleness later. The file's mtime IS the liveness signal.
+  mkdir -p "$LEDGER_DIR/live" 2>/dev/null || true
+  : > "$LEDGER_DIR/live/${sid_safe}" 2>/dev/null || true
+
+  _log "session-start child=$child_id title=\"$title\" root=$root_id session=$sid_safe source=${source:-?}"
+  exit 0
+}
+
+# ============================================================================
+# Mode: --heartbeat  (scheduled task — refresh liveness, conclude stale)
+#
+# Scans `~/.claude/projects/*/*.jsonl` (Claude Code's per-session transcript
+# directory). For each transcript whose mtime is within the freshness window
+# (default 15 min), touches the matching live-marker so the GUI knows the
+# session is still active. For each ledger entry whose live-marker is older
+# than the staleness threshold (default 60 min) — meaning the session has
+# stopped emitting transcript events — emits `concluded` for the branch and
+# removes the marker.
+#
+# This is the upstream-of-the-orchestrator continuous emit that gives the
+# tree a live feel even when no event has happened. Designed to be safe to
+# run on a 5-min schedule via Windows Task Scheduler / cron.
+#
+# Tunables (env):
+#   CONV_TREE_HEARTBEAT_FRESH_MIN   freshness window (default 15)
+#   CONV_TREE_HEARTBEAT_STALE_MIN   conclude threshold (default 60)
+# ============================================================================
+_run_heartbeat() {
+  local fresh_min="${CONV_TREE_HEARTBEAT_FRESH_MIN:-15}"
+  local stale_min="${CONV_TREE_HEARTBEAT_STALE_MIN:-60}"
+
+  local projects_dir="$HOME/.claude/projects"
+  [[ -d "$projects_dir" ]] || { _log "heartbeat: no projects dir at $projects_dir — skipped"; exit 0; }
+
+  mkdir -p "$LEDGER_DIR/live" 2>/dev/null || true
+
+  # Step 1: refresh live markers for sessions with recent transcript activity.
+  local refreshed=0
+  while IFS= read -r jsonl; do
+    [[ -z "$jsonl" ]] && continue
+    # Session id is the filename without .jsonl. Sanitize for marker.
+    local sid sid_safe
+    sid=$(basename "$jsonl" .jsonl)
+    sid_safe=$(printf '%s' "$sid" | tr -c 'A-Za-z0-9._-' '-' | sed 's/-\+/-/g; s/^-//; s/-$//')
+    [[ -z "$sid_safe" ]] && continue
+    : > "$LEDGER_DIR/live/${sid_safe}" 2>/dev/null || true
+    refreshed=$((refreshed+1))
+  done < <(find "$projects_dir" -maxdepth 3 -name "*.jsonl" -type f -mmin "-${fresh_min}" 2>/dev/null)
+  _log "heartbeat: refreshed $refreshed live marker(s) (fresh window=${fresh_min}min)"
+
+  # Step 2: conclude branches whose live-marker has gone stale.
+  local lib; lib=$(_resolve_state_lib)
+  local concluded=0
+  local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-hb-$$.json")
+  : > "$ef"
+  printf '[' >"$ef"
+  local first=1
+
+  if [[ -d "$LEDGER_DIR/live" ]]; then
+    while IFS= read -r marker; do
+      [[ -z "$marker" ]] && continue
+      local sid_safe; sid_safe=$(basename "$marker")
+      local ledger="$LEDGER_DIR/opened-${sid_safe}.jsonl"
+      [[ -f "$ledger" ]] || { rm -f "$marker" 2>/dev/null; continue; }
+      # Read all opened branches from this ledger; emit concluded for each.
+      while IFS=$'\t' read -r nid rest || [[ -n "$nid" ]]; do
+        [[ -z "$nid" ]] && continue
+        local ev_cc; ev_cc="cte-cc-$(printf '%s' "$nid" | _sha1 | cut -c1-32)"
+        [[ $first -eq 1 ]] || printf ',' >>"$ef"
+        printf '{"event_id":"%s","type":"concluded","node_id":"%s","actor":"dispatch"}' "$ev_cc" "$nid" >>"$ef"
+        first=0
+        concluded=$((concluded+1))
+      done <"$ledger"
+      rm -f "$marker" 2>/dev/null || true
+      rm -f "$ledger" 2>/dev/null || true
+    done < <(find "$LEDGER_DIR/live" -maxdepth 1 -type f -mmin "+${stale_min}" 2>/dev/null)
+  fi
+
+  printf ']' >>"$ef"
+  if [[ $first -eq 0 ]]; then
+    _emit_dual "$lib" "$ef"
+    _log "heartbeat: concluded $concluded stale branch(es) (stale threshold=${stale_min}min)"
+  fi
+  rm -f "$ef" 2>/dev/null || true
+
+  # Step 3: write a heartbeat marker file the GUI's /api/health endpoint
+  # reads to display "last heartbeat N min ago" so a stuck heartbeat is
+  # itself visible to the operator.
+  mkdir -p "$HOME/.claude/state/conversation-tree" 2>/dev/null || true
+  printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" \
+    > "$HOME/.claude/state/conversation-tree/heartbeat.last" 2>/dev/null || true
+
+  exit 0
+}
+
+# ============================================================================
 # Mode: --self-test
 # ============================================================================
 _self_test() {
@@ -1020,6 +1214,8 @@ _run_resolve_item() {
 case "$MODE" in
   --on-spawn)      _run_on_spawn ;;
   --on-stop)       _run_on_stop ;;
+  --on-session-start) _run_on_session_start ;;
+  --heartbeat)     _run_heartbeat ;;
   --self-test)     _self_test ;;
   # Orchestrator-emit surface (v1.1.5 — 2026-05-21):
   --emit-branch)   _run_emit_branch ;;

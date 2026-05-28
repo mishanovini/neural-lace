@@ -374,6 +374,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/conv-tree-emit-reconciler.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/deferral-counter.sh"
           },
           {
@@ -444,6 +448,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/spawned-task-result-surfacer.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/conversation-tree-emit.sh --on-session-start"
           },
           {
             "type": "command",

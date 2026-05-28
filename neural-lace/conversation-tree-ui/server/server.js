@@ -96,6 +96,33 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // /api/health — liveness probe consumed by the GUI's "last updated N min
+  // ago" badge. Returns the mtime of the state file (when the tree last
+  // changed) AND the mtime of the heartbeat marker (when the heartbeat
+  // scheduled task last ran). A stuck heartbeat is itself observable to
+  // the operator — they see the badge stop advancing.
+  if (url === '/api/health') {
+    var hh = {}; hh[CT] = 'application/json';
+    var nowMs = Date.now();
+    var stateMtime = null, hbMtime = null;
+    try { stateMtime = fs.statSync(STATE_FILE).mtimeMs; } catch (_) {}
+    var hbPath = path.join(require('os').homedir(),
+      '.claude', 'state', 'conversation-tree', 'heartbeat.last');
+    try { hbMtime = fs.statSync(hbPath).mtimeMs; } catch (_) {}
+    res.writeHead(200, hh);
+    res.end(JSON.stringify({
+      ok: true,
+      now_ms: nowMs,
+      state_file: STATE_FILE,
+      state_mtime_ms: stateMtime,
+      state_age_seconds: stateMtime ? Math.round((nowMs - stateMtime) / 1000) : null,
+      heartbeat_mtime_ms: hbMtime,
+      heartbeat_age_seconds: hbMtime ? Math.round((nowMs - hbMtime) / 1000) : null,
+      heartbeat_stale: hbMtime ? ((nowMs - hbMtime) > 10 * 60 * 1000) : true
+    }));
+    return;
+  }
+
   if (url === '/api/events') {
     var hs = { 'Cache-Control': 'no-cache', Connection: 'keep-alive' };
     hs[CT] = 'text/event-stream';
