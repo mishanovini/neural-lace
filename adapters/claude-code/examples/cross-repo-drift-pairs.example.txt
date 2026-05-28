@@ -1,0 +1,21 @@
+# cross-repo-drift-pairs.example.txt — copy to ~/.claude/local/cross-repo-drift-pairs.txt
+#
+# One line per repo pair to monitor for cross-repo drift. Fields are
+# space-separated. Lines starting with `#` and empty lines are ignored.
+#
+# Format:
+#   <owner1/name1> <owner2/name2> [<label>]
+#
+# Examples (REPLACE with your real owner/repo names — do NOT commit the
+# populated file; it lives under ~/.claude/local/ which is gitignored):
+#
+# your-org/my-project your-username/my-project my-project
+# another-org/repo-foo another-username/repo-foo repo-foo
+#
+# Consumed by:
+#   - scripts/check-cross-repo-drift.sh (periodic poller; rc 0/1/2)
+#   - hooks/cross-repo-drift-warn.sh   (SessionStart warn-only)
+#
+# Both invocations honor CROSS_REPO_DRIFT_PAIRS env var as an override
+# (mostly used in self-tests). The runtime default is the per-machine
+# location ~/.claude/local/cross-repo-drift-pairs.txt.

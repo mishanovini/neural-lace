@@ -8,6 +8,16 @@
 # push URL configured in the repo and pushes the branch to each. Remote names are
 # irrelevant, so the same command works from any clone regardless of naming.
 #
+# POST-PUSH VERIFICATION (drift detection part (a), 2026-05-28):
+# When pushing master, after all per-URL pushes succeed, query each remote's master SHA
+# via `gh api repos/<owner>/<name>/branches/master` and confirm all match. If any differ
+# (push half-completed silently, ref-update raced, branch protection rejected, etc.),
+# log the divergence and exit non-zero. This is the harness-internal alternative to the
+# cross-repo mirror Action (PRs #30/#31/#32 — reverted by PR #33; ADR-044 Reverted) which
+# proved over-engineered for the actual use case (every push happens through Claude Code
+# with the harness loaded, so a local post-push check covers the steady-state need
+# without the cross-account PAT operational burden).
+#
 # Usage:
 #   sync.sh [branch]      # default: current branch
 #   sync.sh --self-test   # run the built-in self-test
@@ -16,6 +26,8 @@
 #   - Never force-pushes (no --force / -f anywhere).
 #   - Reports per-URL success/failure.
 #   - Exits non-zero if ANY push fails — NO silent half-sync (the original drift bug).
+#   - On master pushes: ALSO exits non-zero if remote SHAs disagree after push (the
+#     post-push drift signal — even if all individual pushes returned 0).
 #   - Identity-free: the URLs come from the user's local git config at runtime, so this
 #     committed script contains no real org/user names (harness-hygiene).
 
@@ -25,6 +37,90 @@ set -u
 # `git remote -v` lines look like: "<name>\t<url> (push)".
 _sync_collect_urls() {
   git remote -v 2>/dev/null | awk '$3=="(push)"{print $2}' | awk '!seen[$0]++'
+}
+
+# Extract owner/name from a GitHub HTTPS or SSH URL.
+# Returns empty if the URL isn't a recognizable GitHub URL.
+_sync_owner_name_from_url() {
+  local url="$1"
+  case "$url" in
+    https://github.com/*)
+      url="${url#https://github.com/}"
+      url="${url%.git}"
+      printf '%s' "$url"
+      ;;
+    git@github.com:*)
+      url="${url#git@github.com:}"
+      url="${url%.git}"
+      printf '%s' "$url"
+      ;;
+    *)
+      ;;
+  esac
+}
+
+# Query a GitHub repo's master SHA via gh CLI. Empty on error.
+# On a 404 `gh api` outputs the error JSON body to stdout AND exits non-zero
+# — `|| true` suppresses the exit code, so we must validate the shape
+# explicitly (40-char hex) to distinguish a real SHA from an error body.
+_sync_remote_master_sha() {
+  local owner_name="$1" sha
+  [ -z "$owner_name" ] && return 0
+  sha="$(gh api "repos/${owner_name}/branches/master" --jq '.commit.sha' 2>/dev/null || true)"
+  if [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s' "$sha"
+  fi
+}
+
+# Post-push verification: for each distinct GitHub URL, query its master SHA;
+# all must be equal. Returns 0 if consistent, 1 if divergent, 2 if cannot verify
+# (no gh CLI / no GitHub URLs / API call failed for one or more).
+_sync_verify_master_convergence() {
+  command -v gh >/dev/null 2>&1 || { echo "  [verify] skipped (gh CLI not available)" >&2; return 2; }
+
+  local urls owner_name shas_seen="" first_sha="" url sha mismatch=0 missing=0
+  urls="$(_sync_collect_urls)"
+  [ -z "$urls" ] && return 2
+
+  echo ""
+  echo "Post-push drift check (master SHAs across remotes):"
+  while IFS= read -r url; do
+    [ -z "$url" ] && continue
+    owner_name="$(_sync_owner_name_from_url "$url")"
+    if [ -z "$owner_name" ]; then
+      echo "  - $url -> not a recognizable GitHub URL; skipping verify."
+      continue
+    fi
+    sha="$(_sync_remote_master_sha "$owner_name")"
+    if [ -z "$sha" ]; then
+      echo "  - $owner_name -> SHA unavailable (gh api failed; auth scope / network / no master ref)"
+      missing=1
+      continue
+    fi
+    echo "  - $owner_name = $sha"
+    if [ -z "$first_sha" ]; then
+      first_sha="$sha"
+    elif [ "$sha" != "$first_sha" ]; then
+      mismatch=1
+    fi
+  done <<< "$urls"
+
+  if [ "$mismatch" -ne 0 ]; then
+    echo "" >&2
+    echo "DRIFT DETECTED: master SHAs disagree across remotes (see list above)." >&2
+    echo "The push completed but the repos are NOT at identical SHAs. Resolve before" >&2
+    echo "the next push, or future syncs will compound the divergence. Common causes:" >&2
+    echo "  - one remote rejected the push (branch protection / wrong scope / etc.)" >&2
+    echo "  - a concurrent push to one remote raced this one" >&2
+    echo "  - the branches were already divergent and this push only converged some" >&2
+    return 1
+  fi
+  if [ "$missing" -ne 0 ]; then
+    echo "  [verify] WARNING — could not query SHA for one or more remotes; convergence not confirmed." >&2
+    return 2
+  fi
+  echo "  [verify] all remote master SHAs match."
+  return 0
 }
 
 _sync_run() {
@@ -67,6 +163,19 @@ _sync_run() {
     return 1
   fi
   echo "Sync complete — branch '$branch' pushed to all distinct remote URLs."
+
+  # Post-push verification: master only. Other branches don't need cross-repo
+  # equality because they're not the steady-state convergence point.
+  if [ "$branch" = "master" ]; then
+    local verify_rc
+    _sync_verify_master_convergence
+    verify_rc=$?
+    if [ "$verify_rc" -eq 1 ]; then
+      return 1
+    fi
+    # rc=2 (cannot verify) is a warning, not a failure — we don't want to false-alarm
+    # in environments without gh CLI auth, but it IS logged so the operator sees it.
+  fi
   return 0
 }
 
@@ -130,6 +239,30 @@ _sync_self_test() {
       if _sync_run master >/dev/null 2>&1; then _f "fail-loud: expected non-zero with a broken remote, got 0"; fi
       git remote remove broken
     fi
+
+    # Test 5: owner/name parser handles https + ssh + non-github URLs.
+    if [ "$failed" = "0" ]; then
+      local on
+      on="$(_sync_owner_name_from_url "https://github.com/foo/bar.git")"
+      [ "$on" = "foo/bar" ] || _f "owner-name (https): got '$on', want 'foo/bar'"
+      on="$(_sync_owner_name_from_url "git@github.com:foo/bar.git")"
+      [ "$on" = "foo/bar" ] || _f "owner-name (ssh): got '$on', want 'foo/bar'"
+      on="$(_sync_owner_name_from_url "https://github.com/foo/bar")"
+      [ "$on" = "foo/bar" ] || _f "owner-name (no .git): got '$on', want 'foo/bar'"
+      on="$(_sync_owner_name_from_url "$tmp/repoA.git")"
+      [ -z "$on" ] || _f "owner-name (filesystem URL): expected empty, got '$on'"
+    fi
+
+    # Test 6: verify-convergence returns 2 (cannot-verify) when no GitHub URLs present.
+    # In the self-test we only have filesystem URLs, so the parser returns empty for
+    # all of them, gh CLI never runs, and the function exits 2 (warning, not failure).
+    if [ "$failed" = "0" ]; then
+      _sync_verify_master_convergence >/dev/null 2>&1
+      local rc=$?
+      if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+        _f "verify-convergence (no-github-urls): expected 0 or 2, got $rc"
+      fi
+    fi
   fi
 
   cd "$start_dir" 2>/dev/null || true
@@ -139,7 +272,7 @@ _sync_self_test() {
     echo "self-test: FAIL — $msg" >&2
     return 1
   fi
-  echo "self-test: OK"
+  echo "self-test: OK (6 scenarios)"
   return 0
 }
 

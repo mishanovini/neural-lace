@@ -451,6 +451,11 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/cross-repo-drift-warn.sh",
+            "statusMessage": "Checking cross-repo NL drift..."
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/conversation-tree-emit.sh --on-session-start"
           },
           {
