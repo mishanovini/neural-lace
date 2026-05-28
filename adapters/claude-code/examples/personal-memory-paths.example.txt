@@ -1,0 +1,48 @@
+# personal-memory-paths.txt — per-machine config consumed by install.sh
+#
+# WHAT THIS DOES
+# ==============
+# On each install.sh run, the installer reads this file and for each absolute
+# directory path listed below, copies the current content of
+# ~/.claude/rules/principles.md into a file named `principles_canonical.md`
+# inside that directory. The synced file carries a header marker noting it is
+# auto-generated and points at the canonical source.
+#
+# WHY
+# ===
+# Misha 2026-05-28: the operating rules live in TWO places — the harness
+# canonical principles.md AND the personal-memory `feedback_dispatch_operating_rules.md`
+# file. They could drift. Install-time copy keeps them in sync without
+# replacing the personal-framed memory file (which stays as the user's
+# editable, per-relationship narrative).
+#
+# FORMAT
+# ======
+# - One absolute path per line.
+# - Lines starting with `#` are comments and skipped.
+# - Blank lines are skipped.
+# - Paths can contain spaces (NOT quoted — the entire line minus trailing
+#   whitespace is treated as a single path).
+# - $HOME and ~ expansion is supported.
+#
+# HOW TO USE
+# ==========
+# 1. Copy this file to ~/.claude/local/personal-memory-paths.txt
+#    (the .example suffix becomes .txt; install.sh seeds it from this template
+#    on first install if the target doesn't exist).
+# 2. Replace the example paths below with the actual personal-memory directories
+#    on this machine (they often live under
+#    ~/AppData/Roaming/Claude/local-agent-mode-sessions/<agent-uuid>/<sub-uuid>/agent/memory/
+#    on Windows, or similar agent-mode paths on macOS/Linux).
+# 3. Run install.sh — the sync writes principles_canonical.md to each path.
+#
+# EXAMPLE PATHS (replace with your real paths; these will not work on your
+# machine — they're shapes only):
+#
+# Windows agent-mode path:
+# C:\Users\<your-username>\AppData\Roaming\Claude\local-agent-mode-sessions\<agent-uuid>\<sub-uuid>\agent\memory
+#
+# macOS / Linux agent-mode path:
+# $HOME/Library/Application Support/Claude/local-agent-mode-sessions/<agent-uuid>/<sub-uuid>/agent/memory
+#
+# After editing, lines that aren't comments / blank become active sync targets.

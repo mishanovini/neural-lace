@@ -38,9 +38,18 @@
 # ====
 #   warn  (default) — log every detection to the warn-log, exit 0 (never block).
 #   block          — block-eligible detections route through the retry-guard
-#                    (blocks, with the standard 3-retry downgrade). Rule 3 still warn-only.
+#                    (blocks, with the standard 3-retry downgrade). Rule 3 still warn-only
+#                    BUT in block-mode R3 detections also write an in-band notification
+#                    alert marker to ~/.claude/state/external-monitor-alerts/
+#                    so the SessionStart `external-monitor-alert-surfacer.sh` hook
+#                    surfaces the warning at the next interactive session — per
+#                    Misha 2026-05-28: ambiguous R3 hits stay warn (no block) but
+#                    DO need an in-band notification surface (not just stderr the
+#                    agent never reads). Per the in-band-friction principle.
 # Resolution order: PRINCIPLES_GATE_MODE env  >  ~/.claude/local/principles-gate-mode file  >  "warn".
-# Start in warn-mode; flip to block only after the false-positive rate is calibrated.
+# Flipped to block 2026-05-28 after warn-log review showed R4/R5/R7 firings are
+# high-signal real anti-patterns, R3 firings are legitimate decision-surfacing
+# (kept warn-only with in-band notification).
 #
 # ESCAPE HATCH
 # ============
@@ -275,6 +284,33 @@ fi
 # Warn-mode: never block.
 if [[ "$MODE" = "warn" ]]; then
   exit 0
+fi
+
+# Block-mode in-band notification for Rule 3 (warn-only, but surface via
+# external-monitor-alert at next session start per the wired
+# external-monitor-alert-surfacer.sh hook). Misha 2026-05-28: R3 stays warn-only
+# because "is one option clearly principled" is heuristic, but the warning needs
+# in-band surface (not just stderr the agent never reads).
+if [[ "$R3" -gt 0 ]] && [[ "$MODE" = "block" ]]; then
+  ALERT_DIR="${PRINCIPLES_GATE_ALERT_DIR:-$HOME/.claude/state/external-monitor-alerts}"
+  mkdir -p "$ALERT_DIR" 2>/dev/null || true
+  TS_ALERT=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo "unknown")
+  TS_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
+  SID_ALERT="${RG_SESSION_ID:-${CLAUDE_SESSION_ID:-unknown}}"
+  SNIPPET_ALERT=$(printf '%s' "$LAST_ASSISTANT" | tr '\n' ' ' | head -c 240 | sed 's/"/\\"/g')
+  ALERT_FILE="$ALERT_DIR/principles-gate-r3-${TS_ALERT}-${SID_ALERT}.json"
+  cat > "$ALERT_FILE" 2>/dev/null <<JSON
+{
+  "started_at": "$TS_ISO",
+  "source": "principles-compliance-gate.sh",
+  "rule": "R3",
+  "session_id": "$SID_ALERT",
+  "detection_count": $R3,
+  "summary": "Rule 3 (possible multi-option question) flagged $R3 time(s) in the final assistant message. Heuristic — review whether one option was clearly principled and could have been taken without surfacing to Misha. See ~/.claude/state/principles-gate-warnings.log for the matched line.",
+  "snippet": "$SNIPPET_ALERT"
+}
+JSON
+  echo "[principles-gate] R3 in-band notification: wrote $ALERT_FILE" >&2
 fi
 
 # Block-mode: block only on block-eligible detections (Rule 4/5/7). Rule 3 stays warn.
