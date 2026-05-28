@@ -2,6 +2,25 @@
 
 > **For the catalog of best practices this harness encodes** (decision records, anti-vaporware, orchestrator pattern, two-layer config, and 20+ more with rationale for each), see [`docs/best-practices.md`](../../docs/best-practices.md). The sections below are the operational rules — the best-practices doc is the narrative guide that explains *why* each rule exists.
 
+## Operating Principles (canonical reference)
+
+**Before any tool-call turn or user-facing message, the Operating Rules in `~/.claude/rules/principles.md` are binding.** Misha refers to them by number ("Rule 3", "Operating Rule 5") or short name ("the honesty rule"). The full list — Rules 0–7 plus the Decision Principles and Design Philosophy — is in the principles doc:
+
+@~/.claude/rules/principles.md
+
+The numbered rules in short form (consult the doc above for full body, examples, and enforcement map):
+
+- **Rule 0 — Honesty is absolute.** Foundation under every other rule. When in doubt about any rule, the answer is the more honest path.
+- **Rule 1 — Drive to completion.** Don't defer or retire what you set out to do. "Complete it" or "explicitly pause with reason + re-engage trigger."
+- **Rule 2 — Be the interface, not a pointer.** "Read the PR" / "see the doc" is failure mode. Summarize artifacts you reference.
+- **Rule 3 — Distinguish "needs Misha input" from "I should figure it out."** Before posing a decision: can you defend a single right answer based on principles + evidence? If yes, take it.
+- **Rule 4 — No false framings.** Wire-or-retire / defer-or-fix smuggle the wrong answer in. If one option is clearly aligned with the principles, recommend it OR take it.
+- **Rule 5 — "Done" means shipped to master.** Spawning a session ≠ done. PR open ≠ done. Merged ≠ done unless to master. Cite a merge SHA or master reference.
+- **Rule 6 — Preemptive over symptom-treating.** Design so the failure cannot arise rather than treating it after.
+- **Rule 7 — No false promises.** Don't claim future behavior you cannot trigger. If a mechanism doesn't exist, name it as a gap and propose one.
+
+**Companion mechanism:** `~/.claude/hooks/principles-compliance-gate.sh` is a Stop hook that scans the final assistant message for Rule 3/4/5/7 anti-patterns. Mode resolved from `PRINCIPLES_GATE_MODE` env var > `~/.claude/local/principles-gate-mode` file > "warn" default. Block-mode blocks Stop on R4/R5/R7 detections; R3 is intentionally warn-only (the "is one option clearly principled?" question is not mechanically decidable, but R3 hits do route to an in-band notification marker for the next SessionStart per the principles-gate-warn surfacing pattern).
+
 ## Accounts & Auto-Switching
 - Work account for business repos, personal account for personal repos
 - Directory-based: `~/claude-projects/<org>/` determines which GitHub + Supabase account is active
@@ -217,6 +236,7 @@ Gen 4 mechanisms still apply unchanged: `pre-commit-tdd-gate.sh` (4 layers), `pl
 Four highest-leverage agent prompts (`task-verifier`, `code-reviewer`, `plan-phase-builder`, `end-user-advocate`) carry `## Counter-Incentive Discipline` sections priming each agent against its own training-induced bias toward call-it-done shortcuts. Builder agents are primed against finding-workarounds-to-mark-complete; reviewers are primed against trust-the-builder-by-default. Reviewer-accountability tracker (HARNESS-GAP-11) is the structural follow-up gated on telemetry.
 
 ## Detailed Protocols (in ~/.claude/rules/)
+- `principles.md` — **canonical Operating Rules 0–7 + Decision Principles + Design Philosophy.** The single doc a fresh-machine Claude reads to make decisions without Misha. Loaded explicitly at the top of this CLAUDE.md via `@`-reference. Companion: `principles-compliance-gate.sh`.
 - `planning.md` — task planning, mid-build decisions, completion reports, decision records, session history
 - `testing.md` — test discipline, E2E, pre-commit review, UX validation, deployment validation, purpose validation
 - `vaporware-prevention.md` — Gen 4-6 enforcement map (hook-backed anti-vaporware) + Build Doctrine extensions
