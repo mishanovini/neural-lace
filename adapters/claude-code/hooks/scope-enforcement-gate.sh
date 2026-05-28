@@ -813,11 +813,72 @@ Test merge-context allowlist.
     echo "self-test (20) git-dir-resolution (windows-drive-letter / posix / relative / empty): PASS" >&2
     PASSED=$((PASSED+1))
   else
+    echo "self-test (20) git-dir-resolution: FAIL" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenarios 21-24: HARNESS-GAP-41 trailing-slash pattern semantics ----
+  # The parser stores plan declarations like `foo/ — description` with the
+  # trailing slash retained. Pre-fix, glob_match treated `foo/` as strict
+  # prefix-with-slash and missed bare gitlink paths (`git rm --cached foo`
+  # stages `foo` with no trailing slash). Post-fix, `foo/` matches BOTH
+  # `foo/bar/baz` (existing behavior) AND bare `foo` (NEW), while still
+  # rejecting `foobar` and `foo-extra` (false-positive guard).
+  PLAN_GITLINK='# Plan: test
+Status: ACTIVE
+
+## Goal
+Test gitlink-shaped trailing-slash matching.
+
+## Files to Modify/Create
+- `gitlink-dir/` — directory-shaped declaration for a gitlink cleanup
+
+## Tasks
+- [ ] 1. test
+'
+
+  # ---- Scenario 21: PASS — `foo/` matches bare path `foo` (the gitlink case) ----
+  RC=$(_run_scenario s21 "$PLAN_GITLINK" "gitlink-dir")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (21) trailing-slash-matches-bare-path: PASS (gitlink case)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (21) trailing-slash-matches-bare-path: FAIL (rc=$RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 22: PASS — `foo/` still matches paths under foo (existing behavior preserved) ----
+  RC=$(_run_scenario s22 "$PLAN_GITLINK" "gitlink-dir/nested/file.ts")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (22) trailing-slash-matches-nested-path: PASS (existing behavior preserved)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (22) trailing-slash-matches-nested-path: FAIL (rc=$RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 23: FAIL — `foo/` must NOT match `foobar` (false-positive guard) ----
+  RC=$(_run_scenario s23 "$PLAN_GITLINK" "gitlink-dirbar")
+  if [[ "$RC" == "2" ]]; then
+    echo "self-test (23) trailing-slash-does-not-match-substring-prefix: PASS (correctly blocked)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (23) trailing-slash-does-not-match-substring-prefix: FAIL (rc=$RC, expected 2)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 24: FAIL — `foo/` must NOT match `foo-extra` (hyphen-extended false-positive guard) ----
+  RC=$(_run_scenario s24 "$PLAN_GITLINK" "gitlink-dir-extra")
+  if [[ "$RC" == "2" ]]; then
+    echo "self-test (24) trailing-slash-does-not-match-hyphen-extended: PASS (correctly blocked)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (24) trailing-slash-does-not-match-hyphen-extended: FAIL (rc=$RC, expected 2)" >&2
     FAILED=$((FAILED+1))
   fi
 
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 20 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 24 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1176,7 +1237,18 @@ glob_match() {
   fi
 
   if [[ "${pat: -1}" == "/" ]]; then
+    # Trailing-slash pattern matches:
+    #  (a) any path under that prefix: "foo/" matches "foo/bar/baz"
+    #  (b) the bare path with no slash: "foo/" matches "foo"
+    # Case (b) is required for gitlink-shaped paths — `git rm --cached <dir>`
+    # produces a bare path in the staged tree (no trailing slash), so a
+    # plan declaring `foo/` must still match that staged entry.
+    # HARNESS-GAP-41 (2026-05-24).
     if [[ "$path" == "$pat"* ]]; then
+      return 0
+    fi
+    local pat_no_slash="${pat%/}"
+    if [[ "$path" == "$pat_no_slash" ]]; then
       return 0
     fi
     return 1
