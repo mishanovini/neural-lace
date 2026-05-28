@@ -130,3 +130,15 @@ adapters/claude-code/business-patterns.paths
 
 # Build Doctrine propagation engine audit log (per-event data, gitignored)
 build-doctrine/telemetry/propagation.jsonl
+
+# Anthropic Dispatch sibling-worktree directories. Each Dispatch spawn that
+# uses isolation: "worktree" creates a top-level directory matching the
+# `<adjective>-<surname>-<6hex>` naming convention (e.g., amazing-fermi-233a5a).
+# Such directories are registered git worktrees (see `git worktree list`);
+# they have their own .git pointer back to this repo and must NEVER be staged
+# as gitlinks or content. The `close-plan` procedure's `git add -A`
+# accidentally swept 30 of them into the index as mode-160000 gitlinks on
+# 2026-05-22 (commit fff2de3); the cleanup landed via the plan referenced in
+# docs/plans/archive/repo-cleanup-dispatch-worktree-gitlinks-2026-05-22.md.
+# The glob below prevents recurrence. HARNESS-GAP-41 (2026-05-24).
+/[a-z]*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]/
