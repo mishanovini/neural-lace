@@ -15,7 +15,7 @@
 #
 # Usage:
 #   pwsh -File adapters/claude-code/scripts/install-daily-harness-eval-task.ps1
-#   pwsh -File ... -RepoPath "C:\Users\misha\dev\Pocket Technician\neural-lace"
+#   pwsh -File ... -RepoPath "$env:USERPROFILE\dev\<work-org>\neural-lace"
 #   pwsh -File ... -Time "17:00"
 #   pwsh -File ... -Uninstall
 #
@@ -25,7 +25,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$RepoPath = "$HOME\dev\Pocket Technician\neural-lace",
+    [string]$RepoPath = "$HOME\dev\<work-org>\neural-lace",
     [string]$Time = "17:00",
     [switch]$Uninstall
 )

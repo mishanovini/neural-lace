@@ -307,7 +307,7 @@ depending on most others.
   bug-shaped fixtures. One focused session.
 - **Immediate, PROVEN value.** The bug is confirmed and currently active — this
   very session was pointed at an EMPTY `…neural-lace/memory` while the real
-  memories sit in `…Pocket-Technician/memory`. Every repo-cwd and worktree session
+  memories sit in `…<parent-project>/memory`. Every repo-cwd and worktree session
   is silently memory-blind today. Fixing it improves every subsequent session.
 - **Regression-locked.** The doctrine-scoping plan's R4 test makes the fix durable.
 
