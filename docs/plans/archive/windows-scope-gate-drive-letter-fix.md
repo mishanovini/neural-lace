@@ -1,5 +1,5 @@
 # Plan: scope-enforcement-gate Windows drive-letter fix + HARNESS-GAP-27 supersession docs
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 tier: 1
