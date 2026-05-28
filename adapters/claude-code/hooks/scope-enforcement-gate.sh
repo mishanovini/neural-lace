@@ -123,7 +123,34 @@ _is_system_managed_path() {
 }
 
 # ============================================================
-# --self-test handler (nineteen scenarios)
+# Helper: resolve a git-dir path to absolute form.
+#
+# `git rev-parse --git-dir` may return:
+#   - a POSIX-absolute path (/home/u/repo/.git)
+#   - a Windows drive-letter absolute path (C:/Users/u/repo/.git, or rarely
+#     the backslash form C:\Users\...\.git) — Git Bash on Windows
+#   - a relative path (.git, or worktrees/foo/.git) — resolve vs repo root
+#   - empty (could not resolve) — return empty
+#
+# The Windows drive-letter form is the load-bearing case: a `case` that
+# matched only `/*` treated `C:/…/.git` as RELATIVE and re-prefixed it with
+# the repo root, producing a nonexistent path. The MERGE_HEAD / rebase-state
+# checks then silently never fired on Windows, so the rebase/merge full-skip
+# (HARNESS-GAP-29) was lost there. Treat drive-letter paths as already
+# absolute.
+# ============================================================
+_resolve_git_dir_abs() {
+  local gd="$1" root="$2"
+  case "$gd" in
+    "") printf '' ;;                            # could not resolve
+    /*) printf '%s' "$gd" ;;                    # POSIX-absolute
+    [A-Za-z]:/*|[A-Za-z]:\\*) printf '%s' "$gd" ;;  # Windows drive-letter absolute
+    *) printf '%s/%s' "$root" "$gd" ;;          # relative -> resolve vs repo root
+  esac
+}
+
+# ============================================================
+# --self-test handler (twenty scenarios)
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
   # We need this script's path for re-invocation under different cwds
@@ -763,8 +790,34 @@ Test merge-context allowlist.
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 20: git-dir resolution — Windows drive-letter is absolute (regression: HARNESS-GAP-29 on Windows) ----
+  # On Windows Git Bash, `git rev-parse --git-dir` returns a drive-letter
+  # path like C:/Users/u/repo/.git. The pre-fix `case` matched only `/*`,
+  # so such a path fell through to relative-handling and got re-prefixed
+  # with the repo root — producing a nonexistent path, so the MERGE_HEAD /
+  # rebase-state checks never fired and the rebase/merge full-skip was lost.
+  # _resolve_git_dir_abs must return drive-letter (and POSIX-absolute) paths
+  # unchanged, resolve relative paths vs the repo root, and keep empty empty.
+  S20_OK=1
+  out=$(_resolve_git_dir_abs "C:/Users/u/repo/.git" "/some/repo/root")
+  [[ "$out" == "C:/Users/u/repo/.git" ]] || { S20_OK=0; echo "self-test (20) windows-drive-letter-forward-slash: FAIL (got '$out')" >&2; }
+  out=$(_resolve_git_dir_abs 'C:\Users\u\repo\.git' "/some/repo/root")
+  [[ "$out" == 'C:\Users\u\repo\.git' ]] || { S20_OK=0; echo "self-test (20) windows-drive-letter-backslash: FAIL (got '$out')" >&2; }
+  out=$(_resolve_git_dir_abs "/home/u/repo/.git" "/some/repo/root")
+  [[ "$out" == "/home/u/repo/.git" ]] || { S20_OK=0; echo "self-test (20) posix-absolute: FAIL (got '$out')" >&2; }
+  out=$(_resolve_git_dir_abs ".git" "/some/repo/root")
+  [[ "$out" == "/some/repo/root/.git" ]] || { S20_OK=0; echo "self-test (20) relative-resolves-vs-root: FAIL (got '$out')" >&2; }
+  out=$(_resolve_git_dir_abs "" "/some/repo/root")
+  [[ -z "$out" ]] || { S20_OK=0; echo "self-test (20) empty-stays-empty: FAIL (got '$out')" >&2; }
+  if [[ "$S20_OK" -eq 1 ]]; then
+    echo "self-test (20) git-dir-resolution (windows-drive-letter / posix / relative / empty): PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 19 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 20 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -855,11 +908,7 @@ fi
 # the per-worktree git dir, full-skip the scope check, and log for audit.
 # This supersedes the narrower migration-only merge exemption below.
 GIT_DIR_PATH=$(git -C "$REPO_ROOT" rev-parse --git-dir 2>/dev/null || echo "")
-case "$GIT_DIR_PATH" in
-  /*) ;;                                   # already absolute
-  "") ;;                                   # couldn't resolve; leave empty
-  *) GIT_DIR_PATH="$REPO_ROOT/$GIT_DIR_PATH" ;;  # relative -> resolve vs REPO_ROOT
-esac
+GIT_DIR_PATH=$(_resolve_git_dir_abs "$GIT_DIR_PATH" "$REPO_ROOT")
 
 SKIP_REASON=""
 if [[ -n "$GIT_DIR_PATH" ]]; then
@@ -899,16 +948,9 @@ fi
 IN_MERGE=0
 if command -v git >/dev/null 2>&1; then
   GIT_DIR_PATH=$(git -C "$REPO_ROOT" rev-parse --git-dir 2>/dev/null || echo "")
-  if [[ -n "$GIT_DIR_PATH" ]]; then
-    # git rev-parse --git-dir may return a relative path; resolve it
-    # relative to REPO_ROOT if not absolute.
-    case "$GIT_DIR_PATH" in
-      /*) ;;
-      *) GIT_DIR_PATH="$REPO_ROOT/$GIT_DIR_PATH" ;;
-    esac
-    if [[ -e "$GIT_DIR_PATH/MERGE_HEAD" ]]; then
-      IN_MERGE=1
-    fi
+  GIT_DIR_PATH=$(_resolve_git_dir_abs "$GIT_DIR_PATH" "$REPO_ROOT")
+  if [[ -n "$GIT_DIR_PATH" ]] && [[ -e "$GIT_DIR_PATH/MERGE_HEAD" ]]; then
+    IN_MERGE=1
   fi
 fi
 export IN_MERGE

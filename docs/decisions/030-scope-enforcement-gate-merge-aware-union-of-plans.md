@@ -1,8 +1,10 @@
-# Decision 030 — Scope-enforcement-gate union-of-plans approach for merge commits (DEFERRED)
+# Decision 030 — Scope-enforcement-gate union-of-plans approach for merge commits (SUPERSEDED)
 
 - **Date:** 2026-05-14
-- **Status:** Deferred (the lightweight migration-allowlist approach shipped first; this ADR captures the more-general design for future implementation)
+- **Status:** SUPERSEDED 2026-05-27 by PR #26 (HARNESS-GAP-29, master `0d6bc43`) — see `docs/plans/archive/scope-gate-rebase-exemption.md`. The deferred union-of-plans design below is no longer pursued. (Originally: Deferred — the lightweight migration-allowlist approach shipped first; this ADR captured the more-general design for future implementation.)
 - **Stakeholders:** harness maintainer; every Claude Code session that resolves a merge of master into a feature branch
+
+> **Supersession note (2026-05-27).** PR #26 chose a different, simpler answer than this ADR's union-of-plans design: when a rebase or merge is in progress, `scope-enforcement-gate.sh` now **full-skips** the scope check entirely (a commit during a rebase/merge stages files git's replay/merge brought in, not author-chosen plan scope, so scope-checking them is meaningless). This is a refinement of Option D below ("skip scope-check entirely when MERGE_HEAD exists") — which this ADR rejected for *normal* commits, but which is correct for the *narrow, detected* rebase/merge-in-progress window. Operator confirmed the broader full-skip is the desired behavior. The union-of-plans mechanism specified below is therefore NOT implemented and the "When to un-defer" triggers no longer apply. This ADR is retained as the historical record of the design space; HARNESS-GAP-27 (its originating backlog entry) is likewise marked superseded.
 
 ## Context
 
