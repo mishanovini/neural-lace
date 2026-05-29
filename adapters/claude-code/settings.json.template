@@ -460,6 +460,11 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/external-monitor-alert-surfacer.sh",
+            "statusMessage": "Checking for external-monitor / daily-eval alerts..."
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/cross-repo-drift-warn.sh",
             "statusMessage": "Checking cross-repo NL drift..."
           },
@@ -471,6 +476,11 @@
             "type": "command",
             "command": "bash ~/.claude/hooks/plan-status-archival-sweep.sh",
             "statusMessage": "Sweeping terminal-status plans into archive..."
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/stale-active-plan-surfacer.sh",
+            "statusMessage": "Checking for stale ACTIVE plans..."
           },
           {
             "type": "command",

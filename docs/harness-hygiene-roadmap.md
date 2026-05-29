@@ -307,7 +307,7 @@ depending on most others.
   bug-shaped fixtures. One focused session.
 - **Immediate, PROVEN value.** The bug is confirmed and currently active — this
   very session was pointed at an EMPTY `…neural-lace/memory` while the real
-  memories sit in `…Pocket-Technician/memory`. Every repo-cwd and worktree session
+  memories sit in `…<parent-project>/memory`. Every repo-cwd and worktree session
   is silently memory-blind today. Fixing it improves every subsequent session.
 - **Regression-locked.** The doctrine-scoping plan's R4 test makes the fix durable.
 
@@ -333,12 +333,24 @@ session's continuity:
   authored at their plans' R1 (not this session) to avoid mega-session. _Confirm._
 - **DECISION D3 — doctrine filenames.** `principles.md` + `doctrine-scoping.md`
   under `adapters/claude-code/rules/` (per the naming-consult rule). _Confirm names._
-- **DECISION D4 — `feedback_loud_is_not_rare.md` phantom.** `gate-respect.md:109`
-  cites a memory that doesn't exist. Per the converged doctrine summary, **"loud is
-  not rare" is NOT a principle — a one-off feedback, do not elevate** — so the
-  recommended fix is to **remove/repoint the citation** (inline the one sentence of
-  intent, drop the dangling memory reference), NOT to author the memory. (Piece #8
-  executes; _confirm the remove-don't-write direction_.)
+- **DECISION D4 — `feedback_loud_is_not_rare.md` phantom → ELEVATED + RENAMED.**
+  `gate-respect.md:109` cites a memory that, at this roadmap's writing, did not
+  exist. **REVERSAL (Misha-authorized 2026-05-28):** the principle WAS elevated to a
+  persistent feedback memory and **renamed** to better describe what it actually
+  says. The principle now lives at `feedback_in_band_friction.md` (succeeding
+  `feedback_loud_is_not_rare.md` — old filename is now a redirect stub). One-line
+  statement: *real LLM friction lands in-band (stderr / tool error / system-
+  reminder), not in audit logs the agent never reads.* The citation in
+  `gate-respect.md:109` continues to point at the OLD filename and still resolves
+  via the redirect stub; a follow-up may update that line to the new filename when
+  next editing gate-respect.md. The original "do not elevate" position came from a
+  converged doctrine summary that under-weighted (a) the existing real reach of the
+  principle (cited by 3 different artifacts including a load-bearing harness rule)
+  and (b) Misha's standing rule that named, repeatable principles deserve durable
+  memory homes — both arguments held; the principle is general enough to warrant a
+  persistent memory entry. The original recommendation (Piece #8 removes/repoints
+  the citation) is **no longer in force** — Piece #8 does not need to touch
+  `gate-respect.md:109`.
 - **DECISION D5 — `continuation-enforcer.sh` + `propagation-trigger-router.sh`.**
   Both built-but-unwired in live settings AND template, yet CLAUDE.md +
   `session-end-protocol.md` describe `continuation-enforcer.sh` as live. Wire them

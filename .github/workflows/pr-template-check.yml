@@ -19,6 +19,10 @@ jobs:
       - name: Validate PR body against capture-codify template
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          # PR_TITLE enables the diagnostic-evidence section check on PRs
+          # whose title matches the fix/sweep/class-sweep/refactor pattern.
+          # See validate-pr-template.sh `validate_evidence` for the contract.
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -eo pipefail
           # Source the shared validator library so CI and the local pre-push
@@ -27,4 +31,4 @@ jobs:
           # downstream-repo rollout copies .github/ verbatim with no path
           # rewriting. See Decision 7 in the capture-codify-pr-template plan.
           source "$GITHUB_WORKSPACE/.github/scripts/validate-pr-template.sh"
-          validate_pr_body "$PR_BODY"
+          validate_pr_body "$PR_BODY" "$PR_TITLE"

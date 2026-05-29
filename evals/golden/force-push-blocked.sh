@@ -28,20 +28,20 @@ PATTERN='git\s+push\s+.*(-f|--force)'
 for cmd in "${blocked_patterns[@]}"; do
   if echo "$cmd" | grep -qE "$PATTERN"; then
     echo "PASS: Correctly blocked: $cmd"
-    ((PASS++))
+    PASS=$((PASS + 1))
   else
     echo "FAIL: Should have blocked: $cmd"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   fi
 done
 
 for cmd in "${allowed_patterns[@]}"; do
   if echo "$cmd" | grep -qE "$PATTERN"; then
     echo "FAIL: Should have allowed: $cmd"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   else
     echo "PASS: Correctly allowed: $cmd"
-    ((PASS++))
+    PASS=$((PASS + 1))
   fi
 done
 
