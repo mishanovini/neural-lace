@@ -39,19 +39,24 @@ Ship as 3 atomic PRs in dependency order, all against `pt/master` then cherry-pi
 ## Tasks
 
 - [x] 1. PR 1 — Create `rules/information-architecture.md` + INDEX.md row; verify `evals/golden/rules-index-coverage.sh` passes — **Verification: mechanical** — `evals/golden/rules-index-coverage.sh` PASS; landed in #51 (PT master `38a6ea9`, personal `b237cc8`)
-- [ ] 2. PR 2 — Create `session-start-discovery-cheatsheet.sh` (5-scenario self-test) + extend `principles-compliance-gate.sh` with CRED detection (6 new self-test scenarios, 16 total PASS) + wire cheatsheet hook in `settings.json.template` — **Verification: mechanical** — both hooks' `--self-test` PASS; live mirror byte-identical
-- [ ] 3. PR 3 — Create `claude-md-hygiene-gate.sh` pre-commit (warn-mode initially; size + rule-body-shape + duplication detection; ≥ 5 self-test scenarios) + create `install-weekly-hygiene-task.ps1` + wire hygiene gate in `settings.json.template` PreToolUse Bash chain — **Verification: mechanical** — hook `--self-test` PASS; weekly task installer dry-runs cleanly
+- [x] 2. PR 2 — Create `session-start-discovery-cheatsheet.sh` (5-scenario self-test) + extend `principles-compliance-gate.sh` with CRED detection (6 new self-test scenarios, 16 total PASS) + wire cheatsheet hook in `settings.json.template` — **Verification: mechanical** — both hooks' `--self-test` PASS; live mirror byte-identical; landed in #54 (PT master `adb7d65`, personal `331e048`)
+- [ ] 3. PR 3 — Create `claude-md-hygiene-gate.sh` pre-commit (warn-mode initially; size + rule-body-shape + duplication detection; 7 self-test scenarios) + create `harness-hygiene-weekly.sh` wrapper (5 self-test scenarios) + create `install-weekly-hygiene-task.ps1` + wire hygiene gate in `settings.json.template` PreToolUse Bash chain — **Verification: mechanical** — hooks' `--self-test` PASS; weekly task installer dry-runs cleanly
 
 ## Files to Modify/Create
 
 - `adapters/claude-code/rules/information-architecture.md` — NEW (PR 1, shipped)
 - `adapters/claude-code/rules/INDEX.md` — MODIFY (PR 1, shipped) — add row for information-architecture
-- `adapters/claude-code/hooks/session-start-discovery-cheatsheet.sh` — NEW (PR 2)
-- `adapters/claude-code/hooks/principles-compliance-gate.sh` — MODIFY (PR 2) — add CRED detection class (warn-only) + 6 self-test scenarios
+- `adapters/claude-code/hooks/session-start-discovery-cheatsheet.sh` — NEW (PR 2, shipped)
+- `adapters/claude-code/hooks/principles-compliance-gate.sh` — MODIFY (PR 2, shipped) — add CRED detection class (warn-only) + 6 self-test scenarios
 - `adapters/claude-code/hooks/claude-md-hygiene-gate.sh` — NEW (PR 3)
-- `adapters/claude-code/scripts/install-weekly-hygiene-task.ps1` — NEW (PR 3)
-- `adapters/claude-code/settings.json.template` — MODIFY (PR 2 + PR 3) — wire SessionStart cheatsheet + PreToolUse hygiene gate
+- `adapters/claude-code/scripts/harness-hygiene-weekly.sh` — NEW (PR 3) — weekly cron wrapper invoked by the installer task
+- `adapters/claude-code/scripts/install-weekly-hygiene-task.ps1` — NEW (PR 3) — Windows Scheduled Task installer (mirrors install-daily-harness-eval-task.ps1)
+- `adapters/claude-code/settings.json.template` — MODIFY (PR 2 shipped + PR 3) — wire SessionStart cheatsheet + PreToolUse hygiene gate
 - `docs/plans/harness-hygiene-2-2026-05-29.md` — THIS plan file (lands inline with PR 2 commit per scope-enforcement-gate option "open a new plan")
+
+## In-flight scope updates
+
+- 2026-05-29: `adapters/claude-code/scripts/harness-hygiene-weekly.sh` — separated from `install-weekly-hygiene-task.ps1` (installer registers the Scheduled Task; this wrapper is the bash script the task runs). Standard cron-wrapper pattern mirrors `harness-evaluator-daily.sh`. Self-test added (5 scenarios PASS — size no-op on empty repo, dup no-op on empty repo, index-sync no-golden message, size threshold exceeded fires, size under threshold silent).
 
 ## Assumptions
 
