@@ -475,6 +475,11 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/scripts/broadcast-active-session.sh write 2>/dev/null; bash ~/.claude/scripts/broadcast-active-session.sh check",
+            "statusMessage": "Broadcasting active-session + checking other computers..."
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/conversation-tree-emit.sh --on-session-start"
           },
           {
