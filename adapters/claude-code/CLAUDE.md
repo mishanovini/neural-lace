@@ -238,6 +238,7 @@ Four highest-leverage agent prompts (`task-verifier`, `code-reviewer`, `plan-pha
 - `session-end-protocol.md` — every turn ends with EXACTLY ONE marker on the last line: `DONE:` / `PAUSING:` / `BLOCKED:`; `continuation-enforcer.sh` Stop hook blocks session-end otherwise
 - `harness-hygiene.md` — no sensitive data / personal identifiers in harness code; two-layer config; instances never ship in harness repos
 - `harness-maintenance.md` — global-first rule changes, commit to neural-lace, update architecture doc
+- `workstream-memory-ecology.md` — four memory tiers (T1 global / T2 per-project / T3 auto-memory / T4 ephemeral) + tier-selection on capture + the documented cross-workstream T1.5 gap + stopgap (canonical-repo + consumer-pointers) until a workstream substrate is designed
 - `ux-design.md` — error messages, empty states, loading states, destructive actions
 - `react.md` — React/Next.js standards
 - `typescript.md` — TypeScript strict mode, no any, import type
