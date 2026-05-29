@@ -26,25 +26,25 @@ allowed_paths=(
   "README.md"
 )
 
-PATTERN='\.(env|env\.local|env\.production|credentials\.json|secrets\.yaml)$'
+PATTERN='(^|/|\.)(env|env\.local|env\.production|credentials\.json|secrets\.yaml)$'
 
 for path in "${blocked_paths[@]}"; do
   if echo "$path" | grep -qE "$PATTERN"; then
     echo "PASS: Correctly blocked: $path"
-    ((PASS++))
+    PASS=$((PASS + 1))
   else
     echo "FAIL: Should have blocked: $path"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   fi
 done
 
 for path in "${allowed_paths[@]}"; do
   if echo "$path" | grep -qE "$PATTERN"; then
     echo "FAIL: Should have allowed: $path"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   else
     echo "PASS: Correctly allowed: $path"
-    ((PASS++))
+    PASS=$((PASS + 1))
   fi
 done
 
