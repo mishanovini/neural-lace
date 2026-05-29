@@ -33,6 +33,39 @@ PR_TEMPLATE_PLACEHOLDER='<mechanism answer — replace this bracketed text>'
 # Minimum substantive rationale length for the (c) "no mechanism" answer form.
 PR_TEMPLATE_RATIONALE_MIN_CHARS=40
 
+# --- Diagnostic-evidence section constants ----------------------------------
+
+# Heading for the diagnostic-evidence section. Case-sensitive, anchored to
+# start of line via grep -Fxq. The full sub-title is part of the match so
+# a PR that pastes only "## Primary evidence" (without the parenthetical)
+# does not falsely satisfy the heading check.
+PR_TEMPLATE_EVIDENCE_HEADING='## Primary evidence (required for any sweep / class-fix / refactor PR)'
+
+# The four required sub-headings under the Primary evidence section. Each
+# must have substantive non-placeholder content beneath it.
+PR_TEMPLATE_EVIDENCE_SUBHEADINGS=(
+  '### What runtime/log evidence did you pull?'
+  '### What did the evidence show?'
+  '### What hypothesis did you test BEFORE writing the fix?'
+  '### What refutation criteria would have shown the hypothesis was wrong?'
+)
+
+# Per-sub-heading minimum substantive char count. The threshold is the same
+# as the mechanism rationale's (deliberately — substantive primary evidence
+# is at least as effortful as a no-mechanism rationale).
+PR_TEMPLATE_EVIDENCE_SUBSECTION_MIN_CHARS=40
+
+# Opt-out marker. Pattern matches `[evidence-exempt: <reason>]` anywhere in
+# the PR body. The reason must be ≥ 20 substantive chars to count.
+PR_TEMPLATE_EVIDENCE_EXEMPT_RE='\[evidence-exempt:[[:space:]]*([^]]*)\]'
+PR_TEMPLATE_EVIDENCE_EXEMPT_MIN_CHARS=20
+
+# PR-title pattern that requires the diagnostic-evidence section. Case-
+# insensitive substring match. A PR whose title contains any of these tokens
+# is claiming to fix a recurring class and must show primary evidence (or
+# explicit opt-out).
+PR_TEMPLATE_EVIDENCE_TITLE_TRIGGERS='(^|[^a-z])(fix:|sweep|class-sweep|refactor)([^a-z]|$)'
+
 # --- Functions ---------------------------------------------------------------
 
 # emit_failure_message <category> <detail>
@@ -52,6 +85,15 @@ emit_failure_message() {
       ;;
     rationale_short)
       printf '[pr-template] FAIL: "no mechanism" option requires ≥%d chars of substantive rationale (got %s chars)\n' "$PR_TEMPLATE_RATIONALE_MIN_CHARS" "$detail" >&2
+      ;;
+    evidence_section_missing)
+      printf '[pr-template] FAIL: PR title matches sweep/class-fix/refactor pattern but "%s" section is missing. Either fill in the four sub-sections (runtime/log evidence, what it showed, hypothesis tested, refutation criteria) per diagnosis.md DIAGNOSTIC-FIRST PROTOCOL, or add an opt-out marker `[evidence-exempt: <reason>]` (≥%d chars) anywhere in the PR body.\n' "$PR_TEMPLATE_EVIDENCE_HEADING" "$PR_TEMPLATE_EVIDENCE_EXEMPT_MIN_CHARS" >&2
+      ;;
+    evidence_subsection_missing)
+      printf '[pr-template] FAIL: Primary evidence sub-section under-substance: %s\n' "$detail" >&2
+      ;;
+    evidence_exempt_too_short)
+      printf '[pr-template] FAIL: `[evidence-exempt: ...]` marker found but rationale is shorter than %d chars (got %s chars). Add a substantive reason or fill the Primary evidence section properly.\n' "$PR_TEMPLATE_EVIDENCE_EXEMPT_MIN_CHARS" "$detail" >&2
       ;;
     *)
       printf '[pr-template] FAIL: %s\n' "$detail" >&2
@@ -280,11 +322,174 @@ validate_rationale_length_prose() {
   '
 }
 
-# validate_pr_body <pr_body>
+# --- Diagnostic-evidence functions ------------------------------------------
+
+# pr_title_requires_evidence <pr_title>
+# Returns 0 if the title matches the fix/sweep/class-sweep/refactor pattern
+# (case-insensitive). Returns 1 otherwise. Empty title returns 1.
+pr_title_requires_evidence() {
+  local title="$1"
+  [[ -z "$title" ]] && return 1
+  # Use grep -i for case-insensitive match. The PR_TEMPLATE_EVIDENCE_TITLE_TRIGGERS
+  # pattern uses word-boundary-ish anchors (start-of-line OR non-letter) to
+  # avoid matching "prefix:" in unrelated tokens.
+  if printf '%s\n' "$title" | grep -iqE "$PR_TEMPLATE_EVIDENCE_TITLE_TRIGGERS"; then
+    return 0
+  fi
+  return 1
+}
+
+# detect_evidence_exemption <pr_body>
+# Echoes the substantive char count of the [evidence-exempt: <reason>] marker
+# if one is present, or 0 if the marker is absent. Used by the validator to
+# decide whether the PR opted out of the evidence requirement.
+detect_evidence_exemption() {
+  local body="$1"
+  # Extract the reason text from the first matching marker.
+  # awk avoids bash-version-sensitive regex capture groups.
+  printf '%s\n' "$body" | awk '
+    BEGIN { found = 0; chars = 0 }
+    {
+      if (!found && match($0, /\[evidence-exempt:[[:space:]]*[^]]*\]/)) {
+        m = substr($0, RSTART, RLENGTH)
+        # Strip the prefix and the trailing ]
+        sub(/^\[evidence-exempt:[[:space:]]*/, "", m)
+        sub(/\][[:space:]]*$/, "", m)
+        # Count non-whitespace chars in the reason.
+        gsub(/[[:space:]]/, "", m)
+        chars = length(m)
+        found = 1
+      }
+    }
+    END { print chars }
+  '
+}
+
+# extract_evidence_section <pr_body>
+# Prints the content from after the Primary evidence heading to the next
+# `^## ` heading or EOF.
+extract_evidence_section() {
+  local body="$1"
+  printf '%s\n' "$body" | awk -v heading="$PR_TEMPLATE_EVIDENCE_HEADING" '
+    BEGIN { in_section = 0 }
+    {
+      if (in_section && $0 ~ /^## /) {
+        exit 0
+      }
+      if (in_section) {
+        print
+      }
+      if ($0 == heading) {
+        in_section = 1
+      }
+    }
+  '
+}
+
+# validate_evidence_subsections <evidence_section>
+# Returns 0 if all four required sub-sections have ≥ N chars of substantive
+# (non-placeholder, non-whitespace) content. Echoes the failing sub-section
+# name to stderr on the first failure.
+validate_evidence_subsections() {
+  local section="$1"
+  local sub
+  for sub in "${PR_TEMPLATE_EVIDENCE_SUBHEADINGS[@]}"; do
+    local sub_content
+    sub_content=$(printf '%s\n' "$section" | awk -v target="$sub" '
+      BEGIN { in_sub = 0 }
+      {
+        if (in_sub && $0 ~ /^### /) {
+          exit 0
+        }
+        if (in_sub) {
+          print
+        }
+        if ($0 == target) {
+          in_sub = 1
+        }
+      }
+    ')
+    # Count substantive (non-whitespace, non-placeholder) chars.
+    local chars
+    chars=$(printf '%s\n' "$sub_content" | awk '
+      BEGIN { total = 0 }
+      {
+        line = $0
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+        if (line == "") next
+        # Skip lines that look like the template placeholder.
+        if (line ~ /<replace this bracketed text/) next
+        total += length(line)
+      }
+      END { print total }
+    ')
+    if [[ "$chars" -lt "$PR_TEMPLATE_EVIDENCE_SUBSECTION_MIN_CHARS" ]]; then
+      printf '%s (got %s chars, threshold %d)' "$sub" "$chars" "$PR_TEMPLATE_EVIDENCE_SUBSECTION_MIN_CHARS"
+      return 1
+    fi
+  done
+  return 0
+}
+
+# validate_evidence <pr_body> <pr_title>
+# Top-level diagnostic-evidence check. Returns 0 if the PR is either (a) not
+# title-triggered, (b) has a substantive [evidence-exempt: ...] marker, or
+# (c) has all four Primary-evidence sub-sections filled. Returns 1 otherwise.
+validate_evidence() {
+  local body="$1"
+  local title="$2"
+  if ! pr_title_requires_evidence "$title"; then
+    printf '[pr-template] evidence check: SKIP (title does not match sweep/fix/refactor pattern)\n'
+    return 0
+  fi
+  printf '[pr-template] evidence check: REQUIRED (title matches: %s)\n' "$title"
+
+  # Opt-out path — check before the section requirement so a thin marker
+  # short-circuits the heavier check.
+  local exempt_chars
+  exempt_chars=$(detect_evidence_exemption "$body")
+  if [[ "$exempt_chars" -gt 0 ]]; then
+    if [[ "$exempt_chars" -lt "$PR_TEMPLATE_EVIDENCE_EXEMPT_MIN_CHARS" ]]; then
+      emit_failure_message evidence_exempt_too_short "$exempt_chars"
+      printf '[pr-template] verdict: FAIL\n'
+      return 1
+    fi
+    printf '[pr-template] evidence check: OPT-OUT (%s chars of rationale)\n' "$exempt_chars"
+    return 0
+  fi
+
+  # Section-presence check.
+  if ! printf '%s\n' "$body" | grep -Fxq "$PR_TEMPLATE_EVIDENCE_HEADING"; then
+    emit_failure_message evidence_section_missing
+    printf '[pr-template] verdict: FAIL\n'
+    return 1
+  fi
+  printf '[pr-template] evidence section heading found\n'
+
+  local section
+  section=$(extract_evidence_section "$body")
+  local sub_failure
+  if ! sub_failure=$(validate_evidence_subsections "$section"); then
+    emit_failure_message evidence_subsection_missing "$sub_failure"
+    printf '[pr-template] verdict: FAIL\n'
+    return 1
+  fi
+
+  printf '[pr-template] evidence check: PASS (all four sub-sections substantive)\n'
+  return 0
+}
+
+# validate_pr_body <pr_body> [pr_title]
 # Top-level validator. Returns 0 if the body passes all checks, 1 otherwise.
 # Emits stdout progress logs and stderr canonical failure messages.
+#
+# When `pr_title` is supplied (or PR_TITLE env is set), the diagnostic-evidence
+# section requirement is ALSO checked. With no title, only the original
+# mechanism-section check runs — preserving backward compatibility for callers
+# that pre-date the evidence-section extension.
 validate_pr_body() {
   local body="$1"
+  local title="${2:-${PR_TITLE:-}}"
   local body_chars=${#body}
   printf '[pr-template] checking PR body (%d chars)\n' "$body_chars"
 
@@ -374,6 +579,17 @@ validate_pr_body() {
       printf '[pr-template] verdict: FAIL\n'
       return 1
     fi
+  fi
+
+  # Diagnostic-evidence check fires only if a title was supplied (either as
+  # the 2nd positional arg or via the PR_TITLE env var). Without a title,
+  # we cannot detect whether the PR claims to fix a recurring class.
+  if [[ -n "$title" ]]; then
+    if ! validate_evidence "$body" "$title"; then
+      return 1
+    fi
+  else
+    printf '[pr-template] evidence check: SKIP (no PR title supplied; pass PR_TITLE env or 2nd arg to enable)\n'
   fi
 
   printf '[pr-template] verdict: PASS\n'
@@ -509,11 +725,72 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     fails=$((fails + 1))
   fi
 
+  # --- Diagnostic-evidence cases (16-22) ------------------------------------
+  # All cases below pass a substantive mechanism section + a PR title to
+  # exercise the evidence-section logic added in the 2026-05-23 PR.
+
+  mech_section=$'## What mechanism would have caught this?\n\n### a) Existing catalog entry\n\nFM-006 self-reported task completion without evidence.\n'
+
+  # Case 16: non-fix-class title (no fix:/sweep/refactor in title) → evidence
+  # check SKIPS regardless of section presence → PASS.
+  case16="$mech_section"
+  if ! validate_pr_body "$case16" "feat: add new dashboard widget" >/dev/null 2>&1; then
+    echo "FAIL: non-fix-class title should skip evidence check" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 17: fix-class title + missing evidence section → FAIL evidence_section_missing.
+  case17="$mech_section"
+  if validate_pr_body "$case17" "fix: example bug in foo" >/dev/null 2>&1; then
+    echo "FAIL: fix: title without evidence section should fail" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 18: sweep title with substantive [evidence-exempt: ...] marker → PASS.
+  case18="$mech_section"$'\n[evidence-exempt: docs-only typo in a comment, no runtime behavior change]\n'
+  if ! validate_pr_body "$case18" "sweep: rename helper across 12 files" >/dev/null 2>&1; then
+    echo "FAIL: sweep with substantive evidence-exempt marker should pass" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 19: fix: title with too-short [evidence-exempt: ...] marker → FAIL evidence_exempt_too_short.
+  case19="$mech_section"$'\n[evidence-exempt: tiny]\n'
+  if validate_pr_body "$case19" "fix: example" >/dev/null 2>&1; then
+    echo "FAIL: too-short evidence-exempt marker should fail" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 20: fix-class title + Primary evidence section with all four
+  # sub-sections substantively filled → PASS.
+  evidence_section=$'\n## Primary evidence (required for any sweep / class-fix / refactor PR)\n\n### What runtime/log evidence did you pull?\n\nvercel logs dpl_xyz --since 24h --limit 2000 --json, examined the failure window 14:00-15:00 UTC.\n\n### What did the evidence show?\n\n1760/2000 lines with "Unhandled Rejection: cannot use different slug names for the same dynamic path id !== orgId" — exact error string.\n\n### What hypothesis did you test BEFORE writing the fix?\n\nHYPOTHESIZED that renaming both segments to a consistent name removes the conflict — tested by inspecting the route tree under src/app/api/admin/orgs/[orgId]/ and confirming no other route uses [id] for the same parent.\n\n### What refutation criteria would have shown the hypothesis was wrong?\n\nWould be REFUTED by post-rename logs continuing to show the same Unhandled Rejection error in the next deployment.\n'
+  case20="$mech_section$evidence_section"
+  if ! validate_pr_body "$case20" "fix: route-tree slug conflict for org admin" >/dev/null 2>&1; then
+    echo "FAIL: fix-class title with substantive evidence should pass" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 21: fix-class title + Primary evidence section with one sub-section
+  # empty (placeholder remaining) → FAIL evidence_subsection_missing.
+  evidence_section_thin=$'\n## Primary evidence (required for any sweep / class-fix / refactor PR)\n\n### What runtime/log evidence did you pull?\n\nvercel logs --since 24h covering the failure window.\n\n### What did the evidence show?\n\n<replace this bracketed text>\n\n### What hypothesis did you test BEFORE writing the fix?\n\nHYPOTHESIZED that renaming both segments removes the conflict.\n\n### What refutation criteria would have shown the hypothesis was wrong?\n\nWould be REFUTED by post-rename logs continuing to show the same error.\n'
+  case21="$mech_section$evidence_section_thin"
+  if validate_pr_body "$case21" "fix: example" >/dev/null 2>&1; then
+    echo "FAIL: thin evidence sub-section should fail" >&2
+    fails=$((fails + 1))
+  fi
+
+  # Case 22: PR_TITLE via env var rather than 2nd arg — same behavior as case 17.
+  case22="$mech_section"
+  if PR_TITLE="fix: same shape via env" validate_pr_body "$case22" >/dev/null 2>&1; then
+    echo "FAIL: PR_TITLE env should trigger evidence check the same as 2nd arg" >&2
+    fails=$((fails + 1))
+  fi
+
+  total=22
   if [[ $fails -eq 0 ]]; then
-    echo "Self-test passed (15 cases)" >&2
+    echo "Self-test passed ($total cases)" >&2
     exit 0
   else
-    echo "Self-test failed: $fails case(s) failed" >&2
+    echo "Self-test failed: $fails case(s) failed (of $total)" >&2
     exit 1
   fi
 fi
