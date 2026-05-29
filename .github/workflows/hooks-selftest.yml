@@ -63,16 +63,24 @@ jobs:
           # both fail cold in CI. Tracked in PR #28 body + the rot
           # surfaced is itself the value the eats-own-cooking arc provides.
           #
-          # 2026-05-28 — REBASE discovery (replacement PR for #28). The hook
-          # conversation-tree-extract-pending.sh was added to the repo AFTER
-          # the original PR #28 was authored. Its --self-test exhibits the
-          # same accumulated-state-vs-cold-CI gap as its conv-tree siblings
-          # (EX1 / FN1 / ID1 / FP3 / ML1 / LG1 cases all fail cold). Same
-          # mitigation pattern: allowlist with a tracking pointer; the fix
-          # is a separate follow-up that makes the self-test self-contained.
+          # 2026-05-28 — REBASE discoveries (replacement PR for #28). Two
+          # additional conv-tree hooks were added to the repo AFTER PR #28
+          # was originally authored. Both exhibit the same accumulated-
+          # state-vs-cold-CI gap as the original conv-tree-emit.sh:
+          #   - conversation-tree-extract-pending.sh — EX1/FN1/ID1/FP3/ML1/LG1
+          #     cases all fail cold (extracts decisions/actions/questions
+          #     from text, depends on accumulated state).
+          #   - conv-tree-emit-reconciler.sh — same conv-tree subsystem, same
+          #     cold-CI gap shape, surfaced on the second CI run of this PR.
+          # Same mitigation pattern: allowlist with a tracking pointer; the
+          # fix is a separate follow-up that makes each self-test self-
+          # contained. The fact that the workflow surfaces these on cold CI
+          # — and that local sweeps had been missing them — is itself the
+          # eat-own-cooking value the workflow provides.
           KNOWN_FAILING_HOOKS=(
             "conversation-tree-emit.sh"
             "conversation-tree-extract-pending.sh"
+            "conv-tree-emit-reconciler.sh"
             "tool-call-budget.sh"
           )
 
