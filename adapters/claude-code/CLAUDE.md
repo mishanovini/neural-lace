@@ -44,6 +44,8 @@ That doc names the established convention for this machine — which CLI tools a
 
 If a credential genuinely is not configured anywhere the reference doc names, surface the specific gap with the conventions you checked — do not default to "please paste your X token." Template: `adapters/claude-code/examples/credentials-reference.example.md`.
 
+**If `~/.claude/local/credentials-reference.md` is MISSING or still the unfilled template stub on this machine, that is itself the gap to surface to the operator** — not a license to ask for tokens. `install.sh` emits a warning when the file is missing or stub-shaped; the operator should populate it before further work. The credentials-first rule applies whether or not the reference doc is populated: ask which convention is in play, never which value to use.
+
 ## Naming & Identity
 - NEVER name projects/products without consulting the user first
 - Use placeholder names until the user provides a name

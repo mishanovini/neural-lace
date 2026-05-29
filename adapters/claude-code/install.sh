@@ -387,6 +387,26 @@ if [ "$MODE" = "dry-run" ]; then
   done
   echo ""
 
+  # Credentials-reference presence check (item 10)
+  echo "[Phase 4c: Credentials-reference check]"
+  cred_target="$CLAUDE_DIR/local/credentials-reference.md"
+  if [ ! -f "$cred_target" ]; then
+    echo "  [WOULD WARN]                       credentials-reference.md MISSING at $cred_target"
+  else
+    stub_found=""
+    for marker in "<your-machine-or-username>" "Last updated: YYYY-MM-DD" "Pick whichever describes how credentials actually flow"; do
+      if grep -qF -- "$marker" "$cred_target" 2>/dev/null; then
+        stub_found="$marker"; break
+      fi
+    done
+    if [ -n "$stub_found" ]; then
+      echo "  [WOULD WARN]                       credentials-reference.md is UNFILLED TEMPLATE (marker: $stub_found)"
+    else
+      echo "  [WOULD SKIP -- file populated]     $cred_target"
+    fi
+  fi
+  echo ""
+
   # Legacy hook cleanup
   echo "[Phase 5: Legacy per-repo hook cleanup]"
   CLAUDE_PROJECTS_ROOT="$HOME/claude-projects"
@@ -711,6 +731,71 @@ set_global_git_default() {
 
 set_global_git_default "pull.rebase" "true"
 set_global_git_default "rebase.autoStash" "true"
+
+# ============================================================
+# Credentials-reference presence check (item 10)
+# ============================================================
+#
+# `~/.claude/local/credentials-reference.md` is the machine-local doc
+# that names where every credential actually lives on this machine.
+# Code sessions are instructed (by CLAUDE.md's `## Credentials
+# Reference` section) to ALWAYS read it BEFORE asking the operator
+# for any token. If the file is missing or still the unfilled template
+# stub, sessions will hit that instruction, find no useful content,
+# and fall back to asking the operator — defeating the purpose.
+#
+# This check emits a clear WARNING if the file is missing or still
+# contains the template's placeholder markers. Never blocks install
+# (the warning is informational; the operator may have a reason).
+
+check_credentials_reference() {
+  local target="$CLAUDE_DIR/local/credentials-reference.md"
+  local example="$ADAPTER_DIR/examples/credentials-reference.example.md"
+
+  if [ ! -f "$target" ]; then
+    echo ""
+    echo "  ⚠ WARNING: credentials-reference.md is MISSING."
+    echo "    Expected at: $target"
+    echo "    Without it, Code sessions will ask you for credentials despite"
+    echo "    the CLAUDE.md \"NEVER ask\" rule. Populate the file before the"
+    echo "    next session."
+    if [ -f "$example" ]; then
+      echo ""
+      echo "    Quick start: cp \"$example\" \"$target\""
+      echo "    Then edit the file to match this machine's conventions."
+    fi
+    return 0
+  fi
+
+  # File exists. Check if it's still the unfilled template stub.
+  # Template markers (any one match flags the file as unfilled):
+  #   - "<your-machine-or-username>" — first-line placeholder
+  #   - "Last updated: YYYY-MM-DD"   — date placeholder
+  #   - "Pick whichever describes how credentials actually flow"
+  #     — Option A/B chooser intro
+  local stub_markers=(
+    "<your-machine-or-username>"
+    "Last updated: YYYY-MM-DD"
+    "Pick whichever describes how credentials actually flow"
+  )
+  local found=""
+  for marker in "${stub_markers[@]}"; do
+    if grep -qF -- "$marker" "$target" 2>/dev/null; then
+      found="$marker"
+      break
+    fi
+  done
+  if [ -n "$found" ]; then
+    echo ""
+    echo "  ⚠ WARNING: credentials-reference.md is the UNFILLED TEMPLATE."
+    echo "    Detected stub marker: $found"
+    echo "    Without populating this file, Code sessions will ask you for"
+    echo "    credentials despite the CLAUDE.md \"NEVER ask\" rule. Edit"
+    echo "    $target now to match this machine's conventions."
+  fi
+}
+
+check_credentials_reference
 
 # ============================================================
 # Clean up legacy per-repo hooks
