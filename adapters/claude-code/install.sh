@@ -7,8 +7,9 @@
 #   2. Copies settings.json.template to ~/.claude/settings.json (if missing)
 #   3. Makes all hook scripts executable
 #   4. Sets `git config --global core.hooksPath` for the pre-push scanner
-#   5. Creates ~/.claude/business-patterns.d/ for team-shared pattern files
-#   6. Creates ~/.neural-lace/ for telemetry and trust data (future)
+#   5. Sets global git defaults: `pull.rebase=true` + `rebase.autoStash=true`
+#   6. Creates ~/.claude/business-patterns.d/ for team-shared pattern files
+#   7. Creates ~/.neural-lace/ for telemetry and trust data (future)
 #
 # Usage:
 #   cd /path/to/neural-lace/adapters/claude-code
@@ -368,6 +369,24 @@ if [ "$MODE" = "dry-run" ]; then
   fi
   echo ""
 
+  # Global git pull defaults
+  echo "[Phase 4b: Global git pull defaults]"
+  for pair in "pull.rebase=true" "rebase.autoStash=true"; do
+    key="${pair%%=*}"
+    desired="${pair#*=}"
+    current=$(git config --global --get "$key" 2>/dev/null || echo "")
+    if [ "$current" = "$desired" ]; then
+      echo "  [WOULD SKIP -- already set]        $key=$desired"
+    elif [ -n "$current" ]; then
+      echo "  [WOULD CHANGE]                     $key: $current -> $desired"
+      changes=$((changes + 1))
+    else
+      echo "  [WOULD SET]                        $key=$desired"
+      changes=$((changes + 1))
+    fi
+  done
+  echo ""
+
   # Legacy hook cleanup
   echo "[Phase 5: Legacy per-repo hook cleanup]"
   CLAUDE_PROJECTS_ROOT="$HOME/claude-projects"
@@ -653,6 +672,45 @@ if [ -d "$ADAPTER_DIR/git-hooks" ]; then
     echo "  global git core.hooksPath already correct"
   fi
 fi
+
+# ============================================================
+# Global git pull defaults (rebase on pull, auto-stash dirty tree)
+# ============================================================
+#
+# These two defaults make `git pull` produce clean linear history on tracking
+# branches without manual ceremony:
+#   - pull.rebase=true       — `git pull` rebases local commits on top of
+#                              fetched remote commits (instead of producing a
+#                              merge commit each time the branches diverged).
+#   - rebase.autoStash=true  — automatically stash + unstash uncommitted
+#                              changes during rebase, so a dirty working tree
+#                              doesn't block the pull.
+#
+# This is the canonical "rebase your own tracking branch" case. For the
+# distinct case of incorporating master into a published feature branch (where
+# rebasing would force divergence with the remote feature branch and require
+# a force-push), continue to use `git merge origin/master` explicitly per
+# rules/git-discipline.md Rule 1 / safe-alternative (a).
+
+set_global_git_default() {
+  local key="$1"
+  local desired="$2"
+  local current
+  current=$(git config --global --get "$key" 2>/dev/null || echo "")
+  if [ "$current" = "$desired" ]; then
+    echo "  global git $key already = $desired"
+  else
+    git config --global "$key" "$desired"
+    if [ -n "$current" ]; then
+      echo "  set global git $key to: $desired (was: $current)"
+    else
+      echo "  set global git $key to: $desired"
+    fi
+  fi
+}
+
+set_global_git_default "pull.rebase" "true"
+set_global_git_default "rebase.autoStash" "true"
 
 # ============================================================
 # Clean up legacy per-repo hooks
