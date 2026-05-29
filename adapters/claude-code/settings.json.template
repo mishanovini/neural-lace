@@ -452,6 +452,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/session-start-discovery-cheatsheet.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/discovery-surfacer.sh"
           },
           {
