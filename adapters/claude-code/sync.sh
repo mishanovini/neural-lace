@@ -59,31 +59,46 @@ _sync_owner_name_from_url() {
   esac
 }
 
-# Query a GitHub repo's master SHA via gh CLI. Empty on error.
+# Query a GitHub repo's master TREE HASH via gh CLI. Empty on error.
 # On a 404 `gh api` outputs the error JSON body to stdout AND exits non-zero
 # — `|| true` suppresses the exit code, so we must validate the shape
-# explicitly (40-char hex) to distinguish a real SHA from an error body.
+# explicitly (40-char hex) to distinguish a real tree hash from an error body.
+#
+# WHY TREE HASH AND NOT COMMIT SHA: per the 2026-05-29 divergent-history-identical-
+# content posture (PT canonical; personal receives the same content via
+# cherry-pick + non-force direct push), the two repos intentionally have
+# different commit SHAs forever — each cherry-pick produces a distinct commit
+# object on the receiving side. What must stay identical is the CONTENT
+# (the tree hash). Comparing `.commit.sha` here would false-positive on every
+# push under this posture; comparing `.commit.commit.tree.sha` (the tree the
+# master tip points at) is the correct content-equivalence check.
+# Function name is preserved for callsite stability; the value it returns is
+# now a tree hash, not a commit SHA.
 _sync_remote_master_sha() {
-  local owner_name="$1" sha
+  local owner_name="$1" tree
   [ -z "$owner_name" ] && return 0
-  sha="$(gh api "repos/${owner_name}/branches/master" --jq '.commit.sha' 2>/dev/null || true)"
-  if [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
-    printf '%s' "$sha"
+  tree="$(gh api "repos/${owner_name}/branches/master" --jq '.commit.commit.tree.sha' 2>/dev/null || true)"
+  if [[ "$tree" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s' "$tree"
   fi
 }
 
-# Post-push verification: for each distinct GitHub URL, query its master SHA;
-# all must be equal. Returns 0 if consistent, 1 if divergent, 2 if cannot verify
-# (no gh CLI / no GitHub URLs / API call failed for one or more).
+# Post-push verification: for each distinct GitHub URL, query its master TREE
+# HASH; all must be equal. Returns 0 if consistent, 1 if divergent, 2 if cannot
+# verify (no gh CLI / no GitHub URLs / API call failed for one or more).
+#
+# Tree-hash (content) equivalence is the right check under the 2026-05-29
+# divergent-history-identical-content posture: the two repos are expected to
+# have different commit SHAs forever, but identical tree hashes (same content).
 _sync_verify_master_convergence() {
   command -v gh >/dev/null 2>&1 || { echo "  [verify] skipped (gh CLI not available)" >&2; return 2; }
 
-  local urls owner_name shas_seen="" first_sha="" url sha mismatch=0 missing=0
+  local urls owner_name first_tree="" url tree mismatch=0 missing=0
   urls="$(_sync_collect_urls)"
   [ -z "$urls" ] && return 2
 
   echo ""
-  echo "Post-push drift check (master SHAs across remotes):"
+  echo "Post-push drift check (master tree hashes across remotes — content equivalence):"
   while IFS= read -r url; do
     [ -z "$url" ] && continue
     owner_name="$(_sync_owner_name_from_url "$url")"
@@ -91,35 +106,36 @@ _sync_verify_master_convergence() {
       echo "  - $url -> not a recognizable GitHub URL; skipping verify."
       continue
     fi
-    sha="$(_sync_remote_master_sha "$owner_name")"
-    if [ -z "$sha" ]; then
-      echo "  - $owner_name -> SHA unavailable (gh api failed; auth scope / network / no master ref)"
+    tree="$(_sync_remote_master_sha "$owner_name")"
+    if [ -z "$tree" ]; then
+      echo "  - $owner_name -> tree hash unavailable (gh api failed; auth scope / network / no master ref)"
       missing=1
       continue
     fi
-    echo "  - $owner_name = $sha"
-    if [ -z "$first_sha" ]; then
-      first_sha="$sha"
-    elif [ "$sha" != "$first_sha" ]; then
+    echo "  - $owner_name tree = $tree"
+    if [ -z "$first_tree" ]; then
+      first_tree="$tree"
+    elif [ "$tree" != "$first_tree" ]; then
       mismatch=1
     fi
   done <<< "$urls"
 
   if [ "$mismatch" -ne 0 ]; then
     echo "" >&2
-    echo "DRIFT DETECTED: master SHAs disagree across remotes (see list above)." >&2
-    echo "The push completed but the repos are NOT at identical SHAs. Resolve before" >&2
+    echo "DRIFT DETECTED: master tree hashes disagree across remotes (content divergence)." >&2
+    echo "The push completed but the repos are NOT at identical CONTENT. Resolve before" >&2
     echo "the next push, or future syncs will compound the divergence. Common causes:" >&2
     echo "  - one remote rejected the push (branch protection / wrong scope / etc.)" >&2
     echo "  - a concurrent push to one remote raced this one" >&2
     echo "  - the branches were already divergent and this push only converged some" >&2
+    echo "  - a cherry-pick conflict was resolved differently on one side" >&2
     return 1
   fi
   if [ "$missing" -ne 0 ]; then
-    echo "  [verify] WARNING — could not query SHA for one or more remotes; convergence not confirmed." >&2
+    echo "  [verify] WARNING — could not query tree hash for one or more remotes; convergence not confirmed." >&2
     return 2
   fi
-  echo "  [verify] all remote master SHAs match."
+  echo "  [verify] all remote master tree hashes match (content converged)."
   return 0
 }
 
@@ -263,6 +279,67 @@ _sync_self_test() {
         _f "verify-convergence (no-github-urls): expected 0 or 2, got $rc"
       fi
     fi
+
+    # Test 7: tree-hash compare — two remotes with different commit SHAs but
+    # identical tree hashes report convergence (rc=0). This is the post-2026-05-29
+    # divergent-history-identical-content posture; comparing commit SHAs would
+    # have false-positived as drift, comparing tree hashes correctly returns OK.
+    # Uses a mock `gh` on PATH so no real network or auth is required.
+    if [ "$failed" = "0" ]; then
+      local mock_bin
+      mock_bin="$(mktemp -d 2>/dev/null || mktemp -d -t 'sync-mock-gh')"
+      if [ -n "$mock_bin" ] && [ -d "$mock_bin" ]; then
+        cat > "$mock_bin/gh" <<'MOCKGH'
+#!/usr/bin/env bash
+# Fake gh for sync.sh self-test. Only handles `gh api repos/<owner>/<name>/branches/master --jq <filter>`.
+filter=""; repo=""; prev=""
+for arg in "$@"; do
+  case "$prev" in --jq) filter="$arg" ;; esac
+  case "$arg" in repos/*/branches/master) repo="$arg" ;; esac
+  prev="$arg"
+done
+# Two repos: different commit SHAs, IDENTICAL tree hashes.
+case "$repo" in
+  repos/test-owner-A/repo-x/branches/master)
+    commit_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    tree_sha="11111111111111111111111111111111111111aa"
+    ;;
+  repos/test-owner-B/repo-y/branches/master)
+    commit_sha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    tree_sha="11111111111111111111111111111111111111aa"
+    ;;
+  *) exit 1 ;;
+esac
+case "$filter" in
+  ".commit.commit.tree.sha") echo "$tree_sha" ;;
+  ".commit.sha") echo "$commit_sha" ;;
+  *) exit 1 ;;
+esac
+MOCKGH
+        chmod +x "$mock_bin/gh"
+
+        # Stub out _sync_collect_urls so the function sees two distinct GitHub URLs
+        # that the owner-name parser can recognize. The parser only accepts
+        # github.com URLs, so we use real-looking https URLs.
+        _sync_collect_urls_orig_body="$(declare -f _sync_collect_urls)"
+        _sync_collect_urls() {
+          printf 'https://github.com/test-owner-A/repo-x.git\n'
+          printf 'https://github.com/test-owner-B/repo-y.git\n'
+        }
+        local out rc
+        out="$(PATH="$mock_bin:$PATH" _sync_verify_master_convergence 2>&1)"; rc=$?
+        # Restore the original collect-urls function.
+        eval "$_sync_collect_urls_orig_body"
+
+        if [ "$rc" -ne 0 ]; then
+          _f "tree-hash-equiv (T7): expected rc=0 (content converged), got $rc; out: $out"
+        elif ! printf '%s' "$out" | grep -q 'tree hashes match'; then
+          _f "tree-hash-equiv (T7): expected 'tree hashes match' in output; out: $out"
+        fi
+
+        rm -rf "$mock_bin" 2>/dev/null || true
+      fi
+    fi
   fi
 
   cd "$start_dir" 2>/dev/null || true
@@ -272,7 +349,7 @@ _sync_self_test() {
     echo "self-test: FAIL — $msg" >&2
     return 1
   fi
-  echo "self-test: OK (6 scenarios)"
+  echo "self-test: OK (7 scenarios)"
   return 0
 }
 

@@ -52,8 +52,33 @@ covers the steady-state need. Drift coverage shifts from "push automation" to
 - `adapters/claude-code/settings.json.template` — wire the new SessionStart hook
 
 ## Testing Strategy
-- Mechanical: `bash sync.sh --self-test` (6 scenarios), `bash check-cross-repo-drift.sh --self-test` (5 scenarios), `bash cross-repo-drift-warn.sh` (silent no-op without config, exit 0). All three already pass locally.
-- Runtime: on first real push through `sync.sh` on master, the post-push verify step will print a SHA list and either confirm convergence or flag drift.
+- Mechanical: `bash sync.sh --self-test` (7 scenarios), `bash check-cross-repo-drift.sh --self-test` (7 scenarios), `bash cross-repo-drift-warn.sh` (silent no-op without config, exit 0). All three pass locally.
+- Runtime: on first real push through `sync.sh` on master, the post-push verify step will print a TREE-HASH list and either confirm content convergence or flag drift.
+
+## Amendments
+
+### 2026-05-29 — tree-hash (content) comparison, not commit-SHA comparison
+
+Under the divergent-history-identical-content posture adopted 2026-05-29 (one
+repo canonical; the other receives the same content via cherry-pick + non-force
+direct push), the two repos are EXPECTED to have different commit SHAs forever
+— each cherry-pick produces a distinct commit object on the receiving side.
+The original drift scripts compared `.commit.sha` (the commit SHA the branch
+tip points at), which would false-positive on every invocation under this
+posture.
+
+Fix landed: all three components now compare `.commit.commit.tree.sha` (the
+TREE hash the master tip points at). Tree-hash equivalence is the correct
+content-equivalence check; identical content with different history is the
+target state and reports OK. Sibling self-test scenarios added:
+- `check-cross-repo-drift.sh` ST6 (same-tree-different-commit → rc 0) +
+  ST7 (different-tree → rc 1), using a mock `gh` on PATH.
+- `sync.sh` T7 (mock-gh tree-hash equivalence → rc 0 with "tree hashes match"
+  in output).
+
+Operator-facing prose throughout (log lines, warning banners, ntfy bodies,
+docstrings) updated from "SHA" / "commit SHA" → "tree hash" / "content hash"
+so the surface matches the semantics.
 
 ## Walking Skeleton
 
