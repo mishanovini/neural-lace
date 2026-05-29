@@ -358,6 +358,63 @@ Do NOT mix Mode 1 and Mode 2 on the same working tree without worktrees (i.e., l
 
 ---
 
+## Recurring-check vocabulary — heartbeat vs. wake-up vs. routine vs. status report vs. checkpoint
+
+The word "heartbeat" is overloaded across the harness, and a separate set of words (status report, checkpoint) describe synchronous in-thread events that are NOT recurring checks at all. The naming collision causes the wrong primitive to be picked when the user says "set up X to check Y every hour." This section names the four recurring-check primitives, distinguishes them from the two synchronous concepts, and gives the decision-by-shape rule.
+
+**Source context.** Jason Liu's [*Codex-maxxing*](https://jxnl.co/writing/2026/05/10/codex-maxxing/) (2026-05-10) introduces "heartbeat" as *"a thread-local scheduled automation where you can tell a thread to 'check on this every few hours,' and it will run automatically at that interval."* His canonical example: a Chief of Staff thread that *"every 30 minutes, checks Slack and Gmail for unanswered messages that need attention."* NL has independently co-opted "heartbeat" for a different concept (background-task sweeps, not thread-local re-engagement); the term collision is the immediate motivator for this section.
+
+### The four recurring-check primitives
+
+| Primitive | Where the agent runs | Process / context | Best for | Example in NL today |
+|---|---|---|---|---|
+| **Background-task heartbeat** | NOT running (woken only when it fires) | External scheduled task; output is filesystem state | Sweeping state the agent observes on next session start | `conversation-tree-emit.sh --heartbeat` (Windows Task Scheduler every 5 min); `session-resilience` PostToolUse handoff write |
+| **In-conversation wake-up** | Same conversation re-fires after delay | Same thread, same accumulated context | Polling external state the harness cannot notify you about (CI run, deploy, remote queue) | `ScheduleWakeup` tool (used by `/loop` dynamic mode) |
+| **Routine (Mode 4 cron-trigger)** | FRESH session per fire | New process, fresh context, no conversational continuity | Periodic work that does not need conversational continuity (nightly verification, weekly grooming) | `/schedule` Routines; `CronCreate` MCP tool |
+| **`/loop` dynamic** | Same conversation re-fires per operator-chosen pace | Same thread, same accumulated context | Operator-paced repetition of a prompt/skill (e.g., `/loop 5m /find-my-bugs`) | `/loop` CLI skill |
+
+### The two synchronous concepts (NOT recurring checks)
+
+- **Status report.** A synchronous text update from agent to user describing current state. Fired by the agent's own judgment mid-thread, not on any schedule. Examples: a mid-build update naming what just landed; a turn-end DONE / PAUSING / BLOCKED marker (per `~/.claude/rules/session-end-protocol.md`). Status reports are *messages*, not *automations*; they do not fire on a clock.
+- **Checkpoint.** A mid-build commit at a known-good state, recorded as a Tier 2 decision per `~/.claude/rules/planning.md` "Mid-Build Decisions" — explicitly NOT a recurring check; it is a single intentional snapshot taken when the agent reaches a reversible-but-meaningful stopping point. The word "checkpoint" should NOT be used for periodic background activity (use heartbeat for that).
+
+### Decision rule — which primitive should I pick?
+
+Answer the questions in order; stop at the first match:
+
+1. **Does the work need conversational continuity (same context, same in-thread state)?**
+   - Yes → use `ScheduleWakeup` (in-conversation wake-up) for polling, or `/loop` dynamic for operator-paced repetition.
+   - No → continue.
+2. **Does the work need to run while the agent is NOT in-thread (true background)?**
+   - Yes → use a background-task heartbeat (external scheduled task that sweeps state and writes outputs the agent observes on next session start).
+   - No → continue.
+3. **Does the work need a fresh session each fire (no inherited state, scheduled cadence)?**
+   - Yes → use Mode 4 (`/schedule` Routines or `CronCreate`).
+4. **Is the work a one-off in-thread update about current state, not a scheduled fire at all?**
+   - That is a *status report* — write the update, do not schedule anything.
+5. **Is the work a one-off mid-build commit to capture a reversible-but-meaningful point?**
+   - That is a *checkpoint* per `planning.md` Tier 2 — commit and record in the Decisions Log, do not schedule anything.
+
+### Why this matters in practice
+
+The wrong primitive ships the wrong outcome:
+
+- Picking *background-task heartbeat* when the work needs conversational continuity loses the in-thread context the work depends on (e.g., "every 30 min, continue the analysis where we left off" cannot be served by a stateless sweep).
+- Picking *in-conversation wake-up* when the agent will not be in-thread (e.g., the user closed Claude Code) silently no-ops — the wake-up only fires if the session is still alive.
+- Picking *Routine* when the work needs to ride on conversational state loses everything not committed to disk between fires.
+- Picking a *status report* when the work needs to repeat fires once and never again — the user expects ongoing visibility that never arrives.
+- Calling a one-off Tier 2 commit a "heartbeat" misleads downstream sessions that grep for the term expecting a scheduled automation.
+
+### The Liu-vs-NL terminology collision (honest acknowledgment)
+
+Liu uses "heartbeat" specifically for the *in-conversation wake-up* primitive in our table — thread-local periodic re-engagement of the same conversation. NL has independently used "heartbeat" for the *background-task* primitive (PostToolUse handoff writes; external scheduled sweeps). Both usages are entrenched; neither is going to win a renaming war.
+
+The pragmatic resolution: in NL artifacts (rules, hooks, scripts, decision records), "heartbeat" continues to mean *background-task heartbeat*. When importing from Liu's vocabulary (or any external source that uses the term), the matching NL primitive is *in-conversation wake-up* — describe it that way, do not propagate the collision.
+
+When the user says "heartbeat" without context, ask which primitive they mean. Defaulting to the wrong one produces silent failure exactly when periodic checks are most valuable.
+
+---
+
 ## Setup prerequisites per mode
 
 | Mode | Prerequisites |
