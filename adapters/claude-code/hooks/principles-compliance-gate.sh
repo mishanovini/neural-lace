@@ -29,6 +29,15 @@
 #   Rule 7 — future-tense promise without a named mechanism token              [block-eligible]
 #   Rule 3 — multi-option question posed to the user (possible — can't judge   [WARN-ONLY, never blocks]
 #            whether one option is "clearly principled"; too heuristic to block)
+#   CRED   — credential-asking patterns ("I need your VERCEL_TOKEN",            [WARN-ONLY, never blocks]
+#            "please paste your GH token") without a documented-source carve-out.
+#            Companion to rules/information-architecture.md + the CLAUDE.md
+#            "## Credentials Reference" section. The credential-reference doc at
+#            ~/.claude/local/credentials-reference.md is the established convention;
+#            asking for credentials that are already documented there is the
+#            orphaned-content failure mode harness-hygiene-2 closes. Warn-only
+#            because the carve-out logic is heuristic (a sentence MENTIONING a
+#            token name might be documenting the convention rather than asking).
 #
 # Per Decision Principle 6 ("mechanical where reliable; advisory where
 # heuristic"): Rule 3 detection is intentionally warn-only even in block-mode,
@@ -73,7 +82,7 @@ set -u
 # ----------------------------------------------------------------------------
 detect_violations() {
   local msg="$1"
-  R3=0; R4=0; R5=0; R7=0
+  R3=0; R4=0; R5=0; R7=0; CRED=0
   DETECTION_LINES=""
 
   local lc
@@ -126,6 +135,38 @@ detect_violations() {
     fi
   fi
 
+  # --- CRED: credential-asking patterns (WARN-ONLY, heuristic) ---
+  # Targets the orphaned-content failure mode: agent asks operator for a
+  # credential that is already configured per ~/.claude/local/credentials-reference.md.
+  # Patterns are conservative (high-confidence credential-asking shapes only).
+  # Carve-out: if the message ALSO references the credentials-reference doc OR
+  # names a specific canonical source location (`.env.local`, `gh auth`, `vercel
+  # env pull`, etc.), treat as documentation rather than asking.
+  local cred_pats=(
+    'i need (your |the |a )?(vercel_token|github_token|gh_token|gh pat|github pat|anthropic_api_key|openai_api_key|supabase_(access_)?token|stripe_(secret_)?key|twilio_(auth_)?token|resend_api_key)'
+    '(please |could you |can you )?(give|provide|share|paste|send) (me )?(a |your |the )?(github |gh |vercel |aws |stripe |openai |anthropic |supabase |twilio |resend )?(token|api key|credential|secret|pat|access token|password)\b'
+    'i.?ll need (a |your |the )?(github |gh |vercel |aws |stripe |openai |anthropic |supabase |twilio |resend )?(token|api key|credential|secret|pat|access token|password)\b'
+    'you.?ll need to (give|provide|share|paste|send) (me )?(a |your |the )?(github |gh |vercel |aws |stripe |openai |anthropic |supabase |twilio |resend )?(token|api key|credential|secret|pat|access token|password)\b'
+    "what.?s (your |the )?(vercel|gh|github|aws|stripe|openai|anthropic|supabase|twilio|resend)('s)? (token|key|api key|pat|credential)"
+    '(paste|enter|type) (your |the )?(vercel_token|github_token|gh_token|anthropic_api_key|openai_api_key|supabase_access_token|stripe_secret_key|twilio_auth_token|resend_api_key)( here|.)'
+  )
+  local cred_pat
+  for cred_pat in "${cred_pats[@]}"; do
+    if printf '%s' "$lc" | grep -E -q -- "$cred_pat" 2>/dev/null; then
+      # Carve-out: documentation rather than asking. If the message references
+      # the credentials-reference doc OR names a canonical source location, the
+      # message is most likely documenting where the credential lives — skip.
+      local has_carveout=0
+      local carveout='(credentials?[- ]reference|\.env\.local|\.env\.example|gh auth (status|switch|login)|vercel env pull|~/\.supabase/tokens|~/\.claude\.json|claude login|local/credentials-reference\.md|already (configured|authenticated|cached)|canonical (location|source))'
+      printf '%s' "$lc" | grep -E -q -- "$carveout" 2>/dev/null && has_carveout=1
+      if [[ "$has_carveout" -eq 0 ]]; then
+        CRED=$((CRED+1))
+        DETECTION_LINES+=$'CRED\tcredential-asking pattern without credentials-reference carve-out\tcredential-asking-no-carveout'$'\n'
+        break
+      fi
+    fi
+  done
+
   # --- Rule 3: multi-option question posed to the user (WARN-ONLY, heuristic) ---
   # Cannot judge whether one option is "clearly principled"; flagged for review only.
   if printf '%s' "$msg" | grep -F -q '?' 2>/dev/null; then
@@ -160,7 +201,8 @@ if [[ "${1:-}" = "--self-test" ]]; then
     local actual
     case "$expect_rule" in
       R3) actual=$R3;; R4) actual=$R4;; R5) actual=$R5;; R7) actual=$R7;;
-      TOTAL) actual=$((R3+R4+R5+R7));;
+      CRED) actual=$CRED;;
+      TOTAL) actual=$((R3+R4+R5+R7+CRED));;
     esac
     if [[ "$actual" -eq "$expect_count" ]]; then
       echo "PASS  $name ($expect_rule=$actual)"; PASS=$((PASS+1))
@@ -189,6 +231,20 @@ if [[ "${1:-}" = "--self-test" ]]; then
     "Should I merge PR #7 now or wait for review? Let me know."
   check "rule3 plain statement not flagged"        R3 0 \
     "I merged PR #7 after confirming the checks were green."
+
+  # CRED: credential-asking patterns
+  check "cred ask vercel token detected"           CRED 1 \
+    "I need your VERCEL_TOKEN to pull the env vars."
+  check "cred ask paste github token detected"     CRED 1 \
+    "Please paste your GitHub PAT so I can authenticate."
+  check "cred carveout reference doc exempt"       CRED 0 \
+    "I need your VERCEL_TOKEN — but per credentials-reference, it should already be cached via vercel login."
+  check "cred carveout env.local exempt"           CRED 0 \
+    "Please paste your token... actually, the convention is .env.local — let me check there first."
+  check "cred plain operational text not flagged"  CRED 0 \
+    "I switched gh auth to the canonical user for the mirror push."
+  check "cred ai-feature mention not flagged"      CRED 0 \
+    "The Anthropic API key is set in .env.local per the project convention."
 
   echo ""
   echo "Result: $PASS passed, $FAIL failed"
@@ -260,11 +316,20 @@ fi
 
 detect_violations "$LAST_ASSISTANT"
 
-TOTAL=$((R3 + R4 + R5 + R7))
-BLOCK_ELIGIBLE=$((R4 + R5 + R7))   # Rule 3 is intentionally NOT block-eligible.
+TOTAL=$((R3 + R4 + R5 + R7 + CRED))
+BLOCK_ELIGIBLE=$((R4 + R5 + R7))   # Rule 3 + CRED are intentionally NOT block-eligible.
 
 # Always emit a machine-readable summary line to stderr.
-echo "[principles-gate] mode=$MODE R3=$R3 R4=$R4 R5=$R5 R7=$R7 total=$TOTAL" >&2
+echo "[principles-gate] mode=$MODE R3=$R3 R4=$R4 R5=$R5 R7=$R7 CRED=$CRED total=$TOTAL" >&2
+
+# In-band CRED notification: when a credential-asking pattern is detected (any
+# mode), surface a one-line stderr reminder pointing at the credentials-reference
+# doc. This is in-band friction: the agent sees the reminder at Stop time and
+# can revise before re-attempting. CRED is warn-only — never blocks — so the
+# reminder is the entire mechanism.
+if [[ "$CRED" -gt 0 ]]; then
+  echo "[principles-gate] CRED: detected credential-asking pattern. Consult ~/.claude/local/credentials-reference.md BEFORE asking the operator for tokens/keys/credentials. The reference names the established convention for this machine (vercel login cache, gh auth status, ~/.supabase/tokens, .env.local per project). Per CLAUDE.md '## Credentials Reference' and rules/information-architecture.md." >&2
+fi
 
 # Log every detection to the warn-log (append).
 LOG_FILE="${PRINCIPLES_GATE_LOG:-$HOME/.claude/state/principles-gate-warnings.log}"
