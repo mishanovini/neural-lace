@@ -145,11 +145,17 @@ _main_sync() {
   # 5. Save current branch and set up cleanup trap.
   original_branch="$(git symbolic-ref --short -q HEAD || echo "")"
   temp_branch="${TEMP_BRANCH_PREFIX}$(printf '%s' "$pt_sha" | head -c 7)"
+  # Export for the cleanup trap (locals are out of scope at EXIT under set -u,
+  # which produced "unbound variable: temp_branch" on the original PR #44 ship).
+  _SYNC_ORIGINAL_BRANCH="$original_branch"
+  _SYNC_TEMP_BRANCH="$temp_branch"
   cleanup() {
-    if [ -n "${original_branch:-}" ]; then
-      git checkout --quiet "$original_branch" 2>/dev/null || true
+    if [ -n "${_SYNC_ORIGINAL_BRANCH:-}" ]; then
+      git checkout --quiet "$_SYNC_ORIGINAL_BRANCH" 2>/dev/null || true
     fi
-    git branch -D "$temp_branch" 2>/dev/null || true
+    if [ -n "${_SYNC_TEMP_BRANCH:-}" ]; then
+      git branch -D "$_SYNC_TEMP_BRANCH" 2>/dev/null || true
+    fi
   }
   trap cleanup EXIT
 
