@@ -58,7 +58,7 @@ Ship 7 standard git-best-practice mechanisms (items 1, 2, 3, 6, 7, 8, 9 — item
 
 ## In-flight scope updates
 
-(Populated during build if scope must expand within the initiative.)
+- 2026-05-29: `adapters/claude-code/rules/INDEX.md` — item 8 adds a new rule (`branch-hygiene.md`); the INDEX coverage golden test requires every rule have an INDEX row. Edit is mechanical (one row insertion).
 
 ## Assumptions
 

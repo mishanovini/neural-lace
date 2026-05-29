@@ -131,6 +131,107 @@ surface_stale_plans() {
   fi
 }
 
+# -------- Item 8 (2026-05-29): Scan for stale LOCAL BRANCHES --------
+#
+# A local branch is "stale" when ALL of:
+#   - It is ahead of master by >= 1 commit.
+#   - Its most-recent commit is older than STALE_BRANCH_DAYS (default 7).
+#   - It has NOT been pushed to any remote in the same window
+#     (heuristic: the branch's HEAD is not reachable from any
+#     remote-tracking ref).
+#
+# Branches NOT scanned: master/main itself, HEAD, and any branch whose
+# name matches a known WIP-pattern with a fresh date suffix (the WIP
+# pattern is the operator's signal "I know about this branch").
+#
+# Threshold overridable via STALE_BRANCH_DAYS env var.
+#
+# See: adapters/claude-code/rules/branch-hygiene.md
+STALE_BRANCH_DAYS="${STALE_BRANCH_DAYS:-7}"
+STALE_BRANCH_SECONDS=$((STALE_BRANCH_DAYS * 86400))
+
+# Detect whether $1's HEAD is reachable from any remote-tracking ref.
+# Returns 0 (reachable, i.e. branch HEAD was at some point pushed) or
+# non-zero (unreachable, i.e. local-only).
+_branch_head_on_a_remote() {
+  local branch="$1"
+  local sha
+  sha=$(git rev-parse --verify --quiet "$branch" 2>/dev/null) || return 1
+  # If any remote-tracking ref contains this SHA → already pushed.
+  if git for-each-ref --format='%(refname)' refs/remotes/ 2>/dev/null \
+    | while read -r remote_ref; do
+        git merge-base --is-ancestor "$sha" "$remote_ref" 2>/dev/null && echo "yes" && break || true
+      done | grep -q "yes"; then
+    return 0
+  fi
+  return 1
+}
+
+surface_stale_branches() {
+  local cwd="$1"
+  # Skip silently if not a git repo or master ref missing.
+  ( cd "$cwd" 2>/dev/null && git rev-parse --is-inside-work-tree >/dev/null 2>&1 ) || return 0
+
+  pushd "$cwd" >/dev/null 2>&1 || return 0
+
+  # Resolve the canonical "primary" branch — master if present, else main.
+  local primary_ref=""
+  if git rev-parse --verify --quiet master >/dev/null 2>&1; then
+    primary_ref="master"
+  elif git rev-parse --verify --quiet main >/dev/null 2>&1; then
+    primary_ref="main"
+  else
+    popd >/dev/null 2>&1
+    return 0
+  fi
+
+  local now
+  now=$(date +%s)
+  local stale_lines=""
+  local stale_count=0
+
+  local branch_name branch_sha last_ts age ahead_count
+  while IFS= read -r branch_name; do
+    [ -z "$branch_name" ] && continue
+    # Skip the primary branches themselves.
+    case "$branch_name" in
+      "$primary_ref"|master|main) continue ;;
+    esac
+    # Skip if branch ref is missing (defensive).
+    branch_sha=$(git rev-parse --verify --quiet "$branch_name" 2>/dev/null) || continue
+    # Skip if not ahead of primary.
+    ahead_count=$(git rev-list --count "${primary_ref}..${branch_name}" 2>/dev/null)
+    [ -n "$ahead_count" ] || continue
+    [ "$ahead_count" -ge 1 ] || continue
+    # Skip if pushed (local HEAD reachable from any remote ref).
+    if _branch_head_on_a_remote "$branch_name"; then
+      continue
+    fi
+    # Check last-commit age.
+    last_ts=$(git log -1 --format=%ct "$branch_name" 2>/dev/null)
+    [ -n "$last_ts" ] && [ "$last_ts" != "0" ] || continue
+    age=$((now - last_ts))
+    [ "$age" -ge "$STALE_BRANCH_SECONDS" ] || continue
+    stale_lines+="  • ${branch_name} — ahead of ${primary_ref} by ${ahead_count}; last commit $(hours_ago "$age") ago; not pushed."$'\n'
+    stale_count=$((stale_count + 1))
+  done < <(git for-each-ref --format='%(refname:short)' refs/heads/ 2>/dev/null)
+
+  popd >/dev/null 2>&1
+
+  if [ "$stale_count" -gt 0 ]; then
+    echo ""
+    echo "[stale-local-branch-surfacer] ${stale_count} local branch(es) stale (>=${STALE_BRANCH_DAYS}d without push or commit):"
+    printf '%s' "$stale_lines"
+    echo "  Per rules/branch-hygiene.md: review each. Decision tree:"
+    echo "    (a) content shipped via different SHA path? → 'git diff <branch> ${primary_ref}'"
+    echo "        empty → safe to delete: 'git branch -D <branch>'"
+    echo "    (b) hypothesis abandoned / feature descoped? → delete"
+    echo "    (c) still in-flight? → push, OR rename to 'wip/<machine>-<topic>-<date>'"
+    echo "    (d) backup snapshot? → audit if underlying need still active"
+    echo ""
+  fi
+}
+
 # -------- Self-test --------
 run_self_test() {
   local tmp
@@ -268,11 +369,82 @@ EOF
     failures=$((failures + 1))
   fi
 
+  # ---- Scenarios 6/7/8: surface_stale_branches (item 8, 2026-05-29) ----
+
+  # Scenario 6: stale-local-branch — branch ahead of master + last commit > 7 days + not pushed → SURFACE
+  local s6="$tmp/stale-branch"
+  mkdir -p "$s6" && (
+    cd "$s6" && git init --quiet && git config user.email "t@example.com" && git config user.name "T"
+    echo init > a && git add a && git commit --quiet -m init
+    git branch master 2>/dev/null
+    git checkout --quiet -b old-feature
+    echo work > b && git add b && git commit --quiet -m work
+    # Backdate last commit ~8 days
+    GIT_COMMITTER_DATE="$(date -u -d '8 days ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-8d '+%Y-%m-%dT%H:%M:%SZ')" \
+    GIT_AUTHOR_DATE="$(date -u -d '8 days ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-8d '+%Y-%m-%dT%H:%M:%SZ')" \
+      git commit --quiet --amend --no-edit --date="8 days ago" 2>/dev/null
+    git checkout --quiet master
+  )
+  local out6
+  out6=$(surface_stale_branches "$s6" 2>&1)
+  if echo "$out6" | grep -q "old-feature.*ahead of master"; then
+    echo "  PASS stale-branch-surfaces"
+  else
+    echo "  FAIL stale-branch-surfaces (got: $out6)" >&2
+    failures=$((failures + 1))
+  fi
+
+  # Scenario 7: fresh-local-branch — ahead of master but recent → silent
+  local s7="$tmp/fresh-branch"
+  mkdir -p "$s7" && (
+    cd "$s7" && git init --quiet && git config user.email "t@example.com" && git config user.name "T"
+    echo init > a && git add a && git commit --quiet -m init
+    git branch master 2>/dev/null
+    git checkout --quiet -b new-feature
+    echo work > b && git add b && git commit --quiet -m "fresh commit"
+    git checkout --quiet master
+  )
+  local out7
+  out7=$(surface_stale_branches "$s7" 2>&1)
+  if [ -z "$out7" ]; then
+    echo "  PASS fresh-branch-silent"
+  else
+    echo "  FAIL fresh-branch-silent (got: $out7)" >&2
+    failures=$((failures + 1))
+  fi
+
+  # Scenario 8: branch ahead of master + old + pushed to a remote → silent
+  local s8="$tmp/pushed-branch"
+  mkdir -p "$tmp/bare-s8" && ( cd "$tmp/bare-s8" && git init --bare --quiet )
+  mkdir -p "$s8" && (
+    cd "$s8" && git init --quiet && git config user.email "t@example.com" && git config user.name "T"
+    git remote add origin "$tmp/bare-s8"
+    echo init > a && git add a && git commit --quiet -m init
+    git branch master 2>/dev/null
+    git checkout --quiet -b old-pushed-feature
+    echo work > b && git add b && git commit --quiet -m work
+    GIT_COMMITTER_DATE="$(date -u -d '8 days ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-8d '+%Y-%m-%dT%H:%M:%SZ')" \
+    GIT_AUTHOR_DATE="$(date -u -d '8 days ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-8d '+%Y-%m-%dT%H:%M:%SZ')" \
+      git commit --quiet --amend --no-edit --date="8 days ago" 2>/dev/null
+    # PUSH the branch — should NOT surface.
+    git push --quiet origin old-pushed-feature 2>/dev/null
+    git fetch --quiet origin 2>/dev/null
+    git checkout --quiet master
+  )
+  local out8
+  out8=$(surface_stale_branches "$s8" 2>&1)
+  if [ -z "$out8" ]; then
+    echo "  PASS pushed-branch-silent"
+  else
+    echo "  FAIL pushed-branch-silent (got: $out8)" >&2
+    failures=$((failures + 1))
+  fi
+
   rm -rf "$tmp"
 
   if [ "$failures" -eq 0 ]; then
     echo ""
-    echo "SELF-TEST: all scenarios passed (5/5)"
+    echo "SELF-TEST: all scenarios passed (8/8)"
     return 0
   else
     echo ""
@@ -294,4 +466,5 @@ if [ ! -t 0 ]; then
 fi
 
 surface_stale_plans "$PWD"
+surface_stale_branches "$PWD"
 exit 0
