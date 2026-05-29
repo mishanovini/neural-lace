@@ -9,7 +9,9 @@
 #   2. Runs the test-gate (blocks pushes to master/main without a test-pass
 #      receipt for the current HEAD, for repos that opted in via a
 #      .claude/pre-push-test-gate.enabled marker file)
-#   3. If the repo has a local hook at .git/hooks/pre-push.local, runs that too
+#   3. Runs the divergence check (blocks pushes to master/main when the
+#      remote target ref has advanced since the local fetch)
+#   4. If the repo has a local hook at .git/hooks/pre-push.local, runs that too
 #
 # To bypass everything: git push --no-verify
 # To bypass test-gate only: PT_PUSH_NO_TEST_GATE=1 git push
@@ -51,7 +53,20 @@ if [ -n "$TEST_GATE" ] && [ -f "$TEST_GATE" ]; then
   echo "$REF_INPUT" | bash "$TEST_GATE" "$@"
 fi
 
-# 3. Run any local repo-specific pre-push hook
+# 3. Run the divergence check (blocks master/main pushes when remote has advanced)
+DIV_CHECK="$HOOK_DIR/../hooks/pre-push-divergence-check.sh"
+if [ ! -f "$DIV_CHECK" ]; then
+  if [ -f "$HOME/claude-projects/neural-lace/adapters/claude-code/hooks/pre-push-divergence-check.sh" ]; then
+    DIV_CHECK="$HOME/claude-projects/neural-lace/adapters/claude-code/hooks/pre-push-divergence-check.sh"
+  else
+    DIV_CHECK=""
+  fi
+fi
+if [ -n "$DIV_CHECK" ] && [ -f "$DIV_CHECK" ]; then
+  echo "$REF_INPUT" | bash "$DIV_CHECK" "$@"
+fi
+
+# 4. Run any local repo-specific pre-push hook
 LOCAL_HOOK="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/pre-push.local"
 if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then
   echo "$REF_INPUT" | "$LOCAL_HOOK" "$@"
