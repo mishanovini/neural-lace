@@ -28,7 +28,7 @@ Risk-tiered verification rebalances cost to risk: mechanical work gets a determi
 
 ### `Verification: contract`
 
-**When to use.** The task ships an artifact whose correctness is a match against a locked shape: a JSON Schema, a golden fixture, a reference output. Examples: extending `evidence.schema.json` (the artifact must validate against the meta-schema), adding a finding entry (the schema-gate validates against `findings-template.md`'s six-field structure), updating the plan template (the resulting fixture must round-trip through `plan-reviewer.sh --self-test` without findings).
+**When to use.** The task ships an artifact whose correctness is a match against a locked shape: a JSON Schema, a golden fixture, a reference output. Examples: extending `evidence.schema.json` (the artifact must validate against the meta-schema), adding a finding entry (the schema-gate validates against `findings-template.md`'s six-field structure), updating the plan template (the resulting fixture must round-trip through `plan-reviewer.sh --self-test` without findings). Composes with the pre-existing-oracle discipline in `~/.claude/rules/planning.md` FUNCTIONALITY-OVER-COMPONENTS — the schema / golden / contract IS the oracle the task is verified against; reinventing a per-task validator that does not match the locked shape is a misuse of this level.
 
 **What the validator checks.** `plan-edit-validator.sh` accepts a referenced golden-file or schema match. The evidence must cite either:
 - A schema-validation invocation (e.g., `jq -e --arg id "$task_id" '.task_id == $id' <artifact>`) that exits 0, OR

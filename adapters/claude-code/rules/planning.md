@@ -14,6 +14,24 @@ Concrete examples — each of these is the same failure shape:
 
 The test for "done" is always: **can a user do the thing?** If you cannot demonstrate the user-facing outcome end-to-end against the running system, the task is not complete — you have built a component, not functionality. A component that exists and compiles but does not connect to user-observable functionality is vaporware regardless of how clean its code looks.
 
+**When a pre-existing oracle exists, it IS the done criterion. Prefer it over reinventing a validator.**
+
+If a port, rewrite, migration, replacement implementation, or refactor has an existing reference — the original test suite, the consumer contract, a golden output set, a reference runtime, the un-refactored code's behavior — that reference IS the oracle of functionality. "Done" is "the new thing passes the pre-existing oracle," not "the new thing passes the new tests the builder wrote alongside it."
+
+Concrete examples — same shape across contexts:
+
+- **Porting library X to a new language.** Done when the port passes X's original test suite. NOT done when the port passes its own freshly-written tests. (Source case: Jason Liu's [Codex-maxxing](https://jxnl.co/writing/2026/05/10/codex-maxxing/) — *"Because the original project already had a large unit test suite, I could set a goal like: migrate Rich into Rust, but it must pass all the unit tests from the original library."*)
+- **Replacing an API endpoint's implementation.** Done when existing consumer tests (the ones that were green before the replacement) are still green against the new implementation. NOT done when new endpoint-internal tests pass.
+- **Refactoring a function.** Done when the un-refactored tests still pass without modification. NOT done when the tests had to be edited "to match the new shape."
+- **Migrating a schema or data format.** Done when existing readers can read the migrated data and produce identical output. NOT done when a new migration-internal validator says the rows look right.
+- **Re-implementing a CLI command.** Done when scripts/users that called the old command produce byte-identical output (or behavior, where output is not deterministic) with the new command. NOT done when the new command's `--self-test` passes.
+
+**Why this is structural, not stylistic.** A builder facing "port X to Y" tends to invent new tests for the Y-port and call passing-those-tests done. Those tests can be wrong *by selection* — the builder writes tests for behavior the port already has and skips tests for behavior the port silently dropped. The pre-existing oracle is the test the builder cannot game by selection: it was authored against the original, not against the port. Its bias is fixed at authoring time; the new-test bias floats with the builder's mental model of "what matters." Liu's framing makes this explicit — the oracle defines done; the implementation is finished when it satisfies the oracle, not when its author is satisfied with what they wrote.
+
+**When to escalate from oracle to additional verification.** The pre-existing oracle is necessary; it may not be sufficient. If the port adds capabilities the original lacked (e.g., new error messages, new concurrency model, new performance characteristics), those need *additional* tests beyond the oracle — but those tests are an additive layer, not a replacement for the oracle. Risk-tiered verification (`~/.claude/rules/risk-tiered-verification.md`) names `Verification: contract` for exactly this case: the contract-as-oracle is the structural check, additional runtime probes layer on for novel surfaces.
+
+**When no oracle exists.** Greenfield implementations have no pre-existing oracle by definition. The fallback is the per-task `**Prove it works:**` sub-block (per `~/.claude/rules/planning.md` "Integration Verification — Every Full-Level Task Must Prove It Works") — a numbered user-flow scenario that becomes the de-facto oracle. This is more work than reusing an existing oracle, which is why "is there an existing oracle?" is the first question to ask when scoping a port/rewrite/replacement task.
+
 **Why this is the most important rule.** Every other discipline in the harness — anti-vaporware gates, runtime verification, comprehension gate, integration verification, acceptance scenarios — exists to enforce this single principle at different boundaries. If the principle is internalized, the other gates are belt-and-suspenders. If the principle is missed, no number of structural gates will save you, because a builder optimizing for component behavior will produce evidence that satisfies every structural check while shipping nothing the user can use.
 
 **Per-role consequences:**
