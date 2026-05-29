@@ -1,6 +1,6 @@
 # Plan: Harness Hygiene v2 — Information Architecture + Discoverability + Hygiene Gate
 
-Status: ACTIVE
+Status: COMPLETED
 Mode: code
 Execution Mode: orchestrator
 tier: 1
