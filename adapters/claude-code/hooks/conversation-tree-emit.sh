@@ -127,6 +127,26 @@ _resolve_state_lib() {
   _fallback_conv_tree_path "state/state.js"
 }
 
+# Resolve the sole-normative decision-context schema module
+# (decision-context-schema.js). Mirrors decision-context-gate.sh's
+# _resolve_schema_module resolution order so writer and gate agree on the
+# fence grammar substrate. Override via DECISION_CONTEXT_SCHEMA env var
+# (used by --self-test to point at a stub OR a deliberately-broken path
+# to exercise the silent-fallback-to-sentinel-only path).
+_resolve_decision_schema() {
+  if [[ -n "${DECISION_CONTEXT_SCHEMA:-}" ]]; then
+    printf '%s' "$DECISION_CONTEXT_SCHEMA"; return 0
+  fi
+  local root=""
+  if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
+    local cand="$root/neural-lace/conversation-tree-ui/state/decision-context-schema.js"
+    if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
+    cand="$root/conversation-tree-ui/state/decision-context-schema.js"
+    if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
+  fi
+  _fallback_conv_tree_path "state/decision-context-schema.js"
+}
+
 # The MAIN repo checkout (NOT a worktree). `git rev-parse --git-common-dir`
 # points a worktree at the parent repo's .git; its dirname is the main
 # checkout. In a non-worktree session this equals --show-toplevel. This is
@@ -346,6 +366,182 @@ _warn_no_rich_details() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# Fence-block emit (Task 7 of docs/plans/decision-context-gate-2026-05-29.md).
+#
+# Recognize `::: <category> id=… … :::` fenced blocks in the spawn prompt body
+# and emit the matching ADR-032 §2 rich event combo against the spawn's CHILD
+# node (the `sp-<hash>` node `_run_on_spawn` just emitted via branch-opened).
+#
+# Composes ALONGSIDE the legacy `Instructions:/Recommendation:/Links:` sentinel
+# path — both can fire for the same spawn. The underlying state-library
+# `appendEvent` facade dedupes by deterministic event_id (ADR-032 §2), so the
+# fence-emitted and sentinel-emitted artifacts coexist without collision.
+#
+# Failure isolation: a missing schema module (zod not installed, path missing,
+# subprocess error) SILENTLY falls back to sentinel-only behavior. The hook
+# remains a WRITER — exit-status 0 is the invariant, NEVER blocks the spawn.
+#
+# Args: $1 = full tool input JSON; $2 = child node_id (sp-<hash>) the events
+# should be attached to.
+_emit_fence_blocks() {
+  local input="$1" child_id="$2"
+  [[ -z "$child_id" ]] && return 0
+  _have jq || return 0
+  _have node || return 0
+
+  local schema_mod; schema_mod=$(_resolve_decision_schema)
+  [[ -z "$schema_mod" ]] && return 0
+  if [[ ! -f "$schema_mod" ]]; then
+    _log "decision-context schema module not found at '$schema_mod' — skipping fence parse (sentinel path unaffected)"
+    return 0
+  fi
+
+  # Cheap pre-check: skip the node subprocess entirely if no `::: <word>` lines
+  # appear in the prompt at all. Keeps the hot path fast for the common case.
+  local prompt
+  prompt=$(printf '%s' "$input" | jq -r '
+    (.tool_input.prompt // .tool_input.description // .tool_input.content // "")' 2>/dev/null || echo "")
+  [[ -z "$prompt" ]] && return 0
+  if ! printf '%s' "$prompt" | grep -qE '^:::[[:space:]]+\S'; then
+    return 0
+  fi
+
+  # Stash the prompt to a temp file (multi-line strings are awkward to pass
+  # safely through argv). Pass the path + child_id to node; the script parses
+  # every fence, validates via the canonical safeValidateFence dispatcher, and
+  # writes a JSON events array to the events file. We then emit via _emit_dual
+  # the same way every other path does.
+  local pf; pf=$(mktemp 2>/dev/null || echo "/tmp/cte-fence-prompt-$$.txt")
+  printf '%s' "$prompt" >"$pf" 2>/dev/null || { rm -f "$pf" 2>/dev/null || true; return 0; }
+  local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-fence-events-$$.json")
+
+  local out
+  out=$(node -e '
+    var fs = require("fs"), crypto = require("crypto");
+    var schemaPath = process.argv[1];
+    var promptPath = process.argv[2];
+    var evFile = process.argv[3];
+    var nodeId = process.argv[4];
+    var s;
+    try { s = require(schemaPath); }
+    catch (e) { process.stdout.write("LIBERR:" + (e&&e.message||e)); process.exit(0); }
+    var raw;
+    try { raw = fs.readFileSync(promptPath, "utf8"); }
+    catch (e) { process.stdout.write("READERR:" + (e&&e.message||e)); process.exit(0); }
+
+    function _hash16(str) {
+      return crypto.createHash("sha1").update(String(str)).digest("hex").slice(0, 32);
+    }
+
+    // Locate every fence block (opener -> closer).
+    var lines = raw.split(/\r?\n/);
+    var blocks = [];
+    var i = 0;
+    while (i < lines.length) {
+      if (/^:::\s+\S/.test(lines[i])) {
+        var j = i + 1;
+        while (j < lines.length && lines[j].trim() !== ":::") j++;
+        if (j >= lines.length) break;
+        blocks.push(lines.slice(i, j + 1).join("\n"));
+        i = j + 1;
+      } else {
+        i++;
+      }
+    }
+    if (blocks.length === 0) { process.stdout.write("NONE"); process.exit(0); }
+
+    var events = [];
+    var errors = [];
+    var emitted = 0;
+    for (var b = 0; b < blocks.length; b++) {
+      var raw1 = blocks[b];
+      var parsed;
+      try { parsed = s.parseFenceBlock(raw1); }
+      catch (e) { errors.push("parse[" + (b+1) + "]:" + (e&&e.message||e)); continue; }
+      var cat = parsed.category;
+      var v;
+      try { v = s.safeValidateFence(cat, parsed.payload); }
+      catch (e) { errors.push("validate[" + cat + "]:" + (e&&e.message||e)); continue; }
+      if (!v || !v.success) {
+        var emsg = (v && v.error && v.error.issues)
+          ? v.error.issues.map(function(x){ return x.path.join(".") + ":" + x.message; }).join("; ")
+          : (v && v.error && v.error.message) || "validation-failed";
+        errors.push("zod[" + cat + "/" + (parsed.payload && parsed.payload.id || "?") + "]:" + emsg);
+        continue;
+      }
+      var data = v.data;
+      var itemId = "item-" + (data.id || ("anon-" + b));
+      var title = data.title || data.label || data.id || ("decision-context-" + cat);
+      var text = data.about || data.title || "";
+      var details = Object.assign({}, data, { _category: cat });
+
+      var evType, evIdPrefix;
+      if (cat === "decision") { evType = "decision-raised"; evIdPrefix = "cte-fdr-"; }
+      else if (cat === "question") { evType = "question-raised"; evIdPrefix = "cte-fqr-"; }
+      else if (cat === "action_item_for_user") { evType = "action-added"; evIdPrefix = "cte-fac-"; }
+      else if (cat === "autonomous_action") { evType = "autonomous-action-logged"; evIdPrefix = "cte-faa-"; }
+      else { errors.push("unknown-category:" + cat); continue; }
+
+      var primaryEvId = evIdPrefix + _hash16(nodeId + "|" + (data.id || ("anon-" + b)));
+      var primary = {
+        event_id: primaryEvId,
+        type: evType,
+        node_id: nodeId,
+        actor: "dispatch",
+        title: title,
+        text: text,
+        details: details
+      };
+      if (cat !== "autonomous_action") {
+        primary.item_id = itemId;
+      }
+      events.push(primary);
+
+      // Sibling item-details-set with rich payload (matches the gate path).
+      // autonomous-action-logged already carries details on the primary event
+      // per ADR-032 §2, but emitting a sibling item-details-set for all four
+      // categories preserves the GUI rendering parity the gate path uses.
+      events.push({
+        event_id: "cte-fids-" + _hash16(nodeId + "|" + (data.id || ("anon-" + b))),
+        type: "item-details-set",
+        node_id: nodeId,
+        item_id: itemId,
+        details: details
+      });
+      emitted++;
+    }
+
+    if (events.length === 0) {
+      process.stdout.write("NOEMITS\t" + errors.join(" || "));
+      process.exit(0);
+    }
+    fs.writeFileSync(evFile, JSON.stringify(events));
+    process.stdout.write("OK\t" + emitted + (errors.length ? ("\tERR\t" + errors.join(" || ")) : ""));
+    process.exit(0);
+  ' "$schema_mod" "$pf" "$ef" "$child_id" 2>>"$LOG_FILE") || out="NODEERR"
+
+  rm -f "$pf" 2>/dev/null || true
+
+  case "$out" in
+    OK*)
+      if [[ -s "$ef" ]]; then
+        local lib; lib=$(_resolve_state_lib)
+        _emit_dual "$lib" "$ef"
+        _log "fence-emit child=$child_id $out"
+      fi
+      ;;
+    NONE|NOEMITS*)
+      _log "fence-emit child=$child_id $out (sentinel path unaffected)"
+      ;;
+    *)
+      _log "fence-emit child=$child_id parse/exec error: $out (sentinel path unaffected)"
+      ;;
+  esac
+  rm -f "$ef" 2>/dev/null || true
+  return 0
+}
+
 # Primary branch identifier the conv-tree-state-gate will look for, derived
 # from tool_input with the SAME Pin-1 extraction + priority order the gate
 # uses (task-id= sentinel → worker-<tok> → backtick-after-"branch" → the
@@ -451,6 +647,14 @@ JSON
   # iteration: parse sentinels into a follow-up annotation/item-details-set
   # emission so the GUI auto-populates detail fields from the spawn prompt.
   _warn_no_rich_details "$input" "$title"
+
+  # Task 7 of docs/plans/decision-context-gate-2026-05-29.md — fence-block
+  # rich emit. Composes with (does NOT replace) the legacy sentinel path.
+  # Parses every `::: <category> id=… … :::` fence in the spawn prompt and
+  # emits the matching ADR-032 §2 rich event combo against the child node
+  # we just emitted (sp-<hash>). Failure-isolated: schema-load errors silently
+  # fall back to sentinel-only behavior, never block the spawn.
+  _emit_fence_blocks "$input" "$child_id"
 
   exit 0
 }
@@ -995,6 +1199,189 @@ _self_test() {
       bash "$SELF" --emit-branch <<<'{"node_id":"st31-root","parent_id":null,"title":"ST31 Root"}' >/dev/null 2>&1
   done
   _ck "ST31 --emit-branch idempotent on node_id" "$(_count "$sp31" branch-opened)" "1"
+
+  # ==========================================================================
+  # ST32-ST36 — Task 7: decision-context fence-block emit on spawn.
+  # The spawn hook recognizes `::: <category> id=… … :::` fenced blocks in the
+  # prompt body and emits the matching ADR-032 §2 event combo against the
+  # spawn's child node. Coexists with legacy Instructions:/Recommendation:/
+  # Links: sentinels — both can fire for the same spawn; the underlying facade
+  # dedupes by event_id. Failure isolation: schema-load errors silently fall
+  # back to sentinel-only behavior, never block the spawn.
+  # ==========================================================================
+
+  # ST32 — well-formed `decision` fence -> branch-opened(root) + branch-opened
+  # (child) + decision-raised(child) + item-details-set(child).
+  local sp32="$tmp/st-32.json"
+  local FENCE32='::: decision id=ST32-DEC
+**Title:** Pick a path
+**About:** We must decide between paths A and B for the migration.
+**Background:** The two paths differ in reversibility cost; we cannot easily flip later.
+**Question:** Should we take path A or path B?
+**Why not decide alone:** This affects user-visible URL structure that downstream consumers depend on.
+**Options:**
+- **Path A** (key=a)
+  **What it does:** Single-table migration; faster.
+  **Risk:** Lock contention on rollout.
+  **Reversibility cost:** cheap
+  **Cost:** 2 hours
+- **Path B** (key=b)
+  **What it does:** Dual-table migration; safer.
+  **Risk:** Longer lead time.
+  **Reversibility cost:** expensive
+  **Cost:** 1 day
+**Recommendation:**
+  **Option key:** a
+  **Reasoning:** Lower blast radius if we need to revert.
+**Reply with:** Reply "A" or "B".
+:::'
+  local payload32; payload32=$(jq -n --arg p "spawn body
+${FENCE32}" --arg t "Fence Spawn 32" \
+    '{tool_name:"mcp__ccd_session__spawn_task",tool_input:{title:$t,prompt:$p},session_id:"sess-st-32"}')
+  CONV_TREE_STATE_PATH="$sp32" CLAUDE_SESSION_ID="sess-st-32" \
+    bash "$SELF" --on-spawn <<<"$payload32" >/dev/null 2>&1
+  local dr32 ids32
+  dr32=$(_count "$sp32" decision-raised)
+  ids32=$(_count "$sp32" item-details-set)
+  if [[ "$dr32" == "1" && "$ids32" == "1" ]]; then
+    echo "PASS: ST32 well-formed decision fence -> decision-raised(1) + item-details-set(1)"
+    pass=$((pass+1))
+  else
+    echo "FAIL: ST32 fence decision (decision-raised=$dr32 item-details-set=$ids32)"
+    fail=$((fail+1))
+  fi
+
+  # ST33 — spawn with ONLY legacy sentinels (no fence): existing behavior
+  # preserved, no decision-raised emitted from fence path.
+  local sp33="$tmp/st-33.json"
+  local SENT33='Instructions: edit foo.ts
+Recommendation: ship in one commit
+Links: docs/a.md, docs/b.md'
+  local payload33; payload33=$(jq -n --arg p "body\n$SENT33\nmore" --arg t "Sentinels Only" \
+    '{tool_name:"mcp__ccd_session__spawn_task",tool_input:{title:$t,prompt:$p},session_id:"sess-st-33"}')
+  CONV_TREE_STATE_PATH="$sp33" CLAUDE_SESSION_ID="sess-st-33" \
+    bash "$SELF" --on-spawn <<<"$payload33" >/dev/null 2>&1
+  local dr33; dr33=$(_count "$sp33" decision-raised)
+  local bo33; bo33=$(_count "$sp33" branch-opened)
+  if [[ "$dr33" == "0" && "$bo33" == "2" ]]; then
+    echo "PASS: ST33 sentinels-only spawn -> no decision-raised, branch-opened(2 = root+child)"
+    pass=$((pass+1))
+  else
+    echo "FAIL: ST33 sentinels-only (decision-raised=$dr33 branch-opened=$bo33)"
+    fail=$((fail+1))
+  fi
+
+  # ST34 — malformed fence (decision missing required `options[]`):
+  # validator rejects, fence path emits NO rich events, branch-opened still
+  # fires from the upstream spawn-emit, exit 0 (writer isolation).
+  local sp34="$tmp/st-34.json"
+  local BAD34='::: decision id=ST34-BAD
+**Title:** Broken
+**About:** Missing options array (required by schema).
+**Background:** This fence is intentionally invalid.
+**Question:** ?
+**Why not decide alone:** ?
+**Reply with:** none
+:::'
+  local payload34; payload34=$(jq -n --arg p "$BAD34" --arg t "Bad Fence" \
+    '{tool_name:"mcp__ccd_session__spawn_task",tool_input:{title:$t,prompt:$p},session_id:"sess-st-34"}')
+  CONV_TREE_STATE_PATH="$sp34" CLAUDE_SESSION_ID="sess-st-34" \
+    bash "$SELF" --on-spawn <<<"$payload34" >/dev/null 2>&1
+  local rc34=$?
+  local dr34; dr34=$(_count "$sp34" decision-raised)
+  local bo34; bo34=$(_count "$sp34" branch-opened)
+  if [[ "$rc34" == "0" && "$dr34" == "0" && "$bo34" == "2" ]]; then
+    echo "PASS: ST34 malformed fence -> rejected, no decision-raised; spawn branch-opened still fires; exit 0"
+    pass=$((pass+1))
+  else
+    echo "FAIL: ST34 malformed fence (rc=$rc34 decision-raised=$dr34 branch-opened=$bo34)"
+    fail=$((fail+1))
+  fi
+
+  # ST35 — multiple fences in one prompt: one `decision` + one
+  # `autonomous_action` -> BOTH event combos emitted.
+  local sp35="$tmp/st-35.json"
+  local MULTI35="::: decision id=ST35-DEC
+**Title:** First decision
+**About:** Need user input on this.
+**Background:** Context here.
+**Question:** A or B?
+**Why not decide alone:** Has user-visible impact.
+**Options:**
+- **Option A** (key=a)
+  **What it does:** thing A
+  **Risk:** mild
+  **Reversibility cost:** cheap
+  **Cost:** small
+- **Option B** (key=b)
+  **What it does:** thing B
+  **Risk:** moderate
+  **Reversibility cost:** expensive
+  **Cost:** large
+**Recommendation:**
+  **Option key:** a
+  **Reasoning:** safer rollout
+**Reply with:** A or B
+:::
+
+filler
+
+::: autonomous_action id=ST35-AA
+**Title:** Wiped cache
+**About:** Cleared the build cache to recover from a stale-state failure.
+**Background:** CI was failing with stale-cache errors; cache wipe restored green builds.
+**Action taken:** Ran 'npm run clean' on the build pipeline.
+**Reasoning:** Stale cache was the root cause; wipe is the documented recovery.
+**Reversibility:** Fully reversible (cache rebuilds on next run).
+**References:** docs/runbook.md
+:::"
+  local payload35; payload35=$(jq -n --arg p "$MULTI35" --arg t "Multi" \
+    '{tool_name:"mcp__ccd_session__spawn_task",tool_input:{title:$t,prompt:$p},session_id:"sess-st-35"}')
+  CONV_TREE_STATE_PATH="$sp35" CLAUDE_SESSION_ID="sess-st-35" \
+    bash "$SELF" --on-spawn <<<"$payload35" >/dev/null 2>&1
+  local dr35 aa35 ids35
+  dr35=$(_count "$sp35" decision-raised)
+  aa35=$(_count "$sp35" autonomous-action-logged)
+  ids35=$(_count "$sp35" item-details-set)
+  if [[ "$dr35" == "1" && "$aa35" == "1" && "$ids35" == "2" ]]; then
+    echo "PASS: ST35 multi-fence: decision-raised(1) + autonomous-action-logged(1) + item-details-set(2)"
+    pass=$((pass+1))
+  else
+    echo "FAIL: ST35 multi-fence (decision-raised=$dr35 autonomous-action-logged=$aa35 item-details-set=$ids35)"
+    fail=$((fail+1))
+  fi
+
+  # ST36 — schema module unavailable (CONV_TREE_STATE_LIB unset is fine, but
+  # DECISION_CONTEXT_SCHEMA points at a non-existent path): fence path
+  # silently no-ops, legacy sentinel path still runs, warning still fires,
+  # exit 0 (writer isolation).
+  local sp36="$tmp/st-36.json"
+  local LONG_PROMPT36
+  LONG_PROMPT36=$(printf 'spawn body without sentinels here. %.0s' {1..15})
+  # Build a payload that ALSO contains a fence: if the schema is unavailable,
+  # the fence is ignored AND no decision-raised emits, but the branch-opened
+  # spawn-emit still happens. The legacy WARN about absent sentinels also fires.
+  local payload36; payload36=$(jq -n --arg p "$LONG_PROMPT36" --arg t "NoSchema36" \
+    '{tool_name:"mcp__ccd_session__spawn_task",tool_input:{title:$t,prompt:$p},session_id:"sess-st-36"}')
+  local LOG_BEFORE36 LOG_AFTER36
+  LOG_BEFORE36=$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)
+  CONV_TREE_STATE_PATH="$sp36" CLAUDE_SESSION_ID="sess-st-36" \
+    DECISION_CONTEXT_SCHEMA="$tmp/does-not-exist-schema.js" \
+    bash "$SELF" --on-spawn <<<"$payload36" >/dev/null 2>&1
+  local rc36=$?
+  LOG_AFTER36=$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)
+  local dr36 bo36
+  dr36=$(_count "$sp36" decision-raised)
+  bo36=$(_count "$sp36" branch-opened)
+  local warn36=N
+  tail -n $((LOG_AFTER36 - LOG_BEFORE36 + 1)) "$LOG_FILE" 2>/dev/null | grep -q 'WARN: spawn branch "NoSchema36"' && warn36=Y
+  if [[ "$rc36" == "0" && "$dr36" == "0" && "$bo36" == "2" && "$warn36" == "Y" ]]; then
+    echo "PASS: ST36 schema unavailable -> fence path silent; sentinel WARN still fires; exit 0"
+    pass=$((pass+1))
+  else
+    echo "FAIL: ST36 schema unavailable (rc=$rc36 decision-raised=$dr36 branch-opened=$bo36 warn=$warn36)"
+    fail=$((fail+1))
+  fi
 
   rm -rf "$tmp" 2>/dev/null || true
   echo "self-test: $pass passed, $fail failed"
