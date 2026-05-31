@@ -275,3 +275,35 @@ The hook is a UserPromptSubmit-class **writer** (NOT a gate) that closes the rou
 - **`node` in PATH.** All facade calls via `node -e`. If unavailable, exits 0 silently.
 - **`zod` installed** in conv-tree-ui module (Task 2). Hook doesn't directly require it; facade chain does.
 - **Settings.json wiring lands in Task 9.** Hook ships unwired; bootstrap wave registers under UserPromptSubmit.
+
+## Task 9 (partial — Wave 3 wiring) — Wire hooks into Stop + UserPromptSubmit chains
+
+EVIDENCE BLOCK
+==============
+Task ID: 9-partial
+Task description: Wire `decision-context-gate.sh` in Stop chain (after `goal-coverage-on-stop.sh`) and `decision-context-reply-emit.sh` in UserPromptSubmit chain (after `goal-extraction-on-prompt.sh`) in BOTH `adapters/claude-code/settings.json.template` AND live `~/.claude/settings.json`. Verification: mechanical.
+Verified at: 2026-05-30T00:00:00Z
+Verifier: task-verifier agent
+
+Comprehension-gate: PASS (confidence 8) — articulation at docs/plans/decision-context-gate-2026-05-29-evidence-task9-partial.md substantively matches diff 66ef445; four sub-sections all well above 30-char threshold; cites two-layer config discipline, correct chain positions (after goal-coverage-on-stop.sh / goal-extraction-on-prompt.sh), JSON validity preservation, divergence non-regression, and gitignored-live-file rationale.
+
+Checks run:
+1. Template Stop chain — `jq '.hooks.Stop[].hooks[]?.command' adapters/claude-code/settings.json.template` shows `decision-context-gate.sh` immediately after `goal-coverage-on-stop.sh` PASS
+2. Template UserPromptSubmit chain — same `jq` query shows `decision-context-reply-emit.sh` immediately after `goal-extraction-on-prompt.sh` PASS
+3. Live `~/.claude/settings.json` mirror — same two entries at same positions PASS
+4. JSON validity — `jq empty` on both files exits 0 PASS
+5. Hook executability — `[ -x ~/.claude/hooks/decision-context-gate.sh ]` and reply-emit PASS
+6. Commit shape — `git show --stat 66ef445` shows only template touched (8 insertions); live file edit gitignored per design PASS
+
+Git evidence:
+  - 66ef445 — feat(settings): wire decision-context-gate + reply-emit hooks (Task 9-partial)
+  - dc7af21 — docs(plan): task 9-partial comprehension articulation
+
+Runtime verification: command:jq -e '.hooks.Stop[].hooks[]?.command' adapters/claude-code/settings.json.template
+Runtime verification: command:jq empty ~/.claude/settings.json
+Runtime verification: file adapters/claude-code/settings.json.template::decision-context-gate.sh
+Runtime verification: file adapters/claude-code/settings.json.template::decision-context-reply-emit.sh
+
+Verdict: PASS
+Confidence: 9
+Reason: Both hooks wired at correct chain positions in both layers; JSON valid; divergence non-regressed (195=195 per builder); hooks executable. Task 9 main checkbox INTENTIONALLY NOT FLIPPED — Wave 5 covers full Task 9 scope (CLAUDE.md addition, FM-NNN entry, remaining wiring per plan). This partial records the Wave 3 wiring predicate for Walking Skeleton.
