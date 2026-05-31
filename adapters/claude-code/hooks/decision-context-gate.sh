@@ -402,14 +402,25 @@ _is_tier2() {
 #   "PERR\t<msg>" → parser error (malformed fence body)
 #   "NONE"     → no fenced blocks
 # Writes the event JSON-array to the file path passed as $3 (caller-supplied).
+#
+# B10-FU-1 (2026-05-30 fix): items land on the SESSION-ROOT node (the project
+# or global root that conversation-tree-emit.sh --on-session-start seeds),
+# NOT on a fresh per-decision node. Per ADR-032 §3 (FR-2 cardinality) items
+# live ON a node — multiple items on one node = one branch. The gate emits
+# a defensive `branch-opened` for the root FIRST (idempotent on event_id per
+# ADR-032 §2 — re-emission is a no-op when the session-start hook already
+# fired); the per-block primary events follow with node_id=root.
 _parse_validate_emit_events_file() {
   local schema_mod="$1" last_msg_file="$2" events_file="$3"
+  local root_id="$4" root_title="$5"
   _have node || { printf 'NOENV\tno-node'; return 1; }
   node -e '
     var path = require("path"), fs = require("fs");
     var schemaPath = process.argv[1];
     var msgPath = process.argv[2];
     var evFile = process.argv[3];
+    var rootId = process.argv[4];
+    var rootTitle = process.argv[5];
     var s;
     try { s = require(schemaPath); }
     catch (e) { process.stdout.write("NOENV\tschema-require:" + (e&&e.message||e)); process.exit(0); }
@@ -433,8 +444,31 @@ _parse_validate_emit_events_file() {
     }
     if (blocks.length === 0) { process.stdout.write("NONE"); process.exit(0); }
 
+    // Hash helper for deterministic event_ids (no external deps).
+    function _hash16(str) {
+      var h = require("crypto").createHash("sha1").update(String(str)).digest("hex");
+      return h.slice(0, 32);
+    }
+
     var events = [];
     var errors = [];
+
+    // B10-FU-1: defensive root branch-opened. Idempotent on event_id per
+    // ADR-032 sec.2 -- if --on-session-start already emitted this same node,
+    // the facade dedupes silently. Required because the gate may fire in
+    // sessions that bypassed session-start (the gate self-tests, or
+    // replays from fallback.jsonl).
+    if (rootId) {
+      events.push({
+        event_id: "dc-bo-" + _hash16(rootId),
+        type: "branch-opened",
+        node_id: rootId,
+        parent_id: null,
+        title: rootTitle || rootId,
+        actor: "dispatch"
+      });
+    }
+
     for (var b = 0; b < blocks.length; b++) {
       var raw = blocks[b];
       var parsed;
@@ -450,7 +484,11 @@ _parse_validate_emit_events_file() {
         continue;
       }
       var data = v.data;
-      var nodeId = "dc-" + cat + "-" + (data.id || ("anon-" + b));
+      // B10-FU-1: emit against the SESSION-ROOT node, not a fresh
+      // per-decision node. Items live ON a node (FR-2). The item_id
+      // remains per-decision so each fence produces a distinct item
+      // in the root node items[] array.
+      var nodeId = rootId || ("dc-" + cat + "-" + (data.id || ("anon-" + b)));
       var itemId = "item-" + (data.id || ("anon-" + b));
       var title = data.title || data.label || data.id || ("decision-context-" + cat);
       var text = data.about || data.title || "";
@@ -505,7 +543,7 @@ _parse_validate_emit_events_file() {
     }
     process.stdout.write("OK\t" + (events.length));
     process.exit(0);
-  ' "$schema_mod" "$last_msg_file" "$events_file" 2>>"$LOG_FILE" || printf 'NOENV\tnode-exec'
+  ' "$schema_mod" "$last_msg_file" "$events_file" "$root_id" "$root_title" 2>>"$LOG_FILE" || printf 'NOENV\tnode-exec'
 }
 
 # ============================================================================
@@ -633,6 +671,14 @@ _run_gate() {
   local EVENTS_FILE; EVENTS_FILE=$(mktemp 2>/dev/null || echo "/tmp/dc-ev-$$.json")
   printf '%s' "$LAST_ASSISTANT" >"$LAST_MSG_FILE"
 
+  # B10-FU-1: resolve the session-root node so items land on the same
+  # branch that conversation-tree-emit.sh --on-session-start opened.
+  # Same _project_root logic — fence items attach to "the conversation
+  # about this project" (or the global root if cwd is outside any project).
+  local ROOTLINE; ROOTLINE=$(_project_root)
+  local ROOT_ID="${ROOTLINE%%$'\t'*}"
+  local ROOT_TITLE="${ROOTLINE##*$'\t'}"
+
   local PARSE_RESULT="NONE"
   local VERDICT_KIND="" VERDICT_BODY=""
   if [[ "$FENCE_PRESENT" -eq 1 ]]; then
@@ -640,7 +686,7 @@ _run_gate() {
       _log "schema module unavailable: $SCHEMA_MOD — fence cannot be validated"
       PARSE_RESULT="NOENV	schema-missing:$SCHEMA_MOD"
     else
-      PARSE_RESULT=$(_parse_validate_emit_events_file "$SCHEMA_MOD" "$LAST_MSG_FILE" "$EVENTS_FILE")
+      PARSE_RESULT=$(_parse_validate_emit_events_file "$SCHEMA_MOD" "$LAST_MSG_FILE" "$EVENTS_FILE" "$ROOT_ID" "$ROOT_TITLE")
     fi
     VERDICT_KIND="${PARSE_RESULT%%	*}"
     VERDICT_BODY="${PARSE_RESULT#*	}"
@@ -668,10 +714,12 @@ _run_gate() {
         # Schema or node unavailable — degrade to fallback queue + emit barebones.
         # Don't block (writer-hook discipline).
         _log "Tier 1 fence — env unavailable ($VERDICT_BODY); fence accepted, fallback queued"
-        # Write a minimal placeholder event to fallback for replay.
+        # Write a minimal placeholder event to fallback for replay. Targets
+        # the session-root node (B10-FU-1) so on replay the note lands on
+        # an existing branch instead of a dangling node_id.
         mkdir -p "$FALLBACK_DIR" 2>/dev/null || true
-        printf '{"event_id":"dc-stub-%s","type":"branch-note-add","node_id":"dc-unparsed","text":"unparsed-fence pending replay","actor":"dispatch","details":{"reason":"schema-or-node-unavailable","verdict":"%s"}}\n' \
-          "$(printf '%s' "$LAST_ASSISTANT" | _sha1 | cut -c1-16)" "$VERDICT_BODY" \
+        printf '{"event_id":"dc-stub-%s","type":"branch-note-add","node_id":"%s","text":"unparsed-fence pending replay","actor":"dispatch","details":{"reason":"schema-or-node-unavailable","verdict":"%s"}}\n' \
+          "$(printf '%s' "$LAST_ASSISTANT" | _sha1 | cut -c1-16)" "$ROOT_ID" "$VERDICT_BODY" \
           >>"$FALLBACK_FILE" 2>/dev/null || true
         ;;
       NONE|*)
@@ -1107,6 +1155,46 @@ EOF
     _ck "ST11 autonomous-action-logged count" "$C_AA" "1"
   else
     echo "FAIL: ST11 state file missing"; fail=$((fail+1))
+  fi
+
+  # ---------- ST12 (B10-FU-1): item appears in snapshot.nodes[].items[] -------
+  # This is the load-bearing regression test for the B10-FU-1 fix. Pre-fix,
+  # the gate emitted decision-raised against a fresh node_id ("dc-decision-<id>")
+  # that the reducer could not resolve via findNode; the event landed in
+  # events[] but was silently dropped from snapshot.nodes[].items[]. Post-fix,
+  # the gate emits a defensive branch-opened for the project/global root then
+  # the decision-raised against that root — so the reducer projects the item
+  # into snapshot.nodes[].items[] as ADR-032 sec.3 / FR-2 specifies.
+  local TR12="$TMP/tr12.jsonl" SP12="$TMP/sp12.json"
+  _make_transcript "$TR12" "$FENCE2"
+  local RC12
+  CONV_TREE_STATE_PATH="$SP12" \
+    bash "$SELF" <<<"$(jq -nc --arg p "$TR12" '{transcript_path:$p, session_id:"st12"}')" >/dev/null 2>&1
+  RC12=$?
+  _ck "ST12 fence emit -> exit 0" "$RC12" "0"
+  if [[ -f "$SP12" ]]; then
+    # Verify (a) snapshot.nodes[] non-empty AND (b) at least one node has an
+    # item whose item_id is "item-db-choice" (matches FENCE2's id=db-choice).
+    local ITEM_IN_NODE
+    ITEM_IN_NODE=$(node -e '
+      try {
+        var s = require(process.argv[1]);
+        var st = s.readState({ statePath: process.argv[2] });
+        var snap = s.deriveSnapshot(st.events);
+        var nodes = (snap && snap.nodes) || [];
+        var hit = 0;
+        for (var i = 0; i < nodes.length; i++) {
+          var items = nodes[i].items || [];
+          for (var j = 0; j < items.length; j++) {
+            if (items[j].item_id === "item-db-choice") { hit++; }
+          }
+        }
+        process.stdout.write(String(hit));
+      } catch (e) { process.stdout.write("ERR:" + (e && e.message || e)); }
+    ' "$LIB" "$SP12" 2>/dev/null)
+    _ck "ST12 item lands in snapshot.nodes[].items[] (B10-FU-1 fix)" "$ITEM_IN_NODE" "1"
+  else
+    echo "FAIL: ST12 state file missing"; fail=$((fail+1))
   fi
 
   echo

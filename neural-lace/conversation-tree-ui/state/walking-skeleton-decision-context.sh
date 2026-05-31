@@ -127,27 +127,42 @@ RESTORE_NEEDED=1
 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));' "$BACKUP_FILE" \
   || _die "backup not valid JSON; aborting"
 
-# ---------- Stage 1.5: pre-seed the WS-1 branch via the facade --------------
-# The gate emits `decision-raised` with node_id="dc-decision-WS-1", which the
-# reducer rejects silently if no `branch-opened` already exists for that
-# node_id (per state/reducer.js `decision-raised` arm — `findNode` is
-# required). The gate does NOT emit `branch-opened` ahead of the fence
-# events; that orchestration is the caller's responsibility. For the
-# Walking Skeleton, we pre-seed the branch via the facade BEFORE invoking
-# the gate so the fence's decision-raised + item-details-set land on a
-# resolvable node and the reducer surfaces the item in snapshot.nodes[]
-# (which the reply hook reads).
-_log "stage 1.5/5: pre-seed WS-1 branch via state.js facade"
-WS1_NODE_ID="dc-decision-WS-1"
-PRESEED_OUT=$(node -e '
-  var s = require(process.argv[1]);
-  s.appendBranchOpened(
-    { id: process.argv[2], parentId: null, title: "Walking Skeleton WS-1 (demo)" },
-    { statePath: process.argv[3] }
-  );
-  process.stdout.write("seeded");
-' "$LIVE_LIB" "$WS1_NODE_ID" "$LIVE_STATE" 2>"$TMP_DIR/preseed.err") || _die "preseed failed: $(cat "$TMP_DIR/preseed.err")"
-[[ "$PRESEED_OUT" == "seeded" ]] || _die "preseed unexpected output: $PRESEED_OUT"
+# ---------- Stage 1.5: seed the session-root branch via --on-session-start --
+# B10-FU-1 (2026-05-30): the gate emits decision-raised against the
+# session-root node (the project-root node that
+# conversation-tree-emit.sh --on-session-start seeds). Pre-fix, the gate
+# emitted against a fresh per-decision node-id; the reducer dropped the
+# item from snapshot.nodes[]. Post-fix, the gate itself defensively
+# emits a root branch-opened (idempotent per ADR-032 sec.2). To mirror
+# the production session-start path, we invoke conversation-tree-emit.sh
+# --on-session-start with a synthetic session-start event BEFORE running
+# the gate, so the gate idempotent re-emission of the same root is a
+# no-op (which is what we want to demonstrate in the live round-trip).
+_log "stage 1.5/5: seed session-root via conversation-tree-emit.sh --on-session-start"
+SESSION_START_HOOK="$HOME/.claude/hooks/conversation-tree-emit.sh"
+if [[ ! -f "$SESSION_START_HOOK" ]]; then
+  # Fall back to the canonical adapter path (worktree-local).
+  SESSION_START_HOOK="$(cd "$SCRIPT_DIR/../../../../" 2>/dev/null && pwd)/adapters/claude-code/hooks/conversation-tree-emit.sh"
+fi
+[[ -f "$SESSION_START_HOOK" ]] || _die "conversation-tree-emit.sh missing at $SESSION_START_HOOK"
+
+SS_STDIN=$(jq -nc \
+  --arg sid "ws-demo" \
+  --arg src "startup" \
+  --arg cwd "$(pwd)" \
+  '{session_id:$sid, source:$src, cwd:$cwd}')
+SS_STDERR="$TMP_DIR/sstart.stderr"
+set +e
+CONV_TREE_STATE_PATH="$LIVE_STATE" \
+  bash "$SESSION_START_HOOK" --on-session-start <<<"$SS_STDIN" 2>"$SS_STDERR"
+SS_RC=$?
+set -e
+if [[ "$SS_RC" -ne 0 ]]; then
+  _log "PARTIAL: --on-session-start returned exit $SS_RC"
+  head -20 "$SS_STDERR" >&2 || true
+  _die "session-start seed failed"
+fi
+_log "  session-start hook seeded project-root branch"
 
 # ---------- Stage 2: synthesize transcript with well-formed fence ----------
 _log "stage 2/5: emit WS-1 decision via gate hook"
@@ -225,6 +240,40 @@ if [[ "$DR_COUNT" -lt 1 ]] || [[ "$IDS_COUNT" -lt 1 ]]; then
   _die "fence-emit did not land the expected events"
 fi
 
+# LOAD-BEARING (B10-FU-1): verify the item ALSO appears in snapshot.nodes[].items[].
+# Pre-fix, events landed in events[] but the reducer rejected decision-raised
+# at findNode -> the item was DROPPED from snapshot.nodes[]. The bug was masked
+# by the prior manual preseed. Post-fix (with --on-session-start seeding the
+# root + the gate emitting against root with defensive branch-opened) the item
+# MUST appear in snapshot.nodes[].items[] with item_id="item-WS-1" and
+# checked=false (it gets flipped to checked=true after Stage 3 reply-emit).
+ITEM_IN_SNAPSHOT=$(node -e '
+  var s = require(process.argv[1]);
+  var st = s.readState({ statePath: process.argv[2] });
+  var snap = s.deriveSnapshot(st.events);
+  var nodes = (snap && snap.nodes) || [];
+  var hit = null;
+  for (var i = 0; i < nodes.length; i++) {
+    var items = nodes[i].items || [];
+    for (var j = 0; j < items.length; j++) {
+      if (items[j].item_id === "item-WS-1") {
+        hit = { node_id: nodes[i].node_id, checked: !!items[j].checked, kind: items[j].kind };
+        break;
+      }
+    }
+    if (hit) break;
+  }
+  process.stdout.write(JSON.stringify(hit));
+' "$LIVE_LIB" "$LIVE_STATE" 2>/dev/null)
+_log "  WS-1 item in snapshot.nodes[]: $ITEM_IN_SNAPSHOT"
+if [[ "$ITEM_IN_SNAPSHOT" == "null" ]] || [[ -z "$ITEM_IN_SNAPSHOT" ]]; then
+  _die "B10-FU-1 regression: item-WS-1 did NOT appear in snapshot.nodes[].items[] (event landed in events[] but reducer dropped it)"
+fi
+SNAP_CHECKED_PRE=$(printf '%s' "$ITEM_IN_SNAPSHOT" | jq -r '.checked // false')
+if [[ "$SNAP_CHECKED_PRE" != "false" ]]; then
+  _die "B10-FU-1 invariant: item-WS-1 should be unchecked BEFORE reply-emit; got checked=$SNAP_CHECKED_PRE"
+fi
+
 # Extract the actual item_id the gate emitted so the reply phrase can match
 # via reply_with phrase regardless of internal item-id format.
 ITEM_ID=$(node -e '
@@ -276,6 +325,33 @@ ANS_COUNT=$(printf '%s' "$WS1_AFTER_REPLY" | jq -r '.answered // 0')
 if [[ "$ANS_COUNT" -lt 1 ]]; then
   _die "reply-emit did not land an answered event for WS-1"
 fi
+
+# LOAD-BEARING (B10-FU-1): verify snapshot.nodes[].items[].checked=true after
+# reply-emit. Pre-fix the item never even reached the snapshot. Post-fix it
+# should both appear AND flip to checked=true via the reducer answered arm.
+SNAP_AFTER_REPLY=$(node -e '
+  var s = require(process.argv[1]);
+  var st = s.readState({ statePath: process.argv[2] });
+  var snap = s.deriveSnapshot(st.events);
+  var nodes = (snap && snap.nodes) || [];
+  var hit = null;
+  for (var i = 0; i < nodes.length; i++) {
+    var items = nodes[i].items || [];
+    for (var j = 0; j < items.length; j++) {
+      if (items[j].item_id === "item-WS-1") {
+        hit = { checked: !!items[j].checked };
+        break;
+      }
+    }
+    if (hit) break;
+  }
+  process.stdout.write(hit ? JSON.stringify(hit) : "null");
+' "$LIVE_LIB" "$LIVE_STATE" 2>/dev/null)
+SNAP_CHECKED_POST=$(printf '%s' "$SNAP_AFTER_REPLY" | jq -r '.checked // false' 2>/dev/null || echo "false")
+if [[ "$SNAP_CHECKED_POST" != "true" ]]; then
+  _die "B10-FU-1 regression: item-WS-1 should be checked=true in snapshot.nodes[].items[] AFTER reply-emit; got '$SNAP_AFTER_REPLY' (parsed checked=$SNAP_CHECKED_POST)"
+fi
+_log "  WS-1 item.checked=true in snapshot.nodes[].items[] (B10-FU-1 round-trip confirmed)"
 
 # ---------- Stage 4: snapshot the final state ------------------------------
 _log "stage 4/5: snapshot final state -> $FINAL_FILE"
