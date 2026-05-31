@@ -195,8 +195,16 @@ Dependency-ordered (see "Dependency graph" below for the visual). Tasks 1-3 unbl
 
 ## In-flight scope updates
 
+<<<<<<< HEAD
 - 2026-05-30: `docs/decisions/045-decision-context-enforcement-surface.md` — ADR ID renumbered from 037 to 045 (037-044 already taken at dispatch time). Plan references to "037" in `## Files to Modify/Create` and `## Definition of Done` resolve to file 045. Same content, same Task 1, mechanical-only change.
 - 2026-05-30: `docs/DECISIONS.md` — index row added for ADR 045 (atomic with the new ADR per `decisions-index-gate.sh`).
+=======
+- 2026-05-30: `neural-lace/conversation-tree-ui/state/decision-context-schema.d.ts` — TypeScript peer of `decision-context-schema.js`. The Files-to-Modify entry above lists the pair as "`...-schema.js` + `.d.ts`" — the scope-enforcement-gate parses bullets atomically, so the `.d.ts` path is broken out here explicitly.
+- 2026-05-30: `neural-lace/conversation-tree-ui/package.json` — Task 2 introduces zod as the conv-tree-ui module's only runtime dep (SOLE NORMATIVE validator per the canonical schema). The `conversation-tree-ui` directory had no `package.json` prior to this plan; scope explicitly absorbed per Task 2's brief ("if it doesn't have a package.json, scope absorbed: add one with `zod` only").
+- 2026-05-30: `neural-lace/conversation-tree-ui/package-lock.json` — automatic peer of the above; locks `zod ^3.23.8`. Required for reproducible installs.
+- 2026-05-30: `neural-lace/conversation-tree-ui/state/schema.js` — additive edit: append `autonomous-action-logged` to `EVENT_TYPES` + matching `EVENT_REQUIRED_FIELDS` entry. Per DEC-2 (this plan) + ADR-032 §1 ("Adding a new event type to EVENT_TYPES is additive (no bump)"); `schema_version` stays 1. Edit is purely additive — no existing required field changed. Already implicitly named in the parent task brief ("extend the conversation-tree state schema with one new additive event type"), surfaced here for the gate's explicit-file requirement.
+- 2026-05-30: `neural-lace/conversation-tree-ui/state/selftest.js` — additive edit: new property scenario (P18) exercising the `autonomous-action-logged` round-trip + forward-tolerance + required-field enforcement. Already implicitly named in the parent task brief ("extend the conversation-tree self-test"), surfaced here for the gate's explicit-file requirement.
+>>>>>>> 18b4a2e (feat(conv-tree): decision-context schema module + autonomous-action-logged event (task 2 of decision-context-gate))
 
 ## Assumptions
 
