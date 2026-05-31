@@ -128,11 +128,11 @@ Dependency-ordered (see "Dependency graph" below for the visual). Tasks 1-3 unbl
       - Done when: golden-file `--self-test` round-trips well-formed fixtures, rejects malformed ones (each required-field absent, each enum-out-of-range, the expires_at + reversibility_cost cross-field constraint), AND `state/selftest.js` runs all P1-P15 green.
       - **Wire check:** `rg "require\(.*decision-context-schema\)" adapters/claude-code/hooks/ neural-lace/conversation-tree-ui/` → both hook + GUI import the same module; `rg "autonomous-action-logged" neural-lace/conversation-tree-ui/state/schema.js` → present in `EVENT_TYPES` AND `EVENT_REQUIRED_FIELDS`.
 
-- [ ] 3. **Author `adapters/claude-code/rules/decision-context.md` — Verification: mechanical**
+- [x] 3. **Author `adapters/claude-code/rules/decision-context.md` — Verification: mechanical**
       - The fence grammar (with worked examples per category), the Tiered-Scan trigger taxonomy, composition with `conv-tree-orchestrator-emit.md`'s Layer D (this rule IS the load-bearing mechanism for the Layer D enforcement; Layer D's Pattern moves to: "the agent self-applies the fence; the hook enforces it"), composition with ADR-032 §2 (which fenced category emits which event type combo), and the Mechanism+Pattern split per `harness-hygiene.md` conventions.
       - Done when: rule file exists, `plan-reviewer.sh` and `definition-on-first-use-gate.sh` pass on the diff, the rule cross-references conv-tree-orchestrator-emit.md / ADR-031 / ADR-032 / ADR-034.
 
-- [ ] 4. **Implement `adapters/claude-code/hooks/decision-context-gate.sh` (Stop hook per OQ-1) — Verification: full**
+- [x] 4. **Implement `adapters/claude-code/hooks/decision-context-gate.sh` (Stop hook per OQ-1) — Verification: full**
       - Reads last assistant message from `$TRANSCRIPT_PATH`. Tier 1 trigger (enumerated options OR terminal `?` + list OR explicit phrases "pick one"/"your call"/"which do you want") AND no fence → BLOCK Stop with the schema as the error message. Tier 2 (weaker signals) → no block; appends a fresh `decision-context-followup-*.txt` marker that `decision-context-pending-surfacer.sh` (Task 5) reads on next SessionStart. Tier 3 (rhetorical asks "does that make sense?", "right?") → whitelisted no-op.
       - When a fence IS present: parse via the Zod module (`node -e require(state-library + decision-context-schema) … validate`), enforce expires_at × default_if_no_response constraint, emit `decision-raised` / `question-raised` / `action-added` / `annotated` + `item-details-set` via the `state.js` facade.
       - On facade failure: write to `~/.claude/state/decision-context/fallback.jsonl`, log to `~/.claude/logs/decision-context-gate.log`, ALLOW Stop (writer-hook failure must not block per `gate-respect.md` "writer hooks do not block" + the existing `conversation-tree-emit.sh` pattern).
@@ -146,7 +146,7 @@ Dependency-ordered (see "Dependency graph" below for the visual). Tasks 1-3 unbl
       - Also drains Task-4 Tier-2 follow-up markers as a "previous-turn weak signal" reminder.
       - Done when: `--self-test` covers (a) no pending → silent, (b) one pending → system-reminder block emitted, (c) externally-resolved-since-last-seen → injection includes the resolution.
 
-- [ ] 6. **Implement `decision-context-reply-emit.sh` (UserPromptSubmit) — Verification: full**
+- [x] 6. **Implement `decision-context-reply-emit.sh` (UserPromptSubmit) — Verification: full**
       - Scans user's submitted prompt for open node IDs (regex from the schema's `id` field shape) AND/OR `reply_with` literal-phrase matches against open nodes. Emits `answered` / `action-done` / `item-details-set` via the `state.js` facade. Fallback-log on facade failure.
       - Done when: `--self-test` covers (a) user references node ID → state update emitted, (b) user mentions `reply_with` literal phrase → state update emitted, (c) user message with no references → no-op, (d) facade-down → fallback line written.
 

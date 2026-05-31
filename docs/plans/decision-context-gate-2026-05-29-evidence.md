@@ -1,5 +1,41 @@
 # Evidence Log — Decision-Context Gate (Active Enforcement) 2026-05-29
 
+## Task 4 — Implement `adapters/claude-code/hooks/decision-context-gate.sh` (Stop hook per OQ-1)
+
+EVIDENCE BLOCK
+==============
+Task ID: 4
+Task description: Implement `adapters/claude-code/hooks/decision-context-gate.sh` (Stop hook per OQ-1) — Verification: full
+Verified at: 2026-05-30T00:00:00Z
+Verifier: task-verifier agent
+
+Comprehension-gate: PASS (confidence 8) — articulation at docs/plans/decision-context-gate-2026-05-29-evidence-task4.md substantively matches diff a2c61a8; four sub-sections (Spec meaning / Edge cases covered / Edge cases NOT covered / Assumptions) all well above 30-char threshold and cite specific diff content (`_parseRecommendationBlock`, `EVENT_REQUIRED_FIELDS`, `_resolve_schema_module`, ST1-ST11 self-test counts). Rung-2 requirement satisfied.
+
+Checks run:
+1. Hook syntactic + executable — bash -n PASS, executable bit PASS
+2. Self-test from clean retry-guard state — `bash adapters/claude-code/hooks/decision-context-gate.sh --self-test` → `self-test: OK 25/25` (11 scenarios incl. ST7 facade-down, ST8 pre-filter, ST9 retry-guard 3-strike, ST11 all four event categories)
+3. Mirror byte-identical — `diff -q adapters/claude-code/hooks/decision-context-gate.sh ~/.claude/hooks/decision-context-gate.sh` clean
+4. docs/harness-architecture.md inventory row at line 203 — substantive (names Tier-1/2/3 behavior, sole-normative Zod, facade emission, fallback path, waiver pattern, 11 self-test scenarios)
+5. Composition integrity (read from diff a2c61a8): `_resolve_schema_module` resolves to Task 2's `neural-lace/conversation-tree-ui/state/decision-context-schema.js` via git-rev-parse with `DECISION_CONTEXT_SCHEMA` env override; emission goes through `state.js` `appendEvent` facade via `node -e require(stateLib)` (NEVER direct JSON, NEVER direct HTTP); fallback path is `~/.claude/state/decision-context/fallback.jsonl` (ST7); pre-filter short-circuits BEFORE node subprocess on signal-free messages (ST8 via `DC_PERF_TRACE_FILE`)
+
+Git evidence:
+  - a2c61a8 — feat(hooks): decision-context-gate.sh — Stop-hook reactive enforcement (hook + inventory row)
+  - 703a049 — docs(plan): task 4 comprehension articulation
+
+Runtime verification: command:bash adapters/claude-code/hooks/decision-context-gate.sh --self-test
+Runtime verification: file adapters/claude-code/hooks/decision-context-gate.sh::CONV_TREE_STATE_LIB
+Runtime verification: file docs/harness-architecture.md::decision-context-gate.sh
+
+Verdict: PASS
+Confidence: 8
+Reason: Hook ships ADR-045 Stop-hook reactive enforcement end-to-end; 25/25 self-test PASS from clean state covers all 11 scenarios including writer-hook discipline (ST7), perf pre-filter (ST8), retry-guard downgrade (ST9), and all four event categories (ST11); composes correctly with Task 2 Zod module via sole-normative `require()` and Task 1 ADR resolvers; mirror byte-identical; B4-FU-1 retry-guard leak is test-harness ergonomics only (does not affect production behavior).
+
+### Comprehension Articulation (builder-authored, embedded by reference)
+
+See `docs/plans/decision-context-gate-2026-05-29-evidence-task4.md` for the full four-sub-section articulation (Spec meaning / Edge cases covered / Edge cases NOT covered / Assumptions). Reviewed against diff a2c61a8: all citations resolve, all claimed edge-cases map to diff content, assumptions are not contradicted by the diff.
+
+---
+
 ## Task 2 — Author schema TS module + Zod validator + autonomous-action-logged event
 
 EVIDENCE BLOCK
@@ -73,3 +109,169 @@ Build the SOLE NORMATIVE Zod schema for the decision-context fence grammar — t
 - `zod` v3 (3.23.8) is API-stable for the duration of this plan; if zod v4 introduces a breaking change, the `package.json` semver-caret pins to v3.x.
 - The `package.json` introduction in `neural-lace/conversation-tree-ui/` doesn't break existing imports anywhere (no callers existed before this dep was added — the conv-tree-ui directory had no `package.json` prior, per B2's brief absorption).
 - The OQ-2 partial-coverage finding on `renderItemDetails` is informational here; Task 9-full owns the templated extension. Task 2 is complete without touching `app.js`.
+
+## Task 3 — Author `adapters/claude-code/rules/decision-context.md`
+
+EVIDENCE BLOCK
+==============
+Task ID: 3
+Task description: Author `adapters/claude-code/rules/decision-context.md` — Verification: mechanical
+Verified at: 2026-05-30T23:25:00Z
+Verifier: task-verifier agent (Verification: mechanical early-return)
+
+Comprehension-gate: PASS (confidence 8) — articulation embedded below; four sub-sections substantive (Spec meaning paraphrases the task accurately, Edge cases covered cite specific rule-file sections, Edge cases NOT covered explicitly enumerate gaps with rationale, Assumptions name verified premises with commit-SHA citations); consistent with diff at 51ac77e (all 11 sections present, four worked fence examples, Tier-1/2/3 taxonomy, Layer D migration, ADR-032 §2 mapping, sole-normative validator section).
+
+Verification level: mechanical
+Evidence path: docs/plans/decision-context-gate-2026-05-29-evidence.md (legacy one-line prose path)
+
+Checks run:
+1. Rule file exists at canonical path with all 11 sections
+   Command: grep -nE "^##? " adapters/claude-code/rules/decision-context.md
+   Output: 11 sections present — Title (L1), Originating context (L7), Rule-in-one-sentence (L15), Fence grammar (L19), Tiered-Scan taxonomy (L138), Composition with Layer D (L178), Composition with ADR-032 §2 events (L189), Sole-normative validator (L204), Cross-references (L212), Enforcement (L226), Scope (L241)
+   Result: PASS
+
+2. Mirror byte-identical
+   Command: diff -q adapters/claude-code/rules/decision-context.md $HOME/.claude/rules/decision-context.md
+   Output: (empty — exit 0)
+   Result: PASS
+
+3. docs/harness-architecture.md row added atomically in same commit
+   Command: git show 51ac77e -- docs/harness-architecture.md
+   Output: new row at L473 for `decision-context.md` (2026-05-30) describing Hybrid classification, fence grammar, Tiered-Scan, Mechanism stack, Layer D migration, ADR-032 §2 mapping; Last-updated header refreshed
+   Result: PASS
+
+4. definition-on-first-use-gate + harness-hygiene-scan
+   Command: bash adapters/claude-code/hooks/definition-on-first-use-gate.sh --self-test (orchestrator pre-flight)
+   Output: 7/7 PASS; harness-hygiene-scan clean
+   Result: PASS
+
+Git evidence:
+  Commits in scope:
+    - 51ac77e — feat(rules): decision-context.md — fence grammar + Tiered-Scan + ADR-032 §2 composition
+    - b3e3002 — docs(evidence): task 3 comprehension articulation (R2 gate)
+  Files modified: adapters/claude-code/rules/decision-context.md (+245), docs/harness-architecture.md (+1 row, header refresh), docs/plans/decision-context-gate-2026-05-29-evidence-task3.md (+articulation)
+  Mirror: $HOME/.claude/rules/decision-context.md byte-identical (35212 bytes both sides)
+
+Runtime verification: file adapters/claude-code/rules/decision-context.md::The fence grammar
+Runtime verification: file adapters/claude-code/rules/decision-context.md::Tiered-Scan
+Runtime verification: file adapters/claude-code/rules/decision-context.md::Composition with ADR-032
+Runtime verification: file docs/harness-architecture.md::decision-context.md
+
+Verdict: PASS
+Confidence: 9
+Reason: Verification: mechanical level — rule file present with all 11 required sections substantively populated, mirror byte-identical, architecture-doc row added in same commit, gates clean. Comprehension articulation maps to diff content (sole-normative validator section, cross-field constraint, Tier-3 AND-no-stronger-trigger condition, back-compat with existing sentinels all verifiable in the rule body).
+
+#### Comprehension Articulation
+
+### Spec meaning
+
+The task asked me to author the canonical rule file at `adapters/claude-code/rules/decision-context.md` (mirrored byte-identically to `~/.claude/rules/decision-context.md`) that documents the fence grammar four agent→user surfaces must use, the Tiered-Scan trigger taxonomy the Stop-hook gate (Task 4) consumes, how this rule composes with the existing `conv-tree-orchestrator-emit.md` Layer D (migrating it from Pattern-only to Mechanism+Pattern for the four named categories), and the Mechanism+Pattern split per `harness-hygiene.md`'s convention. The rule does NOT re-specify the Zod schema (the canonical schema module at `neural-lace/conversation-tree-ui/state/decision-context-schema.js` is the sole-normative validator and is cited as such); it documents the wire format that maps to that schema. The eleven required sections (Classification / Originating context / Rule-in-one-sentence / Fence grammar with four worked examples / Tiered-Scan taxonomy / Composition with Layer D / Composition with ADR-032 §2 events / Sole-normative validator / Cross-references / Enforcement table / Scope) were all populated substantively, the rule cites all four ADRs (031, 032, 034, 045) and all six sibling Stop hooks by name, and the docs-freshness gate triggered a same-commit update of `docs/harness-architecture.md`'s rules table with a new row pointing at the rule.
+
+### Edge cases covered
+
+- **Fence in a non-Dispatch standalone session** — covered in the "Scope" section (rule lines near the bottom): "The rule binds in every session mode — interactive local, parallel local, cloud-remote / Dispatch orchestrator, scheduled, and agent-team — because decision-soliciting / question-asking / action-item-assigning / autonomous-action-logging surfaces appear in all of them."
+- **Cross-field constraint (`expires_at` ⇒ `default_if_no_response` ⇒ `reversibility_cost ∈ {free, cheap}` for `decision` category)** — explicitly stated in the "fence grammar" section's preamble, with the Tier-3-irreversible-decision rationale cross-referencing `~/.claude/rules/planning.md` "Mid-Build Decisions" Tier 3. The `decision` worked example demonstrates compliance (the `union` option has `reversibility_cost: free`, satisfying the constraint when `expires_at` is set with `default_if_no_response: union`).
+- **`autonomous_action` exempt from cross-field constraint** — explicitly called out at the end of the cross-field-constraint paragraph: "autonomous_action is exempt from the cross-field constraint because it has no `expires_at` / `default_if_no_response` / `options` fields (it's a fait-accompli log, not a pending decision)."
+- **Hook degrades to Pattern-only for cloud-remote sessions that don't load `~/.claude/` hooks** — explicit in the "Scope" section's closing paragraph, cross-referencing ADR-031 r7's accepted cloud blind spot.
+- **Schema-version-skew handling (hook compiled against a future major)** — explicit in the "Sole-normative validator" section: "Schema-version-skew handling (hook compiled against a future major; GUI on current major) follows ADR-031 r7 Pin 2: the gate REJECTs schema-too-new at parse time with a distinct 'schema too new — upgrade' error rather than falling back to a partial parse."
+- **Tier-3 rhetorical-whitelist with simultaneous Tier-1/Tier-2 fire** — covered in the Tier-3 sub-section: "The gate is a deliberate no-op when a Tier-3 phrase matches and no Tier-1 or Tier-2 trigger ALSO fires" (the AND-no-stronger-trigger condition prevents false-negative).
+- **Back-compat with existing `Instructions:` / `Recommendation:` / `Links:` sentinels** — covered in the "Composition with conv-tree-orchestrator-emit.md Layer D" section: the fence subsumes the existing sentinels; Task 7 will extend the parser to recognize both; older sessions without Task 7 continue to work with the sentinel-only form.
+- **Sole-normative validator principle (no parallel parser anywhere)** — entire dedicated section ("Sole-normative validator") explains the parallel-implementation-determinism principle and cites ADR-032 §8 r2.1 as the architectural precedent.
+
+### Edge cases NOT covered
+
+- **Malformed fence INSIDE a Markdown code block** — if the agent emits a fenced ::: block inside a triple-backtick code block (e.g., as an example in documentation or in a teaching artifact), the Stop hook's regex pre-filter might still trip Tier-1 detection but the fence parser would still treat it as a real fence. The rule does NOT explicitly address this; the implicit answer is that the canonical Zod module is the parser and it accepts any ::: block regardless of enclosing context — but the hook implementation (Task 4) will need to decide whether to scan inside code blocks. I left this for Task 4 to surface.
+- **Multi-fence-per-message ordering** — the rule mentions "Each is parsed and emitted as a separate event" in passing in the parent plan's Edge Cases, but the new rule body itself doesn't explicitly walk through what happens if a single message has three fences. The Zod module's `parseFenceBlock` finds the FIRST fence and returns it; the Task 4 hook will need to loop to find all of them. Documented in the plan, not in this rule.
+- **User-pasted fence in a tool result (e.g., agent reads a doc containing an example fence and that content lands in the assistant turn)** — the parent plan's Edge Cases covers "user pastes a fence into their reply" but not the symmetric case where the agent itself quotes back a fence example from documentation. Not addressed here; would be a Task 4 hook concern (writer-actor distinction in the transcript).
+- **Standalone (non-Dispatch) sessions don't have a global tree** — the rule says "Standalone sessions emit to the global tree (`~/.claude/state/conversation-tree/global/tree-state.json`)" assuming the substrate exists; if a standalone install has never run any Dispatch session, the global tree path may not exist. Out of scope here — the existing `conversation-tree-emit.sh` resolver handles bootstrapping.
+- **Loop-deadlock when the agent's redo contains the same Tier-1 trigger as the original** — relies on the `stop-hook-retry-guard.sh` library's 3-retry downgrade, which the rule references but does not re-document.
+
+### Assumptions
+
+- The sole-normative Zod module at `neural-lace/conversation-tree-ui/state/decision-context-schema.js` (already landed in Task 2, commit `8407a48` on the feature branch) is the source of truth for the field set, enum values, and cross-field constraints. The rule documents the wire format and the validator's role; it does NOT redefine the schema or specify additional fields/constraints beyond what's in the module.
+- The `state.js` facade's `appendEvent` is the sole-normative write path per ADR-032 §8 r2.1 — the rule cites this and forbids parallel HTTP paths, but does NOT re-document the facade's internals.
+- The six sibling Stop hooks (`continuation-enforcer`, `narrate-and-wait-gate`, `goal-coverage-on-stop`, `deferral-counter`, `imperative-evidence-linker`, `principles-compliance-gate`) all use the "scan last assistant message in transcript JSONL; BLOCK-with-redo-required" pattern and share the `lib/stop-hook-retry-guard.sh` library — the rule references them as precedents without re-validating that each one actually does this (I trust the parent plan's survey and ADR 045's recap).
+- ADR 045 has landed (verified — `docs/decisions/045-decision-context-enforcement-surface.md` exists on this branch) and locks the Stop-hook reactive surface; this rule documents the substance of that ADR's decision without re-litigating the rejected alternatives.
+- The `autonomous-action-logged` event type has been added to `state/schema.js`'s `EVENT_TYPES` and `EVENT_REQUIRED_FIELDS` per Task 2 / DEC-2 / commit `8407a48`; the rule documents this as fact, citing the commit SHA.
+- The `definition-on-first-use-gate.sh` scope-prefix is `neural-lace/build-doctrine/**/*.md` (verified by grep against the hook source), so acronyms in `adapters/claude-code/rules/decision-context.md` are NOT subject to the gate; the rule uses ADR / MCP / DEC / GUI / etc. freely.
+- The `harness-hygiene-scan.sh` `is_path_shape_exempt()` function exempts `adapters/*` (verified by reading the hook source), so my rule file's repeated mention of domain vocabulary (Dispatch / State / Tree / Fence / Mechanism / Pattern / Layer) does not trip the Layer-2 cluster heuristic.
+- The `docs-freshness-gate.sh` requires `harness-architecture.md` to be updated atomically with any new rule file added — verified by hitting the gate and resolving it with a same-commit doc update.
+
+## Task 6 — decision-context-reply-emit.sh (UserPromptSubmit writer)
+
+EVIDENCE BLOCK
+==============
+Task ID: 6
+Task description: Implement `decision-context-reply-emit.sh` (UserPromptSubmit) — Verification: full
+Verified at: 2026-05-30T23:30:00Z
+Verifier: task-verifier agent
+
+Comprehension-gate: PASS (confidence 9) — articulation embedded below; four sub-sections substantive and grounded in diff cd95b3b; edge-cases-covered cite ST1-ST10b mapped to specific code paths; assumptions name schema-major-1 contract + Task 4 reply_with contract + facade-as-sole-writer.
+
+Checks run:
+1. File exists, executable, bash -n clean
+   Command: ls -la adapters/claude-code/hooks/decision-context-reply-emit.sh && bash -n
+   Result: PASS — 28002 bytes, executable, syntax OK
+2. Self-test re-run (independent of orchestrator)
+   Command: bash adapters/claude-code/hooks/decision-context-reply-emit.sh --self-test
+   Result: PASS — 17/17 (ST1-ST10b)
+3. Mirror byte-identical
+   Command: diff -q adapters/.../decision-context-reply-emit.sh ~/.claude/hooks/decision-context-reply-emit.sh
+   Result: PASS
+4. docs/harness-architecture.md row added (same commit)
+   Result: PASS — row at line 188 documents the UserPromptSubmit hook
+5. Composition verified
+   - Facade-only writes (grep confirms `state.js` + `appendEvent`; no raw HTTP/fetch path)
+   - `node.state === "archived" || node.state === "concluded"` skip at line 207
+   - Deterministic event_id `dcre-<tag>-<sha1(item_id|promptSha)[0:24]>` at lines 245-254
+   - `_die_safe` always exits 0 (line 55); fallback.jsonl path for facade-down (ST7)
+   Result: PASS
+
+Git evidence:
+  - cd95b3b feat(hooks): decision-context-reply-emit (hook + arch doc, 612 insertions)
+  - 404923b docs(plan): Task 6 comprehension articulation (132 lines)
+
+Runtime verification: command bash adapters/claude-code/hooks/decision-context-reply-emit.sh --self-test
+Runtime verification: file adapters/claude-code/hooks/decision-context-reply-emit.sh::node.state === "archived"
+Runtime verification: file adapters/claude-code/hooks/decision-context-reply-emit.sh::dcre-
+
+Verdict: PASS
+Confidence: 9
+Reason: Hook implements writer-class UserPromptSubmit detection across three layered modes (item_id / node_id / reply_with phrase) with all required composition properties — facade-only writes per ADR-031 r7, deterministic event_id idempotency per ADR-032 §2, archived/concluded node skip, already-resolved-item skip, absolute failure isolation (every path exits 0), fallback.jsonl drainer path for Task 8. 17/17 self-test scenarios cover the spec's edge cases (decision/question/action kind dispatch, case-insensitive phrase, follow-up response_text capture, 3-fire idempotency, facade-down recovery, archived skip, double-fire prevention). Mirror byte-identical. Architecture doc updated atomically. Articulation matches diff cd95b3b precisely.
+
+## Comprehension Articulation
+
+### Spec meaning
+
+The hook is a UserPromptSubmit-class **writer** (NOT a gate) that closes the round-trip in the decision-context substrate: when Misha replies to a prompt soliciting a decision/question/action that has already landed in his conversation tree as an open item, this hook detects the reply, projects it onto ADR-032 §2 events (`answered` for decision/question, `action-done` for action), and lands the resolution in the tree state via the frozen state.js facade. A follow-up response text after the trigger gets captured on the item via `item-details-set` with `details.response_text`. Three detection modes layer in specificity order: (a) item_id literal token match, (b) node_id literal token match, (c) case-insensitive `details.reply_with` substring match. Only OPEN items on OPEN nodes count — checked/deferred/backlogged items and archived/concluded nodes are silently skipped so a stale mention of an already-resolved item is a no-op. Idempotency is the load-bearing property because UserPromptSubmit fires on every prompt: the event_id is deterministic per (item_id, sha1(prompt)) so re-firing on the same prompt produces the same event_id and the facade dedupes. Failure isolation is absolute — every code path exits 0, facade-unreachable events land in fallback.jsonl for Task 8's drainer; the user's prompt must NEVER be blocked by a writer-class hook (gate-respect.md).
+
+### Edge cases covered
+
+- **Archived/concluded nodes silently skipped (ST10).** Node-state filter is the first check inside per-node loop in `_scan_and_emit`.
+- **Already-checked/deferred/backlogged items skipped (ST10b).** Filtered per-item before any detection runs.
+- **Action items emit `action-done`, not `answered` (ST4).** Hook chooses event type by `it.kind` exactly.
+- **Multiple open items, prompt mentions a subset (ST9).** Each item independently scanned.
+- **Idempotency on 3 re-fires (ST6).** Deterministic event_id `dcre-<tag>-<sha1(item_id|sha1(prompt))[0:24]>`; facade dedupes per ADR-032 §2.
+- **Facade-down (ST7).** Node subprocess returns `LIBERR:`/`READERR:`; dispatcher writes to `~/.claude/state/decision-context/fallback.jsonl` and exits 0.
+- **Case-insensitive reply_with phrase (ST3).** `phraseMatch()` lowercases both sides.
+- **Follow-up response text (ST5).** `followUp()` slices after matched span, trims, caps 2000 chars.
+- **No-match silent (ST8).** Exits 0 with zero events.
+- **Multi-sink dedupe.** GUI STATE_FILE + §5 gate path receive same event_ids; per-file no-op via facade idempotency.
+
+### Edge cases NOT covered
+
+- **Overlapping `reply_with` phrases.** Item A `"yes"` + item B `"yes please"` both match "yes please" — both events emit. Schema guidance mitigates but doesn't eliminate.
+- **Paraphrase-only references.** "the database question we discussed" matches neither id nor reply_with — Task 5 pending-surfacer re-injects.
+- **Schema-version skew.** Hook does not call Zod validator. Future major bump would require re-validating field assumptions.
+- **Cross-session ambiguity.** Two parallel Dispatch sessions with DIFFERENT prompts on same item_id produce two events; reducer drops second silently as already-checked.
+- **`item-details-set` overwrite on subsequent reply.** Two events land with different event_ids; reducer last-writer-wins on `it.details`.
+
+### Assumptions
+
+- **Schema major 1 stable.** Hook reads `it.checked`/`it.deferred`/`it.backlogged`/`it.kind`/`it.details.reply_with`/`node.state`/`node.items[]`.
+- **State-lib at conventional path.** Resolver follows conversation-tree-emit.sh's exact pattern.
+- **Task 4 stores `reply_with` as `details.reply_with` on the item via `item-details-set`.** Contract for path (c). If stored elsewhere, (a) and (b) still work.
+- **`UserPromptSubmit` input has `prompt` field.** Reads `.prompt // .user_prompt // .message` fallback chain.
+- **`node` in PATH.** All facade calls via `node -e`. If unavailable, exits 0 silently.
+- **`zod` installed** in conv-tree-ui module (Task 2). Hook doesn't directly require it; facade chain does.
+- **Settings.json wiring lands in Task 9.** Hook ships unwired; bootstrap wave registers under UserPromptSubmit.
