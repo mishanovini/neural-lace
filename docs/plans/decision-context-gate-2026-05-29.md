@@ -114,12 +114,12 @@ Standard `--self-test` convention all existing harness hooks follow; mirror that
 
 Dependency-ordered (see "Dependency graph" below for the visual). Tasks 1-3 unblock everything; Tasks 4-7 are parallelizable once Tasks 1-3 land; Task 8 closes.
 
-- [ ] 1. **Author `docs/decisions/037-decision-context-enforcement-surface.md` per DEC-1 — Verification: contract**
+- [x] 1. **Author `docs/decisions/037-decision-context-enforcement-surface.md` per DEC-1 — Verification: contract**
       - The architectural decision is settled (Misha 2026-05-29: Stop-hook reactive). Builder authors the ADR with Title/Status/Stakeholders/Context/Decision/Alternatives/Consequences sections per Tier-2+ ADR format, citing sibling Stop-hook precedents (`continuation-enforcer`, `narrate-and-wait-gate`, `goal-coverage-on-stop`, `deferral-counter`, `imperative-evidence-linker`, `principles-compliance-gate`).
       - Update `docs/DECISIONS.md` index with the new row.
       - Done when: the ADR exists, the index row is added, `decisions-index-gate.sh` passes on the diff, `definition-on-first-use-gate.sh` passes on the diff.
 
-- [ ] 2. **Author the schema TS module + Zod validator at `neural-lace/conversation-tree-ui/state/decision-context-schema.js` (+ `.d.ts`); extend `state/schema.js` with `autonomous-action-logged` per DEC-2 — Verification: contract**
+- [x] 2. **Author the schema TS module + Zod validator at `neural-lace/conversation-tree-ui/state/decision-context-schema.js` (+ `.d.ts`); extend `state/schema.js` with `autonomous-action-logged` per DEC-2 — Verification: contract**
       - Four categories (decision/question/action_item_for_user/autonomous_action) with the field set the brief specifies, expressed as a Zod schema. Maps to ADR-032 §2 events plus `item-details-set` payloads for decision/question/action_item_for_user, AND the **new** `autonomous-action-logged` event for autonomous_action.
       - **Schema additions (DEC-2):** add `'autonomous-action-logged'` to `state/schema.js` `EVENT_TYPES` enum (additive within major 1, no `schema_version` bump per ADR-032 §1) and `EVENT_REQUIRED_FIELDS` map (`['node_id', 'text', 'details']`). Extend `state/selftest.js` with a P15 scenario proving the new event type round-trips through the reducer.
       - Constraint: `expires_at` set ⇒ `default_if_no_response` must reference an option whose `reversibility_cost` is `free` or `cheap`. Validated at the Zod layer.
