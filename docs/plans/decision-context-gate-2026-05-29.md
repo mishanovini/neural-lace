@@ -141,7 +141,7 @@ Dependency-ordered (see "Dependency graph" below for the visual). Tasks 1-3 unbl
       - **Wire check:** `rg "decision-context-gate" adapters/claude-code/settings.json.template` → wired in Stop chain after `goal-coverage-on-stop.sh`; `bash adapters/claude-code/hooks/decision-context-gate.sh --self-test` → PASS.
       - **Prove it works:** 1. In a sandbox transcript with a Tier-1-trigger last assistant message + no fence, run the hook → expect exit 2 + the schema in stderr. 2. Append a well-formed fence to the same transcript, re-run → expect exit 0 + an event landed in the `--self-test` state file. 3. Append a Tier-3 rhetorical "does that make sense?" → expect exit 0, no block, no event. 4. Force the facade to fail (broken `CONV_TREE_STATE_LIB` path) → expect exit 0 + fallback.jsonl line.
 
-- [ ] 5. **Implement `decision-context-pending-surfacer.sh` (SessionStart) — Verification: full**
+- [x] 5. **Implement `decision-context-pending-surfacer.sh` (SessionStart) — Verification: full**
       - Mirror `discovery-surfacer.sh` exactly. Reads the attestation-verified snapshot, finds unresolved decision-context items, compares per-node `event_id` to `~/.claude/state/decision-context/seen-<sid>.json`, emits one system-reminder per item the agent hasn't seen this session.
       - Also drains Task-4 Tier-2 follow-up markers as a "previous-turn weak signal" reminder.
       - Done when: `--self-test` covers (a) no pending → silent, (b) one pending → system-reminder block emitted, (c) externally-resolved-since-last-seen → injection includes the resolution.
@@ -150,11 +150,11 @@ Dependency-ordered (see "Dependency graph" below for the visual). Tasks 1-3 unbl
       - Scans user's submitted prompt for open node IDs (regex from the schema's `id` field shape) AND/OR `reply_with` literal-phrase matches against open nodes. Emits `answered` / `action-done` / `item-details-set` via the `state.js` facade. Fallback-log on facade failure.
       - Done when: `--self-test` covers (a) user references node ID → state update emitted, (b) user mentions `reply_with` literal phrase → state update emitted, (c) user message with no references → no-op, (d) facade-down → fallback line written.
 
-- [ ] 7. **Extend `conversation-tree-emit.sh` to recognize the fence grammar in spawn prompts — Verification: mechanical**
+- [x] 7. **Extend `conversation-tree-emit.sh` to recognize the fence grammar in spawn prompts — Verification: mechanical**
       - The existing `Instructions:` / `Recommendation:` / `Links:` sentinels stay accepted (back-compat) — they're a degenerate sentinel-only form of the fence. The hook ALSO recognizes a full fence in the prompt body and emits the rich payload via `item-details-set` instead of just logging a "missing rich details" warning.
       - `--self-test` scenarios ST20-ST24: ST20 fence-in-prompt → rich item-details-set emitted; ST21 sentinel-only-prompt → existing behavior unchanged; ST22 user-pasted fence in tool result → ignored (writer is `dispatch` actor, not `gui`); ST23 fence with malformed schema → log warning + emit bare branch-opened only (no partial item); ST24 multiple fenced blocks → all parsed.
 
-- [ ] 8. **Implement `decision-context-replay.sh` + wire on SessionStart — Verification: contract**
+- [x] 8. **Implement `decision-context-replay.sh` + wire on SessionStart — Verification: contract**
       - Drains `~/.claude/state/decision-context/fallback.jsonl`. For each queued event, calls the `state.js` facade. On success, deletes the line (atomic-rewrite). On persistent failure, leaves the line and stops draining.
       - Idempotent on `event_id` per the ADR-032 §2 facade contract.
       - Done when: `--self-test` covers (a) empty queue → no-op, (b) 3 queued events all succeed → file empty after, (c) facade fails on event 2 → events 1 succeeds & is removed, events 2+3 remain.

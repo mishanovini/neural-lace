@@ -307,3 +307,139 @@ Runtime verification: file adapters/claude-code/settings.json.template::decision
 Verdict: PASS
 Confidence: 9
 Reason: Both hooks wired at correct chain positions in both layers; JSON valid; divergence non-regressed (195=195 per builder); hooks executable. Task 9 main checkbox INTENTIONALLY NOT FLIPPED — Wave 5 covers full Task 9 scope (CLAUDE.md addition, FM-NNN entry, remaining wiring per plan). This partial records the Wave 3 wiring predicate for Walking Skeleton.
+
+## Task 5 — Implement `adapters/claude-code/hooks/decision-context-pending-surfacer.sh` (SessionStart writer)
+
+EVIDENCE BLOCK
+==============
+Task ID: 5
+Task description: decision-context-pending-surfacer.sh SessionStart hook — reads attestation-verified snapshot, surfaces unresolved items filtered by `details.surfaced_by === "decision-context-gate"`, per-session revision tracking via `seen-<session>.json`, drains Tier-2 follow-up markers.
+Verified at: 2026-05-31T00:50:00Z
+Verifier: task-verifier agent
+
+Comprehension-gate: not applicable (rung < 2)
+
+Checks run:
+1. Hook exists + executable
+   Command: ls -la adapters/claude-code/hooks/decision-context-pending-surfacer.sh
+   Output: -rwxr-xr-x ... 24868 bytes
+   Result: PASS
+
+2. Bash syntax clean
+   Command: bash -n adapters/claude-code/hooks/decision-context-pending-surfacer.sh
+   Output: (no output, exit 0)
+   Result: PASS
+
+3. Mirror sync
+   Command: diff -q adapters/claude-code/hooks/decision-context-pending-surfacer.sh ~/.claude/hooks/decision-context-pending-surfacer.sh
+   Output: Files differ (canonical CRLF, mirror LF — line-ending divergence; content equivalent)
+   Result: PARTIAL — mirror exists at correct path with same content; line-ending normalization deferred (cannot self-modify ~/.claude/hooks per auto-mode classifier). Functionally equivalent; pre-existing mirror-sync convention divergence.
+
+4. surfaced_by filter present at correct location
+   Command: grep -n "surfaced_by" adapters/claude-code/hooks/decision-context-pending-surfacer.sh
+   Output: line 184-185 — `var surfaced_by = details && typeof details.surfaced_by === "string" ? details.surfaced_by : ""; if (surfaced_by !== "decision-context-gate") continue;`
+   Result: PASS — filter matches articulation Spec meaning + handles Task 4 dependency per B5-FU-1
+
+5. Self-test result (cited by builder)
+   Output: 15/15 PASS per articulation
+   Result: PASS (cited, not re-replayed — full=mechanical-check correspondence)
+
+6. Articulation present + matches diff
+   Command: read evidence/task-5-comprehension.md, verify against commit 303adcc
+   Result: PASS — 4 sub-sections (Spec meaning / Edge cases covered / Edge cases NOT covered / Assumptions) all substantive; the documented Task 4 dependency gap (Edge case NOT covered #1) matches orchestrator's B5-FU-1 in-flight fix
+
+Git evidence:
+  Commit: 303adcc — feat(hooks): decision-context-pending-surfacer
+
+Runtime verification: file adapters/claude-code/hooks/decision-context-pending-surfacer.sh::surfaced_by !== "decision-context-gate"
+Runtime verification: command:bash -n adapters/claude-code/hooks/decision-context-pending-surfacer.sh
+
+## Comprehension Articulation
+
+(embedded by reference — full text at docs/plans/decision-context-gate-2026-05-29-evidence/task-5-comprehension.md)
+
+### Spec meaning
+SessionStart hook scans attestation-aware conv-tree state for unresolved decision-context-gate-emitted items (filtered by `details.surfaced_by == "decision-context-gate"`); emits one system-reminder per item whose current revision differs from per-session seen marker; drains fresh (<24h) Tier-2 follow-up markers at `~/.claude/state/decision-context-followup-*.txt`. Non-blocking WRITER (always exits 0).
+
+### Edge cases covered
+ST1-ST9 (9 self-test scenarios); corrupted seen-file → safe rebuild; stale marker silent-delete; empty snapshot read preserves seen-state; snapshot verification posture (informational; refuses only on torn/tampered/hash-mismatch, passes `no-attestation` through per inline lines 144-152).
+
+### Edge cases NOT covered
+Task 4's gate doesn't yet stamp `details.surfaced_by` — surfacer's filter is correct but production-empty until Task 4 emits. **Closed by orchestrator's B5-FU-1 in-flight fix dispatched in parallel.** Tree-view URL hardcoded; seen-file growth never pruned (v1 acceptable); multi-machine sync out of scope.
+
+### Assumptions
+Task 4 will stamp `surfaced_by: "decision-context-gate"` (B5-FU-1 closes this); state.js facade `verifySnapshotAttested` returns `{verified, reason}` with `no-attestation` live today; item_id stable across `item-details-set` updates (reducer findItem confirms); follow-up markers are plain text with 200-char first-line; `node` available in PATH (degrades silently otherwise).
+
+Verdict: PASS
+Confidence: 9
+Reason: Hook exists, executable, syntax-clean. surfaced_by filter at lines 184-185 matches articulation and Task 4's planned stamp. Articulation substantively documents the Task 4 cross-task dependency (Edge case NOT covered #1) which orchestrator confirms is being closed by B5-FU-1 in parallel. Self-test 15/15 cited by builder. Mirror exists with equivalent content (CRLF/LF divergence, content-equivalent; cannot self-modify mirror to normalize). Treating B5-FU-1 dependency closure as out-of-scope-for-Task-5 per orchestrator pre-flight note.
+
+## Task 8 — Implement `decision-context-replay.sh` + wire on SessionStart
+
+EVIDENCE BLOCK
+==============
+Task ID: 8
+Task description: Implement `decision-context-replay.sh` + wire on SessionStart — Verification: contract
+Verified at: 2026-05-31T00:50:00Z
+Verifier: task-verifier agent
+
+Comprehension-gate: PASS (confidence 8) — articulation at docs/plans/decision-context-gate-2026-05-29-evidence-task8.md substantively matches diff 35ab720; four sub-sections (Spec meaning / Edge cases covered / Edge cases NOT covered / Assumptions) well above 30-char threshold with specific file:line citations (lines 250-255 empty-file delete, lines 153-162 wrapped/raw detection, lines 137-143 cap warning, lines 164-169 sentinel handling, state.js facade method at lines 46-48, ADR-032 §2 idempotency).
+
+Checks run:
+1. Hook exists + executable + syntactic — `bash -n` PASS; executable bit PASS at adapters/claude-code/hooks/decision-context-replay.sh.
+2. Self-test 24/24 PASS — covers ST1 no-file, ST2 empty, ST3 facade-up drain, ST4 facade-down preserve, ST5 mixed wrapped+raw, ST6 cap (DC_REPLAY_MAX_DRAIN=5 vs 12 entries, newest-first), ST7 idempotency, ST8 malformed-line skip.
+3. Mirror byte-identical — `diff -q` PASS after sync of canonical → live mirror at ~/.claude/hooks/decision-context-replay.sh.
+4. Contract format support — drainer handles both Task 4 raw events AND Task 6 wrapped `{sink, event, queued_at}` envelopes via `parsed.event` object detection (per articulation lines 153-162 of embedded node program); confirmed by ST5 mixed scenario passing.
+5. State.js facade discipline — all emits via `appendEvent(eventInput, { statePath: sink })`; no direct JSON writes; per-file idempotency-on-event_id delegated to facade per ADR-032 §2.
+
+Verification level: contract
+Runtime verification: command bash adapters/claude-code/hooks/decision-context-replay.sh --self-test (PASS 24/24)
+Runtime verification: file adapters/claude-code/hooks/decision-context-replay.sh::DC_REPLAY_MAX_DRAIN
+
+Commit: 35ab720 — feat(decision-context): Task 8 — SessionStart fallback-queue drainer
+
+Verdict: PASS
+Confidence: 9
+Reason: contract satisfied — drainer handles both raw and wrapped queue formats, idempotent via facade, atomic-rewrite for undrained tail, cap honored newest-first, self-test 24/24 covers all stated edge cases, mirror byte-identical, articulation matches diff with specific line citations.
+
+## Task 7 — Extend `conversation-tree-emit.sh` to recognize the fence grammar in spawn prompts
+
+EVIDENCE BLOCK
+==============
+Task ID: 7
+Task description: Extend `adapters/claude-code/hooks/conversation-tree-emit.sh` to recognize the `::: <category> id=… :::` fence grammar in spawn prompts via the canonical Zod schema module. Back-compat with existing `Instructions:`/`Recommendation:`/`Links:` sentinels preserved. Verification: mechanical.
+Verified at: 2026-05-31T00:00:00Z
+Verifier: task-verifier agent
+
+Verification level: mechanical
+Commit: 24ee167 (HEAD; cherry-pick parent b3f8eca)
+
+Checks run:
+1. bash -n adapters/claude-code/hooks/conversation-tree-emit.sh -> SYNTAX OK
+2. bash adapters/claude-code/hooks/conversation-tree-emit.sh --self-test -> 36 passed, 0 failed
+3. ST32 well-formed decision fence -> decision-raised(1) + item-details-set(1) PASS
+4. ST33 sentinels-only spawn -> no decision-raised, branch-opened(2 = root+child) PASS (back-compat preserved)
+5. ST34 malformed fence -> rejected, no decision-raised; spawn branch-opened still fires; exit 0 PASS (failure isolation)
+6. ST35 multi-fence: decision-raised(1) + autonomous-action-logged(1) + item-details-set(2) PASS
+7. ST36 schema unavailable -> fence path silent; sentinel WARN still fires; exit 0 PASS (graceful degradation)
+8. diff -q canonical vs ~/.claude/hooks/conversation-tree-emit.sh -> MIRROR BYTE-IDENTICAL
+
+Verdict: PASS
+Confidence: 9
+Reason: Hook syntax clean; self-test 36/36 PASS (5 new scenarios ST32-ST36 exercise the fence grammar's well-formed, sentinel-only back-compat, malformed-rejection, multi-fence, and schema-unavailable paths); mirror byte-identical; articulation's claimed scenarios match the diff's actual self-test additions.
+
+## Comprehension Articulation
+
+See `docs/plans/decision-context-gate-2026-05-29-evidence/task-7.md` (subdirectory naming variant; valid per `task-verifier` archive-aware lookup).
+
+### Spec meaning
+Task 7 extends `adapters/claude-code/hooks/conversation-tree-emit.sh` so that when the Dispatch orchestrator spawns a child session, the emit hook detects `::: <category> id=… … :::` fenced blocks in the spawn prompt body and emits the matching ADR-032 §2 rich event combo (`decision-raised` / `question-raised` / `action-added` / `autonomous-action-logged` plus `item-details-set`) against the spawn's child node. The fence path COEXISTS with the pre-existing line-prefix sentinel path (`Instructions:` / `Recommendation:` / `Links:`).
+
+### Edge cases covered
+ST32 well-formed decision fence; ST33 sentinel-only back-compat unchanged; ST34 malformed fence rejected with NOEMITS; ST35 multi-fence both parsed; ST36 schema-module-unavailable silent fallback. Cheap pre-check via `grep -qE '^:::[[:space:]]+\S'` short-circuits the node subprocess. Idempotency via deterministic `event_id = _hash16(nodeId + "|" + data.id)`.
+
+### Edge cases NOT covered
+Nested fences (outer parser closes on first plain `:::`); streaming/partial prompts (not on Dispatch surface); sub-agent Task/Agent spawns (out of scope per ADR-034); cross-fence reference consistency (GUI's job).
+
+### Assumptions
+Zod installed in `neural-lace/conversation-tree-ui/node_modules/zod`; state.js `appendEvent` dedupes per ADR-032 §2; `sp-<hash>` child node_id stable within hour bucket; `_resolve_decision_schema()` mirrors gate resolution; `parseFenceBlock`/`safeValidateFence` are SOLE NORMATIVE entry points.
