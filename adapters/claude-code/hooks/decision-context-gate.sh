@@ -492,7 +492,7 @@ _parse_validate_emit_events_file() {
       var itemId = "item-" + (data.id || ("anon-" + b));
       var title = data.title || data.label || data.id || ("decision-context-" + cat);
       var text = data.about || data.title || "";
-      var details = Object.assign({}, data, { _category: cat });
+      var details = Object.assign({}, data, { _category: cat, surfaced_by: "decision-context-gate" });
 
       // Project to ADR-032 §2 events.
       var evType, evIdPrefix;
@@ -1195,6 +1195,39 @@ EOF
     _ck "ST12 item lands in snapshot.nodes[].items[] (B10-FU-1 fix)" "$ITEM_IN_NODE" "1"
   else
     echo "FAIL: ST12 state file missing"; fail=$((fail+1))
+  fi
+
+  # ---------- ST28 (B5-FU-1): item-details-set carries surfaced_by stamp -----
+  # Task 5 pending-surfacer hard-requires details.surfaced_by === "decision-context-gate"
+  # to surface an item. Without this stamp on the gate's emit path, the surfacer
+  # would surface NOTHING in production — defeats Task 5's purpose. This test
+  # locks the cross-task contract: every item-details-set emission carries the
+  # canonical surfaced_by value.
+  local TR28="$TMP/tr28.jsonl" SP28="$TMP/sp28.json"
+  _make_transcript "$TR28" "$FENCE2"
+  local RC28
+  CONV_TREE_STATE_PATH="$SP28" \
+    bash "$SELF" <<<"$(jq -nc --arg p "$TR28" '{transcript_path:$p, session_id:"st28"}')" >/dev/null 2>&1
+  RC28=$?
+  _ck "ST28 Tier-1 + valid fence → exit 0" "$RC28" "0"
+  if [[ -f "$SP28" ]]; then
+    local STAMP28
+    STAMP28=$(node -e '
+      (function(){
+        try {
+          var s = require(process.argv[1]);
+          var st = s.readState({ statePath: process.argv[2] });
+          var idsEvents = st.events.filter(function(e){ return e.type === "item-details-set"; });
+          if (idsEvents.length === 0) { process.stdout.write("NO_IDS"); return; }
+          var last = idsEvents[idsEvents.length - 1];
+          var sb = last && last.details && last.details.surfaced_by;
+          process.stdout.write(String(sb));
+        } catch (e) { process.stdout.write("ERR:" + (e && e.message || e)); }
+      })();
+    ' "$LIB" "$SP28" 2>/dev/null)
+    _ck "ST28 item-details-set.details.surfaced_by stamped (B5-FU-1)" "$STAMP28" "decision-context-gate"
+  else
+    echo "FAIL: ST28 state file missing"; fail=$((fail+1))
   fi
 
   echo
