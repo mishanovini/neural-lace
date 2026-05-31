@@ -237,8 +237,72 @@
       box.appendChild(fb);
     }
 
+    // --- decision-context fence-grammar header (Task 9-full / OQ-2) -----------
+    // When the item carries the decision-context `_category` marker (stamped
+    // by decision-context-gate / replay), surface the urgency chip + category
+    // hint above the legacy actionable rows so the operator immediately sees
+    // what's being asked of them. Legacy items (no `_category`) skip this.
+    var dcCat = de._category;
+    if (dcCat) {
+      var hdr = el('div', 'det-row det-dc-header');
+      var lbl = el('span', 'det-k', 'Kind');
+      var hv = el('div', 'det-v');
+      var kindChip = el('span', 'det-chip det-chip-cat det-chip-cat-' + String(dcCat),
+        String(dcCat).replace(/_/g, ' '));
+      hv.appendChild(kindChip);
+      if (de.urgency) {
+        var ug = el('span', 'det-chip det-chip-urgency det-chip-urgency-' + String(de.urgency),
+          'urgency: ' + String(de.urgency));
+        hv.appendChild(document.createTextNode(' '));
+        hv.appendChild(ug);
+      }
+      hdr.appendChild(lbl); hdr.appendChild(hv); box.appendChild(hdr);
+      // about / background — fence-grammar context fields, distinct from legacy
+      // `description` / `context` rows below. Render only when present.
+      add(detailRow('About', de.about, projectKey));
+      add(detailRow('Background', de.background, projectKey));
+    }
+
     // --- contract item 1: ACTIONABLE FIELDS FIRST ----------------------------
     add(detailRow('Instructions', de.instructions, projectKey));
+    // Question-category fence fields (asked-of-the-user payload).
+    if (dcCat === 'question') {
+      add(detailRow('Question', de.question, projectKey));
+      add(detailRow('Why asking', de.why_asking, projectKey));
+      add(detailRow('What I’ve tried', de.what_ive_tried, projectKey));
+      if (de.answer_shape) {
+        var asRow = el('div', 'det-row');
+        asRow.appendChild(el('span', 'det-k', 'Answer shape'));
+        var asV = el('div', 'det-v');
+        asV.appendChild(el('span', 'det-chip det-chip-answer-shape', String(de.answer_shape)));
+        asRow.appendChild(asV); box.appendChild(asRow);
+      }
+    }
+    // Decision-category fence fields (question + why_not_decide_alone above options).
+    if (dcCat === 'decision') {
+      add(detailRow('Question', de.question, projectKey));
+      add(detailRow('Why not decide alone', de.why_not_decide_alone, projectKey));
+    }
+    // Action-item-for-user fence fields.
+    if (dcCat === 'action_item_for_user') {
+      add(detailRow('The ask', de.the_ask, projectKey));
+      add(detailRow('Why assigned', de.why_assigned, projectKey));
+      add(detailRow('What I’m doing meanwhile', de.what_im_doing_meanwhile, projectKey));
+      if (de.state) {
+        var stRow = el('div', 'det-row');
+        stRow.appendChild(el('span', 'det-k', 'State'));
+        var stV = el('div', 'det-v');
+        stV.appendChild(el('span', 'det-chip det-chip-state det-chip-state-' + String(de.state),
+          String(de.state)));
+        stRow.appendChild(stV); box.appendChild(stRow);
+      }
+    }
+    // Autonomous-action fence fields (fait-accompli notification).
+    if (dcCat === 'autonomous_action') {
+      add(detailRow('Action taken', de.action_taken, projectKey));
+      add(detailRow('Reasoning', de.reasoning, projectKey));
+      add(detailRow('Reversibility', de.reversibility, projectKey));
+    }
     if (Array.isArray(de.options) && de.options.length) {
       var ow = el('div', 'det-row');
       ow.appendChild(el('span', 'det-k', 'Options'));
@@ -246,15 +310,85 @@
       de.options.forEach(function (op) {
         if (typeof op === 'string') { ol.appendChild(el('div', 'det-opt', op)); return; }
         var o = el('div', 'det-opt');
-        o.appendChild(el('div', 'det-opt-l', op.label || ''));
+        // Legacy `label` OR new-schema `name` (+ optional `key` prefix).
+        var optTitle = '';
+        if (op.key) optTitle += '[' + op.key + '] ';
+        optTitle += (op.name || op.label || '');
+        o.appendChild(el('div', 'det-opt-l', optTitle));
+        // Legacy pros/cons preserved.
         if (op.pros) o.appendChild(el('div', 'muted', '+ ' + op.pros));
         if (op.cons) o.appendChild(el('div', 'muted', '− ' + op.cons));
+        // New-schema decision-option fields (rendered when present).
+        if (op.what_it_does) o.appendChild(el('div', 'det-opt-field',
+          'what it does: ' + op.what_it_does));
+        if (op.risk) o.appendChild(el('div', 'det-opt-field', 'risk: ' + op.risk));
+        if (op.reversibility_cost) {
+          var rcWrap = el('div', 'det-opt-field');
+          rcWrap.appendChild(document.createTextNode('reversibility: '));
+          rcWrap.appendChild(el('span',
+            'det-chip det-chip-revcost det-chip-revcost-' + String(op.reversibility_cost),
+            String(op.reversibility_cost)));
+          o.appendChild(rcWrap);
+        }
+        if (op.cost) o.appendChild(el('div', 'det-opt-field', 'cost: ' + op.cost));
         ol.appendChild(o);
       });
       ow.appendChild(ol); box.appendChild(ow);
     }
-    add(detailRow('Recommendation', de.recommendation, projectKey));
+    // Recommendation: legacy is a plain string; fence-schema is an object with
+    // option_key + reasoning. Render whichever shape arrives.
+    if (de.recommendation != null) {
+      if (typeof de.recommendation === 'string') {
+        add(detailRow('Recommendation', de.recommendation, projectKey));
+      } else if (typeof de.recommendation === 'object') {
+        var rWrap = el('div', 'det-row');
+        rWrap.appendChild(el('span', 'det-k', 'Recommendation'));
+        var rV = el('div', 'det-v');
+        if (de.recommendation.option_key) {
+          var rk = el('div', 'det-rec-key', 'option: ' + de.recommendation.option_key);
+          rV.appendChild(rk);
+        }
+        if (de.recommendation.reasoning) {
+          var rr = el('div', 'det-rec-reasoning');
+          rr.textContent = de.recommendation.reasoning;
+          rV.appendChild(rr);
+        }
+        rWrap.appendChild(rV); box.appendChild(rWrap);
+      }
+    }
+    // reply_with: how to phrase the chosen response (decision category).
+    if (de.reply_with) {
+      var rwRow = el('div', 'det-row det-reply-with');
+      rwRow.appendChild(el('span', 'det-k', 'Reply with'));
+      var rwV = el('div', 'det-v');
+      var rwBox = el('code', 'det-reply-with-box');
+      rwBox.textContent = String(de.reply_with);
+      rwV.appendChild(rwBox);
+      rwRow.appendChild(rwV); box.appendChild(rwRow);
+    }
     add(detailRow('Blocking input needed', de.blocking_input, projectKey));
+    // Envelope fields shared across categories (after the actionable payload).
+    add(detailRow('Default if no response', de.default_if_no_response, projectKey));
+    add(detailRow('Expires at', de.expires_at, projectKey));
+    add(detailRow('Warn at', de.warn_at, projectKey));
+    // references: autonomous_action carries a required ≥1 entry list; other
+    // categories may carry it as supplementary cross-links.
+    if (Array.isArray(de.references) && de.references.length) {
+      var refRow = el('div', 'det-row');
+      refRow.appendChild(el('span', 'det-k', 'References'));
+      var refV = el('div', 'det-v');
+      de.references.forEach(function (r) {
+        var rs = String(r);
+        if (/docs\/[A-Za-z0-9._\/-]+/.test(rs)) {
+          linkifyDocs(refV, rs, projectKey);
+        } else {
+          var rc = el('span', 'det-link', rs);
+          refV.appendChild(rc);
+        }
+        refV.appendChild(document.createTextNode(' '));
+      });
+      refRow.appendChild(refV); box.appendChild(refRow);
+    }
 
     // --- supporting detail (only when distinct from the item header) ---------
     if (!descRedundant) add(detailRow('Description', de.description, projectKey));
