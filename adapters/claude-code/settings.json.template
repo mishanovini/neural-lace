@@ -477,6 +477,14 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/decision-context-replay.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/decision-context-pending-surfacer.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/spawned-task-result-surfacer.sh"
           },
           {

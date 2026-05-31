@@ -169,6 +169,7 @@ Four highest-leverage agent prompts (`task-verifier`, `code-reviewer`, `plan-pha
 - `diagnosis.md` — exhaustive diagnosis before fixing; DIAGNOSTIC-FIRST PROTOCOL (runtime logs first); FM-catalog reflex; "Fix the Class, Not the Instance"
 - `claims.md` — hypothesis-vs-proof labeling + refutation-criteria requirement (Decision 035)
 - `discovery-protocol.md` — proactive capture-and-decide for mid-process learnings
+- `decision-context.md` — Stop-hook reactive enforcement of structured decision / question / action-item / autonomous-action surfaces; fence grammar + Tiered-Scan taxonomy; composes with `conv-tree-orchestrator-emit.md` Layer D; mechanism map per ADR 045 (DEC-1)
 - `comprehension-gate.md` — articulate-before-checkbox-flip at plan rung >= 2
 - `prd-validity.md` + `spec-freeze.md` — plan-PRD link requirement + frozen-spec-before-edit gate
 - `findings-ledger.md` — six-field finding entries in `docs/findings.md`
