@@ -195,7 +195,8 @@ Dependency-ordered (see "Dependency graph" below for the visual). Tasks 1-3 unbl
 
 ## In-flight scope updates
 
-(Populated as in-flight scope additions are discovered per `scope-enforcement-gate.sh`.)
+- 2026-05-30: `docs/decisions/045-decision-context-enforcement-surface.md` — ADR ID renumbered from 037 to 045 (037-044 already taken at dispatch time). Plan references to "037" in `## Files to Modify/Create` and `## Definition of Done` resolve to file 045. Same content, same Task 1, mechanical-only change.
+- 2026-05-30: `docs/DECISIONS.md` — index row added for ADR 045 (atomic with the new ADR per `decisions-index-gate.sh`).
 
 ## Assumptions
 
