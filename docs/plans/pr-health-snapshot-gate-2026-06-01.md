@@ -32,6 +32,9 @@ Make the PR-health snapshot a HARD REQUIREMENT at session close (Misha's directi
 - `adapters/claude-code/rules/vaporware-prevention.md` — enforcement-map row.
 - `docs/harness-architecture.md` — changelog + Stop-table row + Rules-table row.
 
+## In-flight scope updates
+- 2026-06-01: `adapters/claude-code/rules/INDEX.md` — the `rules-index-coverage.sh` golden test requires every rule file to have an INDEX row; the new `pr-health-snapshot.md` rule needs its one-line entry. Surfaced by CI on PR #48.
+
 ## Assumptions
 - Claude Code has no pre-send/PostMessage hook; the Stop event is the closest real surface for "before a session calls its work complete" (same constraint principles-compliance-gate accepted).
 - The gate is a presence-check on the transcript; the agent runs `gh` and emits the snapshot. The gate does not call `gh` itself — keeping it fast and CI-safe.
