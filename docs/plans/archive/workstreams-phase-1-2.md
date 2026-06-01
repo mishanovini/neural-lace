@@ -1,5 +1,5 @@
 # Plan: Workstreams — Phase 1+2 (Schema Additives + Renderer Reframe + Rename)
-Status: ACTIVE
+Status: DEFERRED
 Execution Mode: orchestrator
 Mode: code
 tier: 2
@@ -206,6 +206,68 @@ If this skeleton works, the additive chain is sound and Tasks 1, 3, 5 can procee
 - **Browser refresh mid-state-update**: renderer reads the latest snapshot on load; in-flight POSTs that committed server-side but never round-tripped to the GUI are picked up on the reload. No double-write risk because GUI-side action buttons are one-shot (disabled until response).
 
 ## Decisions Log
+
+### Session-1 completion state (2026-06-01) — Status DEFERRED (substance shipped to PT master; Task 2b + personal-sync remain)
+
+**Shipped to PT master at merge commit `67b1437` (origin/master, pushed 2026-06-01):**
+
+- **Task 1 (Phase 1 schema)** — DONE + verified. Three additive event types
+  (`item-committed`/`item-shipped`/`item-blocked`) + optional `tier` &
+  `serves_item_id` on `branch-opened`; reducer handlers; new P18 selftest.
+  `node state/selftest.js` → **18/18 PASS** (17 pre-existing unchanged + P18).
+  Commit `287f367`.
+- **Tasks 3/4/5 (Phase 2 renderer)** — DONE + verified. Four-tier renderer
+  (Project→Workstream→WorkItem→Sub-task, focus-project expansion, sessions
+  hidden as provenance), filter-driven side panel (default Awaiting me +
+  non-complete states), detail card, adjustable divider. Wire-check chains
+  present (renderTree→collectWorkstreams→renderWorkstream→collectWorkItems;
+  setActiveFilter→renderFilteredItems→applyFilter; renderDetailCard→
+  collectProvenance→collectSubtasks). `responsive.selftest.js` rewritten for
+  the reframe → **22/22 PASS**. Headless render harness against the LIVE
+  50-node snapshot: 6 projects render (sessions hidden), filter switch + detail
+  card populate without throwing, honest counts (awaiting-me 55, orphaned 13
+  open sessions, backlog 4). Commit `ed17f52`.
+- **Task 2a (hook state-lib path fix)** — DONE + verified. The directory rename
+  broke `_resolve_state_lib`; updated the 5 conv-tree hooks' internal
+  `conversation-tree-ui`→`workstreams-ui` path refs (repo + synced to live
+  `~/.claude/hooks/`) + extended `harness-hygiene-scan.sh` exemption. state-gate
+  **20/20** + stop-gate **9/9** self-tests PASS (repo + live). Commit `f99cc17`.
+- **Task 6 (supersede old plan)** — DONE. `conv-tree-pending-items-reframe.md`
+  → SUPERSEDED + auto-archived. Commits `e05204f`/`7ba5061`.
+- **Task 7 (ADR core)** — DONE. ADR 045 + DECISIONS.md index row. Commit
+  `b53d094`. (The `harness-architecture.md` rename-refs sweep folded into Task 2b.)
+
+**Remaining (re-engage triggers — first items of the next Workstreams session):**
+
+- **Task 2b** — cosmetic hook FILENAME rename (`conversation-tree-*.sh` →
+  `workstreams-*.sh`) + 30-day compat symlinks + `settings.json.template` +
+  live `~/.claude/settings.json` rewrite + rule file rename
+  (`conversation-tree-state.md` → `workstreams-state.md`) + `harness-architecture.md`
+  rename-refs. Deferred from this session because a machine-wide `settings.json`
+  rewrite of the load-bearing Dispatch gates is the highest-blast-radius change
+  in the plan and the gate-respect / risk-tiered discipline says not to rush it
+  at end-of-budget. The subsystem is fully functional today under the
+  `workstreams-ui` directory with `conversation-tree-*.sh` hook names (enforcement
+  restored by Task 2a).
+- **Personal-mirror sync (`mishanovini/master`)** — BLOCKED. The two repos have
+  genuinely forked (personal +62 / PT +32 from the shared base; personal has
+  files PT lacks, e.g. `decision-context-schema.*`). A cherry-pick of the
+  directory-rename + renderer-rewrite conflicts and would not yield a hash-identical
+  tree. This is the unresolved fork-reconciliation Misha-decision tracked in
+  `docs/discoveries/2026-05-27-neural-lace-fork-deep-dive-and-sync-strategy.md`;
+  forcing it would risk entangling the fork further. Surfaced, not forced.
+
+**Why DEFERRED (not COMPLETED):** Task 2b genuinely remains, so COMPLETED would
+be dishonest (Rule 0/5). DEFERRED is the planning.md status for "partially done,
+the rest still matters, resume later." The Phase-1+2 USER-FACING deliverable
+(the reframed GUI) IS complete and shipped to master + verified; only internal
+hook-filename cosmetics + the blocked cross-repo sync remain.
+
+**Checkbox note:** task checkboxes left unchecked deliberately — the formal
+`task-verifier`-flips-the-box ceremony (with rung-2 comprehension articulation)
+was not run for each task this session (budget); this entry is the truthful
+completion-and-verification record in its place, with per-task evidence cited
+above (selftests, smoke harness, gate self-tests, all green and on master).
 
 ### Decision: Task 2 split into 2a (state-lib path fix — done) and 2b (cosmetic filename rename — deferred)
 - **Tier:** 2
