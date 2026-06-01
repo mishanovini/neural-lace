@@ -1,2173 +1,759 @@
 'use strict';
-/* Conversation Tree UI — Phase C/D client (ADR-031 Option 2 passive tracker).
- * Reads the file-mediated state contract via SSE; writes GUI mutations as
- * single appended events through POST /api/event (symmetric FR-11). The GUI
- * NEVER spawns/feeds/steers a Claude Code session — there is no continue/
- * resume/compose/send affordance anywhere (Option-2 invariant). No framework,
- * no build step. */
+/* Workstreams UI — v2 work-first reframe (2026-05-30). Formerly the
+ * Conversation Tree UI client. ADR-031 Option-2 passive tracker: reads the
+ * file-mediated state contract via SSE (/api/events → "state"), writes GUI
+ * mutations as single appended events through POST /api/event (symmetric
+ * FR-11). The GUI NEVER spawns / feeds / steers a Claude Code session — there
+ * is no continue / resume / compose / send affordance (Option-2 invariant).
+ * No framework, no build step (Node-stdlib server; vanilla DOM here).
+ *
+ * Reframe (vs the Conversation-Tree renderer it replaces):
+ *   - LEFT pane renders a four-tier hierarchy: Project → Workstream → WorkItem
+ *     → Sub-task. Sessions (sess-* / sub-* nodes) are NEVER rendered as their
+ *     own row; they surface only as provenance inside the detail card.
+ *   - RIGHT pane is a filter-driven single list (Awaiting me / In flight /
+ *     Blocked / Recently shipped / Orphaned / Backlog / All), replacing the
+ *     stacked Waiting/Backlog/Decisions/Questions accordion. Default filter =
+ *     "Awaiting me"; default-visible states are the non-complete ones
+ *     ({proposed, committed, in-flight, blocked}); {shipped, closed} hide until
+ *     "All" / "Recently shipped" is chosen (Misha's 2026-05-30 Q2 answer).
+ *   - Selecting an item replaces the filtered list with a detail card
+ *     (kind / tier / state / provenance / sub-task rollup / action buttons).
+ *   - An adjustable divider resizes the two panes; the split persists to
+ *     localStorage.
+ *
+ * Today's data has no explicit Workstream tier (items hang directly off
+ * project roots); the four-tier functions degrade gracefully to Project →
+ * WorkItem and light up the Workstream tier automatically once Phase-3
+ * backfill assigns it. */
 (function () {
   // ---- element handles -------------------------------------------------
   var $ = function (id) { return document.getElementById(id); };
-  var treeSelect = $('treeSelect'), addProjBtn = $('addProjBtn'),
-      showArchived = $('showArchived'), lastRead = $('lastRead'),
-      freshnessEl = $('freshness'),
-      statusEl = $('status'), corruptBanner = $('corruptBanner'),
-      noteStack = $('noteStack'), toast = $('toast'),
+  var showArchived = $('showArchived'),
+      freshnessEl = $('freshness'), statusEl = $('status'),
+      corruptBanner = $('corruptBanner'), toast = $('toast'),
       treeCanvas = $('treeCanvas'), treeScroll = $('treeScroll'),
-      treeState = $('treeState'), treeCrumb = $('treeCrumb'),
-      actionsBody = $('actionsBody'), actionsState = $('actionsState'),
-      actionsSort = $('actionsSort'),
-      backlogBody = $('backlogBody'), backlogState = $('backlogState'),
-      backlogSort = $('backlogSort'), addBacklogBtn = $('addBacklogBtn'),
-      backlogCapture = $('backlogCapture'), blText = $('blText'),
-      blPriority = $('blPriority'), blContext = $('blContext'),
-      blSave = $('blSave'), blCancel = $('blCancel'),
-      ctxPanel = $('ctxPanel'), ctxScrim = $('ctxScrim'), zoomIn = $('zoomIn'),
-      zoomOut = $('zoomOut'), fitSel = $('fitSel'),
-      showConcluded = $('showConcluded'),
-      // v3 accordion 2026-05-27 — right-panel stacked accordion + drawer toggle
-      paneStack = $('paneStack'),
-      // v3 accordion 2026-05-27 — filtered subview body containers
-      decisionsBody = $('decisionsBody'), decisionsState = $('decisionsState'),
-      decisionsCount = $('decisionsCount'),
-      questionsBody = $('questionsBody'), questionsState = $('questionsState'),
-      questionsCount = $('questionsCount'),
-      paneToggle = $('paneToggle'), rightClose = $('rightClose'),
-      panePeek = $('panePeek'), panePeekLabel = $('panePeekLabel'),
-      docsBtn = $('docsBtn'), docScrim = $('docScrim'), docModal = $('docModal'),
-      docTitle = $('docTitle'), docBody = $('docBody'), docClose = $('docClose'),
-      docOpenEditor = $('docOpenEditor'), docsPanel = $('docsPanel'),
-      docsBody = $('docsBody'), docsFilter = $('docsFilter'), docsClose = $('docsClose'),
-      // v2 redesign 2026-05-23 — dedicated Send-to-Dispatch composer modal
-      dispatchScrim = $('dispatchScrim'), dispatchModal = $('dispatchModal'),
-      dispatchTarget = $('dispatchTarget'), dispatchText = $('dispatchText'),
-      dispatchClearAfter = $('dispatchClearAfter'),
-      dispatchSend = $('dispatchSend'), dispatchStage = $('dispatchStage'),
-      dispatchCancel = $('dispatchCancel'), dispatchClose = $('dispatchClose');
+      treeState = $('treeState'), treeSummary = $('treeSummary'),
+      orphanSection = $('orphanSection'), orphanBody = $('orphanBody'),
+      orphanCount = $('orphanCount'),
+      filterBar = $('filterBar'), filterBody = $('filterBody'),
+      filterState = $('filterState'), detailCard = $('detailCard'),
+      layout = $('layout'), divider = $('divider'),
+      addBacklogBtn = $('addBacklogBtn'), backlogCapture = $('backlogCapture'),
+      blText = $('blText'), blContext = $('blContext'),
+      blPriority = $('blPriority'), blSave = $('blSave'), blCancel = $('blCancel');
 
   // ---- client view state ----------------------------------------------
-  var S = null;                 // latest snapshot
-  var loaded = false;           // first frame received yet?
-  var activeTree = localStorage.getItem('ctree-active') || 'global';
-  var sel = null;               // selected node_id
-  var selItem = null;           // item 17: selected item_id (bidirectional hl)
-  var collapsed = new Set();    // node_ids the user collapsed (default expanded)
-  var zoom = 1;
-  var firedDefers = new Set(JSON.parse(localStorage.getItem('ctree-fired') || '[]'));
-  var dismissed = new Set();    // dismissed persistent notes (node_id keys)
-  var seenConcluded = new Set(); // nodes already known concluded (notify once)
-  var primed = false;           // suppress conclude-notifications on first frame
-  var ctxExpanded = false;      // FR-6 layered: summary -> full
-  // v1.1 item 3: hide-concluded. localStorage UI-pref convention (same as
-  // zoom/collapsed/activeTree/projects/drafts). Default OFF = hide concluded
-  // (Misha's preferred default). '1' = show concluded.
-  var showConcludedPref = localStorage.getItem('ctree-show-concluded') === '1';
+  var S = null;                 // latest snapshot { nodes, backlog, rejections, ... }
+  var loaded = false;
+  var activeFilter = localStorage.getItem('workstreams.activeFilter') || 'awaiting-me';
+  var focusProject = localStorage.getItem('workstreams.focusProject') || null;
+  var collapsed = loadSet('workstreams.collapsed');   // project ids the user collapsed
+  var selItem = null;           // { nodeId, itemId } currently in the detail card
+  var ORPHAN_HOURS = 24;        // in-flight with no movement for >24h = orphan
+  var SHIP_RECENT_DAYS = 7;
+
+  function loadSet(key) {
+    try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')); }
+    catch (_) { return new Set(); }
+  }
+  function saveSet(key, set) {
+    try { localStorage.setItem(key, JSON.stringify(Array.from(set))); } catch (_) {}
+  }
 
   // ---- tiny DOM helpers ------------------------------------------------
   function el(tag, cls, txt) {
-    var e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (txt != null) e.textContent = txt;
-    return e;
-  }
-  function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
-  // v1.1-ux items 7/12/13: snackbar. opts.undo = fn → renders an "Undo"
-  // button + uses the 10s timer (item 12). A ✕ is ALWAYS present (item 13):
-  // pressing it closes immediately AND cancels the pending Undo (the action
-  // stays in its post-action state — undo only fires on the Undo click).
-  function closeToast() {
-    clearTimeout(toast._t);
-    toast._pendingUndo = null;
-    toast.hidden = true;
-    clear(toast);
-  }
-  function snackbar(msg, opts) {
-    opts = opts || {};
-    clearTimeout(toast._t);
-    clear(toast);
-    toast.className = 'toast ' + (opts.kind || '');
-    toast.hidden = false;
-    toast.appendChild(el('span', 'sb-msg', msg));
-    toast._pendingUndo = (typeof opts.undo === 'function') ? opts.undo : null;
-    if (toast._pendingUndo) {
-      var u = el('button', 'sb-undo', 'Undo');
-      u.addEventListener('click', function () {
-        var fn = toast._pendingUndo; closeToast(); if (fn) fn();
-      });
-      toast.appendChild(u);
-    }
-    var x = el('button', 'sb-x', '✕');
-    x.title = 'dismiss (cancels Undo)';
-    x.addEventListener('click', closeToast);     // item 13: ✕ cancels the pending undo
-    toast.appendChild(x);
-    // item 12: undo-bearing snackbar lingers 10s; plain feedback stays 2.6s
-    var dur = opts.duration || (toast._pendingUndo ? 10000 : 2600);
-    toast._t = setTimeout(closeToast, dur);
-  }
-  // Back-compat: every existing showToast(msg,kind) caller = plain snackbar.
-  function showToast(msg, kind) { snackbar(msg, { kind: kind }); }
-
-  // v1.1-ux item 7: respect reduced-motion (harness UX/accessibility std).
-  function reducedMotion() {
-    try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
-    catch (_) { return false; }
-  }
-  // item 18: arrival-flash class. Normal = animated wash (.arrive); reduced
-  // motion = a single persistent highlight (.arrive-static) cleared after
-  // ~1.5s by sweepArriveStatic() so the operator still sees WHERE it landed.
-  function arriveCls() { return reducedMotion() ? 'arrive-static' : 'arrive'; }
-  function sweepArriveStatic() {
-    if (!reducedMotion()) return;
-    setTimeout(function () {
-      [].forEach.call(document.querySelectorAll('.arrive-static'),
-        function (n) { n.classList.remove('arrive-static'); });
-    }, 1500);
-  }
-  // item 7: slide+fade the row OUT (~200ms) before the mutation posts, so a
-  // state change is felt, not just "vanished". Then run `then`.
-  function animateLeave(li, then) {
-    if (!li || reducedMotion()) { then(); return; }
-    li.classList.add('leaving');
-    setTimeout(then, 210);
-  }
-  // item 7: optimistic post + undo snackbar. `undoFn` posts the inverse
-  // event. post() is silenced (3rd arg) so only the undo snackbar shows.
-  function actWithUndo(li, postEv, okMsg, undoFn, afterOk) {
-    animateLeave(li, function () {
-      post(postEv, okMsg, true).then(function (ok) {
-        if (!ok) return;                       // post() surfaced the error
-        if (afterOk) afterOk();
-        snackbar(okMsg + ' — Undo?', { kind: 'ok', undo: undoFn });
-      });
-    });
-  }
-  // items 7+8: which action/backlog item ids are NEW since the last render
-  // (drives the entrance flash + the per-pane "+N new" badge). Primed on the
-  // first frame so nothing flashes/badges on initial load.
-  var seenTreeIds = null;       // item 18: prime tree nodes on first frame
-  var seenActionIds = null, seenBacklogIds = null;
-  var newActionIds = {}, newBacklogIds = {};
-  var newActionsCount = 0, newBacklogCount = 0;
-  function diffNewIds(curIds, prevSet, kind) {
-    var fresh = {};
-    if (prevSet == null) {            // first frame — prime, badge nothing
-      var prime = {}; curIds.forEach(function (id) { prime[id] = 1; });
-      if (kind === 'a') seenActionIds = prime; else seenBacklogIds = prime;
-      return { fresh: {}, count: 0 };
-    }
-    var cnt = 0;
-    curIds.forEach(function (id) { if (!prevSet[id]) { fresh[id] = 1; cnt++; } });
-    var next = {}; curIds.forEach(function (id) { next[id] = 1; });
-    if (kind === 'a') seenActionIds = next; else seenBacklogIds = next;
-    return { fresh: fresh, count: cnt };
-  }
-
-  // item 9: rich-details disclosure (collapsed by default; per-item toggle).
-  var expandedItems = new Set();
-  function detailRow(label, val, projectKey) {
-    if (val == null || val === '') return null;
-    var d = el('div', 'det-row');
-    d.appendChild(el('span', 'det-k', label));
-    var v = el('div', 'det-v');
-    linkifyDocs(v, String(val), projectKey);   // item 19: docs/… → clickable
-    d.appendChild(v);
-    return d;
-  }
-  // v1.1.4 item 40 — detail-pane info-hierarchy + linkified branch refs +
-  // graceful fallback when only redundant boilerplate is available.
-  //
-  // CONTRACT (drives selftest R60..R65 and state P18):
-  //   1. ACTIONABLE FIELDS FIRST.  Instructions / Options / Recommendation /
-  //      Blocking input are rendered ABOVE Context, because the operator's
-  //      first question is "what do I do?" — context is supporting detail,
-  //      not the answer.
-  //   2. NO REDUNDANT "What" ROW.  When `description === itemText` (the
-  //      verbatim-text case the backfill produces by the honesty contract,
-  //      `backfill-details.js:158`), suppress the row — it would just repeat
-  //      what the item header already shows. When `description` differs
-  //      from itemText (a real distinct doc-sourced description), surface it.
-  //   3. BRANCH-LINK PARSING.  `(see branch: <Title>)` becomes a clickable
-  //      jump-to-branch button, looking the branch up by title in nodes().
-  //      Falls back to plain chip when no match. Docs/... links continue to
-  //      use linkifyDocs (preserved from item 19).
-  //   4. GRACEFUL FALLBACK.  When no actionable fields are present (no
-  //      instructions/options/recommendation/blocking_input AND description
-  //      is redundant), prepend a single muted line — "No detailed
-  //      instructions recorded — see linked branch / Dispatch doc for
-  //      context." — so the pane is never blank-but-with-empty-labels.
-  //   5. INCOMPLETE-METADATA BADGE.  When the item has none of the actionable
-  //      fields, surface a small "incomplete metadata" badge so old
-  //      backfilled items can be retro-populated by hand if needed (per
-  //      Misha's Phase 4 ask).
-  //
-  // Signature backward-compat: `itemText` is the 3rd arg, OPTIONAL — older
-  // call sites that didn't pass it still work (redundancy check just no-ops).
-  function renderItemDetails(de, projectKey, itemText) {
-    var box = el('div', 'li-details');
-    if (!de || typeof de !== 'object') return box;
-    var add = function (node) { if (node) box.appendChild(node); };
-
-    // --- contract item 2: redundancy detection -------------------------------
-    var descRedundant = (
-      itemText != null && de.description != null
-      && String(de.description).trim() === String(itemText).trim()
-    );
-
-    // --- contract item 5: incomplete-metadata signal -------------------------
-    var hasActionable = !!(
-      de.instructions || de.recommendation || de.blocking_input
-      || (Array.isArray(de.options) && de.options.length)
-    );
-    var descIsSubstantive = (
-      de.description != null && !descRedundant
-      && String(de.description).trim().length > 20
-    );
-    var incomplete = !hasActionable && !descIsSubstantive;
-
-    // --- contract item 4: graceful fallback ----------------------------------
-    if (incomplete) {
-      var fb = el('div', 'det-fallback');
-      var fbLine = el('div', 'muted',
-        'No detailed instructions recorded — see linked branch / Dispatch doc for context.');
-      fb.appendChild(fbLine);
-      var fbBadge = el('span', 'det-incomplete-badge', 'incomplete metadata');
-      fbBadge.title = 'This item lacks actionable instructions/options/recommendation. '
-        + 'Re-run backfill-details.js with --enrich or paste fuller detail when raising the item.';
-      fb.appendChild(fbBadge);
-      box.appendChild(fb);
-    }
-
-    // --- contract item 1: ACTIONABLE FIELDS FIRST ----------------------------
-    add(detailRow('Instructions', de.instructions, projectKey));
-    if (Array.isArray(de.options) && de.options.length) {
-      var ow = el('div', 'det-row');
-      ow.appendChild(el('span', 'det-k', 'Options'));
-      var ol = el('div', 'det-v');
-      de.options.forEach(function (op) {
-        if (typeof op === 'string') { ol.appendChild(el('div', 'det-opt', op)); return; }
-        var o = el('div', 'det-opt');
-        o.appendChild(el('div', 'det-opt-l', op.label || ''));
-        if (op.pros) o.appendChild(el('div', 'muted', '+ ' + op.pros));
-        if (op.cons) o.appendChild(el('div', 'muted', '− ' + op.cons));
-        ol.appendChild(o);
-      });
-      ow.appendChild(ol); box.appendChild(ow);
-    }
-    add(detailRow('Recommendation', de.recommendation, projectKey));
-    add(detailRow('Blocking input needed', de.blocking_input, projectKey));
-
-    // --- supporting detail (only when distinct from the item header) ---------
-    if (!descRedundant) add(detailRow('Description', de.description, projectKey));
-    add(detailRow('Context', de.context, projectKey));
-
-    // --- contract item 3: links (last, but with branch-link parsing) ---------
-    if (Array.isArray(de.links) && de.links.length) {
-      var lw = el('div', 'det-row');
-      lw.appendChild(el('span', 'det-k', 'Links'));
-      var lv = el('div', 'det-v');
-      de.links.forEach(function (lk) {
-        var s = String(lk);
-        // item 19 preserved: a docs/… link becomes a clickable .doc-link.
-        if (/docs\/[A-Za-z0-9._\/-]+/.test(s)) {
-          linkifyDocs(lv, s, projectKey);
-        } else {
-          // v1.1.4 item 40 NEW: parse `(see branch: TITLE)` → clickable jump.
-          // Match the title against nodes() (substring match — the backfill
-          // emits the full title verbatim, but be lenient about wrapping
-          // parens / trailing punctuation).
-          var bm = s.match(/see\s+branch:\s*(.+?)\s*\)?\s*$/i);
-          if (bm) {
-            var wanted = bm[1].trim();
-            var match = nodes().find(function (n) {
-              return n && n.title && String(n.title).trim() === wanted;
-            });
-            if (match) {
-              var jb = el('button', 'det-link det-link-branch',
-                '→ branch: ' + (match.title || match.node_id));
-              jb.title = 'Jump to branch in tree';
-              jb.setAttribute('data-jump-node', match.node_id);
-              jb.addEventListener('click', function () { focusNode(match.node_id); });
-              lv.appendChild(jb);
-              lv.appendChild(document.createTextNode(' '));
-              return;
-            }
-          }
-          // Fallback: plain chip (preserved from prior behavior).
-          var c = el('span', 'det-link', s);
-          c.title = 'repo path / reference';
-          lv.appendChild(c);
-        }
-        lv.appendChild(document.createTextNode(' '));
-      });
-      lw.appendChild(lv); box.appendChild(lw);
-    }
-    return box;
-  }
-  // item 10: a decision/question (or an action whose details flag it as
-  // needing input) can be answered inline without context-switching.
-  function respondable(it) {
-    return it.kind === 'decision' || it.kind === 'question'
-      || (it.details && it.details.blocking_input);
-  }
-  function copyResponseForDispatch(it, text) {
-    var blob = '[action ' + it.item_id + '] ' + it.text + '\nResponse: ' + text + '\n' +
-      '(captured in the Conversation Tree GUI — paste to close the loop in Dispatch)';
-    try {
-      navigator.clipboard.writeText(blob).then(
-        function () { showToast('response copied — paste into Dispatch', 'ok'); },
-        function () { fallbackCopy(blob); });
-    } catch (_) { fallbackCopy(blob); }
-  }
-  // item 8: per-pane "+N new" badge. Set from the SSE-driven diff; cleared
-  // when the user looks at that pane (focus / scroll / click within it).
-  function updateNewBadges() {
-    var ab = $('actionsNewBadge'), bb = $('backlogNewBadge');
-    if (ab) { ab.textContent = newActionsCount ? '+' + newActionsCount + ' new' : ''; ab.hidden = !newActionsCount; }
-    if (bb) { bb.textContent = newBacklogCount ? '+' + newBacklogCount + ' new' : ''; bb.hidden = !newBacklogCount; }
-  }
-  function clearNewBadge(which) {
-    if (which === 'a' && newActionsCount) { newActionsCount = 0; updateNewBadges(); }
-    if (which === 'b' && newBacklogCount) { newBacklogCount = 0; updateNewBadges(); }
-  }
-
-  // ---- write path (BF-5 mutation-feedback contract) --------------------
-  // Optimistic intent + explicit saved/error. The crown-jewel tree is never
-  // shown as saved when the append failed: on failure we re-sync from SSE
-  // (server is the source of truth) and surface an explicit revert toast.
-  function post(ev, okMsg, silent) {
-    return fetch('/api/event', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ev),
-    }).then(function (r) { return r.json().then(function (j) { return { r: r, j: j }; }); })
-      .then(function (o) {
-        if (o.r.ok && o.j.ok) {
-          // Authoritative immediate update: the server returns the real
-          // post-append snapshot. Apply it now (BF-5 immediate confirmation +
-          // removes the race where a follow-up check reads pre-append state);
-          // the SSE frame re-confirms shortly. Never shows an unpersisted
-          // change as saved — this IS the persisted snapshot.
-          if (o.j.snapshot) {
-            S = o.j.snapshot; loaded = true;
-            detectConcludeNotifications(); checkDefers(); render();
-          }
-          if (!silent) showToast(okMsg || 'saved', 'ok');
-          return o.j;
-        }
-        var why = o.j && (o.j.error || (o.j.schema_too_new && 'schema too new'));
-        showToast('Couldn’t save that change — tree state unchanged; ' + (why || 'append rejected'), 'err');
-        return null; // SSE will re-broadcast last-good; nothing to revert
-      })
-      .catch(function () {
-        showToast('Couldn’t save that change — tree state unchanged; server unreachable', 'err');
-        return null;
-      });
-  }
-  function uid(p) { return (p || 'g') + '-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e5).toString(36); }
-
-  // ---- item 19: tiny self-contained markdown renderer (NO runtime dep) ----
-  // Covers the internal-doc subset: headings, bold/italic, inline + fenced
-  // code, links, ordered/unordered lists, hr, paragraphs. HTML-escaped first
-  // so doc content can never inject markup.
-  function esc(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-  function inlineMd(s) {
-    return esc(s)
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  }
-  function mdRender(src) {
-    var lines = String(src == null ? '' : src).split(/\r?\n/);
-    var html = '', i = 0, inList = false, listTag = '';
-    function closeList() { if (inList) { html += '</' + listTag + '>'; inList = false; listTag = ''; } }
-    while (i < lines.length) {
-      var ln = lines[i];
-      var fence = ln.match(/^```/);
-      if (fence) {
-        closeList(); i++;
-        var code = '';
-        while (i < lines.length && !/^```/.test(lines[i])) { code += lines[i] + '\n'; i++; }
-        i++; html += '<pre><code>' + esc(code) + '</code></pre>'; continue;
-      }
-      var h = ln.match(/^(#{1,6})\s+(.*)$/);
-      if (h) { closeList(); html += '<h' + h[1].length + '>' + inlineMd(h[2]) + '</h' + h[1].length + '>'; i++; continue; }
-      if (/^\s*([-*])\s+/.test(ln)) {
-        if (!inList || listTag !== 'ul') { closeList(); html += '<ul>'; inList = true; listTag = 'ul'; }
-        html += '<li>' + inlineMd(ln.replace(/^\s*[-*]\s+/, '')) + '</li>'; i++; continue;
-      }
-      if (/^\s*\d+\.\s+/.test(ln)) {
-        if (!inList || listTag !== 'ol') { closeList(); html += '<ol>'; inList = true; listTag = 'ol'; }
-        html += '<li>' + inlineMd(ln.replace(/^\s*\d+\.\s+/, '')) + '</li>'; i++; continue;
-      }
-      if (/^\s*(---+|\*\*\*+)\s*$/.test(ln)) { closeList(); html += '<hr>'; i++; continue; }
-      if (/^\s*$/.test(ln)) { closeList(); i++; continue; }
-      closeList(); html += '<p>' + inlineMd(ln) + '</p>'; i++;
-    }
-    closeList();
-    return html;
-  }
-  // item 19: open one doc inline (rendered markdown). projectKey defaults to
-  // the active tree (the project tag); the server resolves it cross-repo.
-  var curDoc = null;
-  // v2 redesign 2026-05-23 — doc viewer is a CENTERED MODAL (was a resizable
-  // right side pane). Reading long-form content should not shift the
-  // persistent #layout (tree + side panel stay put). The scrim is shown
-  // alongside the modal; the docsPanel drawer shares the same scrim.
-  function openDocModal(project, relPath) {
-    project = project || activeTree;
-    curDoc = { project: project, path: relPath };
-    docTitle.textContent = project + ' › ' + relPath;
-    docBody.innerHTML = '<p class="muted">Loading…</p>';
-    docModal.hidden = false;
-    docScrim.hidden = false;                       // centred modal — scrim is on
-    fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(relPath))
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        if (j && j.ok) { docBody.innerHTML = mdRender(j.content); }
-        else { docBody.innerHTML = '<p class="muted">Could not load this doc: ' + esc((j && j.error) || 'unknown') + '</p>'; }
-      })
-      .catch(function () { docBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
-  }
-  function closeDocModal() {
-    docModal.hidden = true; curDoc = null;
-    // only drop the shared scrim if no sibling overlay still needs it
-    if (docsPanel.hidden) docScrim.hidden = true;
-  }
-  // item 19: linkify any docs/…(.md) token inside a text node into a clickable
-  // .doc-link button (so doc references in item text/details are not dead text).
-  var DOCRE = /docs\/[A-Za-z0-9._\/-]+\.md|docs\/[A-Za-z0-9._\/-]+/g;
-  function linkifyDocs(container, text, projectKey) {
-    var s = String(text == null ? '' : text), last = 0, m;
-    DOCRE.lastIndex = 0;
-    while ((m = DOCRE.exec(s)) !== null) {
-      if (m.index > last) container.appendChild(document.createTextNode(s.slice(last, m.index)));
-      var b = el('button', 'doc-link', m[0]);
-      b.title = 'open ' + m[0] + ' (project: ' + (projectKey || activeTree) + ')';
-      (function (p) { b.addEventListener('click', function () { openDocModal(projectKey, p); }); })(m[0]);
-      container.appendChild(b);
-      last = m.index + m[0].length;
-    }
-    if (last < s.length) container.appendChild(document.createTextNode(s.slice(last)));
-  }
-  // item 19 / 37: cross-project docs browser. Server returns a FLAT per-project
-  // file list; the UI builds a nested project → folder → file tree, each level
-  // collapsible. Projects start COLLAPSED by default; an active
-  // filter auto-expands every path that contains a match. Expansion state is
-  // remembered across opens (and sessions) in localStorage.
-  var docsCache = null;
-  var DOCS_EXP_KEY = 'ctree-docs-expanded-v1';
-  var docsExpanded = (function () {
-    try {
-      var raw = JSON.parse(localStorage.getItem(DOCS_EXP_KEY) || '[]');
-      return Array.isArray(raw) ? raw : [];
-    } catch (_) { return []; }
-  })();
-  function isExp(k) { return docsExpanded.indexOf(k) !== -1; }
-  function toggleExp(k) {
-    var i = docsExpanded.indexOf(k);
-    if (i === -1) docsExpanded.push(k); else docsExpanded.splice(i, 1);
-    try { localStorage.setItem(DOCS_EXP_KEY, JSON.stringify(docsExpanded)); } catch (_) {}
-  }
-  function openDocsPanel() {
-    docsPanel.hidden = false; docScrim.hidden = false;
-    if (docsCache) { renderDocsPanel(); return; }
-    docsBody.innerHTML = '<p class="muted">Loading docs…</p>';
-    fetch('/api/docs').then(function (r) { return r.json(); }).then(function (j) {
-      docsCache = (j && j.projects) || {}; renderDocsPanel();
-    }).catch(function () { docsBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
-  }
-  function closeDocsPanel() { docsPanel.hidden = true; if (docModal.hidden) docScrim.hidden = true; }
-  // Build { dirs:{name:node}, files:[{name,full}] } from flat "docs/a/b.md".
-  function buildDocTree(files) {
-    var root = { dirs: {}, files: [] };
-    files.forEach(function (full) {
-      var parts = String(full).split('/');
-      var fname = parts.pop();
-      var node = root;
-      parts.forEach(function (seg) {
-        if (!node.dirs[seg]) node.dirs[seg] = { dirs: {}, files: [] };
-        node = node.dirs[seg];
-      });
-      node.files.push({ name: fname, full: full });
-    });
-    return root;
-  }
-  function countDocs(node) {
-    var n = node.files.length;
-    Object.keys(node.dirs).forEach(function (d) { n += countDocs(node.dirs[d]); });
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (txt != null) n.textContent = txt;
     return n;
   }
-  // Render one tree node's children into parent. expandAll forces every
-  // folder open (used while a filter is active so matches are visible).
-  function renderDocNode(parent, node, projKey, pathPrefix, depth, expandAll) {
-    Object.keys(node.dirs).sort().forEach(function (dname) {
-      var child = node.dirs[dname];
-      var folderPath = pathPrefix ? pathPrefix + '/' + dname : dname;
-      var fkey = projKey + '' + folderPath;
-      var open = expandAll || isExp(fkey);
-      var row = el('div', 'dp-dir');
-      row.style.paddingLeft = (0.6 + depth * 0.9) + 'rem';
-      row.appendChild(el('span', 'twist', open ? '▾' : '▸'));
-      row.appendChild(el('span', 'dp-name', dname));
-      row.appendChild(el('span', 'dp-count', String(countDocs(child))));
-      row.addEventListener('click', function () { toggleExp(fkey); renderDocsPanel(); });
-      parent.appendChild(row);
-      if (open) renderDocNode(parent, child, projKey, folderPath, depth + 1, expandAll);
-    });
-    node.files.forEach(function (file) {
-      var fe = el('div', 'dp-file');
-      fe.style.paddingLeft = (1.3 + depth * 0.9) + 'rem';
-      fe.appendChild(el('span', 'dp-fileicon', '📄'));
-      fe.appendChild(el('span', 'dp-name', file.name));
-      fe.title = file.full;
-      fe.addEventListener('click', function () { openDocModal(projKey, file.full); });
-      parent.appendChild(fe);
+  function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
-  function renderDocsPanel() {
-    var f = (docsFilter.value || '').trim().toLowerCase();
-    var filterActive = f.length > 0;
-    clear(docsBody);
-    Object.keys(docsCache).sort().forEach(function (key) {
-      var info = docsCache[key];
-      var files = (info.files || []).filter(function (p) {
-        return !filterActive || p.toLowerCase().indexOf(f) !== -1;
-      });
-      if (filterActive && files.length === 0) return;
-      var projOpen = info.missing ? false
-        : (filterActive ? true : isExp(key));
-      var head = el('div', 'dp-proj');
-      head.appendChild(el('span', 'twist', info.missing ? '⚠' : (projOpen ? '▾' : '▸')));
-      head.appendChild(el('span', 'dp-name', key));
-      head.appendChild(el('span', 'dp-count',
-        info.missing ? 'root not found' : String(files.length)));
-      if (!info.missing) {
-        head.addEventListener('click', function () { toggleExp(key); renderDocsPanel(); });
-      }
-      docsBody.appendChild(head);
-      if (info.missing) { docsBody.appendChild(el('div', 'dp-missing', info.root)); return; }
-      if (!projOpen) return;
-      if (files.length === 0) { docsBody.appendChild(el('div', 'dp-missing', '(no docs)')); return; }
-      renderDocNode(docsBody, buildDocTree(files), key, '', 1, filterActive);
-    });
-    if (!docsBody.firstChild) docsBody.appendChild(el('p', 'muted', 'No docs match.'));
+  var toastTimer = null;
+  function showToast(msg, kind) {
+    toast.textContent = msg;
+    toast.className = 'toast' + (kind ? ' ' + kind : '');
+    toast.hidden = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toast.hidden = true; }, 2600);
   }
-  if (docsBtn) docsBtn.addEventListener('click', openDocsPanel);
-  if (docsClose) docsClose.addEventListener('click', closeDocsPanel);
-  if (docsFilter) docsFilter.addEventListener('input', function () { if (docsCache) renderDocsPanel(); });
-  if (docClose) docClose.addEventListener('click', closeDocModal);
-  if (docOpenEditor) docOpenEditor.addEventListener('click', function () {
-    if (!curDoc) return;
-    fetch('/api/doc/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(curDoc) })
-      .then(function (r) { return r.json(); })
-      .then(function (j) { showToast(j && j.ok ? 'opened in editor' : ('open failed: ' + ((j && j.error) || '')), j && j.ok ? 'ok' : 'err'); })
-      .catch(function () { showToast('open failed — server unreachable', 'err'); });
-  });
-  if (docScrim) docScrim.addEventListener('click', function () { closeDocModal(); closeDocsPanel(); });
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') {
-      // v2 redesign 2026-05-23 — dismiss top-most overlay first
-      if (!dispatchModal.hidden) closeDispatchModal();
-      else if (!docModal.hidden) closeDocModal();
-      else if (!docsPanel.hidden) closeDocsPanel();
-    }
-  });
+  function uid(p) {
+    return (p || 'g') + '-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e5).toString(36);
+  }
 
-  // ---- snapshot helpers ------------------------------------------------
+  // ---- event write path (symmetric FR-11) ------------------------------
+  // POST one appended event to /api/event with one retry (exp backoff), then
+  // surface an error toast and leave the GUI in pre-action state (no silent
+  // loss — plan Behavioral Contracts → Retry semantics).
+  function post(ev, okMsg) {
+    if (!ev.event_id) ev.event_id = uid('gui');
+    if (!ev.ts) ev.ts = new Date().toISOString();
+    if (!ev.actor) ev.actor = 'gui';
+    function attempt(delay) {
+      return fetch('/api/event', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ev),
+      }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then(function (j) {
+        if (j && j.ok === false) throw new Error(j.error || 'rejected');
+        if (okMsg) showToast(okMsg, 'ok');
+        return j;
+      }).catch(function (err) {
+        if (delay < 2000) {
+          return new Promise(function (res) { setTimeout(res, delay); })
+            .then(function () { return attempt(Math.min(delay * 2, 2000)); });
+        }
+        showToast('Save failed — ' + err.message + '. Try again.', 'err');
+        throw err;
+      });
+    }
+    return attempt(200);
+  }
+
+  // ---- data accessors --------------------------------------------------
   function nodes() { return (S && Array.isArray(S.nodes)) ? S.nodes : []; }
   function backlog() { return (S && Array.isArray(S.backlog)) ? S.backlog : []; }
   function byId(id) { return nodes().find(function (n) { return n.node_id === id; }) || null; }
-  function order(scope) { return (S && S.order && S.order[scope]) ? S.order[scope] : null; }
-  function treeOf(n) { return n.tree_id || 'global'; }
-  function nodeTrees() {
-    var t = {};
-    nodes().forEach(function (n) { t[treeOf(n)] = 1; });
-    backlog().forEach(function (b) { t[b.tree_id || 'global'] = 1; });
-    t['global'] = 1;
-    (JSON.parse(localStorage.getItem('ctree-projects') || '[]')).forEach(function (p) { t[p] = 1; });
-    return Object.keys(t).sort();
-  }
-  function chain(nodeId) {        // node -> root, array of nodes (self first)
-    var out = [], cur = byId(nodeId), guard = 0;
-    while (cur && guard++ < 500) { out.push(cur); cur = cur.parent_id ? byId(cur.parent_id) : null; }
-    return out;
-  }
-  function crumb(nodeId) {
-    return chain(nodeId).reverse().map(function (n) { return n.title || n.node_id; }).join(' › ');
-  }
-  // v1.1.2 item 28: a backlogged item ("Defer → until further notice — move
-  // to Backlog") leaves "Waiting on you" even though it is not checked — it
-  // was parked, not resolved. The Backlog "Activate" button is the return path.
-  function isWaiting(it) { return ((!it.checked) || it.deferred || it.contested) && !it.backlogged; }
+  function childrenOf(id) { return nodes().filter(function (n) { return n.parent_id === id; }); }
 
-  // ---- per-pane data-state rendering (C1b/c/d/e + BF-2) ----------------
-  // Four never-conflated states: loading | first-run-empty | steady-state-empty
-  // | populated (+ a global corruption banner that never blanks a pane).
-  function paneState(stateEl, bodyEl, mode, opts) {
-    opts = opts || {};
-    if (mode === 'populated') { stateEl.hidden = true; bodyEl.style.display = ''; return; }
-    bodyEl.style.display = 'none'; stateEl.hidden = false;
-    // Clear only pure list bodies (actions/backlog). The tree pane's body is
-    // the scroll container that also holds #treeCanvas/#treeState — never wipe
-    // it here; renderTree owns treeCanvas's contents.
-    if (bodyEl.classList.contains('list-body')) clear(bodyEl);
-    stateEl.className = 'pane-state' + (mode === 'loading' ? ' skel' : '');
-    clear(stateEl);
-    if (mode === 'loading') {
-      stateEl.appendChild(el('div', null, 'Loading conversation tree…'));
-      stateEl.appendChild(el('div', 'bar')); stateEl.appendChild(el('div', 'bar')); stateEl.appendChild(el('div', 'bar'));
-    } else if (mode === 'first-run') {
-      stateEl.appendChild(el('div', null, opts.first || 'Nothing here yet.'));
-      var h = el('div', 'hint', opts.hint || ''); stateEl.appendChild(h);
-    } else if (mode === 'steady-empty') {
-      stateEl.appendChild(el('div', null, opts.steady || 'All caught up.'));
-      if (opts.affordance) stateEl.appendChild(opts.affordance);
-    }
+  // A project = a root node (parent_id == null). The proj-* roots are the real
+  // projects; the today-* roots are archived daily rollups.
+  function isProject(n) { return n && n.parent_id == null; }
+  // Sessions / sub-branches surface only as provenance, never as a tree row.
+  function isSession(n) { return n && /^(sess|sub)-/.test(n.node_id); }
+  function projectTitle(n) { return n.title || n.node_id; }
+
+  // WorkItems are the decision/question/action entries on a node (collectWorkItems).
+  // The wire-check chain renderTree → collectWorkstreams → renderWorkstream →
+  // collectWorkItems is preserved even though today's data has no Workstream
+  // nodes (collectWorkstreams returns []), so items render directly under the
+  // project via collectWorkItems(projectId).
+  function collectWorkItems(scopeNodeId) {
+    var n = byId(scopeNodeId);
+    if (!n || !Array.isArray(n.items)) return [];
+    return n.items.map(function (it) {
+      return { nodeId: n.node_id, itemId: it.item_id, item: it, projectId: rootProjectOf(n.node_id) };
+    });
+  }
+  // Workstream-tier nodes under a project = non-session child branches. Today
+  // every child is a session, so this returns []; Phase-3 backfill adds real
+  // workstream nodes (tier === 'workstream') which this picks up automatically.
+  function collectWorkstreams(projectNodeId) {
+    return childrenOf(projectNodeId).filter(function (c) {
+      return !isSession(c) && (c.tier === 'workstream' || hasNonSessionDescendantItems(c));
+    });
+  }
+  function hasNonSessionDescendantItems(n) {
+    return Array.isArray(n.items) && n.items.length > 0;
+  }
+  function rootProjectOf(nodeId) {
+    var n = byId(nodeId), guard = 0;
+    while (n && n.parent_id != null && guard++ < 50) n = byId(n.parent_id);
+    return n ? n.node_id : nodeId;
   }
 
-  // ---- corruption banner (UX-I4 / C1d) ---------------------------------
-  function renderCorrupt() {
-    if (S && S.schema_too_new) {
-      corruptBanner.hidden = false;
-      corruptBanner.textContent = '⚠ ' + (S.message || 'schema too new') +
-        ' — the saved tree was written by a newer version; showing nothing rather than mis-parsing. Upgrade the GUI/gate.';
-      return true;
-    }
-    if (S && S.__corrupt) {
-      corruptBanner.hidden = false;
-      corruptBanner.textContent = '⚠ State file unreadable — could not load from any saved version. ' +
-        'See the append-only audit log; the tree was NOT blanked, no events were lost.';
-      return true;
-    }
-    corruptBanner.hidden = true;
-    return false;
+  // ---- WorkItem state derivation --------------------------------------
+  // Explicit it.state (from the new item-committed/shipped/blocked events)
+  // wins; otherwise infer from the legacy checked/contested/deferred flags so
+  // the existing 62 items render correctly without migration (plan Edge Cases).
+  function itemState(it) {
+    if (it.state) return it.state;
+    if (it.checked) return 'shipped';
+    if (it.contested) return 'blocked';
+    if (it.deferred || it.backlogged) return 'committed';
+    return 'in-flight';
   }
-
-  // ---- TREE PANE (C2) --------------------------------------------------
-  // v1.1 item 3: node_ids whose ENTIRE subtree is concluded (concluded leaf,
-  // or a branch all of whose descendants are concluded). When hide is on,
-  // these drop out — but a concluded ancestor with any non-concluded
-  // descendant stays so the open work underneath remains reachable.
-  function concludedHiddenSet() {
-    if (showConcludedPref) return null;            // showing all -> hide nothing
-    var same = nodes().filter(function (n) { return treeOf(n) === activeTree; });
-    var kids = {};
-    same.forEach(function (n) { if (n.parent_id) (kids[n.parent_id] = kids[n.parent_id] || []).push(n); });
-    var memo = {}, hide = {};
-    function allConcluded(n) {
-      if (n.node_id in memo) return memo[n.node_id];
-      memo[n.node_id] = false;                      // cycle guard
-      if (n.state !== 'concluded') return (memo[n.node_id] = false);
-      var ch = kids[n.node_id] || [];
-      var res = ch.every(allConcluded);
-      memo[n.node_id] = res;
-      if (res) hide[n.node_id] = 1;
-      return res;
-    }
-    same.forEach(allConcluded);
-    return hide;
+  var COMPLETE_STATES = { shipped: 1, closed: 1 };
+  function isComplete(it) { return !!COMPLETE_STATES[itemState(it)]; }
+  // Awaiting me = the legacy "waiting on you" predicate: unchecked & not parked
+  // (deferred/contested still count as waiting). This is the default filter.
+  function isWaiting(it) {
+    return ((!it.checked) || it.deferred || it.contested) && !it.backlogged && itemState(it) !== 'shipped';
   }
-  function visibleNodes() {
-    var hidden = concludedHiddenSet();
+  function nodeOpenedMs(nodeId) {
+    var n = byId(nodeId);
+    var t = n && (n.opened_at || null);
+    var ms = t ? Date.parse(t) : NaN;
+    return isNaN(ms) ? null : ms;
+  }
+  // Orphans (Phase 2) are STALE SESSIONS, matching the v2 design §3/§4 sketch
+  // ("session 743934a8 — no declared item", "session a5d… — declared but
+  // stalled") — NOT work items. A session node that opened but was never
+  // concluded/archived, and last opened > ORPHAN_HOURS ago, is an un-reconciled
+  // orphan: exactly what the Phase-4 hard-block gate will require dispositioning.
+  // Item-level "no-progress-for-24h" needs the event log the GUI does not have
+  // (Phase-3 reconciler adds it); until then the safe default for work items is
+  // NON-orphaned (plan Integration points), so the orphan surface keys off the
+  // session signal which IS computable from the snapshot.
+  function staleSessions() {
     return nodes().filter(function (n) {
-      if (treeOf(n) !== activeTree) return false;
-      if (n.state === 'archived' && !showArchived.checked) return false;
-      if (hidden && hidden[n.node_id]) return false;   // item 3: drop fully-concluded subtrees
-      return true;
+      if (!isSession(n)) return false;
+      if (n.state === 'concluded' || n.state === 'archived') return false;
+      var ms = nodeOpenedMs(n.node_id);
+      if (ms == null) return true;                // unknown age but still open ⇒ orphan candidate
+      return (Date.now() - ms) > ORPHAN_HOURS * 3600 * 1000;
     });
   }
-  // True when the active tree HAS branches but the concluded filter hid all
-  // of them (drives a tailored steady-empty, never a blank canvas).
-  function allHiddenByConcluded() {
-    if (showConcludedPref) return false;
-    var same = nodes().filter(function (n) {
-      return treeOf(n) === activeTree && !(n.state === 'archived' && !showArchived.checked);
-    });
-    return same.length > 0 && visibleNodes().length === 0;
-  }
-  function forest(vis) {
-    var ids = {}; vis.forEach(function (n) { ids[n.node_id] = n; });
-    var roots = [], kids = {};
-    vis.forEach(function (n) {
-      var p = n.parent_id;
-      if (p && ids[p]) { (kids[p] = kids[p] || []).push(n); }
-      else { roots.push(n); }
-    });
-    return { roots: roots, kids: kids };
-  }
-  function nodeBadges(n) {
-    var frag = document.createDocumentFragment();
-    var draftLive = localStorage.getItem('ctree-draft-' + n.node_id);
-    if (n.draft || (draftLive && draftLive.trim())) frag.appendChild(el('span', 'badge draft', '▸ unfinished note'));
-    if (n.items && n.items.some(function (i) { return i.contested; })) frag.appendChild(el('span', 'badge contested', '⚠ contested'));
-    if (n.items && n.items.some(function (i) { return i.deferred; })) frag.appendChild(el('span', 'badge deferred', 'deferred'));
-    // BF-1 persistent on-node handoff badge — set on the passive-handoff
-    // action, persists until Dispatch acts on it (items added / concluded /
-    // archived). The fixed-set copy is intentional ("ready to start in
-    // Dispatch" — positive affordance, never only the negative).
-    if (n.origin === 'backlog-activated' && n.state === 'open' &&
-        (!n.items || n.items.length === 0)) {
-      frag.appendChild(el('span', 'badge handoff', '▸ ready to start in Dispatch'));
-    }
-    if (n.bound_sessions && n.bound_sessions.length) frag.appendChild(el('span', 'badge sess', '⚠ ' + n.bound_sessions.length + ' session(s) — may be partial'));
-    var openCt = (n.items || []).filter(function (i) { return isWaiting(i); }).length;
-    if (openCt) frag.appendChild(el('span', 'badge count', openCt + ' open'));
-    return frag;
-  }
-  function renderTreeNode(n, kids, container, depth) {
-    depth = depth || 0;                       // item 25: forest roots = depth 0
-    var wrap = el('div', 'tnode');
-    var kidList = kids[n.node_id] || [];
-    var hasKids = kidList.length > 0;
-    var isCollapsed = collapsed.has(n.node_id) || n.state === 'concluded';
-    if (isCollapsed) wrap.classList.add('collapsed');
-
-    var row = el('div', 'tnode-row' + (depth === 0 ? ' tnode-root' : '')); // item 25: top-level = H1/H2-style header
-    if (n.node_id === sel) { row.classList.add('sel'); row.classList.add('hl'); } // item 17: interior wash
-    if (seenTreeIds && !seenTreeIds[n.node_id]) row.classList.add(arriveCls());    // item 18: new node flash
-    if (n.state === 'concluded') row.classList.add('concluded');
-    if (n.state === 'archived') row.classList.add('archived');
-    row.setAttribute('data-node', n.node_id);
-    row.setAttribute('draggable', 'true'); // C5 mouse drag re-parent
-
-    // item 25: top-level nodes get a larger, distinct disclosure glyph.
-    var tw = el('span', 'twist', hasKids ? (isCollapsed ? (depth === 0 ? '▶' : '▸') : (depth === 0 ? '▼' : '▾')) : (depth === 0 ? '◆' : '·'));
-    tw.addEventListener('click', function (e) {
-      e.stopPropagation();
-      if (!hasKids) return;
-      if (collapsed.has(n.node_id)) collapsed.delete(n.node_id); else collapsed.add(n.node_id);
-      render();
-    });
-    row.appendChild(tw);
-
-    if (n.state === 'concluded') {
-      var stub = el('span', 'tnode-title concluded stub', n.title + '  — concluded');
-      row.appendChild(stub);
-      var reopen = el('button', 'btn-neutral outline', '↩ re-open');
-      reopen.title = 'auto-concluded — re-open (no data loss)';
-      reopen.addEventListener('click', function (e) { e.stopPropagation(); post({ type: 're-opened', node_id: n.node_id }, 're-opened'); });
-      row.appendChild(reopen);
-    } else {
-      var t = el('span', 'tnode-title', n.title || n.node_id);
-      row.appendChild(t);
-    }
-    row.appendChild(nodeBadges(n));
-
-    row.addEventListener('click', function () { selectNode(n.node_id); });
-    // C5: drag-drop re-parent (mouse-only, NFR-6 v1).
-    row.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/node', n.node_id); });
-    row.addEventListener('dragover', function (e) { e.preventDefault(); row.classList.add('dragover'); });
-    row.addEventListener('dragleave', function () { row.classList.remove('dragover'); });
-    row.addEventListener('drop', function (e) {
-      e.preventDefault(); row.classList.remove('dragover');
-      var dragged = e.dataTransfer.getData('text/node');
-      if (dragged && dragged !== n.node_id) {
-        post({ type: 're-parented', node_id: dragged, new_parent_id: n.node_id }, 're-parented');
-      }
-    });
-
-    wrap.appendChild(row);
-    if (hasKids) {
-      var kc = el('div', 'tkids');
-      kidList.forEach(function (k) { renderTreeNode(k, kids, kc, depth + 1); });
-      wrap.appendChild(kc);
-    }
-    container.appendChild(wrap);
-  }
-  function renderTree() {
-    var vis = visibleNodes();
-    if (!loaded) { paneState(treeState, treeScroll, 'loading'); return; }
-    if (nodes().length === 0) {
-      paneState(treeState, treeScroll, 'first-run', {
-        first: 'No conversation tree yet.',
-        hint: 'When Dispatch opens a branch (or you activate a backlog item), the tree appears here.',
-      });
-      return;
-    }
-    if (vis.length === 0) {
-      if (allHiddenByConcluded()) {
-        var aff = el('button', 'ghost', 'Show concluded');
-        aff.addEventListener('click', function () { showConcluded.checked = true; applyShowConcluded(); });
-        paneState(treeState, treeScroll, 'steady-empty', {
-          steady: 'All branches in "' + activeTree + '" are concluded — hidden by your "show concluded" preference.',
-          affordance: aff,
-        });
-        return;
-      }
-      paneState(treeState, treeScroll, 'steady-empty', {
-        steady: activeTree === 'global'
-          ? 'This tree has no branches yet.'
-          : 'Project "' + activeTree + '" has no branches yet — activate a backlog item or switch trees.',
-      });
-      return;
-    }
-    paneState(treeState, treeScroll, 'populated');
-    clear(treeCanvas);
-    // item 5: fluid zoom — scale visually AND widen/narrow the layout box so
-    // rows reflow to fill the freed width (no dead horizontal space).
-    treeCanvas.style.transform = 'scale(' + zoom + ')';
-    treeCanvas.style.width = (100 / zoom) + '%';
-    var f = forest(vis);
-    var orderedRoots = applyOrder(f.roots, order('tree:' + activeTree), 'node_id');
-    orderedRoots.forEach(function (r) { renderTreeNode(r, f.kids, treeCanvas); });
-    treeCrumb.textContent = sel ? crumb(sel) : 'no selection';
-    // item 18: after rendering, snapshot the now-seen node ids so the NEXT
-    // frame flashes only genuinely-new nodes (first frame primes silently).
-    var seenNow = {}; vis.forEach(function (v) { seenNow[v.node_id] = 1; });
-    seenTreeIds = seenNow;
-    sweepArriveStatic();   // reduced-motion: clear persistent highlights ~1.5s
+  function isRecentlyShipped(it) {
+    if (itemState(it) !== 'shipped') return false;
+    if (!it.shipped_ts) return false;             // legacy checked items have no ship ts
+    var ms = Date.parse(it.shipped_ts);
+    if (isNaN(ms)) return false;
+    return (Date.now() - ms) < SHIP_RECENT_DAYS * 86400 * 1000;
   }
 
-  // ---- ACTIONS PANE (C3) ----------------------------------------------
-  function actionEntries() {
+  // ---- state-badge glyphs ---------------------------------------------
+  var STATE_ICON = {
+    proposed: '·', committed: '◷', 'in-flight': '◐', blocked: '⏳', shipped: '✓', closed: '✓',
+  };
+  function stateIcon(st) { return STATE_ICON[st] || '◐'; }
+  function kindGlyph(k) { return k === 'decision' ? '◆' : k === 'question' ? '?' : '!'; }
+
+  // ====================================================================
+  //  ALL WORKITEMS (flattened, across every project) — the filter source
+  // ====================================================================
+  function allWorkItems() {
     var out = [];
-    visibleNodes().forEach(function (n) {
-      if (n.state === 'archived') return;
+    nodes().forEach(function (n) {
+      if (isSession(n)) return;                   // sessions are provenance, not items
+      if (n.state === 'archived' && !showArchived.checked) return;
       (n.items || []).forEach(function (it) {
-        if (isWaiting(it)) out.push({ n: n, it: it });
+        out.push({ nodeId: n.node_id, itemId: it.item_id, item: it, projectId: rootProjectOf(n.node_id) });
       });
     });
     return out;
   }
-  // v1.1.2 items 30+33: priority sort with type-intrinsic + recency fallback.
-  // P1=1 best, P5=5 (unassigned) worst. Within same priority: type-intrinsic
-  // urgency (action > decision > question) — Misha's rule: action="must do",
-  // decision="needs judgment", question="needs info". Within same type:
-  // recency, newest first (item_id is ULID-ish → reverse-lex).
-  function typeRank(k) { return k === 'action' ? 1 : k === 'decision' ? 2 : k === 'question' ? 3 : 9; }
-  function effectivePrio(it) { var p = Number(it && it.priority); return (p >= 1 && p <= 5) ? p : 5; }
-  function sortActions(arr) {
-    var mode = actionsSort.value;
-    if (mode === 'manual') {
-      var ord = order('actions:' + activeTree);
-      return applyOrderObj(arr, ord, function (x) { return x.it.item_id; });
+
+  // ---- filter logic ----------------------------------------------------
+  function applyFilter(items, filterName) {
+    switch (filterName) {
+      case 'awaiting-me':      return items.filter(function (r) { return isWaiting(r.item); });
+      case 'in-flight':        return items.filter(function (r) { return itemState(r.item) === 'in-flight'; });
+      case 'blocked':          return items.filter(function (r) { return itemState(r.item) === 'blocked'; });
+      case 'recently-shipped': return items.filter(function (r) { return isRecentlyShipped(r.item); });
+      case 'orphaned':         return [];   // orphans are sessions, handled in renderFilteredItems
+      case 'all':              return items.slice();
+      default:                 return items.filter(function (r) { return isWaiting(r.item); });
     }
-    var c = arr.slice();
-    c.sort(function (a, b) {
-      if (mode === 'priority') {
-        var pa = effectivePrio(a.it), pb = effectivePrio(b.it);
-        if (pa !== pb) return pa - pb;                           // P1..P5 ascending
-        var ta = typeRank(a.it.kind), tb = typeRank(b.it.kind);
-        if (ta !== tb) return ta - tb;                           // action > decision > question
-        return a.it.item_id < b.it.item_id ? 1                   // newest first (reverse-lex on ULID-ish id)
-             : a.it.item_id > b.it.item_id ? -1 : 0;
-      }
-      if (mode === 'deferred') return (a.it.deferred ? 1 : 0) - (b.it.deferred ? 1 : 0);
-      if (mode === 'node') return crumb(a.n.node_id).localeCompare(crumb(b.n.node_id));
-      return a.it.kind.localeCompare(b.it.kind); // 'kind' default
+  }
+  function filterCount(filterName) {
+    if (filterName === 'backlog') return backlog().filter(function (b) { return !b.activated; }).length;
+    if (filterName === 'orphaned') return staleSessions().length;
+    return applyFilter(allWorkItems(), filterName).length;
+  }
+  function updateChipCounts() {
+    ['awaiting-me', 'in-flight', 'blocked', 'recently-shipped', 'orphaned', 'backlog', 'all'].forEach(function (f) {
+      var span = filterBar.querySelector('[data-count="' + f + '"]');
+      if (span) span.textContent = filterCount(f);
     });
-    return c;
+    Array.prototype.forEach.call(filterBar.querySelectorAll('.chip'), function (c) {
+      c.classList.toggle('active', c.getAttribute('data-filter') === activeFilter);
+      c.setAttribute('aria-selected', c.getAttribute('data-filter') === activeFilter ? 'true' : 'false');
+    });
   }
 
-  // v1.1.2 item 33 — priority assignment popover (P1..P5; P5 = clear).
-  // Emits a `priority-assigned` event with actor=gui. One open at a time.
-  function closePrioPop() {
-    var p = document.querySelector('.prio-pop');
-    if (p) p.remove();
-    document.removeEventListener('keydown', prioEsc, true);
-    document.removeEventListener('click', prioOutside, true);
+  // setActiveFilter — the chip click handler (wire-check target).
+  function setActiveFilter(filterName) {
+    activeFilter = filterName;
+    localStorage.setItem('workstreams.activeFilter', filterName);
+    selItem = null;                               // leaving an item-detail context
+    detailCard.hidden = true;
+    renderFilteredItems(filterName);
+    updateChipCounts();
   }
-  function prioEsc(e) { if (e.key === 'Escape') closePrioPop(); }
-  function prioOutside(e) {
-    var p = document.querySelector('.prio-pop');
-    if (p && !p.contains(e.target) && !(e.target.classList && e.target.classList.contains('prio-assign'))) closePrioPop();
-  }
-  function openPrioPop(anchorLi, targetId) {
-    closePrioPop();
-    var pop = el('div', 'prio-pop');
-    var row = el('div', 'pp-row');
-    [1, 2, 3, 4, 5].forEach(function (p) {
-      var label = (p === 5) ? 'Clear / unassigned' : 'P' + p;
-      var cls = (p === 5) ? 'btn-neutral outline' : 'p-badge p' + p;
-      var b = el('button', cls, label);
-      b.addEventListener('click', function () {
-        closePrioPop();
-        post({ type: 'priority-assigned', target_id: targetId, priority: p }, p === 5 ? 'priority cleared' : 'priority P' + p + ' set');
-      });
-      row.appendChild(b);
-    });
-    pop.appendChild(row);
-    anchorLi.appendChild(pop);
-    setTimeout(function () {
-      document.addEventListener('keydown', prioEsc, true);
-      document.addEventListener('click', prioOutside, true);
-    }, 0);
-  }
-  // v3 accordion 2026-05-27 — filtered subviews: Decisions / Questions
-  // panels show a lightweight quick-glance index of items whose kind matches
-  // the filter, sourced from the same actionEntries() pool as Waiting. Each
-  // row is one line: kind badge + text + jump button. Clicking the row jumps
-  // to the node in the tree AND highlights the item (selItem). The full
-  // interaction surface (mark-done / respond / defer) lives in Waiting; the
-  // filtered panels are deliberately read-mostly to keep them scannable.
-  function renderFilteredKind(kindFilter, bodyEl, stateEl, countEl, emptyMsg) {
-    if (!loaded) { paneState(stateEl, bodyEl, 'loading'); if (countEl) countEl.hidden = true; return; }
-    var all = actionEntries();
-    var entries = all.filter(function (e) { return e.it.kind === kindFilter; });
-    // count badge in panel header
-    if (countEl) {
-      if (entries.length > 0) { countEl.textContent = String(entries.length); countEl.hidden = false; }
-      else { countEl.textContent = ''; countEl.hidden = true; }
-    }
-    if (entries.length === 0) {
-      paneState(stateEl, bodyEl, 'steady-empty', { steady: emptyMsg });
+
+  // renderFilteredItems — re-render the single side-panel list for a filter.
+  function renderFilteredItems(filterName) {
+    detailCard.hidden = true;
+    filterBody.hidden = false;
+    clear(filterBody);
+    if (filterName === 'backlog') { renderBacklogInto(filterBody); return; }
+    if (filterName === 'orphaned') { renderOrphansInto(filterBody); return; }
+    var refs = applyFilter(allWorkItems(), filterName);
+    if (!refs.length) {
+      filterBody.appendChild(emptyMsg(filterName));
       return;
     }
-    paneState(stateEl, bodyEl, 'populated');
-    clear(bodyEl);
-    entries.forEach(function (en) {
-      var n = en.n, it = en.it;
-      var li = el('div', 'li kind-' + it.kind
-        + ((sel === n.node_id || selItem === it.item_id) ? ' hl' : ''));
-      li.setAttribute('data-item', it.item_id);
-      li.setAttribute('data-node', n.node_id);
-      var top = el('div', 'li-top');
-      top.appendChild(el('span', 'li-kind ' + it.kind, it.kind));
-      top.appendChild(el('span', 'li-text', it.text));
-      var ep = effectivePrio(it);
-      if (ep >= 1 && ep <= 4) top.appendChild(el('span', 'p-badge p' + ep, 'P' + ep));
-      var jump = el('button', 'li-jump', '→');
-      jump.title = 'Jump to in tree';
-      jump.addEventListener('click', function (e) {
-        e.stopPropagation();
-        selItem = it.item_id;
-        focusNode(n.node_id);
-      });
-      top.appendChild(jump);
-      top.addEventListener('click', function (e) {
-        if (e.target.closest('button')) return;
-        selItem = it.item_id;
-        focusNode(n.node_id);
-      });
-      li.appendChild(top);
-      bodyEl.appendChild(li);
+    // group by project for readability
+    var byProj = {};
+    refs.forEach(function (r) { (byProj[r.projectId] = byProj[r.projectId] || []).push(r); });
+    Object.keys(byProj).forEach(function (pid) {
+      var head = el('div', 'list-group-head', projectTitle(byId(pid) || { title: pid }));
+      filterBody.appendChild(head);
+      byProj[pid].forEach(function (r) { filterBody.appendChild(itemRow(r)); });
     });
   }
-  function renderDecisions() {
-    renderFilteredKind('decision', decisionsBody, decisionsState, decisionsCount,
-      'No decisions waiting right now — items appear here when Dispatch raises a `decision-raised` event.');
-  }
-  function renderQuestions() {
-    renderFilteredKind('question', questionsBody, questionsState, questionsCount,
-      'No questions waiting right now — items appear here when Dispatch raises a `question-raised` event.');
+  function emptyMsg(filterName) {
+    var labels = {
+      'awaiting-me': 'Nothing is waiting on you. ✓',
+      'in-flight': 'Nothing in flight right now.',
+      'blocked': 'Nothing blocked.',
+      'recently-shipped': 'Nothing shipped in the last ' + SHIP_RECENT_DAYS + ' days.',
+      'orphaned': 'No orphaned work — every in-flight item has moved recently. ✓',
+      'all': 'No work items yet.',
+    };
+    return el('div', 'empty', labels[filterName] || 'Nothing here.');
   }
 
-  function renderActions() {
-    if (!loaded) { paneState(actionsState, actionsBody, 'loading'); return; }
-    var entries = sortActions(actionEntries());
-    if (entries.length === 0) {
-      paneState(actionsState, actionsBody, 'steady-empty', {
-        steady: 'Nothing waiting on you right now — items appear here when Dispatch raises a decision/question or an action needs you.',
+  // a single work-item row in the filtered list
+  function itemRow(r) {
+    var st = itemState(r.item);
+    var li = el('div', 'item-row state-' + st);
+    li.setAttribute('data-node', r.nodeId);
+    li.setAttribute('data-item', r.itemId);
+    var ic = el('span', 'item-ic', stateIcon(st));
+    ic.title = st;
+    li.appendChild(ic);
+    var body = el('div', 'item-main');
+    var txt = el('div', 'item-text', r.item.text || '(untitled)');
+    body.appendChild(txt);
+    var meta = el('div', 'item-meta');
+    meta.appendChild(el('span', 'k-' + r.item.kind, r.item.kind));
+    meta.appendChild(el('span', 'st-badge st-' + st, st));
+    if (r.item.deferred) meta.appendChild(el('span', 'st-badge st-committed', 'deferred'));
+    body.appendChild(meta);
+    li.appendChild(body);
+    li.addEventListener('click', function () { renderDetailCard(r.nodeId, r.itemId); });
+    return li;
+  }
+
+  function renderBacklogInto(container) {
+    var bl = backlog().filter(function (b) { return !b.activated; });
+    if (!bl.length) { container.appendChild(el('div', 'empty', 'Backlog is empty.')); return; }
+    bl.forEach(function (b) {
+      var row = el('div', 'item-row state-committed');
+      row.appendChild(el('span', 'item-ic', '◷'));
+      var body = el('div', 'item-main');
+      body.appendChild(el('div', 'item-text', b.text || '(untitled)'));
+      if (b.context_text) body.appendChild(el('div', 'item-ctx', b.context_text));
+      var meta = el('div', 'item-meta');
+      meta.appendChild(el('span', 'st-badge st-committed', 'backlog · ' + (b.priority || '—')));
+      body.appendChild(meta);
+      row.appendChild(body);
+      container.appendChild(row);
+    });
+  }
+
+  function sessionRow(s) {
+    var row = el('div', 'item-row state-blocked');
+    row.appendChild(el('span', 'item-ic', '⚠️'));
+    var body = el('div', 'item-main');
+    body.appendChild(el('div', 'item-text', s.title || s.node_id));
+    var meta = el('div', 'item-meta');
+    meta.appendChild(el('span', 'st-badge st-blocked', 'open session'));
+    meta.appendChild(el('span', 'st-badge st-committed',
+      'in ' + projectTitle(byId(rootProjectOf(s.node_id)) || { title: '—' })));
+    if (s.opened_at) meta.appendChild(el('span', 'st-badge st-proposed',
+      'opened ' + new Date(s.opened_at).toLocaleDateString()));
+    body.appendChild(meta);
+    row.appendChild(body);
+    return row;
+  }
+  function renderOrphansInto(container) {
+    var ss = staleSessions();
+    if (!ss.length) { container.appendChild(el('div', 'empty',
+      'No orphaned sessions — every session has concluded. ✓')); return; }
+    container.appendChild(el('div', 'list-group-head',
+      'Open sessions never concluded (' + ss.length + ')'));
+    ss.forEach(function (s) { container.appendChild(sessionRow(s)); });
+  }
+
+  // ====================================================================
+  //  TREE PANE — four-tier hierarchy
+  // ====================================================================
+  function projects() {
+    return nodes().filter(isProject).filter(function (n) {
+      return showArchived.checked || n.state !== 'archived';
+    });
+  }
+  // Per-project rollup: counts of awaiting / in-flight across the project's
+  // (non-session) descendant items, for the header badge.
+  function projectRollup(projId) {
+    var refs = projectItems(projId);
+    var awaiting = refs.filter(function (r) { return isWaiting(r.item); }).length;
+    var inflight = refs.filter(function (r) { return itemState(r.item) === 'in-flight'; }).length;
+    var blocked = refs.filter(function (r) { return itemState(r.item) === 'blocked'; }).length;
+    return { awaiting: awaiting, inflight: inflight, blocked: blocked, total: refs.length };
+  }
+  // Every non-session descendant item of a project (items on the project node
+  // plus items on any workstream/sub nodes under it).
+  function projectItems(projId) {
+    var out = collectWorkItems(projId);
+    collectWorkstreams(projId).forEach(function (ws) {
+      out = out.concat(collectWorkItems(ws.node_id));
+      childrenOf(ws.node_id).filter(function (c) { return !isSession(c); }).forEach(function (sub) {
+        out = out.concat(collectWorkItems(sub.node_id));
       });
+    });
+    return out;
+  }
+
+  // renderTree — project-level renderer (wire-check entry point).
+  function renderTree() {
+    clear(treeCanvas);
+    var projs = projects();
+    if (!projs.length) {
+      treeState.hidden = false;
+      treeState.textContent = loaded ? 'No projects yet.' : 'Loading…';
       return;
     }
-    paneState(actionsState, actionsBody, 'populated');
-    clear(actionsBody);
-    // items 7+8: detect newly-arrived action items (flash + "+N new" badge)
-    var dN = diffNewIds(entries.map(function (e) { return e.it.item_id; }), seenActionIds, 'a');
-    newActionIds = dN.fresh;
-    if (dN.count) { newActionsCount += dN.count; updateNewBadges(); }
-    // v1.1.2 item 29 — branch-group headers (only when sort=branch).
-    // Insert a header div above each contiguous group of items sharing the
-    // same crumb (full branch path). Style consistent with .tnode-root.
-    var groupBy = actionsSort.value === 'node';
-    var lastGroup = null;
-    entries.forEach(function (en, ix) {
-      var n = en.n, it = en.it;
-      if (groupBy) {
-        var cur = crumb(n.node_id);
-        if (cur !== lastGroup) {
-          var hdr = el('div', 'wou-group-header');
-          // Render the breadcrumb with subtle '›' separators (matches existing crumb format).
-          hdr.textContent = cur;
-          actionsBody.appendChild(hdr);
-          lastGroup = cur;
-        }
-      }
-      // item 14: kind-<k> drives the type-colour accent/tint. item 17: .hl
-      // when this item is the active selection (bidirectional highlight).
-      var li = el('div', 'li kind-' + it.kind + (it.contested ? ' contested' : '')
-        + (it.responded ? ' responded' : '')
-        + ((sel === n.node_id || selItem === it.item_id) ? ' hl' : '')
-        + (newActionIds[it.item_id] ? ' ' + arriveCls() : ''));
-      li.setAttribute('data-item', it.item_id);
-      li.setAttribute('data-node', n.node_id);
-      li.setAttribute('draggable', actionsSort.value === 'manual' ? 'true' : 'false');
-      var top = el('div', 'li-top');
-      top.appendChild(el('span', 'li-kind ' + it.kind, it.kind));
-      top.appendChild(el('span', 'li-text', it.text));   // item 15: flex:1, owns row width
-      // v1.1.2 items 33+34 — P-badge (P1..P4 visible; P5 = unassigned, no badge)
-      var ep = effectivePrio(it);
-      if (ep >= 1 && ep <= 4) {
-        top.appendChild(el('span', 'p-badge p' + ep, 'P' + ep));
-      }
-      // v1.1.2 item 33 — "Assign priority" affordance (small flag) opens popover
-      var assignBtn = el('button', 'prio-assign btn-neutral outline', '⚑');
-      assignBtn.title = 'Assign priority (P1–P5; P5 = unassigned)';
-      assignBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        openPrioPop(li, it.item_id);
+    treeState.hidden = true;
+    // pick the focus project (most-recently-clicked, else the one with the most
+    // awaiting items) if none is recorded
+    if (!focusProject || !byId(focusProject)) {
+      var best = null, bestN = -1;
+      projs.forEach(function (p) {
+        var r = projectRollup(p.node_id);
+        if (r.awaiting > bestN) { bestN = r.awaiting; best = p.node_id; }
       });
-      top.appendChild(assignBtn);
-      if (it.deferred) {
-        var d = el('span', 'badge deferred', 'deferred' + (it.scheduled_for ? ' · ' + fmtTime(it.scheduled_for) : ''));
-        top.appendChild(d);
-      }
-      // item 15: replace the width-eating text crumb with a fixed 24px icon.
-      var jump = el('button', 'li-jump', '→');
-      jump.title = 'Jump to in tree';
-      jump.addEventListener('click', function (e) { e.stopPropagation(); focusNode(n.node_id); });
-      top.appendChild(jump);
-      // item 17: clicking the row (not a control) highlights the tree node.
-      top.addEventListener('click', function (e) {
-        if (e.target.closest('button')) return;
-        selItem = it.item_id; focusNode(n.node_id);
-      });
-      li.appendChild(top);
-
-      // item 9: rich-details disclosure (collapsed by default)
-      if (it.details && typeof it.details === 'object') {
-        var expanded = expandedItems.has(it.item_id);
-        var disc = el('button', 'ghost det-toggle', (expanded ? '▾' : '▸') + ' details');
-        // v1.1.2 item 26: toggle IN PLACE — never call the full renderActions()
-        // (clear(actionsBody) + rebuild collapses the list height, which resets
-        // the pane scroll to the top and makes the clicked item vanish). Add or
-        // remove just this item's details box; keep expandedItems in sync so a
-        // later SSE-driven full render still shows it expanded.
-        disc.addEventListener('click', function () {
-          var nowExpanded;
-          if (expandedItems.has(it.item_id)) {
-            expandedItems.delete(it.item_id);
-            var box = li.querySelector('.li-details');
-            if (box) box.remove();
-            disc.textContent = '▸ details';
-            nowExpanded = false;
-          } else {
-            expandedItems.add(it.item_id);
-            var d = renderItemDetails(it.details, treeOf(n), it.text);
-            li.insertBefore(d, disc.nextSibling);
-            disc.textContent = '▾ details';
-            nowExpanded = true;
-          }
-          // If expanding pushed the item partly out of view, scroll the
-          // MINIMUM needed to keep it visible — never a full reset to top.
-          if (nowExpanded) li.scrollIntoView({ block: 'nearest' });
-        });
-        li.appendChild(disc);
-        if (expanded) li.appendChild(renderItemDetails(it.details, treeOf(n), it.text));
-      }
-      // item 10: responded — awaiting confirmation (visible, de-emphasised)
-      if (it.responded) {
-        var rn = el('div', 'responded-note');
-        rn.appendChild(el('span', 'badge', 'responded — awaiting confirmation'));
-        rn.appendChild(el('div', 'muted', it.responded.text));
-        var cp = el('button', 'btn-info', '⧉ Copy to Dispatch →');
-        cp.addEventListener('click', function () { copyResponseForDispatch(it, it.responded.text); });
-        rn.appendChild(cp);
-        li.appendChild(rn);
-      }
-
-      if (it.contested) {
-        var label = it.contested.direction === 'dispatch-done-you-disputed'
-          ? '⚠ Dispatch marked done · you disputed'
-          : '⚠ You marked done · Dispatch disputed';
-        var cn = el('div', 'contest-note');
-        cn.appendChild(el('div', null, label));
-        cn.appendChild(el('div', 'muted', it.contested.note || ''));
-        var rb = el('div', 'li-actions');
-        var accept = el('button', 'btn-neutral', 'Accept their position');
-        accept.addEventListener('click', function () {
-          post({ type: 'contest-resolved', node_id: n.node_id, item_id: it.item_id, resolution: 'accept-theirs' }, 'resolved')
-            .then(function (ok) { if (ok) maybeAutoConclude(n.node_id); });
-        });
-        var keep = el('button', 'btn-neutral outline', 'Keep mine, re-open');
-        keep.addEventListener('click', function () {
-          post({ type: 'contest-resolved', node_id: n.node_id, item_id: it.item_id, resolution: 'keep-mine-reopen' }, 'resolved');
-        });
-        rb.appendChild(accept); rb.appendChild(keep);
-        cn.appendChild(rb);
-        li.appendChild(cn);
-      } else {
-        var acts = el('div', 'li-actions');
-        // v1.1.2 item 27: a decision/question resolves ONLY via Respond —
-        // there is no quiet mark-as-resolved button for them (that would
-        // leave Dispatch with no response captured). Actions keep "mark
-        // done" (there is no response to capture; mark-done is correct there).
-        if (it.kind === 'action') {
-          var done = el('button', 'btn-go', 'mark done');
-          done.addEventListener('click', function () {
-            actWithUndo(li,
-              { type: 'action-done', node_id: n.node_id, item_id: it.item_id }, 'Marked done',
-              function () {   // item 7 undo: re-surface the item (+ re-open node if it auto-concluded)
-                post({ type: 'item-unchecked', node_id: n.node_id, item_id: it.item_id }, 'undone', true)
-                  .then(function (ok) {
-                    if (!ok) return;
-                    var nd = byId(n.node_id);
-                    if (nd && nd.state === 'concluded') post({ type: 're-opened', node_id: n.node_id }, 're-opened', true);
-                  });
-              },
-              function () { maybeAutoConclude(n.node_id); });
-          });
-          acts.appendChild(done);
-        }
-        // D2: dispute a state-checked item (low-emphasis safety net).
-        if (it.checked) {
-          var dis = el('button', 'btn-up outline', 'dispute');
-          dis.title = 'safety net — not a distrust mechanism';
-          dis.addEventListener('click', function () {
-            var note = prompt('Why do you dispute this being done? (a note; can become a thread in Dispatch)');
-            if (note == null) return;
-            post({ type: 'contested', node_id: n.node_id, item_id: it.item_id, direction: 'dispatch-done-you-disputed', note: note }, 'flagged contested');
-          });
-          acts.appendChild(dis);
-        }
-        // D3: defer / clear-defer.
-        if (it.deferred) {
-          var clr = el('button', 'btn-del outline', 'clear defer');
-          clr.addEventListener('click', function () { post({ type: 'defer-cleared', node_id: n.node_id, item_id: it.item_id }, 'defer cleared'); });
-          acts.appendChild(clr);
-        } else {
-          // v1.1.2 item 28: friendly Defer popover (presets + native
-          // datetime-local + "until further notice — move to Backlog"),
-          // all in the user's LOCAL timezone — no ISO prompt().
-          var dfr = el('button', 'btn-wait', 'defer');
-          dfr.addEventListener('click', function () { openDeferPop(li, n, it); });
-          acts.appendChild(dfr);
-        }
-        // item 10: inline Respond on decisions/questions/needs-input (only
-        // when not yet responded — the responded note above takes over then)
-        if (respondable(it) && !it.responded) {
-          var rsp = el('button', 'btn-info', 'Respond');
-          rsp.addEventListener('click', function () {
-            if (li.querySelector('.respond-box')) return;   // one open at a time
-            var rb2 = el('div', 'respond-box');
-            var ta = el('textarea', 'draft-area');
-            ta.placeholder = 'Your response — captured here; Copy to Dispatch closes the loop (v1.1).';
-            var row = el('div', 'row');
-            var submit = el('button', 'btn-go', 'Submit response');
-            submit.addEventListener('click', function () {
-              var txt = ta.value.trim();
-              if (!txt) { ta.focus(); return; }
-              post({ type: 'action-responded', node_id: n.node_id, item_id: it.item_id, response_text: txt }, 'response captured')
-                .then(function (ok) { if (ok) copyResponseForDispatch(it, txt); });
-            });
-            var cancel = el('button', 'ghost', 'cancel');
-            cancel.addEventListener('click', function () { rb2.remove(); });
-            row.appendChild(submit); row.appendChild(cancel);
-            rb2.appendChild(ta); rb2.appendChild(row);
-            li.appendChild(rb2);
-            ta.focus();
-          });
-          acts.appendChild(rsp);
-        }
-        li.appendChild(acts);
-      }
-      // manual drag-reorder (FR-29)
-      if (actionsSort.value === 'manual') wireReorder(li, it.item_id, 'actions:' + activeTree, function () { return actionEntries().map(function (e) { return e.it.item_id; }); });
-      actionsBody.appendChild(li);
-    });
-  }
-
-  // ---- v1.1.2 item 28: friendly Defer popover -------------------------
-  // Presets + native datetime-local + "until further notice — move to
-  // Backlog". ALL times the user's LOCAL timezone (display via fmtTime =
-  // toLocaleString; input via <input type=datetime-local> which is local +
-  // tz-aware on Windows out of the box). The state file stores the canonical
-  // ISO `scheduled_for` (cross-machine) PLUS additive `scheduled_for_local`
-  // + `tz_offset_min` so re-display anywhere is unambiguous (no version bump).
-  // Buttons use the merged item-22 `btn-*` palette (defer/postpone = btn-wait;
-  // utility move = btn-info; neutral = btn-neutral).
-  function pad2(x) { return (x < 10 ? '0' : '') + x; }
-  function toLocalInput(d) {            // Date -> "YYYY-MM-DDTHH:MM" (local)
-    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
-      'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
-  }
-  function closeDeferPop() {
-    var p = document.querySelector('.defer-pop');
-    if (p) p.remove();
-    document.removeEventListener('keydown', deferEsc, true);
-    document.removeEventListener('click', deferOutside, true);
-  }
-  function deferEsc(e) { if (e.key === 'Escape') closeDeferPop(); }
-  function deferOutside(e) {
-    var p = document.querySelector('.defer-pop');
-    if (p && !p.contains(e.target) && !(e.target.closest && e.target.closest('.li-actions'))) closeDeferPop();
-  }
-  function openDeferPop(li, n, it) {
-    closeDeferPop();                                   // one open at a time
-    function commit(d) {
-      closeDeferPop();
-      actWithUndo(li,
-        { type: 'deferred', node_id: n.node_id, item_id: it.item_id,
-          scheduled_for: d.toISOString(),
-          scheduled_for_local: toLocalInput(d),
-          tz_offset_min: d.getTimezoneOffset() },
-        'Deferred to ' + fmtTime(d.toISOString()),
-        function () { post({ type: 'defer-cleared', node_id: n.node_id, item_id: it.item_id }, 'defer cleared', true); });
+      focusProject = best || projs[0].node_id;
     }
-    var pop = el('div', 'defer-pop');
-    pop.appendChild(el('div', 'dp-title', 'Defer until'));
-
-    var later = el('button', 'btn-wait', 'Later today (8 PM)');
-    later.addEventListener('click', function () {
-      var d = new Date(); d.setHours(20, 0, 0, 0);
-      if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);   // already past 8 PM → tomorrow
-      commit(d);
+    var totAwait = 0, totFlight = 0;
+    projs.forEach(function (p) {
+      var roll = projectRollup(p.node_id);
+      totAwait += roll.awaiting; totFlight += roll.inflight;
+      var expanded = (p.node_id === focusProject) && !collapsed.has(p.node_id);
+      treeCanvas.appendChild(renderProject(p, roll, expanded));
     });
-    var tmrw = el('button', 'btn-wait', 'Tomorrow morning (9 AM)');
-    tmrw.addEventListener('click', function () {
-      var d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); commit(d);
-    });
-    var week = el('button', 'btn-wait', 'Next week (Mon 9 AM)');
-    week.addEventListener('click', function () {
-      var d = new Date();
-      var add = ((1 - d.getDay() + 7) % 7) || 7;   // days to NEXT Monday (today-Mon → +7)
-      d.setDate(d.getDate() + add); d.setHours(9, 0, 0, 0); commit(d);
-    });
-    var pick = el('button', 'btn-wait', 'Pick a specific time…');
-    var whenRow = el('div', 'dp-when'); whenRow.style.display = 'none';
-    var dti = el('input'); dti.type = 'datetime-local';
-    var pre = new Date(); pre.setDate(pre.getDate() + 1); pre.setHours(9, 0, 0, 0);
-    dti.value = toLocalInput(pre);
-    var setBtn = el('button', 'btn-wait', 'Set');
-    setBtn.addEventListener('click', function () {
-      if (!dti.value) { dti.focus(); return; }
-      var d = new Date(dti.value);                  // datetime-local parses as LOCAL
-      if (isNaN(d.getTime())) { dti.focus(); return; }
-      commit(d);
-    });
-    pick.addEventListener('click', function () {
-      whenRow.style.display = whenRow.style.display === 'none' ? 'flex' : 'none';
-      if (whenRow.style.display === 'flex') dti.focus();
-    });
-    whenRow.appendChild(dti); whenRow.appendChild(setBtn);
-
-    var toBl = el('button', 'btn-info', 'Until further notice — move to Backlog');
-    toBl.title = 'Parks this out of "Waiting on you" and tracks it in Backlog; the Backlog "Activate" button brings it back.';
-    toBl.addEventListener('click', function () {
-      closeDeferPop();
-      post({ type: 'item-backlogged', node_id: n.node_id, item_id: it.item_id }, null, true)
-        .then(function (ok) {
-          if (!ok) return;
-          var blId = uid('bl');
-          post({ type: 'backlog-added', item_id: blId, tree_id: treeOf(n),
-            priority: 'medium', text: it.text }, 'moved to Backlog')
-            .then(function (ok2) {
-              if (ok2) post({ type: 'context-attached', target: blId,
-                context_ref: 'parked from tree: ' + crumb(n.node_id) }, null, true);
-            });
-        });
-    });
-
-    var cancel = el('button', 'btn-neutral', 'cancel');
-    cancel.addEventListener('click', closeDeferPop);
-
-    [later, tmrw, week, pick].forEach(function (b) { pop.appendChild(b); });
-    pop.appendChild(whenRow);
-    pop.appendChild(toBl);
-    pop.appendChild(cancel);
-    li.appendChild(pop);
-    setTimeout(function () {
-      document.addEventListener('keydown', deferEsc, true);
-      document.addEventListener('click', deferOutside, true);
-    }, 0);
+    treeSummary.textContent = totAwait + ' awaiting · ' + totFlight + ' in flight';
+    renderOrphanSection();
   }
 
-  // ---- BACKLOG PANE (C4) ----------------------------------------------
-  function backlogEntries() {
-    return backlog().filter(function (b) { return (b.tree_id || 'global') === activeTree; });
-  }
-  // item 21: robust priority rank. The OLD `PRIO_RANK[p] || 9` was the bug —
-  // `0 || 9` is 9, so `high` (rank 0) sorted to the BOTTOM (the "backwards"
-  // report). prioRank normalises high|p1|1 → 0, medium|p2|2 → 1, low|p3|3 → 2,
-  // anything unknown → 9, and never uses a falsy-OR fallback.
-  function prioRank(p) {
-    var k = String(p == null ? '' : p).trim().toLowerCase();
-    if (k === 'high' || k === 'p1' || k === '1') return 0;
-    if (k === 'medium' || k === 'med' || k === 'p2' || k === '2') return 1;
-    if (k === 'low' || k === 'p3' || k === '3') return 2;
-    return 9;
-  }
-  function sortBacklog(arr) {
-    var mode = backlogSort.value;
-    if (mode === 'manual') return applyOrderObj(arr, order('backlog:' + activeTree), function (b) { return b.item_id; });
-    var c = arr.slice();
-    if (mode === 'priority') c.sort(function (a, b) {
-      var d = prioRank(a.priority) - prioRank(b.priority);   // P1→P2→P3 top→bottom
-      return d !== 0 ? d : String(a.item_id).localeCompare(String(b.item_id)); // deterministic tiebreak
-    });
-    else c.sort(function (a, b) { return String(a.item_id).localeCompare(String(b.item_id)); }); // date (ULID-ish id is time-sortable)
-    return c;
-  }
-  function renderBacklog() {
-    if (!loaded) { paneState(backlogState, backlogBody, 'loading'); return; }
-    var entries = sortBacklog(backlogEntries());
-    if (entries.length === 0) {
-      var aff = el('button', 'btn-go', '+ capture one');
-      aff.addEventListener('click', openCapture);
-      paneState(backlogState, backlogBody, 'steady-empty', {
-        steady: 'No backlog items in "' + activeTree + '" — capture one with [+].',
-        affordance: aff,
+  function renderProject(p, roll, expanded) {
+    var wrap = el('div', 'proj' + (expanded ? ' exp' : ''));
+    var head = el('div', 'proj-head');
+    head.appendChild(el('span', 'twisty', expanded ? '▼' : '▶'));
+    head.appendChild(el('span', 'proj-title', projectTitle(p)));
+    var badge = el('span', 'proj-badge');
+    if (roll.awaiting) badge.appendChild(el('span', 'b-await', roll.awaiting + ' awaiting'));
+    if (roll.inflight) badge.appendChild(el('span', 'b-flight', roll.inflight + ' in-flight'));
+    if (roll.blocked) badge.appendChild(el('span', 'b-block', roll.blocked + ' blocked'));
+    if (!roll.total) badge.appendChild(el('span', 'b-none', 'nothing in flight'));
+    head.appendChild(badge);
+    head.addEventListener('click', function () { toggleProject(p.node_id); });
+    wrap.appendChild(head);
+    if (expanded) {
+      var body = el('div', 'proj-body');
+      // direct work items under the project (non-complete by default)
+      var directs = collectWorkItems(p.node_id).filter(visibleInTree);
+      directs.forEach(function (r) { body.appendChild(treeItemRow(r, 1)); });
+      // workstream-tier nodes (lights up after Phase-3 backfill)
+      collectWorkstreams(p.node_id).forEach(function (ws) {
+        body.appendChild(renderWorkstream(ws));
       });
-      return;
+      if (!directs.length && !collectWorkstreams(p.node_id).length) {
+        body.appendChild(el('div', 'proj-empty', 'Nothing in flight'));
+      }
+      wrap.appendChild(body);
     }
-    paneState(backlogState, backlogBody, 'populated');
-    clear(backlogBody);
-    var dB = diffNewIds(entries.map(function (x) { return x.item_id; }), seenBacklogIds, 'b');
-    newBacklogIds = dB.fresh;
-    if (dB.count) { newBacklogCount += dB.count; updateNewBadges(); }
-    entries.forEach(function (b) {
-      var li = el('div', 'li' + (newBacklogIds[b.item_id] ? ' ' + arriveCls() : ''));
-      li.setAttribute('draggable', backlogSort.value === 'manual' ? 'true' : 'false');
-      var top = el('div', 'li-top');
-      top.appendChild(el('span', 'prio ' + b.priority, b.priority));
-      top.appendChild(el('span', 'li-text', b.text));
-      // v1.1.2 items 33+34 — numeric P-badge from priority-assigned events
-      // (separate from the legacy text priority high/medium/low). Visible only
-      // when P1..P4; P5/unassigned shows no extra badge.
-      var bp = Number(b.priority_num);
-      if (bp >= 1 && bp <= 4) top.appendChild(el('span', 'p-badge p' + bp, 'P' + bp));
-      var bAssign = el('button', 'prio-assign btn-neutral outline', '⚑');
-      bAssign.title = 'Assign numeric priority (P1–P5; P5 = unassigned)';
-      bAssign.addEventListener('click', function (e) { e.stopPropagation(); openPrioPop(li, b.item_id); });
-      top.appendChild(bAssign);
-      if (b.activated) top.appendChild(el('span', 'badge', 'activated ✓'));
-      li.appendChild(top);
-      // v2 redesign 2026-05-23 — UX-VR-13 context-as-textarea: every backlog
-      // item exposes a context disclosure. Read mode if present; click to
-      // edit in a textarea. Empty items show "Add context →" as a clear
-      // affordance. Legacy context_refs (file refs / cross-links) still
-      // render as before — they're a different kind of attached context.
-      var hasContext = typeof b.context_text === 'string' && b.context_text.trim().length > 0;
-      var ctxToggle = el('button', 'li-context-toggle' + (hasContext ? '' : ' empty'),
-        hasContext ? '▾ context' : '+ Add context →');
-      ctxToggle.title = hasContext
-        ? 'show / edit this backlog item\'s context (multi-line)'
-        : 'this item has no context yet — click to add one (multi-line textarea)';
-      var ctxBox = el('div'); ctxBox.style.display = 'none';
-      function renderCtxRead() {
-        ctxBox.innerHTML = '';
-        ctxBox.style.display = '';
-        if (hasContext) {
-          var rd = el('div', 'li-context-render', b.context_text);
-          var ed = el('button', 'btn-info outline', '✎ edit');
-          ed.style.marginTop = '0.35rem';
-          ed.addEventListener('click', function () { renderCtxEdit(b.context_text); });
-          ctxBox.appendChild(rd); ctxBox.appendChild(ed);
-        } else {
-          var empty = el('div', 'li-context-empty', 'no context recorded — click "Add context →" to add one.');
-          ctxBox.appendChild(empty);
-          renderCtxEdit('');
-        }
-      }
-      function renderCtxEdit(initial) {
-        ctxBox.innerHTML = '';
-        ctxBox.style.display = '';
-        var wrap = el('div', 'li-context-edit');
-        var ta = el('textarea', 'context-area');
-        ta.value = (initial == null ? '' : initial);
-        ta.placeholder = 'context — what you know about this, why it matters, prior decisions, related docs (multi-line, supports markdown-ish prose)';
-        wrap.appendChild(ta);
-        var row = el('div', 'row');
-        var save = el('button', 'btn-go', 'Save context');
-        var cancel = el('button', 'btn-neutral outline', 'cancel');
-        save.addEventListener('click', function () {
-          var nv = ta.value || '';
-          post({ type: 'backlog-context-set', item_id: b.item_id, context_text: nv },
-            nv.trim() ? 'context saved' : 'context cleared');
-        });
-        cancel.addEventListener('click', function () {
-          if (hasContext) renderCtxRead();
-          else { ctxBox.style.display = 'none'; ctxToggle.textContent = '+ Add context →'; }
-        });
-        row.appendChild(save); row.appendChild(cancel);
-        wrap.appendChild(row);
-        ctxBox.appendChild(wrap);
-      }
-      ctxToggle.addEventListener('click', function () {
-        if (ctxBox.style.display === 'none') {
-          if (hasContext) renderCtxRead(); else renderCtxEdit('');
-        } else {
-          ctxBox.style.display = 'none';
-        }
-      });
-      li.appendChild(ctxToggle);
-      li.appendChild(ctxBox);
-      // legacy context_refs (file/doc cross-links) — still surfaced
-      if (b.context_refs && b.context_refs.length) {
-        li.appendChild(el('div', 'muted', 'attached refs: ' + b.context_refs.join(' | ')));
-      }
-      var acts = el('div', 'li-actions');
-      if (!b.activated) {
-        var act = el('button', 'btn-go', 'Activate → new tree root');
-        act.addEventListener('click', function () { activateBacklog(b); });
-        acts.appendChild(act);
-        var addRef = el('button', 'btn-info outline', '+ attach ref');
-        addRef.title = 'attach a file/doc reference (separate from the prose context above)';
-        addRef.addEventListener('click', function () {
-          var note = prompt('Attach a file ref / doc path / prior-decision link:');
-          if (note == null || !note.trim()) return;
-          post({ type: 'context-attached', target: b.item_id, context_ref: note.trim() }, 'ref attached');
-        });
-        acts.appendChild(addRef);
-      } else {
-        var copy = el('button', 'btn-info', '⧉ copy context for Dispatch');
-        copy.addEventListener('click', function () { copyHandoff(b.text, (b.context_refs || []).concat(b.context_text ? ['CONTEXT:\n' + b.context_text] : []), b.activated_node); });
-        acts.appendChild(copy);
-      }
-      li.appendChild(acts);
-      if (backlogSort.value === 'manual') wireReorder(li, b.item_id, 'backlog:' + activeTree, function () { return backlogEntries().map(function (x) { return x.item_id; }); });
-      backlogBody.appendChild(li);
+    return wrap;
+  }
+
+  // renderWorkstream — per-workstream rollup + its work items (wire-check target).
+  function renderWorkstream(wsNode) {
+    var wrap = el('div', 'ws');
+    var head = el('div', 'ws-head');
+    head.appendChild(el('span', 'ws-title', wsNode.title || wsNode.node_id));
+    var allShipped = collectWorkItems(wsNode.node_id).every(function (r) { return isComplete(r.item); });
+    head.appendChild(el('span', 'ws-state st-' + (allShipped ? 'shipped' : 'active'),
+      allShipped ? 'shipped' : 'active'));
+    wrap.appendChild(head);
+    var body = el('div', 'ws-body');
+    collectWorkItems(wsNode.node_id).filter(visibleInTree).forEach(function (r) {
+      body.appendChild(treeItemRow(r, 2));
     });
+    // sub-tasks (children of the workstream that are not sessions)
+    childrenOf(wsNode.node_id).filter(function (c) { return !isSession(c); }).forEach(function (sub) {
+      collectWorkItems(sub.node_id).filter(visibleInTree).forEach(function (r) {
+        body.appendChild(treeItemRow(r, 3));
+      });
+    });
+    wrap.appendChild(body);
+    return wrap;
   }
-  function openCapture() {
-    backlogCapture.hidden = false; blText.value = ''; blContext.value = '';
-    blText.focus();
+
+  // non-complete-by-default: hide shipped/closed in the tree unless "show
+  // archived" is on (the tree's complete-work escape hatch for this phase).
+  function visibleInTree(r) {
+    return showArchived.checked || !isComplete(r.item);
   }
-  addBacklogBtn.addEventListener('click', openCapture);
+
+  function treeItemRow(r, depth) {
+    var st = itemState(r.item);
+    var li = el('div', 'tree-item d' + depth + ' state-' + st);
+    if (selItem && selItem.nodeId === r.nodeId && selItem.itemId === r.itemId) li.classList.add('sel');
+    li.appendChild(el('span', 'ti-ic', stateIcon(st)));
+    li.appendChild(el('span', 'ti-kind', kindGlyph(r.item.kind)));
+    li.appendChild(el('span', 'ti-text', r.item.text || '(untitled)'));
+    li.addEventListener('click', function () { renderDetailCard(r.nodeId, r.itemId); });
+    return li;
+  }
+
+  function toggleProject(projId) {
+    if (focusProject === projId && !collapsed.has(projId)) {
+      collapsed.add(projId);                      // collapse the focused project
+    } else {
+      collapsed.delete(projId);
+      focusProject = projId;                      // focus + expand
+      localStorage.setItem('workstreams.focusProject', projId);
+    }
+    saveSet('workstreams.collapsed', collapsed);
+    renderTree();
+  }
+
+  function renderOrphanSection() {
+    var ss = staleSessions();
+    if (!ss.length) { orphanSection.hidden = true; return; }
+    orphanSection.hidden = false;
+    orphanCount.textContent = ss.length;
+    clear(orphanBody);
+    ss.slice(0, 20).forEach(function (s) {
+      var row = el('div', 'orphan-row');
+      row.appendChild(el('span', 'orphan-ic', '⚠️'));
+      row.appendChild(el('span', 'orphan-text',
+        projectTitle(byId(rootProjectOf(s.node_id)) || { title: '—' }) + ' — ' + (s.title || s.node_id)));
+      orphanBody.appendChild(row);
+    });
+    if (ss.length > 20) orphanBody.appendChild(el('div', 'proj-empty', '+ ' + (ss.length - 20) + ' more'));
+  }
+
+  // ====================================================================
+  //  DETAIL CARD
+  // ====================================================================
+  // collectProvenance — session events that touched this item. The GUI has the
+  // snapshot only (no event log), so provenance is best-effort: the containing
+  // node, its bound sessions, and any sibling session nodes under the same
+  // project that declare serves_item_id === this item (the Phase-1
+  // session→work-item link).
+  function collectProvenance(nodeId, itemId) {
+    var prov = [];
+    var host = byId(nodeId);
+    if (host) {
+      prov.push({ label: 'on node', value: host.title || host.node_id });
+      (host.bound_sessions || []).forEach(function (sid) {
+        prov.push({ label: 'bound session', value: sid });
+      });
+    }
+    var projId = rootProjectOf(nodeId);
+    childrenOf(projId).filter(isSession).forEach(function (s) {
+      if (s.serves_item_id === itemId) {
+        prov.push({ label: 'serving session', value: s.title || s.node_id });
+      }
+    });
+    return prov;
+  }
+  // collectSubtasks — children whose parent_id === the item's node, i.e.
+  // sub-task branches. Items aren't nodes, so this walks snapshot.nodes for
+  // non-session children of the containing node (returns [] for today's data).
+  function collectSubtasks(nodeId, itemId) {
+    var subs = [];
+    childrenOf(nodeId).filter(function (c) { return !isSession(c); }).forEach(function (c) {
+      (c.items || []).forEach(function (it) {
+        subs.push({ text: it.text, checked: !!it.checked, state: itemState(it) });
+      });
+    });
+    return subs;
+  }
+
+  // renderDetailCard — selection handler (wire-check target). Replaces the
+  // filtered list with the card; deselect (✕ / Esc) restores the list.
+  function renderDetailCard(nodeId, itemId) {
+    var host = byId(nodeId);
+    var it = host && (host.items || []).find(function (x) { return x.item_id === itemId; });
+    if (!it) { setActiveFilter(activeFilter); return; }
+    selItem = { nodeId: nodeId, itemId: itemId };
+    var st = itemState(it);
+    filterBody.hidden = true;
+    detailCard.hidden = false;
+    clear(detailCard);
+
+    var head = el('div', 'dc-head');
+    head.appendChild(el('span', 'dc-title', it.text || '(untitled)'));
+    var close = el('button', 'ghost dc-close', '✕');
+    close.title = 'back to list (Esc)';
+    close.addEventListener('click', function () { setActiveFilter(activeFilter); });
+    head.appendChild(close);
+    detailCard.appendChild(head);
+
+    var meta = el('div', 'dc-meta');
+    meta.appendChild(dcRow('Project', projectTitle(byId(rootProjectOf(nodeId)) || { title: nodeId })));
+    var tier = (host && host.tier) ? host.tier : inferTier(nodeId);
+    meta.appendChild(dcRow('Kind', it.kind));
+    meta.appendChild(dcRow('Tier', tier));
+    meta.appendChild(dcRow('State', stateIcon(st) + ' ' + st));
+    if (it.ship_evidence) meta.appendChild(dcRow('Evidence', it.ship_evidence));
+    if (it.block_reason) meta.appendChild(dcRow('Blocked', it.block_reason));
+    if (host && host.opened_at) meta.appendChild(dcRow('Last activity', new Date(host.opened_at).toLocaleString()));
+    detailCard.appendChild(meta);
+
+    // provenance
+    var prov = collectProvenance(nodeId, itemId);
+    if (prov.length) {
+      detailCard.appendChild(el('div', 'dc-sec-h', 'Provenance'));
+      var pl = el('div', 'dc-prov');
+      prov.forEach(function (p) {
+        var pr = el('div', 'dc-prov-row');
+        pr.appendChild(el('span', 'dc-prov-l', p.label));
+        pr.appendChild(el('span', 'dc-prov-v', p.value));
+        pl.appendChild(pr);
+      });
+      detailCard.appendChild(pl);
+    }
+
+    // sub-task rollup
+    var subs = collectSubtasks(nodeId, itemId);
+    if (subs.length) {
+      detailCard.appendChild(el('div', 'dc-sec-h', 'Sub-tasks (' + subs.length + ')'));
+      var sl = el('div', 'dc-subs');
+      subs.forEach(function (s) {
+        var sr = el('div', 'dc-sub-row');
+        sr.appendChild(el('span', 'dc-sub-ck', s.checked ? '✓' : '⏳'));
+        sr.appendChild(el('span', 'dc-sub-t', s.text));
+        sl.appendChild(sr);
+      });
+      detailCard.appendChild(sl);
+    }
+
+    // actions — Mark shipped / Block / Decompose / Reassign. Mark shipped &
+    // Block are wired to the Phase-1 events; Decompose/Reassign are Phase-3/4
+    // surfaces (disabled placeholders) so the affordance is visible now.
+    var acts = el('div', 'dc-acts');
+    var ship = el('button', 'btn-go', 'Mark shipped');
+    ship.addEventListener('click', function () {
+      post({ type: 'item-shipped', node_id: nodeId, item_id: itemId }, 'Marked shipped')
+        .then(function () { selItem = null; });
+    });
+    acts.appendChild(ship);
+    var block = el('button', 'btn-warn outline', 'Block');
+    block.addEventListener('click', function () {
+      var reason = window.prompt('Why is this blocked?', '');
+      if (reason == null) return;
+      post({ type: 'item-blocked', node_id: nodeId, item_id: itemId, reason: reason }, 'Marked blocked');
+    });
+    acts.appendChild(block);
+    var commit = el('button', 'btn-info outline', 'Commit');
+    commit.title = 'park as committed work (not started yet)';
+    commit.addEventListener('click', function () {
+      post({ type: 'item-committed', node_id: nodeId, item_id: itemId }, 'Committed');
+    });
+    acts.appendChild(commit);
+    var decompose = el('button', 'btn-neutral outline', 'Decompose');
+    decompose.disabled = true; decompose.title = 'Phase 3+ — break into sub-tasks';
+    acts.appendChild(decompose);
+    var reassign = el('button', 'btn-neutral outline', 'Reassign');
+    reassign.disabled = true; reassign.title = 'Phase 3+ — re-parent to another workstream';
+    acts.appendChild(reassign);
+    detailCard.appendChild(acts);
+  }
+  function dcRow(label, val) {
+    var r = el('div', 'dc-row');
+    r.appendChild(el('span', 'dc-l', label));
+    r.appendChild(el('span', 'dc-v', val == null ? '—' : String(val)));
+    return r;
+  }
+  function inferTier(nodeId) {
+    var n = byId(nodeId);
+    if (!n) return 'work-item';
+    if (n.parent_id == null) return 'project';
+    var depth = 0, cur = n, guard = 0;
+    while (cur && cur.parent_id != null && guard++ < 50) { depth++; cur = byId(cur.parent_id); }
+    return depth === 1 ? 'workstream' : depth === 2 ? 'work-item' : 'sub-task';
+  }
+
+  // ====================================================================
+  //  RENDER ORCHESTRATION
+  // ====================================================================
+  function renderCorrupt() {
+    var corrupt = S && S.valid === false;
+    if (corrupt) {
+      corruptBanner.hidden = false;
+      corruptBanner.textContent = '⚠ State file appears torn — showing last-good content. '
+        + 'The reducer is replaying the event log to recover.';
+    } else {
+      corruptBanner.hidden = true;
+    }
+    return corrupt;
+  }
+  function render() {
+    renderCorrupt();
+    renderTree();
+    if (selItem) {
+      renderDetailCard(selItem.nodeId, selItem.itemId);
+    } else if (activeFilter === 'backlog') {
+      renderFilteredItems('backlog');
+    } else {
+      renderFilteredItems(activeFilter);
+    }
+    updateChipCounts();
+  }
+
+  // ---- wiring ----------------------------------------------------------
+  filterBar.addEventListener('click', function (e) {
+    var chip = e.target.closest('.chip');
+    if (chip) setActiveFilter(chip.getAttribute('data-filter'));
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && selItem) { setActiveFilter(activeFilter); }
+  });
+  showArchived.addEventListener('change', function () { render(); });
+
+  // backlog capture
+  addBacklogBtn.addEventListener('click', function () {
+    backlogCapture.hidden = !backlogCapture.hidden;
+    if (!backlogCapture.hidden) blText.focus();
+  });
   blCancel.addEventListener('click', function () { backlogCapture.hidden = true; });
   blSave.addEventListener('click', function () {
-    var txt = blText.value.trim();
-    if (!txt) { blText.focus(); return; }
-    var itemId = uid('bl');
-    // v2 redesign 2026-05-23 — UX-VR-13: capture-time context_text rides on
-    // the same backlog-added event so it's persisted atomically with the
-    // item itself. Previously context was sent as a separate
-    // context-attached event (which the reducer dropped silently). Empty
-    // string is preserved as empty string.
-    var ctx = blContext.value;
-    post({ type: 'backlog-added', item_id: itemId, tree_id: activeTree, priority: blPriority.value, text: txt, context_text: ctx }, 'backlog item added')
-      .then(function (ok) {
-        if (!ok) return;
-        backlogCapture.hidden = true;
-      });
-  });
-  function activateBacklog(b) {
-    var newId = uid('n');
-    post({ type: 'backlog-activated', item_id: b.item_id, new_node_id: newId }, 'activated — new tree root created')
-      .then(function (ok) {
-        if (!ok) return;
-        // BF-1 / DEC-C positive handoff affordance.
-        copyHandoff(b.text, b.context_refs, newId);
-        pushNote('act-' + b.item_id,
-          '▸ ready to start in Dispatch — "' + b.text + '" is now a tracked tree root. ' +
-          'This tracker doesn’t run Claude — open Dispatch and continue there; this node now tracks it. ' +
-          '(Context copied to clipboard.)', false);
-        // item 7 undo (partial, documented): reverses the user-visible effect
-        // by archiving the just-created node (no un-activate event exists).
-        snackbar('Activated — Undo?', { kind: 'ok', undo: function () {
-          post({ type: 'archived', node_id: newId }, 'undone — node archived', true);
-        } });
-      });
-  }
-  function copyHandoff(text, ctx, nodeId) {
-    var blob = 'Continue this work in Dispatch:\n\n' + text + '\n\n' +
-      (ctx && ctx.length ? 'Context:\n- ' + ctx.join('\n- ') + '\n\n' : '') +
-      'Tracker node: ' + (nodeId || '(new)') + '\n';
-    try {
-      navigator.clipboard.writeText(blob).then(
-        function () { showToast('context copied — paste into Dispatch', 'ok'); },
-        function () { fallbackCopy(blob); });
-    } catch (_) { fallbackCopy(blob); }
-  }
-  function fallbackCopy(blob) {
-    var ta = el('textarea'); ta.value = blob; ta.style.position = 'fixed'; ta.style.left = '-9999px';
-    document.body.appendChild(ta); ta.select();
-    try { document.execCommand('copy'); showToast('context copied — paste into Dispatch', 'ok'); }
-    catch (e) { showToast('copy failed — select the context block manually', 'err'); }
-    document.body.removeChild(ta);
-  }
-
-  // ---- ordering helpers (FR-29 reordered) ------------------------------
-  function applyOrder(arr, ord, key) {
-    if (!ord) return arr;
-    var pos = {}; ord.forEach(function (id, i) { pos[id] = i; });
-    return arr.slice().sort(function (a, b) {
-      var pa = pos[a[key]], pb = pos[b[key]];
-      if (pa == null && pb == null) return 0;
-      if (pa == null) return 1; if (pb == null) return -1;
-      return pa - pb;
+    var text = (blText.value || '').trim();
+    if (!text) { showToast('Enter the work item text first.', 'err'); return; }
+    post({
+      type: 'backlog-added', item_id: uid('bl'), tree_id: 'global',
+      priority: blPriority.value, text: text, context_text: (blContext.value || '').trim(),
+    }, 'Captured to backlog').then(function () {
+      blText.value = ''; blContext.value = ''; backlogCapture.hidden = true;
+      setActiveFilter('backlog');
     });
-  }
-  function applyOrderObj(arr, ord, keyFn) {
-    if (!ord) return arr;
-    var pos = {}; ord.forEach(function (id, i) { pos[id] = i; });
-    return arr.slice().sort(function (a, b) {
-      var pa = pos[keyFn(a)], pb = pos[keyFn(b)];
-      if (pa == null && pb == null) return 0;
-      if (pa == null) return 1; if (pb == null) return -1;
-      return pa - pb;
-    });
-  }
-  var dragId = null;
-  function wireReorder(li, id, scope, idsFn) {
-    li.addEventListener('dragstart', function () { dragId = id; });
-    li.addEventListener('dragover', function (e) { e.preventDefault(); li.classList.add('dragover'); });
-    li.addEventListener('dragleave', function () { li.classList.remove('dragover'); });
-    li.addEventListener('drop', function (e) {
-      e.preventDefault(); li.classList.remove('dragover');
-      if (!dragId || dragId === id) return;
-      var ids = idsFn();
-      ids = ids.filter(function (x) { return x !== dragId; });
-      var at = ids.indexOf(id);
-      ids.splice(at < 0 ? ids.length : at, 0, dragId);
-      post({ type: 'reordered', scope: scope, ordered_ids: ids }, 'reordered');
-      dragId = null;
-    });
-  }
-
-  // ---- node selection + FR-6 context surface (C2) ----------------------
-  function selectNode(id) {
-    sel = id; selItem = null; ctxExpanded = false; render(); openCtx(id);
-    // item 17: bidirectional — selecting a tree node scrolls the matching
-    // "Waiting on you" item(s) into view (the tree node itself is already
-    // in view since the click originated there).
-    setTimeout(function () {
-      var m = actionsBody.querySelector('.li[data-node="' + cssEsc(id) + '"]');
-      if (m) m.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }, 30);
-  }
-  function focusNode(id) {                          // BF-4 cross-surface nav
-    var n = byId(id); if (!n) return;
-    if (treeOf(n) !== activeTree) {
-      activeTree = treeOf(n); localStorage.setItem('ctree-active', activeTree); syncTreeSelect();
-      showToast('Switched to "' + activeTree + '" tree to show this', 'ok');
-    }
-    chain(id).forEach(function (a) { collapsed.delete(a.node_id); }); // expand ancestors
-    sel = id; render(); openCtx(id);
-    setTimeout(function () {
-      var r = treeCanvas.querySelector('[data-node="' + cssEsc(id) + '"]');
-      if (r) r.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }, 30);
-  }
-  function cssEsc(s) { return String(s).replace(/"/g, '\\"'); }
-  // v2 redesign 2026-05-23: ctxPanel is a centred MODAL (was a docked side
-  // pane). It NEVER shifts the persistent #layout — tree + side panel stay
-  // put. Dismiss via Esc / scrim click / ✕.
-  function closeCtx() {
-    ctxPanel.hidden = true;
-    ctxScrim.hidden = true;
-    sel = null;
-    render();
-  }
-  function openCtx(id) {
-    var n = byId(id);
-    if (!n) { closeCtx(); return; }
-    ctxPanel.hidden = false;
-    ctxScrim.hidden = false;          // always show scrim — this is a modal
-    clear(ctxPanel);
-    var head = el('div', 'ctx-head');
-    head.appendChild(el('span', 'pane-title', n.title || n.node_id));
-    var x = el('button', 'ghost x', '✕');
-    x.title = 'close (Esc / click outside also close)';
-    x.addEventListener('click', closeCtx);
-    head.appendChild(x);
-    ctxPanel.appendChild(head);
-    var body = el('div', 'ctx-body');
-
-    // parent chain to root
-    var s1 = el('div', 'ctx-sec'); s1.appendChild(el('h4', null, 'Parent chain → root'));
-    var cc = el('div', 'ctx-chain');
-    chain(id).reverse().forEach(function (a, i, arr) {
-      var seg = el('span', 'seg', a.title || a.node_id);
-      seg.addEventListener('click', function () { focusNode(a.node_id); });
-      cc.appendChild(seg);
-      if (i < arr.length - 1) cc.appendChild(document.createTextNode('  ›  '));
-    });
-    s1.appendChild(cc); body.appendChild(s1);
-
-    // diverging sub-branches
-    var subs = nodes().filter(function (x) { return x.parent_id === id; });
-    var s2 = el('div', 'ctx-sec'); s2.appendChild(el('h4', null, 'Diverging sub-branches (' + subs.length + ')'));
-    if (subs.length === 0) s2.appendChild(el('div', 'muted', 'none'));
-    subs.forEach(function (x) {
-      var d = el('div', 'ctx-item ' + 'seg'); d.textContent = x.title || x.node_id;
-      d.style.cursor = 'pointer'; d.addEventListener('click', function () { focusNode(x.node_id); });
-      s2.appendChild(d);
-    });
-    body.appendChild(s2);
-
-    // v1.1.3 item 39: when an item is currently selected (clicked from the
-    // "Waiting on you" list), the pane MUST show at least as much detail as
-    // the inline `▾ details` disclosure does — full What/Why/Options/etc.
-    // Without this, clicking an item to open the pane gave the user LESS
-    // information than clicking the inline ▾, which was the wrong direction.
-    if (selItem) {
-      var selIt = (n.items || []).filter(function (x) { return x.item_id === selItem; })[0];
-      if (selIt) {
-        var ss = el('div', 'ctx-sec');
-        ss.appendChild(el('h4', null, 'Selected item'));
-        var hdr = el('div', 'ctx-sel-hdr');
-        hdr.appendChild(el('span', 'li-kind ' + selIt.kind, selIt.kind));
-        hdr.appendChild(el('span', 'ctx-sel-text', selIt.text));
-        ss.appendChild(hdr);
-        if (selIt.details && typeof selIt.details === 'object') {
-          ss.appendChild(renderItemDetails(selIt.details, treeOf(n), selIt.text));
-        } else {
-          ss.appendChild(el('div', 'muted', 'no rich details on this item yet'));
-        }
-        body.appendChild(ss);
-      }
-    }
-
-    // open items (summary -> full, OQ-3 layered)
-    var open = (n.items || []).filter(function (it) { return isWaiting(it); });
-    var s3 = el('div', 'ctx-sec'); s3.appendChild(el('h4', null, 'Open items (' + open.length + ')'));
-    var showN = ctxExpanded ? open.length : Math.min(3, open.length);
-    open.slice(0, showN).forEach(function (it) {
-      var d = el('div', 'ctx-item', '[' + it.kind + '] ' + it.text +
-        (it.deferred ? '  (deferred)' : '') + (it.contested ? '  (contested)' : ''));
-      // v1.1.2 item 20 DROPPED: the maintainer is comfortable with "promote
-      // to branch" now that the affordance is understood — label reverted to
-      // the original wording. item 22's scope-up purple (.btn-up) STAYS;
-      // event type stays `promoted` (ADR-032 schema frozen).
-      var pr = el('button', 'btn-up', 'promote to branch');
-      pr.style.marginLeft = '0.4rem';
-      pr.addEventListener('click', function () {
-        post({ type: 'promoted', node_id: n.node_id, item_id: it.item_id, new_node_id: uid('n') }, 'promoted to branch');
-      });
-      d.appendChild(pr);
-      s3.appendChild(d);
-    });
-    if (open.length > showN || (ctxExpanded && open.length > 3)) {
-      var more = el('div', 'ctx-more', ctxExpanded ? 'show less' : 'show all ' + open.length + ' — fuller context');
-      more.addEventListener('click', function () { ctxExpanded = !ctxExpanded; openCtx(id); });
-      s3.appendChild(more);
-    }
-    body.appendChild(s3);
-
-    // cross-links (FR-3) + add cross-link
-    var s4 = el('div', 'ctx-sec'); s4.appendChild(el('h4', null, 'Cross-links'));
-    (n.cross_links || []).forEach(function (cl) {
-      var chip = el('span', 'xlink-chip', (cl.tag || 'link') + ' → ' + (byId(cl.to) ? byId(cl.to).title : cl.to));
-      chip.addEventListener('click', function () { if (byId(cl.to)) focusNode(cl.to); });
-      s4.appendChild(chip); s4.appendChild(document.createTextNode(' '));
-    });
-    var addL = el('button', 'btn-info outline', '+ cross-link');
-    addL.addEventListener('click', function () {
-      var to = prompt('Link to which node_id? (cross-tree allowed)');
-      if (!to) return;
-      var tag = prompt('Link tag / relationship:', 'related');
-      post({ type: 'cross-linked', from_node: n.node_id, to_node: to.trim(), tag: (tag || 'related').trim() }, 'cross-linked');
-    });
-    s4.appendChild(document.createElement('br')); s4.appendChild(addL);
-    body.appendChild(s4);
-
-    // v1.1.2 item 35 — Staged Note IS now a real (opt-in) message-relay
-    // channel (the v1.1 reader hook surfaces branch-note-add events to
-    // Dispatch on the next prompt). Keep the scratchpad: "stage and save"
-    // still works for in-progress thoughts. The old warning label is dropped
-    // (no longer accurate now that the reader is live). Add explicit
-    // "Send to Dispatch" button (emits branch-note-add).
-    var s5 = el('div', 'ctx-sec'); s5.appendChild(el('h4', null, 'Staged note · send to Dispatch'));
-    var ta = el('textarea', 'draft-area');
-    ta.value = (localStorage.getItem('ctree-draft-' + id) != null)
-      ? localStorage.getItem('ctree-draft-' + id) : (n.draft || '');
-    ta.addEventListener('input', function () { localStorage.setItem('ctree-draft-' + id, ta.value); });
-    s5.appendChild(ta);
-    // "✓ sent at <ts>" indicator (item 35) — shows the most recent send for
-    // this branch if any. Misha can amend + Send again; latest is what the
-    // reader surfaces on the next Dispatch turn.
-    if (n.last_sent_note) {
-      var sentInd = el('div', 'muted');
-      sentInd.textContent = '✓ last sent at ' + fmtTime(n.last_sent_note.ts);
-      sentInd.style.fontSize = '0.72rem';
-      s5.appendChild(sentInd);
-    }
-    var dr = el('div', 'row');
-    var send = el('button', 'btn-go', 'Send to Dispatch');
-    send.title = 'Emit a branch-note-add event — the reader hook surfaces it to the orchestrator on the next Dispatch turn.';
-    // "Clear after send" checkbox (default unchecked per spec — keeps note visible).
-    var clearLbl = el('label');
-    clearLbl.style.fontSize = '0.72rem'; clearLbl.style.display = 'flex';
-    clearLbl.style.alignItems = 'center'; clearLbl.style.gap = '0.25rem';
-    var clearCb = el('input'); clearCb.type = 'checkbox';
-    clearLbl.appendChild(clearCb); clearLbl.appendChild(document.createTextNode(' clear after send'));
-    send.addEventListener('click', function () {
-      var txt = (ta.value || '').trim();
-      if (!txt) { ta.focus(); return; }
-      post({ type: 'branch-note-add', target: id, note_text: txt }, 'sent to Dispatch')
-        .then(function (ok) {
-          if (!ok) return;
-          if (clearCb.checked) {
-            localStorage.removeItem('ctree-draft-' + id);
-            ta.value = '';
-            post({ type: 'draft-cleared', node_id: id }, null, true);
-          }
-        });
-    });
-    var stage = el('button', 'btn-info', 'stage (save draft)');
-    stage.title = 'Persist the staged note WITHOUT sending — useful for in-progress thoughts.';
-    stage.addEventListener('click', function () { post({ type: 'draft-saved', node_id: id, draft_text: ta.value }, 'note staged'); });
-    var copyD = el('button', 'btn-info outline', '⧉ copy');
-    copyD.addEventListener('click', function () { copyHandoff(n.title, [ta.value], id); });
-    var used = el('button', 'btn-del outline', 'mark used / clear');
-    used.addEventListener('click', function () {
-      localStorage.removeItem('ctree-draft-' + id);
-      post({ type: 'draft-cleared', node_id: id }, 'note cleared');
-    });
-    // v2 redesign 2026-05-23 — open the focused composer modal pre-filled
-    // with the currently staged note. Cleaner for long-form composition.
-    var openComp = el('button', 'btn-up outline', '⤴ open composer');
-    openComp.title = 'open the dedicated Send-to-Dispatch composer modal';
-    openComp.addEventListener('click', function () { openDispatchModal(id, n.title, ta.value); });
-    dr.appendChild(send); dr.appendChild(clearLbl); dr.appendChild(stage); dr.appendChild(copyD); dr.appendChild(used); dr.appendChild(openComp);
-    s5.appendChild(dr);
-    body.appendChild(s5);
-
-    // node-level controls: archive / annotate. NO continue/resume anywhere.
-    var s6 = el('div', 'ctx-sec'); s6.appendChild(el('h4', null, 'Node'));
-    var r6 = el('div', 'row');
-    if (n.state === 'archived') {
-      var rest = el('button', 'btn-info', 'restore from archive');
-      rest.addEventListener('click', function () { post({ type: 're-opened', node_id: id }, 'restored'); });
-      r6.appendChild(rest);
-    } else {
-      var arch = el('button', 'btn-del outline', 'archive');
-      arch.title = 'archival never closes a Claude Code session (FR-28)';
-      arch.addEventListener('click', function () {
-        post({ type: 'archived', node_id: id }, 'Archived', true).then(function (ok) {
-          if (!ok) return;
-          snackbar('Archived — Undo?', { kind: 'ok', undo: function () {
-            post({ type: 're-opened', node_id: id }, 'undone — restored', true);
-          } });
-        });
-        closeCtx();
-      });
-      r6.appendChild(arch);
-    }
-    var note = el('button', 'btn-neutral outline', 'annotate');
-    note.addEventListener('click', function () {
-      var t = prompt('Annotation (lifecycle trail / FR-12):'); if (!t) return;
-      post({ type: 'annotated', node_id: id, text: t }, 'annotated');
-    });
-    r6.appendChild(note);
-    s6.appendChild(r6);
-    s6.appendChild(el('div', 'handoff-explain',
-      'This tracker doesn’t run Claude — open Dispatch and continue there; this node now tracks it.'));
-    body.appendChild(s6);
-
-    ctxPanel.appendChild(body);
-  }
-
-  // ---- D1 auto-conclude (only when the full checklist is checked) ------
-  function maybeAutoConclude(nodeId) {
-    var n = byId(nodeId); if (!n || !n.items || n.items.length === 0) return;
-    var allChecked = n.items.every(function (it) { return it.checked && !it.contested; });
-    if (allChecked && n.state === 'open') {
-      post({ type: 'concluded', node_id: nodeId }, 'branch concluded');
-    }
-  }
-
-  // ---- persistent in-GUI notifications (BF-6 / DEC-B) ------------------
-  // v1.1.3+ (2026-05-23): auto-dismiss for non-hot notes, cap-3 visible
-  // non-hot, group similar (e.g., "5 branches under 'X' concluded"). Hot
-  // notes (action-due, deferred-due) always persist and never count against
-  // the cap — they represent things the user must act on.
-  //
-  // Signature backward-compat: pushNote(key, msg, hotBool)  →  legacy.
-  //                            pushNote(key, msg, opts)     →  options:
-  //   { hot: bool, groupKey: string, groupRender: fn(count, latest) }
-  // When groupKey is set, multiple pushNote calls sharing the same groupKey
-  // collapse into a single note whose body is groupRender(count, latestMsg).
-  var NOTE_AUTO_DISMISS_MS = 5000;
-  var NOTE_VISIBLE_CAP = 3;
-  function pushNote(key, msg, optsOrHot) {
-    var opts = (typeof optsOrHot === 'object' && optsOrHot !== null)
-      ? optsOrHot : { hot: !!optsOrHot };
-    var hot = !!opts.hot;
-    var groupKey = opts.groupKey || null;
-    var groupRender = typeof opts.groupRender === 'function' ? opts.groupRender : null;
-    var durationMs = typeof opts.durationMs === 'number' ? opts.durationMs : NOTE_AUTO_DISMISS_MS;
-
-    if (dismissed.has(key)) return;
-    // Grouping: if this note has a groupKey and the group node already exists,
-    // bump its counter + refresh content + reset auto-dismiss timer.
-    if (groupKey) {
-      if (dismissed.has(groupKey)) return;
-      var groupNd = noteStack.querySelector('[data-group="' + cssEsc(groupKey) + '"]');
-      if (groupNd) {
-        var count = (parseInt(groupNd.getAttribute('data-count'), 10) || 1) + 1;
-        groupNd.setAttribute('data-count', String(count));
-        var body = groupNd.querySelector('.note-body');
-        if (body) body.textContent = groupRender ? groupRender(count, msg) : (count + 'x: ' + msg);
-        _scheduleAutoDismiss(groupNd, hot, durationMs);
-        return;
-      }
-    }
-    // Idempotency on key.
-    var existing = noteStack.querySelector('[data-k="' + cssEsc(key) + '"]');
-    if (existing) return;
-
-    var nd = el('div', 'note' + (hot ? ' hot' : ''));
-    nd.setAttribute('data-k', key);
-    if (groupKey) {
-      nd.setAttribute('data-group', groupKey);
-      nd.setAttribute('data-count', '1');
-    }
-    var x = el('button', 'ghost dismiss', '✕');
-    x.addEventListener('click', function () {
-      if (nd._t) { clearTimeout(nd._t); nd._t = null; }
-      dismissed.add(key);
-      if (groupKey) dismissed.add(groupKey);
-      nd.remove();
-    });
-    nd.appendChild(x);
-    var bodySpan = el('span', 'note-body');
-    bodySpan.textContent = msg;
-    nd.appendChild(bodySpan);
-    noteStack.appendChild(nd);
-
-    _enforceCap();
-    _scheduleAutoDismiss(nd, hot, durationMs);
-  }
-  // Reset (or set) the auto-dismiss timer on a note. Hot notes never auto-dismiss.
-  function _scheduleAutoDismiss(nd, hot, durationMs) {
-    if (hot) return;
-    if (nd._t) { clearTimeout(nd._t); }
-    nd._t = setTimeout(function () {
-      // Auto-dismiss: do NOT add to `dismissed` Set (we want the underlying
-      // event to be able to re-surface later if it recurs — though the
-      // seenConcluded / firedDefers Sets at the call site already prevent
-      // re-firing for the same node, this keeps the auto-dismiss path from
-      // permanently suppressing genuinely-new events).
-      if (nd.parentNode) nd.parentNode.removeChild(nd);
-    }, durationMs);
-  }
-  // Cap visible non-hot notes. Hot notes persist regardless.
-  function _enforceCap() {
-    var notes = noteStack.querySelectorAll('.note');
-    var nonHot = [];
-    for (var i = 0; i < notes.length; i++) {
-      if (!notes[i].classList.contains('hot')) nonHot.push(notes[i]);
-    }
-    // Remove oldest non-hot notes until at-or-below the cap. Oldest = first
-    // in DOM order (appendChild order).
-    while (nonHot.length > NOTE_VISIBLE_CAP) {
-      var victim = nonHot.shift();
-      if (victim._t) { clearTimeout(victim._t); victim._t = null; }
-      if (victim.parentNode) victim.parentNode.removeChild(victim);
-    }
-  }
-  function detectConcludeNotifications() {
-    nodes().forEach(function (n) {
-      if (n.state === 'concluded' && !seenConcluded.has(n.node_id)) {
-        seenConcluded.add(n.node_id);
-        if (primed && n.parent_id) {
-          var p = byId(n.parent_id);
-          var parentTitle = p ? p.title : n.parent_id;
-          var branchTitle = n.title || n.node_id;
-          // Group concluded notifications by parent so a burst of sibling
-          // branches concluding shows as "5 branches under 'X' concluded —
-          // most recent: 'Y'" rather than 5 separate toasts.
-          pushNote('concl-' + n.node_id,
-            'Branch "' + branchTitle + '" concluded — parent "' +
-            parentTitle + '" notified.',
-            { hot: false, groupKey: 'concl-parent-' + n.parent_id,
-              groupRender: function (parentTitleCaptured) {
-                return function (count, latest) {
-                  if (count === 1) return latest;
-                  return count + ' branches under "' + parentTitleCaptured +
-                    '" concluded — most recent: "' + branchTitle + '"';
-                };
-              }(parentTitle) });
-        }
-      }
-    });
-    primed = true;
-  }
-  function fmtTime(t) { try { return new Date(t).toLocaleString(); } catch (_) { return String(t); } }
-  // D3: at the scheduled time, highlight + notify exactly ONCE; do nothing
-  // else (no auto-clear, no auto-move, no auto-act).
-  function checkDefers() {
-    var now = Date.now();
-    nodes().forEach(function (n) {
-      (n.items || []).forEach(function (it) {
-        if (it.deferred && it.scheduled_for) {
-          var due = Date.parse(it.scheduled_for);
-          var key = n.node_id + ':' + it.item_id + ':' + it.scheduled_for;
-          if (!isNaN(due) && due <= now && !firedDefers.has(key)) {
-            firedDefers.add(key);
-            localStorage.setItem('ctree-fired', JSON.stringify([].slice.call(firedDefers)));
-            pushNote('defer-' + key,
-              'Deferred item due: "' + it.text + '" (' + crumb(n.node_id) + '). ' +
-              'It stays on your list, tagged — nothing was moved or cleared.', true);
-          }
-        }
-      });
-    });
-  }
-
-  // ---- project (tree) selector (D5) ------------------------------------
-  function syncTreeSelect() {
-    var trees = nodeTrees();
-    clear(treeSelect);
-    trees.forEach(function (t) {
-      var o = el('option', null, t === 'global' ? 'global (cross-cutting)' : t);
-      o.value = t; if (t === activeTree) o.selected = true;
-      treeSelect.appendChild(o);
-    });
-    if (trees.indexOf(activeTree) === -1) { activeTree = 'global'; }
-  }
-  treeSelect.addEventListener('change', function () {
-    activeTree = treeSelect.value; localStorage.setItem('ctree-active', activeTree);
-    closeCtx();
-  });
-  addProjBtn.addEventListener('click', function () {
-    var name = prompt('New project tree name (user-directed; no auto-discovery):');
-    if (!name || !name.trim()) return;
-    name = name.trim();
-    var ps = JSON.parse(localStorage.getItem('ctree-projects') || '[]');
-    if (ps.indexOf(name) === -1) ps.push(name);
-    localStorage.setItem('ctree-projects', JSON.stringify(ps));
-    activeTree = name; localStorage.setItem('ctree-active', name);
-    syncTreeSelect(); render();
-  });
-  showArchived.addEventListener('change', render);
-  actionsSort.addEventListener('change', renderActions);
-  backlogSort.addEventListener('change', renderBacklog);
-
-  // ---- item 3: hide-concluded toggle (localStorage UI-pref) ------------
-  function applyShowConcluded() {
-    showConcludedPref = !!showConcluded.checked;
-    localStorage.setItem('ctree-show-concluded', showConcludedPref ? '1' : '0');
-    render();
-  }
-  showConcluded.checked = showConcludedPref;       // default OFF = hide
-  showConcluded.addEventListener('change', applyShowConcluded);
-
-  // ---- item 2: ctx overlay dismiss — click-outside + Esc ---------------
-  ctxScrim.addEventListener('click', closeCtx);
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && !ctxPanel.hidden) closeCtx();
   });
 
-  // ---- v3 accordion 2026-05-27: stacked-panel collapse + drawer toggle --
-  // The right panel hosts Waiting / Backlog / Decisions / Questions as a
-  // vertical accordion. Each .apanel has a clickable header (.apanel-head)
-  // that toggles the panel's .collapsed class. Per-panel collapse state
-  // persists via localStorage so the operator's layout survives reload.
-  // Drawer state (whole-panel show/hide) remains class-based on <body>:
-  // `.side-open` / `.side-hidden`.
-  var PANEL_KEY_PREFIX = 'ctree-panel-';     // per-panel collapse key (e.g. ctree-panel-waiting-collapsed)
-  var SIDE_KEY = 'ctree-side';
-  function panelCollapseKey(name) { return PANEL_KEY_PREFIX + name + '-collapsed'; }
-  function applyPanelCollapse(section, name, collapsed) {
-    section.classList.toggle('collapsed', !!collapsed);
-    var head = section.querySelector('.apanel-head');
-    if (head) head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-    localStorage.setItem(panelCollapseKey(name), collapsed ? '1' : '0');
-  }
-  function togglePanel(name) {
-    var section = paneStack && paneStack.querySelector('section.apanel[data-panel="' + name + '"]');
-    if (!section) return;
-    var nowCollapsed = !section.classList.contains('collapsed');
-    applyPanelCollapse(section, name, nowCollapsed);
-    // clear "+N new" badges when the operator looks at the relevant panel
-    if (!nowCollapsed) {
-      if (name === 'waiting') clearNewBadge('a');
-      if (name === 'backlog') clearNewBadge('b');
+  // ---- adjustable divider (persists workstreams.paneSplit) -------------
+  (function dividerSetup() {
+    var saved = parseFloat(localStorage.getItem('workstreams.paneSplit'));
+    if (!isNaN(saved) && saved > 15 && saved < 85) setSplit(saved);
+    var dragging = false;
+    function setSplit(pct) {
+      layout.style.setProperty('--tree-w', pct + '%');
     }
-  }
-  // Boot: read persisted per-panel collapse state; default to expanded.
-  if (paneStack) {
-    [].forEach.call(paneStack.querySelectorAll('section.apanel[data-panel]'), function (section) {
-      var name = section.getAttribute('data-panel');
-      var saved = localStorage.getItem(panelCollapseKey(name));
-      applyPanelCollapse(section, name, saved === '1');
-    });
-    // Click on the .apanel-head (or any descendant non-control) toggles the panel.
-    paneStack.addEventListener('click', function (e) {
-      var head = e.target.closest('.apanel-head[data-panel-toggle]');
-      if (!head) return;
-      // Inline controls (selects, buttons inside the header) stop propagation
-      // via their own onclick="event.stopPropagation()" attributes — but
-      // defensive guard here too in case any control is added without that.
-      if (e.target.closest('select, .apanel-action, .apanel-sort')) return;
-      togglePanel(head.getAttribute('data-panel-toggle'));
-    });
-  }
-
-  // Side panel open / close / drawer state. Class-based:
-  //   .side-open   — drawer is slid in (meaningful only at <1024px width)
-  //   .side-hidden — explicitly hidden at wide widths (peek pill returns it)
-  // Default: at wide widths the panel is in the persistent grid (no class);
-  // at narrow widths the drawer starts closed (peek visible). Persisted
-  // 'hidden' state is honored on reload at any width.
-  function applySideState(state) {
-    if (state !== 'hidden' && state !== 'open') state = 'visible';
-    document.body.classList.remove('side-open', 'side-hidden');
-    if (state === 'hidden') {
-      document.body.classList.add('side-hidden');
-      panePeek.hidden = false;
-      panePeekLabel.textContent = 'Panels';
-    } else if (state === 'open') {
-      document.body.classList.add('side-open');
-      panePeek.hidden = true;
-    } else {
-      // visible — wide-mode default (no class needed, persistent grid column)
-      panePeek.hidden = true;
+    function pctFromEvent(clientX) {
+      var rect = layout.getBoundingClientRect();
+      return Math.max(18, Math.min(80, ((clientX - rect.left) / rect.width) * 100));
     }
-    localStorage.setItem(SIDE_KEY, state === 'hidden' ? 'hidden' : 'visible');
-  }
-  // Boot the side state. Saved 'hidden' wins everywhere; otherwise at
-  // narrow widths start with the drawer closed (peek pill is the way in),
-  // and at wide widths show the persistent column.
-  var savedSide = localStorage.getItem(SIDE_KEY);
-  if (savedSide === 'hidden') applySideState('hidden');
-  else if (window.innerWidth < 1024) {
-    // narrow: drawer closed → no .side-open class, peek visible
-    panePeek.hidden = false;
-    panePeekLabel.textContent = 'Panels';
-  } else {
-    applySideState('visible');
-  }
-  paneToggle.addEventListener('click', function () {
-    if (window.innerWidth >= 1024) {
-      applySideState(document.body.classList.contains('side-hidden') ? 'visible' : 'hidden');
-    } else {
-      // narrow: toggle drawer open/closed
-      if (document.body.classList.contains('side-open')) {
-        document.body.classList.remove('side-open');
-        panePeek.hidden = false;
-      } else {
-        document.body.classList.add('side-open');
-        panePeek.hidden = true;
-      }
-    }
-  });
-  rightClose.addEventListener('click', function () {
-    if (window.innerWidth >= 1024) applySideState('hidden');
-    else {
-      document.body.classList.remove('side-open');
-      panePeek.hidden = false;
-      panePeekLabel.textContent = 'Panels';
-    }
-  });
-  panePeek.addEventListener('click', function () {
-    if (window.innerWidth >= 1024) applySideState('visible');
-    else { document.body.classList.add('side-open'); panePeek.hidden = true; }
-  });
-  // re-evaluate on viewport-width crossing the 1024 threshold so the user
-  // does not get stuck in a state that no longer makes sense.
-  window.addEventListener('resize', function () {
-    if (window.innerWidth < 1024) {
-      // entering narrow: if not explicitly open as drawer, ensure peek shows
-      if (!document.body.classList.contains('side-open')) {
-        panePeek.hidden = false;
-      }
-    } else {
-      // entering wide: re-apply persisted hidden/visible
-      var s = localStorage.getItem(SIDE_KEY);
-      applySideState(s === 'hidden' ? 'hidden' : 'visible');
-    }
-  });
-
-  // item 8: looking at a pane (scroll or click within it) clears its badge.
-  actionsBody.addEventListener('scroll', function () { clearNewBadge('a'); });
-  actionsBody.addEventListener('click', function () { clearNewBadge('a'); });
-  backlogBody.addEventListener('scroll', function () { clearNewBadge('b'); });
-  backlogBody.addEventListener('click', function () { clearNewBadge('b'); });
-
-  // ---- v2 redesign 2026-05-23: Send-to-Dispatch composer modal ---------
-  var dispatchTargetId = null;
-  function openDispatchModal(nodeId, title, prefill) {
-    dispatchTargetId = nodeId;
-    dispatchTarget.textContent = title || nodeId;
-    dispatchText.value = (prefill != null && prefill !== '')
-      ? prefill
-      : (localStorage.getItem('ctree-draft-' + nodeId) || '');
-    dispatchClearAfter.checked = false;
-    dispatchScrim.hidden = false;
-    dispatchModal.hidden = false;
-    setTimeout(function () { dispatchText.focus(); }, 0);
-  }
-  function closeDispatchModal() {
-    dispatchModal.hidden = true;
-    dispatchScrim.hidden = true;
-    dispatchTargetId = null;
-  }
-  dispatchClose.addEventListener('click', closeDispatchModal);
-  dispatchCancel.addEventListener('click', closeDispatchModal);
-  dispatchScrim.addEventListener('click', closeDispatchModal);
-  dispatchSend.addEventListener('click', function () {
-    if (!dispatchTargetId) return;
-    var txt = (dispatchText.value || '').trim();
-    if (!txt) { dispatchText.focus(); return; }
-    var clearAfter = !!dispatchClearAfter.checked;
-    var nid = dispatchTargetId;
-    post({ type: 'branch-note-add', target: nid, note_text: txt }, 'sent to Dispatch')
-      .then(function (ok) {
-        if (!ok) return;
-        if (clearAfter) {
-          localStorage.removeItem('ctree-draft-' + nid);
-          post({ type: 'draft-cleared', node_id: nid }, null, true);
-        }
-        closeDispatchModal();
-      });
-  });
-  dispatchStage.addEventListener('click', function () {
-    if (!dispatchTargetId) return;
-    post({ type: 'draft-saved', node_id: dispatchTargetId, draft_text: dispatchText.value }, 'note staged')
-      .then(function (ok) { if (ok) closeDispatchModal(); });
-  });
-
-  // ---- pan/zoom (C2) ---------------------------------------------------
-  zoomIn.addEventListener('click', function () { zoom = Math.min(2, zoom + 0.1); renderTree(); });
-  zoomOut.addEventListener('click', function () { zoom = Math.max(0.4, zoom - 0.1); renderTree(); });
-  // item 4: true fit-to-viewport. Measure the tree's NATURAL (zoom==1)
-  // bounding box, derive the scale that fits it inside the visible tree-pane
-  // area with a small padding margin, apply scale + scroll to origin. Works
-  // with no node selected (the old impl no-op'd without a selection).
-  fitSel.addEventListener('click', function () {
-    if (!loaded || visibleNodes().length === 0) return;
-    var pT = treeCanvas.style.transform, pW = treeCanvas.style.width;
-    treeCanvas.style.transform = 'scale(1)';
-    treeCanvas.style.width = '100%';
-    // read layout metrics at natural scale (transform does not affect them)
-    var cw = treeCanvas.scrollWidth, ch = treeCanvas.scrollHeight;
-    var vw = treeScroll.clientWidth, vh = treeScroll.clientHeight;
-    if (!cw || !ch || !vw || !vh) { treeCanvas.style.transform = pT; treeCanvas.style.width = pW; return; }
-    var z = Math.min(vw / cw, vh / ch) * 0.96;          // 4% padding
-    z = Math.max(0.15, Math.min(2, z));                 // fit may zoom further out than +/-
-    zoom = z;
-    renderTree();                                       // applies scale + width:(100/zoom)%
-    treeScroll.scrollLeft = 0; treeScroll.scrollTop = 0;
-    showToast('fit to view (' + Math.round(z * 100) + '%)', 'ok');
-  });
-  (function () { // drag-to-pan on empty tree space
-    var down = false, sx, sy, sl, st;
-    treeScroll.addEventListener('mousedown', function (e) {
-      if (e.target.closest('.tnode-row')) return;
-      down = true; sx = e.clientX; sy = e.clientY; sl = treeScroll.scrollLeft; st = treeScroll.scrollTop;
-    });
+    divider.addEventListener('mousedown', function () { dragging = true; document.body.style.userSelect = 'none'; });
     window.addEventListener('mousemove', function (e) {
-      if (!down) return;
-      treeScroll.scrollLeft = sl - (e.clientX - sx);
-      treeScroll.scrollTop = st - (e.clientY - sy);
+      if (!dragging) return;
+      var pct = pctFromEvent(e.clientX);
+      setSplit(pct);
     });
-    window.addEventListener('mouseup', function () { down = false; });
+    window.addEventListener('mouseup', function () {
+      if (!dragging) return;
+      dragging = false; document.body.style.userSelect = '';
+      var cur = layout.style.getPropertyValue('--tree-w');
+      if (cur) localStorage.setItem('workstreams.paneSplit', parseFloat(cur));
+    });
+    divider.addEventListener('keydown', function (e) {
+      var cur = parseFloat(layout.style.getPropertyValue('--tree-w')) || 42;
+      if (e.key === 'ArrowLeft') { cur = Math.max(18, cur - 2); }
+      else if (e.key === 'ArrowRight') { cur = Math.min(80, cur + 2); }
+      else return;
+      setSplit(cur); localStorage.setItem('workstreams.paneSplit', cur); e.preventDefault();
+    });
   })();
-
-  // ---- top-level render ------------------------------------------------
-  function render() {
-    var corrupt = renderCorrupt();
-    syncTreeSelect();
-    if (corrupt && (!S || (!S.nodes || S.nodes.length === 0))) {
-      // corruption with no last-good content: panes show first-run, banner
-      // carries the truth — never a blank screen (UX-I4).
-    }
-    renderTree();
-    renderActions();
-    renderDecisions();
-    renderQuestions();
-    renderBacklog();
-    if (sel && !ctxPanel.hidden) openCtx(sel);
-  }
 
   // ---- SSE connection (read half of the file contract) -----------------
   function connect() {
@@ -2175,25 +761,15 @@
     es.addEventListener('state', function (e) {
       try { S = JSON.parse(e.data); } catch (err) { return; }
       loaded = true;
-      lastRead.textContent = 'last read ' + new Date().toLocaleTimeString();
       statusEl.textContent = 'live'; statusEl.classList.add('live');
-      detectConcludeNotifications();
-      checkDefers();
       render();
     });
     es.onerror = function () {
       statusEl.textContent = 'reconnecting…'; statusEl.classList.remove('live');
     };
   }
-  setInterval(checkDefers, 30000); // D3 scheduled-time poll
 
-  // Freshness badge: polls /api/health every 30s and shows two ages:
-  //   • state age   — how long since the tree-state file changed
-  //   • heartbeat   — how long since the scheduled heartbeat task last ran
-  // If heartbeat is stale (>10 min, per server's heartbeat_stale flag) the
-  // badge turns red so the operator immediately sees that the auto-update
-  // mechanism has stopped. This is the load-bearing "can I trust this tree?"
-  // signal — without it, the tree can sit silently broken for days.
+  // ---- freshness badge -------------------------------------------------
   function fmtAge(sec) {
     if (sec == null) return '—';
     if (sec < 60) return sec + 's';
@@ -2205,21 +781,16 @@
     if (!freshnessEl) return;
     fetch('/api/health', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (h) {
       if (!h || !h.ok) { freshnessEl.textContent = 'health?'; freshnessEl.className = 'freshness stale'; return; }
-      var sAge = fmtAge(h.state_age_seconds);
-      var hAge = fmtAge(h.heartbeat_age_seconds);
-      freshnessEl.textContent = 'tree ' + sAge + ' • hb ' + hAge;
+      freshnessEl.textContent = 'state ' + fmtAge(h.state_age_seconds) + ' • hb ' + fmtAge(h.heartbeat_age_seconds);
       freshnessEl.className = 'freshness' + (h.heartbeat_stale ? ' stale' : '');
-      freshnessEl.title = (h.heartbeat_stale
-        ? 'WARNING: heartbeat has not fired in over 10 minutes — the tree may be missing recent activity. '
-        : 'Tree state file: changed ' + sAge + ' ago. Heartbeat: ran ' + hAge + ' ago. ')
-        + 'Heartbeat scheduled task: ConversationTreeUI-Heartbeat (every 5 min).';
     }).catch(function () {
-      freshnessEl.textContent = 'health err';
-      freshnessEl.className = 'freshness stale';
+      freshnessEl.textContent = 'health err'; freshnessEl.className = 'freshness stale';
     });
   }
   setInterval(pollHealth, 30000);
   pollHealth();
 
+  // initial chip-active paint, then connect
+  updateChipCounts();
   connect();
 })();

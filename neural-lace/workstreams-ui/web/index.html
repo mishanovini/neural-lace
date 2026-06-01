@@ -3,214 +3,99 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Conversation Tree</title>
+  <title>Workstreams</title>
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+  <!-- Workstreams (formerly Conversation Tree) — v2 work-first reframe
+       2026-05-30. Left: four-tier Project → Workstream → WorkItem → Sub-task
+       hierarchy with focus-project default expansion. Right: filter-driven
+       single pane with a detail card on selection. Adjustable divider between
+       the two, persisted to localStorage. The GUI is a passive observer
+       (ADR-031 Option 2): it reads the file-mediated state via SSE and writes
+       GUI mutations as single appended events through POST /api/event. It
+       NEVER spawns / feeds / steers a Claude Code session. -->
   <header>
-    <h1>Conversation Tree</h1>
-    <label class="proj-wrap">tree
-      <select id="treeSelect" aria-label="active project tree"></select>
-    </label>
-    <button id="addProjBtn" class="btn-neutral outline" title="add a project tree">+ project</button>
+    <h1>Workstreams</h1>
     <label class="archtoggle"><input type="checkbox" id="showArchived"> show archived</label>
     <span class="spacer"></span>
-    <button id="docsBtn" class="ghost" title="browse docs across projects">📁 Docs</button>
-    <!-- v3 accordion 2026-05-27: explicit toggle to open/close the right side panel.
-         Always visible; the panel itself collapses to a drawer at <1024px wide. -->
-    <button id="paneToggle" class="ghost" aria-label="toggle side panel" title="show / hide the side panel (drawer at narrow widths)">⇆ panel</button>
-    <span id="lastRead" class="lastread" aria-live="polite">—</span>
-    <span id="freshness" class="freshness" aria-live="polite" title="How recently the tree state file changed AND when the heartbeat last ran. Red if heartbeat is stale (&gt;10min).">—</span>
+    <button id="addBacklogBtn" class="btn-info outline" title="capture a not-yet-started work item">+ capture</button>
+    <span id="freshness" class="freshness" aria-live="polite" title="How recently the state file changed AND when the heartbeat last ran. Red if heartbeat is stale (&gt;10min).">—</span>
     <span id="status" class="status" aria-live="polite">connecting…</span>
   </header>
 
   <!-- Global corruption banner (UX-I4 / C1d). -->
   <div id="corruptBanner" class="banner corrupt" role="alert" hidden></div>
-  <!-- Persistent in-GUI notification stack (BF-6 / DEC-B). -->
-  <div id="noteStack" class="note-stack" aria-live="polite"></div>
-  <!-- Transient saved/error feedback (BF-5). -->
+  <!-- Transient saved/error feedback. -->
   <div id="toast" class="toast" role="status" hidden></div>
 
   <main id="layout">
-    <!-- LEFT: tree pane. Always visible, fixed narrow width, full vertical
-         height, internally scrollable. -->
-    <section id="treePane" class="pane tree-pane" aria-label="conversation tree">
+    <!-- LEFT: four-tier hierarchy. Project (proj-* roots) → Workstream →
+         WorkItem → Sub-task. Sessions (sess-*) are NEVER rendered as their own
+         row — they surface only as provenance in the detail card. Focus
+         project expanded; others collapsed. "Orphans this week" section at the
+         bottom surfaces in-flight work that isn't moving. -->
+    <section id="treePane" class="pane tree-pane" aria-label="workstreams hierarchy">
       <div class="pane-head">
-        <span class="pane-title">Tree</span>
-        <span id="treeCrumb" class="crumb" aria-live="polite">no selection</span>
-        <span class="pane-tools">
-          <label class="viewtoggle" title="show/hide concluded branches">
-            <span class="eye">👁</span>
-            <input type="checkbox" id="showConcluded"> Show concluded
-          </label>
-          <button id="zoomOut" class="ghost" title="zoom out">−</button>
-          <button id="zoomIn" class="ghost" title="zoom in">+</button>
-          <button id="fitSel" class="ghost" title="center on selection">⊙ fit</button>
-        </span>
+        <span class="pane-title">Projects</span>
+        <span id="treeSummary" class="crumb" aria-live="polite"></span>
       </div>
       <div id="treeScroll" class="pane-body tree-scroll">
         <div id="treeCanvas" class="tree-canvas"></div>
+        <div id="orphanSection" class="orphan-section" hidden>
+          <div class="orphan-head">⚠️ Orphans this week <span id="orphanCount" class="count-badge"></span></div>
+          <div id="orphanBody" class="orphan-body"></div>
+        </div>
       </div>
       <div id="treeState" class="pane-state" hidden></div>
     </section>
 
-    <!-- RIGHT: stacked-accordion side panel hosting Waiting / Backlog /
-         Decisions / Questions vertically. Each panel collapses to its header
-         on click; per-panel collapse state persists via localStorage.
-         Persistent column at >=1024px; off-canvas DRAWER at <1024px. -->
-    <aside id="rightPanel" class="side-panel" aria-label="stacked accordion side panel">
-      <div class="rp-head">
-        <span class="rp-title">Panels</span>
-        <button id="rightClose" class="ghost rp-close" aria-label="close side panel" title="hide side panel">✕</button>
+    <!-- Adjustable divider — drag to resize the two panes; width persists to
+         localStorage (key: workstreams.paneSplit). -->
+    <div id="divider" class="divider" role="separator" aria-orientation="vertical"
+         aria-label="resize panes" tabindex="0" title="drag to resize (← / → with keyboard)"></div>
+
+    <!-- RIGHT: filter-driven single pane. The filter chips replace the old
+         stacked Waiting/Backlog/Decisions/Questions accordion. Selecting an
+         item replaces the filtered list with a detail card; deselecting
+         restores the list. Default filter = "Awaiting me" with non-complete
+         states only (shipped/closed hidden until "All" or "Recently shipped"). -->
+    <aside id="sidePanel" class="side-panel" aria-label="filtered work items">
+      <div id="filterBar" class="filter-bar" role="tablist" aria-label="work item filters">
+        <button class="chip" data-filter="awaiting-me"   role="tab">Awaiting me <span class="chip-count" data-count="awaiting-me">0</span></button>
+        <button class="chip" data-filter="in-flight"      role="tab">In flight <span class="chip-count" data-count="in-flight">0</span></button>
+        <button class="chip" data-filter="blocked"        role="tab">Blocked <span class="chip-count" data-count="blocked">0</span></button>
+        <button class="chip" data-filter="recently-shipped" role="tab">Recently shipped <span class="chip-count" data-count="recently-shipped">0</span></button>
+        <button class="chip" data-filter="orphaned"       role="tab">Orphaned <span class="chip-count chip-warn" data-count="orphaned">0</span></button>
+        <button class="chip" data-filter="backlog"        role="tab">Backlog <span class="chip-count" data-count="backlog">0</span></button>
+        <button class="chip" data-filter="all"            role="tab">All <span class="chip-count" data-count="all">0</span></button>
       </div>
-      <div id="paneStack" class="pane-stack">
 
-        <!-- Waiting on You panel -->
-        <section id="actionsPane" class="pane apanel" data-panel="waiting" aria-label="waiting on you">
-          <button class="apanel-head" data-panel-toggle="waiting" aria-expanded="true" type="button">
-            <span class="apanel-chevron" aria-hidden="true">▾</span>
-            <span class="apanel-title">Waiting on you</span>
-            <span id="actionsNewBadge" class="new-badge" aria-live="polite" hidden></span>
-            <span class="apanel-spacer"></span>
-            <label class="sortlbl apanel-sort" title="priority: explicit P1-P5 first; within same priority falls back to type-intrinsic urgency (action > decision > question) then recency. P5 always at bottom." onclick="event.stopPropagation();">sort
-              <select id="actionsSort" aria-label="sort actions" onclick="event.stopPropagation();">
-                <option value="priority">priority</option>
-                <option value="kind">kind</option>
-                <option value="node">branch</option>
-                <option value="deferred">deferred last</option>
-                <option value="manual">manual</option>
-              </select>
-            </label>
-          </button>
-          <div class="apanel-body">
-            <div id="actionsBody" class="pane-body list-body"></div>
-            <div id="actionsState" class="pane-state" hidden></div>
-          </div>
-        </section>
-
-        <!-- Backlog panel -->
-        <section id="backlogPane" class="pane apanel" data-panel="backlog" aria-label="backlog">
-          <button class="apanel-head" data-panel-toggle="backlog" aria-expanded="true" type="button">
-            <span class="apanel-chevron" aria-hidden="true">▾</span>
-            <span class="apanel-title">Backlog</span>
-            <span id="backlogNewBadge" class="new-badge" aria-live="polite" hidden></span>
-            <span class="apanel-spacer"></span>
-            <label class="sortlbl apanel-sort" onclick="event.stopPropagation();">sort
-              <select id="backlogSort" aria-label="sort backlog" onclick="event.stopPropagation();">
-                <option value="priority">priority</option>
-                <option value="date">date</option>
-                <option value="manual">manual</option>
-              </select>
-            </label>
-            <button id="addBacklogBtn" class="ghost apanel-action" title="capture a backlog item" onclick="event.stopPropagation();">+</button>
-          </button>
-          <div class="apanel-body">
-            <div id="backlogCapture" class="capture" hidden>
-              <div class="capture-row">
-                <input id="blText" type="text" placeholder="What's the not-yet-started work?" aria-label="backlog item text">
-                <select id="blPriority" aria-label="priority">
-                  <option value="high">high</option>
-                  <option value="medium" selected>medium</option>
-                  <option value="low">low</option>
-                </select>
-              </div>
-              <!-- v2 redesign UX-VR-13 (2026-05-23): context is now a multi-line
-                   TEXTAREA, not a one-line input. Misha: "Just a title isn't very
-                   useful. The context is critical, and it should open into a
-                   larger textbox, not a single line." -->
-              <textarea id="blContext" placeholder="context — what you know about this, why it matters, any prior decisions or related docs (multi-line, supports markdown-ish prose)" aria-label="context note"></textarea>
-              <div class="capture-row">
-                <button id="blSave" class="btn-go">Add</button>
-                <button id="blCancel" class="ghost">cancel</button>
-              </div>
-            </div>
-            <div id="backlogBody" class="pane-body list-body"></div>
-            <div id="backlogState" class="pane-state" hidden></div>
-          </div>
-        </section>
-
-        <!-- Decisions panel — filtered view of Waiting items where kind=decision -->
-        <section id="decisionsPane" class="pane apanel" data-panel="decisions" aria-label="decisions waiting">
-          <button class="apanel-head" data-panel-toggle="decisions" aria-expanded="true" type="button">
-            <span class="apanel-chevron" aria-hidden="true">▾</span>
-            <span class="apanel-title">Decisions</span>
-            <span id="decisionsCount" class="count-badge" aria-live="polite" hidden></span>
-          </button>
-          <div class="apanel-body">
-            <div id="decisionsBody" class="pane-body list-body"></div>
-            <div id="decisionsState" class="pane-state" hidden></div>
-          </div>
-        </section>
-
-        <!-- Questions panel — filtered view of Waiting items where kind=question -->
-        <section id="questionsPane" class="pane apanel" data-panel="questions" aria-label="questions waiting">
-          <button class="apanel-head" data-panel-toggle="questions" aria-expanded="true" type="button">
-            <span class="apanel-chevron" aria-hidden="true">▾</span>
-            <span class="apanel-title">Questions</span>
-            <span id="questionsCount" class="count-badge" aria-live="polite" hidden></span>
-          </button>
-          <div class="apanel-body">
-            <div id="questionsBody" class="pane-body list-body"></div>
-            <div id="questionsState" class="pane-state" hidden></div>
-          </div>
-        </section>
-
+      <!-- Inline capture form for new backlog items (toggled by + capture). -->
+      <div id="backlogCapture" class="capture" hidden>
+        <input id="blText" type="text" placeholder="What's the not-yet-started work?" aria-label="backlog item text">
+        <textarea id="blContext" placeholder="context — what you know, why it matters, related docs (multi-line)" aria-label="context note"></textarea>
+        <div class="capture-row">
+          <select id="blPriority" aria-label="priority">
+            <option value="high">high</option>
+            <option value="medium" selected>medium</option>
+            <option value="low">low</option>
+          </select>
+          <button id="blSave" class="btn-go">Add</button>
+          <button id="blCancel" class="btn-neutral outline">cancel</button>
+        </div>
       </div>
+
+      <div id="filterBody" class="pane-body list-body" aria-live="polite"></div>
+      <div id="filterState" class="pane-state" hidden></div>
+
+      <!-- Detail card: shown in place of the filtered list when an item is
+           selected (Decisions Log: replaces the filter view; restores on
+           deselect). Carries kind / tier / state / provenance / sub-task
+           rollup / action buttons. -->
+      <div id="detailCard" class="detail-card" hidden></div>
     </aside>
-
-    <!-- Drawer-collapsed peek pill (visible only when side panel is closed
-         in drawer mode or via explicit close). -->
-    <button id="panePeek" class="pane-peek" hidden aria-label="open side panel">
-      <span id="panePeekLabel">Panels</span>
-    </button>
   </main>
-
-  <!-- v2 2026-05-23: Detail surface is a centered MODAL. Modal never shifts
-       the persistent #layout. Dismissible. -->
-  <div id="ctxScrim" class="modal-scrim" hidden></div>
-  <aside id="ctxPanel" class="modal-card ctx-modal" hidden aria-label="node context" role="dialog" aria-modal="true"></aside>
-
-  <!-- Doc viewer: centered modal. -->
-  <div id="docScrim" class="modal-scrim" hidden></div>
-  <div id="docModal" class="modal-card doc-modal" hidden role="dialog" aria-label="document viewer" aria-modal="true">
-    <div class="doc-head">
-      <span class="doc-title" id="docTitle">document</span>
-      <button id="docOpenEditor" class="ghost" title="open in your OS default editor">⧉ Open in editor</button>
-      <button id="docClose" class="ghost" title="close (Esc)">✕</button>
-    </div>
-    <div class="doc-body" id="docBody"></div>
-  </div>
-
-  <!-- Cross-project docs browser: side drawer (navigator, not reading
-       surface — drawer is the right idiom). -->
-  <aside id="docsPanel" hidden aria-label="docs browser">
-    <div class="dp-head">
-      <input id="docsFilter" type="text" placeholder="filter by filename…" aria-label="filter docs">
-      <button id="docsClose" class="ghost" title="close">✕</button>
-    </div>
-    <div class="dp-body" id="docsBody"></div>
-  </aside>
-
-  <!-- v2 2026-05-23: dedicated Send-to-Dispatch composer modal. -->
-  <div id="dispatchScrim" class="modal-scrim" hidden></div>
-  <div id="dispatchModal" class="modal-card dispatch-modal" hidden role="dialog" aria-label="send to dispatch composer" aria-modal="true">
-    <div class="doc-head">
-      <span class="doc-title">Send to Dispatch · <span id="dispatchTarget">—</span></span>
-      <button id="dispatchClose" class="ghost" title="close (Esc)">✕</button>
-    </div>
-    <div class="doc-body">
-      <p class="muted" style="margin-top: 0;">Compose a note to surface on the next Dispatch turn for this branch. The reader hook will deliver it as a <code>branch-note-add</code> event.</p>
-      <textarea id="dispatchText" class="draft-area" style="min-height: 12rem;" aria-label="dispatch message body"></textarea>
-      <label style="display: flex; align-items: center; gap: 0.4rem; margin-top: 0.6rem; font-size: 0.78rem; color: var(--muted);">
-        <input type="checkbox" id="dispatchClearAfter"> clear staged draft after send
-      </label>
-      <div class="row" style="margin-top: 0.8rem;">
-        <button id="dispatchSend" class="btn-go">Send to Dispatch</button>
-        <button id="dispatchStage" class="btn-info outline">Save as staged draft</button>
-        <button id="dispatchCancel" class="btn-neutral outline">Cancel</button>
-      </div>
-    </div>
-  </div>
 
   <script src="/app.js"></script>
 </body>

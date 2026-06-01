@@ -1,24 +1,13 @@
 'use strict';
-/* Conversation Tree UI — v3 responsive-layout regression self-test.
- * Dependency-free (Node stdlib only, no build step, no headless-browser dep).
+/* Workstreams UI — v2 work-first reframe structural regression self-test.
+ * Dependency-free (Node stdlib only; reads the three web/ source files as text
+ * and greps for the load-bearing invariants of the reframe). No build step, no
+ * headless-browser dep — runs in CI. Behavioural rendering against live data is
+ * covered separately (the headless render harness + Misha's browser confirm).
  *
- * V3 accordion redesign (2026-05-27) — per Misha's feedback:
- *   - Tree pane FIXED narrow width (clamp 260-340px), full vertical height,
- *     always visible. Never has content stacked below it.
- *   - ONE side panel right of the tree, hosting Waiting / Backlog /
- *     Decisions / Questions as a VERTICAL ACCORDION (no longer tabs).
- *     Each panel has a clickable header with a chevron; click to collapse to
- *     header-only. All panels start expanded. Per-panel collapse state
- *     persists via localStorage (key prefix: ctree-panel-<name>-collapsed).
- *   - Persistent column at >=1024px; off-canvas DRAWER at <1024px.
- *   - Detail (ex-ctxPanel), Doc viewer, Dispatch composer are CENTERED
- *     MODALS — they NEVER shift the persistent #layout.
- *   - UX-VR-13: backlog context is a multi-line TEXTAREA (not single-line).
- *
- * State model:
- *   .apanel.collapsed                — per-panel collapse state on the section
- *   body.side-open                   — drawer open (only meaningful at <1024px)
- *   body.side-hidden                 — explicitly hidden at wide widths (peek pill returns it)
+ * Supersedes the v3-accordion responsive selftest: the stacked Waiting/Backlog/
+ * Decisions/Questions accordion is gone, replaced by a filter-driven single
+ * pane + detail card + adjustable divider (per workstreams-design-v2).
  *
  * Run: `node web/responsive.selftest.js`. */
 const fs = require('fs');
@@ -35,260 +24,75 @@ function ok(name, cond) {
 }
 const C = css.replace(/\s+/g, ' ');
 
-// --- v2 layout fundamentals ---------------------------------------------
-const bodyBlock = (C.match(/(^|})\s*body\s*\{([^}]*)\}/) || [,, ''])[2];
-ok('R1 body{} no off-screen min-width:1440px / min-height:900px bug',
-  bodyBlock.length > 0
-  && !/min-width:\s*1440px/.test(bodyBlock)
-  && !/min-height:\s*900px/.test(bodyBlock));
-ok('R2 #layout is CSS grid', /#layout\s*\{[^}]*display:\s*grid/.test(C));
+// --- rename ---------------------------------------------------------------
+ok('R1 product renamed to Workstreams (title + h1)',
+  /<title>\s*Workstreams\s*<\/title>/.test(html) && /<h1>\s*Workstreams\s*<\/h1>/.test(html));
 
-// v2 layout: single-row "tree side", no stacking below the tree
-ok('R3 v2: default #layout grid-template-areas is single-row "tree side"',
-  /#layout\s*\{[^}]*grid-template-areas:\s*"tree\s+side"/.test(C)
-  && !/grid-template-areas:\s*"tree\s+tree"\s*"actions/.test(C));
+// --- layout fundamentals --------------------------------------------------
+const bodyBlock = (C.match(/(^|})\s*body\s*\{([^}]*)\}/) || [, , ''])[2];
+ok('R2 body{} no off-screen min-width:1440px / min-height:900px bug',
+  bodyBlock.length > 0 && !/min-width:\s*1440px/.test(bodyBlock) && !/min-height:\s*900px/.test(bodyBlock));
+ok('R3 #layout is CSS grid', /#layout\s*\{[^}]*display:\s*grid/.test(C));
+ok('R4 adjustable divider: grid uses --tree-w + a "divider" grid area',
+  /grid-template-columns:\s*var\(--tree-w[^)]*\)\s*6px\s*1fr/.test(C)
+  && /grid-template-areas:\s*"tree divider side"/.test(C));
+ok('R5 divider element present + draggable (col-resize cursor)',
+  /id="divider"/.test(html) && /#divider[^}]*cursor:\s*col-resize/.test(C));
 
-// v2: tree column narrow + clamped via --tree-col
-ok('R4 v2: tree column is clamp(260px, 22vw, 340px) via --tree-col',
-  /--tree-col:\s*clamp\(260px,\s*22vw,\s*340px\)/.test(C)
-  && /#layout\s*\{[^}]*grid-template-columns:\s*var\(--tree-col\)\s*1fr/.test(C)
-  && !/grid-template-columns:\s*57%\s*43%/.test(C));
+// --- filter-driven side panel (replaces the accordion) --------------------
+const FILTERS = ['awaiting-me', 'in-flight', 'blocked', 'recently-shipped', 'orphaned', 'backlog', 'all'];
+ok('R6 filter chip bar present with all seven filters',
+  /id="filterBar"/.test(html) && FILTERS.every(f => new RegExp('data-filter="' + f + '"').test(html)));
+ok('R7 stacked Waiting/Backlog/Decisions/Questions accordion is GONE',
+  !/data-panel-toggle/.test(html) && !/class="apanel/.test(html) && !/id="paneStack"/.test(html));
+ok('R8 default active filter = awaiting-me (non-complete by default)',
+  /workstreams\.activeFilter['"]\)\s*\|\|\s*['"]awaiting-me['"]/.test(js));
+ok('R9 detail card slot present (replaces filter view on selection)',
+  /id="detailCard"/.test(html) && /\.detail-card\s*\{/.test(C));
 
-// v2: no legacy 1440px Layout-A 3-pane grid
-ok('R5 v2: no @media (min-width:1440px) 3-pane grid override',
-  !/@media \(min-width:\s*1440px\)[^@]*grid-template-areas:\s*"tree\s+actions"\s*"tree\s+backlog"/.test(C));
+// --- wire-check function chains (Tasks 3 / 4 / 5) -------------------------
+const TASK3 = ['renderTree', 'collectWorkstreams', 'renderWorkstream', 'collectWorkItems'];
+const TASK4 = ['setActiveFilter', 'renderFilteredItems', 'applyFilter'];
+const TASK5 = ['renderDetailCard', 'collectProvenance', 'collectSubtasks'];
+function defines(fn) { return new RegExp('function\\s+' + fn + '\\s*\\(').test(js); }
+ok('R10 Task-3 tree chain defined (renderTree → collectWorkstreams → renderWorkstream → collectWorkItems)',
+  TASK3.every(defines));
+ok('R11 Task-4 filter chain defined (setActiveFilter → renderFilteredItems → applyFilter)',
+  TASK4.every(defines));
+ok('R12 Task-5 detail chain defined (renderDetailCard → collectProvenance → collectSubtasks)',
+  TASK5.every(defines));
 
-// v2 drawer mode at <1024px: single-column layout + side panel slides via `right`
-ok('R6 v2: @media (max-width:1023.98px) collapses to single column + drawer slides via right (class-based .side-open)',
-  /@media \(max-width:\s*1023\.98px\)\s*\{[^@]*grid-template-areas:\s*"tree"/.test(C)
-  && /@media \(max-width:\s*1023\.98px\)\s*\{[\s\S]*?#layout \.side-panel\s*\{[^}]*right:\s*calc\(-1 \* min\(var\(--side-panel-w\)/.test(C)
-  && /body\.side-open\s*#layout \.side-panel\s*\{\s*right:\s*0/.test(C));
+// --- four-tier hierarchy + sessions-as-provenance -------------------------
+ok('R13 sessions (sess-*/sub-*) are hidden from the tree (isSession predicate)',
+  /function\s+isSession\s*\([^)]*\)\s*\{[^}]*\/\^\(sess\|sub\)-\//.test(js));
+ok('R14 four-tier render: project rows, workstream rows, tree-item depth classes',
+  /class="proj/.test(js.replace(/'/g, '"')) || /'proj'/.test(js)
+  ? (/['"]proj['"]/.test(js) && /['"]ws['"]/.test(js) && /tree-item d/.test(js)) : false);
+ok('R15 orphan surface present (section + Orphaned filter, session-based)',
+  /id="orphanSection"/.test(html) && /function\s+staleSessions\s*\(/.test(js));
 
-// v3: tabs replaced by accordion; #paneStack contains stacked .apanel sections
-ok('R7 v3: legacy #tabBar AND #paneTabs removed from HTML; #paneStack hosts the accordion',
-  !/id="tabBar"/.test(html)
-  && !/id="paneTabs"/.test(html)
-  && /id="paneStack"/.test(html)
-  && /\.apanel-head\s*\{/.test(C)
-  && /\.apanel\.collapsed\s+\.apanel-body\s*\{\s*display:\s*none/.test(C));
+// --- Phase-1 lifecycle events emitted from the detail card ----------------
+ok('R16 detail card action buttons emit item-shipped / item-blocked / item-committed',
+  /type:\s*['"]item-shipped['"]/.test(js)
+  && /type:\s*['"]item-blocked['"]/.test(js)
+  && /type:\s*['"]item-committed['"]/.test(js));
 
-// v2: no <700 stacking rule (single side panel now, tabs swap)
-ok('R8 v2: no @media max-width:699.98px stacking-actions-over-backlog rule',
-  !/@media \(max-width:\s*699\.98px\)\s*\{[^@]*grid-template-areas:\s*"tree"\s*"actions"\s*"backlog"/.test(C));
+// --- preserved plumbing ----------------------------------------------------
+ok('R17 reads file-contract via SSE (/api/events "state") + writes via POST /api/event',
+  /new EventSource\(['"]\/api\/events['"]\)/.test(js)
+  && /fetch\(['"]\/api\/event['"]/.test(js));
+ok('R18 POST /api/event retried once with backoff (no silent loss)',
+  /attempt\(\s*Math\.min\(delay\s*\*\s*2/.test(js));
+ok('R19 backlog capture: multi-line context TEXTAREA preserved (UX-VR-13)',
+  /<textarea id="blContext"/.test(html) && /type:\s*['"]backlog-added['"]/.test(js));
+ok('R20 localStorage persistence keys for filter + pane split',
+  /workstreams\.activeFilter/.test(js) && /workstreams\.paneSplit/.test(js));
+ok('R21 Option-2 invariant: no spawn/continue/resume/feed affordance',
+  !/\/api\/(spawn|continue|resume|feed|steer)/.test(js));
 
-// v2 modal contract: .modal-card[hidden] hides cleanly; .modal-scrim is fixed
-ok('R9 v2: .modal-card[hidden] overrides display:flex',
-  /\.modal-card\[hidden\]\s*\{\s*display:\s*none\s*!important/.test(C));
-ok('R10 v2: .modal-scrim is a fixed-position backdrop',
-  /\.modal-scrim\s*\{[^}]*position:\s*fixed/.test(C)
-  && /\.modal-scrim\s*\{[^}]*z-index:\s*59/.test(C));
-ok('R11 v2: .modal-card is centered (translate(-50%,-50%)) and does NOT shift #layout',
-  /\.modal-card\s*\{[^}]*top:\s*50%/.test(C)
-  && /\.modal-card\s*\{[^}]*left:\s*50%/.test(C)
-  && /\.modal-card\s*\{[^}]*transform:\s*translate\(-50%,\s*-50%\)/.test(C)
-  // critical regression-guard: NO layout-shift rule
-  && !/body\[data-ctx-pane="open"\]\s*#layout\s*\{[^}]*margin-right/.test(C)
-  && !/body\[data-doc-pane="open"\]\s*#layout\s*\{[^}]*margin-right/.test(C));
-
-ok('R12 .tree-canvas width:100% base (fluid zoom)',
-  /\.tree-canvas\s*\{[^}]*width:\s*100%/.test(C));
-
-// --- HTML structural hooks ----------------------------------------------
-ok('R13 #showConcluded toggle in header', /id="showConcluded"/.test(html));
-ok('R14 v3: accordion panels with data-panel-toggle for waiting/backlog/decisions/questions',
-  /data-panel-toggle="waiting"/.test(html)
-  && /data-panel-toggle="backlog"/.test(html)
-  && /data-panel-toggle="decisions"/.test(html)
-  && /data-panel-toggle="questions"/.test(html)
-  && /data-panel="waiting"/.test(html)
-  && /data-panel="backlog"/.test(html)
-  && /data-panel="decisions"/.test(html)
-  && /data-panel="questions"/.test(html));
-ok('R15 #ctxScrim element present', /id="ctxScrim"/.test(html));
-
-// --- JS behavior hooks --------------------------------------------------
-ok('R16 closeCtx() single dismiss path', /function closeCtx\s*\(\)/.test(js));
-ok('R17 ctxScrim click + Escape wired to closeCtx',
-  /ctxScrim\.addEventListener\('click',\s*closeCtx\)/.test(js)
-  && /e\.key === 'Escape'[^}]*closeCtx/.test(js));
-ok('R18 hide-concluded persisted via localStorage',
-  /localStorage\.setItem\('ctree-show-concluded'/.test(js)
-  && /localStorage\.getItem\('ctree-show-concluded'\)\s*===\s*'1'/.test(js));
-ok('R19 concludedHiddenSet subtree filter',
-  /function concludedHiddenSet\s*\(\)/.test(js) && /allHiddenByConcluded/.test(js));
-ok('R20 Fit measures natural bbox + applies scale + scroll origin',
-  /treeCanvas\.scrollWidth/.test(js) && /treeCanvas\.scrollHeight/.test(js)
-  && /treeScroll\.scrollLeft\s*=\s*0;\s*treeScroll\.scrollTop\s*=\s*0/.test(js));
-ok('R21 zoom reflow sets width:(100/zoom)%',
-  /treeCanvas\.style\.width\s*=\s*\(100\s*\/\s*zoom\)\s*\+\s*'%'/.test(js));
-ok('R22 v3: togglePanel uses .collapsed class on .apanel section + persists per-panel collapse to localStorage',
-  /function togglePanel\s*\(\s*name\s*\)/.test(js)
-  && /function applyPanelCollapse\s*\(/.test(js)
-  && /section\.classList\.toggle\(['"]collapsed['"]/.test(js)
-  && /localStorage\.setItem\(panelCollapseKey\(name\),/.test(js)
-  && /paneStack\.addEventListener\(['"]click['"]/.test(js));
-ok('R22b v2: drawer toggles use class-based state (.side-open / .side-hidden) + paneToggle/rightClose/panePeek wired + resize listener',
-  /function applySideState\s*\(/.test(js)
-  && /classList\.add\('side-(open|hidden)'\)/.test(js)
-  && /paneToggle\.addEventListener\('click'/.test(js)
-  && /rightClose\.addEventListener\('click'/.test(js)
-  && /panePeek\.addEventListener\('click'/.test(js)
-  && /window\.addEventListener\('resize'/.test(js));
-
-const schema = fs.readFileSync(path.join(D, '..', 'state', 'schema.js'), 'utf8');
-const reducer = fs.readFileSync(path.join(D, '..', 'state', 'reducer.js'), 'utf8');
-
-// snackbar + undo + ✕
-ok('R23 snackbar() with undo button + ✕, 10s vs 2.6s timer',
-  /function snackbar\s*\(/.test(js)
-  && /sb-undo/.test(js) && /sb-x/.test(js)
-  && /_pendingUndo\s*\?\s*10000\s*:\s*2600/.test(js));
-ok('R24 ✕ → closeToast clears timer + cancels pending undo',
-  /function closeToast\s*\(\)/.test(js)
-  && /toast\._pendingUndo\s*=\s*null/.test(js)
-  && /x\.addEventListener\('click',\s*closeToast\)/.test(js));
-ok('R25 actWithUndo: leave-anim → silent post → undo snackbar',
-  /function actWithUndo\s*\(/.test(js)
-  && /function animateLeave\s*\(/.test(js)
-  && /reducedMotion\s*\(\)/.test(js));
-ok('R26 list enter/leave/flash keyframes + reduced-motion guard',
-  /@keyframes li-enter/.test(C) && /@keyframes li-leave/.test(C) && /@keyframes li-flash/.test(C)
-  && /@media \(prefers-reduced-motion: reduce\)/.test(C));
-
-ok('R27 per-pane "+N new" badge: spans + diff + clear-on-look',
-  /id="actionsNewBadge"/.test(html) && /id="backlogNewBadge"/.test(html)
-  && /function diffNewIds\s*\(/.test(js) && /function updateNewBadges\s*\(/.test(js)
-  && /clearNewBadge\('a'\)/.test(js) && /\.new-badge/.test(C));
-
-ok('R28 item-details-set additive event',
-  /'item-details-set'/.test(schema)
-  && /'item-details-set':\s*\['node_id',\s*'item_id',\s*'details'\]/.test(schema)
-  && /case 'item-details-set'/.test(reducer));
-ok('R29 rich-details disclosure UI: renderItemDetails + .li-details',
-  /function renderItemDetails\s*\(/.test(js) && /det-toggle/.test(js)
-  && /\.li-details\s*\{/.test(C));
-
-ok('R30 action-responded additive event',
-  /'action-responded'/.test(schema)
-  && /'action-responded':\s*\['node_id',\s*'item_id',\s*'response_text'\]/.test(schema)
-  && /case 'action-responded'/.test(reducer));
-ok('R31 inline Respond UI + responded state + Copy-to-Dispatch',
-  /function respondable\s*\(/.test(js)
-  && /function copyResponseForDispatch\s*\(/.test(js)
-  && /respond-box/.test(js) && /responded — awaiting confirmation/.test(js)
-  && /\.li\.responded\s*\{/.test(C));
-
-ok('R32 item-unchecked additive inverse event',
-  /'item-unchecked'/.test(schema)
-  && /'item-unchecked':\s*\['node_id',\s*'item_id'\]/.test(schema)
-  && /case 'item-unchecked'/.test(reducer)
-  && /type:\s*'item-unchecked'/.test(js));
-
-ok('R33 SCHEMA_VERSION still 1 (all v2 additions are additive)',
-  /const SCHEMA_VERSION\s*=\s*1\s*;/.test(schema));
-
-// ----- v2 redesign 2026-05-23 — modal contract -------------------------
-ok('R57 v2: doc viewer is a CENTERED MODAL (NOT a resizable side drawer) and does NOT shift #layout',
-  /id="docModal"[^>]*class="modal-card doc-modal"/.test(html)
-  && /\.doc-modal\s*\{[^}]*width:\s*min\(820px,\s*92vw\)/.test(C)
-  && !/#docModal\s*\{[^}]*right:\s*0/.test(C)
-  && !/body\[data-doc-pane="open"\]\s*#layout\s*\{[^}]*margin-right/.test(C)
-  && !/document\.body\.dataset\.docPane\s*=\s*'open'/.test(js)
-  && !/function ensureDocResizeHandle\s*\(/.test(js)
-  && !/DOC_PANE_W_KEY/.test(js)
-  && /docScrim\.hidden\s*=\s*false/.test(js));
-
-ok('R66 v2: openCtx does NOT set body.dataset.ctxPane (modal contract — no layout shift)',
-  !/document\.body\.dataset\.ctxPane\s*=\s*['"]open['"]/.test(js));
-ok('R67 v2: closeCtx does NOT touch body.dataset.ctxPane',
-  !/delete document\.body\.dataset\.ctxPane;/.test(js));
-ok('R68 v2: CSS contains NO body[data-ctx-pane=open] #layout margin-shift rule',
-  !/body\[data-ctx-pane="open"\]\s*#layout\s*\{[\s\S]*?margin-right/.test(C));
-ok('R69 v2: ctxPanel uses .modal-card .ctx-modal contract',
-  /class="modal-card ctx-modal"/.test(html)
-  && /\.ctx-modal\s*\{[^}]*width:\s*min\(640px,\s*92vw\)/.test(C)
-  && !/\.ctx-panel[^}]*width:\s*var\(--ctx-pane-w/.test(C));
-ok('R70 v2: dispatch composer modal #dispatchModal exists + wired open/close + branch-note-add emit',
-  /id="dispatchModal"/.test(html)
-  && /id="dispatchScrim"/.test(html)
-  && /function openDispatchModal\s*\(nodeId/.test(js)
-  && /function closeDispatchModal\s*\(\)/.test(js)
-  && /post\(\{\s*type:\s*'branch-note-add'/.test(js)
-  && /dispatchSend\.addEventListener\('click'/.test(js));
-
-ok('R71 v2: tree pane full-height + uses --tree-col fixed-narrow column',
-  /\.tree-pane\s*\{\s*grid-area:\s*tree/.test(C)
-  && /grid-template-rows:\s*1fr/.test(C));
-ok('R72 v2: no #layout grid-template-areas that stacks anything below the tree',
-  !/grid-template-areas:\s*"tree\s+tree"/.test(C)
-  && !/grid-template-areas:\s*"tree"\s+"actions"\s+"backlog"/.test(C)
-  && !/grid-template-areas:\s*"tree"\s+"actions"/.test(C));
-ok('R73 v2: #panePeek peek pill exists + click handler wired',
-  /id="panePeek"/.test(html)
-  && /\.pane-peek\s*\{/.test(C)
-  && /panePeek\.addEventListener\('click'/.test(js));
-ok('R74 v3: per-panel collapse state persists via ctree-panel-<name>-collapsed and reads on boot',
-  /PANEL_KEY_PREFIX\s*=\s*['"]ctree-panel-['"]/.test(js)
-  && /function panelCollapseKey\s*\(\s*name\s*\)/.test(js)
-  && /localStorage\.getItem\(panelCollapseKey\(name\)\)/.test(js));
-
-// ----- v2 redesign UX-VR-13 — context-as-textarea pattern ---------------
-ok('R75 UX-VR-13: schema has additive backlog-context-set event + reducer case',
-  /'backlog-context-set'/.test(schema)
-  && /'backlog-context-set':\s*\['item_id',\s*'context_text'\]/.test(schema)
-  && /case 'backlog-context-set':/.test(reducer));
-ok('R76 UX-VR-13: backlog capture form has a <textarea id="blContext"> (not <input>)',
-  /<textarea id="blContext"/.test(html)
-  && !/<input id="blContext"\s+type="text"/.test(html));
-ok('R77 UX-VR-13: backlog-added carries context_text on capture (reducer persists it on the backlog item)',
-  /post\(\{\s*type:\s*'backlog-added',[\s\S]{0,400}context_text:\s*ctx/.test(js)
-  && /context_text:\s*ctxOnAdd/.test(reducer));
-ok('R78 UX-VR-13: per-item context disclosure + edit textarea + "Add context →" affordance for empty items',
-  /li-context-toggle/.test(js)
-  && /\.li-context-toggle\s*\{/.test(C)
-  && /\.li-context-toggle\.empty/.test(C)
-  && /\+ Add context →/.test(js)
-  && /\.context-area\s*\{[^}]*resize:\s*vertical/.test(C)
-  && /post\(\{\s*type:\s*'backlog-context-set',\s*item_id:\s*b\.item_id,\s*context_text:\s*nv\s*\}/.test(js));
-
-// --- 2026-05-23 toast-stacking fix ------------------------------------------
-// Locks the four invariants of the pushNote refactor: auto-dismiss timer for
-// non-hot notes, visible-cap helper, group-by-key collapse, and backward-
-// compat with the legacy boolean third-arg.
-
-ok('R71 toast-fix: NOTE_AUTO_DISMISS_MS and NOTE_VISIBLE_CAP constants present',
-  /var\s+NOTE_AUTO_DISMISS_MS\s*=\s*\d+/.test(js)
-  && /var\s+NOTE_VISIBLE_CAP\s*=\s*\d+/.test(js));
-
-ok('R72 toast-fix: pushNote signature accepts opts object OR legacy hot boolean',
-  /function pushNote\s*\(\s*key\s*,\s*msg\s*,\s*optsOrHot\s*\)/.test(js)
-  && /typeof\s+optsOrHot\s*===\s*'object'/.test(js)
-  && /opts\.hot/.test(js)
-  && /opts\.groupKey/.test(js));
-
-ok('R73 toast-fix: _scheduleAutoDismiss schedules setTimeout for non-hot, no-op for hot',
-  /function _scheduleAutoDismiss\s*\(\s*nd\s*,\s*hot\s*,\s*durationMs\s*\)\s*\{[\s\S]*?if\s*\(\s*hot\s*\)\s*return;/.test(js)
-  && /nd\._t\s*=\s*setTimeout\s*\(\s*function\s*\(\s*\)\s*\{[\s\S]*?nd\.parentNode\.removeChild\(nd\)/.test(js));
-
-ok('R74 toast-fix: _enforceCap walks .note children, removes oldest non-hot when over cap',
-  /function _enforceCap\s*\(\s*\)/.test(js)
-  && /noteStack\.querySelectorAll\(\s*['"]\.note['"]\s*\)/.test(js)
-  && /nonHot\.length\s*>\s*NOTE_VISIBLE_CAP/.test(js)
-  && /clearTimeout\(victim\._t\)/.test(js));
-
-ok('R75 toast-fix: group-by-key collapse — querySelector data-group, bump data-count, refresh body via groupRender',
-  /noteStack\.querySelector\(\s*['"]\[data-group="['"]\s*\+\s*cssEsc\(groupKey\)/.test(js)
-  && /data-count/.test(js)
-  && /groupRender\s*\?\s*groupRender\(count,\s*msg\)/.test(js));
-
-ok('R76 toast-fix: concluded notifications use groupKey="concl-parent-<parent_id>" + groupRender producing "N branches under" message',
-  /groupKey:\s*['"]concl-parent-['"]\s*\+\s*n\.parent_id/.test(js)
-  && /branches under "/.test(js)
-  && /concluded — most recent:/.test(js));
-
-ok('R77 toast-fix: note body lives in a .note-body child so group-refresh can replace it without touching the dismiss button',
-  /el\(['"]span['"],\s*['"]note-body['"]\)/.test(js)
-  && /querySelector\(['"]\.note-body['"]\)/.test(js));
+// --- narrow-width responsiveness ------------------------------------------
+ok('R22 narrow width (<=860px) stacks the two panes single-column',
+  /@media\s*\(max-width:\s*860px\)[^}]*#layout\s*\{[^}]*grid-template-areas:\s*"tree"\s*"side"/.test(C.replace(/\s+/g, ' ')));
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
