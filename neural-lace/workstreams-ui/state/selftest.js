@@ -720,6 +720,95 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
   finally { cleanup(dir); }
 })();
 
+// ---- P18 Workstreams reframe 2026-05-30 (Phase 1): item-committed /
+//      item-shipped / item-blocked lifecycle transitions + optional tier &
+//      serves_item_id on branch-opened — ADDITIVE within schema major 1
+//      (ADR-032 §1). Covers the plan's Behavioral Contracts (idempotency) and
+//      the Walking Skeleton (item-shipped round-trip + attestation). --------
+(function P18() {
+  const dir = freshDir(); const o = optsFor(dir);
+  try {
+    // (a) optional tier + serves_item_id ride on branch-opened (reducer-read,
+    //     additive). A branch-opened WITHOUT them is unchanged (fields absent).
+    state.appendEvent({ type: 'branch-opened', node_id: 'ws1', parent_id: null, title: 'A Workstream',
+      tier: 'workstream', serves_item_id: 'wi-7' }, o);
+    state.appendEvent({ type: 'branch-opened', node_id: 'plain', parent_id: null, title: 'No tier' }, o);
+    state.appendEvent({ type: 'action-added', node_id: 'ws1', item_id: 'a1', text: 'do work' }, o);
+    state.appendEvent({ type: 'decision-raised', node_id: 'ws1', item_id: 'd1', text: 'pick' }, o);
+    state.appendEvent({ type: 'question-raised', node_id: 'ws1', item_id: 'q1', text: 'which?' }, o);
+
+    const majorStill1 = state.readState(o).schema_version === 1;   // no major bump
+    let s = state.readState(o);
+    const ws1Node = s.snapshot.nodes.find(function (n) { return n.node_id === 'ws1'; });
+    const plainNode = s.snapshot.nodes.find(function (n) { return n.node_id === 'plain'; });
+    const optionalFieldsSet = ws1Node.tier === 'workstream' && ws1Node.serves_item_id === 'wi-7';
+    const optionalFieldsAbsent = plainNode.tier === undefined && plainNode.serves_item_id === undefined;
+
+    // (b) item-committed → state='committed' (+ optional reason)
+    state.appendEvent({ type: 'item-committed', node_id: 'ws1', item_id: 'd1', reason: 'queued for next sprint' }, o);
+    let d1 = state.readState(o).snapshot.nodes.find(function (n) { return n.node_id === 'ws1'; })
+      .items.find(function (x) { return x.item_id === 'd1'; });
+    const committed = d1.state === 'committed' && d1.commit_reason === 'queued for next sprint';
+
+    // (c) item-shipped → state='shipped', checked=true, evidence + shipped_ts
+    //     (the Walking Skeleton round-trip).
+    state.appendEvent({ type: 'item-shipped', node_id: 'ws1', item_id: 'a1', evidence: 'abc1234' }, o);
+    let a1 = state.readState(o).snapshot.nodes.find(function (n) { return n.node_id === 'ws1'; })
+      .items.find(function (x) { return x.item_id === 'a1'; });
+    const shipped = a1.state === 'shipped' && a1.checked === true
+      && a1.ship_evidence === 'abc1234' && typeof a1.shipped_ts === 'string';
+
+    // (d) item-blocked → state='blocked' (+ optional reason)
+    state.appendEvent({ type: 'item-blocked', node_id: 'ws1', item_id: 'q1', reason: 'awaiting API key' }, o);
+    let q1 = state.readState(o).snapshot.nodes.find(function (n) { return n.node_id === 'ws1'; })
+      .items.find(function (x) { return x.item_id === 'q1'; });
+    const blocked = q1.state === 'blocked' && q1.block_reason === 'awaiting API key';
+
+    // (e) LWW on `state`: committed → blocked → shipped on the same item ends shipped.
+    state.appendEvent({ type: 'item-committed', node_id: 'ws1', item_id: 'd1' }, o);
+    state.appendEvent({ type: 'item-blocked', node_id: 'ws1', item_id: 'd1' }, o);
+    state.appendEvent({ type: 'item-shipped', node_id: 'ws1', item_id: 'd1' }, o);
+    d1 = state.readState(o).snapshot.nodes.find(function (n) { return n.node_id === 'ws1'; })
+      .items.find(function (x) { return x.item_id === 'd1'; });
+    const lww = d1.state === 'shipped' && d1.checked === true;
+
+    // (f) idempotency: re-append the SAME event_id ⇒ no-op (snapshot unchanged).
+    const before = state.readState(o);
+    const beforeItems = before.snapshot.nodes.find(function (n) { return n.node_id === 'ws1'; }).items.length;
+    const r1 = state.appendEvent({ event_id: 'FIXED-SHIP-1', type: 'item-shipped', node_id: 'ws1', item_id: 'a1' }, o);
+    const r2 = state.appendEvent({ event_id: 'FIXED-SHIP-1', type: 'item-shipped', node_id: 'ws1', item_id: 'a1' }, o);
+    const after = state.readState(o);
+    const afterItems = after.snapshot.nodes.find(function (n) { return n.node_id === 'ws1'; }).items.length;
+    const idempotent = r1.appended === true && r2.appended === false && r2.idempotentNoop === true
+      && beforeItems === afterItems;
+
+    // (g) unknown item rejected-not-applied (retained in the log — NFR-2).
+    state.appendEvent({ type: 'item-shipped', node_id: 'ws1', item_id: 'nope' }, o);
+    const sr = state.readState(o);
+    const unknownRejected = sr.snapshot.rejections.some(function (rj) {
+      return rj.type === 'item-shipped' && /item not found/.test(rj.reason);
+    }) && sr.events.some(function (e) { return e.type === 'item-shipped' && e.item_id === 'nope'; });
+
+    // (h) attestation: the on-disk snapshot (now carrying the new events) is
+    //     attestation-verified (the §8 path the gate uses) — schema additives
+    //     do not break verifySnapshotAttested.
+    const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    const v = store.verifySnapshotAttested(onDisk);
+
+    const majorStill1After = state.readState(o).schema_version === 1;
+
+    check('P18 Workstreams Phase-1: item-committed/shipped/blocked transitions + optional tier&serves_item_id + LWW + idempotency + unknown-rejected + attestation-verified + schema_version still 1',
+      majorStill1 && optionalFieldsSet && optionalFieldsAbsent && committed && shipped
+        && blocked && lww && idempotent && unknownRejected && v.verified === true
+        && majorStill1After,
+      'major1=' + majorStill1 + ' optSet=' + optionalFieldsSet + ' optAbsent=' + optionalFieldsAbsent
+        + ' committed=' + committed + ' shipped=' + shipped + ' blocked=' + blocked + ' lww=' + lww
+        + ' idempotent=' + idempotent + ' unknownRej=' + unknownRejected + ' verified=' + v.verified
+        + ' major1After=' + majorStill1After);
+  } catch (e) { check('P18 Workstreams Phase-1 lifecycle transitions', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
 process.stdout.write('\nADR-032 state library — property self-test\n');
 process.stdout.write(RESULTS.join('\n') + '\n');
 process.stdout.write('\n' + PASS + ' passed, ' + FAIL + ' failed\n');

@@ -1,5 +1,5 @@
 #!/bin/bash
-# conversation-tree-stop-gate.sh — Stop hook (conversation-tree-ui v1, Task B2)
+# conversation-tree-stop-gate.sh — Stop hook (workstreams-ui v1, Task B2)
 #
 # The SECOND enforcement leg of ADR-031 r7 "Enforcement design". B1's
 # PreToolUse gate (conversation-tree-state-gate.sh) blocks an *individual*
@@ -97,12 +97,12 @@ _resolve_state_lib() {
   fi
   local root=""
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
-    local cand="$root/neural-lace/conversation-tree-ui/state/state.js"
+    local cand="$root/neural-lace/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
-    cand="$root/conversation-tree-ui/state/state.js"
+    cand="$root/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   fi
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/conversation-tree-ui/state/state.js"
+  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/state.js"
 }
 
 WAIVER_GLOB='conv-tree-stop-waiver-*.txt'
@@ -126,8 +126,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
   if ST_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$ST_ROOT" ]]; then :; fi
   ST_LIB=""
   for c in \
-    "$ST_ROOT/neural-lace/conversation-tree-ui/state/state.js" \
-    "$ST_ROOT/conversation-tree-ui/state/state.js"; do
+    "$ST_ROOT/neural-lace/workstreams-ui/state/state.js" \
+    "$ST_ROOT/workstreams-ui/state/state.js"; do
     [[ -f "$c" ]] && { ST_LIB="$c"; break; }
   done
   if [[ -z "$ST_LIB" ]]; then

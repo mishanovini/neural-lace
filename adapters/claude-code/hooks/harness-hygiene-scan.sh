@@ -424,7 +424,9 @@ is_path_shape_exempt() {
     # Dispatch conversation-tree state, so the Layer-2 cluster heuristic
     # false-positives on every file. Structural path-prefix exemption per
     # harness-hygiene.md "How to add false-positive exemptions"; same logic
-    # as adapters/ and build-doctrine/. (conversation-tree-ui-v1 Phase C/D.)
+    # as adapters/ and build-doctrine/. (workstreams-ui, formerly
+    # conversation-tree-ui — both exempted during the 2026-05-30 rename window.)
+    neural-lace/workstreams-ui/*|neural-lace/workstreams-ui) return 0 ;;
     neural-lace/conversation-tree-ui/*|neural-lace/conversation-tree-ui) return 0 ;;
     # The synced `~/.claude/` mirror (when scanning that tree directly).
     *.claude/*|*/.claude/*) return 0 ;;

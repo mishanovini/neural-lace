@@ -1,5 +1,5 @@
 # Plan: Conversation Tree reframe — projects → open pending items, sessions invisible
-Status: ACTIVE
+Status: SUPERSEDED
 Execution Mode: orchestrator
 Mode: code
 tier: 2
@@ -62,6 +62,20 @@ Misha's 2026-05-27 reframe: the Conversation Tree is NOT a session-tracker. It t
 Thinnest end-to-end slice: in `renderTree()`, for ONE project root, collect its subtree's `isWaiting` items and render them as leaves while skipping session rows — confirm in the browser that that project shows its pending items with no session nodes. Proves the render model before generalizing to all projects + wiring resolve-from-tree.
 
 ## Decisions Log
+### Decision: SUPERSEDED by docs/plans/workstreams-phase-1-2.md (2026-06-01)
+- **Tier:** 2
+- **Chosen:** This plan's renderer-reframe scope folded into the broader
+  Workstreams Phase 1+2 plan (`docs/plans/workstreams-phase-1-2.md`), which
+  shipped the four-tier work-first renderer + schema additives + subsystem
+  rename. The pending-items reframe (sessions-as-provenance, work-item-first
+  side panel) is realized there — see that plan's Tasks 3/4/5 and the
+  `isSession()` predicate / detail-card provenance in `web/app.js`. Marking
+  this plan SUPERSEDED rather than COMPLETED because its specific task list was
+  absorbed, not executed verbatim.
+- **Reasoning:** Per the v2 design (`workstreams-design-v2-2026-05-30.md` §6),
+  Phase 1 alone had no visible surface; bundling this reframe with the schema
+  additives + rename was the minimum coherent ship.
+
 ### Decision: Hide sessions at render, not remove from state (frozen-contract + gate safety)
 - **Tier:** 2
 - **Chosen:** Session nodes stay in `snapshot.nodes`; the GUI tree does not render them and lifts their open items to the project. Provenance kept.

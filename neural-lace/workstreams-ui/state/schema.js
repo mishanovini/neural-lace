@@ -68,6 +68,22 @@ const EVENT_TYPES = Object.freeze([
   // Last-writer-wins on the target's context_text field. Idempotent on
   // event_id per the standard envelope.
   'backlog-context-set',
+  // Workstreams reframe 2026-05-30 (Phase 1) — explicit WorkItem lifecycle
+  // transitions. ADDITIVE within schema major 1 (same rule/precedent as every
+  // addition above): three new event types, NO required-field change to any
+  // existing event, schema_version stays 1; the conv-tree/workstreams gates
+  // key off the major and are unaffected. Each sets the target item's derived
+  // `state` (proposed → committed → in-flight → blocked → shipped/closed) and
+  // is last-writer-wins on that field; re-emission for the same event_id is an
+  // idempotent no-op per the standard envelope. `item-shipped` additionally
+  // marks the item `checked` (shipped ⇒ the work is done, leaves the waiting
+  // set). The OPTIONAL `tier` + `serves_item_id` fields on `branch-opened`
+  // (read in the reducer; NOT added to EVENT_REQUIRED_FIELDS) carry the
+  // four-tier hierarchy + the session→work-item link — both optional so every
+  // existing branch-opened event parses unchanged.
+  'item-committed',
+  'item-shipped',
+  'item-blocked',
 ]);
 
 // §2 — per-event required fields IN ADDITION TO the envelope
@@ -112,6 +128,15 @@ const EVENT_REQUIRED_FIELDS = Object.freeze({
   'branch-note-add':   ['target', 'note_text'],     // explicit Send of a staged note to Dispatch (target=node_id)
   // v2 redesign 2026-05-23 — UX-VR-13: edit context_text on a backlog item.
   'backlog-context-set': ['item_id', 'context_text'],
+  // Workstreams reframe 2026-05-30 (Phase 1) — three WorkItem lifecycle
+  // transitions. Each requires only the item locator (node_id + item_id);
+  // OPTIONAL payloads (`reason` on committed/blocked, `evidence` =
+  // commit-SHA/PR-URL on shipped) are NOT required-fields (additive, no
+  // contract change). The `tier` + `serves_item_id` optional fields ride on
+  // `branch-opened` and are deliberately absent here (optional ⇒ not required).
+  'item-committed': ['node_id', 'item_id'],
+  'item-shipped':   ['node_id', 'item_id'],
+  'item-blocked':   ['node_id', 'item_id'],
 });
 
 const ACTORS = Object.freeze(['dispatch', 'gui']);

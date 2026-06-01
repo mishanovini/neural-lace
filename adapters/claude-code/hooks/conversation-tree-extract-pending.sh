@@ -140,12 +140,12 @@ _resolve_state_lib() {
   if [[ -n "${CONV_TREE_STATE_LIB:-}" ]]; then printf '%s' "$CONV_TREE_STATE_LIB"; return 0; fi
   local root=""
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
-    local cand="$root/neural-lace/conversation-tree-ui/state/state.js"
+    local cand="$root/neural-lace/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
-    cand="$root/conversation-tree-ui/state/state.js"
+    cand="$root/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   fi
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/conversation-tree-ui/state/state.js"
+  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/state.js"
 }
 
 # Sibling emit hook — the single write path (never reimplement appendEvent).

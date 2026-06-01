@@ -80,7 +80,19 @@ function applyEvent(snap, ev, treeId) {
       // per-project trees within the single v1 state file (DEC-G). Optional
       // field, reducer-read only — additive, no required-field change, no major
       // bump. Absent ⇒ the file/global tree (Phase-0 behavior unchanged).
-      snap.nodes.push(newNode(ev.node_id, ev.parent_id, ev.title, ev.tree_id || treeId));
+      const bn = newNode(ev.node_id, ev.parent_id, ev.title, ev.tree_id || treeId);
+      // Workstreams reframe 2026-05-30 (Phase 1) — two OPTIONAL fields ride on
+      // branch-opened, both reducer-read-only and additive (NOT in
+      // EVENT_REQUIRED_FIELDS, so absent ⇒ unchanged Phase-0 behavior):
+      //   `tier`           — one of workstream | work-item | sub-task; carries
+      //                      the explicit four-tier hierarchy level so the
+      //                      renderer need not infer it from the parent chain.
+      //   `serves_item_id` — the WorkItem id this branch/session serves (the
+      //                      Session→WorkItem declaration-at-spawn link). Used
+      //                      by the detail card's provenance walk in Phase 2+.
+      if (ev.tier != null) bn.tier = String(ev.tier);
+      if (ev.serves_item_id != null) bn.serves_item_id = String(ev.serves_item_id);
+      snap.nodes.push(bn);
       return;
     }
     case 'decision-raised':
@@ -383,6 +395,40 @@ function applyEvent(snap, ev, treeId) {
       const entry = { text: String(ev.note_text), ts: ev.ts, actor: ev.actor };
       node.notes_sent.push(entry);
       node.last_sent_note = entry;          // GUI badge target
+      return;
+    }
+    // Workstreams reframe 2026-05-30 (Phase 1) — explicit WorkItem lifecycle
+    // transitions. ADDITIVE within schema major 1 (ADR-032 §1). Each locates
+    // the item by node_id + item_id (same locator shape as answered/
+    // action-done/deferred) and sets its derived `state`; last-writer-wins on
+    // that field, idempotent on event_id at the envelope layer. An unresolved
+    // item is rejected-not-applied (retained in the log — NFR-2) so a stray
+    // ship/commit/block event surfaces in snapshot.rejections rather than
+    // silently mutating nothing.
+    case 'item-committed': {
+      const node = findNode(snap, ev.node_id);
+      const it = findItem(node, ev.item_id);
+      if (!it) { reject(snap, ev, 'item not found'); return; }
+      it.state = 'committed';
+      if (ev.reason != null) it.commit_reason = String(ev.reason);
+      return;
+    }
+    case 'item-shipped': {
+      const node = findNode(snap, ev.node_id);
+      const it = findItem(node, ev.item_id);
+      if (!it) { reject(snap, ev, 'item not found'); return; }
+      it.state = 'shipped';
+      it.checked = true;                     // shipped ⇒ the work is done; leaves the waiting set
+      if (ev.evidence != null) it.ship_evidence = String(ev.evidence); // commit SHA / PR URL
+      it.shipped_ts = ev.ts;                 // "Recently shipped (7d)" filter keys off this
+      return;
+    }
+    case 'item-blocked': {
+      const node = findNode(snap, ev.node_id);
+      const it = findItem(node, ev.item_id);
+      if (!it) { reject(snap, ev, 'item not found'); return; }
+      it.state = 'blocked';
+      if (ev.reason != null) it.block_reason = String(ev.reason);
       return;
     }
     default:

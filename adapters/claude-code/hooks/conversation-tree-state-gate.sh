@@ -1,5 +1,5 @@
 #!/bin/bash
-# conversation-tree-state-gate.sh — PreToolUse gate (conversation-tree-ui v1, Task B1)
+# conversation-tree-state-gate.sh — PreToolUse gate (workstreams-ui v1, Task B1)
 #
 # Blocks a child-session spawn unless the conversation-tree state file (a)
 # exists, (b) is a valid JSON document, (c) carries an *attestation-verified*
@@ -94,7 +94,7 @@ _resolve_state_path() {
 }
 
 # Resolve the state-library entry module (state.js). The library is part of
-# the harness source tree (neural-lace/conversation-tree-ui/state/state.js),
+# the harness source tree (neural-lace/workstreams-ui/state/state.js),
 # NOT copied into ~/.claude/. Resolution order: explicit override, then a
 # search up from the state file's repo, then the well-known repo subdir.
 _resolve_state_lib() {
@@ -104,15 +104,15 @@ _resolve_state_lib() {
   fi
   local root=""
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
-    local cand="$root/neural-lace/conversation-tree-ui/state/state.js"
+    local cand="$root/neural-lace/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
-    cand="$root/conversation-tree-ui/state/state.js"
+    cand="$root/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   fi
   # Fall back to a HOME-relative well-known location if the harness ever
   # vendors the lib there. (Returned even if absent; the require failure is
   # then a hook-internal error -> fail-open per Pin-2.)
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/conversation-tree-ui/state/state.js"
+  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/state.js"
 }
 
 WAIVER_GLOB='conv-tree-spawn-waiver-*.txt'
@@ -133,8 +133,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
   if ST_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$ST_ROOT" ]]; then :; fi
   ST_LIB=""
   for c in \
-    "$ST_ROOT/neural-lace/conversation-tree-ui/state/state.js" \
-    "$ST_ROOT/conversation-tree-ui/state/state.js"; do
+    "$ST_ROOT/neural-lace/workstreams-ui/state/state.js" \
+    "$ST_ROOT/workstreams-ui/state/state.js"; do
     [[ -f "$c" ]] && { ST_LIB="$c"; break; }
   done
   if [[ -z "$ST_LIB" ]]; then

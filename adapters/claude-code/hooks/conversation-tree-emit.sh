@@ -99,15 +99,15 @@ _sha1() {
 # base is overridable via CONV_TREE_MAIN_CHECKOUT (per-machine config — the
 # two-layer-config rule keeps machine-specific absolute paths out of committed
 # harness code); the generic default is the historical convention location.
-# `<leaf>` is a conversation-tree-ui-relative path (e.g. state/state.js); both
-# the nested (`<root>/neural-lace/conversation-tree-ui/`) and flat
-# (`<root>/conversation-tree-ui/`) repo layouts are probed, mirroring the
+# `<leaf>` is a workstreams-ui-relative path (e.g. state/state.js); both
+# the nested (`<root>/neural-lace/workstreams-ui/`) and flat
+# (`<root>/workstreams-ui/`) repo layouts are probed, mirroring the
 # git-based resolvers, before defaulting to the nested form.
 _fallback_conv_tree_path() {
   local leaf="$1"
   local base="${CONV_TREE_MAIN_CHECKOUT:-$HOME/claude-projects/neural-lace}"
-  local nested="$base/neural-lace/conversation-tree-ui/$leaf"
-  local flat="$base/conversation-tree-ui/$leaf"
+  local nested="$base/neural-lace/workstreams-ui/$leaf"
+  local flat="$base/workstreams-ui/$leaf"
   if [[ -e "$nested" ]]; then printf '%s' "$nested"; return 0; fi
   if [[ -e "$flat" ]]; then printf '%s' "$flat"; return 0; fi
   printf '%s' "$nested"
@@ -119,9 +119,9 @@ _resolve_state_lib() {
   if [[ -n "${CONV_TREE_STATE_LIB:-}" ]]; then printf '%s' "$CONV_TREE_STATE_LIB"; return 0; fi
   local root=""
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
-    local cand="$root/neural-lace/conversation-tree-ui/state/state.js"
+    local cand="$root/neural-lace/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
-    cand="$root/conversation-tree-ui/state/state.js"
+    cand="$root/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   fi
   _fallback_conv_tree_path "state/state.js"
@@ -152,10 +152,10 @@ _resolve_gui_state_path() {
   if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then printf '%s' "$CONV_TREE_STATE_PATH"; return 0; fi
   local mr
   if mr=$(_main_repo_root) && [[ -n "$mr" ]]; then
-    local c="$mr/neural-lace/conversation-tree-ui/state/tree-state.json"
-    if [[ -f "$mr/neural-lace/conversation-tree-ui/state/state.js" ]]; then printf '%s' "$c"; return 0; fi
-    c="$mr/conversation-tree-ui/state/tree-state.json"
-    if [[ -f "$mr/conversation-tree-ui/state/state.js" ]]; then printf '%s' "$c"; return 0; fi
+    local c="$mr/neural-lace/workstreams-ui/state/tree-state.json"
+    if [[ -f "$mr/neural-lace/workstreams-ui/state/state.js" ]]; then printf '%s' "$c"; return 0; fi
+    c="$mr/workstreams-ui/state/tree-state.json"
+    if [[ -f "$mr/workstreams-ui/state/state.js" ]]; then printf '%s' "$c"; return 0; fi
   fi
   _fallback_conv_tree_path "state/tree-state.json"
 }
@@ -802,23 +802,23 @@ _self_test() {
   # while the gate sink stays worktree-local (gate parity). Lock both.
   if command -v git >/dev/null 2>&1; then
     local R="$tmp/mainrepo" WT="$tmp/wt"
-    mkdir -p "$R/neural-lace/conversation-tree-ui/state"
-    : >"$R/neural-lace/conversation-tree-ui/state/state.js"
+    mkdir -p "$R/neural-lace/workstreams-ui/state"
+    : >"$R/neural-lace/workstreams-ui/state/state.js"
     ( cd "$R" && git init -q . && git config user.email t@e.test && git config user.name t \
         && git add -A && git commit -qm init && git worktree add -q "$WT" -b st13wt ) >/dev/null 2>&1
     local Rabs gui_from_wt gate_from_wt want_gui
     Rabs=$(cd "$R" && pwd)
-    want_gui="$Rabs/neural-lace/conversation-tree-ui/state/tree-state.json"
+    want_gui="$Rabs/neural-lace/workstreams-ui/state/tree-state.json"
     gui_from_wt=$( cd "$WT" && CONV_TREE_STATE_PATH="" bash "$SELF" --resolve-gui-sink 2>/dev/null | head -n1 )
     gate_from_wt=$( cd "$WT" && CONV_TREE_STATE_PATH="" bash "$SELF" --resolve-gate-sink 2>/dev/null | head -n1 )
     _ck "ST13 GUI sink from worktree -> MAIN checkout module file" "$gui_from_wt" "$want_gui"
     # Path-format-agnostic (Windows: git emits native C:/... while $WT is MSYS
     # /tmp/...). The invariant that matters: the gate sink is the §5 path
     # (.claude/state/conversation-tree/), NOT the GUI module file
-    # (conversation-tree-ui/state/), and the two differ — dual-sink divergence.
+    # (workstreams-ui/state/), and the two differ — dual-sink divergence.
     if [[ -n "$gate_from_wt" \
           && "$gate_from_wt" == *"/.claude/state/conversation-tree/tree-state.json" \
-          && "$gate_from_wt" != *"conversation-tree-ui/state/"* \
+          && "$gate_from_wt" != *"workstreams-ui/state/"* \
           && "$gate_from_wt" != "$gui_from_wt" ]]; then
       echo "PASS: ST14 gate sink is the §5 path & differs from the GUI sink"; pass=$((pass+1))
     else
