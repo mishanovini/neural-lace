@@ -72,12 +72,12 @@ _resolve_state_lib() {
   if [[ -n "${CONV_TREE_STATE_LIB:-}" ]]; then printf '%s' "$CONV_TREE_STATE_LIB"; return 0; fi
   local root=""
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
-    local cand="$root/neural-lace/conversation-tree-ui/state/state.js"
+    local cand="$root/neural-lace/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
-    cand="$root/conversation-tree-ui/state/state.js"
+    cand="$root/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   fi
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/conversation-tree-ui/state/state.js"
+  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/state.js"
 }
 
 # The MAIN repo checkout (NOT a worktree) — parent of git-common-dir. The
@@ -102,12 +102,12 @@ _resolve_gui_state_path() {
   if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then printf '%s' "$CONV_TREE_STATE_PATH"; return 0; fi
   local mr
   if mr=$(_main_repo_root) && [[ -n "$mr" ]]; then
-    local c="$mr/neural-lace/conversation-tree-ui/state/tree-state.json"
-    if [[ -f "$mr/neural-lace/conversation-tree-ui/state/state.js" ]]; then printf '%s' "$c"; return 0; fi
-    c="$mr/conversation-tree-ui/state/tree-state.json"
-    if [[ -f "$mr/conversation-tree-ui/state/state.js" ]]; then printf '%s' "$c"; return 0; fi
+    local c="$mr/neural-lace/workstreams-ui/state/tree-state.json"
+    if [[ -f "$mr/neural-lace/workstreams-ui/state/state.js" ]]; then printf '%s' "$c"; return 0; fi
+    c="$mr/workstreams-ui/state/tree-state.json"
+    if [[ -f "$mr/workstreams-ui/state/state.js" ]]; then printf '%s' "$c"; return 0; fi
   fi
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/conversation-tree-ui/state/tree-state.json"
+  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/tree-state.json"
 }
 
 _read_stdin() {

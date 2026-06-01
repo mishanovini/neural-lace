@@ -62,7 +62,20 @@ The user-observable correctness check is **the GUI renders without errors agains
 
 ### In-flight scope updates
 
-(none yet — populated during build if scope expands)
+- 2026-06-01: `adapters/claude-code/hooks/conversation-tree-emit.sh`,
+  `conversation-tree-read.sh`, `conversation-tree-state-gate.sh`,
+  `conversation-tree-stop-gate.sh`, `conversation-tree-extract-pending.sh` —
+  internal `conversation-tree-ui` → `workstreams-ui` path references updated so
+  the hooks find the renamed directory's state library (the directory rename in
+  Task 2 broke `_resolve_state_lib`'s `git rev-parse`-relative probe, degrading
+  the conv-tree gates to fail-open). Hook FILENAMES kept as `conversation-tree-*.sh`
+  for this phase (see Decisions Log "Task 2 split into 2a/2b"); the cosmetic
+  filename rename to `workstreams-*.sh` + `settings.json` rewrite + symlinks is
+  deferred to Task 2b.
+- 2026-06-01: `adapters/claude-code/hooks/harness-hygiene-scan.sh` — added a
+  `neural-lace/workstreams-ui/*` path-prefix exemption alongside the existing
+  `conversation-tree-ui` one, so the Layer-2 cluster heuristic does not
+  false-positive on the renamed directory's files.
 
 ## Tasks
 
@@ -193,6 +206,48 @@ If this skeleton works, the additive chain is sound and Tasks 1, 3, 5 can procee
 - **Browser refresh mid-state-update**: renderer reads the latest snapshot on load; in-flight POSTs that committed server-side but never round-tripped to the GUI are picked up on the reload. No double-write risk because GUI-side action buttons are one-shot (disabled until response).
 
 ## Decisions Log
+
+### Decision: Task 2 split into 2a (state-lib path fix — done) and 2b (cosmetic filename rename — deferred)
+- **Tier:** 2
+- **Chosen:** Split Task 2. **2a (done this session):** the directory rename
+  (`conversation-tree-ui` → `workstreams-ui`) + update the 6 conv-tree hooks'
+  internal `_resolve_state_lib` path references so they find the renamed
+  directory + extend the `harness-hygiene-scan.sh` path-prefix exemption.
+  Synced to the live `~/.claude/hooks/`; state-gate (20/20) + stop-gate (9/9)
+  self-tests pass. **2b (deferred):** rename the hook FILES to `workstreams-*.sh`,
+  create 30-day backward-compat symlinks at the old names, rewrite
+  `settings.json.template` + sibling-write the live `~/.claude/settings.json`,
+  rename the rule file `conversation-tree-state.md` → `workstreams-state.md`.
+- **Alternatives:** (a) Do the full filename rename + settings rewrite this
+  session — rejected at end-of-budget: a machine-wide `settings.json` rewrite
+  that re-wires the load-bearing Dispatch spawn/stop gates is the
+  highest-blast-radius change in the plan; rushing it at low remaining context
+  violates the gate-respect / risk-tiered discipline (don't rush
+  high-blast-radius changes). (b) Skip 2a too — rejected: the directory rename
+  ALREADY broke the hooks' state-lib resolution (fail-open), so 2a is a
+  correctness fix, not optional.
+- **Reasoning:** 2a restores enforcement (the thing the rename broke) with ZERO
+  `settings.json` change — the hooks keep their existing filenames, so the live
+  wiring is untouched and verified-green. 2b is purely cosmetic naming
+  consistency and is safer as a focused follow-up than a budget-stretched rush.
+- **Re-engage trigger:** Task 2b is the first item of the next Workstreams
+  session (alongside Phase 3). Until then the subsystem is fully functional
+  under the `workstreams-ui` directory with `conversation-tree-*.sh` hook names.
+- **Surfaced to user:** in this session's Phase-2 completion message.
+
+### Decision: Direct build (not orchestrator-dispatched) for this tightly-coupled plan
+- **Tier:** 2
+- **Chosen:** The builder executed Tasks 1/3/4/5 directly in this session rather
+  than dispatching to `plan-phase-builder` sub-agents as `Execution Mode:
+  orchestrator` nominally directs.
+- **Reasoning:** Tasks 3/4/5 all rewrite the SAME file (`web/app.js`) and cannot
+  be parallelized (they would merge-conflict); Task 1 (schema) is a hard
+  prerequisite of the renderer. Sequential single-file work gains nothing from
+  dispatch latency, and the pace constraint ("every minute wasteful") favors
+  direct execution. The orchestrator pattern is Pattern-class (no hook enforces
+  it); the load-bearing mandate (task-verifier flips checkboxes) is honored
+  separately. Flagged for transparency.
+- **Surfaced to user:** Phase-2 completion message.
 
 ### Decision: Bundle Phase 1 + Phase 2 as a single shippable plan
 - **Tier:** 2
