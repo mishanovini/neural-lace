@@ -77,10 +77,30 @@ jobs:
           # contained. The fact that the workflow surfaces these on cold CI
           # — and that local sweeps had been missing them — is itself the
           # eat-own-cooking value the workflow provides.
+          #
+          # 2026-06-01 — FOURTH member of the conv-tree node-dependent
+          # family. decision-context-gate.sh shipped via PR #45 (decision-
+          # context active-enforcement substrate, merged 2026-05-31). Its
+          # --self-test passes 29/29 locally but 6 scenarios fail cold in CI
+          # (ST2/ST5/ST11/ST12/ST28) because they exercise the node + zod +
+          # state.js facade emit/validation path: the gate does
+          # `require("<conv-tree-ui>/state/decision-context-schema.js")`
+          # which needs `conversation-tree-ui/node_modules` (zod). This
+          # workflow does a bare checkout with NO `npm ci` in
+          # conversation-tree-ui, so require() throws and the gate's
+          # writer-hook discipline silently exits 0 (state file never
+          # written; cross-field validation never runs). Same root cause as
+          # the three hooks above: node-dependent path can't run cold.
+          # PR #45 shipped the hook without adding it here, so the gate
+          # (correctly) flagged it as newly-failing and turned master red.
+          # Class fix tracked in docs/backlog.md (HARNESS-GAP — install
+          # conversation-tree-ui node deps in this workflow, then de-allow-
+          # list all four conv-tree node hooks). Until then: allowlisted.
           KNOWN_FAILING_HOOKS=(
             "conversation-tree-emit.sh"
             "conversation-tree-extract-pending.sh"
             "conv-tree-emit-reconciler.sh"
+            "decision-context-gate.sh"
             "tool-call-budget.sh"
           )
 
