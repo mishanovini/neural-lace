@@ -263,7 +263,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/conversation-tree-emit.sh --on-spawn"
+            "command": "bash ~/.claude/hooks/workstreams-emit.sh --on-spawn"
           }
         ]
       },
@@ -272,7 +272,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/conversation-tree-state-gate.sh"
+            "command": "bash ~/.claude/hooks/workstreams-state-gate.sh"
           }
         ]
       },
@@ -342,7 +342,7 @@
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/conversation-tree-read.sh"
+            "command": "bash ~/.claude/hooks/workstreams-read.sh"
           }
         ]
       }
@@ -380,19 +380,19 @@
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/conversation-tree-stop-gate.sh"
+            "command": "bash ~/.claude/hooks/workstreams-stop-gate.sh"
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/conversation-tree-emit.sh --on-stop"
+            "command": "bash ~/.claude/hooks/workstreams-emit.sh --on-stop"
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/conversation-tree-extract-pending.sh"
+            "command": "bash ~/.claude/hooks/workstreams-extract-pending.sh"
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/conv-tree-emit-reconciler.sh"
+            "command": "bash ~/.claude/hooks/workstreams-emit-reconciler.sh"
           },
           {
             "type": "command",
@@ -493,7 +493,7 @@
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/conversation-tree-emit.sh --on-session-start"
+            "command": "bash ~/.claude/hooks/workstreams-emit.sh --on-session-start"
           },
           {
             "type": "command",
