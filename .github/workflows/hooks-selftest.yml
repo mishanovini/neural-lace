@@ -98,6 +98,15 @@ jobs:
             "workstreams-emit-reconciler.sh"
             "tool-call-budget.sh"
             "decision-context-gate.sh"
+            # 2026-06-02: the reconverge (ADR 047) landed three more decision-context
+            # hooks that depend on the conversation-tree-ui node state library and so
+            # fail cold in CI (same HARNESS-GAP-42 accumulated-state-vs-cold-CI class as
+            # decision-context-gate.sh above). Allowlisted here with the same tracking
+            # pointer; the real fix (make each self-test self-contained / install node
+            # deps) is the GAP-42 follow-up already owed for the conv-tree originals.
+            "decision-context-pending-surfacer.sh"
+            "decision-context-replay.sh"
+            "decision-context-reply-emit.sh"
           )
 
           is_known_failing() {

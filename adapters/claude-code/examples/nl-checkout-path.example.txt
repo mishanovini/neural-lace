@@ -1,0 +1,14 @@
+# nl-checkout-path.txt — per-machine path to THIS machine's canonical neural-lace checkout.
+#
+# Read by session-start-auto-install.sh (the continuous live-sync hook) when the
+# checkout is NOT at one of the generic candidate paths it probes
+# (~/claude-projects/neural-lace, ~/dev/neural-lace, ~/code/neural-lace,
+# ~/src/neural-lace, ~/projects/neural-lace, ~/neural-lace) and is not discoverable
+# by walking up from the session cwd.
+#
+# Format: one absolute path, the first non-comment non-empty line wins.
+# This file is machine-local (lives in ~/.claude/local/, gitignored) — never commit
+# a real machine path into the harness kit.
+#
+# Copy to ~/.claude/local/nl-checkout-path.txt and set the path, e.g.:
+# /home/you/some/custom/location/neural-lace

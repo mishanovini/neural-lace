@@ -484,6 +484,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/session-start-auto-install.sh",
+            "statusMessage": "Auto-installing canonical harness updates into ~/.claude/..."
+          },
+          {
+            "type": "command",
             "command": "if match=$(bash ~/.claude/scripts/read-local-config.sh match-dir \"$PWD\" 2>/dev/null) && [ -n \"$match\" ]; then TYPE=$(echo \"$match\" | awk '{print $1}'); GH_USER=$(echo \"$match\" | awk '{print $2}'); gh auth switch --user \"$GH_USER\" 2>/dev/null; echo \"GitHub account: $GH_USER ($TYPE)\"; SB_TOKEN_FILE=\"$HOME/.supabase/tokens/$TYPE\"; if [ -f \"$SB_TOKEN_FILE\" ]; then supabase login --token \"$(cat \"$SB_TOKEN_FILE\")\" 2>/dev/null; echo \"Supabase account: $(basename \"$SB_TOKEN_FILE\")\"; else echo \"Supabase: no token found at $SB_TOKEN_FILE\"; fi; else echo 'Account switcher: no match for $PWD in ~/.claude/local/accounts.config.json (or config missing — see ~/.claude/local/accounts.config.example.json)'; fi",
             "statusMessage": "Switching GitHub + Supabase accounts..."
           },
