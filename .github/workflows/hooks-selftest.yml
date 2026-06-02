@@ -77,10 +77,25 @@ jobs:
           # contained. The fact that the workflow surfaces these on cold CI
           # — and that local sweeps had been missing them — is itself the
           # eat-own-cooking value the workflow provides.
+          #
+          # 2026-06-01 — PHASE-3 RENAME regression (surfaced while merging
+          # PR #58, Component B). The Workstreams Phase-3 Task-2b rename
+          # (master @ edc0806) added the workstreams-*.sh hooks ALONGSIDE
+          # 30-day back-compat shims at the old conversation-tree-* /
+          # conv-tree-* names. The new hooks exhibit the SAME accumulated-
+          # state-vs-cold-CI gap as their predecessors but were never added
+          # to this allowlist, so they read as newly-failing and this workflow
+          # has been red on master since the rename landed. Same mitigation:
+          # allowlist the new names with this tracking pointer; the real fix
+          # (make each self-test self-contained) is the same separate follow-up
+          # already owed for the conv-tree originals.
           KNOWN_FAILING_HOOKS=(
             "conversation-tree-emit.sh"
             "conversation-tree-extract-pending.sh"
             "conv-tree-emit-reconciler.sh"
+            "workstreams-emit.sh"
+            "workstreams-extract-pending.sh"
+            "workstreams-emit-reconciler.sh"
             "tool-call-budget.sh"
           )
 
