@@ -2,7 +2,7 @@
 title: orchestrator-prime relay premise refuted; redesign already exists
 date: 2026-06-02
 type: architectural-learning
-status: pending
+status: decided
 auto_applied: false
 originating_context: A Dispatch-orchestrator session spawned a Code session with a multi-part brief to "build orchestrator-prime" — a long-lived harness-native Code session that Dispatch pokes via a transcript-read relay to replace Dispatch's orchestration role. Diagnostic-first investigation before building.
 decision_needed: Build orchestrator-prime as specified (REFUTED mechanism), OR greenlight the already-authored dispatch-coordination-redesign.md (honest mechanism, pending Misha since 2026-05-25), OR build the salvageable sound core (stateless harness-native orchestrator re-hydrated per Dispatch turn) as a new Mode:design plan?
@@ -142,9 +142,18 @@ and `~/.claude/rules/planning.md` Tier-3, it is surfaced to Misha and **NOT auto
 
 ## Decision
 
-(Pending Misha.)
+**Misha chose Option C (build the salvageable harness-native core), course-corrected to a
+sound mechanism: `/loop`.** Rather than the refuted transcript-read relay, orchestrator-prime
+self-wakes (ScheduleWakeup/CronCreate) and reads a file-mediated inbox — sidestepping the RC1
+parent-wake gap. The refuted sub-behaviors (message-revive, read-transcript) are replaced with
+their verified-tool-surface equivalents (detect+surface+respawn-with-ack; search-snippet
+surfacing). Recorded as ADR 047; built on branch `feat/orchestrator-prime`.
 
 ## Implementation log
 
-(Empty — diagnostic-only. No worktree created, no relay built, no ADR-068 authored: an ADR
-records a *made* decision, and this decision is Misha's and unmade. No code changes.)
+- `docs/decisions/047-orchestrator-prime-loop-architecture.md` — ADR (the /loop architecture + the verified/refuted boundary).
+- `docs/plans/orchestrator-prime.md` — Mode:design plan (Tasks 1–2 done; 3–7 pending: relay-rule [done], memory [done], seam smoke test, systems-designer PASS, launch).
+- `adapters/claude-code/skills/orchestrator-prime.md` (+ `~/.claude/` mirror) — the brain, written to the verified tool surface.
+- `~/.claude/orchestrator-prime/{inbox,outbox}/` + `state.json` — runtime scaffold.
+- `adapters/claude-code/rules/dispatch-relay-protocol.md` (+ mirror) + `feedback-dispatch-relay-only.md` memory — Dispatch demoted to relay.
+- Branch `feat/orchestrator-prime`. NOT launched: the always-on auto-merging loop awaits the harness-map dependency + seam smoke test + systems-designer PASS + Misha's first-cycle ack (irreversible blast radius).
