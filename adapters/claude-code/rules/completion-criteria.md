@@ -1,6 +1,6 @@
 # Feature-Completion Criteria — "Shipped" Means All Eight, Not Just Merged
 
-**Classification:** Hybrid. The eight-criteria definition of "complete" and the discipline of emitting a `## Completion Criteria` section when declaring a feature shipped are Patterns the session self-applies. The mechanical layer is two artifacts: `completion-criteria-gate.sh` (Stop hook — blocks session wrap when a feature-shipment-declaring final message does not account for all eight criteria) and `feature-completion-audit.sh` (project-generic post-fact backstop walking `Status: COMPLETED` plans against real production state). The gate's block-mode default, retry-guard loop-break, and per-criterion skip audit-log are Mechanism; the audit's report is Mechanism.
+**Classification:** Hybrid. The eight-criteria definition of "complete" and the discipline of emitting a `## Completion Criteria` section when declaring a feature shipped are Patterns the session self-applies. The mechanical layer is two artifacts: `completion-criteria-gate.sh` (Stop hook — blocks session wrap when a feature-shipment-declaring final message does not account for all eight criteria) and `page-doc-accuracy-audit.sh` (project-generic, forward-facing post-fact backstop checking each live contractor-facing page against its support doc). The gate's block-mode default, retry-guard loop-break, and per-criterion skip audit-log are Mechanism; the audit's report is Mechanism.
 
 **Ships with:** ADR 046 (`docs/decisions/046-feature-completion-criteria-gate.md`).
 
@@ -65,19 +65,25 @@ Each line may be `N/A — <reason>` instead when the criterion genuinely does no
 
 Per `~/.claude/rules/gate-respect.md`: when the gate blocks, the first move is to satisfy the criteria (or justify them N/A), not to reach for `DISABLE`. The gate's stderr names exactly which criteria are unmet and why.
 
-## The audit backstop
+## The audit backstop — `page-doc-accuracy-audit.sh` (forward-facing)
 
-`feature-completion-audit.sh` is the thorough post-fact net the gate's phrase-trigger cannot be. It is **project-generic** (it ships in the kit and carries no project identifiers) and parameterized by `--project <path>`. It walks `docs/plans/**` for `Status: COMPLETED` items and verifies each against the same eight criteria using **real repository state** — git log for PR/merge SHAs, `docs/support/*.mdx` presence (cross-referenced with an optional page-registry for contractor-facing classification), migration mentions, deploy/acceptance markers — then writes a report to `<project>/docs/audits/completion-audit-<date>.md` (override with `--out`) and exits non-zero if gaps exist.
+> Redesigned 2026-06-01 (per Misha): Part B was originally a backwards-facing completed-plan walker; that is removed. Part B is now a **forward-facing page-vs-doc accuracy audit** — current pages vs current docs, not historical plans vs current state.
 
-Run it manually (`feature-completion-audit.sh --project <path>`) or wire it to a nightly scheduled task. The baseline run is what surfaces already-shipped features that missed criteria (the F4 / C-47 / Smart-Import / What's-New user-doc gaps).
+`page-doc-accuracy-audit.sh` checks, for every LIVE contractor-facing page (PageRegistry `owner: 'org'`), whether the page's support doc still accurately describes what the page does **now**. It is **project-generic** (ships in the kit, no project identifiers; parameterized by `--project <path>`) and keys off Next.js app-router conventions (`src/app/**/page.tsx` with route groups stripped), a `src/lib/page-registry.ts`, and `docs/support/*.mdx`. STATIC + best-effort (runtime/Playwright is a future enhancement). Per page it flags:
 
-**The two layers are complementary, not redundant.** The gate is the fast in-session backstop; the audit is the thorough post-fact net grounded in production state. The gate intentionally favors false-negatives (a real shipment with unusual phrasing slips the gate) *because* the audit catches what the gate misses — including the skip-everything evasion the gate cannot see. A gate that fired on every session would be noise; a phrase-scoped gate plus a state-grounded audit is the right division of labor.
+- **🔴 STALE** (exit-blocking) — a UI term the doc names (bold / short-quoted / "click X" prose) that appears **nowhere** in `src/`. The doc points contractors at a removed/renamed button or section — actively misleading. **High-precision by design:** the broad `src/` search (one prebuilt source index) makes route→component mapping errors unable to cause a false STALE, because the cost of a false STALE (telling the operator to "fix" a correct doc) is high.
+- **🟡 UNDOCUMENTED** — a prominent page label (from the route's source closure) the doc never mentions. Best-effort; conservative filters (multi-word / non-common-button); a prompt to confirm, not a confirmed gap.
+- **⚪ MISSING_DOC** — a contractor-facing page with no doc at all.
+
+Platform/admin routes (audit log, platform console, impersonation) are skipped. Output: `<project>/docs/audit/page-doc-accuracy-<date>.md` (override `--out`). Exit 1 iff any STALE. Run weekly (scheduled task) or on-demand (a project may wire `npm run audit:doc-accuracy` to call it). It catches the drift class the project-tier doc-gate misses on *already-shipped* pages: button renames that broke a doc, removed sections still described, new features added without doc updates.
+
+**The two layers are complementary — and both forward-facing.** Part A (the gate) catches incompleteness *at session-close, going forward*; Part B (this audit) catches *drift on what is already shipped*. Neither walks history. The gate intentionally favors false-negatives (a real shipment with unusual phrasing slips the phrase-trigger) *because* the audit independently re-checks shipped pages against their docs.
 
 ## Cross-references
 
 - **ADR:** `docs/decisions/046-feature-completion-criteria-gate.md` — the decision, alternatives, and the refutation criterion the baseline audit tests.
 - **Gate:** `adapters/claude-code/hooks/completion-criteria-gate.sh` (`--self-test`: 14/14, gh-free + node-free → no `KNOWN_FAILING_HOOKS` entry).
-- **Audit:** `adapters/claude-code/scripts/feature-completion-audit.sh`.
+- **Audit:** `adapters/claude-code/scripts/page-doc-accuracy-audit.sh`.
 - **Sibling gate (the pattern this mirrors):** `~/.claude/rules/pr-health-snapshot.md` + `adapters/claude-code/hooks/pr-health-snapshot-gate.sh` — same block-mode-default + retry-guard + escape-hatch shape, also a presence-check on the agent's own final message.
 - **Composes with:** `~/.claude/rules/session-end-protocol.md` (the `DONE:` marker the gate deliberately does NOT trigger on); `~/.claude/rules/gate-respect.md` (diagnose-before-bypass when it blocks); `~/.claude/rules/planning.md` "FUNCTIONALITY OVER COMPONENTS" (the higher principle — a feature is done when the user can do the thing, which user docs + acceptance verification operationalize); F7's dev-doc gate (covers criterion #3 when wired); the project-tier user-doc gate (covers criterion #4 at PR time).
 - **Enforcement map:** `~/.claude/rules/vaporware-prevention.md` (one row).
@@ -88,7 +94,7 @@ Run it manually (`feature-completion-audit.sh --project <path>`) or wire it to a
 |---|---|---|
 | Rule (this doc) | The eight criteria; when the gate fires; the section format; the escape-hatch policy | `adapters/claude-code/rules/completion-criteria.md` |
 | Gate (Stop hook, Mechanism) | Feature-shipment-declaring final message must account for all eight (✓+evidence or N/A+justification) or session wrap blocks | `adapters/claude-code/hooks/completion-criteria-gate.sh` |
-| Audit (Mechanism) | Post-fact verification of `Status: COMPLETED` plans against real prod state; report + non-zero exit on gaps | `adapters/claude-code/scripts/feature-completion-audit.sh` |
+| Audit (Mechanism) | Forward-facing page-vs-doc accuracy check on every live contractor-facing page; report + non-zero exit on STALE docs | `adapters/claude-code/scripts/page-doc-accuracy-audit.sh` |
 | Retry-guard (Mechanism) | 3-retry downgrade-to-warn; unmet-set signature so partial progress resets the counter | `adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh` |
 | Skip audit-log (Mechanism) | Every `COMPLETION_GATE_SKIP` criterion is recorded with session + timestamp | `.claude/state/completion-gate-skips.log` |
 
