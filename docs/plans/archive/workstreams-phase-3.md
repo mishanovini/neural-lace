@@ -1,5 +1,5 @@
 # Plan: Workstreams — Phase 3 (Lifecycle Emit) + Phase 4 (Orphan/Shipped Views) + Task 2b (Hook Rename)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 tier: 2
