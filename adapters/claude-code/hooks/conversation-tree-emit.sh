@@ -376,6 +376,37 @@ _gate_primary_candidate() {
   printf '%s' "$ti_title"
 }
 
+# ---------------------------------------------------------------------------
+# Work-item declaration sentinel (Workstreams Phase 3, 2026-06-01).
+#
+# A Dispatch spawn MAY declare the WorkItem it serves with a single
+# line-prefixed sentinel in the prompt body (same shape family as the
+# Instructions:/Recommendation:/Links:/Report-back: sentinels). Two forms:
+#
+#   Work-item: <existing-item-id>          -> the session serves an item that
+#                                             already exists in the tree; the
+#                                             child branch records serves_item_id
+#                                             and a session-bound link is emitted.
+#   Work-item: new — <kind>:<text>         -> the session creates a NEW item; the
+#   Work-item: new — <text>                   hook emits the matching kind event
+#   Work-item: new: <text>                    (action|decision|question, default
+#                                             action) on the child branch, sets
+#                                             serves_item_id to a deterministic
+#                                             new id, and emits session-bound.
+#
+# The sentinel is OPTIONAL. A spawn WITHOUT it works exactly as before
+# (branch-opened only) — that item-less spawn is the candidate orphan the
+# Phase-4 orphan filter surfaces. PURE: extracts from input, never writes.
+_extract_work_item() {
+  local input="$1"
+  _have jq || { printf '%s' ""; return 0; }
+  local prompt
+  prompt=$(printf '%s' "$input" | jq -r '
+    (.tool_input.prompt // .tool_input.description // .tool_input.content // "")' 2>/dev/null || echo "")
+  printf '%s' "$prompt" | grep -iE '^[[:space:]]*Work-item:[[:space:]]' | head -n1 \
+    | sed -E 's/^[[:space:]]*Work-item:[[:space:]]*//I' | sed -E 's/[[:space:]]+$//' | cut -c1-200
+}
+
 # ============================================================================
 # Mode: --on-spawn  (PreToolUse on the enumerated spawn surface)
 # ============================================================================
@@ -422,26 +453,82 @@ _run_on_spawn() {
 
   local lib; lib=$(_resolve_state_lib)
 
+  # Workstreams Phase 3 — parse the optional Work-item: declaration. Sets
+  # serves_item_id (the Session→WorkItem link recorded on the child branch),
+  # and for the `new` form, the kind + text of the item to create on the child.
+  local wi_raw serves_item_id="" wi_is_new=0 wi_kind="action" wi_text=""
+  wi_raw=$(_extract_work_item "$input")
+  if [[ -n "$wi_raw" ]]; then
+    if printf '%s' "$wi_raw" | grep -qiE '^new([^A-Za-z0-9]|$)'; then
+      wi_is_new=1
+      # strip leading "new" then any leading non-word separators (space, em-dash,
+      # en-dash, hyphen, colon — matched byte-wise so multibyte dashes are safe).
+      local rest; rest=$(printf '%s' "$wi_raw" | sed -E 's/^[Nn][Ee][Ww]//' | sed -E 's/^[^A-Za-z0-9]+//')
+      local maybe_kind; maybe_kind=$(printf '%s' "$rest" | sed -nE 's/^(action|decision|question):.*$/\1/Ip')
+      if [[ -n "$maybe_kind" ]]; then
+        wi_kind=$(printf '%s' "$maybe_kind" | tr 'A-Z' 'a-z')
+        wi_text=$(printf '%s' "$rest" | sed -E 's/^(action|decision|question):[[:space:]]*//I')
+      else
+        wi_kind="action"; wi_text="$rest"
+      fi
+      [[ -z "$wi_text" ]] && wi_text="$title"
+      serves_item_id="wi-$(printf '%s|%s' "$child_id" "$wi_text" | _sha1 | cut -c1-12)"
+    else
+      serves_item_id="$wi_raw"   # reference to an existing WorkItem id
+    fi
+  fi
+
   # Deterministic, type-scoped event ids -> per-file idempotency on re-fire.
   local ev_root ev_child
   ev_root="cte-bo-$(printf '%s' "$root_id" | _sha1 | cut -c1-32)"
   ev_child="cte-bo-$(printf '%s' "$child_id" | _sha1 | cut -c1-32)"
 
+  # Build the event batch. Root + child branch-opened always; the child carries
+  # serves_item_id when declared. For a `new` work-item, a kind event creates
+  # the item on the child branch. A session-bound links this session to the
+  # child node whenever a work-item is declared (the provenance link).
+  local root_bo child_bo
+  root_bo=$(printf '{"event_id":"%s","type":"branch-opened","node_id":"%s","parent_id":null,"title":%s,"actor":"dispatch"}' \
+    "$ev_root" "$root_id" "$(jq -Rn --arg t "$root_title" '$t')")
+  if [[ -n "$serves_item_id" ]]; then
+    child_bo=$(printf '{"event_id":"%s","type":"branch-opened","node_id":"%s","parent_id":"%s","title":%s,"serves_item_id":%s,"actor":"dispatch"}' \
+      "$ev_child" "$child_id" "$root_id" "$(jq -Rn --arg t "$title" '$t')" "$(jq -Rn --arg s "$serves_item_id" '$s')")
+  else
+    child_bo=$(printf '{"event_id":"%s","type":"branch-opened","node_id":"%s","parent_id":"%s","title":%s,"actor":"dispatch"}' \
+      "$ev_child" "$child_id" "$root_id" "$(jq -Rn --arg t "$title" '$t')")
+  fi
+  local events="[$root_bo,$child_bo"
+  if [[ "$wi_is_new" -eq 1 && -n "$serves_item_id" ]]; then
+    local kind_ev
+    case "$wi_kind" in
+      decision) kind_ev="decision-raised" ;;
+      question) kind_ev="question-raised" ;;
+      *)        kind_ev="action-added" ;;
+    esac
+    local ev_item; ev_item="cte-${kind_ev:0:6}-$(printf '%s|%s' "$child_id" "$serves_item_id" | _sha1 | cut -c1-32)"
+    events="$events,$(printf '{"event_id":"%s","type":"%s","node_id":"%s","item_id":"%s","text":%s,"actor":"dispatch"}' \
+      "$ev_item" "$kind_ev" "$child_id" "$serves_item_id" "$(jq -Rn --arg t "$wi_text" '$t')")"
+  fi
+  if [[ -n "$serves_item_id" ]]; then
+    local ev_sb; ev_sb="cte-sb-$(printf '%s|%s' "$child_id" "$sid" | _sha1 | cut -c1-32)"
+    events="$events,$(printf '{"event_id":"%s","type":"session-bound","node_id":"%s","session_id":%s,"actor":"dispatch"}' \
+      "$ev_sb" "$child_id" "$(jq -Rn --arg s "$sid" '$s')")"
+  fi
+  events="$events]"
+
   local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-spawn-$$.json")
-  cat >"$ef" <<JSON
-[
-  {"event_id":"$ev_root","type":"branch-opened","node_id":"$root_id","parent_id":null,"title":$(jq -Rn --arg t "$root_title" '$t'),"actor":"dispatch"},
-  {"event_id":"$ev_child","type":"branch-opened","node_id":"$child_id","parent_id":"$root_id","title":$(jq -Rn --arg t "$title" '$t'),"actor":"dispatch"}
-]
-JSON
+  printf '%s' "$events" >"$ef"
   _emit_dual "$lib" "$ef"
   rm -f "$ef" 2>/dev/null || true
 
-  # Correlation ledger: this session opened child_id (title) — Stop concludes.
+  # Correlation ledger: child_id, title, ts, serves_item_id, base-commit-SHA.
+  # The base SHA lets --on-stop detect whether the session shipped a commit
+  # (HEAD moved) and emit item-shipped. serves_item_id names the item to ship.
   mkdir -p "$LEDGER_DIR" 2>/dev/null || true
   local ledger="$LEDGER_DIR/opened-${sid}.jsonl"
-  printf '%s\t%s\t%s\n' "$child_id" "$title" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null || true
-  _log "branch-opened child=$child_id title=\"$title\" root=$root_id session=$sid"
+  local base_sha; base_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+  printf '%s\t%s\t%s\t%s\t%s\n' "$child_id" "$title" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" "$serves_item_id" "$base_sha" >>"$ledger" 2>/dev/null || true
+  _log "branch-opened child=$child_id title=\"$title\" root=$root_id session=$sid serves=${serves_item_id:-none}"
 
   # v1.1.4 item 41 — observability for the GUI detail-pane content quality.
   # Non-blocking warning when a substantive Dispatch prompt ships without
@@ -455,8 +542,25 @@ JSON
   exit 0
 }
 
+# Resolve the node that owns a given item_id in the current snapshot (so an
+# item-shipped event targets the item's real owning node — which for a `new`
+# work-item is the child branch itself, and for an existing-item reference is
+# whatever node already holds it). Empty if not found / node unavailable; the
+# caller falls back to the child node (reducer rejects-not-applies a mismatch,
+# so a wrong guess is a harmless logged no-op — NFR-2, never a false mutation).
+_owner_node_of_item() {
+  local item_id="$1"
+  _have node || { printf '%s' ""; return 0; }
+  local lib sink
+  lib=$(_resolve_state_lib)
+  sink=$(_resolve_gui_state_path)
+  [[ -f "$sink" ]] || { printf '%s' ""; return 0; }
+  node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var id=process.argv[3];for(var i=0;i<st.snapshot.nodes.length;i++){var n=st.snapshot.nodes[i];if((n.items||[]).some(function(it){return it.item_id===id})){process.stdout.write(n.node_id);return}}process.stdout.write("")}catch(e){process.stdout.write("")}' "$lib" "$sink" "$item_id" 2>/dev/null || printf '%s' ""
+}
+
 # ============================================================================
-# Mode: --on-stop  (Stop hook — conclude branches this session opened)
+# Mode: --on-stop  (Stop hook — conclude branches this session opened, and
+# emit item-shipped for any served work-item whose session shipped a commit)
 # ============================================================================
 _run_on_stop() {
   local input; input=$(_read_stdin)
@@ -465,24 +569,41 @@ _run_on_stop() {
   [[ -f "$ledger" ]] || exit 0   # session opened no branches -> silent no-op
 
   local lib; lib=$(_resolve_state_lib)
-  local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-stop-$$.json")
-  : >"$ef"
-  printf '[' >"$ef"
-  local first=1 nid rest
-  while IFS=$'\t' read -r nid rest || [[ -n "$nid" ]]; do
+
+  # Commit detection: if HEAD moved since the recorded base SHA, the session
+  # shipped a commit. Best-effort — git-unavailable / unchanged HEAD / missing
+  # base ⇒ no item-shipped (conclude only); never a false ship.
+  local head_sha; head_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+
+  local events="[" first=1 n_cc=0 n_ship=0
+  local nid title ts serves base
+  while IFS=$'\t' read -r nid title ts serves base || [[ -n "$nid" ]]; do
     [[ -z "$nid" ]] && continue
+    # item-shipped FIRST (so FR-7 lets the subsequent concluded apply for a
+    # new-item branch — shipped marks the item checked).
+    if [[ -n "$serves" && -n "$head_sha" && -n "$base" && "$head_sha" != "$base" ]]; then
+      local owner; owner=$(_owner_node_of_item "$serves")
+      [[ -z "$owner" ]] && owner="$nid"
+      local ev_sh; ev_sh="cte-sh-$(printf '%s|%s' "$owner" "$serves" | _sha1 | cut -c1-32)"
+      [[ $first -eq 1 ]] || events="$events,"; first=0
+      events="$events$(printf '{"event_id":"%s","type":"item-shipped","node_id":"%s","item_id":"%s","evidence":%s,"actor":"dispatch"}' \
+        "$ev_sh" "$owner" "$serves" "$(jq -Rn --arg e "$head_sha" '$e' 2>/dev/null || printf '"%s"' "$head_sha")")"
+      n_ship=$((n_ship+1))
+    fi
     local ev_cc; ev_cc="cte-cc-$(printf '%s' "$nid" | _sha1 | cut -c1-32)"
-    [[ $first -eq 1 ]] || printf ',' >>"$ef"
-    printf '{"event_id":"%s","type":"concluded","node_id":"%s","actor":"dispatch"}' "$ev_cc" "$nid" >>"$ef"
-    first=0
+    [[ $first -eq 1 ]] || events="$events,"; first=0
+    events="$events$(printf '{"event_id":"%s","type":"concluded","node_id":"%s","actor":"dispatch"}' "$ev_cc" "$nid")"
+    n_cc=$((n_cc+1))
   done <"$ledger"
-  printf ']' >>"$ef"
+  events="$events]"
 
   if [[ $first -eq 0 ]]; then
+    local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-stop-$$.json")
+    printf '%s' "$events" >"$ef"
     _emit_dual "$lib" "$ef"
-    _log "concluded $(wc -l <"$ledger" 2>/dev/null | tr -d ' ') branch(es) for session=$sid"
+    rm -f "$ef" 2>/dev/null || true
+    _log "stop session=$sid concluded=$n_cc shipped=$n_ship"
   fi
-  rm -f "$ef" 2>/dev/null || true
   rm -f "$ledger" 2>/dev/null || true   # idempotent: a re-fired Stop is a no-op
   exit 0
 }
@@ -580,9 +701,15 @@ JSON
   # node_id\ttitle\ttimestamp). Indexed by sid so the Stop hook finds it.
   mkdir -p "$LEDGER_DIR" 2>/dev/null || true
   local ledger="$LEDGER_DIR/opened-${sid_safe}.jsonl"
+  # 5-field ledger (Workstreams Phase 3): child_id, title, ts, serves_item_id,
+  # base-commit-SHA. serves comes from the CLAUDE_TASK_WORKITEM env the
+  # orchestrator MAY set when spawning a worktree session; base SHA lets the
+  # child's own --on-stop detect a shipped commit and emit item-shipped.
+  local ss_serves; ss_serves="${CLAUDE_TASK_WORKITEM:-}"
+  local ss_base; ss_base=$(cd "$cwd" 2>/dev/null && git rev-parse HEAD 2>/dev/null || echo "")
   # Idempotency: only append if this child_id isn't already in the ledger.
   if [[ ! -f "$ledger" ]] || ! grep -q "^${child_id}	" "$ledger" 2>/dev/null; then
-    printf '%s\t%s\t%s\n' "$child_id" "$title" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null || true
+    printf '%s\t%s\t%s\t%s\t%s\n' "$child_id" "$title" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" "$ss_serves" "$ss_base" >>"$ledger" 2>/dev/null || true
   fi
 
   # Heartbeat tracker: record this session as live so --heartbeat can detect
@@ -811,7 +938,18 @@ _self_test() {
     want_gui="$Rabs/neural-lace/workstreams-ui/state/tree-state.json"
     gui_from_wt=$( cd "$WT" && CONV_TREE_STATE_PATH="" bash "$SELF" --resolve-gui-sink 2>/dev/null | head -n1 )
     gate_from_wt=$( cd "$WT" && CONV_TREE_STATE_PATH="" bash "$SELF" --resolve-gate-sink 2>/dev/null | head -n1 )
-    _ck "ST13 GUI sink from worktree -> MAIN checkout module file" "$gui_from_wt" "$want_gui"
+    # Path-format-agnostic (Windows: git emits native C:/… while $WT is MSYS
+    # /tmp/…) — mirrors ST14's robustness. The invariant that matters: the GUI
+    # sink resolves to the MAIN checkout's workstreams-ui module file, NOT the
+    # worktree's. (want_gui retained above as the documented expected shape.)
+    if [[ -n "$gui_from_wt" \
+          && "$gui_from_wt" == *"/neural-lace/workstreams-ui/state/tree-state.json" \
+          && "$gui_from_wt" == *"/mainrepo/"* \
+          && "$gui_from_wt" != *"/wt/"* ]]; then
+      echo "PASS: ST13 GUI sink from worktree -> MAIN checkout module file"; pass=$((pass+1))
+    else
+      echo "FAIL: ST13 GUI sink (got '$gui_from_wt'; want *mainrepo*/neural-lace/workstreams-ui/state/tree-state.json, not under /wt/)"; fail=$((fail+1))
+    fi
     # Path-format-agnostic (Windows: git emits native C:/... while $WT is MSYS
     # /tmp/...). The invariant that matters: the gate sink is the §5 path
     # (.claude/state/conversation-tree/), NOT the GUI module file
@@ -995,6 +1133,72 @@ _self_test() {
       bash "$SELF" --emit-branch <<<'{"node_id":"st31-root","parent_id":null,"title":"ST31 Root"}' >/dev/null 2>&1
   done
   _ck "ST31 --emit-branch idempotent on node_id" "$(_count "$sp31" branch-opened)" "1"
+
+  # ST32-ST36: Workstreams Phase 3 — work-item declaration + lifecycle emit.
+  # ST32: spawn declares an EXISTING work-item -> child branch carries
+  # serves_item_id and a session-bound link is emitted.
+  local sp32="$tmp/st-32.json"
+  CONV_TREE_STATE_PATH="$sp32" CLAUDE_SESSION_ID="sess-st-32" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Serves Existing","prompt":"Work-item: wi-existing-99"},"session_id":"sess-st-32"}' >/dev/null 2>&1
+  local serves32
+  serves32=$(node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var n=st.snapshot.nodes.find(function(x){return x.title==="Serves Existing"});process.stdout.write(n&&n.serves_item_id==="wi-existing-99"?"Y":"N")' "$LIB" "$sp32" 2>/dev/null)
+  _ck "ST32 Work-item: <id> -> child branch carries serves_item_id" "$serves32" "Y"
+  _ck "ST32b Work-item declared -> session-bound emitted" "$(_count "$sp32" session-bound)" "1"
+
+  # ST33: spawn declares a NEW work-item -> the matching kind event creates the
+  # item on the child branch (decision form here).
+  local sp33="$tmp/st-33.json"
+  CONV_TREE_STATE_PATH="$sp33" CLAUDE_SESSION_ID="sess-st-33" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"New WI","prompt":"Work-item: new — decision:Pick the approach"},"session_id":"sess-st-33"}' >/dev/null 2>&1
+  local newitem33
+  newitem33=$(node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var n=st.snapshot.nodes.find(function(x){return x.title==="New WI"});var ok=n&&(n.items||[]).some(function(it){return it.kind==="decision"&&it.text==="Pick the approach"});process.stdout.write(ok?"Y":"N")' "$LIB" "$sp33" 2>/dev/null)
+  _ck "ST33 Work-item: new — decision:... -> decision item on child branch" "$newitem33" "Y"
+
+  # ST34: spawn WITHOUT a Work-item -> backward-compat (no session-bound; still
+  # the root+child branch-opened pair).
+  local sp34="$tmp/st-34.json"
+  CONV_TREE_STATE_PATH="$sp34" CLAUDE_SESSION_ID="sess-st-34" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Plain Spawn","prompt":"just do some work, no declaration"},"session_id":"sess-st-34"}' >/dev/null 2>&1
+  _ck "ST34 no Work-item -> NO session-bound (backward-compat)" "$(_count "$sp34" session-bound)" "0"
+  _ck "ST34b no Work-item -> still 2 branch-opened (root+child)" "$(_count "$sp34" branch-opened)" "2"
+
+  # ST35: --on-stop after a real commit -> the served (new) item-ships; because
+  # item-shipped precedes concluded in the batch, FR-7 lets the node conclude.
+  if command -v git >/dev/null 2>&1; then
+    local G="$tmp/shiprepo"; mkdir -p "$G"
+    ( cd "$G" && git init -q . && git config user.email t@e.test && git config user.name t \
+        && echo a > a.txt && git add -A && git commit -qm base ) >/dev/null 2>&1
+    local sp35="$tmp/st-35.json"
+    ( cd "$G" && CONV_TREE_STATE_PATH="$sp35" CLAUDE_SESSION_ID="sess-st-35" \
+        bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Ship Branch","prompt":"Work-item: new — action:Land the thing"},"session_id":"sess-st-35"}' >/dev/null 2>&1 )
+    ( cd "$G" && echo b > b.txt && git add -A && git commit -qm work ) >/dev/null 2>&1
+    ( cd "$G" && CONV_TREE_STATE_PATH="$sp35" CLAUDE_SESSION_ID="sess-st-35" \
+        bash "$SELF" --on-stop <<<'{"session_id":"sess-st-35"}' >/dev/null 2>&1 )
+    local shipped35
+    shipped35=$(node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var ok=st.snapshot.nodes.some(function(n){return (n.items||[]).some(function(it){return it.state==="shipped"})});process.stdout.write(ok?"Y":"N")' "$LIB" "$sp35" 2>/dev/null)
+    _ck "ST35 on-stop after commit -> served item state=shipped" "$shipped35" "Y"
+    _ck "ST35b exactly 1 item-shipped event" "$(_count "$sp35" item-shipped)" "1"
+  else
+    echo "PASS: ST35 (skipped: git unavailable)"; pass=$((pass+1))
+    echo "PASS: ST35b (skipped: git unavailable)"; pass=$((pass+1))
+  fi
+
+  # ST36: --on-stop with NO commit (HEAD unchanged) -> no item-shipped (no
+  # false ship); the unshipped declared item leaves the branch open (orphan
+  # candidate) — exactly the Phase-4 surface.
+  if command -v git >/dev/null 2>&1; then
+    local G2="$tmp/noshiprepo"; mkdir -p "$G2"
+    ( cd "$G2" && git init -q . && git config user.email t@e.test && git config user.name t \
+        && echo a > a.txt && git add -A && git commit -qm base ) >/dev/null 2>&1
+    local sp36="$tmp/st-36.json"
+    ( cd "$G2" && CONV_TREE_STATE_PATH="$sp36" CLAUDE_SESSION_ID="sess-st-36" \
+        bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"No Ship","prompt":"Work-item: new — action:Maybe later"},"session_id":"sess-st-36"}' >/dev/null 2>&1 )
+    ( cd "$G2" && CONV_TREE_STATE_PATH="$sp36" CLAUDE_SESSION_ID="sess-st-36" \
+        bash "$SELF" --on-stop <<<'{"session_id":"sess-st-36"}' >/dev/null 2>&1 )
+    _ck "ST36 on-stop without commit -> NO item-shipped (no false ship)" "$(_count "$sp36" item-shipped)" "0"
+  else
+    echo "PASS: ST36 (skipped: git unavailable)"; pass=$((pass+1))
+  fi
 
   rm -rf "$tmp" 2>/dev/null || true
   echo "self-test: $pass passed, $fail failed"
