@@ -284,6 +284,15 @@
             "command": "bash ~/.claude/hooks/dag-review-waiver-gate.sh"
           }
         ]
+      },
+      {
+        "matcher": "SendUserMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/workstreams-task-binding.sh --on-message"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -385,6 +394,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/workstreams-emit.sh --on-stop"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/workstreams-task-binding.sh --on-stop"
           },
           {
             "type": "command",
@@ -494,6 +507,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/workstreams-emit.sh --on-session-start"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/workstreams-task-binding.sh --on-session-start"
           },
           {
             "type": "command",

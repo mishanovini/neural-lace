@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "5fe4b37a21533a006731afe17bddd44ee108dc75",
+  "files_modified": [
+    "adapters/claude-code/hooks/lib/workstreams-task-bridge.js",
+    "adapters/claude-code/hooks/workstreams-task-binding.sh",
+    "adapters/claude-code/settings.json.template",
+    "docs/plans/taskcreate-workstreams-binding.md"
+  ],
+  "mechanical_checks": {
+    "files-in-commit": {
+      "passed": true,
+      "detail": "4 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-02T00:44:45Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "taskcreate-workstreams-binding"
+}
