@@ -84,6 +84,22 @@ const EVENT_TYPES = Object.freeze([
   'item-committed',
   'item-shipped',
   'item-blocked',
+  // decision-context-gate-2026-05-29 (DEC-2 + forthcoming ADR-037):
+  // ADDITIVE within schema major 1 (ADR-032 §1 — "Adding a new event type
+  // to EVENT_TYPES is additive (no bump)"; no required-field change to any
+  // existing event; schema_version stays 1; conv-tree gates key off the
+  // major and are unaffected). Emitted ONLY by the `autonomous_action`
+  // fence-grammar category — a fait-accompli log entry of an action the
+  // agent took unilaterally, distinct from `decision-raised` /
+  // `question-raised` / `action-added` (those are PENDING items requiring
+  // the user). The `details` payload is the validated autonomous_action
+  // fence payload (action_taken / reasoning / reversibility / references)
+  // — the reducer's forward-tolerance accepts any sub-shape and does NOT
+  // declare sub-fields at the schema layer (the
+  // decision-context-schema.js Zod module is the SOLE NORMATIVE validator
+  // for the payload's interior). See docs/plans/decision-context-gate-2026-05-29.md
+  // Section B grammar + DEC-2.
+  'autonomous-action-logged',
 ]);
 
 // §2 — per-event required fields IN ADDITION TO the envelope
@@ -142,6 +158,16 @@ const EVENT_REQUIRED_FIELDS = Object.freeze({
   'item-committed': ['node_id', 'item_id'],
   'item-shipped':   ['node_id', 'item_id'],
   'item-blocked':   ['node_id', 'item_id'],
+  // decision-context-gate-2026-05-29 (DEC-2): autonomous_action fence
+  // category emits this event. node_id locates the branch; text is a
+  // short human-readable summary (matches branch-note-add's text
+  // convention); details is the FULL validated autonomous_action payload
+  // (action_taken / reasoning / reversibility / references[]). The
+  // reducer treats `details` as forward-tolerant — unknown sub-fields are
+  // preserved on read, NO sub-fields are validated at the schema layer
+  // (the Zod module decision-context-schema.js is the SOLE NORMATIVE
+  // validator for the payload interior).
+  'autonomous-action-logged': ['node_id', 'text', 'details'],
 });
 
 const ACTORS = Object.freeze(['dispatch', 'gui']);

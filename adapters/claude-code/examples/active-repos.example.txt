@@ -1,0 +1,18 @@
+# active-repos.txt — repo list consumed by pr-health-snapshot-gate.sh
+#
+# Copy this file to ~/.claude/config/active-repos.txt and replace the
+# placeholders below with YOUR active repos. One repo per line. Use the short
+# name (the value the gate looks for in your PR Health Snapshot table). Blank
+# lines and `#` comments are ignored.
+#
+# The shipped kit's hardcoded fallback is INTENTIONALLY EMPTY (harness-hygiene:
+# the kit must not carry any operator's business/org/product repo identifiers).
+# If this per-machine file is absent AND no fallback is configured, the gate
+# no-ops — there is nothing to enforce until you declare your active repos here.
+
+# --- replace these placeholders with your real repos ---
+web-app
+marketing-site
+admin-dashboard
+leads-service
+finance-app

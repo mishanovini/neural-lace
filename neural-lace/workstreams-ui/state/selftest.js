@@ -809,6 +809,92 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
   finally { cleanup(dir); }
 })();
 
+// ---- P18 decision-context-gate-2026-05-29 (Task 2 / DEC-2): -----------------
+//   `autonomous-action-logged` round-trips through validate + reducer:
+//     - envelope validation (validateEvent) accepts the event
+//     - appendEvent succeeds; readState returns the event in events[]
+//     - reducer is forward-tolerant: an unknown sub-field in `details` does
+//       NOT throw, and on re-read the unknown field is preserved verbatim
+//     - schema_version stays 1 (additive within major 1 per ADR-032 §1)
+//   Plan task names this scenario "P15" but P15–P17 are already taken by the
+//   prior v1.1-ux / item-28 / items-33+34+35 suites; this is the next free
+//   slot. Numbering is presentation-only; the audit-trail mapping
+//   (P18 ↔ task-2 acceptance criterion 4) lives in the plan file's
+//   Decisions Log.
+(function P18() {
+  const dir = freshDir(); const o = optsFor(dir);
+  try {
+    // Root branch so the autonomous-action's node_id resolves on read.
+    state.appendEvent({ type: 'branch-opened', node_id: 'n-aa-1', parent_id: null, title: 'Root' }, o);
+
+    const aaDetails = {
+      action_taken: 'git rebase',
+      reasoning: 'master diverged',
+      reversibility: 'git reflog @{1}; git reset --hard',
+      references: ['git-discipline.md'],
+      // An unknown sub-field that the reducer's forward-tolerance must preserve.
+      unknown_future_field: 'forward-tolerance probe',
+    };
+
+    let envelopeOk = true;
+    try {
+      state.appendEvent({
+        type: 'autonomous-action-logged',
+        node_id: 'n-aa-1',
+        text: 'agent auto-rebased the feature branch',
+        details: aaDetails,
+        actor: 'dispatch',
+      }, o);
+    } catch (e) { envelopeOk = false; }
+
+    const s = state.readState(o);
+    const evs = s.events.filter(function (e) { return e.type === 'autonomous-action-logged'; });
+    const oneEvent = evs.length === 1;
+    const nodeOk = oneEvent && evs[0].node_id === 'n-aa-1';
+    const textOk = oneEvent && evs[0].text === 'agent auto-rebased the feature branch';
+    const detailsOk = oneEvent && evs[0].details
+      && evs[0].details.action_taken === 'git rebase'
+      && evs[0].details.references && evs[0].details.references[0] === 'git-discipline.md';
+    // Forward-tolerance: unknown sub-field preserved verbatim.
+    const forwardTol = oneEvent && evs[0].details
+      && evs[0].details.unknown_future_field === 'forward-tolerance probe';
+
+    // Schema major stays 1 (additive).
+    const majorStill1 = s.schema_version === 1;
+
+    // Required-field enforcement: missing `details` → reject at envelope layer.
+    let missingDetailsRejected = false;
+    try {
+      state.appendEvent({
+        type: 'autonomous-action-logged',
+        node_id: 'n-aa-1',
+        text: 'no details',
+        actor: 'dispatch',
+      }, o);
+    } catch (e) { missingDetailsRejected = /details/.test(e.message); }
+
+    // Missing node_id → reject at envelope layer.
+    let missingNodeRejected = false;
+    try {
+      state.appendEvent({
+        type: 'autonomous-action-logged',
+        text: 'no node',
+        details: aaDetails,
+        actor: 'dispatch',
+      }, o);
+    } catch (e) { missingNodeRejected = /node_id/.test(e.message); }
+
+    check('P18 autonomous-action-logged: envelope OK + round-trips + forward-tolerant details + schema_version still 1 + required-field enforcement',
+      envelopeOk && oneEvent && nodeOk && textOk && detailsOk && forwardTol
+        && majorStill1 && missingDetailsRejected && missingNodeRejected,
+      'envelopeOk=' + envelopeOk + ' one=' + oneEvent + ' nodeOk=' + nodeOk
+        + ' textOk=' + textOk + ' detailsOk=' + detailsOk + ' forwardTol=' + forwardTol
+        + ' major1=' + majorStill1 + ' detRej=' + missingDetailsRejected
+        + ' nodeRej=' + missingNodeRejected);
+  } catch (e) { check('P18 autonomous-action-logged round-trip', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
 process.stdout.write('\nADR-032 state library — property self-test\n');
 process.stdout.write(RESULTS.join('\n') + '\n');
 process.stdout.write('\n' + PASS + ' passed, ' + FAIL + ' failed\n');

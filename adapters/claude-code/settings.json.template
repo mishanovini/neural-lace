@@ -250,6 +250,15 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/doc-gate.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Task|Agent",
         "hooks": [
           {
@@ -351,6 +360,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/decision-context-reply-emit.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/workstreams-read.sh"
           }
         ]
@@ -429,7 +442,15 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/decision-context-gate.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/principles-compliance-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/pr-health-snapshot-gate.sh"
           },
           {
             "type": "command",
@@ -483,6 +504,14 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/discovery-surfacer.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/decision-context-replay.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/decision-context-pending-surfacer.sh"
           },
           {
             "type": "command",

@@ -97,6 +97,7 @@ jobs:
             "workstreams-extract-pending.sh"
             "workstreams-emit-reconciler.sh"
             "tool-call-budget.sh"
+            "decision-context-gate.sh"
           )
 
           is_known_failing() {

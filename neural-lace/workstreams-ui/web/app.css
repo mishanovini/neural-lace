@@ -532,6 +532,34 @@ button:active { transform: scale(0.98); }
 .li.kind-question .li-details .det-row:first-child .det-v { color: var(--type-question); font-weight: 600; }
 .det-opt { border-left: 2px solid var(--border2); padding-left: 0.5rem; margin: 0.2rem 0; }
 .det-opt-l { font-weight: 600; }
+/* Task 9-full (OQ-2 / decision-context fence-grammar fields). Minimal chips
+   + reply-with code block + recommendation block so the fence-payload reads
+   as more than flat key/value rows. */
+.det-opt-field { font-size: 0.78rem; color: var(--muted); margin-left: 0.2rem; }
+.det-chip {
+  display: inline-block; font-size: 0.7rem; padding: 0.05rem 0.4rem;
+  border-radius: 4px; border: 1px solid var(--border2); margin-right: 0.2rem;
+}
+.det-chip-cat { background: rgba(99,102,241,0.10); border-color: rgba(99,102,241,0.4); }
+.det-chip-urgency-low      { background: rgba(34,197,94,0.10); }
+.det-chip-urgency-medium   { background: rgba(234,179,8,0.10); }
+.det-chip-urgency-high     { background: rgba(249,115,22,0.15); border-color: rgba(249,115,22,0.4); }
+.det-chip-urgency-critical { background: rgba(239,68,68,0.18); border-color: rgba(239,68,68,0.5); font-weight: 600; }
+.det-chip-revcost-free        { background: rgba(34,197,94,0.10); }
+.det-chip-revcost-cheap       { background: rgba(132,204,22,0.10); }
+.det-chip-revcost-expensive   { background: rgba(249,115,22,0.12); }
+.det-chip-revcost-irreversible{ background: rgba(239,68,68,0.18); border-color: rgba(239,68,68,0.5); font-weight: 600; }
+.det-chip-state-open    { background: rgba(59,130,246,0.10); }
+.det-chip-state-done    { background: rgba(34,197,94,0.10); }
+.det-chip-state-declined{ background: rgba(156,163,175,0.15); }
+.det-chip-state-stale   { background: rgba(234,179,8,0.15); }
+.det-rec-key { font-weight: 600; font-size: 0.78rem; }
+.det-rec-reasoning { font-size: 0.82rem; margin-top: 0.15rem; }
+.det-reply-with-box {
+  display: inline-block; padding: 0.1rem 0.4rem;
+  background: var(--bg2, rgba(0,0,0,0.04)); border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem;
+}
 .det-link { font-size: 0.72rem; color: var(--info); border: 1px solid var(--info); border-radius: 4px; padding: 0.03rem 0.35rem; }
 .det-link-branch {
   font-size: 0.72rem; color: var(--info); background: rgba(59,130,246,0.10);

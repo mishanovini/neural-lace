@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "task_id": "11",
+  "verdict": "PASS",
+  "commit_sha": "47474c5368a306c8f640a2e10e78719e669f81fb",
+  "files_modified": [],
+  "mechanical_checks": {
+    "files-in-commit": {
+      "passed": true,
+      "detail": "844 file(s) in HEAD",
+      "command": "git ls-tree --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-05-31T08:28:54Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/decision-context-gate-2026-05-29.md"
+}

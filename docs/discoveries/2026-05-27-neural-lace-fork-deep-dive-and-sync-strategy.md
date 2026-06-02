@@ -368,3 +368,37 @@ All figures from `git` against freshly-fetched `origin` (PT, via the `MishaPT` g
 and `personal` (mishanovini) tracking refs, plus `gh` PR/branch-protection queries on
 2026-05-27. Merge-base `fff2de3`; PT master `f7ee4d2`; personal master `5715f3c`. No writes
 to either remote; `gh` active account restored to `mishanovini` as found.
+
+## Decision & Implementation log — 2026-06-02 reconcile execution
+
+**Executed** the bidirectional PT↔personal fork reconcile (Misha GO, "keep things moving").
+
+**Renumber decision (Tier 2).** The two repos independently authored ADR 045:
+- PT `origin/master`: `045-workstreams-reframe.md` + `046-workstreams-lifecycle-emit.md` (sequential workstreams ADRs).
+- personal: `045-decision-context-enforcement-surface.md`.
+
+Chosen: **decision-context ADR renumbered 045 → 047** (PT already occupies 045+046). Rationale:
+PT is the declared-canonical line and holds the two lower numbers contiguously; the
+decision-context ADR has zero cross-repo inbound refs (5 intra-personal refs, all swept).
+Renumbering decision-context (not workstreams) keeps PT's contiguous 045/046 intact and
+touches only personal-origin files. ADR file `git mv`'d to `047-decision-context-enforcement-surface.md`;
+title + all inbound refs (rule, 3 hooks, evidence docs, FM-031, DECISIONS index, harness-arch) swept 045→047.
+
+**Method.** 3-way merge (base = merge-base `94cb114`) resolved once on a `reconverge` branch.
+16 conflicts: schema.js/selftest.js additive-union (state self-test 19/19 PASS); personal's new
+decision-context files accepted under the renamed `workstreams-ui/` path; INDEX/harness-architecture/
+DECISIONS/CLAUDE/backlog/hooks-selftest unioned (PT's renamed `workstreams-*` rows kept, personal's
+new `decision-context`/`pr-health` rows added, superseded `conversation-tree-*` rows dropped);
+settings.json.template hook-wiring unioned (valid JSON; all 6 personal hooks wired once).
+PT becomes the union via the merge commit (full granular history of both lines); personal advances
+to the same union tree via a separate FF reconverge commit (different SHA, identical tree — established
+posture). Both pushes non-force.
+
+**Follow-ups filed (genuine integration gaps, NOT silently dropped):**
+1. Port personal's decision-context fence-field view-rendering (`renderItemDetails`, ~138 lines, written
+   against the pre-rename renderer) into PT's rewritten four-tier `workstreams-ui/web/app.js` (which has
+   no decision-context rendering). Personal's complementary CSS (`det-chip-*` etc.) already merged into
+   `app.css`; only the JS render logic needs porting. Personal's code preserved in git history @ `f0b3db1`.
+2. Update `decision-context-gate.sh` schema `require()` path + the emit-hook fence recognition for the
+   `conversation-tree-ui`→`workstreams-ui` rename (gate self-test already CI-allowlisted; writer-hook
+   discipline exits 0 on require-miss, so no breakage — just no emit until path fixed).

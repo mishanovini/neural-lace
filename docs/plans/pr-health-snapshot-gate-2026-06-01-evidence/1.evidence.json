@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "fefd40b2dfe5d43b00370eda37c91f810837b5ba",
+  "files_modified": [
+    "adapters/claude-code/examples/active-repos.example.txt",
+    "adapters/claude-code/hooks/pr-health-snapshot-gate.sh",
+    "adapters/claude-code/rules/INDEX.md",
+    "adapters/claude-code/rules/pr-health-snapshot.md",
+    "adapters/claude-code/rules/vaporware-prevention.md",
+    "adapters/claude-code/settings.json.template",
+    "docs/harness-architecture.md",
+    "docs/plans/pr-health-snapshot-gate-2026-06-01.md"
+  ],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/hooks/pr-health-snapshot-gate.sh": {
+      "passed": true,
+      "detail": "adapters/claude-code/hooks/pr-health-snapshot-gate.sh exists",
+      "command": "test -e adapters/claude-code/hooks/pr-health-snapshot-gate.sh",
+      "exit_code": 0
+    },
+    "exists:adapters/claude-code/rules/pr-health-snapshot.md": {
+      "passed": true,
+      "detail": "adapters/claude-code/rules/pr-health-snapshot.md exists",
+      "command": "test -e adapters/claude-code/rules/pr-health-snapshot.md",
+      "exit_code": 0
+    },
+    "command:bash adapters/claude-code/hooks/pr-health-snapshot-gate.sh --self-test": {
+      "passed": true,
+      "detail": "ws (exit 0)\nPASS  missing-warn-mode-allows (exit 0)\nPASS  disable-env-allows (exit 0)\nPASS  no-transcript-noop (exit 0)\nPASS  empty-repo-list-noop (exit 0)\n\nself-test: 7 pass, 0 fail\nself-test: OK 7/7",
+      "command": "bash adapters/claude-code/hooks/pr-health-snapshot-gate.sh --self-test",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "8 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-01T19:37:51Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "pr-health-snapshot-gate-2026-06-01"
+}
