@@ -123,7 +123,16 @@ surfaced to Misha and **NOT auto-applied**.
 
 ## Decision
 
-(Pending Misha.)
+**A (rely on auto-emit) + orchestrator-prime owns forward emission.** Confirmed 2026-06-02: the
+local conv-tree auto-emits Dispatch conversation branches (40 nodes in this checkout, 252 in the
+served dev checkout; newest minutes old) via the SessionStart/spawn/heartbeat hooks — the tree
+already reflects today's Dispatch work. The 40-node manual narration backfill stays REJECTED
+(schema-invalid: closed actor `{dispatch,gui}` + closed event-type set + ADR-034 scopes product
+events OUT; raw-writing would also break the ADR-032 §8 attestation). Going forward,
+orchestrator-prime's per-cycle body emits schema-valid in-scope events (`branch-opened`,
+`decision-raised` for *pending* decisions, `concluded`) through the `appendEvent` facade — that is
+how "the conv-tree reflects today's work" is satisfied honestly. Misha's "let orchestrator-prime
+figure out what fits the schema" is exactly this disposition.
 
 ## Implementation log
 

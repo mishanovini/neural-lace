@@ -54,7 +54,10 @@ the relay seam's health.
   - **Wire checks:** `~/.claude/skills/orchestrator-prime.md` → reads `~/.claude/orchestrator-prime/inbox/` → writes `~/.claude/orchestrator-prime/outbox/`. (≥2 arrows.)
   - **Integration points:** `mcp__ccd_session_mgmt__list_sessions` available in the launch session; conversation-tree facade reachable.
 - [ ] 6. systems-designer PASS on this Mode:design plan BEFORE the always-on loop is launched with full autonomy. — Verification: mechanical
-- [ ] 7. Launch + report-only first cycle; Misha acks full autonomy via inbox; then enable merge/respawn cycles. — Verification: full
+- [ ] 7. Launch in FULL AUTONOMY from cycle 1 via the durable `orchestrator-prime-keepalive` scheduled task (DONE — created); report-only gating DROPPED per Misha 2026-06-02. — Verification: full
+- [ ] 8. Dispatch-callback: per-cycle, when the outbox has new entries, `spawn_task` a chip surfacing them to Misha (the real verified surface; `mcp__dispatch__start_task` does not exist). — Verification: mechanical (DONE in SKILL)
+- [ ] 9. Full harness awareness on startup (read all agents/hooks/rules/skills/memory/ADRs, build an in-memory index, re-index on change). — Verification: mechanical (DONE in SKILL)
+- [ ] 10. Conv-tree ownership: rely on auto-emit (confirmed live) + orchestrator-prime forward emission of schema-valid in-scope events; 40-node manual backfill stays rejected (schema-invalid + ADR-034). — Verification: mechanical (DONE; disposition recorded)
 
 ## Files to Modify/Create
 - `adapters/claude-code/skills/orchestrator-prime.md` — NEW (DONE). The brain. (+ `~/.claude/` mirror, untracked.)
@@ -69,6 +72,8 @@ the relay seam's health.
 
 ## In-flight scope updates
 <!-- date + one-line reason -->
+- 2026-06-02: Misha direction update — report-only gating DROPPED (full autonomy cycle 1); auto-merge policy READ FROM HARNESS applied to all repos with green-prod-deploy hard exclusion; Dispatch-callback added via `spawn_task` chip; full-harness-awareness startup; durable `orchestrator-prime-keepalive` scheduled task created (reboot resilience); manifest references status-snapshot; SKILL rewritten to v2.
+- 2026-06-02: `docs/discoveries/2026-06-02-conv-tree-backfill-premise-mismatch.md` dispositioned (A: rely on auto-emit + orchestrator-prime forward emission; 40-node manual backfill rejected as schema-invalid + ADR-034). orchestrator-prime owns conv-tree forward emission, so this discovery is in this plan's scope.
 
 ## Assumptions
 - `ScheduleWakeup`/`CronCreate --durable` reliably re-wakes the loop (PROVEN available this session; durability across session death verified at Task 5).
