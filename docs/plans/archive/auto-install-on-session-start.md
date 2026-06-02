@@ -1,6 +1,6 @@
 # Plan: Auto-install harness changes on SessionStart (continuous live-sync)
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 frozen: true
@@ -141,12 +141,37 @@ Thinnest end-to-end slice: discover NL checkout → read ONE canonical hook from
 - **To reverse / re-run the linearization:** `git checkout reconverge-linear && git rebase origin/master` (reconverge-linear still at c96513d, un-advanced). Surfaced in the final report.
 
 ## Definition of Done
-- [ ] All tasks checked off (by task-verifier)
-- [ ] `session-start-auto-install.sh --self-test` green (≥10 scenarios)
-- [ ] Hook wired into `settings.json.template` (first in SessionStart `""` matcher) + live settings wiring synced
-- [ ] This machine's live `~/.claude/` re-synced (hook run live; second run no-op)
-- [ ] ADR + DECISIONS.md row landed
-- [ ] backlog + harness-architecture.md updated
-- [ ] Live mirror (`~/.claude/hooks/session-start-auto-install.sh`) byte-identical to repo (`diff -q`)
-- [ ] PR opened against PT master, merged, master synced
-- [ ] Plan Status → COMPLETED (auto-archives)
+- [x] All tasks checked off (by task-verifier — all 5 PASS, evidence in `auto-install-on-session-start-evidence.md`)
+- [x] `session-start-auto-install.sh --self-test` green (13 scenarios, 0 failed — also green in CI)
+- [x] Hook wired into `settings.json.template` (first in SessionStart `""` matcher) + live settings wiring synced
+- [x] This machine's live `~/.claude/` re-synced (run 1 = 19 installed + 78 updated; run 2+ = no-op; post-merge run propagated the reconverge `decision-context-*` hooks to live, all matching master)
+- [x] ADR 048 + DECISIONS.md row landed
+- [x] backlog (v51) + harness-architecture.md updated
+- [x] Live mirror (`~/.claude/hooks/session-start-auto-install.sh`) byte-identical to repo / canonical master
+- [x] PR #60 opened against PT master, squash-merged @ `e0903e9`, local master synced
+- [x] Plan Status → COMPLETED (auto-archives)
+
+## Completion Report
+
+### 1. Implementation Summary
+All 5 tasks shipped and verified PASS. Merged to PT master via PR #60 (squash) @ **`e0903e9`**. Branch commits `0dd9c27..7e20324`. No backlog items absorbed (header declares `none`); the `AUTO-INSTALL-V2` v2 residual was *filed* to the backlog (not absorbed).
+
+The mechanism: `session-start-auto-install.sh` runs first in the SessionStart chain, discovers the NL checkout (per-machine config → generic candidates → cwd walk-up), reads canonical content from the fetched `origin/master` ref (never the working tree — sidesteps the install footgun), syncs `hooks/`+`scripts/` master-wins-with-backup, additive-merges missing canonical `settings.json` entries (validate-before-atomic-swap), compares modulo CRLF/LF, idempotent, exits 0 always.
+
+### 2. Design decisions & plan deviations
+Three locked decisions (ADR 048): source-from-`origin/master`-ref; master-wins-for-executables vs additive-merge-for-settings; v1-scope-to-executable-surfaces. Two in-flight events: (a) recovered an interrupted `reconverge-linear` rebase my branch-creation collided with (all refs preserved — see Decisions Log); (b) allowlisted 3 reconverge `decision-context-*` hooks in `hooks-selftest.yml` to unblock master CI (it was red at `3a2babc` independent of this work — see In-flight scope updates).
+
+### 3. Known issues & gotchas
+- **Bootstrap:** a brand-new machine needs ONE `install.sh` run to land the hook+wiring; every change thereafter self-propagates. (Office_PC needs that one bootstrap.)
+- **First run per machine** does a one-time CRLF→LF normalization burst; steady-state is a no-op.
+- **v2 residuals** (`AUTO-INSTALL-V2` in backlog): widen synced surfaces to rules/agents/docs; prune live files removed from canonical; prune accumulated `.backup-auto-install-*` dirs.
+
+### 4. Manual steps required
+- **Office_PC:** run `install.sh` once (lands the hook + wiring + the reconverge updates it's missing); after that, fully automatic.
+- The reconverge owner still owns: re-running the `reconverge-linear` linearization (`git checkout reconverge-linear && git rebase origin/master`, ref intact @ `c96513d`) and the GAP-42 real fix (self-contained `decision-context-*` self-tests).
+
+### 5. Testing performed
+13-scenario `--self-test` (local + CI green); live exercise against real `~/.claude/` (idempotent no-op confirmed; previously-missing canonical hooks now byte-identical to master); task-verifier PASS ×5; full PR CI green (hygiene, hooks-selftest, golden, credential scan, PR-template).
+
+### 6. Cost estimates
+Zero recurring cost. Per-session overhead: one bounded `git fetch origin master` + `git ls-tree`/`git show`/`cmp` reads; <500ms in the steady-state no-op case.
