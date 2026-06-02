@@ -1,5 +1,5 @@
 # Plan: Workstreams — Phase 1+2 (Schema Additives + Renderer Reframe + Rename)
-Status: DEFERRED
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 tier: 2
@@ -206,6 +206,33 @@ If this skeleton works, the additive chain is sound and Tasks 1, 3, 5 can procee
 - **Browser refresh mid-state-update**: renderer reads the latest snapshot on load; in-flight POSTs that committed server-side but never round-tripped to the GUI are picked up on the reload. No double-write risk because GUI-side action buttons are one-shot (disabled until response).
 
 ## Decisions Log
+
+### Decision: Status DEFERRED → COMPLETED (2026-06-02) — both residuals routed to owner sessions
+- **Tier:** 2
+- **Chosen:** Flip to COMPLETED. Both items left open at Session-1 end are now
+  owned by other sessions, so this plan's scope is genuinely closed from this
+  plan's perspective (nothing remains that THIS plan must still do).
+- **Routing (per Misha, 2026-06-02):**
+  - **Task 2b** (cosmetic hook-filename rename `conversation-tree-*.sh` →
+    `workstreams-*.sh` + symlinks + `settings.json` + rule-file rename +
+    `harness-architecture.md` refs) → **routed to the Phase 3 build session
+    `local_55828ae9`** (`feat/workstreams-phase-3`), which folds it into Phase 3.
+    Default-picked per `feedback_no_blocking_on_reversible_micro_decisions.md`.
+  - **Personal-mirror sync (`mishanovini/master`)** → **routed to the
+    verification + sync task `local_f994e7c5`**, which independently confirmed
+    Phase 1+2 IS on PT master at `37d9865` (Session-1 report was correct) and
+    surfaced the actual blocker this session could not have known: personal
+    has 34 PT-absent commits AND an **ADR-number collision** — personal already
+    has a decision-context ADR numbered 045. Proposed resolution (awaiting
+    Misha's one-line OK, owned by `local_f994e7c5`): decision-context keeps 045,
+    **this plan's ADR 045 renumbers to 046**, then reconverge non-force. NOTE
+    for whoever lands that: `docs/decisions/045-workstreams-reframe.md` +
+    its `docs/DECISIONS.md` row may need to become 046.
+- **Verification posture unchanged:** the Session-1 evidence (state 18/18,
+  renderer 22/22, conv-tree gates 20/20+9/9, live headless render) stands; the
+  USER-FACING deliverable shipped to PT master at `67b1437`/`37d9865`.
+- **Surfaced to user:** Misha confirmed the routing + close-out instruction
+  directly (2026-06-02).
 
 ### Session-1 completion state (2026-06-01) — Status DEFERRED (substance shipped to PT master; Task 2b + personal-sync remain)
 
