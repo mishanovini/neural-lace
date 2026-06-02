@@ -463,6 +463,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/completion-criteria-gate.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/scripts/session-wrap.sh refresh"
           }
         ]
