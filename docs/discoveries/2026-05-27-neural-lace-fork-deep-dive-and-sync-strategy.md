@@ -2,8 +2,9 @@
 title: Neural Lace two-repo fork deep-dive + sync strategy
 date: 2026-05-27
 type: process
-status: pending
+status: superseded
 auto_applied: false
+superseded_by: docs/discoveries/2026-06-02-pt-personal-fork-reconcile-and-adr-renumber.md (reconcile landed as union commit 235d717; both remotes at tree 9d89fe2; sync now enforced continuously by auto-install + sync-both-rule + cross-repo-drift-postpush-gate)
 originating_context: Misha directive — "I am not going to pick one as canonical... figure out all modifications across all NL repos and everything in flight. Consolidate and keep the two repos in sync. They need to stay in sync. I am not going to archive either of them."
 decision_needed: Approve a consolidation path + a going-forward sync mechanism. Several sub-decisions require Misha (force-push exception vs tree-only sync; governance alignment; visibility asymmetry; ADR-036 renumber). See "Risks + open questions".
 predicted_downstream:
