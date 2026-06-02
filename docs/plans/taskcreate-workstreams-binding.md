@@ -86,7 +86,43 @@ The thinnest end-to-end slice: a synthetic transcript containing one `TaskCreate
 
 ## Decisions Log
 
-[Populated during implementation.]
+All decisions below were reversible micro-decisions, default-picked and recorded per the pace constraint. The two **load-bearing** ones (thresholds/modes) are surfaced to Misha in the completion summary.
+
+### Decision: No new event types — bridge maps onto the existing ADR-032 enum
+- **Tier:** 1
+- **Chosen:** `TaskCreate→action-added`, `TaskUpdate in_progress→session-bound`, `completed→action-done`, `deleted→item-backlogged`. All four already exist in `schema.js` EVENT_TYPES.
+- **Reasoning:** Component B is concurrently editing `reducer.js`/`schema.js` in `.claude/worktrees/component-b/`. Adding an event type would collide. The existing enum covers the task's named mappings exactly (the spec's `action-done` for "completed" is a real event type; `item-backlogged` is the honest "parked, NOT shipped" closure for "deleted"). Zero shared-file edit ⇒ zero collision (coordination check satisfied).
+- **To reverse:** Re-map in `lib/workstreams-task-bridge.js` `buildEvents()`.
+
+### Decision: Build in an isolated worktree off master, ship additively
+- **Tier:** 2
+- **Chosen:** New branch `feat/taskcreate-workstreams-binding` from `master` (37d9865) in `.claude/worktrees/task-binding/`. Purely additive (2 new files + 3 settings entries).
+- **Reasoning:** The current `feat/workstreams-phase-3` branch carries in-flight Phase-3 + Task-2b (hook rename) work; shipping this binding from there would drag that unrelated work to master. Master has the workstreams-ui state lib (Phase 1+2) this needs. Isolation keeps the change shippable alone.
+- **To reverse:** `git worktree remove`.
+
+### Decision (LOAD-BEARING): M1 default = block; M3 default = warn
+- **Tier:** 2
+- **Chosen:** `WS_TASK_STOP_MODE=block` (M1, the "did you track ANY work" gate), `WS_TASK_MESSAGE_MODE=warn` (M3, the "you committed without a task" gate). Both env-tunable (`block|warn|off`).
+- **Reasoning:** Honors the spec's explicit asymmetry — Misha specified Exit-Code-2 for M1 and "default to warn-only initially; flip to block after calibration" for M3 (the most intrusive). M1's block is made safe (gate-respect.md) by: a tool-call threshold carve-out (trivial sessions pass), `stop-hook-retry-guard` (downgrades to warn after 3 identical failures — can't hard-loop), and a `.claude/state/workstreams-task-waiver-*.txt` escape hatch.
+- **To reverse:** Set the env vars; or change the `${WS_TASK_*_MODE:-...}` defaults.
+
+### Decision (LOAD-BEARING): M1 threshold = 5 tool calls
+- **Tier:** 1
+- **Chosen:** `WS_TASK_MIN_TOOLCALLS=5` — block only when `toolCalls > 5` AND zero task mutations.
+- **Reasoning:** A session with ≤5 tool calls is plausibly a lookup/trivial session that shouldn't be forced to create a task (spec scenario d). 6+ tool calls with no task is "real work went untracked."
+- **To reverse:** Set `WS_TASK_MIN_TOOLCALLS`.
+
+### Decision: M2 surfaces from Workstreams (not TaskList); scoped to project root
+- **Tier:** 1
+- **Chosen:** SessionStart reads the durable Workstreams event log and surfaces active `kind=action && !checked && !deferred` items under the cwd's project root subtree.
+- **Reasoning:** TaskList has NO hook-readable state file (it's a Cowork runtime tool). The Workstreams log IS a readable file, and the bridge populated it from prior sessions' TaskCreates — so surfacing from Workstreams is the only workable design AND is exactly the intended binding (TaskList→durable→next-session visibility). "This session's workspace" maps to the project root via the SAME cwd→root mapping the emit hook uses.
+- **To reverse:** Adjust the `--on-session-start` node query.
+
+### Decision: M3 PreToolUse matcher = `SendUserMessage` (calibration point)
+- **Tier:** 1
+- **Chosen:** Matcher `SendUserMessage` (the Dispatch message-surface tool named in `orchestration-architecture-2026-05-30.md`).
+- **Reasoning:** `SendUserMessage` is not in a standalone session's tool registry — it is the Dispatch orchestrator's message surface, which is exactly the target ("keep the orchestrator using the task list"). If the live tool name differs, the matcher simply never fires (no false enforcement — Rule 7). This is the single piece needing live calibration.
+- **To reverse:** Change the matcher string in `settings.json.template` (+ live `~/.claude/settings.json`).
 
 ## Definition of Done
 
