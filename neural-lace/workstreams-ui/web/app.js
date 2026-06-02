@@ -50,8 +50,12 @@
   var focusProject = localStorage.getItem('workstreams.focusProject') || null;
   var collapsed = loadSet('workstreams.collapsed');   // project ids the user collapsed
   var selItem = null;           // { nodeId, itemId } currently in the detail card
-  var ORPHAN_HOURS = 24;        // in-flight with no movement for >24h = orphan
-  var SHIP_RECENT_DAYS = 7;
+  // Phase 4 — configurable windows (localStorage override, same pattern as
+  // activeFilter/focusProject above). Defaults preserve prior behavior:
+  //   localStorage 'workstreams.orphanHours'     (default 24) — stale-session threshold
+  //   localStorage 'workstreams.shipRecentDays'  (default 7)  — "Recently shipped" window
+  var ORPHAN_HOURS = Number(localStorage.getItem('workstreams.orphanHours')) || 24;
+  var SHIP_RECENT_DAYS = Number(localStorage.getItem('workstreams.shipRecentDays')) || 7;
 
   function loadSet(key) {
     try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')); }
