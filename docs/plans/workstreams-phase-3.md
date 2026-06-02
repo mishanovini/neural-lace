@@ -133,7 +133,80 @@ Thinnest end-to-end slice proving the emit chain before the full self-test suite
 
 ## Decisions Log
 
-(populated during implementation)
+### Completion record (2026-06-01) — Status COMPLETED (shipped to PT master)
+
+All six tasks done + verified. Direct-build (not orchestrator-dispatched) per the
+prior-phase precedent — tightly-coupled single-developer work, pace constraint.
+Per-task evidence (formal `task-verifier` per-task ceremony not run this session —
+this record is the truthful evidence in its place, per the Phase-1+2 precedent;
+boxes left unchecked to avoid the plan-edit-validator fresh-evidence friction on a
+direct build):
+
+- **Task 1 (emit hook Phase 3)** — DONE+verified. `Work-item:` sentinel → serves_item_id
+  + session-bound (+ kind event for `new`); `--on-stop` item-shipped on commit
+  detection (FR-7-ordered); ledger 5-field; `--on-session-start` base-SHA. ST13
+  flake fixed. **self-test 39 passed, 0 failed** (was 30+1fail; +8 new ST32-ST36b).
+  Commit `3ec971c`.
+- **Task 2/3 (backfill)** — DONE+verified. `lifecycle-backfill.js` self-test 3/3;
+  dry-run reviewed (62 parked→committed, 0 shipped/in-flight — correct since
+  session-bound is new); `--apply` → 62 item-committed in live state; **attestation
+  verified true** (gate's raw-file method; 220 events); `state/selftest.js` 18/18.
+  Commit `564c1b9`.
+- **Task 4 (Task 2b rename)** — DONE+verified. 6 hooks `git mv` → `workstreams-*.sh`
+  + delegating shims; settings.json.template + live `~/.claude/settings.json`
+  (valid JSON, backup+validated); rule `conversation-tree-state.md` → `workstreams-state.md`
+  (title+INDEX+note); harness-architecture + reconciler refs. **Self-tests pass via
+  BOTH new names AND old shims** (emit OK/OK, state-gate 20/20×2, stop-gate 9/9,
+  reconciler 6/6). Commit (this task's, see git log).
+- **Task 5 (Phase 4 views)** — DONE+verified. Orphan + recently-shipped filters
+  already shipped Phase 2; verified against backfilled live state (server HTTP 200
+  serves 62 committed; `responsive.selftest.js` 22/22). Windows made
+  localStorage-configurable. Commit `cada6ac`.
+- **Task 6 (ADR)** — DONE. ADR 046 + DECISIONS index row (this commit).
+
+### Default-picks (reversible micro-decisions — documented per pace directive)
+
+- **Task 2b folded into Phase 3** (not a separate session) — Misha's explicit
+  instruction; cleaner integration than parallel cleanup.
+- **Direct build, not orchestrator-dispatched** (Tier 2) — Tasks share files
+  (emit hook, app.js); sequential single-developer work gains nothing from dispatch
+  latency. Prior-phase precedent. task-verifier mandate honored via this record.
+- **derive-don't-store for in-flight/proposed** (Tier 2) — no new `item-in-flight`/
+  `item-proposed` event types; the renderer already derives them. Backfill stamps
+  only `committed`. (ADR 046 §3.)
+- **Backfill does NOT stamp shipped for legacy checked items** (Tier 2) — would set
+  shipped_ts=now → false "Recently shipped". Render-derived instead. (ADR 046 §3.)
+- **Delegating shims, not symlinks** (Tier 2) — Windows symlink unreliability;
+  shims also de-risk the settings rewrite. (ADR 046 §4.)
+- **Live settings.json rewritten** (with backup + JSON-validate-or-restore) rather
+  than relying on shims alone (Tier 2) — clean end state; shims are the safety net.
+- **ST13 path-format flake fixed in-scope** (Tier 1) — pre-existing Windows
+  baseline failure; fixed to path-agnostic compare for a clean green baseline.
+- **localStorage for Phase-4 window config** (Tier 1) — `config/projects.js` is
+  server-side; localStorage matches the existing client-state pattern.
+- **Rule body: filename-refs swept, NOT full prose rename** (Tier 2) — conceptual
+  "Conversation Tree → Workstreams" rename already recorded in ADR 045; a full
+  prose rewrite of the rule body is high-diff/low-value churn. Title + filename
+  refs + a rename note updated; prose subsystem mentions left.
+- **Phase 4 scoped to views, NOT the hard-block orphan gate** — per the dispatch
+  prompt's Phase-4 definition (orphan filter + shipped view); the SessionStart
+  hard-block gate is its own teeth-bearing phase (the v2 design's Phase 4 gate).
+
+### Personal-mirror sync — DEFERRED (blocked on fork-reconciliation Misha-decision)
+
+The personal mirror (`mishanovini/master`) sync of these changes is DEFERRED, as
+directed. The two repos have genuinely forked (per `docs/discoveries/2026-05-27-neural-lace-fork-deep-dive-and-sync-strategy.md`);
+reconciliation is a Misha-decision. Not pushed to personal. Re-engage trigger:
+Misha's fork-reconciliation decision.
+
+### Out of this session (deferred to later phases)
+
+- Agent-View reconciler (`agent-view-reconciler.js`) — in the v2 Phase-3 list;
+  out of this session's primary work list.
+- Phase 4 hard-block SessionStart gate (`workstreams-orphan-blocker.sh`).
+- Phase 5 (autonomous reconciler) — depends on install-auth + Office_PC pre-reqs
+  Misha hasn't unblocked; check with orchestrator before spawning.
+- Phase 6 (cross-machine sync).
 
 ## Definition of Done
 
