@@ -322,6 +322,15 @@
             "command": "bash ~/.claude/hooks/plan-lifecycle.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/cross-repo-drift-postpush-gate.sh"
+          }
+        ]
       }
     ],
     "TaskCreated": [
