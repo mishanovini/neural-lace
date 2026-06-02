@@ -134,6 +134,11 @@ const EVENT_REQUIRED_FIELDS = Object.freeze({
   // commit-SHA/PR-URL on shipped) are NOT required-fields (additive, no
   // contract change). The `tier` + `serves_item_id` optional fields ride on
   // `branch-opened` and are deliberately absent here (optional ⇒ not required).
+  // Component B (orchestration-architecture §3) adds one more OPTIONAL payload:
+  // `blocked_on` on `item-blocked` (the WorkItem id this item is blocked ON) —
+  // also NOT a required field (absent ⇒ a blocked item with no declared
+  // dependency). The reconciler keys its cascade off it; reducer captures
+  // `it.blocked_on`. Additive, no contract change, schema_version stays 1.
   'item-committed': ['node_id', 'item_id'],
   'item-shipped':   ['node_id', 'item_id'],
   'item-blocked':   ['node_id', 'item_id'],

@@ -409,6 +409,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/workstreams-orchestrator-queue.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/deferral-counter.sh"
           },
           {

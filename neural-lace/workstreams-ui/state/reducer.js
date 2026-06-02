@@ -411,6 +411,12 @@ function applyEvent(snap, ev, treeId) {
       if (!it) { reject(snap, ev, 'item not found'); return; }
       it.state = 'committed';
       if (ev.reason != null) it.commit_reason = String(ev.reason);
+      // Component B (orchestration-architecture §3): committing means the item
+      // is no longer blocked on anything — clear any prior `blocked_on` edge.
+      // This keeps the reconciler's cascade idempotent: once a cascade
+      // transitions blocked→committed, a re-run sees state!=='blocked' and no
+      // blocked_on, so it never re-fires. ADDITIVE / reducer-read-only.
+      if (it.blocked_on != null) it.blocked_on = null;
       return;
     }
     case 'item-shipped': {
@@ -429,6 +435,15 @@ function applyEvent(snap, ev, treeId) {
       if (!it) { reject(snap, ev, 'item not found'); return; }
       it.state = 'blocked';
       if (ev.reason != null) it.block_reason = String(ev.reason);
+      // Component B (orchestration-architecture §3) — OPTIONAL `blocked_on`
+      // dependency edge: the WorkItem id this item is blocked ON. Reducer-read-
+      // only, additive, NOT in EVENT_REQUIRED_FIELDS (absent ⇒ a blocked item
+      // with no declared dependency, which simply never auto-unblocks via the
+      // cascade). The reconciler keys its cascade off `it.blocked_on === <the
+      // just-shipped item_id>` to transition blocked→committed. No required-
+      // field change, no major bump (same shape as the optional `reason`/
+      // `evidence` payloads above).
+      if (ev.blocked_on != null) it.blocked_on = String(ev.blocked_on);
       return;
     }
     default:
