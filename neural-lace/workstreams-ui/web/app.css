@@ -727,15 +727,42 @@ button:active { transform: scale(0.98); }
   padding: 0.45rem 0.7rem; border-bottom: 1px solid var(--border); }
 .tree-scroll { position: relative; }
 
-.proj { margin-bottom: 0.2rem; }
+/* ---- TIER HIERARCHY: Repo → Project → Workstream → WorkItem → Sub-task ----
+   (design-v2 §1, + Misha's Repo top-tier 2026-06-03). Nesting is rendered with
+   guide-rail CONTAINERS (.tree-kids), one per level. Each adds an indent step +
+   a vertical rail connecting its children to the parent row above; nesting
+   compounds so every tier sits at a distinct, clearly-indented x. Decision /
+   Question / Action is a per-item BADGE, never a nesting axis. */
+
+/* Top tier — GitHub repo group header. */
+.repo-group { margin-bottom: 0.5rem; }
+.repo-head {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.6rem; border-radius: 7px; cursor: pointer;
+  background-color: var(--panel2);
+  background-image: linear-gradient(rgba(167,139,250,0.12), rgba(167,139,250,0.12));
+  border: 1px solid var(--border2);
+}
+.repo-head:hover { background-image: linear-gradient(rgba(167,139,250,0.20), rgba(167,139,250,0.20)); }
+.repo-title { font-weight: 800; font-size: 0.92rem; letter-spacing: 0.01em; }
+.repo-badge { margin-left: auto; display: flex; gap: 0.35rem; font-size: 0.68rem; }
+.repo-badge span { padding: 0.05rem 0.4rem; border-radius: 999px; font-weight: 600; }
+
+/* The guide-rail nesting container — the load-bearing hierarchy cue. */
+.tree-kids { margin-left: 0.8rem; border-left: 2px solid var(--border2);
+  padding-left: 0.85rem; display: flex; flex-direction: column; gap: 0.12rem; }
+.repo-kids { margin-top: 0.2rem; }
+
+/* Project tier. */
+.proj { margin: 0.2rem 0; }
 .proj-head {
   display: flex; align-items: center; gap: 0.45rem;
-  padding: 0.4rem 0.5rem; border-radius: 6px; cursor: pointer;
+  padding: 0.38rem 0.5rem; border-radius: 6px; cursor: pointer;
   background: var(--panel); border: 1px solid var(--border);
 }
 .proj-head:hover { background: var(--panel2); }
 .proj.exp > .proj-head { border-color: var(--border2); }
-.twisty { color: var(--muted); font-size: 0.7rem; width: 0.8rem; }
+.twisty { color: var(--muted); font-size: 0.7rem; width: 0.8rem; flex: 0 0 auto; }
 .proj-title { font-weight: 700; font-size: 0.86rem; }
 .proj-badge { margin-left: auto; display: flex; gap: 0.35rem; font-size: 0.68rem; }
 .proj-badge span { padding: 0.05rem 0.4rem; border-radius: 999px; font-weight: 600; }
@@ -743,42 +770,22 @@ button:active { transform: scale(0.98); }
 .b-flight { background: rgba(96,165,250,0.16); color: var(--info); }
 .b-block  { background: rgba(251,191,36,0.16); color: var(--warn); }
 .b-none   { background: var(--panel2); color: var(--muted); font-weight: 500; }
-.proj-body { padding: 0.25rem 0 0.5rem 1.4rem; display: flex; flex-direction: column; gap: 0.12rem; }
+.proj-kids { margin-top: 0.15rem; }
 .proj-empty { color: var(--muted); font-size: 0.76rem; font-style: italic; padding: 0.25rem 0.4rem; }
 
-.ws { margin: 0.2rem 0; }
+/* Workstream tier (lights up when Phase-3 backfill assigns workstream nodes). */
+.ws { margin: 0.15rem 0; }
 .ws-head { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.45rem;
   font-size: 0.82rem; font-weight: 700; color: var(--muted); }
 .ws-title { color: var(--text); }
+.ws-subhead { padding: 0.25rem 0.45rem; font-size: 0.78rem; font-weight: 600; color: var(--text); }
+.ws-count { margin-left: auto; font-size: 0.64rem; font-weight: 600; color: var(--muted);
+  background: var(--panel2); border: 1px solid var(--border2); border-radius: 999px; padding: 0.02rem 0.42rem; }
 .ws-state { font-size: 0.64rem; padding: 0.03rem 0.36rem; border-radius: 999px; }
 .ws-state.st-active  { background: rgba(96,165,250,0.16); color: var(--info); }
 .ws-state.st-shipped { background: rgba(52,211,153,0.16); color: var(--ok); }
 
-/* ---- TIER NESTING (bug: flat-list, 2026-06-02) ---------------------------
-   The hierarchy is rendered with nested guide-rail CONTAINERS, not per-depth
-   margin classes. Each .tree-kids adds one indent step + a vertical rail
-   connecting its children to the parent row above; nesting compounds the
-   indent automatically, so Project → (Kind group | Workstream) → WorkItem →
-   Sub-task each sit at a distinct, clearly-indented x. This is what makes the
-   degraded (workstream-less) view read as a tree instead of a flat dump. */
-.tree-group { display: flex; align-items: center; gap: 0.45rem; padding: 0.3rem 0.45rem;
-  margin-top: 0.35rem; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.04em; color: var(--muted); }
-.tree-group:first-child { margin-top: 0.1rem; }
-.tg-badge { flex: 0 0 auto; font-size: 0.6rem; font-weight: 700; padding: 0.04rem 0.4rem;
-  border-radius: 4px; }
-.tg-badge.k-action   { background: rgba(239,68,68,0.18);  color: var(--type-action); }
-.tg-badge.k-decision { background: rgba(245,158,11,0.18); color: var(--type-decision); }
-.tg-badge.k-question { background: rgba(59,130,246,0.18); color: var(--type-question); }
-.tg-title { color: var(--text); }
-.tg-count { margin-left: auto; font-size: 0.66rem; font-weight: 600; color: var(--muted);
-  background: var(--panel2); border: 1px solid var(--border2); border-radius: 999px;
-  padding: 0.02rem 0.45rem; }
-.tree-subhead { text-transform: none; font-size: 0.78rem; color: var(--text); }
-
-.tree-kids { margin-left: 0.85rem; border-left: 2px solid var(--border2);
-  padding-left: 0.9rem; display: flex; flex-direction: column; gap: 0.1rem; }
-
+/* WorkItem / Sub-task rows. Indent comes from the enclosing .tree-kids. */
 .tree-item { display: flex; align-items: center; gap: 0.4rem; padding: 0.22rem 0.45rem;
   border-radius: 5px; cursor: pointer; font-size: 0.8rem; }
 .tree-item:hover { background: var(--panel2); }

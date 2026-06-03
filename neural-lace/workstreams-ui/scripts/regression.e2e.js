@@ -54,47 +54,53 @@ const ok = (n, c, d) => results.push({ n, pass: !!c, d });
   await page.goto(URL, { waitUntil: 'networkidle2', timeout: 30000 });
   await new Promise(r => setTimeout(r, 1400));
 
-  // bug #1 — tree renders; items nest UNDER the project header (basic presence).
+  // bug #1 — repo-grouped tree renders; projects nest under a repo header.
   const t = await page.evaluate(() => {
-    const projHead = document.querySelector('#treeCanvas .proj.exp > .proj-head');
-    const firstItem = document.querySelector('#treeCanvas .tree-item');
-    let indented = false;
-    if (projHead && firstItem) indented = firstItem.getBoundingClientRect().x > projHead.getBoundingClientRect().x + 8;
-    return { projs: document.querySelectorAll('#treeCanvas .proj').length,
-             items: document.querySelectorAll('#treeCanvas .tree-item').length, indented };
+    const repoHead = document.querySelector('#treeCanvas .repo-group > .repo-head');
+    const firstProj = document.querySelector('#treeCanvas .proj-head');
+    let nested = false;
+    if (repoHead && firstProj) nested = firstProj.getBoundingClientRect().x > repoHead.getBoundingClientRect().x + 8;
+    return { repos: document.querySelectorAll('#treeCanvas .repo-group').length,
+             projs: document.querySelectorAll('#treeCanvas .proj').length,
+             items: document.querySelectorAll('#treeCanvas .tree-item').length, nested };
   });
-  ok(1, t.projs >= 2 && t.items >= 1 && t.indented, `projs=${t.projs} items=${t.items} indented=${t.indented}`);
+  ok(1, t.repos >= 1 && t.projs >= 1 && t.items >= 1 && t.nested,
+     `repos=${t.repos} projs=${t.projs} items=${t.items} projNestedUnderRepo=${t.nested}`);
 
-  // bug #9 (flat-list regression, 2026-06-02) — the tree must be VISUALLY tiered,
-  // not "indented but still flat". Assert a real intermediate tier exists and
-  // each tier sits at a strictly-greater, perceptibly-stepped x:
-  //   project-row.x  <  group-header.x  <  item.x   (each step >= 12px)
-  // This catches the prior failure where all items collapsed to one indent
-  // because the per-tier indent classes styled tiers the data never produced.
+  // bug #9 (flat-list regression, 2026-06-02 / repo+workstream tiers 2026-06-03)
+  // The design hierarchy is Repo → Project → Workstream → WorkItem (kinds are
+  // per-item BADGES, never the nesting axis). Assert the four tiers sit at
+  // strictly-greater, perceptibly-stepped x AND that a real Workstream tier
+  // (.ws) exists AND that the discarded kind-grouping (.tree-group) is GONE.
+  // This catches both the original flat-list and the wrong kind-grouping fix.
   const tier = await page.evaluate(() => {
     const x = (el) => el ? Math.round(el.getBoundingClientRect().x) : null;
-    const scope = document.querySelector('#treeCanvas .proj.exp');
-    if (!scope) return { err: 'no expanded project' };
-    const projHead = scope.querySelector(':scope > .proj-head');
-    const groups = Array.from(scope.querySelectorAll('.tree-group'));
-    const items = Array.from(scope.querySelectorAll('.tree-item'));
-    const kidsRails = scope.querySelectorAll('.tree-kids').length;
-    const projX = x(projHead);
-    const groupXs = Array.from(new Set(groups.map(x)));
-    const itemXs = Array.from(new Set(items.map(x)));
-    const groupX = groupXs.length ? Math.min(...groupXs) : null;
-    const itemX = itemXs.length ? Math.min(...itemXs) : null;
+    const minX = els => { const xs = Array.from(new Set(els.map(x).filter(v => v != null))); return xs.length ? Math.min(...xs) : null; };
+    const repoGroup = document.querySelector('#treeCanvas .repo-group.exp') || document.querySelector('#treeCanvas .repo-group');
+    if (!repoGroup) return { err: 'no repo group' };
+    const proj = repoGroup.querySelector('.proj.exp') || document.querySelector('#treeCanvas .proj.exp');
+    if (!proj) return { err: 'no expanded project' };
+    const repoX = x(repoGroup.querySelector(':scope > .repo-head'));
+    const projX = x(proj.querySelector(':scope > .proj-head'));
+    const wsX = minX(Array.from(proj.querySelectorAll('.ws > .ws-head')));
+    const itemX = minX(Array.from(proj.querySelectorAll('.tree-item')));
     return {
-      groupCount: groups.length, itemCount: items.length, kidsRails,
-      projX, groupX, itemX,
-      stepGroup: (groupX != null && projX != null) ? groupX - projX : null,
-      stepItem: (itemX != null && groupX != null) ? itemX - groupX : null,
+      repoCount: document.querySelectorAll('#treeCanvas .repo-group').length,
+      wsCount: proj.querySelectorAll('.ws').length,
+      itemCount: proj.querySelectorAll('.tree-item').length,
+      treeGroupCount: document.querySelectorAll('#treeCanvas .tree-group').length, // must be 0 (kind-grouping retired)
+      repoX, projX, wsX, itemX,
+      stepProj: (projX != null && repoX != null) ? projX - repoX : null,
+      stepWs: (wsX != null && projX != null) ? wsX - projX : null,
+      stepItem: (itemX != null && wsX != null) ? itemX - wsX : null,
     };
   });
-  const tierPass = tier.groupCount >= 1 && tier.itemCount >= 1 && tier.kidsRails >= 1
-    && tier.stepGroup >= 12 && tier.stepItem >= 12;
-  ok(9, tierPass, `groups=${tier.groupCount} items=${tier.itemCount} rails=${tier.kidsRails} ` +
-    `x: proj=${tier.projX}->group=${tier.groupX}(+${tier.stepGroup})->item=${tier.itemX}(+${tier.stepItem})`);
+  const tierPass = tier.repoCount >= 1 && tier.wsCount >= 1 && tier.itemCount >= 1
+    && tier.treeGroupCount === 0
+    && tier.stepProj >= 12 && tier.stepWs >= 12 && tier.stepItem >= 12;
+  ok(9, tierPass, `repos=${tier.repoCount} ws=${tier.wsCount} items=${tier.itemCount} ` +
+    `kindGroups=${tier.treeGroupCount}(want0) x: repo=${tier.repoX}->proj=${tier.projX}(+${tier.stepProj})` +
+    `->ws=${tier.wsX}(+${tier.stepWs})->item=${tier.itemX}(+${tier.stepItem})`);
 
   // bug #4 — tree rows carry COLORED kind badges (not just a faint glyph).
   const b4 = await page.evaluate(() => {

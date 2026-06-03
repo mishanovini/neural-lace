@@ -49,6 +49,7 @@
   var activeFilter = localStorage.getItem('workstreams.activeFilter') || 'awaiting-me';
   var focusProject = localStorage.getItem('workstreams.focusProject') || null;
   var collapsed = loadSet('workstreams.collapsed');   // project ids the user collapsed
+  var collapsedRepos = loadSet('workstreams.collapsedRepos'); // repo groups the user collapsed
   var selItem = null;           // { nodeId, itemId } currently in the detail card
   // Phase 4 — configurable windows (localStorage override, same pattern as
   // activeFilter/focusProject above). Defaults preserve prior behavior:
@@ -381,10 +382,56 @@
   // ====================================================================
   //  TREE PANE — four-tier hierarchy
   // ====================================================================
+  // `global` is the cross-cutting backlog container; `proj-personal` and
+  // `proj-pocket-technician` are 0-item ACCOUNT-name nodes — they ARE the repo
+  // groups (the top tier), not projects within them. Rendering them as child
+  // projects produced the redundant "Pocket Technician under Pocket Technician".
+  // Excluded from the project list; their account becomes the repo header.
+  var NON_PROJECT_NODES = { 'global': 1, 'proj-personal': 1, 'proj-pocket-technician': 1 };
   function projects() {
     return nodes().filter(isProject).filter(function (n) {
+      if (NON_PROJECT_NODES[n.node_id]) return false;
       return showArchived.checked || n.state !== 'archived';
     });
+  }
+
+  // ---- repo grouping (top tier: GitHub repo → Project) -------------------
+  // The design (workstreams-design-v2 §1) is Project → Workstream → WorkItem →
+  // Sub-task; Misha added a Repo tier ABOVE projects so the tree mirrors which
+  // GitHub repo each project lives in. The mapping below is DERIVED from the
+  // real git remotes on this machine (mishanovini/* = Personal, Pocket-Technician/*
+  // = Pocket Technician); it is overridable per-machine via a `repoMap` object on
+  // the served snapshot (S.repoMap) or a project node's own `repo` field — those
+  // win over this default so the data layer can correct it without a code change.
+  // DERIVED from ground truth — `gh repo list` for each account + the local
+  // dev/<account>/ folders (cortex-one + foresight live only in mishanovini;
+  // Circuit lives only in Pocket-Technician; neural-lace lives in BOTH).
+  var PROJECT_REPO_DEFAULT = {
+    'proj-cortex-one': 'Personal',
+    'proj-foresight': 'Personal',
+    'proj-circuit': 'Pocket Technician',
+  };
+  // neural-lace is dual-remoted (mishanovini AND Pocket-Technician); per Misha it
+  // gets its OWN "Shared" group rather than appearing under both accounts.
+  var PROJECT_REPOS_MULTI = { 'proj-neural-lace': ['Shared'] };
+  var REPO_ORDER = ['Pocket Technician', 'Personal', 'Shared'];
+  // Returns the array of repos a project belongs to (≥1). Node-level `repo`
+  // and a served `S.repoMap` override the derived default.
+  function reposOf(projNode) {
+    if (projNode && projNode.repo) return [].concat(projNode.repo);
+    if (S && S.repoMap && S.repoMap[projNode.node_id]) return [].concat(S.repoMap[projNode.node_id]);
+    if (PROJECT_REPOS_MULTI[projNode.node_id]) return PROJECT_REPOS_MULTI[projNode.node_id];
+    return [PROJECT_REPO_DEFAULT[projNode.node_id] || 'Other'];
+  }
+  // Repo-level rollup: sum the awaiting / in-flight / blocked across the repo's
+  // projects, for the repo header badge.
+  function repoRollup(projNodes) {
+    var awaiting = 0, inflight = 0, blocked = 0;
+    projNodes.forEach(function (p) {
+      var r = projectRollup(p.node_id);
+      awaiting += r.awaiting; inflight += r.inflight; blocked += r.blocked;
+    });
+    return { awaiting: awaiting, inflight: inflight, blocked: blocked };
   }
   // Per-project rollup: counts of awaiting / in-flight across the project's
   // (non-session) descendant items, for the header badge.
@@ -408,7 +455,8 @@
     return out;
   }
 
-  // renderTree — project-level renderer (wire-check entry point).
+  // renderTree — repo-grouped renderer (wire-check entry point). Renders the
+  // top tier (GitHub repo) → Project → (Workstream →) WorkItem → Sub-task.
   function renderTree() {
     clear(treeCanvas);
     var projs = projects();
@@ -428,15 +476,108 @@
       });
       focusProject = best || projs[0].node_id;
     }
+    // group projects by their owning repo(s) — a dual-remoted project (neural-lace)
+    // appears under every repo that holds it.
+    var byRepo = {};
+    projs.forEach(function (p) {
+      reposOf(p).forEach(function (r) { (byRepo[r] = byRepo[r] || []).push(p); });
+    });
+    var repos = REPO_ORDER.filter(function (r) { return byRepo[r]; }).concat(
+      Object.keys(byRepo).filter(function (r) { return REPO_ORDER.indexOf(r) === -1; }).sort());
+    // totals over UNIQUE projects (a dual-remoted project must not double-count)
     var totAwait = 0, totFlight = 0;
     projs.forEach(function (p) {
-      var roll = projectRollup(p.node_id);
-      totAwait += roll.awaiting; totFlight += roll.inflight;
-      var expanded = (p.node_id === focusProject) && !collapsed.has(p.node_id);
-      treeCanvas.appendChild(renderProject(p, roll, expanded));
+      var r = projectRollup(p.node_id); totAwait += r.awaiting; totFlight += r.inflight;
+    });
+    repos.forEach(function (repo) {
+      var rProjs = byRepo[repo];
+      treeCanvas.appendChild(renderRepoGroup(repo, rProjs, repoRollup(rProjs), !collapsedRepos.has(repo)));
     });
     treeSummary.textContent = totAwait + ' awaiting · ' + totFlight + ' in flight';
     renderOrphanSection();
+  }
+
+  // renderRepoGroup — the top tier. A collapsible repo header with its projects
+  // nested inside a guide-rail container. Repos are expanded by default.
+  function renderRepoGroup(repo, projNodes, roll, expanded) {
+    var wrap = el('div', 'repo-group' + (expanded ? ' exp' : ''));
+    var head = el('div', 'repo-head');
+    head.appendChild(el('span', 'twisty', expanded ? '▼' : '▶'));
+    head.appendChild(el('span', 'repo-title', repo));
+    var badge = el('span', 'repo-badge');
+    if (roll.awaiting) badge.appendChild(el('span', 'b-await', roll.awaiting + ' awaiting'));
+    if (roll.inflight) badge.appendChild(el('span', 'b-flight', roll.inflight + ' in-flight'));
+    if (roll.blocked) badge.appendChild(el('span', 'b-block', roll.blocked + ' blocked'));
+    head.appendChild(badge);
+    head.addEventListener('click', function () { toggleRepo(repo); });
+    wrap.appendChild(head);
+    if (expanded) {
+      var kids = el('div', 'tree-kids repo-kids');
+      projNodes.forEach(function (p) {
+        var pRoll = projectRollup(p.node_id);
+        var pExpanded = (p.node_id === focusProject) && !collapsed.has(p.node_id);
+        kids.appendChild(renderProject(p, pRoll, pExpanded));
+      });
+      wrap.appendChild(kids);
+    }
+    return wrap;
+  }
+  function toggleRepo(repo) {
+    if (collapsedRepos.has(repo)) collapsedRepos.delete(repo); else collapsedRepos.add(repo);
+    saveSet('workstreams.collapsedRepos', collapsedRepos);
+    renderTree();
+  }
+
+  // ---- derived Workstream tier (theme grouping of a project's items) -------
+  // The data carries no `tier:workstream` nodes, so the Workstream tier is
+  // DERIVED: each WorkItem is bucketed into a logical initiative by matching its
+  // text against an ordered theme list (first match wins; the rest → "General").
+  // This is the "smart, logical grouping" best-guess backfill Misha approved
+  // (2026-06-03) until real workstream nodes are assigned. Order matters.
+  var WS_THEMES = [
+    [/cross-repo|cross repo/i, 'Cross-repo'],
+    [/conv(ersation)?[\s-]?tree|workstream/i, 'Conversation Tree / Workstreams'],
+    [/dispatch/i, 'Dispatch'],
+    [/sync|mirror|\bfork\b|cross-machine|both masters|\bremote\b/i, 'Cross-machine sync'],
+    [/doctrine|principle/i, 'Doctrine & Principles'],
+    [/fm-catalog|failure[\s-]?mode|\bFM-\d/i, 'Failure-mode catalog'],
+    [/propagation/i, 'Propagation engine'],
+    [/retry-guard|continuation-enforcer|stop-hook|evidence-gate|scope-enforc|completion-criteria|pr-health|\bgate\b/i, 'Harness gates'],
+    [/pipeline-override|never_matched|categoriz|rule rows|unattributable/i, 'Foresight Q1 — categorization'],
+    [/\bbug #?\d+/i, 'Bug fixes'],
+    [/install|bootstrap|fresh-machine|hook settings|auto-install/i, 'Install & bootstrap'],
+    [/PR #\d+/i, 'PR follow-ups'],
+  ];
+  function workstreamOf(item) {
+    var t = String((item && item.text) || '');
+    for (var i = 0; i < WS_THEMES.length; i++) { if (WS_THEMES[i][0].test(t)) return WS_THEMES[i][1]; }
+    return 'General';
+  }
+  // Bucket refs by workstreamOf; render a workstream header (.ws-head) + a nested
+  // .tree-kids of its items. Sort largest-first, "General" last.
+  function renderDerivedWorkstreams(parentEl, refs) {
+    if (!refs.length) return;
+    var byWs = {};
+    refs.forEach(function (r) { var w = workstreamOf(r.item); (byWs[w] = byWs[w] || []).push(r); });
+    var names = Object.keys(byWs).sort(function (a, b) {
+      if (a === 'General') return 1; if (b === 'General') return -1;
+      return byWs[b].length - byWs[a].length;
+    });
+    names.forEach(function (w) {
+      var grp = byWs[w];
+      var ws = el('div', 'ws');
+      var head = el('div', 'ws-head');
+      head.appendChild(el('span', 'ws-title', w));
+      var allShipped = grp.every(function (r) { return isComplete(r.item); });
+      head.appendChild(el('span', 'ws-state st-' + (allShipped ? 'shipped' : 'active'),
+        allShipped ? 'shipped' : 'active'));
+      head.appendChild(el('span', 'ws-count', String(grp.length)));
+      ws.appendChild(head);
+      var kids = el('div', 'tree-kids ws-kids');
+      grp.forEach(function (r) { kids.appendChild(treeItemRow(r, 3)); });
+      ws.appendChild(kids);
+      parentEl.appendChild(ws);
+    });
   }
 
   function renderProject(p, roll, expanded) {
@@ -453,56 +594,23 @@
     head.addEventListener('click', function () { toggleProject(p.node_id); });
     wrap.appendChild(head);
     if (expanded) {
-      var body = el('div', 'proj-body');
+      // Children nest inside a guide-rail container (.tree-kids). Real
+      // Workstream-tier nodes (if Phase-3 backfill ever lands them as nodes)
+      // render first as their own tier; the project's DIRECT items are grouped
+      // into DERIVED workstreams by theme (the Workstream tier — an initiative
+      // within a project, design-v2 §1). NO kind-grouping — Decision/Question/
+      // Action is a per-item badge, not a nesting axis.
+      var body = el('div', 'tree-kids proj-kids');
       var workstreams = collectWorkstreams(p.node_id);
-      // Real Workstream-tier nodes (Phase-3 backfill) render first as their own
-      // tier — Project → Workstream → WorkItem → Sub-task.
       workstreams.forEach(function (ws) { body.appendChild(renderWorkstream(ws)); });
-      // Direct project items (today's data has no Workstream tier — every item
-      // hangs off the project root). Rendering them as a flat list of d1 rows is
-      // the FLAT-LIST bug (2026-06-02): all items land at one indent, reading as
-      // an undifferentiated dump. Instead derive a real intermediate tier from
-      // `kind` (Decisions / Questions / Actions) and nest items inside guide-rail
-      // containers, so the degraded (workstream-less) view still reads as a
-      // hierarchy: Project → Kind group → WorkItem.
       var directs = collectWorkItems(p.node_id).filter(visibleInTree);
-      if (directs.length) renderKindGroups(body, directs);
+      renderDerivedWorkstreams(body, directs);
       if (!directs.length && !workstreams.length) {
         body.appendChild(el('div', 'proj-empty', 'Nothing in flight'));
       }
       wrap.appendChild(body);
     }
     return wrap;
-  }
-
-  // ---- intermediate tier: group flat project items by kind ----------------
-  // Kind is the only structural grouping today's data carries, so it is the
-  // honest source for the middle tier until real Workstream nodes exist. Each
-  // group renders a header (depth 1) followed by a .tree-kids guide-rail
-  // container holding the items (depth 2) — the nesting container is what makes
-  // the items sit at a measurably distinct, clearly-indented x (regression:
-  // tier-nesting). Known kinds keep a stable order; unknown kinds sort last.
-  var KIND_ORDER = ['decision', 'question', 'action'];
-  var KIND_HEAD = { decision: 'Decisions', question: 'Questions', action: 'Actions' };
-  function renderKindGroups(parentEl, refs) {
-    var byKind = {};
-    refs.forEach(function (r) {
-      var k = r.item.kind || 'action';
-      (byKind[k] = byKind[k] || []).push(r);
-    });
-    var kinds = KIND_ORDER.filter(function (k) { return byKind[k]; }).concat(
-      Object.keys(byKind).filter(function (k) { return KIND_ORDER.indexOf(k) === -1; }).sort());
-    kinds.forEach(function (k) {
-      var grp = byKind[k];
-      var gh = el('div', 'tree-group k-' + k);
-      gh.appendChild(el('span', 'tg-badge k-' + k, kindLabel(k)));
-      gh.appendChild(el('span', 'tg-title', KIND_HEAD[k] || k));
-      gh.appendChild(el('span', 'tg-count', String(grp.length)));
-      parentEl.appendChild(gh);
-      var kids = el('div', 'tree-kids');
-      grp.forEach(function (r) { kids.appendChild(treeItemRow(r, 2)); });
-      parentEl.appendChild(kids);
-    });
   }
 
   // renderWorkstream — per-workstream rollup + its work items (wire-check target).
@@ -516,23 +624,22 @@
     head.appendChild(el('span', 'ws-state st-' + (allShipped ? 'shipped' : 'active'),
       allShipped ? 'shipped' : 'active'));
     wrap.appendChild(head);
-    var kids = el('div', 'tree-kids');
+    var body = el('div', 'tree-kids ws-kids');
     collectWorkItems(wsNode.node_id).filter(visibleInTree).forEach(function (r) {
-      kids.appendChild(treeItemRow(r, 2));
+      body.appendChild(treeItemRow(r, 3));
     });
-    // sub-tasks (children of the workstream that are not sessions) nest one
-    // level deeper, under their own sub-header + nested guide-rail container.
+    // sub-tasks (children of the workstream that are not sessions) nest deeper.
     childrenOf(wsNode.node_id).filter(function (c) { return !isSession(c); }).forEach(function (sub) {
       var subItems = collectWorkItems(sub.node_id).filter(visibleInTree);
       if (!subItems.length) return;
-      var subHead = el('div', 'tree-group tree-subhead');
-      subHead.appendChild(el('span', 'tg-title', sub.title || sub.node_id));
-      kids.appendChild(subHead);
+      var subHead = el('div', 'ws-subhead');
+      subHead.appendChild(el('span', 'ws-title', sub.title || sub.node_id));
+      body.appendChild(subHead);
       var subKids = el('div', 'tree-kids');
-      subItems.forEach(function (r) { subKids.appendChild(treeItemRow(r, 3)); });
-      kids.appendChild(subKids);
+      subItems.forEach(function (r) { subKids.appendChild(treeItemRow(r, 4)); });
+      body.appendChild(subKids);
     });
-    wrap.appendChild(kids);
+    wrap.appendChild(body);
     return wrap;
   }
 
@@ -551,9 +658,8 @@
 
   function treeItemRow(r, depth) {
     var st = itemState(r.item);
-    // Indent is supplied by the enclosing .tree-kids guide-rail container (not a
-    // per-depth margin class), so a workstream-less project still nests cleanly.
-    // data-depth is retained for the geometry regression + any depth styling.
+    // Indent is supplied by the enclosing .tree-kids guide-rail container, not a
+    // per-depth margin class. data-depth is retained for the geometry regression.
     var li = el('div', 'tree-item state-' + st);
     li.setAttribute('data-depth', String(depth));
     li.setAttribute('data-node', r.nodeId);

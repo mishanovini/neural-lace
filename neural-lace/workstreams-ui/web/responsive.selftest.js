@@ -65,16 +65,17 @@ ok('R12 Task-5 detail chain defined (renderDetailCard → collectProvenance → 
 // --- four-tier hierarchy + sessions-as-provenance -------------------------
 ok('R13 sessions (sess-*/sub-*) are hidden from the tree (isSession predicate)',
   /function\s+isSession\s*\([^)]*\)\s*\{[^}]*\/\^\(sess\|sub\)-\//.test(js));
-ok('R14 hierarchy render: project rows, kind-group intermediate tier, guide-rail nesting',
-  // Project + Workstream rows + the derived Kind-group tier (renderKindGroups)
-  // + nesting via .tree-kids guide-rail containers + per-row data-depth. The
-  // OLD per-depth `tree-item d<n>` margin classes were retired (flat-list bug,
-  // 2026-06-02) because they styled tiers the data never produced — indent now
-  // comes from the nesting container, so depth is carried as a data attribute.
-  /['"]proj['"]/.test(js) && /['"]ws['"]/.test(js)
-  && /function\s+renderKindGroups\s*\(/.test(js)
-  && /['"]tree-group/.test(js) && /['"]tree-kids['"]/.test(js)
-  && /setAttribute\(['"]data-depth['"]/.test(js));
+ok('R14 tiered render: Repo → Project → Workstream → WorkItem via guide-rail containers',
+  // Repo top tier (renderRepoGroup + reposOf) + Project rows + derived Workstream
+  // tier (renderDerivedWorkstreams) + guide-rail nesting (.tree-kids) + per-row
+  // data-depth. The OLD per-depth `tree-item d<n>` classes AND the wrong
+  // kind-grouping (renderKindGroups) are both retired — indent comes from the
+  // nesting container, kinds are per-item badges not a nesting axis (2026-06-03).
+  /function\s+renderRepoGroup\s*\(/.test(js) && /function\s+reposOf\s*\(/.test(js)
+  && /function\s+renderDerivedWorkstreams\s*\(/.test(js)
+  && /['"]proj['"]/.test(js) && /['"]ws['"]/.test(js)
+  && /['"]tree-kids/.test(js) && /setAttribute\(['"]data-depth['"]/.test(js)
+  && !/renderKindGroups/.test(js));
 ok('R15 orphan surface present (section + Orphaned filter, session-based)',
   /id="orphanSection"/.test(html) && /function\s+staleSessions\s*\(/.test(js));
 
