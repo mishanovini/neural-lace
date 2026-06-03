@@ -41,7 +41,7 @@
 #
 # When a fence IS present (in any tier), the hook calls into the
 # SOLE-NORMATIVE Zod-backed validator at
-# neural-lace/conversation-tree-ui/state/decision-context-schema.js
+# neural-lace/workstreams-ui/state/decision-context-schema.js
 # (Task 2 module). Each validated block is projected onto an ADR-032 §2
 # event (decision-raised / question-raised / action-added /
 # autonomous-action-logged) + a sibling item-details-set with the rich
@@ -112,10 +112,9 @@ fi
 _fallback_conv_tree_path() {
   local leaf="$1"
   local base="${CONV_TREE_MAIN_CHECKOUT:-$HOME/claude-projects/neural-lace}"
-  # The UI module was renamed conversation-tree-ui -> workstreams-ui (2026-06).
-  # Prefer the new name; keep the old as back-compat fallback.
+  # The UI module lives at neural-lace/workstreams-ui/ (renamed 2026-06).
   local d cand
-  for d in workstreams-ui conversation-tree-ui; do
+  for d in workstreams-ui; do
     for cand in "$base/neural-lace/$d/$leaf" "$base/$d/$leaf"; do
       if [[ -e "$cand" ]]; then printf '%s' "$cand"; return 0; fi
     done
@@ -130,7 +129,7 @@ _resolve_state_lib() {
   fi
   local root="" d cand
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
-    for d in workstreams-ui conversation-tree-ui; do
+    for d in workstreams-ui; do
       for cand in "$root/neural-lace/$d/state/state.js" "$root/$d/state/state.js"; do
         if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
       done
@@ -146,7 +145,7 @@ _resolve_schema_module() {
   fi
   local root="" d cand
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
-    for d in workstreams-ui conversation-tree-ui; do
+    for d in workstreams-ui; do
       for cand in "$root/neural-lace/$d/state/decision-context-schema.js" "$root/$d/state/decision-context-schema.js"; do
         if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
       done
@@ -170,7 +169,7 @@ _resolve_gui_state_path() {
   fi
   local mr d
   if mr=$(_main_repo_root) && [[ -n "$mr" ]]; then
-    for d in workstreams-ui conversation-tree-ui; do
+    for d in workstreams-ui; do
       if [[ -f "$mr/neural-lace/$d/state/state.js" ]]; then
         printf '%s' "$mr/neural-lace/$d/state/tree-state.json"; return 0
       fi
@@ -781,7 +780,7 @@ Available categories: decision, question, action_item_for_user,
 autonomous_action.
 
 Schema (sole-normative Zod module):
-  neural-lace/conversation-tree-ui/state/decision-context-schema.js
+  neural-lace/workstreams-ui/state/decision-context-schema.js
 
 ${extra_detail:+Validator detail: $extra_detail
 }

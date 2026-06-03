@@ -74,10 +74,9 @@ fi
 _fallback_conv_tree_path() {
   local leaf="$1"
   local base="${CONV_TREE_MAIN_CHECKOUT:-$HOME/claude-projects/neural-lace}"
-  # UI module renamed conversation-tree-ui -> workstreams-ui (2026-06); prefer
-  # the new name, keep the old as back-compat fallback.
+  # UI module lives at neural-lace/workstreams-ui/ (renamed 2026-06).
   local d cand
-  for d in workstreams-ui conversation-tree-ui; do
+  for d in workstreams-ui; do
     for cand in "$base/neural-lace/$d/$leaf" "$base/$d/$leaf"; do
       if [[ -e "$cand" ]]; then printf '%s' "$cand"; return 0; fi
     done
@@ -89,12 +88,13 @@ _resolve_state_lib() {
   if [[ -n "${CONV_TREE_STATE_LIB:-}" ]]; then
     printf '%s' "$CONV_TREE_STATE_LIB"; return 0
   fi
-  local root=""
+  local root="" d cand
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
-    local cand="$root/neural-lace/conversation-tree-ui/state/state.js"
-    if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
-    cand="$root/conversation-tree-ui/state/state.js"
-    if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
+    for d in workstreams-ui; do
+      for cand in "$root/neural-lace/$d/state/state.js" "$root/$d/state/state.js"; do
+        if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
+      done
+    done
   fi
   _fallback_conv_tree_path "state/state.js"
 }
@@ -112,14 +112,16 @@ _resolve_gui_state_path() {
   if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then
     printf '%s' "$CONV_TREE_STATE_PATH"; return 0
   fi
-  local mr
+  local mr d
   if mr=$(_main_repo_root) && [[ -n "$mr" ]]; then
-    if [[ -f "$mr/neural-lace/conversation-tree-ui/state/state.js" ]]; then
-      printf '%s' "$mr/neural-lace/conversation-tree-ui/state/tree-state.json"; return 0
-    fi
-    if [[ -f "$mr/conversation-tree-ui/state/state.js" ]]; then
-      printf '%s' "$mr/conversation-tree-ui/state/tree-state.json"; return 0
-    fi
+    for d in workstreams-ui; do
+      if [[ -f "$mr/neural-lace/$d/state/state.js" ]]; then
+        printf '%s' "$mr/neural-lace/$d/state/tree-state.json"; return 0
+      fi
+      if [[ -f "$mr/$d/state/state.js" ]]; then
+        printf '%s' "$mr/$d/state/tree-state.json"; return 0
+      fi
+    done
   fi
   _fallback_conv_tree_path "state/tree-state.json"
 }
