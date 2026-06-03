@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-01
 **Status:** Active
-**Stakeholders:** Misha (decision authority — declared the failure pattern and the eight criteria); every code session (downstream — the gate fires at their Stop when they declare a feature shipped); the maintainer of the per-project completion audit (downstream — `feature-completion-audit.sh` consumes the same eight-criteria definition post-fact).
+**Stakeholders:** Misha (decision authority — declared the failure pattern and the eight criteria); every code session (downstream — the gate fires at their Stop when they declare a feature shipped); the maintainer of the per-project completion audit (downstream — `page-doc-accuracy-audit.sh` consumes the same eight-criteria definition post-fact).
 
 ## Context
 
