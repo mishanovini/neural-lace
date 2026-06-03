@@ -112,23 +112,29 @@ fi
 _fallback_conv_tree_path() {
   local leaf="$1"
   local base="${CONV_TREE_MAIN_CHECKOUT:-$HOME/claude-projects/neural-lace}"
-  local nested="$base/neural-lace/conversation-tree-ui/$leaf"
-  local flat="$base/conversation-tree-ui/$leaf"
-  if [[ -e "$nested" ]]; then printf '%s' "$nested"; return 0; fi
-  if [[ -e "$flat" ]]; then printf '%s' "$flat"; return 0; fi
-  printf '%s' "$nested"
+  # The UI module was renamed conversation-tree-ui -> workstreams-ui (2026-06).
+  # Prefer the new name; keep the old as back-compat fallback.
+  local d cand
+  for d in workstreams-ui conversation-tree-ui; do
+    for cand in "$base/neural-lace/$d/$leaf" "$base/$d/$leaf"; do
+      if [[ -e "$cand" ]]; then printf '%s' "$cand"; return 0; fi
+    done
+  done
+  # Nothing on disk: default to the new-name nested path.
+  printf '%s' "$base/neural-lace/workstreams-ui/$leaf"
 }
 
 _resolve_state_lib() {
   if [[ -n "${CONV_TREE_STATE_LIB:-}" ]]; then
     printf '%s' "$CONV_TREE_STATE_LIB"; return 0
   fi
-  local root=""
+  local root="" d cand
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
-    local cand="$root/neural-lace/conversation-tree-ui/state/state.js"
-    if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
-    cand="$root/conversation-tree-ui/state/state.js"
-    if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
+    for d in workstreams-ui conversation-tree-ui; do
+      for cand in "$root/neural-lace/$d/state/state.js" "$root/$d/state/state.js"; do
+        if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
+      done
+    done
   fi
   _fallback_conv_tree_path "state/state.js"
 }
@@ -138,12 +144,13 @@ _resolve_schema_module() {
   if [[ -n "${DECISION_CONTEXT_SCHEMA:-}" ]]; then
     printf '%s' "$DECISION_CONTEXT_SCHEMA"; return 0
   fi
-  local root=""
+  local root="" d cand
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
-    local cand="$root/neural-lace/conversation-tree-ui/state/decision-context-schema.js"
-    if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
-    cand="$root/conversation-tree-ui/state/decision-context-schema.js"
-    if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
+    for d in workstreams-ui conversation-tree-ui; do
+      for cand in "$root/neural-lace/$d/state/decision-context-schema.js" "$root/$d/state/decision-context-schema.js"; do
+        if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
+      done
+    done
   fi
   _fallback_conv_tree_path "state/decision-context-schema.js"
 }
@@ -161,14 +168,16 @@ _resolve_gui_state_path() {
   if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then
     printf '%s' "$CONV_TREE_STATE_PATH"; return 0
   fi
-  local mr
+  local mr d
   if mr=$(_main_repo_root) && [[ -n "$mr" ]]; then
-    if [[ -f "$mr/neural-lace/conversation-tree-ui/state/state.js" ]]; then
-      printf '%s' "$mr/neural-lace/conversation-tree-ui/state/tree-state.json"; return 0
-    fi
-    if [[ -f "$mr/conversation-tree-ui/state/state.js" ]]; then
-      printf '%s' "$mr/conversation-tree-ui/state/tree-state.json"; return 0
-    fi
+    for d in workstreams-ui conversation-tree-ui; do
+      if [[ -f "$mr/neural-lace/$d/state/state.js" ]]; then
+        printf '%s' "$mr/neural-lace/$d/state/tree-state.json"; return 0
+      fi
+      if [[ -f "$mr/$d/state/state.js" ]]; then
+        printf '%s' "$mr/$d/state/tree-state.json"; return 0
+      fi
+    done
   fi
   _fallback_conv_tree_path "state/tree-state.json"
 }

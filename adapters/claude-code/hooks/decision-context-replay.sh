@@ -74,11 +74,15 @@ fi
 _fallback_conv_tree_path() {
   local leaf="$1"
   local base="${CONV_TREE_MAIN_CHECKOUT:-$HOME/claude-projects/neural-lace}"
-  local nested="$base/neural-lace/conversation-tree-ui/$leaf"
-  local flat="$base/conversation-tree-ui/$leaf"
-  if [[ -e "$nested" ]]; then printf '%s' "$nested"; return 0; fi
-  if [[ -e "$flat" ]]; then printf '%s' "$flat"; return 0; fi
-  printf '%s' "$nested"
+  # UI module renamed conversation-tree-ui -> workstreams-ui (2026-06); prefer
+  # the new name, keep the old as back-compat fallback.
+  local d cand
+  for d in workstreams-ui conversation-tree-ui; do
+    for cand in "$base/neural-lace/$d/$leaf" "$base/$d/$leaf"; do
+      if [[ -e "$cand" ]]; then printf '%s' "$cand"; return 0; fi
+    done
+  done
+  printf '%s' "$base/neural-lace/workstreams-ui/$leaf"
 }
 
 _resolve_state_lib() {
