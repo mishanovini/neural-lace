@@ -743,28 +743,46 @@ button:active { transform: scale(0.98); }
 .b-flight { background: rgba(96,165,250,0.16); color: var(--info); }
 .b-block  { background: rgba(251,191,36,0.16); color: var(--warn); }
 .b-none   { background: var(--panel2); color: var(--muted); font-weight: 500; }
-.proj-body { padding: 0.25rem 0 0.4rem 0.9rem; display: flex; flex-direction: column; gap: 0.12rem; }
+.proj-body { padding: 0.25rem 0 0.5rem 1.4rem; display: flex; flex-direction: column; gap: 0.12rem; }
 .proj-empty { color: var(--muted); font-size: 0.76rem; font-style: italic; padding: 0.25rem 0.4rem; }
 
-.ws { margin: 0.2rem 0 0.2rem 0.2rem; }
-.ws-head { display: flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.4rem;
-  font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+.ws { margin: 0.2rem 0; }
+.ws-head { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.45rem;
+  font-size: 0.82rem; font-weight: 700; color: var(--muted); }
 .ws-title { color: var(--text); }
 .ws-state { font-size: 0.64rem; padding: 0.03rem 0.36rem; border-radius: 999px; }
 .ws-state.st-active  { background: rgba(96,165,250,0.16); color: var(--info); }
 .ws-state.st-shipped { background: rgba(52,211,153,0.16); color: var(--ok); }
-.ws-body { padding-left: 0.7rem; display: flex; flex-direction: column; gap: 0.1rem; }
 
-.tree-item { display: flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.45rem;
+/* ---- TIER NESTING (bug: flat-list, 2026-06-02) ---------------------------
+   The hierarchy is rendered with nested guide-rail CONTAINERS, not per-depth
+   margin classes. Each .tree-kids adds one indent step + a vertical rail
+   connecting its children to the parent row above; nesting compounds the
+   indent automatically, so Project → (Kind group | Workstream) → WorkItem →
+   Sub-task each sit at a distinct, clearly-indented x. This is what makes the
+   degraded (workstream-less) view read as a tree instead of a flat dump. */
+.tree-group { display: flex; align-items: center; gap: 0.45rem; padding: 0.3rem 0.45rem;
+  margin-top: 0.35rem; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted); }
+.tree-group:first-child { margin-top: 0.1rem; }
+.tg-badge { flex: 0 0 auto; font-size: 0.6rem; font-weight: 700; padding: 0.04rem 0.4rem;
+  border-radius: 4px; }
+.tg-badge.k-action   { background: rgba(239,68,68,0.18);  color: var(--type-action); }
+.tg-badge.k-decision { background: rgba(245,158,11,0.18); color: var(--type-decision); }
+.tg-badge.k-question { background: rgba(59,130,246,0.18); color: var(--type-question); }
+.tg-title { color: var(--text); }
+.tg-count { margin-left: auto; font-size: 0.66rem; font-weight: 600; color: var(--muted);
+  background: var(--panel2); border: 1px solid var(--border2); border-radius: 999px;
+  padding: 0.02rem 0.45rem; }
+.tree-subhead { text-transform: none; font-size: 0.78rem; color: var(--text); }
+
+.tree-kids { margin-left: 0.85rem; border-left: 2px solid var(--border2);
+  padding-left: 0.9rem; display: flex; flex-direction: column; gap: 0.1rem; }
+
+.tree-item { display: flex; align-items: center; gap: 0.4rem; padding: 0.22rem 0.45rem;
   border-radius: 5px; cursor: pointer; font-size: 0.8rem; }
 .tree-item:hover { background: var(--panel2); }
 .tree-item.sel { background: rgba(167,139,250,0.18); outline: 1px solid var(--accent); }
-/* Tier indentation — d1 = WorkItem under a Project, d2 = under a Workstream,
-   d3 = sub-task. A left guide rail makes the nesting read as a tree even with
-   only two populated tiers (bug #1, 2026-06-02). */
-.tree-item.d1 { margin-left: 1.6rem; border-left: 2px solid var(--border2); padding-left: 0.6rem; }
-.tree-item.d2 { margin-left: 2.6rem; border-left: 2px solid var(--border2); padding-left: 0.6rem; }
-.tree-item.d3 { margin-left: 3.6rem; border-left: 2px solid var(--border2); padding-left: 0.6rem; }
 .ti-ic { width: 1rem; text-align: center; }
 .ti-kind { width: 0.9rem; text-align: center; color: var(--muted); font-size: 0.74rem; }
 /* Colored kind badge in the tree (bug #4) — parity with the right-pane .k-*

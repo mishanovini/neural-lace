@@ -65,9 +65,16 @@ ok('R12 Task-5 detail chain defined (renderDetailCard → collectProvenance → 
 // --- four-tier hierarchy + sessions-as-provenance -------------------------
 ok('R13 sessions (sess-*/sub-*) are hidden from the tree (isSession predicate)',
   /function\s+isSession\s*\([^)]*\)\s*\{[^}]*\/\^\(sess\|sub\)-\//.test(js));
-ok('R14 four-tier render: project rows, workstream rows, tree-item depth classes',
-  /class="proj/.test(js.replace(/'/g, '"')) || /'proj'/.test(js)
-  ? (/['"]proj['"]/.test(js) && /['"]ws['"]/.test(js) && /tree-item d/.test(js)) : false);
+ok('R14 hierarchy render: project rows, kind-group intermediate tier, guide-rail nesting',
+  // Project + Workstream rows + the derived Kind-group tier (renderKindGroups)
+  // + nesting via .tree-kids guide-rail containers + per-row data-depth. The
+  // OLD per-depth `tree-item d<n>` margin classes were retired (flat-list bug,
+  // 2026-06-02) because they styled tiers the data never produced — indent now
+  // comes from the nesting container, so depth is carried as a data attribute.
+  /['"]proj['"]/.test(js) && /['"]ws['"]/.test(js)
+  && /function\s+renderKindGroups\s*\(/.test(js)
+  && /['"]tree-group/.test(js) && /['"]tree-kids['"]/.test(js)
+  && /setAttribute\(['"]data-depth['"]/.test(js));
 ok('R15 orphan surface present (section + Orphaned filter, session-based)',
   /id="orphanSection"/.test(html) && /function\s+staleSessions\s*\(/.test(js));
 
