@@ -776,3 +776,28 @@ proposal-ranked-by-feasibility in
 shipped fix), `docs/harness-architecture.md` Scripts table, companion
 HARNESS-GAP-28 (Dispatch spawner env-var convention — same "spawn is
 Anthropic-side" theme).
+
+---
+
+## HARNESS-GAP (2026-06-02): broadcast-active-session.sh cannot parse SSH host-alias origin URLs
+
+**Severity:** P1 (cross-machine coordination silently non-functional on alias-routed remotes)
+**Found:** Office_PC bootstrap session, 2026-06-02. PROVEN.
+**Symptom:** `broadcast-active-session.sh write` exits 1 with `ERROR: could not parse origin URL`; no `harness/active-sessions/<host>` branch is created on the PT-org remote (verified 404 via `gh api repos/<pt-org>/<repo>/branches/...`).
+**Root cause:** `_origin_owner_name()` `case` only matches `https://github.com/*` and `git@github.com:*`. This machine's origin push URL is `git@<ssh-alias>:<pt-org>/<repo>.git` — an SSH host alias (`Host <ssh-alias>` in ~/.ssh/config selecting a per-account key). The alias != `github.com`, so the parser returns empty -> `_die`. `gh api` itself works (active gh account has org push); only owner/name extraction fails.
+**Status:** FIXED 2026-06-03 (commit on neural-lace master; broadcast verified writing to the PT-org remote).
+**Fix (strict superset; cannot regress github.com parsing):** add an arm to `_origin_owner_name()` handling `git@<alias>:owner/name(.git)`:
+    git@*:*/*) url="${url#git@*:}"; url="${url%.git}"; printf '%s' "$url" ;;
+  (place before the catch-all `*)`; also covers https with custom host via an analogous `https://*/*/*` arm if desired.)
+**Propagation:** master-wins via session-start-auto-install.sh -> fix must land in canonical adapters/claude-code/scripts/ + be pushed; a live-only patch is reverted on next session start.
+
+---
+
+## HARNESS-GAP (2026-06-02): decision-context-gate schema path broke on conversation-tree-ui -> workstreams-ui rename
+
+**Severity:** P1 (decision-context enforcement substrate non-functional after the rename)
+**Found:** Office_PC bootstrap session, 2026-06-02. PROVEN.
+**Symptom:** `decision-context-gate.sh` BLOCKS every decision-soliciting Stop message even when a well-formed `::: decision id=... :::` fence is present. The gate's `_resolve_schema_module()` looks for `<root>/neural-lace/conversation-tree-ui/state/decision-context-schema.js` and `<root>/conversation-tree-ui/state/decision-context-schema.js`, but the repo renamed `conversation-tree-ui` -> `workstreams-ui`; the schema module is no longer at either path in the main tree (only in stale `.claude/worktrees/*`). The Zod validator can't load -> no fence ever validates -> the gate blocks unconditionally. Compounded when cwd is non-git (git-root resolution fails, falls to a `_fallback_conv_tree_path` that also misses).
+**Fix:** update `_resolve_schema_module()` in `adapters/claude-code/hooks/decision-context-gate.sh` to point at `workstreams-ui/state/decision-context-schema.js` (keep the old path as a fallback for back-compat). Sweep the whole gate (and any sibling hooks: `workstreams-*`, `decision-context-*`, `_fallback_conv_tree_path`) for other `conversation-tree-ui` literals left stale by the rename — likely a class, not a single instance.
+**Workaround:** per-session `.claude/state/decision-context-waiver-<ts>.txt` (the gate's documented escape).
+**Propagation:** master-wins via auto-install; fix must land in canonical + be pushed.

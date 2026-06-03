@@ -70,6 +70,12 @@ _origin_owner_name() {
   case "$url" in
     https://github.com/*) url="${url#https://github.com/}"; url="${url%.git}"; printf '%s' "$url" ;;
     git@github.com:*)     url="${url#git@github.com:}"; url="${url%.git}"; printf '%s' "$url" ;;
+    # SSH host-alias remotes (e.g. `git@<alias>:Owner/Repo.git` from a
+    # ~/.ssh/config `Host <alias>` entry that selects a per-account key).
+    # gh api uses the active gh account, not SSH, so only owner/name matters.
+    git@*:*/*)            url="${url#git@*:}"; url="${url%.git}"; printf '%s' "$url" ;;
+    # Non-github HTTPS hosts (GHE / custom). Strips scheme+host, keeps owner/name.
+    https://*/*/*)        url="${url#https://*/}"; url="${url%.git}"; printf '%s' "$url" ;;
     *) printf '' ;;
   esac
 }
@@ -348,6 +354,17 @@ _self_test() {
     git remote add origin "git@github.com:other-user/other-repo.git"
     got="$(_origin_owner_name)"
     [ "$got" = "other-user/other-repo" ] || { echo "  S3 origin-owner SSH: FAIL ($got)"; exit 1; }
+    # SSH host-alias remote (e.g. a ~/.ssh/config Host alias selecting a per-account key):
+    # git@<alias>:owner/repo.git — gh api uses the active account, so only owner/name matters.
+    git remote remove origin
+    git remote add origin "git@gh-alias:example-org/example-repo.git"
+    got="$(_origin_owner_name)"
+    [ "$got" = "example-org/example-repo" ] || { echo "  S3 origin-owner SSH-alias: FAIL ($got)"; exit 1; }
+    # Non-github HTTPS host (GHE / custom)
+    git remote remove origin
+    git remote add origin "https://ghe.example.com/grp/proj.git"
+    got="$(_origin_owner_name)"
+    [ "$got" = "grp/proj" ] || { echo "  S3 origin-owner HTTPS-custom: FAIL ($got)"; exit 1; }
     echo "  S3 origin-owner parsing: PASS"
   ) && pass=$((pass+1)) || fail=$((fail+1))
 
