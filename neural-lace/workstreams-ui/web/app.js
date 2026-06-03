@@ -454,14 +454,20 @@
     wrap.appendChild(head);
     if (expanded) {
       var body = el('div', 'proj-body');
-      // direct work items under the project (non-complete by default)
+      var workstreams = collectWorkstreams(p.node_id);
+      // Real Workstream-tier nodes (Phase-3 backfill) render first as their own
+      // tier — Project → Workstream → WorkItem → Sub-task.
+      workstreams.forEach(function (ws) { body.appendChild(renderWorkstream(ws)); });
+      // Direct project items (today's data has no Workstream tier — every item
+      // hangs off the project root). Rendering them as a flat list of d1 rows is
+      // the FLAT-LIST bug (2026-06-02): all items land at one indent, reading as
+      // an undifferentiated dump. Instead derive a real intermediate tier from
+      // `kind` (Decisions / Questions / Actions) and nest items inside guide-rail
+      // containers, so the degraded (workstream-less) view still reads as a
+      // hierarchy: Project → Kind group → WorkItem.
       var directs = collectWorkItems(p.node_id).filter(visibleInTree);
-      directs.forEach(function (r) { body.appendChild(treeItemRow(r, 1)); });
-      // workstream-tier nodes (lights up after Phase-3 backfill)
-      collectWorkstreams(p.node_id).forEach(function (ws) {
-        body.appendChild(renderWorkstream(ws));
-      });
-      if (!directs.length && !collectWorkstreams(p.node_id).length) {
+      if (directs.length) renderKindGroups(body, directs);
+      if (!directs.length && !workstreams.length) {
         body.appendChild(el('div', 'proj-empty', 'Nothing in flight'));
       }
       wrap.appendChild(body);
@@ -469,7 +475,39 @@
     return wrap;
   }
 
+  // ---- intermediate tier: group flat project items by kind ----------------
+  // Kind is the only structural grouping today's data carries, so it is the
+  // honest source for the middle tier until real Workstream nodes exist. Each
+  // group renders a header (depth 1) followed by a .tree-kids guide-rail
+  // container holding the items (depth 2) — the nesting container is what makes
+  // the items sit at a measurably distinct, clearly-indented x (regression:
+  // tier-nesting). Known kinds keep a stable order; unknown kinds sort last.
+  var KIND_ORDER = ['decision', 'question', 'action'];
+  var KIND_HEAD = { decision: 'Decisions', question: 'Questions', action: 'Actions' };
+  function renderKindGroups(parentEl, refs) {
+    var byKind = {};
+    refs.forEach(function (r) {
+      var k = r.item.kind || 'action';
+      (byKind[k] = byKind[k] || []).push(r);
+    });
+    var kinds = KIND_ORDER.filter(function (k) { return byKind[k]; }).concat(
+      Object.keys(byKind).filter(function (k) { return KIND_ORDER.indexOf(k) === -1; }).sort());
+    kinds.forEach(function (k) {
+      var grp = byKind[k];
+      var gh = el('div', 'tree-group k-' + k);
+      gh.appendChild(el('span', 'tg-badge k-' + k, kindLabel(k)));
+      gh.appendChild(el('span', 'tg-title', KIND_HEAD[k] || k));
+      gh.appendChild(el('span', 'tg-count', String(grp.length)));
+      parentEl.appendChild(gh);
+      var kids = el('div', 'tree-kids');
+      grp.forEach(function (r) { kids.appendChild(treeItemRow(r, 2)); });
+      parentEl.appendChild(kids);
+    });
+  }
+
   // renderWorkstream — per-workstream rollup + its work items (wire-check target).
+  // Items + sub-tasks nest inside .tree-kids guide-rail containers (compounding
+  // indent per depth) so Workstream → WorkItem → Sub-task each sit at a distinct x.
   function renderWorkstream(wsNode) {
     var wrap = el('div', 'ws');
     var head = el('div', 'ws-head');
@@ -478,17 +516,23 @@
     head.appendChild(el('span', 'ws-state st-' + (allShipped ? 'shipped' : 'active'),
       allShipped ? 'shipped' : 'active'));
     wrap.appendChild(head);
-    var body = el('div', 'ws-body');
+    var kids = el('div', 'tree-kids');
     collectWorkItems(wsNode.node_id).filter(visibleInTree).forEach(function (r) {
-      body.appendChild(treeItemRow(r, 2));
+      kids.appendChild(treeItemRow(r, 2));
     });
-    // sub-tasks (children of the workstream that are not sessions)
+    // sub-tasks (children of the workstream that are not sessions) nest one
+    // level deeper, under their own sub-header + nested guide-rail container.
     childrenOf(wsNode.node_id).filter(function (c) { return !isSession(c); }).forEach(function (sub) {
-      collectWorkItems(sub.node_id).filter(visibleInTree).forEach(function (r) {
-        body.appendChild(treeItemRow(r, 3));
-      });
+      var subItems = collectWorkItems(sub.node_id).filter(visibleInTree);
+      if (!subItems.length) return;
+      var subHead = el('div', 'tree-group tree-subhead');
+      subHead.appendChild(el('span', 'tg-title', sub.title || sub.node_id));
+      kids.appendChild(subHead);
+      var subKids = el('div', 'tree-kids');
+      subItems.forEach(function (r) { subKids.appendChild(treeItemRow(r, 3)); });
+      kids.appendChild(subKids);
     });
-    wrap.appendChild(body);
+    wrap.appendChild(kids);
     return wrap;
   }
 
@@ -507,7 +551,11 @@
 
   function treeItemRow(r, depth) {
     var st = itemState(r.item);
-    var li = el('div', 'tree-item d' + depth + ' state-' + st);
+    // Indent is supplied by the enclosing .tree-kids guide-rail container (not a
+    // per-depth margin class), so a workstream-less project still nests cleanly.
+    // data-depth is retained for the geometry regression + any depth styling.
+    var li = el('div', 'tree-item state-' + st);
+    li.setAttribute('data-depth', String(depth));
     li.setAttribute('data-node', r.nodeId);
     li.setAttribute('data-item', r.itemId);
     if (selItem && selItem.nodeId === r.nodeId && selItem.itemId === r.itemId) li.classList.add('sel');

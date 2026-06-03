@@ -10,21 +10,43 @@
 //
 // Usage:
 //   1. Start the GUI server:  node server/server.js   (default port 7733)
-//   2. npm i -D puppeteer     (NOT a shipped dependency — dev-only)
+//   2. npm i -D puppeteer      (full, downloads Chromium)   OR
+//      npm i -D puppeteer-core  (tiny — drives system Chrome via CHROME_PATH)
 //   3. WS_URL=http://127.0.0.1:7733/ node scripts/regression.e2e.js
 //
 // Exit 0 = all pass, 1 = a regression, 2 = harness error.
 'use strict';
+const fs = require('fs');
 const URL = process.env.WS_URL || 'http://127.0.0.1:7733/';
-let puppeteer;
-try { puppeteer = require('puppeteer'); }
-catch (_) { console.error('puppeteer not installed — run `npm i -D puppeteer` (dev-only).'); process.exit(2); }
+
+// Prefer full puppeteer (bundled Chromium); fall back to puppeteer-core driving
+// the system Chrome. The fallback keeps the suite runnable without the ~150MB
+// Chromium download — it just needs a Chrome binary (CHROME_PATH or a default).
+let puppeteer, launchOpts = { headless: 'new', args: ['--no-sandbox', '--disable-gpu'] };
+try {
+  puppeteer = require('puppeteer');
+} catch (_) {
+  try {
+    puppeteer = require('puppeteer-core');
+    const candidates = [process.env.CHROME_PATH,
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      '/usr/bin/google-chrome', '/usr/bin/chromium-browser',
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].filter(Boolean);
+    const exe = candidates.find(p => { try { return fs.existsSync(p); } catch (_) { return false; } });
+    if (!exe) { console.error('puppeteer-core found but no Chrome binary — set CHROME_PATH.'); process.exit(2); }
+    launchOpts.executablePath = exe;
+  } catch (__) {
+    console.error('Install a driver: `npm i -D puppeteer` or `npm i -D puppeteer-core` (dev-only).');
+    process.exit(2);
+  }
+}
 
 const results = [];
 const ok = (n, c, d) => results.push({ n, pass: !!c, d });
 
 (async () => {
-  const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
+  const browser = await puppeteer.launch(launchOpts);
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 900 });
   const errs = [];
@@ -32,16 +54,47 @@ const ok = (n, c, d) => results.push({ n, pass: !!c, d });
   await page.goto(URL, { waitUntil: 'networkidle2', timeout: 30000 });
   await new Promise(r => setTimeout(r, 1400));
 
-  // bug #1 — four-tier tree renders and items nest UNDER the project header.
+  // bug #1 — tree renders; items nest UNDER the project header (basic presence).
   const t = await page.evaluate(() => {
-    const projTitle = document.querySelector('#treeCanvas .proj-title');
+    const projHead = document.querySelector('#treeCanvas .proj.exp > .proj-head');
     const firstItem = document.querySelector('#treeCanvas .tree-item');
     let indented = false;
-    if (projTitle && firstItem) indented = firstItem.getBoundingClientRect().x > projTitle.getBoundingClientRect().x + 4;
+    if (projHead && firstItem) indented = firstItem.getBoundingClientRect().x > projHead.getBoundingClientRect().x + 8;
     return { projs: document.querySelectorAll('#treeCanvas .proj').length,
              items: document.querySelectorAll('#treeCanvas .tree-item').length, indented };
   });
   ok(1, t.projs >= 2 && t.items >= 1 && t.indented, `projs=${t.projs} items=${t.items} indented=${t.indented}`);
+
+  // bug #9 (flat-list regression, 2026-06-02) — the tree must be VISUALLY tiered,
+  // not "indented but still flat". Assert a real intermediate tier exists and
+  // each tier sits at a strictly-greater, perceptibly-stepped x:
+  //   project-row.x  <  group-header.x  <  item.x   (each step >= 12px)
+  // This catches the prior failure where all items collapsed to one indent
+  // because the per-tier indent classes styled tiers the data never produced.
+  const tier = await page.evaluate(() => {
+    const x = (el) => el ? Math.round(el.getBoundingClientRect().x) : null;
+    const scope = document.querySelector('#treeCanvas .proj.exp');
+    if (!scope) return { err: 'no expanded project' };
+    const projHead = scope.querySelector(':scope > .proj-head');
+    const groups = Array.from(scope.querySelectorAll('.tree-group'));
+    const items = Array.from(scope.querySelectorAll('.tree-item'));
+    const kidsRails = scope.querySelectorAll('.tree-kids').length;
+    const projX = x(projHead);
+    const groupXs = Array.from(new Set(groups.map(x)));
+    const itemXs = Array.from(new Set(items.map(x)));
+    const groupX = groupXs.length ? Math.min(...groupXs) : null;
+    const itemX = itemXs.length ? Math.min(...itemXs) : null;
+    return {
+      groupCount: groups.length, itemCount: items.length, kidsRails,
+      projX, groupX, itemX,
+      stepGroup: (groupX != null && projX != null) ? groupX - projX : null,
+      stepItem: (itemX != null && groupX != null) ? itemX - groupX : null,
+    };
+  });
+  const tierPass = tier.groupCount >= 1 && tier.itemCount >= 1 && tier.kidsRails >= 1
+    && tier.stepGroup >= 12 && tier.stepItem >= 12;
+  ok(9, tierPass, `groups=${tier.groupCount} items=${tier.itemCount} rails=${tier.kidsRails} ` +
+    `x: proj=${tier.projX}->group=${tier.groupX}(+${tier.stepGroup})->item=${tier.itemX}(+${tier.stepItem})`);
 
   // bug #4 — tree rows carry COLORED kind badges (not just a faint glyph).
   const b4 = await page.evaluate(() => {
