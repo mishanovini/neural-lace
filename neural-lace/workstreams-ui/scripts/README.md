@@ -54,6 +54,33 @@ Both accept `--sink <path>` to target a tree-state file other than the default
 > `conversation-tree-extract-pending.sh` Stop hook (see the harness `hooks/`
 > directory); this script remains for manual / curated population.
 
+## Regression test (browser e2e)
+
+`regression.e2e.js` is a **real-headless-browser** regression suite that locks
+the 8 GUI bugs fixed on 2026-06-02
+(`docs/reviews/2026-06-02-workstreams-gui-8-bug-regression.md`). The DOM-free
+node selftests (`../state/selftest.js`, `../web/responsive.selftest.js`) cannot
+catch CSS footguns or DOM-wiring regressions — e.g. the `[hidden]` override that
+squeezed the detail card into a 67px bottom strip, or the selection that never
+highlighted the clicked tree row. This suite drives an actual browser to assert
+each fix.
+
+`puppeteer` is **dev-only — NOT a shipped dependency** (keeps the GUI's runtime
+deps to just `zod`). Install it on demand:
+
+```bash
+# 1. start the server
+node server/server.js
+# 2. install puppeteer just for testing (dev-only; safe to delete after)
+npm i -D puppeteer
+# 3. run the suite (default WS_URL=http://127.0.0.1:7733/)
+node scripts/regression.e2e.js
+```
+
+Exit 0 = all 9 checks pass (8 bugs + a no-page-errors guard); exit 1 = a
+regression; exit 2 = harness error (e.g. puppeteer missing). Each assertion
+prints its measured evidence (`cardH`, `selTreeRows`, badge counts, etc.).
+
 ## Quick start
 
 From this `scripts/` directory, in PowerShell:
