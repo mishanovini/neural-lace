@@ -635,7 +635,7 @@ _run_on_session_start() {
 
   # Pull session_id from event JSON or env. Source distinguishes startup vs
   # resume vs compact — all of them register the same branch (idempotent).
-  local sid source cwd transcript_path
+  local sid="" source="" cwd="" transcript_path=""
   if [[ -n "$input" ]]; then
     sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || echo "")
     source=$(printf '%s' "$input" | jq -r '.source // empty' 2>/dev/null || echo "")

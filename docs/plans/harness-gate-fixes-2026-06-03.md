@@ -36,7 +36,7 @@ Fix four harness defects surfaced during the 2026-06-02/03 Office_PC bootstrap, 
 - `docs/backlog.md` — mark the two HARNESS-GAP entries fixed (already present)
 
 ## In-flight scope updates
-- (none yet)
+- 2026-06-03: `adapters/claude-code/hooks/workstreams-emit.sh` — fix `sid: unbound variable` crash on empty stdin in `_run_on_session_start` (init `local sid="" source="" cwd="" transcript_path=""`). Discovered while launching the workstreams GUI (empty-GUI investigation). The broader workstreams-ui pipeline defect cluster (stale settings wiring + duplicate-root data model) is filed as a separate backlog finding, NOT fixed here.
 
 ## Assumptions
 - Canonical `~/claude-projects/neural-lace` is the source of truth; live `~/.claude/` is synced from it (Windows copy, not symlink).
