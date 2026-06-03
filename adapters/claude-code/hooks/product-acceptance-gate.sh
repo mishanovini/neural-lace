@@ -189,27 +189,23 @@ _scan_plans_dir() {
 }
 
 find_active_plans() {
-  # 1. cwd-relative plans (the current worktree, or cwd itself when non-git).
+  # Plan DISCOVERY is PRIMARY-CHECKOUT-ONLY (cwd's docs/plans). The canonical
+  # ACTIVE-plan list lives in the primary checkout; secondary worktrees hold
+  # stale feature-branch COPIES of plans that would otherwise surface as dozens
+  # of spurious un-waivered ACTIVE plans (the multi-worktree sprawl case that
+  # made this gate fire on every session-end against stale worktree copies).
+  #
+  # ARTIFACT aggregation across worktrees is UNCHANGED and lives in a separate
+  # function: a PASS acceptance artifact in ANY worktree's .claude/state/ still
+  # satisfies the gate (the multi-worktree-team case in acceptance-scenarios.md).
+  # Only plan DISCOVERY is cwd-only.
+  #
+  # 2026-06-03: refines the earlier over-scoping fix, which wrongly scanned
+  # secondary worktrees' docs/plans for the ACTIVE list too — over-finding
+  # stale copies. The original acceptance-scenarios.md design is "plans from
+  # docs/plans (top-level), artifacts aggregated across worktrees"; this restores
+  # exactly that.
   _scan_plans_dir "docs/plans"
-
-  # 2. Every OTHER worktree of the current repo. Best-effort: if git is
-  #    missing or cwd is not a work tree, this is a no-op and only cwd's
-  #    own docs/plans/ (step 1) is gated — never sibling repos.
-  command -v git >/dev/null 2>&1 || return 0
-  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  local wt_list line wt seen_primary=0
-  wt_list=$(git worktree list --porcelain 2>/dev/null) || return 0
-  [[ -z "$wt_list" ]] && return 0
-  while IFS= read -r line; do
-    case "$line" in
-      "worktree "*)
-        wt="${line#worktree }"
-        # Skip the primary (first porcelain entry = cwd, already scanned).
-        if [[ $seen_primary -eq 0 ]]; then seen_primary=1; continue; fi
-        _scan_plans_dir "${wt}/docs/plans"
-        ;;
-    esac
-  done <<< "$wt_list"
 }
 
 # Get the current plan_commit_sha for a plan file.

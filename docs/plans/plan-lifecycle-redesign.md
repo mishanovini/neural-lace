@@ -142,6 +142,11 @@ THIS session writes only the documentation files marked ✎.)
 - `adapters/claude-code/rules/plan-lifecycle.md` — R6: NEW (or fold into `planning.md`)
 - `docs/harness-architecture.md` — R1–R6: inventory updates per `harness-maintenance.md`
 
+## In-flight scope updates
+
+- 2026-06-03: `adapters/claude-code/hooks/product-acceptance-gate.sh` — refine `find_active_plans` to discover plans cwd-only (it was scanning stale secondary-worktree plan COPIES, surfacing dozens of spurious un-waivered ACTIVE plans on every session-end across a large multi-worktree downstream repo). This is squarely a plan-lifecycle concern: it defines which plans count as ACTIVE for the acceptance gate. Artifact aggregation across worktrees is unchanged. self-test 11/11.
+- 2026-06-03: `docs/plans/plan-lifecycle-redesign.md` — this in-flight scope-update entry.
+
 ## Assumptions
 
 - The existing `acceptance-exempt: true` carve-out and `product-acceptance-gate.sh`
