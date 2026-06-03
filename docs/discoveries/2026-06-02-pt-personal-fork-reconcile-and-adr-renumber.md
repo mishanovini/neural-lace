@@ -115,3 +115,18 @@ reconcile, or (b) carve out an exception. Not acting on this unilaterally.
   `reconverge-land`, `reconverge-linear`, `trial-merge`; `reconverge-land`
   worktree removed.
 - `2026-05-27-neural-lace-fork-deep-dive-and-sync-strategy` → `status: superseded`.
+- Docs commit `c735fcf` (this discovery + supersede) — both masters.
+- **Renderer port (Misha follow-up, option 1):** the union initially took PT's
+  four-tier `app.js` rewrite, which had dropped personal's decision-context
+  fence rendering (the deferred "~138-line renderItemDetails" — a real regression
+  on `personal/master`, which previously had it). Ported `renderItemDetails` +
+  `detailRow` + a self-contained `linkifyDocs`-lite from
+  `ee16f41:conversation-tree-ui/web/app.js` into the four-tier detail card
+  (`workstreams-ui/web/app.js`), commit `37503dc` on both masters. The `det-*`
+  CSS was already present (app.css auto-merged personal's styles); only the JS
+  logic was dropped. Validation: `node --check` PASS, `web/responsive.selftest.js`
+  22/22 PASS, stubbed-DOM execution test 8/8 PASS (autonomous-action + decision
+  fence payloads render). The `(see branch: …)` jump degrades to a toast (the
+  four-tier renderer has no `focusNode` tree-canvas nav); doc-path chips are
+  informational (no docs-modal subsystem in the four-tier renderer). This
+  resolves follow-up (1) from the backlog v50 changelog note.
