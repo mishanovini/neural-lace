@@ -94,6 +94,14 @@ orchestrator will cherry-pick them back onto the feature branch in Phase B.
 
 **Auto-cleanup interaction:** worktrees that made commits persist until the orchestrator cleans them up (per the cherry-pick protocol below). The worker branch (`worker-<task-id>`) and the worktree-internal branch (`worktree-agent-<id>`) are both deleted in step e of the cherry-pick protocol.
 
+### Cross-repo worktree dispatch
+
+`isolation: "worktree"` builds the worktree off the **launcher session's cwd repo**, NOT the repo a dispatched task targets. So when an orchestrator running in repo A dispatches a builder to work on a DIFFERENT repo B (a cross-repo dispatch), the auto-worktree is rooted in A — the wrong tree. Do NOT rely on `isolation: "worktree"` to land in the target repo.
+
+Instead, the dispatch prompt MUST instruct a cross-repo builder to: (1) `pwd`-detect its worktree root; (2) if that root is not inside the target repo, `gh auth switch -u <target-account>`, `cd` the real target checkout (e.g. `~/claude-projects/<target>`), `git fetch`, then `git worktree add <path> <target-branch>` to create its own isolated worktree off the target branch; (3) do ALL work in that target-rooted worktree.
+
+Observed failure (2026-06-02): a cross-repo builder dispatched from a neural-lace orchestrator got a neural-lace-rooted worktree; without the self-detect-and-reroot workaround a downstream-product artifact (product/person names) could have landed in the harness repo and tripped the harness-hygiene denylist (or harness content could leak into the product repo). See **HARNESS-GAP-46** for the proposed spawn-validator warning that would surface this rooting caveat at spawn time.
+
 ### Build-in-parallel, verify-sequentially
 
 This is the critical discipline. Parallel builders can race on build work (tests, file edits, commits in their own worktrees). But the **plan file + evidence file** are shared resources that CANNOT be updated in parallel safely:
