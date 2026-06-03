@@ -56,8 +56,22 @@ set -u
 FETCH_TIMEOUT_SECONDS="${FETCH_TIMEOUT_SECONDS:-10}"
 # LIVE_DIR_OVERRIDE lets the self-test point "live ~/.claude" at a temp dir.
 LIVE_DIR="${LIVE_DIR_OVERRIDE:-$HOME/.claude}"
-# Canonical executable surfaces synced master-wins:
-SYNC_SUBDIRS="hooks scripts"
+# Canonical surfaces synced master-wins. Executable surfaces (hooks/scripts =
+# .sh) AND content surfaces (agents/rules/templates/skills = .md) are all pure
+# harness content with no legitimate machine-local drift (per
+# rules/harness-maintenance.md), so canonical always wins. Live-only files are
+# NEVER deleted — only install-if-missing / update-if-differing. (Extended
+# 2026-06-03: agents/rules/templates/skills were previously install.sh-only, so
+# they silently drifted on every machine until a manual install — HARNESS-GAP.)
+SYNC_SUBDIRS="hooks scripts agents rules templates skills"
+
+# Per-subdir canonical file extension: executable (.sh) vs content (.md).
+_subdir_ext() {
+  case "$1" in
+    hooks|scripts) printf 'sh' ;;
+    *)             printf 'md' ;;
+  esac
+}
 # Candidate NL checkout locations (first valid wins). These are GENERIC defaults;
 # a machine whose checkout lives elsewhere (e.g. a path with spaces) names it in
 # ~/.claude/local/nl-checkout-path.txt (per-machine config, gitignored — never
@@ -175,17 +189,18 @@ _content_same() {
   diff -q <(tr -d '\r' < "$1" 2>/dev/null) <(tr -d '\r' < "$2" 2>/dev/null) >/dev/null 2>&1
 }
 
-# Sync canonical files of one subdir (hooks|scripts) into live. master-wins.
-# Args: nl_dir, ref, subdir
+# Sync canonical files of one subdir (hooks|scripts=.sh, agents|rules|
+# templates|skills=.md) into live. master-wins. Args: nl_dir, ref, subdir
 sync_canonical_files() {
   local nl="$1" ref="$2" subdir="$3"
   local live_sub="$LIVE_DIR/$subdir"
+  local ext; ext=$(_subdir_ext "$subdir")
   mkdir -p "$live_sub" 2>/dev/null || true
 
-  # Canonical basenames for this subdir at the ref.
+  # Canonical basenames for this subdir at the ref (extension per subdir).
   local canon_list
   canon_list=$(git -C "$nl" ls-tree --name-only "$ref" "adapters/claude-code/$subdir/" 2>/dev/null \
-    | grep '\.sh$' | sed 's#.*/##' | sort -u)
+    | grep "\\.${ext}\$" | sed 's#.*/##' | sort -u)
   [ -z "$canon_list" ] && return 0
 
   local b tmp target
@@ -198,14 +213,14 @@ sync_canonical_files() {
     fi
     target="$live_sub/$b"
     if [ ! -e "$target" ]; then
-      cp "$tmp" "$target" 2>/dev/null && chmod +x "$target" 2>/dev/null
+      cp "$tmp" "$target" 2>/dev/null && { [ "$ext" = sh ] && chmod +x "$target" 2>/dev/null; :; }
       N_INSTALLED=$((N_INSTALLED + 1))
       _log "installed $subdir/$b (was missing)"
     elif ! _content_same "$tmp" "$target"; then
       # master-wins, but back up the prior live copy first.
       mkdir -p "$BACKUP_DIR/$subdir" 2>/dev/null || true
       cp "$target" "$BACKUP_DIR/$subdir/$b" 2>/dev/null || true
-      cp "$tmp" "$target" 2>/dev/null && chmod +x "$target" 2>/dev/null
+      cp "$tmp" "$target" 2>/dev/null && { [ "$ext" = sh ] && chmod +x "$target" 2>/dev/null; :; }
       N_UPDATED=$((N_UPDATED + 1))
       _log "updated $subdir/$b (backed up prior copy to $(basename "$BACKUP_DIR")/$subdir/)"
     else
@@ -216,7 +231,7 @@ sync_canonical_files() {
 
   # Count live files NOT in canonical (informational drift; never touched).
   local f base
-  for f in "$live_sub"/*.sh; do
+  for f in "$live_sub"/*."$ext"; do
     [ -e "$f" ] || continue
     base=$(basename "$f")
     if ! printf '%s\n' "$canon_list" | grep -qx "$base"; then
@@ -375,11 +390,13 @@ run_self_test() {
 
   # ---- Build a canonical NL repo fixture ----
   local CANON="$tmp/nl"
-  mkdir -p "$CANON/adapters/claude-code/hooks" "$CANON/adapters/claude-code/scripts"
+  mkdir -p "$CANON/adapters/claude-code/hooks" "$CANON/adapters/claude-code/scripts" "$CANON/adapters/claude-code/agents"
   printf '%s\n' '# NEURAL-LACE-INSTALLER' 'echo installer' > "$CANON/adapters/claude-code/install.sh"
   printf '%s\n' '#!/bin/bash' 'echo hook-alpha v1' > "$CANON/adapters/claude-code/hooks/alpha.sh"
   printf '%s\n' '#!/bin/bash' 'echo hook-beta v1' > "$CANON/adapters/claude-code/hooks/beta.sh"
   printf '%s\n' '#!/bin/bash' 'echo script-gamma v1' > "$CANON/adapters/claude-code/scripts/gamma.sh"
+  # A content surface (.md) — exercises the agents/rules/templates/skills sync path.
+  printf '%s\n' '# agent-delta' 'content v1' > "$CANON/adapters/claude-code/agents/delta.md"
   # A canonical settings.json.template with two SessionStart entries, one of which
   # is the auto-install self-wire entry, plus one Stop entry.
   cat > "$CANON/adapters/claude-code/settings.json.template" <<'TMPL'
@@ -414,8 +431,9 @@ TMPL
   local L1="$tmp/live1"; mkdir -p "$L1"
   out=$(_run_main "$L1")
   if [ -f "$L1/hooks/alpha.sh" ] && [ -f "$L1/hooks/beta.sh" ] && [ -f "$L1/scripts/gamma.sh" ] \
+     && [ -f "$L1/agents/delta.md" ] \
      && diff -q "$L1/hooks/alpha.sh" <(git -C "$CANON" show master:adapters/claude-code/hooks/alpha.sh) >/dev/null 2>&1; then
-    echo "PASS: fresh-live-installs-all"; pass=$((pass+1))
+    echo "PASS: fresh-live-installs-all (incl .md content surface)"; pass=$((pass+1))
   else echo "FAIL: fresh-live-installs-all (out: $out)"; fail=$((fail+1)); fi
 
   # ---- Scenario 2: up-to-date-noop ----
