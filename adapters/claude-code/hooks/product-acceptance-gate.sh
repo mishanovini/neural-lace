@@ -162,24 +162,54 @@ source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
 
 # ---------- helpers ----------------------------------------------------
 
-# Find all ACTIVE plan files (top level only, NOT archive/).
-# Echoes one path per line.
-find_active_plans() {
-  local dir
-  for dir in docs/plans */docs/plans */*/docs/plans; do
-    [[ -d "$dir" ]] || continue
-    # Iterate top-level *.md only; skip archive subdir and -evidence files
-    for f in "$dir"/*.md; do
-      [[ -f "$f" ]] || continue
-      # Skip evidence companions
-      case "$f" in
-        *-evidence.md) continue ;;
-      esac
-      if grep -qiE '^Status:[[:space:]]*ACTIVE' "$f" 2>/dev/null; then
-        echo "$f"
-      fi
-    done
+# Find all ACTIVE plan files (top level only, NOT archive/) for the CURRENT
+# REPO ONLY: cwd's docs/plans/ plus every other worktree of the current repo
+# (mirrors discover_acceptance_artifacts' git-worktree enumeration). Echoes
+# one path per line.
+#
+# Scoping rationale (HARNESS-GAP 2026-06-03, over-scoping fix): the prior
+# implementation globbed `docs/plans */docs/plans */*/docs/plans`. From a
+# parent-of-projects cwd (a non-git dir holding many sibling project
+# checkouts + their worktrees) those `*/` globs recursed into UNRELATED
+# sibling repos, so the gate demanded a PASS artifact for every ACTIVE plan
+# in every sibling project (134 in practice). The gate's contract is
+# per-repo: scope plan discovery to the current repo + its worktrees, exactly
+# as artifact discovery already does. When cwd is NOT a git work tree, scan
+# only cwd's own docs/plans/ — never recurse into child/sibling dirs.
+_scan_plans_dir() {
+  local d="$1" f
+  [[ -d "$d" ]] || return 0
+  for f in "$d"/*.md; do
+    [[ -f "$f" ]] || continue
+    case "$f" in *-evidence.md) continue ;; esac
+    if grep -qiE '^Status:[[:space:]]*ACTIVE' "$f" 2>/dev/null; then
+      echo "$f"
+    fi
   done
+}
+
+find_active_plans() {
+  # 1. cwd-relative plans (the current worktree, or cwd itself when non-git).
+  _scan_plans_dir "docs/plans"
+
+  # 2. Every OTHER worktree of the current repo. Best-effort: if git is
+  #    missing or cwd is not a work tree, this is a no-op and only cwd's
+  #    own docs/plans/ (step 1) is gated — never sibling repos.
+  command -v git >/dev/null 2>&1 || return 0
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  local wt_list line wt seen_primary=0
+  wt_list=$(git worktree list --porcelain 2>/dev/null) || return 0
+  [[ -z "$wt_list" ]] && return 0
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        wt="${line#worktree }"
+        # Skip the primary (first porcelain entry = cwd, already scanned).
+        if [[ $seen_primary -eq 0 ]]; then seen_primary=1; continue; fi
+        _scan_plans_dir "${wt}/docs/plans"
+        ;;
+    esac
+  done <<< "$wt_list"
 }
 
 # Get the current plan_commit_sha for a plan file.
@@ -665,6 +695,23 @@ if [[ "${1:-}" == "--self-test" ]]; then
   write_plan "scenario-h" 1 noreason
   expect_exit "h" 2 "exempt-without-reason"
 
+  # ---- (X) ACTIVE plan in a CHILD subdir is NOT discovered (over-scoping fix) ----
+  # Regression guard for HARNESS-GAP 2026-06-03: a parent-of-projects cwd must
+  # not gate on plans living in sibling/child project dirs. Plant an ACTIVE plan
+  # (no artifact) under a non-worktree child subdir. The OLD `*/docs/plans` glob
+  # would have found + BLOCKED on it (exit 2); the per-repo-scoped finder must
+  # ignore it -> no ACTIVE plans -> exit 0.
+  reset_repo
+  mkdir -p subproj/docs/plans
+  {
+    echo "# Plan: child-subdir-should-be-ignored"
+    echo "Status: ACTIVE"
+    echo "## Goal"
+    echo "Must not be discovered by a parent-of-projects cwd."
+  } > subproj/docs/plans/scenario-x.md
+  expect_exit "X" 0 "child-subdir-plan-not-discovered"
+  rm -rf subproj
+
   # ---- (W1) PASS artifact ONLY in secondary worktree -> PASS ----
   # Lead's worktree has no artifact; teammate's worktree wrote a PASS.
   # The gate must aggregate across worktrees and see it.
@@ -699,7 +746,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   reset_repo
 
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 10 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 11 scenarios)" >&2
   if [[ $FAILED -eq 0 ]]; then
     exit 0
   else
