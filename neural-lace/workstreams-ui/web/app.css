@@ -53,6 +53,12 @@
   --side-panel-w: clamp(380px, 32vw, 520px);
 }
 * { box-sizing: border-box; }
+/* Global hidden-attribute defense. Without this, author display rules
+   (e.g. `.list-body { display: flex }`) override the UA `[hidden]{display:none}`
+   at equal specificity, so `el.hidden = true` silently fails to hide the
+   element. That footgun squeezed the detail card into a 67px bottom strip when
+   #filterBody (.list-body) stayed visible despite `.hidden`. (bug #2, 2026-06-02) */
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -753,9 +759,21 @@ button:active { transform: scale(0.98); }
   border-radius: 5px; cursor: pointer; font-size: 0.8rem; }
 .tree-item:hover { background: var(--panel2); }
 .tree-item.sel { background: rgba(167,139,250,0.18); outline: 1px solid var(--accent); }
-.tree-item.d2 { margin-left: 0.7rem; } .tree-item.d3 { margin-left: 1.4rem; }
+/* Tier indentation — d1 = WorkItem under a Project, d2 = under a Workstream,
+   d3 = sub-task. A left guide rail makes the nesting read as a tree even with
+   only two populated tiers (bug #1, 2026-06-02). */
+.tree-item.d1 { margin-left: 1.6rem; border-left: 2px solid var(--border2); padding-left: 0.6rem; }
+.tree-item.d2 { margin-left: 2.6rem; border-left: 2px solid var(--border2); padding-left: 0.6rem; }
+.tree-item.d3 { margin-left: 3.6rem; border-left: 2px solid var(--border2); padding-left: 0.6rem; }
 .ti-ic { width: 1rem; text-align: center; }
 .ti-kind { width: 0.9rem; text-align: center; color: var(--muted); font-size: 0.74rem; }
+/* Colored kind badge in the tree (bug #4) — parity with the right-pane .k-*
+   chips so decision / question / action are scannable at a glance. */
+.ti-badge { flex: 0 0 auto; font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.03em; padding: 0.02rem 0.34rem; border-radius: 4px; }
+.ti-badge.k-action   { background: rgba(239,68,68,0.18);  color: var(--type-action); }
+.ti-badge.k-decision { background: rgba(245,158,11,0.18); color: var(--type-decision); }
+.ti-badge.k-question { background: rgba(59,130,246,0.18); color: var(--type-question); }
 .ti-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tree-item.state-shipped .ti-text { color: var(--muted); text-decoration: line-through; }
 .tree-item.state-blocked .ti-ic { color: var(--warn); }

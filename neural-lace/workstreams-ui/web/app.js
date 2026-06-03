@@ -29,7 +29,7 @@
 (function () {
   // ---- element handles -------------------------------------------------
   var $ = function (id) { return document.getElementById(id); };
-  var showArchived = $('showArchived'),
+  var showArchived = $('showArchived'), showCompleted = $('showCompleted'),
       freshnessEl = $('freshness'), statusEl = $('status'),
       corruptBanner = $('corruptBanner'), toast = $('toast'),
       treeCanvas = $('treeCanvas'), treeScroll = $('treeScroll'),
@@ -196,9 +196,17 @@
   // (Phase-3 reconciler adds it); until then the safe default for work items is
   // NON-orphaned (plan Integration points), so the orphan surface keys off the
   // session signal which IS computable from the snapshot.
+  // Internal sub-agent sessions (auto-titled "subagent <hash>", node_id sub-*)
+  // are AI-internal mechanics — peer reviewers, verifiers, parallel builders.
+  // Per ADR-034 they are NOT branches of the user↔AI conversation and must NOT
+  // be surfaced to the operator as orphans needing reconciliation (bug #3).
+  function isInternalSubagent(n) {
+    return n && /^subagent\s+[0-9a-f]{6,}/i.test(String(n.title || ''));
+  }
   function staleSessions() {
     return nodes().filter(function (n) {
       if (!isSession(n)) return false;
+      if (isInternalSubagent(n)) return false;    // bug #3: drop AI-internal subagent noise
       if (n.state === 'concluded' || n.state === 'archived') return false;
       var ms = nodeOpenedMs(n.node_id);
       if (ms == null) return true;                // unknown age but still open ⇒ orphan candidate
@@ -268,6 +276,7 @@
     activeFilter = filterName;
     localStorage.setItem('workstreams.activeFilter', filterName);
     selItem = null;                               // leaving an item-detail context
+    syncTreeSelection();                          // bug #5: clear tree highlight
     detailCard.hidden = true;
     renderFilteredItems(filterName);
     updateChipCounts();
@@ -486,18 +495,43 @@
   // non-complete-by-default: hide shipped/closed in the tree unless "show
   // archived" is on (the tree's complete-work escape hatch for this phase).
   function visibleInTree(r) {
-    return showArchived.checked || !isComplete(r.item);
+    // Completed (shipped/closed) items hide in the tree unless EITHER the
+    // "show completed" toggle (bug #7) OR "show archived" is on.
+    return showArchived.checked || (showCompleted && showCompleted.checked) || !isComplete(r.item);
   }
+
+  // Short uppercase kind label for the colored tree badge (bug #4). Falls back
+  // to the raw kind for any future kind value.
+  var KIND_LABEL = { decision: 'DEC', question: 'ASK', action: 'ACT' };
+  function kindLabel(k) { return KIND_LABEL[k] || String(k || '').slice(0, 3).toUpperCase() || '•'; }
 
   function treeItemRow(r, depth) {
     var st = itemState(r.item);
     var li = el('div', 'tree-item d' + depth + ' state-' + st);
+    li.setAttribute('data-node', r.nodeId);
+    li.setAttribute('data-item', r.itemId);
     if (selItem && selItem.nodeId === r.nodeId && selItem.itemId === r.itemId) li.classList.add('sel');
     li.appendChild(el('span', 'ti-ic', stateIcon(st)));
-    li.appendChild(el('span', 'ti-kind', kindGlyph(r.item.kind)));
+    // colored kind badge (decision / question / action) — parity with the
+    // right-pane .k-* chips so the type is scannable in the tree (bug #4).
+    var badge = el('span', 'ti-badge k-' + (r.item.kind || 'action'), kindLabel(r.item.kind));
+    badge.title = r.item.kind || '';
+    li.appendChild(badge);
     li.appendChild(el('span', 'ti-text', r.item.text || '(untitled)'));
     li.addEventListener('click', function () { renderDetailCard(r.nodeId, r.itemId); });
     return li;
+  }
+
+  // syncTreeSelection — toggle the .sel highlight on existing tree rows to match
+  // selItem WITHOUT a full re-render (bug #5: clicking an item — from the tree
+  // OR the right-pane list — now highlights the matching tree row).
+  function syncTreeSelection() {
+    Array.prototype.forEach.call(treeCanvas.querySelectorAll('.tree-item'), function (li) {
+      var on = selItem
+        && li.getAttribute('data-node') === selItem.nodeId
+        && li.getAttribute('data-item') === selItem.itemId;
+      li.classList.toggle('sel', !!on);
+    });
   }
 
   function toggleProject(projId) {
@@ -843,6 +877,7 @@
     var it = host && (host.items || []).find(function (x) { return x.item_id === itemId; });
     if (!it) { setActiveFilter(activeFilter); return; }
     selItem = { nodeId: nodeId, itemId: itemId };
+    syncTreeSelection();                          // bug #5: highlight matching tree row
     var st = itemState(it);
     filterBody.hidden = true;
     detailCard.hidden = false;
@@ -986,6 +1021,7 @@
     if (e.key === 'Escape' && selItem) { setActiveFilter(activeFilter); }
   });
   showArchived.addEventListener('change', function () { render(); });
+  if (showCompleted) showCompleted.addEventListener('change', function () { render(); });
 
   // backlog capture
   addBacklogBtn.addEventListener('click', function () {
@@ -1035,6 +1071,178 @@
       else if (e.key === 'ArrowRight') { cur = Math.min(80, cur + 2); }
       else return;
       setSplit(cur); localStorage.setItem('workstreams.paneSplit', cur); e.preventDefault();
+    });
+  })();
+
+  // ====================================================================
+  //  DOCS BROWSER (restored 2026-06-02 — bug #6). Cross-project folder tree
+  //  reading /api/docs (flat per-project file list → nested project→folder→file
+  //  tree) + an in-GUI markdown viewer (/api/doc) + open-in-OS-editor
+  //  (/api/doc/open). Ported from the pre-rename renderer (ee16f41); the
+  //  four-tier rewrite dropped the frontend while the endpoints + CSS survived.
+  // ====================================================================
+  (function docsBrowser() {
+    var docsBtn = $('docsBtn'), docsPanel = $('docsPanel'), docsClose = $('docsClose'),
+        docsFilter = $('docsFilter'), docsBody = $('docsBody'), docScrim = $('docScrim'),
+        docModal = $('docModal'), docTitle = $('docTitle'), docBody = $('docBody'),
+        docClose = $('docClose'), docOpenEditor = $('docOpenEditor');
+    if (!docsBtn || !docsPanel) return;            // drawer not in this build
+
+    var docsCache = null, curDoc = null;
+    var DOCS_EXP_KEY = 'workstreams.docsExpanded';
+    var docsExpanded = (function () {
+      try { var r = JSON.parse(localStorage.getItem(DOCS_EXP_KEY) || '[]'); return Array.isArray(r) ? r : []; }
+      catch (_) { return []; }
+    })();
+    function isExp(k) { return docsExpanded.indexOf(k) !== -1; }
+    function toggleExp(k) {
+      var i = docsExpanded.indexOf(k);
+      if (i === -1) docsExpanded.push(k); else docsExpanded.splice(i, 1);
+      try { localStorage.setItem(DOCS_EXP_KEY, JSON.stringify(docsExpanded)); } catch (_) {}
+    }
+
+    function openDocsPanel() {
+      docsPanel.hidden = false; docScrim.hidden = false;
+      if (docsCache) { renderDocsPanel(); return; }
+      docsBody.innerHTML = '<p class="muted">Loading docs…</p>';
+      fetch('/api/docs').then(function (r) { return r.json(); }).then(function (j) {
+        docsCache = (j && j.projects) || {}; renderDocsPanel();
+      }).catch(function () { docsBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
+    }
+    function closeDocsPanel() { docsPanel.hidden = true; if (docModal.hidden) docScrim.hidden = true; }
+
+    function buildDocTree(files) {
+      var root = { dirs: {}, files: [] };
+      files.forEach(function (full) {
+        var parts = String(full).split('/'), fname = parts.pop(), node = root;
+        parts.forEach(function (seg) {
+          if (!node.dirs[seg]) node.dirs[seg] = { dirs: {}, files: [] };
+          node = node.dirs[seg];
+        });
+        node.files.push({ name: fname, full: full });
+      });
+      return root;
+    }
+    function countDocs(node) {
+      var n = node.files.length;
+      Object.keys(node.dirs).forEach(function (d) { n += countDocs(node.dirs[d]); });
+      return n;
+    }
+    function renderDocNode(parent, node, projKey, pathPrefix, depth, expandAll) {
+      Object.keys(node.dirs).sort().forEach(function (dname) {
+        var child = node.dirs[dname];
+        var folderPath = pathPrefix ? pathPrefix + '/' + dname : dname;
+        var fkey = projKey + '' + folderPath;
+        var open = expandAll || isExp(fkey);
+        var row = el('div', 'dp-dir');
+        row.style.paddingLeft = (0.6 + depth * 0.9) + 'rem';
+        row.appendChild(el('span', 'twist', open ? '▾' : '▸'));
+        row.appendChild(el('span', 'dp-name', dname));
+        row.appendChild(el('span', 'dp-count', String(countDocs(child))));
+        row.addEventListener('click', function () { toggleExp(fkey); renderDocsPanel(); });
+        parent.appendChild(row);
+        if (open) renderDocNode(parent, child, projKey, folderPath, depth + 1, expandAll);
+      });
+      node.files.forEach(function (file) {
+        var fe = el('div', 'dp-file');
+        fe.style.paddingLeft = (1.3 + depth * 0.9) + 'rem';
+        fe.appendChild(el('span', 'dp-fileicon', '📄'));
+        fe.appendChild(el('span', 'dp-name', file.name));
+        fe.title = file.full;
+        fe.addEventListener('click', function () { openDocModal(projKey, file.full); });
+        parent.appendChild(fe);
+      });
+    }
+    function renderDocsPanel() {
+      var f = (docsFilter.value || '').trim().toLowerCase(), filterActive = f.length > 0;
+      clear(docsBody);
+      Object.keys(docsCache).sort().forEach(function (key) {
+        var info = docsCache[key];
+        var files = (info.files || []).filter(function (p) {
+          return !filterActive || p.toLowerCase().indexOf(f) !== -1;
+        });
+        if (filterActive && files.length === 0) return;
+        var projOpen = info.missing ? false : (filterActive ? true : isExp(key));
+        var head = el('div', 'dp-proj');
+        head.appendChild(el('span', 'twist', info.missing ? '⚠' : (projOpen ? '▾' : '▸')));
+        head.appendChild(el('span', 'dp-name', key));
+        head.appendChild(el('span', 'dp-count', info.missing ? 'root not found' : String(files.length)));
+        if (!info.missing) head.addEventListener('click', function () { toggleExp(key); renderDocsPanel(); });
+        docsBody.appendChild(head);
+        if (info.missing) { docsBody.appendChild(el('div', 'dp-missing', info.root)); return; }
+        if (!projOpen) return;
+        if (files.length === 0) { docsBody.appendChild(el('div', 'dp-missing', '(no docs)')); return; }
+        renderDocNode(docsBody, buildDocTree(files), key, '', 1, filterActive);
+      });
+      if (!docsBody.firstChild) docsBody.appendChild(el('p', 'muted', 'No docs match.'));
+    }
+
+    // --- in-GUI markdown viewer -------------------------------------------
+    function inlineMd(s) {
+      return esc(s)
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+        .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    }
+    function mdRender(src) {
+      var lines = String(src == null ? '' : src).split(/\r?\n/);
+      var html = '', i = 0, inList = false, listTag = '';
+      function closeList() { if (inList) { html += '</' + listTag + '>'; inList = false; listTag = ''; } }
+      while (i < lines.length) {
+        var ln = lines[i];
+        if (/^```/.test(ln)) {
+          closeList(); i++; var code = '';
+          while (i < lines.length && !/^```/.test(lines[i])) { code += lines[i] + '\n'; i++; }
+          i++; html += '<pre><code>' + esc(code) + '</code></pre>'; continue;
+        }
+        var h = ln.match(/^(#{1,6})\s+(.*)$/);
+        if (h) { closeList(); html += '<h' + h[1].length + '>' + inlineMd(h[2]) + '</h' + h[1].length + '>'; i++; continue; }
+        if (/^\s*([-*])\s+/.test(ln)) {
+          if (!inList || listTag !== 'ul') { closeList(); html += '<ul>'; inList = true; listTag = 'ul'; }
+          html += '<li>' + inlineMd(ln.replace(/^\s*[-*]\s+/, '')) + '</li>'; i++; continue;
+        }
+        if (/^\s*\d+\.\s+/.test(ln)) {
+          if (!inList || listTag !== 'ol') { closeList(); html += '<ol>'; inList = true; listTag = 'ol'; }
+          html += '<li>' + inlineMd(ln.replace(/^\s*\d+\.\s+/, '')) + '</li>'; i++; continue;
+        }
+        if (/^\s*(---+|\*\*\*+)\s*$/.test(ln)) { closeList(); html += '<hr>'; i++; continue; }
+        if (/^\s*$/.test(ln)) { closeList(); i++; continue; }
+        closeList(); html += '<p>' + inlineMd(ln) + '</p>'; i++;
+      }
+      closeList(); return html;
+    }
+    function openDocModal(project, relPath) {
+      curDoc = { project: project, path: relPath };
+      docTitle.textContent = project + ' › ' + relPath;
+      docBody.innerHTML = '<p class="muted">Loading…</p>';
+      docModal.hidden = false; docScrim.hidden = false;
+      fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(relPath))
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (j && j.ok) docBody.innerHTML = mdRender(j.content);
+          else docBody.innerHTML = '<p class="muted">Could not load this doc: ' + esc((j && j.error) || 'unknown') + '</p>';
+        })
+        .catch(function () { docBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
+    }
+    function closeDocModal() { docModal.hidden = true; curDoc = null; if (docsPanel.hidden) docScrim.hidden = true; }
+
+    docsBtn.addEventListener('click', openDocsPanel);
+    docsClose.addEventListener('click', closeDocsPanel);
+    docsFilter.addEventListener('input', function () { if (docsCache) renderDocsPanel(); });
+    if (docClose) docClose.addEventListener('click', closeDocModal);
+    if (docOpenEditor) docOpenEditor.addEventListener('click', function () {
+      if (!curDoc) return;
+      fetch('/api/doc/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(curDoc) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { showToast(j && j.ok ? 'opened in editor' : ('open failed: ' + ((j && j.error) || '')), j && j.ok ? 'ok' : 'err'); })
+        .catch(function () { showToast('open failed — server unreachable', 'err'); });
+    });
+    docScrim.addEventListener('click', function () { closeDocModal(); closeDocsPanel(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      if (!docModal.hidden) { closeDocModal(); return; }
+      if (!docsPanel.hidden) closeDocsPanel();
     });
   })();
 

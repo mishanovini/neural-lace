@@ -17,8 +17,10 @@
        NEVER spawns / feeds / steers a Claude Code session. -->
   <header>
     <h1>Workstreams</h1>
+    <label class="archtoggle"><input type="checkbox" id="showCompleted"> show completed</label>
     <label class="archtoggle"><input type="checkbox" id="showArchived"> show archived</label>
     <span class="spacer"></span>
+    <button id="docsBtn" class="ghost" title="browse docs across projects">📁 Docs</button>
     <button id="addBacklogBtn" class="btn-info outline" title="capture a not-yet-started work item">+ capture</button>
     <span id="freshness" class="freshness" aria-live="polite" title="How recently the state file changed AND when the heartbeat last ran. Red if heartbeat is stale (&gt;10min).">—</span>
     <span id="status" class="status" aria-live="polite">connecting…</span>
@@ -43,7 +45,7 @@
       <div id="treeScroll" class="pane-body tree-scroll">
         <div id="treeCanvas" class="tree-canvas"></div>
         <div id="orphanSection" class="orphan-section" hidden>
-          <div class="orphan-head">⚠️ Orphans this week <span id="orphanCount" class="count-badge"></span></div>
+          <div class="orphan-head" title="Dispatch sessions that opened but were never concluded (>24h). Internal sub-agent sessions are excluded.">⚠️ Stale sessions <span id="orphanCount" class="count-badge"></span></div>
           <div id="orphanBody" class="orphan-body"></div>
         </div>
       </div>
@@ -66,7 +68,7 @@
         <button class="chip" data-filter="in-flight"      role="tab">In flight <span class="chip-count" data-count="in-flight">0</span></button>
         <button class="chip" data-filter="blocked"        role="tab">Blocked <span class="chip-count" data-count="blocked">0</span></button>
         <button class="chip" data-filter="recently-shipped" role="tab">Recently shipped <span class="chip-count" data-count="recently-shipped">0</span></button>
-        <button class="chip" data-filter="orphaned"       role="tab">Orphaned <span class="chip-count chip-warn" data-count="orphaned">0</span></button>
+        <button class="chip" data-filter="orphaned"       role="tab" title="Dispatch sessions never concluded (>24h); internal sub-agent sessions excluded">Stale sessions <span class="chip-count chip-warn" data-count="orphaned">0</span></button>
         <button class="chip" data-filter="backlog"        role="tab">Backlog <span class="chip-count" data-count="backlog">0</span></button>
         <button class="chip" data-filter="all"            role="tab">All <span class="chip-count" data-count="all">0</span></button>
       </div>
@@ -96,6 +98,26 @@
       <div id="detailCard" class="detail-card" hidden></div>
     </aside>
   </main>
+
+  <!-- Cross-project docs browser (restored 2026-06-02 — bug #6). Shared scrim
+       for the drawer + the doc viewer modal. /api/docs, /api/doc, /api/doc/open
+       endpoints are live in server.js. -->
+  <div id="docScrim" class="modal-scrim" hidden></div>
+  <aside id="docsPanel" hidden aria-label="docs browser">
+    <div class="dp-head">
+      <input id="docsFilter" type="text" placeholder="filter by filename…" aria-label="filter docs">
+      <button id="docsClose" class="ghost" title="close">✕</button>
+    </div>
+    <div class="dp-body" id="docsBody"></div>
+  </aside>
+  <div id="docModal" class="modal-card doc-modal" hidden role="dialog" aria-label="document viewer" aria-modal="true">
+    <div class="doc-head">
+      <span class="doc-title" id="docTitle">document</span>
+      <button id="docOpenEditor" class="ghost" title="open in your OS default editor">⧉ Open in editor</button>
+      <button id="docClose" class="ghost" title="close (Esc)">✕</button>
+    </div>
+    <div class="doc-body" id="docBody"></div>
+  </div>
 
   <script src="/app.js"></script>
 </body>
