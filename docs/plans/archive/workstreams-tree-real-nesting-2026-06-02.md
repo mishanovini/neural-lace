@@ -1,5 +1,5 @@
 # Plan: Workstreams tree — real visual nesting (kill the flat-list)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -34,9 +34,9 @@ group-header x < item x, each step distinct.
 - OUT: right-pane filter list, detail card, server, state schema, data backfill.
 
 ## Tasks
-- [ ] 1. app.js: group direct project items by kind into a Project → Kind-group → WorkItem tier; nest via .tree-kids guide-rail containers. — Verification: full
-- [ ] 2. app.css: add .tree-group / .tree-kids nesting styles with distinct per-tier indent + guide rails; retire the dead .d1/.d2/.d3 indent rules. — Verification: full
-- [ ] 3. regression.e2e.js: strengthen bug#1 + add tier-geometry test asserting projHead<group<item distinct x; add puppeteer-core fallback so it runs with system Chrome. — Verification: full
+- [x] 1. app.js: group direct project items by kind into a Project → Kind-group → WorkItem tier; nest via .tree-kids guide-rail containers. — Verification: full
+- [x] 2. app.css: add .tree-group / .tree-kids nesting styles with distinct per-tier indent + guide rails; retire the dead .d1/.d2/.d3 indent rules. — Verification: full
+- [x] 3. regression.e2e.js: strengthen bug#1 + add tier-geometry test asserting projHead<group<item distinct x; add puppeteer-core fallback so it runs with system Chrome. — Verification: full
 
 ## Files to Modify/Create
 - `neural-lace/workstreams-ui/web/app.js` — kind-grouping + guide-rail nesting renderer
@@ -86,6 +86,22 @@ Render one kind-group with one nested item; assert item x > group x in browser.
 - S5: n/a
 
 ## Definition of Done
-- [ ] Tree visually nests (screenshot proves it; ≥3 distinct tier x-positions)
-- [ ] regression.e2e.js green incl. new tier-geometry test
-- [ ] Shipped to PT master AND personal master (tree-hash verified)
+- [x] Tree visually nests (screenshot proves it; ≥3 distinct tier x-positions)
+- [x] regression.e2e.js green incl. new tier-geometry test
+- [x] Shipped to PT master AND personal master (tree-hash verified)
+
+## Completion Report
+Implemented inline (one tightly-coupled GUI change verified as a unit, not
+fragmented across builders). Fix commit `e98deaf`.
+
+Browser-verified evidence (puppeteer-core + system Chrome, live server :7733):
+- BEFORE: `distinctItemX:[50]`, 35 items all at one x, 11px past project title — flat.
+- AFTER: 3 real kind-groups (Decisions 9 / Questions 1 / Actions 25); tier x:
+  `proj=10 → group=32 (+22) → item=62 (+30)` — distinct, stepped, guide-railed.
+- Screenshots: diag-before.png / diag-after.png / diag-tree-zoom.png (local, uncommitted).
+- regression.e2e.js 10/10 (new bug#9 tier-geometry); state selftest 19/0; responsive 22/0.
+
+Known limitation surfaced honestly: the data carries no Workstream/Sub-task
+tier (all 63 nodes tier=(none)); the rendered hierarchy is Project → Kind group
+→ WorkItem. The Workstream/Sub-task tiers light up automatically when Phase-3
+backfill assigns real workstream nodes (renderWorkstream path preserved).
