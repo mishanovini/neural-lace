@@ -801,3 +801,13 @@ Anthropic-side" theme).
 **Fix:** update `_resolve_schema_module()` in `adapters/claude-code/hooks/decision-context-gate.sh` to point at `workstreams-ui/state/decision-context-schema.js` (keep the old path as a fallback for back-compat). Sweep the whole gate (and any sibling hooks: `workstreams-*`, `decision-context-*`, `_fallback_conv_tree_path`) for other `conversation-tree-ui` literals left stale by the rename — likely a class, not a single instance.
 **Workaround:** per-session `.claude/state/decision-context-waiver-<ts>.txt` (the gate's documented escape).
 **Propagation:** master-wins via auto-install; fix must land in canonical + be pushed.
+
+---
+
+## HARNESS-GAP (2026-06-03): decision-context node-validation layer broken on Windows (MSYS path) + module deps never installed
+
+**Severity:** P1 (decision-context Stop gate blocks every fenced decision on Windows; emission/surfacer hooks silently no-op)
+**Found:** Office_PC bootstrap, 2026-06-03. PROVEN (self-test 16/10; node require fails). Compounds the 2026-06-02 rename entry above.
+**Sub-bug A — module deps never installed:** `neural-lace/workstreams-ui/package.json` declares `zod` but nothing `npm install`s it; `install.sh` does not install the module's deps. A fresh machine has no `node_modules`, so `require('zod')` in the schema fails. **Fix:** `install.sh` should run `npm install --omit=dev` in `neural-lace/workstreams-ui/` (idempotent). Manually installed zod this session as a stopgap.
+**Sub-bug B — MSYS-vs-Windows node path:** the gate invokes `node -e '... require(process.argv[1]) ...'` passing resolver output AND mktemp paths as argv. On Git Bash these are MSYS form (`/c/Users/...`) which the Windows `node` binary cannot resolve → `LIBERR`/`MODULE_NOT_FOUND` → validation/emission silently no-op (exit 0, empty stderr). Affects every `node -e` site in `decision-context-gate.sh` (+ likely the sibling emit/replay/surfacer hooks and the workstreams-* hooks). **Fix:** convert every path arg passed to `node` via `cygpath -m` when `cygpath` exists (guarded so Linux/cloud POSIX paths are untouched) — a focused cross-platform task; must self-test on both platforms before shipping.
+**Status:** rename-sweep FIXED (commit 4031d6a); zod installed (stopgap); Sub-bug A install.sh fix + Sub-bug B cygpath fix REMAIN.
