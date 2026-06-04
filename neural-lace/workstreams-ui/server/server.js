@@ -77,6 +77,9 @@ function serveStatic(res, file) {
   fs.readFile(path.join(WEB_DIR, file), (err, buf) => {
     if (err) { res.writeHead(404).end('not found'); return; }
     var h = {}; h[CT] = MIME[path.extname(file)] || 'application/octet-stream';
+    // no-cache so the browser can never run a stale app.js/app.css after a fix lands
+    // (root cause of "Workstreams UI shows empty" — see docs/discoveries/2026-06-03-workstreams-ui-empty-gui-rootcause.md)
+    h['Cache-Control'] = 'no-cache, must-revalidate';
     res.writeHead(200, h);
     res.end(buf);
   });
