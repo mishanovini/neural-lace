@@ -80,3 +80,23 @@ DONE: the private repo + schema + a pushed scaffold is the thinnest end-to-end s
 - [ ] coord-push/pull self-tests green; reconciler test green
 - [ ] GUI renders merged two-machine view (or local-fallback) + a populated item appears from a fence
 - [ ] Fixes on NL master; ADR landed; SCRATCHPAD updated
+
+## Orchestration — wave dispatch (run from a neural-lace-rooted session)
+**Why a NL-rooted session:** worktree isolation roots off the launching session's cwd; an org-folder-rooted session (e.g. cwd in a sibling org dir) can't create neural-lace worktrees. Run the orchestrator with `cwd = ~/claude-projects/neural-lace`.
+
+**Discipline (per the orchestrator pattern):** each builder is a worktree-isolated `general-purpose` agent (the `plan-phase-builder` type is not always registered — use `general-purpose` with `isolation: "worktree"`). Builders build + self-test + commit IN THEIR WORKTREE, return a concise verdict + commit SHAs, and **do NOT invoke task-verifier or edit this plan**. After each wave, the orchestrator cherry-picks each builder's commits onto master in task-ID order, runs `task-verifier` per task, then tears the worktree down. Parallelism ceiling ~5.
+
+**Wave 1 — 4 parallel (disjoint files):**
+- **Task 2** — `coord-push.sh` + `coord-pull.sh` (`adapters/claude-code/scripts/`) + SessionStart wiring in `settings.json.template`. Design: git-over-SSH + local clone (NOT gh Contents API; NO `gh auth switch`). **Hygiene: never hardcode the personal repo URL in the committed script** — read `COORD_REPO_URL` env → `~/.claude/local/coord-repo-url.txt` → WARN+exit0; clone dir `COORD_CLONE_DIR` → `~/claude-projects/workstreams-coordination`. coord-pull = fetch+reset --hard origin/main; coord-push = write `tree-state/<host>.json` from `…/workstreams-ui/state/tree-state.json` snapshot, commit, push with pull-rebase-on-non-ff (cap 2), throttle 600s. Reuse broadcast-active-session.sh helper patterns. `--self-test` against a TEMP bare repo (never the live one). Sync to `~/.claude/scripts/`.
+- **Task 3** — ADR (next free number from `docs/DECISIONS.md`, NOT assumed) + index row. Capture: shared-store coordination; **why a separate PRIVATE repo on the personal account** (NL is public; task/claim/machine data is personal); peer-to-peer; assisted-first. **Hygiene: generic only — no personal username/repo path** ("a private repo on the operator's personal account").
+- **Task 4** — `workstreams-ui/state/reconciler.js`: read SHARED claims (configurable path that coord-pull populates; default `~/claude-projects/workstreams-coordination/claims.json`) in addition to local; respect `machine_assigned`; existing lease-expiry + dedup-skip applies (a remote unexpired claim suppresses local spawn). Node test: remote-unexpired-claim suppresses; expired does not.
+- **Task 7** — single-machine "GUI shows real work" (see `docs/discoveries/2026-06-03-workstreams-ui-empty-gui-rootcause.md`): (a) `hooks/decision-context-gate.sh` + `decision-context-reply-emit.sh` path resolver → live `workstreams-ui` (so item events land where the GUI reads) + sync to `~/.claude/hooks/`; (b) `state/reducer.js` `branch-opened` → upsert-by-node_id (kills 28+ dup nodes; use `findNode()`); (c) `web/app.js` open-branch in-flight fallback. Extend the reducer test + hook `--self-test`.
+
+**Wave 2 — after Wave 1 cherry-picked (Task 6 shares `app.js` with Task 7):**
+- **Task 5** — `adapters/claude-code/scripts/coord-overlap-detect.sh`: flag `tasks/*.json` whose `target` (paths/feature/plan/repo) intersect an in-flight task on another machine. `--self-test`.
+- **Task 6** — GUI aggregation: `state/merge-peers.js` (new — union peers' tree-state snapshots by event_id/node_id, origin-tag by hostname); `server/server.js` `safeRead()` merges local + `tree-state/*.json` peers (fallback to local on failure); `web/app.js` origin badge + shared-task-list panel + assignment control.
+
+**Wave 3 — orchestrator-direct (not a builder):**
+- **Task 8** — push fixes to NL master; author `~/.claude/local/coord-repo-url.txt` on each machine; reconcile the 5 drift files; SCRATCHPAD update. BOOK inherits via `session-start-auto-install` + then publishes its own tree/claims on its next session.
+
+**Live integration (orchestrator, after the build):** write `~/.claude/local/coord-repo-url.txt` = the real private repo URL; run `coord-push.sh` for real once; confirm the GUI renders + (after BOOK runs) shows both machines.
