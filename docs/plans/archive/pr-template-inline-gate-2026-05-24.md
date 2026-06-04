@@ -1,6 +1,7 @@
 # Plan: Inline PR-body validator gate (HARNESS-GAP-43 / FM-030)
 
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: pr-template-inline-gate.sh wired in settings.json.template Stop chain, FM-030 in failure-modes.md, harness-architecture.md inventory row, HARNESS-GAP-43 absorbed. Shipped eda6f2b, reconverged PR #35 (94cb114). Dispatch never ran task-verifier. -->
 Mode: code
 Execution Mode: solo
 Backlog items absorbed: harness-gap-43-pr-template-inline-body

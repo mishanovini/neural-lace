@@ -1,6 +1,7 @@
 # Plan: Recover unique-to-this-machine docs (audit + conv-tree-v4 design)
 
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: both recovered docs present (docs/audit/2026-05-28-end-of-day-completeness.md, docs/discoveries/2026-05-27-conv-tree-v4-design.md, PR #42 a3c531a/01d3867); the third action (drop the stale review doc) confirmed executed (file absent). All 3 actions done. Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 frozen: true

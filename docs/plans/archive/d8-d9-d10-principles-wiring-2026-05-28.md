@@ -1,5 +1,6 @@
 # Plan: D8 + D9 + D10 — Principles Wiring + Sync + Gate Tightening
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: D8 (Operating Principles section + @principles.md ref in CLAUDE.md), D9 (personal-memory sync in install.sh + example), D10 (principles-compliance-gate.sh R3 alert path). Shipped PR #41 (7dc019f), reconverged 588c5b7/3a2babc. Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 tier: 1

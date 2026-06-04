@@ -1,6 +1,7 @@
 # Plan: Decision Queue substrate (throughput-bottleneck-reducer)
 
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: ADR 043 + DECISIONS row, decision-queue.schema.json, decision-queue.sh (--self-test), dispatch-decision-queue-tools.md, conv-tree-decisions-panel-spec.md, harness-eval-decision-queue-bridge.sh. Shipped e004396, reconverged #35. Task 6's one-line harness-evaluator.sh activation was DEFERRED-by-design (gated on another branch); substrate complete. Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 shape: build-harness-infrastructure

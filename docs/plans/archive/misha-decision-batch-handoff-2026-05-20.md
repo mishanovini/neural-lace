@@ -1,5 +1,6 @@
 # Plan: cross-project decision-batch handoff doc + cross-branch stash discovery
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified: in-repo discovery 2026-05-21-stash-push-single-file-leaves-unstashed-deletions-stageable.md on HEAD (e4a2f1d); off-repo handoff doc MISHA-DECISIONS-2026-05-20.md present on filesystem (intentionally uncommitted per harness-hygiene). Both artifacts exist where the plan specified. Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none

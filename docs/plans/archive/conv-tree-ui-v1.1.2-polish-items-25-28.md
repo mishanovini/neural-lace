@@ -1,5 +1,6 @@
 # Plan: Conversation Tree UI v1.1.2 — polish (items 25–28)
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. RENAMED from conv-tree-ui-v1.1.2-polish.md → -items-25-28 to resolve a filename collision: docs/plans/archive/conv-tree-ui-v1.1.2-polish.md is a DIFFERENT, earlier polish round (item 20/25) already COMPLETED; this is the later items-25-28 round. Verified on master HEAD: additive item-backlogged event + reducer round-trip + backlogged-excludes-from-Waiting (PR #12 0094c0b); item 25 pre-delivered by PR #11. Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 tier: 1

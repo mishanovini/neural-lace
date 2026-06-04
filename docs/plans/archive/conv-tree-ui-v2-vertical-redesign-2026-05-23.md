@@ -1,5 +1,6 @@
 # Plan: Conversation Tree UI — v2 vertical redesign (2026-05-23)
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: backlog-context-set event + context_text persistence + v2 vertical layout in workstreams-ui. Shipped PR #32 (b93fdaf), carried via fork unification e99e4b6 / reconverge 3a2babc. Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 tier: 1

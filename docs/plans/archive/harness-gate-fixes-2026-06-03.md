@@ -1,5 +1,6 @@
 # Plan: Harness gate fixes — broadcast SSH-alias, decision-context schema-path, acceptance over-scoping, skills-sync
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: T1 broadcast SSH-alias (eef40b9), T2 decision-context workstreams-ui resolver (4031d6a), T3 acceptance discovery cwd-only (6b79adb), T4 skills auto-sync (SYNC_SUBDIRS incl. skills). Plus workstreams-emit unbound-var fix 909f71b. All four self-tested fixes on master. Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 tier: 2

@@ -1,5 +1,6 @@
 # Plan: ci/eats-own-cooking — run the harness's own evals + hook self-tests on every push and PR
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Deliverables verified present on master HEAD: .github/workflows/evals.yml + .github/workflows/hooks-selftest.yml (in continuous use; allowlist maintenance commits 71d5fb7/a260360/b3a9eaa). Left ACTIVE only because sandbox-blind Dispatch never ran task-verifier to flip the box. -->
 Execution Mode: orchestrator
 Mode: code
 tier: 1

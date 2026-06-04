@@ -1,5 +1,6 @@
 # Plan: Incentive-Audit Fixes 2026-05-28 (Fix #1 + Fix #3 + #34 cron/wakeup)
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: stale-active-plan-surfacer.sh, measure-claim-reviewer-rate.sh, harness-evaluator-daily.sh, install-daily-harness-eval-task.ps1, both surfacers wired in SessionStart. Shipped PR #40 (43b9707/6cc5ff1), reconverged 588c5b7. Fix #2 (HMAC) explicitly Misha-deferred. Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 tier: 1

@@ -1,5 +1,6 @@
 # Plan: Principles Doctrine Authoring — A Canonical, Scope-Hierarchical Principles Index
-Status: ACTIVE
+Status: DEFERRED
+<!-- DEFERRED 2026-06-04 by stale-ACTIVE-plan cleanup. Design phase shipped (plan PR #7 50bb4a9). R1–R7 implementation unbuilt, no commits in 8 days. RE-ENGAGE TRIGGER: when this doctrine index is scheduled — flip back to ACTIVE, restore from archive. NOTE before resuming: (a) reserved ADR 043 collided (taken by 043-decision-queue-substrate) — re-reserve; (b) target filename rules/principles.md now overlaps the already-shipped consolidation doc from harness-principles-doc-and-gate — resolve the §D1 naming/scope decision first. Reversible. -->
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none

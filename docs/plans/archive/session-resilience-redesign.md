@@ -1,5 +1,6 @@
 # Plan: Session-Resilience Redesign — Survive (or Recover From) Terminal Death
-Status: ACTIVE
+Status: DEFERRED
+<!-- DEFERRED 2026-06-04 by stale-ACTIVE-plan cleanup. Design phase shipped (plan PR #12, ADR 040 + terminal-death discovery on HEAD). The entire R1–R7 implementation roadmap is unbuilt (dispatch-preflight-gate.sh, handoff-heartbeat.sh, transcript-ceiling-gate.sh, topic-shift-surfacer.sh all absent), no commits in 9 days. RE-ENGAGE TRIGGER: when session-resilience implementation is scheduled — flip back to ACTIVE, restore from archive. Reversible. -->
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none

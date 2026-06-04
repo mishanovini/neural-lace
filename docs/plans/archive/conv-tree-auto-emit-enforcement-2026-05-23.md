@@ -1,5 +1,6 @@
 # Plan: Conv Tree Auto-Emit Enforcement (Layer B + Layer D)
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: Layer-B reconciler (conv-tree-emit-reconciler.sh, now shim→workstreams-emit-reconciler.sh) + Layer-D rule conv-tree-orchestrator-emit.md, wired in Stop chain. Shipped PR #33 (932e3be), renamed e272c3e. Box never flipped because sandbox-blind Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 tier: 1

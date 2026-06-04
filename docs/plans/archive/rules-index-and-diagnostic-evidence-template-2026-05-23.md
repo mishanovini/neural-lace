@@ -1,5 +1,6 @@
 # Plan: docs/rules-index + diagnostic-evidence PR-template extension
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: rules/INDEX.md, evals/golden/rules-index-coverage.sh, "## Primary evidence" section in PULL_REQUEST_TEMPLATE.md, validate_evidence in validate-pr-template.sh (+ self-test cases). Both adjacent gaps shipped. Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 tier: 1

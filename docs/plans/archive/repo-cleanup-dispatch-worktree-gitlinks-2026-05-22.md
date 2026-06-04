@@ -1,6 +1,7 @@
 # Plan: Repo cleanup — remove 30 Dispatch sibling-worktree gitlinks from index + prevent recurrence
 
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: gitlink (mode 160000) entries in index = 0 (all 30 removed); .gitignore carries the Dispatch sibling-worktree recurrence guard; parser fix bf89a75 (HARNESS-GAP-41). Headline deliverable confirmed. Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 shape: build-harness-infrastructure

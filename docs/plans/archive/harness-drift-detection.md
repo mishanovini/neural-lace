@@ -1,6 +1,7 @@
 # Plan: Harness-internal cross-repo drift detection (replaces mirror Action)
 
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: scripts/check-cross-repo-drift.sh, hooks/cross-repo-drift-warn.sh, examples/cross-repo-drift-pairs.example.txt, sync.sh post-push tree-hash verify, settings wiring. Shipped 5b60c97/3b19478/b0461ec. Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 frozen: true
