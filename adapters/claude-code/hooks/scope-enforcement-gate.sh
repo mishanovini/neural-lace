@@ -93,7 +93,8 @@
 # Helper: is this path system-managed (exempt from scope-check)?
 #
 # Always exempt:
-#   - docs/plans/archive/* (moved by plan-lifecycle.sh)
+#   - docs/plans/archive/*  (moved by plan-lifecycle.sh on terminal status)
+#   - docs/plans/deferred/* (moved by plan-lifecycle.sh on DEFERRED — ADR 052)
 #
 # Additionally exempt when IN_MERGE=1 (per HARNESS-GAP-27):
 #   - supabase/migrations/*.sql
@@ -109,6 +110,7 @@ _is_system_managed_path() {
   local p="$1"
   case "$p" in
     docs/plans/archive/*) return 0 ;;
+    docs/plans/deferred/*) return 0 ;;
   esac
   if [[ "${IN_MERGE:-0}" == "1" ]]; then
     case "$p" in

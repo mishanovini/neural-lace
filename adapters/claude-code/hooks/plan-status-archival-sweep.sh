@@ -110,6 +110,9 @@ sweep_plans() {
   local cwd="${1:-$PWD}"
   local plans_dir="$cwd/docs/plans"
   local archive_dir="$plans_dir/archive"
+  # DEFERRED is terminal-for-editing but NOT done-for-building → it rests in
+  # the intended-but-not-active area, not archive/ (ADR 051 / Misha 2026-06-04).
+  local deferred_dir="$plans_dir/deferred"
 
   # If the directory doesn't exist, exit silently. Common in projects
   # that don't use the planning protocol yet.
@@ -133,24 +136,29 @@ sweep_plans() {
     status_val=$(plan_status_value "$plan")
     [ -n "$status_val" ] || continue
 
+    local dest_dir dest_label
     case "$status_val" in
-      COMPLETED|DEFERRED|ABANDONED|SUPERSEDED|completed|deferred|abandoned|superseded)
-        archive_plan "$plan" "$archive_dir"
-        rc=$?
-        if [ "$rc" -eq 0 ]; then
-          echo "[plan-archival-sweep] auto-archived '$base' (Status: $status_val) → docs/plans/archive/"
-          archived_count=$((archived_count + 1))
-        elif [ "$rc" -eq 2 ]; then
-          : # warning already emitted by archive_plan
-        else
-          echo "[plan-archival-sweep] WARNING: failed to archive '$base' (Status: $status_val); manual review needed" >&2
-        fi
-        ;;
+      DEFERRED|deferred)
+        dest_dir="$deferred_dir"; dest_label="docs/plans/deferred/ (intended, not active)" ;;
+      COMPLETED|ABANDONED|SUPERSEDED|completed|abandoned|superseded)
+        dest_dir="$archive_dir"; dest_label="docs/plans/archive/" ;;
+      *)
+        continue ;;
     esac
+    archive_plan "$plan" "$dest_dir"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      echo "[plan-archival-sweep] swept '$base' (Status: $status_val) → $dest_label"
+      archived_count=$((archived_count + 1))
+    elif [ "$rc" -eq 2 ]; then
+      : # warning already emitted by archive_plan
+    else
+      echo "[plan-archival-sweep] WARNING: failed to sweep '$base' (Status: $status_val); manual review needed" >&2
+    fi
   done
 
   if [ "$archived_count" -gt 0 ]; then
-    echo "[plan-archival-sweep] swept $archived_count terminal-status plan(s) into docs/plans/archive/. See ~/.claude/rules/planning.md 'Plan File Lifecycle' for the convention."
+    echo "[plan-archival-sweep] swept $archived_count terminal-status plan(s) into docs/plans/{archive,deferred}/ (DEFERRED → deferred/; COMPLETED/ABANDONED/SUPERSEDED → archive/). See ~/.claude/rules/planning.md 'Plan File Lifecycle' for the convention."
   fi
 }
 
@@ -219,7 +227,7 @@ EOF
   git_status=$(git -C "$s3" diff --cached --name-status 2>/dev/null)
   if [ -f "$s3/docs/plans/archive/finished-plan.md" ] \
      && [ ! -f "$s3/docs/plans/finished-plan.md" ] \
-     && echo "$out3" | grep -q "auto-archived 'finished-plan.md'" \
+     && echo "$out3" | grep -q "swept 'finished-plan.md'" \
      && echo "$git_status" | grep -qE '^R[0-9]+'; then
     echo "PASS: [completed-archives] plan moved to archive AND git tracks rename"
   else
@@ -230,7 +238,8 @@ EOF
     failures=$((failures + 1))
   fi
 
-  # ---- Scenario 4: DEFERRED plan + sibling evidence both move ----
+  # ---- Scenario 4: DEFERRED plan + sibling evidence both move to deferred/ ----
+  # DEFERRED is intended-but-not-active → deferred/, NOT archive/.
   local s4="$tmp/with-evidence"
   mkdir -p "$s4/docs/plans"
   init_git_repo "$s4"
@@ -246,13 +255,14 @@ EOF
 EOF
   git -C "$s4" add docs/plans/ && git -C "$s4" commit -q -m "test"
   sweep_plans "$s4" >/dev/null 2>&1
-  if [ -f "$s4/docs/plans/archive/sibling-plan.md" ] \
-     && [ -f "$s4/docs/plans/archive/sibling-plan-evidence.md" ] \
+  if [ -f "$s4/docs/plans/deferred/sibling-plan.md" ] \
+     && [ -f "$s4/docs/plans/deferred/sibling-plan-evidence.md" ] \
+     && [ ! -f "$s4/docs/plans/archive/sibling-plan.md" ] \
      && [ ! -f "$s4/docs/plans/sibling-plan.md" ] \
      && [ ! -f "$s4/docs/plans/sibling-plan-evidence.md" ]; then
-    echo "PASS: [with-evidence] plan and evidence both archived"
+    echo "PASS: [with-evidence] DEFERRED plan and evidence both moved to deferred/ (not archive/)"
   else
-    echo "FAIL: [with-evidence] sibling pair did not move correctly" >&2
+    echo "FAIL: [with-evidence] DEFERRED sibling pair did not route to deferred/ correctly" >&2
     failures=$((failures + 1))
   fi
 

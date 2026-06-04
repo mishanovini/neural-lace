@@ -454,25 +454,25 @@ No lifecycle hook activity is needed at this stage.
 
 **The Status field MUST be the final edit made to a plan file in its active life.** Completion reports, final decisions log entries, and any closing notes are written BEFORE flipping `Status:` to a terminal value (COMPLETED, DEFERRED, ABANDONED, SUPERSEDED).
 
-Why: when `Status:` transitions to terminal, `plan-lifecycle.sh` immediately executes `git mv docs/plans/<slug>.md docs/plans/archive/<slug>.md` in the same edit cycle. If a `<slug>-evidence.md` companion exists, it moves with the plan. If you try to append to the plan after flipping Status, the path is already gone and you have to recover.
+Why: when `Status:` transitions to terminal, `plan-lifecycle.sh` immediately executes a `git mv` in the same edit cycle. **The destination depends on the status (ADR 052):** `COMPLETED` / `ABANDONED` / `SUPERSEDED` (genuinely done-with) → `docs/plans/archive/<slug>.md`; `DEFERRED` (intended-but-not-currently-active — the plan-level backlog) → `docs/plans/deferred/<slug>.md`. If a `<slug>-evidence.md` companion exists, it moves with the plan. If you try to append to the plan after flipping Status, the path is already gone and you have to recover. **Re-activating a DEFERRED plan:** flip its `Status:` back to `ACTIVE` and `git mv` it from `docs/plans/deferred/` back to `docs/plans/<slug>.md`. To truly drop a deferred plan, flip it to `ABANDONED` (it then archives).
 
 **The Status change and the file rename land in the same commit.** Marking a plan complete and archiving it are one action, not two — there is no separate "archive this plan" step to remember.
 
 The hook emits a system message after the move:
 
-> 📦 Plan `<slug>` transitioned to [STATUS] and was archived. Subsequent references should use: `docs/plans/archive/<slug>.md`
+> Plan `<slug>` transitioned to [STATUS] and was moved to: `docs/plans/<archive|deferred>/<slug>.md` (DEFERRED → deferred/; COMPLETED/ABANDONED/SUPERSEDED → archive/)
 
 **Bash sed-based Status flips do NOT trigger this hook** (it's a PostToolUse Edit/Write hook; Bash doesn't fire those events). Always flip `Status:` via the Edit or Write tool, never via `sed -i` or other Bash file-mutation. If you do flip via Bash, the plan will be stranded in `docs/plans/` until the next session-start sweep catches it (see "Stage 3.5" below). Recovery in the current session: manually `git mv docs/plans/<slug>.md docs/plans/archive/<slug>.md` (and any sibling evidence file).
 
 ### Stage 3.5: Session-start safety-net sweep
 
-`plan-status-archival-sweep.sh` is a SessionStart hook that scans `docs/plans/*.md` (top-level only, not `docs/plans/archive/`) for any plan whose `Status:` is at a terminal value (COMPLETED / DEFERRED / ABANDONED / SUPERSEDED) and `git mv`s it (plus any sibling `<slug>-evidence.md`) into `docs/plans/archive/`. It restores the post-condition that Stage 3's `plan-lifecycle.sh` is supposed to enforce, but without depending on HOW the Status flip happened — Edit, Write, Bash sed, or any future automation.
+`plan-status-archival-sweep.sh` is a SessionStart hook that scans `docs/plans/*.md` (top-level only, not the `archive/` or `deferred/` subdirs) for any plan whose `Status:` is at a terminal value and `git mv`s it (plus any sibling `<slug>-evidence.md`) into the **status-appropriate** destination: `COMPLETED` / `ABANDONED` / `SUPERSEDED` → `docs/plans/archive/`; `DEFERRED` → `docs/plans/deferred/` (ADR 052). It restores the post-condition that Stage 3's `plan-lifecycle.sh` is supposed to enforce, but without depending on HOW the Status flip happened — Edit, Write, Bash sed, or any future automation.
 
 Latency: archival happens at the NEXT session start, not at flip time. A COMPLETED plan can sit in `docs/plans/` for the rest of the current session. This is acceptable because archival is housekeeping; the Edit-tool path (recommended) keeps zero-latency archival via `plan-lifecycle.sh`, and the sweep is the safety net for everything else.
 
 The sweep is silent when there's nothing to archive. If it does archive plans, it emits one line per plan:
 
-> [plan-archival-sweep] auto-archived '<slug>.md' (Status: <STATUS>) → docs/plans/archive/
+> [plan-archival-sweep] swept '<slug>.md' (Status: <STATUS>) → docs/plans/archive/ (or docs/plans/deferred/ for DEFERRED)
 
 Originating context: `docs/discoveries/2026-05-04-sed-status-flip-bypasses-plan-lifecycle.md` decided 2026-05-04 (option D — document + sweep).
 

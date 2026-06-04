@@ -43,6 +43,7 @@ set -u
 
 SCRIPT_NAME="find-plan-file.sh"
 ACTIVE_DIR="docs/plans"
+DEFERRED_DIR="docs/plans/deferred"
 ARCHIVE_DIR="docs/plans/archive"
 
 # ---------- helpers ----------------------------------------------------
@@ -56,6 +57,7 @@ normalize_slug() {
   s="$1"
   # Strip directory prefixes if present.
   s="${s#docs/plans/archive/}"
+  s="${s#docs/plans/deferred/}"
   s="${s#docs/plans/}"
   # Strip trailing slash (defensive).
   s="${s%/}"
@@ -109,6 +111,17 @@ resolve() {
       done < <(find "$ACTIVE_DIR" -maxdepth 1 -type f -name "$pattern" 2>/dev/null | LC_ALL=C sort)
     fi
 
+    # Deferred matches (intended-but-not-active).
+    if [ -d "$DEFERRED_DIR" ]; then
+      local md
+      while IFS= read -r md; do
+        [ -n "$md" ] || continue
+        printf '%s\n' "$md"
+        printf '%s: resolved from deferred: %s\n' "$SCRIPT_NAME" "$md" >&2
+        found=1
+      done < <(find "$DEFERRED_DIR" -maxdepth 1 -type f -name "$pattern" 2>/dev/null | LC_ALL=C sort)
+    fi
+
     # Archive matches.
     if [ -d "$ARCHIVE_DIR" ]; then
       local m
@@ -120,12 +133,17 @@ resolve() {
       done < <(find "$ARCHIVE_DIR" -maxdepth 1 -type f -name "$pattern" 2>/dev/null | LC_ALL=C sort)
     fi
   else
-    # Plain slug mode: try active first, then archive. Single match.
+    # Plain slug mode: try active first, then deferred, then archive. Single match.
     pattern="$slug"
     local active_path="$ACTIVE_DIR/$pattern"
+    local deferred_path="$DEFERRED_DIR/$pattern"
     local archive_path="$ARCHIVE_DIR/$pattern"
     if [ -f "$active_path" ]; then
       printf '%s\n' "$active_path"
+      found=1
+    elif [ -f "$deferred_path" ]; then
+      printf '%s\n' "$deferred_path"
+      printf '%s: resolved from deferred: %s\n' "$SCRIPT_NAME" "$deferred_path" >&2
       found=1
     elif [ -f "$archive_path" ]; then
       printf '%s\n' "$archive_path"

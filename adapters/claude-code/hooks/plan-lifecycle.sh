@@ -192,8 +192,10 @@ process_lifecycle_event() {
   norm=$(normalize_path "$file_path")
 
   # Activation guard: must be a top-level plan markdown file.
+  # archive/ AND deferred/ are resting places — never re-act on files there.
   case "$norm" in
     *docs/plans/archive/*) return 0 ;;
+    *docs/plans/deferred/*) return 0 ;;
     *docs/plans/*.md) ;;
     *) return 0 ;;
   esac
@@ -253,11 +255,18 @@ EOF
   if [ ! -f "$file_path" ]; then return 0; fi
   if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then return 0; fi
 
-  # Compute target archive path. Keep the same basename.
-  local repo_root archive_dir archive_path base evidence_src evidence_dest
+  # Compute target path. Keep the same basename.
+  # DESTINATION SPLIT (ADR 051 / Misha 2026-06-04): DEFERRED is terminal for
+  # EDITING (no more edits expected → the plan rests) but NOT done for BUILDING
+  # (the work is still intended). So DEFERRED routes to docs/plans/deferred/ —
+  # the "intended but not currently active" category, a plan-level backlog —
+  # NOT to archive/. COMPLETED / ABANDONED / SUPERSEDED are genuinely done-with
+  # → archive/.
+  local repo_root archive_dir archive_path base evidence_src evidence_dest dest_subdir
   repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
   if [ -z "$repo_root" ]; then return 0; fi
-  archive_dir="$repo_root/docs/plans/archive"
+  if [ "$post_status" = "DEFERRED" ]; then dest_subdir="deferred"; else dest_subdir="archive"; fi
+  archive_dir="$repo_root/docs/plans/$dest_subdir"
   base=$(basename "$rel")
   archive_path="$archive_dir/$base"
 
@@ -266,12 +275,12 @@ EOF
     cat >&2 <<EOF
 
 ==================================================================
-PLAN LIFECYCLE — archive collision (no move)
+PLAN LIFECYCLE — $dest_subdir collision (no move)
 ==================================================================
-Plan transitioned to $post_status but cannot be auto-archived:
+Plan transitioned to $post_status but cannot be auto-moved:
 
   source: docs/plans/$base
-  target: docs/plans/archive/$base (already exists)
+  target: docs/plans/$dest_subdir/$base (already exists)
 
 Resolve manually: rename one of the two and re-flip Status.
 
@@ -286,11 +295,11 @@ EOF
   # files.
   local moved="no" mv_err
   if git ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
-    if mv_err=$(git mv "$rel" "docs/plans/archive/$base" 2>&1); then
+    if mv_err=$(git mv "$rel" "docs/plans/$dest_subdir/$base" 2>&1); then
       moved="git"
     fi
   else
-    if mv_err=$(mv "$file_path" "$archive_path" 2>&1) && git add "docs/plans/archive/$base" 2>/dev/null; then
+    if mv_err=$(mv "$file_path" "$archive_path" 2>&1) && git add "docs/plans/$dest_subdir/$base" 2>/dev/null; then
       moved="plain"
     fi
   fi
@@ -299,13 +308,13 @@ EOF
     cat >&2 <<EOF
 
 ==================================================================
-PLAN LIFECYCLE — archival failed
+PLAN LIFECYCLE — move failed
 ==================================================================
 Plan transitioned to $post_status but git mv failed:
 
   $mv_err
 
-Resolve manually: git mv "$rel" "docs/plans/archive/$base"
+Resolve manually: git mv "$rel" "docs/plans/$dest_subdir/$base"
 
 EOF
     return 0
@@ -319,24 +328,30 @@ EOF
   evidence_dest="$archive_dir/$evidence_base"
   if [ -f "$evidence_src" ] && [ ! -e "$evidence_dest" ]; then
     if git ls-files --error-unmatch "$evidence_rel" >/dev/null 2>&1; then
-      git mv "$evidence_rel" "docs/plans/archive/$evidence_base" 2>/dev/null || true
+      git mv "$evidence_rel" "docs/plans/$dest_subdir/$evidence_base" 2>/dev/null || true
     else
-      mv "$evidence_src" "$evidence_dest" 2>/dev/null && git add "docs/plans/archive/$evidence_base" 2>/dev/null || true
+      mv "$evidence_src" "$evidence_dest" 2>/dev/null && git add "docs/plans/$dest_subdir/$evidence_base" 2>/dev/null || true
     fi
   fi
 
+  local dest_label
+  if [ "$dest_subdir" = "deferred" ]; then
+    dest_label="moved to the DEFERRED (intended-but-not-active) area"
+  else
+    dest_label="auto-archived"
+  fi
   cat >&2 <<EOF
 
 ==================================================================
-PLAN LIFECYCLE — auto-archived
+PLAN LIFECYCLE — $dest_label
 ==================================================================
 Plan "$base" transitioned to $post_status and was moved to:
 
-  docs/plans/archive/$base
+  docs/plans/$dest_subdir/$base
 
-Subsequent references should use the archive path. The git mv is
-already staged — your next commit will capture the Status change
-AND the rename atomically.
+Subsequent references should use that path. The git mv is already
+staged — your next commit will capture the Status change AND the
+rename atomically.
 
 EOF
   return 0
@@ -468,7 +483,7 @@ EOP
   PRE5=$(git show HEAD:docs/plans/case5.md)
   cat > docs/plans/case5.md <<'EOP'
 # Plan: Case 5
-Status: DEFERRED
+Status: COMPLETED
 EOP
   POST5=$(cat docs/plans/case5.md)
   OUT5=$(process_lifecycle_event "$TMP/docs/plans/case5.md" "Edit" "$PRE5" "$POST5" 2>&1 || true)
@@ -483,6 +498,45 @@ EOP
   fi
   if [ ! -f docs/plans/archive/case5-evidence.md ]; then
     echo "FAIL scenario 5: evidence companion did not move." >&2
+    exit 1
+  fi
+
+  # ---- Scenario 5b: DEFERRED routes to deferred/ (NOT archive/) ----
+  # DEFERRED is terminal-for-editing but NOT done-for-building, so it
+  # belongs in the intended-but-not-active area, not archive/.
+  cat > docs/plans/case5b.md <<'EOP'
+# Plan: Case 5b
+Status: ACTIVE
+EOP
+  cat > docs/plans/case5b-evidence.md <<'EOP'
+EVIDENCE BLOCK
+Task ID: B.1
+Runtime verification: bash -lc 'true'
+EOP
+  git add docs/plans/case5b.md docs/plans/case5b-evidence.md
+  git commit -q -m "plan: case5b + evidence"
+  PRE5B=$(git show HEAD:docs/plans/case5b.md)
+  cat > docs/plans/case5b.md <<'EOP'
+# Plan: Case 5b
+Status: DEFERRED
+EOP
+  POST5B=$(cat docs/plans/case5b.md)
+  OUT5B=$(process_lifecycle_event "$TMP/docs/plans/case5b.md" "Edit" "$PRE5B" "$POST5B" 2>&1 || true)
+  if ! printf '%s' "$OUT5B" | grep -q "DEFERRED (intended-but-not-active)"; then
+    echo "FAIL scenario 5b: expected deferred-area message. Got:" >&2
+    echo "$OUT5B" >&2
+    exit 1
+  fi
+  if [ ! -f docs/plans/deferred/case5b.md ]; then
+    echo "FAIL scenario 5b: deferred plan not in docs/plans/deferred/." >&2
+    exit 1
+  fi
+  if [ -f docs/plans/archive/case5b.md ]; then
+    echo "FAIL scenario 5b: DEFERRED plan wrongly went to archive/." >&2
+    exit 1
+  fi
+  if [ ! -f docs/plans/deferred/case5b-evidence.md ]; then
+    echo "FAIL scenario 5b: evidence companion did not move to deferred/." >&2
     exit 1
   fi
 

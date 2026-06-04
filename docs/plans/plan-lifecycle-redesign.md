@@ -146,6 +146,15 @@ THIS session writes only the documentation files marked ✎.)
 
 - 2026-06-03: `adapters/claude-code/hooks/product-acceptance-gate.sh` — refine `find_active_plans` to discover plans cwd-only (it was scanning stale secondary-worktree plan COPIES, surfacing dozens of spurious un-waivered ACTIVE plans on every session-end across a large multi-worktree downstream repo). This is squarely a plan-lifecycle concern: it defines which plans count as ACTIVE for the acceptance gate. Artifact aggregation across worktrees is unchanged. self-test 11/11.
 - 2026-06-03: `docs/plans/plan-lifecycle-redesign.md` — this in-flight scope-update entry.
+DEFERRED-routing fix (ADR 052, Misha directive 2026-06-04 — deferred = intended-but-not-active, like backlog; squarely a plan-lifecycle concern: defines where a terminal-status plan rests by status). One file per bullet:
+- 2026-06-04: `adapters/claude-code/hooks/plan-lifecycle.sh` — route DEFERRED → deferred/, others → archive/. self-test 10/10.
+- 2026-06-04: `adapters/claude-code/hooks/plan-status-archival-sweep.sh` — same destination split. self-test 5/5.
+- 2026-06-04: `adapters/claude-code/hooks/scope-enforcement-gate.sh` — exempt `docs/plans/deferred/*` (plan-lifecycle-managed, like archive/). self-test 24/24.
+- 2026-06-04: `adapters/claude-code/scripts/find-plan-file.sh` — lookup active → deferred → archive. self-test 14/14.
+- 2026-06-04: `adapters/claude-code/rules/planning.md` — "Plan File Lifecycle" documents the destination split.
+- 2026-06-04: `docs/decisions/052-deferred-plans-not-archived.md` — ADR for the split.
+- 2026-06-04: `docs/DECISIONS.md` — ADR 052 index row.
+- 2026-06-04: `docs/harness-architecture.md` — the two lifecycle-hook rows updated.
 
 ## Assumptions
 
