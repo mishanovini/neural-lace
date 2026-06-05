@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "465126c985a682434afac089f7e3826c6f1bda25",
+  "files_modified": [],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/hooks/gh-account-blindness-hint.sh": {
+      "passed": true,
+      "detail": "adapters/claude-code/hooks/gh-account-blindness-hint.sh exists",
+      "command": "test -e adapters/claude-code/hooks/gh-account-blindness-hint.sh",
+      "exit_code": 0
+    },
+    "command:bash adapters/claude-code/hooks/gh-account-blindness-hint.sh --self-test >/dev/null 2>&1": {
+      "passed": true,
+      "detail": "",
+      "command": "bash adapters/claude-code/hooks/gh-account-blindness-hint.sh --self-test >/dev/null 2>&1",
+      "exit_code": 0
+    },
+    "exists:docs/harness-architecture.md": {
+      "passed": true,
+      "detail": "docs/harness-architecture.md exists",
+      "command": "test -e docs/harness-architecture.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-05T17:50:38Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "gh-account-blindness-mechanism"
+}
