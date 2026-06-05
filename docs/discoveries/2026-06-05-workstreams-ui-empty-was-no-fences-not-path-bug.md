@@ -49,10 +49,11 @@ The 2026-06-04 cross-machine plan Task 7 is scoped as "decision-context path res
 → workstreams-ui (items populate); reducer upsert dedup; open-branch fallback." Two of
 those three premises are already satisfied:
 - Path resolver: already correct (no change needed).
-- Reducer dedup: the 81 dup `ss-misha` / 53 dup `ss-neural-lace` session nodes are real
+- Reducer dedup: the 81 dup person-session / 53 dup repo-session nodes are real
   but **do NOT pollute the rendered view** — sessions are hidden as provenance, so the
-  tree renders clean (Pocket Technician / Shared→neural-lace / Other) without dedup. The
-  dedup remains a nice-to-have for state-file size, not a render blocker.
+  tree renders the project roots cleanly (the harness repo plus the operator's other
+  projects) without dedup. The dedup remains a nice-to-have for state-file size, not a
+  render blocker.
 - Open-branch fallback: not needed for the awaiting-me/in-flight frame of reference once
   real items exist.
 
