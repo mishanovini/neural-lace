@@ -60,7 +60,7 @@ Re-index on any later cycle where a harness file changed (new agent/hook/rule �
 8. `~/.claude/orchestrator-prime/state.json` (known sessions, surfaced set, last cycle).
 9. `~/.claude/orchestrator-prime/manifest.json` (per-machine in-flight inventory) + the referenced `status-snapshot-<date>.md`.
 10. The conversation-tree canonical state (per ADR-039's pinned path).
-11. The project backlogs named in the manifest + `~/.claude/config/active-repos.txt`.
+11. The project backlogs named in the manifest + `~/.claude/config/active-repos.txt`. Then run `bash ~/.claude/scripts/coord-pull.sh` once on cold spawn so you hydrate with the peer machine's current claims/tasks/tree-state before cycle 1 (non-blocking).
 12. `list_sessions` → reconcile the manifest against reality; classify each: running / idle / done / errored / not-found. Trust ground truth over the snapshot.
 
 ### C. Go
@@ -73,6 +73,7 @@ Re-index on any later cycle where a harness file changed (new agent/hook/rule �
 
 Emit a conversation-tree event (via `appendEvent`, schema-valid, actor `dispatch`) for every state-changing action.
 
+0. **Cross-machine pull (`coord-pull.sh`):** FIRST action of every cycle — `bash ~/.claude/scripts/coord-pull.sh`. Refreshes the local clone of the private `workstreams-coordination` repo so this cycle sees the OTHER machine's claims / tasks / tree-state before you sweep or spawn. The reconciler + Workstreams GUI read the refreshed clone. Non-blocking: a failure logs WARN and the cycle proceeds on local-only state. **Respect peer claims:** do NOT spawn work a peer holds an unexpired claim on (the shared `claims.json` the reconciler reads).
 1. **Inbox:** read `inbox/*.json` oldest-first. Process each Misha directive → write a response to `outbox/<turn_id>.json` → `.done`-mark the inbox file. "stop"/"pause" → ack to outbox + EXIT (don't reschedule).
 2. **Session sweep:** `list_sessions`, diff vs `state.json`:
    - **newly done** → emit `concluded` + write outbox summary (via `search_session_transcripts` snippet) + mark surfaced (never double-surface).
@@ -82,7 +83,7 @@ Emit a conversation-tree event (via `appendEvent`, schema-valid, actor `dispatch
 5. **Surface-to-Misha (the callback — MANDATORY when outbox has new entries):** if any new `outbox/*.json` was written this cycle, you MUST `spawn_task` a chip whose title+tldr summarize what needs Misha's attention (e.g. "orchestrator-prime: 2 audits need your sign-off + 3 PRs merged"). The chip IS the relay to Misha. Also emit a tree event and fire ntfy if configured. **Never end a cycle with an unsurfaced outbox.**
 6. **Audit-surface-and-discuss:** new report under `docs/audit/**` → surface its exec summary to outbox + `spawn_task` chip + block downstream work on that topic until Misha's ack at `.claude/state/ux-audit-acks/<id>.json`.
 7. **Emit tree events** for spawn / completion / decision / agent-invocation / audit-surface / merge — schema-valid only (closed actor enum `{dispatch,gui}`, closed event-type set per ADR-032/034; a *pending* decision = `decision-raised`). No fabricated product-narration nodes (ADR-034 scopes those OUT; they'd pollute the truth log).
-8. **Persist state** atomically (temp-then-rename) → `state.json`. Update `last_cycle_at`, known sessions, surfaced set.
+8. **Persist state** atomically (temp-then-rename) → `state.json`. Update `last_cycle_at`, known sessions, surfaced set. **Then cross-machine push (`coord-push.sh`):** if anything changed this cycle (tree-state, a task claim/assignment edit), `bash ~/.claude/scripts/coord-push.sh` to publish this machine's `tree-state/<host>.json` + tasks/claims to the shared repo so the peer's next coord-pull sees it. It is throttled (600s) + no-ops when the snapshot is unchanged, so calling it every cycle is safe. Non-blocking; NEVER force-pushes (pull-rebase on non-ff).
 9. **Schedule next cycle.**
 
 Exit: only an inbox "stop"/"pause", or a critical unrecoverable failure (write it to outbox + a discovery file + `spawn_task` a chip before exiting).

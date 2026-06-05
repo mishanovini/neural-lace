@@ -46,6 +46,9 @@ Open the Workstreams UI on either machine and see: the merged tree of BOTH machi
 
 ## In-flight scope updates
 - 2026-06-04: `neural-lace/workstreams-ui/server/server.js` already received the `Cache-Control: no-cache` static-asset fix this session (root cause of the GUI showing stale code); committed with the build.
+- 2026-06-04: `<personal-account>/workstreams-coordination` (external repo) — added `tasks/task-2026-06-04-*.json`, `claims.json`, and `MACHINE-BOOTSTRAP.md` (proposed Office_PC↔BOOK division + machine bootstrap/safety doc + BOOK startup prompt). Coordination-substrate scope of this plan.
+- 2026-06-04 (Task 2): `adapters/claude-code/skills/orchestrator-prime.md` (+ `~/.claude/` mirror) — loop-wired coord-pull (cycle step 0 + cold-spawn hydrate) and coord-push (cycle step 8). This is the correct hook point per the task prompt ("the loop is skill-driven"): coordination sync belongs to the orchestrator-prime cadence, NOT to every code session. Consequently `settings.json.template` (originally listed for SessionStart coord-push wiring) was deliberately NOT modified — every-session coord-pull would wrongly sync coordination state from non-orchestrator sessions.
+- 2026-06-04 (Task 2): `docs/harness-architecture.md` — added the coord-push.sh + coord-pull.sh rows to the scripts inventory (build-harness-infrastructure docs-freshness requirement).
 
 ## Assumptions
 - The personal github.com SSH key has write access to `<personal-account>/workstreams-coordination` (PROVEN — scaffold pushed via SSH).
