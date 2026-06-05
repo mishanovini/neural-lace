@@ -91,6 +91,9 @@ const server = http.createServer((req, res) => {
   if (url === '/' || url === '/index.html') return serveStatic(res, 'index.html');
   if (url === '/app.js') return serveStatic(res, 'app.js');
   if (url === '/app.css') return serveStatic(res, 'app.css');
+  // Browsers auto-request /favicon.ico; answer 204 so it doesn't log a 404
+  // (a spurious console error that misleads anyone debugging the GUI).
+  if (url === '/favicon.ico') { res.writeHead(204); res.end(); return; }
 
   if (url === '/api/state') {
     var hj = {}; hj[CT] = 'application/json';
