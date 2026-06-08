@@ -1,6 +1,6 @@
 # Plan: functionality-auditor agent
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -23,7 +23,7 @@ The maintainer can dispatch `functionality-auditor` against any shipped surface 
 - OUT: any change to other agents, hooks, rules, or settings wiring; any audit of an actual product surface (validation is performed read-only, not committed here); the live `~/.claude/settings.json` (agents need no settings wiring).
 
 ## Tasks
-- [ ] 1. Author `functionality-auditor.md` grounded in the 7 frameworks + 6-verdict taxonomy + 8-phase methodology + per-element output + worked example; mirror to `~/.claude/agents/`; add the arch-doc row; validate against a live codebase (3 cases). — Verification: mechanical
+- [x] 1. Author `functionality-auditor.md` grounded in the 7 frameworks + 6-verdict taxonomy + 8-phase methodology + per-element output + worked example; mirror to `~/.claude/agents/`; add the arch-doc row; validate against a live codebase (3 cases). — Verification: mechanical
 
 ## Files to Modify/Create
 - `adapters/claude-code/agents/functionality-auditor.md` — new sub-agent prompt (canonical).
@@ -63,4 +63,24 @@ The thinnest end-to-end slice: a single agent markdown file whose frontmatter `n
 - [ ] Agent file authored + mirrored byte-identical + clean of project identifiers (harness-hygiene).
 - [ ] Arch-doc agent row added.
 - [ ] Three-case validation PROVEN and reported.
-- [ ] Committed to neural-lace via PR (merge-on-green); outbox JSON written.
+- [x] Committed to neural-lace via PR (merge-on-green); outbox JSON written.
+
+## Completion Report
+
+### 1. Implementation Summary
+Task 1 shipped in full: `adapters/claude-code/agents/functionality-auditor.md` authored (239 lines, grounded in the 7 named frameworks), mirrored byte-identical to `~/.claude/agents/`, arch-doc agent row added. Shipped via PR #56, merged to master (merge sha `21c6424`). No backlog items absorbed.
+
+### 2. Design Decisions & Plan Deviations
+None from the approved scope. The richest architecture-drift example discovered during validation (a free-text guidance field bypassed by the new template path for migrated states) was genericized into the agent's internal worked example rather than shipped with the source product's identifiers (harness-hygiene). The bootstrap plan itself was created to satisfy `scope-enforcement-gate` (three unrelated plans were ACTIVE); per gate Option 2 (genuinely-separate work → new plan).
+
+### 3. Known Issues & Gotchas
+The agent is a prompt artifact with no executable runtime; its "acceptance" is the validation trace, not a browser run (hence `acceptance-exempt`). No hook enforces the agent's own methodology at runtime — it is invoked on demand via the Task tool, like its sibling `ux-ia-auditor`.
+
+### 4. Manual Steps Required
+None. Live `~/.claude/agents/` mirror already synced byte-identical; agents need no `settings.json` wiring.
+
+### 5. Testing Performed & Recommended
+Three validation cases, each PROVEN by direct reads against a live codebase (read-only): (a) DRY/divergence caught, (b) architecture-drift candidate found with old-vs-new, (c) Chesterton's-fence true-negative correctly kept (indirect consumer cited). `harness-hygiene-scan` clean; canonical↔mirror byte-identical; all 11 CI checks green pre-merge. Recommended next: dispatch the agent on a real product surface for a full audit once Misha has reviewed the agent prompt.
+
+### 6. Cost Estimates
+None — a documentation/prompt artifact; no new services, APIs, or recurring costs.
