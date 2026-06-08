@@ -71,6 +71,7 @@ the relay seam's health.
 - `~/.claude/projects/.../memory/{feedback-dispatch-relay-only.md,MEMORY.md}` — NEW/MODIFY (DONE, untracked per-machine memory).
 
 ## In-flight scope updates
+- 2026-06-08: docs/backlog.md — orchestrator-prime loop logs open-work entries to the backlog
 <!-- date + one-line reason -->
 - 2026-06-02: Misha direction update — report-only gating DROPPED (full autonomy cycle 1); auto-merge policy READ FROM HARNESS applied to all repos with green-prod-deploy hard exclusion; Dispatch-callback added via `spawn_task` chip; full-harness-awareness startup; durable `orchestrator-prime-keepalive` scheduled task created (reboot resilience); manifest references status-snapshot; SKILL rewritten to v2.
 - 2026-06-02: `docs/discoveries/2026-06-02-conv-tree-backfill-premise-mismatch.md` dispositioned (A: rely on auto-emit + orchestrator-prime forward emission; 40-node manual backfill rejected as schema-invalid + ADR-034). orchestrator-prime owns conv-tree forward emission, so this discovery is in this plan's scope.
