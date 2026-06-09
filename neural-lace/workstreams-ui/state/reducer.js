@@ -427,6 +427,35 @@ function applyEvent(snap, ev, treeId) {
       it.checked = true;                     // shipped ⇒ the work is done; leaves the waiting set
       if (ev.evidence != null) it.ship_evidence = String(ev.evidence); // commit SHA / PR URL
       it.shipped_ts = ev.ts;                 // "Recently shipped (7d)" filter keys off this
+      // Phase D (2026-06-09) — OPTIONAL `deployed` flag rides on item-shipped so
+      // a single event can record "merged AND deployed" in one step. Reducer-
+      // read-only, additive, NOT in EVENT_REQUIRED_FIELDS (absent ⇒ shipped but
+      // not yet deployed — exactly the "shipped-not-deployed" set Misha wants
+      // surfaced). When true the item is fully Deployed; the GUI derives the
+      // Shipped-not-deployed vs Deployed filters off `it.deployed`. No required-
+      // field change, no major bump (same shape as the optional `evidence` above).
+      if (ev.deployed === true) { it.deployed = true; it.deployed_ts = ev.ts; }
+      return;
+    }
+    // Phase D (2026-06-09) — explicit "merged work reached production" transition.
+    // ADDITIVE within schema major 1 (ADR-032 §1: a new event type is additive,
+    // no major bump; the conv-tree/workstreams gates key off the major and are
+    // unaffected). Promotes an already-shipped item to deployed WITHOUT a second
+    // ship event, so the audit trail distinguishes "merged" from "live in prod".
+    // Requires only the item locator; OPTIONAL `evidence` (deploy URL / SHA) is
+    // captured but not a required field. An item not yet shipped is auto-shipped
+    // first (deploy implies the work landed) so a stray deploy event is never
+    // rejected for a missing intermediate ship.
+    case 'item-deployed': {
+      const node = findNode(snap, ev.node_id);
+      const it = findItem(node, ev.item_id);
+      if (!it) { reject(snap, ev, 'item not found'); return; }
+      it.state = 'shipped';                  // deployed items are a superset of shipped
+      it.checked = true;
+      it.deployed = true;
+      it.deployed_ts = ev.ts;
+      if (!it.shipped_ts) it.shipped_ts = ev.ts;   // deploy implies it shipped
+      if (ev.evidence != null) it.deploy_evidence = String(ev.evidence);
       return;
     }
     case 'item-blocked': {

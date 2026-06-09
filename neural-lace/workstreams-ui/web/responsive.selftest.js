@@ -40,26 +40,39 @@ ok('R5 divider element present + draggable (col-resize cursor)',
   /id="divider"/.test(html) && /#divider[^}]*cursor:\s*col-resize/.test(C));
 
 // --- filter-driven side panel (replaces the accordion) --------------------
-const FILTERS = ['awaiting-me', 'in-flight', 'blocked', 'recently-shipped', 'orphaned', 'backlog', 'all'];
+// Phase D (2026-06-09) — the all-work filter set now tracks work to DEPLOYED:
+// `shipped-not-deployed` (efforts that did NOT reach prod) + `deployed` joined
+// the original seven.
+const FILTERS = ['awaiting-me', 'in-flight', 'blocked', 'shipped-not-deployed',
+  'deployed', 'recently-shipped', 'orphaned', 'backlog', 'all'];
 ok('R6 filter chip bar present with all seven filters',
   /id="filterBar"/.test(html) && FILTERS.every(f => new RegExp('data-filter="' + f + '"').test(html)));
 ok('R7 stacked Waiting/Backlog/Decisions/Questions accordion is GONE',
   !/data-panel-toggle/.test(html) && !/class="apanel/.test(html) && !/id="paneStack"/.test(html));
 ok('R8 default active filter = awaiting-me (non-complete by default)',
   /workstreams\.activeFilter['"]\)\s*\|\|\s*['"]awaiting-me['"]/.test(js));
-ok('R9 detail card slot present (replaces filter view on selection)',
-  /id="detailCard"/.test(html) && /\.detail-card\s*\{/.test(C));
+// Phase D (2026-06-09) — the detail view is now a dismissible MODAL OVERLAY
+// (id="detailModal" + scrim), NOT a list-replacing card. The filter list stays
+// put behind it (overlay model). This is Misha's repeatedly-flagged regression
+// fix: selecting an item must open a modal in front of everything, not fill the
+// right pane.
+ok('R9 detail is a dismissible MODAL OVERLAY (scrim + modal, list stays behind)',
+  /id="detailModal"/.test(html) && /id="detailScrim"/.test(html)
+  && /class="modal-card detail-modal"/.test(html) && /\.detail-modal\s*\{/.test(C));
 
 // --- wire-check function chains (Tasks 3 / 4 / 5) -------------------------
 const TASK3 = ['renderTree', 'collectWorkstreams', 'renderWorkstream', 'collectWorkItems'];
 const TASK4 = ['setActiveFilter', 'renderFilteredItems', 'applyFilter'];
-const TASK5 = ['renderDetailCard', 'collectProvenance', 'collectSubtasks'];
+// Phase D — the detail handler is openDetailModal (the modal opener), plus the
+// new context-appropriate action-button builder and the decision-recorder.
+const TASK5 = ['openDetailModal', 'closeDetailModal', 'collectProvenance',
+  'collectSubtasks', 'buildActionButtons', 'recordDecision'];
 function defines(fn) { return new RegExp('function\\s+' + fn + '\\s*\\(').test(js); }
 ok('R10 Task-3 tree chain defined (renderTree → collectWorkstreams → renderWorkstream → collectWorkItems)',
   TASK3.every(defines));
 ok('R11 Task-4 filter chain defined (setActiveFilter → renderFilteredItems → applyFilter)',
   TASK4.every(defines));
-ok('R12 Task-5 detail chain defined (renderDetailCard → collectProvenance → collectSubtasks)',
+ok('R12 Task-5 detail chain defined (openDetailModal → buildActionButtons → recordDecision; collectProvenance/collectSubtasks)',
   TASK5.every(defines));
 
 // --- four-tier hierarchy + sessions-as-provenance -------------------------
@@ -101,6 +114,35 @@ ok('R21 Option-2 invariant: no spawn/continue/resume/feed affordance',
 // --- narrow-width responsiveness ------------------------------------------
 ok('R22 narrow width (<=860px) stacks the two panes single-column',
   /@media\s*\(max-width:\s*860px\)[^}]*#layout\s*\{[^}]*grid-template-areas:\s*"tree"\s*"side"/.test(C.replace(/\s+/g, ' ')));
+
+// --- Phase D: context-appropriate action buttons (requirement 3) ----------
+// Decision/question resolution emits `answered` + records the choice via
+// `item-details-set`; actions emit `action-done`; EVERY item can `action-responded`
+// (respond-with-details / ask-clarifying without resolving).
+ok('R23 context-appropriate buttons emit answered / action-done / action-responded / item-details-set',
+  /type:\s*['"]answered['"]/.test(js)
+  && /type:\s*['"]action-done['"]/.test(js)
+  && /type:\s*['"]action-responded['"]/.test(js)
+  && /type:\s*['"]item-details-set['"]/.test(js));
+
+// --- Phase D: track ALL work to DEPLOYED (requirement 4) ------------------
+// New filters surface efforts that did NOT reach prod (shipped-not-deployed)
+// and those that did (deployed); a Mark-deployed button emits item-deployed.
+ok('R24 deploy-tracking: shipped-not-deployed + deployed filters + item-deployed event',
+  /case 'shipped-not-deployed'/.test(js) && /case 'deployed'/.test(js)
+  && /function\s+isDeployed\s*\(/.test(js)
+  && /type:\s*['"]item-deployed['"]/.test(js));
+
+// --- Phase D: modal dismissal (click-scrim / Esc / ✕) ---------------------
+ok('R25 modal dismissal wired (scrim click + Esc + ✕ all call closeDetailModal)',
+  /detailScrim\.addEventListener\(['"]click['"],\s*closeDetailModal\)/.test(js)
+  && /e\.key === 'Escape' && !detailModal\.hidden/.test(js)
+  && /dmClose\.addEventListener\(['"]click['"],\s*closeDetailModal\)/.test(js));
+
+// --- Phase D: full Phase-C context renders inside the modal ---------------
+ok('R26 modal renders full Phase-C context via renderItemDetails (Background/options/recommendation/links)',
+  /dmBody\.appendChild\(renderItemDetails\(/.test(js)
+  && /function\s+renderItemDetails\s*\(/.test(js));
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
