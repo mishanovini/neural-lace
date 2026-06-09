@@ -1,6 +1,6 @@
 # Orchestrator Pattern — Delegate Build Work to Sub-Agents
 
-**Classification:** Pattern (documented convention), not Mechanism (hook-enforced). The `task-verifier` mandate still applies mechanically — builders invoke it, orchestrator trusts the verdict. What's documented here (dispatch discipline, parallelism protocol, cherry-pick flow) is self-applied convention that the main session is expected to follow. No hook detects "you built directly instead of dispatching." The listed backstops (tool-call-budget, pre-stop-verifier) enforce task completion correctness, not orchestration discipline — so they apply identically whether the main session or a sub-agent does the work.
+**Classification:** Pattern (documented convention), not Mechanism (hook-enforced). The `task-verifier` mandate still applies mechanically — builders invoke it; the orchestrator confirms the verifier's on-disk evidence before accepting any verdict (see "Nested verification"). What's documented here (dispatch discipline, parallelism protocol, cherry-pick flow) is self-applied convention that the main session is expected to follow. No hook detects "you built directly instead of dispatching." The listed backstops (tool-call-budget, pre-stop-verifier) enforce task completion correctness, not orchestration discipline — so they apply identically whether the main session or a sub-agent does the work.
 
 **The rule in one sentence:** for any plan with more than one task, the main session orchestrates — it dispatches each task to a fresh `plan-phase-builder` sub-agent, collects the result, and moves on. The main session does NOT do the build work itself.
 
@@ -188,7 +188,7 @@ For each batch of tasks (one if serial, up to 5 if parallel):
    Follow-ups (if any): <items the builder identified but deferred, belonging in docs/backlog.md>
    ```
 
-4. **Update SCRATCHPAD** with the commit SHA and move to the next task. The main session does NOT re-verify — task-verifier already did. If the builder returned PASS and task-verifier returned PASS, trust the result.
+4. **Confirm the evidence, then update SCRATCHPAD.** A builder's return is a CLAIM, not a fact. Before accepting it, run the cheap mechanical confirmations yourself: the cited commit SHAs exist (`git log <sha>`), the task-verifier evidence artifact exists for the task ID (read the evidence block / `.evidence.json` — not the builder's summary of it), and the plan checkbox state matches. These are file reads, not a re-build — seconds, not minutes. Only after the evidence is confirmed does the result enter SCRATCHPAD or any report to the user. Never accept a builder summary alone; never re-narrate an unconfirmed claim as fact. (This replaced the prior accept-the-builder-verdict instruction on 2026-06-09 after an orchestrator shipped false done-claims by re-narrating unverified builder summaries.)
 
 5. **On BLOCKED or FAIL:** stop dispatching. Report the blocker to the user with the builder's specific detail. Do not try to route around the block by dispatching the next task — that was the exact "drop this task and move on" failure mode `planning.md` explicitly prohibits.
 
@@ -272,11 +272,11 @@ The orchestrator is NOT a passive dispatcher. It's the persistent quality layer.
 
 ## Nested verification
 
-Builders invoke `task-verifier` themselves, per the existing `task-verifier` mandate. The orchestrator does NOT re-verify a builder's work — task-verifier already did. The orchestrator trusts the `task-verifier` PASS/FAIL verdict as the authoritative signal.
+Builders invoke `task-verifier` themselves, per the existing `task-verifier` mandate. The orchestrator does NOT re-run the build's verification — but it MUST confirm the verification actually happened before accepting the verdict: read the evidence artifact (the `<plan>-evidence.md` block or `<task-id>.evidence.json`) and the flipped checkbox for the task ID. A verdict is authoritative only when its artifact exists on disk. A builder *reporting* "task-verifier passed" with no artifact present is an unverified claim and is treated as FAIL — dispatch back or verify directly; do not record it as done.
 
-This matters because: re-verifying would mean the orchestrator reads the builder's commits and runs checks itself, which dumps build detail back into the orchestrator's context. The whole point is to keep that detail OUT.
+The depth calibration matters: confirming artifacts is a few file reads and keeps build detail OUT of the orchestrator's context; re-running the build's tests wholesale would dump it back in. Artifact confirmation is the required floor; wholesale re-build-verification remains the anti-pattern. Trust is not a mechanism — the artifact is.
 
-If the orchestrator has reason to doubt a builder's claim (builder returned DONE but the commit SHA doesn't exist, builder returned PASS but no task-verifier invocation is evident in its summary), the orchestrator dispatches `plan-evidence-reviewer` to independently check — that agent is the "audit" role, distinct from task-verifier.
+If the confirmation fails or smells wrong (commit SHA doesn't resolve, evidence block stale, checkbox unflipped, artifact text generic), the orchestrator dispatches `plan-evidence-reviewer` to independently audit — that agent is the "audit" role, distinct from task-verifier.
 
 ## When the orchestrator itself should hand off
 
@@ -293,7 +293,7 @@ At that point, the orchestrator writes a detailed continuation prompt, commits i
 
 2. **"I'll dispatch but also read all the files myself so I can guide the builder."** No. The builder reads what it needs. If you've already read a file that's relevant, reference it in the dispatch prompt by file path — don't paste the contents.
 
-3. **"I'll re-verify the builder's work after task-verifier passed."** No. Pass through the verdict.
+3. **"The builder said task-verifier passed, so it's done."** No. Confirm the evidence artifact and the flipped checkbox exist (cheap file reads) before accepting ANY verdict. A reported verdict without an on-disk artifact is FAIL. The complementary anti-pattern also holds: do not re-run the build's whole test suite yourself — artifact confirmation is the right depth.
 
 4. **"I'll bundle Phases 1, 2, and 3 into one builder because they're related."** No. One builder per task by default. Bundle only when tasks land in a single commit AND are in the same phase.
 

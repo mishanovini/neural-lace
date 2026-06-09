@@ -118,6 +118,16 @@ _STOP_HOOK_RETRY_GUARD_SOURCED=1
 : "${RETRY_GUARD_STATE_DIR:=.claude/state}"
 : "${RETRY_GUARD_SWEEP_AGE_HOURS:=24}"
 
+# Verification-class hooks: gates that measure WORK STATE (incomplete plan
+# tasks, missing acceptance artifacts) rather than message form. Added
+# 2026-06-09: these hooks refuse the downgrade while the final assistant
+# message claims `DONE:` — an agent can ALWAYS resolve that block honestly
+# by changing its marker to PAUSING:/BLOCKED:, so refusing cannot create
+# the infinite-loop DoS the downgrade exists to prevent. Originating
+# incident: an autonomous loop rode the downgrade past 38 consecutive
+# pre-stop-verifier blocks while reporting DONE on incomplete work.
+: "${RETRY_GUARD_VERIFICATION_HOOKS:=pre-stop-verifier product-acceptance-gate}"
+
 # ----------------------------------------------------------------------
 # retry_guard_session_id [ <input-json> ]
 #
@@ -222,6 +232,72 @@ _retry_guard_sweep_old() {
     -type f \
     -mmin "+$((RETRY_GUARD_SWEEP_AGE_HOURS * 60))" \
     -delete 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------
+# Internal: is this hook verification-class? (see config note above)
+# ----------------------------------------------------------------------
+_retry_guard_is_verification_hook() {
+  local h="$1" v
+  for v in $RETRY_GUARD_VERIFICATION_HOOKS; do
+    [[ "$h" == "$v" ]] && return 0
+  done
+  return 1
+}
+
+# ----------------------------------------------------------------------
+# Internal: resolve the session transcript path. Resolution order:
+#   1. RETRY_GUARD_TRANSCRIPT env (explicit override; used by self-tests
+#      and by hooks that export it after stdin parsing)
+#   2. RG_TRANSCRIPT_PATH (a hook may set it in its own shell)
+#   3. Derived from CLAUDE_SESSION_ID: Claude Code stores the transcript
+#      at ~/.claude/projects/<project-slug>/<session-id>.jsonl
+# Echoes the path; returns 1 if unresolvable (callers fail open).
+# ----------------------------------------------------------------------
+_retry_guard_resolve_transcript() {
+  if [[ -n "${RETRY_GUARD_TRANSCRIPT:-}" && -f "${RETRY_GUARD_TRANSCRIPT}" ]]; then
+    printf '%s' "$RETRY_GUARD_TRANSCRIPT"; return 0
+  fi
+  if [[ -n "${RG_TRANSCRIPT_PATH:-}" && -f "${RG_TRANSCRIPT_PATH}" ]]; then
+    printf '%s' "$RG_TRANSCRIPT_PATH"; return 0
+  fi
+  if [[ -n "${CLAUDE_SESSION_ID:-}" && -d "${HOME}/.claude/projects" ]]; then
+    local found
+    found=$(find "${HOME}/.claude/projects" -maxdepth 2 -name "${CLAUDE_SESSION_ID}.jsonl" -type f 2>/dev/null | head -1)
+    if [[ -n "$found" ]]; then
+      printf '%s' "$found"; return 0
+    fi
+  fi
+  return 1
+}
+
+# ----------------------------------------------------------------------
+# Internal: does the FINAL assistant message in the transcript claim a
+# `DONE:` session-end marker (per session-end-protocol.md, the marker
+# sits on the last non-empty line, optionally markdown-emphasised)?
+#
+# Fail-OPEN by design: any resolution/parse failure returns 1 ("no claim
+# detected"), so behavior only changes when a DONE claim is provably
+# present. Requires jq; without jq, returns 1.
+# ----------------------------------------------------------------------
+_retry_guard_final_msg_claims_done() {
+  command -v jq >/dev/null 2>&1 || return 1
+  local tp
+  tp=$(_retry_guard_resolve_transcript) || return 1
+  local text
+  text=$(tail -n 400 "$tp" 2>/dev/null \
+    | jq -c -R 'fromjson? // empty' 2>/dev/null \
+    | jq -rs '
+        [ .[] | select(.type=="assistant") ] | last
+        | (.message.content // empty)
+        | if type=="array" then [ .[] | select(.type=="text") | .text ] | join("\n")
+          elif type=="string" then .
+          else "" end' 2>/dev/null)
+  [[ -n "$text" && "$text" != "null" ]] || return 1
+  local last_line
+  last_line=$(printf '%s\n' "$text" | sed -e 's/[[:space:]]*$//' | awk 'NF{l=$0} END{print l}')
+  printf '%s' "$last_line" | grep -qE '^[[:space:]]*[*_`]*DONE:' && return 0
+  return 1
 }
 
 # ----------------------------------------------------------------------
@@ -352,6 +428,27 @@ retry_guard_block_or_exit() {
   count=$(retry_guard_record "$hook_name" "$sid" "$failure_sig")
 
   if (( count >= RETRY_GUARD_THRESHOLD )); then
+    # VERIFICATION-GATE INTEGRITY (2026-06-09): a verification-class hook
+    # may NOT be downgraded while the final assistant message claims DONE:.
+    # The downgrade exists to break loops the agent cannot resolve — but a
+    # dishonest completion claim is ALWAYS resolvable: change the marker to
+    # PAUSING:/BLOCKED: naming the gap, and the downgrade proceeds normally.
+    if _retry_guard_is_verification_hook "$hook_name" && _retry_guard_final_msg_claims_done; then
+      if [[ -n "$block_stdout" ]]; then
+        printf '%s\n' "$block_stdout"
+      fi
+      cat >&2 <<EOF
+[retry-guard] ${hook_name}: downgrade REFUSED — verification gate + DONE claim.
+This gate reports the work is INCOMPLETE (same failure ${count}x), and the final
+message claims 'DONE:'. A verification-class block is never downgraded under a
+completion claim. Two honest resolutions:
+  - actually complete the work so the gate PASSes, or
+  - change the session-end marker to PAUSING:/BLOCKED: naming the specific gap
+    (the loop-break then proceeds normally — honest pauses stay possible).
+Original block reason: ${error_msg}
+EOF
+      exit "$block_exit"
+    fi
     retry_guard_log_unresolved "$hook_name" "$sid" "$count" "$failure_sig" "$error_msg"
     local short
     short=$(_retry_guard_session_short "$sid")
@@ -574,6 +671,82 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     fail "expected env-wins got $resolved"
   fi
   unset CLAUDE_SESSION_ID
+
+  echo "Scenario 12: verification hook + DONE claim → downgrade REFUSED (stays blocked)"
+  rm -rf .claude/state
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"work summary here\n\nDONE: shipped everything abc1234"}]}}' > done-transcript.jsonl
+  export RETRY_GUARD_TRANSCRIPT="$PWD/done-transcript.jsonl"
+  _=$(retry_guard_record "pre-stop-verifier" "sess-V" "incomplete")
+  _=$(retry_guard_record "pre-stop-verifier" "sess-V" "incomplete")
+  set +e
+  ( retry_guard_block_or_exit "pre-stop-verifier" "sess-V" "incomplete" \
+      "plan has unchecked tasks" \
+      '{"decision":"block"}' 2 ) >/tmp/rg-out 2>/tmp/rg-err
+  rc=$?
+  set -e
+  if [[ "$rc" == "2" ]]; then
+    pass "verification hook + DONE stays blocked at threshold (got exit $rc)"
+  else
+    fail "expected exit 2 (refused downgrade), got $rc"
+  fi
+  if grep -q "downgrade REFUSED" /tmp/rg-err; then
+    pass "refusal stanza names the DONE-claim conflict"
+  else
+    fail "refusal stderr missing 'downgrade REFUSED'"
+  fi
+
+  echo "Scenario 13: verification hook + PAUSING claim → downgrade proceeds (exit 0)"
+  rm -rf .claude/state
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"work summary here\n\nPAUSING: plan X incomplete, awaiting operator decision on Y"}]}}' > pausing-transcript.jsonl
+  export RETRY_GUARD_TRANSCRIPT="$PWD/pausing-transcript.jsonl"
+  _=$(retry_guard_record "pre-stop-verifier" "sess-V2" "incomplete")
+  _=$(retry_guard_record "pre-stop-verifier" "sess-V2" "incomplete")
+  set +e
+  ( retry_guard_block_or_exit "pre-stop-verifier" "sess-V2" "incomplete" \
+      "plan has unchecked tasks" \
+      '{"decision":"block"}' 2 ) >/tmp/rg-out 2>/tmp/rg-err
+  rc=$?
+  set -e
+  if [[ "$rc" == "0" ]]; then
+    pass "verification hook + honest PAUSING downgrades at threshold (got exit $rc)"
+  else
+    fail "expected exit 0 (downgrade), got $rc"
+  fi
+
+  echo "Scenario 14: NON-verification hook + DONE claim → downgrade proceeds unchanged (exit 0)"
+  rm -rf .claude/state
+  export RETRY_GUARD_TRANSCRIPT="$PWD/done-transcript.jsonl"
+  _=$(retry_guard_record "test-hook" "sess-V3" "stuck")
+  _=$(retry_guard_record "test-hook" "sess-V3" "stuck")
+  set +e
+  ( retry_guard_block_or_exit "test-hook" "sess-V3" "stuck" \
+      "non-verification failure" \
+      '{"decision":"block"}' 2 ) >/tmp/rg-out 2>/tmp/rg-err
+  rc=$?
+  set -e
+  if [[ "$rc" == "0" ]]; then
+    pass "non-verification hook downgrades regardless of DONE (got exit $rc)"
+  else
+    fail "expected exit 0, got $rc"
+  fi
+  unset RETRY_GUARD_TRANSCRIPT
+
+  echo "Scenario 15: verification hook + unresolvable transcript → fail-open downgrade (exit 0)"
+  rm -rf .claude/state
+  unset RETRY_GUARD_TRANSCRIPT RG_TRANSCRIPT_PATH CLAUDE_SESSION_ID
+  _=$(retry_guard_record "pre-stop-verifier" "sess-V4" "incomplete")
+  _=$(retry_guard_record "pre-stop-verifier" "sess-V4" "incomplete")
+  set +e
+  ( retry_guard_block_or_exit "pre-stop-verifier" "sess-V4" "incomplete" \
+      "plan has unchecked tasks" \
+      '{"decision":"block"}' 2 ) >/tmp/rg-out 2>/tmp/rg-err
+  rc=$?
+  set -e
+  if [[ "$rc" == "0" ]]; then
+    pass "no transcript resolvable → fail-open downgrade preserved (got exit $rc)"
+  else
+    fail "expected exit 0 (fail-open), got $rc"
+  fi
 
   echo ""
   echo "self-test summary: $PASSED passed, $FAILED failed"

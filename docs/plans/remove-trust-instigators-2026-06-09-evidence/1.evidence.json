@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "04f524dd6b4f431c1c361d58714d348a0abc240b",
+  "files_modified": [
+    "adapters/claude-code/CLAUDE.md",
+    "adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh",
+    "adapters/claude-code/hooks/product-acceptance-gate.sh",
+    "adapters/claude-code/rules/acceptance-scenarios.md",
+    "adapters/claude-code/rules/orchestrator-pattern.md",
+    "adapters/claude-code/rules/planning.md",
+    "adapters/claude-code/rules/session-end-protocol.md",
+    "adapters/claude-code/rules/testing.md",
+    "docs/plans/remove-trust-instigators-2026-06-09.md"
+  ],
+  "mechanical_checks": {
+    "command:! grep -qE 'trust the result|trusts the verdict|Pass through the verdict' adapters/claude-code/rules/orchestrator-pattern.md adapters/claude-code/rules/planning.md": {
+      "passed": true,
+      "detail": "",
+      "command": "! grep -qE 'trust the result|trusts the verdict|Pass through the verdict' adapters/claude-code/rules/orchestrator-pattern.md adapters/claude-code/rules/planning.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'evidence artifact exists for the task ID' adapters/claude-code/rules/orchestrator-pattern.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'evidence artifact exists for the task ID' adapters/claude-code/rules/orchestrator-pattern.md",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "9 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-09T20:52:15Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/remove-trust-instigators-2026-06-09.md"
+}
