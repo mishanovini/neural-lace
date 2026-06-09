@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "task_id": "3",
+  "verdict": "PASS",
+  "commit_sha": "9b0629c399c7471278304305bd1062a00e769b6c",
+  "files_modified": [
+    "adapters/claude-code/CLAUDE.md",
+    "adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh",
+    "adapters/claude-code/hooks/product-acceptance-gate.sh",
+    "adapters/claude-code/rules/acceptance-scenarios.md",
+    "adapters/claude-code/rules/orchestrator-pattern.md",
+    "adapters/claude-code/rules/planning.md",
+    "adapters/claude-code/rules/session-end-protocol.md",
+    "adapters/claude-code/rules/testing.md",
+    "docs/plans/remove-trust-instigators-2026-06-09.md"
+  ],
+  "mechanical_checks": {
+    "command:bash adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh --self-test": {
+      "passed": true,
+      "detail": "15: verification hook + unresolvable transcript → fail-open downgrade (exit 0)\n  PASS: no transcript resolvable → fail-open downgrade preserved (got exit 0)\n\nself-test summary: 19 passed, 0 failed",
+      "command": "bash adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh --self-test",
+      "exit_code": 0
+    },
+    "command:grep -q '_retry_guard_is_verification_hook' adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q '_retry_guard_is_verification_hook' adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-09T20:36:08Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/remove-trust-instigators-2026-06-09.md"
+}

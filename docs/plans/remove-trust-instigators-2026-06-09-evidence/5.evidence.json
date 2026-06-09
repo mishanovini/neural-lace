@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "task_id": "5",
+  "verdict": "PASS",
+  "commit_sha": "9b0629c399c7471278304305bd1062a00e769b6c",
+  "files_modified": [
+    "adapters/claude-code/CLAUDE.md",
+    "adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh",
+    "adapters/claude-code/hooks/product-acceptance-gate.sh",
+    "adapters/claude-code/rules/acceptance-scenarios.md",
+    "adapters/claude-code/rules/orchestrator-pattern.md",
+    "adapters/claude-code/rules/planning.md",
+    "adapters/claude-code/rules/session-end-protocol.md",
+    "adapters/claude-code/rules/testing.md",
+    "docs/plans/remove-trust-instigators-2026-06-09.md"
+  ],
+  "mechanical_checks": {
+    "command:grep -q 'MECHANICALLY REFUSED' adapters/claude-code/rules/acceptance-scenarios.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'MECHANICALLY REFUSED' adapters/claude-code/rules/acceptance-scenarios.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-09T20:37:58Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/remove-trust-instigators-2026-06-09.md"
+}
