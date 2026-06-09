@@ -14,6 +14,14 @@
 #   chains; matches `git commit` as the next token. Pass-through on
 #   non-Bash tool calls and non-commit Bash commands.
 #
+# No-docs/plans/ full-skip (2026-06-08):
+#   A repo with NO docs/plans/ directory cannot have plan-scoped commits —
+#   there is nothing to scope against — so the gate skips the check entirely
+#   and allows the commit (with a brief stderr note). This is the correct
+#   general fix; it unblocks committing operational state to repos that don't
+#   use the plan workflow (e.g. the workstreams-coordination state repo).
+#   Self-test scenario 25 covers it.
+#
 # System-managed-path allowlist (2026-05-04):
 #   `docs/plans/archive/*` and `docs/plans/archive/*-evidence.md` are
 #   exempt — these files are moved by `plan-lifecycle.sh` on Status:
@@ -879,8 +887,41 @@ Test gitlink-shaped trailing-slash matching.
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 25: PASS — repo with NO docs/plans/ → full-skip (2026-06-08) ----
+  # A repo that doesn't use the plan workflow (e.g. the workstreams-coordination
+  # state repo) has no plans to scope against; the gate must skip the check and
+  # allow the commit. _run_scenario always creates docs/plans, so build the
+  # no-plans repo inline.
+  (
+    repo="$TMPROOT/s25"
+    mkdir -p "$repo"
+    cd "$repo" || exit 99
+    git init -q 2>/dev/null || true
+    git config user.email "test@example.com" 2>/dev/null
+    git config user.name "Test" 2>/dev/null
+    git config commit.gpgsign false 2>/dev/null
+    # Deliberately NO docs/plans/ — only operational state.
+    mkdir -p state
+    echo '{"x":1}' > state/tree-state.json
+    git add state/tree-state.json 2>/dev/null
+    git commit -q -m "init state repo" 2>/dev/null
+    echo '{"x":2}' > state/tree-state.json
+    git add state/tree-state.json 2>/dev/null
+    input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"state: update\""}}'
+    printf '%s' "$input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    echo $? > rc.txt
+  )
+  RC=$(cat "$TMPROOT/s25/rc.txt" 2>/dev/null || echo 99)
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (25) no-docs-plans-repo-skips: PASS (correctly skipped, exit 0)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (25) no-docs-plans-repo-skips: FAIL (rc=$RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 24 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 25 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -959,7 +1000,21 @@ if [[ -z "$REPO_ROOT" ]]; then
   done
 fi
 
-if [[ -z "$REPO_ROOT" ]] || [[ ! -d "$REPO_ROOT/docs/plans" ]]; then
+# Could not locate a repo root at all → cannot reason about scope; pass through.
+if [[ -z "$REPO_ROOT" ]]; then
+  exit 0
+fi
+
+# --- Full-skip: repo has NO docs/plans/ directory (2026-06-08) ---
+# A repository with no docs/plans/ cannot have plan-scoped commits — there are
+# no plans to scope against, so the scope check is vacuous and would only
+# false-block. This is the correct GENERAL fix (it unblocks committing
+# operational state to repos that simply don't use the plan workflow, e.g. the
+# workstreams-coordination state repo), superseding any per-repo carve-out.
+# Skip explicitly + audibly (the prior silent `! -d docs/plans` early-exit gave
+# no signal); errs toward allow, consistent with the other full-skip branches.
+if [[ ! -d "$REPO_ROOT/docs/plans" ]]; then
+  echo "[scope-enforcement-gate] no docs/plans/ in repo '$REPO_ROOT' — scope-check skipped (a repo without plans cannot have plan-scoped commits)." >&2
   exit 0
 fi
 

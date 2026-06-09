@@ -11,15 +11,22 @@ const path = require('path');
 const schema = require('./schema.js');
 const reducer = require('./reducer.js');
 const store = require('./store.js');
+const { resolveWorkstreamsStatePath } = require('./resolve-state-path.js');
 
 const SCHEMA_VERSION = schema.SCHEMA_VERSION;
 
 // Phase-0 well-known path compatibility: the skeleton used a single file at
-// state/tree-state.json. Keep that exact path as the DEFAULT so server.js
-// (which destructures STATE_FILE) and the seed CLI behave identically. The
-// real §5 per-project + global resolver is available via resolveStatePath /
-// the opts.statePath / opts.treeId knobs on the new API.
-const STATE_FILE = path.join(__dirname, 'tree-state.json');
+// state/tree-state.json. Workstreams consolidation (Phase A, 2026-06-08): the
+// canonical state file now lives at one operator-configured location recorded
+// in ~/.claude/workstreams-state-path.txt, resolved by the SHARED
+// resolve-state-path.js helper (the JS twin of the bash
+// lib/workstreams-state-resolver.sh every writer hook uses) so server.js (which
+// destructures STATE_FILE) and the hooks all read/write the SAME file. The
+// module-relative path stays as the FALLBACK so a machine without the config
+// behaves exactly as before. CONV_TREE_STATE_PATH still overrides everything.
+// The real §5 per-project + global resolver is still available via
+// resolveStatePath / the opts.statePath / opts.treeId knobs on the new API.
+const STATE_FILE = resolveWorkstreamsStatePath(path.join(__dirname, 'tree-state.json'));
 const DEFAULT_OPTS = { statePath: STATE_FILE, treeId: 'global' };
 
 // Backward-compatible reader. Returns { schema_version, tree_id, events,

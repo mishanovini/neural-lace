@@ -79,6 +79,14 @@ set -uo pipefail
 # shellcheck disable=SC1091
 source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
 
+# ----- shared canonical-state-path resolver (Workstreams consolidation) ------
+# Sourced best-effort. Collapses the GUI sink and the §5 gate sink onto the one
+# operator-configured canonical file (~/.claude/workstreams-state-path.txt), so
+# this gate, the sibling writers, and the GUI all read/write the SAME file. If
+# the lib is absent the legacy per-path resolvers below still work.
+# shellcheck disable=SC1091
+{ source "${BASH_SOURCE[0]%/*}/lib/workstreams-state-resolver.sh" 2>/dev/null; } || true
+
 LOG_DIR="$HOME/.claude/logs"
 LOG_FILE="$LOG_DIR/decision-context-gate.log"
 FALLBACK_DIR="$HOME/.claude/state/decision-context"
@@ -164,34 +172,43 @@ _main_repo_root() {
 }
 
 _resolve_gui_state_path() {
-  if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then
-    printf '%s' "$CONV_TREE_STATE_PATH"; return 0
-  fi
-  local mr d
+  # Canonical-state-path consolidation: shared resolver returns the configured
+  # canonical file (CONV_TREE_STATE_PATH override > home config > legacy GUI
+  # sink computed below as fallback).
+  local legacy mr d
   if mr=$(_main_repo_root) && [[ -n "$mr" ]]; then
     for d in workstreams-ui; do
       if [[ -f "$mr/neural-lace/$d/state/state.js" ]]; then
-        printf '%s' "$mr/neural-lace/$d/state/tree-state.json"; return 0
+        legacy="$mr/neural-lace/$d/state/tree-state.json"; break
       fi
       if [[ -f "$mr/$d/state/state.js" ]]; then
-        printf '%s' "$mr/$d/state/tree-state.json"; return 0
+        legacy="$mr/$d/state/tree-state.json"; break
       fi
     done
   fi
-  _fallback_conv_tree_path "state/tree-state.json"
+  [[ -z "${legacy:-}" ]] && legacy=$(_fallback_conv_tree_path "state/tree-state.json")
+  if declare -F resolve_workstreams_state_path >/dev/null 2>&1; then
+    resolve_workstreams_state_path "$legacy"
+  else
+    if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then printf '%s' "$CONV_TREE_STATE_PATH"; else printf '%s' "$legacy"; fi
+  fi
 }
 
 _resolve_gate_state_path() {
-  if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then
-    printf '%s' "$CONV_TREE_STATE_PATH"; return 0
-  fi
-  local root=""
+  # Canonical-state-path consolidation: collapses the §5 per-project sink onto
+  # the SAME canonical file as the GUI sink (override > home config > legacy §5
+  # path as fallback).
+  local legacy root=""
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
-    local proj="$root/.claude/state/conversation-tree/tree-state.json"
-    if [[ -f "$proj" ]]; then printf '%s' "$proj"; return 0; fi
-    printf '%s' "$proj"; return 0
+    legacy="$root/.claude/state/conversation-tree/tree-state.json"
+  else
+    legacy="$HOME/.claude/state/conversation-tree/global/tree-state.json"
   fi
-  printf '%s' "$HOME/.claude/state/conversation-tree/global/tree-state.json"
+  if declare -F resolve_workstreams_state_path >/dev/null 2>&1; then
+    resolve_workstreams_state_path "$legacy"
+  else
+    if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then printf '%s' "$CONV_TREE_STATE_PATH"; else printf '%s' "$legacy"; fi
+  fi
 }
 
 _project_root() {
