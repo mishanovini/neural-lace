@@ -310,11 +310,19 @@ _emit_dual_with_fallback() {
 # subprocess entirely.
 _has_any_signal() {
   local text="$1"
-  # Trailing 1200 chars is where decision-soliciting phrases cluster.
+  # Trailing 1200 chars is where decision-soliciting phrases cluster — EXCEPT
+  # the prose-decision markers (PAUSING:/BLOCKED:/"Decisions for Misha"/
+  # "waiting on you") which can appear earlier; scan the WHOLE message for
+  # those (2026-06-08 tightening per the deterministic-turn-emit discovery —
+  # plain-prose PAUSING with no fence/options was the slip-through class).
   local tail
   tail=$(printf '%s' "$text" | tail -c 1200)
   # Match-any: option markers, terminal ?, fence opener, or any phrase token.
   if printf '%s' "$tail" | grep -qiE '\?|^[[:space:]]*[A-Da-d1-9]\)|^[[:space:]]*[1-9]\.[[:space:]]|\*\*Option|^[[:space:]]*-[[:space:]]+Option|::: (decision|question|action_item_for_user|autonomous_action)|pick one|your call|which (do|would) you|should I|would you like|sound good\??|make sense\??|right\?'; then
+    return 0
+  fi
+  # Whole-message scan for the prose-decision markers.
+  if printf '%s' "$text" | grep -qiE '^[[:space:]]*[*_`> #-]*[[:space:]]*(PAUSING|BLOCKED)[[:space:]]*:|waiting on (you|misha)|^[[:space:]]*[*#]*[[:space:]]*decisions? (for|awaiting|from|needed)'; then
     return 0
   fi
   return 1
@@ -381,6 +389,83 @@ _is_tier1() {
     return 0
   fi
   return 1
+}
+
+# Prose-decision detector (2026-06-08 tightening). The class the fence-emit
+# Pattern (Layer D) missed: the orchestrator wrote a plain-prose PAUSING:/
+# BLOCKED: marker, or a "waiting on you" / "Decisions for Misha" prose line,
+# that solicits a decision WITHOUT any enumerated options / fence — so the
+# original _is_tier1 (which keys on options / explicit phrases / terminal-?
+# +list) returned false and ZERO cards were emitted. This detector recognizes:
+#   1. A PAUSING: marker whose summary is substantive (it ALWAYS names a
+#      decision the operator must make — that is what PAUSING means per
+#      session-end-protocol.md: "the user must decide something").
+#   2. A BLOCKED: marker whose summary names an operator action (provide X).
+#   3. A "waiting on you/misha" line.
+#   4. A "Decisions for Misha" section header (workstreams-extract-pending
+#      marker convention).
+# Returns 0 (prose-decision present) or 1 (absent).
+_is_prose_decision() {
+  local text="$1"
+  # PAUSING:/BLOCKED: marker line with a non-trivial summary (>= 8 chars after
+  # the colon). Leading markdown emphasis tolerated (mirrors
+  # continuation-enforcer.sh / the turn-emit hook's marker scan).
+  if printf '%s' "$text" | grep -qiE '^[[:space:]]*[*_`> #-]*[[:space:]]*(PAUSING|BLOCKED)[[:space:]]*:[[:space:]]*[^[:space:]].{7,}'; then
+    return 0
+  fi
+  # "waiting on you/misha" with a substantive object.
+  if printf '%s' "$text" | grep -qiE 'waiting on (you|misha)\b'; then
+    return 0
+  fi
+  # "Decisions for Misha" / "Questions for Misha" / "Action items for Misha"
+  # section header alone on a line (optionally bold/## wrapped).
+  if printf '%s' "$text" | grep -qiE '^[[:space:]]*[*#]*[[:space:]]*(decisions?|questions?|action items?) (for|awaiting|from|needed)[[:space:]]*[a-z]*[*[:space:]]*:?[[:space:]]*$'; then
+    return 0
+  fi
+  return 1
+}
+
+# Has the deterministic turn-emit (or a fence emit) produced a card for THIS
+# session this turn in the state sink? Used by the prose-decision hard-block:
+# if a card exists, the decision IS auditable in the tree and the gate allows;
+# if not, the gate blocks (the backstop for when turn-emit failed to emit).
+# Looks for a `turn-<sid>-*` node (turn-emit) OR any node whose items[] carry a
+# details.surfaced_by of workstreams-turn-emit / decision-context-gate that was
+# touched recently. Conservative: any lookup failure → returns 1 (no card
+# found) so the gate errs toward blocking a genuinely-uncarded decision.
+_card_emitted_this_turn() {
+  local sid="$1"
+  _have node || return 1
+  local sink
+  # Read the GUI sink (the binding sink the turn-emit writes + the server reads).
+  if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then sink="$CONV_TREE_STATE_PATH"; else sink=$(_resolve_gui_state_path); fi
+  [[ -n "$sink" && -f "$sink" ]] || return 1
+  local lib; lib=$(_resolve_state_lib)
+  [[ -f "$lib" ]] || return 1
+  local found
+  found=$(node -e '
+    (function(){
+      try {
+        var s = require(process.argv[1]);
+        var st = s.readState({ statePath: process.argv[2] });
+        var sid = process.argv[3];
+        var nodes = (st.snapshot && st.snapshot.nodes) || [];
+        var prefix = "turn-" + sid + "-";
+        for (var i = 0; i < nodes.length; i++) {
+          var n = nodes[i];
+          // A turn-emit node for this session with at least one item OR
+          // annotation counts as "a card was emitted this turn".
+          if (n.node_id && n.node_id.indexOf(prefix) === 0) {
+            if ((n.items && n.items.length) || (n.annotations && n.annotations.length)) {
+              process.stdout.write("Y"); return;
+            }
+          }
+        }
+        process.stdout.write("N");
+      } catch (e) { process.stdout.write("N"); }
+    })();
+  ' "$lib" "$sink" "$sid" 2>/dev/null || printf 'N')
+  [[ "$found" == "Y" ]]
 }
 
 # Tier 2: weaker decision-soliciting language. "should I ...?", "would you
@@ -651,8 +736,18 @@ _run_gate() {
     TIER=2
   fi
 
-  # No tier signal AND no fence → nothing to do.
-  if [[ "$TIER" -eq 0 ]] && [[ "$FENCE_PRESENT" -eq 0 ]]; then
+  # --- Prose-decision detection (2026-06-08 tightening) ---
+  # The class the original Tier-1 missed: a PAUSING:/BLOCKED: marker or
+  # "waiting on you" / "Decisions for Misha" prose that solicits a decision
+  # WITHOUT enumerated options or a fence. Per the deterministic-turn-emit
+  # discovery, this slipped through and produced ZERO decision cards.
+  local PROSE_DECISION=0
+  if _is_prose_decision "$LAST_ASSISTANT"; then
+    PROSE_DECISION=1
+  fi
+
+  # No tier signal AND no fence AND no prose-decision → nothing to do.
+  if [[ "$TIER" -eq 0 ]] && [[ "$FENCE_PRESENT" -eq 0 ]] && [[ "$PROSE_DECISION" -eq 0 ]]; then
     exit 0
   fi
 
@@ -670,6 +765,25 @@ _run_gate() {
         exit 0
       fi
     done < <(find .claude/state -maxdepth 1 -type f -name 'decision-context-waiver-*.txt' -newermt '1 hour ago' 2>/dev/null)
+  fi
+
+  # --- Prose-decision HARD-BLOCK backstop ---
+  # If a prose-decision was solicited AND there is no fence (the fence path
+  # below emits its own card), block ONLY when the deterministic turn-emit
+  # hook did NOT already emit a card for this session this turn. When a card
+  # exists, the decision IS auditable in the tree → ALLOW (the deterministic
+  # emit covered it; no redo friction needed). When no card exists, the
+  # emission failed (or the turn-emit hook isn't wired) and the decision would
+  # evaporate → BLOCK so the operator's tracker stays truthful.
+  if [[ "$PROSE_DECISION" -eq 1 ]] && [[ "$FENCE_PRESENT" -eq 0 ]]; then
+    local DC_SID; DC_SID=$(_session_id_from_input "$INPUT")
+    if _card_emitted_this_turn "$DC_SID"; then
+      _log "prose-decision: card already emitted for session=$DC_SID this turn → ALLOW"
+    else
+      _log "prose-decision: NO card emitted for session=$DC_SID → BLOCK"
+      _do_block "$RG_SESSION_ID" "prose-decision-no-card" "$LAST_ASSISTANT" \
+        "A PAUSING:/BLOCKED: marker or 'waiting on you' / 'Decisions for Misha' prose solicited a decision, but no decision card was emitted to the Workstreams tree this turn (workstreams-turn-emit.sh should have produced one). Either the emit failed, or the hook is not wired."
+    fi
   fi
 
   # --- Process fence (if present) ---
@@ -764,15 +878,28 @@ _do_block() {
   local trail_preview
   trail_preview=$(printf '%s' "$last_assistant" | tr '\n' ' ' | tail -c 300)
 
+  # Prose-decision case (2026-06-08 tightening) gets a tailored lead paragraph.
+  local lead
+  if [[ "$rg_sig_suffix" == prose-decision* ]]; then
+    lead="The last assistant message solicits a decision via a PAUSING:/BLOCKED:
+marker, a \"waiting on you\" line, or a \"Decisions for Misha\" header — but NO
+decision card reached the Workstreams tree this turn. The deterministic
+workstreams-turn-emit.sh Stop hook should have emitted one; if it did not,
+the emit failed OR the hook is not wired into the Stop chain."
+  else
+    lead="The last assistant message is decision-soliciting (Tier 1) but does
+NOT carry a properly-fenced Decision-Context block."
+  fi
+
   cat >&2 <<MSG
 ================================================================
 DECISION-CONTEXT GATE — BLOCKED
 ================================================================
 
-The last assistant message is decision-soliciting (Tier 1) but does
-NOT carry a properly-fenced Decision-Context block. The orchestrator
-MUST emit decisions / questions / action items / autonomous actions
-as fenced Markdown blocks matching the grammar in:
+${lead} The orchestrator MUST ensure every decision / question /
+action item / autonomous action reaches the Workstreams tree as a card
+— either deterministically (workstreams-turn-emit.sh, no agent action
+required) OR via a fenced Markdown block matching the grammar in:
 
   ~/.claude/rules/decision-context.md
 
@@ -782,21 +909,26 @@ autonomous_action.
 Schema (sole-normative Zod module):
   neural-lace/workstreams-ui/state/decision-context-schema.js
 
-${extra_detail:+Validator detail: $extra_detail
+${extra_detail:+Detail: $extra_detail
 }
 Trailing context (last 300 chars of the message):
   ...${trail_preview}
 
 To proceed, do ONE of:
 
-  1. Re-issue the message with a fenced Decision-Context block per the
+  1. Confirm workstreams-turn-emit.sh is wired in the Stop chain (it
+     emits the card deterministically — no fence authoring needed). If
+     it is wired and still produced no card, check
+     ~/.claude/logs/workstreams-turn-emit.log for the emit failure.
+
+  2. Re-issue the message with a fenced Decision-Context block per the
      grammar. The fence opens with ":::  <category> id=<id>" and closes
      with ":::" on its own line. See the rule for worked examples.
 
-  2. If this is a genuine false positive (rhetorical "make sense?",
+  3. If this is a genuine false positive (rhetorical "make sense?",
      "right?", etc.), no action is required — those are whitelisted.
 
-  3. If the classifier mis-triggered on a non-decision message, write
+  4. If the classifier mis-triggered on a non-decision message, write
      a per-session waiver:
 
          mkdir -p .claude/state
@@ -808,9 +940,9 @@ To proceed, do ONE of:
      Mirrors bug-persistence-gate's waiver pattern exactly (≥1
      substantive line, mtime <1h). Auditable in .claude/state/.
 
-The redo friction is the point: structured fences mean every
-decision is auditable in the conversation tree. See ADR 047 for the
-Stop-hook reactive enforcement model.
+The point: every decision must be auditable in the Workstreams tree.
+See ADR 047 (fence reactive enforcement) + the 2026-06-08
+deterministic-turn-emit discovery (the hard-block backstop).
 ================================================================
 MSG
 
@@ -1237,6 +1369,84 @@ EOF
   else
     echo "FAIL: ST28 state file missing"; fail=$((fail+1))
   fi
+
+  # ===========================================================================
+  # 2026-06-08 prose-decision tightening (the deterministic-turn-emit backstop).
+  # These tests are zod-INDEPENDENT (no fence path), so they pass even where
+  # workstreams-ui/node_modules/zod is not installed (worktree sessions).
+  # ===========================================================================
+
+  # ---------- ST30: PAUSING prose, no fence, NO card emitted → BLOCK ----------
+  # The exact slip-through class from the discovery: plain-prose PAUSING with no
+  # fence and no enumerated options. The original Tier-1 missed it; the tightened
+  # gate hard-blocks because no card reached the tree.
+  local TR30="$TMP/tr30.jsonl" SP30="$TMP/sp30-empty.json"
+  _make_transcript "$TR30" "I reviewed the proposals. PAUSING: need your call on whether to apply migration m162 to production — it drops a legacy column irreversibly."
+  # SP30 does NOT exist (no card emitted) — _card_emitted_this_turn returns false.
+  rm -f "$SP30"
+  local OUT30 RC30
+  OUT30=$(CONV_TREE_STATE_PATH="$SP30" \
+    bash "$SELF" <<<"$(jq -nc --arg p "$TR30" '{transcript_path:$p, session_id:"st30"}')" 2>&1)
+  RC30=$?
+  _ck "ST30 PAUSING prose, no card → exit 2 (BLOCK)" "$RC30" "2"
+  _ck_match "ST30 stderr names the prose-decision backstop" "$OUT30" "no decision card|workstreams-turn-emit|Workstreams tree"
+
+  # ---------- ST31: PAUSING prose, card IS present in sink → ALLOW -----------
+  # Pre-seed the sink with a turn-<sid>-* node carrying an item (as if
+  # workstreams-turn-emit.sh already emitted the card this turn). The gate must
+  # ALLOW — the decision is auditable; no redo friction.
+  local TR31="$TMP/tr31.jsonl" SP31="$TMP/sp31.json"
+  _make_transcript "$TR31" "PAUSING: need your decision on the R23 reframe vs leaving it as-is."
+  # Seed a turn node + a decision item for session st31 via the facade.
+  node -e '
+    var s = require(process.argv[1]); var sink = process.argv[2]; var sid = process.argv[3];
+    var rootId = "global";
+    s.appendEvent({ event_id:"seed-root", type:"branch-opened", node_id:rootId, parent_id:null, title:"global", actor:"dispatch" }, { statePath: sink });
+    var turnNode = "turn-" + sid + "-1";
+    s.appendEvent({ event_id:"seed-tbo", type:"branch-opened", node_id:turnNode, parent_id:rootId, title:"PAUSING: R23", actor:"dispatch" }, { statePath: sink });
+    s.appendEvent({ event_id:"seed-dr", type:"decision-raised", node_id:turnNode, item_id:"item-r23", text:"R23 reframe", actor:"dispatch" }, { statePath: sink });
+  ' "$LIB" "$SP31" "st31" 2>/dev/null
+  local RC31
+  CONV_TREE_STATE_PATH="$SP31" \
+    bash "$SELF" <<<"$(jq -nc --arg p "$TR31" '{transcript_path:$p, session_id:"st31"}')" >/dev/null 2>&1
+  RC31=$?
+  _ck "ST31 PAUSING prose + card present → exit 0 (ALLOW)" "$RC31" "0"
+
+  # ---------- ST32: "waiting on you" prose, no card → BLOCK ------------------
+  local TR32="$TMP/tr32.jsonl" SP32="$TMP/sp32-empty.json"
+  _make_transcript "$TR32" "I finished the build. I am waiting on you to rotate the production API key in Vercel before I can deploy."
+  rm -f "$SP32"
+  local RC32
+  CONV_TREE_STATE_PATH="$SP32" \
+    bash "$SELF" <<<"$(jq -nc --arg p "$TR32" '{transcript_path:$p, session_id:"st32"}')" >/dev/null 2>&1
+  RC32=$?
+  _ck "ST32 'waiting on you' prose, no card → exit 2 (BLOCK)" "$RC32" "2"
+
+  # ---------- ST33: PAUSING prose + waiver → ALLOW (escape valve intact) -----
+  local TR33="$TMP/tr33.jsonl" SP33="$TMP/sp33-empty.json"
+  _make_transcript "$TR33" "PAUSING: should we go with plan A or wait for more data?"
+  rm -rf "$TMP/run33-state" && mkdir -p "$TMP/run33-state/.claude/state"
+  printf 'False positive: this PAUSING is quoting a docs example, not soliciting a real decision.\n' \
+    >"$TMP/run33-state/.claude/state/decision-context-waiver-$(date -u +%Y%m%dT%H%M%S).txt"
+  local RC33
+  (
+    cd "$TMP/run33-state" && \
+    CONV_TREE_STATE_PATH="$SP33" \
+      bash "$SELF" <<<"$(jq -nc --arg p "$TR33" '{transcript_path:$p, session_id:"st33"}')" >/dev/null 2>&1
+  )
+  RC33=$?
+  _ck "ST33 PAUSING prose + fresh waiver → exit 0 (ALLOW)" "$RC33" "0"
+
+  # ---------- ST34: DONE marker only (no decision) → no prose-block ----------
+  # A plain DONE: marker is NOT a decision solicitation; it must NOT block.
+  local TR34="$TMP/tr34.jsonl" SP34="$TMP/sp34-empty.json"
+  _make_transcript "$TR34" "All tasks complete. DONE: shipped the turn-emit hook, self-test 28/28, merged to master abc1234."
+  rm -f "$SP34"
+  local RC34
+  CONV_TREE_STATE_PATH="$SP34" \
+    bash "$SELF" <<<"$(jq -nc --arg p "$TR34" '{transcript_path:$p, session_id:"st34"}')" >/dev/null 2>&1
+  RC34=$?
+  _ck "ST34 DONE-only marker → exit 0 (not a decision; no block)" "$RC34" "0"
 
   echo
   echo "self-test: $pass pass, $fail fail"
