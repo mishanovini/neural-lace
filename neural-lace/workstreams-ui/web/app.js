@@ -1628,9 +1628,25 @@
     if (sec < 86400) return Math.round(sec / 3600) + 'h';
     return Math.round(sec / 86400) + 'd';
   }
+  // ---- stale-tab auto-reload (Phase R2, 2026-06-09) ---------------------
+  // A long-lived tab keeps DATA fresh via SSE while its CODE stays frozen at
+  // tab-load time — the operator kept seeing the pre-Phase-D right-panel
+  // detail for hours after the server already served the modal code (server
+  // `no-cache` headers only matter on a reload that never happens). The
+  // server's /api/health now carries ui_build_ms (max mtime of index.html /
+  // app.js / app.css); when it advances past the stamp this tab booted with,
+  // reload once so the tab always runs the code the server is serving.
+  // Old servers without the field: ui_build_ms is undefined, no-op.
+  var uiBuildSeen = null;
+  function checkUiBuild(h) {
+    if (!h || typeof h.ui_build_ms !== 'number') return;
+    if (uiBuildSeen === null) { uiBuildSeen = h.ui_build_ms; return; }
+    if (h.ui_build_ms > uiBuildSeen) { location.reload(); }
+  }
   function pollHealth() {
     if (!freshnessEl) return;
     fetch('/api/health', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (h) {
+      checkUiBuild(h);
       if (!h || !h.ok) { freshnessEl.textContent = 'health?'; freshnessEl.className = 'freshness stale'; return; }
       freshnessEl.textContent = 'state ' + fmtAge(h.state_age_seconds) + ' • hb ' + fmtAge(h.heartbeat_age_seconds);
       freshnessEl.className = 'freshness' + (h.heartbeat_stale ? ' stale' : '');
