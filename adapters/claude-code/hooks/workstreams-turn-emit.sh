@@ -132,6 +132,18 @@ _resolve_state_lib() {
   _fallback_conv_tree_path "state/state.js"
 }
 
+# Resolve the SOLE-NORMATIVE decision-context schema module
+# (decision-context-schema.js — sibling of state.js). Carries
+# assembleItemDetails(): the single normative assembler both emit paths use to
+# produce self-contained item `details` (Phase C, 2026-06-09). Override via
+# CONV_TREE_SCHEMA_LIB (self-test). Falls back to the state-lib's sibling.
+_resolve_schema_lib() {
+  if [[ -n "${CONV_TREE_SCHEMA_LIB:-}" ]]; then printf '%s' "$CONV_TREE_SCHEMA_LIB"; return 0; fi
+  local statelib; statelib=$(_resolve_state_lib)
+  local dir; dir=$(dirname "$statelib")
+  printf '%s' "$dir/decision-context-schema.js"
+}
+
 # Parent of the repo's git-common-dir = the MAIN checkout (worktree-aware). A
 # worktree session resolves to the main checkout so it writes the file the
 # operator's single GUI server is actually watching.
@@ -268,13 +280,33 @@ _emit_dual() {
 
 # ============================================================================
 # Deterministic extraction + event-array build (the heart of the hook).
+#
+# Phase C rewrite (2026-06-09) — Misha: "items show INCOMPLETE METADATA /
+# fragments like 'Turn 2229' or a garbled \" decisions… — useless. Assume I
+# will not look at this until I've COMPLETELY FORGOTTEN what we're doing. I
+# need background to trigger my memory and the info to make a decision."
+#
+# The fix has three parts:
+#   1. NO per-turn "Turn N" node. Items attach DIRECTLY to the project/global
+#      ROOT node (the same shape decision-context-gate.sh uses — items live ON
+#      a node, FR-2). No more "Turn 2229" noise cards.
+#   2. FRAGMENT REJECTION. _isCleanItem() rejects mid-sentence fragments,
+#      escaped-quote/leading-punctuation noise, lowercase continuations, and
+#      too-short scraps. Only a clean, complete, self-contained solicitation is
+#      a candidate.
+#   3. SELF-CONTAINED details. Each item carries a BACKGROUND memory-trigger
+#      paragraph + the actionable field, assembled + validated via the SOLE
+#      NORMATIVE assembleItemDetails() (decision-context-schema.js). If the
+#      assembler returns null (no background / no actionable field) the item is
+#      NOT emitted — emit NOTHING rather than an "INCOMPLETE METADATA" card.
+#
 # Implemented in ONE node call so the regex/extraction logic is portable and
-# the JSON is well-formed by construction (no shell-quoting hazards). The node
-# program receives the final-assistant-message text on a file + the
-# session_id + turn_index + root node id/title, and prints the events JSON.
+# the JSON is well-formed by construction. The node program receives the
+# final-assistant-message text on a file + session_id + turn_index + root node
+# id/title + the schema-lib path, and prints the events JSON.
 # ============================================================================
 _build_events_file() {
-  local msg_file="$1" sid="$2" turn_index="$3" root_id="$4" root_title="$5" out_file="$6"
+  local msg_file="$1" sid="$2" turn_index="$3" root_id="$4" root_title="$5" out_file="$6" schema_lib="$7"
   _have node || return 1
   node -e '
     var fs = require("fs");
@@ -284,7 +316,38 @@ _build_events_file() {
     var rootId = process.argv[4];
     var rootTitle = process.argv[5];
     var outFile = process.argv[6];
+    var schemaLib = process.argv[7];
     var crypto = require("crypto");
+
+    // ---- SOLE NORMATIVE details assembler -------------------------------
+    // Load assembleItemDetails from the schema module. If it cannot be loaded
+    // (stripped env / missing dep) fall back to an INLINE assembler that
+    // applies the SAME contract (background + >=1 actionable field, else
+    // null). The fallback exists only so the writer never crashes; the schema
+    // module remains the normative source when present.
+    var assembleItemDetails = null;
+    try {
+      var sch = require(schemaLib);
+      if (sch && typeof sch.assembleItemDetails === "function") assembleItemDetails = sch.assembleItemDetails;
+    } catch (e) { /* fall through to inline */ }
+    if (!assembleItemDetails) {
+      var CATS = ["decision", "question", "action_item_for_user", "autonomous_action"];
+      var ACTIONABLE = {
+        decision: ["question", "options", "the_ask", "description"],
+        question: ["question", "why_asking", "description"],
+        action_item_for_user: ["the_ask", "instructions", "description"],
+        autonomous_action: ["action_taken", "reasoning", "description"]
+      };
+      assembleItemDetails = function (category, fields) {
+        if (CATS.indexOf(category) === -1) return null;
+        var d = Object.assign({}, fields || {}, { _category: category });
+        if (!d.background || String(d.background).trim() === "") return null;
+        var need = ACTIONABLE[category] || [];
+        var has = need.some(function (f) { return d[f] != null && String(d[f]).trim() !== ""; });
+        if (!has) return null;
+        return d;
+      };
+    }
 
     var text = "";
     try { text = fs.readFileSync(msgPath, "utf8"); } catch (e) { text = ""; }
@@ -298,29 +361,63 @@ _build_events_file() {
     function h16(s) {
       return crypto.createHash("sha1").update(String(s)).digest("hex").slice(0, 16);
     }
-    // Deterministic per-(sid,turn,content,kind,salt) event id.
     function eid(kind, salt) {
       return "wte-" + kind + "-" + h16(sid + "|" + turnIndex + "|" + contentHash + "|" + salt);
     }
 
     var lines = text.split(/\r?\n/);
 
-    // ---- 1. The session-end marker (DONE / PAUSING / BLOCKED) --------------
-    // Markers live on (typically) the last non-empty line per
-    // session-end-protocol.md. Scan from the end for the first line whose
-    // trimmed form begins with the marker keyword (leading markdown emphasis
-    // tolerated, mirroring continuation-enforcer.sh).
+    // ---- FRAGMENT GUARD (escaping-agnostic) -------------------------------
+    // A candidate item must be a clean, complete, self-contained statement.
+    // The garbage Misha saw was JSONL escape-corruption + list-fragment
+    // leftovers — all detectable by their LEADING character, which is robust
+    // across shell-escaping (no fragile unescape pass needed). Reject when the
+    // first char is a fragment-leader (backslash, quote, closing-punct,
+    // list-leftover, open-paren parenthetical, code-fence/table/blockquote
+    // marker, smart-quote), a bare path/identifier with no spaces, or too
+    // short to be a real ask. The clean asks ("need your call ...", "Approve
+    // the ...", "which do you prefer?") begin with a letter + contain a space.
+    //
+    // FRAGMENT_LEADERS is built from char codes because the node program is
+    // embedded inside a single-quoted bash string — a literal single-quote or
+    // backtick in the JS source would terminate it. Codes:
+    //   92 \   34 "   39 (apostrophe)   96 (backtick)   41 )   93 ]   125 }
+    //   44 ,   59 ;   58 :   46 .   45 -   124 |   62 >   42 *   95 _   126 ~
+    //   40 (   8220/8221 smart-doublequotes   8216/8217 smart-singlequotes
+    function cleanText(s) {
+      // Trim + collapse internal whitespace. Deliberately does NOT unescape —
+      // escape artifacts are a garbage signal the leading-char guard catches.
+      return String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+    }
+    var FRAGMENT_LEADER_CODES = [
+      92, 34, 39, 96, 41, 93, 125, 44, 59, 58, 46, 45, 124, 62, 42, 95, 126, 40,
+      8220, 8221, 8216, 8217
+    ];
+    function isFragmentLeader(ch) {
+      var code = ch.charCodeAt(0);
+      for (var i = 0; i < FRAGMENT_LEADER_CODES.length; i++) {
+        if (FRAGMENT_LEADER_CODES[i] === code) return true;
+      }
+      return false;
+    }
+    function isCleanItem(s) {
+      s = cleanText(s);
+      if (s.length < 12) return false;
+      if (isFragmentLeader(s.charAt(0))) return false;
+      if (/^[A-Za-z0-9._\/-]+$/.test(s)) return false; // bare path/identifier
+      if (!/\s/.test(s)) return false;                  // single token, no ask
+      return true;
+    }
+
+    // ---- 1. session-end marker (DONE / PAUSING / BLOCKED) -----------------
     var marker = null, markerSummary = "";
     for (var li = lines.length - 1; li >= 0; li--) {
       var L = lines[li].replace(/^\s*[*_`>#-]+\s*/, "").trim();
       var m = L.match(/^(DONE|PAUSING|BLOCKED)\s*:\s*(.*)$/);
-      if (m) { marker = m[1]; markerSummary = m[2].trim(); break; }
+      if (m) { marker = m[1]; markerSummary = cleanText(m[2]); break; }
     }
 
-    // ---- 2. Section-header items (Decisions/Questions/Action items) -------
-    // Mirrors the workstreams-extract-pending.sh marker convention: a header
-    // line alone, optionally bold/## wrapped, naming a kind; the bullet list
-    // that immediately follows is the items.
+    // ---- section-header detection -----------------------------------------
     function headerKind(line) {
       var s = line.replace(/^\s*#+\s*/, "").replace(/^\s*\*\*\s*/, "").replace(/\s*\*\*\s*$/, "").trim();
       s = s.replace(/:\s*$/, "");
@@ -328,214 +425,206 @@ _build_events_file() {
       if (/^decisions?\b/.test(low) && /\b(for|awaiting|need|from)\b/.test(low)) return "decision";
       if (/^questions?\b/.test(low) && /\b(for|awaiting|need|from)\b/.test(low)) return "question";
       if (/^(action items?|actions?)\b/.test(low) && /\b(for|awaiting|need|from)\b/.test(low)) return "action";
-      // also accept the canonical "Waiting on you" header
       if (/^waiting on (you|misha)\b/.test(low)) return "action";
       return null;
     }
-    function isListItem(line) {
-      return /^\s*(?:[-*+]\s+|\d+[.)]\s+)/.test(line);
-    }
-    function stripBullet(line) {
-      return line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+)/, "").trim();
-    }
+    function isListItem(line) { return /^\s*(?:[-*+]\s+|\d+[.)]\s+)/.test(line); }
+    function stripBullet(line) { return line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+)/, "").trim(); }
     function isHr(line) { return /^\s*([-*_])\1{2,}\s*$/.test(line); }
 
-    // collected items: { kind, text }
-    var items = [];
+    // ---- a memory-trigger BACKGROUND paragraph ----------------------------
+    // Misha forgot all context. Background must answer: what is this, what were
+    // we doing, why does it matter. We assemble it from what we can ground in
+    // the message deterministically — never fabricate. Sources, in order:
+    //   - the project/root this turn belongs to (orientation),
+    //   - the section the item came from (the kind + header phrasing),
+    //   - the lead context paragraph of the message (the "what were we doing"),
+    //   - the marker summary when present (the "why now / what is at stake").
+    // The result is prose the operator can read cold.
+    var leadContext = "";
+    (function () {
+      // first 1-3 non-empty, non-header, non-list prose lines = the gist of
+      // what this turn was about.
+      var picked = [];
+      for (var i = 0; i < lines.length && picked.length < 3; i++) {
+        var ln = lines[i].trim();
+        if (!ln) continue;
+        if (headerKind(lines[i])) continue;
+        if (isListItem(lines[i])) continue;
+        if (isHr(lines[i])) continue;
+        if (/^(DONE|PAUSING|BLOCKED)\s*:/.test(ln)) continue;
+        if (/^[#>*`|]/.test(ln)) continue;
+        picked.push(cleanText(ln));
+      }
+      leadContext = picked.join(" ").slice(0, 400);
+    })();
+
+    var projectLabel = (rootTitle && rootTitle !== rootId) ? rootTitle : "this workstream";
+
+    function buildBackground(kind, headerPhrase) {
+      var parts = [];
+      // orientation
+      parts.push("From " + projectLabel + (marker ? " (turn ended " + marker + ")" : "") + ".");
+      // what were we doing
+      if (leadContext && leadContext.length > 8) parts.push("Context: " + leadContext);
+      // why it matters / what is at stake — the marker summary when distinct
+      if (markerSummary && markerSummary.length > 8) parts.push("At stake: " + markerSummary);
+      // the kind framing
+      var kindWord = kind === "decision" ? "A decision is awaiting you"
+        : kind === "question" ? "A question is awaiting your answer"
+        : "An action is assigned to you";
+      parts.push(kindWord + (headerPhrase ? " (" + headerPhrase + ")" : "") + ".");
+      var bg = parts.join(" ").replace(/\s+/g, " ").trim();
+      return bg.length > 700 ? bg.slice(0, 697) + "..." : bg;
+    }
+
+    // ---- collect candidate items (kind + text + header phrase) ------------
+    var candidates = [];
     var seenText = {};
-    function pushItem(kind, txt) {
-      txt = String(txt || "").trim();
-      if (!txt) return;
-      // cap to a sane card length; keep first 280 chars
-      if (txt.length > 280) txt = txt.slice(0, 277) + "...";
+    function pushCandidate(kind, txt, headerPhrase) {
+      txt = cleanText(txt);
+      if (!isCleanItem(txt)) return;            // FRAGMENT GUARD
+      if (txt.length > 220) txt = txt.slice(0, 217) + "...";
       var key = kind + "::" + txt.toLowerCase();
       if (seenText[key]) return;
       seenText[key] = 1;
-      items.push({ kind: kind, text: txt });
+      candidates.push({ kind: kind, text: txt, headerPhrase: headerPhrase || "" });
     }
 
+    // 2a. section-header lists
     for (var i = 0; i < lines.length; i++) {
       var k = headerKind(lines[i]);
       if (!k) continue;
-      // consume the following list
+      var headerPhrase = lines[i].replace(/^\s*[#*\s]+/, "").replace(/[:*\s]+$/, "").trim();
       var j = i + 1;
       while (j < lines.length) {
         var ln = lines[j];
         if (isHr(ln)) break;
         if (headerKind(ln)) break;
         if (isListItem(ln)) {
-          pushItem(k, stripBullet(ln));
+          var itemText = stripBullet(ln);
           j++;
-          // capture wrapped continuation lines (non-list, non-blank)
+          // fold wrapped continuation lines INTO this item (they belong to it)
           while (j < lines.length && lines[j].trim() !== "" && !isListItem(lines[j]) && !headerKind(lines[j]) && !isHr(lines[j])) {
-            // append continuation to the last item of this kind
-            var last = items[items.length - 1];
-            if (last) last.text = (last.text + " " + lines[j].trim()).slice(0, 280);
+            itemText = (itemText + " " + lines[j].trim());
             j++;
           }
+          pushCandidate(k, itemText, headerPhrase);
           continue;
         }
-        if (ln.trim() === "") { // blank line ends the section
-          break;
-        }
-        // a non-list, non-blank line before any list item ends the section
+        if (ln.trim() === "") break;
         break;
       }
       i = j - 1;
     }
 
-    // ---- 3. PAUSING-marker decision: the marker summary itself ------------
-    // When the marker is PAUSING/BLOCKED, the summary IS a decision/blocker the
-    // operator must act on. Surface it as a decision (PAUSING) or action
-    // (BLOCKED) item even if no section header was present (the failure mode
-    // the discovery names: plain-prose PAUSING with no fence/section).
+    // 2b. PAUSING/BLOCKED marker summary as a decision/action (the plain-prose
+    // failure mode: a PAUSING with no fence/section). Only if it is a clean,
+    // self-contained sentence.
     if (marker === "PAUSING" && markerSummary) {
-      pushItem("decision", markerSummary);
+      pushCandidate("decision", markerSummary, "PAUSING marker");
     } else if (marker === "BLOCKED" && markerSummary) {
-      pushItem("action", markerSummary);
+      pushCandidate("action", markerSummary, "BLOCKED marker");
     }
 
-    // ---- 4. Enumerated-option decision (no header, no marker) -------------
-    // "pick one" / "your call" / "which do you prefer" + 2+ enumerated options
-    // in the trailing window → a decision the operator must make. We capture
-    // the solicitation sentence as the decision text (the options render as the
-    // card body via the message itself; here we just need ONE card per turn).
-    if (items.filter(function (x) { return x.kind === "decision"; }).length === 0) {
+    // 2c. enumerated-option decision (no header, no marker): "pick one" /
+    // "your call" / "which do you prefer" + >=2 enumerated options.
+    if (candidates.filter(function (x) { return x.kind === "decision"; }).length === 0) {
       var tail = lines.slice(Math.max(0, lines.length - 30)).join("\n");
       var solicit = /pick one|your call|which (?:do|would) you (?:want|prefer)|should I [A-Za-z]+ or [A-Za-z]/i.test(tail);
       var optCount = (tail.match(/^\s*(?:[A-Da-d]\)|[1-9][.)]\s|\*\*Option|-\s+Option)/gmi) || []).length;
       if (solicit && optCount >= 2) {
-        // Use the solicitation sentence (the line containing the phrase) as text.
         var solLine = "";
         for (var s2 = lines.length - 1; s2 >= 0; s2--) {
-          if (/pick one|your call|which (?:do|would) you|should I .* or /i.test(lines[s2])) { solLine = lines[s2].trim(); break; }
+          if (/pick one|your call|which (?:do|would) you|should I .* or /i.test(lines[s2])) { solLine = cleanText(lines[s2]); break; }
         }
-        pushItem("decision", solLine || "Decision requested (enumerated options) — see message");
+        if (solLine) pushCandidate("decision", solLine, "enumerated options");
       }
     }
 
-    // ---- 5. "waiting on you" inline (no header) ---------------------------
-    // A line like "Waiting on you: <x>" or "waiting on you to <x>".
-    if (items.filter(function (x) { return x.kind === "action"; }).length === 0) {
+    // 2d. inline "waiting on you: <x>"
+    if (candidates.filter(function (x) { return x.kind === "action"; }).length === 0) {
       for (var w = 0; w < lines.length; w++) {
         var wm = lines[w].match(/waiting on (?:you|misha)\s*(?:to|:)?\s*(.+)$/i);
-        if (wm && wm[1] && wm[1].trim().length > 3) { pushItem("action", wm[1].trim()); break; }
+        if (wm && wm[1] && cleanText(wm[1]).length > 3) { pushCandidate("action", wm[1], "waiting on you"); break; }
       }
     }
 
-    // ---- 6. in-flight + shipped annotation lines --------------------------
-    var notes = [];
-    function pushNote(tag, txt) {
-      txt = String(txt || "").trim();
-      if (!txt) return;
-      if (txt.length > 280) txt = txt.slice(0, 277) + "...";
-      notes.push({ tag: tag, text: txt });
-    }
-    // in-flight statements
-    for (var f = 0; f < lines.length; f++) {
-      if (/\b(in[- ]flight|in progress|still (?:building|working|running)|currently (?:building|working))\b/i.test(lines[f])) {
-        pushNote("in-flight", lines[f].trim());
-        break; // one in-flight note per turn is enough
-      }
-    }
-    // shipped / merged
-    for (var g = 0; g < lines.length; g++) {
-      if (/\b(shipped|merged to (?:master|main)|deployed to (?:master|production|prod)|landed on (?:master|main))\b/i.test(lines[g])) {
-        pushNote("shipped", lines[g].trim());
-        break;
-      }
-    }
-    if (marker === "DONE" && markerSummary) {
-      pushNote("done", "DONE: " + markerSummary);
-    }
-
-    // ---- 7. Build the event array -----------------------------------------
-    // Nothing to surface? Emit nothing (no empty turn cards).
-    var hasContent = (marker !== null) || items.length > 0 || notes.length > 0;
-    if (!hasContent) { fs.writeFileSync(outFile, "[]"); process.exit(0); }
-
-    var events = [];
-
-    // 7a. Defensive root branch-opened (idempotent on event_id — the
-    // session-start hook or fence gate may already have opened it).
-    events.push({
-      event_id: "wte-root-" + h16(rootId),
-      type: "branch-opened",
-      node_id: rootId,
-      parent_id: null,
-      title: rootTitle || rootId,
-      actor: "dispatch"
-    });
-
-    // 7b. The per-turn branch node, parented under the project/global root.
-    // Title = the marker summary (or a generic turn label). The turn node is
-    // the card the operator sees for "what happened this turn".
-    var turnNodeId = "turn-" + sid + "-" + turnIndex;
-    var turnTitle = marker
-      ? (marker + ": " + (markerSummary || "(no summary)")).slice(0, 120)
-      : ("Turn " + turnIndex);
-    events.push({
-      event_id: "wte-tbo-" + h16(turnNodeId),
-      type: "branch-opened",
-      node_id: turnNodeId,
-      parent_id: rootId,
-      title: turnTitle,
-      actor: "dispatch"
-    });
-
-    // 7c. Items (decision/question/action) as cards ON the turn node.
+    // ---- build the event array --------------------------------------------
+    // Items attach to the ROOT node (no per-turn node). Each item carries a
+    // self-contained `details` via assembleItemDetails; if that returns null
+    // the item is DROPPED (emit nothing rather than incomplete metadata).
     var kindToEvent = {
       decision: "decision-raised",
       question: "question-raised",
       action: "action-added"
     };
-    for (var ii = 0; ii < items.length; ii++) {
-      var it = items[ii];
-      var evType = kindToEvent[it.kind] || "action-added";
-      var salt = it.kind + "|" + it.text;
+    var detailCat = {
+      decision: "decision",
+      question: "question",
+      action: "action_item_for_user"
+    };
+
+    var events = [];
+    var emitted = 0;
+
+    for (var ci = 0; ci < candidates.length; ci++) {
+      var c = candidates[ci];
+      var cat = detailCat[c.kind] || "action_item_for_user";
+      // actionable field per category
+      var fields = {
+        background: buildBackground(c.kind, c.headerPhrase),
+        surfaced_by: "workstreams-turn-emit",
+        source: "workstreams-turn-emit",
+        turn_index: Number(turnIndex) || turnIndex,
+        links: [ "(see branch: " + (rootTitle || rootId) + ")" ]
+      };
+      if (cat === "decision") { fields.question = c.text; }
+      else if (cat === "question") { fields.question = c.text; }
+      else { fields.the_ask = c.text; }
+
+      var details = assembleItemDetails(cat, fields);
+      if (!details) continue;   // not self-contained → DROP (no garbage card)
+
+      // first self-contained item triggers the defensive root branch-opened
+      if (emitted === 0) {
+        events.push({
+          event_id: "wte-root-" + h16(rootId),
+          type: "branch-opened",
+          node_id: rootId,
+          parent_id: null,
+          title: rootTitle || rootId,
+          actor: "dispatch"
+        });
+      }
+
+      var evType = kindToEvent[c.kind] || "action-added";
+      var salt = c.kind + "|" + c.text;
       var itemId = "item-" + h16(salt);
       events.push({
-        event_id: eid(it.kind.slice(0, 3), salt),
+        event_id: eid(c.kind.slice(0, 3), salt),
         type: evType,
-        node_id: turnNodeId,
+        node_id: rootId,
         item_id: itemId,
-        text: it.text,
+        text: c.text,
         actor: "dispatch"
       });
-      // rich details so the GUI detail-pane renders source + kind.
       events.push({
         event_id: eid("ids", salt),
         type: "item-details-set",
-        node_id: turnNodeId,
+        node_id: rootId,
         item_id: itemId,
-        details: {
-          kind: it.kind,
-          source: "workstreams-turn-emit",
-          surfaced_by: "workstreams-turn-emit",
-          turn_index: Number(turnIndex) || turnIndex,
-          marker: marker || null
-        },
+        details: details,
         actor: "dispatch"
       });
+      emitted++;
     }
 
-    // 7d. Notes (marker summary / in-flight / shipped) as annotations on the
-    // turn node. Annotations do not require the node to be unchecked-free, so
-    // they coexist with open items (FR-7 only constrains `concluded`).
-    for (var nn = 0; nn < notes.length; nn++) {
-      var note = notes[nn];
-      events.push({
-        event_id: eid("note", note.tag + "|" + note.text),
-        type: "annotated",
-        node_id: turnNodeId,
-        text: "[" + note.tag + "] " + note.text,
-        actor: "dispatch"
-      });
-    }
-
+    // Nothing self-contained surfaced this turn → emit nothing. NO "Turn N"
+    // node, NO status annotations. Silence beats noise.
     fs.writeFileSync(outFile, JSON.stringify(events));
     process.exit(0);
-  ' "$msg_file" "$sid" "$turn_index" "$root_id" "$root_title" "$out_file" 2>>"$LOG_FILE"
+  ' "$msg_file" "$sid" "$turn_index" "$root_id" "$root_title" "$out_file" "$schema_lib" 2>>"$LOG_FILE"
 }
 
 # Count assistant messages in the transcript → a stable per-turn index. Uses jq
@@ -595,11 +684,12 @@ _run() {
   local ROOT_TITLE="${ROOTLINE##*$'\t'}"
 
   local LIB; LIB=$(_resolve_state_lib)
+  local SCHEMA; SCHEMA=$(_resolve_schema_lib)
   local MSG_FILE; MSG_FILE=$(mktemp 2>/dev/null || echo "/tmp/wte-msg-$$.txt")
   local EV_FILE; EV_FILE=$(mktemp 2>/dev/null || echo "/tmp/wte-ev-$$.json")
   printf '%s' "$LAST" >"$MSG_FILE"
 
-  if _build_events_file "$MSG_FILE" "$SID" "$TURN" "$ROOT_ID" "$ROOT_TITLE" "$EV_FILE"; then
+  if _build_events_file "$MSG_FILE" "$SID" "$TURN" "$ROOT_ID" "$ROOT_TITLE" "$EV_FILE" "$SCHEMA"; then
     # Skip the emit when the event array is empty (nothing surfaced this turn).
     local n
     n=$(node -e 'try{var a=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(String(a.length))}catch(e){process.stdout.write("0")}' "$EV_FILE" 2>/dev/null || echo 0)
@@ -628,6 +718,7 @@ _self_test() {
   local SELF; SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
   local LIB; LIB=$(_resolve_state_lib)
+  local SCHEMA; SCHEMA=$(_resolve_schema_lib)
   if [[ ! -f "$LIB" ]]; then
     echo "self-test: cannot locate state library ($LIB)"; echo "self-test: FAIL"; exit 1
   fi
@@ -635,6 +726,7 @@ _self_test() {
     echo "self-test: node/jq unavailable"; echo "self-test: FAIL"; exit 1
   fi
   export CONV_TREE_STATE_LIB="$LIB"
+  export CONV_TREE_SCHEMA_LIB="$SCHEMA"
 
   _ck() {
     if [[ "$2" == "$3" ]]; then echo "PASS: $1"; pass=$((pass+1));
@@ -659,13 +751,23 @@ _self_test() {
   _count_items() {
     node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var k=process.argv[3];var c=0;st.snapshot.nodes.forEach(function(n){(n.items||[]).forEach(function(it){if(it.kind===k)c++})});process.stdout.write(String(c))}catch(e){process.stdout.write("ERR")}' "$LIB" "$1" "$2"
   }
-  # does a node with the given title prefix exist?
+  # number of nodes whose node_id starts with "turn-" (post-fix: MUST be 0 —
+  # the rewrite emits items on the ROOT node, never a per-turn node).
+  _count_turn_nodes() {
+    node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});process.stdout.write(String(st.snapshot.nodes.filter(function(n){return /^turn-/.test(n.node_id)}).length))}catch(e){process.stdout.write("ERR")}' "$LIB" "$1"
+  }
+  # does any node have a node whose title matches a regex?
   _node_title_match() {
     node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var re=process.argv[3];process.stdout.write(st.snapshot.nodes.some(function(n){return new RegExp(re).test(n.title||"")})?"Y":"N")}catch(e){process.stdout.write("ERR")}' "$LIB" "$1" "$2"
   }
-  # total annotations across nodes
-  _count_annotations() {
-    node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var c=0;st.snapshot.nodes.forEach(function(n){(n.annotations||[]).forEach(function(){c++})});process.stdout.write(String(c))}catch(e){process.stdout.write("ERR")}' "$LIB" "$1"
+  # Does the FIRST item of kind $3 carry a details object with a non-empty
+  # field named $4 (dotted-path-free top-level key)?  Prints Y/N.
+  _item_detail_has() {
+    node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var kind=process.argv[3],field=process.argv[4];var hit="N";st.snapshot.nodes.forEach(function(n){(n.items||[]).forEach(function(it){if(hit==="Y")return;if(it.kind!==kind)return;var d=it.details;if(d&&d[field]!=null&&((Array.isArray(d[field])&&d[field].length)||String(d[field]).trim()!==""))hit="Y"})});process.stdout.write(hit)}catch(e){process.stdout.write("ERR")}' "$LIB" "$1" "$2" "$3"
+  }
+  # Print the text of the first item whose text matches regex $3 (or "" / NONE).
+  _item_text_present() {
+    node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var re=new RegExp(process.argv[3]);var hit="N";st.snapshot.nodes.forEach(function(n){(n.items||[]).forEach(function(it){if(re.test(String(it.text||"")))hit="Y"})});process.stdout.write(hit)}catch(e){process.stdout.write("ERR")}' "$LIB" "$1" "$2"
   }
   _run_hook() {
     local transcript="$1" sink="$2" sid="$3"
@@ -674,14 +776,18 @@ _self_test() {
     echo $?
   }
 
-  # ---------- ST1: PAUSING marker with options → decision card -------------
+  # ---------- ST1: PAUSING marker → SELF-CONTAINED decision on ROOT --------
   local TR1="$TMP/tr1.jsonl" SP1="$TMP/sp1.json"
-  _make_transcript "$TR1" "$(printf 'I reviewed the 24 proposals.\n\nPAUSING: need your call on whether to apply migration m162 to production before the deploy — it drops a legacy column irreversibly.')"
+  _make_transcript "$TR1" "$(printf 'I reviewed the 24 proposals for the R23 launch.\n\nPAUSING: need your call on whether to apply migration m162 to production before the deploy — it drops a legacy column irreversibly.')"
   local RC1; RC1=$(_run_hook "$TR1" "$SP1" "sess-st1")
   _ck "ST1 PAUSING marker → exit 0" "$RC1" "0"
   _ck "ST1 decision-raised emitted" "$(_count_type "$SP1" decision-raised)" "1"
-  _ck "ST1 turn node titled with PAUSING" "$(_node_title_match "$SP1" '^PAUSING:')" "Y"
+  _ck "ST1 NO 'turn-' noise node (item on root)" "$(_count_turn_nodes "$SP1")" "0"
+  _ck "ST1 NO node titled 'Turn N'" "$(_node_title_match "$SP1" '^Turn [0-9]')" "N"
   _ck "ST1 decision item lands in snapshot.nodes[].items[]" "$(_count_items "$SP1" decision)" "1"
+  _ck "ST1 item details carry background (memory-trigger)" "$(_item_detail_has "$SP1" decision background)" "Y"
+  _ck "ST1 item details carry _category" "$(_item_detail_has "$SP1" decision _category)" "Y"
+  _ck "ST1 item details carry the actionable question" "$(_item_detail_has "$SP1" decision question)" "Y"
 
   # ---------- ST2: idempotency — re-fire same message → no duplication -----
   local RC2; RC2=$(_run_hook "$TR1" "$SP1" "sess-st1")
@@ -689,25 +795,27 @@ _self_test() {
   _ck "ST2 decision-raised still 1 (idempotent)" "$(_count_type "$SP1" decision-raised)" "1"
   _ck "ST2 decision items still 1 (idempotent)" "$(_count_items "$SP1" decision)" "1"
 
-  # ---------- ST3: section headers → mixed cards ---------------------------
+  # ---------- ST3: section headers → mixed cards, all self-contained -------
   local TR3="$TMP/tr3.jsonl" SP3="$TMP/sp3.json"
-  _make_transcript "$TR3" "$(printf 'Progress update.\n\nDecisions for Misha:\n- Approve the DB password rotation\n- Choose squash vs merge for #476\n\nQuestions for Misha:\n- Which Twilio number should the campaign use?\n\nAction items for Misha:\n- Rotate the production API key in Vercel\n\nDONE: shipped the turn-emit hook (commit abc1234)')"
+  _make_transcript "$TR3" "$(printf 'Progress update on the demo-org launch prep.\n\nDecisions for Misha:\n- Approve the production DB password rotation before launch\n- Choose squash vs merge for PR #476\n\nQuestions for Misha:\n- Which Twilio number should the demo campaign use?\n\nAction items for Misha:\n- Rotate the production API key in Vercel settings\n\nDONE: shipped the turn-emit hook (commit abc1234)')"
   local RC3; RC3=$(_run_hook "$TR3" "$SP3" "sess-st3")
   _ck "ST3 section headers → exit 0" "$RC3" "0"
   _ck "ST3 two decisions" "$(_count_items "$SP3" decision)" "2"
   _ck "ST3 one question" "$(_count_items "$SP3" question)" "1"
   _ck "ST3 one action" "$(_count_items "$SP3" action)" "1"
-  # DONE marker → annotation note
-  _ck_ge "ST3 at least one annotation (DONE note)" "$(_count_annotations "$SP3")" "1"
+  _ck "ST3 NO turn-noise node" "$(_count_turn_nodes "$SP3")" "0"
+  _ck "ST3 question item carries background" "$(_item_detail_has "$SP3" question background)" "Y"
+  _ck "ST3 action item carries the_ask" "$(_item_detail_has "$SP3" action the_ask)" "Y"
 
   # ---------- ST4: enumerated options, no header, no marker → decision -----
   local TR4="$TMP/tr4.jsonl" SP4="$TMP/sp4.json"
-  _make_transcript "$TR4" "$(printf 'For the cherry-pick conflict, which do you prefer?\n\nA) Take ours\nB) Take theirs\nC) Hand-resolve to union')"
+  _make_transcript "$TR4" "$(printf 'For the cherry-pick conflict on the rule file, which do you prefer?\n\nA) Take ours\nB) Take theirs\nC) Hand-resolve to union')"
   local RC4; RC4=$(_run_hook "$TR4" "$SP4" "sess-st4")
   _ck "ST4 enumerated options → exit 0" "$RC4" "0"
   _ck "ST4 decision card from enumerated options" "$(_count_items "$SP4" decision)" "1"
+  _ck "ST4 decision carries background" "$(_item_detail_has "$SP4" decision background)" "Y"
 
-  # ---------- ST5: no marker, no items, plain prose → no cards -------------
+  # ---------- ST5: plain prose, nothing actionable → NO cards -------------
   local TR5="$TMP/tr5.jsonl" SP5="$TMP/sp5.json"
   _make_transcript "$TR5" "I read the file and confirmed the handler signature is unchanged. Continuing to the next step."
   local RC5; RC5=$(_run_hook "$TR5" "$SP5" "sess-st5")
@@ -715,28 +823,26 @@ _self_test() {
   if [[ ! -f "$SP5" ]]; then
     echo "PASS: ST5 no state file written (nothing to surface)"; pass=$((pass+1))
   else
-    # if written, must contain zero turn nodes / items
     _ck "ST5 zero decision-raised" "$(_count_type "$SP5" decision-raised)" "0"
   fi
 
-  # ---------- ST6: BLOCKED marker → action card ----------------------------
+  # ---------- ST6: BLOCKED marker → self-contained action card ------------
   local TR6="$TMP/tr6.jsonl" SP6="$TMP/sp6.json"
-  _make_transcript "$TR6" "$(printf 'Investigated the deploy.\n\nBLOCKED: e2e suite needs the DB password in .env.local which is unset here — provide it or a sandbox with it set.')"
+  _make_transcript "$TR6" "$(printf 'Investigated the deploy failure on the demo org.\n\nBLOCKED: e2e suite needs the DB password in .env.local which is unset here — provide it or a sandbox with it set.')"
   local RC6; RC6=$(_run_hook "$TR6" "$SP6" "sess-st6")
   _ck "ST6 BLOCKED marker → exit 0" "$RC6" "0"
   _ck "ST6 action-added from BLOCKED" "$(_count_items "$SP6" action)" "1"
+  _ck "ST6 action carries background" "$(_item_detail_has "$SP6" action background)" "Y"
 
-  # ---------- ST7: new turn (different message) → fresh cards, not dup -----
-  # Same session + sink, a DIFFERENT final message → distinct turn node + card.
+  # ---------- ST7: new turn (different message) → fresh distinct card ------
   local TR7="$TMP/tr7.jsonl"
-  # Append two more assistant turns so turn_index advances and content differs.
   cp "$TR1" "$TR7"
   printf '%s\n' "$(jq -nc '{role:"user", content:"and the next?"}')" >>"$TR7"
-  printf '%s\n' "$(jq -nc '{role:"assistant", content:"PAUSING: also need your decision on the R23 reframe vs leaving it as-is."}')" >>"$TR7"
+  printf '%s\n' "$(jq -nc '{role:"assistant", content:"Looked at the R23 reframe.\n\nPAUSING: also need your decision on the R23 reframe vs leaving the open/close times feature as-is."}')" >>"$TR7"
   local RC7; RC7=$(_run_hook "$TR7" "$SP1" "sess-st1")
   _ck "ST7 new turn → exit 0" "$RC7" "0"
-  # Now SP1 should have 2 decision-raised total (the m162 one + the R23 one)
   _ck "ST7 second turn adds a distinct decision (total 2)" "$(_count_type "$SP1" decision-raised)" "2"
+  _ck "ST7 still NO turn-noise nodes" "$(_count_turn_nodes "$SP1")" "0"
 
   # ---------- ST8: no transcript → silent no-op ----------------------------
   local RC8
@@ -745,7 +851,7 @@ _self_test() {
 
   # ---------- ST9: DISABLE escape hatch → no emit --------------------------
   local TR9="$TMP/tr9.jsonl" SP9="$TMP/sp9.json"
-  _make_transcript "$TR9" "PAUSING: should we ship X or Y?"
+  _make_transcript "$TR9" "PAUSING: should we ship feature X or feature Y first?"
   local RC9
   RC9=$(WORKSTREAMS_TURN_EMIT_DISABLE=1 CONV_TREE_STATE_PATH="$SP9" CLAUDE_SESSION_ID="st9" \
     bash "$SELF" <<<"$(jq -nc --arg p "$TR9" '{transcript_path:$p, session_id:"st9"}')" >/dev/null 2>&1; echo $?)
@@ -758,25 +864,46 @@ _self_test() {
 
   # ---------- ST10: facade unavailable → exit 0 (writer-hook discipline) ---
   local TR10="$TMP/tr10.jsonl"
-  _make_transcript "$TR10" "PAUSING: decide on the thing."
+  _make_transcript "$TR10" "PAUSING: decide on whether to ship the thing now or wait."
   local RC10
   RC10=$(CONV_TREE_STATE_LIB="$TMP/does-not-exist.js" CONV_TREE_STATE_PATH="$TMP/sp10.json" CLAUDE_SESSION_ID="st10" \
     bash "$SELF" <<<"$(jq -nc --arg p "$TR10" '{transcript_path:$p, session_id:"st10"}')" >/dev/null 2>&1; echo $?)
   _ck "ST10 facade-down → exit 0 (never blocks)" "$RC10" "0"
 
-  # ---------- ST11: in-flight statement → annotation -----------------------
+  # ---------- ST11 (REQUIRED a): FRAGMENT / turn-noise → NOT emitted -------
+  # The exact garbage shapes Misha saw: a "Turn N" header + a mid-sentence
+  # fragment beginning with an escaped quote + a leading-paren continuation.
+  # None of these is a clean, self-contained item → ZERO cards, NO state file.
   local TR11="$TMP/tr11.jsonl" SP11="$TMP/sp11.json"
-  _make_transcript "$TR11" "$(printf 'The migration is still building in the background.\n\nDONE: kicked off the build')"
+  _make_transcript "$TR11" "$(printf 'Turn 2229\n\n\\\" decisions (the class it missed) and **hard-blocks** if no card got emitted. Self-test passes.\n\n)\\\", \\\"TWLO-006 launch-blocker\\\", \\\"Phase 6 plan')"
   local RC11; RC11=$(_run_hook "$TR11" "$SP11" "sess-st11")
-  _ck "ST11 in-flight → exit 0" "$RC11" "0"
-  _ck_ge "ST11 annotations present (in-flight + done)" "$(_count_annotations "$SP11")" "1"
+  _ck "ST11 fragment/turn-noise → exit 0" "$RC11" "0"
+  if [[ ! -f "$SP11" ]]; then
+    echo "PASS: ST11 fragment/turn-noise → NO state file (nothing emitted)"; pass=$((pass+1))
+    echo "PASS: ST11 fragment/turn-noise → zero items (NO state file)"; pass=$((pass+1))
+  else
+    _ck "ST11 fragment/turn-noise → zero decision-raised" "$(_count_type "$SP11" decision-raised)" "0"
+    _ck "ST11 fragment/turn-noise → zero action items" "$(_count_items "$SP11" action)" "0"
+  fi
+  _ck "ST11 fragment/turn-noise → NO 'turn-' node" "$(_count_turn_nodes "$SP11")" "0"
 
-  # ---------- ST12: shipped/merged line → annotation -----------------------
+  # ---------- ST12 (REQUIRED b): real decision → FULL self-contained card --
+  # A genuine decision with background + the question. Verify the emitted item
+  # carries the memory-trigger background AND the actionable question (the
+  # full-content contract). Options/recommendation come from the FENCE path
+  # (decision-context-gate); the turn-emit path guarantees background + the
+  # actionable field, which is what makes a turn-extracted card self-contained.
   local TR12="$TMP/tr12.jsonl" SP12="$TMP/sp12.json"
-  _make_transcript "$TR12" "$(printf 'Merged to master at deadbeef.\n\nDONE: feature shipped to production')"
+  _make_transcript "$TR12" "$(printf 'I finished the migration audit for the R23 launch on the demo org.\n\nPAUSING: I need your decision on whether to apply migration m162 to production now, or wait for the nightly backup window first — m162 drops the legacy open_hours column irreversibly, so there is no rollback once it runs.')"
   local RC12; RC12=$(_run_hook "$TR12" "$SP12" "sess-st12")
-  _ck "ST12 shipped line → exit 0" "$RC12" "0"
-  _ck_ge "ST12 annotation present (shipped)" "$(_count_annotations "$SP12")" "1"
+  _ck "ST12 real decision → exit 0" "$RC12" "0"
+  _ck "ST12 one decision emitted" "$(_count_items "$SP12" decision)" "1"
+  _ck "ST12 decision text is the full ask (not a fragment)" "$(_item_text_present "$SP12" 'migration m162')" "Y"
+  _ck "ST12 decision carries background (memory-trigger)" "$(_item_detail_has "$SP12" decision background)" "Y"
+  _ck "ST12 decision carries the actionable question" "$(_item_detail_has "$SP12" decision question)" "Y"
+  _ck "ST12 decision carries _category" "$(_item_detail_has "$SP12" decision _category)" "Y"
+  _ck "ST12 decision carries links pointer" "$(_item_detail_has "$SP12" decision links)" "Y"
+  _ck "ST12 NO turn-noise node" "$(_count_turn_nodes "$SP12")" "0"
 
   echo
   echo "self-test: $pass pass, $fail fail"

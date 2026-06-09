@@ -517,7 +517,21 @@ _parse_validate_emit_events_file() {
       var itemId = "item-" + (data.id || ("anon-" + b));
       var title = data.title || data.label || data.id || ("decision-context-" + cat);
       var text = data.about || data.title || "";
-      var details = Object.assign({}, data, { _category: cat, surfaced_by: "decision-context-gate" });
+      // Phase C (2026-06-09): assemble the self-contained `details` via the
+      // SOLE NORMATIVE shared assembler (fenceToDetails → assembleItemDetails)
+      // so the fence path and the every-turn (workstreams-turn-emit) path
+      // produce IDENTICAL content shape. The fence Zod schema already REQUIRES
+      // background + the per-category actionable fields, so this returns a
+      // populated object; the inline Object.assign is the defensive fallback
+      // for an older schema module without fenceToDetails (back-compat).
+      var details;
+      if (typeof s.fenceToDetails === "function") {
+        details = s.fenceToDetails(cat, data);
+      }
+      if (!details) {
+        details = Object.assign({}, data, { _category: cat, surfaced_by: "decision-context-gate" });
+        delete details.category;
+      }
 
       // Project to ADR-032 §2 events.
       var evType, evIdPrefix;

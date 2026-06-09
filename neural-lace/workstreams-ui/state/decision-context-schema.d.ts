@@ -131,3 +131,64 @@ export function safeValidateFence(category: Category, payload: unknown): {
 export function parseFenceBlock(rawText: string): ParsedFenceBlock;
 
 export const CATEGORIES: ReadonlyArray<Category>;
+
+// ----- self-contained item `details` content shape (Phase C, 2026-06-09) ---
+// The shape the GUI detail-pane (web/app.js) renders from an item-details-set
+// event's `details` payload. Both emit paths assemble it via
+// assembleItemDetails so the content never diverges. `[k: string]: unknown`
+// preserves forward-tolerance for passthrough metadata.
+export interface ItemDetailsContent {
+  _category: Category;
+  background: string;
+  about?: string;
+  urgency?: string;
+  expires_at?: string;
+  warn_at?: string;
+  default_if_no_response?: string;
+  references?: string[];
+  links?: string[];
+  description?: string;
+  context?: string;
+  instructions?: string;
+  blocking_input?: string;
+  question?: string;
+  why_not_decide_alone?: string;
+  options?: Array<string | Record<string, unknown>>;
+  recommendation?: string | { option_key?: string; reasoning?: string };
+  reply_with?: string;
+  why_asking?: string;
+  what_ive_tried?: string;
+  answer_shape?: string;
+  the_ask?: string;
+  why_assigned?: string;
+  what_im_doing_meanwhile?: string;
+  state?: string;
+  action_taken?: string;
+  reasoning?: string;
+  reversibility?: string;
+  [k: string]: unknown;
+}
+
+export const DETAIL_CATEGORIES: ReadonlyArray<Category>;
+
+// safeParse-style validation of a details payload.
+export function validateItemDetails(details: unknown): {
+  success: boolean;
+  data?: ItemDetailsContent;
+  error?: unknown;
+};
+
+// Assemble a self-contained details object, or null when it would not be
+// self-contained (no background, or no actionable field). Callers MUST treat
+// null as "do not emit this item."
+export function assembleItemDetails(
+  category: string,
+  fields: Record<string, unknown>
+): ItemDetailsContent | null;
+
+// Mirror of the decision-context-gate's `details` stamp from a validated
+// fence payload; shares the same assembler.
+export function fenceToDetails(
+  category: Category,
+  validatedFencePayload: unknown
+): ItemDetailsContent | null;
