@@ -159,7 +159,7 @@ Dependency-ordered (see "Dependency graph" below for the visual). Tasks 1-3 unbl
       - Idempotent on `event_id` per the ADR-032 §2 facade contract.
       - Done when: `--self-test` covers (a) empty queue → no-op, (b) 3 queued events all succeed → file empty after, (c) facade fails on event 2 → events 1 succeeds & is removed, events 2+3 remain.
 
-- [ ] 9. **Bootstrap: extend `adapters/claude-code/CLAUDE.md` Detailed Protocols list + wire all three new hooks in `settings.json.template` — Verification: mechanical**
+- [x] 9. **Bootstrap: extend `adapters/claude-code/CLAUDE.md` Detailed Protocols list + wire all three new hooks in `settings.json.template` — Verification: mechanical**
       - One bullet in CLAUDE.md "Detailed Protocols" pointing at `rules/decision-context.md`.
       - `settings.json.template`: wire `decision-context-gate.sh` in Stop (after `goal-coverage-on-stop.sh`), `decision-context-pending-surfacer.sh` in SessionStart, `decision-context-reply-emit.sh` in UserPromptSubmit, `decision-context-replay.sh` in SessionStart (before pending-surfacer so newly-flushed events are visible).
       - `harness-hygiene-scan.sh`, `docs-freshness-gate.sh`, `definition-on-first-use-gate.sh` all pass on the diff.

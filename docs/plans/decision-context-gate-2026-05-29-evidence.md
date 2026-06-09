@@ -443,3 +443,33 @@ Nested fences (outer parser closes on first plain `:::`); streaming/partial prom
 
 ### Assumptions
 Zod installed in `neural-lace/conversation-tree-ui/node_modules/zod`; state.js `appendEvent` dedupes per ADR-032 §2; `sp-<hash>` child node_id stable within hour bucket; `_resolve_decision_schema()` mirrors gate resolution; `parseFenceBlock`/`safeValidateFence` are SOLE NORMATIVE entry points.
+
+---
+
+EVIDENCE BLOCK
+==============
+Task ID: 9
+Task description: Bootstrap: extend CLAUDE.md Detailed Protocols + wire all three new hooks in settings.json.template — Verification: mechanical (full Wave-5 closure; Task 9-partial PASS'd earlier)
+Verified at: 2026-05-31T00:00:00Z
+Verifier: task-verifier agent
+
+Comprehension-gate: PASS (confidence 9) — articulation's four sub-sections (Spec meaning, Edge cases covered, Edge cases NOT covered, Assumptions) substantive; diff-correspondence verified at f0b3db1 (settings template lines 480/484, live mirror 506/510 with replay BEFORE pending-surfacer; CLAUDE.md line 172/196; app.js renderItemDetails extended at L205-405 with per-category branches + reply_with at L359-365; FM-031 with 6 required fields per docs/failure-modes.md L296+); back-compat assumptions on legacy de.recommendation as string/object verified by typeof-branched render.
+
+Checks run:
+1. git show --stat f0b3db1 — commit exists, touches expected files
+2. jq '.hooks.SessionStart' template + live — both contain decision-context-replay.sh BEFORE decision-context-pending-surfacer.sh (template 480/484; live 506/510) — PASS
+3. grep "decision-context" CLAUDE.md — present at line 172 (canonical) + 196 (live mirror) — PASS
+4. grep renderItemDetails web/app.js + reply_with field — function at L205, reply_with at L359-365, used in 3 callsites (L1185/1195/1743) — PASS
+5. grep "^## FM-031" docs/failure-modes.md — header at L296, all 6 required fields (Symptom/Root cause/Detection/Prevention/Example/Recovery) present plus bonus Discriminator — PASS
+6. Orchestrator confirmed: gate self-test 29/29 PASS; WS round-trip GUI-confirmed at f0b3db1 (WS-1 decision-raised=1, item-details-set=1, answered=1); settings-divergence-detector flat; both JSON files validate; harness-hygiene-scan clean
+
+Runtime verification: file adapters/claude-code/settings.json.template::decision-context-replay.sh
+Runtime verification: file ~/.claude/settings.json::decision-context-pending-surfacer.sh
+Runtime verification: file adapters/claude-code/CLAUDE.md::decision-context.md
+Runtime verification: file docs/failure-modes.md::## FM-031
+Runtime verification: file neural-lace/conversation-tree-ui/web/app.js::renderItemDetails
+Runtime verification: command:git show --stat f0b3db1
+
+Verdict: PASS
+Confidence: 9
+Reason: All 4 closure artifacts ship correctly (SessionStart wiring with correct ordering in both template+live mirror, CLAUDE.md bullet in both files, app.js renderItemDetails extension covering fence-grammar fields with documented back-compat preservation, FM-031 with full six-field schema). Comprehension articulation matches diff f0b3db1. Builder's WS pre-changes failure was environmental (missing node_modules/zod in worker worktree); orchestrator confirmed WS PASS post-cherry-pick. Task 9-partial PASS recorded earlier; this verdict closes Task 9 in full.
