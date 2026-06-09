@@ -1,5 +1,5 @@
 # Plan: Workstreams Phase C — self-contained items (no fragments / no turn-noise)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
