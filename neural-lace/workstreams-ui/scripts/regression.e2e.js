@@ -5,7 +5,7 @@
 // 8-bug-regression.md) so they cannot silently recur. Unlike the DOM-free
 // node selftests (state/selftest.js, web/responsive.selftest.js), these run a
 // REAL headless browser against the live server — the only way to catch CSS
-// footguns (the `[hidden]` override that squeezed the detail card) and
+// footguns (the modal-overlay scrim + the `[hidden]` override) and
 // DOM-wiring bugs (selection sync, dropped drawer) that unit tests miss.
 //
 // Usage:
@@ -130,17 +130,36 @@ const ok = (n, c, d) => results.push({ n, pass: !!c, d });
     ok(7, after >= before && errs.length === eb, `toggle=true treeItems ${before}->${after}`);
   } else ok(7, false, 'no #showCompleted toggle');
 
-  // bug #2 + #5 — click a tree item: detail card FILLS the pane (not a bottom
-  // strip) AND the clicked tree row gets the .sel highlight.
+  // Phase D (2026-06-09) — click a tree item: the detail is now a dismissible
+  // MODAL OVERLAY (scrim + modal in front of everything), NOT a list-filling
+  // card. The filter list STAYS VISIBLE behind the scrim (overlay model — the
+  // exact regression Misha repeatedly flagged: detail must not fill the right
+  // pane). The clicked tree row still gets the .sel highlight (bug #5).
   await page.evaluate(() => { const ti = document.querySelector('#treeCanvas .tree-item'); if (ti) ti.click(); });
   await new Promise(r => setTimeout(r, 450));
   const click = await page.evaluate(() => {
-    const r = document.querySelector('#detailCard').getBoundingClientRect();
-    return { cardH: Math.round(r.height), filterVisible: document.querySelector('#filterBody').offsetParent !== null,
-             sel: document.querySelectorAll('#treeCanvas .tree-item.sel').length };
+    const m = document.querySelector('#detailModal');
+    const scrim = document.querySelector('#detailScrim');
+    const mr = m.getBoundingClientRect();
+    return {
+      modalVisible: !m.hidden, scrimVisible: !scrim.hidden,
+      modalH: Math.round(mr.height),
+      // the list behind the modal must remain rendered (overlay, not replace)
+      filterStillVisible: document.querySelector('#filterBody').offsetParent !== null,
+      sel: document.querySelectorAll('#treeCanvas .tree-item.sel').length,
+    };
   });
-  ok(2, click.cardH >= 250 && !click.filterVisible, `cardH=${click.cardH} filterStillVisible=${click.filterVisible}`);
+  ok(2, click.modalVisible && click.scrimVisible && click.filterStillVisible && click.modalH >= 200,
+    `modal=${click.modalVisible} scrim=${click.scrimVisible} listBehind=${click.filterStillVisible} modalH=${click.modalH}`);
   ok(5, click.sel === 1, `selTreeRows=${click.sel}`);
+
+  // Phase D — Esc dismisses the modal (overlay model: dismissible, list restores
+  // cleanly without a panel-fill artifact).
+  await page.keyboard.press('Escape');
+  await new Promise(r => setTimeout(r, 300));
+  const dismissed = await page.evaluate(() =>
+    document.querySelector('#detailModal').hidden && document.querySelector('#detailScrim').hidden);
+  ok(9, dismissed, `modal+scrim hidden after Esc=${dismissed}`);
 
   // bug #6 — docs folder browser button opens a populated drawer (#docsPanel is
   // position:fixed so offsetParent is null — use hidden + in-viewport geometry).

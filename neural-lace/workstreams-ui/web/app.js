@@ -37,7 +37,11 @@
       orphanSection = $('orphanSection'), orphanBody = $('orphanBody'),
       orphanCount = $('orphanCount'),
       filterBar = $('filterBar'), filterBody = $('filterBody'),
-      filterState = $('filterState'), detailCard = $('detailCard'),
+      filterState = $('filterState'),
+      // Phase D — item detail is now a MODAL overlay (not a list-replacing card).
+      detailScrim = $('detailScrim'), detailModal = $('detailModal'),
+      dmTitle = $('dmTitle'), dmBody = $('dmBody'), dmActions = $('dmActions'),
+      dmClose = $('dmClose'),
       layout = $('layout'), divider = $('divider'),
       addBacklogBtn = $('addBacklogBtn'), backlogCapture = $('backlogCapture'),
       blText = $('blText'), blContext = $('blContext'),
@@ -221,6 +225,14 @@
     if (isNaN(ms)) return false;
     return (Date.now() - ms) < SHIP_RECENT_DAYS * 86400 * 1000;
   }
+  // Phase D — deploy-state derivation. An item is "deployed" once it.deployed is
+  // true (set by item-deployed OR item-shipped{deployed:true}). "Shipped-not-
+  // deployed" = the work merged/shipped but has NOT reached production — exactly
+  // the set Misha wants surfaced ("every effort that doesn't get deployed").
+  function isDeployed(it) { return it.deployed === true; }
+  function isShippedNotDeployed(it) {
+    return itemState(it) === 'shipped' && !isDeployed(it);
+  }
 
   // ---- state-badge glyphs ---------------------------------------------
   var STATE_ICON = {
@@ -251,6 +263,10 @@
       case 'in-flight':        return items.filter(function (r) { return itemState(r.item) === 'in-flight'; });
       case 'blocked':          return items.filter(function (r) { return itemState(r.item) === 'blocked'; });
       case 'recently-shipped': return items.filter(function (r) { return isRecentlyShipped(r.item); });
+      // Phase D — capture ALL work tracked to DEPLOYED, and surface efforts that
+      // did NOT reach deployed.
+      case 'shipped-not-deployed': return items.filter(function (r) { return isShippedNotDeployed(r.item); });
+      case 'deployed':         return items.filter(function (r) { return isDeployed(r.item); });
       case 'orphaned':         return [];   // orphans are sessions, handled in renderFilteredItems
       case 'all':              return items.slice();
       default:                 return items.filter(function (r) { return isWaiting(r.item); });
@@ -262,7 +278,8 @@
     return applyFilter(allWorkItems(), filterName).length;
   }
   function updateChipCounts() {
-    ['awaiting-me', 'in-flight', 'blocked', 'recently-shipped', 'orphaned', 'backlog', 'all'].forEach(function (f) {
+    ['awaiting-me', 'in-flight', 'blocked', 'shipped-not-deployed', 'deployed',
+     'recently-shipped', 'orphaned', 'backlog', 'all'].forEach(function (f) {
       var span = filterBar.querySelector('[data-count="' + f + '"]');
       if (span) span.textContent = filterCount(f);
     });
@@ -273,19 +290,21 @@
   }
 
   // setActiveFilter — the chip click handler (wire-check target).
+  // Phase D — changing filter closes any open detail modal (the modal is now an
+  // overlay, no longer a list-replacing card). The filter list always renders
+  // behind the (closed) modal.
   function setActiveFilter(filterName) {
     activeFilter = filterName;
     localStorage.setItem('workstreams.activeFilter', filterName);
-    selItem = null;                               // leaving an item-detail context
-    syncTreeSelection();                          // bug #5: clear tree highlight
-    detailCard.hidden = true;
+    closeDetailModal();                           // dismiss overlay + clear selItem
     renderFilteredItems(filterName);
     updateChipCounts();
   }
 
   // renderFilteredItems — re-render the single side-panel list for a filter.
+  // Phase D — no longer toggles a detailCard; the list always shows, the modal
+  // floats on top when an item is open.
   function renderFilteredItems(filterName) {
-    detailCard.hidden = true;
     filterBody.hidden = false;
     clear(filterBody);
     if (filterName === 'backlog') { renderBacklogInto(filterBody); return; }
@@ -309,6 +328,8 @@
       'awaiting-me': 'Nothing is waiting on you. ✓',
       'in-flight': 'Nothing in flight right now.',
       'blocked': 'Nothing blocked.',
+      'shipped-not-deployed': 'Nothing shipped-but-undeployed — every shipped effort reached production. ✓',
+      'deployed': 'Nothing deployed yet.',
       'recently-shipped': 'Nothing shipped in the last ' + SHIP_RECENT_DAYS + ' days.',
       'orphaned': 'No orphaned work — every in-flight item has moved recently. ✓',
       'all': 'No work items yet.',
@@ -334,7 +355,7 @@
     if (r.item.deferred) meta.appendChild(el('span', 'st-badge st-committed', 'deferred'));
     body.appendChild(meta);
     li.appendChild(body);
-    li.addEventListener('click', function () { renderDetailCard(r.nodeId, r.itemId); });
+    li.addEventListener('click', function () { openDetailModal(r.nodeId, r.itemId); });
     return li;
   }
 
@@ -672,7 +693,7 @@
     badge.title = r.item.kind || '';
     li.appendChild(badge);
     li.appendChild(el('span', 'ti-text', r.item.text || '(untitled)'));
-    li.addEventListener('click', function () { renderDetailCard(r.nodeId, r.itemId); });
+    li.addEventListener('click', function () { openDetailModal(r.nodeId, r.itemId); });
     return li;
   }
 
@@ -1024,51 +1045,60 @@
     return box;
   }
 
-  // renderDetailCard — selection handler (wire-check target). Replaces the
-  // filtered list with the card; deselect (✕ / Esc) restores the list.
-  function renderDetailCard(nodeId, itemId) {
+  // ====================================================================
+  //  ITEM DETAIL MODAL (Phase D, 2026-06-09)
+  // ====================================================================
+  // openDetailModal — selection handler (wire-check target). Opens a dismissible
+  // MODAL OVERLAY (not a list-replacing card — the prior detailCard regression
+  // Misha repeatedly flagged). The filtered list stays put behind the scrim;
+  // click-scrim / Esc / ✕ closes. Renders the FULL self-contained context (the
+  // Phase-C `details` payload: Background / the ask / Options / Recommendation /
+  // Links via renderItemDetails) plus context-appropriate action buttons wired
+  // to the answered / action-done / action-responded / item-details-set
+  // lifecycle events via POST /api/event.
+  function openDetailModal(nodeId, itemId) {
     var host = byId(nodeId);
     var it = host && (host.items || []).find(function (x) { return x.item_id === itemId; });
-    if (!it) { setActiveFilter(activeFilter); return; }
+    if (!it) { closeDetailModal(); return; }
     selItem = { nodeId: nodeId, itemId: itemId };
-    syncTreeSelection();                          // bug #5: highlight matching tree row
+    syncTreeSelection();                          // highlight matching tree row
     var st = itemState(it);
-    filterBody.hidden = true;
-    detailCard.hidden = false;
-    clear(detailCard);
+    var cat = (it.details && it.details._category) || null;
 
-    var head = el('div', 'dc-head');
-    head.appendChild(el('span', 'dc-title', it.text || '(untitled)'));
-    var close = el('button', 'ghost dc-close', '✕');
-    close.title = 'back to list (Esc)';
-    close.addEventListener('click', function () { setActiveFilter(activeFilter); });
-    head.appendChild(close);
-    detailCard.appendChild(head);
+    dmTitle.textContent = it.text || '(untitled)';
+    clear(dmBody);
+    clear(dmActions);
 
+    // --- metadata grid ---------------------------------------------------
     var meta = el('div', 'dc-meta');
     meta.appendChild(dcRow('Project', projectTitle(byId(rootProjectOf(nodeId)) || { title: nodeId })));
     var tier = (host && host.tier) ? host.tier : inferTier(nodeId);
-    meta.appendChild(dcRow('Kind', it.kind));
+    meta.appendChild(dcRow('Kind', it.kind + (cat && cat !== it.kind ? ' · ' + cat.replace(/_/g, ' ') : '')));
     meta.appendChild(dcRow('Tier', tier));
-    meta.appendChild(dcRow('State', stateIcon(st) + ' ' + st));
-    if (it.ship_evidence) meta.appendChild(dcRow('Evidence', it.ship_evidence));
+    // Phase D — surface the deploy disposition so the operator sees, per item,
+    // whether the effort reached production.
+    var stLabel = stateIcon(st) + ' ' + st;
+    if (st === 'shipped') stLabel += isDeployed(it) ? ' · deployed' : ' · NOT deployed';
+    meta.appendChild(dcRow('State', stLabel));
+    if (it.responded) meta.appendChild(dcRow('Your response', it.responded.text));
+    if (it.ship_evidence) meta.appendChild(dcRow('Ship evidence', it.ship_evidence));
+    if (it.deploy_evidence) meta.appendChild(dcRow('Deploy evidence', it.deploy_evidence));
     if (it.block_reason) meta.appendChild(dcRow('Blocked', it.block_reason));
     if (host && host.opened_at) meta.appendChild(dcRow('Last activity', new Date(host.opened_at).toLocaleString()));
-    detailCard.appendChild(meta);
+    dmBody.appendChild(meta);
 
-    // decision-context fence detail — ported 2026-06-02 from the pre-rename
-    // conv-tree-ui renderer (renderItemDetails). Shows the fence-grammar
-    // payload (question / decision options / action-item / autonomous-action
-    // action_taken+reasoning+reversibility, recommendation, references, …).
+    // --- full Phase-C context (Background / ask / Options / Recommendation /
+    //     Links / references / autonomous-action fields). renderItemDetails
+    //     already handles every fence-grammar field; reuse it verbatim. -------
     if (it.details && typeof it.details === 'object') {
-      detailCard.appendChild(el('div', 'dc-sec-h', 'Detail'));
-      detailCard.appendChild(renderItemDetails(it.details, rootProjectOf(nodeId), it.text));
+      dmBody.appendChild(el('div', 'dc-sec-h', 'Context'));
+      dmBody.appendChild(renderItemDetails(it.details, rootProjectOf(nodeId), it.text));
     }
 
-    // provenance
+    // --- provenance ------------------------------------------------------
     var prov = collectProvenance(nodeId, itemId);
     if (prov.length) {
-      detailCard.appendChild(el('div', 'dc-sec-h', 'Provenance'));
+      dmBody.appendChild(el('div', 'dc-sec-h', 'Provenance'));
       var pl = el('div', 'dc-prov');
       prov.forEach(function (p) {
         var pr = el('div', 'dc-prov-row');
@@ -1076,13 +1106,13 @@
         pr.appendChild(el('span', 'dc-prov-v', p.value));
         pl.appendChild(pr);
       });
-      detailCard.appendChild(pl);
+      dmBody.appendChild(pl);
     }
 
-    // sub-task rollup
+    // --- sub-task rollup -------------------------------------------------
     var subs = collectSubtasks(nodeId, itemId);
     if (subs.length) {
-      detailCard.appendChild(el('div', 'dc-sec-h', 'Sub-tasks (' + subs.length + ')'));
+      dmBody.appendChild(el('div', 'dc-sec-h', 'Sub-tasks (' + subs.length + ')'));
       var sl = el('div', 'dc-subs');
       subs.forEach(function (s) {
         var sr = el('div', 'dc-sub-row');
@@ -1090,39 +1120,211 @@
         sr.appendChild(el('span', 'dc-sub-t', s.text));
         sl.appendChild(sr);
       });
-      detailCard.appendChild(sl);
+      dmBody.appendChild(sl);
     }
 
-    // actions — Mark shipped / Block / Decompose / Reassign. Mark shipped &
-    // Block are wired to the Phase-1 events; Decompose/Reassign are Phase-3/4
-    // surfaces (disabled placeholders) so the affordance is visible now.
-    var acts = el('div', 'dc-acts');
-    var ship = el('button', 'btn-go', 'Mark shipped');
-    ship.addEventListener('click', function () {
-      post({ type: 'item-shipped', node_id: nodeId, item_id: itemId }, 'Marked shipped')
-        .then(function () { selItem = null; });
+    // --- context-appropriate ACTION BUTTONS ------------------------------
+    buildActionButtons(dmActions, host, it, nodeId, itemId, st, cat);
+
+    // show the overlay
+    detailScrim.hidden = false;
+    detailModal.hidden = false;
+    if (dmClose && dmClose.focus) { try { dmClose.focus(); } catch (_) {} }
+  }
+
+  // closeDetailModal — dismiss the overlay and clear the selection. Safe to call
+  // when nothing is open (idempotent).
+  function closeDetailModal() {
+    detailModal.hidden = true;
+    detailScrim.hidden = true;
+    selItem = null;
+    syncTreeSelection();
+  }
+
+  // buildActionButtons — the context-appropriate affordances. The buttons differ
+  // by the item's kind / decision-context category, but EVERY item always gets a
+  // "Respond / ask a clarifying question" affordance (Misha's requirement 3).
+  //
+  //  decision            → Approve recommendation / Decline / Submit a decision
+  //                        (each emits `answered`, recording the chosen option in
+  //                        item-details-set so the choice is auditable)
+  //  question            → Answer  (emits `answered` + records the answer text)
+  //  action_item_for_user→ Mark done (emits `action-done`) / Decline
+  //  action (generic)    → Mark done (emits `action-done`)
+  //  ALWAYS              → Respond with details (emits `action-responded` — the
+  //                        item stays open/awaiting but carries your note) and
+  //                        the lifecycle controls (Block / Commit / Mark shipped
+  //                        / Mark deployed) so any work item can be tracked to
+  //                        DEPLOYED from the modal.
+  function buildActionButtons(container, host, it, nodeId, itemId, st, cat) {
+    var kind = it.kind;
+    // --- the "what does the user need to DECIDE/DO" cluster (context-appropriate)
+    if (kind === 'decision') {
+      var rec = it.details && it.details.recommendation;
+      var recKey = rec && (typeof rec === 'object' ? rec.option_key : null);
+      var approve = el('button', 'btn-go', recKey ? ('Approve recommendation (' + recKey + ')') : 'Approve');
+      approve.title = 'Record your decision and resolve this item (emits answered)';
+      approve.addEventListener('click', function () {
+        var chosen = recKey || 'approved';
+        recordDecision(nodeId, itemId, it, chosen, 'Approved' + (recKey ? ' option ' + recKey : ''));
+      });
+      container.appendChild(approve);
+
+      // If the decision carries explicit options, offer one Submit button per
+      // option so the operator picks the actual choice (not just approve/decline).
+      var opts = (it.details && Array.isArray(it.details.options)) ? it.details.options : [];
+      if (opts.length) {
+        var pick = el('button', 'btn-info outline', 'Submit a decision…');
+        pick.title = 'Choose one of the listed options';
+        pick.addEventListener('click', function () {
+          var labels = opts.map(function (o, i) {
+            var k = (o && (o.key || o.name || o.label)) || ('option ' + (i + 1));
+            return (i + 1) + ') ' + k;
+          });
+          var ans = window.prompt('Which option? Enter the number:\n' + labels.join('\n'), '1');
+          if (ans == null) return;
+          var ix = parseInt(ans, 10) - 1;
+          if (isNaN(ix) || ix < 0 || ix >= opts.length) { showToast('No such option.', 'err'); return; }
+          var o = opts[ix];
+          var k = (o && (o.key || o.name || o.label)) || ('option ' + (ix + 1));
+          recordDecision(nodeId, itemId, it, k, 'Chose option ' + k);
+        });
+        container.appendChild(pick);
+      }
+
+      var decline = el('button', 'btn-warn outline', 'Decline');
+      decline.title = 'Reject this decision and resolve it (emits answered)';
+      decline.addEventListener('click', function () {
+        var why = window.prompt('Why decline? (optional)', '');
+        if (why === null) return;     // cancelled
+        recordDecision(nodeId, itemId, it, 'declined', 'Declined' + (why ? ': ' + why : ''));
+      });
+      container.appendChild(decline);
+
+    } else if (kind === 'question') {
+      var answer = el('button', 'btn-go', 'Answer');
+      answer.title = 'Provide your answer and resolve this question (emits answered)';
+      answer.addEventListener('click', function () {
+        var a = window.prompt('Your answer:', '');
+        if (a == null) return;
+        if (!String(a).trim()) { showToast('Enter an answer first.', 'err'); return; }
+        recordDecision(nodeId, itemId, it, null, String(a).trim());
+      });
+      container.appendChild(answer);
+
+    } else {                                    // action (incl. action_item_for_user)
+      var done = el('button', 'btn-go', 'Mark done');
+      done.title = 'Mark this action complete (emits action-done)';
+      done.addEventListener('click', function () {
+        post({ type: 'action-done', node_id: nodeId, item_id: itemId }, 'Marked done')
+          .then(closeDetailModal);
+      });
+      container.appendChild(done);
+      if (cat === 'action_item_for_user') {
+        var declineA = el('button', 'btn-warn outline', 'Decline');
+        declineA.title = 'Decline this ask, with a reason (recorded as your response)';
+        declineA.addEventListener('click', function () {
+          var why = window.prompt('Why decline this ask?', '');
+          if (why == null) return;
+          post({ type: 'action-responded', node_id: nodeId, item_id: itemId,
+                 response_text: 'Declined: ' + (why || '(no reason given)') }, 'Declined');
+        });
+        container.appendChild(declineA);
+      }
+    }
+
+    // --- ALWAYS: respond-with-details / ask-a-clarifying-question --------
+    // Emits action-responded — the item stays open/awaiting (NOT a resolve), but
+    // carries the note so the operator's reply is captured even when they don't
+    // want to approve/decline yet.
+    var respond = el('button', 'btn-info outline', 'Respond / ask a question');
+    respond.title = 'Reply with details or ask a clarifying question — keeps the item open (emits action-responded)';
+    respond.addEventListener('click', function () {
+      var note = window.prompt('Respond with details, or ask a clarifying question:', '');
+      if (note == null) return;
+      if (!String(note).trim()) { showToast('Type something first.', 'err'); return; }
+      post({ type: 'action-responded', node_id: nodeId, item_id: itemId,
+             response_text: String(note).trim() }, 'Response recorded')
+        .then(function () { /* stays open — re-render to show the response */ });
     });
-    acts.appendChild(ship);
-    var block = el('button', 'btn-warn outline', 'Block');
-    block.addEventListener('click', function () {
-      var reason = window.prompt('Why is this blocked?', '');
-      if (reason == null) return;
-      post({ type: 'item-blocked', node_id: nodeId, item_id: itemId, reason: reason }, 'Marked blocked');
+    container.appendChild(respond);
+
+    // --- lifecycle controls: track ANY work item to DEPLOYED -------------
+    var lifeSep = el('span', 'dm-act-sep', '·');
+    container.appendChild(lifeSep);
+
+    if (st !== 'blocked') {
+      var block = el('button', 'btn-warn outline', 'Block');
+      block.title = 'Mark this work blocked on a dependency / missing input';
+      block.addEventListener('click', function () {
+        var reason = window.prompt('Why is this blocked?', '');
+        if (reason == null) return;
+        post({ type: 'item-blocked', node_id: nodeId, item_id: itemId, reason: reason }, 'Marked blocked')
+          .then(closeDetailModal);
+      });
+      container.appendChild(block);
+    }
+    if (st === 'proposed' || st === 'in-flight') {
+      var commit = el('button', 'btn-neutral outline', 'Commit');
+      commit.title = 'Park as committed work (not started yet)';
+      commit.addEventListener('click', function () {
+        post({ type: 'item-committed', node_id: nodeId, item_id: itemId }, 'Committed')
+          .then(closeDetailModal);
+      });
+      container.appendChild(commit);
+    }
+    if (st !== 'shipped') {
+      var ship = el('button', 'btn-neutral outline', 'Mark shipped');
+      ship.title = 'Merged / shipped (not yet deployed)';
+      ship.addEventListener('click', function () {
+        var ev = window.prompt('Ship evidence (commit SHA / PR URL) — optional:', '');
+        if (ev === null) return;
+        var payload = { type: 'item-shipped', node_id: nodeId, item_id: itemId };
+        if (ev) payload.evidence = ev;
+        post(payload, 'Marked shipped').then(closeDetailModal);
+      });
+      container.appendChild(ship);
+    }
+    if (!isDeployed(it)) {
+      var deploy = el('button', 'btn-go', 'Mark deployed');
+      deploy.title = 'Live in production — the effort reached deployed';
+      deploy.addEventListener('click', function () {
+        var ev = window.prompt('Deploy evidence (prod URL / deploy SHA) — optional:', '');
+        if (ev === null) return;
+        var payload = { type: 'item-deployed', node_id: nodeId, item_id: itemId };
+        if (ev) payload.evidence = ev;
+        post(payload, 'Marked deployed').then(closeDetailModal);
+      });
+      container.appendChild(deploy);
+    }
+  }
+
+  // recordDecision — resolve a decision/question by emitting `answered` AND, when
+  // a chosen option / answer is supplied, an `item-details-set` that records the
+  // chosen option key + the operator's note onto it.details so the choice is
+  // auditable in the tree (per requirement 3: emit answered / item-details-set
+  // via the state.js facade + /api/event). `answered` is the correct lifecycle
+  // event for decision/question kinds (action-done is rejected on them by the
+  // reducer). Closes the modal on success.
+  function recordDecision(nodeId, itemId, it, chosenKey, note) {
+    // Merge the resolution into the existing details payload (LWW on it.details).
+    var base = (it.details && typeof it.details === 'object') ? it.details : {};
+    var merged = Object.assign({}, base, {
+      _resolution: {
+        chosen: chosenKey || null,
+        note: note || null,
+        decided_at: new Date().toISOString(),
+        by: 'gui',
+      },
     });
-    acts.appendChild(block);
-    var commit = el('button', 'btn-info outline', 'Commit');
-    commit.title = 'park as committed work (not started yet)';
-    commit.addEventListener('click', function () {
-      post({ type: 'item-committed', node_id: nodeId, item_id: itemId }, 'Committed');
-    });
-    acts.appendChild(commit);
-    var decompose = el('button', 'btn-neutral outline', 'Decompose');
-    decompose.disabled = true; decompose.title = 'Phase 3+ — break into sub-tasks';
-    acts.appendChild(decompose);
-    var reassign = el('button', 'btn-neutral outline', 'Reassign');
-    reassign.disabled = true; reassign.title = 'Phase 3+ — re-parent to another workstream';
-    acts.appendChild(reassign);
-    detailCard.appendChild(acts);
+    post({ type: 'answered', node_id: nodeId, item_id: itemId }, 'Recorded')
+      .then(function () {
+        // best-effort: record the chosen option / answer text. A failure here
+        // does not un-resolve the item; the answered event already landed.
+        return post({ type: 'item-details-set', node_id: nodeId, item_id: itemId, details: merged });
+      })
+      .then(closeDetailModal)
+      .catch(function () { /* post() already toasted the error */ });
   }
   function dcRow(label, val) {
     var r = el('div', 'dc-row');
@@ -1156,13 +1358,11 @@
   function render() {
     renderCorrupt();
     renderTree();
-    if (selItem) {
-      renderDetailCard(selItem.nodeId, selItem.itemId);
-    } else if (activeFilter === 'backlog') {
-      renderFilteredItems('backlog');
-    } else {
-      renderFilteredItems(activeFilter);
-    }
+    // Phase D — the list ALWAYS renders (behind the modal); when an item is
+    // selected the modal re-renders on top with the latest state. This is the
+    // overlay model — the list is never hidden by the detail view.
+    renderFilteredItems(activeFilter);
+    if (selItem) openDetailModal(selItem.nodeId, selItem.itemId);
     updateChipCounts();
   }
 
@@ -1171,8 +1371,14 @@
     var chip = e.target.closest('.chip');
     if (chip) setActiveFilter(chip.getAttribute('data-filter'));
   });
+  // Detail-modal dismissal: ✕ button, click-scrim, Esc. Esc here is gated on
+  // the detail modal being open AND in front of the docs modal/drawer (the docs
+  // subsystem has its own Esc handler that returns early when its modal is open;
+  // this one fires only when the detail modal is the topmost overlay).
+  if (dmClose) dmClose.addEventListener('click', closeDetailModal);
+  if (detailScrim) detailScrim.addEventListener('click', closeDetailModal);
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && selItem) { setActiveFilter(activeFilter); }
+    if (e.key === 'Escape' && !detailModal.hidden) { closeDetailModal(); }
   });
   showArchived.addEventListener('change', function () { render(); });
   if (showCompleted) showCompleted.addEventListener('change', function () { render(); });

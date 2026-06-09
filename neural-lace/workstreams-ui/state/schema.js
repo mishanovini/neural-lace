@@ -100,6 +100,15 @@ const EVENT_TYPES = Object.freeze([
   // for the payload's interior). See docs/plans/decision-context-gate-2026-05-29.md
   // Section B grammar + DEC-2.
   'autonomous-action-logged',
+  // Phase D (2026-06-09) — explicit "merged work reached production" transition.
+  // ADDITIVE within schema major 1 (ADR-032 §1: a new event type is additive,
+  // no required-field change to any existing event, schema_version stays 1; the
+  // conv-tree/workstreams gates key off the major and are unaffected). Lets the
+  // tracker distinguish "merged/shipped" from "live in production" so Misha can
+  // see every effort that did NOT reach deployed. `item-shipped` additionally
+  // gained an OPTIONAL `deployed:true` flag (reducer-read-only, not a required
+  // field) to record merged-AND-deployed in one event.
+  'item-deployed',
 ]);
 
 // §2 — per-event required fields IN ADDITION TO the envelope
@@ -168,6 +177,10 @@ const EVENT_REQUIRED_FIELDS = Object.freeze({
   // (the Zod module decision-context-schema.js is the SOLE NORMATIVE
   // validator for the payload interior).
   'autonomous-action-logged': ['node_id', 'text', 'details'],
+  // Phase D (2026-06-09): requires only the item locator. OPTIONAL `evidence`
+  // (deploy URL / prod SHA) is captured by the reducer but NOT a required field
+  // (additive, no contract change, schema_version stays 1).
+  'item-deployed': ['node_id', 'item_id'],
 });
 
 const ACTORS = Object.freeze(['dispatch', 'gui']);

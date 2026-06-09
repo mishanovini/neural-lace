@@ -54,6 +54,15 @@ Open the Workstreams UI on either machine and see: the merged tree of BOTH machi
 - `neural-lace/workstreams-ui/package.json` — stale name `conversation-tree-ui` → `workstreams-ui`
 - `docs/discoveries/2026-06-05-workstreams-ui-empty-was-no-fences-not-path-bug.md` — root-cause write-up
 - `docs/plans/cross-machine-workstreams-coordination-2026-06-04.md` — this in-flight scope update entry
+- 2026-06-08 (Phase A — canonical-state-path consolidation): state was scattered across ~9 files because the writer hooks + GUI each hardcoded a divergent tree-state.json path (GUI-sink vs §5-gate). Collapsed onto one operator-configured canonical file via a shared resolver (extends Task 7's path-resolver intent). Files:
+  - `adapters/claude-code/hooks/lib/workstreams-state-resolver.sh` — new shared bash resolver (CONV_TREE_STATE_PATH > ~/.claude/workstreams-state-path.txt > legacy fallback); self-test 6/6.
+  - `neural-lace/workstreams-ui/state/resolve-state-path.js` — new JS twin (same precedence); self-test 6/6.
+  - `neural-lace/workstreams-ui/state/state.js` — STATE_FILE resolves via the JS helper so server.js reads/writes the canonical file; selftest 19/19.
+  - `adapters/claude-code/hooks/workstreams-emit.sh` — both sink resolvers delegate to the shared resolver; ST13/14 retargeted to fallback + new ST13b convergence; self-test 40/40.
+  - `adapters/claude-code/hooks/workstreams-turn-emit.sh` — same delegation; self-test 28/28.
+  - `adapters/claude-code/hooks/scope-enforcement-gate.sh` — explicit no-docs/plans/ full-skip (unblocks committing operational state to the coordination repo); new self-test scenario 25; 25/25.
+- 2026-06-08 (Phase B — recover orphaned open items into canonical): after Phase A pointed every reader/writer at one canonical file, the ~9 pre-consolidation tree-state.json copies still held genuine OPEN operator work (the 373-node frozen copy alone held a downstream-product launch sprint + integration launch-blockers awaiting the operator). A migration script recovers operator-facing open nodes + their open items into canonical, excluding transient AI-internal session branches per rules/workstreams-state.md ("write the semantically true tree"). Event-sourced through the state.js facade; deduped by node_id; idempotent; sources auto-discovered (no machine paths hardcoded). Result: 37 nodes + 46 items recovered, canonical 42 → 79, attestation verified, GUI renders all via /api/state. File:
+  - `neural-lace/workstreams-ui/state/migrate-open-items.js` — new one-shot+idempotent migration utility.
 
 ## Assumptions
 - The personal github.com SSH key has write access to `<personal-account>/workstreams-coordination` (PROVEN — scaffold pushed via SSH).

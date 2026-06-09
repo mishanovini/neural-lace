@@ -556,6 +556,23 @@ is_exempt() {
     docs/plans/archive/circuit-prod-health-monitor.md) return 0 ;;
   esac
 
+  # Workstreams UI (formerly conversation-tree-ui) web client — the operator's
+  # own machine-state tracker GUI, co-located with the harness under the same
+  # placement directive as the circuit-* operations tooling above. Its
+  # repo-grouping block DERIVES the Repo -> Project tree from the operator's
+  # REAL git remotes on THIS machine (PROJECT_REPO_DEFAULT / PROJECT_REPOS_MULTI
+  # / REPO_ORDER), so it legitimately names the operator's accounts + repos —
+  # that mapping IS the feature, and it is overridable per-machine via the
+  # served `S.repoMap` or a node's own `.repo` field. NOT a generic harness-kit
+  # surface; instance-specific operator tooling, exactly the category the
+  # circuit-* exemptions cover. Layer-2 heuristics (path-shape / capitalized-
+  # cluster detection) STILL scan these files for NEW leak shapes — only the
+  # literal operator-identifier denylist is exempted for this subtree.
+  case "$path" in
+    neural-lace/workstreams-ui/web/*) return 0 ;;
+    neural-lace/conversation-tree-ui/web/*) return 0 ;;
+  esac
+
   # Directory-prefix exemptions
   #
   # NOTE: docs/plans/ is NOT exempt. Neural Lace now commits its own

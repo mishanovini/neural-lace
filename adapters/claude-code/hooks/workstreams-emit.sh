@@ -71,6 +71,15 @@ LOG_DIR="$HOME/.claude/logs"
 LOG_FILE="$LOG_DIR/conversation-tree-emit.log"
 LEDGER_DIR="$HOME/.claude/state/conversation-tree-emit"
 
+# Workstreams consolidation (Phase A, 2026-06-08): the canonical state file
+# lives at one operator-configured location (~/.claude/workstreams-state-path.txt),
+# resolved by the SHARED resolver so this writer, the sibling hooks, and the GUI
+# all read/write the SAME file. Sourced best-effort — if the lib is missing the
+# legacy per-path resolvers below still work (graceful degradation; a writer
+# hook must never break a tool call).
+# shellcheck disable=SC1091
+{ source "$(dirname "${BASH_SOURCE[0]}")/lib/workstreams-state-resolver.sh" 2>/dev/null; } || true
+
 # ---- failure isolation -----------------------------------------------------
 # Any unexpected error in a runtime mode logs and exits 0. The orchestrator's
 # tool call must never be impacted by a writer-hook malfunction.
@@ -149,30 +158,43 @@ _main_repo_root() {
 # worktree session writes the file the operator's single GUI server is
 # actually watching. Falls back to the well-known HOME location.
 _resolve_gui_state_path() {
-  if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then printf '%s' "$CONV_TREE_STATE_PATH"; return 0; fi
-  local mr
+  # Canonical-state-path consolidation: the shared resolver returns the
+  # operator-configured canonical file (CONV_TREE_STATE_PATH override > home
+  # config > the legacy GUI-sink path computed below as the fallback).
+  local legacy mr
   if mr=$(_main_repo_root) && [[ -n "$mr" ]]; then
-    local c="$mr/neural-lace/workstreams-ui/state/tree-state.json"
-    if [[ -f "$mr/neural-lace/workstreams-ui/state/state.js" ]]; then printf '%s' "$c"; return 0; fi
-    c="$mr/workstreams-ui/state/tree-state.json"
-    if [[ -f "$mr/workstreams-ui/state/state.js" ]]; then printf '%s' "$c"; return 0; fi
+    if [[ -f "$mr/neural-lace/workstreams-ui/state/state.js" ]]; then
+      legacy="$mr/neural-lace/workstreams-ui/state/tree-state.json"
+    elif [[ -f "$mr/workstreams-ui/state/state.js" ]]; then
+      legacy="$mr/workstreams-ui/state/tree-state.json"
+    fi
   fi
-  _fallback_conv_tree_path "state/tree-state.json"
+  [[ -z "${legacy:-}" ]] && legacy=$(_fallback_conv_tree_path "state/tree-state.json")
+  if declare -F resolve_workstreams_state_path >/dev/null 2>&1; then
+    resolve_workstreams_state_path "$legacy"
+  else
+    if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then printf '%s' "$CONV_TREE_STATE_PATH"; else printf '%s' "$legacy"; fi
+  fi
 }
 
-# ADR-032 §5 path resolution — byte-identical logic to the conv-tree gates'
-# _resolve_state_path so the §5 sink lands exactly where the gates read.
+# ADR-032 §5 path resolution. Pre-consolidation this resolved to the per-project
+# .claude/state/conversation-tree/ path — a SECOND, divergent sink. The shared
+# resolver now collapses it onto the SAME canonical file as the GUI sink
+# (CONV_TREE_STATE_PATH override > home config > the legacy §5 path as fallback),
+# so _emit_dual's cheap string-compare dedupes to a single write on the common
+# path while the env-override / no-config-file cases keep the old behavior.
 _resolve_gate_state_path() {
-  if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then printf '%s' "$CONV_TREE_STATE_PATH"; return 0; fi
-  local root=""
+  local legacy root=""
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
-    local proj="$root/.claude/state/conversation-tree/tree-state.json"
-    if [[ -f "$proj" ]]; then printf '%s' "$proj"; return 0; fi
+    legacy="$root/.claude/state/conversation-tree/tree-state.json"
+  else
+    legacy="$HOME/.claude/state/conversation-tree/global/tree-state.json"
   fi
-  if [[ -n "$root" ]]; then
-    printf '%s' "$root/.claude/state/conversation-tree/tree-state.json"; return 0
+  if declare -F resolve_workstreams_state_path >/dev/null 2>&1; then
+    resolve_workstreams_state_path "$legacy"
+  else
+    if [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then printf '%s' "$CONV_TREE_STATE_PATH"; else printf '%s' "$legacy"; fi
   fi
-  printf '%s' "$HOME/.claude/state/conversation-tree/global/tree-state.json"
 }
 
 # Project/global root node from cwd. A directory under .../claude-projects/<p>/
@@ -923,49 +945,68 @@ _self_test() {
   if node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});process.exit(st.snapshot.nodes.some(function(n){return n.title==="abc.123"})?0:1)' "$LIB" "$sp17" 2>/dev/null; then echo "PASS: ST17 task-id= wins over worker-/title (gate priority 1)"; pass=$((pass+1)); else echo "FAIL: ST17 task-id priority not honored"; fail=$((fail+1)); fi
 
   # ST13/ST14: worktree topology — the operator runs ONE GUI server from the
-  # MAIN checkout while Dispatch/Code sessions run in worktrees. The GUI sink
-  # MUST resolve to the main checkout's module file (or the GUI never updates
-  # — the exact bug the CONV_TREE_STATE_PATH-overridden ST1-12 cannot catch),
-  # while the gate sink stays worktree-local (gate parity). Lock both.
+  # MAIN checkout while Dispatch/Code sessions run in worktrees.
+  #
+  # Workstreams consolidation (Phase A, 2026-06-08): the canonical state file
+  # now lives at one operator-configured location, so by DEFAULT both the GUI
+  # sink and the gate sink resolve to the SAME canonical file (ST13b below
+  # locks that convergence). ST13/ST14 here pin the LEGACY-FALLBACK topology
+  # logic — exercised by disabling the canonical config (WORKSTREAMS_STATE_CONFIG
+  # → a non-existent file). That keeps the pre-consolidation invariants tested:
+  # GUI sink → MAIN checkout module file; gate sink → worktree-local §5 path;
+  # the two differ. Both are the FALLBACK that fires when no config exists.
   if command -v git >/dev/null 2>&1; then
     local R="$tmp/mainrepo" WT="$tmp/wt"
     mkdir -p "$R/neural-lace/workstreams-ui/state"
     : >"$R/neural-lace/workstreams-ui/state/state.js"
     ( cd "$R" && git init -q . && git config user.email t@e.test && git config user.name t \
         && git add -A && git commit -qm init && git worktree add -q "$WT" -b st13wt ) >/dev/null 2>&1
-    local Rabs gui_from_wt gate_from_wt want_gui
+    local Rabs gui_from_wt gate_from_wt want_gui NOCFG="$tmp/no-such-config.txt"
     Rabs=$(cd "$R" && pwd)
     want_gui="$Rabs/neural-lace/workstreams-ui/state/tree-state.json"
-    gui_from_wt=$( cd "$WT" && CONV_TREE_STATE_PATH="" bash "$SELF" --resolve-gui-sink 2>/dev/null | head -n1 )
-    gate_from_wt=$( cd "$WT" && CONV_TREE_STATE_PATH="" bash "$SELF" --resolve-gate-sink 2>/dev/null | head -n1 )
+    # WORKSTREAMS_STATE_CONFIG → missing file forces the resolver to the legacy
+    # fallback, isolating the topology logic from the real machine config.
+    gui_from_wt=$( cd "$WT" && CONV_TREE_STATE_PATH="" WORKSTREAMS_STATE_CONFIG="$NOCFG" bash "$SELF" --resolve-gui-sink 2>/dev/null | head -n1 )
+    gate_from_wt=$( cd "$WT" && CONV_TREE_STATE_PATH="" WORKSTREAMS_STATE_CONFIG="$NOCFG" bash "$SELF" --resolve-gate-sink 2>/dev/null | head -n1 )
     # Path-format-agnostic (Windows: git emits native C:/… while $WT is MSYS
-    # /tmp/…) — mirrors ST14's robustness. The invariant that matters: the GUI
-    # sink resolves to the MAIN checkout's workstreams-ui module file, NOT the
-    # worktree's. (want_gui retained above as the documented expected shape.)
+    # /tmp/…). The invariant that matters: the legacy GUI fallback resolves to
+    # the MAIN checkout's workstreams-ui module file, NOT the worktree's.
     if [[ -n "$gui_from_wt" \
           && "$gui_from_wt" == *"/neural-lace/workstreams-ui/state/tree-state.json" \
           && "$gui_from_wt" == *"/mainrepo/"* \
           && "$gui_from_wt" != *"/wt/"* ]]; then
-      echo "PASS: ST13 GUI sink from worktree -> MAIN checkout module file"; pass=$((pass+1))
+      echo "PASS: ST13 GUI fallback from worktree -> MAIN checkout module file"; pass=$((pass+1))
     else
-      echo "FAIL: ST13 GUI sink (got '$gui_from_wt'; want *mainrepo*/neural-lace/workstreams-ui/state/tree-state.json, not under /wt/)"; fail=$((fail+1))
+      echo "FAIL: ST13 GUI fallback (got '$gui_from_wt'; want *mainrepo*/neural-lace/workstreams-ui/state/tree-state.json, not under /wt/)"; fail=$((fail+1))
     fi
-    # Path-format-agnostic (Windows: git emits native C:/... while $WT is MSYS
-    # /tmp/...). The invariant that matters: the gate sink is the §5 path
-    # (.claude/state/conversation-tree/), NOT the GUI module file
-    # (workstreams-ui/state/), and the two differ — dual-sink divergence.
+    # The legacy gate fallback is the §5 path (.claude/state/conversation-tree/),
+    # NOT the GUI module file (workstreams-ui/state/), and the two differ.
     if [[ -n "$gate_from_wt" \
           && "$gate_from_wt" == *"/.claude/state/conversation-tree/tree-state.json" \
           && "$gate_from_wt" != *"workstreams-ui/state/"* \
           && "$gate_from_wt" != "$gui_from_wt" ]]; then
-      echo "PASS: ST14 gate sink is the §5 path & differs from the GUI sink"; pass=$((pass+1))
+      echo "PASS: ST14 gate fallback is the §5 path & differs from the GUI fallback"; pass=$((pass+1))
     else
-      echo "FAIL: ST14 gate sink (got '$gate_from_wt'; want a *.claude/state/conversation-tree/ path != GUI '$gui_from_wt')"; fail=$((fail+1))
+      echo "FAIL: ST14 gate fallback (got '$gate_from_wt'; want a *.claude/state/conversation-tree/ path != GUI '$gui_from_wt')"; fail=$((fail+1))
+    fi
+    # ST13b: WITH a canonical config present, BOTH sinks converge on it — the
+    # core consolidation invariant (one file, no divergence). This is what the
+    # shared resolver buys: the pre-consolidation GUI/gate split collapses.
+    local CFG="$tmp/canon-cfg.txt" CANON="$tmp/canon/tree-state.json"
+    printf '%s\n' "$CANON" > "$CFG"
+    local gui_canon gate_canon
+    gui_canon=$( cd "$WT" && CONV_TREE_STATE_PATH="" WORKSTREAMS_STATE_CONFIG="$CFG" bash "$SELF" --resolve-gui-sink 2>/dev/null | head -n1 )
+    gate_canon=$( cd "$WT" && CONV_TREE_STATE_PATH="" WORKSTREAMS_STATE_CONFIG="$CFG" bash "$SELF" --resolve-gate-sink 2>/dev/null | head -n1 )
+    if [[ "$gui_canon" == "$CANON" && "$gate_canon" == "$CANON" ]]; then
+      echo "PASS: ST13b GUI+gate sinks both converge on canonical config file"; pass=$((pass+1))
+    else
+      echo "FAIL: ST13b convergence (gui='$gui_canon' gate='$gate_canon'; both want '$CANON')"; fail=$((fail+1))
     fi
     ( cd "$R" && git worktree remove --force "$WT" ) >/dev/null 2>&1 || true
   else
     echo "PASS: ST13 (skipped: git unavailable)"; pass=$((pass+1))
     echo "PASS: ST14 (skipped: git unavailable)"; pass=$((pass+1))
+    echo "PASS: ST13b (skipped: git unavailable)"; pass=$((pass+1))
   fi
 
   # ST18 — v1.1.4 item 41: rich-details sentinel extraction. The hook must
