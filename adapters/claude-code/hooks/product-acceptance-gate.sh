@@ -251,6 +251,23 @@ check_exemption() {
   fi
 }
 
+# Check whether the plan's DECLARED FILES include user-facing UI surfaces.
+# Scans the '## Files to Modify/Create' and '## In-flight scope updates'
+# sections for UI path patterns. Added 2026-06-09: a plan that touches a
+# user-facing surface may NOT be acceptance-exempt — the exemption exists
+# for plans with NO product user (Dockerfiles, CI, harness internals), and
+# using it on a UI switches off the one adversarial gate that opens the
+# running product (originating incident: a UI consolidation plan declared
+# acceptance-exempt and shipped a broken modal as "verified").
+plan_declares_ui_surface() {
+  local plan="$1"
+  local sections
+  sections=$(awk '/^## (Files to Modify\/Create|In-flight scope updates)/{f=1;next} /^## /{f=0} f' "$plan" 2>/dev/null)
+  [[ -z "$sections" ]] && return 1
+  printf '%s' "$sections" | grep -qE 'src/app/|src/components/|page\.tsx|[a-zA-Z0-9_-]+-ui/|/web/' && return 0
+  return 1
+}
+
 # Discover all acceptance artifacts for a plan slug across the current
 # worktree AND every other worktree of the current repo.
 #
@@ -479,6 +496,10 @@ if [[ "${1:-}" == "--self-test" ]]; then
           echo "acceptance-exempt: true"
           echo "acceptance-exempt-reason: This is a synthetic self-test fixture used to validate the acceptance gate's exemption recognition path."
           ;;
+        true_ui)
+          echo "acceptance-exempt: true"
+          echo "acceptance-exempt-reason: This fixture wrongly exempts a plan that declares user-facing UI files."
+          ;;
         noreason)
           echo "acceptance-exempt: true"
           echo "acceptance-exempt-reason:"
@@ -491,6 +512,12 @@ if [[ "${1:-}" == "--self-test" ]]; then
       echo
       echo "## Goal"
       echo "Self-test fixture exercising product-acceptance-gate.sh."
+      if [[ "$exempt" == "true_ui" ]]; then
+        echo
+        echo "## Files to Modify/Create"
+        echo "- \`src/app/(dashboard)/widgets/page.tsx\` — user-facing widget page"
+        echo "- \`src/components/WidgetCard.tsx\` — card component"
+      fi
     } > "docs/plans/${slug}.md"
     # Stage all current plan-file state (including deletions of prior
     # scenarios' plans from reset_repo's rm -rf) so the resulting commit
@@ -691,6 +718,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
   write_plan "scenario-h" 1 noreason
   expect_exit "h" 2 "exempt-without-reason"
 
+  # ---- (U) exempt plan whose declared files include UI surfaces -> BLOCK ----
+  # 2026-06-09: user-facing plans may not be acceptance-exempt. A plan with
+  # a valid-looking exemption that declares src/app/ + src/components/ files
+  # must be BLOCKED as invalidly exempt.
+  reset_repo
+  write_plan "scenario-u" 1 true_ui
+  expect_exit "U" 2 "exempt-refused-on-ui-surface"
+
   # ---- (X) ACTIVE plan in a CHILD subdir is NOT discovered (over-scoping fix) ----
   # Regression guard for HARNESS-GAP 2026-06-03: a parent-of-projects cwd must
   # not gate on plans living in sibling/child project dirs. Plant an ACTIVE plan
@@ -742,7 +777,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   reset_repo
 
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 11 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 12 scenarios)" >&2
   if [[ $FAILED -eq 0 ]]; then
     exit 0
   else
@@ -794,6 +829,13 @@ while IFS= read -r plan; do
   exempt_status=$(check_exemption "$plan")
   case "$exempt_status" in
     EXEMPT_OK)
+      # 2026-06-09: exemption is INVALID on plans whose declared files
+      # include user-facing UI surfaces — those are exactly the plans the
+      # runtime advocate exists for. Refuse rather than honor.
+      if plan_declares_ui_surface "$plan"; then
+        BLOCKERS="${BLOCKERS}  - ${slug}: declares acceptance-exempt: true but its declared files include user-facing surfaces (src/app/, src/components/, page.tsx, *-ui/, /web/). User-facing plans may NOT be acceptance-exempt — remove the exemption, author ## Acceptance Scenarios, and run end-user-advocate in runtime mode against the live app."$'\n'
+        continue
+      fi
       reason=$(grep -iE '^acceptance-exempt-reason:' "$plan" 2>/dev/null | head -1 | sed 's/^[Aa]cceptance-exempt-reason:[[:space:]]*//')
       echo "[acceptance-gate] plan ${slug} is acceptance-exempt; reason: ${reason}" >&2
       ALLOWS="${ALLOWS}  - ${slug}: exempt (${reason})"$'\n'

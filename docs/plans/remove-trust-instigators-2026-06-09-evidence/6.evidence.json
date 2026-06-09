@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "task_id": "6",
+  "verdict": "PASS",
+  "commit_sha": "9b0629c399c7471278304305bd1062a00e769b6c",
+  "files_modified": [
+    "adapters/claude-code/CLAUDE.md",
+    "adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh",
+    "adapters/claude-code/hooks/product-acceptance-gate.sh",
+    "adapters/claude-code/rules/acceptance-scenarios.md",
+    "adapters/claude-code/rules/orchestrator-pattern.md",
+    "adapters/claude-code/rules/planning.md",
+    "adapters/claude-code/rules/session-end-protocol.md",
+    "adapters/claude-code/rules/testing.md",
+    "docs/plans/remove-trust-instigators-2026-06-09.md"
+  ],
+  "mechanical_checks": {
+    "command:diff -q adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh ~/.claude/hooks/lib/stop-hook-retry-guard.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "diff -q adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh ~/.claude/hooks/lib/stop-hook-retry-guard.sh",
+      "exit_code": 0
+    },
+    "command:diff -q adapters/claude-code/hooks/product-acceptance-gate.sh ~/.claude/hooks/product-acceptance-gate.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "diff -q adapters/claude-code/hooks/product-acceptance-gate.sh ~/.claude/hooks/product-acceptance-gate.sh",
+      "exit_code": 0
+    },
+    "command:diff -q adapters/claude-code/CLAUDE.md ~/.claude/CLAUDE.md": {
+      "passed": true,
+      "detail": "",
+      "command": "diff -q adapters/claude-code/CLAUDE.md ~/.claude/CLAUDE.md",
+      "exit_code": 0
+    },
+    "command:diff -q adapters/claude-code/rules/testing.md ~/.claude/rules/testing.md": {
+      "passed": true,
+      "detail": "",
+      "command": "diff -q adapters/claude-code/rules/testing.md ~/.claude/rules/testing.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-09T20:38:01Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/remove-trust-instigators-2026-06-09.md"
+}

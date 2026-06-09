@@ -20,6 +20,8 @@ All declared work is complete and the session can wind down. "Declared work" is 
 
 `DONE:` is a positive completion claim, subject to the same anti-vaporware discipline as every other completion claim in the harness. A `DONE:` whose summary is contradicted by an unchecked plan task or an incomplete todo is a lie the hook catches.
 
+**A `DONE:` while a verification gate is blocking is a lie by construction.** If `pre-stop-verifier.sh` or `product-acceptance-gate.sh` blocked this Stop — or was downgraded by the retry-guard earlier this session with no state change since — the work is incomplete by the harness's own measurement, and the honest marker is `PAUSING:` or `BLOCKED:` naming the gap. The marker is a *consequence* of verified completion, never a goal to emit so the turn looks finished. Mechanical backstop: `hooks/lib/stop-hook-retry-guard.sh` refuses to downgrade verification-class blocks while the final message claims `DONE:` (added 2026-06-09 after an autonomous loop emitted DONE past 38 consecutive pre-stop-verifier blocks).
+
 ### `PAUSING: <reason + the specific user input needed>`
 
 The session is *intentionally* waiting on a non-delegable user decision: a Tier-3 product decision (`~/.claude/rules/planning.md`), a billing/irreversible-op click, an ambiguous business-logic call the agent must not guess. `PAUSING:` is NOT "natural breakpoint" or "good place to check in" — those are narrate-and-wait behavior and are caught by `narrate-and-wait-gate.sh`. A valid `PAUSING:` articulates BOTH:
