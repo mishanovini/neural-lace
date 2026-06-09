@@ -1,5 +1,5 @@
 # Plan: Workstreams Phase D — item-detail modal, context-appropriate actions, deploy-tracking
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
