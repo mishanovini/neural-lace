@@ -115,6 +115,21 @@ const server = http.createServer((req, res) => {
     var hbPath = path.join(require('os').homedir(),
       '.claude', 'state', 'conversation-tree', 'heartbeat.last');
     try { hbMtime = fs.statSync(hbPath).mtimeMs; } catch (_) {}
+    // ui_build — max mtime of the served web assets. The client's pollHealth
+    // compares this against the stamp it booted with and location.reload()s
+    // when it changes. Root cause this closes (Phase R2, 2026-06-09): a
+    // long-lived tab keeps DATA fresh via SSE while its CODE stays frozen at
+    // tab-load time — the operator saw the pre-Phase-D right-panel detail for
+    // hours after the server already served the modal code. `no-cache` only
+    // helps on a reload the operator never performs; this makes the reload
+    // automatic within one poll interval of any UI-file change.
+    var uiBuild = null;
+    try {
+      ['index.html', 'app.js', 'app.css'].forEach(function (f) {
+        var m = fs.statSync(path.join(WEB_DIR, f)).mtimeMs;
+        if (uiBuild === null || m > uiBuild) uiBuild = m;
+      });
+    } catch (_) { uiBuild = null; }
     res.writeHead(200, hh);
     res.end(JSON.stringify({
       ok: true,
@@ -124,7 +139,8 @@ const server = http.createServer((req, res) => {
       state_age_seconds: stateMtime ? Math.round((nowMs - stateMtime) / 1000) : null,
       heartbeat_mtime_ms: hbMtime,
       heartbeat_age_seconds: hbMtime ? Math.round((nowMs - hbMtime) / 1000) : null,
-      heartbeat_stale: hbMtime ? ((nowMs - hbMtime) > 10 * 60 * 1000) : true
+      heartbeat_stale: hbMtime ? ((nowMs - hbMtime) > 10 * 60 * 1000) : true,
+      ui_build_ms: uiBuild
     }));
     return;
   }
