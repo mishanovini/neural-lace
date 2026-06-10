@@ -472,6 +472,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/customer-facing-review-gate.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/completion-criteria-gate.sh"
           },
           {
