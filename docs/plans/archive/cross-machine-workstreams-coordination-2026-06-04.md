@@ -1,5 +1,5 @@
 # Plan: Cross-machine work-coordination + Workstreams aggregation
-Status: ACTIVE
+Status: SUPERSEDED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -117,3 +117,13 @@ DONE: the private repo + schema + a pushed scaffold is the thinnest end-to-end s
 - **Task 8** — push fixes to NL master; author `~/.claude/local/coord-repo-url.txt` on each machine; reconcile the 5 drift files; SCRATCHPAD update. BOOK inherits via `session-start-auto-install` + then publishes its own tree/claims on its next session.
 
 **Live integration (orchestrator, after the build):** write `~/.claude/local/coord-repo-url.txt` = the real private repo URL; run `coord-push.sh` for real once; confirm the GUI renders + (after BOOK runs) shows both machines.
+
+## Supersession note (2026-06-10 stale-plan triage)
+
+SUPERSEDED by the Workstreams consolidation + rebuild: `docs/plans/archive/workstreams-consolidation-2026-06-08.md` (Misha-approved design 2026-06-08, closed COMPLETED — task-verifier 6/6, acceptance 4/4 PASS) and the R-phase rebuild plans shipped 2026-06-09 (`workstreams-r2-harvest-2026-06-09.md`, `workstreams-r7-work-in-motion-2026-06-09.md`, R5 `c4a2d55`).
+
+**Why this plan's architecture is obsolete (evidence):** this plan's core design was per-machine tree-states pushed as `tree-state/<host>.json` + GUI-side peer merge (`merge-peers.js`, origin badges — Task 6) + reducer dedup (Task 7). The approved consolidation replaced that with a SINGLE canonical git-backed state file shared by both machines — `workstreams-coordination/state/tree-state.json` — confirmed live: `~/.claude/workstreams-state-path.txt` and `adapters/claude-code/config/workstreams-state-path` both resolve there. With one shared file there is no peer-merge to build; `merge-peers.js` was never created and never will be. The user-facing outcome ("merged tree of BOTH machines' work, work-in-motion visible") is delivered by the canonical file + the R7 work-in-motion sweeper.
+
+**What this plan DID ship (already on master, remains in use):** Task 1 coordination-repo scaffold (external); Task 2 `coord-push.sh`/`coord-pull.sh` + orchestrator-prime loop wiring (`8c2ac95`); Task 7 slices — `surface-pending-asks.js` + root-cause discovery (`1fe48f1`), Phase A canonical-state-path resolver (`0291279`), Phase B orphaned-open-items migration (`13e9e60`).
+
+**Residue NOT shipped and NOT obsoleted (returned to backlog, not silently dropped):** Task 3 ADR for the coordination substrate (the 051 number gap in `docs/decisions/` is this unwritten ADR), Task 4 reconciler shared-claims wiring (reconciler still reads the v1 local-stub `~/.claude/state/orchestrator/claims.json`, NOT the coordination clone's `claims.json` — the orchestrator-prime SKILL's "respect peer claims" instruction is currently honored by convention, not mechanism), Task 5 overlap/redundancy detection. Filed as **CROSS-MACHINE-COORD-RESIDUE-01** in `docs/backlog.md` (2026-06-10).
