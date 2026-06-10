@@ -118,6 +118,146 @@ _resolve_state_lib() {
 WAIVER_GLOB='conv-tree-spawn-waiver-*.txt'
 
 # ============================================================
+# --builder-tracking — THIN substrate gate for builder dispatches
+# (ADR-054, 2026-06-10). Wired PreToolUse on Task|Agent|Workflow AFTER
+# workstreams-emit.sh --on-builder-dispatch (forcing-first, gate-second).
+#
+# Semantics (deliberately thin — NOT the Pin-1 branch-naming bar):
+#   subsystem ABSENT (no node, or no state library file)  -> ALLOW
+#       (degrade-open bootstrap rule: tracking is not possible, a machine
+#        without the Workstreams subsystem must not be bricked)
+#   subsystem PRESENT + canonical state file missing      -> BLOCK
+#       (the force: the writer wired immediately before this gate creates
+#        the file on first append; missing here means the dispatch would
+#        proceed UNTRACKED while tracking is possible)
+#   subsystem PRESENT + state file unwritable             -> BLOCK
+#   state file present + writable                         -> ALLOW
+#
+# What this gate deliberately does NOT check: per-dispatch emit success
+# (a ledger/item verification would false-positive-block every dispatch on
+# any transient emit flake — harness-DoS; the Stop-time reconciler is the
+# catch-up for individual missed emits). See ADR-054 Decisions.
+#
+# Escape hatches:
+#   WORKSTREAMS_BUILDER_GATE_DISABLE=1            (harness-dev / self-test)
+#   fresh substantive .claude/state/builder-tracking-waiver-*.txt (<1h)
+# ============================================================
+if [[ "${1:-}" == "--builder-tracking" ]]; then
+  [[ "${WORKSTREAMS_BUILDER_GATE_DISABLE:-0}" == "1" ]] && exit 0
+
+  BT_INPUT="${CLAUDE_TOOL_INPUT:-}"
+  if [[ -z "$BT_INPUT" && ! -t 0 ]]; then BT_INPUT=$(cat 2>/dev/null || echo ""); fi
+  [[ -z "$BT_INPUT" ]] && exit 0
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "[builder-tracking-gate] ALLOW (fail-open): jq unavailable — hook-internal" >&2
+    exit 0
+  fi
+  BT_TOOL=$(printf '%s' "$BT_INPUT" | jq -r '.tool_name // ""' 2>/dev/null || echo "")
+  case "$BT_TOOL" in
+    Task|Agent|Workflow) ;;
+    *) exit 0 ;;   # not a builder-dispatch surface -> no-op
+  esac
+
+  BT_STATE_DIR="${CLAUDE_STATE_DIR:-.claude/state}"
+
+  # Fresh substantive waiver release-valve (mirrors the spawn gate's).
+  _bt_has_fresh_waiver() {
+    [[ -d "$BT_STATE_DIR" ]] || return 1
+    local f
+    while IFS= read -r f; do
+      [[ -f "$f" ]] || continue
+      grep -q '[^[:space:]]' "$f" 2>/dev/null && return 0
+    done < <(find "$BT_STATE_DIR" -maxdepth 1 -type f -name 'builder-tracking-waiver-*.txt' -newermt '1 hour ago' 2>/dev/null)
+    return 1
+  }
+  if _bt_has_fresh_waiver; then
+    echo "[builder-tracking-gate] ALLOW: fresh substantive builder-tracking-waiver present (release valve)" >&2
+    exit 0
+  fi
+
+  # Subsystem detection — node-free thin check beyond `command -v node`:
+  # tracking is possible iff node exists AND the state library module exists.
+  BT_LIB=$(_resolve_state_lib)
+  if ! command -v node >/dev/null 2>&1 || [[ ! -f "$BT_LIB" ]]; then
+    echo "[builder-tracking-gate] ALLOW (degrade-open): workstreams subsystem absent (node or state library unavailable) — tracking not possible (bootstrap rule)" >&2
+    exit 0
+  fi
+
+  # Canonical sink resolution — the SAME shared resolver the writer uses, so
+  # the gate checks the file the writer actually writes. When the resolver
+  # yields a canonical path (env override or home config), that path is THE
+  # decision; legacy probing happens only when no canonical config exists.
+  # shellcheck disable=SC1091
+  { source "$(dirname "${BASH_SOURCE[0]}")/lib/workstreams-state-resolver.sh" 2>/dev/null; } || true
+  BT_CANON=""
+  if declare -F resolve_workstreams_state_path >/dev/null 2>&1; then
+    BT_CANON=$(resolve_workstreams_state_path "")
+  elif [[ -n "${CONV_TREE_STATE_PATH:-}" ]]; then
+    BT_CANON="$CONV_TREE_STATE_PATH"
+  fi
+
+  declare -a BT_CANDS=()
+  if [[ -n "$BT_CANON" ]]; then
+    BT_CANDS+=("$BT_CANON")
+  else
+    # Pre-consolidation legacy fallbacks: the GUI module file next to the
+    # state library, and the §5 per-project path.
+    BT_CANDS+=("$(dirname "$BT_LIB")/tree-state.json")
+    BT_CANDS+=("$(_resolve_state_path)")
+  fi
+
+  _bt_block() {
+    local short="$1"
+    {
+      echo "================================================================"
+      echo "BUILDER-TRACKING GATE — DISPATCH BLOCKED (ADR-054)"
+      echo "================================================================"
+      echo ""
+      echo "$short"
+      echo ""
+      echo "Builder tool: $BT_TOOL"
+      echo "Checked state path(s): ${BT_CANDS[*]}"
+      echo ""
+      echo "The Workstreams tracking substrate IS available on this machine"
+      echo "(node + state library present), but the canonical state file is"
+      echo "missing or unwritable — this dispatch would proceed UNTRACKED."
+      echo "workstreams-emit.sh --on-builder-dispatch (wired immediately"
+      echo "before this gate) should have created/appended it."
+      echo ""
+      echo "Remediation (diagnose before bypass — ~/.claude/rules/gate-respect.md):"
+      echo "  1. Check ~/.claude/workstreams-state-path.txt points at a real,"
+      echo "     writable location, and that the emit hook is wired in"
+      echo "     PreToolUse Task|Agent|Workflow BEFORE this gate."
+      echo "  2. Re-run the dispatch after fixing the substrate."
+      echo "  3. Legitimate edge / suspected gate bug: author a fresh waiver:"
+      echo "       mkdir -p $BT_STATE_DIR && \\"
+      echo "       printf '%s\\n' '<one substantive line: why untracked is OK>' \\"
+      echo "         > $BT_STATE_DIR/builder-tracking-waiver-\$(date +%s).txt"
+      echo "  4. Harness-dev on this gate itself: WORKSTREAMS_BUILDER_GATE_DISABLE=1"
+      echo "================================================================"
+    } >&2
+    echo "[builder-tracking-gate] BLOCK: $short (tool=$BT_TOOL)" >&2
+    cat <<JSON
+{"decision": "block", "reason": "builder-tracking-gate (ADR-054): $short. Tracking is possible on this machine but the canonical Workstreams state file is missing/unwritable — builder dispatches may not proceed untracked. See stderr for remediation."}
+JSON
+    exit 2
+  }
+
+  BT_FOUND=""
+  for f in "${BT_CANDS[@]}"; do
+    [[ -n "$f" && -f "$f" ]] && { BT_FOUND="$f"; break; }
+  done
+  if [[ -z "$BT_FOUND" ]]; then
+    _bt_block "canonical Workstreams state file missing while tracking is possible"
+  fi
+  if [[ ! -w "$BT_FOUND" ]]; then
+    _bt_block "canonical Workstreams state file is not writable ($BT_FOUND)"
+  fi
+  echo "[builder-tracking-gate] ALLOW: state file present + writable ($BT_FOUND)" >&2
+  exit 0
+fi
+
+# ============================================================
 # --self-test — exercises every Pin-2 partition cell + bootstrap +
 # waiver + happy-path + branch-named-but-absent + matcher fire/no-op.
 # Uses a REAL attested-snapshot fixture produced via the state library
@@ -289,6 +429,61 @@ if [[ "${1:-}" == "--self-test" ]]; then
   # previously hit the 'could not extract any branch identifier' BLOCK and
   # forced a waiver) must now silently no-op. ---
   _run "r2-bare-Agent-no-identifier-noop" 0 "$MISSING" "Agent" '{"subagent_type":"code-reviewer","prompt":"review"}' s-r2 1 "" ""
+
+  # --- BT1-BT7: --builder-tracking thin substrate gate (ADR-054) ---
+  # Each scenario pins one cell of the thin gate's decision table. A tmp
+  # config file (WORKSTREAMS_STATE_CONFIG) controls the canonical path so the
+  # machine's real config never leaks into the test.
+  _bt_run() { # name want_rc cfg_path lib_path tool extra_env_disable
+    local name="$1" want="$2" canon="$3" lib="$4" tool="$5" disable="${6:-0}"
+    local cfg="$TMP/bt-cfg-$name.txt"
+    printf '%s\n' "$canon" > "$cfg"
+    local out rc
+    out=$(cd "$TMP" && CLAUDE_STATE_DIR="$TMP/bt-$name-state" \
+          WORKSTREAMS_STATE_CONFIG="$cfg" CONV_TREE_STATE_PATH="" \
+          CONV_TREE_STATE_LIB="$lib" WORKSTREAMS_BUILDER_GATE_DISABLE="$disable" \
+          CLAUDE_TOOL_INPUT="$(printf '{"tool_name":"%s","tool_input":{"description":"bt probe"}}' "$tool")" \
+          bash "$SELF" --builder-tracking 2>"$TMP/bt-$name.err")
+    rc=$?
+    if [[ "$rc" -eq "$want" ]]; then
+      PASSED=$((PASSED+1)); echo "  PASS  bt-$name (rc=$rc)"
+    else
+      FAILED=$((FAILED+1)); echo "  FAIL  bt-$name (rc=$rc want $want; err=$(tail -1 "$TMP/bt-$name.err" 2>/dev/null))"
+    fi
+  }
+  # BT1: state file present + writable -> ALLOW
+  BT_OK="$TMP/bt-state-ok.json"; printf '{}' > "$BT_OK"
+  _bt_run "1-present-writable-allow" 0 "$BT_OK" "$ST_LIB" "Task"
+  # BT2: subsystem present + state file missing -> BLOCK (the force)
+  _bt_run "2-missing-while-possible-block" 2 "$TMP/bt-no-such-state.json" "$ST_LIB" "Agent"
+  # BT3: subsystem absent (no state lib) -> ALLOW degrade-open (bootstrap)
+  _bt_run "3-subsystem-absent-allow" 0 "$TMP/bt-no-such-state.json" "$TMP/no-such-lib.js" "Task"
+  # BT4: missing state file BUT fresh substantive waiver -> ALLOW
+  mkdir -p "$TMP/bt-4-waiver-state"
+  printf 'testing the waiver valve\n' > "$TMP/bt-4-waiver-state/builder-tracking-waiver-1.txt"
+  BT4_CFG="$TMP/bt-cfg-4w.txt"; printf '%s\n' "$TMP/bt-no-such-state.json" > "$BT4_CFG"
+  BT4_OUT=$(cd "$TMP" && CLAUDE_STATE_DIR="$TMP/bt-4-waiver-state" \
+      WORKSTREAMS_STATE_CONFIG="$BT4_CFG" CONV_TREE_STATE_PATH="" CONV_TREE_STATE_LIB="$ST_LIB" \
+      CLAUDE_TOOL_INPUT='{"tool_name":"Task","tool_input":{"description":"bt probe"}}' \
+      bash "$SELF" --builder-tracking 2>&1)
+  if [[ $? -eq 0 ]] && printf '%s' "$BT4_OUT" | grep -q 'release valve'; then
+    PASSED=$((PASSED+1)); echo "  PASS  bt-4-waiver-valve-allow"
+  else
+    FAILED=$((FAILED+1)); echo "  FAIL  bt-4-waiver-valve-allow ($BT4_OUT)"
+  fi
+  # BT5: non-builder tool -> silent no-op ALLOW (even with missing file)
+  _bt_run "5-non-builder-noop" 0 "$TMP/bt-no-such-state.json" "$ST_LIB" "Bash"
+  # BT6: WORKSTREAMS_BUILDER_GATE_DISABLE=1 -> ALLOW
+  _bt_run "6-disable-env-allow" 0 "$TMP/bt-no-such-state.json" "$ST_LIB" "Workflow" 1
+  # BT7: state file present but unwritable -> BLOCK (skip when chmod cannot
+  # produce an unwritable file, e.g. Windows ACL environments)
+  BT_RO="$TMP/bt-state-ro.json"; printf '{}' > "$BT_RO"; chmod 444 "$BT_RO" 2>/dev/null || true
+  if [[ -w "$BT_RO" ]]; then
+    PASSED=$((PASSED+1)); echo "  PASS  bt-7-unwritable-block (skipped: chmod cannot make file unwritable here)"
+  else
+    _bt_run "7-unwritable-block" 2 "$BT_RO" "$ST_LIB" "Task"
+  fi
+  chmod 644 "$BT_RO" 2>/dev/null || true
 
   echo ""
   echo "$PASSED passed, $FAILED failed"

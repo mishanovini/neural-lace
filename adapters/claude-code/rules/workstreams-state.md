@@ -44,6 +44,23 @@ ADR-031 r7's answer to the operator's question ("is Dispatch beholden to the har
 
 The PreToolUse gate catches an *individual* spawn lacking a true-tree write the moment it begins; the Stop gate closes the loop at the session boundary. Both delegate snapshot trust to the single sole-normative state-library primitive (ADR-032 §8 r2.1) — the gate never re-implements canonicalization. What neither can do is verify that the named, well-shaped, attestation-verified node is *semantically true* — that is this rule.
 
+## Builder-dispatch work-item emission (ADR-054, 2026-06-10 — amends ADR-034's scoping for the WORK-ITEM tier)
+
+ADR-034's conversation-BRANCH scoping stands: sub-agent `Task`/`Agent` (and `Workflow`) dispatches still produce **no tree node** — they are AI-internal mechanics, not branches of the user↔AI conversation. What ADR-054 adds is the **work-item tier**: every orchestrator builder dispatch now auto-emits ONE `action-added` work-item on the session's own `ss-*` node, mechanically, with no orchestrator discipline required (Misha's 2026-06-10 directive: tracking must happen automatically "even when you don't want to listen to me").
+
+The mechanism (forcing-first, gate-second):
+
+| Surface | Hook + mode | What it does |
+|---|---|---|
+| PreToolUse `Task\|Agent\|Workflow` | `workstreams-emit.sh --on-builder-dispatch` | Emits an idempotent creation batch via the `state.js` facade: root + session `ss-*` `branch-opened` (same deterministic event ids as `--on-session-start` — no duplication) + `action-added` (`wi-bd-<sha1(sid\|tool\|title)>`, title from `.description // .meta.name // .name // .title // first prompt line`) + `item-details-set` (`_category: "builder-dispatch"`, tool, subagent_type, background flag). Writer — never blocks; every path exits 0. |
+| PreToolUse `Task\|Agent\|Workflow` (wired AFTER the emit) | `workstreams-state-gate.sh --builder-tracking` | THIN fail-closed substrate gate: BLOCKS the dispatch when tracking is possible (node + state library present) but the canonical state file is missing/unwritable — a dispatch may not proceed untracked when tracking is possible. Degrades OPEN when the subsystem itself is absent (bootstrap rule). Valves: fresh substantive `.claude/state/builder-tracking-waiver-*.txt` (<1h), `WORKSTREAMS_BUILDER_GATE_DISABLE=1`. Deliberately NOT a per-dispatch emit verification (that would false-positive-block on any transient flake — the reconciler is the per-dispatch catch-up). |
+| PostToolUse `Task\|Agent\|Workflow` | `workstreams-emit.sh --on-builder-complete` | Foreground dispatches: tool return IS sub-agent completion → `action-done` (item leaves In-flight). Background dispatches (`Workflow`, `run_in_background: true`): launch-ack only → creation batch, NO done. |
+| Stop (existing reconciler wiring) | `workstreams-emit-reconciler.sh` builder sweep | Re-derives every builder `tool_use` from the agent-uneditable transcript; catch-up-fires `--on-builder-dispatch` for each and `--on-builder-complete` for each with a present `tool_result` (idempotent event ids make re-fires no-ops). |
+
+**Noise control:** `details._category: "builder-dispatch"` is outside the GUI's Misha-ask category set, so builder items can never land in Awaiting-me; unchecked + no explicit state derives `in-flight` — exactly the work-in-motion tier.
+
+**The honest completion ceiling (Rule 7):** background dispatches have NO stable local completion contract — no per-workflow completion hook event exists, and the wake/notification message shape is undocumented. Their items honestly stay in-flight (FR-7 keeps the owning session node un-concludable — intentionally visible) until a later `--resolve-item`, the operator, or a future upstream hook surface resolves them. This is a named gap, not a solved problem. Cloud sessions that load no `~/.claude/` hooks remain out of reach (the same accepted blind spot as above).
+
 ## Cross-references
 
 - **Decision record:** `docs/decisions/031-conversation-tree-ui-architecture.md` r7 — ACCEPTED Option-2 file-mediated state contract; the "Enforcement design" Mechanism+Pattern split; the three "Plan-safety pins" (enumerated spawn-path set, fail-closed error partition, append-only-log viability properties); the cloud blind spot.

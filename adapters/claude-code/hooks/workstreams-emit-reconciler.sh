@@ -56,9 +56,14 @@ _sha1() {
 }
 
 _resolve_emit_hook() {
-  # Workstreams rename (2026-06-01): prefer the new name, fall back to the
-  # backward-compat shim at the old name during the transition window.
-  local cand="$HOME/.claude/hooks/workstreams-emit.sh"
+  # Prefer the SIBLING emit hook in this script's own directory (in the live
+  # install that IS ~/.claude/hooks; in a repo checkout it is the repo copy —
+  # keeping reconciler and writer at the same version). Then the live-install
+  # name, then the pre-rename backward-compat shim (Workstreams rename
+  # 2026-06-01).
+  local cand="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/workstreams-emit.sh"
+  if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
+  cand="$HOME/.claude/hooks/workstreams-emit.sh"
   if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   cand="$HOME/.claude/hooks/conversation-tree-emit.sh"
   if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
@@ -152,6 +157,72 @@ _reconcile() {
   _log "reconcile: session=$sid_safe transcript_spawns=$transcript_count ledger_entries=$ledger_count catch_up=$catch_up"
 }
 
+# ---------------------------------------------------------------------------
+# Builder-dispatch reconcile (ADR-054, 2026-06-10). At Stop, re-derive every
+# Task|Agent|Workflow dispatch from the agent-uneditable transcript and
+# catch-up-emit through the SAME emit-hook modes the live PreToolUse /
+# PostToolUse wiring uses (idempotent deterministic event_ids make re-fires
+# per-file no-ops):
+#   - every builder tool_use        -> --on-builder-dispatch (covers a missed
+#                                      PreToolUse fire)
+#   - tool_use WITH a tool_result   -> --on-builder-complete (covers a missed
+#                                      PostToolUse fire; the emit hook itself
+#                                      discriminates background launches and
+#                                      never emits a false done — the ADR-054
+#                                      completion ceiling lives in ONE place)
+# CEILING (honest): background dispatches (Workflow / run_in_background) have
+# NO stable completion contract in the transcript; this sweep cannot and does
+# not invent one. Their items stay in-flight until explicitly resolved.
+# ---------------------------------------------------------------------------
+_reconcile_builders() {
+  local sid_safe="$1" tp="$2"
+  [[ -z "$tp" || ! -f "$tp" ]] && return 0
+  _have jq || return 0
+  local emit_hook; emit_hook=$(_resolve_emit_hook)
+  [[ -z "$emit_hook" ]] && return 0
+
+  # Set of tool_use ids that received a tool_result in this transcript.
+  local results_file; results_file=$(mktemp 2>/dev/null || echo "/tmp/cte-rec-res-$$.txt")
+  jq -r '
+    select(.type == "user" or .role == "user")
+    | (.message.content // .content // [])
+    | (if type == "array" then . else [] end)
+    | .[]?
+    | select(.type == "tool_result")
+    | .tool_use_id // empty
+  ' "$tp" 2>/dev/null > "$results_file" || true
+
+  local n_dispatch=0 n_complete=0
+  while IFS= read -r row; do
+    [[ -z "$row" ]] && continue
+    local name use_id synth
+    name=$(printf '%s' "$row" | jq -r '.name // empty' 2>/dev/null)
+    use_id=$(printf '%s' "$row" | jq -r '.id // empty' 2>/dev/null)
+    [[ -z "$name" ]] && continue
+    synth=$(printf '%s' "$row" | jq -c '{tool_name: .name, tool_input: (.input // {})}' 2>/dev/null)
+    [[ -z "$synth" ]] && continue
+    CLAUDE_TOOL_INPUT="$synth" CLAUDE_SESSION_ID="$sid_safe" \
+      bash "$emit_hook" --on-builder-dispatch >/dev/null 2>&1 || true
+    n_dispatch=$((n_dispatch+1))
+    if [[ -n "$use_id" ]] && grep -qxF "$use_id" "$results_file" 2>/dev/null; then
+      CLAUDE_TOOL_INPUT="$synth" CLAUDE_SESSION_ID="$sid_safe" \
+        bash "$emit_hook" --on-builder-complete >/dev/null 2>&1 || true
+      n_complete=$((n_complete+1))
+    fi
+  done < <(jq -c '
+    select(.type == "assistant" or .role == "assistant")
+    | (.message.content // .content // [])
+    | (if type == "array" then . else [] end)
+    | .[]?
+    | select(.type == "tool_use")
+    | select(.name == "Task" or .name == "Agent" or .name == "Workflow")
+    | {id: (.id // ""), name: .name, input: (.input // {})}
+  ' "$tp" 2>/dev/null)
+  rm -f "$results_file" 2>/dev/null || true
+  [[ "$n_dispatch" -gt 0 ]] && _log "builder-reconcile: session=$sid_safe dispatches=$n_dispatch completions=$n_complete"
+  return 0
+}
+
 _main() {
   local input; input=$(_read_stdin)
   [[ -z "$input" ]] && exit 0
@@ -166,6 +237,7 @@ _main() {
 
   local sid_safe; sid_safe=$(_sid_safe "$sid")
   _reconcile "$sid_safe" "$tp"
+  _reconcile_builders "$sid_safe" "$tp"
   exit 0
 }
 
@@ -252,6 +324,60 @@ JSONL
   CONV_TREE_STATE_PATH="$tmp/state-5.json" \
     bash "$SELF" <<<'{}' >/dev/null 2>&1
   _ck "ST5 no session_id exit 0" "$?" "0"
+
+  # ---- ST6-ST8: builder-dispatch reconcile (ADR-054) ----
+  # Locate the state lib for assertions (mirror the emit hook's resolution).
+  local ST_LIB="${CONV_TREE_STATE_LIB:-}"
+  if [[ -z "$ST_LIB" ]]; then
+    local _root
+    if _root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$_root" ]]; then
+      [[ -f "$_root/neural-lace/workstreams-ui/state/state.js" ]] && ST_LIB="$_root/neural-lace/workstreams-ui/state/state.js"
+      [[ -z "$ST_LIB" && -f "$_root/workstreams-ui/state/state.js" ]] && ST_LIB="$_root/workstreams-ui/state/state.js"
+    fi
+    [[ -z "$ST_LIB" ]] && ST_LIB="$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/state.js"
+  fi
+  _bd_checked() { # statefile -> checked-state of the first wi-bd-* item (or MISSING)
+    node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var out="MISSING";st.snapshot.nodes.forEach(function(n){(n.items||[]).forEach(function(it){if(/^wi-bd-/.test(it.item_id))out=String(it.checked)})});process.stdout.write(out)' "$ST_LIB" "$1" 2>/dev/null
+  }
+  if [[ -f "$ST_LIB" ]] && command -v node >/dev/null 2>&1; then
+    # ST6: builder tool_use WITHOUT a tool_result → catch-up dispatch only
+    # (item exists, unchecked — still in flight).
+    local tp6="$tmp/transcript-6.jsonl"
+    cat >"$tp6" <<'JSONL'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_b6","name":"Task","input":{"description":"Reconcile me"}}]}}
+JSONL
+    local sp6="$tmp/state-6.json"
+    CONV_TREE_STATE_PATH="$sp6" CONV_TREE_STATE_LIB="$ST_LIB" \
+      bash "$SELF" <<<"{\"session_id\":\"rec-st-6\",\"transcript_path\":\"$tp6\"}" >/dev/null 2>&1
+    _ck "ST6 builder without result → item created, unchecked" "$(_bd_checked "$sp6")" "false"
+
+    # ST7: foreground builder WITH a tool_result → catch-up completion (checked).
+    local tp7="$tmp/transcript-7.jsonl"
+    cat >"$tp7" <<'JSONL'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_b7","name":"Agent","input":{"description":"Done builder"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_b7","content":"finished"}]}}
+JSONL
+    local sp7="$tmp/state-7.json"
+    CONV_TREE_STATE_PATH="$sp7" CONV_TREE_STATE_LIB="$ST_LIB" \
+      bash "$SELF" <<<"{\"session_id\":\"rec-st-7\",\"transcript_path\":\"$tp7\"}" >/dev/null 2>&1
+    _ck "ST7 foreground builder with result → item checked" "$(_bd_checked "$sp7")" "true"
+
+    # ST8: Workflow WITH a tool_result (launch-ack) → NOT checked (the
+    # ADR-054 background-completion ceiling — a launch return is not done).
+    local tp8="$tmp/transcript-8.jsonl"
+    cat >"$tp8" <<'JSONL'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_b8","name":"Workflow","input":{"meta":{"name":"BG flow"}}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_b8","content":"launched wf-9"}]}}
+JSONL
+    local sp8="$tmp/state-8.json"
+    CONV_TREE_STATE_PATH="$sp8" CONV_TREE_STATE_LIB="$ST_LIB" \
+      bash "$SELF" <<<"{\"session_id\":\"rec-st-8\",\"transcript_path\":\"$tp8\"}" >/dev/null 2>&1
+    _ck "ST8 Workflow launch-ack result → item NOT checked (ceiling)" "$(_bd_checked "$sp8")" "false"
+  else
+    echo "PASS: ST6 (skipped: state lib or node unavailable)"; pass=$((pass+1))
+    echo "PASS: ST7 (skipped: state lib or node unavailable)"; pass=$((pass+1))
+    echo "PASS: ST8 (skipped: state lib or node unavailable)"; pass=$((pass+1))
+  fi
 
   echo ""
   echo "self-test summary: $pass passed, $fail failed"
