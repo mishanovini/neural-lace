@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "5122b5e0729c429745e3cb43df498acebcd9c126",
+  "files_modified": [
+    "docs/backlog.md",
+    "docs/plans/archive/land-cfr-gate-2026-06-10.md"
+  ],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/scripts/worktree-hygiene-sweep.sh": {
+      "passed": true,
+      "detail": "adapters/claude-code/scripts/worktree-hygiene-sweep.sh exists",
+      "command": "test -e adapters/claude-code/scripts/worktree-hygiene-sweep.sh",
+      "exit_code": 0
+    },
+    "command:grep -q 'WORKTREE_SWEEP_APPROVE' adapters/claude-code/scripts/worktree-hygiene-sweep.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'WORKTREE_SWEEP_APPROVE' adapters/claude-code/scripts/worktree-hygiene-sweep.sh",
+      "exit_code": 0
+    },
+    "command:grep -q 'branch -d' adapters/claude-code/scripts/worktree-hygiene-sweep.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'branch -d' adapters/claude-code/scripts/worktree-hygiene-sweep.sh",
+      "exit_code": 0
+    },
+    "command:grep -q -- '--session-summary' adapters/claude-code/scripts/worktree-hygiene-sweep.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q -- '--session-summary' adapters/claude-code/scripts/worktree-hygiene-sweep.sh",
+      "exit_code": 0
+    },
+    "command:grep -q 'stash list' adapters/claude-code/scripts/worktree-hygiene-sweep.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'stash list' adapters/claude-code/scripts/worktree-hygiene-sweep.sh",
+      "exit_code": 0
+    },
+    "command:grep -q 'git cherry' adapters/claude-code/scripts/worktree-hygiene-sweep.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'git cherry' adapters/claude-code/scripts/worktree-hygiene-sweep.sh",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T13:13:39Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/worktree-hygiene-sweeper-2026-06-09.md"
+}

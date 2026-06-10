@@ -1,0 +1,27 @@
+
+== repo: <projects-root>/neural-lace (base: origin/master, age threshold: 7d) ==
+  WORKTREE                                                   BRANCH                             DIRTY UNIQUE  AGE_D  CLASS
+  <projects-root>/neural-lace/.claude/worktrees/agent-up8 feat/agent-upgrades-low-risk-8         0      0      0  HOLDS-CONTENT
+  <projects-root>/neural-lace/.claude/worktrees/r5-fix feat/workstreams-r5-render-fix         0      0      0  HOLDS-CONTENT
+  <projects-root>/neural-lace/.claude/worktrees/r7-wim feat/workstreams-r7-work-in-motion     0      0      0  HOLDS-CONTENT
+  <projects-root>/neural-lace/.claude/worktrees/wf_5e6a8691-875-1 feat/deterministic-workstreams-turn-emit     0      1      1  HOLDS-CONTENT
+  <projects-root>/neural-lace/.claude/worktrees/whs-close chore/close-whs-plan-2026-06-10        1      0      0  HOLDS-CONTENT
+  <projects-root>/neural-lace/.claude/worktrees/ws-r2 feat/workstreams-r2-harvest-2026-06-09     0      0      0  HOLDS-CONTENT
+  <projects-root>/neural-lace/.claude/worktrees/wt-sweeper feat/worktree-hygiene-sweeper          0      0      0  HOLDS-CONTENT
+  <projects-root>/neural-lace/intelligent-chebyshev-d4e10c claude/intelligent-chebyshev-d4e10c     5      0     28  HOLDS-CONTENT
+  <projects-root>/neural-lace/jolly-davinci-d99487 claude/jolly-davinci-d99487            2      0     22  HOLDS-CONTENT
+  <projects-root>/neural-lace/stoic-gates-feefd3 claude/stoic-gates-feefd3              1      0     28  HOLDS-CONTENT
+  <projects-root>/neural-lace/vibrant-fermi-acf761 claude/vibrant-fermi-acf761            1      2     18  HOLDS-CONTENT
+  <projects-root>/neural-lace/vigorous-bartik-154b8b claude/vigorous-bartik-154b8b          6      0     28  HOLDS-CONTENT
+  <projects-root>/neural-lace/xenodochial-mendeleev-8b3c88 claude/xenodochial-mendeleev-8b3c88     1      0     28  HOLDS-CONTENT
+  <projects-root>/workstreams-ui-server       ws-ui-server-stable                    0      0      0  HOLDS-CONTENT
+  Total: 14 worktree(s), 0 SAFE-PRUNE candidate(s)
+  Stashes: 8
+    stash@{0}: 10d old — WIP on master: 7105059 fix(rules-index): restore workstream-memory-ecology.md INDEX row
+    stash@{1}: 16d old — On fix/conv-tree-toast-stacking-2026-05-23: auto-stash-task1-recovery
+    stash@{2}: 20d old — On master: auto-pre-pull-20260520T210806Z
+    stash@{3}: 20d old — On master: auto-pre-pull-20260520T181436Z
+    stash@{4}: 21d old — On master: auto-pre-pull-20260520T060228Z
+    stash@{5}: 22d old — On master: auto-pre-pull-20260518T193635Z
+    stash@{6}: 22d old — On master: auto-pre-pull-20260518T190818Z
+    stash@{7}: 22d old — On master: auto-pre-pull-20260518T171142Z

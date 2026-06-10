@@ -47,7 +47,7 @@ compact line per repo (count > 5) ready for later SessionStart wiring.
 - `docs/plans/worktree-hygiene-sweeper-2026-06-09.md` — this plan
 
 ## In-flight scope updates
-(no in-flight changes yet)
+- 2026-06-10: `docs/plans/worktree-hygiene-sweeper-2026-06-09-evidence/**` — closure evidence artifacts (3x mechanical .evidence.json + path-anonymized neural-lace report-only run; downstream-repo report run kept out of the harness repo per harness-hygiene, captured in session return)
 
 ## Assumptions
 - `git worktree list --porcelain` output shape (worktree/branch/bare lines) is
