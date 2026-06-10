@@ -1,5 +1,6 @@
 # Plan: Doctrine-Scoping Rules Authoring — Where Doctrine Lives, and Who Loads It
-Status: ACTIVE
+Status: DEFERRED
+<!-- DEFERRED 2026-06-04 by stale-ACTIVE-plan cleanup. Design phase shipped (plan + harness-hygiene-roadmap, PR #7 50bb4a9). The R1–R5 implementation roadmap is entirely unbuilt with no commits in 8 days while active work moved to orchestrator-prime/cross-machine. RE-ENGAGE TRIGGER: when doctrine-scoping implementation is scheduled — flip back to ACTIVE and restore from archive. NOTE before resuming: reserved ADR 044 collided (taken by 044-neural-lace-mirror-automation); re-reserve a free ADR number for R1. Reversible. -->
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none
@@ -42,10 +43,10 @@ policy:
 
 **The confirmed memory-load bug (PROVEN this session).** The cwd-mangle is keyed
 to the session's EXACT cwd. This session's cwd
-(`…/Pocket Technician/neural-lace`) maps to the mangle
-`C--Users-misha-dev-Pocket-Technician-neural-lace`, whose `memory/` dir exists
+(`…/<consumer-org>/neural-lace`) maps to the mangle
+`<machine-slug>-<consumer-org>-neural-lace`, whose `memory/` dir exists
 but has **no MEMORY.md** — while the real memories live one level up in
-`C--Users-misha-dev-Pocket-Technician/memory/` (which HAS MEMORY.md). So a
+`<machine-slug>-<consumer-org>/memory/` (which HAS MEMORY.md). So a
 repo-cwd session cannot see its parent-cwd memories. **Worse:** every worktree
 gets its OWN mangle (`…neural-lace--claude-worktrees-<name>`), so worktree
 sessions miss BOTH the repo-cwd AND the parent-cwd memories. The fix is an
@@ -125,9 +126,9 @@ piece #3, in its OWN future plan — not a file this plan's R-tasks edit.)
 
 - The cwd-mangle is keyed to the session's exact cwd, producing distinct mangles
   for repo-cwd, parent-cwd, and each worktree (PROVEN this session: the dir
-  listing showed `…Pocket-Technician`, `…Pocket-Technician-neural-lace`, and
+  listing showed `…<consumer-org>`, `…<consumer-org>-neural-lace`, and
   `…neural-lace--claude-worktrees-<name>` as separate mangle dirs, with MEMORY.md
-  present ONLY in the parent `…Pocket-Technician/memory`).
+  present ONLY in the parent `…<consumer-org>/memory`).
 - The memory `name:` frontmatter slug is a stable de-duplication key (confirmed by
   the auto-memory memory-file format the harness defines).
 - `harness-maintenance.md` is the authoritative global-doctrine load policy
@@ -301,7 +302,7 @@ CAN be made to resolve its parent's memories.
 Success, measured post-implementation (jointly with piece #3): (1) a repo-cwd
 session resolves and loads its parent-cwd memories — the exact bug observed this
 session (this session was pointed at an empty `…neural-lace/memory` while the
-real memories sat in `…Pocket-Technician/memory`) goes to ZERO; (2) a worktree
+real memories sat in `…<consumer-org>/memory`) goes to ZERO; (2) a worktree
 session resolves to its parent repo's chain and sees the same memories as a
 repo-cwd session — the worktree blind spot goes to ZERO; (3) the harness has ONE
 written policy stating where each doctrine type lives and which session mode loads
@@ -315,14 +316,14 @@ boundary, not silently fixed.
 ### 2. End-to-end trace with a concrete example
 
 The real bug, traced. A session starts with cwd
-`…/Pocket Technician/neural-lace`. Today: the auto-memory injection points at
-`~/.claude/projects/C--Users-misha-dev-Pocket-Technician-neural-lace/memory/`,
+`…/<consumer-org>/neural-lace`. Today: the auto-memory injection points at
+`~/.claude/projects/<machine-slug>-<consumer-org>-neural-lace/memory/`,
 which has no MEMORY.md → the session loads nothing, even though
-`…Pocket-Technician/memory/MEMORY.md` exists one level up. Post-fix: the
+`…<consumer-org>/memory/MEMORY.md` exists one level up. Post-fix: the
 ancestor-chain resolver decomposes the cwd into its ancestor chain
-(`…neural-lace` → `…Pocket Technician` → … capped at the §D2 root), maps each to
+(`…neural-lace` → `…<consumer-org>` → … capped at the §D2 root), maps each to
 its mangle, finds memory dirs at `…-neural-lace` (empty) and
-`…-Pocket-Technician` (MEMORY.md + memories), unions them de-duplicated by `name:`
+`…-<consumer-org>` (MEMORY.md + memories), unions them de-duplicated by `name:`
 slug (nearest-cwd-wins on conflict), and the session loads the parent's memories.
 For a worktree cwd
 `…/neural-lace/.claude/worktrees/bold-albattani-0939ef`: the resolver recognizes
@@ -438,7 +439,7 @@ R5↔bootstrap+index); the LOADER is explicitly OUT (piece #3) and is prescribed
 no Files-to-Modify line here; 0 stranded.
 S2 (Existing-Code-Claim Verification): swept — the cwd-mangle structure (separate
 mangles for repo / parent / worktree; MEMORY.md only in the parent
-`…Pocket-Technician/memory`) was PROVEN by the directory listing this session;
+`…<consumer-org>/memory`) was PROVEN by the directory listing this session;
 claims about `harness-maintenance.md` (default-to-global) and Decision 011
 (project-`.claude/`-only cloud inheritance) verified against this session's
 context; all confirmed accurate.

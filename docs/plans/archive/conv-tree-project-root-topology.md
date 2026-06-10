@@ -1,5 +1,6 @@
 # Plan: Conversation Tree — project-root topology + wire auto-extract hook + path-fallback fix
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: migrate-topology-to-project-roots.js + backfill-from-sessions.js + emit path-fallback (CONV_TREE_MAIN_CHECKOUT) + extract-pending wiring (scripts moved to workstreams-ui/ in the conv-tree→workstreams rename). Shipped PR #20 (4e64e6e). Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 tier: 2
@@ -12,7 +13,7 @@ acceptance-exempt-reason: Harness-internal conversation-tree tooling; no product
 Backlog items absorbed: none
 
 ## Goal
-Misha's directive: the Conversation Tree must not use dates as root nodes. Dispatch is single-threaded, so per-project chronological order is implicit and date grouping is unnecessary. Projects/repos become the top-level (root) nodes; sessions render directly under their project; subagents under sessions. Also fix two latent bugs surfaced by the auto-update diagnosis: (a) the `conversation-tree-extract-pending.sh` Stop hook was authored but never wired into settings — the reason the tree stopped auto-updating for ordinary sessions; (b) `conversation-tree-emit.sh` has a hardcoded, wrong fallback path (`~/claude-projects/neural-lace/neural-lace/...`; real checkout is `~/dev/Pocket Technician/neural-lace`).
+Misha's directive: the Conversation Tree must not use dates as root nodes. Dispatch is single-threaded, so per-project chronological order is implicit and date grouping is unnecessary. Projects/repos become the top-level (root) nodes; sessions render directly under their project; subagents under sessions. Also fix two latent bugs surfaced by the auto-update diagnosis: (a) the `conversation-tree-extract-pending.sh` Stop hook was authored but never wired into settings — the reason the tree stopped auto-updating for ordinary sessions; (b) `conversation-tree-emit.sh` has a hardcoded, wrong fallback path (`~/claude-projects/neural-lace/neural-lace/...`; real checkout is `~/dev/<consumer-org>/neural-lace`).
 
 ## Scope
 - IN:
@@ -59,7 +60,7 @@ Misha's directive: the Conversation Tree must not use dates as root nodes. Dispa
 - backfill: `--dry-run` against the migrated state; assert no `today-*` branch-opened emitted and project branches carry `parent_id: null`.
 - emit.sh: `bash conversation-tree-emit.sh --self-test` passes; CONV_TREE_MAIN_CHECKOUT override resolves correctly.
 - settings template: `node -e` JSON-parse the template; assert extract-pending command present immediately after `--on-stop` in the Stop chain.
-- GUI: start server at :7733, load page, confirm roots are the project nodes (Circuit, foresight, neural-lace, etc.), sessions nested under them, no "Today —" roots.
+- GUI: start server at :7733, load page, confirm roots are the project nodes (<consumer-products>, neural-lace, etc.), sessions nested under them, no "Today —" roots.
 - Auto-update: confirm `~/.claude/logs/conversation-tree-extract-pending.log` records a real (non-self-test) session entry after this session ends.
 
 ## Walking Skeleton

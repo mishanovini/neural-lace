@@ -1,5 +1,5 @@
 # Plan: Workstreams R2 — land live UI deltas, harvest stranded branches, fix stale-tab modal class
-Status: ACTIVE
+Status: SUPERSEDED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -89,3 +89,6 @@ n/a — Mode: code, single-purpose harness-infrastructure plan.
 - [ ] All tasks checked off
 - [ ] Selftests pass
 - [ ] Branch pushed; orchestrator merges
+
+## Superseded note (2026-06-10)
+Phase plan of the Workstreams consolidation. Its entire scope shipped to master (R2: cbee009+c4a2d55; R7: 433f164) and was verified under docs/plans/archive/workstreams-consolidation-2026-06-08.md — task-verifier 6/6 + end-user-advocate runtime 4/4 PASS (r8 artifact). Closed as SUPERSEDED by that plan's closure rather than duplicating its evidence.

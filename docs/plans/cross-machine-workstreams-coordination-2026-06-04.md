@@ -4,7 +4,7 @@ Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
 prd-ref: n/a — harness-development
-acceptance-exempt: true
+acceptance-exempt: false
 acceptance-exempt-reason: Harness-infrastructure work (coordination scripts + Workstreams UI internals); the acceptance bar is the scripts' --self-tests + the GUI functional verification described in Testing Strategy, not a contractor-facing runtime scenario.
 tier: 3
 rung: 2

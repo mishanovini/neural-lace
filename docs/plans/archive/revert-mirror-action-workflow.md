@@ -1,6 +1,7 @@
 # Plan: Revert mirror Action workflow (keep sync.sh; switch to harness-internal drift detection)
 
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Deliverable was REMOVAL: .github/workflows/mirror-to-sister.yml is GONE from HEAD; ADR-044 status flipped to "Reverted (2026-05-28)" with matching DECISIONS row; sync.sh correctly kept per OUT scope. The absence IS the success signal. Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 frozen: true
@@ -37,7 +38,7 @@ URL-based `sync.sh` wrapper covers the steady-state need. Drift coverage moves t
 - `docs/DECISIONS.md` — flip row 044 status to Reverted
 
 ## Testing Strategy
-- Mechanical: post-merge, `gh workflow list --repo Pocket-Technician/neural-lace` no
+- Mechanical: post-merge, `gh workflow list --repo <consumer-org>/neural-lace` no
   longer shows "Mirror master to sister repo"; `ls .github/workflows/` doesn't include
   `mirror-to-sister.yml`.
 

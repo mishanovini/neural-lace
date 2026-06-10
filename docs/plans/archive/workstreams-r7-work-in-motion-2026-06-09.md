@@ -1,5 +1,5 @@
 # Plan: Workstreams R7 — work-in-motion ingestion sweeper
-Status: ACTIVE
+Status: SUPERSEDED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -120,3 +120,6 @@ facade events → snapshot shape the UI filters consume → zero-event re-run).
 - [ ] All tasks checked off
 - [ ] Selftest 34/34 + existing selftests green
 - [ ] Branch pushed; orchestrator merges + runs the canonical sweep
+
+## Superseded note (2026-06-10)
+Phase plan of the Workstreams consolidation. Its entire scope shipped to master (R2: cbee009+c4a2d55; R7: 433f164) and was verified under docs/plans/archive/workstreams-consolidation-2026-06-08.md — task-verifier 6/6 + end-user-advocate runtime 4/4 PASS (r8 artifact). Closed as SUPERSEDED by that plan's closure rather than duplicating its evidence.
