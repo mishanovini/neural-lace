@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "3203d017b2a8d3c7cafe93ad53c00287bd6c890d",
+  "files_modified": [
+    "adapters/claude-code/hooks/scope-enforcement-gate.sh",
+    "adapters/claude-code/settings.json.template",
+    "docs/plans/scope-gate-target-repo-fix-2026-06-10.md"
+  ],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/hooks/scope-enforcement-gate.sh": {
+      "passed": true,
+      "detail": "adapters/claude-code/hooks/scope-enforcement-gate.sh exists",
+      "command": "test -e adapters/claude-code/hooks/scope-enforcement-gate.sh",
+      "exit_code": 0
+    },
+    "command:grep -q '_analyze_git_segment' adapters/claude-code/hooks/scope-enforcement-gate.sh && grep -q '_parse_cd_target' adapters/claude-code/hooks/scope-enforcement-gate.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q '_analyze_git_segment' adapters/claude-code/hooks/scope-enforcement-gate.sh && grep -q '_parse_cd_target' adapters/claude-code/hooks/scope-enforcement-gate.sh",
+      "exit_code": 0
+    },
+    "command:bash adapters/claude-code/hooks/scope-enforcement-gate.sh --self-test": {
+      "passed": true,
+      "detail": "S (correctly blocked)\nself-test (30) gap47-repeated-dash-C-composes: PASS\nself-test (31) gap47-powershell-tool-gated: PASS (correctly blocked)\n\nself-test summary: 31 passed, 0 failed (of 31 scenarios)",
+      "command": "bash adapters/claude-code/hooks/scope-enforcement-gate.sh --self-test",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "3 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T12:02:12Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/scope-gate-target-repo-fix-2026-06-10.md"
+}
