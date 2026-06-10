@@ -140,7 +140,12 @@ extract_verification_level() {
   fi
 
   local level
-  level=$(printf '%s\n' "$block" | grep -iEo 'Verification:[[:space:]]*(mechanical|contract|full)' | head -1 | sed -e 's/Verification:[[:space:]]*//I' | tr '[:upper:]' '[:lower:]')
+  # LAST occurrence wins (discovery 2026-05-11-close-plan-verification-field-
+  # parser-greedy): a task description may legitimately mention a level in
+  # prose (e.g. "add functionality-verifier requirement for `Verification:
+  # full` runtime tasks — Verification: mechanical"); the trailing field is
+  # the declaration. First-occurrence parsing misclassified such tasks.
+  level=$(printf '%s\n' "$block" | grep -iEo 'Verification:[[:space:]]*(mechanical|contract|full)' | tail -1 | sed -e 's/Verification:[[:space:]]*//I' | tr '[:upper:]' '[:lower:]')
 
   if [[ -z "$level" ]]; then
     printf 'full\n'
@@ -815,7 +820,7 @@ run_self_test() {
   local PASSED=0 FAILED=0
   local saved_pwd="$PWD"
 
-  printf 'close-plan.sh self-test (11 scenarios)\n\n' >&2
+  printf 'close-plan.sh self-test (12 scenarios)\n\n' >&2
 
   # ----- S1: all-mechanical-tasks-closure -----
   local D1; D1=$(setup_synthetic_repo "S1" "p-mech")
@@ -1319,9 +1324,52 @@ EOF
   fi
   rm -rf "$D11"
 
+  # ----- S12: inline-phrase-collision — task prose mentions `Verification:
+  # full` but the trailing declaration is `Verification: mechanical`; the
+  # LAST occurrence must win (discovery 2026-05-11-close-plan-verification-
+  # field-parser-greedy). With only a mechanical .evidence.json present,
+  # closure succeeds iff the parser picked `mechanical`. -----
+  local D12; D12=$(setup_synthetic_repo "S12" "p-collide")
+  (
+    cd "$D12" || exit 1
+    cat > docs/plans/p-collide.md <<'EOF'
+# Plan: P Collide
+Status: ACTIVE
+Backlog items absorbed: none
+
+## Goal
+inline-phrase collision must not misclassify the verification level
+
+## Scope
+- IN: x
+- OUT: y
+
+## Tasks
+- [x] 1. Add requirement for `Verification: full` runtime tasks — Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-collide.md`
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-collide-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-collide-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+    bash "$SELF_PATH" close p-collide --no-push >/dev/null 2>&1
+  )
+  if [[ -f "$D12/docs/plans/archive/p-collide.md" ]] \
+     && grep -q '^Status: COMPLETED' "$D12/docs/plans/archive/p-collide.md"; then
+    printf 'self-test (S12) inline-phrase-collision-last-occurrence-wins: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S12) inline-phrase-collision-last-occurrence-wins: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D12"
+
   cd "$saved_pwd"
 
-  printf '\nself-test summary: %d passed, %d failed (of 11 scenarios)\n' "$PASSED" "$FAILED" >&2
+  printf '\nself-test summary: %d passed, %d failed (of 12 scenarios)\n' "$PASSED" "$FAILED" >&2
   if [[ $FAILED -eq 0 ]]; then
     return 0
   fi

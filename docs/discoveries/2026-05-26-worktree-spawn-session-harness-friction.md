@@ -2,8 +2,8 @@
 title: 3 harness-friction items from the worktree-spawn-primitive session
 date: 2026-05-26
 type: process
-status: pending
-auto_applied: false
+status: implemented
+auto_applied: true
 originating_context: feat/worktree-spawn-primitive session (PR #11) — building the worktree-spawn primitive in an isolated worktree
 decision_needed: Should any of these three gate/auto-deploy frictions be fixed? Each is a harness-improvement SUGGESTION surfaced for Misha's decision per friction-reflexion.md (not filed as committed work).
 predicted_downstream:
@@ -73,8 +73,31 @@ lowest-severity (cosmetic tracker noise).
 
 ## Decision
 
-(pending Misha's decision — surfaced per friction-reflexion.md; NOT auto-applied)
+**B (the recommended floor) implemented; (1) and (2) remain surfaced
+discussion suggestions (auto-applied per discovery-protocol — B is a
+small, reversible, mechanism-internal fix the discovery itself
+recommended; 2026-06-10 pending-discoveries triage).** Re-verified
+2026-06-10: all three frictions were still live. (3) was the latent
+machine-wide breakage — `git-hooks/post-commit` runs the COMMITTING
+worktree's install.sh, whose `ADAPTER_DIR` derives from its own
+location, so every worktree commit repointed the GLOBAL `core.hooksPath`
+at a prunable worktree path. Fixed: install.sh now resolves a
+`STABLE_ADAPTER_DIR` (via `git rev-parse --git-common-dir` ≠ `--git-dir`
+worktree detection → main-checkout adapter dir) and uses it for the
+hooksPath pointer; file-sync to `~/.claude/` still deploys what was
+committed (unchanged semantics). (1) scope-gate orphan-commit
+false-fire and (2) task-completed-gate tracker-id conflation stay
+deliberately UN-built and UN-filed: per friction-reflexion.md they are
+suggestions needing Misha's discussion — (1) touches a load-bearing
+gate's semantics; (2) is cosmetic. Both were re-surfaced to Misha in the
+2026-06-10 triage return. Note (1) reproduced live during this very
+triage (the triage session had to open a bookkeeping plan to commit).
 
 ## Implementation log
 
-(empty — no fix built this session; these are suggestions for discussion)
+- `adapters/claude-code/install.sh` — `STABLE_ADAPTER_DIR` resolution
+  (worktree-aware via git-common-dir) + both hooksPath call sites
+  (dry-run Phase 4 echo + actual `git config --global` set) now use it;
+  resolution verified live from a linked worktree (resolves to the main
+  checkout's `adapters/claude-code`).
+- Landed via the 2026-06-10 pending-discoveries-triage branch.

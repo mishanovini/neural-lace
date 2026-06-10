@@ -2,8 +2,8 @@
 title: close-plan.sh Verification-field parser is greedy
 date: 2026-05-11
 type: failure-mode
-status: pending
-auto_applied: false
+status: implemented
+auto_applied: true
 originating_context: docs/plans/functionality-verification-pipeline.md (Task 3 closure)
 decision_needed: Should close-plan.sh (and plan-reviewer.sh Check 12) anchor the `Verification:` field parse to end-of-line or to a specific separator, instead of taking the first occurrence on the line?
 predicted_downstream:
@@ -50,8 +50,12 @@ A alone would close the immediate bug; C alone would surface it earlier but not 
 
 ## Decision
 
-Pending — flagged for review. Out of scope for this session (the workaround landed and the plan closed). The fix is small (one regex change in two files plus the Check 12 warning) but lands as its own harness-improvement work-shape and warrants a brief ADR or a backlog entry rather than being absorbed silently.
+**A + C implemented (auto-applied, 2026-06-10 pending-discoveries triage).** Re-verified against the 2026-06-10 repo: close-plan.sh:143 still took the FIRST `Verification:` occurrence (`head -1`) — the bug was live. Note plan-reviewer.sh Check 12 and plan-edit-validator.sh were already last-occurrence (their greedy-`.*` sed anchors to the final occurrence), so the contract chosen is "LAST occurrence wins" everywhere. Class-sweep found two SIBLING any-occurrence exemption greps (plan-reviewer.sh Check-5 Tier A/B exemptions; wire-check-gate.sh flipped-line exemption) where a prose mention of `Verification: mechanical` could wrongly exempt a full-tier task — both converted to last-occurrence extraction. Reversible (single-revert per file); auto-applied per discovery-protocol.
 
 ## Implementation log
 
-(empty — pending decision)
+- `adapters/claude-code/scripts/close-plan.sh` — `head -1` → `tail -1` (last occurrence wins) + new S12 self-test scenario (inline-phrase collision closes successfully with mechanical evidence); self-test 12 scenarios, 0 fail.
+- `adapters/claude-code/hooks/plan-reviewer.sh` — Check 12 emits a non-blocking disambiguation notice when a task line carries ≥2 `Verification: <level>` occurrences (recommendation C, warn-form); Check-5 Tier A + Tier B mechanical/contract exemptions converted from any-occurrence grep to last-occurrence sed; self-test green (0 unexpected failures).
+- `adapters/claude-code/hooks/wire-check-gate.sh` — mechanical/contract exemption converted to last-occurrence sed; self-test all scenarios matched expectations.
+- `adapters/claude-code/rules/risk-tiered-verification.md` — parser contract documents "when the token appears more than once, the LAST occurrence wins" (recommendation D).
+- Landed via the 2026-06-10 pending-discoveries-triage branch (commit SHAs in the triage plan's evidence).

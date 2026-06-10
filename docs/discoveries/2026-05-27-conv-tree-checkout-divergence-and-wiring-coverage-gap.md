@@ -2,7 +2,7 @@
 title: Main checkout diverged from origin/master; hook-wiring-coverage gap
 date: 2026-05-27
 type: process
-status: pending
+status: implemented
 auto_applied: false
 originating_context: conv-tree project-root topology session (PR #20). Discovered while landing the topology fix — the "extract-pending hook was never wired" symptom traced to a diverged checkout, not a missing commit.
 decision_needed: How should the main checkout (`feat/harness-principles-doc-and-gate` @5eecd69) be reconciled with origin/master, given it has 3 local-only commits AND is missing ~10 origin commits?
@@ -14,7 +14,7 @@ predicted_downstream:
 
 ## What was discovered
 
-1. **Checkout divergence.** The main checkout (`~/dev/Pocket Technician/neural-lace`) sits on branch
+1. **Checkout divergence.** The main checkout (`~/dev/<work-org>/neural-lace`) sits on branch
    `feat/harness-principles-doc-and-gate` @ `5eecd69`, which forked from `origin/master` at merge-base
    `fff2de3`. It carries **3 local-only "design:" commits** (`03a7d2d`, `234950a`, `5eecd69` — Pattern-2
    sequencing + plan-lifecycle-redesign ADR 036) that were never pushed, AND is **missing ~10 origin/master
@@ -59,8 +59,34 @@ via a normal PR when ready (B's end state). Reason: A is fully reversible and pr
 
 ## Decision
 
-(pending Misha's choice of A/B/C)
+**Resolved by the fork-unification, verified 2026-06-10 (pending-discoveries
+triage).** The reconciliation question is moot in the best way: the
+PT↔personal fork reconcile (discovery
+`2026-06-02-pt-personal-fork-reconcile-and-adr-renumber.md`, status
+implemented) landed the divergent lines onto a single tree via the
+Neural Lace unification cutover (PR #29, commit `e99e4b6`), and the
+diverged dev checkout (`~/dev/<work-org>/neural-lace`) no longer
+exists on this machine — the single main checkout is
+`~/claude-projects/neural-lace` on master. The 3 local-only design
+commits' content is on master: `rules/principles.md` +
+`principles-compliance-gate.sh` (the branch's namesake work), ADR 036
+(plan-lifecycle, renumbered slot), and the plan-lifecycle-redesign plan
+(ACTIVE, design phase done per the 2026-06-10 stale-plan triage). The
+extract-pending hook is wired in `settings.json.template` (now
+`workstreams-extract-pending.sh` post-rename) — the original "never
+wired" symptom was indeed the staleness artifact this discovery
+diagnosed. RESIDUAL (still open, deliberately not self-filed per
+friction-reflexion.md): the hook-wiring-coverage lint (finding 3) —
+`evals/golden/` has `rules-index-coverage.sh` but no
+hooks-wired-in-template coverage test; re-surfaced to Misha as a
+discussion suggestion in the 2026-06-10 triage return.
 
 ## Implementation log
 
-(empty until decided)
+- Unification cutover PR #29 (`e99e4b6`) — single-tree end state
+  (effectively option B's end state, reached via the fork reconcile
+  rather than this discovery's own A/B/C).
+- Dev checkout removed from the machine; no diverged line remains.
+- Status flipped pending → implemented in the 2026-06-10 triage; the
+  wiring-coverage-lint residual is tracked only as a surfaced suggestion
+  (no backlog entry without Misha's say-so).
