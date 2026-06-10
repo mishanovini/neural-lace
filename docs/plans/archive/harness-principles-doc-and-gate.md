@@ -1,5 +1,6 @@
 # Plan: Harness Principles Doc + Warn-Mode Compliance Gate
-Status: ACTIVE
+Status: COMPLETED
+<!-- Closed 2026-06-04 by stale-ACTIVE-plan cleanup. Verified on master HEAD: rules/principles.md + hooks/principles-compliance-gate.sh, wired in settings.json.template Stop chain, harness-architecture.md hook-row + changelog. Shipped PR #23 (6924d2b). Dispatch never ran task-verifier. -->
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -54,7 +55,7 @@ item A27 (principles-doc authoring).
   so the Stop-hook final-message scan is the closest real mechanical surface.
 - The live `~/.claude/` mirror is a per-machine copy synced from the repo (Windows install.sh
   copies, not symlinks); both must be updated and kept byte-identical.
-- "Misha" in prose is not denylisted (only `mishanovini`/`MishaPT`/user-path patterns are).
+- "Misha" in prose is not denylisted (only the literal account handles + user-path patterns are).
 
 ## Edge Cases
 

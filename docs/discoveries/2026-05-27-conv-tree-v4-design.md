@@ -2,7 +2,7 @@
 title: Conv-Tree v4 — the redesign Misha asked for already exists (unmerged); adopt it
 date: 2026-05-27
 type: architectural-learning
-status: pending
+status: superseded
 auto_applied: false
 originating_context: Misha's screenshot+feedback on PR #24 (flat-list, sidebar dump). Build a v4 that (1) shows real branching, (2) uses a centered modal, (3) shows curated response-ready details.
 decision_needed: Adopt the existing unmerged accordion redesign onto master (recommended), and decide the fork-reconciliation path for landing it. Plus 4 UX calls listed below.
@@ -159,9 +159,32 @@ branch. Verified:
 
 ## Decision
 
-Pending Misha. Recommended: adopt the accordion redesign (req #1 + #2 satisfied
-immediately; req #3 render-ready, data-empty), answer the 4 UX calls, then land via a
-normal PR once the fork target is decided. NOT building a fresh v4 — the redesign exists.
+**SUPERSEDED by the Workstreams reframe + rebuild (verified 2026-06-10,
+pending-discoveries triage).** The accordion-adoption recommendation was overtaken: the
+conv-tree UI was renamed and substantially rebuilt as `neural-lace/workstreams-ui` (ADR
+045 workstreams reframe; rename commit `43be5c8`; work-first reframe design discovery
+2026-05-30). All three v4 requirements shipped via that successor line rather than via
+the accordion overlay:
+
+1. **Real branching tree** → `3da37b1` ("real tier nesting in tree — kill the flat-list")
+   + `ebc0453` ("real Repo→Project→Workstream→WorkItem tiers") — PR #24's
+   sessions-hidden flat render is gone.
+2. **Centered modal item-detail** → `347cdd8` ("Phase D — item-detail MODAL,
+   context-appropriate action buttons").
+3. **Curated response-ready details** → the decision-context fence grammar (ADR 047)
+   gives the write side a structured details payload, and `2bdc33a` renders
+   fence-grammar detail rows on field presence; the orchestrator-prime skill mandates
+   schema-valid emission. The "0 of 62 items have details" write-side gap this discovery
+   documented was the root the fence-grammar work closed.
+
+The unmerged accordion branch's analysis remains historically useful (it correctly
+located the flat-list defect at app.js:920 and proved the data model supported
+branching), but adopting it now would regress the R-rebuild. The 4 UX calls are
+moot-or-answered in the successor: (1) tree=structure + items-in-detail surfaces per the
+R-rebuild's tier design; (2) fork reconciliation happened (unification cutover
+`e99e4b6`); (3) details flow forward via fence-grammar emission, no narration backfill
+(per 2026-06-02 backfill discovery, implemented); (4) #20's emit-path concern was
+subsumed by the canonical-state-path resolver (`0291279`).
 
 ## How to view it live
 

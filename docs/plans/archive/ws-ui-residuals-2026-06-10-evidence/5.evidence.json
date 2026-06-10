@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "task_id": "5",
+  "verdict": "PASS",
+  "commit_sha": "ad1ebd018623263699ff5770dd0a1312562e6666",
+  "files_modified": [
+    "docs/plans/ws-ui-residuals-2026-06-10.md",
+    "neural-lace/workstreams-ui/state/reducer.js",
+    "neural-lace/workstreams-ui/state/schema.js",
+    "neural-lace/workstreams-ui/state/selftest.js",
+    "neural-lace/workstreams-ui/web/app.js"
+  ],
+  "mechanical_checks": {
+    "command:jq -e '.results | length == 6 and all(.pass)' advocate-result.tmp.json": {
+      "passed": true,
+      "detail": "true",
+      "command": "jq -e '.results | length == 6 and all(.pass)' advocate-result.tmp.json",
+      "exit_code": 0
+    },
+    "command:jq -e '.counts.awaiting == 34 and .counts.inflight == 175 and .textScan.fffdInPage == 0 and (.consoleErrors | length == 0)' advocate-result.tmp.json": {
+      "passed": true,
+      "detail": "true",
+      "command": "jq -e '.counts.awaiting == 34 and .counts.inflight == 175 and .textScan.fffdInPage == 0 and (.consoleErrors | length == 0)' advocate-result.tmp.json",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T15:44:24Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/ws-ui-residuals-2026-06-10.md"
+}

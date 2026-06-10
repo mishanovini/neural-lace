@@ -1,5 +1,6 @@
 # Plan: File-Lifecycle Redesign — Curative Mechanics for Session-Generated Artifacts
-Status: ACTIVE
+Status: DEFERRED
+<!-- DEFERRED 2026-06-04 by stale-ACTIVE-plan cleanup. Design phase shipped (plan PR #15, ADR 037 + ADR 038 + root-cause discovery on HEAD). R-task roadmap mostly unbuilt (R3 pending-items-marker-convention.md and R5 docs-publish-on-stop.sh / published-docs-surfacer.sh absent; R1 session-wrap markers + R4 extract hook landed piecemeal). No commits in 9 days. RE-ENGAGE TRIGGER: when file-lifecycle implementation resumes — reconcile the piecemeal R1/R4 landings, flip back to ACTIVE, restore from archive. Reversible. -->
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none
@@ -208,7 +209,7 @@ in a worktree is readable in the operator's main checkout `docs/reviews/` (or
 surfaced for harvest) even when the worktree branch is never merged.
 
 ### 2. End-to-end trace with a concrete example
-RC1: At T=0 a session starts in `~/dev/Pocket Technician/neural-lace` (no
+RC1: At T=0 a session starts in `~/dev/<consumer-org>/neural-lace` (no
 SCRATCHPAD.md). Stop fires. `session-wrap.sh refresh` runs: `find_repo_root` →
 parent root; `cmd_refresh` sees `! -f SCRATCHPAD.md` → writes the 30-line stub to a
 temp file → `mv` into place (atomic) → appends the `<!-- session-wrap.sh: handoff

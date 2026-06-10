@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "task_id": "3",
+  "verdict": "PASS",
+  "commit_sha": "24ea5968f63fb3df16ba5a6ddfabe0609d507d0a",
+  "files_modified": [
+    "docs/plans/archive/ws-ui-residuals-2026-06-10-evidence.md",
+    "docs/plans/archive/ws-ui-residuals-2026-06-10.md",
+    "docs/plans/ws-ui-residuals-2026-06-10.md"
+  ],
+  "mechanical_checks": {
+    "command:node neural-lace/workstreams-ui/state/check-attest.tmp.js": {
+      "passed": true,
+      "detail": "state: <canonical-workstreams-state> fffd: 0 attested: true",
+      "command": "node neural-lace/workstreams-ui/state/check-attest.tmp.js",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T15:47:35Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/archive/ws-ui-residuals-2026-06-10.md"
+}

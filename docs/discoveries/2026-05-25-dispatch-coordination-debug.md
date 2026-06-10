@@ -5,7 +5,7 @@ type: process
 status: pending
 auto_applied: false
 originating_context: Pattern-5 (Dispatch coordination) design session of the plan-lifecycle redesign initiative; live diagnostic pass on this machine (Claude Code 2.1.146, claude-desktop entrypoint) before authoring docs/plans/dispatch-coordination-redesign.md
-decision_needed: Confirm the diagnosis (esp. the two refuted brief premises) and greenlight the Mode:design plan + ADRs 039/041/042 for a separate build phase. None of the fixes are implemented this session (design-only).
+decision_needed: "(sharpened 2026-06-10) Greenlight — or descope/supersede — docs/plans/dispatch-coordination-redesign.md (still Status: DRAFT) + ADRs 039/041/042 (all still Proposed). Since this discovery was written, OTHER routes shipped parts of the design: RC2b's cwd-divergent state path is fixed (shared canonical-state-path resolver, 0291279, Workstreams consolidation); RC1's topology is reframed by orchestrator-prime (ADR 050 + live skill: the orchestrator polls/wakes itself, Dispatch relays per rules/dispatch-relay-protocol.md); a partial RC5 exists (scripts/check-cross-repo-drift.sh has an optional ntfy alert per the ADR-042 contract). Still unbuilt: RC3 dispatch-mode autodetect (ADR 041; dispatch-mode.json is still a manual flip), the general RC5 Notification/Stop ntfy path, RC4 duplicate-spawn detection, and the RC1 upstream issue filing. The decision is whether to greenlight a SLIMMED build phase covering the remaining RCs, fold them into orchestrator-prime's program backlog and supersede the plan, or defer."
 predicted_downstream:
   - docs/plans/dispatch-coordination-redesign.md
   - docs/decisions/041-dispatch-mode-autodetect-signal.md
@@ -55,10 +55,10 @@ The real causes are two, neither a matcher typo:
 - **(b) Sink/source path divergence (PROVEN).** `~/.claude/logs/conv-tree-read.log`
   (updated *today*, 2026-05-25) repeatedly reports
   `state file absent (…/neural-lace/neural-lace/conversation-tree-ui/state/tree-state.json) — no-op`,
-  flipping between two roots: `/c/Users/misha/claude-projects/neural-lace/…` and
-  `/c/Users/misha/dev/Pocket Technician/neural-lace/…`. The GUI server (per
+  flipping between two roots: `~/claude-projects/neural-lace/…` and
+  `~/dev/<work-org>/neural-lace/…`. The GUI server (per
   `conv-tree-launcher.log`) runs from
-  `C:\Users\misha\dev\Pocket Technician\neural-lace\neural-lace\conversation-tree-ui`
+  `~/dev/<work-org>/neural-lace/neural-lace/conversation-tree-ui`
   (note the doubled `neural-lace\neural-lace` — a nested checkout). The emit/read hooks
   resolve the state path **relative to each session's cwd**, so a session running from
   `claude-projects` writes/reads a *different* state file than the one the GUI watches.
@@ -79,7 +79,7 @@ The brief's proposed signal was `CLAUDE_CODE_ENTRYPOINT=claude-desktop` +
   reported "requires manual flip" pain). The file still carries the example `_comment`.
 
 ### RC4 — No idempotency on Dispatch task-spawn (HYPOTHESIZED at Dispatch side)
-Reported: today a Foresight session double-spawned (laughing-poitras + zealous-lalande,
+Reported: today a personal-project session double-spawned (two sibling sessions
 ~1 min apart, same brief) — a timeout-induced duplicate spawn.
 - HYPOTHESIZED (Dispatch-internal, not directly observable from here): a Dispatch
   spawn RPC timed out client-side, the spawn actually succeeded server-side, and the
@@ -139,9 +139,38 @@ Reversibility: this discovery records observations only; auto_applied:false beca
 downstream is a multi-ADR design that warrants Misha's explicit greenlight (not a
 single-revert reversible change).
 
+## Current state (re-verified 2026-06-10, pending-discoveries triage)
+
+The diagnosis itself has held — both refutations stand, and later work built on them.
+What changed since 2026-05-25:
+
+- **RC2b FIXED by another route.** The cwd-divergent state-path scatter was converged by
+  the Workstreams consolidation's shared canonical-state-path resolver (commit `0291279`,
+  "converge 9-file scatter onto one file"; `~/.claude/workstreams-state-path.txt` is the
+  live pin). The nested dev checkout that hosted the doubled path was removed entirely
+  (see 2026-05-27 checkout-divergence discovery, now implemented).
+- **RC1 reframed by orchestrator-prime.** ADR 050 + the live `orchestrator-prime` skill
+  invert the topology: the harness-native orchestrator wakes itself (loop/scheduled task),
+  polls inbox/tree/sessions, and surfaces to Misha via spawn_task chips — Dispatch relays
+  per `rules/dispatch-relay-protocol.md`. The "parent-wake" Anthropic gap remains real but
+  is no longer the load-bearing path; the upstream issue
+  (`docs/proposals/anthropics-claude-code-parent-wake-issue.md`) remains unfiled.
+- **RC5 partially built.** `scripts/check-cross-repo-drift.sh` carries an optional
+  drift-only ntfy POST per the ADR-042 contract; the general Notification/Stop → ntfy
+  human-wake path is still unbuilt.
+- **RC3 unbuilt.** ADR 041 still Proposed; `~/.claude/local/dispatch-mode.json` is still a
+  manual flip.
+- **RC4 unchanged** (Dispatch-side; harness can only detect, and the detection reconciler
+  shape now naturally belongs to orchestrator-prime's cycle).
+- The plan (`docs/plans/dispatch-coordination-redesign.md`) is still `Status: DRAFT`;
+  ADRs 039/041/042 still `Proposed (gated on Misha's greenlight)`.
+
 ## Decision
 
-(Pending Misha.)
+(Pending Misha — see the sharpened decision_needed above: greenlight a slimmed build of
+the remaining RC3/RC5/RC4/upstream-filing slice, fold those into orchestrator-prime's
+program backlog and supersede the plan, or defer. Kept pending in the 2026-06-10 triage
+because greenlighting a Tier-3 multi-ADR build phase is genuinely Misha's call.)
 
 ## Implementation log
 

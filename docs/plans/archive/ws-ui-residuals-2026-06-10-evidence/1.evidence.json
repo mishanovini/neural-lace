@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "ad1ebd018623263699ff5770dd0a1312562e6666",
+  "files_modified": [
+    "docs/plans/ws-ui-residuals-2026-06-10.md",
+    "neural-lace/workstreams-ui/state/reducer.js",
+    "neural-lace/workstreams-ui/state/schema.js",
+    "neural-lace/workstreams-ui/state/selftest.js",
+    "neural-lace/workstreams-ui/web/app.js"
+  ],
+  "mechanical_checks": {
+    "command:grep -q \"'item-text-set'\" neural-lace/workstreams-ui/state/schema.js && grep -q \"'branch-retitled'\" neural-lace/workstreams-ui/state/schema.js": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q \"'item-text-set'\" neural-lace/workstreams-ui/state/schema.js && grep -q \"'branch-retitled'\" neural-lace/workstreams-ui/state/schema.js",
+      "exit_code": 0
+    },
+    "command:grep -q \"case 'item-text-set'\" neural-lace/workstreams-ui/state/reducer.js && grep -q \"case 'branch-retitled'\" neural-lace/workstreams-ui/state/reducer.js": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q \"case 'item-text-set'\" neural-lace/workstreams-ui/state/reducer.js && grep -q \"case 'branch-retitled'\" neural-lace/workstreams-ui/state/reducer.js",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "5 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T15:43:59Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/ws-ui-residuals-2026-06-10.md"
+}

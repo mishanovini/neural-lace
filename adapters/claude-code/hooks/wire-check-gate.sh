@@ -369,7 +369,11 @@ if [[ -z "$TASK_ID" ]]; then
 fi
 
 # Verification-level exemption: mechanical / contract tasks skip the gate.
-if echo "$FLIPPED_LINE" | grep -qE 'Verification:[[:space:]]+(mechanical|contract)\b'; then
+# LAST occurrence wins (greedy `.*` anchors to the final `Verification:`) —
+# a prose mention of a level earlier on the line must not shadow the trailing
+# declaration (discovery 2026-05-11-close-plan-verification-field-parser-greedy).
+EFF_LVL=$(echo "$FLIPPED_LINE" | sed -nE 's/.*Verification:[[:space:]]+(mechanical|contract|full)\b.*/\1/p')
+if [[ "$EFF_LVL" == "mechanical" || "$EFF_LVL" == "contract" ]]; then
   exit 0
 fi
 

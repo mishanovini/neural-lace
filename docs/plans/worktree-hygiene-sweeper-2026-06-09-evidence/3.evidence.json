@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "task_id": "3",
+  "verdict": "PASS",
+  "commit_sha": "5122b5e0729c429745e3cb43df498acebcd9c126",
+  "files_modified": [
+    "docs/backlog.md",
+    "docs/plans/archive/land-cfr-gate-2026-06-10.md"
+  ],
+  "mechanical_checks": {
+    "exists:docs/plans/worktree-hygiene-sweeper-2026-06-09-evidence/report-run-nl-2026-06-10.txt": {
+      "passed": true,
+      "detail": "docs/plans/worktree-hygiene-sweeper-2026-06-09-evidence/report-run-nl-2026-06-10.txt exists",
+      "command": "test -e docs/plans/worktree-hygiene-sweeper-2026-06-09-evidence/report-run-nl-2026-06-10.txt",
+      "exit_code": 0
+    },
+    "command:grep -q 'Total: 14 worktree(s), 0 SAFE-PRUNE candidate(s)' docs/plans/worktree-hygiene-sweeper-2026-06-09-evidence/report-run-nl-2026-06-10.txt": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'Total: 14 worktree(s), 0 SAFE-PRUNE candidate(s)' docs/plans/worktree-hygiene-sweeper-2026-06-09-evidence/report-run-nl-2026-06-10.txt",
+      "exit_code": 0
+    },
+    "command:diff <(tr -d '\\r' < adapters/claude-code/scripts/worktree-hygiene-sweep.sh) \"$HOME/.claude/scripts/worktree-hygiene-sweep.sh\"": {
+      "passed": true,
+      "detail": "",
+      "command": "diff <(tr -d '\\r' < adapters/claude-code/scripts/worktree-hygiene-sweep.sh) \"$HOME/.claude/scripts/worktree-hygiene-sweep.sh\"",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T13:17:26Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/worktree-hygiene-sweeper-2026-06-09.md"
+}

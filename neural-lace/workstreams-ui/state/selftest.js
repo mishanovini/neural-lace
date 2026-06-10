@@ -895,6 +895,102 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
   finally { cleanup(dir); }
 })();
 
+// ---- P19 text-repair pair (2026-06-10, ws-ui-residuals): item-text-set +
+//      branch-retitled — ADDITIVE within schema major 1 (ADR-032 §1).
+//   - both events validate at the envelope layer (required fields enforced)
+//   - reducer applies them: item text replaced, node title replaced (LWW)
+//   - unknown node/item ids are rejected-not-applied, retained in the log
+//     and surfaced in snapshot.rejections (NFR-2)
+//   - re-append with the SAME event_id is an idempotent no-op (§2)
+//   - schema_version stays 1; attestation still verifies post-append
+(function P19() {
+  const dir = freshDir(); const o = optsFor(dir);
+  try {
+    state.appendEvent({ type: 'branch-opened', node_id: 'n1', parent_id: null, title: 'Mangled � Title' }, o);
+    state.appendEvent({ type: 'action-added', node_id: 'n1', item_id: 'a1', text: 'COORD � owner' }, o);
+    state.appendEvent({ type: 'action-added', node_id: 'n1', item_id: 'a2', text: 'untouched item' }, o);
+
+    const majorStill1 = state.readState(o).schema_version === 1;   // no major bump
+
+    // (a) item-text-set replaces the item's text (the mojibake-repair path).
+    state.appendEvent({ type: 'item-text-set', node_id: 'n1', item_id: 'a1', text: 'COORD — owner' }, o);
+    let s = state.readState(o);
+    let a1 = s.snapshot.nodes[0].items.find(function (x) { return x.item_id === 'a1'; });
+    let a2 = s.snapshot.nodes[0].items.find(function (x) { return x.item_id === 'a2'; });
+    const textReplaced = a1.text === 'COORD — owner' && a1.checked === false;
+    const siblingUntouched = a2.text === 'untouched item';
+
+    // (b) LWW: a second correction wins.
+    state.appendEvent({ type: 'item-text-set', node_id: 'n1', item_id: 'a1', text: 'COORD — owner (final)' }, o);
+    a1 = state.readState(o).snapshot.nodes[0].items.find(function (x) { return x.item_id === 'a1'; });
+    const textLWW = a1.text === 'COORD — owner (final)'
+      && state.readState(o).snapshot.nodes[0].items.length === 2;  // no duplicate item
+
+    // (c) branch-retitled replaces the node title.
+    state.appendEvent({ type: 'branch-retitled', node_id: 'n1', title: 'Repaired — Title' }, o);
+    const n1 = state.readState(o).snapshot.nodes.find(function (n) { return n.node_id === 'n1'; });
+    const retitled = n1.title === 'Repaired — Title' && n1.items.length === 2;
+
+    // (d) unknown ids rejected-not-applied, retained in log + rejections (NFR-2).
+    state.appendEvent({ type: 'item-text-set', node_id: 'n1', item_id: 'nope', text: 'x' }, o);
+    state.appendEvent({ type: 'item-text-set', node_id: 'ghost', item_id: 'a1', text: 'x' }, o);
+    state.appendEvent({ type: 'branch-retitled', node_id: 'ghost', title: 'x' }, o);
+    s = state.readState(o);
+    const rejUnknownItem = s.snapshot.rejections.some(function (r) {
+      return r.type === 'item-text-set' && /item not found/.test(r.reason);
+    });
+    const rejUnknownNode = s.snapshot.rejections.some(function (r) {
+      return r.type === 'item-text-set' && /node_id does not resolve/.test(r.reason);
+    });
+    const rejUnknownRetitle = s.snapshot.rejections.some(function (r) {
+      return r.type === 'branch-retitled' && /node_id does not resolve/.test(r.reason);
+    });
+    const retainedInLog = s.events.filter(function (e) {
+      return (e.type === 'item-text-set' && (e.item_id === 'nope' || e.node_id === 'ghost'))
+        || (e.type === 'branch-retitled' && e.node_id === 'ghost');
+    }).length === 3;
+    const stateUnharmed = s.snapshot.nodes.find(function (n) { return n.node_id === 'n1'; })
+      .items.find(function (x) { return x.item_id === 'a1'; }).text === 'COORD — owner (final)';
+
+    // (e) idempotency on event_id: re-applied correction is a no-op.
+    const r1 = state.appendEvent({ event_id: 'FIXED-TXT-1', type: 'item-text-set', node_id: 'n1', item_id: 'a2', text: 'corrected once' }, o);
+    const r2 = state.appendEvent({ event_id: 'FIXED-TXT-1', type: 'item-text-set', node_id: 'n1', item_id: 'a2', text: 'corrected once' }, o);
+    a2 = state.readState(o).snapshot.nodes[0].items.find(function (x) { return x.item_id === 'a2'; });
+    const idempotent = r1.appended === true && r2.appended === false && r2.idempotentNoop === true
+      && a2.text === 'corrected once';
+
+    // (f) envelope enforcement: missing required fields rejected before write.
+    let missingTextRejected = false;
+    try { state.appendEvent({ type: 'item-text-set', node_id: 'n1', item_id: 'a1' }, o); }
+    catch (e) { missingTextRejected = /text/.test(e.message); }
+    let missingTitleRejected = false;
+    try { state.appendEvent({ type: 'branch-retitled', node_id: 'n1' }, o); }
+    catch (e) { missingTitleRejected = /title/.test(e.message); }
+    let nullTextRejected = false;
+    try { state.appendEvent({ type: 'item-text-set', node_id: 'n1', item_id: 'a1', text: null }, o); }
+    catch (e) { nullTextRejected = /may not be null/.test(e.message); }
+
+    // (g) attestation still verifies on the on-disk file post-corrections.
+    const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    const v = store.verifySnapshotAttested(onDisk);
+    const majorStill1After = state.readState(o).schema_version === 1;
+
+    check('P19 text-repair pair: item-text-set(replace/LWW) + branch-retitled + unknown-id rejected-retained + idempotent + envelope-enforced + attestation-verified + schema_version still 1',
+      majorStill1 && textReplaced && siblingUntouched && textLWW && retitled
+        && rejUnknownItem && rejUnknownNode && rejUnknownRetitle && retainedInLog
+        && stateUnharmed && idempotent && missingTextRejected && missingTitleRejected
+        && nullTextRejected && v.verified === true && majorStill1After,
+      'major1=' + majorStill1 + ' textReplaced=' + textReplaced + ' sibling=' + siblingUntouched
+        + ' lww=' + textLWW + ' retitled=' + retitled + ' rejItem=' + rejUnknownItem
+        + ' rejNode=' + rejUnknownNode + ' rejRetitle=' + rejUnknownRetitle
+        + ' retained=' + retainedInLog + ' unharmed=' + stateUnharmed + ' idem=' + idempotent
+        + ' missText=' + missingTextRejected + ' missTitle=' + missingTitleRejected
+        + ' nullText=' + nullTextRejected + ' verified=' + v.verified
+        + ' major1After=' + majorStill1After);
+  } catch (e) { check('P19 text-repair pair (item-text-set / branch-retitled)', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
 process.stdout.write('\nADR-032 state library — property self-test\n');
 process.stdout.write(RESULTS.join('\n') + '\n');
 process.stdout.write('\n' + PASS + ' passed, ' + FAIL + ' failed\n');

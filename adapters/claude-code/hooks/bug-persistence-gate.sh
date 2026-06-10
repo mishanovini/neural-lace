@@ -63,6 +63,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   #            "review"       => add docs/reviews/2026-05-04-test.md
   #            "discovery"    => add docs/discoveries/2026-05-04-test.md
   #            "findings"     => modify docs/findings.md
+  #            "prd"          => modify docs/prd.md
   #            "none"         => no persistence (expects BLOCK)
   _run_scenario() {
     local label="$1" persistence="$2"
@@ -116,6 +117,9 @@ if [[ "${1:-}" == "--self-test" ]]; then
 - **Status:** open
 - **Description:** Synthetic finding entry written this session.
 NL
+          ;;
+        prd)
+          printf '# PRD\n\n## Open questions\n\n- OQ-1: surfaced during intake; awaiting the user'"'"'s relayed answer.\n' > docs/prd.md
           ;;
         none)
           : # no-op
@@ -189,8 +193,20 @@ JSONL
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 6: PASS-with-prd-edit (discovery 2026-05-16 — the PRD is
+  # durable structured storage during guided interactive intake) ----
+  RC=$(_run_scenario s6 "prd")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (6) PASS-with-prd-edit: PASS (rc=$RC, expected 0)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (6) PASS-with-prd-edit: FAIL (rc=$RC, expected 0)" >&2
+    cat "$TMPROOT/s6/stderr.txt" >&2 2>/dev/null || true
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 5 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 6 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -324,6 +340,16 @@ check_persisted_for() {
     PERSISTED=1
     return
   fi
+  # Unstaged or staged change to the PRD (docs/prd.md or docs/prd/*.md).
+  # The PRD is durable structured storage: during guided interactive intake
+  # the surface-and-wait turn's open questions are persisted to the PRD's
+  # `## Open questions` section, not to backlog/reviews — not recognizing it
+  # caused recurring structural false-fires (discovery
+  # 2026-05-16-bug-persistence-gate-false-fires-on-interactive-intake-surface-turns).
+  if git -C "$root" status --porcelain docs/prd.md docs/prd/ 2>/dev/null | grep -q .; then
+    PERSISTED=1
+    return
+  fi
   # New review file (untracked)
   if git -C "$root" ls-files --others --exclude-standard docs/reviews/ 2>/dev/null | grep -qE '^docs/reviews/[0-9]{4}-[0-9]{2}-[0-9]{2}-'; then
     PERSISTED=1
@@ -351,7 +377,7 @@ check_persisted_for() {
   # separately. `--all` picks up every ref, not just current branch.
   local recent_touches
   recent_touches=$(git -C "$root" log --all --since="6 hours ago" \
-    --pretty=format:'%H' -- docs/backlog.md docs/findings.md 'docs/reviews/*' 'docs/discoveries/*' 2>/dev/null | head -1)
+    --pretty=format:'%H' -- docs/backlog.md docs/findings.md docs/prd.md 'docs/prd/*' 'docs/reviews/*' 'docs/discoveries/*' 2>/dev/null | head -1)
   if [[ -n "$recent_touches" ]]; then
     PERSISTED=1
     return
@@ -364,7 +390,7 @@ check_persisted_for() {
     while read -r sha; do
       [[ -z "$sha" ]] && continue
       if git -C "$root" diff-tree --no-commit-id --name-only -r "$sha" 2>/dev/null | \
-         grep -qE '^docs/backlog\.md$|^docs/findings\.md$|^docs/reviews/[0-9]{4}-[0-9]{2}-[0-9]{2}-|^docs/discoveries/[0-9]{4}-[0-9]{2}-[0-9]{2}-'; then
+         grep -qE '^docs/backlog\.md$|^docs/findings\.md$|^docs/prd\.md$|^docs/prd/|^docs/reviews/[0-9]{4}-[0-9]{2}-[0-9]{2}-|^docs/discoveries/[0-9]{4}-[0-9]{2}-[0-9]{2}-'; then
         echo "$sha"
         break
       fi

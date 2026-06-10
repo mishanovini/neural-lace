@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "task_id": "2",
+  "verdict": "PASS",
+  "commit_sha": "5122b5e0729c429745e3cb43df498acebcd9c126",
+  "files_modified": [
+    "docs/backlog.md",
+    "docs/plans/archive/land-cfr-gate-2026-06-10.md"
+  ],
+  "mechanical_checks": {
+    "command:bash adapters/claude-code/scripts/worktree-hygiene-sweep.sh --self-test": {
+      "passed": true,
+      "detail": ")\n  PASS: removal logged to sweep log\n[self-test] bonus: --session-summary silent at <=5 worktrees\n  PASS: --session-summary prints nothing for repo with <=5 worktrees\n\n[self-test] 15 passed, 0 failed",
+      "command": "bash adapters/claude-code/scripts/worktree-hygiene-sweep.sh --self-test",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T13:14:05Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/worktree-hygiene-sweeper-2026-06-09.md"
+}

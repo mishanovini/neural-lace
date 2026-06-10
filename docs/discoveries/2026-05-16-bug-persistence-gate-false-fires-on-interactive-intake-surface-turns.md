@@ -2,8 +2,8 @@
 title: bug-persistence Stop gate structurally false-fires on interactive-intake surface-and-wait turns
 date: 2026-05-16
 type: process
-status: pending
-auto_applied: false
+status: implemented
+auto_applied: true
 originating_context: conversation-tree-ui interactive guided-PRD intake (Stages B/C/D); bug-persistence-gate.sh fired at the end of multiple "surface the stage's question, wait for Misha's relayed answer" turns
 decision_needed: How should the bug-persistence Stop gate treat the interactive-intake "surface-and-wait" turn, where making NO durable-docs edit is the correct behavior (the AI surfaces options/questions, the human answers next turn, THEN the artifact is edited)? Options below; recommendation A. Reversible — pick at the next harness-review or inline.
 predicted_downstream:
@@ -74,11 +74,23 @@ broadened target proves too permissive in non-intake contexts. NOT C
 
 ## Decision
 
-Pending — surfaced for the post-Stage-F harness reconciliation or an
-inline harness-review decision. This discovery is itself the durable
-capture that satisfies the gate for this turn (option C applied once,
-deliberately, while the structural fix is decided — not as a habit).
+**A implemented (auto-applied, 2026-06-10 pending-discoveries triage).**
+Re-verified against the 2026-06-10 repo: `bug-persistence-gate.sh` still
+recognized only backlog/findings/reviews/discoveries — the structural
+false-fire was live. Recommendation A is the floor the discovery itself
+argued for: the PRD genuinely IS durable structured storage (the gate's
+own `prd-validity` sibling enforces its substance), so `docs/prd.md` and
+`docs/prd/` are now recognized durable-persistence targets. The
+unconditional form was chosen over the "only during active intake"
+variant — detecting "an intake is in progress" reliably would itself be
+agent self-classification, and a non-intake session that persists an
+observation into the PRD has genuinely persisted it. B (surface-and-wait
+turn marker) stays un-built unless A proves too permissive, per the
+discovery's own A-then-maybe-B sequencing. Reversible (single revert).
 
 ## Implementation log
 
-(empty until decided)
+- `adapters/claude-code/hooks/bug-persistence-gate.sh` — `docs/prd.md` +
+  `docs/prd/` added to `check_persisted_for()`'s recognized targets; new
+  self-test scenario 6 (PASS-with-prd-edit); self-test 6/6 PASS.
+- Landed via the 2026-06-10 pending-discoveries-triage branch.

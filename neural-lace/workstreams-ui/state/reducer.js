@@ -475,6 +475,29 @@ function applyEvent(snap, ev, treeId) {
       if (ev.blocked_on != null) it.blocked_on = String(ev.blocked_on);
       return;
     }
+    // Text-repair pair (2026-06-10, ws-ui-residuals — discovery
+    // 2026-06-09-no-event-sourced-text-repair-path). ADDITIVE within schema
+    // major 1 (ADR-032 §1). The event-sourced correction path for item text /
+    // node titles: before these, ingest-time mojibake was frozen (re-emitted
+    // branch-opened on an existing node_id is rejected above; hand-editing the
+    // canonical JSON is forbidden by attestation + sole-normative-writer).
+    // Both are last-writer-wins replacement; unknown node/item ids are
+    // rejected-not-applied (retained in the log — NFR-2) so a stray correction
+    // surfaces in snapshot.rejections rather than silently mutating nothing.
+    case 'item-text-set': {
+      const node = findNode(snap, ev.node_id);
+      if (!node) { reject(snap, ev, 'node_id does not resolve'); return; }
+      const it = findItem(node, ev.item_id);
+      if (!it) { reject(snap, ev, 'item not found'); return; }
+      it.text = String(ev.text);
+      return;
+    }
+    case 'branch-retitled': {
+      const node = findNode(snap, ev.node_id);
+      if (!node) { reject(snap, ev, 'node_id does not resolve'); return; }
+      node.title = String(ev.title);
+      return;
+    }
     default:
       // §1 forward-tolerance: unknown type within the same major is skipped,
       // never an error, never a major bump.

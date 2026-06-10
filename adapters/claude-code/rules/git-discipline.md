@@ -1,4 +1,4 @@
-# Git Discipline — Force-Push Prohibition, Post-Merge Sync, Stop-Hook Waivers
+# Git Discipline — Force-Push Prohibition, Post-Merge Sync, Stop-Hook Waivers, Staged-Set Verification
 
 **Classification:** Pattern (self-applied discipline). The force-push prohibition is partly Mechanism-backed — `~/.claude/git-hooks/pre-push` runs the credential scanner and existing harness gates reject `--no-verify` bypasses, but a `git push --force` to a non-protected branch is not currently blocked by any harness hook. The post-merge sync of the user's main checkout is Pattern only — no hook detects "merged but did not sync." The waiver-instead-of-loop discipline for Stop hooks is Pattern; the underlying mechanism is the retry-guard library at `adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh` which downgrades blocks to warns after 3 retries, but the right move BEFORE that threshold is to author a substantive waiver, not let the retry-guard absorb the failure.
 
@@ -147,6 +147,26 @@ The waiver has a 1-hour TTL by gate convention (mirrors `bug-persistence-gate.sh
 - `~/.claude/hooks/lib/stop-hook-retry-guard.sh` — the retry-guard library (3-retry threshold, identical-signature counting).
 - `~/.claude/rules/testing.md` "Keep Going When Keep-Going Is Authorized" — the `narrate-and-wait-gate.sh` discipline that overlaps with this rule's "never collapse to Standing by." prohibition.
 
+## Rule 4 — Verify the staged set before every commit; `git add <path>` does NOT limit commit scope
+
+**Before every commit on a branch you are not the sole author of — and before every doc-only commit made after a branch switch — run `git status --short` AND `git diff --cached --stat` and confirm the staged set matches your intent.** `git add <path>` adds that path to the index, but `git commit` (without pathspec limiting) commits EVERY staged change in the index — including deletions or modifications carried over from a prior branch state you never intended to ship.
+
+### The originating failure (2026-05-21)
+
+A docs-only catalog commit was authored on a feature-branch worktree via `git stash push <single-doc-path>` → `git checkout master` → `git stash pop` → `git add <doc>` → `git commit`. The commit was expected to ship 1 file; it actually shipped 3 — including the deletion of two load-bearing production runtime files whose deletions had been sitting un-stashed in the working tree and were carried across the branch switch into the index. The session's prose claimed "no code change. Catalog only." while the diff deleted production files. Full chain in `docs/discoveries/2026-05-21-stash-push-single-file-leaves-unstashed-deletions-stageable.md`.
+
+The class: `git stash push <path>` stashes ONLY the named path; all other working-tree state (including deletions) stays put and survives `git checkout` onto the destination branch, where the next `git commit` silently picks it up.
+
+### The discipline
+
+1. **Always check before committing.** `git status --short` + `git diff --cached --stat` immediately before `git commit`, even for "trivial" doc-only commits. If the staged set contains anything you did not author this session, STOP and diagnose (per `~/.claude/rules/diagnosis.md`) before the commit lands.
+2. **Use the pathspec-limited commit form for doc-only commits:** `git commit -m "..." -- <path> [<path>...]`. The `--` pathspec form limits the commit to the named paths regardless of what else is staged — it is the canonical form for cross-branch doc-only commits.
+3. **Prefer not switching branches with a dirty tree at all.** If you must, `git stash push -u` (everything, including untracked) rather than single-path stashes, or use a worktree.
+
+### Enforcement note
+
+Pattern-only. A hook that always surfaces `git diff --cached --stat` on multi-top-level-dir commits (option C of the originating discovery) is a candidate follow-up if this discipline proves insufficient — it was deliberately not built first because legitimate multi-dir commits are common and the false-positive cost is real.
+
 ## Cross-references
 
 - `~/.claude/rules/git.md` — the broader Git Standards rule; references this file for force-push, post-merge sync, and merge-vs-rebase discipline.
@@ -158,7 +178,7 @@ The waiver has a 1-hour TTL by gate convention (mirrors `bug-persistence-gate.sh
 
 | Layer | What it enforces | File | Status |
 |---|---|---|---|
-| Rule (this doc) | Force-push prohibition, post-merge sync mechanic, waiver-before-retry-guard discipline | `adapters/claude-code/rules/git-discipline.md` | landed |
+| Rule (this doc) | Force-push prohibition, post-merge sync mechanic, waiver-before-retry-guard discipline, staged-set verification before commit (Rule 4) | `adapters/claude-code/rules/git-discipline.md` | landed |
 | Hook (existing) | Pre-push credential scanner (does not block `--force` flags directly) | `adapters/claude-code/hooks/pre-push-scan.sh` | landed |
 | Hook (existing) | Stop-hook retry-guard caps loops at 3 retries; this rule says use waivers BEFORE the threshold | `adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh` | landed |
 | Hook (gap) | PreToolUse Bash blocker on `git push --force` / `-f` / `--force-with-lease` | (not yet implemented) | gap |
