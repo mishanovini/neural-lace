@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "task_id": "2",
+  "verdict": "PASS",
+  "commit_sha": "3402cd6e9fb892986e63cb5892d81b93e39894da",
+  "files_modified": [
+    "adapters/claude-code/hooks/customer-facing-review-gate.sh",
+    "adapters/claude-code/rules/INDEX.md",
+    "adapters/claude-code/rules/customer-facing-review.md",
+    "adapters/claude-code/rules/vaporware-prevention.md",
+    "adapters/claude-code/settings.json.template",
+    "docs/DECISIONS.md",
+    "docs/backlog.md",
+    "docs/decisions/053-customer-facing-review-gate.md",
+    "docs/harness-architecture.md",
+    "docs/plans/land-cfr-gate-2026-06-10.md"
+  ],
+  "mechanical_checks": {
+    "command:bash adapters/claude-code/hooks/customer-facing-review-gate.sh --self-test": {
+      "passed": true,
+      "detail": "alformed-input-fails-gracefully (exit 0)\nPASS  missing-agents-defined-flags-clearly (exit 2 + names both families)\nPASS  disable-env-allows (exit 0, bonus)\n\nself-test: 9 pass, 0 fail\nself-test: OK 9/9",
+      "command": "bash adapters/claude-code/hooks/customer-facing-review-gate.sh --self-test",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T12:56:14Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/land-cfr-gate-2026-06-10.md"
+}

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "3402cd6e9fb892986e63cb5892d81b93e39894da",
+  "files_modified": [
+    "adapters/claude-code/hooks/customer-facing-review-gate.sh",
+    "adapters/claude-code/rules/INDEX.md",
+    "adapters/claude-code/rules/customer-facing-review.md",
+    "adapters/claude-code/rules/vaporware-prevention.md",
+    "adapters/claude-code/settings.json.template",
+    "docs/DECISIONS.md",
+    "docs/backlog.md",
+    "docs/decisions/053-customer-facing-review-gate.md",
+    "docs/harness-architecture.md",
+    "docs/plans/land-cfr-gate-2026-06-10.md"
+  ],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/hooks/customer-facing-review-gate.sh": {
+      "passed": true,
+      "detail": "adapters/claude-code/hooks/customer-facing-review-gate.sh exists",
+      "command": "test -e adapters/claude-code/hooks/customer-facing-review-gate.sh",
+      "exit_code": 0
+    },
+    "exists:adapters/claude-code/rules/customer-facing-review.md": {
+      "passed": true,
+      "detail": "adapters/claude-code/rules/customer-facing-review.md exists",
+      "command": "test -e adapters/claude-code/rules/customer-facing-review.md",
+      "exit_code": 0
+    },
+    "exists:docs/decisions/053-customer-facing-review-gate.md": {
+      "passed": true,
+      "detail": "docs/decisions/053-customer-facing-review-gate.md exists",
+      "command": "test -e docs/decisions/053-customer-facing-review-gate.md",
+      "exit_code": 0
+    },
+    "command:! grep -q '046-customer-facing-review-gate' adapters/claude-code/rules/customer-facing-review.md docs/decisions/053-customer-facing-review-gate.md adapters/claude-code/rules/vaporware-prevention.md docs/harness-architecture.md docs/DECISIONS.md": {
+      "passed": true,
+      "detail": "",
+      "command": "! grep -q '046-customer-facing-review-gate' adapters/claude-code/rules/customer-facing-review.md docs/decisions/053-customer-facing-review-gate.md adapters/claude-code/rules/vaporware-prevention.md docs/harness-architecture.md docs/DECISIONS.md",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "10 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T12:56:07Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/land-cfr-gate-2026-06-10.md"
+}
