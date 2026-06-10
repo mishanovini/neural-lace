@@ -144,5 +144,28 @@ ok('R26 modal renders full Phase-C context via renderItemDetails (Background/opt
   /dmBody\.appendChild\(renderItemDetails\(/.test(js)
   && /function\s+renderItemDetails\s*\(/.test(js));
 
+// --- R5 render fix (2026-06-09): fence fields render WITHOUT _category -----
+// The R1-enriched onboarding items carry background / about / the_ask /
+// why_asking / why_assigned in `details` with NO `_category` stamp; the old
+// renderer dropped those rows because every fence-grammar content row was
+// gated behind `details._category` (the R4 root cause, app.js ~line 852).
+// Invariant: inside renderItemDetails, all five rows are emitted by
+// presence-based detailRow calls, and NO content row is gated on a
+// category-equality check or a block-form `if (dcCat) {` gate — `_category`
+// only selects the Kind/urgency header chip via dcCategoryHeader().
+const ridStart = js.indexOf('function renderItemDetails');
+const ridEnd = js.indexOf('function openDetailModal');
+const rid = (ridStart >= 0 && ridEnd > ridStart) ? js.slice(ridStart, ridEnd) : '';
+ok('R27 background/about/the_ask/why_asking/why_assigned render without _category',
+  rid.length > 0
+  && /detailRow\('About',\s*de\.about/.test(rid)
+  && /detailRow\('Background',\s*de\.background/.test(rid)
+  && /detailRow\('The ask',\s*de\.the_ask/.test(rid)
+  && /detailRow\('Why asking',\s*de\.why_asking/.test(rid)
+  && /detailRow\('Why assigned',\s*de\.why_assigned/.test(rid)
+  && !/dcCat\s*===/.test(rid)            // no category-equality content gates
+  && !/if\s*\(dcCat\)\s*\{/.test(rid)    // no block-form gate that could swallow rows
+  && /function\s+dcCategoryHeader\s*\(/.test(js)); // chips extra still exists, gated
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
