@@ -427,9 +427,10 @@ check_waiver() {
 }
 
 # ============================================================
-# --self-test: 10 scenarios
+# --self-test: 14 scenarios
 #   (8 from parent plan D.4 + D.6, plus 2 multi-worktree scenarios
-#    added in agent-teams-integration plan, Task 10)
+#    added in agent-teams-integration plan Task 10, plus U/X added
+#    2026-06-09, plus U2/U3 waiver-valve scenarios added 2026-06-10)
 # ============================================================
 #
 # Scenarios:
@@ -441,6 +442,10 @@ check_waiver() {
 #   (f)  active plan with valid waiver                     → PASS
 #   (g)  active plan with acceptance-exempt: true + reason → PASS
 #   (h)  active plan with acceptance-exempt: true, no reason → BLOCK
+#   (U)  exempt plan declaring UI surfaces, no waiver      → BLOCK (refused)
+#   (U2) exempt+UI plan WITH fresh valid waiver            → PASS (refusal noted; waiver honored)
+#   (U3) exempt+UI plan with STALE waiver                  → BLOCK (expired waiver = no waiver)
+#   (X)  ACTIVE plan in child subdir is not discovered     → PASS
 #   (W1) PASS artifact ONLY in secondary worktree          → PASS
 #   (W2) FAIL in primary + PASS in secondary worktree      → PASS
 #
@@ -726,6 +731,27 @@ if [[ "${1:-}" == "--self-test" ]]; then
   write_plan "scenario-u" 1 true_ui
   expect_exit "U" 2 "exempt-refused-on-ui-surface"
 
+  # ---- (U2) exempt+UI plan WITH fresh valid waiver -> PASS ----
+  # 2026-06-10: a refused exemption must not skip the per-session waiver
+  # valve (discovery: 2026-06-09-acceptance-gate-refused-exemption-skips-
+  # waiver-valve). The refusal stands (no silent exemption) but a fresh
+  # substantive waiver still allows stop, with a stderr refusal notice.
+  reset_repo
+  write_plan "scenario-u2" 1 true_ui
+  echo "Waived for self-test scenario U2 — honest pause mid-rebuild, valid justification text" \
+    > ".claude/state/acceptance-waiver-scenario-u2-$(date +%s).txt"
+  expect_exit "U2" 0 "exempt-refused-but-valid-waiver-honored"
+
+  # ---- (U3) exempt+UI plan with STALE waiver -> BLOCK ----
+  # A waiver older than 1 hour is expired; the refused exemption must
+  # still block (same outcome as no waiver at all).
+  reset_repo
+  write_plan "scenario-u3" 1 true_ui
+  STALE_WAIVER=".claude/state/acceptance-waiver-scenario-u3-1.txt"
+  echo "Stale waiver for self-test scenario U3 — should be ignored by the gate" > "$STALE_WAIVER"
+  touch -d '2 hours ago' "$STALE_WAIVER" 2>/dev/null || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M 2>/dev/null || echo 202601010000)" "$STALE_WAIVER"
+  expect_exit "U3" 2 "exempt-refused-stale-waiver-still-blocks"
+
   # ---- (X) ACTIVE plan in a CHILD subdir is NOT discovered (over-scoping fix) ----
   # Regression guard for HARNESS-GAP 2026-06-03: a parent-of-projects cwd must
   # not gate on plans living in sibling/child project dirs. Plant an ACTIVE plan
@@ -777,7 +803,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   reset_repo
 
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 12 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 14 scenarios)" >&2
   if [[ $FAILED -eq 0 ]]; then
     exit 0
   else
@@ -827,19 +853,26 @@ while IFS= read -r plan; do
 
   # 1. Exemption check
   exempt_status=$(check_exemption "$plan")
+  refused_exemption_msg=""
   case "$exempt_status" in
     EXEMPT_OK)
       # 2026-06-09: exemption is INVALID on plans whose declared files
       # include user-facing UI surfaces — those are exactly the plans the
       # runtime advocate exists for. Refuse rather than honor.
+      # 2026-06-10: a refused exemption must NOT skip the per-session
+      # waiver valve (discovery: 2026-06-09-acceptance-gate-refused-
+      # exemption-skips-waiver-valve). Record the refusal and fall
+      # through to the waiver check below; only add the refusal to
+      # BLOCKERS when no valid waiver exists. Refusal means "you don't
+      # get the exemption," not "you don't get the waiver valve either."
       if plan_declares_ui_surface "$plan"; then
-        BLOCKERS="${BLOCKERS}  - ${slug}: declares acceptance-exempt: true but its declared files include user-facing surfaces (src/app/, src/components/, page.tsx, *-ui/, /web/). User-facing plans may NOT be acceptance-exempt — remove the exemption, author ## Acceptance Scenarios, and run end-user-advocate in runtime mode against the live app."$'\n'
+        refused_exemption_msg="  - ${slug}: declares acceptance-exempt: true but its declared files include user-facing surfaces (src/app/, src/components/, page.tsx, *-ui/, /web/). User-facing plans may NOT be acceptance-exempt — remove the exemption, author ## Acceptance Scenarios, and run end-user-advocate in runtime mode against the live app."$'\n'
+      else
+        reason=$(grep -iE '^acceptance-exempt-reason:' "$plan" 2>/dev/null | head -1 | sed 's/^[Aa]cceptance-exempt-reason:[[:space:]]*//')
+        echo "[acceptance-gate] plan ${slug} is acceptance-exempt; reason: ${reason}" >&2
+        ALLOWS="${ALLOWS}  - ${slug}: exempt (${reason})"$'\n'
         continue
       fi
-      reason=$(grep -iE '^acceptance-exempt-reason:' "$plan" 2>/dev/null | head -1 | sed 's/^[Aa]cceptance-exempt-reason:[[:space:]]*//')
-      echo "[acceptance-gate] plan ${slug} is acceptance-exempt; reason: ${reason}" >&2
-      ALLOWS="${ALLOWS}  - ${slug}: exempt (${reason})"$'\n'
-      continue
       ;;
     EXEMPT_NO_REASON)
       BLOCKERS="${BLOCKERS}  - ${plan}: declares acceptance-exempt: true but acceptance-exempt-reason is missing or shorter than 20 non-whitespace chars. Add a substantive one-sentence reason or remove the exemption."$'\n'
@@ -853,15 +886,28 @@ while IFS= read -r plan; do
   case "$waiver" in
     VALID_WAIVER:*)
       waiver_path="${waiver#VALID_WAIVER:}"
-      echo "[acceptance-gate] plan ${slug} has a per-session waiver at ${waiver_path}; allowing stop." >&2
-      ALLOWS="${ALLOWS}  - ${slug}: waived (${waiver_path})"$'\n'
+      if [[ -n "$refused_exemption_msg" ]]; then
+        echo "[acceptance-gate] plan ${slug}: exemption refused (UI surface) but valid waiver present at ${waiver_path}; allowing stop." >&2
+        ALLOWS="${ALLOWS}  - ${slug}: exemption refused (UI surface); waived (${waiver_path})"$'\n'
+      else
+        echo "[acceptance-gate] plan ${slug} has a per-session waiver at ${waiver_path}; allowing stop." >&2
+        ALLOWS="${ALLOWS}  - ${slug}: waived (${waiver_path})"$'\n'
+      fi
       continue
       ;;
     EMPTY_WAIVER)
+      if [[ -n "$refused_exemption_msg" ]]; then
+        BLOCKERS="${BLOCKERS}${refused_exemption_msg}"
+      fi
       BLOCKERS="${BLOCKERS}  - ${slug}: a waiver file exists but is empty. Waivers must contain at least one non-whitespace line of justification."$'\n'
       continue
       ;;
-    NO_WAIVER) ;;
+    NO_WAIVER)
+      if [[ -n "$refused_exemption_msg" ]]; then
+        BLOCKERS="${BLOCKERS}${refused_exemption_msg}"
+        continue
+      fi
+      ;;
   esac
 
   # 3. Artifact check

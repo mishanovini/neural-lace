@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "db458bc476af0f438bb82d406ec112590cc76e94",
+  "files_modified": [
+    "adapters/claude-code/hooks/product-acceptance-gate.sh",
+    "docs/discoveries/2026-06-09-acceptance-gate-refused-exemption-skips-waiver-valve.md",
+    "docs/plans/fix-acceptance-gate-waiver-valve-2026-06-10.md"
+  ],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/hooks/product-acceptance-gate.sh": {
+      "passed": true,
+      "detail": "adapters/claude-code/hooks/product-acceptance-gate.sh exists",
+      "command": "test -e adapters/claude-code/hooks/product-acceptance-gate.sh",
+      "exit_code": 0
+    },
+    "command:bash adapters/claude-code/hooks/product-acceptance-gate.sh --self-test": {
+      "passed": true,
+      "detail": "cross-worktrees: PASS (expected exit 0, got 0)\nself-test (W2) returns-PASS-when-any-worktree-has-valid-artifact: PASS (expected exit 0, got 0)\n\nself-test summary: 14 passed, 0 failed (of 14 scenarios)",
+      "command": "bash adapters/claude-code/hooks/product-acceptance-gate.sh --self-test",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "3 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T12:12:30Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/fix-acceptance-gate-waiver-valve-2026-06-10.md"
+}
