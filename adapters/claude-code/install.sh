@@ -56,6 +56,28 @@ NEURAL_LACE_ROOT="$(cd "$ADAPTER_DIR/../.." && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 NEURAL_LACE_DATA="$HOME/.neural-lace"
 
+# Resolve the STABLE adapter dir for machine-global pointers (core.hooksPath).
+# When install.sh runs from a linked git worktree (e.g. the post-commit
+# auto-deploy firing inside .claude/worktrees/<name>/), pointing the GLOBAL
+# core.hooksPath at the worktree leaves it dangling machine-wide once the
+# worktree is pruned — pre-push/credential hooks then silently break for every
+# repo until the next install (discovery
+# 2026-05-26-worktree-spawn-session-harness-friction, item 3). Detect the
+# worktree case via git-common-dir != git-dir and resolve to the MAIN
+# checkout's adapter dir instead. File-sync to ~/.claude/ still uses
+# ADAPTER_DIR (deploy-what-was-committed semantics are unchanged).
+STABLE_ADAPTER_DIR="$ADAPTER_DIR"
+_git_common_dir="$(git -C "$ADAPTER_DIR" rev-parse --git-common-dir 2>/dev/null || echo "")"
+_git_dir="$(git -C "$ADAPTER_DIR" rev-parse --git-dir 2>/dev/null || echo "")"
+if [ -n "$_git_common_dir" ] && [ "$_git_common_dir" != "$_git_dir" ]; then
+  # Linked worktree: git-common-dir is the main checkout's .git directory.
+  # _git_common_dir may be relative to ADAPTER_DIR; resolve from there.
+  _main_root="$(cd "$ADAPTER_DIR" 2>/dev/null && cd "$_git_common_dir/.." 2>/dev/null && pwd || echo "")"
+  if [ -n "$_main_root" ] && [ -d "$_main_root/adapters/claude-code/git-hooks" ]; then
+    STABLE_ADAPTER_DIR="$_main_root/adapters/claude-code"
+  fi
+fi
+
 # ============================================================
 # --help
 # ============================================================
@@ -355,16 +377,16 @@ if [ "$MODE" = "dry-run" ]; then
   fi
   echo ""
 
-  # Global git hooks
+  # Global git hooks (STABLE_ADAPTER_DIR — never a prunable worktree path)
   echo "[Phase 4: Global git core.hooksPath]"
   current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || echo "")
-  if [ "$current_hooks_path" = "$ADAPTER_DIR/git-hooks" ]; then
-    echo "  [WOULD SKIP -- already set]        core.hooksPath=$ADAPTER_DIR/git-hooks"
+  if [ "$current_hooks_path" = "$STABLE_ADAPTER_DIR/git-hooks" ]; then
+    echo "  [WOULD SKIP -- already set]        core.hooksPath=$STABLE_ADAPTER_DIR/git-hooks"
   elif [ -n "$current_hooks_path" ]; then
-    echo "  [WOULD CHANGE]                     core.hooksPath: $current_hooks_path -> $ADAPTER_DIR/git-hooks"
+    echo "  [WOULD CHANGE]                     core.hooksPath: $current_hooks_path -> $STABLE_ADAPTER_DIR/git-hooks"
     changes=$((changes + 1))
   else
-    echo "  [WOULD SET]                        core.hooksPath=$ADAPTER_DIR/git-hooks"
+    echo "  [WOULD SET]                        core.hooksPath=$STABLE_ADAPTER_DIR/git-hooks"
     changes=$((changes + 1))
   fi
   echo ""
@@ -679,12 +701,15 @@ chmod +x "$ADAPTER_DIR/git-hooks/"* 2>/dev/null || true
 # Global git hooks
 # ============================================================
 
-if [ -d "$ADAPTER_DIR/git-hooks" ]; then
+# Point the GLOBAL hooksPath at the STABLE adapter dir — never at a linked
+# worktree, whose pruning would leave the pointer dangling machine-wide
+# (discovery 2026-05-26-worktree-spawn-session-harness-friction, item 3).
+if [ -d "$STABLE_ADAPTER_DIR/git-hooks" ]; then
   current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || echo "")
-  if [ "$current_hooks_path" != "$ADAPTER_DIR/git-hooks" ]; then
-    git config --global core.hooksPath "$ADAPTER_DIR/git-hooks"
+  if [ "$current_hooks_path" != "$STABLE_ADAPTER_DIR/git-hooks" ]; then
+    git config --global core.hooksPath "$STABLE_ADAPTER_DIR/git-hooks"
     echo ""
-    echo "  set global git core.hooksPath to: $ADAPTER_DIR/git-hooks"
+    echo "  set global git core.hooksPath to: $STABLE_ADAPTER_DIR/git-hooks"
     if [ -n "$current_hooks_path" ]; then
       echo "    (was: $current_hooks_path)"
     fi
