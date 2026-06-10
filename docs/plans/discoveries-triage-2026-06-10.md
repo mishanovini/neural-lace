@@ -38,7 +38,7 @@ install.sh worktree hooksPath dangling) are fixed on master.
 
 ## Tasks
 
-- [ ] 1. Triage + status-flip the 10 pending master discoveries with re-verified evidence; execute the reversible fixes (parser last-occurrence + S12 self-test, exemption-grep class sweep, Check-12 collision notice, PRD durable target + self-test, git-discipline Rule 4 + INDEX row, install.sh stable hooksPath, risk-tiered doc sentence, GAP-50 backlog entry). Verification: mechanical
+- [x] 1. Triage + status-flip the 10 pending master discoveries with re-verified evidence; execute the reversible fixes (parser last-occurrence + S12 self-test, exemption-grep class sweep, Check-12 collision notice, PRD durable target + self-test, git-discipline Rule 4 + INDEX row, install.sh stable hooksPath, risk-tiered doc sentence, GAP-50 backlog entry). Verification: mechanical
 
 ## Files to Modify/Create
 - `docs/plans/discoveries-triage-2026-06-10.md` — this plan
@@ -63,7 +63,8 @@ install.sh worktree hooksPath dangling) are fixed on master.
 - `docs/backlog.md` — HARNESS-GAP-50 entry + Last-updated bump
 
 ## In-flight scope updates
-(no in-flight changes yet)
+- 2026-06-10: `docs/plans/discoveries-triage-2026-06-10-evidence.md` — closure evidence file (mechanical-level one-line evidence block).
+- 2026-06-10: `docs/plans/discoveries-triage-2026-06-10-evidence/1.evidence.json` — structured mechanical-evidence artifact for close-plan.sh's mechanical route (closure routed through the canonical procedure after the scope gate correctly rejected a hand-rolled archive commit from a no-longer-ACTIVE plan).
 
 ## Assumptions
 - The 10 pending discoveries on master are the full master-side pending set (3 more exist
@@ -101,6 +102,47 @@ n/a — doc + small-fix sweep; the self-tests are the end-to-end slice.
 ## Evidence Log
 
 ## Definition of Done
-- [ ] All tasks checked off
-- [ ] Self-tests pass
-- [ ] Completion report appended
+- [x] All tasks checked off
+- [x] Self-tests pass
+- [x] Completion report appended
+
+## Completion Report
+
+### 1. Implementation Summary
+Single mechanical task, fully shipped across 5 commits on
+`chore/discoveries-triage-2026-06-10` (5b6f5aa, 651cf41, 8fe5dc3, ff3a8e9,
+00293c4): all 10 pending master discoveries triaged with re-verified
+evidence — 7 → implemented, 1 → superseded, 1 → decided (+ HARNESS-GAP-50),
+1 deliberately held pending with a current-state note (dispatch-coordination
+greenlight is Misha's). Four live mechanism defects fixed: Verification-parser
+last-occurrence class fix (close-plan/plan-reviewer/wire-check + rule doc),
+bug-persistence PRD durable target, git-discipline Rule 4 + INDEX, install.sh
+stable hooksPath.
+
+### 2. Design Decisions & Plan Deviations
+Per-discovery decisions live in each discovery file's Decision section (the
+canonical substrate). Deviations: plan Status flipped via bash sed + manual
+in-worktree `git mv` instead of the Edit tool, deliberately, to avoid the
+HARNESS-GAP-49 worktree-index pollution defect; pre-existing denylist
+identifier leaks in two 2026-05 discovery files were sanitized when the
+hygiene scanner blocked the staging commit (no `--no-verify` used).
+
+### 3. Known Issues & Gotchas
+Discovery #7's frictions (1) scope-gate orphan-commit false-fire (reproduced
+live by this very session — this bookkeeping plan exists because of it) and
+(2) task-completed-gate tracker-id conflation remain surfaced-for-discussion,
+deliberately unfiled per friction-reflexion.md. Hook-wiring-coverage lint
+(discovery 2026-05-27) likewise remains a surfaced suggestion only.
+
+### 4. Manual Steps Required
+None. Live mirror synced from git blobs in the same session. The resident
+main-checkout session should `git pull` when its staged batch lands.
+
+### 5. Testing Performed & Recommended
+close-plan.sh --self-test 12/12 (S12 new); plan-reviewer.sh --self-test exit
+0; wire-check-gate.sh --self-test all-matched; bug-persistence-gate.sh
+--self-test 6/6 (S6 new); live functional check of install.sh hooksPath fix
+(global pointer stayed on the main checkout through a worktree auto-deploy).
+
+### 6. Cost Estimates
+None — local harness mechanisms only; no services, no recurring cost.
