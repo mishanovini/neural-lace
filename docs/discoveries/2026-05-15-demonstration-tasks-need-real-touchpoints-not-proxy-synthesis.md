@@ -2,7 +2,7 @@
 title: Demonstration-of-interactive-process tasks must not proxy-synthesize human touchpoints
 date: 2026-05-15
 type: process
-status: pending
+status: implemented
 auto_applied: false
 originating_context: conversation-tree-ui design-process demonstration session; Misha course-corrected after Phase 4 that the guided-PRD intake (Stages A–F) was run autonomously off carry-forward briefing instead of interactively
 decision_needed: Should this become a harness rule (a Pattern in planning.md / a new rule file), and if so what is its exact trigger and scope? Misha deferred the proposal pending the interactive re-run; this discovery holds it so it is not lost.
@@ -72,12 +72,26 @@ documented discipline is warranted.
 
 ## Decision
 
-Pending — Misha deferred the rule proposal until the interactive PRD
-re-run (Stages A–F) completes, so the proposal is evaluated against a
-clean example rather than mid-correction. This discovery holds the
-learning so the discovery-surfacer re-raises it next session if it is
-not decided inline.
+**Option B shipped (verified 2026-06-10 pending-discoveries triage).**
+The recommendation's "B considered if the pattern recurs beyond PRD
+intake" is exactly what landed, same day as this discovery:
+`adapters/claude-code/rules/interactive-process-fidelity.md` (commit
+`5894181`, "carry-forward != user authority") is the generalized rule
+file option B described — it covers the structure/authority asymmetry,
+the un-synthesizable N-R-B touchpoint, the surface-then-wait protocol,
+and explicitly binds "any multi-stage process whose stages exist to
+collect the user's answers, dispositions, or approvals" (PRD intake
+Stages A–F, plan-time interface-impact decisions, discovery-protocol
+irreversible dispositions). It also names this exact originating
+incident as its case study, and files the option-C provenance-detection
+extension honestly as a not-yet-built HARNESS-GAP rather than claiming
+it (Rule 7). Nothing in the recommendation remains unshipped: A's floor
+is subsumed by B; C was deliberately deferred in the rule itself.
 
 ## Implementation log
 
-(empty until decided)
+- `adapters/claude-code/rules/interactive-process-fidelity.md` — landed
+  2026-05-15 via commit `5894181`; present on master and in the live
+  `~/.claude/rules/` mirror as of 2026-06-10.
+- Status flipped pending → implemented in the 2026-06-10
+  pending-discoveries triage (no further action required).

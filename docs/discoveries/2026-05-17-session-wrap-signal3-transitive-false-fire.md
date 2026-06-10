@@ -2,8 +2,8 @@
 title: session-wrap Signal 3 transitively false-fires on cross-session merges
 date: 2026-05-17
 type: process
-status: pending
-auto_applied: false
+status: decided
+auto_applied: true
 originating_context: dreamy-black-dd82c1 worktree-cleanup session; session-wrap.sh Stop hook re-fired ~15+ times on a stale Build-Doctrine roadmap that this session has no scope or honest basis to touch
 decision_needed: Should session-wrap.sh Signal 3 (and the same `$touched` dependency in Signals 5/6) scope "plans touched this session" to the CURRENT session's own commits rather than any archive-rename in a global `git log --since="4 hours ago"` window?
 predicted_downstream:
@@ -96,10 +96,25 @@ git-discipline Rule 3).
 
 ## Decision
 
-(pending — surfaced to Misha; not auto-applied because it is a
-harness-mechanism change that should be decided + implemented in a
-clean session, not the one the gate is actively blocking)
+**A + C adopted (auto-applied decision, 2026-06-10 pending-discoveries
+triage); implementation deferred to a dedicated session as
+HARNESS-GAP-50.** Re-verified against the 2026-06-10 repo: the defect is
+still live — `plans_touched_this_session()` (session-wrap.sh:107) still
+uses the global `git log --since="4 hours ago"` window, and session-wrap
+is still not wired through `lib/stop-hook-retry-guard.sh`. The
+recommendation's own analysis holds (A fixes the false attribution; C is
+the loop-break safety net; B couples to a tagging convention; D is a
+workaround). The decision itself is reversible (single-script change),
+so it is taken here per discovery-protocol; the BUILD is a load-bearing
+Stop-hook rework with extensive self-tests (>30 min) and lands via the
+backlog entry, not this triage branch. Signals 5/6 share the `$touched`
+dependency — the GAP-50 entry mandates fixing the class, not the
+instance.
 
 ## Implementation log
 
-(empty — pending decision)
+- `docs/backlog.md` HARNESS-GAP-50 (added 2026-06-10) — carries the
+  decided A+C remediation, anchor candidates for "session's own
+  commits," and the Signals-5/6 class note. Implementation pending that
+  entry's pickup; this discovery flips to `implemented` when GAP-50
+  ships.

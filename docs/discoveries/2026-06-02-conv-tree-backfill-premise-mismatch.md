@@ -2,7 +2,7 @@
 title: Conv-tree backfill brief rests on refuted premise + schema mismatch
 date: 2026-06-02
 type: architectural-learning
-status: pending
+status: implemented
 auto_applied: false
 originating_context: A Dispatch-orchestrator session relayed a 4-part brief to (Part 1) read the conv-tree interface, (Part 2) backfill ~40 "decision/work/completion/failure" nodes from today's Dispatch conversation, (Part 3) wire orchestrator-prime's SKILL to emit to the tree, (Part 4) add tree-emission to a dispatch-relay-protocol.md "being created by the orchestrator-prime session." Standing direction "do not pause, do not ask." Diagnostic-first investigation before writing anything to the canonical truth log.
 decision_needed: How should "make today's work visible" be satisfied, given the backfill brief as specified is unbuildable on three independent grounds? (A) drop the manual backfill, rely on the auto-emit hooks already populating the tree; (B) greenlight dispatch-coordination-redesign.md (pending since 2026-05-25); (C) salvage the sound core via a new Mode:design plan. A+B is the recommendation.
@@ -136,9 +136,23 @@ figure out what fits the schema" is exactly this disposition.
 
 ## Implementation log
 
-(No DECISION-implementation — the A/B/C disposition is Misha's and unmade, so Status stays
-`pending`. The only writes were investigation side-effects, already recorded under "What was
-actually done" above: 1 truthful test event via `appendEvent` for the interface test; 2 acked
-spawned-task results; this discovery commit. No 40-node backfill written; no orchestrator-prime
-SKILL touched; no dispatch-relay-protocol.md created. When Misha picks A/B/C, that decision's
-implementation lands and Status flips to `decided`/`implemented`.)
+(Reconciled 2026-06-10, pending-discoveries triage — the paragraph that previously lived
+here pre-dated the Decision section above and contradicted it; Misha DID decide on
+2026-06-02: "A (rely on auto-emit) + orchestrator-prime owns forward emission.")
+
+The decided disposition is implemented:
+
+- **A — no manual backfill:** the 40-node narration backfill was never written (correct);
+  the tree/Workstreams state continues to be populated by the auto-emit hooks, since
+  consolidated onto the single canonical state file (`0291279`, Workstreams
+  consolidation).
+- **Forward emission owned by orchestrator-prime:** the live
+  `adapters/claude-code/skills/orchestrator-prime.md` mandates exactly this — its cycle
+  body emits schema-valid, in-scope events through the `appendEvent` facade
+  ("Emit tree events for spawn / completion / decision / agent-invocation /
+  audit-surface / merge — schema-valid only (closed actor enum {dispatch,gui}, closed
+  event-type set per ADR-032/034; a *pending* decision = `decision-raised`)") and its
+  Never-list forbids fabricated/out-of-scope/cross-repo nodes — the precise honesty
+  contract Findings 2–3 established. ADR 050 records the architecture.
+- Status flipped pending → implemented in the 2026-06-10 triage; investigation
+  side-effects from 2026-06-02 remain as recorded under "What was actually done."
