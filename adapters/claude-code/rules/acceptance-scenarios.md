@@ -203,6 +203,8 @@ Both `plan-reviewer.sh` (skips the `## Acceptance Scenarios` requirement) and `p
 - "Tests pass without it." The tests passing is necessary but not sufficient; the loop validates user-observable outcome which tests cannot.
 - "I'm in a hurry." Speed pressure is the highest-risk moment for skipping verification; the loop exists for exactly this case.
 
+**MECHANICALLY REFUSED on user-facing surfaces (2026-06-09):** `product-acceptance-gate.sh` now BLOCKS an `acceptance-exempt: true` plan whose `## Files to Modify/Create` or `## In-flight scope updates` sections declare user-facing paths (`src/app/`, `src/components/`, `page.tsx`, `*-ui/`, `/web/`) — regardless of how substantive the reason text is. "Harness-development" is not a valid exemption basis when the deliverable is a UI the operator looks at; the exemption exists for plans with NO product user, and declaring it on a UI switches off the one adversarial gate that opens the running product. Originating incident: a Workstreams UI consolidation plan declared itself exempt as "harness-internal tooling" and shipped a broken modal + contextless items as "verified." Remediation when blocked: remove the exemption, author `## Acceptance Scenarios`, run `end-user-advocate` runtime mode.
+
 **Audit:** `harness-reviewer` may review exemption rationale during routine harness-dev review. Chronic exemption use without substantive reason is itself a signal — surface it in the weekly `/harness-review`.
 
 ## Cross-references

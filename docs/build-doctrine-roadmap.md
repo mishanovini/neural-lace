@@ -1,6 +1,6 @@
 # Build Doctrine + NL Integration — Roadmap
 
-**Last updated:** 2026-05-17 (table-vs-headline reconciliation only — see provenance note below; **no Build-Doctrine tranche work occurred 2026-05-06→2026-05-17**)
+**Last updated:** 2026-05-06
 **Owner:** Misha
 **Status:** ACTIVE — primary tracker for end-to-end completion of the Build Doctrine integration into Neural Lace
 **Source of truth:** this file. Other artifacts (per-phase plan files in `docs/plans/`, the Build Doctrine plan in `~/claude-projects/Build Doctrine/outputs/build-doctrine-plan.md`, decision records 011-024) are referenced from here, not the other way around.
@@ -20,7 +20,7 @@
 | **2** | Phase 4a — Layer B-shape: 7 template schemas | ✅ DONE | (archived) `docs/plans/archive/build-doctrine-tranche-2-template-schemas.md` | 2026-05-06 |
 | **3** | Phase 4b — Layer B-content: seed `build-doctrine-templates/` with default content for 11 universal floors × 2 depths (Express + Standard) + 4 language naming defaults + branching/commits + API-style architectural default | ✅ DONE | (archived) `docs/plans/archive/build-doctrine-tranche-3-template-content.md` | 2026-05-06 — Deep depth deferred per scope; other architectural defaults deferred until pilot friction informs |
 | **4** | Phase 6 — canonical pilot project pilot | ❌ NOT STARTED | (TBD; plan lives in the pilot project's repo, references doctrine in NL) | — |
-| **5a** | Phase 5 — Knowledge Integration Ritual (process shape + trigger taxonomy + cadence-as-hypothesis + versioning policy). Authored against existing capture substrate (calibration / findings / discoveries / ADRs / `/harness-review`). Cadence numbers + thresholds explicitly tagged `(hypothesis, pending pilot evidence)`. Ships as `build-doctrine/doctrine/07-knowledge-integration.md` without waiting on pilot — reasoning: documentation-of-already-happening-process; pilot evidence revises numbers, not structure. | ✅ DONE | (archived) | 2026-05-06 (Tranche 5a-integration; per backlog v30) |
+| **5a** | Phase 5 — Knowledge Integration Ritual (process shape + trigger taxonomy + cadence-as-hypothesis + versioning policy). Authored against existing capture substrate (calibration / findings / discoveries / ADRs / `/harness-review`). Cadence numbers + thresholds explicitly tagged `(hypothesis, pending pilot evidence)`. Ships as `build-doctrine/doctrine/07-knowledge-integration.md` without waiting on pilot — reasoning: documentation-of-already-happening-process; pilot evidence revises numbers, not structure. | ❌ NOT STARTED | (TBD: `docs/plans/build-doctrine-tranche-5a-knowledge-integration-ritual.md`) | — |
 | **5b** | Phase 5 — Pilot-evidence-driven refinement: cadence calibration (was monthly the right hypothesis?); trigger threshold tuning (was N=3 too eager?); canon-incorporation mechanism (re-run bootstrap vs. selective sync — needs real pilot canon to know what works). Gated on Tranche 4. | ❌ NOT STARTED | (TBD) | — |
 | **5c** | Phase 5 — Telemetry-driven + cross-project ritual extensions: auto-detection of doctrine-change triggers from accumulated calibration + findings telemetry; cross-project pattern detection. Gated on HARNESS-GAP-11 (2026-08). | ❌ NOT STARTED | (TBD) | — |
 | **6-orch** | Phase 7 — Minimal orchestrator scaffolding (~300-500 LOC Python) | ✅ DONE | (archived) `docs/plans/archive/build-doctrine-tranche-6-orchestrator-scaffolding.md` | 2026-05-06 |
@@ -38,8 +38,6 @@
 **Asymmetric leverage between 6a and 5a:** 6a is infrastructure that produces evidence (high-leverage — bootstraps the measurement loop). 5a is process that consumes evidence (medium-leverage — formalizes already-happening evolution). The 5a hypothesis-marker discipline is the AP16 mitigation: explicitly conjectural numbers prevent locked-in-from-imagination accumulating.
 
 Remaining: Tranche 4 (canonical pilot) is the structural wall — needs your pilot-project decision. Tranches 5b, 5c, 6b, 6c gate on Tranche 4 / 2026-08 telemetry per doctrine. **Tranches 5a and 6a do NOT gate on either** and are the next harness-dev pickups ahead of the pilot.
-
-> **Provenance note (2026-05-17):** This file was edited by an unrelated worktree-cleanup session ONLY to reconcile a pre-existing internal inconsistency — the table row for **5a** read `❌ NOT STARTED` while this doc's own headline (and `docs/backlog.md` v30) recorded 5a-integration as DONE 2026-05-06. The table was corrected to match the headline + committed backlog; **no Build-Doctrine tranche work happened in that session and no tranche status was advanced by judgment.** The freshness trigger was `session-wrap.sh` Signal 3 transitively false-firing on an *unrelated* harness-infra plan archival pulled into its 4h `git log` window by a master merge — root cause + proposed fix captured in `docs/discoveries/2026-05-17-session-wrap-signal3-transitive-false-fire.md` (Status: pending). The Tranche-4 wall and all gated tranches (5b/5c/6b/6c) are unchanged and still gate on the pilot / 2026-08 telemetry.
 
 ---
 

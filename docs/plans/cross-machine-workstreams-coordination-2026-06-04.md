@@ -4,8 +4,8 @@ Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
 prd-ref: n/a — harness-development
-acceptance-exempt: true
-acceptance-exempt-reason: Harness-infrastructure work (coordination scripts + Workstreams UI internals); the acceptance bar is the scripts' --self-tests + the GUI functional verification described in Testing Strategy, not a contractor-facing runtime scenario.
+acceptance-exempt: false
+acceptance-exempt-reason: (removed 2026-06-09 — this plan declares Workstreams UI files, a user-facing surface the operator looks at; UI plans may not be exempt per acceptance-scenarios.md. The "GUI functional verification" it promised is exactly what the end-user-advocate runtime gate enforces.)
 tier: 3
 rung: 2
 architecture: orchestration

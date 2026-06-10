@@ -217,7 +217,7 @@ See `~/.claude/rules/orchestrator-pattern.md` for the full protocol: when to use
 
 Plan files should declare `Execution Mode: orchestrator` in their header (default for multi-task plans). The template at `~/.claude/templates/plan-template.md` includes this.
 
-The `task-verifier` mandate (only task-verifier can flip checkboxes) is unchanged — builders invoke task-verifier, orchestrator trusts the verdict. The anti-vaporware rule, runtime verification requirements, evidence block format, and tool-call-budget all still apply; they now apply to the builder's scope rather than the main session's.
+The `task-verifier` mandate (only task-verifier can flip checkboxes) is unchanged — builders invoke task-verifier; the orchestrator confirms the verifier's evidence artifact and the flipped checkbox exist on disk before accepting any verdict (see `orchestrator-pattern.md` "Nested verification" — a reported verdict without an on-disk artifact is FAIL, never "trusted"). The anti-vaporware rule, runtime verification requirements, evidence block format, and tool-call-budget all still apply; they now apply to the builder's scope rather than the main session's.
 
 ## When to use `Execution Mode: agent-team`
 

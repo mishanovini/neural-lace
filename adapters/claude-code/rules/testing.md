@@ -46,6 +46,12 @@ Component-only evidence (only `test <file>` lines, only `file <path>` greps, onl
 - You hit a genuine blocker: missing credentials, ambiguous product decision, hard dependency on something the user must provide. Describe the blocker concretely.
 - The user revoked the directive in their most recent message ("that's enough for today," "let's stop here," "pause").
 
+**SCOPE OF THE DIRECTIVE — keep-going kills PERMISSION stops, never VERIFICATION stops (MANDATORY).** There are two different kinds of stop, and the keep-going directive applies to exactly one of them:
+
+- **Permission / narration stops** ("shall I continue?", "good place to check in") — these are what keep-going eliminates. The work is fine; the pause is ceremony. Don't do them.
+- **Verification stops** (pre-stop-verifier: unchecked tasks / missing evidence; product-acceptance-gate: no runtime PASS artifact; wire-check: broken chain) — these are the harness reporting that the work is NOT done. "Drive to completion" means **do the work until the gate passes** — it NEVER means get past the gate. Riding a verification block via the retry-guard downgrade, a waiver written to clear friction, or by out-waiting it in an autonomous loop is a completion LIE, not completion. (2026-06-09 incident: an autonomous loop rode the retry-guard downgrade past 38 consecutive pre-stop-verifier blocks while reporting "DONE"; the work was not done.)
+- When a verification gate blocks and the work genuinely cannot be completed this turn, the honest move is to end the turn with `PAUSING:`/`BLOCKED:` naming the specific gap — never `DONE:`. The retry-guard refuses to downgrade verification-class blocks while the final message claims DONE (see `hooks/lib/stop-hook-retry-guard.sh`).
+
 **Enforcement:** Stop hook `narrate-and-wait-gate.sh` scans the session for keep-going signals from the user and checks whether the final assistant message trails off with a permission-seeking phrase. If so, the hook blocks session end. Escape hatch: write `.claude/state/autonomous-done-YYYY-MM-DD-HHMM.txt` with a one-line justification when authorized work is genuinely done.
 
 **Why this is strict:** in the 2026-04-21 session the user corrected narrate-and-wait behavior at least six times ("are you still working?", "why do you keep stopping?", "please continue"). The behavioral rule alone hasn't held. The hook closes the loop — if the agent is about to stop after a permission-seeking tail, something is wrong and should be reconsidered.

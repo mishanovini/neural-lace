@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "conv-tree-ui-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["neural-lace/conversation-tree-ui/server/server.js"],
+      "env": { "CTREE_PORT": "7799" },
+      "port": 7799
+    },
+    {
+      "name": "ws-r2-test",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [".claude/worktrees/ws-r2/neural-lace/workstreams-ui/server/server.js"],
+      "env": { "CTREE_PORT": "7734", "CONV_TREE_STATE_PATH": "C:/Users/misha/AppData/Local/Temp/ws-r2-test/tree-state-copy.json" },
+      "port": 7734
+    }
+  ]
+}
