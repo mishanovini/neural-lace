@@ -2,8 +2,8 @@
 title: git stash push of a single file leaves unstashed deletions stageable on branch-switch
 date: 2026-05-21
 type: process
-status: pending
-auto_applied: false
+status: implemented
+auto_applied: true
 originating_context: misha-decision-batch + FM-001 catalog session 2026-05-21; a downstream-project master commit f664400 unintentionally deleted src/instrumentation.ts + src/instrumentation-client.ts while landing a docs-only FM-001 catalog augmentation
 decision_needed: How should the orchestrator avoid the class where switching branches with un-stashed deletions in the working tree silently re-stages those deletions onto the destination branch when `git add <single-file>` is run? Three remediation paths below.
 predicted_downstream:
@@ -126,11 +126,26 @@ a gate blocks). C as a follow-up if A+D recur.
 
 ## Decision
 
-Pending Misha's call on which remediation path to land. Reversible decision
-(any of A/B/C/D can be revised); not auto-applied because the rule wording
-itself is judgment-laden and the hook design (B/C) needs ADR-level scrutiny
-before landing.
+**A + D implemented (auto-applied, 2026-06-10 pending-discoveries
+triage), exactly per this discovery's own recommendation.** The
+remediation is a doc-only rule addition (rule wording within an
+established mechanism class — reversible per discovery-protocol), so it
+no longer warranted waiting: git-discipline.md gains **Rule 4 —
+staged-set verification before every commit** (run `git status --short`
++ `git diff --cached --stat` before committing; `git add <path>` does
+NOT limit commit scope) and documents the pathspec-limited
+`git commit -m "..." -- <path>` form as the canonical doc-only-commit
+shape (D). The hook options (B/C) stay un-built per the recommendation —
+C is named in the rule as the candidate follow-up if the discipline
+proves insufficient. Note close-plan.sh independently adopted the
+pathspec-limited commit form for its closure commit (a70eec2),
+corroborating D as the right convention.
 
 ## Implementation log
 
-(empty — Status is pending; implementation log will populate once a remediation option is chosen and applied)
+- `adapters/claude-code/rules/git-discipline.md` — new Rule 4
+  (staged-set verification + pathspec-limited doc-only commits), title +
+  enforcement table updated; cites this discovery as the originating
+  failure.
+- `adapters/claude-code/rules/INDEX.md` — git-discipline row updated.
+- Landed via the 2026-06-10 pending-discoveries-triage branch.
