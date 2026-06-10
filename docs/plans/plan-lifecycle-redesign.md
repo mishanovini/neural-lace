@@ -155,6 +155,7 @@ DEFERRED-routing fix (ADR 052, Misha directive 2026-06-04 — deferred = intende
 - 2026-06-04: `docs/decisions/052-deferred-plans-not-archived.md` — ADR for the split.
 - 2026-06-04: `docs/DECISIONS.md` — ADR 052 index row.
 - 2026-06-04: `docs/harness-architecture.md` — the two lifecycle-hook rows updated.
+- 2026-06-10: `adapters/claude-code/scripts/close-plan.sh` — fix the recurring rename-only-closure-commit defect (squarely closure-mechanics, this plan's scope; the file is already in `## Files to Modify/Create` for R4). Observed twice (manual fix-ups `83c2564` 2026-06-08, `b27027f` 2026-06-10) and reproduced in a synthetic repo: `git mv` stages the rename carrying the PRE-flip index blob while the sed Status flip + completion report exist only in the working tree, and close-plan staged-but-never-committed — so the closing session's commit landed rename-only with the archived blob still `Status: ACTIVE`. Fix: new step 7 re-adds the moved plan/evidence files and commits pathspec-limited (unrelated staged work is never swept in); WARN-and-continue on commit failure. Also corrected the R4-flagged stale comments (header, usage, steps 5/6) that wrongly claimed the bash sed flip "triggers plan-lifecycle.sh archival" — bash writes fire no PostToolUse event; the inline fallback is the sole archival path under close-plan. New regression scenario S11 (closure-commit-captures-flipped-content); self-test 14 checks / 11 scenarios, 0 failed. This delivers the comment-fix slice of R4 early; R4's auto-closure hook + `--auto` path remain unbuilt.
 
 ## Assumptions
 
@@ -301,6 +302,31 @@ with the minimum content and is the R6 integration test's core path.
 - **Reasoning:** Misha asked the design plan to "design the redesign" and contain
   "an ordered sequence of subsequent implementation sessions." THIS session checks
   off none; future sessions check them off as they ship.
+
+### Decision: 2026-06-10 stale-plan triage — stays ACTIVE; status honestly reported
+- **Tier:** 1
+- **Status:** proceeded with recommendation
+- **Chosen:** Keep `Status: ACTIVE`; ship the close-plan.sh closure-commit fix
+  under this plan's in-flight scope (entry above); do NOT flip any R-checkbox.
+- **State of the plan (evidence, 2026-06-10):** the DESIGN phase is complete —
+  ADR 036 authored + indexed, discovery authored, CLAUDE.md "What Done Means"
+  updated, systems-designer re-review reflected (2026-05-25 findings resolved in
+  §7/§8 + S2). The IMPLEMENTATION roadmap R1–R8 is entirely unstarted: no
+  `plan-auto-closure.sh`, no `plan-staleness-gate.sh`, no
+  `acceptance-scenario-designer.sh`, no plan-reviewer Checks 14/15/16, no
+  `owner:`/`target-completion-date:`/`## Closure Contract` in `plan-template.md`
+  (verified by file-absence greps this session). The waiver churn this redesign
+  exists to eliminate is still live: 372 `acceptance-waiver-*` files in
+  `.claude/state/`, 22 naming this very plan — the strongest evidence R1–R8 are
+  still wanted, not obsolete. The Workstreams R-rebuild (2026-06-09) is an
+  unrelated subsystem and does NOT supersede this plan.
+- **Why not DEFER:** deferral requires Misha's explicit approval (Rule 1 /
+  planning.md); and the open DoD item "(design phase) Misha reviews + authorizes
+  the roadmap" is his call, not a session's.
+- **Re-engage trigger:** Misha authorizes R1 (or any R-session); secondarily,
+  the next waiver-density signal on this plan's slug.
+- **To reverse:** n/a (bookkeeping decision; the close-plan fix reverts as one
+  commit if needed).
 
 ## Definition of Done
 
