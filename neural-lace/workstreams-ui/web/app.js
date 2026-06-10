@@ -809,6 +809,29 @@
     return d;
   }
 
+  // --- decision-context fence-grammar header (Task 9-full / OQ-2) -----------
+  // When the item carries the decision-context `_category` marker (stamped by
+  // decision-context-gate / replay), surface the Kind + urgency chips above
+  // the actionable rows. `_category` gates ONLY this category-specific extra
+  // (and the context-appropriate buttons in buildActionButtons) — it must
+  // NEVER gate content rows (R5 render fix, 2026-06-09).
+  function dcCategoryHeader(dcCat, de) {
+    var hdr = el('div', 'det-row det-dc-header');
+    var lbl = el('span', 'det-k', 'Kind');
+    var hv = el('div', 'det-v');
+    var kindChip = el('span', 'det-chip det-chip-cat det-chip-cat-' + String(dcCat),
+      String(dcCat).replace(/_/g, ' '));
+    hv.appendChild(kindChip);
+    if (de.urgency) {
+      var ug = el('span', 'det-chip det-chip-urgency det-chip-urgency-' + String(de.urgency),
+        'urgency: ' + String(de.urgency));
+      hv.appendChild(document.createTextNode(' '));
+      hv.appendChild(ug);
+    }
+    hdr.appendChild(lbl); hdr.appendChild(hv);
+    return hdr;
+  }
+
   function renderItemDetails(de, projectKey, itemText) {
     var box = el('div', 'li-details');
     if (!de || typeof de !== 'object') return box;
@@ -844,72 +867,53 @@
       box.appendChild(fb);
     }
 
-    // --- decision-context fence-grammar header (Task 9-full / OQ-2) -----------
-    // When the item carries the decision-context `_category` marker (stamped
-    // by decision-context-gate / replay), surface the urgency chip + category
-    // hint above the legacy actionable rows so the operator immediately sees
-    // what's being asked of them. Legacy items (no `_category`) skip this.
+    // --- decision-context fence-grammar fields (R5 render fix, 2026-06-09) ---
+    // Fence-grammar content rows render WHENEVER the field is present in
+    // `details` — they do NOT require `details._category`. The R1-enriched
+    // onboarding items carry background / about / the_ask / why_asking /
+    // why_assigned with no `_category` stamp; the old category-gated rendering
+    // silently dropped those rows (the R4 root cause). `_category` now gates
+    // ONLY category-specific extras: the Kind/urgency header chips here and
+    // the context-appropriate buttons in buildActionButtons.
     var dcCat = de._category;
-    if (dcCat) {
-      var hdr = el('div', 'det-row det-dc-header');
-      var lbl = el('span', 'det-k', 'Kind');
-      var hv = el('div', 'det-v');
-      var kindChip = el('span', 'det-chip det-chip-cat det-chip-cat-' + String(dcCat),
-        String(dcCat).replace(/_/g, ' '));
-      hv.appendChild(kindChip);
-      if (de.urgency) {
-        var ug = el('span', 'det-chip det-chip-urgency det-chip-urgency-' + String(de.urgency),
-          'urgency: ' + String(de.urgency));
-        hv.appendChild(document.createTextNode(' '));
-        hv.appendChild(ug);
-      }
-      hdr.appendChild(lbl); hdr.appendChild(hv); box.appendChild(hdr);
-      // about / background — fence-grammar context fields, distinct from legacy
-      // `description` / `context` rows below. Render only when present.
-      add(detailRow('About', de.about, projectKey));
-      add(detailRow('Background', de.background, projectKey));
-    }
+    if (dcCat) box.appendChild(dcCategoryHeader(dcCat, de));
+    // about / background — fence-grammar context fields, distinct from legacy
+    // `description` / `context` rows below. Render only when present.
+    add(detailRow('About', de.about, projectKey));
+    add(detailRow('Background', de.background, projectKey));
 
     // --- contract item 1: ACTIONABLE FIELDS FIRST ----------------------------
     add(detailRow('Instructions', de.instructions, projectKey));
-    // Question-category fence fields (asked-of-the-user payload).
-    if (dcCat === 'question') {
-      add(detailRow('Question', de.question, projectKey));
-      add(detailRow('Why asking', de.why_asking, projectKey));
-      add(detailRow('What I’ve tried', de.what_ive_tried, projectKey));
-      if (de.answer_shape) {
-        var asRow = el('div', 'det-row');
-        asRow.appendChild(el('span', 'det-k', 'Answer shape'));
-        var asV = el('div', 'det-v');
-        asV.appendChild(el('span', 'det-chip det-chip-answer-shape', String(de.answer_shape)));
-        asRow.appendChild(asV); box.appendChild(asRow);
-      }
+    // Question-class fence fields (presence-based; `question` is shared by the
+    // question AND decision categories, so it renders once, when present).
+    add(detailRow('Question', de.question, projectKey));
+    add(detailRow('Why asking', de.why_asking, projectKey));
+    add(detailRow('What I’ve tried', de.what_ive_tried, projectKey));
+    if (de.answer_shape) {
+      var asRow = el('div', 'det-row');
+      asRow.appendChild(el('span', 'det-k', 'Answer shape'));
+      var asV = el('div', 'det-v');
+      asV.appendChild(el('span', 'det-chip det-chip-answer-shape', String(de.answer_shape)));
+      asRow.appendChild(asV); box.appendChild(asRow);
     }
-    // Decision-category fence fields (question + why_not_decide_alone above options).
-    if (dcCat === 'decision') {
-      add(detailRow('Question', de.question, projectKey));
-      add(detailRow('Why not decide alone', de.why_not_decide_alone, projectKey));
+    // Decision-class fence field (presence-based).
+    add(detailRow('Why not decide alone', de.why_not_decide_alone, projectKey));
+    // Action-item-for-user fence fields (presence-based).
+    add(detailRow('The ask', de.the_ask, projectKey));
+    add(detailRow('Why assigned', de.why_assigned, projectKey));
+    add(detailRow('What I’m doing meanwhile', de.what_im_doing_meanwhile, projectKey));
+    if (de.state) {
+      var stRow = el('div', 'det-row');
+      stRow.appendChild(el('span', 'det-k', 'State'));
+      var stV = el('div', 'det-v');
+      stV.appendChild(el('span', 'det-chip det-chip-state det-chip-state-' + String(de.state),
+        String(de.state)));
+      stRow.appendChild(stV); box.appendChild(stRow);
     }
-    // Action-item-for-user fence fields.
-    if (dcCat === 'action_item_for_user') {
-      add(detailRow('The ask', de.the_ask, projectKey));
-      add(detailRow('Why assigned', de.why_assigned, projectKey));
-      add(detailRow('What I’m doing meanwhile', de.what_im_doing_meanwhile, projectKey));
-      if (de.state) {
-        var stRow = el('div', 'det-row');
-        stRow.appendChild(el('span', 'det-k', 'State'));
-        var stV = el('div', 'det-v');
-        stV.appendChild(el('span', 'det-chip det-chip-state det-chip-state-' + String(de.state),
-          String(de.state)));
-        stRow.appendChild(stV); box.appendChild(stRow);
-      }
-    }
-    // Autonomous-action fence fields (fait-accompli notification).
-    if (dcCat === 'autonomous_action') {
-      add(detailRow('Action taken', de.action_taken, projectKey));
-      add(detailRow('Reasoning', de.reasoning, projectKey));
-      add(detailRow('Reversibility', de.reversibility, projectKey));
-    }
+    // Autonomous-action fence fields (presence-based).
+    add(detailRow('Action taken', de.action_taken, projectKey));
+    add(detailRow('Reasoning', de.reasoning, projectKey));
+    add(detailRow('Reversibility', de.reversibility, projectKey));
     if (Array.isArray(de.options) && de.options.length) {
       var ow = el('div', 'det-row');
       ow.appendChild(el('span', 'det-k', 'Options'));
