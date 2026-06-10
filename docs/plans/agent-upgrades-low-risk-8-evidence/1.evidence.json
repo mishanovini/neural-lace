@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "f6cc6d429b167b738bd889b76140c6bebcd00c12",
+  "files_modified": [
+    "adapters/claude-code/agents/audience-content-reviewer.md",
+    "adapters/claude-code/agents/code-reviewer.md",
+    "adapters/claude-code/agents/explorer.md",
+    "adapters/claude-code/agents/functionality-auditor.md",
+    "adapters/claude-code/agents/research.md",
+    "adapters/claude-code/agents/security-reviewer.md",
+    "adapters/claude-code/agents/test-writer.md",
+    "adapters/claude-code/agents/ux-ia-auditor.md",
+    "docs/plans/agent-upgrades-low-risk-8.md"
+  ],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/agents/explorer.md": {
+      "passed": true,
+      "detail": "adapters/claude-code/agents/explorer.md exists",
+      "command": "test -e adapters/claude-code/agents/explorer.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'Core methodology — breadth-first' adapters/claude-code/agents/explorer.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'Core methodology — breadth-first' adapters/claude-code/agents/explorer.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'Phase 0 — Scope & effort calibration' adapters/claude-code/agents/research.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'Phase 0 — Scope & effort calibration' adapters/claude-code/agents/research.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'Flesch–Kincaid' adapters/claude-code/agents/audience-content-reviewer.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'Flesch–Kincaid' adapters/claude-code/agents/audience-content-reviewer.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'confirmation-bias defense' adapters/claude-code/agents/security-reviewer.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'confirmation-bias defense' adapters/claude-code/agents/security-reviewer.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'four interdependent systems' adapters/claude-code/agents/ux-ia-auditor.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'four interdependent systems' adapters/claude-code/agents/ux-ia-auditor.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'soundness asymmetry' adapters/claude-code/agents/functionality-auditor.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'soundness asymmetry' adapters/claude-code/agents/functionality-auditor.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'Hallucination guard' adapters/claude-code/agents/code-reviewer.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'Hallucination guard' adapters/claude-code/agents/code-reviewer.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'Boundary Value Analysis' adapters/claude-code/agents/test-writer.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'Boundary Value Analysis' adapters/claude-code/agents/test-writer.md",
+      "exit_code": 0
+    },
+    "command:bash evals/golden/rules-index-coverage.sh": {
+      "passed": true,
+      "detail": "Indexed rules in sync: 55\nPASS: INDEX has a row for every rule file, and every row points at an existing file",
+      "command": "bash evals/golden/rules-index-coverage.sh",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "9 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T08:12:18Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/agent-upgrades-low-risk-8.md"
+}
