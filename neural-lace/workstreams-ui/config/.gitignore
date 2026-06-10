@@ -2,3 +2,7 @@
 # codenames must NEVER ship in the kit (harness-hygiene). The generic
 # projects.example.json + the projects.js resolver ARE tracked.
 projects.json
+# Per-machine repo map for scripts/work-in-motion-sweep.js (Phase R7). Same
+# rule: repo paths / org names / gh accounts never ship; the generic
+# wim-repos.example.json IS tracked.
+wim-repos.json

@@ -1,0 +1,19 @@
+{
+  "_comment": "Per-machine repo map for scripts/work-in-motion-sweep.js. COPY this file to `wim-repos.json` (same dir; gitignored — it never ships in the kit per harness-hygiene: no machine paths, org names, or account names in committed files) and edit to your machine. Each entry: repoKey (short id used in node ids), path (repo root; ~ expands), rootNodeId/rootTitle (the project root node in the workstreams tree; defaults derive from repoKey), ghAccount (gh login that can see this repo's remote, for the auth-switch PR fallback; null to skip switching). Alternative locations: ~/.claude/local/wim-sweep-repos.json, or any file named by the WIM_SWEEP_REPOS_FILE env var (highest precedence).",
+  "repos": [
+    {
+      "repoKey": "example-project",
+      "path": "~/code/example-project",
+      "rootNodeId": "proj-example-project",
+      "rootTitle": "Example Project",
+      "ghAccount": null
+    },
+    {
+      "repoKey": "another-project",
+      "path": "/absolute/path/to/another-project",
+      "rootNodeId": "proj-another-project",
+      "rootTitle": "Another Project",
+      "ghAccount": "your-gh-login-for-this-repo"
+    }
+  ]
+}
