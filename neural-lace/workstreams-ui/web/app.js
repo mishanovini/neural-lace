@@ -181,10 +181,35 @@
   }
   var COMPLETE_STATES = { shipped: 1, closed: 1 };
   function isComplete(it) { return !!COMPLETE_STATES[itemState(it)]; }
-  // Awaiting me = the legacy "waiting on you" predicate: unchecked & not parked
-  // (deferred/contested still count as waiting). This is the default filter.
+  // Open = the legacy "waiting" predicate: unchecked & not parked
+  // (deferred/contested still count as open). Base predicate only — the
+  // Awaiting-me chip uses isAwaitingMe below (residual 2, 2026-06-10).
   function isWaiting(it) {
     return ((!it.checked) || it.deferred || it.contested) && !it.backlogged && itemState(it) !== 'shipped';
+  }
+  // Residual 2 (2026-06-10): Awaiting-me / In-flight were non-discriminating —
+  // every open unchecked item satisfied BOTH (isWaiting matched everything
+  // open; itemState defaults to 'in-flight' for any unchecked item without an
+  // explicit state), so the two chips showed the same count (209=209) and the
+  // partition carried no signal. Fix: Awaiting-me = items that are GENUINELY
+  // Misha-asks (a decision / question / action_item_for_user — the rich
+  // details._category written by the fence grammar wins; otherwise the item
+  // kind for decisions/questions, which are user-asks by construction), still
+  // open and unanswered (an inline action-responded means it is back in the
+  // agent's court). In-flight = open work-in-motion items NOT awaiting him
+  // (plain actions without a user-ask category). The two are disjoint by
+  // construction: in-flight requires !isAwaitingMe.
+  var MISHA_ASK_CATEGORIES = { decision: 1, question: 1, action_item_for_user: 1 };
+  function isMishaAsk(it) {
+    var cat = it.details && it.details._category;
+    if (cat) return !!MISHA_ASK_CATEGORIES[cat];
+    return it.kind === 'decision' || it.kind === 'question';
+  }
+  function isAwaitingMe(it) {
+    return isWaiting(it) && isMishaAsk(it) && !it.responded;
+  }
+  function isInFlightItem(it) {
+    return itemState(it) === 'in-flight' && !isAwaitingMe(it);
   }
   function nodeOpenedMs(nodeId) {
     var n = byId(nodeId);
@@ -259,8 +284,8 @@
   // ---- filter logic ----------------------------------------------------
   function applyFilter(items, filterName) {
     switch (filterName) {
-      case 'awaiting-me':      return items.filter(function (r) { return isWaiting(r.item); });
-      case 'in-flight':        return items.filter(function (r) { return itemState(r.item) === 'in-flight'; });
+      case 'awaiting-me':      return items.filter(function (r) { return isAwaitingMe(r.item); });
+      case 'in-flight':        return items.filter(function (r) { return isInFlightItem(r.item); });
       case 'blocked':          return items.filter(function (r) { return itemState(r.item) === 'blocked'; });
       case 'recently-shipped': return items.filter(function (r) { return isRecentlyShipped(r.item); });
       // Phase D — capture ALL work tracked to DEPLOYED, and surface efforts that
@@ -269,7 +294,7 @@
       case 'deployed':         return items.filter(function (r) { return isDeployed(r.item); });
       case 'orphaned':         return [];   // orphans are sessions, handled in renderFilteredItems
       case 'all':              return items.slice();
-      default:                 return items.filter(function (r) { return isWaiting(r.item); });
+      default:                 return items.filter(function (r) { return isAwaitingMe(r.item); });
     }
   }
   function filterCount(filterName) {
@@ -458,8 +483,11 @@
   // (non-session) descendant items, for the header badge.
   function projectRollup(projId) {
     var refs = projectItems(projId);
-    var awaiting = refs.filter(function (r) { return isWaiting(r.item); }).length;
-    var inflight = refs.filter(function (r) { return itemState(r.item) === 'in-flight'; }).length;
+    // Residual 2 (2026-06-10): badges use the SAME partition as the filter
+    // chips (isAwaitingMe / isInFlightItem) so the left-pane numbers match
+    // what the corresponding chip lists.
+    var awaiting = refs.filter(function (r) { return isAwaitingMe(r.item); }).length;
+    var inflight = refs.filter(function (r) { return isInFlightItem(r.item); }).length;
     var blocked = refs.filter(function (r) { return itemState(r.item) === 'blocked'; }).length;
     return { awaiting: awaiting, inflight: inflight, blocked: blocked, total: refs.length };
   }
