@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task_id": "2",
+  "verdict": "PASS",
+  "commit_sha": "ad1ebd018623263699ff5770dd0a1312562e6666",
+  "files_modified": [
+    "docs/plans/ws-ui-residuals-2026-06-10.md",
+    "neural-lace/workstreams-ui/state/reducer.js",
+    "neural-lace/workstreams-ui/state/schema.js",
+    "neural-lace/workstreams-ui/state/selftest.js",
+    "neural-lace/workstreams-ui/web/app.js"
+  ],
+  "mechanical_checks": {
+    "command:node neural-lace/workstreams-ui/state/selftest.js": {
+      "passed": true,
+      "detail": " P19 text-repair pair: item-text-set(replace/LWW) + branch-retitled + unknown-id rejected-retained + idempotent + envelope-enforced + attestation-verified + schema_version still 1\n\n20 passed, 0 failed",
+      "command": "node neural-lace/workstreams-ui/state/selftest.js",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T15:44:20Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/ws-ui-residuals-2026-06-10.md"
+}

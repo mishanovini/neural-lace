@@ -109,6 +109,22 @@ const EVENT_TYPES = Object.freeze([
   // gained an OPTIONAL `deployed:true` flag (reducer-read-only, not a required
   // field) to record merged-AND-deployed in one event.
   'item-deployed',
+  // Text-repair pair (2026-06-10, ws-ui-residuals — discovery
+  // 2026-06-09-no-event-sourced-text-repair-path). ADDITIVE within schema
+  // major 1 (ADR-032 §1: new event types are additive, no required-field
+  // change to any existing event, schema_version stays 1; gates key off the
+  // major and are unaffected). Before these, the enum had NO way to correct
+  // the text of an existing item or the title of an existing node — the
+  // reducer rejects a re-emitted branch-opened on an existing node_id, and
+  // hand-editing the canonical JSON is forbidden (attestation +
+  // sole-normative-writer). Consequence: ingest-time mojibake (U+FFFD) was
+  // frozen into item text with no event-sourced repair path. Both events are
+  // last-writer-wins replacement on the target's text/title field; unknown
+  // node/item ids are rejected-not-applied (retained in the log — NFR-2);
+  // re-emission for the same event_id is an idempotent no-op per the
+  // standard envelope.
+  'item-text-set',
+  'branch-retitled',
 ]);
 
 // §2 — per-event required fields IN ADDITION TO the envelope
@@ -181,6 +197,14 @@ const EVENT_REQUIRED_FIELDS = Object.freeze({
   // (deploy URL / prod SHA) is captured by the reducer but NOT a required field
   // (additive, no contract change, schema_version stays 1).
   'item-deployed': ['node_id', 'item_id'],
+  // Text-repair pair (2026-06-10, ws-ui-residuals — see EVENT_TYPES note).
+  // `item-text-set` replaces the located item's `text` field; `branch-retitled`
+  // replaces the located node's `title`. Both LWW; unknown ids rejected by the
+  // reducer (retained-not-applied, NFR-2). The fields may not be null
+  // (deliberately NOT in NULLABLE_REQUIRED — an empty correction is sent as
+  // an empty string, never null).
+  'item-text-set': ['node_id', 'item_id', 'text'],
+  'branch-retitled': ['node_id', 'title'],
 });
 
 const ACTORS = Object.freeze(['dispatch', 'gui']);

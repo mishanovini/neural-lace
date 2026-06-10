@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task_id": "4",
+  "verdict": "PASS",
+  "commit_sha": "ad1ebd018623263699ff5770dd0a1312562e6666",
+  "files_modified": [
+    "docs/plans/ws-ui-residuals-2026-06-10.md",
+    "neural-lace/workstreams-ui/state/reducer.js",
+    "neural-lace/workstreams-ui/state/schema.js",
+    "neural-lace/workstreams-ui/state/selftest.js",
+    "neural-lace/workstreams-ui/web/app.js"
+  ],
+  "mechanical_checks": {
+    "command:grep -q 'function isAwaitingMe' neural-lace/workstreams-ui/web/app.js && grep -q 'function isInFlightItem' neural-lace/workstreams-ui/web/app.js && grep -q 'isAwaitingMe(r.item)' neural-lace/workstreams-ui/web/app.js": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'function isAwaitingMe' neural-lace/workstreams-ui/web/app.js && grep -q 'function isInFlightItem' neural-lace/workstreams-ui/web/app.js && grep -q 'isAwaitingMe(r.item)' neural-lace/workstreams-ui/web/app.js",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T15:44:22Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/ws-ui-residuals-2026-06-10.md"
+}
