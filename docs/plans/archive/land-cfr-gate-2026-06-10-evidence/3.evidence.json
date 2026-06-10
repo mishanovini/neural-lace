@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "task_id": "3",
+  "verdict": "PASS",
+  "commit_sha": "3402cd6e9fb892986e63cb5892d81b93e39894da",
+  "files_modified": [
+    "adapters/claude-code/hooks/customer-facing-review-gate.sh",
+    "adapters/claude-code/rules/INDEX.md",
+    "adapters/claude-code/rules/customer-facing-review.md",
+    "adapters/claude-code/rules/vaporware-prevention.md",
+    "adapters/claude-code/settings.json.template",
+    "docs/DECISIONS.md",
+    "docs/backlog.md",
+    "docs/decisions/053-customer-facing-review-gate.md",
+    "docs/harness-architecture.md",
+    "docs/plans/land-cfr-gate-2026-06-10.md"
+  ],
+  "mechanical_checks": {
+    "command:jq -r '.hooks.Stop[0].hooks[].command' adapters/claude-code/settings.json.template | grep -A2 'pr-health-snapshot-gate' | grep -q 'customer-facing-review-gate'": {
+      "passed": true,
+      "detail": "",
+      "command": "jq -r '.hooks.Stop[0].hooks[].command' adapters/claude-code/settings.json.template | grep -A2 'pr-health-snapshot-gate' | grep -q 'customer-facing-review-gate'",
+      "exit_code": 0
+    },
+    "command:jq -r '.hooks.Stop[0].hooks[].command' adapters/claude-code/settings.json.template | tail -1 | grep -q 'session-wrap.sh refresh'": {
+      "passed": true,
+      "detail": "",
+      "command": "jq -r '.hooks.Stop[0].hooks[].command' adapters/claude-code/settings.json.template | tail -1 | grep -q 'session-wrap.sh refresh'",
+      "exit_code": 0
+    },
+    "command:bash evals/golden/rules-index-coverage.sh": {
+      "passed": true,
+      "detail": "Indexed rules in sync: 56\nPASS: INDEX has a row for every rule file, and every row points at an existing file",
+      "command": "bash evals/golden/rules-index-coverage.sh",
+      "exit_code": 0
+    },
+    "schema-valid:adapters/claude-code/settings.json.template": {
+      "passed": true,
+      "detail": "schema is valid JSON",
+      "command": "jq empty <adapters/claude-code/settings.json.template",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T12:56:19Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/land-cfr-gate-2026-06-10.md"
+}

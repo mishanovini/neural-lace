@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "task_id": "4",
+  "verdict": "PASS",
+  "commit_sha": "3402cd6e9fb892986e63cb5892d81b93e39894da",
+  "files_modified": [
+    "adapters/claude-code/hooks/customer-facing-review-gate.sh",
+    "adapters/claude-code/rules/INDEX.md",
+    "adapters/claude-code/rules/customer-facing-review.md",
+    "adapters/claude-code/rules/vaporware-prevention.md",
+    "adapters/claude-code/settings.json.template",
+    "docs/DECISIONS.md",
+    "docs/backlog.md",
+    "docs/decisions/053-customer-facing-review-gate.md",
+    "docs/harness-architecture.md",
+    "docs/plans/land-cfr-gate-2026-06-10.md"
+  ],
+  "mechanical_checks": {
+    "command:bash adapters/claude-code/hooks/harness-hygiene-scan.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "bash adapters/claude-code/hooks/harness-hygiene-scan.sh",
+      "exit_code": 0
+    },
+    "command:diff -q adapters/claude-code/hooks/customer-facing-review-gate.sh ~/.claude/hooks/customer-facing-review-gate.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "diff -q adapters/claude-code/hooks/customer-facing-review-gate.sh ~/.claude/hooks/customer-facing-review-gate.sh",
+      "exit_code": 0
+    },
+    "command:diff -q adapters/claude-code/rules/customer-facing-review.md ~/.claude/rules/customer-facing-review.md": {
+      "passed": true,
+      "detail": "",
+      "command": "diff -q adapters/claude-code/rules/customer-facing-review.md ~/.claude/rules/customer-facing-review.md",
+      "exit_code": 0
+    },
+    "command:jq -r '.hooks.Stop[0].hooks[].command' ~/.claude/settings.json | grep -A1 'pr-health-snapshot-gate' | grep -q 'customer-facing-review-gate'": {
+      "passed": true,
+      "detail": "",
+      "command": "jq -r '.hooks.Stop[0].hooks[].command' ~/.claude/settings.json | grep -A1 'pr-health-snapshot-gate' | grep -q 'customer-facing-review-gate'",
+      "exit_code": 0
+    },
+    "command:jq empty ~/.claude/settings.json": {
+      "passed": true,
+      "detail": "",
+      "command": "jq empty ~/.claude/settings.json",
+      "exit_code": 0
+    },
+    "command:bash ~/.claude/hooks/customer-facing-review-gate.sh --self-test": {
+      "passed": true,
+      "detail": "alformed-input-fails-gracefully (exit 0)\nPASS  missing-agents-defined-flags-clearly (exit 2 + names both families)\nPASS  disable-env-allows (exit 0, bonus)\n\nself-test: 9 pass, 0 fail\nself-test: OK 9/9",
+      "command": "bash ~/.claude/hooks/customer-facing-review-gate.sh --self-test",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "10 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-10T13:00:26Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/land-cfr-gate-2026-06-10.md"
+}
