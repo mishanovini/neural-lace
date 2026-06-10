@@ -61,7 +61,7 @@ byte-identical to the canonical files.
 - `docs/harness-architecture.md` — Stop-chain table row + last-updated note
 
 ## In-flight scope updates
-- 2026-06-10: `docs/backlog.md` — filed HARNESS-GAP-47 (UX/CX criterion never folded into completion-criteria-gate), discovered while fixing the rule/ADR's stale "in-flight" coordination claims during the landing
+- 2026-06-10: `docs/backlog.md` — filed HARNESS-GAP-48 (UX/CX criterion never folded into completion-criteria-gate), discovered while fixing the rule/ADR's stale "in-flight" coordination claims during the landing
 
 ## Assumptions
 - The salvage commit 59c28ab is the reviewed, anonymized, canonical content
