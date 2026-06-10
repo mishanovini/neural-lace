@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "workstreams",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/server.js"],
+      "cwd": "neural-lace/workstreams-ui",
+      "port": 7733
+    }
+  ]
+}
