@@ -1,0 +1,17 @@
+{
+  "session_id": "fixture-session-77",
+  "plan_slug": "campaign-duplicate-fixture",
+  "plan_commit_sha": "0000000fixture",
+  "mode": "runtime",
+  "started_at": "2026-06-08T21:10:00Z",
+  "ended_at": "2026-06-08T21:14:30Z",
+  "scenarios": [
+    {
+      "id": "duplicate-campaign-happy-path",
+      "verdict": "FAIL",
+      "artifacts": { "screenshot": "dup-screenshot.png", "network_log": "dup-network.log", "console_log": "dup-console.log" },
+      "assertions_met": ["list renders", "Duplicate button visible", "POST /api/campaigns/duplicate returns 200"],
+      "failure_reason": "New row never appears: the POST succeeds but the list component reads from a client cache that is not invalidated; a manual full-page reload DOES show the copy. Task evidence had cited 'Runtime verification: curl POST /api/campaigns/duplicate -> 200' and task-verifier PASSed on that basis."
+    }
+  ]
+}

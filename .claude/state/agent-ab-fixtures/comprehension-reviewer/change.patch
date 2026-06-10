@@ -1,0 +1,32 @@
+diff --git a/src/lib/rate-limiter.ts b/src/lib/rate-limiter.ts
+index 1111111..2222222 100644
+--- a/src/lib/rate-limiter.ts
++++ b/src/lib/rate-limiter.ts
+@@ -10,6 +10,22 @@ const windows = new Map<string, number[]>();
++export function checkLimit(orgId: string, now: number): boolean {
++  // prune entries outside the rolling 60s window
++  const events = (windows.get(orgId) ?? []).filter((t) => now - t < 60_000);
++  if (events.length >= 100) {
++    windows.set(orgId, events);
++    return false;
++  }
++  events.push(now);
++  windows.set(orgId, events);
++  return true;
++}
++
++export function resetOrg(orgId: string): void {
++  windows.delete(orgId);
++}
+diff --git a/src/services/notifier.ts b/src/services/notifier.ts
+index 3333333..4444444 100644
+--- a/src/services/notifier.ts
++++ b/src/services/notifier.ts
+@@ -42,8 +42,12 @@ export async function sendNotification(org: Org, payload: Payload) {
+-  await queue.push(org.id, payload);
+-  return { queued: true };
++  if (!checkLimit(org.id, Date.now())) {
++    return { queued: false, reason: "rate-limited" };
++  }
++  await queue.push(org.id, payload);
++  return { queued: true };

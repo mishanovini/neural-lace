@@ -1,0 +1,7 @@
+Hooks that fired during the originating session (FIXTURE):
+- pre-commit-tdd-gate.sh (PASS — endpoint test present)
+- plan-edit-validator.sh (PASS — evidence fresh, Task ID matched, runtime line present)
+- runtime-verification-reviewer.sh (PASS — curl line corresponds to the feature endpoint)
+- pre-stop-verifier.sh (PASS)
+NOTE: session transcript is NOT available for this incident (rotated). Plan file and
+FAIL artifact above are the only inputs.

@@ -1,0 +1,2 @@
+# Gate fire log, 2026-05-01 .. 2026-06-09 (FIXTURE)
+# (no entries — the gate has produced zero blocks in 40 days)

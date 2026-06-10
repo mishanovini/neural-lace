@@ -1,0 +1,8 @@
+{
+  "comment": "FIXTURE settings snippet (synthetic). Note: commit-msg-length-gate.sh is documented as wired but does NOT appear in any hook chain below.",
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.claude/hooks/some-other-gate.sh" }] }
+    ]
+  }
+}
