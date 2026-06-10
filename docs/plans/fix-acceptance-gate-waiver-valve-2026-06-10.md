@@ -39,7 +39,7 @@ build-harness-infrastructure (`adapters/claude-code/work-shapes/build-harness-in
 
 ## Tasks
 
-- [ ] 1. In the main loop, record the UI-surface exemption refusal instead of immediately blocking; fall through to the per-session waiver check (valid waiver → allow with stderr note "exemption refused (UI surface) but valid waiver present"; no/empty/stale waiver → add the unchanged refusal text to BLOCKERS). Extend `--self-test` with U2 (exempt+UI plan + fresh valid waiver → exit 0) and U3 (exempt+UI plan + stale waiver → exit 2); keep all existing scenarios green; update the scenario-count line to 14. — Verification: mechanical
+- [x] 1. In the main loop, record the UI-surface exemption refusal instead of immediately blocking; fall through to the per-session waiver check (valid waiver → allow with stderr note "exemption refused (UI surface) but valid waiver present"; no/empty/stale waiver → add the unchanged refusal text to BLOCKERS). Extend `--self-test` with U2 (exempt+UI plan + fresh valid waiver → exit 0) and U3 (exempt+UI plan + stale waiver → exit 2); keep all existing scenarios green; update the scenario-count line to 14. — Verification: mechanical
 
 ## Files to Modify/Create
 - `adapters/claude-code/hooks/product-acceptance-gate.sh` — refused-exemption fall-through + U2/U3 self-test scenarios + count/header update
