@@ -10,9 +10,33 @@
 # either a scope amendment, a new plan to claim the work, or a deferral.
 #
 # Trigger:
-#   PreToolUse on tool_name == "Bash". Strips leading `cd …` and `&&`
-#   chains; matches `git commit` as the next token. Pass-through on
-#   non-Bash tool calls and non-commit Bash commands.
+#   PreToolUse on tool_name == "Bash" OR "PowerShell" (settings matcher
+#   "Bash|PowerShell" — HARNESS-GAP-47, 2026-06-10, closed the PowerShell
+#   bypass: the PowerShell tool runs `git commit` just like Bash and is
+#   parsed with the same command patterns; `cd` is a Set-Location alias and
+#   `Set-Location` itself is recognized). Splits the command on `&&` / `;`,
+#   tracks `cd` / `Set-Location` targets, matches `git commit` (including
+#   `git -C <path> commit`) as a segment. Pass-through on other tools and
+#   non-commit commands.
+#
+# Target-repo resolution (HARNESS-GAP-47, 2026-06-10):
+#   The gate evaluates ALL its logic (plan discovery + staged-file listing)
+#   against the repo the commit actually TARGETS, not the hook process's own
+#   cwd (the session root). Pre-fix, `cd <other-repo> && git commit` was
+#   evaluated against the SESSION repo's docs/plans + staged index, and
+#   `git -C <other-repo> commit` bypassed the gate entirely (the old
+#   `^git\s+commit` regex never matched it). Effective-target priority:
+#     1. `git -C <path>` flags on the commit segment — quoted paths with
+#        spaces supported, repeated -C composes per git semantics (later
+#        relative paths resolve against earlier ones), glued -C<path> too.
+#     2. The last `cd <path>` / `Set-Location <path>` segment preceding the
+#        git-commit segment (`&&` and `;` chains, quoted paths, ~ expansion,
+#        chained relative cds accumulate).
+#     3. Fallback: process cwd (the pre-GAP-47 behavior, unchanged).
+#   A parsed target that doesn't exist or isn't a git repo passes through
+#   with a stderr note — the real git command will fail on its own; there is
+#   nothing meaningful to scope-check. Self-test scenarios 26-31 cover this
+#   plus the PowerShell tool coverage.
 #
 # No-docs/plans/ full-skip (2026-06-08):
 #   A repo with NO docs/plans/ directory cannot have plan-scoped commits —
@@ -160,7 +184,152 @@ _resolve_git_dir_abs() {
 }
 
 # ============================================================
-# --self-test handler (twenty scenarios)
+# Helpers: commit-target parsing (HARNESS-GAP-47, 2026-06-10)
+#
+# The command string may change directory before committing
+# (`cd <path> && git commit`) or target another repo inline
+# (`git -C <path> commit`). These helpers extract the effective
+# target directory so the gate evaluates THAT repo, not the hook
+# process's cwd. See the header "Target-repo resolution" section.
+# ============================================================
+
+# Expand a leading ~ / ~/ to $HOME.
+_expand_tilde() {
+  local p="$1"
+  case "$p" in
+    "~") printf '%s' "$HOME" ;;
+    "~/"*) printf '%s/%s' "$HOME" "${p#\~/}" ;;
+    *) printf '%s' "$p" ;;
+  esac
+}
+
+# Is $1 an absolute path (POSIX or Windows drive-letter)?
+_is_abs_path_str() {
+  case "$1" in
+    /*) return 0 ;;
+    [A-Za-z]:/*|[A-Za-z]:\\*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Tokenize a command segment respecting single/double quotes.
+# Populates global array SEG_TOKENS.
+_tokenize_segment() {
+  local s="$1" i ch n cur="" in_dq=0 in_sq=0 have=0
+  SEG_TOKENS=()
+  n=${#s}
+  for ((i=0; i<n; i++)); do
+    ch="${s:i:1}"
+    if [[ $in_sq -eq 1 ]]; then
+      if [[ "$ch" == "'" ]]; then in_sq=0; else cur+="$ch"; fi
+      continue
+    fi
+    if [[ $in_dq -eq 1 ]]; then
+      if [[ "$ch" == '"' ]]; then in_dq=0; else cur+="$ch"; fi
+      continue
+    fi
+    case "$ch" in
+      "'") in_sq=1; have=1 ;;
+      '"') in_dq=1; have=1 ;;
+      ' '|$'\t')
+        if [[ -n "$cur" ]] || [[ $have -eq 1 ]]; then
+          SEG_TOKENS+=("$cur"); cur=""; have=0
+        fi
+        ;;
+      *) cur+="$ch"; have=1 ;;
+    esac
+  done
+  if [[ -n "$cur" ]] || [[ $have -eq 1 ]]; then
+    SEG_TOKENS+=("$cur")
+  fi
+}
+
+# Compose a directory path: absolute $3 wins; else resolve $3 against the
+# accumulated target $1; else against the base $2 (git's effective cwd).
+_compose_dir() {
+  local cur="$1" base="$2" p="$3"
+  p=$(_expand_tilde "$p")
+  if _is_abs_path_str "$p"; then
+    printf '%s' "$p"
+  elif [[ -n "$cur" ]]; then
+    printf '%s/%s' "$cur" "$p"
+  elif [[ -n "$base" ]]; then
+    printf '%s/%s' "$base" "$p"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+# Analyze a `git …` segment. Sets globals:
+#   GIT_SEG_IS_COMMIT  — 1 iff the segment's subcommand is `commit`
+#                        (commit-tree / commit-graph excluded by token equality)
+#   GIT_SEG_C_TARGET   — composed `-C` target dir, or "" when no -C present.
+#                        Repeated -C composes per git semantics; relative
+#                        paths resolve against $2 (git's effective cwd base).
+_analyze_git_segment() {
+  local seg="$1" base="$2"
+  GIT_SEG_IS_COMMIT=0
+  GIT_SEG_C_TARGET=""
+  _tokenize_segment "$seg"
+  local n=${#SEG_TOKENS[@]} i tok
+  [[ $n -ge 2 ]] || return 0
+  [[ "${SEG_TOKENS[0]}" == "git" ]] || return 0
+  for ((i=1; i<n; i++)); do
+    tok="${SEG_TOKENS[$i]}"
+    case "$tok" in
+      -C)
+        i=$((i+1))
+        [[ $i -lt $n ]] || break
+        GIT_SEG_C_TARGET=$(_compose_dir "$GIT_SEG_C_TARGET" "$base" "${SEG_TOKENS[$i]}")
+        ;;
+      -C?*)
+        GIT_SEG_C_TARGET=$(_compose_dir "$GIT_SEG_C_TARGET" "$base" "${tok:2}")
+        ;;
+      --git-dir|--work-tree|--namespace|-c)
+        i=$((i+1))   # global flags whose value is a separate token
+        ;;
+      -*)
+        :            # other global flags (boolean, or value glued with =)
+        ;;
+      *)
+        if [[ "$tok" == "commit" ]]; then
+          GIT_SEG_IS_COMMIT=1
+        fi
+        return 0
+        ;;
+    esac
+  done
+  return 0
+}
+
+# Parse a `cd <path>` / `Set-Location <path>` segment; echo the resolved
+# target (relative paths resolve against $2, the accumulated cd target or
+# process cwd). Bare `cd` echoes $HOME.
+_parse_cd_target() {
+  local seg="$1" base="$2"
+  _tokenize_segment "$seg"
+  local n=${#SEG_TOKENS[@]}
+  if [[ $n -lt 2 ]]; then
+    printf '%s' "$HOME"
+    return
+  fi
+  local p="${SEG_TOKENS[1]}"
+  # Skip a leading flag (cd -P/-L, Set-Location -LiteralPath/-Path)
+  if [[ "$p" == -* ]] && [[ $n -ge 3 ]]; then
+    p="${SEG_TOKENS[2]}"
+  fi
+  p=$(_expand_tilde "$p")
+  if _is_abs_path_str "$p"; then
+    printf '%s' "$p"
+  elif [[ -n "$base" ]]; then
+    printf '%s/%s' "$base" "$p"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+# ============================================================
+# --self-test handler (thirty-one scenarios)
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
   # We need this script's path for re-invocation under different cwds
@@ -920,8 +1089,139 @@ Test gitlink-shaped trailing-slash matching.
     FAILED=$((FAILED+1))
   fi
 
+  # ============================================================
+  # Scenarios 26-31 — HARNESS-GAP-47 (target-repo resolution +
+  # PowerShell coverage). Each cross-repo scenario builds a SESSION
+  # repo (the hook's cwd) and a TARGET repo (named in the command);
+  # the gate must evaluate the TARGET, never the session cwd.
+  # ============================================================
+
+  # Helper: build a repo at $1. $2 = plan body ("" = NO docs/plans at all).
+  # $3 = csv of files to create + stage.
+  _build_repo() {
+    local dir="$1" plan_body="$2" staged_csv="$3"
+    mkdir -p "$dir"
+    (
+      cd "$dir" || exit 99
+      git init -q 2>/dev/null || true
+      git config user.email "test@example.com" 2>/dev/null
+      git config user.name "Test" 2>/dev/null
+      git config commit.gpgsign false 2>/dev/null
+      if [[ -n "$plan_body" ]]; then
+        mkdir -p docs/plans
+        printf '%s' "$plan_body" > docs/plans/test-scope-plan.md
+        git add docs/plans/test-scope-plan.md 2>/dev/null
+      else
+        echo "init" > .gitkeep
+        git add .gitkeep 2>/dev/null
+      fi
+      git commit -q -m "init" 2>/dev/null
+      local IFS=','
+      local _staged f
+      read -ra _staged <<< "$staged_csv"
+      for f in "${_staged[@]}"; do
+        [[ -z "$f" ]] && continue
+        mkdir -p "$(dirname "$f")" 2>/dev/null
+        echo "stub" > "$f"
+        git add "$f" 2>/dev/null
+      done
+    )
+  }
+
+  # Helper: run the hook from cwd $1 with command $2 and tool name $3
+  # (default Bash); echo the hook's exit code. Uses jq to build the input
+  # JSON safely (paths may contain spaces).
+  _run_hook_cmd() {
+    local cwd="$1" cmd="$2" tool="${3:-Bash}"
+    (
+      cd "$cwd" || exit 99
+      local input
+      input=$(jq -cn --arg t "$tool" --arg c "$cmd" '{tool_name:$t,tool_input:{command:$c}}')
+      printf '%s' "$input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+      echo $?
+    )
+  }
+
+  # ---- Scenario 26 (GAP-47 s-A1): `git -C <other-repo-without-plans>` → full-skip,
+  # even though the SESSION repo (process cwd) has an active plan + an
+  # out-of-scope staged file (which would BLOCK if evaluated against cwd). ----
+  _build_repo "$TMPROOT/s26-session" "$PLAN_NORMAL" "unrelated.md"
+  _build_repo "$TMPROOT/s26-target" "" "state/file.txt"
+  RC=$(_run_hook_cmd "$TMPROOT/s26-session" "git -C $TMPROOT/s26-target commit -m \"x\"")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (26) gap47-git-C-targets-noplans-repo-skips: PASS (evaluated against TARGET, not session cwd)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (26) gap47-git-C-targets-noplans-repo-skips: FAIL (rc=$RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 27 (GAP-47 s-A2): `git -C "<quoted path with spaces>"` into a repo
+  # WITH an active plan + out-of-scope staged file → BLOCK, even though the
+  # SESSION repo has no docs/plans (would full-skip if evaluated against cwd). ----
+  _build_repo "$TMPROOT/s27-session" "" "state/file.txt"
+  _build_repo "$TMPROOT/s27 target with space" "$PLAN_NORMAL" "unrelated.md"
+  RC=$(_run_hook_cmd "$TMPROOT/s27-session" "git -C \"$TMPROOT/s27 target with space\" commit -m \"x\"")
+  if [[ "$RC" == "2" ]]; then
+    echo "self-test (27) gap47-git-C-quoted-space-path-blocks-on-target: PASS (correctly blocked against TARGET)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (27) gap47-git-C-quoted-space-path-blocks-on-target: FAIL (rc=$RC, expected 2)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 28 (GAP-47 s-A3): `cd <other> && git commit` follows the cd target ----
+  _build_repo "$TMPROOT/s28-session" "$PLAN_NORMAL" "unrelated.md"
+  _build_repo "$TMPROOT/s28-target" "" "state/file.txt"
+  RC=$(_run_hook_cmd "$TMPROOT/s28-session" "cd $TMPROOT/s28-target && git commit -m \"x\"")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (28) gap47-cd-then-commit-follows-cd-target: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (28) gap47-cd-then-commit-follows-cd-target: FAIL (rc=$RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 29 (GAP-47 s-A4): plain `git commit` (no -C / cd) — fallback to
+  # process cwd unchanged: out-of-scope staged file in cwd repo still blocks. ----
+  _build_repo "$TMPROOT/s29-session" "$PLAN_NORMAL" "unrelated.md"
+  RC=$(_run_hook_cmd "$TMPROOT/s29-session" "git commit -m \"x\"")
+  if [[ "$RC" == "2" ]]; then
+    echo "self-test (29) gap47-plain-commit-cwd-fallback-unchanged: PASS (correctly blocked)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (29) gap47-plain-commit-cwd-fallback-unchanged: FAIL (rc=$RC, expected 2)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 30 (GAP-47): repeated -C composes per git semantics —
+  # `git -C <abs-tmproot> -C s30-target commit` resolves to $TMPROOT/s30-target. ----
+  _build_repo "$TMPROOT/s30-session" "$PLAN_NORMAL" "unrelated.md"
+  _build_repo "$TMPROOT/s30-target" "" "state/file.txt"
+  RC=$(_run_hook_cmd "$TMPROOT/s30-session" "git -C $TMPROOT -C s30-target commit -m \"x\"")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (30) gap47-repeated-dash-C-composes: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (30) gap47-repeated-dash-C-composes: FAIL (rc=$RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 31 (GAP-47 defect B): tool_name "PowerShell" is gated with the
+  # same semantics — out-of-scope staged file in cwd repo blocks. Pre-fix the
+  # hook exited 0 on any non-Bash tool, so PowerShell commits ran unexamined. ----
+  _build_repo "$TMPROOT/s31-session" "$PLAN_NORMAL" "unrelated.md"
+  RC=$(_run_hook_cmd "$TMPROOT/s31-session" "git commit -m \"x\"" "PowerShell")
+  if [[ "$RC" == "2" ]]; then
+    echo "self-test (31) gap47-powershell-tool-gated: PASS (correctly blocked)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (31) gap47-powershell-tool-gated: FAIL (rc=$RC, expected 2)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 25 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 31 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -947,9 +1247,11 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-# Tool name must be Bash (support nested + flat shapes)
+# Tool name must be Bash or PowerShell (support nested + flat shapes).
+# HARNESS-GAP-47: the PowerShell tool runs `git commit` too; gating only
+# Bash left a silent bypass. The settings matcher is "Bash|PowerShell".
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)
-if [[ "$TOOL_NAME" != "Bash" ]]; then
+if [[ "$TOOL_NAME" != "Bash" ]] && [[ "$TOOL_NAME" != "PowerShell" ]]; then
   exit 0
 fi
 
@@ -959,20 +1261,32 @@ if [[ -z "$CMD" ]]; then
   exit 0
 fi
 
-# --- Detect git commit (after stripping leading `cd …` and `&&`-prefixed blocks) ---
+# --- Detect git commit + parse the effective commit-target (HARNESS-GAP-47) ---
+# Track `cd` / `Set-Location` segments as they accumulate, then when the
+# git-commit segment is found, extract its `-C` flags. Priority for the
+# effective target dir: -C composition > last cd target > process cwd ("").
 IS_GIT_COMMIT=0
+TARGET_DIR=""
+CD_TARGET=""
 TMP_CMD="$CMD"
 TMP_CMD=$(echo "$TMP_CMD" | sed -e 's/&&/\n/g' -e 's/;/\n/g')
 while IFS= read -r seg; do
   seg="${seg#"${seg%%[![:space:]]*}"}"
   seg="${seg%"${seg##*[![:space:]]}"}"
   [[ -z "$seg" ]] && continue
-  if [[ "$seg" =~ ^cd[[:space:]] ]] || [[ "$seg" == "cd" ]]; then
+  if [[ "$seg" =~ ^cd($|[[:space:]]) ]] || [[ "$seg" =~ ^[Ss]et-[Ll]ocation($|[[:space:]]) ]]; then
+    CD_TARGET=$(_parse_cd_target "$seg" "${CD_TARGET:-$PWD}")
     continue
   fi
-  if [[ "$seg" =~ ^git[[:space:]]+commit($|[[:space:]]+) ]]; then
-    if [[ ! "$seg" =~ ^git[[:space:]]+commit-(tree|graph) ]]; then
+  if [[ "$seg" =~ ^git([[:space:]]|$) ]]; then
+    _analyze_git_segment "$seg" "${CD_TARGET:-$PWD}"
+    if [[ "$GIT_SEG_IS_COMMIT" -eq 1 ]]; then
       IS_GIT_COMMIT=1
+      if [[ -n "$GIT_SEG_C_TARGET" ]]; then
+        TARGET_DIR="$GIT_SEG_C_TARGET"
+      elif [[ -n "$CD_TARGET" ]]; then
+        TARGET_DIR="$CD_TARGET"
+      fi
       break
     fi
   fi
@@ -982,22 +1296,41 @@ if [[ "$IS_GIT_COMMIT" -eq 0 ]]; then
   exit 0
 fi
 
-# --- Locate repo root (where docs/plans/ lives) ---
+# --- Locate the COMMIT TARGET's repo root (where docs/plans/ lives) ---
+# HARNESS-GAP-47: when a target dir was parsed from the command, ALL gate
+# logic (plan discovery + staged-file listing) runs against that repo.
+# With no parsed target, behavior is unchanged (process cwd).
 REPO_ROOT=""
-if command -v git >/dev/null 2>&1; then
-  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-fi
-if [[ -z "$REPO_ROOT" ]]; then
-  CURRENT="$PWD"
-  while [[ -n "$CURRENT" ]] && [[ "$CURRENT" != "/" ]]; do
-    if [[ -d "$CURRENT/.git" ]] || [[ -d "$CURRENT/docs/plans" ]]; then
-      REPO_ROOT="$CURRENT"
-      break
-    fi
-    PARENT=$(dirname "$CURRENT")
-    [[ "$PARENT" == "$CURRENT" ]] && break
-    CURRENT="$PARENT"
-  done
+if [[ -n "$TARGET_DIR" ]]; then
+  if [[ ! -d "$TARGET_DIR" ]]; then
+    # Parsed target doesn't exist — the real `git commit` will fail on its
+    # own; nothing meaningful to scope-check. Err toward allow.
+    echo "[scope-enforcement-gate] parsed commit-target dir '$TARGET_DIR' does not exist — scope-check skipped (the git command will fail on its own)." >&2
+    exit 0
+  fi
+  if command -v git >/dev/null 2>&1; then
+    REPO_ROOT=$(git -C "$TARGET_DIR" rev-parse --show-toplevel 2>/dev/null || echo "")
+  fi
+  if [[ -z "$REPO_ROOT" ]]; then
+    echo "[scope-enforcement-gate] parsed commit-target dir '$TARGET_DIR' is not inside a git repo — scope-check skipped (the git command will fail on its own)." >&2
+    exit 0
+  fi
+else
+  if command -v git >/dev/null 2>&1; then
+    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  fi
+  if [[ -z "$REPO_ROOT" ]]; then
+    CURRENT="$PWD"
+    while [[ -n "$CURRENT" ]] && [[ "$CURRENT" != "/" ]]; do
+      if [[ -d "$CURRENT/.git" ]] || [[ -d "$CURRENT/docs/plans" ]]; then
+        REPO_ROOT="$CURRENT"
+        break
+      fi
+      PARENT=$(dirname "$CURRENT")
+      [[ "$PARENT" == "$CURRENT" ]] && break
+      CURRENT="$PARENT"
+    done
+  fi
 fi
 
 # Could not locate a repo root at all → cannot reason about scope; pass through.
