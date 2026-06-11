@@ -167,5 +167,26 @@ ok('R27 background/about/the_ask/why_asking/why_assigned render without _categor
   && !/if\s*\(dcCat\)\s*\{/.test(rid)    // no block-form gate that could swallow rows
   && /function\s+dcCategoryHeader\s*\(/.test(js)); // chips extra still exists, gated
 
+// --- In-modal doc links open IN-APP (2026-06-11, operator-directed) --------
+// Doc references in details text (docs/… paths AND bare *.md names like
+// REDESIGN-PRD-DRAFT-2026-06-10.md) render as clickable button chips that open
+// the doc in the in-app Docs viewer: openDocSmart probes /api/doc candidates
+// (item project → neural-lace → workstreams-coordination; bare names try the
+// coordination repo first) → openDocInApp bridge → openDocModal. The viewer
+// layers ABOVE the detail modal (#docScrim 61 / #docModal 62 vs modal-card 60)
+// and Esc closes the viewer first (detail Esc handler returns early while the
+// viewer is open). DOM built via textContent only — no innerHTML injection.
+ok('R28 doc references in the detail modal are clickable and open in-app',
+  /function\s+openDocSmart\s*\(/.test(js)
+  && /openDocInApp\s*=\s*openDocModal/.test(js)
+  && js.indexOf("el('button', 'det-link det-link-doc'") !== -1
+  && js.indexOf('var DOC_REF_RE') !== -1
+  && js.indexOf('\\.md\\b') !== -1                       // bare *.md names match
+  && /workstreams-coordination/.test(js)                  // coordination-repo candidate
+  && /if\s*\(dv && !dv\.hidden\)\s*return;/.test(js)      // Esc layering: viewer first
+  && /button\.det-link-doc/.test(C)
+  && /#docScrim\s*\{\s*z-index:\s*61/.test(C)
+  && /#docModal\s*\{\s*z-index:\s*62/.test(C));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

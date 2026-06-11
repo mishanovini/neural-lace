@@ -117,6 +117,18 @@ function loadProjects() {
   // kept in that case.
   if (!isWorktreeName(path.basename(self))) map[path.basename(self)] = self;
   map['neural-lace'] = self;
+  // Workstreams coordination repo — its docs live at the repo ROOT (no docs/
+  // subdir), so auto-discovery skips it. Stable alias by documented convention
+  // (~/claude-projects/workstreams-coordination, runtime-computed — no machine
+  // path in source) when present, so item-detail doc links like
+  // "REDESIGN-PRD-DRAFT-….md in workstreams-coordination" resolve via
+  // /api/doc (resolveDoc's traversal guard applies to this root identically).
+  try {
+    const coord = path.join(os.homedir(), 'claude-projects', 'workstreams-coordination');
+    if (fs.existsSync(coord) && fs.statSync(coord).isDirectory() && !hasRoot(map, coord)) {
+      map['workstreams-coordination'] = coord;
+    }
+  } catch (_) { /* best-effort; absent on machines without the repo */ }
   try {
     if (fs.existsSync(CFG)) {
       const raw = JSON.parse(fs.readFileSync(CFG, 'utf8'));
@@ -164,7 +176,30 @@ function listDocs() {
     const root = map[key];
     const docsDir = path.join(root, 'docs');
     if (!fs.existsSync(root)) { out[key] = { root: root, missing: true, files: [] }; return; }
-    if (!fs.existsSync(docsDir)) { out[key] = { root: root, missing: false, files: [] }; return; }
+    if (!fs.existsSync(docsDir)) {
+      // Root-level *.md fallback (the workstreams-coordination shape: docs at
+      // the repo root, no docs/ subdir). Shallow walk (depth ≤ 2) with the
+      // same skip rules as discovery so the Docs drawer can list them. Only
+      // explicit-alias / per-machine-config projects can lack docs/ (auto-
+      // discovery requires it), so the blast radius is those entries only.
+      const rootFiles = [];
+      (function walkRoot(dir, depth) {
+        if (depth > 2) return;
+        let ents;
+        try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+        ents.forEach(function (e) {
+          if (e.name.charAt(0) === '.') return;
+          const fp = path.join(dir, e.name);
+          if (e.isDirectory()) { if (!isSkippedDir(e.name)) walkRoot(fp, depth + 1); }
+          else if (e.isFile() && /\.md$/i.test(e.name)) {
+            rootFiles.push(path.relative(root, fp).split(path.sep).join('/'));
+          }
+        });
+      })(root, 0);
+      rootFiles.sort();
+      out[key] = { root: root, missing: false, files: rootFiles };
+      return;
+    }
     const files = [];
     (function walk(dir, depth) {
       if (depth > 6) return;

@@ -809,23 +809,98 @@
   // renderer with decision-context fence-grammar rendering; PT rewrote app.js
   // four-tier from scratch and did not carry it. This block restores the
   // decision-context detail rendering inside the four-tier detail card.
-  // linkifyDocs is a self-contained LITE version (renders docs/… as styled
-  // chips; the four-tier renderer has no docs-modal subsystem, so they are
-  // informational rather than click-to-open — content preserved, no missing
-  // dependency). The (see branch: …) jump degrades to a toast (the four-tier
-  // renderer has no focusNode tree-canvas navigation).
+  // linkifyDocs (UPGRADED 2026-06-11 — operator-directed): doc references in
+  // details text are now CLICKABLE and open the doc IN-APP via the Docs
+  // viewer (openDocInApp → /api/doc), per Misha: "that link needs to actually
+  // work directly right here and open within the Workstreams UI". Matches
+  // (a) docs/… repo paths and (b) any path-ish token ending in .md — incl.
+  // bare coordination-repo doc names like REDESIGN-PRD-DRAFT-2026-06-10.md.
+  // Tokens embedded in URLs (preceded by '/', ':' or a word char) stay plain
+  // text. DOM is built with textContent / createTextNode ONLY — details text
+  // is operator-trusted but never innerHTML'd, so no HTML injection path.
+  // The (see branch: …) jump still degrades to a toast (no tree-canvas nav).
   // ============================================================================
+  // openDocInApp — bridge to the Docs-viewer subsystem (assigned inside the
+  // docsBrowser IIFE below; null when the drawer is absent from the build, in
+  // which case links degrade to an explanatory toast).
+  var openDocInApp = null;
+  // .md path tokens first (so docs/reviews/x.md matches whole), then bare
+  // docs/… paths (covers non-.md references under docs/).
+  var DOC_REF_RE = /((?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.md\b|docs\/[A-Za-z0-9._\/-]+)/g;
+  var DOC_REF_TEST = /(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.md\b|docs\/[A-Za-z0-9._\/-]+/;
   function linkifyDocs(container, text, projectKey) {
     var s = String(text == null ? '' : text);
-    var re = /docs\/[A-Za-z0-9._\/-]+/g, last = 0, m;
-    while ((m = re.exec(s)) !== null) {
+    var last = 0, m;
+    DOC_REF_RE.lastIndex = 0;
+    while ((m = DOC_REF_RE.exec(s)) !== null) {
+      // mid-URL / mid-token guard: "https://github.com/x/foo.md" must not
+      // linkify its tail; a real doc ref is preceded by whitespace/punctuation.
+      var prev = m.index > 0 ? s.charAt(m.index - 1) : '';
+      if (prev && /[A-Za-z0-9:\/]/.test(prev)) continue;
+      // trim trailing sentence punctuation the docs/… char class can swallow
+      var ref = m[0].replace(/[.,;:!?]+$/, '');
+      if (!ref) continue;
       if (m.index > last) container.appendChild(document.createTextNode(s.slice(last, m.index)));
-      var chip = el('span', 'det-link det-link-doc', m[0]);
-      chip.title = 'repo path' + (projectKey ? ' (project: ' + projectKey + ')' : '');
+      var chip = el('button', 'det-link det-link-doc', ref);
+      chip.type = 'button';
+      chip.title = 'Open in the in-app docs viewer';
+      chip.addEventListener('click', (function (r, pk) {
+        return function (e) { e.stopPropagation(); openDocSmart(r, pk); };
+      })(ref, projectKey));
       container.appendChild(chip);
-      last = m.index + m[0].length;
+      last = m.index + ref.length;
+      DOC_REF_RE.lastIndex = last;
     }
     if (last < s.length) container.appendChild(document.createTextNode(s.slice(last)));
+  }
+
+  // openDocSmart — resolve a doc reference to a (project, path) pair the
+  // server knows, then open it IN-APP. The reference rarely names its project
+  // explicitly, so candidates are probed in order against /api/doc (read-only,
+  // localhost, traversal-guarded server-side): an explicit
+  // `<known-project>/<path>` prefix wins; pathed refs try the item's own
+  // project, then the harness repo, then the coordination repo; BARE filenames
+  // try the coordination repo first (that is where bare-named docs like
+  // REDESIGN-PRD-DRAFT-….md live), then the item's project (root and docs/),
+  // then the harness repo. First hit opens; all-miss → error toast.
+  function openDocSmart(ref, projectKey) {
+    if (!openDocInApp) { showToast('Docs viewer unavailable in this build.', 'err'); return; }
+    var stripped = projectKey ? String(projectKey).replace(/^proj-/, '') : null;
+    var hasSlash = ref.indexOf('/') !== -1;
+    var base = hasSlash ? ref.split('/').pop() : ref;
+    var cands = [];
+    function add(p, rel) {
+      if (!p || !rel) return;
+      for (var i = 0; i < cands.length; i++) { if (cands[i][0] === p && cands[i][1] === rel) return; }
+      cands.push([p, rel]);
+    }
+    if (hasSlash) {
+      var seg0 = ref.split('/')[0], rest = ref.split('/').slice(1).join('/');
+      if (rest && (seg0 === 'workstreams-coordination' || seg0 === 'neural-lace' || seg0 === stripped)) {
+        add(seg0, rest);
+      }
+      add(stripped, ref);
+      add('neural-lace', ref);
+      add('workstreams-coordination', ref);
+      add('workstreams-coordination', base);
+    } else {
+      add('workstreams-coordination', ref);
+      add(stripped, ref);
+      add(stripped, 'docs/' + ref);
+      add('neural-lace', ref);
+      add('neural-lace', 'docs/' + ref);
+    }
+    (function tryNext(i) {
+      if (i >= cands.length) { showToast('Doc not found: ' + ref, 'err'); return; }
+      var p = cands[i][0], rel = cands[i][1];
+      fetch('/api/doc?project=' + encodeURIComponent(p) + '&path=' + encodeURIComponent(rel))
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (j && j.ok) { openDocInApp(p, rel); }
+          else { tryNext(i + 1); }
+        })
+        .catch(function () { tryNext(i + 1); });
+    })(0);
   }
   function detailRow(label, val, projectKey) {
     if (val == null || val === '') return null;
@@ -1018,7 +1093,7 @@
       var refV = el('div', 'det-v');
       de.references.forEach(function (r) {
         var rs = String(r);
-        if (/docs\/[A-Za-z0-9._\/-]+/.test(rs)) {
+        if (DOC_REF_TEST.test(rs)) {
           linkifyDocs(refV, rs, projectKey);
         } else {
           var rc = el('span', 'det-link', rs);
@@ -1040,8 +1115,8 @@
       var lv = el('div', 'det-v');
       de.links.forEach(function (lk) {
         var s = String(lk);
-        // item 19 preserved: a docs/… link becomes a clickable .doc-link.
-        if (/docs\/[A-Za-z0-9._\/-]+/.test(s)) {
+        // item 19 preserved + upgraded: docs/… AND bare *.md links open in-app.
+        if (DOC_REF_TEST.test(s)) {
           linkifyDocs(lv, s, projectKey);
         } else {
           // v1.1.4 item 40 NEW: parse `(see branch: TITLE)` → clickable jump.
@@ -1410,7 +1485,15 @@
   if (dmClose) dmClose.addEventListener('click', closeDetailModal);
   if (detailScrim) detailScrim.addEventListener('click', closeDetailModal);
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && !detailModal.hidden) { closeDetailModal(); }
+    if (e.key === 'Escape' && !detailModal.hidden) {
+      // Doc-link layering (2026-06-11): when the in-app doc viewer is stacked
+      // on top (opened from a doc link inside this modal), let ITS Esc handler
+      // close it and keep the detail modal open underneath. Second Esc then
+      // closes the detail modal.
+      var dv = $('docModal');
+      if (dv && !dv.hidden) return;
+      closeDetailModal();
+    }
   });
   showArchived.addEventListener('change', function () { render(); });
   if (showCompleted) showCompleted.addEventListener('change', function () { render(); });
@@ -1618,6 +1701,10 @@
         .catch(function () { docBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
     }
     function closeDocModal() { docModal.hidden = true; curDoc = null; if (docsPanel.hidden) docScrim.hidden = true; }
+
+    // Expose the in-GUI viewer to the item-detail modal's doc links (2026-06-11):
+    // linkifyDocs/openDocSmart open docs IN-APP through this bridge.
+    openDocInApp = openDocModal;
 
     docsBtn.addEventListener('click', openDocsPanel);
     docsClose.addEventListener('click', closeDocsPanel);

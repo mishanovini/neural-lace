@@ -486,6 +486,12 @@ button:active { transform: scale(0.98); }
 .modal-card[hidden] { display: none !important; }
 .ctx-modal { width: min(640px, 92vw); height: min(82vh, 880px); }
 .doc-modal { width: min(820px, 92vw); height: min(86vh, 1000px); }
+/* Doc-viewer LAYERS ABOVE the item-detail modal (2026-06-11): doc links inside
+   the detail modal open the viewer on top; its scrim dims + click-shields the
+   detail modal underneath (Esc/scrim closes the viewer first). */
+#docScrim { z-index: 61; }
+#docsPanel { z-index: 62; }
+#docModal { z-index: 62; }
 .dispatch-modal { width: min(520px, 92vw); height: auto; max-height: 80vh; }
 
 /* Item DETAIL MODAL (Phase D, 2026-06-09) — the dismissible overlay that
@@ -580,6 +586,12 @@ button:active { transform: scale(0.98); }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem;
 }
 .det-link { font-size: 0.72rem; color: var(--info); border: 1px solid var(--info); border-radius: 4px; padding: 0.03rem 0.35rem; }
+/* Clickable doc-reference chips (2026-06-11) — open the doc IN-APP via the
+   docs viewer. Button form so they are keyboard-activatable. */
+button.det-link-doc {
+  background: rgba(59,130,246,0.10); cursor: pointer; font-family: inherit;
+}
+button.det-link-doc:hover { background: rgba(59,130,246,0.22); text-decoration: underline; }
 .det-link-branch {
   font-size: 0.72rem; color: var(--info); background: rgba(59,130,246,0.10);
   border: 1px solid var(--info); border-radius: 4px;
