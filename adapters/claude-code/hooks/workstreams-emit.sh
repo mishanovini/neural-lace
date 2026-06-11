@@ -42,6 +42,16 @@
 #                what the tree actually contains.
 #   --on-stop    Stop hook. Emits `concluded` for every branch this session
 #                opened (read from the ledger), then clears the ledger.
+#   --on-builder-dispatch  PreToolUse on Task|Agent|Workflow (ADR-054,
+#                2026-06-10). Emits ONE `action-added` WORK-ITEM (kind action,
+#                details._category=builder-dispatch, derives 'in-flight') on
+#                the session's own ss-* node — NO branch node (ADR-034's
+#                branch scoping stands; this is the work-item tier).
+#   --on-builder-complete  PostToolUse on Task|Agent|Workflow. Foreground
+#                dispatches: tool return == completion -> `action-done`.
+#                Background (Workflow / run_in_background:true): launch-ack
+#                only -> creation batch, NO done (documented ceiling — see
+#                the ADR-054 section below).
 #   --self-test  Exercises every classification + idempotency + autodetect +
 #                failure-isolation path against temp state files. Prints
 #                `self-test: OK` / `self-test: FAIL`. Exit 0 / 1.
@@ -126,6 +136,12 @@ _fallback_conv_tree_path() {
 # gates' _resolve_state_lib resolution order so writer and gate agree.
 _resolve_state_lib() {
   if [[ -n "${CONV_TREE_STATE_LIB:-}" ]]; then printf '%s' "$CONV_TREE_STATE_LIB"; return 0; fi
+  local _pin="$HOME/.claude/workstreams-lib-path.txt"
+  if [[ -f "$_pin" ]]; then
+    local _pinned; _pinned=$(head -1 "$_pin" | tr -d '
+')
+    if [[ -n "$_pinned" && -f "$_pinned" ]]; then printf '%s' "$_pinned"; return 0; fi
+  fi
   local root=""
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
     local cand="$root/neural-lace/workstreams-ui/state/state.js"
@@ -1241,6 +1257,102 @@ _self_test() {
     echo "PASS: ST36 (skipped: git unavailable)"; pass=$((pass+1))
   fi
 
+  # BD1-BD10: builder-dispatch work-item emission (ADR-054, 2026-06-10).
+  # Helper: read one field of the builder item from the state file.
+  _bd_item() { # statefile item_id jq-expr
+    node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var id=process.argv[3];var expr=process.argv[4];var found=null;st.snapshot.nodes.forEach(function(n){(n.items||[]).forEach(function(it){if(it.item_id===id)found=it})});if(!found){process.stdout.write("MISSING")}else{var v=found;expr.split(".").forEach(function(k){v=v&&v[k]});process.stdout.write(v===undefined||v===null?"":String(v))}' "$LIB" "$1" "$2" "$3" 2>/dev/null
+  }
+  _bd_itemid_of() { # statefile -> first wi-bd-* item id
+    node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var out="";st.snapshot.nodes.forEach(function(n){(n.items||[]).forEach(function(it){if(/^wi-bd-/.test(it.item_id))out=it.item_id})});process.stdout.write(out)' "$LIB" "$1" 2>/dev/null
+  }
+
+  # BD1: Task dispatch -> action-added work-item on the ss-* session node.
+  local spB1="$tmp/bd-1.json"
+  CONV_TREE_STATE_PATH="$spB1" CLAUDE_SESSION_ID="sess-bd-1" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build the widget","prompt":"long body"},"session_id":"sess-bd-1"}' >/dev/null 2>&1
+  local idB1; idB1=$(_bd_itemid_of "$spB1")
+  if [[ -n "$idB1" && "$(_bd_item "$spB1" "$idB1" 'kind')" == "action" && "$(_bd_item "$spB1" "$idB1" 'text')" == "Build the widget" ]]; then
+    echo "PASS: BD1 Task dispatch -> action work-item on session node"; pass=$((pass+1))
+  else
+    echo "FAIL: BD1 (item='$idB1' kind='$(_bd_item "$spB1" "$idB1" 'kind')' text='$(_bd_item "$spB1" "$idB1" 'text')')"; fail=$((fail+1))
+  fi
+  # BD1b: the item lives on the SAME ss-* node --on-session-start would use.
+  local ownerB1
+  ownerB1=$(node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var out="";st.snapshot.nodes.forEach(function(n){(n.items||[]).some(function(it){return /^wi-bd-/.test(it.item_id)})&&(out=n.node_id)});process.stdout.write(out)' "$LIB" "$spB1" 2>/dev/null)
+  case "$ownerB1" in ss-*) echo "PASS: BD1b item owner is the ss-* session node"; pass=$((pass+1)) ;; *) echo "FAIL: BD1b owner='$ownerB1'"; fail=$((fail+1)) ;; esac
+
+  # BD2: details._category=builder-dispatch (never a Misha-ask -> never Awaiting-me).
+  _ck "BD2 details._category=builder-dispatch (noise control)" "$(_bd_item "$spB1" "$idB1" 'details._category')" "builder-dispatch"
+
+  # BD3: idempotent — 3 re-fires of the same dispatch -> exactly 1 action-added.
+  local spB3="$tmp/bd-3.json"
+  for _r in 1 2 3; do
+    CONV_TREE_STATE_PATH="$spB3" CLAUDE_SESSION_ID="sess-bd-3" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Agent","tool_input":{"description":"Idem builder"},"session_id":"sess-bd-3"}' >/dev/null 2>&1
+  done
+  _ck "BD3 builder dispatch idempotent on (session,tool,title)" "$(_count "$spB3" action-added)" "1"
+
+  # BD4: foreground completion — PostToolUse return == completion -> action-done.
+  local spB4="$tmp/bd-4.json"
+  CONV_TREE_STATE_PATH="$spB4" CLAUDE_SESSION_ID="sess-bd-4" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Finish me"},"session_id":"sess-bd-4"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$spB4" CLAUDE_SESSION_ID="sess-bd-4" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"description":"Finish me"},"tool_response":"done ok","session_id":"sess-bd-4"}' >/dev/null 2>&1
+  local idB4; idB4=$(_bd_itemid_of "$spB4")
+  _ck "BD4 foreground complete -> item.checked" "$(_bd_item "$spB4" "$idB4" 'checked')" "true"
+
+  # BD5: Workflow launch — PostToolUse is launch-ack, NOT completion -> stays open.
+  local spB5="$tmp/bd-5.json"
+  CONV_TREE_STATE_PATH="$spB5" CLAUDE_SESSION_ID="sess-bd-5" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Workflow","tool_input":{"meta":{"name":"Nightly sweep"},"prompt":"body"},"session_id":"sess-bd-5"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$spB5" CLAUDE_SESSION_ID="sess-bd-5" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Workflow","tool_input":{"meta":{"name":"Nightly sweep"},"prompt":"body"},"tool_response":"launched id=wf-1","session_id":"sess-bd-5"}' >/dev/null 2>&1
+  local idB5; idB5=$(_bd_itemid_of "$spB5")
+  if [[ -n "$idB5" && "$(_bd_item "$spB5" "$idB5" 'checked')" != "true" ]]; then
+    echo "PASS: BD5 Workflow launch-return does NOT mark done (honest ceiling)"; pass=$((pass+1))
+  else
+    echo "FAIL: BD5 (item='$idB5' checked='$(_bd_item "$spB5" "$idB5" 'checked')')"; fail=$((fail+1))
+  fi
+  _ck "BD5b Workflow title from meta.name" "$(_bd_item "$spB5" "$idB5" 'text')" "Nightly sweep"
+
+  # BD6: Agent run_in_background:true -> completion NOT emitted at PostToolUse.
+  local spB6="$tmp/bd-6.json"
+  CONV_TREE_STATE_PATH="$spB6" CLAUDE_SESSION_ID="sess-bd-6" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Agent","tool_input":{"description":"BG agent","run_in_background":true},"tool_response":"handle-7","session_id":"sess-bd-6"}' >/dev/null 2>&1
+  local idB6; idB6=$(_bd_itemid_of "$spB6")
+  if [[ -n "$idB6" && "$(_bd_item "$spB6" "$idB6" 'checked')" != "true" ]]; then
+    echo "PASS: BD6 run_in_background Agent -> item created, NOT done"; pass=$((pass+1))
+  else
+    echo "FAIL: BD6 (item='$idB6' checked='$(_bd_item "$spB6" "$idB6" 'checked')')"; fail=$((fail+1))
+  fi
+
+  # BD7: non-builder tool -> no-op (no state file written).
+  local spB7="$tmp/bd-7.json"
+  CONV_TREE_STATE_PATH="$spB7" CLAUDE_SESSION_ID="sess-bd-7" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Bash","tool_input":{"command":"ls"},"session_id":"sess-bd-7"}' >/dev/null 2>&1
+  if [[ -f "$spB7" ]]; then echo "FAIL: BD7 non-builder tool must be a no-op"; fail=$((fail+1)); else echo "PASS: BD7 non-builder tool no-op"; pass=$((pass+1)); fi
+
+  # BD8: Dispatch spawn tools are --on-spawn's surface -> no-op in this mode.
+  local spB8="$tmp/bd-8.json"
+  CONV_TREE_STATE_PATH="$spB8" CLAUDE_SESSION_ID="sess-bd-8" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Not mine"},"session_id":"sess-bd-8"}' >/dev/null 2>&1
+  if [[ -f "$spB8" ]]; then echo "FAIL: BD8 Dispatch spawn must not be handled by --on-builder-dispatch"; fail=$((fail+1)); else echo "PASS: BD8 Dispatch spawn -> no-op in builder mode"; pass=$((pass+1)); fi
+
+  # BD9: failure isolation — broken state-lib -> exit 0, never blocks.
+  local spB9="$tmp/bd-9.json" rcB9
+  CONV_TREE_STATE_PATH="$spB9" CONV_TREE_STATE_LIB="$tmp/does-not-exist.js" CLAUDE_SESSION_ID="sess-bd-9" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Iso"},"session_id":"sess-bd-9"}' >/dev/null 2>&1
+  rcB9=$?
+  _ck "BD9 builder emit failure isolation -> exit 0" "$rcB9" "0"
+
+  # BD10: complete-without-prior-dispatch (missed PreToolUse) -> creation batch
+  # rides in the complete emission: item exists AND is done in one shot.
+  local spB10="$tmp/bd-10.json"
+  CONV_TREE_STATE_PATH="$spB10" CLAUDE_SESSION_ID="sess-bd-10" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"description":"Pre was missed"},"tool_response":"ok","session_id":"sess-bd-10"}' >/dev/null 2>&1
+  local idB10; idB10=$(_bd_itemid_of "$spB10")
+  _ck "BD10 complete-without-pre -> item created + checked" "$(_bd_item "$spB10" "$idB10" 'checked')" "true"
+
   rm -rf "$tmp" 2>/dev/null || true
   echo "self-test: $pass passed, $fail failed"
   if [[ $fail -eq 0 ]]; then echo "self-test: OK"; exit 0; else echo "self-test: FAIL"; exit 1; fi
@@ -1454,6 +1566,195 @@ _run_resolve_item() {
 }
 
 # ============================================================================
+# Builder-dispatch work-item emission (ADR-054, 2026-06-10).
+#
+# ADR-034 scoped sub-agent Task/Agent OUT of the conversation-BRANCH surface
+# (they are AI-internal mechanics, not user↔AI conversation branches). That
+# scoping STANDS — these modes emit NO branch node for a builder dispatch.
+# What ADR-054 adds is the WORK-ITEM tier: every orchestrator builder dispatch
+# (Task | Agent | Workflow) auto-emits ONE `action-added` work-item on the
+# SESSION's own node (the same `ss-<hash>` node --on-session-start registers),
+# so work-in-motion is visible in the Workstreams UI without the orchestrator
+# doing anything. Noise control:
+#   - kind=action + details._category="builder-dispatch" (NOT in the GUI's
+#     MISHA_ASK_CATEGORIES set) -> the item can NEVER land in Awaiting-me;
+#   - unchecked + no explicit state -> derives 'in-flight' (the In-flight
+#     chip), exactly the work-in-motion tier;
+#   - completion (--on-builder-complete) emits `action-done` -> checked ->
+#     leaves the In-flight set.
+#
+# COMPLETION-SIGNAL CEILING (honest — investigated 2026-06-10):
+#   - Foreground Task/Agent dispatches: PostToolUse fires at tool RETURN,
+#     which IS sub-agent completion -> action-done is mechanical and solid.
+#   - `Workflow` launches and Agent dispatches with run_in_background:true:
+#     PostToolUse fires at LAUNCH-return, NOT completion. Emitting done there
+#     would be a false completion claim, so these emit the creation batch only
+#     and the item honestly stays in-flight. There is NO stable local hook
+#     event or documented transcript contract for background-dispatch
+#     completion (no per-workflow completion hook; wake-message shape is
+#     undocumented). Named gap per Rule 7 — resolution paths: a future turn's
+#     orchestrator `--resolve-item`, the operator in the GUI, or an upstream
+#     hook surface if Anthropic ships one. FR-7 keeps the owning session node
+#     un-concludable while such an item is open — intentionally visible.
+#   - Missed PreToolUse/PostToolUse fires: workstreams-emit-reconciler.sh
+#     re-derives the same deterministic ids from the transcript at Stop and
+#     catch-up-emits (idempotent event_ids make double-emission a no-op).
+# ============================================================================
+
+# Builder work-item title from tool_input. Preference: .description (Task/
+# Agent 3-5-word summary) > .meta.name > .name > .title > first non-empty
+# prompt/content line. Cap 120 chars. Empty -> caller skips emission.
+_builder_title() {
+  local input="$1"
+  _have jq || { printf '%s' ""; return 0; }
+  local t
+  t=$(printf '%s' "$input" | jq -r '
+    (.tool_input.description // (.tool_input.meta.name? // empty) //
+     .tool_input.name // .tool_input.title // empty)' 2>/dev/null || echo "")
+  if [[ -z "$t" || "$t" == "null" ]]; then
+    t=$(printf '%s' "$input" | jq -r '
+      (.tool_input.prompt // .tool_input.content // "")
+      | split("\n")[] | select(test("\\S"))' 2>/dev/null | head -n1 || echo "")
+  fi
+  t=$(printf '%s' "$t" | sed 's/^[[:space:]]\+//; s/[[:space:]]\+$//' | cut -c1-120)
+  printf '%s' "$t"
+}
+
+# Background-dispatch predicate: Workflow launches return immediately; Agent
+# dispatches with run_in_background:true return a handle, not a result.
+_builder_is_background() {
+  local input="$1" tool="$2"
+  [[ "$tool" == "Workflow" ]] && { printf '1'; return 0; }
+  local bg
+  bg=$(printf '%s' "$input" | jq -r '.tool_input.run_in_background // false' 2>/dev/null || echo "false")
+  [[ "$bg" == "true" ]] && printf '1' || printf '0'
+}
+
+# Compose the idempotent creation batch for one builder work-item:
+#   [root bo, session-node bo, action-added, item-details-set]
+# Every event_id is deterministic, so re-emission (PostToolUse after
+# PreToolUse, reconciler after both) is a per-file no-op. Echoes the JSON
+# array WITHOUT the closing bracket so the caller may append more events.
+_builder_creation_events() {
+  local sid="$1" tool="$2" title="$3" child_id="$4" item_id="$5" bg="$6"
+  local rootline; rootline=$(_project_root)
+  local root_id="${rootline%%$'\t'*}"
+  local root_title="${rootline##*$'\t'}"
+  local ev_root ev_child ev_item ev_det
+  ev_root="cte-bo-$(printf '%s' "$root_id" | _sha1 | cut -c1-32)"
+  ev_child="cte-bo-$(printf '%s' "$child_id" | _sha1 | cut -c1-32)"
+  # SAME derivations as _run_emit_item / --emit-details so a manual emit for
+  # the same (node,item) dedupes with the automatic one.
+  ev_item="cte-action-$(printf '%s|%s' "$child_id" "$item_id" | _sha1 | cut -c1-32)"
+  ev_det="cte-detset-$(printf '%s|%s' "$child_id" "$item_id" | _sha1 | cut -c1-32)"
+  local sess_title; sess_title=$(basename "${PWD:-.}" 2>/dev/null || echo "")
+  [[ -z "$sess_title" || "$sess_title" == "/" ]] && sess_title="session ${sid:0:12}"
+  local subagent
+  subagent=$(printf '%s' "${BUILDER_INPUT_JSON:-}" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null || echo "")
+  local bg_json="false"; [[ "$bg" == "1" ]] && bg_json="true"
+  local details
+  details=$(jq -cn --arg tool "$tool" --arg st "$subagent" --argjson bg "$bg_json" \
+    '{_category:"builder-dispatch", tool:$tool, background:$bg} + (if $st != "" then {subagent_type:$st} else {} end)' 2>/dev/null) \
+    || details='{"_category":"builder-dispatch"}'
+  printf '[{"event_id":"%s","type":"branch-opened","node_id":"%s","parent_id":null,"title":%s,"actor":"dispatch"},{"event_id":"%s","type":"branch-opened","node_id":"%s","parent_id":"%s","title":%s,"actor":"dispatch"},{"event_id":"%s","type":"action-added","node_id":"%s","item_id":"%s","text":%s,"actor":"dispatch"},{"event_id":"%s","type":"item-details-set","node_id":"%s","item_id":"%s","details":%s,"actor":"dispatch"}' \
+    "$ev_root" "$root_id" "$(jq -Rn --arg t "$root_title" '$t')" \
+    "$ev_child" "$child_id" "$root_id" "$(jq -Rn --arg t "$sess_title" '$t')" \
+    "$ev_item" "$child_id" "$item_id" "$(jq -Rn --arg t "$title" '$t')" \
+    "$ev_det" "$child_id" "$item_id" "$details"
+}
+
+# Shared classification for both builder modes. Echoes
+#   tool \t sid \t child_id \t item_id \t title \t bg
+# or nothing when the input is not a builder dispatch.
+_builder_classify() {
+  local input="$1"
+  _have jq || return 0
+  local tool; tool=$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null || echo "")
+  case "$tool" in
+    Task|Agent|Workflow) ;;
+    # Dispatch spawn tools are --on-spawn's surface (conversation branches);
+    # everything else is not a builder dispatch.
+    *) return 0 ;;
+  esac
+  local title; title=$(_builder_title "$input")
+  [[ -z "$title" ]] && { _log "builder dispatch ($tool) had no extractable title — skipped"; return 0; }
+  local sid; sid=$(_session_id "$input")
+  local child_id="ss-$(printf '%s' "$sid" | _sha1 | cut -c1-12)"
+  # NO time bucket: PostToolUse + the Stop-time reconciler must recompute the
+  # SAME id from the same fields, possibly hours later.
+  local item_id="wi-bd-$(printf '%s|%s|%s' "$sid" "$tool" "$title" | _sha1 | cut -c1-12)"
+  local bg; bg=$(_builder_is_background "$input" "$tool")
+  printf '%s\t%s\t%s\t%s\t%s\t%s' "$tool" "$sid" "$child_id" "$item_id" "$title" "$bg"
+}
+
+# ----------------------------------------------------------------------------
+# --on-builder-dispatch  (PreToolUse on Task|Agent|Workflow)
+# ----------------------------------------------------------------------------
+_run_on_builder_dispatch() {
+  local input; input=$(_read_stdin)
+  [[ -z "$input" ]] && exit 0
+  local line; line=$(_builder_classify "$input")
+  [[ -z "$line" ]] && exit 0
+  local tool sid child_id item_id title bg
+  IFS=$'\t' read -r tool sid child_id item_id title bg <<<"$line"
+
+  local lib; lib=$(_resolve_state_lib)
+  local events
+  events="$(BUILDER_INPUT_JSON="$input" _builder_creation_events "$sid" "$tool" "$title" "$child_id" "$item_id" "$bg")]"
+  local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-bd-$$.json")
+  printf '%s' "$events" >"$ef"
+  _emit_dual "$lib" "$ef"
+  rm -f "$ef" 2>/dev/null || true
+
+  # Builder correlation ledger (observability + reconciler hint):
+  # item_id \t child_id \t tool \t bg \t title \t ts — append once per item.
+  mkdir -p "$LEDGER_DIR" 2>/dev/null || true
+  local ledger="$LEDGER_DIR/builder-${sid}.jsonl"
+  if [[ ! -f "$ledger" ]] || ! grep -q "^${item_id}	" "$ledger" 2>/dev/null; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$item_id" "$child_id" "$tool" "$bg" "$title" \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null || true
+  fi
+  _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid"
+  exit 0
+}
+
+# ----------------------------------------------------------------------------
+# --on-builder-complete  (PostToolUse on Task|Agent|Workflow)
+# Foreground: tool return == completion -> creation batch (covers a missed
+# PreToolUse) + action-done. Background: creation batch only (launch-ack is
+# NOT completion — the documented ceiling above).
+# ----------------------------------------------------------------------------
+_run_on_builder_complete() {
+  local input; input=$(_read_stdin)
+  [[ -z "$input" ]] && exit 0
+  local line; line=$(_builder_classify "$input")
+  [[ -z "$line" ]] && exit 0
+  local tool sid child_id item_id title bg
+  IFS=$'\t' read -r tool sid child_id item_id title bg <<<"$line"
+
+  local lib; lib=$(_resolve_state_lib)
+  local events
+  events="$(BUILDER_INPUT_JSON="$input" _builder_creation_events "$sid" "$tool" "$title" "$child_id" "$item_id" "$bg")"
+  if [[ "$bg" == "1" ]]; then
+    events="$events]"
+    _log "builder-complete DEFERRED (background $tool) item=$item_id — launch-ack is not completion (ADR-054 ceiling)"
+  else
+    # SAME derivation as _run_resolve_item resolution=done, so a manual
+    # resolve and this automatic one dedupe to one event.
+    local ev_type="action-done"
+    local ev_done; ev_done="cte-${ev_type:0:8}-$(printf '%s|%s' "$child_id" "$item_id" | _sha1 | cut -c1-32)"
+    events="$events,$(printf '{"event_id":"%s","type":"action-done","node_id":"%s","item_id":"%s","actor":"dispatch"}' \
+      "$ev_done" "$child_id" "$item_id")]"
+    _log "builder-complete item=$item_id node=$child_id tool=$tool session=$sid"
+  fi
+  local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-bdc-$$.json")
+  printf '%s' "$events" >"$ef"
+  _emit_dual "$lib" "$ef"
+  rm -f "$ef" 2>/dev/null || true
+  exit 0
+}
+
+# ============================================================================
 # Dispatch
 # ============================================================================
 case "$MODE" in
@@ -1462,6 +1763,9 @@ case "$MODE" in
   --on-session-start) _run_on_session_start ;;
   --heartbeat)     _run_heartbeat ;;
   --self-test)     _self_test ;;
+  # Builder-dispatch work-item surface (ADR-054 — 2026-06-10):
+  --on-builder-dispatch) _run_on_builder_dispatch ;;
+  --on-builder-complete) _run_on_builder_complete ;;
   # Orchestrator-emit surface (v1.1.5 — 2026-05-21):
   --emit-branch)   _run_emit_branch ;;
   --emit-item)     _run_emit_item ;;

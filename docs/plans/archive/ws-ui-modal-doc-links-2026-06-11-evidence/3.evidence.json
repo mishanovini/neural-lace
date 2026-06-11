@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task_id": "3",
+  "verdict": "PASS",
+  "commit_sha": "2a7b08b5ba722f323d0377049f910d8ac86b7980",
+  "files_modified": [
+    "adapters/claude-code/agents/domain-expert-tester.md",
+    "adapters/claude-code/agents/enforcement-gap-analyzer.md",
+    "adapters/claude-code/agents/harness-reviewer.md",
+    "adapters/claude-code/agents/prd-validity-reviewer.md",
+    "adapters/claude-code/agents/ux-designer.md",
+    "adapters/claude-code/agents/ux-end-user-tester.md"
+  ],
+  "mechanical_checks": {
+    "command:node neural-lace/workstreams-ui/web/responsive.selftest.js": {
+      "passed": true,
+      "detail": "mendation/links)\n  PASS  R27 background/about/the_ask/why_asking/why_assigned render without _category\n  PASS  R28 doc references in the detail modal are clickable and open in-app\n\n28 passed, 0 failed",
+      "command": "node neural-lace/workstreams-ui/web/responsive.selftest.js",
+      "exit_code": 0
+    },
+    "command:node neural-lace/workstreams-ui/state/selftest.js": {
+      "passed": true,
+      "detail": " P19 text-repair pair: item-text-set(replace/LWW) + branch-retitled + unknown-id rejected-retained + idempotent + envelope-enforced + attestation-verified + schema_version still 1\n\n20 passed, 0 failed",
+      "command": "node neural-lace/workstreams-ui/state/selftest.js",
+      "exit_code": 0
+    },
+    "command:grep -q 'R28 doc references' neural-lace/workstreams-ui/web/responsive.selftest.js": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'R28 doc references' neural-lace/workstreams-ui/web/responsive.selftest.js",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-11T16:42:55Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/ws-ui-modal-doc-links-2026-06-11.md"
+}
