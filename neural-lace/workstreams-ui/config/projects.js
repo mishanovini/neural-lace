@@ -167,15 +167,15 @@ function resolveInsideRoot(root, rel) {
 
 // Resolve (project,relPath) to an absolute path that is PROVABLY inside a
 // permitted root. Rejects traversal, absolute relPaths, and missing files.
-// Resolution order (operator-verified fix, 2026-06-11): the requested
-// project's own root FIRST (existing behavior, unchanged), THEN the
-// workstreams-coordination repo root as a second search root — coordination
-// docs live at that repo's top level (REDESIGN-*.md etc.) and item-detail
-// links reference them from modals opened under OTHER project keys; without
-// the fallback those clicks die in a "Doc not found" toast whenever the
-// client's candidate list or the project map drifts. The fallback is
-// deliberately narrower than the primary: .md files ONLY, same hard
-// traversal guard. Returns { ok, abs } or { ok:false, code, error }.
+// Resolution order (operator-verified 2026-06-11, generalized same day):
+// the requested project's own root FIRST (existing behavior, unchanged),
+// THEN — for doc-shaped rels only — ALL registered roots in deterministic
+// order (coordination repo first, then sorted keys, deduped by resolved
+// path; first existing file wins). Items in the tree can come from ANY
+// project, and their refs often omit or mis-name the owning repo; the
+// all-roots fallback resolves them without weakening the traversal guard
+// (every probe runs through resolveInsideRoot; absolute rels and `..` were
+// already rejected). Returns { ok, abs } or { ok:false, code, error }.
 function resolveDoc(project, relPath) {
   const map = loadProjects();
   const rel = String(relPath || '');
@@ -199,13 +199,53 @@ function resolveDoc(project, relPath) {
     if (fs.existsSync(abs) && fs.statSync(abs).isFile()) return { ok: true, abs: abs };
     primaryFail = { ok: false, code: 404, error: 'doc not found: ' + rel };
   }
-  // --- Fallback: coordination repo root, .md ONLY, same hard guard. ---
-  const coord = coordinationRoot();
-  if (coord && /\.md$/i.test(rel)) {
-    const cabs = resolveInsideRoot(coord, rel);
-    if (cabs && fs.existsSync(cabs) && fs.statSync(cabs).isFile()) {
-      return { ok: true, abs: cabs, fallback_root: 'workstreams-coordination' };
+  // --- Fallback (generalized 2026-06-11, operator directive: "items can be
+  // from ANY of the projects … links need to point properly wherever the docs
+  // may be"): when the requested project is unknown OR the doc is absent from
+  // its root, search ALL registered roots in deterministic order — the
+  // coordination repo first (preserves the prior operator-verified fallback),
+  // then every other registered root in sorted-key order, deduped by resolved
+  // root path. Eligibility is deliberately narrow: doc-shaped rels only
+  // (*.md, or a path containing a docs/ segment) — the two shapes linkifyDocs
+  // emits. Every probe goes through resolveInsideRoot (the same hard
+  // containment guard as the primary); the top-of-function absolute-path and
+  // `..` rejections already ran, so traversal is impossible here. First
+  // existing file wins. A second pass retries each root with the suffix
+  // starting at the first `docs/` segment, which resolves stale refs that
+  // embed a machine-absolute prefix (e.g. "Users/<u>/claude-projects/<org>/
+  // <repo>/docs/x.md") or another repo's leading dirs.
+  const docShaped = /\.md$/i.test(rel) || /(^|[\\/])docs[\\/]/.test(rel);
+  if (docShaped) {
+    const tried = {};
+    const fbRoots = [];
+    function addRoot(key, root) {
+      if (!root) return;
+      let r; try { r = path.resolve(root); } catch (_) { return; }
+      if (tried[r]) return;
+      tried[r] = true;
+      fbRoots.push({ key: key, root: r });
     }
+    addRoot('workstreams-coordination', coordinationRoot());
+    Object.keys(map).sort().forEach(function (k) { addRoot(k, map[k]); });
+    function probe(relCand) {
+      for (let i = 0; i < fbRoots.length; i++) {
+        if (!fs.existsSync(fbRoots[i].root)) continue;
+        const cabs = resolveInsideRoot(fbRoots[i].root, relCand);
+        if (!cabs) continue; // prefix mismatch on this root — skip, never escape
+        try {
+          if (fs.existsSync(cabs) && fs.statSync(cabs).isFile()) {
+            return { ok: true, abs: cabs, fallback_root: fbRoots[i].key };
+          }
+        } catch (_) { /* unreadable — skip */ }
+      }
+      return null;
+    }
+    let hit = probe(rel);
+    if (!hit) {
+      const m = rel.match(/(?:^|[\\/])(docs[\\/].+)$/);
+      if (m && m[1] !== rel) hit = probe(m[1]);
+    }
+    if (hit) return hit;
   }
   return primaryFail;
 }
