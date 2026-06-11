@@ -136,6 +136,12 @@ _fallback_conv_tree_path() {
 # gates' _resolve_state_lib resolution order so writer and gate agree.
 _resolve_state_lib() {
   if [[ -n "${CONV_TREE_STATE_LIB:-}" ]]; then printf '%s' "$CONV_TREE_STATE_LIB"; return 0; fi
+  local _pin="$HOME/.claude/workstreams-lib-path.txt"
+  if [[ -f "$_pin" ]]; then
+    local _pinned; _pinned=$(head -1 "$_pin" | tr -d '
+')
+    if [[ -n "$_pinned" && -f "$_pinned" ]]; then printf '%s' "$_pinned"; return 0; fi
+  fi
   local root=""
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
     local cand="$root/neural-lace/workstreams-ui/state/state.js"
