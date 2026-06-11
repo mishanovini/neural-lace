@@ -1,5 +1,5 @@
 # Plan: Workstreams-UI — in-modal doc links open in-app via the Docs viewer
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -143,7 +143,32 @@ R28 lock layer on top of that proven slice.
   the shared .modal-card class. Tier 1; smallest change that makes the viewer layer above the detail modal.
 
 ## Definition of Done
-- [ ] All tasks checked off (task-verified with structured evidence)
-- [ ] Both selftests pass (responsive 28/28, state 20/20)
-- [ ] Live headless verification of Scenarios 1-4 captured
-- [ ] Completion report appended to this plan file
+- [x] All tasks checked off (task-verified with structured evidence)
+- [x] Both selftests pass (responsive 28/28, state 20/20)
+- [x] Live headless verification of Scenarios 1-4 captured
+- [x] Completion report appended to this plan file
+
+## Completion Report
+
+### 1. Implementation Summary
+All three tasks built and verified in one session (structured evidence: `ws-ui-modal-doc-links-2026-06-11-evidence/{1,2,3}.evidence.json`, all PASS, commit cdd42cf):
+- Task 1 — config/projects.js: `workstreams-coordination` alias (existence-conditional, runtime-computed) + root-`*.md` listDocs fallback. resolveDoc serves the coordination PRD; `../` and absolute paths still rejected; 21 root docs listed.
+- Task 2 — web/app.js + app.css: linkifyDocs emits clickable button chips (docs/… paths + bare/pathed `*.md`; URL-embedded tokens stay plain; textContent-only DOM); openDocSmart candidate probing (explicit prefix > item project > neural-lace > coordination; bare names coordination-first); openDocInApp bridge; references/links gates widened; #docScrim 61 / #docModal+#docsPanel 62 layering; Esc closes viewer first.
+- Task 3 — responsive.selftest.js R28 invariant lock; responsive 28/28, state 20/20; headless live flow verified (Scenarios 1-4 PASS, artifact in `.claude/state/acceptance/ws-ui-modal-doc-links-2026-06-11/`).
+
+### 2. Design Decisions & Plan Deviations
+Per Decisions Log: client-side candidate probing over a server search endpoint; coordination-first for bare names; ID-level z-index overrides. No deviations from plan.
+
+### 3. Known Issues & Gotchas
+- openDocSmart probes up to ~5 localhost GETs per click on a miss-heavy reference; negligible at this scale.
+- Bare-`*.md` matcher can linkify a token that exists nowhere (probe fails → error toast names the reference; no navigation). Accepted: a dead link with a clear error beats an inert chip.
+- The doc viewed in-app re-fetches once on open (probe + openDocModal both GET /api/doc); harmless on localhost.
+
+### 4. Manual Steps Required
+Update the serving worktree (`~/claude-projects/workstreams-ui-server`, take-master pattern) and restart the :7733 server; the ui_build_ms health field auto-reloads open tabs. (Performed by the shipping session.)
+
+### 5. Testing Performed & Recommended
+Performed: node --check on all edited JS; responsive selftest 28/28 (incl. new R28); state selftest 20/20 (untouched); server-side resolution + traversal-guard node checks; live headless-browser click-through of all four acceptance scenarios with console-log capture (zero errors). Recommended: none beyond the standing selftests.
+
+### 6. Cost Estimates
+None — localhost-only feature, no new dependencies, no services.
