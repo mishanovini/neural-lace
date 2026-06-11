@@ -143,28 +143,71 @@ function loadProjects() {
   return map;
 }
 
-// Resolve (project,relPath) to an absolute path that is PROVABLY inside the
-// project root. Rejects traversal, absolute relPaths, unknown projects, and
-// missing files. Returns { ok, abs } or { ok:false, code, error }.
+// Coordination repo root (runtime-computed by documented convention —
+// ~/claude-projects/workstreams-coordination; NO machine path in source).
+// Null when the repo is absent on this machine.
+function coordinationRoot() {
+  try {
+    const c = path.join(os.homedir(), 'claude-projects', 'workstreams-coordination');
+    if (fs.existsSync(c) && fs.statSync(c).isDirectory()) return c;
+  } catch (_) { /* absent on machines without the repo */ }
+  return null;
+}
+
+// HARD containment guard: resolve rel against root and prove the result stays
+// inside the root (prefix check on the resolved path). Returns abs or null.
+// Callers MUST have already rejected absolute rels and `..` segments — this
+// is the second, independent layer of the traversal defense.
+function resolveInsideRoot(root, rel) {
+  const rootR = path.resolve(root);
+  const abs = path.resolve(rootR, rel);
+  if (abs !== rootR && abs.indexOf(rootR + path.sep) !== 0) return null;
+  return abs;
+}
+
+// Resolve (project,relPath) to an absolute path that is PROVABLY inside a
+// permitted root. Rejects traversal, absolute relPaths, and missing files.
+// Resolution order (operator-verified fix, 2026-06-11): the requested
+// project's own root FIRST (existing behavior, unchanged), THEN the
+// workstreams-coordination repo root as a second search root — coordination
+// docs live at that repo's top level (REDESIGN-*.md etc.) and item-detail
+// links reference them from modals opened under OTHER project keys; without
+// the fallback those clicks die in a "Doc not found" toast whenever the
+// client's candidate list or the project map drifts. The fallback is
+// deliberately narrower than the primary: .md files ONLY, same hard
+// traversal guard. Returns { ok, abs } or { ok:false, code, error }.
 function resolveDoc(project, relPath) {
   const map = loadProjects();
-  const root = map[project];
-  if (!root) return { ok: false, code: 400, error: 'unknown project: ' + String(project) };
-  if (!fs.existsSync(root)) return { ok: false, code: 404, error: 'project root not on this machine: ' + project };
   const rel = String(relPath || '');
   if (!rel || rel.indexOf('\0') !== -1) return { ok: false, code: 400, error: 'empty/invalid path' };
   if (path.isAbsolute(rel) || /(^|[\\/])\.\.([\\/]|$)/.test(rel)) {
     return { ok: false, code: 400, error: 'path traversal rejected' };
   }
-  const abs = path.resolve(root, rel);
-  const rootN = path.resolve(root) + path.sep;
-  if (abs !== path.resolve(root) && abs.indexOf(rootN) !== 0) {
-    return { ok: false, code: 400, error: 'path escapes project root' };
+  // --- Primary: the requested project's root (existing root(s) first). ---
+  let primaryFail;
+  const root = map[project];
+  if (!root) {
+    primaryFail = { ok: false, code: 400, error: 'unknown project: ' + String(project) };
+  } else if (!fs.existsSync(root)) {
+    primaryFail = { ok: false, code: 404, error: 'project root not on this machine: ' + project };
+  } else {
+    const abs = resolveInsideRoot(root, rel);
+    if (!abs) {
+      // A resolved escape is a hard reject — never falls through to another root.
+      return { ok: false, code: 400, error: 'path escapes project root' };
+    }
+    if (fs.existsSync(abs) && fs.statSync(abs).isFile()) return { ok: true, abs: abs };
+    primaryFail = { ok: false, code: 404, error: 'doc not found: ' + rel };
   }
-  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
-    return { ok: false, code: 404, error: 'doc not found: ' + rel };
+  // --- Fallback: coordination repo root, .md ONLY, same hard guard. ---
+  const coord = coordinationRoot();
+  if (coord && /\.md$/i.test(rel)) {
+    const cabs = resolveInsideRoot(coord, rel);
+    if (cabs && fs.existsSync(cabs) && fs.statSync(cabs).isFile()) {
+      return { ok: true, abs: cabs, fallback_root: 'workstreams-coordination' };
+    }
   }
-  return { ok: true, abs: abs };
+  return primaryFail;
 }
 
 // Walk <root>/docs for *.md (recursive, depth-capped, symlink-safe enough for
