@@ -24,6 +24,13 @@ const { spawn } = require('child_process');
 const projects = require('../config/projects.js'); // item 19: cross-repo doc map
 const stateLib = require('../state/state.js');
 const { STATE_FILE, readState, appendEvent, SchemaTooNewError, SCHEMA_TOO_NEW_MESSAGE } = stateLib;
+// Task 8 (status-surface redesign 2026-06-11, I1): the SOLE-NORMATIVE per-kind
+// details validator. The browser client cannot require() this module (zod,
+// CommonJS, no build step), so the server — which CAN — derives each item's
+// context-completeness AT SERVE TIME with assembleItemDetails (null = not
+// self-contained = the gate) and annotates the served snapshot. The GUI reads
+// the annotation; NO parallel validator exists anywhere in web/app.js.
+const dcs = require('../state/decision-context-schema.js');
 
 // §1/Pin 2 reader-glue: the ADR-032 reader REFUSES an unknown major by
 // throwing SchemaTooNewError and reading NOTHING (never a partial mis-parse).
@@ -32,13 +39,47 @@ const { STATE_FILE, readState, appendEvent, SchemaTooNewError, SCHEMA_TOO_NEW_ME
 // as a refuse banner — never a best-effort guess at a newer file.
 function safeRead() {
   try {
-    return { snapshot: readState().snapshot };
+    return { snapshot: annotateContextState(readState().snapshot) };
   } catch (err) {
     if (err instanceof SchemaTooNewError) {
       return { snapshot: { nodes: [], schema_too_new: true, message: SCHEMA_TOO_NEW_MESSAGE } };
     }
     throw err;
   }
+}
+
+// ---- context-completeness annotation (Task 8, I1/I2 — 2026-06-11) ----------
+// For every item whose kind/category makes it an OPERATOR-ASK (decision /
+// question / action_item_for_user — the kinds the plan gates), derive
+// `context_state: 'complete' | 'incomplete'` by running the item's `details`
+// through the sole-normative assembler: assembleItemDetails returns null when
+// the payload is not self-contained (no _category-compatible background /
+// actionable field), which IS the context-incomplete gate. The annotation is
+// DERIVED AT SERVE TIME on a fresh per-request parse — it is never persisted
+// to the state file (readState re-parses per call; appendEvent does its own
+// independent read), so the event-sourced contract is untouched.
+// Non-ask items (plain actions, builder-dispatch logs, autonomous_action
+// logs) get NO annotation — the gate does not apply to them.
+var GATE_CATEGORIES = { decision: 1, question: 1, action_item_for_user: 1 };
+function gateCategoryOf(it) {
+  var de = (it && it.details && typeof it.details === 'object') ? it.details : null;
+  var cat = de && de._category;
+  if (cat) return GATE_CATEGORIES[cat] ? cat : null;
+  if (it && it.kind === 'decision') return 'decision';
+  if (it && it.kind === 'question') return 'question';
+  return null;
+}
+function annotateContextState(snap) {
+  if (!snap || !Array.isArray(snap.nodes)) return snap;
+  snap.nodes.forEach(function (n) {
+    (n.items || []).forEach(function (it) {
+      var cat = gateCategoryOf(it);
+      if (!cat) return;
+      var de = (it.details && typeof it.details === 'object') ? it.details : {};
+      it.context_state = dcs.assembleItemDetails(cat, de) !== null ? 'complete' : 'incomplete';
+    });
+  });
+  return snap;
 }
 
 // Per-type payload validation for the operator-authoring events
@@ -94,6 +135,29 @@ function validateOperatorPayload(input) {
       }
       if (typeof input.new_node_id !== 'string' || input.new_node_id.trim() === '') {
         return 'backlog-activated requires a non-empty new_node_id';
+      }
+      return null;
+    }
+    // Backlog surface (Task 7, 2026-06-11) — same C2 guard-rail pattern for the
+    // operator events the backlog add/promote flows emit.
+    case 'backlog-added': {
+      if (typeof input.text !== 'string' || input.text.trim() === '') {
+        return 'backlog-added requires non-empty text';
+      }
+      return null;
+    }
+    case 'item-backlogged': {
+      if (typeof input.item_id !== 'string' || input.item_id.trim() === '') {
+        return 'item-backlogged requires a non-empty item_id';
+      }
+      if (typeof input.node_id !== 'string' || input.node_id.trim() === '') {
+        return 'item-backlogged requires a non-empty node_id';
+      }
+      return null;
+    }
+    case 'branch-retitled': {
+      if (typeof input.title !== 'string' || input.title.trim() === '') {
+        return 'branch-retitled requires a non-empty title';
       }
       return null;
     }

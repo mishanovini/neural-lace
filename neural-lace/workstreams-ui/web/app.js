@@ -395,7 +395,9 @@
     }
   }
   function filterCount(filterName) {
-    if (filterName === 'backlog') return backlog().filter(function (b) { return !b.activated; }).length;
+    // Task 7: the backlog count = parked node items + legacy capture entries
+    // (exactly the rows the backlog surface renders).
+    if (filterName === 'backlog') return backlogItemRefs().length + legacyBacklogEntries().length;
     if (filterName === 'orphaned') return staleSessions().length;
     return applyFilter(allWorkItems(), filterName).length;
   }
@@ -560,21 +562,63 @@
     });
   }
 
+  // Backlog surface render (Task 7) — same edit pattern as My-tasks
+  // (in-surface "+ add", inline edit, remove, I3 revert+retry) PLUS a
+  // promote-to-task affordance per row. Backlog = "someday"; promoted =
+  // active/Next (leaves this view, lands in My-tasks + the activated node's
+  // Next count).
   function renderBacklogInto(container) {
-    var bl = backlog().filter(function (b) { return !b.activated; });
-    if (!bl.length) { container.appendChild(el('div', 'empty', 'Backlog is empty.')); return; }
-    bl.forEach(function (b) {
-      var row = el('div', 'item-row state-committed');
-      row.appendChild(el('span', 'item-ic', '◷'));
-      var body = el('div', 'item-main');
-      body.appendChild(el('div', 'item-text', b.text || '(untitled)'));
-      if (b.context_text) body.appendChild(el('div', 'item-ctx', b.context_text));
-      var meta = el('div', 'item-meta');
-      meta.appendChild(el('span', 'st-badge st-committed', 'backlog · ' + (b.priority || '—')));
-      body.appendChild(meta);
-      row.appendChild(body);
-      container.appendChild(row);
+    // --- always-present "+ add" input (in-surface, never a native prompt) ---
+    var addRow = el('div', 'mytasks-add');
+    var addInput = el('input', 'mytasks-add-input');
+    addInput.type = 'text';
+    addInput.placeholder = 'Capture a "someday" item and press Enter…';
+    addInput.setAttribute('aria-label', 'new backlog item text');
+    var addBtn = el('button', 'btn-go mytasks-add-btn', '+ add');
+    addBtn.setAttribute('aria-label', 'add backlog item');
+    function clearFail() {
+      addRow.classList.remove('save-failed');
+      var rn = addRow.querySelector('.retry-note'); if (rn) rn.remove();
+    }
+    function submitAdd() {
+      var text = (addInput.value || '').trim();
+      if (!text) { showToast('Type the backlog item first.', 'err'); addInput.focus(); return; }
+      addInput.disabled = true; addBtn.disabled = true;
+      addBacklogItem(text, {}, function () {
+        addInput.value = '';
+        addInput.disabled = false; addBtn.disabled = false;
+        addInput.focus();
+        // render() fires from the SSE state push
+      }, function () {
+        // I3 on ADD: nothing persisted — keep the text, re-enable, inline retry note.
+        addInput.disabled = false; addBtn.disabled = false;
+        addRow.classList.add('save-failed');
+        if (!addRow.querySelector('.retry-note')) {
+          addRow.appendChild(el('span', 'retry-note', 'not saved — press Enter to retry'));
+        }
+        addInput.focus();
+      });
+    }
+    addInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); clearFail(); submitAdd(); }
     });
+    addBtn.addEventListener('click', function () { clearFail(); submitAdd(); });
+    addRow.appendChild(addInput);
+    addRow.appendChild(addBtn);
+    container.appendChild(addRow);
+
+    // --- parked rows (editable) + legacy capture entries (promote-only) ---
+    var refs = backlogItemRefs();
+    var legacy = legacyBacklogEntries();
+    if (!refs.length && !legacy.length) {
+      container.appendChild(el('div', 'empty', 'Backlog is empty — capture "someday" work above.'));
+      return;
+    }
+    var listEl = el('div', 'mytasks-list');
+    listEl.setAttribute('role', 'list');
+    refs.forEach(function (r) { listEl.appendChild(backlogRow(r)); });
+    legacy.forEach(function (b) { listEl.appendChild(legacyBacklogRow(b)); });
+    container.appendChild(listEl);
   }
 
   // ====================================================================
@@ -814,6 +858,287 @@
     ids.splice(to, 0, moved);
     post({ type: 'reordered', scope: MYTASKS_NODE, ordered_ids: ids }, 'Reordered')
       .catch(function () { showToast('Reorder not saved — try again.', 'err'); });
+  }
+
+  // ====================================================================
+  //  BACKLOG surface (Task 7) — operator-owned "someday" bucket
+  // ====================================================================
+  // Same edit pattern as My-tasks (C5: in-surface forms only; I3: visible
+  // revert + inline retry on write failure) PLUS promote-to-task.
+  //
+  // Data model (existing events ONLY — C1 is binding, no new event types):
+  //   - A backlog row is a first-class WorkItem parked with the EXISTING
+  //     `backlogged` flag (set by item-backlogged; cleared by item-unchecked).
+  //     itemState() maps backlogged → 'committed', and isWaiting() excludes
+  //     backlogged items, so the "someday" bucket never pollutes the waiting /
+  //     in-flight surfaces. New rows live on a dedicated "Backlog" root.
+  //   - Edit  = item-text-set (the existing text-repair event).
+  //   - Remove = item-removed (the one C1-added event, shared with My-tasks).
+  //   - PROMOTE = the EXISTING `backlog-activated` event (C1 — there is NO
+  //     item-promoted). backlog-activated flips membership on the snap.backlog
+  //     entry (b.activated=true → leaves the backlog view) and opens the
+  //     FR-22 handoff root carrying the item's text. The promote flow then
+  //     places the actual task on that activated root (action-added with
+  //     origin:'operator' so it shows in My-tasks, + item-committed so it
+  //     lands in the NEXT tier) and retires the parked source row
+  //     (item-removed). snap.backlog mirrors are created lazily AT PROMOTE
+  //     time (backlog-added with the CURRENT text) so an inline edit can
+  //     never leave a stale mirror behind.
+  //   - Legacy snap.backlog entries (pre-redesign captures with no node item)
+  //     still render — promote-only, since the event vocabulary has no
+  //     backlog-text-edit/-remove (honest limitation, fix-forward).
+  var BL_NODE = 'backlog-operator';
+  var BL_TITLE = 'Backlog';
+  function isBacklogItem(it) { return it && it.backlogged === true && !it.checked; }
+  function backlogItemRefs() {
+    return allWorkItems().filter(function (r) { return isBacklogItem(r.item); });
+  }
+  // Legacy capture entries: un-activated snap.backlog rows with NO node item
+  // (a mirror created at promote time shares its item_id with the node item,
+  // so dedupe by id keeps each backlog row rendered exactly once).
+  function legacyBacklogEntries() {
+    var nodeIds = {};
+    allWorkItems().forEach(function (r) { nodeIds[r.itemId] = 1; });
+    return backlog().filter(function (b) { return !b.activated && !nodeIds[b.item_id]; });
+  }
+  function ensureBacklogNode(then) {
+    if (byId(BL_NODE)) { then(); return; }
+    post({ type: 'branch-opened', node_id: BL_NODE, parent_id: null, title: BL_TITLE })
+      .then(function () { then(); })
+      .catch(function () { showToast('Could not create the Backlog list — try again.', 'err'); });
+  }
+  // postSeq — append a fixed sequence of events in order. Every event carries a
+  // PRE-GENERATED event_id, so a retry that re-posts the SAME array is safe:
+  // already-landed events are envelope-level idempotent no-ops (§2) and the
+  // sequence resumes at the first event that never landed.
+  function postSeq(events, okMsg) {
+    events.forEach(function (ev) {
+      if (!ev.event_id) ev.event_id = uid('gui');
+      if (!ev.ts) ev.ts = new Date().toISOString();
+    });
+    var p = Promise.resolve();
+    events.forEach(function (ev) {
+      p = p.then(function () { return post(ev); });
+    });
+    return p.then(function () { if (okMsg) showToast(okMsg, 'ok'); });
+  }
+  // addBacklogItem — the ONE add path (used by the surface "+ add" input AND
+  // the header "+ capture" form, so every captured item is equally editable).
+  // opts: { priority: 'high'|'medium'|'low'|null, context: string|null }
+  var PRIORITY_NUM = { high: 2, medium: 3, low: 4 };
+  function addBacklogItem(text, opts, onOk, onFail) {
+    opts = opts || {};
+    var itemId = uid('bl');
+    var events = [
+      { type: 'action-added', node_id: BL_NODE, item_id: itemId, text: text, origin: 'operator' },
+      { type: 'item-backlogged', node_id: BL_NODE, item_id: itemId },
+    ];
+    if (opts.priority && PRIORITY_NUM[opts.priority]) {
+      events.push({ type: 'priority-assigned', target_id: itemId, priority: PRIORITY_NUM[opts.priority] });
+    }
+    if (opts.context && String(opts.context).trim()) {
+      events.push({ type: 'item-details-set', node_id: BL_NODE, item_id: itemId,
+                    details: { description: String(opts.context).trim() } });
+    }
+    ensureBacklogNode(function () {
+      postSeq(events, 'Captured to backlog')
+        .then(function () { if (onOk) onOk(); })
+        .catch(function () { if (onFail) onFail(); });
+    });
+  }
+  // buildPromoteEvents — the promote-to-task sequence for a parked node item.
+  // Built ONCE with stable event_ids; a retry re-posts the identical array.
+  function buildPromoteEvents(r) {
+    var text = r.item.text || '(untitled)';
+    var mirror = null;
+    backlog().forEach(function (b) { if (b.item_id === r.itemId) mirror = b; });
+    var actId = (mirror && mirror.activated && mirror.activated_node)
+      ? mirror.activated_node : uid('blact');
+    var taskId = uid('task');
+    var events = [];
+    if (!mirror) {
+      events.push({ type: 'backlog-added', item_id: r.itemId, tree_id: 'global',
+                    priority: 'medium', text: text });
+    }
+    if (!(mirror && mirror.activated)) {
+      events.push({ type: 'backlog-activated', item_id: r.itemId, new_node_id: actId });
+      // a pre-existing mirror may carry stale text — repair the handoff
+      // node's title via the existing text-repair event.
+      if (mirror && mirror.text !== text) {
+        events.push({ type: 'branch-retitled', node_id: actId, title: text });
+      }
+    }
+    events.push({ type: 'action-added', node_id: actId, item_id: taskId, text: text, origin: 'operator' });
+    events.push({ type: 'item-committed', node_id: actId, item_id: taskId });
+    events.push({ type: 'item-removed', node_id: r.nodeId, item_id: r.itemId });
+    return events;
+  }
+  function buildLegacyPromoteEvents(b) {
+    var actId = uid('blact');
+    var taskId = uid('task');
+    var events = [
+      { type: 'backlog-activated', item_id: b.item_id, new_node_id: actId },
+      { type: 'action-added', node_id: actId, item_id: taskId, text: b.text || '(untitled)', origin: 'operator' },
+      { type: 'item-committed', node_id: actId, item_id: taskId },
+    ];
+    if (b.context_text && String(b.context_text).trim()) {
+      events.push({ type: 'item-details-set', node_id: actId, item_id: taskId,
+                    details: { description: String(b.context_text).trim() } });
+    }
+    return events;
+  }
+  // promote with I3 semantics: on failure the row stays (nothing left the
+  // backlog) and an inline "not promoted — retry" affordance re-posts the SAME
+  // event array (idempotent resume).
+  function runPromote(row, events) {
+    postSeq(events, 'Promoted to task')
+      .catch(function () {
+        row.classList.add('save-failed');
+        if (!row.querySelector('.retry-note')) {
+          var retry = el('button', 'retry-note retry-btn', '↻ not promoted — retry');
+          retry.setAttribute('aria-label', 'retry promoting backlog item');
+          retry.addEventListener('click', function (e) {
+            e.stopPropagation();
+            row.classList.remove('save-failed'); retry.remove();
+            runPromote(row, events);
+          });
+          row.appendChild(retry);
+        }
+      });
+  }
+
+  // attachBacklogEdit — inline text edit for a backlog row (same I3 contract
+  // as myTaskRow: optimistic display, visible REVERT + inline retry on a
+  // failed item-text-set).
+  function attachBacklogEdit(row, txt, r) {
+    function beginEditWith(seed) {
+      if (row.querySelector('.mytask-edit')) return;
+      var inp = el('input', 'mytask-edit');
+      inp.type = 'text';
+      inp.value = seed;
+      inp.setAttribute('aria-label', 'edit backlog item text');
+      var prevText = r.item.text || '';
+      txt.replaceWith(inp);
+      inp.focus(); inp.select();
+      var committed = false;
+      function commit() {
+        if (committed) return; committed = true;
+        var next = (inp.value || '').trim();
+        if (!next || next === prevText) { inp.replaceWith(txt); return; }
+        txt.textContent = next;
+        inp.replaceWith(txt);
+        post({ type: 'item-text-set', node_id: r.nodeId, item_id: r.itemId, text: next })
+          .catch(function () {
+            // I3: REVERT the visible text + inline retry ON the row.
+            txt.textContent = prevText;
+            row.classList.add('save-failed');
+            if (!row.querySelector('.retry-note')) {
+              var retry = el('button', 'retry-note retry-btn', '↻ not saved — retry');
+              retry.setAttribute('aria-label', 'retry saving backlog edit');
+              retry.addEventListener('click', function (e) {
+                e.stopPropagation();
+                row.classList.remove('save-failed'); retry.remove();
+                beginEditWith(next);
+              });
+              row.appendChild(retry);
+            }
+          });
+      }
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); committed = true; inp.replaceWith(txt); }
+      });
+      inp.addEventListener('blur', commit);
+    }
+    txt.addEventListener('click', function () { beginEditWith(r.item.text || ''); });
+    txt.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); beginEditWith(r.item.text || ''); }
+    });
+  }
+
+  // One editable backlog row: inline-editable text · priority badge ·
+  // promote-to-task (▸) · remove (✕).
+  function backlogRow(r) {
+    var row = el('div', 'item-row mytask-row bl-row state-committed');
+    row.setAttribute('role', 'listitem');
+    row.setAttribute('data-node', r.nodeId);
+    row.setAttribute('data-item', r.itemId);
+    row.appendChild(el('span', 'item-ic', '◷'));
+
+    var body = el('div', 'item-main');
+    var txt = el('div', 'item-text mytask-text', r.item.text || '(untitled)');
+    txt.setAttribute('tabindex', '0');
+    txt.setAttribute('role', 'button');
+    txt.setAttribute('aria-label', 'edit backlog item: ' + (r.item.text || 'untitled'));
+    attachBacklogEdit(row, txt, r);
+    body.appendChild(txt);
+    var de = r.item.details;
+    if (de && de.description) body.appendChild(el('div', 'item-ctx', String(de.description)));
+    var meta = el('div', 'item-meta');
+    meta.appendChild(el('span', 'st-badge st-committed', 'backlog'));
+    if (r.item.priority >= 1 && r.item.priority <= 4) {
+      meta.appendChild(el('span', 'st-badge st-committed', 'P' + r.item.priority));
+    }
+    if (isOperatorItem(r.item)) meta.appendChild(el('span', 'origin-badge', 'mine'));
+    body.appendChild(meta);
+    row.appendChild(body);
+
+    var ctrls = el('div', 'mytask-ctrls');
+    var promoteBtn = el('button', 'mytask-ctrl ctrl-promote', '▸');
+    promoteBtn.setAttribute('aria-label', 'promote to task');
+    promoteBtn.title = 'promote to task (moves to the active list / Next)';
+    promoteBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      runPromote(row, buildPromoteEvents(r));
+    });
+    ctrls.appendChild(promoteBtn);
+    var rmBtn = el('button', 'mytask-ctrl ctrl-remove', '✕');
+    rmBtn.setAttribute('aria-label', 'remove backlog item');
+    rmBtn.title = 'remove';
+    rmBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      post({ type: 'item-removed', node_id: r.nodeId, item_id: r.itemId }, 'Removed')
+        .catch(function () {
+          row.classList.add('save-failed');
+          if (!row.querySelector('.retry-note')) {
+            var retry = el('button', 'retry-note retry-btn', '↻ not removed — retry');
+            retry.addEventListener('click', function (ev) {
+              ev.stopPropagation();
+              row.classList.remove('save-failed'); retry.remove(); rmBtn.click();
+            });
+            row.appendChild(retry);
+          }
+        });
+    });
+    ctrls.appendChild(rmBtn);
+    row.appendChild(ctrls);
+    return row;
+  }
+
+  // A legacy capture entry (snap.backlog only — promote works; edit/remove
+  // need a node item the pre-redesign capture never created).
+  function legacyBacklogRow(b) {
+    var row = el('div', 'item-row bl-row bl-legacy state-committed');
+    row.appendChild(el('span', 'item-ic', '◷'));
+    var body = el('div', 'item-main');
+    body.appendChild(el('div', 'item-text', b.text || '(untitled)'));
+    if (b.context_text) body.appendChild(el('div', 'item-ctx', b.context_text));
+    var meta = el('div', 'item-meta');
+    meta.appendChild(el('span', 'st-badge st-committed', 'backlog · ' + (b.priority || '—')));
+    meta.appendChild(el('span', 'st-badge st-muted', 'legacy capture'));
+    body.appendChild(meta);
+    row.appendChild(body);
+    var ctrls = el('div', 'mytask-ctrls');
+    var promoteBtn = el('button', 'mytask-ctrl ctrl-promote', '▸');
+    promoteBtn.setAttribute('aria-label', 'promote to task');
+    promoteBtn.title = 'promote to task (moves to the active list / Next)';
+    promoteBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      runPromote(row, buildLegacyPromoteEvents(b));
+    });
+    ctrls.appendChild(promoteBtn);
+    row.appendChild(ctrls);
+    return row;
   }
 
   function sessionRow(s) {
@@ -1691,6 +2016,191 @@
   }
 
   // ====================================================================
+  //  CONTEXT CARD + GATE (Task 8, 2026-06-11)
+  // ====================================================================
+  // The per-kind required-field templates + the incompleteness gate ALREADY
+  // exist in the sole-normative Zod module (state/decision-context-schema.js:
+  // ItemDetailsContentSchema / validateItemDetails / assembleItemDetails —
+  // assembleItemDetails returns null when the details are not self-contained).
+  // The browser cannot require() that module (zod, CommonJS, no build step),
+  // so the SERVER runs the assembler at serve time and annotates each
+  // operator-ask item with `context_state: 'complete' | 'incomplete'`
+  // (server/server.js annotateContextState). The client CONSUMES that
+  // annotation — there is deliberately NO parallel schema or second validator
+  // here (I1). The cold-read bar: could the operator decide reading ONLY this
+  // card, with zero memory of the chat? complete = yes; anything else gates.
+  function contextGateBlocks(it) {
+    if (!isMishaAsk(it)) return false;      // the gate covers decision / question / action-for-operator
+    return it.context_state !== 'complete'; // server-annotated by the sole-normative assembler
+  }
+  // First N sentences of a paragraph — the inline-essentials clamp
+  // (progressive disclosure: 1-2 sentence background inline, the full text
+  // behind the "More context" expand).
+  function firstSentences(text, n) {
+    var s = String(text == null ? '' : text).trim();
+    if (!s) return '';
+    var parts = s.match(/[^.!?]+[.!?]+(\s|$)/g);
+    if (!parts || parts.length <= n) return s;
+    var out = parts.slice(0, n).join('').trim();
+    return out.length < s.length ? out + ' …' : out;
+  }
+  function optionTitle(op, ix) {
+    if (typeof op === 'string') return op;
+    var t = '';
+    if (op.key) t += '[' + op.key + '] ';
+    t += (op.name || op.label || ('option ' + (ix + 1)));
+    return t;
+  }
+  function optionKeyOf(op, ix) {
+    if (typeof op === 'string') return op;
+    return op.key || op.name || op.label || ('option ' + (ix + 1));
+  }
+  // renderEssentialsCard — the progressive-disclosure context card for a
+  // context-COMPLETE operator-ask. Essentials inline (short background, the
+  // ask, ONE line per option with its meaning + tradeoff, the recommendation,
+  // the reply phrasing + per-option Choose affordances); the FULL existing
+  // detail renderer (renderItemDetails — about / why-not-decide-alone / links
+  // / references / envelope fields) sits behind a native "More context"
+  // disclosure. Re-style of the existing card, not a re-template (I1).
+  function renderEssentialsCard(it, nodeId, itemId, projectKey) {
+    var de = it.details || {};
+    var card = el('div', 'dc-essentials');
+    var bg = de.background || de.about;
+    if (bg) card.appendChild(el('div', 'dc-bg', firstSentences(bg, 2)));
+    var ask = de.question || de.the_ask;
+    if (ask) card.appendChild(el('div', 'dc-ask', ask));
+    var isDecision = it.kind === 'decision' || de._category === 'decision';
+    if (Array.isArray(de.options) && de.options.length) {
+      var ol = el('div', 'dc-opts');
+      de.options.forEach(function (op, ix) {
+        var line = el('div', 'dc-opt-line');
+        var main = el('div', 'dc-opt-main');
+        main.appendChild(el('span', 'dc-opt-name', optionTitle(op, ix)));
+        if (typeof op === 'object') {
+          var meaning = op.what_it_does || op.pros || '';
+          var tradeoff = op.risk || op.cons || '';
+          var bits = [];
+          if (meaning) bits.push(meaning);
+          if (tradeoff) bits.push('risk: ' + tradeoff);
+          if (op.cost) bits.push('cost: ' + op.cost);
+          if (bits.length) main.appendChild(el('span', 'dc-opt-meta', ' — ' + bits.join(' · ')));
+        }
+        line.appendChild(main);
+        // Reply affordance: choose THIS option (replaces the retired native
+        // number-entry prompt). Only on still-open decisions.
+        if (isDecision && !it.checked) {
+          var pick = el('button', 'dc-opt-choose', 'Choose');
+          pick.type = 'button';
+          pick.setAttribute('aria-label', 'choose ' + optionTitle(op, ix));
+          pick.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var k = optionKeyOf(op, ix);
+            recordDecision(nodeId, itemId, it, k, 'Chose option ' + k);
+          });
+          line.appendChild(pick);
+        }
+        ol.appendChild(line);
+      });
+      card.appendChild(ol);
+    }
+    var rec = de.recommendation;
+    if (rec != null) {
+      var recTxt = (typeof rec === 'object')
+        ? ((rec.option_key ? '[' + rec.option_key + '] ' : '') + firstSentences(rec.reasoning || '', 1))
+        : firstSentences(String(rec), 1);
+      if (recTxt) card.appendChild(el('div', 'dc-rec-line', '→ recommended: ' + recTxt));
+    }
+    if (de.reply_with) {
+      var rw = el('div', 'dc-reply-line');
+      rw.appendChild(el('span', 'dc-reply-k', 'Reply with '));
+      var code = el('code', 'det-reply-with-box');
+      code.textContent = String(de.reply_with);
+      rw.appendChild(code);
+      card.appendChild(rw);
+    }
+    // Full reasoning / links / envelope — behind the expand. Native <details>
+    // disclosure: keyboard-focusable summary, no new Esc/overlay handler (I5).
+    var more = document.createElement('details');
+    more.className = 'dc-more';
+    var sum = document.createElement('summary');
+    sum.textContent = 'More context';
+    more.appendChild(sum);
+    more.appendChild(renderItemDetails(de, projectKey, it.text));
+    card.appendChild(more);
+    return card;
+  }
+  // renderIncompletePanel — the gated state (I2). A contextless operator-ask
+  // is NEVER presented as an actionable choice: this panel replaces the card
+  // AND buildActionButtons suppresses the resolving buttons entirely.
+  function renderIncompletePanel(it, projectKey) {
+    var panel = el('div', 'dc-incomplete-panel');
+    panel.appendChild(el('div', 'dc-incomplete-h', 'context incomplete — needs enrichment'));
+    var kindWord = (it.details && it.details._category)
+      ? String(it.details._category).replace(/_/g, ' ') : (it.kind || 'item');
+    panel.appendChild(el('div', 'dc-incomplete-b',
+      'This ' + kindWord + ' lacks the embedded context (background · what each option '
+      + 'means and trades off · a recommendation · how to reply) needed to decide cold. '
+      + 'It is not actionable until the AI enriches it — resolution buttons are disabled.'));
+    var de = it.details;
+    if (de && typeof de === 'object' && Object.keys(de).length) {
+      var more = document.createElement('details');
+      more.className = 'dc-more';
+      var sum = document.createElement('summary');
+      sum.textContent = 'Show what detail exists';
+      more.appendChild(sum);
+      more.appendChild(renderItemDetails(de, projectKey, it.text));
+      panel.appendChild(more);
+    }
+    return panel;
+  }
+  // openInlineForm — the in-surface reply form (C5: every reply / resolution
+  // records via an inline form INSIDE the card — native prompt() dialogs are
+  // retired). One form at a time; Cancel removes it; no new global key or
+  // scrim handler is registered (I5 — the overlay stack is Task 10's; this
+  // lives entirely inside the existing modal).
+  function openInlineForm(container, opts) {
+    var prev = container.querySelector('.dm-form');
+    if (prev) prev.remove();
+    var wrap = el('div', 'dm-form');
+    var fieldId = uid('f');
+    var lbl = el('label', 'dm-form-label', opts.label);
+    lbl.setAttribute('for', fieldId);
+    wrap.appendChild(lbl);
+    var input = opts.multiline ? el('textarea', 'dm-form-input') : el('input', 'dm-form-input');
+    if (!opts.multiline) input.type = 'text';
+    input.id = fieldId;
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+    wrap.appendChild(input);
+    var row = el('div', 'dm-form-row');
+    var go = el('button', 'btn-go', opts.submitLabel);
+    go.type = 'button';
+    go.addEventListener('click', function () {
+      var v = String(input.value || '').trim();
+      if (opts.required && !v) {
+        showToast(opts.requiredMsg || 'Type something first.', 'err');
+        input.focus();
+        return;
+      }
+      opts.onSubmit(v);
+      wrap.remove();
+    });
+    var cancel = el('button', 'btn-neutral outline', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', function () { wrap.remove(); });
+    row.appendChild(go);
+    row.appendChild(cancel);
+    wrap.appendChild(row);
+    container.appendChild(wrap);
+    if (!opts.multiline) {
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); go.click(); }
+      });
+    }
+    input.focus();
+    return wrap;
+  }
+
+  // ====================================================================
   //  ITEM DETAIL MODAL (Phase D, 2026-06-09)
   // ====================================================================
   // openDetailModal — selection handler (wire-check target). Opens a dismissible
@@ -1732,12 +2242,28 @@
     if (host && host.opened_at) meta.appendChild(dcRow('Last activity', new Date(host.opened_at).toLocaleString()));
     dmBody.appendChild(meta);
 
-    // --- full Phase-C context (Background / ask / Options / Recommendation /
-    //     Links / references / autonomous-action fields). renderItemDetails
-    //     already handles every fence-grammar field; reuse it verbatim. -------
-    if (it.details && typeof it.details === 'object') {
+    // --- the CONTEXT CARD (Task 8) -----------------------------------------
+    // Routed through the context-completeness gate (server-annotated by the
+    // sole-normative assembler — see contextGateBlocks):
+    //   gated ask        → "context incomplete — needs enrichment", never a
+    //                      bare choice (the partial detail stays reachable
+    //                      behind a disclosure);
+    //   complete ask     → progressive-disclosure essentials card (short
+    //                      background · the ask · one line per option with
+    //                      meaning+tradeoff · recommendation · reply
+    //                      affordances) with the FULL existing renderer
+    //                      behind "More context";
+    //   everything else  → the existing full detail render, unchanged.
+    var projKey = rootProjectOf(nodeId);
+    if (contextGateBlocks(it)) {
       dmBody.appendChild(el('div', 'dc-sec-h', 'Context'));
-      dmBody.appendChild(renderItemDetails(it.details, rootProjectOf(nodeId), it.text));
+      dmBody.appendChild(renderIncompletePanel(it, projKey));
+    } else if (isMishaAsk(it) && it.context_state === 'complete') {
+      dmBody.appendChild(el('div', 'dc-sec-h', 'Context'));
+      dmBody.appendChild(renderEssentialsCard(it, nodeId, itemId, projKey));
+    } else if (it.details && typeof it.details === 'object') {
+      dmBody.appendChild(el('div', 'dc-sec-h', 'Context'));
+      dmBody.appendChild(renderItemDetails(it.details, projKey, it.text));
     }
 
     // --- provenance ------------------------------------------------------
@@ -1787,22 +2313,66 @@
   }
 
   // buildActionButtons — the context-appropriate affordances. The buttons differ
-  // by the item's kind / decision-context category, but EVERY item always gets a
-  // "Respond / ask a clarifying question" affordance (Misha's requirement 3).
+  // by the item's kind / decision-context category, but EVERY presentable item
+  // gets a "Respond / ask a clarifying question" affordance (Misha's
+  // requirement 3).
   //
-  //  decision            → Approve recommendation / Decline / Submit a decision
-  //                        (each emits `answered`, recording the chosen option in
-  //                        item-details-set so the choice is auditable)
+  // Task 8 (2026-06-11):
+  //   C5 — every reply / resolution records via an IN-SURFACE inline form
+  //        (openInlineForm) — the native prompt() dialogs are retired. The
+  //        explicit option choice lives as per-option "Choose" buttons on the
+  //        essentials card, replacing the old number-entry dialog.
+  //   I2 — when the context gate flags an operator-ask incomplete, the
+  //        resolving buttons (Approve / Choose / Decline / Answer / Mark done)
+  //        AND the lifecycle cluster are SUPPRESSED entirely — the only
+  //        affordance is the respond channel (how the operator requests
+  //        enrichment). A contextless choice can never be acted on blind.
+  //
+  //  decision            → Approve recommendation / Decline (per-option Choose
+  //                        lives on the essentials card; each resolution emits
+  //                        `answered` + records the choice via item-details-set)
   //  question            → Answer  (emits `answered` + records the answer text)
   //  action_item_for_user→ Mark done (emits `action-done`) / Decline
   //  action (generic)    → Mark done (emits `action-done`)
   //  ALWAYS              → Respond with details (emits `action-responded` — the
-  //                        item stays open/awaiting but carries your note) and
-  //                        the lifecycle controls (Block / Commit / Mark shipped
-  //                        / Mark deployed) so any work item can be tracked to
-  //                        DEPLOYED from the modal.
+  //                        item stays open/awaiting but carries your note) and,
+  //                        when not gated, the lifecycle controls (Block /
+  //                        Commit / Mark shipped / Mark deployed) so any work
+  //                        item can be tracked to DEPLOYED from the modal.
   function buildActionButtons(container, host, it, nodeId, itemId, st, cat) {
     var kind = it.kind;
+
+    // The respond channel — built first because it is the ONE affordance the
+    // gated state keeps (the enrichment-request path; action-responded keeps
+    // the item open, it never resolves a choice).
+    function appendRespond(label) {
+      var respond = el('button', 'btn-info outline', label);
+      respond.title = 'Reply with details or ask a clarifying question — keeps the item open (emits action-responded)';
+      respond.addEventListener('click', function () {
+        openInlineForm(container, {
+          label: 'Respond with details, or ask a clarifying question',
+          multiline: true, required: true,
+          requiredMsg: 'Type something first.',
+          submitLabel: 'Send response',
+          onSubmit: function (v) {
+            post({ type: 'action-responded', node_id: nodeId, item_id: itemId,
+                   response_text: v }, 'Response recorded')
+              .then(function () { /* stays open — re-render shows the response */ });
+          },
+        });
+      });
+      container.appendChild(respond);
+    }
+
+    // --- I2: the context-incomplete gate suppresses ALL resolving/lifecycle
+    //     buttons. Only the needs-enrichment note + the respond channel render.
+    if (contextGateBlocks(it)) {
+      container.appendChild(el('span', 'dm-gate-note',
+        'context incomplete — resolution disabled until this item is enriched'));
+      appendRespond('Respond / request enrichment');
+      return;
+    }
+
     // --- the "what does the user need to DECIDE/DO" cluster (context-appropriate)
     if (kind === 'decision') {
       var rec = it.details && it.details.recommendation;
@@ -1814,35 +2384,20 @@
         recordDecision(nodeId, itemId, it, chosen, 'Approved' + (recKey ? ' option ' + recKey : ''));
       });
       container.appendChild(approve);
-
-      // If the decision carries explicit options, offer one Submit button per
-      // option so the operator picks the actual choice (not just approve/decline).
-      var opts = (it.details && Array.isArray(it.details.options)) ? it.details.options : [];
-      if (opts.length) {
-        var pick = el('button', 'btn-info outline', 'Submit a decision…');
-        pick.title = 'Choose one of the listed options';
-        pick.addEventListener('click', function () {
-          var labels = opts.map(function (o, i) {
-            var k = (o && (o.key || o.name || o.label)) || ('option ' + (i + 1));
-            return (i + 1) + ') ' + k;
-          });
-          var ans = window.prompt('Which option? Enter the number:\n' + labels.join('\n'), '1');
-          if (ans == null) return;
-          var ix = parseInt(ans, 10) - 1;
-          if (isNaN(ix) || ix < 0 || ix >= opts.length) { showToast('No such option.', 'err'); return; }
-          var o = opts[ix];
-          var k = (o && (o.key || o.name || o.label)) || ('option ' + (ix + 1));
-          recordDecision(nodeId, itemId, it, k, 'Chose option ' + k);
-        });
-        container.appendChild(pick);
-      }
+      // Choosing a specific option happens on the essentials card — one
+      // labeled "Choose" button per option line (renderEssentialsCard).
 
       var decline = el('button', 'btn-warn outline', 'Decline');
       decline.title = 'Reject this decision and resolve it (emits answered)';
       decline.addEventListener('click', function () {
-        var why = window.prompt('Why decline? (optional)', '');
-        if (why === null) return;     // cancelled
-        recordDecision(nodeId, itemId, it, 'declined', 'Declined' + (why ? ': ' + why : ''));
+        openInlineForm(container, {
+          label: 'Why decline? (optional)',
+          multiline: true, required: false,
+          submitLabel: 'Confirm decline',
+          onSubmit: function (v) {
+            recordDecision(nodeId, itemId, it, 'declined', 'Declined' + (v ? ': ' + v : ''));
+          },
+        });
       });
       container.appendChild(decline);
 
@@ -1850,10 +2405,13 @@
       var answer = el('button', 'btn-go', 'Answer');
       answer.title = 'Provide your answer and resolve this question (emits answered)';
       answer.addEventListener('click', function () {
-        var a = window.prompt('Your answer:', '');
-        if (a == null) return;
-        if (!String(a).trim()) { showToast('Enter an answer first.', 'err'); return; }
-        recordDecision(nodeId, itemId, it, null, String(a).trim());
+        openInlineForm(container, {
+          label: 'Your answer',
+          multiline: true, required: true,
+          requiredMsg: 'Enter an answer first.',
+          submitLabel: 'Submit answer',
+          onSubmit: function (v) { recordDecision(nodeId, itemId, it, null, v); },
+        });
       });
       container.appendChild(answer);
 
@@ -1869,30 +2427,22 @@
         var declineA = el('button', 'btn-warn outline', 'Decline');
         declineA.title = 'Decline this ask, with a reason (recorded as your response)';
         declineA.addEventListener('click', function () {
-          var why = window.prompt('Why decline this ask?', '');
-          if (why == null) return;
-          post({ type: 'action-responded', node_id: nodeId, item_id: itemId,
-                 response_text: 'Declined: ' + (why || '(no reason given)') }, 'Declined');
+          openInlineForm(container, {
+            label: 'Why decline this ask?',
+            multiline: true, required: false,
+            submitLabel: 'Confirm decline',
+            onSubmit: function (v) {
+              post({ type: 'action-responded', node_id: nodeId, item_id: itemId,
+                     response_text: 'Declined: ' + (v || '(no reason given)') }, 'Declined');
+            },
+          });
         });
         container.appendChild(declineA);
       }
     }
 
-    // --- ALWAYS: respond-with-details / ask-a-clarifying-question --------
-    // Emits action-responded — the item stays open/awaiting (NOT a resolve), but
-    // carries the note so the operator's reply is captured even when they don't
-    // want to approve/decline yet.
-    var respond = el('button', 'btn-info outline', 'Respond / ask a question');
-    respond.title = 'Reply with details or ask a clarifying question — keeps the item open (emits action-responded)';
-    respond.addEventListener('click', function () {
-      var note = window.prompt('Respond with details, or ask a clarifying question:', '');
-      if (note == null) return;
-      if (!String(note).trim()) { showToast('Type something first.', 'err'); return; }
-      post({ type: 'action-responded', node_id: nodeId, item_id: itemId,
-             response_text: String(note).trim() }, 'Response recorded')
-        .then(function () { /* stays open — re-render to show the response */ });
-    });
-    container.appendChild(respond);
+    // --- ALWAYS (when not gated): respond-with-details ---------------------
+    appendRespond('Respond / ask a question');
 
     // --- lifecycle controls: track ANY work item to DEPLOYED -------------
     var lifeSep = el('span', 'dm-act-sep', '·');
@@ -1902,10 +2452,15 @@
       var block = el('button', 'btn-warn outline', 'Block');
       block.title = 'Mark this work blocked on a dependency / missing input';
       block.addEventListener('click', function () {
-        var reason = window.prompt('Why is this blocked?', '');
-        if (reason == null) return;
-        post({ type: 'item-blocked', node_id: nodeId, item_id: itemId, reason: reason }, 'Marked blocked')
-          .then(closeDetailModal);
+        openInlineForm(container, {
+          label: 'Why is this blocked?',
+          multiline: false, required: false,
+          submitLabel: 'Mark blocked',
+          onSubmit: function (v) {
+            post({ type: 'item-blocked', node_id: nodeId, item_id: itemId, reason: v }, 'Marked blocked')
+              .then(closeDetailModal);
+          },
+        });
       });
       container.appendChild(block);
     }
@@ -1922,11 +2477,16 @@
       var ship = el('button', 'btn-neutral outline', 'Mark shipped');
       ship.title = 'Merged / shipped (not yet deployed)';
       ship.addEventListener('click', function () {
-        var ev = window.prompt('Ship evidence (commit SHA / PR URL) — optional:', '');
-        if (ev === null) return;
-        var payload = { type: 'item-shipped', node_id: nodeId, item_id: itemId };
-        if (ev) payload.evidence = ev;
-        post(payload, 'Marked shipped').then(closeDetailModal);
+        openInlineForm(container, {
+          label: 'Ship evidence (commit SHA / PR URL) — optional',
+          multiline: false, required: false,
+          submitLabel: 'Mark shipped',
+          onSubmit: function (v) {
+            var payload = { type: 'item-shipped', node_id: nodeId, item_id: itemId };
+            if (v) payload.evidence = v;
+            post(payload, 'Marked shipped').then(closeDetailModal);
+          },
+        });
       });
       container.appendChild(ship);
     }
@@ -1934,11 +2494,16 @@
       var deploy = el('button', 'btn-go', 'Mark deployed');
       deploy.title = 'Live in production — the effort reached deployed';
       deploy.addEventListener('click', function () {
-        var ev = window.prompt('Deploy evidence (prod URL / deploy SHA) — optional:', '');
-        if (ev === null) return;
-        var payload = { type: 'item-deployed', node_id: nodeId, item_id: itemId };
-        if (ev) payload.evidence = ev;
-        post(payload, 'Marked deployed').then(closeDetailModal);
+        openInlineForm(container, {
+          label: 'Deploy evidence (prod URL / deploy SHA) — optional',
+          multiline: false, required: false,
+          submitLabel: 'Mark deployed',
+          onSubmit: function (v) {
+            var payload = { type: 'item-deployed', node_id: nodeId, item_id: itemId };
+            if (v) payload.evidence = v;
+            post(payload, 'Marked deployed').then(closeDetailModal);
+          },
+        });
       });
       container.appendChild(deploy);
     }
@@ -2045,10 +2610,11 @@
   blSave.addEventListener('click', function () {
     var text = (blText.value || '').trim();
     if (!text) { showToast('Enter the work item text first.', 'err'); return; }
-    post({
-      type: 'backlog-added', item_id: uid('bl'), tree_id: 'global',
-      priority: blPriority.value, text: text, context_text: (blContext.value || '').trim(),
-    }, 'Captured to backlog').then(function () {
+    // Task 7: the header capture goes through the SAME add path as the backlog
+    // surface's "+ add" input, so every captured item is equally editable /
+    // removable / promotable (the old backlog-added-only path created
+    // promote-only legacy entries).
+    addBacklogItem(text, { priority: blPriority.value, context: blContext.value }, function () {
       blText.value = ''; blContext.value = ''; backlogCapture.hidden = true;
       setActiveFilter('backlog');
     });
