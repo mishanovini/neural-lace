@@ -136,20 +136,20 @@ Same editing pattern for the "eventually" bucket; add / edit / priority / delete
 - [x] 2. GUI server write endpoints: `POST /api/event` (validated, appends via the
   sole-normative state library) for add/edit/remove/promote/mark-done/defer; reject malformed
   payloads; never bypass the facade. — Verification: full
-- [ ] 3. Cockpit view: per-project status-count rows (fixed density) computed from the reduced
+- [x] 3. Cockpit view: per-project status-count rows (fixed density) computed from the reduced
   state; waiting-count accent; click → project drill. — Verification: full
   **Prove it works:** 1. open the GUI; 2. see one row per project with now/next/waiting/done
   counts; 3. counts match the reduced state; 4. a project with dozens of items shows a number,
   not overflowing chips.
   **Wire checks:** `neural-lace/workstreams-ui/web/app.js` → `neural-lace/workstreams-ui/state/reducer.js` → `neural-lace/workstreams-ui/server/server.js`
   **Integration points:** reads the live `tree-state.json` via the reducer; `curl localhost:<port>/` returns the cockpit DOM.
-- [ ] 4. Waiting-on-you global list: bounded filter (blocked-on-operator + unanswered
+- [x] 4. Waiting-on-you global list: bounded filter (blocked-on-operator + unanswered
   decisions/questions); context-complete summary rows. — Verification: full
   **Prove it works:** 1. open the GUI; 2. the waiting list shows only items needing the
   operator; 3. each row shows background + recommendation inline.
   **Wire checks:** `neural-lace/workstreams-ui/web/app.js` → `neural-lace/workstreams-ui/state/reducer.js`
   **Integration points:** derives from item `state`/`kind`; n/a external.
-- [ ] 5. Per-project tree: color=status / icon=kind / amber needs-you dot + open-count badges;
+- [x] 5. Per-project tree: color=status / icon=kind / amber needs-you dot + open-count badges;
   focusable twists (`aria-expanded`); collapse-done default + "show done". — Verification: full
   **Prove it works:** 1. click a project in the cockpit; 2. its tree renders nested with guide
   lines; 3. amber marks only needs-you/blocked; 4. keyboard can expand/collapse a branch.
@@ -326,6 +326,27 @@ per-task structured rationale + comprehension articulation live in
   all via the in-surface input (zero `window.prompt` in the My-tasks flow — the only added
   prompt token is a comment; the 8 calls are the out-of-scope context-card surface), I3
   revert+inline-retry and I4 keyboard reorder present in the diff. Comprehension-gate: PASS.
+- **Task 3** — Verdict PASS (Confidence 9). Oracle: specified — acceptance scenario
+  `status-of-everything-at-a-glance`. Verifier re-ran the e2e fresh (17/17, server on 7799
+  against a copy of TODAY'S live state — 124 items): 6 cockpit rows, four number pills each,
+  all matching the independent `/api/state`-derived oracle (T2), constant 36px rows with zero
+  item chips (T1/T3); counts derive from the same `allWorkItems()`+`statusCounts()` the filters
+  read (no parallel data path); C3 holds (`proposed`/`closed` removed from the status surface).
+  Comprehension-gate: PASS. Per-task rationale in `…-evidence/tasks-3-4-5.evidence.md`.
+- **Task 4** — Verdict PASS (Confidence 9). Oracle: specified — the Surface-2 contract.
+  Fresh e2e: T10 `waitRows=20 (oracle=20) bare=0` — the rendered list equals the independent
+  `isWaitingOnYou` set; all 20 detail-less live items carry the visible neutral "context
+  incomplete — needs enrichment" marker, none painted decision-ready; the context-COMPLETE
+  inline path (background + recommendation) proven by the live POST round-trip artifact
+  (`waiting-context-complete-1280.jpg`). One shared predicate drives list, cockpit pill, and
+  tree amber. Comprehension-gate: PASS.
+- **Task 5** — Verdict PASS (Confidence 9). Oracle: specified — acceptance scenario
+  `drill-into-a-project-tree` + C4/C6. Fresh e2e: drill bounded with guide lines (T4); amber
+  set === oracle needs-set, zero mismatches both directions (T5); zero kind-color classes in
+  the DOM, kind by glyph icon (T6); keyboard-operable `aria-expanded` button twisty (T7);
+  all-done branches collapsed by default + working "show done" (T8); breadcrumb returns at
+  1280 and 390px (T9/T16). Verifier-independent C6 sweep: 2 comment-only hits in app.css,
+  0 in app.js; C5: zero `window.prompt` added in the diff. Comprehension-gate: PASS.
 
 ## Pre-Submission Audit
 - S1 (Entry-Point Surfacing): each behavior change is cited in a Task + a Files entry.

@@ -128,3 +128,140 @@ Git evidence:
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: the My-tasks surface authors via the in-surface input (zero window.prompt in the flow — the only added prompt token is a comment, the 8 calls are the out-of-scope context-card surface), keyboard reorder + I3 revert/retry are present in the diff, the operator-event POST wiring traces end-to-end through Tasks 2/1, and the prior pass confirmed the full add/edit/reorder/remove/revert round-trip live in a real browser (13/13) persisting across reload.
+
+EVIDENCE BLOCK
+==============
+Task ID: 3
+Task description: Cockpit view: per-project status-count rows (fixed density) computed from the reduced state; waiting-count accent; click → project drill. — Verification: full
+Verified at: 2026-06-12T02:44:22Z
+Verifier: task-verifier agent
+
+Oracle: specified — acceptance scenario `status-of-everything-at-a-glance`: one row per project with now/next/waiting/done counts, readable and non-overflowing even for the lopsided live data; counts must equal the reduced state. Exercised by an INDEPENDENT e2e oracle (regression.e2e.js ORACLE_SRC re-derives the four buckets from raw /api/state, separate from app.js's code) cross-checked against the rendered DOM.
+
+Comprehension-gate: PASS (confidence 9) — Stage 1: all four canonical sub-sections present for Task 3; Stage 2: each substantive (well above 30 non-ws chars, no placeholders); Stage 3: every file:line claim spot-checked against the live code and diff 67bb3f3..f830be4 (statusCounts app.js:259 with disjoint/total C3 buckets shipped→done / isWaitingOnYou→waiting / committed→next / else→now; cockpitRows app.js:894 grouping the SAME allWorkItems() the filters read; zero-pill muted + waiting-accent-only-when->0 at app.js:1021-1026; shared `.ck-cols,.ck-row` grid at app.css:998) — all map; the "blocked sits in WAITING" assumption matches statusCounts exactly and is honestly flagged count-invisible (0 blocked in live data).
+
+Checks run:
+1. Live e2e re-run (fresh server on 7799 against a fresh COPY of today's live state — 124 items, one MORE than the builder's run, so the suite is not locked to a frozen fixture)
+   Command: CONV_TREE_STATE_PATH=<copy> CTREE_PORT=7799 node server/server.js & then WS_URL=http://127.0.0.1:7799/ node scripts/regression.e2e.js
+   Output: 17/17 PASS — T1 ckRows=6 4pills=true numeric=true treeItemsInCockpit=0; T2 all 6 project rows match the reduced state (independent oracle); T3 rowHeights 36..36px constant; T0 pageErrors=0
+   Result: PASS
+2. C3 phantom-state sweep — no invented closed/proposed in the status surface
+   Command: grep -nE "'proposed'|'closed'" web/app.js + git diff 67bb3f3..f830be4
+   Output: STATE_ICON now committed/in-flight/blocked/shipped only (diff REMOVED proposed/closed); COMPLETE_STATES={shipped:1}; the single remaining 'proposed' reference (app.js:1912) is PRE-EXISTING detail-modal code (Task 8 surface), not added by this diff
+   Result: PASS
+3. Data-path trace — counts derive from the reducer's snapshot, no parallel computation
+   Output: SSE /api/events → S (app.js:2268-2270) → nodes() → allWorkItems() (app.js:328) → cockpitRows()+statusCounts() — same flattening the right-pane filters read; server serves readState().snapshot from the sole-normative state library
+   Result: PASS
+4. Runtime screenshot corroboration (committed artifacts)
+   Output: cockpit-1280.jpg / cockpit-768.jpg — one fixed-height row per project, repo-grouped, four NUMBER pills on a shared grid; lopsided projects (Cross-project 8/52, neural-lace 25 next/10 waiting) each one row; amber accent only on waiting>0
+   Result: PASS
+
+Runtime verification: playwright neural-lace/workstreams-ui/scripts/regression.e2e.js::T2-cockpit-counts-match-reduced-state
+Runtime verification: file neural-lace/workstreams-ui/web/app.js::cockpitRows
+
+DEPENDENCY TRACE
+================
+Step 1: reducer folds the event log into the snapshot
+  Verified at: state/reducer.js (untouched this diff); server.js safeRead()→readState().snapshot
+Step 2: GUI receives the snapshot (SSE /api/events + /api/state)
+  Verified at: web/app.js:2268-2270 (S = parsed snapshot); e2e T15 /api/health ok
+Step 3: cockpit rows + counts derived from the same allWorkItems()+statusCounts() the filters read
+  Verified at: web/app.js:894 cockpitRows / :259 statusCounts; e2e T2 oracle match
+Step 4: operator sees one count-row per project; click drills
+  Verified at: e2e T1/T3/T4; cockpit-1280.jpg
+
+Git evidence:
+  Files modified in recent history:
+    - neural-lace/workstreams-ui/web/app.js  (commit f830be4)
+    - neural-lace/workstreams-ui/web/app.css (commit f830be4)
+    - neural-lace/workstreams-ui/scripts/regression.e2e.js (commit f830be4)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: fresh e2e re-run this session (17/17 against a copy of TODAY'S live state, one item more than the builder's run) shows 6 cockpit rows whose four pills all match an independent /api/state-derived oracle, constant 36px row height with zero item chips in the cockpit; code trace confirms counts derive from the reducer snapshot via the same allWorkItems() path the filters use; C3 holds (proposed/closed removed from the status surface).
+
+EVIDENCE BLOCK
+==============
+Task ID: 4
+Task description: Waiting-on-you global list: bounded filter (blocked-on-operator + unanswered decisions/questions); context-complete summary rows; detail-less items carry a visible "context incomplete" marker, never painted decision-ready. — Verification: full
+Verified at: 2026-06-12T02:44:22Z
+Verifier: task-verifier agent
+
+Oracle: specified — the plan's Surface-2 contract: the ONLY globally-rendered item list, bounded by construction to unanswered Misha-asks + blocked work; rows show background + recommendation inline when details exist; an item whose details cannot support that must be visibly flagged. Exercised by the independent e2e oracle (needsYou re-derived from raw /api/state) plus the builder's live context-complete round-trip artifact.
+
+Comprehension-gate: PASS (confidence 9) — Stage 1: four canonical sub-sections present for Task 4; Stage 2: substantive; Stage 3: file:line claims verified (waitingSummary app.js:498 returns null on absent/insufficient details; title-echo/≤20-char description rejected at :503-507; recommendation string-AND-fence duality at :510-514; waitingRow neutral dashed ctx-incomplete-badge at :519+app.css:1098 — deliberately NEUTRAL so amber stays exclusive to needs-you; blocked badge with blocked_on edge at :543-544; renderWaitingInto→applyFilter('awaiting-me')→isWaitingOnYou at :551/:378/:248). The "ALL blocked items included (safe direction)" assumption matches isWaitingOnYou exactly; the honest NOT-covered boundary (presence-based summary check, full per-kind validation is Task 8's gate) is correctly scoped — Task 4's obligation is never to lie about readiness, which the bare=0 assertion proves.
+
+Checks run:
+1. Live e2e re-run — boundedness + no-bare-rows
+   Command: WS_URL=http://127.0.0.1:7799/ node scripts/regression.e2e.js (fresh server, fresh state copy)
+   Output: T10 waitRows=20 (oracle=20) ctx=0 incomplete=20 bare=0 — rendered row set === independent isWaitingOnYou oracle set; all 20 detail-less live items carry the visible incomplete marker, zero painted decision-ready
+   Result: PASS
+2. Context-COMPLETE inline path (builder's live round-trip, corroborated by committed artifact)
+   Output: waiting-context-complete-1280.jpg — a decision POSTed with details (background/options/recommendation) renders wait-bg + "→ option B —…" recommendation inline with NO incomplete badge; code path waitingSummary→wait-ctx confirmed at app.js:529-534
+   Result: PASS
+3. Single-predicate discipline — list, cockpit pill, and tree amber all share isWaitingOnYou
+   Output: applyFilter case 'awaiting-me' (app.js:383), statusCounts waiting bucket (app.js:264), treeItemRow needs (app.js:1249) all call isWaitingOnYou (app.js:248) — the three surfaces cannot disagree
+   Result: PASS
+
+Runtime verification: playwright neural-lace/workstreams-ui/scripts/regression.e2e.js::T10-waiting-bounded-no-bare-rows
+Runtime verification: file neural-lace/workstreams-ui/web/app.js::isWaitingOnYou
+
+Git evidence:
+  Files modified in recent history:
+    - neural-lace/workstreams-ui/web/app.js     (commit f830be4)
+    - neural-lace/workstreams-ui/web/index.html (commit f830be4 — chip relabeled "Waiting on you")
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: fresh e2e re-run shows the list bounded to exactly the independent oracle's 20-item needs-you set with bare=0 (every detail-less item visibly flagged "context incomplete — needs enrichment", none decision-ready); the context-complete inline path is proven by the live POST round-trip artifact; one shared isWaitingOnYou predicate drives list, cockpit pill, and tree amber so the surfaces agree by construction.
+
+EVIDENCE BLOCK
+==============
+Task ID: 5
+Task description: Per-project tree: color=status / icon=kind / amber needs-you dot + open-count badges; focusable twists (aria-expanded); collapse-done default + "show done"; C4 breadcrumb return; C6 kind-color retirement. — Verification: full
+Verified at: 2026-06-12T02:44:22Z
+Verifier: task-verifier agent
+
+Oracle: specified — acceptance scenario `drill-into-a-project-tree` (+ binding corrections C4/C6): nested tree with guide lines bounded to one project; amber marks ONLY needs-you/blocked; done muted; keyboard expand/collapse; persistent breadcrumb return. The C6 prove-it ("amber on any non-needs-you row = zero") is asserted bidirectionally by the e2e against the rendered DOM.
+
+Comprehension-gate: PASS (confidence 9) — Stage 1: four canonical sub-sections present for Task 5; Stage 2: substantive; Stage 3: claims verified against code+diff (branchGroup real <button class="twisty"> with aria-expanded+aria-label at app.js:1198/1205-1209; branchExpanded default !allDone at :1183/:1202; expand-a-done-branch reveals items via allDone||visibleInTree at :1223 with "N done hidden" note at :1225-1228; per-project branch-state key at :1182; treeItemRow color=STATUS class + needs-you amber edge only via isWaitingOnYou at :1247-1254, kind GLYPH icon at :1259, muted done check at :1263; C4 breadcrumb at :1064 + rail app.css:1034 + ≤560px full swap app.css:1079 + drill persistence app.js:59; C6 retirement sweep real — app.css has exactly 2 hits for retired kind-color classes, BOTH comments; app.js zero; st-committed/in-flight re-keyed to grays at app.css:875-885). Honest NOT-covered items (remaining .chip-warn filter chips → Task 10; det-incomplete-badge amber is the pre-existing modal → Task 8 surface; 560px breakpoint judgment call satisfying the ≤390 requirement) are accurate and within scope boundaries; no assumption contradicted.
+
+Checks run:
+1. Live e2e re-run — drill + amber discipline + a11y + done-collapse + return path
+   Command: WS_URL=http://127.0.0.1:7799/ node scripts/regression.e2e.js (fresh server, fresh state copy)
+   Output: T4 drill bounded (neural-lace, 35 items, 10 branch rails, +29px indent, rail=true); T5 amberRows=10 mismatches=0 (amber set === oracle needs-set, both directions); T6 kindColorClasses=0, 35 neutral kind glyphs; T7 aria-expanded true→false via keyboard Enter; T8 all-done branches expandedByDefault=0, show-done reveals 8→23 and reverts; T9 breadcrumb returns to cockpit; T16 390px rail hidden + breadcrumb present
+   Result: PASS
+2. C6 static sweep (re-run independently, not trusted from the evidence file)
+   Command: grep -nE '\.k-action|\.k-decision|\.k-question|li-kind\.|kind-action|kind-decision|kind-question|ti-badge\.k-' web/app.css web/app.js
+   Output: app.css 2 hits — both retirement comments (lines 370, 825); app.js 0 hits; STATE_ICON has no proposed/closed; amber rules target only .needs-dot/.tree-item.needs-you/.ck-pill.accent/.rg-wait (+ pre-existing modal/filter-bar UI outside the row discipline)
+   Result: PASS
+3. C5 — no new window.prompt in this diff
+   Command: git diff 67bb3f3..f830be4 -- web/app.js | grep '^+.*window.prompt'
+   Output: zero added; the 8 call sites (app.js:1829-1937) are all pre-existing detail-modal code = Task 8 scope per the binding correction
+   Result: PASS
+4. Runtime screenshot corroboration
+   Output: drill-1280.jpg — rail + "← All projects" breadcrumb + project header + branch groups with twisty/needs-dot/open-count badges + guide lines + glyph icons, amber edges only on needs-you rows; drill-390.jpg — full swap, breadcrumb present
+   Result: PASS
+
+Runtime verification: playwright neural-lace/workstreams-ui/scripts/regression.e2e.js::T5-amber-set-equals-needs-set
+Runtime verification: file neural-lace/workstreams-ui/web/app.js::branchGroup
+
+DEPENDENCY TRACE
+================
+Step 1: cockpit row click → setDrill(projectId)
+  Verified at: web/app.js:1028 (cockpitRow click) → :947 setDrill; e2e T4
+Step 2: renderDrill consumes the SAME cockpitRows() refs (reducer-derived)
+  Verified at: web/app.js:1037-1042; no parallel data path
+Step 3: renderProjectTree → branchGroup → treeItemRow render the bounded tree
+  Verified at: web/app.js:1108/:1198/:1247; e2e T4/T5/T6
+Step 4: keyboard expand/collapse + breadcrumb return
+  Verified at: web/app.js:1205-1209 (button twisty aria-expanded) / :1064 (breadcrumb); e2e T7/T9/T16
+
+Git evidence:
+  Files modified in recent history:
+    - neural-lace/workstreams-ui/web/app.js  (commit f830be4)
+    - neural-lace/workstreams-ui/web/app.css (commit f830be4)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: fresh e2e re-run (17/17) asserts the drilled tree is bounded, the rendered amber set equals the independent needs-you oracle set with zero mismatches in both directions, zero kind-color classes survive in the DOM, the twisty is a real keyboard-operable aria-expanded button, all-done branches collapse by default with a working show-done toggle, and the breadcrumb restores the cockpit at 1280 and 390px; my own static C6 sweep confirms the retirement (2 comment-only hits in app.css, 0 in app.js) and zero window.prompt lines were added.
