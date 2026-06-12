@@ -32,6 +32,24 @@
 #     have Status fields and don't trigger lifecycle moves on their
 #     own; they ride along with the parent plan when it archives)
 #
+# Target-repo resolution (2026-06-12; incident observed 2026-06-11 —
+# same class as scope-enforcement-gate's HARNESS-GAP-47 fix):
+#   ALL git operations (repo-root resolution, HEAD content reads,
+#   git ls-files / mv / add) run against the repo CONTAINING the edited
+#   plan file — derived from tool_input.file_path via
+#   `git -C "$(dirname <file>)" rev-parse --show-toplevel` — NEVER
+#   against the hook process's cwd (the session root). Pre-fix, a
+#   session rooted in repo A that flipped Status on a plan inside repo B
+#   (e.g. a sibling project's worktree) archived the plan into REPO A:
+#   the cross-repo path fell through to_repo_relative() unchanged,
+#   `git ls-files` (in A) reported it "untracked", and the plain-mv
+#   fallback physically moved B's plan into A's docs/plans/archive/ and
+#   staged it there — deleting it from the repo that owned it. See the
+#   "Target-repo resolution" header section in scope-enforcement-gate.sh
+#   for the sibling fix on command-subject hooks, and FM-032 in
+#   docs/failure-modes.md for the class. Self-test scenario 10 covers
+#   the cross-repo case.
+#
 # Status detection:
 #   - Pre-edit content: `git show HEAD:<repo-relative-path>` if the
 #     file is tracked, else "" (treated as non-existent / new)
@@ -85,9 +103,26 @@ is_terminal_status() {
   esac
 }
 
-# Compute the repo-relative path for a (possibly absolute) file path.
-# Echoes the relative path on stdout. If we can't resolve a repo root,
-# echoes the input unchanged.
+# Resolve the toplevel of the git repo CONTAINING the given file path —
+# NOT the hook process's cwd. PostToolUse hooks run with the SESSION's
+# cwd, which may be a different repo than the one the edited plan file
+# lives in (e.g. a session rooted in one repo editing a plan inside a
+# sibling project's worktree). Deriving the archival target from cwd
+# moved a plan into the WRONG repo — see the header "Target-repo
+# resolution" section. Echoes the repo root (git's mixed form on
+# Windows), or "" when the file is not inside a git work tree.
+resolve_file_repo_root() {
+  local dir
+  dir=$(dirname "$1")
+  [ -d "$dir" ] || { printf '%s' ""; return; }
+  git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true
+}
+
+# Compute the repo-relative path for a (possibly absolute) file path,
+# relative to the CALLER-SUPPLIED repo root ($2) — the root of the repo
+# containing the file, from resolve_file_repo_root(). Echoes the
+# relative path on stdout. If the supplied root is empty, echoes the
+# input unchanged.
 #
 # On Git Bash for Windows there are two path namespaces — POSIX-ish
 # (`/tmp/foo`) and Windows-mixed (`C:/Users/.../foo`). `git rev-parse`
@@ -97,7 +132,7 @@ is_terminal_status() {
 to_repo_relative() {
   local path repo_root_mixed repo_root_posix abs_mixed abs_posix
   path="$1"
-  repo_root_mixed=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  repo_root_mixed="${2:-}"
   if [ -z "$repo_root_mixed" ]; then
     printf '%s' "$path"
     return
@@ -162,11 +197,14 @@ to_repo_relative() {
   printf '%s' "$abs_mixed"
 }
 
-# Return the pre-edit content for a tracked file (git HEAD version).
-# Echoes empty string if the file is not tracked at HEAD.
+# Return the pre-edit content for a tracked file (git HEAD version),
+# evaluated in the repo that contains the file ($1 = that repo's root,
+# from resolve_file_repo_root(); $2 = repo-relative path). Echoes empty
+# string if the root is empty or the file is not tracked at HEAD.
 pre_edit_content() {
-  local rel="$1"
-  git show "HEAD:$rel" 2>/dev/null || true
+  local root="$1" rel="$2"
+  [ -z "$root" ] && return 0
+  git -C "$root" show "HEAD:$rel" 2>/dev/null || true
 }
 
 # Run the lifecycle logic for one file_path. Used both by the
@@ -205,9 +243,12 @@ process_lifecycle_event() {
     *-evidence.md) return 0 ;;
   esac
 
-  # Compute repo-relative path for git operations
-  local rel
-  rel=$(to_repo_relative "$norm")
+  # Resolve the repo CONTAINING the edited file (never the process cwd —
+  # see the header "Target-repo resolution" section), then compute the
+  # repo-relative path for git operations against THAT root.
+  local file_repo_root rel
+  file_repo_root=$(resolve_file_repo_root "$norm")
+  rel=$(to_repo_relative "$norm" "$file_repo_root")
 
   # ---- (1) Commit-on-creation warning ----
   # Triggered when the file is new (no pre_content from git HEAD AND
@@ -225,9 +266,10 @@ A new plan file was just written but is NOT yet committed:
   $rel
 
 Uncommitted plan files can be silently wiped by concurrent sessions
-or git operations. Commit it now:
+or git operations. Commit it now (rooted in the plan's own repo —
+\`git -C ""\` degrades to cwd when the file is outside any repo):
 
-  git add "$rel" && git commit -m "plan: $(basename "${rel%.md}")"
+  git -C "$file_repo_root" add "$rel" && git -C "$file_repo_root" commit -m "plan: $(basename "${rel%.md}")"
 
 (This warning fires once per plan-file creation. It does not block.)
 
@@ -251,9 +293,11 @@ EOF
     return 0
   fi
 
-  # Preconditions for the move:
+  # Preconditions for the move: the file must exist and must live inside
+  # a git work tree (the FILE's work tree — the process cwd is
+  # deliberately irrelevant here).
   if [ ! -f "$file_path" ]; then return 0; fi
-  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then return 0; fi
+  if [ -z "$file_repo_root" ]; then return 0; fi
 
   # Compute target path. Keep the same basename.
   # DESTINATION SPLIT (ADR 051 / Misha 2026-06-04): DEFERRED is terminal for
@@ -263,8 +307,7 @@ EOF
   # NOT to archive/. COMPLETED / ABANDONED / SUPERSEDED are genuinely done-with
   # → archive/.
   local repo_root archive_dir archive_path base evidence_src evidence_dest dest_subdir
-  repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
-  if [ -z "$repo_root" ]; then return 0; fi
+  repo_root="$file_repo_root"
   if [ "$post_status" = "DEFERRED" ]; then dest_subdir="deferred"; else dest_subdir="archive"; fi
   archive_dir="$repo_root/docs/plans/$dest_subdir"
   base=$(basename "$rel")
@@ -294,12 +337,12 @@ EOF
   # a plain `mv` + `git add` — git mv refuses to operate on untracked
   # files.
   local moved="no" mv_err
-  if git ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
-    if mv_err=$(git mv "$rel" "docs/plans/$dest_subdir/$base" 2>&1); then
+  if git -C "$repo_root" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
+    if mv_err=$(git -C "$repo_root" mv "$rel" "docs/plans/$dest_subdir/$base" 2>&1); then
       moved="git"
     fi
   else
-    if mv_err=$(mv "$file_path" "$archive_path" 2>&1) && git add "docs/plans/$dest_subdir/$base" 2>/dev/null; then
+    if mv_err=$(mv "$file_path" "$archive_path" 2>&1) && git -C "$repo_root" add "docs/plans/$dest_subdir/$base" 2>/dev/null; then
       moved="plain"
     fi
   fi
@@ -314,7 +357,7 @@ Plan transitioned to $post_status but git mv failed:
 
   $mv_err
 
-Resolve manually: git mv "$rel" "docs/plans/$dest_subdir/$base"
+Resolve manually: git -C "$repo_root" mv "$rel" "docs/plans/$dest_subdir/$base"
 
 EOF
     return 0
@@ -327,10 +370,10 @@ EOF
   evidence_src="$repo_root/$evidence_rel"
   evidence_dest="$archive_dir/$evidence_base"
   if [ -f "$evidence_src" ] && [ ! -e "$evidence_dest" ]; then
-    if git ls-files --error-unmatch "$evidence_rel" >/dev/null 2>&1; then
-      git mv "$evidence_rel" "docs/plans/$dest_subdir/$evidence_base" 2>/dev/null || true
+    if git -C "$repo_root" ls-files --error-unmatch "$evidence_rel" >/dev/null 2>&1; then
+      git -C "$repo_root" mv "$evidence_rel" "docs/plans/$dest_subdir/$evidence_base" 2>/dev/null || true
     else
-      mv "$evidence_src" "$evidence_dest" 2>/dev/null && git add "docs/plans/$dest_subdir/$evidence_base" 2>/dev/null || true
+      mv "$evidence_src" "$evidence_dest" 2>/dev/null && git -C "$repo_root" add "docs/plans/$dest_subdir/$evidence_base" 2>/dev/null || true
     fi
   fi
 
@@ -362,7 +405,8 @@ EOF
 if [ "${1:-}" = "--self-test" ]; then
   set -u
   TMP=$(mktemp -d)
-  trap 'rm -rf "$TMP"' EXIT
+  OTHER=$(mktemp -d)
+  trap 'rm -rf "$TMP" "$OTHER"' EXIT
 
   cd "$TMP" || exit 2
   git init -q .
@@ -604,6 +648,59 @@ EOP
     exit 1
   fi
 
+  # ---- Scenario 10: plan file in a DIFFERENT repo than the cwd ----
+  # The hook's process cwd stays in $TMP (the "session repo") while the
+  # edited plan lives in $OTHER (a sibling repo, e.g. another project's
+  # worktree). Regression test for the cross-repo mis-archival (header
+  # "Target-repo resolution" section / FM-032): the archival must land
+  # in $OTHER/docs/plans/archive/, stage in $OTHER, and leave the
+  # session repo ($TMP) completely untouched.
+  git -C "$OTHER" init -q
+  git -C "$OTHER" config user.email "selftest@example.test"
+  git -C "$OTHER" config user.name "selftest"
+  mkdir -p "$OTHER/docs/plans"
+  cat > "$OTHER/docs/plans/case10.md" <<'EOP'
+# Plan: Case 10
+Status: ACTIVE
+EOP
+  git -C "$OTHER" add docs/plans/case10.md
+  git -C "$OTHER" commit -q -m "plan: case10"
+  PRE10=$(git -C "$OTHER" show HEAD:docs/plans/case10.md)
+  cat > "$OTHER/docs/plans/case10.md" <<'EOP'
+# Plan: Case 10
+Status: COMPLETED
+EOP
+  POST10=$(cat "$OTHER/docs/plans/case10.md")
+  # NOTE: cwd is still $TMP — that is the point of this scenario.
+  OUT10=$(process_lifecycle_event "$OTHER/docs/plans/case10.md" "Edit" "$PRE10" "$POST10" 2>&1 || true)
+  if ! printf '%s' "$OUT10" | grep -q "auto-archived"; then
+    echo "FAIL scenario 10: expected auto-archive message. Got:" >&2
+    echo "$OUT10" >&2
+    exit 1
+  fi
+  if [ ! -f "$OTHER/docs/plans/archive/case10.md" ]; then
+    echo "FAIL scenario 10: plan not archived in ITS OWN repo." >&2
+    exit 1
+  fi
+  if [ -e "$TMP/docs/plans/archive/case10.md" ]; then
+    echo "FAIL scenario 10: plan wrongly archived into the SESSION repo (cwd)." >&2
+    exit 1
+  fi
+  if [ -f "$OTHER/docs/plans/case10.md" ]; then
+    echo "FAIL scenario 10: source file still present in target repo." >&2
+    exit 1
+  fi
+  if ! git -C "$OTHER" status --porcelain | grep -qE '(^R[ M] .*docs/plans/archive/case10\.md|^A  docs/plans/archive/case10\.md|^D  docs/plans/case10\.md)'; then
+    echo "FAIL scenario 10: move not staged in the plan's own repo. Status:" >&2
+    git -C "$OTHER" status --porcelain >&2
+    exit 1
+  fi
+  if git status --porcelain | grep -q "case10"; then
+    echo "FAIL scenario 10: session repo (cwd) has staged/dirty case10 state." >&2
+    git status --porcelain >&2
+    exit 1
+  fi
+
   echo "OK ($SCRIPT_NAME --self-test)"
   exit 0
 fi
@@ -637,9 +734,11 @@ case "$NORM" in
   *-evidence.md) exit 0 ;;
 esac
 
-# Compute pre-edit content from git HEAD (best-effort).
-REL=$(to_repo_relative "$NORM")
-PRE=$(pre_edit_content "$REL")
+# Resolve the repo containing the edited file (NOT the process cwd) and
+# compute pre-edit content from THAT repo's HEAD (best-effort).
+FILE_REPO_ROOT=$(resolve_file_repo_root "$NORM")
+REL=$(to_repo_relative "$NORM" "$FILE_REPO_ROOT")
+PRE=$(pre_edit_content "$FILE_REPO_ROOT" "$REL")
 
 # Post-edit content: read from disk (PostToolUse runs after the write
 # completed, so disk reflects the new state).
