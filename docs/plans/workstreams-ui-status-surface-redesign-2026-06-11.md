@@ -217,6 +217,10 @@ Verdict: not build-ready as originally written; with these corrections the desig
 - `adapters/claude-code/rules/workstreams-state.md` — Task 9: document the emit context contract (what a context-complete decision/question emission carries).
 - `adapters/claude-code/rules/decision-context.md` — Task 9 (only if needed): cross-reference the GUI gate consuming the same sole-normative schema.
 
+### 2026-06-12 — Task 10/11 file scope (builder-added; scope-gate option 1 — orchestrator may re-land)
+- 2026-06-12: `neural-lace/workstreams-ui/web/responsive.selftest.js` — Task 10: its R25/R28 locks grep the two ad-hoc Esc handlers that I5 RETIRES, so the lock refresh (R25/R28 re-keyed to the overlay stack + new R29 stack-invariants lock) is inseparable from the I5 build.
+- 2026-06-12: `docs/plans/workstreams-ui-status-surface-redesign-2026-06-11-evidence/` — Tasks 10/11: the per-task evidence file + screenshot artifacts the dispatch deliverables require committed on the branch (the same artifact class Tasks 3-9 landed).
+
 ## Assumptions
 - The event-sourced state library + reducer + attestation remain the sole-normative write path
   (the GUI server appends through it, never bypasses it).
