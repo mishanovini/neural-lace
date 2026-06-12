@@ -265,3 +265,177 @@ Git evidence:
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: fresh e2e re-run (17/17) asserts the drilled tree is bounded, the rendered amber set equals the independent needs-you oracle set with zero mismatches in both directions, zero kind-color classes survive in the DOM, the twisty is a real keyboard-operable aria-expanded button, all-done branches collapse by default with a working show-done toggle, and the breadcrumb restores the cockpit at 1280 and 390px; my own static C6 sweep confirms the retirement (2 comment-only hits in app.css, 0 in app.js) and zero window.prompt lines were added.
+
+EVIDENCE BLOCK
+==============
+Task ID: 7
+Task description: Backlog surface: same edit pattern + promote-to-task. — Verification: full
+Verified at: 2026-06-12T20:35:00Z
+Verifier: task-verifier agent
+
+Oracle: specified — the task's Prove-it (add a backlog item; promote it; it moves to the active list / Next and out of backlog) + binding corrections C1 (promote = the EXISTING `backlog-activated`, no new event type), C5 (zero window.prompt), I3 (write-error revert + inline retry).
+
+Comprehension-gate: PASS (confidence 9) — Stage 1: all four canonical sub-sections present for Task 7 in tasks-7-8.evidence.md; Stage 2: substantive, specific, honest NOT-covered list (double-failure promote dupe, legacy-capture edit/remove vocabulary gap, archived-node parked items); Stage 3 diff-correspondence against b13f7dd..c9a34a1 verified by direct read: myTaskRefs backlogged-exclusion at app.js:359-362 + my-tasks filter at :400 exactly as claimed; buildPromoteEvents at :964-982 creates the lazy mirror (`backlog-added` only when absent), uses the EXISTING `backlog-activated`, repairs stale mirror title via `branch-retitled`; postSeq stable pre-generated event_ids at :927-936 (idempotent retry resume). No assumption contradicted. (Three-stage rubric executed directly by this verifier — comprehension-reviewer agent dispatch unavailable in this environment; rubric per ~/.claude/agents/comprehension-reviewer.md stages.)
+
+Checks run:
+1. Live e2e re-run (fresh server on 7799 against a COPY of today's live state; operator's 7733/real file untouched)
+   Command: CONV_TREE_STATE_PATH=<tmp-copy> CTREE_PORT=7799 node server/server.js & then WS_URL=http://127.0.0.1:7799/ node scripts/regression.e2e.js
+   Output: T17 PASS — add=true inMyTasksBeforePromote=false leftBacklog=true task=true/committed/operator activatedRoot=backlog-activated inMyTasksAfter=true; suite 21/21 on second run (first run 20/21 — T10, a Task-4 lock, failed ONLY its >=1 non-vacuity guard because today's live state has zero waiting items: rows=0 === oracle=0, bare=0; re-run with items present passed T10 non-vacuously waitRows=1 oracle=1)
+   Result: PASS
+2. C1 — no new event type
+   Command: git diff b13f7dd..58b23c2 -- neural-lace/workstreams-ui/state/schema.js state/reducer.js state/selftest.js (empty diff) + grep schema.js for item-promoted/task-added/task-edited/task-removed
+   Output: state layer diff EMPTY across Tasks 7/8/9; zero matches for any new event name; EVENT_TYPES unchanged
+   Result: PASS
+3. C5 — zero native prompts
+   Command: grep -c "window.prompt" neural-lace/workstreams-ui/web/app.js
+   Output: 0; e2e T20 window.prompt-in-source=0 nativeDialogsFired=0 (suite-wide counter)
+   Result: PASS
+4. C2 per-type 422 guards for the backlog events
+   Command: read server/server.js:158-178
+   Output: backlog-added (non-empty text), item-backlogged (item_id+node_id), branch-retitled (non-empty title) guards present
+   Result: PASS
+5. State selftest
+   Command: node neural-lace/workstreams-ui/state/selftest.js
+   Output: 21 passed, 0 failed
+   Result: PASS
+
+Runtime verification: playwright neural-lace/workstreams-ui/scripts/regression.e2e.js::T17-backlog-add-promote-roundtrip
+Runtime verification: file neural-lace/workstreams-ui/web/app.js::buildPromoteEvents
+Runtime verification: file neural-lace/workstreams-ui/server/server.js::backlog-added
+
+DEPENDENCY TRACE
+================
+Step 1: operator types in the Backlog "+ add" input
+  Verified at: web/app.js renderBacklogInto/addBacklogItem (:600-921); e2e T17 add=true
+Step 2: POST /api/event (item-backlogged path) with per-type 422 guards
+  Verified at: server/server.js:158-178; C2 guard read
+Step 3: promote click → buildPromoteEvents → existing backlog-activated (+ lazy mirror)
+  Verified at: web/app.js:964-982; e2e T17 activatedRoot=backlog-activated
+Step 4: item leaves Backlog, appears committed/Next in My-tasks + cockpit counts
+  Verified at: e2e T17 leftBacklog=true inMyTasksAfter=true task state=committed; screenshot backlog-promoted-1280.jpg
+
+Git evidence:
+  Files modified in recent history:
+    - neural-lace/workstreams-ui/web/app.js     (commits 58db4d9, 0de8da4)
+    - neural-lace/workstreams-ui/server/server.js (commit 0de8da4)
+    - neural-lace/workstreams-ui/scripts/regression.e2e.js (commit c4db22b)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: I re-ran the full e2e myself against a fresh state copy — T17 demonstrates the complete user bar (in-surface add → row in Backlog and NOT in My-tasks → promote → out of backlog, committed task in the active list on a backlog-activated root); the empty state-layer diff plus my schema grep prove C1 (promote reuses the existing event vocabulary, zero new event types); C5 grep returns zero and the suite's native-dialog counter is zero.
+
+EVIDENCE BLOCK
+==============
+Task ID: 8
+Task description: Context-card + gate: per-kind required-field templates; progressive-disclosure render; context-incomplete flag for items missing required fields. — Verification: full
+Verified at: 2026-06-12T20:36:00Z
+Verifier: task-verifier agent
+
+Oracle: specified — acceptance scenario `open-a-context-complete-decision` (both paths) + binding corrections I1 (consume the sole-normative assembleItemDetails/validateItemDetails; no parallel validator), I2 (suppress ALL resolving buttons on incomplete), C5 (all 8 window.prompt sites retired).
+
+Comprehension-gate: PASS (confidence 9) — Stage 1: all four canonical sub-sections present for Task 8 in tasks-7-8.evidence.md; Stage 2: substantive with honest NOT-covered items (Task-4 waiting-row prose heuristic vs context_state row/card parity deferred to Task 10/11; enrichment round-trip is Task 9's emit side; firstSentences clamp limitation); Stage 3 diff-correspondence verified by direct read: server.js defensive require at :40-48 (degraded mode → no annotation → client gate fails CLOSED), gateCategoryOf + annotateContextState at :79-99 deriving context_state via dcs.assembleItemDetails(cat,de)!==null at serve time on a per-request parse (never persisted), buildActionButtons I2 early-return at app.js:2381-2387 (gate note + single respond/enrichment channel, zero resolving/lifecycle buttons). The stated assumption that the browser cannot require the Zod module (hence serve-time annotation) is consistent with the architecture as read. No assumption contradicted. (Three-stage rubric executed directly by this verifier — comprehension-reviewer dispatch unavailable in this environment.)
+
+Checks run:
+1. Live e2e re-run (fresh server on 7799 against a state COPY)
+   Command: WS_URL=http://127.0.0.1:7799/ node scripts/regression.e2e.js
+   Output: T18 PASS — card=true bg=true opts=2 meaning=true choose=2 rec=true reply=true more=true approve=true inSurfaceForm=true respondedRecorded=true (context-complete decision posted via /api/event against the copy; reply recorded via in-surface form); T19 PASS — "context incomplete — needs enrichment" panel, gateNote=true, buttons=1 (respond-only), resolving=0; T20 PASS — window.prompt-in-source=0, nativeDialogsFired=0
+   Result: PASS
+2. I1 — no parallel validator in the client
+   Command: grep -n "assembleItemDetails|validateItemDetails|ItemDetailsContentSchema|decision-context-schema" web/app.js + grep context_state
+   Output: only a comment (app.js:2035-2037) references the module; the gate predicate reads the server annotation (`it.context_state !== 'complete'` at :2047); per-kind required-field logic exists ONLY in state/decision-context-schema.js, consumed server-side via the boot-safe defensive require (server.js:40-48)
+   Result: PASS
+3. I2 — action suppression
+   Command: read app.js:2355-2390 (buildActionButtons)
+   Output: contextGateBlocks(it) early-return renders ONLY the dm-gate-note + the respond/enrichment channel; behaviorally confirmed by T19 resolving=0
+   Result: PASS
+4. C5 — all 8 prompt sites retired
+   Command: grep -c "window.prompt" web/app.js
+   Output: 0 (token absent entirely); suite-wide native-dialog counter fired 0 times across all 21 tests
+   Result: PASS
+
+Runtime verification: playwright neural-lace/workstreams-ui/scripts/regression.e2e.js::T18-context-complete-card
+Runtime verification: playwright neural-lace/workstreams-ui/scripts/regression.e2e.js::T19-gate-suppresses-resolving-buttons
+Runtime verification: file neural-lace/workstreams-ui/server/server.js::annotateContextState
+
+DEPENDENCY TRACE
+================
+Step 1: item details land in state (item-details-set) / or are absent
+  Verified at: state layer unchanged (empty diff); reducer forward-tolerant details
+Step 2: server annotates context_state at serve time via the sole-normative assembler
+  Verified at: server/server.js:79-99 (gateCategoryOf + annotateContextState; dcs.assembleItemDetails null = incomplete); degraded mode fails CLOSED (:40-48)
+Step 3: client reads the annotation; gate decides actionability
+  Verified at: web/app.js:2047 (contextGateBlocks reads context_state); :2381-2387 early-return
+Step 4: complete card renders essentials + in-surface reply; incomplete renders needs-enrichment with zero resolving buttons
+  Verified at: e2e T18/T19; screenshots context-complete-1280.jpg / context-incomplete-1280.jpg
+
+Git evidence:
+  Files modified in recent history:
+    - neural-lace/workstreams-ui/web/app.js     (commits 58db4d9, 0de8da4)
+    - neural-lace/workstreams-ui/web/app.css    (commit 0de8da4)
+    - neural-lace/workstreams-ui/server/server.js (commits 0de8da4, c4db22b — boot-safe zod require)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: I re-ran the e2e myself — T18 demonstrates the context-complete decision card (background, options with meaning+risk, per-option Choose, recommendation, reply phrasing, "More context" expand, reply recorded via in-surface form) and T19 demonstrates the gate (needs-enrichment panel, exactly one respond-only button, zero resolving buttons); my own greps prove I1 (client carries no validator — completeness is derived server-side by the sole-normative assembleItemDetails, fail-closed when zod is missing) and C5 (zero window.prompt in source, zero native dialogs fired).
+
+EVIDENCE BLOCK
+==============
+Task ID: 9
+Task description: Emit discipline: extend the emit path so a raised decision/question carries the context payload (maps to decision-context.md fences); document the contract. — Verification: full
+Verified at: 2026-06-12T20:38:00Z
+Verifier: task-verifier agent
+
+Oracle: specified (the in-flight 2026-06-12 file-scope contract: per-kind context payloads as sibling item-details-set validated through the sole-normative module — valid→normalized, invalid→raw+WARN, absent→detail-less+WARN, NEVER blocks) + derived (the hook's own pre-existing ST1-ST36/BD1-BD10 self-test suite must stay green alongside the new ST37-ST42 locks).
+
+Comprehension-gate: PASS (confidence 9) — Stage 1: all four canonical sub-sections present in task-9.evidence.md; Stage 2: substantive, with an honest gap-diagnosis table and honest NOT-covered items (no backfill of the ~124 detail-less live items per plan Scope OUT; workstreams-task-bridge.js TaskCreate mirrors logged as follow-up; cloud-session blind spot documented-not-solved); Stage 3 diff-correspondence against c9a34a1..58b23c2 verified by direct read: INVALID→raw+WARN at workstreams-emit.sh:1824-1826, absent→born-context-incomplete WARN at :1834, content-hashed det_ev_id at :1845 (emit-item) and :1908 (emit-details — the ST42 last-writer-wins fix), spawn no-sentinel guard at :756-760, builder ev_det FIXED-derivation honesty comment at :2027-2036 (the salvage fix — re-fires dedupe AND cannot clobber later content-hashed enrichment). Assumptions verified: reducer treats details as forward-tolerant LWW; appendEvent dedupes per event_id; the GUI gate (Task 8, verified above) consumes the same module. decision-context-gate.sh untouched, matching the "only if needed: not needed" claim. (Three-stage rubric executed directly by this verifier — comprehension-reviewer dispatch unavailable in this environment.)
+
+Checks run:
+1. Full self-test, real-module path (this checkout resolves the repo schema module; zod present in workstreams-ui/node_modules)
+   Command: bash adapters/claude-code/hooks/workstreams-emit.sh --self-test
+   Output: 66 passed, 0 failed (ST37/37b/37c normalize+stamp; ST38/38b invalid→raw+WARN; ST39a-c absent→emit+WARN; ST40/40b/41/41b spawn sentinels; ST42/42b content-hashed revision; ST1-ST36 + BD1-BD10 regressions green)
+   Result: PASS
+2. Full self-test, inline-floor path (module deliberately unloadable)
+   Command: DECISION_CONTEXT_SCHEMA=/nonexistent/schema.js bash adapters/claude-code/hooks/workstreams-emit.sh --self-test
+   Output: 66 passed, 0 failed — the same-contract inline floor holds in stripped envs
+   Result: PASS
+3. Live demo re-derived by this verifier (TEMP state file via CONV_TREE_STATE_PATH; operator's tree untouched)
+   Command: --emit-branch; --emit-item decision WITH full per-kind payload; --emit-item question with NO payload; then read state + validate via the sole-normative module
+   Output: rc=0/rc=0; decision details landed normalized (_category=decision, surfaced_by=workstreams-emit, options=2) and validateItemDetails.success=true via state/decision-context-schema.js; question landed detail-less; audit log carries the exact born-context-incomplete WARN referencing rules/workstreams-state.md "Context-complete item emission"
+   Result: PASS
+4. Contract documentation present
+   Command: grep "Context-complete item emission" adapters/claude-code/rules/workstreams-state.md; grep emit-side cross-ref in rules/decision-context.md
+   Output: section at workstreams-state.md:64 + Enforcement-table row at :114; decision-context.md:212 names all consumers of the single module ("no parallel payload schema anywhere")
+   Result: PASS
+5. Scope compliance
+   Command: git diff --stat c9a34a1..58b23c2
+   Output: exactly the four declared files (workstreams-emit.sh, workstreams-state.md, decision-context.md, task-9.evidence.md); decision-context-gate.sh untouched; state layer untouched
+   Result: PASS
+6. Live-mirror sync status (flagged, non-blocking)
+   Command: diff -q adapters/claude-code/{hooks/workstreams-emit.sh,rules/workstreams-state.md,rules/decision-context.md} ~/.claude/...
+   Output: all three DIFFER — ~/.claude mirror predates Task 9 (Jun 10 mtime; zero Task 9 helpers). The emit discipline is NOT live in running sessions until the merge-time install/sync propagates it. Same class as merge-to-master: a plan-closure step, not a task-build gap. MUST be performed at plan closure.
+   Result: SKIPPED (closure-step flag — propagation happens at merge per the two-layer-config convention; the canonical artifact is fully verified)
+
+Runtime verification: test adapters/claude-code/hooks/workstreams-emit.sh::--self-test-66-of-66-both-schema-paths
+Runtime verification: file adapters/claude-code/hooks/workstreams-emit.sh::_normalize_item_details
+Runtime verification: file adapters/claude-code/rules/workstreams-state.md::Context-complete item emission
+
+DEPENDENCY TRACE
+================
+Step 1: orchestrator raises an item with .details via --emit-item (or sentinels via --on-spawn)
+  Verified at: workstreams-emit.sh:1807-1860 / :555-578; live demo rc=0
+Step 2: payload normalized/validated through the sole-normative module (env-override + repo resolution mirrors decision-context-gate.sh)
+  Verified at: _resolve_schema_lib :646-659, _normalize_item_details :687-755; ST37 family
+Step 3: sibling item-details-set lands in the same batch (content-hashed id → enrichment LWW)
+  Verified at: :1845/:1908; live demo event landed; ST42/ST42b
+Step 4: the GUI's Task-8 gate consumes the same module's verdict → context-complete card renders
+  Verified at: server.js annotateContextState (Task 8 PASS above); validateItemDetails.success=true on the demo payload — "valid here" === "actionable there"
+
+Git evidence:
+  Files modified in recent history:
+    - adapters/claude-code/hooks/workstreams-emit.sh  (commits 335e99a, dab16a7)
+    - adapters/claude-code/rules/workstreams-state.md (commit 0b7cead)
+    - adapters/claude-code/rules/decision-context.md  (commit 0b7cead)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: I re-ran the 66-scenario self-test on BOTH schema paths (real module and forced inline floor) and replayed the live demo against a temp state file — a payload-bearing decision lands as decision-raised + a sibling item-details-set whose normalized payload validates success=true through the sole-normative module, and a payload-less question still lands (exit 0, never blocked) born honestly detail-less with the contract-referencing WARN; the contract is documented in workstreams-state.md with the cross-ref in decision-context.md. Flag for plan closure: the ~/.claude live mirror predates this work — sync at merge or the live emit path stays pre-Task-9.

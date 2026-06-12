@@ -161,18 +161,18 @@ Same editing pattern for the "eventually" bucket; add / edit / priority / delete
   3. edit its text inline; 4. it shows in the cockpit counts + its project tree.
   **Wire checks:** `neural-lace/workstreams-ui/web/app.js` → `neural-lace/workstreams-ui/server/server.js` → `neural-lace/workstreams-ui/state/reducer.js`
   **Integration points:** `POST /api/event` round-trips; reload shows the new task.
-- [ ] 7. Backlog surface: same edit pattern + promote-to-task. — Verification: full
+- [x] 7. Backlog surface: same edit pattern + promote-to-task. — Verification: full
   **Prove it works:** 1. add a backlog item; 2. promote it; 3. it moves to the active list /
   Next and out of backlog.
   **Wire checks:** `neural-lace/workstreams-ui/web/app.js` → `neural-lace/workstreams-ui/server/server.js`
   **Integration points:** `item-promoted` event reduces correctly.
-- [ ] 8. Context-card + gate: per-kind required-field templates; progressive-disclosure render;
+- [x] 8. Context-card + gate: per-kind required-field templates; progressive-disclosure render;
   `context-incomplete` flag for items missing required fields. — Verification: full
   **Prove it works:** 1. open a decision with full details → see background/options-with-meaning/
   recommendation/reply; 2. open one missing details → see "context incomplete", not a bare choice.
   **Wire checks:** `neural-lace/workstreams-ui/web/app.js` → `neural-lace/workstreams-ui/state/schema.js`
   **Integration points:** reads `details` shape; n/a external.
-- [ ] 9. Emit discipline: extend the emit path so a raised decision/question carries the
+- [x] 9. Emit discipline: extend the emit path so a raised decision/question carries the
   context payload (maps to `decision-context.md` fences); document the contract. — Verification: full
 - [ ] 10. A11y + polish + rename: coordinated overlay-dismiss stack; aria-labels on icon-only
   controls; sweep "Conversation Tree" → "Workstreams" user-facing copy; visual verification at
@@ -353,6 +353,35 @@ per-task structured rationale + comprehension articulation live in
   all-done branches collapsed by default + working "show done" (T8); breadcrumb returns at
   1280 and 390px (T9/T16). Verifier-independent C6 sweep: 2 comment-only hits in app.css,
   0 in app.js; C5: zero `window.prompt` added in the diff. Comprehension-gate: PASS.
+- **Task 7** — Verdict PASS (Confidence 9). Oracle: specified — the Prove-it + C1/C5/I3.
+  Verifier re-ran the e2e fresh (21/21 on re-run; first pass 20/21 where T10 — a Task-4
+  lock — failed only its >=1 non-vacuity guard because today's live state has zero waiting
+  items, rows=0===oracle=0): T17 add → in Backlog NOT My-tasks → promote → out of backlog,
+  committed/operator task on a `backlog-activated` root, in My-tasks after. C1 PROVEN by an
+  EMPTY state-layer diff across b13f7dd..58b23c2 (no new event type; promote reuses
+  `backlog-activated`); C5 grep = 0; per-type 422 guards at server.js:158-178.
+  Comprehension-gate: PASS. Rationale in `…-evidence/tasks-7-8.evidence.md`.
+- **Task 8** — Verdict PASS (Confidence 9). Oracle: specified — acceptance scenario
+  `open-a-context-complete-decision`, both paths. Fresh e2e: T18 complete card (background,
+  options-with-meaning+risk, per-option Choose, recommendation, reply phrasing, "More
+  context", reply recorded via in-surface form) + T19 gate (needs-enrichment panel, exactly
+  one respond-only button, resolving=0) + T20 (zero `window.prompt` in source, zero native
+  dialogs suite-wide). I1 PROVEN: client carries no validator (module referenced only in a
+  comment; gate reads the server's `context_state` derived via the sole-normative
+  `assembleItemDetails`, fail-closed when zod missing — server.js:40-99). I2 verified at
+  buildActionButtons' early-return (app.js:2381-2387). Comprehension-gate: PASS.
+- **Task 9** — Verdict PASS (Confidence 9). Oracle: specified (the in-flight 2026-06-12
+  emit-contract) + derived (pre-existing ST/BD self-test suite stays green). Verifier re-ran
+  `workstreams-emit.sh --self-test` on BOTH schema paths — real module AND forced inline
+  floor — 66/66 each; re-derived the live demo against a temp state file: payload-bearing
+  decision lands `decision-raised` + sibling `item-details-set` validating
+  `validateItemDetails.success=true` via the sole-normative module; payload-less question
+  still lands (rc=0, never blocks) born detail-less with the contract WARN. Contract
+  documented (workstreams-state.md "Context-complete item emission" + decision-context.md
+  cross-ref); `decision-context-gate.sh` untouched; scope = exactly the four declared files.
+  Comprehension-gate: PASS. CLOSURE FLAG: the `~/.claude/` live mirror predates Task 9 —
+  sync at merge (two-layer-config) or the live emit path stays pre-Task-9. Rationale in
+  `…-evidence/task-9.evidence.md`.
 
 ## Pre-Submission Audit
 - S1 (Entry-Point Surfacing): each behavior change is cited in a Task + a Files entry.
