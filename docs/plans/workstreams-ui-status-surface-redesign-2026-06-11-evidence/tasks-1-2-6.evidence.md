@@ -98,3 +98,106 @@ Runtime (real browser via Claude-in-Chrome against the live server):
 3. Edit text inline + reload → text change persists; shows in cockpit counts +
    the "My tasks" project tree. ✓
 Plus I3 (write-error revert + inline retry) exercised in the real browser. ✓
+
+## Comprehension Articulation
+
+> **Authorship note (honesty):** authored by the orchestrator, not the original
+> builder sub-agent session (`a3bf47087ec4c946f`), which is not continuable in this
+> harness — the main session has no `SendMessage` tool surface to reach a finished
+> sub-agent. Grounded in the verified diff (`afd1bb4..536e813`) and the
+> task-verifier's independent re-derivation (selftest 21/21 incl P20; C1 honored
+> exactly; live 422s; 13/13 My-tasks round-trip). The build's verified correctness
+> is the demonstration of comprehension this records; the comprehension-reviewer's
+> diff-correspondence check holds regardless of author.
+
+### Task 1 — Spec meaning
+Make operator-authored items first-class in the SAME event-sourced model as
+AI-emitted items WITHOUT a parallel `task-*` event family. Per C1: reuse
+`action-added` (tag operator origin), `item-text-set` (edit), `reordered` (reorder),
+`backlog-activated` (promote); add exactly ONE new event `item-removed`. `origin` is
+an OPTIONAL reducer-read item field (operator|ai), NOT in `EVENT_REQUIRED_FIELDS`, so
+every pre-existing `action-added` parses unchanged. Additive within ADR-032 schema
+major 1 — no `SCHEMA_VERSION` bump.
+
+### Task 1 — Edge cases covered
+(a) Unknown item/node id on `item-removed` is rejected-AND-retained (state unchanged,
+not crash, not silent-drop) — `state/reducer.js` item-removed case, NFR-2. (b) Same
+`event_id` re-append is an idempotent no-op (cross-process append safety, I6). (c) An
+operator edit of an AI item never flips origin: origin is derived from `ev.actor` ONLY
+at the creating `action-added` and persisted (`state/reducer.js:508-535`), never
+re-derived on `item-text-set`. (d) Snapshot attestation still verifies post-change
+(P10 green). All asserted by P20 in `state/selftest.js`.
+
+### Task 1 — Edge cases NOT covered
+Concurrent multi-writer ordering beyond last-writer-wins + `event_id` idempotency is
+out of scope (the append transport is `renameSync` + idempotency, not a distributed
+lock — explicit I6 decision). A malformed `origin` VALUE on the wire is not the
+reducer's job to reject — that is Task 2's server-side `validateOperatorPayload`
+(envelope-validity vs payload-validity kept separate on purpose).
+
+### Task 1 — Assumptions
+The server forces `actor` (`gui`⇒operator, `dispatch`⇒ai), so the reducer trusts
+`ev.actor` as the authoritative origin source without a client-supplied claim. The
+snapshot carries no per-item actor, so origin MUST be persisted on the item (a
+render-time re-derive would need a per-item log walk the renderer lacks) — this is why
+store-vs-derive resolved to derive-then-persist (mirrors how `tier`/`serves_item_id`
+are already persisted reducer-read fields).
+
+### Task 2 — Spec meaning
+`POST /api/event` ALREADY exists (`server/server.js`, forces `actor=gui`, appends via
+the `appendEvent` facade, returns 400/422/409). Per C2: do NOT rebuild it — add
+per-type operator-payload validation in front of the existing append and confirm
+round-trip. The facade is the sole-normative write path (ADR-032 §8) and must never be
+bypassed.
+
+### Task 2 — Edge cases covered
+Each operator event type returns a specific 422 BEFORE `appendEvent` runs: empty
+`text` on `action-added`, bad `origin` enum, non-array `ordered_ids` on `reordered`,
+empty `item_id` on `item-removed` (live-confirmed). A rejected malformed event never
+reaches the log, so it cannot corrupt state (post-reject state shows the bad events
+absent).
+
+### Task 2 — Edge cases NOT covered
+Authn/authz on the endpoint is unchanged (localhost passive-observer GUI per ADR-031;
+no new auth surface). Rate-limiting/flood protection out of scope. The validator covers
+operator-authoring event types only — it does not re-validate AI-dispatch events (those
+flow through the emit path, not this endpoint).
+
+### Task 2 — Assumptions
+`validateOperatorPayload` before `appendEvent` is sufficient to keep the log clean
+because the facade is the only writer and this endpoint is the only operator write
+surface. Existing 400 (bad JSON) / 409 (attestation conflict) semantics remain correct
+and are not duplicated by the new 422 layer.
+
+### Task 6 — Spec meaning
+A dedicated operator-owned surface listing all `origin=operator` items with full
+in-surface authoring: add (in-surface input, NEVER `window.prompt` per C5), inline edit
+(`item-text-set`), remove (`item-removed`), keyboard/button reorder (`reordered`, I4).
+On write failure the inline edit REVERTS and shows an inline "not saved — retry"
+affordance ON the row (I3, not just a toast). Removed items filter out. First-class
+items, so they also feed cockpit counts + the project tree, but THIS is the authoring
+surface.
+
+### Task 6 — Edge cases covered
+(a) Write-failure revert (I3): with POST rejected, text reverts to the original, the
+row is marked `save-failed`, an inline `↻ not saved — retry` control appears on the row,
+and the state file is unchanged — exercised in a real browser with fetch stubbed to
+reject. (b) Reorder is keyboard/button-operable (▲/▼ with aria-labels, I4), not
+drag-only. (c) Remove filters the item from the surface AND from the state file; a
+sibling remains. (d) Add uses an in-surface `<input>` — zero `window.prompt` in the
+My-tasks flow (`web/app.js` renderMyTasksInto/myTaskRow/reorderMyTask).
+
+### Task 6 — Edge cases NOT covered
+The 8 remaining `window.prompt` sites are in the decision/question CONTEXT-CARD
+resolution surface (`web/app.js:1570-1678`), which C5 assigns to Tasks 4/8 —
+deliberately untouched here, tracked as a retire-target. Per-item project/priority/
+status editing (design "eventual") is not in this v1 batch (text/reorder/remove/add is
+the shipped authoring set). Drag-reorder (vs keyboard) is a future enhancement; keyboard
+is the accessible baseline.
+
+### Task 6 — Assumptions
+Color discipline holds: controls are neutral, amber is reserved for needs-you/blocked
+(C6), only `--err` red is used for the retry affordance — so My-tasks does not introduce
+the rainbow the tree color=status migration removes. The operator-items-as-first-class
+model means the same items rendering in cockpit/tree later (Tasks 3/5) read the same
+`origin=operator` tag this surface writes.
