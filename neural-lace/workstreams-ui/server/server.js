@@ -41,6 +41,67 @@ function safeRead() {
   }
 }
 
+// Per-type payload validation for the operator-authoring events
+// (workstreams-ui-status-surface-redesign 2026-06-11, C2). The endpoint
+// ALREADY exists and ALREADY enforces required-field presence via the
+// schema's validateEvent (called inside appendEvent). This adds the
+// operator-event-specific guard rails the schema's enum check cannot express:
+// an `origin` that is neither operator nor ai, a non-array `ordered_ids`, an
+// empty/whitespace-only text on create/edit. Returns an error STRING (→ 422)
+// or null (→ proceed). Only the operator-authoring event types are inspected;
+// every other event passes through to the existing required-field validation
+// unchanged (forward-compatible — a new event type the server doesn't know is
+// simply not pre-screened here, the schema layer still guards it).
+function validateOperatorPayload(input) {
+  if (!input || typeof input !== 'object') return null; // schema layer rejects
+  switch (input.type) {
+    case 'action-added': {
+      if (typeof input.text !== 'string' || input.text.trim() === '') {
+        return 'action-added requires non-empty text';
+      }
+      if (input.origin !== undefined && input.origin !== 'operator' && input.origin !== 'ai') {
+        return 'action-added origin must be "operator" or "ai" when present';
+      }
+      return null;
+    }
+    case 'item-text-set': {
+      if (typeof input.text !== 'string' || input.text.trim() === '') {
+        return 'item-text-set requires non-empty text';
+      }
+      return null;
+    }
+    case 'reordered': {
+      if (!Array.isArray(input.ordered_ids)) {
+        return 'reordered requires ordered_ids to be an array';
+      }
+      if (typeof input.scope !== 'string' || input.scope.trim() === '') {
+        return 'reordered requires a non-empty scope';
+      }
+      return null;
+    }
+    case 'item-removed': {
+      if (typeof input.item_id !== 'string' || input.item_id.trim() === '') {
+        return 'item-removed requires a non-empty item_id';
+      }
+      if (typeof input.node_id !== 'string' || input.node_id.trim() === '') {
+        return 'item-removed requires a non-empty node_id';
+      }
+      return null;
+    }
+    case 'backlog-activated': {
+      if (typeof input.item_id !== 'string' || input.item_id.trim() === '') {
+        return 'backlog-activated requires a non-empty item_id';
+      }
+      if (typeof input.new_node_id !== 'string' || input.new_node_id.trim() === '') {
+        return 'backlog-activated requires a non-empty new_node_id';
+      }
+      return null;
+    }
+    default:
+      return null; // not an operator-authoring type — schema layer guards it
+  }
+}
+
 const WEB_DIR = path.join(__dirname, '..', 'web');
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.CTREE_PORT) || 7733;
@@ -171,6 +232,17 @@ const server = http.createServer((req, res) => {
       let input;
       try { input = JSON.parse(body); }
       catch (_) { res.writeHead(400, hj); res.end(JSON.stringify({ ok: false, error: 'malformed JSON body' })); return; }
+      // C2 (2026-06-11): per-type operator-payload guard rails BEFORE the
+      // schema's required-field validation, so a malformed operator event
+      // returns a clear 422 with a specific message rather than a generic
+      // schema error (or, worse, a structurally-valid-but-semantically-wrong
+      // payload reaching the reducer).
+      var payloadErr = validateOperatorPayload(input);
+      if (payloadErr) {
+        res.writeHead(422, hj);
+        res.end(JSON.stringify({ ok: false, error: payloadErr }));
+        return;
+      }
       try {
         input.actor = 'gui'; // symmetric log: GUI mutations are actor=gui
         const r = appendEvent(input);

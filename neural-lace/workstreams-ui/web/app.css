@@ -912,3 +912,67 @@ button.det-link-doc:hover { background: rgba(59,130,246,0.22); text-decoration: 
   #layout #divider { display: none; }
 }
 
+/* ====================================================================
+   My tasks surface (Task 6, 2026-06-11). Operator-owned, editable.
+   Color discipline (C6): controls are NEUTRAL; amber is reserved for
+   needs-you/blocked elsewhere, so nothing here uses --warn. The only
+   accent is --err for the inline "not saved — retry" affordance (I3).
+   ==================================================================== */
+.mytasks-add {
+  display: flex; gap: 0.4rem; align-items: center;
+  padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.mytasks-add-input {
+  flex: 1 1 12rem; min-width: 8rem;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border2); border-radius: 5px;
+  padding: 0.35rem 0.55rem; font: inherit;
+}
+.mytasks-add-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mytasks-add.save-failed .mytasks-add-input { border-color: var(--err); }
+.mytasks-list { display: flex; flex-direction: column; }
+.mytask-row { display: flex; align-items: center; gap: 0.5rem; }
+.mytask-row .item-main { flex: 1 1 auto; min-width: 0; }
+.mytask-text {
+  cursor: text; border-radius: 4px; padding: 0.1rem 0.25rem;
+  word-break: break-word;
+}
+.mytask-text:hover { background: var(--panel2); }
+.mytask-text:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mytask-edit {
+  width: 100%;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--accent); border-radius: 4px;
+  padding: 0.2rem 0.35rem; font: inherit;
+}
+.origin-badge {
+  font-size: 0.66rem; color: var(--accent);
+  border: 1px solid var(--border2); border-radius: 999px;
+  padding: 0.02rem 0.4rem;
+}
+.mytask-ctrls { display: flex; gap: 0.2rem; align-items: center; flex: 0 0 auto; }
+.mytask-ctrl {
+  background: var(--panel); color: var(--muted);
+  border: 1px solid var(--border2); border-radius: 5px;
+  width: 1.7rem; height: 1.7rem; line-height: 1;
+  cursor: pointer; font-size: 0.85rem;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.mytask-ctrl:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.mytask-ctrl:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mytask-ctrl:disabled { opacity: 0.35; cursor: default; }
+.mytask-ctrl.ctrl-done:hover:not(:disabled) { color: var(--ok); border-color: var(--ok); }
+.mytask-ctrl.ctrl-remove:hover:not(:disabled) { color: var(--err); border-color: var(--err); }
+/* I3 inline "not saved — retry" affordance — the ONLY red on this surface. */
+.mytask-row.save-failed { border-color: var(--err); }
+.retry-note {
+  display: inline-block; font-size: 0.72rem; color: var(--err);
+  margin-left: 0.5rem;
+}
+.retry-btn {
+  background: transparent; border: 1px solid var(--err); color: var(--err);
+  border-radius: 5px; padding: 0.05rem 0.45rem; cursor: pointer; font: inherit;
+}
+.retry-btn:hover { background: rgba(248, 113, 113, 0.12); }
+

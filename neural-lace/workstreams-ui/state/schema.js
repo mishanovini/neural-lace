@@ -125,6 +125,20 @@ const EVENT_TYPES = Object.freeze([
   // standard envelope.
   'item-text-set',
   'branch-retitled',
+  // Operator-authoring (workstreams-ui-status-surface-redesign 2026-06-11, C1).
+  // ADDITIVE within schema major 1 (ADR-032 §1: a new event type is additive,
+  // no required-field change to any existing event, schema_version stays 1; the
+  // conv-tree/workstreams gates key off the major and are unaffected). The ONLY
+  // new event the My-tasks operator-authoring path needs — every other
+  // operation REUSES an existing event (action-added [+ origin:operator] to
+  // create, item-text-set to edit, reordered to reorder, backlog-activated to
+  // promote). `item-removed` splices the located item out of node.items; an
+  // unknown node/item id is rejected-not-applied (retained in the log — NFR-2)
+  // so a stray removal surfaces in snapshot.rejections rather than silently
+  // mutating nothing; re-emission for the same event_id is an idempotent no-op
+  // per the standard envelope (and a second removal of an already-gone item is
+  // a clean reject, also idempotent in effect).
+  'item-removed',
 ]);
 
 // §2 — per-event required fields IN ADDITION TO the envelope
@@ -205,6 +219,12 @@ const EVENT_REQUIRED_FIELDS = Object.freeze({
   // an empty string, never null).
   'item-text-set': ['node_id', 'item_id', 'text'],
   'branch-retitled': ['node_id', 'title'],
+  // Operator-authoring (2026-06-11, C1). Requires only the item locator. The
+  // OPTIONAL `origin` field rides on `action-added` (NOT here, and NOT in this
+  // map) so every existing action-added parses unchanged; the reducer reads it
+  // (or derives operator-vs-ai from `actor`) into the OPTIONAL item field
+  // `it.origin` — mirroring how `tier`/`serves_item_id` ride on branch-opened.
+  'item-removed': ['node_id', 'item_id'],
 });
 
 const ACTORS = Object.freeze(['dispatch', 'gui']);

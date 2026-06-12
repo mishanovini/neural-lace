@@ -281,6 +281,43 @@
     return out;
   }
 
+  // ====================================================================
+  //  MY TASKS (operator-authored) — Task 6 of the status-surface redesign
+  // ====================================================================
+  // The operator's hand-authored items live as first-class WorkItems
+  // (origin === 'operator') in the SAME model the AI emits into, so they also
+  // appear in cockpit counts and the relevant project tree. They are created
+  // on a stable dedicated project root ("My tasks") via action-added with an
+  // explicit origin:'operator'; edits reuse item-text-set; reorder reuses
+  // reordered; removal uses the one new item-removed event.
+  var MYTASKS_NODE = 'mytasks-operator';
+  var MYTASKS_TITLE = 'My tasks';
+  function isOperatorItem(it) { return it && it.origin === 'operator'; }
+  // Every operator item across all projects, in the operator's chosen order
+  // (snapshot.order keyed by the My-tasks node scope), with un-ordered items
+  // appended in insertion order so a freshly-added task always shows.
+  function myTaskRefs() {
+    var refs = allWorkItems().filter(function (r) { return isOperatorItem(r.item); });
+    var order = (S && S.order && Array.isArray(S.order[MYTASKS_NODE])) ? S.order[MYTASKS_NODE] : null;
+    if (!order || !order.length) return refs;
+    var pos = {};
+    order.forEach(function (id, i) { pos[id] = i; });
+    return refs.slice().sort(function (a, b) {
+      var pa = (a.itemId in pos) ? pos[a.itemId] : (order.length + 1);
+      var pb = (b.itemId in pos) ? pos[b.itemId] : (order.length + 1);
+      return pa - pb;
+    });
+  }
+  // Ensure the dedicated My-tasks project root exists; if not, create it, then
+  // run the continuation once it's persisted. The operator never has to
+  // "create a project" — the first add lazily materializes the home node.
+  function ensureMyTasksNode(then) {
+    if (byId(MYTASKS_NODE)) { then(); return; }
+    post({ type: 'branch-opened', node_id: MYTASKS_NODE, parent_id: null, title: MYTASKS_TITLE })
+      .then(function () { then(); })
+      .catch(function () { showToast('Could not create the My-tasks list — try again.', 'err'); });
+  }
+
   // ---- filter logic ----------------------------------------------------
   function applyFilter(items, filterName) {
     switch (filterName) {
@@ -293,6 +330,7 @@
       case 'shipped-not-deployed': return items.filter(function (r) { return isShippedNotDeployed(r.item); });
       case 'deployed':         return items.filter(function (r) { return isDeployed(r.item); });
       case 'orphaned':         return [];   // orphans are sessions, handled in renderFilteredItems
+      case 'my-tasks':         return items.filter(function (r) { return isOperatorItem(r.item); });
       case 'all':              return items.slice();
       default:                 return items.filter(function (r) { return isAwaitingMe(r.item); });
     }
@@ -304,7 +342,7 @@
   }
   function updateChipCounts() {
     ['awaiting-me', 'in-flight', 'blocked', 'shipped-not-deployed', 'deployed',
-     'recently-shipped', 'orphaned', 'backlog', 'all'].forEach(function (f) {
+     'recently-shipped', 'orphaned', 'my-tasks', 'backlog', 'all'].forEach(function (f) {
       var span = filterBar.querySelector('[data-count="' + f + '"]');
       if (span) span.textContent = filterCount(f);
     });
@@ -333,6 +371,7 @@
     filterBody.hidden = false;
     clear(filterBody);
     if (filterName === 'backlog') { renderBacklogInto(filterBody); return; }
+    if (filterName === 'my-tasks') { renderMyTasksInto(filterBody); return; }
     if (filterName === 'orphaned') { renderOrphansInto(filterBody); return; }
     var refs = applyFilter(allWorkItems(), filterName);
     if (!refs.length) {
@@ -357,6 +396,7 @@
       'deployed': 'Nothing deployed yet.',
       'recently-shipped': 'Nothing shipped in the last ' + SHIP_RECENT_DAYS + ' days.',
       'orphaned': 'No orphaned work — every in-flight item has moved recently. ✓',
+      'my-tasks': 'No personal tasks yet — add one above.',
       'all': 'No work items yet.',
     };
     return el('div', 'empty', labels[filterName] || 'Nothing here.');
@@ -399,6 +439,245 @@
       row.appendChild(body);
       container.appendChild(row);
     });
+  }
+
+  // ====================================================================
+  //  MY TASKS surface render (Task 6) — operator-owned, editable
+  // ====================================================================
+  // C5: ALL authoring is in-surface (an always-present "+ add" input + inline-
+  //     editable rows) — NEVER window.prompt().
+  // I3: on a POST failure the optimistic change visibly REVERTS and an inline
+  //     "not saved — retry" affordance appears ON that row (not just a toast).
+  // I4: reorder via KEYBOARD (move-up / move-down controls), not drag-only.
+  function renderMyTasksInto(container) {
+    // --- always-present "+ add" input (in-surface, never a native prompt) ---
+    var addRow = el('div', 'mytasks-add');
+    var addInput = el('input', 'mytasks-add-input');
+    addInput.type = 'text';
+    addInput.placeholder = 'Add a task and press Enter…';
+    addInput.setAttribute('aria-label', 'new task text');
+    var addBtn = el('button', 'btn-go mytasks-add-btn', '+ add');
+    addBtn.setAttribute('aria-label', 'add task');
+    function submitAdd() {
+      var text = (addInput.value || '').trim();
+      if (!text) { showToast('Type the task first.', 'err'); addInput.focus(); return; }
+      var itemId = uid('task');
+      addInput.disabled = true; addBtn.disabled = true;
+      ensureMyTasksNode(function () {
+        post({ type: 'action-added', node_id: MYTASKS_NODE, item_id: itemId, text: text, origin: 'operator' },
+          'Task added')
+          .then(function () {
+            addInput.value = '';
+            addInput.disabled = false; addBtn.disabled = false;
+            addInput.focus();   // ready for the next task
+            // render() fires from the SSE state push; no manual re-render needed
+          })
+          .catch(function () {
+            // I3-style failure on ADD: the input keeps its text (nothing was
+            // persisted), is re-enabled, and an inline retry note shows.
+            addInput.disabled = false; addBtn.disabled = false;
+            addRow.classList.add('save-failed');
+            if (!addRow.querySelector('.retry-note')) {
+              var n = el('span', 'retry-note', 'not saved — press Enter to retry');
+              addRow.appendChild(n);
+            }
+            addInput.focus();
+          });
+      });
+    }
+    addInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); addRow.classList.remove('save-failed'); var rn = addRow.querySelector('.retry-note'); if (rn) rn.remove(); submitAdd(); }
+    });
+    addBtn.addEventListener('click', function () { addRow.classList.remove('save-failed'); var rn = addRow.querySelector('.retry-note'); if (rn) rn.remove(); submitAdd(); });
+    addRow.appendChild(addInput);
+    addRow.appendChild(addBtn);
+    container.appendChild(addRow);
+
+    // --- the operator's task list (in chosen order; removed items filtered) ---
+    var refs = myTaskRefs();
+    if (!refs.length) {
+      container.appendChild(el('div', 'empty', 'No personal tasks yet — add one above.'));
+      return;
+    }
+    var listEl = el('div', 'mytasks-list');
+    listEl.setAttribute('role', 'list');
+    refs.forEach(function (r, ix) {
+      listEl.appendChild(myTaskRow(r, ix, refs));
+    });
+    container.appendChild(listEl);
+  }
+
+  // One editable My-tasks row. Inline-edit on the text (contentEditable-free —
+  // a real <input> swapped in on demand so screen readers and keyboard work),
+  // a complete toggle, keyboard reorder (▲/▼), and remove (✕).
+  function myTaskRow(r, ix, refs) {
+    var st = itemState(r.item);
+    var row = el('div', 'item-row mytask-row state-' + st);
+    row.setAttribute('role', 'listitem');
+    row.setAttribute('data-node', r.nodeId);
+    row.setAttribute('data-item', r.itemId);
+
+    var ic = el('span', 'item-ic', r.item.checked ? '✓' : stateIcon(st));
+    ic.title = r.item.checked ? 'done' : st;
+    row.appendChild(ic);
+
+    // --- editable text (display span; click / Enter swaps to an input) ---
+    var body = el('div', 'item-main');
+    var txt = el('div', 'item-text mytask-text', r.item.text || '(untitled)');
+    txt.setAttribute('tabindex', '0');
+    txt.setAttribute('role', 'button');
+    txt.setAttribute('aria-label', 'edit task: ' + (r.item.text || 'untitled'));
+    function beginEdit() {
+      if (row.querySelector('.mytask-edit')) return;   // already editing
+      var inp = el('input', 'mytask-edit');
+      inp.type = 'text';
+      inp.value = r.item.text || '';
+      inp.setAttribute('aria-label', 'edit task text');
+      var prevText = r.item.text || '';
+      txt.replaceWith(inp);
+      inp.focus(); inp.select();
+      var committed = false;
+      function commit() {
+        if (committed) return; committed = true;
+        var next = (inp.value || '').trim();
+        if (!next || next === prevText) {
+          // nothing to save — restore the display span unchanged
+          inp.replaceWith(txt);
+          return;
+        }
+        // optimistic: show the new text immediately, then persist
+        txt.textContent = next;
+        inp.replaceWith(txt);
+        post({ type: 'item-text-set', node_id: r.nodeId, item_id: r.itemId, text: next })
+          .then(function () { /* SSE re-render confirms */ })
+          .catch(function () {
+            // I3: REVERT the visible text and show an inline retry affordance
+            // ON this row (not only a toast).
+            txt.textContent = prevText;
+            row.classList.add('save-failed');
+            if (!row.querySelector('.retry-note')) {
+              var retry = el('button', 'retry-note retry-btn', '↻ not saved — retry');
+              retry.setAttribute('aria-label', 'retry saving task edit');
+              retry.addEventListener('click', function (e) {
+                e.stopPropagation();
+                row.classList.remove('save-failed'); retry.remove();
+                // re-enter edit with the attempted (reverted-from) value
+                beginEditWith(next);
+              });
+              row.appendChild(retry);
+            }
+          });
+      }
+      function cancel() {
+        if (committed) return; committed = true;
+        inp.replaceWith(txt);
+      }
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+      });
+      inp.addEventListener('blur', commit);
+    }
+    function beginEditWith(seed) {
+      // open the editor pre-filled with a retry value
+      var inp = el('input', 'mytask-edit');
+      inp.type = 'text'; inp.value = seed; inp.setAttribute('aria-label', 'edit task text');
+      var prevText = r.item.text || '';
+      txt.replaceWith(inp); inp.focus(); inp.select();
+      var committed = false;
+      function commit() {
+        if (committed) return; committed = true;
+        var next = (inp.value || '').trim();
+        if (!next) { inp.replaceWith(txt); txt.textContent = prevText; return; }
+        txt.textContent = next; inp.replaceWith(txt);
+        post({ type: 'item-text-set', node_id: r.nodeId, item_id: r.itemId, text: next })
+          .catch(function () {
+            txt.textContent = prevText; row.classList.add('save-failed');
+            if (!row.querySelector('.retry-note')) {
+              var retry = el('button', 'retry-note retry-btn', '↻ not saved — retry');
+              retry.addEventListener('click', function (e) { e.stopPropagation(); row.classList.remove('save-failed'); retry.remove(); beginEditWith(next); });
+              row.appendChild(retry);
+            }
+          });
+      }
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); commit(); } else if (e.key === 'Escape') { e.preventDefault(); committed = true; inp.replaceWith(txt); } });
+      inp.addEventListener('blur', commit);
+    }
+    txt.addEventListener('click', beginEdit);
+    txt.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); beginEdit(); } });
+    body.appendChild(txt);
+
+    var meta = el('div', 'item-meta');
+    meta.appendChild(el('span', 'st-badge st-' + st, st));
+    meta.appendChild(el('span', 'origin-badge', 'mine'));
+    body.appendChild(meta);
+    row.appendChild(body);
+
+    // --- controls: complete · reorder (▲/▼, keyboard) · remove ---
+    var ctrls = el('div', 'mytask-ctrls');
+
+    var doneBtn = el('button', 'mytask-ctrl ctrl-done', r.item.checked ? '↺' : '✓');
+    doneBtn.setAttribute('aria-label', r.item.checked ? 'reopen task' : 'mark task done');
+    doneBtn.title = r.item.checked ? 'reopen' : 'mark done';
+    doneBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (r.item.checked) {
+        post({ type: 'item-unchecked', node_id: r.nodeId, item_id: r.itemId }, 'Reopened');
+      } else {
+        post({ type: 'action-done', node_id: r.nodeId, item_id: r.itemId }, 'Done');
+      }
+    });
+    ctrls.appendChild(doneBtn);
+
+    var upBtn = el('button', 'mytask-ctrl ctrl-up', '▲');
+    upBtn.setAttribute('aria-label', 'move task up');
+    upBtn.title = 'move up';
+    upBtn.disabled = ix === 0;
+    upBtn.addEventListener('click', function (e) { e.stopPropagation(); reorderMyTask(refs, ix, ix - 1); });
+    ctrls.appendChild(upBtn);
+
+    var downBtn = el('button', 'mytask-ctrl ctrl-down', '▼');
+    downBtn.setAttribute('aria-label', 'move task down');
+    downBtn.title = 'move down';
+    downBtn.disabled = ix === refs.length - 1;
+    downBtn.addEventListener('click', function (e) { e.stopPropagation(); reorderMyTask(refs, ix, ix + 1); });
+    ctrls.appendChild(downBtn);
+
+    var rmBtn = el('button', 'mytask-ctrl ctrl-remove', '✕');
+    rmBtn.setAttribute('aria-label', 'remove task');
+    rmBtn.title = 'remove';
+    rmBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      post({ type: 'item-removed', node_id: r.nodeId, item_id: r.itemId }, 'Removed')
+        .catch(function () {
+          // I3: removal failed — the row stays (item not actually gone) and an
+          // inline retry note appears.
+          row.classList.add('save-failed');
+          if (!row.querySelector('.retry-note')) {
+            var retry = el('button', 'retry-note retry-btn', '↻ not removed — retry');
+            retry.addEventListener('click', function (ev) { ev.stopPropagation(); row.classList.remove('save-failed'); retry.remove(); rmBtn.click(); });
+            row.appendChild(retry);
+          }
+        });
+    });
+    ctrls.appendChild(rmBtn);
+
+    row.appendChild(ctrls);
+    return row;
+  }
+
+  // Keyboard/button reorder — recompute the full ordered_ids list with the item
+  // moved from `from` to `to`, then persist a single `reordered` event scoped to
+  // the My-tasks node. On failure the SSE state is unchanged so the list snaps
+  // back to the persisted order on the next render (the optimistic move is the
+  // re-render driven by the SSE push, never a local mutation we'd have to undo).
+  function reorderMyTask(refs, from, to) {
+    if (to < 0 || to >= refs.length || from === to) return;
+    var ids = refs.map(function (r) { return r.itemId; });
+    var moved = ids.splice(from, 1)[0];
+    ids.splice(to, 0, moved);
+    post({ type: 'reordered', scope: MYTASKS_NODE, ordered_ids: ids }, 'Reordered')
+      .catch(function () { showToast('Reorder not saved — try again.', 'err'); });
   }
 
   function sessionRow(s) {
