@@ -61,6 +61,46 @@ The mechanism (forcing-first, gate-second):
 
 **The honest completion ceiling (Rule 7):** background dispatches have NO stable local completion contract — no per-workflow completion hook event exists, and the wake/notification message shape is undocumented. Their items honestly stay in-flight (FR-7 keeps the owning session node un-concludable — intentionally visible) until a later `--resolve-item`, the operator, or a future upstream hook surface resolves them. This is a named gap, not a solved problem. Cloud sessions that load no `~/.claude/` hooks remain out of reach (the same accepted blind spot as above).
 
+## Context-complete item emission (Task 9 of the status-surface plan, 2026-06-12)
+
+**The problem this section closes:** an operator-facing item (decision / question / action-for-operator) whose `details` is empty is a **contextless choice** — the operator opens it and sees a bare A/B/C with no background, no meaning per option, no recommendation. The render side (the status-surface plan's Task 8 gate) refuses to present such an item as actionable ("context incomplete — needs enrichment", resolving buttons suppressed). This section is the **upstream half**: the emit path is where context is born, because no render can show context that was never written.
+
+### The contract in one sentence
+
+**Every harness emit of `decision-raised` / `question-raised` / operator-facing `action-added` SHOULD carry — and every emit surface MUST be ABLE to carry — the per-kind context payload as a sibling `item-details-set` in the same batch, validated through the SOLE-NORMATIVE module (`workstreams-ui/state/decision-context-schema.js` — `assembleItemDetails` / `validateItemDetails` / `ItemDetailsContentSchema`); a payload that is absent or invalid NEVER blocks the emit (Layer-A failure isolation) — the item lands honestly detail-less (or with the raw payload, information-preserving) and the audit log carries a WARN.**
+
+### What a context-complete emission carries, per kind
+
+The payload is the `details` object of an `item-details-set` event. The interior shape is owned by `ItemDetailsContentSchema` (sole-normative; `.passthrough()` forward-tolerant). Required for EVERY kind: `_category` (stamped by the assembler — never hand-set by callers) and `background` — the memory-trigger paragraph, written for a reader who forgot all context. Then at least ONE per-kind actionable field:
+
+| Item kind | `_category` | Actionable field (≥ 1 required) | Strongly recommended |
+|---|---|---|---|
+| decision | `decision` | `question`, `options`, `the_ask`, or `description` | `options` (each with meaning/tradeoff), `recommendation`, `reply_with` |
+| question | `question` | `question`, `why_asking`, or `description` | `answer_shape`, `what_ive_tried` |
+| action (operator-facing) | `action_item_for_user` | `the_ask`, `instructions`, or `description` | `why_assigned`, `what_im_doing_meanwhile` |
+| (log) autonomous action | `autonomous_action` | `action_taken`, `reasoning`, or `description` | `reversibility`, `references` |
+
+**The cold-read bar:** could the operator decide/act reading ONLY this card, with zero memory of the chat? `background` + the actionable field is the mechanical floor the schema enforces; the bar is the discipline the emitter self-applies. Items with `details._category` outside the operator set (e.g. `builder-dispatch`, the ADR-054 noise-control tier) are NOT operator asks and are exempt — passed through untouched.
+
+### Where each emit surface stands
+
+| Emit surface | Operator-facing raise | Context behavior |
+|---|---|---|
+| `decision-context-gate.sh` (fence path) | `decision-raised`/`question-raised`/`action-added`/`autonomous-action-logged` from Tier-1 fences | **Rich by construction** — the fence Zod schemas REQUIRE background + the per-kind fields; sibling `item-details-set` via `fenceToDetails` → `assembleItemDetails`. |
+| `workstreams-turn-emit.sh` (every-turn path) | candidate items extracted from the turn text | **Drop-if-incomplete** — `assembleItemDetails` returning null means the item is NOT emitted (emit nothing rather than a garbage card). |
+| `workstreams-emit.sh --emit-item` | the orchestrator's explicit raise | `.details` SHOULD be supplied. Valid → emits the **normalized** payload (`_category` + `surfaced_by` stamped). Invalid → emits the **raw** payload (information-preserving; GUI flags context-incomplete) + audit-log WARN naming the schema failure. Absent → item still emits + WARN ("born context-incomplete"). |
+| `workstreams-emit.sh --emit-details` | enrichment of an existing item | Same validation (category from `._category`, else looked up from the item's kind in the sink snapshot). **Content-hashed event id**: identical re-emits dedupe; revised content is a NEW event the reducer applies last-writer-wins — the enrichment loop the Task-8 "needs enrichment" gate depends on. |
+| `workstreams-emit.sh --on-spawn` `Work-item: new — <kind>:<text>` | item created on the spawned branch | Assembles the payload from the spawn prompt's rich-detail sentinels (`background` = `Instructions:`, `recommendation` = `Recommendation:`, `links` = `Links:`, actionable field = the item text) via `assembleItemDetails`; sibling `item-details-set` joins the same batch so the item is **born context-complete**. No sentinels → born honestly detail-less (+ the >200-char observability WARN). |
+| `workstreams-emit.sh --on-builder-dispatch` | (not operator-facing) | `details._category: "builder-dispatch"` — outside the operator set by design; exempt. |
+
+### Why never-block, and what the WARN buys
+
+`workstreams-emit.sh` is a Layer-A WRITER, not a gate (every runtime path exits 0; a writer-hook malfunction must never break the orchestrator's tool call). So context-completeness is enforced as a **two-sided discipline**, not an emit-time block: the emit side validates + WARNs + preserves information; the render side (Task 8 gate, `validateItemDetails`/`assembleItemDetails` consumed by the GUI) refuses to present an incomplete item as actionable. A contextless choice therefore cannot REACH the operator even though a context-less emit cannot be blocked. The audit-log WARN (`~/.claude/logs/conversation-tree-emit.log`) is the observability surface for spotting emit sites that chronically raise detail-less items.
+
+### Sole-normative module, and the honest fallback floor
+
+NO shell re-implementation of the schema, ever — the hook calls into `decision-context-schema.js` via `node -e require(…)` (env override `DECISION_CONTEXT_SCHEMA`, mirroring `decision-context-gate.sh`). In a stripped environment where the module cannot load (e.g. a fresh worktree without `node_modules`/zod), the node snippet applies the SAME-CONTRACT inline floor that `workstreams-turn-emit.sh` already ships (background + ≥1 per-kind actionable field, else null) — graceful degradation, not a parallel schema; the module remains normative wherever it loads. Self-test coverage: `workstreams-emit.sh --self-test` ST37–ST42 lock this contract (valid→normalized; invalid→raw+WARN; absent→WARN; spawn-sentinel assembly; enrichment last-writer-wins) and pass on both the module path and the floor path.
+
 ## Cross-references
 
 - **Decision record:** `docs/decisions/031-conversation-tree-ui-architecture.md` r7 — ACCEPTED Option-2 file-mediated state contract; the "Enforcement design" Mechanism+Pattern split; the three "Plan-safety pins" (enumerated spawn-path set, fail-closed error partition, append-only-log viability properties); the cloud blind spot.
@@ -71,6 +111,7 @@ The mechanism (forcing-first, gate-second):
 - **Sibling rule (Mechanism+Pattern split, freeze-thaw shape):** `adapters/claude-code/rules/spec-freeze.md` — the canonical Hybrid-classification rule shape this rule follows.
 - **Precedent hooks the conversation-tree gates mirror:** `adapters/claude-code/hooks/bug-persistence-gate.sh` (Stop-hook decision/exit shape + fresh-waiver release valve + `lib/stop-hook-retry-guard.sh` integration) and `adapters/claude-code/hooks/teammate-spawn-validator.sh` (PreToolUse `Task|Agent` spawn-time enforcement).
 - **Convention this rule's "bind the orchestrator, not the child" rationale rests on:** `adapters/claude-code/rules/spawn-task-report-back.md` — the orchestrator has no mechanical callback into a spawned child, so enforcement binds the orchestrator at spawn-time and Stop.
+- **Sole-normative context-payload module (the "Context-complete item emission" contract above):** `neural-lace/workstreams-ui/state/decision-context-schema.js` — `ItemDetailsContentSchema` / `validateItemDetails` / `assembleItemDetails`; the same module `decision-context-gate.sh`, `workstreams-turn-emit.sh`, and the GUI's Task-8 render gate consume. See also `adapters/claude-code/rules/decision-context.md` (the fence grammar the payload maps onto).
 
 ## Enforcement
 
@@ -80,6 +121,7 @@ The mechanism (forcing-first, gate-second):
 | Hook (`workstreams-state-gate.sh`) | Per-spawn: state file exists + valid JSON + attestation-verified snapshot + fresh vs marker + live `snapshot.nodes` element naming the `tool_input` branch (Pin-2 partition; fresh-waiver release valve) | `adapters/claude-code/hooks/workstreams-state-gate.sh` | landed (Task B1) |
 | Hook (`workstreams-stop-gate.sh`) | Session-boundary: spawn in agent-uneditable transcript ⇒ verified state-file write naming the spawned branch before Stop (mirrors `bug-persistence-gate.sh`) | `adapters/claude-code/hooks/workstreams-stop-gate.sh` | landed (Task B2) |
 | Emitter (`workstreams-emit.sh --on-spawn`) | Emits `branch-opened` ONLY for the two Dispatch tools — sub-agent `Task`/`Agent` produce no tree node (keeps the tree free of AI-internal workflow noise; ADR-034) | `adapters/claude-code/hooks/workstreams-emit.sh` | landed (ADR-034) |
+| Emit context discipline (`--emit-item` / `--emit-details` / `--on-spawn` Work-item:new) | Operator-facing raises carry the per-kind context payload as a sibling `item-details-set`, validated through the sole-normative module; absent/invalid payloads never block (WARN + honest detail-less / raw landing); enrichment applies last-writer-wins via content-hashed event ids. Self-test ST37–ST42. | `adapters/claude-code/hooks/workstreams-emit.sh` + `neural-lace/workstreams-ui/state/decision-context-schema.js` | landed (status-surface plan Task 9, 2026-06-12) |
 | Wiring | Both gates + the emitter wired into the PreToolUse + Stop chains with the Dispatch-only matcher (canonical source of truth) | `adapters/claude-code/settings.json.template` | landed (Task B3 / ADR-034) |
 | Decision records | ADR-031 r7 (Mechanism+Pattern split, accepted gaps) + r8 amendment (Dispatch-only narrowing) + ADR-032 §8 r2.1 (attestation primitive) + **ADR-034 (the r8 scoping decision: sub-agent Task/Agent out of scope)** | `docs/decisions/031-conversation-tree-ui-architecture.md`, `docs/decisions/032-conversation-tree-state-schema.md`, `docs/decisions/034-conversation-tree-scope-dispatch-only.md` | landed (Task A1 / ADR-034) |
 | User authority | the operator's interrupt authority is the backstop for the semantic-correctness ceiling and the accepted cloud / `Bash(claude…)` / `/schedule` gaps | (Pattern) | — |
