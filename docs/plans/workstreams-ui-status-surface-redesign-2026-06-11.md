@@ -174,10 +174,10 @@ Same editing pattern for the "eventually" bucket; add / edit / priority / delete
   **Integration points:** reads `details` shape; n/a external.
 - [x] 9. Emit discipline: extend the emit path so a raised decision/question carries the
   context payload (maps to `decision-context.md` fences); document the contract. — Verification: full
-- [ ] 10. A11y + polish + rename: coordinated overlay-dismiss stack; aria-labels on icon-only
+- [x] 10. A11y + polish + rename: coordinated overlay-dismiss stack; aria-labels on icon-only
   controls; sweep "Conversation Tree" → "Workstreams" user-facing copy; visual verification at
   1280/768/390 px against live data. — Verification: full
-- [ ] 11. Integration verification: end-to-end run of all five surfaces against the live
+- [x] 11. Integration verification: end-to-end run of all five surfaces against the live
   112-item state; regression + responsive self-tests green. — Verification: full
 
 ## Files to Modify/Create
@@ -386,6 +386,33 @@ per-task structured rationale + comprehension articulation live in
   Comprehension-gate: PASS. CLOSURE FLAG: the `~/.claude/` live mirror predates Task 9 —
   sync at merge (two-layer-config) or the live emit path stays pre-Task-9. Rationale in
   `…-evidence/task-9.evidence.md`.
+- **Task 10** — Verdict PASS (Confidence 9). Oracle: specified — the task + binding I5/C6 +
+  the polish flags. Verifier re-ran the e2e fresh (24/24 on 7799 against a copy of today's
+  79-node/134-item live state) — T21 overlay stack end-to-end (open → focus trapped → Esc →
+  closed → focus RESTORED → no lingering scrim), T22 amber exclusive to needs-you chips +
+  chrome rename, T23 row/card parity 0 mismatches on server `context_state`; responsive
+  selftest 29/29 (R25/R29 lock the stack). Independent static sweeps: exactly ONE
+  document-level Escape path (the stack, app.js:178-181; both ad-hoc handlers REMOVED in the
+  e1b5fad diff — input-local edit-cancel Esc handlers preserved); zero user-facing
+  "Conversation Tree" in web/ (3 comment-only hits); `chip-warn` gone from static HTML,
+  applied only count-gated to AMBER_CHIPS={awaiting-me,blocked}; waiting-row ask marker reads
+  the same `contextGateBlocks`/`context_state` predicate as the card; `promoteIds`
+  deterministic from the source item id; three icon-only ✕ buttons aria-labeled. Width
+  screenshots (1280/768/390) committed + spot-read. Comprehension-gate: PASS. Rationale in
+  `…-evidence/tasks-10-11.evidence.md`.
+- **Task 11** — Verdict PASS (Confidence 9). Oracle: derived-preexisting — the FULL battery
+  re-run by the verifier, not trusted from transcripts: state selftest 21/21; browser
+  regression 24/24 (all five surfaces exercised in a real headless browser incl. writes —
+  cockpit oracle-match, drill/keyboard/breadcrumb, waiting bounded+parity, my-tasks/backlog
+  add-promote round-trip, both context-card states); responsive selftest 29/29; emit-hook
+  self-test 66/66. Isolation verified live: /api/health named the temp state COPY (the
+  operator's 7733/real file untouched); verifier's 7799 server killed after. The 10
+  committed user-pass journey screenshots corroborate the same flows. Accepted deviation
+  noted: da5e33f added two append-only `## In-flight scope updates` lines (scope-gate
+  option-1 remediation — no checkbox/status/evidence-log touch). Standing closure flags:
+  sync the `~/.claude/` live mirror at merge (Task 9); duplicate "My tasks" root in live
+  data is a pre-existing wrinkle needing a one-time reconcile. Comprehension-gate: PASS.
+  Rationale in `…-evidence/tasks-10-11.evidence.md`.
 
 ## Pre-Submission Audit
 - S1 (Entry-Point Surfacing): each behavior change is cited in a Task + a Files entry.

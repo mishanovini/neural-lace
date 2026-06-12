@@ -439,3 +439,137 @@ Git evidence:
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: I re-ran the 66-scenario self-test on BOTH schema paths (real module and forced inline floor) and replayed the live demo against a temp state file — a payload-bearing decision lands as decision-raised + a sibling item-details-set whose normalized payload validates success=true through the sole-normative module, and a payload-less question still lands (exit 0, never blocked) born honestly detail-less with the contract-referencing WARN; the contract is documented in workstreams-state.md with the cross-ref in decision-context.md. Flag for plan closure: the ~/.claude live mirror predates this work — sync at merge or the live emit path stays pre-Task-9.
+
+EVIDENCE BLOCK
+==============
+Task ID: 10
+Task description: A11y + polish + rename: coordinated overlay-dismiss stack; aria-labels on icon-only controls; sweep "Conversation Tree" → "Workstreams" user-facing copy; visual verification at 1280/768/390 px against live data. — Verification: full (+ binding I5; C6 chip amber re-key; waiting-row/card parity via server context_state; idempotent promote retry)
+Verified at: 2026-06-12T21:28:22Z
+Verifier: task-verifier agent
+
+Oracle: specified — the task description + binding correction I5 (ONE overlay-stack manager; the two ad-hoc document-level Esc handlers RETIRED) + the C6 amber discipline extended to the filter chips + the row/card parity and promote-idempotency polish flags. Exercised by the committed e2e locks (T11/T12/T14/T21/T22/T23) + responsive locks (R25/R29) which I re-ran fresh, plus my own independent static sweeps.
+
+Comprehension-gate: PASS (confidence 9) — Stage 1: all four canonical sub-sections present for Task 10 in tasks-10-11.evidence.md; Stage 2: substantive (SSE-re-render idempotency, shared-scrim z-layering, never-pushed closeDetailModal normalization, input-local-Esc preservation, count-gated amber, non-ask fallback, removed-opener focus guard, zod-less fail-closed) with an honest NOT-covered list (cross-version partial-promote dedup gap, retitle-after-edit cosmetic edge, Tab-only focus trap, click-only docs rows, duplicate My-tasks live-data root); Stage 3 diff-correspondence against a88113c..67a09a3 verified by direct read: push idempotent on layer element (app.js:147, cited 146-148 ✓), scrimStillNeeded shared-scrim hide guard (app.js:136-138 + use at :162; cited 141-143 — ±5-line drift onto REAL content, not fabrication), document.contains(back) focus-restore guard (app.js:165), closeDetailModal never-pushed normalization (app.js:2449-2456), input-local Esc handlers preserved at exactly :862/:888/:1184, AMBER_CHIPS count-gated toggle (app.js:497-504), non-ask summary fallback (app.js:627-640), mirror.activated_node reuse (app.js:1083-1084). Assumptions (static z-order vs stack order; event_id idempotency per ADR-032 §2 — corroborated by selftest P20 + e2e T17; context_state on every served snapshot; rename scope excludes operator data/comments) — none contradicted by the diff. (Three-stage rubric executed directly by this verifier — comprehension-reviewer agent dispatch unavailable in this environment; rubric per ~/.claude/agents/comprehension-reviewer.md stages.)
+
+Checks run:
+1. Live e2e re-run (fresh server on 7799 against a fresh COPY of today's live state — 79 nodes/134 items, one MORE than the builder's run; /api/health confirmed state_file = the temp copy; operator's 7733/real file untouched; my server killed after)
+   Command: CONV_TREE_STATE_PATH=<tmp-copy> CTREE_PORT=7799 node server/server.js & then WS_URL=http://127.0.0.1:7799/ node scripts/regression.e2e.js
+   Output: 24/24 PASS — T11 modal+scrim+selection; T12 Esc closes via the stack; T14 drawer; T21 drawer open→focus inside→Esc→closed+scrimHidden+focusRestored (to #docsBtn); T22 amberChips=[awaiting-me] badAmber=0 missingAmber=0 chromeRenamed=true wsLabelRenamed=true; T23 askRows=21 parityMismatches=0; T17 promote round-trip green on the deterministic ids
+   Result: PASS
+2. Responsive selftest re-run (re-locked R25/R28 + new R29)
+   Command: node neural-lace/workstreams-ui/web/responsive.selftest.js
+   Output: 29 passed, 0 failed — R25 modal dismissal wired through the overlay stack (ad-hoc Esc/scrim handlers retired); R29 stack invariants (Esc topmost-only; focus trap + restore)
+   Result: PASS
+3. I5 static sweep — ONE document-level Escape path (re-run independently)
+   Command: grep -n "addEventListener('keydown'|key === 'Escape'" web/app.js + git show e1b5fad (removed lines)
+   Output: exactly ONE document-level keydown listener (app.js:178, inside overlayStack:129-196; Esc→close(topmost) at :181); all other keydown listeners are element-local input edit-cancel handlers (:707/:773/:860/:888/:892/:1182/:1189/:2332/:2781); the diff REMOVES both ad-hoc document-level Esc handlers (the detail-modal one and the docs-subsystem one)
+   Result: PASS
+4. Rename sweep — zero user-facing "Conversation Tree" in web/
+   Command: grep -rn "Conversation Tree" web/ + grep server.js startup line
+   Output: 3 hits, ALL comments (app.css:1 header, app.js:3 header, index.html:10 "formerly Conversation Tree" HTML comment); WS_THEMES label = 'Workstreams' (app.js:1609 — regex still matches legacy item TEXT = operator data); server startup line says "workstreams-ui listening" (server.js:397); e2e T22 confirms rendered chrome
+   Result: PASS
+5. C6 chip re-key + parity marker (re-run independently)
+   Command: grep -n "chip-warn" web/*.{html,js,css} + read contextGateBlocks
+   Output: chip-warn GONE from static index.html; sole application is app.js:504 — count-gated (n>0) AND restricted to AMBER_CHIPS={awaiting-me,blocked}; waiting-row marker for asks keyed to contextGateBlocks (app.js:637) which reads the server-annotated it.context_state !== 'complete' (app.js:2169-2172) — the SAME predicate the card gates on
+   Result: PASS
+6. aria-labels on icon-only controls
+   Command: grep -n 'dmClose|docsClose|docClose' web/index.html
+   Output: all three ✕ close buttons carry aria-label (close item detail / close docs browser / close document viewer); twists/reorder/promote/choose controls verified labeled in prior task passes
+   Result: PASS
+7. Visual verification at three widths (committed artifacts + e2e width assertions)
+   Output: cockpit-1280/768/390, drill-1280/390 + 6 more committed in 67a09a3, regenerated this batch; I read userpass-07 (incomplete card: resolution buttons suppressed, single respond-only affordance) and userpass-10 (cockpit: amber strictly on waiting pills + Waiting-on-you chip; Blocked=0 NOT amber) — both corroborate; e2e T16 asserts 768 no-overflow + 390 full-swap/railHidden/breadcrumb
+   Result: PASS
+
+Runtime verification: playwright neural-lace/workstreams-ui/scripts/regression.e2e.js::T21-overlay-stack-esc-focus-restore
+Runtime verification: playwright neural-lace/workstreams-ui/scripts/regression.e2e.js::T22-amber-chips-and-rename
+Runtime verification: test neural-lace/workstreams-ui/web/responsive.selftest.js::R29-overlay-stack-invariants
+Runtime verification: file neural-lace/workstreams-ui/web/app.js::overlayStack
+
+DEPENDENCY TRACE
+================
+Step 1: any overlay opens (detail modal / docs drawer / doc viewer) → overlayStack.push
+  Verified at: web/app.js:2440/2821/2943 (push call sites); e2e T11/T14/T21
+Step 2: Esc / scrim-click / ✕ route through the single stack owner
+  Verified at: web/app.js:178-194 (single document keydown; Esc→topmost), :168-175 (bindScrim→own layer); diff removed both ad-hoc handlers
+Step 3: close pops the layer, hides the scrim only when no remaining layer uses it, restores opener focus
+  Verified at: web/app.js:157-166 (splice, scrimStillNeeded, document.contains guard); e2e T21 focusRestored=true, no lingering scrim
+Step 4: operator sees coherent dismissal at all widths with amber discipline intact
+  Verified at: e2e T12/T16/T22; width screenshots
+
+Git evidence:
+  Files modified in recent history:
+    - neural-lace/workstreams-ui/web/app.js     (commit e1b5fad)
+    - neural-lace/workstreams-ui/web/index.html (commit e1b5fad)
+    - neural-lace/workstreams-ui/server/server.js (commit e1b5fad — startup-line rename)
+    - neural-lace/workstreams-ui/scripts/regression.e2e.js (commit e1b5fad — T21-T23)
+    - neural-lace/workstreams-ui/web/responsive.selftest.js (commit 49a1bcb — R25/R28 re-lock + R29)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: I re-ran the e2e (24/24) and responsive selftest (29/29) fresh against a copy of today's live state — T21 demonstrates the stack end-to-end (open→focus trapped→Esc→closed→focus restored→no lingering scrim), T22 proves amber is exclusive to needs-you chips and the chrome rename landed, T23 proves row/card parity on the server-derived context_state; my own static sweeps confirm exactly ONE document-level Escape path (the stack — both ad-hoc handlers removed in the diff), zero user-facing "Conversation Tree" strings (3 comment-only hits), count-gated AMBER_CHIPS, the contextGateBlocks context_state predicate shared by row and card, deterministic promoteIds, and aria-labels on all three icon-only close buttons.
+
+EVIDENCE BLOCK
+==============
+Task ID: 11
+Task description: Integration verification: end-to-end run of all five surfaces against the live 112-item state; regression + responsive self-tests green. — Verification: full
+Verified at: 2026-06-12T21:28:22Z
+Verifier: task-verifier agent
+
+Oracle: derived-preexisting — the FULL pre-existing battery (state/selftest.js, scripts/regression.e2e.js, web/responsive.selftest.js, workstreams-emit.sh --self-test) is the done criterion, PLUS the specified all-five-surfaces user journey (cockpit → drill → keyboard toggle → breadcrumb → waiting list → context cards → my-tasks → backlog → promote). I re-ran the entire battery myself rather than trusting the builder's transcripts.
+
+Comprehension-gate: PASS (confidence 9) — Stage 1: all four canonical sub-sections present for Task 11 in tasks-10-11.evidence.md; Stage 2: substantive (oracle-based locks proven non-frozen by running on evolving state; write-path event coverage enumerated; isolation mechanics named) with an honest NOT-covered list (no assertion against the operator's REAL 7733 server by explicit constraint; ad-hoc user-pass driver not committed — committed suite carries equivalent locks; no real AT testing; ~/.claude live-mirror sync remains the Task-9 closure flag); Stage 3: the battery numbers (21/29/24/66) all REPRODUCED by my own runs; the "79 nodes/133 items at copy time" claim consistent with my fresh copy (79/134 — live state evolved by one item, confirming derived-not-hardcoded assertions); isolation claim verified live (/api/health state_file = temp copy). Assumptions (headless-Chrome = the real-browser bar, consistent with how Tasks 3-8 were verified; state copy faithful; junctioned node_modules) — none contradicted. (Three-stage rubric executed directly by this verifier — comprehension-reviewer dispatch unavailable in this environment.)
+
+Checks run:
+1. State selftest (re-run by verifier)
+   Command: node neural-lace/workstreams-ui/state/selftest.js
+   Output: 21 passed, 0 failed (P1-P20 incl. operator-authoring e2e; schema major 1, attested)
+   Result: PASS
+2. Browser regression e2e (re-run by verifier — fresh server on 7799 against a fresh copy of TODAY'S live state, 79 nodes/134 items)
+   Command: CONV_TREE_STATE_PATH=<tmp-copy> CTREE_PORT=7799 node server/server.js & then WS_URL=http://127.0.0.1:7799/ node scripts/regression.e2e.js
+   Output: 24/24 PASS — all five surfaces exercised through a real headless browser: cockpit (T1/T2/T3 — 6 rows, pills match the independent /api/state oracle, constant 36px), drill tree (T4-T9 — bounded, amber set === needs-set 0 mismatches, keyboard aria-expanded toggle, breadcrumb return, show-done), waiting list (T10 waitRows=20=oracle bare=0; T23 parity 0 mismatches), my-tasks+backlog (T17 add→NOT-in-my-tasks→promote→committed on backlog-activated root→in my-tasks), context cards (T18 complete essentials + in-surface reply recorded; T19 gate suppresses resolving buttons), zero pageErrors (T0), zero native dialogs (T20), overlays (T11/T12/T14/T21)
+   Result: PASS
+3. Responsive structural selftest (re-run by verifier)
+   Command: node neural-lace/workstreams-ui/web/responsive.selftest.js
+   Output: 29 passed, 0 failed
+   Result: PASS
+4. Emit-hook self-test (re-run by verifier; unchanged by this batch — no regression)
+   Command: bash adapters/claude-code/hooks/workstreams-emit.sh --self-test
+   Output: 66 passed, 0 failed
+   Result: PASS
+5. Isolation discipline (verified live, then torn down)
+   Command: curl http://127.0.0.1:7799/api/health
+   Output: state_file = C:/Users/misha/AppData/Local/Temp/<tmp>/tree-state.json (the copy, never the canonical file); my 7799 server killed by PID after the run, port confirmed down
+   Result: PASS
+6. User-journey corroboration (committed artifacts in 67a09a3)
+   Output: 10 userpass-*.jpg screenshots cover the full journey; spot-read userpass-07 (incomplete ask: needs-enrichment panel, resolution disabled, single respond affordance) and userpass-10 (post-promote cockpit: promoted toast, NEXT pill incremented, amber discipline intact, the disclosed duplicate "My tasks" live-data wrinkle visible — honestly documented as pre-existing, not introduced)
+   Result: PASS
+7. Scope check (full Task 10/11 range)
+   Command: git diff --stat a88113c..67a09a3
+   Output: exactly app.js/index.html/server.js/regression.e2e.js/responsive.selftest.js + evidence dir + 4 append-only plan lines (da5e33f — the scope-gate option-1 in-flight addendum; no checkbox/status/evidence-log touch; accepted deviation per the orchestrator)
+   Result: PASS
+
+Runtime verification: test neural-lace/workstreams-ui/state/selftest.js::21-of-21
+Runtime verification: playwright neural-lace/workstreams-ui/scripts/regression.e2e.js::24-of-24-all-five-surfaces
+Runtime verification: test neural-lace/workstreams-ui/web/responsive.selftest.js::29-of-29
+Runtime verification: test adapters/claude-code/hooks/workstreams-emit.sh::--self-test-66-of-66
+
+DEPENDENCY TRACE
+================
+Step 1: live state (copy) served by the GUI server through the sole-normative state library
+  Verified at: /api/health state_file = temp copy; server.js readState().snapshot
+Step 2: all five surfaces render + round-trip writes against that server in a real browser
+  Verified at: e2e T1-T23 (cockpit/drill/waiting/my-tasks/backlog/context cards), POSTs via /api/event
+Step 3: write path folds back through reducer + idempotent event_ids
+  Verified at: selftest P20; e2e T17/T18 respondedRecorded=true
+Step 4: operator-facing journey holds end-to-end at all widths
+  Verified at: e2e T16 (768/390); 10 committed userpass screenshots
+
+Git evidence:
+  Files modified in recent history:
+    - neural-lace/workstreams-ui/scripts/regression.e2e.js (commit e1b5fad)
+    - neural-lace/workstreams-ui/web/responsive.selftest.js (commit 49a1bcb)
+    - docs/plans/workstreams-ui-status-surface-redesign-2026-06-11-evidence/ (commit 67a09a3 — evidence + 10 journey screenshots)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: I re-ran the entire battery myself — state selftest 21/21, browser regression 24/24 (a fresh server on 7799 against a fresh copy of today's evolving live state; all five surfaces exercised end-to-end including writes), responsive selftest 29/29, emit-hook self-test 66/66 — and verified isolation live (/api/health names the temp copy; the operator's 7733/real state untouched). The committed 10-step journey screenshots corroborate the same flows the replayable suite locks. The only plan-file edit in the range is the accepted append-only scope-gate option-1 addendum (da5e33f). Standing closure flag carried from Task 9: sync the ~/.claude live mirror at merge.
