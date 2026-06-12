@@ -1,5 +1,5 @@
 # Plan: Workstreams UI — Shared Status Surface Redesign
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -424,10 +424,43 @@ per-task structured rationale + comprehension articulation live in
   or `docs/` path; no out-of-scope file prescribed.
 
 ## Definition of Done
-- [ ] All tasks checked off (task-verifier).
-- [ ] All five surfaces render against the live state; cockpit never overflows.
-- [ ] Operator can add/edit/reorder/complete tasks + backlog; promote works; persists across reload.
-- [ ] No decision/question/action-for-operator item is shown without required context (gate works).
-- [ ] Self-tests + regression green; visual verification at three widths captured.
-- [ ] ADR landed; rename sweep done; a11y baseline met.
-- [ ] SCRATCHPAD updated; completion report appended; acceptance scenarios PASS at runtime.
+- [x] All tasks checked off (task-verifier). — 11/11 PASS, all rung:2 comprehension-gated.
+- [x] All five surfaces render against the live state; cockpit never overflows. — e2e 24/24 + advocate scenario 1 (lopsided 62-done project shows a number, not chips).
+- [x] Operator can add/edit/reorder/complete tasks + backlog; promote works; persists across reload. — e2e T17 + advocate scenario 2 (incl. mid-edit network-kill revert+retry probe).
+- [x] No decision/question/action-for-operator item is shown without required context (gate works). — e2e T18/T19 + advocate scenario 3 (gate fail-closed; resolving buttons suppressed).
+- [x] Self-tests + regression green; visual verification at three widths captured. — state 21/21, e2e 24/24, responsive 29/29, emit 66/66; screenshots at 1280/768/390 + 10-step journey.
+- [x] ADR landed; rename sweep done; a11y baseline met. — ADR 055; zero user-facing "Conversation Tree" strings; overlay stack + aria-labels + keyboard twists.
+- [x] SCRATCHPAD updated; completion report appended; acceptance scenarios PASS at runtime. — 4/4 PASS artifact at `.claude/state/acceptance/<slug>/advocate-20260612T215349Z.json` (plan_commit_sha 5e72bb3).
+
+## Completion Report
+
+### 1. Implementation Summary
+All 11 tasks shipped on `feat/workstreams-status-surface-2026-06-11` and verified by task-verifier (rung:2 comprehension gate on every batch):
+- **Tasks 1/2 (substrate):** operator authoring reuses `action-added`(+derived persisted `origin`)/`item-text-set`/`reordered`/`backlog-activated`; ONE new event `item-removed` (additive, major 1); existing `POST /api/event` gained per-type 422 validation (not rebuilt). Commits 536e813..c7f2236.
+- **Tasks 3/4/5 (status surfaces):** per-project count cockpit (fixed density), bounded waiting-on-you list (detail-less items honestly flagged), per-project drill tree with breadcrumb return, color=STATUS/icon=KIND migration (amber=needs-you only). Commits f830be4..1f0bbc4.
+- **Task 6 (My-tasks):** in-surface add/edit/keyboard-reorder/remove with write-failure revert + inline retry. Commit 536e813.
+- **Tasks 7/8 (backlog + context-card):** backlog surface with promote (`backlog-activated`, no new event); context-card consumes the sole-normative `assembleItemDetails` gate — complete decisions render background/options-with-meaning/recommendation/reply, incomplete ones render "needs enrichment" with ALL resolving buttons suppressed; all 8 `window.prompt` sites retired. Commits 58db4d9..c9a34a1 (salvaged from an orphaned builder; 4 defects found and fixed in the salvage audit).
+- **Task 9 (emit discipline):** `workstreams-emit.sh` operator-facing raises carry per-kind context payloads as sibling `item-details-set` validated through the sole-normative module (never blocks); contract documented in `rules/workstreams-state.md` + cross-ref. Commits 335e99a..58b23c2 (salvaged; 1 defect fixed).
+- **Tasks 10/11 (polish + integration):** single overlay-dismiss stack, aria-labels, rename sweep, amber re-key, row/card parity, idempotent promote retry; full integration battery + 10-step browser journey. Commits e1b5fad..67a09a3.
+Backlog items absorbed: none (per header).
+
+### 2. Design Decisions & Plan Deviations
+- ADR 055 records the re-conception (foundation kept; presentation re-conceived; density principle; context gate + emit contract).
+- Plan-time review corrections C1–C6/I1–I6 (In-flight section) were binding and shrank the build (event reuse instead of a new `task-*` family; endpoint reuse; phantom states dropped).
+- Two builder sessions died mid-build (session interruption); their uncommitted work was preserved as labeled WIP commits and salvaged by fresh builders under review-before-trust discipline — 5 real defects in the orphaned work were caught and fixed by the salvage audits.
+- One accepted deviation: a builder appended two In-flight scope lines (da5e33f) when the scope gate fired on undeclared test/evidence paths — the gate's documented option-1 remediation.
+
+### 3. Known Issues & Gotchas
+Tracked as `WS-UI-FOLLOWUPS-01` in `docs/backlog.md`: tree-toggle keyboard-focus loss; validator-offline degraded mode silent in UI (fail-closed but unexplained); duplicate "My tasks" roots in live data need a one-time reconcile; cockpit row-proliferation policy needed; minor promote edges; emit self-test has cwd-sensitivity (canonical invocation = repo copy from repo cwd; 66/66).
+
+### 4. Manual Steps Required
+- **Relaunch the Workstreams GUI** (desktop shortcut): the running server on 7733 predates this build and serves the old UI until restarted.
+- **One-time data reconcile** of the duplicate My-tasks root (`mytasks-root` vs `mytasks-operator`) — operator-supervised; the build deliberately never mutated the real state file.
+- `~/.claude/` mirror picks up the Task 9 hook automatically via session-start-auto-install once this merges to master (manual mirror copies are reverted by design until then).
+
+### 5. Testing Performed & Recommended
+Performed: state selftest 21/21 (incl. new P20); regression e2e 24/24 (T17-T23 added); responsive 29/29; emit self-test 66/66 (both schema paths); 13/13 live POST round-trips; real-browser passes by three independent agents (builders, verifiers, advocate) against isolated copies of live state; 4/4 runtime acceptance scenarios PASS with adversarial probes (mid-edit network kill, reload mid-flow, keyboard-only navigation).
+Recommended: operator smoke pass after relaunch on the REAL state file (the one surface no agent touched, by design).
+
+### 6. Cost Estimates
+None recurring — local Node GUI + bash hooks; no new services, dependencies (zod already present), or per-call costs.
