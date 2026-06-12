@@ -211,6 +211,12 @@ The review found the plan OVER-SCOPED — several proposed events already exist,
 
 Verdict: not build-ready as originally written; with these corrections the design is sound and SMALLER.
 
+### 2026-06-12 — Task 9 file scope (emit path lives in the harness hooks, not the GUI)
+- `adapters/claude-code/hooks/workstreams-emit.sh` — Task 9: decision/question emits carry the per-kind context payload (maps to the `decision-context.md` fence grammar / `item-details-set`).
+- `adapters/claude-code/hooks/decision-context-gate.sh` — Task 9 (only if needed): fence→`item-details-set` mapping completeness; no behavior change outside the context-payload path.
+- `adapters/claude-code/rules/workstreams-state.md` — Task 9: document the emit context contract (what a context-complete decision/question emission carries).
+- `adapters/claude-code/rules/decision-context.md` — Task 9 (only if needed): cross-reference the GUI gate consuming the same sole-normative schema.
+
 ## Assumptions
 - The event-sourced state library + reducer + attestation remain the sole-normative write path
   (the GUI server appends through it, never bypasses it).
