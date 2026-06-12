@@ -991,6 +991,110 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
   finally { cleanup(dir); }
 })();
 
+// ---- P20 operator-authoring end-to-end (2026-06-11, C1) --------------------
+// The My-tasks operator-authoring vertical: REUSE existing events (action-added
+// [+ origin], item-text-set, reordered, backlog-activated) + the ONE new
+// `item-removed`. Drives create → edit → reorder → remove through the real
+// append facade and asserts the reduced snapshot, plus the origin store/derive
+// rule, rejection retention (NFR-2), and idempotency.
+(function P20() {
+  const dir = freshDir(); const o = optsFor(dir);
+  try {
+    // A node to hang operator items on (a "My tasks" project root).
+    state.appendEvent({ type: 'branch-opened', node_id: 'mytasks', parent_id: null, title: 'My tasks' }, o);
+
+    // CREATE via action-added — actor forced to 'gui' by the server in prod;
+    // here we pass actor:'gui' explicitly to exercise the derive-from-actor path.
+    state.appendEvent({ type: 'action-added', node_id: 'mytasks', item_id: 't1', text: 'buy groceries', actor: 'gui' }, o);
+    // CREATE with an EXPLICIT origin (the C1 "action-added with origin:operator")
+    state.appendEvent({ type: 'action-added', node_id: 'mytasks', item_id: 't2', text: 'call plumber', origin: 'operator', actor: 'gui' }, o);
+    // An AI-emitted action-added on the same node ⇒ origin derives to 'ai'.
+    state.appendEvent({ type: 'action-added', node_id: 'mytasks', item_id: 'ai1', text: 'AI-suggested follow-up', actor: 'dispatch' }, o);
+
+    let snap = state.readState(o).snapshot;
+    let node = snap.nodes.find(function (n) { return n.node_id === 'mytasks'; });
+    const t1 = node.items.find(function (x) { return x.item_id === 't1'; });
+    const t2 = node.items.find(function (x) { return x.item_id === 't2'; });
+    const ai1 = node.items.find(function (x) { return x.item_id === 'ai1'; });
+    const created = !!t1 && t1.text === 'buy groceries';
+    const originDerivedOperator = t1.origin === 'operator';     // derived from actor=gui
+    const originExplicitOperator = t2.origin === 'operator';    // explicit origin
+    const originDerivedAi = ai1.origin === 'ai';                // derived from actor=dispatch
+
+    // EDIT via item-text-set (operator edit, actor=gui) — must NOT flip origin
+    // of an AI-created item, and edits text of an operator item.
+    state.appendEvent({ type: 'item-text-set', node_id: 'mytasks', item_id: 't1', text: 'buy groceries + milk', actor: 'gui' }, o);
+    state.appendEvent({ type: 'item-text-set', node_id: 'mytasks', item_id: 'ai1', text: 'AI follow-up (operator-edited)', actor: 'gui' }, o);
+    snap = state.readState(o).snapshot;
+    node = snap.nodes.find(function (n) { return n.node_id === 'mytasks'; });
+    const edited = node.items.find(function (x) { return x.item_id === 't1'; }).text === 'buy groceries + milk';
+    const aiOriginUnchangedAfterOperatorEdit = node.items.find(function (x) { return x.item_id === 'ai1'; }).origin === 'ai';
+
+    // REORDER via reordered — snapshot-level order hint keyed by scope.
+    state.appendEvent({ type: 'reordered', scope: 'mytasks', ordered_ids: ['t2', 't1', 'ai1'], actor: 'gui' }, o);
+    snap = state.readState(o).snapshot;
+    const reordered = snap.order && Array.isArray(snap.order['mytasks'])
+      && snap.order['mytasks'][0] === 't2' && snap.order['mytasks'][1] === 't1';
+
+    // REMOVE via item-removed — splices t2 out; t1/ai1 remain.
+    state.appendEvent({ type: 'item-removed', node_id: 'mytasks', item_id: 't2', actor: 'gui' }, o);
+    snap = state.readState(o).snapshot;
+    node = snap.nodes.find(function (n) { return n.node_id === 'mytasks'; });
+    const removed = !node.items.some(function (x) { return x.item_id === 't2'; });
+    const siblingsRemain = node.items.some(function (x) { return x.item_id === 't1'; })
+      && node.items.some(function (x) { return x.item_id === 'ai1'; });
+
+    // item-removed of an UNKNOWN item ⇒ rejected-not-applied + retained (NFR-2).
+    state.appendEvent({ type: 'item-removed', node_id: 'mytasks', item_id: 'does-not-exist', actor: 'gui' }, o);
+    snap = state.readState(o).snapshot;
+    const rejUnknownRemoved = (snap.rejections || []).some(function (r) {
+      return r.type === 'item-removed' && /item not found/.test(r.reason);
+    });
+    // item-removed on an UNKNOWN node ⇒ rejected too.
+    state.appendEvent({ type: 'item-removed', node_id: 'no-such-node', item_id: 't1', actor: 'gui' }, o);
+    snap = state.readState(o).snapshot;
+    const rejUnknownNode = (snap.rejections || []).some(function (r) {
+      return r.type === 'item-removed' && /node_id does not resolve/.test(r.reason);
+    });
+
+    // idempotency: a same-event_id re-append is a no-op (envelope layer).
+    const r1 = state.appendEvent({ event_id: 'P20-FIXED-REMOVE', type: 'item-removed', node_id: 'mytasks', item_id: 't1', actor: 'gui' }, o);
+    const r2 = state.appendEvent({ event_id: 'P20-FIXED-REMOVE', type: 'item-removed', node_id: 'mytasks', item_id: 't1', actor: 'gui' }, o);
+    const idempotent = r1.appended === true && r2.appended === false && r2.idempotentNoop === true;
+    snap = state.readState(o).snapshot;
+    node = snap.nodes.find(function (n) { return n.node_id === 'mytasks'; });
+    const t1GoneAfterIdempotentRemove = !node.items.some(function (x) { return x.item_id === 't1'; });
+
+    // envelope enforcement: item-removed missing the item locator is rejected
+    // before write (required-field validation).
+    let missingItemRejected = false;
+    try { state.appendEvent({ type: 'item-removed', node_id: 'mytasks' }, o); }
+    catch (e) { missingItemRejected = /item_id/.test(e.message); }
+
+    // schema major stays 1 (additive).
+    const majorStill1 = state.readState(o).schema_version === 1;
+    // attestation still verifies on the on-disk file.
+    const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    const v = store.verifySnapshotAttested(onDisk);
+
+    check('P20 operator-authoring e2e: create(+origin store/derive) / edit(no-origin-flip) / reorder / remove(+reject-retain+idempotent+envelope) — schema major 1, attested',
+      created && originDerivedOperator && originExplicitOperator && originDerivedAi
+        && edited && aiOriginUnchangedAfterOperatorEdit && reordered
+        && removed && siblingsRemain && rejUnknownRemoved && rejUnknownNode
+        && idempotent && t1GoneAfterIdempotentRemove && missingItemRejected
+        && majorStill1 && v.verified === true,
+      'created=' + created + ' origDerivedOp=' + originDerivedOperator
+        + ' origExplicitOp=' + originExplicitOperator + ' origDerivedAi=' + originDerivedAi
+        + ' edited=' + edited + ' aiOrigUnchanged=' + aiOriginUnchangedAfterOperatorEdit
+        + ' reordered=' + reordered + ' removed=' + removed + ' siblings=' + siblingsRemain
+        + ' rejUnknownItem=' + rejUnknownRemoved + ' rejUnknownNode=' + rejUnknownNode
+        + ' idem=' + idempotent + ' t1Gone=' + t1GoneAfterIdempotentRemove
+        + ' missItem=' + missingItemRejected + ' major1=' + majorStill1
+        + ' verified=' + v.verified);
+  } catch (e) { check('P20 operator-authoring e2e (action-added+origin / item-text-set / reordered / item-removed)', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
 process.stdout.write('\nADR-032 state library — property self-test\n');
 process.stdout.write(RESULTS.join('\n') + '\n');
 process.stdout.write('\n' + PASS + ' passed, ' + FAIL + ' failed\n');

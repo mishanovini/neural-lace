@@ -51,12 +51,20 @@
   var S = null;                 // latest snapshot { nodes, backlog, rejections, ... }
   var loaded = false;
   var activeFilter = localStorage.getItem('workstreams.activeFilter') || 'awaiting-me';
-  var focusProject = localStorage.getItem('workstreams.focusProject') || null;
-  var collapsed = loadSet('workstreams.collapsed');   // project ids the user collapsed
+  // Status-surface redesign (Tasks 3/5, 2026-06-11): the left pane is a project
+  // COCKPIT (one count-row per project) until the operator drills into ONE
+  // project, whose tree then renders bounded to that project (C4: with a
+  // persistent "← all projects" return path). drillProject persists so a
+  // reload restores the operator's place.
+  var drillProject = localStorage.getItem('workstreams.drillProject') || null;
   var collapsedRepos = loadSet('workstreams.collapsedRepos'); // repo groups the user collapsed
+  // Per-branch disclosure state in the drilled tree. Keys are
+  // '<projectId>::<branch-key>'; values 'exp' | 'col'. Branches with no entry
+  // use the default: OPEN for active branches, COLLAPSED for all-done ones.
+  var branchState = loadObj('workstreams.branchState');
   var selItem = null;           // { nodeId, itemId } currently in the detail card
   // Phase 4 — configurable windows (localStorage override, same pattern as
-  // activeFilter/focusProject above). Defaults preserve prior behavior:
+  // activeFilter/drillProject above). Defaults preserve prior behavior:
   //   localStorage 'workstreams.orphanHours'     (default 24) — stale-session threshold
   //   localStorage 'workstreams.shipRecentDays'  (default 7)  — "Recently shipped" window
   var ORPHAN_HOURS = Number(localStorage.getItem('workstreams.orphanHours')) || 24;
@@ -68,6 +76,15 @@
   }
   function saveSet(key, set) {
     try { localStorage.setItem(key, JSON.stringify(Array.from(set))); } catch (_) {}
+  }
+  function loadObj(key) {
+    try {
+      var o = JSON.parse(localStorage.getItem(key) || '{}');
+      return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+    } catch (_) { return {}; }
+  }
+  function saveObj(key, obj) {
+    try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
   }
 
   // ---- tiny DOM helpers ------------------------------------------------
@@ -94,6 +111,87 @@
   function uid(p) {
     return (p || 'g') + '-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e5).toString(36);
   }
+
+  // ---- overlay stack (I5, Task 10 — 2026-06-12) -------------------------
+  // The ONE coordinated dismiss manager for every overlay layer (item-detail
+  // modal, docs drawer, doc viewer). Replaces the two ad-hoc document-level
+  // Esc handlers + the per-overlay scrim listeners the in-flight correction
+  // retires. Invariants:
+  //   - Esc closes the TOPMOST layer only (one global keydown handler).
+  //   - Clicking a scrim closes the topmost layer that OWNS that scrim
+  //     (its own layer — never the whole stack).
+  //   - Focus is TRAPPED inside the topmost layer (Tab/Shift+Tab wrap) and
+  //     RESTORED to the opener element when the layer closes.
+  //   - The two scrim ELEMENTS (detailScrim z59, docScrim z61) remain in the
+  //     DOM for z-layering (the doc viewer dims the detail modal beneath it);
+  //     this manager is their single owner — a shared scrim stays visible
+  //     while any remaining layer still uses it.
+  var overlayStack = (function () {
+    var stack = [];               // bottom → top: { el, scrim, onClose, prevFocus, initialFocus }
+    function top() { return stack.length ? stack[stack.length - 1] : null; }
+    function find(elm) {
+      for (var i = stack.length - 1; i >= 0; i--) { if (stack[i].el === elm) return i; }
+      return -1;
+    }
+    function scrimStillNeeded(scrim) {
+      return stack.some(function (l) { return l.scrim === scrim; });
+    }
+    function focusables(root) {
+      var sel = 'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+      return Array.prototype.filter.call(root.querySelectorAll(sel), function (n) {
+        return !n.disabled && n.offsetParent !== null;
+      });
+    }
+    function push(layer) {
+      var ix = find(layer.el);
+      if (ix !== -1) return stack[ix];   // already open (SSE re-render) — keep
+                                         // stack position AND the opener focus
+      layer.prevFocus = document.activeElement;
+      stack.push(layer);
+      if (layer.scrim) layer.scrim.hidden = false;
+      layer.el.hidden = false;
+      var f = layer.initialFocus || focusables(layer.el)[0];
+      if (f && f.focus) { try { f.focus(); } catch (_) {} }
+      return layer;
+    }
+    function close(elm) {
+      var ix = find(elm);
+      if (ix === -1) return false;       // idempotent: layer not open
+      var layer = stack.splice(ix, 1)[0];
+      layer.el.hidden = true;
+      if (layer.scrim && !scrimStillNeeded(layer.scrim)) layer.scrim.hidden = true;
+      if (layer.onClose) { try { layer.onClose(); } catch (_) {} }
+      var back = layer.prevFocus;
+      if (back && back.focus && document.contains(back)) { try { back.focus(); } catch (_) {} }
+      return true;
+    }
+    // scrim-click closes ITS OWN layer — the topmost layer owning that scrim.
+    function bindScrim(scrim) {
+      scrim.addEventListener('click', function () {
+        for (var i = stack.length - 1; i >= 0; i--) {
+          if (stack[i].scrim === scrim) { close(stack[i].el); return; }
+        }
+      });
+    }
+    // the single global key handler: Esc pops the topmost layer; Tab is
+    // trapped inside it.
+    document.addEventListener('keydown', function (e) {
+      var t = top();
+      if (!t) return;
+      if (e.key === 'Escape') { e.preventDefault(); close(t.el); return; }
+      if (e.key !== 'Tab') return;
+      var f = focusables(t.el);
+      if (!f.length) return;
+      var first = f[0], last = f[f.length - 1];
+      var inside = t.el.contains(document.activeElement);
+      if (e.shiftKey && (document.activeElement === first || !inside)) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && (document.activeElement === last || !inside)) {
+        e.preventDefault(); first.focus();
+      }
+    });
+    return { push: push, close: close, bindScrim: bindScrim };
+  })();
 
   // ---- event write path (symmetric FR-11) ------------------------------
   // POST one appended event to /api/event with one retry (exp backoff), then
@@ -137,7 +235,12 @@
   function isProject(n) { return n && n.parent_id == null; }
   // Sessions / sub-branches surface only as provenance, never as a tree row.
   function isSession(n) { return n && /^(sess|sub)-/.test(n.node_id); }
-  function projectTitle(n) { return n.title || n.node_id; }
+  function projectTitle(n) {
+    // The `global` root is the cross-cutting container; "global" is cryptic on
+    // an operator-facing cockpit row, so it gets a readable display name.
+    if (n && n.node_id === 'global') return 'Cross-project';
+    return n.title || n.node_id;
+  }
 
   // WorkItems are the decision/question/action entries on a node (collectWorkItems).
   // The wire-check chain renderTree → collectWorkstreams → renderWorkstream →
@@ -179,7 +282,10 @@
     if (it.deferred || it.backlogged) return 'committed';
     return 'in-flight';
   }
-  var COMPLETE_STATES = { shipped: 1, closed: 1 };
+  // C3 (2026-06-11): the reducer produces committed / in-flight / blocked /
+  // shipped only — `closed`/`proposed` are unreachable and dropped from the
+  // v1 spine. "Done" semantics = `shipped`.
+  var COMPLETE_STATES = { shipped: 1 };
   function isComplete(it) { return !!COMPLETE_STATES[itemState(it)]; }
   // Open = the legacy "waiting" predicate: unchecked & not parked
   // (deferred/contested still count as open). Base predicate only — the
@@ -210,6 +316,37 @@
   }
   function isInFlightItem(it) {
     return itemState(it) === 'in-flight' && !isAwaitingMe(it);
+  }
+  // Status-surface redesign (Tasks 3/4/5, 2026-06-11). The WAITING tier per the
+  // plan's spine: "blocked (incl. blocked-on-operator = waiting on you)" — i.e.
+  // every unanswered Misha-ask PLUS every blocked item. A blocked item with a
+  // declared `blocked_on` dependency edge is pipeline-blocked rather than
+  // operator-blocked, but it is still STALLED — it stays in the waiting tier
+  // (its row shows the block reason so the operator sees why). This single
+  // predicate drives the cockpit "waiting" pill, the global waiting-on-you
+  // list, AND the tree's amber needs-you discipline, so the three surfaces
+  // always agree (C6: amber = needs-you/blocked ONLY).
+  function isWaitingOnYou(it) {
+    return isAwaitingMe(it) || itemState(it) === 'blocked';
+  }
+  // statusCounts — the cockpit's four lifecycle buckets (C3: derived from the
+  // states the reducer ACTUALLY produces — committed / in-flight / blocked /
+  // shipped; `proposed`/`closed` are produced by no reducer and are dropped
+  // from the v1 spine). Buckets are DISJOINT and TOTAL over the given refs:
+  //   done    = shipped
+  //   waiting = isWaitingOnYou (unanswered Misha-asks + blocked)
+  //   next    = committed (queued; incl. deferred/backlogged via itemState)
+  //   now     = in-flight (moving)
+  function statusCounts(refs) {
+    var c = { now: 0, next: 0, waiting: 0, done: 0, total: refs.length };
+    refs.forEach(function (r) {
+      var st = itemState(r.item);
+      if (st === 'shipped') c.done++;
+      else if (isWaitingOnYou(r.item)) c.waiting++;
+      else if (st === 'committed') c.next++;
+      else c.now++;                              // in-flight (the open default)
+    });
+    return c;
   }
   function nodeOpenedMs(nodeId) {
     var n = byId(nodeId);
@@ -261,7 +398,7 @@
 
   // ---- state-badge glyphs ---------------------------------------------
   var STATE_ICON = {
-    proposed: '·', committed: '◷', 'in-flight': '◐', blocked: '⏳', shipped: '✓', closed: '✓',
+    committed: '◷', 'in-flight': '◐', blocked: '⏳', shipped: '✓',
   };
   function stateIcon(st) { return STATE_ICON[st] || '◐'; }
   function kindGlyph(k) { return k === 'decision' ? '◆' : k === 'question' ? '?' : '!'; }
@@ -281,10 +418,56 @@
     return out;
   }
 
+  // ====================================================================
+  //  MY TASKS (operator-authored) — Task 6 of the status-surface redesign
+  // ====================================================================
+  // The operator's hand-authored items live as first-class WorkItems
+  // (origin === 'operator') in the SAME model the AI emits into, so they also
+  // appear in cockpit counts and the relevant project tree. They are created
+  // on a stable dedicated project root ("My tasks") via action-added with an
+  // explicit origin:'operator'; edits reuse item-text-set; reorder reuses
+  // reordered; removal uses the one new item-removed event.
+  var MYTASKS_NODE = 'mytasks-operator';
+  var MYTASKS_TITLE = 'My tasks';
+  function isOperatorItem(it) { return it && it.origin === 'operator'; }
+  // Every ACTIVE operator item across all projects, in the operator's chosen
+  // order (snapshot.order keyed by the My-tasks node scope), with un-ordered
+  // items appended in insertion order so a freshly-added task always shows.
+  // Task 7: backlogged operator items are the SEPARATE "someday" bucket — they
+  // render on the Backlog surface only, and ENTER this list via promote
+  // ("Tasks = active; backlog = someday"). Without this exclusion, promote
+  // would be meaningless (the item would already sit in My-tasks).
+  function myTaskRefs() {
+    var refs = allWorkItems().filter(function (r) {
+      return isOperatorItem(r.item) && !r.item.backlogged;
+    });
+    var order = (S && S.order && Array.isArray(S.order[MYTASKS_NODE])) ? S.order[MYTASKS_NODE] : null;
+    if (!order || !order.length) return refs;
+    var pos = {};
+    order.forEach(function (id, i) { pos[id] = i; });
+    return refs.slice().sort(function (a, b) {
+      var pa = (a.itemId in pos) ? pos[a.itemId] : (order.length + 1);
+      var pb = (b.itemId in pos) ? pos[b.itemId] : (order.length + 1);
+      return pa - pb;
+    });
+  }
+  // Ensure the dedicated My-tasks project root exists; if not, create it, then
+  // run the continuation once it's persisted. The operator never has to
+  // "create a project" — the first add lazily materializes the home node.
+  function ensureMyTasksNode(then) {
+    if (byId(MYTASKS_NODE)) { then(); return; }
+    post({ type: 'branch-opened', node_id: MYTASKS_NODE, parent_id: null, title: MYTASKS_TITLE })
+      .then(function () { then(); })
+      .catch(function () { showToast('Could not create the My-tasks list — try again.', 'err'); });
+  }
+
   // ---- filter logic ----------------------------------------------------
   function applyFilter(items, filterName) {
     switch (filterName) {
-      case 'awaiting-me':      return items.filter(function (r) { return isAwaitingMe(r.item); });
+      // Task 4 (2026-06-11): the "Waiting on you" chip is the bounded global
+      // item list — unanswered Misha-asks + blocked items (isWaitingOnYou),
+      // the same predicate the cockpit's waiting pill counts.
+      case 'awaiting-me':      return items.filter(function (r) { return isWaitingOnYou(r.item); });
       case 'in-flight':        return items.filter(function (r) { return isInFlightItem(r.item); });
       case 'blocked':          return items.filter(function (r) { return itemState(r.item) === 'blocked'; });
       case 'recently-shipped': return items.filter(function (r) { return isRecentlyShipped(r.item); });
@@ -293,20 +476,32 @@
       case 'shipped-not-deployed': return items.filter(function (r) { return isShippedNotDeployed(r.item); });
       case 'deployed':         return items.filter(function (r) { return isDeployed(r.item); });
       case 'orphaned':         return [];   // orphans are sessions, handled in renderFilteredItems
+      // Task 7: backlogged operator items live on the Backlog surface only —
+      // promote (backlog-activated) is what moves them into the active list.
+      case 'my-tasks':         return items.filter(function (r) { return isOperatorItem(r.item) && !r.item.backlogged; });
       case 'all':              return items.slice();
-      default:                 return items.filter(function (r) { return isAwaitingMe(r.item); });
+      default:                 return items.filter(function (r) { return isWaitingOnYou(r.item); });
     }
   }
   function filterCount(filterName) {
-    if (filterName === 'backlog') return backlog().filter(function (b) { return !b.activated; }).length;
+    // Task 7: the backlog count = parked node items + legacy capture entries
+    // (exactly the rows the backlog surface renders).
+    if (filterName === 'backlog') return backlogItemRefs().length + legacyBacklogEntries().length;
     if (filterName === 'orphaned') return staleSessions().length;
     return applyFilter(allWorkItems(), filterName).length;
   }
   function updateChipCounts() {
+    // C6 (Task 10): amber = needs-you/blocked ONLY. The only chip counts that
+    // may carry the amber accent are Waiting-on-you and Blocked — and only
+    // while they are non-zero (mirrors the cockpit waiting-pill accent).
+    var AMBER_CHIPS = { 'awaiting-me': 1, 'blocked': 1 };
     ['awaiting-me', 'in-flight', 'blocked', 'shipped-not-deployed', 'deployed',
-     'recently-shipped', 'orphaned', 'backlog', 'all'].forEach(function (f) {
+     'recently-shipped', 'orphaned', 'my-tasks', 'backlog', 'all'].forEach(function (f) {
       var span = filterBar.querySelector('[data-count="' + f + '"]');
-      if (span) span.textContent = filterCount(f);
+      if (!span) return;
+      var n = filterCount(f);
+      span.textContent = n;
+      span.classList.toggle('chip-warn', !!AMBER_CHIPS[f] && n > 0);
     });
     Array.prototype.forEach.call(filterBar.querySelectorAll('.chip'), function (c) {
       c.classList.toggle('active', c.getAttribute('data-filter') === activeFilter);
@@ -333,7 +528,9 @@
     filterBody.hidden = false;
     clear(filterBody);
     if (filterName === 'backlog') { renderBacklogInto(filterBody); return; }
+    if (filterName === 'my-tasks') { renderMyTasksInto(filterBody); return; }
     if (filterName === 'orphaned') { renderOrphansInto(filterBody); return; }
+    if (filterName === 'awaiting-me') { renderWaitingInto(filterBody); return; }
     var refs = applyFilter(allWorkItems(), filterName);
     if (!refs.length) {
       filterBody.appendChild(emptyMsg(filterName));
@@ -357,12 +554,14 @@
       'deployed': 'Nothing deployed yet.',
       'recently-shipped': 'Nothing shipped in the last ' + SHIP_RECENT_DAYS + ' days.',
       'orphaned': 'No orphaned work — every in-flight item has moved recently. ✓',
+      'my-tasks': 'No personal tasks yet — add one above.',
       'all': 'No work items yet.',
     };
     return el('div', 'empty', labels[filterName] || 'Nothing here.');
   }
 
-  // a single work-item row in the filtered list
+  // a single work-item row in the filtered list. C6: the kind chip is a
+  // NEUTRAL glyph+word (icon encodes kind); status badges carry the color.
   function itemRow(r) {
     var st = itemState(r.item);
     var li = el('div', 'item-row state-' + st);
@@ -375,7 +574,7 @@
     var txt = el('div', 'item-text', r.item.text || '(untitled)');
     body.appendChild(txt);
     var meta = el('div', 'item-meta');
-    meta.appendChild(el('span', 'k-' + r.item.kind, r.item.kind));
+    meta.appendChild(el('span', 'kind-chip', kindGlyph(r.item.kind) + ' ' + r.item.kind));
     meta.appendChild(el('span', 'st-badge st-' + st, st));
     if (r.item.deferred) meta.appendChild(el('span', 'st-badge st-committed', 'deferred'));
     body.appendChild(meta);
@@ -384,21 +583,697 @@
     return li;
   }
 
-  function renderBacklogInto(container) {
-    var bl = backlog().filter(function (b) { return !b.activated; });
-    if (!bl.length) { container.appendChild(el('div', 'empty', 'Backlog is empty.')); return; }
-    bl.forEach(function (b) {
-      var row = el('div', 'item-row state-committed');
-      row.appendChild(el('span', 'item-ic', '◷'));
-      var body = el('div', 'item-main');
-      body.appendChild(el('div', 'item-text', b.text || '(untitled)'));
-      if (b.context_text) body.appendChild(el('div', 'item-ctx', b.context_text));
-      var meta = el('div', 'item-meta');
-      meta.appendChild(el('span', 'st-badge st-committed', 'backlog · ' + (b.priority || '—')));
-      body.appendChild(meta);
-      row.appendChild(body);
-      container.appendChild(row);
+  // ====================================================================
+  //  WAITING ON YOU (Task 4) — the bounded global item list
+  // ====================================================================
+  // The ONLY place items render globally; naturally small (unanswered
+  // Misha-asks + blocked items). Each row is a context-complete SUMMARY:
+  // background + recommendation inline, pulled from the item's `details`.
+  // An item with empty/insufficient details is NOT painted as decision-ready
+  // — it carries a visible "context incomplete" marker instead (the full
+  // enrichment gate is Task 8; this list never presents a contextless choice
+  // as actionable).
+  function waitingSummary(it) {
+    var de = it.details;
+    if (!de || typeof de !== 'object') return null;
+    var bg = de.background || de.about || de.the_ask || de.question
+      || de.instructions || null;
+    if (!bg && de.description != null) {
+      var d = String(de.description).trim();
+      // a description that just repeats the title (or is trivially short) is
+      // not context — treat it as absent so the incomplete marker shows
+      if (d && d !== String(it.text || '').trim() && d.length > 20) bg = d;
+    }
+    var rec = null;
+    if (de.recommendation != null) {
+      rec = (typeof de.recommendation === 'object')
+        ? (((de.recommendation.option_key ? 'option ' + de.recommendation.option_key + ' — ' : ''))
+          + (de.recommendation.reasoning || '')).trim() || null
+        : String(de.recommendation);
+    }
+    if (!bg && !rec) return null;
+    return { bg: bg, rec: rec };
+  }
+  function waitingRow(r) {
+    var it = r.item, st = itemState(it);
+    var li = el('div', 'item-row wait-row state-' + st);
+    li.setAttribute('data-node', r.nodeId);
+    li.setAttribute('data-item', r.itemId);
+    var ki = el('span', 'ti-kind-ic wi-kind-ic', kindGlyph(it.kind));
+    ki.title = it.kind || 'action';
+    li.appendChild(ki);
+    var body = el('div', 'item-main');
+    body.appendChild(el('div', 'item-text', it.text || '(untitled)'));
+    // Row/card parity (Task 10): for operator-asks the incomplete marker is
+    // keyed to the SERVER-derived `context_state` (the sole-normative
+    // assembler) via the SAME contextGateBlocks predicate the detail card
+    // uses — never the prose heuristic, so the row and the card can no longer
+    // disagree about who is gated. waitingSummary stays as the DISPLAY
+    // composer for the inline background/recommendation text. Non-asks
+    // (blocked plain actions) carry no context_state; their marker falls back
+    // to summary presence (they are never decision-gated by the card either).
+    var sum = waitingSummary(it);
+    var gated = isMishaAsk(it) ? contextGateBlocks(it) : !sum;
+    if (!gated && sum) {
+      var ctx = el('div', 'wait-ctx');
+      if (sum.bg) ctx.appendChild(el('div', 'wait-bg', String(sum.bg)));
+      if (sum.rec) ctx.appendChild(el('div', 'wait-rec', '→ ' + sum.rec));
+      body.appendChild(ctx);
+    } else {
+      var inc = el('span', 'ctx-incomplete-badge', 'context incomplete — needs enrichment');
+      inc.title = 'This item lacks the embedded context (background / options / '
+        + 'recommendation) needed to act on it cold. Open it for whatever detail exists.';
+      body.appendChild(inc);
+    }
+    var meta = el('div', 'item-meta');
+    meta.appendChild(el('span', 'kind-chip', kindGlyph(it.kind) + ' ' + it.kind));
+    meta.appendChild(el('span', 'st-badge st-' + st,
+      st === 'blocked' ? ('blocked' + (it.blocked_on ? ' on ' + it.blocked_on : '')) : 'waiting on you'));
+    if (it.deferred) meta.appendChild(el('span', 'st-badge st-committed', 'deferred'));
+    body.appendChild(meta);
+    li.appendChild(body);
+    li.addEventListener('click', function () { openDetailModal(r.nodeId, r.itemId); });
+    return li;
+  }
+  function renderWaitingInto(container) {
+    var refs = applyFilter(allWorkItems(), 'awaiting-me');
+    if (!refs.length) { container.appendChild(emptyMsg('awaiting-me')); return; }
+    var byProj = {};
+    refs.forEach(function (r) { (byProj[r.projectId] = byProj[r.projectId] || []).push(r); });
+    Object.keys(byProj).forEach(function (pid) {
+      container.appendChild(el('div', 'list-group-head',
+        projectTitle(byId(pid) || { title: pid })));
+      byProj[pid].forEach(function (r) { container.appendChild(waitingRow(r)); });
     });
+  }
+
+  // Backlog surface render (Task 7) — same edit pattern as My-tasks
+  // (in-surface "+ add", inline edit, remove, I3 revert+retry) PLUS a
+  // promote-to-task affordance per row. Backlog = "someday"; promoted =
+  // active/Next (leaves this view, lands in My-tasks + the activated node's
+  // Next count).
+  function renderBacklogInto(container) {
+    // --- always-present "+ add" input (in-surface, never a native prompt) ---
+    var addRow = el('div', 'mytasks-add');
+    var addInput = el('input', 'mytasks-add-input');
+    addInput.type = 'text';
+    addInput.placeholder = 'Capture a "someday" item and press Enter…';
+    addInput.setAttribute('aria-label', 'new backlog item text');
+    var addBtn = el('button', 'btn-go mytasks-add-btn', '+ add');
+    addBtn.setAttribute('aria-label', 'add backlog item');
+    function clearFail() {
+      addRow.classList.remove('save-failed');
+      var rn = addRow.querySelector('.retry-note'); if (rn) rn.remove();
+    }
+    function submitAdd() {
+      var text = (addInput.value || '').trim();
+      if (!text) { showToast('Type the backlog item first.', 'err'); addInput.focus(); return; }
+      addInput.disabled = true; addBtn.disabled = true;
+      addBacklogItem(text, {}, function () {
+        addInput.value = '';
+        addInput.disabled = false; addBtn.disabled = false;
+        addInput.focus();
+        // render() fires from the SSE state push
+      }, function () {
+        // I3 on ADD: nothing persisted — keep the text, re-enable, inline retry note.
+        addInput.disabled = false; addBtn.disabled = false;
+        addRow.classList.add('save-failed');
+        if (!addRow.querySelector('.retry-note')) {
+          addRow.appendChild(el('span', 'retry-note', 'not saved — press Enter to retry'));
+        }
+        addInput.focus();
+      });
+    }
+    addInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); clearFail(); submitAdd(); }
+    });
+    addBtn.addEventListener('click', function () { clearFail(); submitAdd(); });
+    addRow.appendChild(addInput);
+    addRow.appendChild(addBtn);
+    container.appendChild(addRow);
+
+    // --- parked rows (editable) + legacy capture entries (promote-only) ---
+    var refs = backlogItemRefs();
+    var legacy = legacyBacklogEntries();
+    if (!refs.length && !legacy.length) {
+      container.appendChild(el('div', 'empty', 'Backlog is empty — capture "someday" work above.'));
+      return;
+    }
+    var listEl = el('div', 'mytasks-list');
+    listEl.setAttribute('role', 'list');
+    refs.forEach(function (r) { listEl.appendChild(backlogRow(r)); });
+    legacy.forEach(function (b) { listEl.appendChild(legacyBacklogRow(b)); });
+    container.appendChild(listEl);
+  }
+
+  // ====================================================================
+  //  MY TASKS surface render (Task 6) — operator-owned, editable
+  // ====================================================================
+  // C5: ALL authoring is in-surface (an always-present "+ add" input + inline-
+  //     editable rows) — never a native prompt() dialog.
+  // I3: on a POST failure the optimistic change visibly REVERTS and an inline
+  //     "not saved — retry" affordance appears ON that row (not just a toast).
+  // I4: reorder via KEYBOARD (move-up / move-down controls), not drag-only.
+  function renderMyTasksInto(container) {
+    // --- always-present "+ add" input (in-surface, never a native prompt) ---
+    var addRow = el('div', 'mytasks-add');
+    var addInput = el('input', 'mytasks-add-input');
+    addInput.type = 'text';
+    addInput.placeholder = 'Add a task and press Enter…';
+    addInput.setAttribute('aria-label', 'new task text');
+    var addBtn = el('button', 'btn-go mytasks-add-btn', '+ add');
+    addBtn.setAttribute('aria-label', 'add task');
+    function submitAdd() {
+      var text = (addInput.value || '').trim();
+      if (!text) { showToast('Type the task first.', 'err'); addInput.focus(); return; }
+      var itemId = uid('task');
+      addInput.disabled = true; addBtn.disabled = true;
+      ensureMyTasksNode(function () {
+        post({ type: 'action-added', node_id: MYTASKS_NODE, item_id: itemId, text: text, origin: 'operator' },
+          'Task added')
+          .then(function () {
+            addInput.value = '';
+            addInput.disabled = false; addBtn.disabled = false;
+            addInput.focus();   // ready for the next task
+            // render() fires from the SSE state push; no manual re-render needed
+          })
+          .catch(function () {
+            // I3-style failure on ADD: the input keeps its text (nothing was
+            // persisted), is re-enabled, and an inline retry note shows.
+            addInput.disabled = false; addBtn.disabled = false;
+            addRow.classList.add('save-failed');
+            if (!addRow.querySelector('.retry-note')) {
+              var n = el('span', 'retry-note', 'not saved — press Enter to retry');
+              addRow.appendChild(n);
+            }
+            addInput.focus();
+          });
+      });
+    }
+    addInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); addRow.classList.remove('save-failed'); var rn = addRow.querySelector('.retry-note'); if (rn) rn.remove(); submitAdd(); }
+    });
+    addBtn.addEventListener('click', function () { addRow.classList.remove('save-failed'); var rn = addRow.querySelector('.retry-note'); if (rn) rn.remove(); submitAdd(); });
+    addRow.appendChild(addInput);
+    addRow.appendChild(addBtn);
+    container.appendChild(addRow);
+
+    // --- the operator's task list (in chosen order; removed items filtered) ---
+    var refs = myTaskRefs();
+    if (!refs.length) {
+      container.appendChild(el('div', 'empty', 'No personal tasks yet — add one above.'));
+      return;
+    }
+    var listEl = el('div', 'mytasks-list');
+    listEl.setAttribute('role', 'list');
+    refs.forEach(function (r, ix) {
+      listEl.appendChild(myTaskRow(r, ix, refs));
+    });
+    container.appendChild(listEl);
+  }
+
+  // One editable My-tasks row. Inline-edit on the text (contentEditable-free —
+  // a real <input> swapped in on demand so screen readers and keyboard work),
+  // a complete toggle, keyboard reorder (▲/▼), and remove (✕).
+  function myTaskRow(r, ix, refs) {
+    var st = itemState(r.item);
+    var row = el('div', 'item-row mytask-row state-' + st);
+    row.setAttribute('role', 'listitem');
+    row.setAttribute('data-node', r.nodeId);
+    row.setAttribute('data-item', r.itemId);
+
+    var ic = el('span', 'item-ic', r.item.checked ? '✓' : stateIcon(st));
+    ic.title = r.item.checked ? 'done' : st;
+    row.appendChild(ic);
+
+    // --- editable text (display span; click / Enter swaps to an input) ---
+    var body = el('div', 'item-main');
+    var txt = el('div', 'item-text mytask-text', r.item.text || '(untitled)');
+    txt.setAttribute('tabindex', '0');
+    txt.setAttribute('role', 'button');
+    txt.setAttribute('aria-label', 'edit task: ' + (r.item.text || 'untitled'));
+    function beginEdit() {
+      if (row.querySelector('.mytask-edit')) return;   // already editing
+      var inp = el('input', 'mytask-edit');
+      inp.type = 'text';
+      inp.value = r.item.text || '';
+      inp.setAttribute('aria-label', 'edit task text');
+      var prevText = r.item.text || '';
+      txt.replaceWith(inp);
+      inp.focus(); inp.select();
+      var committed = false;
+      function commit() {
+        if (committed) return; committed = true;
+        var next = (inp.value || '').trim();
+        if (!next || next === prevText) {
+          // nothing to save — restore the display span unchanged
+          inp.replaceWith(txt);
+          return;
+        }
+        // optimistic: show the new text immediately, then persist
+        txt.textContent = next;
+        inp.replaceWith(txt);
+        post({ type: 'item-text-set', node_id: r.nodeId, item_id: r.itemId, text: next })
+          .then(function () { /* SSE re-render confirms */ })
+          .catch(function () {
+            // I3: REVERT the visible text and show an inline retry affordance
+            // ON this row (not only a toast).
+            txt.textContent = prevText;
+            row.classList.add('save-failed');
+            if (!row.querySelector('.retry-note')) {
+              var retry = el('button', 'retry-note retry-btn', '↻ not saved — retry');
+              retry.setAttribute('aria-label', 'retry saving task edit');
+              retry.addEventListener('click', function (e) {
+                e.stopPropagation();
+                row.classList.remove('save-failed'); retry.remove();
+                // re-enter edit with the attempted (reverted-from) value
+                beginEditWith(next);
+              });
+              row.appendChild(retry);
+            }
+          });
+      }
+      function cancel() {
+        if (committed) return; committed = true;
+        inp.replaceWith(txt);
+      }
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+      });
+      inp.addEventListener('blur', commit);
+    }
+    function beginEditWith(seed) {
+      // open the editor pre-filled with a retry value
+      var inp = el('input', 'mytask-edit');
+      inp.type = 'text'; inp.value = seed; inp.setAttribute('aria-label', 'edit task text');
+      var prevText = r.item.text || '';
+      txt.replaceWith(inp); inp.focus(); inp.select();
+      var committed = false;
+      function commit() {
+        if (committed) return; committed = true;
+        var next = (inp.value || '').trim();
+        if (!next) { inp.replaceWith(txt); txt.textContent = prevText; return; }
+        txt.textContent = next; inp.replaceWith(txt);
+        post({ type: 'item-text-set', node_id: r.nodeId, item_id: r.itemId, text: next })
+          .catch(function () {
+            txt.textContent = prevText; row.classList.add('save-failed');
+            if (!row.querySelector('.retry-note')) {
+              var retry = el('button', 'retry-note retry-btn', '↻ not saved — retry');
+              retry.addEventListener('click', function (e) { e.stopPropagation(); row.classList.remove('save-failed'); retry.remove(); beginEditWith(next); });
+              row.appendChild(retry);
+            }
+          });
+      }
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); commit(); } else if (e.key === 'Escape') { e.preventDefault(); committed = true; inp.replaceWith(txt); } });
+      inp.addEventListener('blur', commit);
+    }
+    txt.addEventListener('click', beginEdit);
+    txt.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); beginEdit(); } });
+    body.appendChild(txt);
+
+    var meta = el('div', 'item-meta');
+    meta.appendChild(el('span', 'st-badge st-' + st, st));
+    meta.appendChild(el('span', 'origin-badge', 'mine'));
+    body.appendChild(meta);
+    row.appendChild(body);
+
+    // --- controls: complete · reorder (▲/▼, keyboard) · remove ---
+    var ctrls = el('div', 'mytask-ctrls');
+
+    var doneBtn = el('button', 'mytask-ctrl ctrl-done', r.item.checked ? '↺' : '✓');
+    doneBtn.setAttribute('aria-label', r.item.checked ? 'reopen task' : 'mark task done');
+    doneBtn.title = r.item.checked ? 'reopen' : 'mark done';
+    doneBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (r.item.checked) {
+        post({ type: 'item-unchecked', node_id: r.nodeId, item_id: r.itemId }, 'Reopened');
+      } else {
+        post({ type: 'action-done', node_id: r.nodeId, item_id: r.itemId }, 'Done');
+      }
+    });
+    ctrls.appendChild(doneBtn);
+
+    var upBtn = el('button', 'mytask-ctrl ctrl-up', '▲');
+    upBtn.setAttribute('aria-label', 'move task up');
+    upBtn.title = 'move up';
+    upBtn.disabled = ix === 0;
+    upBtn.addEventListener('click', function (e) { e.stopPropagation(); reorderMyTask(refs, ix, ix - 1); });
+    ctrls.appendChild(upBtn);
+
+    var downBtn = el('button', 'mytask-ctrl ctrl-down', '▼');
+    downBtn.setAttribute('aria-label', 'move task down');
+    downBtn.title = 'move down';
+    downBtn.disabled = ix === refs.length - 1;
+    downBtn.addEventListener('click', function (e) { e.stopPropagation(); reorderMyTask(refs, ix, ix + 1); });
+    ctrls.appendChild(downBtn);
+
+    var rmBtn = el('button', 'mytask-ctrl ctrl-remove', '✕');
+    rmBtn.setAttribute('aria-label', 'remove task');
+    rmBtn.title = 'remove';
+    rmBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      post({ type: 'item-removed', node_id: r.nodeId, item_id: r.itemId }, 'Removed')
+        .catch(function () {
+          // I3: removal failed — the row stays (item not actually gone) and an
+          // inline retry note appears.
+          row.classList.add('save-failed');
+          if (!row.querySelector('.retry-note')) {
+            var retry = el('button', 'retry-note retry-btn', '↻ not removed — retry');
+            retry.addEventListener('click', function (ev) { ev.stopPropagation(); row.classList.remove('save-failed'); retry.remove(); rmBtn.click(); });
+            row.appendChild(retry);
+          }
+        });
+    });
+    ctrls.appendChild(rmBtn);
+
+    row.appendChild(ctrls);
+    return row;
+  }
+
+  // Keyboard/button reorder — recompute the full ordered_ids list with the item
+  // moved from `from` to `to`, then persist a single `reordered` event scoped to
+  // the My-tasks node. On failure the SSE state is unchanged so the list snaps
+  // back to the persisted order on the next render (the optimistic move is the
+  // re-render driven by the SSE push, never a local mutation we'd have to undo).
+  function reorderMyTask(refs, from, to) {
+    if (to < 0 || to >= refs.length || from === to) return;
+    var ids = refs.map(function (r) { return r.itemId; });
+    var moved = ids.splice(from, 1)[0];
+    ids.splice(to, 0, moved);
+    post({ type: 'reordered', scope: MYTASKS_NODE, ordered_ids: ids }, 'Reordered')
+      .catch(function () { showToast('Reorder not saved — try again.', 'err'); });
+  }
+
+  // ====================================================================
+  //  BACKLOG surface (Task 7) — operator-owned "someday" bucket
+  // ====================================================================
+  // Same edit pattern as My-tasks (C5: in-surface forms only; I3: visible
+  // revert + inline retry on write failure) PLUS promote-to-task.
+  //
+  // Data model (existing events ONLY — C1 is binding, no new event types):
+  //   - A backlog row is a first-class WorkItem parked with the EXISTING
+  //     `backlogged` flag (set by item-backlogged; cleared by item-unchecked).
+  //     itemState() maps backlogged → 'committed', and isWaiting() excludes
+  //     backlogged items, so the "someday" bucket never pollutes the waiting /
+  //     in-flight surfaces. New rows live on a dedicated "Backlog" root.
+  //   - Edit  = item-text-set (the existing text-repair event).
+  //   - Remove = item-removed (the one C1-added event, shared with My-tasks).
+  //   - PROMOTE = the EXISTING `backlog-activated` event (C1 — there is NO
+  //     item-promoted). backlog-activated flips membership on the snap.backlog
+  //     entry (b.activated=true → leaves the backlog view) and opens the
+  //     FR-22 handoff root carrying the item's text. The promote flow then
+  //     places the actual task on that activated root (action-added with
+  //     origin:'operator' so it shows in My-tasks, + item-committed so it
+  //     lands in the NEXT tier) and retires the parked source row
+  //     (item-removed). snap.backlog mirrors are created lazily AT PROMOTE
+  //     time (backlog-added with the CURRENT text) so an inline edit can
+  //     never leave a stale mirror behind.
+  //   - Legacy snap.backlog entries (pre-redesign captures with no node item)
+  //     still render — promote-only, since the event vocabulary has no
+  //     backlog-text-edit/-remove (honest limitation, fix-forward).
+  var BL_NODE = 'backlog-operator';
+  var BL_TITLE = 'Backlog';
+  function isBacklogItem(it) { return it && it.backlogged === true && !it.checked; }
+  function backlogItemRefs() {
+    return allWorkItems().filter(function (r) { return isBacklogItem(r.item); });
+  }
+  // Legacy capture entries: un-activated snap.backlog rows with NO node item
+  // (a mirror created at promote time shares its item_id with the node item,
+  // so dedupe by id keeps each backlog row rendered exactly once).
+  function legacyBacklogEntries() {
+    var nodeIds = {};
+    allWorkItems().forEach(function (r) { nodeIds[r.itemId] = 1; });
+    return backlog().filter(function (b) { return !b.activated && !nodeIds[b.item_id]; });
+  }
+  function ensureBacklogNode(then, onFail) {
+    if (byId(BL_NODE)) { then(); return; }
+    post({ type: 'branch-opened', node_id: BL_NODE, parent_id: null, title: BL_TITLE })
+      .then(function () { then(); })
+      .catch(function () {
+        showToast('Could not create the Backlog list — try again.', 'err');
+        // I3: the caller's failure path must run (re-enable the add input +
+        // inline retry note) — a failed node-create is a failed add.
+        if (onFail) onFail();
+      });
+  }
+  // postSeq — append a fixed sequence of events in order. Every event carries a
+  // PRE-GENERATED event_id, so a retry that re-posts the SAME array is safe:
+  // already-landed events are envelope-level idempotent no-ops (§2) and the
+  // sequence resumes at the first event that never landed.
+  function postSeq(events, okMsg) {
+    events.forEach(function (ev) {
+      if (!ev.event_id) ev.event_id = uid('gui');
+      if (!ev.ts) ev.ts = new Date().toISOString();
+    });
+    var p = Promise.resolve();
+    events.forEach(function (ev) {
+      p = p.then(function () { return post(ev); });
+    });
+    return p.then(function () { if (okMsg) showToast(okMsg, 'ok'); });
+  }
+  // addBacklogItem — the ONE add path (used by the surface "+ add" input AND
+  // the header "+ capture" form, so every captured item is equally editable).
+  // opts: { priority: 'high'|'medium'|'low'|null, context: string|null }
+  var PRIORITY_NUM = { high: 2, medium: 3, low: 4 };
+  function addBacklogItem(text, opts, onOk, onFail) {
+    opts = opts || {};
+    var itemId = uid('bl');
+    var events = [
+      { type: 'action-added', node_id: BL_NODE, item_id: itemId, text: text, origin: 'operator' },
+      { type: 'item-backlogged', node_id: BL_NODE, item_id: itemId },
+    ];
+    if (opts.priority && PRIORITY_NUM[opts.priority]) {
+      events.push({ type: 'priority-assigned', target_id: itemId, priority: PRIORITY_NUM[opts.priority] });
+    }
+    if (opts.context && String(opts.context).trim()) {
+      events.push({ type: 'item-details-set', node_id: BL_NODE, item_id: itemId,
+                    details: { description: String(opts.context).trim() } });
+    }
+    ensureBacklogNode(function () {
+      postSeq(events, 'Captured to backlog')
+        .then(function () { if (onOk) onOk(); })
+        .catch(function () { if (onFail) onFail(); });
+    }, onFail);
+  }
+  // promoteIds — STABLE ids for a promote sequence, derived from the SOURCE
+  // item id (Task 10 polish, closing the Task-7 evidence gap): every id —
+  // the handoff node, the created task, and every event_id — is a pure
+  // function of the source item, so ANY re-attempt (the inline retry button
+  // OR a fresh promote click after an SSE re-render dropped that button)
+  // re-posts byte-identical envelopes. Already-landed events are envelope-
+  // level idempotent no-ops (§2) and the sequence resumes at the first event
+  // that never landed — a double-failure can no longer duplicate the task.
+  function promoteIds(sourceItemId) {
+    var base = 'pr-' + String(sourceItemId);
+    return {
+      actId: 'blact-' + base,
+      taskId: 'task-' + base,
+      ev: function (step) { return 'gui-' + base + '-' + step; },
+    };
+  }
+  // buildPromoteEvents — the promote-to-task sequence for a parked node item.
+  // Stable ids (promoteIds): a retry — or a rebuilt array — is an idempotent
+  // resume, never a duplicate.
+  function buildPromoteEvents(r) {
+    var text = r.item.text || '(untitled)';
+    var ids = promoteIds(r.itemId);
+    var mirror = null;
+    backlog().forEach(function (b) { if (b.item_id === r.itemId) mirror = b; });
+    var actId = (mirror && mirror.activated && mirror.activated_node)
+      ? mirror.activated_node : ids.actId;
+    var events = [];
+    if (!mirror) {
+      events.push({ type: 'backlog-added', item_id: r.itemId, tree_id: 'global',
+                    priority: 'medium', text: text, event_id: ids.ev('mirror') });
+    }
+    if (!(mirror && mirror.activated)) {
+      events.push({ type: 'backlog-activated', item_id: r.itemId, new_node_id: actId,
+                    event_id: ids.ev('activate') });
+      // a pre-existing mirror may carry stale text — repair the handoff
+      // node's title via the existing text-repair event.
+      if (mirror && mirror.text !== text) {
+        events.push({ type: 'branch-retitled', node_id: actId, title: text,
+                      event_id: ids.ev('retitle') });
+      }
+    }
+    events.push({ type: 'action-added', node_id: actId, item_id: ids.taskId, text: text,
+                  origin: 'operator', event_id: ids.ev('add') });
+    events.push({ type: 'item-committed', node_id: actId, item_id: ids.taskId,
+                  event_id: ids.ev('commit') });
+    events.push({ type: 'item-removed', node_id: r.nodeId, item_id: r.itemId,
+                  event_id: ids.ev('remove') });
+    return events;
+  }
+  function buildLegacyPromoteEvents(b) {
+    var ids = promoteIds(b.item_id);
+    var events = [
+      { type: 'backlog-activated', item_id: b.item_id, new_node_id: ids.actId,
+        event_id: ids.ev('activate') },
+      { type: 'action-added', node_id: ids.actId, item_id: ids.taskId,
+        text: b.text || '(untitled)', origin: 'operator', event_id: ids.ev('add') },
+      { type: 'item-committed', node_id: ids.actId, item_id: ids.taskId,
+        event_id: ids.ev('commit') },
+    ];
+    if (b.context_text && String(b.context_text).trim()) {
+      events.push({ type: 'item-details-set', node_id: ids.actId, item_id: ids.taskId,
+                    details: { description: String(b.context_text).trim() },
+                    event_id: ids.ev('details') });
+    }
+    return events;
+  }
+  // promote with I3 semantics: on failure the row stays (nothing left the
+  // backlog) and an inline "not promoted — retry" affordance re-posts the SAME
+  // event array (idempotent resume).
+  function runPromote(row, events) {
+    postSeq(events, 'Promoted to task')
+      .catch(function () {
+        row.classList.add('save-failed');
+        if (!row.querySelector('.retry-note')) {
+          var retry = el('button', 'retry-note retry-btn', '↻ not promoted — retry');
+          retry.setAttribute('aria-label', 'retry promoting backlog item');
+          retry.addEventListener('click', function (e) {
+            e.stopPropagation();
+            row.classList.remove('save-failed'); retry.remove();
+            runPromote(row, events);
+          });
+          row.appendChild(retry);
+        }
+      });
+  }
+
+  // attachBacklogEdit — inline text edit for a backlog row (same I3 contract
+  // as myTaskRow: optimistic display, visible REVERT + inline retry on a
+  // failed item-text-set).
+  function attachBacklogEdit(row, txt, r) {
+    function beginEditWith(seed) {
+      if (row.querySelector('.mytask-edit')) return;
+      var inp = el('input', 'mytask-edit');
+      inp.type = 'text';
+      inp.value = seed;
+      inp.setAttribute('aria-label', 'edit backlog item text');
+      var prevText = r.item.text || '';
+      txt.replaceWith(inp);
+      inp.focus(); inp.select();
+      var committed = false;
+      function commit() {
+        if (committed) return; committed = true;
+        var next = (inp.value || '').trim();
+        if (!next || next === prevText) { inp.replaceWith(txt); return; }
+        txt.textContent = next;
+        inp.replaceWith(txt);
+        post({ type: 'item-text-set', node_id: r.nodeId, item_id: r.itemId, text: next })
+          .catch(function () {
+            // I3: REVERT the visible text + inline retry ON the row.
+            txt.textContent = prevText;
+            row.classList.add('save-failed');
+            if (!row.querySelector('.retry-note')) {
+              var retry = el('button', 'retry-note retry-btn', '↻ not saved — retry');
+              retry.setAttribute('aria-label', 'retry saving backlog edit');
+              retry.addEventListener('click', function (e) {
+                e.stopPropagation();
+                row.classList.remove('save-failed'); retry.remove();
+                beginEditWith(next);
+              });
+              row.appendChild(retry);
+            }
+          });
+      }
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); committed = true; inp.replaceWith(txt); }
+      });
+      inp.addEventListener('blur', commit);
+    }
+    txt.addEventListener('click', function () { beginEditWith(r.item.text || ''); });
+    txt.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); beginEditWith(r.item.text || ''); }
+    });
+  }
+
+  // One editable backlog row: inline-editable text · priority badge ·
+  // promote-to-task (▸) · remove (✕).
+  function backlogRow(r) {
+    var row = el('div', 'item-row mytask-row bl-row state-committed');
+    row.setAttribute('role', 'listitem');
+    row.setAttribute('data-node', r.nodeId);
+    row.setAttribute('data-item', r.itemId);
+    row.appendChild(el('span', 'item-ic', '◷'));
+
+    var body = el('div', 'item-main');
+    var txt = el('div', 'item-text mytask-text', r.item.text || '(untitled)');
+    txt.setAttribute('tabindex', '0');
+    txt.setAttribute('role', 'button');
+    txt.setAttribute('aria-label', 'edit backlog item: ' + (r.item.text || 'untitled'));
+    attachBacklogEdit(row, txt, r);
+    body.appendChild(txt);
+    var de = r.item.details;
+    if (de && de.description) body.appendChild(el('div', 'item-ctx', String(de.description)));
+    var meta = el('div', 'item-meta');
+    meta.appendChild(el('span', 'st-badge st-committed', 'backlog'));
+    if (r.item.priority >= 1 && r.item.priority <= 4) {
+      meta.appendChild(el('span', 'st-badge st-committed', 'P' + r.item.priority));
+    }
+    if (isOperatorItem(r.item)) meta.appendChild(el('span', 'origin-badge', 'mine'));
+    body.appendChild(meta);
+    row.appendChild(body);
+
+    var ctrls = el('div', 'mytask-ctrls');
+    var promoteBtn = el('button', 'mytask-ctrl ctrl-promote', '▸');
+    promoteBtn.setAttribute('aria-label', 'promote to task');
+    promoteBtn.title = 'promote to task (moves to the active list / Next)';
+    promoteBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      runPromote(row, buildPromoteEvents(r));
+    });
+    ctrls.appendChild(promoteBtn);
+    var rmBtn = el('button', 'mytask-ctrl ctrl-remove', '✕');
+    rmBtn.setAttribute('aria-label', 'remove backlog item');
+    rmBtn.title = 'remove';
+    rmBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      post({ type: 'item-removed', node_id: r.nodeId, item_id: r.itemId }, 'Removed')
+        .catch(function () {
+          row.classList.add('save-failed');
+          if (!row.querySelector('.retry-note')) {
+            var retry = el('button', 'retry-note retry-btn', '↻ not removed — retry');
+            retry.addEventListener('click', function (ev) {
+              ev.stopPropagation();
+              row.classList.remove('save-failed'); retry.remove(); rmBtn.click();
+            });
+            row.appendChild(retry);
+          }
+        });
+    });
+    ctrls.appendChild(rmBtn);
+    row.appendChild(ctrls);
+    return row;
+  }
+
+  // A legacy capture entry (snap.backlog only — promote works; edit/remove
+  // need a node item the pre-redesign capture never created).
+  function legacyBacklogRow(b) {
+    var row = el('div', 'item-row bl-row bl-legacy state-committed');
+    row.appendChild(el('span', 'item-ic', '◷'));
+    var body = el('div', 'item-main');
+    body.appendChild(el('div', 'item-text', b.text || '(untitled)'));
+    if (b.context_text) body.appendChild(el('div', 'item-ctx', b.context_text));
+    var meta = el('div', 'item-meta');
+    meta.appendChild(el('span', 'st-badge st-committed', 'backlog · ' + (b.priority || '—')));
+    meta.appendChild(el('span', 'st-badge st-muted', 'legacy capture'));
+    body.appendChild(meta);
+    row.appendChild(body);
+    var ctrls = el('div', 'mytask-ctrls');
+    var promoteBtn = el('button', 'mytask-ctrl ctrl-promote', '▸');
+    promoteBtn.setAttribute('aria-label', 'promote to task');
+    promoteBtn.title = 'promote to task (moves to the active list / Next)';
+    promoteBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      runPromote(row, buildLegacyPromoteEvents(b));
+    });
+    ctrls.appendChild(promoteBtn);
+    row.appendChild(ctrls);
+    return row;
   }
 
   function sessionRow(s) {
@@ -410,7 +1285,7 @@
     meta.appendChild(el('span', 'st-badge st-blocked', 'open session'));
     meta.appendChild(el('span', 'st-badge st-committed',
       'in ' + projectTitle(byId(rootProjectOf(s.node_id)) || { title: '—' })));
-    if (s.opened_at) meta.appendChild(el('span', 'st-badge st-proposed',
+    if (s.opened_at) meta.appendChild(el('span', 'st-badge st-muted',
       'opened ' + new Date(s.opened_at).toLocaleDateString()));
     body.appendChild(meta);
     row.appendChild(body);
@@ -469,104 +1344,119 @@
     if (PROJECT_REPOS_MULTI[projNode.node_id]) return PROJECT_REPOS_MULTI[projNode.node_id];
     return [PROJECT_REPO_DEFAULT[projNode.node_id] || 'Other'];
   }
-  // Repo-level rollup: sum the awaiting / in-flight / blocked across the repo's
-  // projects, for the repo header badge.
-  function repoRollup(projNodes) {
-    var awaiting = 0, inflight = 0, blocked = 0;
-    projNodes.forEach(function (p) {
-      var r = projectRollup(p.node_id);
-      awaiting += r.awaiting; inflight += r.inflight; blocked += r.blocked;
+  // ---- cockpit data (Task 3) -------------------------------------------
+  // One entry per ROOT that owns visible work items — grouped from the SAME
+  // allWorkItems() the right-pane filters read, so cockpit counts always match
+  // the reduced state the filters show — PLUS item-less proper projects so an
+  // empty project still shows a row rather than vanishing. Account-container
+  // roots (NON_PROJECT_NODES) appear only when they actually own items (the
+  // `global` cross-cutting container does; the bare account-name nodes don't).
+  function cockpitRows() {
+    var byProj = {};
+    allWorkItems().forEach(function (r) {
+      (byProj[r.projectId] = byProj[r.projectId] || []).push(r);
     });
-    return { awaiting: awaiting, inflight: inflight, blocked: blocked };
-  }
-  // Per-project rollup: counts of awaiting / in-flight across the project's
-  // (non-session) descendant items, for the header badge.
-  function projectRollup(projId) {
-    var refs = projectItems(projId);
-    // Residual 2 (2026-06-10): badges use the SAME partition as the filter
-    // chips (isAwaitingMe / isInFlightItem) so the left-pane numbers match
-    // what the corresponding chip lists.
-    var awaiting = refs.filter(function (r) { return isAwaitingMe(r.item); }).length;
-    var inflight = refs.filter(function (r) { return isInFlightItem(r.item); }).length;
-    var blocked = refs.filter(function (r) { return itemState(r.item) === 'blocked'; }).length;
-    return { awaiting: awaiting, inflight: inflight, blocked: blocked, total: refs.length };
-  }
-  // Every non-session descendant item of a project (items on the project node
-  // plus items on any workstream/sub nodes under it).
-  function projectItems(projId) {
-    var out = collectWorkItems(projId);
-    collectWorkstreams(projId).forEach(function (ws) {
-      out = out.concat(collectWorkItems(ws.node_id));
-      childrenOf(ws.node_id).filter(function (c) { return !isSession(c); }).forEach(function (sub) {
-        out = out.concat(collectWorkItems(sub.node_id));
+    var ids = Object.keys(byProj);
+    projects().forEach(function (p) {
+      if (ids.indexOf(p.node_id) === -1) ids.push(p.node_id);
+    });
+    return ids
+      .map(function (id) { return byId(id); })
+      .filter(function (n) {
+        if (!n) return false;
+        if (NON_PROJECT_NODES[n.node_id] && !(byProj[n.node_id] || []).length) return false;
+        return true;
+      })
+      .map(function (n) {
+        return { projectId: n.node_id, node: n, refs: byProj[n.node_id] || [],
+                 counts: statusCounts(byProj[n.node_id] || []) };
+      })
+      .sort(function (a, b) {
+        // bottleneck-first: most-waiting projects rise to the top of their repo
+        if (b.counts.waiting !== a.counts.waiting) return b.counts.waiting - a.counts.waiting;
+        if (b.counts.now !== a.counts.now) return b.counts.now - a.counts.now;
+        return projectTitle(a.node).localeCompare(projectTitle(b.node));
       });
-    });
-    return out;
   }
 
-  // renderTree — repo-grouped renderer (wire-check entry point). Renders the
-  // top tier (GitHub repo) → Project → (Workstream →) WorkItem → Sub-task.
+  // renderTree — left-pane orchestrator (wire-check entry point). Renders the
+  // project COCKPIT (Task 3: one fixed-density count-row per project) by
+  // default, or the DRILLED single-project tree (Task 5) once a row is
+  // clicked. Density principle (load-bearing): COUNTS globally — O(projects),
+  // never O(items); ITEMS render only in one bounded slice (the drilled
+  // project's tree, or the right-pane waiting list).
   function renderTree() {
     clear(treeCanvas);
-    var projs = projects();
-    if (!projs.length) {
+    var rows = cockpitRows();
+    if (!rows.length) {
       treeState.hidden = false;
       treeState.textContent = loaded ? 'No projects yet.' : 'Loading…';
       return;
     }
     treeState.hidden = true;
-    // pick the focus project (most-recently-clicked, else the one with the most
-    // awaiting items) if none is recorded
-    if (!focusProject || !byId(focusProject)) {
-      var best = null, bestN = -1;
-      projs.forEach(function (p) {
-        var r = projectRollup(p.node_id);
-        if (r.awaiting > bestN) { bestN = r.awaiting; best = p.node_id; }
-      });
-      focusProject = best || projs[0].node_id;
-    }
-    // group projects by their owning repo(s) — a dual-remoted project (neural-lace)
-    // appears under every repo that holds it.
-    var byRepo = {};
-    projs.forEach(function (p) {
-      reposOf(p).forEach(function (r) { (byRepo[r] = byRepo[r] || []).push(p); });
-    });
-    var repos = REPO_ORDER.filter(function (r) { return byRepo[r]; }).concat(
-      Object.keys(byRepo).filter(function (r) { return REPO_ORDER.indexOf(r) === -1; }).sort());
-    // totals over UNIQUE projects (a dual-remoted project must not double-count)
-    var totAwait = 0, totFlight = 0;
-    projs.forEach(function (p) {
-      var r = projectRollup(p.node_id); totAwait += r.awaiting; totFlight += r.inflight;
-    });
-    repos.forEach(function (repo) {
-      var rProjs = byRepo[repo];
-      treeCanvas.appendChild(renderRepoGroup(repo, rProjs, repoRollup(rProjs), !collapsedRepos.has(repo)));
-    });
-    treeSummary.textContent = totAwait + ' awaiting · ' + totFlight + ' in flight';
+    if (drillProject && byId(drillProject)) renderDrill(rows);
+    else { drillProject = null; renderCockpit(rows); }
+    var tot = statusCounts(allWorkItems());
+    treeSummary.textContent = tot.waiting + ' waiting · ' + tot.now + ' now · '
+      + tot.next + ' next · ' + tot.done + ' done';
     renderOrphanSection();
   }
 
-  // renderRepoGroup — the top tier. A collapsible repo header with its projects
-  // nested inside a guide-rail container. Repos are expanded by default.
-  function renderRepoGroup(repo, projNodes, roll, expanded) {
+  // setDrill — enter/leave the single-project drill (cockpit click → drilled
+  // tree; C4: the "← all projects" breadcrumb calls setDrill(null)).
+  function setDrill(projId) {
+    drillProject = projId || null;
+    if (drillProject) localStorage.setItem('workstreams.drillProject', drillProject);
+    else localStorage.removeItem('workstreams.drillProject');
+    renderTree();
+  }
+
+  // ---- COCKPIT (Task 3) -------------------------------------------------
+  var CK_COLS = ['now', 'next', 'waiting', 'done'];
+  var CK_TITLES = {
+    now: 'in flight now', next: 'queued next',
+    waiting: 'waiting on you / blocked', done: 'done (shipped)',
+  };
+  function renderCockpit(rows) {
+    // column-header row — the number pills below align to the same fixed grid
+    var head = el('div', 'ck-cols');
+    head.setAttribute('aria-hidden', 'true');
+    head.appendChild(el('span', 'ck-col-name', ''));
+    CK_COLS.forEach(function (c) { head.appendChild(el('span', 'ck-col', c)); });
+    treeCanvas.appendChild(head);
+    // group rows by owning repo (a dual-remoted project appears under each)
+    var byRepo = {};
+    rows.forEach(function (row) {
+      reposOf(row.node).forEach(function (rp) { (byRepo[rp] = byRepo[rp] || []).push(row); });
+    });
+    var repos = REPO_ORDER.filter(function (r) { return byRepo[r]; }).concat(
+      Object.keys(byRepo).filter(function (r) { return REPO_ORDER.indexOf(r) === -1; }).sort());
+    repos.forEach(function (repo) {
+      treeCanvas.appendChild(renderRepoGroup(repo, byRepo[repo], !collapsedRepos.has(repo)));
+    });
+  }
+
+  // renderRepoGroup — collapsible repo section of cockpit rows. Neutral gray
+  // structure per C6; the only accent is the amber waiting chip when > 0.
+  function renderRepoGroup(repo, rowList, expanded) {
     var wrap = el('div', 'repo-group' + (expanded ? ' exp' : ''));
-    var head = el('div', 'repo-head');
+    var head = el('button', 'repo-head');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     head.appendChild(el('span', 'twisty', expanded ? '▼' : '▶'));
     head.appendChild(el('span', 'repo-title', repo));
-    var badge = el('span', 'repo-badge');
-    if (roll.awaiting) badge.appendChild(el('span', 'b-await', roll.awaiting + ' awaiting'));
-    if (roll.inflight) badge.appendChild(el('span', 'b-flight', roll.inflight + ' in-flight'));
-    if (roll.blocked) badge.appendChild(el('span', 'b-block', roll.blocked + ' blocked'));
-    head.appendChild(badge);
+    var waitSum = 0;
+    rowList.forEach(function (row) { waitSum += row.counts.waiting; });
+    if (waitSum) {
+      var wchip = el('span', 'rg-wait', waitSum + ' waiting');
+      wchip.title = waitSum + ' item(s) in this repo are waiting on you';
+      head.appendChild(wchip);
+    }
     head.addEventListener('click', function () { toggleRepo(repo); });
     wrap.appendChild(head);
     if (expanded) {
-      var kids = el('div', 'tree-kids repo-kids');
-      projNodes.forEach(function (p) {
-        var pRoll = projectRollup(p.node_id);
-        var pExpanded = (p.node_id === focusProject) && !collapsed.has(p.node_id);
-        kids.appendChild(renderProject(p, pRoll, pExpanded));
-      });
+      var kids = el('div', 'ck-rows');
+      rowList.forEach(function (row) { kids.appendChild(cockpitRow(row)); });
       wrap.appendChild(kids);
     }
     return wrap;
@@ -577,6 +1467,135 @@
     renderTree();
   }
 
+  // One fixed-density cockpit row: project name + four NUMBER pills. Never
+  // renders items — a project with dozens of items shows a count, not chips.
+  function cockpitRow(row) {
+    var btn = el('button', 'ck-row' + (row.counts.waiting ? ' has-wait' : ''));
+    btn.type = 'button';
+    btn.setAttribute('data-proj', row.projectId);
+    btn.setAttribute('aria-label', 'open project ' + projectTitle(row.node) + ' — '
+      + CK_COLS.map(function (c) { return row.counts[c] + ' ' + c; }).join(', '));
+    var name = el('span', 'ck-name', projectTitle(row.node));
+    if (row.node.state === 'archived') name.appendChild(el('span', 'ck-arch', ' · archived'));
+    btn.appendChild(name);
+    CK_COLS.forEach(function (c) {
+      var n = row.counts[c];
+      var pill = el('span', 'ck-pill ck-' + c + (n ? '' : ' zero')
+        + (c === 'waiting' && n ? ' accent' : ''), String(n));
+      pill.title = n + ' ' + CK_TITLES[c];
+      btn.appendChild(pill);
+    });
+    btn.addEventListener('click', function () { setDrill(row.projectId); });
+    return btn;
+  }
+
+  // ---- DRILL (Task 5) -----------------------------------------------------
+  // Master-detail at wide widths (C4): a compact cockpit RAIL stays on the
+  // left so the operator can hop projects; at narrow widths (≤560px) the rail
+  // hides and the view is a full swap with the "← all projects" breadcrumb as
+  // the persistent way back — no dead-end drill.
+  function renderDrill(rows) {
+    var proj = byId(drillProject);
+    var mine = null;
+    rows.forEach(function (row) { if (row.projectId === drillProject) mine = row; });
+    var refs = mine ? mine.refs : [];
+    var counts = mine ? mine.counts : statusCounts([]);
+
+    var wrap = el('div', 'drill-wrap');
+    var rail = el('nav', 'ck-rail');
+    rail.setAttribute('aria-label', 'all projects');
+    rows.forEach(function (row) {
+      var b = el('button', 'ck-rail-row' + (row.projectId === drillProject ? ' sel' : ''));
+      b.type = 'button';
+      b.appendChild(el('span', 'ck-rail-name', projectTitle(row.node)));
+      if (row.counts.waiting) {
+        var w = el('span', 'ck-rail-wait', String(row.counts.waiting));
+        w.title = row.counts.waiting + ' waiting on you';
+        b.appendChild(w);
+      }
+      b.addEventListener('click', function () { setDrill(row.projectId); });
+      rail.appendChild(b);
+    });
+    wrap.appendChild(rail);
+
+    var main = el('div', 'drill-main');
+    // C4 — persistent return path + current-project header.
+    var head = el('div', 'drill-head');
+    var back = el('button', 'drill-back', '← All projects');
+    back.type = 'button';
+    back.setAttribute('aria-label', 'back to all projects');
+    back.addEventListener('click', function () { setDrill(null); });
+    head.appendChild(back);
+    head.appendChild(el('span', 'drill-title', projectTitle(proj)));
+    var hc = el('span', 'drill-counts');
+    CK_COLS.forEach(function (c) {
+      var n = counts[c];
+      var pill = el('span', 'ck-pill ck-' + c + (n ? '' : ' zero')
+        + (c === 'waiting' && n ? ' accent' : ''), n + ' ' + c);
+      pill.title = n + ' ' + CK_TITLES[c];
+      hc.appendChild(pill);
+    });
+    head.appendChild(hc);
+    // "show done" toggle (Task 5) — backed by the header's show-completed
+    // checkbox so there is ONE source of truth for done-item visibility.
+    var sd = el('button', 'drill-showdone',
+      (showCompleted.checked ? 'hide done' : 'show done') + ' (' + counts.done + ')');
+    sd.type = 'button';
+    sd.setAttribute('aria-pressed', showCompleted.checked ? 'true' : 'false');
+    sd.addEventListener('click', function () {
+      showCompleted.checked = !showCompleted.checked;
+      render();
+    });
+    head.appendChild(sd);
+    main.appendChild(head);
+
+    var treeEl = el('div', 'drill-tree');
+    // the drilled project IS the project tier — its branches nest inside the
+    // .proj container so the Repo → Project → Workstream → WorkItem hierarchy
+    // is preserved in the drill (rail = repo/projects, .proj = this project).
+    var projWrap = el('div', 'proj');
+    projWrap.classList.add('exp');
+    renderProjectTree(projWrap, proj, refs);
+    treeEl.appendChild(projWrap);
+    main.appendChild(treeEl);
+    wrap.appendChild(main);
+    treeCanvas.appendChild(wrap);
+  }
+
+  // renderProjectTree — ONE bounded project, nested with guide lines: real
+  // child branches (nodes holding items) render as branch groups; the
+  // project's DIRECT items group into derived workstreams by theme.
+  function renderProjectTree(treeEl, proj, refs) {
+    if (!refs.length) {
+      treeEl.appendChild(el('div', 'proj-empty', 'Nothing in flight'));
+      return;
+    }
+    var direct = [], byNode = {};
+    refs.forEach(function (r) {
+      if (r.nodeId === proj.node_id) direct.push(r);
+      else (byNode[r.nodeId] = byNode[r.nodeId] || []).push(r);
+    });
+    // real branch nodes first (workstream-tier nodes per collectWorkstreams
+    // order, then any other item-holding descendant), then derived themes
+    var seen = {};
+    collectWorkstreams(proj.node_id).forEach(function (ws) {
+      if (byNode[ws.node_id]) {
+        treeEl.appendChild(renderWorkstream(ws, byNode[ws.node_id]));
+        seen[ws.node_id] = 1;
+      }
+    });
+    Object.keys(byNode).forEach(function (nid) {
+      if (!seen[nid]) treeEl.appendChild(renderWorkstream(byId(nid) || { node_id: nid }, byNode[nid]));
+    });
+    renderDerivedWorkstreams(treeEl, direct);
+  }
+
+  // renderWorkstream — a REAL branch node's group (wire-check target).
+  function renderWorkstream(wsNode, refs) {
+    refs = refs || collectWorkItems(wsNode.node_id);
+    return branchGroup(wsNode.title || wsNode.node_id, refs, 'node:' + wsNode.node_id);
+  }
+
   // ---- derived Workstream tier (theme grouping of a project's items) -------
   // The data carries no `tier:workstream` nodes, so the Workstream tier is
   // DERIVED: each WorkItem is bucketed into a logical initiative by matching its
@@ -585,7 +1604,9 @@
   // (2026-06-03) until real workstream nodes are assigned. Order matters.
   var WS_THEMES = [
     [/cross-repo|cross repo/i, 'Cross-repo'],
-    [/conv(ersation)?[\s-]?tree|workstream/i, 'Conversation Tree / Workstreams'],
+    // Rename sweep (Task 10): the displayed group label is "Workstreams" —
+    // the REGEX still matches legacy "conv tree" item text (data, not copy).
+    [/conv(ersation)?[\s-]?tree|workstream/i, 'Workstreams'],
     [/dispatch/i, 'Dispatch'],
     [/sync|mirror|\bfork\b|cross-machine|both masters|\bremote\b/i, 'Cross-machine sync'],
     [/doctrine|principle/i, 'Doctrine & Principles'],
@@ -602,8 +1623,8 @@
     for (var i = 0; i < WS_THEMES.length; i++) { if (WS_THEMES[i][0].test(t)) return WS_THEMES[i][1]; }
     return 'General';
   }
-  // Bucket refs by workstreamOf; render a workstream header (.ws-head) + a nested
-  // .tree-kids of its items. Sort largest-first, "General" last.
+  // Bucket the project's direct items into derived workstreams by theme
+  // (first match wins, "General" last) and render each as a branch group.
   function renderDerivedWorkstreams(parentEl, refs) {
     if (!refs.length) return;
     var byWs = {};
@@ -613,83 +1634,63 @@
       return byWs[b].length - byWs[a].length;
     });
     names.forEach(function (w) {
-      var grp = byWs[w];
-      var ws = el('div', 'ws');
-      var head = el('div', 'ws-head');
-      head.appendChild(el('span', 'ws-title', w));
-      var allShipped = grp.every(function (r) { return isComplete(r.item); });
-      head.appendChild(el('span', 'ws-state st-' + (allShipped ? 'shipped' : 'active'),
-        allShipped ? 'shipped' : 'active'));
-      head.appendChild(el('span', 'ws-count', String(grp.length)));
-      ws.appendChild(head);
-      var kids = el('div', 'tree-kids ws-kids');
-      grp.forEach(function (r) { kids.appendChild(treeItemRow(r, 3)); });
-      ws.appendChild(kids);
-      parentEl.appendChild(ws);
+      parentEl.appendChild(branchGroup(w, byWs[w], 'ws:' + w));
     });
   }
 
-  function renderProject(p, roll, expanded) {
-    var wrap = el('div', 'proj' + (expanded ? ' exp' : ''));
-    var head = el('div', 'proj-head');
-    head.appendChild(el('span', 'twisty', expanded ? '▼' : '▶'));
-    head.appendChild(el('span', 'proj-title', projectTitle(p)));
-    var badge = el('span', 'proj-badge');
-    if (roll.awaiting) badge.appendChild(el('span', 'b-await', roll.awaiting + ' awaiting'));
-    if (roll.inflight) badge.appendChild(el('span', 'b-flight', roll.inflight + ' in-flight'));
-    if (roll.blocked) badge.appendChild(el('span', 'b-block', roll.blocked + ' blocked'));
-    if (!roll.total) badge.appendChild(el('span', 'b-none', 'nothing in flight'));
-    head.appendChild(badge);
-    head.addEventListener('click', function () { toggleProject(p.node_id); });
-    wrap.appendChild(head);
-    if (expanded) {
-      // Children nest inside a guide-rail container (.tree-kids). Real
-      // Workstream-tier nodes (if Phase-3 backfill ever lands them as nodes)
-      // render first as their own tier; the project's DIRECT items are grouped
-      // into DERIVED workstreams by theme (the Workstream tier — an initiative
-      // within a project, design-v2 §1). NO kind-grouping — Decision/Question/
-      // Action is a per-item badge, not a nesting axis.
-      var body = el('div', 'tree-kids proj-kids');
-      var workstreams = collectWorkstreams(p.node_id);
-      workstreams.forEach(function (ws) { body.appendChild(renderWorkstream(ws)); });
-      var directs = collectWorkItems(p.node_id).filter(visibleInTree);
-      renderDerivedWorkstreams(body, directs);
-      if (!directs.length && !workstreams.length) {
-        body.appendChild(el('div', 'proj-empty', 'Nothing in flight'));
-      }
-      wrap.appendChild(body);
-    }
-    return wrap;
+  // ---- branch groups (Task 5) -------------------------------------------
+  // Per-branch disclosure state. Default: OPEN for branches with open work,
+  // COLLAPSED for all-done branches (done work is muted and out of the way).
+  function branchKey(key) { return drillProject + '::' + key; }
+  function branchExpanded(key, dflt) {
+    var v = branchState[branchKey(key)];
+    return v === 'exp' ? true : v === 'col' ? false : dflt;
   }
-
-  // renderWorkstream — per-workstream rollup + its work items (wire-check target).
-  // Items + sub-tasks nest inside .tree-kids guide-rail containers (compounding
-  // indent per depth) so Workstream → WorkItem → Sub-task each sit at a distinct x.
-  function renderWorkstream(wsNode) {
-    var wrap = el('div', 'ws');
+  function toggleBranch(key, expand) {
+    branchState[branchKey(key)] = expand ? 'exp' : 'col';
+    saveObj('workstreams.branchState', branchState);
+    renderTree();
+  }
+  // branchGroup — one branch row + its nested items. Branch rows carry: a
+  // FOCUSABLE disclosure twisty (a real <button> with aria-expanded, so the
+  // keyboard can expand/collapse), an open-count badge, and an amber
+  // needs-you dot when anything inside waits on the operator (C6: amber is
+  // the ONLY thing that pops). Done branches are collapsed by default;
+  // explicitly expanding one reveals its items even while "show done" is off.
+  function branchGroup(title, refs, key) {
+    var open = refs.filter(function (r) { return !isComplete(r.item); });
+    var needs = refs.some(function (r) { return isWaitingOnYou(r.item); });
+    var allDone = refs.length > 0 && open.length === 0;
+    var expanded = branchExpanded(key, !allDone);
+    var grp = el('div', 'ws' + (allDone ? ' ws-done' : ''));
     var head = el('div', 'ws-head');
-    head.appendChild(el('span', 'ws-title', wsNode.title || wsNode.node_id));
-    var allShipped = collectWorkItems(wsNode.node_id).every(function (r) { return isComplete(r.item); });
-    head.appendChild(el('span', 'ws-state st-' + (allShipped ? 'shipped' : 'active'),
-      allShipped ? 'shipped' : 'active'));
-    wrap.appendChild(head);
-    var body = el('div', 'tree-kids ws-kids');
-    collectWorkItems(wsNode.node_id).filter(visibleInTree).forEach(function (r) {
-      body.appendChild(treeItemRow(r, 3));
-    });
-    // sub-tasks (children of the workstream that are not sessions) nest deeper.
-    childrenOf(wsNode.node_id).filter(function (c) { return !isSession(c); }).forEach(function (sub) {
-      var subItems = collectWorkItems(sub.node_id).filter(visibleInTree);
-      if (!subItems.length) return;
-      var subHead = el('div', 'ws-subhead');
-      subHead.appendChild(el('span', 'ws-title', sub.title || sub.node_id));
-      body.appendChild(subHead);
-      var subKids = el('div', 'tree-kids');
-      subItems.forEach(function (r) { subKids.appendChild(treeItemRow(r, 4)); });
-      body.appendChild(subKids);
-    });
-    wrap.appendChild(body);
-    return wrap;
+    var tw = el('button', 'twisty', expanded ? '▼' : '▶');
+    tw.type = 'button';
+    tw.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    tw.setAttribute('aria-label', (expanded ? 'collapse ' : 'expand ') + title);
+    tw.addEventListener('click', function (e) { e.stopPropagation(); toggleBranch(key, !expanded); });
+    head.appendChild(tw);
+    head.appendChild(el('span', 'ws-title', title));
+    if (needs) {
+      var dot = el('span', 'needs-dot');
+      dot.title = 'something in here needs you';
+      head.appendChild(dot);
+    }
+    head.appendChild(el('span', 'ws-open-badge' + (open.length ? '' : ' all-done'),
+      open.length ? open.length + ' open' : '✓ done'));
+    head.addEventListener('click', function () { toggleBranch(key, !expanded); });
+    grp.appendChild(head);
+    if (expanded) {
+      var kids = el('div', 'tree-kids ws-kids');
+      var visible = refs.filter(function (r) { return allDone || visibleInTree(r); });
+      visible.forEach(function (r) { kids.appendChild(treeItemRow(r, 3)); });
+      if (!visible.length) {
+        kids.appendChild(el('div', 'proj-empty',
+          refs.length + ' done hidden — use “show done”'));
+      }
+      grp.appendChild(kids);
+    }
+    return grp;
   }
 
   // non-complete-by-default: hide shipped/closed in the tree unless "show
@@ -707,20 +1708,31 @@
 
   function treeItemRow(r, depth) {
     var st = itemState(r.item);
-    // Indent is supplied by the enclosing .tree-kids guide-rail container, not a
-    // per-depth margin class. data-depth is retained for the geometry regression.
-    var li = el('div', 'tree-item state-' + st);
+    var needs = isWaitingOnYou(r.item);
+    // C6 color migration: COLOR encodes STATUS, ICON encodes KIND. Rows are
+    // neutral gray; the amber dot/edge appears ONLY on needs-you/blocked; done
+    // gets the muted green check. Indent is supplied by the enclosing
+    // .tree-kids guide rail; data-depth is retained for the geometry regression.
+    var li = el('div', 'tree-item state-' + st + (needs ? ' needs-you' : ''));
     li.setAttribute('data-depth', String(depth));
     li.setAttribute('data-node', r.nodeId);
     li.setAttribute('data-item', r.itemId);
     if (selItem && selItem.nodeId === r.nodeId && selItem.itemId === r.itemId) li.classList.add('sel');
-    li.appendChild(el('span', 'ti-ic', stateIcon(st)));
-    // colored kind badge (decision / question / action) — parity with the
-    // right-pane .k-* chips so the type is scannable in the tree (bug #4).
-    var badge = el('span', 'ti-badge k-' + (r.item.kind || 'action'), kindLabel(r.item.kind));
-    badge.title = r.item.kind || '';
-    li.appendChild(badge);
+    var ki = el('span', 'ti-kind-ic', kindGlyph(r.item.kind));
+    ki.title = (r.item.kind || 'action') + ' (' + kindLabel(r.item.kind) + ')';
+    li.appendChild(ki);
     li.appendChild(el('span', 'ti-text', r.item.text || '(untitled)'));
+    if (st === 'shipped') {
+      var dn = el('span', 'ti-done-ic', '✓');
+      dn.title = 'done';
+      li.appendChild(dn);
+    } else if (needs) {
+      var nd = el('span', 'needs-dot');
+      nd.title = st === 'blocked'
+        ? ('blocked' + (r.item.block_reason ? ': ' + r.item.block_reason : ''))
+        : 'waiting on you';
+      li.appendChild(nd);
+    }
     li.addEventListener('click', function () { openDetailModal(r.nodeId, r.itemId); });
     return li;
   }
@@ -735,18 +1747,6 @@
         && li.getAttribute('data-item') === selItem.itemId;
       li.classList.toggle('sel', !!on);
     });
-  }
-
-  function toggleProject(projId) {
-    if (focusProject === projId && !collapsed.has(projId)) {
-      collapsed.add(projId);                      // collapse the focused project
-    } else {
-      collapsed.delete(projId);
-      focusProject = projId;                      // focus + expand
-      localStorage.setItem('workstreams.focusProject', projId);
-    }
-    saveSet('workstreams.collapsed', collapsed);
-    renderTree();
   }
 
   function renderOrphanSection() {
@@ -1153,6 +2153,191 @@
   }
 
   // ====================================================================
+  //  CONTEXT CARD + GATE (Task 8, 2026-06-11)
+  // ====================================================================
+  // The per-kind required-field templates + the incompleteness gate ALREADY
+  // exist in the sole-normative Zod module (state/decision-context-schema.js:
+  // ItemDetailsContentSchema / validateItemDetails / assembleItemDetails —
+  // assembleItemDetails returns null when the details are not self-contained).
+  // The browser cannot require() that module (zod, CommonJS, no build step),
+  // so the SERVER runs the assembler at serve time and annotates each
+  // operator-ask item with `context_state: 'complete' | 'incomplete'`
+  // (server/server.js annotateContextState). The client CONSUMES that
+  // annotation — there is deliberately NO parallel schema or second validator
+  // here (I1). The cold-read bar: could the operator decide reading ONLY this
+  // card, with zero memory of the chat? complete = yes; anything else gates.
+  function contextGateBlocks(it) {
+    if (!isMishaAsk(it)) return false;      // the gate covers decision / question / action-for-operator
+    return it.context_state !== 'complete'; // server-annotated by the sole-normative assembler
+  }
+  // First N sentences of a paragraph — the inline-essentials clamp
+  // (progressive disclosure: 1-2 sentence background inline, the full text
+  // behind the "More context" expand).
+  function firstSentences(text, n) {
+    var s = String(text == null ? '' : text).trim();
+    if (!s) return '';
+    var parts = s.match(/[^.!?]+[.!?]+(\s|$)/g);
+    if (!parts || parts.length <= n) return s;
+    var out = parts.slice(0, n).join('').trim();
+    return out.length < s.length ? out + ' …' : out;
+  }
+  function optionTitle(op, ix) {
+    if (typeof op === 'string') return op;
+    var t = '';
+    if (op.key) t += '[' + op.key + '] ';
+    t += (op.name || op.label || ('option ' + (ix + 1)));
+    return t;
+  }
+  function optionKeyOf(op, ix) {
+    if (typeof op === 'string') return op;
+    return op.key || op.name || op.label || ('option ' + (ix + 1));
+  }
+  // renderEssentialsCard — the progressive-disclosure context card for a
+  // context-COMPLETE operator-ask. Essentials inline (short background, the
+  // ask, ONE line per option with its meaning + tradeoff, the recommendation,
+  // the reply phrasing + per-option Choose affordances); the FULL existing
+  // detail renderer (renderItemDetails — about / why-not-decide-alone / links
+  // / references / envelope fields) sits behind a native "More context"
+  // disclosure. Re-style of the existing card, not a re-template (I1).
+  function renderEssentialsCard(it, nodeId, itemId, projectKey) {
+    var de = it.details || {};
+    var card = el('div', 'dc-essentials');
+    var bg = de.background || de.about;
+    if (bg) card.appendChild(el('div', 'dc-bg', firstSentences(bg, 2)));
+    var ask = de.question || de.the_ask;
+    if (ask) card.appendChild(el('div', 'dc-ask', ask));
+    var isDecision = it.kind === 'decision' || de._category === 'decision';
+    if (Array.isArray(de.options) && de.options.length) {
+      var ol = el('div', 'dc-opts');
+      de.options.forEach(function (op, ix) {
+        var line = el('div', 'dc-opt-line');
+        var main = el('div', 'dc-opt-main');
+        main.appendChild(el('span', 'dc-opt-name', optionTitle(op, ix)));
+        if (typeof op === 'object') {
+          var meaning = op.what_it_does || op.pros || '';
+          var tradeoff = op.risk || op.cons || '';
+          var bits = [];
+          if (meaning) bits.push(meaning);
+          if (tradeoff) bits.push('risk: ' + tradeoff);
+          if (op.cost) bits.push('cost: ' + op.cost);
+          if (bits.length) main.appendChild(el('span', 'dc-opt-meta', ' — ' + bits.join(' · ')));
+        }
+        line.appendChild(main);
+        // Reply affordance: choose THIS option (replaces the retired native
+        // number-entry prompt). Only on still-open decisions.
+        if (isDecision && !it.checked) {
+          var pick = el('button', 'dc-opt-choose', 'Choose');
+          pick.type = 'button';
+          pick.setAttribute('aria-label', 'choose ' + optionTitle(op, ix));
+          pick.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var k = optionKeyOf(op, ix);
+            recordDecision(nodeId, itemId, it, k, 'Chose option ' + k);
+          });
+          line.appendChild(pick);
+        }
+        ol.appendChild(line);
+      });
+      card.appendChild(ol);
+    }
+    var rec = de.recommendation;
+    if (rec != null) {
+      var recTxt = (typeof rec === 'object')
+        ? ((rec.option_key ? '[' + rec.option_key + '] ' : '') + firstSentences(rec.reasoning || '', 1))
+        : firstSentences(String(rec), 1);
+      if (recTxt) card.appendChild(el('div', 'dc-rec-line', '→ recommended: ' + recTxt));
+    }
+    if (de.reply_with) {
+      var rw = el('div', 'dc-reply-line');
+      rw.appendChild(el('span', 'dc-reply-k', 'Reply with '));
+      var code = el('code', 'det-reply-with-box');
+      code.textContent = String(de.reply_with);
+      rw.appendChild(code);
+      card.appendChild(rw);
+    }
+    // Full reasoning / links / envelope — behind the expand. Native <details>
+    // disclosure: keyboard-focusable summary, no new Esc/overlay handler (I5).
+    var more = document.createElement('details');
+    more.className = 'dc-more';
+    var sum = document.createElement('summary');
+    sum.textContent = 'More context';
+    more.appendChild(sum);
+    more.appendChild(renderItemDetails(de, projectKey, it.text));
+    card.appendChild(more);
+    return card;
+  }
+  // renderIncompletePanel — the gated state (I2). A contextless operator-ask
+  // is NEVER presented as an actionable choice: this panel replaces the card
+  // AND buildActionButtons suppresses the resolving buttons entirely.
+  function renderIncompletePanel(it, projectKey) {
+    var panel = el('div', 'dc-incomplete-panel');
+    panel.appendChild(el('div', 'dc-incomplete-h', 'context incomplete — needs enrichment'));
+    var kindWord = (it.details && it.details._category)
+      ? String(it.details._category).replace(/_/g, ' ') : (it.kind || 'item');
+    panel.appendChild(el('div', 'dc-incomplete-b',
+      'This ' + kindWord + ' lacks the embedded context (background · what each option '
+      + 'means and trades off · a recommendation · how to reply) needed to decide cold. '
+      + 'It is not actionable until the AI enriches it — resolution buttons are disabled.'));
+    var de = it.details;
+    if (de && typeof de === 'object' && Object.keys(de).length) {
+      var more = document.createElement('details');
+      more.className = 'dc-more';
+      var sum = document.createElement('summary');
+      sum.textContent = 'Show what detail exists';
+      more.appendChild(sum);
+      more.appendChild(renderItemDetails(de, projectKey, it.text));
+      panel.appendChild(more);
+    }
+    return panel;
+  }
+  // openInlineForm — the in-surface reply form (C5: every reply / resolution
+  // records via an inline form INSIDE the card — native prompt() dialogs are
+  // retired). One form at a time; Cancel removes it; no new global key or
+  // scrim handler is registered (I5 — the overlay stack is Task 10's; this
+  // lives entirely inside the existing modal).
+  function openInlineForm(container, opts) {
+    var prev = container.querySelector('.dm-form');
+    if (prev) prev.remove();
+    var wrap = el('div', 'dm-form');
+    var fieldId = uid('f');
+    var lbl = el('label', 'dm-form-label', opts.label);
+    lbl.setAttribute('for', fieldId);
+    wrap.appendChild(lbl);
+    var input = opts.multiline ? el('textarea', 'dm-form-input') : el('input', 'dm-form-input');
+    if (!opts.multiline) input.type = 'text';
+    input.id = fieldId;
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+    wrap.appendChild(input);
+    var row = el('div', 'dm-form-row');
+    var go = el('button', 'btn-go', opts.submitLabel);
+    go.type = 'button';
+    go.addEventListener('click', function () {
+      var v = String(input.value || '').trim();
+      if (opts.required && !v) {
+        showToast(opts.requiredMsg || 'Type something first.', 'err');
+        input.focus();
+        return;
+      }
+      opts.onSubmit(v);
+      wrap.remove();
+    });
+    var cancel = el('button', 'btn-neutral outline', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', function () { wrap.remove(); });
+    row.appendChild(go);
+    row.appendChild(cancel);
+    wrap.appendChild(row);
+    container.appendChild(wrap);
+    if (!opts.multiline) {
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); go.click(); }
+      });
+    }
+    input.focus();
+    return wrap;
+  }
+
+  // ====================================================================
   //  ITEM DETAIL MODAL (Phase D, 2026-06-09)
   // ====================================================================
   // openDetailModal — selection handler (wire-check target). Opens a dismissible
@@ -1194,12 +2379,28 @@
     if (host && host.opened_at) meta.appendChild(dcRow('Last activity', new Date(host.opened_at).toLocaleString()));
     dmBody.appendChild(meta);
 
-    // --- full Phase-C context (Background / ask / Options / Recommendation /
-    //     Links / references / autonomous-action fields). renderItemDetails
-    //     already handles every fence-grammar field; reuse it verbatim. -------
-    if (it.details && typeof it.details === 'object') {
+    // --- the CONTEXT CARD (Task 8) -----------------------------------------
+    // Routed through the context-completeness gate (server-annotated by the
+    // sole-normative assembler — see contextGateBlocks):
+    //   gated ask        → "context incomplete — needs enrichment", never a
+    //                      bare choice (the partial detail stays reachable
+    //                      behind a disclosure);
+    //   complete ask     → progressive-disclosure essentials card (short
+    //                      background · the ask · one line per option with
+    //                      meaning+tradeoff · recommendation · reply
+    //                      affordances) with the FULL existing renderer
+    //                      behind "More context";
+    //   everything else  → the existing full detail render, unchanged.
+    var projKey = rootProjectOf(nodeId);
+    if (contextGateBlocks(it)) {
       dmBody.appendChild(el('div', 'dc-sec-h', 'Context'));
-      dmBody.appendChild(renderItemDetails(it.details, rootProjectOf(nodeId), it.text));
+      dmBody.appendChild(renderIncompletePanel(it, projKey));
+    } else if (isMishaAsk(it) && it.context_state === 'complete') {
+      dmBody.appendChild(el('div', 'dc-sec-h', 'Context'));
+      dmBody.appendChild(renderEssentialsCard(it, nodeId, itemId, projKey));
+    } else if (it.details && typeof it.details === 'object') {
+      dmBody.appendChild(el('div', 'dc-sec-h', 'Context'));
+      dmBody.appendChild(renderItemDetails(it.details, projKey, it.text));
     }
 
     // --- provenance ------------------------------------------------------
@@ -1233,38 +2434,88 @@
     // --- context-appropriate ACTION BUTTONS ------------------------------
     buildActionButtons(dmActions, host, it, nodeId, itemId, st, cat);
 
-    // show the overlay
-    detailScrim.hidden = false;
-    detailModal.hidden = false;
-    if (dmClose && dmClose.focus) { try { dmClose.focus(); } catch (_) {} }
+    // show the overlay — routed through the coordinated overlay stack (I5).
+    // push() is idempotent: an SSE re-render while open keeps the layer's
+    // stack position and does NOT steal focus back to the close button.
+    overlayStack.push({
+      el: detailModal, scrim: detailScrim, initialFocus: dmClose,
+      onClose: function () { selItem = null; syncTreeSelection(); },
+    });
   }
 
   // closeDetailModal — dismiss the overlay and clear the selection. Safe to call
-  // when nothing is open (idempotent).
+  // when nothing is open (idempotent). Delegates to the overlay stack; when the
+  // layer was never pushed (boot-time filter switch), normalize state directly.
   function closeDetailModal() {
-    detailModal.hidden = true;
-    detailScrim.hidden = true;
-    selItem = null;
-    syncTreeSelection();
+    if (!overlayStack.close(detailModal)) {
+      detailModal.hidden = true;
+      detailScrim.hidden = true;
+      selItem = null;
+      syncTreeSelection();
+    }
   }
 
   // buildActionButtons — the context-appropriate affordances. The buttons differ
-  // by the item's kind / decision-context category, but EVERY item always gets a
-  // "Respond / ask a clarifying question" affordance (Misha's requirement 3).
+  // by the item's kind / decision-context category, but EVERY presentable item
+  // gets a "Respond / ask a clarifying question" affordance (Misha's
+  // requirement 3).
   //
-  //  decision            → Approve recommendation / Decline / Submit a decision
-  //                        (each emits `answered`, recording the chosen option in
-  //                        item-details-set so the choice is auditable)
+  // Task 8 (2026-06-11):
+  //   C5 — every reply / resolution records via an IN-SURFACE inline form
+  //        (openInlineForm) — the native prompt() dialogs are retired. The
+  //        explicit option choice lives as per-option "Choose" buttons on the
+  //        essentials card, replacing the old number-entry dialog.
+  //   I2 — when the context gate flags an operator-ask incomplete, the
+  //        resolving buttons (Approve / Choose / Decline / Answer / Mark done)
+  //        AND the lifecycle cluster are SUPPRESSED entirely — the only
+  //        affordance is the respond channel (how the operator requests
+  //        enrichment). A contextless choice can never be acted on blind.
+  //
+  //  decision            → Approve recommendation / Decline (per-option Choose
+  //                        lives on the essentials card; each resolution emits
+  //                        `answered` + records the choice via item-details-set)
   //  question            → Answer  (emits `answered` + records the answer text)
   //  action_item_for_user→ Mark done (emits `action-done`) / Decline
   //  action (generic)    → Mark done (emits `action-done`)
   //  ALWAYS              → Respond with details (emits `action-responded` — the
-  //                        item stays open/awaiting but carries your note) and
-  //                        the lifecycle controls (Block / Commit / Mark shipped
-  //                        / Mark deployed) so any work item can be tracked to
-  //                        DEPLOYED from the modal.
+  //                        item stays open/awaiting but carries your note) and,
+  //                        when not gated, the lifecycle controls (Block /
+  //                        Commit / Mark shipped / Mark deployed) so any work
+  //                        item can be tracked to DEPLOYED from the modal.
   function buildActionButtons(container, host, it, nodeId, itemId, st, cat) {
     var kind = it.kind;
+
+    // The respond channel — built first because it is the ONE affordance the
+    // gated state keeps (the enrichment-request path; action-responded keeps
+    // the item open, it never resolves a choice).
+    function appendRespond(label) {
+      var respond = el('button', 'btn-info outline', label);
+      respond.title = 'Reply with details or ask a clarifying question — keeps the item open (emits action-responded)';
+      respond.addEventListener('click', function () {
+        openInlineForm(container, {
+          label: 'Respond with details, or ask a clarifying question',
+          multiline: true, required: true,
+          requiredMsg: 'Type something first.',
+          submitLabel: 'Send response',
+          onSubmit: function (v) {
+            post({ type: 'action-responded', node_id: nodeId, item_id: itemId,
+                   response_text: v }, 'Response recorded')
+              .then(function () { /* stays open — re-render shows the response */ });
+          },
+        });
+      });
+      container.appendChild(respond);
+    }
+
+    // --- I2: the context-incomplete gate suppresses ALL resolving/lifecycle
+    //     buttons. Only the needs-enrichment note + the respond channel render.
+    if (contextGateBlocks(it)) {
+      container.appendChild(el('span', 'dm-gate-note',
+        'context incomplete — resolution disabled until this item is enriched'));
+      appendRespond('Respond / request enrichment');
+      return;
+    }
+
     // --- the "what does the user need to DECIDE/DO" cluster (context-appropriate)
     if (kind === 'decision') {
       var rec = it.details && it.details.recommendation;
@@ -1276,35 +2527,20 @@
         recordDecision(nodeId, itemId, it, chosen, 'Approved' + (recKey ? ' option ' + recKey : ''));
       });
       container.appendChild(approve);
-
-      // If the decision carries explicit options, offer one Submit button per
-      // option so the operator picks the actual choice (not just approve/decline).
-      var opts = (it.details && Array.isArray(it.details.options)) ? it.details.options : [];
-      if (opts.length) {
-        var pick = el('button', 'btn-info outline', 'Submit a decision…');
-        pick.title = 'Choose one of the listed options';
-        pick.addEventListener('click', function () {
-          var labels = opts.map(function (o, i) {
-            var k = (o && (o.key || o.name || o.label)) || ('option ' + (i + 1));
-            return (i + 1) + ') ' + k;
-          });
-          var ans = window.prompt('Which option? Enter the number:\n' + labels.join('\n'), '1');
-          if (ans == null) return;
-          var ix = parseInt(ans, 10) - 1;
-          if (isNaN(ix) || ix < 0 || ix >= opts.length) { showToast('No such option.', 'err'); return; }
-          var o = opts[ix];
-          var k = (o && (o.key || o.name || o.label)) || ('option ' + (ix + 1));
-          recordDecision(nodeId, itemId, it, k, 'Chose option ' + k);
-        });
-        container.appendChild(pick);
-      }
+      // Choosing a specific option happens on the essentials card — one
+      // labeled "Choose" button per option line (renderEssentialsCard).
 
       var decline = el('button', 'btn-warn outline', 'Decline');
       decline.title = 'Reject this decision and resolve it (emits answered)';
       decline.addEventListener('click', function () {
-        var why = window.prompt('Why decline? (optional)', '');
-        if (why === null) return;     // cancelled
-        recordDecision(nodeId, itemId, it, 'declined', 'Declined' + (why ? ': ' + why : ''));
+        openInlineForm(container, {
+          label: 'Why decline? (optional)',
+          multiline: true, required: false,
+          submitLabel: 'Confirm decline',
+          onSubmit: function (v) {
+            recordDecision(nodeId, itemId, it, 'declined', 'Declined' + (v ? ': ' + v : ''));
+          },
+        });
       });
       container.appendChild(decline);
 
@@ -1312,10 +2548,13 @@
       var answer = el('button', 'btn-go', 'Answer');
       answer.title = 'Provide your answer and resolve this question (emits answered)';
       answer.addEventListener('click', function () {
-        var a = window.prompt('Your answer:', '');
-        if (a == null) return;
-        if (!String(a).trim()) { showToast('Enter an answer first.', 'err'); return; }
-        recordDecision(nodeId, itemId, it, null, String(a).trim());
+        openInlineForm(container, {
+          label: 'Your answer',
+          multiline: true, required: true,
+          requiredMsg: 'Enter an answer first.',
+          submitLabel: 'Submit answer',
+          onSubmit: function (v) { recordDecision(nodeId, itemId, it, null, v); },
+        });
       });
       container.appendChild(answer);
 
@@ -1331,30 +2570,22 @@
         var declineA = el('button', 'btn-warn outline', 'Decline');
         declineA.title = 'Decline this ask, with a reason (recorded as your response)';
         declineA.addEventListener('click', function () {
-          var why = window.prompt('Why decline this ask?', '');
-          if (why == null) return;
-          post({ type: 'action-responded', node_id: nodeId, item_id: itemId,
-                 response_text: 'Declined: ' + (why || '(no reason given)') }, 'Declined');
+          openInlineForm(container, {
+            label: 'Why decline this ask?',
+            multiline: true, required: false,
+            submitLabel: 'Confirm decline',
+            onSubmit: function (v) {
+              post({ type: 'action-responded', node_id: nodeId, item_id: itemId,
+                     response_text: 'Declined: ' + (v || '(no reason given)') }, 'Declined');
+            },
+          });
         });
         container.appendChild(declineA);
       }
     }
 
-    // --- ALWAYS: respond-with-details / ask-a-clarifying-question --------
-    // Emits action-responded — the item stays open/awaiting (NOT a resolve), but
-    // carries the note so the operator's reply is captured even when they don't
-    // want to approve/decline yet.
-    var respond = el('button', 'btn-info outline', 'Respond / ask a question');
-    respond.title = 'Reply with details or ask a clarifying question — keeps the item open (emits action-responded)';
-    respond.addEventListener('click', function () {
-      var note = window.prompt('Respond with details, or ask a clarifying question:', '');
-      if (note == null) return;
-      if (!String(note).trim()) { showToast('Type something first.', 'err'); return; }
-      post({ type: 'action-responded', node_id: nodeId, item_id: itemId,
-             response_text: String(note).trim() }, 'Response recorded')
-        .then(function () { /* stays open — re-render to show the response */ });
-    });
-    container.appendChild(respond);
+    // --- ALWAYS (when not gated): respond-with-details ---------------------
+    appendRespond('Respond / ask a question');
 
     // --- lifecycle controls: track ANY work item to DEPLOYED -------------
     var lifeSep = el('span', 'dm-act-sep', '·');
@@ -1364,10 +2595,15 @@
       var block = el('button', 'btn-warn outline', 'Block');
       block.title = 'Mark this work blocked on a dependency / missing input';
       block.addEventListener('click', function () {
-        var reason = window.prompt('Why is this blocked?', '');
-        if (reason == null) return;
-        post({ type: 'item-blocked', node_id: nodeId, item_id: itemId, reason: reason }, 'Marked blocked')
-          .then(closeDetailModal);
+        openInlineForm(container, {
+          label: 'Why is this blocked?',
+          multiline: false, required: false,
+          submitLabel: 'Mark blocked',
+          onSubmit: function (v) {
+            post({ type: 'item-blocked', node_id: nodeId, item_id: itemId, reason: v }, 'Marked blocked')
+              .then(closeDetailModal);
+          },
+        });
       });
       container.appendChild(block);
     }
@@ -1384,11 +2620,16 @@
       var ship = el('button', 'btn-neutral outline', 'Mark shipped');
       ship.title = 'Merged / shipped (not yet deployed)';
       ship.addEventListener('click', function () {
-        var ev = window.prompt('Ship evidence (commit SHA / PR URL) — optional:', '');
-        if (ev === null) return;
-        var payload = { type: 'item-shipped', node_id: nodeId, item_id: itemId };
-        if (ev) payload.evidence = ev;
-        post(payload, 'Marked shipped').then(closeDetailModal);
+        openInlineForm(container, {
+          label: 'Ship evidence (commit SHA / PR URL) — optional',
+          multiline: false, required: false,
+          submitLabel: 'Mark shipped',
+          onSubmit: function (v) {
+            var payload = { type: 'item-shipped', node_id: nodeId, item_id: itemId };
+            if (v) payload.evidence = v;
+            post(payload, 'Marked shipped').then(closeDetailModal);
+          },
+        });
       });
       container.appendChild(ship);
     }
@@ -1396,11 +2637,16 @@
       var deploy = el('button', 'btn-go', 'Mark deployed');
       deploy.title = 'Live in production — the effort reached deployed';
       deploy.addEventListener('click', function () {
-        var ev = window.prompt('Deploy evidence (prod URL / deploy SHA) — optional:', '');
-        if (ev === null) return;
-        var payload = { type: 'item-deployed', node_id: nodeId, item_id: itemId };
-        if (ev) payload.evidence = ev;
-        post(payload, 'Marked deployed').then(closeDetailModal);
+        openInlineForm(container, {
+          label: 'Deploy evidence (prod URL / deploy SHA) — optional',
+          multiline: false, required: false,
+          submitLabel: 'Mark deployed',
+          onSubmit: function (v) {
+            var payload = { type: 'item-deployed', node_id: nodeId, item_id: itemId };
+            if (v) payload.evidence = v;
+            post(payload, 'Marked deployed').then(closeDetailModal);
+          },
+        });
       });
       container.appendChild(deploy);
     }
@@ -1478,23 +2724,14 @@
     var chip = e.target.closest('.chip');
     if (chip) setActiveFilter(chip.getAttribute('data-filter'));
   });
-  // Detail-modal dismissal: ✕ button, click-scrim, Esc. Esc here is gated on
-  // the detail modal being open AND in front of the docs modal/drawer (the docs
-  // subsystem has its own Esc handler that returns early when its modal is open;
-  // this one fires only when the detail modal is the topmost overlay).
+  // Detail-modal dismissal (I5, Task 10): ✕ button routes to closeDetailModal;
+  // Esc + scrim-click are handled by the coordinated overlay stack — the prior
+  // ad-hoc document-level Esc handler (which manually special-cased the doc
+  // viewer being stacked on top) is RETIRED. The stack's single Esc handler
+  // closes the topmost layer (doc viewer first, then this modal); clicking
+  // the detail scrim closes its own layer only.
   if (dmClose) dmClose.addEventListener('click', closeDetailModal);
-  if (detailScrim) detailScrim.addEventListener('click', closeDetailModal);
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && !detailModal.hidden) {
-      // Doc-link layering (2026-06-11): when the in-app doc viewer is stacked
-      // on top (opened from a doc link inside this modal), let ITS Esc handler
-      // close it and keep the detail modal open underneath. Second Esc then
-      // closes the detail modal.
-      var dv = $('docModal');
-      if (dv && !dv.hidden) return;
-      closeDetailModal();
-    }
-  });
+  if (detailScrim) overlayStack.bindScrim(detailScrim);
   showArchived.addEventListener('change', function () { render(); });
   if (showCompleted) showCompleted.addEventListener('change', function () { render(); });
 
@@ -1507,10 +2744,11 @@
   blSave.addEventListener('click', function () {
     var text = (blText.value || '').trim();
     if (!text) { showToast('Enter the work item text first.', 'err'); return; }
-    post({
-      type: 'backlog-added', item_id: uid('bl'), tree_id: 'global',
-      priority: blPriority.value, text: text, context_text: (blContext.value || '').trim(),
-    }, 'Captured to backlog').then(function () {
+    // Task 7: the header capture goes through the SAME add path as the backlog
+    // surface's "+ add" input, so every captured item is equally editable /
+    // removable / promotable (the old backlog-added-only path created
+    // promote-only legacy entries).
+    addBacklogItem(text, { priority: blPriority.value, context: blContext.value }, function () {
       blText.value = ''; blContext.value = ''; backlogCapture.hidden = true;
       setActiveFilter('backlog');
     });
@@ -1577,14 +2815,22 @@
     }
 
     function openDocsPanel() {
-      docsPanel.hidden = false; docScrim.hidden = false;
+      // I5 (Task 10): the drawer is an overlay-stack layer. The doc viewer
+      // shares the same scrim element (z-layering); the stack keeps the scrim
+      // visible while either layer remains open.
+      overlayStack.push({ el: docsPanel, scrim: docScrim, initialFocus: docsFilter });
       if (docsCache) { renderDocsPanel(); return; }
       docsBody.innerHTML = '<p class="muted">Loading docs…</p>';
       fetch('/api/docs').then(function (r) { return r.json(); }).then(function (j) {
         docsCache = (j && j.projects) || {}; renderDocsPanel();
       }).catch(function () { docsBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
     }
-    function closeDocsPanel() { docsPanel.hidden = true; if (docModal.hidden) docScrim.hidden = true; }
+    function closeDocsPanel() {
+      if (!overlayStack.close(docsPanel)) {
+        docsPanel.hidden = true;
+        if (docModal.hidden) docScrim.hidden = true;
+      }
+    }
 
     function buildDocTree(files) {
       var root = { dirs: {}, files: [] };
@@ -1691,7 +2937,13 @@
       curDoc = { project: project, path: relPath };
       docTitle.textContent = project + ' › ' + relPath;
       docBody.innerHTML = '<p class="muted">Loading…</p>';
-      docModal.hidden = false; docScrim.hidden = false;
+      // I5 (Task 10): the viewer stacks ABOVE whatever opened it (the docs
+      // drawer or the item-detail modal — z61/62 over z59/60); Esc/scrim
+      // close the viewer FIRST, then the layer beneath, via the stack.
+      overlayStack.push({
+        el: docModal, scrim: docScrim, initialFocus: docClose || docOpenEditor,
+        onClose: function () { curDoc = null; },
+      });
       fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(relPath))
         .then(function (r) { return r.json(); })
         .then(function (j) {
@@ -1700,7 +2952,12 @@
         })
         .catch(function () { docBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
     }
-    function closeDocModal() { docModal.hidden = true; curDoc = null; if (docsPanel.hidden) docScrim.hidden = true; }
+    function closeDocModal() {
+      if (!overlayStack.close(docModal)) {
+        docModal.hidden = true; curDoc = null;
+        if (docsPanel.hidden) docScrim.hidden = true;
+      }
+    }
 
     // Expose the in-GUI viewer to the item-detail modal's doc links (2026-06-11):
     // linkifyDocs/openDocSmart open docs IN-APP through this bridge.
@@ -1717,12 +2974,11 @@
         .then(function (j) { showToast(j && j.ok ? 'opened in editor' : ('open failed: ' + ((j && j.error) || '')), j && j.ok ? 'ok' : 'err'); })
         .catch(function () { showToast('open failed — server unreachable', 'err'); });
     });
-    docScrim.addEventListener('click', function () { closeDocModal(); closeDocsPanel(); });
-    document.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape') return;
-      if (!docModal.hidden) { closeDocModal(); return; }
-      if (!docsPanel.hidden) closeDocsPanel();
-    });
+    // I5 (Task 10): scrim + Esc dismissal route through the overlay stack —
+    // the docs subsystem's own document-level Esc handler is RETIRED, and a
+    // docScrim click now closes its OWN topmost layer (the viewer when it is
+    // stacked over the drawer), not the whole stack.
+    overlayStack.bindScrim(docScrim);
   })();
 
   // ---- SSE connection (read half of the file contract) -----------------

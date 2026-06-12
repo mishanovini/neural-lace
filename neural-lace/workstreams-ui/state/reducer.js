@@ -103,10 +103,31 @@ function applyEvent(snap, ev, treeId) {
       if (findItem(node, ev.item_id)) { reject(snap, ev, 'item_id already exists on node'); return; }
       const kind = ev.type === 'decision-raised' ? 'decision'
         : ev.type === 'question-raised' ? 'question' : 'action';
-      node.items.push({
+      const newItem = {
         item_id: ev.item_id, kind: kind, text: String(ev.text),
         checked: false, deferred: false, scheduled_for: null, contested: null,
-      });
+      };
+      // Operator-authoring (2026-06-11, C1) — OPTIONAL `origin` on the created
+      // item, mirroring how `tier`/`serves_item_id` ride on branch-opened
+      // (reducer-read-only, NOT in EVENT_REQUIRED_FIELDS). Resolution order:
+      //   1. explicit `ev.origin` (the emitter declared intent) — used verbatim.
+      //   2. else DERIVE from the authoritative `ev.actor` the server forces:
+      //      actor='gui' (operator did it via the GUI) ⇒ origin='operator';
+      //      actor='dispatch' (the AI emitted it) ⇒ origin='ai'.
+      // This is "derive from actor" per the C1 instruction (no new emitted
+      // field is REQUIRED), with the derived value PERSISTED on the item so the
+      // renderer can filter `it.origin === 'operator'` without walking the log
+      // (the snapshot doesn't carry per-item actor). Set ONLY at creation —
+      // a later operator edit (item-text-set, actor=gui) of an AI-created item
+      // must NOT flip its origin, so origin is never re-derived after this.
+      if (ev.origin === 'operator' || ev.origin === 'ai') {
+        newItem.origin = ev.origin;
+      } else if (ev.actor === 'gui') {
+        newItem.origin = 'operator';
+      } else if (ev.actor === 'dispatch') {
+        newItem.origin = 'ai';
+      }
+      node.items.push(newItem);
       return;
     }
     case 'answered':
@@ -496,6 +517,20 @@ function applyEvent(snap, ev, treeId) {
       const node = findNode(snap, ev.node_id);
       if (!node) { reject(snap, ev, 'node_id does not resolve'); return; }
       node.title = String(ev.title);
+      return;
+    }
+    // Operator-authoring (2026-06-11, C1) — the ONLY new event. Splices the
+    // located item out of node.items. Unknown node/item id is rejected-not-
+    // applied (retained in the log — NFR-2) so a stray removal surfaces in
+    // snapshot.rejections rather than silently mutating nothing. Idempotent: a
+    // second removal of an already-gone item is a clean reject (no item to
+    // splice), and a same-event_id re-append is a no-op at the envelope layer.
+    case 'item-removed': {
+      const node = findNode(snap, ev.node_id);
+      if (!node) { reject(snap, ev, 'node_id does not resolve'); return; }
+      const ix = node.items.findIndex(function (it) { return it.item_id === ev.item_id; });
+      if (ix === -1) { reject(snap, ev, 'item not found'); return; }
+      node.items.splice(ix, 1);
       return;
     }
     default:
