@@ -30,7 +30,22 @@ const { STATE_FILE, readState, appendEvent, SchemaTooNewError, SCHEMA_TOO_NEW_ME
 // context-completeness AT SERVE TIME with assembleItemDetails (null = not
 // self-contained = the gate) and annotates the served snapshot. The GUI reads
 // the annotation; NO parallel validator exists anywhere in web/app.js.
-const dcs = require('../state/decision-context-schema.js');
+//
+// DEFENSIVE require: zod is the ONE runtime dep (declared in package.json;
+// installed in the operator's checkout). A machine without it must NOT crash
+// the passive GUI at boot — it degrades to "no completeness verified": no
+// annotation is written, so the client gate fails CLOSED (every operator-ask
+// renders as context-incomplete rather than presenting an unverified choice
+// as actionable). A loud startup warning names the fix.
+let dcs = null;
+try {
+  dcs = require('../state/decision-context-schema.js');
+} catch (err) {
+  process.stderr.write('[server] WARNING: decision-context-schema unavailable ('
+    + String(err && err.message || err).split('\n')[0]
+    + ') — context-completeness annotation disabled; operator-asks will render '
+    + 'as context-incomplete. Fix: npm install in workstreams-ui/.\n');
+}
 
 // §1/Pin 2 reader-glue: the ADR-032 reader REFUSES an unknown major by
 // throwing SchemaTooNewError and reading NOTHING (never a partial mis-parse).
@@ -70,6 +85,7 @@ function gateCategoryOf(it) {
   return null;
 }
 function annotateContextState(snap) {
+  if (!dcs) return snap; // degraded mode: no validator → no annotation (gate fails closed client-side)
   if (!snap || !Array.isArray(snap.nodes)) return snap;
   snap.nodes.forEach(function (n) {
     (n.items || []).forEach(function (it) {

@@ -105,6 +105,11 @@ const ORACLE_SRC = `(() => {
   await page.setViewport({ width: 1280, height: 800 });
   const errs = [];
   page.on('pageerror', e => errs.push(String(e.stack || e)));
+  // Tasks 7/8 (2026-06-11, C5): NO native dialog (prompt/alert/confirm) may
+  // fire anywhere in the suite — every reply / resolution is an in-surface
+  // form. Counted across the whole run; asserted in T20.
+  let nativeDialogs = 0;
+  page.on('dialog', d => { nativeDialogs++; d.dismiss().catch(() => {}); });
   // fresh client state — the cockpit (not a persisted drill) must show first
   await page.goto(URL, { waitUntil: 'networkidle2', timeout: 30000 });
   await page.evaluate(() => localStorage.clear());
@@ -396,6 +401,217 @@ const ORACLE_SRC = `(() => {
   ok(16, t16a.ckRows >= 1 && !t16a.overflow && t16b.drill && t16b.railHidden && t16b.back,
     `768: rows=${t16a.ckRows} noOverflow=${!t16a.overflow} · 390: drill=${t16b.drill} ` +
     `railHidden=${t16b.railHidden} back=${t16b.back}`);
+
+  // ====================================================================
+  // Tasks 7/8 (2026-06-11) — backlog round-trip + context card + gate.
+  // These tests WRITE events, so the suite must run against a COPY of the
+  // live state (CONV_TREE_STATE_PATH), never the operator's real file.
+  // ====================================================================
+  await page.setViewport({ width: 1280, height: 800 });
+  await new Promise(r => setTimeout(r, 350));
+  const stamp = Date.now().toString(36);
+
+  // T17 — backlog surface round-trip (Task 7 prove-it): add → it appears in
+  // backlog and NOT in My-tasks; promote → it leaves backlog, the task lands
+  // committed (Next) on the activated root, and NOW shows in My-tasks.
+  const blText = 'e2e backlog roundtrip ' + stamp;
+  await page.click('.chip[data-filter="backlog"]');
+  await new Promise(r => setTimeout(r, 400));
+  const t17a = await page.evaluate(() => ({
+    addInput: !!document.querySelector('#filterBody .mytasks-add-input'),
+    rows: document.querySelectorAll('#filterBody .bl-row').length,
+  }));
+  await page.type('#filterBody .mytasks-add-input', blText);
+  await page.keyboard.press('Enter');
+  await new Promise(r => setTimeout(r, 1200));
+  const t17b = await page.evaluate(txt => {
+    const rows = Array.from(document.querySelectorAll('#filterBody .bl-row'));
+    const row = rows.find(r => (r.querySelector('.item-text') || {}).textContent === txt);
+    return { present: !!row, rows: rows.length,
+             promote: row ? !!row.querySelector('.ctrl-promote') : false };
+  }, blText);
+  await shot(page, 'backlog-add-1280');
+  // the someday bucket must NOT leak into the active list before promote
+  await page.click('.chip[data-filter="my-tasks"]');
+  await new Promise(r => setTimeout(r, 400));
+  const t17c = await page.evaluate(txt =>
+    Array.from(document.querySelectorAll('#filterBody .mytask-row .item-text, #filterBody .mytask-row .mytask-text'))
+      .some(e => e.textContent === txt), blText);
+  // promote
+  await page.click('.chip[data-filter="backlog"]');
+  await new Promise(r => setTimeout(r, 400));
+  await page.evaluate(txt => {
+    const row = Array.from(document.querySelectorAll('#filterBody .bl-row'))
+      .find(r => (r.querySelector('.item-text') || {}).textContent === txt);
+    if (row) row.querySelector('.ctrl-promote').click();
+  }, blText);
+  await new Promise(r => setTimeout(r, 1600));
+  const t17d = await page.evaluate(txt => {
+    const inBacklog = Array.from(document.querySelectorAll('#filterBody .bl-row'))
+      .some(r => (r.querySelector('.item-text') || {}).textContent === txt);
+    return fetch('/api/state').then(r => r.json()).then(snap => {
+      let task = null, parked = false, actNode = null;
+      (snap.nodes || []).forEach(n => (n.items || []).forEach(it => {
+        if (it.text !== txt) return;
+        if (n.node_id === 'backlog-operator') { parked = true; return; }
+        task = it; actNode = n;
+      }));
+      return { inBacklog, parkedStill: parked, taskFound: !!task,
+               taskState: task ? task.state : null,
+               taskOrigin: task ? task.origin : null,
+               actOrigin: actNode ? actNode.origin : null };
+    });
+  }, blText);
+  await page.click('.chip[data-filter="my-tasks"]');
+  await new Promise(r => setTimeout(r, 400));
+  const t17e = await page.evaluate(txt =>
+    Array.from(document.querySelectorAll('#filterBody .mytask-row'))
+      .some(r => (r.querySelector('.item-text, .mytask-text') || {}).textContent === txt), blText);
+  await shot(page, 'backlog-promoted-1280');
+  ok(17, t17a.addInput && t17b.present && t17b.promote && !t17c
+    && !t17d.inBacklog && !t17d.parkedStill && t17d.taskFound
+    && t17d.taskState === 'committed' && t17d.taskOrigin === 'operator'
+    && t17d.actOrigin === 'backlog-activated' && t17e,
+    `add=${t17b.present} inMyTasksBeforePromote=${t17c}(want false) ` +
+    `leftBacklog=${!t17d.inBacklog} task=${t17d.taskFound}/${t17d.taskState}/${t17d.taskOrigin} ` +
+    `activatedRoot=${t17d.actOrigin} inMyTasksAfter=${t17e}`);
+
+  // T18 — context-COMPLETE decision card (Task 8 prove-it step 1): background,
+  // each option's meaning+tradeoff, recommendation, reply affordances inline;
+  // full detail behind "More context"; reply records via the IN-SURFACE form.
+  const ctxNode = 'e2e-ctx-' + stamp, decId = 'e2e-dec-' + stamp;
+  const decText = 'e2e context-complete decision ' + stamp;
+  const posted = await page.evaluate(async (nodeId, itemId, txt) => {
+    async function postEv(ev) {
+      ev.actor = 'gui'; ev.ts = new Date().toISOString();
+      ev.event_id = 'gui-e2e-' + Math.random().toString(36).slice(2);
+      const r = await fetch('/api/event', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ev) });
+      return (await r.json());
+    }
+    const a = await postEv({ type: 'branch-opened', node_id: nodeId, parent_id: null, title: 'E2E context demo' });
+    const b = await postEv({ type: 'decision-raised', node_id: nodeId, item_id: itemId, text: txt });
+    const c = await postEv({ type: 'item-details-set', node_id: nodeId, item_id: itemId, details: {
+      _category: 'decision',
+      background: 'We are choosing the storage backend for the e2e demo. The current file store hits contention at 10 writers and the launch needs a call this week.',
+      question: 'Adopt sqlite, or keep the file store with a write queue?',
+      options: [
+        { key: 'sqlite', name: 'Adopt sqlite', what_it_does: 'moves state into a single WAL-mode db', risk: 'migration effort', reversibility_cost: 'cheap', cost: '2 days' },
+        { key: 'queue', name: 'Keep files + queue', what_it_does: 'serializes writers behind a queue', risk: 'queue becomes a bottleneck', reversibility_cost: 'free', cost: '1 day' },
+      ],
+      recommendation: { option_key: 'sqlite', reasoning: 'Contention is structural; queueing only defers it.' },
+      reply_with: 'sqlite OR queue',
+    }});
+    return { a: a.ok, b: b.ok, c: c.ok };
+  }, ctxNode, decId, decText);
+  await new Promise(r => setTimeout(r, 1000));
+  await page.click('.chip[data-filter="awaiting-me"]');
+  await new Promise(r => setTimeout(r, 500));
+  await page.evaluate(id => {
+    const row = document.querySelector(`#filterBody .wait-row[data-item="${id}"]`);
+    if (row) row.click();
+  }, decId);
+  await new Promise(r => setTimeout(r, 500));
+  const t18 = await page.evaluate(() => {
+    const card = document.querySelector('#dmBody .dc-essentials');
+    const opts = Array.from(document.querySelectorAll('#dmBody .dc-opt-line'));
+    const acts = document.querySelector('#detailModal .dm-actions') || document.querySelector('#dmActions');
+    const actTexts = acts ? Array.from(acts.querySelectorAll('button')).map(b => b.textContent) : [];
+    return {
+      card: !!card,
+      bg: !!(card && card.querySelector('.dc-bg') && card.querySelector('.dc-bg').textContent.length > 20),
+      optLines: opts.length,
+      meaningOnEveryOpt: opts.every(o => /—/.test(o.textContent) && /risk:/.test(o.textContent)),
+      chooseBtns: document.querySelectorAll('#dmBody .dc-opt-choose').length,
+      rec: !!document.querySelector('#dmBody .dc-rec-line'),
+      reply: !!document.querySelector('#dmBody .dc-reply-line'),
+      more: !!document.querySelector('#dmBody .dc-more'),
+      gateNote: !!document.querySelector('.dm-gate-note'),
+      approve: actTexts.some(t => /Approve/.test(t)),
+    };
+  });
+  await shot(page, 'context-complete-1280');
+  // reply via the in-surface form (never a native prompt)
+  await page.evaluate(() => {
+    const acts = document.querySelector('#detailModal .dm-actions') || document.querySelector('#dmActions');
+    const b = Array.from(acts.querySelectorAll('button')).find(x => /Respond/.test(x.textContent));
+    if (b) b.click();
+  });
+  await new Promise(r => setTimeout(r, 300));
+  const t18form = await page.evaluate(() => !!document.querySelector('.dm-form textarea.dm-form-input'));
+  await page.type('.dm-form .dm-form-input', 'e2e in-surface reply');
+  await page.evaluate(() => {
+    const f = document.querySelector('.dm-form');
+    const go = Array.from(f.querySelectorAll('button')).find(x => /Send/.test(x.textContent));
+    if (go) go.click();
+  });
+  await new Promise(r => setTimeout(r, 900));
+  const t18resp = await page.evaluate(async (nodeId, itemId) => {
+    const snap = await (await fetch('/api/state')).json();
+    const n = (snap.nodes || []).find(x => x.node_id === nodeId);
+    const it = n && (n.items || []).find(x => x.item_id === itemId);
+    return !!(it && it.responded && /in-surface reply/.test(it.responded.text));
+  }, ctxNode, decId);
+  await page.keyboard.press('Escape');
+  await new Promise(r => setTimeout(r, 300));
+  ok(18, posted.a && posted.b && posted.c && t18.card && t18.bg && t18.optLines === 2
+    && t18.meaningOnEveryOpt && t18.chooseBtns === 2 && t18.rec && t18.reply
+    && t18.more && !t18.gateNote && t18.approve && t18form && t18resp,
+    `card=${t18.card} bg=${t18.bg} opts=${t18.optLines} meaning=${t18.meaningOnEveryOpt} ` +
+    `choose=${t18.chooseBtns} rec=${t18.rec} reply=${t18.reply} more=${t18.more} ` +
+    `approve=${t18.approve} inSurfaceForm=${t18form} respondedRecorded=${t18resp}`);
+
+  // T19 — context-INCOMPLETE gate (Task 8 prove-it step 2 + I2): a detail-less
+  // decision renders the "context incomplete — needs enrichment" panel, and
+  // EVERY resolving/lifecycle button is suppressed — the only affordance is
+  // the respond/enrichment channel.
+  const incId = 'e2e-inc-' + stamp;
+  await page.evaluate(async (nodeId, itemId, stampArg) => {
+    async function postEv(ev) {
+      ev.actor = 'gui'; ev.ts = new Date().toISOString();
+      ev.event_id = 'gui-e2e-' + Math.random().toString(36).slice(2);
+      await fetch('/api/event', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ev) });
+    }
+    await postEv({ type: 'decision-raised', node_id: nodeId, item_id: itemId,
+                   text: 'e2e contextless decision ' + stampArg });
+  }, ctxNode, incId, stamp);
+  await new Promise(r => setTimeout(r, 900));
+  await page.click('.chip[data-filter="awaiting-me"]');
+  await new Promise(r => setTimeout(r, 400));
+  await page.evaluate(id => {
+    const row = document.querySelector(`#filterBody .wait-row[data-item="${id}"]`);
+    if (row) row.click();
+  }, incId);
+  await new Promise(r => setTimeout(r, 500));
+  const t19 = await page.evaluate(() => {
+    const acts = document.querySelector('#detailModal .dm-actions') || document.querySelector('#dmActions');
+    const btns = acts ? Array.from(acts.querySelectorAll('button')) : [];
+    const txts = btns.map(b => b.textContent);
+    return {
+      panel: !!document.querySelector('#dmBody .dc-incomplete-panel'),
+      panelText: (document.querySelector('#dmBody .dc-incomplete-h') || {}).textContent || '',
+      essentials: !!document.querySelector('#dmBody .dc-essentials'),
+      gateNote: !!document.querySelector('.dm-gate-note'),
+      btnCount: btns.length,
+      btnTexts: txts.join(' | '),
+      resolving: txts.filter(t => /Approve|Decline|Answer|Mark done|Choose|Block|Commit|shipped|deployed/i.test(t)).length,
+    };
+  });
+  await shot(page, 'context-incomplete-1280');
+  await page.keyboard.press('Escape');
+  await new Promise(r => setTimeout(r, 250));
+  ok(19, t19.panel && /context incomplete/i.test(t19.panelText) && !t19.essentials
+    && t19.gateNote && t19.resolving === 0 && t19.btnCount === 1,
+    `panel=${t19.panel} "${t19.panelText}" gateNote=${t19.gateNote} ` +
+    `buttons=${t19.btnCount}(want1: respond-only) resolving=${t19.resolving}(want0)`);
+
+  // T20 — C5: the served client source carries ZERO native-prompt call sites,
+  // and no native dialog fired anywhere in this suite.
+  const appSrc = await page.evaluate(async () => await (await fetch('/app.js')).text());
+  const promptHits = (appSrc.match(/window\.prompt/g) || []).length;
+  ok(20, promptHits === 0 && nativeDialogs === 0,
+    `window.prompt-in-source=${promptHits}(want0) nativeDialogsFired=${nativeDialogs}(want0)`);
 
   ok(0, errs.length === 0, `pageErrors=${errs.length}${errs.length ? ' :: ' + errs[0].slice(0, 160) : ''}`);
 
