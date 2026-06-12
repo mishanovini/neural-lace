@@ -192,7 +192,24 @@ Same editing pattern for the "eventually" bucket; add / edit / priority / delete
 - `docs/decisions/NNN-workstreams-status-surface.md` — ADR for the re-conception (Tier 3).
 
 ## In-flight scope updates
-(none yet)
+
+### 2026-06-11 — plan-time review corrections (ux-designer + data-model research; the acceptance lens did not run — agent-name error)
+The review found the plan OVER-SCOPED — several proposed events already exist, so the build SHRINKS by reusing them — plus phantom states and two cleanups. The walking-skeleton (`worker-ws-skeleton`, commit `6005b95`) proved the end-to-end chain works but used new `task-*` events; it is SUPERSEDED by the reuse approach below (rework on clean `feat`, do not cherry-pick as-is). Corrections, binding on the tasks above:
+
+- **C1 (Task 1 re-scope):** Do NOT add `task-added`/`task-edited`/`item-promoted`. REUSE existing events: `action-added` (+ `origin:operator`) for operator-create, `item-text-set` for edit, `reordered` for drag-reorder, `backlog-activated` for promote. Add exactly ONE new event: `item-removed [node_id,item_id]` (splice from `node.items`; reject-not-apply unknown id; idempotent on event_id). `origin` is an OPTIONAL reducer-read item field (mirror `tier`/`serves_item_id` at `reducer.js:93-94`), NOT in `EVENT_REQUIRED_FIELDS`; resolve store-vs-derive-from-`actor` (`schema.js:210`, forced `gui` at `server.js:175`).
+- **C2 (Task 2 re-scope):** `POST /api/event` already exists (`server.js:163-191` — forces `actor=gui`, auto-attests, 400/422/409). Do NOT rebuild. Task 2 = add per-type payload validation for the operator events + confirm round-trip from the My-tasks surface.
+- **C3 (lifecycle states):** `closed` and `proposed` are produced by NO reducer (rendered but unreachable; default untouched item = `in-flight`); the model uses `shipped` for "done". DECISION: drop `closed`/`proposed` from the v1 spine; use the states the reducer actually produces; reconcile `done`↔`shipped` (use the existing `shipped`). Update the ADR + the "## Design → spine" wording.
+- **C4 (drill return path):** Tasks 3+5 — add a persistent "← all projects" breadcrumb + current-project header; master-detail at wide width, full-swap-with-back at ≤390px. Add a "return to cockpit; overview restored" exit step to the `drill-into-a-project-tree` scenario.
+- **C5 (no `window.prompt`):** Tasks 4/6/8 — ALL operator authoring uses in-surface forms / inline-editable elements, never `window.prompt()`; retire the 8 existing prompt() call sites. Add a "reply records via in-surface form, never a native prompt" assertion to `open-a-context-complete-decision`.
+- **C6 (color migration):** Tasks 5+10 — retire the existing color=KIND CSS (`.k-*`, `.li-kind.*`, `kind-*` border colors); re-key color to STATUS, express kind by ICON only (`kindGlyph`/`KIND_LABEL` exist). Tokens: gray=idle/structure, amber=needs-you/blocked ONLY, muted-green-check=done; nothing else uses amber or saturated green. Prove-it: grep rendered DOM — amber on any non-needs-you row returns zero.
+- **I1 (context card = re-style, not re-template):** Task 8 — the per-kind `details` shape + incompleteness gate already exist (`ItemDetailsContentSchema` / `assembleItemDetails` in `decision-context-schema.js` — returns null when not self-contained = the gate). Task 8 = consume `validateItemDetails`/`assembleItemDetails` + re-style the existing detail card with progressive disclosure + the context-incomplete visual; do NOT re-template.
+- **I2 (gate suppresses actions):** Task 8 — when context-incomplete, render ONLY a "needs enrichment" state; SUPPRESS the resolving buttons (Approve/Decline/Answer/Submit), don't just badge.
+- **I3 (write-error revert):** Tasks 6/7 — on `POST /api/event` failure, the inline edit visibly REVERTS + shows an inline "not saved — retry" affordance on that row (not only a toast). Add to `add-and-edit-a-personal-task`.
+- **I4 (keyboard reorder):** Task 6 — reorder via keyboard (move-up/down controls or arrow on focused row), not drag-only.
+- **I5 (overlay stack):** Task 10 — single overlay-stack manager (Esc closes topmost; scrim-click closes own layer; one scrim; focus-trap + restore); retire the two ad-hoc Esc handlers.
+- **I6 (cross-process append):** ADR — correctness rests on `renameSync` atomicity + `event_id` idempotency (verify the bash emit hooks `flock`); do NOT claim a mutex.
+
+Verdict: not build-ready as originally written; with these corrections the design is sound and SMALLER.
 
 ## Assumptions
 - The event-sourced state library + reducer + attestation remain the sole-normative write path
