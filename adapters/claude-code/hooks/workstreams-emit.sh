@@ -2024,8 +2024,13 @@ _builder_creation_events() {
   local ev_root ev_child ev_item ev_det
   ev_root="cte-bo-$(printf '%s' "$root_id" | _sha1 | cut -c1-32)"
   ev_child="cte-bo-$(printf '%s' "$child_id" | _sha1 | cut -c1-32)"
-  # SAME derivations as _run_emit_item / --emit-details so a manual emit for
-  # the same (node,item) dedupes with the automatic one.
+  # ev_item: SAME derivation as _run_emit_item so a manual --emit-item for the
+  # same (node,item) dedupes with the automatic one. ev_det: deliberately the
+  # FIXED (node|item)-only derivation — NOT --emit-details' content-hashed one
+  # (Task 9). The builder details ({_category:builder-dispatch,tool,bg}) are
+  # constant per dispatch, so Pre/Post/reconciler re-fires dedupe on the fixed
+  # id; and because that fixed id is already in the log, a reconciler re-fire
+  # can never clobber a LATER content-hashed enrichment via --emit-details.
   ev_item="cte-action-$(printf '%s|%s' "$child_id" "$item_id" | _sha1 | cut -c1-32)"
   ev_det="cte-detset-$(printf '%s|%s' "$child_id" "$item_id" | _sha1 | cut -c1-32)"
   local sess_title; sess_title=$(basename "${PWD:-.}" 2>/dev/null || echo "")
