@@ -1103,3 +1103,98 @@ button.det-link-doc:hover { background: rgba(59,130,246,0.22); text-decoration: 
   padding: 0.04rem 0.45rem; font-weight: 600;
 }
 
+
+/* ====================================================================
+   BACKLOG surface (Task 7, 2026-06-11) — operator-owned "someday" bucket.
+   Reuses the My-tasks editing chrome (mytasks-add / mytask-row / mytask-ctrl /
+   retry-note). Color discipline unchanged: neutral gray; the only red is the
+   I3 retry affordance; promote uses the neutral ctrl chrome with the shared
+   accent hover (no new color ramp).
+   ==================================================================== */
+.bl-row .item-ic { color: var(--muted); }
+/* legacy snap.backlog captures (promote-only) read slightly muted so the
+   editable parked rows stay the primary surface */
+.bl-legacy { opacity: 0.8; }
+.bl-legacy .item-text { color: var(--muted); }
+.mytask-ctrl.ctrl-promote {
+  width: auto; padding: 0 0.5rem; font-weight: 700;
+}
+.mytask-ctrl.ctrl-promote:hover:not(:disabled) {
+  color: var(--text); border-color: var(--accent); background: var(--panel2);
+}
+
+/* ====================================================================
+   CONTEXT CARD + GATE (Task 8, 2026-06-11) — progressive-disclosure
+   essentials card for context-COMPLETE operator-asks + the neutral
+   "context incomplete — needs enrichment" gated panel (I2). Discipline:
+   the card is structure (gray); the gate state matches the list's
+   ctx-incomplete-badge (neutral, dashed) — enrichment is the AI's job,
+   not a needs-you signal, so NO amber here.
+   ==================================================================== */
+.dc-essentials {
+  display: flex; flex-direction: column; gap: 0.45rem;
+  padding: 0.55rem 0.6rem; margin-bottom: 0.6rem;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+}
+.dc-bg { font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
+.dc-ask { font-size: 0.86rem; font-weight: 700; line-height: 1.45; }
+.dc-opts { display: flex; flex-direction: column; gap: 0.3rem; }
+.dc-opt-line {
+  display: flex; align-items: baseline; gap: 0.5rem;
+  padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--panel2);
+}
+.dc-opt-main { flex: 1 1 auto; min-width: 0; font-size: 0.78rem; line-height: 1.45; }
+.dc-opt-name { font-weight: 700; }
+.dc-opt-meta { color: var(--muted); }
+.dc-opt-choose {
+  flex: 0 0 auto; align-self: center;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border2); border-radius: 5px;
+  padding: 0.12rem 0.55rem; cursor: pointer; font: inherit; font-size: 0.72rem;
+}
+.dc-opt-choose:hover { border-color: var(--accent); background: var(--bg); }
+.dc-opt-choose:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dc-rec-line { font-size: 0.8rem; font-weight: 600; line-height: 1.45; }
+.dc-reply-line { font-size: 0.78rem; display: flex; align-items: baseline; gap: 0.35rem; flex-wrap: wrap; }
+.dc-reply-k { color: var(--muted); }
+/* "More context" native disclosure — keyboard-focusable summary, no overlay */
+.dc-more { margin-top: 0.15rem; }
+.dc-more > summary {
+  cursor: pointer; font-size: 0.74rem; color: var(--muted);
+  padding: 0.15rem 0.1rem; border-radius: 4px; width: fit-content;
+}
+.dc-more > summary:hover { color: var(--text); }
+.dc-more > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dc-more[open] > summary { margin-bottom: 0.35rem; }
+/* the gated state (I2) — neutral + dashed, mirrors .ctx-incomplete-badge */
+.dc-incomplete-panel {
+  display: flex; flex-direction: column; gap: 0.4rem;
+  padding: 0.55rem 0.6rem; margin-bottom: 0.6rem;
+  background: var(--panel2); border: 1px dashed var(--border2); border-radius: 6px;
+}
+.dc-incomplete-h {
+  font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted);
+}
+.dc-incomplete-b { font-size: 0.78rem; color: var(--muted); line-height: 1.5; }
+.dm-gate-note {
+  align-self: center; font-size: 0.72rem; color: var(--muted);
+  border: 1px dashed var(--border2); border-radius: 999px;
+  padding: 0.08rem 0.5rem;
+}
+/* in-surface reply forms (C5) — replace every native prompt() dialog */
+.dm-form {
+  flex-basis: 100%; display: flex; flex-direction: column; gap: 0.35rem;
+  padding: 0.5rem 0.55rem; margin-top: 0.3rem;
+  background: var(--panel2); border: 1px solid var(--border2); border-radius: 6px;
+}
+.dm-form-label { font-size: 0.74rem; font-weight: 600; color: var(--muted); }
+.dm-form-input {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border2); border-radius: 5px;
+  padding: 0.35rem 0.5rem; font: inherit; font-size: 0.8rem;
+}
+textarea.dm-form-input { min-height: 4.2rem; resize: vertical; }
+.dm-form-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dm-form-row { display: flex; gap: 0.4rem; }

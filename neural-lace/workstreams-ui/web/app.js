@@ -349,11 +349,17 @@
   var MYTASKS_NODE = 'mytasks-operator';
   var MYTASKS_TITLE = 'My tasks';
   function isOperatorItem(it) { return it && it.origin === 'operator'; }
-  // Every operator item across all projects, in the operator's chosen order
-  // (snapshot.order keyed by the My-tasks node scope), with un-ordered items
-  // appended in insertion order so a freshly-added task always shows.
+  // Every ACTIVE operator item across all projects, in the operator's chosen
+  // order (snapshot.order keyed by the My-tasks node scope), with un-ordered
+  // items appended in insertion order so a freshly-added task always shows.
+  // Task 7: backlogged operator items are the SEPARATE "someday" bucket — they
+  // render on the Backlog surface only, and ENTER this list via promote
+  // ("Tasks = active; backlog = someday"). Without this exclusion, promote
+  // would be meaningless (the item would already sit in My-tasks).
   function myTaskRefs() {
-    var refs = allWorkItems().filter(function (r) { return isOperatorItem(r.item); });
+    var refs = allWorkItems().filter(function (r) {
+      return isOperatorItem(r.item) && !r.item.backlogged;
+    });
     var order = (S && S.order && Array.isArray(S.order[MYTASKS_NODE])) ? S.order[MYTASKS_NODE] : null;
     if (!order || !order.length) return refs;
     var pos = {};
@@ -389,7 +395,9 @@
       case 'shipped-not-deployed': return items.filter(function (r) { return isShippedNotDeployed(r.item); });
       case 'deployed':         return items.filter(function (r) { return isDeployed(r.item); });
       case 'orphaned':         return [];   // orphans are sessions, handled in renderFilteredItems
-      case 'my-tasks':         return items.filter(function (r) { return isOperatorItem(r.item); });
+      // Task 7: backlogged operator items live on the Backlog surface only —
+      // promote (backlog-activated) is what moves them into the active list.
+      case 'my-tasks':         return items.filter(function (r) { return isOperatorItem(r.item) && !r.item.backlogged; });
       case 'all':              return items.slice();
       default:                 return items.filter(function (r) { return isWaitingOnYou(r.item); });
     }
@@ -625,7 +633,7 @@
   //  MY TASKS surface render (Task 6) — operator-owned, editable
   // ====================================================================
   // C5: ALL authoring is in-surface (an always-present "+ add" input + inline-
-  //     editable rows) — NEVER window.prompt().
+  //     editable rows) — never a native prompt() dialog.
   // I3: on a POST failure the optimistic change visibly REVERTS and an inline
   //     "not saved — retry" affordance appears ON that row (not just a toast).
   // I4: reorder via KEYBOARD (move-up / move-down controls), not drag-only.
@@ -901,11 +909,16 @@
     allWorkItems().forEach(function (r) { nodeIds[r.itemId] = 1; });
     return backlog().filter(function (b) { return !b.activated && !nodeIds[b.item_id]; });
   }
-  function ensureBacklogNode(then) {
+  function ensureBacklogNode(then, onFail) {
     if (byId(BL_NODE)) { then(); return; }
     post({ type: 'branch-opened', node_id: BL_NODE, parent_id: null, title: BL_TITLE })
       .then(function () { then(); })
-      .catch(function () { showToast('Could not create the Backlog list — try again.', 'err'); });
+      .catch(function () {
+        showToast('Could not create the Backlog list — try again.', 'err');
+        // I3: the caller's failure path must run (re-enable the add input +
+        // inline retry note) — a failed node-create is a failed add.
+        if (onFail) onFail();
+      });
   }
   // postSeq — append a fixed sequence of events in order. Every event carries a
   // PRE-GENERATED event_id, so a retry that re-posts the SAME array is safe:
@@ -944,7 +957,7 @@
       postSeq(events, 'Captured to backlog')
         .then(function () { if (onOk) onOk(); })
         .catch(function () { if (onFail) onFail(); });
-    });
+    }, onFail);
   }
   // buildPromoteEvents — the promote-to-task sequence for a parked node item.
   // Built ONCE with stable event_ids; a retry re-posts the identical array.
