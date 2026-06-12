@@ -2,7 +2,7 @@
 title: scope-enforcement-gate resolves repo from session cwd, not cd target
 date: 2026-06-09
 type: process
-status: pending
+status: implemented
 auto_applied: false
 originating_context: workstreams consolidation closure — committing a summary file to the sibling workstreams-coordination repo from a neural-lace-rooted main session
 decision_needed: Should the scope-enforcement-gate resolve the target repo from the git command (parse `-C <dir>` / cwd-after-cd) before applying the no-plan-repo skip, OR should hook-sync always pull from master to prevent regressions of the gate itself?
