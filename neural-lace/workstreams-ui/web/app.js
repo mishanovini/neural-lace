@@ -51,12 +51,20 @@
   var S = null;                 // latest snapshot { nodes, backlog, rejections, ... }
   var loaded = false;
   var activeFilter = localStorage.getItem('workstreams.activeFilter') || 'awaiting-me';
-  var focusProject = localStorage.getItem('workstreams.focusProject') || null;
-  var collapsed = loadSet('workstreams.collapsed');   // project ids the user collapsed
+  // Status-surface redesign (Tasks 3/5, 2026-06-11): the left pane is a project
+  // COCKPIT (one count-row per project) until the operator drills into ONE
+  // project, whose tree then renders bounded to that project (C4: with a
+  // persistent "← all projects" return path). drillProject persists so a
+  // reload restores the operator's place.
+  var drillProject = localStorage.getItem('workstreams.drillProject') || null;
   var collapsedRepos = loadSet('workstreams.collapsedRepos'); // repo groups the user collapsed
+  // Per-branch disclosure state in the drilled tree. Keys are
+  // '<projectId>::<branch-key>'; values 'exp' | 'col'. Branches with no entry
+  // use the default: OPEN for active branches, COLLAPSED for all-done ones.
+  var branchState = loadObj('workstreams.branchState');
   var selItem = null;           // { nodeId, itemId } currently in the detail card
   // Phase 4 — configurable windows (localStorage override, same pattern as
-  // activeFilter/focusProject above). Defaults preserve prior behavior:
+  // activeFilter/drillProject above). Defaults preserve prior behavior:
   //   localStorage 'workstreams.orphanHours'     (default 24) — stale-session threshold
   //   localStorage 'workstreams.shipRecentDays'  (default 7)  — "Recently shipped" window
   var ORPHAN_HOURS = Number(localStorage.getItem('workstreams.orphanHours')) || 24;
@@ -68,6 +76,15 @@
   }
   function saveSet(key, set) {
     try { localStorage.setItem(key, JSON.stringify(Array.from(set))); } catch (_) {}
+  }
+  function loadObj(key) {
+    try {
+      var o = JSON.parse(localStorage.getItem(key) || '{}');
+      return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+    } catch (_) { return {}; }
+  }
+  function saveObj(key, obj) {
+    try { localStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
   }
 
   // ---- tiny DOM helpers ------------------------------------------------
@@ -137,7 +154,12 @@
   function isProject(n) { return n && n.parent_id == null; }
   // Sessions / sub-branches surface only as provenance, never as a tree row.
   function isSession(n) { return n && /^(sess|sub)-/.test(n.node_id); }
-  function projectTitle(n) { return n.title || n.node_id; }
+  function projectTitle(n) {
+    // The `global` root is the cross-cutting container; "global" is cryptic on
+    // an operator-facing cockpit row, so it gets a readable display name.
+    if (n && n.node_id === 'global') return 'Cross-project';
+    return n.title || n.node_id;
+  }
 
   // WorkItems are the decision/question/action entries on a node (collectWorkItems).
   // The wire-check chain renderTree → collectWorkstreams → renderWorkstream →
@@ -179,7 +201,10 @@
     if (it.deferred || it.backlogged) return 'committed';
     return 'in-flight';
   }
-  var COMPLETE_STATES = { shipped: 1, closed: 1 };
+  // C3 (2026-06-11): the reducer produces committed / in-flight / blocked /
+  // shipped only — `closed`/`proposed` are unreachable and dropped from the
+  // v1 spine. "Done" semantics = `shipped`.
+  var COMPLETE_STATES = { shipped: 1 };
   function isComplete(it) { return !!COMPLETE_STATES[itemState(it)]; }
   // Open = the legacy "waiting" predicate: unchecked & not parked
   // (deferred/contested still count as open). Base predicate only — the
@@ -210,6 +235,37 @@
   }
   function isInFlightItem(it) {
     return itemState(it) === 'in-flight' && !isAwaitingMe(it);
+  }
+  // Status-surface redesign (Tasks 3/4/5, 2026-06-11). The WAITING tier per the
+  // plan's spine: "blocked (incl. blocked-on-operator = waiting on you)" — i.e.
+  // every unanswered Misha-ask PLUS every blocked item. A blocked item with a
+  // declared `blocked_on` dependency edge is pipeline-blocked rather than
+  // operator-blocked, but it is still STALLED — it stays in the waiting tier
+  // (its row shows the block reason so the operator sees why). This single
+  // predicate drives the cockpit "waiting" pill, the global waiting-on-you
+  // list, AND the tree's amber needs-you discipline, so the three surfaces
+  // always agree (C6: amber = needs-you/blocked ONLY).
+  function isWaitingOnYou(it) {
+    return isAwaitingMe(it) || itemState(it) === 'blocked';
+  }
+  // statusCounts — the cockpit's four lifecycle buckets (C3: derived from the
+  // states the reducer ACTUALLY produces — committed / in-flight / blocked /
+  // shipped; `proposed`/`closed` are produced by no reducer and are dropped
+  // from the v1 spine). Buckets are DISJOINT and TOTAL over the given refs:
+  //   done    = shipped
+  //   waiting = isWaitingOnYou (unanswered Misha-asks + blocked)
+  //   next    = committed (queued; incl. deferred/backlogged via itemState)
+  //   now     = in-flight (moving)
+  function statusCounts(refs) {
+    var c = { now: 0, next: 0, waiting: 0, done: 0, total: refs.length };
+    refs.forEach(function (r) {
+      var st = itemState(r.item);
+      if (st === 'shipped') c.done++;
+      else if (isWaitingOnYou(r.item)) c.waiting++;
+      else if (st === 'committed') c.next++;
+      else c.now++;                              // in-flight (the open default)
+    });
+    return c;
   }
   function nodeOpenedMs(nodeId) {
     var n = byId(nodeId);
@@ -261,7 +317,7 @@
 
   // ---- state-badge glyphs ---------------------------------------------
   var STATE_ICON = {
-    proposed: '·', committed: '◷', 'in-flight': '◐', blocked: '⏳', shipped: '✓', closed: '✓',
+    committed: '◷', 'in-flight': '◐', blocked: '⏳', shipped: '✓',
   };
   function stateIcon(st) { return STATE_ICON[st] || '◐'; }
   function kindGlyph(k) { return k === 'decision' ? '◆' : k === 'question' ? '?' : '!'; }
@@ -321,7 +377,10 @@
   // ---- filter logic ----------------------------------------------------
   function applyFilter(items, filterName) {
     switch (filterName) {
-      case 'awaiting-me':      return items.filter(function (r) { return isAwaitingMe(r.item); });
+      // Task 4 (2026-06-11): the "Waiting on you" chip is the bounded global
+      // item list — unanswered Misha-asks + blocked items (isWaitingOnYou),
+      // the same predicate the cockpit's waiting pill counts.
+      case 'awaiting-me':      return items.filter(function (r) { return isWaitingOnYou(r.item); });
       case 'in-flight':        return items.filter(function (r) { return isInFlightItem(r.item); });
       case 'blocked':          return items.filter(function (r) { return itemState(r.item) === 'blocked'; });
       case 'recently-shipped': return items.filter(function (r) { return isRecentlyShipped(r.item); });
@@ -332,7 +391,7 @@
       case 'orphaned':         return [];   // orphans are sessions, handled in renderFilteredItems
       case 'my-tasks':         return items.filter(function (r) { return isOperatorItem(r.item); });
       case 'all':              return items.slice();
-      default:                 return items.filter(function (r) { return isAwaitingMe(r.item); });
+      default:                 return items.filter(function (r) { return isWaitingOnYou(r.item); });
     }
   }
   function filterCount(filterName) {
@@ -373,6 +432,7 @@
     if (filterName === 'backlog') { renderBacklogInto(filterBody); return; }
     if (filterName === 'my-tasks') { renderMyTasksInto(filterBody); return; }
     if (filterName === 'orphaned') { renderOrphansInto(filterBody); return; }
+    if (filterName === 'awaiting-me') { renderWaitingInto(filterBody); return; }
     var refs = applyFilter(allWorkItems(), filterName);
     if (!refs.length) {
       filterBody.appendChild(emptyMsg(filterName));
@@ -402,7 +462,8 @@
     return el('div', 'empty', labels[filterName] || 'Nothing here.');
   }
 
-  // a single work-item row in the filtered list
+  // a single work-item row in the filtered list. C6: the kind chip is a
+  // NEUTRAL glyph+word (icon encodes kind); status badges carry the color.
   function itemRow(r) {
     var st = itemState(r.item);
     var li = el('div', 'item-row state-' + st);
@@ -415,13 +476,88 @@
     var txt = el('div', 'item-text', r.item.text || '(untitled)');
     body.appendChild(txt);
     var meta = el('div', 'item-meta');
-    meta.appendChild(el('span', 'k-' + r.item.kind, r.item.kind));
+    meta.appendChild(el('span', 'kind-chip', kindGlyph(r.item.kind) + ' ' + r.item.kind));
     meta.appendChild(el('span', 'st-badge st-' + st, st));
     if (r.item.deferred) meta.appendChild(el('span', 'st-badge st-committed', 'deferred'));
     body.appendChild(meta);
     li.appendChild(body);
     li.addEventListener('click', function () { openDetailModal(r.nodeId, r.itemId); });
     return li;
+  }
+
+  // ====================================================================
+  //  WAITING ON YOU (Task 4) — the bounded global item list
+  // ====================================================================
+  // The ONLY place items render globally; naturally small (unanswered
+  // Misha-asks + blocked items). Each row is a context-complete SUMMARY:
+  // background + recommendation inline, pulled from the item's `details`.
+  // An item with empty/insufficient details is NOT painted as decision-ready
+  // — it carries a visible "context incomplete" marker instead (the full
+  // enrichment gate is Task 8; this list never presents a contextless choice
+  // as actionable).
+  function waitingSummary(it) {
+    var de = it.details;
+    if (!de || typeof de !== 'object') return null;
+    var bg = de.background || de.about || de.the_ask || de.question
+      || de.instructions || null;
+    if (!bg && de.description != null) {
+      var d = String(de.description).trim();
+      // a description that just repeats the title (or is trivially short) is
+      // not context — treat it as absent so the incomplete marker shows
+      if (d && d !== String(it.text || '').trim() && d.length > 20) bg = d;
+    }
+    var rec = null;
+    if (de.recommendation != null) {
+      rec = (typeof de.recommendation === 'object')
+        ? (((de.recommendation.option_key ? 'option ' + de.recommendation.option_key + ' — ' : ''))
+          + (de.recommendation.reasoning || '')).trim() || null
+        : String(de.recommendation);
+    }
+    if (!bg && !rec) return null;
+    return { bg: bg, rec: rec };
+  }
+  function waitingRow(r) {
+    var it = r.item, st = itemState(it);
+    var li = el('div', 'item-row wait-row state-' + st);
+    li.setAttribute('data-node', r.nodeId);
+    li.setAttribute('data-item', r.itemId);
+    var ki = el('span', 'ti-kind-ic wi-kind-ic', kindGlyph(it.kind));
+    ki.title = it.kind || 'action';
+    li.appendChild(ki);
+    var body = el('div', 'item-main');
+    body.appendChild(el('div', 'item-text', it.text || '(untitled)'));
+    var sum = waitingSummary(it);
+    if (sum) {
+      var ctx = el('div', 'wait-ctx');
+      if (sum.bg) ctx.appendChild(el('div', 'wait-bg', String(sum.bg)));
+      if (sum.rec) ctx.appendChild(el('div', 'wait-rec', '→ ' + sum.rec));
+      body.appendChild(ctx);
+    } else {
+      var inc = el('span', 'ctx-incomplete-badge', 'context incomplete — needs enrichment');
+      inc.title = 'This item lacks the embedded context (background / options / '
+        + 'recommendation) needed to act on it cold. Open it for whatever detail exists.';
+      body.appendChild(inc);
+    }
+    var meta = el('div', 'item-meta');
+    meta.appendChild(el('span', 'kind-chip', kindGlyph(it.kind) + ' ' + it.kind));
+    meta.appendChild(el('span', 'st-badge st-' + st,
+      st === 'blocked' ? ('blocked' + (it.blocked_on ? ' on ' + it.blocked_on : '')) : 'waiting on you'));
+    if (it.deferred) meta.appendChild(el('span', 'st-badge st-committed', 'deferred'));
+    body.appendChild(meta);
+    li.appendChild(body);
+    li.addEventListener('click', function () { openDetailModal(r.nodeId, r.itemId); });
+    return li;
+  }
+  function renderWaitingInto(container) {
+    var refs = applyFilter(allWorkItems(), 'awaiting-me');
+    if (!refs.length) { container.appendChild(emptyMsg('awaiting-me')); return; }
+    var byProj = {};
+    refs.forEach(function (r) { (byProj[r.projectId] = byProj[r.projectId] || []).push(r); });
+    Object.keys(byProj).forEach(function (pid) {
+      container.appendChild(el('div', 'list-group-head',
+        projectTitle(byId(pid) || { title: pid })));
+      byProj[pid].forEach(function (r) { container.appendChild(waitingRow(r)); });
+    });
   }
 
   function renderBacklogInto(container) {
@@ -689,7 +825,7 @@
     meta.appendChild(el('span', 'st-badge st-blocked', 'open session'));
     meta.appendChild(el('span', 'st-badge st-committed',
       'in ' + projectTitle(byId(rootProjectOf(s.node_id)) || { title: '—' })));
-    if (s.opened_at) meta.appendChild(el('span', 'st-badge st-proposed',
+    if (s.opened_at) meta.appendChild(el('span', 'st-badge st-muted',
       'opened ' + new Date(s.opened_at).toLocaleDateString()));
     body.appendChild(meta);
     row.appendChild(body);
@@ -748,104 +884,119 @@
     if (PROJECT_REPOS_MULTI[projNode.node_id]) return PROJECT_REPOS_MULTI[projNode.node_id];
     return [PROJECT_REPO_DEFAULT[projNode.node_id] || 'Other'];
   }
-  // Repo-level rollup: sum the awaiting / in-flight / blocked across the repo's
-  // projects, for the repo header badge.
-  function repoRollup(projNodes) {
-    var awaiting = 0, inflight = 0, blocked = 0;
-    projNodes.forEach(function (p) {
-      var r = projectRollup(p.node_id);
-      awaiting += r.awaiting; inflight += r.inflight; blocked += r.blocked;
+  // ---- cockpit data (Task 3) -------------------------------------------
+  // One entry per ROOT that owns visible work items — grouped from the SAME
+  // allWorkItems() the right-pane filters read, so cockpit counts always match
+  // the reduced state the filters show — PLUS item-less proper projects so an
+  // empty project still shows a row rather than vanishing. Account-container
+  // roots (NON_PROJECT_NODES) appear only when they actually own items (the
+  // `global` cross-cutting container does; the bare account-name nodes don't).
+  function cockpitRows() {
+    var byProj = {};
+    allWorkItems().forEach(function (r) {
+      (byProj[r.projectId] = byProj[r.projectId] || []).push(r);
     });
-    return { awaiting: awaiting, inflight: inflight, blocked: blocked };
-  }
-  // Per-project rollup: counts of awaiting / in-flight across the project's
-  // (non-session) descendant items, for the header badge.
-  function projectRollup(projId) {
-    var refs = projectItems(projId);
-    // Residual 2 (2026-06-10): badges use the SAME partition as the filter
-    // chips (isAwaitingMe / isInFlightItem) so the left-pane numbers match
-    // what the corresponding chip lists.
-    var awaiting = refs.filter(function (r) { return isAwaitingMe(r.item); }).length;
-    var inflight = refs.filter(function (r) { return isInFlightItem(r.item); }).length;
-    var blocked = refs.filter(function (r) { return itemState(r.item) === 'blocked'; }).length;
-    return { awaiting: awaiting, inflight: inflight, blocked: blocked, total: refs.length };
-  }
-  // Every non-session descendant item of a project (items on the project node
-  // plus items on any workstream/sub nodes under it).
-  function projectItems(projId) {
-    var out = collectWorkItems(projId);
-    collectWorkstreams(projId).forEach(function (ws) {
-      out = out.concat(collectWorkItems(ws.node_id));
-      childrenOf(ws.node_id).filter(function (c) { return !isSession(c); }).forEach(function (sub) {
-        out = out.concat(collectWorkItems(sub.node_id));
+    var ids = Object.keys(byProj);
+    projects().forEach(function (p) {
+      if (ids.indexOf(p.node_id) === -1) ids.push(p.node_id);
+    });
+    return ids
+      .map(function (id) { return byId(id); })
+      .filter(function (n) {
+        if (!n) return false;
+        if (NON_PROJECT_NODES[n.node_id] && !(byProj[n.node_id] || []).length) return false;
+        return true;
+      })
+      .map(function (n) {
+        return { projectId: n.node_id, node: n, refs: byProj[n.node_id] || [],
+                 counts: statusCounts(byProj[n.node_id] || []) };
+      })
+      .sort(function (a, b) {
+        // bottleneck-first: most-waiting projects rise to the top of their repo
+        if (b.counts.waiting !== a.counts.waiting) return b.counts.waiting - a.counts.waiting;
+        if (b.counts.now !== a.counts.now) return b.counts.now - a.counts.now;
+        return projectTitle(a.node).localeCompare(projectTitle(b.node));
       });
-    });
-    return out;
   }
 
-  // renderTree — repo-grouped renderer (wire-check entry point). Renders the
-  // top tier (GitHub repo) → Project → (Workstream →) WorkItem → Sub-task.
+  // renderTree — left-pane orchestrator (wire-check entry point). Renders the
+  // project COCKPIT (Task 3: one fixed-density count-row per project) by
+  // default, or the DRILLED single-project tree (Task 5) once a row is
+  // clicked. Density principle (load-bearing): COUNTS globally — O(projects),
+  // never O(items); ITEMS render only in one bounded slice (the drilled
+  // project's tree, or the right-pane waiting list).
   function renderTree() {
     clear(treeCanvas);
-    var projs = projects();
-    if (!projs.length) {
+    var rows = cockpitRows();
+    if (!rows.length) {
       treeState.hidden = false;
       treeState.textContent = loaded ? 'No projects yet.' : 'Loading…';
       return;
     }
     treeState.hidden = true;
-    // pick the focus project (most-recently-clicked, else the one with the most
-    // awaiting items) if none is recorded
-    if (!focusProject || !byId(focusProject)) {
-      var best = null, bestN = -1;
-      projs.forEach(function (p) {
-        var r = projectRollup(p.node_id);
-        if (r.awaiting > bestN) { bestN = r.awaiting; best = p.node_id; }
-      });
-      focusProject = best || projs[0].node_id;
-    }
-    // group projects by their owning repo(s) — a dual-remoted project (neural-lace)
-    // appears under every repo that holds it.
-    var byRepo = {};
-    projs.forEach(function (p) {
-      reposOf(p).forEach(function (r) { (byRepo[r] = byRepo[r] || []).push(p); });
-    });
-    var repos = REPO_ORDER.filter(function (r) { return byRepo[r]; }).concat(
-      Object.keys(byRepo).filter(function (r) { return REPO_ORDER.indexOf(r) === -1; }).sort());
-    // totals over UNIQUE projects (a dual-remoted project must not double-count)
-    var totAwait = 0, totFlight = 0;
-    projs.forEach(function (p) {
-      var r = projectRollup(p.node_id); totAwait += r.awaiting; totFlight += r.inflight;
-    });
-    repos.forEach(function (repo) {
-      var rProjs = byRepo[repo];
-      treeCanvas.appendChild(renderRepoGroup(repo, rProjs, repoRollup(rProjs), !collapsedRepos.has(repo)));
-    });
-    treeSummary.textContent = totAwait + ' awaiting · ' + totFlight + ' in flight';
+    if (drillProject && byId(drillProject)) renderDrill(rows);
+    else { drillProject = null; renderCockpit(rows); }
+    var tot = statusCounts(allWorkItems());
+    treeSummary.textContent = tot.waiting + ' waiting · ' + tot.now + ' now · '
+      + tot.next + ' next · ' + tot.done + ' done';
     renderOrphanSection();
   }
 
-  // renderRepoGroup — the top tier. A collapsible repo header with its projects
-  // nested inside a guide-rail container. Repos are expanded by default.
-  function renderRepoGroup(repo, projNodes, roll, expanded) {
+  // setDrill — enter/leave the single-project drill (cockpit click → drilled
+  // tree; C4: the "← all projects" breadcrumb calls setDrill(null)).
+  function setDrill(projId) {
+    drillProject = projId || null;
+    if (drillProject) localStorage.setItem('workstreams.drillProject', drillProject);
+    else localStorage.removeItem('workstreams.drillProject');
+    renderTree();
+  }
+
+  // ---- COCKPIT (Task 3) -------------------------------------------------
+  var CK_COLS = ['now', 'next', 'waiting', 'done'];
+  var CK_TITLES = {
+    now: 'in flight now', next: 'queued next',
+    waiting: 'waiting on you / blocked', done: 'done (shipped)',
+  };
+  function renderCockpit(rows) {
+    // column-header row — the number pills below align to the same fixed grid
+    var head = el('div', 'ck-cols');
+    head.setAttribute('aria-hidden', 'true');
+    head.appendChild(el('span', 'ck-col-name', ''));
+    CK_COLS.forEach(function (c) { head.appendChild(el('span', 'ck-col', c)); });
+    treeCanvas.appendChild(head);
+    // group rows by owning repo (a dual-remoted project appears under each)
+    var byRepo = {};
+    rows.forEach(function (row) {
+      reposOf(row.node).forEach(function (rp) { (byRepo[rp] = byRepo[rp] || []).push(row); });
+    });
+    var repos = REPO_ORDER.filter(function (r) { return byRepo[r]; }).concat(
+      Object.keys(byRepo).filter(function (r) { return REPO_ORDER.indexOf(r) === -1; }).sort());
+    repos.forEach(function (repo) {
+      treeCanvas.appendChild(renderRepoGroup(repo, byRepo[repo], !collapsedRepos.has(repo)));
+    });
+  }
+
+  // renderRepoGroup — collapsible repo section of cockpit rows. Neutral gray
+  // structure per C6; the only accent is the amber waiting chip when > 0.
+  function renderRepoGroup(repo, rowList, expanded) {
     var wrap = el('div', 'repo-group' + (expanded ? ' exp' : ''));
-    var head = el('div', 'repo-head');
+    var head = el('button', 'repo-head');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     head.appendChild(el('span', 'twisty', expanded ? '▼' : '▶'));
     head.appendChild(el('span', 'repo-title', repo));
-    var badge = el('span', 'repo-badge');
-    if (roll.awaiting) badge.appendChild(el('span', 'b-await', roll.awaiting + ' awaiting'));
-    if (roll.inflight) badge.appendChild(el('span', 'b-flight', roll.inflight + ' in-flight'));
-    if (roll.blocked) badge.appendChild(el('span', 'b-block', roll.blocked + ' blocked'));
-    head.appendChild(badge);
+    var waitSum = 0;
+    rowList.forEach(function (row) { waitSum += row.counts.waiting; });
+    if (waitSum) {
+      var wchip = el('span', 'rg-wait', waitSum + ' waiting');
+      wchip.title = waitSum + ' item(s) in this repo are waiting on you';
+      head.appendChild(wchip);
+    }
     head.addEventListener('click', function () { toggleRepo(repo); });
     wrap.appendChild(head);
     if (expanded) {
-      var kids = el('div', 'tree-kids repo-kids');
-      projNodes.forEach(function (p) {
-        var pRoll = projectRollup(p.node_id);
-        var pExpanded = (p.node_id === focusProject) && !collapsed.has(p.node_id);
-        kids.appendChild(renderProject(p, pRoll, pExpanded));
-      });
+      var kids = el('div', 'ck-rows');
+      rowList.forEach(function (row) { kids.appendChild(cockpitRow(row)); });
       wrap.appendChild(kids);
     }
     return wrap;
@@ -854,6 +1005,135 @@
     if (collapsedRepos.has(repo)) collapsedRepos.delete(repo); else collapsedRepos.add(repo);
     saveSet('workstreams.collapsedRepos', collapsedRepos);
     renderTree();
+  }
+
+  // One fixed-density cockpit row: project name + four NUMBER pills. Never
+  // renders items — a project with dozens of items shows a count, not chips.
+  function cockpitRow(row) {
+    var btn = el('button', 'ck-row' + (row.counts.waiting ? ' has-wait' : ''));
+    btn.type = 'button';
+    btn.setAttribute('data-proj', row.projectId);
+    btn.setAttribute('aria-label', 'open project ' + projectTitle(row.node) + ' — '
+      + CK_COLS.map(function (c) { return row.counts[c] + ' ' + c; }).join(', '));
+    var name = el('span', 'ck-name', projectTitle(row.node));
+    if (row.node.state === 'archived') name.appendChild(el('span', 'ck-arch', ' · archived'));
+    btn.appendChild(name);
+    CK_COLS.forEach(function (c) {
+      var n = row.counts[c];
+      var pill = el('span', 'ck-pill ck-' + c + (n ? '' : ' zero')
+        + (c === 'waiting' && n ? ' accent' : ''), String(n));
+      pill.title = n + ' ' + CK_TITLES[c];
+      btn.appendChild(pill);
+    });
+    btn.addEventListener('click', function () { setDrill(row.projectId); });
+    return btn;
+  }
+
+  // ---- DRILL (Task 5) -----------------------------------------------------
+  // Master-detail at wide widths (C4): a compact cockpit RAIL stays on the
+  // left so the operator can hop projects; at narrow widths (≤560px) the rail
+  // hides and the view is a full swap with the "← all projects" breadcrumb as
+  // the persistent way back — no dead-end drill.
+  function renderDrill(rows) {
+    var proj = byId(drillProject);
+    var mine = null;
+    rows.forEach(function (row) { if (row.projectId === drillProject) mine = row; });
+    var refs = mine ? mine.refs : [];
+    var counts = mine ? mine.counts : statusCounts([]);
+
+    var wrap = el('div', 'drill-wrap');
+    var rail = el('nav', 'ck-rail');
+    rail.setAttribute('aria-label', 'all projects');
+    rows.forEach(function (row) {
+      var b = el('button', 'ck-rail-row' + (row.projectId === drillProject ? ' sel' : ''));
+      b.type = 'button';
+      b.appendChild(el('span', 'ck-rail-name', projectTitle(row.node)));
+      if (row.counts.waiting) {
+        var w = el('span', 'ck-rail-wait', String(row.counts.waiting));
+        w.title = row.counts.waiting + ' waiting on you';
+        b.appendChild(w);
+      }
+      b.addEventListener('click', function () { setDrill(row.projectId); });
+      rail.appendChild(b);
+    });
+    wrap.appendChild(rail);
+
+    var main = el('div', 'drill-main');
+    // C4 — persistent return path + current-project header.
+    var head = el('div', 'drill-head');
+    var back = el('button', 'drill-back', '← All projects');
+    back.type = 'button';
+    back.setAttribute('aria-label', 'back to all projects');
+    back.addEventListener('click', function () { setDrill(null); });
+    head.appendChild(back);
+    head.appendChild(el('span', 'drill-title', projectTitle(proj)));
+    var hc = el('span', 'drill-counts');
+    CK_COLS.forEach(function (c) {
+      var n = counts[c];
+      var pill = el('span', 'ck-pill ck-' + c + (n ? '' : ' zero')
+        + (c === 'waiting' && n ? ' accent' : ''), n + ' ' + c);
+      pill.title = n + ' ' + CK_TITLES[c];
+      hc.appendChild(pill);
+    });
+    head.appendChild(hc);
+    // "show done" toggle (Task 5) — backed by the header's show-completed
+    // checkbox so there is ONE source of truth for done-item visibility.
+    var sd = el('button', 'drill-showdone',
+      (showCompleted.checked ? 'hide done' : 'show done') + ' (' + counts.done + ')');
+    sd.type = 'button';
+    sd.setAttribute('aria-pressed', showCompleted.checked ? 'true' : 'false');
+    sd.addEventListener('click', function () {
+      showCompleted.checked = !showCompleted.checked;
+      render();
+    });
+    head.appendChild(sd);
+    main.appendChild(head);
+
+    var treeEl = el('div', 'drill-tree');
+    // the drilled project IS the project tier — its branches nest inside the
+    // .proj container so the Repo → Project → Workstream → WorkItem hierarchy
+    // is preserved in the drill (rail = repo/projects, .proj = this project).
+    var projWrap = el('div', 'proj');
+    projWrap.classList.add('exp');
+    renderProjectTree(projWrap, proj, refs);
+    treeEl.appendChild(projWrap);
+    main.appendChild(treeEl);
+    wrap.appendChild(main);
+    treeCanvas.appendChild(wrap);
+  }
+
+  // renderProjectTree — ONE bounded project, nested with guide lines: real
+  // child branches (nodes holding items) render as branch groups; the
+  // project's DIRECT items group into derived workstreams by theme.
+  function renderProjectTree(treeEl, proj, refs) {
+    if (!refs.length) {
+      treeEl.appendChild(el('div', 'proj-empty', 'Nothing in flight'));
+      return;
+    }
+    var direct = [], byNode = {};
+    refs.forEach(function (r) {
+      if (r.nodeId === proj.node_id) direct.push(r);
+      else (byNode[r.nodeId] = byNode[r.nodeId] || []).push(r);
+    });
+    // real branch nodes first (workstream-tier nodes per collectWorkstreams
+    // order, then any other item-holding descendant), then derived themes
+    var seen = {};
+    collectWorkstreams(proj.node_id).forEach(function (ws) {
+      if (byNode[ws.node_id]) {
+        treeEl.appendChild(renderWorkstream(ws, byNode[ws.node_id]));
+        seen[ws.node_id] = 1;
+      }
+    });
+    Object.keys(byNode).forEach(function (nid) {
+      if (!seen[nid]) treeEl.appendChild(renderWorkstream(byId(nid) || { node_id: nid }, byNode[nid]));
+    });
+    renderDerivedWorkstreams(treeEl, direct);
+  }
+
+  // renderWorkstream — a REAL branch node's group (wire-check target).
+  function renderWorkstream(wsNode, refs) {
+    refs = refs || collectWorkItems(wsNode.node_id);
+    return branchGroup(wsNode.title || wsNode.node_id, refs, 'node:' + wsNode.node_id);
   }
 
   // ---- derived Workstream tier (theme grouping of a project's items) -------
@@ -881,8 +1161,8 @@
     for (var i = 0; i < WS_THEMES.length; i++) { if (WS_THEMES[i][0].test(t)) return WS_THEMES[i][1]; }
     return 'General';
   }
-  // Bucket refs by workstreamOf; render a workstream header (.ws-head) + a nested
-  // .tree-kids of its items. Sort largest-first, "General" last.
+  // Bucket the project's direct items into derived workstreams by theme
+  // (first match wins, "General" last) and render each as a branch group.
   function renderDerivedWorkstreams(parentEl, refs) {
     if (!refs.length) return;
     var byWs = {};
@@ -892,83 +1172,63 @@
       return byWs[b].length - byWs[a].length;
     });
     names.forEach(function (w) {
-      var grp = byWs[w];
-      var ws = el('div', 'ws');
-      var head = el('div', 'ws-head');
-      head.appendChild(el('span', 'ws-title', w));
-      var allShipped = grp.every(function (r) { return isComplete(r.item); });
-      head.appendChild(el('span', 'ws-state st-' + (allShipped ? 'shipped' : 'active'),
-        allShipped ? 'shipped' : 'active'));
-      head.appendChild(el('span', 'ws-count', String(grp.length)));
-      ws.appendChild(head);
-      var kids = el('div', 'tree-kids ws-kids');
-      grp.forEach(function (r) { kids.appendChild(treeItemRow(r, 3)); });
-      ws.appendChild(kids);
-      parentEl.appendChild(ws);
+      parentEl.appendChild(branchGroup(w, byWs[w], 'ws:' + w));
     });
   }
 
-  function renderProject(p, roll, expanded) {
-    var wrap = el('div', 'proj' + (expanded ? ' exp' : ''));
-    var head = el('div', 'proj-head');
-    head.appendChild(el('span', 'twisty', expanded ? '▼' : '▶'));
-    head.appendChild(el('span', 'proj-title', projectTitle(p)));
-    var badge = el('span', 'proj-badge');
-    if (roll.awaiting) badge.appendChild(el('span', 'b-await', roll.awaiting + ' awaiting'));
-    if (roll.inflight) badge.appendChild(el('span', 'b-flight', roll.inflight + ' in-flight'));
-    if (roll.blocked) badge.appendChild(el('span', 'b-block', roll.blocked + ' blocked'));
-    if (!roll.total) badge.appendChild(el('span', 'b-none', 'nothing in flight'));
-    head.appendChild(badge);
-    head.addEventListener('click', function () { toggleProject(p.node_id); });
-    wrap.appendChild(head);
-    if (expanded) {
-      // Children nest inside a guide-rail container (.tree-kids). Real
-      // Workstream-tier nodes (if Phase-3 backfill ever lands them as nodes)
-      // render first as their own tier; the project's DIRECT items are grouped
-      // into DERIVED workstreams by theme (the Workstream tier — an initiative
-      // within a project, design-v2 §1). NO kind-grouping — Decision/Question/
-      // Action is a per-item badge, not a nesting axis.
-      var body = el('div', 'tree-kids proj-kids');
-      var workstreams = collectWorkstreams(p.node_id);
-      workstreams.forEach(function (ws) { body.appendChild(renderWorkstream(ws)); });
-      var directs = collectWorkItems(p.node_id).filter(visibleInTree);
-      renderDerivedWorkstreams(body, directs);
-      if (!directs.length && !workstreams.length) {
-        body.appendChild(el('div', 'proj-empty', 'Nothing in flight'));
-      }
-      wrap.appendChild(body);
-    }
-    return wrap;
+  // ---- branch groups (Task 5) -------------------------------------------
+  // Per-branch disclosure state. Default: OPEN for branches with open work,
+  // COLLAPSED for all-done branches (done work is muted and out of the way).
+  function branchKey(key) { return drillProject + '::' + key; }
+  function branchExpanded(key, dflt) {
+    var v = branchState[branchKey(key)];
+    return v === 'exp' ? true : v === 'col' ? false : dflt;
   }
-
-  // renderWorkstream — per-workstream rollup + its work items (wire-check target).
-  // Items + sub-tasks nest inside .tree-kids guide-rail containers (compounding
-  // indent per depth) so Workstream → WorkItem → Sub-task each sit at a distinct x.
-  function renderWorkstream(wsNode) {
-    var wrap = el('div', 'ws');
+  function toggleBranch(key, expand) {
+    branchState[branchKey(key)] = expand ? 'exp' : 'col';
+    saveObj('workstreams.branchState', branchState);
+    renderTree();
+  }
+  // branchGroup — one branch row + its nested items. Branch rows carry: a
+  // FOCUSABLE disclosure twisty (a real <button> with aria-expanded, so the
+  // keyboard can expand/collapse), an open-count badge, and an amber
+  // needs-you dot when anything inside waits on the operator (C6: amber is
+  // the ONLY thing that pops). Done branches are collapsed by default;
+  // explicitly expanding one reveals its items even while "show done" is off.
+  function branchGroup(title, refs, key) {
+    var open = refs.filter(function (r) { return !isComplete(r.item); });
+    var needs = refs.some(function (r) { return isWaitingOnYou(r.item); });
+    var allDone = refs.length > 0 && open.length === 0;
+    var expanded = branchExpanded(key, !allDone);
+    var grp = el('div', 'ws' + (allDone ? ' ws-done' : ''));
     var head = el('div', 'ws-head');
-    head.appendChild(el('span', 'ws-title', wsNode.title || wsNode.node_id));
-    var allShipped = collectWorkItems(wsNode.node_id).every(function (r) { return isComplete(r.item); });
-    head.appendChild(el('span', 'ws-state st-' + (allShipped ? 'shipped' : 'active'),
-      allShipped ? 'shipped' : 'active'));
-    wrap.appendChild(head);
-    var body = el('div', 'tree-kids ws-kids');
-    collectWorkItems(wsNode.node_id).filter(visibleInTree).forEach(function (r) {
-      body.appendChild(treeItemRow(r, 3));
-    });
-    // sub-tasks (children of the workstream that are not sessions) nest deeper.
-    childrenOf(wsNode.node_id).filter(function (c) { return !isSession(c); }).forEach(function (sub) {
-      var subItems = collectWorkItems(sub.node_id).filter(visibleInTree);
-      if (!subItems.length) return;
-      var subHead = el('div', 'ws-subhead');
-      subHead.appendChild(el('span', 'ws-title', sub.title || sub.node_id));
-      body.appendChild(subHead);
-      var subKids = el('div', 'tree-kids');
-      subItems.forEach(function (r) { subKids.appendChild(treeItemRow(r, 4)); });
-      body.appendChild(subKids);
-    });
-    wrap.appendChild(body);
-    return wrap;
+    var tw = el('button', 'twisty', expanded ? '▼' : '▶');
+    tw.type = 'button';
+    tw.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    tw.setAttribute('aria-label', (expanded ? 'collapse ' : 'expand ') + title);
+    tw.addEventListener('click', function (e) { e.stopPropagation(); toggleBranch(key, !expanded); });
+    head.appendChild(tw);
+    head.appendChild(el('span', 'ws-title', title));
+    if (needs) {
+      var dot = el('span', 'needs-dot');
+      dot.title = 'something in here needs you';
+      head.appendChild(dot);
+    }
+    head.appendChild(el('span', 'ws-open-badge' + (open.length ? '' : ' all-done'),
+      open.length ? open.length + ' open' : '✓ done'));
+    head.addEventListener('click', function () { toggleBranch(key, !expanded); });
+    grp.appendChild(head);
+    if (expanded) {
+      var kids = el('div', 'tree-kids ws-kids');
+      var visible = refs.filter(function (r) { return allDone || visibleInTree(r); });
+      visible.forEach(function (r) { kids.appendChild(treeItemRow(r, 3)); });
+      if (!visible.length) {
+        kids.appendChild(el('div', 'proj-empty',
+          refs.length + ' done hidden — use “show done”'));
+      }
+      grp.appendChild(kids);
+    }
+    return grp;
   }
 
   // non-complete-by-default: hide shipped/closed in the tree unless "show
@@ -986,20 +1246,31 @@
 
   function treeItemRow(r, depth) {
     var st = itemState(r.item);
-    // Indent is supplied by the enclosing .tree-kids guide-rail container, not a
-    // per-depth margin class. data-depth is retained for the geometry regression.
-    var li = el('div', 'tree-item state-' + st);
+    var needs = isWaitingOnYou(r.item);
+    // C6 color migration: COLOR encodes STATUS, ICON encodes KIND. Rows are
+    // neutral gray; the amber dot/edge appears ONLY on needs-you/blocked; done
+    // gets the muted green check. Indent is supplied by the enclosing
+    // .tree-kids guide rail; data-depth is retained for the geometry regression.
+    var li = el('div', 'tree-item state-' + st + (needs ? ' needs-you' : ''));
     li.setAttribute('data-depth', String(depth));
     li.setAttribute('data-node', r.nodeId);
     li.setAttribute('data-item', r.itemId);
     if (selItem && selItem.nodeId === r.nodeId && selItem.itemId === r.itemId) li.classList.add('sel');
-    li.appendChild(el('span', 'ti-ic', stateIcon(st)));
-    // colored kind badge (decision / question / action) — parity with the
-    // right-pane .k-* chips so the type is scannable in the tree (bug #4).
-    var badge = el('span', 'ti-badge k-' + (r.item.kind || 'action'), kindLabel(r.item.kind));
-    badge.title = r.item.kind || '';
-    li.appendChild(badge);
+    var ki = el('span', 'ti-kind-ic', kindGlyph(r.item.kind));
+    ki.title = (r.item.kind || 'action') + ' (' + kindLabel(r.item.kind) + ')';
+    li.appendChild(ki);
     li.appendChild(el('span', 'ti-text', r.item.text || '(untitled)'));
+    if (st === 'shipped') {
+      var dn = el('span', 'ti-done-ic', '✓');
+      dn.title = 'done';
+      li.appendChild(dn);
+    } else if (needs) {
+      var nd = el('span', 'needs-dot');
+      nd.title = st === 'blocked'
+        ? ('blocked' + (r.item.block_reason ? ': ' + r.item.block_reason : ''))
+        : 'waiting on you';
+      li.appendChild(nd);
+    }
     li.addEventListener('click', function () { openDetailModal(r.nodeId, r.itemId); });
     return li;
   }
@@ -1014,18 +1285,6 @@
         && li.getAttribute('data-item') === selItem.itemId;
       li.classList.toggle('sel', !!on);
     });
-  }
-
-  function toggleProject(projId) {
-    if (focusProject === projId && !collapsed.has(projId)) {
-      collapsed.add(projId);                      // collapse the focused project
-    } else {
-      collapsed.delete(projId);
-      focusProject = projId;                      // focus + expand
-      localStorage.setItem('workstreams.focusProject', projId);
-    }
-    saveSet('workstreams.collapsed', collapsed);
-    renderTree();
   }
 
   function renderOrphanSection() {

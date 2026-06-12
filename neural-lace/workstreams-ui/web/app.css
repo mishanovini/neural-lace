@@ -366,15 +366,11 @@ button:active { transform: scale(0.98); }
 .wou-group-header:first-child { margin-top: 0.1rem; border-top: none; }
 .wou-group-header .wgh-sep { color: var(--muted); font-weight: 400; padding: 0 0.2rem; }
 
-.li-kind { font-size: 0.62rem; font-weight: 600; padding: 0.02rem 0.4rem; border-radius: 999px; border: 1px solid transparent; text-transform: uppercase; letter-spacing: 0.04em; cursor: default; user-select: none; }
-.li-kind.action   { background: rgba(239,68,68,0.22);  color: var(--type-action); }
-.li-kind.decision { background: rgba(245,158,11,0.22); color: var(--type-decision); }
-.li-kind.question { background: rgba(59,130,246,0.22); color: var(--type-question); }
-.li-kind:hover { background-color: inherit; }
+/* C6 color migration (2026-06-11): color encodes STATUS, icon encodes KIND.
+   The per-kind color variants (.li-kind.action/.decision/.question and the
+   .li.kind-* borders/tints) are RETIRED — kind is expressed by glyph only. */
+.li-kind { font-size: 0.62rem; font-weight: 600; padding: 0.02rem 0.4rem; border-radius: 999px; border: 1px solid var(--border2); color: var(--muted); background: var(--panel2); text-transform: uppercase; letter-spacing: 0.04em; cursor: default; user-select: none; }
 .li-text { flex: 1; }
-.li.kind-action   { border-left: 5px solid var(--type-action);   background-image: linear-gradient(rgba(239,68,68,0.05),  rgba(239,68,68,0.05)); }
-.li.kind-decision { border-left: 5px solid var(--type-decision); background-image: linear-gradient(rgba(245,158,11,0.05), rgba(245,158,11,0.05)); }
-.li.kind-question { border-left: 5px solid var(--type-question); background-image: linear-gradient(rgba(59,130,246,0.05), rgba(59,130,246,0.05)); }
 .li-jump {
   flex: 0 0 24px; width: 24px; height: 24px; padding: 0; line-height: 1;
   display: flex; align-items: center; justify-content: center;
@@ -383,9 +379,6 @@ button:active { transform: scale(0.98); }
 }
 .li-jump:hover { color: var(--type-question); border-color: var(--type-question); }
 .li.hl, .tnode-row.hl { background-image: linear-gradient(rgba(34,211,238,0.18), rgba(34,211,238,0.18)); border-left: 4px solid var(--type-neutral); }
-.li.kind-action.hl   { background-image: linear-gradient(rgba(239,68,68,0.20), rgba(239,68,68,0.20)); border-left-color: var(--type-action); }
-.li.kind-decision.hl { background-image: linear-gradient(rgba(245,158,11,0.20),rgba(245,158,11,0.20)); border-left-color: var(--type-decision); }
-.li.kind-question.hl { background-image: linear-gradient(rgba(59,130,246,0.20),rgba(59,130,246,0.20)); border-left-color: var(--type-question); }
 .li-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
 .li-actions button { padding: 0.15rem 0.45rem; font-size: 0.72rem; }
 
@@ -552,9 +545,6 @@ button:active { transform: scale(0.98); }
 .det-row { display: flex; gap: 0.5rem; align-items: flex-start; }
 .det-k { flex: 0 0 8.5rem; color: var(--muted); text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.04em; padding-top: 0.1rem; }
 .det-v { flex: 1; white-space: pre-wrap; word-break: break-word; }
-.li.kind-action   .li-details .det-row:first-child .det-v { color: var(--type-action);   font-weight: 600; }
-.li.kind-decision .li-details .det-row:first-child .det-v { color: var(--type-decision); font-weight: 600; }
-.li.kind-question .li-details .det-row:first-child .det-v { color: var(--type-question); font-weight: 600; }
 .det-opt { border-left: 2px solid var(--border2); padding-left: 0.5rem; margin: 0.2rem 0; }
 .det-opt-l { font-weight: 600; }
 /* Task 9-full (OQ-2 / decision-context fence-grammar fields). Minimal chips
@@ -759,19 +749,25 @@ button.det-link-doc:hover { background: rgba(59,130,246,0.22); text-decoration: 
    compounds so every tier sits at a distinct, clearly-indented x. Decision /
    Question / Action is a per-item BADGE, never a nesting axis. */
 
-/* Top tier — GitHub repo group header. */
+/* Top tier — GitHub repo group header (a real <button>: focusable,
+   aria-expanded). C6: neutral gray structure; the only accent is the amber
+   waiting chip. */
 .repo-group { margin-bottom: 0.5rem; }
 .repo-head {
-  display: flex; align-items: center; gap: 0.5rem;
+  display: flex; align-items: center; gap: 0.5rem; width: 100%;
   padding: 0.5rem 0.6rem; border-radius: 7px; cursor: pointer;
-  background-color: var(--panel2);
-  background-image: linear-gradient(rgba(167,139,250,0.12), rgba(167,139,250,0.12));
+  background: var(--panel2); color: var(--text);
   border: 1px solid var(--border2);
+  font: inherit; text-align: left;
 }
-.repo-head:hover { background-image: linear-gradient(rgba(167,139,250,0.20), rgba(167,139,250,0.20)); }
+.repo-head:hover { background: var(--panel); }
+.repo-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .repo-title { font-weight: 800; font-size: 0.92rem; letter-spacing: 0.01em; }
-.repo-badge { margin-left: auto; display: flex; gap: 0.35rem; font-size: 0.68rem; }
-.repo-badge span { padding: 0.05rem 0.4rem; border-radius: 999px; font-weight: 600; }
+.rg-wait {
+  margin-left: auto; font-size: 0.68rem; font-weight: 700;
+  padding: 0.05rem 0.45rem; border-radius: 999px;
+  background: rgba(251,191,36,0.16); color: var(--warn);
+}
 
 /* The guide-rail nesting container — the load-bearing hierarchy cue. */
 .tree-kids { margin-left: 0.8rem; border-left: 2px solid var(--border2);
@@ -791,24 +787,33 @@ button.det-link-doc:hover { background: rgba(59,130,246,0.22); text-decoration: 
 .proj-title { font-weight: 700; font-size: 0.86rem; }
 .proj-badge { margin-left: auto; display: flex; gap: 0.35rem; font-size: 0.68rem; }
 .proj-badge span { padding: 0.05rem 0.4rem; border-radius: 999px; font-weight: 600; }
-.b-await  { background: rgba(167,139,250,0.18); color: var(--accent); }
-.b-flight { background: rgba(96,165,250,0.16); color: var(--info); }
-.b-block  { background: rgba(251,191,36,0.16); color: var(--warn); }
-.b-none   { background: var(--panel2); color: var(--muted); font-weight: 500; }
 .proj-kids { margin-top: 0.15rem; }
 .proj-empty { color: var(--muted); font-size: 0.76rem; font-style: italic; padding: 0.25rem 0.4rem; }
 
-/* Workstream tier (lights up when Phase-3 backfill assigns workstream nodes). */
+/* Workstream / branch tier (Task 5). Branch rows: focusable twisty button +
+   neutral title + amber needs-you dot + open-count badge. C6: the old blue
+   .ws-state.st-active chip is retired — gray structure, amber pop only. */
 .ws { margin: 0.15rem 0; }
 .ws-head { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.45rem;
-  font-size: 0.82rem; font-weight: 700; color: var(--muted); }
+  font-size: 0.82rem; font-weight: 700; color: var(--muted); cursor: pointer;
+  border-radius: 5px; }
+.ws-head:hover { background: var(--panel2); }
 .ws-title { color: var(--text); }
 .ws-subhead { padding: 0.25rem 0.45rem; font-size: 0.78rem; font-weight: 600; color: var(--text); }
-.ws-count { margin-left: auto; font-size: 0.64rem; font-weight: 600; color: var(--muted);
-  background: var(--panel2); border: 1px solid var(--border2); border-radius: 999px; padding: 0.02rem 0.42rem; }
-.ws-state { font-size: 0.64rem; padding: 0.03rem 0.36rem; border-radius: 999px; }
-.ws-state.st-active  { background: rgba(96,165,250,0.16); color: var(--info); }
-.ws-state.st-shipped { background: rgba(52,211,153,0.16); color: var(--ok); }
+.ws-open-badge { margin-left: auto; font-size: 0.64rem; font-weight: 600; color: var(--muted);
+  background: var(--panel2); border: 1px solid var(--border2); border-radius: 999px;
+  padding: 0.02rem 0.42rem; white-space: nowrap; }
+.ws-open-badge.all-done { color: var(--ok); opacity: 0.7; border-color: transparent; }
+.ws-done .ws-title { color: var(--muted); }
+/* the disclosure twisty is a real <button> (keyboard-focusable, aria-expanded) */
+.ws-head .twisty, .repo-head .twisty {
+  background: none; border: none; padding: 0 0.1rem; margin: 0;
+  color: var(--muted); font-size: 0.7rem; width: 1.1rem; flex: 0 0 auto;
+  cursor: pointer; line-height: 1.2;
+}
+.ws-head .twisty:focus-visible, .repo-head .twisty:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px;
+}
 
 /* WorkItem / Sub-task rows. Indent comes from the enclosing .tree-kids. */
 .tree-item { display: flex; align-items: center; gap: 0.4rem; padding: 0.22rem 0.45rem;
@@ -816,18 +821,18 @@ button.det-link-doc:hover { background: rgba(59,130,246,0.22); text-decoration: 
 .tree-item:hover { background: var(--panel2); }
 .tree-item.sel { background: rgba(167,139,250,0.18); outline: 1px solid var(--accent); }
 .ti-ic { width: 1rem; text-align: center; }
-.ti-kind { width: 0.9rem; text-align: center; color: var(--muted); font-size: 0.74rem; }
-/* Colored kind badge in the tree (bug #4) — parity with the right-pane .k-*
-   chips so decision / question / action are scannable at a glance. */
-.ti-badge { flex: 0 0 auto; font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.03em; padding: 0.02rem 0.34rem; border-radius: 4px; }
-.ti-badge.k-action   { background: rgba(239,68,68,0.18);  color: var(--type-action); }
-.ti-badge.k-decision { background: rgba(245,158,11,0.18); color: var(--type-decision); }
-.ti-badge.k-question { background: rgba(59,130,246,0.18); color: var(--type-question); }
+/* C6: ICON = KIND (neutral gray glyph — ◆ decision / ? question / ! action);
+   COLOR = STATUS. The colored .ti-badge.k-* kind badges are RETIRED. */
+.ti-kind-ic { flex: 0 0 auto; width: 1rem; text-align: center; color: var(--muted);
+  font-size: 0.74rem; cursor: default; }
 .ti-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tree-item.state-shipped .ti-text { color: var(--muted); text-decoration: line-through; }
-.tree-item.state-blocked .ti-ic { color: var(--warn); }
-.tree-item.state-in-flight .ti-ic { color: var(--info); }
+.ti-done-ic { flex: 0 0 auto; color: var(--ok); opacity: 0.75; font-size: 0.78rem; }
+/* AMBER = needs-you / blocked ONLY — the one thing that pops. */
+.needs-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--warn); display: inline-block; }
+.tree-item.needs-you { border-left: 2px solid var(--warn); border-radius: 0 5px 5px 0; }
+.tree-item.state-blocked .ti-text { color: var(--warn); }
 
 /* Orphans section */
 .orphan-section { margin-top: 0.8rem; border-top: 1px dashed var(--border2); padding: 0.5rem 0.3rem 0; }
@@ -866,15 +871,17 @@ button.det-link-doc:hover { background: rgba(59,130,246,0.22); text-decoration: 
   white-space: pre-wrap; max-height: 3.6em; overflow: hidden; }
 .item-meta { display: flex; gap: 0.35rem; margin-top: 0.25rem; flex-wrap: wrap; }
 .item-meta span { font-size: 0.66rem; padding: 0.03rem 0.36rem; border-radius: 4px; }
-.k-action { background: rgba(239,68,68,0.16); color: var(--type-action); }
-.k-decision { background: rgba(245,158,11,0.16); color: var(--type-decision); }
-.k-question { background: rgba(59,130,246,0.16); color: var(--type-question); }
+/* C6: kind chips are NEUTRAL (glyph + word) — kind never carries color. */
+.kind-chip { background: var(--panel2); color: var(--muted); border: 1px solid var(--border2); }
+/* C6: status badges use TWO ramps (gray + amber) + the muted-green done
+   semantic. committed / in-flight are neutral grays — only needs-you/blocked
+   pops (amber); shipped is the muted green check tier. */
 .st-badge { font-weight: 600; }
-.st-proposed  { background: var(--panel2); color: var(--muted); }
-.st-committed { background: rgba(34,211,238,0.14); color: var(--type-neutral); }
-.st-in-flight { background: rgba(96,165,250,0.16); color: var(--info); }
+.st-muted     { background: var(--panel2); color: var(--muted); }
+.st-committed { background: var(--panel2); color: var(--muted); }
+.st-in-flight { background: rgba(156,163,175,0.16); color: var(--text); }
 .st-blocked   { background: rgba(251,191,36,0.16); color: var(--warn); }
-.st-shipped   { background: rgba(52,211,153,0.16); color: var(--ok); }
+.st-shipped   { background: rgba(52,211,153,0.12); color: var(--ok); opacity: 0.85; }
 
 /* Detail card */
 .detail-card { padding: 0.7rem 0.8rem; overflow: auto; flex: 1 1 auto; }
@@ -975,4 +982,124 @@ button.det-link-doc:hover { background: rgba(59,130,246,0.22); text-decoration: 
   border-radius: 5px; padding: 0.05rem 0.45rem; cursor: pointer; font: inherit;
 }
 .retry-btn:hover { background: rgba(248, 113, 113, 0.12); }
+
+/* ====================================================================
+   STATUS SURFACE (Tasks 3/4/5, 2026-06-11) — cockpit + drill + waiting.
+   Color discipline (C6): neutral gray structure; AMBER = needs-you/blocked
+   ONLY; muted green check = done. Two ramps + the done semantic, no rainbow.
+   Density principle: the cockpit renders COUNTS (fixed-size number pills,
+   O(projects)); items render only in the drilled tree / waiting list.
+   ==================================================================== */
+
+/* ---- cockpit (Task 3) ---- */
+/* shared fixed grid: project name + four number columns. The pills are
+   fixed-width so the four columns read as a scannable matrix; a project with
+   dozens of items still occupies exactly one row of constant height. */
+.ck-cols, .ck-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(4, minmax(2.4rem, 3rem));
+  gap: 0.3rem; align-items: center;
+}
+.ck-cols {
+  padding: 0.15rem 0.5rem 0.25rem;
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted);
+  position: sticky; top: 0; background: var(--bg); z-index: 4;
+}
+.ck-col { text-align: center; }
+.ck-rows { display: flex; flex-direction: column; gap: 0.25rem; margin: 0.25rem 0 0.1rem; }
+.ck-row {
+  width: 100%; padding: 0.36rem 0.5rem; border-radius: 6px; cursor: pointer;
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  font: inherit; text-align: left;
+}
+.ck-row:hover { background: var(--panel2); border-color: var(--border2); }
+.ck-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ck-name { font-weight: 700; font-size: 0.84rem; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck-arch { font-weight: 400; font-size: 0.7rem; color: var(--muted); }
+.ck-pill {
+  display: inline-block; text-align: center; font-size: 0.74rem; font-weight: 700;
+  padding: 0.08rem 0.2rem; border-radius: 999px;
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border2);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ck-pill.zero { color: var(--muted); font-weight: 400; opacity: 0.55; }
+.ck-pill.ck-done { color: var(--muted); font-weight: 500; }
+/* the bottleneck signal — the ONLY accent on the cockpit */
+.ck-pill.accent { background: rgba(251,191,36,0.18); color: var(--warn);
+  border-color: rgba(251,191,36,0.45); }
+
+/* ---- drill (Task 5) — master-detail (C4) ---- */
+.drill-wrap { display: grid; grid-template-columns: minmax(140px, 180px) 1fr;
+  gap: 0.6rem; min-width: 0; }
+.ck-rail { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0;
+  border-right: 1px solid var(--border); padding-right: 0.45rem; }
+.ck-rail-row {
+  display: flex; align-items: center; gap: 0.3rem; width: 100%;
+  padding: 0.26rem 0.4rem; border-radius: 5px; cursor: pointer;
+  background: none; color: var(--muted); border: 1px solid transparent;
+  font: inherit; font-size: 0.78rem; text-align: left;
+}
+.ck-rail-row:hover { background: var(--panel2); color: var(--text); }
+.ck-rail-row.sel { background: var(--panel); color: var(--text);
+  border-color: var(--border2); font-weight: 700; }
+.ck-rail-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ck-rail-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.ck-rail-wait { flex: 0 0 auto; font-size: 0.64rem; font-weight: 700;
+  padding: 0 0.34rem; border-radius: 999px; min-width: 1rem; text-align: center;
+  background: rgba(251,191,36,0.18); color: var(--warn); }
+.drill-main { min-width: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+/* C4 — persistent breadcrumb + current-project header (no dead-end drill) */
+.drill-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  padding: 0.2rem 0.1rem 0.35rem; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--bg); z-index: 4; }
+.drill-back {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border2);
+  border-radius: 5px; padding: 0.18rem 0.5rem; cursor: pointer; font: inherit;
+  font-size: 0.76rem; white-space: nowrap;
+}
+.drill-back:hover { border-color: var(--accent); }
+.drill-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.drill-title { font-weight: 800; font-size: 0.92rem; }
+.drill-counts { display: inline-flex; gap: 0.25rem; flex-wrap: wrap; }
+.drill-counts .ck-pill { font-size: 0.66rem; font-weight: 600; padding: 0.05rem 0.4rem; }
+.drill-showdone {
+  margin-left: auto; background: none; color: var(--muted);
+  border: 1px solid var(--border2); border-radius: 999px;
+  padding: 0.12rem 0.55rem; cursor: pointer; font: inherit; font-size: 0.72rem;
+}
+.drill-showdone:hover { color: var(--text); border-color: var(--accent); }
+.drill-showdone[aria-pressed="true"] { background: var(--panel2); color: var(--text); }
+.drill-tree { min-width: 0; }
+
+/* C4 — full swap at narrow widths: the rail hides; the breadcrumb is the way
+   back. (≤390px is the design target; 560px keeps the rail from cramping.) */
+@media (max-width: 560px) {
+  .drill-wrap { grid-template-columns: 1fr; }
+  .ck-rail { display: none; }
+}
+
+/* ---- waiting on you (Task 4) ---- */
+/* These rows ARE the needs-you set — the amber edge is within discipline. */
+.wait-row { border-left: 3px solid var(--warn); }
+.wi-kind-ic { font-size: 0.85rem; padding-top: 0.05rem; }
+.wait-ctx { margin-top: 0.2rem; display: flex; flex-direction: column; gap: 0.1rem; }
+.wait-bg {
+  font-size: 0.76rem; color: var(--muted); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.wait-rec { font-size: 0.76rem; color: var(--text); }
+/* context-incomplete marker — deliberately NEUTRAL (gray, dashed): this is
+   "needs enrichment by the AI", not an operator-ask; amber stays exclusive
+   to needs-you. */
+.ctx-incomplete-badge {
+  display: inline-block; margin-top: 0.2rem;
+  font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); background: var(--panel2);
+  border: 1px dashed var(--border2); border-radius: 999px;
+  padding: 0.04rem 0.45rem; font-weight: 600;
+}
 
