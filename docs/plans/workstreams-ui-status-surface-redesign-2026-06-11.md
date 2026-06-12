@@ -129,11 +129,11 @@ Same editing pattern for the "eventually" bucket; add / edit / priority / delete
 
 ## Tasks
 
-- [ ] 1. Data-model deltas: add `origin` (operator|ai) + normalized `state` handling + the
+- [x] 1. Data-model deltas: add `origin` (operator|ai) + normalized `state` handling + the
   per-kind `details` context shape to the schema/reducer (additive within major 1); add a
   `task-added` / `task-edited` / `task-removed` / `item-promoted` event family for the
   operator-authoring path; extend `state/selftest.js`. — Verification: contract
-- [ ] 2. GUI server write endpoints: `POST /api/event` (validated, appends via the
+- [x] 2. GUI server write endpoints: `POST /api/event` (validated, appends via the
   sole-normative state library) for add/edit/remove/promote/mark-done/defer; reject malformed
   payloads; never bypass the facade. — Verification: full
 - [ ] 3. Cockpit view: per-project status-count rows (fixed density) computed from the reduced
@@ -155,7 +155,7 @@ Same editing pattern for the "eventually" bucket; add / edit / priority / delete
   lines; 3. amber marks only needs-you/blocked; 4. keyboard can expand/collapse a branch.
   **Wire checks:** `neural-lace/workstreams-ui/web/app.js` → `neural-lace/workstreams-ui/web/app.css`
   **Integration points:** reads node/item tree from the reducer; n/a external.
-- [ ] 6. My-tasks surface: list all operator items; "+ add" input; inline edit; drag-reorder;
+- [x] 6. My-tasks surface: list all operator items; "+ add" input; inline edit; drag-reorder;
   complete/delete — all via the Task-2 endpoints. — Verification: full
   **Prove it works:** 1. type a new task + enter; 2. it appears and persists to the state file;
   3. edit its text inline; 4. it shows in the cockpit counts + its project tree.
@@ -304,6 +304,28 @@ an additional read/render over the same proven substrate.
   design detail, 2026-06-11).
 - Context-completeness is gated, not advisory: a contextless decision/question/action-for-
   operator item is flagged incomplete and not presented as actionable.
+
+## Evidence Log
+
+Task-verifier PASS records (rung:2 comprehension gate run) live in the companion
+evidence file `workstreams-ui-status-surface-redesign-2026-06-11-evidence.md`; the
+per-task structured rationale + comprehension articulation live in
+`workstreams-ui-status-surface-redesign-2026-06-11-evidence/tasks-1-2-6.evidence.md`.
+
+- **Task 1** — Verdict PASS (Confidence 9). Oracle: derived-preexisting (contract) — the
+  `state/selftest.js` suite is green at 21/21 incl. the new P20 property
+  (create+origin-store/derive / edit-no-origin-flip / reorder / remove+reject-retain+idempotent+envelope).
+  Comprehension-gate: PASS. Diff afd1bb4..536e813 confirms `item-removed` is the only new
+  event and `origin` rides as an optional reducer-read item field.
+- **Task 2** — Verdict PASS (Confidence 9). Oracle: specified — `POST /api/event` returns the
+  exact per-type 422 for empty text / bad origin enum / non-array ordered_ids / empty item_id
+  (validator re-executed standalone; live HTTP 422s recorded prior pass), and the `appendEvent`
+  facade is unchanged (endpoint reused, not rebuilt). Comprehension-gate: PASS.
+- **Task 6** — Verdict PASS (Confidence 9). Oracle: specified — acceptance scenario
+  `add-and-edit-a-personal-task` round-trips live (13/13 in a real browser); add/edit/reorder/remove
+  all via the in-surface input (zero `window.prompt` in the My-tasks flow — the only added
+  prompt token is a comment; the 8 calls are the out-of-scope context-card surface), I3
+  revert+inline-retry and I4 keyboard reorder present in the diff. Comprehension-gate: PASS.
 
 ## Pre-Submission Audit
 - S1 (Entry-Point Surfacing): each behavior change is cited in a Task + a Files entry.
