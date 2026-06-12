@@ -398,6 +398,8 @@ const ORACLE_SRC = `(() => {
   });
   await shot(page, 'drill-390');
   await page.evaluate(() => { const b = document.querySelector('.drill-back'); if (b) b.click(); });
+  await new Promise(r => setTimeout(r, 350));
+  await shot(page, 'cockpit-390');
   ok(16, t16a.ckRows >= 1 && !t16a.overflow && t16b.drill && t16b.railHidden && t16b.back,
     `768: rows=${t16a.ckRows} noOverflow=${!t16a.overflow} · 390: drill=${t16b.drill} ` +
     `railHidden=${t16b.railHidden} back=${t16b.back}`);
@@ -467,6 +469,7 @@ const ORACLE_SRC = `(() => {
   const t17e = await page.evaluate(txt =>
     Array.from(document.querySelectorAll('#filterBody .mytask-row'))
       .some(r => (r.querySelector('.item-text, .mytask-text') || {}).textContent === txt), blText);
+  await shot(page, 'mytasks-1280');
   await shot(page, 'backlog-promoted-1280');
   ok(17, t17a.addInput && t17b.present && t17b.promote && !t17c
     && !t17d.inBacklog && !t17d.parkedStill && t17d.taskFound
@@ -612,6 +615,87 @@ const ORACLE_SRC = `(() => {
   const promptHits = (appSrc.match(/window\.prompt/g) || []).length;
   ok(20, promptHits === 0 && nativeDialogs === 0,
     `window.prompt-in-source=${promptHits}(want0) nativeDialogsFired=${nativeDialogs}(want0)`);
+
+  // ====================================================================
+  // Task 10 (2026-06-12) — a11y/polish locks: overlay stack (I5), amber
+  // chip discipline (C6), waiting-row ↔ card context_state parity.
+  // ====================================================================
+
+  // T21 — I5 overlay stack: opening the docs drawer moves focus INSIDE the
+  // layer; Esc closes the TOPMOST layer and RESTORES focus to the opener;
+  // no scrim lingers after the stack empties.
+  await page.evaluate(() => { const b = document.querySelector('#docsBtn'); b.focus(); b.click(); });
+  await new Promise(r => setTimeout(r, 600));
+  const t21a = await page.evaluate(() => ({
+    drawerOpen: !document.querySelector('#docsPanel').hidden,
+    scrimShown: !document.querySelector('#docScrim').hidden,
+    focusInside: document.querySelector('#docsPanel').contains(document.activeElement),
+  }));
+  await page.keyboard.press('Escape');
+  await new Promise(r => setTimeout(r, 300));
+  const t21b = await page.evaluate(() => ({
+    drawerClosed: document.querySelector('#docsPanel').hidden,
+    scrimHidden: document.querySelector('#docScrim').hidden,
+    focusRestored: document.activeElement === document.querySelector('#docsBtn'),
+  }));
+  ok(21, t21a.drawerOpen && t21a.scrimShown && t21a.focusInside
+    && t21b.drawerClosed && t21b.scrimHidden && t21b.focusRestored,
+    `open: drawer=${t21a.drawerOpen} scrim=${t21a.scrimShown} focusInside=${t21a.focusInside} · ` +
+    `Esc: closed=${t21b.drawerClosed} scrimHidden=${t21b.scrimHidden} focusRestored=${t21b.focusRestored}`);
+
+  // T22 — C6 chip discipline: the amber count accent appears ONLY on the
+  // needs-you-semantic chips (Waiting on you / Blocked) and only when > 0;
+  // the retired chip-warn on shipped-not-deployed / stale-sessions is gone.
+  // Plus the rename sweep: no "Conversation Tree" copy in the app chrome or
+  // the served source's group label (item DATA may still say it — that is
+  // operator data, not product copy).
+  const t22 = await page.evaluate(() => {
+    const warn = Array.from(document.querySelectorAll('#filterBar .chip-count.chip-warn'))
+      .map(s => s.getAttribute('data-count'));
+    const counts = {};
+    document.querySelectorAll('#filterBar .chip-count').forEach(s => {
+      counts[s.getAttribute('data-count')] = Number(s.textContent.trim());
+    });
+    const chrome = (document.querySelector('header').textContent || '')
+      + (document.querySelector('#filterBar').textContent || '')
+      + Array.from(document.querySelectorAll('.pane-title, .pane-head')).map(e => e.textContent).join(' ');
+    return { warn, counts, chromeRenamed: !/conversation[\s-]?tree/i.test(chrome) };
+  });
+  const AMBER_OK = ['awaiting-me', 'blocked'];
+  const badWarn = t22.warn.filter(f => AMBER_OK.indexOf(f) === -1 || !(t22.counts[f] > 0));
+  const missingWarn = AMBER_OK.filter(f => t22.counts[f] > 0 && t22.warn.indexOf(f) === -1);
+  const labelRenamed = !/Conversation Tree \/ Workstreams/.test(appSrc);
+  ok(22, badWarn.length === 0 && missingWarn.length === 0 && t22.chromeRenamed && labelRenamed,
+    `amberChips=[${t22.warn.join(',')}] badAmber=${badWarn.length}(want0) ` +
+    `missingAmber=${missingWarn.length}(want0) chromeRenamed=${t22.chromeRenamed} wsLabelRenamed=${labelRenamed}`);
+
+  // T23 — Task 10 row/card parity: every ASK row in the waiting list keys its
+  // "context incomplete" marker to the SERVER-derived context_state — exactly
+  // the predicate the detail-card gate uses, so row and card cannot disagree.
+  await page.click('.chip[data-filter="awaiting-me"]');
+  await new Promise(r => setTimeout(r, 400));
+  const t23 = await page.evaluate(async () => {
+    const snap = await (await fetch('/api/state')).json();
+    const cs = {};
+    (snap.nodes || []).forEach(n => (n.items || []).forEach(it => {
+      if (it.context_state) cs[it.item_id] = it.context_state;
+    }));
+    const rows = Array.from(document.querySelectorAll('#filterBody .wait-row'));
+    const mism = [];
+    let asks = 0;
+    rows.forEach(r => {
+      const id = r.getAttribute('data-item');
+      if (!(id in cs)) return;                    // non-ask rows carry no context_state
+      asks++;
+      const badge = !!r.querySelector('.ctx-incomplete-badge');
+      const want = cs[id] !== 'complete';
+      if (badge !== want) mism.push(id + ':' + cs[id] + '/badge=' + badge);
+    });
+    return { rows: rows.length, asks, mism };
+  });
+  ok(23, t23.mism.length === 0,
+    `waitRows=${t23.rows} askRows=${t23.asks} parityMismatches=${t23.mism.length}` +
+    (t23.mism.length ? ' :: ' + t23.mism.slice(0, 3).join(' ; ') : ''));
 
   ok(0, errs.length === 0, `pageErrors=${errs.length}${errs.length ? ' :: ' + errs[0].slice(0, 160) : ''}`);
 

@@ -394,6 +394,6 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  process.stdout.write('[server] conversation-tree-ui listening on http://' + HOST + ':' + PORT + '\n');
+  process.stdout.write('[server] workstreams-ui listening on http://' + HOST + ':' + PORT + '\n');
   process.stdout.write('[server] watching state file: ' + STATE_FILE + '\n');
 });

@@ -67,9 +67,14 @@
         <button class="chip" data-filter="in-flight"      role="tab" title="Work in motion — building / running / awaiting verification, tracked toward deployed">In flight <span class="chip-count" data-count="in-flight">0</span></button>
         <button class="chip" data-filter="awaiting-me"   role="tab" title="The bounded global list — every item that needs YOUR decision / answer / action, plus blocked work">Waiting on you <span class="chip-count" data-count="awaiting-me">0</span></button>
         <button class="chip" data-filter="blocked"        role="tab" title="Work stopped on a dependency / missing input">Blocked <span class="chip-count" data-count="blocked">0</span></button>
-        <button class="chip" data-filter="shipped-not-deployed" role="tab" title="Merged / shipped but NOT yet live in production — every effort that hasn't reached deployed">Shipped · not deployed <span class="chip-count chip-warn" data-count="shipped-not-deployed">0</span></button>
+        <!-- C6 (Task 10): amber = needs-you/blocked ONLY. The shipped-not-
+             deployed and stale-sessions counts are pipeline states, not
+             operator-asks — their counts are NEUTRAL. The amber accent is
+             applied dynamically (updateChipCounts) to the Waiting-on-you and
+             Blocked counts when > 0, the two chips inside the amber semantic. -->
+        <button class="chip" data-filter="shipped-not-deployed" role="tab" title="Merged / shipped but NOT yet live in production — every effort that hasn't reached deployed">Shipped · not deployed <span class="chip-count" data-count="shipped-not-deployed">0</span></button>
         <button class="chip" data-filter="deployed"       role="tab" title="Live in production — fully done">Deployed <span class="chip-count" data-count="deployed">0</span></button>
-        <button class="chip" data-filter="orphaned"       role="tab" title="Dispatch sessions never concluded (>24h); internal sub-agent sessions excluded">Stale sessions <span class="chip-count chip-warn" data-count="orphaned">0</span></button>
+        <button class="chip" data-filter="orphaned"       role="tab" title="Dispatch sessions never concluded (>24h); internal sub-agent sessions excluded">Stale sessions <span class="chip-count" data-count="orphaned">0</span></button>
         <button class="chip" data-filter="recently-shipped" role="tab" title="Shipped in the last 7 days">Recently shipped <span class="chip-count" data-count="recently-shipped">0</span></button>
         <button class="chip" data-filter="my-tasks"       role="tab" title="Your hand-authored task list — add / edit / reorder / complete / remove">My tasks <span class="chip-count" data-count="my-tasks">0</span></button>
         <button class="chip" data-filter="backlog"        role="tab" title="Captured but not yet started">Backlog <span class="chip-count" data-count="backlog">0</span></button>
@@ -111,7 +116,7 @@
        aria-label="work item detail" aria-modal="true">
     <div class="dm-head">
       <span id="dmTitle" class="dm-title">work item</span>
-      <button id="dmClose" class="ghost dm-close" title="close (Esc)">✕</button>
+      <button id="dmClose" class="ghost dm-close" title="close (Esc)" aria-label="close item detail">✕</button>
     </div>
     <div id="dmBody" class="dm-body"></div>
     <div id="dmActions" class="dm-actions"></div>
@@ -124,7 +129,7 @@
   <aside id="docsPanel" hidden aria-label="docs browser">
     <div class="dp-head">
       <input id="docsFilter" type="text" placeholder="filter by filename…" aria-label="filter docs">
-      <button id="docsClose" class="ghost" title="close">✕</button>
+      <button id="docsClose" class="ghost" title="close" aria-label="close docs browser">✕</button>
     </div>
     <div class="dp-body" id="docsBody"></div>
   </aside>
@@ -132,7 +137,7 @@
     <div class="doc-head">
       <span class="doc-title" id="docTitle">document</span>
       <button id="docOpenEditor" class="ghost" title="open in your OS default editor">⧉ Open in editor</button>
-      <button id="docClose" class="ghost" title="close (Esc)">✕</button>
+      <button id="docClose" class="ghost" title="close (Esc)" aria-label="close document viewer">✕</button>
     </div>
     <div class="doc-body" id="docBody"></div>
   </div>

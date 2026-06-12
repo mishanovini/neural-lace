@@ -112,6 +112,87 @@
     return (p || 'g') + '-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e5).toString(36);
   }
 
+  // ---- overlay stack (I5, Task 10 — 2026-06-12) -------------------------
+  // The ONE coordinated dismiss manager for every overlay layer (item-detail
+  // modal, docs drawer, doc viewer). Replaces the two ad-hoc document-level
+  // Esc handlers + the per-overlay scrim listeners the in-flight correction
+  // retires. Invariants:
+  //   - Esc closes the TOPMOST layer only (one global keydown handler).
+  //   - Clicking a scrim closes the topmost layer that OWNS that scrim
+  //     (its own layer — never the whole stack).
+  //   - Focus is TRAPPED inside the topmost layer (Tab/Shift+Tab wrap) and
+  //     RESTORED to the opener element when the layer closes.
+  //   - The two scrim ELEMENTS (detailScrim z59, docScrim z61) remain in the
+  //     DOM for z-layering (the doc viewer dims the detail modal beneath it);
+  //     this manager is their single owner — a shared scrim stays visible
+  //     while any remaining layer still uses it.
+  var overlayStack = (function () {
+    var stack = [];               // bottom → top: { el, scrim, onClose, prevFocus, initialFocus }
+    function top() { return stack.length ? stack[stack.length - 1] : null; }
+    function find(elm) {
+      for (var i = stack.length - 1; i >= 0; i--) { if (stack[i].el === elm) return i; }
+      return -1;
+    }
+    function scrimStillNeeded(scrim) {
+      return stack.some(function (l) { return l.scrim === scrim; });
+    }
+    function focusables(root) {
+      var sel = 'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+      return Array.prototype.filter.call(root.querySelectorAll(sel), function (n) {
+        return !n.disabled && n.offsetParent !== null;
+      });
+    }
+    function push(layer) {
+      var ix = find(layer.el);
+      if (ix !== -1) return stack[ix];   // already open (SSE re-render) — keep
+                                         // stack position AND the opener focus
+      layer.prevFocus = document.activeElement;
+      stack.push(layer);
+      if (layer.scrim) layer.scrim.hidden = false;
+      layer.el.hidden = false;
+      var f = layer.initialFocus || focusables(layer.el)[0];
+      if (f && f.focus) { try { f.focus(); } catch (_) {} }
+      return layer;
+    }
+    function close(elm) {
+      var ix = find(elm);
+      if (ix === -1) return false;       // idempotent: layer not open
+      var layer = stack.splice(ix, 1)[0];
+      layer.el.hidden = true;
+      if (layer.scrim && !scrimStillNeeded(layer.scrim)) layer.scrim.hidden = true;
+      if (layer.onClose) { try { layer.onClose(); } catch (_) {} }
+      var back = layer.prevFocus;
+      if (back && back.focus && document.contains(back)) { try { back.focus(); } catch (_) {} }
+      return true;
+    }
+    // scrim-click closes ITS OWN layer — the topmost layer owning that scrim.
+    function bindScrim(scrim) {
+      scrim.addEventListener('click', function () {
+        for (var i = stack.length - 1; i >= 0; i--) {
+          if (stack[i].scrim === scrim) { close(stack[i].el); return; }
+        }
+      });
+    }
+    // the single global key handler: Esc pops the topmost layer; Tab is
+    // trapped inside it.
+    document.addEventListener('keydown', function (e) {
+      var t = top();
+      if (!t) return;
+      if (e.key === 'Escape') { e.preventDefault(); close(t.el); return; }
+      if (e.key !== 'Tab') return;
+      var f = focusables(t.el);
+      if (!f.length) return;
+      var first = f[0], last = f[f.length - 1];
+      var inside = t.el.contains(document.activeElement);
+      if (e.shiftKey && (document.activeElement === first || !inside)) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && (document.activeElement === last || !inside)) {
+        e.preventDefault(); first.focus();
+      }
+    });
+    return { push: push, close: close, bindScrim: bindScrim };
+  })();
+
   // ---- event write path (symmetric FR-11) ------------------------------
   // POST one appended event to /api/event with one retry (exp backoff), then
   // surface an error toast and leave the GUI in pre-action state (no silent
@@ -410,10 +491,17 @@
     return applyFilter(allWorkItems(), filterName).length;
   }
   function updateChipCounts() {
+    // C6 (Task 10): amber = needs-you/blocked ONLY. The only chip counts that
+    // may carry the amber accent are Waiting-on-you and Blocked — and only
+    // while they are non-zero (mirrors the cockpit waiting-pill accent).
+    var AMBER_CHIPS = { 'awaiting-me': 1, 'blocked': 1 };
     ['awaiting-me', 'in-flight', 'blocked', 'shipped-not-deployed', 'deployed',
      'recently-shipped', 'orphaned', 'my-tasks', 'backlog', 'all'].forEach(function (f) {
       var span = filterBar.querySelector('[data-count="' + f + '"]');
-      if (span) span.textContent = filterCount(f);
+      if (!span) return;
+      var n = filterCount(f);
+      span.textContent = n;
+      span.classList.toggle('chip-warn', !!AMBER_CHIPS[f] && n > 0);
     });
     Array.prototype.forEach.call(filterBar.querySelectorAll('.chip'), function (c) {
       c.classList.toggle('active', c.getAttribute('data-filter') === activeFilter);
@@ -536,8 +624,17 @@
     li.appendChild(ki);
     var body = el('div', 'item-main');
     body.appendChild(el('div', 'item-text', it.text || '(untitled)'));
+    // Row/card parity (Task 10): for operator-asks the incomplete marker is
+    // keyed to the SERVER-derived `context_state` (the sole-normative
+    // assembler) via the SAME contextGateBlocks predicate the detail card
+    // uses — never the prose heuristic, so the row and the card can no longer
+    // disagree about who is gated. waitingSummary stays as the DISPLAY
+    // composer for the inline background/recommendation text. Non-asks
+    // (blocked plain actions) carry no context_state; their marker falls back
+    // to summary presence (they are never decision-gated by the card either).
     var sum = waitingSummary(it);
-    if (sum) {
+    var gated = isMishaAsk(it) ? contextGateBlocks(it) : !sum;
+    if (!gated && sum) {
       var ctx = el('div', 'wait-ctx');
       if (sum.bg) ctx.appendChild(el('div', 'wait-bg', String(sum.bg)));
       if (sum.rec) ctx.appendChild(el('div', 'wait-rec', '→ ' + sum.rec));
@@ -959,44 +1056,69 @@
         .catch(function () { if (onFail) onFail(); });
     }, onFail);
   }
+  // promoteIds — STABLE ids for a promote sequence, derived from the SOURCE
+  // item id (Task 10 polish, closing the Task-7 evidence gap): every id —
+  // the handoff node, the created task, and every event_id — is a pure
+  // function of the source item, so ANY re-attempt (the inline retry button
+  // OR a fresh promote click after an SSE re-render dropped that button)
+  // re-posts byte-identical envelopes. Already-landed events are envelope-
+  // level idempotent no-ops (§2) and the sequence resumes at the first event
+  // that never landed — a double-failure can no longer duplicate the task.
+  function promoteIds(sourceItemId) {
+    var base = 'pr-' + String(sourceItemId);
+    return {
+      actId: 'blact-' + base,
+      taskId: 'task-' + base,
+      ev: function (step) { return 'gui-' + base + '-' + step; },
+    };
+  }
   // buildPromoteEvents — the promote-to-task sequence for a parked node item.
-  // Built ONCE with stable event_ids; a retry re-posts the identical array.
+  // Stable ids (promoteIds): a retry — or a rebuilt array — is an idempotent
+  // resume, never a duplicate.
   function buildPromoteEvents(r) {
     var text = r.item.text || '(untitled)';
+    var ids = promoteIds(r.itemId);
     var mirror = null;
     backlog().forEach(function (b) { if (b.item_id === r.itemId) mirror = b; });
     var actId = (mirror && mirror.activated && mirror.activated_node)
-      ? mirror.activated_node : uid('blact');
-    var taskId = uid('task');
+      ? mirror.activated_node : ids.actId;
     var events = [];
     if (!mirror) {
       events.push({ type: 'backlog-added', item_id: r.itemId, tree_id: 'global',
-                    priority: 'medium', text: text });
+                    priority: 'medium', text: text, event_id: ids.ev('mirror') });
     }
     if (!(mirror && mirror.activated)) {
-      events.push({ type: 'backlog-activated', item_id: r.itemId, new_node_id: actId });
+      events.push({ type: 'backlog-activated', item_id: r.itemId, new_node_id: actId,
+                    event_id: ids.ev('activate') });
       // a pre-existing mirror may carry stale text — repair the handoff
       // node's title via the existing text-repair event.
       if (mirror && mirror.text !== text) {
-        events.push({ type: 'branch-retitled', node_id: actId, title: text });
+        events.push({ type: 'branch-retitled', node_id: actId, title: text,
+                      event_id: ids.ev('retitle') });
       }
     }
-    events.push({ type: 'action-added', node_id: actId, item_id: taskId, text: text, origin: 'operator' });
-    events.push({ type: 'item-committed', node_id: actId, item_id: taskId });
-    events.push({ type: 'item-removed', node_id: r.nodeId, item_id: r.itemId });
+    events.push({ type: 'action-added', node_id: actId, item_id: ids.taskId, text: text,
+                  origin: 'operator', event_id: ids.ev('add') });
+    events.push({ type: 'item-committed', node_id: actId, item_id: ids.taskId,
+                  event_id: ids.ev('commit') });
+    events.push({ type: 'item-removed', node_id: r.nodeId, item_id: r.itemId,
+                  event_id: ids.ev('remove') });
     return events;
   }
   function buildLegacyPromoteEvents(b) {
-    var actId = uid('blact');
-    var taskId = uid('task');
+    var ids = promoteIds(b.item_id);
     var events = [
-      { type: 'backlog-activated', item_id: b.item_id, new_node_id: actId },
-      { type: 'action-added', node_id: actId, item_id: taskId, text: b.text || '(untitled)', origin: 'operator' },
-      { type: 'item-committed', node_id: actId, item_id: taskId },
+      { type: 'backlog-activated', item_id: b.item_id, new_node_id: ids.actId,
+        event_id: ids.ev('activate') },
+      { type: 'action-added', node_id: ids.actId, item_id: ids.taskId,
+        text: b.text || '(untitled)', origin: 'operator', event_id: ids.ev('add') },
+      { type: 'item-committed', node_id: ids.actId, item_id: ids.taskId,
+        event_id: ids.ev('commit') },
     ];
     if (b.context_text && String(b.context_text).trim()) {
-      events.push({ type: 'item-details-set', node_id: actId, item_id: taskId,
-                    details: { description: String(b.context_text).trim() } });
+      events.push({ type: 'item-details-set', node_id: ids.actId, item_id: ids.taskId,
+                    details: { description: String(b.context_text).trim() },
+                    event_id: ids.ev('details') });
     }
     return events;
   }
@@ -1482,7 +1604,9 @@
   // (2026-06-03) until real workstream nodes are assigned. Order matters.
   var WS_THEMES = [
     [/cross-repo|cross repo/i, 'Cross-repo'],
-    [/conv(ersation)?[\s-]?tree|workstream/i, 'Conversation Tree / Workstreams'],
+    // Rename sweep (Task 10): the displayed group label is "Workstreams" —
+    // the REGEX still matches legacy "conv tree" item text (data, not copy).
+    [/conv(ersation)?[\s-]?tree|workstream/i, 'Workstreams'],
     [/dispatch/i, 'Dispatch'],
     [/sync|mirror|\bfork\b|cross-machine|both masters|\bremote\b/i, 'Cross-machine sync'],
     [/doctrine|principle/i, 'Doctrine & Principles'],
@@ -2310,19 +2434,25 @@
     // --- context-appropriate ACTION BUTTONS ------------------------------
     buildActionButtons(dmActions, host, it, nodeId, itemId, st, cat);
 
-    // show the overlay
-    detailScrim.hidden = false;
-    detailModal.hidden = false;
-    if (dmClose && dmClose.focus) { try { dmClose.focus(); } catch (_) {} }
+    // show the overlay — routed through the coordinated overlay stack (I5).
+    // push() is idempotent: an SSE re-render while open keeps the layer's
+    // stack position and does NOT steal focus back to the close button.
+    overlayStack.push({
+      el: detailModal, scrim: detailScrim, initialFocus: dmClose,
+      onClose: function () { selItem = null; syncTreeSelection(); },
+    });
   }
 
   // closeDetailModal — dismiss the overlay and clear the selection. Safe to call
-  // when nothing is open (idempotent).
+  // when nothing is open (idempotent). Delegates to the overlay stack; when the
+  // layer was never pushed (boot-time filter switch), normalize state directly.
   function closeDetailModal() {
-    detailModal.hidden = true;
-    detailScrim.hidden = true;
-    selItem = null;
-    syncTreeSelection();
+    if (!overlayStack.close(detailModal)) {
+      detailModal.hidden = true;
+      detailScrim.hidden = true;
+      selItem = null;
+      syncTreeSelection();
+    }
   }
 
   // buildActionButtons — the context-appropriate affordances. The buttons differ
@@ -2594,23 +2724,14 @@
     var chip = e.target.closest('.chip');
     if (chip) setActiveFilter(chip.getAttribute('data-filter'));
   });
-  // Detail-modal dismissal: ✕ button, click-scrim, Esc. Esc here is gated on
-  // the detail modal being open AND in front of the docs modal/drawer (the docs
-  // subsystem has its own Esc handler that returns early when its modal is open;
-  // this one fires only when the detail modal is the topmost overlay).
+  // Detail-modal dismissal (I5, Task 10): ✕ button routes to closeDetailModal;
+  // Esc + scrim-click are handled by the coordinated overlay stack — the prior
+  // ad-hoc document-level Esc handler (which manually special-cased the doc
+  // viewer being stacked on top) is RETIRED. The stack's single Esc handler
+  // closes the topmost layer (doc viewer first, then this modal); clicking
+  // the detail scrim closes its own layer only.
   if (dmClose) dmClose.addEventListener('click', closeDetailModal);
-  if (detailScrim) detailScrim.addEventListener('click', closeDetailModal);
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && !detailModal.hidden) {
-      // Doc-link layering (2026-06-11): when the in-app doc viewer is stacked
-      // on top (opened from a doc link inside this modal), let ITS Esc handler
-      // close it and keep the detail modal open underneath. Second Esc then
-      // closes the detail modal.
-      var dv = $('docModal');
-      if (dv && !dv.hidden) return;
-      closeDetailModal();
-    }
-  });
+  if (detailScrim) overlayStack.bindScrim(detailScrim);
   showArchived.addEventListener('change', function () { render(); });
   if (showCompleted) showCompleted.addEventListener('change', function () { render(); });
 
@@ -2694,14 +2815,22 @@
     }
 
     function openDocsPanel() {
-      docsPanel.hidden = false; docScrim.hidden = false;
+      // I5 (Task 10): the drawer is an overlay-stack layer. The doc viewer
+      // shares the same scrim element (z-layering); the stack keeps the scrim
+      // visible while either layer remains open.
+      overlayStack.push({ el: docsPanel, scrim: docScrim, initialFocus: docsFilter });
       if (docsCache) { renderDocsPanel(); return; }
       docsBody.innerHTML = '<p class="muted">Loading docs…</p>';
       fetch('/api/docs').then(function (r) { return r.json(); }).then(function (j) {
         docsCache = (j && j.projects) || {}; renderDocsPanel();
       }).catch(function () { docsBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
     }
-    function closeDocsPanel() { docsPanel.hidden = true; if (docModal.hidden) docScrim.hidden = true; }
+    function closeDocsPanel() {
+      if (!overlayStack.close(docsPanel)) {
+        docsPanel.hidden = true;
+        if (docModal.hidden) docScrim.hidden = true;
+      }
+    }
 
     function buildDocTree(files) {
       var root = { dirs: {}, files: [] };
@@ -2808,7 +2937,13 @@
       curDoc = { project: project, path: relPath };
       docTitle.textContent = project + ' › ' + relPath;
       docBody.innerHTML = '<p class="muted">Loading…</p>';
-      docModal.hidden = false; docScrim.hidden = false;
+      // I5 (Task 10): the viewer stacks ABOVE whatever opened it (the docs
+      // drawer or the item-detail modal — z61/62 over z59/60); Esc/scrim
+      // close the viewer FIRST, then the layer beneath, via the stack.
+      overlayStack.push({
+        el: docModal, scrim: docScrim, initialFocus: docClose || docOpenEditor,
+        onClose: function () { curDoc = null; },
+      });
       fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(relPath))
         .then(function (r) { return r.json(); })
         .then(function (j) {
@@ -2817,7 +2952,12 @@
         })
         .catch(function () { docBody.innerHTML = '<p class="muted">Server unreachable.</p>'; });
     }
-    function closeDocModal() { docModal.hidden = true; curDoc = null; if (docsPanel.hidden) docScrim.hidden = true; }
+    function closeDocModal() {
+      if (!overlayStack.close(docModal)) {
+        docModal.hidden = true; curDoc = null;
+        if (docsPanel.hidden) docScrim.hidden = true;
+      }
+    }
 
     // Expose the in-GUI viewer to the item-detail modal's doc links (2026-06-11):
     // linkifyDocs/openDocSmart open docs IN-APP through this bridge.
@@ -2834,12 +2974,11 @@
         .then(function (j) { showToast(j && j.ok ? 'opened in editor' : ('open failed: ' + ((j && j.error) || '')), j && j.ok ? 'ok' : 'err'); })
         .catch(function () { showToast('open failed — server unreachable', 'err'); });
     });
-    docScrim.addEventListener('click', function () { closeDocModal(); closeDocsPanel(); });
-    document.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape') return;
-      if (!docModal.hidden) { closeDocModal(); return; }
-      if (!docsPanel.hidden) closeDocsPanel();
-    });
+    // I5 (Task 10): scrim + Esc dismissal route through the overlay stack —
+    // the docs subsystem's own document-level Esc handler is RETIRED, and a
+    // docScrim click now closes its OWN topmost layer (the viewer when it is
+    // stacked over the drawer), not the whole stack.
+    overlayStack.bindScrim(docScrim);
   })();
 
   // ---- SSE connection (read half of the file contract) -----------------
