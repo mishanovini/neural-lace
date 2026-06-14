@@ -1,5 +1,5 @@
 # Plan: Register-Driven-Session Enforcement (the anti-babysitting mechanism)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -100,3 +100,28 @@ passing == the harness's user-facing outcome (the harness user is the maintainer
 - [x] Wired in template + live settings.json (both JSON valid)
 - [x] harness-architecture.md updated
 - [x] Register item RWR-00 recorded
+
+## Evidence Log
+- Task 1 (register-surfacer.sh) — Verification: mechanical. `register-surfacer.sh --self-test` → 4/4 PASS. End-to-end run against the live cross-machine register surfaced LIST 1 correctly. Commit 6ce9f22 (on origin/master, PROVEN ancestor).
+- Task 2 (register-progress-gate.sh) — Verification: mechanical. `register-progress-gate.sh --self-test` → 7/7 PASS (BLOCK on babysitting; ALLOW on evidence / no-awaiting / conversational / named-blocker / disable / warn-mode). Commit 6ce9f22.
+- Task 3 (wiring + config + arch doc) — Verification: mechanical. Both hooks present in `settings.json.template` AND live `~/.claude/settings.json` (both JSON valid via `node JSON.parse`). `config/register-path.example` shipped; `~/.claude/config/register-path` pointer written on this machine. `docs/harness-architecture.md` updated (changelog header + 2 inventory rows), re-applied cleanly on origin/master after the 64-commit rebase. Commit 6ce9f22.
+
+## Completion Report
+
+### 1. Implementation Summary
+Shipped both hooks of the register-driven-session enforcement mechanism (RWR-00) — the structural answer to Misha's directive that ownership of the INCOMPLETE-WORK register be enforced, not promised. `register-surfacer.sh` (SessionStart) + `register-progress-gate.sh` (Stop), both block-mode, both self-tested, wired template + live, on origin/master at 6ce9f22. Backlog items absorbed: none.
+
+### 2. Design Decisions & Plan Deviations
+Gate keyed on the FINAL assistant message + a WORKING-session precondition (avoids false-firing on conversational turns). Block-mode default mirrors `pr-health-snapshot-gate.sh` / `completion-criteria-gate.sh`. No deviations from plan scope. The 64-commit rebase onto origin/master required re-applying the `harness-architecture.md` changelog + table rows on origin's newer base (settings.json.template auto-merged cleanly).
+
+### 3. Known Issues & Gotchas
+The gate's awaiting-Misha signature + evidence-token detection is heuristic (regex on the final message). False-negative risk: a working session that buries an awaiting-list without any trigger phrase. False-positive risk: low (evidence tokens are broad). The retry-guard's 3-retry downgrade is the loop-break if a session legitimately cannot satisfy it.
+
+### 4. Manual Steps Required
+On each additional machine: write `~/.claude/config/register-path` (one line: the coordination-repo path) so the surfacer resolves the register. `install.sh` propagates the live `settings.json` wiring per the HARNESS-GAP-14 template-vs-live split.
+
+### 5. Testing Performed & Recommended
+Performed: surfacer 4/4 + gate 7/7 self-tests (on both the canonical and rebased trees); end-to-end surfacer run against the live register; live `~/.claude/settings.json` JSON validity. Recommended: observe the gate's real-session behavior over the next several sessions; tune the awaiting/evidence regexes if false-fires appear.
+
+### 6. Cost Estimates
+Zero recurring cost — two local bash hooks firing at SessionStart / Stop (sub-second each).
