@@ -507,6 +507,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/register-progress-gate.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/scripts/session-wrap.sh refresh"
           }
         ]
@@ -567,6 +571,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/discovery-surfacer.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/register-surfacer.sh"
           },
           {
             "type": "command",
