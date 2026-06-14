@@ -578,6 +578,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/stalled-work-surfacer.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/decision-context-replay.sh"
           },
           {
