@@ -43,14 +43,49 @@ AWAIT_RE='awaiting (you|misha|your)|waiting on (you|your)|blocked on your|needs 
 
 _json_str() { printf '%s' "$1" | grep -oE "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -n1 | sed -E "s/.*:[[:space:]]*\"([^\"]*)\".*/\1/"; }
 
-# Final assistant message text (jq-free, best-effort).
+# Final assistant message text. EC-2: prefer a PRECISE jq extraction of the
+# LAST assistant-role message (the proven pr-health-snapshot-gate pattern) so we
+# never match a tool_result's "text" field; fall back to a jq-free best-effort
+# scan only when jq is unavailable.
 final_msg() {
-  local t="$1"
+  local t="$1" b64
+  if command -v jq >/dev/null 2>&1; then
+    b64=$(jq -r '
+      select(.role == "assistant" or .message.role == "assistant")
+      | (.content // .text // .message.content // empty)
+      | (if type == "string" then .
+         elif type == "array" then ([.[] | select(type=="object" and (.type//"")=="text") | (.text // "")] | join("\n"))
+         else (. | tostring) end)
+      | select(. != "")
+      | @base64
+    ' "$t" 2>/dev/null | tail -n 1)
+    if [ -n "$b64" ]; then printf '%s' "$b64" | base64 --decode 2>/dev/null; return; fi
+  fi
+  # jq-free fallback (best-effort; may include tool_result text)
   tail -n 400 "$t" 2>/dev/null \
     | grep -oE '"text"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' \
     | tail -n 12 \
     | sed -E 's/^"text"[[:space:]]*:[[:space:]]*"//; s/"$//' \
     | sed -E 's/\\n/ /g; s/\\"/"/g'
+}
+
+# EC-1: did the session ACTUALLY advance work this session? A real git
+# commit/push tool_use means the session is not babysitting by definition —
+# even if the final message forgot to cite it. Precision matters here, so this
+# is jq-only (reads tool_use .input.command, NOT loose prose); without jq we
+# skip this allow-path and fall back to the final-message-only logic (which is
+# stricter, i.e. the safe direction). Returns 0 if advanced.
+session_advanced_in_transcript() {
+  local t="$1" cmds
+  command -v jq >/dev/null 2>&1 || return 1
+  cmds=$(jq -r '
+    (.message.content // .content // empty)
+    | if type=="array"
+      then (.[] | select(type=="object" and (.type//"")=="tool_use") | (.input.command // .input.cmd // empty))
+      else empty end
+  ' "$t" 2>/dev/null)
+  printf '%s' "$cmds" | grep -qE 'git[[:space:]]+(commit|push)([[:space:]]|$)' && return 0
+  return 1
 }
 
 blocker_fresh() {
@@ -87,10 +122,17 @@ run() {
   local final; final="$(final_msg "$transcript")"
   [ -z "$final" ] && exit 0
 
-  # 3) completion evidence → advanced something → allow
+  # 3) completion evidence in the final message → advanced + reported → allow
   printf '%s' "$final" | grep -qiE "$EVIDENCE_RE" && exit 0
-  # 2) awaiting signature present?
+  # 2) awaiting signature present? if not, out of scope → allow
   printf '%s' "$final" | grep -qiE "$AWAIT_RE" || exit 0
+  # EC-1) transcript shows a real git commit/push this session → the session
+  #       advanced work; it is NOT babysitting even if the final message did not
+  #       cite it. Allow, but NUDGE toward the report-it discipline.
+  if session_advanced_in_transcript "$transcript"; then
+    echo "[register-progress-gate] note: this session committed/pushed work but the final message did not cite it. Allowing — but cite the commit/PR/RWR-NN in your report so progress is visible to the operator." >&2
+    exit 0
+  fi
   # 4) fresh named blocker → allow
   blocker_fresh ".claude/state" && exit 0
 
@@ -160,6 +202,33 @@ self_test() {
   # T7 WARN-mode never blocks (working+awaiting+no-evidence but mode=warn)
   rc=0; out="$(cd "$tmp" && rm -f .claude/state/register-blocker-*.txt; REGISTER_GATE_MODE=warn payload "$t1" | REGISTER_GATE_MODE=warn bash "$self" 2>/dev/null)" || rc=$?
   if [ "$rc" -eq 0 ]; then echo "T7 warn-mode => ALLOW: PASS"; pass=$((pass+1)); else echo "T7 => ALLOW: FAIL (rc=$rc)"; fail=$((fail+1)); fi
+
+  # T8 EC-1: awaiting + no FINAL-message evidence, BUT a real git commit tool_use
+  # in the transcript => session advanced => ALLOW (nudge). Guards the
+  # false-positive that would block a session that did work but reported poorly.
+  local t8="$tmp/t8.jsonl"
+  : > "$t8"
+  echo '{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"git commit -m fix"}}]}' >> "$t8"
+  echo '{"role":"assistant","content":[{"type":"text","text":"These items remain awaiting you and blocked on your decisions."}]}' >> "$t8"
+  rc=0; out="$(cd "$tmp" && payload "$t8" | bash "$self" 2>/dev/null)" || rc=$?
+  if [ "$rc" -eq 0 ]; then echo "T8 awaiting+no-final-evidence+transcript-commit => ALLOW: PASS"; pass=$((pass+1)); else echo "T8 => ALLOW: FAIL (rc=$rc)"; fail=$((fail+1)); fi
+
+  # T9 EC-2: precise last-ASSISTANT-message extraction. A tool_result earlier in
+  # the transcript contains an awaiting phrase; the final ASSISTANT message has
+  # neither awaiting nor evidence. The gate must read the assistant message
+  # (=> no awaiting => ALLOW), NOT the tool_result (which would wrongly block).
+  local t9="$tmp/t9.jsonl"
+  : > "$t9"
+  echo '{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{}}]}' >> "$t9"
+  echo '{"role":"user","content":[{"type":"tool_result","content":[{"type":"text","text":"the list shows everything awaiting you and blocked on your decisions"}]}]}' >> "$t9"
+  echo '{"role":"assistant","content":[{"type":"text","text":"I made some internal changes to the helper."}]}' >> "$t9"
+  rc=0; out="$(cd "$tmp" && payload "$t9" | bash "$self" 2>/dev/null)" || rc=$?
+  if [ "$rc" -eq 0 ]; then echo "T9 precise-extraction-ignores-tool_result => ALLOW: PASS"; pass=$((pass+1)); else echo "T9 => ALLOW: FAIL (rc=$rc)"; fail=$((fail+1)); fi
+
+  # T10 EC-2 regression: ensure T1's hard-block STILL fires with jq precise
+  # extraction (no commit anywhere, awaiting in the real assistant message).
+  rc=0; out="$(cd "$tmp" && payload "$t1" | bash "$self" 2>/dev/null)" || rc=$?
+  if [ "$rc" -eq 2 ]; then echo "T10 babysitting-still-blocks-with-jq => BLOCK: PASS"; pass=$((pass+1)); else echo "T10 => BLOCK: FAIL (rc=$rc)"; fail=$((fail+1)); fi
 
   rm -rf "$tmp"
   echo "self-test: $pass passed, $fail failed"

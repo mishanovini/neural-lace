@@ -1,5 +1,5 @@
 # Plan: Register-Driven-Session Enforcement (the anti-babysitting mechanism)
-Status: COMPLETED
+Status: ACTIVE
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -45,7 +45,7 @@ register item (with completion evidence) or name a specific genuine blocker.
 - `docs/harness-architecture.md` — changelog header + 2 inventory rows.
 
 ## In-flight scope updates
-(no in-flight changes yet)
+- 2026-06-13: `adapters/claude-code/hooks/register-progress-gate.sh` — re-opened from COMPLETED after Misha extended scope ("build this, but think about edge cases"). Edge-case hardening EC-1 (transcript-commit allow) + EC-2 (precise jq last-assistant extraction); self-test 7→10. The plan was not actually done when first closed; this is its real completion.
 
 ## Assumptions
 - The cross-machine register lives at `<coordination-root>/INCOMPLETE-WORK-REGISTER-*.md`
@@ -103,7 +103,7 @@ passing == the harness's user-facing outcome (the harness user is the maintainer
 
 ## Evidence Log
 - Task 1 (register-surfacer.sh) — Verification: mechanical. `register-surfacer.sh --self-test` → 4/4 PASS. End-to-end run against the live cross-machine register surfaced LIST 1 correctly. Commit 6ce9f22 (on origin/master, PROVEN ancestor).
-- Task 2 (register-progress-gate.sh) — Verification: mechanical. `register-progress-gate.sh --self-test` → 7/7 PASS (BLOCK on babysitting; ALLOW on evidence / no-awaiting / conversational / named-blocker / disable / warn-mode). Commit 6ce9f22.
+- Task 2 (register-progress-gate.sh) — Verification: mechanical. `register-progress-gate.sh --self-test` → 10/10 PASS (BLOCK on babysitting; ALLOW on evidence / no-awaiting / conversational / named-blocker / disable / warn-mode; + EC-1 transcript-commit allow [T8]; + EC-2 precise-extraction-ignores-tool_result [T9] + babysitting-still-blocks regression [T10]). Commit 6ce9f22; edge-case hardening (EC-1 + EC-2) added 2026-06-13 per Misha.
 - Task 3 (wiring + config + arch doc) — Verification: mechanical. Both hooks present in `settings.json.template` AND live `~/.claude/settings.json` (both JSON valid via `node JSON.parse`). `config/register-path.example` shipped; `~/.claude/config/register-path` pointer written on this machine. `docs/harness-architecture.md` updated (changelog header + 2 inventory rows), re-applied cleanly on origin/master after the 64-commit rebase. Commit 6ce9f22.
 
 ## Completion Report
@@ -114,8 +114,23 @@ Shipped both hooks of the register-driven-session enforcement mechanism (RWR-00)
 ### 2. Design Decisions & Plan Deviations
 Gate keyed on the FINAL assistant message + a WORKING-session precondition (avoids false-firing on conversational turns). Block-mode default mirrors `pr-health-snapshot-gate.sh` / `completion-criteria-gate.sh`. No deviations from plan scope. The 64-commit rebase onto origin/master required re-applying the `harness-architecture.md` changelog + table rows on origin's newer base (settings.json.template auto-merged cleanly).
 
-### 3. Known Issues & Gotchas
-The gate's awaiting-Misha signature + evidence-token detection is heuristic (regex on the final message). False-negative risk: a working session that buries an awaiting-list without any trigger phrase. False-positive risk: low (evidence tokens are broad). The retry-guard's 3-retry downgrade is the loop-break if a session legitimately cannot satisfy it.
+### 3. Known Issues & Gotchas — Edge-Case Audit (per Misha 2026-06-13)
+
+Adversarial pass over both hooks. Two were HARDENED in this session (gate self-test 7→10); the rest are accepted-residual with rationale.
+
+**HARDENED:**
+- **EC-1 — false-positive blocking a session that DID work but reported poorly.** A session that committed/pushed real work but ended with an awaiting phrase and no evidence *token* in the final message would have been wrongly blocked. Block-mode false-positives are the dangerous failure (they train bypass). Fix: `session_advanced_in_transcript()` — if the transcript has a real `git commit`/`git push` tool_use, the session advanced → ALLOW + stderr nudge to cite it. (self-test T8.) jq-only by design (reads `tool_use.input.command`, not loose prose); without jq it falls back to the stricter final-message-only logic (safe direction).
+- **EC-2 — imprecise final-message extraction.** The original `tail -400 | grep "text"` could match a `tool_result`'s text, causing both false-pos (an awaiting phrase quoted in a tool result) and false-neg. Fix: precise jq extraction of the LAST *assistant-role* message (the proven `pr-health-snapshot-gate.sh` pattern), grep fallback only when jq absent. (self-test T9 + T10 regression.)
+
+**ACCEPTED-RESIDUAL (with rationale):**
+- **EC-3 — Goodhart / fake evidence tokens.** An agent could append "DONE: / merged / RWR-01" to pass without working. The gate is a FLOOR, not a proof — backed by NO-TRUST verification (the cited SHA must actually resolve, checked downstream by the orchestrator/Misha). EC-1's transcript-scan lets the honest case pass without gaming; the dishonest case is caught at NO-TRUST. Same residual every evidence-gate has (vaporware-prevention.md "verbal vaporware" gap).
+- **EC-4 — false-negative: working-session detection misses an unusual tool shape.** Then a real working session reads as "conversational" → gate no-ops. This is the *safe* failure direction (never blocks a legitimate session); EC-1's commit-scan widens coverage.
+- **EC-5 — cloud/Dispatch sessions don't load `~/.claude/` hooks.** Genuine cloud sessions run neither hook (the documented cloud blind spot, same as every Stop hook). Not fixable at this layer; the operator's desktop+Dispatch workflow is local and covered.
+- **EC-6 — surfacer picks the wrong register if multiple `INCOMPLETE-WORK-REGISTER-*.md` exist (newest-by-mtime).** The operator maintains one register; `ls -t` could pick a touched-but-old file. Low impact (surfacer only informs, never blocks). Candidate follow-up: sort by filename-date instead of mtime.
+- **EC-7 — surfacer silently surfaces nothing if the pointer is misconfigured.** Deliberate (never disrupt session start). Trade-off: a broken pointer is invisible. Acceptable — non-catastrophic, and the load-bearing gate is independent of the surfacer.
+- **EC-8 — `base64 --decode` is GNU/GitBash syntax (macOS needs `-D`).** Consistent with sibling gates already in the harness; on failure the `|| printf ''` fallback returns empty → gate exits 0 (never blocks blind). Safe degradation.
+
+The retry-guard's 3-retry downgrade-to-warn remains the loop-break for any case the agent genuinely cannot satisfy.
 
 ### 4. Manual Steps Required
 On each additional machine: write `~/.claude/config/register-path` (one line: the coordination-repo path) so the surfacer resolves the register. `install.sh` propagates the live `settings.json` wiring per the HARNESS-GAP-14 template-vs-live split.
