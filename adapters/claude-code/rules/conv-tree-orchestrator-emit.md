@@ -67,7 +67,7 @@ Layer D is the load-bearing layer for genuine cloud Dispatch (no local hook reac
 | `mcp__ccd_session_mgmt__start_code_task` (Dispatch code spawn) | YES (`--on-spawn` PreToolUse) | YES | Emit `branch-opened` per spawn |
 | `mcp__ccd_session__send_message` (if/when exposed) | NOT YET (tool not surfaced) | n/a | Emit `branch-note-add` per send (D-class) |
 | `mcp__ccd_session__send_user_message` (if/when exposed) | NOT YET (tool not surfaced) | n/a | Emit appropriate event per message class (D-class) |
-| Sub-agent `Task` / `Agent` invocations | EXPLICITLY EXCLUDED (ADR-034) | n/a | NOT emitted — AI-internal mechanics, not conversation branches |
+| Sub-agent `Task` / `Agent` / `Workflow` invocations | BRANCH tier: EXCLUDED (ADR-034). WORK-ITEM tier: YES (ADR-054 — `--on-builder-dispatch` PreToolUse + `--on-builder-complete` PostToolUse + `--builder-tracking` thin gate) | YES (reconciler builder sweep: catch-up dispatch + foreground completion from transcript tool_results) | NO branch node ever (AI-internal mechanics); an `action-added` work-item (`details._category=builder-dispatch`, derives in-flight) auto-lands on the session's `ss-*` node; foreground completion auto-emits `action-done`; background (Workflow / run_in_background) completion is a named ceiling — see `workstreams-state.md` ADR-054 section |
 | `Bash(claude …)` / `/schedule` / `claude --remote` | NOT YET (rare; cloud blind spot) | n/a | Acknowledged gap (cloud orchestrator dispatch is not locally observable) |
 | SessionStart (local code session boot) | YES (`--on-session-start`) | n/a | Auto-emits own branch under project root |
 | Stop (any session) | YES (`--on-stop`) | n/a | Auto-concludes branches this session opened |

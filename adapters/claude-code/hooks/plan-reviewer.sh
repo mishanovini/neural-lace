@@ -1509,7 +1509,12 @@ while IFS= read -r task_match; do
   # claimed and Check 5 should respect that. Check 12 enforces the level
   # token is one of the legal values; Check 13 verifies full-level tasks
   # carry the integration-verification sub-blocks.
-  if echo "$task_text" | grep -qE 'Verification:[[:space:]]+(mechanical|contract)\b'; then
+  # LAST occurrence wins (greedy `.*` anchors to the final `Verification:`),
+  # consistent with close-plan.sh / Check 12 — a prose mention of a level
+  # earlier on the line must not shadow the trailing declaration (discovery
+  # 2026-05-11-close-plan-verification-field-parser-greedy).
+  eff_lvl=$(echo "$task_text" | sed -nE 's/.*Verification:[[:space:]]+(mechanical|contract|full)\b.*/\1/p')
+  if [[ "$eff_lvl" == "mechanical" || "$eff_lvl" == "contract" ]]; then
     continue
   fi
   # Look at the next 10 lines for test spec language
@@ -1536,7 +1541,9 @@ while IFS= read -r task_match; do
   fi
 
   # Same Verification: mechanical/contract exemption applies to Tier B.
-  if echo "$task_text" | grep -qE 'Verification:[[:space:]]+(mechanical|contract)\b'; then
+  # LAST occurrence wins (see Tier A note above).
+  eff_lvl=$(echo "$task_text" | sed -nE 's/.*Verification:[[:space:]]+(mechanical|contract|full)\b.*/\1/p')
+  if [[ "$eff_lvl" == "mechanical" || "$eff_lvl" == "contract" ]]; then
     continue
   fi
 
@@ -2217,8 +2224,20 @@ if [[ -n "$VERIFICATION_LINES" ]]; then
     vln=$(echo "$vline" | cut -d: -f1)
     vtext=$(echo "$vline" | cut -d: -f2-)
     # Extract the token immediately after `Verification:`. Strip any
-    # surrounding whitespace and trailing punctuation/markers.
+    # surrounding whitespace and trailing punctuation/markers. The greedy
+    # `.*` prefix anchors to the LAST occurrence on the line — the trailing
+    # declaration wins over prose mentions of a level (consistent with
+    # close-plan.sh; discovery 2026-05-11-close-plan-verification-field-
+    # parser-greedy).
     vlevel=$(echo "$vtext" | sed -nE 's/.*Verification:[[:space:]]+([A-Za-z][A-Za-z_-]*).*/\1/p' | head -1)
+    # Collision notice (non-blocking): multiple `Verification: <level>`
+    # occurrences on one line are ambiguous to a human reader even though
+    # the parser deterministically takes the last. Suggest backticking the
+    # prose mention or rewording (e.g. "full-tier").
+    vocc=$(echo "$vtext" | grep -oiE 'Verification:[[:space:]]*(mechanical|contract|full)' | wc -l | tr -d '[:space:]')
+    if [[ "${vocc:-0}" -ge 2 ]]; then
+      echo "[plan-reviewer] note (non-blocking): line $vln contains $vocc 'Verification: <level>' occurrences; the LAST one ('$(echo "$vtext" | grep -oiE 'Verification:[[:space:]]*(mechanical|contract|full)' | tail -1)') is the declaration. Consider rewording the prose mention (e.g. 'full-tier') to avoid ambiguity." >&2
+    fi
     if [[ -z "$vlevel" ]]; then
       add_finding "Check 12 (risk-tiered verification): line $vln has 'Verification:' but no readable level token. Use one of: mechanical, full, contract. See ~/.claude/rules/risk-tiered-verification.md."
       continue
