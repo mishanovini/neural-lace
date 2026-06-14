@@ -12,8 +12,10 @@
 #   - Verification: full       → existing prose-evidence path (unchanged)
 #
 # Generates completion report from template + commit log, updates SCRATCHPAD,
-# reconciles backlog, flips Status (which triggers plan-lifecycle.sh archival),
-# auto-pushes per user's full-auto preference (per E.2).
+# reconciles backlog, flips Status via a bash write (plan-lifecycle.sh CANNOT
+# fire on it — bash writes are not Edit/Write tool events), archives via its
+# own inline fallback, COMMITS the closure (pathspec-limited to the plan +
+# evidence paths), and auto-pushes per user's full-auto preference (per E.2).
 #
 # Subcommands:
 #   close <plan-slug> [--no-push]              Close the plan
@@ -57,8 +59,9 @@ Usage: close-plan.sh close <plan-slug> [--no-push]
 Deterministic close-plan procedure. Routes each task per its declared
 `Verification:` level (mechanical | contract | full), generates the
 completion report, updates SCRATCHPAD, verifies backlog reconciliation,
-flips Status to COMPLETED (which triggers plan-lifecycle.sh archival),
-commits, and auto-pushes (unless --no-push).
+flips Status to COMPLETED, archives inline (bash writes fire no PostToolUse
+event, so plan-lifecycle.sh cannot do it), commits the closure (pathspec-
+limited to the plan + evidence paths), and auto-pushes (unless --no-push).
 
 Examples:
   close-plan.sh close my-plan-slug
@@ -137,7 +140,12 @@ extract_verification_level() {
   fi
 
   local level
-  level=$(printf '%s\n' "$block" | grep -iEo 'Verification:[[:space:]]*(mechanical|contract|full)' | head -1 | sed -e 's/Verification:[[:space:]]*//I' | tr '[:upper:]' '[:lower:]')
+  # LAST occurrence wins (discovery 2026-05-11-close-plan-verification-field-
+  # parser-greedy): a task description may legitimately mention a level in
+  # prose (e.g. "add functionality-verifier requirement for `Verification:
+  # full` runtime tasks — Verification: mechanical"); the trailing field is
+  # the declaration. First-occurrence parsing misclassified such tasks.
+  level=$(printf '%s\n' "$block" | grep -iEo 'Verification:[[:space:]]*(mechanical|contract|full)' | tail -1 | sed -e 's/Verification:[[:space:]]*//I' | tr '[:upper:]' '[:lower:]')
 
   if [[ -z "$level" ]]; then
     printf 'full\n'
@@ -667,9 +675,13 @@ cmd_close() {
   printf '[close-plan] updating SCRATCHPAD...\n' >&2
   update_scratchpad "$slug"
 
-  # 5. Flip Status: ACTIVE → COMPLETED. This triggers plan-lifecycle.sh
-  # archival (PostToolUse) when a real harness session runs the procedure;
-  # in --self-test the archival is performed inline by the test scaffold.
+  # 5. Flip Status: ACTIVE → COMPLETED via a bash write. NOTE (comment
+  # corrected 2026-06-10 per plan-lifecycle-redesign R4 finding): a bash sed
+  # write is NOT an Edit/Write tool call, so it fires NO PostToolUse event —
+  # plan-lifecycle.sh NEVER sees this flip, whether or not the script runs
+  # inside a Claude Code session. Archival is therefore owned by step 6's
+  # inline fallback in EVERY close-plan flow; plan-lifecycle.sh archives only
+  # manual Edit-tool Status flips made outside this script.
   printf '[close-plan] flipping Status: ACTIVE → COMPLETED...\n' >&2
   local tmp_plan
   tmp_plan=$(mktemp)
@@ -677,17 +689,13 @@ cmd_close() {
   cp "$tmp_plan" "$plan_file"
   rm -f "$tmp_plan"
 
-  # 6. Manual archival fallback. plan-lifecycle.sh is a PostToolUse hook
-  # which fires on Edit/Write tool invocations within a Claude Code session.
-  # When close-plan.sh runs from within such a session, the lifecycle hook
-  # fires automatically and moves the plan to docs/plans/archive/. When the
-  # script runs standalone (e.g., from --self-test or direct shell invocation
-  # outside a Claude Code session), there is no PostToolUse trigger; we must
-  # archive ourselves to maintain the post-condition.
-  #
-  # Detection: if the plan is still under docs/plans/ (top-level, not archive)
-  # after the Status flip, perform the move ourselves. This is idempotent —
-  # if the lifecycle hook already moved it, the check is a no-op.
+  # 6. Inline archival — the SOLE archival path under close-plan (see step 5:
+  # plan-lifecycle.sh cannot fire on bash writes). If the plan is still under
+  # docs/plans/ (top-level, not archive) after the Status flip, move it (and
+  # its sibling evidence file) ourselves. Idempotent — if the file is already
+  # archived, the check is a no-op.
+  local orig_plan_path="$plan_file"
+  local orig_evidence_path="" archived_evidence_path=""
   if [[ "$plan_file" == docs/plans/*.md ]] && [[ "$plan_file" != docs/plans/archive/*.md ]]; then
     if [[ -f "$plan_file" ]]; then
       mkdir -p docs/plans/archive
@@ -707,9 +715,46 @@ cmd_close() {
         else
           mv "$evidence_file" "$archived_evidence"
         fi
+        orig_evidence_path="$evidence_file"
+        archived_evidence_path="$archived_evidence"
       fi
       printf '[close-plan] archived to: %s\n' "$archived_path" >&2
       plan_file="$archived_path"
+    fi
+  fi
+
+  # 7. Commit the closure so the commit captures the FLIPPED content.
+  # Defect this step closes (observed twice — manual fix-ups 83c2564
+  # 2026-06-08 and b27027f 2026-06-10): `git mv` stages the rename carrying
+  # the PRE-flip index blob, while the sed Status flip + completion report
+  # exist only in the working tree; close-plan then staged-but-never-
+  # committed, so the closing session's commit landed as a rename-only
+  # commit whose archived blob still read `Status: ACTIVE`. Fix: re-add the
+  # moved files (refreshing the index to the flipped working-tree content)
+  # and commit pathspec-limited, so unrelated staged work in the calling
+  # session is never swept into the closure commit.
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    local -a closure_paths=()
+    git add -- "$plan_file" 2>/dev/null
+    closure_paths+=("$plan_file")
+    if [[ -n "$archived_evidence_path" ]] && [[ -f "$archived_evidence_path" ]]; then
+      git add -- "$archived_evidence_path" 2>/dev/null
+      closure_paths+=("$archived_evidence_path")
+    fi
+    # Include pre-archival paths so the staged deletions land in the same
+    # commit (only when HEAD knows them — untracked plans have no deletion).
+    if [[ "$orig_plan_path" != "$plan_file" ]] && git cat-file -e "HEAD:$orig_plan_path" 2>/dev/null; then
+      closure_paths+=("$orig_plan_path")
+    fi
+    if [[ -n "$orig_evidence_path" ]] && git cat-file -e "HEAD:$orig_evidence_path" 2>/dev/null; then
+      closure_paths+=("$orig_evidence_path")
+    fi
+    if [[ -n "$(git status --porcelain -- "${closure_paths[@]}" 2>/dev/null)" ]]; then
+      if git commit -q -m "chore(plans): close $slug (COMPLETED + completion report, archived)" -- "${closure_paths[@]}" 2>/dev/null; then
+        printf '[close-plan] closure committed: %s\n' "$(git rev-parse --short HEAD 2>/dev/null)" >&2
+      else
+        printf '[close-plan] WARN: closure commit FAILED — stage+commit %s manually so the archived blob carries Status: COMPLETED (do NOT leave the rename-only staged state; see fix-ups 83c2564/b27027f for the failure shape).\n' "$plan_file" >&2
+      fi
     fi
   fi
 
@@ -775,7 +820,7 @@ run_self_test() {
   local PASSED=0 FAILED=0
   local saved_pwd="$PWD"
 
-  printf 'close-plan.sh self-test (10 scenarios)\n\n' >&2
+  printf 'close-plan.sh self-test (12 scenarios)\n\n' >&2
 
   # ----- S1: all-mechanical-tasks-closure -----
   local D1; D1=$(setup_synthetic_repo "S1" "p-mech")
@@ -1237,9 +1282,94 @@ EOF
   fi
   rm -rf "$D10"
 
+  # ----- S11: closure-commit-captures-flipped-content (regression for the
+  # rename-only-commit defect; manual fix-ups 83c2564 / b27027f) -----
+  local D11; D11=$(setup_synthetic_repo "S11" "p-commit")
+  (
+    cd "$D11" || exit 1
+    cat > docs/plans/p-commit.md <<'EOF'
+# Plan: P Commit
+Status: ACTIVE
+Backlog items absorbed: none
+
+## Goal
+closure commit must capture flipped content
+
+## Scope
+- IN: x
+- OUT: y
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-commit.md`
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-commit-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-commit-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+    bash "$SELF_PATH" close p-commit --no-push >/dev/null 2>&1
+  )
+  if ( cd "$D11" \
+       && git show HEAD:docs/plans/archive/p-commit.md 2>/dev/null | grep -q '^Status: COMPLETED' \
+       && git show HEAD:docs/plans/archive/p-commit.md 2>/dev/null | grep -q '^## Completion Report' \
+       && [[ -z "$(git status --porcelain -- docs/plans/p-commit.md docs/plans/archive/p-commit.md)" ]] ); then
+    printf 'self-test (S11) closure-commit-captures-flipped-content: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S11) closure-commit-captures-flipped-content: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D11"
+
+  # ----- S12: inline-phrase-collision — task prose mentions `Verification:
+  # full` but the trailing declaration is `Verification: mechanical`; the
+  # LAST occurrence must win (discovery 2026-05-11-close-plan-verification-
+  # field-parser-greedy). With only a mechanical .evidence.json present,
+  # closure succeeds iff the parser picked `mechanical`. -----
+  local D12; D12=$(setup_synthetic_repo "S12" "p-collide")
+  (
+    cd "$D12" || exit 1
+    cat > docs/plans/p-collide.md <<'EOF'
+# Plan: P Collide
+Status: ACTIVE
+Backlog items absorbed: none
+
+## Goal
+inline-phrase collision must not misclassify the verification level
+
+## Scope
+- IN: x
+- OUT: y
+
+## Tasks
+- [x] 1. Add requirement for `Verification: full` runtime tasks — Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-collide.md`
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-collide-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-collide-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+    bash "$SELF_PATH" close p-collide --no-push >/dev/null 2>&1
+  )
+  if [[ -f "$D12/docs/plans/archive/p-collide.md" ]] \
+     && grep -q '^Status: COMPLETED' "$D12/docs/plans/archive/p-collide.md"; then
+    printf 'self-test (S12) inline-phrase-collision-last-occurrence-wins: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S12) inline-phrase-collision-last-occurrence-wins: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D12"
+
   cd "$saved_pwd"
 
-  printf '\nself-test summary: %d passed, %d failed (of 10 scenarios)\n' "$PASSED" "$FAILED" >&2
+  printf '\nself-test summary: %d passed, %d failed (of 12 scenarios)\n' "$PASSED" "$FAILED" >&2
   if [[ $FAILED -eq 0 ]]; then
     return 0
   fi

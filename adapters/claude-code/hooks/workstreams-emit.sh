@@ -13,18 +13,23 @@
 #
 # Optional rich-details sentinels (v1.1.4 item 41, 2026-05-20):
 #   The orchestrator MAY include any/all of these line-prefixed sentinels in
-#   the spawn prompt body — they're parsed for observability and (future)
-#   propagation to GUI detail-pane content. The presence/absence is purely
-#   advisory; no spawn is ever blocked for missing them.
+#   the spawn prompt body. The presence/absence is purely advisory; no spawn
+#   is ever blocked for missing them.
 #       Instructions: <one-line summary of what the spawned session is doing>
 #       Recommendation: <one-line guidance for the operator>
 #       Links: <doc/path-1.md>, <doc/path-2.md>
-#   Today: when a spawn has a substantive prompt (>200 chars) but NONE of
-#   these sentinels, the hook logs a WARNING to the audit log so a human
-#   auditor can spot branches that shipped without rich detail. The
-#   conversation-tree GUI already renders a "incomplete metadata" badge on
-#   items lacking the same fields (renderItemDetails fallback). See
-#   `_extract_rich_details` and `_warn_no_rich_details` below.
+#   Since Task 9 of the status-surface plan (2026-06-12) the sentinels DO
+#   propagate: when a spawn declares `Work-item: new — <kind>:<text>`, the
+#   hook assembles a per-kind context payload from the sentinels through the
+#   SOLE-NORMATIVE assembler (decision-context-schema.js assembleItemDetails)
+#   and emits a sibling `item-details-set` in the same batch — so the new
+#   item is born context-complete. When the payload cannot be assembled (no
+#   Instructions: sentinel -> no background), the item is born honestly
+#   detail-less and: (a) an observability WARNING lands in the audit log when
+#   the prompt is substantive (>200 chars) but carries NO sentinels, and (b)
+#   the GUI flags the item context-incomplete (Task 8 render gate). See
+#   `_extract_rich_details`, `_assemble_spawn_details`, and the contract in
+#   rules/workstreams-state.md "Context-complete item emission".
 #
 # Invocation modes:
 #   --on-spawn   PreToolUse on the Dispatch-only spawn surface
@@ -42,6 +47,16 @@
 #                what the tree actually contains.
 #   --on-stop    Stop hook. Emits `concluded` for every branch this session
 #                opened (read from the ledger), then clears the ledger.
+#   --on-builder-dispatch  PreToolUse on Task|Agent|Workflow (ADR-054,
+#                2026-06-10). Emits ONE `action-added` WORK-ITEM (kind action,
+#                details._category=builder-dispatch, derives 'in-flight') on
+#                the session's own ss-* node — NO branch node (ADR-034's
+#                branch scoping stands; this is the work-item tier).
+#   --on-builder-complete  PostToolUse on Task|Agent|Workflow. Foreground
+#                dispatches: tool return == completion -> `action-done`.
+#                Background (Workflow / run_in_background:true): launch-ack
+#                only -> creation batch, NO done (documented ceiling — see
+#                the ADR-054 section below).
 #   --self-test  Exercises every classification + idempotency + autodetect +
 #                failure-isolation path against temp state files. Prints
 #                `self-test: OK` / `self-test: FAIL`. Exit 0 / 1.
@@ -126,6 +141,12 @@ _fallback_conv_tree_path() {
 # gates' _resolve_state_lib resolution order so writer and gate agree.
 _resolve_state_lib() {
   if [[ -n "${CONV_TREE_STATE_LIB:-}" ]]; then printf '%s' "$CONV_TREE_STATE_LIB"; return 0; fi
+  local _pin="$HOME/.claude/workstreams-lib-path.txt"
+  if [[ -f "$_pin" ]]; then
+    local _pinned; _pinned=$(head -1 "$_pin" | tr -d '
+')
+    if [[ -n "$_pinned" && -f "$_pinned" ]]; then printf '%s' "$_pinned"; return 0; fi
+  fi
   local root=""
   if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
     local cand="$root/neural-lace/workstreams-ui/state/state.js"
@@ -316,16 +337,17 @@ _spawn_title() {
 #   Recommendation: <one-line guidance for the operator>
 #   Links: <doc/path-1.md>, <doc/path-2.md>
 #
-# These do NOT (yet) propagate to a rich-details item on the branch — that
-# requires a follow-up `item-details-set` emission against a known item_id,
-# which is out of scope for this writer hook (items belong to the GUI/human
-# side). What they DO power:
+# What the parsed sentinels power:
 #   (a) An observability WARNING in the audit log when a spawn carries a
 #       substantive prompt (>200 chars) but NONE of the sentinels — so a
 #       human auditing the log can spot branches that shipped without rich
 #       detail. NEVER blocks the spawn (writer, not gate).
-#   (b) A future hook can read the parsed sentinels via _extract_rich_details
-#       and emit annotation/details events accordingly.
+#   (b) Task 9 (2026-06-12): when the spawn ALSO declares `Work-item: new`,
+#       the sentinels feed _assemble_spawn_details -> the sole-normative
+#       assembleItemDetails(), and a sibling `item-details-set` joins the
+#       same emit batch so the new item is born context-complete
+#       (background = Instructions:, recommendation = Recommendation:,
+#       links = Links:, per-kind actionable field = the item text).
 #
 # The functions below are PURE — they extract from input, never write state.
 _extract_rich_details() {
@@ -530,6 +552,29 @@ _run_on_spawn() {
     local ev_item; ev_item="cte-${kind_ev:0:6}-$(printf '%s|%s' "$child_id" "$serves_item_id" | _sha1 | cut -c1-32)"
     events="$events,$(printf '{"event_id":"%s","type":"%s","node_id":"%s","item_id":"%s","text":%s,"actor":"dispatch"}' \
       "$ev_item" "$kind_ev" "$child_id" "$serves_item_id" "$(jq -Rn --arg t "$wi_text" '$t')")"
+    # Task 9 (2026-06-12): a NEW operator-facing work-item is born
+    # context-complete when the spawn prompt carries the rich-detail
+    # sentinels. The per-kind payload is assembled through the SOLE-NORMATIVE
+    # assembler (decision-context-schema.js assembleItemDetails — no shell
+    # re-implementation); when it assembles (background present + per-kind
+    # actionable field), a sibling item-details-set joins the same batch.
+    # When it does not (no Instructions: sentinel -> no background), the item
+    # is born honestly detail-less: _warn_no_rich_details observability fires
+    # below and the GUI renders it context-incomplete. Never blocks (writer).
+    local sp_triple sp_instr sp_rec sp_links spawn_details
+    sp_triple=$(_extract_rich_details "$input")
+    sp_instr=$(printf '%s' "$sp_triple" | sed -n '1p')
+    sp_rec=$(printf '%s' "$sp_triple"   | sed -n '2p')
+    sp_links=$(printf '%s' "$sp_triple" | sed -n '3p')
+    spawn_details=$(_assemble_spawn_details "$wi_kind" "$wi_text" "$sp_instr" "$sp_rec" "$sp_links")
+    if [[ -n "$spawn_details" ]]; then
+      # Content-hashed event id: re-firing the same spawn dedupes; a later
+      # enrichment via --emit-details (different content) still applies.
+      local ev_det; ev_det="cte-detset-$(printf '%s|%s|%s' "$child_id" "$serves_item_id" "$spawn_details" | _sha1 | cut -c1-32)"
+      events="$events,$(printf '{"event_id":"%s","type":"item-details-set","node_id":"%s","item_id":"%s","details":%s,"actor":"dispatch"}' \
+        "$ev_det" "$child_id" "$serves_item_id" "$spawn_details")"
+      _log "work-item new item=$serves_item_id born context-complete (details assembled from spawn sentinels via the sole-normative schema)"
+    fi
   fi
   if [[ -n "$serves_item_id" ]]; then
     local ev_sb; ev_sb="cte-sb-$(printf '%s|%s' "$child_id" "$sid" | _sha1 | cut -c1-32)"
@@ -556,9 +601,10 @@ _run_on_spawn() {
   # Non-blocking warning when a substantive Dispatch prompt ships without
   # rich-detail sentinels (Instructions:/Recommendation:/Links:). See the
   # _warn_no_rich_details + _extract_rich_details definitions above for the
-  # schema. The warning lives ONLY in the audit log — never blocks. Future
-  # iteration: parse sentinels into a follow-up annotation/item-details-set
-  # emission so the GUI auto-populates detail fields from the spawn prompt.
+  # schema. The warning lives ONLY in the audit log — never blocks. The
+  # `Work-item: new` form DOES propagate the sentinels into an
+  # item-details-set (Task 9, handled above); this warning remains the
+  # observability floor for spawns that carry no sentinels at all.
   _warn_no_rich_details "$input" "$title"
 
   exit 0
@@ -578,6 +624,183 @@ _owner_node_of_item() {
   sink=$(_resolve_gui_state_path)
   [[ -f "$sink" ]] || { printf '%s' ""; return 0; }
   node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var id=process.argv[3];for(var i=0;i<st.snapshot.nodes.length;i++){var n=st.snapshot.nodes[i];if((n.items||[]).some(function(it){return it.item_id===id})){process.stdout.write(n.node_id);return}}process.stdout.write("")}catch(e){process.stdout.write("")}' "$lib" "$sink" "$item_id" 2>/dev/null || printf '%s' ""
+}
+
+# ---------------------------------------------------------------------------
+# Context-payload helpers (Task 9 — status-surface plan, 2026-06-12).
+#
+# THE CONTRACT (rules/workstreams-state.md "Context-complete item emission"):
+# every operator-facing decision/question/action raised through this writer
+# SHOULD carry the per-kind context payload as an `item-details-set`,
+# validated through the SOLE-NORMATIVE module
+# (workstreams-ui/state/decision-context-schema.js — assembleItemDetails /
+# validateItemDetails / ItemDetailsContentSchema). NO shell re-implementation
+# of the schema, ever — these helpers call into the module via node.
+# Failure isolation is preserved: a missing module / node / invalid payload
+# NEVER blocks the emit; the item lands honestly detail-less (or with the
+# raw payload, information-preserving) and the audit log carries a WARN.
+# ---------------------------------------------------------------------------
+
+# The sole-normative schema module. Mirrors decision-context-gate.sh's
+# _resolve_schema_module (same env override) so writer and gate agree.
+_resolve_schema_lib() {
+  if [[ -n "${DECISION_CONTEXT_SCHEMA:-}" ]]; then
+    printf '%s' "$DECISION_CONTEXT_SCHEMA"; return 0
+  fi
+  local root="" d cand
+  if root=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root" ]]; then
+    for d in workstreams-ui; do
+      for cand in "$root/neural-lace/$d/state/decision-context-schema.js" "$root/$d/state/decision-context-schema.js"; do
+        if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
+      done
+    done
+  fi
+  _fallback_conv_tree_path "state/decision-context-schema.js"
+}
+
+# Map an item kind (the --emit-item vocabulary / ADR-032 item kinds) onto the
+# detail _category vocabulary of the sole-normative schema.
+_kind_to_category() {
+  case "$1" in
+    decision) printf 'decision' ;;
+    question) printf 'question' ;;
+    action)   printf 'action_item_for_user' ;;
+    *)        printf '' ;;
+  esac
+}
+
+# _normalize_item_details <category> <details-json>
+# stdout (single line): "OK <normalized-json>" | "INVALID <reason>" | "SKIP"
+#                       | "NOLIB"
+#   OK      — payload validates against the sole-normative schema; the
+#             normalized (Zod-parsed, _category-stamped, surfaced_by-stamped)
+#             JSON follows. Emit THIS instead of the raw payload.
+#   INVALID — payload supplied but fails the cold-read bar (no background /
+#             no per-kind actionable field). Caller emits the RAW payload
+#             anyway (information-preserving — the GUI flags the item
+#             context-incomplete) and logs a WARN with the reason.
+#   SKIP    — payload declares a NON-operator _category (e.g.
+#             builder-dispatch, the ADR-054 noise-control tier). Passthrough
+#             untouched; not an operator-ask payload.
+#   NOLIB   — node / schema module unavailable. Passthrough untouched
+#             (graceful degradation; a writer must never break a tool call).
+_normalize_item_details() {
+  local category="$1" details="$2"
+  _have node || { printf 'NOLIB'; return 0; }
+  local schema; schema=$(_resolve_schema_lib)
+  local df; df=$(mktemp 2>/dev/null || echo "/tmp/cte-det-$$.json")
+  printf '%s' "$details" >"$df"
+  local out
+  out=$(node -e '
+    var fs = require("fs");
+    var cat = process.argv[2];
+    var det; try { det = JSON.parse(fs.readFileSync(process.argv[3], "utf8")); } catch (e) { process.stdout.write("INVALID details payload is not parseable JSON"); process.exit(0); }
+    // SOLE-NORMATIVE assembler when loadable; else the SAME-CONTRACT inline
+    // floor workstreams-turn-emit.sh ships (background + >=1 per-kind
+    // actionable field, else null). The fallback exists only so the writer
+    // applies the contract in stripped envs (fresh worktree without
+    // node_modules); the schema module remains normative when present.
+    var assemble = null, validate = null, cats = ["decision", "question", "action_item_for_user", "autonomous_action"];
+    try {
+      var sch = require(process.argv[1]);
+      if (sch && typeof sch.assembleItemDetails === "function") {
+        assemble = sch.assembleItemDetails;
+        validate = (typeof sch.validateItemDetails === "function") ? sch.validateItemDetails : null;
+        if (sch.DETAIL_CATEGORIES) cats = sch.DETAIL_CATEGORIES;
+      }
+    } catch (e) { /* fall through to the inline floor */ }
+    var ACTIONABLE = {
+      decision: ["question", "options", "the_ask", "description"],
+      question: ["question", "why_asking", "description"],
+      action_item_for_user: ["the_ask", "instructions", "description"],
+      autonomous_action: ["action_taken", "reasoning", "description"]
+    };
+    if (!assemble) {
+      assemble = function (category, fields) {
+        if (cats.indexOf(category) === -1) return null;
+        var d = Object.assign({}, fields || {}, { _category: category });
+        if (!d.background || String(d.background).trim() === "") return null;
+        var need = ACTIONABLE[category] || [];
+        var has = need.some(function (f) { return d[f] != null && String(d[f]).trim() !== ""; });
+        if (!has) return null;
+        return d;
+      };
+    }
+    if (det && typeof det === "object" && !Array.isArray(det) && det._category && cats.indexOf(det._category) === -1) {
+      process.stdout.write("SKIP"); process.exit(0);
+    }
+    var fields = Object.assign({}, det);
+    if (!fields.surfaced_by) fields.surfaced_by = "workstreams-emit";
+    var ok = assemble(cat, fields);
+    if (ok) { process.stdout.write("OK " + JSON.stringify(ok)); process.exit(0); }
+    var msg = "missing background and/or the per-kind actionable field (" + (ACTIONABLE[cat] || []).join("|") + ")";
+    try {
+      if (validate) {
+        var v = validate(Object.assign({}, fields, { _category: cat }));
+        if (!v.success && v.error && v.error.issues) {
+          msg = v.error.issues.map(function (i) { return ((i.path && i.path.join(".")) || "") + ": " + i.message; }).join("; ").replace(/\s+/g, " ").slice(0, 300);
+        }
+      }
+    } catch (e) {}
+    process.stdout.write("INVALID " + msg);
+  ' "$schema" "$category" "$df" 2>>"$LOG_FILE") || out="NOLIB"
+  rm -f "$df" 2>/dev/null || true
+  printf '%s' "$out"
+}
+
+# _assemble_spawn_details <kind> <item-text> <instructions> <recommendation> <links-csv>
+# stdout: normalized details JSON (sole-normative assembleItemDetails), or
+# EMPTY when the payload would not be self-contained (no Instructions:
+# sentinel -> no background -> the assembler returns null) — caller emits no
+# item-details-set and the item is born honestly detail-less.
+_assemble_spawn_details() {
+  local kind="$1" text="$2" instr="$3" rec="$4" links="$5"
+  local category; category=$(_kind_to_category "$kind")
+  [[ -z "$category" || -z "$instr" ]] && { printf ''; return 0; }
+  _have node || { printf ''; return 0; }
+  local schema; schema=$(_resolve_schema_lib)
+  node -e '
+    var cat = process.argv[2], text = process.argv[3], instr = process.argv[4], rec = process.argv[5], links = process.argv[6];
+    // SOLE-NORMATIVE assembler when loadable; same-contract inline floor
+    // otherwise (the workstreams-turn-emit.sh precedent — never crash, never
+    // emit a payload that fails the cold-read bar).
+    var assemble = null;
+    try {
+      var sch = require(process.argv[1]);
+      if (sch && typeof sch.assembleItemDetails === "function") assemble = sch.assembleItemDetails;
+    } catch (e) { /* fall through */ }
+    if (!assemble) {
+      assemble = function (category, fields) {
+        var d = Object.assign({}, fields || {}, { _category: category });
+        if (!d.background || String(d.background).trim() === "") return null;
+        if (!d.question && !d.the_ask) return null;
+        return d;
+      };
+    }
+    var fields = { background: instr, surfaced_by: "workstreams-emit" };
+    if (cat === "action_item_for_user") { fields.the_ask = text; fields.instructions = instr; }
+    else fields.question = text;
+    if (rec) fields.recommendation = rec;
+    if (links) {
+      var ls = links.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      if (ls.length) fields.links = ls;
+    }
+    var ok = assemble(cat, fields);
+    if (ok) process.stdout.write(JSON.stringify(ok));
+  ' "$schema" "$category" "$text" "$instr" "$rec" "$links" 2>>"$LOG_FILE" || printf ''
+}
+
+# Resolve an existing item's kind from the sink snapshot (used by
+# --emit-details when the payload carries no _category). Empty if not found /
+# node unavailable — caller passes the payload through untouched.
+_kind_of_item() {
+  local item_id="$1"
+  _have node || { printf '%s' ""; return 0; }
+  local lib sink
+  lib=$(_resolve_state_lib)
+  sink=$(_resolve_gui_state_path)
+  [[ -f "$sink" ]] || { printf '%s' ""; return 0; }
+  node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var id=process.argv[3];for(var i=0;i<st.snapshot.nodes.length;i++){var its=st.snapshot.nodes[i].items||[];for(var j=0;j<its.length;j++){if(its[j].item_id===id){process.stdout.write(its[j].kind||"");return}}}process.stdout.write("")}catch(e){process.stdout.write("")}' "$lib" "$sink" "$item_id" 2>/dev/null || printf '%s' ""
 }
 
 # ============================================================================
@@ -1241,6 +1464,197 @@ _self_test() {
     echo "PASS: ST36 (skipped: git unavailable)"; pass=$((pass+1))
   fi
 
+  # ST37-ST42: Task 9 (2026-06-12) — context-payload discipline on the emit
+  # path. Locks the contract in rules/workstreams-state.md "Context-complete
+  # item emission": valid payloads normalize through the SOLE-NORMATIVE
+  # schema module; invalid payloads land raw + WARN; payload-less raises land
+  # + WARN; the Work-item:new spawn path assembles details from the prompt
+  # sentinels; --emit-details enrichment applies last-writer-wins.
+  _item_det() { # statefile item_id detail-field -> value ("" when absent)
+    node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var id=process.argv[3],f=process.argv[4],out="";st.snapshot.nodes.forEach(function(n){(n.items||[]).forEach(function(it){if(it.item_id===id&&it.details)out=it.details[f]===undefined||it.details[f]===null?"":String(it.details[f])})});process.stdout.write(out)}catch(e){process.stdout.write("ERR")}' "$LIB" "$1" "$2" "$3" 2>/dev/null
+  }
+
+  # ST37 — --emit-item decision with a VALID per-kind payload -> the sibling
+  # item-details-set carries the NORMALIZED payload (_category + surfaced_by
+  # stamped by the sole-normative assembler).
+  local sp37="$tmp/st-37.json"
+  CONV_TREE_STATE_PATH="$sp37" CLAUDE_SESSION_ID="sess-st-37" \
+    bash "$SELF" --emit-branch <<<'{"node_id":"st37-root","parent_id":null,"title":"ST37 Root"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp37" CLAUDE_SESSION_ID="sess-st-37" \
+    bash "$SELF" --emit-item <<<'{"kind":"decision","node_id":"st37-root","item_id":"i-st37-d","text":"Apply m162 now?","details":{"background":"We are deciding whether to apply migration m162 to prod; it gates the launch.","question":"Apply m162 to production now, or wait?","options":[{"name":"apply now"},{"name":"wait"}],"recommendation":"apply now"}}' >/dev/null 2>&1
+  _ck "ST37 valid payload -> item-details-set emitted" "$(_count "$sp37" item-details-set)" "1"
+  _ck "ST37b normalized details._category stamped" "$(_item_det "$sp37" "i-st37-d" "_category")" "decision"
+  _ck "ST37c normalized details.surfaced_by stamped" "$(_item_det "$sp37" "i-st37-d" "surfaced_by")" "workstreams-emit"
+
+  # ST38 — --emit-item with an INVALID payload (no background -> fails the
+  # cold-read bar) -> the RAW payload still lands (information-preserving;
+  # the GUI flags context-incomplete) + a schema-FAIL WARN in the audit log.
+  LOG_BEFORE=$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)
+  local sp38="$tmp/st-38.json"
+  CONV_TREE_STATE_PATH="$sp38" CLAUDE_SESSION_ID="sess-st-38" \
+    bash "$SELF" --emit-branch <<<'{"node_id":"st38-root","parent_id":null,"title":"ST38 Root"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp38" CLAUDE_SESSION_ID="sess-st-38" \
+    bash "$SELF" --emit-item <<<'{"kind":"decision","node_id":"st38-root","item_id":"i-st38-d","text":"Partial","details":{"recommendation":"do A"}}' >/dev/null 2>&1
+  LOG_AFTER=$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)
+  _ck "ST38 invalid payload still lands raw (info-preserving)" "$(_item_det "$sp38" "i-st38-d" "recommendation")" "do A"
+  if tail -n $((LOG_AFTER - LOG_BEFORE + 1)) "$LOG_FILE" 2>/dev/null | grep -q 'WARN: emit-item .* details FAIL the sole-normative context schema'; then
+    echo "PASS: ST38b invalid payload -> schema-FAIL WARN logged"; pass=$((pass+1))
+  else
+    echo "FAIL: ST38b expected schema-FAIL WARN in audit log"; fail=$((fail+1))
+  fi
+
+  # ST39 — --emit-item with NO payload -> the item still emits (writer never
+  # blocks) but is born context-incomplete: zero item-details-set + WARN.
+  LOG_BEFORE=$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)
+  local sp39="$tmp/st-39.json"
+  CONV_TREE_STATE_PATH="$sp39" CLAUDE_SESSION_ID="sess-st-39" \
+    bash "$SELF" --emit-branch <<<'{"node_id":"st39-root","parent_id":null,"title":"ST39 Root"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp39" CLAUDE_SESSION_ID="sess-st-39" \
+    bash "$SELF" --emit-item <<<'{"kind":"question","node_id":"st39-root","item_id":"i-st39-q","text":"Which env?"}' >/dev/null 2>&1
+  LOG_AFTER=$(wc -l <"$LOG_FILE" 2>/dev/null || echo 0)
+  _ck "ST39 payload-less raise still emits the item" "$(_count "$sp39" question-raised)" "1"
+  _ck "ST39b payload-less raise -> NO item-details-set" "$(_count "$sp39" item-details-set)" "0"
+  if tail -n $((LOG_AFTER - LOG_BEFORE + 1)) "$LOG_FILE" 2>/dev/null | grep -q 'WARN: emit-item .* raised WITHOUT a context payload'; then
+    echo "PASS: ST39c payload-less raise -> born-context-incomplete WARN logged"; pass=$((pass+1))
+  else
+    echo "FAIL: ST39c expected born-context-incomplete WARN in audit log"; fail=$((fail+1))
+  fi
+
+  # ST40 — Work-item: new + rich-detail sentinels -> the spawn assembles the
+  # per-kind payload from Instructions:/Recommendation:/Links: and the new
+  # item is BORN context-complete (item-details-set in the same batch).
+  local sp40="$tmp/st-40.json"
+  CONV_TREE_STATE_PATH="$sp40" CLAUDE_SESSION_ID="sess-st-40" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Born Complete","prompt":"Work-item: new — decision:Pick the rollout strategy\nInstructions: choosing how to roll out the new billing flow to existing orgs\nRecommendation: staged rollout starting with internal orgs\nLinks: docs/plans/billing.md"},"session_id":"sess-st-40"}' >/dev/null 2>&1
+  _ck "ST40 Work-item:new + sentinels -> item-details-set in spawn batch" "$(_count "$sp40" item-details-set)" "1"
+  local born40
+  born40=$(node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var ok=st.snapshot.nodes.some(function(n){return (n.items||[]).some(function(it){return it.kind==="decision"&&it.details&&/billing flow/.test(it.details.background||"")&&it.details._category==="decision"&&it.details.recommendation==="staged rollout starting with internal orgs"})});process.stdout.write(ok?"Y":"N")}catch(e){process.stdout.write("ERR")}' "$LIB" "$sp40" 2>/dev/null)
+  _ck "ST40b decision born context-complete (background=Instructions:, recommendation carried)" "$born40" "Y"
+
+  # ST41 — Work-item: new WITHOUT sentinels -> item still created (ST33
+  # behavior preserved) but born honestly detail-less: no item-details-set.
+  local sp41="$tmp/st-41.json"
+  CONV_TREE_STATE_PATH="$sp41" CLAUDE_SESSION_ID="sess-st-41" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Born Bare","prompt":"Work-item: new — question:Which env should the demo use?"},"session_id":"sess-st-41"}' >/dev/null 2>&1
+  _ck "ST41 no sentinels -> NO item-details-set (born honestly detail-less)" "$(_count "$sp41" item-details-set)" "0"
+  _ck "ST41b the item itself is still created" "$(_count "$sp41" question-raised)" "1"
+
+  # ST42 — --emit-details enrichment applies LAST-WRITER-WINS. The old
+  # (node|item)-only event-id derivation made a revision an idempotent no-op
+  # (store.js skips duplicate event_ids), silently breaking the enrichment
+  # loop the GUI's "needs enrichment" gate depends on. Content-hashed ids fix
+  # it: v2 is a NEW event the reducer applies as a replace.
+  local sp42="$tmp/st-42.json"
+  CONV_TREE_STATE_PATH="$sp42" CLAUDE_SESSION_ID="sess-st-42" \
+    bash "$SELF" --emit-branch <<<'{"node_id":"st42-root","parent_id":null,"title":"ST42 Root"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp42" CLAUDE_SESSION_ID="sess-st-42" \
+    bash "$SELF" --emit-item <<<'{"kind":"question","node_id":"st42-root","item_id":"i-st42-q","text":"Which env?"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp42" CLAUDE_SESSION_ID="sess-st-42" \
+    bash "$SELF" --emit-details <<<'{"node_id":"st42-root","item_id":"i-st42-q","details":{"background":"ctx v1 for the enrichment-loop test","question":"Which env?"}}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$sp42" CLAUDE_SESSION_ID="sess-st-42" \
+    bash "$SELF" --emit-details <<<'{"node_id":"st42-root","item_id":"i-st42-q","details":{"background":"ctx v2 REVISED for the enrichment-loop test","question":"Which env?"}}' >/dev/null 2>&1
+  case "$(_item_det "$sp42" "i-st42-q" "background")" in
+    *"v2 REVISED"*) echo "PASS: ST42 enrichment revision applies (last-writer-wins restored)"; pass=$((pass+1)) ;;
+    *) echo "FAIL: ST42 revision did not apply (got '$(_item_det "$sp42" "i-st42-q" "background")')"; fail=$((fail+1)) ;;
+  esac
+  _ck "ST42b two distinct item-details-set events (content-hashed ids)" "$(_count "$sp42" item-details-set)" "2"
+
+  # BD1-BD10: builder-dispatch work-item emission (ADR-054, 2026-06-10).
+  # Helper: read one field of the builder item from the state file.
+  _bd_item() { # statefile item_id jq-expr
+    node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var id=process.argv[3];var expr=process.argv[4];var found=null;st.snapshot.nodes.forEach(function(n){(n.items||[]).forEach(function(it){if(it.item_id===id)found=it})});if(!found){process.stdout.write("MISSING")}else{var v=found;expr.split(".").forEach(function(k){v=v&&v[k]});process.stdout.write(v===undefined||v===null?"":String(v))}' "$LIB" "$1" "$2" "$3" 2>/dev/null
+  }
+  _bd_itemid_of() { # statefile -> first wi-bd-* item id
+    node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var out="";st.snapshot.nodes.forEach(function(n){(n.items||[]).forEach(function(it){if(/^wi-bd-/.test(it.item_id))out=it.item_id})});process.stdout.write(out)' "$LIB" "$1" 2>/dev/null
+  }
+
+  # BD1: Task dispatch -> action-added work-item on the ss-* session node.
+  local spB1="$tmp/bd-1.json"
+  CONV_TREE_STATE_PATH="$spB1" CLAUDE_SESSION_ID="sess-bd-1" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build the widget","prompt":"long body"},"session_id":"sess-bd-1"}' >/dev/null 2>&1
+  local idB1; idB1=$(_bd_itemid_of "$spB1")
+  if [[ -n "$idB1" && "$(_bd_item "$spB1" "$idB1" 'kind')" == "action" && "$(_bd_item "$spB1" "$idB1" 'text')" == "Build the widget" ]]; then
+    echo "PASS: BD1 Task dispatch -> action work-item on session node"; pass=$((pass+1))
+  else
+    echo "FAIL: BD1 (item='$idB1' kind='$(_bd_item "$spB1" "$idB1" 'kind')' text='$(_bd_item "$spB1" "$idB1" 'text')')"; fail=$((fail+1))
+  fi
+  # BD1b: the item lives on the SAME ss-* node --on-session-start would use.
+  local ownerB1
+  ownerB1=$(node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var out="";st.snapshot.nodes.forEach(function(n){(n.items||[]).some(function(it){return /^wi-bd-/.test(it.item_id)})&&(out=n.node_id)});process.stdout.write(out)' "$LIB" "$spB1" 2>/dev/null)
+  case "$ownerB1" in ss-*) echo "PASS: BD1b item owner is the ss-* session node"; pass=$((pass+1)) ;; *) echo "FAIL: BD1b owner='$ownerB1'"; fail=$((fail+1)) ;; esac
+
+  # BD2: details._category=builder-dispatch (never a Misha-ask -> never Awaiting-me).
+  _ck "BD2 details._category=builder-dispatch (noise control)" "$(_bd_item "$spB1" "$idB1" 'details._category')" "builder-dispatch"
+
+  # BD3: idempotent — 3 re-fires of the same dispatch -> exactly 1 action-added.
+  local spB3="$tmp/bd-3.json"
+  for _r in 1 2 3; do
+    CONV_TREE_STATE_PATH="$spB3" CLAUDE_SESSION_ID="sess-bd-3" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Agent","tool_input":{"description":"Idem builder"},"session_id":"sess-bd-3"}' >/dev/null 2>&1
+  done
+  _ck "BD3 builder dispatch idempotent on (session,tool,title)" "$(_count "$spB3" action-added)" "1"
+
+  # BD4: foreground completion — PostToolUse return == completion -> action-done.
+  local spB4="$tmp/bd-4.json"
+  CONV_TREE_STATE_PATH="$spB4" CLAUDE_SESSION_ID="sess-bd-4" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Finish me"},"session_id":"sess-bd-4"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$spB4" CLAUDE_SESSION_ID="sess-bd-4" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"description":"Finish me"},"tool_response":"done ok","session_id":"sess-bd-4"}' >/dev/null 2>&1
+  local idB4; idB4=$(_bd_itemid_of "$spB4")
+  _ck "BD4 foreground complete -> item.checked" "$(_bd_item "$spB4" "$idB4" 'checked')" "true"
+
+  # BD5: Workflow launch — PostToolUse is launch-ack, NOT completion -> stays open.
+  local spB5="$tmp/bd-5.json"
+  CONV_TREE_STATE_PATH="$spB5" CLAUDE_SESSION_ID="sess-bd-5" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Workflow","tool_input":{"meta":{"name":"Nightly sweep"},"prompt":"body"},"session_id":"sess-bd-5"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$spB5" CLAUDE_SESSION_ID="sess-bd-5" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Workflow","tool_input":{"meta":{"name":"Nightly sweep"},"prompt":"body"},"tool_response":"launched id=wf-1","session_id":"sess-bd-5"}' >/dev/null 2>&1
+  local idB5; idB5=$(_bd_itemid_of "$spB5")
+  if [[ -n "$idB5" && "$(_bd_item "$spB5" "$idB5" 'checked')" != "true" ]]; then
+    echo "PASS: BD5 Workflow launch-return does NOT mark done (honest ceiling)"; pass=$((pass+1))
+  else
+    echo "FAIL: BD5 (item='$idB5' checked='$(_bd_item "$spB5" "$idB5" 'checked')')"; fail=$((fail+1))
+  fi
+  _ck "BD5b Workflow title from meta.name" "$(_bd_item "$spB5" "$idB5" 'text')" "Nightly sweep"
+
+  # BD6: Agent run_in_background:true -> completion NOT emitted at PostToolUse.
+  local spB6="$tmp/bd-6.json"
+  CONV_TREE_STATE_PATH="$spB6" CLAUDE_SESSION_ID="sess-bd-6" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Agent","tool_input":{"description":"BG agent","run_in_background":true},"tool_response":"handle-7","session_id":"sess-bd-6"}' >/dev/null 2>&1
+  local idB6; idB6=$(_bd_itemid_of "$spB6")
+  if [[ -n "$idB6" && "$(_bd_item "$spB6" "$idB6" 'checked')" != "true" ]]; then
+    echo "PASS: BD6 run_in_background Agent -> item created, NOT done"; pass=$((pass+1))
+  else
+    echo "FAIL: BD6 (item='$idB6' checked='$(_bd_item "$spB6" "$idB6" 'checked')')"; fail=$((fail+1))
+  fi
+
+  # BD7: non-builder tool -> no-op (no state file written).
+  local spB7="$tmp/bd-7.json"
+  CONV_TREE_STATE_PATH="$spB7" CLAUDE_SESSION_ID="sess-bd-7" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Bash","tool_input":{"command":"ls"},"session_id":"sess-bd-7"}' >/dev/null 2>&1
+  if [[ -f "$spB7" ]]; then echo "FAIL: BD7 non-builder tool must be a no-op"; fail=$((fail+1)); else echo "PASS: BD7 non-builder tool no-op"; pass=$((pass+1)); fi
+
+  # BD8: Dispatch spawn tools are --on-spawn's surface -> no-op in this mode.
+  local spB8="$tmp/bd-8.json"
+  CONV_TREE_STATE_PATH="$spB8" CLAUDE_SESSION_ID="sess-bd-8" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Not mine"},"session_id":"sess-bd-8"}' >/dev/null 2>&1
+  if [[ -f "$spB8" ]]; then echo "FAIL: BD8 Dispatch spawn must not be handled by --on-builder-dispatch"; fail=$((fail+1)); else echo "PASS: BD8 Dispatch spawn -> no-op in builder mode"; pass=$((pass+1)); fi
+
+  # BD9: failure isolation — broken state-lib -> exit 0, never blocks.
+  local spB9="$tmp/bd-9.json" rcB9
+  CONV_TREE_STATE_PATH="$spB9" CONV_TREE_STATE_LIB="$tmp/does-not-exist.js" CLAUDE_SESSION_ID="sess-bd-9" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Iso"},"session_id":"sess-bd-9"}' >/dev/null 2>&1
+  rcB9=$?
+  _ck "BD9 builder emit failure isolation -> exit 0" "$rcB9" "0"
+
+  # BD10: complete-without-prior-dispatch (missed PreToolUse) -> creation batch
+  # rides in the complete emission: item exists AND is done in one shot.
+  local spB10="$tmp/bd-10.json"
+  CONV_TREE_STATE_PATH="$spB10" CLAUDE_SESSION_ID="sess-bd-10" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"description":"Pre was missed"},"tool_response":"ok","session_id":"sess-bd-10"}' >/dev/null 2>&1
+  local idB10; idB10=$(_bd_itemid_of "$spB10")
+  _ck "BD10 complete-without-pre -> item created + checked" "$(_bd_item "$spB10" "$idB10" 'checked')" "true"
+
   rm -rf "$tmp" 2>/dev/null || true
   echo "self-test: $pass passed, $fail failed"
   if [[ $fail -eq 0 ]]; then echo "self-test: OK"; exit 0; else echo "self-test: FAIL"; exit 1; fi
@@ -1275,12 +1689,25 @@ _self_test() {
 #                         primary "now-Misha-has-something-to-act-on" hook.)
 #     stdin: {"kind":"decision|question|action","node_id":"<branch>",
 #             "item_id":"<id>","text":"<one-liner>",
-#             "details":{...optional rich-detail payload...}}
-#     `details` is optional — when present, a follow-up `item-details-set`
-#     event is emitted in the same batch.
+#             "details":{...per-kind context payload...}}
+#     `details` SHOULD carry the per-kind context payload (the contract in
+#     rules/workstreams-state.md "Context-complete item emission" — minimum:
+#     `background` + the per-kind actionable field). When present, it is
+#     validated through the SOLE-NORMATIVE module
+#     (decision-context-schema.js assembleItemDetails) and emitted as a
+#     sibling `item-details-set` in the same batch: valid -> normalized
+#     payload; invalid -> raw payload + audit-log WARN (the GUI flags the
+#     item context-incomplete). When absent, the item still emits (never
+#     blocks) but is born context-incomplete and a WARN lands in the audit
+#     log.
 #
-#   --emit-details       (sets / replaces rich details on an existing item.)
+#   --emit-details       (sets / replaces rich details on an existing item —
+#                         the enrichment path for items born detail-less.)
 #     stdin: {"node_id":"<branch>","item_id":"<id>","details":{...}}
+#     Same sole-normative validation as --emit-item (category from
+#     ._category, else looked up from the item's kind). Content-hashed
+#     event id: identical re-emits dedupe; revised content applies
+#     last-writer-wins.
 #
 #   --resolve-item       (closes an existing item with answered / action-done /
 #                         item-backlogged. The orchestrator uses this when
@@ -1377,12 +1804,45 @@ _run_emit_item() {
     *) _log "emit-item: unknown kind '$kind'"; exit 0 ;;
   esac
 
+  # Task 9 (2026-06-12) — context-payload discipline. A supplied .details is
+  # validated through the SOLE-NORMATIVE schema module (assembleItemDetails):
+  #   valid   -> emit the NORMALIZED payload (_category + surfaced_by stamped)
+  #   invalid -> emit the RAW payload anyway (information-preserving; the GUI
+  #              flags the item context-incomplete) + WARN in the audit log
+  #   non-operator _category (e.g. builder-dispatch) -> passthrough untouched
+  #   module unavailable -> passthrough untouched (graceful degradation)
+  # NO .details on an operator-facing raise -> WARN: born context-incomplete.
+  # Never blocks; never drops the item itself (writer, not gate).
+  local category; category=$(_kind_to_category "$kind")
+  if [[ -n "$details" && "$details" != "null" ]]; then
+    local verdict; verdict=$(_normalize_item_details "$category" "$details")
+    case "$verdict" in
+      OK\ *)
+        details="${verdict#OK }"
+        _log "emit-item kind=$kind item_id=$item_id details validated against the sole-normative context schema (category=$category)"
+        ;;
+      INVALID\ *)
+        _log "WARN: emit-item kind=$kind node_id=$node_id item_id=$item_id details FAIL the sole-normative context schema (${verdict#INVALID }) — emitted as-is so no information is lost; the GUI flags the item context-incomplete. Contract: rules/workstreams-state.md \"Context-complete item emission\"."
+        ;;
+      SKIP)
+        : ;;  # non-operator noise-control _category — deliberate, untouched
+      *)
+        _log "emit-item: schema module unavailable — details passed through unvalidated"
+        ;;
+    esac
+  else
+    _log "WARN: emit-item kind=$kind node_id=$node_id item_id=$item_id raised WITHOUT a context payload — the item is born context-incomplete (no background/options/recommendation for the operator). Supply .details per rules/workstreams-state.md \"Context-complete item emission\"."
+  fi
+
   local ev_id; ev_id="cte-${ev_type:0:6}-$(printf '%s|%s' "$node_id" "$item_id" | _sha1 | cut -c1-32)"
   local text_json; text_json=$(jq -Rn --arg t "$text" '$t')
 
   local events
   if [[ -n "$details" && "$details" != "null" ]]; then
-    local det_ev_id; det_ev_id="cte-detset-$(printf '%s|%s' "$node_id" "$item_id" | _sha1 | cut -c1-32)"
+    # Content-hashed event id: re-firing the same emit dedupes; a later
+    # details revision (different content) is a NEW event the reducer applies
+    # last-writer-wins — so enrichment-over-time actually lands.
+    local det_ev_id; det_ev_id="cte-detset-$(printf '%s|%s|%s' "$node_id" "$item_id" "$details" | _sha1 | cut -c1-32)"
     events=$(printf '[{"event_id":"%s","type":"%s","node_id":"%s","item_id":"%s","text":%s,"actor":"dispatch"},{"event_id":"%s","type":"item-details-set","node_id":"%s","item_id":"%s","details":%s,"actor":"dispatch"}]' \
       "$ev_id" "$ev_type" "$node_id" "$item_id" "$text_json" \
       "$det_ev_id" "$node_id" "$item_id" "$details")
@@ -1410,9 +1870,42 @@ _run_emit_details() {
   item_id=$(printf '%s' "$input" | jq -r '.item_id' 2>/dev/null)
   details=$(printf '%s' "$input" | jq -c '.details' 2>/dev/null)
 
-  # event_id is deterministic on (node_id, item_id) so a re-emit replaces the
-  # previous details (last-writer-wins) without producing duplicate events.
-  local ev_id; ev_id="cte-detset-$(printf '%s|%s' "$node_id" "$item_id" | _sha1 | cut -c1-32)"
+  # Task 9 (2026-06-12) — same context-payload discipline as --emit-item.
+  # Category resolution: an explicit operator-facing ._category wins; else
+  # the existing item's kind is looked up from the sink snapshot. A
+  # NON-operator _category (noise-control tier) or an unresolvable category
+  # passes through untouched.
+  local category="" det_cat
+  det_cat=$(printf '%s' "$details" | jq -r '._category // empty' 2>/dev/null)
+  case "$det_cat" in
+    decision|question|action_item_for_user|autonomous_action) category="$det_cat" ;;
+    "")
+      local item_kind; item_kind=$(_kind_of_item "$item_id")
+      category=$(_kind_to_category "$item_kind")
+      ;;
+    *) category="" ;;  # non-operator noise-control _category — untouched
+  esac
+  if [[ -n "$category" ]]; then
+    local verdict; verdict=$(_normalize_item_details "$category" "$details")
+    case "$verdict" in
+      OK\ *)
+        details="${verdict#OK }"
+        _log "emit-details item_id=$item_id details validated against the sole-normative context schema (category=$category)"
+        ;;
+      INVALID\ *)
+        _log "WARN: emit-details node_id=$node_id item_id=$item_id details FAIL the sole-normative context schema (${verdict#INVALID }) — emitted as-is; the GUI flags the item context-incomplete. Contract: rules/workstreams-state.md \"Context-complete item emission\"."
+        ;;
+      SKIP|*) : ;;
+    esac
+  fi
+
+  # Content-hashed event id (Task 9 fix): the previous (node_id, item_id)-only
+  # derivation made a SECOND emit-details with NEW content an idempotent
+  # no-op (appendEvent skips duplicate event_ids — store.js §2), silently
+  # breaking the enrichment loop the GUI's "needs enrichment" gate depends
+  # on. Hashing the content restores true last-writer-wins: identical re-emit
+  # dedupes; revised content is a new event the reducer applies as a replace.
+  local ev_id; ev_id="cte-detset-$(printf '%s|%s|%s' "$node_id" "$item_id" "$details" | _sha1 | cut -c1-32)"
   local events
   events=$(printf '[{"event_id":"%s","type":"item-details-set","node_id":"%s","item_id":"%s","details":%s,"actor":"dispatch"}]' \
     "$ev_id" "$node_id" "$item_id" "$details")
@@ -1454,6 +1947,200 @@ _run_resolve_item() {
 }
 
 # ============================================================================
+# Builder-dispatch work-item emission (ADR-054, 2026-06-10).
+#
+# ADR-034 scoped sub-agent Task/Agent OUT of the conversation-BRANCH surface
+# (they are AI-internal mechanics, not user↔AI conversation branches). That
+# scoping STANDS — these modes emit NO branch node for a builder dispatch.
+# What ADR-054 adds is the WORK-ITEM tier: every orchestrator builder dispatch
+# (Task | Agent | Workflow) auto-emits ONE `action-added` work-item on the
+# SESSION's own node (the same `ss-<hash>` node --on-session-start registers),
+# so work-in-motion is visible in the Workstreams UI without the orchestrator
+# doing anything. Noise control:
+#   - kind=action + details._category="builder-dispatch" (NOT in the GUI's
+#     MISHA_ASK_CATEGORIES set) -> the item can NEVER land in Awaiting-me;
+#   - unchecked + no explicit state -> derives 'in-flight' (the In-flight
+#     chip), exactly the work-in-motion tier;
+#   - completion (--on-builder-complete) emits `action-done` -> checked ->
+#     leaves the In-flight set.
+#
+# COMPLETION-SIGNAL CEILING (honest — investigated 2026-06-10):
+#   - Foreground Task/Agent dispatches: PostToolUse fires at tool RETURN,
+#     which IS sub-agent completion -> action-done is mechanical and solid.
+#   - `Workflow` launches and Agent dispatches with run_in_background:true:
+#     PostToolUse fires at LAUNCH-return, NOT completion. Emitting done there
+#     would be a false completion claim, so these emit the creation batch only
+#     and the item honestly stays in-flight. There is NO stable local hook
+#     event or documented transcript contract for background-dispatch
+#     completion (no per-workflow completion hook; wake-message shape is
+#     undocumented). Named gap per Rule 7 — resolution paths: a future turn's
+#     orchestrator `--resolve-item`, the operator in the GUI, or an upstream
+#     hook surface if Anthropic ships one. FR-7 keeps the owning session node
+#     un-concludable while such an item is open — intentionally visible.
+#   - Missed PreToolUse/PostToolUse fires: workstreams-emit-reconciler.sh
+#     re-derives the same deterministic ids from the transcript at Stop and
+#     catch-up-emits (idempotent event_ids make double-emission a no-op).
+# ============================================================================
+
+# Builder work-item title from tool_input. Preference: .description (Task/
+# Agent 3-5-word summary) > .meta.name > .name > .title > first non-empty
+# prompt/content line. Cap 120 chars. Empty -> caller skips emission.
+_builder_title() {
+  local input="$1"
+  _have jq || { printf '%s' ""; return 0; }
+  local t
+  t=$(printf '%s' "$input" | jq -r '
+    (.tool_input.description // (.tool_input.meta.name? // empty) //
+     .tool_input.name // .tool_input.title // empty)' 2>/dev/null || echo "")
+  if [[ -z "$t" || "$t" == "null" ]]; then
+    t=$(printf '%s' "$input" | jq -r '
+      (.tool_input.prompt // .tool_input.content // "")
+      | split("\n")[] | select(test("\\S"))' 2>/dev/null | head -n1 || echo "")
+  fi
+  t=$(printf '%s' "$t" | sed 's/^[[:space:]]\+//; s/[[:space:]]\+$//' | cut -c1-120)
+  printf '%s' "$t"
+}
+
+# Background-dispatch predicate: Workflow launches return immediately; Agent
+# dispatches with run_in_background:true return a handle, not a result.
+_builder_is_background() {
+  local input="$1" tool="$2"
+  [[ "$tool" == "Workflow" ]] && { printf '1'; return 0; }
+  local bg
+  bg=$(printf '%s' "$input" | jq -r '.tool_input.run_in_background // false' 2>/dev/null || echo "false")
+  [[ "$bg" == "true" ]] && printf '1' || printf '0'
+}
+
+# Compose the idempotent creation batch for one builder work-item:
+#   [root bo, session-node bo, action-added, item-details-set]
+# Every event_id is deterministic, so re-emission (PostToolUse after
+# PreToolUse, reconciler after both) is a per-file no-op. Echoes the JSON
+# array WITHOUT the closing bracket so the caller may append more events.
+_builder_creation_events() {
+  local sid="$1" tool="$2" title="$3" child_id="$4" item_id="$5" bg="$6"
+  local rootline; rootline=$(_project_root)
+  local root_id="${rootline%%$'\t'*}"
+  local root_title="${rootline##*$'\t'}"
+  local ev_root ev_child ev_item ev_det
+  ev_root="cte-bo-$(printf '%s' "$root_id" | _sha1 | cut -c1-32)"
+  ev_child="cte-bo-$(printf '%s' "$child_id" | _sha1 | cut -c1-32)"
+  # ev_item: SAME derivation as _run_emit_item so a manual --emit-item for the
+  # same (node,item) dedupes with the automatic one. ev_det: deliberately the
+  # FIXED (node|item)-only derivation — NOT --emit-details' content-hashed one
+  # (Task 9). The builder details ({_category:builder-dispatch,tool,bg}) are
+  # constant per dispatch, so Pre/Post/reconciler re-fires dedupe on the fixed
+  # id; and because that fixed id is already in the log, a reconciler re-fire
+  # can never clobber a LATER content-hashed enrichment via --emit-details.
+  ev_item="cte-action-$(printf '%s|%s' "$child_id" "$item_id" | _sha1 | cut -c1-32)"
+  ev_det="cte-detset-$(printf '%s|%s' "$child_id" "$item_id" | _sha1 | cut -c1-32)"
+  local sess_title; sess_title=$(basename "${PWD:-.}" 2>/dev/null || echo "")
+  [[ -z "$sess_title" || "$sess_title" == "/" ]] && sess_title="session ${sid:0:12}"
+  local subagent
+  subagent=$(printf '%s' "${BUILDER_INPUT_JSON:-}" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null || echo "")
+  local bg_json="false"; [[ "$bg" == "1" ]] && bg_json="true"
+  local details
+  details=$(jq -cn --arg tool "$tool" --arg st "$subagent" --argjson bg "$bg_json" \
+    '{_category:"builder-dispatch", tool:$tool, background:$bg} + (if $st != "" then {subagent_type:$st} else {} end)' 2>/dev/null) \
+    || details='{"_category":"builder-dispatch"}'
+  printf '[{"event_id":"%s","type":"branch-opened","node_id":"%s","parent_id":null,"title":%s,"actor":"dispatch"},{"event_id":"%s","type":"branch-opened","node_id":"%s","parent_id":"%s","title":%s,"actor":"dispatch"},{"event_id":"%s","type":"action-added","node_id":"%s","item_id":"%s","text":%s,"actor":"dispatch"},{"event_id":"%s","type":"item-details-set","node_id":"%s","item_id":"%s","details":%s,"actor":"dispatch"}' \
+    "$ev_root" "$root_id" "$(jq -Rn --arg t "$root_title" '$t')" \
+    "$ev_child" "$child_id" "$root_id" "$(jq -Rn --arg t "$sess_title" '$t')" \
+    "$ev_item" "$child_id" "$item_id" "$(jq -Rn --arg t "$title" '$t')" \
+    "$ev_det" "$child_id" "$item_id" "$details"
+}
+
+# Shared classification for both builder modes. Echoes
+#   tool \t sid \t child_id \t item_id \t title \t bg
+# or nothing when the input is not a builder dispatch.
+_builder_classify() {
+  local input="$1"
+  _have jq || return 0
+  local tool; tool=$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null || echo "")
+  case "$tool" in
+    Task|Agent|Workflow) ;;
+    # Dispatch spawn tools are --on-spawn's surface (conversation branches);
+    # everything else is not a builder dispatch.
+    *) return 0 ;;
+  esac
+  local title; title=$(_builder_title "$input")
+  [[ -z "$title" ]] && { _log "builder dispatch ($tool) had no extractable title — skipped"; return 0; }
+  local sid; sid=$(_session_id "$input")
+  local child_id="ss-$(printf '%s' "$sid" | _sha1 | cut -c1-12)"
+  # NO time bucket: PostToolUse + the Stop-time reconciler must recompute the
+  # SAME id from the same fields, possibly hours later.
+  local item_id="wi-bd-$(printf '%s|%s|%s' "$sid" "$tool" "$title" | _sha1 | cut -c1-12)"
+  local bg; bg=$(_builder_is_background "$input" "$tool")
+  printf '%s\t%s\t%s\t%s\t%s\t%s' "$tool" "$sid" "$child_id" "$item_id" "$title" "$bg"
+}
+
+# ----------------------------------------------------------------------------
+# --on-builder-dispatch  (PreToolUse on Task|Agent|Workflow)
+# ----------------------------------------------------------------------------
+_run_on_builder_dispatch() {
+  local input; input=$(_read_stdin)
+  [[ -z "$input" ]] && exit 0
+  local line; line=$(_builder_classify "$input")
+  [[ -z "$line" ]] && exit 0
+  local tool sid child_id item_id title bg
+  IFS=$'\t' read -r tool sid child_id item_id title bg <<<"$line"
+
+  local lib; lib=$(_resolve_state_lib)
+  local events
+  events="$(BUILDER_INPUT_JSON="$input" _builder_creation_events "$sid" "$tool" "$title" "$child_id" "$item_id" "$bg")]"
+  local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-bd-$$.json")
+  printf '%s' "$events" >"$ef"
+  _emit_dual "$lib" "$ef"
+  rm -f "$ef" 2>/dev/null || true
+
+  # Builder correlation ledger (observability + reconciler hint):
+  # item_id \t child_id \t tool \t bg \t title \t ts — append once per item.
+  mkdir -p "$LEDGER_DIR" 2>/dev/null || true
+  local ledger="$LEDGER_DIR/builder-${sid}.jsonl"
+  if [[ ! -f "$ledger" ]] || ! grep -q "^${item_id}	" "$ledger" 2>/dev/null; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$item_id" "$child_id" "$tool" "$bg" "$title" \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null || true
+  fi
+  _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid"
+  exit 0
+}
+
+# ----------------------------------------------------------------------------
+# --on-builder-complete  (PostToolUse on Task|Agent|Workflow)
+# Foreground: tool return == completion -> creation batch (covers a missed
+# PreToolUse) + action-done. Background: creation batch only (launch-ack is
+# NOT completion — the documented ceiling above).
+# ----------------------------------------------------------------------------
+_run_on_builder_complete() {
+  local input; input=$(_read_stdin)
+  [[ -z "$input" ]] && exit 0
+  local line; line=$(_builder_classify "$input")
+  [[ -z "$line" ]] && exit 0
+  local tool sid child_id item_id title bg
+  IFS=$'\t' read -r tool sid child_id item_id title bg <<<"$line"
+
+  local lib; lib=$(_resolve_state_lib)
+  local events
+  events="$(BUILDER_INPUT_JSON="$input" _builder_creation_events "$sid" "$tool" "$title" "$child_id" "$item_id" "$bg")"
+  if [[ "$bg" == "1" ]]; then
+    events="$events]"
+    _log "builder-complete DEFERRED (background $tool) item=$item_id — launch-ack is not completion (ADR-054 ceiling)"
+  else
+    # SAME derivation as _run_resolve_item resolution=done, so a manual
+    # resolve and this automatic one dedupe to one event.
+    local ev_type="action-done"
+    local ev_done; ev_done="cte-${ev_type:0:8}-$(printf '%s|%s' "$child_id" "$item_id" | _sha1 | cut -c1-32)"
+    events="$events,$(printf '{"event_id":"%s","type":"action-done","node_id":"%s","item_id":"%s","actor":"dispatch"}' \
+      "$ev_done" "$child_id" "$item_id")]"
+    _log "builder-complete item=$item_id node=$child_id tool=$tool session=$sid"
+  fi
+  local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-bdc-$$.json")
+  printf '%s' "$events" >"$ef"
+  _emit_dual "$lib" "$ef"
+  rm -f "$ef" 2>/dev/null || true
+  exit 0
+}
+
+# ============================================================================
 # Dispatch
 # ============================================================================
 case "$MODE" in
@@ -1462,6 +2149,9 @@ case "$MODE" in
   --on-session-start) _run_on_session_start ;;
   --heartbeat)     _run_heartbeat ;;
   --self-test)     _self_test ;;
+  # Builder-dispatch work-item surface (ADR-054 — 2026-06-10):
+  --on-builder-dispatch) _run_on_builder_dispatch ;;
+  --on-builder-complete) _run_on_builder_complete ;;
   # Orchestrator-emit surface (v1.1.5 — 2026-05-21):
   --emit-branch)   _run_emit_branch ;;
   --emit-item)     _run_emit_item ;;

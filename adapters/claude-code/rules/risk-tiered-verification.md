@@ -72,6 +72,7 @@ Field rules:
 - Legal levels are exactly `mechanical`, `full`, `contract` (case-sensitive, lowercase).
 - The field MUST appear on the same line as the checkbox; multi-line task descriptions place the field on the first line.
 - A task line MAY use any separator before `Verification:` (`—`, `--`, `;`, `|`); the parser scans the line for the literal `Verification:` token and reads the next word.
+- **When the token appears more than once, the LAST occurrence wins.** A task description may legitimately mention a level in prose (e.g. "add the requirement for `Verification: full` runtime tasks — Verification: mechanical"); the trailing field is the declaration. All consumers (`close-plan.sh`, `plan-reviewer.sh` Check 12 + the Check 5 exemptions, `plan-edit-validator.sh`, `wire-check-gate.sh`) parse last-occurrence-wins; `plan-reviewer.sh` emits a non-blocking disambiguation notice when a line carries multiple occurrences. (Discovery `2026-05-11-close-plan-verification-field-parser-greedy`.)
 - Unknown levels (`Verification: contract-strict`, `Verification: minimal`, etc.) are rejected by `plan-reviewer.sh` with a clear stderr message naming the legal levels.
 
 ## Escalation patterns
