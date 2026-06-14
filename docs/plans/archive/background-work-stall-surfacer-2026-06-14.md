@@ -1,5 +1,5 @@
 # Plan: Background-Work Stall Surfacer (encode the "stalled and forgotten" lesson)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
