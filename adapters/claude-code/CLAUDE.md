@@ -21,6 +21,23 @@ The numbered rules in short form (consult the doc above for full body, examples,
 
 **Companion mechanism:** `~/.claude/hooks/principles-compliance-gate.sh` is a Stop hook that scans the final assistant message for Rule 3/4/5/7 anti-patterns. Mode resolved from `PRINCIPLES_GATE_MODE` env var > `~/.claude/local/principles-gate-mode` file > "warn" default. Block-mode blocks Stop on R4/R5/R7 detections; R3 is intentionally warn-only (the "is one option clearly principled?" question is not mechanically decidable, but R3 hits do route to an in-band notification marker for the next SessionStart per the principles-gate-warn surfacing pattern).
 
+## Always Give Misha a Direct, Clickable Link (Rule 2, hard habit)
+
+Whenever a response points Misha at something he should look at — a PR, a Vercel preview, a
+deployment, a dashboard, a GitHub issue/run, a doc, a file, a route/page — **include the exact
+clickable link to that thing in the same message.** Never make him hunt, never say "it's in a PR"
+or "see the preview" or "check the dashboard" without the URL. This is the concrete, always-on
+form of Rule 2 ("be the interface, not a pointer"); he has had to ask for the link more than once,
+so treat a link-less pointer as a defect.
+
+Specifics:
+- **PRs / issues / CI runs:** the full `https://github.com/<org>/<repo>/pull/<n>` (or issue/run) URL — resolve with `gh` if unknown.
+- **Vercel previews / deployments:** the live `https://<deployment>.vercel.app` URL, and **deep-link to the actual page** (e.g. `…vercel.app/automation`), not just the root — get it via `gh pr view <n> --json statusCheckRollup` or `npx --yes vercel ls circuit --meta githubCommitRef=<branch>`.
+- **Files / code:** clickable markdown links (`[path](path:line)`) per the harness link convention.
+- **Anything else with a URL** (Supabase dashboard, Trigger.dev run, Twilio console, etc.): paste the URL.
+
+If a thing has no resolvable link, say so explicitly ("no preview built — here's how to see it locally") rather than leaving a bare pointer.
+
 ## Accounts & Auto-Switching
 - Work account for business repos, personal account for personal repos
 - Directory-based: `~/claude-projects/<org>/` determines which GitHub + Supabase account is active
@@ -43,8 +60,6 @@ That doc names the established convention for this machine — which CLI tools a
 - Claude Code auth → `~/.claude.json`; re-auth via `claude login` if expired.
 
 If a credential genuinely is not configured anywhere the reference doc names, surface the specific gap with the conventions you checked — do not default to "please paste your X token." Template: `adapters/claude-code/examples/credentials-reference.example.md`.
-
-**If `~/.claude/local/credentials-reference.md` is MISSING or still the unfilled template stub on this machine, that is itself the gap to surface to the operator** — not a license to ask for tokens. `install.sh` emits a warning when the file is missing or stub-shaped; the operator should populate it before further work. The credentials-first rule applies whether or not the reference doc is populated: ask which convention is in play, never which value to use.
 
 ## Naming & Identity
 - NEVER name projects/products without consulting the user first
@@ -70,8 +85,6 @@ Full decision tree, per-mode invocation, tradeoffs, and pairing rules in `~/.cla
 - Business logic/user intent unclear: ask — don't guess on user-facing behavior
 - Pre-authorized actions: file creation, folder creation, cd, ls, mkdir
 - **Drive to completion; end every turn with a session-end marker.** A code session keeps working until all assigned work ships, you hit a genuine Tier 3 blocker (irreversible op, ambiguous product decision, missing credentials per `planning.md`), or the operator explicitly says stop. Stopping at "natural breakpoints" is narrate-and-wait behavior and is prohibited when autonomous execution was authorized. Every turn that does end must terminate with exactly one `DONE:` / `PAUSING:` / `BLOCKED:` marker on the last line — see `~/.claude/rules/session-end-protocol.md` for the canonical contract (enforced by `continuation-enforcer.sh` Stop hook; composes with `narrate-and-wait-gate.sh` and `~/.claude/rules/testing.md` "Keep Going When Keep-Going Is Authorized").
-- **"Drive to completion" NEVER means past a verification gate.** The directive eliminates permission-seeking stops, not verification stops. When pre-stop-verifier, product-acceptance-gate, or any work-state gate blocks, "completion" means doing the work until the gate passes — not riding the retry-guard downgrade, writing a friction-clearing waiver, or out-waiting the block in a loop. A turn that ends while a verification gate reports incomplete work ends with `PAUSING:`/`BLOCKED:` naming the gap, never `DONE:`. The marker is a *consequence* of verified completion, not a goal to emit (per `testing.md` "Scope of the directive"; mechanically backed by the retry-guard's refuse-downgrade-under-DONE).
-- **Trust nothing — verify the artifact.** No builder summary, sub-agent verdict, tracker line, memory entry, or your own prior claim is a fact until the underlying artifact is confirmed (commit SHA resolves, evidence file exists, output observed). Re-narrating an unconfirmed claim as fact is how false done-claims ship. "Trust X" instructions were removed from this harness on 2026-06-09; where one survives, treat it as "confirm X's evidence."
 - **`AskUserQuestion` / multiple-choice tool is Dispatch-conditional.** The MC widget renders interactively on standalone Claude Code clients (Desktop, IDE extension, terminal) — there it's fine and useful per normal Claude Code conventions. The MC widget does NOT relay answers back through remote-Dispatch clients (`mcp__ccd_session_mgmt__start_code_task` orchestrated sessions where the user reads from a phone, web UI, or another device); under Dispatch, the MC tool blocks the session with no path forward. Rule:
   - **Under Dispatch:** plain text only. Surface choice + options + tradeoffs + recommendation as plain prose in a normal response. The user reads and replies in their next message. NO `AskUserQuestion`.
   - **Standalone:** MC widget is fine per normal conventions.
@@ -171,7 +184,6 @@ Four highest-leverage agent prompts (`task-verifier`, `code-reviewer`, `plan-pha
 - `diagnosis.md` — exhaustive diagnosis before fixing; DIAGNOSTIC-FIRST PROTOCOL (runtime logs first); FM-catalog reflex; "Fix the Class, Not the Instance"
 - `claims.md` — hypothesis-vs-proof labeling + refutation-criteria requirement (Decision 035)
 - `discovery-protocol.md` — proactive capture-and-decide for mid-process learnings
-- `decision-context.md` — Stop-hook reactive enforcement of structured decision / question / action-item / autonomous-action surfaces; fence grammar + Tiered-Scan taxonomy; composes with `conv-tree-orchestrator-emit.md` Layer D; mechanism map per ADR 047 (DEC-1)
 - `comprehension-gate.md` — articulate-before-checkbox-flip at plan rung >= 2
 - `prd-validity.md` + `spec-freeze.md` — plan-PRD link requirement + frozen-spec-before-edit gate
 - `findings-ledger.md` — six-field finding entries in `docs/findings.md`
