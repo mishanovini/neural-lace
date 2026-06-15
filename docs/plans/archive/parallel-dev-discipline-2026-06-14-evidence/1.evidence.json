@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "7591219a34e7d09f579318d34fe47bc45c42ba18",
+  "files_modified": [],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/rules/parallel-dev-discipline.md": {
+      "passed": true,
+      "detail": "adapters/claude-code/rules/parallel-dev-discipline.md exists",
+      "command": "test -e adapters/claude-code/rules/parallel-dev-discipline.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-15T10:56:34Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/parallel-dev-discipline-2026-06-14.md"
+}
