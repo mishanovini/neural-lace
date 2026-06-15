@@ -1,5 +1,5 @@
 # Plan: Plan-Lifecycle Redesign — Mechanical Closure Machine at Creation
-Status: ACTIVE
+Status: DEFERRED
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none
@@ -327,6 +327,20 @@ with the minimum content and is the R6 integration test's core path.
   the next waiver-density signal on this plan's slug.
 - **To reverse:** n/a (bookkeeping decision; the close-plan fix reverts as one
   commit if needed).
+
+### Decision: DEFERRED 2026-06-15
+- **Tier:** 1
+- **Status:** DEFERRED 2026-06-15 — not currently prioritized; the existing
+  plan-lifecycle mechanisms (close-plan.sh deterministic closure +
+  plan-lifecycle.sh archival + plan-status-archival-sweep.sh) work in practice.
+  Revive when the mechanical-closure-at-creation redesign becomes a priority.
+- **Chosen:** Flip `Status: DEFERRED`. This supersedes the 2026-06-10
+  "stays ACTIVE" decision above — that entry deferred deferral pending Misha's
+  explicit approval; that approval is now given.
+- **Re-engage trigger:** the mechanical-closure-at-creation redesign (R1–R8
+  roadmap) becomes a priority.
+- **To reverse:** flip `Status:` back to `ACTIVE` and `git mv` the plan from
+  `docs/plans/deferred/` back to `docs/plans/`.
 
 ## Definition of Done
 
