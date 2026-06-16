@@ -18,12 +18,19 @@
 # evidence paths), and auto-pushes per user's full-auto preference (per E.2).
 #
 # Subcommands:
-#   close <plan-slug> [--no-push]              Close the plan
+#   close <plan-slug> [--no-push] [--auto]     Close the plan
 #   --self-test                               Run internal test scenarios
 #   --help                                    Show usage
 #
 # Flags:
 #   --no-push   Commit only; do NOT auto-push to origin.
+#   --auto      Auto-closure invocation path (R4 / ADR 036-c). Adds the
+#               Closure-Contract / acceptance-artifact precondition that the
+#               manual close does not require (non-exempt plans must have a
+#               PASS artifact under .claude/state/acceptance/<slug>/ whose
+#               plan_commit_sha matches the COMMITTED plan SHA). ALWAYS
+#               implies --no-push. Used by plan-auto-closure.sh; exit 2 = HOLD
+#               (precondition unmet, plan left ACTIVE).
 #
 # When verification fails, close-plan.sh prints the only remediation path:
 # generate the missing structured evidence via write-evidence.sh capture and
@@ -52,7 +59,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: close-plan.sh close <plan-slug> [--no-push]
+Usage: close-plan.sh close <plan-slug> [--no-push] [--auto]
        close-plan.sh --self-test
        close-plan.sh --help
 
@@ -63,9 +70,15 @@ flips Status to COMPLETED, archives inline (bash writes fire no PostToolUse
 event, so plan-lifecycle.sh cannot do it), commits the closure (pathspec-
 limited to the plan + evidence paths), and auto-pushes (unless --no-push).
 
+--auto (R4 / ADR 036-c): the auto-closure invocation path. Adds the
+Closure-Contract / acceptance-artifact precondition the manual close does
+not require, and ALWAYS implies --no-push. Exit 2 = HOLD (precondition
+unmet, plan left ACTIVE). Used by plan-auto-closure.sh.
+
 Examples:
   close-plan.sh close my-plan-slug
   close-plan.sh close my-plan --no-push
+  close-plan.sh close my-plan --auto       # implies --no-push + contract gate
 
 When verification blocks, the only remediation is to generate the missing
 structured evidence via write-evidence.sh capture, then re-run. There is no
@@ -541,15 +554,116 @@ verify_backlog_reconciled() {
 }
 
 # ---------------------------------------------------------------------------
+# Auto-mode Closure-Contract precondition (R4 / ADR 036-c).
+# ---------------------------------------------------------------------------
+# In --auto mode (and only then) close-plan adds a SECOND gate beyond the
+# per-task verification: it independently confirms the predefined Closure
+# Contract artifact exists with verdict PASS and a matching plan SHA. The
+# manual close trusts the operator; the unattended auto close must not.
+#
+# For an `acceptance-exempt: true` plan the contract IS the self-test /
+# structured-evidence PASS set, which the per-task mechanical verification
+# already enforces upstream — so this precondition is a no-op for exempt
+# plans (returns 0). For a non-exempt plan it requires a PASS acceptance
+# artifact under .claude/state/acceptance/<slug>/ matching the plan's
+# COMMITTED SHA.
+#
+# MATCH BASIS (plan §7 pin): the artifact's `plan_commit_sha` is compared
+# against `git log -n 1 --pretty=format:%H -- <plan-file>` — the plan file's
+# LAST-COMMIT SHA, NOT the working tree. At auto-closure fire time the
+# triggering checkbox-flip Edit is uncommitted, so the working tree differs
+# from the committed plan; the PASS artifact was written against the
+# committed version, and the final [ ]→[x] flip changes only task state, not
+# the acceptance scenarios the artifact verified. (T11b.)
+#
+# Echoes one of: SATISFIED | EXEMPT | NO_ARTIFACT | STALE | FAIL
+#   SATISFIED  — non-exempt; matching-SHA artifact with all verdicts PASS
+#   EXEMPT     — acceptance-exempt: true; contract is self-tests (handled upstream)
+#   NO_ARTIFACT— non-exempt; no artifact directory / no JSON artifacts
+#   STALE      — artifacts exist but none match the committed SHA
+#   FAIL       — matching-SHA artifact exists but a verdict is non-PASS
+check_closure_contract_artifact() {
+  local plan_file="$1"
+  local slug
+  slug=$(basename "$plan_file" .md)
+
+  # Acceptance-exempt → contract satisfied by self-tests (already verified
+  # per-task). The precondition does not add a second artifact gate here.
+  if grep -qiE '^acceptance-exempt:[[:space:]]*true' "$plan_file" 2>/dev/null; then
+    echo "EXEMPT"
+    return
+  fi
+
+  local repo_root
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root="."
+  local art_dir="$repo_root/.claude/state/acceptance/$slug"
+  if [[ ! -d "$art_dir" ]]; then
+    echo "NO_ARTIFACT"
+    return
+  fi
+
+  local artifacts
+  artifacts=$(find "$art_dir" -maxdepth 1 -type f -name '*.json' 2>/dev/null)
+  if [[ -z "$artifacts" ]]; then
+    echo "NO_ARTIFACT"
+    return
+  fi
+
+  # Committed SHA of the plan file (NOT the working tree).
+  local current_sha=""
+  if command -v git >/dev/null 2>&1 && git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    current_sha=$(git -C "$repo_root" log -n 1 --pretty=format:'%H' -- "$plan_file" 2>/dev/null || echo "")
+  fi
+  [[ -z "$current_sha" ]] && current_sha="UNCOMMITTED"
+
+  local found_matching_sha=0 found_all_pass=0 artifact
+  while IFS= read -r artifact; do
+    [[ -z "$artifact" ]] && continue
+    [[ -f "$artifact" ]] || continue
+    local artifact_sha
+    artifact_sha=$(grep -oE '"plan_commit_sha"[[:space:]]*:[[:space:]]*"[^"]+"' "$artifact" 2>/dev/null | head -1 | sed -E 's/.*"plan_commit_sha"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+    if [[ "$artifact_sha" == "$current_sha" ]]; then
+      found_matching_sha=1
+      local verdict_lines
+      verdict_lines=$(grep -oE '"verdict"[[:space:]]*:[[:space:]]*"[^"]+"' "$artifact" 2>/dev/null)
+      [[ -z "$verdict_lines" ]] && continue
+      local has_non_pass
+      has_non_pass=$(echo "$verdict_lines" | grep -vE '"verdict"[[:space:]]*:[[:space:]]*"PASS"' | head -1)
+      if [[ -z "$has_non_pass" ]]; then
+        found_all_pass=1
+        break
+      fi
+    fi
+  done <<< "$artifacts"
+
+  if [[ "$found_all_pass" -eq 1 ]]; then
+    echo "SATISFIED"
+  elif [[ "$found_matching_sha" -eq 1 ]]; then
+    echo "FAIL"
+  else
+    echo "STALE"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Main close subcommand
 # ---------------------------------------------------------------------------
 cmd_close() {
   local slug=""
   local no_push=false
+  local auto_mode=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-push) no_push=true; shift ;;
+      --auto)
+        # R4 (ADR 036-c): auto-closure invocation path. Adds the
+        # Closure-Contract / acceptance-artifact precondition that the
+        # manual close does not require, and ALWAYS implies --no-push (an
+        # unattended PostToolUse-triggered close must never push to origin).
+        auto_mode=true
+        no_push=true
+        shift ;;
       --help|-h) usage; return 0 ;;
       --force)
         printf '%s: --force flag REMOVED (2026-05-06).\n' "$SCRIPT_NAME" >&2
@@ -663,6 +777,27 @@ cmd_close() {
     printf '  perform the close manually via git: edit Status, git mv to archive,\n' >&2
     printf '  git rm stale state, git commit. Visible in history. Appropriately rare.\n' >&2
     return 2
+  fi
+
+  # 2b. Auto-mode Closure-Contract precondition (R4 / ADR 036-c). ONLY in
+  # --auto mode. The manual close trusts the operator; the unattended auto
+  # close must independently confirm the predefined contract artifact exists
+  # with verdict PASS + matching committed SHA before flipping Status. A
+  # non-SATISFIED/EXEMPT result is a HOLD (exit 2): the plan stays ACTIVE,
+  # nothing is half-closed; the PostToolUse caller logs the reason and no-ops.
+  if [[ "$auto_mode" == true ]]; then
+    local contract_state
+    contract_state=$(check_closure_contract_artifact "$plan_file")
+    case "$contract_state" in
+      SATISFIED|EXEMPT)
+        printf '[close-plan] auto: Closure Contract artifact %s\n' "$contract_state" >&2
+        ;;
+      *)
+        printf '[close-plan] auto: HOLD — Closure Contract artifact %s for non-exempt plan %s.\n' "$contract_state" "$slug" >&2
+        printf '[close-plan] auto:   Expected a PASS artifact under .claude/state/acceptance/%s/ whose plan_commit_sha matches the committed plan SHA. Plan stays ACTIVE.\n' "$slug" >&2
+        return 2
+        ;;
+    esac
   fi
 
   # 3. Generate completion report.
@@ -820,7 +955,7 @@ run_self_test() {
   local PASSED=0 FAILED=0
   local saved_pwd="$PWD"
 
-  printf 'close-plan.sh self-test (12 scenarios)\n\n' >&2
+  printf 'close-plan.sh self-test (15 scenarios)\n\n' >&2
 
   # ----- S1: all-mechanical-tasks-closure -----
   local D1; D1=$(setup_synthetic_repo "S1" "p-mech")
@@ -1367,9 +1502,142 @@ EOF
   fi
   rm -rf "$D12"
 
+  # ----- S13: --auto on an acceptance-exempt plan with all mechanical
+  # evidence present → EXEMPT precondition path → CLOSES (T6). -----
+  local D13; D13=$(setup_synthetic_repo "S13" "p-auto-exempt")
+  (
+    cd "$D13" || exit 1
+    cat > docs/plans/p-auto-exempt.md <<'EOF'
+# Plan: P Auto Exempt
+Status: ACTIVE
+Backlog items absorbed: none
+acceptance-exempt: true
+acceptance-exempt-reason: harness-development; self-tests are the acceptance artifact.
+
+## Goal
+auto-closure on an acceptance-exempt plan via self-test evidence
+
+## Scope
+- IN: x
+- OUT: y
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-auto-exempt.md`
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-auto-exempt-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-auto-exempt-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+    bash "$SELF_PATH" close p-auto-exempt --auto >/dev/null 2>&1
+  )
+  if [[ -f "$D13/docs/plans/archive/p-auto-exempt.md" ]] \
+     && grep -q '^Status: COMPLETED' "$D13/docs/plans/archive/p-auto-exempt.md"; then
+    printf 'self-test (S13) auto-exempt-closes-via-selftest-evidence: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S13) auto-exempt-closes-via-selftest-evidence: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D13"
+
+  # ----- S14: --auto on a NON-exempt plan with all tasks verified but NO
+  # acceptance artifact → HOLD (exit 2) → plan stays ACTIVE, NOT closed (T3
+  # primary false-positive guard at the close layer). -----
+  local D14 rc14; D14=$(setup_synthetic_repo "S14" "p-auto-noart")
+  (
+    cd "$D14" || exit 1
+    cat > docs/plans/p-auto-noart.md <<'EOF'
+# Plan: P Auto NoArt
+Status: ACTIVE
+Backlog items absorbed: none
+acceptance-exempt: false
+
+## Goal
+non-exempt auto-closure must HOLD without a contract artifact
+
+## Scope
+- IN: x
+- OUT: y
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-auto-noart.md`
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-auto-noart-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-auto-noart-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+  )
+  ( cd "$D14" && bash "$SELF_PATH" close p-auto-noart --auto >/dev/null 2>&1 ); rc14=$?
+  if [[ "$rc14" -eq 2 ]] \
+     && [[ -f "$D14/docs/plans/p-auto-noart.md" ]] \
+     && grep -q '^Status: ACTIVE' "$D14/docs/plans/p-auto-noart.md" \
+     && [[ ! -f "$D14/docs/plans/archive/p-auto-noart.md" ]]; then
+    printf 'self-test (S14) auto-nonexempt-HOLDs-without-artifact: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S14) auto-nonexempt-HOLDs-without-artifact: FAIL (rc=%s)\n' "$rc14" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D14"
+
+  # ----- S15: --auto on a NON-exempt plan WITH a matching-committed-SHA PASS
+  # acceptance artifact → SATISFIED → CLOSES (T1 true positive at the close
+  # layer; T11b SHA-match basis = committed plan SHA). -----
+  local D15; D15=$(setup_synthetic_repo "S15" "p-auto-art")
+  (
+    cd "$D15" || exit 1
+    cat > docs/plans/p-auto-art.md <<'EOF'
+# Plan: P Auto Art
+Status: ACTIVE
+Backlog items absorbed: none
+acceptance-exempt: false
+
+## Goal
+non-exempt auto-closure closes with a matching PASS artifact
+
+## Scope
+- IN: x
+- OUT: y
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-auto-art.md`
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-auto-art-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-auto-art-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+    # Committed SHA of the plan file (the match basis the gate uses).
+    plan_sha=$(git log -n 1 --pretty=format:'%H' -- docs/plans/p-auto-art.md)
+    mkdir -p .claude/state/acceptance/p-auto-art
+    printf '{"plan_slug":"p-auto-art","plan_commit_sha":"%s","scenarios":[{"id":"happy","verdict":"PASS"}]}\n' "$plan_sha" \
+      > .claude/state/acceptance/p-auto-art/sess-1.json
+    bash "$SELF_PATH" close p-auto-art --auto >/dev/null 2>&1
+  )
+  if [[ -f "$D15/docs/plans/archive/p-auto-art.md" ]] \
+     && grep -q '^Status: COMPLETED' "$D15/docs/plans/archive/p-auto-art.md"; then
+    printf 'self-test (S15) auto-nonexempt-closes-with-matching-artifact: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S15) auto-nonexempt-closes-with-matching-artifact: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D15"
+
   cd "$saved_pwd"
 
-  printf '\nself-test summary: %d passed, %d failed (of 12 scenarios)\n' "$PASSED" "$FAILED" >&2
+  printf '\nself-test summary: %d passed, %d failed (of 15 scenarios)\n' "$PASSED" "$FAILED" >&2
   if [[ $FAILED -eq 0 ]]; then
     return 0
   fi
