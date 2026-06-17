@@ -272,10 +272,38 @@
   }
 
   // ---- WorkItem state derivation --------------------------------------
+  // Status precedence (bug 2026-06-17): a plan-tracking work-item carries the
+  // plan's authoritative lifecycle status verbatim in its own text — the
+  // work-in-motion sweep titles these `PLAN: … [ACTIVE]` straight from the plan
+  // file's `Status: ACTIVE` header. A past PR-merge/deploy emitter, however,
+  // wrote `item-shipped` on several of these while the plan was STILL ACTIVE
+  // (event reason verbatim: "Work merged: PR #350 … Plan file still ACTIVE =
+  // bookkeeping debt"), leaving the item with state==='shipped' but a `[ACTIVE]`
+  // title. The merge signal must NOT override the plan's own authoritative
+  // status: an item whose text says the plan is `[ACTIVE]` is not done. This
+  // guard is the display-layer precedence rule (the bad item-shipped events are
+  // append-only history and cannot be un-emitted) — fixing the derived state
+  // here cascades through every reader (isComplete / branchGroup.allDone /
+  // visibleInTree / statusCounts / the status badges) so the filter and badge
+  // both correct. Matches `[ACTIVE]` only (the sole "still-open" plan marker the
+  // sweep writes); a plan that genuinely leaves ACTIVE gets a concluded node +
+  // a retitle, so `[COMPLETED]`/`[DEFERRED]`/etc never legitimately co-occur
+  // with a shipped item — verified zero collisions in live state.
+  function planStatusSaysOpen(it) {
+    return /\[ACTIVE\]/i.test(String((it && it.text) || ''));
+  }
   // Explicit it.state (from the new item-committed/shipped/blocked events)
   // wins; otherwise infer from the legacy checked/contested/deferred flags so
   // the existing 62 items render correctly without migration (plan Edge Cases).
   function itemState(it) {
+    // Status-precedence override: a stale `shipped` (from a merge/deploy signal
+    // that fired while the plan was still ACTIVE) does NOT win over the plan's
+    // own authoritative `[ACTIVE]` status. Downgrade to the truthful open state.
+    if (planStatusSaysOpen(it)) {
+      if (it.contested) return 'blocked';
+      if (it.deferred || it.backlogged) return 'committed';
+      return 'in-flight';
+    }
     if (it.state) return it.state;
     if (it.checked) return 'shipped';
     if (it.contested) return 'blocked';
@@ -1682,7 +1710,15 @@
     grp.appendChild(head);
     if (expanded) {
       var kids = el('div', 'tree-kids ws-kids');
-      var visible = refs.filter(function (r) { return allDone || visibleInTree(r); });
+      // bug 2026-06-17: items ALWAYS obey the show-completed/show-archived
+      // filter via visibleInTree — even in an all-done branch. The prior
+      // `allDone || visibleInTree(r)` short-circuit leaked completed items into
+      // the default (show-completed OFF) view: a single-item branch whose only
+      // item is shipped is all-done, so the bypass rendered the shipped item
+      // regardless of the filter. Now an all-done branch with the filter off
+      // shows the "N done hidden — use show done" affordance instead (the
+      // explicit-expand intent is preserved: turning show-done ON reveals them).
+      var visible = refs.filter(function (r) { return visibleInTree(r); });
       visible.forEach(function (r) { kids.appendChild(treeItemRow(r, 3)); });
       if (!visible.length) {
         kids.appendChild(el('div', 'proj-empty',
