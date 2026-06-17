@@ -227,11 +227,116 @@ function collectPRs(repoPath, ghAccount) {
   }
 }
 
+// (a4) PRODUCTION DEPLOY ground truth (2026-06-17, deploy-detection fix).
+// The decoupled "this repo's merged work reached production" signal: the
+// operator's authenticated Vercel CLI (NO API key in the harness; uses the
+// same `vercel` login the operator already has). A repo is deploy-aware iff it
+// has a linked `.vercel/project.json`. We read the most-recent READY Production
+// deployment and convert its "Age" column to an approximate epoch
+// (now - age) — that is the "production is live as of" timestamp.
+//
+// WHY age-based, not commit-SHA-based: the operator's workflow is
+// merge-PR-to-master -> Vercel auto-deploys master -> prod Ready. `vercel ls`
+// exposes Age + Status + Environment but NOT the commit SHA (confirmed:
+// `--json` is unsupported; `vercel inspect` omits the SHA in plain output).
+// Exact per-PR commit reachability would be fragile CLI archaeology; the
+// truthful answer to "did this shipped work reach production" for an
+// auto-deploy-on-master setup is "a successful prod deploy completed AFTER it
+// merged". So a shipped wim node whose ship_ts predates the latest Ready prod
+// deploy is deployed. Conservative by construction: a ship with NO subsequent
+// Ready deploy stays shipped-not-deployed (never a false deploy).
+//
+// Failure isolation (mirrors collectPRs/collectBranches): no `.vercel` link,
+// vercel CLI absent, unauthenticated, or any parse failure -> ok:false, the
+// deploy category is SKIPPED for this repo, and NO item-deployed is ever
+// emitted for it. A missing deploy signal never falsely marks work deployed.
+// Cross-platform `vercel ls --prod` runner. Returns the COMBINED stdout+stderr
+// string on success, or null on any failure (missing CLI / unauth / non-zero
+// exit). Two Windows-specific gotchas this handles:
+//   (1) An npm-installed CLI is a `vercel.cmd` shim. `execFileSync('vercel',…)`
+//       hits ENOENT and `execFileSync('vercel.cmd',…)` hits EINVAL — only a
+//       shell invocation resolves the shim via PATHEXT. We therefore run via
+//       `spawnSync` with `shell:true` and a SINGLE command STRING (not args),
+//       which sidesteps the DEP0190 unescaped-args deprecation entirely.
+//   (2) `vercel ls` renders its human table (Age / Status / Environment) to
+//       STDERR; STDOUT carries only the bare deployment URLs. We parse the
+//       table, so we MUST read stderr — hence the combined return.
+// NEVER throws (failure isolation: a deploy signal we cannot read must SKIP,
+// never crash the sweep or falsely mark work deployed). The command is a fixed
+// literal ("vercel ls --prod" / "<VERCEL_BIN> ls --prod") with NO interpolated
+// user input, so the shell invocation introduces no injection surface.
+function runVercelLs(repoPath) {
+  const bins = [];
+  if (process.env.VERCEL_BIN) bins.push(process.env.VERCEL_BIN);
+  bins.push('vercel');
+  for (const bin of bins) {
+    try {
+      const r = require('child_process').spawnSync(bin + ' ls --prod', {
+        cwd: repoPath, encoding: 'utf8', timeout: 90000, shell: true,
+      });
+      if (r.error) continue;
+      const combined = String(r.stdout || '') + '\n' + String(r.stderr || '');
+      // A real listing always contains the table header OR ≥1 deployment URL.
+      // An unauth / project-unlinked failure prints an Error line and no rows.
+      if (/\bProduction\b/.test(combined) || /\.vercel\.app/.test(combined)) {
+        return combined;
+      }
+    } catch (_) { /* try the next candidate */ }
+  }
+  return null;
+}
+function parseVercelAgeToMs(ageStr, nowMs) {
+  // Vercel "Age" column: e.g. "5m", "24m", "9h", "3d", "2w". Coarse but the
+  // only granularity we need (deploy-vs-ship ordering at minute resolution).
+  const m = String(ageStr).trim().match(/^(\d+)\s*([smhdwy])$/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const unit = m[2].toLowerCase();
+  const mult = { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3, y: 365 * 86400e3 }[unit];
+  if (!mult) return null;
+  return nowMs - n * mult;
+}
+function collectDeploys(repo, nowMs) {
+  nowMs = nowMs || Date.now();
+  // Deploy-aware only if linked to a Vercel project.
+  const vercelLink = path.join(repo.path, '.vercel', 'project.json');
+  if (!fs.existsSync(vercelLink)) {
+    return { ok: false, reason: 'no .vercel/project.json (repo not Vercel-linked)', deploy: null };
+  }
+  let out = runVercelLs(repo.path);
+  if (out == null) {
+    return { ok: false, reason: 'vercel ls failed (CLI missing/unauth/error)', deploy: null };
+  }
+  // Find the most-recent READY Production row. The `vercel ls` table lists
+  // newest-first; we take the FIRST row whose status is Ready and env is
+  // Production. Status renders as "● Ready" / "● Error"; match on the word.
+  const lines = out.split(/\r?\n/);
+  let latestReadyMs = null, latestReadyUrl = null;
+  for (const line of lines) {
+    if (!/\bReady\b/.test(line)) continue;
+    if (!/\bProduction\b/.test(line)) continue;
+    // First whitespace-delimited token is the Age column ("5m", "9h", ...).
+    const cols = line.trim().split(/\s+/);
+    const ageMs = parseVercelAgeToMs(cols[0], nowMs);
+    if (ageMs == null) continue;
+    const urlMatch = line.match(/https?:\/\/\S+/);
+    if (latestReadyMs == null || ageMs > latestReadyMs) {
+      latestReadyMs = ageMs;
+      latestReadyUrl = urlMatch ? urlMatch[0] : null;
+    }
+  }
+  if (latestReadyMs == null) {
+    return { ok: true, deploy: null }; // ok (we looked) but nothing Ready in prod yet
+  }
+  return { ok: true, deploy: { ready_at_ms: latestReadyMs, url: latestReadyUrl } };
+}
+
 // Collect ground truth for one repo config -> the shape sweep() consumes.
 function collectRepoGroundTruth(repo) {
   const plansRes = collectPlans(repo.path);
   const branchesRes = collectBranches(repo.path);
   const prsRes = collectPRs(repo.path, repo.ghAccount);
+  const deploysRes = collectDeploys(repo);
   return {
     repoKey: repo.repoKey,
     rootNodeId: repo.rootNodeId,
@@ -239,6 +344,7 @@ function collectRepoGroundTruth(repo) {
     plansOk: plansRes.ok, plansSkipReason: plansRes.reason || null, plans: plansRes.plans,
     branchesOk: branchesRes.ok, branchesSkipReason: branchesRes.reason || null, branches: branchesRes.branches,
     prsOk: prsRes.ok, prsSkipReason: prsRes.reason || null, prs: prsRes.prs,
+    deploysOk: deploysRes.ok, deploysSkipReason: deploysRes.reason || null, deploy: deploysRes.deploy,
   };
 }
 
@@ -397,6 +503,61 @@ function sweep(groundTruth, opts) {
         node_id: n.node_id, actor: 'dispatch' }, 'gone => concluded');
       n.state = 'concluded';
     }
+
+    // ---- DEPLOY detection (2026-06-17): advance shipped wim children of THIS
+    // repo's root from shipped-not-deployed -> deployed when production ground
+    // truth confirms a Ready prod deploy NEWER than the item's ship. Closes the
+    // "Deployed = 0 forever" root cause: nothing else emits item-deployed.
+    //
+    // Only fires when the deploy category collected OK AND a Ready prod deploy
+    // exists. A repo without a Vercel link / vercel CLI / auth -> deploysOk
+    // false -> NO item-deployed (per-category failure isolation: a missing
+    // deploy signal never falsely marks work deployed). Only PR/branch wim
+    // categories are deploy-eligible (a `plan` going non-ACTIVE means the plan
+    // closed, not that code reached production). Idempotent: item.deployed is
+    // checked locally so a second pass emits nothing.
+    if (repoGT.deploysOk && repoGT.deploy && repoGT.deploy.ready_at_ms != null) {
+      const readyMs = repoGT.deploy.ready_at_ms;
+      const deployUrl = repoGT.deploy.url || '(production)';
+      for (const n of nodesById.values()) {
+        if (n.parent_id !== rootId) continue;
+        const cat = wimCategoryOf(n.node_id);
+        if (cat !== 'pr' && cat !== 'br') continue;          // only merged code, not closed plans
+        if (cat === 'pr' && n.node_id.indexOf('wim-pr-' + repoGT.repoKey + '-') !== 0) continue;
+        const it = (n.items || [])[0];
+        if (!it) continue;
+        if (it.deployed === true) continue;                   // already deployed (idempotent)
+        if (!it.checked && it.state !== 'shipped') continue;  // not shipped yet -> not deployable
+        // The item must have shipped BEFORE the latest Ready prod deploy. Use
+        // the item's shipped_ts when present; a gone item just marked shipped
+        // THIS pass has no reduced shipped_ts yet (we set it.checked locally
+        // above), so treat a this-pass ship as ship-now and require the deploy
+        // to be at least as recent. A legacy checked item with no shipped_ts is
+        // conservatively NOT auto-deployed (unknown ship time -> no false
+        // deploy); the operator can mark those manually.
+        const shipMs = it.shipped_ts ? Date.parse(it.shipped_ts) : null;
+        if (shipMs != null && !isNaN(shipMs)) {
+          if (readyMs < shipMs) continue;                     // deploy predates the ship -> not this work
+        } else if (it.deployed_ts == null && it.shipped_ts == null) {
+          // No ship timestamp at all (legacy or this-pass) -> only deploy when
+          // the gone-detection above shipped it THIS pass (it.checked was just
+          // set and the node is concluding); a pre-existing checked item with
+          // no shipped_ts is left for manual marking.
+          const goneThisPass = planned.some(function (e) {
+            return e.type === 'item-shipped' && e.node_id === n.node_id;
+          });
+          if (!goneThisPass) continue;
+        }
+        plan({
+          event_id: evId('deploy', n.node_id), type: 'item-deployed',
+          node_id: n.node_id, item_id: it.item_id,
+          evidence: 'work-in-motion sweep: confirmed live in production via Vercel ' +
+            deployUrl + ' (Ready prod deploy newer than this ship)',
+          actor: 'dispatch',
+        }, 'shipped + prod-deploy-confirmed => deployed');
+        it.deployed = true;
+      }
+    }
   }
 
   // ---- emit (or dry-run)
@@ -440,7 +601,10 @@ function main() {
     const gt = collectRepoGroundTruth(repo);
     console.log('[wim-sweep] ' + gt.repoKey + ': plans=' + (gt.plansOk ? gt.plans.length : 'SKIP(' + gt.plansSkipReason + ')') +
       ' branches=' + (gt.branchesOk ? gt.branches.length : 'SKIP(' + gt.branchesSkipReason + ')') +
-      ' prs=' + (gt.prsOk ? gt.prs.length : 'SKIP(' + gt.prsSkipReason + ')'));
+      ' prs=' + (gt.prsOk ? gt.prs.length : 'SKIP(' + gt.prsSkipReason + ')') +
+      ' deploy=' + (gt.deploysOk
+        ? (gt.deploy ? 'Ready@' + new Date(gt.deploy.ready_at_ms).toISOString() : 'none-ready')
+        : 'SKIP(' + gt.deploysSkipReason + ')'));
     groundTruth.push(gt);
   }
   const res = sweep(groundTruth, { apply: args.apply, statePath: args.statePath || undefined });
@@ -454,7 +618,8 @@ function main() {
 
 module.exports = {
   defaultRepos,
-  collectPlans, collectBranches, collectPRs, collectRepoGroundTruth,
+  collectPlans, collectBranches, collectPRs, collectDeploys, collectRepoGroundTruth,
+  parseVercelAgeToMs,
   planNodeId, branchNodeId, prNodeId, itemIdFor, evId,
   desiredNodesFor, sweep,
 };
