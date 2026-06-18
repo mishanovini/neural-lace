@@ -75,7 +75,7 @@ ground truth on each run.
 
 ## Testing Strategy
 - wim-sweep self-test 49/49 (12 new for deploy detection); state 21/21; reconciler 33/33.
-- Live verification: dry-run plans 35 item-deployed for proj-circuit; applied →
+- Live verification: dry-run plans 35 item-deployed for a Vercel-linked project; applied →
   Deployed 0→35, shipped-not-deployed 211→83 (confirmed via GUI /api/state).
 
 ## Walking Skeleton

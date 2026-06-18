@@ -365,6 +365,34 @@ const brId = sweepMod.branchNodeId('testrepo', 'feat/gamma');
     JSON.stringify(r14.planned.map(e => e.type)));
 }
 
+// ---- T15: gone-this-pass + OLD deploy does NOT mark deployed (ADR-056) ------
+// The bug: a PR that ships (merges) in the SAME sweep that supplies a Ready
+// prod deploy was marked deployed against ANY pre-existing deploy — including
+// one that completed days BEFORE the merge and cannot contain its code. T14
+// only exercised the prior-pass branch (ship and deploy in separate sweeps);
+// THIS test merges AND deploy-detects in ONE pass so the gone-this-pass branch
+// (ship time == now) is exercised. The shared deployIsNewerThanShip predicate
+// must suppress item-deployed because the deploy predates the just-now merge.
+{
+  const prNode = sweepMod.prNodeId('gonerepo', 13);
+  function ggt(extra) {
+    return [Object.assign({
+      repoKey: 'gonerepo', rootNodeId: 'proj-gonerepo', rootTitle: 'Gone This Pass',
+      plansOk: true, plans: [], branchesOk: true, branches: [],
+      prsOk: true, prs: [{ number: 13, title: 'Merges this pass' }],
+      deploysOk: false, deploy: null,
+    }, extra || {})];
+  }
+  sweep(ggt(), true);                          // ingest the open PR
+  // ONE sweep: PR is gone (merged) THIS pass AND a Ready prod deploy is supplied
+  // whose ready_at_ms is 3 days in the PAST -> the deploy predates this merge.
+  const r15 = sweep(ggt({ prsOk: true, prs: [],
+    deploysOk: true, deploy: { ready_at_ms: Date.now() - 3 * 24 * 3600 * 1000, url: 'https://stale.example.test' } }), true);
+  ok('T15 gone-this-pass + deploy older than the just-now merge does NOT mark deployed',
+    !r15.planned.some(e => e.type === 'item-deployed' && e.node_id === prNode),
+    JSON.stringify(r15.planned.map(e => e.type)));
+}
+
 // ---- summary ----------------------------------------------------------------
 try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch (_) {}
 console.log('work-in-motion-sweep selftest: ' + pass + ' passed, ' + fail + ' failed');

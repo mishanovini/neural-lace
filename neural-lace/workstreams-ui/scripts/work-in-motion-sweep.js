@@ -382,6 +382,22 @@ function wimCategoryOf(nodeId) {
 }
 
 // ---------------------------------------------------------------------------
+// Deploy guard (2026-06-17, ADR-056 fix): the SINGLE predicate every path to
+// `item-deployed` must satisfy. A Ready prod deploy may only mark an item
+// deployed when the deploy is strictly newer than (or equal to) the item's
+// ship — a deploy that completed BEFORE the merge cannot contain its code.
+// Both the prior-pass branch (item has a reduced `shipped_ts`) and the
+// gone-this-pass branch (item shipped THIS sweep, ship time == now) gate on
+// this one function; there is no second code path to `item-deployed` that
+// bypasses the guard. `shipMs` null/NaN => not deployable (unknown ship time
+// must never be treated as "older than the deploy").
+function deployIsNewerThanShip(readyMs, shipMs) {
+  if (shipMs == null || isNaN(shipMs)) return false;
+  if (readyMs == null || isNaN(readyMs)) return false;
+  return readyMs >= shipMs;
+}
+
+// ---------------------------------------------------------------------------
 // The sweep core (pure w.r.t. ground truth; all writes via the facade)
 // ---------------------------------------------------------------------------
 // groundTruth: array of per-repo objects (see collectRepoGroundTruth).
@@ -389,6 +405,7 @@ function wimCategoryOf(nodeId) {
 // Returns { planned: [events], appended: n, idempotentNoops: n, skippedExisting: n, log: [] }
 function sweep(groundTruth, opts) {
   opts = opts || {};
+  const nowMs = (typeof opts.nowMs === 'number' && !isNaN(opts.nowMs)) ? opts.nowMs : Date.now();
   const emitOpts = opts.statePath ? { statePath: opts.statePath } : undefined;
   const log = [];
 
@@ -528,26 +545,34 @@ function sweep(groundTruth, opts) {
         if (!it) continue;
         if (it.deployed === true) continue;                   // already deployed (idempotent)
         if (!it.checked && it.state !== 'shipped') continue;  // not shipped yet -> not deployable
-        // The item must have shipped BEFORE the latest Ready prod deploy. Use
-        // the item's shipped_ts when present; a gone item just marked shipped
-        // THIS pass has no reduced shipped_ts yet (we set it.checked locally
-        // above), so treat a this-pass ship as ship-now and require the deploy
-        // to be at least as recent. A legacy checked item with no shipped_ts is
-        // conservatively NOT auto-deployed (unknown ship time -> no false
-        // deploy); the operator can mark those manually.
-        const shipMs = it.shipped_ts ? Date.parse(it.shipped_ts) : null;
-        if (shipMs != null && !isNaN(shipMs)) {
-          if (readyMs < shipMs) continue;                     // deploy predates the ship -> not this work
-        } else if (it.deployed_ts == null && it.shipped_ts == null) {
-          // No ship timestamp at all (legacy or this-pass) -> only deploy when
-          // the gone-detection above shipped it THIS pass (it.checked was just
-          // set and the node is concluding); a pre-existing checked item with
-          // no shipped_ts is left for manual marking.
-          const goneThisPass = planned.some(function (e) {
-            return e.type === 'item-shipped' && e.node_id === n.node_id;
-          });
-          if (!goneThisPass) continue;
+        // The Ready prod deploy must be strictly NEWER than this item's ship —
+        // ONE predicate (deployIsNewerThanShip) gates EVERY path to
+        // item-deployed (ADR-056 fix; prior bug: the gone-this-pass branch
+        // emitted item-deployed with no age guard, so a merge in THIS pass was
+        // marked deployed against a Ready deploy that predated it).
+        //
+        // Determine the effective ship time:
+        //  - prior-pass: item carries a reduced `shipped_ts` -> use it.
+        //  - gone-this-pass: shipped THIS sweep (no reduced shipped_ts yet, but
+        //    an item-shipped event is in `planned`) -> ship time IS now, so the
+        //    deploy must be at least as recent as now (a merge whose own deploy
+        //    has not gone Ready yet stays shipped-not-deployed until a later
+        //    sweep observes a newer Ready deploy).
+        //  - otherwise (legacy checked item, no shipped_ts, not gone this pass):
+        //    unknown ship time -> NOT auto-deployed (operator marks manually).
+        const reducedShipMs = it.shipped_ts ? Date.parse(it.shipped_ts) : null;
+        const goneThisPass = planned.some(function (e) {
+          return e.type === 'item-shipped' && e.node_id === n.node_id;
+        });
+        let shipMs;
+        if (reducedShipMs != null && !isNaN(reducedShipMs)) {
+          shipMs = reducedShipMs;                              // prior-pass ship time
+        } else if (goneThisPass) {
+          shipMs = nowMs;                                      // this-pass ship => ship time is now
+        } else {
+          continue;                                            // unknown ship time -> no false deploy
         }
+        if (!deployIsNewerThanShip(readyMs, shipMs)) continue; // deploy predates the ship -> not this work
         plan({
           event_id: evId('deploy', n.node_id), type: 'item-deployed',
           node_id: n.node_id, item_id: it.item_id,
