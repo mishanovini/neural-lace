@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task_id": "6",
+  "verdict": "PASS",
+  "commit_sha": "7591219a34e7d09f579318d34fe47bc45c42ba18",
+  "files_modified": [],
+  "mechanical_checks": {
+    "command:grep -q \"parallel-dev-discipline.md\" docs/harness-architecture.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q \"parallel-dev-discipline.md\" docs/harness-architecture.md",
+      "exit_code": 0
+    },
+    "command:grep -q \"migration-naming-gate.sh\" docs/harness-architecture.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q \"migration-naming-gate.sh\" docs/harness-architecture.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-15T10:57:13Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/parallel-dev-discipline-2026-06-14.md"
+}

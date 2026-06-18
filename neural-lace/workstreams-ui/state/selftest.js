@@ -991,6 +991,253 @@ function cleanup(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); 
   finally { cleanup(dir); }
 })();
 
+// ---- P20 operator-authoring end-to-end (2026-06-11, C1) --------------------
+// The My-tasks operator-authoring vertical: REUSE existing events (action-added
+// [+ origin], item-text-set, reordered, backlog-activated) + the ONE new
+// `item-removed`. Drives create → edit → reorder → remove through the real
+// append facade and asserts the reduced snapshot, plus the origin store/derive
+// rule, rejection retention (NFR-2), and idempotency.
+(function P20() {
+  const dir = freshDir(); const o = optsFor(dir);
+  try {
+    // A node to hang operator items on (a "My tasks" project root).
+    state.appendEvent({ type: 'branch-opened', node_id: 'mytasks', parent_id: null, title: 'My tasks' }, o);
+
+    // CREATE via action-added — actor forced to 'gui' by the server in prod;
+    // here we pass actor:'gui' explicitly to exercise the derive-from-actor path.
+    state.appendEvent({ type: 'action-added', node_id: 'mytasks', item_id: 't1', text: 'buy groceries', actor: 'gui' }, o);
+    // CREATE with an EXPLICIT origin (the C1 "action-added with origin:operator")
+    state.appendEvent({ type: 'action-added', node_id: 'mytasks', item_id: 't2', text: 'call plumber', origin: 'operator', actor: 'gui' }, o);
+    // An AI-emitted action-added on the same node ⇒ origin derives to 'ai'.
+    state.appendEvent({ type: 'action-added', node_id: 'mytasks', item_id: 'ai1', text: 'AI-suggested follow-up', actor: 'dispatch' }, o);
+
+    let snap = state.readState(o).snapshot;
+    let node = snap.nodes.find(function (n) { return n.node_id === 'mytasks'; });
+    const t1 = node.items.find(function (x) { return x.item_id === 't1'; });
+    const t2 = node.items.find(function (x) { return x.item_id === 't2'; });
+    const ai1 = node.items.find(function (x) { return x.item_id === 'ai1'; });
+    const created = !!t1 && t1.text === 'buy groceries';
+    const originDerivedOperator = t1.origin === 'operator';     // derived from actor=gui
+    const originExplicitOperator = t2.origin === 'operator';    // explicit origin
+    const originDerivedAi = ai1.origin === 'ai';                // derived from actor=dispatch
+
+    // EDIT via item-text-set (operator edit, actor=gui) — must NOT flip origin
+    // of an AI-created item, and edits text of an operator item.
+    state.appendEvent({ type: 'item-text-set', node_id: 'mytasks', item_id: 't1', text: 'buy groceries + milk', actor: 'gui' }, o);
+    state.appendEvent({ type: 'item-text-set', node_id: 'mytasks', item_id: 'ai1', text: 'AI follow-up (operator-edited)', actor: 'gui' }, o);
+    snap = state.readState(o).snapshot;
+    node = snap.nodes.find(function (n) { return n.node_id === 'mytasks'; });
+    const edited = node.items.find(function (x) { return x.item_id === 't1'; }).text === 'buy groceries + milk';
+    const aiOriginUnchangedAfterOperatorEdit = node.items.find(function (x) { return x.item_id === 'ai1'; }).origin === 'ai';
+
+    // REORDER via reordered — snapshot-level order hint keyed by scope.
+    state.appendEvent({ type: 'reordered', scope: 'mytasks', ordered_ids: ['t2', 't1', 'ai1'], actor: 'gui' }, o);
+    snap = state.readState(o).snapshot;
+    const reordered = snap.order && Array.isArray(snap.order['mytasks'])
+      && snap.order['mytasks'][0] === 't2' && snap.order['mytasks'][1] === 't1';
+
+    // REMOVE via item-removed — splices t2 out; t1/ai1 remain.
+    state.appendEvent({ type: 'item-removed', node_id: 'mytasks', item_id: 't2', actor: 'gui' }, o);
+    snap = state.readState(o).snapshot;
+    node = snap.nodes.find(function (n) { return n.node_id === 'mytasks'; });
+    const removed = !node.items.some(function (x) { return x.item_id === 't2'; });
+    const siblingsRemain = node.items.some(function (x) { return x.item_id === 't1'; })
+      && node.items.some(function (x) { return x.item_id === 'ai1'; });
+
+    // item-removed of an UNKNOWN item ⇒ rejected-not-applied + retained (NFR-2).
+    state.appendEvent({ type: 'item-removed', node_id: 'mytasks', item_id: 'does-not-exist', actor: 'gui' }, o);
+    snap = state.readState(o).snapshot;
+    const rejUnknownRemoved = (snap.rejections || []).some(function (r) {
+      return r.type === 'item-removed' && /item not found/.test(r.reason);
+    });
+    // item-removed on an UNKNOWN node ⇒ rejected too.
+    state.appendEvent({ type: 'item-removed', node_id: 'no-such-node', item_id: 't1', actor: 'gui' }, o);
+    snap = state.readState(o).snapshot;
+    const rejUnknownNode = (snap.rejections || []).some(function (r) {
+      return r.type === 'item-removed' && /node_id does not resolve/.test(r.reason);
+    });
+
+    // idempotency: a same-event_id re-append is a no-op (envelope layer).
+    const r1 = state.appendEvent({ event_id: 'P20-FIXED-REMOVE', type: 'item-removed', node_id: 'mytasks', item_id: 't1', actor: 'gui' }, o);
+    const r2 = state.appendEvent({ event_id: 'P20-FIXED-REMOVE', type: 'item-removed', node_id: 'mytasks', item_id: 't1', actor: 'gui' }, o);
+    const idempotent = r1.appended === true && r2.appended === false && r2.idempotentNoop === true;
+    snap = state.readState(o).snapshot;
+    node = snap.nodes.find(function (n) { return n.node_id === 'mytasks'; });
+    const t1GoneAfterIdempotentRemove = !node.items.some(function (x) { return x.item_id === 't1'; });
+
+    // envelope enforcement: item-removed missing the item locator is rejected
+    // before write (required-field validation).
+    let missingItemRejected = false;
+    try { state.appendEvent({ type: 'item-removed', node_id: 'mytasks' }, o); }
+    catch (e) { missingItemRejected = /item_id/.test(e.message); }
+
+    // schema major stays 1 (additive).
+    const majorStill1 = state.readState(o).schema_version === 1;
+    // attestation still verifies on the on-disk file.
+    const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    const v = store.verifySnapshotAttested(onDisk);
+
+    check('P20 operator-authoring e2e: create(+origin store/derive) / edit(no-origin-flip) / reorder / remove(+reject-retain+idempotent+envelope) — schema major 1, attested',
+      created && originDerivedOperator && originExplicitOperator && originDerivedAi
+        && edited && aiOriginUnchangedAfterOperatorEdit && reordered
+        && removed && siblingsRemain && rejUnknownRemoved && rejUnknownNode
+        && idempotent && t1GoneAfterIdempotentRemove && missingItemRejected
+        && majorStill1 && v.verified === true,
+      'created=' + created + ' origDerivedOp=' + originDerivedOperator
+        + ' origExplicitOp=' + originExplicitOperator + ' origDerivedAi=' + originDerivedAi
+        + ' edited=' + edited + ' aiOrigUnchanged=' + aiOriginUnchangedAfterOperatorEdit
+        + ' reordered=' + reordered + ' removed=' + removed + ' siblings=' + siblingsRemain
+        + ' rejUnknownItem=' + rejUnknownRemoved + ' rejUnknownNode=' + rejUnknownNode
+        + ' idem=' + idempotent + ' t1Gone=' + t1GoneAfterIdempotentRemove
+        + ' missItem=' + missingItemRejected + ' major1=' + majorStill1
+        + ' verified=' + v.verified);
+  } catch (e) { check('P20 operator-authoring e2e (action-added+origin / item-text-set / reordered / item-removed)', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
+// ---- P21 Windows transient-rename retry (2026-06-17) -----------------------
+// The atomic publish (write-temp-then-renameSync) intermittently fails with
+// EPERM on Windows when the live GUI server holds fs.watch open on the state
+// directory. store.renameWithRetry absorbs that transient with bounded backoff.
+// We monkey-patch fs.renameSync (the SAME fs object store.js requires) to drive
+// the exact failure deterministically on any platform, and assert:
+//   (a) a transient EPERM (3 fails then success) is ABSORBED — the append
+//       succeeds, the rename was retried, and the published state is NON-CORRUPT
+//       and attestation-verified (the core "retry path + non-corruption" claim);
+//   (b) a NON-transient error (EXDEV) is rethrown immediately with NO retry, and
+//       the orphaned temp is unlinked (never masked, never leaked);
+//   (c) a persistent EPERM throws after exactly `attempts` tries (bounded — no
+//       infinite loop) and unlinks the temp. Restores fs.renameSync in finally.
+(function P21() {
+  const dir = freshDir(); const o = optsFor(dir);
+  const realRename = fs.renameSync;
+  try {
+    // Seed two events through the real rename so a canonical file exists.
+    state.appendEvent({ type: 'branch-opened', node_id: 'n1', parent_id: null, title: 'A' }, o);
+    state.appendEvent({ type: 'branch-opened', node_id: 'n2', parent_id: 'n1', title: 'B' }, o);
+
+    // (a) transient EPERM x3 then succeed — must be absorbed.
+    let renameCallsA = 0, failsLeft = 3;
+    fs.renameSync = function (from, to) {
+      renameCallsA++;
+      if (failsLeft > 0) {
+        failsLeft--;
+        const e = new Error("EPERM: operation not permitted, rename '" + from + "' -> '" + to + "'");
+        e.code = 'EPERM';
+        throw e;
+      }
+      return realRename.call(fs, from, to);
+    };
+    const rA = state.appendEvent({ type: 'decision-raised', node_id: 'n1', item_id: 'd1', text: 'pick X' }, o);
+    fs.renameSync = realRename;
+    const transientAbsorbed = rA.appended === true && renameCallsA === 4; // 3 fail + 1 success
+    const sA = state.readState(o);
+    const n1A = sA.snapshot.nodes.find(function (n) { return n.node_id === 'n1'; });
+    const nonCorruptA = sA.snapshot.nodes.length === 2 && !!n1A && n1A.items.length === 1;
+    const onDiskA = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    const attestedA = store.verifySnapshotAttested(onDiskA).verified === true;
+
+    // (b) non-transient EXDEV — rethrown immediately, no retry, temp unlinked.
+    let renameCallsB = 0;
+    fs.renameSync = function () {
+      renameCallsB++;
+      const e = new Error('EXDEV: cross-device link not permitted, rename');
+      e.code = 'EXDEV';
+      throw e;
+    };
+    let threwB = false;
+    try { state.appendEvent({ type: 'action-added', node_id: 'n1', item_id: 'a1', text: 'x' }, o); }
+    catch (_) { threwB = true; }
+    fs.renameSync = realRename;
+    const nonTransientRethrown = threwB && renameCallsB === 1; // no retry on EXDEV
+    const tmpPrefix = path.basename(o.statePath) + '.tmp.';
+    const noOrphanB = !fs.readdirSync(dir).some(function (nm) { return nm.indexOf(tmpPrefix) === 0; });
+    // Canonical file untouched by the failed publish — still exactly 2 nodes, no a1.
+    const sB = state.readState(o);
+    const stillIntactB = sB.snapshot.nodes.length === 2
+      && !sB.snapshot.nodes.some(function (n) {
+        return (n.items || []).some(function (it) { return it.item_id === 'a1'; });
+      });
+
+    // (c) persistent EPERM via the exported helper with a tiny budget (fast):
+    //     throws after exactly `attempts` calls and unlinks the temp.
+    let renameCallsC = 0;
+    fs.renameSync = function () {
+      renameCallsC++;
+      const e = new Error('EPERM persistent'); e.code = 'EPERM'; throw e;
+    };
+    const probeTmp = o.statePath + '.tmp.probe-c';
+    fs.writeFileSync(probeTmp, 'probe', 'utf8'); // writeFileSync is NOT patched
+    let threwC = false;
+    try { store.renameWithRetry(probeTmp, o.statePath + '.dest-c', { attempts: 3, baseMs: 1, capMs: 1 }); }
+    catch (ec) { threwC = ec && ec.code === 'EPERM'; }
+    fs.renameSync = realRename;
+    const boundedThrew = threwC && renameCallsC === 3;       // exactly `attempts`
+    const probeUnlinked = !fs.existsSync(probeTmp);          // unlinked on final failure
+
+    check('P21 rename-retry: transient EPERM absorbed (retry+non-corrupt+attested) / non-transient EXDEV rethrown-no-retry-temp-unlinked / persistent EPERM bounded+temp-unlinked',
+      transientAbsorbed && nonCorruptA && attestedA
+        && nonTransientRethrown && noOrphanB && stillIntactB
+        && boundedThrew && probeUnlinked,
+      'transientAbsorbed=' + transientAbsorbed + ' (callsA=' + renameCallsA + ')'
+        + ' nonCorruptA=' + nonCorruptA + ' attestedA=' + attestedA
+        + ' nonTransRethrown=' + nonTransientRethrown + ' (callsB=' + renameCallsB + ')'
+        + ' noOrphanB=' + noOrphanB + ' stillIntactB=' + stillIntactB
+        + ' boundedThrew=' + boundedThrew + ' (callsC=' + renameCallsC + ')'
+        + ' probeUnlinked=' + probeUnlinked);
+  } catch (e) { check('P21 rename-retry under simulated Windows EPERM', false, e.message); }
+  finally { fs.renameSync = realRename; cleanup(dir); }
+})();
+
+// ---- P22 stale-temp cleanup (2026-06-17) -----------------------------------
+// Orphaned `<base>.tmp.*` siblings (from crashed / pre-retry EPERM-failed
+// publishes) accumulate; store.cleanupStaleTemps sweeps them on each write,
+// guarded by an age threshold so a concurrent writer's in-flight temp is never
+// deleted. Assert: an orphan aged past the default 60s threshold is swept by the
+// next append; a fresh in-flight temp is preserved; the exported helper honors
+// the age guard (young preserved at 60s cutoff, swept at 0ms cutoff); the
+// published state stays non-corrupt + attested.
+(function P22() {
+  const dir = freshDir(); const o = optsFor(dir);
+  try {
+    state.appendEvent({ type: 'branch-opened', node_id: 'n1', parent_id: null, title: 'A' }, o);
+
+    const base = o.statePath;
+    const oldTmp = base + '.tmp.OLD-orphan';
+    const freshTmp = base + '.tmp.FRESH-inflight';
+    fs.writeFileSync(oldTmp, 'stale orphan from a crashed write', 'utf8');
+    fs.writeFileSync(freshTmp, 'a concurrent writer in-flight temp', 'utf8');
+    // Age the orphan well past the default 60s threshold; leave the fresh one now.
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+    fs.utimesSync(oldTmp, tenMinAgo, tenMinAgo);
+
+    // The next append runs cleanupStaleTemps(base, 60s) at its top.
+    state.appendEvent({ type: 'branch-opened', node_id: 'n2', parent_id: 'n1', title: 'B' }, o);
+
+    const oldGone = !fs.existsSync(oldTmp);     // orphan swept
+    const freshKept = fs.existsSync(freshTmp);  // in-flight temp preserved (captured BEFORE the 0ms sweep below)
+    const s = state.readState(o);
+    const intact = s.snapshot.nodes.length === 2;
+    const onDisk = JSON.parse(fs.readFileSync(o.statePath, 'utf8'));
+    const attested = store.verifySnapshotAttested(onDisk).verified === true;
+
+    // Direct age-guard unit check on the exported helper.
+    const guardTmp = base + '.tmp.AGE-GUARD';
+    fs.writeFileSync(guardTmp, 'x', 'utf8');
+    store.cleanupStaleTemps(base, 60 * 1000);   // young temp -> preserved
+    const youngPreserved = fs.existsSync(guardTmp);
+    store.cleanupStaleTemps(base, 0);           // 0ms cutoff -> swept
+    const sweptAtZero = !fs.existsSync(guardTmp);
+
+    check('P22 stale-temp cleanup: orphan(>60s) swept on write, fresh in-flight temp preserved, age-guard honored (young kept / 0ms swept), non-corrupt + attested',
+      oldGone && freshKept && intact && attested && youngPreserved && sweptAtZero,
+      'oldGone=' + oldGone + ' freshKept=' + freshKept + ' intact=' + intact
+        + ' attested=' + attested + ' youngPreserved=' + youngPreserved
+        + ' sweptAtZero=' + sweptAtZero);
+  } catch (e) { check('P22 stale-temp cleanup', false, e.message); }
+  finally { cleanup(dir); }
+})();
+
 process.stdout.write('\nADR-032 state library — property self-test\n');
 process.stdout.write(RESULTS.join('\n') + '\n');
 process.stdout.write('\n' + PASS + ' passed, ' + FAIL + ' failed\n');

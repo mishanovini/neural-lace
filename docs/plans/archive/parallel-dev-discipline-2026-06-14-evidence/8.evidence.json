@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "task_id": "8",
+  "verdict": "PASS",
+  "commit_sha": "ef0538c98d62bd5594a01fece5e54184bbef9b81",
+  "files_modified": [
+    "docs/plans/archive/parallel-dev-discipline-2026-06-14.md",
+    "docs/plans/parallel-dev-discipline-2026-06-14.md"
+  ],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/rules/parallel-dev-discipline.md": {
+      "passed": true,
+      "detail": "adapters/claude-code/rules/parallel-dev-discipline.md exists",
+      "command": "test -e adapters/claude-code/rules/parallel-dev-discipline.md",
+      "exit_code": 0
+    },
+    "command:bash adapters/claude-code/hooks/harness-hygiene-scan.sh --self-test": {
+      "passed": true,
+      "detail": "self-test: OK",
+      "command": "bash adapters/claude-code/hooks/harness-hygiene-scan.sh --self-test",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-15T11:00:17Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/parallel-dev-discipline-2026-06-14.md"
+}

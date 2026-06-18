@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "task_id": "7",
+  "verdict": "PASS",
+  "commit_sha": "7591219a34e7d09f579318d34fe47bc45c42ba18",
+  "files_modified": [],
+  "mechanical_checks": {
+    "command:diff <(tr -d \"\\r\" < adapters/claude-code/rules/parallel-dev-discipline.md) <(tr -d \"\\r\" < ~/.claude/rules/parallel-dev-discipline.md)": {
+      "passed": true,
+      "detail": "",
+      "command": "diff <(tr -d \"\\r\" < adapters/claude-code/rules/parallel-dev-discipline.md) <(tr -d \"\\r\" < ~/.claude/rules/parallel-dev-discipline.md)",
+      "exit_code": 0
+    },
+    "command:diff <(tr -d \"\\r\" < adapters/claude-code/hooks/migration-naming-gate.sh) <(tr -d \"\\r\" < ~/.claude/hooks/migration-naming-gate.sh)": {
+      "passed": true,
+      "detail": "",
+      "command": "diff <(tr -d \"\\r\" < adapters/claude-code/hooks/migration-naming-gate.sh) <(tr -d \"\\r\" < ~/.claude/hooks/migration-naming-gate.sh)",
+      "exit_code": 0
+    },
+    "command:bash ~/.claude/hooks/migration-naming-gate.sh --self-test": {
+      "passed": true,
+      "detail": "upabase/migrations/168_bad.sql', LF will be replaced by CRLF the next time Git touches it\n  S[s9_noncommit_ignored] ALLOW: PASS\n  S[s10_malformed_failsafe] ALLOW: PASS\n\n[self-test] 23 passed, 0 failed",
+      "command": "bash ~/.claude/hooks/migration-naming-gate.sh --self-test",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-15T10:57:25Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/parallel-dev-discipline-2026-06-14.md"
+}

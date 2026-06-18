@@ -1,5 +1,5 @@
 # Plan: Agent-upgrade batch 2 — A/B staging + evaluation program (16 agents)
-Status: ACTIVE
+Status: DEFERRED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -108,6 +108,12 @@ n/a — staging + fixtures only; no new mechanism is built by this plan.
 - 2026-06-10: harness-reviewer staged file accepts BOTH legacy and renamed
   analyzer section headers in Steps 5.1/5.3 (digest-mandated pair-coupling
   reconciliation). Tier 1 — reversible, documented in MANIFEST.
+- DEFERRED 2026-06-15 — the 16-agent A/B eval program needs a careful dedicated
+  eval run (not an overnight-autonomous task); not the current priority (a
+  downstream product took precedence). Revive to run the A/B eval + land winners.
+  Tier 1 — `Status:` flipped to DEFERRED with Misha's explicit approval; reverse
+  by flipping `Status:` back to ACTIVE and `git mv`-ing the plan from
+  `docs/plans/deferred/` back to `docs/plans/`.
 
 ## Pre-Submission Audit
 - n/a — single-purpose staging plan (Mode: code), no class-sweep needed.

@@ -209,6 +209,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/migration-naming-gate.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/vaporware-volume-gate.sh"
           }
         ]
@@ -338,6 +347,15 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/plan-lifecycle.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/plan-auto-closure.sh"
           }
         ]
       },
@@ -507,6 +525,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/register-progress-gate.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/scripts/session-wrap.sh refresh"
           }
         ]
@@ -567,6 +589,14 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/discovery-surfacer.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/register-surfacer.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/stalled-work-surfacer.sh"
           },
           {
             "type": "command",

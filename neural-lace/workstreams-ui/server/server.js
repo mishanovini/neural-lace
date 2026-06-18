@@ -24,6 +24,28 @@ const { spawn } = require('child_process');
 const projects = require('../config/projects.js'); // item 19: cross-repo doc map
 const stateLib = require('../state/state.js');
 const { STATE_FILE, readState, appendEvent, SchemaTooNewError, SCHEMA_TOO_NEW_MESSAGE } = stateLib;
+// Task 8 (status-surface redesign 2026-06-11, I1): the SOLE-NORMATIVE per-kind
+// details validator. The browser client cannot require() this module (zod,
+// CommonJS, no build step), so the server — which CAN — derives each item's
+// context-completeness AT SERVE TIME with assembleItemDetails (null = not
+// self-contained = the gate) and annotates the served snapshot. The GUI reads
+// the annotation; NO parallel validator exists anywhere in web/app.js.
+//
+// DEFENSIVE require: zod is the ONE runtime dep (declared in package.json;
+// installed in the operator's checkout). A machine without it must NOT crash
+// the passive GUI at boot — it degrades to "no completeness verified": no
+// annotation is written, so the client gate fails CLOSED (every operator-ask
+// renders as context-incomplete rather than presenting an unverified choice
+// as actionable). A loud startup warning names the fix.
+let dcs = null;
+try {
+  dcs = require('../state/decision-context-schema.js');
+} catch (err) {
+  process.stderr.write('[server] WARNING: decision-context-schema unavailable ('
+    + String(err && err.message || err).split('\n')[0]
+    + ') — context-completeness annotation disabled; operator-asks will render '
+    + 'as context-incomplete. Fix: npm install in workstreams-ui/.\n');
+}
 
 // §1/Pin 2 reader-glue: the ADR-032 reader REFUSES an unknown major by
 // throwing SchemaTooNewError and reading NOTHING (never a partial mis-parse).
@@ -32,12 +54,131 @@ const { STATE_FILE, readState, appendEvent, SchemaTooNewError, SCHEMA_TOO_NEW_ME
 // as a refuse banner — never a best-effort guess at a newer file.
 function safeRead() {
   try {
-    return { snapshot: readState().snapshot };
+    return { snapshot: annotateContextState(readState().snapshot) };
   } catch (err) {
     if (err instanceof SchemaTooNewError) {
       return { snapshot: { nodes: [], schema_too_new: true, message: SCHEMA_TOO_NEW_MESSAGE } };
     }
     throw err;
+  }
+}
+
+// ---- context-completeness annotation (Task 8, I1/I2 — 2026-06-11) ----------
+// For every item whose kind/category makes it an OPERATOR-ASK (decision /
+// question / action_item_for_user — the kinds the plan gates), derive
+// `context_state: 'complete' | 'incomplete'` by running the item's `details`
+// through the sole-normative assembler: assembleItemDetails returns null when
+// the payload is not self-contained (no _category-compatible background /
+// actionable field), which IS the context-incomplete gate. The annotation is
+// DERIVED AT SERVE TIME on a fresh per-request parse — it is never persisted
+// to the state file (readState re-parses per call; appendEvent does its own
+// independent read), so the event-sourced contract is untouched.
+// Non-ask items (plain actions, builder-dispatch logs, autonomous_action
+// logs) get NO annotation — the gate does not apply to them.
+var GATE_CATEGORIES = { decision: 1, question: 1, action_item_for_user: 1 };
+function gateCategoryOf(it) {
+  var de = (it && it.details && typeof it.details === 'object') ? it.details : null;
+  var cat = de && de._category;
+  if (cat) return GATE_CATEGORIES[cat] ? cat : null;
+  if (it && it.kind === 'decision') return 'decision';
+  if (it && it.kind === 'question') return 'question';
+  return null;
+}
+function annotateContextState(snap) {
+  if (!dcs) return snap; // degraded mode: no validator → no annotation (gate fails closed client-side)
+  if (!snap || !Array.isArray(snap.nodes)) return snap;
+  snap.nodes.forEach(function (n) {
+    (n.items || []).forEach(function (it) {
+      var cat = gateCategoryOf(it);
+      if (!cat) return;
+      var de = (it.details && typeof it.details === 'object') ? it.details : {};
+      it.context_state = dcs.assembleItemDetails(cat, de) !== null ? 'complete' : 'incomplete';
+    });
+  });
+  return snap;
+}
+
+// Per-type payload validation for the operator-authoring events
+// (workstreams-ui-status-surface-redesign 2026-06-11, C2). The endpoint
+// ALREADY exists and ALREADY enforces required-field presence via the
+// schema's validateEvent (called inside appendEvent). This adds the
+// operator-event-specific guard rails the schema's enum check cannot express:
+// an `origin` that is neither operator nor ai, a non-array `ordered_ids`, an
+// empty/whitespace-only text on create/edit. Returns an error STRING (→ 422)
+// or null (→ proceed). Only the operator-authoring event types are inspected;
+// every other event passes through to the existing required-field validation
+// unchanged (forward-compatible — a new event type the server doesn't know is
+// simply not pre-screened here, the schema layer still guards it).
+function validateOperatorPayload(input) {
+  if (!input || typeof input !== 'object') return null; // schema layer rejects
+  switch (input.type) {
+    case 'action-added': {
+      if (typeof input.text !== 'string' || input.text.trim() === '') {
+        return 'action-added requires non-empty text';
+      }
+      if (input.origin !== undefined && input.origin !== 'operator' && input.origin !== 'ai') {
+        return 'action-added origin must be "operator" or "ai" when present';
+      }
+      return null;
+    }
+    case 'item-text-set': {
+      if (typeof input.text !== 'string' || input.text.trim() === '') {
+        return 'item-text-set requires non-empty text';
+      }
+      return null;
+    }
+    case 'reordered': {
+      if (!Array.isArray(input.ordered_ids)) {
+        return 'reordered requires ordered_ids to be an array';
+      }
+      if (typeof input.scope !== 'string' || input.scope.trim() === '') {
+        return 'reordered requires a non-empty scope';
+      }
+      return null;
+    }
+    case 'item-removed': {
+      if (typeof input.item_id !== 'string' || input.item_id.trim() === '') {
+        return 'item-removed requires a non-empty item_id';
+      }
+      if (typeof input.node_id !== 'string' || input.node_id.trim() === '') {
+        return 'item-removed requires a non-empty node_id';
+      }
+      return null;
+    }
+    case 'backlog-activated': {
+      if (typeof input.item_id !== 'string' || input.item_id.trim() === '') {
+        return 'backlog-activated requires a non-empty item_id';
+      }
+      if (typeof input.new_node_id !== 'string' || input.new_node_id.trim() === '') {
+        return 'backlog-activated requires a non-empty new_node_id';
+      }
+      return null;
+    }
+    // Backlog surface (Task 7, 2026-06-11) — same C2 guard-rail pattern for the
+    // operator events the backlog add/promote flows emit.
+    case 'backlog-added': {
+      if (typeof input.text !== 'string' || input.text.trim() === '') {
+        return 'backlog-added requires non-empty text';
+      }
+      return null;
+    }
+    case 'item-backlogged': {
+      if (typeof input.item_id !== 'string' || input.item_id.trim() === '') {
+        return 'item-backlogged requires a non-empty item_id';
+      }
+      if (typeof input.node_id !== 'string' || input.node_id.trim() === '') {
+        return 'item-backlogged requires a non-empty node_id';
+      }
+      return null;
+    }
+    case 'branch-retitled': {
+      if (typeof input.title !== 'string' || input.title.trim() === '') {
+        return 'branch-retitled requires a non-empty title';
+      }
+      return null;
+    }
+    default:
+      return null; // not an operator-authoring type — schema layer guards it
   }
 }
 
@@ -171,6 +312,17 @@ const server = http.createServer((req, res) => {
       let input;
       try { input = JSON.parse(body); }
       catch (_) { res.writeHead(400, hj); res.end(JSON.stringify({ ok: false, error: 'malformed JSON body' })); return; }
+      // C2 (2026-06-11): per-type operator-payload guard rails BEFORE the
+      // schema's required-field validation, so a malformed operator event
+      // returns a clear 422 with a specific message rather than a generic
+      // schema error (or, worse, a structurally-valid-but-semantically-wrong
+      // payload reaching the reducer).
+      var payloadErr = validateOperatorPayload(input);
+      if (payloadErr) {
+        res.writeHead(422, hj);
+        res.end(JSON.stringify({ ok: false, error: payloadErr }));
+        return;
+      }
       try {
         input.actor = 'gui'; // symmetric log: GUI mutations are actor=gui
         const r = appendEvent(input);
@@ -242,6 +394,6 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  process.stdout.write('[server] conversation-tree-ui listening on http://' + HOST + ':' + PORT + '\n');
+  process.stdout.write('[server] workstreams-ui listening on http://' + HOST + ':' + PORT + '\n');
   process.stdout.write('[server] watching state file: ' + STATE_FILE + '\n');
 });

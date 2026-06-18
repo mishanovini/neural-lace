@@ -133,11 +133,23 @@ ok('R24 deploy-tracking: shipped-not-deployed + deployed filters + item-deployed
   && /function\s+isDeployed\s*\(/.test(js)
   && /type:\s*['"]item-deployed['"]/.test(js));
 
-// --- Phase D: modal dismissal (click-scrim / Esc / ✕) ---------------------
-ok('R25 modal dismissal wired (scrim click + Esc + ✕ all call closeDetailModal)',
-  /detailScrim\.addEventListener\(['"]click['"],\s*closeDetailModal\)/.test(js)
-  && /e\.key === 'Escape' && !detailModal\.hidden/.test(js)
-  && /dmClose\.addEventListener\(['"]click['"],\s*closeDetailModal\)/.test(js));
+// --- Phase D / I5 (Task 10): modal dismissal via the OVERLAY STACK ---------
+// The two ad-hoc document-level Esc handlers and the per-overlay scrim
+// listeners are RETIRED; ONE overlay-stack manager owns Esc (topmost layer
+// only), scrim clicks (own layer only), focus trap, and focus restore.
+ok('R25 modal dismissal wired through the overlay stack (✕ + bindScrim; ad-hoc Esc/scrim handlers retired)',
+  /var overlayStack = \(function \(\)/.test(js)
+  && /dmClose\.addEventListener\(['"]click['"],\s*closeDetailModal\)/.test(js)
+  && /overlayStack\.bindScrim\(detailScrim\)/.test(js)
+  && /overlayStack\.bindScrim\(docScrim\)/.test(js)
+  && !/detailScrim\.addEventListener/.test(js)              // old direct scrim hook gone
+  && !/docScrim\.addEventListener/.test(js)                 // old combined docs scrim hook gone
+  && !/e\.key === 'Escape' && !detailModal\.hidden/.test(js)); // old ad-hoc Esc gone
+ok('R29 overlay stack invariants: Esc closes TOPMOST only; focus trap + restore on close',
+  /if \(e\.key === 'Escape'\) \{ e\.preventDefault\(\); close\(t\.el\); return; \}/.test(js)
+  && /layer\.prevFocus = document\.activeElement/.test(js)
+  && /scrimStillNeeded/.test(js)                            // shared docScrim stays while a layer uses it
+  && /if \(e\.key !== 'Tab'\) return;/.test(js));           // focus trap wraps Tab inside the top layer
 
 // --- Phase D: full Phase-C context renders inside the modal ---------------
 ok('R26 modal renders full Phase-C context via renderItemDetails (Background/options/recommendation/links)',
@@ -174,8 +186,9 @@ ok('R27 background/about/the_ask/why_asking/why_assigned render without _categor
 // (item project → neural-lace → workstreams-coordination; bare names try the
 // coordination repo first) → openDocInApp bridge → openDocModal. The viewer
 // layers ABOVE the detail modal (#docScrim 61 / #docModal 62 vs modal-card 60)
-// and Esc closes the viewer first (detail Esc handler returns early while the
-// viewer is open). DOM built via textContent only — no innerHTML injection.
+// and Esc closes the viewer first — since I5 (Task 10) that ordering comes
+// from the overlay STACK (the viewer is the topmost pushed layer), not from
+// a hand-rolled early-return. DOM built via textContent only — no innerHTML.
 ok('R28 doc references in the detail modal are clickable and open in-app',
   /function\s+openDocSmart\s*\(/.test(js)
   && /openDocInApp\s*=\s*openDocModal/.test(js)
@@ -183,7 +196,7 @@ ok('R28 doc references in the detail modal are clickable and open in-app',
   && js.indexOf('var DOC_REF_RE') !== -1
   && js.indexOf('\\.md\\b') !== -1                       // bare *.md names match
   && /workstreams-coordination/.test(js)                  // coordination-repo candidate
-  && /if\s*\(dv && !dv\.hidden\)\s*return;/.test(js)      // Esc layering: viewer first
+  && /el: docModal, scrim: docScrim/.test(js)             // viewer is an overlay-stack layer (Esc pops it first)
   && /button\.det-link-doc/.test(C)
   && /#docScrim\s*\{\s*z-index:\s*61/.test(C)
   && /#docModal\s*\{\s*z-index:\s*62/.test(C));

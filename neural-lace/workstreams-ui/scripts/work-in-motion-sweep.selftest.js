@@ -263,6 +263,136 @@ const brId = sweepMod.branchNodeId('testrepo', 'feat/gamma');
   delete process.env.WIM_SWEEP_REPOS_FILE;
 }
 
+// ---- T11: parseVercelAgeToMs (age column -> approx epoch) --------------------
+{
+  const now = 1_700_000_000_000;
+  ok('T11 parse "5m"', sweepMod.parseVercelAgeToMs('5m', now) === now - 5 * 60e3);
+  ok('T11 parse "9h"', sweepMod.parseVercelAgeToMs('9h', now) === now - 9 * 3600e3);
+  ok('T11 parse "3d"', sweepMod.parseVercelAgeToMs('3d', now) === now - 3 * 86400e3);
+  ok('T11 garbage -> null', sweepMod.parseVercelAgeToMs('whenever', now) === null);
+}
+
+// ---- T12: DEPLOY detection (shipped-not-deployed -> deployed) ----------------
+// Self-contained: a fresh repo with one PR. (a) ingest it in-flight. (b) PR
+// gone (merged) => item-shipped (shipped-not-deployed). (c) sweep again WITH a
+// Ready prod deploy NEWER than the ship => item-deployed; the UI now derives
+// Deployed for that item. Then verify the conservative guards.
+{
+  const prNode = sweepMod.prNodeId('deployrepo', 7);
+  function dgt(extra) {
+    return [Object.assign({
+      repoKey: 'deployrepo', rootNodeId: 'proj-deployrepo', rootTitle: 'Deploy Repo',
+      plansOk: true, plans: [], branchesOk: true, branches: [],
+      prsOk: true, prs: [{ number: 7, title: 'Ship the thing' }],
+      deploysOk: false, deploy: null,
+    }, extra || {})];
+  }
+  // (a) ingest the open PR
+  sweep(dgt(), true);
+  // (b) PR merged => gone => shipped-not-deployed (deploy still SKIP)
+  sweep(dgt({ prsOk: true, prs: [] }), true);
+  {
+    const snap = readSnap();
+    const n = nodeById(snap, prNode);
+    ok('T12b PR shipped-not-deployed after merge',
+      !!n && uiIsShippedNotDeployed(n.items[0]),
+      n && JSON.stringify({ state: n.items[0].state, deployed: n.items[0].deployed }));
+  }
+  // (c) sweep with a Ready prod deploy NEWER than the ship
+  const r12 = sweep(dgt({ prsOk: true, prs: [],
+    deploysOk: true, deploy: { ready_at_ms: Date.now(), url: 'https://app.example.test' } }), true);
+  ok('T12c plans an item-deployed',
+    r12.planned.some(e => e.type === 'item-deployed' && e.node_id === prNode),
+    JSON.stringify(r12.planned.map(e => e.type)));
+  {
+    const snap = readSnap();
+    const n = nodeById(snap, prNode);
+    ok('T12c PR now Deployed (UI filter shape)', !!n && n.items[0].deployed === true,
+      n && JSON.stringify({ deployed: n.items[0].deployed }));
+    ok('T12c deploy carries evidence', typeof n.items[0].deploy_evidence === 'string'
+      && /production/i.test(n.items[0].deploy_evidence));
+  }
+  // (d) idempotent: a second deploy-aware sweep emits ZERO deploy events
+  const r12d = sweep(dgt({ prsOk: true, prs: [],
+    deploysOk: true, deploy: { ready_at_ms: Date.now(), url: 'https://app.example.test' } }), true);
+  ok('T12d deploy detection is idempotent (already-deployed => no re-emit)',
+    !r12d.planned.some(e => e.type === 'item-deployed'),
+    JSON.stringify(r12d.planned.map(e => e.type)));
+}
+
+// ---- T13: deploy SKIP never marks work deployed (failure isolation) ---------
+{
+  const prNode = sweepMod.prNodeId('noverc', 9);
+  function ngt(extra) {
+    return [Object.assign({
+      repoKey: 'noverc', rootNodeId: 'proj-noverc', rootTitle: 'No Vercel',
+      plansOk: true, plans: [], branchesOk: true, branches: [],
+      prsOk: true, prs: [{ number: 9, title: 'No deploy signal' }],
+      deploysOk: false, deploysSkipReason: 'no .vercel/project.json', deploy: null,
+    }, extra || {})];
+  }
+  sweep(ngt(), true);                          // ingest
+  sweep(ngt({ prsOk: true, prs: [] }), true);  // merge => shipped-not-deployed
+  const r13 = sweep(ngt({ prsOk: true, prs: [] }), true); // deploy still SKIP
+  ok('T13 deploy SKIP emits NO item-deployed',
+    !r13.planned.some(e => e.type === 'item-deployed'),
+    JSON.stringify(r13.planned.map(e => e.type)));
+  const snap = readSnap();
+  const n = nodeById(snap, prNode);
+  ok('T13 item stays shipped-not-deployed when deploy ground truth is unavailable',
+    !!n && uiIsShippedNotDeployed(n.items[0]),
+    n && JSON.stringify({ deployed: n.items[0].deployed }));
+}
+
+// ---- T14: a deploy OLDER than the ship does NOT mark deployed ---------------
+{
+  const prNode = sweepMod.prNodeId('oldrepo', 11);
+  function ogt(extra) {
+    return [Object.assign({
+      repoKey: 'oldrepo', rootNodeId: 'proj-oldrepo', rootTitle: 'Old Deploy',
+      plansOk: true, plans: [], branchesOk: true, branches: [],
+      prsOk: true, prs: [{ number: 11, title: 'Shipped after last deploy' }],
+      deploysOk: false, deploy: null,
+    }, extra || {})];
+  }
+  sweep(ogt(), true);                          // ingest
+  sweep(ogt({ prsOk: true, prs: [] }), true);  // merge now => shipped_ts ~ now
+  // deploy that completed 1 day BEFORE this ship: must NOT count as this work's deploy
+  const r14 = sweep(ogt({ prsOk: true, prs: [],
+    deploysOk: true, deploy: { ready_at_ms: Date.now() - 86400e3, url: 'https://old.example.test' } }), true);
+  ok('T14 prod deploy predating the ship does NOT mark it deployed',
+    !r14.planned.some(e => e.type === 'item-deployed'),
+    JSON.stringify(r14.planned.map(e => e.type)));
+}
+
+// ---- T15: gone-this-pass + OLD deploy does NOT mark deployed (ADR-056) ------
+// The bug: a PR that ships (merges) in the SAME sweep that supplies a Ready
+// prod deploy was marked deployed against ANY pre-existing deploy — including
+// one that completed days BEFORE the merge and cannot contain its code. T14
+// only exercised the prior-pass branch (ship and deploy in separate sweeps);
+// THIS test merges AND deploy-detects in ONE pass so the gone-this-pass branch
+// (ship time == now) is exercised. The shared deployIsNewerThanShip predicate
+// must suppress item-deployed because the deploy predates the just-now merge.
+{
+  const prNode = sweepMod.prNodeId('gonerepo', 13);
+  function ggt(extra) {
+    return [Object.assign({
+      repoKey: 'gonerepo', rootNodeId: 'proj-gonerepo', rootTitle: 'Gone This Pass',
+      plansOk: true, plans: [], branchesOk: true, branches: [],
+      prsOk: true, prs: [{ number: 13, title: 'Merges this pass' }],
+      deploysOk: false, deploy: null,
+    }, extra || {})];
+  }
+  sweep(ggt(), true);                          // ingest the open PR
+  // ONE sweep: PR is gone (merged) THIS pass AND a Ready prod deploy is supplied
+  // whose ready_at_ms is 3 days in the PAST -> the deploy predates this merge.
+  const r15 = sweep(ggt({ prsOk: true, prs: [],
+    deploysOk: true, deploy: { ready_at_ms: Date.now() - 3 * 24 * 3600 * 1000, url: 'https://stale.example.test' } }), true);
+  ok('T15 gone-this-pass + deploy older than the just-now merge does NOT mark deployed',
+    !r15.planned.some(e => e.type === 'item-deployed' && e.node_id === prNode),
+    JSON.stringify(r15.planned.map(e => e.type)));
+}
+
 // ---- summary ----------------------------------------------------------------
 try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch (_) {}
 console.log('work-in-motion-sweep selftest: ' + pass + ' passed, ' + fail + ' failed');

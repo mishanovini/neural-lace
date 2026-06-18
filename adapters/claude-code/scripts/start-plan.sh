@@ -26,6 +26,8 @@
 #   --mode <code|design|design-skip>  default code
 #   --frozen                      default false (set this flag to start frozen)
 #   --prd-ref <slug>              default "n/a — harness-development"
+#   --owner <name>                default "" (Check 14 requires it on v2 ACTIVE plans)
+#   --target-date <YYYY-MM-DD>    default "" (Check 14 requires it on v2 ACTIVE plans)
 #   --execution-mode <name>       default orchestrator
 #   --acceptance-exempt           default false (set flag to be exempt)
 #   --acceptance-exempt-reason "<reason>"
@@ -181,6 +183,8 @@ generate_plan_file() {
   local acc_exempt="${ACCEPTANCE_EXEMPT:-false}"
   local acc_reason="${ACCEPTANCE_EXEMPT_REASON:-}"
   local absorbed="${ABSORB_BACKLOG:-none}"
+  local owner="${OWNER:-}"
+  local target_date="${TARGET_DATE:-}"
 
   # Compose the header block. We rebuild the top-of-file lines in one pass
   # rather than using sed -i in a loop (sed in-place varies across platforms).
@@ -194,7 +198,8 @@ generate_plan_file() {
       -v tier="$tier" -v rung="$rung" -v arch="$arch" -v mode="$mode" \
       -v frozen="$frozen" -v prd_ref="$prd_ref" -v exec_mode="$exec_mode" \
       -v acc_exempt="$acc_exempt" -v acc_reason="$acc_reason" \
-      -v absorbed="$absorbed" -v scope_hint="$scope_hint" '
+      -v absorbed="$absorbed" -v scope_hint="$scope_hint" \
+      -v owner="$owner" -v target_date="$target_date" '
     BEGIN { seen_first_in = 0 }
     /^# Plan: \[Task Title\]$/                  { print "# Plan: " title; next }
     /^Execution Mode: orchestrator$/            { print "Execution Mode: " exec_mode; next }
@@ -214,6 +219,8 @@ generate_plan_file() {
     /^architecture: <coding-harness/            { print "architecture: " arch; next }
     /^frozen: false$/                           { print "frozen: " frozen; next }
     /^prd-ref: <slug \| n\/a — harness-development>$/ { print "prd-ref: " prd_ref; next }
+    /^owner: <name>$/                           { print "owner: " owner; next }
+    /^target-completion-date: <YYYY-MM-DD>$/    { print "target-completion-date: " target_date; next }
     /^- IN: \[what.s included/                  {
       if (!seen_first_in) {
         print "- IN: " scope_hint
@@ -297,6 +304,8 @@ parse_flags() {
   ACCEPTANCE_EXEMPT=""
   ACCEPTANCE_EXEMPT_REASON=""
   ABSORB_BACKLOG=""
+  OWNER=""
+  TARGET_DATE=""
   NO_QUEUE=0
   NO_STAGE=0
 
@@ -308,6 +317,8 @@ parse_flags() {
       --mode)              MODE="$2"; shift 2;;
       --frozen)            FROZEN="true"; shift;;
       --prd-ref)           PRD_REF="$2"; shift 2;;
+      --owner)             OWNER="$2"; shift 2;;
+      --target-date)       TARGET_DATE="$2"; shift 2;;
       --execution-mode)    EXECUTION_MODE="$2"; shift 2;;
       --acceptance-exempt) ACCEPTANCE_EXEMPT="true"; shift;;
       --acceptance-exempt-reason) ACCEPTANCE_EXEMPT_REASON="$2"; shift 2;;
@@ -321,7 +332,7 @@ parse_flags() {
     esac
   done
   export TIER RUNG ARCHITECTURE MODE FROZEN PRD_REF EXECUTION_MODE \
-    ACCEPTANCE_EXEMPT ACCEPTANCE_EXEMPT_REASON ABSORB_BACKLOG
+    ACCEPTANCE_EXEMPT ACCEPTANCE_EXEMPT_REASON ABSORB_BACKLOG OWNER TARGET_DATE
   return 0
 }
 
@@ -422,6 +433,9 @@ tier: <1-5>
 rung: <0-5>
 architecture: <coding-harness | dark-factory | auto-research | orchestration | hybrid>
 frozen: false
+lifecycle-schema: v2
+owner: <name>
+target-completion-date: <YYYY-MM-DD>
 prd-ref: <slug | n/a — harness-development>
 
 ## Goal
@@ -579,6 +593,23 @@ run_self_test() {
     FAILED=$((FAILED+1))
   fi
   rm -rf "$D8"
+
+  # ----- S9: --owner / --target-date propagate (R1 accountability fields) -----
+  local D9
+  D9=$(setup_synthetic_repo "S9")
+  (cd "$D9" && bash "$SELF_PATH" start owned-plan "scope" \
+    --owner Misha --target-date 2026-07-15 --no-stage >/dev/null 2>&1)
+  if [[ -f "$D9/docs/plans/owned-plan.md" ]] \
+     && grep -q '^owner: Misha$' "$D9/docs/plans/owned-plan.md" \
+     && grep -q '^target-completion-date: 2026-07-15$' "$D9/docs/plans/owned-plan.md" \
+     && grep -q '^lifecycle-schema: v2$' "$D9/docs/plans/owned-plan.md"; then
+    printf 'self-test (S9) owner-target-date-propagate: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S9) owner-target-date-propagate: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D9"
 
   printf '\nself-test summary: %d passed, %d failed (of %d scenarios)\n' \
     "$PASSED" "$FAILED" "$((PASSED+FAILED))" >&2
