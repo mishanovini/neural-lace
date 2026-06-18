@@ -420,8 +420,20 @@
   // deployed" = the work merged/shipped but has NOT reached production — exactly
   // the set Misha wants surfaced ("every effort that doesn't get deployed").
   function isDeployed(it) { return it.deployed === true; }
+  // builder-dispatch items (ADR-054 noise-control tier: details._category ===
+  // 'builder-dispatch') are AI-internal completed sub-agent dispatches, NOT
+  // deployable code. When such an item finishes (action-done => checked =>
+  // itemState 'shipped') it must NOT pollute the "shipped-not-deployed" backlog
+  // — that bucket is "merged code awaiting production", and a builder dispatch
+  // never deploys. It is a completed internal task; it belongs in Recently
+  // shipped (accomplishments), not in the deploy-pending backlog. (2026-06-17:
+  // 93 of the 211 stale shipped-not-deployed items were exactly this — see
+  // docs/discoveries/2026-06-17-workstreams-no-deploy-signal-no-ask-resolution.md.)
+  function isBuilderDispatch(it) {
+    return !!(it && it.details && it.details._category === 'builder-dispatch');
+  }
   function isShippedNotDeployed(it) {
-    return itemState(it) === 'shipped' && !isDeployed(it);
+    return itemState(it) === 'shipped' && !isDeployed(it) && !isBuilderDispatch(it);
   }
 
   // ---- state-badge glyphs ---------------------------------------------
