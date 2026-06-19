@@ -73,6 +73,12 @@ For each behavior the task adds (one behavior at a time):
 
 **When strict test-first doesn't apply** (`Verification: mechanical` / `contract` structural work, harness-internal mechanisms whose verification idiom is `--self-test`, pure config), say so — but the *spirit* holds: define the check that proves correctness, then satisfy it honestly. For AI features, the functionality test must invoke a **real** (smallest-viable) model — mocking the LLM defeats the test.
 
+**RED means red against the REAL bug, asserting the REAL output.** A green test is not a working feature. Three traps make a passing test prove nothing — avoid all three:
+
+- **Assert the rendered output, not an intermediate shape.** Your test must drive the real component (render it, hit the real endpoint) and assert the **output the user observes** — the DOM text/element on screen, the response field the user actually consumes — NOT an intermediate value en route (a computed return, props handed to a child, hook/store state, an API field before it is rendered). A test asserting an intermediate can be green while the user-facing surface is broken. *(Real failure: a cost test stayed green while the pricing tab was broken — it asserted the computed cost, not the cell the user reads.)*
+- **RED must fail BECAUSE the user-facing behavior is broken/absent** — not merely fail somewhere. Confirm the test goes red against the broken / old / stubbed code *for the user-observable reason*. A test already green against the broken code is asserting something the bug never touched — it is testing nothing the user cares about.
+- **For a setting / flag / config (or a user-observable conditional governed by one), prove the OUTPUT changes — wired ≠ reached ≠ behaving.** The test must toggle the setting (or exercise the states it governs) and assert the **rendered output differs** across its values, for the states that actually exercise it — *especially the highest-traffic ones*. "The setting is read" (wired) and "the branch exists" (reached) are not "the output is observably different" (behaving). *(Real failure: config cards stayed inert for the highest-traffic states — the setting was wired but never changed the render.)*
+
 ### Phase 3 — INTEGRATE & PROVE (exercise the real path)
 
 1. **Typecheck** (`npx tsc --noEmit` or project equivalent) and run the relevant test tier (`npm run test:unit` / `test:api` / `npx playwright test ...`). Confirm PASS.
