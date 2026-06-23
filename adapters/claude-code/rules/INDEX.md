@@ -76,6 +76,7 @@ Canonical inventory of every rule file under `adapters/claude-code/rules/`. The 
 | `verification-pipeline.md` | Verification Pipeline — Four-Agent Sequence Before Task Completion | Hybrid | Build-time + Stop-time — `functionality-verifier` per-task, `end-user-advocate` at session end (`product-acceptance-gate.sh`), `claim-reviewer` before prose summary, `domain-expert-tester` after substantial UI builds | 2026-05-11 |
 | `work-shapes.md` | Work Shapes — When to Use, How to Add, How to Escalate | Pattern | Plan-time — scan `adapters/claude-code/work-shapes/` for a canonical task shape that matches; cite `shape_id` in dispatch prompts | 2026-05-05 |
 | `workstream-memory-ecology.md` | Workstream-Memory Ecology — Match Capture To Tier; Don't Pollute Workstreams With Each Other's Context | Pattern | Always — at fact-observation time, judge which tier (project SCRATCHPAD / cross-workstream vault / user auto-memory) the fact belongs to and route accordingly | 2026-05-23 |
+| `worktree-isolation.md` | Worktree Isolation — Inform Every Session at Start; Preserve Work Before Ending in a Worktree | Hybrid | Session-start (`session-start-worktree-advisor.sh` auto-injects tailored worktree guidance) + Stop (`worktree-teardown-gate.sh` blocks ending in a worktree with uncommitted work; preserve-first, never `--force`) | 2026-06-23 |
 
 ## Maintenance
 

@@ -456,6 +456,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/worktree-teardown-gate.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/workstreams-stop-gate.sh"
           },
           {
@@ -615,6 +619,10 @@
             "type": "command",
             "command": "bash ~/.claude/hooks/session-start-git-freshness.sh",
             "statusMessage": "Checking git freshness (fetch + behind + working-tree state)..."
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/session-start-worktree-advisor.sh"
           },
           {
             "type": "command",
