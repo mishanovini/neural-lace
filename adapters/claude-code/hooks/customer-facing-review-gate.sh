@@ -298,13 +298,14 @@ fi
 if [[ -z "$TRANSCRIPT_PATH" ]] || [[ ! -f "$TRANSCRIPT_PATH" ]]; then exit 0; fi
 if ! command -v jq >/dev/null 2>&1; then exit 0; fi
 
-# Mode resolution: env > local file > "block" (hard-requirement default).
+# Mode resolution: env > local file > "warn" (default; set "block" in env/file to hard-block).
+# 2026-06-20: default flipped block->warn (see pr-health-snapshot-gate.sh for rationale).
 MODE="${UX_REVIEW_GATE_MODE:-}"
 if [[ -z "$MODE" ]] && [[ -f "$HOME/.claude/local/ux-review-gate-mode" ]]; then
   MODE=$(tr -d '[:space:]' < "$HOME/.claude/local/ux-review-gate-mode" 2>/dev/null || echo "")
 fi
-[[ -z "$MODE" ]] && MODE="block"
-[[ "$MODE" != "warn" ]] && MODE="block"
+[[ -z "$MODE" ]] && MODE="warn"
+[[ "$MODE" != "block" ]] && MODE="warn"
 
 # ------------------------------------------------------------
 # Extract every tool_use record as: name <US> subagent_type <US> blob

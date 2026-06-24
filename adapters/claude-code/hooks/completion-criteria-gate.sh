@@ -310,13 +310,14 @@ if [[ "${COMPLETION_GATE_DISABLE:-0}" = "1" ]]; then exit 0; fi
 if [[ -z "$TRANSCRIPT_PATH" ]] || [[ ! -f "$TRANSCRIPT_PATH" ]]; then exit 0; fi
 if ! command -v jq >/dev/null 2>&1; then exit 0; fi
 
-# Mode resolution: env > local file > "block" (hard-requirement default).
+# Mode resolution: env > local file > "warn" (default; set "block" in env/file to hard-block).
+# 2026-06-20: default flipped block->warn (see pr-health-snapshot-gate.sh for rationale).
 MODE="${COMPLETION_GATE_MODE:-}"
 if [[ -z "$MODE" ]] && [[ -f "$HOME/.claude/local/completion-gate-mode" ]]; then
   MODE=$(tr -d '[:space:]' < "$HOME/.claude/local/completion-gate-mode" 2>/dev/null || echo "")
 fi
-[[ -z "$MODE" ]] && MODE="block"
-[[ "$MODE" != "warn" ]] && MODE="block"
+[[ -z "$MODE" ]] && MODE="warn"
+[[ "$MODE" != "block" ]] && MODE="warn"
 
 # Extract the LAST assistant message (full text; base64 to survive newlines).
 LAST_B64=$(jq -r '
