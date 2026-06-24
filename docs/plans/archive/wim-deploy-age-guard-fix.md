@@ -1,5 +1,5 @@
 # Plan: Fix gone-this-pass false-DEPLOYED in work-in-motion-sweep (PR #61)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -35,9 +35,9 @@ a sweep observes a Ready prod deploy genuinely newer than its merge.
   workstreams scripts.
 
 ## Tasks
-- [ ] 1. Extract a shared `deployIsNewerThanShip(readyMs, shipMs)` predicate and gate BOTH deploy-emission branches on it (gone-this-pass uses ship time == now). — Verification: mechanical
-- [ ] 2. Add T15 regression test (gone-this-pass + old deploy must NOT plan item-deployed); confirm 50/50, T14 + T12c still green. — Verification: mechanical
-- [ ] 3. Anonymize `proj-circuit` → "a Vercel-linked project" in the archived plan's Testing Strategy. — Verification: mechanical
+- [x] 1. Extract a shared `deployIsNewerThanShip(readyMs, shipMs)` predicate and gate BOTH deploy-emission branches on it (gone-this-pass uses ship time == now). — Verification: mechanical
+- [x] 2. Add T15 regression test (gone-this-pass + old deploy must NOT plan item-deployed); confirm 50/50, T14 + T12c still green. — Verification: mechanical
+- [x] 3. Anonymize `proj-circuit` → "a Vercel-linked project" in the archived plan's Testing Strategy. — Verification: mechanical
 
 ## Files to Modify/Create
 - `neural-lace/workstreams-ui/scripts/work-in-motion-sweep.js` — add shared predicate; both branches gate on it (the fix).
@@ -100,7 +100,17 @@ the self-test exercises it.
 - S5 (Scope-vs-Analysis Check): swept — all three task verbs target files listed in Scope IN.
 
 ## Definition of Done
-- [ ] All tasks checked off
-- [ ] Self-test 50/50 with T15 green
-- [ ] SCRATCHPAD/plan reconciled
-- [ ] PR #61 updated (orchestrator re-confirms + merges)
+- [x] All tasks checked off
+- [x] Self-test 50/50 with T15 green
+- [x] SCRATCHPAD/plan reconciled
+- [x] PR #61 updated (orchestrator re-confirms + merges)
+
+## Completion Report (2026-06-17 — triage)
+
+The fix shipped to `origin/master` via **PR #61** (merge commit **ac29415** — "fix(workstreams): reflect real deploy status + stop builder-dispatch noise polluting shipped-not-deployed (#61)"). All three tasks verified on master:
+
+- **Task 1** — the shared `deployIsNewerThanShip(readyMs, shipMs)` predicate is present at `neural-lace/workstreams-ui/scripts/work-in-motion-sweep.js:394` and gates EVERY path to `item-deployed` (the single emission site at :575 continues only when the predicate passes; the comment at :549 documents the one-predicate-gates-every-path design).
+- **Task 2** — the T15 regression test ("gone-this-pass + deploy older than the just-now merge does NOT mark deployed") is present at `work-in-motion-sweep.selftest.js:368-391`. Self-test run at triage time: **50 passed, 0 failed** with T15 green — the plan's stated acceptance idiom (PROVEN at runtime).
+- **Task 3** — `proj-circuit` codename anonymized in `docs/plans/archive/workstreams-ui-reflect-real-status.md` (grep count: 0 occurrences).
+
+acceptance-exempt (harness-internal Node tooling; `--self-test` is the acceptance artifact). All deliverables confirmed shipped → COMPLETED.

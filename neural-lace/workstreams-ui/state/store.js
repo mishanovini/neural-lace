@@ -298,6 +298,96 @@ function rotateVersions(statePath, retention) {
   } catch (_) { /* retention is best-effort (NFR-1) — never blocks the publish */ }
 }
 
+// ---- Windows transient-rename resilience (atomic-publish hardening) ---------
+// POSIX rename(2) is atomic and never contends with a reader, so on Linux/macOS
+// the FIRST renameSync below succeeds and this layer adds ZERO cost (no sleep,
+// no extra syscall). On Windows, when the live GUI server holds fs.watch open on
+// the state DIRECTORY (server.js watches path.dirname(STATE_FILE) so the
+// atomic-rename inode swap keeps firing SSE), that directory-change watch
+// (ReadDirectoryChangesW) intermittently holds a brief lock on the rename
+// target/temp and renameSync throws EPERM/EACCES/EBUSY mid-publish (observed
+// 2026-06-17: a 35-event batch lost 8 events when one rename hit EPERM). The fix
+// is a bounded backoff retry — the lock clears within a few short waits
+// (empirically the very next attempt succeeds). Non-transient errors (e.g.
+// EXDEV) are rethrown immediately — never masked.
+const RENAME_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const RENAME_RETRY_ATTEMPTS = 10; // incl. the first; worst-case ~1.1s of backoff
+const RENAME_RETRY_BASE_MS = 25;  // linear-ish growth: 25,50,75,... capped
+const RENAME_RETRY_CAP_MS = 250;  // per-sleep ceiling
+// Orphaned temps older than this are swept on each write. Generous enough that a
+// concurrent writer's in-flight temp (write -> rename is sub-millisecond) is
+// NEVER mistaken for an orphan; small enough that crash/EPERM leftovers clear
+// promptly (10+ stale `.tmp.*` siblings observed on a live machine, 2026-06-17).
+const DEFAULT_TEMP_STALE_MS = 60 * 1000;
+
+// Blocking sleep WITHOUT a CPU busy-loop. Atomics.wait on a throwaway
+// SharedArrayBuffer is the standard main-thread-safe synchronous sleep in Node
+// (renameSync + appendEvent are synchronous, so an async timer cannot be used).
+function sleepSync(ms) {
+  if (!(ms > 0)) return;
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch (_) {
+    // Fallback if SharedArrayBuffer/Atomics are unavailable (very old runtimes):
+    // a coarse busy-wait. Only ever reached on the rare retry path.
+    const end = Date.now() + ms;
+    while (Date.now() < end) { /* spin */ }
+  }
+}
+
+// Atomic publish with bounded Windows-EPERM retry. Fast path: one renameSync.
+// On a transient sharing-violation (EPERM/EACCES/EBUSY) back off and retry up to
+// `attempts` total; on a NON-transient error OR after exhausting the budget,
+// unlink the orphaned temp (best-effort) and rethrow so the caller still sees
+// the real failure. `cfg` ({attempts, baseMs, capMs}) overrides the tuned
+// defaults — used by the self-test to exercise the bounded path quickly;
+// production always uses the defaults.
+function renameWithRetry(tmp, dest, cfg) {
+  cfg = cfg || {};
+  const attempts = cfg.attempts || RENAME_RETRY_ATTEMPTS;
+  const baseMs = cfg.baseMs != null ? cfg.baseMs : RENAME_RETRY_BASE_MS;
+  const capMs = cfg.capMs != null ? cfg.capMs : RENAME_RETRY_CAP_MS;
+  let attempt = 0;
+  for (;;) {
+    try {
+      fs.renameSync(tmp, dest);
+      return; // fast path on POSIX; a cleared lock on Windows
+    } catch (err) {
+      attempt++;
+      const transient = !!(err && RENAME_RETRY_CODES.has(err.code));
+      if (!transient || attempt >= attempts) {
+        try { fs.unlinkSync(tmp); } catch (_) {} // don't leave a stray .tmp.* behind
+        throw err;
+      }
+      sleepSync(Math.min(baseMs * attempt, capMs));
+    }
+  }
+}
+
+// Sweep orphaned `<base>.tmp.*` siblings older than maxAgeMs. Orphans come from
+// crashed writes and (pre-retry) EPERM-failed publishes; left unswept they
+// accumulate. Best-effort: never throws, never blocks the publish. The age
+// guard makes it safe under concurrent writers — an in-flight temp is
+// milliseconds old, far below the threshold, so it is never swept. Scoped to
+// the state file's own basename prefix, so it never touches the state file, the
+// `.audit.log`, the `.versions/` dir, or any sibling file's temps.
+function cleanupStaleTemps(statePath, maxAgeMs) {
+  try {
+    const dir = path.dirname(statePath);
+    const prefix = path.basename(statePath) + '.tmp.';
+    const now = Date.now();
+    const entries = fs.readdirSync(dir);
+    for (const name of entries) {
+      if (name.indexOf(prefix) !== 0) continue;
+      const full = path.join(dir, name);
+      try {
+        const st = fs.statSync(full);
+        if (st.isFile() && (now - st.mtimeMs) >= maxAgeMs) fs.unlinkSync(full);
+      } catch (_) { /* race with another sweeper / writer — ignore */ }
+    }
+  } catch (_) { /* dir missing or unreadable — nothing to sweep */ }
+}
+
 // ---- §7b atomic single-event append + §7c compaction -----------------------
 function appendEvent(eventInput, opts) {
   opts = opts || {};
@@ -307,6 +397,12 @@ function appendEvent(eventInput, opts) {
   const retention = opts.retention || DEFAULT_RETENTION;
 
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
+
+  // Sweep orphaned `.tmp.*` siblings from prior crashed / EPERM-failed publishes
+  // before writing a fresh one (best-effort; the age guard protects any
+  // concurrent writer's in-flight temp). "On write" is the available hook — the
+  // store module is stateless and has no separate init step.
+  cleanupStaleTemps(statePath, opts.tempStaleMs || DEFAULT_TEMP_STALE_MS);
 
   // Read current truth (torn-snapshot-safe). Strip prior snapshot-committed
   // attestation meta-records: only DOMAIN events accumulate / feed the
@@ -386,12 +482,14 @@ function appendEvent(eventInput, opts) {
   // NFR-1: snapshot the prior version before overwriting (best-effort).
   rotateVersions(statePath, retention);
 
-  // §7b atomic publish: write temp, fsync-then-rename. While the temp is
-  // being written `snapshot.valid` is moot because the temp is not yet the
-  // well-known path; the rename swaps a fully-serialized file in one fs op.
+  // §7b atomic publish: write temp, then rename. While the temp is being
+  // written `snapshot.valid` is moot because the temp is not yet the well-known
+  // path; the rename swaps a fully-serialized file in one fs op. On Windows the
+  // GUI server's directory fs.watch can briefly lock the rename (EPERM) — the
+  // bounded retry absorbs that transient; POSIX takes the zero-cost fast path.
   const tmp = statePath + '.tmp.' + process.pid + '.' + Date.now() + '.' + Math.floor(Math.random() * 1e6);
   fs.writeFileSync(tmp, JSON.stringify(nextState, null, 2), 'utf8');
-  fs.renameSync(tmp, statePath); // atomic single-fs publish (Pin 3b / §7b)
+  renameWithRetry(tmp, statePath); // atomic single-fs publish (Pin 3b / §7b)
 
   return { state: readState(opts), appended: true, event: ev, compacted: didCompact };
 }
@@ -422,6 +520,11 @@ module.exports = {
   DEFAULT_COMPACTION_THRESHOLD,
   DEFAULT_RETENTION,
   __writeTornForTest,
+  // Windows transient-rename resilience (atomic-publish hardening):
+  renameWithRetry,
+  cleanupStaleTemps,
+  DEFAULT_TEMP_STALE_MS,
+  RENAME_RETRY_ATTEMPTS,
   // DEC-D (d) snapshot-integrity attestation primitive (ADR-032 §8 r2):
   SNAPSHOT_COMMITTED_TYPE,
   canonicalJSON,

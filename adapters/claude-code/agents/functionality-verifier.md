@@ -144,6 +144,8 @@ Specifically:
 - **A button that renders but produces no observable change when clicked is FAIL.** Don't pass because "the click handler is wired."
 - **An AI response that is grammatically valid but does not satisfy the task's stated outcome is FAIL.** Don't pass because "the model returned something."
 - **A migration that lands a column without backfilling existing rows is FAIL.** Don't pass because "the column exists."
+- **A setting / flag / config whose code path is wired but whose user-facing output does not CHANGE when you toggle it is FAIL** (wired ≠ reached ≠ behaving). Exercise BOTH/ALL of the setting's values AND the highest-traffic states it governs — a single default-state PASS does not prove the setting changes behavior where it matters. *(Real failure: config cards stayed inert for the highest-traffic states — the setting was wired but never changed the render.)*
+- **An assertion against an intermediate value the user never sees is NOT your evidence.** You decide on what the USER observes rendered (DOM text/element, the response field consumed) — never a logged number, a network payload field en route, or a builder's green unit test that asserts a computed value before render. *(Real failure: a cost test stayed green while the pricing tab was broken — it asserted the computed cost, not the cell the user reads.)* If the only "evidence" is such a test, you have not verified functionality; exercise the rendered output yourself.
 
 When uncertain between PASS and INCOMPLETE: choose INCOMPLETE. The cost of a false PASS (vaporware ships) is higher than the cost of a false INCOMPLETE (builder demonstrates more concretely). The harness pays the cost of false INCOMPLETEs willingly.
 

@@ -351,6 +351,15 @@
         ]
       },
       {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/plan-auto-closure.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
@@ -453,6 +462,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/product-acceptance-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/worktree-teardown-gate.sh"
           },
           {
             "type": "command",
@@ -615,6 +628,10 @@
             "type": "command",
             "command": "bash ~/.claude/hooks/session-start-git-freshness.sh",
             "statusMessage": "Checking git freshness (fetch + behind + working-tree state)..."
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/session-start-worktree-advisor.sh"
           },
           {
             "type": "command",

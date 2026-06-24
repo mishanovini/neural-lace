@@ -84,6 +84,40 @@ Required by `plan-reviewer.sh` Check 10.
 See `~/.claude/rules/spec-freeze.md` for the freeze-thaw protocol.
 -->
 
+lifecycle-schema: v2
+<!--
+lifecycle-schema marks a plan as governed by the mechanical-closure
+redesign (ADR 036). Its PRESENCE is the grandfather signal: pre-redesign
+plans lack the field, so plan-reviewer.sh Check 14 (owner +
+target-completion-date) and Check 15 (## Closure Contract) SKIP them.
+A plan created from this template carries `lifecycle-schema: v2` and is
+therefore enforced. This is sub-decision 036-d (D2 option iii — enforce
+on the ACTIVE transition only; never retroactively block already-ACTIVE
+pre-redesign plans). Backfilling the field into a legacy plan opts that
+plan into the new gates. Do not remove it from a new plan to dodge the
+gates — that is the same anti-pattern as deleting a test to make a build
+pass. See ~/.claude/rules/plan-lifecycle.md and Decision 036.
+-->
+
+owner: <name>
+<!--
+owner — who is accountable for this plan reaching a terminal state
+(COMPLETED / ABANDONED / SUPERSEDED / DEFERRED). One accountable human.
+Required (non-empty) on `Status: ACTIVE` plans that carry
+`lifecycle-schema: v2`, per plan-reviewer.sh Check 14. Sub-decision
+036-d. Pass via `start-plan.sh --owner <name>`.
+-->
+
+target-completion-date: <YYYY-MM-DD>
+<!--
+target-completion-date — the date by which the owner commits this plan
+will reach a terminal state, in YYYY-MM-DD form. A falsifiable
+structural commitment, not a wish. Required + well-formed on
+`Status: ACTIVE` v2 plans, per plan-reviewer.sh Check 14. The staleness
+commitment-breach gate (R5, future) reads this field. Pass via
+`start-plan.sh --target-date <YYYY-MM-DD>`.
+-->
+
 prd-ref: <slug | n/a — harness-development>
 <!--
 prd-ref values (PRD-validity gate, Decision 015):
@@ -507,6 +541,41 @@ If no scenarios were proposed and rejected, state that explicitly:
 "None — all advocate-proposed scenarios are in scope above."
 -->
 - [populate me — accepted-as-out-of-scope scenarios live here, with rationale]
+
+## Closure Contract
+<!--
+REQUIRED + substantive on `Status: ACTIVE` plans carrying
+`lifecycle-schema: v2` (plan-reviewer.sh Check 15). Sub-decision 036-b:
+the PASS-artifact contract is DEFINED AT CREATION, before any work
+starts — "we know we're done when…" written before work begins, not
+re-litigated at session end when context is thinnest. This is the
+pre-agreed target that auto-closure (plan-auto-closure.sh, R4) reads.
+
+Declare four things concretely:
+
+  - **Commands that run** to verify completion (acceptance-scenario
+    runtime commands for product plans; the `--self-test` invocations
+    for harness plans).
+  - **Expected outputs** — the PASS criteria (e.g. "exit 0",
+    "13/13 PASS", "scenario `foo` verdict PASS").
+  - **On-disk artifact location** — where the PASS artifact lands:
+    `.claude/state/acceptance/<plan-slug>/...` for product plans;
+    the structured `<plan-slug>-evidence/<task-id>.evidence.json` set
+    for acceptance-exempt harness plans.
+  - **Done when** — one sentence: "this plan is DONE when all tasks are
+    task-verifier PASS AND the artifact at <location> exists with
+    <verdict>."
+
+For an `acceptance-exempt: true` plan the contract is the self-test PASS
+(the exemption shifts the closure target to self-tests; it does not
+remove the target). The substance bar is the same as Check 6b — ≥ 20
+non-whitespace chars of non-placeholder content. See
+~/.claude/rules/plan-lifecycle.md and Decision 036-b.
+-->
+- **Commands that run:** [populate me — verification commands]
+- **Expected outputs:** [populate me — PASS criteria]
+- **On-disk artifact location:** [populate me — where the PASS artifact lands]
+- **Done when:** [populate me — one-sentence closure condition]
 
 ## Testing Strategy
 <!--
