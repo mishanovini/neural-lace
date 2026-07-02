@@ -14,7 +14,7 @@ owner: orchestrator (this session)
 target-completion-date: 2026-06-19
 
 ## Disposition (2026-07-02)
-Deferred per DEC-2026-07-02-002. Content remains valuable (rendered-output validation for functionality-verifier / plan-phase-builder / task-verifier, from Circuit #589/#592). Re-engage trigger: post nl-overhaul F.4 retro (Wave C sweeps agent-file references first).
+Deferred per DEC-2026-07-02-002. Content remains valuable (rendered-output validation for functionality-verifier / plan-phase-builder / task-verifier, from downstream-product issues #589/#592). Re-engage trigger: post nl-overhaul F.4 retro (Wave C sweeps agent-file references first).
 
 ## Goal
 A proven failure this week: agents validated "the value reaches a function" or

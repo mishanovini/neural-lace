@@ -240,8 +240,8 @@ Commit: n/a — machine-state resolution (no repo diff; root cause was stale act
 
 Checks run:
 1. Remote inventory at main checkout
-   Command: cd "C:/Users/misha/dev/Pocket Technician/neural-lace" && git remote -v
-   Output: origin = https://github.com/Pocket-Technician/neural-lace.git; personal = https://github.com/mishanovini/neural-lace.git (fetch+push each)
+   Command: cd "<main-checkout>" && git remote -v
+   Output: origin = the org remote; personal = the personal-fork remote (fetch+push each)
    Result: PASS
 2. git fetch origin (main checkout, standing account state, no switch needed)
    Command: git fetch origin; echo $?
@@ -258,7 +258,7 @@ Runtime verification: file docs/plans/nl-overhaul-program-2026-07-specs-b.md::gi
 
 Verdict: PASS
 Confidence: 9
-Reason: PROVEN: the specs-b §B.8 Done-when command pair was replayed live from the MAIN checkout "C:/Users/misha/dev/Pocket Technician/neural-lace" this session — `git fetch origin` exit 0 AND `git fetch personal` exit 0 with no account switch required, confirming the machine-state resolution holds as standing state.
+Reason: PROVEN: the specs-b §B.8 Done-when command pair was replayed live from the MAIN checkout (path per ~/.claude/local/nl-repo-path) this session — `git fetch origin` exit 0 AND `git fetch personal` exit 0 with no account switch required, confirming the machine-state resolution holds as standing state.
 
 ## Task B.9 — Backlog reconciliation pass 1
 
@@ -349,10 +349,10 @@ Checks run:
    Result: PASS
 3. Doctor green against live mirror
    Command: bash ~/.claude/hooks/harness-doctor.sh --quick </dev/null
-   Output: [doctor] GREEN — 6 checks passed (exit 0). Replayed twice, plus once with explicit repo root "C:/Users/misha/dev/Pocket Technician/neural-lace" as $2 — identical GREEN 6/6, exit 0.
+   Output: [doctor] GREEN — 6 checks passed (exit 0). Replayed twice, plus once with the explicit main-checkout repo root as $2 — identical GREEN 6/6, exit 0.
    Result: PASS
 4. Live-vs-template wiring covered by the doctor's template-live-drift check — verified GENUINELY EXECUTED, not skipped
-   Adversarial probe: invoking the doctor with a bogus second positional arg (consumed as EXPLICIT_REPO_ROOT per harness-doctor.sh L723) reproduces the check's skip path ("[doctor] WARN template-live-drift: cannot compare — live settings.json or template missing"). _warn() echoes UNCONDITIONALLY (no verbosity gating), and the clean --quick runs printed zero WARN lines — therefore the drift comparison ran and matched. Both inputs confirmed present: ~/.claude/settings.json (exists) and C:/Users/misha/dev/Pocket Technician/neural-lace/adapters/claude-code/settings.json.template (exists); repo root resolves via ~/.claude/local/nl-repo-path config tier (the 9d5a3d7 fix).
+   Adversarial probe: invoking the doctor with a bogus second positional arg (consumed as EXPLICIT_REPO_ROOT per harness-doctor.sh L723) reproduces the check's skip path ("[doctor] WARN template-live-drift: cannot compare — live settings.json or template missing"). _warn() echoes UNCONDITIONALLY (no verbosity gating), and the clean --quick runs printed zero WARN lines — therefore the drift comparison ran and matched. Both inputs confirmed present: ~/.claude/settings.json (exists) and <main-checkout>/adapters/claude-code/settings.json.template (exists); repo root resolves via ~/.claude/local/nl-repo-path config tier (the 9d5a3d7 fix).
    Result: PASS
 5. Re-routed B.3 assertion — decision-context-gate self-test on the live machine (FOLLOW-UP DATUM per Decisions Log "B.3 accepted with one assertion re-routed to B.6"; does NOT gate B.6 — B.6's Done-when is doctor-green)
    Command: HARNESS_SELFTEST=1 timeout 120 bash ~/.claude/hooks/decision-context-gate.sh --self-test </dev/null
@@ -380,7 +380,7 @@ Comprehension-gate: not applicable (rung < 2)
 
 Commit: 0a44e69 (salvage: pre-push-scan PII pattern class + allowlist example + harness-improvement 001 — orphaned working-tree work from 2026-06-12, rescued during GAP-51 surgery) — on branch salvage/pre-push-pii-patterns-20260702 at the MAIN checkout. Machine-state task: no commit on the program branch by design; the surgery's product is the main checkout's git state.
 
-Checks run (all at main checkout C:/Users/misha/dev/Pocket Technician/neural-lace):
+Checks run (all at the main checkout, path per ~/.claude/local/nl-repo-path):
 1. Working tree clean
    Command: git -C <main> status --short
    Output: (empty; 0 lines)
