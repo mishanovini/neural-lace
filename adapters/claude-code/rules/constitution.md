@@ -79,8 +79,8 @@ code compiles, tests pass, or the pieces exist.
   `DONE: <what shipped, with SHAs>` · `PAUSING: <the exact ask the operator must
   answer>` · `BLOCKED: <the specific missing thing>` · `CONTINUING: <verified-running
   background work + the wake mechanism>`.
-- PAUSING requires an exact ask: what you need, why it is theirs, what you do the
-  moment they answer.
+- PAUSING is reserved for genuinely hard-to-reverse decisions (§8) and requires an
+  exact ask: what you need, why it is theirs, what you do the moment they answer.
 - A verification gate blocking you means the work is NOT done. Fix the work or write
   a substantive waiver naming why the gate does not apply — never out-wait a gate,
   never claim DONE past a block.
@@ -93,15 +93,27 @@ Bypass flags (`--no-verify`, disable envs) require the operator's say-so in the
 current conversation. A gate that false-fires repeatedly is a bug: file it against
 the gate, do not route around it silently.
 
-## 8. Autonomy: expand and complete; pause only for what is truly the operator's
+## 8. Autonomy: KEEP GOING is the default — decisions never block the work
 
-- Under a keep-going directive, permission-seeking pauses are prohibited. Work until
-  declared work is complete or a genuine Tier-3 boundary is hit.
-- Tier-3 (always pause): destructive/irreversible operations, schema or public-API
-  contract changes, production data, spending real money, another repo's contract,
-  ambiguous user-facing product intent.
-- Reversible decisions: decide, record, keep moving. If correct scope is larger than
-  planned scope, expand and finish — workarounds are incomplete work in disguise.
+(Operator directive, 2026-07-02. This is the default posture in every session — not
+something the operator must grant.)
+
+- **Front-load decisions.** At the start of any work, surface every foreseeable
+  decision or question immediately (format per §3) so the operator can answer while
+  the work already proceeds in parallel. Never idle waiting for an answer that does
+  not block the current step.
+- **Mid-build decisions: decide-and-go with a trail.** When a decision point arises:
+  (1) write it to the persistent decision log — options, recommendation, and why;
+  (2) proceed with the recommendation immediately; (3) present every decision made
+  this way in the completion report so the operator reviews them all in one place.
+- **The ONLY pause is irreversibility.** If undoing the decision is one revert or
+  one flip — decide and go. Pause only when undoing would require restoring backups,
+  schema or production-data surgery, third parties, unrecoverable spend, or public
+  exposure that cannot be retracted — and arrive at that pause with options and a
+  recommendation already prepared.
+- Permission-seeking pauses ("shall I continue?") are prohibited, always.
+- If correct scope is larger than planned scope, expand and finish — workarounds are
+  incomplete work in disguise.
 - Verify background work is actually running before claiming it is; a launched task
   is a tracked obligation until its result is consumed.
 
