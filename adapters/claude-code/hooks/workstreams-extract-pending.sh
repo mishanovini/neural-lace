@@ -75,6 +75,9 @@
 
 set -uo pipefail
 
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/nl-paths.sh" 2>/dev/null; } || true
+
 MODE="${1:-}"
 
 LOG_DIR="$HOME/.claude/logs"
@@ -145,12 +148,21 @@ _resolve_state_lib() {
     cand="$root/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   fi
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/state.js"
+  if command -v nl_workstreams_ui >/dev/null 2>&1; then
+    local _ui; _ui="$(nl_workstreams_ui 2>/dev/null)"
+    [[ -n "$_ui" ]] && { printf '%s' "$_ui/state/state.js"; return 0; }
+  fi
+  printf '%s' "$HOME/.claude/state/state.js"
 }
 
 # Sibling emit hook — the single write path (never reimplement appendEvent).
 _emit_hook() {
-  printf '%s' "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/conversation-tree-emit.sh"
+  local self_dir; self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+  if [[ -f "$self_dir/workstreams-emit.sh" ]]; then
+    printf '%s' "$self_dir/workstreams-emit.sh"
+  else
+    printf '%s' "$self_dir/conversation-tree-emit.sh"
+  fi
 }
 
 # ---- the marker parser (node — robust JSONL + regex) -----------------------

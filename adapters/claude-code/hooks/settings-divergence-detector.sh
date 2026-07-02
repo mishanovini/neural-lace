@@ -3,7 +3,7 @@
 #
 # SessionStart hook that compares ~/.claude/settings.json against the
 # committed template at
-# $HOME/claude-projects/neural-lace/adapters/claude-code/settings.json.template
+# <nl-repo-root>/adapters/claude-code/settings.json.template
 # and surfaces unexpected divergences as a warning.
 #
 # Background. ~/.claude/settings.json is gitignored (per-machine live
@@ -30,8 +30,14 @@
 
 set -u
 
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/nl-paths.sh
+source "$SELF_DIR/lib/nl-paths.sh" 2>/dev/null || true
+
 # Allow override for self-test
-TEMPLATE_PATH="${TEMPLATE_PATH_OVERRIDE:-$HOME/claude-projects/neural-lace/adapters/claude-code/settings.json.template}"
+_NL_ROOT="$(nl_repo_root 2>/dev/null)"
+TEMPLATE_PATH="${TEMPLATE_PATH_OVERRIDE:-${_NL_ROOT:+$_NL_ROOT/adapters/claude-code/settings.json.template}}"
+TEMPLATE_PATH="${TEMPLATE_PATH:-$HOME/.claude/settings.json.template}"
 LIVE_PATH="${LIVE_PATH_OVERRIDE:-$HOME/.claude/settings.json}"
 
 # -------- Utility: count hook entries by event type --------

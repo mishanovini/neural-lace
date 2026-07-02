@@ -147,10 +147,10 @@ The XYZ component routes traffic. It's a long-running process. (cross-system Y z
 
 | Layer | What it enforces | File | Status |
 |---|---|---|---|
-| Rule (this doc) | When the gate fires; what authors should do; the regex + stopword allowlist | `adapters/claude-code/rules/definition-on-first-use.md` | landing in Phase 1d-F Task 1 |
-| Hook | Mechanical block on commits with undefined acronyms in scope-prefix `*.md` | `adapters/claude-code/hooks/definition-on-first-use-gate.sh` | landing in Phase 1d-F Task 2 |
-| Decision record | The five sub-decisions backing this rule | `docs/decisions/023-definition-on-first-use-enforcement.md` | landed in Phase 1d-F Task 1 |
-| Wiring | Hook is registered in PreToolUse Bash chain | `adapters/claude-code/settings.json.template` | landing in Phase 1d-F Task 3 |
+| Rule (this doc) | When the gate fires; what authors should do; the regex + stopword allowlist | `adapters/claude-code/rules/definition-on-first-use.md` | landed |
+| Hook | Mechanical block on commits with undefined acronyms in scope-prefix `*.md` | `adapters/claude-code/hooks/definition-on-first-use-gate.sh` | landed |
+| Decision record | The five sub-decisions backing this rule | `docs/decisions/023-definition-on-first-use-enforcement.md` | landed |
+| Wiring | Hook is registered in PreToolUse Bash chain | `adapters/claude-code/settings.json.template` | landed |
 
 The rule is documentation (Pattern-level discipline). The mechanism (hook + wiring) is hook-enforced. Together they close the loop: cannot commit a doctrine doc with an undefined acronym (gate); the discipline of defining acronyms before use is the author self-applying.
 

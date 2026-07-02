@@ -83,14 +83,19 @@ set -u
 # ============================================================
 if [[ "${1:-}" = "--self-test" ]]; then
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck disable=SC1091
+  { source "$SCRIPT_DIR/lib/nl-paths.sh" 2>/dev/null; } || true
   # The fixtures live alongside the hook in the adapter tree.
   # Try sibling tests dir first (when invoked from the adapter), then the
   # repo-relative path when invoked from the harness install.
   FIXTURE_DIR=""
+  _NL_ROOT_FOR_FIXTURES=""
+  command -v nl_repo_root >/dev/null 2>&1 && _NL_ROOT_FOR_FIXTURES="$(nl_repo_root 2>/dev/null)"
   for candidate in \
     "$SCRIPT_DIR/../tests/transcript-lie-detector" \
-    "$HOME/claude-projects/neural-lace/adapters/claude-code/tests/transcript-lie-detector" \
+    "${_NL_ROOT_FOR_FIXTURES:+$_NL_ROOT_FOR_FIXTURES/adapters/claude-code/tests/transcript-lie-detector}" \
     "$HOME/.claude/tests/transcript-lie-detector"; do
+    [[ -z "$candidate" ]] && continue
     if [[ -d "$candidate" ]]; then
       FIXTURE_DIR="$candidate"
       break

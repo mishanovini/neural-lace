@@ -140,11 +140,11 @@ The block-message names the plan(s) claiming the file and explicitly offers opti
 | Layer | What it enforces | File | Status |
 |---|---|---|---|
 | Rule (this doc) | When to freeze, when to thaw, the freeze-thaw protocol, the in-flight-vs-thaw distinction | `adapters/claude-code/rules/spec-freeze.md` | landed |
-| Template | The `frozen:` field with default `false` and inline guidance | `adapters/claude-code/templates/plan-template.md` | landed (Phase 1d-C-2 Task 1) |
-| Hook (`spec-freeze-gate.sh`) | Edits to declared files blocked unless owning plan has `frozen: true` | `adapters/claude-code/hooks/spec-freeze-gate.sh` | landing in Phase 1d-C-2 Task 4 |
-| Plan-reviewer Check 10 | `frozen:` field present, value is `true` or `false` | `adapters/claude-code/hooks/plan-reviewer.sh` | landing in Phase 1d-C-2 Task 5 |
-| Sibling hook (C10) | Commit-time scope-vs-plan check (catches scope expansion at commit boundary) | `adapters/claude-code/hooks/scope-enforcement-gate.sh` | landed (Phase 1d-C-1) |
-| Decision record | The five sub-decisions backing this rule | `docs/decisions/016-spec-freeze-gate-c2.md` | landed (Phase 1d-C-2 Task 1) |
+| Template | The `frozen:` field with default `false` and inline guidance | `adapters/claude-code/templates/plan-template.md` | landed |
+| Hook (`spec-freeze-gate.sh`) | Edits to declared files blocked unless owning plan has `frozen: true` | `adapters/claude-code/hooks/spec-freeze-gate.sh` | landed |
+| Plan-reviewer Check 10 | `frozen:` field present, value is `true` or `false` | `adapters/claude-code/hooks/plan-reviewer.sh` | landed |
+| Sibling hook (C10) | Commit-time scope-vs-plan check (catches scope expansion at commit boundary) | `adapters/claude-code/hooks/scope-enforcement-gate.sh` | landed |
+| Decision record | The five sub-decisions backing this rule | `docs/decisions/016-spec-freeze-gate-c2.md` | landed |
 
 The rule is documentation (Pattern-level). The mechanism stack (gate + plan-reviewer Check 10 + sibling C10) is hook-enforced. Together they close the loop: cannot edit a declared file before the spec is frozen (C2 / this rule); cannot commit a scope-expanding change without updating the plan (C10); cannot author a plan with a malformed `frozen:` field (Check 10).
 

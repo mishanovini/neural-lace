@@ -1,6 +1,6 @@
 # Git Discipline — Force-Push Prohibition, Post-Merge Sync, Stop-Hook Waivers, Staged-Set Verification
 
-**Classification:** Pattern (self-applied discipline). The force-push prohibition is partly Mechanism-backed — `~/.claude/git-hooks/pre-push` runs the credential scanner and existing harness gates reject `--no-verify` bypasses, but a `git push --force` to a non-protected branch is not currently blocked by any harness hook. The post-merge sync of the user's main checkout is Pattern only — no hook detects "merged but did not sync." The waiver-instead-of-loop discipline for Stop hooks is Pattern; the underlying mechanism is the retry-guard library at `adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh` which downgrades blocks to warns after 3 retries, but the right move BEFORE that threshold is to author a substantive waiver, not let the retry-guard absorb the failure.
+**Classification:** Hybrid. The force-push prohibition is Mechanism-backed — a live inline PreToolUse Bash blocker in `settings.json.template` matches `git push … --force` / `-f` (which also catches `--force-with-lease`, since the literal string `--force` is a substring of `--force-with-lease`) and separately blocks `--no-verify`, refusing the tool call before it runs (see "Enforcement — the live inline blocker" under Rule 1). `~/.claude/git-hooks/pre-push` additionally runs the credential scanner. The post-merge sync of the user's main checkout is Pattern only — no hook detects "merged but did not sync." The waiver-instead-of-loop discipline for Stop hooks is Pattern; the underlying mechanism is the retry-guard library at `adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh` which downgrades blocks to warns after 3 retries, but the right move BEFORE that threshold is to author a substantive waiver, not let the retry-guard absorb the failure.
 
 **Why this rule exists:** the user observed (2026-05-14) that every code session was asked to re-explain merge / sync / waiver mechanics in its prompt. Baking these into the harness means every future session inherits them automatically without per-task prompting.
 
@@ -32,9 +32,9 @@ d. **If the situation genuinely demands history rewriting** (e.g., secrets accid
 
 `git reset --hard` is allowed against your local working tree if it doesn't require a push to take effect on the remote (e.g., resetting an unpushed branch). It is NOT a path to force-push.
 
-### Enforcement gap (honest)
+### Enforcement — the live inline blocker
 
-There is currently no PreToolUse hook on `git push` that blocks `--force` / `--force-with-lease` / `-f` flags. This is a candidate for mechanization (proposed: `force-push-prohibition-gate.sh` PreToolUse Bash). Until the gate ships, this rule relies on agent discipline and on the user's interrupt authority when they see a force-push attempt.
+A PreToolUse Bash hook wired in `settings.json.template` inspects every `Bash` tool call. If the command matches `git\s+push\s+.*--force|git\s+push\s+-f\b`, the tool call is BLOCKED with `BLOCKED: Force push requires explicit user authorization. Ask the user first.` and a non-zero exit before the command ever runs — this also catches `--force-with-lease`, because the blocker matches on the literal substring `--force`. A sibling clause in the same hook blocks any `--no-verify` flag on the command line with `BLOCKED: Skipping hooks (--no-verify) requires explicit user authorization. Fix the hook failure instead.` This is the live Mechanism; the agent-discipline content above (safe alternatives, when to escalate to the user) is what to do INSTEAD of force-pushing when the blocker fires, not a substitute for it.
 
 ## Rule 2 — Sync the user's main checkout after every merge to master
 
@@ -179,12 +179,12 @@ Pattern-only. A hook that always surfaces `git diff --cached --stat` on multi-to
 | Layer | What it enforces | File | Status |
 |---|---|---|---|
 | Rule (this doc) | Force-push prohibition, post-merge sync mechanic, waiver-before-retry-guard discipline, staged-set verification before commit (Rule 4) | `adapters/claude-code/rules/git-discipline.md` | landed |
+| Hook (Mechanism, live) | Inline PreToolUse Bash blocker on `git push … --force` / `-f` (also catches `--force-with-lease`) and on `--no-verify` | `adapters/claude-code/settings.json.template` inline matcher | landed |
 | Hook (existing) | Pre-push credential scanner (does not block `--force` flags directly) | `adapters/claude-code/hooks/pre-push-scan.sh` | landed |
 | Hook (existing) | Stop-hook retry-guard caps loops at 3 retries; this rule says use waivers BEFORE the threshold | `adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh` | landed |
-| Hook (gap) | PreToolUse Bash blocker on `git push --force` / `-f` / `--force-with-lease` | (not yet implemented) | gap |
-| Hook (gap) | PostMerge sync trigger for user's main checkout | (not yet implemented) | gap |
+| Hook (gap) | PostMerge sync trigger for user's main checkout | (no hook exists — Pattern only) | gap |
 
-The rule is documentation-enforced (Pattern). The two gaps are candidates for future mechanization; until they ship, the discipline relies on agent self-application and on user interrupt authority.
+The force-push prohibition is Mechanism-enforced by the live inline blocker above. The post-merge sync gap is a candidate for future mechanization; until it ships, the discipline relies on agent self-application and on user interrupt authority.
 
 ## Scope
 

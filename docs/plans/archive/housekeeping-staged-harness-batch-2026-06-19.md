@@ -1,5 +1,5 @@
 # Plan: Housekeeping — commit the hygiene-clean accumulated harness-kit batch (2026-06-19)
-Status: ACTIVE
+Status: SUPERSEDED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -12,6 +12,9 @@ frozen: true
 prd-ref: n/a — harness-development
 owner: orchestrator (this session)
 target-completion-date: 2026-06-19
+
+## Disposition (2026-07-02)
+Superseded by nl-overhaul B.7: the staged batch was found already cleared; the genuine orphaned subset (pre-push-scan PII patterns + allowlist example + harness-improvement 001) is preserved on branch salvage/pre-push-pii-patterns-20260702 @ 0a44e69; main checkout clean at origin/master.
 
 ## Goal
 A cross-machine sync (`check-harness-sync.sh` running `git add -A`, RWR-27) swept

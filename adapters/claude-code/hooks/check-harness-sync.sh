@@ -11,9 +11,13 @@
 # - Skips when committing inside neural-lace itself (avoids loops).
 # - Skips templates/ (deployed from patterns/templates/, not adapters/).
 
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/nl-paths.sh
+source "$SELF_DIR/lib/nl-paths.sh" 2>/dev/null || true
+
 LIVE="$HOME/.claude"
-REPO="$HOME/claude-projects/neural-lace/adapters/claude-code"
-NL_ROOT="$HOME/claude-projects/neural-lace"
+NL_ROOT="${NL_ROOT_OVERRIDE:-$(nl_repo_root 2>/dev/null)}"
+REPO="${NL_ROOT:+$NL_ROOT/adapters/claude-code}"
 
 # ============================================================
 # --self-test : prove the RWR-27 staging contract in isolation

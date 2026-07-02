@@ -2,7 +2,7 @@
 title: Dispatch↔Code coordination debug — 5 root causes, 2 brief premises refuted
 date: 2026-05-25
 type: process
-status: pending
+status: decided
 auto_applied: false
 originating_context: Pattern-5 (Dispatch coordination) design session of the plan-lifecycle redesign initiative; live diagnostic pass on this machine (Claude Code 2.1.146, claude-desktop entrypoint) before authoring docs/plans/dispatch-coordination-redesign.md
 decision_needed: "(sharpened 2026-06-10) Greenlight — or descope/supersede — docs/plans/dispatch-coordination-redesign.md (still Status: DRAFT) + ADRs 039/041/042 (all still Proposed). Since this discovery was written, OTHER routes shipped parts of the design: RC2b's cwd-divergent state path is fixed (shared canonical-state-path resolver, 0291279, Workstreams consolidation); RC1's topology is reframed by orchestrator-prime (ADR 050 + live skill: the orchestrator polls/wakes itself, Dispatch relays per rules/dispatch-relay-protocol.md); a partial RC5 exists (scripts/check-cross-repo-drift.sh has an optional ntfy alert per the ADR-042 contract). Still unbuilt: RC3 dispatch-mode autodetect (ADR 041; dispatch-mode.json is still a manual flip), the general RC5 Notification/Stop ntfy path, RC4 duplicate-spawn detection, and the RC1 upstream issue filing. The decision is whether to greenlight a SLIMMED build phase covering the remaining RCs, fold them into orchestrator-prime's program backlog and supersede the plan, or defer."
@@ -171,6 +171,8 @@ What changed since 2026-05-25:
 the remaining RC3/RC5/RC4/upstream-filing slice, fold those into orchestrator-prime's
 program backlog and supersede the plan, or defer. Kept pending in the 2026-06-10 triage
 because greenlighting a Tier-3 multi-ADR build phase is genuinely Misha's call.)
+
+2026-07-02: diagnosis stands; the dependent plan + ADRs 039/041/042 are deferred with the orchestrator-prime cluster (DEC-2026-07-02-002); re-engage post nl-overhaul F.4.
 
 ## Implementation log
 

@@ -26,7 +26,7 @@
 # justification. Anything less blocks the session wrap.
 #
 # This gate is the fast IN-SESSION backstop. The thorough POST-FACT net is
-# feature-completion-audit.sh, which walks shipped features against real
+# page-doc-accuracy-audit.sh, which walks shipped features against real
 # production state and catches what the gate's phrase-trigger misses. Two
 # layers, by design: the gate favors false-negatives (a real shipment with
 # unusual phrasing slips the gate) precisely because the periodic audit is the

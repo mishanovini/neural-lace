@@ -76,8 +76,10 @@ _subdir_ext() {
 # a machine whose checkout lives elsewhere (e.g. a path with spaces) names it in
 # ~/.claude/local/nl-checkout-path.txt (per-machine config, gitignored — never
 # ship a specific machine path in the kit). The cwd walk-up is the final fallback.
+# The shared lib/nl-paths.sh resolver's probe list is consulted first (step 1.5
+# below); these generic per-scheme guesses are additional siblings for
+# checkouts that don't match nl-paths.sh's own short probe list.
 NL_CANDIDATES=(
-  "$HOME/claude-projects/neural-lace"
   "$HOME/dev/neural-lace"
   "$HOME/code/neural-lace"
   "$HOME/src/neural-lace"
@@ -114,7 +116,18 @@ discover_nl_checkout() {
     printf '%s\n' "$NL_CHECKOUT_OVERRIDE"
     return 0
   fi
-  # 2. Per-machine config file naming the checkout path.
+  # 1.5. $NL_REPO_ROOT env var (the shared lib/nl-paths.sh convention — see
+  #      B.2). Explicit-only here (NOT the full nl_repo_root() git-derived /
+  #      probe-list fallback, which always resolves to whatever checkout this
+  #      hook file itself lives in and would defeat step 4's cwd-based
+  #      "genuinely no other checkout available" detection).
+  if [ -n "${NL_REPO_ROOT:-}" ] && _is_valid_nl_checkout "$NL_REPO_ROOT"; then
+    printf '%s\n' "$NL_REPO_ROOT"
+    return 0
+  fi
+  # 2. Per-machine config file naming the checkout path (this hook's own
+  #    config, plus the shared lib/nl-paths.sh config as a synonym so a
+  #    machine configured for one resolver is recognized by both).
   local cfg="$LIVE_DIR/local/nl-checkout-path.txt"
   if [ -f "$cfg" ]; then
     local line
@@ -124,6 +137,17 @@ discover_nl_checkout() {
     line="${line%"${line##*[![:space:]]}"}"
     if [ -n "$line" ] && _is_valid_nl_checkout "$line"; then
       printf '%s\n' "$line"
+      return 0
+    fi
+  fi
+  local shared_cfg="$LIVE_DIR/local/nl-repo-path"
+  if [ -f "$shared_cfg" ]; then
+    local sline
+    sline=$(head -1 "$shared_cfg" 2>/dev/null)
+    sline="${sline#"${sline%%[![:space:]]*}"}"
+    sline="${sline%"${sline##*[![:space:]]}"}"
+    if [ -n "$sline" ] && _is_valid_nl_checkout "$sline"; then
+      printf '%s\n' "$sline"
       return 0
     fi
   fi

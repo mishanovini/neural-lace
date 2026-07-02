@@ -70,13 +70,18 @@ set -u
 # --self-test: run the hook against the fixture
 # ============================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+{ source "$SCRIPT_DIR/lib/nl-paths.sh" 2>/dev/null; } || true
 
 if [[ "${1:-}" = "--self-test" ]]; then
   FIXTURE_DIR=""
+  _NL_ROOT_FOR_FIXTURES=""
+  command -v nl_repo_root >/dev/null 2>&1 && _NL_ROOT_FOR_FIXTURES="$(nl_repo_root 2>/dev/null)"
   for candidate in \
     "$SCRIPT_DIR/../tests/goal-extraction" \
-    "$HOME/claude-projects/neural-lace/adapters/claude-code/tests/goal-extraction" \
+    "${_NL_ROOT_FOR_FIXTURES:+$_NL_ROOT_FOR_FIXTURES/adapters/claude-code/tests/goal-extraction}" \
     "$HOME/.claude/tests/goal-extraction"; do
+    [[ -z "$candidate" ]] && continue
     if [[ -d "$candidate" ]]; then
       FIXTURE_DIR="$candidate"
       break

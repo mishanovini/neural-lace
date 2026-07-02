@@ -53,7 +53,7 @@ The gate keys on **spawned** customer-facing work (the 2026-06-02 failure mode).
 
 ## Live-wiring note (HARNESS-GAP-14 class)
 
-The canonical wiring is in `adapters/claude-code/settings.json.template` (Stop chain, after `pr-health-snapshot-gate.sh`, before the non-gate `session-wrap.sh refresh`). Live `~/.claude/settings.json` is per-machine and updated by the operator's `install.sh` run — the same template-vs-live split `pr-health-snapshot-gate.sh` and `doc-gate.sh` have. Until install runs, the gate's script is present in `~/.claude/hooks/` but is not yet invoked from the live Stop chain.
+The canonical wiring is in `adapters/claude-code/settings.json.template` (Stop chain, after `pr-health-snapshot-gate.sh`, before the non-gate `session-wrap.sh refresh`). Live `~/.claude/settings.json` is per-machine and updated by the operator's `install.sh` run — the same template-vs-live split `pr-health-snapshot-gate.sh` and `doc-gate.sh` have. Until install runs, the gate's script is present in `~/.claude/hooks/` but is not yet invoked from the live Stop chain — wired in template; live wiring pending Wave B.6 install; slated for Wave D relocation per ADR 058.
 
 ## Coordination with completion-criteria-gate
 

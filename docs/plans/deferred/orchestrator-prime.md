@@ -1,8 +1,8 @@
 # Plan: orchestrator-prime — the always-on harness-native orchestrator
-Status: ACTIVE
+Status: DEFERRED
 Execution Mode: orchestrator
 Mode: design
-frozen: false
+frozen: true
 tier: 3
 rung: 3
 architecture: harness-infrastructure
@@ -11,6 +11,9 @@ acceptance-exempt: true
 acceptance-exempt-reason: Harness-internal always-on orchestrator runtime (a SKILL + scaffold + self-scheduling loop); the "user" is the maintainer running it and a hook/loop firing at an event boundary. No product UI to advocate for; self-tests + the report-only first-cycle output are the acceptance artifact.
 owner: Misha
 Backlog items absorbed: none
+
+## Disposition (2026-07-02)
+Deferred per DEC-2026-07-02-002. The substrate it targets (Stop chain, wake queue — 330/330 wakes dropped, digest, ledger) is rebuilt by nl-overhaul Waves D/E; building now would target a harness with weeks to live. ADR 050 remains Proposed. Re-engage: post-F.4 with a fresh design review.
 
 ## Goal
 

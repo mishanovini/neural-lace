@@ -87,6 +87,10 @@ source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
 # shellcheck disable=SC1091
 { source "${BASH_SOURCE[0]%/*}/lib/workstreams-state-resolver.sh" 2>/dev/null; } || true
 
+# ----- shared neural-lace repo-root resolver (B.2 legacy-path fix) ----------
+# shellcheck disable=SC1091
+{ source "${BASH_SOURCE[0]%/*}/lib/nl-paths.sh" 2>/dev/null; } || true
+
 LOG_DIR="$HOME/.claude/logs"
 LOG_FILE="$LOG_DIR/decision-context-gate.log"
 FALLBACK_DIR="$HOME/.claude/state/decision-context"
@@ -119,7 +123,11 @@ fi
 
 _fallback_conv_tree_path() {
   local leaf="$1"
-  local base="${CONV_TREE_MAIN_CHECKOUT:-$HOME/claude-projects/neural-lace}"
+  local base="${CONV_TREE_MAIN_CHECKOUT:-}"
+  if [[ -z "$base" ]] && command -v nl_repo_root >/dev/null 2>&1; then
+    base="$(nl_repo_root 2>/dev/null)"
+  fi
+  [[ -z "$base" ]] && base="$HOME/.claude"
   # The UI module lives at neural-lace/workstreams-ui/ (renamed 2026-06).
   local d cand
   for d in workstreams-ui; do
