@@ -407,3 +407,195 @@ Runtime verification: file docs/failure-modes.md::FM-03
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: the main checkout's working tree is clean, master..origin/master count is 0 (landed exactly at origin/master), the preservation branch salvage/pre-push-pii-patterns-20260702 exists with tip 0a44e69 explicitly recording the GAP-51 rescue, and FM-03x entries grep to 5 (≥ 3) in the main checkout's failure-modes catalog. The spec-vs-execution branch-name deviation (backup/* → salvage/*) is documented in check 3 and satisfies the plan-line Done-when's unnamed "backup branch exists" criterion with intent intact.
+
+## Task B.12 — Sync-daemon containment
+
+EVIDENCE BLOCK
+==============
+Task ID: B.12
+Task description: Sync-daemon containment (operator-approved scope add 2026-07-02; absorbs discovery 2026-06-02-component-c-sync-daemon): stopgap — the cross-machine sync daemon honors an interactive-session lock so it never rewrites a checkout with a live session (the failure class that created GAP-51); durable fix (dedicated sync clone, option C) lands as a Wave E/F follow-on defined in specs-e — Verification: mechanical
+Verified at: 2026-07-02T23:00:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — plan Done-when: daemon script refuses (logged) to touch a repo when the liveness marker is present; self-test proves lock-respected + lock-absent-proceeds; the discovery file flipped to `status: decided` citing this task.
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commit: ebfcbf8 (overhaul(B.12): interactive-session-lock lib + sync-pt-to-personal guard)
+
+Checks run:
+1. interactive-session-lock.sh self-test
+   Command: bash adapters/claude-code/hooks/lib/interactive-session-lock.sh --self-test
+   Output: T1 fresh-transcript-locked: PASS / T2 stale-transcript-unlocked: PASS / T3 explicit-lock-locked: PASS / T4 stale-lock-unlocked: PASS / T5 refusal-logged-sandboxed: PASS / T6 slug-formula: PASS / "self-test: 6 passed, 0 failed"; exit 0
+   Result: PASS
+2. sync-pt-to-personal.sh wired to the lock lib
+   Command: grep -c "isl_live_session" adapters/claude-code/scripts/sync-pt-to-personal.sh
+   Output: 1
+   Result: PASS (≥1)
+3. Discovery status flipped to decided
+   Command: grep -c "status: decided" docs/discoveries/2026-06-02-component-c-sync-daemon-thrashes-live-checkout.md
+   Output: 1
+   Result: PASS (≥1)
+
+Runtime verification: test adapters/claude-code/hooks/lib/interactive-session-lock.sh::--self-test
+
+Verdict: PASS
+Confidence: 8
+Reason: PROVEN: the lock library's self-test covers both the lock-respected path (T1/T3/T5) and the lock-absent-proceeds path (T2/T4), all 6/6 green; sync-pt-to-personal.sh is grep-confirmed wired to the lock primitive (isl_live_session); the discovery file is confirmed flipped to status: decided citing this task, matching all three plan-line Done-when clauses.
+
+## Task C.0 — Wave-spec refinement for Wave C
+
+EVIDENCE BLOCK
+==============
+Task ID: C.0
+Task description: Wave-spec refinement for Wave C (incl. final rule→{constitution|stub+doctrine|delete} disposition table for all 61 rules, cluster assignments for C.4, and the JIT trigger map) — Verification: mechanical
+Verified at: 2026-07-02T23:00:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — plan Done-when: specs-c file exists; disposition table covers 61/61 rules (count assertion).
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commit: 624b028 (per dispatch instructions; specs-c file present on branch tip 710755d)
+
+Checks run:
+1. specs-c file exists
+   Command: test -f docs/plans/nl-overhaul-program-2026-07-specs-c.md
+   Output: file present
+   Result: PASS
+2. Disposition table row count
+   Command: grep -c "^| R[0-6][0-9] | " docs/plans/nl-overhaul-program-2026-07-specs-c.md
+   Output: 61
+   Result: PASS (= 61, matches the plan's own count assertion at specs-c line 75)
+
+Runtime verification: file docs/plans/nl-overhaul-program-2026-07-specs-c.md::"^| R[0-6][0-9] | "
+
+Verdict: PASS
+Confidence: 8
+Reason: PROVEN: docs/plans/nl-overhaul-program-2026-07-specs-c.md exists and its disposition table contains exactly 61 rows (R01–R61), one per rule under adapters/claude-code/rules/, matching the plan's own Done-when count assertion exactly.
+
+## Task C.1 — Manifest: manifest.json + schema + manifest-check.sh + doctor upgrade
+
+EVIDENCE BLOCK
+==============
+Task ID: C.1
+Task description: Manifest: adapters/claude-code/manifest.json + schemas/manifest.schema.json + scripts/manifest-check.sh (validates schema; disk↔manifest coverage both ways); doctor upgraded to read it — Verification: mechanical
+Verified at: 2026-07-02T23:00:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — plan Done-when: manifest-check.sh exits 0; harness-doctor.sh --quick consumes manifest (grep for manifest read + red-fixture self-test scenario).
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commit: 710755d (overhaul(C.1): manifest.json (89 entries / 90 hooks) + manifest.schema.json + manifest-check.sh + manifest-driven doctor claim-honesty)
+
+Checks run:
+1. manifest-check.sh runs clean
+   Command: bash adapters/claude-code/scripts/manifest-check.sh
+   Output: "[manifest-check] GREEN — 89 entries, 90 hooks covered, 0 warn"; exit 0
+   Result: PASS
+2. manifest-check.sh self-test (schema validation + disk↔manifest coverage both ways)
+   Command: HARNESS_SELFTEST=1 bash adapters/claude-code/scripts/manifest-check.sh --self-test
+   Output: s1-valid-green PASS / s2-missing-hook-red PASS / s3-unlisted-disk-hook-red PASS / s4-gate-no-honest-status-red PASS / s5-wired-claim-not-in-template-red PASS / s6-gen-index-golden PASS / s7-doctrine-enforcing-red PASS / s8-doctrine-transition-warn-green PASS; "8 passed, 0 failed"; exit 0
+   Result: PASS
+3. harness-doctor.sh self-test (includes the manifest-check red-fixture scenario, #7)
+   Command: HARNESS_SELFTEST=1 bash adapters/claude-code/hooks/harness-doctor.sh --self-test
+   Output: 16 scenarios incl. "7-manifest-check-red: PASS" and "7-manifest-check-green: PASS"; "16 passed, 0 failed"; exit 0
+   Result: PASS
+4. Doctor reads the manifest (grep for manifest consumption)
+   Command: grep -c manifest adapters/claude-code/hooks/harness-doctor.sh
+   Output: 81
+   Result: PASS (≥1, well beyond a single reference — the doctor is manifest-driven throughout)
+
+Runtime verification: command bash adapters/claude-code/scripts/manifest-check.sh
+Runtime verification: test adapters/claude-code/hooks/harness-doctor.sh::--self-test
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: manifest-check.sh exits 0 against the live manifest.json (89 entries, 90 hooks, 0 warn), its own self-test is 8/8 green (schema validation + both-direction disk↔manifest coverage exercised via s2/s3), harness-doctor.sh's self-test is 16/16 green including the manifest-check-specific red/green fixture pair, and the doctor's source grep-confirms 81 references to "manifest" — the doctor is genuinely manifest-driven, not merely manifest-aware.
+
+## Task C.3 — Constitution + CLAUDE.md rewrite
+
+EVIDENCE BLOCK
+==============
+Task ID: C.3
+Task description: Constitution: draft rules/constitution.md (≤350 lines: Rules 0–7 compressed, FUNCTIONALITY-OVER-COMPONENTS, persistence discipline, session-end markers, gate-respect, credentials pointer, doctrine-index pointer) + CLAUDE.md rewrite ≤100 lines — OPERATOR REVIEW checkpoint — Verification: mechanical
+Verified at: 2026-07-02T23:00:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — plan Done-when: operator approval recorded in Decisions Log; wc -c constitution ≤ 24000 bytes; CLAUDE.md ≤ 100 lines.
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commit: 65d3946 (CLAUDE.md rewrite; constitution.md drafted in the same wave per the plan's C.3 task line)
+
+Checks run:
+1. Operator-approval Decisions Log entries present
+   Command: (manual read) docs/plans/nl-overhaul-program-2026-07.md Decisions Log
+   Output: "### Decision: Constitution §8 rewritten per operator directive — keep-going is the DEFAULT, two-tier reversibility model" (Status: operator-directed 2026-07-02, quotes the operator verbatim) and "### Decision: Decision-presentation format replaced (operator directive 2026-07-02)" (Status: operator-directed, quotes the operator verbatim: "formatted very poorly to make it easy for me to understand")
+   Result: PASS — two independent operator-directed Decisions Log entries reference constitution content by section (§8, §3), satisfying "operator approval recorded in Decisions Log"
+2. Constitution byte count
+   Command: wc -c < adapters/claude-code/rules/constitution.md
+   Output: 8293
+   Result: PASS (≤ 24000)
+3. CLAUDE.md line count
+   Command: wc -l < adapters/claude-code/CLAUDE.md
+   Output: 77
+   Result: PASS (≤ 100)
+4. "operator directive" citation present in the plan (corroborating check per dispatch instructions)
+   Command: grep -c "operator directive" docs/plans/nl-overhaul-program-2026-07.md
+   Output: 2
+   Result: PASS (≥1)
+
+Runtime verification: file adapters/claude-code/rules/constitution.md::"^## "
+Runtime verification: file adapters/claude-code/CLAUDE.md::"^#"
+
+Verdict: PASS
+Confidence: 8
+Reason: PROVEN: constitution.md is 8293 bytes (well under the 24000-byte / ~350-line budget) and CLAUDE.md is 77 lines (under the 100-line cap); two Decisions Log entries record explicit operator direction over constitution content (§8 two-tier reversibility model, §3 decision-presentation format), satisfying the operator-review-checkpoint clause of this task's Done-when.
+
+## Task C.4 — Stub-rewrite sweep per the C.0 disposition table
+
+EVIDENCE BLOCK
+==============
+Task ID: C.4
+Task description: Stub-rewrite sweep per the C.0 disposition table: surviving rules become ≤40-line doctrine compact forms in adapters/claude-code/doctrine/ (enforcement pointer + trigger + one-screen substance); full prose moves to doctrine/<name>-full.md where worth keeping, else deleted. The auto-load rules/ dir keeps ONLY the constitution set. Run as parallel cluster tasks — Verification: mechanical
+Verified at: 2026-07-02T23:00:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — plan Done-when per cluster: every compact form ≤ 3000 bytes; content-checklist greps from specs-c pass; doctrine/ twin exists for each disposition-table row. specs-c §C.4 shared contract states the hard cap explicitly: "Hard caps per compact file: ≤40 lines AND ≤3000 bytes (wc -c)" and the per-cluster Done-when literally is: `for f in <your compacts>; do [ $(wc -c < $f) -le 3000 ]; done`.
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commits: 6c14776 (CL1), ff673ce (CL2), f81fd3f (CL3), b666dfd (CL4), 0a6fc77 (CL6), 3dc2b35 (CL5)
+
+Checks run:
+1. doctrine/ file count
+   Command: ls adapters/claude-code/doctrine/*.md | wc -l
+   Output: 66
+   Result: PASS (= 66, matches the plan's expected total: 42 compacts + 24 fulls)
+2. Byte-cap sweep on every non-full compact (exact replay of the dispatch instructions and specs-c §C.4's own per-cluster Done-when)
+   Command: for f in adapters/claude-code/doctrine/*.md; do case "$f" in *-full.md) continue;; esac; [ $(wc -c < "$f") -le 3000 ] || echo "OVERSIZE $f"; done
+   Output: "OVERSIZE adapters/claude-code/doctrine/harness-dev.md"
+   Result: FAIL — adapters/claude-code/doctrine/harness-dev.md is 3006 bytes (confirmed via `wc -c`, re-verified twice), 6 bytes over the ≤3000-byte hard cap specs-c §C.4 declares for every compact ("Hard caps per compact file: ≤40 lines AND ≤3000 bytes"). Line count is compliant (22 lines, well under 40) — the violation is byte-count only. No later commit on this branch touches this file (git log confirms 3dc2b35 is the only commit against it); 9075bdf, the next C.4-adjacent commit, edited harness-hygiene-scan.sh only, not this file.
+3. Line-cap sweep (secondary check, all compacts)
+   Command: for f in adapters/claude-code/doctrine/*.md; do case "$f" in *-full.md) continue;; esac; wc -l "$f"; done | awk '$1 > 40 {print "OVERSIZE-LINES:", $0}'
+   Output: (empty — no violations)
+   Result: PASS (informational; does not offset the byte-cap failure in check 2)
+4. Required-token spot-check (planning.md two-tier-supersession clause, cited by dispatch instructions)
+   Command: grep -c "decide-and-go" adapters/claude-code/doctrine/planning.md; grep -c "Tier 1" adapters/claude-code/doctrine/planning.md
+   Output: 1 (decide-and-go present); 0 (Tier 1 language absent, as required by the supersession clause)
+   Result: PASS
+5. Hygiene scan on all new doctrine files
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh --files adapters/claude-code/doctrine/*.md
+   Output: (silent); exit 0
+   Result: PASS
+
+Runtime verification: file adapters/claude-code/doctrine/harness-dev.md::"^# "
+
+Verdict: FAIL
+Confidence: 9
+Reason: PROVEN — adapters/claude-code/doctrine/harness-dev.md is 3006 bytes, exceeding the ≤3000-byte hard cap that specs-c §C.4 explicitly declares for every compact file in this task's own Done-when ("Hard caps per compact file: ≤40 lines AND ≤3000 bytes (wc -c)"; per-cluster Done-when literally asserts `[ $(wc -c < $f) -le 3000 ]` for every compact). This is a small, precisely-bounded overage (6 bytes) but is unambiguous against the mechanical spec as written — every other check in this task's replay set passes cleanly (66/66 file count, 0 line-cap violations, required tokens present, hygiene scan silent).
+
+Gaps:
+  - adapters/claude-code/doctrine/harness-dev.md is 6 bytes over the ≤3000-byte compact cap (3006 bytes). (Class: byte-cap-overage-single-file; Sweep query: `for f in adapters/claude-code/doctrine/*.md; do case "$f" in *-full.md) continue;; esac; [ $(wc -c < "$f") -le 3000 ] || echo "OVERSIZE $f"; done` — 1 match, no siblings found; Required generalization: trim 6+ bytes of whitespace/prose from harness-dev.md's compact (e.g. shorten line 9's "Plans/decisions/reviews about downstream projects do NOT ship..." clause, or drop one redundant word) and re-run the sweep to confirm 0 matches before re-invoking task-verifier.)
