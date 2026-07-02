@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-lace.dev/schemas/manifest.v1.json",
+  "title": "Harness Enforcement Manifest (v1)",
+  "description": "Canonical machine-readable inventory of every enforcement/doctrine unit in the harness (NL Overhaul task C.1, ADR 058 D3). One entry per unit: a unit is either a doctrine surface (compact under adapters/claude-code/doctrine/, or rules/constitution.md) with its enforcing hooks, or a hook-only unit (doctrine_file null). Coverage contract enforced by scripts/manifest-check.sh: every *.sh under adapters/claude-code/hooks/ (excluding lib/; attic/ is a sibling dir and never scanned) appears in at least one entry's hooks[], and every doctrine target from the Wave C disposition table (specs-c §C.0) appears as some entry's doctrine_file. Consumed by hooks/harness-doctor.sh (manifest-driven claim-honesty), hooks/doctrine-jit.sh (jit_triggers path matching, task C.2), and scripts/manifest-check.sh --gen-index (generated doctrine/INDEX.md). Schema version 1 (initial).",
+  "type": "object",
+  "required": ["schema_version", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently always 1. Validators accept current + N-1 versions for graceful migration."
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One entry per enforcement/doctrine unit, sorted by id (LC_ALL=C order) for deterministic diffs and --gen-index output.",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "doctrine_file", "hooks", "events", "wired_template", "selftest", "jit_triggers", "blocking", "budget_class"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9-]*$",
+            "description": "Kebab-case slug uniquely identifying the unit within the manifest."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["gate", "writer", "surfacer", "pattern", "convention"],
+            "description": "gate = can refuse/block an action or session (or is a warn-mode gate — see blocking); writer = emits state/artifacts as a side effect, never blocks; surfacer = read-only informational output at a lifecycle boundary; pattern = self-applied discipline with no hook; convention = per-surface coding convention with no hook."
+          },
+          "doctrine_file": {
+            "type": ["string", "null"],
+            "pattern": "^(doctrine/[A-Za-z0-9._-]+\\.md|rules/constitution\\.md)$",
+            "description": "Path (relative to adapters/claude-code/) of the doctrine compact this unit's substance lives in: doctrine/<name>.md, rules/constitution.md, or null for hook-only units with no doctrine surface. During the doctrine buildout (before the generated doctrine/INDEX.md exists — written by manifest-check.sh --gen-index at C.5) manifest-check.sh WARNs (not REDs) on missing doctrine/ targets; once the INDEX exists the check is fully RED-enforcing."
+          },
+          "hooks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]+\\.sh$"
+            },
+            "description": "Basenames of hook scripts under adapters/claude-code/hooks/ implementing this unit. Empty for pattern/convention units. Each disk hook must appear in exactly one entry (coverage checked both ways by manifest-check.sh)."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["Stop", "SessionStart", "PreToolUse", "PostToolUse", "UserPromptSubmit", "TaskCreated", "TaskCompleted", "precommit", "prepush", "manual"]
+            },
+            "description": "Lifecycle events the unit's hooks fire on. Claude Code hook events use their canonical casing; precommit/prepush denote git-hook dispatch (pre-commit-gate.sh chain or git-hooks/pre-push); manual denotes on-demand invocation. Empty for pattern/convention units."
+          },
+          "wired_template": {
+            "type": "boolean",
+            "description": "True iff EVERY basename in hooks[] appears in adapters/claude-code/settings.json.template (derived by parsing the template; inline compound-command references count). False when hooks is empty (hook-derived field; no hooks means nothing is wired) or when any hook is absent from the template — git-hook-dispatched and chain-invoked hooks are the honest false cases, named in honest_status."
+          },
+          "selftest": {
+            "type": "boolean",
+            "description": "True iff EVERY hook in hooks[] contains a --self-test entrypoint (grep-derived). False when hooks is empty or when any hook lacks one."
+          },
+          "jit_triggers": {
+            "type": "object",
+            "required": ["paths", "keywords"],
+            "additionalProperties": false,
+            "description": "Just-in-time doctrine-injection triggers consumed by hooks/doctrine-jit.sh (task C.2). paths come from the specs-c §C.0 JIT column; keywords is reserved and empty in v1.",
+            "properties": {
+              "paths": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "description": "Path substrings/globs; an Edit/Write whose file_path matches any of them triggers a once-per-session injection of this unit's doctrine compact."
+              },
+              "keywords": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "description": "Reserved for v2 keyword triggers. Empty array in v1."
+              }
+            }
+          },
+          "blocking": {
+            "type": "boolean",
+            "description": "True iff the unit can refuse an action or block session end in its default mode. Warn-mode-default gates (e.g. doc-gate, principles-compliance) and PostToolUse feedback hooks are blocking: false."
+          },
+          "honest_status": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "description": "REQUIRED (non-empty) when kind is 'gate' AND wired_template is false: names honestly how/where the gate actually fires (git-hook dispatcher, pre-commit chain, sub-invocation) or which Wave lands its wiring (e.g. 'pending Wave D'). Omit or null otherwise. Enforced by manifest-check.sh check (e) and the conditional below."
+          },
+          "budget_class": {
+            "type": "string",
+            "enum": ["stop", "session-start", "pretool", "posttool", "none"],
+            "description": "The single settings.json chain this unit is budgeted against for the Wave F chain-length budgets (Stop <= 6, SessionStart <= 8, blocking <= 12). 'none' for git-hook-dispatched, manual, multi-chain, and hook-less units."
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": { "const": "gate" },
+                "wired_template": { "const": false }
+              },
+              "required": ["kind", "wired_template"]
+            },
+            "then": {
+              "required": ["honest_status"],
+              "properties": {
+                "honest_status": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

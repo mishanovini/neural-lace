@@ -1,0 +1,15 @@
+# Git — compact
+> Enforcement: pre-push-scan.sh, automation-mode-gate.sh, stop-hook-retry-guard.sh; else Pattern — self-applied. Sources: git, git-discipline, branch-hygiene, merge-completed-work, deploy-to-production. Full: doctrine/git-full.md
+> Applies: every git operation in every session.
+
+- Commit at natural milestones. Messages: `<type>: <description>` (feat, fix, refactor, test, docs, chore). Push at completion points — default is push, not wait.
+- **NEVER force-push.** No `--force`, `-f`, `--force-with-lease` — any branch, no exceptions. Alternatives: `git merge origin/master` instead of rebase; new branch + cherry-pick + fresh PR; plain push if never pushed. Genuine history-rewrite need (leaked secret) → pause for the operator.
+- Never `--no-verify` or `--no-gpg-sign`; honor branch protection. `--amend` only before first push.
+- Post-merge sync: after any merge to master, cd to the main checkout (parent of `git rev-parse --git-common-dir`) and `git fetch origin && git pull --ff-only origin master`. Stash/pop around uncommitted changes; surface stash-pop conflicts — never auto-resolve. Non-ff pull → surface, don't merge silently.
+- Staged-set verify: before every commit run `git status --short` + `git diff --cached --stat`; `git add <path>` does NOT limit commit scope. Doc-only commits after a branch switch use the pathspec form: `git commit -m "..." -- <path>`.
+- Stop-hook blocks on plans orthogonal to the session: write a substantive waiver proactively; never loop "Standing by.", never bypass with `--no-verify`, never edit the gate mid-session.
+- Branch naming: `wip/<machine>-<topic>-<date>`, `feat/<slug>`, `fix/<slug>`, `salvage/`, `backup/`, `rebase/`. Pop or branch-convert stashes by session end; a stash >24h old is a leak. Stale branch (ahead of master, no push/commit 7d): empty diff vs master → delete; still live → push, rename to wip/, or open a PR.
+- Every session that opens a PR must merge before reporting DONE, unless it needs product review, has failing CI, or has conflicts. Auto-merge green safe classes (docs, plans, config, tests-only, dep bumps, cleanup). Never leave a green-mergeable PR sitting >1h.
+- Deploy to production by default: verified work lands on master and deploys; report the production URL, never the preview. Skip only on explicit "preview only", red tests, or irreversible migrations (ask first). Stacked PRs: merge A, retarget B, merge B.
+- Customer tier: pre-customer projects run `full-auto` (direct master OK, auto-merge on verified-green); real users → `review-before-deploy` (per-project `automation-mode.json`).
+- gh/git 404 or 403 is wrong-account evidence first: `gh auth switch -u <owner>`, retry, then conclude.

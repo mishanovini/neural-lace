@@ -57,13 +57,17 @@ FETCH_TIMEOUT_SECONDS="${FETCH_TIMEOUT_SECONDS:-10}"
 # LIVE_DIR_OVERRIDE lets the self-test point "live ~/.claude" at a temp dir.
 LIVE_DIR="${LIVE_DIR_OVERRIDE:-$HOME/.claude}"
 # Canonical surfaces synced master-wins. Executable surfaces (hooks/scripts =
-# .sh) AND content surfaces (agents/rules/templates/skills = .md) are all pure
-# harness content with no legitimate machine-local drift (per
+# .sh) AND content surfaces (agents/rules/templates/skills/doctrine = .md) are
+# all pure harness content with no legitimate machine-local drift (per
 # rules/harness-maintenance.md), so canonical always wins. Live-only files are
 # NEVER deleted — only install-if-missing / update-if-differing. (Extended
 # 2026-06-03: agents/rules/templates/skills were previously install.sh-only, so
-# they silently drifted on every machine until a manual install — HARNESS-GAP.)
-SYNC_SUBDIRS="hooks scripts agents rules templates skills"
+# they silently drifted on every machine until a manual install — HARNESS-GAP.
+# Extended Wave-C C.5: doctrine/ added as the new canonical home for doctrine
+# content moved out of rules/ — never-delete semantics are fine here; canon
+# stops carrying the old rules/*.md content after the master merge, and
+# install.sh's rules-prune step is the one place stale rules/*.md get removed.)
+SYNC_SUBDIRS="hooks scripts agents rules templates skills doctrine"
 
 # Per-subdir canonical file extension: executable (.sh) vs content (.md).
 _subdir_ext() {

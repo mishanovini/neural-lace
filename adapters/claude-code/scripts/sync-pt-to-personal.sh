@@ -115,6 +115,32 @@ _main_sync() {
   local original_branch temp_branch
   local current_gh_account need_switch=0
 
+  # 0. Interactive-session-lock guard (B.12 — see
+  #    docs/discoveries/2026-06-02-component-c-sync-daemon-thrashes-live-checkout.md
+  #    and hooks/lib/interactive-session-lock.sh for the contract): this script
+  #    checkouts/cherry-picks on the working tree, so it MUST refuse to run
+  #    while an interactive session is live on this checkout. Operator-attended
+  #    runs may set ISL_BYPASS=1 (still logged).
+  local script_dir isl_lib guard_repo_root
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+  isl_lib="${ISL_LIB_PATH:-$script_dir/../hooks/lib/interactive-session-lock.sh}"
+  guard_repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  if [ -f "$isl_lib" ]; then
+    # shellcheck source=/dev/null
+    . "$isl_lib"
+    if isl_live_session "$guard_repo_root"; then
+      if [ "${ISL_BYPASS:-0}" = "1" ]; then
+        isl_refuse_log "$guard_repo_root" "sync-pt-to-personal" "bypassed"
+        _log "interactive session live on $guard_repo_root — ISL_BYPASS=1 set; proceeding (bypass logged)"
+      else
+        isl_refuse_log "$guard_repo_root" "sync-pt-to-personal"
+        _die "interactive session live on $guard_repo_root — refusing to mutate the working tree (refusal logged to ~/.claude/logs/interactive-session-lock.log; operator-attended runs may set ISL_BYPASS=1)"
+      fi
+    fi
+  else
+    _log "WARN: interactive-session-lock lib not found at $isl_lib — proceeding unguarded"
+  fi
+
   # 1. Discover mirror remote.
   mirror_line="$(_discover_mirror_remote)"
   [ -z "$mirror_line" ] && _die "no mirror remote found (need 2 remotes with distinct URLs)"
