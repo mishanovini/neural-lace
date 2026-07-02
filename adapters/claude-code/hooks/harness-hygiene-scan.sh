@@ -531,6 +531,7 @@ is_exempt() {
   case "$path" in
     principles/harness-hygiene.md) return 0 ;;
     adapters/claude-code/rules/harness-hygiene.md) return 0 ;;
+    adapters/claude-code/doctrine/harness-hygiene-full.md) return 0 ;;
     principles/forward-compatibility.md) return 0 ;;
     adapters/claude-code/git-hooks/pre-commit) return 0 ;;
     adapters/claude-code/hooks/harness-hygiene-scan.sh) return 0 ;;
