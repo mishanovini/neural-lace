@@ -31,6 +31,7 @@ Do not hand-edit: regenerate with `bash adapters/claude-code/scripts/manifest-ch
 | discovery-protocol | surfacer | [doctrine/discovery-protocol.md](discovery-protocol.md) | discovery-surfacer.sh | no | — |
 | doc-gate | gate | [doctrine/code-conventions.md](code-conventions.md) | doc-gate.sh | no | — |
 | docs-freshness | gate | [doctrine/harness-dev.md](harness-dev.md) | docs-freshness-gate.sh | yes | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
+| doctrine-jit | writer | — | doctrine-jit.sh | no | — |
 | effort-policy-warn | surfacer | — | effort-policy-warn.sh | no | — |
 | env-local-protection | gate | [doctrine/security.md](security.md) | env-local-protection.sh | yes | — |
 | external-monitor-alerts | surfacer | — | external-monitor-alert-surfacer.sh | no | — |
