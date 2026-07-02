@@ -1,6 +1,6 @@
 # Session-End Protocol — Every Turn Ends With Exactly One DONE / PAUSING / BLOCKED Marker
 
-**Classification:** Hybrid. The discipline of classifying *why* the turn is ending (work complete vs. waiting on the user vs. genuinely stuck) is a Pattern the agent self-applies. The "the last line of the final response MUST carry exactly one valid marker, or session-end is blocked" rule is a Mechanism enforced by `continuation-enforcer.sh` (Stop hook). The marker's format and the TodoWrite-consistency cross-check are mechanically validated by that hook; the honesty of the chosen marker (is it really DONE?) is Pattern.
+**Classification:** Hybrid (pending Wave D session-honesty-gate). The discipline of classifying *why* the turn is ending (work complete vs. waiting on the user vs. genuinely stuck) is a Pattern the agent self-applies. The "the last line of the final response MUST carry exactly one valid marker, or session-end is blocked" rule is designed as a Mechanism — `continuation-enforcer.sh` (Stop hook) exists and passes its own self-test, but is **not yet wired into the live Stop chain** (`settings.json.template`); wiring is pending Wave D session-honesty-gate. Until it lands, marker discipline (including the marker format and the TodoWrite-consistency cross-check) is Pattern-only; the honesty of the chosen marker (is it really DONE?) remains Pattern regardless of wiring status.
 
 **Originating directive (2026-05-17):** Misha was frustrated across a full day by sessions going idle between sub-tasks without making their terminal intent explicit — a session would trail off mid-plan, the operator could not tell from the last message whether it was done, waiting, or stuck, and had to babysit. The systemic fix: force every session to *declare* its terminal intent in a machine-readable form on the last line, and make that declaration non-optional via a Stop-hook gate.
 
@@ -97,12 +97,12 @@ Escape hatch: `CONTINUATION_ENFORCER_DISABLE=1` for harness-development sessions
 | Layer | What it enforces | File |
 |---|---|---|
 | Rule (this doc) | Three markers, when each is honest, exactly-one-on-last-line discipline | `adapters/claude-code/rules/session-end-protocol.md` |
-| Hook (Mechanism) | Marker present + exactly-one + format-valid + DONE/TodoWrite consistency + PAUSING substance; blocks session-end otherwise | `adapters/claude-code/hooks/continuation-enforcer.sh` |
+| Hook (Mechanism, pending Wave D) | Marker present + exactly-one + format-valid + DONE/TodoWrite consistency + PAUSING substance; blocks session-end otherwise. Self-test passes; **not yet wired into the live Stop chain** — pending Wave D session-honesty-gate install | `adapters/claude-code/hooks/continuation-enforcer.sh` |
 | Retry-guard (Mechanism) | Downgrades the block to a warn after 3 identical-failure retries; logs the unresolved gap | `adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh` |
 | User authority | The operator reads the marker on the last line and redirects when the marker is dishonest | (Pattern) |
 
-The rule is documentation; the hook is the mechanical floor. Together they make a turn impossible to end without an explicit, checked, machine-readable statement of why it is ending — which is what removes the babysitting.
+The rule is documentation; the hook exists and self-tests green but is not yet the live mechanical floor (pending Wave D). Until wiring lands, marker discipline relies on agent self-application and the operator's interrupt authority when a turn ends without a clear terminal-intent statement.
 
 ## Scope
 
-Applies in every project whose Claude Code installation has `continuation-enforcer.sh` wired into the Stop chain in `settings.json`. The rule file is loaded contextually by the harness; no per-project opt-in. The gate is universal — it fires on every session, not only when a keep-going directive is present — because the operator needs the terminal-intent signal on *every* turn, and the retry-guard prevents any lockout when a session genuinely cannot satisfy it. Projects whose installation has not wired the hook see this rule as documentation only.
+Applies in every project whose Claude Code installation has `continuation-enforcer.sh` wired into the Stop chain in `settings.json` — **not yet the case in the live template; wiring is pending Wave D session-honesty-gate.** The rule file is loaded contextually by the harness; no per-project opt-in. Once wired, the gate is intended to be universal — firing on every session, not only when a keep-going directive is present — because the operator needs the terminal-intent signal on *every* turn, and the retry-guard prevents any lockout when a session genuinely cannot satisfy it. Until wiring lands, this rule is documentation only.

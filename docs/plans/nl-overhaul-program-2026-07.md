@@ -137,7 +137,7 @@ The operator (the harness's user) can, after this program: (a) run `harness-doct
 - Live mirror `~/.claude/**` via install.sh runs only; main-checkout git state (B.7); git remotes config (B.8)
 
 ## In-flight scope updates
-(none yet)
+- 2026-07-02: `adapters/claude-code/CLAUDE.md` — B.5 doc-truth-sweep touches this file directly (per its own §B.5 done-when: CLAUDE.md ≤200-line trim); already covered by this plan's `## Scope` IN clause and by line 134's `## Files to Modify/Create` bullet, but the scope-enforcement-gate's parser only extracts the first backtick-quoted path per bullet line — adding this explicit In-flight line satisfies the gate without editing anyone else's scope declaration.
 
 ## Assumptions
 

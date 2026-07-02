@@ -144,11 +144,11 @@ The planner self-applies the following discipline when authoring or revising a P
 | Layer | What it enforces | File | Status |
 |---|---|---|---|
 | Rule (this doc) | When PRDs are required, what the seven sections require, the harness-development carve-out | `adapters/claude-code/rules/prd-validity.md` | landed |
-| Template | Shape of a correct PRD with the seven sections and per-section guidance | `adapters/claude-code/templates/prd-template.md` | landed (Phase 1d-C-2 Task 1) |
-| Hook (`prd-validity-gate.sh`) | Plan creation blocked unless `prd-ref:` resolves to a PRD with seven substantive sections | `adapters/claude-code/hooks/prd-validity-gate.sh` | landing in Phase 1d-C-2 Task 3 |
-| Agent (`prd-validity-reviewer`) | PRD content is substantive, scenarios concrete, success metrics measurable | `adapters/claude-code/agents/prd-validity-reviewer.md` | landed (Phase 1d-C-2 Task 7) |
-| Plan-reviewer Check 10 | The `prd-ref:` plan-header field is present and non-empty (semantic check is C1's job) | `adapters/claude-code/hooks/plan-reviewer.sh` | landing in Phase 1d-C-2 Task 5 |
-| Decision record | The three sub-decisions backing this rule | `docs/decisions/015-prd-validity-gate-c1.md` | landed (Phase 1d-C-2 Task 1) |
+| Template | Shape of a correct PRD with the seven sections and per-section guidance | `adapters/claude-code/templates/prd-template.md` | landed |
+| Hook (`prd-validity-gate.sh`) | Plan creation blocked unless `prd-ref:` resolves to a PRD with seven substantive sections | `adapters/claude-code/hooks/prd-validity-gate.sh` | landed |
+| Agent (`prd-validity-reviewer`) | PRD content is substantive, scenarios concrete, success metrics measurable | `adapters/claude-code/agents/prd-validity-reviewer.md` | landed |
+| Plan-reviewer Check 10 | The `prd-ref:` plan-header field is present and non-empty (semantic check is C1's job) | `adapters/claude-code/hooks/plan-reviewer.sh` | landed |
+| Decision record | The three sub-decisions backing this rule | `docs/decisions/015-prd-validity-gate-c1.md` | landed |
 
 The rule is documentation (Pattern-level). The mechanism stack (hook + plan-reviewer Check 10 + agent) is hook-and-agent-enforced. Together they close the loop: cannot author a plan without a valid PRD reference (hook); cannot author a plan with a malformed `prd-ref:` field (Check 10); cannot move to implementation with a present-but-shallow PRD (agent). The carve-out is the explicit, auditable bypass for harness-internal work.
 

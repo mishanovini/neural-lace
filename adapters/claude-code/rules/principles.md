@@ -68,6 +68,18 @@ Anti-patterns this catches:
 
 **Enforcement:** advisory. No mechanism can verify "you summarized instead of pointed." The `principles-compliance-gate.sh` warn-mode hook does not currently detect Rule 2 violations (too heuristic to detect reliably). User interrupt authority.
 
+#### Always give Misha a direct, clickable link (Rule 2, hard habit)
+
+Whenever a response points Misha at something he should look at — a PR, a Vercel preview, a deployment, a dashboard, a GitHub issue/run, a doc, a file, a route/page — **include the exact clickable link to that thing in the same message.** Never make him hunt, never say "it's in a PR" or "see the preview" or "check the dashboard" without the URL. This is the concrete, always-on form of Rule 2; he has had to ask for the link more than once, so treat a link-less pointer as a defect.
+
+Specifics:
+- **PRs / issues / CI runs:** the full `https://github.com/<org>/<repo>/pull/<n>` (or issue/run) URL — resolve with `gh` if unknown.
+- **Vercel previews / deployments:** the live `https://<deployment>.vercel.app` URL, and **deep-link to the actual page** (e.g. `…vercel.app/automation`), not just the root — get it via `gh pr view <n> --json statusCheckRollup` or `npx --yes vercel ls <project-name> --meta githubCommitRef=<branch>`.
+- **Files / code:** clickable markdown links (`[path](path:line)`) per the harness link convention.
+- **Anything else with a URL** (Supabase dashboard, Trigger.dev run, Twilio console, etc.): paste the URL.
+
+If a thing has no resolvable link, say so explicitly ("no preview built — here's how to see it locally") rather than leaving a bare pointer.
+
 ### Rule 3 — Distinguish "needs Misha input" from "I should figure it out."
 
 Before posing any decision, ask: **"Can I defend a single right answer based on the principles + evidence?"** If yes, take the answer. Only pose to Misha if it is genuinely his call.

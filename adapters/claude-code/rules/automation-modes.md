@@ -39,10 +39,10 @@ Launch Claude Code in your IDE (VS Code extension, JetBrains plugin) or via `cla
 
 Full Neural Lace harness. The session loads:
 
-- `~/.claude/settings.json` with all PreToolUse, PostToolUse, and Stop hooks (26 hooks in the Gen 4+ inventory per `docs/harness-architecture.md`)
-- `~/.claude/rules/*.md` loaded contextually (17 rules)
-- `~/.claude/agents/*.md` dispatchable via Task tool (16 agents including task-verifier, plan-evidence-reviewer, systems-designer, end-user-advocate)
-- `~/.claude/skills/*.md` as slash commands (5 skills)
+- `~/.claude/settings.json` with all PreToolUse, PostToolUse, and Stop hooks (see the live hook inventory in `docs/harness-architecture.md`)
+- `~/.claude/rules/*.md` loaded contextually (see `adapters/claude-code/rules/INDEX.md` for the current rule inventory)
+- `~/.claude/agents/*.md` dispatchable via Task tool (including task-verifier, plan-evidence-reviewer, systems-designer, end-user-advocate — see `docs/harness-architecture.md` for the current agent inventory)
+- `~/.claude/skills/*.md` as slash commands (see `docs/harness-architecture.md` for the current skill inventory)
 - `~/.claude/templates/*.md` for plan/decision/completion-report structure
 - `~/.claude/CLAUDE.md` as global behavioral instructions
 - `~/.claude/local/*.config.json` personal config (per-machine, never committed)
@@ -309,7 +309,7 @@ Decision 011 classifies Dispatch as out of scope for the core problem: it doesn'
 
 Separate Anthropic platform ($0.08/session-hour + token costs, public beta since April 8, 2026). API-level multi-agent orchestration where agents are defined via API, not via `.claude/` files.
 
-Rejected in Decision 011 Alternative D: would require complete architectural rewrite of the harness as agent logic. Months of work to migrate 26 hooks + 17 rules + 16 agents + 5 skills + 10 templates from declarative `.claude/` files to imperative API code. Wrong tool for a local development harness.
+Rejected in Decision 011 Alternative D: would require complete architectural rewrite of the harness as agent logic. Months of work to migrate the full inventory of hooks, rules, agents, skills, and templates (see `docs/harness-architecture.md` for current counts) from declarative `.claude/` files to imperative API code. Wrong tool for a local development harness.
 
 ### DevContainers (Docker-based local isolation)
 

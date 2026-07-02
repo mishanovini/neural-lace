@@ -23,20 +23,7 @@ The numbered rules in short form (consult the doc above for full body, examples,
 
 ## Always Give Misha a Direct, Clickable Link (Rule 2, hard habit)
 
-Whenever a response points Misha at something he should look at — a PR, a Vercel preview, a
-deployment, a dashboard, a GitHub issue/run, a doc, a file, a route/page — **include the exact
-clickable link to that thing in the same message.** Never make him hunt, never say "it's in a PR"
-or "see the preview" or "check the dashboard" without the URL. This is the concrete, always-on
-form of Rule 2 ("be the interface, not a pointer"); he has had to ask for the link more than once,
-so treat a link-less pointer as a defect.
-
-Specifics:
-- **PRs / issues / CI runs:** the full `https://github.com/<org>/<repo>/pull/<n>` (or issue/run) URL — resolve with `gh` if unknown.
-- **Vercel previews / deployments:** the live `https://<deployment>.vercel.app` URL, and **deep-link to the actual page** (e.g. `…vercel.app/automation`), not just the root — get it via `gh pr view <n> --json statusCheckRollup` or `npx --yes vercel ls circuit --meta githubCommitRef=<branch>`.
-- **Files / code:** clickable markdown links (`[path](path:line)`) per the harness link convention.
-- **Anything else with a URL** (Supabase dashboard, Trigger.dev run, Twilio console, etc.): paste the URL.
-
-If a thing has no resolvable link, say so explicitly ("no preview built — here's how to see it locally") rather than leaving a bare pointer.
+Every response pointing at a PR, preview, deployment, dashboard, issue/run, doc, file, or route MUST include the exact clickable link in the same message — never a bare "see the PR" / "check the dashboard." Full specifics (per-artifact-type link resolution, the no-resolvable-link fallback) in `~/.claude/rules/principles.md` under Rule 2 "Always give Misha a direct, clickable link (hard habit)".
 
 ## Accounts & Auto-Switching
 - Work account for business repos, personal account for personal repos
@@ -84,7 +71,7 @@ Full decision tree, per-mode invocation, tradeoffs, and pairing rules in `~/.cla
 - Builds/tests fail: investigate and fix (up to 3 attempts) before escalating
 - Business logic/user intent unclear: ask — don't guess on user-facing behavior
 - Pre-authorized actions: file creation, folder creation, cd, ls, mkdir
-- **Drive to completion; end every turn with a session-end marker.** A code session keeps working until all assigned work ships, you hit a genuine Tier 3 blocker (irreversible op, ambiguous product decision, missing credentials per `planning.md`), or the operator explicitly says stop. Stopping at "natural breakpoints" is narrate-and-wait behavior and is prohibited when autonomous execution was authorized. Every turn that does end must terminate with exactly one `DONE:` / `PAUSING:` / `BLOCKED:` marker on the last line — see `~/.claude/rules/session-end-protocol.md` for the canonical contract (enforced by `continuation-enforcer.sh` Stop hook; composes with `narrate-and-wait-gate.sh` and `~/.claude/rules/testing.md` "Keep Going When Keep-Going Is Authorized").
+- **Drive to completion; end every turn with a session-end marker.** A code session keeps working until all assigned work ships, you hit a genuine Tier 3 blocker (irreversible op, ambiguous product decision, missing credentials per `planning.md`), or the operator explicitly says stop. Stopping at "natural breakpoints" is narrate-and-wait behavior and is prohibited when autonomous execution was authorized. Every turn that does end must terminate with exactly one `DONE:` / `PAUSING:` / `BLOCKED:` marker on the last line — see `~/.claude/rules/session-end-protocol.md` for the canonical contract (`continuation-enforcer.sh` Stop hook exists and self-tests green but is not yet wired into the live Stop chain — pending Wave D session-honesty-gate; composes with `narrate-and-wait-gate.sh` and `~/.claude/rules/testing.md` "Keep Going When Keep-Going Is Authorized").
 - **`AskUserQuestion` / multiple-choice tool is Dispatch-conditional.** The MC widget renders interactively on standalone Claude Code clients (Desktop, IDE extension, terminal) — there it's fine and useful per normal Claude Code conventions. The MC widget does NOT relay answers back through remote-Dispatch clients (`mcp__ccd_session_mgmt__start_code_task` orchestrated sessions where the user reads from a phone, web UI, or another device); under Dispatch, the MC tool blocks the session with no path forward. Rule:
   - **Under Dispatch:** plain text only. Surface choice + options + tradeoffs + recommendation as plain prose in a normal response. The user reads and replies in their next message. NO `AskUserQuestion`.
   - **Standalone:** MC widget is fine per normal conventions.

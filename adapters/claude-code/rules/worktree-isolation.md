@@ -1,6 +1,6 @@
 # Worktree Isolation — Inform Every Session at Start; Preserve Work Before Ending in a Worktree
 
-**Classification:** Hybrid. The discipline (when to use a per-session worktree, and the exemption set for when NOT to) is a Pattern the operator and every session self-apply. Two Mechanisms back it: `session-start-worktree-advisor.sh` (SessionStart) auto-injects tailored guidance — the START side, which a hook **cannot force** (the cwd is chosen before SessionStart fires; a subprocess cannot relocate its parent) and therefore only informs; and `worktree-teardown-gate.sh` (Stop) blocks a session from ending inside a linked worktree with **uncommitted** work, steering toward preserve-first and **never** toward `--force` deletion.
+**Classification:** Hybrid. The discipline (when to use a per-session worktree, and the exemption set for when NOT to) is a Pattern the operator and every session self-apply. Two Mechanisms back it: `session-start-worktree-advisor.sh` (SessionStart) auto-injects tailored guidance — the START side, which a hook **cannot force** (the cwd is chosen before SessionStart fires; a subprocess cannot relocate its parent) and therefore only informs; and `worktree-teardown-gate.sh` (Stop) blocks a session from ending inside a linked worktree with **uncommitted** work, steering toward preserve-first and **never** toward `--force` deletion. Both hooks exist, pass their self-tests, and are wired in the canonical `settings.json.template` — but live wiring is pending Wave B.6 install (the template has not yet been synced to the user's live `~/.claude/settings.json`).
 
 **Ships with:** ADR 057 (`docs/decisions/057-worktree-isolation-enforcement.md`), which records the full A1–A7 / B1–B10 exemption + edge-case analysis (the operator asked to see every non-wanted case before the build).
 
@@ -60,10 +60,10 @@ Neither mechanism *forces* a session to start in a worktree (that's UI/operator 
 | Layer | What it enforces | File |
 |---|---|---|
 | Rule (this doc) | When to use a worktree; the A1–A7 exemption set; the B1 preserve-first / B2 cwd-scope discipline | `adapters/claude-code/rules/worktree-isolation.md` |
-| Advisor (SessionStart, Mechanism) | Auto-injects tailored worktree guidance at every session start (informational; never blocks) | `adapters/claude-code/hooks/session-start-worktree-advisor.sh` |
-| Teardown gate (Stop, Mechanism) | Blocks ending in a worktree with uncommitted work; steers preserve-first, never `--force` | `adapters/claude-code/hooks/worktree-teardown-gate.sh` |
+| Advisor (SessionStart, Mechanism, wired in template; live wiring pending Wave B.6 install) | Auto-injects tailored worktree guidance at every session start (informational; never blocks) | `adapters/claude-code/hooks/session-start-worktree-advisor.sh` |
+| Teardown gate (Stop, Mechanism, wired in template; live wiring pending Wave B.6 install) | Blocks ending in a worktree with uncommitted work; steers preserve-first, never `--force` | `adapters/claude-code/hooks/worktree-teardown-gate.sh` |
 | User authority | The backstop for the start side (which no hook can force) and the named failure-mode-2 limitation | (Pattern) |
 
 ## Scope
 
-Applies in any project whose Claude Code installation has the two hooks wired in `settings.json`. Both degrade to no-ops where they can't apply (non-git, no transcript, main checkout, already isolated), so they are safe in every session mode. The advisor fires on every SessionStart; the teardown gate fires on every Stop but no-ops unless the session is ending inside a linked worktree.
+Applies in any project whose Claude Code installation has the two hooks wired in `settings.json`. Both are wired in the canonical `settings.json.template`; live wiring pending Wave B.6 install (the sync from template to the user's `~/.claude/settings.json` has not yet run). Both degrade to no-ops where they can't apply (non-git, no transcript, main checkout, already isolated), so they are safe in every session mode. The advisor fires on every SessionStart; the teardown gate fires on every Stop but no-ops unless the session is ending inside a linked worktree.

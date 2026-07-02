@@ -157,11 +157,11 @@ Both layers must operate together. The gate catches malformed entries at commit 
 
 | Layer | What it enforces | File | Status |
 |---|---|---|---|
-| Rule (this doc) | When findings are required, the six-field schema, the dispositioning lifecycle, the relationship to backlog and reviews | `adapters/claude-code/rules/findings-ledger.md` | landing in Phase 1d-C-3 Task 2 |
-| Template | Shape of a correct findings ledger with schema spec and sample entries | `adapters/claude-code/templates/findings-template.md` | landing in Phase 1d-C-3 Task 1 |
-| Hook (`findings-ledger-schema-gate.sh`) | Schema validation on every commit modifying `docs/findings.md` | `adapters/claude-code/hooks/findings-ledger-schema-gate.sh` | landing in Phase 1d-C-3 Task 3 |
-| Hook (`bug-persistence-gate.sh` extended) | Sessions cannot end with trigger-phrase observations un-persisted; `docs/findings.md` is a legitimate persistence target | `adapters/claude-code/hooks/bug-persistence-gate.sh` | landing in Phase 1d-C-3 Task 4 |
-| Decision record | The three sub-decisions backing this rule | `docs/decisions/019-findings-ledger-format.md` | landing in Phase 1d-C-3 Task 1 |
+| Rule (this doc) | When findings are required, the six-field schema, the dispositioning lifecycle, the relationship to backlog and reviews | `adapters/claude-code/rules/findings-ledger.md` | landed |
+| Template | Shape of a correct findings ledger with schema spec and sample entries | `adapters/claude-code/templates/findings-template.md` | landed |
+| Hook (`findings-ledger-schema-gate.sh`) | Schema validation on every commit modifying `docs/findings.md` | `adapters/claude-code/hooks/findings-ledger-schema-gate.sh` | landed |
+| Hook (`bug-persistence-gate.sh` extended) | Sessions cannot end with trigger-phrase observations un-persisted; `docs/findings.md` is a legitimate persistence target | `adapters/claude-code/hooks/bug-persistence-gate.sh` | landed |
+| Decision record | The three sub-decisions backing this rule | `docs/decisions/019-findings-ledger-format.md` | landed |
 
 The rule is documentation (Pattern-level). The mechanism stack (schema gate + bug-persistence extension) is hook-enforced. Together they close the loop: cannot commit a malformed entry (gate); cannot end a session with un-persisted trigger-phrase observations (extended Stop hook); the discipline of class-aware writing is the agent self-applying.
 
