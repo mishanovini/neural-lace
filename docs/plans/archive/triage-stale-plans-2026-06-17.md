@@ -1,5 +1,5 @@
 # Plan: Triage 5 stale neural-lace ACTIVE plans (2026-06-17)
-Status: ACTIVE
+Status: SUPERSEDED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -10,6 +10,9 @@ rung: 0
 architecture: coding-harness
 frozen: true
 prd-ref: n/a — harness-development
+
+## Disposition (2026-07-02)
+Items 1–2 executed by the nl-overhaul estate pass (exact-ask-rule closed; wim-deploy-age-guard-fix.md confirmed already archived at docs/plans/archive/, not top-level ACTIVE — nothing further to do). Items 3–4 superseded by nl-overhaul F.3 + DEC-2026-07-02-002.
 
 ## Goal
 Triage the stale ACTIVE plans in `docs/plans/`: verify each plan's deliverables against `origin/master`, and for each either close it (COMPLETED + archive) when fully shipped, keep it ACTIVE with a dated Decisions Log note when it is live decision-blocked work, or report a recommendation when its disposition is the operator's call. Plan bookkeeping only — no source code, no feature work.

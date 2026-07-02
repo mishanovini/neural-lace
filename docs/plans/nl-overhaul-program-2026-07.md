@@ -142,6 +142,10 @@ The operator (the harness's user) can, after this program: (a) run `harness-doct
 ## In-flight scope updates
 - 2026-07-02: `docs/reviews/nl-overhaul-baseline-2026-07.md` — B.10 baseline snapshot (same scope-gate first-backtick parser limitation as the CLAUDE.md line below; second independent builder hit it in one wave — now an explicit D.0 gate-map row). Filename is mandated verbatim by the Closure Contract and does not match the docs/reviews date-prefix gitignore allowlist; tracked via one-time `git add -f` (documented exception; the file stays tracked thereafter).
 - 2026-07-02: `adapters/claude-code/CLAUDE.md` — B.5 doc-truth-sweep touches this file directly (per its own §B.5 done-when: CLAUDE.md ≤200-line trim); already covered by this plan's `## Scope` IN clause and by line 134's `## Files to Modify/Create` bullet, but the scope-enforcement-gate's parser only extracts the first backtick-quoted path per bullet line — adding this explicit In-flight line satisfies the gate without editing anyone else's scope declaration.
+- 2026-07-02: `docs/backlog.md` — DEC-2026-07-02-002 estate-disposition commit, backlog reconciliation note. Same scope-gate first-backtick parser limitation as the lines above (not the first backtick token on its `## Files to Modify/Create` bullet line); explicit In-flight line (one file per bullet, matching the extractor's one-path-per-line contract) satisfies the gate.
+- 2026-07-02: `docs/discoveries/2026-06-10-product-acceptance-gate-waiver-unreachable-for-exempt-ui-plans.md` — DEC-2026-07-02-002, discovery status flip (pending → superseded).
+- 2026-07-02: `docs/discoveries/2026-06-02-component-c-sync-daemon-thrashes-live-checkout.md` — DEC-2026-07-02-002, discovery status flip (pending → decided; absorbed as B.12).
+- 2026-07-02: `docs/discoveries/2026-05-25-dispatch-coordination-debug.md` — DEC-2026-07-02-002, discovery status flip (pending → decided; parked with orchestrator-prime cluster).
 
 ## Assumptions
 

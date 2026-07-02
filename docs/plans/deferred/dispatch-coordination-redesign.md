@@ -1,5 +1,5 @@
 # Plan: Dispatch ↔ Code Session Coordination Redesign (Pattern 5 of 5)
-Status: DRAFT
+Status: DEFERRED
 Execution Mode: orchestrator
 Mode: design
 frozen: false
@@ -21,6 +21,9 @@ Backlog items absorbed: none
      plan is authored Mode: design because it integrates a new third-party service
      (ntfy.sh) and crosses session boundaries (>3 state transitions), which are explicit
      Mode: design triggers. The brief also mandates Mode: design. Honor both. -->
+
+## Disposition (2026-07-02)
+Deferred per DEC-2026-07-02-002 (same cluster as orchestrator-prime). Its problem space (wake delivery, operator visibility) is partially re-solved by the overhaul's digest + ledger; re-evaluate what remains post-F.4.
 
 ## Goal
 

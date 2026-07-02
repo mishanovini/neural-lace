@@ -2,7 +2,7 @@
 title: Component C cross-machine sync rewrites the live dev checkout mid-session
 date: 2026-06-02
 type: process
-status: pending
+status: decided
 auto_applied: false
 originating_context: feat/event-driven-heartbeat build session (replacing the polling heartbeat scheduled task)
 decision_needed: How should active manual development coexist with the Component C cross-machine-sync daemon, which performs branch checkouts / cherry-picks / resets (and triggers install.sh) on the SAME working tree a session is developing in?
@@ -74,6 +74,8 @@ viable interim. D is a must-have guard regardless of which of A/B/C is chosen â€
 ## Decision
 
 [pending Misha â€” recommend C (sync in a dedicated clone, never the dev checkout) + A (interactive-session lock stopgap) + D (never `git add -A` / `install.sh` from a transient sync branch)]
+
+2026-07-02: absorbed as nl-overhaul task B.12 (interactive-lock stopgap now; dedicated sync clone as the Wave E/F durable fix). Operator approved.
 
 ## Preservation state (this session; the daemon fix itself is unimplemented)
 
