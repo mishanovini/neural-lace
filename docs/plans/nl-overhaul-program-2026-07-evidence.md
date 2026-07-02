@@ -222,3 +222,103 @@ Runtime verification: file docs/plans/orchestrator-prime.md::frozen: true
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: both plans carry exactly one "^frozen: true" header line at commit 259c3f1 and the program plan's Decisions Log contains the "Administrative freeze" rationale entry (line 211), satisfying the B.11 Done-when.
+
+## Task B.8 — Remote/account fetch-path fix
+
+EVIDENCE BLOCK
+==============
+Task ID: B.8
+Task description: Remote/account fetch-path fix: resolve the `Repository not found` on `git fetch origin` under the work gh account (remote URLs vs account mapping); verify both-remote sync works per the standing two-remote rule — Verification: mechanical
+Verified at: 2026-07-02T20:19:47Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — live both-remote fetch assertion from the MAIN checkout per specs-b §B.8 Done-when
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commit: n/a — machine-state resolution (no repo diff; root cause was stale active gh account — the credential helper authenticates as the active account; the accounts.config dir-trigger mapping was already correct). Verified live at branch HEAD 2de07af.
+
+Checks run:
+1. Remote inventory at main checkout
+   Command: cd "C:/Users/misha/dev/Pocket Technician/neural-lace" && git remote -v
+   Output: origin = https://github.com/Pocket-Technician/neural-lace.git; personal = https://github.com/mishanovini/neural-lace.git (fetch+push each)
+   Result: PASS
+2. git fetch origin (main checkout, standing account state, no switch needed)
+   Command: git fetch origin; echo $?
+   Output: exit 0
+   Result: PASS
+3. git fetch personal (main checkout, same session)
+   Command: git fetch personal; echo $?
+   Output: exit 0
+   Result: PASS
+4. Account-switch fallback path (read-local-config match-dir + gh auth switch)
+   Result: SKIPPED (not needed — both fetches exited 0 on first attempt under the standing account state, which per the spec IS the correct configuration for this directory)
+
+Runtime verification: file docs/plans/nl-overhaul-program-2026-07-specs-b.md::git fetch origin && git fetch personal
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: the specs-b §B.8 Done-when command pair was replayed live from the MAIN checkout "C:/Users/misha/dev/Pocket Technician/neural-lace" this session — `git fetch origin` exit 0 AND `git fetch personal` exit 0 with no account switch required, confirming the machine-state resolution holds as standing state.
+
+## Task B.9 — Backlog reconciliation pass 1
+
+EVIDENCE BLOCK
+==============
+Task ID: B.9
+Task description: Backlog reconciliation pass 1: mark the entries this program absorbs with (absorbed by docs/plans/nl-overhaul-program-2026-07.md) — GAP-20/21/22, synthetic-session-runner P0, waiver-density alarm, continuation-enforcer wiring, GAP-52, GAP-53, tool-call-budget --ack HMAC item, GAP-42 — and close already-fixed-but-open items (GAP-19, STALE-PLANS-01) — Verification: mechanical
+Verified at: 2026-07-02T20:19:47Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — per-ID grep assertions on docs/backlog.md per specs-b §B.9 Done-when
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commit: 18270b9 (overhaul(B.9): backlog reconciliation pass 1 — mark absorbed items, close 2 already-fixed) — docs/backlog.md
+
+Checks run:
+1. grep -c "absorbed by docs/plans/nl-overhaul-program-2026-07.md" docs/backlog.md → 11 — PASS (≥ 10)
+2. grep -c "GAP-19" docs/backlog.md → 6 — PASS (≥ 1); entry line 112 reads "- **HARNESS-GAP-19 — [CLOSED 2026-07-02]** — ... **Evidence of closure:** grep -n \"session-wrap.sh refresh\" adapters/claude-code/settings.json.template matches" — CLOSED marker confirmed on the entry itself
+3. Per-ID absorbed greps (each = count of that ID's lines carrying the absorbed marker): GAP-20 → 3, GAP-21 → 2, GAP-22 → 3, GAP-52 → 1, GAP-53 → 1, GAP-42 → 2, synthetic-session-runner → 1, waiver-density → 2, continuation-enforcer → 2, tool-call-budget --ack/HMAC → 1 — ALL PASS (≥ 1 each)
+4. grep "STALE-PLANS-01" docs/backlog.md | grep -c "CLOSED" → 1 — PASS
+5. Last-updated stamp refreshed
+   Command: head -3 docs/backlog.md
+   Output: line 3 = "**Last updated:** 2026-07-02 v59 — **NL overhaul program backlog reconciliation pass 1** (task B.9 ...)"; pre-B.9 state (git show 18270b9~1:docs/backlog.md) had the identical layout (line 1 title, line 2 blank, line 3 stamp) reading "2026-06-12 v58" — B.9 refreshed the stamp in place. Note: the stamp sits on line 3 (line 2 blank); this layout is pre-existing and unchanged by B.9, satisfying the plan's Done-when ("backlog Last updated line refreshed") and specs-b ("Refresh the Last updated line").
+   Result: PASS
+
+Runtime verification: file docs/backlog.md::absorbed by docs/plans/nl-overhaul-program-2026-07.md
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: at commit 18270b9 the backlog carries 11 absorbed markers (≥ 10), every listed ID's entry greps to ≥ 1 absorbed/closed marker, GAP-19's entry carries "[CLOSED 2026-07-02]" with closure evidence, STALE-PLANS-01 is CLOSED, and the Last-updated line is refreshed to 2026-07-02 v59 (position line 3, pre-existing layout).
+
+## Task B.10 — Baseline snapshot for D7 refutation criteria
+
+EVIDENCE BLOCK
+==============
+Task ID: B.10
+Task description: Baseline snapshot for D7 refutation criteria: record current metrics (downgrade counts, waiver counts, alert ack-rate, rules-dir bytes, Stop-chain length, live blocking-gate count) to docs/reviews/nl-overhaul-baseline-2026-07.md — Verification: mechanical
+Verified at: 2026-07-02T20:19:47Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — file-existence + six-section structure assertions per specs-b §B.10 Done-when ("file exists; all six sections have a number + command")
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commit: 2de07af (overhaul(B.10): baseline snapshot for D7 refutation criteria — six metrics + reproduction commands; content authored by worker-B.10, integrated by orchestrator with In-flight scope line) — docs/reviews/nl-overhaul-baseline-2026-07.md, +162 lines (new file)
+
+Checks run:
+1. test -f docs/reviews/nl-overhaul-baseline-2026-07.md → exists — PASS
+2. grep -c "^## [0-9]\." docs/reviews/nl-overhaul-baseline-2026-07.md → 6 — PASS (exactly six metric sections; the seventh "## Snapshot provenance" heading is non-metric)
+3. Six required metric classes each present as a section heading: "## 1. Retry-guard downgrade entries" (L15) / "## 2. Acceptance waiver files count" (L34) / "## 3. External-monitor alert count + acked count" (L55) / "## 4. Live rules-dir byte size" (L74) / "## 5. Live Stop-chain entry count" (L90) / "## 6. Live blocking-gate count" (L129) — PASS
+4. Each section carries a **Value:** line: 321 lines / 12 files / 33 total alerts, 0 acked / 883,882 bytes across 61 files / 20 hook entries / pending — PASS (section 6's "pending" is legitimate per the specs-b escape clause: "doctor output once B.6 lands — else note pending"; B.6 is unchecked at verification time, and the section includes the deferred reproduction command plus verified-absent evidence for harness-doctor.sh)
+5. Reproduction command per section: grep -c '```bash' → 8 fenced bash blocks; sections 1–6 each contain ≥ 1 exact reproduction command — PASS
+6. File tracked in git despite the docs/reviews date-prefix gitignore allowlist mismatch (documented one-time git add -f exception per the plan's In-flight scope updates)
+   Command: git ls-files docs/reviews/nl-overhaul-baseline-2026-07.md
+   Output: docs/reviews/nl-overhaul-baseline-2026-07.md
+   Result: PASS
+
+Runtime verification: file docs/reviews/nl-overhaul-baseline-2026-07.md::**Value:
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: at commit 2de07af the baseline file exists and is git-tracked, contains exactly six metric sections matching the required classes (downgrade / acceptance-waiver / external-monitor / rules-dir bytes / Stop-chain / blocking-gate), each with a Value line and an exact reproduction command; section 6's "pending" value is explicitly sanctioned by the specs-b escape clause since B.6 has not landed.
