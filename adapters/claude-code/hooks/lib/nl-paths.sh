@@ -5,9 +5,9 @@
 # audit's "213-failures-in-a-month" legacy-path defect, RC5/RC6):
 #   Many hooks/scripts hardcoded a single machine-specific path (the historical
 #   convention directory under $HOME — see _NL_PATHS_LEGACY_DIR below) as "the"
-#   neural-lace checkout. Any machine whose checkout lives elsewhere (this machine's actual
-#   checkout is under $HOME/dev/Pocket Technician/neural-lace, worktrees
-#   under .claude/worktrees/<slug>, CI runners, a teammate's differently
+#   neural-lace checkout. Any machine whose checkout lives elsewhere (a
+#   differently-named parent directory, worktrees under
+#   .claude/worktrees/<slug>, CI runners, a teammate's differently
 #   named clone) silently fails every fallback/fixture/self-location path
 #   that depended on the hardcoded string. This resolver is the single
 #   canonical answer to "where is the neural-lace repo checked out?",
@@ -42,7 +42,7 @@
 # Probe list — last-resort fallback only (order 4 above). Kept short and
 # reviewed; NOT a place to accumulate every machine's checkout path.
 #
-# The second entry is built from path SEGMENTS (rather than one literal
+# The entry is built from path SEGMENTS (rather than one literal
 # string) so this canonical resolver file itself is not flagged by the
 # repo-wide "legacy hardcoded path" sweep this file exists to make
 # unnecessary everywhere else (B.2 Done-when). The RESOLVED path is
@@ -51,7 +51,6 @@
 _NL_PATHS_LEGACY_DIR_PARTS=("claude" "projects")
 _NL_PATHS_LEGACY_DIR="${_NL_PATHS_LEGACY_DIR_PARTS[0]}-${_NL_PATHS_LEGACY_DIR_PARTS[1]}"
 _NL_PATHS_PROBE_LIST=(
-  "$HOME/dev/Pocket Technician/neural-lace"
   "$HOME/$_NL_PATHS_LEGACY_DIR/neural-lace"
 )
 

@@ -857,11 +857,11 @@ Anthropic-side" theme).
 **(absorbed by docs/plans/nl-overhaul-program-2026-07.md — B.3)**
 
 **Severity:** P1
-**Found:** Circuit SMS-debug session, 2026-06-13 (Misha: "harness-hygiene-scan is supposed to run on every repo that uses the harness").
-**Verified:** `harness-hygiene-scan.sh` resolves its denylist at `$REPO_ROOT/adapters/claude-code/patterns/harness-denylist.txt` and `exit 0` (silent skip) when absent (hook lines ~319-322). That path exists ONLY in the neural-lace harness repo, so the scanner NEVER runs in any downstream/product repo (Circuit, marketing, etc.). The rule's stated "every repo using the harness" intent is unmet.
+**Found:** downstream-product SMS-debug session, 2026-06-13 (operator: "harness-hygiene-scan is supposed to run on every repo that uses the harness").
+**Verified:** `harness-hygiene-scan.sh` resolves its denylist at `$REPO_ROOT/adapters/claude-code/patterns/harness-denylist.txt` and `exit 0` (silent skip) when absent (hook lines ~319-322). That path exists ONLY in the neural-lace harness repo, so the scanner NEVER runs in any downstream/product repo. The rule's stated "every repo using the harness" intent is unmet.
 **Tension:** the denylist keeps the KIT generic (no project identifiers IN the kit); on a product repo, project identifiers are legitimate, so the kit-denylist cannot run as-is there. PII/secret coverage for all repos currently lives in `pre-push-scan.sh` (global `core.hooksPath`), which DOES run everywhere.
 **Fix (needs design):** either (a) resolve the denylist from the installed `~/.claude/patterns/` as a fallback AND run only the PII/heuristic layer (not the kit-identifier denylist) on product repos; or (b) explicitly scope harness-hygiene-scan kit-only and move "protect every repo" wholly to `pre-push-scan.sh` with documented PII patterns + a clear rule. Reconcile with pre-push-scan PII coverage; add self-tests for the product-repo path.
-**Originating incident:** operator PII (personal cell) committed to Circuit (PR #510), NOT caught by any local hook — only GitHub server-side secret-scanning surfaced it.
+**Originating incident:** operator PII (personal cell) committed to a downstream product repo (its PR #510), NOT caught by any local hook — only GitHub server-side secret-scanning surfaced it.
 
 ## HARNESS-GAP-53 (2026-06-13): completion-criteria-gate "deploy" criterion is presence-only, not prod-verified
 
@@ -870,5 +870,5 @@ Anthropic-side" theme).
 **Severity:** P1
 **Found:** same session.
 **Defect:** the Stop-hook completion-criteria-gate passes the "deploy" criterion on any deploy-evidence token in the final message; it does NOT verify a PRODUCTION deployment exists for the merged commit SHA. An agent can honestly cite a PR PREVIEW deploy ("Vercel — Deployment has completed") and pass while NOTHING reached production.
-**Observed:** a multi-fix Circuit session merged to master with the gate passing "deploy ✓" while production ran a 23h-old build (master→prod auto-deploy was broken — see Circuit CIRCUIT-DEPLOY-MASTER-NOT-REACHING-PROD-01). No fix was actually live; the gate gave false assurance.
+**Observed:** a multi-fix downstream-product session merged to master with the gate passing "deploy ✓" while production ran a 23h-old build (master→prod auto-deploy was broken — see that repo's DEPLOY-MASTER-NOT-REACHING-PROD-01 backlog entry). No fix was actually live; the gate gave false assurance.
 **Fix:** strengthen the deploy criterion to require/verify a production deployment whose commit == merged SHA (checkable artifact: prod-alias commit == HEAD), or require an explicit prod-verification step (`vercel ls --prod` / prod-alias commit check) rather than accepting any deploy token. Pair with a "PR Vercel checks are PREVIEW, not prod — verify don't assume" reminder.
