@@ -100,6 +100,16 @@ resolve_repo_root() {
     printf '%s\n' "$NL_REPO_ROOT"
     return 0
   fi
+  # Config-file tier (written by install.sh; same anchor nl-paths.sh uses) —
+  # the live mirror is not a git repo, so this is the tier that fires there.
+  local cfg="${HOME:-}/.claude/local/nl-repo-path"
+  if [[ -f "$cfg" ]]; then
+    root="$(head -1 "$cfg" | tr -d '\r\n')"
+    if [[ -n "$root" && -d "$root" ]]; then
+      printf '%s\n' "$root"
+      return 0
+    fi
+  fi
   return 1
 }
 
@@ -204,6 +214,9 @@ check_lib_deps() {
   local hook
   for hook in "$hooks_dir"/*.sh; do
     [[ -f "$hook" ]] || continue
+    # Skip this scanner itself — its self-test section embeds fixture
+    # source-lines (lib/missing-lib.sh etc.) that are data, not includes.
+    [[ "$(basename "$hook")" == "harness-doctor.sh" ]] && continue
     local hook_dir
     hook_dir="$(cd "$(dirname "$hook")" && pwd)"
     # Match any line containing a source/. include directive, then extract
@@ -321,8 +334,14 @@ check_claim_honesty() {
     if printf '%s\n' "$live_names" | grep -qx "$hook_name"; then
       continue
     fi
+    # Live-first: the live rules copy is what sessions actually load; the
+    # repo copy is the fallback (covers self-test fixtures + repo-only runs).
+    local live_rule="${live_home}/rules/${rule_rel#rules/}"
+    if [[ -f "$live_rule" ]] && grep -q "pending Wave" "$live_rule" 2>/dev/null; then
+      continue
+    fi
     local rule_path="${repo_root}/adapters/claude-code/${rule_rel}"
-    if [[ -f "$rule_path" ]] && grep -q "pending Wave" "$rule_path" 2>/dev/null; then
+    if [[ -n "$repo_root" && -f "$rule_path" ]] && grep -q "pending Wave" "$rule_path" 2>/dev/null; then
       continue
     fi
     _red "claim-honesty" "${hook_name} is not wired in live settings.json AND its rule (${rule_rel}) lacks the 'pending Wave' honest-status marker"
