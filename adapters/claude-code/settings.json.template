@@ -209,6 +209,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/migration-naming-gate.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/vaporware-volume-gate.sh"
           }
         ]
@@ -342,6 +351,15 @@
         ]
       },
       {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/plan-auto-closure.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
@@ -447,6 +465,10 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/worktree-teardown-gate.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/workstreams-stop-gate.sh"
           },
           {
@@ -504,6 +526,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/completion-criteria-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/register-progress-gate.sh"
           },
           {
             "type": "command",
@@ -570,6 +596,14 @@
           },
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/register-surfacer.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/stalled-work-surfacer.sh"
+          },
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/decision-context-replay.sh"
           },
           {
@@ -594,6 +628,10 @@
             "type": "command",
             "command": "bash ~/.claude/hooks/session-start-git-freshness.sh",
             "statusMessage": "Checking git freshness (fetch + behind + working-tree state)..."
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/session-start-worktree-advisor.sh"
           },
           {
             "type": "command",

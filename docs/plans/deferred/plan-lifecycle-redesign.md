@@ -1,5 +1,5 @@
 # Plan: Plan-Lifecycle Redesign — Mechanical Closure Machine at Creation
-Status: ACTIVE
+Status: DEFERRED
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none
@@ -156,6 +156,7 @@ DEFERRED-routing fix (ADR 052, Misha directive 2026-06-04 — deferred = intende
 - 2026-06-04: `docs/DECISIONS.md` — ADR 052 index row.
 - 2026-06-04: `docs/harness-architecture.md` — the two lifecycle-hook rows updated.
 - 2026-06-10: `adapters/claude-code/scripts/close-plan.sh` — fix the recurring rename-only-closure-commit defect (squarely closure-mechanics, this plan's scope; the file is already in `## Files to Modify/Create` for R4). Observed twice (manual fix-ups `83c2564` 2026-06-08, `b27027f` 2026-06-10) and reproduced in a synthetic repo: `git mv` stages the rename carrying the PRE-flip index blob while the sed Status flip + completion report exist only in the working tree, and close-plan staged-but-never-committed — so the closing session's commit landed rename-only with the archived blob still `Status: ACTIVE`. Fix: new step 7 re-adds the moved plan/evidence files and commits pathspec-limited (unrelated staged work is never swept in); WARN-and-continue on commit failure. Also corrected the R4-flagged stale comments (header, usage, steps 5/6) that wrongly claimed the bash sed flip "triggers plan-lifecycle.sh archival" — bash writes fire no PostToolUse event; the inline fallback is the sole archival path under close-plan. New regression scenario S11 (closure-commit-captures-flipped-content); self-test 14 checks / 11 scenarios, 0 failed. This delivers the comment-fix slice of R4 early; R4's auto-closure hook + `--auto` path remain unbuilt.
+- 2026-06-15: `adapters/claude-code/rules/vaporware-prevention.md` — R4 landing: add the plan-lifecycle mechanical-closure-machine (R1/R2/R4) enforcement-map row (Checks 14/15 + plan-auto-closure.sh + close-plan.sh --auto). Squarely this plan's scope — the enforcement-map row is the required doc deliverable for the R1/R2/R4 mechanisms. Other R4 files (`adapters/claude-code/hooks/plan-auto-closure.sh`, `adapters/claude-code/scripts/close-plan.sh`, `adapters/claude-code/settings.json.template`, `docs/harness-architecture.md`) are already in `## Files to Modify/Create` / prior in-flight entries.
 
 ## Assumptions
 
@@ -327,6 +328,20 @@ with the minimum content and is the R6 integration test's core path.
   the next waiver-density signal on this plan's slug.
 - **To reverse:** n/a (bookkeeping decision; the close-plan fix reverts as one
   commit if needed).
+
+### Decision: DEFERRED 2026-06-15
+- **Tier:** 1
+- **Status:** DEFERRED 2026-06-15 — not currently prioritized; the existing
+  plan-lifecycle mechanisms (close-plan.sh deterministic closure +
+  plan-lifecycle.sh archival + plan-status-archival-sweep.sh) work in practice.
+  Revive when the mechanical-closure-at-creation redesign becomes a priority.
+- **Chosen:** Flip `Status: DEFERRED`. This supersedes the 2026-06-10
+  "stays ACTIVE" decision above — that entry deferred deferral pending Misha's
+  explicit approval; that approval is now given.
+- **Re-engage trigger:** the mechanical-closure-at-creation redesign (R1–R8
+  roadmap) becomes a priority.
+- **To reverse:** flip `Status:` back to `ACTIVE` and `git mv` the plan from
+  `docs/plans/deferred/` back to `docs/plans/`.
 
 ## Definition of Done
 

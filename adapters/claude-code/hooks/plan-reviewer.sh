@@ -1263,6 +1263,161 @@ CHECK13_HI4
     FAILED=1
   fi
 
+  # ============================================================
+  # Check 14 + 15 scenarios (cc1..cc7) — plan-lifecycle redesign R1/R2
+  # ============================================================
+  #
+  # write_lifecycle_plan: a minimal Mode: code, Status: ACTIVE plan with all
+  # 5 Check-10 header fields valid (so Check 10 passes) plus a populated body
+  # (so Check 6b passes), parameterizing the three NEW lifecycle fields and
+  # the ## Closure Contract section so each Check 14/15 path is isolated.
+  #
+  #   $1 = output path
+  #   $2 = schema_line     (full line, e.g. "lifecycle-schema: v2"; "" to omit)
+  #   $3 = owner_line      (full line, e.g. "owner: Misha"; "" to omit)
+  #   $4 = target_line     (full line, e.g. "target-completion-date: 2026-07-15"; "" to omit)
+  #   $5 = contract_mode   ("populated" | "missing" | "placeholder")
+  write_lifecycle_plan() {
+    local out="$1" schema_line="$2" owner_line="$3" target_line="$4" contract_mode="$5"
+    {
+      echo "# Plan: Self-test Check 14/15 lifecycle fixture"
+      echo "Status: ACTIVE"
+      echo "Mode: code"
+      echo "Backlog items absorbed: none"
+      echo "tier: 1"
+      echo "rung: 0"
+      echo "architecture: coding-harness"
+      echo "frozen: false"
+      [[ -n "$schema_line" ]] && echo "$schema_line"
+      [[ -n "$owner_line" ]] && echo "$owner_line"
+      [[ -n "$target_line" ]] && echo "$target_line"
+      echo "prd-ref: n/a — harness-development"
+      echo ""
+      echo "## Goal"
+      echo "Exercise Check 14 (accountability fields) and Check 15 (Closure"
+      echo "Contract) under the lifecycle-schema: v2 grandfather gate."
+      echo ""
+      echo "## Scope"
+      echo "- IN: Check 14 + Check 15 enforcement"
+      echo "- OUT: anything else; single-purpose fixture"
+      echo ""
+      echo "## Tasks"
+      echo "- [ ] 1. Synthetic task placeholder; Verification: mechanical"
+      echo ""
+      echo "## Files to Modify/Create"
+      echo "- \`hooks/plan-reviewer.sh\` — Check 14/15 under exercise"
+      echo ""
+      echo "## Assumptions"
+      echo "- Assumes Checks 6b and 10 pass so the only failing path is"
+      echo "  Check 14 or Check 15 itself."
+      echo ""
+      echo "## Edge Cases"
+      echo "- A plan lacking lifecycle-schema: v2 must be grandfathered and"
+      echo "  never reach Check 14/15 at all (cc1 covers this)."
+      echo ""
+      echo "## Testing Strategy"
+      echo "- Run plan-reviewer.sh against each variant; observe the exit code."
+      echo ""
+      echo "Walking Skeleton: n/a — self-test fixture, no runtime slice."
+      echo ""
+      case "$contract_mode" in
+        populated)
+          echo "## Closure Contract"
+          echo "- **Commands that run:** bash hooks/plan-reviewer.sh --self-test"
+          echo "- **Expected outputs:** exit 0 with all scenarios matched"
+          echo "- **On-disk artifact location:** docs/plans/lifecycle-fixture-evidence/1.evidence.json"
+          echo "- **Done when:** the single task is task-verifier PASS and the evidence file exists with verdict PASS."
+          ;;
+        placeholder)
+          echo "## Closure Contract"
+          echo "- **Commands that run:** [populate me — verification commands]"
+          echo "- **Expected outputs:** [populate me — PASS criteria]"
+          echo "- **On-disk artifact location:** [populate me — where the PASS artifact lands]"
+          echo "- **Done when:** [populate me — one-sentence closure condition]"
+          ;;
+        missing)
+          : # no Closure Contract section at all
+          ;;
+      esac
+      echo ""
+      echo "## Definition of Done"
+      echo "- [ ] Self-test reports the expected verdict."
+    } > "$out"
+  }
+
+  # (cc1) Grandfathered: ACTIVE plan WITHOUT lifecycle-schema → Checks 14/15
+  #       must NOT fire. No owner / target / contract present. EXPECT PASS.
+  #       This is the load-bearing no-false-positive guard for legacy plans.
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc1.md" "" "" "" "missing"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/cc1.md" > /dev/null 2>&1; then
+    echo "self-test (cc1) check14-15-grandfathered-no-v2-marker: PASS (expected)" >&2
+  else
+    echo "self-test (cc1) check14-15-grandfathered-no-v2-marker: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/cc1.md" >&2 || true
+    FAILED=1
+  fi
+
+  # (cc2) v2 plan, all fields populated + Closure Contract populated. EXPECT PASS.
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc2.md" "lifecycle-schema: v2" \
+    "owner: Misha" "target-completion-date: 2026-07-15" "populated"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/cc2.md" > /dev/null 2>&1; then
+    echo "self-test (cc2) check14-15-v2-fully-populated: PASS (expected)" >&2
+  else
+    echo "self-test (cc2) check14-15-v2-fully-populated: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/cc2.md" >&2 || true
+    FAILED=1
+  fi
+
+  # (cc3) v2 plan missing owner: → Check 14 FAIL. EXPECT FAIL.
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc3.md" "lifecycle-schema: v2" \
+    "" "target-completion-date: 2026-07-15" "populated"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/cc3.md" > /dev/null 2>&1; then
+    echo "self-test (cc3) check14-v2-missing-owner: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (cc3) check14-v2-missing-owner: FAIL (expected)" >&2
+  fi
+
+  # (cc4) v2 plan missing target-completion-date: → Check 14 FAIL. EXPECT FAIL.
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc4.md" "lifecycle-schema: v2" \
+    "owner: Misha" "" "populated"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/cc4.md" > /dev/null 2>&1; then
+    echo "self-test (cc4) check14-v2-missing-target-date: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (cc4) check14-v2-missing-target-date: FAIL (expected)" >&2
+  fi
+
+  # (cc5) v2 plan with malformed target-date (not YYYY-MM-DD) → Check 14 FAIL.
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc5.md" "lifecycle-schema: v2" \
+    "owner: Misha" "target-completion-date: July 15" "populated"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/cc5.md" > /dev/null 2>&1; then
+    echo "self-test (cc5) check14-v2-malformed-target-date: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (cc5) check14-v2-malformed-target-date: FAIL (expected)" >&2
+  fi
+
+  # (cc6) v2 plan with all fields but MISSING ## Closure Contract → Check 15 FAIL.
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc6.md" "lifecycle-schema: v2" \
+    "owner: Misha" "target-completion-date: 2026-07-15" "missing"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/cc6.md" > /dev/null 2>&1; then
+    echo "self-test (cc6) check15-v2-missing-closure-contract: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (cc6) check15-v2-missing-closure-contract: FAIL (expected)" >&2
+  fi
+
+  # (cc7) v2 plan with placeholder-only ## Closure Contract → Check 15 FAIL.
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc7.md" "lifecycle-schema: v2" \
+    "owner: Misha" "target-completion-date: 2026-07-15" "placeholder"
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/cc7.md" > /dev/null 2>&1; then
+    echo "self-test (cc7) check15-v2-placeholder-closure-contract: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (cc7) check15-v2-placeholder-closure-contract: FAIL (expected)" >&2
+  fi
+
   if [[ $FAILED -eq 0 ]]; then
     echo "plan-reviewer --self-test: all scenarios matched expectations" >&2
     exit 0
@@ -2451,6 +2606,116 @@ if [[ -n "$CHECK13_FINDINGS" ]]; then
     echo "$CHECK13_FINDINGS" >&2
   else
     add_finding "Check 13 (integration verification): one or more Verification: full tasks lack required integration-verification sub-blocks:"$'\n'"$CHECK13_FINDINGS"
+  fi
+fi
+
+# ============================================================
+# Checks 14 + 15 (Plan-Lifecycle Redesign R1/R2, ADR 036): accountability
+# fields + Closure Contract — GRANDFATHER-GATED on lifecycle-schema: v2
+# ============================================================
+#
+# ADR 036-d (D2 option iii — enforce on the ACTIVE transition only, never
+# retroactively block already-ACTIVE pre-redesign plans). The mechanical
+# grandfather signal a single-file commit-time reviewer can read is the
+# PRESENCE of the `lifecycle-schema: v2` header field:
+#
+#   - Pre-redesign plans LACK the field → Checks 14/15 SKIP (grandfathered).
+#   - New plans created from plan-template.md carry `lifecycle-schema: v2`
+#     → Checks 14/15 ENFORCE.
+#   - A one-time backfill that adds the field to a current ACTIVE plan opts
+#     that plan into the gates (intended).
+#
+# Status-gated to ACTIVE (or empty / nascent) like Check 10: terminal-status
+# plans early-exited at the top of the script (and STATUS_AWK re-derives the
+# value robustly on Windows Git Bash where grep -P fails).
+#
+# FAIL-SAFE: every extraction uses the same robust awk pattern as Check 10
+# and degrades to empty on parse error. A malformed UNRELATED plan (one
+# without the v2 marker) is grandfathered → these checks add zero findings,
+# so a parse glitch on a legacy plan can never hard-block a commit. Only a
+# plan that explicitly opted into v2 is held to the new bar.
+
+LIFECYCLE_SCHEMA_VALUE=$(awk -F: '/^lifecycle-schema:/ { sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2; exit }' "$PLAN_FILE" 2>/dev/null)
+
+if { [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; } && [[ "$LIFECYCLE_SCHEMA_VALUE" == "v2" ]]; then
+
+  # ----- Check 14: owner + target-completion-date accountability fields -----
+  OWNER_VALUE=$(awk '/^owner:/ { sub(/^owner:[ \t]*/, ""); sub(/[ \t]+$/, ""); print; exit }' "$PLAN_FILE" 2>/dev/null)
+  TARGET_DATE_VALUE=$(awk -F: '/^target-completion-date:/ { sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2; exit }' "$PLAN_FILE" 2>/dev/null)
+
+  # owner: present + non-empty + not the template placeholder
+  if [[ -z "$OWNER_VALUE" ]] || [[ "$OWNER_VALUE" == "<name>" ]]; then
+    add_finding "Check 14 (plan-lifecycle accountability): required field 'owner:' is missing or empty. Name the one human accountable for this plan reaching a terminal state. Add 'owner: <name>' to the plan header (start-plan.sh --owner <name>). See Decision 036-d and ~/.claude/rules/plan-lifecycle.md."
+  fi
+
+  # target-completion-date: present + non-empty + well-formed YYYY-MM-DD + not placeholder
+  if [[ -z "$TARGET_DATE_VALUE" ]] || [[ "$TARGET_DATE_VALUE" == "<YYYY-MM-DD>" ]]; then
+    add_finding "Check 14 (plan-lifecycle accountability): required field 'target-completion-date:' is missing or empty. State the date by which the owner commits this plan reaches a terminal state. Add 'target-completion-date: YYYY-MM-DD' (start-plan.sh --target-date YYYY-MM-DD). See Decision 036-d."
+  elif ! [[ "$TARGET_DATE_VALUE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    add_finding "Check 14 (plan-lifecycle accountability): field 'target-completion-date:' has invalid value '$TARGET_DATE_VALUE'. Must be a YYYY-MM-DD date (e.g. 2026-07-15). See Decision 036-d."
+  fi
+
+  # ----- Check 15: ## Closure Contract section present + substantive -----
+  # Mirrors Check 6b's substance bar: section present, ≥ 20 non-whitespace
+  # chars, not solely placeholder. Sub-decision 036-b — the PASS-artifact
+  # contract is defined at creation.
+  if ! grep -qE '^## Closure Contract[[:space:]]*$' "$PLAN_FILE" 2>/dev/null; then
+    add_finding "Check 15 (plan-lifecycle Closure Contract): missing '## Closure Contract' section. Sub-decision 036-b requires every v2 ACTIVE plan to declare its PASS-artifact contract at creation (commands that run / expected outputs / on-disk artifact location / done-when sentence). See ~/.claude/templates/plan-template.md and Decision 036-b."
+  else
+    # Extract the section body: lines after the heading up to the next `## `.
+    CC_BODY=$(awk '
+      /^## Closure Contract[[:space:]]*$/ { in_cc = 1; next }
+      in_cc && /^## / { exit }
+      in_cc { print }
+    ' "$PLAN_FILE" 2>/dev/null)
+
+    # Strip HTML comments (<!-- ... -->) before measuring substance — the
+    # template ships a long guidance comment that is not user content.
+    CC_NO_COMMENTS=$(printf '%s\n' "$CC_BODY" | awk '
+      BEGIN { in_comment = 0 }
+      {
+        line = $0
+        while (1) {
+          if (in_comment) {
+            ci = index(line, "-->")
+            if (ci == 0) { line = ""; break }
+            line = substr(line, ci + 3); in_comment = 0
+          } else {
+            oi = index(line, "<!--")
+            if (oi == 0) break
+            before = substr(line, 1, oi - 1)
+            rest = substr(line, oi + 4)
+            ci = index(rest, "-->")
+            if (ci == 0) { print before; line = ""; in_comment = 1; break }
+            line = before substr(rest, ci + 3)
+          }
+        }
+        if (line != "") print line
+      }
+    ')
+
+    CC_NON_WS=$(printf '%s' "$CC_NO_COMMENTS" | tr -d '[:space:]' | wc -c | tr -cd '[:digit:]')
+    CC_NON_WS=${CC_NON_WS:-0}
+    if [[ "$CC_NON_WS" -lt 20 ]]; then
+      add_finding "Check 15 (plan-lifecycle Closure Contract): '## Closure Contract' section is empty or too short (only $CC_NON_WS non-whitespace chars; needs >= 20). Declare commands / expected outputs / artifact location / done-when. See Decision 036-b."
+    else
+      # Placeholder-only check: strip the template placeholder tokens and
+      # list-bullet scaffolding; if nothing substantive remains, fail.
+      CC_NORM=$(printf '%s' "$CC_NO_COMMENTS" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
+      for pat in '\[populate me[^]]*\]' '\[populate me\]' '\[todo\]' '\btodo\b' 'tbd'; do
+        CC_NORM=$(printf '%s' "$CC_NORM" | sed -E "s|${pat}||g")
+      done
+      # Strip the template's static field labels so a plan that left every
+      # value as a placeholder (labels only) is correctly flagged.
+      for lbl in 'commands that run' 'expected outputs' 'on-disk artifact location' 'done when'; do
+        CC_NORM=$(printf '%s' "$CC_NORM" | sed -E "s|${lbl}||g")
+      done
+      CC_NORM=$(printf '%s' "$CC_NORM" | sed -E 's|[][(){}:;,.!?"`*'"'"'-]||g')
+      CC_NORM=$(printf '%s' "$CC_NORM" | tr -d '[:space:]')
+      if [[ -z "$CC_NORM" ]]; then
+        add_finding "Check 15 (plan-lifecycle Closure Contract): '## Closure Contract' contains only placeholder text (the '[populate me ...]' template prompts). Replace each field with the plan's concrete closure target. See Decision 036-b."
+      fi
+    fi
   fi
 fi
 

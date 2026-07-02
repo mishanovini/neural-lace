@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task_id": "5",
+  "verdict": "PASS",
+  "commit_sha": "7591219a34e7d09f579318d34fe47bc45c42ba18",
+  "files_modified": [],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/hooks/session-start-git-freshness.sh": {
+      "passed": true,
+      "detail": "adapters/claude-code/hooks/session-start-git-freshness.sh exists",
+      "command": "test -e adapters/claude-code/hooks/session-start-git-freshness.sh",
+      "exit_code": 0
+    },
+    "command:grep -qi \"BEHIND\" adapters/claude-code/hooks/session-start-git-freshness.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -qi \"BEHIND\" adapters/claude-code/hooks/session-start-git-freshness.sh",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-15T10:57:12Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/parallel-dev-discipline-2026-06-14.md"
+}

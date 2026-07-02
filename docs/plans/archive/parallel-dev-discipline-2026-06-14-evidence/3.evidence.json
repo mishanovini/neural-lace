@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task_id": "3",
+  "verdict": "PASS",
+  "commit_sha": "7591219a34e7d09f579318d34fe47bc45c42ba18",
+  "files_modified": [],
+  "mechanical_checks": {
+    "command:grep -q parallel-dev-discipline adapters/claude-code/rules/INDEX.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q parallel-dev-discipline adapters/claude-code/rules/INDEX.md",
+      "exit_code": 0
+    },
+    "command:bash evals/golden/rules-index-coverage.sh": {
+      "passed": true,
+      "detail": "Indexed rules in sync: 58\nPASS: INDEX has a row for every rule file, and every row points at an existing file",
+      "command": "bash evals/golden/rules-index-coverage.sh",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-15T10:56:50Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/parallel-dev-discipline-2026-06-14.md"
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "task_id": "4",
+  "verdict": "PASS",
+  "commit_sha": "7591219a34e7d09f579318d34fe47bc45c42ba18",
+  "files_modified": [],
+  "mechanical_checks": {
+    "command:grep -q migration-naming-gate adapters/claude-code/settings.json.template": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q migration-naming-gate adapters/claude-code/settings.json.template",
+      "exit_code": 0
+    },
+    "command:grep -q migration-naming-gate ~/.claude/settings.json": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q migration-naming-gate ~/.claude/settings.json",
+      "exit_code": 0
+    },
+    "command:jq . < adapters/claude-code/settings.json.template > /dev/null": {
+      "passed": true,
+      "detail": "",
+      "command": "jq . < adapters/claude-code/settings.json.template > /dev/null",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-06-15T10:56:51Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/parallel-dev-discipline-2026-06-14.md"
+}
