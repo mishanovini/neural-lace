@@ -2,7 +2,7 @@
 Status: ACTIVE
 Execution Mode: orchestrator
 Mode: design
-frozen: false
+frozen: true
 tier: 3
 rung: 3
 architecture: harness-infrastructure

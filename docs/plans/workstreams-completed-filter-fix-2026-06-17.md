@@ -8,7 +8,7 @@ acceptance-exempt-reason: Workstreams GUI filter fix; state self-tests + a new f
 tier: 2
 rung: 1
 architecture: orchestration
-frozen: false
+frozen: true
 prd-ref: n/a — harness-development
 
 ## Goal
