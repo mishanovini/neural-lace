@@ -2,7 +2,7 @@
 # conv-tree-emit-reconciler.sh — LAYER B of the four-layer Conv Tree
 # auto-emit enforcement chain (see rules/conv-tree-orchestrator-emit.md).
 #
-# Runs as a Stop hook AFTER conversation-tree-emit.sh --on-stop. Opens
+# Runs as a Stop hook AFTER workstreams-emit.sh --on-stop. Opens
 # $TRANSCRIPT_PATH JSONL (agent-uneditable), enumerates every Dispatch
 # spawn the session made, and compares to the per-session correlation
 # ledger Layer A wrote. If a transcript spawn has NO matching ledger
@@ -44,14 +44,14 @@ trap '_die_safe "uncaught (line $LINENO)"' ERR
 
 _have() { command -v "$1" >/dev/null 2>&1; }
 
-# Mirror conversation-tree-emit.sh's session-id sanitization so ledger
+# Mirror workstreams-emit.sh's session-id sanitization so ledger
 # filenames line up.
 _sid_safe() {
   local sid="$1"
   printf '%s' "$sid" | tr -c 'A-Za-z0-9._-' '-' | sed 's/-\+/-/g; s/^-//; s/-$//'
 }
 
-# Mirror conversation-tree-emit.sh's _sha1 helper.
+# Mirror workstreams-emit.sh's _sha1 helper.
 _sha1() {
   if _have sha1sum; then sha1sum | cut -d' ' -f1
   elif _have shasum; then shasum -a 1 | cut -d' ' -f1
@@ -62,13 +62,12 @@ _resolve_emit_hook() {
   # Prefer the SIBLING emit hook in this script's own directory (in the live
   # install that IS ~/.claude/hooks; in a repo checkout it is the repo copy —
   # keeping reconciler and writer at the same version). Then the live-install
-  # name, then the pre-rename backward-compat shim (Workstreams rename
-  # 2026-06-01).
+  # name. The primary workstreams-emit.sh always exists; the pre-rename
+  # backward-compat shim (Workstreams rename 2026-06-01) retired to attic/
+  # past its 2026-06-30 delete-by date — no fallback to it.
   local cand="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/workstreams-emit.sh"
   if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   cand="$HOME/.claude/hooks/workstreams-emit.sh"
-  if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
-  cand="$HOME/.claude/hooks/conversation-tree-emit.sh"
   if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   printf '%s' ""
 }
@@ -121,7 +120,7 @@ _count_ledger_entries() {
 }
 
 # Reconcile: for any transcript spawn without a matching ledger entry,
-# re-fire conversation-tree-emit.sh --on-spawn with a synthesized
+# re-fire workstreams-emit.sh --on-spawn with a synthesized
 # tool_input. The emit hook is idempotent on deterministic event_id, so
 # this is safe to run unconditionally.
 _reconcile() {
