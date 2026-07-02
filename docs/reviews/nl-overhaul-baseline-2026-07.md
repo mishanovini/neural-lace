@@ -128,7 +128,9 @@ for (const key of ["PreToolUse", "SessionStart"]) {
 
 ## 6. Live blocking-gate count
 
-**Value: pending — `harness-doctor.sh` (task B.1) has not yet landed on this branch**
+**Value (backfilled 2026-07-02 post-B.6): doctor --quick GREEN 6/6, exit 0. Live Stop-chain entries: 20 pre-B.6 → 22 post-B.6** (the count deliberately went UP in Wave B — truth reconciliation wired the six dormant claimed-Mechanisms before Wave D consolidates to ≤6). Per-gate `blocking:` classification (the ≤12 budget metric) is defined by the C.1 manifest; re-record it there. Original pending note preserved below for provenance.
+
+~~Value: pending — `harness-doctor.sh` (task B.1) has not yet landed on this branch~~
 
 Per the B.10 spec ("live blocking-gate count (doctor output once B.6 lands — else
 note pending)"): at snapshot time neither `harness-doctor.sh` nor its wiring

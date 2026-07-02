@@ -322,3 +322,88 @@ Runtime verification: file docs/reviews/nl-overhaul-baseline-2026-07.md::**Value
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: at commit 2de07af the baseline file exists and is git-tracked, contains exactly six metric sections matching the required classes (downgrade / acceptance-waiver / external-monitor / rules-dir bytes / Stop-chain / blocking-gate), each with a Value line and an exact reproduction command; section 6's "pending" value is explicitly sanctioned by the specs-b escape clause since B.6 has not landed.
+
+## Task B.6 — Wiring reconciliation + truth-classification
+
+EVIDENCE BLOCK
+==============
+Task ID: B.6
+Task description: Wiring reconciliation + truth-classification (SERIAL, after B.1–B.5 merge): sync template↔live via install run; re-classify every rule whose Mechanism claim is not yet true (pending Wave D/E) with an honest status line; tag pre-wave-b-cutover first — Verification: mechanical
+Verified at: 2026-07-02T20:41:57Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — plan Done-when: harness-doctor.sh --quick exits 0 against the live mirror; specs-b §B.6 Done-when: doctor --quick exit 0 + backup file exists + tag exists
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commit: 9d5a3d7 (overhaul(B.6): doctor fixes from first live run — nl-repo-path config tier in repo-root resolution, lib-deps self-scan exclusion, live-first claim-honesty rule lookup; live mirror reconciled → doctor --quick GREEN 6/6) — adapters/claude-code/hooks/harness-doctor.sh. The settings.json reconciliation + install run are machine-state at ~/.claude (no repo commit by design; live mirror is synced, not committed).
+
+Checks run:
+1. Cutover tag exists
+   Command: git tag -l pre-wave-b-cutover
+   Output: pre-wave-b-cutover
+   Result: PASS
+2. Live settings backup exists
+   Command: test -f ~/.claude/settings.json.bak-waveb
+   Output: exit 0; ls shows 26,077 bytes, mtime Jul 2 13:23
+   Result: PASS
+3. Doctor green against live mirror
+   Command: bash ~/.claude/hooks/harness-doctor.sh --quick </dev/null
+   Output: [doctor] GREEN — 6 checks passed (exit 0). Replayed twice, plus once with explicit repo root "C:/Users/misha/dev/Pocket Technician/neural-lace" as $2 — identical GREEN 6/6, exit 0.
+   Result: PASS
+4. Live-vs-template wiring covered by the doctor's template-live-drift check — verified GENUINELY EXECUTED, not skipped
+   Adversarial probe: invoking the doctor with a bogus second positional arg (consumed as EXPLICIT_REPO_ROOT per harness-doctor.sh L723) reproduces the check's skip path ("[doctor] WARN template-live-drift: cannot compare — live settings.json or template missing"). _warn() echoes UNCONDITIONALLY (no verbosity gating), and the clean --quick runs printed zero WARN lines — therefore the drift comparison ran and matched. Both inputs confirmed present: ~/.claude/settings.json (exists) and C:/Users/misha/dev/Pocket Technician/neural-lace/adapters/claude-code/settings.json.template (exists); repo root resolves via ~/.claude/local/nl-repo-path config tier (the 9d5a3d7 fix).
+   Result: PASS
+5. Re-routed B.3 assertion — decision-context-gate self-test on the live machine (FOLLOW-UP DATUM per Decisions Log "B.3 accepted with one assertion re-routed to B.6"; does NOT gate B.6 — B.6's Done-when is doctor-green)
+   Command: HARNESS_SELFTEST=1 timeout 120 bash ~/.claude/hooks/decision-context-gate.sh --self-test </dev/null
+   Output: exit 1; "self-test: 20 pass, 6 fail". Failing scenarios: ST2 (state file not written), ST5 ×2 assertions (cross-field violation in fence → exit 0, want 2; stderr lacks validator/zod detail), ST11/ST12/ST28 (state file missing). All six are in the fence-validation/state-write class — consistent with the pre-existing workstreams-ui node_modules (zod) provisioning gap PROVEN in the B.3 decision. Still red on the live machine; per the Decisions Log clause ("if still red there, B.6 fixes or files it") the FILE-IT disposition is now due and is surfaced to the orchestrator in the verification report.
+   Result: RECORDED (non-gating datum)
+
+Runtime verification: file adapters/claude-code/hooks/harness-doctor.sh::check_template_live_drift
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: tag pre-wave-b-cutover exists, ~/.claude/settings.json.bak-waveb exists (26,077 bytes), and harness-doctor.sh --quick exits 0 with "[doctor] GREEN — 6 checks passed" against the live mirror (replayed 3× including explicit-root invocation); the template-live-drift comparison was adversarially confirmed to have genuinely executed (skip-WARN reproducible only with a bogus root; zero WARNs in clean runs with unconditional _warn). The decision-context-gate residual red (20/6) is honestly recorded as the routed follow-up datum, non-gating per the plan's own Done-when and Decisions Log.
+
+## Task B.7 — Main-checkout surgery (GAP-51)
+
+EVIDENCE BLOCK
+==============
+Task ID: B.7
+Task description: Main-checkout surgery (GAP-51): backup branch of the staged ~40-file batch, audit batch vs origin/master, drop stale reversions (FM-024..031 must survive), land the main checkout clean at origin/master — Verification: mechanical
+Verified at: 2026-07-02T20:41:57Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — plan Done-when: main checkout git status --short empty; rev-list --count master..origin/master = 0; backup branch exists; grep -c "FM-03" docs/failure-modes.md ≥ 3 there (specs-b §B.7 step 6)
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commit: 0a44e69 (salvage: pre-push-scan PII pattern class + allowlist example + harness-improvement 001 — orphaned working-tree work from 2026-06-12, rescued during GAP-51 surgery) — on branch salvage/pre-push-pii-patterns-20260702 at the MAIN checkout. Machine-state task: no commit on the program branch by design; the surgery's product is the main checkout's git state.
+
+Checks run (all at main checkout C:/Users/misha/dev/Pocket Technician/neural-lace):
+1. Working tree clean
+   Command: git -C <main> status --short
+   Output: (empty; 0 lines)
+   Result: PASS
+2. Master exactly at origin/master
+   Command: git -C <main> rev-list --count master..origin/master
+   Output: 0
+   Result: PASS
+3. Preservation branch exists
+   Command: git -C <main> branch -l "salvage/*"
+   Output: salvage/pre-push-pii-patterns-20260702
+   Result: PASS — with documented deviation: specs-b §B.7 step 2 named the branch backup/gap-51-staged-batch-20260702; git branch -l "backup/*" at the main checkout returns EMPTY. Execution instead preserved the audited-wanted subset under the salvage/ prefix (per branch-hygiene naming). The plan-line Done-when requires "backup branch exists" (unnamed), and the task text itself mandates "audit batch vs origin/master, drop stale reversions" — so a salvage-of-wanted-content branch matches the task's intent (stale reversions dropped BY DESIGN, wanted content preserved). Orchestrator-supervised per the task's own supervision clause.
+4. FM-024..031 survival proxy
+   Command: grep -c "FM-03" <main>/docs/failure-modes.md
+   Output: 5
+   Result: PASS (≥ 3)
+5. Salvage tip is the claimed rescue commit
+   Command: git -C <main> log --oneline -1 salvage/pre-push-pii-patterns-20260702
+   Output: 0a44e69 salvage: pre-push-scan PII pattern class + allowlist example + harness-improvement 001 (orphaned working-tree work from 2026-06-12, rescued during GAP-51 surgery)
+   Result: PASS
+
+Runtime verification: file docs/failure-modes.md::FM-03
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: the main checkout's working tree is clean, master..origin/master count is 0 (landed exactly at origin/master), the preservation branch salvage/pre-push-pii-patterns-20260702 exists with tip 0a44e69 explicitly recording the GAP-51 rescue, and FM-03x entries grep to 5 (≥ 3) in the main checkout's failure-modes catalog. The spec-vs-execution branch-name deviation (backup/* → salvage/*) is documented in check 3 and satisfies the plan-line Done-when's unnamed "backup branch exists" criterion with intent intact.
