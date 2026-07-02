@@ -95,3 +95,11 @@ By the harness's own claims discipline: "adding gates reduced failure rates" is 
 - **Phase 5 — Governance.** Rule/token budgets enforced by the doctor; the meta-gaps (GAP-20/21/22) become the standing priority queue.
 
 Full agent reports: Workflow run `wf_030678e0-8fd` (session transcript dir). This review is the durable record.
+
+---
+
+## Addendum — two live exhibits observed while closing the audit session itself (2026-07-01)
+
+1. **Cross-gate collision (RC5 instance, new):** `workstreams-task-binding` (Stop) blocked session end demanding the session "call TaskCreate (and TaskUpdate it to completed)". Complying, `task-completed-evidence-gate` (TaskCompleted) then blocked the completion because it requires an evidence block in an ACTIVE plan for every task_id — but session-log tasks demanded by the binding gate belong to no plan. The two gates are unsatisfiable together for any session that has task-worthy work outside the three (stale) ACTIVE plans.
+2. **Inoperable escape hatch (same class as discovery 2026-06-10):** the evidence gate's documented remediation — "set `bypass_evidence_check: true` on the event input" — is unreachable from the agent's tool surface: `TaskUpdate` exposes no such parameter and task `metadata` does not flow into the hook's event JSON (verified by retry: identical block). The only working bypass is a process-level env var the agent cannot set mid-session. Outcome: task honestly left pending-blocked despite completed work.
+3. Also observed: a docs-only `git commit` on this worktree branch passed the entire PreToolUse commit-gate chain with zero output (no scope-gate objection despite 3 ACTIVE plans not claiming the path) — behavior worth confirming intentional (docs/reviews may be allowlisted, or the gate did not fire).
