@@ -47,6 +47,9 @@
 
 set -uo pipefail
 
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/nl-paths.sh" 2>/dev/null; } || true
+
 MODE="${1:-}"
 
 LOG_DIR="$HOME/.claude/logs"
@@ -77,7 +80,11 @@ _resolve_state_lib() {
     cand="$root/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   fi
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/state.js"
+  if command -v nl_workstreams_ui >/dev/null 2>&1; then
+    local _ui; _ui="$(nl_workstreams_ui 2>/dev/null)"
+    [[ -n "$_ui" ]] && { printf '%s' "$_ui/state/state.js"; return 0; }
+  fi
+  printf '%s' "$HOME/.claude/state/state.js"
 }
 
 # The MAIN repo checkout (NOT a worktree) — parent of git-common-dir. The
@@ -107,7 +114,11 @@ _resolve_gui_state_path() {
     c="$mr/workstreams-ui/state/tree-state.json"
     if [[ -f "$mr/workstreams-ui/state/state.js" ]]; then printf '%s' "$c"; return 0; fi
   fi
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/tree-state.json"
+  if command -v nl_workstreams_ui >/dev/null 2>&1; then
+    local _ui; _ui="$(nl_workstreams_ui 2>/dev/null)"
+    [[ -n "$_ui" ]] && { printf '%s' "$_ui/state/tree-state.json"; return 0; }
+  fi
+  printf '%s' "$HOME/.claude/state/tree-state.json"
 }
 
 _read_stdin() {

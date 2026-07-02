@@ -39,13 +39,23 @@
 
 set -u
 
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck disable=SC1091
+{ source "$SELF_DIR/../hooks/lib/nl-paths.sh" 2>/dev/null; } || true
+
 # ============================================================
 # Constants / config
 # ============================================================
 COORD_CLONE_DIR="${COORD_CLONE_DIR:-$HOME/claude-projects/workstreams-coordination}"
 COORD_BRANCH="${COORD_BRANCH:-main}"
 COORD_PUSH_THROTTLE_SECONDS="${COORD_PUSH_THROTTLE_SECONDS:-600}"
-WORKSTREAMS_STATE_DIR="${WORKSTREAMS_STATE_DIR:-$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state}"
+_WORKSTREAMS_STATE_DIR_DEFAULT=""
+if command -v nl_workstreams_ui >/dev/null 2>&1; then
+  _ui_dir="$(nl_workstreams_ui 2>/dev/null)"
+  [[ -n "$_ui_dir" ]] && _WORKSTREAMS_STATE_DIR_DEFAULT="$_ui_dir/state"
+fi
+[[ -z "$_WORKSTREAMS_STATE_DIR_DEFAULT" ]] && _WORKSTREAMS_STATE_DIR_DEFAULT="$HOME/.claude/state/workstreams-ui-state"
+WORKSTREAMS_STATE_DIR="${WORKSTREAMS_STATE_DIR:-$_WORKSTREAMS_STATE_DIR_DEFAULT}"
 STATE_DIR="${STATE_DIR:-${HOME}/.claude/state/coord-sync}"
 LAST_PUSH_FILE="${LAST_PUSH_FILE:-$STATE_DIR/last-push}"
 LOCAL_CONFIG_URL_FILE="${HOME}/.claude/local/coord-repo-url.txt"

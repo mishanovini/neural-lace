@@ -34,14 +34,21 @@ set -u
 exec 2>&1  # surface warnings on stdout too so SessionStart UIs that don't show
            # stderr (some Claude Code clients) still see them
 
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+{ source "$SELF_DIR/lib/nl-paths.sh" 2>/dev/null; } || true
+
 # Resolve sibling poller script. Prefer the runtime-mirror copy in ~/.claude/
 # (where `install.sh` places harness files); fall back to the repo source path
 # (useful when the hook is invoked from a fresh clone before install).
+_NL_ROOT_FOR_POLLER=""
+command -v nl_repo_root >/dev/null 2>&1 && _NL_ROOT_FOR_POLLER="$(nl_repo_root 2>/dev/null)"
 POLLER=""
 for cand in \
     "$HOME/.claude/scripts/check-cross-repo-drift.sh" \
-    "$HOME/claude-projects/neural-lace/adapters/claude-code/scripts/check-cross-repo-drift.sh" \
+    "${_NL_ROOT_FOR_POLLER:+$_NL_ROOT_FOR_POLLER/adapters/claude-code/scripts/check-cross-repo-drift.sh}" \
     "$(dirname "$0")/../scripts/check-cross-repo-drift.sh"; do
+  [ -z "$cand" ] && continue
   if [ -f "$cand" ]; then POLLER="$cand"; break; fi
 done
 

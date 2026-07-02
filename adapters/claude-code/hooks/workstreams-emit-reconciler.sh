@@ -28,6 +28,9 @@
 
 set -uo pipefail
 
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/nl-paths.sh" 2>/dev/null; } || true
+
 LOG_DIR="$HOME/.claude/logs"
 LOG_FILE="$LOG_DIR/conversation-tree-emit.log"
 LEDGER_DIR="$HOME/.claude/state/conversation-tree-emit"
@@ -334,7 +337,10 @@ JSONL
       [[ -f "$_root/neural-lace/workstreams-ui/state/state.js" ]] && ST_LIB="$_root/neural-lace/workstreams-ui/state/state.js"
       [[ -z "$ST_LIB" && -f "$_root/workstreams-ui/state/state.js" ]] && ST_LIB="$_root/workstreams-ui/state/state.js"
     fi
-    [[ -z "$ST_LIB" ]] && ST_LIB="$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/state.js"
+    if [[ -z "$ST_LIB" ]] && command -v nl_workstreams_ui >/dev/null 2>&1; then
+      local _ui; _ui="$(nl_workstreams_ui 2>/dev/null)"
+      [[ -n "$_ui" && -f "$_ui/state/state.js" ]] && ST_LIB="$_ui/state/state.js"
+    fi
   fi
   _bd_checked() { # statefile -> checked-state of the first wi-bd-* item (or MISSING)
     node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var out="MISSING";st.snapshot.nodes.forEach(function(n){(n.items||[]).forEach(function(it){if(/^wi-bd-/.test(it.item_id))out=String(it.checked)})});process.stdout.write(out)' "$ST_LIB" "$1" 2>/dev/null

@@ -46,6 +46,8 @@ LOG_DIR="$HOME/.claude/logs"
 LOG_FILE="$LOG_DIR/workstreams-task-binding.log"
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRIDGE_JS="$SELF_DIR/lib/workstreams-task-bridge.js"
+# shellcheck disable=SC1091
+{ source "$SELF_DIR/lib/nl-paths.sh" 2>/dev/null; } || true
 
 # ---- failure isolation -----------------------------------------------------
 _log() {
@@ -68,7 +70,11 @@ _read_stdin() {
 # ---- resolvers (mirror conversation-tree-emit.sh so writer + gate agree) ----
 _fallback_conv_tree_path() {
   local leaf="$1"
-  local base="${CONV_TREE_MAIN_CHECKOUT:-$HOME/claude-projects/neural-lace}"
+  local base="${CONV_TREE_MAIN_CHECKOUT:-}"
+  if [[ -z "$base" ]] && command -v nl_repo_root >/dev/null 2>&1; then
+    base="$(nl_repo_root 2>/dev/null)"
+  fi
+  [[ -z "$base" ]] && base="$HOME/.claude"
   local nested="$base/neural-lace/workstreams-ui/$leaf"
   local flat="$base/workstreams-ui/$leaf"
   if [[ -e "$nested" ]]; then printf '%s' "$nested"; return 0; fi

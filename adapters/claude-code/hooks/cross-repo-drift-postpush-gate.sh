@@ -40,6 +40,10 @@
 
 set -u
 
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+{ source "$SELF_DIR/lib/nl-paths.sh" 2>/dev/null; } || true
+
 # ============================================================
 # Resolve the poller (prefer runtime mirror, fall back to repo source)
 # ============================================================
@@ -47,11 +51,14 @@ _resolve_poller() {
   if [ -n "${POLLER_OVERRIDE:-}" ]; then
     printf '%s\n' "$POLLER_OVERRIDE"; return 0
   fi
+  local nl_root=""
+  command -v nl_repo_root >/dev/null 2>&1 && nl_root="$(nl_repo_root 2>/dev/null)"
   local cand
   for cand in \
       "$HOME/.claude/scripts/check-cross-repo-drift.sh" \
-      "$HOME/claude-projects/neural-lace/adapters/claude-code/scripts/check-cross-repo-drift.sh" \
+      "${nl_root:+$nl_root/adapters/claude-code/scripts/check-cross-repo-drift.sh}" \
       "$(dirname "$0")/../scripts/check-cross-repo-drift.sh"; do
+    [ -z "$cand" ] && continue
     if [ -f "$cand" ]; then printf '%s\n' "$cand"; return 0; fi
   done
   printf '%s\n' ""

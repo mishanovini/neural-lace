@@ -68,12 +68,17 @@ set -u
 # Resolve pattern library and fixture directories
 # ============================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+{ source "$SCRIPT_DIR/lib/nl-paths.sh" 2>/dev/null; } || true
 
 resolve_pattern_lib() {
+  local nl_root=""
+  command -v nl_repo_root >/dev/null 2>&1 && nl_root="$(nl_repo_root 2>/dev/null)"
   for candidate in \
     "$SCRIPT_DIR/../data/imperative-patterns.json" \
-    "$HOME/claude-projects/neural-lace/adapters/claude-code/data/imperative-patterns.json" \
+    "${nl_root:+$nl_root/adapters/claude-code/data/imperative-patterns.json}" \
     "$HOME/.claude/data/imperative-patterns.json"; do
+    [[ -z "$candidate" ]] && continue
     if [[ -f "$candidate" ]]; then
       echo "$candidate"
       return 0
@@ -87,10 +92,13 @@ resolve_pattern_lib() {
 # ============================================================
 if [[ "${1:-}" = "--self-test" ]]; then
   FIXTURE_DIR=""
+  _NL_ROOT_FOR_FIXTURES=""
+  command -v nl_repo_root >/dev/null 2>&1 && _NL_ROOT_FOR_FIXTURES="$(nl_repo_root 2>/dev/null)"
   for candidate in \
     "$SCRIPT_DIR/../tests/imperative-evidence-linker" \
-    "$HOME/claude-projects/neural-lace/adapters/claude-code/tests/imperative-evidence-linker" \
+    "${_NL_ROOT_FOR_FIXTURES:+$_NL_ROOT_FOR_FIXTURES/adapters/claude-code/tests/imperative-evidence-linker}" \
     "$HOME/.claude/tests/imperative-evidence-linker"; do
+    [[ -z "$candidate" ]] && continue
     if [[ -d "$candidate" ]]; then
       FIXTURE_DIR="$candidate"
       break

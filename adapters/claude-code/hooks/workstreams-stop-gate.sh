@@ -65,6 +65,9 @@
 
 set -u
 
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/nl-paths.sh" 2>/dev/null; } || true
+
 # ============================================================
 # State-file + state-library path resolution — kept byte-consistent with
 # conversation-tree-state-gate.sh (B1) per ADR-032 §5. Same trust primitive;
@@ -108,7 +111,11 @@ _resolve_state_lib() {
     cand="$root/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   fi
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/state.js"
+  if command -v nl_workstreams_ui >/dev/null 2>&1; then
+    local _ui; _ui="$(nl_workstreams_ui 2>/dev/null)"
+    [[ -n "$_ui" ]] && { printf '%s' "$_ui/state/state.js"; return 0; }
+  fi
+  printf '%s' "$HOME/.claude/state/state.js"
 }
 
 WAIVER_GLOB='conv-tree-stop-waiver-*.txt'

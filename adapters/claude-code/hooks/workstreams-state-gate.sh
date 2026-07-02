@@ -60,6 +60,9 @@
 
 set -u
 
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/nl-paths.sh" 2>/dev/null; } || true
+
 # ============================================================
 # Resolvable constants / overridable knobs (tests set these)
 # ============================================================
@@ -118,7 +121,11 @@ _resolve_state_lib() {
   # Fall back to a HOME-relative well-known location if the harness ever
   # vendors the lib there. (Returned even if absent; the require failure is
   # then a hook-internal error -> fail-open per Pin-2.)
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/state.js"
+  if command -v nl_workstreams_ui >/dev/null 2>&1; then
+    local _ui; _ui="$(nl_workstreams_ui 2>/dev/null)"
+    [[ -n "$_ui" ]] && { printf '%s' "$_ui/state/state.js"; return 0; }
+  fi
+  printf '%s' "$HOME/.claude/state/state.js"
 }
 
 WAIVER_GLOB='conv-tree-spawn-waiver-*.txt'
