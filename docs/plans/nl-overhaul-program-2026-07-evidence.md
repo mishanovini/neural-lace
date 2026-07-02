@@ -638,3 +638,54 @@ Runtime verification: file adapters/claude-code/doctrine/harness-dev.md::"^# "
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN — every check from the prior FAIL block's replay set now passes cleanly against commit 4fa8501: the byte-cap sweep across all 42 non-full compacts (including the previously-oversize harness-dev.md, now 2976 bytes) emits zero OVERSIZE lines; file count, required-token, and hygiene checks are unchanged-clean. The single named gap from the prior verification (6-byte overage on harness-dev.md) is resolved by this commit; no new gaps introduced.
+
+## Task C.2 — JIT injector hooks/doctrine-jit.sh
+
+EVIDENCE BLOCK
+==============
+Task ID: C.2
+Task description: JIT injector `hooks/doctrine-jit.sh` (PostToolUse Edit|Write path-pattern matching from manifest `jit_triggers`; per-session dedup markers; ≤1 injection per doctrine file per session; compact-form injection ≤1.5K tokens each). Injection MUST use the PostToolUse JSON `hookSpecificOutput.additionalContext` emission form — Verification: mechanical
+Verified at: 2026-07-02T20:35:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — two-part Done-when: (a) `--self-test` ≥6 scenarios exits 0 (fixture-level); (b) a real live-session probe (a scripted session touching a trigger path shows the injected doctrine text in its transcript), recorded in specs-c, gating C.5 cutover.
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commit: 0871cf0 (overhaul(C.2): add doctrine-jit.sh PostToolUse just-in-time doctrine injector)
+Commit: c2ed9fa (overhaul(C.2): wire doctrine-jit.sh into template PostToolUse Edit|Write|MultiEdit (orchestrator serial edit))
+Commit: 01d0d5c (overhaul(C.2): live-probe result PASS recorded — C.5 gate OPEN)
+
+Checks run:
+1. Fixture-level self-test (re-run, independent replay)
+   Command: HARNESS_SELFTEST=1 bash adapters/claude-code/hooks/doctrine-jit.sh --self-test
+   Output: T1-T10 all PASS; "[self-test] 11 passed, 0 failed"; exit 0
+   Result: PASS (11 scenarios, exceeds the ≥6 Done-when floor)
+2. Hook wired into settings.json.template
+   Command: grep -c "doctrine-jit" adapters/claude-code/settings.json.template
+   Output: 1
+   Result: PASS
+3. Hook file present and executable
+   Command: ls -la adapters/claude-code/hooks/doctrine-jit.sh
+   Output: -rwxr-xr-x ... 23824 Jul 2 16:11 adapters/claude-code/hooks/doctrine-jit.sh
+   Result: PASS
+4. Live-probe result recorded in specs-c (docs/plans/nl-overhaul-program-2026-07-specs-c.md "## C.2 live-probe result")
+   Output: "PASS — 2026-07-02 (gates C.5: OPEN)" with three witnesses (dedup marker, transcript grep, agent report verbatim quote)
+   Result: PASS (recorded, substantive, PASS verdict)
+5. Independent re-verification of witness 1 (dedup marker on disk)
+   Command: ls "$HOME/.claude/state/doctrine-jit/" | grep -c "tdd-gate"
+   Output: 1
+   Result: PASS (marker `85a3ae3a-a9f9-4729-a73e-6214ed0c996a--tdd-gate` present on disk, matches the naming scheme only the hook writes)
+6. Independent re-verification of witness 2 (targeted grep count on agent-uneditable transcript; file NOT read/catted)
+   Command: grep -c "doctrine-jit" "$HOME/.claude/projects/C--Users-misha-dev-Pocket-Technician-neural-lace--claude-worktrees-hungry-solomon-179991/85a3ae3a-a9f9-4729-a73e-6214ed0c996a/subagents/agent-a2e9fdd2d16c316f8.jsonl"
+   Output: 4
+   Result: PASS (matches specs-c's exact claim of 4)
+   Sub-check: grep -c "doctrine-jit] tdd-gate — injected once for this session" on same file → 1 (header text present)
+   Sub-check: grep -c "hookSpecificOutput" on same file (line-count semantics) → 2 (matches specs-c's "keys = 2" claim)
+
+Runtime verification: file adapters/claude-code/hooks/doctrine-jit.sh::"--self-test"
+Runtime verification: functionality-verifier doctrine-jit-C.2::PASS — live sub-agent probe (session 85a3ae3a-a9f9-4729-a73e-6214ed0c996a, subagent agent-a2e9fdd2d16c316f8) independently re-confirmed via on-disk dedup marker + agent-uneditable transcript grep, per specs-c "## C.2 live-probe result"
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — the fixture-level self-test (11/11) was independently re-run this session and passed cleanly; the wiring grep confirms the hook is registered in settings.json.template; and both of the two independent live-probe witnesses recorded in specs-c (the on-disk dedup marker and the agent-uneditable transcript's doctrine-jit references) were independently re-verified against the actual filesystem and transcript rather than trusted from the specs-c narrative alone. All match or exceed the specs-c claims (transcript grep = 4 as claimed; header text present; hookSpecificOutput line-count = 2 as claimed). No gaps found.
