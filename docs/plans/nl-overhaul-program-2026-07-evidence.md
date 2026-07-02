@@ -599,3 +599,42 @@ Reason: PROVEN — adapters/claude-code/doctrine/harness-dev.md is 3006 bytes, e
 
 Gaps:
   - adapters/claude-code/doctrine/harness-dev.md is 6 bytes over the ≤3000-byte compact cap (3006 bytes). (Class: byte-cap-overage-single-file; Sweep query: `for f in adapters/claude-code/doctrine/*.md; do case "$f" in *-full.md) continue;; esac; [ $(wc -c < "$f") -le 3000 ] || echo "OVERSIZE $f"; done` — 1 match, no siblings found; Required generalization: trim 6+ bytes of whitespace/prose from harness-dev.md's compact (e.g. shorten line 9's "Plans/decisions/reviews about downstream projects do NOT ship..." clause, or drop one redundant word) and re-run the sweep to confirm 0 matches before re-invoking task-verifier.)
+
+## Task C.4 — Re-verification after byte-cap trim (commit 4fa8501)
+
+EVIDENCE BLOCK
+==============
+Task ID: C.4
+Task description: Stub-rewrite sweep per the C.0 disposition table: surviving rules become ≤40-line doctrine compact forms in adapters/claude-code/doctrine/ (enforcement pointer + trigger + one-screen substance); full prose moves to doctrine/<name>-full.md where worth keeping, else deleted. The auto-load rules/ dir keeps ONLY the constitution set. Run as parallel cluster tasks — Verification: mechanical
+Verified at: 2026-07-02T23:09:16Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — plan Done-when per cluster: every compact form ≤ 3000 bytes; content-checklist greps from specs-c pass; doctrine/ twin exists for each disposition-table row. specs-c §C.4 shared contract: "Hard caps per compact file: ≤40 lines AND ≤3000 bytes (wc -c)".
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commit: 4fa85015b2991d7282e6eedb55e8256107c79790 (overhaul(C.4): trim harness-dev.md 3006→under-cap; the orchestrator's fix for the sole gap in the prior FAIL block above)
+
+Checks run:
+1. doctrine/ file count
+   Command: ls adapters/claude-code/doctrine/*.md | wc -l
+   Output: 66
+   Result: PASS (= 66, matches the plan's expected total: 42 compacts + 24 fulls)
+2. Byte-cap sweep on every non-full compact (exact replay of the prior FAIL check)
+   Command: for f in adapters/claude-code/doctrine/*.md; do case "$f" in *-full.md) continue;; esac; [ $(wc -c < "$f") -le 3000 ] || echo "OVERSIZE $f"; done
+   Output: (empty)
+   Result: PASS — adapters/claude-code/doctrine/harness-dev.md now confirmed at 2976 bytes (wc -c), down from 3006; no OVERSIZE lines emitted across all 42 non-full compacts.
+3. Required-token spot-check (planning.md two-tier-supersession clause)
+   Command: grep -c "decide-and-go" adapters/claude-code/doctrine/planning.md; grep -c "Tier 1" adapters/claude-code/doctrine/planning.md
+   Output: 1 (decide-and-go present); 0 (Tier 1 language absent, as required by the supersession clause)
+   Result: PASS
+4. Hygiene scan on all new doctrine files
+   Command: bash adapters/claude-code/hooks/harness-hygiene-scan.sh --files adapters/claude-code/doctrine/*.md
+   Output: (silent); exit 0
+   Result: PASS
+
+Runtime verification: file adapters/claude-code/doctrine/harness-dev.md::"^# "
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — every check from the prior FAIL block's replay set now passes cleanly against commit 4fa8501: the byte-cap sweep across all 42 non-full compacts (including the previously-oversize harness-dev.md, now 2976 bytes) emits zero OVERSIZE lines; file count, required-token, and hygiene checks are unchanged-clean. The single named gap from the prior verification (6-byte overage on harness-dev.md) is resolved by this commit; no new gaps introduced.
