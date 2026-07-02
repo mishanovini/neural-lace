@@ -174,4 +174,8 @@ Orchestrator serial: C.3 remainder (CLAUDE.md ≤100 rewrite) · C.2 wiring + li
 
 ## C.2 live-probe result
 
-(pending — orchestrator records PASS/FAIL + transcript path here before C.5)
+**PASS — 2026-07-02 (gates C.5: OPEN).** Probe: a real sonnet sub-agent session (worktree-isolated) executed a Write of `tests/jit-probe.test.ts`; the live-wired `~/.claude/hooks/doctrine-jit.sh` matched the manifest `tdd-gate` entry's `.test.` trigger and injected the testing compact via PostToolUse `hookSpecificOutput.additionalContext`. Three independent witnesses, all PROVEN:
+1. Dedup marker on disk: `~/.claude/state/doctrine-jit/<session-id>--tdd-gate` (mtime = probe run; only the hook writes this naming scheme).
+2. Agent-uneditable transcript (`~/.claude/projects/<project-slug>/<session-id>/subagents/agent-a2e9fdd2d16c316f8.jsonl`): `grep -c "doctrine-jit"` = 4; exact header present: `[doctrine-jit] tdd-gate — injected once for this session (trigger: .test.)`; `hookSpecificOutput|additionalContext` keys = 2.
+3. The probe agent's verbatim report quotes the injected compact's first lines, matching `doctrine/testing.md`.
+Notes: (a) a first probe attempt was refused by the agent as suspected prompt-injection (doctrine-jit absent from its loaded rules — built this same session); grounding the prompt in the plan/specs/hook files resolved it; (b) the headless `claude -p` probe form is NOT viable on this machine (desktop-host-managed auth: `CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH=1`, no standalone CLI credentials) — the sub-agent probe form is the reproducible pattern here; (c) sub-agent sessions demonstrably pick up the live settings wiring added mid-parent-session.
