@@ -17,6 +17,7 @@
 #   ./install.sh --dry-run         # print what would change, don't execute
 #   ./install.sh --replace-settings  # install settings.json, back up existing
 #   ./install.sh --uninstall       # best-effort uninstall (see --help)
+#   ./install.sh --verify          # after installing, run harness-doctor.sh --quick
 #   ./install.sh --help            # full usage reference
 #
 # Re-run anytime to refresh (safe — existing symlinks are replaced).
@@ -28,6 +29,7 @@ set -e
 # ============================================================
 
 MODE="install"
+VERIFY_AFTER_INSTALL=0
 for arg in "$@"; do
   case "$arg" in
     --help|-h)
@@ -41,6 +43,13 @@ for arg in "$@"; do
       ;;
     --uninstall)
       MODE="uninstall"
+      ;;
+    --verify)
+      # Additive flag (not a MODE): after the normal copy phase, run
+      # harness-doctor.sh --quick and propagate its exit code. Only takes
+      # effect in the normal install flow (MODE=install); harmless no-op
+      # combined with --help/--dry-run/--replace-settings/--uninstall.
+      VERIFY_AFTER_INSTALL=1
       ;;
     *)
       echo "install.sh: unknown argument: $arg" >&2
@@ -91,12 +100,17 @@ USAGE
   ./install.sh --dry-run           Print what would change; don't execute
   ./install.sh --replace-settings  Install settings.json from template, backing up existing
   ./install.sh --uninstall         Best-effort uninstall (restores most recent backup)
+  ./install.sh --verify            After installing, run harness-doctor.sh --quick and
+                                    propagate its exit code (skips gracefully with a
+                                    warning if harness-doctor.sh isn't installed yet)
   ./install.sh --help, -h          This message
 
 NOTES
   - Re-running without flags is safe; existing files are backed up before overwrite.
   - settings.json is NOT overwritten by default; use --replace-settings to override.
-  - ~/.claude/local/ is NEVER touched by the installer (personal config layer).
+  - ~/.claude/local/ is NEVER touched by the installer (personal config layer), except
+    for ~/.claude/local/nl-repo-path, which the installer writes/refreshes every run
+    (the resolved repo root, consumed by hooks/lib/nl-paths.sh's nl_repo_root()).
   - For a true revert to a pre-Neural-Lace state, take a whole-directory snapshot
     of ~/.claude/ BEFORE first install and restore it if needed. See SETUP.md.
 HELP
@@ -369,6 +383,25 @@ if [ "$MODE" = "dry-run" ]; then
       check_sync_target "$ADAPTER_DIR/$dir" "$CLAUDE_DIR/$dir" "$dir/"
     fi
   done
+  # Install-completeness additions (B.3): these previously were NOT synced at
+  # all (tests/, patterns/, examples/) or were only partially covered as a
+  # side effect of the hooks/ sync (hooks/lib/ -- explicit here for clarity
+  # and to guarantee completeness independent of the hooks/ sweep).
+  if [ -d "$ADAPTER_DIR/hooks/lib" ]; then
+    check_sync_target "$ADAPTER_DIR/hooks/lib" "$CLAUDE_DIR/hooks/lib" "hooks/lib/"
+  fi
+  if [ -d "$ADAPTER_DIR/tests" ]; then
+    check_sync_target "$ADAPTER_DIR/tests" "$CLAUDE_DIR/tests" "tests/"
+  fi
+  if [ -d "$ADAPTER_DIR/patterns" ]; then
+    check_sync_target "$ADAPTER_DIR/patterns" "$CLAUDE_DIR/patterns" "patterns/"
+  fi
+  if [ -d "$ADAPTER_DIR/examples" ]; then
+    check_sync_target "$ADAPTER_DIR/examples" "$CLAUDE_DIR/examples" "examples/"
+  fi
+  if [ -d "$ADAPTER_DIR/data" ]; then
+    check_sync_target "$ADAPTER_DIR/data" "$CLAUDE_DIR/data" "data/"
+  fi
   if [ -d "$NEURAL_LACE_ROOT/patterns/templates" ]; then
     check_sync_target "$NEURAL_LACE_ROOT/patterns/templates" "$CLAUDE_DIR/templates" "templates/"
   fi
@@ -515,6 +548,25 @@ if [ "$MODE" = "dry-run" ]; then
     echo "  (no examples/ directory in adapter)"
   fi
   echo ""
+
+  # nl-repo-path (B.3): written/refreshed on every run, unlike the seed-once
+  # local/ examples above -- this is a resolved value (the repo root), not a
+  # user-editable config file, so it is safe (and necessary) to overwrite.
+  echo "[Phase 7b: Write \$CLAUDE_DIR/local/nl-repo-path]"
+  echo "  [WOULD WRITE]                      $CLAUDE_DIR/local/nl-repo-path = $NEURAL_LACE_ROOT"
+  changes=$((changes + 1))
+  echo ""
+
+  # --verify preview
+  if [ "$VERIFY_AFTER_INSTALL" -eq 1 ]; then
+    echo "[Phase 7c: --verify]"
+    if [ -f "$CLAUDE_DIR/hooks/harness-doctor.sh" ]; then
+      echo "  [WOULD RUN]                        $CLAUDE_DIR/hooks/harness-doctor.sh --quick"
+    else
+      echo "  [WOULD SKIP -- not installed yet]  harness-doctor.sh not present at $CLAUDE_DIR/hooks/harness-doctor.sh"
+    fi
+    echo ""
+  fi
 
   # Summary
   echo "[Summary]"
@@ -683,6 +735,38 @@ for dir in rules agents hooks scripts pipeline-prompts pipeline-templates comman
   fi
 done
 
+# ============================================================
+# Install completeness (B.3): sync directories self-tests and doctor
+# checks need but which weren't previously deployed at all, or were only
+# deployed as a side effect of the hooks/ sweep above (hooks/lib/ -- kept
+# here explicitly, both for clarity and so it stays deployed even if the
+# hooks/ sync logic ever changes independently of this one). data/ was
+# discovered missing while running B.3's own Done-when assertion
+# (imperative-evidence-linker.sh --self-test silently no-ops without its
+# pattern-library JSON present at ~/.claude/data/) -- same completeness
+# class as the other four, added here rather than narrowing the assertion.
+# ============================================================
+
+if [ -d "$ADAPTER_DIR/hooks/lib" ]; then
+  sync_directory "$ADAPTER_DIR/hooks/lib" "$CLAUDE_DIR/hooks/lib" "hooks/lib"
+fi
+
+if [ -d "$ADAPTER_DIR/tests" ]; then
+  sync_directory "$ADAPTER_DIR/tests" "$CLAUDE_DIR/tests" "tests"
+fi
+
+if [ -d "$ADAPTER_DIR/patterns" ]; then
+  sync_directory "$ADAPTER_DIR/patterns" "$CLAUDE_DIR/patterns" "patterns"
+fi
+
+if [ -d "$ADAPTER_DIR/examples" ]; then
+  sync_directory "$ADAPTER_DIR/examples" "$CLAUDE_DIR/examples" "examples"
+fi
+
+if [ -d "$ADAPTER_DIR/data" ]; then
+  sync_directory "$ADAPTER_DIR/data" "$CLAUDE_DIR/data" "data"
+fi
+
 # Sync shared templates from patterns/ (tool-agnostic)
 if [ -d "$NEURAL_LACE_ROOT/patterns/templates" ]; then
   sync_directory "$NEURAL_LACE_ROOT/patterns/templates" "$CLAUDE_DIR/templates" "templates (from patterns/)"
@@ -696,6 +780,21 @@ fi
 # Make scripts executable
 chmod +x "$ADAPTER_DIR/hooks/"*.sh 2>/dev/null || true
 chmod +x "$ADAPTER_DIR/git-hooks/"* 2>/dev/null || true
+
+# ============================================================
+# Write resolved repo root (B.3)
+# ============================================================
+# hooks/lib/nl-paths.sh's nl_repo_root() resolution order is:
+#   (1) $NL_REPO_ROOT env, (2) content of this file, (3) git-derived from the
+#   hook's own location, (4) a fixed probe list. Writing it here means every
+#   hook gets a fast, correct answer without needing $NL_REPO_ROOT set or a
+#   git-derived lookup to succeed. Unlike the local/ example-seeded files
+#   above, this is a RESOLVED VALUE (not user-editable config), so it is
+#   safe -- and necessary -- to overwrite on every install run. This never
+#   touches any OTHER file under local/.
+mkdir -p "$CLAUDE_DIR/local"
+printf '%s\n' "$NEURAL_LACE_ROOT" > "$CLAUDE_DIR/local/nl-repo-path"
+echo "  wrote $CLAUDE_DIR/local/nl-repo-path = $NEURAL_LACE_ROOT"
 
 # ============================================================
 # Global git hooks
@@ -1073,3 +1172,38 @@ esac
 
 echo "Update: cd $NEURAL_LACE_ROOT && git pull && $0"
 echo ""
+
+# ============================================================
+# --verify: run harness-doctor.sh --quick and propagate its exit code
+# ============================================================
+# Runs LAST (after every sync + write above has completed and printed its
+# own output) so a non-zero doctor exit doesn't short-circuit, under `set
+# -e`, any of the normal install reporting. Degrades gracefully with a
+# warning (does not fail the install) when harness-doctor.sh isn't deployed
+# yet -- e.g. on a repo checkout from before Wave B.1 landed, or mid-Wave-B
+# before B.1's worker branch has been cherry-picked in.
+
+if [ "$VERIFY_AFTER_INSTALL" -eq 1 ]; then
+  echo "========================================================"
+  echo "  --verify: running harness-doctor.sh --quick"
+  echo "========================================================"
+  DOCTOR_BIN="$CLAUDE_DIR/hooks/harness-doctor.sh"
+  if [ -f "$DOCTOR_BIN" ]; then
+    set +e
+    bash "$DOCTOR_BIN" --quick
+    DOCTOR_EXIT=$?
+    set -e
+    echo ""
+    if [ "$DOCTOR_EXIT" -eq 0 ]; then
+      echo "  --verify: harness-doctor.sh --quick passed."
+    else
+      echo "  --verify: harness-doctor.sh --quick FAILED (exit $DOCTOR_EXIT). See RED lines above." >&2
+    fi
+    echo ""
+    exit "$DOCTOR_EXIT"
+  else
+    echo "  WARNING: --verify requested but $DOCTOR_BIN not found -- skipping doctor check." >&2
+    echo "    (harness-doctor.sh ships from Wave B.1; re-run --verify after it's installed.)" >&2
+    echo ""
+  fi
+fi
