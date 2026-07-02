@@ -6,7 +6,7 @@
 - **no sensitive data** in harness code: no passwords/tokens/keys, no real emails (use `example.com`/`test@example.com`), no real domains, no personal names outside an `Owner:` field, no absolute paths with a username (use `$HOME`/`~/`), no company/org/product-codenames, no incident details tied to a real product, no real user data in fixtures.
 - Two-layer config: harness layer (committed, generic) + `~/.claude/local/` (gitignored, per-machine); harness code reads local via safe fallbacks, never crashes when local is absent.
 - Templates use obviously-placeholder defaults (`<your-username>`, not a real one).
-- Plans/decisions/reviews about downstream projects do NOT ship in the harness repo; harness-dev-about-itself artifacts DO (naming convention: date/number prefix at top level is tracked; nested or non-conforming names are gitignored).
+- Downstream-project plans/decisions/reviews do NOT ship in the harness repo; harness-dev-about-itself artifacts DO (date/number-prefixed top-level names are tracked; non-conforming names are gitignored).
 - Installation is idempotent and lossless: re-running install.sh never destroys `~/.claude/local/` or user-edited settings; conflicting overwrites get a `.example` suffix instead.
 
 ## Maintenance (harness-maintenance.md)
