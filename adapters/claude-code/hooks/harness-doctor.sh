@@ -55,7 +55,7 @@
 #                             path under lib/ resolves relative to the
 #                             hook's own directory.
 #   3. legacy-paths         : no live hook/script references the retired
-#                             "claude-projects/neural-lace" path family.
+#                             legacy repo path family (claude-projects/neural…-lace, written split here so the doctor never matches itself).
 #   4. template-live-drift  : the sorted basename set of hooks wired in live
 #                             settings vs the committed template must match.
 #   5. claim-honesty        : embedded v1 checklist — each named hook must
@@ -234,20 +234,23 @@ check_legacy_paths() {
   local hooks_dir="${live_home}/hooks"
   local scripts_dir="${live_home}/scripts"
   local found=0
+  # Pattern built by concatenation so this script's own text never matches it
+  # (the doctor must not RED-flag itself; see Wave-B integration note).
+  local legacy_pat="claude-projects/neural""-lace"
 
   if [[ -d "$hooks_dir" ]]; then
     while IFS= read -r f; do
       [[ -z "$f" ]] && continue
-      _red "legacy-paths" "${f} references the retired claude-projects/neural-lace path"
+      _red "legacy-paths" "${f} references the retired legacy repo path (${legacy_pat})"
       found=1
-    done < <(grep -rl "claude-projects/neural-lace" "$hooks_dir" 2>/dev/null)
+    done < <(grep -rl "$legacy_pat" "$hooks_dir" 2>/dev/null)
   fi
   if [[ -d "$scripts_dir" ]]; then
     while IFS= read -r f; do
       [[ -z "$f" ]] && continue
-      _red "legacy-paths" "${f} references the retired claude-projects/neural-lace path"
+      _red "legacy-paths" "${f} references the retired legacy repo path (${legacy_pat})"
       found=1
-    done < <(grep -rl "claude-projects/neural-lace" "$scripts_dir" 2>/dev/null)
+    done < <(grep -rl "$legacy_pat" "$scripts_dir" 2>/dev/null)
   fi
   if [[ ! -d "$hooks_dir" && ! -d "$scripts_dir" ]]; then
     _warn "legacy-paths" "no live hooks/ or scripts/ directory — nothing to check"
@@ -542,10 +545,10 @@ EOF
   # retired path family ----
   D=$(_scenario_dir c3-red)
   _stamp_claim_honesty_green "$D"
-  cat > "$D/live/hooks/legacy.sh" <<'EOF'
-#!/bin/bash
-SRC="$HOME/claude-projects/neural-lace/adapters/claude-code"
-EOF
+  {
+    printf '%s\n' '#!/bin/bash'
+    printf 'SRC="$HOME/claude-projects/neural%s"\n' '-lace/adapters/claude-code'
+  } > "$D/live/hooks/legacy.sh"
   chmod +x "$D/live/hooks/legacy.sh"
   _write_settings "$D/live/settings.json" "legacy.sh"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
