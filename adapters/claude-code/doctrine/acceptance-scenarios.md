@@ -1,0 +1,11 @@
+# Acceptance Scenarios — compact
+> Enforcement: product-acceptance-gate.sh (Stop, position 4), plan-reviewer.sh (section presence); end-user-advocate agent. Full: doctrine/acceptance-scenarios-full.md
+> Applies: every plan with a product user — adversarial observation of the running product from the user's perspective.
+
+- At plan time, once Goal/Scope/Edge Cases are stable, invoke end-user-advocate (plan-time mode). It authors `## Acceptance Scenarios` — one `###` sub-section per scenario with a `**Slug:**`, a numbered user-perspective `**User flow:**`, prose `**Success criteria:**`, and `**Artifacts to capture:**`. Close every flagged gap before build begins; move rejected-but-real scenarios to `## Out-of-scope scenarios` with per-entry rationale.
+- At runtime, before session end, invoke end-user-advocate (runtime mode) against the live app. It executes each scenario in a browser and writes a JSON artifact to `.claude/state/acceptance/<plan-slug>/` recording per-scenario PASS/FAIL and the plan_commit_sha.
+- product-acceptance-gate.sh BLOCKS session end when any ACTIVE non-exempt plan lacks a PASS artifact whose plan_commit_sha matches the plan file's current HEAD SHA. Stale artifacts don't count — re-run against HEAD. A PASS in any worktree of the repo satisfies the gate.
+- Scenarios-shared, assertions-private: builder dispatch prompts include the scenarios verbatim; the advocate's exact selectors, strings, and assertions stay private. Builders build the user-observable outcome, never the assertion text. Keep success criteria prose ("the user sees their order ID"), never literal strings.
+- Plans with NO product user (harness-dev, pure infra, UI-less migrations) declare `acceptance-exempt: true` + `acceptance-exempt-reason:` ≥20 substantive chars. NEVER exempt user-facing surfaces — the gate refuses exemptions whose declared files touch `src/app/`, `src/components/`, `page.tsx`.
+- A persistently failing scenario is a signal: fix the code, narrow the scenario, or move it out-of-scope with rationale — silent skipping is banned.
+- Orthogonal-plan blocks: write a fresh substantive waiver at `.claude/state/acceptance-waiver-<slug>-<ts>.txt` (<1h TTL) instead of looping the gate.
