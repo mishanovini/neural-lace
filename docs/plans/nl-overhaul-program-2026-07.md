@@ -140,6 +140,7 @@ The operator (the harness's user) can, after this program: (a) run `harness-doct
 - Live mirror `~/.claude/**` via install.sh runs only; main-checkout git state (B.7); git remotes config (B.8)
 
 ## In-flight scope updates
+- 2026-07-02: `adapters/claude-code/install.sh` — C.5 edits it (doctrine sync + rules-prune + PRINCIPLES_SRC); scope-gate first-backtick parser misses it as a non-first token on its Scope line (7th occurrence of the class).
 - 2026-07-02: `adapters/claude-code/doctrine/` — C.4 cluster builders create doctrine compacts + fulls here; scope-gate's first-backtick parser misses the second token on the rules/** relocation bullet (line 135 class, 4th occurrence).
 - 2026-07-02: `adapters/claude-code/schemas/` — C.1 creates manifest.schema.json; same first-backtick parser limitation (schemas path is the second token on its Files bullet).
 - 2026-07-02: `adapters/claude-code/scripts/` — C.1 creates manifest-check.sh and B.12 edits sync-pt-to-personal.sh; same first-backtick parser limitation (scripts path is the third token on its Files bullet).
