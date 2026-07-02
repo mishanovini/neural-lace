@@ -66,6 +66,9 @@ The operator (the harness's user) can, after this program: (a) run `harness-doct
 - [x] B.11 Plan-estate freeze (unblocks spec-freeze-gate collisions found in review finding 2): `orchestrator-prime.md` and `workstreams-completed-filter-fix-2026-06-17.md` flipped `frozen: false → true` with administrative rationale (full disposition remains F.3, operator-approved) — Model: opus (main session; performed inline 2026-07-02, this task is the verification record) — Parallelizable: yes — Verification: mechanical
   - Done-when: `grep -c "^frozen: true" docs/plans/orchestrator-prime.md docs/plans/workstreams-completed-filter-fix-2026-06-17.md` = 1 each; rationale entry present in this plan's Decisions Log.
 
+- [ ] B.12 Sync-daemon containment (operator-approved scope add 2026-07-02; absorbs discovery 2026-06-02-component-c-sync-daemon): stopgap — the cross-machine sync daemon honors an interactive-session lock so it never rewrites a checkout with a live session (the failure class that created GAP-51); durable fix (dedicated sync clone, option C) lands as a Wave E/F follow-on defined in specs-e — Model: sonnet — Parallelizable: yes — Verification: mechanical
+  - Done-when: daemon script refuses (logged) to touch a repo when the liveness marker is present; self-test proves lock-respected + lock-absent-proceeds; the discovery file flipped to `status: decided` citing this task.
+
 ### Wave C — Phase 1: Context diet
 
 - [ ] C.0 Wave-spec refinement for Wave C (incl. final rule→{constitution|stub+doctrine|delete} disposition table for all 61 rules, cluster assignments for C.4, and the JIT trigger map) — Model: opus — Parallelizable: no — Verification: mechanical
@@ -117,7 +120,7 @@ The operator (the harness's user) can, after this program: (a) run `harness-doct
 
 ### Wave F — Phase 5: Governance + closure
 
-- [ ] F.1 Budgets in doctor: Stop ≤6 / SessionStart ≤8 / blocking ≤12 / always-loaded ≤30KB enforced as doctor checks; new-gate evidence bar (named golden scenario + FP expectation + retirement condition) added to the constitution's harness-change section — Model: sonnet — Parallelizable: yes — Verification: mechanical
+- [ ] F.1 Budgets in doctor: Stop ≤6 / SessionStart ≤8 / blocking ≤12 / always-loaded ≤30KB enforced as doctor checks; new-gate evidence bar (named golden scenario + FP expectation + retirement condition) added to the constitution's harness-change section; **plus (operator pain-point 1, 2026-07-02): ACTIVE-plan budget ≤3 machine-wide as a doctor check, and plan-staleness escalation — an ACTIVE plan with no commit in 7 days gets an auto-drafted deferral proposal in the digest (operator one-word approves), so stale plans can no longer silently squat and tax other sessions** — Model: sonnet — Parallelizable: yes — Verification: mechanical
   - Done-when: doctor red-fixtures for each budget violation pass self-test.
 - [ ] F.2 Docs regeneration: harness-architecture.md rewritten from manifest; best-practices.md updated; failure-modes + findings entries for the program's fixed classes — Model: sonnet — Parallelizable: yes — Verification: mechanical
   - Done-when: architecture doc inventory counts match manifest counts (script assertion).
@@ -211,6 +214,18 @@ B.1 (harness-doctor) + B.6 (first green run against the live mirror) is the walk
 
 ### Decision: Administrative freeze of orchestrator-prime + workstreams-completed-filter-fix (B.11)
 - **Tier:** 1 — **Status:** proceeded — **Chosen:** flip `frozen: false → true` on both plans with no other change; full disposition (COMPLETED/DEFERRED/ABANDONED) remains the operator-approved F.3 batch. — **Reasoning:** spec-freeze-gate blocks edits to files claimed by ANY unfrozen ACTIVE plan; both plans are ≥14 days commit-stale and their declared scopes are final in practice; freezing is honest ("spec final as declared"), reversible (one-line flip), and unblocks Waves B–E without silently deferring anyone's work. — **To reverse:** flip back to `frozen: false`.
+
+### Decision: DEC-2026-07-02-002 approved verbatim by operator — estate dispositions + B.12 executed
+- **Tier:** 2 — **Status:** operator-approved ("I like all of your recommendations. Please go forward with each of those.", 2026-07-02) — **Chosen:** close exact-ask-rule + workstreams-filter-fix (verify-first); supersede triage-stale-plans (→F.3) + housekeeping-staged-batch (→B.7, salvage branch `salvage/pre-push-pii-patterns-20260702`); DEFER validation-discipline-agent-encode, orchestrator-prime, dispatch-coordination-redesign (re-engage: post-F.4 retro); discovery waiver-unreachable → superseded by ADR 058; discovery sync-daemon → absorbed as task B.12; discovery dispatch-debug → decided, parked with the orchestrator-prime cluster.
+
+### Decision: Decision-presentation format replaced (operator directive 2026-07-02)
+- **Tier:** 2 — **Status:** operator-directed ("formatted very poorly to make it easy for me to understand") — **Chosen:** the compact human-first format now specified in constitution.md §3 (one-sentence ask → ≤5 lines context with links → option table → my pick → one-word replies; ≤20 lines) replaces the `:::` fence grammar as the operator-facing surface. Interim: where the live decision-context-gate demands a fence, the session writes the gate's waiver (designed valve) rather than emitting the rejected format; the gate's fence enforcement retires in D.4 as already designed. — **Checkpoint:** constitution.md §3.
+
+### Decision: Workstreams UI verdict — operator declares it failed its purpose; digest becomes the primary surface
+- **Tier:** 2 — **Status:** operator input recorded 2026-07-02 ("The Conversations Tree/Workstreams UI ... has failed completely") — **Chosen:** E.1's in-chat digest is now the PRIMARY operator-information surface; the GUI mirror in E.1 is demoted to optional pending a dedicated purpose-failure audit (filed to backlog as its own effort, NOT absorbed into this program — scope discipline). The workstreams emit-side writers stay (cheap, data-preserving) so whatever the audit decides has data to work with.
+
+### Decision: decision-context-gate live self-test red (zod class) — file-not-fix
+- **Tier:** 1 — **Status:** proceeded — **Chosen:** no fix investment; the failing surface (fence validation/state-write, 6/26 scenarios, missing workstreams-ui node_modules) belongs to a gate whose fence enforcement is already slated for D.4 retirement; recorded as a D.0 gate-map input instead. — **To reverse:** provision node_modules + fix if D.0 decides to keep any fence path.
 
 ## Pre-Submission Audit
 
