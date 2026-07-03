@@ -154,3 +154,11 @@ The `Description` body field is required substantive content explaining the obse
 - **Location:** all PreToolUse Bash gates matching git commit (findings-ledger-schema-gate.sh, scope-enforcement-gate.sh, pre-commit-gate.sh chain)
 - **Status:** dispositioned-act
 - **Description:** A compound command of the shape \"<fix> && git add && git commit\" is pre-screened by PreToolUse commit-gates against the CURRENTLY-staged state; when the gate blocks, the ENTIRE command is prevented from running — including the fix at its start. The agent sees a block, re-runs, and the fix never lands (observed 3 consecutive times before diagnosis). Corrective encoded: separate fix-calls from commit-calls (doctrine note), and D.0 audits gate block-messages to state explicitly that the whole command was not executed. Disposition: folded into the D.0 gate-map audit of the nl-overhaul program.
+
+### NL-FINDING-017 — install.sh mv-based backup fails on locked files; live manifest.json went silently stale across a cutover
+- **Severity:** warn
+- **Scope:** canon
+- **Source:** D.5 operator-side cutover completion (orchestrator session 2026-07-03)
+- **Location:** adapters/claude-code/install.sh (backup mv of ~/.claude/hooks) + live ~/.claude/manifest.json freshness
+- **Status:** dispositioned-act
+- **Description:** During the D.5 live cutover, install.sh aborted mid-run (mv of ~/.claude/hooks to the backup dir: Permission denied — file held open), leaving the live manifest.json at its C.5-era state; the doctor then reported 20 claim-honesty REDs against retired-gate entries that no longer exist on master. Root causes: (a) mv-based backup is not lock-tolerant on Windows — should copy-then-verify instead; (b) no freshness check ties live manifest.json to the repo manifest (doctor compares against the LIVE copy). Disposition: fix install.sh backup strategy + add a doctor manifest-freshness check (live vs repo hash) — E-wave item; folded into the E.0 spec mandate.

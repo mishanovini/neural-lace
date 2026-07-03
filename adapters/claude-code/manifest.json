@@ -1357,7 +1357,7 @@
       },
       "blocking": false,
       "budget_class": "stop",
-      "honest_status": "Dispatched via workstreams-stop-writer.sh since D.5; block demoted to ledger warn (specs-d §D.0.2 #4)."
+      "honest_status": "retired at D.5 cutover (attic + exit-0 shim); consolidated into the single workstreams Stop writer per ADR 058 D5 / specs-d"
     },
     {
       "id": "workstreams-task-binding",
@@ -1378,7 +1378,7 @@
       },
       "blocking": false,
       "budget_class": "stop",
-      "honest_status": "Stop block retired per specs-d §D.0.5 (collision with task-completed-evidence); WS_TASK_STOP_MODE defaults to warn (D.6); dispatched via surfacer-pack (SessionStart) and stop-writer (Stop)."
+      "honest_status": "retired at D.5 cutover (attic + exit-0 shim); consolidated into the single workstreams Stop writer (D.0 collision resolution) per ADR 058 D5 / specs-d"
     },
     {
       "id": "workstreams-turn-emit",
