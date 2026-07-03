@@ -256,14 +256,21 @@ extract_body_from_command() {
 if [[ "${1:-}" == "--self-test" ]]; then
   SCRIPT="${BASH_SOURCE[0]}"
 
-  # Resolve validator library (used by all self-test cases).
-  # In the worktree where this script lives, .github/ is at the repo root.
-  # When invoked from the LIVE mirror (~/.claude/hooks — doctor --full does this),
-  # the relative hop resolves to $HOME's parent; fall back to nl-paths' repo root.
-  REPO_ROOT="$(cd "$(dirname "$SCRIPT")/../../.." && pwd)"
-  if [[ ! -f "$REPO_ROOT/.github/scripts/validate-pr-template.sh" ]] && [[ -f "$(dirname "$SCRIPT")/lib/nl-paths.sh" ]]; then
+  # Resolve validator library (used by all self-test cases). Mirrors the
+  # runtime-path resolution below (git rev-parse --show-toplevel from cwd —
+  # same idiom sibling vaporware-volume-gate.sh uses) so this works from any
+  # cwd. A fixed-depth `dirname "$SCRIPT"/../../..` hop is NOT used here: it
+  # silently resolves to the wrong directory when invoked from the LIVE
+  # mirror (~/.claude/hooks — doctor --full does this), since the mirror has
+  # no repo three levels up (it walked to $HOME's parent, e.g.
+  # /c/Users/.github/... instead of the actual repo's .github/). Fall back to
+  # nl-paths' self-location-based resolver (which also tries git, from the
+  # SCRIPT's own directory rather than cwd, plus config-file/probe-list
+  # fallbacks) when cwd isn't inside a git repo at all.
+  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  if [[ ! -f "$REPO_ROOT/.github/scripts/validate-pr-template.sh" ]] && [[ -f "$_PTIG_SELF_DIR/lib/nl-paths.sh" ]]; then
     # shellcheck disable=SC1091
-    source "$(dirname "$SCRIPT")/lib/nl-paths.sh"
+    source "$_PTIG_SELF_DIR/lib/nl-paths.sh"
     REPO_ROOT="$(nl_repo_root)"
   fi
   VALIDATOR_LIB="$REPO_ROOT/.github/scripts/validate-pr-template.sh"
@@ -561,10 +568,9 @@ Remediation:
   - Fix the PR body to address the failure above (add the missing section,
     fill the placeholder, or extend the rationale to ≥40 chars for (c)).
   - For complex bodies, author \`.pr-description.md\` locally and use
-    \`gh pr create --body-file .pr-description.md\` — the file can be
-    validated repeatedly via the validator-script CLI by invoking the
-    validator directly:
-      bash .github/scripts/validate-pr-template.sh --self-test
+    \`gh pr create --body-file .pr-description.md\` — validate the file
+    itself repeatedly (the validator is a sourceable library, not a file CLI):
+      bash -c 'source .github/scripts/validate-pr-template.sh; validate_pr_body \"\$(cat .pr-description.md)\" && echo \"verdict: PASS\"'
 
 Rule:    rules/planning.md \"Capture-codify at PR time\"
 Sibling: vaporware-volume-gate.sh (PR volume-shape check on same matcher)

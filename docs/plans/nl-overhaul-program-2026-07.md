@@ -210,6 +210,9 @@ B.1 (harness-doctor) + B.6 (first green run against the live mirror) is the walk
 
 ## Decisions Log
 
+### Decision: Doctor per-hook self-test budget 120s → 600s (D.5 FAIL remediation, 2026-07-03)
+- **Tier:** 1 — **Status:** proceeded with recommendation — **Chosen:** raise `harness-doctor.sh --full`'s per-hook self-test timeout from 120s to 600s. — **Context:** first D.5 verification FAILED — 6 of 8 doctor REDs were exit-124 timeouts, and at least two suites are structurally over-budget (plan-deletion-protection green at 150s standalone; scope-enforcement ~6 min per D.6 evidence), making "doctor --full green" unsatisfiable at 120s regardless of hook correctness. — **Options:** (a) raise budget — one number, worst case ~1.5h weekly/CI wall-clock; (b) fast-subset self-test modes per slow hook — real per-hook engineering, tests less by construction; (c) amend the Done-when — weakens the oracle. — **Reasoning:** (a) is reversible in one edit and keeps the oracle intact; (b) stays a Wave-E candidate only if CI wall-clock proves painful. — **To reverse:** set the constant back; optionally add fast-subset modes via E-wave.
+
 ### Decision: Backlog absorption deferred to task B.9 rather than declared in header
 - **Tier:** 1 — **Status:** proceeded with recommendation — **Chosen:** `Backlog items absorbed: none` at creation; B.9 performs the absorption markings with per-ID greps. — **Reasoning:** the backlog is itself stale (audit §3) and lives on a diverged main checkout at plan-creation time; atomically editing it in the creation commit would race B.7's surgery. The atomicity contract's intent (no double-tracking) is honored by B.9's Done-when. — **To reverse:** edit header + backlog in one commit later.
 

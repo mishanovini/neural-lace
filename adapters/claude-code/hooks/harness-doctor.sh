@@ -83,7 +83,7 @@
 #                             or the checker script cannot be found.
 #   8. selftest-sweep       : (--full only) run every live hook containing
 #                             the string "--self-test" with
-#                             HARNESS_SELFTEST=1 timeout 120
+#                             HARNESS_SELFTEST=1 timeout 600
 #                             bash <hook> --self-test </dev/null; RED per
 #                             non-zero exit.
 #

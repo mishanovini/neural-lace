@@ -1027,3 +1027,27 @@ Runtime verification: file adapters/claude-code/scripts/tool-call-counter.sh::.
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN — every §D.6 assertion executed this session and passed: the full 32/32 scope-enforcement suite (multi-path scenario included, run to completion — not the time-constrained fallback), spec-freeze 7/7, evidence-gate 10/10 with both plan-scoping scenarios, bypass-hatch zero-grep, task-binding warn-by-default, counter script + shared backtick lib present and sourced by both hooks.
+
+## D.5 — verification attempt 1: FAIL (task-verifier a8d30809e9037f807, 2026-07-03T18:55Z; checkbox NOT flipped)
+
+Verifier's returned evidence block, persisted verbatim by the orchestrator per its FAIL protocol
+(verifier does not write this file on FAIL). Remediation commit follows; re-verification pending.
+
+Oracle: plan Done-when (line 102) — chain counts (Stop ≤6, SessionStart ≤8) both sides; doctor --full
+green; golden evals green; retired live paths exit 0. Run against main checkout @ 51af599 + live ~/.claude.
+
+Assertions: 1 chain counts live (Stop=6 SessionStart=8) PASS · 2 chain counts template PASS ·
+3 doctor --quick GREEN 7/7 PASS · 4 golden evals 6/6 PASS · 5 rollback tag pre-wave-d-cutover +
+settings.json.bak-waved present PASS · 6 retired-path shims 8/8 spot-checked exit-0 PASS ·
+7 doctor --full: FAIL — "[doctor] FAILED — 8 red, 0 warn, 8 checks run", exit 1.
+
+RED breakdown: exit-124 timeouts at the doctor's 120s/hook budget — plan-auto-closure,
+plan-deletion-protection (green at 150s standalone), plan-reviewer, scope-enforcement (~6 min per
+D.6 evidence), work-integrity-gate, workstreams-emit. Hard failures — pr-template-inline-gate exit 2
+(mangled validator path /c/Users/.github/... while library exists at <repo>/.github/scripts/;
+dirname-of-HOME class; LIVE-WIRED) and workstreams-extract-pending exit 1 (dangling runtime+selftest
+references to retired conversation-tree-emit.sh at :164/:346-347; feature silently no-op at runtime).
+
+Verdict: FAIL — Confidence: 9 — Reason: PROVEN, Done-when requires doctor --full green; it is not.
+Remediation (this session): fix both hard-fail hooks class-wide + stale-name sweep (9 live matches),
+raise doctor per-hook budget 120s→600s (Decisions Log entry in plan), re-run --full, re-verify.

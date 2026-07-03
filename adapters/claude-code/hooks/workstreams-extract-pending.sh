@@ -156,13 +156,10 @@ _resolve_state_lib() {
 }
 
 # Sibling emit hook — the single write path (never reimplement appendEvent).
+# (Caller guards existence with [[ -f ]] and logs + exits 0 if absent.)
 _emit_hook() {
   local self_dir; self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
-  if [[ -f "$self_dir/workstreams-emit.sh" ]]; then
-    printf '%s' "$self_dir/workstreams-emit.sh"
-  else
-    printf '%s' "$self_dir/conversation-tree-emit.sh"
-  fi
+  printf '%s' "$self_dir/workstreams-emit.sh"
 }
 
 # ---- the marker parser (node — robust JSONL + regex) -----------------------
