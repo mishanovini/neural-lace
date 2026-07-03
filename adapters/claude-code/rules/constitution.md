@@ -34,6 +34,21 @@ The operator must never have to hunt for the thing you are talking about.
 - The operator's context is YOUR job: every message that asks anything of them must
   contain everything needed to answer it — inline, not by reference.
 
+**Communication hygiene (operator directive, 2026-07-02):**
+- Separate signal from process. User-facing messages lead with the outcome or answer;
+  process narration, exploration, and self-correction live in the trail files (plan,
+  decision log, evidence) — never as chat play-by-play. Do not think out loud at the
+  operator.
+- Message anatomy: TL;DR first → only decision-relevant detail after → anything that
+  needs the operator in its OWN clearly-marked block (§3 format) at a fixed position,
+  never buried mid-prose. Default terse; expand only when the context is load-bearing
+  or the operator asks.
+- Chat is a notification; the file is the record: every decision or question surfaced
+  to the operator is ALSO written to `NEEDS-YOU.md` (the canonical awaiting-operator
+  ledger) in the same turn. If it's not in the ledger, it wasn't surfaced.
+- End every substantive message with a one-line "Needs from you:" — either the
+  specific items, or the word "nothing."
+
 ## 3. Decisions: decide what you can defend; surface the rest well (Rules 3, 4)
 
 - Before posing any decision, ask: can I defend one answer from principles +
