@@ -61,8 +61,8 @@ If the procedure blocks and the orchestrator is tempted to bypass via direct fil
 - `adapters/claude-code/hooks/plan-lifecycle.sh` — the PostToolUse hook that auto-archives once Status flips.
 - `adapters/claude-code/hooks/plan-closure-validator.sh` — the existing closure-validator (tagged for retirement during Tranche F; the deterministic procedure produces evidence that satisfies it during the transition).
 - `~/.claude/templates/completion-report.md` — the template the procedure mirrors.
-- `~/.claude/rules/planning.md` — Verifier Mandate, plan-file lifecycle, backlog absorption rules.
-- `~/.claude/rules/vaporware-prevention.md` — enforcement-map row for closure-validation.
+- `~/.claude/doctrine/planning.md` — Verifier Mandate, plan-file lifecycle, backlog absorption rules.
+- `~/.claude/doctrine/vaporware-prevention.md` — enforcement-map row for closure-validation.
 - `docs/plans/architecture-simplification-tranche-e-deterministic-close-plan.md` — the originating plan.
 - `docs/plans/architecture-simplification-tranche-b-mechanical-evidence.md` — the structured-evidence substrate this procedure consumes.
 - `docs/plans/architecture-simplification-tranche-d-risk-tiered-verification.md` — the risk-tiered verification routing this procedure honors.

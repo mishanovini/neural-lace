@@ -7,7 +7,7 @@
 # pending discoveries waiting for resolution.
 #
 # This is the surfacing half of the discovery protocol shipped in
-# ~/.claude/rules/discovery-protocol.md. The capture half lives in the
+# ~/.claude/doctrine/discovery-protocol.md. The capture half lives in the
 # extended `bug-persistence-gate.sh` (which now treats
 # `docs/discoveries/YYYY-MM-DD-*.md` as legitimate persistence alongside
 # `docs/backlog.md` and `docs/reviews/`).
@@ -176,7 +176,7 @@ surface_discoveries() {
   done
 
   echo "These discoveries surfaced in prior sessions and are awaiting decision."
-  echo "Per ~/.claude/rules/discovery-protocol.md, options: (a) review and decide"
+  echo "Per ~/.claude/doctrine/discovery-protocol.md, options: (a) review and decide"
   echo "inline; (b) auto-apply the recommendation if reversible; (c) defer"
   echo "explicitly via Status: superseded or Status: rejected."
 }

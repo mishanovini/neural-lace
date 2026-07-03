@@ -21,7 +21,7 @@ tier values (Build Doctrine `03-work-sizing.md`):
                       work without prior precedent.
 
 Required by `plan-reviewer.sh` Check 10 on `Status: ACTIVE` plans.
-See `~/.claude/rules/planning.md` and Decision 017.
+See `~/.claude/doctrine/planning.md` and Decision 017.
 -->
 
 rung: <0-5>
@@ -81,7 +81,7 @@ frozen values (spec-freeze gate, Decision 016):
           re-flip true.
 
 Required by `plan-reviewer.sh` Check 10.
-See `~/.claude/rules/spec-freeze.md` for the freeze-thaw protocol.
+See `~/.claude/doctrine/spec-freeze.md` for the freeze-thaw protocol.
 -->
 
 lifecycle-schema: v2
@@ -96,7 +96,7 @@ on the ACTIVE transition only; never retroactively block already-ACTIVE
 pre-redesign plans). Backfilling the field into a legacy plan opts that
 plan into the new gates. Do not remove it from a new plan to dodge the
 gates — that is the same anti-pattern as deleting a test to make a build
-pass. See ~/.claude/rules/plan-lifecycle.md and Decision 036.
+pass. See ~/.claude/doctrine/planning-full.md (Plan File Lifecycle) and Decision 036.
 -->
 
 owner: <name>
@@ -138,7 +138,7 @@ prd-ref values (PRD-validity gate, Decision 015):
                                   (em-dash). Auditable via grep.
 
 Required by `plan-reviewer.sh` Check 10.
-See `~/.claude/rules/prd-validity.md` and `adapters/claude-code/templates/prd-template.md`.
+See `~/.claude/doctrine/prd-validity.md` and `adapters/claude-code/templates/prd-template.md`.
 -->
 
 <!--
@@ -156,7 +156,7 @@ acceptance-exempt values:
           `product-acceptance-gate.sh` Stop hook honors the exemption;
           `harness-reviewer` may audit the rationale.
 
-See `~/.claude/rules/acceptance-scenarios.md` for the full plan-time →
+See `~/.claude/doctrine/acceptance-scenarios.md` for the full plan-time →
 runtime → gap-analysis loop and explicit when-to-use guidance for the
 exemption.
 
@@ -165,14 +165,14 @@ Execution Mode values:
                 dispatches each task to a `plan-phase-builder` sub-agent via the
                 Task tool, and collects results. The main session does NOT do the
                 build work itself — it stays lean as an orchestrator. See
-                ~/.claude/rules/orchestrator-pattern.md for the full protocol.
+                ~/.claude/doctrine/orchestrator-pattern.md for the full protocol.
   direct        Single-task quick fixes (one file, < 15 min). The main session
                 does the work directly. No sub-agent dispatch overhead.
   agent-team    Uses Anthropic's experimental Agent Teams feature
                 (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1) for peer-to-peer
                 teammate coordination with a shared task list. Gated by
                 `enabled: true` in ~/.claude/local/agent-teams.config.json
-                (default false). See ~/.claude/rules/agent-teams.md for the
+                (default false). See ~/.claude/doctrine/agent-teams.md for the
                 full protocol, the upstream-bug list, and when to prefer this
                 over orchestrator. Decision record:
                 docs/decisions/012-agent-teams-integration.md.
@@ -200,7 +200,7 @@ plan file creation.
       ABANDONMENT or DEFERRAL the items return to the backlog with a
       `(deferred from <plan-path>)` note.
 
-See ~/.claude/rules/planning.md, "Backlog absorption at plan creation".
+See ~/.claude/doctrine/planning.md, "Backlog absorption at plan creation".
 
 Mode values:
   code    Default. Code-level work — bug fixes, UI changes, refactors,
@@ -219,7 +219,7 @@ Mode values:
           systems-designer agent MUST review the plan before
           implementation begins.
 
-See ~/.claude/rules/design-mode-planning.md for the full protocol on
+See ~/.claude/doctrine/design-mode-planning.md for the full protocol on
 design-mode tasks.
 -->
 
@@ -229,7 +229,7 @@ Required sections (enforced by plan-reviewer.sh):
   Testing Strategy
 
 Every required section must contain substantive, plan-specific content —
-not placeholder text. See ~/.claude/rules/planning.md, "Verbose Plans Are
+not placeholder text. See ~/.claude/doctrine/planning.md, "Verbose Plans Are
 Mandatory", for the full rule. Verbose planning is mandatory regardless
 of plan size.
 -->
@@ -241,7 +241,7 @@ user-observable outcome this plan produces, not just the mechanism.]
 ## User-facing Outcome
 <!--
 REQUIRED. Operationalizes FUNCTIONALITY OVER COMPONENTS — the harness's
-most important rule (~/.claude/rules/planning.md).
+most important rule (~/.claude/doctrine/planning.md).
 
 State concretely what a user can DO after this plan ships that they
 could not do before. Not what code exists; what action becomes possible.
@@ -297,7 +297,7 @@ group them under a batch header. Default is serial. Examples:
              or compete for the same migration number / port / resource
 
 The orchestrator reads these markers to decide dispatch batching. When in
-doubt, leave unmarked (serial). See ~/.claude/rules/orchestrator-pattern.md
+doubt, leave unmarked (serial). See ~/.claude/doctrine/orchestrator-pattern.md
 for the full safety rules on parallelization.
 
 Per-task `Verification:` declaration (Tranche D of architecture-simplification,
@@ -323,7 +323,7 @@ where <level> is one of:
 
 If the field is omitted, `full` applies. The plan-edit-validator routes
 checkbox-flip authorization per level. See
-~/.claude/rules/risk-tiered-verification.md for the full protocol and
+~/.claude/doctrine/risk-tiered-verification.md for the full protocol and
 when to use each level.
 
 Format examples:
@@ -413,7 +413,7 @@ preserves all behavior, doc-only change marked Verification: mechanical,
 etc.), promote the task to mechanical/contract level rather than
 papering over the integration verification with placeholders.
 
-See ~/.claude/rules/planning.md "Integration Verification — Every
+See ~/.claude/doctrine/planning.md "Integration Verification — Every
 Full-Level Task Must Prove It Works" for the full rule and the
 ~/.claude/hooks/wire-check-gate.sh self-test for worked PASS/FAIL
 fixtures.
@@ -517,7 +517,7 @@ may contain a single line explaining the exemption (e.g., "n/a —
 harness-dev plan, no product user; see acceptance-exempt-reason
 above").
 
-See `~/.claude/rules/acceptance-scenarios.md` for the full protocol.
+See `~/.claude/doctrine/acceptance-scenarios.md` for the full protocol.
 -->
 - [populate me — end-user advocate writes scenarios here in plan-time mode]
 
@@ -570,7 +570,7 @@ For an `acceptance-exempt: true` plan the contract is the self-test PASS
 (the exemption shifts the closure target to self-tests; it does not
 remove the target). The substance bar is the same as Check 6b — ≥ 20
 non-whitespace chars of non-placeholder content. See
-~/.claude/rules/plan-lifecycle.md and Decision 036-b.
+~/.claude/doctrine/planning-full.md (Plan File Lifecycle) and Decision 036-b.
 -->
 - **Commands that run:** [populate me — verification commands]
 - **Expected outputs:** [populate me — PASS criteria]
@@ -583,7 +583,7 @@ How each task will be verified — unit tests, integration tests, runtime
 verification commands. Prefer concrete command lines ("run
 `npm run test:links`") or file paths ("new Playwright test at
 tests/e2e/foo.spec.ts") over vague statements ("test manually"). See
-~/.claude/rules/vaporware-prevention.md.
+~/.claude/doctrine/vaporware-prevention.md.
 
 AI-output features (any feature whose user-observable behavior is determined
 by an LLM's generated text — chatbot replies, AI-drafted summaries, AI
@@ -623,7 +623,7 @@ user-facing flow), replace this entire block with a single line:
 ## Decisions Log
 [Populated during implementation — see Mid-Build Decision Protocol.
 Plan-time decisions with interface impact: surface to user via
-AskUserQuestion BEFORE recording — see ~/.claude/rules/planning.md
+AskUserQuestion BEFORE recording — see ~/.claude/doctrine/planning.md
 "Plan-Time Decisions With Interface Impact — Surface To User".
 Each Tier-2+ decision must also have a docs/decisions/NNN-slug.md
 record landed in the same commit.]
@@ -633,7 +633,7 @@ record landed in the same commit.]
 REQUIRED for Mode: design plans before invoking systems-designer.
 DELETE this section if Mode: code or Mode: design-skip.
 
-Run the five class-sweeps from ~/.claude/rules/design-mode-planning.md
+Run the five class-sweeps from ~/.claude/doctrine/design-mode-planning.md
 "Pre-Submission Class-Sweep Audit". Document one line per sweep with
 the count and result. Fix all gaps found BEFORE submitting to
 systems-designer.
@@ -653,7 +653,7 @@ Why this exists: prevents the multi-round sibling-instance dance with
 systems-designer that an originating 2026-04-28 review effort (an
 auth-refactor plan, eight rounds to converge) surfaced 11 distinct
 failure classes from. The reviewer is a safety net, not the primary
-discovery mechanism. See ~/.claude/rules/design-mode-planning.md and
+discovery mechanism. See ~/.claude/doctrine/design-mode-planning.md and
 ~/.claude/docs/failure-modes.md FM-007 through FM-017 for the
 underlying failure classes.
 -->
@@ -688,7 +688,7 @@ system-design work.
 Theme: make the invisible visible. Every section makes one
 normally-implicit aspect of the system explicit and checkable.
 
-See ~/.claude/rules/design-mode-planning.md for guidance on what
+See ~/.claude/doctrine/design-mode-planning.md for guidance on what
 belongs in each section and why.
 -->
 

@@ -89,7 +89,7 @@ For each distinct claim in the evidence block, label its **epistemic source** (N
 | **TESTIMONY** | Claim citing an external source / URL / doc | Independently re-fetch / re-read the cited source. If it cannot be reached or says something else, flag source-fabrication. |
 | **ASSERTED-ungrounded** | Claim with no cited operation, output, file, or SHA ("the feature works", "this is correct") | Cannot be re-derived → contributes only INSUFFICIENT weight; never grounds a CONSISTENT verdict. |
 
-This labeling is the load-bearing move. It is the harness's PROVEN/HYPOTHESIZED discipline (`~/.claude/rules/claims.md`) applied to the evidence block: **a claim is PROVEN only when you re-observe its grounding; otherwise it is asserted, and asserted claims do not pass.**
+This labeling is the load-bearing move. It is the harness's PROVEN/HYPOTHESIZED discipline (`~/.claude/doctrine/claims.md`) applied to the evidence block: **a claim is PROVEN only when you re-observe its grounding; otherwise it is asserted, and asserted claims do not pass.**
 
 ### Step 2 — Verify claimed files exist (PROVEN-by-tool, file class)
 

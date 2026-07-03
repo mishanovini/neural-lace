@@ -6,7 +6,7 @@
 # number (#NNN or github.com/.*/issues/NNN).
 #
 # The rule: "skipped tests are worse than no tests" — see
-# ~/.claude/rules/testing.md "No Skipped Tests" section.
+# ~/.claude/doctrine/testing.md "No Skipped Tests" section.
 #
 # A test that skips under some condition looks like coverage but isn't.
 # It silently passes anything when the skip fires, which is exactly the
@@ -94,7 +94,7 @@ This commit adds new test skip calls without an issue-number reference:
 $(echo -e "$VIOLATIONS")
 
 Skipped tests are worse than no tests — they create the illusion of
-coverage while silently passing anything. See ~/.claude/rules/testing.md
+coverage while silently passing anything. See ~/.claude/doctrine/testing.md
 "No Skipped Tests" for the full rationale.
 
 To unblock, choose ONE:

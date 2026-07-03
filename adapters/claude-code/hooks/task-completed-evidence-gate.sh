@@ -29,7 +29,7 @@
 #
 #   3. Functionality demonstration warning (non-blocking):
 #      operationalizes the harness's most important rule —
-#      FUNCTIONALITY OVER COMPONENTS (~/.claude/rules/planning.md).
+#      FUNCTIONALITY OVER COMPONENTS (~/.claude/doctrine/planning.md).
 #      After Layer 1 passes, inspects the task's evidence section
 #      for at least one functionality marker (playwright, curl,
 #      Wire check executed, runtime_evidence, Prove it works,
@@ -314,7 +314,7 @@ typecheck/lint, "compiles successfully") — NOT user-facing
 functionality.
 
 The harness's most important rule
-(~/.claude/rules/planning.md "FUNCTIONALITY OVER COMPONENTS")
+(~/.claude/doctrine/planning.md "FUNCTIONALITY OVER COMPONENTS")
 says: a task is done when a user can perform the action the task
 describes and get the expected result, not when the components
 compile and unit tests pass.
@@ -509,7 +509,7 @@ Resolution:
 
 This block exists because evidence-first is the harness's
 load-bearing anti-vaporware mechanism (see
-~/.claude/rules/vaporware-prevention.md)."
+~/.claude/doctrine/vaporware-prevention.md)."
   fi
 
   # ---------- Layer 3: FUNCTIONALITY OVER COMPONENTS warning

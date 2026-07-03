@@ -503,7 +503,7 @@ fi
 # (Generation 4: replayable commands, not keyword scans)
 # ============================================================
 #
-# See ~/.claude/rules/vaporware-prevention.md for rationale.
+# See ~/.claude/doctrine/vaporware-prevention.md for rationale.
 #
 # The check now has two sub-layers:
 #   4a. For plans with runtime-feature tasks, REQUIRE at least one

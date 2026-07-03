@@ -243,7 +243,7 @@ Do NOT simply rephrase the same narrate-and-wait message. The
 rule exists because rephrased permission-seeking is still
 permission-seeking.
 
-See: ~/.claude/rules/orchestrator-pattern.md ("The main session is
+See: ~/.claude/doctrine/orchestrator-pattern.md ("The main session is
 lean, not idle") and the user's repeated feedback in this session
 memory about narrate-and-wait as a failure mode.
 

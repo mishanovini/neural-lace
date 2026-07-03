@@ -383,7 +383,7 @@ if [[ "$BLOCK_ELIGIBLE" -eq 0 ]]; then
   exit 0
 fi
 
-BLOCKER_MSG="principles-compliance-gate: your final message matched $BLOCK_ELIGIBLE operating-rule anti-pattern(s) (Rule 4 false-binary=$R4, Rule 5 done-without-SHA=$R5, Rule 7 promise-without-mechanism=$R7). Revise per ~/.claude/rules/principles.md, then re-attempt Stop. See $LOG_FILE for the matched lines. Suppress with PRINCIPLES_GATE_DISABLE=1 for harness-dev sessions editing the patterns themselves."
+BLOCKER_MSG="principles-compliance-gate: your final message matched $BLOCK_ELIGIBLE operating-rule anti-pattern(s) (Rule 4 false-binary=$R4, Rule 5 done-without-SHA=$R5, Rule 7 promise-without-mechanism=$R7). Revise per ~/.claude/rules/constitution.md, then re-attempt Stop. See $LOG_FILE for the matched lines. Suppress with PRINCIPLES_GATE_DISABLE=1 for harness-dev sessions editing the patterns themselves."
 
 if command -v retry_guard_block_or_exit >/dev/null 2>&1; then
   RG_FAILURE_SIG="principles-gate:R4=$R4:R5=$R5:R7=$R7"

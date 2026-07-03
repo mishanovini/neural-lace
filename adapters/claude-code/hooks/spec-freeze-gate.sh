@@ -596,7 +596,7 @@ OTHER_COUNT=$((NUM_UNFROZEN - 1))
   echo "spec review), OR move the file out of that plan's"
   echo "'## Files to Modify/Create' list."
   echo ""
-  echo "See ~/.claude/rules/spec-freeze.md for the freeze-thaw protocol."
+  echo "See ~/.claude/doctrine/spec-freeze.md for the freeze-thaw protocol."
   echo ""
   echo "Unfrozen plans claiming this file:"
   for p in "${UNFROZEN_CLAIMERS[@]}"; do
@@ -616,7 +616,7 @@ OTHER_COUNT=$((NUM_UNFROZEN - 1))
   fi
   echo ""
   echo "Emergency override: edit the plan to flip frozen, OR temporarily"
-  echo "use a non-Edit/Write tool (per ~/.claude/rules/git.md)."
+  echo "use a non-Edit/Write tool (per ~/.claude/doctrine/git.md)."
   echo "================================================================"
 } >&2
 

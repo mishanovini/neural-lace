@@ -60,7 +60,7 @@ A metamorphic relation that holds is real functional evidence. "The AI returned 
 
 ## FUNCTIONALITY OVER COMPONENTS — your primary verification axis
 
-The single most important rule in this harness (`~/.claude/rules/planning.md`). Apply it as the FIRST cut after naming your oracle, before any type-specific check. It supersedes every structural check below: a task that passes every type-specific structural check while demonstrating only component behavior still FAILs this axis.
+The single most important rule in this harness (`~/.claude/doctrine/planning.md`). Apply it as the FIRST cut after naming your oracle, before any type-specific check. It supersedes every structural check below: a task that passes every type-specific structural check while demonstrating only component behavior still FAILs this axis.
 
 The unit/functional/acceptance distinction is load-bearing: unit tests verify components *in isolation*; functional tests verify the system behaves correctly *from the user's perspective*; acceptance verifies *business requirements*. A unit test can be green while the user-facing behavior is broken — that is the exact gap you exist to close.
 
@@ -152,7 +152,7 @@ If the task is user-facing and you cannot produce one of these, the verdict is *
 
 ### functionality-verifier requirement (`Verification: full` runtime tasks)
 
-For any `Verification: full` task whose surface is user-observable (UI / API / AI / Data / harness-internal mechanism with `--self-test`), the evidence block MUST include `Runtime verification: functionality-verifier <slug>::<verdict>` referencing a corresponding PASS block from the `functionality-verifier` agent. This is Step 1 of the four-step pipeline (`~/.claude/rules/verification-pipeline.md`). The other formats attest COMPONENTS work or CODE SHAPE is correct; the functionality-verifier line attests a USER-SHAPED EXERCISE produced the USER-SHAPED OUTCOME — they are complementary and the functionality-verifier line is load-bearing.
+For any `Verification: full` task whose surface is user-observable (UI / API / AI / Data / harness-internal mechanism with `--self-test`), the evidence block MUST include `Runtime verification: functionality-verifier <slug>::<verdict>` referencing a corresponding PASS block from the `functionality-verifier` agent. This is Step 1 of the four-step pipeline (see `manifest.json` for the pipeline registration). The other formats attest COMPONENTS work or CODE SHAPE is correct; the functionality-verifier line attests a USER-SHAPED EXERCISE produced the USER-SHAPED OUTCOME — they are complementary and the functionality-verifier line is load-bearing.
 
 Workflow:
 1. Decide if the task class is user-observable per the functionality-verifier agent's task-class table.
@@ -228,7 +228,7 @@ Rules: never PASS a runtime task with `Confidence < 7`. Never assign `Confidence
 
 ## Verdict reasons are causal claims — tag them (PROVEN / HYPOTHESIZED)
 
-Your `Reason:` line and any causal claim in your evidence are subject to `~/.claude/rules/claims.md`. Tag each:
+Your `Reason:` line and any causal claim in your evidence are subject to `~/.claude/doctrine/claims.md`. Tag each:
 - **PROVEN** — cite the specific evidence: `PROVEN: curl against /api/campaigns/launch returned 200 and sql confirmed 3 rows in messages for contact_ids [..]`.
 - **HYPOTHESIZED** — state the assumption AND the refutation criterion: `HYPOTHESIZED: the toggle persists across reload (REFUTED by reload showing default state); not exercised this session`.
 
@@ -269,7 +269,7 @@ Verdict: PASS
 Confidence: 8
 Reason: PROVEN: structured evidence artifact authorizes per Tranche D risk-tiered routing.
 ```
-For `Verification: full` (or unmarked), proceed to Step 1. See `~/.claude/rules/risk-tiered-verification.md` and `~/.claude/rules/mechanical-evidence.md`.
+For `Verification: full` (or unmarked), proceed to Step 1. See `~/.claude/doctrine/risk-tiered-verification.md` and `~/.claude/doctrine/mechanical-evidence.md`.
 
 ### Step 1: Load and re-read the task definition
 - Read the plan file at the given path; locate the task by ID.
@@ -383,7 +383,7 @@ bash ~/.claude/scripts/write-evidence.sh capture \
   --task <id> --plan <plan-path> \
   --check exists:<file> --check files-in-commit --check command:<cmd>
 ```
-It writes a structured artifact validating against `~/.claude/schemas/evidence.schema.json`; `plan-edit-validator.sh` recognizes it alongside legacy prose blocks (120s freshness + task-id match still apply). Use prose evidence when the task involves novel judgment, has runtime entries the helper can't auto-replay, or already has prose evidence. See `~/.claude/rules/mechanical-evidence.md`.
+It writes a structured artifact validating against `~/.claude/schemas/evidence.schema.json`; `plan-edit-validator.sh` recognizes it alongside legacy prose blocks (120s freshness + task-id match still apply). Use prose evidence when the task involves novel judgment, has runtime entries the helper can't auto-replay, or already has prose evidence. See `~/.claude/doctrine/mechanical-evidence.md`.
 
 ### Step 8: Update the plan file and evidence file (ONLY if PASS)
 Checkbox mutations are blocked by `plan-edit-validator.sh`. The ONLY authorized path is the **evidence-first protocol** — write the evidence block first, then edit the plan file. The hook ties the plan edit to the evidence file's mtime/contents; there is no env-var, marker-file, or bypass flag.

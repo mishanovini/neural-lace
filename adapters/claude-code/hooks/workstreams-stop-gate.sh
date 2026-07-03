@@ -532,7 +532,7 @@ Before the session can end, do ONE of:
          > $STATE_DIR/conv-tree-stop-waiver-\$(date +%s).txt
      (>=1 non-whitespace line, mtime < 1h). NEVER --no-verify.
 
-See ~/.claude/rules/gate-respect.md — diagnose before bypass.
+See ~/.claude/doctrine/gate-respect.md — diagnose before bypass.
 ================================================================
 MSG
 

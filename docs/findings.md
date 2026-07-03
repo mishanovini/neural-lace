@@ -138,3 +138,11 @@ The `Description` body field is required substantive content explaining the obse
 - **Location:** neural-lace/conversation-tree-ui/state/backfill-details.js
 - **Status:** dispositioned-accept
 - **Description:** NL-FINDING-012 (PR #11 merged with failing backfill B15) is now RESOLVED on master: PR #13's in-flight fix "repointed B15 from the v1.1.1-closure-archived plan path to the permanent docs/DECISIONS.md; backfill restored 15/15." NL-FINDING-012's recommended dedicated-session fix is therefore moot — B15 was environment/path-fragility (a referenced doc moved on plan-archive), fixed by repointing to a permanent doc. No further action; NL-FINDING-012 → dispositioned-accept (resolved upstream by #13).
+
+### NL-FINDING-014 — Agent-tool `isolation: "worktree"` silently failed for one of 12 dispatches; builder branched in the MAIN checkout
+- **Severity:** error
+- **Scope:** cross-repo
+- **Source:** Wave-C orchestrator session (2026-07-02), caught at the post-cutover `git pull` on the main checkout
+- **Location:** platform Agent tool (worktree provisioning) + adapters/claude-code/hooks/teammate-spawn-validator.sh (validates the FLAG, cannot verify the resulting cwd)
+- **Status:** open
+- **Description:** During the NL Overhaul Wave-C parallel build, 12 builder dispatches all passed `isolation: "worktree"`. Eleven received worktrees; ONE (the C.4-CL5 builder) ran in the ORCHESTRATOR'S MAIN-CHECKOUT-adjacent context: its completion notification carried no worktree block, and its `git checkout -b worker-C.4-CL5` executed in the main checkout, moving that checkout's HEAD off master. Detected only when the post-cutover `git pull` behaved oddly (HEAD at a worker commit; local master still tracking the wrong remote). No work was lost (the builder's commit was intact and cherry-picked normally), but the failure class is severe in the general case: an unattended writer operating on the shared main checkout is exactly the GAP-51/sync-daemon failure shape (see B.12). Mitigation available today: builders' FIRST-ACTION contract could add `git rev-parse --git-common-dir` vs `--git-dir` self-check ("am I in a linked worktree?") and return BLOCKED if not. Class: isolation-flag-accepted-but-not-provisioned. Sweep query: `rg -l "isolation" adapters/claude-code/hooks/teammate-spawn-validator.sh` + orchestrator dispatch prompts.

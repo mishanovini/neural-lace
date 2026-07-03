@@ -447,7 +447,7 @@ This should have been caught at plan-creation by plan-reviewer.sh
 Check 13. Re-author the plan task with a Wire checks block (or use
 the 'n/a — <reason>' carve-out for tasks with no code chain).
 
-See ~/.claude/rules/planning.md "Integration Verification".
+See ~/.claude/doctrine/planning.md "Integration Verification".
 MSG
   exit 1
 fi
@@ -600,7 +600,7 @@ completion regardless of whether a running instance was available.
 Runtime evidence (executed Prove-it-works scenario) is additive when
 present.
 
-See ~/.claude/rules/planning.md "Integration Verification".
+See ~/.claude/doctrine/planning.md "Integration Verification".
 MSG
   exit 1
 fi
@@ -623,7 +623,7 @@ Add more arrows with backtick-quoted file paths, OR (if no chain
 exists for this task) use the canonical carve-out in Wire checks:
   - n/a — <reason ≥ 30 chars>
 
-See ~/.claude/rules/planning.md "Integration Verification".
+See ~/.claude/doctrine/planning.md "Integration Verification".
 MSG
   exit 1
 fi

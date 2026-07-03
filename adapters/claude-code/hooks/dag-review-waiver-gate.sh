@@ -8,7 +8,7 @@
 # with >=40 chars of substantive content.
 #
 # Plan: docs/plans/phase-1d-c-1-low-risk-mechanisms.md (Task T3)
-# Rule: ~/.claude/rules/vaporware-prevention.md (T5 lands the row)
+# Rule: ~/.claude/doctrine/vaporware-prevention.md (T5 lands the row)
 #
 # Operationalizes the Builder/Planner role boundary at dispatch time.
 # Plans dispatching at Tier 3+ without DAG review ship work whose

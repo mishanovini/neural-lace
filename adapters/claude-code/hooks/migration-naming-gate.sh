@@ -36,7 +36,7 @@
 #   re-staging an existing integer migration does not trip the gate. The
 #   discipline binds NEW migrations only; the back-catalog is frozen.
 #
-# Rule: ~/.claude/rules/parallel-dev-discipline.md (Practice 7)
+# Rule: ~/.claude/doctrine/parallel-dev-discipline.md (Practice 7)
 #
 # Exit codes:
 #   0 — commit allowed (no offending newly-added migration)
@@ -188,7 +188,7 @@ _main_check() {
     echo "  # then re-stage and commit. Two machines one second apart still differ."
     echo ""
     echo "Accepted prefix forms: YYYYMMDDHHMMSS_  |  YYYYMMDDHHMMSS-  |  YYYYMMDD-HHMMSS_"
-    echo "Rule: ~/.claude/rules/parallel-dev-discipline.md (Practice 7)"
+    echo "Rule: ~/.claude/doctrine/parallel-dev-discipline.md (Practice 7)"
     echo ""
     echo "(Existing integer-named migrations already in history are grandfathered —"
     echo " only NEWLY-ADDED files are checked. This binds NEW migrations only.)"

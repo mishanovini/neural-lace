@@ -180,7 +180,7 @@ Design-mode work requires a plan in docs/plans/ with:
 
 Create the plan first. Use ~/.claude/templates/plan-template.md with
 Mode: design and fill the 10 Systems Engineering Analysis sections.
-See ~/.claude/rules/design-mode-planning.md for the full protocol.
+See ~/.claude/doctrine/design-mode-planning.md for the full protocol.
 
 If this edit is genuinely not system-design work (e.g., one-line typo
 fix in a Dockerfile comment), create a Mode: design-skip plan with a
@@ -252,7 +252,7 @@ Target file is a design-mode file:
   $FILE_PATH
 
 Design-mode files require a written systems-engineering plan BEFORE
-implementation. See ~/.claude/rules/design-mode-planning.md for why.
+implementation. See ~/.claude/doctrine/design-mode-planning.md for why.
 
 No active plan with \`Mode: design\` (or \`Mode: design-skip\` referencing
 this file) was found under:

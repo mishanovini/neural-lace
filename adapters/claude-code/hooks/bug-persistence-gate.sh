@@ -9,7 +9,7 @@
 # AND no persistence happened, blocks session end with a detailed message.
 #
 # This is the mechanical enforcement of the bug-persistence rule in
-# ~/.claude/rules/testing.md. Rules that depend on the agent remembering
+# ~/.claude/doctrine/testing.md. Rules that depend on the agent remembering
 # to follow them are theater; this hook closes the loop.
 #
 # Escape hatch: the agent can write
@@ -335,7 +335,7 @@ check_persisted_for() {
     return
   fi
   # Unstaged or staged change to findings.md (Phase 1d-C-3, 2026-05-04;
-  # see ~/.claude/rules/findings-ledger.md and Decision 019).
+  # see ~/.claude/doctrine/findings-ledger.md and Decision 019).
   if git -C "$root" status --porcelain docs/findings.md 2>/dev/null | grep -q .; then
     PERSISTED=1
     return
@@ -360,7 +360,7 @@ check_persisted_for() {
     PERSISTED=1
     return
   fi
-  # New discovery file (untracked) — see ~/.claude/rules/discovery-protocol.md
+  # New discovery file (untracked) — see ~/.claude/doctrine/discovery-protocol.md
   if git -C "$root" ls-files --others --exclude-standard docs/discoveries/ 2>/dev/null | grep -qE '^docs/discoveries/[0-9]{4}-[0-9]{2}-[0-9]{2}-'; then
     PERSISTED=1
     return
@@ -434,7 +434,7 @@ BUG-PERSISTENCE GATE — BLOCKED
 This session mentioned bugs / gaps / deficiencies using trigger
 phrases, but did NOT persist any of them to docs/backlog.md,
 docs/reviews/YYYY-MM-DD-<slug>.md, docs/discoveries/YYYY-MM-DD-<slug>.md,
-or docs/findings.md. See rule in ~/.claude/rules/testing.md (Bug
+or docs/findings.md. See rule in ~/.claude/doctrine/testing.md (Bug
 Persistence section).
 
 Trigger phrases detected (up to 10):
@@ -452,7 +452,7 @@ Before the session can end, do ONE of:
      testing / audit pass.
 
   3. Create docs/discoveries/YYYY-MM-DD-<slug>.md with the discovery
-     protocol format (see ~/.claude/rules/discovery-protocol.md). Use
+     protocol format (see ~/.claude/doctrine/discovery-protocol.md). Use
      this for mid-process realizations that aren't bug-shaped:
      architectural learnings, scope expansions, dependency surprises,
      performance/failure-mode/process/user-experience discoveries.
@@ -460,7 +460,7 @@ Before the session can end, do ONE of:
      etc.) is documented in the rule.
 
   4. Add a structured entry to docs/findings.md per the locked six-field
-     schema (Decision 019; see ~/.claude/rules/findings-ledger.md and the
+     schema (Decision 019; see ~/.claude/doctrine/findings-ledger.md and the
      template at ~/.claude/templates/findings-template.md). Use this for
      class-aware observations from gates / adversarial-review agents /
      builder mid-session discoveries that warrant a tracked disposition
@@ -472,7 +472,7 @@ Before the session can end, do ONE of:
      with one line per false-positive justifying why. Create the
      state directory if it doesn't exist; it's gitignored.
 
-See also: ~/.claude/rules/planning.md "Identifying a gap = writing a
+See also: ~/.claude/doctrine/planning.md "Identifying a gap = writing a
 backlog entry, in the same response" — the same principle applies to
 bugs surfaced during execution.
 

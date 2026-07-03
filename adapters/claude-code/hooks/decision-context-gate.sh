@@ -13,7 +13,7 @@
 # $TRANSCRIPT_PATH (agent-uneditable, Gen-6 narrative-integrity property),
 # detects decision-soliciting language via a three-tier classifier, and
 # BLOCKS Stop when a Tier-1 trigger fires without a properly-fenced
-# Markdown block per the grammar in ~/.claude/rules/decision-context.md.
+# Markdown block per the grammar in ~/.claude/doctrine/decision-context.md.
 #
 # The redo friction IS the agent's incentive to fence first. Same shape as
 # the six sibling Stop hooks that already operate on the
@@ -813,7 +813,7 @@ NOT carry a properly-fenced Decision-Context block. The orchestrator
 MUST emit decisions / questions / action items / autonomous actions
 as fenced Markdown blocks matching the grammar in:
 
-  ~/.claude/rules/decision-context.md
+  ~/.claude/doctrine/decision-context.md
 
 Available categories: decision, question, action_item_for_user,
 autonomous_action.
@@ -858,7 +858,7 @@ MSG
     "$rg_sid" \
     "decision-context:${rg_sig_suffix}" \
     "Decision-context gate: tier-1 trigger without valid fence (${rg_sig_suffix})." \
-    '{"decision": "block", "reason": "Decision-context gate: decision-soliciting message detected without a properly-fenced Decision-Context block per ~/.claude/rules/decision-context.md. Re-issue with a fenced block, or write a per-session waiver. See stderr."}' \
+    '{"decision": "block", "reason": "Decision-context gate: decision-soliciting message detected without a properly-fenced Decision-Context block per ~/.claude/doctrine/decision-context.md. Re-issue with a fenced block, or write a per-session waiver. See stderr."}' \
     2
 }
 

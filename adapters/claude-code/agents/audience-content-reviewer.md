@@ -218,13 +218,13 @@ whole corpus for siblings before reporting:
 4. List every true-sibling location in the finding's `instances` array.
 
 This is the harness "Fix the Class, Not the Instance" discipline
-(`~/.claude/rules/diagnosis.md`). Reporting one instance and letting the next review
+(`~/.claude/doctrine/diagnosis.md`). Reporting one instance and letting the next review
 round surface its siblings is the failure mode this step prevents.
 
 ## Step 6 — Persist Before Returning
 
 Write the full finding set to `docs/reviews/YYYY-MM-DD-content-audience-review.md`
-**before** returning your summary (per `~/.claude/rules/testing.md` "persist first,
+**before** returning your summary (per `~/.claude/doctrine/testing.md` "persist first,
 analyze second" — if the session dies after review but before persistence, the
 findings are lost). Then return the JSON below.
 
