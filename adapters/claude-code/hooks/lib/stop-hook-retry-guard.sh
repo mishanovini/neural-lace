@@ -112,6 +112,25 @@ fi
 _STOP_HOOK_RETRY_GUARD_SOURCED=1
 
 # ----------------------------------------------------------------------
+# Signal ledger (ADR 058 D6 / NL Overhaul task D.1) — sourced BEST-EFFORT.
+# When present, every downgrade this library performs also appends one
+# "downgrade" event to the shared JSONL ledger so Wave-E consumers (the
+# digest, the waiver-density alarm, the KPI script) can see it. When the
+# ledger lib is absent (older harness install, or a caller running this
+# file in isolation), `ledger_emit` is simply undefined and every call
+# site below guards with `command -v ledger_emit` — a missing ledger lib
+# NEVER changes this file's blocking/downgrade behavior.
+# ----------------------------------------------------------------------
+if [[ -z "${_SIGNAL_LEDGER_SOURCED:-}" ]]; then
+  _rg_ledger_lib="${BASH_SOURCE%/*}/signal-ledger.sh"
+  if [[ -f "$_rg_ledger_lib" ]]; then
+    # shellcheck source=/dev/null
+    source "$_rg_ledger_lib" 2>/dev/null || true
+  fi
+  unset _rg_ledger_lib
+fi
+
+# ----------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------
 : "${RETRY_GUARD_THRESHOLD:=3}"
@@ -450,6 +469,9 @@ EOF
       exit "$block_exit"
     fi
     retry_guard_log_unresolved "$hook_name" "$sid" "$count" "$failure_sig" "$error_msg"
+    if command -v ledger_emit >/dev/null 2>&1; then
+      ledger_emit "$hook_name" "downgrade" "$error_msg"
+    fi
     local short
     short=$(_retry_guard_session_short "$sid")
     cat >&2 <<EOF

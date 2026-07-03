@@ -797,3 +797,47 @@ Runtime verification: file adapters/claude-code/hooks/plan-reviewer.sh::doctrine
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN — every remaining `claude/rules/` reference across agents/skills/templates (excluding constitution.md) was individually read and classified against the plan's own two documented legitimate exception classes, with zero matches outside them (2 → class a, downstream project's own rules dir; 2 → class b, orchestrator-prime.md's dual-directory enumeration). Every remaining reference in hooks/ (excluding attic, excluding constitution.md) is confirmed to be harness-doctor.sh's byte-budget measurement text, the sole documented exception. The pre-existing `rules/plan-lifecycle.md` dangler (a file that never existed) is confirmed fixed to zero occurrences in both named files, with the redirect target (doctrine/planning-full.md) confirmed to exist and the editing hook confirmed syntactically clean.
+
+## Task D.1 — `hooks/lib/signal-ledger.sh`: append-only JSONL event lib
+
+EVIDENCE BLOCK
+==============
+Task ID: D.1
+Task description: `hooks/lib/signal-ledger.sh`: append-only JSONL event lib (block/warn/waiver/downgrade/skip; HARNESS_SELFTEST sandboxing built in) — Verification: mechanical
+Verified at: 2026-07-03T01:54:41Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — plan Done-when: "`--self-test` exits 0; retry-guard lib routes its downgrade events through it."
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Note: D.1 was dispatched ahead of D.0 per the Decisions Log entry "D.1 + E.4 stable-subset dispatched ahead of D.0/E.0 wave-specs" (docs/plans/nl-overhaul-program-2026-07.md line 256-257) — shape was already fully fixed by the plan + ADR 058 D6, no D.0 dependency; every downstream D/E task consumes this lib.
+
+Commit: a32e3a9 (overhaul(D.1): signal-ledger lib + retry-guard downgrade routing) — adds adapters/claude-code/hooks/lib/signal-ledger.sh (+415 lines) and extends adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh (+22 lines)
+
+Checks run:
+1. signal-ledger.sh self-test
+   Command: bash adapters/claude-code/hooks/lib/signal-ledger.sh --self-test
+   Output: 7 scenarios, 12 assertions, "self-test summary: 12 passed, 0 failed"; exit 0
+   Result: PASS
+2. stop-hook-retry-guard.sh self-test (sandboxed)
+   Command: HARNESS_SELFTEST=1 bash adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh --self-test
+   Output: 15 scenarios, "self-test summary: 19 passed, 0 failed"; exit 0
+   Result: PASS
+3. retry-guard routes downgrade events through the ledger (wiring presence)
+   Command: grep -c "signal-ledger" adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh; grep -c "ledger_emit" adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh
+   Output: signal-ledger: 1 (best-effort `source` of `${BASH_SOURCE%/*}/signal-ledger.sh` at line 125, guarded so a missing lib never changes blocking behavior); ledger_emit: 4 (definition/doc references plus the actual call site at line 472-474 inside the downgrade path: `if command -v ledger_emit >/dev/null 2>&1; then ledger_emit "$hook_name" "downgrade" "$error_msg"; fi`, immediately after `retry_guard_log_unresolved` and before the downgrade warning is printed)
+   Result: PASS (≥1 each; call site confirmed substantive, not a stray string — it fires on every retry-guard downgrade, guarded by `command -v` so absence of the lib is a no-op)
+4. manifest coverage
+   Command: bash adapters/claude-code/scripts/manifest-check.sh
+   Output: "[manifest-check] GREEN — 90 entries, 91 hooks covered, 0 warn"; exit 0
+   Result: PASS
+
+Runtime verification: command bash adapters/claude-code/hooks/lib/signal-ledger.sh --self-test
+Runtime verification: command bash adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh --self-test
+Runtime verification: file adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh::ledger_emit "$hook_name" "downgrade" "$error_msg"
+Runtime verification: command bash adapters/claude-code/scripts/manifest-check.sh
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — both self-tests replayed live this session with exit 0 (signal-ledger.sh: 12/12 assertions; stop-hook-retry-guard.sh: 19/19 assertions including the pre-existing DONE-riding-refusal scenarios, confirming the D.1 sourcing addition did not regress the retry-guard's prior behavior). The wiring is not a bare grep-bait string: the retry-guard's downgrade path at line 472-474 calls `ledger_emit "$hook_name" "downgrade" "$error_msg"` guarded by `command -v ledger_emit`, so every downgrade this session's Stop-hook chain performs emits one "downgrade" event to the shared ledger, and a missing/older ledger lib degrades to a no-op rather than breaking retry-guard's core blocking semantics (verified by reading the guarded source block at lines 114-131). manifest-check.sh is GREEN (90 entries, 91 hooks, 0 warn). Dispatch order (D.1 ahead of D.0) is documented and justified in the plan's own Decisions Log, cited above.
