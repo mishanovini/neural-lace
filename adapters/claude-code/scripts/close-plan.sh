@@ -646,6 +646,268 @@ check_closure_contract_artifact() {
 }
 
 # ---------------------------------------------------------------------------
+# Completion-criteria check (D.4 relocation from completion-criteria-gate.sh,
+# a retired Stop hook). WHY relocated here, not just deleted: "intended but
+# not finished" is a binary failure, not gradual drift — the eight completion
+# criteria (code / tests / dev_docs / user_docs / migration / deploy /
+# acceptance / stakeholder) were previously enforced by scanning a SESSION'S
+# FINAL MESSAGE for a declared-shipped trigger phrase, which a differently-
+# worded wrap-up could dodge entirely. Checking at CLOSE time instead is
+# strictly stronger: close-plan.sh is the one mechanical choke point every
+# plan MUST pass through to reach Status: COMPLETED, so there is no phrasing
+# that routes around it. This also closes GAP-53 (a preview-deploy false-pass
+# fell through the original gate's evidence regex, which accepted "deploy
+# green" without distinguishing preview from production) — see the `deploy`
+# criterion's stricter PROD_EVIDENCE_RE below.
+#
+# Design note: acceptance-exempt plans (harness-dev, no product user) are not
+# exempted from ALL 8 criteria wholesale — they are exempted from the ones
+# that assume a shipped product surface (user_docs, deploy, stakeholder) via
+# the plan's own N/A-with-justification convention, same as the original
+# gate's per-criterion N/A path. This function does not special-case
+# acceptance-exempt; a plan that is genuinely dev-only marks those criteria
+# N/A in its own Completion Criteria section, same mechanism non-exempt
+# plans use for a legitimately-inapplicable criterion.
+
+COMPLETION_CRIT_KEYS=(code tests dev_docs user_docs migration deploy acceptance stakeholder)
+
+_completion_crit_display() {
+  case "$1" in
+    code)        echo "Code merged to master" ;;
+    tests)       echo "Tests added" ;;
+    dev_docs)    echo "Dev docs updated (ADR/architecture/runbook)" ;;
+    user_docs)   echo "User docs updated (docs/support/*.mdx)" ;;
+    migration)   echo "Migration applied to production" ;;
+    deploy)      echo "Vercel MASTER/PRODUCTION deploy succeeded" ;;
+    acceptance)  echo "Acceptance criteria verified" ;;
+    stakeholder) echo "Stakeholder / team notified" ;;
+    *)           echo "$1" ;;
+  esac
+}
+
+_completion_crit_keyword_re() {
+  case "$1" in
+    code)        echo 'code merged|merged to master|code merge|code:[[:space:]]' ;;
+    tests)       echo 'test' ;;
+    dev_docs)    echo 'dev doc|dev-doc|developer doc|adr|architecture|runbook' ;;
+    user_docs)   echo 'user doc|user-doc|support doc|support page|\.mdx|docs/support' ;;
+    migration)   echo 'migration|schema' ;;
+    deploy)      echo 'deploy|vercel' ;;
+    acceptance)  echo 'acceptance' ;;
+    stakeholder) echo 'stakeholder|notif|notified|support team|team alert' ;;
+    *)           echo "$1" ;;
+  esac
+}
+
+# General evidence token (SHA / #PR / @handle / URL / file-with-ext / route / artifact keyword).
+COMPLETION_EVIDENCE_RE='[0-9a-f]{7,40}|#[A-Za-z0-9][A-Za-z0-9_-]*|@[A-Za-z][A-Za-z0-9_-]*|https?://|[A-Za-z0-9_./-]+\.(mdx|md|tsx?|jsx?|sql|sh|ya?ml|json|png|jpe?g|csv)|/[a-z][A-Za-z0-9_/-]+|screenshot|smoke[- ]?test|playwright|curl |migration [0-9]+|deploy[a-z]* (green|success|succeeded|verified)'
+
+# GAP-53 fix: the `deploy` criterion additionally requires PRODUCTION/MASTER
+# evidence, not just "green" — a preview-deploy line like "Vercel preview
+# deploy green for PR #412" satisfies the general evidence regex above but
+# must NOT satisfy the deploy criterion specifically. Require one of
+# master/production/prod alongside the deploy/green language.
+COMPLETION_PROD_DEPLOY_RE='(master|production|\bprod\b).*(deploy|vercel)|(deploy|vercel).*(master|production|\bprod\b)'
+
+# Check-mark ERE (ASCII [x] plus common unicode ticks).
+COMPLETION_CHECK_RE='\[[xX]\]|✓|✅|✔|☑'
+
+# classify_completion_criterion <key> <section-text>
+# Echoes: SATISFIED | NA | NOEVIDENCE | NOVERDICT | MISSING
+classify_completion_criterion() {
+  local key="$1" section="$2"
+  local kw; kw="$(_completion_crit_keyword_re "$key")"
+  local lines
+  lines="$(printf '%s\n' "$section" | grep -iE "$kw" 2>/dev/null || true)"
+  if [[ -z "$lines" ]]; then
+    echo "MISSING"; return 0
+  fi
+  local saw_na=0 saw_check_noevidence=0 line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if printf '%s' "$line" | grep -iqE 'n/?a\b|not applicable' 2>/dev/null; then
+      if printf '%s' "$line" | grep -iqE '(n/?a\b|not applicable).*[-—:].*[A-Za-z]{4}' 2>/dev/null; then
+        echo "NA"; return 0
+      else
+        saw_na=1
+      fi
+      continue
+    fi
+    if printf '%s' "$line" | grep -qE "$COMPLETION_CHECK_RE" 2>/dev/null; then
+      if [[ "$key" == "deploy" ]]; then
+        # deploy criterion: require BOTH the general evidence token AND the
+        # production/master qualifier (GAP-53).
+        if printf '%s' "$line" | grep -qiE "$COMPLETION_EVIDENCE_RE" 2>/dev/null \
+           && printf '%s' "$line" | grep -qiE "$COMPLETION_PROD_DEPLOY_RE" 2>/dev/null; then
+          echo "SATISFIED"; return 0
+        else
+          saw_check_noevidence=1
+        fi
+      else
+        if printf '%s' "$line" | grep -qiE "$COMPLETION_EVIDENCE_RE" 2>/dev/null; then
+          echo "SATISFIED"; return 0
+        else
+          saw_check_noevidence=1
+        fi
+      fi
+    fi
+  done <<< "$lines"
+  if [[ "$saw_check_noevidence" -eq 1 ]]; then echo "NOEVIDENCE"; return 0; fi
+  if [[ "$saw_na" -eq 1 ]]; then echo "NOVERDICT"; return 0; fi
+  echo "NOVERDICT"
+}
+
+# verify_completion_criteria <plan_file>
+# Reads the plan file's own `## Completion Criteria` section (written by the
+# session before invoking close-plan, or present from a prior close attempt).
+# Returns 0 if all 8 criteria are SATISFIED or NA; prints unmet keys to
+# stdout (space-separated "key:status" pairs) and returns 1 otherwise.
+#
+# Grandfathering (mirrors verify_closure_contract_recorded's convention,
+# which itself mirrors plan-reviewer.sh Check 15's grandfather rule):
+#   - acceptance-exempt: true plans (harness-dev, no shipped product surface)
+#     are a no-op PASS unless the plan itself already declares a
+#     `## Completion Criteria` section (an exempt plan CAN opt in; it is
+#     never forced in — mirrors the original gate's "feature shipped"
+#     trigger-phrase design, which would rarely fire on harness-dev wraps).
+#   - Plans that do not declare `lifecycle-schema: v2` are grandfathered
+#     (no-op PASS) — the same boundary plan-reviewer.sh's Closure Contract
+#     check uses, so this does not retroactively block legacy plans
+#     close-plan.sh already knows how to close.
+# Non-exempt v2 plans with NO Completion Criteria section at all are
+# MISSING-SECTION on every non-skipped criterion (hard block) — closure IS
+# the shipment declaration for these plans; there is no separate "trigger
+# phrase" to dodge.
+#
+# Escape hatch: CLOSE_PLAN_COMPLETION_SKIP=a,b,c — per-criterion skip,
+# audit-logged to .claude/state/completion-gate-skips.log (same log the
+# original Stop-hook gate used, so history is continuous across the
+# relocation). No blanket disable env — close-plan.sh already has no
+# script-level override philosophy (see the file header); a per-criterion,
+# audit-logged skip is the sole valve, mirroring the pre-relocation gate.
+verify_completion_criteria() {
+  local plan_file="$1"
+
+  # Grandfather: pre-v2 plans are not retroactively subject to this check.
+  if ! grep -qE '^lifecycle-schema:[[:space:]]*v2' "$plan_file" 2>/dev/null; then
+    return 0
+  fi
+
+  # acceptance-exempt plans: no-op unless they opted in with their own
+  # Completion Criteria section (in which case honor whatever it declares).
+  if grep -qiE '^acceptance-exempt:[[:space:]]*true' "$plan_file" 2>/dev/null \
+     && ! grep -qiE '^[[:space:]]*#{2,3}[[:space:]]*completion criteria[[:space:]]*$' "$plan_file" 2>/dev/null; then
+    return 0
+  fi
+
+  declare -A skip_set=()
+  local raw_skip="${CLOSE_PLAN_COMPLETION_SKIP:-}"
+  if [[ -n "$raw_skip" ]]; then
+    local tok
+    for tok in $(printf '%s' "$raw_skip" | tr ',' ' '); do
+      [[ -z "$tok" ]] && continue
+      skip_set["$tok"]=1
+    done
+  fi
+
+  local section has_section=0
+  if grep -qiE '^[[:space:]]*#{2,3}[[:space:]]*completion criteria[[:space:]]*$' "$plan_file" 2>/dev/null; then
+    has_section=1
+  fi
+  section=$(awk '
+    /^[[:space:]]*#{2,3}[[:space:]]*[Cc]ompletion [Cc]riteria[[:space:]]*$/ { inSec=1; next }
+    inSec==1 && /^[[:space:]]*##[[:space:]]/ { inSec=0 }
+    inSec==1 { print }
+  ' "$plan_file" 2>/dev/null)
+
+  local skiplog="${CLOSE_PLAN_COMPLETION_SKIPLOG:-.claude/state/completion-gate-skips.log}"
+  local unmet="" key status
+  for key in "${COMPLETION_CRIT_KEYS[@]}"; do
+    if [[ -n "${skip_set[$key]:-}" ]]; then
+      mkdir -p "$(dirname "$skiplog")" 2>/dev/null || true
+      local ts; ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date)
+      printf '%s\tplan=%s\tcriterion=%s\tsource=close-plan.sh\n' "$ts" "$(basename "$plan_file" .md)" "$key" >> "$skiplog" 2>/dev/null || true
+      continue
+    fi
+    if [[ "$has_section" -eq 0 ]]; then
+      unmet="${unmet}${key}:MISSING-SECTION "
+      continue
+    fi
+    status="$(classify_completion_criterion "$key" "$section")"
+    case "$status" in
+      SATISFIED|NA) ;;
+      *) unmet="${unmet}${key}:${status} " ;;
+    esac
+  done
+  unmet="${unmet% }"
+
+  if [[ -z "$unmet" ]]; then
+    return 0
+  fi
+  printf '%s\n' "$unmet"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# PR-merge boundary check: Closure-Contract commands recorded (D.4 item 1's
+# second half). Distinct from check_closure_contract_artifact() above (which
+# verifies an ACTUAL PASS artifact exists for --auto mode): this instead
+# verifies the plan's `## Closure Contract` section (declared at plan
+# CREATION per Decision 036-b / plan-reviewer.sh Check 15) still has its four
+# fields populated with real content at CLOSE time — not left as
+# "[populate me ...]" template placeholders. Plan-reviewer only checks this
+# at creation/edit time (PreToolUse); a plan could still be closed with a
+# since-blanked or never-populated Closure Contract if nothing re-checked at
+# the close boundary. This is that re-check.
+#
+# Grandfathered (returns 0, no-op) for plans that predate lifecycle-schema:
+# v2 or declare no ## Closure Contract section at all — same grandfather
+# rule plan-reviewer.sh Check 15 uses, so this does not retroactively block
+# legacy plans close-plan.sh already knows how to close.
+verify_closure_contract_recorded() {
+  local plan_file="$1"
+
+  if ! grep -qE '^lifecycle-schema:[[:space:]]*v2' "$plan_file" 2>/dev/null; then
+    return 0
+  fi
+  if ! grep -qE '^## Closure Contract[[:space:]]*$' "$plan_file" 2>/dev/null; then
+    return 0
+  fi
+
+  local cc_text
+  cc_text=$(awk '
+    /^## Closure Contract[[:space:]]*$/ { in_cc = 1; next }
+    in_cc && /^## / { in_cc = 0 }
+    in_cc { print }
+  ' "$plan_file" 2>/dev/null)
+
+  local non_ws
+  non_ws=$(printf '%s' "$cc_text" | tr -d '[:space:]' | wc -c | tr -d '[:space:]')
+  if [[ "${non_ws:-0}" -lt 20 ]]; then
+    return 1
+  fi
+
+  local pat
+  for pat in '\[populate me[^]]*\]' '\[populate me\]' '\[todo\]' '\btodo\b' 'tbd'; do
+    if printf '%s' "$cc_text" | grep -qiE "$pat" 2>/dev/null; then
+      return 1
+    fi
+  done
+
+  # Must name at least a commands-that-run line and a done-when line with
+  # actual content beyond the label itself (mirrors plan-reviewer's field
+  # presence check).
+  if ! printf '%s' "$cc_text" | grep -qiE 'commands that run.{5,}'; then
+    return 1
+  fi
+  if ! printf '%s' "$cc_text" | grep -qiE 'done when.{5,}'; then
+    return 1
+  fi
+
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main close subcommand
 # ---------------------------------------------------------------------------
 cmd_close() {
@@ -752,6 +1014,33 @@ cmd_close() {
     failed_tasks+=("backlog-reconciliation")
   fi
 
+  # 2c. Completion-criteria check (D.4 relocation from completion-criteria-
+  # gate.sh — a plan cannot flip to COMPLETED with unmet completion criteria).
+  # Only applies when the plan carries a `## Completion Criteria` section OR
+  # the plan explicitly triggers it; a plan with NO such section AND no prior
+  # attempt to declare one is treated as not-yet-accounting-for-shipment and
+  # blocks, same as the original gate's MISSING-SECTION verdict. This is
+  # deliberately not conditioned on a "feature shipped" trigger phrase (the
+  # transcript-scanning approach the original Stop-hook used) — closure IS
+  # the shipment declaration, so the check always applies at close time.
+  local completion_unmet
+  if ! completion_unmet=$(verify_completion_criteria "$plan_file"); then
+    printf '[close-plan]   completion-criteria: FAIL (unmet: %s)\n' "$completion_unmet" >&2
+    failed_tasks+=("completion-criteria:${completion_unmet// /,}")
+  else
+    printf '[close-plan]   completion-criteria: PASS\n' >&2
+  fi
+
+  # 2d. PR-merge boundary: Closure Contract still recorded (D.4 item 1,
+  # closes GAP-53's preview-deploy false-pass surface by re-checking at
+  # close, not trusting the creation-time plan-reviewer check alone).
+  if ! verify_closure_contract_recorded "$plan_file"; then
+    printf '[close-plan]   closure-contract-recorded: FAIL\n' >&2
+    failed_tasks+=("closure-contract-recorded")
+  else
+    printf '[close-plan]   closure-contract-recorded: PASS (or grandfathered)\n' >&2
+  fi
+
   # Block if any failure. The ONLY remediation path is to satisfy the check by
   # generating the missing structured evidence via write-evidence.sh. There is
   # no script-level escape hatch — neither --force (removed 2026-05-06) nor an
@@ -773,6 +1062,19 @@ cmd_close() {
     printf '\n  For each failing mechanical/contract task, run:\n' >&2
     printf '    bash ~/.claude/scripts/write-evidence.sh capture --task <id> --plan %s --check files-in-commit\n' "$slug" >&2
     printf '\n  For full-tier tasks, ensure the prose evidence-block has Verdict: PASS in the evidence file.\n' >&2
+    if printf '%s\n' "${failed_tasks[@]}" | grep -q '^completion-criteria:'; then
+      printf '\n  For completion-criteria failures: add/complete a "## Completion Criteria" section\n' >&2
+      printf '    to the plan covering all 8 (code/tests/dev_docs/user_docs/migration/deploy/\n' >&2
+      printf '    acceptance/stakeholder), each as [x] + evidence OR N/A + justification. The\n' >&2
+      printf '    deploy criterion requires PRODUCTION/MASTER evidence specifically (a preview\n' >&2
+      printf '    deploy does not satisfy it — GAP-53). Escape hatch: CLOSE_PLAN_COMPLETION_SKIP=\n' >&2
+      printf '    <keys> for genuinely inapplicable criteria (audit-logged).\n' >&2
+    fi
+    if printf '%s\n' "${failed_tasks[@]}" | grep -q '^closure-contract-recorded$'; then
+      printf '\n  For closure-contract-recorded failure: populate all four "## Closure Contract"\n' >&2
+      printf '    fields (Commands that run / Expected outputs / On-disk artifact location /\n' >&2
+      printf '    Done when) with plan-specific content — no "[populate me]" placeholders left.\n' >&2
+    fi
     printf '\n[close-plan] No script-level override exists. If genuinely necessary,\n' >&2
     printf '  perform the close manually via git: edit Status, git mv to archive,\n' >&2
     printf '  git rm stale state, git commit. Visible in history. Appropriately rare.\n' >&2
@@ -1635,9 +1937,218 @@ EOF
   fi
   rm -rf "$D15"
 
+  # ----- S16 (D.4): v2 plan with UNMET completion criteria (no Completion
+  # Criteria section at all) → BLOCK. Locks the relocation's core behavior:
+  # a plan cannot flip to COMPLETED with unmet completion criteria. -----
+  local D16; D16=$(setup_synthetic_repo "S16" "p-cc-missing")
+  (
+    cd "$D16" || exit 1
+    cat > docs/plans/p-cc-missing.md <<'EOF'
+# Plan: P CC Missing
+Status: ACTIVE
+Backlog items absorbed: none
+lifecycle-schema: v2
+
+## Goal
+test completion-criteria relocation blocks on missing section
+
+## Scope
+- IN: x
+- OUT: y
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-cc-missing.md`
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-cc-missing-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-cc-missing-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+  )
+  local s16_out s16_rc
+  s16_out=$(cd "$D16" && bash "$SELF_PATH" close p-cc-missing --no-push 2>&1)
+  s16_rc=$?
+  if [[ $s16_rc -ne 0 ]] \
+     && printf '%s' "$s16_out" | grep -q 'completion-criteria' \
+     && [[ ! -f "$D16/docs/plans/archive/p-cc-missing.md" ]]; then
+    printf 'self-test (S16) v2-plan-missing-completion-criteria-blocks: PASS (blocked)\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S16) v2-plan-missing-completion-criteria-blocks: FAIL (rc=%s)\n' "$s16_rc" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D16"
+
+  # ----- S17 (D.4): v2 plan with ALL EIGHT completion criteria satisfied
+  # (evidence + PRODUCTION deploy) → PASS + closes. -----
+  local D17; D17=$(setup_synthetic_repo "S17" "p-cc-full")
+  (
+    cd "$D17" || exit 1
+    cat > docs/plans/p-cc-full.md <<'EOF'
+# Plan: P CC Full
+Status: ACTIVE
+Backlog items absorbed: none
+lifecycle-schema: v2
+
+## Goal
+test completion-criteria relocation passes when all 8 satisfied
+
+## Scope
+- IN: x
+- OUT: y
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-cc-full.md`
+
+## Completion Criteria
+
+- [x] Code merged to master — PR #412, commit ab12cd3
+- [x] Tests added — e2e/foo.spec.ts
+- [x] Dev docs updated — docs/decisions/047-foo.md (ADR)
+- [x] User docs updated — docs/support/foo.mdx
+- [x] Migration applied to production — migration 152 verified
+- [x] Vercel MASTER deploy succeeded — deploy green for ab12cd3 on master
+- [x] Acceptance criteria verified — smoke test against /foo, screenshot captured
+- [x] Stakeholder notified — support team alerted in #support
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-cc-full-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-cc-full-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+    bash "$SELF_PATH" close p-cc-full --no-push >/dev/null 2>&1
+  )
+  if [[ -f "$D17/docs/plans/archive/p-cc-full.md" ]] \
+     && grep -q '^Status: COMPLETED' "$D17/docs/plans/archive/p-cc-full.md"; then
+    printf 'self-test (S17) v2-plan-full-completion-criteria-closes: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S17) v2-plan-full-completion-criteria-closes: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D17"
+
+  # ----- S18 (D.4, GAP-53 regression lock): v2 plan whose `deploy` criterion
+  # is checked off with PREVIEW-deploy evidence only (no master/production
+  # qualifier) → BLOCK. A preview deploy is not a production deploy; the
+  # relocated check must not repeat the false-pass the original gate's
+  # looser evidence regex allowed. -----
+  local D18; D18=$(setup_synthetic_repo "S18" "p-cc-preview")
+  (
+    cd "$D18" || exit 1
+    cat > docs/plans/p-cc-preview.md <<'EOF'
+# Plan: P CC Preview
+Status: ACTIVE
+Backlog items absorbed: none
+lifecycle-schema: v2
+
+## Goal
+test GAP-53 preview-deploy false-pass does not recur at close-plan
+
+## Scope
+- IN: x
+- OUT: y
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-cc-preview.md`
+
+## Completion Criteria
+
+- [x] Code merged to master — PR #412, commit ab12cd3
+- [x] Tests added — e2e/foo.spec.ts
+- [x] Dev docs updated — docs/decisions/047-foo.md (ADR)
+- [x] User docs updated — docs/support/foo.mdx
+- [x] Migration applied to production — migration 152 verified
+- [x] Vercel preview deploy succeeded — deploy green for PR #412
+- [x] Acceptance criteria verified — smoke test against /foo, screenshot captured
+- [x] Stakeholder notified — support team alerted in #support
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-cc-preview-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-cc-preview-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+  )
+  local s18_out s18_rc
+  s18_out=$(cd "$D18" && bash "$SELF_PATH" close p-cc-preview --no-push 2>&1)
+  s18_rc=$?
+  if [[ $s18_rc -ne 0 ]] \
+     && printf '%s' "$s18_out" | grep -qE 'completion-criteria.*deploy' \
+     && [[ ! -f "$D18/docs/plans/archive/p-cc-preview.md" ]]; then
+    printf 'self-test (S18) gap53-preview-deploy-does-not-satisfy-deploy-criterion: PASS (blocked)\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S18) gap53-preview-deploy-does-not-satisfy-deploy-criterion: FAIL (rc=%s out=%s)\n' "$s18_rc" "$s18_out" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D18"
+
+  # ----- S19 (D.4): v2 plan with a PLACEHOLDER-ONLY Closure Contract section
+  # (never populated) → BLOCK on closure-contract-recorded (PR-merge boundary
+  # check). Locks that close-plan re-verifies the contract at CLOSE time, not
+  # just trusting the plan-reviewer creation-time check. -----
+  local D19; D19=$(setup_synthetic_repo "S19" "p-cc-contract")
+  (
+    cd "$D19" || exit 1
+    cat > docs/plans/p-cc-contract.md <<'EOF'
+# Plan: P CC Contract
+Status: ACTIVE
+Backlog items absorbed: none
+lifecycle-schema: v2
+acceptance-exempt: true
+acceptance-exempt-reason: harness-development; self-tests are the acceptance artifact.
+
+## Goal
+test PR-merge boundary check blocks on an unfilled Closure Contract
+
+## Scope
+- IN: x
+- OUT: y
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-cc-contract.md`
+
+## Closure Contract
+- **Commands that run:** [populate me — verification commands]
+- **Expected outputs:** [populate me — PASS criteria]
+- **On-disk artifact location:** [populate me — where the PASS artifact lands]
+- **Done when:** [populate me — one-sentence closure condition]
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-cc-contract-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-cc-contract-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+  )
+  local s19_out s19_rc
+  s19_out=$(cd "$D19" && bash "$SELF_PATH" close p-cc-contract --no-push 2>&1)
+  s19_rc=$?
+  if [[ $s19_rc -ne 0 ]] \
+     && printf '%s' "$s19_out" | grep -q 'closure-contract-recorded' \
+     && [[ ! -f "$D19/docs/plans/archive/p-cc-contract.md" ]]; then
+    printf 'self-test (S19) placeholder-closure-contract-blocks-at-close: PASS (blocked)\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S19) placeholder-closure-contract-blocks-at-close: FAIL (rc=%s)\n' "$s19_rc" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D19"
+
   cd "$saved_pwd"
 
-  printf '\nself-test summary: %d passed, %d failed (of 15 scenarios)\n' "$PASSED" "$FAILED" >&2
+  printf '\nself-test summary: %d passed, %d failed (of 19 scenarios)\n' "$PASSED" "$FAILED" >&2
   if [[ $FAILED -eq 0 ]]; then
     return 0
   fi

@@ -67,6 +67,15 @@ _normalize_path() {
 }
 
 # ============================================================
+# Shared backtick-token extraction (§D.0.7 fix, NL Overhaul Wave D.6).
+# Loops ALL backtick pairs on a bullet line instead of only the first
+# (the pre-fix bug both this file and scope-enforcement-gate.sh shared).
+# ============================================================
+_SFG_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/extract-backtick-paths.sh
+source "$_SFG_SELF_DIR/lib/extract-backtick-paths.sh" 2>/dev/null || true
+
+# ============================================================
 # Helper: convert any path (absolute or relative) into a repo-relative
 # path against $REPO_ROOT. If path doesn't fall under repo root, returns
 # the path unchanged (so cross-repo edits still get sensible matching).
@@ -192,9 +201,18 @@ _parse_files_section() {
 
     local extracted=""
     if [[ "$line" == *'`'* ]]; then
-      # Backticked path: extract first backticked segment
-      local tmp="${line#*\`}"
-      extracted="${tmp%%\`*}"
+      # §D.0.7 fix: loop ALL backtick pairs on the line (a bullet can name
+      # multiple paths, e.g. "- `a/b.ts` and `c/d.ts` — desc"), not just
+      # the first. Each valid token is emitted independently below.
+      local tok
+      while IFS= read -r tok; do
+        [[ -z "$tok" ]] && continue
+        if [[ "$tok" != */* ]] && [[ "$tok" != *.* ]]; then
+          continue
+        fi
+        printf '%s\n' "$tok"
+      done < <(extract_backtick_paths "$line")
+      continue
     else
       # Plain path: take up to first em-dash, double-hyphen, or single
       # hyphen separator with surrounding whitespace.
@@ -307,7 +325,7 @@ _glob_match() {
 }
 
 # ============================================================
-# --self-test handler (six scenarios)
+# --self-test handler (seven scenarios)
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
   SELF_TEST_HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
@@ -470,8 +488,65 @@ beta|false|ACTIVE|docs/plans/alpha.md")
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 7 (§D.0.7): multi-path-per-line bullet — a single bullet
+  # naming TWO backticked paths ("- `a/multi1.ts` and `a/multi2.ts` — desc")
+  # must produce TWO scope entries, so an unfrozen plan blocks edits to
+  # EITHER named path — not just the first backtick pair (the pre-fix
+  # bug this hook shared with scope-enforcement-gate.sh). This scenario
+  # writes the plan file directly (the _run_scenario CSV helper always
+  # emits one bullet per file) and targets the SECOND path in the bullet;
+  # pre-fix this would have ALLOWED (second token silently dropped). ----
+  _run_multi_path_scenario() {
+    local label="$1" target_rel="$2"
+    local repo="$TMPROOT/$label"
+    mkdir -p "$repo/docs/plans"
+    (cd "$repo" && git init -q 2>/dev/null || true)
+    local canonical_repo
+    canonical_repo=$(cd "$repo" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || echo "$repo")
+
+    cat > "$repo/docs/plans/multi.md" <<'PLANEOF'
+# Plan: multi
+Status: ACTIVE
+frozen: false
+
+## Goal
+Test plan for multi-path-bullet self-test.
+
+## Files to Modify/Create
+- `src/multi1.ts` and `src/multi2.ts` — two-file bullet (§D.0.7)
+
+## Tasks
+- [ ] 1. test
+PLANEOF
+
+    local target_full="$repo/$target_rel"
+    mkdir -p "$(dirname "$target_full")" 2>/dev/null
+    [[ -f "$target_full" ]] || echo "stub" > "$target_full"
+
+    local target_canonical="$canonical_repo/$target_rel"
+    local file_path_json
+    file_path_json=$(printf '%s' "$target_canonical" | jq -Rs . 2>/dev/null)
+    [[ -z "$file_path_json" ]] && file_path_json='""'
+    local input
+    input=$(printf '{"tool_name":"Edit","tool_input":{"file_path":%s,"old_string":"stub","new_string":"updated"}}' \
+      "$file_path_json")
+
+    printf '%s' "$input" | bash "$SELF_TEST_HOOK" >"$repo/stdout.txt" 2>"$repo/stderr.txt"
+    echo $?
+  }
+
+  RC=$(_run_multi_path_scenario s7 "src/multi2.ts")
+  if [[ "$RC" == "1" ]]; then
+    echo "self-test (7) multi-path-per-line-bullet-second-token-blocks: PASS (rc=$RC, expected 1; correctly blocked)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (7) multi-path-per-line-bullet-second-token-blocks: FAIL (rc=$RC, expected 1)" >&2
+    cat "$TMPROOT/s7/stderr.txt" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 6 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 7 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -617,6 +692,10 @@ OTHER_COUNT=$((NUM_UNFROZEN - 1))
   echo ""
   echo "Emergency override: edit the plan to flip frozen, OR temporarily"
   echo "use a non-Edit/Write tool (per ~/.claude/doctrine/git.md)."
+  echo ""
+  echo "NOTE: this block prevented the ENTIRE command from running — including any"
+  echo "fix/edit/\`git add\` prefix before the \`git commit\`. Nothing was executed."
+  echo "Re-run the non-commit part as its own call first, then commit separately."
   echo "================================================================"
 } >&2
 

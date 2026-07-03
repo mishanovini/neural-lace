@@ -31,12 +31,35 @@
 #
 # Tunables (env, all optional):
 #   WS_TASK_MIN_TOOLCALLS   M1 threshold (default 5; block when toolCalls > N)
-#   WS_TASK_STOP_MODE       block | warn | off   (M1; default block)
+#   WS_TASK_STOP_MODE       block | warn | off   (M1; default WARN — see retirement note)
 #   WS_TASK_MESSAGE_MODE    warn  | block | off   (M3; default warn — calibration-first)
 #
-# Classification: M1 is a gate (can block, loop-safe). M2/M3/the bridge are
-# writer/advisory. Every runtime path is failure-isolated: a malfunction in the
-# binding must never wedge the session.
+# Classification: M1 is a gate (can block if WS_TASK_STOP_MODE=block is set
+# explicitly; loop-safe). M2/M3/the bridge are writer/advisory. Every runtime
+# path is failure-isolated: a malfunction in the binding must never wedge
+# the session.
+#
+# ============================================================
+# M1 Stop-block RETIREMENT (NL Overhaul Wave D, §D.0.5 / D.6, 2026-07-02)
+# ============================================================
+# The default for WS_TASK_STOP_MODE flipped block -> warn at Wave D.6. Root
+# cause (§D.0.5, PROVEN): M1's block demanded "call TaskCreate (and
+# TaskUpdate it to completed)" for any session with >5 tool calls and 0 task
+# mutations — but complying fired a TaskCompleted event that
+# task-completed-evidence-gate.sh then blocked (no plan claims an invented
+# compliance task). Mutually unsatisfiable for any session whose work sits
+# outside the current ACTIVE plans. Disposition: the Stop-BLOCK retires
+# (this default flip is that retirement — old deployments with an explicit
+# WS_TASK_STOP_MODE=block override in their environment keep blocking until
+# that override is removed; this file's own default no longer forces it).
+# The mutation-count SIGNAL survives as a non-blocking ledger warn (this
+# hook's normal warn path below, now the default outcome). The
+# SessionStart listing (M2, --on-session-start) is unaffected and keeps
+# surfacing active commitments. The template wiring removal (deleting the
+# Stop-hook registration entirely) lands at D.5 — this file must stay safe
+# under STALE LIVE WIRING in the meantime, i.e. even if some deployed
+# settings.json still invokes `--on-stop` directly, the new default no
+# longer blocks unless the operator opts back in explicitly.
 
 set -uo pipefail
 
@@ -153,7 +176,10 @@ _run_on_stop() {
   [[ -z "$cwd" ]] && cwd="$(pwd 2>/dev/null || echo)"
   [[ -z "$tpath" ]] && { _log "on-stop: no transcript_path — no-op"; exit 0; }
 
-  local mode="${WS_TASK_STOP_MODE:-block}"
+  # Default flipped block -> warn at NL Overhaul Wave D.6 (§D.0.5 retirement
+  # note above). Set WS_TASK_STOP_MODE=block explicitly to restore the old
+  # blocking behavior (not recommended — see the collision this fixes).
+  local mode="${WS_TASK_STOP_MODE:-warn}"
   [[ "$mode" == "off" ]] && exit 0
 
   # Resolve sinks + project root, then run the bridge (writer: emit + count).
@@ -431,6 +457,14 @@ EOF
   out=$(printf '{"transcript_path":"%s","session_id":"ST-warn","cwd":"%s"}' "$t_notask" "$tmp" \
     | CONV_TREE_STATE_PATH="$tmp/m1d.json" WS_TASK_STOP_MODE=warn bash "${BASH_SOURCE[0]}" --on-stop 2>/dev/null); rc=$?
   [[ $rc -eq 0 ]] ; _ck "M1 warn-mode never blocks (rc=$rc)" $?
+
+  # --- M1 DEFAULT (§D.0.5/D.6 retirement): no WS_TASK_STOP_MODE set at all
+  # -> must NOT block (default flipped block -> warn at Wave D.6). This is
+  # the scenario that would have failed pre-fix: 6 tool calls + zero task
+  # mutations, no explicit mode override. ---
+  out=$(printf '{"transcript_path":"%s","session_id":"ST-default","cwd":"%s"}' "$t_notask" "$tmp" \
+    | CONV_TREE_STATE_PATH="$tmp/m1e.json" bash "${BASH_SOURCE[0]}" --on-stop 2>/dev/null); rc=$?
+  [[ $rc -eq 0 ]] ; _ck "M1 default (no env override) no longer blocks — warn is the new default (rc=$rc)" $?
 
   # --- M2 on-session-start surfaces active items ---
   # Reuse the state from the create scenario (has an unchecked... actually

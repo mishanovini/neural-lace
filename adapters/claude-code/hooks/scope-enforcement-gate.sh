@@ -138,6 +138,16 @@
 # scenario repo before invoking the hook; the spawned hook process
 # then detects merge-context from the filesystem.
 # ============================================================
+
+# ============================================================
+# Shared backtick-token extraction (§D.0.7 fix, NL Overhaul Wave D.6).
+# Loops ALL backtick pairs on a bullet line instead of only the first
+# (the pre-fix bug both this file and spec-freeze-gate.sh shared).
+# ============================================================
+_SEG_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/extract-backtick-paths.sh
+source "$_SEG_SELF_DIR/lib/extract-backtick-paths.sh" 2>/dev/null || true
+
 _is_system_managed_path() {
   local p="$1"
   case "$p" in
@@ -329,7 +339,7 @@ _parse_cd_target() {
 }
 
 # ============================================================
-# --self-test handler (thirty-one scenarios)
+# --self-test handler (thirty-two scenarios)
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
   # We need this script's path for re-invocation under different cwds
@@ -1220,8 +1230,35 @@ Test gitlink-shaped trailing-slash matching.
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 32 (§D.0.7): multi-path-per-line bullet — a single bullet
+  # naming TWO backticked paths ("- `a/multi1.ts` and `a/multi2.ts` — desc")
+  # must produce TWO scope entries. Stage both named paths only; ALLOW
+  # proves the second backtick pair was NOT silently dropped (pre-fix, only
+  # a/multi1.ts would have entered SECTION_ENTRIES and a/multi2.ts would
+  # have blocked as out-of-scope). ----
+  PLAN_MULTI_PATH='# Plan: test
+Status: ACTIVE
+
+## Goal
+Test goal.
+
+## Files to Modify/Create
+- `src/multi1.ts` and `src/multi2.ts` — two-file bullet (§D.0.7)
+
+## Tasks
+- [ ] 1. test
+'
+  RC=$(_run_scenario s32 "$PLAN_MULTI_PATH" "src/multi1.ts,src/multi2.ts")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (32) multi-path-per-line-bullet-both-tokens-in-scope: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (32) multi-path-per-line-bullet-both-tokens-in-scope: FAIL (rc=$RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 31 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 32 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1534,8 +1571,18 @@ _parse_one_section() {
     fi
 
     if [[ "$line" == *'`'* ]]; then
-      local tmp="${line#*\`}"
-      extracted="${tmp%%\`*}"
+      # §D.0.7 fix: loop ALL backtick pairs on the line (a bullet can name
+      # multiple paths, e.g. "- `a/b.ts` and `c/d.ts` — desc"), not just
+      # the first. Each valid token is appended independently below.
+      local tok
+      while IFS= read -r tok; do
+        [[ -z "$tok" ]] && continue
+        if [[ "$tok" != */* ]] && [[ "$tok" != *.* ]]; then
+          continue
+        fi
+        SECTION_ENTRIES+=("$tok")
+      done < <(extract_backtick_paths "$line")
+      continue
     else
       extracted="$line"
       extracted="${extracted%% — *}"
@@ -1892,6 +1939,10 @@ fi
   echo "Emergency override: \`git commit --no-verify\` bypasses ALL pre-commit hooks"
   echo "including this one. Use only when explicitly authorized (per"
   echo "~/.claude/doctrine/git.md). The bypass is auditable in git's output."
+  echo ""
+  echo "NOTE: this block prevented the ENTIRE command from running — including any"
+  echo "fix/edit/\`git add\` prefix before the \`git commit\`. Nothing was executed."
+  echo "Re-run the non-commit part as its own call first, then commit separately."
   echo ""
   echo "================================================================"
 } >&2

@@ -192,6 +192,10 @@ _main_check() {
     echo ""
     echo "(Existing integer-named migrations already in history are grandfathered —"
     echo " only NEWLY-ADDED files are checked. This binds NEW migrations only.)"
+    echo ""
+    echo "NOTE: this block prevented the ENTIRE command from running — including any"
+    echo "fix/edit/git add prefix before the git commit. Nothing was executed. Re-run"
+    echo "the non-commit part as its own call first, then commit separately."
   } >&2
   return 1
 }

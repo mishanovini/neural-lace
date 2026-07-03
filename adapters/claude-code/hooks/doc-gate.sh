@@ -1,6 +1,18 @@
 #!/bin/bash
 # doc-gate.sh — F7 dev-doc gate (warn-mode default), 2026-05-30
 #
+# DEMOTED to ALWAYS non-blocking warn at NL Overhaul Wave D.6 (§D.0.4 /
+# §D.6 item 8, 2026-07-02): this gate already defaulted to warn-mode;
+# the remaining `enforce`-mode path (opt-in via DOC_GATE_MODE=enforce)
+# that used to `exit 2` (block) now ALSO exits 0 and instead emits a
+# hookSpecificOutput.additionalContext warn (the sanctioned channel
+# that reaches model context) plus a signal-ledger `warn` event.
+# Detection logic is UNCHANGED — only the verdict emission changed.
+# manifest.json's `blocking` flag for this unit flips to false in the
+# same wave (D.5 template/manifest cutover). DOC_GATE_MODE=enforce is
+# now purely cosmetic (changes the message header) — it no longer
+# blocks.
+#
 # Classification: Mechanism (PreToolUse Bash hook on `git commit`)
 #
 # Purpose: enforces the global convention that every change to
@@ -73,6 +85,10 @@
 #     (structural-change → docs-touched).
 
 set -u
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/signal-ledger.sh
+source "$SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
 
 # Hard-coded default mode for the soak-in period. Flip to "enforce"
 # after the soak window. Per-session override via DOC_GATE_MODE env var.
@@ -189,13 +205,15 @@ if [[ "${1:-}" == "--self-test" ]]; then
     FAILED=$((FAILED+1))
   fi
 
-  # ---- Scenario s3: BLOCK — code change, no doc update, enforce mode ----
+  # ---- Scenario s3 (Wave D.6 demotion): code change, no doc update,
+  # enforce mode -> WARN-shape: exit 0 + warn text on stderr (was BLOCK
+  # exit 2 pre-demotion; DOC_GATE_MODE=enforce no longer blocks). ----
   RC=$(_run_scenario s3 yes "src/foo.ts" "feat: add foo without docs" "enforce")
-  if [[ "$RC" == "2" ]] && _stderr_contains s3 "DOC GATE" && _stderr_contains s3 "src/foo.ts"; then
-    echo "self-test (s3) enforce-mode blocks: PASS" >&2
+  if [[ "$RC" == "0" ]] && _stderr_contains s3 "DOC GATE" && _stderr_contains s3 "src/foo.ts"; then
+    echo "self-test (s3) enforce-mode now warns (demoted): PASS" >&2
     PASSED=$((PASSED+1))
   else
-    echo "self-test (s3) enforce-mode blocks: FAIL (rc=$RC, expected 2)" >&2
+    echo "self-test (s3) enforce-mode now warns (demoted): FAIL (rc=$RC, expected 0)" >&2
     cat "$TMPROOT/s3/stderr.txt" >&2 2>/dev/null
     FAILED=$((FAILED+1))
   fi
@@ -511,14 +529,10 @@ if [[ -n "$BYPASS_REASON" ]]; then
   exit 0
 fi
 
-# --- Emit warning (always) ---
-{
+# --- Emit warning (always; Wave D.6 — enforce mode no longer blocks) ---
+WARN_BODY=$(
   echo "================================================================"
-  if [[ "$MODE" == "enforce" ]]; then
-    echo "DOC GATE — COMMIT BLOCKED (enforce mode)"
-  else
-    echo "DOC GATE — warning (warn mode; commit allowed)"
-  fi
+  echo "DOC GATE — warning (commit allowed; enforce mode no longer blocks post-Wave-D.6)"
   echo "================================================================"
   echo ""
   echo "Code files staged without a corresponding docs/dev/*.md update:"
@@ -540,24 +554,17 @@ fi
   echo "     your project doesn't follow this convention, remove the"
   echo "     directory and the gate falls silent."
   echo ""
-  if [[ "$MODE" == "enforce" ]]; then
-    echo "Mode: enforce (override per-session: \`export DOC_GATE_MODE=warn\`)."
-  else
-    echo "Mode: warn — this is a soak-in period. The default will flip to"
-    echo "       enforce after ≈ 2 weeks. Override per-session via the"
-    echo "       DOC_GATE_MODE env var."
-  fi
+  echo "Mode: $MODE (cosmetic only post-Wave-D.6 — neither warn nor enforce"
+  echo "      blocks; override per-session via the DOC_GATE_MODE env var)."
   echo ""
   echo "================================================================"
-} >&2
-
-if [[ "$MODE" == "enforce" ]]; then
-  # JSON decision for Claude Code
-  cat <<'JSON'
-{"decision": "block", "reason": "doc-gate: code file(s) staged without corresponding docs/dev/*.md update. See stderr for the three options (update doc / [skip-docs:] bypass / remove docs/dev/ to opt out)."}
-JSON
-  exit 2
+)
+printf '%s\n' "$WARN_BODY" >&2
+if command -v jq >/dev/null 2>&1; then
+  jq -n --arg ctx "[doc-gate] WARN (demoted from block, Wave D.6): ${#MISSING[@]} code file(s) missing docs/dev update
+$WARN_BODY" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse", additionalContext:$ctx}}'
 fi
+command -v ledger_emit >/dev/null 2>&1 && ledger_emit "doc-gate" "warn" "${#MISSING[@]} code file(s) missing docs/dev update"
 
-# warn mode: allow
 exit 0

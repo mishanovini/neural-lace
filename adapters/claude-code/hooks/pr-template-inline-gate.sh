@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 # pr-template-inline-gate.sh
 #
+# DEMOTED to non-blocking warn at NL Overhaul Wave D.6 (§D.0.4 / §D.6
+# item 8, 2026-07-02): every path that used to `exit 1` (block) now
+# exits 0 and instead emits a hookSpecificOutput.additionalContext warn
+# (the sanctioned channel that reaches model context) plus a
+# signal-ledger `warn` event. Detection/parsing logic (extract_body_
+# from_command, the validator invocation) is UNCHANGED — only the
+# verdict emission changed from block to warn. manifest.json's
+# `blocking` flag for this unit flips to false in the same wave (D.5
+# template/manifest cutover). Note: the SERVER-SIDE `PR Template Check`
+# CI workflow and `pre-push-pr-template.sh` (git pre-push hook, separate
+# mechanism) are UNAFFECTED by this demotion — they still enforce; this
+# hook's local PreToolUse early-warning just no longer blocks the tool
+# call itself.
+#
 # Closes HARNESS-GAP-40 — local-side validation of inline PR bodies passed
 # to `gh pr create` / `gh pr edit` via `--body`, `--body=`, or `--body-file`.
 #
@@ -64,6 +78,29 @@
 #                                  sourced here, same as the two siblings)
 
 set -eo pipefail
+
+_PTIG_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/signal-ledger.sh
+source "$_PTIG_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+
+# ============================================================
+# _demote_warn <title> <body> — emit the demoted-to-warn verdict:
+# hookSpecificOutput.additionalContext JSON on stdout (reaches model
+# context) + a human-readable copy on stderr + a signal-ledger warn
+# event, then exit 0 (never blocks).
+# ============================================================
+_demote_warn() {
+  local title="$1"
+  local body="$2"
+  printf '%s\n' "$body" >&2
+  if command -v jq >/dev/null 2>&1; then
+    jq -n --arg ctx "[pr-template-inline-gate] WARN (demoted from block, Wave D.6): ${title}
+${body}" \
+      '{hookSpecificOutput:{hookEventName:"PreToolUse", additionalContext:$ctx}}'
+  fi
+  command -v ledger_emit >/dev/null 2>&1 && ledger_emit "pr-template-inline-gate" "warn" "$title"
+  exit 0
+}
 
 # ============================================================
 # extract_body_from_command — parse the inline body from the
@@ -259,45 +296,64 @@ No template sections at all here.'
 
   FAILED=0
 
+  # Wave D.6 (§D.6 item 8): every path that used to BLOCK (exit 1) now
+  # exits 0 and instead emits a WARN. `expected_warn` below therefore
+  # means "1=detection should still fire (now as a WARN in stderr, exit
+  # STILL 0), 0=no detection, silent allow". Every scenario now expects
+  # exit_code==0 — the distinguishing signal is presence/absence of the
+  # WARN marker in stderr, which proves detection logic is unchanged.
   run_scenario() {
     local name="$1"
     local command_str="$2"
-    local expected_block="$3"   # 1=expect block, 0=expect allow
+    local expected_warn="$3"   # 1=expect WARN detected (stderr), 0=silent allow
     local label="$4"
 
     local input
     input=$(jq -nc --arg cmd "$command_str" '{tool_input: {command: $cmd}}')
 
     local exit_code=0
-    PR_TEMPLATE_INLINE_GATE_TEST_REPO_ROOT="$REPO_ROOT" \
-      bash "$SCRIPT" <<<"$input" >/dev/null 2>&1 || exit_code=$?
+    local stderr_out
+    stderr_out=$(PR_TEMPLATE_INLINE_GATE_TEST_REPO_ROOT="$REPO_ROOT" \
+      bash "$SCRIPT" <<<"$input" 2>&1 >/dev/null) || exit_code=$?
 
-    if [[ "$expected_block" == "1" ]]; then
-      if [[ $exit_code -ne 0 ]]; then
-        echo "self-test ($name) [$label]: BLOCK (expected, exit=$exit_code)" >&2
+    local warn_present=0
+    if printf '%s' "$stderr_out" | grep -q "WARN (demoted from block\|WARN, not a block\|not supported\|does not exist"; then
+      warn_present=1
+    fi
+
+    if [[ $exit_code -ne 0 ]]; then
+      echo "self-test ($name) [$label]: FAIL — expected exit=0 always post-demotion, got exit=$exit_code" >&2
+      FAILED=1
+      return
+    fi
+
+    if [[ "$expected_warn" == "1" ]]; then
+      if [[ "$warn_present" == "1" ]]; then
+        echo "self-test ($name) [$label]: ALLOW + WARN detected (expected)" >&2
       else
-        echo "self-test ($name) [$label]: ALLOW (expected BLOCK)" >&2
+        echo "self-test ($name) [$label]: ALLOW but NO WARN detected (expected WARN)" >&2
         FAILED=1
       fi
     else
-      if [[ $exit_code -eq 0 ]]; then
-        echo "self-test ($name) [$label]: ALLOW (expected)" >&2
+      if [[ "$warn_present" == "0" ]]; then
+        echo "self-test ($name) [$label]: ALLOW, silent (expected)" >&2
       else
-        echo "self-test ($name) [$label]: BLOCK (expected ALLOW, exit=$exit_code)" >&2
+        echo "self-test ($name) [$label]: ALLOW but unexpected WARN detected" >&2
         FAILED=1
       fi
     fi
   }
 
-  # T1: Valid inline --body with all sections → PASS
+  # T1: Valid inline --body with all sections → PASS, silent
   run_scenario "T1-valid-inline-body" \
     "gh pr create --title \"test\" --body \"$VALID_BODY\"" \
-    0 "valid --body with all sections → ALLOW"
+    0 "valid --body with all sections → ALLOW, silent"
 
-  # T2: --body missing required sections → BLOCKS
+  # T2 (Wave D.6 demotion): --body missing required sections → ALLOW +
+  # WARN detected (was BLOCK exit 1 pre-demotion).
   run_scenario "T2-invalid-inline-body" \
     "gh pr create --title \"test\" --body \"$INVALID_BODY_NO_SUMMARY\"" \
-    1 "--body missing mechanism section → BLOCK"
+    1 "--body missing mechanism section → ALLOW + WARN (demoted)"
 
   # T3: --body via heredoc form → parses correctly, validates valid body
   # Note: command is delivered as the literal string the shell would receive
@@ -315,15 +371,17 @@ EOF
     "gh pr create --title test --body-file $TMPDIR_TEST/valid-body.md" \
     0 "--body-file <valid> → ALLOW"
 
-  # T5: --body-file with invalid content → BLOCKS
+  # T5 (Wave D.6 demotion): --body-file with invalid content → ALLOW +
+  # WARN detected (was BLOCK exit 1 pre-demotion).
   run_scenario "T5-body-file-invalid" \
     "gh pr create --title test --body-file $TMPDIR_TEST/invalid-body.md" \
-    1 "--body-file <invalid> → BLOCK"
+    1 "--body-file <invalid> → ALLOW + WARN (demoted)"
 
-  # T6: --body-file - (stdin) → BLOCKS with stdin-not-supported message
+  # T6 (Wave D.6 demotion): --body-file - (stdin) → ALLOW + WARN with
+  # stdin-not-supported message (was BLOCK exit 1 pre-demotion).
   run_scenario "T6-body-file-stdin" \
     "gh pr create --title test --body-file -" \
-    1 "--body-file - (stdin) → BLOCK with stdin-not-supported"
+    1 "--body-file - (stdin) → ALLOW + WARN stdin-not-supported (demoted)"
 
   # T7: gh pr create with NO --body/--body-file/--fill → PASS through
   run_scenario "T7-no-body-source" \
@@ -335,10 +393,11 @@ EOF
     "gh pr create --title test --fill" \
     0 "--fill flag → ALLOW (pass-through)"
 
-  # T9: gh pr edit <N> --body missing sections → BLOCKS
+  # T9 (Wave D.6 demotion): gh pr edit <N> --body missing sections →
+  # ALLOW + WARN detected (was BLOCK exit 1 pre-demotion).
   run_scenario "T9-edit-invalid" \
     "gh pr edit 42 --body \"$INVALID_BODY_NO_SUMMARY\"" \
-    1 "gh pr edit with invalid --body → BLOCK"
+    1 "gh pr edit with invalid --body → ALLOW + WARN (demoted)"
 
   # T10: --body='inline with equals' form → parses correctly (passes)
   # Build a body that uses the equals form; use single quotes to avoid
@@ -426,34 +485,26 @@ EXTRACT_RESULT=$(extract_body_from_command "$COMMAND" "$REPO_ROOT") || EXTRACT_E
 if [[ $EXTRACT_EXIT -eq 2 ]]; then
   case "$EXTRACT_RESULT" in
     STDIN_NOT_SUPPORTED*)
-      cat >&2 <<'ERR_MSG'
-[pr-template-inline-gate] BLOCKED
+      _demote_warn "--body-file - (stdin) not supported" "\
+[pr-template-inline-gate] The \`--body-file -\` (stdin) form is not supported by the local inline-body validator. The Bash tool's stdin is the hook-input JSON, not your PR body; the gate cannot read your intended PR body content.
 
-The `--body-file -` (stdin) form is not supported by the local inline-body validator. The Bash tool's stdin is the hook-input JSON, not your PR body; the gate cannot read your intended PR body content.
+Remediation: write your PR body to a file first, then use \`--body-file <path>\`:
 
-Remediation: write your PR body to a file first, then use `--body-file <path>`:
+  gh pr create --title \"...\" --body-file .pr-description.md
 
-  gh pr create --title "..." --body-file .pr-description.md
-
-Rule: rules/planning.md "Capture-codify at PR time"
-Related: HARNESS-GAP-40 (inline-body validation)
-ERR_MSG
-      exit 1
+Rule: rules/planning.md \"Capture-codify at PR time\"
+Related: HARNESS-GAP-40 (inline-body validation)"
       ;;
     BODY_FILE_MISSING*)
       missing_path="${EXTRACT_RESULT#BODY_FILE_MISSING	}"
-      cat >&2 <<ERR_MSG
-[pr-template-inline-gate] BLOCKED
-
-The --body-file path does not exist: $missing_path
+      _demote_warn "--body-file path does not exist: $missing_path" "\
+[pr-template-inline-gate] The --body-file path does not exist: $missing_path
 
 The gate cannot validate a non-existent body file. gh pr create would itself fail downstream, but we surface the failure locally so you don't waste a push.
 
 Remediation: confirm the path is correct (relative to the repo root or use an absolute path).
 
-Rule: rules/planning.md "Capture-codify at PR time"
-ERR_MSG
-      exit 1
+Rule: rules/planning.md \"Capture-codify at PR time\""
       ;;
   esac
 fi
@@ -483,36 +534,34 @@ if [[ $VALIDATOR_EXIT -eq 0 ]]; then
 fi
 
 # FAIL — surface the validator's own stderr verbatim, prepend a header
-# naming the gate + the failing command class, and exit 1 (BLOCK).
+# naming the gate + the failing command class. Wave D.6: WARN, not block
+# — the server-side `PR Template Check` CI workflow and
+# pre-push-pr-template.sh still enforce.
 ACTION_LABEL="gh pr create"
 if [[ $IS_PR_EDIT -eq 1 ]]; then
   ACTION_LABEL="gh pr edit"
 fi
 
-cat >&2 <<HEADER
-[pr-template-inline-gate] BLOCKED
+WARN_BODY="[pr-template-inline-gate] template validation failed (WARN, not a block)
 
-Inline PR body passed to \`$ACTION_LABEL\` failed the capture-codify template validator. The same validator runs server-side as \`PR Template Check\` — blocking here saves a push, an email, and the second-push amendment cycle.
+Inline PR body passed to \`$ACTION_LABEL\` failed the capture-codify template validator. The same validator runs server-side as \`PR Template Check\`, which still enforces — this local warning just gives you the chance to fix it before pushing.
 
 ----- validator output (stderr) -----
-HEADER
-cat "$VALIDATOR_STDERR_FILE" >&2
-cat >&2 <<'FOOTER'
+$(cat "$VALIDATOR_STDERR_FILE")
 ----- end validator output -----
 
 Remediation:
   - Fix the PR body to address the failure above (add the missing section,
     fill the placeholder, or extend the rationale to ≥40 chars for (c)).
-  - For complex bodies, author `.pr-description.md` locally and use
-    `gh pr create --body-file .pr-description.md` — the file can be
+  - For complex bodies, author \`.pr-description.md\` locally and use
+    \`gh pr create --body-file .pr-description.md\` — the file can be
     validated repeatedly via the validator-script CLI by invoking the
     validator directly:
       bash .github/scripts/validate-pr-template.sh --self-test
 
-Rule:    rules/planning.md "Capture-codify at PR time"
+Rule:    rules/planning.md \"Capture-codify at PR time\"
 Sibling: vaporware-volume-gate.sh (PR volume-shape check on same matcher)
-Sibling: pre-push-pr-template.sh  (git pre-push side; validates .pr-description.md + commit msgs)
-Related: HARNESS-GAP-40 (inline-body validation; this gate closes it)
-FOOTER
+Sibling: pre-push-pr-template.sh  (git pre-push side; validates .pr-description.md + commit msgs; STILL ENFORCES)
+Related: HARNESS-GAP-40 (inline-body validation; this gate closes it)"
 
-exit 1
+_demote_warn "PR template validation failed for $ACTION_LABEL" "$WARN_BODY"

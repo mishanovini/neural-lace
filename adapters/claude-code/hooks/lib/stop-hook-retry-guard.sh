@@ -145,7 +145,7 @@ fi
 # the infinite-loop DoS the downgrade exists to prevent. Originating
 # incident: an autonomous loop rode the downgrade past 38 consecutive
 # pre-stop-verifier blocks while reporting DONE on incomplete work.
-: "${RETRY_GUARD_VERIFICATION_HOOKS:=pre-stop-verifier product-acceptance-gate}"
+: "${RETRY_GUARD_VERIFICATION_HOOKS:=pre-stop-verifier product-acceptance-gate work-integrity-gate}"
 
 # ----------------------------------------------------------------------
 # retry_guard_session_id [ <input-json> ]

@@ -841,3 +841,189 @@ Runtime verification: command bash adapters/claude-code/scripts/manifest-check.s
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN — both self-tests replayed live this session with exit 0 (signal-ledger.sh: 12/12 assertions; stop-hook-retry-guard.sh: 19/19 assertions including the pre-existing DONE-riding-refusal scenarios, confirming the D.1 sourcing addition did not regress the retry-guard's prior behavior). The wiring is not a bare grep-bait string: the retry-guard's downgrade path at line 472-474 calls `ledger_emit "$hook_name" "downgrade" "$error_msg"` guarded by `command -v ledger_emit`, so every downgrade this session's Stop-hook chain performs emits one "downgrade" event to the shared ledger, and a missing/older ledger lib degrades to a no-op rather than breaking retry-guard's core blocking semantics (verified by reading the guarded source block at lines 114-131). manifest-check.sh is GREEN (90 entries, 91 hooks, 0 warn). Dispatch order (D.1 ahead of D.0) is documented and justified in the plan's own Decisions Log, cited above.
+
+## Task D.0 — Wave-spec refinement + design freeze of the final gate map
+
+EVIDENCE BLOCK
+==============
+Task ID: D.0
+Task description: Wave-spec refinement + design freeze of the final gate map (frozen Stop/SessionStart/PreToolUse target lists + per-retired-gate behavior-relocation notes incl. explicit rows for workstreams-task-binding × task-completed-evidence-gate and the bypass_evidence_check hatch)
+Verified at: 2026-07-03T06:25:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: specified — plan Done-when clause (line 92) + specs-d content requirements
+Comprehension-gate: not applicable (rung < 2; plan rung: 1)
+
+Checks run:
+1. specs-d exists: docs/plans/nl-overhaul-program-2026-07-specs-d.md (23,248 bytes, mtime Jul 2 21:24)
+   Result: PASS
+2. Section headers §D.0.2 through §D.0.10 all present (grep of header lines)
+   Result: PASS
+3. §D.0.2 frozen Stop chain 22→6 with per-retired-gate relocation notes (retired list names the relocation target per gate)
+   Result: PASS
+4. §D.0.3 frozen SessionStart chain 24→8; §D.0.4 frozen PreToolUse map + ≤12 counting rule + 12-unit table
+   Result: PASS
+5. §D.0.5 MANDATED ROW workstreams-task-binding × task-completed-evidence-gate: collision described (audit addendum lines 95-105), frozen disposition for both ends, bypass_evidence_check hatch dispositioned DELETE (proven unreachable, task-completed-evidence-gate.sh:395)
+   Result: PASS
+
+Runtime verification: file docs/plans/nl-overhaul-program-2026-07-specs-d.md::MANDATED ROW — workstreams-task-binding × task-completed-evidence-gate
+Runtime verification: file docs/plans/nl-overhaul-program-2026-07-specs-d.md::bypass_evidence_check
+Runtime verification: command grep -c "^## §D.0" docs/plans/nl-overhaul-program-2026-07-specs-d.md
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — specs-d read in full this session; all Done-when contents present: frozen Stop (§D.0.2), SessionStart (§D.0.3), PreToolUse (§D.0.4) target lists, per-retired-gate behavior-relocation notes, explicit mandated rows for the two named hooks and the bypass_evidence_check hatch (§D.0.5, disposition DELETE).
+
+## Task D.2 — hooks/work-integrity-gate.sh (merged Stop gate)
+
+EVIDENCE BLOCK
+==============
+Task ID: D.2
+Task description: work-integrity-gate.sh merging pre-stop-verifier + product-acceptance + worktree-uncommitted checks, session-scoped, retry-guard integrated, ledger-logging; registered in RETRY_GUARD_VERIFICATION_HOOKS
+Verified at: 2026-07-03T06:25:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: specified — plan Done-when (line 96) + specs-d §D.2: --self-test ≥12 scenarios exits 0 incl. three mandated scenarios; retry-guard lib registration
+Comprehension-gate: not applicable (rung < 2; plan rung: 1)
+
+Checks run:
+1. bash adapters/claude-code/hooks/work-integrity-gate.sh --self-test
+   Output: "self-test summary: 20 passed, 0 failed"; exit 0 (20 scenarios ≥ 12)
+   Result: PASS
+2. Mandated scenario "orthogonal-ACTIVE-plan-does-NOT-block": PASS (exit 0)
+   Result: PASS
+3. Mandated scenario "session-touched-plan-unchecked-tasks-DOES-block": PASS (exit 2)
+   Result: PASS
+4. Mandated scenario "DONE-claimed-gate-blocking-NOT-downgraded": PASS (exit 2); companion "retry-guard-refusal-names-work-integrity-gate": PASS
+   Result: PASS
+5. hooks/lib/stop-hook-retry-guard.sh:148 default list = "pre-stop-verifier product-acceptance-gate work-integrity-gate"
+   Result: PASS
+
+Runtime verification: command bash adapters/claude-code/hooks/work-integrity-gate.sh --self-test
+Runtime verification: file adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh::pre-stop-verifier product-acceptance-gate work-integrity-gate
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — self-test executed this session (exit 0, 20 scenarios, 0 failed) with all three mandated scenario names observed passing in the output; retry-guard lib default at line 148 contains work-integrity-gate so its blocks are non-downgradeable while DONE is claimed.
+
+## Task D.3 — hooks/session-honesty-gate.sh (marker contract Stop gate)
+
+EVIDENCE BLOCK
+==============
+Task ID: D.3
+Task description: session-honesty-gate.sh marker contract (DONE/PAUSING/BLOCKED/CONTINUING) + demoted narrative heuristics as ledger warns; blocks ONLY on marker-absence/format or DONE-vs-verification-block contradiction; minimal-delta design pin
+Verified at: 2026-07-03T06:25:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: specified — plan Done-when (line 98) + specs-d §D.3: --self-test ≥10 scenarios exits 0 incl. two mandated scenarios
+Comprehension-gate: not applicable (rung < 2; plan rung: 1)
+
+Checks run:
+1. bash adapters/claude-code/hooks/session-honesty-gate.sh --self-test
+   Output: "self-test summary: 22 passed, 0 failed" across 16 scenarios (≥ 10); exit 0
+   Result: PASS
+2. Mandated Scenario 3 "waiting-on-operator turn ending PAUSING: <exact ask> passes": PASS
+   Result: PASS
+3. Mandated Scenario 4 "DONE while work-integrity-gate blocked this session (via ledger) -> fails": PASS (exit 2); Scenario 15 covers the unresolved-stop-hooks.log contradiction source
+   Result: PASS
+4. Design-pin Scenario 8 "minimal-delta retry closing passes (after a prior block)": PASS (2 -> 0)
+   Result: PASS
+5. Demoted heuristics warn-not-block (Scenarios 9-12: PAUSING-without-exact-ask, narrate-and-wait, deferral phrases, sub-flagrant contradiction — all pass + ledger warn)
+   Result: PASS
+
+Runtime verification: command bash adapters/claude-code/hooks/session-honesty-gate.sh --self-test
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — self-test executed this session (exit 0, 22 assertions across 16 scenarios) with both mandated scenarios observed passing by name, plus the operator design-pin (minimal-delta closing) scenario green.
+
+## Task D.4 — Relocate retired-gate behaviors
+
+EVIDENCE BLOCK
+==============
+Task ID: D.4
+Task description: completion-criteria → close-plan.sh + PR-merge path (closes GAP-53); customer-facing-review → spawn-time PreToolUse warn + ledger; pr-health → digest feed collector; decision-context enforcement retired (emit writers kept); vaporware-volume → CI; NL-FINDING-016 banner sweep; nl_main_checkout_root
+Verified at: 2026-07-03T06:25:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: specified — plan Done-when (line 100): per-relocation grep/self-test assertions from specs-d §D.4
+Comprehension-gate: not applicable (rung < 2; plan rung: 1)
+
+Checks run:
+1. NL-FINDING-016 banner sweep
+   Command: grep -c "ENTIRE command" pre-commit-gate.sh findings-ledger-schema-gate.sh plan-deletion-protection.sh claude-md-hygiene-gate.sh migration-naming-gate.sh
+   Output: 1 each (all five hooks)
+   Result: PASS
+2. bash adapters/claude-code/scripts/pr-health-snapshot.sh --self-test
+   Output: "self-test: OK 9/9"; exit 0
+   Result: PASS
+3. bash adapters/claude-code/scripts/close-plan.sh --self-test
+   Output: "self-test summary: 22 passed, 0 failed (of 19 scenarios)"; exit 0; incl. S18 gap53-preview-deploy-does-not-satisfy-deploy-criterion: PASS (blocked) and S19 placeholder-closure-contract-blocks-at-close: PASS (blocked)
+   Result: PASS
+4. bash adapters/claude-code/hooks/lib/nl-paths.sh --self-test
+   Output: "self-test: OK"; exit 0; nl_main_checkout_root present (13 occurrences; T6/T7/T8 exercise non-worktree/linked-worktree/outside-repo)
+   Result: PASS
+5. adapters/claude-code/patterns/customer-facing-patterns.txt exists (1,931 bytes)
+   Result: PASS
+6. bash adapters/claude-code/hooks/teammate-spawn-validator.sh --self-test
+   Output: "passed: 13 / 13"; exit 0; incl. S7 "customer-facing spawn → WARN (non-blocking, exit 0)", S8 "backend-only spawn → no customer-facing warn", S9 "customer-facing + blockable spawn → warn fires AND block still fires"
+   Result: PASS
+
+Runtime verification: command bash adapters/claude-code/scripts/pr-health-snapshot.sh --self-test
+Runtime verification: command bash adapters/claude-code/scripts/close-plan.sh --self-test
+Runtime verification: command bash adapters/claude-code/hooks/lib/nl-paths.sh --self-test
+Runtime verification: command bash adapters/claude-code/hooks/teammate-spawn-validator.sh --self-test
+Runtime verification: file adapters/claude-code/patterns/customer-facing-patterns.txt::.
+Runtime verification: command grep -c "ENTIRE command" adapters/claude-code/hooks/pre-commit-gate.sh adapters/claude-code/hooks/findings-ledger-schema-gate.sh adapters/claude-code/hooks/plan-deletion-protection.sh adapters/claude-code/hooks/claude-md-hygiene-gate.sh adapters/claude-code/hooks/migration-naming-gate.sh
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — all per-relocation assertions from specs-d §D.4 executed this session and passed with cited output (banner sweep 5/5, pr-health 9/9, close-plan 22/22 incl. the GAP-53 preview-deploy scenario, nl-paths OK with nl_main_checkout_root, patterns file present, spawn-validator 13/13 incl. customer-facing warn scenarios).
+
+## Task D.6 — PreToolUse rationalization
+
+EVIDENCE BLOCK
+==============
+Task ID: D.6
+Task description: retire tool-call-budget attestation loop (soft counter → ledger/digest), fold dag-review-waiver into spawn validator, plan-scoped task-completed-evidence-gate + delete bypass_evidence_check hatch, workstreams-task-binding warn default, backtick-parser fix (shared lib), NL-FINDING-016 banners
+Verified at: 2026-07-03T06:25:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: specified — plan Done-when (line 104) + specs-d §D.6 per-item grep/self-test assertions
+Comprehension-gate: not applicable (rung < 2; plan rung: 1)
+
+Checks run:
+1. bash adapters/claude-code/hooks/scope-enforcement-gate.sh --self-test (full slow suite, ~6 min)
+   Output: "self-test summary: 32 passed, 0 failed (of 32 scenarios)"; exit 0; incl. (32) multi-path-per-line-bullet-both-tokens-in-scope: PASS
+   Result: PASS
+2. bash adapters/claude-code/hooks/spec-freeze-gate.sh --self-test
+   Output: "self-test summary: 7 passed, 0 failed (of 7 scenarios)"; exit 0; incl. (7) multi-path-per-line-bullet-second-token-blocks: PASS
+   Result: PASS
+3. hooks/lib/extract-backtick-paths.sh exists (4,541 bytes, executable); grep -l "extract-backtick-paths" scope-enforcement-gate.sh spec-freeze-gate.sh → BOTH match
+   Result: PASS
+4. bash adapters/claude-code/hooks/task-completed-evidence-gate.sh --self-test
+   Output: "passed: 10 / 10"; exit 0; incl. D3b "ad-hoc task (not plan-declared) completes without evidence → ALLOW + warn" and D3c "plan-declared task completes without evidence → BLOCK"
+   Result: PASS
+5. grep -c "jq.*bypass_evidence_check" adapters/claude-code/hooks/task-completed-evidence-gate.sh = 0 (dead hatch deleted per §D.0.5)
+   Result: PASS
+6. bash adapters/claude-code/hooks/workstreams-task-binding.sh --self-test
+   Output: "self-test: OK"; exit 0; incl. "M1 default (no env override) no longer blocks — warn is the new default (rc=0)"
+   Result: PASS
+7. adapters/claude-code/scripts/tool-call-counter.sh exists (1,695 bytes, executable)
+   Result: PASS
+8. Banners: grep -c "ENTIRE command" = 1 in scope-enforcement-gate.sh and 1 in spec-freeze-gate.sh
+   Result: PASS
+9. DAG-fold in spawn validator: teammate-spawn-validator self-test S7-S9 DAG-fold scenarios pass (Tier-3 no-waiver → BLOCK / substantive waiver → ALLOW / Tier-1 → ALLOW)
+   Result: PASS
+
+Runtime verification: command bash adapters/claude-code/hooks/scope-enforcement-gate.sh --self-test
+Runtime verification: command bash adapters/claude-code/hooks/spec-freeze-gate.sh --self-test
+Runtime verification: command bash adapters/claude-code/hooks/task-completed-evidence-gate.sh --self-test
+Runtime verification: command bash adapters/claude-code/hooks/workstreams-task-binding.sh --self-test
+Runtime verification: command grep -c "jq.*bypass_evidence_check" adapters/claude-code/hooks/task-completed-evidence-gate.sh
+Runtime verification: file adapters/claude-code/hooks/lib/extract-backtick-paths.sh::.
+Runtime verification: file adapters/claude-code/scripts/tool-call-counter.sh::.
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — every §D.6 assertion executed this session and passed: the full 32/32 scope-enforcement suite (multi-path scenario included, run to completion — not the time-constrained fallback), spec-freeze 7/7, evidence-gate 10/10 with both plan-scoping scenarios, bypass-hatch zero-grep, task-binding warn-by-default, counter script + shared backtick lib present and sourced by both hooks.

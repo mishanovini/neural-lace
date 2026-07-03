@@ -1,9 +1,19 @@
 #!/bin/bash
 # observed-errors-gate.sh
 #
-# PreToolUse hook on Bash (git commit) that blocks fix-class commits
-# unless the agent has captured a verbatim error in
-# `.claude/state/observed-errors.md` from the current session.
+# DEMOTED to non-blocking warn at NL Overhaul Wave D.6 (§D.0.4 / §D.6
+# item 8, 2026-07-02): every path that used to `exit 1` (block) now
+# exits 0 and instead emits a hookSpecificOutput.additionalContext warn
+# (the sanctioned channel that reaches model context) plus a
+# signal-ledger `warn` event. Detection logic is UNCHANGED — only the
+# verdict emission changed from block to warn. manifest.json's
+# `blocking` flag for this unit flips to false in the same wave (D.5
+# template/manifest cutover).
+#
+# PreToolUse hook on Bash (git commit) that used to block fix-class
+# commits unless the agent had captured a verbatim error in
+# `.claude/state/observed-errors.md` from the current session; now
+# warns instead.
 #
 # Why: in a representative incident, the agent saw an HTTP 500 returned
 # from a test five times before reading the response body. The body
@@ -19,10 +29,33 @@
 #     narrow remedy (one file), low cheap-evasion paths.
 #
 # Exit codes:
-#   0 — commit allowed
-#   1 — commit blocked (stderr explains)
+#   0 — commit allowed (always, post-demotion; a WARN may be emitted via
+#       hookSpecificOutput.additionalContext + a signal-ledger entry)
 
 set -e
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/signal-ledger.sh
+source "$SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+
+# ============================================================
+# _demote_warn <title> <body> — emit the demoted-to-warn verdict:
+# hookSpecificOutput.additionalContext JSON on stdout (reaches model
+# context) + a human-readable copy on stderr + a signal-ledger warn
+# event, then exit 0 (never blocks).
+# ============================================================
+_demote_warn() {
+  local title="$1"
+  local body="$2"
+  printf '%s\n' "$body" >&2
+  if command -v jq >/dev/null 2>&1; then
+    jq -n --arg ctx "[observed-errors-gate] WARN (demoted from block, Wave D.6): ${title}
+${body}" \
+      '{hookSpecificOutput:{hookEventName:"PreToolUse", additionalContext:$ctx}}'
+  fi
+  command -v ledger_emit >/dev/null 2>&1 && ledger_emit "observed-errors-gate" "warn" "$title"
+  exit 0
+}
 
 INPUT="${CLAUDE_TOOL_INPUT:-}"
 if [[ -z "$INPUT" ]]; then
@@ -120,16 +153,16 @@ fi
 ERRORS_FILE="$REPO_ROOT/.claude/state/observed-errors.md"
 
 if [[ ! -f "$ERRORS_FILE" ]]; then
-  cat >&2 <<'ERR_MSG'
-[observed-errors-gate] BLOCKED: this commit looks like a fix but no observed-errors trail exists.
+  _demote_warn "no observed-errors trail exists" "\
+[observed-errors-gate] this commit looks like a fix but no observed-errors trail exists.
 
 Rule: ~/.claude/doctrine/observed-errors-first.md
 Why: on 2026-04-25 the agent saw HTTP 500 five times before reading the
 response body, which would have given the root cause instantly. This
-gate forces you to read the body / capture the actual error before
-shipping a fix.
+gate exists to nudge you to read the body / capture the actual error
+before shipping a fix.
 
-To proceed, append a real observation to .claude/state/observed-errors.md:
+To address, append a real observation to .claude/state/observed-errors.md:
 
   ## YYYY-MM-DD HH:MM — <one-line description>
   Reproduction: <command or steps>
@@ -138,11 +171,9 @@ To proceed, append a real observation to .claude/state/observed-errors.md:
   Hypothesis: <what you think the cause is, derived from the observation>
 
 If this fix genuinely has no runtime symptom (e.g., a code-review-only
-catch), set OBSERVED_ERRORS_OVERRIDE="<reason>" in your env for this
+catch), set OBSERVED_ERRORS_OVERRIDE=\"<reason>\" in your env for this
 commit. The override is logged at .claude/state/observed-errors-overrides.log
-for periodic review.
-ERR_MSG
-  exit 1
+for periodic review."
 fi
 
 # File exists. Was it modified recently (last 60 minutes)?
@@ -152,17 +183,15 @@ NOW=$(date +%s)
 AGE=$(( NOW - MTIME ))
 
 if (( AGE > 3600 )); then
-  cat >&2 <<ERR_MSG
-[observed-errors-gate] BLOCKED: .claude/state/observed-errors.md exists but
+  _demote_warn "observed-errors.md is stale (>60min)" "\
+[observed-errors-gate] .claude/state/observed-errors.md exists but
 was last modified $((AGE / 60)) minutes ago — older than the 60-minute
-freshness window. The current session needs its own captured error.
+freshness window. The current session's fix ideally has its own captured error.
 
-Append a fresh entry, or set OBSERVED_ERRORS_OVERRIDE="<reason>" if this
+Append a fresh entry, or set OBSERVED_ERRORS_OVERRIDE=\"<reason>\" if this
 fix has no runtime symptom in the current session.
 
-Rule: ~/.claude/doctrine/observed-errors-first.md
-ERR_MSG
-  exit 1
+Rule: ~/.claude/doctrine/observed-errors-first.md"
 fi
 
 # File exists and is fresh. Does it contain a recognizable error?
@@ -180,19 +209,17 @@ if grep -qiE '(expected|received|to be|toBe|toEqual)' "$ERRORS_FILE"; then RECOG
 if grep -qE '(console\.(error|warn)|FAIL\s|✗|×|✘)' "$ERRORS_FILE"; then RECOGNIZABLE=1; fi
 
 if (( RECOGNIZABLE == 0 )); then
-  cat >&2 <<'ERR_MSG'
-[observed-errors-gate] BLOCKED: .claude/state/observed-errors.md exists
+  _demote_warn "observed-errors.md has no recognizable error" "\
+[observed-errors-gate] .claude/state/observed-errors.md exists
 but doesn't contain anything that looks like a real error — no status
 codes, no exceptions, no stack frames, no test failures.
 
-The point of this gate is to force you to paste the verbatim symptom.
-A summary like "the test failed" is not a captured error. Paste the
+The point of this gate is to nudge you to paste the verbatim symptom.
+A summary like \"the test failed\" is not a captured error. Paste the
 actual output your test/script/browser produced.
 
-Override with OBSERVED_ERRORS_OVERRIDE="<reason>" if genuinely no
-runtime symptom exists. Rule: ~/.claude/doctrine/observed-errors-first.md
-ERR_MSG
-  exit 1
+Override with OBSERVED_ERRORS_OVERRIDE=\"<reason>\" if genuinely no
+runtime symptom exists. Rule: ~/.claude/doctrine/observed-errors-first.md"
 fi
 
 # All checks passed — allow the commit

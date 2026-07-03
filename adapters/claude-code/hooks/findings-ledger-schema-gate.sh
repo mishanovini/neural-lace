@@ -611,6 +611,10 @@ if ! _VALIDATE_FILE "$FINDINGS_FILE"; then
     echo ""
     echo "[findings-schema] entries=$ENTRY_COUNT verdict=FAIL field='$_FIRST_FAIL_REASON' entry='$_FIRST_FAIL_ID'"
     echo "================================================================"
+    echo ""
+    echo "NOTE: this block prevented the ENTIRE command from running — including any"
+    echo "fix/edit/git add prefix before the git commit. Nothing was executed. Re-run"
+    echo "the non-commit part as its own call first, then commit separately."
   } >&2
 
   cat <<'JSON'

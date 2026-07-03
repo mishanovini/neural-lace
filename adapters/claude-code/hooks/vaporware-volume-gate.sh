@@ -3,6 +3,13 @@
 #
 # A8 of the adversarial-validation-mechanisms plan.
 #
+# RELOCATION NOTE (NL Overhaul Wave D, task D.4, per specs-d.md §D.4 item 5):
+# this check moves to CI — the check gets added to the E.4 design-skip
+# companion plan's CI list. This task (D.4) only writes this relocation
+# note; the PreToolUse wiring for this gate retires at D.5, same cutover as
+# every other Wave-D retirement. This file's own behavior is UNCHANGED by
+# this note — nothing below this comment has been modified for D.4.
+#
 # PreToolUse hook on `Bash` that fires on `gh pr create` (and, opt-in, on
 # `git push` when a PR is being prepared). Reads the cumulative branch
 # state via `git diff origin/master...HEAD --numstat` and computes:

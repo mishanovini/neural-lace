@@ -79,6 +79,10 @@ Escape hatches if you genuinely need this command:
   - Use git mv to archive/ instead of deletion
   - For genuine cleanup of archive files: target the archive path
     explicitly (rm docs/plans/archive/<file>.md is allowed)
+
+NOTE: this block prevented the ENTIRE command from running — including any
+fix/edit/git add prefix before the git commit. Nothing was executed. Re-run
+the non-commit part as its own call first, then commit separately.
 MSG
   exit 1
 }

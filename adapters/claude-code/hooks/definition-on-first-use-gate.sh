@@ -1,10 +1,21 @@
 #!/bin/bash
 # definition-on-first-use-gate.sh — Phase 1d-F (Decision 023), 2026-05-04
 #
-# PreToolUse hook (Bash matcher) that blocks `git commit` when the commit
-# stages `*.md` files under `neural-lace/build-doctrine/` and any newly-added
-# acronym (regex \b[A-Z]{2,6}\b minus stopword allowlist) is neither in the
-# glossary nor defined in-context within the same diff.
+# DEMOTED to non-blocking warn at NL Overhaul Wave D.6 (§D.0.4 / §D.6
+# item 8, 2026-07-02): the path that used to `exit 1` (block) now exits
+# 0 and instead emits a hookSpecificOutput.additionalContext warn (the
+# sanctioned channel that reaches model context) plus a signal-ledger
+# `warn` event. Detection logic is UNCHANGED — only the verdict emission
+# changed from block to warn. manifest.json's `blocking` flag for this
+# unit flips to false in the same wave (D.5 template/manifest cutover).
+# --self-test scenarios 4 and 7 (previously asserting block/exit=1) are
+# updated to assert the warn-shape (exit=0 + warn text on stderr).
+#
+# PreToolUse hook (Bash matcher) that used to block `git commit` when the
+# commit stages `*.md` files under `neural-lace/build-doctrine/` and any
+# newly-added acronym (regex \b[A-Z]{2,6}\b minus stopword allowlist) is
+# neither in the glossary nor defined in-context within the same diff;
+# now warns instead.
 #
 # Rule (Decision 023):
 #   - 023a: Acronym detection via \b[A-Z]{2,6}\b (2-6 char bound).
@@ -26,11 +37,15 @@
 #   and non-commit Bash commands.
 #
 # Exit codes:
-#   0 — allow (commit proceeds; no in-scope changes OR all acronyms defined)
-#   1 — block (stderr explains; JSON {decision: block} on stdout)
+#   0 — allow (always, post-demotion; a WARN may be emitted via
+#       hookSpecificOutput.additionalContext + a signal-ledger entry)
 #   2 — internal error (passes through to allow; we don't lock up the session)
 
 set -u
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/signal-ledger.sh
+source "$SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
 
 # ============================================================
 # Stopword allowlist (Decision 023b)
@@ -314,13 +329,15 @@ The XYZ (alias) component routes traffic.
     FAILED=$((FAILED+1))
   fi
 
-  # ---- Scenario 4: FAIL — undefined acronym, no parenthetical, not in glossary ----
+  # ---- Scenario 4 (Wave D.6 demotion): undefined acronym, no parenthetical,
+  # not in glossary -> WARN-shape: exit 0 + warn text on stderr (was BLOCK
+  # exit 1 pre-demotion). ----
   RC=$(_run_scenario s4 "$IN_SCOPE_UNDEFINED" "$GLOSSARY_BASIC")
-  if [[ "$RC" == "1" ]]; then
-    echo "self-test (4) FAIL-undefined-acronym: PASS (rc=$RC, expected 1; correctly blocked)" >&2
+  if [[ "$RC" == "0" ]] && grep -q "verdict=WARN" "$TMPROOT/s4/stderr.txt" 2>/dev/null; then
+    echo "self-test (4) WARN-undefined-acronym: PASS (rc=$RC, expected 0; demoted to warn)" >&2
     PASSED=$((PASSED+1))
   else
-    echo "self-test (4) FAIL-undefined-acronym: FAIL (rc=$RC, expected 1)" >&2
+    echo "self-test (4) WARN-undefined-acronym: FAIL (rc=$RC, expected 0 + verdict=WARN in stderr)" >&2
     cat "$TMPROOT/s4/stderr.txt" 2>/dev/null >&2
     FAILED=$((FAILED+1))
   fi
@@ -347,13 +364,15 @@ The XYZ (alias) component routes traffic.
     FAILED=$((FAILED+1))
   fi
 
-  # ---- Scenario 7: FAIL — single-word parenthetical not recognized as definition ----
+  # ---- Scenario 7 (Wave D.6 demotion): single-word parenthetical not
+  # recognized as definition -> WARN-shape: exit 0 + warn text on stderr
+  # (was BLOCK exit 1 pre-demotion). ----
   RC=$(_run_scenario s7 "$IN_SCOPE_DIFF_SINGLE_WORD_PAREN" "$GLOSSARY_BASIC")
-  if [[ "$RC" == "1" ]]; then
-    echo "self-test (7) FAIL-single-word-paren-not-definition: PASS (rc=$RC, expected 1; correctly blocked)" >&2
+  if [[ "$RC" == "0" ]] && grep -q "verdict=WARN" "$TMPROOT/s7/stderr.txt" 2>/dev/null; then
+    echo "self-test (7) WARN-single-word-paren-not-definition: PASS (rc=$RC, expected 0; demoted to warn)" >&2
     PASSED=$((PASSED+1))
   else
-    echo "self-test (7) FAIL-single-word-paren-not-definition: FAIL (rc=$RC, expected 1)" >&2
+    echo "self-test (7) WARN-single-word-paren-not-definition: FAIL (rc=$RC, expected 0 + verdict=WARN in stderr)" >&2
     cat "$TMPROOT/s7/stderr.txt" 2>/dev/null >&2
     FAILED=$((FAILED+1))
   fi
@@ -476,40 +495,39 @@ for file in "${IN_SCOPE_FILES[@]}"; do
 done
 
 if [[ -n "$FAIL_TERM" ]]; then
-  {
-    echo "================================================================"
-    echo "DEFINITION-ON-FIRST-USE GATE — COMMIT BLOCKED"
-    echo "================================================================"
-    echo ""
-    echo "Undefined acronym: '$FAIL_TERM'"
-    echo "Found in:          $FAIL_FILE"
-    if [[ -n "$GLOSSARY" ]]; then
-      echo "Glossary checked:  $GLOSSARY"
-    else
-      echo "Glossary checked:  <none found at configured paths>"
-    fi
-    echo ""
-    echo "Remediation (pick one):"
-    echo "  1. Add an entry to the glossary:"
-    echo "     **$FAIL_TERM** — <one-line definition>."
-    echo "  2. Define in-context in the same diff via parenthetical:"
-    echo "     $FAIL_TERM (foo bar baz) ..."
-    echo "     (parenthetical must contain at least 2 words within ~30 chars)"
-    echo ""
-    echo "Stopwords (universally-understood, never flagged): OK, OR, JSON,"
-    echo "  URL, API, HTTP, CSS, ID, etc. — see Decision 023b for full list."
-    echo ""
-    echo "Rule:     adapters/claude-code/rules/definition-on-first-use.md"
-    echo "Decision: docs/decisions/023-definition-on-first-use-enforcement.md"
-    echo ""
-    echo "[definition-first-use] file=$FAIL_FILE term=$FAIL_TERM verdict=FAIL"
-    echo "================================================================"
-  } >&2
+  GLOSSARY_LINE="<none found at configured paths>"
+  [[ -n "$GLOSSARY" ]] && GLOSSARY_LINE="$GLOSSARY"
+  WARN_BODY="================================================================
+DEFINITION-ON-FIRST-USE GATE — undefined acronym (WARN, not a block)
+================================================================
 
-  cat <<'JSON'
-{"decision": "block", "reason": "Definition-on-first-use gate: undefined acronym in scope-prefix file. See stderr for the failing term and remediation paths."}
-JSON
-  exit 1
+Undefined acronym: '$FAIL_TERM'
+Found in:          $FAIL_FILE
+Glossary checked:  $GLOSSARY_LINE
+
+Remediation (pick one):
+  1. Add an entry to the glossary:
+     **$FAIL_TERM** — <one-line definition>.
+  2. Define in-context in the same diff via parenthetical:
+     $FAIL_TERM (foo bar baz) ...
+     (parenthetical must contain at least 2 words within ~30 chars)
+
+Stopwords (universally-understood, never flagged): OK, OR, JSON,
+  URL, API, HTTP, CSS, ID, etc. — see Decision 023b for full list.
+
+Rule:     adapters/claude-code/rules/definition-on-first-use.md
+Decision: docs/decisions/023-definition-on-first-use-enforcement.md
+
+[definition-first-use] file=$FAIL_FILE term=$FAIL_TERM verdict=WARN
+================================================================"
+  printf '%s\n' "$WARN_BODY" >&2
+  if command -v jq >/dev/null 2>&1; then
+    jq -n --arg ctx "[definition-on-first-use-gate] WARN (demoted from block, Wave D.6): undefined acronym '$FAIL_TERM'
+$WARN_BODY" \
+      '{hookSpecificOutput:{hookEventName:"PreToolUse", additionalContext:$ctx}}'
+  fi
+  command -v ledger_emit >/dev/null 2>&1 && ledger_emit "definition-on-first-use-gate" "warn" "undefined acronym '$FAIL_TERM' in $FAIL_FILE"
+  exit 0
 fi
 
 # PASS

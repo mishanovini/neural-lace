@@ -1,8 +1,22 @@
 #!/bin/bash
 # systems-design-gate.sh — Generation 5
 #
-# PreToolUse hook that blocks Edit/Write operations on design-mode files
-# unless a valid plan with Mode: design (or Mode: design-skip) exists.
+# DEMOTED to non-blocking warn at NL Overhaul Wave D.6 (§D.0.4 / §D.6
+# item 8, 2026-07-02): this is the SHAPE check only (does a plan file
+# with the right Mode:/Status: header exist) — every path that used to
+# `exit 1` (block) now exits 0 and instead emits a
+# hookSpecificOutput.additionalContext warn (the sanctioned channel
+# that reaches model context) plus a signal-ledger `warn` event.
+# Detection logic is UNCHANGED — only the verdict emission changed from
+# block to warn. The plan-BOUNDARY SUBSTANCE check (is the Systems
+# Engineering Analysis actually complete/good, not just present) stays
+# in plan-reviewer.sh's precommit layer, unaffected by this demotion.
+# manifest.json's `blocking` flag for this unit flips to false in the
+# same wave (D.5 template/manifest cutover).
+#
+# PreToolUse hook that used to block Edit/Write operations on design-mode
+# files unless a valid plan with Mode: design (or Mode: design-skip)
+# exists; now warns instead.
 #
 # Design-mode files: CI/CD workflows, migrations, infrastructure config,
 # deployment scripts. See DESIGN_MODE_PATTERNS below for the full list.
@@ -27,10 +41,33 @@
 #      in a "Why design-skip" section → pass through.
 #
 # Exit codes:
-#   0 — edit is allowed
-#   1 — edit is blocked (stderr explains why + how to unblock)
+#   0 — edit is allowed (always, post-demotion; a WARN may be emitted via
+#       hookSpecificOutput.additionalContext + a signal-ledger entry)
 
 set -e
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/signal-ledger.sh
+source "$SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+
+# ============================================================
+# _demote_warn <title> <body> — emit the demoted-to-warn verdict:
+# hookSpecificOutput.additionalContext JSON on stdout (reaches model
+# context) + a human-readable copy on stderr + a signal-ledger warn
+# event, then exit 0 (never blocks).
+# ============================================================
+_demote_warn() {
+  local title="$1"
+  local body="$2"
+  printf '%s\n' "$body" >&2
+  if command -v jq >/dev/null 2>&1; then
+    jq -n --arg ctx "[systems-design-gate] WARN (demoted from block, Wave D.6): ${title}
+${body}" \
+      '{hookSpecificOutput:{hookEventName:"PreToolUse", additionalContext:$ctx}}'
+  fi
+  command -v ledger_emit >/dev/null 2>&1 && ledger_emit "systems-design-gate" "warn" "$title"
+  exit 0
+}
 
 # ============================================================
 # Input loading — support both CLAUDE_TOOL_INPUT and stdin
@@ -167,14 +204,12 @@ while [[ "$CURRENT" != "/" && "$CURRENT" != "." && -n "$CURRENT" ]]; do
 done
 
 if [[ -z "$REPO_ROOT" ]] || [[ ! -d "$REPO_ROOT/docs/plans" ]]; then
-  cat >&2 <<MSG
-BLOCKED: systems-design-gate
-
-Target file is a design-mode file:
+  _demote_warn "no docs/plans/ found for design-mode file $FILE_PATH" "\
+[systems-design-gate] Target file is a design-mode file:
   $FILE_PATH
 
 But no docs/plans/ directory was found walking up from this file.
-Design-mode work requires a plan in docs/plans/ with:
+Design-mode work should ideally have a plan in docs/plans/ with:
   Mode: design
   Status: ACTIVE
 
@@ -184,9 +219,7 @@ See ~/.claude/doctrine/design-mode-planning.md for the full protocol.
 
 If this edit is genuinely not system-design work (e.g., one-line typo
 fix in a Dockerfile comment), create a Mode: design-skip plan with a
-one-sentence justification — that records your judgment for audit.
-MSG
-  exit 1
+one-sentence justification — that records your judgment for audit."
 fi
 
 # ============================================================
@@ -242,23 +275,21 @@ if [[ -n "$ACTIVE_SKIP_PLAN" ]]; then
 fi
 
 # ============================================================
-# No valid plan found — block with guidance
+# No valid plan found — WARN with guidance (Wave D.6: no longer blocks)
 # ============================================================
 
-cat >&2 <<MSG
-BLOCKED: systems-design-gate
-
-Target file is a design-mode file:
+_demote_warn "no valid design-mode plan found for $FILE_PATH" "\
+[systems-design-gate] Target file is a design-mode file:
   $FILE_PATH
 
-Design-mode files require a written systems-engineering plan BEFORE
-implementation. See ~/.claude/doctrine/design-mode-planning.md for why.
+Design-mode files should ideally have a written systems-engineering plan
+BEFORE implementation. See ~/.claude/doctrine/design-mode-planning.md for why.
 
 No active plan with \`Mode: design\` (or \`Mode: design-skip\` referencing
 this file) was found under:
   $REPO_ROOT/docs/plans/
 
-To unblock, choose ONE:
+To address, choose ONE:
 
 Option A — Full design-mode plan (recommended for substantive changes):
   1. Copy ~/.claude/templates/plan-template.md to docs/plans/<slug>.md
@@ -275,7 +306,7 @@ Option B — design-skip plan (only for trivial changes):
        <one-sentence specific justification, naming $FILE_BASENAME>
        ## Change
        <one-line description of what you're editing>
-  2. Commit. Retry the edit.
+  2. Commit.
 
 Option B is AUDITED — the skip plan lives in the repo, so the judgment
 call is visible in git history. Don't use it to route around legitimate
@@ -285,5 +316,7 @@ that's already been applied.
 
 If you think this file shouldn't trigger the gate (pattern is too broad),
 update ~/.claude/hooks/systems-design-gate.sh to refine the pattern.
-MSG
-exit 1
+
+Substance review (is the plan's Systems Engineering Analysis actually
+complete/good) stays enforced in plan-reviewer.sh's precommit layer —
+this demotion only affects the shape-check at edit time."

@@ -16,6 +16,21 @@
 
 set -eo pipefail
 
+# NL-FINDING-016 (compound-command gate trap): if this gate blocks (any
+# non-zero, non-self-test exit), print the banner explaining that the ENTIRE
+# Bash call — including any fix/edit/git-add prefix before the git commit —
+# never ran. A trap on EXIT covers every block path in this file uniformly.
+_pcg_finding016_trap() {
+  local rc=$?
+  if [[ "$rc" -ne 0 ]] && [[ "${1:-}" != "--self-test" ]]; then
+    echo "" >&2
+    echo "NOTE: this block prevented the ENTIRE command from running — including any" >&2
+    echo "fix/edit/git add prefix before the git commit. Nothing was executed. Re-run" >&2
+    echo "the non-commit part as its own call first, then commit separately." >&2
+  fi
+}
+trap '_pcg_finding016_trap "$1"' EXIT
+
 # --- Build-script selection (DB-free gate validation) ----------------------
 # A project's pre-commit build can couple code-correctness validation with
 # DB-touching steps (e.g. `prisma migrate`, or build-time data fetching that

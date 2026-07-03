@@ -1,8 +1,24 @@
 #!/bin/bash
 # prd-validity-gate.sh — Phase 1d-C-2 (C1), 2026-05-04
 #
-# PreToolUse hook that blocks plan creation/edit when the plan's `prd-ref:`
-# header field resolves to a missing or incomplete `docs/prd.md`.
+# DEMOTED to non-blocking warn at NL Overhaul Wave D.6 (§D.0.4 / §D.6
+# item 8, 2026-07-02): this is the MECHANICAL shape-check half only
+# (missing PRD file / missing-or-placeholder sections) — the path that
+# used to `exit 1` (block) now exits 0 and instead emits a
+# hookSpecificOutput.additionalContext warn (the sanctioned channel
+# that reaches model context) plus a signal-ledger `warn` event, and
+# recommends invoking `prd-validity-reviewer`. The SUBSTANCE review
+# (is the PRD actually GOOD, not just shape-complete) stays with the
+# prd-validity-reviewer agent, unaffected by this demotion. Detection
+# logic is UNCHANGED — only the verdict emission changed from block to
+# warn. manifest.json's `blocking` flag for this unit flips to false in
+# the same wave (D.5 template/manifest cutover). --self-test scenarios
+# 4-6 (previously asserting block/exit=1) are updated to assert the
+# warn-shape (exit=0 + warn text on stderr).
+#
+# PreToolUse hook that used to block plan creation/edit when the plan's
+# `prd-ref:` header field resolves to a missing or incomplete
+# `docs/prd.md`; now warns instead.
 #
 # Rule (mechanism, Build Doctrine §6 C1): every plan that intends to ship
 # product-user-visible work must reference a Product Requirements Document
@@ -39,10 +55,14 @@
 #   `docs/prd/<slug>.md` per Build Doctrine §6 default. SCRATCHPAD-locked.
 #
 # Exit codes:
-#   0 — allow (plan write proceeds)
-#   1 — block (stderr explains why)
+#   0 — allow (always, post-demotion; a WARN may be emitted via
+#       hookSpecificOutput.additionalContext + a signal-ledger entry)
 #   2 — input parse error (passes through to allow; we don't lock up the
 #       session on hook bugs)
+
+_PVG_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/signal-ledger.sh
+source "$_PVG_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
 
 # ============================================================
 # Helper: normalize a path (forward-slash, repo-relative)
@@ -419,36 +439,39 @@ Some work that lacks a prd-ref.
     FAILED=$((FAILED+1))
   fi
 
-  # ---- Scenario 4: FAIL-prd-file-missing ----
-  # plan has prd-ref: real-feature but no docs/prd.md exists
+  # ---- Scenario 4 (Wave D.6 demotion): prd-file-missing — plan has
+  # prd-ref: real-feature but no docs/prd.md exists -> WARN-shape: exit
+  # 0 + warn text on stderr (was BLOCK exit 1 pre-demotion). ----
   RC=$(_run_scenario s4 "$PLAN_WITH_PRD_REF" "")
-  if [[ "$RC" == "1" ]]; then
-    echo "self-test (4) FAIL-prd-file-missing: PASS (rc=$RC, expected 1; correctly blocked)" >&2
+  if [[ "$RC" == "0" ]] && grep -q "verdict=WARN" "$TMPROOT/s4/stderr.txt" 2>/dev/null; then
+    echo "self-test (4) WARN-prd-file-missing: PASS (rc=$RC, expected 0; demoted to warn)" >&2
     PASSED=$((PASSED+1))
   else
-    echo "self-test (4) FAIL-prd-file-missing: FAIL (rc=$RC, expected 1)" >&2
+    echo "self-test (4) WARN-prd-file-missing: FAIL (rc=$RC, expected 0 + verdict=WARN in stderr)" >&2
     cat "$TMPROOT/s4/stderr.txt" >&2
     FAILED=$((FAILED+1))
   fi
 
-  # ---- Scenario 5: FAIL-prd-section-missing ----
+  # ---- Scenario 5 (Wave D.6 demotion): prd-section-missing -> WARN-shape
+  # (was BLOCK exit 1 pre-demotion). ----
   RC=$(_run_scenario s5 "$PLAN_WITH_PRD_REF" "$PRD_MISSING_FUNCTIONAL")
-  if [[ "$RC" == "1" ]]; then
-    echo "self-test (5) FAIL-prd-section-missing: PASS (rc=$RC, expected 1; correctly blocked)" >&2
+  if [[ "$RC" == "0" ]] && grep -q "verdict=WARN" "$TMPROOT/s5/stderr.txt" 2>/dev/null; then
+    echo "self-test (5) WARN-prd-section-missing: PASS (rc=$RC, expected 0; demoted to warn)" >&2
     PASSED=$((PASSED+1))
   else
-    echo "self-test (5) FAIL-prd-section-missing: FAIL (rc=$RC, expected 1)" >&2
+    echo "self-test (5) WARN-prd-section-missing: FAIL (rc=$RC, expected 0 + verdict=WARN in stderr)" >&2
     cat "$TMPROOT/s5/stderr.txt" >&2
     FAILED=$((FAILED+1))
   fi
 
-  # ---- Scenario 6: FAIL-prd-section-placeholder ----
+  # ---- Scenario 6 (Wave D.6 demotion): prd-section-placeholder ->
+  # WARN-shape (was BLOCK exit 1 pre-demotion). ----
   RC=$(_run_scenario s6 "$PLAN_WITH_PRD_REF" "$PRD_PLACEHOLDER_METRICS")
-  if [[ "$RC" == "1" ]]; then
-    echo "self-test (6) FAIL-prd-section-placeholder: PASS (rc=$RC, expected 1; correctly blocked)" >&2
+  if [[ "$RC" == "0" ]] && grep -q "verdict=WARN" "$TMPROOT/s6/stderr.txt" 2>/dev/null; then
+    echo "self-test (6) WARN-prd-section-placeholder: PASS (rc=$RC, expected 0; demoted to warn)" >&2
     PASSED=$((PASSED+1))
   else
-    echo "self-test (6) FAIL-prd-section-placeholder: FAIL (rc=$RC, expected 1)" >&2
+    echo "self-test (6) WARN-prd-section-placeholder: FAIL (rc=$RC, expected 0 + verdict=WARN in stderr)" >&2
     cat "$TMPROOT/s6/stderr.txt" >&2
     FAILED=$((FAILED+1))
   fi
@@ -537,56 +560,68 @@ PRD_PATH="$REPO_ROOT/docs/prd.md"
 
 # Step 6a: PRD file missing
 if [[ ! -f "$PRD_PATH" ]]; then
-  {
-    echo "================================================================"
-    echo "PRD-VALIDITY GATE — PLAN BLOCKED"
-    echo "================================================================"
-    echo ""
-    echo "Plan declares prd-ref: $PRD_REF"
-    echo "But the PRD file is missing at: $PRD_PATH"
-    echo ""
-    echo "Required: a Product Requirements Document at docs/prd.md with"
-    echo "7 sections: Problem, Scenarios, Functional, Non-functional,"
-    echo "Success metrics, Out-of-scope, Open questions. Each section"
-    echo "must have >= 30 non-whitespace chars of substantive content."
-    echo ""
-    echo "Options:"
-    echo "  1. Create docs/prd.md from the template at"
-    echo "     ~/.claude/templates/prd-template.md"
-    echo "  2. If this plan does not need a PRD (harness-internal work),"
-    echo "     change prd-ref to: n/a — harness-development"
-    echo ""
-    echo "[prd-validity] plan=$FILE_PATH prd-ref=$PRD_REF verdict=FAIL reason=prd-file-missing path=$PRD_PATH"
-    echo "================================================================"
-  } >&2
-  exit 1
+  WARN_BODY="================================================================
+PRD-VALIDITY GATE — plan write allowed, WARN (mechanical PRD check failed)
+================================================================
+
+Plan declares prd-ref: $PRD_REF
+But the PRD file is missing at: $PRD_PATH
+
+Required: a Product Requirements Document at docs/prd.md with
+7 sections: Problem, Scenarios, Functional, Non-functional,
+Success metrics, Out-of-scope, Open questions. Each section
+must have >= 30 non-whitespace chars of substantive content.
+
+Options:
+  1. Create docs/prd.md from the template at
+     ~/.claude/templates/prd-template.md
+  2. If this plan does not need a PRD (harness-internal work),
+     change prd-ref to: n/a — harness-development
+
+[prd-validity] plan=$FILE_PATH prd-ref=$PRD_REF verdict=WARN reason=prd-file-missing path=$PRD_PATH
+================================================================"
+  printf '%s\n' "$WARN_BODY" >&2
+  if command -v jq >/dev/null 2>&1; then
+    jq -n --arg ctx "[prd-validity-gate] WARN (demoted from block, Wave D.6): PRD file missing at $PRD_PATH
+$WARN_BODY" \
+      '{hookSpecificOutput:{hookEventName:"PreToolUse", additionalContext:$ctx}}'
+  fi
+  command -v ledger_emit >/dev/null 2>&1 && ledger_emit "prd-validity-gate" "warn" "prd-file-missing path=$PRD_PATH plan=$FILE_PATH"
+  exit 0
 fi
 
 # Step 6b/7: validate the PRD
 if ! _validate_prd "$PRD_PATH"; then
-  {
-    echo "================================================================"
-    echo "PRD-VALIDITY GATE — PLAN BLOCKED"
-    echo "================================================================"
-    echo ""
-    echo "Plan declares prd-ref: $PRD_REF"
-    echo "PRD file exists at: $PRD_PATH"
-    echo "But the PRD has section problems:"
-    echo ""
-    while IFS= read -r line; do
-      [[ -z "$line" ]] && continue
-      echo "  • $line"
-    done <<< "$_PRD_FAIL_REASONS"
-    echo ""
-    echo "Required: 7 sections (Problem, Scenarios, Functional,"
-    echo "Non-functional, Success metrics, Out-of-scope, Open questions),"
-    echo "each with >= 30 non-whitespace chars of substantive content."
-    echo "See template at ~/.claude/templates/prd-template.md."
-    echo ""
-    echo "[prd-validity] plan=$FILE_PATH prd-ref=$PRD_REF verdict=FAIL reason=prd-sections-incomplete path=$PRD_PATH"
-    echo "================================================================"
-  } >&2
-  exit 1
+  FAIL_REASONS_TEXT=""
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    FAIL_REASONS_TEXT="${FAIL_REASONS_TEXT}  • ${line}
+"
+  done <<< "$_PRD_FAIL_REASONS"
+  WARN_BODY="================================================================
+PRD-VALIDITY GATE — plan write allowed, WARN (mechanical PRD check failed)
+================================================================
+
+Plan declares prd-ref: $PRD_REF
+PRD file exists at: $PRD_PATH
+But the PRD has section problems:
+
+${FAIL_REASONS_TEXT}
+Required: 7 sections (Problem, Scenarios, Functional,
+Non-functional, Success metrics, Out-of-scope, Open questions),
+each with >= 30 non-whitespace chars of substantive content.
+See template at ~/.claude/templates/prd-template.md.
+
+[prd-validity] plan=$FILE_PATH prd-ref=$PRD_REF verdict=WARN reason=prd-sections-incomplete path=$PRD_PATH
+================================================================"
+  printf '%s\n' "$WARN_BODY" >&2
+  if command -v jq >/dev/null 2>&1; then
+    jq -n --arg ctx "[prd-validity-gate] WARN (demoted from block, Wave D.6): PRD sections incomplete at $PRD_PATH
+$WARN_BODY" \
+      '{hookSpecificOutput:{hookEventName:"PreToolUse", additionalContext:$ctx}}'
+  fi
+  command -v ledger_emit >/dev/null 2>&1 && ledger_emit "prd-validity-gate" "warn" "prd-sections-incomplete path=$PRD_PATH plan=$FILE_PATH"
+  exit 0
 fi
 
 # Step 8: PASS — emit structured stderr + recommend substance review

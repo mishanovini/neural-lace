@@ -608,6 +608,43 @@ EOF
   cd "$TMPROOT"
   rm -rf "$R1ROOT"
 
+  # ---- scenario 12 (D.4, §D.0.8): caller-cwd outside any repo — BOTH
+  # resolvers must fail safe TOGETHER, never silently collapse WT_REPO->REPO.
+  # §D.0.8 REFUTED the dual-path split as a bug (it's deliberate: SCRATCHPAD
+  # resolves to the MAIN checkout via find_repo_root/git-common-dir, while
+  # backlog/roadmap/discoveries resolve to the CURRENT worktree via
+  # find_worktree_root/show-toplevel). The one gap this locks: called from a
+  # cwd with NO git ancestry at all, find_repo_root and find_worktree_root
+  # must BOTH fail (non-zero) rather than one succeeding while the other
+  # fails and some caller falls back to treating WT_REPO as REPO (which
+  # would silently point worktree-scoped reads at the wrong root — the one
+  # path that could produce the reported cross-resolver symptom).
+  cd "$TMPROOT"
+  NONGIT_DIR12=$(mktemp -d 2>/dev/null || mktemp -d -t nongit12)
+  cd "$NONGIT_DIR12"
+  if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    echo "self-test (S12) caller-cwd-outside-repo-fails-safe-together: SKIP (mktemp dir is unexpectedly inside a git repo)"
+  else
+    FRR_OUT=""; FRR_EXIT=0
+    FRR_OUT=$(find_repo_root 2>&1) || FRR_EXIT=$?
+    FWR_OUT=""; FWR_EXIT=0
+    FWR_OUT=$(find_worktree_root 2>&1) || FWR_EXIT=$?
+    # Both must fail (non-zero exit, empty stdout) — neither may return a
+    # fabricated path, and critically neither may succeed while the other
+    # fails (that asymmetry is exactly what would let a caller collapse
+    # WT_REPO to a bogus REPO or vice versa).
+    if [ "$FRR_EXIT" -ne 0 ] && [ "$FWR_EXIT" -ne 0 ] \
+       && [ -z "$FRR_OUT" ] && [ -z "$FWR_OUT" ]; then
+      echo "self-test (S12) caller-cwd-outside-repo-fails-safe-together: PASS"
+      PASSED=$((PASSED + 1))
+    else
+      echo "self-test (S12) caller-cwd-outside-repo-fails-safe-together: FAIL (find_repo_root exit=$FRR_EXIT out='$FRR_OUT'; find_worktree_root exit=$FWR_EXIT out='$FWR_OUT' — expected both non-zero/empty)"
+      FAILED=$((FAILED + 1))
+    fi
+  fi
+  cd "$TMPROOT"
+  rm -rf "$NONGIT_DIR12"
+
   echo ""
   echo "self-test summary: $PASSED passed, $FAILED failed (of $((PASSED + FAILED)) scenarios)"
   if [ "$FAILED" -gt 0 ]; then exit 1; fi

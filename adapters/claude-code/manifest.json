@@ -2,25 +2,6 @@
   "schema_version": 1,
   "entries": [
     {
-      "id": "acceptance-scenarios",
-      "kind": "gate",
-      "doctrine_file": "doctrine/acceptance-scenarios.md",
-      "hooks": [
-        "product-acceptance-gate.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "stop"
-    },
-    {
       "id": "agent-teams",
       "kind": "gate",
       "doctrine_file": "doctrine/agent-teams.md",
@@ -68,14 +49,15 @@
       "events": [
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "session-start"
+      "budget_class": "session-start",
+      "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
       "id": "backlog-plan-atomicity",
@@ -154,25 +136,6 @@
       "budget_class": "none"
     },
     {
-      "id": "completion-criteria",
-      "kind": "gate",
-      "doctrine_file": "doctrine/completion-criteria.md",
-      "hooks": [
-        "completion-criteria-gate.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "stop"
-    },
-    {
       "id": "comprehension-gate",
       "kind": "pattern",
       "doctrine_file": "doctrine/comprehension-gate.md",
@@ -237,102 +200,26 @@
       "budget_class": "posttool"
     },
     {
-      "id": "cross-repo-drift-warn",
-      "kind": "surfacer",
-      "doctrine_file": "doctrine/git.md",
-      "hooks": [
-        "cross-repo-drift-warn.sh"
-      ],
-      "events": [
-        "SessionStart"
-      ],
-      "wired_template": true,
-      "selftest": false,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "session-start"
-    },
-    {
-      "id": "customer-facing-review",
-      "kind": "gate",
-      "doctrine_file": "doctrine/customer-facing-review.md",
-      "hooks": [
-        "customer-facing-review-gate.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "stop"
-    },
-    {
-      "id": "dag-review-waiver",
-      "kind": "gate",
-      "doctrine_file": "doctrine/orchestrator-pattern.md",
-      "hooks": [
-        "dag-review-waiver-gate.sh"
-      ],
-      "events": [
-        "PreToolUse"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "pretool"
-    },
-    {
       "id": "decision-context-emitters",
       "kind": "writer",
       "doctrine_file": "doctrine/decision-context.md",
       "hooks": [
         "decision-context-pending-surfacer.sh",
-        "decision-context-replay.sh",
         "decision-context-reply-emit.sh"
       ],
       "events": [
         "SessionStart",
         "UserPromptSubmit"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "session-start"
-    },
-    {
-      "id": "decision-context-gate",
-      "kind": "gate",
-      "doctrine_file": "doctrine/decision-context.md",
-      "hooks": [
-        "decision-context-gate.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "stop"
+      "budget_class": "session-start",
+      "honest_status": "replay retired to attic (fence retirement, D.4/D.5); pending-surfacer dispatched via surfacer-pack; reply-emit wired at UserPromptSubmit."
     },
     {
       "id": "decisions-index",
@@ -372,8 +259,9 @@
         ],
         "keywords": []
       },
-      "blocking": true,
-      "budget_class": "pretool"
+      "blocking": false,
+      "budget_class": "pretool",
+      "honest_status": "Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4."
     },
     {
       "id": "deploy-automation-mode",
@@ -414,8 +302,9 @@
         ],
         "keywords": []
       },
-      "blocking": true,
-      "budget_class": "pretool"
+      "blocking": false,
+      "budget_class": "pretool",
+      "honest_status": "Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4."
     },
     {
       "id": "diagnosis",
@@ -442,14 +331,15 @@
       "events": [
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "session-start"
+      "budget_class": "session-start",
+      "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
       "id": "discovery-protocol",
@@ -461,7 +351,7 @@
       "events": [
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [
@@ -470,7 +360,8 @@
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "session-start"
+      "budget_class": "session-start",
+      "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
       "id": "doc-gate",
@@ -540,14 +431,15 @@
       "events": [
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "session-start"
+      "budget_class": "session-start",
+      "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
       "id": "env-local-protection",
@@ -578,14 +470,15 @@
       "events": [
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "session-start"
+      "budget_class": "session-start",
+      "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
       "id": "findings-ledger",
@@ -686,14 +579,15 @@
       "events": [
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "session-start"
+      "budget_class": "session-start",
+      "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
       "id": "harness-doctor",
@@ -703,9 +597,10 @@
         "harness-doctor.sh"
       ],
       "events": [
+        "SessionStart",
         "manual"
       ],
-      "wired_template": false,
+      "wired_template": true,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
@@ -713,7 +608,7 @@
       },
       "blocking": false,
       "honest_status": "diagnostic tool — invoked on demand (harness-doctor.sh --quick); chain wiring is a post-Wave-D decision",
-      "budget_class": "none"
+      "budget_class": "session-start"
     },
     {
       "id": "harness-hygiene-scan",
@@ -737,25 +632,6 @@
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain and manual --full-tree runs; not directly wired in settings.json.template",
       "budget_class": "none"
-    },
-    {
-      "id": "harness-sync-check",
-      "kind": "gate",
-      "doctrine_file": "doctrine/harness-dev.md",
-      "hooks": [
-        "check-harness-sync.sh"
-      ],
-      "events": [
-        "PreToolUse"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "pretool"
     },
     {
       "id": "interactive-process-fidelity",
@@ -827,49 +703,6 @@
       "budget_class": "none"
     },
     {
-      "id": "narrate-and-wait",
-      "kind": "gate",
-      "doctrine_file": "doctrine/session-end-protocol.md",
-      "hooks": [
-        "narrate-and-wait-gate.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": true,
-      "selftest": false,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "stop"
-    },
-    {
-      "id": "narrative-integrity",
-      "kind": "gate",
-      "doctrine_file": "doctrine/claims.md",
-      "hooks": [
-        "deferral-counter.sh",
-        "goal-coverage-on-stop.sh",
-        "goal-extraction-on-prompt.sh",
-        "imperative-evidence-linker.sh",
-        "transcript-lie-detector.sh"
-      ],
-      "events": [
-        "Stop",
-        "UserPromptSubmit"
-      ],
-      "wired_template": true,
-      "selftest": false,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "stop"
-    },
-    {
       "id": "no-test-skip",
       "kind": "gate",
       "doctrine_file": "doctrine/testing.md",
@@ -904,8 +737,9 @@
         "paths": [],
         "keywords": []
       },
-      "blocking": true,
-      "budget_class": "pretool"
+      "blocking": false,
+      "budget_class": "pretool",
+      "honest_status": "Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4."
     },
     {
       "id": "outcome-evidence",
@@ -923,8 +757,9 @@
         "paths": [],
         "keywords": []
       },
-      "blocking": true,
-      "budget_class": "pretool"
+      "blocking": false,
+      "budget_class": "pretool",
+      "honest_status": "Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4."
     },
     {
       "id": "parallel-dev-migration-naming",
@@ -998,14 +833,15 @@
         "PostToolUse",
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "posttool"
+      "budget_class": "posttool",
+      "honest_status": "plan-status-archival-sweep.sh dispatched via session-start-surfacer-pack.sh since D.5; plan-auto-closure.sh/plan-lifecycle.sh fire on PostToolUse as before."
     },
     {
       "id": "plan-reviewer",
@@ -1029,25 +865,6 @@
       "budget_class": "none"
     },
     {
-      "id": "pr-health-snapshot",
-      "kind": "gate",
-      "doctrine_file": "doctrine/pr-health-snapshot.md",
-      "hooks": [
-        "pr-health-snapshot-gate.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "stop"
-    },
-    {
       "id": "pr-template-inline",
       "kind": "gate",
       "doctrine_file": "doctrine/planning.md",
@@ -1063,8 +880,9 @@
         "paths": [],
         "keywords": []
       },
-      "blocking": true,
-      "budget_class": "pretool"
+      "blocking": false,
+      "budget_class": "pretool",
+      "honest_status": "Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4."
     },
     {
       "id": "prd-validity",
@@ -1084,8 +902,9 @@
         ],
         "keywords": []
       },
-      "blocking": true,
-      "budget_class": "pretool"
+      "blocking": false,
+      "budget_class": "pretool",
+      "honest_status": "Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4."
     },
     {
       "id": "pre-commit-chain",
@@ -1147,44 +966,6 @@
       "budget_class": "none"
     },
     {
-      "id": "pre-stop-verifier",
-      "kind": "gate",
-      "doctrine_file": "doctrine/planning.md",
-      "hooks": [
-        "pre-stop-verifier.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "stop"
-    },
-    {
-      "id": "principles-compliance",
-      "kind": "gate",
-      "doctrine_file": "doctrine/principles-full.md",
-      "hooks": [
-        "principles-compliance-gate.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "stop"
-    },
-    {
       "id": "propagation-engine",
       "kind": "writer",
       "doctrine_file": null,
@@ -1205,25 +986,6 @@
       "budget_class": "none"
     },
     {
-      "id": "register-progress",
-      "kind": "gate",
-      "doctrine_file": "doctrine/session-end-protocol.md",
-      "hooks": [
-        "register-progress-gate.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "stop"
-    },
-    {
       "id": "register-surfacer",
       "kind": "surfacer",
       "doctrine_file": "doctrine/session-end-protocol.md",
@@ -1233,14 +995,15 @@
       "events": [
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "session-start"
+      "budget_class": "session-start",
+      "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
       "id": "review-finding-fix",
@@ -1319,50 +1082,11 @@
       "budget_class": "none"
     },
     {
-      "id": "session-end-marker",
-      "kind": "gate",
-      "doctrine_file": "doctrine/session-end-protocol.md",
-      "hooks": [
-        "continuation-enforcer.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": false,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "honest_status": "pending Wave D (D.3 session-honesty-gate) — hook exists with green self-tests but is not wired into the live Stop chain",
-      "budget_class": "stop"
-    },
-    {
       "id": "session-start-auto-install",
       "kind": "writer",
       "doctrine_file": "doctrine/harness-dev.md",
       "hooks": [
         "session-start-auto-install.sh"
-      ],
-      "events": [
-        "SessionStart"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "session-start"
-    },
-    {
-      "id": "settings-divergence",
-      "kind": "surfacer",
-      "doctrine_file": "doctrine/harness-dev.md",
-      "hooks": [
-        "settings-divergence-detector.sh"
       ],
       "events": [
         "SessionStart"
@@ -1386,14 +1110,15 @@
       "events": [
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "session-start"
+      "budget_class": "session-start",
+      "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
       "id": "spec-freeze",
@@ -1425,14 +1150,15 @@
       "events": [
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "session-start"
+      "budget_class": "session-start",
+      "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
       "id": "task-verifier-reminder",
@@ -1496,25 +1222,6 @@
       "budget_class": "none"
     },
     {
-      "id": "tool-call-budget",
-      "kind": "gate",
-      "doctrine_file": "doctrine/orchestrator-pattern.md",
-      "hooks": [
-        "tool-call-budget.sh"
-      ],
-      "events": [
-        "PreToolUse"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "pretool"
-    },
-    {
       "id": "vaporware-volume",
       "kind": "gate",
       "doctrine_file": "doctrine/vaporware-prevention.md",
@@ -1531,7 +1238,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "honest_status": "Member of the commit-boundary blocking unit (specs-d §D.0.4 as amended at D.5); CI relocation follows in E.4 companion."
     },
     {
       "id": "wire-check",
@@ -1600,14 +1308,15 @@
         "SessionStart",
         "UserPromptSubmit"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "none"
+      "budget_class": "none",
+      "honest_status": "workstreams-emit.sh wired directly (SessionStart + spawn PreToolUse); Stop-side members dispatched via workstreams-stop-writer.sh since D.5."
     },
     {
       "id": "workstreams-spawn-gate",
@@ -1640,14 +1349,15 @@
       "events": [
         "Stop"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
-      "blocking": true,
-      "budget_class": "stop"
+      "blocking": false,
+      "budget_class": "stop",
+      "honest_status": "Dispatched via workstreams-stop-writer.sh since D.5; block demoted to ledger warn (specs-d §D.0.2 #4)."
     },
     {
       "id": "workstreams-task-binding",
@@ -1657,18 +1367,18 @@
         "workstreams-task-binding.sh"
       ],
       "events": [
-        "PreToolUse",
         "Stop",
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
-      "blocking": true,
-      "budget_class": "stop"
+      "blocking": false,
+      "budget_class": "stop",
+      "honest_status": "Stop block retired per specs-d §D.0.5 (collision with task-completed-evidence); WS_TASK_STOP_MODE defaults to warn (D.6); dispatched via surfacer-pack (SessionStart) and stop-writer (Stop)."
     },
     {
       "id": "workstreams-turn-emit",
@@ -1700,21 +1410,22 @@
       "events": [
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "budget_class": "session-start"
+      "budget_class": "session-start",
+      "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
-      "id": "worktree-teardown",
+      "id": "work-integrity",
       "kind": "gate",
-      "doctrine_file": "doctrine/worktree-isolation.md",
+      "doctrine_file": "doctrine/planning.md",
       "hooks": [
-        "worktree-teardown-gate.sh"
+        "work-integrity-gate.sh"
       ],
       "events": [
         "Stop"
@@ -1727,6 +1438,124 @@
       },
       "blocking": true,
       "budget_class": "stop"
+    },
+    {
+      "id": "session-honesty",
+      "kind": "gate",
+      "doctrine_file": "doctrine/session-end-protocol.md",
+      "hooks": [
+        "session-honesty-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "workstreams-stop-writer",
+      "kind": "writer",
+      "doctrine_file": "doctrine/workstreams-state.md",
+      "hooks": [
+        "workstreams-stop-writer.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "stop"
+    },
+    {
+      "id": "signal-ledger-flush",
+      "kind": "writer",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "signal-ledger-flush.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "stop"
+    },
+    {
+      "id": "session-start-surfacer-pack",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "session-start-surfacer-pack.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start",
+      "honest_status": "TRANSITIONAL consolidation (specs-d §D.0.3 entry 8) — E.1 digest replaces it."
+    },
+    {
+      "id": "wave-d-retired-shims",
+      "kind": "writer",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "narrate-and-wait-gate.sh",
+        "deferral-counter.sh",
+        "transcript-lie-detector.sh",
+        "imperative-evidence-linker.sh",
+        "goal-coverage-on-stop.sh",
+        "goal-extraction-on-prompt.sh",
+        "decision-context-gate.sh",
+        "principles-compliance-gate.sh",
+        "pr-health-snapshot-gate.sh",
+        "customer-facing-review-gate.sh",
+        "completion-criteria-gate.sh",
+        "register-progress-gate.sh",
+        "pre-stop-verifier.sh",
+        "product-acceptance-gate.sh",
+        "worktree-teardown-gate.sh",
+        "continuation-enforcer.sh",
+        "tool-call-budget.sh",
+        "dag-review-waiver-gate.sh",
+        "check-harness-sync.sh",
+        "settings-divergence-detector.sh",
+        "cross-repo-drift-warn.sh",
+        "decision-context-replay.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "Exit-0 shims at retired live paths for one release (live-session safety, ADR 058 D5 pin c); originals in attic/. Hard-delete next release."
     }
   ]
 }

@@ -118,6 +118,51 @@ nl_workstreams_ui() {
   printf '%s/neural-lace/workstreams-ui' "$root"
 }
 
+# nl_main_checkout_root — print the MAIN checkout's toplevel (the parent repo
+# a linked worktree was created FROM), or empty if unresolvable. Wave-D task
+# D.4 (§D.0.8): several hooks/scripts hand-duplicated this exact git-common-dir
+# derivation (session-wrap.sh's find_repo_root() being the original — see that
+# function's comment for the ADR 028 rationale: SCRATCHPAD.md and other
+# session-lifetime state live in the MAIN checkout, not the short-lived
+# worktree, because worktrees are build isolation, not branch-lifetime
+# contexts). This is the canonical, shared version of that technique so future
+# hooks stop re-deriving it. §D.0.8 is explicit that session-wrap.sh's OWN
+# behavior does not change here (it may adopt this helper or keep its local
+# copy — both resolve identically); this function exists so NEW callers have
+# one place to source it from instead of re-copying the git-dir-vs-
+# git-common-dir comparison.
+#
+# Technique (identical to session-wrap.sh find_repo_root()):
+#   1. `git rev-parse --show-toplevel` — if this fails, we are not in a git
+#      repo at all; print empty (never error the sourcing shell).
+#   2. `git rev-parse --git-dir` and `--git-common-dir`, both resolved to
+#      absolute paths. If either call fails, fall back to the toplevel from
+#      step 1 (best-effort; do not fail safe-into-emptiness on a partial
+#      git failure when we already have a usable toplevel).
+#   3. If git-dir != git-common-dir, we are in a LINKED WORKTREE: the main
+#      checkout's root is `dirname "$git_common_dir"` (the common .git dir
+#      lives directly under the main checkout).
+#   4. Otherwise (git-dir == git-common-dir): we ARE the main checkout;
+#      print the toplevel from step 1.
+nl_main_checkout_root() {
+  local toplevel
+  toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || { printf ''; return 0; }
+
+  local git_dir git_common_dir
+  git_dir=$(git rev-parse --git-dir 2>/dev/null) || { printf '%s' "$toplevel"; return 0; }
+  git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || { printf '%s' "$toplevel"; return 0; }
+
+  git_dir=$(cd "$git_dir" 2>/dev/null && pwd) || { printf '%s' "$toplevel"; return 0; }
+  git_common_dir=$(cd "$git_common_dir" 2>/dev/null && pwd) || { printf '%s' "$toplevel"; return 0; }
+
+  if [[ "$git_dir" != "$git_common_dir" ]]; then
+    # Linked worktree: main checkout's toplevel is dirname of the common .git dir.
+    dirname "$git_common_dir"
+  else
+    printf '%s' "$toplevel"
+  fi
+}
+
 # ============================================================
 # --self-test (only runs when this file is EXECUTED directly, not sourced)
 # ============================================================
@@ -125,6 +170,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   _nlp_tmp=$(mktemp -d 2>/dev/null || echo "/tmp/nlp-$$")
   mkdir -p "$_nlp_tmp"
   _nlp_fail=0
+  # Absolute self-path (T6/T7 `cd` into a synthetic repo BEFORE sourcing;
+  # BASH_SOURCE[0] there would otherwise still be the relative invocation
+  # path, which resolves against the WRONG cwd post-cd).
+  _nlp_self_abs="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
   _nlp_ck() {
     if [[ "$2" == "$3" ]]; then echo "  ok   $1"; else echo "  FAIL $1 (expected '$3', got '$2')"; _nlp_fail=$((_nlp_fail+1)); fi
   }
@@ -168,6 +217,51 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # function does not error (exit 0) and prints SOMETHING-or-empty, never
   # crashes the sourcing shell.
   echo "  ok   T5 no crash on unresolved root (result: '${_nlp_result5:-<empty>}')"
+
+  # T6: nl_main_checkout_root() (D.4, §D.0.8) — non-worktree repo returns its
+  # own toplevel (git-dir == git-common-dir case).
+  _nlp_repo6="$_nlp_tmp/repo6"
+  mkdir -p "$_nlp_repo6"
+  ( cd "$_nlp_repo6" && git init -q . && git config user.email "t@example.test" \
+    && git config user.name "T" && echo x > f && git add f && git commit -q -m init ) >/dev/null 2>&1
+  # Oracle: `git rev-parse --show-toplevel` — the non-worktree branch of
+  # nl_main_checkout_root() prints this value verbatim (see the function:
+  # git_dir==git_common_dir -> `printf '%s' "$toplevel"`, unmodified by the
+  # later cd+pwd normalization). NOT a pwd-based oracle: on Windows/Git-Bash
+  # `git rev-parse --show-toplevel` (C:/Users/... form) and `pwd`
+  # (MSYS-style /tmp/... form) disagree on the SAME directory's spelling, so
+  # the oracle must match whichever form the code path under test actually
+  # emits, not just "a" correct-looking path.
+  _nlp_repo6_abs=$(cd "$_nlp_repo6" && git rev-parse --show-toplevel)
+  _nlp_ck "T6 nl_main_checkout_root non-worktree returns own toplevel" \
+    "$(cd "$_nlp_repo6" && bash -c "source '${_nlp_self_abs}'; nl_main_checkout_root")" \
+    "$_nlp_repo6_abs"
+
+  # T7: nl_main_checkout_root() from a LINKED WORKTREE returns the main
+  # checkout's toplevel, not the worktree path (the collision this helper
+  # exists to prevent hooks from re-deriving incorrectly). Different oracle
+  # form than T6: the worktree branch of the function computes
+  # `dirname "$git_common_dir"` where git_common_dir was ALREADY normalized
+  # via cd+pwd (see the function body) — so the oracle here must be the
+  # pwd-normalized dirname of the common .git dir, not show-toplevel's form.
+  _nlp_wt7="$_nlp_tmp/wt7"
+  if ( cd "$_nlp_repo6" && git worktree add -q -b nlp-selftest-wt7 "$_nlp_wt7" ) >/dev/null 2>&1; then
+    _nlp_expected7=$(cd "$_nlp_wt7" && dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd)")
+    _nlp_result7=$(cd "$_nlp_wt7" && bash -c "source '${_nlp_self_abs}'; nl_main_checkout_root")
+    _nlp_ck "T7 nl_main_checkout_root from linked worktree returns MAIN checkout" \
+      "$_nlp_result7" \
+      "$_nlp_expected7"
+    ( cd "$_nlp_repo6" && git worktree remove --force "$_nlp_wt7" >/dev/null 2>&1 || true )
+    ( cd "$_nlp_repo6" && git branch -D nlp-selftest-wt7 >/dev/null 2>&1 || true )
+  else
+    echo "  ok   T7 nl_main_checkout_root from linked worktree: SKIP (git worktree add failed in test env)"
+  fi
+
+  # T8: nl_main_checkout_root() outside any git repo returns empty (never
+  # errors, never fabricates a path). Companion to nl_repo_root's T5.
+  mkdir -p "$_nlp_tmp/nogit8"
+  _nlp_result8=$(cd "$_nlp_tmp/nogit8" && bash -c "source '${_nlp_self_abs}'; nl_main_checkout_root" 2>/dev/null)
+  _nlp_ck "T8 nl_main_checkout_root outside any repo returns empty" "$_nlp_result8" ""
 
   rm -rf "$_nlp_tmp" 2>/dev/null || true
   echo ""

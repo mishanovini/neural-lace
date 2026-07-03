@@ -94,15 +94,6 @@
         ]
       },
       {
-        "matcher": "Edit|Write|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/tool-call-budget.sh"
-          }
-        ]
-      },
-      {
         "matcher": "Bash",
         "hooks": [
           {
@@ -154,16 +145,6 @@
             "type": "command",
             "command": "bash ~/.claude/hooks/automation-mode-gate.sh",
             "statusMessage": "Checking automation mode for deploy commands..."
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "CMD=$(jq -r '.tool_input.command // \"\"'); if echo \"$CMD\" | grep -qE '(^|[[:space:];&|])git[[:space:]]+commit([[:space:]]|$)' && ! echo \"$CMD\" | grep -qE 'git[[:space:]]+commit-tree'; then bash ~/.claude/hooks/check-harness-sync.sh || exit 1; bash ~/.claude/hooks/pre-commit-gate.sh || exit 1; fi",
-            "statusMessage": "Running pre-commit gate (harness sync + tests + build)..."
           }
         ]
       },
@@ -313,20 +294,11 @@
         ]
       },
       {
-        "matcher": "Task",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/dag-review-waiver-gate.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "SendUserMessage",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/workstreams-task-binding.sh --on-message"
+            "command": "CMD=$(jq -r '.tool_input.command // \"\"'); if echo \"$CMD\" | grep -qE '(^|[[:space:];&|])git[[:space:]]+commit([[:space:]]|$)' && ! echo \"$CMD\" | grep -qE 'git[[:space:]]+commit-tree'; then bash ~/.claude/hooks/pre-commit-gate.sh || exit 1; fi"
           }
         ]
       }
@@ -428,10 +400,6 @@
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/goal-extraction-on-prompt.sh"
-          },
-          {
-            "type": "command",
             "command": "bash ~/.claude/hooks/decision-context-reply-emit.sh"
           },
           {
@@ -458,7 +426,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/pre-stop-verifier.sh"
+            "command": "bash ~/.claude/hooks/work-integrity-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/session-honesty-gate.sh"
           },
           {
             "type": "command",
@@ -466,79 +438,11 @@
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/narrate-and-wait-gate.sh"
+            "command": "bash ~/.claude/hooks/workstreams-stop-writer.sh"
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/product-acceptance-gate.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/worktree-teardown-gate.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/workstreams-stop-gate.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/workstreams-emit.sh --on-stop"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/workstreams-task-binding.sh --on-stop"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/workstreams-extract-pending.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/workstreams-emit-reconciler.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/workstreams-orchestrator-queue.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/deferral-counter.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/transcript-lie-detector.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/imperative-evidence-linker.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/goal-coverage-on-stop.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/decision-context-gate.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/principles-compliance-gate.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/pr-health-snapshot-gate.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/customer-facing-review-gate.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/completion-criteria-gate.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/register-progress-gate.sh"
+            "command": "bash ~/.claude/hooks/signal-ledger-flush.sh"
           },
           {
             "type": "command",
@@ -562,90 +466,23 @@
         "hooks": [
           {
             "type": "command",
-            "command": "AMF=\"$HOME/.claude/local/automation-mode.json\"; if [ ! -f \"$AMF\" ]; then echo 'Neural Lace — choose an automation mode (reply in chat):'; echo '  (1) review-before-deploy  [safer default — pauses before git push, merges, deploys]'; echo '  (2) full-auto             [runs through multi-step plans without pausing]'; echo 'Change anytime with: /automation-mode <review|full-auto>'; echo 'Per-project override: create <project>/.claude/automation-mode.json'; mkdir -p \"$HOME/.claude/local\"; EXAMPLE_SEED=\"\"; for CAND in \"$HOME/.claude/examples/automation-mode.example.json\" \"$HOME/claude-projects/neural-lace/adapters/claude-code/examples/automation-mode.example.json\"; do if [ -f \"$CAND\" ]; then EXAMPLE_SEED=\"$CAND\"; break; fi; done; if [ -n \"$EXAMPLE_SEED\" ]; then cp \"$EXAMPLE_SEED\" \"$AMF\"; else printf '%s\\n' '{' '  \"version\": 1,' '  \"mode\": \"review-before-deploy\",' '  \"deploy_matchers\": [' '    \"git push\",' '    \"gh pr merge\",' '    \"gh repo create\",' '    \"supabase db push\",' '    \"vercel deploy\",' '    \"npm publish\"' '  ]' '}' > \"$AMF\"; fi; fi",
-            "statusMessage": "Checking automation mode (first run)..."
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/session-start-auto-install.sh",
-            "statusMessage": "Auto-installing canonical harness updates into ~/.claude/..."
+            "command": "bash ~/.claude/hooks/session-start-auto-install.sh"
           },
           {
             "type": "command",
-            "command": "if match=$(bash ~/.claude/scripts/read-local-config.sh match-dir \"$PWD\" 2>/dev/null) && [ -n \"$match\" ]; then TYPE=$(echo \"$match\" | awk '{print $1}'); GH_USER=$(echo \"$match\" | awk '{print $2}'); gh auth switch --user \"$GH_USER\" 2>/dev/null; echo \"GitHub account: $GH_USER ($TYPE)\"; SB_TOKEN_FILE=\"$HOME/.supabase/tokens/$TYPE\"; if [ -f \"$SB_TOKEN_FILE\" ]; then supabase login --token \"$(cat \"$SB_TOKEN_FILE\")\" 2>/dev/null; echo \"Supabase account: $(basename \"$SB_TOKEN_FILE\")\"; else echo \"Supabase: no token found at $SB_TOKEN_FILE\"; fi; else echo 'Account switcher: no match for $PWD in ~/.claude/local/accounts.config.json (or config missing — see ~/.claude/local/accounts.config.example.json)'; fi",
-            "statusMessage": "Switching GitHub + Supabase accounts..."
+            "command": "bash ~/.claude/hooks/harness-doctor.sh --quick"
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/gh-account-blindness-hint.sh --session-start",
-            "statusMessage": "Broadcasting gh account map (404 means switch, not missing)..."
+            "command": "AMF=\"$HOME/.claude/local/automation-mode.json\"; if [ ! -f \"$AMF\" ]; then echo 'Neural Lace — choose an automation mode (reply in chat):'; echo '  (1) review-before-deploy  [safer default — pauses before git push, merges, deploys]'; echo '  (2) full-auto             [runs through multi-step plans without pausing]'; echo 'Change anytime with: /automation-mode <review|full-auto>'; echo 'Per-project override: create <project>/.claude/automation-mode.json'; mkdir -p \"$HOME/.claude/local\"; EXAMPLE_SEED=\"\"; for CAND in \"$HOME/.claude/examples/automation-mode.example.json\" \"$HOME/claude-projects/neural-lace/adapters/claude-code/examples/automation-mode.example.json\"; do if [ -f \"$CAND\" ]; then EXAMPLE_SEED=\"$CAND\"; break; fi; done; if [ -n \"$EXAMPLE_SEED\" ]; then cp \"$EXAMPLE_SEED\" \"$AMF\"; else printf '%s\\n' '{' '  \"version\": 1,' '  \"mode\": \"review-before-deploy\",' '  \"deploy_matchers\": [' '    \"git push\",' '    \"gh pr merge\",' '    \"gh repo create\",' '    \"supabase db push\",' '    \"vercel deploy\",' '    \"npm publish\"' '  ]' '}' > \"$AMF\"; fi; fi; if match=$(bash ~/.claude/scripts/read-local-config.sh match-dir \"$PWD\" 2>/dev/null) && [ -n \"$match\" ]; then TYPE=$(echo \"$match\" | awk '{print $1}'); GH_USER=$(echo \"$match\" | awk '{print $2}'); gh auth switch --user \"$GH_USER\" 2>/dev/null; echo \"GitHub account: $GH_USER ($TYPE)\"; SB_TOKEN_FILE=\"$HOME/.supabase/tokens/$TYPE\"; if [ -f \"$SB_TOKEN_FILE\" ]; then supabase login --token \"$(cat \"$SB_TOKEN_FILE\")\" 2>/dev/null; echo \"Supabase account: $(basename \"$SB_TOKEN_FILE\")\"; else echo \"Supabase: no token found at $SB_TOKEN_FILE\"; fi; else echo 'Account switcher: no match for $PWD in ~/.claude/local/accounts.config.json (or config missing — see ~/.claude/local/accounts.config.example.json)'; fi"
           },
           {
             "type": "command",
-            "command": "if [ -f pipeline/evidence.md ] || [ -f orchestrate.sh ]; then echo 'Pipeline: active. Use Option B (build → evidence → gates → verifier → commit) for all changes.'; elif [ -f ~/.claude/pipeline-templates/orchestrate.sh ]; then echo 'Pipeline: available but not set up for this project. Run /setup-pipeline to initialize.'; fi",
-            "statusMessage": "Checking pipeline status..."
+            "command": "bash ~/.claude/hooks/gh-account-blindness-hint.sh --session-start"
           },
           {
             "type": "command",
-            "command": "bash $HOME/.claude/hooks/effort-policy-warn.sh",
-            "statusMessage": "Checking effort-level policy..."
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/session-start-discovery-cheatsheet.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/discovery-surfacer.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/register-surfacer.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/stalled-work-surfacer.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/decision-context-replay.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/decision-context-pending-surfacer.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/spawned-task-result-surfacer.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/external-monitor-alert-surfacer.sh",
-            "statusMessage": "Checking for external-monitor / daily-eval alerts..."
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/cross-repo-drift-warn.sh",
-            "statusMessage": "Checking cross-repo NL drift..."
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/session-start-git-freshness.sh",
-            "statusMessage": "Checking git freshness (fetch + behind + working-tree state)..."
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/session-start-worktree-advisor.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/scripts/broadcast-active-session.sh write 2>/dev/null; bash ~/.claude/scripts/broadcast-active-session.sh check",
-            "statusMessage": "Broadcasting active-session + checking other computers..."
+            "command": "bash ~/.claude/scripts/broadcast-active-session.sh write 2>/dev/null; bash ~/.claude/scripts/broadcast-active-session.sh check"
           },
           {
             "type": "command",
@@ -653,22 +490,7 @@
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/workstreams-task-binding.sh --on-session-start"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/plan-status-archival-sweep.sh",
-            "statusMessage": "Sweeping terminal-status plans into archive..."
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/stale-active-plan-surfacer.sh",
-            "statusMessage": "Checking for stale ACTIVE plans..."
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/settings-divergence-detector.sh",
-            "statusMessage": "Checking template-vs-live settings divergence..."
+            "command": "bash ~/.claude/hooks/session-start-surfacer-pack.sh"
           }
         ]
       }
