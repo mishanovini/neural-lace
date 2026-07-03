@@ -258,7 +258,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
 
   # Resolve validator library (used by all self-test cases).
   # In the worktree where this script lives, .github/ is at the repo root.
+  # When invoked from the LIVE mirror (~/.claude/hooks — doctor --full does this),
+  # the relative hop resolves to $HOME's parent; fall back to nl-paths' repo root.
   REPO_ROOT="$(cd "$(dirname "$SCRIPT")/../../.." && pwd)"
+  if [[ ! -f "$REPO_ROOT/.github/scripts/validate-pr-template.sh" ]] && [[ -f "$(dirname "$SCRIPT")/lib/nl-paths.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "$(dirname "$SCRIPT")/lib/nl-paths.sh"
+    REPO_ROOT="$(nl_repo_root)"
+  fi
   VALIDATOR_LIB="$REPO_ROOT/.github/scripts/validate-pr-template.sh"
   if [[ ! -f "$VALIDATOR_LIB" ]]; then
     echo "self-test: validator library missing at $VALIDATOR_LIB" >&2

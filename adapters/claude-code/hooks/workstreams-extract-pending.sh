@@ -343,7 +343,9 @@ _self_test() {
   export CONV_TREE_STATE_LIB="$LIB"
   export CONV_TREE_LEDGER_DIR="$tmp/ledger"; mkdir -p "$CONV_TREE_LEDGER_DIR"
   local SELF; SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-  local EMIT; EMIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/conversation-tree-emit.sh"
+  # 2026-06-01 rename: sibling is workstreams-emit.sh (dead conversation-tree name
+  # kept this self-test red since then — first surfaced by doctor --full, 2026-07-03)
+  local EMIT; EMIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workstreams-emit.sh"
   if [[ ! -f "$EMIT" ]]; then echo "self-test: sibling emit hook not found ($EMIT)"; echo "self-test: FAIL"; exit 1; fi
 
   _ck() { if [[ "$2" == "$3" ]]; then echo "PASS: $1"; pass=$((pass+1)); else echo "FAIL: $1 (got '$2' want '$3')"; fi; [[ "$2" == "$3" ]] || fail=$((fail+1)); }

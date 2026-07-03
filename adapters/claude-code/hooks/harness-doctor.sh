@@ -515,7 +515,9 @@ check_selftest_sweep() {
     [[ -f "$hook" ]] || continue
     grep -q -- '--self-test' "$hook" 2>/dev/null || continue
     local out rc
-    out="$(HARNESS_SELFTEST=1 timeout 120 bash "$hook" --self-test </dev/null 2>&1)"
+    # 120s killed passing-but-slow suites on Windows (git-heavy scenarios measured
+    # 4-8 min; NL-FINDING-018-era doctor --full run). Default 600, env-overridable.
+    out="$(HARNESS_SELFTEST=1 timeout "${DOCTOR_SELFTEST_TIMEOUT:-600}" bash "$hook" --self-test </dev/null 2>&1)"
     rc=$?
     if [[ "$rc" -ne 0 ]]; then
       local last_line
