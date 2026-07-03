@@ -356,26 +356,56 @@ fi
 # external-monitor-alert-surfacer.sh hook). Misha 2026-05-28: R3 stays warn-only
 # because "is one option clearly principled" is heuristic, but the warning needs
 # in-band surface (not just stderr the agent never reads).
+#
+# NL-FINDING-021 fix (2026-07-03): external-monitor-alert-surfacer.sh renders
+# every alert through a health-probe template — "${anomaly}/${total_routes}
+# routes anomalous (${healthy} healthy)" — but this writer never populated
+# those fields, so every emitted alert rendered as the malformed
+# "/ routes anomalous ( healthy)" (empty anomaly string, empty/blank health).
+# 32 such duplicates accumulated unacked. Fix at the emission site (per
+# specs-e §E.1): populate anomaly_count/healthy_count/total_routes so the
+# surfacer's template has real data, AND guard the write so an alert is
+# NEVER emitted when the anomaly count would be empty/zero or the implied
+# health would read "healthy" — an R3 detection is by definition an
+# anomaly (detection_count>=1 here, already guarded by `$R3 -gt 0` above),
+# so anomaly_count is always >=1 and health is always "anomalous" on this
+# path; the explicit guard below is defense-in-depth against any future
+# caller of this block that might zero R3 between the outer check and here.
 if [[ "$R3" -gt 0 ]] && [[ "$MODE" = "block" ]]; then
   ALERT_DIR="${PRINCIPLES_GATE_ALERT_DIR:-$HOME/.claude/state/external-monitor-alerts}"
-  mkdir -p "$ALERT_DIR" 2>/dev/null || true
-  TS_ALERT=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo "unknown")
-  TS_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
-  SID_ALERT="${RG_SESSION_ID:-${CLAUDE_SESSION_ID:-unknown}}"
-  SNIPPET_ALERT=$(printf '%s' "$LAST_ASSISTANT" | tr '\n' ' ' | head -c 240 | sed 's/"/\\"/g')
-  ALERT_FILE="$ALERT_DIR/principles-gate-r3-${TS_ALERT}-${SID_ALERT}.json"
-  cat > "$ALERT_FILE" 2>/dev/null <<JSON
+  ALERT_ANOMALY_COUNT="$R3"
+  ALERT_HEALTHY_COUNT=0
+  ALERT_TOTAL_ROUTES=1
+  ALERT_HEALTH="anomalous"
+  # Guard: never write an alert whose anomaly count is empty/zero or whose
+  # health reads "healthy" — that combination is the NL-FINDING-021 defect
+  # class (a non-anomaly alerting as if it were one).
+  if [[ -z "$ALERT_ANOMALY_COUNT" || "$ALERT_ANOMALY_COUNT" -eq 0 || "$ALERT_HEALTH" == "healthy" ]]; then
+    echo "[principles-gate] R3 alert-write SKIPPED: anomaly_count empty/zero or health=healthy (NL-FINDING-021 guard)" >&2
+  else
+    mkdir -p "$ALERT_DIR" 2>/dev/null || true
+    TS_ALERT=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo "unknown")
+    TS_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
+    SID_ALERT="${RG_SESSION_ID:-${CLAUDE_SESSION_ID:-unknown}}"
+    SNIPPET_ALERT=$(printf '%s' "$LAST_ASSISTANT" | tr '\n' ' ' | head -c 240 | sed 's/"/\\"/g')
+    ALERT_FILE="$ALERT_DIR/principles-gate-r3-${TS_ALERT}-${SID_ALERT}.json"
+    cat > "$ALERT_FILE" 2>/dev/null <<JSON
 {
   "started_at": "$TS_ISO",
   "source": "principles-compliance-gate.sh",
   "rule": "R3",
   "session_id": "$SID_ALERT",
   "detection_count": $R3,
+  "total_routes": $ALERT_TOTAL_ROUTES,
+  "healthy_count": $ALERT_HEALTHY_COUNT,
+  "anomaly_count": $ALERT_ANOMALY_COUNT,
+  "health": "$ALERT_HEALTH",
   "summary": "Rule 3 (possible multi-option question) flagged $R3 time(s) in the final assistant message. Heuristic — review whether one option was clearly principled and could have been taken without surfacing to Misha. See ~/.claude/state/principles-gate-warnings.log for the matched line.",
   "snippet": "$SNIPPET_ALERT"
 }
 JSON
-  echo "[principles-gate] R3 in-band notification: wrote $ALERT_FILE" >&2
+    echo "[principles-gate] R3 in-band notification: wrote $ALERT_FILE" >&2
+  fi
 fi
 
 # Block-mode: block only on block-eligible detections (Rule 4/5/7). Rule 3 stays warn.

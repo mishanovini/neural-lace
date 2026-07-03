@@ -227,6 +227,13 @@ The `Description` body field is required substantive content explaining the obse
 - **Status:** open
 - **Description:** The full self-test suite intermittently fails scenarios that pass in isolation, with a signature no gate code path produces — exit 2 with completely empty stderr (every real block writes a stanza to stderr before exiting 2). HYPOTHESIZED environmental (tempdir/process churn under parallel load; refuted if 5 consecutive clean-machine full-suite runs stay green — the failing scenarios executed NONE of the changed code). Practical risk: a red CI or local run gets misattributed to whatever change is under review (it nearly was, during the ADR 059 valve review). Mitigation landed with this entry's commit: _expect now dumps last-stdout + last-stderr + the raw rc on failure so the next occurrence is diagnosable from its artifact. Remediation (E.2/E.10 candidate): isolate per-scenario tempdirs or serialize repo builds; investigate whether retry-guard state files under the shared tmproot leak across scenarios. Sweep query: run `bash adapters/claude-code/hooks/work-integrity-gate.sh --self-test` 5x consecutively; check hooks-selftest.yml CI history for intermittent reds on this hook.
 
+  **Refutation run 2026-07-03 (Wave-E task E.2):** Per-scenario tempdir isolation applied
+  (unique TMPDIR, SIGNAL_LEDGER_PATH, RETRY_GUARD_STATE_DIR per scenario via _setup_scenario
+  helper called before each scenario's repo build). Full suite run 5 consecutive times with
+  isolation: all 5 runs completed with "24 passed, 0 failed" summary. No environmental
+  flakes observed. Conclusion: cross-scenario state leakage was the root cause; isolation
+  fully remediates the finding.
+
 ### NL-FINDING-026 — existence-only waiver checks and remedy-artifacts-counted-as-dirt: two residual classes from the check-a valve review
 - **Severity:** warn
 - **Scope:** canon

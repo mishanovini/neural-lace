@@ -1,0 +1,20 @@
+{
+  "id": "session-start-digest",
+  "kind": "surfacer",
+  "doctrine_file": "doctrine/harness-dev.md",
+  "hooks": [
+    "session-start-digest.sh"
+  ],
+  "events": [
+    "SessionStart"
+  ],
+  "wired_template": false,
+  "selftest": true,
+  "jit_triggers": {
+    "paths": [],
+    "keywords": []
+  },
+  "blocking": false,
+  "budget_class": "session-start",
+  "honest_status": "Built at E.1; not yet wired into settings.json.template (orchestrator-only surface per specs-e §E.0.1 — wiring lands at §E.W, replacing the session-start-surfacer-pack.sh SessionStart entry)."
+}

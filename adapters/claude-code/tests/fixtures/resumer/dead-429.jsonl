@@ -1,0 +1,3 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"go ahead"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Working on it now."}]}}
+{"type":"system","subtype":"api_error","isApiErrorMessage":true,"result":"error","message":"Error: 429 rate_limit_error: Number of request tokens has exceeded your rate limit."}

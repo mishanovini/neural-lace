@@ -1,0 +1,16 @@
+{
+  "id": "session-resumer",
+  "kind": "writer",
+  "doctrine_file": null,
+  "hooks": [],
+  "events": [],
+  "wired_template": false,
+  "selftest": true,
+  "jit_triggers": {
+    "paths": [],
+    "keywords": []
+  },
+  "blocking": false,
+  "budget_class": "none",
+  "honest_status": "Not a Claude Code hook — invoked by a Windows Scheduled Task (`NL-session-resumer`, 10-minute cadence) via git-bash, outside settings.json entirely; see adapters/claude-code/scripts/session-resumer.sh header for the exact schtasks /Create line. Registration is an orchestrator/operator step (specs-e §E.W.6), not yet performed as of this fragment's authoring — doctor predicate below reports honest 'documented, not registered' until then."
+}

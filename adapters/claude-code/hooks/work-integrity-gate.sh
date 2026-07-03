@@ -710,6 +710,18 @@ _wig_self_test() {
   trap 'rm -rf "${tmproot:-}"' EXIT
   export SIGNAL_LEDGER_PATH="$tmproot/ledger.jsonl"
 
+  # ---- per-scenario isolation (NL-FINDING-025 remediation) -------
+  # Each scenario gets its own tempdir for retry-guard state and ledger to
+  # prevent cross-scenario leakage. Called before each _build_repo invocation.
+  _setup_scenario() {
+    local scenario_name="$1"
+    local scenario_tmpdir="$tmproot/tmpdir-$scenario_name"
+    mkdir -p "$scenario_tmpdir"
+    export TMPDIR="$scenario_tmpdir"
+    export SIGNAL_LEDGER_PATH="$scenario_tmpdir/ledger.jsonl"
+    export RETRY_GUARD_STATE_DIR="$scenario_tmpdir"
+  }
+
   local passed=0 failed=0
 
   # ---- repo builder -----------------------------------------------
@@ -828,6 +840,7 @@ _wig_self_test() {
   # An ACTIVE plan with unchecked tasks exists in the repo, but the
   # session's transcript never touched it → must pass.
   # ================================================================
+  _setup_scenario s1
   R=$(_build_repo s1)
   _write_plan "$R" "orthogonal-plan" "ACTIVE" "unchecked" "no-evidence"
   T=$(_write_transcript "$R")   # touches nothing
@@ -838,6 +851,7 @@ _wig_self_test() {
   # Scenario 2 (MANDATED): session-touched plan with unchecked tasks
   # DOES block.
   # ================================================================
+  _setup_scenario s2
   R=$(_build_repo s2)
   _write_plan "$R" "touched-plan" "ACTIVE" "unchecked" "no-evidence"
   T=$(_write_transcript "$R" "$R/docs/plans/touched-plan.md")
@@ -849,6 +863,7 @@ _wig_self_test() {
   # plan with unchecked tasks + fresh per-session waiver → passes.
   # The waiver-parity valve for check (a)'s world-state assertion.
   # ================================================================
+  _setup_scenario s2b
   R=$(_build_repo s2b)
   _write_plan "$R" "waived-unchecked" "ACTIVE" "unchecked" "no-evidence" \
     "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
@@ -866,6 +881,7 @@ _wig_self_test() {
   # tasks block but the missing-evidence SESSION-HONESTY check must
   # still fire.
   # ================================================================
+  _setup_scenario s2c
   R=$(_build_repo s2c)
   _write_plan "$R" "waived-mixed" "ACTIVE" "checked" "no-evidence" \
     "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
@@ -882,6 +898,7 @@ _wig_self_test() {
   # an honesty contradiction, not a world-state fact — a fresh waiver
   # must NOT clear it.
   # ================================================================
+  _setup_scenario s2d
   R=$(_build_repo s2d)
   _write_plan "$R" "waived-completed" "COMPLETED" "unchecked" "no-evidence"
   mkdir -p "$R/.claude/state"
@@ -896,6 +913,7 @@ _wig_self_test() {
   # waiver file (stray touch / failed echo) must NOT clear the block —
   # the message's ">=1 substantive line" claim is enforced, not theater.
   # ================================================================
+  _setup_scenario s2e
   R=$(_build_repo s2e)
   _write_plan "$R" "waived-empty" "ACTIVE" "unchecked" "no-evidence" \
     "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
@@ -910,6 +928,7 @@ _wig_self_test() {
   # acceptance artifact requirement issue avoided via acceptance-exempt
   # → passes cleanly.
   # ================================================================
+  _setup_scenario s3
   R=$(_build_repo s3)
   _write_plan "$R" "clean-plan" "ACTIVE" "checked" "with-evidence" \
     "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
@@ -921,6 +940,7 @@ _wig_self_test() {
   # Scenario 4: session-touched plan with checked task but NO evidence
   # → blocks (check a, missing evidence entirely).
   # ================================================================
+  _setup_scenario s4
   R=$(_build_repo s4)
   _write_plan "$R" "no-evidence-plan" "ACTIVE" "checked" "no-evidence" \
     "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
@@ -932,6 +952,7 @@ _wig_self_test() {
   # Scenario 5: COMPLETED plan (session-touched) with unchecked tasks
   # → blocks (stricter COMPLETED path).
   # ================================================================
+  _setup_scenario s5
   R=$(_build_repo s5)
   _write_plan "$R" "completed-unchecked" "COMPLETED" "unchecked" "no-evidence"
   T=$(_write_transcript "$R" "$R/docs/plans/completed-unchecked.md")
@@ -942,6 +963,7 @@ _wig_self_test() {
   # Scenario 6: ABANDONED plan (session-touched) with unchecked tasks
   # → no-op, passes.
   # ================================================================
+  _setup_scenario s6
   R=$(_build_repo s6)
   _write_plan "$R" "abandoned-plan" "ABANDONED" "unchecked" "no-evidence"
   T=$(_write_transcript "$R" "$R/docs/plans/abandoned-plan.md")
@@ -952,6 +974,7 @@ _wig_self_test() {
   # Scenario 7: ACTIVE plan, checked+evidence, NOT exempt, no acceptance
   # artifact directory → blocks (check b).
   # ================================================================
+  _setup_scenario s7
   R=$(_build_repo s7)
   _write_plan "$R" "needs-acceptance" "ACTIVE" "checked" "with-evidence"
   T=$(_write_transcript "$R" "$R/docs/plans/needs-acceptance.md")
@@ -962,6 +985,7 @@ _wig_self_test() {
   # Scenario 8: ACTIVE plan with a valid PASS acceptance artifact at the
   # current plan_commit_sha → passes.
   # ================================================================
+  _setup_scenario s8
   R=$(_build_repo s8)
   _write_plan "$R" "pass-acceptance" "ACTIVE" "checked" "with-evidence"
   SHA=$(cd "$R" && git log -n 1 --pretty=format:'%H' -- docs/plans/pass-acceptance.md)
@@ -976,6 +1000,7 @@ EOF
   # ================================================================
   # Scenario 9: acceptance-exempt: true but reason too short → blocks.
   # ================================================================
+  _setup_scenario s9
   R=$(_build_repo s9)
   _write_plan "$R" "exempt-no-reason" "ACTIVE" "checked" "with-evidence" \
     "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: short"
@@ -987,6 +1012,7 @@ EOF
   # Scenario 10: acceptance waiver present and fresh → passes despite no
   # artifact.
   # ================================================================
+  _setup_scenario s10
   R=$(_build_repo s10)
   _write_plan "$R" "waived-plan" "ACTIVE" "checked" "with-evidence"
   mkdir -p "$R/.claude/state"
@@ -999,6 +1025,7 @@ EOF
   # ================================================================
   # Scenario 11 (MANDATED): dirty worktree blocks with rescue text.
   # ================================================================
+  _setup_scenario s11
   R=$(_build_repo s11)
   WT="$tmproot/s11-wt"
   ( cd "$R" && git worktree add -q "$WT" -b s11-feat master >/dev/null 2>&1 )
@@ -1018,6 +1045,7 @@ EOF
   # Scenario 12 (MANDATED): clean session passes (clean worktree, main
   # checkout, no touched plans at all).
   # ================================================================
+  _setup_scenario s12
   R=$(_build_repo s12)
   RC=$(_run_gate "$R" "")
   _expect "clean-session-main-checkout-passes" "$RC" "0"
@@ -1028,6 +1056,7 @@ EOF
   # the "nothing unpushed" branch rather than degrading to "no upstream
   # configured at all").
   # ================================================================
+  _setup_scenario s13
   R=$(_build_repo s13 with-origin)
   WT="$tmproot/s13-wt"
   ( cd "$R" && git worktree add -q "$WT" -b s13-feat master >/dev/null 2>&1 )
@@ -1038,6 +1067,7 @@ EOF
   # ================================================================
   # Scenario 14: locked worktree, dirty → no-op (exempt).
   # ================================================================
+  _setup_scenario s14
   R=$(_build_repo s14)
   WT="$tmproot/s14-wt"
   ( cd "$R" && git worktree add -q "$WT" -b s14-feat master >/dev/null 2>&1 && git worktree lock "$WT" 2>/dev/null )
@@ -1048,6 +1078,7 @@ EOF
   # ================================================================
   # Scenario 15: dirty worktree WITH a fresh teardown waiver → passes.
   # ================================================================
+  _setup_scenario s15
   R=$(_build_repo s15)
   WT="$tmproot/s15-wt"
   ( cd "$R" && git worktree add -q "$WT" -b s15-feat master >/dev/null 2>&1 )
@@ -1071,6 +1102,7 @@ EOF
     failed=$((failed+1))
   fi
 
+  _setup_scenario s16
   R=$(_build_repo s16)
   ( cd "$R" &&
     export RETRY_GUARD_STATE_DIR=".claude/state"
@@ -1105,6 +1137,7 @@ EOF
   # one broken — only the broken one blocks (proves per-plan scoping,
   # not "first plan found wins").
   # ================================================================
+  _setup_scenario s17
   R=$(_build_repo s17)
   _write_plan "$R" "multi-clean" "ACTIVE" "checked" "with-evidence" \
     "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."

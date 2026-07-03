@@ -1,0 +1,20 @@
+{
+  "id": "nl-issue-capture-loop",
+  "kind": "pattern",
+  "doctrine_file": "",
+  "hooks": [
+    "scripts/nl-issue.sh"
+  ],
+  "events": [],
+  "wired_template": false,
+  "selftest": true,
+  "jit_triggers": {
+    "paths": [],
+    "keywords": [
+      "nl-issue",
+      "harness friction"
+    ]
+  },
+  "blocking": false,
+  "budget_class": "none"
+}

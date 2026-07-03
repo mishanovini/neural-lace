@@ -1,0 +1,31 @@
+{
+  "_fragment_note": "Wave E task E.9 (pre-compaction continuity, two-stage) — TWO manifest entries per §E.0.1 (builder ships fragment, orchestrator merges into adapters/claude-code/manifest.json .entries at §E.W). SCHEMA GAP the orchestrator must resolve before merging entry #2: adapters/claude-code/schemas/manifest.schema.json's `events` enum (currently [\"Stop\",\"SessionStart\",\"PreToolUse\",\"PostToolUse\",\"UserPromptSubmit\",\"TaskCreated\",\"TaskCompleted\",\"precommit\",\"prepush\",\"manual\"]) has NO \"PreCompact\" value — Claude Code's native PreCompact hook event is not yet representable. Entry #2 below uses \"manual\" as the closest existing enum value (PreCompact's manual-trigger matcher IS a real semantic match for the *manual* half of this hook's two matchers, but the *auto* matcher — the far more common real-world firing, an approaching context limit — has no corresponding enum value at all today). RECOMMENDATION: add \"PreCompact\" to the events enum (schema-only edit; manifest.json entries + this fragment migrate to it in the same commit) rather than leave \"manual\" standing in for both PreCompact matchers indefinitely — filed here rather than edited directly because schemas/manifest.schema.json is tightly coupled to manifest.json, which is orchestrator-owned per §E.0.1.",
+  "entries": [
+    {
+      "id": "context-watermark",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": ["context-watermark.sh"],
+      "events": ["PostToolUse"],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": { "paths": [], "keywords": [] },
+      "blocking": false,
+      "honest_status": "Not yet wired into settings.json.template — template edits are ORCHESTRATOR-ONLY this wave (§E.0.1); lands at §E.W integration alongside E.1/E.9b/E.11's PostToolUse/PreCompact/Stop additions. Hook + --self-test are complete and green on this branch.",
+      "budget_class": "posttool"
+    },
+    {
+      "id": "pre-compact-continuity",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": ["pre-compact-continuity.sh"],
+      "events": ["manual"],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": { "paths": [], "keywords": [] },
+      "blocking": false,
+      "honest_status": "Not yet wired into settings.json.template (orchestrator-only this wave, §E.0.1; lands at §E.W with BOTH the auto and manual PreCompact matchers). events:[\"manual\"] is a SCHEMA-GAP STAND-IN, not the real value — see this fragment file's top-level _fragment_note: the manifest schema's events enum has no \"PreCompact\" entry at all yet (needed for BOTH this hook's auto and manual matchers; \"manual\" here only accidentally names one of the two real matchers and should not be read as this hook being manual-only). MECHANISM PIN (constitution §1): the PreCompact hookSpecificOutput.additionalContext / stdout emission channel is HYPOTHESIZED, not PROVEN, on this Claude Code version (2.1.197) — no cheap live-probe form was available to this non-orchestrator builder (would require triggering a real compaction; see the hook's own header comment for the full reasoning). The snapshot-file + existing SessionStart `matcher:\"compact\"` echo (settings.json.template, already live) is the PROVEN reliable fallback: this hook prepends its six-category instructions directly onto the mechanical snapshot file that echo's downstream reader can consume, independent of whether (a)/(b) are ever honored. Hook + --self-test are complete and green on this branch.",
+      "budget_class": "none"
+    }
+  ]
+}
