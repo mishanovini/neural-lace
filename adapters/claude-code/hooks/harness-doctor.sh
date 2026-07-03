@@ -83,7 +83,7 @@
 #                             or the checker script cannot be found.
 #   8. selftest-sweep       : (--full only) run every live hook containing
 #                             the string "--self-test" with
-#                             HARNESS_SELFTEST=1 timeout 600
+#                             HARNESS_SELFTEST=1 timeout 1500
 #                             bash <hook> --self-test </dev/null; RED per
 #                             non-zero exit.
 #
@@ -516,8 +516,10 @@ check_selftest_sweep() {
     grep -q -- '--self-test' "$hook" 2>/dev/null || continue
     local out rc
     # 120s killed passing-but-slow suites on Windows (git-heavy scenarios measured
-    # 4-8 min; NL-FINDING-018-era doctor --full run). Default 600, env-overridable.
-    out="$(HARNESS_SELFTEST=1 timeout "${DOCTOR_SELFTEST_TIMEOUT:-600}" bash "$hook" --self-test </dev/null 2>&1)"
+    # 4-8 min; NL-FINDING-018-era doctor --full run), and 600s killed plan-reviewer
+    # (green standalone at 987s, measured 2026-07-03). Default 1500 (~1.5x slowest
+    # measured suite), env-overridable; per-hook budgets via manifest = E-wave.
+    out="$(HARNESS_SELFTEST=1 timeout "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$hook" --self-test </dev/null 2>&1)"
     rc=$?
     if [[ "$rc" -ne 0 ]]; then
       local last_line
