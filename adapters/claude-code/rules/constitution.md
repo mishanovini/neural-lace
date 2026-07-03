@@ -99,6 +99,12 @@ code compiles, tests pass, or the pieces exist.
 - A verification gate blocking you means the work is NOT done. Fix the work or write
   a substantive waiver naming why the gate does not apply — never out-wait a gate,
   never claim DONE past a block.
+- **Blocked-end retries never re-emit the report** (operator directive 2026-07-02):
+  the session report is written ONCE — to its file (completion report / NEEDS-YOU /
+  review) with one chat copy. If a Stop gate then blocks, fix the specific gap and
+  re-end with a minimal delta only: the marker + one line naming what was fixed +
+  "full report above stands." Re-summarizing on retry degrades the copy the operator
+  actually reads; the original is the record.
 
 ## 7. Gates: diagnose, fix, waiver — in that order
 
