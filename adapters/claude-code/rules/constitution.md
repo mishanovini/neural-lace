@@ -87,6 +87,8 @@ code compiles, tests pass, or the pieces exist.
   response that surfaced them**. Chat is ephemeral; anything not in a file is lost.
 - Audit and agent results are persisted before analysis, not after.
 - Update status docs when work completes, not later. "Later" means "stale."
+- Harness friction or defects noticed in ANY project: one line via `nl-issue.sh "<what>"` —
+  it lands in the machine-wide ledger and the weekly triage. Never just mention it in chat.
 
 ## 6. Session end: one honest marker, never a ride-through
 

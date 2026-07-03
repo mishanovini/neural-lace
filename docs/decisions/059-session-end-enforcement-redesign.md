@@ -4,7 +4,7 @@ Date: 2026-07-03
 Status: Accepted (operator approved 2026-07-03: "I think this is a great approach. Let's incorporate it into what we're building.")
 Stakeholders: Misha (operator), all sessions (every session ends through this surface)
 Amends: ADR 058 D5 (gate consolidation — this ADR governs the *semantics* of the surviving Stop chain, not its census)
-Companion plan: `docs/plans/nl-overhaul-program-2026-07.md` (tasks E.8, E.9, F.5; immediate increment via NL-FINDING-019 patch)
+Companion plan: `docs/plans/nl-overhaul-program-2026-07.md` (tasks E.11, E.12, F.5 — authored as E.8/E.9/F.5; renumbered at the Wave-E reconciliation merge after a parallel-session task-ID collision; immediate increment via NL-FINDING-019 patch)
 Evidence base: live four-cycle Stop trap on 2026-07-03 (the session that shipped PR #74 / master a9c1c69), NL-FINDING-016 (compound-command gate trap), NL-FINDING-019 (check (a) × in-flight-scope-update two-gate trap), discovery 2026-06-17 (cross-repo gate misfire → waiver/attestation anti-pattern), audit 2026-07-01 (107 retry-guard downgrades; ride-through economics)
 
 ## Context
@@ -105,7 +105,8 @@ scoped per D4 (waiver clears the unchecked-tasks world-state block; never the
 checked-box-without-evidence honesty block) + the block message gains the
 honest-hatch text per the E.10 block-message contract. Self-test scenarios
 added; harness-reviewer review required before commit. The fuller D1/D2/D6
-mechanics land via plan tasks E.8/E.9; D4/D5/D7 governance via F.5; exact
+mechanics land via plan tasks E.11/E.12 (renumbered from E.8/E.9 at
+reconciliation); D4/D5/D7 governance via F.5; exact
 mechanical specs via E.0's specs-e refinement.
 
 ## Program-level refutation criteria

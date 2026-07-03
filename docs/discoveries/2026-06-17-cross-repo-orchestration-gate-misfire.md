@@ -2,7 +2,7 @@
 title: Cross-repo orchestration makes home-repo-scoped Stop gates misfire → drove a waiver/attestation anti-pattern
 date: 2026-06-17
 type: process
-status: pending
+status: decided
 auto_applied: false
 originating_context: Operator caught the orchestrator repeatedly writing acceptance-waivers + a bug-persistence attestation to clear Stop gates, instead of diagnosing and fixing — the exact bypass anti-pattern gate-respect.md prohibits. Root cause is structural, not just behavioral.
 decision_needed: How should Neural Lace handle an orchestrator session that runs in repo A but does work whose plans + bug-persistence live in repo B, so the repo-A Stop gates stop misfiring?
@@ -61,6 +61,7 @@ Surfaced to the operator; not auto-applied (it touches gate behavior + the orche
 - 2026-06-17: worktree sprawl cleaned (32→21; 5 locked cross-session leftovers remain);
   product-acceptance-gate now exits 0. This doc is the proper persistence of the gap (replaces
   the bug-attestation reflex). A/B/C await the operator's build decision.
+- 2026-07-03 DISPOSITION (Wave-E orchestrator, decide-and-go per §8; status → decided): each option resolves through the overhaul program rather than a bespoke build. **A** — RESOLVED by Wave D: product-acceptance-gate retired into `work-integrity-gate.sh`, which is session-scoped by design ("scoped to plans/files this session actually touched", ADR 058 D5), killing the phantom-plan worktree aggregation; residual worktree-sprawl hygiene lands in F.1's staleness machinery. **B** — structural fix assigned: ADR 059 D6's session end-manifest carries `unresolved: [{item, where-recorded}]` pointers that VALIDATE mechanically wherever the record lives (incl. repo B) — lands via task E.12; bug-persistence-gate accepts the manifest pointer once E.12's validator exists. **C** — remains deferred with the orchestrator-prime cluster per DEC-2026-07-02-002 (re-engage post-F.4). **E** — CONFIRMED still unfixed (scope-enforcement-gate.sh:154 exempts only `docs/plans/archive/*`); added to task E.10's sweep as item 13 (specs-e §E.10) — `docs/discoveries/` becomes scope-exempt, and the bug-persistence×scope-enforcement tension is a named golden example for ADR 059 D5's remedy-chain checklist (F.5). **D** — the anti-reflex discipline is now constitution §7 + ADR 059 D4's purpose-clause waivers (mechanical engagement with gate purpose).
 - 2026-06-17: committing THIS discovery tripped `scope-enforcement-gate` (the session branch
   has `plan-lifecycle-redesign` ACTIVE; an ad-hoc process discovery is by-definition off-plan).
   Per the no-bypass directive, I did NOT `--no-verify` it nor mis-attribute it to the active
