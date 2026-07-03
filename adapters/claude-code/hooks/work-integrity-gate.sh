@@ -206,11 +206,25 @@ _wig_check_evidence() {
   pending=$(echo "$pending" | tr -d '[:space:]')
 
   if [[ "${pending:-0}" -gt 0 ]]; then
+    # Escape hatch (ADR 058 D5 pin d — every block needs an honest hatch):
+    # a fresh (<1h) non-empty per-session waiver acknowledging the open tasks.
+    # Intended use: long-running multi-session program plans (Execution Mode:
+    # orchestrator) whose remaining tasks continue in OTHER sessions by design.
+    local slug wbase
+    slug=$(basename "${plan%.md}")
+    wbase=$(dirname "$(git rev-parse --git-common-dir 2>/dev/null || echo .git)")
+    for wdir in ".claude/state" "${wbase}/.claude/state"; do
+      if find "$wdir" -maxdepth 1 -type f -name "work-integrity-waiver-${slug}-*.txt" -newermt "1 hour ago" 2>/dev/null | head -1 | grep -q . ; then
+        echo "[work-integrity] unchecked-tasks waived for ${slug} (fresh per-session waiver; open tasks continue in other sessions)" >&2
+        return 0
+      fi
+    done
+
     local msg
     if [[ "$is_completed" -eq 1 ]]; then
       msg="Session-touched plan $plan has Status: COMPLETED but $pending task(s) are still unchecked. A plan cannot be marked COMPLETED while any task remains unchecked. Check the box after actually completing the task, or set Status: ACTIVE/ABANDONED to reflect reality."
     else
-      msg="Session-touched plan $plan has $pending unchecked task(s) remaining. Complete and check them, or set 'Status: ABANDONED' with a reason to stop early."
+      msg="Session-touched plan $plan has $pending unchecked task(s) remaining. Complete and check them; or set Status: ABANDONED with a reason; or — for a multi-session program plan whose tasks continue elsewhere by design — write a fresh waiver: .claude/state/work-integrity-waiver-<plan-slug>-<ts>.txt (>=1 substantive line naming WHY the open tasks are legitimately in flight; expires in 1h). Note: this block prevented only session-end — no other part of your command ran or was lost."
     fi
     echo "" >&2
     echo "================================================================" >&2
