@@ -149,6 +149,7 @@ The operator (the harness's user) can, after this program: (a) run `harness-doct
 - Live mirror `~/.claude/**` via install.sh runs only; main-checkout git state (B.7); git remotes config (B.8)
 
 ## In-flight scope updates
+- 2026-07-03: `.pr-description.md` — tracked per-PR body file refreshed for PR #74 (attic/lib re-source shims + NL-FINDING-018, spawned decision-context self-test root-cause task); commit required by work-integrity gate (tracked-file modification at session end).
 - 2026-07-03: `adapters/claude-code/attic/` — D.5 retirement destination (22 hooks + exit-0 shims at old names); scope-gate first-backtick parser limitation, occurrence #6 (attic/** is a non-first token on line 140's Files bullet); the D.6 parser fix is on-branch but the LIVE gate predates it until install.
 - 2026-07-03: `adapters/claude-code/tests/` — D.5 repoint of acceptance-loop + agent-teams self-tests to attic paths (classifier-verified sole (A)-class breakages); same parser-limitation class (tests/** mid-line on line 143).
 - 2026-07-03: `adapters/claude-code/patterns/customer-facing-patterns.txt` — D.4 customer-facing-review pattern extraction; scope-gate first-backtick parser limitation, occurrence #5 (patterns/** is a non-first token on line 143's Files bullet) — fix lands in D.6 per specs-d §D.0.7.
