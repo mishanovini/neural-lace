@@ -1116,3 +1116,15 @@ Git evidence:
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN — all four Done-when clauses re-executed this invocation and green: chain counts 6/8 on BOTH template and live (node exit 0); golden evals 6/6 exit 0; all 22 retired live paths exit 0 against '{}' stdin; doctor --quick GREEN plus the caller-authorized targeted --full equivalent (both attempt-1 hard-fail suites re-run green from live mirror + 600s budget confirmed live). Supporting artifacts: pre-wave-d-cutover tag, 28 attic hooks, blocking budget 12/12 GREEN.
+
+## D.5 addendum — literal full-sweep GREEN achieved post-closure (2026-07-03, orchestrator session)
+
+Attempt 2 closed D.5 honestly on "targeted --full equivalent" evidence (PR #76). This addendum
+converts the residual Done-when clause to PROVEN: `bash ~/.claude/hooks/harness-doctor.sh --full`
+= "[doctor] GREEN — 8 checks passed", exit 0, run against the live mirror at master b8a1597.
+Three defect classes stood between the first sweep (8 RED) and green, all fixed on master:
+(1) six per-hook timeout REDs — budget 120s→600s→1500s, evidence-based (plan-reviewer green
+standalone at 987s; Decisions Log); (2) two hard-fail hooks — pr-template path-derivation class
++ extract-pending dead sibling reference (038503e, harness-reviewer PASS); (3) task-binding
+suite flake — unsandboxed retry-guard counters, fixed synthetic ids (b8a1597, NL-FINDING-028).
+Sweep wall-clock at 1500s budget: ~85 min (weekly/CI-acceptable).
