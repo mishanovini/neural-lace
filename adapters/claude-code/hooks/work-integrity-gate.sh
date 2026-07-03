@@ -205,21 +205,40 @@ _wig_check_evidence() {
   pending=$(grep -c '^- \[ \]' "$plan" 2>/dev/null || echo "0")
   pending=$(echo "$pending" | tr -d '[:space:]')
 
-  if [[ "${pending:-0}" -gt 0 ]]; then
-    # Escape hatch (ADR 058 D5 pin d — every block needs an honest hatch):
-    # a fresh (<1h) non-empty per-session waiver acknowledging the open tasks.
-    # Intended use: long-running multi-session program plans (Execution Mode:
-    # orchestrator) whose remaining tasks continue in OTHER sessions by design.
-    local slug wbase
+  if [[ "${pending:-0}" -gt 0 ]] && [[ "$is_completed" -eq 0 ]]; then
+    # Escape hatch (ADR 058 D5 pin d + ADR 059 D4 waiver parity —
+    # NL-FINDING-019/020): a fresh (<1h) non-empty per-session waiver
+    # acknowledging the open tasks. Intended use: long-running multi-session
+    # program plans (Execution Mode: orchestrator) whose remaining tasks
+    # continue in OTHER sessions by design, and sessions whose only plan
+    # touch was incidental (e.g., the in-flight scope-update line the
+    # scope-enforcement gate itself mandates) — without this valve, check (a)
+    # deadlocks the session end (observed live 2026-07-03: four Stop cycles
+    # to end a session whose deliverable was already merged).
+    # ADR 059 D4 scoping rule: the waiver clears ONLY this world-state
+    # assertion (unchecked tasks on an ACTIVE plan). Session-honesty
+    # assertions — checked-box-without-evidence below, and the
+    # COMPLETED-but-unchecked contradiction (is_completed guard above) —
+    # are resolvable by the session that created them and get no valve.
+    # Every use is ledger-logged so the E.3/E.5 waiver-density telemetry
+    # counts it.
+    local slug wbase waiver_a
     slug=$(basename "${plan%.md}")
     wbase=$(dirname "$(git rev-parse --git-common-dir 2>/dev/null || echo .git)")
-    for wdir in ".claude/state" "${wbase}/.claude/state"; do
-      if find "$wdir" -maxdepth 1 -type f -name "work-integrity-waiver-${slug}-*.txt" -newermt "1 hour ago" 2>/dev/null | head -1 | grep -q . ; then
-        echo "[work-integrity] unchecked-tasks waived for ${slug} (fresh per-session waiver; open tasks continue in other sessions)" >&2
-        return 0
-      fi
-    done
+    waiver_a=$(_wig_check_waiver "$slug" "work-integrity-waiver" ".claude/state" "${wbase}/.claude/state")
+    case "$waiver_a" in
+      VALID_WAIVER:*)
+        echo "[work-integrity] unchecked-tasks waived for ${slug} (fresh per-session waiver at ${waiver_a#VALID_WAIVER:}; open tasks continue in other sessions). Evidence checks for checked boxes still apply." >&2
+        _wig_ledger "waiver" "check-a waived: ${slug} (${pending} unchecked; ${waiver_a#VALID_WAIVER:})"
+        pending=0
+        ;;
+      EMPTY_WAIVER)
+        echo "[work-integrity] a fresh work-integrity-waiver for ${slug} exists but is EMPTY — not honored (>=1 substantive line required; falling through to the block)." >&2
+        ;;
+    esac
+  fi
 
+  if [[ "${pending:-0}" -gt 0 ]]; then
     local msg
     if [[ "$is_completed" -eq 1 ]]; then
       msg="Session-touched plan $plan has Status: COMPLETED but $pending task(s) are still unchecked. A plan cannot be marked COMPLETED while any task remains unchecked. Check the box after actually completing the task, or set Status: ACTIVE/ABANDONED to reflect reality."
@@ -339,20 +358,31 @@ _wig_get_plan_sha() {
   echo "UNCOMMITTED"
 }
 
+# Shared waiver validation for every waiver family this hook honors
+# (ADR 059 D4 "same shape everywhere": fresh <1h + substantive first line).
+# Args: <slug> [prefix=acceptance-waiver] [dir ...=.claude/state]
+# Echoes NO_WAIVER | EMPTY_WAIVER | VALID_WAIVER:<path>. The first
+# directory containing a fresh match decides; an empty match is reported
+# as EMPTY_WAIVER (harness-reviewer 2026-07-03 Finding 1: an existence-only
+# check would clear a blocking gate for a stray `touch`).
 _wig_check_waiver() {
-  local slug="$1" waiver_dir=".claude/state" recent first_line_stripped
-  [[ -d "$waiver_dir" ]] || { echo "NO_WAIVER"; return; }
-  recent=$(find "$waiver_dir" -maxdepth 1 -type f -name "acceptance-waiver-${slug}-*.txt" -newermt '1 hour ago' 2>/dev/null | head -1)
-  if [[ -z "$recent" ]]; then
-    echo "NO_WAIVER"
+  local slug="$1" prefix="${2:-acceptance-waiver}"
+  local dirs=("${@:3}")
+  [[ ${#dirs[@]} -eq 0 ]] && dirs=(".claude/state")
+  local waiver_dir recent first_line_stripped
+  for waiver_dir in "${dirs[@]}"; do
+    [[ -d "$waiver_dir" ]] || continue
+    recent=$(find "$waiver_dir" -maxdepth 1 -type f -name "${prefix}-${slug}-*.txt" -newermt '1 hour ago' 2>/dev/null | head -1)
+    [[ -z "$recent" ]] && continue
+    first_line_stripped=$(head -1 "$recent" 2>/dev/null | tr -d '[:space:]')
+    if [[ -z "$first_line_stripped" ]]; then
+      echo "EMPTY_WAIVER"
+    else
+      echo "VALID_WAIVER:${recent}"
+    fi
     return
-  fi
-  first_line_stripped=$(head -1 "$recent" 2>/dev/null | tr -d '[:space:]')
-  if [[ -z "$first_line_stripped" ]]; then
-    echo "EMPTY_WAIVER"
-  else
-    echo "VALID_WAIVER:${recent}"
-  fi
+  done
+  echo "NO_WAIVER"
 }
 
 # Artifact check: cwd-local only (this merged gate does not aggregate
@@ -779,8 +809,16 @@ _wig_self_test() {
       echo "self-test ($label): PASS (exit $actual)" >&2
       passed=$((passed+1))
     else
+      # Dump BOTH streams + the raw rc so an empty-stderr failure (the
+      # environmental-flake signature, harness-reviewer 2026-07-03
+      # Finding 5) is diagnosable from its artifact instead of
+      # unreproducible.
       echo "self-test ($label): FAIL (expected exit $expected, got $actual)" >&2
+      echo "--- last-stderr ---" >&2
       cat "$tmproot/last-stderr.txt" 2>/dev/null >&2
+      echo "--- last-stdout ---" >&2
+      cat "$tmproot/last-stdout.txt" 2>/dev/null >&2
+      echo "--- end capture (rc=$actual) ---" >&2
       failed=$((failed+1))
     fi
   }
@@ -805,6 +843,67 @@ _wig_self_test() {
   T=$(_write_transcript "$R" "$R/docs/plans/touched-plan.md")
   RC=$(_run_gate "$R" "$T")
   _expect "session-touched-plan-unchecked-tasks-DOES-block" "$RC" "2"
+
+  # ================================================================
+  # Scenario 2b (NL-FINDING-019 / ADR 059 D4): session-touched ACTIVE
+  # plan with unchecked tasks + fresh per-session waiver → passes.
+  # The waiver-parity valve for check (a)'s world-state assertion.
+  # ================================================================
+  R=$(_build_repo s2b)
+  _write_plan "$R" "waived-unchecked" "ACTIVE" "unchecked" "no-evidence" \
+    "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
+  mkdir -p "$R/.claude/state"
+  echo "Incidental touch only: this session appended an in-flight scope line; plan belongs to the program orchestrator." \
+    > "$R/.claude/state/work-integrity-waiver-waived-unchecked-$(date +%s).txt"
+  T=$(_write_transcript "$R" "$R/docs/plans/waived-unchecked.md")
+  RC=$(_run_gate "$R" "$T")
+  _expect "unchecked-tasks-with-fresh-waiver-passes" "$RC" "0"
+
+  # ================================================================
+  # Scenario 2c (ADR 059 D4 scoping rule): a waiver clears WORLD-STATE
+  # assertions only. Mixed plan: unchecked tasks AND a checked box with
+  # NO evidence, plus a fresh waiver — the valve clears the unchecked-
+  # tasks block but the missing-evidence SESSION-HONESTY check must
+  # still fire.
+  # ================================================================
+  R=$(_build_repo s2c)
+  _write_plan "$R" "waived-mixed" "ACTIVE" "checked" "no-evidence" \
+    "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
+  echo "- [ ] X.9 an open task that the waiver legitimately covers" >> "$R/docs/plans/waived-mixed.md"
+  mkdir -p "$R/.claude/state"
+  echo "Waiver covers the open task; it must not clear the missing-evidence honesty check for the checked box." \
+    > "$R/.claude/state/work-integrity-waiver-waived-mixed-$(date +%s).txt"
+  T=$(_write_transcript "$R" "$R/docs/plans/waived-mixed.md")
+  RC=$(_run_gate "$R" "$T")
+  _expect "waiver-does-NOT-clear-missing-evidence" "$RC" "2"
+
+  # ================================================================
+  # Scenario 2d (ADR 059 D4 scoping rule): COMPLETED-but-unchecked is
+  # an honesty contradiction, not a world-state fact — a fresh waiver
+  # must NOT clear it.
+  # ================================================================
+  R=$(_build_repo s2d)
+  _write_plan "$R" "waived-completed" "COMPLETED" "unchecked" "no-evidence"
+  mkdir -p "$R/.claude/state"
+  echo "Waiver present but must not clear the COMPLETED-with-unchecked-tasks contradiction." \
+    > "$R/.claude/state/work-integrity-waiver-waived-completed-$(date +%s).txt"
+  T=$(_write_transcript "$R" "$R/docs/plans/waived-completed.md")
+  RC=$(_run_gate "$R" "$T")
+  _expect "waiver-does-NOT-clear-completed-unchecked" "$RC" "2"
+
+  # ================================================================
+  # Scenario 2e (harness-reviewer 2026-07-03 Finding 1): an EMPTY
+  # waiver file (stray touch / failed echo) must NOT clear the block —
+  # the message's ">=1 substantive line" claim is enforced, not theater.
+  # ================================================================
+  R=$(_build_repo s2e)
+  _write_plan "$R" "waived-empty" "ACTIVE" "unchecked" "no-evidence" \
+    "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
+  mkdir -p "$R/.claude/state"
+  : > "$R/.claude/state/work-integrity-waiver-waived-empty-$(date +%s).txt"
+  T=$(_write_transcript "$R" "$R/docs/plans/waived-empty.md")
+  RC=$(_run_gate "$R" "$T")
+  _expect "EMPTY-waiver-does-NOT-clear-unchecked-tasks" "$RC" "2"
 
   # ================================================================
   # Scenario 3: session-touched plan with checked task + evidence + no
