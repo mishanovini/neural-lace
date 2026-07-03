@@ -249,6 +249,32 @@ done_contradicted_by_block() {
     fi
   fi
 
+  # NL-FINDING-027 interim fix (ADR 059 D6 end-manifest is the structural
+  # replacement): a block RESOLVED through work-integrity's own sanctioned
+  # valve must not poison a later honest DONE. A currently-valid (<1h,
+  # non-empty) work-integrity waiver on disk is proof the block was resolved
+  # via the sanctioned path — the work-integrity gate itself passes the SAME
+  # Stop cycle on its strength, so the historical block and the DONE are not
+  # in contradiction. This clears a FALSE INPUT to the honesty check; it does
+  # NOT waive the honesty assertion itself (ADR 059 D4 scoping preserved).
+  if [[ -n "$evidence" ]]; then
+    local _shg_wbase _shg_wdir _shg_dirs
+    # Sandbox discipline (NL-FINDING-028 class): under HARNESS_SELFTEST only
+    # the scenario-provided state_dir is searched — the common-dir escape
+    # would leak REAL waivers into synthetic scenarios.
+    _shg_dirs=("$state_dir")
+    if [[ -z "${HARNESS_SELFTEST:-}" ]]; then
+      _shg_wbase=$(dirname "$(git rev-parse --git-common-dir 2>/dev/null || echo .git)")
+      _shg_dirs+=("${_shg_wbase}/.claude/state")
+    fi
+    for _shg_wdir in "${_shg_dirs[@]}"; do
+      if find "$_shg_wdir" -maxdepth 1 -type f -name 'work-integrity-waiver-*.txt' \
+           -newermt '1 hour ago' -size +0c 2>/dev/null | head -1 | grep -q . ; then
+        return 1
+      fi
+    done
+  fi
+
   if [[ -n "$evidence" ]]; then
     printf '%s' "$evidence"
     return 0
