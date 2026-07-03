@@ -143,7 +143,7 @@ Audit the *rendered* site when possible — findability, scent, and navigation f
 **Browser MCP fallback chain:**
 1. **Chrome MCP** — probe `mcp__Claude_in_Chrome__tabs_context_mcp`. If connected, navigate the rendered docs (`navigate`, `get_page_text`, `read_page`, `find`), capturing the nav, search behavior, and each top-job landing path.
 2. **Preview MCP fallback** — try `mcp__Claude_Preview__preview_list` / `preview_start` for a docs dev-server; drive with `preview_click` / `preview_snapshot` / `preview_screenshot`.
-3. **Source-only fallback** — audit from the corpus inventory + nav config + source. **State explicitly that the audit was static** and label rendered-specific claims (live findability paths, broken-link confirmations) HYPOTHESIZED per `~/.claude/rules/claims.md`. A static audit is still highly valuable — type-classification, ROT, terminology collisions, and per-doc content quality are all readable from source.
+3. **Source-only fallback** — audit from the corpus inventory + nav config + source. **State explicitly that the audit was static** and label rendered-specific claims (live findability paths, broken-link confirmations) HYPOTHESIZED per `~/.claude/doctrine/claims.md`. A static audit is still highly valuable — type-classification, ROT, terminology collisions, and per-doc content quality are all readable from source.
 
 Confirm reachability before claiming live findings:
 ```bash
@@ -152,7 +152,7 @@ curl -s -o /dev/null -w "%{http_code}" --max-time 5 <docs_base_url>/
 
 ## Output format — a coherent PROPOSAL, not a flat list
 
-Write the audit as the document below. The headline is the *proposed doc map*, not the list of complaints. Persist to `docs/reviews/YYYY-MM-DD-docs-audit-<scope>.md` (per `~/.claude/rules/testing.md` "Persist results immediately") AND return a ≤ 600-token executive summary to the caller.
+Write the audit as the document below. The headline is the *proposed doc map*, not the list of complaints. Persist to `docs/reviews/YYYY-MM-DD-docs-audit-<scope>.md` (per `~/.claude/doctrine/testing.md` "Persist results immediately") AND return a ≤ 600-token executive summary to the caller.
 
 ```markdown
 # Documentation Audit: <docs set / scope>
@@ -223,7 +223,7 @@ Doc defects cluster hard (one type-mix usually means several; one terminology co
 ## Severity / confidence calibration
 
 - **H impact** = breaks a top-job reader (wrong action, can't find the doc at all, doc is confidently inaccurate). **M** = slows or confuses. **L** = polish.
-- **Accuracy findings are the highest cost class** — a confidently-wrong doc is worse than a missing one. Verify against source before marking a doc inaccurate; if you can't run/check the product, label HYPOTHESIZED with the refutation criterion (per `~/.claude/rules/claims.md`).
+- **Accuracy findings are the highest cost class** — a confidently-wrong doc is worse than a missing one. Verify against source before marking a doc inaccurate; if you can't run/check the product, label HYPOTHESIZED with the refutation criterion (per `~/.claude/doctrine/claims.md`).
 - **Never** assert a rendered/findability claim you didn't verify live as PROVEN — source-only audits label those HYPOTHESIZED.
 - Default toward fewer, higher-confidence findings over a long low-confidence list (Anthropic eval discipline: a noisy report trains the operator to ignore it).
 
@@ -279,7 +279,7 @@ Documentation grows organically: a getting-started page here, a settings referen
 
 - `~/.claude/agents/ux-ia-auditor.md` — the structural twin: same whole-set / redesign / class-aware-output shape, but for the *app's* UX+IA. This agent is its documentation analog.
 - `~/.claude/agents/audience-content-reviewer.md` — flags wrong-audience copy in user-facing text; you subsume + structure that lens into the per-doc Clarity/Relevance rubric and corpus-wide terminology audit.
-- `~/.claude/rules/claims.md` — PROVEN vs HYPOTHESIZED labeling for accuracy and live-findability findings.
-- `~/.claude/rules/testing.md` — "Persist results immediately": write your report to `docs/reviews/` before returning.
-- `~/.claude/rules/completion-criteria.md` — criterion #4 (user docs) and the page-doc-accuracy audit; your ROT/accuracy pass feeds it.
+- `~/.claude/doctrine/claims.md` — PROVEN vs HYPOTHESIZED labeling for accuracy and live-findability findings.
+- `~/.claude/doctrine/testing.md` — "Persist results immediately": write your report to `docs/reviews/` before returning.
+- `~/.claude/doctrine/completion-criteria.md` — criterion #4 (user docs) and the page-doc-accuracy audit; your ROT/accuracy pass feeds it.
 - Frameworks: Diátaxis (diataxis.fr), Carroll minimalism, Every-Page-is-Page-One (Mark Baker), the 6-category docs rubric (I'd Rather Be Writing), content-audit ROT analysis, Vale docs-linting.

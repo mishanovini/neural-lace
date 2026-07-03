@@ -15,7 +15,7 @@
 #
 # Plan:    docs/plans/context-aware-permission-gates.md (Task 5)
 # ADR:     docs/decisions/029-local-edit-authorization-mechanism.md
-# Rule:    ~/.claude/rules/local-edit-authorization.md
+# Rule:    ~/.claude/doctrine/local-edit-authorization.md
 # Skill:   ~/.claude/skills/grant-local-edit.md
 #
 # Behavior:

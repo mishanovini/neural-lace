@@ -13,7 +13,7 @@
 # This gate forces the read by demanding a captured error before fix
 # commits are accepted.
 #
-# Rule: ~/.claude/rules/observed-errors-first.md
+# Rule: ~/.claude/doctrine/observed-errors-first.md
 # Audit lens applied: ~/.claude/docs/harness-review-audit-questions.md
 #   — triggers on observable commit shape (not self-classification),
 #     narrow remedy (one file), low cheap-evasion paths.
@@ -123,7 +123,7 @@ if [[ ! -f "$ERRORS_FILE" ]]; then
   cat >&2 <<'ERR_MSG'
 [observed-errors-gate] BLOCKED: this commit looks like a fix but no observed-errors trail exists.
 
-Rule: ~/.claude/rules/observed-errors-first.md
+Rule: ~/.claude/doctrine/observed-errors-first.md
 Why: on 2026-04-25 the agent saw HTTP 500 five times before reading the
 response body, which would have given the root cause instantly. This
 gate forces you to read the body / capture the actual error before
@@ -160,7 +160,7 @@ freshness window. The current session needs its own captured error.
 Append a fresh entry, or set OBSERVED_ERRORS_OVERRIDE="<reason>" if this
 fix has no runtime symptom in the current session.
 
-Rule: ~/.claude/rules/observed-errors-first.md
+Rule: ~/.claude/doctrine/observed-errors-first.md
 ERR_MSG
   exit 1
 fi
@@ -190,7 +190,7 @@ A summary like "the test failed" is not a captured error. Paste the
 actual output your test/script/browser produced.
 
 Override with OBSERVED_ERRORS_OVERRIDE="<reason>" if genuinely no
-runtime symptom exists. Rule: ~/.claude/rules/observed-errors-first.md
+runtime symptom exists. Rule: ~/.claude/doctrine/observed-errors-first.md
 ERR_MSG
   exit 1
 fi

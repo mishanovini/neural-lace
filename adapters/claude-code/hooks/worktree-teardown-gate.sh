@@ -232,7 +232,7 @@ PRESERVE the work before ending (do NOT reach for 'git worktree remove
        echo "<why this WIP is intentionally persistent>" > \\
          .claude/state/worktree-teardown-waiver-$(date -u +%Y%m%dT%H%M%SZ).txt
 
-See ~/.claude/rules/worktree-isolation.md (teardown gate / B1).
+See ~/.claude/doctrine/worktree-isolation.md (teardown gate / B1).
 ================================================================
 MSG
 

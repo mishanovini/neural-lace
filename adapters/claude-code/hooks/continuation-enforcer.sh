@@ -1,7 +1,7 @@
 #!/bin/bash
 # continuation-enforcer.sh — Stop hook
 #
-# Enforces ~/.claude/rules/session-end-protocol.md: every session MUST end
+# Enforces ~/.claude/doctrine/session-end-protocol.md: every session MUST end
 # its turn with EXACTLY ONE machine-readable marker — DONE: / PAUSING: /
 # BLOCKED: — alone on the last non-empty line of its final response.
 #
@@ -284,7 +284,7 @@ cat >&2 <<MSG
 CONTINUATION ENFORCER — SESSION END BLOCKED
 ================================================================
 
-Per ~/.claude/rules/session-end-protocol.md, every session MUST end
+Per ~/.claude/doctrine/session-end-protocol.md, every session MUST end
 its turn with EXACTLY ONE marker, alone on the LAST non-empty line of
 its final response:
 

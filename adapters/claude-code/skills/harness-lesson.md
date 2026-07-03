@@ -7,7 +7,7 @@ description: Encode a recent failure as a proposed harness change (hook, rule, o
 
 Failure-to-mechanism skill. Takes a specific failure as input and produces a deployable harness change that catches the entire class of failure, not just the specific instance.
 
-This is the "encode the fix" step from `~/.claude/rules/diagnosis.md`. Every failure that isn't encoded repeats.
+This is the "encode the fix" step from `~/.claude/doctrine/diagnosis.md`. Every failure that isn't encoded repeats.
 
 ## When to use
 
@@ -77,7 +77,7 @@ Map the failure class to the appropriate mechanism. The harness has these enforc
 - **SessionStart hook** — runs at session start; surfaces warnings and context. Best for: reminders, freshness checks, policy warnings.
 - **Stop hook / pre-stop** — runs at session end; blocks stop if preconditions aren't met. Best for: plan-integrity sweep.
 - **Agent** (`~/.claude/agents/*.md`) — an independent reviewer that the main session delegates to. Best for: adversarial review (task-verifier, claim-reviewer, plan-evidence-reviewer).
-- **Rule file** (`~/.claude/rules/*.md`) — behavioral convention, self-applied. Best for: patterns that are hard to mechanically detect but easy to state.
+- **Doctrine file** (`~/.claude/doctrine/*.md`) — behavioral convention, self-applied. Best for: patterns that are hard to mechanically detect but easy to state.
 - **Template change** (`~/.claude/templates/*.md`) — default structure for new files. Best for: enforcing required sections by default.
 - **Skill** (`~/.claude/skills/*.md`) — user-invokable procedure. Best for: reducing friction on a task that's currently manual.
 

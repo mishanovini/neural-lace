@@ -1187,7 +1187,7 @@ HARNESS_HEAD
   # Scenario (hi3): live-mirror ~/.claude/ paths recognized — expect PASS
   write_harness_carveout_plan "$TMPDIR_SELFTEST/hi3.md" \
     "- \`~/.claude/hooks/plan-reviewer.sh\` — live-mirror edit
-- \`~/.claude/rules/planning.md\` — live-mirror rule update"
+- \`~/.claude/doctrine/planning.md\` — live-mirror rule update"
   if bash "$SCRIPT" "$TMPDIR_SELFTEST/hi3.md" > /dev/null 2>&1; then
     echo "self-test (hi3) check4b-live-mirror-recognized: PASS (expected)" >&2
   else
@@ -1743,7 +1743,7 @@ fi
 # ============================================================
 #
 # Every plan — regardless of size or mode — must include the seven
-# required sections listed in `~/.claude/rules/planning.md` → "Verbose
+# required sections listed in `~/.claude/doctrine/planning.md` → "Verbose
 # Plans Are Mandatory". A section fails the check if:
 #
 #   (1) its `## <Heading>` marker is missing from the file, OR
@@ -1796,7 +1796,7 @@ check_required_section() {
   ln=$(grep -nE "^${heading_pattern}\s*\$" "$PLAN_FILE" 2>/dev/null | head -1 | cut -d: -f1)
 
   if [[ -z "$ln" ]]; then
-    add_finding "Check 6b: required section '$heading' is missing. Every plan must include: ${REQUIRED_HEADINGS[*]}. See ~/.claude/rules/planning.md, 'Verbose Plans Are Mandatory'."
+    add_finding "Check 6b: required section '$heading' is missing. Every plan must include: ${REQUIRED_HEADINGS[*]}. See ~/.claude/doctrine/planning.md, 'Verbose Plans Are Mandatory'."
     return
   fi
 
@@ -1826,7 +1826,7 @@ check_required_section() {
   non_ws_count=${non_ws_count:-0}
 
   if [[ $non_ws_count -lt 20 ]]; then
-    add_finding "Check 6b: required section '$heading' is empty or too short (only $non_ws_count non-whitespace chars; needs >= 20). Populate with substantive, plan-specific content. See ~/.claude/rules/planning.md, 'Verbose Plans Are Mandatory'."
+    add_finding "Check 6b: required section '$heading' is empty or too short (only $non_ws_count non-whitespace chars; needs >= 20). Populate with substantive, plan-specific content. See ~/.claude/doctrine/planning.md, 'Verbose Plans Are Mandatory'."
     return
   fi
 
@@ -1842,7 +1842,7 @@ check_required_section() {
   stripped=$(printf '%s' "$stripped" | tr -d '[:space:]')
 
   if [[ -z "$stripped" ]]; then
-    add_finding "Check 6b: required section '$heading' contains only placeholder text (e.g., '[populate me]', 'TODO', or template prompt). Replace with plan-specific content. See ~/.claude/rules/planning.md, 'Verbose Plans Are Mandatory'."
+    add_finding "Check 6b: required section '$heading' contains only placeholder text (e.g., '[populate me]', 'TODO', or template prompt). Replace with plan-specific content. See ~/.claude/doctrine/planning.md, 'Verbose Plans Are Mandatory'."
     return
   fi
 }
@@ -1870,7 +1870,7 @@ done
 # non-placeholder content.
 #
 # Rationale: design-mode work fails catastrophically when any of these
-# 10 dimensions is unexamined. See ~/.claude/rules/design-mode-planning.md.
+# 10 dimensions is unexamined. See ~/.claude/doctrine/design-mode-planning.md.
 
 # Only apply to plans with Mode: design (not design-skip, not code)
 MODE_VALUE=$(awk '/^Mode:/ { print $2; exit }' "$PLAN_FILE" 2>/dev/null | tr -d '[:space:]')
@@ -1952,7 +1952,7 @@ fi
 # When a plan declares Mode: design, the planner must perform the
 # 5-sweep Pre-Submission Class-Sweep Audit (S1-S5) before invoking
 # systems-designer. The discipline is documented in
-# ~/.claude/rules/design-mode-planning.md "Pre-Submission Class-Sweep
+# ~/.claude/doctrine/design-mode-planning.md "Pre-Submission Class-Sweep
 # Audit (mandatory before invoking systems-designer)" — landed in
 # commit 9c4e4c8 as a Pattern; this check is the Mechanism layer.
 #
@@ -1988,7 +1988,7 @@ if [[ "$MODE_VALUE" == "design" ]]; then
   AUDIT_LN=$(grep -nE '^## Pre-Submission Audit\s*$' "$PLAN_FILE" 2>/dev/null | head -1 | cut -d: -f1)
 
   if [[ -z "$AUDIT_LN" ]]; then
-    add_finding "Check 8A (design-mode): plan declares Mode: design but lacks '## Pre-Submission Audit' section. The planner must perform the 5-sweep audit (S1 Entry-Point Surfacing, S2 Existing-Code-Claim Verification, S3 Cross-Section Consistency, S4 Numeric-Parameter Sweep, S5 Scope-vs-Analysis Check) before invoking the systems-designer agent. Add the section per the template at ~/.claude/templates/plan-template.md, OR if the plan is genuinely a single-task design-mode change with no analysis surface for sweeps to apply to, use the canonical carve-out: 'n/a — single-task plan, no class-sweep needed'. See ~/.claude/rules/design-mode-planning.md, 'Pre-Submission Class-Sweep Audit'."
+    add_finding "Check 8A (design-mode): plan declares Mode: design but lacks '## Pre-Submission Audit' section. The planner must perform the 5-sweep audit (S1 Entry-Point Surfacing, S2 Existing-Code-Claim Verification, S3 Cross-Section Consistency, S4 Numeric-Parameter Sweep, S5 Scope-vs-Analysis Check) before invoking the systems-designer agent. Add the section per the template at ~/.claude/templates/plan-template.md, OR if the plan is genuinely a single-task design-mode change with no analysis surface for sweeps to apply to, use the canonical carve-out: 'n/a — single-task plan, no class-sweep needed'. See ~/.claude/doctrine/design-mode-planning.md, 'Pre-Submission Class-Sweep Audit'."
   else
     # Extract the section body up to the next '## ' heading.
     # Strip HTML comments so prompts inside <!-- --> don't count
@@ -2024,7 +2024,7 @@ if [[ "$MODE_VALUE" == "design" ]]; then
     done
 
     if [[ $HAS_CARVEOUT -eq 0 ]] && [[ $SWEEP_TOKENS_FOUND -lt 5 ]]; then
-      add_finding "Check 8A (design-mode): plan's '## Pre-Submission Audit' section has neither (a) the canonical full-sentence carve-out 'n/a — single-task plan, no class-sweep needed', nor (b) at least one line each starting with S1/S2/S3/S4/S5 (found $SWEEP_TOKENS_FOUND of 5 distinct sweep tokens). The planner must document each of the 5 sweeps (or use the canonical carve-out) before invoking systems-designer. Format per sweep: 'S1 (Entry-Point Surfacing): swept, N matches, M cited correctly, K added to Tasks/Files'. See ~/.claude/rules/design-mode-planning.md, 'The \`## Pre-Submission Audit\` section'."
+      add_finding "Check 8A (design-mode): plan's '## Pre-Submission Audit' section has neither (a) the canonical full-sentence carve-out 'n/a — single-task plan, no class-sweep needed', nor (b) at least one line each starting with S1/S2/S3/S4/S5 (found $SWEEP_TOKENS_FOUND of 5 distinct sweep tokens). The planner must document each of the 5 sweeps (or use the canonical carve-out) before invoking systems-designer. Format per sweep: 'S1 (Entry-Point Surfacing): swept, N matches, M cited correctly, K added to Tasks/Files'. See ~/.claude/doctrine/design-mode-planning.md, 'The \`## Pre-Submission Audit\` section'."
     fi
   fi
 fi
@@ -2035,7 +2035,7 @@ fi
 # ============================================================
 #
 # The "Quantitative Claims Must Be Validated, Not Asserted" rule in
-# ~/.claude/rules/design-mode-planning.md requires that every comparative
+# ~/.claude/doctrine/design-mode-planning.md requires that every comparative
 # quantitative claim ("under 50 RPM", "fits within 30s timeout",
 # "30% margin") in a design-mode plan be accompanied by inline arithmetic
 # in the same paragraph that demonstrates the math has been checked.
@@ -2074,7 +2074,7 @@ if [[ "$MODE_VALUE" == "design" ]]; then
   # Comparative-phrase detection. We collect all match line numbers and
   # then validate each match's surrounding paragraph for arithmetic.
   # The pattern groups cover the canonical forms documented in
-  # ~/.claude/rules/design-mode-planning.md "Quantitative Claims Must Be
+  # ~/.claude/doctrine/design-mode-planning.md "Quantitative Claims Must Be
   # Validated, Not Asserted".
   COMPARATIVE_PATTERN='(\bunder [0-9]+\b|\bover [0-9]+\b|\bexceeds [0-9]+\b|\bfits within [0-9]+\b|\bbelow [0-9]+\b|\babove [0-9]+\b|\bat most [0-9]+\b|\bat least [0-9]+\b|\bwell (above|below) [0-9]+\b|\bcomfortably (under|within|below|above)\b|[0-9]+%[[:space:]]+(margin|headroom|over|under)\b|\b[0-9]+x\b[[:space:]]+(faster|slower|larger|smaller|more|less)\b)'
 
@@ -2131,7 +2131,7 @@ if [[ "$MODE_VALUE" == "design" ]]; then
       ARITH_PATTERN='[0-9]+[[:space:]]*[×*/÷][[:space:]]*[0-9]+|[0-9]+[[:space:]]*[<>][=]?[[:space:]]*[0-9]+|[0-9]+[[:space:]]*[≤≥][[:space:]]*[0-9]+|[=→][[:space:]]*[0-9]+|[0-9]+[[:space:]]*=[[:space:]]*[0-9]+'
 
       if ! echo "$paragraph" | grep -qE "$ARITH_PATTERN" 2>/dev/null; then
-        add_finding "Check 9 (design-mode comparative claim without inline arithmetic): line $ln has a comparative quantitative claim without arithmetic in the same paragraph — \"$phrase\". Required: show the math in the same paragraph (e.g., \"60 calls (15 threads × 2 calls × 2 batches × 1 sync) ÷ 60s = 60 calls/min < 50 RPM tier limit\"). Reason: FM-013 / FM-014 — capacity claims without arithmetic are unverified. See ~/.claude/rules/design-mode-planning.md, 'Quantitative Claims Must Be Validated, Not Asserted'."
+        add_finding "Check 9 (design-mode comparative claim without inline arithmetic): line $ln has a comparative quantitative claim without arithmetic in the same paragraph — \"$phrase\". Required: show the math in the same paragraph (e.g., \"60 calls (15 threads × 2 calls × 2 batches × 1 sync) ÷ 60s = 60 calls/min < 50 RPM tier limit\"). Reason: FM-013 / FM-014 — capacity claims without arithmetic are unverified. See ~/.claude/doctrine/design-mode-planning.md, 'Quantitative Claims Must Be Validated, Not Asserted'."
       fi
     done <<< "$COMPARATIVE_LINES"
   fi
@@ -2351,7 +2351,7 @@ fi
 # Mode-agnostic. Status-agnostic for new-plan creation: even DEFERRED
 # plans benefit from a quick syntax check on their task list.
 #
-# See ~/.claude/rules/risk-tiered-verification.md for level semantics.
+# See ~/.claude/doctrine/risk-tiered-verification.md for level semantics.
 
 # Scan task-checkbox lines under any heading whose title contains "Task"
 # (case-insensitive — matches "## Tasks", "## Implementation Tasks", etc.).
@@ -2394,11 +2394,11 @@ if [[ -n "$VERIFICATION_LINES" ]]; then
       echo "[plan-reviewer] note (non-blocking): line $vln contains $vocc 'Verification: <level>' occurrences; the LAST one ('$(echo "$vtext" | grep -oiE 'Verification:[[:space:]]*(mechanical|contract|full)' | tail -1)') is the declaration. Consider rewording the prose mention (e.g. 'full-tier') to avoid ambiguity." >&2
     fi
     if [[ -z "$vlevel" ]]; then
-      add_finding "Check 12 (risk-tiered verification): line $vln has 'Verification:' but no readable level token. Use one of: mechanical, full, contract. See ~/.claude/rules/risk-tiered-verification.md."
+      add_finding "Check 12 (risk-tiered verification): line $vln has 'Verification:' but no readable level token. Use one of: mechanical, full, contract. See ~/.claude/doctrine/risk-tiered-verification.md."
       continue
     fi
     if ! [[ "$vlevel" =~ ^(mechanical|full|contract)$ ]]; then
-      add_finding "Check 12 (risk-tiered verification): line $vln declares 'Verification: $vlevel' but the only legal levels are: mechanical, full, contract (case-sensitive, lowercase). See ~/.claude/rules/risk-tiered-verification.md."
+      add_finding "Check 12 (risk-tiered verification): line $vln declares 'Verification: $vlevel' but the only legal levels are: mechanical, full, contract (case-sensitive, lowercase). See ~/.claude/doctrine/risk-tiered-verification.md."
     fi
   done <<< "$VERIFICATION_LINES"
 fi
@@ -2536,7 +2536,7 @@ while IFS= read -r task_line; do
   # Prove it works
   prove_body=$(extract_subblock "Prove it works")
   if [[ -z "$(printf '%s' "$prove_body" | tr -d '[:space:]')" ]]; then
-    CHECK13_FINDINGS+="    - Task $task_id_display: missing '**Prove it works:**' sub-block (line $task_ln). Required for every Verification: full task. See ~/.claude/rules/planning.md 'Integration Verification'."$'\n'
+    CHECK13_FINDINGS+="    - Task $task_id_display: missing '**Prove it works:**' sub-block (line $task_ln). Required for every Verification: full task. See ~/.claude/doctrine/planning.md 'Integration Verification'."$'\n'
   elif ! is_substantive "$prove_body"; then
     CHECK13_FINDINGS+="    - Task $task_id_display: '**Prove it works:**' is empty / placeholder / too short (< 30 chars substantive content). Provide >= 2 numbered scenario steps a real user would take."$'\n'
   elif ! printf '%s' "$prove_body" | grep -qE '^[[:space:]]*[12]\.' ; then
@@ -2645,7 +2645,7 @@ if { [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; } && [[ "$LIFECY
 
   # owner: present + non-empty + not the template placeholder
   if [[ -z "$OWNER_VALUE" ]] || [[ "$OWNER_VALUE" == "<name>" ]]; then
-    add_finding "Check 14 (plan-lifecycle accountability): required field 'owner:' is missing or empty. Name the one human accountable for this plan reaching a terminal state. Add 'owner: <name>' to the plan header (start-plan.sh --owner <name>). See Decision 036-d and ~/.claude/rules/plan-lifecycle.md."
+    add_finding "Check 14 (plan-lifecycle accountability): required field 'owner:' is missing or empty. Name the one human accountable for this plan reaching a terminal state. Add 'owner: <name>' to the plan header (start-plan.sh --owner <name>). See Decision 036-d and ~/.claude/doctrine/planning-full.md (Plan File Lifecycle)."
   fi
 
   # target-completion-date: present + non-empty + well-formed YYYY-MM-DD + not placeholder

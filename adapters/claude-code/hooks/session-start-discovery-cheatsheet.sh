@@ -8,7 +8,7 @@
 # discoveries, ADRs, and the information-architecture routing rule.
 #
 # This is the discoverability half of the harness-hygiene-2 initiative.
-# Companion: rules/information-architecture.md (the routing rule itself).
+# Companion: doctrine/harness-dev.md (the routing rule itself).
 # Sibling Mechanism: claude-md-hygiene-gate.sh (PR 3 — bloat detection).
 #
 # Why this exists:
@@ -24,7 +24,7 @@
 #     ignored — the hook emits the same content every session.
 #   - Output is plain stdout text (same convention as discovery-surfacer.sh,
 #     external-monitor-alert-surfacer.sh, etc.).
-#   - Silent when ~/.claude/rules/INDEX.md is missing AND no INDEX is in the
+#   - Silent when ~/.claude/doctrine/INDEX.md is missing AND no INDEX is in the
 #     project's adapters/ subtree — i.e. the harness is not installed.
 #     Otherwise always emits the cheatsheet (no harm in surfacing it).
 #   - Map content is hand-maintained here, not auto-derived. The 9 entries
@@ -38,12 +38,12 @@ set -u
 # -------- Resolve INDEX.md path (prefer live mirror, fall back to repo) --------
 resolve_index_path() {
   local cwd="${1:-$PWD}"
-  if [ -f "$HOME/.claude/rules/INDEX.md" ]; then
-    printf '%s\n' "$HOME/.claude/rules/INDEX.md"
+  if [ -f "$HOME/.claude/doctrine/INDEX.md" ]; then
+    printf '%s\n' "$HOME/.claude/doctrine/INDEX.md"
     return 0
   fi
-  if [ -f "$cwd/adapters/claude-code/rules/INDEX.md" ]; then
-    printf '%s\n' "$cwd/adapters/claude-code/rules/INDEX.md"
+  if [ -f "$cwd/adapters/claude-code/doctrine/INDEX.md" ]; then
+    printf '%s\n' "$cwd/adapters/claude-code/doctrine/INDEX.md"
     return 0
   fi
   return 1
@@ -61,13 +61,13 @@ emit_cheatsheet() {
   fi
 
   cat <<'EOF'
-[discovery-cheatsheet] Where to find harness info (per ~/.claude/rules/information-architecture.md):
+[discovery-cheatsheet] Where to find harness info (per ~/.claude/doctrine/harness-dev.md):
 
-  Operating principles           → ~/.claude/rules/principles.md
+  Operating principles           → ~/.claude/rules/constitution.md (full: ~/.claude/doctrine/principles-full.md)
   Credentials / auth conventions → ~/.claude/local/credentials-reference.md
-  All operating rules (index)    → ~/.claude/rules/INDEX.md
-  Per-surface rules              → ~/.claude/rules/<rule-name>.md
-  Information architecture rule  → ~/.claude/rules/information-architecture.md
+  All operating rules (index)    → ~/.claude/doctrine/INDEX.md
+  Per-surface rules              → ~/.claude/doctrine/<rule-name>.md
+  Information architecture rule  → ~/.claude/doctrine/harness-dev.md
   Architectural decisions (ADRs) → docs/decisions/NNN-<slug>.md  (index: docs/DECISIONS.md)
   Active implementation plans    → docs/plans/<slug>.md          (archived: docs/plans/archive/)
   Pending discoveries            → docs/discoveries/YYYY-MM-DD-<slug>.md
@@ -93,7 +93,7 @@ run_self_test() {
   # Scenario 1: INDEX in live mirror present => emit cheatsheet
   # We can't easily mock $HOME, so we test the resolve helper directly and
   # assume the live mirror exists (which it does on any installed machine).
-  if [ -f "$HOME/.claude/rules/INDEX.md" ]; then
+  if [ -f "$HOME/.claude/doctrine/INDEX.md" ]; then
     local out1
     out1=$(emit_cheatsheet "$tmp" 2>/dev/null)
     if echo "$out1" | grep -qF "Where to find harness info"; then
@@ -108,20 +108,20 @@ run_self_test() {
       echo "FAIL: [credentials-line-present] cheatsheet missing credentials line" >&2
       failures=$((failures + 1))
     fi
-    if echo "$out1" | grep -qF "information-architecture.md"; then
+    if echo "$out1" | grep -qF "harness-dev.md"; then
       echo "PASS: [info-arch-line-present]"
     else
       echo "FAIL: [info-arch-line-present] cheatsheet missing info-arch line" >&2
       failures=$((failures + 1))
     fi
   else
-    echo "SKIP: [live-mirror-present] no live mirror at \$HOME/.claude/rules/INDEX.md"
+    echo "SKIP: [live-mirror-present] no live mirror at \$HOME/.claude/doctrine/INDEX.md"
   fi
 
   # Scenario 2: INDEX in repo subtree present (no live mirror) => emit cheatsheet
   local s2="$tmp/repo-subtree"
-  mkdir -p "$s2/adapters/claude-code/rules"
-  echo "# Rules INDEX" > "$s2/adapters/claude-code/rules/INDEX.md"
+  mkdir -p "$s2/adapters/claude-code/doctrine"
+  echo "# Rules INDEX" > "$s2/adapters/claude-code/doctrine/INDEX.md"
   # We can't unset HOME safely; test resolve_index_path directly with a fake
   # path. Force the helper to fail on $HOME by setting HOME to /nonexistent.
   local saved_home="$HOME"

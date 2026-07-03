@@ -159,7 +159,7 @@ Write to `docs/harness-improvements/<YYYY-MM-DD>-<class-slug>.md`. Use the forma
 
 ### Causal-claim labeling (harness-wide discipline — applies to YOUR analysis)
 
-Per `~/.claude/rules/claims.md`, every causal claim you make about *why the control missed* must be tagged:
+Per `~/.claude/doctrine/claims.md`, every causal claim you make about *why the control missed* must be tagged:
 - **PROVEN** — cite the specific evidence: the hook source line, the diff hunk, the transcript tool-call, the FAIL artifact field. Example: "the gate's matcher is `src/app/**` (PROVEN: `scope-enforcement-gate.sh:42`) and the failing file was `src/components/Foo.tsx` (PROVEN: `git show <sha>`), so it was `not-triggered`."
 - **HYPOTHESIZED** — state the assumption AND a refutation criterion. Example: "the builder likely skipped the runtime check (HYPOTHESIZED: no `playwright` line in the evidence block; REFUTED by a transcript showing the check ran)."
 

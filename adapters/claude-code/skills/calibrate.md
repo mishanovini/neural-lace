@@ -240,9 +240,7 @@ bash ~/.claude/skills/calibrate.md task-verifier shortcut "verifier returned PAS
 
 The above is illustrative — the skill is not currently structured as a
 standalone bash file. The actual self-test runs through `/calibrate`
-invocations against a temporary working directory. See the rule
-`~/.claude/rules/calibration-loop.md` for the full discipline and how
-roll-up consumes the entries.
+invocations against a temporary working directory.
 
 ## State directory layout
 
@@ -289,9 +287,6 @@ counter-incentive prompt update or a new mechanical gate.
 
 ## Related
 
-- `~/.claude/rules/calibration-loop.md` — the discipline this skill
-  implements; observation-class semantics; what becomes a prompt update
-  vs. a work-shape extension vs. defers to telemetry.
 - `~/.claude/skills/harness-review.md` Check 12 — the roll-up consumer.
 - `docs/decisions/queued-tranche-1.5.md` G.1, G.2 — decisions backing the
   storage location and manual-vs-mechanized cadence.

@@ -574,7 +574,7 @@ fi
 # Always PASS — these are informational. Reviewers interpret context and
 # decide which patterns warrant a prompt update, work-shape library
 # extension, or defer to telemetry (HARNESS-GAP-11). See
-# ~/.claude/rules/calibration-loop.md for the discipline.
+# ~/.claude/skills/calibrate.md for the discipline.
 #
 # Volume warning: if any agent has > 100 entries, surface a finding so the
 # operator considers archival to a sub-directory.

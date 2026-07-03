@@ -945,7 +945,7 @@ PRODUCT-ACCEPTANCE GATE — BLOCKED
 
 This session has ACTIVE plan(s) whose product has not been verified
 at runtime by the end-user-advocate. Per Generation 5 enforcement
-(see ~/.claude/rules/acceptance-scenarios.md), a session cannot end
+(see ~/.claude/doctrine/acceptance-scenarios.md), a session cannot end
 with the product in a user-broken state.
 
 Blocking reasons:
@@ -975,7 +975,7 @@ To unblock, do ONE of:
      use will surface in the weekly /harness-review.
 
 See also:
-  - ~/.claude/rules/acceptance-scenarios.md (full loop documentation)
+  - ~/.claude/doctrine/acceptance-scenarios.md (full loop documentation)
   - ~/.claude/agents/end-user-advocate.md (agent invocation)
   - docs/plans/end-user-advocate-acceptance-loop.md (parent plan)
 

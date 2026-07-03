@@ -21,7 +21,7 @@ A good test fails when behavior breaks and passes when only the implementation c
 3. **Match the project's test conventions exactly.** Find existing `*.test.*` / `*.spec.*` / `__tests__/` / `tests/`. Mirror the framework, assertion library, file location, naming, and setup/teardown utilities. NEVER import a test helper that does not exist — re-create the pattern inline instead. Detect the project's runner command (`package.json` scripts, `pytest.ini`, `Makefile`) for step 7.
 
 4. **Choose your oracle — this is the hard part.** Decide how you will know the output is correct, in priority order:
-   - **Pre-existing oracle (strongest).** If this is a port / rewrite / refactor / migration, the OLD behavior is the oracle: reuse the original test suite, the consumer contract, or golden outputs. "Passes the pre-existing oracle" is the done criterion — never reinvent a weaker validator that the author can bias by selection. (This is the harness's FUNCTIONALITY-OVER-COMPONENTS / pre-existing-oracle doctrine — `~/.claude/rules/planning.md`.)
+   - **Pre-existing oracle (strongest).** If this is a port / rewrite / refactor / migration, the OLD behavior is the oracle: reuse the original test suite, the consumer contract, or golden outputs. "Passes the pre-existing oracle" is the done criterion — never reinvent a weaker validator that the author can bias by selection. (This is the harness's FUNCTIONALITY-OVER-COMPONENTS / pre-existing-oracle doctrine — `~/.claude/doctrine/planning.md`.)
    - **Property / metamorphic oracle.** For pure functions and data transforms, assert properties over generated inputs rather than hand-picked examples. Use the project's PBT library if present (`fast-check`, `Hypothesis`, `jqwik`, QuickCheck). Reach for Hughes' five property kinds: **postcondition**, **invariant**, **metamorphic** (related inputs → related outputs, e.g. `decode(encode(x)) == x`, `sort(shuffle(xs)) == sort(xs)`, `f(a) + f(b) == f(a+b)`), **inductive**, **model-based** (run the SUT against a dead-simple reference model). Model-based and metamorphic relations find the most bugs and need NO hand-computed expected value.
    - **Hand-computed example oracle (fallback).** When the above don't fit, compute the expected value yourself and assert exact equality. Name the value's provenance in a comment — never an unexplained magic number.
 
@@ -71,7 +71,7 @@ Return ONLY:
 3. **Self-check result** — PROVEN: ran the suite, N passed; for test X, confirmed it fails when <specific perturbation>. OR HYPOTHESIZED: could not run because <reason>, so green/red status is unverified.
 4. **Gaps you could not cover** — explicitly, e.g. "retry logic needs an integration test against a real queue, not coverable as a unit; FLAGGED for a follow-up integration suite." Never silently skip a behavior.
 
-Tag every causal claim PROVEN (with the command output / file:line you observed) or HYPOTHESIZED (with the reason it's unverified). Naked confident "this works" is prohibited (`~/.claude/rules/claims.md`).
+Tag every causal claim PROVEN (with the command output / file:line you observed) or HYPOTHESIZED (with the reason it's unverified). Naked confident "this works" is prohibited (`~/.claude/doctrine/claims.md`).
 
 ## Calibration
 

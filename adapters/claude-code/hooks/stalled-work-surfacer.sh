@@ -79,7 +79,7 @@ run() {
   [ -d "$SCAN_ROOT" ] || exit 0
   scan
   if [ "${STALL_COUNT:-0}" -gt 0 ]; then
-    echo "  Per ~/.claude/rules/background-work-tracking.md: a launched background task is a tracked"
+    echo "  Per ~/.claude/doctrine/background-work-tracking.md: a launched background task is a tracked"
     echo "  obligation until its result is consumed. Never report it 'running' without checking it."
   fi
   exit 0

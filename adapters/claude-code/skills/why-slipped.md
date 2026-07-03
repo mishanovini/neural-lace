@@ -54,7 +54,7 @@ Cite file paths, commit SHAs, or session artifacts where possible. "The plan had
 
 ### Step 2. Trace the enforcement map
 
-Read `~/.claude/rules/vaporware-prevention.md` — specifically the "Enforcement map" table. For each row in that table, ask:
+Read `~/.claude/doctrine/vaporware-prevention.md` — specifically the "Enforcement map" table. For each row in that table, ask:
 
 - Does this hook/rule apply to the failure class?
 - If yes, did it fire? If it fired, what did it say?
@@ -63,9 +63,9 @@ Read `~/.claude/rules/vaporware-prevention.md` — specifically the "Enforcement
 
 Also check:
 
-- `~/.claude/rules/planning.md` for plan-lifecycle rules
-- `~/.claude/rules/testing.md` for verification rules
-- `~/.claude/rules/diagnosis.md` for correction-feedback rules
+- `~/.claude/doctrine/planning.md` for plan-lifecycle rules
+- `~/.claude/doctrine/testing.md` for verification rules
+- `~/.claude/doctrine/diagnosis.md` for correction-feedback rules
 - `~/.claude/hooks/` directory for all active hooks (not just the ones listed in the map)
 
 ### Step 3. Classify the failure type
@@ -90,7 +90,7 @@ The proposal MUST be concrete. Not "we should add a hook." A full path plus actu
 Acceptable fix shapes:
 
 - **New hook:** `~/.claude/hooks/<name>.sh` — include a sketch of the hook body (what event, what trigger, what check, what exit code). If the fix is a PreToolUse/PostToolUse/SessionStart hook, specify which.
-- **Rule addition:** `~/.claude/rules/<existing-file>.md` — include the exact paragraph to add, with context on where in the file it goes.
+- **Doctrine addition:** `~/.claude/doctrine/<existing-file>.md` (or `~/.claude/rules/constitution.md` for a core behavioral rule) — include the exact paragraph to add, with context on where in the file it goes.
 - **Agent modification:** `~/.claude/agents/<name>.md` — include the specific instruction to add or modify.
 - **Template change:** `~/.claude/templates/<name>.md` — include the section to add.
 - **Skill addition:** `~/.claude/skills/<name>.md` — include the frontmatter and body sketch.

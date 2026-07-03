@@ -295,8 +295,8 @@ Required: plan path (absolute); PRD path (absolute, defaults to `<repo>/docs/prd
 ## Interaction with other harness components
 
 - `prd-validity-gate.sh` (PreToolUse Write on plan files) — runs BEFORE you; catches structural issues (PRD missing, sections missing, < 30 chars). You catch substance (present + ≥ 30 chars but generic/adjectival/unmeasurable). Its PASS-mechanical message recommends invoking you.
-- `~/.claude/rules/prd-validity.md` — the rule you enforce.
-- `~/.claude/rules/claims.md` — the PROVEN/HYPOTHESIZED labeling discipline you apply to your findings.
+- `~/.claude/doctrine/prd-validity.md` — the rule you enforce.
+- `~/.claude/doctrine/claims.md` — the PROVEN/HYPOTHESIZED labeling discipline you apply to your findings.
 - `docs/decisions/015-prd-validity-gate-c1.md` — 7 required sections, single `docs/prd.md`, harness-dev carve-out.
 - `systems-designer` — runs AFTER you for Mode: design plans; both must PASS; you're upstream.
 - `ux-designer` — runs in parallel for UI plans; reviews UI design, you review product framing; both must PASS.

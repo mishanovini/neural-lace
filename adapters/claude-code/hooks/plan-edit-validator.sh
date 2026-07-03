@@ -878,7 +878,7 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)
 # is present or the token is unrecognized (backward-compatible per
 # Decision queued-tranche-1.5.md D.2).
 #
-# See ~/.claude/rules/risk-tiered-verification.md for level semantics.
+# See ~/.claude/doctrine/risk-tiered-verification.md for level semantics.
 
 extract_verification_level() {
   local plan_file="$1"

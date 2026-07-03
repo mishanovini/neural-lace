@@ -677,7 +677,7 @@ Checks run:
    Output: 1
    Result: PASS (marker `85a3ae3a-a9f9-4729-a73e-6214ed0c996a--tdd-gate` present on disk, matches the naming scheme only the hook writes)
 6. Independent re-verification of witness 2 (targeted grep count on agent-uneditable transcript; file NOT read/catted)
-   Command: grep -c "doctrine-jit" "$HOME/.claude/projects/C--Users-misha-dev-Pocket-Technician-neural-lace--claude-worktrees-hungry-solomon-179991/85a3ae3a-a9f9-4729-a73e-6214ed0c996a/subagents/agent-a2e9fdd2d16c316f8.jsonl"
+   Command: grep -c "doctrine-jit" "$HOME/.claude/projects/<orchestrator-project-slug>/<session-id>/subagents/agent-a2e9fdd2d16c316f8.jsonl"
    Output: 4
    Result: PASS (matches specs-c's exact claim of 4)
    Sub-check: grep -c "doctrine-jit] tdd-gate — injected once for this session" on same file → 1 (header text present)
@@ -689,3 +689,155 @@ Runtime verification: functionality-verifier doctrine-jit-C.2::PASS — live sub
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN — the fixture-level self-test (11/11) was independently re-run this session and passed cleanly; the wiring grep confirms the hook is registered in settings.json.template; and both of the two independent live-probe witnesses recorded in specs-c (the on-disk dedup marker and the agent-uneditable transcript's doctrine-jit references) were independently re-verified against the actual filesystem and transcript rather than trusted from the specs-c narrative alone. All match or exceed the specs-c claims (transcript grep = 4 as claimed; header text present; hookSpecificOutput line-count = 2 as claimed). No gaps found.
+
+## Task C.5 — The move + cutover
+
+EVIDENCE BLOCK
+==============
+Task ID: C.5
+Task description: The move + cutover (SERIAL): relocate non-constitution rules out of the auto-load dir into `doctrine/`; leave exit-0-shim-equivalent handling per the live-session safety rule; update install.sh mapping; regenerate INDEX from manifest (or retire INDEX per C.0 decision); tag `pre-wave-c-cutover`; install + doctor. Pre-condition: C.2's live probe passed — Verification: mechanical
+Verified at: 2026-07-03T01:23:40Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — plan Done-when: post-install `cat ~/.claude/rules/*.md | wc -c` ≤ 30000; `harness-doctor.sh --quick` green incl. new byte-budget check; golden evals pass.
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commits: ceddf5b (overhaul(C.5): rules->doctrine move + doctrine INDEX + auto-install sync + golden eval rewrite), 9b96be2 (manifest entry for doctrine-jit itself), 32c7a6c (overhaul(C.5): install.sh doctrine sync + rules-prune + PRINCIPLES_SRC to principles-full), 971dc62 (overhaul(C.5): regenerate doctrine/INDEX.md against the 90-entry manifest), 848cf25 (backlog: GOLDEN-EVAL-ENV-01), 58d91f1 (hygiene sanitization fixup) — squash-merged to master via PR #69 (<origin-org>/neural-lace), merge commit b632fc3.
+
+Checks run:
+1. Post-install rules-dir byte budget
+   Command: cat ~/.claude/rules/*.md | wc -c
+   Output: 8293
+   Result: PASS (≤ 30000)
+2. rules/ dir contents
+   Command: ls ~/.claude/rules/
+   Output: constitution.md
+   Result: PASS (only the constitution set remains)
+3. Doctor green against live mirror, including the new byte-budget check
+   Command: bash ~/.claude/hooks/harness-doctor.sh --quick </dev/null
+   Output: "[doctor] GREEN — 7 checks passed"; exit 0 (up from 6/6 recorded at B.6 — the 7th check is the byte-budget check C.5 adds)
+   Result: PASS
+4. rules-index-coverage golden eval (the rewritten invariant per C.0's disposition: INDEX retired, replaced by manifest-driven doctrine/INDEX.md)
+   Command: bash evals/golden/rules-index-coverage.sh
+   Output: "Checks passed: 4" / "PASS: rules/ holds only constitution.md; doctrine/INDEX.md covers every compact within the 3000-byte cap"; exit 0
+   Result: PASS
+5. manifest-check.sh
+   Command: bash adapters/claude-code/scripts/manifest-check.sh
+   Output: "[manifest-check] GREEN — 90 entries, 91 hooks covered, 0 warn"; exit 0
+   Result: PASS
+6. Wave C landed on master
+   Command: git log --oneline origin/master -1
+   Output: "b632fc3 NL Overhaul Wave C: context diet — constitution-only rules/, doctrine compacts + JIT injection, manifest, cutover (#69)"
+   Result: PASS (mentions "Wave C"; matches the squash SHA b632fc3 cited by prior wave-close evidence)
+7. Cutover tag
+   Command: git tag -l pre-wave-c-cutover
+   Output: pre-wave-c-cutover
+   Result: PASS
+8. Doctor byte-budget config
+   Command: cat ~/.claude/local/doctor-budget
+   Output: 30000
+   Result: PASS
+9. PR #69 merge + CI status (<origin-org>/neural-lace — origin remote; confirmed via `gh pr view 69 --repo <origin-org>/neural-lace --json state,mergedAt,statusCheckRollup` after account-blindness correction, `gh auth switch -u <work-gh-account>`)
+   Output: state=MERGED, mergedAt=2026-07-02T23:58:06Z, mergeCommit.oid=b632fc310b726152ab7ca6ae04efb651b81cecae (matches local git log exactly); 11/11 statusCheckRollup entries conclusion=SUCCESS, incl. "Golden behavioral tests" (run 28629116249) and "Server-side enforcement" (run 28629116258)
+   Result: PASS
+10. KNOWN EXCEPTION — credential-push-blocked.sh local-vs-CI divergence (per dispatch instructions, not scored against the local run)
+    Local run: `bash evals/golden/credential-push-blocked.sh` → exit 1, "COMMIT BLOCKED: sensitive patterns detected" — reproduces the documented pre-existing machine-env issue (global core.hooksPath intercepts the eval's fixture commit; backlog entry GOLDEN-EVAL-ENV-01 confirmed present in docs/backlog.md).
+    CI run (canonical): `gh run view 28629116249 --repo <origin-org>/neural-lace --log | grep -A1 credential-push-blocked.sh` → "PASS: Push with credential pattern was correctly blocked" — this is the PR #69 "Golden behavioral tests" job, SUCCESS.
+    Result: PASS (per dispatch instructions, cite CI evidence rather than local run for this one eval; local failure is the documented exception, not a regression)
+
+Runtime verification: command bash ~/.claude/hooks/harness-doctor.sh --quick
+Runtime verification: command bash evals/golden/rules-index-coverage.sh
+Runtime verification: command bash adapters/claude-code/scripts/manifest-check.sh
+Runtime verification: file docs/backlog.md::GOLDEN-EVAL-ENV-01
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — all Done-when criteria replayed live this session: post-install rules-dir is 8293 bytes (well under the 30000-byte cap) and contains only constitution.md; harness-doctor.sh --quick is GREEN with 7 checks (the new byte-budget check included); the rewritten rules-index-coverage golden eval and manifest-check.sh both exit 0; the pre-wave-c-cutover tag exists; and Wave C is confirmed merged to master via PR #69 (<origin-org>/neural-lace, merge commit b632fc3, all 11 CI checks SUCCESS) — verified directly via `gh pr view` after correcting an initial wrong-repo/wrong-account 404 (origin remote is <origin-org>/neural-lace, not the personal fork; required `gh auth switch -u <work-gh-account>`). The one local-only failure (credential-push-blocked.sh) is the documented pre-existing machine-env exception (GOLDEN-EVAL-ENV-01), independently confirmed green in the cited CI run's log output, consistent with dispatch instructions to cite CI rather than the local run for this eval.
+
+## Task C.6 — Agent/skill/template reference sweep
+
+EVIDENCE BLOCK
+==============
+Task ID: C.6
+Task description: Agent/skill/template reference sweep: update every `~/.claude/rules/<name>.md` reference across agents/skills/templates/hooks to constitution-or-doctrine paths — Verification: mechanical
+Verified at: 2026-07-03T01:23:40Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — plan Done-when: `grep -rl "claude/rules/" adapters/claude-code/{agents,skills,templates}` matches only constitution-set files.
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Commits: fc1f25b (overhaul(C.6): rules/ references swept (partial — stragglers listed)), 9205d96 (overhaul(C.6): fix pre-existing dangling rules/plan-lifecycle.md refs (file never existed) -> doctrine/planning-full.md)
+
+Checks run:
+1. agents/skills/templates rules/ references (excluding constitution.md)
+   Command: grep -rn "claude/rules/" adapters/claude-code/agents adapters/claude-code/skills adapters/claude-code/templates | grep -v constitution.md
+   Output: 4 matches — agents/code-reviewer.md:31 (`.claude/rules/*` — generic instruction to read a project's OWN conventions; code-reviewer operates on arbitrary downstream repos), skills/orchestrator-prime.md:9 and :52 (enumerates `~/.claude/rules/` alongside `~/.claude/doctrine/` as real current dirs to index — the skill IS harness-aware of both directories post-diet), templates/plan-template.md:601 (explicit "the project's own .claude/rules/" — a downstream project's own rules dir, not this harness's)
+   Classification: agents/code-reviewer.md:31 and templates/plan-template.md:601 → documented class (a) "references to a DOWNSTREAM project's own `.claude/rules/` dir"; skills/orchestrator-prime.md:9,52 → documented class (b) "skills/orchestrator-prime.md enumerating rules/ alongside doctrine/ as real current dirs"
+   Result: PASS (every remaining match is one of the two documented legitimate classes; zero matches outside them)
+2. hooks/ rules/ references (excluding attic, excluding constitution.md)
+   Command: grep -rn "claude/rules/" adapters/claude-code/hooks | grep -v attic | grep -v constitution.md
+   Output: 3 matches, all in adapters/claude-code/hooks/harness-doctor.sh (lines 70, 497, 499) — the doctor's own byte-budget check text, which MEASURES `~/.claude/rules/*.md` (the doctor's function) rather than referencing it as a doctrine source
+   Classification: matches the documented exception exactly ("harness-doctor.sh's byte-budget lines")
+   Result: PASS (no matches outside the documented exception)
+3. plan-lifecycle dangler fix
+   Command: grep -rc "rules/plan-lifecycle" adapters/claude-code/templates/plan-template.md adapters/claude-code/hooks/plan-reviewer.sh
+   Output: adapters/claude-code/templates/plan-template.md:0 / adapters/claude-code/hooks/plan-reviewer.sh:0
+   Result: PASS (= 0 in both files)
+4. Fix-commit sanity (syntax + redirect target existence, since check 3 depends on 9205d96 landing cleanly)
+   Command: bash -n adapters/claude-code/hooks/plan-reviewer.sh; test -f adapters/claude-code/doctrine/planning-full.md
+   Output: syntax OK; doctrine/planning-full.md exists
+   Result: PASS
+
+Runtime verification: command grep -rn "claude/rules/" adapters/claude-code/agents adapters/claude-code/skills adapters/claude-code/templates | grep -v constitution.md
+Runtime verification: command grep -rn "claude/rules/" adapters/claude-code/hooks | grep -v attic | grep -v constitution.md
+Runtime verification: file adapters/claude-code/hooks/plan-reviewer.sh::doctrine/planning-full.md
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — every remaining `claude/rules/` reference across agents/skills/templates (excluding constitution.md) was individually read and classified against the plan's own two documented legitimate exception classes, with zero matches outside them (2 → class a, downstream project's own rules dir; 2 → class b, orchestrator-prime.md's dual-directory enumeration). Every remaining reference in hooks/ (excluding attic, excluding constitution.md) is confirmed to be harness-doctor.sh's byte-budget measurement text, the sole documented exception. The pre-existing `rules/plan-lifecycle.md` dangler (a file that never existed) is confirmed fixed to zero occurrences in both named files, with the redirect target (doctrine/planning-full.md) confirmed to exist and the editing hook confirmed syntactically clean.
+
+## Task D.1 — `hooks/lib/signal-ledger.sh`: append-only JSONL event lib
+
+EVIDENCE BLOCK
+==============
+Task ID: D.1
+Task description: `hooks/lib/signal-ledger.sh`: append-only JSONL event lib (block/warn/waiver/downgrade/skip; HARNESS_SELFTEST sandboxing built in) — Verification: mechanical
+Verified at: 2026-07-03T01:54:41Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical — plan Done-when: "`--self-test` exits 0; retry-guard lib routes its downgrade events through it."
+Verification level: mechanical
+Comprehension-gate: not applicable (rung < 2)
+
+Note: D.1 was dispatched ahead of D.0 per the Decisions Log entry "D.1 + E.4 stable-subset dispatched ahead of D.0/E.0 wave-specs" (docs/plans/nl-overhaul-program-2026-07.md line 256-257) — shape was already fully fixed by the plan + ADR 058 D6, no D.0 dependency; every downstream D/E task consumes this lib.
+
+Commit: a32e3a9 (overhaul(D.1): signal-ledger lib + retry-guard downgrade routing) — adds adapters/claude-code/hooks/lib/signal-ledger.sh (+415 lines) and extends adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh (+22 lines)
+
+Checks run:
+1. signal-ledger.sh self-test
+   Command: bash adapters/claude-code/hooks/lib/signal-ledger.sh --self-test
+   Output: 7 scenarios, 12 assertions, "self-test summary: 12 passed, 0 failed"; exit 0
+   Result: PASS
+2. stop-hook-retry-guard.sh self-test (sandboxed)
+   Command: HARNESS_SELFTEST=1 bash adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh --self-test
+   Output: 15 scenarios, "self-test summary: 19 passed, 0 failed"; exit 0
+   Result: PASS
+3. retry-guard routes downgrade events through the ledger (wiring presence)
+   Command: grep -c "signal-ledger" adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh; grep -c "ledger_emit" adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh
+   Output: signal-ledger: 1 (best-effort `source` of `${BASH_SOURCE%/*}/signal-ledger.sh` at line 125, guarded so a missing lib never changes blocking behavior); ledger_emit: 4 (definition/doc references plus the actual call site at line 472-474 inside the downgrade path: `if command -v ledger_emit >/dev/null 2>&1; then ledger_emit "$hook_name" "downgrade" "$error_msg"; fi`, immediately after `retry_guard_log_unresolved` and before the downgrade warning is printed)
+   Result: PASS (≥1 each; call site confirmed substantive, not a stray string — it fires on every retry-guard downgrade, guarded by `command -v` so absence of the lib is a no-op)
+4. manifest coverage
+   Command: bash adapters/claude-code/scripts/manifest-check.sh
+   Output: "[manifest-check] GREEN — 90 entries, 91 hooks covered, 0 warn"; exit 0
+   Result: PASS
+
+Runtime verification: command bash adapters/claude-code/hooks/lib/signal-ledger.sh --self-test
+Runtime verification: command bash adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh --self-test
+Runtime verification: file adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh::ledger_emit "$hook_name" "downgrade" "$error_msg"
+Runtime verification: command bash adapters/claude-code/scripts/manifest-check.sh
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — both self-tests replayed live this session with exit 0 (signal-ledger.sh: 12/12 assertions; stop-hook-retry-guard.sh: 19/19 assertions including the pre-existing DONE-riding-refusal scenarios, confirming the D.1 sourcing addition did not regress the retry-guard's prior behavior). The wiring is not a bare grep-bait string: the retry-guard's downgrade path at line 472-474 calls `ledger_emit "$hook_name" "downgrade" "$error_msg"` guarded by `command -v ledger_emit`, so every downgrade this session's Stop-hook chain performs emits one "downgrade" event to the shared ledger, and a missing/older ledger lib degrades to a no-op rather than breaking retry-guard's core blocking semantics (verified by reading the guarded source block at lines 114-131). manifest-check.sh is GREEN (90 entries, 91 hooks, 0 warn). Dispatch order (D.1 ahead of D.0) is documented and justified in the plan's own Decisions Log, cited above.

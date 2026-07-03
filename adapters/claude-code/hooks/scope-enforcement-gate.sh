@@ -110,7 +110,7 @@
 #   REMOVED 2026-05-04. The block-message no longer offers a waiver
 #   path. Three structural options (update plan / open new plan / defer)
 #   cover every legitimate case. Emergency override is `git commit
-#   --no-verify` per ~/.claude/rules/git.md.
+#   --no-verify` per ~/.claude/doctrine/git.md.
 #
 # Exit codes:
 #   0 — commit allowed (or non-applicable)
@@ -1891,7 +1891,7 @@ fi
   echo ""
   echo "Emergency override: \`git commit --no-verify\` bypasses ALL pre-commit hooks"
   echo "including this one. Use only when explicitly authorized (per"
-  echo "~/.claude/rules/git.md). The bypass is auditable in git's output."
+  echo "~/.claude/doctrine/git.md). The bypass is auditable in git's output."
   echo ""
   echo "================================================================"
 } >&2
