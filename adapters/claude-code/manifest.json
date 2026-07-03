@@ -1,0 +1,1732 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "acceptance-scenarios",
+      "kind": "gate",
+      "doctrine_file": "doctrine/acceptance-scenarios.md",
+      "hooks": [
+        "product-acceptance-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "agent-teams",
+      "kind": "gate",
+      "doctrine_file": "doctrine/agent-teams.md",
+      "hooks": [
+        "teammate-spawn-validator.sh",
+        "task-created-validator.sh",
+        "task-completed-evidence-gate.sh"
+      ],
+      "events": [
+        "PreToolUse",
+        "TaskCreated",
+        "TaskCompleted"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "automation-modes",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/automation-modes.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "background-work-tracking",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/background-work-tracking.md",
+      "hooks": [
+        "stalled-work-surfacer.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "backlog-plan-atomicity",
+      "kind": "gate",
+      "doctrine_file": "doctrine/planning.md",
+      "hooks": [
+        "backlog-plan-atomicity.sh"
+      ],
+      "events": [
+        "precommit"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "bug-persistence",
+      "kind": "gate",
+      "doctrine_file": "doctrine/testing.md",
+      "hooks": [
+        "bug-persistence-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "claude-md-hygiene",
+      "kind": "gate",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "claude-md-hygiene-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "code-conventions",
+      "kind": "convention",
+      "doctrine_file": "doctrine/code-conventions.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [
+          "src/app/api/",
+          "/migrations/"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "completion-criteria",
+      "kind": "gate",
+      "doctrine_file": "doctrine/completion-criteria.md",
+      "hooks": [
+        "completion-criteria-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "comprehension-gate",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/comprehension-gate.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "consolidation-discipline",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/consolidation-discipline.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "constitution",
+      "kind": "pattern",
+      "doctrine_file": "rules/constitution.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "cross-repo-drift-gate",
+      "kind": "gate",
+      "doctrine_file": "doctrine/git.md",
+      "hooks": [
+        "cross-repo-drift-postpush-gate.sh"
+      ],
+      "events": [
+        "PostToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "posttool"
+    },
+    {
+      "id": "cross-repo-drift-warn",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/git.md",
+      "hooks": [
+        "cross-repo-drift-warn.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "customer-facing-review",
+      "kind": "gate",
+      "doctrine_file": "doctrine/customer-facing-review.md",
+      "hooks": [
+        "customer-facing-review-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "dag-review-waiver",
+      "kind": "gate",
+      "doctrine_file": "doctrine/orchestrator-pattern.md",
+      "hooks": [
+        "dag-review-waiver-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "decision-context-emitters",
+      "kind": "writer",
+      "doctrine_file": "doctrine/decision-context.md",
+      "hooks": [
+        "decision-context-pending-surfacer.sh",
+        "decision-context-replay.sh",
+        "decision-context-reply-emit.sh"
+      ],
+      "events": [
+        "SessionStart",
+        "UserPromptSubmit"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "decision-context-gate",
+      "kind": "gate",
+      "doctrine_file": "doctrine/decision-context.md",
+      "hooks": [
+        "decision-context-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "decisions-index",
+      "kind": "gate",
+      "doctrine_file": "doctrine/planning.md",
+      "hooks": [
+        "decisions-index-gate.sh"
+      ],
+      "events": [
+        "precommit"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "definition-on-first-use",
+      "kind": "gate",
+      "doctrine_file": "doctrine/definition-on-first-use.md",
+      "hooks": [
+        "definition-on-first-use-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "build-doctrine/"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "deploy-automation-mode",
+      "kind": "gate",
+      "doctrine_file": "doctrine/git.md",
+      "hooks": [
+        "automation-mode-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "design-mode-planning",
+      "kind": "gate",
+      "doctrine_file": "doctrine/design-mode-planning.md",
+      "hooks": [
+        "systems-design-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [
+          ".github/workflows/",
+          "Dockerfile",
+          "vercel.json"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "diagnosis",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/diagnosis.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "discovery-cheatsheet",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "session-start-discovery-cheatsheet.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "discovery-protocol",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/discovery-protocol.md",
+      "hooks": [
+        "discovery-surfacer.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "docs/discoveries/"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "doc-gate",
+      "kind": "gate",
+      "doctrine_file": "doctrine/code-conventions.md",
+      "hooks": [
+        "doc-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "docs-freshness",
+      "kind": "gate",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "docs-freshness-gate.sh"
+      ],
+      "events": [
+        "precommit"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "doctrine-jit",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [
+        "doctrine-jit.sh"
+      ],
+      "events": [
+        "PostToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "posttool"
+    },
+    {
+      "id": "effort-policy-warn",
+      "kind": "surfacer",
+      "doctrine_file": null,
+      "hooks": [
+        "effort-policy-warn.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "env-local-protection",
+      "kind": "gate",
+      "doctrine_file": "doctrine/security.md",
+      "hooks": [
+        "env-local-protection.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "external-monitor-alerts",
+      "kind": "surfacer",
+      "doctrine_file": null,
+      "hooks": [
+        "external-monitor-alert-surfacer.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "findings-ledger",
+      "kind": "gate",
+      "doctrine_file": "doctrine/findings-ledger.md",
+      "hooks": [
+        "findings-ledger-schema-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "docs/findings.md"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "friction-reflexion",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/friction-reflexion.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "frontend-conventions",
+      "kind": "convention",
+      "doctrine_file": "doctrine/frontend-conventions.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [
+          "src/components/",
+          ".tsx"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "gate-respect",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/gate-respect.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "gh-account-hint",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/git.md",
+      "hooks": [
+        "gh-account-blindness-hint.sh"
+      ],
+      "events": [
+        "PostToolUse",
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "posttool"
+    },
+    {
+      "id": "git-freshness",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/git.md",
+      "hooks": [
+        "session-start-git-freshness.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "harness-doctor",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "harness-doctor.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "honest_status": "diagnostic tool — invoked on demand (harness-doctor.sh --quick); chain wiring is a post-Wave-D decision",
+      "budget_class": "none"
+    },
+    {
+      "id": "harness-hygiene-scan",
+      "kind": "gate",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "harness-hygiene-scan.sh"
+      ],
+      "events": [
+        "precommit",
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "invoked via pre-commit-gate.sh chain and manual --full-tree runs; not directly wired in settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "harness-sync-check",
+      "kind": "gate",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "check-harness-sync.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "interactive-process-fidelity",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/interactive-process-fidelity.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "local-edit-authorization",
+      "kind": "gate",
+      "doctrine_file": "doctrine/local-edit-authorization.md",
+      "hooks": [
+        "local-edit-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "mechanical-evidence",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/mechanical-evidence.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "migration-claude-md",
+      "kind": "gate",
+      "doctrine_file": "doctrine/code-conventions.md",
+      "hooks": [
+        "migration-claude-md-gate.sh"
+      ],
+      "events": [
+        "precommit"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "narrate-and-wait",
+      "kind": "gate",
+      "doctrine_file": "doctrine/session-end-protocol.md",
+      "hooks": [
+        "narrate-and-wait-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "narrative-integrity",
+      "kind": "gate",
+      "doctrine_file": "doctrine/claims.md",
+      "hooks": [
+        "deferral-counter.sh",
+        "goal-coverage-on-stop.sh",
+        "goal-extraction-on-prompt.sh",
+        "imperative-evidence-linker.sh",
+        "transcript-lie-detector.sh"
+      ],
+      "events": [
+        "Stop",
+        "UserPromptSubmit"
+      ],
+      "wired_template": true,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "no-test-skip",
+      "kind": "gate",
+      "doctrine_file": "doctrine/testing.md",
+      "hooks": [
+        "no-test-skip-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "observed-errors-first",
+      "kind": "gate",
+      "doctrine_file": "doctrine/observed-errors-first.md",
+      "hooks": [
+        "observed-errors-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "outcome-evidence",
+      "kind": "gate",
+      "doctrine_file": "doctrine/testing.md",
+      "hooks": [
+        "outcome-evidence-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "parallel-dev-migration-naming",
+      "kind": "gate",
+      "doctrine_file": "doctrine/parallel-dev-discipline.md",
+      "hooks": [
+        "migration-naming-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "plan-deletion-protection",
+      "kind": "gate",
+      "doctrine_file": "doctrine/planning.md",
+      "hooks": [
+        "plan-deletion-protection.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "plan-edit-validator",
+      "kind": "gate",
+      "doctrine_file": "doctrine/planning.md",
+      "hooks": [
+        "plan-edit-validator.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "docs/plans/"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "plan-lifecycle",
+      "kind": "writer",
+      "doctrine_file": "doctrine/planning.md",
+      "hooks": [
+        "plan-auto-closure.sh",
+        "plan-lifecycle.sh",
+        "plan-status-archival-sweep.sh"
+      ],
+      "events": [
+        "PostToolUse",
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "posttool"
+    },
+    {
+      "id": "plan-reviewer",
+      "kind": "gate",
+      "doctrine_file": "doctrine/planning.md",
+      "hooks": [
+        "plan-reviewer.sh"
+      ],
+      "events": [
+        "precommit",
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "invoked via pre-commit-gate.sh chain and plan-edit flows; not directly wired in settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "pr-health-snapshot",
+      "kind": "gate",
+      "doctrine_file": "doctrine/pr-health-snapshot.md",
+      "hooks": [
+        "pr-health-snapshot-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "pr-template-inline",
+      "kind": "gate",
+      "doctrine_file": "doctrine/planning.md",
+      "hooks": [
+        "pr-template-inline-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "prd-validity",
+      "kind": "gate",
+      "doctrine_file": "doctrine/prd-validity.md",
+      "hooks": [
+        "prd-validity-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "docs/prd.md"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "pre-commit-chain",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": [
+        "pre-commit-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "pre-push-divergence",
+      "kind": "gate",
+      "doctrine_file": "doctrine/git.md",
+      "hooks": [
+        "pre-push-divergence-check.sh"
+      ],
+      "events": [
+        "prepush"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "wired via git-hooks/pre-push dispatcher (core.hooksPath), not settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "pre-push-test",
+      "kind": "gate",
+      "doctrine_file": "doctrine/testing.md",
+      "hooks": [
+        "pre-push-test-gate.sh"
+      ],
+      "events": [
+        "prepush"
+      ],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "wired via git-hooks/pre-push dispatcher (core.hooksPath) with per-repo opt-in marker; not settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "pre-stop-verifier",
+      "kind": "gate",
+      "doctrine_file": "doctrine/planning.md",
+      "hooks": [
+        "pre-stop-verifier.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "principles-compliance",
+      "kind": "gate",
+      "doctrine_file": "doctrine/principles-full.md",
+      "hooks": [
+        "principles-compliance-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "stop"
+    },
+    {
+      "id": "propagation-engine",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [
+        "propagation-trigger-router.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "honest_status": "invoked manually or by future PostToolUse wiring (Tranche 6a); not wired in settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "register-progress",
+      "kind": "gate",
+      "doctrine_file": "doctrine/session-end-protocol.md",
+      "hooks": [
+        "register-progress-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "register-surfacer",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/session-end-protocol.md",
+      "hooks": [
+        "register-surfacer.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "review-finding-fix",
+      "kind": "gate",
+      "doctrine_file": "doctrine/testing.md",
+      "hooks": [
+        "review-finding-fix-gate.sh"
+      ],
+      "events": [
+        "precommit"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "risk-tiered-verification",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/risk-tiered-verification.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "runtime-verification",
+      "kind": "gate",
+      "doctrine_file": "doctrine/vaporware-prevention.md",
+      "hooks": [
+        "runtime-verification-executor.sh",
+        "runtime-verification-reviewer.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "invoked via pre-stop-verifier.sh (Stop chain); not directly wired in settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "secret-hygiene-prepush",
+      "kind": "gate",
+      "doctrine_file": "doctrine/security.md",
+      "hooks": [
+        "pre-push-scan.sh"
+      ],
+      "events": [
+        "prepush"
+      ],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "wired via git-hooks/pre-push dispatcher (core.hooksPath), not settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "session-end-marker",
+      "kind": "gate",
+      "doctrine_file": "doctrine/session-end-protocol.md",
+      "hooks": [
+        "continuation-enforcer.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "pending Wave D (D.3 session-honesty-gate) — hook exists with green self-tests but is not wired into the live Stop chain",
+      "budget_class": "stop"
+    },
+    {
+      "id": "session-start-auto-install",
+      "kind": "writer",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "session-start-auto-install.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "settings-divergence",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "settings-divergence-detector.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "spawn-task-report-back",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/spawn-task-report-back.md",
+      "hooks": [
+        "spawned-task-result-surfacer.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "spec-freeze",
+      "kind": "gate",
+      "doctrine_file": "doctrine/spec-freeze.md",
+      "hooks": [
+        "scope-enforcement-gate.sh",
+        "spec-freeze-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "stale-plan-surfacer",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/planning.md",
+      "hooks": [
+        "stale-active-plan-surfacer.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "task-verifier-reminder",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/planning.md",
+      "hooks": [
+        "post-tool-task-verifier-reminder.sh"
+      ],
+      "events": [
+        "PostToolUse"
+      ],
+      "wired_template": true,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "posttool"
+    },
+    {
+      "id": "tdd-gate",
+      "kind": "gate",
+      "doctrine_file": "doctrine/testing.md",
+      "hooks": [
+        "pre-commit-tdd-gate.sh"
+      ],
+      "events": [
+        "precommit"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          ".test.",
+          ".spec.",
+          "/tests/",
+          "/e2e/"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
+      "budget_class": "none"
+    },
+    {
+      "id": "teaching-moments",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/teaching-moments.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [
+          "docs/teaching-examples/"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "tool-call-budget",
+      "kind": "gate",
+      "doctrine_file": "doctrine/orchestrator-pattern.md",
+      "hooks": [
+        "tool-call-budget.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "vaporware-volume",
+      "kind": "gate",
+      "doctrine_file": "doctrine/vaporware-prevention.md",
+      "hooks": [
+        "vaporware-volume-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "wire-check",
+      "kind": "gate",
+      "doctrine_file": "doctrine/planning.md",
+      "hooks": [
+        "wire-check-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "work-shapes",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/work-shapes.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "workstream-memory-ecology",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/workstream-memory-ecology.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "workstreams-emitters",
+      "kind": "writer",
+      "doctrine_file": "doctrine/workstreams-state.md",
+      "hooks": [
+        "workstreams-emit-reconciler.sh",
+        "workstreams-emit.sh",
+        "workstreams-extract-pending.sh",
+        "workstreams-orchestrator-queue.sh",
+        "workstreams-read.sh"
+      ],
+      "events": [
+        "PreToolUse",
+        "PostToolUse",
+        "Stop",
+        "SessionStart",
+        "UserPromptSubmit"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "workstreams-spawn-gate",
+      "kind": "gate",
+      "doctrine_file": "doctrine/workstreams-state.md",
+      "hooks": [
+        "workstreams-state-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "workstreams-ui/"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool"
+    },
+    {
+      "id": "workstreams-stop-gate",
+      "kind": "gate",
+      "doctrine_file": "doctrine/workstreams-state.md",
+      "hooks": [
+        "workstreams-stop-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "workstreams-task-binding",
+      "kind": "gate",
+      "doctrine_file": "doctrine/workstreams-state.md",
+      "hooks": [
+        "workstreams-task-binding.sh"
+      ],
+      "events": [
+        "PreToolUse",
+        "Stop",
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "workstreams-turn-emit",
+      "kind": "writer",
+      "doctrine_file": "doctrine/workstreams-state.md",
+      "hooks": [
+        "workstreams-turn-emit.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "honest_status": "pending wiring — deterministic every-turn writer exists with green self-tests but is not wired in settings.json.template (doctor claim-honesty item)",
+      "budget_class": "none"
+    },
+    {
+      "id": "worktree-advisor",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/worktree-isolation.md",
+      "hooks": [
+        "session-start-worktree-advisor.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start"
+    },
+    {
+      "id": "worktree-teardown",
+      "kind": "gate",
+      "doctrine_file": "doctrine/worktree-isolation.md",
+      "hooks": [
+        "worktree-teardown-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop"
+    }
+  ]
+}

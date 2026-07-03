@@ -233,7 +233,7 @@ state. The one thing NOT promised: prompt parent-resume on child turn-end (filed
 named as unsolved).
 
 ### 2. End-to-end trace with a concrete example
-Misha, on his phone, taps "new task" in the Dispatch app to spawn a Foresight child. The
+The operator, on his phone, taps "new task" in the Dispatch app to spawn a downstream-project child. The
 Dispatch backend creates session `zealous-lalande`. **No local hook fires** (the spawn
 originated in the app UI, not an orchestrator tool call — RC2(a)). Later, an orchestrator
 or any local-Dispatch session starts; `conv-tree-reconcile.sh` runs at SessionStart, calls

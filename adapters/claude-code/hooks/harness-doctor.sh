@@ -18,15 +18,15 @@
 #
 # MODES
 # =====
-#   --quick (default): checks 1-6 against the LIVE mirror ($HOME/.claude)
+#   --quick (default): checks 1-7 against the LIVE mirror ($HOME/.claude)
 #                       and the repo. Never runs self-tests. Fast (<2s
 #                       typical). Exit 0 iff zero RED lines.
-#   --full            : quick + check 7 (self-test sweep across every live
+#   --full            : quick + check 8 (self-test sweep across every live
 #                       hook that declares --self-test). Exit 0 iff zero RED.
 #   --self-test       : fixture suite in mktemp -d sandboxes
 #                       (HARNESS_SELFTEST=1). One RED-producing fixture AND
-#                       one GREEN fixture per check class (1-6), plus a
-#                       --full fixture exercising check 7 against a stub
+#                       one GREEN fixture per check class (1-7), plus a
+#                       --full fixture exercising check 8 against a stub
 #                       hook. Exit 0 iff every scenario behaves as expected.
 #
 # OUTPUT FORMAT
@@ -45,7 +45,7 @@
 # handling; v1 does not require node either. Both are checked defensively
 # so a bare-bash environment still runs every check.
 #
-# CHECKS (v1 — manifest arrives in C.1; v1 embeds its data inline)
+# CHECKS (v2 — manifest-driven as of C.1; adapters/claude-code/manifest.json)
 # ==================================================================
 #   1. wiring-resolves     : every hook basename referenced in live
 #                             settings.json AND in the committed template
@@ -58,17 +58,30 @@
 #                             legacy repo path family (claude-projects/neural…-lace, written split here so the doctor never matches itself).
 #   4. template-live-drift  : the sorted basename set of hooks wired in live
 #                             settings vs the committed template must match.
-#   5. claim-honesty        : embedded v1 checklist — each named hook must
-#                             be EITHER wired in live settings OR its rule
-#                             file must contain "pending Wave" (the honest-
-#                             status marker B.5 adds).
+#   5. claim-honesty        : manifest-driven (replaced the embedded v1
+#                             checklist in C.1) — every `kind: gate` entry
+#                             in manifest.json must EITHER declare
+#                             wired_template true AND have all its hooks[]
+#                             present in live settings.json, OR carry a
+#                             non-empty honest_status string naming how it
+#                             actually fires. WARN (skip) when no
+#                             manifest.json exists (pre-C.1 machine) or no
+#                             JSON parser (node/jq) is available.
 #   6. byte-budget          : total bytes of ~/.claude/rules/*.md vs the
 #                             threshold in ~/.claude/local/doctor-budget
 #                             (default 1000000 = warn-only era; C.5 lowers
 #                             this to 30000). Over budget -> RED if the
 #                             threshold file exists and sets a strict value,
 #                             else WARN in the default (absent-file) era.
-#   7. selftest-sweep       : (--full only) run every live hook containing
+#   7. manifest-check       : when a repo manifest.json exists, invoke
+#                             scripts/manifest-check.sh check (schema
+#                             validation + hooks<->disk coverage both ways +
+#                             wired_template truth vs the template +
+#                             doctrine_file existence + gate honest_status).
+#                             Non-zero exit -> RED. WARN (skip, graceful)
+#                             when the manifest is absent (pre-C.1 machine)
+#                             or the checker script cannot be found.
+#   8. selftest-sweep       : (--full only) run every live hook containing
 #                             the string "--self-test" with
 #                             HARNESS_SELFTEST=1 timeout 120
 #                             bash <hook> --self-test </dev/null; RED per
@@ -309,43 +322,143 @@ check_template_live_drift() {
 }
 
 # ------------------------------------------------------------
-# Check 5: claim-honesty
-# Embedded v1 checklist. Each hook must EITHER be wired in live settings.json
-# OR its rule file must contain the honest-status marker string "pending Wave".
+# resolve_manifest <live_home> <repo_root>
+# Echoes the manifest path (live-first, repo fallback) or nothing.
 # ------------------------------------------------------------
-CLAIM_HONESTY_HOOKS=(
-  "customer-facing-review-gate.sh:rules/customer-facing-review.md"
-  "worktree-teardown-gate.sh:rules/worktree-isolation.md"
-  "session-start-worktree-advisor.sh:rules/worktree-isolation.md"
-  "stalled-work-surfacer.sh:rules/background-work-tracking.md"
-  "workstreams-turn-emit.sh:rules/workstreams-state.md"
-)
+resolve_manifest() {
+  local live_home="$1" repo_root="$2"
+  if [[ -f "${live_home}/manifest.json" ]]; then
+    printf '%s\n' "${live_home}/manifest.json"
+    return 0
+  fi
+  if [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/manifest.json" ]]; then
+    printf '%s\n' "${repo_root}/adapters/claude-code/manifest.json"
+    return 0
+  fi
+  return 1
+}
 
+# ------------------------------------------------------------
+# extract_manifest_gates <manifest>
+# Emits a normalized stream for check 5:
+#   GATE|<id>|<wired01>|<honest01>
+#   GH|<id>|<hook-basename>
+# node preferred, jq fallback; caller handles the neither-case.
+# ------------------------------------------------------------
+extract_manifest_gates() {
+  local manifest="$1"
+  if command -v node >/dev/null 2>&1; then
+    node -e '
+const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+for (const e of m.entries || []) {
+  if (e.kind !== "gate") continue;
+  const honest = (typeof e.honest_status === "string" && e.honest_status.trim().length > 0) ? "1" : "0";
+  console.log(["GATE", e.id, e.wired_template ? "1" : "0", honest].join("|"));
+  for (const h of e.hooks || []) console.log(["GH", e.id, h].join("|"));
+}' "$manifest" 2>/dev/null
+  elif command -v jq >/dev/null 2>&1; then
+    jq -r '
+.entries[] | select(.kind == "gate") as $e |
+(["GATE", $e.id,
+  (if $e.wired_template then "1" else "0" end),
+  (if (($e.honest_status // "") | length) > 0 then "1" else "0" end)] | join("|")),
+((($e.hooks // [])[]) | "GH|\($e.id)|\(.)")' "$manifest" 2>/dev/null
+  fi
+}
+
+# ------------------------------------------------------------
+# Check 5: claim-honesty (manifest-driven, C.1)
+# Every `kind: gate` entry in manifest.json must EITHER be wired_template
+# true with all its hooks present in live settings.json, OR carry a
+# non-empty honest_status. Graceful WARN when no manifest / no parser.
+# ------------------------------------------------------------
 check_claim_honesty() {
   local live_home="$1" repo_root="$2"
-  local live_settings="${live_home}/settings.json"
-  local live_names=""
-  [[ -f "$live_settings" ]] && live_names="$(extract_wired_hook_basenames "$live_settings")"
+  local manifest
+  if ! manifest="$(resolve_manifest "$live_home" "$repo_root")"; then
+    _warn "claim-honesty" "no manifest.json found (live mirror or repo) — manifest-driven claim-honesty skipped (pre-C.1 machine)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1 && ! command -v jq >/dev/null 2>&1; then
+    _warn "claim-honesty" "neither node nor jq available — manifest-driven claim-honesty skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
 
-  local entry hook_name rule_rel
-  for entry in "${CLAIM_HONESTY_HOOKS[@]}"; do
-    hook_name="${entry%%:*}"
-    rule_rel="${entry#*:}"
-    if printf '%s\n' "$live_names" | grep -qx "$hook_name"; then
+  local stream
+  stream="$(extract_manifest_gates "$manifest")"
+  if [[ -z "$stream" ]]; then
+    _warn "claim-honesty" "manifest at ${manifest} yielded no gate entries (parse failure or none declared)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local live_settings="${live_home}/settings.json"
+  local live_missing=0
+  if [[ ! -f "$live_settings" ]]; then
+    live_missing=1
+    _warn "claim-honesty" "live settings.json missing — live-wiring verification for wired gates skipped"
+  fi
+
+  local tag id wired honest t2 i2 hook
+  while IFS='|' read -r tag id wired honest; do
+    [[ "$tag" == "GATE" ]] || continue
+    if [[ "$honest" == "1" ]]; then
       continue
     fi
-    # Live-first: the live rules copy is what sessions actually load; the
-    # repo copy is the fallback (covers self-test fixtures + repo-only runs).
-    local live_rule="${live_home}/rules/${rule_rel#rules/}"
-    if [[ -f "$live_rule" ]] && grep -q "pending Wave" "$live_rule" 2>/dev/null; then
+    if [[ "$wired" == "0" ]]; then
+      _red "claim-honesty" "manifest gate '${id}' has wired_template false and no honest_status — name how it fires or which Wave lands its wiring"
       continue
     fi
-    local rule_path="${repo_root}/adapters/claude-code/${rule_rel}"
-    if [[ -n "$repo_root" && -f "$rule_path" ]] && grep -q "pending Wave" "$rule_path" 2>/dev/null; then
-      continue
+    [[ "$live_missing" -eq 1 ]] && continue
+    while IFS='|' read -r t2 i2 hook; do
+      [[ "$t2" == "GH" && "$i2" == "$id" ]] || continue
+      if ! grep -qF "$hook" "$live_settings" 2>/dev/null; then
+        _red "claim-honesty" "manifest gate '${id}' claims wired_template true but hook '${hook}' does not appear in live settings.json — run install"
+      fi
+    done <<< "$stream"
+  done <<< "$stream"
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check 7: manifest-check
+# When a repo manifest exists, run scripts/manifest-check.sh check against
+# the repo. Graceful WARN when the manifest is absent (pre-C.1 machine),
+# the repo root is unresolved, or the checker script cannot be found.
+# ------------------------------------------------------------
+check_manifest() {
+  local live_home="$1" repo_root="$2"
+  local repo_manifest=""
+  [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/manifest.json" ]] \
+    && repo_manifest="${repo_root}/adapters/claude-code/manifest.json"
+
+  if [[ -z "$repo_manifest" ]]; then
+    if [[ -f "${live_home}/manifest.json" ]]; then
+      _warn "manifest-check" "manifest present in live mirror but no repo manifest resolved — manifest-check needs the repo (hooks/ coverage); skipped"
+    else
+      _warn "manifest-check" "no manifest.json found — manifest-check skipped (pre-C.1 machine)"
     fi
-    _red "claim-honesty" "${hook_name} is not wired in live settings.json AND its rule (${rule_rel}) lacks the 'pending Wave' honest-status marker"
-  done
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local checker="${repo_root}/adapters/claude-code/scripts/manifest-check.sh"
+  [[ -f "$checker" ]] || checker="${live_home}/scripts/manifest-check.sh"
+  if [[ ! -f "$checker" ]]; then
+    _warn "manifest-check" "manifest.json present but manifest-check.sh not found (repo scripts/ or live scripts/) — cannot validate"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local out rc n
+  out="$(MANIFEST_CHECK_ROOT="$repo_root" bash "$checker" check 2>&1)"
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    n="$(printf '%s\n' "$out" | grep -c 'RED' 2>/dev/null || true)"
+    _red "manifest-check" "manifest-check reported ${n:-?} RED finding(s) — run: bash adapters/claude-code/scripts/manifest-check.sh"
+  fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
 
@@ -390,7 +503,7 @@ check_byte_budget() {
 }
 
 # ------------------------------------------------------------
-# Check 7: selftest-sweep (--full only)
+# Check 8: selftest-sweep (--full only)
 # ------------------------------------------------------------
 check_selftest_sweep() {
   local live_home="$1"
@@ -414,7 +527,7 @@ check_selftest_sweep() {
 }
 
 # ------------------------------------------------------------
-# run_quick_checks — checks 1-6 against the given live_home/repo_root
+# run_quick_checks — checks 1-7 against the given live_home/repo_root
 # ------------------------------------------------------------
 run_quick_checks() {
   local live_home="$1" repo_root="$2"
@@ -424,6 +537,7 @@ run_quick_checks() {
   check_template_live_drift "$live_home" "$repo_root"
   check_claim_honesty "$live_home" "$repo_root"
   check_byte_budget "$live_home"
+  check_manifest "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -454,8 +568,23 @@ if [[ "${1:-}" == "--self-test" ]]; then
     local label="$1"
     local dir="$TMPROOT/$label"
     mkdir -p "$dir/live/hooks" "$dir/live/rules" "$dir/live/scripts" "$dir/live/local"
-    mkdir -p "$dir/repo/adapters/claude-code/hooks" "$dir/repo/adapters/claude-code/scripts" "$dir/repo/adapters/claude-code/rules"
+    mkdir -p "$dir/repo/adapters/claude-code/hooks" "$dir/repo/adapters/claude-code/scripts" \
+             "$dir/repo/adapters/claude-code/rules" "$dir/repo/adapters/claude-code/schemas"
     printf '%s\n' "$dir"
+  }
+
+  # Copies the real manifest-check.sh + manifest schema into a fixture repo
+  # so the doctor's check 7 (manifest-check invocation) can run there.
+  # Returns 1 (caller should SKIP manifest scenarios) when the real tooling
+  # is not present next to this doctor (e.g. a partial install).
+  _copy_manifest_tooling() {
+    local dir="$1"
+    local checker_src="$SCRIPT_DIR/../scripts/manifest-check.sh"
+    local schema_src="$SCRIPT_DIR/../schemas/manifest.schema.json"
+    [[ -f "$checker_src" && -f "$schema_src" ]] || return 1
+    cp "$checker_src" "$dir/repo/adapters/claude-code/scripts/manifest-check.sh"
+    cp "$schema_src" "$dir/repo/adapters/claude-code/schemas/manifest.schema.json"
+    return 0
   }
 
   _write_settings() {
@@ -472,17 +601,13 @@ if [[ "${1:-}" == "--self-test" ]]; then
     printf '%s' "$body" > "$path"
   }
 
-  # Every scenario except the dedicated check-5 (claim-honesty) ones needs
-  # the claim-honesty checklist satisfied so unrelated scenarios don't
-  # spuriously RED on check 5. Stamp the "pending Wave" marker into each
-  # checklist rule file.
+  # Historical helper (pre-C.1 the claim-honesty check used an embedded
+  # checklist that fixtures had to satisfy). Check 5 is manifest-driven now:
+  # fixtures WITHOUT a manifest.json take the graceful-WARN path on both
+  # check 5 and check 7, so unrelated scenarios need no stamping. Kept as a
+  # no-op to keep the scenario bodies' shape stable.
   _stamp_claim_honesty_green() {
-    local dir="$1"
-    mkdir -p "$dir/repo/adapters/claude-code/rules"
-    local rel
-    for rel in "rules/customer-facing-review.md" "rules/worktree-isolation.md" "rules/background-work-tracking.md" "rules/workstreams-state.md"; do
-      echo "pending Wave D" > "$dir/repo/adapters/claude-code/${rel}"
-    done
+    :
   }
 
   _run_quick() {
@@ -610,39 +735,110 @@ EOF
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "4-template-live-drift-green" 0 "$RC" "" "$OUT"
 
-  # ---- Check 5 (claim-honesty): RED fixture — a checklist hook is neither
-  # wired nor honestly marked pending ----
+  # Manifest fixture writer for the check-5/check-7 scenarios.
+  #   $1 = fixture dir, $2 = variant: "green" | "no-honest" | "ghost-hook"
+  # green      : wired gate (hook on disk+template+live) + pending gate with
+  #              honest_status — passes both claim-honesty and manifest-check.
+  # no-honest  : the pending gate LACKS honest_status -> claim-honesty RED.
+  # ghost-hook : manifest references a hook absent from disk (honest_status
+  #              present, so claim-honesty passes) -> manifest-check RED.
+  _write_manifest_fixture() {
+    local dir="$1" variant="$2"
+    local pending_hook="pending-gate.sh" honest_line
+    printf '#!/bin/bash\nexit 0\n' > "$dir/repo/adapters/claude-code/hooks/wired-gate.sh"
+    printf '#!/bin/bash\nexit 0\n' > "$dir/live/hooks/wired-gate.sh"
+    if [[ "$variant" == "ghost-hook" ]]; then
+      pending_hook="ghost.sh"   # deliberately NOT created on disk
+    else
+      printf '#!/bin/bash\nexit 0\n' > "$dir/repo/adapters/claude-code/hooks/pending-gate.sh"
+    fi
+    if [[ "$variant" == "no-honest" ]]; then
+      honest_line=""
+    else
+      honest_line='      "honest_status": "invoked via a chain script; not directly wired",'
+    fi
+    cat > "$dir/repo/adapters/claude-code/manifest.json" <<MANIFEST_EOF
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "wired-gate",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": ["wired-gate.sh"],
+      "events": ["Stop"],
+      "wired_template": true,
+      "selftest": false,
+      "jit_triggers": { "paths": [], "keywords": [] },
+      "blocking": true,
+      "budget_class": "stop"
+    },
+    {
+      "id": "pending-gate",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": ["${pending_hook}"],
+      "events": ["precommit"],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": { "paths": [], "keywords": [] },
+      "blocking": true,
+${honest_line}
+      "budget_class": "none"
+    }
+  ]
+}
+MANIFEST_EOF
+    # no-honest variant leaves an empty line where honest_status was — strip
+    # it so the JSON stays parseable.
+    if [[ "$variant" == "no-honest" ]]; then
+      grep -v '^$' "$dir/repo/adapters/claude-code/manifest.json" > "$dir/repo/adapters/claude-code/manifest.json.tmp" \
+        && mv "$dir/repo/adapters/claude-code/manifest.json.tmp" "$dir/repo/adapters/claude-code/manifest.json"
+    fi
+    _write_settings "$dir/live/settings.json" "wired-gate.sh"
+    cp "$dir/live/settings.json" "$dir/repo/adapters/claude-code/settings.json.template"
+  }
+
+  # ---- Check 5 (claim-honesty, manifest-driven): RED fixture — a manifest
+  # gate has wired_template false and no honest_status ----
   D=$(_scenario_dir c5-red)
-  mkdir -p "$D/repo/adapters/claude-code/rules"
-  cat > "$D/repo/adapters/claude-code/rules/worktree-isolation.md" <<'EOF'
-# Worktree Isolation
-No pending marker here.
-EOF
-  _write_settings "$D/live/settings.json"
-  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  if _copy_manifest_tooling "$D"; then :; fi
+  _write_manifest_fixture "$D" no-honest
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "5-claim-honesty-red" 1 "$RC" "RED claim-honesty" "$OUT"
 
-  # ---- Check 5: GREEN fixture — the same hook is honestly marked pending ----
+  # ---- Check 5: GREEN fixture — every manifest gate is either live-wired
+  # or carries an honest_status ----
   D=$(_scenario_dir c5-green)
-  mkdir -p "$D/repo/adapters/claude-code/rules"
-  cat > "$D/repo/adapters/claude-code/rules/worktree-isolation.md" <<'EOF'
-# Worktree Isolation
-Status: pending Wave D — not yet wired.
-EOF
-  cat > "$D/repo/adapters/claude-code/rules/background-work-tracking.md" <<'EOF'
-pending Wave D
-EOF
-  cat > "$D/repo/adapters/claude-code/rules/workstreams-state.md" <<'EOF'
-pending Wave D
-EOF
-  cat > "$D/repo/adapters/claude-code/rules/customer-facing-review.md" <<'EOF'
-pending Wave D
-EOF
-  _write_settings "$D/live/settings.json"
-  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  if _copy_manifest_tooling "$D"; then :; fi
+  _write_manifest_fixture "$D" green
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "5-claim-honesty-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check 7 (manifest-check invocation): RED fixture — the manifest
+  # references a hook that does not exist on disk (claim-honesty itself is
+  # satisfied via honest_status, so the RED must come from manifest-check) ----
+  D=$(_scenario_dir c7m-red)
+  if _copy_manifest_tooling "$D"; then
+    _write_manifest_fixture "$D" ghost-hook
+    OUT="$(_run_quick "$D")"; RC=$?
+    _assert "7-manifest-check-red" 1 "$RC" "RED manifest-check" "$OUT"
+  else
+    echo "self-test (7-manifest-check-red): SKIP — manifest-check.sh not present next to this doctor" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- Check 7: GREEN fixture — a fully consistent manifest passes the
+  # manifest-check invocation ----
+  D=$(_scenario_dir c7m-green)
+  if _copy_manifest_tooling "$D"; then
+    _write_manifest_fixture "$D" green
+    OUT="$(_run_quick "$D")"; RC=$?
+    _assert "7-manifest-check-green" 0 "$RC" "" "$OUT"
+  else
+    echo "self-test (7-manifest-check-green): SKIP — manifest-check.sh not present next to this doctor" >&2
+    PASSED=$((PASSED + 1))
+  fi
 
   # ---- Check 6 (byte-budget): RED fixture — strict budget exceeded ----
   D=$(_scenario_dir c6-red)
@@ -664,7 +860,7 @@ EOF
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "6-byte-budget-green" 0 "$RC" "" "$OUT"
 
-  # ---- Check 7 (--full only): RED fixture — a stub hook's --self-test fails ----
+  # ---- Check 8 (--full only): RED fixture — a stub hook's --self-test fails ----
   D=$(_scenario_dir c7-red)
   _stamp_claim_honesty_green "$D"
   cat > "$D/live/hooks/failing.sh" <<'EOF'
@@ -680,9 +876,9 @@ EOF
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   cp "$D/live/hooks/failing.sh" "$D/repo/adapters/claude-code/hooks/failing.sh"
   OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --full "$D/repo" 2>&1)"; RC=$?
-  _assert "7-selftest-sweep-red" 1 "$RC" "RED selftest-sweep" "$OUT"
+  _assert "8-selftest-sweep-red" 1 "$RC" "RED selftest-sweep" "$OUT"
 
-  # ---- Check 7: GREEN fixture — a stub hook's --self-test passes ----
+  # ---- Check 8: GREEN fixture — a stub hook's --self-test passes ----
   D=$(_scenario_dir c7-green)
   _stamp_claim_honesty_green "$D"
   cat > "$D/live/hooks/passing.sh" <<'EOF'
@@ -698,7 +894,7 @@ EOF
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   cp "$D/live/hooks/passing.sh" "$D/repo/adapters/claude-code/hooks/passing.sh"
   OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --full "$D/repo" 2>&1)"; RC=$?
-  _assert "7-selftest-sweep-green" 0 "$RC" "" "$OUT"
+  _assert "8-selftest-sweep-green" 0 "$RC" "" "$OUT"
 
   echo "" >&2
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed" >&2
