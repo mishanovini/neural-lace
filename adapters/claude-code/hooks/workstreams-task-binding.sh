@@ -378,6 +378,13 @@ _run_self_test() {
   local fails=0
   local tmp; tmp=$(mktemp -d 2>/dev/null || echo "/tmp/wstb-$$")
   mkdir -p "$tmp"
+  # Sandbox the shared retry-guard: scenarios reuse fixed synthetic session ids
+  # (ST-notask etc.), so counters written to the REAL cwd-relative state dir
+  # accumulate across suite runs until the guard silently DOWNGRADES the very
+  # blocks the scenarios assert (observed 2026-07-03: M1 green all morning,
+  # red after the day's repeated doctor sweeps crossed the threshold).
+  export RETRY_GUARD_STATE_DIR="$tmp/rg-state"
+  mkdir -p "$tmp/rg-state"
   local lib; lib=$(_resolve_state_lib)
   if [[ ! -f "$lib" ]]; then echo "self-test: FAIL (state lib not found at $lib)"; exit 1; fi
 
