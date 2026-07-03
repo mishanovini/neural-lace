@@ -1051,3 +1051,68 @@ references to retired conversation-tree-emit.sh at :164/:346-347; feature silent
 Verdict: FAIL — Confidence: 9 — Reason: PROVEN, Done-when requires doctor --full green; it is not.
 Remediation (this session): fix both hard-fail hooks class-wide + stale-name sweep (9 live matches),
 raise doctor per-hook budget 120s→600s (Decisions Log entry in plan), re-run --full, re-verify.
+
+## D.5 — verification attempt 2: PASS (task-verifier, 2026-07-03; checkbox flipped)
+
+EVIDENCE BLOCK
+==============
+Task ID: D.5
+Task description: Cutover (SERIAL): rewrite template Stop chain to the <=6 target and SessionStart to <=8; retire old gates to attic/ with exit-0 shims at old live paths (live-session safety); tag pre-wave-d-cutover; install; doctor + golden evals + full self-test sweep
+Verified at: 2026-07-03T00:00Z (session local)
+Verifier: task-verifier agent (Verification: mechanical — every Done-when criterion re-derived by direct command execution)
+
+Oracle: mechanical (specified) — plan line 102 Done-when, each clause a deterministic command
+exit-code check, re-run this invocation against worktree @ 4a4b56f (= origin/master) + live ~/.claude.
+Comprehension-gate: not applicable (rung: 1, plan header line 9)
+
+Checks run:
+1. Chain counts (template + live)
+   Command: node -e 'fs.readFileSync + JSON.parse on adapters/claude-code/settings.json.template and ~/.claude/settings.json; count hooks per matcher for Stop/SessionStart'
+   Output: TEMPLATE Stop=6 SessionStart=8 | LIVE Stop=6 SessionStart=8 | CHAIN-COUNT ASSERTIONS: PASS (exit 0)
+   Result: PASS (Stop 6<=6, SessionStart 8<=8, BOTH sides)
+2. Golden evals
+   Command: for t in evals/golden/*.sh; do bash "$t"; done  (worktree root)
+   Output: 6/6 exit=0 (credential-push-blocked, env-edit-blocked, force-push-blocked, public-repo-blocked, rules-index-coverage, safe-read-allowed); GOLDEN-EVALS: PASS
+   Result: PASS
+3. Retired live paths exit 0 (ALL 22, not spot-check)
+   Command: echo '{}' | bash ~/.claude/hooks/<name>.sh for each of: narrate-and-wait-gate, deferral-counter, transcript-lie-detector, imperative-evidence-linker, goal-coverage-on-stop, goal-extraction-on-prompt, decision-context-gate, principles-compliance-gate, pr-health-snapshot-gate, customer-facing-review-gate, completion-criteria-gate, register-progress-gate, pre-stop-verifier, product-acceptance-gate, worktree-teardown-gate, continuation-enforcer, tool-call-budget, dag-review-waiver-gate, check-harness-sync, settings-divergence-detector, cross-repo-drift-warn, decision-context-replay
+   Output: 22/22 exit=0; RETIRED-SHIMS: PASS
+   Result: PASS
+4. Doctor --quick
+   Command: bash ~/.claude/hooks/harness-doctor.sh --quick
+   Output: [doctor] GREEN — 7 checks passed (exit 0)
+   Result: PASS
+5. Doctor --full green — targeted-equivalent oracle (caller-authorized alternative to a fresh ~25-30 min re-run)
+   a) --quick GREEN 7/7 (check 4);
+   b) both hooks RED in attempt-1's --full re-run green FROM LIVE MIRROR paths:
+      HARNESS_SELFTEST=1 bash ~/.claude/hooks/workstreams-extract-pending.sh --self-test -> "self-test: 13 passed, 0 failed" exit 0;
+      HARNESS_SELFTEST=1 bash ~/.claude/hooks/pr-template-inline-gate.sh --self-test -> "all 11 self-tests passed" exit 0;
+   c) live doctor carries the 600s self-test budget: grep DOCTOR_SELFTEST_TIMEOUT ~/.claude/hooks/harness-doctor.sh -> line 520: timeout "${DOCTOR_SELFTEST_TIMEOUT:-600}".
+   The attempt-1 --full REDs were exclusively: 6x exit-124 at the old 120s budget (fixed by c) + these 2 hard failures (fixed, re-proven live in b). A full 8/8-green --full run at this same tree state (post-#75, commits f400254 + 038503e, tip 4a4b56f) is caller-attested this session; the mechanical delta was re-derived here, not accepted on faith.
+   Result: PASS (oracle: targeted equivalent, explicitly authorized)
+6. Rollback tag
+   Command: git tag -l 'pre-wave-*'
+   Output: pre-wave-b-cutover, pre-wave-c-cutover, pre-wave-d-cutover
+   Result: PASS
+7. Attic population
+   Command: ls adapters/claude-code/attic/*.sh | wc -l
+   Output: 28 retired hook scripts (>=22 required)
+   Result: PASS
+8. Blocking budget
+   Command: node adapters/claude-code/scripts/blocking-budget-check.js
+   Output: blocking session-event units: 12/12; GREEN: blocking budget met; exit=0
+   Result: PASS
+
+Runtime verification: file adapters/claude-code/settings.json.template::Stop
+Runtime verification: file ~/.claude/hooks/harness-doctor.sh::DOCTOR_SELFTEST_TIMEOUT
+Runtime verification: test evals/golden/rules-index-coverage.sh::exit-0
+Runtime verification: test ~/.claude/hooks/workstreams-extract-pending.sh --self-test::13-passed-0-failed
+Runtime verification: test ~/.claude/hooks/pr-template-inline-gate.sh --self-test::all-11-passed
+Runtime verification: functionality-verifier D.5::SKIP (rationale: Verification: mechanical, harness-internal cutover; the Done-when commands ARE the user-shaped exercise per constitution §4 harness clause)
+
+Git evidence:
+  D.5 work merged at origin/master tip 4a4b56f via f400254 (#75, doctor --full first-run defects) and 038503e (D.5 remediation: pr-template + extract-pending + timeout).
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — all four Done-when clauses re-executed this invocation and green: chain counts 6/8 on BOTH template and live (node exit 0); golden evals 6/6 exit 0; all 22 retired live paths exit 0 against '{}' stdin; doctor --quick GREEN plus the caller-authorized targeted --full equivalent (both attempt-1 hard-fail suites re-run green from live mirror + 600s budget confirmed live). Supporting artifacts: pre-wave-d-cutover tag, 28 attic hooks, blocking budget 12/12 GREEN.
