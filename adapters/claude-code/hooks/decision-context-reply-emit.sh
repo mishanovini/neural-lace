@@ -47,8 +47,25 @@ set -uo pipefail
 
 MODE="${1:-}"
 
-LOG_DIR="$HOME/.claude/logs"
+# Log destination: sandboxed when HARNESS_SELFTEST=1 or MODE is --self-test
+# itself (self-test isolation — E.2 remediation) so no self-test run appends
+# to the real machine's ~/.claude/logs/decision-context-reply-emit.log
+# regardless of HOME. Prefers an explicit HARNESS_SELFTEST_DIR; falls back to
+# a PID-scoped tmp sandbox otherwise (signal-ledger.sh's convention).
+if [[ "${HARNESS_SELFTEST:-0}" == "1" ]] || [[ "$MODE" == "--self-test" ]]; then
+  export HARNESS_SELFTEST=1
+  _DCRE_SANDBOX="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/decision-context-reply-emit-selftest/$$}"
+  export HARNESS_SELFTEST_DIR="$_DCRE_SANDBOX"
+  LOG_DIR="$_DCRE_SANDBOX/logs"
+else
+  LOG_DIR="$HOME/.claude/logs"
+fi
 LOG_FILE="$LOG_DIR/decision-context-reply-emit.log"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+# FALLBACK follows $HOME by design (the Task-8 drainer reads the real
+# ~/.claude/state/decision-context/fallback.jsonl). Self-test isolation is
+# done at the HOME level (see the self-test fn's HOME redirect) so a run
+# never touches the real state dir; ST7 further overrides HOME per-subprocess.
 FALLBACK_DIR="$HOME/.claude/state/decision-context"
 FALLBACK_FILE="$FALLBACK_DIR/fallback.jsonl"
 
@@ -408,6 +425,14 @@ _self_test() {
   export CONV_TREE_STATE_LIB="$LIB"
   local SELF; SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
+  # Isolate the ENTIRE self-test under a private HOME so no scenario writes
+  # fallback.jsonl (or any state) into the real ~/.claude/state — the actual
+  # isolation mechanism (the _DCRE_SELFTEST_FB_* exports below are not read by
+  # production and were a no-op; HASH-DRIFT source found by the E.2 temp-HOME
+  # proof). Scenarios run the hook as a subprocess, which re-derives its
+  # $HOME-based paths from this; ST7 further overrides HOME per-subprocess.
+  export HOME="$tmp/st-home"
+  mkdir -p "$HOME/.claude/state/decision-context" "$HOME/.claude/logs" 2>/dev/null || true
   # Use a private fallback file per self-test run so we don't pollute the live one.
   local SAVED_FALLBACK_DIR="$FALLBACK_DIR"
   local SAVED_FALLBACK_FILE="$FALLBACK_FILE"

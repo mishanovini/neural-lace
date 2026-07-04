@@ -489,6 +489,13 @@ validate_evidence() {
 # that pre-date the evidence-section extension.
 validate_pr_body() {
   local body="$1"
+  # NL-FINDING-030: GitHub's API serves pull_request.body with CRLF line
+  # endings, and the heading checks below use `grep -Fxq` (exact whole-line
+  # match), so an otherwise-correct "## What mechanism..." line carrying a
+  # trailing CR false-fails as "heading not found". Normalize CR out up front
+  # so every downstream check sees LF-only lines. (MSYS grep masks \r locally,
+  # which is why this only bites in Linux CI — verify with `od`, not grep.)
+  body="${body//$'\r'/}"
   local title="${2:-${PR_TITLE:-}}"
   local body_chars=${#body}
   printf '[pr-template] checking PR body (%d chars)\n' "$body_chars"
@@ -785,7 +792,17 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     fails=$((fails + 1))
   fi
 
-  total=22
+  # Case 23 (NL-FINDING-030): a valid body with CRLF line endings — the shape
+  # GitHub's API serves pull_request.body as — must PASS. Before the CR-strip
+  # at the top of validate_pr_body, the trailing CR made grep -Fxq miss the
+  # heading and this false-failed as section_missing.
+  case23=$(printf '## What mechanism would have caught this?\r\n\r\n### a) Existing catalog entry\r\n\r\nFM-006 self-reported task completion without evidence — caught by plan-edit-validator.\r\n')
+  if ! validate_pr_body "$case23" >/dev/null 2>&1; then
+    echo "FAIL: CRLF-line-ending body (GitHub API shape) should have passed" >&2
+    fails=$((fails + 1))
+  fi
+
+  total=23
   if [[ $fails -eq 0 ]]; then
     echo "Self-test passed ($total cases)" >&2
     exit 0

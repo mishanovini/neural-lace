@@ -137,15 +137,18 @@ if [[ "${1:-}" == "--self-test" ]]; then
   SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
   if [[ ! -f "$SELF" ]]; then echo "self-test: cannot resolve own path" >&2; exit 2; fi
 
-  ST_ROOT=""
-  if ST_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$ST_ROOT" ]]; then :; fi
-  ST_LIB=""
-  for c in \
-    "$ST_ROOT/neural-lace/workstreams-ui/state/state.js" \
-    "$ST_ROOT/workstreams-ui/state/state.js"; do
-    [[ -f "$c" ]] && { ST_LIB="$c"; break; }
-  done
-  if [[ -z "$ST_LIB" ]]; then
+  # Locate the real state library for fixture generation. Delegates to the
+  # SAME _resolve_state_lib() the production runtime path uses (pin repo
+  # root via nl-paths.sh's nl_repo_root/nl_workstreams_ui, not an ambient
+  # `git rev-parse --show-toplevel` re-derivation) so the self-test resolves
+  # identically to production regardless of the invoking cwd. Fixed: the
+  # self-test's OWN prior ad-hoc re-derivation relied solely on ambient-cwd
+  # git discovery, which returns empty (and this self-test then exit-2s) when
+  # invoked from a cwd outside any git repo — e.g. a fresh-HOME sandbox whose
+  # cwd is $HOME/.claude, exactly the condition the harness's fresh-install
+  # self-test sweep runs under.
+  ST_LIB="$(_resolve_state_lib)"
+  if [[ -z "$ST_LIB" ]] || [[ ! -f "$ST_LIB" ]]; then
     echo "self-test: cannot locate state library (state.js) for fixture generation" >&2
     exit 2
   fi

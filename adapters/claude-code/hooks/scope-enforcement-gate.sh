@@ -1451,7 +1451,15 @@ if [[ -n "$SKIP_REASON" ]]; then
   # Audit log (best-effort; never fail the hook on a logging error). At
   # PreToolUse time the new commit's SHA does not exist yet, so we log the
   # current HEAD (the parent) for context.
-  EXEMPT_LOG="$HOME/.claude/state/scope-gate-exemptions.log"
+  # Sandbox the exemption-audit log under HARNESS_SELFTEST so a self-test
+  # scenario that trips an exemption (e.g. the discovery/replay exemption)
+  # never appends to the real ~/.claude/state/scope-gate-exemptions.log
+  # (HASH-DRIFT source found by the E.2 temp-HOME proof).
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    EXEMPT_LOG="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/scope-enforcement-gate-selftest/$$}/scope-gate-exemptions.log"
+  else
+    EXEMPT_LOG="$HOME/.claude/state/scope-gate-exemptions.log"
+  fi
   HEAD_SHA=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
   CUR_BRANCH=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
   TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")

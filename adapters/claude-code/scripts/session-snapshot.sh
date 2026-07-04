@@ -118,35 +118,54 @@ _derive_session_id() {
 # ============================================================
 
 _section_git() {
+  local main_root="${1:-}"
   echo "## 3a. Git state (this checkout)"
-  if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+  # Resolve git state against main_root when given (test isolation / a caller
+  # invoked from a cwd outside any repo, e.g. a fresh-HOME self-test sandbox
+  # where $PWD is $HOME/.claude — NOT the repo). Falls back to the ambient cwd
+  # when main_root is empty, preserving prior behavior for callers that don't
+  # pass one.
+  local -a gitc=()
+  if [ -n "$main_root" ]; then
+    gitc=(git -C "$main_root")
+  else
+    gitc=(git)
+  fi
+  if ! "${gitc[@]}" rev-parse --show-toplevel >/dev/null 2>&1; then
     echo "_not a git repository at snapshot time_"
     echo ""
     return 0
   fi
   local branch head dirty
-  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")"
-  head="$(git rev-parse HEAD 2>/dev/null || echo "?")"
+  branch="$("${gitc[@]}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")"
+  head="$("${gitc[@]}" rev-parse HEAD 2>/dev/null || echo "?")"
   echo "- Branch: \`${branch}\`"
   echo "- HEAD: \`${head}\`"
   echo "- Status (\`git status --porcelain\`):"
   echo '```'
-  git status --porcelain 2>/dev/null | head -100
+  "${gitc[@]}" status --porcelain 2>/dev/null | head -100
   echo '```'
-  dirty="$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+  dirty="$("${gitc[@]}" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
   echo "- Uncommitted entries: ${dirty}"
   echo ""
 }
 
 _section_worktrees() {
+  local main_root="${1:-}"
   echo "## 3b. Worktrees"
-  if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+  local -a gitc=()
+  if [ -n "$main_root" ]; then
+    gitc=(git -C "$main_root")
+  else
+    gitc=(git)
+  fi
+  if ! "${gitc[@]}" rev-parse --show-toplevel >/dev/null 2>&1; then
     echo "_not a git repository at snapshot time_"
     echo ""
     return 0
   fi
   echo '```'
-  git worktree list 2>/dev/null
+  "${gitc[@]}" worktree list 2>/dev/null
   echo '```'
   echo ""
 }
@@ -291,8 +310,8 @@ _build_snapshot() {
     echo "_operator-awaiting half of (5) require model judgment and are NOT reconstructable_"
     echo "_here — see the accompanying summarizer instructions for those._"
     echo ""
-    _section_git
-    _section_worktrees
+    _section_git "$main_root"
+    _section_worktrees "$main_root"
     _section_open_tasks "$main_root"
     _section_inflight_background "$main_root"
     _section_active_plan "$main_root"

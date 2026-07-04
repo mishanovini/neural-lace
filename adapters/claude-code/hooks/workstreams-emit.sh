@@ -85,9 +85,30 @@ set -uo pipefail
 
 MODE="${1:-}"
 
-LOG_DIR="$HOME/.claude/logs"
+# Log + ledger destinations: sandboxed when HARNESS_SELFTEST=1 OR the
+# invocation is --self-test itself (self-test isolation — E.2 remediation;
+# --self-test always self-sandboxes even if a caller forgot to export
+# HARNESS_SELFTEST=1 first) so no self-test run appends to the real
+# machine's ~/.claude/logs/conversation-tree-emit.log or writes correlation-
+# ledger fixtures into ~/.claude/state/conversation-tree-emit/ regardless of
+# HOME. Prefers an explicit HARNESS_SELFTEST_DIR; falls back to a PID-scoped
+# tmp sandbox otherwise (signal-ledger.sh's convention) so exporting
+# HARNESS_SELFTEST=1 alone (e.g. a bare sweep loop) is enough.
+if [[ "${HARNESS_SELFTEST:-0}" == "1" ]] || [[ "$MODE" == "--self-test" ]]; then
+  export HARNESS_SELFTEST=1
+  _WSE_SANDBOX="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/workstreams-emit-selftest/$$}"
+  export HARNESS_SELFTEST_DIR="$_WSE_SANDBOX"
+  LOG_DIR="$_WSE_SANDBOX/logs"
+  LEDGER_DIR="$_WSE_SANDBOX/state/conversation-tree-emit"
+else
+  LOG_DIR="$HOME/.claude/logs"
+  LEDGER_DIR="$HOME/.claude/state/conversation-tree-emit"
+fi
 LOG_FILE="$LOG_DIR/conversation-tree-emit.log"
-LEDGER_DIR="$HOME/.claude/state/conversation-tree-emit"
+# Ensure both dirs exist up front: several call sites redirect directly to
+# $LOG_FILE via `2>>` rather than through _log()'s own mkdir -p, so a
+# freshly-resolved sandbox dir (self-test) must exist before first use.
+mkdir -p "$LOG_DIR" "$LEDGER_DIR" 2>/dev/null || true
 
 # Workstreams consolidation (Phase A, 2026-06-08): the canonical state file
 # lives at one operator-configured location (~/.claude/workstreams-state-path.txt),
@@ -1067,6 +1088,21 @@ _self_test() {
   trap - ERR
   local pass=0 fail=0 tmp
   tmp=$(mktemp -d 2>/dev/null || echo "/tmp/cte-st-$$"); mkdir -p "$tmp"
+  # Self-contained sandboxing regardless of caller env (E.2 remediation): every
+  # child `bash "$SELF"` this self-test spawns below inherits
+  # HARNESS_SELFTEST_DIR="$tmp" and therefore logs/ledgers to $tmp, never the
+  # real ~/.claude/logs or ~/.claude/state/conversation-tree-emit/, even if
+  # the caller invoked --self-test without first setting HARNESS_SELFTEST=1.
+  # Re-point THIS process's own LOG_FILE/LEDGER_DIR (resolved once at
+  # top-of-script, before --self-test dispatch reached here) at the SAME
+  # "$tmp" so the parent's own log-content assertions (ST38/ST39 etc.) read
+  # from the identical file the child subprocesses just wrote to.
+  export HARNESS_SELFTEST=1
+  export HARNESS_SELFTEST_DIR="$tmp"
+  LOG_DIR="$tmp/logs"
+  LEDGER_DIR="$tmp/state/conversation-tree-emit"
+  LOG_FILE="$LOG_DIR/conversation-tree-emit.log"
+  mkdir -p "$LOG_DIR" "$LEDGER_DIR" 2>/dev/null || true
   local LIB; LIB=$(CONV_TREE_STATE_LIB="${CONV_TREE_STATE_LIB:-}" _resolve_state_lib)
   if [[ ! -f "$LIB" ]]; then echo "self-test: cannot locate state library ($LIB)"; echo "self-test: FAIL"; exit 1; fi
   export CONV_TREE_STATE_LIB="$LIB"

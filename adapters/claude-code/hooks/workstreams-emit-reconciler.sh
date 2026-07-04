@@ -31,9 +31,27 @@ set -uo pipefail
 # shellcheck disable=SC1091
 { source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/nl-paths.sh" 2>/dev/null; } || true
 
-LOG_DIR="$HOME/.claude/logs"
+# Log + ledger destinations: sandboxed when HARNESS_SELFTEST=1 or invoked as
+# --self-test itself (self-test isolation — E.2 remediation) so no self-test
+# run appends to the real machine's ~/.claude/logs/conversation-tree-emit.log
+# or ~/.claude/state/conversation-tree-emit/ regardless of HOME. Prefers an
+# explicit HARNESS_SELFTEST_DIR; falls back to a PID-scoped tmp sandbox
+# otherwise (signal-ledger.sh's convention). Shares the SAME log filename as
+# workstreams-emit.sh by design (Layer A/B of the same enforcement chain —
+# see header) so both hooks' sandboxing must resolve identically when both
+# are exercised under the same HARNESS_SELFTEST_DIR.
+if [[ "${HARNESS_SELFTEST:-0}" == "1" ]] || [[ "${1:-}" == "--self-test" ]]; then
+  export HARNESS_SELFTEST=1
+  _WER_SANDBOX="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/workstreams-emit-selftest/$$}"
+  export HARNESS_SELFTEST_DIR="$_WER_SANDBOX"
+  LOG_DIR="$_WER_SANDBOX/logs"
+  LEDGER_DIR="$_WER_SANDBOX/state/conversation-tree-emit"
+else
+  LOG_DIR="$HOME/.claude/logs"
+  LEDGER_DIR="$HOME/.claude/state/conversation-tree-emit"
+fi
 LOG_FILE="$LOG_DIR/conversation-tree-emit.log"
-LEDGER_DIR="$HOME/.claude/state/conversation-tree-emit"
+mkdir -p "$LOG_DIR" "$LEDGER_DIR" 2>/dev/null || true
 
 _log() {
   mkdir -p "$LOG_DIR" 2>/dev/null || true
@@ -253,6 +271,18 @@ _self_test() {
   local pass=0 fail=0
   local tmp; tmp=$(mktemp -d 2>/dev/null || echo "/tmp/cte-rec-st-$$")
   mkdir -p "$tmp"
+  # Re-point THIS process's own LOG_FILE/LEDGER_DIR (resolved once at
+  # top-of-script, before --self-test dispatch reached here) at the SAME
+  # "$tmp" the child `bash "$SELF"` self-invocations below will inherit via
+  # HARNESS_SELFTEST_DIR, so this self-test's own log-content assertions
+  # (log_before/log_after) read from the identical file the children wrote
+  # to (E.2 remediation — mirrors workstreams-emit.sh's identical fix).
+  export HARNESS_SELFTEST=1
+  export HARNESS_SELFTEST_DIR="$tmp"
+  LOG_DIR="$tmp/logs"
+  LEDGER_DIR="$tmp/state/conversation-tree-emit"
+  LOG_FILE="$LOG_DIR/conversation-tree-emit.log"
+  mkdir -p "$LOG_DIR" "$LEDGER_DIR" 2>/dev/null || true
   local emit_hook; emit_hook=$(_resolve_emit_hook)
   if [[ -z "$emit_hook" ]]; then
     echo "self-test: cannot locate ~/.claude/hooks/workstreams-emit.sh"

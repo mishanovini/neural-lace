@@ -68,8 +68,21 @@ set -uo pipefail
 
 MODE="${1:-}"
 
-LOG_DIR="$HOME/.claude/logs"
+# Log destination: sandboxed when HARNESS_SELFTEST=1 or MODE is --self-test
+# itself (self-test isolation — E.2 remediation) so no self-test run appends
+# to the real machine's ~/.claude/logs/workstreams-task-binding.log
+# regardless of HOME. Prefers an explicit HARNESS_SELFTEST_DIR; falls back to
+# a PID-scoped tmp sandbox otherwise (signal-ledger.sh's convention).
+if [[ "${HARNESS_SELFTEST:-0}" == "1" ]] || [[ "$MODE" == "--self-test" ]]; then
+  export HARNESS_SELFTEST=1
+  _WTB_SANDBOX="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/workstreams-task-binding-selftest/$$}"
+  export HARNESS_SELFTEST_DIR="$_WTB_SANDBOX"
+  LOG_DIR="$_WTB_SANDBOX/logs"
+else
+  LOG_DIR="$HOME/.claude/logs"
+fi
 LOG_FILE="$LOG_DIR/workstreams-task-binding.log"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRIDGE_JS="$SELF_DIR/lib/workstreams-task-bridge.js"
 # shellcheck disable=SC1091

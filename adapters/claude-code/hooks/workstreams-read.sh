@@ -52,9 +52,29 @@ set -uo pipefail
 
 MODE="${1:-}"
 
-LOG_DIR="$HOME/.claude/logs"
+# Log destination: sandboxed when HARNESS_SELFTEST=1 (self-test isolation —
+# E.2 remediation) so no self-test run appends to the real machine's
+# ~/.claude/logs/conv-tree-read.log regardless of HOME. Prefers an explicit
+# HARNESS_SELFTEST_DIR (set by a caller that wants a specific sandbox root);
+# falls back to a PID-scoped tmp sandbox otherwise — signal-ledger.sh's
+# HARNESS_SELFTEST_PATH-unset fallback pattern — so simply exporting
+# HARNESS_SELFTEST=1 (with no other setup, e.g. a bare sweep loop) is enough
+# to keep this hook's self-test off the real ~/.claude tree.
+if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+  if [[ -n "${HARNESS_SELFTEST_DIR:-}" ]]; then
+    LOG_DIR="$HARNESS_SELFTEST_DIR/logs"
+  else
+    LOG_DIR="${TMPDIR:-/tmp}/conv-tree-read-selftest/$$/logs"
+  fi
+else
+  LOG_DIR="$HOME/.claude/logs"
+fi
 LOG_FILE="$LOG_DIR/conv-tree-read.log"
 CURSOR_DIR_DEFAULT="$HOME/.claude/state/conv-tree-read"
+# Ensure the log dir exists up front: some call sites (below) redirect
+# directly to $LOG_FILE via `2>>` rather than through _log()'s own mkdir -p,
+# so a freshly-resolved sandbox dir (self-test) must exist before first use.
+mkdir -p "$LOG_DIR" 2>/dev/null || true
 
 # ---- failure isolation -----------------------------------------------------
 # Any unexpected error in the runtime path logs and exits 0. The operator's
@@ -388,6 +408,13 @@ _self_test() {
   trap - ERR
   local pass=0 fail=0 tmp
   tmp=$(mktemp -d 2>/dev/null || echo "/tmp/ctr-st-$$"); mkdir -p "$tmp"
+  # Self-contained sandboxing regardless of caller env (E.2 remediation): every
+  # child `bash "$SELF"` this self-test spawns (via _fire below) inherits
+  # HARNESS_SELFTEST_DIR="$tmp" and therefore logs to $tmp/logs, never the real
+  # ~/.claude/logs, even if the caller invoked --self-test without first
+  # setting HARNESS_SELFTEST=1 itself.
+  export HARNESS_SELFTEST=1
+  export HARNESS_SELFTEST_DIR="$tmp"
   local LIB; LIB=$(_resolve_state_lib)
   if [[ ! -f "$LIB" ]]; then echo "self-test: cannot locate state library ($LIB)"; echo "self-test: FAIL"; exit 1; fi
   _have node || { echo "self-test: node unavailable"; echo "self-test: FAIL"; exit 1; }

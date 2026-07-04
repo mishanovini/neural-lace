@@ -67,8 +67,21 @@ set -uo pipefail
 
 MODE="${1:-}"
 
-LOG_DIR="$HOME/.claude/logs"
+# Log destination: sandboxed when HARNESS_SELFTEST=1 or MODE is --self-test
+# itself (self-test isolation — E.2 remediation) so no self-test run appends
+# to the real machine's ~/.claude/logs/workstreams-turn-emit.log regardless
+# of HOME. Prefers an explicit HARNESS_SELFTEST_DIR; falls back to a
+# PID-scoped tmp sandbox otherwise (signal-ledger.sh's convention).
+if [[ "${HARNESS_SELFTEST:-0}" == "1" ]] || [[ "$MODE" == "--self-test" ]]; then
+  export HARNESS_SELFTEST=1
+  _WTE_SANDBOX="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/workstreams-turn-emit-selftest/$$}"
+  export HARNESS_SELFTEST_DIR="$_WTE_SANDBOX"
+  LOG_DIR="$_WTE_SANDBOX/logs"
+else
+  LOG_DIR="$HOME/.claude/logs"
+fi
 LOG_FILE="$LOG_DIR/workstreams-turn-emit.log"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
 
 # Workstreams consolidation (Phase A, 2026-06-08): SHARED canonical-state-path
 # resolver — collapses the GUI sink and §5 gate sink onto the one

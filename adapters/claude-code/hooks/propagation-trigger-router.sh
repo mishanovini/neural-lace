@@ -479,6 +479,26 @@ run_self_test() {
   local SELF_PATH
   SELF_PATH="$(realpath "${BASH_SOURCE[0]}")"
 
+  # ---------------------------------------------------------------------
+  # _self_invoke — run a self-test scenario's nested `bash "$SELF_PATH"
+  # evaluate ...` under a bounded timeout.
+  #
+  # WHY: each S-scenario below re-execs this script as a child process to
+  # exercise the real `evaluate` codepath end-to-end. Observed on this
+  # Windows/Git-Bash (MSYS) environment: these rapid recursive self-
+  # invocations intermittently stall indefinitely with NO child git/jq/node
+  # process left running (consistent with an MSYS process-group/job-control
+  # wait race, not a logic hang in this script's own evaluate/dispatch
+  # code — the identical `evaluate` call, run directly and in isolation,
+  # completes in <1s every time; see repro notes, E.2 remediation). Without
+  # a bound, one flaky nested invocation stalls the ENTIRE self-test (and
+  # any sweep driving it) for the outer harness's full timeout budget.
+  # `timeout` bounds the blast radius to one scenario's FAIL instead.
+  # ---------------------------------------------------------------------
+  _self_invoke() {
+    timeout 20 bash "$SELF_PATH" "$@"
+  }
+
   # ----- S1: schema-validity -----
   local SCHEMA_PATH
   SCHEMA_PATH="$SCRIPT_DIR/../schemas/propagation-rules.schema.json"
@@ -506,7 +526,7 @@ run_self_test() {
   write_minimal_rules "$D3"
   PROPAGATION_RULES_FILE="$D3/build-doctrine/propagation/propagation-rules.json" \
   PROPAGATION_AUDIT_LOG="$D3/build-doctrine/telemetry/propagation.jsonl" \
-    bash "$SELF_PATH" evaluate plan-status-flip --path "docs/plans/foo.md" --meta status_to=COMPLETED >/dev/null 2>&1
+    _self_invoke evaluate plan-status-flip --path "docs/plans/foo.md" --meta status_to=COMPLETED >/dev/null 2>&1
   local s3_count
   s3_count=$(count_audit_lines "$D3/build-doctrine/telemetry/propagation.jsonl")
   if [[ "$s3_count" -ge 1 ]] && grep -q '"verdict":"fired"' "$D3/build-doctrine/telemetry/propagation.jsonl" 2>/dev/null; then
@@ -523,7 +543,7 @@ run_self_test() {
   write_minimal_rules "$D4"
   PROPAGATION_RULES_FILE="$D4/build-doctrine/propagation/propagation-rules.json" \
   PROPAGATION_AUDIT_LOG="$D4/build-doctrine/telemetry/propagation.jsonl" \
-    bash "$SELF_PATH" evaluate session-end >/dev/null 2>&1
+    _self_invoke evaluate session-end >/dev/null 2>&1
   if grep -q '"verdict":"no-rules-matched"' "$D4/build-doctrine/telemetry/propagation.jsonl" 2>/dev/null; then
     printf 'self-test (S4) unmatched-event-records-negative-space: PASS\n' >&2
     PASSED=$((PASSED+1))
@@ -539,7 +559,7 @@ run_self_test() {
   # status_to=ACTIVE should NOT match (rule wants COMPLETED).
   PROPAGATION_RULES_FILE="$D5/build-doctrine/propagation/propagation-rules.json" \
   PROPAGATION_AUDIT_LOG="$D5/build-doctrine/telemetry/propagation.jsonl" \
-    bash "$SELF_PATH" evaluate plan-status-flip --path "docs/plans/foo.md" --meta status_to=ACTIVE >/dev/null 2>&1
+    _self_invoke evaluate plan-status-flip --path "docs/plans/foo.md" --meta status_to=ACTIVE >/dev/null 2>&1
   if grep -q '"verdict":"no-rules-matched"' "$D5/build-doctrine/telemetry/propagation.jsonl" 2>/dev/null; then
     printf 'self-test (S5) metadata-match-filters-correctly: PASS\n' >&2
     PASSED=$((PASSED+1))
@@ -554,7 +574,7 @@ run_self_test() {
   write_minimal_rules "$D6"
   PROPAGATION_RULES_FILE="$D6/build-doctrine/propagation/propagation-rules.json" \
   PROPAGATION_AUDIT_LOG="$D6/build-doctrine/telemetry/propagation.jsonl" \
-    bash "$SELF_PATH" evaluate doctrine-doc-modified --path "build-doctrine/doctrine/01-principles.md" >/dev/null 2>&1
+    _self_invoke evaluate doctrine-doc-modified --path "build-doctrine/doctrine/01-principles.md" >/dev/null 2>&1
   if grep -q '"verdict":"fired"' "$D6/build-doctrine/telemetry/propagation.jsonl" 2>/dev/null; then
     printf 'self-test (S6) path-pattern-positive-match: PASS\n' >&2
     PASSED=$((PASSED+1))
@@ -569,7 +589,7 @@ run_self_test() {
   write_minimal_rules "$D7"
   PROPAGATION_RULES_FILE="$D7/build-doctrine/propagation/propagation-rules.json" \
   PROPAGATION_AUDIT_LOG="$D7/build-doctrine/telemetry/propagation.jsonl" \
-    bash "$SELF_PATH" evaluate doctrine-doc-modified --path "docs/random.md" >/dev/null 2>&1
+    _self_invoke evaluate doctrine-doc-modified --path "docs/random.md" >/dev/null 2>&1
   if grep -q '"verdict":"no-rules-matched"' "$D7/build-doctrine/telemetry/propagation.jsonl" 2>/dev/null; then
     printf 'self-test (S7) path-pattern-negative-match: PASS\n' >&2
     PASSED=$((PASSED+1))
@@ -585,7 +605,7 @@ run_self_test() {
   local s8_rc s8_out
   s8_out=$(PROPAGATION_RULES_FILE="$D8/build-doctrine/propagation/propagation-rules.json" \
            PROPAGATION_AUDIT_LOG="$D8/build-doctrine/telemetry/propagation.jsonl" \
-           bash "$SELF_PATH" evaluate session-end 2>&1)
+           _self_invoke evaluate session-end 2>&1)
   s8_rc=$?
   if [[ "$s8_rc" -eq 2 ]] && printf '%s' "$s8_out" | grep -q "malformed JSON"; then
     printf 'self-test (S8) malformed-config-rejected: PASS\n' >&2
@@ -602,7 +622,7 @@ run_self_test() {
   local s9_rc s9_out
   s9_out=$(PROPAGATION_RULES_FILE="$D9/nonexistent/propagation-rules.json" \
            PROPAGATION_AUDIT_LOG="$D9/build-doctrine/telemetry/propagation.jsonl" \
-           bash "$SELF_PATH" evaluate session-end 2>&1)
+           _self_invoke evaluate session-end 2>&1)
   s9_rc=$?
   if [[ "$s9_rc" -eq 2 ]] && printf '%s' "$s9_out" | grep -q "rules file not found"; then
     printf 'self-test (S9) missing-config-rejected: PASS\n' >&2
@@ -618,7 +638,7 @@ run_self_test() {
   write_minimal_rules "$D10"
   PROPAGATION_RULES_FILE="$D10/build-doctrine/propagation/propagation-rules.json" \
   PROPAGATION_AUDIT_LOG="$D10/build-doctrine/telemetry/propagation.jsonl" \
-    bash "$SELF_PATH" evaluate plan-status-flip --path "docs/plans/foo.md" --meta status_to=COMPLETED >/dev/null 2>&1
+    _self_invoke evaluate plan-status-flip --path "docs/plans/foo.md" --meta status_to=COMPLETED >/dev/null 2>&1
   local s10_lines s10_valid_lines
   s10_lines=$(count_audit_lines "$D10/build-doctrine/telemetry/propagation.jsonl")
   s10_valid_lines=$(while IFS= read -r line; do
@@ -638,7 +658,7 @@ run_self_test() {
   write_minimal_rules "$D11"
   PROPAGATION_RULES_FILE="$D11/build-doctrine/propagation/propagation-rules.json" \
   PROPAGATION_AUDIT_LOG="$D11/build-doctrine/telemetry/propagation.jsonl" \
-    bash "$SELF_PATH" evaluate plan-status-flip --path "docs/plans/foo.md" --meta status_to=COMPLETED >/dev/null 2>&1
+    _self_invoke evaluate plan-status-flip --path "docs/plans/foo.md" --meta status_to=COMPLETED >/dev/null 2>&1
   local entry
   entry=$(head -1 "$D11/build-doctrine/telemetry/propagation.jsonl" 2>/dev/null)
   if printf '%s' "$entry" | jq -e '.schema_version and .timestamp and .event_id and .rule_id and .verdict and .duration_ms and .event' >/dev/null 2>&1; then
@@ -668,7 +688,7 @@ run_self_test() {
 EOF
   PROPAGATION_RULES_FILE="$D12/build-doctrine/propagation/propagation-rules.json" \
   PROPAGATION_AUDIT_LOG="$D12/build-doctrine/telemetry/propagation.jsonl" \
-    bash "$SELF_PATH" evaluate session-end >/dev/null 2>&1
+    _self_invoke evaluate session-end >/dev/null 2>&1
   if grep -q '"verdict":"action-failed"' "$D12/build-doctrine/telemetry/propagation.jsonl" 2>/dev/null; then
     printf 'self-test (S12) failed-action-recorded: PASS\n' >&2
     PASSED=$((PASSED+1))
@@ -697,7 +717,7 @@ EOF
 EOF
   PROPAGATION_RULES_FILE="$D13/build-doctrine/propagation/propagation-rules.json" \
   PROPAGATION_AUDIT_LOG="$D13/build-doctrine/telemetry/propagation.jsonl" \
-    bash "$SELF_PATH" evaluate session-end >/dev/null 2>&1
+    _self_invoke evaluate session-end >/dev/null 2>&1
   if grep -q '"verdict":"condition-not-met"' "$D13/build-doctrine/telemetry/propagation.jsonl" 2>/dev/null; then
     printf 'self-test (S13) condition-not-met-skips-action: PASS\n' >&2
     PASSED=$((PASSED+1))
