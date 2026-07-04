@@ -113,6 +113,32 @@ but MERGE F.2 last within the batch.
 - Done-when: plan line 148 (inventory-count script assertion) + doctor README-anchor
   predicate green.
 
+### §F.2b Docs-as-process (operator directive 2026-07-04: proactive, not tail-gated)
+
+Docs must be produced INSIDE the build loop; tail gates become backstops only.
+Three mechanisms (F.2 builder ships all three; harness-reviewer reviews as
+Pattern+Mechanism hybrid):
+1. Plan template gains a required `Docs impact:` field PER TASK (the doc/README/
+   runbook delta the task causes, or the literal word `none` with a reason).
+   `plan-edit-validator` warns when absent; `task-verifier` treats a non-`none`
+   Docs-impact as part of the task's Done-when — docs land in the SAME commit as
+   the code, verified at checkbox time, not at session end. (Generation beats
+   maintenance where possible: prefer extending a generator over hand-editing.)
+2. Every NEW operator-facing capability ships a RUNBOOK stub (what it is, the one
+   command, where its output lands) + a "what's new" line: `nl-issue.sh`-style
+   append to `~/.claude/state/harness-changelog.jsonl`, which the E.1 digest
+   surfaces once per session ("harness changes since your last session") — closes
+   the silent-auto-install gap where capabilities arrive unannounced (e.g. nl-issue
+   landed 2026-07-03 and the operator would not have known without being told).
+3. Existing freshness/anchor gates (doctor README anchors, docs-freshness) stay as
+   the BACKSTOP layer; a backstop firing is a signal the in-process layer failed —
+   ledger it as such (E.3-style rate visibility).
+- Done-when: template field present + validator warn fixture; verifier honors
+  Docs-impact (fixture: task with non-none impact and no doc delta → verifier
+  refuses flip); changelog append + digest line proven in sandbox; runbook stub
+  exists for every Wave-E/F operator-facing capability (enumerate: nl-issue,
+  session-resumer, digest, NEEDS-YOU, pre-compaction snapshots, KPI report).
+
 ## §F.3 Estate dispositions (serial, operator-facing) — protocol
 
 Present ONE batched compact-format decision block (constitution §3, ≤20 lines) for:
@@ -151,6 +177,10 @@ re-design proposal to operator; do NOT add gates, do NOT rationalize partial num
 Ambiguous/mixed → present the table to the operator with a recommendation, no
 self-graded pass. Also record: findings 019–028 status sweep (each terminal or
 owned), attic retirement date honored, completion report appended to the plan.
+MANDATORY in the completion report (operator commitment 2026-07-04): the
+ACTIVATION PROPOSAL for `docs/plans/nl-observability-program-2026-08.md` (DRAFT,
+frozen) — one-word operator greenlight flips it ACTIVE and starts O.0. Omitting
+this proposal fails F.4's Done-when.
 
 ## §F.6 Sync-daemon durable fix
 
