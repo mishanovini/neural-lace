@@ -67,6 +67,19 @@ surfacers, additional dashboards, cross-machine ledger sync beyond read-both.
   drill Q1–Q6, zero unmapped event types, operator-trust check — Model: strongest
   available — Done-when: completion review doc with measured numbers.
 
+- [ ] O.8 Estate-coordination protocol (from NL-FINDING-031 + the 2026-07-04 manual run):
+  `/coordinate-estate` skill + doctrine compact encoding what the origin session did by
+  hand — inventory sessions (list_sessions), classify (active / stalled>2h / wedged-
+  undeliverable / superseded), re-home orphans via nl-issue, stand-down superseded
+  satellites, freeze-window protocol (declare in main-checkout SCRATCHPAD coordination
+  section; satellites land-or-hold; cutover owner proceeds on ACTIVE flag), spawn-time
+  supersession check (grep master+branches for existing fix before building) — file-based
+  channels ONLY (send_message requires per-message operator confirmation by design; it is
+  a nudge, not an orchestration primitive) — Model: sonnet
+  - Done-when: skill file exists + doctrine compact with JIT trigger; drill — a seeded
+    stale-session fixture is classified and its task re-homed to the nl-issue ledger;
+    coordination-section format documented in the doctrine.
+
 ## Files to Modify/Create
 
 `adapters/claude-code/hooks/lib/signal-ledger.sh` (extend), new
