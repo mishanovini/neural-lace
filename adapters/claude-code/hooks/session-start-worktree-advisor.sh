@@ -115,6 +115,7 @@ _self_test() {
     # $1 = dir name; creates a git repo with one commit, cd-ready
     mkdir -p "$tmp/$1" && cd "$tmp/$1" || return 1
     git init --quiet
+    git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
     git config user.email "t@example.com" && git config user.name "T"
     echo a > a && git add a && git commit --quiet -m init
   }

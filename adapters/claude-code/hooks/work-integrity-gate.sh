@@ -741,6 +741,7 @@ _wig_self_test() {
     (
       cd "$repo" || exit 99
       git init -q -b master 2>/dev/null || { git init -q; git checkout -q -b master 2>/dev/null; }
+      git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
       git config user.email "t@example.com"; git config user.name "T"; git config commit.gpgsign false
       git config core.autocrlf false; git config core.safecrlf false
       echo seed > seed.txt

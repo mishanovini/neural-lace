@@ -374,7 +374,7 @@ EOF
   # Scenario 6: stale-local-branch — branch ahead of master + last commit > 7 days + not pushed → SURFACE
   local s6="$tmp/stale-branch"
   mkdir -p "$s6" && (
-    cd "$s6" && git init --quiet && git config user.email "t@example.com" && git config user.name "T"
+    cd "$s6" && git init --quiet && git config core.hooksPath "" && git config user.email "t@example.com" && git config user.name "T"
     echo init > a && git add a && git commit --quiet -m init
     git branch master 2>/dev/null
     git checkout --quiet -b old-feature
@@ -397,7 +397,7 @@ EOF
   # Scenario 7: fresh-local-branch — ahead of master but recent → silent
   local s7="$tmp/fresh-branch"
   mkdir -p "$s7" && (
-    cd "$s7" && git init --quiet && git config user.email "t@example.com" && git config user.name "T"
+    cd "$s7" && git init --quiet && git config core.hooksPath "" && git config user.email "t@example.com" && git config user.name "T"
     echo init > a && git add a && git commit --quiet -m init
     git branch master 2>/dev/null
     git checkout --quiet -b new-feature
@@ -417,7 +417,7 @@ EOF
   local s8="$tmp/pushed-branch"
   mkdir -p "$tmp/bare-s8" && ( cd "$tmp/bare-s8" && git init --bare --quiet )
   mkdir -p "$s8" && (
-    cd "$s8" && git init --quiet && git config user.email "t@example.com" && git config user.name "T"
+    cd "$s8" && git init --quiet && git config core.hooksPath "" && git config user.email "t@example.com" && git config user.name "T"
     git remote add origin "$tmp/bare-s8"
     echo init > a && git add a && git commit --quiet -m init
     git branch master 2>/dev/null

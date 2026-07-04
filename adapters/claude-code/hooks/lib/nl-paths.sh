@@ -222,7 +222,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # own toplevel (git-dir == git-common-dir case).
   _nlp_repo6="$_nlp_tmp/repo6"
   mkdir -p "$_nlp_repo6"
-  ( cd "$_nlp_repo6" && git init -q . && git config user.email "t@example.test" \
+  ( cd "$_nlp_repo6" && git init -q . && git config core.hooksPath "" && git config user.email "t@example.test" \
     && git config user.name "T" && echo x > f && git add f && git commit -q -m init ) >/dev/null 2>&1
   # Oracle: `git rev-parse --show-toplevel` — the non-worktree branch of
   # nl_main_checkout_root() prints this value verbatim (see the function:

@@ -1189,7 +1189,7 @@ _self_test() {
     local R="$tmp/mainrepo" WT="$tmp/wt"
     mkdir -p "$R/neural-lace/workstreams-ui/state"
     : >"$R/neural-lace/workstreams-ui/state/state.js"
-    ( cd "$R" && git init -q . && git config user.email t@e.test && git config user.name t \
+    ( cd "$R" && git init -q . && git config core.hooksPath "" && git config user.email t@e.test && git config user.name t \
         && git add -A && git commit -qm init && git worktree add -q "$WT" -b st13wt ) >/dev/null 2>&1
     local Rabs gui_from_wt gate_from_wt want_gui NOCFG="$tmp/no-such-config.txt"
     Rabs=$(cd "$R" && pwd)
@@ -1437,7 +1437,7 @@ _self_test() {
   # item-shipped precedes concluded in the batch, FR-7 lets the node conclude.
   if command -v git >/dev/null 2>&1; then
     local G="$tmp/shiprepo"; mkdir -p "$G"
-    ( cd "$G" && git init -q . && git config user.email t@e.test && git config user.name t \
+    ( cd "$G" && git init -q . && git config core.hooksPath "" && git config user.email t@e.test && git config user.name t \
         && echo a > a.txt && git add -A && git commit -qm base ) >/dev/null 2>&1
     local sp35="$tmp/st-35.json"
     ( cd "$G" && CONV_TREE_STATE_PATH="$sp35" CLAUDE_SESSION_ID="sess-st-35" \
@@ -1459,7 +1459,7 @@ _self_test() {
   # candidate) — exactly the Phase-4 surface.
   if command -v git >/dev/null 2>&1; then
     local G2="$tmp/noshiprepo"; mkdir -p "$G2"
-    ( cd "$G2" && git init -q . && git config user.email t@e.test && git config user.name t \
+    ( cd "$G2" && git init -q . && git config core.hooksPath "" && git config user.email t@e.test && git config user.name t \
         && echo a > a.txt && git add -A && git commit -qm base ) >/dev/null 2>&1
     local sp36="$tmp/st-36.json"
     ( cd "$G2" && CONV_TREE_STATE_PATH="$sp36" CLAUDE_SESSION_ID="sess-st-36" \

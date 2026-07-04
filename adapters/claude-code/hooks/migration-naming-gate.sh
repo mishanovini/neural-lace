@@ -254,7 +254,7 @@ _self_test() {
   _scenario() { # name setup_fn expect(BLOCK|ALLOW)
     local name="$1" setup="$2" expect="$3"
     local d="$tmp/$name"
-    mkdir -p "$d" && ( cd "$d" && git init --quiet && git config user.email t@example.com && git config user.name T )
+    mkdir -p "$d" && ( cd "$d" && git init --quiet && git config core.hooksPath "" && git config user.email t@example.com && git config user.name T )
     ( cd "$d" && eval "$setup" )
     local rc=0
     ( cd "$d" && CLAUDE_TOOL_INPUT='{"tool_input":{"command":"git commit -m x"}}' _main_check 2>/dev/null ) || rc=$?

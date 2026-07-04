@@ -732,6 +732,7 @@ run_self_test() {
 
     # Initialize git fixture
     git init -q
+    git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.test"
     git config user.name "Test"
     mkdir -p docs/plans/archive

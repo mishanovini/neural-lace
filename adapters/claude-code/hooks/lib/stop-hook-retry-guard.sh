@@ -535,6 +535,7 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
 
   cd "$TMP" || { echo "could not cd to TMP" >&2; exit 1; }
   git init -q 2>/dev/null
+  git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
   git config user.email "selftest@example.test" 2>/dev/null
   git config user.name  "Self Test"            2>/dev/null
   : > seed.txt

@@ -267,7 +267,7 @@ _self_test() {
 
   local repo="$tmp/fixture-repo"
   mkdir -p "$repo/docs/plans"
-  ( cd "$repo" && git init -q . && git config user.email "t@example.test" && git config user.name "T" \
+  ( cd "$repo" && git init -q . && git config core.hooksPath "" && git config user.email "t@example.test" && git config user.name "T" \
       && echo hi > README.md && git add README.md && git commit -q -m init ) >/dev/null 2>&1
   cat > "$repo/docs/plans/fixture-plan.md" <<'PLAN'
 Status: ACTIVE

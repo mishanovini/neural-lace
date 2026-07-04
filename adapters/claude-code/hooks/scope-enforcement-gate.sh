@@ -374,6 +374,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
     (
       cd "$repo" || exit 99
       git init -q 2>/dev/null || true
+      git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
       git config user.email "test@example.com" 2>/dev/null
       git config user.name "Test" 2>/dev/null
       git config commit.gpgsign false 2>/dev/null
@@ -604,6 +605,7 @@ Test.
   (
     cd "$S11_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -689,6 +691,7 @@ Drive-by hotfix for unrelated.md.
   (
     cd "$S12_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -736,6 +739,7 @@ Test merge-context allowlist.
   (
     cd "$S13_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -771,6 +775,7 @@ Test merge-context allowlist.
   (
     cd "$S14_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -809,6 +814,7 @@ Test merge-context allowlist.
   (
     cd "$S15_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -851,6 +857,7 @@ Test merge-context allowlist.
   (
     cd "$S16_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -885,6 +892,7 @@ Test merge-context allowlist.
   (
     cd "$S17_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -919,6 +927,7 @@ Test merge-context allowlist.
   (
     cd "$S18_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -954,6 +963,7 @@ Test merge-context allowlist.
   (
     cd "$S19_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -1076,6 +1086,7 @@ Test gitlink-shaped trailing-slash matching.
     mkdir -p "$repo"
     cd "$repo" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -1114,6 +1125,7 @@ Test gitlink-shaped trailing-slash matching.
     (
       cd "$dir" || exit 99
       git init -q 2>/dev/null || true
+      git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
       git config user.email "test@example.com" 2>/dev/null
       git config user.name "Test" 2>/dev/null
       git config commit.gpgsign false 2>/dev/null

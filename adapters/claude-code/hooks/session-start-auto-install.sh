@@ -440,7 +440,7 @@ run_self_test() {
   }
 }
 TMPL
-  ( cd "$CANON" && git init --quiet && git config user.email t@example.com && git config user.name T \
+  ( cd "$CANON" && git init --quiet && git config core.hooksPath "" && git config user.email t@example.com && git config user.name T \
       && git add -A && git commit --quiet -m init && git branch -M master ) || { echo "fixture git init failed" >&2; return 1; }
 
   # Helper: run main() in a subshell with a fresh LIVE dir + given overrides.

@@ -182,6 +182,7 @@ _self_test() {
   (
     cd "$tmp" && mkdir noremote && cd noremote
     git init --quiet
+    git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
     git config user.email "t@example.com" && git config user.name "T"
     echo a > a && git add a && git commit --quiet -m init
     out="$(_main_check 2>/dev/null)"
@@ -193,6 +194,7 @@ _self_test() {
   (
     cd "$tmp" && mkdir behind && cd behind
     git init --quiet
+    git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
     git config user.email "t@example.com" && git config user.name "T"
     git remote add origin "$tmp/bare-canonical"
     echo a > a && git add a && git commit --quiet -m init
@@ -201,6 +203,7 @@ _self_test() {
     # Advance the remote master
     ( cd "$tmp" && mkdir advancer && cd advancer
       git init --quiet
+      git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
       git config user.email "t@example.com" && git config user.name "T"
       git remote add origin "$tmp/bare-canonical"
       git fetch --quiet origin

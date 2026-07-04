@@ -410,6 +410,7 @@ if [ "${1:-}" = "--self-test" ]; then
 
   cd "$TMP" || exit 2
   git init -q .
+  git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
   git config user.email "selftest@example.test"
   git config user.name "selftest"
   mkdir -p docs/plans
