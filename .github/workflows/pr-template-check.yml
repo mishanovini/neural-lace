@@ -18,13 +18,23 @@ jobs:
 
       - name: Validate PR body against capture-codify template
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -eo pipefail
+          # Fetch the CURRENT body/title at run time rather than trusting the
+          # frozen creation-time event payload (NL-FINDING-030). A job rerun
+          # replays the original webhook event, so
+          # github.event.pull_request.body is the body AS OF PR creation — a
+          # body-only fix could never re-green a rerun. gh pr view reads live
+          # PR state, so a rerun validates the current body/title.
+          pr_json="$(gh pr view "$PR_NUMBER" --json body,title)"
+          PR_BODY="$(printf '%s' "$pr_json" | jq -r '.body // ""')"
           # PR_TITLE enables the diagnostic-evidence section check on PRs
           # whose title matches the fix/sweep/class-sweep/refactor pattern.
           # See validate-pr-template.sh `validate_evidence` for the contract.
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          set -eo pipefail
+          PR_TITLE="$(printf '%s' "$pr_json" | jq -r '.title // ""')"
           # Source the shared validator library so CI and the local pre-push
           # hook share identical regex + canonical stderr messages.
           # Library lives at .github/scripts/ (not adapters/claude-code/) so

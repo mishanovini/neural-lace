@@ -202,18 +202,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 1
     if: github.event_name == 'pull_request'
+    # gh pr view needs pull-requests: read; the workflow default (contents:
+    # read) is insufficient, so grant it at the job scope only.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
       - name: Validate PR body
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         shell: bash
         run: |
           set -eo pipefail
+          # Fetch the CURRENT body/title at run time rather than the frozen
+          # creation-time event payload (NL-FINDING-030): a job rerun replays
+          # the original webhook event, so github.event.pull_request.body is
+          # the body AS OF PR creation and a body-only fix could never
+          # re-green a rerun. gh pr view reads live PR state.
+          pr_json="$(gh pr view "$PR_NUMBER" --json body,title)"
+          PR_BODY="$(printf '%s' "$pr_json" | jq -r '.body // ""')"
+          PR_TITLE="$(printf '%s' "$pr_json" | jq -r '.title // ""')"
           source "$GITHUB_WORKSPACE/.github/scripts/validate-pr-template.sh"
-          validate_pr_body "$PR_BODY"
+          validate_pr_body "$PR_BODY" "$PR_TITLE"
 
   summary:
     name: All-checks summary

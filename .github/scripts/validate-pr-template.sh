@@ -497,6 +497,11 @@ validate_pr_body() {
   # which is why this only bites in Linux CI — verify with `od`, not grep.)
   body="${body//$'\r'/}"
   local title="${2:-${PR_TITLE:-}}"
+  # Strip \r from the title too (defense-in-depth, NL-FINDING-030 review
+  # advisory). The title matcher today is a substring regex (`grep -iqE`),
+  # which tolerates a trailing \r — but this keeps normalization symmetric so
+  # any future FULL-LINE matcher fed the title inherits the guard for free.
+  title="${title//$'\r'/}"
   local body_chars=${#body}
   printf '[pr-template] checking PR body (%d chars)\n' "$body_chars"
 
