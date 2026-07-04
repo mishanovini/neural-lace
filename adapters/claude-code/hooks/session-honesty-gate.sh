@@ -72,6 +72,28 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 source "$SCRIPT_DIR/lib/stop-hook-retry-guard.sh"
 
 # ----------------------------------------------------------------------
+# _shg_report_gap <check> <message>
+#   ADR 059 D1, specs-e §E.11: emits one JSON line on stdout describing a
+#   gap this gate would otherwise have blocked on. Schema:
+#   {"gate","check","message"}. Used only in --report mode (see the
+#   live-path branches below); never touches the ledger or retry-guard —
+#   a --report invocation is a pure read consumed by the dispatcher.
+# ----------------------------------------------------------------------
+_shg_report_gap() {
+  local check="$1" message="$2" gate_esc check_esc msg_esc
+  if command -v _signal_ledger_json_escape >/dev/null 2>&1; then
+    gate_esc=$(_signal_ledger_json_escape "session-honesty-gate")
+    check_esc=$(_signal_ledger_json_escape "$check")
+    msg_esc=$(_signal_ledger_json_escape "$message")
+  else
+    gate_esc="session-honesty-gate"
+    check_esc=$(printf '%s' "$check" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    msg_esc=$(printf '%s' "$message" | sed 's/\\/\\\\/g; s/"/\\"/g; :a;N;$!ba; s/\n/\\n/g')
+  fi
+  printf '{"gate":"%s","check":"%s","message":"%s"}\n' "$gate_esc" "$check_esc" "$msg_esc"
+}
+
+# ----------------------------------------------------------------------
 # marker_scan_eval <transcript-path>
 #
 # Core marker-contract check (absorbed from continuation-enforcer.sh).
@@ -564,6 +586,17 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     echo $?
   }
 
+  # Same as run_live but invokes --report mode. Report JSON lines land in
+  # $TMP/out.json for the caller to inspect.
+  run_live_report() {
+    local transcript="$1" sid="$2"
+    local input
+    input=$(jq -cn --arg t "$transcript" --arg s "$sid" '{"transcript_path":$t,"session_id":$s}')
+    printf '%s' "$input" | CLAUDE_SESSION_ID="$sid" bash "${BASH_SOURCE[0]}" --report \
+      >"$TMP/out.json" 2>"$TMP/err.txt"
+    echo $?
+  }
+
   echo "Scenario 1: no marker -> block"
   jl "$TMP/s1.jsonl" $'Let me know if you'\''d like me to continue.'
   rc=$(run_live "$TMP/s1.jsonl" "sess-1")
@@ -793,6 +826,50 @@ FAKENYU
   rc=$?
   [[ "$rc" == "0" ]] && ok "SESSION_HONESTY_GATE_DISABLE=1 no-ops" || no "expected exit 0, got $rc"
 
+  echo "Scenario 17 (specs-e §E.11, --report mode): no-marker session under --report exits 0 and emits ONE JSON gap line naming the marker-format check"
+  rm -f "$TMP/ledger.jsonl"
+  jl "$TMP/s17.jsonl" $'trailing off with no marker at all'
+  rc=$(run_live_report "$TMP/s17.jsonl" "sess-17")
+  [[ "$rc" == "0" ]] && ok "report-mode never blocks even on no-marker (exit 0)" || no "expected exit 0, got $rc"
+  if grep -q '"gate":"session-honesty-gate"' "$TMP/out.json" 2>/dev/null && grep -q '"check":"marker-format' "$TMP/out.json" 2>/dev/null; then
+    ok "report-mode emits marker-format gap as JSON line"
+  else
+    no "expected a marker-format JSON gap line in --report stdout"
+  fi
+
+  echo "Scenario 18 (specs-e §E.11, --report mode): DONE-vs-block contradiction under --report exits 0 and emits the contradiction gap (never blocks, even for this verification-class condition — the dispatcher decides escalation, not this gate's own --report invocation)"
+  rm -f "$TMP/ledger.jsonl"
+  ledger_line=$(jq -cn --arg sid "sess-18" '{"ts":"2026-07-03T10:00:00Z","session_id":$sid,"gate":"work-integrity-gate","event":"block","detail":"unchecked tasks"}')
+  printf '%s\n' "$ledger_line" >> "$TMP/ledger.jsonl"
+  jl "$TMP/s18.jsonl" $'All shipped.\n\nDONE: shipped everything, merged abc1234'
+  rc=$(run_live_report "$TMP/s18.jsonl" "sess-18")
+  [[ "$rc" == "0" ]] && ok "report-mode never blocks on DONE-vs-block contradiction (exit 0)" || no "expected exit 0, got $rc"
+  if grep -q '"check":"done-vs-block-contradiction"' "$TMP/out.json" 2>/dev/null; then
+    ok "report-mode emits done-vs-block-contradiction gap as JSON line"
+  else
+    no "expected a done-vs-block-contradiction JSON gap line in --report stdout"
+  fi
+
+  echo "Scenario 19 (specs-e §E.11, --report mode): clean session (valid marker, no contradiction) under --report emits NO gap lines and exits 0"
+  rm -f "$TMP/ledger.jsonl"
+  jl "$TMP/s19.jsonl" $'All shipped.\n\nDONE: shipped everything, merged def5678'
+  rc=$(run_live_report "$TMP/s19.jsonl" "sess-19")
+  [[ "$rc" == "0" ]] && ok "report-mode clean session exits 0" || no "expected exit 0, got $rc"
+  CLEAN_LINES=$(grep -c '^{' "$TMP/out.json" 2>/dev/null)
+  CLEAN_LINES=$(printf '%s' "$CLEAN_LINES" | tr -d '[:space:]')
+  [[ -z "$CLEAN_LINES" ]] && CLEAN_LINES=0
+  [[ "$CLEAN_LINES" -eq 0 ]] && ok "report-mode clean session emits no gap lines" || no "expected 0 JSON gap lines, got $CLEAN_LINES"
+
+  echo "Scenario 20 (specs-e §E.11, --report mode): --report never touches the resolved ledger (pure read)"
+  rm -f "$TMP/ledger.jsonl"
+  jl "$TMP/s20.jsonl" $'trailing off with no marker at all'
+  run_live_report "$TMP/s20.jsonl" "sess-20" >/dev/null
+  if [[ -f "$TMP/ledger.jsonl" ]]; then
+    no "expected --report to leave the ledger untouched, but $TMP/ledger.jsonl was written"
+  else
+    ok "report-mode wrote no ledger events"
+  fi
+
   echo ""
   echo "self-test summary: $PASSED passed, $FAILED failed"
   [[ "$FAILED" == "0" ]] && exit 0 || exit 1
@@ -804,6 +881,12 @@ fi
 if [[ -n "${SESSION_HONESTY_GATE_DISABLE:-}" ]]; then
   exit 0
 fi
+
+# --report mode (ADR 059 D1, specs-e §E.11): run every check, emit gaps as
+# JSON lines on stdout, ALWAYS exit 0 at the end — never blocks, never
+# touches the ledger or retry-guard. Consumed by stop-verdict-dispatcher.sh.
+_SHG_REPORT_MODE=0
+[[ "${1:-}" == "--report" ]] && _SHG_REPORT_MODE=1
 
 INPUT=""
 if [[ ! -t 0 ]]; then
@@ -820,7 +903,10 @@ fi
 marker_scan_eval "$TRANSCRIPT_PATH"
 
 if [[ "$MARKER_VERDICT" == "block" ]]; then
-  cat >&2 <<MSG
+  if [[ "$_SHG_REPORT_MODE" == "1" ]]; then
+    _shg_report_gap "marker-format:${MARKER_SIG}" "${MARKER_MSG}"
+  else
+    cat >&2 <<MSG
 ================================================================
 SESSION HONESTY GATE — SESSION END BLOCKED
 ================================================================
@@ -843,17 +929,18 @@ sufficient once it is correct.
 ================================================================
 MSG
 
-  ledger_emit_ok=0
-  command -v ledger_emit >/dev/null 2>&1 && ledger_emit_ok=1
-  [[ "$ledger_emit_ok" -eq 1 ]] && ledger_emit "session-honesty-gate" "block" "${MARKER_SIG}: ${MARKER_MSG}"
+    ledger_emit_ok=0
+    command -v ledger_emit >/dev/null 2>&1 && ledger_emit_ok=1
+    [[ "$ledger_emit_ok" -eq 1 ]] && ledger_emit "session-honesty-gate" "block" "${MARKER_SIG}: ${MARKER_MSG}"
 
-  retry_guard_block_or_exit \
-    "session-honesty-gate" \
-    "$RG_SESSION_ID" \
-    "session-honesty-gate:${MARKER_SIG}" \
-    "${MARKER_MSG}" \
-    '{"decision": "block", "reason": "Session honesty gate: the final message lacks a single valid DONE/PAUSING/BLOCKED/CONTINUING marker on its last line. See stderr. Append exactly one honest terminal-state marker and re-end."}' \
-    2
+    retry_guard_block_or_exit \
+      "session-honesty-gate" \
+      "$RG_SESSION_ID" \
+      "session-honesty-gate:${MARKER_SIG}" \
+      "${MARKER_MSG}" \
+      '{"decision": "block", "reason": "Session honesty gate: the final message lacks a single valid DONE/PAUSING/BLOCKED/CONTINUING marker on its last line. See stderr. Append exactly one honest terminal-state marker and re-end."}' \
+      2
+  fi
 fi
 
 # --- Marker format is valid. Check condition (b): DONE-vs-block contradiction. ---
@@ -861,7 +948,10 @@ if [[ "$MARKER_KEYWORD" == "DONE" ]]; then
   CONTRA_EVIDENCE=$(done_contradicted_by_block "$RG_SESSION_ID")
   if [[ -n "$CONTRA_EVIDENCE" ]]; then
     CONTRA_MSG="Marked DONE: but work-integrity-gate (or its pre-D.5 shim) recorded a BLOCK for this session. Evidence: ${CONTRA_EVIDENCE}"
-    cat >&2 <<MSG
+    if [[ "$_SHG_REPORT_MODE" == "1" ]]; then
+      _shg_report_gap "done-vs-block-contradiction" "${CONTRA_MSG}"
+    else
+      cat >&2 <<MSG
 ================================================================
 SESSION HONESTY GATE — SESSION END BLOCKED (DONE-vs-BLOCK CONTRADICTION)
 ================================================================
@@ -880,21 +970,32 @@ work is incomplete. Two honest resolutions:
 Do not re-assert DONE: without one of the above.
 ================================================================
 MSG
-    command -v ledger_emit >/dev/null 2>&1 && ledger_emit "session-honesty-gate" "block" "done-vs-block-contradiction: ${CONTRA_EVIDENCE}"
-    retry_guard_block_or_exit \
-      "session-honesty-gate" \
-      "$RG_SESSION_ID" \
-      "session-honesty-gate:done-vs-block-contradiction" \
-      "$CONTRA_MSG" \
-      '{"decision": "block", "reason": "Session honesty gate: DONE: claimed while work-integrity-gate blocked this session. See stderr."}' \
-      2
+      command -v ledger_emit >/dev/null 2>&1 && ledger_emit "session-honesty-gate" "block" "done-vs-block-contradiction: ${CONTRA_EVIDENCE}"
+      retry_guard_block_or_exit \
+        "session-honesty-gate" \
+        "$RG_SESSION_ID" \
+        "session-honesty-gate:done-vs-block-contradiction" \
+        "$CONTRA_MSG" \
+        '{"decision": "block", "reason": "Session honesty gate: DONE: claimed while work-integrity-gate blocked this session. See stderr."}' \
+        2
+    fi
   fi
 fi
 
 # --- Allow path: run demoted heuristics as non-blocking ledger warns. ---
-FINAL_TEXT=$(extract_final_text "$TRANSCRIPT_PATH")
-if [[ -n "$FINAL_TEXT" ]]; then
-  run_demoted_warns "$FINAL_TEXT" "$MARKER_KEYWORD" "$MARKER_SUMMARY" "$RG_SESSION_ID"
+# (--report mode skips even this: it is a pure read of BLOCKING conditions
+# only — the dispatcher aggregates gaps that would have blocked, not the
+# pre-existing non-blocking warn stream, which already reaches the ledger
+# on every normal invocation regardless of --report.)
+if [[ "$_SHG_REPORT_MODE" != "1" ]]; then
+  FINAL_TEXT=$(extract_final_text "$TRANSCRIPT_PATH")
+  if [[ -n "$FINAL_TEXT" ]]; then
+    run_demoted_warns "$FINAL_TEXT" "$MARKER_KEYWORD" "$MARKER_SUMMARY" "$RG_SESSION_ID"
+  fi
+fi
+
+if [[ "$_SHG_REPORT_MODE" == "1" ]]; then
+  exit 0
 fi
 
 exit 0

@@ -107,18 +107,24 @@ jobs:
             'docs/**' '.github/workflows/**' 2>/dev/null \
             | awk '{sum += $1} END {print sum+0}')
 
-          # executes-behavior file count: files whose path/name signals
-          # an artifact PRODUCED BY actually running the thing. Two
-          # families: (1) generic run artifacts (logs, screenshots,
-          # test-result JSON, loop-history dumps); (2) THIS HARNESS's own
-          # execution-evidence conventions — a self-test-bearing script,
-          # an evals/ scenario (a golden run encoded as code), or a
-          # generated docs/reviews/ report (a KPI/baseline artifact that
-          # only exists because the producing script was run). Modeling
-          # execution evidence as web-app logs/screenshots ALONE
-          # false-flags every harness PR whose proof is its self-tests.
-          EXECUTES_FILES=$(git diff "$BASE_REF"...HEAD --name-only 2>/dev/null \
-            | grep -icE '(^|/)(.*\.(log|png|jpg|jpeg))$|test-results?|loop-history|run-output|(^|/)evals/|(^|/)docs/reviews/|self-test' || true)
+          # executes-behavior file count. Modeling execution evidence as
+          # web-app logs/screenshots ALONE false-flags every harness PR
+          # whose proof is its self-tests (observed twice on Wave-E PRs #82,
+          # #83). Two families are counted:
+          #   (1) PATH artifacts: generic run outputs (logs, screenshots,
+          #       test-result JSON, loop-history dumps) + this harness's
+          #       artifact dirs (evals/ scenarios, docs/reviews/ generated
+          #       reports, tests/ fixtures/harnesses).
+          #   (2) CONTENT artifacts: any .sh in the diff that CARRIES a
+          #       `--self-test` — in this harness a self-tested script IS
+          #       the execution evidence (its self-test is a runnable proof
+          #       the behavior was exercised), which no path pattern catches.
+          PATH_EXEC=$(git diff "$BASE_REF"...HEAD --name-only 2>/dev/null \
+            | grep -icE '(^|/)(.*\.(log|png|jpg|jpeg))$|test-results?|loop-history|run-output|(^|/)evals/|(^|/)docs/reviews/|(^|/)tests/' || true)
+          SH_SELFTEST=$(git diff "$BASE_REF"...HEAD --name-only -- '*.sh' 2>/dev/null \
+            | while IFS= read -r f; do [ -n "$f" ] && [ -f "$f" ] && grep -Ilq -- '--self-test' "$f" && printf '.\n'; done \
+            | grep -c '.' || true)
+          EXECUTES_FILES=$(( ${PATH_EXEC:-0} + ${SH_SELFTEST:-0} ))
 
           echo "describes-behavior lines added: $DESCRIBES_LINES"
           echo "executes-behavior files: $EXECUTES_FILES"

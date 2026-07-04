@@ -107,10 +107,20 @@ _wig_ledger() {
 # ----------------------------------------------------------------------
 # _wig_block <check> <sig> <err_msg> <block_json>
 #   Wraps retry_guard_block_or_exit; logs to the ledger first. Never
-#   returns.
+#   returns — EXCEPT in --report mode (ADR 059 D1/D2, specs-e §E.11),
+#   where it emits a JSON-lines gap record to stdout and RETURNS instead
+#   of blocking, so the stop-verdict-dispatcher can aggregate every gap
+#   this gate finds across the whole session in one pass. Report mode
+#   never touches the ledger or the retry-guard counters — the dispatcher
+#   owns the batched-verdict + downgrade lifecycle; this gate's own
+#   --report invocation is a pure read (run every check, report, exit 0).
 # ----------------------------------------------------------------------
 _wig_block() {
   local check="$1" sig="$2" err_msg="$3" block_json="$4"
+  if [[ "${_WIG_REPORT_MODE:-0}" == "1" ]]; then
+    _wig_report_gap "$check" "$err_msg"
+    return 0
+  fi
   _wig_ledger "block" "${check}: ${err_msg}"
   retry_guard_block_or_exit \
     "work-integrity-gate" \
@@ -119,6 +129,29 @@ _wig_block() {
     "$err_msg" \
     "$block_json" \
     2
+}
+
+# ----------------------------------------------------------------------
+# _wig_report_gap <check> <message>
+#   Emits one JSON line on stdout describing a gap found in --report mode
+#   (ADR 059 D1, specs-e §E.11). Schema: {"gate","check","message"}.
+#   Never fails the calling gate — best-effort JSON escaping via the
+#   shared _signal_ledger_json_escape helper when available (signal-
+#   ledger.sh is always sourced by this file), a minimal inline fallback
+#   otherwise.
+# ----------------------------------------------------------------------
+_wig_report_gap() {
+  local check="$1" message="$2" gate_esc check_esc msg_esc
+  if command -v _signal_ledger_json_escape >/dev/null 2>&1; then
+    gate_esc=$(_signal_ledger_json_escape "work-integrity-gate")
+    check_esc=$(_signal_ledger_json_escape "$check")
+    msg_esc=$(_signal_ledger_json_escape "$message")
+  else
+    gate_esc="work-integrity-gate"
+    check_esc=$(printf '%s' "$check" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    msg_esc=$(printf '%s' "$message" | sed 's/\\/\\\\/g; s/"/\\"/g; :a;N;$!ba; s/\n/\\n/g')
+  fi
+  printf '{"gate":"%s","check":"%s","message":"%s"}\n' "$gate_esc" "$check_esc" "$msg_esc"
 }
 
 # ============================================================
@@ -183,6 +216,104 @@ _wig_resolve_touched_plans() {
     done
     [[ -n "$found" ]] && printf '%s\n' "$found"
   done <<< "$raw" | sort -u
+}
+
+# ============================================================
+# Manifest-derived scoping (task E.12, ADR 059 D6+D3) — REPLACES the
+# transcript-derived scoping above WHEN a session end-manifest exists.
+# ============================================================
+#
+# Scoping rule (harness-reviewer pin, verbatim, specs-e §E.12): manifest
+# scoping distinguishes "created the state" from "touched the file" — an
+# incidental toucher of someone else's COMPLETED-but-unchecked plan must
+# not inherit remedies only the plan owner can honestly execute.
+#
+# The transcript-derived scoping above (_wig_touched_plan_paths) treats
+# ANY Read/Edit/Write tool_use on a plan path as "session-touched" — that
+# includes a session that merely READ a foreign plan for context (never
+# created or modified anything about its state). Manifest scoping is
+# narrower and more honest: it derives "touched" from the manifest's OWN
+# `shipped[].sha` list — commits THIS session actually made and got
+# merged. A plan file changed in one of those commits is a plan this
+# session demonstrably CREATED state for; a plan merely opened/read
+# (never committed to) is not, and is correctly OUT of scope even if the
+# transcript shows a Read tool_use against it.
+#
+# _wig_manifest_touched_plans <manifest-json-path> <plan-dir> [<plan-dir>...]
+#   Echoes resolved on-disk plan paths (same shape as
+#   _wig_resolve_touched_plans's output) derived from the manifest's
+#   shipped[].sha commits' changed files. Fails open (empty output) on
+#   any parse error / missing jq / missing git — never blocks the gate
+#   just because manifest-derivation hit a snag; the caller's overall
+#   fail-open contract (empty touched-set => checks (a)/(b) no-op) is
+#   unchanged either way.
+# ----------------------------------------------------------------------
+_wig_manifest_touched_plans() {
+  local manifest_path="$1"
+  shift
+  local -a plan_dirs=("$@")
+  [[ -n "$manifest_path" && -f "$manifest_path" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  command -v git >/dev/null 2>&1 || return 0
+
+  local shas
+  shas=$(jq -r '.shipped[]?.sha // empty' "$manifest_path" 2>/dev/null | tr -d '\r')
+  [[ -z "$shas" ]] && return 0
+
+  local sha changed all_changed=""
+  while IFS= read -r sha; do
+    [[ -z "$sha" ]] && continue
+    changed=$(git show --name-only --pretty=format: "$sha" 2>/dev/null | tr -d '\r')
+    [[ -n "$changed" ]] && all_changed+="${changed}"$'\n'
+  done <<< "$shas"
+  [[ -z "$all_changed" ]] && return 0
+
+  _wig_resolve_touched_plans "$all_changed" "${plan_dirs[@]}"
+}
+
+# ============================================================
+# _wig_resolve_manifest_path <transcript-path>
+#   The end-manifest for THIS session, if one exists. Resolution:
+#   1. WORK_INTEGRITY_GATE_MANIFEST env override (self-test / explicit).
+#   2. The session id resolved from RG_SESSION_ID (set by _wig_main before
+#      this is called) against end-manifest.sh's own path convention
+#      (~/.claude/state/end-manifest/<sanitized-session-id>.json, or
+#      END_MANIFEST_STATE_DIR if that override is set — mirrors
+#      end-manifest.sh's _em_state_dir()/_em_sanitize_session_id()
+#      exactly, duplicated here rather than sourcing that file's
+#      internals, since this gate has no dependency on end-manifest.sh
+#      otherwise and the convention is a two-line mirror, not a shared
+#      algorithm worth a new lib for).
+# Echoes the manifest path if it exists on disk, empty otherwise (empty
+# means "no manifest this session" — transcript-derived scoping applies).
+# ----------------------------------------------------------------------
+_wig_resolve_manifest_path() {
+  if [[ -n "${WORK_INTEGRITY_GATE_MANIFEST:-}" ]]; then
+    [[ -f "$WORK_INTEGRITY_GATE_MANIFEST" ]] && printf '%s' "$WORK_INTEGRITY_GATE_MANIFEST"
+    return 0
+  fi
+  [[ -n "${RG_SESSION_ID:-}" ]] || return 0
+  local state_dir
+  if [[ -n "${END_MANIFEST_STATE_DIR:-}" ]]; then
+    state_dir="$END_MANIFEST_STATE_DIR"
+  elif [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    # Sandbox discipline (SELFTEST-ORACLE-PIN-01 / NL-FINDING-025 class):
+    # under HARNESS_SELFTEST, never fall through to the real machine's
+    # $HOME/.claude/state/end-manifest — a self-test scenario that wants
+    # manifest scoping MUST set END_MANIFEST_STATE_DIR or
+    # WORK_INTEGRITY_GATE_MANIFEST explicitly. Returning empty here means
+    # "no manifest" (transcript fallback applies), which is exactly the
+    # correct behavior for every EXISTING self-test scenario that never
+    # opts into manifest scoping.
+    return 0
+  else
+    state_dir="${HOME:-$PWD}/.claude/state/end-manifest"
+  fi
+  local sanitized
+  sanitized=$(printf '%s' "$RG_SESSION_ID" | tr -c 'a-zA-Z0-9_-' '_')
+  local cand="${state_dir}/${sanitized}.json"
+  [[ -f "$cand" ]] && printf '%s' "$cand"
+  return 0
 }
 
 # ============================================================
@@ -810,17 +941,30 @@ _wig_main() {
   done
 
   if [[ ${#plan_dirs[@]} -gt 0 ]]; then
-    local raw_touched touched_plans
-    raw_touched=$(_wig_touched_plan_paths "$transcript_path")
-    if [[ -n "$raw_touched" ]]; then
-      touched_plans=$(_wig_resolve_touched_plans "$raw_touched" "${plan_dirs[@]}")
-      if [[ -n "$touched_plans" ]]; then
-        while IFS= read -r plan; do
-          [[ -z "$plan" ]] && continue
-          _wig_check_evidence "$plan" "$transcript_path"
-          _wig_check_acceptance "$plan"
-        done <<< "$touched_plans"
-      fi
+    local touched_plans=""
+    # Manifest scoping (task E.12, ADR 059 D6+D3) REPLACES transcript-
+    # derived scoping WHEN a session end-manifest exists for this session
+    # — see _wig_manifest_touched_plans's own docstring for the scoping
+    # rule (created-the-state vs touched-the-file). Transcript fallback
+    # (the pre-E.12 behavior) applies unchanged for manifest-less
+    # sessions, so this is additive, not a breaking change for any
+    # session that never writes a manifest.
+    local manifest_path
+    manifest_path=$(_wig_resolve_manifest_path)
+    if [[ -n "$manifest_path" ]]; then
+      touched_plans=$(_wig_manifest_touched_plans "$manifest_path" "${plan_dirs[@]}")
+      _wig_ledger "info" "manifest-scoping active: ${manifest_path}"
+    else
+      local raw_touched
+      raw_touched=$(_wig_touched_plan_paths "$transcript_path")
+      [[ -n "$raw_touched" ]] && touched_plans=$(_wig_resolve_touched_plans "$raw_touched" "${plan_dirs[@]}")
+    fi
+    if [[ -n "$touched_plans" ]]; then
+      while IFS= read -r plan; do
+        [[ -z "$plan" ]] && continue
+        _wig_check_evidence "$plan" "$transcript_path"
+        _wig_check_acceptance "$plan"
+      done <<< "$touched_plans"
     fi
   fi
 
@@ -828,12 +972,19 @@ _wig_main() {
   _wig_check_worktree
 
   # Reaching here means every check (a)/(b)/(c) call above returned without
-  # blocking (each blocking path calls _wig_block, which never returns) —
-  # this Stop cycle PASSED. Emit a ledger "pass" event so session-honesty-
-  # gate's resolution-aware DONE-vs-block check (NL-FINDING-027, specs-e
-  # §E.10 item 10) can see "work-integrity ALSO passed at THIS Stop" as
-  # evidence a historical block from earlier in the session is resolved.
-  _wig_ledger "pass" "work-integrity-gate: session-touched checks passed at this Stop"
+  # blocking (each blocking path calls _wig_block, which never returns in
+  # normal/blocking mode — see _wig_block's --report branch for the one
+  # exception) — this Stop cycle PASSED (or, in --report mode, every gap
+  # found was reported and we still reached the end). Emit a ledger "pass"
+  # event so session-honesty-gate's resolution-aware DONE-vs-block check
+  # (NL-FINDING-027, specs-e §E.10 item 10) can see "work-integrity ALSO
+  # passed at THIS Stop" as evidence a historical block from earlier in the
+  # session is resolved. --report mode never touches the ledger (see
+  # _wig_block's --report branch note) — it is a pure read, so skip this
+  # write too; the dispatcher decides what to log for a --report run.
+  if [[ "${_WIG_REPORT_MODE:-0}" != "1" ]]; then
+    _wig_ledger "pass" "work-integrity-gate: session-touched checks passed at this Stop"
+  fi
 
   exit 0
 }
@@ -979,6 +1130,18 @@ _wig_self_test() {
       cd "$dir" || exit 99
       export WORK_INTEGRITY_GATE_TRANSCRIPT="$transcript"
       printf '{"session_id":"selftest-%s"}' "$(basename "$dir")" | bash "$script_path" >"$tmproot/last-stdout.txt" 2>"$tmproot/last-stderr.txt"
+      echo $?
+    )
+  }
+
+  # Same as _run_gate but invokes --report mode. Echoes exit code; report
+  # JSON lines land in $tmproot/last-stdout.txt for the caller to inspect.
+  _run_gate_report() {
+    local dir="$1" transcript="${2:-}"
+    (
+      cd "$dir" || exit 99
+      export WORK_INTEGRITY_GATE_TRANSCRIPT="$transcript"
+      printf '{"session_id":"selftest-%s"}' "$(basename "$dir")" | bash "$script_path" --report >"$tmproot/last-stdout.txt" 2>"$tmproot/last-stderr.txt"
       echo $?
     )
   }
@@ -1455,6 +1618,176 @@ EOF
   RC=$(_run_gate "$R" "$T")
   _expect "multi-touched-plans-only-broken-one-blocks" "$RC" "2"
 
+  # ================================================================
+  # Scenario 18 (specs-e §E.11, --report mode): a session with TWO
+  # independent gaps (unchecked tasks on one plan + a dirty worktree)
+  # invoked with --report must exit 0 (never block) and emit BOTH gaps
+  # as JSON lines on stdout — the dispatcher's aggregation contract.
+  # ================================================================
+  _setup_scenario s18
+  R=$(_build_repo s18)
+  _write_plan "$R" "report-broken" "ACTIVE" "unchecked" "no-evidence"
+  WT="$tmproot/s18-wt"
+  ( cd "$R" && git worktree add -q "$WT" -b s18-feat master >/dev/null 2>&1 )
+  ( cd "$WT" && mkdir -p docs/plans && cp "$R/docs/plans/report-broken.md" docs/plans/report-broken.md && echo dirty >> seed.txt )
+  T=$(_write_transcript "$WT" "$WT/docs/plans/report-broken.md")
+  RC=$(_run_gate_report "$WT" "$T")
+  _expect "report-mode-never-blocks-exit-0" "$RC" "0"
+  REPORT_LINES=$(grep -c '^{' "$tmproot/last-stdout.txt" 2>/dev/null)
+  REPORT_LINES=$(printf '%s' "$REPORT_LINES" | tr -d '[:space:]')
+  [[ -z "$REPORT_LINES" ]] && REPORT_LINES=0
+  if [[ "${REPORT_LINES:-0}" -ge 2 ]]; then
+    echo "self-test (report-mode-emits-both-gaps-as-json-lines): PASS (${REPORT_LINES} lines)" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (report-mode-emits-both-gaps-as-json-lines): FAIL (expected >=2 JSON lines, got ${REPORT_LINES})" >&2
+    echo "--- last-stdout ---" >&2
+    cat "$tmproot/last-stdout.txt" 2>/dev/null >&2
+    failed=$((failed+1))
+  fi
+  if grep -q '"gate":"work-integrity-gate"' "$tmproot/last-stdout.txt" 2>/dev/null && \
+     grep -q '"check":"check-a-pending"' "$tmproot/last-stdout.txt" 2>/dev/null && \
+     grep -q '"check":"check-c-dirty"' "$tmproot/last-stdout.txt" 2>/dev/null; then
+    echo "self-test (report-mode-json-schema-and-check-ids-present): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (report-mode-json-schema-and-check-ids-present): FAIL (missing gate/check fields)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 19 (specs-e §E.11, --report mode): clean session under
+  # --report emits NO gap lines and exits 0.
+  # ================================================================
+  _setup_scenario s19
+  R=$(_build_repo s19)
+  RC=$(_run_gate_report "$R" "")
+  _expect "report-mode-clean-session-exit-0" "$RC" "0"
+  REPORT_LINES19=$(grep -c '^{' "$tmproot/last-stdout.txt" 2>/dev/null)
+  REPORT_LINES19=$(printf '%s' "$REPORT_LINES19" | tr -d '[:space:]')
+  [[ -z "$REPORT_LINES19" ]] && REPORT_LINES19=0
+  if [[ "${REPORT_LINES19:-0}" -eq 0 ]]; then
+    echo "self-test (report-mode-clean-session-emits-no-gaps): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (report-mode-clean-session-emits-no-gaps): FAIL (expected 0 lines, got ${REPORT_LINES19})" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 20 (specs-e §E.11, --report mode): --report mode never
+  # touches the retry-guard counters or the resolved ledger — a
+  # --report invocation followed by a NORMAL (blocking) invocation of
+  # the SAME failure must still see attempt #1 at the retry-guard layer
+  # (i.e. --report is a pure read with no side effects on the counter
+  # file), and --report itself must never write to SIGNAL_LEDGER_PATH.
+  # ================================================================
+  _setup_scenario s20
+  R=$(_build_repo s20)
+  _write_plan "$R" "report-noside" "ACTIVE" "unchecked" "no-evidence"
+  T=$(_write_transcript "$R" "$R/docs/plans/report-noside.md")
+  _run_gate_report "$R" "$T" >/dev/null
+  if [[ -f "$SIGNAL_LEDGER_PATH" ]]; then
+    LEDGER_LINES=$(wc -l < "$SIGNAL_LEDGER_PATH" 2>/dev/null || echo 0)
+  else
+    LEDGER_LINES=0
+  fi
+  LEDGER_LINES=$(echo "$LEDGER_LINES" | tr -d '[:space:]')
+  if [[ "${LEDGER_LINES:-0}" -eq 0 ]]; then
+    echo "self-test (report-mode-no-ledger-side-effect): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (report-mode-no-ledger-side-effect): FAIL (expected 0 ledger lines after --report, got ${LEDGER_LINES})" >&2
+    failed=$((failed+1))
+  fi
+  RC=$(_run_gate "$R" "$T")
+  _expect "post-report-normal-invocation-still-blocks-first-attempt" "$RC" "2"
+
+  # Runs the gate against $1 (cwd) with WORK_INTEGRITY_GATE_TRANSCRIPT=$2
+  # AND WORK_INTEGRITY_GATE_MANIFEST=$3 (a manifest file path). Echoes
+  # exit code. Used by the manifest-scoping scenarios below (task E.12).
+  _run_gate_manifest() {
+    local dir="$1" transcript="${2:-}" manifest="${3:-}"
+    (
+      cd "$dir" || exit 99
+      export WORK_INTEGRITY_GATE_TRANSCRIPT="$transcript"
+      export WORK_INTEGRITY_GATE_MANIFEST="$manifest"
+      printf '{"session_id":"selftest-%s"}' "$(basename "$dir")" | bash "$script_path" >"$tmproot/last-stdout.txt" 2>"$tmproot/last-stderr.txt"
+      echo $?
+      unset WORK_INTEGRITY_GATE_MANIFEST
+    )
+  }
+
+  # ================================================================
+  # Scenario 21 (task E.12, ADR 059 D6+D3, manifest scoping — incidental-
+  # toucher): the TRANSCRIPT shows this session Read/Edit'd a foreign
+  # plan with unchecked tasks (would normally block under transcript-
+  # derived scoping — see Scenario 2 for that baseline), but a manifest
+  # IS present for this session and its shipped[] SHAs never touched that
+  # plan file. Manifest scoping REPLACES transcript scoping here: the
+  # session must NOT block on a plan it merely touched but never shipped
+  # state for (the scoping rule: "created the state" vs "touched the
+  # file" — an incidental toucher must not inherit the plan owner's
+  # remedies).
+  # ================================================================
+  _setup_scenario s21
+  R=$(_build_repo s21)
+  _write_plan "$R" "foreign-unchecked" "ACTIVE" "unchecked" "no-evidence"
+  T=$(_write_transcript "$R" "$R/docs/plans/foreign-unchecked.md")
+  MANIFEST_S21="$tmproot/tmpdir-s21/manifest.json"
+  jq -n '{schema_version:1,session_id:"selftest-s21",created_at:"2026-07-04T00:00:00Z",torn_down:false,shipped:[],unresolved:[],needs_operator:[],marker:"DONE: unrelated work, never touched foreign-unchecked.md"}' > "$MANIFEST_S21"
+  RC=$(_run_gate_manifest "$R" "$T" "$MANIFEST_S21")
+  _expect "manifest-scoping-incidental-toucher-does-NOT-block" "$RC" "0"
+
+  # ================================================================
+  # Scenario 22 (task E.12): manifest-scoping OWNER case — the manifest's
+  # shipped[] SHA DID actually change the plan file (this session
+  # committed to it), so manifest scoping DOES bring it into scope, and
+  # the unchecked-tasks block fires exactly as transcript scoping would
+  # have. Proves manifest scoping isn't a blanket bypass — it is a
+  # NARROWER, more honest signal that still catches the owner's own gap.
+  # ================================================================
+  _setup_scenario s22
+  R=$(_build_repo s22)
+  _write_plan "$R" "owned-unchecked" "ACTIVE" "unchecked" "no-evidence"
+  SHA22=$(cd "$R" && git log -n 1 --pretty=format:'%H' -- docs/plans/owned-unchecked.md)
+  T=$(_write_transcript "$R" "$R/docs/plans/owned-unchecked.md")
+  MANIFEST_S22="$tmproot/tmpdir-s22/manifest.json"
+  jq -n --arg sha "$SHA22" '{schema_version:1,session_id:"selftest-s22",created_at:"2026-07-04T00:00:00Z",torn_down:false,shipped:[{sha:$sha,remote:"master"}],unresolved:[],needs_operator:[],marker:"DONE: shipped owned-unchecked.md"}' > "$MANIFEST_S22"
+  RC=$(_run_gate_manifest "$R" "$T" "$MANIFEST_S22")
+  _expect "manifest-scoping-owner-case-still-blocks" "$RC" "2"
+
+  # ================================================================
+  # Scenario 23 (NL-FINDING-019 golden, re-proven at this gate's level):
+  # a session whose ONLY plan interaction was the in-flight scope-update
+  # line the scope-enforcement gate itself mandates. Manifest's shipped[]
+  # SHA touches the plan (the scope-line commit), but the plan's ONLY
+  # unchecked tasks are pre-existing (not this session's). Passes WITHOUT
+  # a waiver: manifest scoping brings the plan into scope (it WAS
+  # shipped-to), and the pre-existing marker pass-through / waiver valve
+  # remain available exactly as before — this scenario proves manifest
+  # scoping does not by itself introduce a NEW block that needs a NEW
+  # waiver; the existing PAUSING-marker pass-through still clears it
+  # cleanly under manifest scoping too.
+  # ================================================================
+  _setup_scenario s23
+  R=$(_build_repo s23)
+  _write_plan "$R" "scope-line-plan" "ACTIVE" "unchecked" "no-evidence" \
+    "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
+  echo "## In-flight scope updates" >> "$R/docs/plans/scope-line-plan.md"
+  echo "- added task F.9 (scope-line-only touch)" >> "$R/docs/plans/scope-line-plan.md"
+  ( cd "$R" && git add -A && git commit -q -m "scope-line-only touch" )
+  SHA23=$(cd "$R" && git log -n 1 --pretty=format:'%H')
+  T=$(_write_transcript_marker "$R" \
+    "Appended the mandated scope line only.
+
+PAUSING: unrelated pre-existing unchecked tasks continue in another wave — reply go or no-go?" \
+    "$R/docs/plans/scope-line-plan.md")
+  MANIFEST_S23="$tmproot/tmpdir-s23/manifest.json"
+  jq -n --arg sha "$SHA23" '{schema_version:1,session_id:"selftest-s23",created_at:"2026-07-04T00:00:00Z",torn_down:false,shipped:[{sha:$sha,remote:"master"}],unresolved:[],needs_operator:[],marker:"PAUSING: unrelated pre-existing unchecked tasks continue in another wave — reply go or no-go?"}' > "$MANIFEST_S23"
+  RC=$(_run_gate_manifest "$R" "$T" "$MANIFEST_S23")
+  _expect "manifest-scoping-019-golden-scope-line-only-passes-no-waiver" "$RC" "0"
+
   echo "" >&2
   echo "self-test summary: $passed passed, $failed failed" >&2
   if [[ "$failed" -eq 0 ]]; then
@@ -1470,6 +1803,20 @@ EOF
 if [[ "${1:-}" == "--self-test" ]]; then
   _wig_self_test
   exit $?
+fi
+
+# --report mode (ADR 059 D1, specs-e §E.11): run every check, emit gaps as
+# JSON lines on stdout, ALWAYS exit 0 — never blocks, never touches the
+# ledger or retry-guard. Consumed by stop-verdict-dispatcher.sh, which
+# invokes all three gates this way and aggregates before deciding whether
+# to block. set +e locally: _wig_main below still calls `exit 0` itself at
+# the end of its normal control flow, so this wrapper only needs to ensure
+# a stray non-zero from an unexpected code path never escapes as this
+# process's exit code in report mode.
+if [[ "${1:-}" == "--report" ]]; then
+  _WIG_REPORT_MODE=1
+  _wig_main
+  exit 0
 fi
 
 _wig_main

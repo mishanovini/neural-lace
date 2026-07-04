@@ -155,6 +155,84 @@ JSONL
     cat "$repo/rc.txt" 2>/dev/null || echo 99
   }
 
+  # Same as _run_scenario but invokes --report mode. Report JSON lines
+  # land in <repo>/stdout.txt for the caller to inspect (mirrors
+  # _run_scenario's own stdout.txt/stderr.txt/rc.txt capture). Duplicates
+  # _run_scenario's persistence-target setup (backlog/review/discovery/
+  # findings/prd/attested/attested-weak/none) rather than parameterizing
+  # that function, to avoid touching the existing (already self-tested)
+  # helper's call signature.
+  _run_scenario_report() {
+    local label="$1" persistence="$2"
+    local repo="$TMPROOT/$label"
+    mkdir -p "$repo"
+    (
+      cd "$repo" || exit 99
+      git init -q 2>/dev/null || true
+      git config core.hooksPath "" 2>/dev/null
+      git config user.email "test@example.com" 2>/dev/null
+      git config user.name "Test" 2>/dev/null
+      git config commit.gpgsign false 2>/dev/null
+      mkdir -p docs/reviews docs/discoveries
+      echo "init" > .marker
+      git add .marker 2>/dev/null
+      git commit -q -m "init" 2>/dev/null
+
+      case "$persistence" in
+        backlog)
+          echo "- new bug observed" > docs/backlog.md
+          ;;
+        review)
+          echo "# Review" > docs/reviews/2026-05-04-test.md
+          ;;
+        discovery)
+          echo "# Discovery" > docs/discoveries/2026-05-04-test.md
+          ;;
+        findings)
+          cat > docs/findings.md <<'NL'
+# Findings
+
+### NL-FINDING-002 — fresh entry
+
+- **Severity:** info
+- **Scope:** unit
+- **Source:** orchestrator
+- **Location:** somewhere:1
+- **Status:** open
+- **Description:** Synthetic finding entry written this session.
+NL
+          ;;
+        prd)
+          printf '# PRD\n\n## Open questions\n\n- OQ-1: surfaced during intake; awaiting the user'"'"'s relayed answer.\n' > docs/prd.md
+          ;;
+        attested)
+          mkdir -p .claude/state
+          {
+            echo "Purpose: this gate exists to prevent bugs surfaced in conversation from being lost"
+            echo "Because: the flagged phrase is a rhetorical example in this self-test fixture, not a real bug"
+          } > ".claude/state/bugs-attested-$(date +%Y%m%d-%H%M).txt"
+          ;;
+        attested-weak)
+          mkdir -p .claude/state
+          echo "not a real bug, false positive" > ".claude/state/bugs-attested-$(date +%Y%m%d-%H%M).txt"
+          ;;
+        none)
+          : # no-op
+          ;;
+      esac
+
+      cat > transcript.jsonl <<'JSONL'
+{"role": "assistant", "content": "We should also handle the X case. Let me flag this for follow-up."}
+JSONL
+
+      local input
+      input=$(printf '{"transcript_path":"%s"}' "$repo/transcript.jsonl")
+      printf '%s' "$input" | bash "$SELF_TEST_HOOK" --report >stdout.txt 2>stderr.txt
+      echo $? > rc.txt
+    )
+    cat "$repo/rc.txt" 2>/dev/null || echo 99
+  }
+
   # ---- Scenario 1: PASS-with-backlog-edit ----
   RC=$(_run_scenario s1 "backlog")
   if [[ "$RC" == "0" ]]; then
@@ -244,8 +322,51 @@ JSONL
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 9 (specs-e §E.11, --report mode): trigger phrases + no
+  # persistence, invoked with --report, must exit 0 (never block) and emit
+  # ONE JSON gap line on stdout. ----
+  RC=$(_run_scenario_report s9 "none")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (9) REPORT-mode-never-blocks: PASS (rc=$RC, expected 0)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (9) REPORT-mode-never-blocks: FAIL (rc=$RC, expected 0)" >&2
+    cat "$TMPROOT/s9/stderr.txt" >&2 2>/dev/null || true
+    FAILED=$((FAILED+1))
+  fi
+  if grep -q '"gate":"bug-persistence-gate"' "$TMPROOT/s9/stdout.txt" 2>/dev/null && \
+     grep -q '"check":"trigger-phrases-not-persisted"' "$TMPROOT/s9/stdout.txt" 2>/dev/null; then
+    echo "self-test (9b) REPORT-mode-emits-json-gap-line: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (9b) REPORT-mode-emits-json-gap-line: FAIL (expected a bug-persistence-gate/trigger-phrases-not-persisted JSON line)" >&2
+    cat "$TMPROOT/s9/stdout.txt" >&2 2>/dev/null || true
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 10 (specs-e §E.11, --report mode): persisted (clean)
+  # session invoked with --report emits NO gap lines and exits 0. ----
+  RC=$(_run_scenario_report s10 "backlog")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (10) REPORT-mode-clean-session-exit-0: PASS (rc=$RC, expected 0)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (10) REPORT-mode-clean-session-exit-0: FAIL (rc=$RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+  CLEAN_LINES=$(grep -c '^{' "$TMPROOT/s10/stdout.txt" 2>/dev/null)
+  CLEAN_LINES=$(printf '%s' "$CLEAN_LINES" | tr -d '[:space:]')
+  [[ -z "$CLEAN_LINES" ]] && CLEAN_LINES=0
+  if [[ "$CLEAN_LINES" -eq 0 ]]; then
+    echo "self-test (10b) REPORT-mode-clean-session-emits-no-gaps: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (10b) REPORT-mode-clean-session-emits-no-gaps: FAIL (expected 0 JSON lines, got $CLEAN_LINES)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 8 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 10 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -258,6 +379,30 @@ fi
 source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
 # shellcheck disable=SC1091
 { source "${BASH_SOURCE[0]%/*}/lib/waiver-purpose-clause.sh" 2>/dev/null; } || true
+# shellcheck disable=SC1091
+{ source "${BASH_SOURCE[0]%/*}/lib/signal-ledger.sh" 2>/dev/null; } || true
+
+# --report mode (ADR 059 D1, specs-e §E.11): run every check, emit gaps as
+# JSON lines on stdout, ALWAYS exit 0 — never blocks, never touches the
+# ledger or retry-guard. Consumed by stop-verdict-dispatcher.sh.
+BPG_REPORT_MODE=0
+[[ "${1:-}" == "--report" ]] && BPG_REPORT_MODE=1
+
+# _bpg_report_gap <check> <message> — emits one JSON line on stdout, schema
+# {"gate","check","message"}. Used only when BPG_REPORT_MODE=1.
+_bpg_report_gap() {
+  local check="$1" message="$2" gate_esc check_esc msg_esc
+  if command -v _signal_ledger_json_escape >/dev/null 2>&1; then
+    gate_esc=$(_signal_ledger_json_escape "bug-persistence-gate")
+    check_esc=$(_signal_ledger_json_escape "$check")
+    msg_esc=$(_signal_ledger_json_escape "$message")
+  else
+    gate_esc="bug-persistence-gate"
+    check_esc=$(printf '%s' "$check" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    msg_esc=$(printf '%s' "$message" | sed 's/\\/\\\\/g; s/"/\\"/g; :a;N;$!ba; s/\n/\\n/g')
+  fi
+  printf '{"gate":"%s","check":"%s","message":"%s"}\n' "$gate_esc" "$check_esc" "$msg_esc"
+}
 
 # Read stdin JSON (Claude Code provides it)
 INPUT=""
@@ -272,7 +417,7 @@ if [[ -n "$INPUT" ]]; then
 fi
 
 # If we can't find a transcript, no-op — better to let session end than
-# to block falsely.
+# to block falsely. (--report mode: nothing to report either way.)
 if [[ -z "$TRANSCRIPT_PATH" ]] || [[ ! -f "$TRANSCRIPT_PATH" ]]; then
   exit 0
 fi
@@ -471,6 +616,14 @@ if [[ -d "$ATTEST_DIR" ]]; then
 fi
 
 if [[ "$PERSISTED" -eq 1 ]]; then
+  exit 0
+fi
+
+# --report mode (ADR 059 D1, specs-e §E.11): report the gap as a JSON line
+# and exit 0 instead of blocking — never touches the ledger or retry-guard.
+if [[ "$BPG_REPORT_MODE" == "1" ]]; then
+  _bpg_report_gap "trigger-phrases-not-persisted" \
+    "Bug-persistence gate: trigger phrases detected with no corresponding edit to docs/backlog.md, docs/reviews/, docs/discoveries/, or docs/findings.md."
   exit 0
 fi
 

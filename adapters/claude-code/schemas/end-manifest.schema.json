@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-lace.dev/schemas/end-manifest.v1.json",
+  "title": "Session end-manifest (v1)",
+  "description": "ADR 059 D6 + D3: the session ends by writing one small structured manifest instead of Stop gates forensically re-deriving session history from transcript heuristics. Written by `adapters/claude-code/scripts/end-manifest.sh write` to ~/.claude/state/end-manifest/<session-id>.json; validated by `end-manifest.sh validate` (called by stop-verdict-dispatcher.sh, task E.11, when a manifest is present for the current session). The constitution §6 marker contract is unchanged; this is its machine-checkable expansion. See docs/decisions/059-session-end-enforcement-redesign.md.",
+  "type": "object",
+  "required": ["schema_version", "session_id", "created_at", "shipped", "unresolved", "needs_operator", "marker"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently always 1."
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The session this manifest describes. Matches the filename (<session_id>.json, sanitized)."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp at which the manifest was written."
+    },
+    "torn_down": {
+      "type": "boolean",
+      "description": "True when the session claims its worktree (if any) has already been cleanly torn down / has nothing left uncommitted. The validator's worktree-clean check only applies when this is true (a session still mid-flight in a linked worktree is not claiming a clean teardown yet)."
+    },
+    "shipped": {
+      "type": "array",
+      "description": "SHAs this session created/merged and claims are durably on master (or another named remote-tracked branch). Validator: each SHA must be reachable from the resolved remote ref.",
+      "items": {
+        "type": "object",
+        "required": ["sha", "remote"],
+        "additionalProperties": false,
+        "properties": {
+          "sha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{7,40}$",
+            "description": "Git commit SHA (short or full hex)."
+          },
+          "remote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The remote-tracked ref this SHA claims to be reachable from, e.g. 'origin/master', 'master'. The validator resolves this via git and checks ancestry."
+          }
+        }
+      }
+    },
+    "unresolved": {
+      "type": "array",
+      "description": "Gaps this session did NOT resolve, each with WHERE it was durably recorded (so the validator can mechanically confirm the record exists, rather than trusting the claim). Typically populated from stop-verdict-dispatcher.sh's block-once-then-ledger path (task E.11) writing to ~/.claude/state/unresolved-gaps.jsonl, or from an explicit backlog/findings entry.",
+      "items": {
+        "type": "object",
+        "required": ["item", "recorded_at"],
+        "additionalProperties": false,
+        "properties": {
+          "item": {
+            "type": "string",
+            "minLength": 1,
+            "description": "One-line description of the unresolved gap. Must appear verbatim (substring match) inside the file named by recorded_at for the validator to accept it."
+          },
+          "recorded_at": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path (repo-relative or absolute) to the durable record containing this item: ~/.claude/state/unresolved-gaps.jsonl, docs/backlog.md, docs/findings.md, docs/discoveries/<date>-<slug>.md, etc. The validator requires this file to EXIST and CONTAIN the item text."
+          }
+        }
+      }
+    },
+    "needs_operator": {
+      "type": "array",
+      "description": "Free-text items this session is surfacing to the operator (constitution §2/§3 decisions, questions, PAUSING asks). Not independently validated beyond being an array of strings — NEEDS-YOU.md / needs-you.sh is the durable ledger for these; this array is a session-local echo for the manifest's own completeness.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "marker": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(DONE|PAUSING|BLOCKED|CONTINUING):",
+      "description": "The exact text of the final assistant message's last non-empty line (the constitution §6 marker). The validator compares this, VERBATIM, against the session transcript's own actual last line — a mismatch means the manifest was written before the true final message, or hand-edited, either of which invalidates every other claim in the manifest."
+    }
+  }
+}
