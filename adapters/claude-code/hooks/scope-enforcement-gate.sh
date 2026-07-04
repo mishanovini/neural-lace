@@ -153,6 +153,14 @@ _is_system_managed_path() {
   case "$p" in
     docs/plans/archive/*) return 0 ;;
     docs/plans/deferred/*) return 0 ;;
+    # Discovery 2026-06-17 option E (dispositioned decided at E.0, specs-e
+    # §E.10 item 13): ad-hoc process capture (docs/discoveries/*) is
+    # off-plan by nature — a discovery filed mid-session about a foreign
+    # ACTIVE plan must not be blocked as scope-creep on that plan, and
+    # bug-persistence-gate.sh WANTS those commits to happen (it treats
+    # docs/discoveries/*.md as a valid persistence target). Same mechanism
+    # as the archive/deferred exemption above.
+    docs/discoveries/*) return 0 ;;
   esac
   if [[ "${IN_MERGE:-0}" == "1" ]]; then
     case "$p" in
@@ -469,6 +477,20 @@ Test.
     PASSED=$((PASSED+1))
   else
     echo "self-test (2) system-managed-archive-exempt: FAIL (rc=$RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 2b (Discovery 2026-06-17 option E, specs-e §E.10 item 13):
+  # PASS — a staged docs/discoveries/*.md file passes under a FOREIGN
+  # ACTIVE plan (PLAN_NORMAL declares only src/foo.ts, src/bar.ts,
+  # src/lib/*.ts — a discovery file matches none of those globs) WITHOUT
+  # a waiver. Ad-hoc process capture is off-plan by nature. ----
+  RC=$(_run_scenario s2b "$PLAN_NORMAL" "docs/discoveries/2026-07-03-example-discovery.md")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (2b) system-managed-discovery-exempt-under-foreign-plan: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (2b) system-managed-discovery-exempt-under-foreign-plan: FAIL (rc=$RC, expected 0)" >&2
     FAILED=$((FAILED+1))
   fi
 

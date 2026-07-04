@@ -145,7 +145,15 @@ fi
 # the infinite-loop DoS the downgrade exists to prevent. Originating
 # incident: an autonomous loop rode the downgrade past 38 consecutive
 # pre-stop-verifier blocks while reporting DONE on incomplete work.
-: "${RETRY_GUARD_VERIFICATION_HOOKS:=pre-stop-verifier product-acceptance-gate work-integrity-gate}"
+#
+# session-honesty-gate ADDED here (NL-FINDING-027, specs-e §E.10 item 10):
+# once its done_contradicted_by_block() became resolution-aware (a LATER
+# work-integrity PASS or a valid purpose-clause waiver clears a historical
+# block), its blocks are no longer a pure message-form check — a session
+# that keeps re-claiming DONE past an ACTUAL unresolved contradiction must
+# not be allowed to ride the downgrade out. Honest PAUSING:/BLOCKED: still
+# downgrades normally; only DONE-riding is refused.
+: "${RETRY_GUARD_VERIFICATION_HOOKS:=pre-stop-verifier product-acceptance-gate work-integrity-gate session-honesty-gate}"
 
 # ----------------------------------------------------------------------
 # retry_guard_session_id [ <input-json> ]

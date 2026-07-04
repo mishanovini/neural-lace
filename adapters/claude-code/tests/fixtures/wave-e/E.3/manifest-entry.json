@@ -1,0 +1,19 @@
+{
+  "id": "waiver-density-alarm",
+  "kind": "pattern",
+  "doctrine_file": null,
+  "hooks": [],
+  "events": [],
+  "wired_template": false,
+  "selftest": true,
+  "jit_triggers": {
+    "paths": [],
+    "keywords": [
+      "waiver-density",
+      "fix-or-retire"
+    ]
+  },
+  "blocking": false,
+  "budget_class": "none",
+  "honest_status": "Not a hooks/*.sh unit (schema hooks[] pattern disallows the scripts/ path prefix — see adapters/claude-code/scripts/waiver-density.sh, invoked directly by session-start-digest.sh's feed_waiver_density() via a full relative path, and by scripts/harness-kpis.sh (E.5) in --report mode). kind:pattern with an empty hooks[] mirrors the E.7 session-resumer.sh fragment's precedent for the same scripts/-not-hooks/ situation."
+}

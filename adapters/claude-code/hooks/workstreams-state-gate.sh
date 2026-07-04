@@ -62,6 +62,8 @@ set -u
 
 # shellcheck disable=SC1091
 { source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/nl-paths.sh" 2>/dev/null; } || true
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/waiver-purpose-clause.sh" 2>/dev/null; } || true
 
 # ============================================================
 # Resolvable constants / overridable knobs (tests set these)
@@ -174,12 +176,18 @@ if [[ "${1:-}" == "--builder-tracking" ]]; then
   BT_STATE_DIR="${CLAUDE_STATE_DIR:-.claude/state}"
 
   # Fresh substantive waiver release-valve (mirrors the spawn gate's).
+  # ADR 058 D5 pin f (specs-e §E.10 item 2): non-empty content alone is no
+  # longer sufficient — the purpose-clause pair is required too.
   _bt_has_fresh_waiver() {
     [[ -d "$BT_STATE_DIR" ]] || return 1
     local f
     while IFS= read -r f; do
       [[ -f "$f" ]] || continue
-      grep -q '[^[:space:]]' "$f" 2>/dev/null && return 0
+      if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+        waiver_has_purpose_clauses "$f" && return 0
+      else
+        grep -q '[^[:space:]]' "$f" 2>/dev/null && return 0
+      fi
     done < <(find "$BT_STATE_DIR" -maxdepth 1 -type f -name 'builder-tracking-waiver-*.txt' -newermt '1 hour ago' 2>/dev/null)
     return 1
   }
@@ -335,9 +343,15 @@ if [[ "${1:-}" == "--self-test" ]]; then
     local input
     input=$(printf '{"tool_name":%s,"tool_input":%s}' "\"$tn\"" "$ti")
     local out err code
+    # NL-FINDING-024 (item 8): fast recheck knobs so the bounded-re-read
+    # loop never slows the self-test suite (production defaults are
+    # 3 attempts / 700ms; self-test uses 1 attempt / 10ms unless the
+    # scenario itself is testing the recheck loop, which overrides inline).
     out=$(cd "$work" && CLAUDE_SESSION_ID="$sid" \
           CONV_TREE_STATE_PATH="$sp" CONV_TREE_STATE_LIB="$ST_LIB" \
           CLAUDE_STATE_DIR="$work/.claude/state" \
+          WSG_RECHECK_ATTEMPTS="${WSG_RECHECK_ATTEMPTS_OVERRIDE:-1}" \
+          WSG_RECHECK_DELAY_MS="${WSG_RECHECK_DELAY_MS_OVERRIDE:-10}" \
           CLAUDE_TOOL_INPUT="$input" bash "$SELF" 2>"$TMP/$label.err")
     code=$?
     err=$(cat "$TMP/$label.err" 2>/dev/null || echo "")
@@ -348,7 +362,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
       PASSED=$((PASSED+1)); echo "  PASS  $label (exit $code)"
     else
       FAILED=$((FAILED+1)); echo "  FAIL  $label (exit $code, want $exp; needle='$needle')"
-      printf '        decision: %s\n' "$(printf '%s' "$err" | grep -F '[conv-tree-gate]' | tail -1)"
+      printf '        decision: %s\n' "$(printf '%s' "$err" | grep -F '[workstreams-state-gate]' | tail -1)"
     fi
   }
 
@@ -408,10 +422,55 @@ if [[ "${1:-}" == "--self-test" ]]; then
   # --- Branch present but archived -> BLOCK (state!=archived required) ---
   _run "b2-branch-archived-BLOCK"  2 "$ARCHIVED" "mcp__ccd_session__spawn_task" "$TI_ARCH" s-b2 0 "" "no live node"
 
-  # --- Waiver release-valve: torn state + fresh waiver -> ALLOW ---
-  _run "w1-waiver-overrides-torn"  0 "$TORN" "mcp__ccd_session__spawn_task" "$TI_GOOD" s-w1 0 "fresh substantive justification line" ""
+  # --- NL-FINDING-024 (specs-e §E.10 item 8): bounded re-read recovers a
+  # writer-flush race. State file starts WITHOUT the branch; a background
+  # writer overwrites it with the real (branch-present) fixture after a
+  # delay LONG enough to land inside the recheck window even accounting
+  # for this environment's node-subprocess startup overhead (measured
+  # ~8-9s for the gate's own node -e verifier calls before it ever reaches
+  # the recheck loop) — hence the generous per-attempt delay/attempt count
+  # here (self-test-only knobs; production defaults are 3x700ms). Must
+  # ALLOW, not BLOCK — proves a race that resolves within the window is
+  # recovered rather than producing a spurious block.
+  RACE_DIR="$TMP/race"
+  mkdir -p "$RACE_DIR"
+  RACE_STATE="$RACE_DIR/race-state.json"
+  _mk_attested "$RACE_DIR/race-stale.json" "worker-other" "Other" "open"
+  cp "$RACE_DIR/race-stale.json" "$RACE_STATE"
+  (
+    sleep 9
+    cp "$GOOD" "$RACE_STATE"
+  ) &
+  RACE_BG_PID=$!
+  RACE_OUT=$(cd "$TMP" && CLAUDE_SESSION_ID="s-race1" \
+        CONV_TREE_STATE_PATH="$RACE_STATE" CONV_TREE_STATE_LIB="$ST_LIB" \
+        CLAUDE_STATE_DIR="$TMP/race-cstate" \
+        WSG_RECHECK_ATTEMPTS=5 WSG_RECHECK_DELAY_MS=3000 \
+        CLAUDE_TOOL_INPUT="$(printf '{"tool_name":"mcp__ccd_session__spawn_task","tool_input":%s}' "$TI_GOOD")" \
+        bash "$SELF" 2>"$TMP/race1.err")
+  RACE_RC=$?
+  wait "$RACE_BG_PID" 2>/dev/null || true
+  if [[ "$RACE_RC" -eq 0 ]]; then
+    PASSED=$((PASSED+1)); echo "  PASS  race1-writer-flush-resolves-within-window (exit 0)"
+  else
+    FAILED=$((FAILED+1)); echo "  FAIL  race1-writer-flush-resolves-within-window (exit $RACE_RC)"
+    tail -5 "$TMP/race1.err" 2>/dev/null | sed 's/^/        /'
+  fi
+
+  # --- Genuinely-missing branch: re-read exhausts all attempts and still
+  # blocks (the bounded re-read must not become an unbounded/silent ALLOW).
+  # Uses a tiny delay so the suite stays fast. ---
+  _run "race2-genuinely-absent-still-blocks-after-recheck" 2 "$GOOD" "mcp__ccd_session__spawn_task" "$TI_ABSENT" s-race2 0 "" "bounded re-read attempts"
+
+  # --- Waiver release-valve: torn state + fresh waiver with the required
+  # purpose-clause pair (ADR 058 D5 pin f) -> ALLOW ---
+  W1_WAIVER=$'Purpose: this gate exists to prevent spawning against an unverified tree\nBecause: fresh substantive justification line for this self-test scenario'
+  _run "w1-waiver-overrides-torn"  0 "$TORN" "mcp__ccd_session__spawn_task" "$TI_GOOD" s-w1 0 "$W1_WAIVER" ""
   # --- Empty/whitespace-only waiver does NOT help: torn still -> CLOSED ---
   _run "w2-empty-waiver-no-help"   2 "$TORN" "mcp__ccd_session__spawn_task" "$TI_GOOD" s-w2 0 "   " "NOT integrity-verified"
+  # --- NL-FINDING-026 class 1 / pin f regression: NON-EMPTY waiver that
+  # lacks the purpose-clause pair does NOT help: torn still -> CLOSED ---
+  _run "w3-weak-waiver-no-purpose-clauses-no-help" 2 "$TORN" "mcp__ccd_session__spawn_task" "$TI_GOOD" s-w3 0 "just trust me on this one" "NOT integrity-verified"
 
   # --- REGRESSION (ADR-034): a Code session doing 4 parallel sub-agent
   # Task dispatches must NOT be gated. Asserts exit 0 AND zero BLOCK output
@@ -471,9 +530,13 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _bt_run "2-missing-while-possible-block" 2 "$TMP/bt-no-such-state.json" "$ST_LIB" "Agent"
   # BT3: subsystem absent (no state lib) -> ALLOW degrade-open (bootstrap)
   _bt_run "3-subsystem-absent-allow" 0 "$TMP/bt-no-such-state.json" "$TMP/no-such-lib.js" "Task"
-  # BT4: missing state file BUT fresh substantive waiver -> ALLOW
+  # BT4: missing state file BUT fresh substantive waiver (with the
+  # required purpose-clause pair, ADR 058 D5 pin f) -> ALLOW
   mkdir -p "$TMP/bt-4-waiver-state"
-  printf 'testing the waiver valve\n' > "$TMP/bt-4-waiver-state/builder-tracking-waiver-1.txt"
+  {
+    echo "Purpose: this gate exists to prevent untracked builder dispatches when tracking is possible"
+    echo "Because: testing the waiver valve in this self-test scenario"
+  } > "$TMP/bt-4-waiver-state/builder-tracking-waiver-1.txt"
   BT4_CFG="$TMP/bt-cfg-4w.txt"; printf '%s\n' "$TMP/bt-no-such-state.json" > "$BT4_CFG"
   BT4_OUT=$(cd "$TMP" && CLAUDE_STATE_DIR="$TMP/bt-4-waiver-state" \
       WORKSTREAMS_STATE_CONFIG="$BT4_CFG" CONV_TREE_STATE_PATH="" CONV_TREE_STATE_LIB="$ST_LIB" \
@@ -483,6 +546,21 @@ if [[ "${1:-}" == "--self-test" ]]; then
     PASSED=$((PASSED+1)); echo "  PASS  bt-4-waiver-valve-allow"
   else
     FAILED=$((FAILED+1)); echo "  FAIL  bt-4-waiver-valve-allow ($BT4_OUT)"
+  fi
+  # BT4-weak (ADR 058 D5 pin f regression): non-empty waiver WITHOUT the
+  # purpose-clause pair must NOT open the release valve -> still BLOCK.
+  mkdir -p "$TMP/bt-4w-waiver-state"
+  printf 'testing the waiver valve\n' > "$TMP/bt-4w-waiver-state/builder-tracking-waiver-1.txt"
+  BT4W_CFG="$TMP/bt-cfg-4ww.txt"; printf '%s\n' "$TMP/bt-no-such-state.json" > "$BT4W_CFG"
+  BT4W_OUT=$(cd "$TMP" && CLAUDE_STATE_DIR="$TMP/bt-4w-waiver-state" \
+      WORKSTREAMS_STATE_CONFIG="$BT4W_CFG" CONV_TREE_STATE_PATH="" CONV_TREE_STATE_LIB="$ST_LIB" \
+      CLAUDE_TOOL_INPUT='{"tool_name":"Task","tool_input":{"description":"bt probe"}}' \
+      bash "$SELF" --builder-tracking 2>&1)
+  BT4W_RC=$?
+  if [[ "$BT4W_RC" -eq 2 ]]; then
+    PASSED=$((PASSED+1)); echo "  PASS  bt-4w-weak-waiver-still-blocks (rc=$BT4W_RC)"
+  else
+    FAILED=$((FAILED+1)); echo "  FAIL  bt-4w-weak-waiver-still-blocks (rc=$BT4W_RC, want 2)"
   fi
   # BT5: non-builder tool -> silent no-op ALLOW (even with missing file)
   _bt_run "5-non-builder-noop" 0 "$TMP/bt-no-such-state.json" "$ST_LIB" "Bash"
@@ -592,11 +670,18 @@ _touch_marker() {
 }
 
 # --- Block helper: structured stderr + JSON {decision:block} + exit 2 ---
+# NOTE (NL-FINDING-024, specs-e §E.10 item 8): this hook's manifest id is
+# "workstreams-spawn-gate" (file: workstreams-state-gate.sh) — the block
+# header/reason below name it correctly. On-disk state PATHS
+# (.claude/state/conversation-tree/, conv-tree-spawn-waiver-*.txt) are a
+# separate, load-bearing ADR-032 schema/file-glob contract and are
+# deliberately NOT renamed here (existing waiver files + the state
+# library's own path conventions depend on them).
 _block() {
   local short="$1" body="$2"
   {
     echo "================================================================"
-    echo "CONVERSATION-TREE STATE GATE — SPAWN BLOCKED"
+    echo "WORKSTREAMS STATE GATE — SPAWN BLOCKED"
     echo "================================================================"
     echo ""
     echo "$body"
@@ -607,7 +692,11 @@ _block() {
     echo "Remediation (diagnose before bypass — ~/.claude/doctrine/gate-respect.md):"
     echo "  1. Write the true conversation-tree state (a verified snapshot"
     echo "     whose snapshot.nodes contains a live node naming this branch)"
-    echo "     via the state library, THEN retry the spawn."
+    echo "     via the state library, THEN retry the spawn. If you JUST"
+    echo "     spawned this exact title, the writer (workstreams-emit.sh"
+    echo "     --on-spawn) may still be flushing its write — retry once"
+    echo "     before waiving (NL-FINDING-024: a same-process race can lose"
+    echo "     to this gate on the FIRST spawn of a fresh title)."
     echo "  2. If this is a legitimate edge or a suspected gate bug, author a"
     echo "     fresh substantive waiver (mirrors bug-persistence-gate.sh):"
     echo "       mkdir -p $STATE_DIR && \\"
@@ -617,9 +706,9 @@ _block() {
     echo "================================================================"
   } >&2
   # The decision line on every fire (ALLOW/BLOCK + reason).
-  echo "[conv-tree-gate] BLOCK: $short (tool=$TOOL_NAME)" >&2
+  echo "[workstreams-state-gate] BLOCK: $short (tool=$TOOL_NAME)" >&2
   cat <<JSON
-{"decision": "block", "reason": "conversation-tree-state-gate: $short. See stderr for the Pin-2 partition cell + remediation (write the true tree, or a fresh substantive conv-tree-spawn-waiver)."}
+{"decision": "block", "reason": "workstreams-state-gate: $short. If you JUST spawned this title, the writer may still be flushing -- retry once before waiving. See stderr for the Pin-2 partition cell + remediation (write the true tree, or a fresh substantive conv-tree-spawn-waiver)."}
 JSON
   exit 2
 }
@@ -627,13 +716,17 @@ JSON
 # --- B1c: fresh substantive waiver release-valve (mirrors
 # bug-persistence-gate.sh waiver semantics: >=1 substantive non-whitespace
 # line, mtime < 1h). Checked BEFORE the state checks so a hook bug or a
-# legitimate edge never bricks all work. ---
+# legitimate edge never bricks all work. ADR 058 D5 pin f (specs-e §E.10
+# item 2): non-empty content alone is no longer sufficient — the
+# purpose-clause pair (lib/waiver-purpose-clause.sh) is required too. ---
 _has_fresh_waiver() {
   [[ -d "$STATE_DIR" ]] || return 1
   local f
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
-    if grep -q '[^[:space:]]' "$f" 2>/dev/null; then
+    if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+      waiver_has_purpose_clauses "$f" && return 0
+    elif grep -q '[^[:space:]]' "$f" 2>/dev/null; then
       return 0
     fi
   done < <(find "$STATE_DIR" -maxdepth 1 -type f -name "$WAIVER_GLOB" -newermt '1 hour ago' 2>/dev/null)
@@ -773,27 +866,72 @@ branch — BLOCKED. Include the worker branch in the spawn prompt (per
 spawn-task-report-back.md / orchestrator-pattern.md)."
 fi
 
+# --- NL-FINDING-024 fix (specs-e §E.10 item 8): matching PreToolUse hooks
+# can execute CONCURRENTLY with workstreams-emit.sh --on-spawn (the writer
+# wired immediately before this gate), so the writer's flush can still be
+# in flight when this gate reads $RAW above — a spurious BLOCK on the
+# FIRST spawn of a fresh title. Bounded re-read: if the first pass finds no
+# match, re-read the state file from disk up to WSG_RECHECK_ATTEMPTS more
+# times (default 3, ~WSG_RECHECK_DELAY_MS apart, default 700ms) before
+# blocking — a genuinely-missing branch still blocks (just ~1.4-2.1s
+# later); a race that resolves within the window now ALLOWs correctly.
+# Self-test overrides both knobs to keep the suite fast.
+: "${WSG_RECHECK_ATTEMPTS:=3}"
+: "${WSG_RECHECK_DELAY_MS:=700}"
+
+_wsg_match_candidate() {
+  local raw="$1"
+  local c
+  for c in "${CANDS[@]}"; do
+    [[ -z "$c" ]] && continue
+    if printf '%s' "$raw" | jq -e --arg b "$c" '
+          .snapshot.nodes[]?
+          | select(((.node_id==$b) or (.title==$b)) and (.state!="archived"))' \
+          >/dev/null 2>&1; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
 MATCHED=""
-for c in "${CANDS[@]}"; do
-  [[ -z "$c" ]] && continue
-  if printf '%s' "$RAW" | jq -e --arg b "$c" '
-        .snapshot.nodes[]?
-        | select(((.node_id==$b) or (.title==$b)) and (.state!="archived"))' \
-        >/dev/null 2>&1; then
-    MATCHED="$c"
-    break
-  fi
-done
+if MATCHED=$(_wsg_match_candidate "$RAW"); then
+  :
+else
+  MATCHED=""
+  _wsg_attempt=1
+  while [[ "$_wsg_attempt" -le "$WSG_RECHECK_ATTEMPTS" ]]; do
+    # Sleep first (the writer needs SOME time to finish its flush); then
+    # re-read the state file fresh from disk — a concurrent writer may have
+    # completed its write since our first read.
+    _wsg_sleep_s=$(awk -v ms="$WSG_RECHECK_DELAY_MS" 'BEGIN{printf "%.3f", ms/1000}' 2>/dev/null || echo "0.7")
+    sleep "$_wsg_sleep_s" 2>/dev/null || sleep 1
+    _wsg_reread=$(cat "$STATE_PATH" 2>/dev/null || echo "")
+    if [[ -n "$_wsg_reread" ]] && printf '%s' "$_wsg_reread" | jq -e . >/dev/null 2>&1; then
+      if MATCHED=$(_wsg_match_candidate "$_wsg_reread"); then
+        RAW="$_wsg_reread"
+        echo "[workstreams-state-gate] re-read attempt ${_wsg_attempt}/${WSG_RECHECK_ATTEMPTS} found the branch — writer flush race resolved, ALLOWing" >&2
+        break
+      fi
+    fi
+    _wsg_attempt=$((_wsg_attempt + 1))
+  done
+fi
 
 if [[ -z "$MATCHED" ]]; then
   _touch_marker
-  _block "verified snapshot has no live node naming this spawn's branch" \
+  _block "verified snapshot has no live node naming this spawn's branch (after ${WSG_RECHECK_ATTEMPTS} bounded re-read attempts)" \
     "The snapshot is integrity-verified, but snapshot.nodes contains no live
 (state!=archived) node whose node_id or title matches any branch identifier
-extracted from the spawn input (candidates: ${CANDS[*]}). ADR-031 r7 Pin-1:
-the orchestrator must write a state entry NAMING this branch before spawning
-it — this raises the bar from 'wrote anything' to 'wrote a live node naming
-THIS branch'. Write the true tree (a branch-opened for this node), then retry."
+extracted from the spawn input (candidates: ${CANDS[*]}), even after
+${WSG_RECHECK_ATTEMPTS} bounded re-read attempts (~${WSG_RECHECK_DELAY_MS}ms
+apart) to tolerate a same-process writer-flush race (NL-FINDING-024). ADR-031
+r7 Pin-1: the orchestrator must write a state entry NAMING this branch before
+spawning it — this raises the bar from 'wrote anything' to 'wrote a live node
+naming THIS branch'. If you JUST spawned this title, the writer may still be
+flushing — retry once before waiving. Otherwise, write the true tree (a
+branch-opened for this node), then retry."
 fi
 
 # --- ALLOW: verified snapshot + fresh + names a live branch node ---

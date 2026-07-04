@@ -1,0 +1,21 @@
+{
+  "id": "needs-you-ledger",
+  "kind": "writer",
+  "doctrine_file": null,
+  "hooks": [
+    "scripts/needs-you.sh"
+  ],
+  "events": [],
+  "wired_template": false,
+  "selftest": true,
+  "jit_triggers": {
+    "paths": [],
+    "keywords": [
+      "needs-you",
+      "NEEDS-YOU",
+      "awaiting your decision"
+    ]
+  },
+  "blocking": false,
+  "budget_class": "none"
+}

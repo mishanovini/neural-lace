@@ -1,0 +1,139 @@
+name: Synthetic runner
+
+# NL Overhaul task E.4 (synthetic-session-runner completion). CI wiring
+# for evals/synthetic/run-all.sh, per the design-skip companion plan at
+# docs/plans/nl-overhaul-synthetic-ci-2026-07.md.
+#
+# Two triggers:
+#   - Weekly cron: the regression floor — catches silent drift even on
+#     weeks with no commits touching the relevant surfaces (e.g. a
+#     shared lib edit, or a runner-image tool-version bump).
+#   - pull_request, path-filtered to the hooks + synthetic-eval
+#     surfaces: fast feedback on the same day a regression is introduced.
+#
+# vaporware-volume job: the CI-side replacement for the retired
+# vaporware-volume-gate.sh PreToolUse hook (NL Overhaul Wave D task D.4,
+# specs-d.md §D.4 item 5 — "this check moves to CI"). See that job's
+# steps below for the exact describes-vs-executes-behavior ratio this
+# reproduces from the original hook.
+
+on:
+  schedule:
+    # Every Monday at 09:00 UTC. Weekly cadence matches the
+    # drift-detection cadence precedent set by scripts/harness-kpis.sh's
+    # weekly scheduled-task registration (specs-e §E.5) for the same
+    # class of rot-detection job.
+    - cron: '0 9 * * 1'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'adapters/claude-code/hooks/**'
+      - 'evals/synthetic/**'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-runner:
+    name: Synthetic scenarios (evals/synthetic/run-all.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Show shell + tool versions
+        run: |
+          bash --version | head -1
+          git --version
+          jq --version
+
+      # Several scenarios `git init` a synthetic fixture repo and commit
+      # into it (scenario-scope-creep.sh, scenario-secret-paste.sh, and
+      # the work-integrity-gate self-test scenarios these scenarios
+      # exercise). A configured identity prevents spurious failures
+      # inside those sub-repos — same convention as hooks-selftest.yml.
+      - name: Configure git identity (required by some scenario fixtures)
+        run: |
+          git config --global user.email "ci@neural-lace.invalid"
+          git config --global user.name  "Neural Lace CI"
+
+      - name: Run evals/synthetic/run-all.sh
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash evals/synthetic/run-all.sh
+          rc=$?
+          if [[ $rc -ne 0 ]]; then
+            echo "::error::synthetic-runner: one or more scenarios failed (exit $rc). See the run output above for the failing scenario name(s)."
+            exit $rc
+          fi
+          echo "::notice::synthetic-runner: all scenarios passed, zero deferred/skipped."
+
+  vaporware-volume:
+    name: Vaporware-volume check (CI relocation of vaporware-volume-gate.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Only meaningful against a PR's cumulative diff vs. the base branch;
+    # the weekly cron run has no PR diff to measure against, so this job
+    # is PR-triggered only.
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository (full history for base...HEAD diff)
+        uses: actions/checkout@v5
+        with:
+          # The retired hook computed `git diff origin/master...HEAD
+          # --numstat`. A shallow (depth-1) checkout — actions/checkout's
+          # default — would make that diff silently empty, which would
+          # make this check falsely pass every PR. fetch-depth: 0 avoids
+          # that gap (see the companion plan's Edge Cases section).
+          fetch-depth: 0
+
+      - name: Compute describes-vs-executes-behavior ratio
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -uo pipefail
+
+          BASE_REF="origin/${{ github.event.pull_request.base.ref }}"
+          git fetch origin "${{ github.event.pull_request.base.ref }}" --depth=1000 2>/dev/null || true
+
+          # describes-behavior lines: lines added to files that describe
+          # what a system would do (docs, configs, CI YAML, scripts,
+          # source) — same extension list as the retired hook.
+          DESCRIBES_LINES=$(git diff "$BASE_REF"...HEAD --numstat -- \
+            '*.md' '*.yml' '*.yaml' '*.json' '*.sh' '*.ts' '*.tsx' '*.js' '*.jsx' \
+            'docs/**' '.github/workflows/**' 2>/dev/null \
+            | awk '{sum += $1} END {print sum+0}')
+
+          # executes-behavior file count: files whose path/name signals
+          # an artifact PRODUCED BY actually running the thing. Two
+          # families: (1) generic run artifacts (logs, screenshots,
+          # test-result JSON, loop-history dumps); (2) THIS HARNESS's own
+          # execution-evidence conventions — a self-test-bearing script,
+          # an evals/ scenario (a golden run encoded as code), or a
+          # generated docs/reviews/ report (a KPI/baseline artifact that
+          # only exists because the producing script was run). Modeling
+          # execution evidence as web-app logs/screenshots ALONE
+          # false-flags every harness PR whose proof is its self-tests.
+          EXECUTES_FILES=$(git diff "$BASE_REF"...HEAD --name-only 2>/dev/null \
+            | grep -icE '(^|/)(.*\.(log|png|jpg|jpeg))$|test-results?|loop-history|run-output|(^|/)evals/|(^|/)docs/reviews/|self-test' || true)
+
+          echo "describes-behavior lines added: $DESCRIBES_LINES"
+          echo "executes-behavior files: $EXECUTES_FILES"
+
+          # Bypass: PR title prefixed [docs-only] or [no-execution],
+          # same escape hatch the retired hook offered (auditable —
+          # becomes a permanent part of the PR title).
+          if [[ "$PR_TITLE" == \[docs-only\]* ]] || [[ "$PR_TITLE" == \[no-execution\]* ]]; then
+            echo "::notice::vaporware-volume: PR title carries an explicit docs-only/no-execution prefix — bypassing the check (auditable via the PR title itself)."
+            exit 0
+          fi
+
+          if [[ "$DESCRIBES_LINES" -gt 200 ]] && [[ "$EXECUTES_FILES" -eq 0 ]]; then
+            echo "::error::vaporware-volume: $DESCRIBES_LINES describes-behavior lines added with ZERO execution-evidence files. Add a test-run log / workflow-run artifact / screenshot, OR re-title the PR with a [docs-only] or [no-execution] prefix if this is genuinely a no-execution change."
+            exit 1
+          fi
+
+          echo "::notice::vaporware-volume: OK ($DESCRIBES_LINES describes-behavior lines, $EXECUTES_FILES execution-evidence files)."

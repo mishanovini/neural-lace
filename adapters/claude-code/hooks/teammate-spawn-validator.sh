@@ -44,6 +44,9 @@
 
 set -e
 
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/waiver-purpose-clause.sh" 2>/dev/null; } || true
+
 # ============================================================
 # Self-test entry point (handled BEFORE input parsing)
 # ============================================================
@@ -364,6 +367,9 @@ _dag_session_marker_path() {
 }
 
 # Find a substantive (>=40 non-whitespace chars) waiver file for a slug.
+# ADR 058 D5 pin f (specs-e §E.10 item 2): >=40 chars alone is no longer
+# sufficient — the purpose-clause pair (lib/waiver-purpose-clause.sh) is
+# required too (a 40-char string with no clause pair is still theater).
 _dag_find_substantive_waiver() {
   local slug="$1"
   local state_dir="${STATE_DIR_OVERRIDE:-.claude/state}"
@@ -374,6 +380,9 @@ _dag_find_substantive_waiver() {
     content_chars=$(tr -d '[:space:]' < "$f" 2>/dev/null | wc -c | tr -d '[:space:]')
     [[ -z "$content_chars" ]] && content_chars=0
     if [[ "$content_chars" -ge 40 ]]; then
+      if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+        waiver_has_purpose_clauses "$f" || continue
+      fi
       printf '%s' "$f"
       return 0
     fi
@@ -799,10 +808,13 @@ PLANEOF
     failed_names="$failed_names\n  - S7"
   fi
 
-  # S8 — same Tier 3 plan, WITH a substantive waiver on file → ALLOW
+  # S8 — same Tier 3 plan, WITH a substantive waiver on file (ADR 058 D5
+  # pin f: purpose-clause pair required) → ALLOW
   rm -rf "$dag_state_dir"; mkdir -p "$dag_state_dir"
-  printf 'DAG reviewed with user 2026-07-02; tasks confirmed parallel-safe; approved for dispatch.' \
-    > "$dag_state_dir/dag-approved-tier3-demo-20260702000000.txt"
+  {
+    printf 'Purpose: this gate exists to prevent unreviewed parallel-DAG plans from dispatching\n'
+    printf 'Because: DAG reviewed with user 2026-07-02; tasks confirmed parallel-safe; approved for dispatch.\n'
+  } > "$dag_state_dir/dag-approved-tier3-demo-20260702000000.txt"
   total=$((total+1))
   set +e
   actual_exit=$(

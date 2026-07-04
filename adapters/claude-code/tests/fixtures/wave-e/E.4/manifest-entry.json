@@ -1,0 +1,18 @@
+{
+  "_fragment_note": "Wave E task E.4 (synthetic-runner completion). This entry covers the CI workflow (.github/workflows/synthetic-runner.yml), NOT a hooks/*.sh script — hooks[] is empty because there is no adapters/claude-code/hooks/*.sh file for a GitHub Actions workflow to appear in. kind:\"gate\" because the workflow can fail a PR check (refuses a merge signal) and its second job (vaporware-volume) is the CI relocation of the retired vaporware-volume-gate.sh PreToolUse hook (specs-d §D.4 item 5). events:[\"manual\"] is a SCHEMA-GAP STAND-IN like E.9's PreCompact entries — the manifest schema's events enum (adapters/claude-code/schemas/manifest.schema.json) has no CI-native trigger value (no \"schedule\", no \"pull_request\"); \"manual\" is the closest existing enum value, not a claim that this workflow is manually invoked (it fires on a weekly cron + PR events, per the workflow file itself). RECOMMENDATION (same as E.9's fragment): if the events enum is extended for PreCompact, consider adding CI-trigger values (e.g. \"ci-schedule\", \"ci-pull-request\") in the same schema pass. The 3 deferred scenarios this task also built (scenario-false-done.sh, scenario-marker-missing.sh, scenario-waiver-abuse.sh) are covered by the PRE-EXISTING synthetic-runner manifest surface (evals/synthetic/run-all.sh is not itself a manifest entry — it is a test harness, not an enforcement/doctrine unit — so no separate entries are needed for the 3 new scenario files; they are exercised by this workflow, not new units in their own right).",
+  "entries": [
+    {
+      "id": "synthetic-runner-ci",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": ["manual"],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": { "paths": [], "keywords": [] },
+      "blocking": true,
+      "honest_status": "Fires as a GitHub Actions workflow (.github/workflows/synthetic-runner.yml), not a Claude Code hook — there is nothing to wire into settings.json.template. Runs bash evals/synthetic/run-all.sh on ubuntu-latest, weekly (cron) + on pull_request events touching adapters/claude-code/hooks/** or evals/synthetic/**. selftest:false is honest: the workflow YAML has no --self-test entrypoint of its own (the underlying evals/synthetic/run-all.sh and its 8 scenario-*.sh files each have PASS/FAIL fixture pairs, but that is the eval suite's own self-verification, not a --self-test flag on this manifest unit). Second job (vaporware-volume) is the CI relocation of the retired vaporware-volume-gate.sh PreToolUse hook per specs-d §D.4 item 5 — see docs/plans/nl-overhaul-synthetic-ci-2026-07.md for the design-skip companion plan this workflow was authored under.",
+      "budget_class": "none"
+    }
+  ]
+}

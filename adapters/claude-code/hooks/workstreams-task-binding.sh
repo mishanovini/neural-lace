@@ -63,6 +63,9 @@
 
 set -uo pipefail
 
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/waiver-purpose-clause.sh" 2>/dev/null; } || true
+
 MODE="${1:-}"
 
 LOG_DIR="$HOME/.claude/logs"
@@ -221,21 +224,28 @@ _run_on_stop() {
   fi
 
   # Waiver escape hatch (gate-respect.md): a fresh substantive waiver file.
+  # ADR 058 D5 pin f (specs-e §E.10 item 2): >=1 substantive line alone is
+  # no longer sufficient — the purpose-clause pair is required too.
   local state_dir=".claude/state"
   if compgen -G "$state_dir/workstreams-task-waiver-*.txt" >/dev/null 2>&1; then
     local w
     for w in "$state_dir"/workstreams-task-waiver-*.txt; do
       [[ -f "$w" ]] || continue
-      # younger than 1h AND >=1 substantive line
+      # younger than 1h AND >=1 substantive line AND (if the lib loaded)
+      # the purpose-clause pair.
       local age_min; age_min=$(( ( $(date +%s 2>/dev/null || echo 0) - $(date -r "$w" +%s 2>/dev/null || echo 0) ) / 60 ))
       if (( age_min < 60 )) && grep -qE '\S' "$w" 2>/dev/null; then
+        if declare -F waiver_has_purpose_clauses >/dev/null 2>&1 && ! waiver_has_purpose_clauses "$w"; then
+          _log "on-stop: waiver $w present but lacks the purpose-clause pair (pin f) — not honored"
+          continue
+        fi
         _log "on-stop: honoring waiver $w (age ${age_min}m)"; exit 0
       fi
     done
   fi
 
   # The injection text (shared by warn + block).
-  local nudge="[workstreams-task-binding] This session made $toolcalls tool calls but created/updated ZERO tasks. Record what you did in the task list so it survives to the next session: call TaskCreate (and TaskUpdate it to completed). The harness mirrors your tasks into the durable Workstreams tracker automatically. To intentionally skip (rare): write a one-line justification to $state_dir/workstreams-task-waiver-\$(date +%s).txt, or set WS_TASK_STOP_MODE=warn."
+  local nudge="[workstreams-task-binding] This session made $toolcalls tool calls but created/updated ZERO tasks. Record what you did in the task list so it survives to the next session: call TaskCreate (and TaskUpdate it to completed). The harness mirrors your tasks into the durable Workstreams tracker automatically. To intentionally skip (rare): write a waiver naming BOTH why this gate exists and why that does not apply here (ADR 058 D5 pin f) to $state_dir/workstreams-task-waiver-\$(date +%s).txt, e.g. printf 'Purpose: this gate exists to prevent unrecorded session work\\nBecause: <your reason>\\n' > $state_dir/workstreams-task-waiver-\$(date +%s).txt, or set WS_TASK_STOP_MODE=warn."
 
   if [[ "$mode" == "warn" ]]; then
     printf '%s\n' "$nudge" >&2
@@ -459,6 +469,28 @@ EOF
   out=$(printf '{"transcript_path":"%s","session_id":"ST-triv","cwd":"%s"}' "$t_trivial" "$tmp" \
     | CONV_TREE_STATE_PATH="$tmp/m1c.json" WS_TASK_STOP_MODE=block bash "${BASH_SOURCE[0]}" --on-stop 2>/dev/null); rc=$?
   [[ $rc -eq 0 ]] ; _ck "M1 passes: trivial 1-tool session (rc=$rc)" $?
+
+  # --- M1 waiver escape hatch (ADR 058 D5 pin f, specs-e §E.10 item 2):
+  # a fresh waiver WITH the purpose-clause pair clears the block; a fresh
+  # waiver WITHOUT it does NOT (existence+freshness alone is not enough).
+  # Uses SELF_DIR (already-resolved absolute path) rather than the bare
+  # ${BASH_SOURCE[0]} since these scenarios `cd` into a fixture dir first.
+  local m1w_dir="$tmp/m1w"; mkdir -p "$m1w_dir/.claude/state"
+  {
+    printf 'Purpose: this gate exists to prevent unrecorded session work\n'
+    printf 'Because: this self-test scenario intentionally exercises the waiver valve\n'
+  } > "$m1w_dir/.claude/state/workstreams-task-waiver-1.txt"
+  rc=$(cd "$m1w_dir" && printf '{"transcript_path":"%s","session_id":"ST-waiver","cwd":"%s"}' "$t_notask" "$m1w_dir" \
+    | CONV_TREE_STATE_PATH="$tmp/m1w.json" WS_TASK_STOP_MODE=block RETRY_GUARD_STATE_DIR="$tmp/rg-state-m1w" \
+      bash "$SELF_DIR/$(basename "${BASH_SOURCE[0]}")" --on-stop >/dev/null 2>/dev/null; echo $?)
+  [[ "$rc" == "0" ]] ; _ck "M1 waiver with purpose clauses clears block (rc=$rc)" $?
+
+  local m1ww_dir="$tmp/m1ww"; mkdir -p "$m1ww_dir/.claude/state"
+  printf 'just skip this one\n' > "$m1ww_dir/.claude/state/workstreams-task-waiver-1.txt"
+  rc=$(cd "$m1ww_dir" && printf '{"transcript_path":"%s","session_id":"ST-waiver-weak","cwd":"%s"}' "$t_notask" "$m1ww_dir" \
+    | CONV_TREE_STATE_PATH="$tmp/m1ww.json" WS_TASK_STOP_MODE=block RETRY_GUARD_STATE_DIR="$tmp/rg-state-m1ww" \
+      bash "$SELF_DIR/$(basename "${BASH_SOURCE[0]}")" --on-stop >/dev/null 2>/dev/null; echo $?)
+  [[ "$rc" == "2" ]] ; _ck "M1 weak waiver (no purpose clauses) still blocks (rc=$rc)" $?
 
   # --- M1 warn mode never blocks ---
   out=$(printf '{"transcript_path":"%s","session_id":"ST-warn","cwd":"%s"}' "$t_notask" "$tmp" \

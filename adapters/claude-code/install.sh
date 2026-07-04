@@ -462,6 +462,20 @@ if [ "$MODE" = "dry-run" ]; then
   fi
   echo ""
 
+  # Workstreams heartbeat scheduled task (NL-FINDING-022, item 6)
+  echo "[Phase 4d: Workstreams heartbeat scheduled-task registration]"
+  if command -v schtasks >/dev/null 2>&1; then
+    if MSYS_NO_PATHCONV=1 schtasks /Query /TN "NL-workstreams-heartbeat" >/dev/null 2>&1; then
+      echo "  [WOULD SKIP -- already registered]  NL-workstreams-heartbeat"
+    else
+      echo "  [WOULD REGISTER]                   NL-workstreams-heartbeat (workstreams-emit.sh --heartbeat, every 5 min)"
+      changes=$((changes + 1))
+    fi
+  else
+    echo "  [WOULD SKIP -- schtasks unavailable] non-Windows platform"
+  fi
+  echo ""
+
   # Legacy hook cleanup
   echo "[Phase 5: Legacy per-repo hook cleanup]"
   CLAUDE_PROJECTS_ROOT="$HOME/claude-projects"
@@ -660,13 +674,76 @@ prune_stale_backups
 BACKUP_DIR="$CLAUDE_DIR/.backup-$(date +%Y%m%d-%H%M%S)"
 BACKED_UP=0
 
+# NL-FINDING-017 fix (specs-e §E.10 item 4): backup becomes copy-then-
+# verify, never mv-the-live-tree. The prior mv-based backup aborted
+# mid-run on a locked file (Windows: "Permission denied — file held
+# open"), leaving the live tree in a half-moved state and the manifest
+# silently stale across the cutover. Copy-then-verify is lock-tolerant:
+# the live file is left in place (readable by whatever holds it open)
+# until its backup copy is hash-verified byte-identical, and ONLY the
+# copy is ever touched by a failure — the live tree is never partially
+# removed. Best-effort hashing (sha1sum -> shasum -> openssl -> byte-
+# count fallback) mirrors the pattern already used by hooks/lib/
+# stop-hook-retry-guard.sh's _retry_guard_hash.
+_hash_path() {
+  local p="$1"
+  if [ -d "$p" ]; then
+    # Directory: hash the sorted relative-path + content-hash listing so
+    # the comparison is order-independent and catches any file diff.
+    (
+      cd "$p" 2>/dev/null || exit 1
+      find . -type f -print0 | sort -z | while IFS= read -r -d '' f; do
+        if command -v sha1sum >/dev/null 2>&1; then
+          sha1sum "$f" 2>/dev/null
+        elif command -v shasum >/dev/null 2>&1; then
+          shasum "$f" 2>/dev/null
+        else
+          wc -c < "$f" 2>/dev/null
+          printf ' %s\n' "$f"
+        fi
+      done
+    ) | { command -v sha1sum >/dev/null 2>&1 && sha1sum || { command -v shasum >/dev/null 2>&1 && shasum || cat; }; } | awk '{print $1}'
+  else
+    if command -v sha1sum >/dev/null 2>&1; then
+      sha1sum "$p" 2>/dev/null | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+      shasum "$p" 2>/dev/null | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+      openssl sha1 "$p" 2>/dev/null | awk '{print $NF}'
+    else
+      wc -c < "$p" 2>/dev/null | tr -d '[:space:]'
+    fi
+  fi
+}
+
 backup_if_real_file() {
   local target="$1"
   if [ -e "$target" ] && [ ! -L "$target" ]; then
     mkdir -p "$BACKUP_DIR"
-    mv "$target" "$BACKUP_DIR/"
+    local dst="$BACKUP_DIR/$(basename "$target")"
+    # Copy (never mv) -- the live tree is untouched by this step. -R/-r for
+    # dirs, plain cp for files; either way the ORIGINAL stays in place.
+    if [ -d "$target" ]; then
+      cp -R "$target" "$dst" 2>/dev/null
+    else
+      cp "$target" "$dst" 2>/dev/null
+    fi
+    if [ ! -e "$dst" ]; then
+      echo "  ERROR: backup copy of $target to $dst FAILED -- leaving live tree untouched, aborting this sync" >&2
+      return 1
+    fi
+    # Hash-verify the copy before ANY removal of the live tree is allowed.
+    local src_hash dst_hash
+    src_hash="$(_hash_path "$target")"
+    dst_hash="$(_hash_path "$dst")"
+    if [ -n "$src_hash" ] && [ "$src_hash" != "$dst_hash" ]; then
+      echo "  ERROR: backup copy of $target does not hash-match the original ($src_hash != $dst_hash) -- leaving live tree untouched, aborting this sync" >&2
+      rm -rf "$dst" 2>/dev/null
+      return 1
+    fi
     BACKED_UP=1
   fi
+  return 0
 }
 
 # Sync a file: prefer symlink, fall back to copy (Windows Git Bash)
@@ -675,7 +752,10 @@ sync_file() {
   local dst="$2"
   local label="$3"
 
-  backup_if_real_file "$dst"
+  if ! backup_if_real_file "$dst"; then
+    echo "  SKIPPED sync of $label -- backup verification failed (see error above); live file left untouched" >&2
+    return 1
+  fi
   rm -f "$dst"
   ln -s "$src" "$dst" 2>/dev/null || true
 
@@ -694,7 +774,10 @@ sync_directory() {
   local dst="$2"
   local label="$3"
 
-  backup_if_real_file "$dst"
+  if ! backup_if_real_file "$dst"; then
+    echo "  SKIPPED sync of $label/ -- backup verification failed (see error above); live directory left untouched" >&2
+    return 1
+  fi
   [ -L "$dst" ] && rm -f "$dst"
 
   ln -s "$src" "$dst" 2>/dev/null || true
@@ -962,6 +1045,63 @@ check_credentials_reference() {
 }
 
 check_credentials_reference
+
+# ============================================================
+# Workstreams heartbeat scheduled-task registration (NL-FINDING-022,
+# specs-e §E.10 item 6 — DECISION: WIRE)
+# ============================================================
+#
+# workstreams-emit.sh --heartbeat is the Layer-C backstop that concludes
+# crashed-orchestrator branches (marks stale spawned branches as
+# concluded so the Workstreams GUI stops showing phantom in-flight work).
+# It has existed since ADR-031/032 but had NO runtime trigger under any
+# name — doctrine claimed a 5-minute Windows scheduled task that was
+# never actually registered (constitution §10 theater class). This
+# section makes the claim true: idempotent registration via schtasks,
+# tolerating schtasks absence on non-Windows with a logged skip (never
+# fails the install). Reversible: one `schtasks /Delete` unregisters it.
+#
+# Idempotent: schtasks /Create without /F fails if the task already
+# exists with the same name; we probe first via /Query and only /Create
+# when absent, so re-running install.sh never errors or double-registers.
+
+register_workstreams_heartbeat_task() {
+  local task_name="NL-workstreams-heartbeat"
+  local heartbeat_script="$CLAUDE_DIR/hooks/workstreams-emit.sh"
+
+  if ! command -v schtasks >/dev/null 2>&1; then
+    echo "  (schtasks not available on this platform — skipping ${task_name} scheduled-task registration; non-Windows machines get no runtime heartbeat trigger, tracked via the doctor's honest WARN)"
+    return 0
+  fi
+
+  if [ ! -f "$heartbeat_script" ]; then
+    echo "  WARNING: ${heartbeat_script} not found — skipping ${task_name} registration (run install.sh again after hooks/ sync completes)"
+    return 0
+  fi
+
+  if MSYS_NO_PATHCONV=1 schtasks /Query /TN "$task_name" >/dev/null 2>&1; then
+    echo "  scheduled task '${task_name}' already registered — skipping (idempotent)"
+    return 0
+  fi
+
+  # Resolve a bash executable schtasks can invoke directly (Windows Task
+  # Scheduler does not inherit the interactive Git Bash PATH, so a bare
+  # "bash" TR would fail at trigger time — the same class of gotcha the
+  # E.7 session-resumer builder documented for its own scheduled task).
+  local bash_bin
+  bash_bin="$(command -v bash 2>/dev/null || echo "bash")"
+
+  local tr_cmd
+  tr_cmd="\"${bash_bin}\" \"${heartbeat_script}\" --heartbeat"
+
+  if MSYS_NO_PATHCONV=1 schtasks /Create /TN "$task_name" /TR "$tr_cmd" /SC MINUTE /MO 5 /F >/dev/null 2>&1; then
+    echo "  registered scheduled task '${task_name}' (workstreams-emit.sh --heartbeat, every 5 min)"
+  else
+    echo "  WARNING: schtasks /Create failed for '${task_name}' — heartbeat will not run on a schedule until this is fixed (see: bash adapters/claude-code/hooks/harness-doctor.sh --quick for the honest status)"
+  fi
+}
+
+register_workstreams_heartbeat_task
 
 # ============================================================
 # Clean up legacy per-repo hooks

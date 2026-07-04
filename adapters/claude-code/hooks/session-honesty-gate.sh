@@ -213,7 +213,7 @@ marker_scan_eval() {
 # ----------------------------------------------------------------------
 done_contradicted_by_block() {
   local sid="$1"
-  local evidence=""
+  local evidence="" block_ts=""
 
   # Source 1: retry-guard's unresolved-stop-hooks.log (session-scoped by
   # the short token stop-hook-retry-guard.sh derives from the session id).
@@ -226,6 +226,7 @@ done_contradicted_by_block() {
     hit=$(grep -E "hook=(work-integrity-gate|pre-stop-verifier|product-acceptance-gate)[[:space:]].*session=${short}\b" "$log_file" 2>/dev/null | tail -n 1)
     if [[ -n "$hit" ]]; then
       evidence="unresolved-stop-hooks.log: ${hit}"
+      block_ts=$(printf '%s' "$hit" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' | head -1)
     fi
   fi
 
@@ -245,41 +246,78 @@ done_contradicted_by_block() {
       ' "$ledger_path" 2>/dev/null | tail -n 1)
       if [[ -n "$hit" ]]; then
         evidence="signal-ledger: ${hit}"
+        block_ts=$(printf '%s' "$hit" | jq -r '.ts // empty' 2>/dev/null || echo "")
       fi
     fi
   fi
 
-  # NL-FINDING-027 interim fix (ADR 059 D6 end-manifest is the structural
-  # replacement): a block RESOLVED through work-integrity's own sanctioned
-  # valve must not poison a later honest DONE. A currently-valid (<1h,
-  # non-empty) work-integrity waiver on disk is proof the block was resolved
-  # via the sanctioned path — the work-integrity gate itself passes the SAME
-  # Stop cycle on its strength, so the historical block and the DONE are not
-  # in contradiction. This clears a FALSE INPUT to the honesty check; it does
-  # NOT waive the honesty assertion itself (ADR 059 D4 scoping preserved).
-  if [[ -n "$evidence" ]]; then
-    local _shg_wbase _shg_wdir _shg_dirs
-    # Sandbox discipline (NL-FINDING-028 class): under HARNESS_SELFTEST only
-    # the scenario-provided state_dir is searched — the common-dir escape
-    # would leak REAL waivers into synthetic scenarios.
-    _shg_dirs=("$state_dir")
-    if [[ -z "${HARNESS_SELFTEST:-}" ]]; then
-      _shg_wbase=$(dirname "$(git rev-parse --git-common-dir 2>/dev/null || echo .git)")
-      _shg_dirs+=("${_shg_wbase}/.claude/state")
+  if [[ -z "$evidence" ]]; then
+    return 1
+  fi
+
+  # NL-FINDING-027 fix (specs-e §E.10 item 10a): a block RESOLVED via EITHER
+  # of two sanctioned paths must not poison a later honest DONE:
+  #
+  #   (1) a currently-valid (<1h, non-empty) work-integrity waiver on disk —
+  #       proof the block was resolved via the waiver valve.
+  #   (2) a LATER work-integrity "pass" ledger event for this session, with
+  #       a timestamp AFTER the recorded block — proof work-integrity itself
+  #       re-ran clean (the actual work got done / the waiver above wasn't
+  #       even needed) since the block fired. This is the interim's missing
+  #       half: previously only a waiver cleared the false input; a session
+  #       that just finished the work and re-ran clean had no valve at all.
+  #
+  # Both clear a FALSE INPUT to the honesty check; neither waives the
+  # honesty assertion itself (ADR 059 D4 scoping preserved) — a session
+  # whose LATEST work-integrity signal is still a block (no later pass, no
+  # fresh waiver) remains genuinely contradicted.
+  #
+  # pin-f-doctor-exempt: this file reads work-integrity-waiver-*.txt as
+  # EVIDENCE that a DIFFERENT gate's (work-integrity-gate.sh) block was
+  # legitimately resolved — it is NOT this gate's own waiver escape hatch
+  # (session-honesty-gate's own contract stays marker-only per §D.3's
+  # design pin; a waiver never bypasses the marker requirement itself).
+  # work-integrity-gate.sh already validates this waiver family's purpose
+  # clauses (ADR 058 D5 pin f) at the point it is WRITTEN/HONORED; this
+  # file only reads its freshness as a downstream signal.
+  local _shg_wbase _shg_wdir _shg_dirs
+  # Sandbox discipline (NL-FINDING-028 class): under HARNESS_SELFTEST only
+  # the scenario-provided state_dir is searched — the common-dir escape
+  # would leak REAL waivers into synthetic scenarios.
+  _shg_dirs=("$state_dir")
+  if [[ -z "${HARNESS_SELFTEST:-}" ]]; then
+    _shg_wbase=$(dirname "$(git rev-parse --git-common-dir 2>/dev/null || echo .git)")
+    _shg_dirs+=("${_shg_wbase}/.claude/state")
+  fi
+  for _shg_wdir in "${_shg_dirs[@]}"; do
+    if find "$_shg_wdir" -maxdepth 1 -type f -name 'work-integrity-waiver-*.txt' \
+         -newermt '1 hour ago' -size +0c 2>/dev/null | head -1 | grep -q . ; then
+      return 1
     fi
-    for _shg_wdir in "${_shg_dirs[@]}"; do
-      if find "$_shg_wdir" -maxdepth 1 -type f -name 'work-integrity-waiver-*.txt' \
-           -newermt '1 hour ago' -size +0c 2>/dev/null | head -1 | grep -q . ; then
+  done
+
+  # (2) LATER work-integrity PASS check.
+  if [[ -n "$block_ts" ]]; then
+    local ledger_path=""
+    if command -v _signal_ledger_path >/dev/null 2>&1; then
+      ledger_path=$(_signal_ledger_path)
+    fi
+    if [[ -n "$ledger_path" ]] && [[ -f "$ledger_path" ]] && command -v jq >/dev/null 2>&1; then
+      local pass_hit
+      pass_hit=$(jq -c --arg sid "$sid" --arg since "$block_ts" '
+        select(.session_id == $sid)
+        | select(.event == "pass")
+        | select(.gate == "work-integrity-gate")
+        | select((.ts // "") > $since)
+      ' "$ledger_path" 2>/dev/null | tail -n 1)
+      if [[ -n "$pass_hit" ]]; then
         return 1
       fi
-    done
+    fi
   fi
 
-  if [[ -n "$evidence" ]]; then
-    printf '%s' "$evidence"
-    return 0
-  fi
-  return 1
+  printf '%s' "$evidence"
+  return 0
 }
 
 # ----------------------------------------------------------------------
@@ -328,6 +366,52 @@ warn_narrate_and_wait() {
       return 0
     fi
   done
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# warn_decision_block_no_needs_you <final_text>
+#
+# E.6's D.3 warn extension, reassigned here per specs-e §E.10 item 11
+# (single owner of session-honesty-gate edits this wave): the final
+# message contains a constitution §3 decision block ("Decision needed:"
+# compact format, or the legacy "PAUSING:"-adjacent decision framing) but
+# NEEDS-YOU.md has no entry for this session. Calls E.6's
+# `needs-you.sh has-entry-for-session <sid>` query flag when that script
+# exists; TOLERATES ITS ABSENCE (E.6 may not have landed on this tree yet
+# — this warn must never error or block on a missing sibling script, only
+# skip silently, same tolerate-absent contract as the digest's other
+# cross-task feeds).
+# ----------------------------------------------------------------------
+warn_decision_block_no_needs_you() {
+  local final_text="$1" sid="$2"
+
+  # Heuristic decision-block detector: constitution §3's compact format
+  # opens with "Decision needed:" (case-insensitive, optionally bolded);
+  # also catch the common "Reply with:" companion line the format mandates
+  # so a decision block missing the exact header phrase is still caught.
+  printf '%s' "$final_text" | grep -qiE '\*{0,2}Decision needed:\*{0,2}|^\*{0,2}Reply with:\*{0,2}' || return 0
+
+  # Resolve needs-you.sh: repo-relative (adapters/claude-code/scripts/) or
+  # live-mirror (~/.claude/scripts/). Absence is NOT an error — E.6 may not
+  # have landed on this tree yet.
+  local nyu=""
+  local repo_root=""
+  if command -v git >/dev/null 2>&1; then
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  fi
+  if [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/scripts/needs-you.sh" ]]; then
+    nyu="${repo_root}/adapters/claude-code/scripts/needs-you.sh"
+  elif [[ -f "${HOME:-}/.claude/scripts/needs-you.sh" ]]; then
+    nyu="${HOME}/.claude/scripts/needs-you.sh"
+  fi
+  [[ -z "$nyu" ]] && return 0   # tolerate-absent: E.6 not present on this tree
+
+  local has_entry
+  has_entry=$(bash "$nyu" has-entry-for-session "$sid" 2>/dev/null || echo "")
+  if [[ "$has_entry" != "true" ]] && [[ "$has_entry" != "1" ]]; then
+    echo "final message contains a decision block but NEEDS-YOU.md has no entry for this session (constitution §2 ledger requirement)"
+  fi
   return 0
 }
 
@@ -383,7 +467,7 @@ emit_warn() {
 }
 
 # ----------------------------------------------------------------------
-# run_demoted_warns <final_text> <keyword> <summary>
+# run_demoted_warns <final_text> <keyword> <summary> [<session_id>]
 #
 # Runs every demoted heuristic and emits a ledger "warn" for each hit.
 # NEVER affects the exit code. Called on the allow path only (a message
@@ -391,7 +475,7 @@ emit_warn() {
 # demote-scan).
 # ----------------------------------------------------------------------
 run_demoted_warns() {
-  local final_text="$1" keyword="$2" summary="$3"
+  local final_text="$1" keyword="$2" summary="$3" sid="${4:-}"
   local d
 
   d=$(warn_continuing_no_wake_token "$keyword" "$summary")
@@ -410,6 +494,9 @@ run_demoted_warns() {
   emit_warn "session-honesty-gate" "$d"
 
   d=$(warn_goal_coverage_miss "$final_text" "$keyword")
+  emit_warn "session-honesty-gate" "$d"
+
+  d=$(warn_decision_block_no_needs_you "$final_text" "$sid")
   emit_warn "session-honesty-gate" "$d"
 }
 
@@ -607,6 +694,98 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   rc=$(run_live "$TMP/s15.jsonl" "sess-15")
   [[ "$rc" == "2" ]] && ok "DONE-vs-block contradiction detected via unresolved-stop-hooks.log" || no "expected exit 2, got $rc"
 
+  echo "Scenario 15b (NL-FINDING-027 item 10a): DONE honest-block-resolve — a work-integrity block followed by a LATER work-integrity PASS for this session clears the contradiction"
+  rm -f "$TMP/ledger.jsonl"
+  block_line=$(jq -cn --arg sid "sess-15b" '{"ts":"2026-07-03T10:00:00Z","session_id":$sid,"gate":"work-integrity-gate","event":"block","detail":"unchecked tasks"}')
+  pass_line=$(jq -cn --arg sid "sess-15b" '{"ts":"2026-07-03T10:05:00Z","session_id":$sid,"gate":"work-integrity-gate","event":"pass","detail":"session-touched checks passed at this Stop"}')
+  printf '%s\n' "$block_line" >> "$TMP/ledger.jsonl"
+  printf '%s\n' "$pass_line" >> "$TMP/ledger.jsonl"
+  jl "$TMP/s15b.jsonl" $'Finished the remaining tasks and re-ran the checks.\n\nDONE: shipped everything, merged def9999'
+  rc=$(run_live "$TMP/s15b.jsonl" "sess-15b")
+  [[ "$rc" == "0" ]] && ok "DONE after block-then-LATER-pass resolves (honest block-resolve-DONE passes)" || no "expected exit 0, got $rc"
+
+  echo "Scenario 15c (NL-FINDING-027 item 10a regression): DONE-riding — a work-integrity block with NO later pass and NO waiver still blocks (not downgradeable via a stale pass)"
+  rm -f "$TMP/ledger.jsonl"
+  block_line=$(jq -cn --arg sid "sess-15c" '{"ts":"2026-07-03T10:00:00Z","session_id":$sid,"gate":"work-integrity-gate","event":"block","detail":"unchecked tasks"}')
+  stale_pass_line=$(jq -cn --arg sid "sess-15c" '{"ts":"2026-07-03T09:00:00Z","session_id":$sid,"gate":"work-integrity-gate","event":"pass","detail":"an EARLIER pass, before the block — must not count"}')
+  printf '%s\n' "$stale_pass_line" >> "$TMP/ledger.jsonl"
+  printf '%s\n' "$block_line" >> "$TMP/ledger.jsonl"
+  jl "$TMP/s15c.jsonl" $'Still riding on the earlier pass.\n\nDONE: shipped everything, merged def0000'
+  rc=$(run_live "$TMP/s15c.jsonl" "sess-15c")
+  [[ "$rc" == "2" ]] && ok "DONE-riding on a PRE-block pass still blocks (exit 2, not downgradeable)" || no "expected exit 2, got $rc"
+
+  echo "Scenario 15d: RETRY_GUARD_VERIFICATION_HOOKS (lib default) lists session-honesty-gate"
+  if printf '%s' "$RETRY_GUARD_VERIFICATION_HOOKS" | grep -qw "session-honesty-gate"; then
+    ok "retry-guard lib default RETRY_GUARD_VERIFICATION_HOOKS includes session-honesty-gate"
+  else
+    no "RETRY_GUARD_VERIFICATION_HOOKS='$RETRY_GUARD_VERIFICATION_HOOKS' does not list session-honesty-gate"
+  fi
+
+  echo "Scenario 15e: verification-class registration means a DONE-riding session-honesty-gate block is NOT downgradeable at the retry-guard threshold"
+  rm -rf "$TMP/rg-state-15e"
+  mkdir -p "$TMP/rg-state-15e"
+  (
+    export RETRY_GUARD_STATE_DIR="$TMP/rg-state-15e"
+    export RETRY_GUARD_THRESHOLD=3
+    export CLAUDE_SESSION_ID="shg-done-sess"
+    printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"work summary\n\nDONE: shipped everything abc1234"}]}}' > "$TMP/rg-state-15e/done-transcript.jsonl"
+    export RETRY_GUARD_TRANSCRIPT="$TMP/rg-state-15e/done-transcript.jsonl"
+    # shellcheck disable=SC1090
+    source "$(dirname "${BASH_SOURCE[0]}")/lib/stop-hook-retry-guard.sh"
+    _=$(retry_guard_record "session-honesty-gate" "shg-done-sess" "no-marker")
+    _=$(retry_guard_record "session-honesty-gate" "shg-done-sess" "no-marker")
+    set +e
+    ( retry_guard_block_or_exit "session-honesty-gate" "shg-done-sess" "no-marker" \
+        "no marker on final line" \
+        '{"decision":"block"}' 2 ) >"$TMP/shg-rg-out" 2>"$TMP/shg-rg-err"
+    rc=$?
+    set -e
+    exit "$rc"
+  )
+  rc=$?
+  [[ "$rc" == "2" ]] && ok "session-honesty-gate DONE-riding NOT downgraded at threshold (exit 2)" || no "expected exit 2, got $rc"
+  if grep -q "downgrade REFUSED" "$TMP/shg-rg-err" 2>/dev/null; then
+    ok "retry-guard refusal stanza names session-honesty-gate"
+  else
+    no "expected 'downgrade REFUSED' in retry-guard stderr"
+  fi
+
+  echo "Scenario 15f (specs-e §E.10 item 11, E.6's D.3 warn reassigned): decision block with NO needs-you.sh on this tree tolerates absence (no crash, no warn — E.6 not present)"
+  rm -f "$TMP/ledger.jsonl"
+  jl "$TMP/s15f.jsonl" $'Investigated the migration.\n\n**Decision needed:** pick an approach.\n\n**Reply with:** A or B.\n\nDONE: report above stands'
+  rc=$(run_live "$TMP/s15f.jsonl" "sess-15f")
+  [[ "$rc" == "0" ]] && ok "decision-block warn tolerates absent needs-you.sh (exit 0)" || no "expected exit 0, got $rc"
+
+  echo "Scenario 15g: decision block + needs-you.sh present + has-entry-for-session=false -> emits the D.3 warn"
+  rm -f "$TMP/ledger.jsonl"
+  FAKE_NYU_DIR="$TMP/fake-scripts"
+  mkdir -p "$FAKE_NYU_DIR"
+  cat > "$FAKE_NYU_DIR/needs-you.sh" <<'FAKENYU'
+#!/bin/bash
+if [[ "${1:-}" == "has-entry-for-session" ]]; then
+  echo "false"
+  exit 0
+fi
+exit 1
+FAKENYU
+  chmod +x "$FAKE_NYU_DIR/needs-you.sh"
+  # Fake a repo root whose adapters/claude-code/scripts/needs-you.sh resolves
+  # to the stub above (git rev-parse --show-toplevel is used by the resolver;
+  # simplest correct fixture is the live-mirror fallback path via HOME).
+  FAKE_HOME="$TMP/fake-home-15g"
+  mkdir -p "$FAKE_HOME/.claude/scripts"
+  cp "$FAKE_NYU_DIR/needs-you.sh" "$FAKE_HOME/.claude/scripts/needs-you.sh"
+  jl "$TMP/s15g.jsonl" $'Investigated the migration.\n\n**Decision needed:** pick an approach.\n\n**Reply with:** A or B.\n\nDONE: report above stands'
+  input=$(jq -cn --arg t "$TMP/s15g.jsonl" --arg s "sess-15g" '{"transcript_path":$t,"session_id":$s}')
+  printf '%s' "$input" | HOME="$FAKE_HOME" CLAUDE_SESSION_ID="sess-15g" bash "${BASH_SOURCE[0]}" >"$TMP/out15g.json" 2>"$TMP/err15g.txt"
+  rc=$?
+  [[ "$rc" == "0" ]] && ok "decision-block + no needs-you entry still passes (non-blocking warn)" || no "expected exit 0, got $rc"
+  if [[ -f "$TMP/ledger.jsonl" ]] && grep -q "NEEDS-YOU.md has no entry" "$TMP/ledger.jsonl"; then
+    ok "decision-block-no-needs-you-entry emits the D.3 warn"
+  else
+    no "expected a 'NEEDS-YOU.md has no entry' warn in the ledger"
+  fi
+
   echo "Scenario 16: SESSION_HONESTY_GATE_DISABLE=1 no-ops even with no marker"
   jl "$TMP/s16.jsonl" $'trailing off with no marker at all'
   input=$(jq -cn --arg t "$TMP/s16.jsonl" --arg s "sess-16" '{"transcript_path":$t,"session_id":$s}')
@@ -715,7 +894,7 @@ fi
 # --- Allow path: run demoted heuristics as non-blocking ledger warns. ---
 FINAL_TEXT=$(extract_final_text "$TRANSCRIPT_PATH")
 if [[ -n "$FINAL_TEXT" ]]; then
-  run_demoted_warns "$FINAL_TEXT" "$MARKER_KEYWORD" "$MARKER_SUMMARY"
+  run_demoted_warns "$FINAL_TEXT" "$MARKER_KEYWORD" "$MARKER_SUMMARY" "$RG_SESSION_ID"
 fi
 
 exit 0

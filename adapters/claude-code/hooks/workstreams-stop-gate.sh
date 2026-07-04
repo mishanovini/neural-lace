@@ -67,6 +67,8 @@ set -u
 
 # shellcheck disable=SC1091
 { source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/nl-paths.sh" 2>/dev/null; } || true
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/waiver-purpose-clause.sh" 2>/dev/null; } || true
 
 # ============================================================
 # State-file + state-library path resolution — kept byte-consistent with
@@ -259,12 +261,18 @@ JSONL
   _run "s3-spawn-torn-state-BLOCK"      2 "$TORN"     "$TR_SPAWN"   ""  ""      "NOT integrity-verified"
   # 4. NO spawn this session -> ALLOW (silent)
   _run "s4-no-spawn-ALLOW-silent"       0 "$MISSING"  "$TR_NOSPAWN" ""  ""      ""
-  # 5. spawn + no state BUT fresh substantive waiver -> ALLOW
-  _run "s5-fresh-waiver-ALLOW"          0 "$MISSING"  "$TR_SPAWN"   "legitimate edge: spawn dispatched a read-only research agent that touches no tree" fresh ""
+  # 5. spawn + no state BUT fresh substantive waiver WITH the required
+  # purpose-clause pair (ADR 058 D5 pin f) -> ALLOW
+  S5_WAIVER=$'Purpose: this gate exists to prevent ending a session with an unrecorded spawn\nBecause: this legitimate edge dispatched a read-only research agent that touches no tree'
+  _run "s5-fresh-waiver-ALLOW"          0 "$MISSING"  "$TR_SPAWN"   "$S5_WAIVER" fresh ""
   # 6. spawn + no state + whitespace-only waiver -> still BLOCK
   _run "s6-whitespace-waiver-BLOCK"     2 "$MISSING"  "$TR_SPAWN"   "    " fresh "conversation-tree state"
   # 7. spawn + no state + stale(>1h) waiver -> still BLOCK
   _run "s7-stale-waiver-BLOCK"          2 "$MISSING"  "$TR_SPAWN"   "this justification is substantive but stale" stale "conversation-tree state"
+  # 7b (ADR 058 D5 pin f regression): non-empty, FRESH waiver LACKING the
+  # purpose-clause pair -> still BLOCK (existence+freshness alone is not
+  # enough — the pre-pin-f behavior this fixes).
+  _run "s7b-weak-waiver-no-purpose-clauses-BLOCK" 2 "$MISSING" "$TR_SPAWN" "just trust me, this spawn is fine" fresh "conversation-tree state"
   # 8. transcript missing (gate-internal limitation) -> fail-open ALLOW
   _run "s8-transcript-missing-failopen" 0 "$GOOD"     "$TR_MISSING" ""  ""      ""
   # 9. REGRESSION (ADR-034): a session whose ONLY spawns were sub-agent
@@ -391,13 +399,17 @@ done <<< "$TI_TITLES"
 # --- Fresh substantive waiver release-valve (mirrors bug-persistence-gate.sh
 # waiver semantics EXACTLY: >=1 substantive non-whitespace line, mtime < 1h).
 # Checked BEFORE the state checks so a hook bug or a legitimate edge never
-# bricks all work. ---
+# bricks all work. ADR 058 D5 pin f (specs-e §E.10 item 2): non-empty
+# content alone is no longer sufficient — the purpose-clause pair
+# (lib/waiver-purpose-clause.sh) is required too. ---
 _has_fresh_waiver() {
   [[ -d "$STATE_DIR" ]] || return 1
   local f
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
-    if grep -q '[^[:space:]]' "$f" 2>/dev/null; then
+    if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+      waiver_has_purpose_clauses "$f" && return 0
+    elif grep -q '[^[:space:]]' "$f" 2>/dev/null; then
       return 0
     fi
   done < <(find "$STATE_DIR" -maxdepth 1 -type f -name "$WAIVER_GLOB" -newermt '1 hour ago' 2>/dev/null)

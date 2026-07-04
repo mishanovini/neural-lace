@@ -463,6 +463,297 @@ check_manifest() {
 }
 
 # ------------------------------------------------------------
+# _hash_file <path> — best-effort content hash (sha1sum -> shasum ->
+# openssl -> byte-count fallback). Mirrors install.sh's _hash_path (item
+# 4's copy-then-verify backup) so both sides of the NL-FINDING-017 fix
+# use the same hashing discipline.
+# ------------------------------------------------------------
+_hash_file() {
+  local p="$1"
+  if command -v sha1sum >/dev/null 2>&1; then
+    sha1sum "$p" 2>/dev/null | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum "$p" 2>/dev/null | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl sha1 "$p" 2>/dev/null | awk '{print $NF}'
+  else
+    wc -c < "$p" 2>/dev/null | tr -d '[:space:]'
+  fi
+}
+
+# ------------------------------------------------------------
+# Check: manifest-freshness (NL-FINDING-017, specs-e §E.10 item 4)
+# Live ~/.claude/manifest.json hash vs the repo's manifest.json hash. A
+# mismatch means install.sh has not been run since the repo manifest
+# last changed (the exact D.5 cutover failure: install.sh aborted
+# mid-run, live manifest.json stayed at its stale pre-cutover state, and
+# the doctor's OTHER checks then reported 20 claim-honesty REDs against
+# retired-gate entries that no longer existed on master — the true
+# defect was manifest STALENESS, not the gates themselves). RED with an
+# honest "run install" remediation; graceful WARN when either side is
+# absent (pre-C.1 machine, or repo manifest not resolved).
+# ------------------------------------------------------------
+check_manifest_freshness() {
+  local live_home="$1" repo_root="$2"
+  local live_manifest="${live_home}/manifest.json"
+  local repo_manifest=""
+  [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/manifest.json" ]] \
+    && repo_manifest="${repo_root}/adapters/claude-code/manifest.json"
+
+  if [[ ! -f "$live_manifest" || -z "$repo_manifest" ]]; then
+    _warn "manifest-freshness" "cannot compare — live manifest.json (${live_manifest}) or repo manifest.json missing (pre-C.1 machine or unresolved repo root)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local live_hash repo_hash
+  live_hash="$(_hash_file "$live_manifest")"
+  repo_hash="$(_hash_file "$repo_manifest")"
+  if [[ -z "$live_hash" || -z "$repo_hash" ]]; then
+    _warn "manifest-freshness" "could not hash one or both manifests (live=${live_manifest}, repo=${repo_manifest}) — no hashing tool available"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  if [[ "$live_hash" != "$repo_hash" ]]; then
+    _red "manifest-freshness" "live ~/.claude/manifest.json (hash ${live_hash:0:12}) does not match repo adapters/claude-code/manifest.json (hash ${repo_hash:0:12}) — run: bash adapters/claude-code/install.sh"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: wave-e-surfaces (specs-e §E.10 item 12) — doctor predicates from
+# the E.1/E.7/E.8/E.9 fragments, implemented VERBATIM per
+# adapters/claude-code/tests/fixtures/wave-e/{E.1,E.7,E.8,E.9}/doctor-predicate.md.
+# E.5/E.6 fragments are being built in PARALLEL (batch 2) and are being
+# built by the orchestrator at integration per specs-e §E.10 item 12 —
+# they are SKIPPED here (noted, not implemented) because their fragments
+# do not exist on this builder's tree.
+# ------------------------------------------------------------
+check_wave_e_surfaces() {
+  local live_home="$1" repo_root="$2"
+
+  # --- E.1: session-start-digest.sh (predicates 1, 2, 4; predicate 3 is a
+  # one-time point-in-time check per the fragment, not a recurring gate). ---
+  local e1_hook="${live_home}/hooks/session-start-digest.sh"
+  if [[ ! -f "$e1_hook" ]]; then
+    _warn "wave-e-e1-digest" "session-start-digest.sh missing from live mirror at ${e1_hook} — E.1 not yet installed on this machine"
+  else
+    if ! bash "$e1_hook" --self-test >/dev/null 2>&1; then
+      _red "wave-e-e1-digest" "session-start-digest.sh --self-test exited non-zero at ${e1_hook}"
+    fi
+  fi
+  local e1_probe_guard="${repo_root}/adapters/claude-code/attic/principles-compliance-gate.sh"
+  if [[ -n "$repo_root" && -f "$e1_probe_guard" ]]; then
+    if ! grep -q 'NL-FINDING-021' "$e1_probe_guard" 2>/dev/null || ! grep -q 'ALERT_ANOMALY_COUNT' "$e1_probe_guard" 2>/dev/null; then
+      _red "wave-e-e1-digest" "NL-FINDING-021 probe guard missing from ${e1_probe_guard} (anomaly-count/health check before the alert write)"
+    fi
+  fi
+
+  # --- E.7: session-resumer.sh (Check A always; Check B Windows-only /
+  # --full-style honest warn, per the fragment's "Why WARN not RED"). ---
+  local e7_script="${live_home}/scripts/session-resumer.sh"
+  if [[ ! -f "$e7_script" ]]; then
+    _warn "session-resumer" "session-resumer.sh missing from live mirror at ${e7_script} — E.7 not yet installed on this machine"
+  else
+    if [[ ! -x "$e7_script" ]]; then
+      _red "session-resumer" "session-resumer.sh missing or not executable at ${e7_script}"
+    elif ! grep -q -- '--self-test' "$e7_script" 2>/dev/null; then
+      _red "session-resumer" "session-resumer.sh has no --self-test entrypoint"
+    fi
+    if command -v schtasks >/dev/null 2>&1; then
+      if MSYS_NO_PATHCONV=1 schtasks /Query /TN "NL-session-resumer" >/dev/null 2>&1; then
+        :
+      else
+        _warn "session-resumer" "scheduled task 'NL-session-resumer' not registered — documented (see session-resumer.sh header), not registered. Honest warn until specs-e §E.W.6 runs on this machine."
+      fi
+    fi
+  fi
+
+  # --- E.8: nl-issue.sh (predicate 1: exists+executable; predicate 2:
+  # digest wiring grep, absence-tolerant on the digest hook itself). ---
+  local e8_script="${live_home}/scripts/nl-issue.sh"
+  if [[ ! -f "$e8_script" ]]; then
+    _warn "wave-e-e8-nl-issue" "nl-issue.sh missing from live mirror at ${e8_script} — E.8 not yet installed on this machine"
+  elif [[ ! -x "$e8_script" ]]; then
+    _red "wave-e-e8-nl-issue" "nl-issue.sh exists but is not executable at ${e8_script}"
+  fi
+  if [[ -f "$e1_hook" ]]; then
+    if ! grep -q "nl-issue.sh" "$e1_hook" 2>/dev/null; then
+      _red "wave-e-e8-nl-issue" "session-start-digest.sh exists but does not wire nl-issue.sh (silent no-op digest feed)"
+    fi
+  fi
+
+  # --- E.9: context-watermark.sh + pre-compact-continuity.sh (hook
+  # presence + PostToolUse/PreCompact template wiring + handoff dir
+  # writable). Mirrors check_wave_e_e9_precompaction from the fragment. ---
+  local e9_template=""
+  [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/settings.json.template" ]] \
+    && e9_template="${repo_root}/adapters/claude-code/settings.json.template"
+  [[ -z "$e9_template" && -f "${live_home}/settings.json" ]] && e9_template="${live_home}/settings.json"
+
+  # E.9 predicates are scoped to fire ONLY when the template actually wires
+  # (or is expected to wire) these hooks — an unrelated settings.json
+  # fixture (pre-Wave-E, or a doctor self-test fixture built for a
+  # different check) that never mentions either hook name is simply
+  # "E.9 not yet installed on this machine" (WARN, tolerate-absent — same
+  # contract as the E.1/E.7/E.8 sub-checks above), NOT a RED. RED is
+  # reserved for the case the fragment calls "the primary signal": the
+  # template DOES reference one of the two hooks (so E.9 wiring was
+  # attempted) but is missing the OTHER hook, missing a matcher, or the
+  # hook file itself is absent from disk despite being wired.
+  local e9_cw_wired=0 e9_pc_wired=0
+  if [[ -n "$e9_template" ]]; then
+    grep -q 'context-watermark\.sh' "$e9_template" 2>/dev/null && e9_cw_wired=1
+    grep -q 'pre-compact-continuity\.sh' "$e9_template" 2>/dev/null && e9_pc_wired=1
+  fi
+
+  if [[ -z "$e9_template" ]]; then
+    _warn "wave-e-e9-precompaction" "no settings template/live settings resolved — skipped"
+  elif [[ "$e9_cw_wired" -eq 0 && "$e9_pc_wired" -eq 0 ]]; then
+    _warn "wave-e-e9-precompaction" "neither context-watermark.sh nor pre-compact-continuity.sh referenced in ${e9_template} — E.9 not yet installed/wired on this machine"
+  else
+    local e9_hooks_dir="${repo_root}/adapters/claude-code/hooks"
+    [[ -d "$e9_hooks_dir" ]] || e9_hooks_dir="${live_home}/hooks"
+    if [[ ! -f "${e9_hooks_dir}/context-watermark.sh" ]]; then
+      _red "wave-e-e9-precompaction" "context-watermark.sh missing from ${e9_hooks_dir} — run: bash install.sh (or restore from adapters/claude-code/hooks/)"
+    fi
+    if [[ ! -f "${e9_hooks_dir}/pre-compact-continuity.sh" ]]; then
+      _red "wave-e-e9-precompaction" "pre-compact-continuity.sh missing from ${e9_hooks_dir} — run: bash install.sh (or restore from adapters/claude-code/hooks/)"
+    fi
+
+    if [[ "$e9_cw_wired" -eq 0 ]]; then
+      _red "wave-e-e9-precompaction" "context-watermark.sh not wired into PostToolUse — add a PostToolUse entry (matcher covering all tools) invoking ~/.claude/hooks/context-watermark.sh"
+    fi
+
+    if [[ "$e9_pc_wired" -eq 0 ]]; then
+      _red "wave-e-e9-precompaction" "pre-compact-continuity.sh not wired into PreCompact — add PreCompact entries for both auto and manual matchers invoking ~/.claude/hooks/pre-compact-continuity.sh"
+    elif command -v node >/dev/null 2>&1; then
+      local e9_matchers
+      e9_matchers="$(node -e "
+        const fs=require('fs');
+        let cfg;
+        try { cfg = JSON.parse(fs.readFileSync('${e9_template}','utf8')); } catch(e) { process.exit(0); }
+        const pc = (cfg.hooks && cfg.hooks.PreCompact) || [];
+        console.log(pc.map(b => b.matcher).join(','));
+      " 2>/dev/null)"
+      if ! printf '%s' "$e9_matchers" | grep -q 'auto' || ! printf '%s' "$e9_matchers" | grep -q 'manual'; then
+        _red "wave-e-e9-precompaction" "PreCompact chain missing one of the auto/manual matchers (found: '${e9_matchers}') — pre-compact-continuity.sh must be wired on BOTH"
+      fi
+    fi
+
+    local e9_handoff_dir="${HOME:-}/.claude/state/session-handoff"
+    if ! mkdir -p "$e9_handoff_dir" 2>/dev/null || ! touch "${e9_handoff_dir}/.doctor-write-probe" 2>/dev/null; then
+      _red "wave-e-e9-precompaction" "session-handoff directory not writable: ${e9_handoff_dir} — check permissions"
+    else
+      rm -f "${e9_handoff_dir}/.doctor-write-probe" 2>/dev/null || true
+    fi
+  fi
+
+  # E.5 (harness-kpis.sh) / E.6 (needs-you.sh) doctor predicates: SKIPPED —
+  # those fragments are built in parallel (batch 2) and are not present on
+  # this builder's tree. The orchestrator adds check_wave_e_e5_kpis /
+  # check_wave_e_e6_needs_you (or folds them into this function) at §E.W
+  # integration once adapters/claude-code/tests/fixtures/wave-e/{E.5,E.6}/
+  # doctor-predicate.md exist.
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: heartbeat-task (NL-FINDING-022, specs-e §E.10 item 6 — DECISION:
+# WIRE). Verifies the `NL-workstreams-heartbeat` scheduled task exists.
+# WARN (not RED) when schtasks is unavailable (non-Windows) or the task
+# is not yet registered (honest-status territory pre-§E.W, mirrors the
+# E.7 session-resumer predicate's own WARN rationale) — this doctor
+# check's job is "did install.sh's registration code run/succeed", not
+# "punish a machine that hasn't run install.sh since this task shipped".
+# ------------------------------------------------------------
+check_heartbeat_task() {
+  local live_home="$1" repo_root="$2"
+  if ! command -v schtasks >/dev/null 2>&1; then
+    _warn "heartbeat-task" "schtasks not available on this platform — scheduled-task check skipped (non-Windows)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if MSYS_NO_PATHCONV=1 schtasks /Query /TN "NL-workstreams-heartbeat" >/dev/null 2>&1; then
+    :
+  else
+    _warn "heartbeat-task" "scheduled task 'NL-workstreams-heartbeat' not registered — run: bash adapters/claude-code/install.sh (registers workstreams-emit.sh --heartbeat every 5 min)"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: untracked-dirt-ignore-rule (NL-FINDING-026 class 2, specs-e
+# §E.10 item 9). Verifies the ignore rule work-integrity-gate's check (c)
+# now hard-codes (grep -v .claude/state) is ALSO backed by this repo's own
+# .gitignore, so a governed repo relying on .gitignore (rather than the
+# gate's built-in exclusion alone) stays honest. WARN (not RED) when the
+# repo is unresolved — this is a hygiene check on the governed repo the
+# doctor is running against, not a hard gate on every possible caller.
+# ------------------------------------------------------------
+check_untracked_dirt_ignore_rule() {
+  local repo_root="$2"
+  [[ -z "$repo_root" ]] && { _warn "untracked-dirt-ignore-rule" "repo root unresolved — skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+  local gi="${repo_root}/.gitignore"
+  if [[ ! -f "$gi" ]]; then
+    _warn "untracked-dirt-ignore-rule" "no .gitignore found at ${gi} — cannot verify .claude/state/ ignore rule (work-integrity-gate's check-c exclusion still applies unconditionally as a code-level fallback)"
+  elif ! grep -qE '(^|[^#])\.claude/state/?[[:space:]]*$' "$gi" 2>/dev/null; then
+    _warn "untracked-dirt-ignore-rule" ".gitignore at ${gi} does not appear to ignore .claude/state/ — work-integrity-gate's check-c grep -v exclusion covers this in code, but the repo's own .gitignore should too (NL-FINDING-026 class 2)"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: pin-f-waiver-purpose-clauses (ADR 058 D5 pin f, specs-e §E.10
+# item 2). Every waiver-accepting hook must validate the two named
+# clauses ("this gate exists to prevent X" / "that does not apply here
+# because Y") via the shared _wig_check_waiver-style helper (or an
+# equivalent per-hook implementation). This doctor check is a GREP
+# assertion, not a runtime probe: it verifies each hook enumerated by
+# `rg -l "waiver" hooks/*.sh` actually references a purpose-clause
+# validation routine, so a future waiver-accepting hook added WITHOUT
+# purpose-clause validation is caught structurally.
+# ------------------------------------------------------------
+check_pin_f_waiver_purpose_clauses() {
+  local repo_root="$2"
+  [[ -z "$repo_root" ]] && { _warn "pin-f-waiver-purpose-clauses" "repo root unresolved — skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+  local hooks_dir="${repo_root}/adapters/claude-code/hooks"
+  [[ -d "$hooks_dir" ]] || { _warn "pin-f-waiver-purpose-clauses" "no repo hooks/ directory at ${hooks_dir} — skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local f
+  for f in "$hooks_dir"/*.sh; do
+    [[ -f "$f" ]] || continue
+    # Narrow signal (not a bare "waiver" mention — that false-positives on
+    # comments about REMOVED waiver paths, self-tests asserting a waiver
+    # string is ABSENT, and unrelated "waiver-density" telemetry, none of
+    # which are waiver-reading hooks): a hook that actually READS a waiver
+    # file as an escape hatch names a `*-waiver-*`/`*-attested-*`/
+    # `*-approved-*` filename pattern somewhere (a `find -name` probe, a
+    # `WAIVER_GLOB=` variable, a `compgen -G` check, or a native bash glob
+    # loop `for f in dir/prefix-*.txt`) — the union of shapes every real
+    # waiver reader in this repo uses (work-integrity-gate.sh,
+    # workstreams-state-gate.sh, workstreams-stop-gate.sh,
+    # teammate-spawn-validator.sh, workstreams-task-binding.sh,
+    # bug-persistence-gate.sh).
+    grep -qE '(waiver-|attested-|approved-)[A-Za-z0-9._$*{}-]*\.txt' "$f" 2>/dev/null || continue
+    # A file that reads a waiver family purely as a downstream SIGNAL (not
+    # as its own escape hatch — the family is validated where it is
+    # written/honored by a DIFFERENT gate) can declare that explicitly with
+    # a `pin-f-doctor-exempt:` marker comment naming why, rather than
+    # re-implementing/re-referencing a validator it doesn't own.
+    grep -qE 'pin-f-doctor-exempt' "$f" 2>/dev/null && continue
+    # Every waiver-reading hook must reference the shared purpose-clause
+    # validator (_wig_check_waiver, waiver_has_purpose_clauses per pin-f)
+    # OR its own inline purpose-clause validation marker.
+    if ! grep -qE '_wig_check_waiver|waiver_has_purpose_clauses|_check_waiver_purpose_clauses|purpose[-_ ]clause' "$f" 2>/dev/null; then
+      _warn "pin-f-waiver-purpose-clauses" "$(basename "$f") reads a waiver-family file but does not reference a purpose-clause validator (_wig_check_waiver / waiver_has_purpose_clauses / a 'purpose-clause' marker / a 'pin-f-doctor-exempt' comment) — pin (f) requires validating 'this gate exists to prevent X' + 'that does not apply here because Y'"
+    fi
+  done
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check 6: byte-budget
 # ------------------------------------------------------------
 check_byte_budget() {
@@ -542,6 +833,11 @@ run_quick_checks() {
   check_claim_honesty "$live_home" "$repo_root"
   check_byte_budget "$live_home"
   check_manifest "$live_home" "$repo_root"
+  check_manifest_freshness "$live_home" "$repo_root"
+  check_wave_e_surfaces "$live_home" "$repo_root"
+  check_heartbeat_task "$live_home" "$repo_root"
+  check_untracked_dirt_ignore_rule "$live_home" "$repo_root"
+  check_pin_f_waiver_purpose_clauses "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -863,6 +1159,92 @@ MANIFEST_EOF
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "6-byte-budget-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: manifest-freshness (NL-FINDING-017, item 4). RED fixture —
+  # live and repo manifest.json hash mismatch ----
+  D=$(_scenario_dir mf-red)
+  _stamp_claim_honesty_green "$D"
+  echo '{"schema_version":1,"entries":[]}' > "$D/live/manifest.json"
+  echo '{"schema_version":1,"entries":[],"drift":"repo-changed"}' > "$D/repo/adapters/claude-code/manifest.json"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "manifest-freshness-red" 1 "$RC" "RED manifest-freshness" "$OUT"
+
+  # ---- Check: manifest-freshness GREEN fixture — identical hashes ----
+  D=$(_scenario_dir mf-green)
+  _stamp_claim_honesty_green "$D"
+  echo '{"schema_version":1,"entries":[]}' > "$D/live/manifest.json"
+  cp "$D/live/manifest.json" "$D/repo/adapters/claude-code/manifest.json"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "manifest-freshness-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: heartbeat-task (NL-FINDING-022, item 6). Only meaningfully
+  # exercisable on a machine with schtasks (Windows); elsewhere it WARNs
+  # (skip) and this scenario is a no-op pass either way — a machine with
+  # NO 'NL-workstreams-heartbeat' task registered must not RED (WARN only). ----
+  D=$(_scenario_dir hb-warn)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "heartbeat-task-unregistered-warns-not-red" 0 "$RC" "" "$OUT"
+
+  # ---- Check: untracked-dirt-ignore-rule (NL-FINDING-026 class 2, item 9).
+  # RED-equivalent (WARN) fixture — repo .gitignore does NOT ignore
+  # .claude/state/ ----
+  D=$(_scenario_dir udi-warn)
+  _stamp_claim_honesty_green "$D"
+  echo "node_modules/" > "$D/repo/.gitignore"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "untracked-dirt-ignore-rule-missing-warns" 0 "$RC" "WARN untracked-dirt-ignore-rule" "$OUT"
+
+  # ---- Check: untracked-dirt-ignore-rule GREEN fixture — .gitignore DOES
+  # cover .claude/state/ ----
+  D=$(_scenario_dir udi-green)
+  _stamp_claim_honesty_green "$D"
+  printf 'node_modules/\n.claude/state/\n' > "$D/repo/.gitignore"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "untracked-dirt-ignore-rule-present-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: pin-f-waiver-purpose-clauses (ADR 058 D5 pin f, item 2).
+  # RED-equivalent (WARN) fixture — a repo hook reads a waiver with no
+  # purpose-clause validator referenced ----
+  D=$(_scenario_dir pf-warn)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/hooks/legacy-waiver-reader.sh" <<'EOF'
+#!/bin/bash
+# reads a waiver file with only an existence+freshness check
+if find .claude/state -name 'foo-waiver-*.txt' -newermt '1 hour ago' | grep -q .; then
+  exit 0
+fi
+EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "pin-f-waiver-purpose-clauses-missing-warns" 0 "$RC" "WARN pin-f-waiver-purpose-clauses" "$OUT"
+
+  # ---- Check: pin-f-waiver-purpose-clauses GREEN fixture — the hook
+  # references the shared purpose-clause validator ----
+  D=$(_scenario_dir pf-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/hooks/modern-waiver-reader.sh" <<'EOF'
+#!/bin/bash
+# reads a waiver file, routed through waiver_has_purpose_clauses
+if waiver_has_purpose_clauses ".claude/state/foo-waiver-x.txt"; then
+  exit 0
+fi
+EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "pin-f-waiver-purpose-clauses-present-green" 0 "$RC" "" "$OUT"
 
   # ---- Check 8 (--full only): RED fixture — a stub hook's --self-test fails ----
   D=$(_scenario_dir c7-red)

@@ -122,6 +122,21 @@ NL
         prd)
           printf '# PRD\n\n## Open questions\n\n- OQ-1: surfaced during intake; awaiting the user'"'"'s relayed answer.\n' > docs/prd.md
           ;;
+        attested)
+          # ADR 058 D5 pin f (specs-e §E.10 item 2): the attestation must
+          # name BOTH the gate's purpose and why it does not apply here.
+          mkdir -p .claude/state
+          {
+            echo "Purpose: this gate exists to prevent bugs surfaced in conversation from being lost"
+            echo "Because: the flagged phrase is a rhetorical example in this self-test fixture, not a real bug"
+          } > ".claude/state/bugs-attested-$(date +%Y%m%d-%H%M).txt"
+          ;;
+        attested-weak)
+          # Existence + non-empty content, but NO purpose-clause pair —
+          # must NOT clear the block under pin f.
+          mkdir -p .claude/state
+          echo "not a real bug, false positive" > ".claude/state/bugs-attested-$(date +%Y%m%d-%H%M).txt"
+          ;;
         none)
           : # no-op
           ;;
@@ -206,8 +221,31 @@ JSONL
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 7 (ADR 058 D5 pin f, specs-e §E.10 item 2): a fresh
+  # attestation WITH the purpose-clause pair clears the block ----
+  RC=$(_run_scenario s7 "attested")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (7) PASS-with-attestation-purpose-clauses: PASS (rc=$RC, expected 0)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (7) PASS-with-attestation-purpose-clauses: FAIL (rc=$RC, expected 0)" >&2
+    cat "$TMPROOT/s7/stderr.txt" >&2 2>/dev/null || true
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 8 (ADR 058 D5 pin f regression): a fresh, non-empty
+  # attestation LACKING the purpose-clause pair does NOT clear the block ----
+  RC=$(_run_scenario s8 "attested-weak")
+  if [[ "$RC" == "2" ]]; then
+    echo "self-test (8) BLOCK-attestation-missing-purpose-clauses: PASS (rc=$RC, expected 2; weak attestation correctly rejected)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (8) BLOCK-attestation-missing-purpose-clauses: FAIL (rc=$RC, expected 2)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 6 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 8 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -218,6 +256,8 @@ fi
 # Shared retry-guard library — see lib/stop-hook-retry-guard.sh.
 # shellcheck disable=SC1091
 source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
+# shellcheck disable=SC1091
+{ source "${BASH_SOURCE[0]%/*}/lib/waiver-purpose-clause.sh" 2>/dev/null; } || true
 
 # Read stdin JSON (Claude Code provides it)
 INPUT=""
@@ -413,12 +453,20 @@ if [[ "$PERSISTED" -eq 0 ]]; then
 fi
 
 # Attestation escape hatch — agent has explicitly declared these matches
-# are not real bugs (quoted examples, hypothetical, etc.).
+# are not real bugs (quoted examples, hypothetical, etc.). ADR 058 D5 pin f
+# (specs-e §E.10 item 2): existence+freshness alone is no longer
+# sufficient — the purpose-clause pair (lib/waiver-purpose-clause.sh) is
+# required too, same as every other waiver reader this wave.
 ATTEST_DIR=".claude/state"
 if [[ -d "$ATTEST_DIR" ]]; then
   # Most recent attestation file (if any) within the last 1 hour
-  if find "$ATTEST_DIR" -type f -name 'bugs-attested-*.txt' -newermt '1 hour ago' 2>/dev/null | grep -q .; then
-    PERSISTED=1
+  ATTEST_FILE=$(find "$ATTEST_DIR" -maxdepth 1 -type f -name 'bugs-attested-*.txt' -newermt '1 hour ago' 2>/dev/null | head -1)
+  if [[ -n "$ATTEST_FILE" ]]; then
+    if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+      waiver_has_purpose_clauses "$ATTEST_FILE" && PERSISTED=1
+    else
+      PERSISTED=1
+    fi
   fi
 fi
 
@@ -470,8 +518,13 @@ Before the session can end, do ONE of:
 
   5. If the matches are false positives (quoted examples, rhetorical,
      etc.), create .claude/state/bugs-attested-YYYY-MM-DD-HHMM.txt
-     with one line per false-positive justifying why. Create the
-     state directory if it doesn't exist; it's gitignored.
+     naming BOTH why this gate exists and why that does not apply here
+     (ADR 058 D5 pin f), e.g.:
+       Purpose: this gate exists to prevent bugs surfaced in conversation
+                from being lost without a durable record
+       Because: <one line per false-positive justifying why it is not
+                a real bug>
+     Create the state directory if it doesn't exist; it's gitignored.
 
 See also: ~/.claude/doctrine/planning.md "Identifying a gap = writing a
 backlog entry, in the same response" — the same principle applies to

@@ -91,6 +91,8 @@ _WIG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$_WIG_DIR/lib/signal-ledger.sh"
 # shellcheck disable=SC1091
 source "$_WIG_DIR/lib/stop-hook-retry-guard.sh"
+# shellcheck disable=SC1091
+source "$_WIG_DIR/lib/waiver-purpose-clause.sh"
 
 # ----------------------------------------------------------------------
 # _wig_ledger <event> <detail>  — best-effort, never fails the hook.
@@ -184,6 +186,81 @@ _wig_resolve_touched_plans() {
 }
 
 # ============================================================
+# _wig_marker_pass_through <transcript-path>
+#
+# NL-FINDING-019/020 residue (specs-e §E.10 item 5): a PAUSING/CONTINUING
+# final marker with an EXACT ASK satisfies check (a)'s unchecked-tasks
+# world-state assertion for plans whose unchecked tasks belong to future
+# waves — the same ADR 059 D4 scoping the waiver valve already applies
+# (world-state only; COMPLETED-but-unchecked and checked-box-without-
+# evidence remain unwaivable and marker-immune, enforced by callers never
+# routing those paths through this helper).
+#
+# "Exact ask" is deliberately mechanical, not vibes-based: PAUSING requires
+# a question mark or an explicit decision-request phrase; CONTINUING
+# requires a wake-mechanism token (mirrors session-honesty-gate's own
+# heuristics so the two gates never disagree about what "exact" means).
+# DONE and BLOCKED are NOT pass-through markers here — DONE while tasks
+# are unchecked is exactly the contradiction check (a) exists to catch,
+# and BLOCKED names a blocker, not a future-wave continuation plan.
+#
+# Echoes a one-line marker summary on stdout when pass-through applies;
+# returns 1 (no pass-through) on any parse failure, missing transcript,
+# absent jq, or a marker that doesn't meet the exact-ask bar. Fails CLOSED
+# (no pass-through) by design — this is a NEW escape hatch, so ambiguity
+# must fall through to the existing waiver/block path, not silently open.
+# ============================================================
+_wig_marker_pass_through() {
+  local transcript="$1"
+  [[ -n "$transcript" && -f "$transcript" ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+
+  local final_text
+  final_text=$(jq -rs '
+    [ .[]
+      | select((.type? == "assistant")
+               or (.message?.role? == "assistant")
+               or (.role? == "assistant")) ] as $a
+    | if ($a | length) == 0 then ""
+      else
+        ($a[-1] | (.message?.content // .content // .text // "")) as $c
+        | if ($c | type) == "array" then
+            ([ $c[] | if type == "object" then (.text // "")
+                      elif type == "string" then .
+                      else "" end ] | join("\n"))
+          elif ($c | type) == "string" then $c
+          else ($c | tostring) end
+      end
+  ' "$transcript" 2>/dev/null)
+  [[ -z "$final_text" ]] && return 1
+
+  local last_line stripped
+  last_line=$(printf '%s\n' "$final_text" | awk 'NF{l=$0} END{print l}')
+  stripped=$(printf '%s' "$last_line" \
+    | sed -E 's/^[[:space:]>*_`#-]+//' \
+    | sed -E 's/[[:space:]*_`]+$//')
+
+  local keyword summary
+  if printf '%s' "$stripped" | grep -qE '^PAUSING:[[:space:]]'; then
+    keyword="PAUSING"
+  elif printf '%s' "$stripped" | grep -qE '^CONTINUING:[[:space:]]'; then
+    keyword="CONTINUING"
+  else
+    return 1
+  fi
+  summary=$(printf '%s' "$stripped" | sed -E 's/^(PAUSING|CONTINUING):[[:space:]]*//')
+
+  if [[ "$keyword" == "PAUSING" ]]; then
+    printf '%s' "$summary" | grep -qiE '(\?|reply with|confirm|choose|go/no-go|approve|which (option|one)|decision needed)' || return 1
+  else
+    printf '%s' "$summary" | grep -qiE '(scheduled|watchdog|cron|wakeup|wake-up|monitor|background task|task[_ ]?id|task_[a-z0-9]+)' || return 1
+  fi
+
+  printf '%s: %s' "$keyword" "${summary:0:200}"
+  return 0
+}
+
+# ============================================================
 # Check (a): per-task evidence (pre-stop-verifier subset)
 #
 # For a single plan file, blocks (via _wig_block, never returns) if:
@@ -191,9 +268,13 @@ _wig_resolve_touched_plans() {
 #   - any checked task lacks a matching evidence block (companion file
 #     or in-plan ## Evidence Log)
 # Skips (no-op) plans that are ABANDONED/DEFERRED.
+#
+# $2 (optional): transcript path, for the marker-aware pass-through
+# (NL-FINDING-019/020 residue, specs-e §E.10 item 5).
 # ============================================================
 _wig_check_evidence() {
   local plan="$1"
+  local transcript="${2:-}"
   local evidence_file="${plan%.md}-evidence.md"
 
   grep -qiE '^Status:\s*(ABANDONED|DEFERRED)' "$plan" 2>/dev/null && return 0
@@ -204,6 +285,25 @@ _wig_check_evidence() {
   local pending
   pending=$(grep -c '^- \[ \]' "$plan" 2>/dev/null || echo "0")
   pending=$(echo "$pending" | tr -d '[:space:]')
+
+  if [[ "${pending:-0}" -gt 0 ]] && [[ "$is_completed" -eq 0 ]]; then
+    local slug wbase
+    slug=$(basename "${plan%.md}")
+
+    # NL-FINDING-019/020 residue (specs-e §E.10 item 5): a PAUSING/CONTINUING
+    # final marker with an exact ask satisfies check (a) for plans whose
+    # unchecked tasks belong to future waves — checked BEFORE the waiver
+    # valve so a marker-carrying session never needs to also author a
+    # waiver file. ADR 059 D4 scoping is unchanged: this only ever clears
+    # the unchecked-tasks world-state assertion (this branch), never the
+    # COMPLETED-but-unchecked or missing-evidence honesty checks.
+    local marker_pass
+    if marker_pass=$(_wig_marker_pass_through "$transcript"); then
+      echo "[work-integrity] unchecked-tasks pass-through for ${slug} (final marker: ${marker_pass}; open tasks continue in a future wave/session). Evidence checks for checked boxes still apply." >&2
+      _wig_ledger "waiver" "check-a marker-pass-through: ${slug} (${pending} unchecked; ${marker_pass})"
+      pending=0
+    fi
+  fi
 
   if [[ "${pending:-0}" -gt 0 ]] && [[ "$is_completed" -eq 0 ]]; then
     # Escape hatch (ADR 058 D5 pin d + ADR 059 D4 waiver parity —
@@ -235,6 +335,9 @@ _wig_check_evidence() {
       EMPTY_WAIVER)
         echo "[work-integrity] a fresh work-integrity-waiver for ${slug} exists but is EMPTY — not honored (>=1 substantive line required; falling through to the block)." >&2
         ;;
+      WEAK_WAIVER:*)
+        echo "[work-integrity] a fresh work-integrity-waiver for ${slug} exists but lacks the required purpose-clause pair (ADR 058 D5 pin f) — not honored. $(waiver_purpose_clause_help "open tasks continue in another wave/session by design")" >&2
+        ;;
     esac
   fi
 
@@ -243,7 +346,7 @@ _wig_check_evidence() {
     if [[ "$is_completed" -eq 1 ]]; then
       msg="Session-touched plan $plan has Status: COMPLETED but $pending task(s) are still unchecked. A plan cannot be marked COMPLETED while any task remains unchecked. Check the box after actually completing the task, or set Status: ACTIVE/ABANDONED to reflect reality."
     else
-      msg="Session-touched plan $plan has $pending unchecked task(s) remaining. Complete and check them; or set Status: ABANDONED with a reason; or — for a multi-session program plan whose tasks continue elsewhere by design — write a fresh waiver: .claude/state/work-integrity-waiver-<plan-slug>-<ts>.txt (>=1 substantive line naming WHY the open tasks are legitimately in flight; expires in 1h). Note: this block prevented only session-end — no other part of your command ran or was lost."
+      msg="Session-touched plan $plan has $pending unchecked task(s) remaining. Complete and check them; or set Status: ABANDONED with a reason; or end this turn with an honest PAUSING:/CONTINUING: marker carrying an exact ask/wake-token (satisfies this check directly — no waiver file needed); or — for a multi-session program plan whose tasks continue elsewhere by design — write a fresh waiver: .claude/state/work-integrity-waiver-<plan-slug>-<ts>.txt (>=1 substantive line naming WHY the open tasks are legitimately in flight; expires in 1h). Note: this block prevented only session-end — no other part of your command ran or was lost."
     fi
     echo "" >&2
     echo "================================================================" >&2
@@ -359,12 +462,17 @@ _wig_get_plan_sha() {
 }
 
 # Shared waiver validation for every waiver family this hook honors
-# (ADR 059 D4 "same shape everywhere": fresh <1h + substantive first line).
+# (ADR 059 D4 "same shape everywhere": fresh <1h + substantive first line;
+# ADR 058 D5 pin (f), specs-e §E.10 item 2: ALSO requires the two named
+# purpose clauses — "this gate exists to prevent X" + "that does not
+# apply here because Y" — via the shared lib/waiver-purpose-clause.sh).
 # Args: <slug> [prefix=acceptance-waiver] [dir ...=.claude/state]
-# Echoes NO_WAIVER | EMPTY_WAIVER | VALID_WAIVER:<path>. The first
-# directory containing a fresh match decides; an empty match is reported
-# as EMPTY_WAIVER (harness-reviewer 2026-07-03 Finding 1: an existence-only
-# check would clear a blocking gate for a stray `touch`).
+# Echoes NO_WAIVER | EMPTY_WAIVER | WEAK_WAIVER:<path> | VALID_WAIVER:<path>.
+# The first directory containing a fresh match decides; an empty match is
+# reported as EMPTY_WAIVER (harness-reviewer 2026-07-03 Finding 1: an
+# existence-only check would clear a blocking gate for a stray `touch`);
+# a non-empty match LACKING the purpose-clause pair is WEAK_WAIVER (pin f:
+# non-empty content alone is still theater without the clauses).
 _wig_check_waiver() {
   local slug="$1" prefix="${2:-acceptance-waiver}"
   local dirs=("${@:3}")
@@ -377,8 +485,10 @@ _wig_check_waiver() {
     first_line_stripped=$(head -1 "$recent" 2>/dev/null | tr -d '[:space:]')
     if [[ -z "$first_line_stripped" ]]; then
       echo "EMPTY_WAIVER"
-    else
+    elif waiver_has_purpose_clauses "$recent"; then
       echo "VALID_WAIVER:${recent}"
+    else
+      echo "WEAK_WAIVER:${recent}"
     fi
     return
   done
@@ -492,6 +602,16 @@ _wig_check_acceptance() {
       echo "" >&2
       _wig_block "check-b-empty-waiver" "$plan" "$msg" "{\"decision\": \"block\", \"reason\": \"$msg\"}"
       ;;
+    WEAK_WAIVER:*)
+      local msg="${refused_msg:+${refused_msg} }Plan ${slug}: a waiver file exists but lacks the required purpose-clause pair (ADR 058 D5 pin f). $(waiver_purpose_clause_help "why this plan legitimately has no runtime acceptance evidence yet")"
+      echo "" >&2
+      echo "================================================================" >&2
+      echo "WORK-INTEGRITY GATE — BLOCKED (check b: waiver missing purpose clauses)" >&2
+      echo "================================================================" >&2
+      echo "$msg" >&2
+      echo "" >&2
+      _wig_block "check-b-weak-waiver" "$plan" "$msg" "{\"decision\": \"block\", \"reason\": \"$msg\"}"
+      ;;
     NO_WAIVER)
       if [[ -n "$refused_msg" ]]; then
         echo "" >&2
@@ -557,7 +677,19 @@ _wig_check_worktree() {
 
   local dirty=0
   if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then dirty=1; fi
-  if [[ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]]; then dirty=1; fi
+  # NL-FINDING-026 class 2 (specs-e §E.10 item 9): exclude .claude/state/
+  # from the untracked-dirt computation. Every gate's sanctioned remedy
+  # (waivers, acceptance artifacts, attestations) writes there — in a
+  # governed repo whose .gitignore does NOT already cover the directory,
+  # writing the SANCTIONED remedy for one gate would otherwise make this
+  # check (c) block on the artifact the harness itself told the session to
+  # create (the exact NL-FINDING-016/019 two-gate-trap shape). This repo's
+  # own .gitignore already covers .claude/state/ (belt-and-suspenders); the
+  # grep -v makes the exclusion unconditional so a DOWNSTREAM governed repo
+  # gets the same protection without needing to remember the ignore line.
+  if git ls-files --others --exclude-standard 2>/dev/null | grep -v -E '(^|[/\\])\.claude[/\\]state([/\\]|$)' | grep -q .; then
+    dirty=1
+  fi
 
   local branch
   branch="$(git symbolic-ref --short -q HEAD 2>/dev/null || echo "")"
@@ -571,11 +703,20 @@ _wig_check_worktree() {
     [[ "${cnt:-0}" -gt 0 ]] && unpushed="$cnt"
   fi
 
-  # fresh-waiver escape hatch
+  # fresh-waiver escape hatch (NL-FINDING-026 class 1 fix, specs-e §E.10
+  # item 2: existence+freshness alone used to be sufficient even though the
+  # message implies substantive content — now routed through the shared
+  # purpose-clause validator, same as checks a/b's _wig_check_waiver).
   if [[ -d .claude/state ]]; then
-    if find .claude/state -type f -name 'worktree-teardown-waiver-*.txt' -newermt '1 hour ago' 2>/dev/null | grep -q .; then
-      _wig_ledger "waiver" "check-c worktree-teardown-waiver honored"
-      return 0
+    local _wig_tw_file
+    _wig_tw_file=$(find .claude/state -maxdepth 1 -type f -name 'worktree-teardown-waiver-*.txt' -newermt '1 hour ago' 2>/dev/null | head -1)
+    if [[ -n "$_wig_tw_file" ]]; then
+      if waiver_has_purpose_clauses "$_wig_tw_file"; then
+        _wig_ledger "waiver" "check-c worktree-teardown-waiver honored (${_wig_tw_file})"
+        return 0
+      else
+        echo "[work-integrity-gate] check-c: a fresh worktree-teardown-waiver exists at ${_wig_tw_file} but lacks the required purpose-clause pair (ADR 058 D5 pin f) — not honored, falling through to the block. $(waiver_purpose_clause_help "why this WIP is intentionally left uncommitted")" >&2
+      fi
     fi
   fi
 
@@ -618,9 +759,12 @@ PRESERVE the work before ending (do NOT reach for 'git worktree remove
        git add -A && git commit -m "<msg>" && git push -u origin ${branch:-<branch>}
   2. Stash it (survives worktree removal):
        git stash push -u -m "wip-\$(date -u +%Y%m%dT%H%M%SZ)"
-  3. If this WIP is intentionally left to resume later, waive:
+  3. If this WIP is intentionally left to resume later, waive (must name
+     BOTH the gate's purpose AND why it does not apply here — ADR 058 D5
+     pin f; existence/freshness alone is no longer sufficient):
        mkdir -p .claude/state
-       echo "<why this WIP is intentionally persistent>" > \\
+       { echo "Purpose: this gate exists to prevent silent loss of uncommitted worktree WIP"; \\
+         echo "Because: <why this WIP is intentionally persistent>"; } > \\
          .claude/state/worktree-teardown-waiver-\$(date -u +%Y%m%dT%H%M%SZ).txt
 
 See ~/.claude/doctrine/worktree-isolation.md (teardown gate / B1).
@@ -673,7 +817,7 @@ _wig_main() {
       if [[ -n "$touched_plans" ]]; then
         while IFS= read -r plan; do
           [[ -z "$plan" ]] && continue
-          _wig_check_evidence "$plan"
+          _wig_check_evidence "$plan" "$transcript_path"
           _wig_check_acceptance "$plan"
         done <<< "$touched_plans"
       fi
@@ -682,6 +826,14 @@ _wig_main() {
 
   # Check (c) always runs — worktree-scoped, not plan-scoped.
   _wig_check_worktree
+
+  # Reaching here means every check (a)/(b)/(c) call above returned without
+  # blocking (each blocking path calls _wig_block, which never returns) —
+  # this Stop cycle PASSED. Emit a ledger "pass" event so session-honesty-
+  # gate's resolution-aware DONE-vs-block check (NL-FINDING-027, specs-e
+  # §E.10 item 10) can see "work-integrity ALSO passed at THIS Stop" as
+  # evidence a historical block from earlier in the session is resolved.
+  _wig_ledger "pass" "work-integrity-gate: session-touched checks passed at this Stop"
 
   exit 0
 }
@@ -804,6 +956,21 @@ _wig_self_test() {
     echo "$tfile"
   }
 
+  # Same as _write_transcript, but the final assistant message's text is the
+  # given marker line (item 5 self-test — marker-aware pass-through) instead
+  # of the generic "work summary". $1=repo, $2=marker line, $3..=touched plans.
+  _write_transcript_marker() {
+    local repo="$1" marker_line="$2"; shift 2
+    local tfile="$tmproot/transcript-$$-$RANDOM.jsonl"
+    : > "$tfile"
+    local p
+    for p in "$@"; do
+      printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"%s"}}]}}\n' "$p" >> "$tfile"
+    done
+    printf '%s\n' "$(jq -cn --arg t "$marker_line" '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":$t}]}}' 2>/dev/null)" >> "$tfile"
+    echo "$tfile"
+  }
+
   # Runs the gate against $1 (cwd) with WORK_INTEGRITY_GATE_TRANSCRIPT=$2
   # (may be empty). Echoes exit code.
   _run_gate() {
@@ -869,11 +1036,35 @@ _wig_self_test() {
   _write_plan "$R" "waived-unchecked" "ACTIVE" "unchecked" "no-evidence" \
     "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
   mkdir -p "$R/.claude/state"
-  echo "Incidental touch only: this session appended an in-flight scope line; plan belongs to the program orchestrator." \
-    > "$R/.claude/state/work-integrity-waiver-waived-unchecked-$(date +%s).txt"
+  {
+    echo "Purpose: this gate exists to prevent multi-wave program plans from silently losing track of open tasks"
+    echo "Because: this session's only plan touch was the in-flight scope-update line the scope gate itself mandated; the plan belongs to the program orchestrator and continues in other sessions"
+  } > "$R/.claude/state/work-integrity-waiver-waived-unchecked-$(date +%s).txt"
   T=$(_write_transcript "$R" "$R/docs/plans/waived-unchecked.md")
   RC=$(_run_gate "$R" "$T")
   _expect "unchecked-tasks-with-fresh-waiver-passes" "$RC" "0"
+
+  # ================================================================
+  # Scenario 2b-weak (ADR 058 D5 pin f, specs-e §E.10 item 2): a NON-EMPTY
+  # waiver that lacks the required purpose-clause pair is REJECTED — the
+  # message must quote the required shape (Purpose:/Because:).
+  # ================================================================
+  _setup_scenario s2bw
+  R=$(_build_repo s2bw)
+  _write_plan "$R" "waived-weak" "ACTIVE" "unchecked" "no-evidence" \
+    "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
+  mkdir -p "$R/.claude/state"
+  echo "just trust me on this one" > "$R/.claude/state/work-integrity-waiver-waived-weak-$(date +%s).txt"
+  T=$(_write_transcript "$R" "$R/docs/plans/waived-weak.md")
+  RC=$(_run_gate "$R" "$T")
+  _expect "weak-waiver-missing-purpose-clauses-rejected" "$RC" "2"
+  if grep -q "Purpose:" "$tmproot/last-stderr.txt" 2>/dev/null && grep -q "Because:" "$tmproot/last-stderr.txt" 2>/dev/null; then
+    echo "self-test (weak-waiver-message-quotes-required-shape): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (weak-waiver-message-quotes-required-shape): FAIL (block message does not quote Purpose:/Because:)" >&2
+    failed=$((failed+1))
+  fi
 
   # ================================================================
   # Scenario 2c (ADR 059 D4 scoping rule): a waiver clears WORLD-STATE
@@ -923,6 +1114,73 @@ _wig_self_test() {
   T=$(_write_transcript "$R" "$R/docs/plans/waived-empty.md")
   RC=$(_run_gate "$R" "$T")
   _expect "EMPTY-waiver-does-NOT-clear-unchecked-tasks" "$RC" "2"
+
+  # ================================================================
+  # Scenario 2f (specs-e §E.10 item 5, NL-FINDING-019/020 residue): a
+  # PAUSING: final marker with an exact ask satisfies check (a) for a
+  # plan whose unchecked tasks belong to a future wave — no waiver file
+  # needed. No .claude/state waiver present; the marker alone clears it.
+  # ================================================================
+  _setup_scenario s2f
+  R=$(_build_repo s2f)
+  _write_plan "$R" "marker-pass-pausing" "ACTIVE" "unchecked" "no-evidence" \
+    "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
+  T=$(_write_transcript_marker "$R" \
+    "Landed batch 1; batch 2 continues next wave.
+
+PAUSING: proceed with batch 2 in a follow-up session — reply go or no-go?" \
+    "$R/docs/plans/marker-pass-pausing.md")
+  RC=$(_run_gate "$R" "$T")
+  _expect "PAUSING-exact-ask-marker-pass-through-clears-unchecked" "$RC" "0"
+
+  # ================================================================
+  # Scenario 2g: CONTINUING with a wake-mechanism token also satisfies
+  # check (a)'s unchecked-tasks assertion.
+  # ================================================================
+  _setup_scenario s2g
+  R=$(_build_repo s2g)
+  _write_plan "$R" "marker-pass-continuing" "ACTIVE" "unchecked" "no-evidence" \
+    "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
+  T=$(_write_transcript_marker "$R" \
+    "Kicked off the remaining batches in the background.
+
+CONTINUING: scheduled watchdog will resume this plan's remaining waves" \
+    "$R/docs/plans/marker-pass-continuing.md")
+  RC=$(_run_gate "$R" "$T")
+  _expect "CONTINUING-wake-token-marker-pass-through-clears-unchecked" "$RC" "0"
+
+  # ================================================================
+  # Scenario 2h: a PAUSING marker WITHOUT an exact-ask shape does NOT
+  # pass through — falls back to the existing block/waiver path.
+  # ================================================================
+  _setup_scenario s2h
+  R=$(_build_repo s2h)
+  _write_plan "$R" "marker-vague-pausing" "ACTIVE" "unchecked" "no-evidence" \
+    "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
+  T=$(_write_transcript_marker "$R" \
+    "Hit a wall.
+
+PAUSING: not sure how to proceed" \
+    "$R/docs/plans/marker-vague-pausing.md")
+  RC=$(_run_gate "$R" "$T")
+  _expect "vague-PAUSING-does-NOT-pass-through-still-blocks" "$RC" "2"
+
+  # ================================================================
+  # Scenario 2i (ADR 059 D4 scoping, marker-immune): a DONE marker never
+  # pass-throughs check (a) — DONE-while-unchecked is the contradiction
+  # this check exists to catch, marker or not.
+  # ================================================================
+  _setup_scenario s2i
+  R=$(_build_repo s2i)
+  _write_plan "$R" "marker-done-unchecked" "ACTIVE" "unchecked" "no-evidence" \
+    "acceptance-exempt: true"$'\n'"acceptance-exempt-reason: Harness-dev self-test fixture with no user-facing product surface."
+  T=$(_write_transcript_marker "$R" \
+    "Shipped everything.
+
+DONE: merged abc1234" \
+    "$R/docs/plans/marker-done-unchecked.md")
+  RC=$(_run_gate "$R" "$T")
+  _expect "DONE-marker-never-passes-through-unchecked-tasks" "$RC" "2"
 
   # ================================================================
   # Scenario 3: session-touched plan with checked task + evidence + no
@@ -1017,8 +1275,10 @@ EOF
   R=$(_build_repo s10)
   _write_plan "$R" "waived-plan" "ACTIVE" "checked" "with-evidence"
   mkdir -p "$R/.claude/state"
-  echo "Waived for self-test — valid one-line justification text" \
-    > "$R/.claude/state/acceptance-waiver-waived-plan-$(date +%s).txt"
+  {
+    echo "Purpose: this gate exists to prevent shipping ACTIVE plans without runtime acceptance evidence"
+    echo "Because: this is a harness-dev self-test fixture with no user-facing product surface to exercise end-user-advocate against"
+  } > "$R/.claude/state/acceptance-waiver-waived-plan-$(date +%s).txt"
   T=$(_write_transcript "$R" "$R/docs/plans/waived-plan.md")
   RC=$(_run_gate "$R" "$T")
   _expect "fresh-acceptance-waiver-passes" "$RC" "0"
@@ -1084,9 +1344,57 @@ EOF
   WT="$tmproot/s15-wt"
   ( cd "$R" && git worktree add -q "$WT" -b s15-feat master >/dev/null 2>&1 )
   ( cd "$WT" && echo dirty >> seed.txt && mkdir -p .claude/state && \
-    echo "intentionally leaving WIP; will resume" > ".claude/state/worktree-teardown-waiver-$(date -u +%Y%m%dT%H%M%SZ).txt" )
+    { echo "Purpose: this gate exists to prevent silent loss of uncommitted worktree WIP"; \
+      echo "Because: intentionally leaving WIP to resume in a follow-up session"; } \
+      > ".claude/state/worktree-teardown-waiver-$(date -u +%Y%m%dT%H%M%SZ).txt" )
   RC=$(_run_gate "$WT" "")
   _expect "dirty-worktree-with-waiver-passes" "$RC" "0"
+
+  # ================================================================
+  # Scenario 15-weak (NL-FINDING-026 class 1, ADR 058 D5 pin f): a
+  # teardown waiver that is fresh + non-empty but LACKS the purpose-clause
+  # pair must NOT clear the dirty-worktree block (existence+freshness
+  # alone is theater — the pre-pin-f behavior this fixes).
+  # ================================================================
+  _setup_scenario s15w
+  R=$(_build_repo s15w)
+  WT="$tmproot/s15w-wt"
+  ( cd "$R" && git worktree add -q "$WT" -b s15w-feat master >/dev/null 2>&1 )
+  ( cd "$WT" && echo dirty >> seed.txt && mkdir -p .claude/state && \
+    echo "intentionally leaving WIP; will resume" > ".claude/state/worktree-teardown-waiver-$(date -u +%Y%m%dT%H%M%SZ).txt" )
+  RC=$(_run_gate "$WT" "")
+  _expect "dirty-worktree-weak-waiver-still-blocks" "$RC" "2"
+
+  # ================================================================
+  # Scenario 15h (NL-FINDING-026 class 2, specs-e §E.10 item 9): an
+  # UNTRACKED file under .claude/state/ (e.g. a gate's own remedy
+  # artifact — a waiver, an acceptance artifact) must NOT by itself count
+  # as untracked dirt for check (c). Repo tree is otherwise perfectly
+  # clean (no tracked-file diff, no OTHER untracked files) — only a fresh
+  # .claude/state/ file exists. Must pass WITHOUT needing a teardown
+  # waiver at all (the exclusion, not the waiver valve, is what clears it).
+  # ================================================================
+  _setup_scenario s15h
+  R=$(_build_repo s15h)
+  WT="$tmproot/s15h-wt"
+  ( cd "$R" && git worktree add -q "$WT" -b s15h-feat master >/dev/null 2>&1 )
+  ( cd "$WT" && mkdir -p .claude/state/acceptance/some-plan && \
+    echo '{"verdict":"PASS"}' > .claude/state/acceptance/some-plan/art.json )
+  RC=$(_run_gate "$WT" "")
+  _expect "untracked-claude-state-file-does-NOT-dirty-check-c" "$RC" "0"
+
+  # ================================================================
+  # Scenario 15i (regression): an untracked file OUTSIDE .claude/state/
+  # still counts as dirt — the exclusion must be narrow, not a blanket
+  # "any untracked file passes" regression.
+  # ================================================================
+  _setup_scenario s15i
+  R=$(_build_repo s15i)
+  WT="$tmproot/s15i-wt"
+  ( cd "$R" && git worktree add -q "$WT" -b s15i-feat master >/dev/null 2>&1 )
+  ( cd "$WT" && echo "untracked" > some-new-file.txt )
+  RC=$(_run_gate "$WT" "")
+  _expect "untracked-file-OUTSIDE-claude-state-still-dirties-check-c" "$RC" "2"
 
   # ================================================================
   # Scenario 16 (MANDATED): DONE-claimed + this gate blocking is NOT
