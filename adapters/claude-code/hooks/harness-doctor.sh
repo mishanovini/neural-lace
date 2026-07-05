@@ -630,10 +630,14 @@ check_wave_e_surfaces() {
       _red "wave-e-e9-precompaction" "pre-compact-continuity.sh not wired into PreCompact — add PreCompact entries for both auto and manual matchers invoking ~/.claude/hooks/pre-compact-continuity.sh"
     elif command -v node >/dev/null 2>&1; then
       local e9_matchers
-      e9_matchers="$(node -e "
+      # NL-FINDING-033: feed the file via STDIN (fd 0), not as a path arg —
+      # native Windows node cannot resolve MSYS paths ('/c/Users/...' becomes
+      # 'C:\c\User...' → ENOENT → silent false-empty → false RED), whereas the
+      # MSYS `cat` reads the path fine. Reading stdin sidesteps translation.
+      e9_matchers="$(cat "$e9_template" 2>/dev/null | node -e "
         const fs=require('fs');
         let cfg;
-        try { cfg = JSON.parse(fs.readFileSync('${e9_template}','utf8')); } catch(e) { process.exit(0); }
+        try { cfg = JSON.parse(fs.readFileSync(0,'utf8')); } catch(e) { process.exit(0); }
         const pc = (cfg.hooks && cfg.hooks.PreCompact) || [];
         console.log(pc.map(b => b.matcher).join(','));
       " 2>/dev/null)"
