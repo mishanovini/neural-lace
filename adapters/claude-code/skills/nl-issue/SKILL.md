@@ -42,6 +42,23 @@ bash ~/.claude/scripts/nl-issue.sh "<one line describing the friction>"
 That is the entire capture step — one line, one command, in whatever project
 directory the session happens to be in. No flags needed for the common case.
 
+### From a NON-neural-lace project, this is the ONLY channel — do not write to NL directly
+
+If the current session is rooted in any project that is not the neural-lace
+checkout (a downstream product repo, a personal repo, anywhere else on the
+machine), `nl-issue.sh` is the **only** sanctioned way to change anything
+about the harness. **Never** edit files in the neural-lace repo or under
+`~/.claude/` from a foreign-project session — not a rule, not a hook, not a
+doctrine file, not a "quick fix." (Observed 2026-07-03: a downstream-product
+session, asked to report an NL lesson, attempted to write a rule directly into
+NL — operator-endorsed correction: report-only.) Every real NL change must go
+through the harness's own review
+path — harness-reviewer, self-tests, `harness-doctor.sh`, and the §10
+always-loaded budget — which a foreign session cannot exercise. Capturing the
+idea via `nl-issue.sh` routes it to the weekly triage where it gets that
+review; a direct write bypasses all of it and is exactly the drift the harness
+exists to prevent.
+
 Related verbs (for triage sessions, not routine capture):
 
 ```bash

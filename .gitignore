@@ -71,6 +71,10 @@ id_ed25519.pub
 # produced while USING neural-lace to build something else — those belong
 # in the downstream project's own repo, not here.
 SCRATCHPAD.md
+# NEEDS-YOU.md — the per-machine awaiting-operator ledger (E.6), same
+# local-only class as SCRATCHPAD: session/operator working state, not a
+# committed artifact.
+NEEDS-YOU.md
 
 # docs/{decisions,reviews,sessions}: ignore content that doesn't follow the
 # established NL-self conventions. Decision records are NNN-*.md; reviews

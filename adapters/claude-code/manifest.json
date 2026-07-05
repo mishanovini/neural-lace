@@ -89,14 +89,15 @@
       "events": [
         "Stop"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "stop"
+      "budget_class": "stop",
+      "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact."
     },
     {
       "id": "claude-md-hygiene",
@@ -1430,14 +1431,15 @@
       "events": [
         "Stop"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "stop"
+      "budget_class": "stop",
+      "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact."
     },
     {
       "id": "session-honesty",
@@ -1449,14 +1451,15 @@
       "events": [
         "Stop"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "stop"
+      "budget_class": "stop",
+      "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact."
     },
     {
       "id": "workstreams-stop-writer",
@@ -1506,7 +1509,7 @@
       "events": [
         "SessionStart"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
@@ -1514,7 +1517,7 @@
       },
       "blocking": false,
       "budget_class": "session-start",
-      "honest_status": "TRANSITIONAL consolidation (specs-d §D.0.3 entry 8) — E.1 digest replaces it."
+      "honest_status": "Replaced by session-start-digest.sh at §E.W (E.1); retained on disk, attic at F-wave."
     },
     {
       "id": "wave-d-retired-shims",
@@ -1556,6 +1559,200 @@
       "blocking": false,
       "budget_class": "none",
       "honest_status": "Exit-0 shims at retired live paths for one release (live-session safety, ADR 058 D5 pin c); originals in attic/. Hard-delete next release."
+    },
+    {
+      "id": "session-start-digest",
+      "kind": "surfacer",
+      "doctrine_file": null,
+      "hooks": [
+        "session-start-digest.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start",
+      "honest_status": "ONE SessionStart digest replacing the transitional surfacer-pack (E.1); wired at §E.W."
+    },
+    {
+      "id": "waiver-density-alarm",
+      "kind": "pattern",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/waiver-density.sh — invoked by the digest (--digest-line) + E.5 KPI (--report); not an event-wired hook."
+    },
+    {
+      "id": "synthetic-runner-ci",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "none",
+      "honest_status": "GitHub Actions workflow (.github/workflows/synthetic-runner.yml), not a Claude Code hook; events:[\"manual\"] is a schema-gap stand-in for CI cron+PR triggers."
+    },
+    {
+      "id": "harness-kpis",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/harness-kpis.sh — weekly KPI report from the signal ledger (E.5); scheduled-task registration documented, not a hook."
+    },
+    {
+      "id": "needs-you-ledger",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/needs-you.sh — maintains NEEDS-YOU.md (E.6); called by decision-log flow + digest, not event-wired."
+    },
+    {
+      "id": "session-resumer",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/session-resumer.sh — OS-scheduled watchdog (E.7); schtasks registration is a §E.W.6 step, not a settings.json hook."
+    },
+    {
+      "id": "nl-issue-capture-loop",
+      "kind": "pattern",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/nl-issue.sh + skill (E.8) — cross-project capture; not event-wired."
+    },
+    {
+      "id": "context-watermark",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [
+        "context-watermark.sh"
+      ],
+      "events": [
+        "PostToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "posttool",
+      "honest_status": "E.9a early-warning context watermark; wired PostToolUse at §E.W."
+    },
+    {
+      "id": "pre-compact-continuity",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [
+        "pre-compact-continuity.sh"
+      ],
+      "events": [
+        "PreCompact"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "E.9b PreCompact backstop; wired (auto+manual) at §E.W. PreCompact additionalContext channel HYPOTHESIZED on this CC version; snapshot-file + SessionStart compact-echo is the PROVEN fallback (constitution §1)."
+    },
+    {
+      "id": "stop-verdict-dispatcher",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": [
+        "stop-verdict-dispatcher.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop",
+      "honest_status": "E.11 batched Stop verdict; invokes work-integrity/session-honesty/bug-persistence in --report mode, aggregates one verdict; replaces their 3 blocking Stop entries at §E.W (Stop 6->4). pin-f: delegates to the gates that validate purpose clauses."
+    },
+    {
+      "id": "end-manifest",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/end-manifest.sh (E.12) — session end-manifest writer+validator; invoked by the dispatcher when a manifest is present, not event-wired."
     }
   ]
 }

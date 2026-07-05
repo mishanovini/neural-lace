@@ -12,6 +12,15 @@
 # §E.0.1 rule 1) — this file builds the mechanism; it is not yet referenced
 # by settings.json.template.
 #
+# pin-f-doctor-exempt (ADR 058 D5 pin f): this dispatcher surfaces the member
+# gates' waiver remediation text (Purpose:/Because:) in its aggregated block
+# message but does NOT itself validate waiver files — it invokes each member
+# gate in --report mode (see below) and the member gate (work-integrity-gate.sh
+# via waiver_has_purpose_clauses, etc.) performs the purpose-clause validation.
+# The dispatcher is a pure aggregator over already-validated verdicts, so it
+# needs no purpose-clause validator of its own; the harness-doctor pin-f check
+# treats this marker comment as the exemption.
+#
 # Mechanism:
 #   1. Invoke all three gates in `--report` mode (each runs every check,
 #      emits gaps as JSON lines on stdout, always exits 0 — see each

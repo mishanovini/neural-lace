@@ -305,6 +305,15 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/context-watermark.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write",
         "hooks": [
           {
@@ -420,21 +429,33 @@
         ]
       }
     ],
+    "PreCompact": [
+      {
+        "matcher": "auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/pre-compact-continuity.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "manual",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/pre-compact-continuity.sh"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/work-integrity-gate.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/session-honesty-gate.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/bug-persistence-gate.sh"
+            "command": "bash ~/.claude/hooks/stop-verdict-dispatcher.sh"
           },
           {
             "type": "command",
@@ -490,7 +511,7 @@
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/session-start-surfacer-pack.sh"
+            "command": "bash ~/.claude/hooks/session-start-digest.sh"
           }
         ]
       }

@@ -527,15 +527,24 @@ feed_ledger_summary() {
 # Feed 10: nl-issues untriaged count (§E.8). Tolerate absent file.
 # ----------------------------------------------------------------------
 feed_nl_issues() {
-  local path="${HOME:-$PWD}/.claude/state/nl-issues.jsonl"
-  [[ -f "$path" ]] || return 0
-  local untriaged
-  untriaged="$(grep -c '"triaged":false\|"triaged": false' "$path" 2>/dev/null || true)"
-  [[ -z "$untriaged" ]] && untriaged=0
-  [[ "$untriaged" -eq 0 ]] && return 0
-  local oldest
-  oldest="$(grep '"triaged":false\|"triaged": false' "$path" 2>/dev/null | head -1 | sed -E 's/.*"ts":"([^"]*)".*/\1/')"
-  printf 'nl-issues: %d untriaged, oldest %s -> %s\n' "$untriaged" "${oldest:-unknown}" "$path"
+  # Delegate to nl-issue.sh --digest-feed (E.8): it owns the ledger's field
+  # schema ("triage_status":"untriaged", NOT "triaged":false — the inline grep
+  # this replaced never matched, always reporting 0) AND the escalation +
+  # idempotent backlog-append behavior. --digest-feed emits NOTHING for an
+  # absent/empty/all-triaged ledger, so the tolerate-absent + quiet-feed rules
+  # hold without a pre-check here.
+  local nli="$HOOKS_DIR/../scripts/nl-issue.sh"
+  [[ -x "$nli" ]] || nli="$HOME/.claude/scripts/nl-issue.sh"
+  [[ -x "$nli" ]] || return 0
+  local out
+  out="$(bash "$nli" --digest-feed 2>/dev/null || true)"
+  [[ -z "$out" ]] && return 0
+  # Prefix the feed name per this digest's line economy; keep the ESCALATION
+  # line (if any) on its own line.
+  printf '%s\n' "$out" | while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    printf 'nl-issues: %s\n' "$line"
+  done
 }
 
 # ----------------------------------------------------------------------
