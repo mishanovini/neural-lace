@@ -878,3 +878,10 @@ Anthropic-side" theme).
 **Defect:** the Stop-hook completion-criteria-gate passes the "deploy" criterion on any deploy-evidence token in the final message; it does NOT verify a PRODUCTION deployment exists for the merged commit SHA. An agent can honestly cite a PR PREVIEW deploy ("Vercel — Deployment has completed") and pass while NOTHING reached production.
 **Observed:** a multi-fix downstream-product session merged to master with the gate passing "deploy ✓" while production ran a 23h-old build (master→prod auto-deploy was broken — see that repo's DEPLOY-MASTER-NOT-REACHING-PROD-01 backlog entry). No fix was actually live; the gate gave false assurance.
 **Fix:** strengthen the deploy criterion to require/verify a production deployment whose commit == merged SHA (checkable artifact: prod-alias commit == HEAD), or require an explicit prod-verification step (`vercel ls --prod` / prod-alias commit check) rather than accepting any deploy token. Pair with a "PR Vercel checks are PREVIEW, not prod — verify don't assume" reminder.
+
+## NL-ISSUES-TRIAGE-20260705 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 6 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 0d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
