@@ -402,6 +402,17 @@ if [ "$MODE" = "dry-run" ]; then
   if [ -d "$ADAPTER_DIR/data" ]; then
     check_sync_target "$ADAPTER_DIR/data" "$CLAUDE_DIR/data" "data/"
   fi
+  # manifest.json + schemas/ (NL-FINDING-017: previously NOT synced, so the
+  # live manifest the doctor's claim-honesty + manifest-freshness checks read
+  # drifted stale across every cutover — the exact class that produced the
+  # §E.W MANIFEST-DRIFT. The manifest is the enforcement source of truth; it
+  # MUST be deployed with the hooks it describes).
+  if [ -f "$ADAPTER_DIR/manifest.json" ]; then
+    check_sync_target "$ADAPTER_DIR/manifest.json" "$CLAUDE_DIR/manifest.json" "manifest.json"
+  fi
+  if [ -d "$ADAPTER_DIR/schemas" ]; then
+    check_sync_target "$ADAPTER_DIR/schemas" "$CLAUDE_DIR/schemas" "schemas/"
+  fi
   if [ -d "$NEURAL_LACE_ROOT/patterns/templates" ]; then
     check_sync_target "$NEURAL_LACE_ROOT/patterns/templates" "$CLAUDE_DIR/templates" "templates/"
   fi
@@ -890,6 +901,19 @@ fi
 
 if [ -d "$ADAPTER_DIR/data" ]; then
   sync_directory "$ADAPTER_DIR/data" "$CLAUDE_DIR/data" "data"
+fi
+
+# manifest.json + schemas/ (NL-FINDING-017): the enforcement source of truth
+# was NEVER deployed to ~/.claude — install synced hooks/rules/doctrine but not
+# the manifest the doctor's claim-honesty + manifest-freshness checks READ, so
+# the live manifest drifted stale across every cutover (the §E.W MANIFEST-DRIFT
+# that surfaced this gap). The manifest MUST ship with the hooks it describes.
+if [ -f "$ADAPTER_DIR/manifest.json" ]; then
+  sync_file "$ADAPTER_DIR/manifest.json" "$CLAUDE_DIR/manifest.json" "manifest.json"
+fi
+
+if [ -d "$ADAPTER_DIR/schemas" ]; then
+  sync_directory "$ADAPTER_DIR/schemas" "$CLAUDE_DIR/schemas" "schemas"
 fi
 
 # Sync shared templates from patterns/ (tool-agnostic)
