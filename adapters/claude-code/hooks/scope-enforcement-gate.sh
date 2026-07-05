@@ -109,8 +109,11 @@
 # Waivers:
 #   REMOVED 2026-05-04. The block-message no longer offers a waiver
 #   path. Three structural options (update plan / open new plan / defer)
-#   cover every legitimate case. Emergency override is `git commit
-#   --no-verify` per ~/.claude/doctrine/git.md.
+#   cover every legitimate case. There is no bypass flag: this hook is a
+#   PreToolUse gate that pattern-matches the `git commit` command string
+#   BEFORE git runs, so `--no-verify` (a git pre-commit-hook bypass) has
+#   no effect on it — the block message names the real remediations
+#   instead (NL-FINDING-032).
 #
 # Exit codes:
 #   0 — commit allowed (or non-applicable)
@@ -347,7 +350,7 @@ _parse_cd_target() {
 }
 
 # ============================================================
-# --self-test handler (thirty-two scenarios)
+# --self-test handler (thirty-three scenarios)
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
   # We need this script's path for re-invocation under different cwds
@@ -1291,8 +1294,79 @@ Test goal.
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 33 (NL-FINDING-032): block message names a REAL remediation.
+  # Prior defect: the block message claimed `git commit --no-verify` was an
+  # "emergency override" for this gate. False — this hook is a PreToolUse
+  # gate that pattern-matches the `git commit` string BEFORE git runs, so
+  # a git pre-commit-hook bypass flag has no effect on it. Verify (a) the
+  # string "no-verify" no longer appears anywhere in the emitted message,
+  # and (b) the message's actual named remediation — appending an
+  # `## In-flight scope updates` bullet for the blocked path — really
+  # clears the block on a same-shape re-commit. ----
+  PLAN_S33='# Plan: test
+Status: ACTIVE
+
+## Goal
+Test goal.
+
+## Files to Modify/Create
+- `src/foo.ts` — primary file
+
+## Tasks
+- [ ] 1. test
+'
+  S33_REPO="$TMPROOT/s33"
+  mkdir -p "$S33_REPO"
+  (
+    cd "$S33_REPO" || exit 99
+    git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
+    git config user.email "test@example.com" 2>/dev/null
+    git config user.name "Test" 2>/dev/null
+    git config commit.gpgsign false 2>/dev/null
+    mkdir -p docs/plans
+    printf '%s' "$PLAN_S33" > "docs/plans/test-scope-plan.md"
+    git add docs/plans/test-scope-plan.md 2>/dev/null
+    git commit -q -m "init plan" 2>/dev/null
+    echo "stub" > "unrelated.md"
+    git add "unrelated.md" 2>/dev/null
+    s33_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}'
+    printf '%s' "$s33_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>blocked_stderr.txt
+    echo $? > blocked_rc.txt
+
+    # Apply the message's real named remediation: append an In-flight
+    # scope updates bullet for the blocked path, then re-stage (already
+    # staged; the plan edit is the new staged content) and re-commit.
+    printf '\n## In-flight scope updates\n- 2026-07-04: `unrelated.md` — self-test remediation-clears-block proof\n' >> "docs/plans/test-scope-plan.md"
+    git add docs/plans/test-scope-plan.md 2>/dev/null
+    printf '%s' "$s33_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>after_stderr.txt
+    echo $? > after_rc.txt
+  )
+  S33_BLOCKED_RC=$(cat "$S33_REPO/blocked_rc.txt" 2>/dev/null || echo 99)
+  S33_AFTER_RC=$(cat "$S33_REPO/after_rc.txt" 2>/dev/null || echo 99)
+  S33_BLOCKED_STDERR=$(cat "$S33_REPO/blocked_stderr.txt" 2>/dev/null || echo "")
+  S33_OK=1
+  if [[ "$S33_BLOCKED_RC" != "2" ]]; then
+    S33_OK=0
+    echo "self-test (33) no-verify-message-fixed: FAIL (initial rc=$S33_BLOCKED_RC, expected 2)" >&2
+  fi
+  if [[ "$S33_BLOCKED_STDERR" == *"no-verify"* ]]; then
+    S33_OK=0
+    echo "self-test (33) no-verify-message-fixed: FAIL (stderr still contains 'no-verify')" >&2
+  fi
+  if [[ "$S33_AFTER_RC" != "0" ]]; then
+    S33_OK=0
+    echo "self-test (33) no-verify-message-fixed: FAIL (after-remediation rc=$S33_AFTER_RC, expected 0 — named remediation did not clear the block)" >&2
+  fi
+  if [[ "$S33_OK" -eq 1 ]]; then
+    echo "self-test (33) no-verify-message-fixed: PASS (no 'no-verify' string; named In-flight-scope-updates remediation actually clears the block)" >&2
+    PASSED=$((PASSED+1))
+  else
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 32 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 33 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1978,9 +2052,14 @@ fi
   echo "genuinely-separate work gets its own plan, and work that shouldn't ship"
   echo "goes to backlog. Three options cover every legitimate case."
   echo ""
-  echo "Emergency override: \`git commit --no-verify\` bypasses ALL pre-commit hooks"
-  echo "including this one. Use only when explicitly authorized (per"
-  echo "~/.claude/doctrine/git.md). The bypass is auditable in git's output."
+  echo "There is no override flag: this gate is a PreToolUse hook that pattern-"
+  echo "matches the \`git commit\` command string BEFORE git runs, so any git"
+  echo "commit-hook bypass flag has no effect on it — the block already happened"
+  echo "before git was ever invoked. The only real remediations are the three"
+  echo "options above — fastest is usually option 1: append one backtick-quoted-"
+  echo "path bullet (- <YYYY-MM-DD>: <path> — <reason>) per staged file to the"
+  echo "active plan's \`## In-flight scope updates\` section (or list the path"
+  echo "directly under \`## Files to Modify/Create\`), then re-stage and re-commit."
   echo ""
   echo "NOTE: this block prevented the ENTIRE command from running — including any"
   echo "fix/edit/\`git add\` prefix before the \`git commit\`. Nothing was executed."
