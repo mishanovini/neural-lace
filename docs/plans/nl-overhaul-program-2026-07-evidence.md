@@ -1128,3 +1128,16 @@ standalone at 987s; Decisions Log); (2) two hard-fail hooks — pr-template path
 + extract-pending dead sibling reference (038503e, harness-reviewer PASS); (3) task-binding
 suite flake — unsandboxed retry-guard counters, fixed synthetic ids (b8a1597, NL-FINDING-028).
 Sweep wall-clock at 1500s budget: ~85 min (weekly/CI-acceptable).
+
+## §E.W cutover — LIVE doctor --full GREEN 13/13 (2026-07-05, coordinator session, post-reboot resume)
+
+The §E.W live cutover, interrupted by a machine reboot mid-flight, was resumed and completed by
+the sole-surviving coordinator session. `bash ~/.claude/hooks/harness-doctor.sh --full` (from the
+main checkout on master @ 301479b) = "[doctor] GREEN — 13 checks passed", exit 0, one honest WARN
+(NL-session-resumer schtasks not yet registered — deferred until estate quiesced to avoid
+auto-resuming dead post-reboot transcripts). Live state verified: Stop chain 4 (ADR-059
+stop-verdict-dispatcher), SessionStart 8, PreCompact auto+manual, manifest synced (content-identical,
+CRLF-only vs master), machine-local settings keys preserved. Path to green: install.sh manifest-sync
+fix (65706c1, completes NL-FINDING-017), surgical live Stop-chain swap, and NL-FINDING-033 (doctor
+E.9 check fed MSYS path to native node → false RED; now reads via stdin, 8025389). Golden evals 6/6.
+This addendum records the mechanical maintainer-is-user demonstration (constitution §4 harness clause).
