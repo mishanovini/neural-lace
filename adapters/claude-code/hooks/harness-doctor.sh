@@ -1385,26 +1385,37 @@ for (const p of problems) console.log(p);
 }
 
 # ------------------------------------------------------------
-# Check: line-endings (NL-FINDING-038, Wave-F F.1 incident). On Windows a
-# file-edit can silently rewrite a whole tracked script LF -> CRLF: before
-# .gitattributes landed that produced a ~2000-line spurious diff; with the
-# eol=lf pin in force the clean filter NORMALIZES the comparison instead, so
-# `git status` shows CLEAN while the on-disk bytes stay CRLF — invisible to
-# git, but install.sh cp's those working-tree bytes live, Linux CI bash
-# hard-fails on \r, and heredocs the script emits carry the pollution
-# forward. This check is the only detector for that masked state, so it
-# scans the REPO working tree. Live ~/.claude is deliberately NOT scanned:
-# the live mirror is CRLF by design equilibrium (install.sh cp's from
-# historical CRLF working trees; session-start-auto-install.sh's
-# _content_same compares modulo \r precisely so the two installers don't
-# ping-pong) and MSYS bash tolerates it — flagging live would be ~144 false
-# positives on a working system.
+# Check: line-endings (NL-FINDING-038, Wave-F F.1 incident; live-mirror scan
+# added for LIVE-MIRROR-CRLF-01). On Windows a file-edit can silently
+# rewrite a whole tracked script LF -> CRLF: before .gitattributes landed
+# that produced a ~2000-line spurious diff; with the eol=lf pin in force
+# the clean filter NORMALIZES the comparison instead, so `git status` shows
+# CLEAN while the on-disk bytes stay CRLF — invisible to git, but
+# install.sh cp's those working-tree bytes live, Linux CI bash hard-fails
+# on \r, and heredocs the script emits carry the pollution forward. This
+# check is the primary detector for that masked state in the REPO working
+# tree.
+#
+# The live mirror (~/.claude) is ALSO scanned now, but only ever WARNs
+# (never REDs): a mirror built before the .gitattributes pin landed, or by
+# an installer running on a stale core.autocrlf=true checkout, can carry
+# CRLF forward via install.sh's `cp` fallback (no symlink support) even
+# though the repo tree is clean today. That is stale-mirror drift, not an
+# active break — MSYS bash tolerates CRLF at runtime — and install.sh's
+# CRLF-normalization-on-copy (LIVE-MIRROR-CRLF-01) self-heals it on the next
+# run, so RED would be a false alarm for a one-command fix. Distinguishing
+# it from a real REPO regression (still RED) is exactly the fix this
+# extension delivers — NL-FINDING-038's own residual-risk note flagged that
+# the doctor "is the only detector" of masked CRLF yet never looked at the
+# one place (the live mirror) that matters at runtime.
 # Detection is pure-bash byte matching ([[ == *$'\r'* ]]) — NEVER grep/sed/
 # awk, which silently strip \r on MSYS (NL-FINDING-030).
-#   RED  : a tracked shell surface (*.sh, git-hooks/*) has CR bytes on disk.
-#   WARN : repo .gitattributes lacks the '*.sh text eol=lf' pin (the
-#          git-layer guard that keeps CRLF out of the index on every clone,
-#          overriding any autocrlf setting).
+#   RED  : a tracked shell surface (*.sh, git-hooks/*) has CR bytes on disk
+#          in the REPO working tree.
+#   WARN : repo .gitattributes lacks the '*.sh text eol=lf' pin, OR the live
+#          mirror (~/.claude/hooks, hooks/lib, scripts) carries CRLF while
+#          the repo tree is clean (transition-period signal — run
+#          install.sh to normalize; never RED for this half of the check).
 # ------------------------------------------------------------
 check_line_endings() {
   local live_home="$1" repo_root="$2"
@@ -1446,6 +1457,30 @@ check_line_endings() {
   if [[ ! -f "$repo_root/.gitattributes" ]] \
      || ! grep -qE '^\*\.sh[[:space:]]+text[[:space:]]+eol=lf' "$repo_root/.gitattributes" 2>/dev/null; then
     _warn "line-endings" ".gitattributes is missing its '*.sh text eol=lf' pin — CRLF can enter the index on clones without a local autocrlf override (NL-FINDING-038)"
+  fi
+
+  # Live-mirror scan (LIVE-MIRROR-CRLF-01): WARN-only, transition-period
+  # signal. Scans ${live_home}/hooks/*.sh, ${live_home}/hooks/lib/*.sh, and
+  # ${live_home}/scripts/*.sh for CR bytes using the same pure-bash byte
+  # match as the repo scan above (never grep — NL-FINDING-030). A single
+  # WARN covers the whole mirror (not one per file) so a stale mirror
+  # doesn't flood the doctor's output; the fix (re-run install.sh) is the
+  # same regardless of how many files carry CRLF.
+  if [[ -n "$live_home" && -d "$live_home" ]]; then
+    local live_crlf_found=0
+    for f in "$live_home"/hooks/*.sh \
+             "$live_home"/hooks/lib/*.sh \
+             "$live_home"/scripts/*.sh; do
+      [[ -f "$f" && -s "$f" ]] || continue
+      content="$(<"$f")"
+      if [[ "$content" == *$'\r'* ]]; then
+        live_crlf_found=1
+        break
+      fi
+    done
+    if [[ "$live_crlf_found" -eq 1 ]]; then
+      _warn "line-endings" "live mirror carries pre-pin CRLF — run install.sh to normalize (${live_home}/hooks and/or scripts contain CR bytes; NL-FINDING-038 residual-risk gap, LIVE-MIRROR-CRLF-01)"
+    fi
   fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
@@ -2476,6 +2511,73 @@ MANIFEST_EOF
     _assert "line-endings-git-red" 1 "$RC" "CR bytes in the working tree" "$OUT"
   else
     echo "self-test (line-endings-git-red): SKIP — git unavailable" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- Check: line-endings LIVE-MIRROR WARN fixture (LIVE-MIRROR-CRLF-01)
+  # — repo tree is fully clean (LF scripts + eol=lf pin, i.e. what would
+  # otherwise be the all-GREEN scenario) but the LIVE mirror's hooks/
+  # directory carries CRLF, simulating a mirror built before the
+  # .gitattributes pin landed. Must WARN, never RED — this is stale-mirror
+  # drift self-healed by re-running install.sh, not an active break. ----
+  D=$(_scenario_dir le-live-warn)
+  _stamp_claim_honesty_green "$D"
+  printf '#!/bin/bash\nexit 0\n' > "$D/repo/adapters/claude-code/scripts/lf-script.sh"
+  printf '*.sh text eol=lf\n' > "$D/repo/.gitattributes"
+  printf '#!/bin/bash\r\nexit 0\r\n' > "$D/live/hooks/crlf-live-hook.sh"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "line-endings-live-mirror-warns" 0 "$RC" "WARN line-endings.*live mirror carries pre-pin CRLF" "$OUT"
+
+  # ---- Check: line-endings LIVE-MIRROR WARN fixture, hooks/lib/ variant —
+  # same as above but the CRLF lives under hooks/lib/ instead of hooks/
+  # directly, exercising the second scanned glob. ----
+  D=$(_scenario_dir le-live-warn-lib)
+  _stamp_claim_honesty_green "$D"
+  printf '#!/bin/bash\nexit 0\n' > "$D/repo/adapters/claude-code/scripts/lf-script.sh"
+  printf '*.sh text eol=lf\n' > "$D/repo/.gitattributes"
+  mkdir -p "$D/live/hooks/lib"
+  printf '#!/bin/bash\r\nexit 0\r\n' > "$D/live/hooks/lib/crlf-live-lib.sh"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "line-endings-live-mirror-lib-warns" 0 "$RC" "WARN line-endings.*live mirror carries pre-pin CRLF" "$OUT"
+
+  # ---- Check: line-endings LIVE-MIRROR GREEN fixture — repo clean AND live
+  # mirror LF-clean (post-install.sh-normalization steady state). No WARN,
+  # no RED. ----
+  D=$(_scenario_dir le-live-green)
+  _stamp_claim_honesty_green "$D"
+  printf '#!/bin/bash\nexit 0\n' > "$D/repo/adapters/claude-code/scripts/lf-script.sh"
+  printf '*.sh text eol=lf\n' > "$D/repo/.gitattributes"
+  printf '#!/bin/bash\nexit 0\n' > "$D/live/hooks/lf-live-hook.sh"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "line-endings-live-mirror-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: line-endings LIVE-MIRROR CRLF must never RED, even when
+  # combined with an otherwise-red-triggering repo scenario elsewhere in the
+  # same run — verifies the live-mirror predicate is additive-WARN-only and
+  # cannot itself flip RC to 1. Reuses the le-red repo-CRLF fixture's repo
+  # side (which legitimately RC=1s on its own) is NOT what this asserts;
+  # instead this scenario keeps the repo clean and only pollutes live, then
+  # asserts RC=0 (no RED) while still asserting the WARN text fired. ----
+  D=$(_scenario_dir le-live-warn-not-red)
+  _stamp_claim_honesty_green "$D"
+  printf '#!/bin/bash\nexit 0\n' > "$D/repo/adapters/claude-code/scripts/lf-script.sh"
+  printf '*.sh text eol=lf\n' > "$D/repo/.gitattributes"
+  printf '#!/bin/bash\r\nexit 0\r\n' > "$D/live/scripts/crlf-live-script.sh"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "line-endings-live-mirror-never-red" 0 "$RC" "WARN line-endings" "$OUT"
+  if printf '%s' "$OUT" | grep -q "RED line-endings"; then
+    echo "self-test (line-endings-live-mirror-never-red-strict): FAIL (unexpected RED line-endings in output)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (line-endings-live-mirror-never-red-strict): PASS" >&2
     PASSED=$((PASSED + 1))
   fi
 
