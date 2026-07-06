@@ -561,6 +561,112 @@ check_manifest_freshness() {
 }
 
 # ------------------------------------------------------------
+# Check: wave-f-f2-docs (Wave F, task F.2) — doctor predicates from the F.2
+# fragment, implemented VERBATIM per
+# adapters/claude-code/tests/fixtures/wave-f/F.2/doctor-predicate.md.
+#
+# Predicate 1 — docs/harness-architecture.md byte-equals a fresh regen
+# (gen-architecture-doc.sh --check). WARN (not RED) when the script itself
+# is missing OR when it degrades gracefully (neither node nor jq present —
+# same posture manifest-check.sh takes; distinguished from a real drift
+# RED by grepping the script's own graceful-degradation WARN line so this
+# check does not have to re-implement the node/jq probe).
+#
+# Predicate 2 — the five README surfaces named in the fragment each carry
+# a `<!-- last-verified: YYYY-MM-DD (doctor-checked) -->` anchor no more
+# than 90 days old. Implemented verbatim from the fragment's check command
+# (same grep/date logic), inlined here rather than shelled out so it
+# shares this file's _red/_warn accounting.
+#
+# Predicate 2b (doctrine/INDEX.md) and Predicate 3 (scripts/README.md
+# carve-out) are handled by check_manifest / existing generator drift
+# checks and documented-no-op respectively — the fragment itself notes
+# both need no additional doctor code (see doctor-predicate.md).
+# ------------------------------------------------------------
+check_wave_f_f2_docs() {
+  local live_home="$1" repo_root="$2"
+
+  # --- Predicate 1: harness-architecture.md drift ---
+  if [[ -z "$repo_root" ]]; then
+    _warn "wave-f-f2-docs" "repo root unresolved — skipped harness-architecture.md drift check"
+  else
+    local gen_script="${repo_root}/adapters/claude-code/scripts/gen-architecture-doc.sh"
+    if [[ ! -f "$gen_script" ]]; then
+      _warn "wave-f-f2-docs" "gen-architecture-doc.sh missing from ${gen_script} — F.2 not yet installed on this machine"
+    else
+      local gen_out gen_rc
+      gen_out="$(bash "$gen_script" --check 2>&1)"
+      gen_rc=$?
+      if printf '%s' "$gen_out" | grep -q 'WARN: needs node or jq'; then
+        _warn "wave-f-f2-docs" "gen-architecture-doc.sh --check degraded (neither node nor jq available) — drift check skipped, same posture as manifest-check.sh"
+      elif [[ "$gen_rc" -ne 0 ]]; then
+        _red "wave-f-f2-docs" "docs/harness-architecture.md drift — gen-architecture-doc.sh --check exited ${gen_rc}: $(printf '%s' "$gen_out" | tail -n 1)"
+      fi
+    fi
+  fi
+
+  # --- Predicate 2: README freshness anchors, verbatim per the fragment ---
+  # Absence-tolerant at the SURFACE level (same contract as the E.1/E.7/
+  # E.8/E.9 wave-fragment sub-checks below): a fixture/machine where NONE
+  # of the five README surfaces exist at all is "F.2 not yet installed
+  # here" (WARN, not RED) — this is the shape every doctor self-test
+  # fixture repo takes unless it explicitly opts into an F.2 scenario, and
+  # a real repo pre-dating F.2 would otherwise RED on every one of the
+  # five files for a doc-surface convention it never adopted. Once at
+  # least one of the five exists, F.2 is "installed" on this
+  # repo/fixture and every surface is held to the full predicate
+  # (missing/no-anchor/stale all RED) — that is the partial-adoption case
+  # the predicate exists to catch.
+  if [[ -z "$repo_root" ]]; then
+    _warn "wave-f-f2-docs" "repo root unresolved — skipped README freshness-anchor scan"
+  else
+    local -a f2_readmes=(
+      "${repo_root}/README.md"
+      "${repo_root}/adapters/claude-code/README.md"
+      "${repo_root}/adapters/claude-code/attic/README.md"
+      "${repo_root}/evals/README.md"
+      "${repo_root}/neural-lace/workstreams-ui/README.md"
+    )
+    local f2_any_present=0
+    for f in "${f2_readmes[@]}"; do
+      [[ -f "$f" ]] && { f2_any_present=1; break; }
+    done
+
+    if [[ "$f2_any_present" -eq 0 ]]; then
+      _warn "wave-f-f2-docs" "none of the five F.2 README surfaces present under ${repo_root} — F.2 not yet installed on this repo/fixture"
+    else
+      local today_epoch max_age_days=90
+      today_epoch=$(date +%s)
+      local f line date_str anchor_epoch age_days
+      for f in "${f2_readmes[@]}"
+      do
+        if [[ ! -f "$f" ]]; then
+          _red "wave-f-f2-docs" "MISSING README surface: ${f}"
+          continue
+        fi
+        line="$(grep -m1 -E '<!-- last-verified: [0-9]{4}-[0-9]{2}-[0-9]{2} \(doctor-checked\) -->' "$f" 2>/dev/null)"
+        if [[ -z "$line" ]]; then
+          _red "wave-f-f2-docs" "NO-ANCHOR: ${f} missing '<!-- last-verified: YYYY-MM-DD (doctor-checked) -->'"
+          continue
+        fi
+        date_str="$(printf '%s' "$line" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')"
+        anchor_epoch="$(date -d "$date_str" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$date_str" +%s 2>/dev/null)"
+        if [[ -z "$anchor_epoch" ]]; then
+          _red "wave-f-f2-docs" "UNPARSEABLE-DATE: ${f} anchor date '${date_str}'"
+          continue
+        fi
+        age_days=$(( (today_epoch - anchor_epoch) / 86400 ))
+        if [[ "$age_days" -gt "$max_age_days" ]]; then
+          _red "wave-f-f2-docs" "STALE (${age_days}d, budget <= ${max_age_days}d): ${f} — re-verify and bump the last-verified anchor"
+        fi
+      done
+    fi
+  fi
+
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check: wave-e-surfaces (specs-e §E.10 item 12) — doctor predicates from
 # the E.1/E.7/E.8/E.9 fragments, implemented VERBATIM per
 # adapters/claude-code/tests/fixtures/wave-e/{E.1,E.7,E.8,E.9}/doctor-predicate.md.
@@ -1050,7 +1156,58 @@ _budget_active_plans_roots() {
     done < "$extra"
   fi
 
-  printf '%s\n' "${roots[@]}" | sort -u | grep -v '^$'
+  # De-dup by GIT IDENTITY, not raw path string. When the doctor runs from a
+  # linked worktree, resolve_repo_root()'s own root (this worktree's
+  # toplevel) and <live_home>/local/nl-repo-path (the main checkout) are two
+  # DIFFERENT absolute paths that are nonetheless the SAME repository —
+  # `git worktree` gives every linked worktree its own toplevel but they all
+  # share one `git rev-parse --git-common-dir` (the shared .git). A raw
+  # `sort -u` on path strings does not catch this and double-counts every
+  # plan in docs/plans/ once per worktree that resolves to the same repo
+  # (verifier live-probe: "6 across 2 roots" vs true 3, both roots worktrees
+  # of one repo). Fix: key de-dup on each root's resolved git-common-dir
+  # (falling back to the raw path itself for non-git roots, e.g. the live
+  # mirror tier or a future non-repo project-roots entry) so two worktrees
+  # of one repo collapse to a single counted root. Linear scan (not
+  # associative arrays — this file targets bash 3.2 for macOS parity) over
+  # a handful of roots; first-seen root per key wins, preserving the
+  # documented priority order (repo_root, then nl-repo-path, then
+  # nl-project-roots).
+  local -a seen_keys=() out=()
+  local r key already
+  for r in "${roots[@]}"; do
+    [[ -z "$r" ]] && continue
+    key=""
+    if [[ -d "$r" ]] && command -v git >/dev/null 2>&1; then
+      key="$(git -C "$r" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+      # Older git (pre-2.31) lacks --path-format; fall back to the raw
+      # (possibly relative) --git-common-dir and normalize it against $r.
+      if [[ -z "$key" ]]; then
+        local raw_gcd
+        raw_gcd="$(git -C "$r" rev-parse --git-common-dir 2>/dev/null)"
+        if [[ -n "$raw_gcd" ]]; then
+          case "$raw_gcd" in
+            /*) key="$raw_gcd" ;;
+            *) key="${r}/${raw_gcd}" ;;
+          esac
+        fi
+      fi
+    fi
+    [[ -z "$key" ]] && key="$r"
+
+    already=0
+    local sk
+    for sk in "${seen_keys[@]+"${seen_keys[@]}"}"; do
+      [[ "$sk" == "$key" ]] && { already=1; break; }
+    done
+    if [[ "$already" -eq 0 ]]; then
+      seen_keys+=("$key")
+      out+=("$r")
+    fi
+  done
+
+  [[ "${#out[@]}" -eq 0 ]] && return 0
+  printf '%s\n' "${out[@]}"
 }
 
 check_budget_active_plans() {
@@ -1374,6 +1531,7 @@ run_quick_checks() {
   check_byte_budget "$live_home"
   check_manifest "$live_home" "$repo_root"
   check_manifest_freshness "$live_home" "$repo_root"
+  check_wave_f_f2_docs "$live_home" "$repo_root"
   check_wave_e_surfaces "$live_home" "$repo_root"
   check_heartbeat_task "$live_home" "$repo_root"
   check_untracked_dirt_ignore_rule "$live_home" "$repo_root"
@@ -1738,6 +1896,89 @@ MANIFEST_EOF
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "manifest-freshness-green" 0 "$RC" "" "$OUT"
 
+  # ---- Check: wave-f-f2-docs Predicate 1 (harness-architecture.md drift).
+  # RED fixture — a real gen-architecture-doc.sh copy + a hand-edited
+  # committed doc that no longer matches a fresh regen from manifest.json. ----
+  D=$(_scenario_dir f2p1-red)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/docs"
+  cp "$SCRIPT_DIR/../scripts/gen-architecture-doc.sh" "$D/repo/adapters/claude-code/scripts/gen-architecture-doc.sh"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'F2MANIFEST_EOF'
+{"schema_version":1,"entries":[{"id":"a","kind":"gate","hooks":["a.sh"],"events":["precommit"],"blocking":true,"selftest":true,"wired_template":true,"honest_status":"x","budget_class":"none"}]}
+F2MANIFEST_EOF
+  ( cd "$D/repo" && bash adapters/claude-code/scripts/gen-architecture-doc.sh >/dev/null 2>&1 )
+  echo "hand-edited drift line" >> "$D/repo/docs/harness-architecture.md"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "wave-f-f2-docs-predicate1-red" 1 "$RC" "RED wave-f-f2-docs.*harness-architecture" "$OUT"
+
+  # ---- Check: wave-f-f2-docs Predicate 1 GREEN fixture — committed doc
+  # freshly regenerated, byte-identical to a re-run ----
+  D=$(_scenario_dir f2p1-green)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/docs"
+  cp "$SCRIPT_DIR/../scripts/gen-architecture-doc.sh" "$D/repo/adapters/claude-code/scripts/gen-architecture-doc.sh"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'F2MANIFEST_EOF'
+{"schema_version":1,"entries":[{"id":"a","kind":"gate","hooks":["a.sh"],"events":["precommit"],"blocking":true,"selftest":true,"wired_template":true,"honest_status":"x","budget_class":"none"}]}
+F2MANIFEST_EOF
+  ( cd "$D/repo" && bash adapters/claude-code/scripts/gen-architecture-doc.sh >/dev/null 2>&1 )
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "wave-f-f2-docs-predicate1-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: wave-f-f2-docs Predicate 2 (README freshness anchors). RED
+  # fixture — one of the five surfaces has a 100-day-old anchor, the rest
+  # fresh (today). Uses backdated `date` arithmetic, not a hardcoded
+  # calendar date, so this fixture never goes stale itself. ----
+  D=$(_scenario_dir f2p2-red)
+  _stamp_claim_honesty_green "$D"
+  _f2_today="$(date +%Y-%m-%d)"
+  _f2_stale_date="$(date -d '-100 days' +%Y-%m-%d 2>/dev/null || date -j -v-100d +%Y-%m-%d 2>/dev/null)"
+  mkdir -p "$D/repo/adapters/claude-code/attic" "$D/repo/evals" "$D/repo/neural-lace/workstreams-ui"
+  printf '# Repo\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today" > "$D/repo/README.md"
+  printf '# Adapter\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today" > "$D/repo/adapters/claude-code/README.md"
+  printf '# Attic\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_stale_date" > "$D/repo/adapters/claude-code/attic/README.md"
+  printf '# Evals\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today" > "$D/repo/evals/README.md"
+  printf '# UI\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today" > "$D/repo/neural-lace/workstreams-ui/README.md"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "wave-f-f2-docs-predicate2-stale-red" 1 "$RC" "RED wave-f-f2-docs.*STALE.*attic/README.md" "$OUT"
+
+  # ---- Check: wave-f-f2-docs Predicate 2 RED fixture — one surface
+  # missing its anchor entirely ----
+  D=$(_scenario_dir f2p2-noanchor-red)
+  _stamp_claim_honesty_green "$D"
+  _f2_today2="$(date +%Y-%m-%d)"
+  mkdir -p "$D/repo/adapters/claude-code/attic" "$D/repo/evals" "$D/repo/neural-lace/workstreams-ui"
+  printf '# Repo\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today2" > "$D/repo/README.md"
+  printf '# Adapter\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today2" > "$D/repo/adapters/claude-code/README.md"
+  printf '# Attic (no anchor)\n' > "$D/repo/adapters/claude-code/attic/README.md"
+  printf '# Evals\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today2" > "$D/repo/evals/README.md"
+  printf '# UI\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today2" > "$D/repo/neural-lace/workstreams-ui/README.md"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "wave-f-f2-docs-predicate2-noanchor-red" 1 "$RC" "RED wave-f-f2-docs.*NO-ANCHOR.*attic/README.md" "$OUT"
+
+  # ---- Check: wave-f-f2-docs Predicate 2 GREEN fixture — all five anchors
+  # present and fresh (today) ----
+  D=$(_scenario_dir f2p2-green)
+  _stamp_claim_honesty_green "$D"
+  _f2_today3="$(date +%Y-%m-%d)"
+  mkdir -p "$D/repo/adapters/claude-code/attic" "$D/repo/evals" "$D/repo/neural-lace/workstreams-ui"
+  printf '# Repo\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today3" > "$D/repo/README.md"
+  printf '# Adapter\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today3" > "$D/repo/adapters/claude-code/README.md"
+  printf '# Attic\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today3" > "$D/repo/adapters/claude-code/attic/README.md"
+  printf '# Evals\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today3" > "$D/repo/evals/README.md"
+  printf '# UI\n<!-- last-verified: %s (doctor-checked) -->\n' "$_f2_today3" > "$D/repo/neural-lace/workstreams-ui/README.md"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "wave-f-f2-docs-predicate2-green" 0 "$RC" "" "$OUT"
+
   # ---- Check: heartbeat-task (NL-FINDING-022, item 6). Only meaningfully
   # exercisable on a machine with schtasks (Windows); elsewhere it WARNs
   # (skip) and this scenario is a no-op pass either way — a machine with
@@ -1960,12 +2201,80 @@ fs.writeFileSync(p, JSON.stringify(m));
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "budget-active-plans-green" 0 "$RC" "" "$OUT"
 
+  # ---- Check: budget-active-plans WORKTREE DOUBLE-COUNT fixture (verifier
+  # live-probe finding: doctor run from a linked worktree double-counts
+  # ACTIVE plans because repo_root and <live_home>/local/nl-repo-path
+  # resolve to two different absolute paths for the same repository) — a
+  # real git repo with a real LINKED WORKTREE of itself, registered via
+  # `git worktree add`. repo_root is pointed at the worktree; live/local/
+  # nl-repo-path points at the main repo — the exact shape a doctor run
+  # FROM a linked worktree produces (resolve_repo_root() resolves the
+  # worktree's own toplevel; nl-repo-path names the main checkout). Both
+  # sides carry the SAME docs/plans/ (2 ACTIVE plans; committed to the repo
+  # so the worktree checkout sees them too — `git worktree add` checks out
+  # tracked files, it does not duplicate them on disk as separate content).
+  # Pre-fix: naive path-string de-dup treats these as two distinct roots
+  # and double-counts -> 4 total (over budget 3) -> false RED. Post-fix:
+  # git-common-dir de-dup collapses them to ONE counted root -> 2 total
+  # (under budget) -> GREEN. ----
+  D=$(_scenario_dir bap-wt-dedup-green)
+  _stamp_claim_honesty_green "$D"
+  (
+    cd "$D/repo" \
+      && git init --quiet && git config core.hooksPath "" \
+      && git config user.email t@example.com && git config user.name T \
+      && mkdir -p docs/plans \
+      && printf '# Plan 1\nStatus: ACTIVE\n' > docs/plans/p1.md \
+      && printf '# Plan 2\nStatus: ACTIVE\n' > docs/plans/p2.md \
+      && git add docs/plans && git commit --quiet -m "seed plans" \
+      && git worktree add --quiet -b bap-wt-dedup-green-branch "$D/linked-worktree" >/dev/null 2>&1
+  ) >/dev/null 2>&1
+  mkdir -p "$D/live/local"
+  printf '%s\n' "$D/repo" > "$D/live/local/nl-repo-path"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # Point repo_root (NL_REPO_ROOT / positional arg) at the LINKED worktree,
+  # not $D/repo — this reproduces "doctor invoked from the worktree" while
+  # nl-repo-path (above) still names the main checkout, matching the two
+  # divergent-path, same-repo shape the fix targets.
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/linked-worktree" bash "$SELF_TEST_HOOK" --quick "$D/linked-worktree" 2>&1)"; RC=$?
+  _assert "budget-active-plans-worktree-dedup-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: budget-active-plans TWO GENUINELY DISTINCT REPOS still sum
+  # correctly (proves the git-common-dir de-dup is not overly permissive —
+  # it must NOT collapse two unrelated repos just because both happen to be
+  # git repos). repo_root = repo-one (2 ACTIVE plans); nl-repo-path =
+  # repo-two (2 ACTIVE plans, its own separate .git). True total = 4 (over
+  # budget 3) across 2 distinct roots -> RED. ----
+  D=$(_scenario_dir bap-2repos-red)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo-two/docs/plans"
+  (
+    cd "$D/repo" && git init --quiet && git config core.hooksPath "" \
+      && git config user.email t@example.com && git config user.name T
+  ) >/dev/null 2>&1
+  (
+    cd "$D/repo-two" && git init --quiet && git config core.hooksPath "" \
+      && git config user.email t@example.com && git config user.name T
+  ) >/dev/null 2>&1
+  mkdir -p "$D/repo/docs/plans"
+  printf '# Plan 1\nStatus: ACTIVE\n' > "$D/repo/docs/plans/p1.md"
+  printf '# Plan 2\nStatus: ACTIVE\n' > "$D/repo/docs/plans/p2.md"
+  printf '# Plan 1\nStatus: ACTIVE\n' > "$D/repo-two/docs/plans/p1.md"
+  printf '# Plan 2\nStatus: ACTIVE\n' > "$D/repo-two/docs/plans/p2.md"
+  mkdir -p "$D/live/local"
+  printf '%s\n' "$D/repo-two" > "$D/live/local/nl-repo-path"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-active-plans-two-distinct-repos-red" 1 "$RC" "RED budget-active-plans.*4 plans" "$OUT"
+
   # ---- Check: budget-worktrees-branches. RED fixture — a real throwaway
   # git repo with a stale (8-day-old, backdated commit) local branch with
-  # no upstream. Worktree count/age sub-check needs `git worktree add`
-  # which the doctor's own sandboxing doesn't otherwise exercise here, so
-  # this fixture targets the branch-staleness half (worktree count <= 6 /
-  # age is exercised implicitly — a single-worktree repo never trips it). ----
+  # no upstream. This fixture targets the branch-staleness half only; the
+  # worktree-age half (a real `git worktree add` with a backdated HEAD) is
+  # exercised separately by the bwb-age-red/bwb-age-green fixtures below —
+  # this was a previously-admitted gap (see git history) now closed. ----
   D=$(_scenario_dir bwb-red)
   _stamp_claim_honesty_green "$D"
   # Epoch form ("@<unix-ts> +0000"), not "8 days ago" — GIT_AUTHOR_DATE/
@@ -2003,6 +2312,52 @@ fs.writeFileSync(p, JSON.stringify(m));
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "budget-worktrees-branches-branch-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: budget-worktrees-branches WORKTREE-AGE RED fixture — a real
+  # git repo with a real LINKED WORKTREE (registered via `git worktree add`,
+  # not just a branch) whose HEAD commit is backdated >=7d via
+  # GIT_COMMITTER_DATE. This exercises the worktree age sub-check itself
+  # (the wt_path/HEAD loop over `git worktree list --porcelain` in
+  # check_budget_worktrees_branches), which the pre-existing bwb-red/
+  # bwb-green fixtures above admit (in their own comment) they never
+  # exercised — this fixture closes that gap. ----
+  D=$(_scenario_dir bwb-age-red)
+  _stamp_claim_honesty_green "$D"
+  (
+    _bwb_age_stale_ts=$(( $(date -u +%s) - 8 * 86400 )) \
+      && cd "$D/repo" \
+      && git init --quiet && git config core.hooksPath "" \
+      && git config user.email t@example.com && git config user.name T \
+      && echo x > f && git add f && git commit --quiet -m init \
+      && git worktree add --quiet -b stale-worktree-branch "$D/stale-worktree" >/dev/null 2>&1 \
+      && cd "$D/stale-worktree" \
+      && git config core.hooksPath "" \
+      && echo y > g && git add g \
+      && GIT_AUTHOR_DATE="@${_bwb_age_stale_ts} +0000" GIT_COMMITTER_DATE="@${_bwb_age_stale_ts} +0000" git commit --quiet -m stale-worktree-commit
+  ) >/dev/null 2>&1
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-worktrees-branches-age-red" 1 "$RC" "RED budget-worktrees-branches.*stale-worktree.*no commit in [89][0-9]*d" "$OUT"
+
+  # ---- Check: budget-worktrees-branches WORKTREE-AGE GREEN fixture — a
+  # real linked worktree with a fresh (just-made) commit; must NOT flag ----
+  D=$(_scenario_dir bwb-age-green)
+  _stamp_claim_honesty_green "$D"
+  (
+    cd "$D/repo" \
+      && git init --quiet && git config core.hooksPath "" \
+      && git config user.email t@example.com && git config user.name T \
+      && echo x > f && git add f && git commit --quiet -m init \
+      && git worktree add --quiet -b fresh-worktree-branch "$D/fresh-worktree" >/dev/null 2>&1 \
+      && cd "$D/fresh-worktree" \
+      && git config core.hooksPath "" \
+      && echo y > g && git add g && git commit --quiet -m fresh-worktree-commit
+  ) >/dev/null 2>&1
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-worktrees-branches-age-green" 0 "$RC" "" "$OUT"
 
   # ---- Check: new-gate-evidence-bar. RED fixture — an added_after >=
   # 2026-07 entry missing the full evidence bar ----
