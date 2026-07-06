@@ -4,18 +4,23 @@ Do not hand-edit: regenerate with `bash adapters/claude-code/scripts/manifest-ch
 
 | id | kind | doctrine | hooks | blocking | honest_status |
 |---|---|---|---|---|---|
+| acceptance-scenarios | pattern | [doctrine/acceptance-scenarios.md](acceptance-scenarios.md) | — | no | — |
 | agent-teams | gate | [doctrine/agent-teams.md](agent-teams.md) | task-completed-evidence-gate.sh, task-created-validator.sh, teammate-spawn-validator.sh | yes | — |
 | automation-modes | pattern | [doctrine/automation-modes.md](automation-modes.md) | — | no | — |
 | background-work-tracking | surfacer | [doctrine/background-work-tracking.md](background-work-tracking.md) | stalled-work-surfacer.sh | no | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | backlog-plan-atomicity | gate | [doctrine/planning.md](planning.md) | backlog-plan-atomicity.sh | yes | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
 | bug-persistence | gate | [doctrine/testing.md](testing.md) | bug-persistence-gate.sh | yes | Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact. |
+| claims | pattern | [doctrine/claims.md](claims.md) | — | no | — |
 | claude-md-hygiene | gate | [doctrine/harness-dev.md](harness-dev.md) | claude-md-hygiene-gate.sh | yes | — |
 | code-conventions | convention | [doctrine/code-conventions.md](code-conventions.md) | — | no | — |
+| completion-criteria | pattern | [doctrine/completion-criteria.md](completion-criteria.md) | — | no | — |
 | comprehension-gate | pattern | [doctrine/comprehension-gate.md](comprehension-gate.md) | — | no | — |
 | consolidation-discipline | pattern | [doctrine/consolidation-discipline.md](consolidation-discipline.md) | — | no | — |
 | constitution | pattern | [rules/constitution.md](../rules/constitution.md) | — | no | — |
 | context-watermark | writer | — | context-watermark.sh | no | E.9a early-warning context watermark; wired PostToolUse at §E.W. |
 | cross-repo-drift-gate | gate | [doctrine/git.md](git.md) | cross-repo-drift-postpush-gate.sh | no | — |
+| cross-repo-nl-touch-warn | surfacer | — | cross-repo-nl-touch-warn.sh | no | — |
+| customer-facing-review | pattern | [doctrine/customer-facing-review.md](customer-facing-review.md) | — | no | — |
 | decision-context-emitters | writer | [doctrine/decision-context.md](decision-context.md) | decision-context-pending-surfacer.sh, decision-context-reply-emit.sh | no | replay retired to attic (fence retirement, D.4/D.5); pending-surfacer dispatched via surfacer-pack; reply-emit wired at UserPromptSubmit. |
 | decisions-index | gate | [doctrine/planning.md](planning.md) | decisions-index-gate.sh | yes | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
 | definition-on-first-use | gate | [doctrine/definition-on-first-use.md](definition-on-first-use.md) | definition-on-first-use-gate.sh | no | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
@@ -34,9 +39,12 @@ Do not hand-edit: regenerate with `bash adapters/claude-code/scripts/manifest-ch
 | findings-ledger | gate | [doctrine/findings-ledger.md](findings-ledger.md) | findings-ledger-schema-gate.sh | yes | — |
 | friction-reflexion | pattern | [doctrine/friction-reflexion.md](friction-reflexion.md) | — | no | — |
 | frontend-conventions | convention | [doctrine/frontend-conventions.md](frontend-conventions.md) | — | no | — |
+| gate-demotion | pattern | — | — | no | — |
 | gate-respect | pattern | [doctrine/gate-respect.md](gate-respect.md) | — | no | — |
+| gen-architecture-doc | writer | — | — | no | scripts/gen-architecture-doc.sh (F.2) -- regenerates docs/harness-architecture.md from manifest.json; --check is the doctor drift predicate (tests/fixtures/wave-f/F.2/doctor-predicate.md); not event-wired (manual + doctor-invoked). |
 | gh-account-hint | surfacer | [doctrine/git.md](git.md) | gh-account-blindness-hint.sh | no | — |
 | git-freshness | surfacer | [doctrine/git.md](git.md) | session-start-git-freshness.sh | no | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
+| harness-changelog | writer | — | — | no | scripts/harness-changelog.sh (F.2b) -- machine-wide 'what's new' ledger + --digest-line consumed by session-start-digest.sh's feed 15; not event-wired. |
 | harness-doctor | surfacer | [doctrine/harness-dev.md](harness-dev.md) | harness-doctor.sh | no | diagnostic tool — invoked on demand (harness-doctor.sh --quick); chain wiring is a post-Wave-D decision |
 | harness-hygiene-scan | gate | [doctrine/harness-dev.md](harness-dev.md) | harness-hygiene-scan.sh | yes | invoked via pre-commit-gate.sh chain and manual --full-tree runs; not directly wired in settings.json.template |
 | harness-kpis | writer | — | — | no | scripts/harness-kpis.sh — weekly KPI report from the signal ledger (E.5); scheduled-task registration documented, not a hook. |
@@ -48,12 +56,14 @@ Do not hand-edit: regenerate with `bash adapters/claude-code/scripts/manifest-ch
 | nl-issue-capture-loop | pattern | — | — | no | scripts/nl-issue.sh + skill (E.8) — cross-project capture; not event-wired. |
 | no-test-skip | gate | [doctrine/testing.md](testing.md) | no-test-skip-gate.sh | yes | — |
 | observed-errors-first | gate | [doctrine/observed-errors-first.md](observed-errors-first.md) | observed-errors-gate.sh | no | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
+| orchestrator-pattern | pattern | [doctrine/orchestrator-pattern.md](orchestrator-pattern.md) | — | no | — |
 | outcome-evidence | gate | [doctrine/testing.md](testing.md) | outcome-evidence-gate.sh | no | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
 | parallel-dev-migration-naming | gate | [doctrine/parallel-dev-discipline.md](parallel-dev-discipline.md) | migration-naming-gate.sh | yes | — |
 | plan-deletion-protection | gate | [doctrine/planning.md](planning.md) | plan-deletion-protection.sh | yes | — |
 | plan-edit-validator | gate | [doctrine/planning.md](planning.md) | plan-edit-validator.sh | yes | — |
 | plan-lifecycle | writer | [doctrine/planning.md](planning.md) | plan-auto-closure.sh, plan-lifecycle.sh, plan-status-archival-sweep.sh | no | plan-status-archival-sweep.sh dispatched via session-start-surfacer-pack.sh since D.5; plan-auto-closure.sh/plan-lifecycle.sh fire on PostToolUse as before. |
 | plan-reviewer | gate | [doctrine/planning.md](planning.md) | plan-reviewer.sh | yes | invoked via pre-commit-gate.sh chain and plan-edit flows; not directly wired in settings.json.template |
+| pr-health-snapshot | pattern | [doctrine/pr-health-snapshot.md](pr-health-snapshot.md) | — | no | — |
 | pr-template-inline | gate | [doctrine/planning.md](planning.md) | pr-template-inline-gate.sh | no | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
 | prd-validity | gate | [doctrine/prd-validity.md](prd-validity.md) | prd-validity-gate.sh | no | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
 | pre-commit-chain | gate | — | pre-commit-gate.sh | yes | — |
