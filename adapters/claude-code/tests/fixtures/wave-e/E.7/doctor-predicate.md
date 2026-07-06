@@ -89,7 +89,31 @@ read: `session-resumer.sh` appends one JSON line per action to
 `~/.claude/state/resumer/digest-feed.jsonl`
 (`{"ts","session_id","event","detail"}`, event one of `classify-skip |
 resume-attempt | resume-unresumable | resume-fallback | backoff-wait |
-escalation`). E.1's digest should render a single feed line: count of
-`resume-attempt`/`resume-fallback` events in the last 24h + the most
-recent one's `detail`, tolerating the file's total absence (a quiet
-harness with nothing to resume never creates it).
+escalation | storm-cap-queued | would-have-resumed | tombstone`). E.1's
+digest should render a single feed line: count of `resume-attempt`/
+`resume-fallback` events in the last 24h + the most recent one's `detail`,
+tolerating the file's total absence (a quiet harness with nothing to resume
+never creates it).
+
+## Activation guardrails (E.7 activation preconditions, operator concern
+2026-07-06 — nl-issue ledger entry "E.7 ACTIVATION PRECONDITIONS")
+
+Before the orchestrator runs §E.W step 6 to register the scheduled task, it
+MUST register it in SHADOW MODE first (`RESUMER_SHADOW=1` in the `/TR`
+command — see `docs/runbooks/session-resumer.md`), observe >=2 days of
+`would-have-resumed` digest lines, and only then re-register without the
+env var to arm it. This is a rollout-process precondition, not a new doctor
+predicate: Check B above still only verifies the task is REGISTERED (it
+cannot distinguish shadow-registered from armed-registered from the task
+name alone, since `RESUMER_SHADOW` is baked into the `/TR` command string,
+not queryable via `schtasks /Query`'s summary output). An operator wanting
+to confirm shadow-vs-armed reads the task's actual `/TR` string:
+
+```bash
+MSYS_NO_PATHCONV=1 schtasks /Query /TN "NL-session-resumer" /V /FO LIST | grep -i "Task To Run"
+```
+
+Kill switch (documented fully in the runbook): `schtasks /Change /TN
+"NL-session-resumer" /DISABLE`. Tombstone verb: `session-resumer.sh --never
+<session-id>` (writes `~/.claude/state/session-resumer/never/<session-id>`).
+Storm-cap tuning: `RESUMER_STORM_CAP` env var (default 2/hour, 0=uncapped).

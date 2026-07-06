@@ -106,20 +106,101 @@
 # doctor-predicate.md fragment so E.10 can grep-verify the wiring exists.
 #
 # ============================================================
+# ACTIVATION GUARDRAILS (E.7 activation preconditions, operator concern
+# 2026-07-06 — nl-issue ledger entry "E.7 ACTIVATION PRECONDITIONS";
+# BINDING before the scheduled task is armed for real resumes)
+# ============================================================
+#
+# (1) STORM CAP — machine-wide max resume/fallback ACTIONS per rolling hour
+#     (default 2, RESUMER_STORM_CAP override). A reboot can leave many dead
+#     transcripts at once; without a cap every one of them fires a `claude`
+#     process in the same watchdog pass. Classification still runs for every
+#     candidate every pass (nothing is skipped-and-forgotten); once the cap
+#     for the current rolling hour is reached, remaining resume-eligible
+#     sessions are QUEUED oldest-transcript-first and logged to the digest
+#     feed as event "storm-cap-queued" with detail "resume queued (storm
+#     cap)" — they get picked up on a LATER pass once the window has room
+#     (the queue is not persisted structure, it re-derives every pass from
+#     whatever is still resume-eligible; "oldest first" = transcript mtime
+#     ascending). Cap state: one timestamp-per-action append log at
+#     `~/.claude/state/resumer/storm-cap.log` (one epoch-seconds line per
+#     resume/fallback action taken); the count of lines within the last
+#     3600s IS the rolling-hour count. RESUMER_STORM_CAP=0 disables the cap
+#     (unlimited — escape hatch, still logged if used).
+#
+# (2) TOMBSTONES — a session that was deliberately ended (not crashed) is
+#     marked never-resume via a marker FILE (not a marker line in a shared
+#     log, so a single `rm` retracts it) at:
+#       ~/.claude/state/session-resumer/never/<session-id>
+#     New verb: `session-resumer.sh --never <session-id>` touches that file
+#     (idempotent; mkdir -p the dir first). The scan skips ANY transcript
+#     whose session id has a tombstone, logging "classify-skip" with detail
+#     "tombstoned — never-resume marker present".
+#
+#     Archived-session marker (investigated): the CCD session store exposes
+#     archival only via the `archive_session` MCP tool call, not as a
+#     mechanically-discoverable on-disk file this bash script can read —
+#     `~/.claude/projects/<slug>/<session-id>.jsonl` gains no archived-flag
+#     sibling file and no in-JSONL marker on archival (verified by inspecting
+#     a live projects dir: sessions have only their own `.jsonl`, plus for
+#     some IDs a same-named directory holding `subagents/`+`workflows/`
+#     subdirs — unrelated to archival status). So: ARCHIVING AND TOMBSTONING
+#     ARE NOT THE SAME THING and this script does NOT infer one from the
+#     other. `--never <id>` is the one explicit channel; if a session is
+#     archived through the UI/tool and the operator also wants the watchdog
+#     to leave it alone forever, they run `--never` on it too.
+#
+# (3) LIVENESS GUARD — skip any session whose repo has a FRESH interactive-
+#     session-lock signal (the B.12 pattern in hooks/lib/interactive-
+#     session-lock.sh, also consumed by scripts/sync-pt-to-personal.sh):
+#     either the explicit `<repo>/.claude/state/interactive-session.lock`
+#     file, or a fresh transcript under that repo's own Claude-projects slug
+#     dir, both within ISL_WINDOW_MIN (default 15) minutes. This is the
+#     "open-but-idle interactive window" false-positive guard: a human may
+#     be mid-thought in a DIFFERENT session on the same repo when this one
+#     went stale, and headlessly injecting a resume nudge into that repo
+#     while a person is actively looking at it is exactly the class of harm
+#     B.12 exists to prevent. Classified skip, logged "classify-skip" with
+#     detail "liveness guard: interactive session live on <repo-root>".
+#     Resolved repo root: the transcript's own `cwd` field (same field
+#     perform_resume already reads for the fallback path).
+#
+# (4) SHADOW MODE — RESUMER_SHADOW=1 (env var, distinct from --self-test's
+#     HARNESS_SELFTEST=1 dry-run plumbing) runs classification AND every
+#     guardrail (storm cap / tombstone / liveness) exactly as in a live
+#     pass, but the final resume/fallback command is NEVER executed —
+#     instead ONE digest-feed line is appended per would-be action:
+#       event="would-have-resumed", detail="would-have-resumed <session-id>
+#       (<reason>)"
+#     No backoff state is written in shadow mode (a shadow pass must be
+#     re-runnable indefinitely without mutating the real backoff schedule
+#     that governs live behavior later). This is the mode the scheduled
+#     task registers with FIRST — see docs/runbooks/session-resumer.md for
+#     the shadow -> armed rollout procedure and the kill switch.
+#
+# (5) KILL SWITCH — documented in docs/runbooks/session-resumer.md: what
+#     the watchdog does, the shadow->armed rollout, the one-liner to
+#     disable the scheduled task (`schtasks /Change /TN "NL-session-
+#     resumer" /DISABLE`), the `--never` tombstone verb, and storm-cap
+#     tuning (RESUMER_STORM_CAP).
+#
+# ============================================================
 # SANDBOXING (HARNESS_SELFTEST)
 # ============================================================
 #
-# HARNESS_SELFTEST=1 routes ALL state (backoff files, digest feed) through
-# signal-ledger.sh's existing sandbox convention PLUS this script's own
-# RESUMER_STATE_DIR override (mirrors local-edit-gate.sh / plan-edit-
-# validator.sh's per-lib override pattern). The self-test NEVER invokes
-# the real `claude` binary — resume/fallback command construction is
-# captured into RESUMER_DRYRUN_LOG instead of exec'd, exactly like a
-# "would run: <cmd>" trace.
+# HARNESS_SELFTEST=1 routes ALL state (backoff files, digest feed, storm-cap
+# log, tombstone dir) through signal-ledger.sh's existing sandbox convention
+# PLUS this script's own RESUMER_STATE_DIR override (mirrors local-edit-
+# gate.sh / plan-edit-validator.sh's per-lib override pattern). The self-test
+# NEVER invokes the real `claude` binary — resume/fallback command
+# construction is captured into RESUMER_DRYRUN_LOG instead of exec'd, exactly
+# like a "would run: <cmd>" trace.
 #
 # Usage:
-#   session-resumer.sh                 # live scan + resume pass
-#   session-resumer.sh --self-test      # exercise fixtures, never invokes claude
+#   session-resumer.sh                    # live scan + resume pass
+#   session-resumer.sh --self-test         # exercise fixtures, never invokes claude
+#   session-resumer.sh --never <session-id>  # tombstone: never resume this id
+#   RESUMER_SHADOW=1 session-resumer.sh   # classify + guardrails, log would-have, never exec
 #
 # Bash 3.2 / Git-Bash on Windows portable (no mapfile, no declare -A).
 
@@ -131,6 +212,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 source "$SCRIPT_DIR/../hooks/lib/signal-ledger.sh" 2>/dev/null || true
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/../hooks/lib/nl-paths.sh" 2>/dev/null || true
+# shellcheck disable=SC1091
+source "${ISL_LIB_PATH:-$SCRIPT_DIR/../hooks/lib/interactive-session-lock.sh}" 2>/dev/null || true
 
 RESUME_NUDGE="re-read SCRATCHPAD.md + NEEDS-YOU.md, verify branch state, continue the in-flight task"
 
@@ -177,6 +260,135 @@ _resumer_projects_root() {
     return 0
   fi
   printf '%s/.claude/projects' "${HOME:-$PWD}"
+}
+
+# ----------------------------------------------------------------------
+# _resumer_tombstone_dir — resolve the never-resume marker directory
+# (activation guardrail 2: TOMBSTONES). Sandboxed the same way as the
+# backoff state dir (RESUMER_STATE_DIR override wins; else derives from it
+# so a --self-test run's tombstones never leak into production).
+# ----------------------------------------------------------------------
+_resumer_tombstone_dir() {
+  printf '%s/never' "$(_resumer_state_dir)"
+}
+
+# ----------------------------------------------------------------------
+# _resumer_tombstone_path <session_id>
+# ----------------------------------------------------------------------
+_resumer_tombstone_path() {
+  printf '%s/%s' "$(_resumer_tombstone_dir)" "$1"
+}
+
+# ----------------------------------------------------------------------
+# is_tombstoned <session_id> — 0 (true) if a never-resume marker exists.
+# ----------------------------------------------------------------------
+is_tombstoned() {
+  [[ -f "$(_resumer_tombstone_path "$1")" ]]
+}
+
+# ----------------------------------------------------------------------
+# tombstone_session <session_id> — the `--never <id>` verb: creates the
+# marker (idempotent; mkdir -p first). Always returns 0 unless the dir
+# genuinely cannot be created.
+# ----------------------------------------------------------------------
+tombstone_session() {
+  local sid="$1" dir path
+  [[ -z "$sid" ]] && { echo "session-resumer: --never requires a session-id" >&2; return 1; }
+  dir="$(_resumer_tombstone_dir)"
+  mkdir -p "$dir" 2>/dev/null || { echo "session-resumer: could not create tombstone dir $dir" >&2; return 1; }
+  path="$(_resumer_tombstone_path "$sid")"
+  : > "$path" 2>/dev/null || { echo "session-resumer: could not write tombstone $path" >&2; return 1; }
+  emit_action "$sid" "tombstone" "never-resume marker created (--never)"
+  echo "session-resumer: tombstoned $sid -> $path"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# _resumer_storm_cap_log — resolve the storm-cap action-timestamp log path
+# (activation guardrail 1: STORM CAP). One epoch-seconds line per
+# resume/fallback action taken; sandboxed the same way as the backoff dir.
+# ----------------------------------------------------------------------
+_resumer_storm_cap_log() {
+  printf '%s/storm-cap.log' "$(_resumer_state_dir)"
+}
+
+# ----------------------------------------------------------------------
+# storm_cap_count_last_hour — count of storm-cap-log lines with epoch
+# timestamp within the last 3600s of now. Prunes older lines from the log
+# on every call (keeps the file from growing unbounded) — best-effort,
+# never fails the caller.
+# ----------------------------------------------------------------------
+storm_cap_count_last_hour() {
+  local path now cutoff
+  path="$(_resumer_storm_cap_log)"
+  [[ -f "$path" ]] || { echo 0; return 0; }
+  now=$(date -u +%s)
+  cutoff=$((now - 3600))
+  local kept
+  kept="$(awk -v cutoff="$cutoff" '$1 ~ /^[0-9]+$/ && $1 >= cutoff' "$path" 2>/dev/null)"
+  # Rewrite the log pruned to just the kept (recent) lines — best-effort.
+  if [[ -n "$kept" ]]; then
+    printf '%s\n' "$kept" > "${path}.tmp$$" 2>/dev/null && mv "${path}.tmp$$" "$path" 2>/dev/null || true
+  else
+    : > "$path" 2>/dev/null || true
+  fi
+  if [[ -z "$kept" ]]; then
+    echo 0
+  else
+    printf '%s\n' "$kept" | grep -c '^[0-9]'
+  fi
+}
+
+# ----------------------------------------------------------------------
+# storm_cap_record_action — append one epoch-seconds line marking a
+# resume/fallback action was just taken (called ONLY on the live/dryrun
+# action path, never in shadow mode — shadow mode never consumes the cap).
+# ----------------------------------------------------------------------
+storm_cap_record_action() {
+  local path
+  path="$(_resumer_storm_cap_log)"
+  mkdir -p "$(dirname "$path")" 2>/dev/null || true
+  date -u +%s >> "$path" 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------
+# storm_cap_limit — echoes the configured cap (RESUMER_STORM_CAP override,
+# default 2). 0 means uncapped.
+# ----------------------------------------------------------------------
+storm_cap_limit() {
+  printf '%s' "${RESUMER_STORM_CAP:-2}"
+}
+
+# ----------------------------------------------------------------------
+# storm_cap_has_room — 0 (true) if another action can be taken within the
+# current rolling hour, given the configured cap. A cap of 0 means
+# unlimited (always has room).
+# ----------------------------------------------------------------------
+storm_cap_has_room() {
+  local cap
+  cap="$(storm_cap_limit)"
+  [[ "$cap" -eq 0 ]] && return 0
+  local count
+  count="$(storm_cap_count_last_hour)"
+  [[ "$count" -lt "$cap" ]]
+}
+
+# ----------------------------------------------------------------------
+# liveness_guard_live <transcript> — 0 (true) if the transcript's own repo
+# (its `cwd` field) has a FRESH interactive-session-lock signal (activation
+# guardrail 3: LIVENESS GUARD, the B.12 pattern). Returns 1 (false, i.e.
+# "no live interactive window, safe to consider resuming") whenever the
+# ISL lib is unavailable, the transcript has no cwd, or the check itself
+# fails — never blocks the scan due to a missing dependency.
+# ----------------------------------------------------------------------
+liveness_guard_live() {
+  local transcript="$1"
+  command -v isl_live_session >/dev/null 2>&1 || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  local cwd
+  cwd="$(jq -r '.cwd? // empty' "$transcript" 2>/dev/null | head -1)"
+  [[ -z "$cwd" ]] && return 1
+  isl_live_session "$cwd"
 }
 
 # ----------------------------------------------------------------------
@@ -341,20 +553,46 @@ has_active_plan_activity() {
 }
 
 # ----------------------------------------------------------------------
-# classify_transcript <transcript> [<repo_root>]
+# classify_transcript <transcript> [<repo_root>] [<session_id>]
 #
 # Sets CLASSIFY_VERDICT (resume|skip), CLASSIFY_REASON (one-line detail).
+#
+# session_id is optional (defaults to the transcript's basename minus
+# .jsonl, matching how scan_and_resume derives it) — passed explicitly so
+# --self-test scenarios that use ad-hoc fixture paths still get correct
+# tombstone/liveness-guard behavior keyed on the ACTUAL id under test.
 # ----------------------------------------------------------------------
 CLASSIFY_VERDICT=""
 CLASSIFY_REASON=""
 
 classify_transcript() {
-  local transcript="$1" repo_root="${2:-}"
+  local transcript="$1" repo_root="${2:-}" sid="${3:-}"
   CLASSIFY_VERDICT="skip"
   CLASSIFY_REASON=""
 
   if [[ ! -f "$transcript" ]]; then
     CLASSIFY_REASON="transcript missing"
+    return 0
+  fi
+
+  [[ -z "$sid" ]] && sid="$(basename "$transcript" .jsonl)"
+
+  # Guardrail 2: TOMBSTONES — a deliberately-never-resume session is
+  # skipped before any other signal is even computed.
+  if is_tombstoned "$sid"; then
+    CLASSIFY_VERDICT="skip"
+    CLASSIFY_REASON="tombstoned — never-resume marker present"
+    return 0
+  fi
+
+  # Guardrail 3: LIVENESS GUARD — an interactive session is live on this
+  # transcript's own repo right now; never headlessly nudge into a tree a
+  # human may be actively looking at.
+  if liveness_guard_live "$transcript"; then
+    local live_cwd
+    live_cwd="$(command -v jq >/dev/null 2>&1 && jq -r '.cwd? // empty' "$transcript" 2>/dev/null | head -1)"
+    CLASSIFY_VERDICT="skip"
+    CLASSIFY_REASON="liveness guard: interactive session live on ${live_cwd:-<unknown repo>}"
     return 0
   fi
 
@@ -516,6 +754,34 @@ perform_resume() {
   local cmd
   cmd="$(build_resume_command "$sid")"
 
+  # Guardrail 4: SHADOW MODE — classification + every guardrail above
+  # already ran for real; log what WOULD happen and stop. No backoff state
+  # is written (a shadow pass must be safely re-runnable indefinitely) and
+  # no storm-cap slot is consumed (shadow mode never contends with live
+  # resume traffic for the cap). Checked before the storm cap itself so a
+  # shadow pass's digest line always reflects "this session would have
+  # been resumed", independent of how much of the live cap happens to be
+  # free at the moment the shadow pass runs.
+  if [[ "${RESUMER_SHADOW:-0}" == "1" ]]; then
+    emit_action "$sid" "would-have-resumed" "would-have-resumed ${sid} (${reason})"
+    return 0
+  fi
+
+  # Guardrail 1: STORM CAP — if the rolling-hour cap is already spent,
+  # queue this session (oldest-transcript-first ordering is achieved by
+  # scan_and_resume iterating transcripts in mtime-ascending order before
+  # calling here — see scan_and_resume) rather than firing another
+  # `claude` process. Logged, re-evaluated next pass; no backoff state
+  # written (this is not a failure, just a deferral).
+  if ! storm_cap_has_room; then
+    emit_action "$sid" "storm-cap-queued" "resume queued (storm cap); ${reason}"
+    return 0
+  fi
+  # Committed to taking an action this pass — record it against the
+  # rolling-hour cap BEFORE dispatching, whether via the self-test dryrun
+  # path or the live path (both count identically toward the cap).
+  storm_cap_record_action
+
   if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
     printf '%s\n' "$cmd" >> "${RESUMER_DRYRUN_LOG:-/dev/null}" 2>/dev/null || true
     local rc="${RESUMER_SELFTEST_RESUME_RC:-0}"
@@ -563,6 +829,13 @@ perform_resume() {
 # ----------------------------------------------------------------------
 # scan_and_resume — the live entry point: enumerate transcripts under
 # ~/.claude/projects/*/, filter to last-48h mtime, classify, act.
+#
+# Candidates are processed OLDEST-TRANSCRIPT-MTIME-FIRST across the WHOLE
+# scan (not just within one project dir) so that when the storm cap (E.7
+# activation guardrail 1) is exhausted mid-pass, the sessions that get
+# queued are consistently the newer-mtime ones — a stable, predictable
+# "oldest first" ordering rather than an accident of directory iteration
+# order.
 # ----------------------------------------------------------------------
 scan_and_resume() {
   local projects_root repo_root
@@ -574,22 +847,35 @@ scan_and_resume() {
   now=$(date -u +%s)
   cutoff=$((now - 48*3600))
 
-  local proj_dir f mtime sid
+  # Build a "mtime<TAB>path" list of in-window transcripts, then sort
+  # numerically ascending on mtime (oldest first) before acting on any of
+  # them — portable (no mapfile/declare -A; bash 3.2 / Git-Bash safe).
+  local proj_dir f mtime sid list_file
+  list_file="$(mktemp 2>/dev/null || printf '%s/resumer-scan.%s' "${TMPDIR:-/tmp}" "$$")"
+  : > "$list_file"
   for proj_dir in "$projects_root"/*/; do
     [[ -d "$proj_dir" ]] || continue
     for f in "$proj_dir"*.jsonl; do
       [[ -f "$f" ]] || continue
       mtime=$(mtime_epoch "$f")
       [[ "$mtime" -lt "$cutoff" ]] && continue
-      sid="$(basename "$f" .jsonl)"
-      classify_transcript "$f" "$repo_root"
-      if [[ "$CLASSIFY_VERDICT" == "skip" ]]; then
-        emit_action "$sid" "classify-skip" "$CLASSIFY_REASON"
-      else
-        perform_resume "$sid" "$f" "$CLASSIFY_REASON" "$repo_root"
-      fi
+      printf '%s\t%s\n' "$mtime" "$f" >> "$list_file"
     done
   done
+
+  local line
+  while IFS=$'\t' read -r mtime f; do
+    [[ -z "$f" ]] && continue
+    sid="$(basename "$f" .jsonl)"
+    classify_transcript "$f" "$repo_root" "$sid"
+    if [[ "$CLASSIFY_VERDICT" == "skip" ]]; then
+      emit_action "$sid" "classify-skip" "$CLASSIFY_REASON"
+    else
+      perform_resume "$sid" "$f" "$CLASSIFY_REASON" "$repo_root"
+    fi
+  done < <(sort -n -k1,1 "$list_file" 2>/dev/null)
+
+  rm -f "$list_file" 2>/dev/null || true
 }
 
 # ============================================================
@@ -606,8 +892,15 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   export SIGNAL_LEDGER_PATH="$TMP/ledger.jsonl"
   export RESUMER_STATE_DIR="$TMP/resumer-state"
   export RESUMER_DRYRUN_LOG="$TMP/dryrun.log"
-  mkdir -p "$RESUMER_STATE_DIR"
+  # Sandbox the ISL (interactive-session-lock) lib's own state too — this
+  # script now sources it for the LIVENESS GUARD (activation guardrail 3),
+  # and its self-test scenarios below construct fixture liveness signals
+  # that must never touch the real ~/.claude/projects or ~/.claude/logs.
+  export ISL_PROJECTS_ROOT="$TMP/isl-projects"
+  export ISL_LOG_FILE="$TMP/isl-refusal.log"
+  mkdir -p "$RESUMER_STATE_DIR" "$ISL_PROJECTS_ROOT"
   unset CLAUDE_CODE_SESSION_ID
+  unset RESUMER_SHADOW
 
   FIXDIR_SRC="$SCRIPT_DIR/../tests/fixtures/resumer"
   # Work on COPIES under TMP so the self-test never mutates the checked-in
@@ -648,7 +941,7 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   # ------------------------------------------------------------
   echo "Scenario 1: dead-429 classifies resume; resume command asserted verbatim"
   : > "$RESUMER_DRYRUN_LOG"
-  rm -f "$RESUMER_STATE_DIR"/*.json
+  rm -f "$RESUMER_STATE_DIR"/*.json "$RESUMER_STATE_DIR"/storm-cap.log
   classify_transcript "$FIXDIR/dead-429.jsonl" ""
   if [[ "$CLASSIFY_VERDICT" == "resume" ]]; then
     ok "dead-429 classifies as resume"
@@ -703,7 +996,7 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   # Scenario 5: backoff arithmetic — 2nd failure -> 15 min wait.
   # ------------------------------------------------------------
   echo "Scenario 5: backoff arithmetic (2nd failure -> 15min)"
-  rm -f "$RESUMER_STATE_DIR"/backoff-sess.json
+  rm -f "$RESUMER_STATE_DIR"/backoff-sess.json "$RESUMER_STATE_DIR"/storm-cap.log
   : > "$RESUMER_DRYRUN_LOG"
   now=$(date -u +%s)
   # Seed state as if 1 attempt already happened, eligible now.
@@ -727,7 +1020,7 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   # no resume command constructed.
   # ------------------------------------------------------------
   echo "Scenario 6: max-attempts cap (6th eligible -> escalation, no command)"
-  rm -f "$RESUMER_STATE_DIR"/capped-sess.json
+  rm -f "$RESUMER_STATE_DIR"/capped-sess.json "$RESUMER_STATE_DIR"/storm-cap.log
   : > "$RESUMER_DRYRUN_LOG"
   write_backoff_state "capped-sess" 5 "$(date -u +%s)" "resume-attempt"
   before_lines=$(wc -l < "$RESUMER_DRYRUN_LOG" 2>/dev/null | tr -d ' ')
@@ -749,7 +1042,7 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   # Scenario 7: unresumable --resume error triggers fresh-spawn fallback.
   # ------------------------------------------------------------
   echo "Scenario 7: unresumable --resume error falls back to fresh-spawn"
-  rm -f "$RESUMER_STATE_DIR"/unresumable-sess.json
+  rm -f "$RESUMER_STATE_DIR"/unresumable-sess.json "$RESUMER_STATE_DIR"/storm-cap.log
   : > "$RESUMER_DRYRUN_LOG"
   RESUMER_SELFTEST_RESUME_RC=1 perform_resume "unresumable-sess" "$FIXDIR/dead-429.jsonl" "test" "$TMP"
   if grep -q '^claude -p "re-read SCRATCHPAD.md' "$RESUMER_DRYRUN_LOG"; then
@@ -784,6 +1077,134 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     no "expected digest-feed.jsonl to contain the emitted session id"
   fi
 
+  # ------------------------------------------------------------
+  # Scenario 10 (activation guardrail 1 — STORM CAP): 3 dead sessions,
+  # cap=2 -> exactly 2 resumes fire and 1 is queued (storm-cap-queued).
+  # ------------------------------------------------------------
+  echo "Scenario 10: storm cap (3 dead, cap 2 -> 2 resumes + 1 queued)"
+  rm -f "$RESUMER_STATE_DIR"/storm-*.json "$RESUMER_STATE_DIR"/storm-cap.log
+  rm -f "$TMP/resumer-state/digest-feed.jsonl"
+  : > "$RESUMER_DRYRUN_LOG"
+  RESUMER_STORM_CAP=2
+  export RESUMER_STORM_CAP
+  perform_resume "storm-a" "$FIXDIR/dead-429.jsonl" "test" ""
+  perform_resume "storm-b" "$FIXDIR/dead-429.jsonl" "test" ""
+  perform_resume "storm-c" "$FIXDIR/dead-429.jsonl" "test" ""
+  unset RESUMER_STORM_CAP
+  resume_cmd_lines=$(wc -l < "$RESUMER_DRYRUN_LOG" 2>/dev/null | tr -d ' ')
+  queued_count=0
+  if [[ -f "$TMP/resumer-state/digest-feed.jsonl" ]]; then
+    queued_count=$(grep -c '"event":"storm-cap-queued"' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null | tr -d ' ')
+  fi
+  [[ -z "$resume_cmd_lines" ]] && resume_cmd_lines=0
+  [[ -z "$queued_count" ]] && queued_count=0
+  if [[ "$resume_cmd_lines" == "2" ]] && [[ "$queued_count" == "1" ]]; then
+    ok "storm cap allows exactly 2 resumes and queues the 3rd (commands=$resume_cmd_lines queued=$queued_count)"
+  else
+    no "expected 2 resume commands + 1 queued, got commands=$resume_cmd_lines queued=$queued_count"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 11 (activation guardrail 2 — TOMBSTONES): --never marks a
+  # session id; classify_transcript then skips it even though the
+  # underlying transcript is the dead-429 fixture (would otherwise resume).
+  # ------------------------------------------------------------
+  echo "Scenario 11: tombstone (--never) skips even a dead-429 transcript"
+  rm -rf "$RESUMER_STATE_DIR/never"
+  tombstone_session "tombstoned-sess" >/dev/null
+  if is_tombstoned "tombstoned-sess"; then
+    ok "tombstone_session created a discoverable marker"
+  else
+    no "tombstone_session did not create a marker is_tombstoned can see"
+  fi
+  classify_transcript "$FIXDIR/dead-429.jsonl" "" "tombstoned-sess"
+  if [[ "$CLASSIFY_VERDICT" == "skip" ]] && printf '%s' "$CLASSIFY_REASON" | grep -qi "tombstoned"; then
+    ok "tombstoned session classifies skip even with a dead-429 signature ($CLASSIFY_REASON)"
+  else
+    no "expected tombstoned skip, got $CLASSIFY_VERDICT ($CLASSIFY_REASON)"
+  fi
+  # A non-tombstoned session id on the SAME transcript still resumes —
+  # proves the skip is keyed on the id, not a global switch.
+  classify_transcript "$FIXDIR/dead-429.jsonl" "" "not-tombstoned-sess"
+  if [[ "$CLASSIFY_VERDICT" == "resume" ]]; then
+    ok "a different (non-tombstoned) session id on the same transcript still resumes"
+  else
+    no "expected resume for a non-tombstoned id, got $CLASSIFY_VERDICT ($CLASSIFY_REASON)"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 12 (activation guardrail 3 — LIVENESS GUARD): a transcript
+  # whose cwd has a FRESH interactive-session-lock signal classifies skip
+  # even though its own content is the dead-429 death signature.
+  # ------------------------------------------------------------
+  echo "Scenario 12: liveness guard skips a dead-429 transcript whose repo has a live interactive session"
+  LIVE_REPO="$TMP/live-repo"
+  mkdir -p "$LIVE_REPO"
+  LIVE_TRANSCRIPT="$TMP/liveness-fixture.jsonl"
+  {
+    printf '{"cwd":"%s","type":"user","message":{"role":"user","content":[{"type":"text","text":"go ahead"}]}}\n' "$LIVE_REPO"
+    printf '{"cwd":"%s","type":"system","subtype":"api_error","isApiErrorMessage":true,"result":"error","message":"Error: 429 rate_limit_error"}\n' "$LIVE_REPO"
+  } > "$LIVE_TRANSCRIPT"
+  # Sanity check: WITHOUT any liveness signal, this fixture resumes (proves
+  # the skip below is caused by the liveness guard, not some other factor).
+  classify_transcript "$LIVE_TRANSCRIPT" "" "liveness-sanity-sess"
+  if [[ "$CLASSIFY_VERDICT" == "resume" ]]; then
+    ok "liveness fixture resumes when no interactive session is live (sanity baseline)"
+  else
+    no "expected resume as the sanity baseline, got $CLASSIFY_VERDICT ($CLASSIFY_REASON)"
+  fi
+  # Now make the repo's own transcript slug dir contain a fresh .jsonl —
+  # the ISL "any fresh transcript under this repo's slug" liveness signal.
+  isl_slug="$(isl_project_slug_candidates "$LIVE_REPO" 2>/dev/null | head -n 1)"
+  isl_tdir="$ISL_PROJECTS_ROOT/$isl_slug"
+  mkdir -p "$isl_tdir"
+  : > "$isl_tdir/some-other-session.jsonl"
+  classify_transcript "$LIVE_TRANSCRIPT" "" "liveness-guarded-sess"
+  if [[ "$CLASSIFY_VERDICT" == "skip" ]] && printf '%s' "$CLASSIFY_REASON" | grep -qi "liveness guard"; then
+    ok "liveness guard skips a dead-429 transcript whose repo has a live interactive session ($CLASSIFY_REASON)"
+  else
+    no "expected liveness-guard skip, got $CLASSIFY_VERDICT ($CLASSIFY_REASON)"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 13 (activation guardrail 4 — SHADOW MODE): RESUMER_SHADOW=1
+  # logs "would-have-resumed" and does NOT construct/execute any command
+  # or write backoff state.
+  # ------------------------------------------------------------
+  echo "Scenario 13: shadow mode logs would-have-resumed, never executes, never writes backoff state"
+  rm -f "$RESUMER_STATE_DIR"/shadow-sess.json
+  rm -f "$TMP/resumer-state/digest-feed.jsonl"
+  : > "$RESUMER_DRYRUN_LOG"
+  RESUMER_SHADOW=1 perform_resume "shadow-sess" "$FIXDIR/dead-429.jsonl" "test reason" ""
+  shadow_cmd_lines=$(wc -l < "$RESUMER_DRYRUN_LOG" 2>/dev/null | tr -d ' ')
+  [[ -z "$shadow_cmd_lines" ]] && shadow_cmd_lines=0
+  shadow_logged=0
+  if [[ -f "$TMP/resumer-state/digest-feed.jsonl" ]] && grep -q '"event":"would-have-resumed"' "$TMP/resumer-state/digest-feed.jsonl" \
+     && grep -q 'would-have-resumed shadow-sess' "$TMP/resumer-state/digest-feed.jsonl"; then
+    shadow_logged=1
+  fi
+  shadow_backoff_attempts="$(read_backoff_attempts "shadow-sess")"
+  if [[ "$shadow_cmd_lines" == "0" ]] && [[ "$shadow_logged" == "1" ]] && [[ "$shadow_backoff_attempts" == "0" ]]; then
+    ok "shadow mode logs would-have-resumed, executes nothing, writes no backoff state"
+  else
+    no "expected 0 dryrun-log lines + would-have-resumed logged + 0 backoff attempts; got cmd_lines=$shadow_cmd_lines logged=$shadow_logged attempts=$shadow_backoff_attempts"
+  fi
+  # Shadow mode also never consumes a storm-cap slot: run it repeatedly
+  # past the default cap and confirm live resume capacity is untouched.
+  rm -f "$RESUMER_STATE_DIR"/storm-cap.log
+  RESUMER_STORM_CAP=1
+  export RESUMER_STORM_CAP
+  RESUMER_SHADOW=1 perform_resume "shadow-x" "$FIXDIR/dead-429.jsonl" "test" ""
+  RESUMER_SHADOW=1 perform_resume "shadow-y" "$FIXDIR/dead-429.jsonl" "test" ""
+  RESUMER_SHADOW=1 perform_resume "shadow-z" "$FIXDIR/dead-429.jsonl" "test" ""
+  unset RESUMER_STORM_CAP
+  shadow_room="$(storm_cap_has_room && echo yes || echo no)"
+  if [[ "$shadow_room" == "yes" ]]; then
+    ok "repeated shadow-mode passes never consume the storm-cap budget"
+  else
+    no "expected storm-cap room to remain untouched after shadow-mode passes, got: $shadow_room"
+  fi
+
   echo ""
   echo "self-test summary: $PASSED passed, $FAILED failed"
   if [[ "$FAILED" == "0" ]]; then
@@ -796,6 +1217,11 @@ fi
 # ============================================================
 # main (live invocation, not under --self-test)
 # ============================================================
-if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" != "--self-test" ]]; then
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--never" ]]; then
+  tombstone_session "${2:-}"
+  exit $?
+fi
+
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" != "--self-test" ]] && [[ "${1:-}" != "--never" ]]; then
   scan_and_resume
 fi
