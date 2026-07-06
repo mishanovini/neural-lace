@@ -1663,15 +1663,15 @@
       "events": [
         "PreToolUse"
       ],
-      "wired_template": true,
+      "wired_template": false,
       "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
-      "blocking": true,
+      "blocking": false,
       "budget_class": "pretool",
-      "honest_status": "Member of the commit-boundary blocking unit (specs-d §D.0.4 as amended at D.5); CI relocation follows in E.4 companion.",
+      "honest_status": "RETIRED from live PreToolUse 2026-07-06 per synth-ci plan task 2 — coverage relocated to .github/workflows/synthetic-runner.yml (first scheduled live run GREEN: actions/runs/28785582207). Hook file retained for the CI path.",
       "honesty_rationale": "Commit-boundary content check (specs-d §D.0.4) — resolvable by the session."
     },
     {

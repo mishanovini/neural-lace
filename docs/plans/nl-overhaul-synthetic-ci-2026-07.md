@@ -265,3 +265,10 @@ DELETE this section if Mode: code or Mode: design-skip.
   `synthetic-runner` workflow green on `ubuntu-latest`, AND Task 2's
   vaporware-volume relocation is either implemented and green or
   explicitly documented as a non-port with a named substitute check.
+
+## Live-run evidence (2026-07-06, orchestrator)
+First scheduled (cron) live run on master: GREEN — run 28785582207, trigger=schedule, 11s,
+2026-07-06T10:39Z. URL: https://github.com/Pocket-Technician/neural-lace/actions/runs/28785582207
+Prior PR-trigger runs also green (28727523866, 28727356577 on the §E.W cutover PR). Workflow
+authored+merged via #82/#83; local clean-worktree exercise of the exact CI commands verified by
+the closure-batch builder (wtdxq84qq). Checkbox flips await task-verifier.
