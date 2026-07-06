@@ -146,6 +146,70 @@ _svd_resolve_needs_you() {
 }
 
 # ----------------------------------------------------------------------
+# _svd_resolve_end_manifest <repo_root>
+#   Resolve end-manifest.sh: repo-relative (adapters/claude-code/scripts/)
+#   first, then the live-mirror (~/.claude/scripts/) fallback — same
+#   resolution order as _svd_resolve_needs_you above. Echoes the resolved
+#   path or empty (tolerate-absent: a tree without E.12 installed simply
+#   never gets manifest write/validate folded into the verdict).
+# ----------------------------------------------------------------------
+_svd_resolve_end_manifest() {
+  local repo_root="$1" ems=""
+  if [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/scripts/end-manifest.sh" ]]; then
+    ems="${repo_root}/adapters/claude-code/scripts/end-manifest.sh"
+  elif [[ -f "${HOME:-}/.claude/scripts/end-manifest.sh" ]]; then
+    ems="${HOME}/.claude/scripts/end-manifest.sh"
+  fi
+  printf '%s' "$ems"
+}
+
+# ----------------------------------------------------------------------
+# _svd_write_and_validate_manifest <repo_root> <transcript_path> <session_id>
+#   ADR 059 D6 / specs-e §E.12: the dispatcher (not a separate hook event —
+#   Stop IS the session-end surface) writes THIS Stop's end-manifest, then
+#   validates it, so:
+#     (a) a manifest exists on disk for member gates (work-integrity-gate.sh's
+#         _wig_resolve_manifest_path) to consult for manifest-scoping, and
+#     (b) any FAILED validator check (fabricated SHA / missing recorded_at /
+#         dirty-tree lie / marker mismatch) becomes a gap in THIS dispatcher's
+#         own aggregated verdict, exactly like a member gate's --report gap.
+#   Best-effort/fail-open: no end-manifest.sh on this tree, no jq, or a write
+#   error => print nothing, emit no gap (member gates fall back to their own
+#   transcript-derived scoping, unchanged pre-E.12 behavior). A write success
+#   followed by a validate FAILURE is the only path that emits a gap line —
+#   the write step itself is never gap-worthy (an empty/best-effort manifest
+#   is still strictly additive over having none).
+# ----------------------------------------------------------------------
+_svd_write_and_validate_manifest() {
+  local repo_root="$1" transcript_path="$2" session_id="$3"
+  local ems
+  ems=$(_svd_resolve_end_manifest "$repo_root")
+  [[ -n "$ems" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+
+  local write_args=(write --session-id "$session_id")
+  [[ -n "$transcript_path" ]] && write_args+=(--transcript "$transcript_path")
+  local manifest_path
+  manifest_path=$(bash "$ems" "${write_args[@]}" 2>/dev/null) || return 0
+  [[ -n "$manifest_path" && -f "$manifest_path" ]] || return 0
+
+  local -a validate_args=(validate "$manifest_path")
+  [[ -n "$transcript_path" ]] && validate_args+=(--transcript "$transcript_path")
+  local validate_err
+  validate_err=$(bash "$ems" "${validate_args[@]}" 2>&1 >/dev/null)
+  local rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    local fail_line
+    while IFS= read -r fail_line; do
+      [[ "$fail_line" == FAIL:* ]] || continue
+      printf '{"gate":"end-manifest","check":"validate-failed","message":"%s"}\n' \
+        "$(_svd_json_escape "$fail_line")"
+    done <<< "$validate_err"
+  fi
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # _svd_unresolved_gaps_path — the exact path E.1's session-start-digest.sh
 # feed_unresolved_gaps() already consumes (${HOME}/.claude/state/
 # unresolved-gaps.jsonl). Kept as one function so a future path change
@@ -242,6 +306,16 @@ _svd_pin_d_remediation() {
           ;;
       esac
       ;;
+    end-manifest)
+      case "$check" in
+        validate-failed)
+          echo "Re-run 'bash scripts/end-manifest.sh validate <session-id>' locally to see the exact FAIL line (fabricated SHA / missing recorded_at / dirty-tree lie / marker mismatch); fix the underlying claim (push the SHA, actually record the unresolved item where it's claimed, commit/stash the worktree, or let the manifest regenerate with the true final marker) rather than editing the manifest by hand."
+          ;;
+        *)
+          echo "Re-run 'bash scripts/end-manifest.sh validate <session-id>' locally to see this check's full remediation text on stderr."
+          ;;
+      esac
+      ;;
     *)
       echo "Re-run the reporting gate's normal (blocking) mode locally to see its full remediation text on stderr."
       ;;
@@ -292,8 +366,21 @@ _svd_main() {
   # see stop-hook-retry-guard.sh _retry_guard_resolve_transcript()).
   [[ -n "$transcript_path" ]] && export RETRY_GUARD_TRANSCRIPT="$transcript_path"
 
+  local repo_root=""
+  command -v git >/dev/null 2>&1 && repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+
+  # ADR 059 D6 / specs-e §E.12: write + validate THIS session's end-manifest
+  # BEFORE the member gates run, so work-integrity-gate.sh's manifest-scoping
+  # (_wig_resolve_manifest_path) finds a manifest on disk for this Stop, and
+  # any validator FAILURE is folded into the aggregated verdict below as an
+  # "end-manifest" gap alongside the three member gates' own gaps.
+  local all_gaps=""
+  local manifest_gaps
+  manifest_gaps=$(_svd_write_and_validate_manifest "$repo_root" "$transcript_path" "$session_id")
+  [[ -n "$manifest_gaps" ]] && all_gaps+="${manifest_gaps}"$'\n'
+
   # Aggregate every member gate's --report output.
-  local all_gaps="" gate_script gate_name
+  local gate_script gate_name
   for gate_script in "${_SVD_MEMBER_GATES[@]}"; do
     gate_name="${gate_script%.sh}"
     local out
@@ -372,8 +459,8 @@ _svd_main() {
   gaps_path=$(_svd_unresolved_gaps_path)
   mkdir -p "$(dirname "$gaps_path")" 2>/dev/null || true
 
-  local repo_root=""
-  command -v git >/dev/null 2>&1 && repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  # repo_root was already resolved earlier in this function (used for the
+  # end-manifest write/validate step above) — reused here, not recomputed.
   local nyu
   nyu=$(_svd_resolve_needs_you "$repo_root")
 
@@ -449,7 +536,7 @@ _svd_emit_block_message() {
     echo ""
 
     local gate_name
-    for gate_name in "work-integrity-gate" "session-honesty-gate" "bug-persistence-gate"; do
+    for gate_name in "end-manifest" "work-integrity-gate" "session-honesty-gate" "bug-persistence-gate"; do
       local gate_gaps
       if command -v jq >/dev/null 2>&1; then
         gate_gaps=$(printf '%s' "$all_gaps" | jq -c --arg g "$gate_name" 'select(.gate == $g)' 2>/dev/null)
@@ -482,7 +569,7 @@ _svd_emit_block_message() {
     echo "================================================================"
   } >&2
 
-  local reason="Stop-verdict dispatcher: ${gap_count} gap(s) found across work-integrity-gate/session-honesty-gate/bug-persistence-gate. See stderr for the combined verdict grouped per gate with remediation."
+  local reason="Stop-verdict dispatcher: ${gap_count} gap(s) found across end-manifest/work-integrity-gate/session-honesty-gate/bug-persistence-gate. See stderr for the combined verdict grouped per gate with remediation."
   printf '{"decision": "block", "reason": "%s"}\n' "$(_svd_json_escape "$reason")"
 }
 
@@ -516,14 +603,29 @@ _svd_self_test() {
     export NEEDS_YOU_MD_PATH="$d/NEEDS-YOU.md"
     export HOME="$d/home"
     mkdir -p "$HOME/.claude/state"
+    # end-manifest.sh's own HARNESS_SELFTEST=1 convention routes its state
+    # dir to a per-PID tempdir UNLESS END_MANIFEST_STATE_DIR is set
+    # explicitly (SELFTEST-ORACLE-PIN-01 — mirrors work-integrity-gate.sh's
+    # own _wig_resolve_manifest_path, which likewise requires this env var
+    # under HARNESS_SELFTEST=1). Every scenario gets its own per-scenario
+    # manifest dir so the manifest-wiring scenarios below resolve to a
+    # KNOWN, per-scenario path instead of a $$-keyed one.
+    export END_MANIFEST_STATE_DIR="$d/end-manifest-state"
+    mkdir -p "$END_MANIFEST_STATE_DIR"
     unset RETRY_GUARD_TRANSCRIPT STOP_VERDICT_DISPATCHER_TRANSCRIPT CLAUDE_SESSION_ID
   }
 
   # Builds a synthetic repo with the three member gate scripts copied in
   # (self-test never depends on ambient cwd — SELFTEST-ORACLE-PIN-01) plus
-  # lib/ so each member gate's own sourcing resolves.
+  # lib/ so each member gate's own sourcing resolves. $2 (optional):
+  # "with-manifest" also copies scripts/end-manifest.sh into the fixture's
+  # adapters/claude-code/scripts/ layout so _svd_resolve_end_manifest's
+  # repo-relative resolution finds it via `git rev-parse --show-toplevel`
+  # (task E.12 wiring scenarios below need this; every pre-existing
+  # scenario omits it deliberately, proving the fail-open no-manifest path
+  # is unchanged).
   _build_dispatcher_repo() {
-    local name="$1"
+    local name="$1" variant="${2:-}"
     local repo="$tmproot/$name"
     mkdir -p "$repo/hooks/lib"
     cp "${_SVD_DIR}/work-integrity-gate.sh" "$repo/hooks/" 2>/dev/null
@@ -531,6 +633,16 @@ _svd_self_test() {
     cp "${_SVD_DIR}/bug-persistence-gate.sh" "$repo/hooks/" 2>/dev/null
     cp "${_SVD_DIR}/stop-verdict-dispatcher.sh" "$repo/hooks/" 2>/dev/null
     cp "${_SVD_DIR}"/lib/*.sh "$repo/hooks/lib/" 2>/dev/null
+    if [[ "$variant" == "with-manifest" ]]; then
+      # end-manifest.sh must live under the GIT REPO's own toplevel (every
+      # scenario's actual git repo is $repo/repo, one level below $repo —
+      # see the "REPO=$tmproot/<name>/repo" convention each scenario
+      # follows below), because _svd_resolve_end_manifest resolves it
+      # repo-relative to `git rev-parse --show-toplevel`, not to this
+      # fixture-builder's own $repo.
+      mkdir -p "$repo/repo/adapters/claude-code/scripts"
+      cp "${_SVD_DIR}/../scripts/end-manifest.sh" "$repo/repo/adapters/claude-code/scripts/" 2>/dev/null
+    fi
     printf '%s' "$repo/hooks"
   }
 
@@ -735,6 +847,156 @@ _svd_self_test() {
   # each _setup_scenario exports its own tmpdir-scoped HOME.)
   echo "self-test (sandboxed-scenarios-use-per-scenario-HOME): PASS (each scenario exported its own HOME under ${tmproot})" >&2
   passed=$((passed+1))
+
+  # ================================================================
+  # Scenario 9 (task E.12 wiring, ADR 059 D6): the dispatcher itself
+  # writes THIS session's end-manifest (no other hook event does — Stop is
+  # the session-end surface) so a manifest exists on disk for the member
+  # gates to consult, at the path _wig_resolve_manifest_path resolves to
+  # (END_MANIFEST_STATE_DIR/<sanitized-session-id>.json — this scenario's
+  # own per-scenario override, exported by _setup_scenario above; mirrors
+  # the live convention of ${HOME}/.claude/state/end-manifest/<id>.json
+  # when neither override applies). Uses the "with-manifest" fixture
+  # variant so end-manifest.sh is present under adapters/claude-code/
+  # scripts/ (repo-relative resolution).
+  # ================================================================
+  _setup_scenario s9
+  HOOKS=$(_build_dispatcher_repo s9 with-manifest)
+  REPO="$tmproot/s9/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T=$(_write_transcript "$tmproot/s9" $'All good.\n\nDONE: nothing to report')
+  RC=$(_run_dispatcher "$HOOKS" "$REPO" "$T" "sess-s9")
+  _expect "manifest-written-clean-session-still-exits-0" "$RC" "0"
+  MANIFEST_S9="${END_MANIFEST_STATE_DIR}/sess-s9.json"
+  if [[ -f "$MANIFEST_S9" ]] && command -v jq >/dev/null 2>&1 && jq -e '.schema_version == 1' "$MANIFEST_S9" >/dev/null 2>&1; then
+    echo "self-test (dispatcher-writes-manifest-at-session-id-path): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (dispatcher-writes-manifest-at-session-id-path): FAIL (expected ${MANIFEST_S9} to exist and be schema_version 1)" >&2
+    failed=$((failed+1))
+  fi
+  # End-to-end proof (not just "a manifest file exists somewhere"):
+  # work-integrity-gate.sh, invoked BY the dispatcher's own --report call
+  # within this SAME Stop, actually found and used that manifest — its
+  # own ledger line ("manifest-scoping active: <path>") is the mechanical
+  # signal, written to this scenario's SIGNAL_LEDGER_PATH.
+  if grep -q "manifest-scoping active" "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (work-integrity-gate-consumed-the-dispatcher-written-manifest-same-stop): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (work-integrity-gate-consumed-the-dispatcher-written-manifest-same-stop): FAIL (expected a 'manifest-scoping active' ledger line from work-integrity-gate.sh's --report invocation)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 10 (task E.12 wiring): _svd_write_and_validate_manifest folds
+  # a validator FAILURE into a JSON gap line the dispatcher's aggregation
+  # understands — unit-tested directly against a STUB end-manifest.sh
+  # (write always "succeeds" at a fixed path; validate always fails with a
+  # known FAIL: line), so this scenario is independent of any particular
+  # real validator check and proves the GLUE (gap-line shape, gate name,
+  # FAIL-line filtering) rather than re-proving end-manifest.sh's own
+  # checks (already covered by that file's own --self-test).
+  # ================================================================
+  _setup_scenario s10
+  STUB_DIR="$tmproot/tmpdir-s10/stub-scripts"
+  mkdir -p "$STUB_DIR" "$tmproot/tmpdir-s10/state"
+  STUB_MANIFEST="$tmproot/tmpdir-s10/state/stub-manifest.json"
+  echo '{"schema_version":1}' > "$STUB_MANIFEST"
+  cat > "$STUB_DIR/end-manifest.sh" <<STUBEOF
+#!/bin/bash
+case "\$1" in
+  write) echo "$STUB_MANIFEST" ;;
+  validate)
+    echo "PASS: unrelated check" >&2
+    echo "FAIL: shipped SHA deadbeef is NOT reachable from master (fabricated-SHA / not-yet-merged check)" >&2
+    echo "end-manifest validate: ONE OR MORE CHECKS FAILED (\$STUB_MANIFEST)" >&2
+    exit 1
+    ;;
+esac
+STUBEOF
+  chmod +x "$STUB_DIR/end-manifest.sh"
+  UNIT_TEST_SCRIPT="$tmproot/tmpdir-s10/unit-test.sh"
+  {
+    echo '#!/bin/bash'
+    echo "source '${_SVD_DIR}/lib/signal-ledger.sh' 2>/dev/null"
+    echo "_svd_resolve_end_manifest() { printf '%s' '${STUB_DIR}/end-manifest.sh'; }"
+    declare -f _svd_json_escape
+    declare -f _svd_write_and_validate_manifest
+    echo "_svd_write_and_validate_manifest '' '' 'sess-s10'"
+  } > "$UNIT_TEST_SCRIPT"
+  GAP_OUT=$(bash "$UNIT_TEST_SCRIPT" 2>/dev/null)
+  if printf '%s' "$GAP_OUT" | grep -q '"gate":"end-manifest"' && printf '%s' "$GAP_OUT" | grep -q '"check":"validate-failed"' && printf '%s' "$GAP_OUT" | grep -q 'NOT reachable'; then
+    echo "self-test (write-and-validate-manifest-folds-FAIL-line-into-gap-json): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (write-and-validate-manifest-folds-FAIL-line-into-gap-json): FAIL (got: ${GAP_OUT})" >&2
+    failed=$((failed+1))
+  fi
+  if ! printf '%s' "$GAP_OUT" | grep -q 'PASS: unrelated check'; then
+    echo "self-test (write-and-validate-manifest-never-emits-PASS-lines-as-gaps): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (write-and-validate-manifest-never-emits-PASS-lines-as-gaps): FAIL" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 11 (task E.12 wiring): no end-manifest.sh on this tree (the
+  # pre-existing fixture repos built WITHOUT the "with-manifest" variant,
+  # e.g. scenario 1) => _svd_write_and_validate_manifest is a silent no-op
+  # (fail-open) — proves this task's change is additive, never a new
+  # failure mode for a tree/session with no manifest support.
+  # ================================================================
+  _setup_scenario s11
+  HOOKS=$(_build_dispatcher_repo s11)
+  REPO="$tmproot/s11/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T=$(_write_transcript "$tmproot/s11" $'All good.\n\nDONE: nothing to report')
+  RC=$(_run_dispatcher "$HOOKS" "$REPO" "$T" "sess-s11")
+  _expect "no-end-manifest-sh-on-tree-still-exits-0-fail-open" "$RC" "0"
+  if ! grep -q "end-manifest" "$tmproot/last-stderr.txt" 2>/dev/null; then
+    echo "self-test (no-manifest-support-no-end-manifest-gap-mentioned): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (no-manifest-support-no-end-manifest-gap-mentioned): FAIL" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 12 (MANDATED, specs-e §E.12 Done-when, lines 428-430):
+  # grep-assertion — no surviving Stop gate greps the TRANSCRIPT for
+  # plan-touch derivation when a manifest exists for the session. This is
+  # a static proof over the source, not a runtime scenario: with a
+  # manifest present, work-integrity-gate.sh's _wig_main takes the
+  # manifest branch (_wig_manifest_touched_plans) and the transcript-grep
+  # branch (_wig_touched_plan_paths, which greps the transcript JSONL for
+  # tool_use Edit/Write/Read entries) is provably unreachable in that
+  # branch — i.e. is gated behind the `else` of the exact same
+  # `if [[ -n "$manifest_path" ]]` this scenario asserts exists.
+  # ================================================================
+  if grep -qE 'if \[\[ -n "\$manifest_path" \]\]; then' "${_SVD_DIR}/work-integrity-gate.sh" \
+     && grep -A3 'if \[\[ -n "\$manifest_path" \]\]; then' "${_SVD_DIR}/work-integrity-gate.sh" | grep -q '_wig_manifest_touched_plans' \
+     && grep -A6 'if \[\[ -n "\$manifest_path" \]\]; then' "${_SVD_DIR}/work-integrity-gate.sh" | grep -q '_wig_touched_plan_paths'; then
+    echo "self-test (grep-assertion-manifest-branch-replaces-transcript-grep-when-manifest-present): PASS (work-integrity-gate.sh: manifest_path present -> _wig_manifest_touched_plans; else -> _wig_touched_plan_paths, confirmed by source grep)" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (grep-assertion-manifest-branch-replaces-transcript-grep-when-manifest-present): FAIL (expected the if/else branch structure gating _wig_touched_plan_paths behind absence of a manifest)" >&2
+    failed=$((failed+1))
+  fi
+  if grep -q '_svd_write_and_validate_manifest' "${_SVD_DIR}/stop-verdict-dispatcher.sh" 2>/dev/null; then
+    echo "self-test (grep-assertion-dispatcher-actually-invokes-end-manifest-write-and-validate): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (grep-assertion-dispatcher-actually-invokes-end-manifest-write-and-validate): FAIL (dispatcher no longer calls the manifest write/validate step)" >&2
+    failed=$((failed+1))
+  fi
 
   echo "" >&2
   echo "self-test summary: $passed passed, $failed failed" >&2
