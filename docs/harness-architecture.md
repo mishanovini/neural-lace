@@ -11,19 +11,12 @@ For the Tier-3 unified narrative (team-role analogy + layer cross-walk), see
 [`architecture-overview.md`](architecture-overview.md). This file is the
 Tier-4 exhaustive machine-derived inventory.
 
-<!-- Wave-F integration note: F.5's hand-edited changelog paragraph (cross-repo-nl-touch-warn.sh,
-     gate-demotion.sh, harness-reviewer.md remedy-chain section) was represented via the manifest
-     entries added in integration Step 2 (see tests/fixtures/wave-f/F.5/manifest-entry.json) and
-     is now captured by regeneration (Step 4) rather than hand-edited prose here, per F.2's
-     generated-file convention. Nothing lost — see git history of this file pre-integration for
-     the original hand-edit, and harness-architecture-history.md for the frozen narrative. -->
-
 ## Summary
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 90 |
-| Unique hook scripts | 100 |
+| Total manifest entries | 100 |
+| Unique hook scripts | 101 |
 | Blocking gates (`blocking: true`) | 32 |
 
 ## Hooks by event
@@ -42,6 +35,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreCompact | pre-compact-continuity | writer | no | pre-compact-continuity.sh |
 | PreToolUse | agent-teams | gate | yes | task-completed-evidence-gate.sh, task-created-validator.sh, teammate-spawn-validator.sh |
 | PreToolUse | claude-md-hygiene | gate | yes | claude-md-hygiene-gate.sh |
+| PreToolUse | cross-repo-nl-touch-warn | surfacer | no | cross-repo-nl-touch-warn.sh |
 | PreToolUse | definition-on-first-use | gate | no | definition-on-first-use-gate.sh |
 | PreToolUse | deploy-automation-mode | gate | yes | automation-mode-gate.sh |
 | PreToolUse | design-mode-planning | gate | no | systems-design-gate.sh |
@@ -120,9 +114,9 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
 | gate | 32 | 10 |
-| writer | 0 | 16 |
-| surfacer | 0 | 15 |
-| pattern | 0 | 15 |
+| writer | 0 | 18 |
+| surfacer | 0 | 16 |
+| pattern | 0 | 22 |
 | convention | 0 | 2 |
 
 ## Budgets
@@ -136,9 +130,9 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 |---|---|
 | stop | 8 |
 | session-start | 15 |
-| pretool | 22 |
+| pretool | 23 |
 | posttool | 6 |
-| none | 39 |
+| none | 48 |
 
 ## Doctrine index
 
@@ -150,12 +144,16 @@ it rather than duplicating it, so the two generators cannot disagree).
 
 | doctrine_file | entries pointing to it |
 |---|---|
+| doctrine/acceptance-scenarios.md | 1 (acceptance-scenarios) |
 | doctrine/agent-teams.md | 1 (agent-teams) |
 | doctrine/automation-modes.md | 1 (automation-modes) |
 | doctrine/background-work-tracking.md | 1 (background-work-tracking) |
+| doctrine/claims.md | 1 (claims) |
 | doctrine/code-conventions.md | 3 (code-conventions, doc-gate, migration-claude-md) |
+| doctrine/completion-criteria.md | 1 (completion-criteria) |
 | doctrine/comprehension-gate.md | 1 (comprehension-gate) |
 | doctrine/consolidation-discipline.md | 1 (consolidation-discipline) |
+| doctrine/customer-facing-review.md | 1 (customer-facing-review) |
 | doctrine/decision-context.md | 1 (decision-context-emitters) |
 | doctrine/definition-on-first-use.md | 1 (definition-on-first-use) |
 | doctrine/design-mode-planning.md | 1 (design-mode-planning) |
@@ -171,8 +169,10 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/local-edit-authorization.md | 1 (local-edit-authorization) |
 | doctrine/mechanical-evidence.md | 1 (mechanical-evidence) |
 | doctrine/observed-errors-first.md | 1 (observed-errors-first) |
+| doctrine/orchestrator-pattern.md | 1 (orchestrator-pattern) |
 | doctrine/parallel-dev-discipline.md | 1 (parallel-dev-migration-naming) |
 | doctrine/planning.md | 11 (backlog-plan-atomicity, decisions-index, plan-deletion-protection, plan-edit-validator, plan-lifecycle, plan-reviewer, pr-template-inline, stale-plan-surfacer, task-verifier-reminder, wire-check, work-integrity) |
+| doctrine/pr-health-snapshot.md | 1 (pr-health-snapshot) |
 | doctrine/prd-validity.md | 1 (prd-validity) |
 | doctrine/risk-tiered-verification.md | 1 (risk-tiered-verification) |
 | doctrine/security.md | 2 (env-local-protection, secret-hygiene-prepush) |
@@ -188,24 +188,29 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/worktree-isolation.md | 1 (worktree-advisor) |
 | rules/constitution.md | 1 (constitution) |
 
-Entries with no doctrine_file (`-`): 16.
+Entries with no doctrine_file (`-`): 20.
 
 ## Full entry listing
 
 | id | kind | events | blocking | budget_class | honest_status |
 |---|---|---|---|---|---|
+| acceptance-scenarios | pattern | — | no | none | — |
 | agent-teams | gate | PreToolUse, TaskCompleted, TaskCreated | yes | pretool | — |
 | automation-modes | pattern | — | no | none | — |
 | background-work-tracking | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | backlog-plan-atomicity | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
 | bug-persistence | gate | Stop | yes | stop | Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact. |
+| claims | pattern | — | no | none | — |
 | claude-md-hygiene | gate | PreToolUse | yes | pretool | — |
 | code-conventions | convention | — | no | none | — |
+| completion-criteria | pattern | — | no | none | — |
 | comprehension-gate | pattern | — | no | none | — |
 | consolidation-discipline | pattern | — | no | none | — |
 | constitution | pattern | — | no | none | — |
 | context-watermark | writer | PostToolUse | no | posttool | E.9a early-warning context watermark; wired PostToolUse at §E.W. |
 | cross-repo-drift-gate | gate | PostToolUse | no | posttool | — |
+| cross-repo-nl-touch-warn | surfacer | PreToolUse | no | pretool | — |
+| customer-facing-review | pattern | — | no | none | — |
 | decision-context-emitters | writer | SessionStart, UserPromptSubmit | no | session-start | replay retired to attic (fence retirement, D.4/D.5); pending-surfacer dispatched via surfacer-pack; reply-emit wired at UserPromptSubmit. |
 | decisions-index | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
 | definition-on-first-use | gate | PreToolUse | no | pretool | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
@@ -224,9 +229,12 @@ Entries with no doctrine_file (`-`): 16.
 | findings-ledger | gate | PreToolUse | yes | pretool | — |
 | friction-reflexion | pattern | — | no | none | — |
 | frontend-conventions | convention | — | no | none | — |
+| gate-demotion | pattern | — | no | none | — |
 | gate-respect | pattern | — | no | none | — |
+| gen-architecture-doc | writer | — | no | none | scripts/gen-architecture-doc.sh (F.2) -- regenerates docs/harness-architecture.md from manifest.json; --check is the doctor drift predicate (tests/fixtures/wave-f/F.2/doctor-predicate.md); not event-wired (manual + doctor-invoked). |
 | gh-account-hint | surfacer | PostToolUse, SessionStart | no | posttool | — |
 | git-freshness | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
+| harness-changelog | writer | — | no | none | scripts/harness-changelog.sh (F.2b) -- machine-wide 'what's new' ledger + --digest-line consumed by session-start-digest.sh's feed 15; not event-wired. |
 | harness-doctor | surfacer | SessionStart, manual | no | session-start | diagnostic tool — invoked on demand (harness-doctor.sh --quick); chain wiring is a post-Wave-D decision |
 | harness-hygiene-scan | gate | manual, precommit | yes | none | invoked via pre-commit-gate.sh chain and manual --full-tree runs; not directly wired in settings.json.template |
 | harness-kpis | writer | — | no | none | scripts/harness-kpis.sh — weekly KPI report from the signal ledger (E.5); scheduled-task registration documented, not a hook. |
@@ -238,12 +246,14 @@ Entries with no doctrine_file (`-`): 16.
 | nl-issue-capture-loop | pattern | — | no | none | scripts/nl-issue.sh + skill (E.8) — cross-project capture; not event-wired. |
 | no-test-skip | gate | PreToolUse | yes | pretool | — |
 | observed-errors-first | gate | PreToolUse | no | pretool | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
+| orchestrator-pattern | pattern | — | no | none | — |
 | outcome-evidence | gate | PreToolUse | no | pretool | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
 | parallel-dev-migration-naming | gate | PreToolUse | yes | pretool | — |
 | plan-deletion-protection | gate | PreToolUse | yes | pretool | — |
 | plan-edit-validator | gate | PreToolUse | yes | pretool | — |
 | plan-lifecycle | writer | PostToolUse, SessionStart | no | posttool | plan-status-archival-sweep.sh dispatched via session-start-surfacer-pack.sh since D.5; plan-auto-closure.sh/plan-lifecycle.sh fire on PostToolUse as before. |
 | plan-reviewer | gate | manual, precommit | yes | none | invoked via pre-commit-gate.sh chain and plan-edit flows; not directly wired in settings.json.template |
+| pr-health-snapshot | pattern | — | no | none | — |
 | pr-template-inline | gate | PreToolUse | no | pretool | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
 | prd-validity | gate | PreToolUse | no | pretool | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
 | pre-commit-chain | gate | PreToolUse | yes | pretool | — |
