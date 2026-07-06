@@ -90,6 +90,51 @@
 #       downgrade)
 #   2 — session is blocked; stderr explains why, stdout carries
 #       {"decision":"block", ...} JSON (Claude Code Stop-hook contract)
+#
+# ============================================================
+# FUNCTIONAL-LINK check (Wave F, task F.L — operator directive 2026-07-05,
+# nl-issue ledger golden scenario: Claude presented a dead file link)
+# ============================================================
+# WARN-ONLY, never contributes to the block/gap verdict above and never
+# participates in cycle-counting/DONE-refusal (it is not a member gate's
+# --report gap; it is a pure side-channel ledger warn). Parses the FINAL
+# assistant message of the Stop transcript for markdown links
+# `[text](target)`, skipping:
+#   - http(s):// and mailto: targets (external, always "resolve")
+#   - "#" anchors (in-page, not a file link)
+#   - any link whose OPENING `[` falls inside an inline code span
+#     (an even number of unescaped backticks precede it on the same line)
+#     or inside a fenced code block (``` ... ``` — tracked line-by-line)
+# For every remaining target, resolves against, in order:
+#   (a) the session's cwd (may be a worktree — the common case for a
+#       worker session)
+#   (b) the MAIN checkout root (nl_main_checkout_root(), lib/nl-paths.sh)
+#       — a worktree-relative link to a file that only exists in the main
+#       checkout (e.g. NEEDS-YOU.md, gitignored per-checkout state) must
+#       still resolve OK; this is the scenario this check exists to
+#       distinguish from a genuinely dead link.
+# Neither resolves => emit a signal-ledger "warn" event (gate name
+# "stop-verdict-dispatcher", detail names the exact dead target) plus a
+# stderr notice whose remediation is pin-d compliant: "give the absolute
+# path instead" (copy-pasteable framing — the model's own next message can
+# just do that). This NEVER blocks (exit code / verdict untouched) and
+# NEVER appears in the combined block message above (only in ledger +
+# stderr side-channel), so it cannot itself cause the DONE-refusal or
+# cycle-counting paths to fire.
+#
+# FP expectation (documented per constitution §10 — this is a WARN, not a
+# blocking gate, so the bar is lower, but still named): a link that is
+# CORRECT but points at a file the current checkout genuinely lacks (e.g.
+# a stale reference to a file deleted by a concurrent session between the
+# link being written and this Stop firing) will false-positive-warn; this
+# is accepted because (1) it never blocks, (2) the remediation ("give the
+# absolute path instead") is harmless even when the link was transiently
+# correct, and (3) the alternative (resolving against a live network
+# fetch, e.g. a GitHub blob URL) is out of scope for a local mechanical
+# check. Retirement condition: if this warn's false-positive rate proves
+# high in the ledger (E.3-style rate visibility, feed_ledger_summary), the
+# remedy is to add more resolution roots (e.g. a configured list of
+# additional checkout-relative roots), not to remove the check.
 
 set -u
 
@@ -100,6 +145,8 @@ _SVD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$_SVD_DIR/lib/signal-ledger.sh"
 # shellcheck disable=SC1091
 source "$_SVD_DIR/lib/stop-hook-retry-guard.sh"
+# shellcheck disable=SC1091
+source "$_SVD_DIR/lib/nl-paths.sh"
 
 # The three member gates this dispatcher aggregates, in the order they
 # used to run in the Stop chain (work-integrity, session-honesty,
@@ -410,6 +457,180 @@ _svd_run_report() {
 }
 
 # ----------------------------------------------------------------------
+# _svd_final_assistant_message <transcript_path>
+#   Echoes the FINAL assistant message's plain text (joined text-block
+#   content), or empty on any resolution/parse failure. Identical jq shape
+#   to stop-hook-retry-guard.sh's own _retry_guard_final_msg_claims_done
+#   (same "last assistant message, join text blocks" extraction) — kept as
+#   a separate helper here (rather than reusing that function directly)
+#   because that function returns a DONE-claim boolean, not the raw text;
+#   duplicating the tail/jq shape is deliberate to avoid coupling this
+#   check's behavior to retry-guard's own DONE-specific return contract.
+# ----------------------------------------------------------------------
+_svd_final_assistant_message() {
+  local tp="$1"
+  command -v jq >/dev/null 2>&1 || { printf ''; return 0; }
+  [[ -n "$tp" && -f "$tp" ]] || { printf ''; return 0; }
+  tail -n 400 "$tp" 2>/dev/null \
+    | jq -c -R 'fromjson? // empty' 2>/dev/null \
+    | jq -rs '
+        [ .[] | select(.type=="assistant") ] | last
+        | (.message.content // empty)
+        | if type=="array" then [ .[] | select(.type=="text") | .text ] | join("\n")
+          elif type=="string" then .
+          else "" end' 2>/dev/null
+}
+
+# ----------------------------------------------------------------------
+# _svd_extract_markdown_link_targets <text>
+#   Prints one link TARGET per line for every markdown-style `[text](tgt)`
+#   occurrence in $text, EXCLUDING any match whose opening `[` sits inside:
+#     - an inline code span (an odd number of un-escaped backticks precede
+#       it on the same rendered line — i.e. the `[` is the (2k+1)th
+#       backtick-delimited region), or
+#     - a fenced code block (a line starting with ``` or ~~~ toggles
+#       "inside fence" state; every line while inside is skipped whole).
+#   Processes the text LINE BY LINE (markdown links do not span lines in
+#   this parser — matches the golden-scenario fixtures, which are
+#   single-line links) so the fence-state and backtick-parity tracking
+#   stay simple and auditable rather than a single multiline regex.
+# ----------------------------------------------------------------------
+_svd_extract_markdown_link_targets() {
+  local text="$1"
+  local in_fence=0
+  local line
+  while IFS= read -r line; do
+    if printf '%s' "$line" | grep -qE '^[[:space:]]*(```|~~~)'; then
+      in_fence=$((1 - in_fence))
+      continue
+    fi
+    [[ "$in_fence" -eq 1 ]] && continue
+
+    # Walk the line left-to-right, tracking backtick parity, and emit the
+    # target of every [text](target) match whose `[` is at EVEN backtick
+    # parity (i.e. NOT inside an inline code span).
+    local remaining="$line"
+    local consumed_backticks=0
+    while [[ "$remaining" == *'['*']('*')'* ]]; do
+      local before="${remaining%%[*}"
+      local bt_here
+      bt_here=$(printf '%s' "$before" | tr -cd '`' | wc -c)
+      local parity=$(( (consumed_backticks + bt_here) % 2 ))
+
+      local after_bracket="${remaining#*[}"
+      # Require the very next chars to be `](` for this `[` to be a link
+      # open (a bare `[` with no matching `](` is not a link at all).
+      if [[ "$after_bracket" != *']('* ]]; then
+        break
+      fi
+      local link_text_and_rest="${after_bracket%%](*}"
+      local after_paren="${after_bracket#*](}"
+      if [[ "$after_paren" != *')'* ]]; then
+        break
+      fi
+      local target="${after_paren%%)*}"
+      local rest="${after_paren#*)}"
+
+      if [[ "$parity" -eq 0 ]]; then
+        printf '%s\n' "$target"
+      fi
+
+      consumed_backticks=$((consumed_backticks + bt_here))
+      remaining="$rest"
+    done
+  done <<< "$text"
+}
+
+# ----------------------------------------------------------------------
+# _svd_link_target_ignorable <target>
+#   True (0) for targets this check does not evaluate at all: http(s)://,
+#   mailto:, and bare "#" in-page anchors (including "path#anchor" forms —
+#   still ignored per spec: "http(s)/mailto/# ... ignored"; a target that
+#   is JUST an anchor into the current doc is not a file-link claim).
+# ----------------------------------------------------------------------
+_svd_link_target_ignorable() {
+  local target="$1"
+  case "$target" in
+    http://*|https://*|mailto:*) return 0 ;;
+    '#'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# ----------------------------------------------------------------------
+# _svd_resolve_link_target <target> <session_cwd> <main_root>
+#   Resolves a (non-ignorable) link target against, in order: (a) the
+#   session cwd, (b) the main checkout root. Strips a trailing "#anchor"
+#   fragment before resolving (an anchor is not part of the filesystem
+#   path). Absolute paths are checked directly against both roots'
+#   filesystem (an absolute path either exists or it doesn't — "against
+#   root" is a no-op for it, but both branches still just stat the same
+#   absolute path, which is correct and cheap). Prints "ok" + the
+#   resolved path if found, or "dead" on stdout if neither root resolves
+#   it. Never errors.
+# ----------------------------------------------------------------------
+_svd_resolve_link_target() {
+  local target="$1" cwd="$2" main_root="$3"
+  local path="${target%%#*}"
+  [[ -z "$path" ]] && { printf 'dead'; return 0; }
+
+  local candidate
+  if [[ "$path" == /* || "$path" =~ ^[A-Za-z]:[/\\] ]]; then
+    if [[ -e "$path" ]]; then printf 'ok %s' "$path"; return 0; fi
+    printf 'dead'; return 0
+  fi
+
+  if [[ -n "$cwd" ]]; then
+    candidate="${cwd%/}/${path}"
+    if [[ -e "$candidate" ]]; then printf 'ok %s' "$candidate"; return 0; fi
+  fi
+  if [[ -n "$main_root" ]]; then
+    candidate="${main_root%/}/${path}"
+    if [[ -e "$candidate" ]]; then printf 'ok %s' "$candidate"; return 0; fi
+  fi
+  printf 'dead'
+}
+
+# ----------------------------------------------------------------------
+# _svd_functional_link_check <transcript_path> <session_cwd>
+#   WARN-only (see header comment above). Extracts the final assistant
+#   message, walks every non-ignorable, non-code-span markdown link
+#   target, and for each unresolved one emits a signal-ledger "warn" event
+#   + a stderr notice naming the exact dead target with the pin-d
+#   remediation. Never writes to stdout (must never be mistaken for a
+#   member gate's JSON gap line by the caller's aggregation) and never
+#   returns non-zero (fail-open: a parse error here is silently "nothing
+#   to warn about", never a reason to disturb the real verdict).
+# ----------------------------------------------------------------------
+_svd_functional_link_check() {
+  local transcript_path="$1" session_cwd="$2"
+  local text
+  text=$(_svd_final_assistant_message "$transcript_path")
+  [[ -n "$text" ]] || return 0
+
+  local main_root=""
+  command -v git >/dev/null 2>&1 && main_root=$(nl_main_checkout_root 2>/dev/null || echo "")
+
+  local target resolution
+  while IFS= read -r target; do
+    [[ -z "$target" ]] && continue
+    _svd_link_target_ignorable "$target" && continue
+    resolution=$(_svd_resolve_link_target "$target" "$session_cwd" "$main_root")
+    if [[ "$resolution" == "dead" ]]; then
+      local detail="dead link target: ${target} -- give the absolute path instead"
+      _svd_ledger "warn" "$detail"
+      {
+        echo ""
+        echo "---- FUNCTIONAL-LINK (WARN, non-blocking) ----"
+        echo "  [dead-link] ${target}"
+        echo "    -> give the absolute path instead (neither the session cwd nor the main checkout root resolved this target)."
+      } >&2
+    fi
+  done < <(_svd_extract_markdown_link_targets "$text")
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # Main (production execution) — skipped entirely under --self-test.
 # ----------------------------------------------------------------------
 _svd_main() {
@@ -433,6 +654,15 @@ _svd_main() {
 
   local repo_root=""
   command -v git >/dev/null 2>&1 && repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+
+  # FUNCTIONAL-LINK check (task F.L): WARN-only, runs independently of the
+  # gap aggregation below and never contributes to all_gaps/the verdict —
+  # see the header comment block above for the full mechanism. Uses the
+  # session's actual cwd (captured here, before anything else in this
+  # function could change directory — nothing does, but this keeps the
+  # capture site unambiguous) as resolution root (a), alongside the main
+  # checkout root (b) inside the helper itself.
+  _svd_functional_link_check "$transcript_path" "$(pwd)"
 
   # ADR 059 D6 / specs-e §E.12: write + validate THIS session's end-manifest
   # BEFORE the member gates run, so work-integrity-gate.sh's manifest-scoping
@@ -1145,6 +1375,141 @@ STUBEOF
     passed=$((passed+1))
   else
     echo "self-test (NL-FINDING-036-grep-assertion-write-call-site-passes-shipped-since): FAIL (expected the write_args construction to include --shipped-since)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 14 (task F.L, MANDATED GOLDEN SCENARIO): a final message that
+  # links NEEDS-YOU.md from a WORKTREE cwd where only the MAIN checkout
+  # has that file (real `git worktree add`, mirroring nl-paths.sh's own
+  # T7 self-test technique) resolves OK via the main-checkout-root
+  # fallback (b) -> NO warn ledger event for this target. Companion link
+  # to a genuinely missing file in the SAME message WARNS naming it (proves
+  # the check evaluates each link independently, not all-or-nothing), and
+  # neither link affects the exit code (WARN-only, never blocks).
+  # ================================================================
+  _setup_scenario s14
+  HOOKS=$(_build_dispatcher_repo s14)
+  REPO="$tmproot/s14/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo "NEEDS-YOU.md" > .gitignore; git add -A; git commit -q -m seed; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed2; \
+    echo "# NEEDS-YOU" > NEEDS-YOU.md )
+  WT14="$tmproot/s14/worktree"
+  git -C "$REPO" worktree add -q -b s14-wt-branch "$WT14" >/dev/null 2>&1
+  # NEEDS-YOU.md is gitignored (the live convention: per-checkout state,
+  # never committed) and exists ONLY in the main checkout's working copy
+  # (created above, after the seed commit, so it is untracked there and
+  # git-worktree-add never propagates it into the new worktree). The
+  # worktree's own working copy genuinely has no such file — a CLEAN
+  # worktree (no uncommitted changes of its own), so work-integrity-gate's
+  # check-c (dirty-worktree-on-Stop) does not fire and this scenario
+  # isolates the FUNCTIONAL-LINK behavior from unrelated gates.
+  T14=$(_write_transcript "$tmproot/s14" $'Here is the status: [NEEDS-YOU.md](NEEDS-YOU.md) has the open items, but [stale ref](docs/nonexistent.md) is gone.\n\nDONE: nothing to report')
+  RC14=$(_run_dispatcher "$HOOKS" "$WT14" "$T14" "sess-s14")
+  _expect "golden-scenario-worktree-cwd-never-blocks" "$RC14" "0"
+  if ! grep -q '"gate":"stop-verdict-dispatcher".*NEEDS-YOU\.md\|dead link target: NEEDS-YOU\.md' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (golden-scenario-NEEDS-YOU-resolves-via-main-checkout-root-no-warn): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (golden-scenario-NEEDS-YOU-resolves-via-main-checkout-root-no-warn): FAIL (NEEDS-YOU.md incorrectly flagged dead despite existing in the main checkout)" >&2
+    failed=$((failed+1))
+  fi
+  if grep -q 'dead link target: docs/nonexistent\.md' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (golden-scenario-companion-dead-link-still-warns): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (golden-scenario-companion-dead-link-still-warns): FAIL (expected docs/nonexistent.md to be flagged dead)" >&2
+    failed=$((failed+1))
+  fi
+  if grep -q 'give the absolute path instead' "$tmproot/last-stderr.txt" 2>/dev/null; then
+    echo "self-test (golden-scenario-warn-message-is-pin-d-actionable): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (golden-scenario-warn-message-is-pin-d-actionable): FAIL (expected the pin-d remediation phrase on stderr)" >&2
+    failed=$((failed+1))
+  fi
+  ( cd "$REPO" && git worktree remove --force "$WT14" >/dev/null 2>&1 || true; git branch -D s14-wt-branch >/dev/null 2>&1 || true )
+
+  # ================================================================
+  # Scenario 15 (task F.L): http(s)/mailto/# targets are NEVER evaluated,
+  # even when the "path" would obviously not resolve as a file (proves
+  # the ignore-list short-circuits before any filesystem check).
+  # ================================================================
+  _setup_scenario s15
+  HOOKS=$(_build_dispatcher_repo s15)
+  REPO="$tmproot/s15/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T15=$(_write_transcript "$tmproot/s15" $'See [docs](https://example.com/nonexistent), [mail](mailto:a@b.com), [anchor](#nope).\n\nDONE: nothing to report')
+  RC15=$(_run_dispatcher "$HOOKS" "$REPO" "$T15" "sess-s15")
+  _expect "http-mailto-anchor-links-never-block" "$RC15" "0"
+  if ! grep -qE '"gate":"stop-verdict-dispatcher".*(example\.com|mailto:|#nope)' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (http-mailto-anchor-links-ignored-not-warned): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (http-mailto-anchor-links-ignored-not-warned): FAIL (an ignorable target was incorrectly warned on)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 16 (task F.L): a link inside an inline code span is NEVER
+  # evaluated, even when its "target" is obviously not a real file —
+  # proves the code-span skip (backtick-parity tracking), not just that
+  # the target happens to resolve.
+  # ================================================================
+  _setup_scenario s16
+  HOOKS=$(_build_dispatcher_repo s16)
+  REPO="$tmproot/s16/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T16=$(_write_transcript "$tmproot/s16" $'Write links like this: `[text](docs/totally-fake.md)` in markdown.\n\nDONE: nothing to report')
+  RC16=$(_run_dispatcher "$HOOKS" "$REPO" "$T16" "sess-s16")
+  _expect "code-span-link-example-never-blocks" "$RC16" "0"
+  if ! grep -q 'docs/totally-fake\.md' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (code-span-link-example-not-warned): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (code-span-link-example-not-warned): FAIL (a link inside an inline code span was incorrectly warned on)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 17 (task F.L): a WARN never appears in the combined BLOCK
+  # message and never contributes to gap_count/cycle-counting — build a
+  # session that has a REAL blocking gap (no marker) PLUS a dead link in
+  # the same final message; the block message must list the marker-format
+  # gap but must NOT fold the dead-link warn into it (separate channel).
+  # ================================================================
+  _setup_scenario s17
+  HOOKS=$(_build_dispatcher_repo s17)
+  REPO="$tmproot/s17/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T17=$(_write_transcript "$tmproot/s17" $'See [gone](docs/still-not-here.md) — trailing off with no marker at all')
+  RC17=$(_run_dispatcher "$HOOKS" "$REPO" "$T17" "sess-s17")
+  _expect "warn-plus-real-gap-still-blocks-on-the-real-gap" "$RC17" "2"
+  if grep -q "marker-format" "$tmproot/last-stderr.txt" 2>/dev/null \
+     && ! grep -q "docs/still-not-here\.md" "$tmproot/last-stdout.txt" 2>/dev/null; then
+    echo "self-test (warn-channel-separate-from-block-message-and-block-json): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (warn-channel-separate-from-block-message-and-block-json): FAIL (expected the WARN to stay out of the block-JSON reason string on stdout)" >&2
+    failed=$((failed+1))
+  fi
+  if grep -q 'dead link target: docs/still-not-here\.md' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (warn-still-ledgered-alongside-a-real-block): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (warn-still-ledgered-alongside-a-real-block): FAIL (expected the dead link to still be ledgered even though a real gap also blocked)" >&2
     failed=$((failed+1))
   fi
 
