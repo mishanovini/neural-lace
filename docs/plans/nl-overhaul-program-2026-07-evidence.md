@@ -1256,3 +1256,108 @@ before and after).
 No shellcheck available in this environment to lint the diff; self-test + livesmoke are the
 verification oracle. CR-byte check (`cmp` against a stripped copy) confirms the edited file has
 no CRLF contamination.
+
+## Task F.2 — Docs regeneration (task-verifier independent re-verification, round 2)
+EVIDENCE BLOCK
+==============
+Task ID: F.2
+Task description: Docs regeneration: harness-architecture.md rewritten from manifest; best-practices.md updated; ALL README files brought current and freshness-anchored (root README.md, adapters/claude-code/README*, doctrine/INDEX.md [generated], attic/README, evals/README) — each carries a generated-from or last-verified anchor the doctor can check; failure-modes + findings entries for the program's fixed classes — Model: sonnet — Parallelizable: yes — Verification: mechanical
+Verified at: 2026-07-06T07:47:55Z
+Verifier: task-verifier agent
+
+Oracle: mechanical (Verification: mechanical, per plan header) — the Done-when is "architecture doc inventory counts match manifest counts (script assertion)"; supplemented by re-running the doctor-predicate.md fragment's own cited commands as the derived-contract oracle for the README-anchor and drift sub-clauses.
+
+Comprehension-gate: not applicable (rung: 1, plan header confirmed via grep)
+
+Round-1 disposition (for context, not trusted): FAIL — "best-practices.md clause never done; same predicate-fold gap [as F.1]" (see "Wave-F verification round 1" entry above, workflow wf2vtv808). This entry re-derives independently against the current tree (commits a8e2eb7 doctor-fold, 4abc9e9 best-practices rewrite) rather than trusting the fix commits' own messages.
+
+Checks run:
+1. Doctor self-test full suite (confirms F.1's integration of F.2's predicates is real, not theater)
+   Command: bash adapters/claude-code/hooks/harness-doctor.sh --self-test
+   Output: "self-test summary: 50 passed, 0 failed" — includes wave-f-f2-docs-predicate1-red/green, wave-f-f2-docs-predicate2-stale-red/noanchor-red/green (all PASS)
+   Result: PASS
+
+2. check_wave_f_f2_docs wiring — defined once (line 586), invoked once in main check sequence (line 1534) of adapters/claude-code/hooks/harness-doctor.sh
+   Command: grep -n "check_wave_f_f2_docs\b" adapters/claude-code/hooks/harness-doctor.sh
+   Output: 586:check_wave_f_f2_docs() {  /  1534:  check_wave_f_f2_docs "$live_home" "$repo_root"
+   Result: PASS
+
+3. Live RED-fixture seed against the REAL README.md (not a synthetic fixture) — backdated the real anchor to 2026-01-01, ran --quick, confirmed RED fired with correct age arithmetic, restored original, confirmed git diff clean after
+   Command: sed -i 's/last-verified: 2026-07-05/last-verified: 2026-01-01/' README.md && bash adapters/claude-code/hooks/harness-doctor.sh --quick
+   Output: "[doctor] RED wave-f-f2-docs: STALE (185d, budget <= 90d): .../README.md — re-verify and bump the last-verified anchor"; after restore, `git status --short` empty
+   Result: PASS
+
+4. Predicate 1 (harness-architecture.md drift) re-run live, exact cited command
+   Command: bash adapters/claude-code/scripts/gen-architecture-doc.sh --check
+   Output: "[gen-architecture-doc] GREEN — committed doc matches a fresh regen"
+   Result: PASS
+
+5. Predicate 1 fixture suite re-run (5/5, including the drift-detection RED scenario)
+   Command: bash adapters/claude-code/scripts/gen-architecture-doc.sh --self-test
+   Output: "self-test summary: 5 passed, 0 failed" (s1..s5, incl. s3-drift-detected-red)
+   Result: PASS
+
+6. Predicate 2 (README freshness anchors, all 5 named surfaces) re-run live, exact cited loop from tests/fixtures/wave-f/F.2/doctor-predicate.md
+   Command: (inlined bash loop over README.md, adapters/claude-code/README.md, adapters/claude-code/attic/README.md, evals/README.md, neural-lace/workstreams-ui/README.md per doctor-predicate.md's Predicate 2 block)
+   Output: all 5 "OK (1 d)"; exit=0
+   Result: PASS
+
+7. Predicate 2b (doctrine/INDEX.md drift-verified freshness, not literal anchor — documented reconciliation of the task line's "[generated]" annotation) re-run live
+   Command: bash adapters/claude-code/scripts/manifest-check.sh --gen-index >/dev/null && git diff --quiet -- adapters/claude-code/doctrine/INDEX.md
+   Output: exit 0, no diff
+   Result: PASS
+
+8. Architecture-doc inventory-count assertion (the literal Done-when) — cross-checked the doc's own "Total manifest entries" row against a live jq count
+   Command: jq '.entries | length' adapters/claude-code/manifest.json  (=100)  vs  grep "Total manifest entries" docs/harness-architecture.md (states 100)
+   Output: 100 == 100 (also cross-checked gate=42/pattern=22/writer=18/surfacer=16/convention=2, blocking=32 — all match jq re-derivation exactly)
+   Result: PASS
+
+9. best-practices.md mechanism-truth spot-check — re-ran 6 of its cited commands (exceeds the "2-3" ask)
+   Commands: wc -c adapters/claude-code/rules/constitution.md (9786, matches claim); wc -l adapters/claude-code/CLAUDE.md (77, matches); jq '.entries|length' manifest.json (100, matches); jq blocking:true count (32, matches); jq group_by(.kind) (42 gate/22 pattern/18 writer/16 surfacer/2 convention, matches the doc's Verification-log line verbatim); ls adapters/claude-code/doctrine/*.md | wc -l (67, matches)
+   Result: PASS — all 6 re-derived values matched the doc's stated claims exactly; doc's own "Verification log (2026-07-06)" section (line 1153) independently found and cross-checked
+
+10. failure-modes.md entries for the program's fixed classes
+   Command: grep -n "^## FM-03[3-6]" docs/failure-modes.md
+   Output: FM-033 (compound-command discard), FM-034 (scope-update/two-gate trap), FM-035 (selftest retry-guard state-leak), FM-036 (fallback-window masks invocation shape) — all 4 present
+   Result: PASS
+
+Runtime verification: functionality-verifier F.2::SKIP (rationale: harness-internal mechanical-verification task per plan header Verification: mechanical + acceptance-exempt: true; the doctor --self-test suite IS the functionality-verifier-equivalent self-test per constitution §4's harness carve-out — re-run live above with a real (non-synthetic) RED fixture seeded against the actual README.md, not merely the self-test's internal fixtures)
+Runtime verification: test adapters/claude-code/hooks/harness-doctor.sh::self-test (50 passed, 0 failed)
+Runtime verification: file docs/harness-architecture.md::"Total manifest entries | 100" (cross-checked against `jq '.entries|length' adapters/claude-code/manifest.json` = 100)
+Runtime verification: command bash adapters/claude-code/scripts/gen-architecture-doc.sh --check (exit 0, GREEN)
+Runtime verification: command bash adapters/claude-code/scripts/manifest-check.sh --gen-index && git diff --quiet -- adapters/claude-code/doctrine/INDEX.md (exit 0, no drift)
+
+DEPENDENCY TRACE
+================
+Step 1: F.1 integrator folds F.2's fragment predicates into harness-doctor.sh
+  ↓ Verified at: adapters/claude-code/hooks/harness-doctor.sh:586 (check_wave_f_f2_docs defined) + :1534 (invoked in main sequence) + commit a8e2eb7
+Step 2: Predicate 1 (architecture-doc drift) exercised against the real repo
+  ↓ Verified at: live `gen-architecture-doc.sh --check` exit 0 this session; self-test 5/5 incl. s3-drift-detected-red
+Step 3: Predicate 2 (README anchors) exercised against the real repo AND a live-seeded RED fixture on the real README.md
+  ↓ Verified at: live inlined-loop run (exit 0, all 5 "OK (1 d)"); live RED-seed run (`STALE (185d)` fired correctly, then restored clean)
+Step 4: Doctor --self-test suite proves both predicates are wired as automated fixtures, not just manually re-run by the verifier
+  ↓ Verified at: "self-test summary: 50 passed, 0 failed" incl. wave-f-f2-docs-predicate1/2 red+green scenarios
+Step 5: best-practices.md + harness-architecture.md content claims are mechanism-true
+  ↓ Verified at: 6 cited commands re-run, all matched exactly (100 entries/32 blocking/9786 bytes/77 lines/67 doctrine files/kind breakdown)
+Step 6: failure-modes.md carries entries for the program's fixed classes
+  ↓ Verified at: grep confirms FM-033..FM-036 present with full symptom/root-cause/detection/prevention shape
+
+Git evidence:
+  Files modified in recent history:
+    - adapters/claude-code/hooks/harness-doctor.sh  (last commit: a8e2eb7, 2026-07-06 — folds F.2 predicates)
+    - docs/best-practices.md  (last commit: 4abc9e9, 2026-07-05 — mechanism-true rewrite)
+    - docs/harness-architecture.md, README.md, adapters/claude-code/README.md, adapters/claude-code/attic/README.md, evals/README.md, neural-lace/workstreams-ui/README.md, adapters/claude-code/doctrine/INDEX.md, docs/failure-modes.md  (commit 24efc14, 2026-07-05 — F.2 docs regeneration)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — every sub-clause of F.2's Done-when and its supporting predicate fragment was re-exercised live this session against the current tree, independent of the builder's fix-commit narration: (a) architecture-doc inventory count verified equal to a live jq re-derivation of manifest.json (100/100, plus the full kind breakdown); (b) the doctor's check_wave_f_f2_docs predicate is genuinely wired into the main check sequence (not orphaned) and its self-test fixtures pass 50/50; (c) a REAL (non-fixture) RED was induced by backdating the actual README.md's anchor and observed to correctly fire and then clean up with zero residual diff — this is the strongest possible falsification attempt against the "theater" finding from round 1, and it survived; (d) best-practices.md's mechanism claims were independently re-derived (not merely trusted) across 6 commands, all matching exactly; (e) failure-modes.md carries the required FM-033..FM-036 entries. Round-1's FAIL reason ("predicate-fold gap") is refuted by direct evidence the fold now exists, fires, and self-tests.
+
+Round-1 disposition superseded. Checkbox authorized to flip.
+
+## Wave-F round-2 re-verification: F.1 + F.2 + F.6 PASS, flipped (workflow w6qinb1bc, 2026-07-06)
+Confidence 9, re-derived not re-trusted: F.1 — doctor 50/50 incl. worktree-AGE + dedup fixtures;
+fresh disposable linked worktree --quick run byte-identical to main checkout (root-dedup live).
+F.2 — gen-architecture-doc --check GREEN; 5/5 README anchors fresh; check_wave_f_f2_docs defined
++call-sited; 5 cited commands re-run, zero drift. F.6 — 10/10; REAL flagless sync with live lock:
+log-and-proceed, caller untouched, mirror tree-identical advance; clone-is-caller refusal RC=1;
+zero real-state pollution. Cosmetic residual: S9 print-label wording stale (code correct).
