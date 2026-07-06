@@ -189,6 +189,152 @@ _kpi_nl_issues_section() {
 }
 
 # ============================================================
+# _kpi_backlog_path — resolve docs/backlog.md (BACKLOG-LOOP-01 part 3,
+# observability O.9). BACKLOG_MD_PATH overrides (fixtures); under
+# HARNESS_SELFTEST=1 the default resolves into the sandbox (absent file
+# => section reports "no backlog file") so self-tests never read the
+# real backlog unless a fixture is explicitly provided.
+# ============================================================
+_kpi_backlog_path() {
+  if [[ -n "${BACKLOG_MD_PATH:-}" ]]; then
+    printf '%s' "$BACKLOG_MD_PATH"
+    return 0
+  fi
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/backlog-selftest/%s/backlog.md' "${TMPDIR:-/tmp}" "$$"
+    return 0
+  fi
+  local root
+  root="$(_kpi_repo_root)"
+  printf '%s/docs/backlog.md' "$root"
+  return 0
+}
+
+# ============================================================
+# _kpi_backlog_date_epoch <YYYY-MM-DD> — GNU date with BSD fallback
+# ============================================================
+_kpi_backlog_date_epoch() {
+  date -u -d "$1" +%s 2>/dev/null \
+    || date -u -j -f '%Y-%m-%d' "$1" +%s 2>/dev/null \
+    || echo ""
+}
+
+# ============================================================
+# _kpi_backlog_section <backlog_path> [window_days] — render the
+# Backlog Health section (BACKLOG-LOOP-01 part 3):
+#   - open-row count by priority (high/medium/low/unlabeled)
+#   - aging histogram of open rows (0-7 / 8-30 / 31-90 / >90 days)
+#   - adds vs terminal transitions inside the report window
+#     (default KPI_WINDOW_DAYS=7 — this is a weekly report)
+#
+# Row grammar mirrors session-start-digest.sh feed_backlog_accountability:
+# structured rows "- **<ID>"; terminal markers DISPOSITIONED/IMPLEMENTED/
+# ABSORBED/CLOSED/SUPERSEDED/WONTFIX (case-insensitive, word-bounded) on
+# the row line; age from the first "added YYYY-MM-DD"; priority from the
+# first "priority:high|medium|low" label. Terminal transitions in-window
+# are counted from the date adjacent to the terminal marker; terminal
+# rows without an adjacent date are reported as undated.
+# ============================================================
+_kpi_backlog_section() {
+  local backlog_path="$1"
+  local window_days="${2:-${KPI_WINDOW_DAYS:-7}}"
+
+  printf '### Backlog Health\n\n'
+  if [[ ! -f "$backlog_path" ]]; then
+    printf 'No backlog file at %s.\n\n' "$backlog_path"
+    return 0
+  fi
+
+  local now window_start_epoch
+  now="$(date -u +%s)"
+  window_start_epoch=$((now - window_days * 86400))
+
+  local open_high=0 open_medium=0 open_low=0 open_unlabeled=0
+  local age_0_7=0 age_8_30=0 age_31_90=0 age_over_90=0 open_undated=0
+  local adds_window=0 terminal_window=0 terminal_undated=0 terminal_total=0
+  local line id added added_epoch age_days prio term_date term_epoch
+
+  while IFS= read -r line; do
+    id="$(printf '%s' "$line" | grep -oE '^- \*\*[A-Z][A-Z0-9-]{3,}' | sed 's/^- \*\*//')"
+    [[ -z "$id" ]] && continue
+
+    added="$(printf '%s' "$line" | grep -oE 'added [0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n1 | sed 's/^added //')"
+    added_epoch=""
+    [[ -n "$added" ]] && added_epoch="$(_kpi_backlog_date_epoch "$added")"
+
+    # Adds inside the report window (regardless of current state).
+    if [[ -n "$added_epoch" ]] && [[ "$added_epoch" -ge "$window_start_epoch" ]]; then
+      adds_window=$((adds_window + 1))
+    fi
+
+    if printf '%s' "$line" | grep -qiE '\b(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)\b'; then
+      terminal_total=$((terminal_total + 1))
+      term_date="$(printf '%s' "$line" \
+        | grep -oiE '(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)[^0-9]{0,12}[0-9]{4}-[0-9]{2}-[0-9]{2}' \
+        | head -n1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
+      if [[ -n "$term_date" ]]; then
+        term_epoch="$(_kpi_backlog_date_epoch "$term_date")"
+        if [[ -n "$term_epoch" ]] && [[ "$term_epoch" -ge "$window_start_epoch" ]]; then
+          terminal_window=$((terminal_window + 1))
+        fi
+      else
+        terminal_undated=$((terminal_undated + 1))
+      fi
+      continue
+    fi
+
+    # Open row: priority + aging histogram.
+    prio="$(printf '%s' "$line" | grep -oE 'priority:(high|medium|low)' | head -n1 | sed 's/^priority://')"
+    case "$prio" in
+      high)   open_high=$((open_high + 1)) ;;
+      medium) open_medium=$((open_medium + 1)) ;;
+      low)    open_low=$((open_low + 1)) ;;
+      *)      open_unlabeled=$((open_unlabeled + 1)) ;;
+    esac
+    if [[ -z "$added_epoch" ]]; then
+      open_undated=$((open_undated + 1))
+      continue
+    fi
+    age_days=$(( (now - added_epoch) / 86400 ))
+    if   [[ "$age_days" -le 7 ]];  then age_0_7=$((age_0_7 + 1))
+    elif [[ "$age_days" -le 30 ]]; then age_8_30=$((age_8_30 + 1))
+    elif [[ "$age_days" -le 90 ]]; then age_31_90=$((age_31_90 + 1))
+    else                                age_over_90=$((age_over_90 + 1))
+    fi
+  done < <(grep -E '^- \*\*[A-Z]' "$backlog_path" 2>/dev/null)
+
+  local open_total=$((open_high + open_medium + open_low + open_unlabeled))
+
+  printf 'Open structured rows: %d (terminal-marked: %d)\n\n' "$open_total" "$terminal_total"
+  printf '| Priority | Open rows |\n'
+  printf '|----------|-----------|\n'
+  printf '| high | %d |\n' "$open_high"
+  printf '| medium | %d |\n' "$open_medium"
+  printf '| low | %d |\n' "$open_low"
+  printf '| (unlabeled) | %d |\n' "$open_unlabeled"
+  printf '\n'
+  printf '| Age (open rows) | Count |\n'
+  printf '|-----------------|-------|\n'
+  printf '| 0-7d | %d |\n' "$age_0_7"
+  printf '| 8-30d | %d |\n' "$age_8_30"
+  printf '| 31-90d | %d |\n' "$age_31_90"
+  printf '| >90d | %d |\n' "$age_over_90"
+  if [[ "$open_undated" -gt 0 ]]; then
+    printf '| (no parseable added-date) | %d |\n' "$open_undated"
+  fi
+  printf '\n'
+  printf '| Flow (last %dd) | Count |\n' "$window_days"
+  printf '|------------------|-------|\n'
+  printf '| Rows added | %d |\n' "$adds_window"
+  printf '| Terminal transitions | %d |\n' "$terminal_window"
+  if [[ "$terminal_undated" -gt 0 ]]; then
+    printf '| (terminal, no adjacent date) | %d |\n' "$terminal_undated"
+  fi
+  printf '\n'
+  return 0
+}
+
+# ============================================================
 # _kpi_generate_report — generate the full KPI report
 # ============================================================
 _kpi_generate_report() {
@@ -265,6 +411,9 @@ _kpi_generate_report() {
 
     # NL-Issue Triage Section
     _kpi_nl_issues_section "$nl_issues_path"
+
+    # Backlog Health Section (BACKLOG-LOOP-01 part 3, observability O.9)
+    _kpi_backlog_section "$(_kpi_backlog_path)"
 
     printf 'Generated at %s UTC\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   } > "$output_path"
@@ -367,6 +516,73 @@ EOF
     pass "report indicates no untriaged issues"
   else
     fail "report should indicate no untriaged issues"
+  fi
+
+  echo "Scenario 3: fixture backlog renders the Backlog Health section (BACKLOG-LOOP-01)"
+  # Fixture: 2 open rows per distinct age bucket + priorities, 1 unlabeled,
+  # 2 terminal rows (one dated in-window, one undated), 1 row added
+  # in-window. Dates computed relative to today so bucket boundaries are
+  # deterministic.
+  d2="$(date -u -d '2 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-2d '+%Y-%m-%d' 2>/dev/null)"
+  d20="$(date -u -d '20 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-20d '+%Y-%m-%d' 2>/dev/null)"
+  d60="$(date -u -d '60 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-60d '+%Y-%m-%d' 2>/dev/null)"
+  d120="$(date -u -d '120 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-120d '+%Y-%m-%d' 2>/dev/null)"
+  export BACKLOG_MD_PATH="$TMP/fixture-backlog.md"
+  cat > "$BACKLOG_MD_PATH" <<EOF
+# Fixture Backlog
+
+- **KPI-FRESH-01 — fresh high row** (added $d2; \`priority:high\`). Prose.
+- **KPI-MID-01 — mid-age medium row** (added $d20; \`priority:medium\`). Prose.
+- **KPI-OLD-01 — old low row** (added $d60; \`priority:low\`). Prose.
+- **KPI-ANCIENT-01 — ancient unlabeled row** (added $d120). Prose.
+- **KPI-TERM-01 — [CLOSED $d2] closed in window** (added $d120; \`priority:high\`). Prose.
+- **KPI-TERM-02 — done long ago** (added $d120; \`priority:low\`). **(absorbed by docs/plans/fixture.md)**.
+EOF
+  report_path3="$TMP/report3.md"
+  _kpi_generate_report "$report_path3" "2026-07-06"
+
+  if grep -q "### Backlog Health" "$report_path3" 2>/dev/null; then
+    pass "report contains Backlog Health section"
+  else
+    fail "report missing Backlog Health section"
+  fi
+  if grep -q "Open structured rows: 4 (terminal-marked: 2)" "$report_path3" 2>/dev/null; then
+    pass "open/terminal row counts correct (4 open, 2 terminal)"
+  else
+    fail "open/terminal row counts wrong (expected 4 open, 2 terminal)"
+  fi
+  if grep -q "| high | 1 |" "$report_path3" 2>/dev/null \
+     && grep -q "| medium | 1 |" "$report_path3" 2>/dev/null \
+     && grep -q "| low | 1 |" "$report_path3" 2>/dev/null \
+     && grep -q "| (unlabeled) | 1 |" "$report_path3" 2>/dev/null; then
+    pass "priority breakdown correct (1 high / 1 medium / 1 low / 1 unlabeled)"
+  else
+    fail "priority breakdown wrong"
+  fi
+  if grep -q "| 0-7d | 1 |" "$report_path3" 2>/dev/null \
+     && grep -q "| 8-30d | 1 |" "$report_path3" 2>/dev/null \
+     && grep -q "| 31-90d | 1 |" "$report_path3" 2>/dev/null \
+     && grep -q "| >90d | 1 |" "$report_path3" 2>/dev/null; then
+    pass "aging histogram buckets correct (1/1/1/1)"
+  else
+    fail "aging histogram buckets wrong"
+  fi
+  if grep -q "| Rows added | 1 |" "$report_path3" 2>/dev/null \
+     && grep -q "| Terminal transitions | 1 |" "$report_path3" 2>/dev/null \
+     && grep -q "| (terminal, no adjacent date) | 1 |" "$report_path3" 2>/dev/null; then
+    pass "flow counts correct (1 added, 1 terminal in-window, 1 undated terminal)"
+  else
+    fail "flow counts wrong"
+  fi
+  unset BACKLOG_MD_PATH
+
+  echo "Scenario 4: absent backlog file -> honest no-file line, no crash"
+  report_path4="$TMP/report4.md"
+  _kpi_generate_report "$report_path4" "2026-07-06"
+  if grep -q "No backlog file at" "$report_path4" 2>/dev/null; then
+    pass "absent backlog reported honestly"
+  else
+    fail "absent backlog not reported"
   fi
 
   echo "Summary: $PASSED passed, $FAILED failed"
