@@ -820,6 +820,38 @@ _backlog_date_to_epoch() {
     || echo ""
 }
 
+# _backlog_row_is_terminal <row line> -> 0 (terminal) / 1 (open).
+#
+# POSITION-ANCHORED marker detection, not a whole-line scan: a naive
+# whole-line grep falsely skipped OPEN rows whose prose merely REFERENCES
+# another row's terminal state (live example, caught by this increment's
+# own livesmoke: GH-AUTH-AUTOSWITCH-WORKORG-01, an open 35d-overdue row,
+# was invisible because its prose says "distinct from HARNESS-GAP-12
+# (IMPLEMENTED 2026-05-04)"). The four rules below match every terminal
+# form actually observed in the live backlog and nothing else:
+#   R1  UPPERCASE marker inside the bold TITLE span
+#       ("[CLOSED 2026-07-02] ...", "[SUPERSEDED 2026-05-27 by PR #26]")
+#   R2  "** — MARKER" immediately after the title close
+#       ("- **HARNESS-GAP-08** — IMPLEMENTED 2026-05-05 via ...")
+#   R3  bold-paren annotation, case-insensitive (live form is lowercase:
+#       "**(absorbed by docs/plans/...)**")
+#   R4  bold annotation opening with optional qualifier + UPPERCASE marker
+#       ("**LARGELY SUPERSEDED same-day**", "**IMPLEMENTED 2026-05-05 ...**")
+# R1/R2/R4 are case-SENSITIVE: lowercase title prose like "residue from
+# the superseded cross-machine plan" describes SUBJECT MATTER, not row
+# state (CROSS-MACHINE-COORD-RESIDUE-01 is an open row).
+# Mirrored verbatim in plan-edit-validator.sh + harness-kpis.sh — the
+# three BACKLOG-LOOP-01 consumers must agree on what "open" means.
+_BACKLOG_TERM_U='(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)'
+_backlog_row_is_terminal() {
+  local line="$1"
+  printf '%s' "$line" | grep -qE "^- \*\*[^*]*\b${_BACKLOG_TERM_U}\b" && return 0
+  printf '%s' "$line" | grep -qE "\*\*[[:space:]]+(—|--?)[[:space:]]+${_BACKLOG_TERM_U}\b" && return 0
+  printf '%s' "$line" | grep -qiE '\*\*\((dispositioned|implemented|absorbed|closed|superseded|wontfix)\b' && return 0
+  printf '%s' "$line" | grep -qE "\*\*((PARTIALLY|LARGELY)[[:space:]]+)?${_BACKLOG_TERM_U}\b" && return 0
+  return 1
+}
+
 feed_backlog_accountability() {
   local seen_path="$1" cwd="${2:-$PWD}"
   local backlog="$cwd/docs/backlog.md"
@@ -837,8 +869,7 @@ feed_backlog_accountability() {
   while IFS= read -r line; do
     id="$(printf '%s' "$line" | grep -oE '^- \*\*[A-Z][A-Z0-9-]{3,}' | sed 's/^- \*\*//')"
     [[ -z "$id" ]] && continue
-    # Terminal-state markers anywhere on the row line => not an open row.
-    printf '%s' "$line" | grep -qiE '\b(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)\b' && continue
+    _backlog_row_is_terminal "$line" && continue
     added="$(printf '%s' "$line" | grep -oE 'added [0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n1 | sed 's/^added //')"
     [[ -z "$added" ]] && continue
     added_epoch="$(_backlog_date_to_epoch "$added")"
@@ -1414,10 +1445,13 @@ EOF
 - **TERM-CLOSED-01 — [CLOSED $_d8] fixture terminal, aged past every tier** (added $_d91; \`priority:high\`). Prose.
 - **TERM-ABSORBED-01 — fixture aged past every tier** (added $_d91; \`priority:high\`). **(absorbed by docs/plans/fixture.md)**.
 - **TERM-IMPL-01** — IMPLEMENTED $_d8 via docs/plans/fixture2.md (added $_d91; \`priority:high\`).
+- **OPEN-REF-01 — open row whose prose references ANOTHER row's terminal state** (added $_d8; \`priority:high\`). **This is distinct from OTHER-GAP-99 (IMPLEMENTED 2026-01-01).** Still open work.
 EOF
   local s13_seen="$tmp/s13-seen.jsonl"
   local out13a
-  out13a="$(feed_backlog_accountability "$s13_seen" "$s13")"
+  # Cap raised for this scenario so every crossed row can surface; cap
+  # behavior itself is S13c's job.
+  out13a="$(BACKLOG_DIGEST_CAP=10 feed_backlog_accountability "$s13_seen" "$s13")"
   _ck_contains "S13a high row crossed >7d surfaces with tier+age" "$out13a" "backlog: HIGH-OVERDUE-01 (high, 8d)"
   _ck_contains "S13a medium row crossed >30d surfaces" "$out13a" "backlog: MED-OVERDUE-01 (medium, 31d)"
   _ck_contains "S13a low row crossed >90d surfaces" "$out13a" "backlog: LOW-OVERDUE-01 (low, 91d)"
@@ -1428,6 +1462,7 @@ EOF
   _ck_not_contains "S13a [CLOSED]-marked row never surfaces" "$out13a" "TERM-CLOSED-01"
   _ck_not_contains "S13a (absorbed by ...)-marked row never surfaces" "$out13a" "TERM-ABSORBED-01"
   _ck_not_contains "S13a IMPLEMENTED-marked row never surfaces" "$out13a" "TERM-IMPL-01"
+  _ck_contains "S13a open row REFERENCING another row's terminal state still surfaces (GH-AUTH false-skip regression)" "$out13a" "backlog: OPEN-REF-01 (high, 8d)"
 
   # S13b: second invocation same ISO week + same seen ledger -> silent.
   local out13b

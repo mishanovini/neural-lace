@@ -206,6 +206,23 @@ trap 'release_plan_lock' EXIT INT TERM
 # NOTE: defined ABOVE the --self-test block (unlike check_docs_impact_warn,
 # which self-tests against an inline replica) so F13/F14 exercise THIS
 # function — no replica to drift.
+
+# _backlog_row_is_terminal <row line> -> 0 (terminal) / 1 (open).
+# MIRRORED VERBATIM from session-start-digest.sh (see the rationale
+# comment there: position-anchored R1-R4 rules; a naive whole-line scan
+# falsely skipped open rows whose prose references ANOTHER row's
+# terminal state). The three BACKLOG-LOOP-01 consumers must agree on
+# what "open" means.
+_BACKLOG_TERM_U='(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)'
+_backlog_row_is_terminal() {
+  local line="$1"
+  printf '%s' "$line" | grep -qE "^- \*\*[^*]*\b${_BACKLOG_TERM_U}\b" && return 0
+  printf '%s' "$line" | grep -qE "\*\*[[:space:]]+(—|--?)[[:space:]]+${_BACKLOG_TERM_U}\b" && return 0
+  printf '%s' "$line" | grep -qiE '\*\*\((dispositioned|implemented|absorbed|closed|superseded|wontfix)\b' && return 0
+  printf '%s' "$line" | grep -qE "\*\*((PARTIALLY|LARGELY)[[:space:]]+)?${_BACKLOG_TERM_U}\b" && return 0
+  return 1
+}
+
 check_backlog_absorption_warn() {
   local plan_path_norm="$1"
   local prospective="$2"
@@ -242,7 +259,7 @@ check_backlog_absorption_warn() {
   while IFS= read -r line; do
     id="$(printf '%s' "$line" | grep -oE '^- \*\*[A-Z][A-Z0-9-]{3,}' | sed 's/^- \*\*//')"
     [[ -z "$id" ]] && continue
-    printf '%s' "$line" | grep -qiE '\b(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)\b' && continue
+    _backlog_row_is_terminal "$line" && continue
     # Already named by the plan (absorbed header or explicit deferral
     # note anywhere in the prospective content) -> handled, no warn.
     if printf '%s' "$prospective" | grep -qF -- "$id"; then
@@ -941,6 +958,7 @@ JSON
 - **FIXTURE-SURFACE-01 — session-start-digest.sh needs a fictional extension** (added 2026-01-01; `priority:high`). Prose body.
 - **FIXTURE-OTHER-01 — some-unrelated-hook.sh cleanup** (added 2026-01-01; `priority:low`). Prose body.
 - **FIXTURE-TERM-01 — [CLOSED 2026-01-02] session-start-digest.sh already handled** (added 2026-01-01; `priority:high`). Prose body.
+- **FIXTURE-REF-OPEN-01 — open session-start-digest.sh row whose prose references another row's terminal state** (added 2026-01-01; `priority:high`). **This is distinct from OTHER-GAP-99 (IMPLEMENTED 2026-01-01).** Still open.
 EOF
 
   PLAN_F13=$'# Fixture Plan\n\nStatus: DRAFT\n\n## Goal\n\nFixture.\n\n## Files to Modify/Create\n\n`adapters/claude-code/hooks/session-start-digest.sh` (extend)\n\n## Testing Strategy\n\nn/a\n'
@@ -950,6 +968,7 @@ EOF
   set -e
   if [[ "$RC_F13" -eq 0 ]] \
      && printf '%s' "$OUT_F13" | grep -q "FIXTURE-SURFACE-01" \
+     && printf '%s' "$OUT_F13" | grep -q "FIXTURE-REF-OPEN-01" \
      && printf '%s' "$OUT_F13" | grep -q "Absorb or explicitly defer each" \
      && ! printf '%s' "$OUT_F13" | grep -q "FIXTURE-OTHER-01" \
      && ! printf '%s' "$OUT_F13" | grep -q "FIXTURE-TERM-01"; then
@@ -961,7 +980,7 @@ EOF
   fi
 
   PLAN_F14="${PLAN_F13/Status: DRAFT/Status: DRAFT
-Backlog items absorbed: FIXTURE-SURFACE-01 (fixture absorption).}"
+Backlog items absorbed: FIXTURE-SURFACE-01 (fixture absorption); FIXTURE-REF-OPEN-01 (deferred — fixture).}"
   set +e
   OUT_F14="$(BACKLOG_MD_PATH="$BL_FIXTURE" check_backlog_absorption_warn "docs/plans/fixture-f14.md" "$PLAN_F14" 2>&1)"
   RC_F14=$?

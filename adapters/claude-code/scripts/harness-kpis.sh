@@ -220,6 +220,24 @@ _kpi_backlog_date_epoch() {
 }
 
 # ============================================================
+# _backlog_row_is_terminal <row line> -> 0 (terminal) / 1 (open).
+# MIRRORED VERBATIM from session-start-digest.sh (see the rationale
+# comment there: position-anchored R1-R4 rules; a naive whole-line scan
+# falsely skipped open rows whose prose references ANOTHER row's
+# terminal state). The three BACKLOG-LOOP-01 consumers must agree on
+# what "open" means.
+# ============================================================
+_BACKLOG_TERM_U='(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)'
+_backlog_row_is_terminal() {
+  local line="$1"
+  printf '%s' "$line" | grep -qE "^- \*\*[^*]*\b${_BACKLOG_TERM_U}\b" && return 0
+  printf '%s' "$line" | grep -qE "\*\*[[:space:]]+(—|--?)[[:space:]]+${_BACKLOG_TERM_U}\b" && return 0
+  printf '%s' "$line" | grep -qiE '\*\*\((dispositioned|implemented|absorbed|closed|superseded|wontfix)\b' && return 0
+  printf '%s' "$line" | grep -qE "\*\*((PARTIALLY|LARGELY)[[:space:]]+)?${_BACKLOG_TERM_U}\b" && return 0
+  return 1
+}
+
+# ============================================================
 # _kpi_backlog_section <backlog_path> [window_days] — render the
 # Backlog Health section (BACKLOG-LOOP-01 part 3):
 #   - open-row count by priority (high/medium/low/unlabeled)
@@ -267,7 +285,7 @@ _kpi_backlog_section() {
       adds_window=$((adds_window + 1))
     fi
 
-    if printf '%s' "$line" | grep -qiE '\b(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)\b'; then
+    if _backlog_row_is_terminal "$line"; then
       terminal_total=$((terminal_total + 1))
       term_date="$(printf '%s' "$line" \
         | grep -oiE '(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)[^0-9]{0,12}[0-9]{4}-[0-9]{2}-[0-9]{2}' \
@@ -537,6 +555,7 @@ EOF
 - **KPI-ANCIENT-01 — ancient unlabeled row** (added $d120). Prose.
 - **KPI-TERM-01 — [CLOSED $d2] closed in window** (added $d120; \`priority:high\`). Prose.
 - **KPI-TERM-02 — done long ago** (added $d120; \`priority:low\`). **(absorbed by docs/plans/fixture.md)**.
+- **KPI-REF-OPEN-01 — open row referencing another row's terminal state** (added $d2; \`priority:high\`). **Distinct from OTHER-GAP-99 (IMPLEMENTED 2026-01-01).** Still open.
 EOF
   report_path3="$TMP/report3.md"
   _kpi_generate_report "$report_path3" "2026-07-06"
@@ -546,31 +565,31 @@ EOF
   else
     fail "report missing Backlog Health section"
   fi
-  if grep -q "Open structured rows: 4 (terminal-marked: 2)" "$report_path3" 2>/dev/null; then
-    pass "open/terminal row counts correct (4 open, 2 terminal)"
+  if grep -q "Open structured rows: 5 (terminal-marked: 2)" "$report_path3" 2>/dev/null; then
+    pass "open/terminal row counts correct (5 open incl. terminal-referencing row, 2 terminal)"
   else
-    fail "open/terminal row counts wrong (expected 4 open, 2 terminal)"
+    fail "open/terminal row counts wrong (expected 5 open, 2 terminal)"
   fi
-  if grep -q "| high | 1 |" "$report_path3" 2>/dev/null \
+  if grep -q "| high | 2 |" "$report_path3" 2>/dev/null \
      && grep -q "| medium | 1 |" "$report_path3" 2>/dev/null \
      && grep -q "| low | 1 |" "$report_path3" 2>/dev/null \
      && grep -q "| (unlabeled) | 1 |" "$report_path3" 2>/dev/null; then
-    pass "priority breakdown correct (1 high / 1 medium / 1 low / 1 unlabeled)"
+    pass "priority breakdown correct (2 high / 1 medium / 1 low / 1 unlabeled)"
   else
     fail "priority breakdown wrong"
   fi
-  if grep -q "| 0-7d | 1 |" "$report_path3" 2>/dev/null \
+  if grep -q "| 0-7d | 2 |" "$report_path3" 2>/dev/null \
      && grep -q "| 8-30d | 1 |" "$report_path3" 2>/dev/null \
      && grep -q "| 31-90d | 1 |" "$report_path3" 2>/dev/null \
      && grep -q "| >90d | 1 |" "$report_path3" 2>/dev/null; then
-    pass "aging histogram buckets correct (1/1/1/1)"
+    pass "aging histogram buckets correct (2/1/1/1)"
   else
     fail "aging histogram buckets wrong"
   fi
-  if grep -q "| Rows added | 1 |" "$report_path3" 2>/dev/null \
+  if grep -q "| Rows added | 2 |" "$report_path3" 2>/dev/null \
      && grep -q "| Terminal transitions | 1 |" "$report_path3" 2>/dev/null \
      && grep -q "| (terminal, no adjacent date) | 1 |" "$report_path3" 2>/dev/null; then
-    pass "flow counts correct (1 added, 1 terminal in-window, 1 undated terminal)"
+    pass "flow counts correct (2 added, 1 terminal in-window, 1 undated terminal)"
   else
     fail "flow counts wrong"
   fi
