@@ -88,6 +88,75 @@ if [ -n "$_git_common_dir" ] && [ "$_git_common_dir" != "$_git_dir" ]; then
 fi
 
 # ============================================================
+# CRLF normalization on copy (LIVE-MIRROR-CRLF-01)
+# ============================================================
+# The repo is LF-only by .gitattributes pin (*.sh/*.md/*.json/... eol=lf,
+# NL-FINDING-038), but on Windows the symlink path below often fails
+# (requires elevated privilege / Developer Mode) and install.sh falls back
+# to `cp`, copying whatever bytes the repo's working tree holds. A mirror
+# built BEFORE the .gitattributes pin landed — or checked out with a stale
+# core.autocrlf=true — carries CRLF forward into ~/.claude on every such
+# copy, and nothing downstream ever re-normalizes it: the live mirror drifts
+# CRLF while a fresh clone is LF-clean (the exact drift the Closure Contract
+# exists to catch; harness-doctor.sh's check_line_endings only scans the
+# REPO tree, so it is blind to this).
+#
+# Fix: strip \r from genuinely-text surfaces as part of the copy, so every
+# install run converges the live mirror to LF regardless of the repo
+# working tree's byte state or prior mirror history. Scoped to hooks/
+# scripts/ lib/ and other *.sh-bearing dirs (never binary/data assets —
+# see is_text_sync_target below) so no non-text file is ever touched.
+# Defined early (before any MODE branch) so --replace-settings and the
+# examples-seed step can use it too, not just the normal sync_file/
+# sync_directory path.
+
+# Returns 0 (true) if $1 is a target this installer should CRLF-normalize
+# on copy: shell scripts and the other plain-text harness surfaces that
+# ship as *.sh/*.md/*.json/*.txt under the synced dirs. Binary/data assets
+# (schemas' occasional non-text fixtures, anything under data/ that isn't
+# one of these extensions, images, etc.) are left byte-for-byte untouched.
+is_text_sync_target() {
+  case "$1" in
+    *.sh|*.md|*.json|*.jsonl|*.yaml|*.yml|*.js|*.mjs|*.ts|*.py|*.toml|*.txt)
+      return 0 ;;
+    */git-hooks/pre-commit|*/git-hooks/pre-push|*/git-hooks/post-commit)
+      # Extensionless git-hooks entrypoints are shell scripts too.
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
+
+# Copies $1 -> $2, stripping CR bytes if $1 qualifies as a text sync target
+# (see is_text_sync_target) and leaving every other file a plain byte-for-
+# byte `cp` (binaries, or text files git normalizes without a CRLF concern
+# on this platform get the fast path unchanged).
+cp_normalized() {
+  local src="$1" dst="$2"
+  if is_text_sync_target "$src" && [ -f "$src" ]; then
+    tr -d '\r' < "$src" > "$dst" 2>/dev/null && return 0
+    # tr failed (e.g. permissions) -- fall back to a plain copy rather than
+    # leaving $dst missing.
+    cp "$src" "$dst"
+    return $?
+  fi
+  cp "$src" "$dst"
+}
+
+# Verifies that $2's on-disk content matches $1's content MODULO CRLF
+# (NL-FINDING-017 discipline: comparing raw bytes here would false-mismatch
+# on every CRLF-normalizing copy, since dst is EXPECTED to differ from a
+# CRLF-carrying src by exactly its \r bytes). Returns 0 on match.
+_verify_normalized_copy() {
+  local src="$1" dst="$2"
+  [ -f "$src" ] && [ -f "$dst" ] || return 1
+  local src_norm dst_norm
+  src_norm="$(tr -d '\r' < "$src" 2>/dev/null)"
+  dst_norm="$(tr -d '\r' < "$dst" 2>/dev/null)"
+  [ "$src_norm" = "$dst_norm" ]
+}
+
+# ============================================================
 # --help
 # ============================================================
 
@@ -292,7 +361,7 @@ if [ "$MODE" = "replace-settings" ]; then
     echo "  (No existing settings.json to back up)"
   fi
 
-  cp "$ADAPTER_DIR/settings.json.template" "$CLAUDE_DIR/settings.json"
+  cp_normalized "$ADAPTER_DIR/settings.json.template" "$CLAUDE_DIR/settings.json"
   echo "  Installed: $CLAUDE_DIR/settings.json from template"
   echo ""
   echo "  ACTION REQUIRED: Edit $CLAUDE_DIR/settings.json and replace placeholders"
@@ -774,7 +843,10 @@ sync_file() {
     echo "  linked $label"
   else
     rm -f "$dst"
-    cp "$src" "$dst"
+    cp_normalized "$src" "$dst"
+    if is_text_sync_target "$src" && ! _verify_normalized_copy "$src" "$dst"; then
+      echo "  WARNING: copy of $label does not content-match source modulo CRLF -- live file may be stale/corrupt; re-run install.sh" >&2
+    fi
     echo "  copied $label (symlinks unavailable)"
   fi
 }
@@ -800,6 +872,7 @@ sync_directory() {
   rm -rf "$dst"
   mkdir -p "$dst"
   local count=0
+  local mismatches=0
   while IFS= read -r -d '' rel; do
     local rel_path="${rel#./}"
     [ "$rel_path" = "." ] && continue
@@ -809,11 +882,19 @@ sync_directory() {
       mkdir -p "$dst_file"
     else
       mkdir -p "$(dirname "$dst_file")"
-      cp "$src_file" "$dst_file"
+      cp_normalized "$src_file" "$dst_file"
+      if is_text_sync_target "$src_file" && ! _verify_normalized_copy "$src_file" "$dst_file"; then
+        mismatches=$((mismatches + 1))
+        echo "  WARNING: copy of $label/$rel_path does not content-match source modulo CRLF -- live file may be stale/corrupt; re-run install.sh" >&2
+      fi
       count=$((count + 1))
     fi
   done < <(cd "$src" && find . -print0)
-  echo "  synced $label/ ($count files)"
+  if [ "$mismatches" -gt 0 ]; then
+    echo "  synced $label/ ($count files, $mismatches content-verify mismatch(es) -- see WARNINGs above)"
+  else
+    echo "  synced $label/ ($count files)"
+  fi
 }
 
 echo "Deploying Claude Code adapter..."
@@ -1176,7 +1257,7 @@ fi
 echo ""
 if [ ! -f "$CLAUDE_DIR/settings.json" ]; then
   if [ -f "$ADAPTER_DIR/settings.json.template" ]; then
-    cp "$ADAPTER_DIR/settings.json.template" "$CLAUDE_DIR/settings.json"
+    cp_normalized "$ADAPTER_DIR/settings.json.template" "$CLAUDE_DIR/settings.json"
     echo "  created settings.json from template"
     echo ""
     echo "  ACTION REQUIRED: Edit $CLAUDE_DIR/settings.json and replace placeholders"
@@ -1236,7 +1317,7 @@ if [ -d "$ADAPTER_DIR/examples" ]; then
     if [ -e "$target" ]; then
       echo "  $CLAUDE_DIR/local/$target_name exists (not overwritten)"
     else
-      cp "$example" "$target"
+      cp_normalized "$example" "$target"
       echo "  created $CLAUDE_DIR/local/$target_name from example"
       seeded_any=1
     fi
@@ -1251,7 +1332,7 @@ if [ -d "$ADAPTER_DIR/examples" ]; then
     if [ -e "$target" ]; then
       echo "  $CLAUDE_DIR/local/$target_name exists (not overwritten)"
     else
-      cp "$example" "$target"
+      cp_normalized "$example" "$target"
       echo "  created $CLAUDE_DIR/local/$target_name from example"
       seeded_any=1
     fi
@@ -1281,7 +1362,7 @@ PATHS_EXAMPLE="$ADAPTER_DIR/examples/personal-memory-paths.example.txt"
 
 # Seed the config from the example on first install (if neither exists)
 if [ ! -e "$PATHS_CONFIG" ] && [ -f "$PATHS_EXAMPLE" ]; then
-  cp "$PATHS_EXAMPLE" "$PATHS_CONFIG"
+  cp_normalized "$PATHS_EXAMPLE" "$PATHS_CONFIG"
   echo ""
   echo "  seeded $PATHS_CONFIG from example"
   echo "    edit it to list per-machine personal-memory dirs you want synced;"
