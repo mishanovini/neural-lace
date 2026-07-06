@@ -87,6 +87,38 @@
 #                             bash <hook> --self-test </dev/null; RED per
 #                             non-zero exit.
 #
+# WAVE F BUDGET CHECKS (task F.1, specs-f §F.1 — all in --quick)
+# ===============================================================
+#   budget-chains           : Stop <= 6, SessionStart <= 8 total hook
+#                             entries, checked against BOTH the live
+#                             settings.json and the committed template.
+#   budget-blocking-gates   : manifest entries with blocking:true <= 12.
+#   budget-always-loaded    : byte-sum of ~/.claude/rules/*.md +
+#                             ~/.claude/CLAUDE.md <= 30000 (dedicated,
+#                             non-configurable — distinct from the older
+#                             configurable check_byte_budget/rules-only
+#                             mechanism, which stays as-is).
+#   budget-active-plans     : `Status: ACTIVE` plans <= 3 machine-wide,
+#                             walking the exact root list documented at
+#                             _budget_active_plans_roots()'s header
+#                             comment; fail-open (WARN) per unreadable
+#                             root, count what is readable.
+#   budget-worktrees-branches: git worktree count <= 6, none >7d without
+#                             a commit; local branches with no upstream
+#                             and no commit in 7d flagged.
+#   new-gate-evidence-bar   : manifest entries with added_after >=
+#                             "2026-07" must carry golden_scenario,
+#                             fp_expectation, retirement_condition, and
+#                             (waiver_path OR honesty_rationale) —
+#                             ADR 059 D4. Doctor-side half only; the
+#                             constitution §10 prose half is
+#                             orchestrator-owned.
+#
+# Staleness ESCALATION (deferral/removal proposals) is NOT here — it
+# lives in session-start-digest.sh (a SessionStart feed), per specs-f
+# §F.1: "the doctor only REDs on budget breach; the digest carries the
+# remediation proposals."
+#
 # ESCAPE HATCH
 # ============
 # None needed — this is a read-only diagnostic tool, not a blocking
@@ -660,9 +692,25 @@ check_wave_e_surfaces() {
   # freshness ≤7d whenever an Awaiting-decision item is open — tolerate-absent when
   # the ledger has never been created). (E.5 harness-kpis predicate remains an
   # optional follow-up; E.5's Done-when was met without a doctor check.)
+  #
+  # NL-FINDING (F.1 fix, found running the doctor's own --self-test on
+  # master before this wave's changes): predicate 1 used to RED
+  # unconditionally when needs-you.sh was absent, instead of the
+  # tolerate-absent WARN every sibling E.1/E.7/E.8/E.9 sub-check uses for
+  # "not yet installed on THIS machine/fixture" — a bare mktemp -d fixture
+  # (every self-test scenario in this file) naturally lacks
+  # scripts/needs-you.sh, so this made check_wave_e_surfaces RED on every
+  # single self-test scenario regardless of what that scenario was
+  # actually testing, masking real self-test signal entirely. Also fixed:
+  # ny_state read from literal "${HOME}" instead of the passed-in
+  # live_home, so a self-test run (which sandboxes via
+  # HARNESS_DOCTOR_HOME, not HOME) leaked the REAL machine's
+  # needs-you ledger into every fixture's verdict (the same class of bug
+  # as NL-FINDING-025/028 — self-test state must never escape to the real
+  # machine's paths).
   local ny_script="${repo_root}/adapters/claude-code/scripts/needs-you.sh"
   if [[ ! -f "$ny_script" ]]; then
-    _red "wave-e-e6-needs-you" "needs-you.sh missing at ${ny_script} — run: bash install.sh"
+    _warn "wave-e-e6-needs-you" "needs-you.sh missing at ${ny_script} — E.6 not yet installed on this machine"
   elif [[ ! -x "$ny_script" ]]; then
     _red "wave-e-e6-needs-you" "needs-you.sh present but not executable — chmod +x ${ny_script}"
   elif ! grep -q -- '--self-test' "$ny_script"; then
@@ -673,7 +721,7 @@ check_wave_e_surfaces() {
   [[ -f "$ny_nlpaths" ]] && ny_main_root=$(bash -c "source '$ny_nlpaths'; nl_main_checkout_root" 2>/dev/null)
   [[ -n "$ny_main_root" ]] || ny_main_root="$repo_root"
   local ny_md="${ny_main_root}/NEEDS-YOU.md"
-  local ny_state="${HOME}/.claude/state/needs-you/ledger.json"
+  local ny_state="${live_home}/state/needs-you/ledger.json"
   if [[ -f "$ny_state" ]] && command -v jq >/dev/null 2>&1; then
     local ny_open
     ny_open=$(jq '[.items[] | select(.section == "decision" and .state == "open")] | length' "$ny_state" 2>/dev/null || echo 0)
@@ -789,6 +837,366 @@ check_pin_f_waiver_purpose_clauses() {
 }
 
 # ------------------------------------------------------------
+# Check: budget-chains (Wave F, task F.1, specs-f §F.1 item 1)
+# Stop <= 6, SessionStart <= 8 chain entries, checked against BOTH the
+# committed template and the live settings.json. A single check id
+# ("budget-chains") consolidates what earlier waves only discussed in
+# comments (session-start-surfacer-pack.sh's header note) — there was no
+# prior mechanical enforcement to "consolidate" other than that comment,
+# so this is the first real implementation under the budget-chains id.
+# Counts TOTAL hook entries across every matcher block for the event
+# (not matcher-block count), matching how Claude Code actually executes
+# the chain (every hooks[] entry in every matching block runs).
+# ------------------------------------------------------------
+_count_chain_entries() {
+  # $1 = settings.json path, $2 = event name (Stop|SessionStart) -> prints total hook count (or empty on parse failure)
+  local settings="$1" event="$2"
+  [[ -f "$settings" ]] || { printf ''; return 0; }
+  if command -v node >/dev/null 2>&1; then
+    cat "$settings" 2>/dev/null | node -e "
+      const fs = require('fs');
+      let cfg;
+      try { cfg = JSON.parse(fs.readFileSync(0, 'utf8')); } catch (e) { process.exit(0); }
+      const arr = (cfg.hooks && cfg.hooks['$event']) || [];
+      let total = 0;
+      for (const block of arr) total += (block.hooks || []).length;
+      console.log(total);
+    " 2>/dev/null
+  elif command -v jq >/dev/null 2>&1; then
+    jq -r --arg ev "$event" '[(.hooks[$ev] // [])[] | (.hooks // []) | length] | add // 0' "$settings" 2>/dev/null
+  else
+    printf ''
+  fi
+}
+
+check_budget_chains() {
+  local live_home="$1" repo_root="$2"
+  local live_settings="${live_home}/settings.json"
+  local template_settings="${repo_root}/adapters/claude-code/settings.json.template"
+
+  if ! command -v node >/dev/null 2>&1 && ! command -v jq >/dev/null 2>&1; then
+    _warn "budget-chains" "neither node nor jq available — chain-length budgets skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local src path event count max
+  for src in live template; do
+    if [[ "$src" == "live" ]]; then path="$live_settings"; else path="$template_settings"; fi
+    if [[ ! -f "$path" ]]; then
+      _warn "budget-chains" "${src} settings.json not found at ${path} — skipped for ${src}"
+      continue
+    fi
+    for event in Stop SessionStart; do
+      if [[ "$event" == "Stop" ]]; then max=6; else max=8; fi
+      count="$(_count_chain_entries "$path" "$event")"
+      if [[ -z "$count" ]]; then
+        _warn "budget-chains" "could not parse ${event} chain length from ${src} settings (${path})"
+        continue
+      fi
+      if [[ "$count" -gt "$max" ]]; then
+        _red "budget-chains" "${event} chain has ${count} hook entries in ${src} settings (budget <= ${max}) — ${path}"
+      fi
+    done
+  done
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: budget-blocking-gates (Wave F, task F.1, specs-f §F.1 item 2)
+# Blocking gates <= 12: count manifest entries with blocking:true.
+# ------------------------------------------------------------
+check_budget_blocking_gates() {
+  local live_home="$1" repo_root="$2"
+  local manifest
+  if ! manifest="$(resolve_manifest "$live_home" "$repo_root")"; then
+    _warn "budget-blocking-gates" "no manifest.json found (live mirror or repo) — skipped (pre-C.1 machine)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1 && ! command -v jq >/dev/null 2>&1; then
+    _warn "budget-blocking-gates" "neither node nor jq available — skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local count max=12
+  if command -v node >/dev/null 2>&1; then
+    count="$(node -e '
+const fs = require("fs");
+const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+console.log((m.entries || []).filter(e => e.blocking === true).length);
+' "$manifest" 2>/dev/null)"
+  else
+    count="$(jq '[.entries[] | select(.blocking == true)] | length' "$manifest" 2>/dev/null)"
+  fi
+  [[ -z "$count" ]] && { _warn "budget-blocking-gates" "could not count blocking entries in ${manifest}"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  if [[ "$count" -gt "$max" ]]; then
+    _red "budget-blocking-gates" "${count} manifest entries have blocking:true (budget <= ${max}) — ${manifest}; remediation: demote via scripts/gate-demotion.sh (F.5) or consolidate per ADR 059 D7"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: budget-always-loaded (Wave F, task F.1, specs-f §F.1 item 3)
+# Always-loaded <= 30KB: byte-sum of ~/.claude/rules/*.md + CLAUDE.md.
+# This is a DEDICATED, always-strict 30KB rule (independent of the
+# existing configurable check_byte_budget/~/.claude/local/doctor-budget
+# mechanism, which stays as the machine-tunable soft-by-default check) —
+# specs-f §F.1 item 3 names an exact, non-configurable threshold.
+# ------------------------------------------------------------
+check_budget_always_loaded() {
+  local live_home="$1"
+  local rules_dir="${live_home}/rules"
+  local claude_md="${live_home}/CLAUDE.md"
+  local max=30000
+
+  if [[ ! -d "$rules_dir" && ! -f "$claude_md" ]]; then
+    _warn "budget-always-loaded" "neither ${rules_dir} nor ${claude_md} exist — nothing to check"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local total
+  total="$( { cat "$rules_dir"/*.md 2>/dev/null; cat "$claude_md" 2>/dev/null; } | wc -c | tr -d '[:space:]')"
+  total="${total:-0}"
+
+  if [[ "$total" -gt "$max" ]]; then
+    _red "budget-always-loaded" "${total} bytes across ~/.claude/rules/*.md + CLAUDE.md exceeds the always-loaded budget of ${max} bytes — move content to doctrine/ (JIT-delivered) per constitution §10"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: budget-active-plans (Wave F, task F.1, specs-f §F.1 item 4)
+# ACTIVE plans <= 3 machine-wide: `grep -l "^Status: ACTIVE" docs/plans/*.md
+# | wc -l` across every repo listed in ~/.claude/local/nl-repo-path +
+# registered project roots.
+#
+# EXACT ROOT LIST THIS CHECK WALKS (documented per spec's explicit
+# requirement):
+#   1. The repo_root passed in (this invocation's own resolved repo).
+#   2. The single line in <live_home>/local/nl-repo-path, if that file
+#      exists and names a readable directory (this machine's canonical
+#      NL checkout — see hooks/lib/nl-paths.sh's identical resolution;
+#      live_home is $HOME/.claude, overridable to a sandbox root via
+#      HARNESS_DOCTOR_HOME exactly like every other live-mirror read in
+#      this file — self-test fixtures must never leak the REAL machine's
+#      nl-repo-path into a fixture's verdict).
+#   3. Every line in <live_home>/local/nl-project-roots (one absolute path
+#      per line, '#'-comments and blanks skipped) IF that file exists —
+#      this is the "registered project roots" extension point named by
+#      the spec; no such file exists on this machine today (single-repo
+#      machine), so this tier is a no-op here but is honestly documented
+#      and wired for a future multi-repo machine.
+# Duplicate roots (e.g. repo_root == nl-repo-path on a single-repo
+# machine) are counted once. Fail-open per spec: an unreadable/missing
+# root contributes 0 to the count (WARN, not RED) rather than aborting
+# the whole check.
+# ------------------------------------------------------------
+_budget_active_plans_roots() {
+  # Emits the de-duplicated list of candidate roots, one per line.
+  local repo_root="$1" live_home="$2"
+  local -a roots=()
+  [[ -n "$repo_root" ]] && roots+=("$repo_root")
+
+  local cfg="${live_home}/local/nl-repo-path"
+  if [[ -f "$cfg" ]]; then
+    local line
+    line="$(head -1 "$cfg" 2>/dev/null | tr -d '\r')"
+    [[ -n "$line" ]] && roots+=("$line")
+  fi
+
+  local extra="${live_home}/local/nl-project-roots"
+  if [[ -f "$extra" ]]; then
+    local rline
+    while IFS= read -r rline; do
+      rline="${rline%$'\r'}"
+      [[ -z "$rline" ]] && continue
+      [[ "$rline" == \#* ]] && continue
+      roots+=("$rline")
+    done < "$extra"
+  fi
+
+  printf '%s\n' "${roots[@]}" | sort -u | grep -v '^$'
+}
+
+check_budget_active_plans() {
+  local live_home="$1" repo_root="$2"
+  local max=3
+  local roots
+  roots="$(_budget_active_plans_roots "$repo_root" "$live_home")"
+  if [[ -z "$roots" ]]; then
+    _warn "budget-active-plans" "no roots resolved (repo_root unset, no <live_home>/local/nl-repo-path) — skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local total=0 root plans_dir n unreadable=()
+  while IFS= read -r root; do
+    [[ -z "$root" ]] && continue
+    plans_dir="${root}/docs/plans"
+    if [[ ! -d "$plans_dir" || ! -r "$plans_dir" ]]; then
+      unreadable+=("$root")
+      continue
+    fi
+    n=0
+    local f
+    for f in "$plans_dir"/*.md; do
+      [[ -f "$f" ]] || continue
+      head -n 30 "$f" 2>/dev/null | grep -qE '^Status:[[:space:]]*ACTIVE' && n=$((n + 1))
+    done
+    total=$((total + n))
+  done <<< "$roots"
+
+  if [[ "${#unreadable[@]}" -gt 0 ]]; then
+    _warn "budget-active-plans" "$(IFS=,; echo "${unreadable[*]}") had no readable docs/plans/ — counted as 0 (fail-open)"
+  fi
+
+  if [[ "$total" -gt "$max" ]]; then
+    _red "budget-active-plans" "${total} plans with Status: ACTIVE across $(printf '%s' "$roots" | grep -c .) root(s) (budget <= ${max}) — defer/complete/abandon via the F.3-style disposition process"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: budget-worktrees-branches (Wave F, task F.1, specs-f §F.1 item 5)
+# Worktree count <= 6 and none older than 7 days without a commit; local
+# branches with no upstream and no commit in 7 days flagged.
+# ------------------------------------------------------------
+check_budget_worktrees_branches() {
+  local repo_root="$2"
+  [[ -z "$repo_root" ]] && { _warn "budget-worktrees-branches" "repo root unresolved — skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+  command -v git >/dev/null 2>&1 || { _warn "budget-worktrees-branches" "git not available — skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local max_worktrees=6
+  local stale_secs=$((7 * 86400))
+  local now; now=$(date +%s)
+
+  # --- worktree count + age ---
+  local wt_list
+  wt_list="$(git -C "$repo_root" worktree list --porcelain 2>/dev/null)"
+  if [[ -z "$wt_list" ]]; then
+    _warn "budget-worktrees-branches" "git worktree list produced no output — skipped worktree sub-check"
+  else
+    local wt_count
+    wt_count="$(printf '%s\n' "$wt_list" | grep -c '^worktree ')"
+    if [[ "$wt_count" -gt "$max_worktrees" ]]; then
+      _red "budget-worktrees-branches" "${wt_count} git worktrees registered (budget <= ${max_worktrees}) — prune with: git worktree prune; git worktree remove <stale-path>"
+    fi
+
+    # Per-worktree staleness: no commit in 7 days on that worktree's HEAD.
+    local wt_path=""
+    while IFS= read -r line; do
+      case "$line" in
+        "worktree "*) wt_path="${line#worktree }" ;;
+        "HEAD "*)
+          local sha ts age
+          sha="${line#HEAD }"
+          [[ -z "$wt_path" ]] && continue
+          [[ "$wt_path" == "$repo_root" ]] && continue  # main checkout is not a "worktree" for this budget
+          ts="$(git -C "$repo_root" log -1 --format=%ct "$sha" 2>/dev/null)"
+          [[ -z "$ts" ]] && continue
+          age=$((now - ts))
+          if [[ "$age" -ge "$stale_secs" ]]; then
+            _red "budget-worktrees-branches" "worktree ${wt_path} has no commit in $((age / 86400))d (budget: 7d) — remove with: git worktree remove '${wt_path}'"
+          fi
+          ;;
+      esac
+    done <<< "$wt_list"
+  fi
+
+  # --- local branch staleness: no upstream + no commit in 7 days ---
+  local br_list
+  br_list="$(git -C "$repo_root" for-each-ref --format='%(refname:short)|%(upstream:short)|%(committerdate:unix)' refs/heads/ 2>/dev/null)"
+  if [[ -n "$br_list" ]]; then
+    local name upstream ts age
+    while IFS='|' read -r name upstream ts; do
+      [[ -z "$name" ]] && continue
+      [[ -n "$upstream" ]] && continue
+      [[ -z "$ts" ]] && continue
+      age=$((now - ts))
+      if [[ "$age" -ge "$stale_secs" ]]; then
+        _red "budget-worktrees-branches" "branch '${name}' has no upstream and no commit in $((age / 86400))d (budget: 7d) — push it (git push -u origin ${name}) or delete it (git branch -D ${name})"
+      fi
+    done <<< "$br_list"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: new-gate-evidence-bar (Wave F, task F.1, specs-f §F.1 item 3 /
+# ADR 059 D4 — the DOCTOR side; constitution §10's prose side is
+# ORCHESTRATOR-ONLY and shipped separately). Any manifest entry with
+# `added_after: 2026-07` (or any value >= "2026-07" lexicographically —
+# the field is a YYYY-MM string) must carry golden_scenario,
+# fp_expectation, retirement_condition, and (waiver_path OR
+# honesty_rationale). RED otherwise. Graceful WARN when no manifest, no
+# parser, or the manifest schema does not yet declare these fields (this
+# doctor check does not itself require the schema/manifest to carry the
+# fields — it degrades to "no added_after entries found" silently, since
+# a manifest with zero added_after entries has nothing to validate).
+# ------------------------------------------------------------
+check_new_gate_evidence_bar() {
+  local live_home="$1" repo_root="$2"
+  local manifest
+  if ! manifest="$(resolve_manifest "$live_home" "$repo_root")"; then
+    _warn "new-gate-evidence-bar" "no manifest.json found — skipped (pre-C.1 machine)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1 && ! command -v jq >/dev/null 2>&1; then
+    _warn "new-gate-evidence-bar" "neither node nor jq available — skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local out
+  if command -v node >/dev/null 2>&1; then
+    out="$(node -e '
+const fs = require("fs");
+const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const problems = [];
+for (const e of m.entries || []) {
+  const addedAfter = e.added_after;
+  if (typeof addedAfter !== "string" || addedAfter.trim().length === 0) continue;
+  if (addedAfter < "2026-07") continue;
+  const missing = [];
+  if (typeof e.golden_scenario !== "string" || e.golden_scenario.trim().length === 0) missing.push("golden_scenario");
+  if (typeof e.fp_expectation !== "string" || e.fp_expectation.trim().length === 0) missing.push("fp_expectation");
+  if (typeof e.retirement_condition !== "string" || e.retirement_condition.trim().length === 0) missing.push("retirement_condition");
+  const hasWaiverPath = typeof e.waiver_path === "string" && e.waiver_path.trim().length > 0;
+  const hasHonestyRationale = typeof e.honesty_rationale === "string" && e.honesty_rationale.trim().length > 0;
+  if (!hasWaiverPath && !hasHonestyRationale) missing.push("waiver_path-or-honesty_rationale");
+  if (missing.length) problems.push(e.id + ": missing " + missing.join(", "));
+}
+for (const p of problems) console.log(p);
+' "$manifest" 2>/dev/null)"
+  else
+    out="$(jq -r '
+.entries[] | select((.added_after // "") >= "2026-07") as $e |
+(
+  [ (if (($e.golden_scenario // "") | length) > 0 then empty else "golden_scenario" end),
+    (if (($e.fp_expectation // "") | length) > 0 then empty else "fp_expectation" end),
+    (if (($e.retirement_condition // "") | length) > 0 then empty else "retirement_condition" end),
+    (if ((($e.waiver_path // "") | length) > 0) or ((($e.honesty_rationale // "") | length) > 0) then empty else "waiver_path-or-honesty_rationale" end)
+  ] | select(length > 0)
+) as $missing | select(($missing | length) > 0) | "\($e.id): missing \($missing | join(\", \"))"
+' "$manifest" 2>/dev/null)"
+  fi
+
+  if [[ -n "$out" ]]; then
+    local line
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      _red "new-gate-evidence-bar" "${line} (added_after >= 2026-07 requires the full evidence bar per ADR 059 D4)"
+    done <<< "$out"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check 6: byte-budget
 # ------------------------------------------------------------
 check_byte_budget() {
@@ -873,6 +1281,12 @@ run_quick_checks() {
   check_heartbeat_task "$live_home" "$repo_root"
   check_untracked_dirt_ignore_rule "$live_home" "$repo_root"
   check_pin_f_waiver_purpose_clauses "$live_home" "$repo_root"
+  check_budget_chains "$live_home" "$repo_root"
+  check_budget_blocking_gates "$live_home" "$repo_root"
+  check_budget_always_loaded "$live_home" "$repo_root"
+  check_budget_active_plans "$live_home" "$repo_root"
+  check_budget_worktrees_branches "$live_home" "$repo_root"
+  check_new_gate_evidence_bar "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -1280,6 +1694,231 @@ EOF
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "pin-f-waiver-purpose-clauses-present-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: budget-chains (Wave F, F.1). RED fixture — Stop chain has
+  # 7 entries (budget <= 6) in BOTH live and template. Dummy hook FILES are
+  # created on both the live and repo sides so the unrelated wiring-resolves
+  # check (which RED-fires on any referenced-but-missing hook) stays quiet —
+  # this fixture is scoped to budget-chains only. ----
+  _write_chain_settings() {
+    # $1 = D (scenario dir), $2 = event (Stop|SessionStart), $3 = count, $4 = name prefix
+    local d="$1" event="$2" n="$3" prefix="$4"
+    local body="{\"hooks\":{\"${event}\":[{\"matcher\":\"*\",\"hooks\":["
+    local i first=1
+    for ((i = 0; i < n; i++)); do
+      if [[ "$first" -eq 0 ]]; then body="${body},"; fi
+      first=0
+      body="${body}{\"type\":\"command\",\"command\":\"bash ~/.claude/hooks/${prefix}-${i}.sh\"}"
+      echo '#!/bin/bash' > "$d/live/hooks/${prefix}-${i}.sh"
+      echo '#!/bin/bash' > "$d/repo/adapters/claude-code/hooks/${prefix}-${i}.sh"
+    done
+    body="${body}]}]}}"
+    printf '%s' "$body" > "$d/live/settings.json"
+    cp "$d/live/settings.json" "$d/repo/adapters/claude-code/settings.json.template"
+  }
+  D=$(_scenario_dir bc-stop-red)
+  _stamp_claim_honesty_green "$D"
+  _write_chain_settings "$D" "Stop" 7 "stop-dummy"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-chains-stop-red" 1 "$RC" "RED budget-chains.*Stop chain has 7" "$OUT"
+
+  # ---- Check: budget-chains GREEN fixture — Stop chain at 4 (within budget) ----
+  D=$(_scenario_dir bc-stop-green)
+  _stamp_claim_honesty_green "$D"
+  _write_chain_settings "$D" "Stop" 4 "stop-dummy"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-chains-stop-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: budget-chains RED fixture — SessionStart chain has 9 entries
+  # (budget <= 8) ----
+  D=$(_scenario_dir bc-ss-red)
+  _stamp_claim_honesty_green "$D"
+  _write_chain_settings "$D" "SessionStart" 9 "ss-dummy"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-chains-sessionstart-red" 1 "$RC" "RED budget-chains.*SessionStart chain has 9" "$OUT"
+
+  # ---- Check: budget-blocking-gates. RED fixture — 13 manifest entries
+  # with blocking:true (budget <= 12) ----
+  _write_blocking_manifest_fixture() {
+    local dir="$1" count="$2"
+    local entries="" i
+    for ((i = 0; i < count; i++)); do
+      [[ -n "$entries" ]] && entries="${entries},"
+      entries="${entries}{\"id\":\"gate-${i}\",\"kind\":\"gate\",\"doctrine_file\":null,\"hooks\":[],\"events\":[],\"wired_template\":false,\"selftest\":false,\"jit_triggers\":{\"paths\":[],\"keywords\":[]},\"blocking\":true,\"honest_status\":\"fixture stub\",\"budget_class\":\"none\"}"
+    done
+    printf '{"schema_version":1,"entries":[%s]}' "$entries" > "$dir/repo/adapters/claude-code/manifest.json"
+  }
+  D=$(_scenario_dir bbg-red)
+  _stamp_claim_honesty_green "$D"
+  _write_blocking_manifest_fixture "$D" 13
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-blocking-gates-red" 1 "$RC" "RED budget-blocking-gates.*13 manifest entries" "$OUT"
+
+  # ---- Check: budget-blocking-gates GREEN fixture — 12 entries (at budget) ----
+  D=$(_scenario_dir bbg-green)
+  _stamp_claim_honesty_green "$D"
+  _write_blocking_manifest_fixture "$D" 12
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-blocking-gates-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: budget-always-loaded. RED fixture — rules + CLAUDE.md exceed
+  # 30000 bytes ----
+  D=$(_scenario_dir bal-red)
+  _stamp_claim_honesty_green "$D"
+  head -c 31000 /dev/zero | tr '\0' 'x' > "$D/live/rules/big.md"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-always-loaded-red" 1 "$RC" "RED budget-always-loaded" "$OUT"
+
+  # ---- Check: budget-always-loaded GREEN fixture — well under 30000 bytes ----
+  D=$(_scenario_dir bal-green)
+  _stamp_claim_honesty_green "$D"
+  echo "small" > "$D/live/rules/small.md"
+  echo "small claude.md" > "$D/live/CLAUDE.md"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-always-loaded-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: budget-active-plans. RED fixture — 4 ACTIVE plans in the
+  # repo root's docs/plans/ (budget <= 3). The fixture's live/local/ has no
+  # nl-repo-path file, so (post-fix) only repo_root itself is walked —
+  # this is the isolation the live_home-scoping fix above guarantees. ----
+  D=$(_scenario_dir bap-red)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/docs/plans"
+  for i in 1 2 3 4; do
+    printf '# Plan %d\nStatus: ACTIVE\n' "$i" > "$D/repo/docs/plans/p${i}.md"
+  done
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-active-plans-red" 1 "$RC" "RED budget-active-plans.*4 plans" "$OUT"
+
+  # ---- Check: budget-active-plans GREEN fixture — 3 ACTIVE plans (at budget) ----
+  D=$(_scenario_dir bap-green)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/docs/plans"
+  for i in 1 2 3; do
+    printf '# Plan %d\nStatus: ACTIVE\n' "$i" > "$D/repo/docs/plans/p${i}.md"
+  done
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-active-plans-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: budget-worktrees-branches. RED fixture — a real throwaway
+  # git repo with a stale (8-day-old, backdated commit) local branch with
+  # no upstream. Worktree count/age sub-check needs `git worktree add`
+  # which the doctor's own sandboxing doesn't otherwise exercise here, so
+  # this fixture targets the branch-staleness half (worktree count <= 6 /
+  # age is exercised implicitly — a single-worktree repo never trips it). ----
+  D=$(_scenario_dir bwb-red)
+  _stamp_claim_honesty_green "$D"
+  # Epoch form ("@<unix-ts> +0000"), not "8 days ago" — GIT_AUTHOR_DATE/
+  # GIT_COMMITTER_DATE do not accept git's free-form --date approxidate
+  # syntax on every git build (confirmed non-parseable on this machine's
+  # git 2.53; the epoch form is universally accepted).
+  ( _bwb_stale_ts=$(( $(date -u +%s) - 8 * 86400 )) \
+      && cd "$D/repo" \
+      && git init --quiet && git config core.hooksPath "" \
+      && git config user.email t@example.com && git config user.name T \
+      && echo x > f && git add f && git commit --quiet -m init \
+      && git checkout --quiet -b stale-no-upstream-branch \
+      && echo y > g && git add g \
+      && GIT_AUTHOR_DATE="@${_bwb_stale_ts} +0000" GIT_COMMITTER_DATE="@${_bwb_stale_ts} +0000" git commit --quiet -m stale \
+      && { git checkout --quiet master 2>/dev/null || git checkout --quiet main 2>/dev/null || true; }
+  ) >/dev/null 2>&1
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-worktrees-branches-branch-red" 1 "$RC" "RED budget-worktrees-branches.*stale-no-upstream-branch" "$OUT"
+
+  # ---- Check: budget-worktrees-branches GREEN fixture — a fresh branch
+  # with a recent commit and no upstream (must NOT flag: <7d old) ----
+  D=$(_scenario_dir bwb-green)
+  _stamp_claim_honesty_green "$D"
+  ( cd "$D/repo" \
+      && git init --quiet && git config core.hooksPath "" \
+      && git config user.email t@example.com && git config user.name T \
+      && echo x > f && git add f && git commit --quiet -m init \
+      && git checkout --quiet -b fresh-no-upstream-branch \
+      && echo y > g && git add g && git commit --quiet -m fresh \
+      && git checkout --quiet master 2>/dev/null || git checkout --quiet main 2>/dev/null || true
+  ) >/dev/null 2>&1
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-worktrees-branches-branch-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: new-gate-evidence-bar. RED fixture — an added_after >=
+  # 2026-07 entry missing the full evidence bar ----
+  D=$(_scenario_dir nge-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "new-gate-incomplete",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": { "paths": [], "keywords": [] },
+      "blocking": true,
+      "honest_status": "fixture stub",
+      "added_after": "2026-07",
+      "budget_class": "none"
+    }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "new-gate-evidence-bar-red" 1 "$RC" "RED new-gate-evidence-bar.*new-gate-incomplete" "$OUT"
+
+  # ---- Check: new-gate-evidence-bar GREEN fixture — the full evidence bar
+  # is present ----
+  D=$(_scenario_dir nge-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "new-gate-complete",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": { "paths": [], "keywords": [] },
+      "blocking": true,
+      "honest_status": "fixture stub",
+      "added_after": "2026-07",
+      "golden_scenario": "Circuit incident 2026-07-03 cross-repo write",
+      "fp_expectation": "legitimate cross-repo harness sessions must not warn",
+      "retirement_condition": "zero fires for 30 days post-GA",
+      "waiver_path": "fixture-waiver-*.txt",
+      "budget_class": "none"
+    }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "new-gate-evidence-bar-green" 0 "$RC" "" "$OUT"
 
   # ---- Check 8 (--full only): RED fixture — a stub hook's --self-test fails ----
   D=$(_scenario_dir c7-red)
