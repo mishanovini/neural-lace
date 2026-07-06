@@ -1373,7 +1373,26 @@
       "blocking": true,
       "honest_status": "wired via git-hooks/pre-push dispatcher (core.hooksPath), not settings.json.template",
       "budget_class": "none",
-      "waiver_path": "git push --no-verify (git-native); OPEN QUESTION for operator: should secrets be the one pre-push check where --no-verify is NOT normalized as an acceptable documented path? Flagged, not resolved, in this audit (see tests/fixtures/wave-f/F.5/waiver-parity-audit.md row 25)."
+      "waiver_path": "git push --no-verify (git-native). F.3 disposition (2026-07-06, operator-approved): ACCEPT-DOCUMENTED — the bypass stays available per constitution §9, on condition of a genuine CI-side backstop; see the sibling 'secret-scan-ci-backstop' manifest entry (SECRET-SCAN-CI-BACKSTOP-01, .github/workflows/secret-backstop.yml). Previously an open question in tests/fixtures/wave-f/F.5/waiver-parity-audit.md row 25 — now resolved."
+    },
+    {
+      "id": "secret-scan-ci-backstop",
+      "kind": "gate",
+      "doctrine_file": "doctrine/security.md",
+      "hooks": [],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "none",
+      "honest_status": "GitHub Actions workflow (.github/workflows/secret-backstop.yml), not a Claude Code hook; events:[\"manual\"] is a schema-gap stand-in for CI push+PR triggers (same convention as the synthetic-runner-ci entry). Re-invokes the EXISTING pre-push-scan.sh + harness-hygiene-scan.sh scripts against the diff range server-side — the compensating control the F.3 disposition on secret-hygiene-prepush's --no-verify bypass required. Deliberately overlaps server-side-enforcement.yml's credential-scan/harness-hygiene jobs (defense-in-depth, documented in the workflow file's header) rather than being the sole CI coverage.",
+      "honesty_rationale": "GitHub Actions required-status-check, not a session-time hook; a waiver here is a GitHub branch-protection admin override, outside this manifest's waiver-file scope by construction (same rationale as synthetic-runner-ci)."
     },
     {
       "id": "session-honesty",

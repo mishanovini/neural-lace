@@ -668,6 +668,18 @@ is_exempt() {
     adapters/claude-code/hooks/decisions-index-gate.sh) return 0 ;;
   esac
 
+  # SECRET-SCAN-CI-BACKSTOP-01 fixture files. These deliberately contain
+  # AWS's own public documentation placeholder access-key ID
+  # (AKIAIOSFODNN7EXAMPLE — never a live credential) so the CI-backstop
+  # oracle can be proven locally against a real flagless-shape pattern
+  # match, matching pre-push-scan.sh's AKIA[0-9A-Z]{16} regex by design.
+  # Same class as sensitive-patterns.local.example (hooks/pre-push-scan.sh
+  # header) — a fixture that intentionally names the pattern it tests.
+  case "$path" in
+    adapters/claude-code/tests/secret-backstop-fixture-check.sh) return 0 ;;
+    docs/plans/secret-scan-ci-backstop-skip.md) return 0 ;;
+  esac
+
   # Instance-specific operations tooling exemptions.
   #
   # These files are intentionally named after the specific downstream product
