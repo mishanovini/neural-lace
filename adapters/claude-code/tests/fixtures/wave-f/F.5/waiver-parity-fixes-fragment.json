@@ -1,0 +1,46 @@
+{
+  "_fragment_note": "Wave F task F.5 waiver-parity GAP fixes (ADR 059 D4). Companion to waiver-parity-audit.md's 'GAP fixes landed' section. F.1 orchestrator merges these `waiver_path` (and, for spec-freeze, the flagged note) values into the corresponding EXISTING entries in adapters/claude-code/manifest.json at integration — this fragment does NOT edit manifest.json directly (§F.0.1: manifest.json is orchestrator-only this wave). Two of the five fixed hooks (task-created-validator.sh, spec-freeze-gate.sh) fold under a manifest entry that covers MULTIPLE hook files with DIFFERENT waiver postures per hook (agent-teams covers task-created-validator.sh + task-completed-evidence-gate.sh + teammate-spawn-validator.sh; spec-freeze covers spec-freeze-gate.sh + scope-enforcement-gate.sh) — those two entries need a per-hook breakdown at merge time rather than one blanket `waiver_path` string on the manifest entry; the fragment values below are scoped to the SPECIFIC hook file, for F.1 to compose into whatever multi-hook shape the schema ends up using (see waiver-parity-audit.md Proposal 1 for the proposed `waiver_path`/`honesty_rationale` schema fields, not yet added to schemas/manifest.schema.json as of this fragment).",
+  "gap_fixes": [
+    {
+      "manifest_id": "agent-teams",
+      "hook_file": "task-created-validator.sh",
+      "waiver_path": ".claude/state/task-created-waiver-*.txt, fresh <1h, purpose-clause validated (lib/waiver-purpose-clause.sh). Distinct from — and coexists with — the pre-existing TASK_CREATED_BYPASS=1 env var / bypass_validation event-input field, both of which are documented-equivalent session-wide switches (now ledger-logged as of this fix; previously silent, the F.5 audit row-2 gap).",
+      "multi_hook_note": "This manifest entry ALSO covers task-completed-evidence-gate.sh (its own structured waiver, unchanged by this fix, already ledger-logged pre-fix per audit row 3 — still missing freshness/purpose-clause gating, NOT touched by this pass) and teammate-spawn-validator.sh (structured waiver for condition (d) only, unchanged). Recommend F.1 give this entry a per-hook waiver_path breakdown rather than one blanket string.",
+      "ledger_gate_names": ["task-created-validator"],
+      "self_test": "bash adapters/claude-code/hooks/task-created-validator.sh --self-test -> 8/8 PASS (incl. W1 waiver-absent-blocks, W2 waiver-honored, W3 waiver-stale-rejected, W4 weak-waiver-no-purpose-clauses)"
+    },
+    {
+      "manifest_id": "harness-hygiene-scan",
+      "hook_file": "harness-hygiene-scan.sh",
+      "waiver_path": ".claude/state/harness-hygiene-waiver-*.txt, fresh <1h, purpose-clause validated (lib/waiver-purpose-clause.sh) PLUS a 'Files:' line naming the repo-relative path(s) the waiver covers — suppresses matches on ONLY those named files for this run. Distinct from the durable, out-of-band, plan-time exempt-list (is_exempt()) which covers known-legitimate files/paths, not novel false positives.",
+      "multi_hook_note": null,
+      "ledger_gate_names": ["harness-hygiene-scan"],
+      "self_test": "bash adapters/claude-code/hooks/harness-hygiene-scan.sh --self-test -> self-test: OK (incl. w1 waiver-absent, w2 waiver-honored, w3 waiver-stale, w4 waiver-names-different-file-still-blocks, w5 weak-waiver-no-purpose-clauses)"
+    },
+    {
+      "manifest_id": "plan-deletion-protection",
+      "hook_file": "plan-deletion-protection.sh",
+      "waiver_path": ".claude/state/plan-deletion-waiver-*.txt, fresh <1h, purpose-clause validated (lib/waiver-purpose-clause.sh). Checked inside the shared emit_block() helper BEFORE every detector's block message, so it covers all five detection paths (rm, git clean, git stash -u, git checkout/restore/reset, mv/git mv-outside-archive) uniformly. Replaces the previous vague 'commit the deletion explicitly ... bypass this hook by editing the source out manually' non-mechanical remedy.",
+      "multi_hook_note": null,
+      "ledger_gate_names": ["plan-deletion-protection"],
+      "self_test": "bash adapters/claude-code/hooks/plan-deletion-protection.sh --self-test -> 18/18 PASS (scenarios 15-18: waiver-absent-blocks, waiver-honored, waiver-stale-rejected, weak-waiver-no-purpose-clauses)"
+    },
+    {
+      "manifest_id": "wire-check",
+      "hook_file": "wire-check-gate.sh",
+      "waiver_path": ".claude/state/wire-check-waiver-<plan-slug>-<task-id>-*.txt, fresh <1h, purpose-clause validated (lib/waiver-purpose-clause.sh). Scoped per plan+task (glob includes both). Checked at BOTH static-trace block sites (broken-arrow AND insufficient-verified-arrow-count). Distinct from — and coexists with — the plan-time 'n/a — <reason >= 30 chars>' carve-out, which is for tasks with NO code chain at all, not a static-trace false negative on a genuine chain.",
+      "multi_hook_note": null,
+      "ledger_gate_names": ["wire-check-gate"],
+      "self_test": "bash adapters/claude-code/hooks/wire-check-gate.sh --self-test -> all scenarios matched expectations (w10 waiver-absent-blocks, w11 waiver-honored, w12 waiver-stale-rejected, w13 weak-waiver-no-purpose-clauses)"
+    },
+    {
+      "manifest_id": "spec-freeze",
+      "hook_file": "spec-freeze-gate.sh",
+      "waiver_path": ".claude/state/spec-freeze-waiver-<plan-slug>-*.txt, fresh <1h, purpose-clause validated (lib/waiver-purpose-clause.sh). Checked against EVERY unfrozen claiming plan's slug (not just the primary named in the block message), so a waiver scoped to the actually-relevant plan is honored regardless of claimer-list sort order. ADDITIVE to — does not replace — the durable unfreeze-then-refreeze remedy (still named first in the block message). Vague 'temporarily use a non-Edit/Write tool' bypass-via-different-tool language removed from the block message.",
+      "multi_hook_note": "This manifest entry ALSO covers scope-enforcement-gate.sh, which remains HONESTY-CLASS/no-valve by deliberate design (waiver removed 2026-05-04, unchanged by this fix — it is a repo-boundary world-fact check, not touched here). Recommend F.1 give this entry a per-hook breakdown: scope-enforcement-gate.sh honesty_rationale unchanged, spec-freeze-gate.sh gets this waiver_path.",
+      "decision_flag": "This row's classification (waiver-eligible world-state assertion vs. honesty-class no-valve) was originally reserved by the F.5 audit for explicit operator/harness-reviewer input rather than unilateral resolution (row 27's original 'D4 gap?' column: 'Not resolved unilaterally here per constitution Section 3'). This fix resolves it as (b) add-a-structured-waiver, leaning on ADR 059 D4's own hard-rule text ('every blocking check MUST ship a structured waiver path') plus D4's scoping rule (waivers clear world-state assertions; the plan's frozen field is exactly that) as the defensible unilateral basis under constitution Section 3's 'can I defend one answer from principles + evidence? If yes, take it' test. FLAGGED for F.1/harness-reviewer confirmation at the next review pass — not silently accepted as final.",
+      "ledger_gate_names": ["spec-freeze-gate"],
+      "self_test": "bash adapters/claude-code/hooks/spec-freeze-gate.sh --self-test -> 11/11 PASS (scenarios 8-11: waiver-absent-blocks, waiver-honored, waiver-stale-rejected, weak-waiver-no-purpose-clauses)"
+    }
+  ]
+}

@@ -50,13 +50,61 @@
 #     (non-integration task per Check 13)
 #
 # Exit codes:
-#   0 — edit allowed (silent pass OR static trace passed)
+#   0 — edit allowed (silent pass OR static trace passed OR fresh
+#       structured waiver honored)
 #   1 — edit blocked (static trace failed: broken link, missing file,
 #       or insufficient verifiable arrows without carve-out)
 #
-# Self-test: `bash wire-check-gate.sh --self-test` exercises 9 scenarios.
+# WAIVER (F.5 waiver-parity audit row 32 / ADR 059 D4 fix): the plan-time
+# `n/a — <reason>` carve-out (above) is a DIFFERENT thing — a pre-declared
+# exemption for tasks with no code chain at all. A session that hits a
+# genuine static-trace FALSE NEGATIVE at flip-time (e.g. the referenced
+# function lives in a vendored/generated file the trace doesn't parse) has,
+# as of this fix, a real escape hatch distinct from the carve-out: a fresh
+# (<1h) structured waiver at
+# .claude/state/wire-check-waiver-<plan-slug>-<task-id>-*.txt naming BOTH
+# purpose clauses (lib/waiver-purpose-clause.sh). It suppresses ONLY the
+# static-trace block for THIS plan+task, once, and is ledger-logged.
+#
+# Self-test: `bash wire-check-gate.sh --self-test` exercises the static
+# trace scenarios plus the waiver-honored/absent/stale trio.
 
 set -u
+
+# ============================================================
+# Shared libs (best-effort; hook degrades gracefully if absent)
+# ============================================================
+_WCG_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/waiver-purpose-clause.sh
+source "$_WCG_SELF_DIR/lib/waiver-purpose-clause.sh" 2>/dev/null || true
+# shellcheck source=lib/signal-ledger.sh
+source "$_WCG_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+
+# _wcg_has_fresh_waiver <plan-slug> <task-id>
+# Fresh (<1h) .claude/state/wire-check-waiver-<plan-slug>-<task-id>-*.txt
+# naming BOTH purpose clauses. Prints the matched file path, returns 0.
+_wcg_has_fresh_waiver() {
+  local plan_slug="$1" task_id="$2"
+  local state_dir="${CLAUDE_STATE_DIR:-.claude/state}"
+  [[ -d "$state_dir" ]] || return 1
+  # Sanitize slug/task-id for glob safety (mirrors session-id sanitization
+  # used elsewhere in the harness — alnum, dot, dash, underscore only).
+  local safe_slug safe_task
+  safe_slug=$(printf '%s' "$plan_slug" | tr -c 'A-Za-z0-9._-' '-')
+  safe_task=$(printf '%s' "$task_id" | tr -c 'A-Za-z0-9._-' '-')
+  local glob="wire-check-waiver-${safe_slug}-${safe_task}-*.txt"
+  local f
+  while IFS= read -r f; do
+    [[ -f "$f" ]] || continue
+    if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+      if waiver_has_purpose_clauses "$f"; then
+        printf '%s' "$f"
+        return 0
+      fi
+    fi
+  done < <(find "$state_dir" -maxdepth 1 -type f -name "$glob" -newermt '1 hour ago' 2>/dev/null)
+  return 1
+}
 
 # ============================================================
 # --self-test
@@ -314,6 +362,69 @@ JSON_EOF
     FAILED=1
   fi
 
+  # ---- Structured-waiver scenarios (F.5 audit row 32 / ADR 059 D4) ----
+  # Reuses the w2 broken-link fixture (plan slug "foo", task-id "1").
+
+  # (w10) waiver-absent-blocks: same broken-link input, no waiver → BLOCK
+  W10_STATE="$ROOT_W2/.claude/state"
+  mkdir -p "$W10_STATE"
+  W10_OUT=$(echo "$INPUT_W2" | CLAUDE_TOOL_NAME=Edit CLAUDE_STATE_DIR="$W10_STATE" bash "$SCRIPT" 2>&1)
+  W10_EXIT=$?
+  if [[ $W10_EXIT -ne 0 ]]; then
+    echo "self-test (w10) waiver-absent-blocks: PASS (expected block)" >&2
+  else
+    echo "self-test (w10) waiver-absent-blocks: FAIL (expected block, got allow)" >&2
+    FAILED=1
+  fi
+
+  # (w11) waiver-honored: fresh wire-check-waiver-foo-1-*.txt with BOTH
+  # purpose clauses → ALLOW despite the broken link.
+  {
+    echo "Purpose: this gate exists to prevent shipping a broken code chain"
+    echo "Because: this is a self-test scenario exercising the waiver valve"
+  } > "$W10_STATE/wire-check-waiver-foo-1-selftest.txt"
+  W11_OUT=$(echo "$INPUT_W2" | CLAUDE_TOOL_NAME=Edit CLAUDE_STATE_DIR="$W10_STATE" bash "$SCRIPT" 2>&1)
+  W11_EXIT=$?
+  if [[ $W11_EXIT -eq 0 ]]; then
+    echo "self-test (w11) waiver-honored: PASS (expected allow)" >&2
+  else
+    echo "self-test (w11) waiver-honored: FAIL (expected allow, got block)" >&2
+    echo "$W11_OUT" >&2
+    FAILED=1
+  fi
+  rm -f "$W10_STATE/wire-check-waiver-foo-1-selftest.txt"
+
+  # (w12) waiver-stale-rejected: same valid waiver but backdated >1h → BLOCK
+  {
+    echo "Purpose: this gate exists to prevent shipping a broken code chain"
+    echo "Because: this is a self-test scenario exercising the waiver valve"
+  } > "$W10_STATE/wire-check-waiver-foo-1-stale.txt"
+  touch -d '2 hours ago' "$W10_STATE/wire-check-waiver-foo-1-stale.txt" 2>/dev/null \
+    || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M.%S 2>/dev/null)" "$W10_STATE/wire-check-waiver-foo-1-stale.txt" 2>/dev/null \
+    || true
+  W12_OUT=$(echo "$INPUT_W2" | CLAUDE_TOOL_NAME=Edit CLAUDE_STATE_DIR="$W10_STATE" bash "$SCRIPT" 2>&1)
+  W12_EXIT=$?
+  if [[ $W12_EXIT -ne 0 ]]; then
+    echo "self-test (w12) waiver-stale-rejected: PASS (expected block)" >&2
+  else
+    echo "self-test (w12) waiver-stale-rejected: FAIL (expected block, got allow)" >&2
+    FAILED=1
+  fi
+  rm -f "$W10_STATE/wire-check-waiver-foo-1-stale.txt"
+
+  # (w13) regression (pin f): non-empty waiver lacking the purpose-clause
+  # pair does NOT open the valve → BLOCK
+  printf 'just trust me on this one\n' > "$W10_STATE/wire-check-waiver-foo-1-weak.txt"
+  W13_OUT=$(echo "$INPUT_W2" | CLAUDE_TOOL_NAME=Edit CLAUDE_STATE_DIR="$W10_STATE" bash "$SCRIPT" 2>&1)
+  W13_EXIT=$?
+  if [[ $W13_EXIT -ne 0 ]]; then
+    echo "self-test (w13) weak-waiver-no-purpose-clauses: PASS (expected block)" >&2
+  else
+    echo "self-test (w13) weak-waiver-no-purpose-clauses: FAIL (expected block, got allow)" >&2
+    FAILED=1
+  fi
+  rm -f "$W10_STATE/wire-check-waiver-foo-1-weak.txt"
+
   if [[ $FAILED -eq 0 ]]; then
     echo "wire-check-gate --self-test: all scenarios matched expectations" >&2
     exit 0
@@ -367,6 +478,10 @@ TASK_ID=$(echo "$FLIPPED_LINE" | sed -nE 's/^[[:space:]]*- \[x\][[:space:]]+([A-
 if [[ -z "$TASK_ID" ]]; then
   exit 0
 fi
+
+# Derived early (needed by both the plan-slug and the waiver check below,
+# which apply before the static trace even runs).
+PLAN_SLUG=$(basename "$FILE_PATH" .md)
 
 # Verification-level exemption: mechanical / contract tasks skip the gate.
 # LAST occurrence wins (greedy `.*` anchors to the final `Verification:`) —
@@ -580,6 +695,11 @@ done <<< "$WIRE_BODY"
 
 # Decision
 if [[ -n "$BROKEN_DETAILS" ]]; then
+  WCG_WAIVER_FILE=""
+  if WCG_WAIVER_FILE=$(_wcg_has_fresh_waiver "$PLAN_SLUG" "$TASK_ID"); then
+    command -v ledger_emit >/dev/null 2>&1 && ledger_emit "wire-check-gate" "waiver" "plan=$PLAN_SLUG task=$TASK_ID file=$WCG_WAIVER_FILE reason=broken-arrow"
+    echo "[wire-check] ALLOW: fresh substantive wire-check-waiver present (release valve) — task=$TASK_ID broken-arrow static trace suppressed" >&2
+  else
   cat >&2 <<MSG
 BLOCKED: wire-check-gate (static trace failed)
 
@@ -600,12 +720,30 @@ completion regardless of whether a running instance was available.
 Runtime evidence (executed Prove-it-works scenario) is additive when
 present.
 
+Hatch (cost: suppresses the static trace for THIS plan+task, once,
+ledger-logged — distinct from the plan-time 'n/a' carve-out, which is
+for tasks with no code chain at all, not a false-negative trace): a
+genuine static-trace FALSE NEGATIVE (e.g. the token lives in a
+vendored/generated file the trace doesn't parse) gets a fresh (<1h)
+structured waiver naming BOTH purpose clauses:
+  mkdir -p .claude/state && \\
+  { printf 'Purpose: this gate exists to prevent <X>\\n'; \\
+    printf 'Because: <Y>\\n'; \\
+  } > .claude/state/wire-check-waiver-${PLAN_SLUG}-${TASK_ID}-\$(date +%s).txt
+Re-attempt the checkbox flip after writing the waiver.
+
 See ~/.claude/doctrine/planning.md "Integration Verification".
 MSG
   exit 1
+  fi
 fi
 
 if [[ $VERIFIED_COUNT -lt 2 ]]; then
+  WCG_WAIVER_FILE=""
+  if WCG_WAIVER_FILE=$(_wcg_has_fresh_waiver "$PLAN_SLUG" "$TASK_ID"); then
+    command -v ledger_emit >/dev/null 2>&1 && ledger_emit "wire-check-gate" "waiver" "plan=$PLAN_SLUG task=$TASK_ID file=$WCG_WAIVER_FILE reason=insufficient-arrows"
+    echo "[wire-check] ALLOW: fresh substantive wire-check-waiver present (release valve) — task=$TASK_ID insufficient-verified-arrows suppressed" >&2
+  else
   cat >&2 <<MSG
 BLOCKED: wire-check-gate
 
@@ -623,16 +761,24 @@ Add more arrows with backtick-quoted file paths, OR (if no chain
 exists for this task) use the canonical carve-out in Wire checks:
   - n/a — <reason ≥ 30 chars>
 
+Hatch (cost: suppresses this specific block for THIS plan+task, once,
+ledger-logged): a genuine static-trace false negative gets a fresh
+(<1h) structured waiver naming BOTH purpose clauses:
+  mkdir -p .claude/state && \\
+  { printf 'Purpose: this gate exists to prevent <X>\\n'; \\
+    printf 'Because: <Y>\\n'; \\
+  } > .claude/state/wire-check-waiver-${PLAN_SLUG}-${TASK_ID}-\$(date +%s).txt
+
 See ~/.claude/doctrine/planning.md "Integration Verification".
 MSG
   exit 1
+  fi
 fi
 
 # Static trace PASS — log and check for additive runtime evidence
 echo "[wire-check] static trace PASS — $VERIFIED_COUNT arrow(s) verified" >&2
 
 EVIDENCE_FILE="${FILE_PATH%.md}-evidence.md"
-PLAN_SLUG=$(basename "$FILE_PATH" .md)
 ARTIFACT_PATH="${PLAN_DIR}/${PLAN_SLUG}-evidence/${TASK_ID}.evidence.json"
 
 if [[ -f "$EVIDENCE_FILE" ]]; then

@@ -43,10 +43,24 @@
 #   not lock the maintainer out of routine edits.
 #
 # Exit codes:
-#   0 — allow (edit proceeds)
+#   0 — allow (edit proceeds, incl. via the waiver release valve below)
 #   1 — block (stderr explains why)
 #   2 — input parse error (only when stdin malformed; plan-parse errors
 #       degrade to ALLOW per the rule above)
+#
+# WAIVER (F.5 waiver-parity audit row 27 / ADR 059 D4 fix): the previous
+# only remedy for a time-boxed, substantive need to touch a frozen plan's
+# file WITHOUT formally unfreezing it was "edit the plan to flip frozen, OR
+# temporarily use a non-Edit/Write tool" — the second option is a literal
+# bypass-via-different-tool, not a waiver, with no ledger trail of why.
+# ADR 059 D4 is a hard design rule ("every blocking check MUST ship a
+# structured waiver path") and this block is a world-state assertion (the
+# plan's frozen field), not a session-honesty assertion — squarely inside
+# D4's waiver-eligible scope. Fixed: a fresh (<1h) structured waiver at
+# .claude/state/spec-freeze-waiver-<slug>-*.txt naming BOTH purpose clauses
+# (lib/waiver-purpose-clause.sh) ALLOWS the edit, ledger-logged. This is
+# DISTINCT from — and does not replace — actually unfreezing the plan,
+# which remains the durable, non-time-boxed remedy.
 #
 # References:
 #   - adapters/claude-code/hooks/scope-enforcement-gate.sh — the parallel
@@ -55,6 +69,8 @@
 #     parsing + self-test runner pattern.
 #   - adapters/claude-code/hooks/plan-edit-validator.sh — header-field
 #     extraction precedent.
+#   - adapters/claude-code/hooks/bug-persistence-gate.sh — the canonical
+#     structured-waiver shape this fix mirrors.
 
 # ============================================================
 # Helper: normalize a path (forward-slash; trim)
@@ -74,6 +90,35 @@ _normalize_path() {
 _SFG_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=lib/extract-backtick-paths.sh
 source "$_SFG_SELF_DIR/lib/extract-backtick-paths.sh" 2>/dev/null || true
+# shellcheck source=lib/waiver-purpose-clause.sh
+source "$_SFG_SELF_DIR/lib/waiver-purpose-clause.sh" 2>/dev/null || true
+# shellcheck source=lib/signal-ledger.sh
+source "$_SFG_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+
+# _sfg_has_fresh_waiver <plan-slug>
+# Fresh (<1h) .claude/state/spec-freeze-waiver-<plan-slug>-*.txt naming
+# BOTH purpose clauses (lib/waiver-purpose-clause.sh). Mirrors
+# bug-persistence-gate.sh waiver semantics. Prints the matched file path
+# and returns 0 on success.
+_sfg_has_fresh_waiver() {
+  local plan_slug="$1"
+  local state_dir="${CLAUDE_STATE_DIR:-.claude/state}"
+  [[ -d "$state_dir" ]] || return 1
+  local safe_slug
+  safe_slug=$(printf '%s' "$plan_slug" | tr -c 'A-Za-z0-9._-' '-')
+  local glob="spec-freeze-waiver-${safe_slug}-*.txt"
+  local f
+  while IFS= read -r f; do
+    [[ -f "$f" ]] || continue
+    if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+      if waiver_has_purpose_clauses "$f"; then
+        printf '%s' "$f"
+        return 0
+      fi
+    fi
+  done < <(find "$state_dir" -maxdepth 1 -type f -name "$glob" -newermt '1 hour ago' 2>/dev/null)
+  return 1
+}
 
 # ============================================================
 # Helper: convert any path (absolute or relative) into a repo-relative
@@ -545,8 +590,104 @@ PLANEOF
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Structured-waiver scenarios (F.5 audit row 27 / ADR 059 D4 fix) ----
+  # Reuses the s1-style unfrozen-plan setup (plan slug "alpha", claims
+  # src/foo.ts) but writes a waiver into the fixture's .claude/state/
+  # before invoking the hook, via CLAUDE_STATE_DIR.
+  _run_waiver_scenario() {
+    local label="$1" waiver_body="$2" backdate="$3"
+    local repo="$TMPROOT/$label"
+    mkdir -p "$repo/docs/plans" "$repo/.claude/state"
+    (cd "$repo" && git init -q 2>/dev/null || true)
+    local canonical_repo
+    canonical_repo=$(cd "$repo" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || echo "$repo")
+
+    cat > "$repo/docs/plans/alpha.md" <<'PLANEOF'
+# Plan: alpha
+Status: ACTIVE
+frozen: false
+
+## Goal
+Test plan for waiver self-test.
+
+## Files to Modify/Create
+- `src/foo.ts` — test file
+
+## Tasks
+- [ ] 1. test
+PLANEOF
+
+    if [[ -n "$waiver_body" ]]; then
+      printf '%s' "$waiver_body" > "$repo/.claude/state/spec-freeze-waiver-alpha-selftest.txt"
+      if [[ "$backdate" == "1" ]]; then
+        touch -d '2 hours ago' "$repo/.claude/state/spec-freeze-waiver-alpha-selftest.txt" 2>/dev/null \
+          || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M.%S 2>/dev/null)" "$repo/.claude/state/spec-freeze-waiver-alpha-selftest.txt" 2>/dev/null \
+          || true
+      fi
+    fi
+
+    local target_full="$repo/src/foo.ts"
+    mkdir -p "$(dirname "$target_full")" 2>/dev/null
+    [[ -f "$target_full" ]] || echo "stub" > "$target_full"
+
+    local target_canonical="$canonical_repo/src/foo.ts"
+    local file_path_json
+    file_path_json=$(printf '%s' "$target_canonical" | jq -Rs . 2>/dev/null)
+    [[ -z "$file_path_json" ]] && file_path_json='""'
+    local input
+    input=$(printf '{"tool_name":"Edit","tool_input":{"file_path":%s,"old_string":"stub","new_string":"updated"}}' \
+      "$file_path_json")
+
+    (cd "$repo" && printf '%s' "$input" | \
+      CLAUDE_STATE_DIR="$repo/.claude/state" bash "$SELF_TEST_HOOK" >"$repo/stdout.txt" 2>"$repo/stderr.txt")
+    echo $?
+  }
+
+  # (8) waiver-absent-blocks: no waiver file → BLOCK (rc=1)
+  RC=$(_run_waiver_scenario s8 "" 0)
+  if [[ "$RC" == "1" ]]; then
+    echo "self-test (8) waiver-absent-blocks: PASS (rc=$RC, expected 1)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (8) waiver-absent-blocks: FAIL (rc=$RC, expected 1)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # (9) waiver-honored: fresh waiver with BOTH purpose clauses → ALLOW (rc=0)
+  W9_BODY=$'Purpose: this gate exists to prevent silent spec drift mid-build\nBecause: this is a self-test scenario exercising the waiver valve\n'
+  RC=$(_run_waiver_scenario s9 "$W9_BODY" 0)
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (9) waiver-honored: PASS (rc=$RC, expected 0)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (9) waiver-honored: FAIL (rc=$RC, expected 0)" >&2
+    cat "$TMPROOT/s9/stderr.txt" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # (10) waiver-stale-rejected: same valid waiver but backdated >1h → BLOCK
+  RC=$(_run_waiver_scenario s10 "$W9_BODY" 1)
+  if [[ "$RC" == "1" ]]; then
+    echo "self-test (10) waiver-stale-rejected: PASS (rc=$RC, expected 1)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (10) waiver-stale-rejected: FAIL (rc=$RC, expected 1)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # (11) regression (pin f): non-empty waiver without purpose-clause pair
+  # does NOT open the valve → BLOCK
+  RC=$(_run_waiver_scenario s11 "just trust me on this one" 0)
+  if [[ "$RC" == "1" ]]; then
+    echo "self-test (11) weak-waiver-no-purpose-clauses: PASS (rc=$RC, expected 1)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (11) weak-waiver-no-purpose-clauses: FAIL (rc=$RC, expected 1)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 7 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 11 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -660,6 +801,25 @@ PRIMARY_UNFROZEN="${UNFROZEN_CLAIMERS[0]}"
 PRIMARY_SLUG=$(_plan_slug "$PRIMARY_UNFROZEN")
 OTHER_COUNT=$((NUM_UNFROZEN - 1))
 
+# --- Waiver release valve (F.5 audit row 27 / ADR 059 D4 fix). Checked
+# against EVERY unfrozen claiming plan's slug (not just the primary) so a
+# waiver scoped to the actually-relevant plan is honored even when a
+# different plan happens to sort first. ---
+SFG_WAIVER_FILE=""
+SFG_WAIVER_PLAN=""
+for _sfg_plan in "${UNFROZEN_CLAIMERS[@]}"; do
+  _sfg_slug=$(_plan_slug "$_sfg_plan")
+  if SFG_WAIVER_FILE=$(_sfg_has_fresh_waiver "$_sfg_slug"); then
+    SFG_WAIVER_PLAN="$_sfg_slug"
+    break
+  fi
+done
+if [[ -n "$SFG_WAIVER_FILE" ]]; then
+  command -v ledger_emit >/dev/null 2>&1 && ledger_emit "spec-freeze-gate" "waiver" "plan=$SFG_WAIVER_PLAN file=$TARGET_REL waiver=$SFG_WAIVER_FILE"
+  echo "[spec-freeze] ALLOW: fresh substantive spec-freeze-waiver present for plan '$SFG_WAIVER_PLAN' (release valve) — file=$TARGET_REL" >&2
+  exit 0
+fi
+
 {
   echo "================================================================"
   echo "SPEC-FREEZE GATE — FILE EDIT BLOCKED"
@@ -690,7 +850,20 @@ OTHER_COUNT=$((NUM_UNFROZEN - 1))
     done
   fi
   echo ""
-  echo "Emergency override: edit the plan to flip frozen, OR temporarily"
+  echo "Hatch (cost: allows edits to THIS file under THIS plan's freeze,"
+  echo "until the waiver expires in <1h, ledger-logged — does NOT flip"
+  echo "frozen: true, so the block returns on the next call unless you also"
+  echo "unfreeze or the waiver is renewed):"
+  echo "  A genuine, time-boxed, substantive need to touch a frozen plan's"
+  echo "  file WITHOUT formally unfreezing it gets a fresh (<1h) structured"
+  echo "  waiver naming BOTH purpose clauses:"
+  echo "    mkdir -p .claude/state && \\"
+  echo "    { printf 'Purpose: this gate exists to prevent <X>\\n'; \\"
+  echo "      printf 'Because: <Y>\\n'; \\"
+  echo "    } > .claude/state/spec-freeze-waiver-${PRIMARY_SLUG}-\$(date +%s).txt"
+  echo "  Re-run the edit after writing the waiver."
+  echo ""
+  echo "Durable remedy: edit the plan to flip frozen, OR temporarily"
   echo "use a non-Edit/Write tool (per ~/.claude/doctrine/git.md)."
   echo ""
   echo "NOTE: this block prevented the ENTIRE command from running — including any"
