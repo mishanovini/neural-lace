@@ -1,8 +1,11 @@
 # Best Practices Encoded in Neural Lace
 
 > **Status:** actively maintained. Every practice listed here is backed by a specific rule file, hook, or agent in the harness tree. If you find a reference that doesn't resolve, file an issue.
+> **Last verified:** 2026-07-06, against `adapters/claude-code/manifest.json` (100 entries, 32 `blocking: true`), `adapters/claude-code/rules/constitution.md` (9,786 bytes), ADR 058 (`docs/decisions/058-nl-overhaul-great-consolidation.md`), and ADR 059 (`docs/decisions/059-session-end-enforcement-redesign.md`). Counts and mechanism claims were checked with real commands — see the [Verification log](#verification-log-2026-07-06) at the bottom.
 
 Neural Lace is more than an AI harness. It encodes a set of software-engineering and AI-collaboration practices that an individual developer or team would otherwise have to discover independently over years of practice and failure. This document is the reader's guide to those practices: what they are, why they exist, how the harness enforces them, and when it is honest to bend them.
+
+**Architecture note (2026-07 overhaul, ADR 058 "The Great Consolidation").** Most `adapters/claude-code/rules/<topic>.md` references below point at a path that no longer exists. `~/.claude/rules/constitution.md` is now the ONLY rule file auto-loaded into every session (ADR 058 D1, ~9.8KB); the detailed topic files that used to be always-loaded moved to `adapters/claude-code/doctrine/<topic>.md` (67 files, mirrored to `~/.claude/doctrine/`) and are delivered just-in-time by `doctrine-jit.sh` rather than always-loaded (D2). Read every `adapters/claude-code/rules/<topic>.md` reference below (other than `rules/constitution.md` itself) as `adapters/claude-code/doctrine/<topic>.md` — confirmed by direct file check, 2026-07-06. The new sections ["The constitution + JIT doctrine (ADR 058)"](#the-constitution--jit-doctrine-adr-058), ["Session-end batched verdict (ADR 059)"](#session-end-batched-verdict-adr-059), and ["Build disciplines learned the hard way"](#build-disciplines-learned-the-hard-way) describe the parts of the architecture that are genuinely new, not just relocated. The pre-overhaul narrative this file used to tell is preserved verbatim at [`harness-architecture-history.md`](harness-architecture-history.md) for archaeology.
 
 The document is structured so each practice has the same shape:
 
@@ -19,20 +22,48 @@ The harness distinguishes between two kinds of enforcement:
 
 Both matter, but they are not the same thing. This document labels which is which, so readers can calibrate how much friction each rule adds.
 
+Post-overhaul, `adapters/claude-code/manifest.json` makes this distinction machine-checkable rather than asserted in prose, and adds two kinds this document didn't need before: **surfacer** (a SessionStart/PostToolUse writer that informs but never blocks — 16 of 100 entries) and **writer** (a state-mutating script with no gate semantics — 18 of 100). `gate` (Mechanism) accounts for 42 entries; `pattern`/`convention` (Pattern) account for the remaining 24; 32 entries total carry `blocking: true`. Reproduce this with `jq '.entries | group_by(.kind) | map({kind:.[0].kind, count:length})' adapters/claude-code/manifest.json` — that is the point of ADR 058 D3 below: claimed-vs-actual is a command, not a claim.
+
 ## Table of contents
 
+- [The constitution + JIT doctrine (ADR 058)](#the-constitution--jit-doctrine-adr-058)
 - [Core practices](#core-practices)
 - [AI-collaboration practices](#ai-collaboration-practices)
 - [Security practices](#security-practices)
 - [Planning + decision practices](#planning--decision-practices)
 - [Testing + verification practices](#testing--verification-practices)
+- [Session-end batched verdict (ADR 059)](#session-end-batched-verdict-adr-059)
 - [Documentation practices](#documentation-practices)
+- [Self-improvement — the nl-issue loop](#self-improvement--the-nl-issue-loop)
+- [Build disciplines learned the hard way](#build-disciplines-learned-the-hard-way)
 - [Autonomy practices](#autonomy-practices)
 - [Diagnosis practices](#diagnosis-practices)
 - [UX practices](#ux-practices)
 - [Commit practices](#commit-practices)
 - [References](#references)
 - [Contributing](#contributing)
+
+---
+
+## The constitution + JIT doctrine (ADR 058)
+
+**Classification:** Mechanism. `harness-doctor.sh --quick` checks the always-loaded byte budget and that every `wired_template: true` manifest entry is live; `doctrine-jit.sh` (PostToolUse, self-tested) does the delivery.
+
+**The rule.** `~/.claude/rules/constitution.md` is the only rule file loaded into every session (ADR 058 D1) — ten numbered sections (honesty, be-the-interface, decisions, functionality-over-components, persistence, session-end marker, gate-respect, safety lines, autonomy, harness-change discipline), 9,786 bytes as of this writing. `CLAUDE.md` is a 77-line routing index, not a rulebook. Everything else lives at `adapters/claude-code/doctrine/<topic>.md` and is delivered just-in-time: `doctrine-jit.sh` injects a doctrine file's compact form the first time a session's Edit/Write touches a path matching that manifest entry's `jit_triggers.paths`, using the `hookSpecificOutput.additionalContext` emission form (plain hook stdout does not reach model context — a live-verified implementation pin, not a guess). `adapters/claude-code/manifest.json` (100 entries; §D3) is the single machine-readable source of truth that both `doctrine-jit.sh` and `harness-doctor.sh` read; `docs/harness-architecture.md` and `adapters/claude-code/doctrine/INDEX.md` are GENERATED from it (`gen-architecture-doc.sh`, `manifest-check.sh --gen-index`) — never hand-edited.
+
+**Why it exists.** The 2026-07-01 effectiveness audit measured ~226-270K tokens of doctrine (61 rule files, 884KB) auto-loaded into every session, most of it irrelevant to the task at hand — exactly the failure mode the pre-overhaul edition of this document described as settled practice. Long always-loaded context is where drift and false memories accumulate; "load everything and hope the model prioritizes" is a demonstrated failure (compliance follows salience, not intent). D1+D2 replaced it with "load almost nothing, deliver detail just-in-time, and make the inventory a JSON file both the doctor and the injector can read."
+
+**How the harness enforces it.** `adapters/claude-code/rules/constitution.md`; `adapters/claude-code/hooks/doctrine-jit.sh` (`--self-test`); `adapters/claude-code/manifest.json` validated against `adapters/claude-code/schemas/manifest.schema.json`; `adapters/claude-code/hooks/harness-doctor.sh` (`--quick` at SessionStart, <2s; `--full` in CI + weekly, runs every hook's own `--self-test`). Verified live on this branch, 2026-07-06:
+```
+$ bash adapters/claude-code/hooks/harness-doctor.sh --quick
+[doctor] WARN session-resumer: scheduled task 'NL-session-resumer' not registered
+[doctor] RED budget-active-plans: 5 plans with Status: ACTIVE across 2 root(s) (budget <= 3)
+[doctor] RED budget-worktrees-branches: 7 git worktrees registered (budget <= 6)
+[doctor] FAILED — 2 red, 1 warn, 19 checks run
+```
+This is an honest, reproducible failure (this workspace genuinely has 5 ACTIVE plans and 7 worktrees from concurrent overhaul work), not a broken doctor — a RED run means resolve the workspace, not the doctor.
+
+**When to break it.** You don't add prose to the constitution to make a point land harder (constitution §10: a new rule may enter only by replacing something — the always-loaded budget is capped and the doctor enforces it). You don't hand-edit `docs/harness-architecture.md` or `doctrine/INDEX.md` — if the generated output is wrong, fix the manifest entry or the generator and regenerate.
 
 ---
 
@@ -622,6 +653,20 @@ test('dashboard renders hero cards and supporting grid', async ({ page }) => {
 
 ---
 
+## Session-end batched verdict (ADR 059)
+
+**Classification:** Mechanism. `stop-verdict-dispatcher.sh` (manifest id `stop-verdict-dispatcher`, `blocking: true`) invokes `work-integrity-gate.sh`, `session-honesty-gate.sh`, and `bug-persistence-gate.sh` in `--report` mode and aggregates one verdict — they are no longer independent blocking Stop-chain entries (see their `honest_status` notes in `adapters/claude-code/doctrine/INDEX.md`).
+
+**The rule.** All Stop-chain checks report into ONE combined verdict before the agent sees any of them (D1) — no more serial whack-a-mole where fixing gap 1 triggers a re-stop that discovers gap 2. The FIRST blocking Stop presents the full gap list with one remediation opportunity. If a SECOND Stop still has unresolved gaps, they're written to the unresolved-gaps ledger, `NEEDS-YOU.md`, and the next session's digest, and the session ends anyway (D2, "block-once-then-ledger") — nothing silently dropped, but no infinite loop either. Stop gates assert only what THIS session did — work preserved, claims honest, surfaced items recorded — never world-state claims like "this plan is finished" (D3); those belong to the digest, the doctor, and CI. Every blocking check ships a structured waiver path (fresh <1h, substantive reason, ledger-logged) that clears world-state assertions only — never a session-honesty assertion like "a checked box with no evidence," which the session that created it must resolve directly (D4). The session writes one small end-manifest (shipped SHAs, unresolved items + where recorded, needs-operator items, the constitution §6 marker as its last line); Stop gates validate the manifest's claims with cheap mechanical checks instead of re-deriving session history from transcript heuristics (D6).
+
+**Why it exists.** A live incident on 2026-07-03: a session that had already merged its deliverable cleanly needed FOUR Stop cycles to end, because one gate's own prescribed remedy (a plan scope-line edit) triggered a SECOND gate's block with no waiver valve, ending only via the retry-guard's emergency downgrade (NL-FINDING-016, NL-FINDING-019). Each gate was locally sensible; the composition was a trap. The redesign's insight: the intent — no lost work, no lies, nothing silently dropped — requires detection, a durable record, one remediation opportunity, and escalation. It does not require loops.
+
+**How the harness enforces it.** `adapters/claude-code/hooks/stop-verdict-dispatcher.sh`; `adapters/claude-code/scripts/end-manifest.sh` (D6); `harness-reviewer`'s checklist now includes a mandatory remedy-chain question (D5) — for each remedy a gate's block message prescribes, which OTHER gates does executing it trigger? A one-table analysis of this shape would have caught both NL-FINDING-016 and NL-FINDING-019 before they shipped.
+
+**When to break it.** The DONE-refusal is retained verbatim and explicitly NOT relaxed here: a verification-class block is never downgraded under a `DONE:` claim. The block-once-then-ledger valve is for genuine composition traps, not a second chance to talk past a real gap.
+
+---
+
 ## Documentation practices
 
 Documentation is the cross-session memory of a codebase. If it goes stale, future sessions lose the context they need to act correctly.
@@ -667,6 +712,64 @@ Atomicity in the same commit is the discipline that keeps this from drifting. A 
 **How the harness enforces it.** `adapters/claude-code/hooks/docs-freshness-gate.sh` is a pre-commit hook that detects structural changes (A=Added, D=Deleted, R=Renamed) to files under `adapters/claude-code/{hooks,rules,agents,skills,commands}/` or `principles/` and blocks the commit unless at least one of `docs/harness-architecture.md`, `docs/harness-guide.md`, or `docs/best-practices.md` is also staged. Modifications (M) to existing files do not trigger the gate — only structural changes that affect the documented inventory. See `adapters/claude-code/rules/harness-maintenance.md` for the narrative rule this hook enforces.
 
 **When to break it.** Rarely. If a file's purpose is genuinely too minor to document in `harness-architecture.md` (a one-line helper, a transient template), leaving it undocumented is fine — but then it should not appear in the doc at all. The rule is "if it's documented, keep the doc current," not "document everything."
+
+`docs/harness-architecture.md` and `adapters/claude-code/doctrine/INDEX.md` are now GENERATED from `adapters/claude-code/manifest.json` (`gen-architecture-doc.sh`, `manifest-check.sh --gen-index` — both carry a `<!-- GENERATED FILE — do not hand-edit -->` banner) rather than hand-maintained prose; regenerate them after a manifest change instead of patching them directly. `docs/best-practices.md` (this file) is explicitly NOT generated — its currency is this file's own "Last verified" anchor plus manual review, not a script.
+
+### Docs-as-process — the `Docs impact:` field (§F.2b)
+
+**Classification:** Hybrid. `plan-edit-validator.sh` WARNS (never blocks) on a newly-introduced task line missing a `Docs impact:` annotation; `task-verifier` treats a non-`none` claim as part of that task's Done-when (Mechanism). Choosing accurate content for the field is self-applied (Pattern).
+
+**The rule.** Every plan task declares the doc/README/runbook delta it causes, or the literal word `none` with a one-clause reason, inline on the task line — e.g. `Docs impact: adds a runbook stub at docs/runbooks/foo.md`. If the task claims a doc delta but the commit shows no corresponding change, `task-verifier` refuses to flip the checkbox.
+
+**Why it exists.** Operator directive 2026-07-04: docs are produced INSIDE the build loop, not tail-gated onto session end, where they reliably get deferred and go stale (see "Status documents update with work" above). Declaring the doc delta at task-authoring time and having the verifier enforce it as part of Done-when converts documentation from a hoped-for afterthought into a checked deliverable.
+
+**How the harness enforces it.** `adapters/claude-code/templates/plan-template.md` documents the field with three worked examples. `plan-edit-validator.sh`'s warn-only check fires on new task lines. `adapters/claude-code/agents/task-verifier.md` Step 3's Documentation sub-check treats a claimed, undelivered doc impact as a FAIL.
+
+**When to break it.** You don't omit the field — `none` with a reason is always valid for pure-refactor tasks. The plan template's fill-in-the-blank task skeleton doesn't itself demonstrate the field (only the explanatory note above it does) — see [Contributing](#contributing) for this gap, flagged not fixed here.
+
+---
+
+## Self-improvement — the nl-issue loop
+
+### nl-issue.sh — cross-project friction capture (Wave E, task E.8)
+
+**Classification:** Mechanism (the ledger + dedup logic) + Pattern (the triage discipline that consumes it).
+
+**The rule.** Any session, in any project, on this machine, appends a one-line friction/idea note via `nl-issue.sh "<what>"` to ONE machine-wide JSONL ledger under `$HOME/.claude/state/`. Constitution §5 names this as the required capture point for harness friction or defects noticed in any project. A byte-identical untriaged entry from the same project within 24h increments an existing count rather than duplicating; triaged entries are never merged into.
+
+**Why it exists.** The 2026-07-01 audit found friction feedback scattered across channels nobody consumed — a calibration file with zero uses, a harness-evaluator run exactly once, monitor alerts with a 0% acknowledgment rate. `nl-issue.sh` is deliberately the ONE capture point, machine-local by construction, so every checkout on the machine writes to the same file regardless of which repo the session is rooted in.
+
+**How the harness enforces it.** `adapters/claude-code/scripts/nl-issue.sh` (manifest id `nl-issue-capture-loop`, not event-wired — invoked directly). Weekly triage consumes the ledger; entries carry `triage_status`, `triage_ref`, `triaged_ts` fields for that purpose.
+
+**When to break it.** You don't skip capture because friction "seems minor" — the dedup logic exists so low-cost, frequent capture doesn't become noise. One line to the ledger is the whole obligation; elaborating in chat is optional.
+
+### Waiver-density alarm and metric-driven auto-demotion (ADR 059 D7)
+
+**Classification:** Mechanism. `waiver-density.sh` feeds the SessionStart digest and the weekly KPI report; auto-demotion writes the manifest.
+
+**The rule.** A gate whose waiver rate is ≥3/week auto-opens a "fix or retire this gate" item in the digest and backlog. Since ADR 059, a gate whose false-fire/waiver/downgrade rate crosses the threshold is auto-demoted to `blocking: false` in the manifest (plus an `honest_status` note), pending `harness-reviewer` re-review — not left blocking indefinitely while everyone routes around it with waivers.
+
+**Why it exists.** Called "the #1 unbuilt fix" in an earlier incentive audit: a constantly-waived gate is broken, and reporting that without acting on it just produces a dashboard nobody needs to check. Wave D.6 had already ad-hoc-demoted two gates this way (`observed-errors-first`, `pr-template-inline`); ADR 059 D7 makes that a designed lifecycle instead of an occasional manual call.
+
+**How the harness enforces it.** `adapters/claude-code/scripts/waiver-density.sh` (`--digest-line`/`--report`). Demoted entries carry an explicit `honest_status` string in the manifest.
+
+**When to break it.** You don't manually flip a gate to non-blocking to dodge a waiver-density finding — that's exactly the ride-through behavior the mechanism exists to catch through re-review, not unilateral action.
+
+---
+
+## Build disciplines learned the hard way
+
+Narrow, concrete disciplines that earned their place here because getting them wrong produced a specific named finding in `docs/findings.md`. They apply to anyone building INSIDE this harness, not to end-users of a downstream product.
+
+**Fix-edits are not commit calls (NL-FINDING-016).** A `git commit` inside a compound Bash command (`fix-thing && git add -A && git commit -m "..."`) can trip a PreToolUse gate on the WHOLE command, including the fix it contains. Apply the fix as one tool call, let it land, then issue the commit as its own call.
+
+**Self-tests sandbox ALL writes (NL-FINDING-025, -028, -034).** Any hook's `--self-test` must redirect every state write — ledger appends, lock files, retry-guard counters — to a sandbox (convention: `HARNESS_SELFTEST=1`), never real `~/.claude/state/`. NL-FINDING-025 was an "intermittent flake" that was actually a self-test polluting real retry-guard counters; NL-FINDING-028 is the same root cause from the opposite direction (fixed synthetic session IDs accumulating real counts until the guard silently downgraded the assertion under test). Grep a hook for every write path and confirm each is conditioned on the sandbox variable before trusting its self-test in isolation.
+
+**Livesmoke the REAL flagless shape (NL-FINDING-034, -035, -036).** A fix verified only against its own fixture, or only in its "obvious" shape, isn't verified against what a real session hits. NL-FINDING-034: a pollution counter double-echoed on the zero-match case, throwing a bash syntax error on every CLEAN production file — invisible until livesmoked against a sandboxed HOME with real clean files, not the fixture that always had pollution to find. NL-FINDING-035: the live `NEEDS-YOU.md` was a stale hand-authored fossil, not the actual script's render — no bootstrap ever regenerated it. NL-FINDING-036: a dispatcher never actually passed `--shipped-since` downstream, so a live Stop gate could block a session over commits from an UNRELATED plan. Before calling a fix done, run the tool's default invocation — no test-only flags — against a sandboxed-but-realistic copy of real state and read the literal output.
+
+**CRLF byte-checks use cmp/tr, not grep/od letter-matching (NL-FINDING-030, -038).** MSYS tools (`grep`, `sed`) on Windows can silently mask `\r` bytes. NL-FINDING-030: a `grep -Fxq` line-exact PR-template check was CR-intolerant while PR bodies legitimately carry CRLF. NL-FINDING-038: Windows edits silently converted whole tracked files LF→CRLF (no `.gitattributes`); the fix's own `eol=lf` clean filter then masked on-disk CRLF from `git status`. Verify with `cmp`/`tr -d`, not by pattern-matching the printable letter `r` (a documented mistake on record — matching `r` is not matching the CR control byte).
+
+**Pin-d block-message contract: tested remediation, not aspirational text (ADR 058 D5 pin d).** Every blocking gate's message must contain what failed specifically, the exact copy-pasteable remedy, the honest escape hatch with its cost, and what did/didn't execute. Before shipping or editing a gate message, actually run its own prescribed remedy verbatim in a sandbox and confirm it clears the gate — a remedy that can't be followed (the `bypass_evidence_check` class) is worse than no message, because it trains agents that gate guidance is noise.
 
 ---
 
@@ -985,6 +1088,20 @@ Even solo-developer force-pushes are dangerous: if you've pushed a branch to a p
 
 ## References
 
+**Post-overhaul (current) locations — start here:**
+
+- `adapters/claude-code/rules/constitution.md` — the only always-loaded rule file (ADR 058 D1)
+- `adapters/claude-code/CLAUDE.md` — the routing index
+- `adapters/claude-code/manifest.json` — single source of truth for every hook/gate/pattern (ADR 058 D3)
+- `adapters/claude-code/doctrine/INDEX.md` — generated doctrine index; every path below of the shape `adapters/claude-code/rules/<topic>.md` should be read as `adapters/claude-code/doctrine/<topic>.md` (or `<topic>-full.md`) per this index
+- `docs/decisions/058-nl-overhaul-great-consolidation.md` — ADR 058, the architecture this document now describes
+- `docs/decisions/059-session-end-enforcement-redesign.md` — ADR 059, the Stop-chain batched-verdict redesign
+- `adapters/claude-code/templates/plan-template.md` — plan shape, including the `Docs impact:` field (§F.2b)
+- `docs/architecture-overview.md` — unified narrative (team-role analogy + layer cross-walk)
+- `harness-architecture-history.md` — pre-overhaul narrative history, preserved verbatim for archaeology
+
+**Topic doctrine (paths below are pre-overhaul; see the note above for their current location):**
+
 - `principles/harness-hygiene.md` — the load-bearing hygiene rule (the "what never ships" catalog)
 - `principles/core-values.md` — the underlying values the harness optimizes for
 - `adapters/claude-code/rules/planning.md` — decisions, scope, mid-build protocol, completion reports
@@ -1002,12 +1119,15 @@ Even solo-developer force-pushes are dangerous: if you've pushed a branch to a p
 - `adapters/claude-code/rules/automation-modes.md` — five session modes and the decision tree
 - `adapters/claude-code/rules/git.md` — commit style, branch strategy, force-push policy, customer-tier branching
 - `adapters/claude-code/rules/ux-design.md` — error messages, empty states, destructive actions
-- `adapters/claude-code/rules/ux-standards.md` — color rules, contrast, state handling, AI features
+- `adapters/claude-code/rules/ux-standards.md` — color rules, contrast, state handling, AI features (narrative companion `docs/ux-guidelines.md` also still names this pre-overhaul path in its own header — known drift, not fixed here)
 - `adapters/claude-code/rules/harness-maintenance.md` — global-first rule changes, commit atomicity, sync discipline
-- `docs/harness-architecture.md` — detailed enforcement map + per-file purpose
+- `docs/harness-architecture.md` — GENERATED detailed enforcement map + per-file purpose (regenerate via `gen-architecture-doc.sh`, don't hand-edit)
 - `docs/harness-guide.md` — file-by-file reference
-- `docs/SETUP.md` — two-layer config walkthrough
-- `docs/decisions/` — Tier 2+ decision records (013-024 from the Build Doctrine integration arc)
+- `docs/decisions/` — Tier 2+ decision records, `docs/DECISIONS.md` is the index
+- `docs/findings.md` — the findings ledger (six-field schema; source of the NL-FINDING-* citations above)
+- `docs/failure-modes.md` — the durable failure-class catalog
+
+(`docs/SETUP.md`, cited in the pre-overhaul edition of this section, no longer exists on disk — checked 2026-07-06; if you need the two-layer config walkthrough, `README.md` and `principles/harness-hygiene.md` currently carry that content.)
 
 ## Contributing
 
@@ -1025,3 +1145,20 @@ When proposing a practice, include:
 - When to break it (the honest edge cases)
 
 Practices that fail any of the three criteria are rejected. Practices that pass are added to this document with a reference to the enforcing mechanism or documented pattern.
+
+**Docs-impact for this entry:** editing this file for a future practice should carry `Docs impact: docs/best-practices.md — <section>` on the authoring plan's task line (§F.2b) rather than being tail-gated to session end.
+
+**Plan-template gap found in passing (reported, not fixed here — out of this task's scope):** `adapters/claude-code/templates/plan-template.md`'s fill-in-the-blank task skeleton (`- [ ] 1. [First task — specific enough to verify completion]` / `- [ ] 2. [Second task]`, around line 442) does not itself carry a `Docs impact:` placeholder, even though the explanatory note immediately above it (with three worked examples, around line 336) documents the field as required. A plan author who copies the literal skeleton rather than a worked example produces task lines missing the field, relying entirely on `plan-edit-validator.sh`'s WARN (not block) to catch it after the fact. Suggested fix for a future task: add a `— Docs impact: [none — reason, OR describe the delta]` placeholder to the skeleton lines themselves.
+
+## Verification log (2026-07-06)
+
+Every mechanism claim added or corrected in this revision was checked against a live command or file read on this branch, not asserted from memory:
+
+- `wc -c adapters/claude-code/rules/constitution.md` → 9786 bytes; `wc -l adapters/claude-code/CLAUDE.md` → 77 lines (D1 claim).
+- `jq '.entries|length'` and grouping by `.kind` on `adapters/claude-code/manifest.json` → 100 entries total (42 gate / 22 pattern / 18 writer / 16 surfacer / 2 convention), 32 with `blocking: true` (D3 claim).
+- `ls adapters/claude-code/doctrine/*.md | wc -l` → 67 files (JIT-delivery claim).
+- `bash adapters/claude-code/hooks/harness-doctor.sh --quick` → real output captured verbatim in "The constitution + JIT doctrine" section above.
+- Spot-checked every `adapters/claude-code/rules/<topic>.md` path this document cites (other than `constitution.md`) with `test -f`: all MISSING at that path; their doctrine successors under `adapters/claude-code/doctrine/` were confirmed present.
+- `docs/SETUP.md` — confirmed absent from the tree.
+- `grep -n "Docs impact"` on `adapters/claude-code/templates/plan-template.md` — confirmed the field is documented (~line 336) but absent from the fill-in skeleton (~line 442), the basis for the plan-template gap note above.
+- `docs/decisions/058-nl-overhaul-great-consolidation.md` and `docs/decisions/059-session-end-enforcement-redesign.md` read in full for the D1-D9 / D1-D7 citations above.
