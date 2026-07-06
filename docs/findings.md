@@ -224,7 +224,7 @@ The `Description` body field is required substantive content explaining the obse
 - **Scope:** unit
 - **Source:** harness-reviewer pass on the ADR 059 check-a valve diff (2026-07-03) — 3 full-suite runs of the pre-reconciliation shape produced failures at s6+s8, then 2b, then none; 0 failures in 50 controlled A/B invocations of the same scenarios; reconciled HEAD suite green
 - **Location:** adapters/claude-code/hooks/work-integrity-gate.sh --self-test harness (_run_gate/_expect; scenarios build synthetic git repos under a tempdir)
-- **Status:** open
+- **Status:** closed
 - **Description:** The full self-test suite intermittently fails scenarios that pass in isolation, with a signature no gate code path produces — exit 2 with completely empty stderr (every real block writes a stanza to stderr before exiting 2). HYPOTHESIZED environmental (tempdir/process churn under parallel load; refuted if 5 consecutive clean-machine full-suite runs stay green — the failing scenarios executed NONE of the changed code). Practical risk: a red CI or local run gets misattributed to whatever change is under review (it nearly was, during the ADR 059 valve review). Mitigation landed with this entry's commit: _expect now dumps last-stdout + last-stderr + the raw rc on failure so the next occurrence is diagnosable from its artifact. Remediation (E.2/E.10 candidate): isolate per-scenario tempdirs or serialize repo builds; investigate whether retry-guard state files under the shared tmproot leak across scenarios. Sweep query: run `bash adapters/claude-code/hooks/work-integrity-gate.sh --self-test` 5x consecutively; check hooks-selftest.yml CI history for intermittent reds on this hook.
 
   **Refutation run 2026-07-03 (Wave-E task E.2):** Per-scenario tempdir isolation applied
@@ -233,6 +233,9 @@ The `Description` body field is required substantive content explaining the obse
   isolation: all 5 runs completed with "24 passed, 0 failed" summary. No environmental
   flakes observed. Conclusion: cross-scenario state leakage was the root cause; isolation
   fully remediates the finding.
+
+  **Closed 2026-07-05 (Wave-E task E.2 self-test-sandbox sweep):** refutation condition
+  above is satisfied (5/5 clean runs, no flakes) — status flipped from open to closed.
 
 ### NL-FINDING-026 — existence-only waiver checks and remedy-artifacts-counted-as-dirt: two residual classes from the check-a valve review
 - **Severity:** warn
@@ -281,6 +284,7 @@ The `Description` body field is required substantive content explaining the obse
 - **Severity:** warn
 - **Scope:** canon
 - **Source:** operator-directed estate coordination 2026-07-04 — 3 of 6 running sessions (busy-sanderson, dazzling-hodgkin, wizardly-goldberg) persistently undeliverable via send_message ("Target session is recovering its own pending input"), all with EMPTY worktrees; a 4th (sleepy-wright) sat idle 13h on a task another session had already fixed (7204d19)
+- **Location:** cross-session coordination protocol (send_message / list_sessions estate-management surface); no single file — see remediation O.2 (observability heartbeat) and O.8 (estate-coordination skill + doctrine, added this commit's Description)
 - **Status:** dispositioned-act
 - **Description:** Sessions spawned for satellite tasks can wedge awaiting their own pending input (permission prompt / recovered input state). In that state they are unreachable by cross-session messages (send_message hard-fails), produce nothing, hold their task invisibly, and nothing detects or re-homes the work — the operator discovers it by noticing windows. Compounding constraints: send_message ALWAYS requires per-message operator confirmation (by design — cross-session injection surface), so message-based coordination cannot be autonomous; the durable coordination channel must be FILE-based (main-checkout SCRATCHPAD coordination section + nl-issue re-homing, the protocol used manually today). Duplicate-work risk is real: sleepy-wright's task was independently fixed by the Wave-E orchestrator while the satellite idled. Remediation (dispositioned): (a) observability program O.2 heartbeat + stalled-detection makes wedged sessions VISIBLE mechanically (staleness = signal); (b) new O.8 task (added this commit) encodes the estate-coordination protocol as a skill + doctrine — freeze windows, satellite land-or-hold rules, stand-down/supersession checks before dispatch (grep master + open branches for the task's fix before building), orphan re-homing via nl-issue; (c) spawn-time dedup discipline: the spawner records chip→task binding so a superseding fix can close the chip (dismiss_task) instead of letting the satellite run stale. Sweep query: `grep -rn "recovering its own pending input"` in coordination transcripts; wedge census = list_sessions lastActivityAt >2h with empty worktree.
 

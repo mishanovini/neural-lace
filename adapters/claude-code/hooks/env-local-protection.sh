@@ -57,7 +57,22 @@ if [[ "${1:-}" == "--self-test" ]]; then
   SELF_TEST=1
 fi
 
-BACKUP_ROOT="${HOME}/.claude/backups/env-local"
+# Backup destination: sandboxed when HARNESS_SELFTEST=1 OR the invocation is
+# --self-test itself (self-test isolation — E.2 remediation, mirrors the
+# workstreams-emit.sh convention). Without this, every self-test run's
+# run_self_tests() backup_env_local() calls wrote REAL .bak files into
+# ~/.claude/backups/env-local/ on the machine running the test — 58 files of
+# pollution accumulated before this fix (NL-FINDING-025 family). Prefers an
+# explicit HARNESS_SELFTEST_DIR; falls back to a PID-scoped tmp sandbox
+# otherwise, so exporting HARNESS_SELFTEST=1 alone is enough.
+if [[ "${HARNESS_SELFTEST:-0}" == "1" ]] || [[ "${SELF_TEST:-0}" == "1" ]]; then
+  export HARNESS_SELFTEST=1
+  _ELP_SANDBOX="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/env-local-protection-selftest/$$}"
+  export HARNESS_SELFTEST_DIR="$_ELP_SANDBOX"
+  BACKUP_ROOT="$_ELP_SANDBOX/backups/env-local"
+else
+  BACKUP_ROOT="${HOME}/.claude/backups/env-local"
+fi
 
 # ============================================================
 # Helpers
