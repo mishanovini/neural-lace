@@ -92,7 +92,14 @@
 #   budget-chains           : Stop <= 6, SessionStart <= 8 total hook
 #                             entries, checked against BOTH the live
 #                             settings.json and the committed template.
-#   budget-blocking-gates   : manifest entries with blocking:true <= 12.
+#   budget-blocking-gates   : <= 12 blocking session-event UNITS per the
+#                             specs-d §D.0.4 frozen counting rule (wired_
+#                             template:true + live-session event + same-
+#                             class consolidation), via
+#                             scripts/blocking-budget-check.js — NOT a bare
+#                             count of blocking:true manifest entries (fixed
+#                             during Wave-F integration; see the check's own
+#                             header comment for the pre-fix defect).
 #   budget-always-loaded    : byte-sum of ~/.claude/rules/*.md +
 #                             ~/.claude/CLAUDE.md <= 30000 (dedicated,
 #                             non-configurable — distinct from the older
@@ -904,7 +911,30 @@ check_budget_chains() {
 
 # ------------------------------------------------------------
 # Check: budget-blocking-gates (Wave F, task F.1, specs-f §F.1 item 2)
-# Blocking gates <= 12: count manifest entries with blocking:true.
+#
+# Blocking gates <= 12. COUNTING RULE (Wave-F integration fix, 2026-07-06):
+# this budget was FROZEN at Wave D as specs-d §D.0.4's "blocking session-event
+# UNITS" definition — manifest entries with blocking:true AND wired_template:
+# true AND wired to a live-session event (Stop/PreToolUse/SessionStart/
+# PostToolUse/UserPromptSubmit/TaskCreated/TaskCompleted), with same-class
+# entries CONSOLIDATED into one unit (e.g. env-local-protection +
+# deploy-automation-mode = one "command-safety" unit; the 5 commit-time-only
+# gates = one "commit-boundary" unit). git-boundary hooks (precommit/prepush)
+# are an explicitly SEPARATE budget class, not counted here. D.5's evidence
+# block ("blocking budget 12/12 GREEN") was produced by exactly this counting
+# method via scripts/blocking-budget-check.js — that script is kept as the
+# SOLE implementation (avoid a second, drifting reimplementation here); this
+# check shells out to it.
+#
+# An earlier version of this check counted every manifest entry with bare
+# blocking:true (no wired_template/live-event filter, no consolidation),
+# which conflates the D.0.4 budget with a raw entry count and inflates the
+# reported number well past 12 for reasons the budget was never meant to
+# flag (git-boundary-only gates, GAP entries not yet wired live, and
+# same-class hooks the frozen rule explicitly treats as one unit). Fixed
+# during Wave-F integration (F.1+F.5+F.2 merge) rather than relaxing the
+# budget number itself — the true post-Wave-D-and-E number, by the correct
+# definition, is 10/12 (GREEN, 2 units of headroom).
 # ------------------------------------------------------------
 check_budget_blocking_gates() {
   local live_home="$1" repo_root="$2"
@@ -914,26 +944,27 @@ check_budget_blocking_gates() {
     CHECKS_RUN=$((CHECKS_RUN + 1))
     return 0
   fi
-  if ! command -v node >/dev/null 2>&1 && ! command -v jq >/dev/null 2>&1; then
-    _warn "budget-blocking-gates" "neither node nor jq available — skipped"
+  if ! command -v node >/dev/null 2>&1; then
+    _warn "budget-blocking-gates" "node not available — blocking-budget-check.js requires node — skipped"
     CHECKS_RUN=$((CHECKS_RUN + 1))
     return 0
   fi
 
-  local count max=12
-  if command -v node >/dev/null 2>&1; then
-    count="$(node -e '
-const fs = require("fs");
-const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-console.log((m.entries || []).filter(e => e.blocking === true).length);
-' "$manifest" 2>/dev/null)"
-  else
-    count="$(jq '[.entries[] | select(.blocking == true)] | length' "$manifest" 2>/dev/null)"
+  local checker="${repo_root}/adapters/claude-code/scripts/blocking-budget-check.js"
+  [[ -f "$checker" ]] || checker="${live_home}/scripts/blocking-budget-check.js"
+  if [[ ! -f "$checker" ]]; then
+    _warn "budget-blocking-gates" "manifest.json present but blocking-budget-check.js not found (repo scripts/ or live scripts/) — cannot validate"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
   fi
-  [[ -z "$count" ]] && { _warn "budget-blocking-gates" "could not count blocking entries in ${manifest}"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
 
-  if [[ "$count" -gt "$max" ]]; then
-    _red "budget-blocking-gates" "${count} manifest entries have blocking:true (budget <= ${max}) — ${manifest}; remediation: demote via scripts/gate-demotion.sh (F.5) or consolidate per ADR 059 D7"
+  local out rc
+  out="$(node "$checker" "$manifest" 2>&1)"
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    local units_line
+    units_line="$(printf '%s\n' "$out" | grep -m1 'blocking session-event units:' || true)"
+    _red "budget-blocking-gates" "${units_line:-blocking-budget-check.js reported over-budget} (budget <= 12 consolidated units per specs-d §D.0.4) — ${manifest}; remediation: demote via scripts/gate-demotion.sh (F.5) or consolidate per ADR 059 D7"
   fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
@@ -1520,6 +1551,7 @@ EOF
       "selftest": false,
       "jit_triggers": { "paths": [], "keywords": [] },
       "blocking": true,
+      "honesty_rationale": "fixture: waiver-parity satisfied for this manifest-check/claim-honesty fixture",
       "budget_class": "stop"
     },
     {
@@ -1532,6 +1564,7 @@ EOF
       "selftest": false,
       "jit_triggers": { "paths": [], "keywords": [] },
       "blocking": true,
+      "waiver_path": "fixture-waiver-*.txt",
 ${honest_line}
       "budget_class": "none"
     }
@@ -1737,33 +1770,73 @@ EOF
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "budget-chains-sessionstart-red" 1 "$RC" "RED budget-chains.*SessionStart chain has 9" "$OUT"
 
-  # ---- Check: budget-blocking-gates. RED fixture — 13 manifest entries
-  # with blocking:true (budget <= 12) ----
+  # ---- Check: budget-blocking-gates. Counting rule (specs-d §D.0.4, fixed
+  # during Wave-F integration): blocking:true AND wired_template:true AND
+  # wired to a live-session event, with same-class consolidation via
+  # blocking-budget-check.js's UNIT_MAP — NOT a bare blocking:true count.
+  # Fixture entries must be wired_template:true with a session event
+  # (PreToolUse here) to be counted at all; each fixture id is distinct so
+  # none of them hit the UNIT_MAP consolidation table (that table's own
+  # behavior is exercised live against the real manifest, not re-tested
+  # here — this fixture only needs to prove the RED/GREEN threshold at 12).
   _write_blocking_manifest_fixture() {
     local dir="$1" count="$2"
     local entries="" i
     for ((i = 0; i < count; i++)); do
       [[ -n "$entries" ]] && entries="${entries},"
-      entries="${entries}{\"id\":\"gate-${i}\",\"kind\":\"gate\",\"doctrine_file\":null,\"hooks\":[],\"events\":[],\"wired_template\":false,\"selftest\":false,\"jit_triggers\":{\"paths\":[],\"keywords\":[]},\"blocking\":true,\"honest_status\":\"fixture stub\",\"budget_class\":\"none\"}"
+      entries="${entries}{\"id\":\"fixture-gate-${i}\",\"kind\":\"gate\",\"doctrine_file\":null,\"hooks\":[],\"events\":[\"PreToolUse\"],\"wired_template\":true,\"selftest\":false,\"jit_triggers\":{\"paths\":[],\"keywords\":[]},\"blocking\":true,\"honest_status\":\"fixture stub\",\"budget_class\":\"pretool\"}"
     done
     printf '{"schema_version":1,"entries":[%s]}' "$entries" > "$dir/repo/adapters/claude-code/manifest.json"
+  }
+  _copy_blocking_budget_tooling() {
+    local dir="$1"
+    local src="$SCRIPT_DIR/../scripts/blocking-budget-check.js"
+    [[ -f "$src" ]] || return 1
+    mkdir -p "$dir/repo/adapters/claude-code/scripts"
+    cp "$src" "$dir/repo/adapters/claude-code/scripts/blocking-budget-check.js"
+    return 0
   }
   D=$(_scenario_dir bbg-red)
   _stamp_claim_honesty_green "$D"
   _write_blocking_manifest_fixture "$D" 13
+  _copy_blocking_budget_tooling "$D"
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
-  _assert "budget-blocking-gates-red" 1 "$RC" "RED budget-blocking-gates.*13 manifest entries" "$OUT"
+  _assert "budget-blocking-gates-red" 1 "$RC" "RED budget-blocking-gates.*blocking session-event units: 13" "$OUT"
 
-  # ---- Check: budget-blocking-gates GREEN fixture — 12 entries (at budget) ----
+  # ---- Check: budget-blocking-gates GREEN fixture — 12 units (at budget) ----
   D=$(_scenario_dir bbg-green)
   _stamp_claim_honesty_green "$D"
   _write_blocking_manifest_fixture "$D" 12
+  _copy_blocking_budget_tooling "$D"
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "budget-blocking-gates-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: budget-blocking-gates — a blocking:true entry that is NOT
+  # wired_template (a GAP entry) or fires only on a git-boundary event must
+  # NOT count toward the budget (proves the fix: this used to inflate the
+  # count under the old bare-blocking:true method). 13 non-counting entries
+  # + the budget-class fixture at exactly 12 counting entries -> still GREEN.
+  D=$(_scenario_dir bbg-noncounting-green)
+  _stamp_claim_honesty_green "$D"
+  _write_blocking_manifest_fixture "$D" 12
+  node -e '
+const fs = require("fs");
+const p = process.argv[1];
+const m = JSON.parse(fs.readFileSync(p, "utf8"));
+for (let i = 0; i < 13; i++) {
+  m.entries.push({ id: `fixture-noncounting-${i}`, kind: "gate", doctrine_file: null, hooks: [], events: ["precommit"], wired_template: false, selftest: false, jit_triggers: { paths: [], keywords: [] }, blocking: true, honest_status: "fixture: git-boundary, not wired live", budget_class: "none" });
+}
+fs.writeFileSync(p, JSON.stringify(m));
+' "$D/repo/adapters/claude-code/manifest.json"
+  _copy_blocking_budget_tooling "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-blocking-gates-noncounting-entries-green" 0 "$RC" "" "$OUT"
 
   # ---- Check: budget-always-loaded. RED fixture — rules + CLAUDE.md exceed
   # 30000 bytes ----
