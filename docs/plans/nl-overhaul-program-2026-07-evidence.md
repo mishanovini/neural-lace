@@ -1361,3 +1361,10 @@ F.2 — gen-architecture-doc --check GREEN; 5/5 README anchors fresh; check_wave
 +call-sited; 5 cited commands re-run, zero drift. F.6 — 10/10; REAL flagless sync with live lock:
 log-and-proceed, caller untouched, mirror tree-identical advance; clone-is-caller refusal RC=1;
 zero real-state pollution. Cosmetic residual: S9 print-label wording stale (code correct).
+
+## F.3 PASS + closure batch (2026-07-06): F.3 flipped (verifier, 11 checks, both operator approvals cited);
+E.7 guardrails merged (storm cap / tombstones --never / liveness guard / RESUMER_SHADOW / runbook; 18/18 +
+shadow livesmoke: would-have line lands, zero processes spawned). SYNTH-CI: workflow yml already on master
+(#82/#83), exact CI commands verified green from clean worktree; REMAINING ORDERED: (1) live Actions run
+green + URL cited -> synth-ci plan boxes via verifier; (2) THEN retire vaporware-volume-gate live PreToolUse
+entry + manifest honest_status (its own note: "CI relocation follows in E.4 companion") — no coverage gap.
