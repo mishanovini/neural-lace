@@ -1,8 +1,8 @@
 # Plan: orchestrator-prime — the always-on harness-native orchestrator
-Status: DEFERRED
+Status: ABANDONED
 Execution Mode: orchestrator
 Mode: design
-frozen: true
+frozen: false
 tier: 3
 rung: 3
 architecture: harness-infrastructure
@@ -142,3 +142,8 @@ list_sessions → outbox + tree facade → operator surface) without any merge/r
 - [ ] systems-designer PASS (Task 6).
 - [ ] Report-only first cycle produces a correct inherited-state outbox; Misha acks full autonomy (Task 7).
 - [ ] harness-architecture.md + DECISIONS.md + SCRATCHPAD updated; completion report appended.
+
+## Disposition (operator-approved 2026-07-06, F.3)
+ABANDONED-superseded: the NL overhaul absorbed this plan's goals — orchestrator discipline now lives
+in doctrine/orchestrator-pattern + the O.8 estate-coordination protocol (observability program), with
+mechanical backing (worktree gates, budget checks, digest proposals). Archive keeps it salvageable.
