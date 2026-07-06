@@ -24,14 +24,54 @@
 # Bias: false-positive blocks are acceptable friction; false-negative
 # passes are not. Detection biases toward blocking on uncertainty.
 #
+# WAIVER (F.5 waiver-parity audit row 17 / ADR 059 D4 fix): the previous
+# only remedy for a genuine deliberate non-archive removal/move was "commit
+# it, then bypass this hook by editing the source out manually" — vague,
+# no file, no freshness, no ledger. Fixed: a fresh (<1h) structured waiver
+# at .claude/state/plan-deletion-waiver-<slug>-*.txt, naming BOTH purpose
+# clauses (lib/waiver-purpose-clause.sh), ALLOWS the specific blocked
+# command to proceed and is ledger-logged as a "waiver" event.
+#
 # Self-test:
 #   bash plan-deletion-protection.sh --self-test
 #
 # Exit codes:
-#   0 — command is allowed (silent) or non-blocking warning emitted
-#   1 — command is blocked (stderr explains why)
+#   0 — command is allowed (silent), non-blocking warning emitted, or a
+#       fresh substantive waiver was honored (release valve)
+#   1 — command is blocked (stderr explains why + the waiver hatch)
 
 set -e
+
+# ============================================================
+# Shared libs (best-effort; hook degrades gracefully if absent)
+# ============================================================
+_PDP_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/waiver-purpose-clause.sh
+source "$_PDP_SELF_DIR/lib/waiver-purpose-clause.sh" 2>/dev/null || true
+# shellcheck source=lib/signal-ledger.sh
+source "$_PDP_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+
+PDP_STATE_DIR="${CLAUDE_STATE_DIR:-.claude/state}"
+PDP_WAIVER_GLOB='plan-deletion-waiver-*.txt'
+
+# _pdp_has_fresh_waiver — fresh (<1h) .claude/state/plan-deletion-waiver-*.txt
+# naming BOTH purpose clauses (lib/waiver-purpose-clause.sh). Mirrors
+# bug-persistence-gate.sh / workstreams-state-gate.sh waiver semantics.
+# Prints the matched waiver file path and returns 0 on success.
+_pdp_has_fresh_waiver() {
+  [[ -d "$PDP_STATE_DIR" ]] || return 1
+  local f
+  while IFS= read -r f; do
+    [[ -f "$f" ]] || continue
+    if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+      if waiver_has_purpose_clauses "$f"; then
+        printf '%s' "$f"
+        return 0
+      fi
+    fi
+  done < <(find "$PDP_STATE_DIR" -maxdepth 1 -type f -name "$PDP_WAIVER_GLOB" -newermt '1 hour ago' 2>/dev/null)
+  return 1
+}
 
 # ============================================================
 # Self-test entry point (handled BEFORE input parsing)
@@ -59,10 +99,22 @@ load_input() {
 # ============================================================
 
 # emit_block <title> <body>
-# Prints structured BLOCKED message to stderr and exits 1.
+# Checks the structured-waiver release valve FIRST (ADR 059 D4; F.5 audit
+# row 17); if a fresh, purpose-clause-valid plan-deletion-waiver-*.txt
+# exists, the command is ALLOWED (ledger-logged, exit 0) instead of
+# blocked. Otherwise prints structured BLOCKED message to stderr and
+# exits 1, naming the waiver hatch + its cost.
 emit_block() {
   local title="$1"
   local body="$2"
+
+  local pdp_waiver_file
+  if pdp_waiver_file=$(_pdp_has_fresh_waiver); then
+    command -v ledger_emit >/dev/null 2>&1 && ledger_emit "plan-deletion-protection" "waiver" "title=$title file=$pdp_waiver_file"
+    echo "[plan-deletion-protection] ALLOW: fresh substantive plan-deletion-waiver present (release valve) — $title" >&2
+    return 0
+  fi
+
   cat >&2 <<MSG
 
 ================================================================
@@ -74,7 +126,17 @@ Plan files are protected from accidental destruction. The only
 legitimate move from docs/plans/<file>.md is:
   git mv docs/plans/<file>.md docs/plans/archive/<file>.md
 
-Escape hatches if you genuinely need this command:
+Hatch (cost: allows THIS specific command to run, once, ledger-logged —
+never a blanket disable of this hook):
+  A genuine, substantive, deliberate non-archive removal/move gets a
+  fresh (<1h) structured waiver naming BOTH purpose clauses:
+    mkdir -p .claude/state && \\
+    { printf 'Purpose: this gate exists to prevent <X>\\n'; \\
+      printf 'Because: <Y>\\n'; \\
+    } > .claude/state/plan-deletion-waiver-<slug>-\$(date +%s).txt
+  Re-run the exact same command after writing the waiver.
+
+Other options:
   - Commit the plan first (git history then preserves it)
   - Use git mv to archive/ instead of deletion
   - For genuine cleanup of archive files: target the archive path
@@ -812,6 +874,31 @@ run_self_test() {
   setup_no_plan() {
     :
   }
+  # ---- Waiver setup helpers (F.5 audit row 17 / ADR 059 D4) ----
+  setup_uncommitted_plan_with_fresh_waiver() {
+    setup_uncommitted_plan
+    mkdir -p .claude/state
+    {
+      echo "Purpose: this gate exists to prevent accidental plan-file loss"
+      echo "Because: this is a self-test scenario exercising the waiver valve"
+    } > .claude/state/plan-deletion-waiver-selftest.txt
+  }
+  setup_uncommitted_plan_with_stale_waiver() {
+    setup_uncommitted_plan
+    mkdir -p .claude/state
+    {
+      echo "Purpose: this gate exists to prevent accidental plan-file loss"
+      echo "Because: this is a self-test scenario exercising the waiver valve"
+    } > .claude/state/plan-deletion-waiver-selftest.txt
+    touch -d '2 hours ago' .claude/state/plan-deletion-waiver-selftest.txt 2>/dev/null \
+      || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M.%S 2>/dev/null)" .claude/state/plan-deletion-waiver-selftest.txt 2>/dev/null \
+      || true
+  }
+  setup_uncommitted_plan_with_weak_waiver() {
+    setup_uncommitted_plan
+    mkdir -p .claude/state
+    printf 'just trust me on this one\n' > .claude/state/plan-deletion-waiver-selftest.txt
+  }
 
   echo "plan-deletion-protection self-test"
   echo "==================================="
@@ -871,6 +958,23 @@ run_self_test() {
   run_scenario "14. git mv docs/plans/foo.md docs/plans/archive/foo.md → PASS" \
     PASS setup_committed_clean_plan \
     "git mv docs/plans/foo.md docs/plans/archive/foo.md"
+
+  # ---- Structured-waiver scenarios (F.5 audit row 17 / ADR 059 D4) ----
+  run_scenario "15. waiver-absent-blocks: rm docs/plans/foo.md, no waiver → BLOCK" \
+    BLOCK setup_uncommitted_plan \
+    "rm docs/plans/foo.md"
+
+  run_scenario "16. waiver-honored: rm docs/plans/foo.md, fresh purpose-clause waiver → PASS" \
+    PASS setup_uncommitted_plan_with_fresh_waiver \
+    "rm docs/plans/foo.md"
+
+  run_scenario "17. waiver-stale-rejected: rm docs/plans/foo.md, waiver >1h old → BLOCK" \
+    BLOCK setup_uncommitted_plan_with_stale_waiver \
+    "rm docs/plans/foo.md"
+
+  run_scenario "18. weak-waiver-no-purpose-clauses: rm docs/plans/foo.md → BLOCK" \
+    BLOCK setup_uncommitted_plan_with_weak_waiver \
+    "rm docs/plans/foo.md"
 
   echo "==================================="
   echo "passed: $passed / $total"

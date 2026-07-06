@@ -38,6 +38,17 @@
 #   - docs/plans/ is NOT exempt — Neural Lace now commits its own
 #     development plans (subject to hygiene like any other committed file).
 #
+# WAIVER (F.5 waiver-parity audit row 12 / ADR 059 D4 fix): the exemption
+# list above is a PLAN-TIME allowlist (known-legitimate files/paths, edited
+# out-of-band). It does not help a session that hits a genuine NOVEL
+# false-positive at commit time (a denylisted string appearing legitimately
+# in, e.g., a test fixture never seen before). For that case, a fresh (<1h)
+# structured waiver at .claude/state/harness-hygiene-waiver-*.txt, naming
+# BOTH purpose clauses (lib/waiver-purpose-clause.sh) AND the specific
+# file(s) it covers, suppresses ONLY the matches on those named files for
+# this run (never a blanket suppression of the whole scan). See
+# `_hhs_waived_files` below.
+#
 # EXIT CODES
 #   0 — no matches (or denylist missing / not in a git repo — silent no-op)
 #   1 — one or more matches detected (denylist or heuristic)
@@ -58,6 +69,41 @@
 #                         from path-shape detection for the same reason.
 
 set -u
+
+# ---------- structured waiver (F.5 waiver-parity audit row 12 / ADR 059 D4)
+# ----------------------------------------------------------------------------
+# Fresh (<1h) .claude/state/harness-hygiene-waiver-*.txt files, each naming
+# BOTH purpose clauses (lib/waiver-purpose-clause.sh) AND a "Files:" line
+# listing the repo-relative path(s) the waiver covers (space or newline
+# separated). Matches on a listed file are suppressed for this run only —
+# this is per-file and per-run, distinct from the plan-time exempt-list
+# (is_exempt below), which is a durable, out-of-band, known-legitimate list.
+_HHS_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/waiver-purpose-clause.sh
+source "$_HHS_SELF_DIR/lib/waiver-purpose-clause.sh" 2>/dev/null || true
+# shellcheck source=lib/signal-ledger.sh
+source "$_HHS_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+
+# _hhs_waived_files <state-dir>
+# Prints, one per line, every repo-relative file path named in a fresh
+# (<1h), purpose-clause-valid waiver's "Files:" line(s). Empty output if no
+# valid fresh waiver exists (fails closed — same posture as every other
+# structured waiver in the harness).
+_hhs_waived_files() {
+  local state_dir="$1"
+  [ -d "$state_dir" ] || return 0
+  local f
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+      waiver_has_purpose_clauses "$f" || continue
+    fi
+    # "Files:" line(s), case-insensitive label, space/comma-separated paths.
+    grep -iE '^[[:space:]]*files[[:space:]]*:' "$f" 2>/dev/null \
+      | sed -E 's/^[[:space:]]*[Ff][Ii][Ll][Ee][Ss][[:space:]]*:[[:space:]]*//' \
+      | tr ', ' '\n\n'
+  done < <(find "$state_dir" -maxdepth 1 -type f -name 'harness-hygiene-waiver-*.txt' -newermt '1 hour ago' 2>/dev/null)
+}
 
 # ---------- self-test ----------------------------------------------------
 
@@ -190,6 +236,58 @@ if [ "${1:-}" = "--self-test" ]; then
   ST_HEUR_VOCAB_RC=$?
   ST_HEUR_CLEAN_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "clean-prose.md" 2>&1)
   ST_HEUR_CLEAN_RC=$?
+
+  # ---- Structured-waiver scenarios (F.5 audit row 12 / ADR 059 D4) ----
+  # Reuses dirty.txt (the FORBIDDEN_TOKEN fixture) as the "novel false
+  # positive" file the waiver covers.
+  ST_WAIVER_STATE="$TMPDIR_ST/.claude/state"
+  mkdir -p "$ST_WAIVER_STATE"
+
+  # W1 — waiver-absent-blocks: no waiver file → same as plain dirty (exit 1)
+  ST_W1_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W1_RC=$?
+
+  # W2 — waiver-honored: fresh waiver naming both clauses + Files: dirty.txt
+  {
+    echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
+    echo "Because: dirty.txt is a self-test fixture, not a real leak"
+    echo "Files: dirty.txt"
+  } > "$ST_WAIVER_STATE/harness-hygiene-waiver-selftest.txt"
+  ST_W2_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W2_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-selftest.txt"
+
+  # W3 — waiver-stale-rejected: same valid waiver but backdated >1h → BLOCK
+  {
+    echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
+    echo "Because: dirty.txt is a self-test fixture, not a real leak"
+    echo "Files: dirty.txt"
+  } > "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt"
+  touch -d '2 hours ago' "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt" 2>/dev/null \
+    || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M.%S 2>/dev/null)" "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt" 2>/dev/null \
+    || true
+  ST_W3_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W3_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt"
+
+  # W4 — regression: waiver naming clauses but a DIFFERENT file → dirty.txt
+  # still BLOCKS (per-file scoping actually scopes, not a blanket valve)
+  {
+    echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
+    echo "Because: some other file is a self-test fixture, not a real leak"
+    echo "Files: some-other-file.txt"
+  } > "$ST_WAIVER_STATE/harness-hygiene-waiver-otherfile.txt"
+  ST_W4_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W4_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-otherfile.txt"
+
+  # W5 — regression (pin f): non-empty waiver WITHOUT purpose-clause pair,
+  # even with a matching Files: line, does NOT open the valve → BLOCK
+  echo "Files: dirty.txt" > "$ST_WAIVER_STATE/harness-hygiene-waiver-weak.txt"
+  ST_W5_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W5_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-weak.txt"
+
   set -e
 
   FAIL=0
@@ -298,6 +396,38 @@ if [ "${1:-}" = "--self-test" ]; then
     echo "(no project-internal shapes and no repeated non-allowlist clusters)" >&2
     echo "output was:" >&2
     echo "$ST_HEUR_CLEAN_OUT" >&2
+    FAIL=1
+  fi
+
+  # ---- Structured-waiver assertions (F.5 audit row 12 / ADR 059 D4) ----
+  # W1: waiver-absent-blocks
+  if [ "$ST_W1_RC" -ne 1 ]; then
+    echo "self-test: FAIL (w1) — waiver-absent expected exit 1, got $ST_W1_RC" >&2
+    echo "$ST_W1_OUT" >&2
+    FAIL=1
+  fi
+  # W2: waiver-honored (fresh, both clauses, Files: matches) → ALLOW
+  if [ "$ST_W2_RC" -ne 0 ]; then
+    echo "self-test: FAIL (w2) — waiver-honored expected exit 0, got $ST_W2_RC" >&2
+    echo "$ST_W2_OUT" >&2
+    FAIL=1
+  fi
+  # W3: waiver-stale-rejected (>1h old) → BLOCK
+  if [ "$ST_W3_RC" -ne 1 ]; then
+    echo "self-test: FAIL (w3) — waiver-stale expected exit 1, got $ST_W3_RC" >&2
+    echo "$ST_W3_OUT" >&2
+    FAIL=1
+  fi
+  # W4: waiver names a DIFFERENT file → dirty.txt still BLOCKS (scoping works)
+  if [ "$ST_W4_RC" -ne 1 ]; then
+    echo "self-test: FAIL (w4) — waiver for a different file must not cover dirty.txt, expected exit 1, got $ST_W4_RC" >&2
+    echo "$ST_W4_OUT" >&2
+    FAIL=1
+  fi
+  # W5: non-empty waiver without purpose-clause pair (pin f) → BLOCK
+  if [ "$ST_W5_RC" -ne 1 ]; then
+    echo "self-test: FAIL (w5) — weak waiver (no purpose-clauses) expected exit 1, got $ST_W5_RC" >&2
+    echo "$ST_W5_OUT" >&2
     FAIL=1
   fi
 
@@ -635,8 +765,23 @@ fi
 # ---------- scan each file -----------------------------------------------
 
 MATCH_COUNT=0
+WAIVED_COUNT=0
 MATCHES_TMP=$(mktemp)
 trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$MATCHES_TMP"' EXIT
+
+# Structured-waiver files (F.5 audit row 12 / ADR 059 D4). Computed once per
+# run; state dir resolves relative to REPO_ROOT so pre-commit invocations
+# (which run with cwd=REPO_ROOT) and the self-test's own tmp repos agree.
+HHS_STATE_DIR="${CLAUDE_STATE_DIR:-$REPO_ROOT/.claude/state}"
+HHS_WAIVED_FILES_TMP=$(mktemp)
+trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$MATCHES_TMP" "$HHS_WAIVED_FILES_TMP"' EXIT
+_hhs_waived_files "$HHS_STATE_DIR" > "$HHS_WAIVED_FILES_TMP" 2>/dev/null || true
+
+_hhs_is_waived() {
+  local path="$1"
+  [ -s "$HHS_WAIVED_FILES_TMP" ] || return 1
+  grep -qFx "$path" "$HHS_WAIVED_FILES_TMP" 2>/dev/null
+}
 
 # Read the null-delimited file list.
 while IFS= read -r -d '' rel_path; do
@@ -660,6 +805,15 @@ while IFS= read -r -d '' rel_path; do
 
   # Skip exempt paths
   if is_exempt "$check_path"; then
+    continue
+  fi
+
+  # Skip files covered by a fresh, purpose-clause-valid structured waiver
+  # (F.5 audit row 12 / ADR 059 D4) — per-file, per-run, distinct from the
+  # durable exempt-list above.
+  if _hhs_is_waived "$check_path"; then
+    WAIVED_COUNT=$((WAIVED_COUNT + 1))
+    command -v ledger_emit >/dev/null 2>&1 && ledger_emit "harness-hygiene-scan" "waiver" "file=$check_path"
     continue
   fi
 
@@ -718,11 +872,23 @@ fi
   echo "The following content matches patterns in the harness denylist."
   echo "Harness repos must not ship personal/business identifiers. Clean"
   echo "these up, or add the file to the scanner exemption list if the"
-  echo "match is legitimate."
+  echo "match is legitimate and durable."
   echo ""
   cat "$MATCHES_TMP"
   echo ""
-  echo "To bypass (not recommended): git commit --no-verify"
+  echo "Hatch (cost: suppresses matches on ONLY the named file(s), this run,"
+  echo "ledger-logged — never a blanket suppression of the whole scan):"
+  echo "  A genuine NOVEL false-positive (not a known-legitimate file worth"
+  echo "  a durable exemption) gets a fresh (<1h) structured waiver naming"
+  echo "  BOTH purpose clauses AND the file(s) it covers:"
+  echo "    mkdir -p $HHS_STATE_DIR && \\"
+  echo "    { printf 'Purpose: this gate exists to prevent <X>\\n'; \\"
+  echo "      printf 'Because: <Y>\\n'; \\"
+  echo "      printf 'Files: <repo-relative-path> [<repo-relative-path> ...]\\n'; \\"
+  echo "    } > $HHS_STATE_DIR/harness-hygiene-waiver-\$(date +%s).txt"
+  echo "  Re-run the commit after writing the waiver."
+  echo ""
+  echo "To bypass everything (not recommended, git-native, unaudited): git commit --no-verify"
   echo "Denylist: adapters/claude-code/patterns/harness-denylist.txt"
   echo "Rule: principles/harness-hygiene.md"
   echo "================================================================"
