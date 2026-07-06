@@ -1166,3 +1166,12 @@ unrelated plans). Independently re-run by the orchestrator (not builder self-rep
 REMAINING E-tasks: E.2 (purge bug 034 + env-local sandbox fixed; the core Done-when — TEMP-HOME
 full-sweep hash-identical across ALL manifest selftest:true hooks — is a distinct verification
 task, not yet run); E.7 (resumer schtasks registration + drill, awaiting operator activation).
+
+## E.2 — TEMP-HOME full-sweep proof PASS (verifier agent, 2026-07-05; checkbox flipped by orchestrator)
+Strong-form Done-when met: 65 selftest:true manifest entries -> 75 unique hook/script files, ALL run
+under HOME=$TEMPHOME + HARNESS_SELFTEST=1; 74/75 rc=0 (plan-reviewer skipped >300s — oversized suite,
+still progressing, noted); REAL ~/.claude/{state,logs,backups} (1317 files) mtime-diffed before/after:
+every changed file attributable by session-UUID correlation to this orchestrator session's own live
+activity, ZERO self-test/fixture markers — no pollution. work-integrity 5x consecutive rc=0
+(NL-FINDING-025 refutation met). purge-selftest-pollution self-test 6/6. Residuals already ledgered:
+NL-FINDING-037 (--apply exit-code bug, verified live) + plan-reviewer suite >300s (profiling item).

@@ -109,7 +109,7 @@ The operator (the harness's user) can, after this program: (a) run `harness-doct
   - Done-when: specs-e exists.
 - [x] E.1 Digest: one SessionStart block (≤15 lines; merges the 12 surfacers' feeds: discoveries, stale plans, monitor alerts, spawned-task results, pending decisions, git freshness, worktree advice, doctor --quick, ledger summary; dedup + auto-expiry + auto-ack of repeats) + mirror into workstreams GUI — Model: sonnet — Parallelizable: yes — Verification: mechanical
   - Done-when: `--self-test` exits 0; SessionStart chain shows digest replacing the retired surfacers (count assertion).
-- [ ] E.2 HARNESS_SELFTEST sandbox sweep: every hook's self-test writes state/ledger to sandbox (shared helper from D.1); purge existing self-test pollution from production logs — Model: haiku — Parallelizable: yes — Verification: mechanical
+- [x] E.2 HARNESS_SELFTEST sandbox sweep: every hook's self-test writes state/ledger to sandbox (shared helper from D.1); purge existing self-test pollution from production logs — Model: haiku — Parallelizable: yes — Verification: mechanical
   - Done-when: in a TEMP-HOME install, running the full self-test sweep leaves the manifest-derived list of production state/ledger files hash-identical before/after (review finding 9 — never asserted against the live machine's mutating state dir).
 - [x] E.3 Waiver-density alarm: ledger analysis in digest; ≥3 waivers/wk per gate → auto-append "fix or retire <gate>" backlog entry — Model: sonnet — Parallelizable: yes — Verification: mechanical
   - Done-when: fixture ledger with 3 waivers produces the backlog entry (self-test).
