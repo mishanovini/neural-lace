@@ -34,6 +34,16 @@
 #         rules/constitution.md targets are checked strictly (rules/ exists).
 #     (e) kind:gate + wired_template:false without a non-empty honest_status
 #         -> RED
+#     (f) waiver-parity (ADR 059 D4, Wave F task F.5/F.1): every entry with
+#         blocking:true must carry a non-empty waiver_path OR honesty_rationale
+#         -> RED per miss. Schema-level enforcement of the same rule lives in
+#         schemas/manifest.schema.json's allOf conditional; this is the
+#         belt-and-suspenders re-assertion at the script level (same pattern
+#         as check (e) re-asserting the honest_status conditional).
+#     (g) new-gate-evidence-bar (ADR 059 D4, Wave F task F.1): every entry
+#         with added_after lexicographically >= "2026-07" must carry
+#         non-empty golden_scenario, fp_expectation, retirement_condition,
+#         and (waiver_path OR honesty_rationale) -> RED per miss.
 #   --gen-index     : write adapters/claude-code/doctrine/INDEX.md from the
 #                     manifest (one row per entry: id, kind, doctrine link,
 #                     hooks, blocking, honest_status). Deterministic (sorted
@@ -42,7 +52,9 @@
 #                     valid manifest GREEN; missing-hook-file RED;
 #                     unlisted-disk-hook RED; wired-false-gate-without-
 #                     honest_status RED; wired-true-but-not-in-template RED;
-#                     gen-index golden compare. Exit 0 iff all pass.
+#                     gen-index golden compare; doctrine enforcing/transition
+#                     RED/WARN; waiver-parity RED/GREEN (S9/S9b); new-gate-
+#                     evidence-bar RED/GREEN (S10/S10b). Exit 0 iff all pass.
 #
 # ENV
 # ===
@@ -261,6 +273,91 @@ def allowed: req + ["honest_status"];
 }
 
 # ------------------------------------------------------------
+# check_waiver_parity_and_evidence_bar <manifest> — checks (f) + (g).
+# ADR 059 D4 waiver-parity + specs-f §F.1 new-gate-evidence-bar. Emits RED
+# lines itself via _red. Graceful degradation (WARN + return 0) when neither
+# node nor jq is available, matching validate_schema's posture.
+# ------------------------------------------------------------
+check_waiver_parity_and_evidence_bar() {
+  local manifest="$1"
+
+  if have_node; then
+    local out rc
+    out="$(node -e '
+const fs = require("fs");
+let manifest;
+try { manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); }
+catch (err) { process.exit(0); } // parse failure already reported by validate_schema
+
+const nonEmpty = (v) => typeof v === "string" && v.trim().length > 0;
+const problems = [];
+
+for (const e of manifest.entries || []) {
+  const id = e && e.id ? e.id : "<no-id>";
+
+  // (f) waiver-parity: every blocking:true entry needs waiver_path OR honesty_rationale.
+  if (e.blocking === true && !nonEmpty(e.waiver_path) && !nonEmpty(e.honesty_rationale)) {
+    problems.push(`waiver-parity|${id}: blocking:true entry has neither a non-empty waiver_path nor honesty_rationale (ADR 059 D4)`);
+  }
+
+  // (g) new-gate-evidence-bar: added_after >= "2026-07" (lexicographic YYYY-MM) needs the full bar.
+  if (nonEmpty(e.added_after) && e.added_after >= "2026-07") {
+    const missing = [];
+    if (!nonEmpty(e.golden_scenario)) missing.push("golden_scenario");
+    if (!nonEmpty(e.fp_expectation)) missing.push("fp_expectation");
+    if (!nonEmpty(e.retirement_condition)) missing.push("retirement_condition");
+    if (!nonEmpty(e.waiver_path) && !nonEmpty(e.honesty_rationale)) missing.push("waiver_path-or-honesty_rationale");
+    if (missing.length) {
+      problems.push(`new-gate-evidence-bar|${id}: added_after ${e.added_after} >= 2026-07 but missing ${missing.join(",")}`);
+    }
+  }
+}
+for (const p of problems.slice(0, 30)) console.log(p);
+process.exit(problems.length ? 1 : 0);
+' "$manifest" 2>&1)"
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+      while IFS='|' read -r tag detail; do
+        [[ -z "$tag" ]] && continue
+        _red "$tag" "$detail"
+      done <<< "$out"
+      return 1
+    fi
+    return 0
+  fi
+
+  if have_jq; then
+    local bad
+    bad="$(jq -r '
+[ .entries[] |
+  . as $e |
+  ( if ($e.blocking == true) and (($e.waiver_path // "") | length) == 0 and (($e.honesty_rationale // "") | length) == 0
+    then ["waiver-parity|\($e.id): blocking:true entry has neither a non-empty waiver_path nor honesty_rationale (ADR 059 D4)"]
+    else [] end ) +
+  ( if (($e.added_after // "") | length) > 0 and ($e.added_after >= "2026-07") then
+      ( [ (if (($e.golden_scenario // "") | length) > 0 then empty else "golden_scenario" end),
+          (if (($e.fp_expectation // "") | length) > 0 then empty else "fp_expectation" end),
+          (if (($e.retirement_condition // "") | length) > 0 then empty else "retirement_condition" end),
+          (if ((($e.waiver_path // "") | length) > 0) or ((($e.honesty_rationale // "") | length) > 0) then empty else "waiver_path-or-honesty_rationale" end)
+        ] | map(select(. != null)) ) as $missing |
+      ( if ($missing | length) > 0 then ["new-gate-evidence-bar|\($e.id): added_after \($e.added_after) >= 2026-07 but missing \($missing | join(","))"] else [] end )
+    else [] end )
+] | .[0:30] | .[]' "$manifest" 2>/dev/null)"
+    if [[ -n "$bad" ]]; then
+      while IFS='|' read -r tag detail; do
+        [[ -z "$tag" ]] && continue
+        _red "$tag" "$detail"
+      done <<< "$bad"
+      return 1
+    fi
+    return 0
+  fi
+
+  _warn "waiver-parity" "neither node nor jq available — waiver-parity/evidence-bar checks skipped"
+  return 0
+}
+
+# ------------------------------------------------------------
 # run_check — subcommand: check
 # ------------------------------------------------------------
 run_check() {
@@ -374,6 +471,13 @@ run_check() {
       _red "honest-status" "entry '${id}' is a gate with wired_template false and no honest_status — name how it actually fires or which Wave lands its wiring"
     fi
   done <<< "$stream"
+
+  # (f) waiver-parity (ADR 059 D4) + (g) new-gate-evidence-bar — both need
+  # waiver_path/honesty_rationale/added_after/golden_scenario/fp_expectation/
+  # retirement_condition, none of which the H/E awk stream (extract_stream)
+  # carries, so these two run as their own node/jq pass directly on the
+  # manifest (same have_node/have_jq graceful-degradation posture as (a)).
+  check_waiver_parity_and_evidence_bar "$manifest"
 
   local n_entries n_hooks
   n_entries="$(printf '%s\n' "$stream" | awk -F'|' '$1=="E"' | wc -l | tr -d '[:space:]')"
@@ -506,6 +610,7 @@ run_self_test() {
       "selftest": true,
       "jit_triggers": { "paths": ["docs/plans/"], "keywords": [] },
       "blocking": true,
+      "honesty_rationale": "fixture: session-honesty-class, resolvable by the session itself",
       "budget_class": "stop"
     },
     {
@@ -519,6 +624,7 @@ run_self_test() {
       "jit_triggers": { "paths": [], "keywords": [] },
       "blocking": true,
       "honest_status": "invoked via a chain script; not directly wired",
+      "waiver_path": "fixture-waiver-*.txt",
       "budget_class": "none"
     }
   ]
@@ -615,6 +721,36 @@ EOF
   mkdir -p "$D/adapters/claude-code/doctrine"
   OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
   _assert "s8-doctrine-transition-warn-green" 0 "$RC" "WARN doctrine-file.*doctrine/a.md" "$OUT"
+
+  # S9 — waiver-parity (ADR 059 D4, check f): blocking:true entry with
+  # NEITHER waiver_path NOR honesty_rationale: RED
+  D="$TMPROOT/s9"; _fixture "$D"
+  _valid_manifest | grep -v '"honesty_rationale"' > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  _assert "s9-waiver-parity-red" 1 "$RC" "RED waiver-parity: a-gate" "$OUT"
+
+  # S9b — same fixture but WITH honesty_rationale restored: GREEN (proves
+  # the check is satisfied by honesty_rationale alone, no waiver_path needed).
+  D="$TMPROOT/s9b"; _fixture "$D"
+  _valid_manifest > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  _assert "s9b-waiver-parity-green" 0 "$RC" "GREEN" "$OUT"
+
+  # S10 — new-gate-evidence-bar (specs-f §F.1, check g): an added_after
+  # >= "2026-07" entry missing golden_scenario/fp_expectation/
+  # retirement_condition: RED
+  D="$TMPROOT/s10"; _fixture "$D"
+  _valid_manifest | sed 's/"budget_class": "stop"/"budget_class": "stop", "added_after": "2026-07"/' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  _assert "s10-new-gate-evidence-bar-red" 1 "$RC" "RED new-gate-evidence-bar: a-gate.*missing" "$OUT"
+
+  # S10b — same fixture but with the full evidence bar present: GREEN.
+  D="$TMPROOT/s10b"; _fixture "$D"
+  _valid_manifest | sed 's/"budget_class": "stop"/"budget_class": "stop", "added_after": "2026-07", "golden_scenario": "fixture scenario", "fp_expectation": "fixture fp", "retirement_condition": "fixture retirement"/' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  _assert "s10b-new-gate-evidence-bar-green" 0 "$RC" "GREEN" "$OUT"
 
   echo "" >&2
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed" >&2

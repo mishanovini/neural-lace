@@ -2,6 +2,21 @@
   "schema_version": 1,
   "entries": [
     {
+      "id": "acceptance-scenarios",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/acceptance-scenarios.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
       "id": "agent-teams",
       "kind": "gate",
       "doctrine_file": "doctrine/agent-teams.md",
@@ -22,7 +37,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "waiver_path": "teammate-spawn-validator.sh condition (d) honors a DAG-review structured waiver via lib/waiver-purpose-clause.sh. NOTE: task-created-validator.sh and task-completed-evidence-gate.sh (same entry, different hook files) have GAP-class bypasses (env-var, not ledger-logged/fresh) — tracked as orchestratorTodo, not yet fixed."
     },
     {
       "id": "automation-modes",
@@ -77,7 +93,8 @@
       },
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
-      "budget_class": "none"
+      "budget_class": "none",
+      "honesty_rationale": "Commit-time atomicity check (new plan must declare absorbed backlog items in its own header) — resolvable by editing the same commit; not a world-state assertion."
     },
     {
       "id": "bug-persistence",
@@ -97,7 +114,23 @@
       },
       "blocking": true,
       "budget_class": "stop",
-      "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact."
+      "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact.",
+      "waiver_path": "ATTEST_FILE (structured waiver via lib/waiver-purpose-clause.sh, waiver_has_purpose_clauses gate) — the canonical reference implementation other hooks were retrofitted to match."
+    },
+    {
+      "id": "claims",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/claims.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
     },
     {
       "id": "claude-md-hygiene",
@@ -116,7 +149,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "waiver_path": "CLAUDE_MD_HYGIENE_DISABLE=1 env var (full no-op); note DEFAULT MODE is warn (exit 0 always) pending 24h calibration — blocking:true reflects the designed end-state."
     },
     {
       "id": "code-conventions",
@@ -131,6 +165,21 @@
           "src/app/api/",
           "/migrations/"
         ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
+    },
+    {
+      "id": "completion-criteria",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/completion-criteria.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
         "keywords": []
       },
       "blocking": false,
@@ -182,6 +231,26 @@
       "budget_class": "none"
     },
     {
+      "id": "context-watermark",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [
+        "context-watermark.sh"
+      ],
+      "events": [
+        "PostToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "posttool",
+      "honest_status": "E.9a early-warning context watermark; wired PostToolUse at §E.W."
+    },
+    {
       "id": "cross-repo-drift-gate",
       "kind": "gate",
       "doctrine_file": "doctrine/git.md",
@@ -199,6 +268,45 @@
       },
       "blocking": false,
       "budget_class": "posttool"
+    },
+    {
+      "id": "cross-repo-nl-touch-warn",
+      "kind": "surfacer",
+      "doctrine_file": null,
+      "hooks": [
+        "cross-repo-nl-touch-warn.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "pretool",
+      "added_after": "2026-07",
+      "golden_scenario": "Circuit incident 2026-07-03 cross-repo write — a session whose project root is a different repo edits a neural-lace file (or vice versa) without the operator noticing until much later.",
+      "fp_expectation": "legitimate cross-repo harness sessions (main-checkout maintenance, orchestrator sessions operating from a linked worktree of the SAME repo) must not warn — both REQUIRED fixtures (main-checkout session, linked-worktree session) pass silently, 11/11 self-test scenarios.",
+      "retirement_condition": "zero fires for 30 days post-GA, or superseded by a stronger structural repo-isolation mechanism.",
+      "honesty_rationale": "WARN-only by design (specs-f §F.5 item 4) — never blocks; a legitimate cross-repo/orchestrator touch is common and blocking it would be strictly worse than the risk it flags. Points at nl-issue.sh as the canonical cross-project capture path."
+    },
+    {
+      "id": "customer-facing-review",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/customer-facing-review.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
     },
     {
       "id": "decision-context-emitters",
@@ -240,7 +348,8 @@
       },
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
-      "budget_class": "none"
+      "budget_class": "none",
+      "honesty_rationale": "Commit-time atomicity check (Tier-2+ decision needs its DECISIONS.md index row in the same commit) — resolvable by the session that created the gap."
     },
     {
       "id": "definition-on-first-use",
@@ -281,7 +390,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "honesty_rationale": "Policy switch, not a per-session block — the escape hatch IS changing the project/user automation-mode config (see doctrine/automation-modes.md), not a waiver file."
     },
     {
       "id": "design-mode-planning",
@@ -401,7 +511,8 @@
       },
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
-      "budget_class": "none"
+      "budget_class": "none",
+      "honesty_rationale": "Commit-time atomicity check (structural harness change needs its doc delta in the same commit) — resolvable by the session."
     },
     {
       "id": "doctrine-jit",
@@ -443,6 +554,22 @@
       "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
+      "id": "end-manifest",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/end-manifest.sh (E.12) — session end-manifest writer+validator; invoked by the dispatcher when a manifest is present, not event-wired."
+    },
+    {
       "id": "env-local-protection",
       "kind": "gate",
       "doctrine_file": "doctrine/security.md",
@@ -459,7 +586,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "waiver_path": "inline ENV_LOCAL_OVERWRITE_OK=1 command-prefix sentinel (documented equivalent; hook auto-backs-up before honoring it)."
     },
     {
       "id": "external-monitor-alerts",
@@ -500,7 +628,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "honesty_rationale": "Schema-validity check on the session's own docs/findings.md edit — checked-box-without-evidence shape, unwaivable by ADR 059 D4 design."
     },
     {
       "id": "friction-reflexion",
@@ -536,6 +665,26 @@
       "budget_class": "none"
     },
     {
+      "id": "gate-demotion",
+      "kind": "pattern",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "added_after": "2026-07",
+      "golden_scenario": "A gate crosses the waiver-density.sh over-threshold line (>=3 waivers/week) and is a genuine auto-demotion candidate per ADR 059 D7.",
+      "fp_expectation": "gate-demotion.sh --self-test operates ONLY on manifest COPIES in a tempdir (16/16 scenarios green); --apply is the orchestrator-applied real-manifest-edit step, never auto-scheduled, so there is no session-time false-positive surface — a human/harness-reviewer reviews every real demotion.",
+      "retirement_condition": "superseded if ADR 059 D7's metric-driven demotion policy changes, or if waiver-density.sh itself is retired.",
+      "honesty_rationale": "Manually-invoked script (scripts/, not hooks/) in the same class as waiver-density.sh — invoked from the E.5 weekly KPI pass's --dry-run mode; --apply is a reviewed, orchestrator-applied action by design (ADR 059 D7), never a session-time gate."
+    },
+    {
       "id": "gate-respect",
       "kind": "pattern",
       "doctrine_file": "doctrine/gate-respect.md",
@@ -549,6 +698,22 @@
       },
       "blocking": false,
       "budget_class": "none"
+    },
+    {
+      "id": "gen-architecture-doc",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/gen-architecture-doc.sh (F.2) -- regenerates docs/harness-architecture.md from manifest.json; --check is the doctor drift predicate (tests/fixtures/wave-f/F.2/doctor-predicate.md); not event-wired (manual + doctor-invoked)."
     },
     {
       "id": "gh-account-hint",
@@ -589,6 +754,22 @@
       "blocking": false,
       "budget_class": "session-start",
       "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
+    },
+    {
+      "id": "harness-changelog",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/harness-changelog.sh (F.2b) -- machine-wide 'what's new' ledger + --digest-line consumed by session-start-digest.sh's feed 15; not event-wired."
     },
     {
       "id": "harness-doctor",
@@ -632,7 +813,24 @@
       },
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain and manual --full-tree runs; not directly wired in settings.json.template",
-      "budget_class": "none"
+      "budget_class": "none",
+      "honesty_rationale": "GAP (F.5 waiver-parity-audit.md row 12): denylist-pattern scan with a plan-time exempt-list but NO session-time waiver for a genuine false positive. Proposal 3 fix (structured lib/waiver-purpose-clause.sh waiver) not yet applied — tracked as orchestratorTodo."
+    },
+    {
+      "id": "harness-kpis",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/harness-kpis.sh — weekly KPI report from the signal ledger (E.5); scheduled-task registration documented, not a hook."
     },
     {
       "id": "interactive-process-fidelity",
@@ -666,7 +864,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "waiver_path": "~/.claude/state/local-edit-<slug>-<ISO8601>.txt, fresh <30min, written only by the operator-invoked /grant-local-edit skill."
     },
     {
       "id": "mechanical-evidence",
@@ -701,7 +900,40 @@
       },
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
-      "budget_class": "none"
+      "budget_class": "none",
+      "honesty_rationale": "Commit-time atomicity check (migration + CLAUDE.md line move together) — resolvable by the session."
+    },
+    {
+      "id": "needs-you-ledger",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/needs-you.sh — maintains NEEDS-YOU.md (E.6); called by decision-log flow + digest, not event-wired."
+    },
+    {
+      "id": "nl-issue-capture-loop",
+      "kind": "pattern",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/nl-issue.sh + skill (E.8) — cross-project capture; not event-wired."
     },
     {
       "id": "no-test-skip",
@@ -720,7 +952,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "honesty_rationale": "New-skip-without-issue-reference check on the session's own commit; adding a real issue/finding reference IS the intended escape hatch (recommend the block message name this explicitly — see audit row 15)."
     },
     {
       "id": "observed-errors-first",
@@ -741,6 +974,21 @@
       "blocking": false,
       "budget_class": "pretool",
       "honest_status": "Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4."
+    },
+    {
+      "id": "orchestrator-pattern",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/orchestrator-pattern.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none"
     },
     {
       "id": "outcome-evidence",
@@ -779,7 +1027,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "honesty_rationale": "New-file naming-convention check on the session's own newly-added migration — resolvable by renaming in the same commit."
     },
     {
       "id": "plan-deletion-protection",
@@ -798,7 +1047,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "honesty_rationale": "GAP (F.5 waiver-parity-audit.md row 17): block message's only remedy is manual out-of-band editing, not a real mechanical waiver. Proposal 3 fix (structured waiver for deliberate non-archive removal) not yet applied — tracked as orchestratorTodo."
     },
     {
       "id": "plan-edit-validator",
@@ -819,7 +1069,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "honesty_rationale": "Checkbox-flip authorization is the canonical checked-box-without-evidence honesty assertion (ADR 059 D4) — deliberately unwaivable; TASK_VERIFIER_MODE=1 back door was removed 2026-05-04 for this reason."
     },
     {
       "id": "plan-lifecycle",
@@ -863,6 +1114,22 @@
       },
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain and plan-edit flows; not directly wired in settings.json.template",
+      "budget_class": "none",
+      "honesty_rationale": "Adversarial content review of the session's own plan edit — resolvable by fixing the plan."
+    },
+    {
+      "id": "pr-health-snapshot",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/pr-health-snapshot.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
       "budget_class": "none"
     },
     {
@@ -924,7 +1191,28 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "honesty_rationale": "Aggregator; dispatches 6 independently-audited sub-checks (see backlog-plan-atomicity, decisions-index, docs-freshness, migration-claude-md, plan-reviewer, review-finding-fix, tdd-gate) — no separate waiver posture of its own."
+    },
+    {
+      "id": "pre-compact-continuity",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [
+        "pre-compact-continuity.sh"
+      ],
+      "events": [
+        "PreCompact"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "E.9b PreCompact backstop; wired (auto+manual) at §E.W. PreCompact additionalContext channel HYPOTHESIZED on this CC version; snapshot-file + SessionStart compact-echo is the PROVEN fallback (constitution §1)."
     },
     {
       "id": "pre-push-divergence",
@@ -944,7 +1232,8 @@
       },
       "blocking": true,
       "honest_status": "wired via git-hooks/pre-push dispatcher (core.hooksPath), not settings.json.template",
-      "budget_class": "none"
+      "budget_class": "none",
+      "waiver_path": "git push --no-verify (git-native, documented at git-hooks/pre-push dispatcher level); world-state fact (remote moved) is more honestly fixed by fetch+merge/rebase than waived."
     },
     {
       "id": "pre-push-test",
@@ -964,7 +1253,8 @@
       },
       "blocking": true,
       "honest_status": "wired via git-hooks/pre-push dispatcher (core.hooksPath) with per-repo opt-in marker; not settings.json.template",
-      "budget_class": "none"
+      "budget_class": "none",
+      "waiver_path": "git push --no-verify, plus a per-repo structural opt-in marker (stronger than a per-session waiver — a repo can opt out of the check entirely)."
     },
     {
       "id": "propagation-engine",
@@ -1024,7 +1314,8 @@
       },
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
-      "budget_class": "none"
+      "budget_class": "none",
+      "honesty_rationale": "Commit-time atomicity check (review-finding-referencing commit needs the review file touched) — resolvable by the session."
     },
     {
       "id": "risk-tiered-verification",
@@ -1060,7 +1351,8 @@
       },
       "blocking": true,
       "honest_status": "invoked via pre-stop-verifier.sh (Stop chain); not directly wired in settings.json.template",
-      "budget_class": "none"
+      "budget_class": "none",
+      "honesty_rationale": "ADR 059 D2 verification-class Stop block — NEVER downgraded under a DONE claim by explicit design; this is the load-bearing case the no-waiver rule exists FOR."
     },
     {
       "id": "secret-hygiene-prepush",
@@ -1080,7 +1372,45 @@
       },
       "blocking": true,
       "honest_status": "wired via git-hooks/pre-push dispatcher (core.hooksPath), not settings.json.template",
-      "budget_class": "none"
+      "budget_class": "none",
+      "waiver_path": "git push --no-verify (git-native); OPEN QUESTION for operator: should secrets be the one pre-push check where --no-verify is NOT normalized as an acceptable documented path? Flagged, not resolved, in this audit (see tests/fixtures/wave-f/F.5/waiver-parity-audit.md row 25)."
+    },
+    {
+      "id": "session-honesty",
+      "kind": "gate",
+      "doctrine_file": "doctrine/session-end-protocol.md",
+      "hooks": [
+        "session-honesty-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop",
+      "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact.",
+      "honesty_rationale": "ADR 059 D2/D4: reads OTHER gates' waiver state to detect already-resolved blocks, but its own resolved-vs-live assertion is never itself waivable by design (pin-f-doctor-exempt, hook comment line 297)."
+    },
+    {
+      "id": "session-resumer",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/session-resumer.sh — OS-scheduled watchdog (E.7); schtasks registration is a §E.W.6 step, not a settings.json hook."
     },
     {
       "id": "session-start-auto-install",
@@ -1100,6 +1430,65 @@
       },
       "blocking": false,
       "budget_class": "session-start"
+    },
+    {
+      "id": "session-start-digest",
+      "kind": "surfacer",
+      "doctrine_file": null,
+      "hooks": [
+        "session-start-digest.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start",
+      "honest_status": "ONE SessionStart digest replacing the transitional surfacer-pack (E.1); wired at §E.W."
+    },
+    {
+      "id": "session-start-surfacer-pack",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "session-start-surfacer-pack.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "session-start",
+      "honest_status": "Replaced by session-start-digest.sh at §E.W (E.1); retained on disk, attic at F-wave."
+    },
+    {
+      "id": "signal-ledger-flush",
+      "kind": "writer",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "signal-ledger-flush.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "stop"
     },
     {
       "id": "spawn-task-report-back",
@@ -1139,7 +1528,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "honesty_rationale": "scope-enforcement-gate.sh half: repo-boundary world-fact check, waiver deliberately REMOVED 2026-05-04 (honesty-class, correct). spec-freeze-gate.sh half (same entry, different hook file): GAP — no real waiver for a substantive time-boxed frozen-plan touch; OPEN operator/harness-reviewer decision, not resolved here (see tests/fixtures/wave-f/F.5/waiver-parity-audit.md row 27)."
     },
     {
       "id": "stale-plan-surfacer",
@@ -1160,6 +1550,46 @@
       "blocking": false,
       "budget_class": "session-start",
       "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
+    },
+    {
+      "id": "stop-verdict-dispatcher",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": [
+        "stop-verdict-dispatcher.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop",
+      "honest_status": "E.11 batched Stop verdict; invokes work-integrity/session-honesty/bug-persistence in --report mode, aggregates one verdict; replaces their 3 blocking Stop entries at §E.W (Stop 6->4). pin-f: delegates to the gates that validate purpose clauses.",
+      "honesty_rationale": "Aggregator; delegates to bug-persistence/work-integrity/session-honesty's own waiver postures (already stated in its honest_status)."
+    },
+    {
+      "id": "synthetic-runner-ci",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "none",
+      "honest_status": "GitHub Actions workflow (.github/workflows/synthetic-runner.yml), not a Claude Code hook; events:[\"manual\"] is a schema-gap stand-in for CI cron+PR triggers.",
+      "honesty_rationale": "GitHub Actions required-status-check, not a session-time hook; a waiver here is a GitHub branch-protection admin override, outside this manifest's waiver-file scope by construction."
     },
     {
       "id": "task-verifier-reminder",
@@ -1203,7 +1633,8 @@
       },
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
-      "budget_class": "none"
+      "budget_class": "none",
+      "honesty_rationale": "New-runtime-code-needs-tests check on the session's own commit — resolvable by writing the test; the harness's single most important mechanical enforcement, deliberately hard to waive."
     },
     {
       "id": "teaching-moments",
@@ -1240,7 +1671,65 @@
       },
       "blocking": true,
       "budget_class": "pretool",
-      "honest_status": "Member of the commit-boundary blocking unit (specs-d §D.0.4 as amended at D.5); CI relocation follows in E.4 companion."
+      "honest_status": "Member of the commit-boundary blocking unit (specs-d §D.0.4 as amended at D.5); CI relocation follows in E.4 companion.",
+      "honesty_rationale": "Commit-boundary content check (specs-d §D.0.4) — resolvable by the session."
+    },
+    {
+      "id": "waiver-density-alarm",
+      "kind": "pattern",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/waiver-density.sh — invoked by the digest (--digest-line) + E.5 KPI (--report); not an event-wired hook."
+    },
+    {
+      "id": "wave-d-retired-shims",
+      "kind": "writer",
+      "doctrine_file": "doctrine/harness-dev.md",
+      "hooks": [
+        "narrate-and-wait-gate.sh",
+        "deferral-counter.sh",
+        "transcript-lie-detector.sh",
+        "imperative-evidence-linker.sh",
+        "goal-coverage-on-stop.sh",
+        "goal-extraction-on-prompt.sh",
+        "decision-context-gate.sh",
+        "principles-compliance-gate.sh",
+        "pr-health-snapshot-gate.sh",
+        "customer-facing-review-gate.sh",
+        "completion-criteria-gate.sh",
+        "register-progress-gate.sh",
+        "pre-stop-verifier.sh",
+        "product-acceptance-gate.sh",
+        "worktree-teardown-gate.sh",
+        "continuation-enforcer.sh",
+        "tool-call-budget.sh",
+        "dag-review-waiver-gate.sh",
+        "check-harness-sync.sh",
+        "settings-divergence-detector.sh",
+        "cross-repo-drift-warn.sh",
+        "decision-context-replay.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "Exit-0 shims at retired live paths for one release (live-session safety, ADR 058 D5 pin c); originals in attic/. Hard-delete next release."
     },
     {
       "id": "wire-check",
@@ -1259,7 +1748,29 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "honesty_rationale": "GAP (F.5 waiver-parity-audit.md row 32): no waiver mechanism beyond the plan-time n/a carve-out, which does not cover a flip-time false-negative. Proposal 3 fix (structured waiver) not yet applied — tracked as orchestratorTodo."
+    },
+    {
+      "id": "work-integrity",
+      "kind": "gate",
+      "doctrine_file": "doctrine/planning.md",
+      "hooks": [
+        "work-integrity-gate.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "stop",
+      "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact.",
+      "waiver_path": "Structured waiver via lib/waiver-purpose-clause.sh (sourced directly); checks (a)/(b) are waiver-gated per ADR 059 D4 scoping (world-state assertions only — never the checked-box-without-evidence honesty assertion). Canonical reference implementation."
     },
     {
       "id": "work-shapes",
@@ -1338,7 +1849,8 @@
         "keywords": []
       },
       "blocking": true,
-      "budget_class": "pretool"
+      "budget_class": "pretool",
+      "waiver_path": "conv-tree-spawn-waiver-*.txt, fresh <1h, purpose-clause validated (lib/waiver-purpose-clause.sh) — explicitly modeled on bug-persistence-gate.sh."
     },
     {
       "id": "workstreams-stop-gate",
@@ -1359,6 +1871,25 @@
       "blocking": false,
       "budget_class": "stop",
       "honest_status": "retired at D.5 cutover (attic + exit-0 shim); consolidated into the single workstreams Stop writer per ADR 058 D5 / specs-d"
+    },
+    {
+      "id": "workstreams-stop-writer",
+      "kind": "writer",
+      "doctrine_file": "doctrine/workstreams-state.md",
+      "hooks": [
+        "workstreams-stop-writer.sh"
+      ],
+      "events": [
+        "Stop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "stop"
     },
     {
       "id": "workstreams-task-binding",
@@ -1420,339 +1951,6 @@
       "blocking": false,
       "budget_class": "session-start",
       "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
-    },
-    {
-      "id": "work-integrity",
-      "kind": "gate",
-      "doctrine_file": "doctrine/planning.md",
-      "hooks": [
-        "work-integrity-gate.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": false,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "stop",
-      "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact."
-    },
-    {
-      "id": "session-honesty",
-      "kind": "gate",
-      "doctrine_file": "doctrine/session-end-protocol.md",
-      "hooks": [
-        "session-honesty-gate.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": false,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "stop",
-      "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact."
-    },
-    {
-      "id": "workstreams-stop-writer",
-      "kind": "writer",
-      "doctrine_file": "doctrine/workstreams-state.md",
-      "hooks": [
-        "workstreams-stop-writer.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "stop"
-    },
-    {
-      "id": "signal-ledger-flush",
-      "kind": "writer",
-      "doctrine_file": "doctrine/harness-dev.md",
-      "hooks": [
-        "signal-ledger-flush.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "stop"
-    },
-    {
-      "id": "session-start-surfacer-pack",
-      "kind": "surfacer",
-      "doctrine_file": "doctrine/harness-dev.md",
-      "hooks": [
-        "session-start-surfacer-pack.sh"
-      ],
-      "events": [
-        "SessionStart"
-      ],
-      "wired_template": false,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "session-start",
-      "honest_status": "Replaced by session-start-digest.sh at §E.W (E.1); retained on disk, attic at F-wave."
-    },
-    {
-      "id": "wave-d-retired-shims",
-      "kind": "writer",
-      "doctrine_file": "doctrine/harness-dev.md",
-      "hooks": [
-        "narrate-and-wait-gate.sh",
-        "deferral-counter.sh",
-        "transcript-lie-detector.sh",
-        "imperative-evidence-linker.sh",
-        "goal-coverage-on-stop.sh",
-        "goal-extraction-on-prompt.sh",
-        "decision-context-gate.sh",
-        "principles-compliance-gate.sh",
-        "pr-health-snapshot-gate.sh",
-        "customer-facing-review-gate.sh",
-        "completion-criteria-gate.sh",
-        "register-progress-gate.sh",
-        "pre-stop-verifier.sh",
-        "product-acceptance-gate.sh",
-        "worktree-teardown-gate.sh",
-        "continuation-enforcer.sh",
-        "tool-call-budget.sh",
-        "dag-review-waiver-gate.sh",
-        "check-harness-sync.sh",
-        "settings-divergence-detector.sh",
-        "cross-repo-drift-warn.sh",
-        "decision-context-replay.sh"
-      ],
-      "events": [
-        "manual"
-      ],
-      "wired_template": false,
-      "selftest": false,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "none",
-      "honest_status": "Exit-0 shims at retired live paths for one release (live-session safety, ADR 058 D5 pin c); originals in attic/. Hard-delete next release."
-    },
-    {
-      "id": "session-start-digest",
-      "kind": "surfacer",
-      "doctrine_file": null,
-      "hooks": [
-        "session-start-digest.sh"
-      ],
-      "events": [
-        "SessionStart"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "session-start",
-      "honest_status": "ONE SessionStart digest replacing the transitional surfacer-pack (E.1); wired at §E.W."
-    },
-    {
-      "id": "waiver-density-alarm",
-      "kind": "pattern",
-      "doctrine_file": null,
-      "hooks": [],
-      "events": [],
-      "wired_template": false,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "none",
-      "honest_status": "scripts/waiver-density.sh — invoked by the digest (--digest-line) + E.5 KPI (--report); not an event-wired hook."
-    },
-    {
-      "id": "synthetic-runner-ci",
-      "kind": "gate",
-      "doctrine_file": null,
-      "hooks": [],
-      "events": [
-        "manual"
-      ],
-      "wired_template": false,
-      "selftest": false,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "none",
-      "honest_status": "GitHub Actions workflow (.github/workflows/synthetic-runner.yml), not a Claude Code hook; events:[\"manual\"] is a schema-gap stand-in for CI cron+PR triggers."
-    },
-    {
-      "id": "harness-kpis",
-      "kind": "writer",
-      "doctrine_file": null,
-      "hooks": [],
-      "events": [],
-      "wired_template": false,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "none",
-      "honest_status": "scripts/harness-kpis.sh — weekly KPI report from the signal ledger (E.5); scheduled-task registration documented, not a hook."
-    },
-    {
-      "id": "needs-you-ledger",
-      "kind": "writer",
-      "doctrine_file": null,
-      "hooks": [],
-      "events": [],
-      "wired_template": false,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "none",
-      "honest_status": "scripts/needs-you.sh — maintains NEEDS-YOU.md (E.6); called by decision-log flow + digest, not event-wired."
-    },
-    {
-      "id": "session-resumer",
-      "kind": "writer",
-      "doctrine_file": null,
-      "hooks": [],
-      "events": [],
-      "wired_template": false,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "none",
-      "honest_status": "scripts/session-resumer.sh — OS-scheduled watchdog (E.7); schtasks registration is a §E.W.6 step, not a settings.json hook."
-    },
-    {
-      "id": "nl-issue-capture-loop",
-      "kind": "pattern",
-      "doctrine_file": null,
-      "hooks": [],
-      "events": [],
-      "wired_template": false,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "none",
-      "honest_status": "scripts/nl-issue.sh + skill (E.8) — cross-project capture; not event-wired."
-    },
-    {
-      "id": "context-watermark",
-      "kind": "writer",
-      "doctrine_file": null,
-      "hooks": [
-        "context-watermark.sh"
-      ],
-      "events": [
-        "PostToolUse"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "posttool",
-      "honest_status": "E.9a early-warning context watermark; wired PostToolUse at §E.W."
-    },
-    {
-      "id": "pre-compact-continuity",
-      "kind": "writer",
-      "doctrine_file": null,
-      "hooks": [
-        "pre-compact-continuity.sh"
-      ],
-      "events": [
-        "PreCompact"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "none",
-      "honest_status": "E.9b PreCompact backstop; wired (auto+manual) at §E.W. PreCompact additionalContext channel HYPOTHESIZED on this CC version; snapshot-file + SessionStart compact-echo is the PROVEN fallback (constitution §1)."
-    },
-    {
-      "id": "stop-verdict-dispatcher",
-      "kind": "gate",
-      "doctrine_file": null,
-      "hooks": [
-        "stop-verdict-dispatcher.sh"
-      ],
-      "events": [
-        "Stop"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "stop",
-      "honest_status": "E.11 batched Stop verdict; invokes work-integrity/session-honesty/bug-persistence in --report mode, aggregates one verdict; replaces their 3 blocking Stop entries at §E.W (Stop 6->4). pin-f: delegates to the gates that validate purpose clauses."
-    },
-    {
-      "id": "end-manifest",
-      "kind": "writer",
-      "doctrine_file": null,
-      "hooks": [],
-      "events": [],
-      "wired_template": false,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "none",
-      "honest_status": "scripts/end-manifest.sh (E.12) — session end-manifest writer+validator; invoked by the dispatcher when a manifest is present, not event-wired."
     }
   ]
 }
