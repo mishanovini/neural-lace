@@ -24,6 +24,7 @@
 #  11. waiver-density alarm              (§E.3 — tolerate absent)
 #  12. unresolved-gaps entries           (§E.11 — tolerate absent)
 #  13. NEEDS-YOU.md open-item count      (§E.6 — tolerate absent)
+#  14. harness "what's new" changelog    (§F.2b — tolerate absent; harness-changelog.sh --digest-line)
 #
 # A quiet harness produces a 2-line digest: doctor verdict + "all quiet".
 #
@@ -575,6 +576,23 @@ feed_unresolved_gaps() {
 # ----------------------------------------------------------------------
 # Feed 13: NEEDS-YOU.md link + open-item count (§E.6). Tolerate absent.
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Feed 14: harness "what's new" changelog (§F.2b, Wave F task F.2). Tolerate
+# absent script/ledger. Delegates to harness-changelog.sh --digest-line,
+# which owns the ledger schema + seen-marker advancement (same delegation
+# pattern as feed_nl_issues / feed_waiver_density above — this hook never
+# reads the JSONL directly).
+# ----------------------------------------------------------------------
+feed_harness_changelog() {
+  local hcl="$HOOKS_DIR/../scripts/harness-changelog.sh"
+  [[ -x "$hcl" ]] || hcl="$HOME/.claude/scripts/harness-changelog.sh"
+  [[ -f "$hcl" ]] || return 0
+  local out
+  out="$(bash "$hcl" --digest-line 2>/dev/null || true)"
+  [[ -z "$out" ]] && return 0
+  printf '%s\n' "$out" | head -n1
+}
+
 feed_needs_you() {
   local cwd="${1:-$PWD}"
   local root
@@ -650,6 +668,8 @@ run_digest() {
   body="$(feed_unresolved_gaps)"
   [[ -n "$body" ]] && lines+=("$body")
   body="$(feed_needs_you "$cwd")"
+  [[ -n "$body" ]] && lines+=("$body")
+  body="$(feed_harness_changelog)"
   [[ -n "$body" ]] && lines+=("$body")
 
   # A quiet harness: doctor line + "all quiet" (2 lines total).
@@ -1015,6 +1035,33 @@ EOF
   else
     echo "FAIL: S10 fixture project field accidentally matched this repo's name" >&2
     fail=$((fail + 1))
+  fi
+
+  # ---- S11: feed_harness_changelog() POSITIVE + SILENT-AFTER-SEEN path
+  #          (§F.2b, Wave F task F.2). Populated, sandboxed changelog ledger
+  #          fed through feed_harness_changelog() must surface the digest
+  #          line once, then go silent on a subsequent call (seen-marker
+  #          advanced by harness-changelog.sh --digest-line itself).
+  local s11_hcl="$HOOKS_DIR/../scripts/harness-changelog.sh"
+  if [[ -f "$s11_hcl" ]]; then
+    local s11_ledger="$tmp/s11-changelog.jsonl"
+    local s11_seen="$tmp/s11-seen-marker"
+    HARNESS_CHANGELOG_PATH="$s11_ledger" HARNESS_CHANGELOG_SEEN_PATH="$s11_seen" \
+      bash "$s11_hcl" append --text "fixture capability shipped" >/dev/null 2>&1
+    local out11
+    out11="$(HARNESS_CHANGELOG_PATH="$s11_ledger" HARNESS_CHANGELOG_SEEN_PATH="$s11_seen" feed_harness_changelog)"
+    _ck_contains "S11 feed_harness_changelog() surfaces the digest line for a populated ledger" "$out11" "harness changes since your last session"
+    local out11b
+    out11b="$(HARNESS_CHANGELOG_PATH="$s11_ledger" HARNESS_CHANGELOG_SEEN_PATH="$s11_seen" feed_harness_changelog)"
+    if [[ -z "$out11b" ]]; then
+      echo "PASS: S11b feed_harness_changelog() silent on second call (seen-marker advanced)"
+      pass=$((pass + 1))
+    else
+      echo "FAIL: S11b feed_harness_changelog() should be silent after seen-marker advances, got '$out11b'" >&2
+      fail=$((fail + 1))
+    fi
+  else
+    echo "SKIP: S11 harness-changelog.sh not found at $s11_hcl" >&2
   fi
 
   rm -rf "$tmp" 2>/dev/null || true
