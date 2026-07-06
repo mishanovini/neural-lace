@@ -1141,3 +1141,17 @@ CRLF-only vs master), machine-local settings keys preserved. Path to green: inst
 fix (65706c1, completes NL-FINDING-017), surgical live Stop-chain swap, and NL-FINDING-033 (doctor
 E.9 check fed MSYS path to native node → false RED; now reads via stdin, 8025389). Golden evals 6/6.
 This addendum records the mechanical maintainer-is-user demonstration (constitution §4 harness clause).
+
+
+## Wave-E checkbox verification (workflow wf_6133f99e-b97, 2026-07-05, 12 parallel task-verifiers)
+8 PASS flipped, 4 FAIL held for remediation (E.2 env-local selftest unsandboxed; E.6 feed_needs_you regex mismatch + NEEDS-YOU 4-section; E.8 nl-issue selftest reads real backlog; E.12 end-manifest unwired to any Stop event). Full per-task evidence blocks: workflow output wvym2117m.output.
+
+PASS:
+- **E.0** PASS (- [ ] E.0 Wave-spec refinement for Wave E — Model: opus — Parallelizable: no — Verificatio...)
+- **E.1** PASS (`--self-test` exits 0; SessionStart chain shows digest replacing the retired surfacers (co...)
+- **E.3** PASS (Done-when: fixture ledger with 3 waivers produces the backlog entry (self-test). [plan lin...)
+- **E.4** PASS (Done-when: `evals/synthetic/run-all.sh` exits 0 locally; design-skip plan exists; CI workf...)
+- **E.5** PASS (Done-when: script produces the report from fixture + live ledger; numbers match fixture ex...)
+- **E.9** PASS (Done-when: self-test asserts ALL SIX categories appear by name in the emitted summarizer-i...)
+- **E.10** PASS (Done-when: per-gate contract-conformance checklist in specs-e with grep evidence; purpose-...)
+- **E.11** PASS (self-test proves a two-gap session gets ONE block listing both gaps, and a second Stop wit...)
