@@ -1,5 +1,5 @@
 # Plan: nl-overhaul-synthetic-ci-2026-07
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: direct
 Mode: design-skip
 Backlog items absorbed: none
@@ -94,14 +94,14 @@ silently regressed due to an unrelated change, e.g. a shared lib edit).
   Claude Code harness install path).
 
 ## Tasks
-- [ ] 1. Author `.github/workflows/synthetic-runner.yml` with two
+- [x] 1. Author `.github/workflows/synthetic-runner.yml` with two
   triggers (`schedule: cron` weekly + `pull_request` path-filtered on
   `adapters/claude-code/hooks/**` and `evals/synthetic/**`) and one job
   that checks out the repo and runs `bash evals/synthetic/run-all.sh` on
   `ubuntu-latest`, following the existing workflow conventions in this
   repo (`actions/checkout@v5`, `permissions: contents: read`,
   `timeout-minutes`, GH `::group::`/`::error::` annotations) — Verification: mechanical
-- [ ] 2. Fold the vaporware-volume-gate CI relocation into the same
+- [x] 2. Fold the vaporware-volume-gate CI relocation into the same
   workflow as a second job (`vaporware-volume` check running against the
   PR's cumulative diff via `git diff origin/master...HEAD --numstat`,
   mirroring the retired hook's describes-vs-executes-behavior ratio
@@ -110,7 +110,7 @@ silently regressed due to an unrelated change, e.g. a shared lib edit).
   point it depended on, document the CI-side substitute explicitly in
   this plan's Closure Contract naming the concrete replacement check —
   Verification: mechanical
-- [ ] 3. Verify the workflow is syntactically valid and exercises the
+- [x] 3. Verify the workflow is syntactically valid and exercises the
   intended triggers (`actionlint`-equivalent local YAML/trigger sanity
   check; a real PR run against this plan's own branch is the live proof
   — cite the checks-tab run URL in the completion evidence per this
@@ -237,10 +237,10 @@ DELETE this section if Mode: code or Mode: design-skip.
 <!-- Deleted per template instruction: Mode: design-skip. -->
 
 ## Definition of Done
-- [ ] All tasks checked off
-- [ ] `synthetic-runner.yml` present at `.github/workflows/` and
+- [x] All tasks checked off
+- [x] `synthetic-runner.yml` present at `.github/workflows/` and
   syntactically valid
-- [ ] A live GitHub Actions run shows green, with the run URL cited in
+- [x] A live GitHub Actions run shows green, with the run URL cited in
   the completion evidence — Runtime verification: cite the Actions
   checks-tab run URL
 - [ ] SCRATCHPAD.md updated with final state
@@ -266,7 +266,7 @@ DELETE this section if Mode: code or Mode: design-skip.
   vaporware-volume relocation is either implemented and green or
   explicitly documented as a non-port with a named substitute check.
 
-## Live-run evidence (2026-07-06, orchestrator)
+## Completion Report (2026-07-06; live-run evidence)
 First scheduled (cron) live run on master: GREEN — run 28785582207, trigger=schedule, 11s,
 2026-07-06T10:39Z. URL: https://github.com/Pocket-Technician/neural-lace/actions/runs/28785582207
 Prior PR-trigger runs also green (28727523866, 28727356577 on the §E.W cutover PR). Workflow
