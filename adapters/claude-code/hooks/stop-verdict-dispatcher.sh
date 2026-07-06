@@ -164,6 +164,57 @@ _svd_resolve_end_manifest() {
 }
 
 # ----------------------------------------------------------------------
+# _svd_session_start_ref
+#   NL-FINDING-036 fix: the REAL session-start boundary to pass as
+#   end-manifest.sh write's --shipped-since, so "shipped this session"
+#   means "reachable from HEAD but not yet on the remote-tracked baseline
+#   at session start" — NOT end-manifest.sh's own hardcoded HEAD~20
+#   fallback (a raw commit-count window that has nothing to do with THIS
+#   session's actual start, and on any tree with >20 intervening commits
+#   from OTHER sessions/PRs folds every one of their touched plans into
+#   this session's shipped[] list, which is exactly what then makes
+#   work-integrity-gate.sh's manifest-scoping treat unrelated plans as
+#   "session-touched" — PROVEN live, see stop-verdict-dispatcher.sh's own
+#   NL-FINDING-036 self-test scenario below).
+#
+#   Resolution order (soundest-first, mirrors the SAME convention already
+#   used elsewhere in this file's sibling gate, work-integrity-gate.sh's
+#   check (c) unpushed-commit count — see that file's "@{upstream} first,
+#   origin/master fallback" pattern):
+#     1. `@{upstream}` — the current branch's own tracked remote ref. This
+#        is the actual "what has this branch shipped vs. its own remote"
+#        boundary and is correct even when master itself has moved since
+#        this branch forked (a merge-base against a moving origin/master
+#        would otherwise silently widen as master advances).
+#     2. `git merge-base HEAD origin/master` — no upstream configured
+#        (e.g. a fresh local branch never pushed): the point this branch
+#        diverged from master is the soundest available proxy for "session
+#        start", since every commit from HEAD back to that point is, by
+#        construction, work only this branch (this session's lineage) can
+#        have made.
+#     3. empty — neither resolves (no git, detached HEAD with no
+#        origin/master, brand-new repo with one commit, etc.): the caller
+#        omits --shipped-since entirely and end-manifest.sh's own
+#        HEAD~20 fallback applies (pre-existing fail-open behavior,
+#        unchanged for trees where no sound boundary exists at all).
+# ----------------------------------------------------------------------
+_svd_session_start_ref() {
+  command -v git >/dev/null 2>&1 || { printf ''; return 0; }
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { printf ''; return 0; }
+
+  if git rev-parse --verify --quiet '@{upstream}' >/dev/null 2>&1; then
+    git rev-parse '@{upstream}' 2>/dev/null
+    return 0
+  fi
+  if git rev-parse --verify --quiet origin/master >/dev/null 2>&1; then
+    local mb
+    mb=$(git merge-base HEAD origin/master 2>/dev/null)
+    [[ -n "$mb" ]] && { printf '%s' "$mb"; return 0; }
+  fi
+  printf ''
+}
+
+# ----------------------------------------------------------------------
 # _svd_write_and_validate_manifest <repo_root> <transcript_path> <session_id>
 #   ADR 059 D6 / specs-e §E.12: the dispatcher (not a separate hook event —
 #   Stop IS the session-end surface) writes THIS Stop's end-manifest, then
@@ -179,6 +230,16 @@ _svd_resolve_end_manifest() {
 #   followed by a validate FAILURE is the only path that emits a gap line —
 #   the write step itself is never gap-worthy (an empty/best-effort manifest
 #   is still strictly additive over having none).
+#
+#   NL-FINDING-036 fix: ALWAYS derives a real --shipped-since boundary via
+#   _svd_session_start_ref and passes it explicitly — this is the ONLY
+#   caller of end-manifest.sh write in the live (flagless Stop-hook) path,
+#   so leaving this flag unset here is precisely what let end-manifest.sh's
+#   own HEAD~20 fallback silently apply in production while every prior
+#   self-test scenario passed --shipped-since explicitly and never
+#   exercised the dispatcher's own real call shape (see this file's
+#   self-test scenario 13 below, which mirrors the exact flagless stdin
+#   invocation and is the regression guard for this fix).
 # ----------------------------------------------------------------------
 _svd_write_and_validate_manifest() {
   local repo_root="$1" transcript_path="$2" session_id="$3"
@@ -187,8 +248,12 @@ _svd_write_and_validate_manifest() {
   [[ -n "$ems" ]] || return 0
   command -v jq >/dev/null 2>&1 || return 0
 
+  local since_ref
+  since_ref=$(_svd_session_start_ref)
+
   local write_args=(write --session-id "$session_id")
   [[ -n "$transcript_path" ]] && write_args+=(--transcript "$transcript_path")
+  [[ -n "$since_ref" ]] && write_args+=(--shipped-since "$since_ref")
   local manifest_path
   manifest_path=$(bash "$ems" "${write_args[@]}" 2>/dev/null) || return 0
   [[ -n "$manifest_path" && -f "$manifest_path" ]] || return 0
@@ -995,6 +1060,91 @@ STUBEOF
     passed=$((passed+1))
   else
     echo "self-test (grep-assertion-dispatcher-actually-invokes-end-manifest-write-and-validate): FAIL (dispatcher no longer calls the manifest write/validate step)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 13 (NL-FINDING-036 regression guard): a synthetic session
+  # that touched NOTHING must not be blocked over UNRELATED plans, when
+  # invoked via the dispatcher's REAL production shape — flagless stdin
+  # JSON, no --shipped-since anywhere in the caller (mirrors the exact
+  # livesmoke repro: `echo '{"transcript_path":"","session_id":"..."}' |
+  # bash stop-verdict-dispatcher.sh`, no extra args, no env override of
+  # the shipped-since boundary). Every PRIOR scenario in this file used
+  # end-manifest.sh's "with-manifest" variant only for scenarios that
+  # never had >20 intervening commits, so the HEAD~20 fallback window
+  # never leaked into any of them — this is precisely the gap that
+  # masked the bug (self-tests exercised a correctly-scoped shape; the
+  # live path fell through to end-manifest.sh's own hardcoded default).
+  #
+  # Fixture: a bare "origin" remote (so @{upstream}/origin/master
+  # resolve), a plan committed and PUSHED as part of the origin baseline
+  # (i.e. already shipped before this session started), then >20 FURTHER
+  # commits on origin/master itself — each touching a DIFFERENT unrelated
+  # plan with unchecked tasks — simulating "lots of other sessions/PRs
+  # landed on master before this session's Stop fires". The test session
+  # then fast-forwards its local branch to match origin/master (so HEAD
+  # == @{upstream}, i.e. genuinely nothing of this session's own is
+  # unshipped) and ends with a clean DONE: marker having touched nothing.
+  # Pre-fix (no --shipped-since passed to end-manifest.sh write), the
+  # HEAD~20 fallback would treat 20 of those unrelated plan-touching
+  # commits as "this session's shipped work" and work-integrity-gate.sh's
+  # manifest-scoping would then block on their unchecked tasks. Post-fix,
+  # _svd_session_start_ref resolves @{upstream} (== HEAD, nothing
+  # unshipped) so shipped[] is correctly empty and the Stop passes clean.
+  # ================================================================
+  _setup_scenario s13
+  HOOKS=$(_build_dispatcher_repo s13 with-manifest)
+  REPO="$tmproot/s13/repo"
+  ORIGIN_BARE="$tmproot/s13/origin.git"
+  git init -q --bare "$ORIGIN_BARE" 2>/dev/null
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    git remote add origin "$ORIGIN_BARE"; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed; \
+    git push -q -u origin master )
+  # >20 unrelated commits landing on master, each with its own unchecked
+  # plan — simulates other sessions'/PRs' work accumulating before this
+  # session's Stop. 22 to comfortably exceed end-manifest.sh's HEAD~20.
+  i=1
+  while [[ "$i" -le 22 ]]; do
+    ( cd "$REPO" && \
+      { echo "# Plan: unrelated-plan-${i}"; echo "Status: ACTIVE"; echo; echo "## Tasks"; echo "- [ ] U.${i} unrelated unchecked task"; } > "docs/plans/unrelated-plan-${i}.md"; \
+      git add -A; git commit -q -m "unrelated work ${i} (not this session)" )
+    i=$((i+1))
+  done
+  ( cd "$REPO" && git push -q origin master )
+  # This session's own view: fast-forwarded to match origin/master exactly
+  # (HEAD == @{upstream}) — nothing of THIS session's own is unshipped,
+  # and this session touched none of the unrelated plans above.
+  T=$(_write_transcript "$tmproot/s13" $'Investigated an unrelated question, touched nothing.\n\nDONE: nothing to report')
+  RC=$(_run_dispatcher "$HOOKS" "$REPO" "$T" "sess-s13")
+  _expect "NL-FINDING-036-no-touch-session-not-blocked-over-unrelated-plans-real-shape" "$RC" "0"
+  if ! grep -qE "unrelated-plan-[0-9]+" "$tmproot/last-stderr.txt" 2>/dev/null; then
+    echo "self-test (NL-FINDING-036-no-unrelated-plan-named-in-block-message): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (NL-FINDING-036-no-unrelated-plan-named-in-block-message): FAIL (an unrelated plan was named — HEAD~20-style leak still present)" >&2
+    failed=$((failed+1))
+  fi
+  MANIFEST_S13="${END_MANIFEST_STATE_DIR}/sess-s13.json"
+  if [[ -f "$MANIFEST_S13" ]] && command -v jq >/dev/null 2>&1 && [[ "$(jq '.shipped | length' "$MANIFEST_S13" 2>/dev/null)" == "0" ]]; then
+    echo "self-test (NL-FINDING-036-manifest-shipped-array-correctly-empty-not-HEAD-tilde-20-derived): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (NL-FINDING-036-manifest-shipped-array-correctly-empty-not-HEAD-tilde-20-derived): FAIL (expected shipped[] to be empty at ${MANIFEST_S13})" >&2
+    failed=$((failed+1))
+  fi
+  # Static proof the fix is actually wired: the dispatcher's manifest-write
+  # call site now always resolves and passes --shipped-since (never relies
+  # on end-manifest.sh's own hardcoded fallback in the live path).
+  if grep -q '_svd_session_start_ref' "${_SVD_DIR}/stop-verdict-dispatcher.sh" 2>/dev/null \
+     && grep -A2 'local write_args=(write --session-id' "${_SVD_DIR}/stop-verdict-dispatcher.sh" | grep -q -- '--shipped-since'; then
+    echo "self-test (NL-FINDING-036-grep-assertion-write-call-site-passes-shipped-since): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (NL-FINDING-036-grep-assertion-write-call-site-passes-shipped-since): FAIL (expected the write_args construction to include --shipped-since)" >&2
     failed=$((failed+1))
   fi
 
