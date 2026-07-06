@@ -757,8 +757,62 @@ JSON
     FAILED=$((FAILED+1))
   fi
 
+  # ============================================================
+  # F11/F12 — §F.2b Docs-impact WARN (never blocks)
+  # ============================================================
+  # Inline replica of check_docs_impact_warn (defined later in this file,
+  # after the --self-test block's exit — mirrored here per the same
+  # convention as the F5-F10 replicas above).
+  selftest_check_docs_impact_warn() {
+    local old_content="$1" new_content="$2"
+    local new_task_lines
+    new_task_lines="$(echo "$new_content" | grep -E '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' 2>/dev/null)"
+    [[ -z "$new_task_lines" ]] && { echo "NONE"; return 0; }
+    local any_warned=0
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      local tid
+      tid="$(echo "$line" | grep -oE '[A-Z]+\.[0-9]+(\.[0-9]+)*' | head -1)"
+      [[ -z "$tid" ]] && continue
+      if echo "$old_content" | grep -qF "$tid"; then continue; fi
+      if ! echo "$line" | grep -qiE 'Docs impact:'; then
+        any_warned=1
+      fi
+    done <<< "$new_task_lines"
+    [[ "$any_warned" -eq 1 ]] && echo "WARNED" || echo "CLEAN"
+  }
+
+  # ---- F11: new-task-missing-docs-impact-warns ----
+  OLD_F11=""
+  NEW_F11="- [ ] G.1. Add a new hook."
+  RESULT_F11=$(selftest_check_docs_impact_warn "$OLD_F11" "$NEW_F11")
+  if [[ "$RESULT_F11" == "WARNED" ]]; then
+    echo "self-test (F11) new-task-missing-docs-impact-warns: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F11) new-task-missing-docs-impact-warns: FAIL (result=$RESULT_F11)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F12: new-task-with-docs-impact-clean (and: editing an EXISTING
+  # task's wording, where the task ID already appears in old_content, never
+  # warns even without the field — F12b) ----
+  OLD_F12=""
+  NEW_F12="- [ ] G.2. Add a new hook. — Docs impact: none — internal refactor, no doc surface"
+  RESULT_F12=$(selftest_check_docs_impact_warn "$OLD_F12" "$NEW_F12")
+  OLD_F12B="- [ ] G.3. Original wording."
+  NEW_F12B="- [ ] G.3. Revised wording, no Docs impact field."
+  RESULT_F12B=$(selftest_check_docs_impact_warn "$OLD_F12B" "$NEW_F12B")
+  if [[ "$RESULT_F12" == "CLEAN" ]] && [[ "$RESULT_F12B" == "CLEAN" ]]; then
+    echo "self-test (F12) docs-impact-present-or-existing-task-edit-clean: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F12) docs-impact-present-or-existing-task-edit-clean: FAIL (new=$RESULT_F12 existing-edit=$RESULT_F12B)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 10 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 12 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1096,6 +1150,76 @@ check_evidence_first() {
   return 1
 }
 
+# ============================================================
+# check_docs_impact_warn — §F.2b (Wave F task F.2) — WARN-only, never blocks
+# ============================================================
+#
+# The plan template's per-task `Docs impact:` field (the doc/README/runbook
+# delta the task causes, or the literal word `none` with a reason) is meant
+# to be authored ALONGSIDE the task, not bolted on later. This check WARNS
+# (stderr message, exit code of the calling branch is untouched — this
+# function never returns non-zero) when a NEWLY-INTRODUCED task line (one
+# that appears in the new content but had no counterpart in the old content)
+# lacks a `Docs impact:` annotation. It is deliberately non-blocking: unlike
+# the checkbox-flip authorization above, an author drafting/iterating on task
+# text should never be gated on this field mid-edit — the WARN is a nudge at
+# authoring time, and `task-verifier` is where a non-none Docs-impact claim
+# with no accompanying doc delta is actually enforced (agents/task-verifier.md
+# Step 3 Documentation check).
+#
+# Detection is intentionally conservative (never false-blocks, may under-warn):
+# a "new" task line is one whose task-ID token does not appear ANYWHERE in
+# the old content at all — so editing an EXISTING task's wording never
+# spuriously warns, only genuinely new task lines do.
+check_docs_impact_warn() {
+  local old_content="$1"
+  local new_content="$2"
+
+  # Extract new task lines: "- [ ] <ID>. ..." present in new_content.
+  local new_task_lines
+  new_task_lines="$(echo "$new_content" | grep -E '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' 2>/dev/null)"
+  [[ -z "$new_task_lines" ]] && return 0
+
+  local warned=0
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local tid
+    tid="$(echo "$line" | grep -oE '[A-Z]+\.[0-9]+(\.[0-9]+)*' | head -1)"
+    [[ -z "$tid" ]] && continue
+    # Skip if this task ID already existed anywhere in the old content
+    # (i.e., this is an edit to existing task text, not a brand-new task).
+    if echo "$old_content" | grep -qF "$tid"; then
+      continue
+    fi
+    # New task line. Does IT (or does the sub-bullet immediately following
+    # it in new_content) declare Docs impact? We only check the task line
+    # itself here — the sub-bullet form is a documented alternative the
+    # plan-reviewer's fuller check (a future Check N) may also recognize;
+    # this hook's job is the cheap same-line nudge.
+    if ! echo "$line" | grep -qiE 'Docs impact:'; then
+      if [[ "$warned" -eq 0 ]]; then
+        cat >&2 <<WARNMSG
+
+----------------------------------------------------------------
+[plan-edit-validator] WARN — new task missing 'Docs impact:' (§F.2b)
+----------------------------------------------------------------
+New task '${tid}' has no 'Docs impact:' annotation. Per the plan
+template, every task declares the doc/README/runbook delta it causes,
+or the literal word 'none' with a reason:
+
+  - [ ] ${tid}. <description> — Docs impact: <what doc changes> | none — <reason>
+
+This is a WARN, not a block — the edit is allowed. task-verifier
+treats a non-'none' Docs-impact claim with no accompanying doc delta
+as part of this task's Done-when (agents/task-verifier.md).
+WARNMSG
+        warned=1
+      fi
+    fi
+  done <<< "$new_task_lines"
+  return 0
+}
+
 # For Edit calls: look at old_string vs new_string
 if [[ "$TOOL_NAME" == "Edit" ]]; then
   if [[ "$HAS_NESTED" == "true" ]]; then
@@ -1105,6 +1229,10 @@ if [[ "$TOOL_NAME" == "Edit" ]]; then
     OLD_STR=$(echo "$INPUT" | jq -r '.old_string // ""' 2>/dev/null)
     NEW_STR=$(echo "$INPUT" | jq -r '.new_string // ""' 2>/dev/null)
   fi
+
+  # §F.2b — WARN (never blocks) on a newly-introduced task line missing
+  # 'Docs impact:'.
+  check_docs_impact_warn "$OLD_STR" "$NEW_STR"
 
   # Does the old string contain an unchecked box AND the new string contain
   # a checked box? If yes, this is a checkbox flip.
@@ -1234,10 +1362,15 @@ fi
 if [[ "$TOOL_NAME" == "Write" ]]; then
   NEW_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null)
 
-  # If the file doesn't exist yet, it's a new plan file — allow
+  # If the file doesn't exist yet, it's a new plan file — allow, but still
+  # WARN (§F.2b) on any task line missing 'Docs impact:' (old content is
+  # empty, so every task line in a fresh plan is "new").
   if [[ ! -f "$FILE_PATH" ]]; then
+    check_docs_impact_warn "" "$NEW_CONTENT"
     exit 0
   fi
+
+  check_docs_impact_warn "$(cat "$FILE_PATH" 2>/dev/null)" "$NEW_CONTENT"
 
   OLD_CHECKED=$(grep -cE '^\s*-\s*\[\s*[xX]\s*\]' "$FILE_PATH" 2>/dev/null || echo "0")
   OLD_CHECKED=$(echo "$OLD_CHECKED" | tr -d '[:space:]')

@@ -333,6 +333,26 @@ Format examples:
   - [ ] 3. Implement the runtime feature end-to-end — Verification: full
   - [ ] 4. Legacy task without declaration   (defaults to full)
 
+REQUIRED per-task `Docs impact:` field (§F.2b, Wave F task F.2 — operator
+directive 2026-07-04: docs are produced INSIDE the build loop, not tail-gated
+onto session end). Every task declares the doc/README/runbook delta it
+causes, or the literal word `none` with a one-clause reason:
+
+  - [ ] 5. Add scripts/foo.sh generator — Verification: mechanical — Docs impact: adds a runbook stub at docs/runbooks/foo.md
+  - [ ] 6. Refactor internal helper, no behavior change — Verification: mechanical — Docs impact: none — pure refactor, no doc surface
+  - [ ] 7. Ship a new operator-facing capability — Verification: full — Docs impact: README section + harness-changelog.jsonl entry + digest line
+
+`plan-edit-validator.sh` WARNS (never blocks) when a NEWLY-introduced task
+line lacks a `Docs impact:` annotation — editing an existing task's wording
+never triggers the warning, only brand-new task lines do. `task-verifier`
+treats a non-`none` Docs-impact claim as part of that task's Done-when: if
+the task claims a doc delta but the commit shows no corresponding doc/README/
+runbook change, the verifier refuses to flip the checkbox (see
+`agents/task-verifier.md`, Step 3 task-type-specific checks, "Documentation").
+Prefer EXTENDING A GENERATOR over hand-editing a doc where one exists
+(`scripts/gen-architecture-doc.sh`, `scripts/manifest-check.sh --gen-index`)
+— generation beats maintenance.
+
 INTEGRATION VERIFICATION — REQUIRED FOR EVERY `Verification: full` TASK
 (or unmarked task, which defaults to full).
 

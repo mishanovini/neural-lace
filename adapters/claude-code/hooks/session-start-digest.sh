@@ -28,6 +28,7 @@
 #                                          ACTIVE plans / worktrees / local
 #                                          branches stale >=7d; one-word
 #                                          operator approval each)
+#  15. harness "what's new" changelog    (§F.2b — tolerate absent; harness-changelog.sh --digest-line)
 #
 # A quiet harness produces a 2-line digest: doctor verdict + "all quiet".
 #
@@ -579,6 +580,23 @@ feed_unresolved_gaps() {
 # ----------------------------------------------------------------------
 # Feed 13: NEEDS-YOU.md link + open-item count (§E.6). Tolerate absent.
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Feed 14: harness "what's new" changelog (§F.2b, Wave F task F.2). Tolerate
+# absent script/ledger. Delegates to harness-changelog.sh --digest-line,
+# which owns the ledger schema + seen-marker advancement (same delegation
+# pattern as feed_nl_issues / feed_waiver_density above — this hook never
+# reads the JSONL directly).
+# ----------------------------------------------------------------------
+feed_harness_changelog() {
+  local hcl="$HOOKS_DIR/../scripts/harness-changelog.sh"
+  [[ -x "$hcl" ]] || hcl="$HOME/.claude/scripts/harness-changelog.sh"
+  [[ -f "$hcl" ]] || return 0
+  local out
+  out="$(bash "$hcl" --digest-line 2>/dev/null || true)"
+  [[ -z "$out" ]] && return 0
+  printf '%s\n' "$out" | head -n1
+}
+
 feed_needs_you() {
   local cwd="${1:-$PWD}"
   local root
@@ -805,6 +823,8 @@ run_digest() {
       [[ -n "$_staleness_line" ]] && lines+=("$_staleness_line")
     done <<< "$body"
   fi
+  body="$(feed_harness_changelog)"
+  [[ -n "$body" ]] && lines+=("$body")
 
   # A quiet harness: doctor line + "all quiet" (2 lines total).
   if [[ "${#lines[@]}" -le 1 ]]; then
@@ -1224,6 +1244,36 @@ EOF
   out11c="$(export HARNESS_SELFTEST=1; export STALENESS_PROPOSALS_PATH="$tmp/s11c-proposals.jsonl"; feed_staleness_proposals "$s11c")"
   _ck_contains "S11c stale branch proposes a disposition" "$out11c" "propose: branch 'stale-no-upstream'"
   _ck_contains "S11c names PUSH/DELETE/KEEP" "$out11c" "reply PUSH"
+
+  # ---- S12: feed_harness_changelog() POSITIVE + SILENT-AFTER-SEEN path
+  #          (§F.2b, Wave F task F.2). Populated, sandboxed changelog ledger
+  #          fed through feed_harness_changelog() must surface the digest
+  #          line once, then go silent on a subsequent call (seen-marker
+  #          advanced by harness-changelog.sh --digest-line itself).
+  #          (Renumbered S11->S12 during Wave-F integration to avoid colliding
+  #          with F.1's S11/S11a/S11b/S11c feed_staleness_proposals scenarios —
+  #          same class as the E.6xE.8 S9 collision.)
+  local s12_hcl="$HOOKS_DIR/../scripts/harness-changelog.sh"
+  if [[ -f "$s12_hcl" ]]; then
+    local s12_ledger="$tmp/s12-changelog.jsonl"
+    local s12_seen="$tmp/s12-seen-marker"
+    HARNESS_CHANGELOG_PATH="$s12_ledger" HARNESS_CHANGELOG_SEEN_PATH="$s12_seen" \
+      bash "$s12_hcl" append --text "fixture capability shipped" >/dev/null 2>&1
+    local out12
+    out12="$(HARNESS_CHANGELOG_PATH="$s12_ledger" HARNESS_CHANGELOG_SEEN_PATH="$s12_seen" feed_harness_changelog)"
+    _ck_contains "S12 feed_harness_changelog() surfaces the digest line for a populated ledger" "$out12" "harness changes since your last session"
+    local out12b
+    out12b="$(HARNESS_CHANGELOG_PATH="$s12_ledger" HARNESS_CHANGELOG_SEEN_PATH="$s12_seen" feed_harness_changelog)"
+    if [[ -z "$out12b" ]]; then
+      echo "PASS: S12b feed_harness_changelog() silent on second call (seen-marker advanced)"
+      pass=$((pass + 1))
+    else
+      echo "FAIL: S12b feed_harness_changelog() should be silent after seen-marker advances, got '$out12b'" >&2
+      fail=$((fail + 1))
+    fi
+  else
+    echo "SKIP: S12 harness-changelog.sh not found at $s12_hcl" >&2
+  fi
 
   rm -rf "$tmp" 2>/dev/null || true
   echo ""

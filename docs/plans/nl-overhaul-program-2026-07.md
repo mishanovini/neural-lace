@@ -180,6 +180,11 @@ The operator (the harness's user) can, after this program: (a) run `harness-doct
 - 2026-07-02: `docs/discoveries/2026-06-10-product-acceptance-gate-waiver-unreachable-for-exempt-ui-plans.md` — DEC-2026-07-02-002, discovery status flip (pending → superseded).
 - 2026-07-02: `docs/discoveries/2026-06-02-component-c-sync-daemon-thrashes-live-checkout.md` — DEC-2026-07-02-002, discovery status flip (pending → decided; absorbed as B.12).
 - 2026-07-02: `docs/discoveries/2026-05-25-dispatch-coordination-debug.md` — DEC-2026-07-02-002, discovery status flip (pending → decided; parked with orchestrator-prime cluster).
+- 2026-07-05: `adapters/claude-code/README.md` (new — F.2's task line explicitly names `adapters/claude-code/README*`, but the scope-gate's first-backtick-per-bullet parser only sees `adapters/claude-code/hooks/**` on that bullet's line 158, same documented parser-limitation class as every other entry in this section) — new top-level adapter README (F.2 README sweep).
+- 2026-07-05: `docs/harness-architecture-history.md` (new — F.2's regeneration of `docs/harness-architecture.md` preserves the pre-existing hand-maintained narrative verbatim at this sibling path rather than deleting it; `docs/harness-architecture.md` itself is already covered on line 163).
+- 2026-07-05: `docs/runbooks/*.md` (new — F.2b mechanism 2 runbook stubs for the six named operator-facing capabilities: nl-issue, session-resumer, digest, NEEDS-YOU, pre-compaction, KPI report; `docs/` is broadly covered on line 163 but `docs/runbooks/` as a new subdirectory is called out explicitly per this section's convention).
+- 2026-07-05: `neural-lace/workstreams-ui/README.md` (new — F.2's README sweep; `neural-lace/workstreams-ui/**` beyond digest-mirror touchpoints is Scope OUT for PRODUCT CODE per line 28, but a README is documentation, not application code, and F.2's task line explicitly requires "workstreams-ui README(s)").
+- 2026-07-05: `README.md` (repo-root) — F.2's task line explicitly names "root README.md" for the freshness-anchor sweep; the bare filename was not itself a backtick-quoted token on any `## Files to Modify/Create` bullet (only `adapters/claude-code/CLAUDE.md` etc. are named there), same parser-limitation class as the other entries in this section.
 
 ## Assumptions
 

@@ -2,17 +2,19 @@
 
 > An intelligent, self-improving harness that gives AI coding tools the discipline of an entire engineering team — enforced mechanically, not by hoping the AI follows instructions.
 
-**Last verified:** 2026-05-06.
+<!-- last-verified: 2026-07-05 (doctor-checked) -->
 
 ## CI — the harness eats its own cooking
 
-Every push and pull request runs three independent workflows so the harness's own discipline mechanisms are exercised server-side, not just trusted to be correct:
+Every push and pull request runs five independent workflows so the harness's own discipline mechanisms are exercised server-side, not just trusted to be correct:
 
-- **Evals** (`.github/workflows/evals.yml`) — runs the 5 golden behavioral tests under `evals/golden/` plus the `validate-pr-template.sh --self-test` battery.
-- **Hooks self-test** (`.github/workflows/hooks-selftest.yml`) — discovers every hook under `adapters/claude-code/hooks/` that ships a `--self-test` block (44 as of this writing), runs each one, and also runs the standalone test scripts under `adapters/claude-code/tests/`.
+- **Evals** (`.github/workflows/evals.yml`) — runs the golden behavioral tests under `evals/golden/` (6 as of this writing — see `evals/README.md`) plus the `validate-pr-template.sh --self-test` battery.
+- **Hooks self-test** (`.github/workflows/hooks-selftest.yml`) — discovers every hook under `adapters/claude-code/hooks/` that ships a `--self-test` block (69 as of this writing), runs each one, and also runs the standalone test scripts under `adapters/claude-code/tests/`.
 - **PR template** (`.github/workflows/pr-template-check.yml`) — validates the capture-codify section in every PR body.
+- **Server-side enforcement** (`.github/workflows/server-side-enforcement.yml`) — re-runs the subset of gates that must hold even when local hooks are bypassed (branch-protection-class checks).
+- **Synthetic runner** (`.github/workflows/synthetic-runner.yml`) — scenario-driven regression suite scoring the harness against golden synthetic sessions (manifest id `synthetic-runner-ci`; see `docs/harness-architecture.md`).
 
-Status badges for these three workflows are intentionally NOT pasted into this README — the harness-hygiene gate forbids hard-coding the GitHub owner/org into shipped kit files. To embed badges in your fork, add them to a non-shipped doc with your own `<owner>/<repo>` substituted into the URL `https://github.com/<owner>/<repo>/actions/workflows/<workflow-file>/badge.svg`. Red on any of these badges is a stop-the-line signal — the harness's claim "the AI cannot bypass the gate" silently degrades when these tests rot.
+Status badges for these five workflows are intentionally NOT pasted into this README — the harness-hygiene gate forbids hard-coding the GitHub owner/org into shipped kit files. To embed badges in your fork, add them to a non-shipped doc with your own `<owner>/<repo>` substituted into the URL `https://github.com/<owner>/<repo>/actions/workflows/<workflow-file>/badge.svg`. Red on any of these badges is a stop-the-line signal — the harness's claim "the AI cannot bypass the gate" silently degrades when these tests rot.
 
 ## The problem
 
