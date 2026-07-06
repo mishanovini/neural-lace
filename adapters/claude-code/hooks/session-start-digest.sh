@@ -576,9 +576,17 @@ feed_unresolved_gaps() {
 # Feed 13: NEEDS-YOU.md link + open-item count (§E.6). Tolerate absent.
 # ----------------------------------------------------------------------
 feed_needs_you() {
+  local cwd="${1:-$PWD}"
   local root
-  root="$(nl_main_checkout_root 2>/dev/null || true)"
-  [[ -z "$root" ]] && root="${1:-$PWD}"
+  # nl_main_checkout_root resolves via `git rev-parse --show-toplevel` in the
+  # CURRENT shell cwd, not an argument — so it must be invoked from within
+  # $cwd (a subshell cd, not the caller's actual process cwd) or it silently
+  # ignores this function's own cwd parameter and resolves whatever repo the
+  # calling process happens to be sitting in (harmless in the real SessionStart
+  # hook, where process cwd IS the session's cwd, but a real test-isolation
+  # gap for any fixture/self-test that passes a different cwd explicitly).
+  root="$(cd "$cwd" 2>/dev/null && nl_main_checkout_root 2>/dev/null || true)"
+  [[ -z "$root" ]] && root="$cwd"
   local path="$root/NEEDS-YOU.md"
   [[ -f "$path" ]] || return 0
   # Count the actual per-item "### <title>" blocks that needs-you.sh renders
