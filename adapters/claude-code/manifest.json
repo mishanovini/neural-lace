@@ -288,7 +288,7 @@
       "blocking": false,
       "budget_class": "pretool",
       "added_after": "2026-07",
-      "golden_scenario": "Circuit incident 2026-07-03 cross-repo write — a session whose project root is a different repo edits a neural-lace file (or vice versa) without the operator noticing until much later.",
+      "golden_scenario": "Downstream-product incident 2026-07-03 cross-repo write — a session whose project root is a different repo edits a neural-lace file (or vice versa) without the operator noticing until much later.",
       "fp_expectation": "legitimate cross-repo harness sessions (main-checkout maintenance, orchestrator sessions operating from a linked worktree of the SAME repo) must not warn — both REQUIRED fixtures (main-checkout session, linked-worktree session) pass silently, 11/11 self-test scenarios.",
       "retirement_condition": "zero fires for 30 days post-GA, or superseded by a stronger structural repo-isolation mechanism.",
       "honesty_rationale": "WARN-only by design (specs-f §F.5 item 4) — never blocks; a legitimate cross-repo/orchestrator touch is common and blocking it would be strictly worse than the risk it flags. Points at nl-issue.sh as the canonical cross-project capture path."

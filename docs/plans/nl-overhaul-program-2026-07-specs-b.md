@@ -1,6 +1,9 @@
 # Wave B specs — exact per-task build specs (appendix to nl-overhaul-program-2026-07.md)
 Status: REFERENCE (spec appendix, not an independent plan — task B.0 deliverable)
 prd-ref: n/a — harness-development
+rung: 1
+architecture: coding-harness
+frozen: true
 
 Builder contract (applies to every task): you work on a worker branch cut from `claude/modest-satoshi-150d97` (first action: `git checkout -b worker-<task-id> claude/modest-satoshi-150d97`). Read the master plan section for your task + this appendix section. Edit ONLY the files your section names (plus new files it names). Run your Done-when assertions before committing. Commit on your worker branch with message `overhaul(B.<n>): <summary>`. Do NOT invoke task-verifier, do NOT edit the plan file, do NOT edit `settings.json.template` (B.6 owns wiring), do NOT touch `~/.claude/` (live mirror is install-only). Return: verdict, commit SHAs, ≤5-sentence summary, blockers.
 

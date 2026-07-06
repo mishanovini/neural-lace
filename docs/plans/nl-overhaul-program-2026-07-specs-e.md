@@ -1,4 +1,9 @@
 # Wave E specs — signal loop + telemetry: exact per-task build specs (appendix to nl-overhaul-program-2026-07.md)
+Status: REFERENCE (spec appendix, not an independent plan — task E.0 deliverable)
+prd-ref: n/a — harness-development
+rung: 1
+architecture: coding-harness
+frozen: true
 
 Authored by the Wave-E orchestrator (E.0), 2026-07-03, immediately after the Wave-E
 reconciliation merge (ADR 059 estate + the parallel E.8/E.9 task strand; the ADR 059

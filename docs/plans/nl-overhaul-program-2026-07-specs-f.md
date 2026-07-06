@@ -1,4 +1,9 @@
 # Wave F — mechanical specs (strong-model refinement, authored 2026-07-03 by the program-origin Fable session)
+Status: REFERENCE (spec appendix, not an independent plan — task F.0 deliverable)
+prd-ref: n/a — harness-development
+rung: 1
+architecture: coding-harness
+frozen: true
 
 Context at authoring: Waves A–D live (doctor --full LITERAL GREEN 8/8 @ b8a1597; evidence
 addendum 03a7827). Wave E batch 1 merged (#79), batch 2 running, batch 3 + §E.W ahead.
@@ -81,7 +86,7 @@ but MERGE F.2 last within the batch.
   harness-reviewer re-review (E.3 threshold)"` via a jq transform, ledger-emit, and
   digest line. Self-test: fixture ledger crossing → manifest copy flips + note.
   Runs from the E.5 weekly KPI pass (not a new hook — zero new chain entries).
-- Candidate gate (Circuit incident 2026-07-03, golden scenario on file): PreToolUse
+- Candidate gate (downstream-product incident 2026-07-03, golden scenario on file): PreToolUse
   WARN (not block) on Edit/Write targeting the NL repo from a session whose project
   root ≠ NL repo, pointing at nl-issue.sh. Ship ONLY if it passes the §10 evidence
   bar (FP expectation: legitimate cross-repo harness sessions — orchestrators in
