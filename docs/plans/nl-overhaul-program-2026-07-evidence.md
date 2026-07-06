@@ -1187,3 +1187,72 @@ with the dedicated clone the refusal becomes log-and-proceed (clone isolation ma
 NEW FP CLASS (verifier live-probe artifact): budget-active-plans double-counts when doctor runs from
 a linked worktree (worktree root treated as 2nd root, same plans counted twice: "6 across 2 roots"
 vs true 3) — fix = de-dup roots by git-common-dir. Fix round dispatched.
+
+## F.6 fix-round evidence (builder-authored draft — NOT verified; the verifier re-derives this
+## independently before any checkbox flips)
+
+Branch `claude/f6-sync-clone-log-and-proceed`, `adapters/claude-code/scripts/sync-pt-to-personal.sh`
+(commit pending — see the branch tip at hand-off). Resolves the round-1 F.6 FAIL above per the
+orchestrator-recorded design decision: under §SYNC-CLONE-C the daemon's mutations run exclusively
+against `$SYNC_CLONE_DIR`, never the caller's checkout, so B.12's unconditional refuse-and-die
+contradicted the Done-when ("a live sync run succeeds while an interactive session is open").
+
+Change: the interactive-session-lock guard (step 0 of `_main_sync`) now runs a CLONE-PATH CHECK —
+`_resolve_sync_clone_dir` is hoisted ahead of the guard (new step -0.5) so `$clone_dir` is known
+before the liveness check fires, and a new `_normalize_path` helper (`cygpath -u` preferred, falls
+back to `readlink -f`, then the raw string) compares the caller's `git rev-parse --show-toplevel`
+against `$clone_dir` cross-spelling-safe (Windows-native "C:/Users/..." vs MSYS "/tmp/..." for the
+same directory).
+  - Caller checkout != clone (the real/only-supported shape): LOG-AND-PROCEED. `isl_refuse_log`
+    still fires with a new "log-and-proceed" verdict (not silently skipped) naming the lock holder
+    — refusal becomes observability, not a block.
+  - Caller checkout == clone (degenerate/unsupported invocation — someone runs the script from
+    inside `$SYNC_CLONE_DIR` itself): REFUSE-and-die, unchanged from B.12. This is the only branch
+    where refusal still applies.
+Script header's DEDICATED-CLONE ARCHITECTURE note and the `-h`/`--help` usage text both rewritten
+to describe the branch, replacing the stale "refusal log accumulates zero entries" framing (round-1
+FAIL) with "zero REFUSED entries outside the clone path, log-and-proceed entries when a session is
+genuinely open."
+
+Self-test (`sync-pt-to-personal.sh --self-test`, sandboxed per HARNESS_SELFTEST=1 + ISL_LOG_FILE +
+ISL_PROJECTS_ROOT + SYNC_CLONE_DIR + GIT_CONFIG_GLOBAL all redirected under `mktemp -d`, confirmed
+zero writes to the real `~/.claude/{logs,sync-clone}` before/after): 10/10 PASS, run twice for
+flakiness (stable both times).
+  - S8 (rewritten from round-1's "zero-touch + zero-refusal" framing): fresh ISL transcript AND the
+    explicit `.claude/state/interactive-session.lock` file both present on the caller checkout,
+    `ISL_BYPASS` unset, real flagless invocation (`bash "$SCRIPT_ABS_PATH" "$sha"`, not internal
+    function calls) — asserts rc=0, caller HEAD/branch byte-identical before/after, log gained
+    EXACTLY ONE entry with verdict `log-and-proceed` naming `repo=<caller-toplevel>`, zero `refused`
+    entries, dedicated clone bootstrapped.
+  - S9 (new): real flagless invocation with `SYNC_CLONE_DIR` pointed AT the caller checkout itself
+    (the degenerate case) plus the same live-transcript+lock-file fixture — asserts rc!=0, mirror
+    unchanged, one `refused` entry logged. Proves the clone-path check, not a blanket
+    log-and-proceed, governs S8's pass.
+`interactive-session-lock.sh --self-test`: 6/6 PASS, unchanged (library itself not touched).
+
+Livesmoke (real flagless run, NOT via `--self-test`, fixtures under `/tmp` — the scratchpad's
+Windows path proved too long for git's bare-repo unpack and was abandoned for this fixture):
+  1. Canonical + mirror bare repos + a caller checkout ("work") with `origin`/`personal` remotes,
+     one new commit on `origin` not yet on `personal`, and a real
+     `work/.claude/state/interactive-session.lock` file created (touch, no mtime tricks — genuinely
+     fresh). `SYNC_CLONE_DIR` pointed at a scratch path distinct from `work`.
+     Ran `bash sync-pt-to-personal.sh <sha>` from inside `work` with the lock file present:
+     exit code 0; log file gained exactly one line:
+     `<ts> log-and-proceed daemon=sync-pt-to-personal repo=C:/.../f6-livesmoke/work window=15min bypass=0`;
+     mirror bare repo's `master` advanced to the cherry-picked, tree-verified commit
+     (`9a3bd6d...`, tree matched `origin`'s); `work`'s HEAD/branch unchanged
+     (`2f194e08.../master` before and after) — the caller checkout was never touched.
+  2. Degenerate case, same fixtures: cloned a fresh working copy of the canonical bare repo,
+     wired `personal` as its second remote, dropped a live-transcript + lock file scoped to ITS
+     OWN checkout dir, then ran the script with `SYNC_CLONE_DIR` pointed AT that same checkout
+     (making caller == clone). Exit code 1; log file recorded
+     `<ts> refused daemon=sync-pt-to-personal repo=.../clone-is-caller ... bypass=0`; mirror
+     `master` unchanged — confirms the refusal branch still fires when the clone-path check
+     legitimately applies.
+Fixtures cleaned up after (`rm -rf /tmp/f6-livesmoke`); no real `~/.claude/sync-clone` or
+`~/.claude/logs/interactive-session-lock.log` touched by any of the above (confirmed absent
+before and after).
+
+No shellcheck available in this environment to lint the diff; self-test + livesmoke are the
+verification oracle. CR-byte check (`cmp` against a stripped copy) confirms the edited file has
+no CRLF contamination.

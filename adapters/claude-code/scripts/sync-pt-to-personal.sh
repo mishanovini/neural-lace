@@ -27,14 +27,26 @@
 #   clone can be bootstrapped with the same canonical+mirror remote URLs — no
 #   `checkout`, `reset`, `cherry-pick`, `commit`, or `push` ever touches it.
 #
-#   The B.12 interactive-session-lock guard STAYS as defense-in-depth (per the
-#   F.6 task line): it still runs before any mutation and still refuses if the
-#   caller's repo shows a live session, in case this script is ever invoked
-#   against a checkout in a mode that would mutate it. But because the actual
-#   mutations happen exclusively in $SYNC_CLONE_DIR, a normal daemon run never
-#   trips it and the refusal log accumulates zero interactive-checkout-touch
-#   entries from this path — that emptiness is the F.6 Done-when's third
-#   clause, not merely "the guard exists."
+#   The B.12 interactive-session-lock guard STAYS as defense-in-depth, but its
+#   verdict now branches on WHICH checkout is live (F.6 fix round, resolving
+#   the verified gap: the guard used to refuse-and-die unconditionally, which
+#   contradicted the Done-when "a live sync run succeeds while an interactive
+#   session is open"):
+#     - caller checkout is a NORMAL interactive checkout, distinct from
+#       $SYNC_CLONE_DIR (the expected/only-supported shape of a real run):
+#       LOG-AND-PROCEED. A live session on the caller never blocks the sync,
+#       because the caller's tree is never touched — the log line still
+#       records the lock holder (repo + daemon + verdict) for observability.
+#     - caller checkout IS $SYNC_CLONE_DIR itself, or the ISL liveness check
+#       somehow fires against the clone (a misconfigured/degenerate
+#       invocation this script does not otherwise support — e.g. someone
+#       manually `cd`s into the dedicated clone and runs it from there):
+#       REFUSE-and-die, unchanged from B.12. This is the ONLY branch where
+#       refusal still applies — defense-in-depth for the one shape where a
+#       live session sharing the mutated tree would actually be unsafe.
+#   The refusal log accumulating zero REFUSED entries tagged with a caller
+#   path outside $SYNC_CLONE_DIR, while still gaining LOG-AND-PROCEED entries
+#   when a real session is open, is the F.6 Done-when's third clause.
 #
 # Usage:
 #   sync-pt-to-personal.sh <PR-number-or-commit-SHA>
@@ -96,6 +108,22 @@ _discover_mirror_remote() {
       return 0
     fi
   done < <(git -C "$repo_dir" remote -v 2>/dev/null | awk '$3=="(push)"{print $1"\t"$2}' | awk '!seen[$1]++')
+}
+
+# Normalize a path for cross-spelling comparison (the clone-path check needs
+# this: `git rev-parse --show-toplevel` renders Windows-native, e.g.
+# "C:/Users/...", while a raw $SYNC_CLONE_DIR/cwd on MSYS bash is commonly
+# "/c/..." or "/tmp/..." — same directory, different spelling). Preference
+# order: `cygpath -u` (canonical POSIX form, when available — covers both
+# spellings uniformly) > `readlink -f` (resolves symlinks, same-spelling
+# only) > the raw string (last resort, exact-match only).
+_normalize_path() {
+  local p="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -u "$p" 2>/dev/null && return 0
+  fi
+  readlink -f "$p" 2>/dev/null && return 0
+  printf '%s' "$p"
 }
 
 # Parse owner from a GitHub HTTPS/SSH URL. Echoes empty on no match.
@@ -219,26 +247,52 @@ _main_sync() {
   git_toplevel="$(git -C "$caller_repo_dir" rev-parse --show-toplevel 2>/dev/null || echo "")"
   [ -n "$git_toplevel" ] && caller_repo_dir="$git_toplevel"
 
+  # -0.5. Resolve the dedicated sync-clone path NOW (read-only path
+  #       arithmetic, no clone/bootstrap yet — that happens at step 2 below).
+  #       Needed ahead of the ISL guard so the guard can tell a normal
+  #       interactive caller apart from the degenerate case of the script
+  #       being run FROM the clone itself (see step 0's clone-path check).
+  clone_dir="$(_resolve_sync_clone_dir "$caller_repo_dir")"
+
   # 0. Interactive-session-lock guard (B.12 — see
   #    docs/discoveries/2026-06-02-component-c-sync-daemon-thrashes-live-checkout.md
-  #    and hooks/lib/interactive-session-lock.sh for the contract). Kept as
-  #    DEFENSE-IN-DEPTH per the F.6 task line even though, under the
-  #    dedicated-clone architecture below, this script's mutations never touch
-  #    $caller_repo_dir — this guard is what makes that guarantee cheap to
-  #    verify (a green refusal log with zero touches from this daemon path IS
-  #    the F.6 Done-when's proof, not a contradiction of "never mutates").
+  #    and hooks/lib/interactive-session-lock.sh for the contract). Verdict
+  #    branches on the CLONE-PATH CHECK (is the caller checkout the dedicated
+  #    clone itself?) — see the header note above for the design rationale.
   local isl_lib
   isl_lib="${ISL_LIB_PATH:-$SCRIPT_DIR/../hooks/lib/interactive-session-lock.sh}"
   if [ -f "$isl_lib" ]; then
     # shellcheck source=/dev/null
     . "$isl_lib"
     if isl_live_session "$caller_repo_dir"; then
-      if [ "${ISL_BYPASS:-0}" = "1" ]; then
+      # Clone-path check: normalize both sides (_normalize_path — cygpath -u
+      # preferred, so a Windows-native toplevel from `git rev-parse
+      # --show-toplevel` and an MSYS-spelled $SYNC_CLONE_DIR/cwd compare
+      # equal when they name the same directory) so this comparison isn't
+      # fooled by spelling differences alone.
+      local caller_real clone_real
+      caller_real="$(_normalize_path "$caller_repo_dir")"
+      clone_real="$(_normalize_path "$clone_dir")"
+
+      if [ "$caller_real" = "$clone_real" ]; then
+        # Degenerate/unsupported shape: the caller checkout IS the dedicated
+        # clone. The never-touches-the-caller-tree guarantee does not hold
+        # here (this run WOULD mutate the very tree the live session is in)
+        # — refuse, unchanged from B.12. Defense-in-depth for the one case
+        # where it still matters.
+        isl_refuse_log "$caller_repo_dir" "sync-pt-to-personal"
+        _die "interactive session live on $caller_repo_dir, which IS the dedicated sync clone ($clone_dir) — refusing to run (refusal logged to ~/.claude/logs/interactive-session-lock.log; operator-attended runs may set ISL_BYPASS=1 to override). This is the one shape where a live session shares the tree this script mutates."
+      elif [ "${ISL_BYPASS:-0}" = "1" ]; then
         isl_refuse_log "$caller_repo_dir" "sync-pt-to-personal" "bypassed"
         _log "interactive session live on $caller_repo_dir — ISL_BYPASS=1 set; proceeding (bypass logged; dedicated-clone architecture means this does not touch the live checkout regardless)"
       else
-        isl_refuse_log "$caller_repo_dir" "sync-pt-to-personal"
-        _die "interactive session live on $caller_repo_dir — refusing to run (refusal logged to ~/.claude/logs/interactive-session-lock.log; operator-attended runs may set ISL_BYPASS=1). Note: this script only mutates its dedicated sync clone, never $caller_repo_dir directly — this refusal is defense-in-depth per B.12/F.6."
+        # Normal shape: caller is a distinct interactive checkout, not the
+        # clone. The dedicated-clone architecture means this run never
+        # touches $caller_repo_dir, so a live session there is not unsafe —
+        # LOG-AND-PROCEED (F.6 fix round). The log line still names the lock
+        # holder for observability.
+        isl_refuse_log "$caller_repo_dir" "sync-pt-to-personal" "log-and-proceed"
+        _log "interactive session live on $caller_repo_dir — proceeding (logged; dedicated-clone architecture means this run only mutates $clone_dir, never the live checkout)"
       fi
     fi
   else
@@ -266,10 +320,10 @@ _main_sync() {
   _log "canonical remote: $CANONICAL_REMOTE -> $canonical_url"
   _log "mirror remote:    $mirror_name -> $mirror_url (owner: ${mirror_owner:-<unparsed>})"
 
-  # 2. Resolve + bootstrap the DEDICATED sync clone. All mutating operations
-  #    from here on run with `git -C "$clone_dir"` — the caller's working
-  #    tree/HEAD is never touched again in this function.
-  clone_dir="$(_resolve_sync_clone_dir "$caller_repo_dir")"
+  # 2. Bootstrap the DEDICATED sync clone (path already resolved at step
+  #    -0.5, ahead of the ISL guard). All mutating operations from here on
+  #    run with `git -C "$clone_dir"` — the caller's working tree/HEAD is
+  #    never touched again in this function.
   _log "dedicated sync clone: $clone_dir"
   if ! _ensure_sync_clone "$clone_dir" "$canonical_url" "$mirror_name" "$mirror_url"; then
     _die "could not bootstrap dedicated sync clone at $clone_dir"
@@ -579,14 +633,16 @@ _self_test() {
   # Scenario S8 (the F.6 Done-when's core proof, mirroring the REAL flagless
   # invocation shape): run `sync-pt-to-personal.sh <sha>` for real (not just
   # calling internal functions) with $tmp/work as an ATTENDED-LOOKING repo
-  # (fresh transcript under its ISL slug -> isl_live_session TRUE) and confirm
-  # (a) the run still completes successfully because it never mutates
-  # $tmp/work in the first place (dedicated-clone architecture, not a bypass),
-  # (b) $tmp/work's branch/HEAD is byte-identical before and after, and
-  # (c) the refusal log has ZERO entries — because a script that never
-  # attempts to mutate the caller's tree never trips the guard in the first
-  # place. This is the literal "interactive-session-lock refusal log shows
-  # zero interactive-checkout touches from the daemon path" Done-when clause.
+  # (fresh transcript under its ISL slug -> isl_live_session TRUE), with the
+  # lock file present too, and confirm
+  # (a) the run still completes successfully (LOG-AND-PROCEED, not a refusal
+  # and not the ISL_BYPASS path — ISL_BYPASS is unset in this scenario),
+  # (b) $tmp/work's branch/HEAD is byte-identical before and after (proves
+  # the clone-path check correctly identified $tmp/work as NOT the clone), and
+  # (c) the log gained exactly one entry, verdict "log-and-proceed", naming
+  # the lock holder (repo=$tmp/work) — the observability half of the F.6 fix
+  # (never zero entries: a live session IS logged, just not refused). This is
+  # the literal "sync proceeds from the clone + logs" half of the F.6 task.
   (
     cd "$tmp/work"
     # Mirror remote stays a plain local bare-repo path (not github.com-shaped)
@@ -608,7 +664,9 @@ _self_test() {
     before_branch="$(git symbolic-ref --short -q HEAD || echo "detached")"
 
     # Simulate a LIVE interactive session on $tmp/work via a fresh transcript
-    # under its ISL project slug (same mechanism the real lock checks).
+    # under its ISL project slug (same mechanism the real lock checks) AND
+    # the explicit lock file (belt-and-suspenders — the task line calls out
+    # "scenario with the lock file present").
     local slug tdir
     slug="$(isl_project_slug_candidates "$tmp/work" 2>/dev/null | head -n 1)"
     if [ -z "$slug" ]; then
@@ -618,9 +676,12 @@ _self_test() {
     tdir="$ISL_PROJECTS_ROOT/$slug"
     mkdir -p "$tdir"
     : > "$tdir/session-live.jsonl"
+    mkdir -p "$tmp/work/.claude/state"
+    : > "$tmp/work/.claude/state/interactive-session.lock"
 
     rm -f "$ISL_LOG_FILE"
     rm -rf "${SYNC_CLONE_DIR:?}"
+    unset ISL_BYPASS
 
     local sha; sha="$(git rev-parse HEAD)"
     local out rc
@@ -634,14 +695,79 @@ _self_test() {
     local log_lines=0
     [ -f "$ISL_LOG_FILE" ] && log_lines=$(wc -l < "$ISL_LOG_FILE" | tr -d ' ')
 
+    rm -f "$tmp/work/.claude/state/interactive-session.lock"
+
+    # repo= in the log is the caller dir as `git rev-parse --show-toplevel`
+    # renders it (Windows-native on this platform, e.g. "C:/Users/...") which
+    # can differ in spelling from $tmp (MSYS-style "/tmp/..." here) even
+    # though both name the same directory — match on the toplevel spelling
+    # actually recorded, or fall back to a basename check, so this assertion
+    # isn't platform-path-form-fragile.
+    local work_toplevel
+    work_toplevel="$(git -C "$tmp/work" rev-parse --show-toplevel 2>/dev/null || echo "$tmp/work")"
     if [ "$rc" -eq 0 ] \
        && [ "$after_head" = "$before_head" ] && [ "$after_branch" = "$before_branch" ] \
-       && [ "$log_lines" = "0" ] \
+       && [ "$log_lines" = "1" ] \
+       && grep -q 'log-and-proceed' "$ISL_LOG_FILE" \
+       && { grep -q "repo=$work_toplevel" "$ISL_LOG_FILE" || grep -q "repo=$tmp/work" "$ISL_LOG_FILE"; } \
+       && ! grep -q '^[^ ]* refused ' "$ISL_LOG_FILE" \
        && [ -d "$SYNC_CLONE_DIR/.git" ]; then
-      echo "  S8 live-session real invocation (zero-touch + zero-refusal): PASS"
+      echo "  S8 live-session+lock-file real invocation (log-and-proceed from clone): PASS"
     else
-      echo "  S8 live-session real invocation (zero-touch + zero-refusal): FAIL (rc=$rc before=$before_head/$before_branch after=$after_head/$after_branch log_lines=$log_lines)"
+      echo "  S8 live-session+lock-file real invocation (log-and-proceed from clone): FAIL (rc=$rc before=$before_head/$before_branch after=$after_head/$after_branch log_lines=$log_lines)"
       echo "$out" | sed 's/^/    /'
+      cat "$ISL_LOG_FILE" 2>/dev/null | sed 's/^/    log: /'
+      return 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
+  # Scenario S9 (defense-in-depth retained): simulate the DEGENERATE case of
+  # this script being run FROM the dedicated clone itself, with the lock file
+  # present there. Real flagless invocation (bash "$SCRIPT_ABS_PATH" "$sha"),
+  # cwd = the clone dir, SYNC_CLONE_DIR pointed AT that same dir so the
+  # clone-path check's caller-vs-clone comparison matches. Must still REFUSE
+  # (non-zero rc, "refused" verdict logged, mirror untouched) — proving the
+  # clone-path guard, not a blanket log-and-proceed, is what governs S8.
+  (
+    local clone_as_caller="$tmp/clone-is-caller"
+    rm -rf "$clone_as_caller"
+    git clone --quiet "$tmp/bare-canonical" "$clone_as_caller" 2>/dev/null
+    git -C "$clone_as_caller" remote add personal "$tmp/bare-mirror" 2>/dev/null || true
+    git -C "$clone_as_caller" fetch --quiet personal 2>/dev/null
+
+    local mirror_before
+    mirror_before="$(git -C "$tmp/bare-mirror" rev-parse master 2>/dev/null || echo "")"
+
+    # Fresh transcript + lock file scoped to $clone_as_caller's own ISL slug.
+    local slug tdir
+    slug="$(isl_project_slug_candidates "$clone_as_caller" 2>/dev/null | head -n 1)"
+    if [ -z "$slug" ]; then
+      slug="$(printf '%s' "$clone_as_caller" | tr '/:\\ .' '-----')"
+    fi
+    tdir="$ISL_PROJECTS_ROOT/$slug"
+    mkdir -p "$tdir"
+    : > "$tdir/session-live.jsonl"
+    mkdir -p "$clone_as_caller/.claude/state"
+    : > "$clone_as_caller/.claude/state/interactive-session.lock"
+
+    rm -f "$ISL_LOG_FILE"
+
+    local sha; sha="$(git -C "$clone_as_caller" rev-parse master)"
+    local out rc
+    out="$(cd "$clone_as_caller" && SYNC_CLONE_DIR="$clone_as_caller" bash "$SCRIPT_ABS_PATH" "$sha" 2>&1)"
+    rc=$?
+
+    local mirror_after
+    mirror_after="$(git -C "$tmp/bare-mirror" rev-parse master 2>/dev/null || echo "")"
+
+    if [ "$rc" -ne 0 ] \
+       && [ "$mirror_after" = "$mirror_before" ] \
+       && grep -q '^[^ ]* refused ' "$ISL_LOG_FILE" 2>/dev/null; then
+      echo "  S9 non-clone-checkout still refuses (defense-in-depth): PASS"
+    else
+      echo "  S9 non-clone-checkout still refuses (defense-in-depth): FAIL (rc=$rc mirror_before=$mirror_before mirror_after=$mirror_after)"
+      echo "$out" | sed 's/^/    /'
+      cat "$ISL_LOG_FILE" 2>/dev/null | sed 's/^/    log: /'
       return 1
     fi
   ) && pass=$((pass+1)) || fail=$((fail+1))
@@ -678,8 +804,11 @@ push) run inside that dedicated clone — the invoking repo's working tree and
 HEAD are never touched (Wave F task F.6 / specs-e SYNC-CLONE-C: the durable
 fix for the sync daemon thrashing a live checkout, docs/discoveries/
 2026-06-02-component-c-sync-daemon-thrashes-live-checkout.md). The B.12
-interactive-session-lock guard still runs first as defense-in-depth. No-op if
-mirror master's tree already matches.
+interactive-session-lock guard still runs first: it LOGS-AND-PROCEEDS when a
+live session is on a normal (non-clone) checkout — the sync never touches
+that tree, so it is safe to proceed, and the log line still records the lock
+holder — and only REFUSES in the degenerate case where the invoking checkout
+IS the dedicated clone itself. No-op if mirror master's tree already matches.
 USAGE
     [ "${1:-}" = "" ] && exit 2 || exit 0
     ;;
