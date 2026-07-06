@@ -581,9 +581,23 @@ feed_needs_you() {
   [[ -z "$root" ]] && root="${1:-$PWD}"
   local path="$root/NEEDS-YOU.md"
   [[ -f "$path" ]] || return 0
-  local open_count
-  open_count="$(grep -cE '^\s*-\s+\[ \]|^###? .*Awaiting' "$path" 2>/dev/null || true)"
-  [[ -z "$open_count" ]] && open_count=0
+  # Count the actual per-item "### <title>" blocks that needs-you.sh renders
+  # under EACH open-item section (Awaiting your decision / Open questions /
+  # In flight) — NOT a regex that also matches the section HEADER lines
+  # themselves (the prior `^###? .*Awaiting` alternative matched the literal
+  # "## Awaiting your decision" header, so any real count collapsed to a
+  # miscounted 1 regardless of how many items were actually open). Decisions
+  # render as "### <title>" blocks; questions/inflight render as "- " bullets
+  # (see needs-you.sh's _ny_render_decision_block / _ny_render_bullet) — the
+  # placeholder lines ("_None open._" / "_Nothing in flight._") contain
+  # neither pattern, so empty sections correctly contribute 0.
+  local open_count=0 n
+  n="$(awk '/^## Awaiting your decision/{flag=1;next}/^## /{flag=0}flag' "$path" 2>/dev/null | grep -cE '^### ' || true)"
+  [[ -n "$n" ]] && open_count=$((open_count + n))
+  n="$(awk '/^## Open questions/{flag=1;next}/^## /{flag=0}flag' "$path" 2>/dev/null | grep -cE '^- ' || true)"
+  [[ -n "$n" ]] && open_count=$((open_count + n))
+  n="$(awk '/^## In flight/{flag=1;next}/^## /{flag=0}flag' "$path" 2>/dev/null | grep -cE '^- ' || true)"
+  [[ -n "$n" ]] && open_count=$((open_count + n))
   [[ "$open_count" -eq 0 ]] && return 0
   printf 'needs-you: %d open item(s) -> %s\n' "$open_count" "$path"
 }
@@ -932,6 +946,44 @@ EOF
   else
     echo "FAIL: S8b sandbox path incorrectly resolved to production path" >&2
     fail=$((fail + 1))
+  fi
+
+  # ---- S9: feed_needs_you POSITIVE path — a NEEDS-YOU.md rendered from a
+  #          ledger with 2 open decision items must report count 2, not the
+  #          prior (buggy) hardcoded-1 miscount that matched the section
+  #          HEADER line itself instead of the per-item "### <title>" blocks.
+  #          Renders via the REAL needs-you.sh (not a hand-rolled fixture
+  #          file) so this test exercises the actual producer/consumer
+  #          contract between the two scripts. ----
+  local s9_needsyou="$HOOKS_DIR/../scripts/needs-you.sh"
+  if [[ -x "$s9_needsyou" ]]; then
+    local s9="$tmp/s9"
+    mkdir -p "$s9/state"
+    (
+      export NEEDS_YOU_STATE_DIR="$s9/state"
+      export NEEDS_YOU_MD_PATH="$s9/NEEDS-YOU.md"
+      unset HARNESS_SELFTEST 2>/dev/null || true
+      bash "$s9_needsyou" add --section decision --text $'Ship tonight?\nTier 1 — reversible.\nMy pick: yes.' --session "sess-s9a" >/dev/null
+      bash "$s9_needsyou" add --section decision --text $'Ship tomorrow?\nTier 1 — reversible.\nMy pick: yes.' --session "sess-s9b" >/dev/null
+    )
+    if [[ -f "$s9/NEEDS-YOU.md" ]]; then
+      local s9_dir; s9_dir="$(dirname "$s9/NEEDS-YOU.md")"
+      # feed_needs_you's root resolution tries nl_main_checkout_root() FIRST
+      # (which shells out to `git rev-parse --show-toplevel` in the CURRENT
+      # cwd) and only falls back to the $1 argument when that's empty — so
+      # this must run from a cwd with NO git ancestry, else it would silently
+      # resolve to this very self-test's own repo checkout instead of the
+      # sandbox, and never touch the fixture at all. $tmp (mktemp -d) is
+      # never inside a git repo.
+      local out9
+      out9="$(cd "$s9_dir" && HOME="$tmp/s9-fake-home" feed_needs_you "$s9_dir")"
+      _ck_contains "S9 feed_needs_you reports count 2 for 2 open decision items" "$out9" "needs-you: 2 open item(s)"
+    else
+      echo "FAIL: S9 needs-you.sh did not render NEEDS-YOU.md fixture" >&2
+      fail=$((fail + 1))
+    fi
+  else
+    echo "SKIP: S9 needs-you.sh not found/executable at $s9_needsyou" >&2
   fi
 
   rm -rf "$tmp" 2>/dev/null || true
