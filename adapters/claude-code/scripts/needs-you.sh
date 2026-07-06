@@ -40,9 +40,25 @@
 #     always (a maintenance sweep, not a query).
 #
 #   needs-you.sh render
-#     Runs expire, then rewrites NEEDS-YOU.md from current state in full (all
-#     four sections, always in the same order, always all four headers present
-#     even when empty). Exit 0 on success, 1 on write failure.
+#     Runs bootstrap-migrate (see below), then expire, then rewrites
+#     NEEDS-YOU.md from current state in full (all four sections, always in
+#     the same order, always all four headers present even when empty). Exit
+#     0 on success, 1 on write failure.
+#
+#   needs-you.sh bootstrap-migrate
+#     NL-FINDING-035: if NEEDS-YOU.md is ABSENT, or PRESENT but missing any of
+#     the four canonical section headers (i.e. it is a stale hand-authored
+#     file predating the render machinery, or was hand-edited despite the
+#     "do not hand-edit" notice), this ingests any pre-existing content as a
+#     single migrated `--section decision` ledger entry (so an operator item
+#     that was only ever a hand-written heading survives as a real ledger
+#     entry, not silently discarded) and marks migration done, then falls
+#     through to a full render. Idempotent: once the ledger contains a
+#     `migrated_from_legacy_file` marker item (or the file already has all 4
+#     headers), this is a no-op. Called automatically by `render` (and hence
+#     by `add`/`resolve`, which both call render); exposed standalone for
+#     scripting/tests. Exit 0 always (best-effort ingestion; never blocks the
+#     render it precedes).
 #
 #   needs-you.sh has-entry-for-session <session-id>
 #     Exit 0 if the ledger has ANY open (unresolved) entry whose session field
@@ -428,10 +444,97 @@ _ny_render_decided_line() {
 }
 
 # ----------------------------------------------------------------------
-# cmd_render — expire, then rewrite NEEDS-YOU.md in full (4 sections, always).
+# NY_CANONICAL_HEADERS — the four canonical section headers, in render order.
+# Shared by cmd_bootstrap_migrate (presence check) and the self-test.
+# ----------------------------------------------------------------------
+NY_CANONICAL_HEADERS=(
+  "## Awaiting your decision"
+  "## Open questions"
+  "## In flight (sessions + waves)"
+  "## Recently decided for your §8 review"
+)
+
+# _ny_md_has_all_headers <path> — true (exit 0) iff the file exists and
+# contains all 4 canonical headers; false otherwise (absent file, or present
+# but missing one or more headers — e.g. a stale hand-authored file).
+_ny_md_has_all_headers() {
+  local path="$1"
+  [[ -f "$path" ]] || return 1
+  local h
+  for h in "${NY_CANONICAL_HEADERS[@]}"; do
+    grep -qF "$h" "$path" 2>/dev/null || return 1
+  done
+  return 0
+}
+
+# _ny_ledger_has_legacy_migration_marker — true iff the ledger already
+# recorded a migrated-legacy-file item (migration is idempotent: run once).
+_ny_ledger_has_legacy_migration_marker() {
+  local cur; cur=$(_ny_read_ledger)
+  local n
+  n=$(echo "$cur" | jq '[.items[] | select(.tier == "migrated_from_legacy_file")] | length' 2>/dev/null || echo 0)
+  [[ "${n:-0}" -gt 0 ]]
+}
+
+# ----------------------------------------------------------------------
+# cmd_bootstrap_migrate — NL-FINDING-035. See header comment ("bootstrap-
+# migrate") for the full contract. Best-effort, idempotent, never fails the
+# render it precedes.
+# ----------------------------------------------------------------------
+cmd_bootstrap_migrate() {
+  _ny_ensure_state
+  local md_path; md_path="$(_ny_md_path)"
+
+  # Already-canonical (or already-migrated): nothing to do.
+  _ny_md_has_all_headers "$md_path" && return 0
+  _ny_ledger_has_legacy_migration_marker && return 0
+
+  # Absent file with an empty ledger and no prior migration: nothing to
+  # migrate — a plain render (which the caller performs next) will create a
+  # well-formed file from scratch. Only ingest content when the file exists
+  # and actually has non-whitespace body content worth preserving.
+  if [[ ! -f "$md_path" ]]; then
+    return 0
+  fi
+
+  local body
+  body="$(cat "$md_path" 2>/dev/null)"
+  # Strip a leading "# NEEDS-YOU"-style title line (any leading-#-heading
+  # whose text starts with NEEDS-YOU, matching both the "# NEEDS-YOU" and
+  # "# NEEDS-YOU.md — ..." variants seen in the wild) and any blank lines
+  # immediately after it, so (a) we can tell if there's any substantive
+  # content left to migrate, and (b) the migrated item's TITLE (the render
+  # pipeline's `head -1` of --text) is the real first content line — e.g.
+  # "## [2026-07-05] Activate auto-resume daemon (E.7) ..." — rather than
+  # this boilerplate banner line collapsing to "(untitled decision)".
+  local stripped
+  stripped="$(printf '%s\n' "$body" | sed -E '1{/^# NEEDS-YOU/d}' | sed -E '/./,$!d')"
+  if [[ -z "$(printf '%s\n' "$stripped" | grep -vE '^[[:space:]]*$')" ]]; then
+    return 0
+  fi
+
+  # Ingest the stripped pre-existing body as one migrated decision entry, so
+  # a hand-authored heading (e.g. an operator "## [DATE] <title>" block with
+  # **Context:**/**What I need:**/**Reply:** lines) survives as a real
+  # ledger item under "Awaiting your decision" instead of being silently
+  # overwritten by the next render. --tier carries the
+  # "migrated_from_legacy_file" marker (idempotency + provenance); it is not
+  # one of the normal 1|2|3 reversibility tiers and is never interpreted as
+  # such by render (render only ever prints --tier for informational
+  # purposes and doesn't currently render it at all, so this is safe).
+  cmd_add --section decision --text "$stripped" --session "legacy-migration" \
+    --tier "migrated_from_legacy_file" >/dev/null
+
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_render — bootstrap-migrate, then expire, then rewrite NEEDS-YOU.md in
+# full (4 sections, always).
 # ----------------------------------------------------------------------
 cmd_render() {
   _ny_ensure_state
+  cmd_bootstrap_migrate
   cmd_expire
 
   local cur; cur=$(_ny_read_ledger)
@@ -692,6 +795,112 @@ cmd_selftest() {
 
   rm -rf "$sandbox"
 
+  # ----------------------------------------------------------------------
+  # T18-T21: NL-FINDING-035 bootstrap-migrate. T18 mirrors the EXACT live
+  # production shape found on the operator's machine: a stale hand-authored
+  # NEEDS-YOU.md containing only an ad-hoc "## [DATE] <title>" heading (no
+  # canonical section headers at all) with an EMPTY ledger — this is the
+  # real invocation shape (via `render`, called by `add`/`resolve`, and
+  # transitively by whatever calls those in production), not a synthetic
+  # flagged/self-test-only shape.
+  # ----------------------------------------------------------------------
+  local sandbox3; sandbox3=$(mktemp -d)
+  local legacy_body
+  legacy_body=$'# NEEDS-YOU.md — the per-machine awaiting-operator ledger (E.6), same\n\n## [2026-07-05] Activate auto-resume daemon (E.7) — low urgency, one 2-min action\n**Context:** E.7 session-resumer is built + self-test 10/10 green.\n**What I need:** close the 6 dead session windows.\n**Reply:** "closed" (I register) · "register now" (accept noise) · "defer"'
+  (
+    export NEEDS_YOU_STATE_DIR="$sandbox3/state"
+    export NEEDS_YOU_MD_PATH="$sandbox3/NEEDS-YOU.md"
+    mkdir -p "$NEEDS_YOU_STATE_DIR"
+    printf '%s\n' "$legacy_body" > "$NEEDS_YOU_MD_PATH"
+    echo '{"schema_version":1,"items":[]}' > "$NEEDS_YOU_STATE_DIR/ledger.json"
+    cmd_render >/dev/null 2>&1
+  )
+  local md3="$sandbox3/NEEDS-YOU.md"
+  local headers_ok3=1
+  for h in "${NY_CANONICAL_HEADERS[@]}"; do
+    grep -qF "$h" "$md3" || headers_ok3=0
+  done
+  if [[ "$headers_ok3" == "1" ]]; then
+    ok "T18 bootstrap-migrate: stale live-shape file gains all 4 canonical headers"
+  else
+    fail_ "T18 bootstrap-migrate: canonical headers still missing after render on stale live-shape file"
+  fi
+  if grep -q "Activate auto-resume daemon" "$md3"; then
+    ok "T18b bootstrap-migrate: legacy heading content preserved as a migrated ledger entry"
+  else
+    fail_ "T18b bootstrap-migrate: legacy content lost, not migrated into the ledger"
+  fi
+  # The migrated item must render as a real "### <title>" decision block
+  # under "Awaiting your decision" (i.e. countable by session-start-digest.sh
+  # feed_needs_you, which counts "^### " lines in that section) — not just
+  # present somewhere in the file.
+  local awaiting_block3
+  awaiting_block3=$(awk '/^## Awaiting your decision/{flag=1;next}/^## /{flag=0}flag' "$md3")
+  if echo "$awaiting_block3" | grep -qE '^### '; then
+    ok "T18c migrated legacy item counts as an open item under Awaiting your decision"
+  else
+    fail_ "T18c migrated legacy item did not render as a countable ### block under Awaiting your decision"
+  fi
+
+  # T19: idempotency — rendering again does not create a SECOND migrated
+  # ledger item. (Note: the rendered markdown itself legitimately shows the
+  # migrated text twice within a single item's block — once as the "### "
+  # title line, once as the body — since _ny_render_decision_block always
+  # renders title-then-full-body for every decision item, migrated or not;
+  # see T4's "Ship tonight?" fixture for the same non-migration-related
+  # shape. So idempotency must be asserted against the LEDGER's item count,
+  # not a grep-count over the rendered file.)
+  (
+    export NEEDS_YOU_STATE_DIR="$sandbox3/state"
+    export NEEDS_YOU_MD_PATH="$sandbox3/NEEDS-YOU.md"
+    cmd_render >/dev/null 2>&1
+  )
+  local migrate_count3
+  migrate_count3=$(jq '[.items[] | select(.tier == "migrated_from_legacy_file")] | length' "$sandbox3/state/ledger.json" 2>/dev/null || echo "?")
+  [[ "$migrate_count3" == "1" ]] && ok "T19 bootstrap-migrate is idempotent (exactly 1 migrated ledger item after repeat render)" \
+    || fail_ "T19 expected exactly 1 migrated ledger item after repeat render, got $migrate_count3"
+  rm -rf "$sandbox3"
+
+  # T20: absent file (no prior NEEDS-YOU.md at all) still renders cleanly
+  # with all 4 headers via the SAME bootstrap-migrate + render path, no
+  # spurious migrated entry (nothing to migrate).
+  local sandbox4; sandbox4=$(mktemp -d)
+  (
+    export NEEDS_YOU_STATE_DIR="$sandbox4/state"
+    export NEEDS_YOU_MD_PATH="$sandbox4/NEEDS-YOU.md"
+    cmd_render >/dev/null 2>&1
+  )
+  local md4="$sandbox4/NEEDS-YOU.md"
+  local headers_ok4=1
+  for h in "${NY_CANONICAL_HEADERS[@]}"; do
+    grep -qF "$h" "$md4" || headers_ok4=0
+  done
+  [[ "$headers_ok4" == "1" ]] && ok "T20 absent file: render still produces all 4 canonical headers" \
+    || fail_ "T20 absent file: canonical headers missing after render"
+  if grep -q "migrated_from_legacy_file\|legacy-migration" "$md4" 2>/dev/null; then
+    fail_ "T20b absent file: spuriously created a migrated entry with nothing to migrate"
+  else
+    ok "T20b absent file: no spurious migrated entry created"
+  fi
+  rm -rf "$sandbox4"
+
+  # T21: an already-well-formed NEEDS-YOU.md (all 4 headers present, real
+  # content) is left alone by bootstrap-migrate — no double-migration of
+  # already-canonical content.
+  local sandbox5; sandbox5=$(mktemp -d)
+  (
+    export NEEDS_YOU_STATE_DIR="$sandbox5/state"
+    export NEEDS_YOU_MD_PATH="$sandbox5/NEEDS-YOU.md"
+    cmd_add --section question --text "Already-canonical fixture question" --session "sess-t21" >/dev/null
+    cmd_render >/dev/null 2>&1
+  )
+  local md5="$sandbox5/NEEDS-YOU.md"
+  local q_count5
+  q_count5=$(grep -c "Already-canonical fixture question" "$md5" || true)
+  [[ "$q_count5" == "1" ]] && ok "T21 well-formed file untouched by bootstrap-migrate (no re-migration)" \
+    || fail_ "T21 expected exactly 1 occurrence, got $q_count5 (possible spurious re-migration)"
+  rm -rf "$sandbox5"
+
   echo ""
   echo "RESULT: $pass passed, $fail failed"
   if [[ "$fail" -gt 0 ]]; then
@@ -715,7 +924,11 @@ Verbs:
                          -> prints new entry id, exit 0
   resolve <id>           [--note STR] -> moves entry to "Recently decided"
   expire                 collapse >7-day-old decided items into a count
-  render                 expire, then rewrite NEEDS-YOU.md in full
+  bootstrap-migrate      migrate a stale/hand-authored NEEDS-YOU.md into the
+                         ledger (NL-FINDING-035); idempotent; also runs
+                         automatically at the start of every `render`
+  render                 bootstrap-migrate, expire, then rewrite NEEDS-YOU.md
+                         in full
   has-entry-for-session <session-id>
                          exit 0 if an OPEN entry exists for that session, else 1
   --self-test            run self-test suite (sandboxed; never touches real state)
@@ -730,6 +943,7 @@ case "$1" in
   add) shift; cmd_add "$@" ;;
   resolve) shift; cmd_resolve "$@" ;;
   expire) shift; cmd_expire "$@" ;;
+  bootstrap-migrate) shift; cmd_bootstrap_migrate "$@" ;;
   render) shift; cmd_render "$@" ;;
   has-entry-for-session) shift; cmd_has_entry_for_session "$@" ;;
   --self-test|--selftest|selftest|self-test) cmd_selftest ;;
