@@ -176,3 +176,14 @@ backoff arithmetic, max-attempts escalation, unresumable fallback, storm cap
 (3 dead + cap 2 -> 2 resumes + 1 queued), tombstone skip, liveness-guard
 skip, and shadow-mode logs-but-does-not-execute. All state sandboxed; the
 real `claude` binary is never invoked under `--self-test`.
+
+## Registration pattern (REQUIRED — quoting lesson 2026-07-06)
+Do NOT inline the bash -c command in /TR: schtasks collapses nested quotes (observed live: the
+inner path quotes truncated the -c argument -> every tick exit 1, silently). Instead create
+%USERPROFILE%\.claude\scripts\resumer-shadow.cmd containing:
+
+    @echo off
+    "C:\Program Files\Git\bin\bash.exe" -c "export PATH=/usr/bin:/mingw64/bin:$PATH; cd '<nl-repo-root-msys>' && RESUMER_SHADOW=1 bash adapters/claude-code/scripts/session-resumer.sh >> <log> 2>&1"
+
+and point /TR at the .cmd. Verify after registering: force one run (schtasks /Run), then
+schtasks /Query /V must show Last Result: 0 (267009 = still running; wait). Per-machine step.
