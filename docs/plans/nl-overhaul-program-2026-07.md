@@ -353,8 +353,8 @@ B.1 (harness-doctor) + B.6 (first green run against the live mirror) is the walk
 ## Definition of Done
 
 - [ ] All Wave B–F tasks checked (task-verifier)
-- [ ] Closure Contract commands pass on temp-HOME install AND live mirror
-- [ ] Golden + synthetic evals green in CI on master
+- [x] Closure Contract commands pass on temp-HOME install AND live mirror
+- [x] Golden + synthetic evals green in CI on master
 - [ ] F.4 completion report exists with baseline comparison
 - [ ] SCRATCHPAD/backlog/plan-estate reconciled (B.9, F.3)
 - [ ] Completion report appended to this plan file

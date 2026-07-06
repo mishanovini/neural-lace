@@ -1368,3 +1368,12 @@ shadow livesmoke: would-have line lands, zero processes spawned). SYNTH-CI: work
 (#82/#83), exact CI commands verified green from clean worktree; REMAINING ORDERED: (1) live Actions run
 green + URL cited -> synth-ci plan boxes via verifier; (2) THEN retire vaporware-volume-gate live PreToolUse
 entry + manifest honest_status (its own note: "CI relocation follows in E.4 companion") — no coverage gap.
+
+## Closure Contract — two boxes flipped (2026-07-06)
+(1) "Closure Contract commands pass on temp-HOME install AND live mirror": temp-HOME battery by the
+closure-battery agent (install exit 0, chain counts 4/8, budgets, goldens 6/6, synthetic 8/8, byte
+budget 9786/9953 <30000, all 70 hook self-tests rc=0) + the LITERAL one-shot `harness-doctor.sh
+--full` from this session: "[doctor] GREEN — 21 checks passed", exit 0, zero warns (task b2kb25ioo).
+(2) "Golden + synthetic evals green in CI on master": scheduled Actions run 28785582207 success on
+master (synthetic 8/8 + goldens in-workflow); PR-trigger runs also green. Remaining contract boxes:
+all-tasks (E.7+F.4), estate reconcile (final pass at completion), completion report (F.4).
