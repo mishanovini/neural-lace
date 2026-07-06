@@ -437,6 +437,60 @@ warn_decision_block_no_needs_you() {
   return 0
 }
 
+# ----------------------------------------------------------------------
+# needs_you_add_pausing_entry <keyword> <summary> <session-id>
+#
+# E.6/E.10 wiring: the decision-log -> needs-you.sh call-site that
+# doctor-predicate.md (adapters/claude-code/tests/fixtures/wave-e/E.6/
+# doctor-predicate.md, "add — session-wrap.sh PAUSING-path call point")
+# flagged as DOCUMENTED, NOT WIRED. That fragment offered two equally-valid
+# integration points (a session-wrap.sh subcommand, or a direct call from
+# here) and explicitly deferred the choice to E.10/the orchestrator since
+# this file already has MARKER_KEYWORD/MARKER_SUMMARY/the session id in
+# scope right after marker_scan_eval — this is that direct-call option.
+#
+# When a turn ends PAUSING:, the exact-ask text on that marker line is
+# appended to NEEDS-YOU.md's "Awaiting your decision" section via
+# `needs-you.sh add`, so the surfaced decision is mechanically in the
+# ledger the same turn (constitution §2: "chat is a notification; the
+# file is the record") — not just warned-about after the fact by
+# warn_decision_block_no_needs_you (which only fires for the
+# "Decision needed:" §3-block shape, not the PAUSING: marker path).
+#
+# Never blocks: mirrors warn_decision_block_no_needs_you's tolerate-absent
+# contract (E.6 may not have landed / needs-you.sh may be missing on this
+# tree) and every failure mode collapses to a silent no-op, never a
+# non-zero exit from this gate.
+# ----------------------------------------------------------------------
+needs_you_add_pausing_entry() {
+  local keyword="$1" summary="$2" sid="$3"
+  [[ "$keyword" == "PAUSING" ]] || return 0
+  [[ -n "$summary" ]] || return 0
+
+  local nyu=""
+  local repo_root=""
+  if command -v git >/dev/null 2>&1; then
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  fi
+  if [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/scripts/needs-you.sh" ]]; then
+    nyu="${repo_root}/adapters/claude-code/scripts/needs-you.sh"
+  elif [[ -f "${HOME:-}/.claude/scripts/needs-you.sh" ]]; then
+    nyu="${HOME}/.claude/scripts/needs-you.sh"
+  fi
+  [[ -z "$nyu" ]] && return 0   # tolerate-absent: E.6 not present on this tree
+
+  # Skip if this session already has an open ledger entry (e.g. a prior
+  # retry of the same PAUSING turn already recorded it) — avoids piling up
+  # duplicate entries for a single still-open decision across gate re-runs
+  # of the same session id.
+  if bash "$nyu" has-entry-for-session "$sid" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  bash "$nyu" add --section decision --text "$summary" --session "$sid" >/dev/null 2>&1 || true
+  return 0
+}
+
 warn_deferral_phrases() {
   local final_text="$1"
   local patterns=('\bdeferred?\b' '\bTBD\b' '\bFIXME\b' 'follow-up' 'future work' 'next session' 'out of scope for this')
@@ -870,6 +924,45 @@ FAKENYU
     ok "report-mode wrote no ledger events"
   fi
 
+  echo "Scenario 21 (E.6/E.10 wiring): PAUSING: marker -> needs-you.sh add is actually CALLED, appending a real NEEDS-YOU.md ledger entry (closes doctor-predicate.md's 'add — DOCUMENTED, NOT WIRED' gap)"
+  rm -f "$TMP/ledger.jsonl"
+  REPO_ROOT_21=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  if [[ -n "$REPO_ROOT_21" && -x "${REPO_ROOT_21}/adapters/claude-code/scripts/needs-you.sh" ]]; then
+    S21_HOME="$TMP/fake-home-21"
+    mkdir -p "$S21_HOME"
+    jl "$TMP/s21.jsonl" $'Investigated the migration.\n\nPAUSING: the migration drops the legacy column irreversibly — reply go or no-go to proceed?'
+    input21=$(jq -cn --arg t "$TMP/s21.jsonl" --arg s "sess-21" '{"transcript_path":$t,"session_id":$s}')
+    printf '%s' "$input21" | HOME="$S21_HOME" NEEDS_YOU_STATE_DIR="$S21_HOME/ny-state" \
+      NEEDS_YOU_MD_PATH="$S21_HOME/NEEDS-YOU.md" CLAUDE_SESSION_ID="sess-21" \
+      bash "${BASH_SOURCE[0]}" >"$TMP/out21.json" 2>"$TMP/err21.txt"
+    rc=$?
+    [[ "$rc" == "0" ]] && ok "PAUSING marker still passes (non-blocking wiring)" || no "expected exit 0, got $rc"
+    if [[ -f "$S21_HOME/NEEDS-YOU.md" ]] && grep -q "reply go or no-go to proceed" "$S21_HOME/NEEDS-YOU.md" \
+       && grep -q 'session `sess-21`' "$S21_HOME/NEEDS-YOU.md"; then
+      ok "needs-you.sh add was actually called: NEEDS-YOU.md has the PAUSING ask under sess-21"
+    else
+      no "expected NEEDS-YOU.md at $S21_HOME/NEEDS-YOU.md to contain the PAUSING ask for sess-21"
+    fi
+    # Idempotence half: a second gate run for the SAME still-open session
+    # must not append a duplicate entry (needs_you_add_pausing_entry's
+    # has-entry-for-session pre-check).
+    printf '%s' "$input21" | HOME="$S21_HOME" NEEDS_YOU_STATE_DIR="$S21_HOME/ny-state" \
+      NEEDS_YOU_MD_PATH="$S21_HOME/NEEDS-YOU.md" CLAUDE_SESSION_ID="sess-21" \
+      bash "${BASH_SOURCE[0]}" >"$TMP/out21b.json" 2>"$TMP/err21b.txt"
+    # NOTE: each rendered decision block legitimately contains the ask text
+    # TWICE (once as the "### <title>" heading, once as the block body — see
+    # needs-you.sh's _ny_render_decision_block), so a raw text-occurrence
+    # grep is not a valid duplicate-entry oracle. The session-attribution
+    # line ("session `<sid>`") is rendered exactly ONCE per ledger item
+    # regardless of how many times the ask text itself appears within that
+    # item's own block — count THAT instead.
+    dup_count=$(grep -cF 'session `sess-21`' "$S21_HOME/NEEDS-YOU.md" 2>/dev/null || echo 0)
+    [[ "$dup_count" == "1" ]] && ok "re-running the gate for the same open session does not duplicate the ledger entry" \
+      || no "expected exactly 1 ledger item for sess-21 after a repeat run, got $dup_count"
+  else
+    echo "  SKIP: needs-you.sh not found at expected repo-relative path in this checkout"
+  fi
+
   echo ""
   echo "self-test summary: $PASSED passed, $FAILED failed"
   [[ "$FAILED" == "0" ]] && exit 0 || exit 1
@@ -992,6 +1085,12 @@ if [[ "$_SHG_REPORT_MODE" != "1" ]]; then
   if [[ -n "$FINAL_TEXT" ]]; then
     run_demoted_warns "$FINAL_TEXT" "$MARKER_KEYWORD" "$MARKER_SUMMARY" "$RG_SESSION_ID"
   fi
+  # E.6/E.10 wiring: PAUSING: marker -> NEEDS-YOU.md ledger entry (see
+  # needs_you_add_pausing_entry's header comment for the doctor-predicate.md
+  # "DOCUMENTED, NOT WIRED" gap this closes). Runs regardless of whether
+  # FINAL_TEXT extraction succeeded, since MARKER_SUMMARY is already parsed
+  # from marker_scan_eval independent of extract_final_text.
+  needs_you_add_pausing_entry "$MARKER_KEYWORD" "$MARKER_SUMMARY" "$RG_SESSION_ID"
 fi
 
 if [[ "$_SHG_REPORT_MODE" == "1" ]]; then
