@@ -8,7 +8,9 @@ grep_pattern='selftest|self-test|signal-ledger-selftest|orthogonal-plan|pass-acc
 
 _count_pollution() {
   [[ -f "$1" ]] || { echo 0; return; }
-  grep -cE "$grep_pattern" "$1" 2>/dev/null || echo 0
+  local c
+  c=$(grep -cE "$grep_pattern" "$1" 2>/dev/null)
+  echo "${c:-0}"
 }
 
 _purge_file() {
@@ -95,6 +97,35 @@ FIXTURE
       fi
     else
       echo "self-test: FAIL (expected 4 pollution, got $count)" >&2
+      exit 1
+    fi
+
+    # NL-FINDING-034: zero-match EXISTING file. grep -cE exits 1 (no match)
+    # while still printing "0" to stdout; a naive `grep -c ... || echo 0`
+    # double-fires on this case (the || also runs), yielding "0\n0" and
+    # breaking every `[[ $count -eq 0 ]]` caller with a syntax error. This
+    # is the exact shape of every clean production log/state file, so it
+    # must be asserted as its own scenario, not just inferred from the
+    # 4-pollution fixture above.
+    clean_fixture="$tmpdir/clean.log"
+    cat > "$clean_fixture" << 'CLEANFIXTURE'
+2026-07-03T10:00:00Z: real production line
+2026-07-03T10:00:01Z: another real production line
+2026-07-03T10:00:02Z: no pollution tokens anywhere in this file
+CLEANFIXTURE
+
+    clean_count=$(_count_pollution "$clean_fixture")
+    if [[ "$clean_count" == "0" ]]; then
+      echo "self-test: PASS (zero-match existing file → count '0', no double-fire)" >&2
+      purge_output=$(_purge_file "$clean_fixture")
+      if [[ -z "$purge_output" ]]; then
+        echo "self-test: PASS (_purge_file no-ops on clean existing file)" >&2
+      else
+        echo "self-test: FAIL (_purge_file emitted '$purge_output' for a clean file, expected silence)" >&2
+        exit 1
+      fi
+    else
+      echo "self-test: FAIL (zero-match existing file: expected count '0', got '$clean_count' — double-fire regression)" >&2
       exit 1
     fi
 
