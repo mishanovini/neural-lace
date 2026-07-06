@@ -654,12 +654,43 @@ check_wave_e_surfaces() {
     fi
   fi
 
-  # E.5 (harness-kpis.sh) / E.6 (needs-you.sh) doctor predicates: SKIPPED —
-  # those fragments are built in parallel (batch 2) and are not present on
-  # this builder's tree. The orchestrator adds check_wave_e_e5_kpis /
-  # check_wave_e_e6_needs_you (or folds them into this function) at §E.W
-  # integration once adapters/claude-code/tests/fixtures/wave-e/{E.5,E.6}/
-  # doctor-predicate.md exist.
+  # E.6 (needs-you.sh) doctor predicate — implemented at §E.W integration
+  # verbatim per adapters/claude-code/tests/fixtures/wave-e/E.6/doctor-predicate.md
+  # (Predicate 1: script exists+executable+--self-test; Predicate 2: NEEDS-YOU.md
+  # freshness ≤7d whenever an Awaiting-decision item is open — tolerate-absent when
+  # the ledger has never been created). (E.5 harness-kpis predicate remains an
+  # optional follow-up; E.5's Done-when was met without a doctor check.)
+  local ny_script="${repo_root}/adapters/claude-code/scripts/needs-you.sh"
+  if [[ ! -f "$ny_script" ]]; then
+    _red "wave-e-e6-needs-you" "needs-you.sh missing at ${ny_script} — run: bash install.sh"
+  elif [[ ! -x "$ny_script" ]]; then
+    _red "wave-e-e6-needs-you" "needs-you.sh present but not executable — chmod +x ${ny_script}"
+  elif ! grep -q -- '--self-test' "$ny_script"; then
+    _red "wave-e-e6-needs-you" "needs-you.sh missing a --self-test entrypoint despite its manifest selftest claim"
+  fi
+  local ny_nlpaths="${repo_root}/adapters/claude-code/hooks/lib/nl-paths.sh"
+  local ny_main_root=""
+  [[ -f "$ny_nlpaths" ]] && ny_main_root=$(bash -c "source '$ny_nlpaths'; nl_main_checkout_root" 2>/dev/null)
+  [[ -n "$ny_main_root" ]] || ny_main_root="$repo_root"
+  local ny_md="${ny_main_root}/NEEDS-YOU.md"
+  local ny_state="${HOME}/.claude/state/needs-you/ledger.json"
+  if [[ -f "$ny_state" ]] && command -v jq >/dev/null 2>&1; then
+    local ny_open
+    ny_open=$(jq '[.items[] | select(.section == "decision" and .state == "open")] | length' "$ny_state" 2>/dev/null || echo 0)
+    if [[ "${ny_open:-0}" -gt 0 ]]; then
+      if [[ ! -f "$ny_md" ]]; then
+        _red "wave-e-e6-needs-you" "NEEDS-YOU.md missing at main-checkout root (${ny_md}) despite ${ny_open} open decision item(s) — run: bash adapters/claude-code/scripts/needs-you.sh render"
+      else
+        local ny_now ny_mtime ny_age
+        ny_now=$(date -u +%s)
+        ny_mtime=$(stat -c %Y "$ny_md" 2>/dev/null || stat -f %m "$ny_md" 2>/dev/null || echo 0)
+        ny_age=$(( ny_now - ny_mtime ))
+        if [[ "$ny_age" -gt $((7 * 86400)) ]]; then
+          _red "wave-e-e6-needs-you" "NEEDS-YOU.md is $((ny_age / 86400))d stale despite ${ny_open} open decision item(s) — run: bash adapters/claude-code/scripts/needs-you.sh render"
+        fi
+      fi
+    fi
+  fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
 
