@@ -29,6 +29,11 @@
 #                                          branches stale >=7d; one-word
 #                                          operator approval each)
 #  15. harness "what's new" changelog    (§F.2b — tolerate absent; harness-changelog.sh --digest-line)
+#  16. backlog accountability proposals  (observability O.9 pre-activation
+#                                          increment BACKLOG-LOOP-01 —
+#                                          docs/backlog.md open rows overdue
+#                                          per age tier; one-word disposition
+#                                          proposals, once per <ID>-<ISOweek>)
 #
 # A quiet harness produces a 2-line digest: doctor verdict + "all quiet".
 #
@@ -773,6 +778,105 @@ feed_staleness_proposals() {
 }
 
 # ----------------------------------------------------------------------
+# Feed 16: backlog accountability proposals (observability O.9 —
+# BACKLOG-LOOP-01 pre-activation increment; operator directive 2026-07-06:
+# "I do not look at the backlog and I forget about it; Claude manages it").
+#
+# Parses docs/backlog.md STRUCTURED open rows — lines shaped
+#   - **<ID> — <title>** (added YYYY-MM-DD ...; `priority:high|medium|low`) ...
+# — skipping terminal-marked rows: DISPOSITIONED / IMPLEMENTED / ABSORBED
+# (the directive's three) plus the same-class markers observed live in the
+# real file (CLOSED / SUPERSEDED / WONTFIX; e.g. "[CLOSED 2026-07-02]",
+# "**(absorbed by docs/plans/...)**", "— IMPLEMENTED 2026-05-05 via").
+# Rows without a parseable "added YYYY-MM-DD" or bold ID are out of the
+# structured-row contract and are skipped (never guessed at).
+#
+# AGE TIERS (env-overridable): a row is OVERDUE when age strictly exceeds
+# its tier — high > BACKLOG_TIER_HIGH_DAYS (7), medium >
+# BACKLOG_TIER_MEDIUM_DAYS (30), low > BACKLOG_TIER_LOW_DAYS (90). Rows
+# with no `priority:` label default to LOW (least-nag posture; the
+# proposal's DEMOTE reply is the operator's re-tiering lever).
+#
+# ONE LINE PER OVERDUE ROW (pin-d one-word reply contract, same as F.1):
+#   backlog: <ID> (<prio>, <age>d) -> reply SCHEDULE (spawn task) /
+#     FOLD (name plan) / DEMOTE (lower tier) / WONTFIX (reason)
+#
+# IDEMPOTENCY: once per <ID>-<ISOweek> via the digest's EXISTING
+# seen.jsonl ledger (feed="backlog") — unlike F.1's per-calendar-day
+# staleness keys, a surfaced row stays quiet for the rest of that ISO
+# week (%G-W%V), then re-proposes if still open. Sandboxed under
+# HARNESS_SELFTEST=1 exactly like every other seen.jsonl consumer.
+#
+# CAP: at most BACKLOG_DIGEST_CAP (default 3) row lines per session,
+# OLDEST-FIRST, plus one "+N more" overflow line when overdue rows
+# remain. Rows beyond the cap are NOT recorded as seen, so they surface
+# in subsequent sessions of the same week rather than being silently
+# eaten by the cap.
+# ----------------------------------------------------------------------
+_backlog_date_to_epoch() {
+  local d="$1"
+  date -u -d "$d" +%s 2>/dev/null \
+    || date -u -j -f '%Y-%m-%d' "$d" +%s 2>/dev/null \
+    || echo ""
+}
+
+feed_backlog_accountability() {
+  local seen_path="$1" cwd="${2:-$PWD}"
+  local backlog="$cwd/docs/backlog.md"
+  [[ -f "$backlog" ]] || return 0
+  local tier_high="${BACKLOG_TIER_HIGH_DAYS:-7}"
+  local tier_medium="${BACKLOG_TIER_MEDIUM_DAYS:-30}"
+  local tier_low="${BACKLOG_TIER_LOW_DAYS:-90}"
+  local cap="${BACKLOG_DIGEST_CAP:-3}"
+  local isoweek; isoweek="$(date -u '+%G-W%V' 2>/dev/null || echo unknown)"
+  local now; now="$(date -u +%s)"
+
+  # Collect overdue candidates as "age_days<TAB>id<TAB>prio" lines.
+  local candidates=""
+  local line id added added_epoch age_days prio threshold prior key
+  while IFS= read -r line; do
+    id="$(printf '%s' "$line" | grep -oE '^- \*\*[A-Z][A-Z0-9-]{3,}' | sed 's/^- \*\*//')"
+    [[ -z "$id" ]] && continue
+    # Terminal-state markers anywhere on the row line => not an open row.
+    printf '%s' "$line" | grep -qiE '\b(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)\b' && continue
+    added="$(printf '%s' "$line" | grep -oE 'added [0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n1 | sed 's/^added //')"
+    [[ -z "$added" ]] && continue
+    added_epoch="$(_backlog_date_to_epoch "$added")"
+    [[ -z "$added_epoch" ]] && continue
+    age_days=$(( (now - added_epoch) / 86400 ))
+    prio="$(printf '%s' "$line" | grep -oE 'priority:(high|medium|low)' | head -n1 | sed 's/^priority://')"
+    [[ -z "$prio" ]] && prio="low"
+    case "$prio" in
+      high)   threshold="$tier_high" ;;
+      medium) threshold="$tier_medium" ;;
+      *)      threshold="$tier_low" ;;
+    esac
+    [[ "$age_days" -gt "$threshold" ]] || continue
+    # Weekly idempotency: already surfaced this ISO week -> suppress.
+    key="${id}-${isoweek}"
+    prior="$(_seen_lookup "$seen_path" "backlog" "$key")"
+    [[ -n "$prior" ]] && continue
+    candidates+="${age_days}"$'\t'"${id}"$'\t'"${prio}"$'\n'
+  done < <(grep -E '^- \*\*[A-Z]' "$backlog" 2>/dev/null)
+
+  [[ -z "$candidates" ]] && return 0
+  local total emitted=0
+  total="$(printf '%s' "$candidates" | grep -c .)"
+  while IFS=$'\t' read -r age_days id prio; do
+    [[ -z "$id" ]] && continue
+    [[ "$emitted" -lt "$cap" ]] || break
+    printf 'backlog: %s (%s, %sd) -> reply SCHEDULE (spawn task) / FOLD (name plan) / DEMOTE (lower tier) / WONTFIX (reason)\n' \
+      "$id" "$prio" "$age_days"
+    _seen_bump "$seen_path" "backlog" "${id}-${isoweek}"
+    emitted=$((emitted + 1))
+  done < <(printf '%s' "$candidates" | sort -t$'\t' -k1,1 -rn)
+  if [[ "$total" -gt "$cap" ]]; then
+    printf 'backlog: +%d more overdue row(s) -> docs/backlog.md\n' "$((total - cap))"
+  fi
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # Main assembly. Args: $1 = cwd override (testability), $2 = alert_dir
 # override, $3 = seen_path override. Writes the digest to stdout, capped
 # at MAX_LINES. Always exits 0.
@@ -813,10 +917,19 @@ run_digest() {
   [[ -n "$body" ]] && lines+=("$body")
   body="$(feed_needs_you "$cwd")"
   [[ -n "$body" ]] && lines+=("$body")
-  # feed_staleness_proposals is the one feed that can emit MULTIPLE lines
-  # (one per stale artifact) — read it line-by-line into the array rather
-  # than the single-"$body"-element pattern every other feed above uses,
-  # so the MAX_LINES cap below counts/truncates each proposal individually.
+  # feed_backlog_accountability and feed_staleness_proposals are the two
+  # feeds that can emit MULTIPLE lines (one per overdue row / stale
+  # artifact) — read them line-by-line into the array rather than the
+  # single-"$body"-element pattern every other feed above uses, so the
+  # MAX_LINES cap below counts/truncates each proposal individually.
+  # Backlog rows come FIRST so a staleness-proposal flood cannot starve
+  # them out of the 15-line budget.
+  body="$(feed_backlog_accountability "$seen_path" "$cwd")"
+  if [[ -n "$body" ]]; then
+    while IFS= read -r _backlog_line; do
+      [[ -n "$_backlog_line" ]] && lines+=("$_backlog_line")
+    done <<< "$body"
+  fi
   body="$(feed_staleness_proposals "$cwd")"
   if [[ -n "$body" ]]; then
     while IFS= read -r _staleness_line; do
@@ -1274,6 +1387,104 @@ EOF
   else
     echo "SKIP: S12 harness-changelog.sh not found at $s12_hcl" >&2
   fi
+
+  # ---- S13: feed_backlog_accountability() (observability O.9,
+  #           BACKLOG-LOOP-01). Sandboxed fixture backlog + sandboxed
+  #           seen.jsonl (025/028/034 discipline — the REAL
+  #           docs/backlog.md and the REAL seen ledger are never touched).
+  local _d8 _d31 _d91 _d6 _d29 _d89
+  _d8="$(date -u -d '8 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-8d '+%Y-%m-%d' 2>/dev/null)"
+  _d31="$(date -u -d '31 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-31d '+%Y-%m-%d' 2>/dev/null)"
+  _d91="$(date -u -d '91 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-91d '+%Y-%m-%d' 2>/dev/null)"
+  _d6="$(date -u -d '6 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-6d '+%Y-%m-%d' 2>/dev/null)"
+  _d29="$(date -u -d '29 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-29d '+%Y-%m-%d' 2>/dev/null)"
+  _d89="$(date -u -d '89 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-89d '+%Y-%m-%d' 2>/dev/null)"
+
+  local s13="$tmp/s13"
+  mkdir -p "$s13/docs"
+  cat > "$s13/docs/backlog.md" <<EOF
+# Fixture Backlog
+
+- **HIGH-OVERDUE-01 — fixture high crossed** (added $_d8 from fixture; label: \`harness-gap\`, \`priority:high\`). Prose body.
+- **MED-OVERDUE-01 — fixture medium crossed** (added $_d31; \`priority:medium\`). Prose body.
+- **LOW-OVERDUE-01 — fixture low crossed** (added $_d91; \`priority:low\`). Prose body.
+- **HIGH-FRESH-01 — fixture high NOT yet crossed** (added $_d6; \`priority:high\`). Prose body.
+- **MED-FRESH-01 — fixture medium NOT yet crossed** (added $_d29; \`priority:medium\`). Prose body.
+- **LOW-FRESH-01 — fixture low NOT yet crossed** (added $_d89; \`priority:low\`). Prose body.
+- **TERM-CLOSED-01 — [CLOSED $_d8] fixture terminal, aged past every tier** (added $_d91; \`priority:high\`). Prose.
+- **TERM-ABSORBED-01 — fixture aged past every tier** (added $_d91; \`priority:high\`). **(absorbed by docs/plans/fixture.md)**.
+- **TERM-IMPL-01** — IMPLEMENTED $_d8 via docs/plans/fixture2.md (added $_d91; \`priority:high\`).
+EOF
+  local s13_seen="$tmp/s13-seen.jsonl"
+  local out13a
+  out13a="$(feed_backlog_accountability "$s13_seen" "$s13")"
+  _ck_contains "S13a high row crossed >7d surfaces with tier+age" "$out13a" "backlog: HIGH-OVERDUE-01 (high, 8d)"
+  _ck_contains "S13a medium row crossed >30d surfaces" "$out13a" "backlog: MED-OVERDUE-01 (medium, 31d)"
+  _ck_contains "S13a low row crossed >90d surfaces" "$out13a" "backlog: LOW-OVERDUE-01 (low, 91d)"
+  _ck_contains "S13a pin-d one-word replies inline, all four actionable" "$out13a" "-> reply SCHEDULE (spawn task) / FOLD (name plan) / DEMOTE (lower tier) / WONTFIX (reason)"
+  _ck_not_contains "S13a high row at 6d (not >7d) silent" "$out13a" "HIGH-FRESH-01"
+  _ck_not_contains "S13a medium row at 29d (not >30d) silent" "$out13a" "MED-FRESH-01"
+  _ck_not_contains "S13a low row at 89d (not >90d) silent" "$out13a" "LOW-FRESH-01"
+  _ck_not_contains "S13a [CLOSED]-marked row never surfaces" "$out13a" "TERM-CLOSED-01"
+  _ck_not_contains "S13a (absorbed by ...)-marked row never surfaces" "$out13a" "TERM-ABSORBED-01"
+  _ck_not_contains "S13a IMPLEMENTED-marked row never surfaces" "$out13a" "TERM-IMPL-01"
+
+  # S13b: second invocation same ISO week + same seen ledger -> silent.
+  local out13b
+  out13b="$(feed_backlog_accountability "$s13_seen" "$s13")"
+  if [[ -z "$out13b" ]]; then
+    echo "PASS: S13b second run same week is idempotent (silent)"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: S13b expected silence on second run, got:" >&2
+    printf '%s\n' "$out13b" | sed 's/^/    /' >&2
+    fail=$((fail + 1))
+  fi
+
+  # S13c: cap overflow — 5 overdue rows, default cap 3 -> the 3 OLDEST
+  # surface + one "+2 more" overflow line; the 2 newest are NOT seen-bumped
+  # and surface on the NEXT session (cap never silently eats rows).
+  local _d100 _d99 _d98 _d97 _d96
+  _d100="$(date -u -d '100 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-100d '+%Y-%m-%d' 2>/dev/null)"
+  _d99="$(date -u -d '99 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-99d '+%Y-%m-%d' 2>/dev/null)"
+  _d98="$(date -u -d '98 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-98d '+%Y-%m-%d' 2>/dev/null)"
+  _d97="$(date -u -d '97 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-97d '+%Y-%m-%d' 2>/dev/null)"
+  _d96="$(date -u -d '96 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-96d '+%Y-%m-%d' 2>/dev/null)"
+  local s13c="$tmp/s13c"
+  mkdir -p "$s13c/docs"
+  cat > "$s13c/docs/backlog.md" <<EOF
+- **CAP-A-01 — oldest** (added $_d100; \`priority:high\`). Prose.
+- **CAP-B-01 — second-oldest** (added $_d99; \`priority:high\`). Prose.
+- **CAP-C-01 — third-oldest** (added $_d98; \`priority:high\`). Prose.
+- **CAP-D-01 — fourth** (added $_d97; \`priority:high\`). Prose.
+- **CAP-E-01 — fifth** (added $_d96; \`priority:high\`). Prose.
+EOF
+  local s13c_seen="$tmp/s13c-seen.jsonl"
+  local out13c
+  out13c="$(feed_backlog_accountability "$s13c_seen" "$s13c")"
+  _ck_contains "S13c oldest row surfaces under cap" "$out13c" "CAP-A-01"
+  _ck_contains "S13c second-oldest surfaces under cap" "$out13c" "CAP-B-01"
+  _ck_contains "S13c third-oldest surfaces under cap" "$out13c" "CAP-C-01"
+  _ck_not_contains "S13c fourth (over cap) held back this session" "$out13c" "CAP-D-01"
+  _ck_contains "S13c overflow line names the held-back count" "$out13c" "backlog: +2 more overdue row(s) -> docs/backlog.md"
+  local out13c2
+  out13c2="$(feed_backlog_accountability "$s13c_seen" "$s13c")"
+  _ck_contains "S13c2 next session drains the held-back rows (CAP-D)" "$out13c2" "CAP-D-01"
+  _ck_contains "S13c2 next session drains the held-back rows (CAP-E)" "$out13c2" "CAP-E-01"
+  _ck_not_contains "S13c2 already-surfaced rows stay quiet same week" "$out13c2" "CAP-A-01"
+
+  # S13d: run_digest-level wiring — the feed's lines land in the real
+  # digest assembly (not just the unit function).
+  local s13d="$tmp/s13d"
+  _seed_repo "$s13d"
+  mkdir -p "$s13d/docs"
+  cat > "$s13d/docs/backlog.md" <<EOF
+- **WIRED-ROW-01 — fixture overdue high row** (added $_d8; \`priority:high\`). Prose.
+EOF
+  local s13d_seen="$tmp/s13d-seen.jsonl"
+  local out13d
+  out13d="$(DIGEST_SEEN_PATH="$s13d_seen" run_digest "$s13d" "$tmp/s13d-no-alerts" "$s13d_seen" 2>/dev/null)"
+  _ck_contains "S13d run_digest carries the backlog feed line" "$out13d" "backlog: WIRED-ROW-01 (high, 8d)"
 
   rm -rf "$tmp" 2>/dev/null || true
   echo ""
