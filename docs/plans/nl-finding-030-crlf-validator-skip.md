@@ -73,6 +73,9 @@ done-record, not task-verifier-gated checkboxes.
 - `docs/findings.md` — NL-FINDING-030 Status → closed with the collision + resolving-commit note.
 - `docs/plans/nl-finding-030-crlf-validator-skip.md` — this design-skip record.
 
+## In-flight scope updates
+- 2026-07-05: `.gitattributes` — repo-wide eol=lf pin: the whole-file escalation of this plan's CRLF class (NL-FINDING-038, Wave-F F.1 incident); operator-directed remediation shipped alongside the doctor `line-endings` check (adapters/claude-code/hooks/harness-doctor.sh, already in the overhaul plans' scope).
+
 ## Assumptions
 - `ubuntu-latest` runners ship `gh` and `jq` (both pre-installed by GitHub).
 - `gh pr view --json body,title` requires `pull-requests: read`; the primary check job
