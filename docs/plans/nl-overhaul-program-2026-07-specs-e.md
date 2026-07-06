@@ -224,8 +224,25 @@ ONE block, hard-capped at 15 output lines (assert in self-test: `wc -l ≤ 15`).
   `NL-session-resumer` via schtasks; drill = start a sacrificial `claude -p` session,
   kill its process mid-turn, wait one watchdog cycle, verify the resume fired and the
   session continued (cite the resumer ledger events + resumed transcript lines).
-- Done-when: self-test green; task registered (doctor predicate: schtasks query
-  finds it); drill evidence recorded in the plan evidence file.
+- **Activation guardrails (BINDING before arming — §E.0-DECISIONS entry 8)**: storm
+  cap (RESUMER_STORM_CAP, default 2/hour, oldest-first queue, event
+  `storm-cap-queued`); tombstones (`--never <id>` verb, marker dir
+  `~/.claude/state/session-resumer/never/`, scan skips tombstoned ids; archiving is
+  documented as NOT the same signal — no reliable on-disk archived marker exists,
+  `--never` is the explicit channel); liveness guard (B.12 interactive-session-lock
+  pattern, keyed on the transcript's `cwd`, skips a session whose repo has a fresh
+  interactive window); shadow mode (RESUMER_SHADOW=1, classify+guard for real, log
+  `would-have-resumed`, never exec/never write backoff state — the mode the
+  scheduled task registers with FIRST); kill-switch runbook
+  (`docs/runbooks/session-resumer.md`: shadow→armed rollout, `schtasks /Change
+  /DISABLE`, tombstone verb, storm-cap tuning).
+- `--self-test` extended: storm-cap fixture (3 dead, cap 2 → 2 resumes + 1 queued),
+  tombstone-skip, liveness-skip, shadow-mode-logs-but-does-not-exec.
+- Done-when: self-test green (18/18); task registered (doctor predicate: schtasks
+  query finds it); drill evidence recorded in the plan evidence file; livesmoke —
+  real flagless run with RESUMER_SHADOW=1 against a fixture transcript dir produces
+  a would-have-resumed line in the sandboxed digest feed with zero claude processes
+  spawned (verified 2026-07-06).
 
 ## §E.8 nl-issue capture loop — exact spec
 
@@ -452,3 +469,21 @@ refusal-log shows zero interactive-checkout touches.
 6. NL-FINDING-027 + SELFTEST-ORACLE-PIN-01 + NL-FINDING-025-isolation assigned to
    E.10 / E.10 / E.2 respectively.
 7. F.6 (sync-clone option C) added to the plan per B.12's "defined in specs-e" clause.
+8. **E.7 activation guardrails added (operator directive 2026-07-06, nl-issue ledger
+   "E.7 ACTIVATION PRECONDITIONS")**: session-resumer.sh gains five preconditions
+   before the scheduled task may be armed for real resumes — (1) storm cap
+   (RESUMER_STORM_CAP, default 2/hour, oldest-transcript-first queueing, logged
+   `storm-cap-queued`); (2) tombstones (`--never <id>` marker at
+   `~/.claude/state/session-resumer/never/<id>`; archived-session on-disk markers
+   investigated and found NOT mechanically discoverable — documented as
+   archiving != tombstone, `--never` is the explicit channel); (3) liveness guard
+   reusing the B.12 interactive-session-lock pattern (same lib
+   sync-pt-to-personal.sh sources) keyed on the transcript's own `cwd`; (4) shadow
+   mode (RESUMER_SHADOW=1, distinct from --self-test's HARNESS_SELFTEST=1 plumbing)
+   — the mode the scheduled task registers with FIRST; (5) kill-switch runbook
+   (docs/runbooks/session-resumer.md, rewritten: shadow->armed rollout, `schtasks
+   /Change /DISABLE`, tombstone verb, storm-cap tuning). Self-test extended to 18
+   scenarios (13 numbered blocks); doctor-predicate.md + manifest-entry.json
+   fragments updated with the new digest-feed event names and the binding
+   shadow-first activation precondition. Decide-and-go: this directly implements
+   the named ledger preconditions, no new design choice introduced.
