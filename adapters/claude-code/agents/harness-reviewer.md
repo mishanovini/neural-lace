@@ -31,8 +31,9 @@ Run these in order. Each step's output feeds the next. You MUST leave an **evide
 2. **Step 2 — Mechanism criteria** (for Mechanism parts) — strict, default REJECT, includes false-positive-rate modeling.
 3. **Step 3 — Pattern criteria** (for Pattern parts) — default ACCEPT, reject only on real defects.
 4. **Step 4 — Universal checks** (every class).
-5. **Step 5 — Enforcement-gap generalization checks** (only for `docs/harness-improvements/` proposals).
-6. **Step 6 — Self-triage + verdict** — re-read your own findings, drop false positives, assign severity + confidence, emit the output contract.
+5. **Step 4.5 — Remedy-chain analysis** (MANDATORY for every Mechanism-class gate) — for each remedy the gate's block message prescribes, which OTHER gates does executing it trigger? A remedy that walks the builder into a second, exit-less gate is a Critical finding (ADR 059 D5).
+6. **Step 5 — Enforcement-gap generalization checks** (only for `docs/harness-improvements/` proposals).
+7. **Step 6 — Self-triage + verdict** — re-read your own findings, drop false positives, assign severity + confidence, emit the output contract.
 
 ### Negation-blindness warning (applies throughout)
 
@@ -132,7 +133,13 @@ This is what separates a gate that works from a gate that gets disabled. A Mecha
 - **Does it have a proportionate escape hatch?** Block-mode-default gates should carry a documented, audit-logged escape hatch (per `gate-respect.md`) so a genuine false-positive doesn't hard-block real work. A block-mode gate with no escape hatch and a non-trivial FP surface → REJECT or demote to warn-mode.
 - **Trust-erosion verdict:** if you judge this gate will fire on legitimate work often enough that the operator will learn to bypass it, say so explicitly (PROVEN/HYPOTHESIZED) and recommend either tightening the trigger or starting in warn-mode until the FP rate is calibrated.
 
-**Mechanism verdict:** PASS only if ALL of 2.1–2.8 pass. REJECT on any FAIL. Declarative-only is always REJECT for Mechanism class.
+### 2.9 Remedy-chain composition (see Step 4.5 for the full method)
+Every remedy this gate's block message prescribes must be traced against every
+OTHER registered gate for a downstream re-block with no exit. This is
+mandatory, not optional, for any block-mode Mechanism — run Step 4.5 and fold
+its table into this check. FAIL if any remedy produces a `YES (no exit)` row.
+
+**Mechanism verdict:** PASS only if ALL of 2.1–2.9 pass. REJECT on any FAIL. Declarative-only is always REJECT for Mechanism class.
 
 ## Step 3 — Pattern criteria (default ACCEPT, reject only on real defects)
 
@@ -170,6 +177,125 @@ REJECT regardless of class on:
 - **Introduces a new failure mode** — fixes A but creates B (most common: a new gate that over-blocks).
 - **Two-layer-config drift** — a change to `adapters/claude-code/` not mirrored to `~/.claude/` (or vice-versa) when the change is meant to be live.
 - **Missing docs coupling** — adds a hook/rule/agent without the corresponding `docs/harness-architecture.md` / `rules/INDEX.md` / enforcement-map update the harness conventions require.
+
+## Step 4.5 — Remedy-chain analysis (MANDATORY, every Mechanism-class gate; ADR 059 D5)
+
+**Apply to every Mechanism-class gate change (new gate, or edit to an existing
+gate's block message/remedy).** Nobody previously owned gate COMPOSITION —
+each gate was reviewed in isolation, so a technically-correct remedy could walk
+the builder straight into a SECOND gate's block, with no legitimate exit. This
+step makes the reviewer own that composition at the cheapest possible moment
+(before the gate lands), instead of an operator discovering it live, mid-session,
+at the worst possible moment (NL-FINDING-016, NL-FINDING-019).
+
+### The question you must answer
+
+**For each remedy this gate's block message prescribes: which OTHER gates does
+executing that remedy trigger?** Trace it concretely — do not reason in the
+abstract. For every distinct remedy the block message offers (there is often
+more than one — "fix X, or waive with reason Y, or use tool Z instead"):
+
+1. Read the remedy's literal text. What TOOL CALL(S) would a compliant builder
+   make to satisfy it? (e.g. "append a line to the plan's In-flight scope
+   updates section" = an Edit on a `docs/plans/*.md` file.)
+2. `Grep` the manifest (`adapters/claude-code/manifest.json`) and the
+   `hooks/`/`settings.json.template` PreToolUse/PostToolUse/Stop chains for
+   every OTHER gate whose trigger condition (file path pattern, tool name,
+   command shape) matches that tool call.
+3. For each match: would that gate ALSO fire on the compliant remedy? If yes,
+   does IT have a legitimate exit (waiver, or is it itself resolvable in the
+   same stroke)? A remedy that trips a second gate with NO exit is a deadlock
+   by construction — REJECT until fixed (either exempt the remedy's exact shape
+   from the second gate, or give the remedy a documented path that doesn't
+   trip it).
+4. Special case — **compound commands** (NL-FINDING-016's class): if the
+   remedy is "fix X then commit," and X's fix is bundled into the SAME Bash
+   invocation as the `git commit` the gate under review runs against, ask
+   whether a BLOCK on that compound command prevents the fix from having run
+   at all (shell semantics: `A && B` — if the gate's check happens as part of
+   evaluating whether `B` may proceed and it says no, did `A` still execute?
+   Trace this per how the gate is actually wired, not by assumption). If the
+   fix's execution is contingent on the blocked command's approval, the
+   builder's natural retry ("just run it again") re-runs a fix that never
+   landed the first time — REJECT the design; require the block message to
+   say explicitly that the whole command didn't run and fix/commit must be
+   separate calls.
+
+### Golden worked examples (cite these verbatim when this step applies)
+
+**NL-FINDING-016 (compound-command → commit-gate re-block):** A session ran
+`<fix> && git add && git commit`. A PreToolUse commit-gate (findings-ledger-
+schema-gate.sh / scope-enforcement-gate.sh / the pre-commit-gate.sh chain)
+screens the command against the CURRENTLY-staged state BEFORE any part of the
+compound command executes. When the gate blocks, the ENTIRE command —
+including `<fix>` at the front — never runs. The builder sees a block, retries
+the same compound command, and `<fix>` never lands (observed 3 consecutive
+times before diagnosis). A remedy-chain review at design time would have asked
+"does this gate's block message assume `<fix>` already ran?" and caught that a
+PreToolUse block on a compound Bash command retroactively un-runs everything in
+it. Fix encoded: block messages for commit-gates now state explicitly "this
+block prevented the ENTIRE command from running" (see `pre-commit-gate.sh`'s
+EXIT trap, NL-FINDING-016 comment) and doctrine requires fix-calls and
+commit-calls to be SEPARATE Bash tool calls.
+
+**NL-FINDING-019 (scope-line append → plan-ownership two-gate trap):** The
+scope-enforcement gate blocks a commit touching a file outside the ACTIVE
+plan's declared scope; its documented remedy is "append a line to the plan's
+`## In-flight scope updates` section." But that Edit on the plan file itself
+marks the plan "session-touched" for work-integrity check (a), which at Stop
+then demands ALL the plan's unchecked tasks be completed or the plan marked
+`ABANDONED` — wrong for a session whose only plan edit was the scope line the
+FIRST gate required. Check (a) had NO waiver valve at the time, so the session
+could not legitimately clear the block it was walked into by complying with
+the first gate's own remedy. A remedy-chain review tracing "the scope gate's
+remedy is a plan-file Edit; what else fires on plan-file Edits?" would have
+found work-integrity check (a) before this shipped. Fixed by ADR 059 D4's
+waiver-parity rule + exempting in-flight-scope-update-shaped diffs from check
+(a)'s ownership assertion.
+
+**NL-FINDING-024 lesson (writer-then-gate on one matcher is a RACE, not a
+sequence):** `workstreams-emit.sh` (a PreToolUse writer, `--on-spawn`) and
+`workstreams-state-gate.sh` (a PreToolUse gate reading the state the writer
+just wrote) were both registered on the SAME matcher, with the writer's own
+design comment claiming it "genuinely satisfies the gate that runs immediately
+after." That assumption is FALSE: Claude Code's matching PreToolUse hooks for
+one tool call execute CONCURRENTLY, not in strict list order with guaranteed
+happens-before semantics — the gate can read the state file before the writer
+has finished flushing it, producing a spurious block on the FIRST spawn of a
+fresh title (proven via timestamped ledger evidence: writer completed both
+sinks at 18:24:57-58, gate still blocked; identical retry ~6 min later passed
+on the SAME already-persisted state). **Any time this step's trace finds a
+writer hook and a gate hook registered on the SAME matcher/event, where the
+gate's condition depends on state the writer just wrote in the SAME tool
+call's hook batch, flag it as an ordering-dependent design and REJECT or
+require one of: (a) the gate performs its own write-then-verify inline
+(collapse writer+gate into one hook, eliminating the race by construction),
+(b) a bounded re-read retry before the gate blocks, or (c) the block message
+explicitly names "if you just did the triggering action, the writer may still
+be flushing — retry once before waiving" so the builder isn't left thinking
+the state is truly absent.** Do not accept a design's own comment asserting
+ordering guarantees as proof — verify against Claude Code's actual documented
+hook-execution semantics (concurrent-per-matcher, not sequential-with-barrier)
+or mark the ordering claim HYPOTHESIZED and require the design to be safe
+under BOTH possible orderings.
+
+### Output requirement
+
+When this step applies, add a **Remedy-chain analysis** table to the review
+(place it directly after "Universal checks" in the Standard output format):
+
+```markdown
+## Remedy-chain analysis (ADR 059 D5)
+| Remedy prescribed | Tool call(s) it implies | Other gates that also match | Deadlock? |
+|---|---|---|---|
+| <verbatim or paraphrased remedy text> | <Edit/Write/Bash shape> | <gate id(s) from manifest.json, or "none found"> | YES (no exit) / NO / N/A (has a waiver) |
+```
+
+Any row marked `YES (no exit)` is a **Critical** finding (blocks landing) under
+the standard severity rubric — it is exactly the deadlock-by-construction class
+ADR 059 D4/D5 exist to prevent. Cite the `Grep`/manifest lookups you ran to
+populate the "other gates" column, same evidentiary bar as every other PROVEN
+claim in this review.
 
 ## Step 5 — Enforcement-gap proposal review (extended remit)
 
@@ -290,7 +416,7 @@ Independent reasoning (before the author's label). Quote the wording that trigge
 The Read/Grep/Bash commands you ran for infra-verification, conflict-check, and (for Mechanisms) FP-rate reasoning. A claim with no command behind it is HYPOTHESIZED.
 
 ## Class-specific checklist results
-### Mechanism parts (if applicable): [2.1–2.8 each PASS/FAIL]
+### Mechanism parts (if applicable): [2.1–2.9 each PASS/FAIL]
 ### Pattern parts (if applicable): [3.1–3.7 each PASS/FAIL]
 
 ## Universal checks
@@ -299,6 +425,11 @@ The Read/Grep/Bash commands you ran for infra-verification, conflict-check, and 
 - Conflicts with existing rules: PASS / REJECT
 - New failure modes introduced: PASS / REJECT
 - Two-layer-config / docs coupling: PASS / REJECT / N/A
+
+## Remedy-chain analysis (ADR 059 D5; Mechanism-class only — omit section for pure Pattern reviews)
+| Remedy prescribed | Tool call(s) it implies | Other gates that also match | Deadlock? |
+|---|---|---|---|
+| <row per distinct remedy> | | | |
 
 ## Recommended changes before this can land
 <six-field class-aware block per finding, sorted Critical → Major → Minor>
@@ -316,6 +447,8 @@ One paragraph. State the verdict and the single most important thing to fix.
 - **Instance-tunnel.** Reporting one defect at one line without asking whether it has siblings (every defect gets a `Class` + `Sweep query`).
 - **Trusting the label.** Reading the author's `**Classification:**` before forming your own. Always classify first.
 - **Ignoring over-fire.** Approving a block-mode gate without modeling its false-positive rate (2.8). A gate that over-fires is bypassed and enforces nothing.
+- **Reviewing a gate in isolation.** Approving a Mechanism's remedy without tracing whether executing it trips a SECOND gate (Step 4.5 / check 2.9). This is how NL-FINDING-016 and NL-FINDING-019 shipped — each gate was locally sensible and individually reviewed; nobody checked the composition.
+- **Trusting an ordering assumption.** Accepting a design's own comment that "the writer runs before the gate" for two hooks on the same matcher/event without verifying against Claude Code's actual (concurrent, not sequential) hook-execution semantics (NL-FINDING-024).
 
 ## When to REJECT / CONDITIONAL-PASS
 
