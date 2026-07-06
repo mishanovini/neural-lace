@@ -15,9 +15,9 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 100 |
+| Total manifest entries | 101 |
 | Unique hook scripts | 101 |
-| Blocking gates (`blocking: true`) | 31 |
+| Blocking gates (`blocking: true`) | 32 |
 
 ## Hooks by event
 
@@ -94,6 +94,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | manual | harness-hygiene-scan | gate | yes | harness-hygiene-scan.sh |
 | manual | plan-reviewer | gate | yes | plan-reviewer.sh |
 | manual | propagation-engine | writer | no | propagation-trigger-router.sh |
+| manual | secret-scan-ci-backstop | gate | yes | — |
 | manual | synthetic-runner-ci | gate | yes | — |
 | manual | wave-d-retired-shims | writer | no | check-harness-sync.sh, completion-criteria-gate.sh, continuation-enforcer.sh, cross-repo-drift-warn.sh, customer-facing-review-gate.sh, dag-review-waiver-gate.sh, decision-context-gate.sh, decision-context-replay.sh, deferral-counter.sh, goal-coverage-on-stop.sh, goal-extraction-on-prompt.sh, imperative-evidence-linker.sh, narrate-and-wait-gate.sh, pr-health-snapshot-gate.sh, pre-stop-verifier.sh, principles-compliance-gate.sh, product-acceptance-gate.sh, register-progress-gate.sh, settings-divergence-detector.sh, tool-call-budget.sh, transcript-lie-detector.sh, worktree-teardown-gate.sh |
 | manual | workstreams-turn-emit | writer | no | workstreams-turn-emit.sh |
@@ -113,7 +114,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
-| gate | 31 | 11 |
+| gate | 32 | 11 |
 | writer | 0 | 18 |
 | surfacer | 0 | 16 |
 | pattern | 0 | 22 |
@@ -132,7 +133,7 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 | session-start | 15 |
 | pretool | 23 |
 | posttool | 6 |
-| none | 48 |
+| none | 49 |
 
 ## Doctrine index
 
@@ -175,7 +176,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/pr-health-snapshot.md | 1 (pr-health-snapshot) |
 | doctrine/prd-validity.md | 1 (prd-validity) |
 | doctrine/risk-tiered-verification.md | 1 (risk-tiered-verification) |
-| doctrine/security.md | 2 (env-local-protection, secret-hygiene-prepush) |
+| doctrine/security.md | 3 (env-local-protection, secret-hygiene-prepush, secret-scan-ci-backstop) |
 | doctrine/session-end-protocol.md | 2 (register-surfacer, session-honesty) |
 | doctrine/spawn-task-report-back.md | 1 (spawn-task-report-back) |
 | doctrine/spec-freeze.md | 1 (spec-freeze) |
@@ -266,6 +267,7 @@ Entries with no doctrine_file (`-`): 20.
 | risk-tiered-verification | pattern | — | no | none | — |
 | runtime-verification | gate | Stop | yes | none | invoked via pre-stop-verifier.sh (Stop chain); not directly wired in settings.json.template |
 | secret-hygiene-prepush | gate | prepush | yes | none | wired via git-hooks/pre-push dispatcher (core.hooksPath), not settings.json.template |
+| secret-scan-ci-backstop | gate | manual | yes | none | GitHub Actions workflow (.github/workflows/secret-backstop.yml), not a Claude Code hook; events:["manual"] is a schema-gap stand-in for CI push+PR triggers (same convention as the synthetic-runner-ci entry). Re-invokes the EXISTING pre-push-scan.sh + harness-hygiene-scan.sh scripts against the diff range server-side — the compensating control the F.3 disposition on secret-hygiene-prepush's --no-verify bypass required. Deliberately overlaps server-side-enforcement.yml's credential-scan/harness-hygiene jobs (defense-in-depth, documented in the workflow file's header) rather than being the sole CI coverage. |
 | session-honesty | gate | Stop | yes | stop | Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact. |
 | session-resumer | writer | — | no | none | scripts/session-resumer.sh — OS-scheduled watchdog (E.7); schtasks registration is a §E.W.6 step, not a settings.json hook. |
 | session-start-auto-install | writer | SessionStart | no | session-start | — |
