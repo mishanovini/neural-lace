@@ -1155,3 +1155,14 @@ PASS:
 - **E.9** PASS (Done-when: self-test asserts ALL SIX categories appear by name in the emitted summarizer-i...)
 - **E.10** PASS (Done-when: per-gate contract-conformance checklist in specs-e with grep evidence; purpose-...)
 - **E.11** PASS (self-test proves a two-gap session gets ONE block listing both gaps, and a second Stop wit...)
+
+## Wave-E E.6 + E.12 — round-2 remediation verified + flipped (2026-07-05)
+E.6: live NEEDS-YOU.md now has all 4 canonical sections (needs-you.sh bootstrap/migrate,
+finding 035); live `session-start-digest.sh` emits `needs-you: 1 open item(s) -> NEEDS-YOU.md`
+(the E.7 activation item migrated into a real ledger entry). E.12: stop-verdict-dispatcher
+now derives a real session-start boundary and passes `--shipped-since` (line 256); self-test
+28/28 incl. the NL-FINDING-036 real-shape regression guards (no-touch session not blocked over
+unrelated plans). Independently re-run by the orchestrator (not builder self-report).
+REMAINING E-tasks: E.2 (purge bug 034 + env-local sandbox fixed; the core Done-when — TEMP-HOME
+full-sweep hash-identical across ALL manifest selftest:true hooks — is a distinct verification
+task, not yet run); E.7 (resumer schtasks registration + drill, awaiting operator activation).
