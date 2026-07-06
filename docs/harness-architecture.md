@@ -17,7 +17,7 @@ Tier-4 exhaustive machine-derived inventory.
 |---|---|
 | Total manifest entries | 100 |
 | Unique hook scripts | 101 |
-| Blocking gates (`blocking: true`) | 32 |
+| Blocking gates (`blocking: true`) | 31 |
 
 ## Hooks by event
 
@@ -53,7 +53,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreToolUse | prd-validity | gate | no | prd-validity-gate.sh |
 | PreToolUse | pre-commit-chain | gate | yes | pre-commit-gate.sh |
 | PreToolUse | spec-freeze | gate | yes | scope-enforcement-gate.sh, spec-freeze-gate.sh |
-| PreToolUse | vaporware-volume | gate | yes | vaporware-volume-gate.sh |
+| PreToolUse | vaporware-volume | gate | no | vaporware-volume-gate.sh |
 | PreToolUse | wire-check | gate | yes | wire-check-gate.sh |
 | PreToolUse | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-extract-pending.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
 | PreToolUse | workstreams-spawn-gate | gate | yes | workstreams-state-gate.sh |
@@ -113,7 +113,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
-| gate | 32 | 10 |
+| gate | 31 | 11 |
 | writer | 0 | 18 |
 | surfacer | 0 | 16 |
 | pattern | 0 | 22 |
@@ -280,7 +280,7 @@ Entries with no doctrine_file (`-`): 20.
 | task-verifier-reminder | surfacer | PostToolUse | no | posttool | — |
 | tdd-gate | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
 | teaching-moments | pattern | — | no | none | — |
-| vaporware-volume | gate | PreToolUse | yes | pretool | Member of the commit-boundary blocking unit (specs-d §D.0.4 as amended at D.5); CI relocation follows in E.4 companion. |
+| vaporware-volume | gate | PreToolUse | no | pretool | RETIRED from live PreToolUse 2026-07-06 per synth-ci plan task 2 — coverage relocated to .github/workflows/synthetic-runner.yml (first scheduled live run GREEN: actions/runs/28785582207). Hook file retained for the CI path. |
 | waiver-density-alarm | pattern | — | no | none | scripts/waiver-density.sh — invoked by the digest (--digest-line) + E.5 KPI (--report); not an event-wired hook. |
 | wave-d-retired-shims | writer | manual | no | none | Exit-0 shims at retired live paths for one release (live-session safety, ADR 058 D5 pin c); originals in attic/. Hard-delete next release. |
 | wire-check | gate | PreToolUse | yes | pretool | — |
