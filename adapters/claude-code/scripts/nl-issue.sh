@@ -699,6 +699,21 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   LEDGER9="$TMP/s9.jsonl"
   BACKLOG9="$TMP/backlog9.md"
   printf '# fixture backlog\n' > "$BACKLOG9"
+  # Snapshot the REAL (non-sandbox) backlog's content BEFORE this scenario
+  # runs, so the "never touched real state" assertion below is a byte-exact
+  # before/after diff — deterministic regardless of what the real backlog
+  # already contains (e.g. a same-day NL-ISSUES-TRIAGE-<today> entry
+  # committed for real by an earlier, unrelated digest-feed run). Grepping
+  # the real file for today's exact ID (the prior approach) is NOT
+  # deterministic: it false-fails whenever that ID legitimately pre-exists
+  # on disk for reasons unrelated to this test run.
+  REAL_BACKLOG9_SNAPSHOT=""
+  if command -v nl_repo_root >/dev/null 2>&1; then
+    REAL_ROOT9="$(nl_repo_root)"
+    if [[ -n "$REAL_ROOT9" && -f "$REAL_ROOT9/docs/backlog.md" ]]; then
+      REAL_BACKLOG9_SNAPSHOT="$(cat "$REAL_ROOT9/docs/backlog.md" 2>/dev/null)"
+    fi
+  fi
   for i in 1 2 3 4 5 6; do
     ( export NL_ISSUES_PATH="$LEDGER9"; bash "$SELF_ABS" "escalation issue $i" >/dev/null )
   done
@@ -727,15 +742,19 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   else
     fail "expected exactly 1 occurrence of $TODAY_ID after re-run, got $DUP_COUNT"
   fi
-  # Confirm the REAL (non-sandbox) backlog was never touched by this scenario.
-  REAL_BACKLOG_HITS=0
+  # Confirm the REAL (non-sandbox) backlog was never touched by this
+  # scenario: byte-exact compare against the BEFORE snapshot taken above.
+  # (Deterministic regardless of what the real backlog already contains —
+  # see the comment at the snapshot site for why a same-day-ID grep on the
+  # real file is the wrong check.)
+  REAL_BACKLOG9_AFTER=""
   if command -v nl_repo_root >/dev/null 2>&1; then
-    REAL_ROOT="$(nl_repo_root)"
-    if [[ -n "$REAL_ROOT" && -f "$REAL_ROOT/docs/backlog.md" ]]; then
-      REAL_BACKLOG_HITS=$(grep -c "$TODAY_ID" "$REAL_ROOT/docs/backlog.md" 2>/dev/null | tr -d ' ')
+    REAL_ROOT9="$(nl_repo_root)"
+    if [[ -n "$REAL_ROOT9" && -f "$REAL_ROOT9/docs/backlog.md" ]]; then
+      REAL_BACKLOG9_AFTER="$(cat "$REAL_ROOT9/docs/backlog.md" 2>/dev/null)"
     fi
   fi
-  if [[ "${REAL_BACKLOG_HITS:-0}" == "0" ]]; then
+  if [[ "$REAL_BACKLOG9_AFTER" == "$REAL_BACKLOG9_SNAPSHOT" ]]; then
     pass "the real repo docs/backlog.md was NOT touched by the sandboxed escalation test"
   else
     fail "the REAL docs/backlog.md was unexpectedly modified by the self-test"

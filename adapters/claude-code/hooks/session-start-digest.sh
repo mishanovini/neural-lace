@@ -986,6 +986,29 @@ EOF
     echo "SKIP: S9 needs-you.sh not found/executable at $s9_needsyou" >&2
   fi
 
+  # ---- S10: feed_nl_issues() POSITIVE path — a populated, sandboxed,
+  #          CROSS-PROJECT nl-issues ledger (NL_ISSUES_PATH into a tempdir,
+  #          "project" field deliberately != this repo's own name) fed through
+  #          feed_nl_issues() must surface the "nl-issues: ..." digest line.
+  #          (E.8 cross-project positive path; merged alongside E.6's S9.)
+  local s10_ledger="$tmp/s10-nl-issues.jsonl"
+  local s10_project="unrelated-other-project"
+  printf '{"ts":"%s","project":"%s","session":"fixture-session","text":"cross-project fixture friction note","count":1,"triage_status":"untriaged","triage_ref":"","triaged_ts":""}\n' \
+    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$s10_project" > "$s10_ledger"
+  local out10
+  out10="$(export NL_ISSUES_PATH="$s10_ledger"; feed_nl_issues)"
+  _ck_contains "S10 feed_nl_issues() surfaces the digest line for a populated cross-project ledger" "$out10" "nl-issues:"
+  _ck_contains "S10 digest line reports 1 untriaged" "$out10" "1 untriaged"
+  local this_repo_name
+  this_repo_name="$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")")"
+  if [[ "$s10_project" != "$this_repo_name" ]]; then
+    echo "PASS: S10 fixture project field ($s10_project) differs from this repo's name ($this_repo_name)"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: S10 fixture project field accidentally matched this repo's name" >&2
+    fail=$((fail + 1))
+  fi
+
   rm -rf "$tmp" 2>/dev/null || true
   echo ""
   echo "self-test summary: $pass passed, $fail failed"
