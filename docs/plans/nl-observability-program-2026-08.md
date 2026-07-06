@@ -67,6 +67,8 @@ surfacers, additional dashboards, cross-machine ledger sync beyond read-both.
   drill Q1–Q6, zero unmapped event types, operator-trust check — Model: strongest
   available — Done-when: completion review doc with measured numbers.
 
+- [ ] O.9 Backlog accountability loop (operator directive 2026-07-06 — "I do not look at the backlog and I forget about it; Claude manages it"): (1) digest feed — age-tiered surfacing (high>7d, medium>30d, low>90d) with one-word disposition proposals (SCHEDULE/FOLD-INTO-<plan>/DEMOTE/WONTFIX), idempotent per item-week, F.1-staleness-proposal pattern; (2) plan-time absorption matching — plan-edit validation greps backlog rows naming the plan-touched surfaces; header must absorb or explicitly defer each match; (3) KPI backlog-health section (adds vs closes, aging histogram) + periodic terminal-state batch proposal (F.3 one-word format); every row ends done/absorbed/wontfix-with-reason. Immediate increment (digest feed + validator warn + KPI section) ships pre-activation as BACKLOG-LOOP-01 — this task hardens + derives it from ground truth in the O.3 lib — Model: sonnet
+  - Done-when: seeded aged-fixture rows surface exactly once per tier with correct proposals; a fixture plan touching a backlog-named surface without absorbing warns; KPI fixture renders the health section; drill — operator answers one digest proposal word and the row reaches terminal state.
 - [ ] O.8 Estate-coordination protocol (from NL-FINDING-031 + the 2026-07-04 manual run):
   `/coordinate-estate` skill + doctrine compact encoding what the origin session did by
   hand — inventory sessions (list_sessions), classify (active / stalled>2h / wedged-
