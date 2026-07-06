@@ -3,9 +3,22 @@
 // against manifest.json, using the D.0-frozen counting rule (specs-d §D.0.4):
 // count manifest entries with blocking:true AND wired_template:true wired to
 // live-session events, grouped into consolidated UNITS. git-boundary hooks
-// (precommit/prepush) are a separate budget class. F.1 wires this into the doctor.
+// (precommit/prepush) are a separate budget class. This is the SOLE
+// implementation of the frozen counting rule — harness-doctor.sh's
+// budget-blocking-gates check (Wave F task F.1, wired at integration) shells
+// out to this script rather than reimplementing the UNIT_MAP consolidation a
+// third time, so there is exactly one place this rule can drift.
+//
+// Usage: node blocking-budget-check.js [path/to/manifest.json]
+// Defaults to the sibling manifest.json (../manifest.json relative to this
+// script) when no path argument is given — preserves the original bare-CLI
+// ergonomics; the optional argument lets callers (harness-doctor.sh) point it
+// at a live-home or fixture manifest instead.
 const path = require('path');
-const m = require(path.join(__dirname, '..', 'manifest.json'));
+const manifestPath = process.argv[2]
+  ? path.resolve(process.argv[2])
+  : path.join(__dirname, '..', 'manifest.json');
+const m = require(manifestPath);
 
 const UNIT_MAP = {
   // command-safety unit: dangerous-command artifact screens (specs-d §D.0.4 #6)

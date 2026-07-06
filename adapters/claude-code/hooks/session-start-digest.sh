@@ -24,6 +24,11 @@
 #  11. waiver-density alarm              (§E.3 — tolerate absent)
 #  12. unresolved-gaps entries           (§E.11 — tolerate absent)
 #  13. NEEDS-YOU.md open-item count      (§E.6 — tolerate absent)
+#  14. staleness-disposition proposals   (Wave F, task F.1, specs-f §F.1 —
+#                                          ACTIVE plans / worktrees / local
+#                                          branches stale >=7d; one-word
+#                                          operator approval each)
+#  15. harness "what's new" changelog    (§F.2b — tolerate absent; harness-changelog.sh --digest-line)
 #
 # A quiet harness produces a 2-line digest: doctor verdict + "all quiet".
 #
@@ -575,6 +580,23 @@ feed_unresolved_gaps() {
 # ----------------------------------------------------------------------
 # Feed 13: NEEDS-YOU.md link + open-item count (§E.6). Tolerate absent.
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Feed 14: harness "what's new" changelog (§F.2b, Wave F task F.2). Tolerate
+# absent script/ledger. Delegates to harness-changelog.sh --digest-line,
+# which owns the ledger schema + seen-marker advancement (same delegation
+# pattern as feed_nl_issues / feed_waiver_density above — this hook never
+# reads the JSONL directly).
+# ----------------------------------------------------------------------
+feed_harness_changelog() {
+  local hcl="$HOOKS_DIR/../scripts/harness-changelog.sh"
+  [[ -x "$hcl" ]] || hcl="$HOME/.claude/scripts/harness-changelog.sh"
+  [[ -f "$hcl" ]] || return 0
+  local out
+  out="$(bash "$hcl" --digest-line 2>/dev/null || true)"
+  [[ -z "$out" ]] && return 0
+  printf '%s\n' "$out" | head -n1
+}
+
 feed_needs_you() {
   local cwd="${1:-$PWD}"
   local root
@@ -608,6 +630,146 @@ feed_needs_you() {
   [[ -n "$n" ]] && open_count=$((open_count + n))
   [[ "$open_count" -eq 0 ]] && return 0
   printf 'needs-you: %d open item(s) -> %s\n' "$open_count" "$path"
+}
+
+# ----------------------------------------------------------------------
+# Feed 14: staleness-disposition proposals (Wave F, task F.1, specs-f §F.1).
+#
+# "Staleness ESCALATION lives in the digest (E.1), not the doctor: a
+# nightly-ish SessionStart pass drafts one-line disposition proposals
+# (defer plan / delete or push branch / remove worktree — one-word
+# operator approval each). Idempotent: a proposal keyed
+# <artifact>-<yyyymmdd> is emitted once."
+#
+# IDEMPOTENCY: a dedicated state file (NOT seen.jsonl — that scheme is
+# repeat-count-based dedup for "same signal every session"; this is a
+# once-per-CALENDAR-DAY proposal regardless of how many sessions start
+# that day) at STALENESS_PROPOSALS_PATH (default
+# ~/.claude/state/digest/staleness-proposals.jsonl; HARNESS_SELFTEST=1
+# sandboxes it exactly like _digest_seen_path/_doctor_cache_path). One
+# line per emitted proposal: {"key":"<artifact>-<yyyymmdd>","ts":...}.
+# A proposal already emitted today for that exact artifact is suppressed;
+# a NEW day (different yyyymmdd) re-proposes if the artifact is still
+# stale, so the operator is not nagged more than once/day but also never
+# permanently silenced by an old entry.
+#
+# ONE-WORD REPLY CONTRACT (pin (d), specs-f §F.1 / ADR 058 D5 pins d/e/f):
+# every proposal line names the exact one-word replies and what each
+# triggers, inline — never "see the plan".
+# ----------------------------------------------------------------------
+_staleness_proposals_path() {
+  if [[ -n "${STALENESS_PROPOSALS_PATH:-}" ]]; then
+    printf '%s' "$STALENESS_PROPOSALS_PATH"
+    return 0
+  fi
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/digest-selftest/%s/staleness-proposals.jsonl' "${TMPDIR:-/tmp}" "${$}"
+    return 0
+  fi
+  printf '%s/.claude/state/digest/staleness-proposals.jsonl' "${HOME:-$PWD}"
+}
+
+# _staleness_already_proposed_today <path> <key> -> 0 (yes, suppress) / 1 (no, emit)
+_staleness_already_proposed_today() {
+  local path="$1" key="$2"
+  [[ -f "$path" ]] || return 1
+  grep -qF "\"key\":\"${key}\"" "$path" 2>/dev/null
+}
+
+# _staleness_record_proposal <path> <key>
+_staleness_record_proposal() {
+  local path="$1" key="$2"
+  mkdir -p "$(dirname "$path")" 2>/dev/null || true
+  local now; now="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown)"
+  printf '{"key":"%s","ts":"%s"}\n' "$key" "$now" >> "$path" 2>/dev/null || true
+}
+
+# feed_staleness_proposals <cwd> — walks the SAME repo the SessionStart hook
+# is running in (specs-f names "an ACTIVE plan"/"WORKTREES AND BRANCHES";
+# the machine-wide multi-root walk is the DOCTOR's budget-active-plans job —
+# this feed proposes DISPOSITIONS for THIS repo's stale artifacts, which is
+# what a SessionStart hook can act on with a concrete git/file remediation).
+feed_staleness_proposals() {
+  local cwd="${1:-$PWD}"
+  local proposals_path; proposals_path="$(_staleness_proposals_path)"
+  local today; today="$(date -u '+%Y%m%d' 2>/dev/null || echo unknown)"
+  local now; now=$(date +%s)
+  local stale_secs=$((7 * 86400))
+  local -a lines=()
+
+  # --- stale ACTIVE plans (no commit in 7 days) ---
+  local plans_dir="$cwd/docs/plans"
+  if [[ -d "$plans_dir" ]]; then
+    local f
+    for f in "$plans_dir"/*.md; do
+      [[ -f "$f" ]] || continue
+      head -n 30 "$f" 2>/dev/null | grep -qE '^Status:[[:space:]]*ACTIVE' || continue
+      local ts
+      ts=$(git -C "$cwd" log -1 --format=%ct -- "$f" 2>/dev/null)
+      [[ -z "$ts" || "$ts" == "0" ]] && ts=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo "")
+      [[ -z "$ts" ]] && continue
+      local age=$((now - ts))
+      [[ "$age" -ge "$stale_secs" ]] || continue
+      local slug; slug="$(basename "$f" .md)"
+      local key="plan-${slug}-${today}"
+      _staleness_already_proposed_today "$proposals_path" "$key" && continue
+      lines+=("propose: defer docs/plans/${slug}.md ($((age / 86400))d no commit) -> reply DEFER (flips Status: DEFERRED + backlog row) / KEEP (renews staleness clock, no change) / ABANDON (flips Status: ABANDONED + rationale)")
+      _staleness_record_proposal "$proposals_path" "$key"
+    done
+  fi
+
+  # --- stale worktrees (git-registered, >=7d no commit) ---
+  if command -v git >/dev/null 2>&1; then
+    local wt_list
+    wt_list="$(git -C "$cwd" worktree list --porcelain 2>/dev/null)"
+    if [[ -n "$wt_list" ]]; then
+      local repo_root; repo_root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)"
+      local wt_path=""
+      while IFS= read -r line; do
+        case "$line" in
+          "worktree "*) wt_path="${line#worktree }" ;;
+          "HEAD "*)
+            local sha ts age
+            sha="${line#HEAD }"
+            [[ -z "$wt_path" ]] && continue
+            [[ -n "$repo_root" && "$wt_path" == "$repo_root" ]] && continue
+            ts="$(git -C "$cwd" log -1 --format=%ct "$sha" 2>/dev/null)"
+            [[ -z "$ts" ]] && continue
+            age=$((now - ts))
+            [[ "$age" -ge "$stale_secs" ]] || continue
+            local wt_base; wt_base="$(basename "$wt_path")"
+            local key="worktree-${wt_base}-${today}"
+            _staleness_already_proposed_today "$proposals_path" "$key" && continue
+            lines+=("propose: remove worktree ${wt_path} ($((age / 86400))d no commit) -> reply REMOVE (git worktree remove '${wt_path}') / KEEP (renews staleness clock, no change)")
+            _staleness_record_proposal "$proposals_path" "$key"
+            ;;
+        esac
+      done <<< "$wt_list"
+    fi
+  fi
+
+  # --- stale local branches (no upstream, >=7d no commit) ---
+  if command -v git >/dev/null 2>&1; then
+    local br_list
+    br_list="$(git -C "$cwd" for-each-ref --format='%(refname:short)|%(upstream:short)|%(committerdate:unix)' refs/heads/ 2>/dev/null)"
+    if [[ -n "$br_list" ]]; then
+      local name upstream ts age
+      while IFS='|' read -r name upstream ts; do
+        [[ -z "$name" ]] && continue
+        [[ -n "$upstream" ]] && continue
+        [[ -z "$ts" ]] && continue
+        age=$((now - ts))
+        [[ "$age" -ge "$stale_secs" ]] || continue
+        local key="branch-${name}-${today}"
+        _staleness_already_proposed_today "$proposals_path" "$key" && continue
+        lines+=("propose: branch '${name}' ($((age / 86400))d no upstream+no commit) -> reply PUSH (git push -u origin ${name}) / DELETE (git branch -D ${name}) / KEEP (renews staleness clock, no change)")
+        _staleness_record_proposal "$proposals_path" "$key"
+      done <<< "$br_list"
+    fi
+  fi
+
+  [[ "${#lines[@]}" -eq 0 ]] && return 0
+  printf '%s\n' "${lines[@]}"
 }
 
 # ----------------------------------------------------------------------
@@ -650,6 +812,18 @@ run_digest() {
   body="$(feed_unresolved_gaps)"
   [[ -n "$body" ]] && lines+=("$body")
   body="$(feed_needs_you "$cwd")"
+  [[ -n "$body" ]] && lines+=("$body")
+  # feed_staleness_proposals is the one feed that can emit MULTIPLE lines
+  # (one per stale artifact) — read it line-by-line into the array rather
+  # than the single-"$body"-element pattern every other feed above uses,
+  # so the MAX_LINES cap below counts/truncates each proposal individually.
+  body="$(feed_staleness_proposals "$cwd")"
+  if [[ -n "$body" ]]; then
+    while IFS= read -r _staleness_line; do
+      [[ -n "$_staleness_line" ]] && lines+=("$_staleness_line")
+    done <<< "$body"
+  fi
+  body="$(feed_harness_changelog)"
   [[ -n "$body" ]] && lines+=("$body")
 
   # A quiet harness: doctor line + "all quiet" (2 lines total).
@@ -1015,6 +1189,90 @@ EOF
   else
     echo "FAIL: S10 fixture project field accidentally matched this repo's name" >&2
     fail=$((fail + 1))
+  fi
+
+  # ---- S11: feed_staleness_proposals() (Wave F, task F.1) ----
+  # S11a: a stale (8-day-old, backdated) ACTIVE plan proposes a
+  # defer/keep/abandon disposition with the exact one-word replies inline.
+  local s11a="$tmp/s11a"
+  mkdir -p "$s11a/docs/plans"
+  ( cd "$s11a" && git init --quiet && git config core.hooksPath "" \
+      && git config user.email t@example.com && git config user.name T \
+      && printf '# Stale Plan\nStatus: ACTIVE\n' > docs/plans/stale-plan.md \
+      && git add docs/plans/stale-plan.md \
+      && _s11a_ts=$(( $(date -u +%s) - 8 * 86400 )) \
+      && GIT_AUTHOR_DATE="@${_s11a_ts} +0000" GIT_COMMITTER_DATE="@${_s11a_ts} +0000" git commit --quiet -m stale
+  ) >/dev/null 2>&1
+  local out11a
+  out11a="$(export HARNESS_SELFTEST=1; export STALENESS_PROPOSALS_PATH="$tmp/s11a-proposals.jsonl"; feed_staleness_proposals "$s11a")"
+  _ck_contains "S11a stale ACTIVE plan proposes a disposition" "$out11a" "propose: defer docs/plans/stale-plan.md"
+  _ck_contains "S11a names the exact one-word replies (pin d contract)" "$out11a" "reply DEFER"
+  _ck_contains "S11a names KEEP and ABANDON too" "$out11a" "KEEP"
+
+  # S11a-repeat: invoking AGAIN the same UTC day must NOT re-propose
+  # (idempotent per <artifact>-<yyyymmdd>).
+  local out11a_repeat
+  out11a_repeat="$(export HARNESS_SELFTEST=1; export STALENESS_PROPOSALS_PATH="$tmp/s11a-proposals.jsonl"; feed_staleness_proposals "$s11a")"
+  _ck_not_contains "S11a-repeat same-day re-invocation is idempotent (suppressed)" "$out11a_repeat" "propose: defer"
+
+  # S11b: a FRESH ACTIVE plan (recent commit) must NOT propose anything.
+  local s11b="$tmp/s11b"
+  mkdir -p "$s11b/docs/plans"
+  ( cd "$s11b" && git init --quiet && git config core.hooksPath "" \
+      && git config user.email t@example.com && git config user.name T \
+      && printf '# Fresh Plan\nStatus: ACTIVE\n' > docs/plans/fresh-plan.md \
+      && git add docs/plans/fresh-plan.md && git commit --quiet -m fresh
+  ) >/dev/null 2>&1
+  local out11b
+  out11b="$(export HARNESS_SELFTEST=1; export STALENESS_PROPOSALS_PATH="$tmp/s11b-proposals.jsonl"; feed_staleness_proposals "$s11b")"
+  _ck_contains "S11b fresh ACTIVE plan silent (no proposal)" "|${out11b}|" "||"
+
+  # S11c: a stale local branch (no upstream, 8d no commit) proposes
+  # push/delete/keep.
+  local s11c="$tmp/s11c"
+  mkdir -p "$s11c"
+  ( cd "$s11c" && git init --quiet && git config core.hooksPath "" \
+      && git config user.email t@example.com && git config user.name T \
+      && echo x > f && git add f && git commit --quiet -m init \
+      && git checkout --quiet -b stale-no-upstream \
+      && echo y > g && git add g \
+      && _s11c_ts=$(( $(date -u +%s) - 8 * 86400 )) \
+      && GIT_AUTHOR_DATE="@${_s11c_ts} +0000" GIT_COMMITTER_DATE="@${_s11c_ts} +0000" git commit --quiet -m stale \
+      && { git checkout --quiet master 2>/dev/null || git checkout --quiet main 2>/dev/null || true; }
+  ) >/dev/null 2>&1
+  local out11c
+  out11c="$(export HARNESS_SELFTEST=1; export STALENESS_PROPOSALS_PATH="$tmp/s11c-proposals.jsonl"; feed_staleness_proposals "$s11c")"
+  _ck_contains "S11c stale branch proposes a disposition" "$out11c" "propose: branch 'stale-no-upstream'"
+  _ck_contains "S11c names PUSH/DELETE/KEEP" "$out11c" "reply PUSH"
+
+  # ---- S12: feed_harness_changelog() POSITIVE + SILENT-AFTER-SEEN path
+  #          (§F.2b, Wave F task F.2). Populated, sandboxed changelog ledger
+  #          fed through feed_harness_changelog() must surface the digest
+  #          line once, then go silent on a subsequent call (seen-marker
+  #          advanced by harness-changelog.sh --digest-line itself).
+  #          (Renumbered S11->S12 during Wave-F integration to avoid colliding
+  #          with F.1's S11/S11a/S11b/S11c feed_staleness_proposals scenarios —
+  #          same class as the E.6xE.8 S9 collision.)
+  local s12_hcl="$HOOKS_DIR/../scripts/harness-changelog.sh"
+  if [[ -f "$s12_hcl" ]]; then
+    local s12_ledger="$tmp/s12-changelog.jsonl"
+    local s12_seen="$tmp/s12-seen-marker"
+    HARNESS_CHANGELOG_PATH="$s12_ledger" HARNESS_CHANGELOG_SEEN_PATH="$s12_seen" \
+      bash "$s12_hcl" append --text "fixture capability shipped" >/dev/null 2>&1
+    local out12
+    out12="$(HARNESS_CHANGELOG_PATH="$s12_ledger" HARNESS_CHANGELOG_SEEN_PATH="$s12_seen" feed_harness_changelog)"
+    _ck_contains "S12 feed_harness_changelog() surfaces the digest line for a populated ledger" "$out12" "harness changes since your last session"
+    local out12b
+    out12b="$(HARNESS_CHANGELOG_PATH="$s12_ledger" HARNESS_CHANGELOG_SEEN_PATH="$s12_seen" feed_harness_changelog)"
+    if [[ -z "$out12b" ]]; then
+      echo "PASS: S12b feed_harness_changelog() silent on second call (seen-marker advanced)"
+      pass=$((pass + 1))
+    else
+      echo "FAIL: S12b feed_harness_changelog() should be silent after seen-marker advances, got '$out12b'" >&2
+      fail=$((fail + 1))
+    fi
+  else
+    echo "SKIP: S12 harness-changelog.sh not found at $s12_hcl" >&2
   fi
 
   rm -rf "$tmp" 2>/dev/null || true

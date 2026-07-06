@@ -145,6 +145,36 @@
               "none"
             ],
             "description": "The single settings.json chain this unit is budgeted against for the Wave F chain-length budgets (Stop <= 6, SessionStart <= 8, blocking <= 12). 'none' for git-hook-dispatched, manual, multi-chain, and hook-less units."
+          },
+          "waiver_path": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "description": "Path/glob (relative to ~/.claude/state/ or the repo) of the structured waiver file this blocking gate honors, typically validated by hooks/lib/waiver-purpose-clause.sh. Null or omitted when honesty_rationale explains why no waiver is offered."
+          },
+          "honesty_rationale": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "description": "REQUIRED (non-null) when blocking is true AND waiver_path is null/absent: names why this gate's block is session-honesty-class (resolvable by the session that created the gap, e.g. fix the commit content) rather than a world-state assertion needing a waiver, per ADR 059 D4 scoping. Enforced by manifest-check.sh's waiver-parity check."
+          },
+          "added_after": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9]{4}-[0-9]{2}$",
+            "description": "OPTIONAL YYYY-MM string marking this entry as subject to the new-gate-evidence-bar (ADR 059 D4): entries with added_after >= '2026-07' (lexicographic) must also carry golden_scenario, fp_expectation, retirement_condition, and (waiver_path OR honesty_rationale). Omitted/null for pre-existing entries not subject to the bar."
+          },
+          "golden_scenario": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "description": "OPTIONAL (required by the new-gate-evidence-bar when added_after >= '2026-07'): names the concrete real-world scenario this gate/check was built to catch."
+          },
+          "fp_expectation": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "description": "OPTIONAL (required by the new-gate-evidence-bar when added_after >= '2026-07'): the expected false-positive rate/profile, naming what a legitimate session doing this looks like so it is distinguishable from the caught scenario."
+          },
+          "retirement_condition": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "description": "OPTIONAL (required by the new-gate-evidence-bar when added_after >= '2026-07'): the condition under which this gate/check should be retired or demoted (ADR 059 D7 gate-demotion.sh reads this class of signal)."
           }
         },
         "allOf": [
@@ -172,6 +202,65 @@
                   "type": "string",
                   "minLength": 1
                 }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "blocking": {
+                  "const": true
+                }
+              },
+              "required": [
+                "blocking"
+              ]
+            },
+            "then": {
+              "anyOf": [
+                {
+                  "required": ["waiver_path"],
+                  "properties": { "waiver_path": { "type": "string", "minLength": 1 } }
+                },
+                {
+                  "required": ["honesty_rationale"],
+                  "properties": { "honesty_rationale": { "type": "string", "minLength": 1 } }
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "added_after": {
+                  "type": "string",
+                  "pattern": "^(2026-(0[7-9]|1[0-2])|20[3-9][0-9]-[0-9]{2}|2[1-9][0-9]{2}-[0-9]{2})$"
+                }
+              },
+              "required": [
+                "added_after"
+              ]
+            },
+            "then": {
+              "required": [
+                "golden_scenario",
+                "fp_expectation",
+                "retirement_condition"
+              ],
+              "anyOf": [
+                {
+                  "required": ["waiver_path"],
+                  "properties": { "waiver_path": { "type": "string", "minLength": 1 } }
+                },
+                {
+                  "required": ["honesty_rationale"],
+                  "properties": { "honesty_rationale": { "type": "string", "minLength": 1 } }
+                }
+              ],
+              "properties": {
+                "golden_scenario": { "type": "string", "minLength": 1 },
+                "fp_expectation": { "type": "string", "minLength": 1 },
+                "retirement_condition": { "type": "string", "minLength": 1 }
               }
             }
           }
