@@ -789,6 +789,72 @@ check_pin_f_waiver_purpose_clauses() {
 }
 
 # ------------------------------------------------------------
+# Check: line-endings (NL-FINDING-038, Wave-F F.1 incident). On Windows a
+# file-edit can silently rewrite a whole tracked script LF -> CRLF: before
+# .gitattributes landed that produced a ~2000-line spurious diff; with the
+# eol=lf pin in force the clean filter NORMALIZES the comparison instead, so
+# `git status` shows CLEAN while the on-disk bytes stay CRLF — invisible to
+# git, but install.sh cp's those working-tree bytes live, Linux CI bash
+# hard-fails on \r, and heredocs the script emits carry the pollution
+# forward. This check is the only detector for that masked state, so it
+# scans the REPO working tree. Live ~/.claude is deliberately NOT scanned:
+# the live mirror is CRLF by design equilibrium (install.sh cp's from
+# historical CRLF working trees; session-start-auto-install.sh's
+# _content_same compares modulo \r precisely so the two installers don't
+# ping-pong) and MSYS bash tolerates it — flagging live would be ~144 false
+# positives on a working system.
+# Detection is pure-bash byte matching ([[ == *$'\r'* ]]) — NEVER grep/sed/
+# awk, which silently strip \r on MSYS (NL-FINDING-030).
+#   RED  : a tracked shell surface (*.sh, git-hooks/*) has CR bytes on disk.
+#   WARN : repo .gitattributes lacks the '*.sh text eol=lf' pin (the
+#          git-layer guard that keeps CRLF out of the index on every clone,
+#          overriding any autocrlf setting).
+# ------------------------------------------------------------
+check_line_endings() {
+  local live_home="$1" repo_root="$2"
+  if [[ -z "$repo_root" ]]; then
+    _warn "line-endings" "repo root unresolved — skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local f content toplevel
+  toplevel="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null)"
+  if [[ -n "$toplevel" && "$toplevel" -ef "$repo_root" ]]; then
+    # Real repo (repo_root IS the toplevel — an -ef inode compare, so a
+    # fixture dir that merely sits INSIDE some repo still takes the glob
+    # branch): enumerate every tracked shell surface.
+    # process-substitution (not a trailing pipe) so _red's RED_COUNT
+    # increment happens in THIS shell (same trap as lib-deps).
+    while IFS= read -r -d '' f; do
+      [[ -f "$repo_root/$f" && -s "$repo_root/$f" ]] || continue
+      content="$(<"$repo_root/$f")"
+      if [[ "$content" == *$'\r'* ]]; then
+        _red "line-endings" "${f} has CR bytes in the working tree (the eol=lf clean filter masks this — git status shows clean) — fix: dos2unix '${f}' (NL-FINDING-038)"
+      fi
+    done < <(git -C "$repo_root" ls-files -z -- '*.sh' 'adapters/claude-code/git-hooks/*' 2>/dev/null)
+  else
+    # Non-git contexts (self-test fixtures): scan the adapter shell dirs.
+    for f in "$repo_root"/adapters/claude-code/hooks/*.sh \
+             "$repo_root"/adapters/claude-code/hooks/lib/*.sh \
+             "$repo_root"/adapters/claude-code/scripts/*.sh \
+             "$repo_root"/adapters/claude-code/git-hooks/*; do
+      [[ -f "$f" && -s "$f" ]] || continue
+      content="$(<"$f")"
+      if [[ "$content" == *$'\r'* ]]; then
+        _red "line-endings" "${f#"$repo_root"/} has CR bytes — fix: dos2unix (NL-FINDING-038)"
+      fi
+    done
+  fi
+
+  if [[ ! -f "$repo_root/.gitattributes" ]] \
+     || ! grep -qE '^\*\.sh[[:space:]]+text[[:space:]]+eol=lf' "$repo_root/.gitattributes" 2>/dev/null; then
+    _warn "line-endings" ".gitattributes is missing its '*.sh text eol=lf' pin — CRLF can enter the index on clones without a local autocrlf override (NL-FINDING-038)"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check 6: byte-budget
 # ------------------------------------------------------------
 check_byte_budget() {
@@ -873,6 +939,7 @@ run_quick_checks() {
   check_heartbeat_task "$live_home" "$repo_root"
   check_untracked_dirt_ignore_rule "$live_home" "$repo_root"
   check_pin_f_waiver_purpose_clauses "$live_home" "$repo_root"
+  check_line_endings "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -905,6 +972,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
     mkdir -p "$dir/live/hooks" "$dir/live/rules" "$dir/live/scripts" "$dir/live/local"
     mkdir -p "$dir/repo/adapters/claude-code/hooks" "$dir/repo/adapters/claude-code/scripts" \
              "$dir/repo/adapters/claude-code/rules" "$dir/repo/adapters/claude-code/schemas"
+    # E.6 fixture stamp (NL-FINDING-039): check_wave_e_e6_needs_you REDs when
+    # the repo-side needs-you.sh is missing / non-executable / lacking a
+    # --self-test entrypoint. The NL-FINDING-035 round-2 fix added that
+    # predicate without stamping the fixtures, breaking every rc-0 scenario
+    # in this suite. Every fixture repo gets a conforming stub.
+    printf '#!/bin/bash\n# fixture stub; the real script ships via install.sh\n[[ "${1:-}" == "--self-test" ]] && exit 0\nexit 0\n' \
+      > "$dir/repo/adapters/claude-code/scripts/needs-you.sh"
+    chmod +x "$dir/repo/adapters/claude-code/scripts/needs-you.sh" 2>/dev/null
     printf '%s\n' "$dir"
   }
 
@@ -1280,6 +1355,62 @@ EOF
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "pin-f-waiver-purpose-clauses-present-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: line-endings (NL-FINDING-038). RED fixture — a repo shell
+  # surface carries CRLF bytes (the Wave-F F.1 whole-file-conversion class).
+  # CR bytes are generated via printf escapes so this self-test's own source
+  # stays LF-clean. ----
+  D=$(_scenario_dir le-red)
+  _stamp_claim_honesty_green "$D"
+  printf '#!/bin/bash\r\nexit 0\r\n' > "$D/repo/adapters/claude-code/scripts/crlf-script.sh"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "line-endings-red" 1 "$RC" "RED line-endings" "$OUT"
+
+  # ---- Check: line-endings WARN fixture — LF-clean scripts but no
+  # .gitattributes eol pin ----
+  D=$(_scenario_dir le-warn)
+  _stamp_claim_honesty_green "$D"
+  printf '#!/bin/bash\nexit 0\n' > "$D/repo/adapters/claude-code/scripts/lf-script.sh"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "line-endings-missing-pin-warns" 0 "$RC" "WARN line-endings" "$OUT"
+
+  # ---- Check: line-endings GREEN fixture — LF scripts + the eol=lf pin ----
+  D=$(_scenario_dir le-green)
+  _stamp_claim_honesty_green "$D"
+  printf '#!/bin/bash\nexit 0\n' > "$D/repo/adapters/claude-code/scripts/lf-script.sh"
+  printf '*.sh text eol=lf\n' > "$D/repo/.gitattributes"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "line-endings-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: line-endings git-branch RED fixture — exercises the
+  # PRODUCTION code path (git ls-files enumeration + -ef toplevel guard +
+  # process-substitution RED propagation), which the glob-branch scenarios
+  # above cannot reach (their fixture repos are plain directories).
+  # git-init'd per NL-FINDING-029: hooksPath cleared so global hooks never
+  # fire; autocrlf pinned off so the CRLF bytes written are the bytes kept;
+  # `git add` (not commit) suffices for ls-files enumeration — no identity
+  # config, no hook cost. ----
+  D=$(_scenario_dir le-git-red)
+  _stamp_claim_honesty_green "$D"
+  if command -v git >/dev/null 2>&1 && git -C "$D/repo" init --quiet >/dev/null 2>&1; then
+    git -C "$D/repo" config core.hooksPath ""
+    git -C "$D/repo" config core.autocrlf false
+    printf '#!/bin/bash\r\nexit 0\r\n' > "$D/repo/adapters/claude-code/scripts/crlf-tracked.sh"
+    git -C "$D/repo" add -A >/dev/null 2>&1
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(_run_quick "$D")"; RC=$?
+    _assert "line-endings-git-red" 1 "$RC" "CR bytes in the working tree" "$OUT"
+  else
+    echo "self-test (line-endings-git-red): SKIP — git unavailable" >&2
+    PASSED=$((PASSED + 1))
+  fi
 
   # ---- Check 8 (--full only): RED fixture — a stub hook's --self-test fails ----
   D=$(_scenario_dir c7-red)

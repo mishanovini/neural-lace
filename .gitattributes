@@ -1,0 +1,63 @@
+# Line-ending policy — pinned after the Wave-F F.1 incident (NL-FINDING-038):
+# on Windows, a file-edit silently rewrote entire hook scripts LF -> CRLF,
+# producing a ~2000-line spurious diff caught only by od/dos2unix (whole-file
+# scale of the NL-FINDING-030 class). This repo is authored on Windows but its
+# scripts execute under POSIX shells, so the repo is LF-only; `eol=lf` here
+# overrides any local core.autocrlf setting on clones.
+
+# Default: auto-detected text is LF everywhere. This also covers extensionless
+# scripts (adapters/claude-code/git-hooks/pre-commit, pre-push, post-commit).
+* text=auto eol=lf
+
+# Hot harness surfaces — pinned explicitly (not left to auto-detection) so a
+# stray control byte can never flip one of these to binary and drop it out of
+# normalization.
+*.sh    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.jsonl text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.ts    text eol=lf
+*.py    text eol=lf
+*.ps1   text eol=lf
+*.toml  text eol=lf
+*.txt   text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+
+# Windows batch files are the one genuine CRLF format (none tracked today;
+# this pin is future-proofing so one never lands as LF and breaks cmd.exe).
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Binary — never normalized, text-diffed, or line-merged.
+# Any NEW binary file type MUST get a pin here before its first commit —
+# the `* text=auto eol=lf` default falls back to git's NUL-byte heuristic
+# for unlisted types, and a misdetected binary would be silently corrupted
+# by normalization.
+*.jpg    binary
+*.jpeg   binary
+*.png    binary
+*.gif    binary
+*.webp   binary
+*.avif   binary
+*.ico    binary
+*.pdf    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.otf    binary
+*.eot    binary
+*.zip    binary
+*.gz     binary
+*.tar    binary
+*.7z     binary
+*.exe    binary
+*.dll    binary
+*.so     binary
+*.dylib  binary
+*.sqlite binary
+*.db     binary
