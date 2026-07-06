@@ -1175,3 +1175,15 @@ every changed file attributable by session-UUID correlation to this orchestrator
 activity, ZERO self-test/fixture markers — no pollution. work-integrity 5x consecutive rc=0
 (NL-FINDING-025 refutation met). purge-selftest-pollution self-test 6/6. Residuals already ledgered:
 NL-FINDING-037 (--apply exit-code bug, verified live) + plan-reviewer suite >300s (profiling item).
+
+## Wave-F verification round 1 (workflow wf2vtv808, 2026-07-06)
+F.5 PASS -> flipped (waiver-parity audit spot-checked against hook source; gate-demotion live dry-run;
+remedy-chain section present; 32/32 blocking entries carry waiver_path or honesty_rationale).
+F.1 PARTIAL: worktree-AGE red-fixture missing; F.2's doctor predicates (gen-arch-doc --check drift,
+README anchor freshness) never folded -> anchors currently theater (§10). F.2 FAIL: best-practices.md
+clause never done; same predicate-fold gap. F.6 FAIL: sync guard's explicit interactive-session.lock
+branch still refuses (B.12 behavior) vs Done-when "succeeds while session open" — design resolution:
+with the dedicated clone the refusal becomes log-and-proceed (clone isolation makes it safe).
+NEW FP CLASS (verifier live-probe artifact): budget-active-plans double-counts when doctor runs from
+a linked worktree (worktree root treated as 2nd root, same plans counted twice: "6 across 2 roots"
+vs true 3) — fix = de-dup roots by git-common-dir. Fix round dispatched.
