@@ -179,6 +179,135 @@ release_plan_lock() {
 trap 'release_plan_lock' EXIT INT TERM
 
 # ============================================================
+# check_backlog_absorption_warn — BACKLOG-LOOP-01 part 2 (observability
+# O.9, operator directive 2026-07-06) — WARN-only, NEVER blocks
+# ============================================================
+#
+# Plan-time absorption matching: when a plan under docs/plans/ declares a
+# "## Files to Modify/Create" section, every OPEN docs/backlog.md row that
+# names one of the plan's declared surfaces (word-ish match on path
+# basenames / hook / script stems) must either be absorbed by the plan
+# (the existing "Backlog items absorbed:" header convention) or explicitly
+# deferred in the plan body. When matched rows are named NOWHERE in the
+# prospective plan content, this WARNS listing the matched IDs. Like
+# check_docs_impact_warn below, it never returns non-zero: authoring-time
+# nudge only — the session-start digest's backlog feed (part 1) is the
+# standing accountability backstop.
+#
+# Open-row parsing mirrors session-start-digest.sh's
+# feed_backlog_accountability exactly: structured rows ("- **<ID>")
+# minus terminal-marked ones (DISPOSITIONED/IMPLEMENTED/ABSORBED per the
+# directive + same-class CLOSED/SUPERSEDED/WONTFIX observed live).
+#
+# BACKLOG_MD_PATH overrides the backlog location (self-test fixtures —
+# the real docs/backlog.md is never read under --self-test); the default
+# derives <repo>/docs/backlog.md from the plan file's own path.
+#
+# NOTE: defined ABOVE the --self-test block (unlike check_docs_impact_warn,
+# which self-tests against an inline replica) so F13/F14 exercise THIS
+# function — no replica to drift.
+
+# _backlog_row_is_terminal <row line> -> 0 (terminal) / 1 (open).
+# MIRRORED VERBATIM from session-start-digest.sh (see the rationale
+# comment there: position-anchored R1-R4 rules; a naive whole-line scan
+# falsely skipped open rows whose prose references ANOTHER row's
+# terminal state). The three BACKLOG-LOOP-01 consumers must agree on
+# what "open" means.
+_BACKLOG_TERM_U='(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)'
+_backlog_row_is_terminal() {
+  local line="$1"
+  printf '%s' "$line" | grep -qE "^- \*\*[^*]*\b${_BACKLOG_TERM_U}\b" && return 0
+  printf '%s' "$line" | grep -qE "\*\*[[:space:]]+(—|--?)[[:space:]]+${_BACKLOG_TERM_U}\b" && return 0
+  printf '%s' "$line" | grep -qiE '\*\*\((dispositioned|implemented|absorbed|closed|superseded|wontfix)\b' && return 0
+  printf '%s' "$line" | grep -qE "\*\*((PARTIALLY|LARGELY)[[:space:]]+)?${_BACKLOG_TERM_U}\b" && return 0
+  return 1
+}
+
+check_backlog_absorption_warn() {
+  local plan_path_norm="$1"
+  local prospective="$2"
+
+  local backlog="${BACKLOG_MD_PATH:-}"
+  if [[ -z "$backlog" ]]; then
+    local root="${plan_path_norm%docs/plans/*}"
+    backlog="${root}docs/backlog.md"
+  fi
+  [[ -f "$backlog" ]] || return 0
+  [[ -z "$prospective" ]] && return 0
+
+  # Declared surfaces: the "## Files to Modify/Create" section (tolerant
+  # header match: "Files to Modify", "Files to Create", "Files to
+  # Modify/Create"; section ends at the next "## " heading).
+  local section
+  section="$(printf '%s\n' "$prospective" | awk '
+    /^##+[[:space:]]*Files to (Modify|Create)/ { insec=1; next }
+    /^##[[:space:]]/ { insec=0 }
+    insec { print }
+  ')"
+  [[ -z "$section" ]] && return 0
+
+  # Path-ish tokens -> extensionless stems for word-ish matching against
+  # backlog row text. Generic stems (README/CLAUDE/index/...) and very
+  # short stems are excluded — they would match half the backlog.
+  local tokens
+  tokens="$(printf '%s\n' "$section" \
+    | grep -oE '[A-Za-z0-9_./-]+\.(sh|md|json|js|ts|tsx|py|ps1|yml|yaml)' \
+    | sort -u)"
+  [[ -z "$tokens" ]] && return 0
+
+  local match_ids="" line id token base stem
+  while IFS= read -r line; do
+    id="$(printf '%s' "$line" | grep -oE '^- \*\*[A-Z][A-Z0-9-]{3,}' | sed 's/^- \*\*//')"
+    [[ -z "$id" ]] && continue
+    _backlog_row_is_terminal "$line" && continue
+    # Already named by the plan (absorbed header or explicit deferral
+    # note anywhere in the prospective content) -> handled, no warn.
+    if printf '%s' "$prospective" | grep -qF -- "$id"; then
+      continue
+    fi
+    while IFS= read -r token; do
+      [[ -z "$token" ]] && continue
+      base="${token##*/}"
+      stem="${base%.*}"
+      case "$stem" in
+        README*|readme*|CLAUDE*|claude|index|main|backlog|settings) continue ;;
+      esac
+      [[ "${#stem}" -lt 5 ]] && continue
+      if printf '%s' "$line" | grep -qF -- "$stem"; then
+        match_ids+="${id}"$'\n'
+        break
+      fi
+    done <<< "$tokens"
+  done < <(grep -E '^- \*\*[A-Z]' "$backlog" 2>/dev/null)
+
+  match_ids="$(printf '%s' "$match_ids" | grep -E . | sort -u || true)"
+  [[ -z "$match_ids" ]] && return 0
+
+  local id_list
+  id_list="$(printf '%s\n' "$match_ids" | tr '\n' ' ' | sed 's/ $//')"
+  cat >&2 <<WARNMSG
+
+----------------------------------------------------------------
+[plan-edit-validator] WARN — open backlog rows name this plan's
+surfaces (BACKLOG-LOOP-01 absorption matching)
+----------------------------------------------------------------
+Open docs/backlog.md rows match surfaces this plan declares under
+'## Files to Modify/Create', but the plan names none of them:
+
+  ${id_list}
+
+Absorb or explicitly defer each (add to the absorbed header or note
+deferral): name the ID in the plan's 'Backlog items absorbed:' header,
+or note its deferral with a reason in the plan body.
+
+This is a WARN, not a block — the edit is allowed. The session-start
+digest keeps proposing each overdue row until it reaches a terminal
+state (done / absorbed / wontfix-with-reason).
+WARNMSG
+  return 0
+}
+
+# ============================================================
 # --self-test: 4 scenarios for plan task 9 (lock concurrency)
 # ============================================================
 #
@@ -811,8 +940,89 @@ JSON
     FAILED=$((FAILED+1))
   fi
 
+  # ============================================================
+  # F13/F14 — BACKLOG-LOOP-01 absorption matching (WARN-only)
+  # ============================================================
+  #
+  # These exercise the REAL check_backlog_absorption_warn (defined above
+  # the self-test block — no inline replica) against a FIXTURE backlog
+  # via BACKLOG_MD_PATH; the real docs/backlog.md is never read here.
+  #   F13  plan declares a surface an open fixture row names, plan does
+  #        not name the row ID -> WARNED (matched ID listed), rc 0; the
+  #        unrelated-surface row and the terminal-marked row stay silent
+  #   F14  same plan WITH 'Backlog items absorbed: <ID>' header -> CLEAN
+  BL_FIXTURE="$TMPDIR_SELFTEST/fixture-backlog.md"
+  cat > "$BL_FIXTURE" <<'EOF'
+# Fixture Backlog
+
+- **FIXTURE-SURFACE-01 — session-start-digest.sh needs a fictional extension** (added 2026-01-01; `priority:high`). Prose body.
+- **FIXTURE-OTHER-01 — some-unrelated-hook.sh cleanup** (added 2026-01-01; `priority:low`). Prose body.
+- **FIXTURE-TERM-01 — [CLOSED 2026-01-02] session-start-digest.sh already handled** (added 2026-01-01; `priority:high`). Prose body.
+- **FIXTURE-REF-OPEN-01 — open session-start-digest.sh row whose prose references another row's terminal state** (added 2026-01-01; `priority:high`). **This is distinct from OTHER-GAP-99 (IMPLEMENTED 2026-01-01).** Still open.
+EOF
+
+  PLAN_F13=$'# Fixture Plan\n\nStatus: DRAFT\n\n## Goal\n\nFixture.\n\n## Files to Modify/Create\n\n`adapters/claude-code/hooks/session-start-digest.sh` (extend)\n\n## Testing Strategy\n\nn/a\n'
+  set +e
+  OUT_F13="$(BACKLOG_MD_PATH="$BL_FIXTURE" check_backlog_absorption_warn "docs/plans/fixture-f13.md" "$PLAN_F13" 2>&1)"
+  RC_F13=$?
+  set -e
+  if [[ "$RC_F13" -eq 0 ]] \
+     && printf '%s' "$OUT_F13" | grep -q "FIXTURE-SURFACE-01" \
+     && printf '%s' "$OUT_F13" | grep -q "FIXTURE-REF-OPEN-01" \
+     && printf '%s' "$OUT_F13" | grep -q "Absorb or explicitly defer each" \
+     && ! printf '%s' "$OUT_F13" | grep -q "FIXTURE-OTHER-01" \
+     && ! printf '%s' "$OUT_F13" | grep -q "FIXTURE-TERM-01"; then
+    echo "self-test (F13) backlog-surface-match-unabsorbed-warns: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F13) backlog-surface-match-unabsorbed-warns: FAIL (rc=$RC_F13 out=$OUT_F13)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  PLAN_F14="${PLAN_F13/Status: DRAFT/Status: DRAFT
+Backlog items absorbed: FIXTURE-SURFACE-01 (fixture absorption); FIXTURE-REF-OPEN-01 (deferred — fixture).}"
+  set +e
+  OUT_F14="$(BACKLOG_MD_PATH="$BL_FIXTURE" check_backlog_absorption_warn "docs/plans/fixture-f14.md" "$PLAN_F14" 2>&1)"
+  RC_F14=$?
+  set -e
+  if [[ "$RC_F14" -eq 0 ]] && [[ -z "$OUT_F14" ]]; then
+    echo "self-test (F14) absorbed-header-naming-the-id-silences: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F14) absorbed-header-naming-the-id-silences: FAIL (rc=$RC_F14 out=$OUT_F14)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ============================================================
+  # F15 — end-to-end: REAL flagless subprocess invocation (stdin JSON,
+  # Edit shape) on a prose-only plan edit (NO task lines in the fragment).
+  # Proves three things at once:
+  #   1. the §F.2b set-e regression is fixed (a no-task-line fragment
+  #      previously killed the hook with exit 1 before ANY later check ran)
+  #   2. the Edit-branch jq prospective-content path feeds
+  #      check_backlog_absorption_warn (WARN listing the matched ID)
+  #   3. the edit is ALLOWED (exit 0) — WARN never blocks
+  # ============================================================
+  F15_DIR="$TMPDIR_SELFTEST/f15/docs/plans"
+  mkdir -p "$F15_DIR"
+  printf '# F15 Plan\n\nStatus: DRAFT\n\n## Files to Modify/Create\n\n`adapters/claude-code/hooks/session-start-digest.sh` (extend)\n' > "$F15_DIR/f15-plan.md"
+  F15_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f15-plan.md","old_string":"Status: DRAFT","new_string":"Status: DRAFT (f15 edit)"}}' "$F15_DIR")"
+  set +e
+  F15_ERR="$(printf '%s' "$F15_JSON" | BACKLOG_MD_PATH="$BL_FIXTURE" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F15=$?
+  set -e
+  if [[ "$RC_F15" -eq 0 ]] \
+     && printf '%s' "$F15_ERR" | grep -q "FIXTURE-SURFACE-01" \
+     && printf '%s' "$F15_ERR" | grep -q "Absorb or explicitly defer each"; then
+    echo "self-test (F15) e2e-prose-edit-allowed-with-absorption-warn: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F15) e2e-prose-edit-allowed-with-absorption-warn: FAIL (rc=$RC_F15 stderr=$F15_ERR)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 12 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 15 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1176,8 +1386,14 @@ check_docs_impact_warn() {
   local new_content="$2"
 
   # Extract new task lines: "- [ ] <ID>. ..." present in new_content.
+  # "|| true" is load-bearing: this script runs under `set -e`, and a
+  # no-match grep exits 1, which (as the last command of an assignment
+  # substitution) killed the WHOLE hook with exit 1 on ANY plan edit
+  # whose new fragment contained no task line — the `[[ -z ]] && return`
+  # guard below never ran (latent since §F.2b; caught by BACKLOG-LOOP-01's
+  # F15 end-to-end scenario, 2026-07-06).
   local new_task_lines
-  new_task_lines="$(echo "$new_content" | grep -E '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' 2>/dev/null)"
+  new_task_lines="$(echo "$new_content" | grep -E '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' 2>/dev/null || true)"
   [[ -z "$new_task_lines" ]] && return 0
 
   local warned=0
@@ -1233,6 +1449,21 @@ if [[ "$TOOL_NAME" == "Edit" ]]; then
   # §F.2b — WARN (never blocks) on a newly-introduced task line missing
   # 'Docs impact:'.
   check_docs_impact_warn "$OLD_STR" "$NEW_STR"
+
+  # BACKLOG-LOOP-01 — WARN (never blocks) when open backlog rows name
+  # surfaces this plan declares. Prospective content = on-disk content
+  # with the LITERAL old_string -> new_string replacement applied (jq
+  # split/join — literal, no regex), so section/header context outside
+  # the edited fragment still participates in the match. jq failure
+  # falls back to the on-disk content (conservative: pre-edit view).
+  if [[ -f "$FILE_PATH" ]]; then
+    PROSPECTIVE_CONTENT="$(jq -rn --rawfile c "$FILE_PATH" --arg old "$OLD_STR" --arg new "$NEW_STR" \
+      'if $old == "" then $c else ($c | split($old) | join($new)) end' 2>/dev/null \
+      || cat "$FILE_PATH" 2>/dev/null)"
+  else
+    PROSPECTIVE_CONTENT="$NEW_STR"
+  fi
+  check_backlog_absorption_warn "$FILE_PATH_NORM" "$PROSPECTIVE_CONTENT"
 
   # Does the old string contain an unchecked box AND the new string contain
   # a checked box? If yes, this is a checkbox flip.
@@ -1367,10 +1598,17 @@ if [[ "$TOOL_NAME" == "Write" ]]; then
   # empty, so every task line in a fresh plan is "new").
   if [[ ! -f "$FILE_PATH" ]]; then
     check_docs_impact_warn "" "$NEW_CONTENT"
+    # BACKLOG-LOOP-01 — a FRESH plan is the highest-value moment for
+    # absorption matching (WARN-only, never blocks).
+    check_backlog_absorption_warn "$FILE_PATH_NORM" "$NEW_CONTENT"
     exit 0
   fi
 
   check_docs_impact_warn "$(cat "$FILE_PATH" 2>/dev/null)" "$NEW_CONTENT"
+
+  # BACKLOG-LOOP-01 — WARN (never blocks); full Write content IS the
+  # prospective plan content.
+  check_backlog_absorption_warn "$FILE_PATH_NORM" "$NEW_CONTENT"
 
   OLD_CHECKED=$(grep -cE '^\s*-\s*\[\s*[xX]\s*\]' "$FILE_PATH" 2>/dev/null || echo "0")
   OLD_CHECKED=$(echo "$OLD_CHECKED" | tr -d '[:space:]')
