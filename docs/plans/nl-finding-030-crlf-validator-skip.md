@@ -1,5 +1,5 @@
 # Plan: NL-FINDING-030 — rerun-safe CI body fetch (fix 2 of 2) (design-skip)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: direct
 Mode: design-skip
 Backlog items absorbed: none
@@ -134,3 +134,9 @@ Resolved 2026-07-04. Fix (1) [CR-strip + Case 23] already on master via #84/d412
 fetch] + the title-strip + finding closure land via this branch; harness-reviewer PASS.
 Reaches master via PR under the Session-A estate-coordination order (dazzling-hawking /
 030-validator satellite). Status stays ACTIVE until merge; archive on merge.
+
+## Completion report (2026-07-06, orchestrator)
+Both fixes merged to master: fix 1/2 (validator CR-tolerance) and fix 2/2 (rerun-safe CI body/title
+fetch, PR #85 4e8c7c7). NL-FINDING-030 dispositioned; CRLF class further hardened by NL-FINDING-038
+(.gitattributes eol=lf + doctor line-endings check). Zero unchecked tasks; design-skip plan, oracle
+was the CI run itself (PR #85 checks green). Closing per protocol: report first, Status flip last.
