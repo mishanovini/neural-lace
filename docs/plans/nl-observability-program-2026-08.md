@@ -119,6 +119,18 @@ new `adapters/claude-code/scripts/session-heartbeat.sh`, `workstreams-ui/`
 - 2026-07-06: `adapters/claude-code/scripts/session-resumer.sh` — specs-o §O.1 assigns C2 event-name normalization here.
 - 2026-07-06: `adapters/claude-code/tests/fixtures/wave-o/` — O.1's fragment deliverables (manifest-amendments.md, install-sync.md, doctor-predicate.md, template-wiring.md) per specs-o §O.0.1 serialization rules.
 - 2026-07-06: `adapters/claude-code/observability-consumer-map.json` — the top-level Files-to-Modify entry named this bare (no path prefix); this bullet gives the full repo-relative path so the scope gate's glob match resolves it.
+- 2026-07-06: `adapters/claude-code/hooks/lib/session-heartbeat-lib.sh` — the
+  O.2 builder split the C1 read-side classification functions
+  (hb_path_for/hb_write/hb_is_stale/hb_classify) into a shared lib file
+  (mirrors the `hooks/lib/signal-ledger.sh` precedent) so
+  `scripts/session-heartbeat.sh`'s own `sweep` verb and the future §O.3
+  `od_sessions` call the identical implementation. Named in specs-o §O.2
+  deliverable 2; not itself listed in this section's original
+  `session-heartbeat.sh` line.
+- 2026-07-06: `adapters/claude-code/tests/fixtures/wave-o/O.2/` — per specs-o
+  §O.0.1 serialization rules, builders ship orchestrator-splice fragments
+  (`manifest-amendments.md`, `callsite-wiring.md`) under this path rather
+  than editing `manifest.json`/`settings.json.template` directly.
 
 ## Assumptions
 
