@@ -66,6 +66,14 @@ The operator must never have to hunt for the thing you are talking about.
   5. **Reply with:** the exact one-word answers and what each triggers.
 - Batch related decisions. Never bury a decision mid-prose. Never re-ask what the
   operator already answered.
+- **The cold-reader bar (operator directive 2026-07-06).** Write every decision for a
+  reader with ZERO session context. Your session shorthand means nothing to the operator:
+  define any term of art you use, name the concrete system and artifact (which repo, which
+  account, which file — linked per §2), state in each option what will actually happen in
+  plain outcomes, and say why this call is theirs rather than yours. The test: could they
+  answer correctly from the block alone, cold? A structurally-complete block only this
+  session can understand is a §3 violation, not a decision.
+
 
 ## 4. Functionality over components — the only definition of done
 
