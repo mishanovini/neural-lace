@@ -68,6 +68,20 @@ HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 { source "$HOOKS_DIR/lib/signal-ledger.sh" 2>/dev/null; } || true
 
+# ---- WAVE-O O.9: od_backlog_health oracle, guarded source + feature-detect ----
+# Contract C4 (specs-o §O.0.3): observability-derive.sh is owned/built by task
+# O.3 (parallel; O.9 never creates/edits that file — §O.0.1 rule 2). Source it
+# if present; if it doesn't yet supply od_backlog_health (pre-merge, or the
+# file doesn't exist at all), fall back to the private test shim so this hook
+# still has a real oracle to call. Once O.3 merges the real lib, the guarded
+# source above wins the declare -F check and this fallback is never invoked.
+# shellcheck disable=SC1091
+{ source "$HOOKS_DIR/lib/observability-derive.sh" 2>/dev/null; } || true
+if ! declare -F od_backlog_health >/dev/null 2>&1; then
+  # shellcheck disable=SC1091
+  { source "$HOOKS_DIR/../tests/fixtures/wave-o/O.9/od-backlog-shim.sh" 2>/dev/null; } || true
+fi
+
 MAX_LINES=15
 DIGEST_ALERT_CAP=5
 
@@ -812,87 +826,57 @@ feed_staleness_proposals() {
 # remain. Rows beyond the cap are NOT recorded as seen, so they surface
 # in subsequent sessions of the same week rather than being silently
 # eaten by the cap.
-# ----------------------------------------------------------------------
-_backlog_date_to_epoch() {
-  local d="$1"
-  date -u -d "$d" +%s 2>/dev/null \
-    || date -u -j -f '%Y-%m-%d' "$d" +%s 2>/dev/null \
-    || echo ""
-}
-
-# _backlog_row_is_terminal <row line> -> 0 (terminal) / 1 (open).
 #
-# POSITION-ANCHORED marker detection, not a whole-line scan: a naive
-# whole-line grep falsely skipped OPEN rows whose prose merely REFERENCES
-# another row's terminal state (live example, caught by this increment's
-# own livesmoke: GH-AUTH-AUTOSWITCH-WORKORG-01, an open 35d-overdue row,
-# was invisible because its prose says "distinct from HARNESS-GAP-12
-# (IMPLEMENTED 2026-05-04)"). The four rules below match every terminal
-# form actually observed in the live backlog and nothing else:
-#   R1  UPPERCASE marker inside the bold TITLE span
-#       ("[CLOSED 2026-07-02] ...", "[SUPERSEDED 2026-05-27 by PR #26]")
-#   R2  "** — MARKER" immediately after the title close
-#       ("- **HARNESS-GAP-08** — IMPLEMENTED 2026-05-05 via ...")
-#   R3  bold-paren annotation, case-insensitive (live form is lowercase:
-#       "**(absorbed by docs/plans/...)**")
-#   R4  bold annotation opening with optional qualifier + UPPERCASE marker
-#       ("**LARGELY SUPERSEDED same-day**", "**IMPLEMENTED 2026-05-05 ...**")
-# R1/R2/R4 are case-SENSITIVE: lowercase title prose like "residue from
-# the superseded cross-machine plan" describes SUBJECT MATTER, not row
-# state (CROSS-MACHINE-COORD-RESIDUE-01 is an open row).
-# Mirrored verbatim in plan-edit-validator.sh + harness-kpis.sh — the
-# three BACKLOG-LOOP-01 consumers must agree on what "open" means.
-_BACKLOG_TERM_U='(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)'
-_backlog_row_is_terminal() {
-  local line="$1"
-  printf '%s' "$line" | grep -qE "^- \*\*[^*]*\b${_BACKLOG_TERM_U}\b" && return 0
-  printf '%s' "$line" | grep -qE "\*\*[[:space:]]+(—|--?)[[:space:]]+${_BACKLOG_TERM_U}\b" && return 0
-  printf '%s' "$line" | grep -qiE '\*\*\((dispositioned|implemented|absorbed|closed|superseded|wontfix)\b' && return 0
-  printf '%s' "$line" | grep -qE "\*\*((PARTIALLY|LARGELY)[[:space:]]+)?${_BACKLOG_TERM_U}\b" && return 0
-  return 1
-}
+# ORACLE (Wave O task O.9): row-parsing + position-anchored
+# terminal-marker detection is no longer duplicated in this function —
+# it is delegated to the od_backlog_health oracle (contract C4; guarded
+# source + feature-detect fallback at the top of this file). This
+# function now ONLY applies the digest's own presentation policy
+# (weekly idempotency via seen.jsonl, the cap, the proposal line format)
+# on top of the oracle's overdue_ids + row facts.
+# ----------------------------------------------------------------------
 
 feed_backlog_accountability() {
   local seen_path="$1" cwd="${2:-$PWD}"
   local backlog="$cwd/docs/backlog.md"
   [[ -f "$backlog" ]] || return 0
-  local tier_high="${BACKLOG_TIER_HIGH_DAYS:-7}"
-  local tier_medium="${BACKLOG_TIER_MEDIUM_DAYS:-30}"
-  local tier_low="${BACKLOG_TIER_LOW_DAYS:-90}"
+  declare -F od_backlog_health >/dev/null 2>&1 || return 0
   local cap="${BACKLOG_DIGEST_CAP:-3}"
   local isoweek; isoweek="$(date -u '+%G-W%V' 2>/dev/null || echo unknown)"
-  local now; now="$(date -u +%s)"
 
-  # Collect overdue candidates as "age_days<TAB>id<TAB>prio" lines.
-  local candidates=""
-  local line id added added_epoch age_days prio threshold prior key
-  while IFS= read -r line; do
-    id="$(printf '%s' "$line" | grep -oE '^- \*\*[A-Z][A-Z0-9-]{3,}' | sed 's/^- \*\*//')"
-    [[ -z "$id" ]] && continue
-    _backlog_row_is_terminal "$line" && continue
-    added="$(printf '%s' "$line" | grep -oE 'added [0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n1 | sed 's/^added //')"
-    [[ -z "$added" ]] && continue
-    added_epoch="$(_backlog_date_to_epoch "$added")"
-    [[ -z "$added_epoch" ]] && continue
-    age_days=$(( (now - added_epoch) / 86400 ))
-    prio="$(printf '%s' "$line" | grep -oE 'priority:(high|medium|low)' | head -n1 | sed 's/^priority://')"
-    [[ -z "$prio" ]] && prio="low"
-    case "$prio" in
-      high)   threshold="$tier_high" ;;
-      medium) threshold="$tier_medium" ;;
-      *)      threshold="$tier_low" ;;
-    esac
-    [[ "$age_days" -gt "$threshold" ]] || continue
-    # Weekly idempotency: already surfaced this ISO week -> suppress.
-    key="${id}-${isoweek}"
-    prior="$(_seen_lookup "$seen_path" "backlog" "$key")"
-    [[ -n "$prior" ]] && continue
-    candidates+="${age_days}"$'\t'"${id}"$'\t'"${prio}"$'\n'
-  done < <(grep -E '^- \*\*[A-Z]' "$backlog" 2>/dev/null)
+  local oracle_json
+  oracle_json="$(BACKLOG_MD_PATH="$backlog" od_backlog_health --json 2>/dev/null)"
+  [[ -z "$oracle_json" ]] && return 0
 
+  # Ask the oracle for oldest-first overdue rows as "age_days<TAB>id<TAB>prio"
+  # lines (node does the JSON walk; bash keeps the seen.jsonl/cap policy).
+  local candidates
+  candidates="$(printf '%s' "$oracle_json" | node -e '
+    "use strict";
+    var doc = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    var byId = {};
+    (doc.rows || []).forEach(function (r) { byId[r.id] = r; });
+    var ids = (doc.summary && doc.summary.overdue_ids) || [];
+    ids.forEach(function (id) {
+      var r = byId[id];
+      if (!r) return;
+      process.stdout.write(String(r.age_days) + "\t" + r.id + "\t" + r.priority + "\n");
+    });
+  ' 2>/dev/null)"
   [[ -z "$candidates" ]] && return 0
+
+  # Weekly idempotency filter: drop rows already surfaced this ISO week.
+  local filtered="" line age_days id prio prior
+  while IFS=$'\t' read -r age_days id prio; do
+    [[ -z "$id" ]] && continue
+    prior="$(_seen_lookup "$seen_path" "backlog" "${id}-${isoweek}")"
+    [[ -n "$prior" ]] && continue
+    filtered+="${age_days}"$'\t'"${id}"$'\t'"${prio}"$'\n'
+  done <<< "$candidates"
+  [[ -z "$filtered" ]] && return 0
+
   local total emitted=0
-  total="$(printf '%s' "$candidates" | grep -c .)"
+  total="$(printf '%s' "$filtered" | grep -c .)"
   while IFS=$'\t' read -r age_days id prio; do
     [[ -z "$id" ]] && continue
     [[ "$emitted" -lt "$cap" ]] || break
@@ -900,7 +884,7 @@ feed_backlog_accountability() {
       "$id" "$prio" "$age_days"
     _seen_bump "$seen_path" "backlog" "${id}-${isoweek}"
     emitted=$((emitted + 1))
-  done < <(printf '%s' "$candidates" | sort -t$'\t' -k1,1 -rn)
+  done < <(printf '%s' "$filtered" | sort -t$'\t' -k1,1 -rn)
   if [[ "$total" -gt "$cap" ]]; then
     printf 'backlog: +%d more overdue row(s) -> docs/backlog.md\n' "$((total - cap))"
   fi
@@ -918,7 +902,26 @@ run_digest() {
   local seen_path; seen_path="${3:-$(_digest_seen_path)}"
   local input="${DIGEST_STDIN:-}"
 
+  # ---- WAVE-O O.1 EMIT: session-start (contract C2) ----------------------
+  # ONE marked lifecycle-event emit call, per specs-o §O.1 deliverable 2.
+  # Fires at the top of the real flagless SessionStart invocation (before
+  # any feed runs), so a session that crashes mid-digest still recorded its
+  # start. Never blocks: ledger_emit's own contract (never fails the
+  # caller) plus the `_have` guard below (no-op if signal-ledger.sh failed
+  # to source, e.g. a stripped-down fixture tree).
+  if _have ledger_emit; then
+    ledger_emit "session-start-digest" "session-start" "cwd=${cwd}"
+  fi
+  # ---- END WAVE-O O.1 EMIT -------------------------------------------------
+
   local -a lines=()
+
+  # ---- WAVE-O O.2 CALLSITE: session-start liveness heartbeat -------------
+  # Best-effort, never-blocks (session-heartbeat.sh touch always exits 0).
+  # Per specs-o §O.2 fragment callsite-wiring.md item 1 (orchestrator splice).
+  "$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event start >/dev/null 2>&1 || true
+  # ---- END WAVE-O O.2 CALLSITE ---------------------------------------------
+
   local doctor_line
   doctor_line="$(feed_doctor "$cwd")"
   [[ -n "$doctor_line" ]] && lines+=("$doctor_line")
@@ -1520,6 +1523,66 @@ EOF
   local out13d
   out13d="$(DIGEST_SEEN_PATH="$s13d_seen" run_digest "$s13d" "$tmp/s13d-no-alerts" "$s13d_seen" 2>/dev/null)"
   _ck_contains "S13d run_digest carries the backlog feed line" "$out13d" "backlog: WIRED-ROW-01 (high, 8d)"
+
+  # ---- S14 (Wave O task O.1): run_digest emits a session-start ledger
+  # event exactly once per invocation. Invoked via the REAL flagless
+  # production call shape (run_digest "$cwd") -- no extra flags, only env
+  # sandboxing (SIGNAL_LEDGER_PATH) per specs-o §O.0.1 rule 4 -- so this
+  # scenario mirrors the mandated flagless-invocation-shape requirement.
+  local s14="$tmp/s14"
+  _seed_repo "$s14"
+  local s14_seen="$tmp/s14-seen.jsonl"
+  local s14_ledger="$tmp/s14-ledger.jsonl"
+  ( export SIGNAL_LEDGER_PATH="$s14_ledger"; \
+    DIGEST_SEEN_PATH="$s14_seen" run_digest "$s14" "$tmp/s14-no-alerts" "$s14_seen" >/dev/null 2>&1 )
+  if [[ -f "$s14_ledger" ]] && grep -q '"gate":"session-start-digest".*"event":"session-start"' "$s14_ledger" 2>/dev/null; then
+    echo "PASS: S14 run_digest emits a session-start ledger event (contract C2, flagless shape)"; pass=$((pass + 1))
+  else
+    echo "FAIL: S14 run_digest emits a session-start ledger event (expected a session-start-digest/session-start line in $s14_ledger)" >&2
+    fail=$((fail + 1))
+  fi
+  local s14_count
+  s14_count=$(grep -c '"event":"session-start"' "$s14_ledger" 2>/dev/null | tr -d ' ')
+  [[ -z "$s14_count" ]] && s14_count=0
+  _ck_le "S14 exactly one session-start line per run_digest invocation" "$s14_count" "1"
+  if [[ "$s14_count" -ge 1 ]]; then
+    echo "PASS: S14 at least one session-start line emitted"; pass=$((pass + 1))
+  else
+    echo "FAIL: S14 at least one session-start line emitted (got 0)" >&2
+    fail=$((fail + 1))
+  fi
+
+  # ---- S15 (Wave O task O.1, specs-o §O.0.1 rule 4 -- flagless-shape
+  # mandate): every OTHER scenario in this file calls feed_*/run_digest as
+  # internal bash functions; this one invokes the REAL production entry
+  # path instead -- `bash session-start-digest.sh` with stdin (empty, the
+  # normal SessionStart shape) and NO CLI flags, only env-var sandboxing
+  # (HOME + SIGNAL_LEDGER_PATH + DIGEST_SEEN_PATH), exactly mirroring how
+  # settings.json.template actually wires this hook.
+  local s15="$tmp/s15"
+  _seed_repo "$s15"
+  local s15_ledger="$tmp/s15-ledger.jsonl"
+  local s15_seen="$tmp/s15-seen.jsonl"
+  local s15_home="$tmp/s15-home"
+  mkdir -p "$s15_home/.claude/state"
+  # BASH_SOURCE[0] resolved to an ABSOLUTE path via HOOKS_DIR (already
+  # computed at top-of-script) BEFORE the `cd` below — the self-test was
+  # invoked with a RELATIVE path in earlier iterations of this scenario,
+  # and once the subshell `cd`'d into the fixture dir, that relative path
+  # no longer resolved to the real script, which hung the whole suite
+  # indefinitely at this exact call (root-caused via `bash -x` tracing).
+  local s15_script="$HOOKS_DIR/$(basename "${BASH_SOURCE[0]}")"
+  (
+    cd "$s15" && \
+    HOME="$s15_home" HARNESS_SELFTEST=1 SIGNAL_LEDGER_PATH="$s15_ledger" DIGEST_SEEN_PATH="$s15_seen" \
+      bash "$s15_script" </dev/null >/dev/null 2>&1
+  )
+  if [[ -f "$s15_ledger" ]] && grep -q '"gate":"session-start-digest".*"event":"session-start"' "$s15_ledger" 2>/dev/null; then
+    echo "PASS: S15 real flagless invocation (bash session-start-digest.sh, no flags) emits session-start"; pass=$((pass + 1))
+  else
+    echo "FAIL: S15 real flagless invocation (bash session-start-digest.sh, no flags) emits session-start (expected a line in $s15_ledger)" >&2
+    fail=$((fail + 1))
+  fi
 
   rm -rf "$tmp" 2>/dev/null || true
   echo ""

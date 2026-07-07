@@ -414,13 +414,64 @@ emit_digest_feed() {
 }
 
 # ----------------------------------------------------------------------
+# _resumer_normalize_event <event> — NL Observability Program Wave O, task
+# O.1 (specs-o §O.1 deliverable 2): maps this script's own pre-existing
+# event vocabulary (tombstone/escalation/backoff-wait/would-have-resumed/
+# storm-cap-queued/resume-attempt/resume-unresumable/resume-fallback/
+# classify-skip) onto the frozen contract-C2 ledger event types
+# (session-resume/throttle-detected), so the SIGNAL LEDGER carries the
+# normalized name while the ORIGINAL name is preserved verbatim in the
+# detail text (never lost — "keep old names as detail text" per specs-o).
+#
+# Mapping rationale:
+#   session-resume    — an actual (or would-be, under shadow mode) resume
+#                        attempt against a dead session: resume-attempt,
+#                        resume-fallback, resume-unresumable,
+#                        would-have-resumed, tombstone (a resume-adjacent
+#                        lifecycle action on the session).
+#   throttle-detected  — this pass could not/did not act because of a
+#                        rate/volume constraint: backoff-wait (per-session
+#                        cooldown), storm-cap-queued (rolling-hour cap),
+#                        escalation (repeated-failure ceiling reached).
+#   (anything else, e.g. classify-skip — a natural-end/no-signal
+#    classification, not a resume or a throttle event) passes through
+#    UNCHANGED; the digest-feed side (emit_digest_feed, called separately
+#    by emit_action below) always keeps the original name regardless.
+# ----------------------------------------------------------------------
+_resumer_normalize_event() {
+  local event="$1"
+  case "$event" in
+    resume-attempt|resume-fallback|resume-unresumable|would-have-resumed|tombstone)
+      printf 'session-resume'
+      ;;
+    backoff-wait|storm-cap-queued|escalation)
+      printf 'throttle-detected'
+      ;;
+    *)
+      printf '%s' "$event"
+      ;;
+  esac
+}
+
+# ----------------------------------------------------------------------
 # emit_action <session_id> <event> <detail> — the one call site every
 # action funnels through: ledger_emit (if available) + digest feed.
+#
+# Wave O task O.1: the LEDGER event name is normalized to contract C2
+# (session-resume | throttle-detected | passthrough) via
+# _resumer_normalize_event; the ORIGINAL event name is preserved verbatim
+# at the front of the ledger detail text ("orig_event=<event> ..."), never
+# dropped. The DIGEST FEED (emit_digest_feed below) is UNCHANGED — it
+# keeps receiving the original event name exactly as before, so every
+# pre-existing digest-feed self-test assertion (grep '"event":"escalation"'
+# etc. against digest-feed.jsonl) continues to pass unmodified.
 # ----------------------------------------------------------------------
 emit_action() {
   local sid="$1" event="$2" detail="$3"
   if command -v ledger_emit >/dev/null 2>&1; then
-    ledger_emit "resumer" "$event" "session=${sid} ${detail}"
+    local normalized
+    normalized="$(_resumer_normalize_event "$event")"
+    ledger_emit "resumer" "$normalized" "session=${sid} orig_event=${event} ${detail}"
   fi
   emit_digest_feed "$sid" "$event" "$detail"
 }
@@ -809,6 +860,15 @@ perform_resume() {
   # ---- LIVE path: actually invoke the CLI. Never reached under
   # --self-test / HARNESS_SELFTEST=1 (see gate above). ----
   emit_action "$sid" "resume-attempt" "attempt ${next_attempt}/${MAX_ATTEMPTS}: ${reason}"
+  # ---- WAVE-O O.2 CALLSITE: resume-event liveness heartbeat --------------
+  # Best-effort, never-blocks, tolerates the script being absent (mirrors
+  # the callsite-wiring.md guard style: session-heartbeat.sh touch always
+  # exits 0, but we don't even assume the file exists on every checkout).
+  # Orchestrator-added per specs-o §O.2 "Note on resume event" — the O.2
+  # builder's fragment names this as an orchestrator TODO since
+  # session-resumer.sh is not in O.1's or O.2's owned-files list.
+  [[ -x "$SCRIPT_DIR/session-heartbeat.sh" ]] && "$SCRIPT_DIR/session-heartbeat.sh" touch --event resume >/dev/null 2>&1 || true
+  # ---- END WAVE-O O.2 CALLSITE ----------------------------------------------
   local out rc
   out=$(claude -p --resume "$sid" "$RESUME_NUDGE" 2>&1)
   rc=$?
@@ -1203,6 +1263,66 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     ok "repeated shadow-mode passes never consume the storm-cap budget"
   else
     no "expected storm-cap room to remain untouched after shadow-mode passes, got: $shadow_room"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 14 (Wave O task O.1, specs-o §O.1 deliverable 2, contract C2):
+  # the SIGNAL LEDGER (not the digest feed — that stays on the original
+  # vocabulary, proven unaffected by every PASS above) carries the
+  # NORMALIZED event name, with the ORIGINAL name preserved verbatim in the
+  # detail text. Reuses ledger content already produced by earlier
+  # scenarios in THIS SAME self-test run (Scenario 6 escalation, Scenario 7
+  # resume-fallback/resume-unresumable, Scenario 13 would-have-resumed) —
+  # SIGNAL_LEDGER_PATH has been the one fixture path ($TMP/ledger.jsonl)
+  # for the whole run, so every prior emit_action call already landed here.
+  # ------------------------------------------------------------
+  echo "Scenario 14: ledger event names are normalized to contract C2; original names preserved in detail"
+  if [[ -f "$SIGNAL_LEDGER_PATH" ]]; then
+    if grep -q '"gate":"resumer".*"event":"throttle-detected".*orig_event=escalation' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+      ok "escalation normalizes to throttle-detected (orig_event preserved)"
+    else
+      no "expected a resumer/throttle-detected ledger line with orig_event=escalation"
+    fi
+    if grep -q '"gate":"resumer".*"event":"session-resume".*orig_event=resume-fallback' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+      ok "resume-fallback normalizes to session-resume (orig_event preserved)"
+    else
+      no "expected a resumer/session-resume ledger line with orig_event=resume-fallback"
+    fi
+    if grep -q '"gate":"resumer".*"event":"session-resume".*orig_event=would-have-resumed' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+      ok "would-have-resumed normalizes to session-resume (orig_event preserved)"
+    else
+      no "expected a resumer/session-resume ledger line with orig_event=would-have-resumed"
+    fi
+    if grep -q '"gate":"resumer".*"event":"throttle-detected".*orig_event=storm-cap-queued' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+      ok "storm-cap-queued normalizes to throttle-detected (orig_event preserved)"
+    else
+      no "expected a resumer/throttle-detected ledger line with orig_event=storm-cap-queued"
+    fi
+    if grep -q '"gate":"resumer".*"event":"classify-skip"' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+      ok "classify-skip passes through unchanged (not a resume/throttle event)"
+    else
+      no "expected a resumer/classify-skip ledger line to pass through unchanged"
+    fi
+    if ! grep -q '"gate":"resumer".*"event":"escalation"' "$SIGNAL_LEDGER_PATH" 2>/dev/null \
+       && ! grep -q '"gate":"resumer".*"event":"resume-fallback"' "$SIGNAL_LEDGER_PATH" 2>/dev/null \
+       && ! grep -q '"gate":"resumer".*"event":"would-have-resumed"' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+      ok "raw pre-normalization event names never appear as the ledger's own event field"
+    else
+      no "a raw (non-normalized) event name leaked into the ledger's event field"
+    fi
+  else
+    no "expected \$SIGNAL_LEDGER_PATH ($SIGNAL_LEDGER_PATH) to exist after this self-test's many emit_action calls"
+  fi
+  # Digest-feed side stays on the ORIGINAL vocabulary — re-assert directly
+  # against the content Scenario 13 (immediately above) just wrote (earlier
+  # scenarios' digest-feed content, e.g. Scenario 6's "escalation", is
+  # legitimately overwritten/rm'd by Scenarios 10-13's own setup steps —
+  # this reuses whatever is CURRENT at this point in the run rather than a
+  # stale target).
+  if [[ -f "$TMP/resumer-state/digest-feed.jsonl" ]] && grep -q '"event":"would-have-resumed"' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null; then
+    ok "digest-feed.jsonl keeps the ORIGINAL event name (would-have-resumed) unaffected by ledger normalization"
+  else
+    no "expected digest-feed.jsonl to still carry the original 'would-have-resumed' event name"
   fi
 
   echo ""

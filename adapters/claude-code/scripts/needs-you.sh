@@ -301,6 +301,32 @@ cmd_add() {
   _ny_write_ledger "$new"
 
   cmd_render >/dev/null
+
+  # ------------------------------------------------------------------
+  # O.5 CALL POINT (Wave O, NL Observability Program): best-effort phone
+  # push for the "NEEDS-YOU created" push rule (design sketch §push —
+  # exactly three classes: NEEDS-YOU created, session stalled/throttled,
+  # doctor RED). This is the ONLY moment a new entry is created, so it is
+  # the exact trigger point. Guarded so a push failure — or ntfy-push.sh
+  # not existing at all on some checkout — can NEVER block `add`: title/
+  # body derived from the item that was just written, invoked in a
+  # subshell with its own stdout/stderr discarded, and its exit code is
+  # never inspected by this function. ntfy-push.sh itself silently no-ops
+  # when no topic is configured (§O.5 hard contract) — this call site
+  # does not need to know or care whether a topic exists.
+  # ------------------------------------------------------------------
+  local _ny_push_title
+  case "$section" in
+    decision) _ny_push_title="NEEDS-YOU: new decision" ;;
+    question) _ny_push_title="NEEDS-YOU: new question" ;;
+    inflight) _ny_push_title="NEEDS-YOU: in flight" ;;
+    *) _ny_push_title="NEEDS-YOU: new entry" ;;
+  esac
+  local _ny_push_bin="$_NY_SELF_DIR/ntfy-push.sh"
+  if [[ -f "$_ny_push_bin" ]]; then
+    ( bash "$_ny_push_bin" send --class needs-you --title "$_ny_push_title" --body "$text" >/dev/null 2>&1 || true )
+  fi
+
   echo "$id"
 }
 

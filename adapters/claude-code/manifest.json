@@ -590,6 +590,28 @@
       "waiver_path": "inline ENV_LOCAL_OVERWRITE_OK=1 command-prefix sentinel (documented equivalent; hook auto-backs-up before honoring it)."
     },
     {
+      "id": "estate-coordination",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/estate-coordination.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [
+          "SCRATCHPAD.md"
+        ],
+        "keywords": [
+          "freeze",
+          "coordinate sessions",
+          "stand down"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "docs+skill unit only (skills/coordinate-estate.md + doctrine/estate-coordination.md); no hook, no wiring; jit_triggers fire doctrine-jit.sh's paths-match on any edit whose file_path contains SCRATCHPAD.md (keywords reserved for v2 per schema, not yet matched)."
+    },
+    {
       "id": "external-monitor-alerts",
       "kind": "surfacer",
       "doctrine_file": null,
@@ -920,6 +942,25 @@
       "honest_status": "scripts/needs-you.sh — maintains NEEDS-YOU.md (E.6); called by decision-log flow + digest, not event-wired."
     },
     {
+      "id": "nl-cli",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/observability.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/scripts/nl.sh",
+          "adapters/claude-code/hooks/lib/observability-derive.sh"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/nl.sh (C5 dispatcher) + hooks/lib/observability-derive.sh (C4 pure-read derivation lib: od_sessions/od_needs_me/od_shipped_since/od_harness_health/od_costs/od_backlog_health/od_why) — the six-question observability CLI (specs-o §O.3). Read-only, zero state writes; not event-wired (invoked on demand by the operator or by the future §O.4 cockpit server shelling out to `nl <sub> --json`)."
+    },
+    {
       "id": "nl-issue-capture-loop",
       "kind": "pattern",
       "doctrine_file": null,
@@ -954,6 +995,67 @@
       "blocking": true,
       "budget_class": "pretool",
       "honesty_rationale": "New-skip-without-issue-reference check on the session's own commit; adding a real issue/finding reference IS the intended escape hatch (recommend the block message name this explicitly — see audit row 15)."
+    },
+    {
+      "id": "ntfy-push",
+      "kind": "surfacer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/scripts/ntfy-push.sh"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "added_after": "2026-07",
+      "golden_scenario": "Operator misses a new NEEDS-YOU entry, a session stalling out unattended for hours, or a doctor RED regression because nothing interrupts them outside the terminal — the 2026-07-04 design sketch's push surface exists to close exactly this gap for the three classes the operator actually wants an interrupt for.",
+      "fp_expectation": "Near-zero: push only fires for a genuinely NEW item-id per class (deduped forever via sent.jsonl) and only once a real ntfy topic is configured; an unknown --class is rejected before any network attempt (self-tested negative) so no other event type can ever reach this channel. Legitimate no-push cases (topic not yet configured, no new items, doctor staying green) are silent — never a false push.",
+      "retirement_condition": "Retire or fold into a broader alerting mechanism if the operator reports push volume becoming noise (more than a few pushes/week outside genuine incidents), or if the O.4 cockpit's own visibility make phone push redundant for all three classes per the O.7 retro's operator-trust check.",
+      "honesty_rationale": "Not a gate — a best-effort external notification writer. send/scan never block or fail any caller (needs-you.sh's call site is fire-and-forget; the scheduled scan tick's own exit code is not consumed by anything blocking)."
+    },
+    {
+      "id": "observability",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/observability.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": [
+          "estate count",
+          "nl status"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "CANONICAL-COUNTERS-01 rule + the six operator questions + nl usage (specs-o §O.3 deliverable 1). doctrine/observability.md (compact) + doctrine/observability-full.md (detail, per the estate-coordination.md compact/full split precedent). No hook; the rule is self-applied discipline (per Pattern kind), same class as `estate-coordination`. ORCHESTRATOR RECONCILIATION (batch 2): O.3's fragment proposed the same jit_triggers.paths (scripts/nl.sh, hooks/lib/observability-derive.sh) as the sibling `nl-cli` entry above; doctrine-jit.sh's _compute_injection returns on the FIRST array-order match (see hooks/doctrine-jit.sh ~line 283), so with identical paths on both entries `nl-cli` (earlier in array order) would always win and this entry's own trigger would never fire — a dead, shadowed config. Resolved toward path-disjoint triggers: `nl-cli` (the mechanism entry) keeps the paths; this entry (the doctrine entry, same doctrine_file) keeps only its keywords, which the schema documents as reserved/not yet mechanically matched in v1 but preserved as documentation-of-intent."
+    },
+    {
+      "id": "observability-consumer-map",
+      "kind": "convention",
+      "doctrine_file": "doctrine/observability.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [
+          "observability-consumer-map.json"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "Data contract (specs-o §O.0.3 contract C3): every signal-ledger event type observed in the ledger or emitted anywhere in the repo MUST have >=1 named entry here (law 2). Seeded by O.1 (batch 1) with all 18 known types (8 pre-existing + 10 Wave-O new); enforced by O.6's check_obs_consumer_map doctor predicate. doctrine_file backfilled to \"doctrine/observability.md\" at orchestrator integration (batch 2) per O.3's report-back — that file now exists."
     },
     {
       "id": "observed-errors-first",
@@ -1355,6 +1457,28 @@
       "honesty_rationale": "ADR 059 D2 verification-class Stop block — NEVER downgraded under a DONE claim by explicit design; this is the load-bearing case the no-waiver rule exists FOR."
     },
     {
+      "id": "scheduled-task-health",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "scripts/scheduled-task-health.sh"
+        ],
+        "keywords": [
+          "scheduled task",
+          "schtasks",
+          "Last Result"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/scheduled-task-health.sh — one-line-per-task Last-Result report for every NL-owned (NL-*) Windows scheduled task (O.6); called by harness-doctor.sh's check_obs_scheduled_tasks predicate, not event-wired as its own settings.json entry. Reports raw values only; makes no pass/fail judgment itself."
+    },
+    {
       "id": "secret-hygiene-prepush",
       "kind": "gate",
       "doctrine_file": "doctrine/security.md",
@@ -1393,6 +1517,25 @@
       "budget_class": "none",
       "honest_status": "GitHub Actions workflow (.github/workflows/secret-backstop.yml), not a Claude Code hook; events:[\"manual\"] is a schema-gap stand-in for CI push+PR triggers (same convention as the synthetic-runner-ci entry). Re-invokes the EXISTING pre-push-scan.sh + harness-hygiene-scan.sh scripts against the diff range server-side — the compensating control the F.3 disposition on secret-hygiene-prepush's --no-verify bypass required. Deliberately overlaps server-side-enforcement.yml's credential-scan/harness-hygiene jobs (defense-in-depth, documented in the workflow file's header) rather than being the sole CI coverage.",
       "honesty_rationale": "GitHub Actions required-status-check, not a session-time hook; a waiver here is a GitHub branch-protection admin override, outside this manifest's waiver-file scope by construction (same rationale as synthetic-runner-ci)."
+    },
+    {
+      "id": "session-heartbeat",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "scripts/session-heartbeat.sh",
+          "hooks/lib/session-heartbeat-lib.sh"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/session-heartbeat.sh (touch/sweep) + hooks/lib/session-heartbeat-lib.sh (hb_path_for/hb_write/hb_is_stale/hb_classify, the shared C1 read-side implementation) — per-session liveness file (O.2); called by one-line splices in session-start-digest.sh / workstreams-stop-writer.sh / pre-compact-continuity.sh / session-resumer.sh, not event-wired as its own settings.json entry."
     },
     {
       "id": "session-honesty",
@@ -1822,13 +1965,32 @@
       "budget_class": "none"
     },
     {
+      "id": "workstreams-extract-pending",
+      "kind": "writer",
+      "doctrine_file": "doctrine/workstreams-state.md",
+      "hooks": [
+        "workstreams-extract-pending.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "retired to attic at O.4 cutover (attic + exit-0 shim, per manifest-amendments.md fragment adapters/claude-code/tests/fixtures/wave-o/O.4/manifest-amendments.md Entry 2) — superseded by needs-you.sh per that file's own header; item-extraction from Stop-time transcript scanning is no longer the mechanism. Removed from workstreams-stop-writer.sh's MEMBERS array in the same integration commit."
+    },
+    {
       "id": "workstreams-emitters",
       "kind": "writer",
       "doctrine_file": "doctrine/workstreams-state.md",
       "hooks": [
         "workstreams-emit-reconciler.sh",
         "workstreams-emit.sh",
-        "workstreams-extract-pending.sh",
         "workstreams-orchestrator-queue.sh",
         "workstreams-read.sh"
       ],
@@ -1847,7 +2009,7 @@
       },
       "blocking": false,
       "budget_class": "none",
-      "honest_status": "workstreams-emit.sh wired directly (SessionStart + spawn PreToolUse); Stop-side members dispatched via workstreams-stop-writer.sh since D.5."
+      "honest_status": "workstreams-emit.sh wired directly (SessionStart + spawn PreToolUse); Stop-side members dispatched via workstreams-stop-writer.sh since D.5. workstreams-extract-pending.sh split out to its own entry (id: workstreams-extract-pending) and retired at O.4 cutover; removed from workstreams-stop-writer.sh's MEMBERS array in the same commit."
     },
     {
       "id": "workstreams-spawn-gate",
@@ -1859,17 +2021,15 @@
       "events": [
         "PreToolUse"
       ],
-      "wired_template": true,
-      "selftest": true,
+      "wired_template": false,
+      "selftest": false,
       "jit_triggers": {
-        "paths": [
-          "workstreams-ui/"
-        ],
+        "paths": [],
         "keywords": []
       },
-      "blocking": true,
-      "budget_class": "pretool",
-      "waiver_path": "conv-tree-spawn-waiver-*.txt, fresh <1h, purpose-clause validated (lib/waiver-purpose-clause.sh) — explicitly modeled on bug-persistence-gate.sh."
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "retired at O.4 cutover (attic + exit-0 shim, per template-wiring.md fragment adapters/claude-code/tests/fixtures/wave-o/O.4/template-wiring.md) — the ONLY protected consumer (workstreams-ui's tree-state read) was replaced by derived-truth reads (nl <sub> --json); law 2 (EVERY-SIGNAL-HAS-A-CONSUMER) has no consumer left to protect. Closes NL-FINDING-024 at the root (the spawn writer -> gate PreToolUse race this finding describes can no longer fire). Blocking-gate budget 10/12 -> 8/12."
     },
     {
       "id": "workstreams-stop-gate",
@@ -1942,13 +2102,13 @@
         "manual"
       ],
       "wired_template": false,
-      "selftest": true,
+      "selftest": false,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "honest_status": "pending wiring — deterministic every-turn writer exists with green self-tests but is not wired in settings.json.template (doctor claim-honesty item)",
+      "honest_status": "retired to attic at O.4 cutover, unwired — item-extraction is superseded by needs-you.sh; this deterministic every-turn writer was built but never connected to settings.json.template and is no longer needed now that tree-state.json is not the cockpit's truth source.",
       "budget_class": "none"
     },
     {

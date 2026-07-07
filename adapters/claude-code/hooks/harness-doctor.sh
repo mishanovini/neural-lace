@@ -900,6 +900,389 @@ check_untracked_dirt_ignore_rule() {
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
 
+# ============================================================
+# NL Observability Program Wave O, task O.6 (specs-o §O.6): six pipeline-
+# health predicates. Spliced verbatim from
+# tests/fixtures/wave-o/O.6/doctor-predicate.md (orchestrator integration,
+# batch 2). Placement: immediately after check_untracked_dirt_ignore_rule,
+# before check_pin_f_waiver_purpose_clauses, per the fragment's own
+# suggested insertion point.
+# ============================================================
+
+# ------------------------------------------------------------
+# Check: obs-writers-firing (specs-o §O.6 item 1). Ledger mtime <24h AND
+# line-count grew since the doctor's own last-seen stamp
+# (${live_home}/state/doctor-cache/obs-ledger-stamp.txt, self-updating).
+# A ledger that exists but has gone stale/stopped-growing means every
+# writer upstream silently died. First-ever run (stamp absent) always
+# passes and just seeds the baseline.
+# ------------------------------------------------------------
+check_obs_writers_firing() {
+  local live_home="$1" repo_root="$2"
+  local ledger="${live_home}/state/signal-ledger.jsonl"
+
+  if [[ ! -f "$ledger" ]]; then
+    _warn "obs-writers-firing" "signal ledger not found at ${ledger} — observability pipeline not yet installed/run on this machine"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local now_epoch mtime_epoch age_hours
+  now_epoch=$(date -u +%s 2>/dev/null || echo 0)
+  mtime_epoch=$(stat -c %Y "$ledger" 2>/dev/null || stat -f %m "$ledger" 2>/dev/null || echo 0)
+  age_hours=$(( (now_epoch - mtime_epoch) / 3600 ))
+
+  if [[ "$age_hours" -gt 24 ]]; then
+    _red "obs-writers-firing" "signal ledger ${ledger} has not been written to in ${age_hours}h (budget 24h) — every ledger writer may have silently stopped firing; check session-start-digest.sh/stop-verdict-dispatcher.sh/workstreams-stop-writer.sh wiring"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local line_count
+  line_count=$(wc -l < "$ledger" 2>/dev/null | tr -d ' ')
+  [[ -n "$line_count" ]] || line_count=0
+
+  local stamp_dir="${live_home}/state/doctor-cache"
+  local stamp_file="${stamp_dir}/obs-ledger-stamp.txt"
+  mkdir -p "$stamp_dir" 2>/dev/null || true
+
+  if [[ ! -f "$stamp_file" ]]; then
+    printf '%s %s\n' "$mtime_epoch" "$line_count" > "$stamp_file" 2>/dev/null || true
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local prev_mtime prev_lines
+  read -r prev_mtime prev_lines < "$stamp_file" 2>/dev/null
+  prev_mtime="${prev_mtime:-0}"
+  prev_lines="${prev_lines:-0}"
+
+  if [[ "$mtime_epoch" -le "$prev_mtime" || "$line_count" -le "$prev_lines" ]]; then
+    _red "obs-writers-firing" "signal ledger ${ledger} has NOT grown since the last doctor check (was ${prev_lines} lines at mtime ${prev_mtime}, now ${line_count} lines at mtime ${mtime_epoch}) despite being <24h old — writers may be looping without emitting, or the file was truncated/rotated without the rotation being reflected here"
+  fi
+
+  printf '%s %s\n' "$mtime_epoch" "$line_count" > "$stamp_file" 2>/dev/null || true
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: obs-heartbeats-fresh (specs-o §O.6 item 2). Every session with a
+# transcript mtime <30min must have a heartbeat file <30min old (else RED
+# naming the stale/missing sids). Zero live sessions is GREEN.
+#
+# ORCHESTRATOR FIX (found running this predicate's own self-test
+# scenarios against the full suite, batch 2): the fragment's original
+# default fell back to "${HOME}/.claude/projects" — the REAL machine's
+# transcript tree — rather than deriving from $live_home (which every
+# self-test scenario already sandboxes via HARNESS_DOCTOR_HOME). That
+# leaked this machine's real live sessions into EVERY OTHER unrelated
+# doctor self-test scenario that doesn't explicitly set
+# OBS_TRANSCRIPTS_DIR, RED-ing them all with "N session(s) ... no
+# heartbeat directory". Default now derives from $live_home
+# (${live_home}/projects, i.e. $HOME/.claude/projects when live_home is
+# the real $HOME/.claude — see resolve_live_home) so a sandboxed
+# HARNESS_DOCTOR_HOME automatically isolates transcripts too; explicit
+# OBS_TRANSCRIPTS_DIR still overrides for fixtures that want a flat
+# (non-nested) layout.
+# ------------------------------------------------------------
+check_obs_heartbeats_fresh() {
+  local live_home="$1" repo_root="$2"
+  local hb_dir="${live_home}/state/heartbeats"
+  local transcripts_dir="${OBS_TRANSCRIPTS_DIR:-${live_home}/projects}"
+
+  if [[ ! -d "$transcripts_dir" ]]; then
+    _warn "obs-heartbeats-fresh" "no transcripts directory at ${transcripts_dir} — nothing to check (zero live sessions)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local now_epoch
+  now_epoch=$(date -u +%s 2>/dev/null || echo 0)
+
+  local -a live_sids=()
+  local f mtime age_min sid
+  while IFS= read -r -d '' f; do
+    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
+    age_min=$(( (now_epoch - mtime) / 60 ))
+    if [[ "$age_min" -lt 30 ]]; then
+      sid="$(basename "$f" .jsonl)"
+      live_sids+=("$sid")
+    fi
+  done < <(find "$transcripts_dir" -type f -name '*.jsonl' -print0 2>/dev/null)
+
+  if [[ "${#live_sids[@]}" -eq 0 ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  if [[ ! -d "$hb_dir" ]]; then
+    _red "obs-heartbeats-fresh" "${#live_sids[@]} session(s) have a transcript <30min old but no heartbeat directory exists at ${hb_dir} — session-heartbeat.sh touch is not wired or O.2 is not installed on this machine"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local -a stale_sids=()
+  for sid in "${live_sids[@]}"; do
+    local hbf="${hb_dir}/${sid}.json"
+    if [[ ! -f "$hbf" ]]; then
+      stale_sids+=("${sid}:missing")
+      continue
+    fi
+    local hb_mtime hb_age_min
+    hb_mtime=$(stat -c %Y "$hbf" 2>/dev/null || stat -f %m "$hbf" 2>/dev/null || echo 0)
+    hb_age_min=$(( (now_epoch - hb_mtime) / 60 ))
+    if [[ "$hb_age_min" -ge 30 ]]; then
+      stale_sids+=("${sid}:${hb_age_min}min")
+    fi
+  done
+
+  if [[ "${#stale_sids[@]}" -gt 0 ]]; then
+    _red "obs-heartbeats-fresh" "$(IFS=,; echo "${stale_sids[*]}") — session(s) with a transcript <30min old have a missing/stale (>=30min) heartbeat file; the heartbeat writer may not be wired into this session's chain (see tests/fixtures/wave-o/O.2/callsite-wiring.md)"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: obs-scheduled-tasks (specs-o §O.6 item 3, SCHEDULED-TASK-HEALTH-01).
+# Every registered NL-owned task (via scripts/scheduled-task-health.sh
+# list) has Last Result in {0, 267009, 267011}; else RED naming the task +
+# code. Not-registered stays the existing WARN semantics elsewhere.
+# ------------------------------------------------------------
+check_obs_scheduled_tasks() {
+  local live_home="$1" repo_root="$2"
+  local script=""
+  [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/scripts/scheduled-task-health.sh" ]] \
+    && script="${repo_root}/adapters/claude-code/scripts/scheduled-task-health.sh"
+  [[ -z "$script" && -f "${live_home}/scripts/scheduled-task-health.sh" ]] \
+    && script="${live_home}/scripts/scheduled-task-health.sh"
+
+  if [[ -z "$script" ]]; then
+    _warn "obs-scheduled-tasks" "scheduled-task-health.sh missing — O.6 not yet installed on this machine"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v schtasks >/dev/null 2>&1 && [[ -z "${SCHTASKS_CMD:-}" ]]; then
+    _warn "obs-scheduled-tasks" "schtasks not available on this platform — scheduled-task health check skipped (non-Windows)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local out
+  out="$(bash "$script" list 2>/dev/null)"
+  if [[ -z "$out" ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local line name code bad=0
+  while IFS=$'\t' read -r name code; do
+    [[ -z "$name" ]] && continue
+    case "$code" in
+      0|267009|267011) ;;
+      *)
+        _red "obs-scheduled-tasks" "task '${name}' Last Result=${code} (expected one of 0/267009/267011) — check the task's registered command path; run: MSYS_NO_PATHCONV=1 schtasks /Query /V /FO LIST /TN \"${name}\""
+        bad=1
+        ;;
+    esac
+  done <<< "$out"
+
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: obs-consumer-map (specs-o §O.6 item 4, contract C3's enforcing
+# predicate). Two-sided: (a) every event type observed in the ledger's
+# last 1000 lines has an entry in observability-consumer-map.json; (b)
+# every literal event-type string passed as the SECOND argument to
+# ledger_emit/ledger_emit_typed anywhere in the repo has an entry; (c)
+# every entry in the map has >=1 consumer. Unknown-in-map = RED naming
+# the type. The literal-scan filters out variable-named 2nd-args
+# (grep -vE '^\$') — several real pre-existing call sites
+# (stop-verdict-dispatcher.sh, work-integrity-gate.sh, session-resumer.sh,
+# test-gate.sh's own self-test) pass a variable, not a literal, as the
+# 2nd arg; without the filter this predicate would RED on bogus
+# "unmapped event type '$ev'" noise. CRLF: `tr -d '\r'` on the ledger-side
+# jq output is required — this machine's real ledger round-trips through
+# jq with CRLF line endings (findings 030/038-class).
+# ------------------------------------------------------------
+check_obs_consumer_map() {
+  local live_home="$1" repo_root="$2"
+  local map=""
+  [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/observability-consumer-map.json" ]] \
+    && map="${repo_root}/adapters/claude-code/observability-consumer-map.json"
+  [[ -z "$map" && -f "${live_home}/observability-consumer-map.json" ]] \
+    && map="${live_home}/observability-consumer-map.json"
+
+  if [[ -z "$map" ]]; then
+    _warn "obs-consumer-map" "observability-consumer-map.json not found — O.1 not yet installed on this machine"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    _warn "obs-consumer-map" "jq not available — cannot verify observability-consumer-map.json coverage"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! jq -e . "$map" >/dev/null 2>&1; then
+    _red "obs-consumer-map" "${map} is not valid JSON"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  # (c) every map entry has >=1 consumer
+  local empty_entries
+  empty_entries="$(jq -r '.event_types | to_entries[] | select((.value.consumers // []) | length == 0) | .key' "$map" 2>/dev/null)"
+  if [[ -n "$empty_entries" ]]; then
+    _red "obs-consumer-map" "event type(s) with zero consumers in ${map}: $(printf '%s' "$empty_entries" | tr '\n' ',' | sed 's/,$//')"
+  fi
+
+  # (a) every ledger-observed event type (last 1000 lines) is in the map.
+  local ledger="${live_home}/state/signal-ledger.jsonl"
+  if [[ -f "$ledger" ]]; then
+    local unmapped_ledger
+    unmapped_ledger="$(tail -n 1000 "$ledger" 2>/dev/null | jq -r '.event // empty' 2>/dev/null | tr -d '\r' | sort -u | while read -r ev; do
+      [[ -z "$ev" ]] && continue
+      jq -e --arg e "$ev" '.event_types | has($e)' "$map" >/dev/null 2>&1 || echo "$ev"
+    done)"
+    if [[ -n "$unmapped_ledger" ]]; then
+      _red "obs-consumer-map" "ledger event type(s) observed in last 1000 lines but absent from ${map}: $(printf '%s' "$unmapped_ledger" | tr '\n' ',' | sed 's/,$//')"
+    fi
+  fi
+
+  # (b) every literal ledger_emit(_typed) 2nd-arg literal in the repo is in
+  # the map. grep -vE '^\$' filters variable-named 2nd-args (see header
+  # comment above).
+  if [[ -n "$repo_root" ]]; then
+    local unmapped_repo
+    unmapped_repo="$(grep -rhoE 'ledger_emit(_typed)?[[:space:]]+"[^"]*"[[:space:]]+"[^"]*"' \
+        "${repo_root}/adapters/claude-code/hooks" "${repo_root}/adapters/claude-code/scripts" 2>/dev/null \
+      | sed -E 's/ledger_emit(_typed)?[[:space:]]+"[^"]*"[[:space:]]+"([^"]*)"/\2/' \
+      | grep -vE '^\$' \
+      | sort -u | while read -r ev; do
+        [[ -z "$ev" ]] && continue
+        jq -e --arg e "$ev" '.event_types | has($e)' "$map" >/dev/null 2>&1 || echo "$ev"
+      done)"
+    if [[ -n "$unmapped_repo" ]]; then
+      _red "obs-consumer-map" "literal ledger_emit event type(s) found in repo source but absent from ${map}: $(printf '%s' "$unmapped_repo" | tr '\n' ',' | sed 's/,$//')"
+    fi
+  fi
+
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: obs-cockpit-fresh (specs-o §O.6 item 5). WARN-only, never RED
+# (per specs-o §O.6 exactly). GREEN when the cockpit is intentionally not
+# running (optional per machine). Fires only when NL-workstreams-cockpit
+# is registered for autostart AND sessions are live AND the derived-cache
+# stamp is >60min stale.
+# ------------------------------------------------------------
+check_obs_cockpit_fresh() {
+  local live_home="$1" repo_root="$2"
+  local cockpit_dir=""
+  [[ -n "$repo_root" && -d "${repo_root}/workstreams-ui/server" ]] \
+    && cockpit_dir="${repo_root}/workstreams-ui/server"
+
+  if [[ -z "$cockpit_dir" ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local registered=0
+  if command -v schtasks >/dev/null 2>&1; then
+    MSYS_NO_PATHCONV=1 schtasks /Query /TN "NL-workstreams-cockpit" >/dev/null 2>&1 && registered=1
+  fi
+  if [[ "$registered" -eq 0 ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local hb_dir="${live_home}/state/heartbeats"
+  local now_epoch any_live=0
+  now_epoch=$(date -u +%s 2>/dev/null || echo 0)
+  if [[ -d "$hb_dir" ]]; then
+    local f mtime age_min
+    while IFS= read -r -d '' f; do
+      mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
+      age_min=$(( (now_epoch - mtime) / 60 ))
+      [[ "$age_min" -lt 30 ]] && any_live=1
+    done < <(find "$hb_dir" -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null)
+  fi
+  if [[ "$any_live" -eq 0 ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local stamp="${live_home}/state/workstreams-cache/derived-cache-stamp.txt"
+  if [[ ! -f "$stamp" ]]; then
+    _warn "obs-cockpit-fresh" "cockpit registered for autostart (NL-workstreams-cockpit) and sessions are live, but no derived-cache stamp found at ${stamp} — cockpit server may not be running or has never refreshed"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local stamp_mtime stamp_age_min
+  stamp_mtime=$(stat -c %Y "$stamp" 2>/dev/null || stat -f %m "$stamp" 2>/dev/null || echo 0)
+  stamp_age_min=$(( (now_epoch - stamp_mtime) / 60 ))
+  if [[ "$stamp_age_min" -gt 60 ]]; then
+    _warn "obs-cockpit-fresh" "cockpit derived-cache stamp is ${stamp_age_min}min old (budget 60min) while sessions are live and autostart is registered — cockpit may be stalled; check workstreams-ui/server process"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: needs-you-headers (specs-o §O.6 item 6, E6-HEADER-HARDENING-01).
+# When the needs-you ledger's open decision-count is >0, NEEDS-YOU.md
+# must contain all 4 NY_CANONICAL_HEADERS. Gated on ny_open>0, same
+# posture as the existing E.6 staleness check in check_wave_e_surfaces.
+# ------------------------------------------------------------
+check_needs_you_headers() {
+  local live_home="$1" repo_root="$2"
+
+  local ny_nlpaths="${repo_root}/adapters/claude-code/hooks/lib/nl-paths.sh"
+  local ny_main_root=""
+  [[ -f "$ny_nlpaths" ]] && ny_main_root=$(bash -c "source '$ny_nlpaths'; nl_main_checkout_root" 2>/dev/null)
+  [[ -n "$ny_main_root" ]] || ny_main_root="$repo_root"
+  local ny_md="${ny_main_root}/NEEDS-YOU.md"
+  local ny_state="${live_home}/state/needs-you/ledger.json"
+
+  if [[ ! -f "$ny_state" ]]; then
+    _warn "needs-you-headers" "needs-you ledger not found at ${ny_state} — E.6 not yet installed on this machine"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    _warn "needs-you-headers" "jq not available — cannot check needs-you open-count"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local ny_open
+  ny_open=$(jq '[.items[] | select(.section == "decision" and .state == "open")] | length' "$ny_state" 2>/dev/null || echo 0)
+  [[ "${ny_open:-0}" -gt 0 ]] || { CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  if [[ ! -f "$ny_md" ]]; then
+    _red "needs-you-headers" "NEEDS-YOU.md missing at ${ny_md} despite ${ny_open} open decision item(s) — run: bash adapters/claude-code/scripts/needs-you.sh render"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local -a headers=(
+    "## Awaiting your decision"
+    "## Open questions"
+    "## In flight (sessions + waves)"
+    "## Recently decided for your §8 review"
+  )
+  local -a missing=()
+  local h
+  for h in "${headers[@]}"; do
+    grep -qF "$h" "$ny_md" 2>/dev/null || missing+=("$h")
+  done
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    _red "needs-you-headers" "NEEDS-YOU.md (${ny_md}) missing $(printf '%s' "${#missing[@]}") of 4 canonical header(s) despite ${ny_open} open decision item(s): $(IFS='|'; echo "${missing[*]}") — run: bash adapters/claude-code/scripts/needs-you.sh render"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
 # ------------------------------------------------------------
 # Check: pin-f-waiver-purpose-clauses (ADR 058 D5 pin f, specs-e §E.10
 # item 2). Every waiver-accepting hook must validate the two named
@@ -1570,6 +1953,14 @@ run_quick_checks() {
   check_wave_e_surfaces "$live_home" "$repo_root"
   check_heartbeat_task "$live_home" "$repo_root"
   check_untracked_dirt_ignore_rule "$live_home" "$repo_root"
+  # NL Observability Program Wave O, task O.6 (specs-o §O.6) — pipeline
+  # health predicates, spliced batch 2.
+  check_obs_writers_firing "$live_home" "$repo_root"
+  check_obs_heartbeats_fresh "$live_home" "$repo_root"
+  check_obs_scheduled_tasks "$live_home" "$repo_root"
+  check_obs_consumer_map "$live_home" "$repo_root"
+  check_obs_cockpit_fresh "$live_home" "$repo_root"
+  check_needs_you_headers "$live_home" "$repo_root"
   check_pin_f_waiver_purpose_clauses "$live_home" "$repo_root"
   check_line_endings "$live_home" "$repo_root"
   check_budget_chains "$live_home" "$repo_root"
@@ -2579,6 +2970,369 @@ MANIFEST_EOF
   else
     echo "self-test (line-endings-live-mirror-never-red-strict): PASS" >&2
     PASSED=$((PASSED + 1))
+  fi
+
+  # ============================================================
+  # NL Observability Program Wave O, task O.6 (specs-o §O.6) — RED/GREEN
+  # self-test scenarios for the six pipeline-health predicates. Spliced
+  # from tests/fixtures/wave-o/O.6/doctor-predicate.md (orchestrator
+  # integration, batch 2).
+  # ============================================================
+
+  # ---- obs-writers-firing: RED — stamp claims MORE lines / LATER mtime
+  # than the real file currently has (not-grown-since-last-check) ----
+  D=$(_scenario_dir o6-writers-red)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state/doctor-cache"
+  printf '{"gate":"x","event":"block","ts":"2026-01-01T00:00:00Z"}\n' > "$D/live/state/signal-ledger.jsonl"
+  touch "$D/live/state/signal-ledger.jsonl"
+  now_epoch=$(date -u +%s 2>/dev/null || echo 0)
+  printf '%s %s\n' "$((now_epoch + 100))" "999" > "$D/live/state/doctor-cache/obs-ledger-stamp.txt"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "o6-obs-writers-firing-red" 1 "$RC" "RED obs-writers-firing" "$OUT"
+
+  # ---- obs-writers-firing: GREEN — no pre-existing stamp (first-run
+  # seeds the baseline, does not fail) ----
+  D=$(_scenario_dir o6-writers-green)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state"
+  printf '{"gate":"x","event":"block","ts":"2026-01-01T00:00:00Z"}\n' > "$D/live/state/signal-ledger.jsonl"
+  touch "$D/live/state/signal-ledger.jsonl"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "RED obs-writers-firing"; then
+    echo "self-test (o6-obs-writers-firing-green): FAIL (unexpected RED)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-obs-writers-firing-green): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- obs-heartbeats-fresh: RED — a fresh transcript with a missing
+  # heartbeat file, per-sid naming branch (heartbeats dir EXISTS but the
+  # specific sid's file does not — distinct from the "no heartbeats dir
+  # at all" branch, which has its own message and is covered by a
+  # separate assertion below) ----
+  D=$(_scenario_dir o6-hb-red)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/transcripts/proj" "$D/live/state/heartbeats"
+  printf '{}\n' > "$D/transcripts/proj/sess-live.jsonl"
+  touch "$D/transcripts/proj/sess-live.jsonl"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(OBS_TRANSCRIPTS_DIR="$D/transcripts" _run_quick "$D")"; RC=$?
+  _assert "o6-obs-heartbeats-fresh-red" 1 "$RC" "RED obs-heartbeats-fresh" "$OUT"
+  if ! printf '%s' "$OUT" | grep -q "sess-live:missing"; then
+    echo "self-test (o6-obs-heartbeats-fresh-red-names-sid): FAIL (did not name sess-live:missing)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-obs-heartbeats-fresh-red-names-sid): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- obs-heartbeats-fresh: GREEN — a fresh transcript WITH a fresh
+  # heartbeat file, plus the zero-live-sessions GREEN case ----
+  D=$(_scenario_dir o6-hb-green)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/transcripts/proj" "$D/live/state/heartbeats"
+  printf '{}\n' > "$D/transcripts/proj/sess-live.jsonl"
+  touch "$D/transcripts/proj/sess-live.jsonl"
+  printf '{"schema":1,"session_id":"sess-live"}\n' > "$D/live/state/heartbeats/sess-live.json"
+  touch "$D/live/state/heartbeats/sess-live.json"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(OBS_TRANSCRIPTS_DIR="$D/transcripts" _run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "RED obs-heartbeats-fresh"; then
+    echo "self-test (o6-obs-heartbeats-fresh-green): FAIL (unexpected RED)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-obs-heartbeats-fresh-green): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+  D=$(_scenario_dir o6-hb-green-idle)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/transcripts"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(OBS_TRANSCRIPTS_DIR="$D/transcripts" _run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "RED obs-heartbeats-fresh"; then
+    echo "self-test (o6-obs-heartbeats-fresh-green-idle): FAIL (unexpected RED on zero live sessions)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-obs-heartbeats-fresh-green-idle): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- obs-scheduled-tasks: RED — SCHTASKS_CMD stub reports a bad Last
+  # Result code.
+  #
+  # ORCHESTRATOR FIX: the fragment's own RED/GREEN fixture instructions
+  # described SCHTASKS_CMD as a path to an executable stub printing
+  # "name<TAB>code" lines. That does not match the REAL script
+  # (scripts/scheduled-task-health.sh): SCHTASKS_CMD is `eval`'d as a full
+  # shell COMMAND STRING (see _sth_query_output), and its expected output
+  # is the RAW `schtasks /Query /V /FO LIST` block format (`TaskName:` /
+  # `Last Result:` label lines, task name prefixed with a literal `\`),
+  # which _sth_parse_and_filter then reduces to the tab-separated
+  # name/code pairs. The original fixtures silently produced zero output
+  # (found running this predicate's own scenarios) rather than failing
+  # loudly — corrected to the real interface, matching the script's own
+  # --self-test fixture shape exactly. ----
+  D=$(_scenario_dir o6-sched-red)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/adapters/claude-code/scripts"
+  cp "$SCRIPT_DIR/../scripts/scheduled-task-health.sh" "$D/repo/adapters/claude-code/scripts/scheduled-task-health.sh" 2>/dev/null
+  if [[ -f "$D/repo/adapters/claude-code/scripts/scheduled-task-health.sh" ]]; then
+    SCHED_FIXTURE_RED=$(cat <<'EOF'
+Folder: \
+TaskName:                             \NL-fixture-task
+Last Result:                          -2147024894
+EOF
+)
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(SCHTASKS_CMD="printf '%s\n' '${SCHED_FIXTURE_RED}'" _run_quick "$D")"; RC=$?
+    _assert "o6-obs-scheduled-tasks-red" 1 "$RC" "RED obs-scheduled-tasks" "$OUT"
+    if ! printf '%s' "$OUT" | grep -q "NL-fixture-task"; then
+      echo "self-test (o6-obs-scheduled-tasks-red-names-task): FAIL (did not name NL-fixture-task)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (o6-obs-scheduled-tasks-red-names-task): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (o6-obs-scheduled-tasks-red): SKIP (scheduled-task-health.sh not present next to this doctor)" >&2
+  fi
+
+  # ---- obs-scheduled-tasks: GREEN — Last Result=0, plus the
+  # absent-script WARN-not-RED case ----
+  D=$(_scenario_dir o6-sched-green)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/adapters/claude-code/scripts"
+  cp "$SCRIPT_DIR/../scripts/scheduled-task-health.sh" "$D/repo/adapters/claude-code/scripts/scheduled-task-health.sh" 2>/dev/null
+  if [[ -f "$D/repo/adapters/claude-code/scripts/scheduled-task-health.sh" ]]; then
+    SCHED_FIXTURE_GREEN=$(cat <<'EOF'
+Folder: \
+TaskName:                             \NL-fixture-task
+Last Result:                          0
+EOF
+)
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(SCHTASKS_CMD="printf '%s\n' '${SCHED_FIXTURE_GREEN}'" _run_quick "$D")"; RC=$?
+    if printf '%s' "$OUT" | grep -q "RED obs-scheduled-tasks"; then
+      echo "self-test (o6-obs-scheduled-tasks-green): FAIL (unexpected RED)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (o6-obs-scheduled-tasks-green): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (o6-obs-scheduled-tasks-green): SKIP (scheduled-task-health.sh not present next to this doctor)" >&2
+  fi
+  D=$(_scenario_dir o6-sched-absent)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "RED obs-scheduled-tasks"; then
+    echo "self-test (o6-obs-scheduled-tasks-absent-script-green): FAIL (unexpected RED when script absent)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-obs-scheduled-tasks-absent-script-green): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- obs-consumer-map: RED — map missing an event type + an entry
+  # with zero consumers ----
+  D=$(_scenario_dir o6-map-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/observability-consumer-map.json" <<'EOF'
+{"schema":1,"event_types":{"block":{"consumers":["digest:x"]},"empty-one":{"consumers":[]}}}
+EOF
+  mkdir -p "$D/repo/adapters/claude-code/hooks"
+  printf '#!/bin/bash\nledger_emit "my-gate" "warn" "detail"\n' > "$D/repo/adapters/claude-code/hooks/fixture-hook.sh"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  if command -v jq >/dev/null 2>&1; then
+    OUT="$(_run_quick "$D")"; RC=$?
+    _assert "o6-obs-consumer-map-red" 1 "$RC" "RED obs-consumer-map" "$OUT"
+    if ! printf '%s' "$OUT" | grep -q "warn"; then
+      echo "self-test (o6-obs-consumer-map-red-names-warn): FAIL (did not name the unmapped 'warn' literal)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (o6-obs-consumer-map-red-names-warn): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+    if ! printf '%s' "$OUT" | grep -q "empty-one"; then
+      echo "self-test (o6-obs-consumer-map-red-names-zero-consumer-entry): FAIL (did not name empty-one)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (o6-obs-consumer-map-red-names-zero-consumer-entry): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (o6-obs-consumer-map-red): SKIP (jq unavailable)" >&2
+  fi
+
+  # ---- obs-consumer-map: GREEN — map covers every literal + every entry
+  # has >=1 consumer ----
+  D=$(_scenario_dir o6-map-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/observability-consumer-map.json" <<'EOF'
+{"schema":1,"event_types":{"block":{"consumers":["digest:x"]},"warn":{"consumers":["digest:x"]}}}
+EOF
+  mkdir -p "$D/repo/adapters/claude-code/hooks"
+  printf '#!/bin/bash\nledger_emit "my-gate" "warn" "detail"\n' > "$D/repo/adapters/claude-code/hooks/fixture-hook.sh"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  if command -v jq >/dev/null 2>&1; then
+    OUT="$(_run_quick "$D")"; RC=$?
+    if printf '%s' "$OUT" | grep -q "RED obs-consumer-map"; then
+      echo "self-test (o6-obs-consumer-map-green): FAIL (unexpected RED)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (o6-obs-consumer-map-green): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (o6-obs-consumer-map-green): SKIP (jq unavailable)" >&2
+  fi
+
+  # ---- obs-cockpit-fresh: WARN-analog (this predicate is never RED) —
+  # cockpit registered, sessions live, stamp stale ----
+  D=$(_scenario_dir o6-cockpit-warn)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/workstreams-ui/server" "$D/live/state/heartbeats" "$D/live/state/workstreams-cache"
+  printf 'stub\n' > "$D/repo/workstreams-ui/server/server.js"
+  printf '{"schema":1}\n' > "$D/live/state/heartbeats/sess-x.json"
+  touch "$D/live/state/heartbeats/sess-x.json"
+  : > "$D/live/state/workstreams-cache/derived-cache-stamp.txt"
+  touch -d '2 hours ago' "$D/live/state/workstreams-cache/derived-cache-stamp.txt" 2>/dev/null \
+    || touch -A -020000 "$D/live/state/workstreams-cache/derived-cache-stamp.txt" 2>/dev/null || true
+  mkdir -p "$D/fakebin"
+  cat > "$D/fakebin/schtasks" <<'STUBEOF'
+#!/bin/bash
+for a in "$@"; do
+  if [[ "$a" == "NL-workstreams-cockpit" ]]; then exit 0; fi
+done
+exit 0
+STUBEOF
+  chmod +x "$D/fakebin/schtasks"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(PATH="$D/fakebin:$PATH" _run_quick "$D")"; RC=$?
+  # Never RED (max severity is WARN) regardless of whether the stamp-age
+  # arithmetic landed >60min on this platform's touch fallback.
+  if printf '%s' "$OUT" | grep -q "RED obs-cockpit-fresh"; then
+    echo "self-test (o6-obs-cockpit-fresh-never-red): FAIL (obs-cockpit-fresh must never RED)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-obs-cockpit-fresh-never-red): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+  _assert "o6-obs-cockpit-fresh-warn-rc" 0 "$RC" "" "$OUT"
+
+  # ---- obs-cockpit-fresh: GREEN — the common case (workstreams-ui not
+  # installed at all) ----
+  D=$(_scenario_dir o6-cockpit-green)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -qE "(RED|WARN) obs-cockpit-fresh"; then
+    echo "self-test (o6-obs-cockpit-fresh-green-absent): FAIL (unexpected RED/WARN when workstreams-ui/server absent)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-obs-cockpit-fresh-green-absent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- needs-you-headers: RED — open decision item + NEEDS-YOU.md
+  # missing 2 of 4 canonical headers ----
+  D=$(_scenario_dir o6-ny-red)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state/needs-you"
+  cat > "$D/live/state/needs-you/ledger.json" <<'EOF'
+{"schema_version":1,"items":[{"id":"NY-1","section":"decision","state":"open"}]}
+EOF
+  cat > "$D/repo/NEEDS-YOU.md" <<'EOF'
+## Awaiting your decision
+stuff
+
+## In flight (sessions + waves)
+stuff
+EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  if command -v jq >/dev/null 2>&1; then
+    OUT="$(_run_quick "$D")"; RC=$?
+    _assert "o6-needs-you-headers-red" 1 "$RC" "RED needs-you-headers" "$OUT"
+    if ! printf '%s' "$OUT" | grep -q "Open questions"; then
+      echo "self-test (o6-needs-you-headers-red-names-missing): FAIL (did not name a missing header)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (o6-needs-you-headers-red-names-missing): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (o6-needs-you-headers-red): SKIP (jq unavailable)" >&2
+  fi
+
+  # ---- needs-you-headers: GREEN — all 4 headers present; plus the
+  # gate-not-triggered GREEN (ny_open==0, headers all missing, still
+  # GREEN) ----
+  D=$(_scenario_dir o6-ny-green)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state/needs-you"
+  cat > "$D/live/state/needs-you/ledger.json" <<'EOF'
+{"schema_version":1,"items":[{"id":"NY-1","section":"decision","state":"open"}]}
+EOF
+  cat > "$D/repo/NEEDS-YOU.md" <<'EOF'
+## Awaiting your decision
+## Open questions
+## In flight (sessions + waves)
+## Recently decided for your §8 review
+EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  if command -v jq >/dev/null 2>&1; then
+    OUT="$(_run_quick "$D")"; RC=$?
+    if printf '%s' "$OUT" | grep -q "RED needs-you-headers"; then
+      echo "self-test (o6-needs-you-headers-green): FAIL (unexpected RED)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (o6-needs-you-headers-green): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (o6-needs-you-headers-green): SKIP (jq unavailable)" >&2
+  fi
+  D=$(_scenario_dir o6-ny-green-not-triggered)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state/needs-you"
+  cat > "$D/live/state/needs-you/ledger.json" <<'EOF'
+{"schema_version":1,"items":[]}
+EOF
+  cat > "$D/repo/NEEDS-YOU.md" <<'EOF'
+(no headers at all)
+EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  if command -v jq >/dev/null 2>&1; then
+    OUT="$(_run_quick "$D")"; RC=$?
+    if printf '%s' "$OUT" | grep -q "RED needs-you-headers"; then
+      echo "self-test (o6-needs-you-headers-green-gate-not-triggered): FAIL (predicate fired despite ny_open==0)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (o6-needs-you-headers-green-gate-not-triggered): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (o6-needs-you-headers-green-gate-not-triggered): SKIP (jq unavailable)" >&2
   fi
 
   # ---- Check 8 (--full only): RED fixture — a stub hook's --self-test fails ----

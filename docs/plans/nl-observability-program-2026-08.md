@@ -108,6 +108,13 @@ new `adapters/claude-code/scripts/session-heartbeat.sh`, `workstreams-ui/`
 `observability-consumer-map.json` (new, doctor-read).
 
 ## In-flight scope updates
+
+This list was written at O.0 wave-spec time (high-level); the per-task NORMATIVE
+spec (`docs/plans/nl-observability-program-2026-08-specs-o.md` §O.0.2 dispatch map)
+enumerates each task's exact file ownership, disjoint by design (parallel worktree
+builders). Entries below name concrete files the per-task spec assigns that weren't
+individually spelled out above:
+
 - 2026-07-06: `adapters/claude-code/hooks/harness-hygiene-scan.sh` — GAP-55 hygiene sweep (operator LEAVE directive): cross-cutting maintenance commit, not observability work; listed because the scope gate intersects ALL active plans' scopes and this plan is now ACTIVE alongside the overhaul program.
 - 2026-07-06: `docs/backlog.md` — same GAP-55 sweep commit (disposition update), same intersection reason.
 - 2026-07-06: `docs/conventions/worktree-per-session.md` — same GAP-55 sweep commit (redaction), same intersection reason.
@@ -120,6 +127,60 @@ new `adapters/claude-code/scripts/session-heartbeat.sh`, `workstreams-ui/`
 - 2026-07-06: `docs/reviews/2026-06-02-workstreams-gui-8-bug-regression.md` — same GAP-55 sweep commit (redaction), same intersection reason.
 - 2026-07-06: `docs/plans/nl-overhaul-program-2026-07.md` — same GAP-55 sweep commit (In-flight bullets for the sweep files), same intersection reason.
 - 2026-07-06: `docs/plans/nl-observability-program-2026-08.md` — this section itself.
+- 2026-07-06: `adapters/claude-code/hooks/stop-verdict-dispatcher.sh` — specs-o §O.1 (NORMATIVE) assigns turn-trace + session-stop emission here; top-level list undercounted it.
+- 2026-07-06: `adapters/claude-code/hooks/workstreams-stop-writer.sh` — specs-o §O.1 assigns member-timing + turn-trace emission here.
+- 2026-07-06: `adapters/claude-code/hooks/session-start-digest.sh` — specs-o §O.1 assigns the one marked session-start emit call here.
+- 2026-07-06: `adapters/claude-code/hooks/pre-compact-continuity.sh` — specs-o §O.1 assigns the one marked session-compact emit line here.
+- 2026-07-06: `adapters/claude-code/hooks/workstreams-emit.sh` — specs-o §O.1 assigns spawn-dispatched/spawn-concluded/bg-task-started emit lines here.
+- 2026-07-06: `adapters/claude-code/scripts/session-resumer.sh` — specs-o §O.1 assigns C2 event-name normalization here.
+- 2026-07-06: `adapters/claude-code/tests/fixtures/wave-o/` — O.1's fragment deliverables (manifest-amendments.md, install-sync.md, doctor-predicate.md, template-wiring.md) per specs-o §O.0.1 serialization rules.
+- 2026-07-06: `adapters/claude-code/observability-consumer-map.json` — the top-level Files-to-Modify entry named this bare (no path prefix); this bullet gives the full repo-relative path so the scope gate's glob match resolves it.
+- 2026-07-06: `adapters/claude-code/hooks/lib/session-heartbeat-lib.sh` — the
+  O.2 builder split the C1 read-side classification functions
+  (hb_path_for/hb_write/hb_is_stale/hb_classify) into a shared lib file
+  (mirrors the `hooks/lib/signal-ledger.sh` precedent) so
+  `scripts/session-heartbeat.sh`'s own `sweep` verb and the future §O.3
+  `od_sessions` call the identical implementation. Named in specs-o §O.2
+  deliverable 2; not itself listed in this section's original
+  `session-heartbeat.sh` line.
+- 2026-07-06: `adapters/claude-code/tests/fixtures/wave-o/O.2/` — per specs-o
+  §O.0.1 serialization rules, builders ship orchestrator-splice fragments
+  (`manifest-amendments.md`, `callsite-wiring.md`) under this path rather
+  than editing `manifest.json`/`settings.json.template` directly.
+- 2026-07-06: `adapters/claude-code/scripts/ntfy-push.sh` (new) — O.5 push
+  implementation (send/scan verbs), per specs-o.md §O.5 dispatch map row
+  (build/wave-o-o5).
+- 2026-07-06: `adapters/claude-code/scripts/needs-you.sh` (edit — one guarded call
+  in `cmd_add`) — O.5's "NEEDS-YOU created" push call site, per specs-o.md §O.5
+  deliverable 2.
+- 2026-07-06: `adapters/claude-code/tests/fixtures/wave-o/O.5/*.md` (new) — O.5
+  orchestrator-integration fragments (manifest-amendments, scan-tick-wiring,
+  doctor-predicate, install-sync, template-wiring), per §O.0.1 serialization rules
+  (builders ship fragments for orchestrator-only surfaces, never edit them
+  directly).
+- 2026-07-06: `adapters/claude-code/skills/coordinate-estate.md` (new),
+  `adapters/claude-code/doctrine/estate-coordination.md` (new),
+  `adapters/claude-code/tests/fixtures/wave-o/` (new, builder-fragment output
+  for orchestrator-only files) — O.8's file list per specs-o §O.0.2 dispatch
+  map, omitted from the header list at plan-creation time (predates specs-o's
+  per-task detail); added here rather than opened as a separate plan since
+  O.8 is this plan's own declared task.
+- 2026-07-07: O.4 integration (orchestrator-applied, specs-o §O.4 deliverable
+  4/5) — `adapters/claude-code/settings.json.template` (removed the two
+  `workstreams-state-gate.sh` PreToolUse entries), `adapters/claude-code/
+  manifest.json` (workstreams-spawn-gate retired honest_status; new
+  workstreams-extract-pending standalone retired entry split out of
+  workstreams-emitters; workstreams-turn-emit honest_status updated),
+  `adapters/claude-code/hooks/workstreams-stop-writer.sh` (MEMBERS array +
+  self-test fixture list drop workstreams-extract-pending.sh),
+  `adapters/claude-code/hooks/{workstreams-state-gate,workstreams-extract-
+  pending,workstreams-turn-emit}.sh` (attic'd; thin exit-0 shims left at the
+  original hooks/ path so manifest-check.sh's hooks[]<->disk coverage
+  contract stays satisfiable without scanning attic/), `docs/findings.md`
+  (NL-FINDING-024 status -> closed) — none of these were individually named
+  in the header Files-to-Modify list (which said "doctor (orchestrator-only
+  at integration)" generically); listed here per this section's own stated
+  purpose.
 
 ## Assumptions
 

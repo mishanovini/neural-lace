@@ -176,6 +176,82 @@ _svd_ledger() {
 }
 
 # ----------------------------------------------------------------------
+# _svd_now_ms — current epoch time in milliseconds. Best-effort: falls
+# back to whole-second * 1000 on a `date` build without %3N support (the
+# turn-trace deltas below just become second-granular in that case, never
+# an error). NL Observability Program Wave O, task O.1 (specs-o §O.1
+# deliverable 2 / contract C2 turn-trace).
+# ----------------------------------------------------------------------
+_svd_now_ms() {
+  local ms
+  ms=$(date +%s%3N 2>/dev/null)
+  if [[ "$ms" =~ ^[0-9]+$ ]] && [[ "${#ms}" -ge 13 ]]; then
+    printf '%s' "$ms"
+  else
+    printf '%s000' "$(date +%s 2>/dev/null || echo 0)"
+  fi
+}
+
+# ----------------------------------------------------------------------
+# _SVD_TRACE_HOOKS (array of compact JSON objects, one per timed member)
+# accumulated during this Stop's run, emitted as ONE turn-trace ledger
+# event (contract C2) at every exit path of _svd_main. Reset per-process
+# (this dispatcher never handles more than one Stop per invocation).
+# ----------------------------------------------------------------------
+_SVD_TRACE_HOOKS=()
+
+# ----------------------------------------------------------------------
+# _svd_trace_record <basename> <ms> <verdict>
+#   Appends one compact JSON object to _SVD_TRACE_HOOKS. verdict is one of
+#   allow|block|warn|n/a (contract C2's turn-trace detail shape).
+# ----------------------------------------------------------------------
+_svd_trace_record() {
+  local name="$1" ms="$2" verdict="$3"
+  if command -v jq >/dev/null 2>&1; then
+    _SVD_TRACE_HOOKS+=("$(jq -cn --arg n "$name" --argjson ms "${ms:-0}" --arg v "$verdict" '{n:$n, ms:$ms, v:$v}' 2>/dev/null)")
+  else
+    _SVD_TRACE_HOOKS+=("{\"n\":\"$(_svd_json_escape "$name")\",\"ms\":${ms:-0},\"v\":\"$(_svd_json_escape "$verdict")\"}")
+  fi
+}
+
+# ----------------------------------------------------------------------
+# _svd_emit_turn_trace — builds the contract-C2 compact JSON
+# ({"hooks":[...],"total_ms":N}) from _SVD_TRACE_HOOKS and emits ONE
+# turn-trace ledger event. Best-effort/never fails: an empty hooks array
+# (e.g. gap_count==0 fast exit before any member ran — should not happen
+# in the live path since members always run before the pass/fail branch,
+# but defensive regardless) still emits a valid, if empty, trace.
+# ----------------------------------------------------------------------
+_svd_emit_turn_trace() {
+  local total_ms="${1:-0}"
+  local hooks_json="[]"
+  if [[ "${#_SVD_TRACE_HOOKS[@]}" -gt 0 ]]; then
+    local IFS=,
+    hooks_json="[${_SVD_TRACE_HOOKS[*]}]"
+  fi
+  local detail
+  detail=$(printf '{"hooks":%s,"total_ms":%s}' "$hooks_json" "${total_ms:-0}")
+  _svd_ledger "turn-trace" "$detail"
+}
+
+# ----------------------------------------------------------------------
+# _svd_emit_stop_and_trace <start_ms> <verdict_detail>
+#   ONE call site every exit path of _svd_main funnels through: emits the
+#   session-stop lifecycle event (contract C2) + the turn-trace event
+#   (contract C2 / this task's deliverable 2) together, so every Stop —
+#   pass, block, or protocol-downgrade — records both exactly once.
+# ----------------------------------------------------------------------
+_svd_emit_stop_and_trace() {
+  local start_ms="$1" verdict_detail="$2"
+  local end_ms total_ms
+  end_ms=$(_svd_now_ms)
+  total_ms=$((end_ms - start_ms))
+  [[ "$total_ms" -lt 0 ]] && total_ms=0
+  _svd_ledger "session-stop" "$verdict_detail"
+  _svd_emit_turn_trace "$total_ms"
+}
+
+# ----------------------------------------------------------------------
 # _svd_resolve_needs_you <repo_root>
 #   Resolve needs-you.sh: repo-relative (adapters/claude-code/scripts/)
 #   first, then the live-mirror (~/.claude/scripts/) fallback — mirrors
@@ -634,6 +710,10 @@ _svd_functional_link_check() {
 # Main (production execution) — skipped entirely under --self-test.
 # ----------------------------------------------------------------------
 _svd_main() {
+  local _svd_start_ms
+  _svd_start_ms=$(_svd_now_ms)
+  _SVD_TRACE_HOOKS=()
+
   local input=""
   if [[ ! -t 0 ]]; then
     input=$(cat 2>/dev/null || echo "")
@@ -670,16 +750,27 @@ _svd_main() {
   # any validator FAILURE is folded into the aggregated verdict below as an
   # "end-manifest" gap alongside the three member gates' own gaps.
   local all_gaps=""
+  local _svd_step_t0 _svd_step_t1
+  _svd_step_t0=$(_svd_now_ms)
   local manifest_gaps
   manifest_gaps=$(_svd_write_and_validate_manifest "$repo_root" "$transcript_path" "$session_id")
+  _svd_step_t1=$(_svd_now_ms)
+  _svd_trace_record "end-manifest" "$((_svd_step_t1 - _svd_step_t0))" "$([[ -n "$manifest_gaps" ]] && echo "block" || echo "allow")"
   [[ -n "$manifest_gaps" ]] && all_gaps+="${manifest_gaps}"$'\n'
 
-  # Aggregate every member gate's --report output.
+  # Aggregate every member gate's --report output. Each member is timed
+  # individually (specs-o §O.1 deliverable 2 / contract C2: "each
+  # aggregator times its own chain members via date +%s%3N deltas") and
+  # recorded into _SVD_TRACE_HOOKS for the ONE turn-trace event this Stop
+  # emits at its exit path below.
   local gate_script gate_name
   for gate_script in "${_SVD_MEMBER_GATES[@]}"; do
     gate_name="${gate_script%.sh}"
+    _svd_step_t0=$(_svd_now_ms)
     local out
     out=$(_svd_run_report "$gate_script" "" "$transcript_path" "$session_id")
+    _svd_step_t1=$(_svd_now_ms)
+    _svd_trace_record "$gate_name" "$((_svd_step_t1 - _svd_step_t0))" "$([[ -n "$out" ]] && echo "block" || echo "allow")"
     [[ -n "$out" ]] && all_gaps+="${out}"$'\n'
   done
 
@@ -690,6 +781,7 @@ _svd_main() {
 
   if [[ "$gap_count" -eq 0 ]]; then
     _svd_ledger "stop-cycle" "gaps=0 verdict=pass"
+    _svd_emit_stop_and_trace "$_svd_start_ms" "verdict=pass gaps=0"
     exit 0
   fi
 
@@ -734,6 +826,7 @@ _svd_main() {
     _svd_ledger "stop-cycle" "gaps=${gap_count} cycle=${cycle_count} verdict=block-done-refusal"
     _svd_ledger "block" "done-refusal: verification-class gap(s) present with a DONE: claim; never downgraded"
     _svd_emit_block_message "$all_gaps" "$gap_count" 1
+    _svd_emit_stop_and_trace "$_svd_start_ms" "verdict=block-done-refusal gaps=${gap_count} cycle=${cycle_count}"
     exit 2
   fi
 
@@ -742,6 +835,7 @@ _svd_main() {
     _svd_ledger "stop-cycle" "gaps=${gap_count} cycle=${cycle_count} verdict=block-first"
     _svd_ledger "block" "combined verdict: ${gap_count} gap(s) across member gates (cycle ${cycle_count})"
     _svd_emit_block_message "$all_gaps" "$gap_count" 0
+    _svd_emit_stop_and_trace "$_svd_start_ms" "verdict=block-first gaps=${gap_count} cycle=${cycle_count}"
     exit 2
   fi
 
@@ -794,6 +888,7 @@ them with full context. This is the DESIGNED protocol, not a failure.
 ================================================================
 MSG
 
+  _svd_emit_stop_and_trace "$_svd_start_ms" "verdict=protocol-downgrade gaps=${gap_count} cycle=${cycle_count}"
   exit 0
 }
 
@@ -992,6 +1087,41 @@ _svd_self_test() {
   RC=$(_run_dispatcher "$HOOKS" "$REPO" "$T" "sess-s1")
   _expect "clean-session-exit-0" "$RC" "0"
 
+  # Wave O task O.1 (specs-o §O.1 deliverable 2, contract C2): the clean
+  # pass path emits session-stop + exactly ONE turn-trace event, and the
+  # turn-trace detail is valid nested JSON naming each member gate + a
+  # numeric total_ms.
+  if grep -q '"gate":"stop-verdict-dispatcher".*"event":"session-stop"' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (o1-session-stop-emitted-on-clean-pass): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (o1-session-stop-emitted-on-clean-pass): FAIL (expected a stop-verdict-dispatcher/session-stop ledger line)" >&2
+    failed=$((failed+1))
+  fi
+  TT_COUNT=$(grep -c '"event":"turn-trace"' "$SIGNAL_LEDGER_PATH" 2>/dev/null | tr -d ' ')
+  if [[ "$TT_COUNT" == "1" ]]; then
+    echo "self-test (o1-exactly-one-turn-trace-event-per-stop): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (o1-exactly-one-turn-trace-event-per-stop): FAIL (expected 1 turn-trace line, got ${TT_COUNT})" >&2
+    failed=$((failed+1))
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    TT_LINE=$(grep '"event":"turn-trace"' "$SIGNAL_LEDGER_PATH" 2>/dev/null | tail -1)
+    TT_DETAIL=$(printf '%s' "$TT_LINE" | jq -r '.detail' 2>/dev/null)
+    TT_NHOOKS=$(printf '%s' "$TT_DETAIL" | jq -r '.hooks | length' 2>/dev/null)
+    TT_TOTAL=$(printf '%s' "$TT_DETAIL" | jq -r '.total_ms' 2>/dev/null)
+    TT_HAS_WIG=$(printf '%s' "$TT_DETAIL" | jq -r '.hooks[] | select(.n=="work-integrity-gate") | .n' 2>/dev/null)
+    TT_HAS_MANIFEST=$(printf '%s' "$TT_DETAIL" | jq -r '.hooks[] | select(.n=="end-manifest") | .n' 2>/dev/null)
+    if [[ "$TT_NHOOKS" -ge 3 ]] && [[ "$TT_TOTAL" =~ ^[0-9]+$ ]] && [[ "$TT_HAS_WIG" == "work-integrity-gate" ]] && [[ "$TT_HAS_MANIFEST" == "end-manifest" ]]; then
+      echo "self-test (o1-turn-trace-detail-names-members-and-numeric-total-ms): PASS (hooks=${TT_NHOOKS} total_ms=${TT_TOTAL})" >&2
+      passed=$((passed+1))
+    else
+      echo "self-test (o1-turn-trace-detail-names-members-and-numeric-total-ms): FAIL (nhooks=${TT_NHOOKS} total=${TT_TOTAL} wig=${TT_HAS_WIG} manifest=${TT_HAS_MANIFEST}, detail=${TT_DETAIL})" >&2
+      failed=$((failed+1))
+    fi
+  fi
+
   # ================================================================
   # Scenario 2 (MANDATED): two-gap session -> ONE combined block listing
   # BOTH gaps (bug-persistence trigger phrase + session-honesty no-marker).
@@ -1012,6 +1142,23 @@ _svd_self_test() {
     passed=$((passed+1))
   else
     echo "self-test (two-gap-session-combined-message-lists-both-gates): FAIL (expected both gate names on stderr)" >&2
+    failed=$((failed+1))
+  fi
+  # Wave O task O.1: the BLOCK path also emits session-stop + turn-trace
+  # (not just the clean-pass path proven in Scenario 1 above), with the
+  # session-stop detail naming the block verdict.
+  if grep -q '"gate":"stop-verdict-dispatcher".*"event":"session-stop".*verdict=block-first' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (o1-session-stop-emitted-on-block-path-with-verdict-detail): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (o1-session-stop-emitted-on-block-path-with-verdict-detail): FAIL (expected verdict=block-first in the session-stop detail)" >&2
+    failed=$((failed+1))
+  fi
+  if grep -q '"gate":"stop-verdict-dispatcher".*"event":"turn-trace"' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (o1-turn-trace-emitted-on-block-path): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (o1-turn-trace-emitted-on-block-path): FAIL" >&2
     failed=$((failed+1))
   fi
 

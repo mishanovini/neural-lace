@@ -479,6 +479,15 @@ if [ "$MODE" = "dry-run" ]; then
   if [ -f "$ADAPTER_DIR/manifest.json" ]; then
     check_sync_target "$ADAPTER_DIR/manifest.json" "$CLAUDE_DIR/manifest.json" "manifest.json"
   fi
+  # observability-consumer-map.json (NL Observability Program Wave O, task
+  # O.1, specs-o §O.0.3 contract C3): the doctor's check_obs_consumer_map
+  # predicate (O.6) reads this from the LIVE ~/.claude/ mirror, so it needs
+  # the same single-file sync treatment as manifest.json above — a fresh
+  # event type added to the repo copy must reach the live copy the doctor
+  # actually checks, or the doctor is validating a stale artifact.
+  if [ -f "$ADAPTER_DIR/observability-consumer-map.json" ]; then
+    check_sync_target "$ADAPTER_DIR/observability-consumer-map.json" "$CLAUDE_DIR/observability-consumer-map.json" "observability-consumer-map.json"
+  fi
   if [ -d "$ADAPTER_DIR/schemas" ]; then
     check_sync_target "$ADAPTER_DIR/schemas" "$CLAUDE_DIR/schemas" "schemas/"
   fi
@@ -991,6 +1000,16 @@ fi
 # that surfaced this gap). The manifest MUST ship with the hooks it describes.
 if [ -f "$ADAPTER_DIR/manifest.json" ]; then
   sync_file "$ADAPTER_DIR/manifest.json" "$CLAUDE_DIR/manifest.json" "manifest.json"
+fi
+
+# observability-consumer-map.json (NL Observability Program Wave O, task
+# O.1, specs-o §O.0.3 contract C3): the doctor's check_obs_consumer_map
+# predicate (O.6) reads this from the LIVE ~/.claude/ mirror, so it needs
+# the same single-file sync treatment as manifest.json above — a fresh
+# event type added to the repo copy must reach the live copy the doctor
+# actually checks, or the doctor is validating a stale artifact.
+if [ -f "$ADAPTER_DIR/observability-consumer-map.json" ]; then
+  sync_file "$ADAPTER_DIR/observability-consumer-map.json" "$CLAUDE_DIR/observability-consumer-map.json" "observability-consumer-map.json"
 fi
 
 if [ -d "$ADAPTER_DIR/schemas" ]; then

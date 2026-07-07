@@ -54,32 +54,29 @@ Both accept `--sink <path>` to target a tree-state file other than the default
 > `conversation-tree-extract-pending.sh` Stop hook (see the harness `hooks/`
 > directory); this script remains for manual / curated population.
 
-## Regression test (browser e2e)
+## Regression test (browser e2e) — RETIRED 2026-07 (O.4 cockpit rebuild)
 
-`regression.e2e.js` is a **real-headless-browser** regression suite that locks
-the 8 GUI bugs fixed on 2026-06-02
-(`docs/reviews/2026-06-02-workstreams-gui-8-bug-regression.md`). The DOM-free
-node selftests (`../state/selftest.js`, `../web/responsive.selftest.js`) cannot
-catch CSS footguns or DOM-wiring regressions — e.g. the `[hidden]` override that
-squeezed the detail card into a 67px bottom strip, or the selection that never
-highlighted the clicked tree row. This suite drives an actual browser to assert
-each fix.
+`regression.e2e.js` locked the pre-O.4 cockpit/drill/waiting design's DOM
+(8 GUI bugs fixed 2026-06-02 + the 2026-06-11 status-surface redesign). NL
+Observability Program Wave O, task O.4 (specs-o §O.4) REPLACED that UI with
+a six-question cockpit reading derived truth via the `nl` CLI — every DOM id
+and write affordance this suite asserted against is gone. It has been moved
+to `../attic/regression.e2e.js.retired` (salvage-before-reset; see
+`../attic/README.md`) rather than deleted, and MUST NOT be run against the
+current server (every assertion will fail — correctly, since the surface it
+tested no longer exists).
 
-`puppeteer` is **dev-only — NOT a shipped dependency** (keeps the GUI's runtime
-deps to just `zod`). Install it on demand:
+The DOM-free node selftest for the NEW cockpit is `../web/cockpit.selftest.js`
+(run: `node web/cockpit.selftest.js`); the server-side wiring self-test is
+`../server/server.selftest.js`. `../web/responsive.selftest.js` (the pre-O.4
+tree/accordion structural test) is likewise retired to
+`../attic/responsive.selftest.js.retired`.
 
-```bash
-# 1. start the server
-node server/server.js
-# 2. install puppeteer just for testing (dev-only; safe to delete after)
-npm i -D puppeteer
-# 3. run the suite (default WS_URL=http://127.0.0.1:7733/)
-node scripts/regression.e2e.js
-```
-
-Exit 0 = all 9 checks pass (8 bugs + a no-page-errors guard); exit 1 = a
-regression; exit 2 = harness error (e.g. puppeteer missing). Each assertion
-prints its measured evidence (`cardH`, `selTreeRows`, badge counts, etc.).
+A live-browser regression suite for the new cockpit is a reasonable future
+increment; it was not built as part of O.4 (whose own acceptance bar is the
+end-user-advocate's runtime scenario run against the ten scenarios in
+`docs/reviews/2026-07-06-o4-acceptance-scenarios.md`, not a maintained e2e
+suite).
 
 ## Quick start
 

@@ -660,6 +660,64 @@ _em_self_test() {
   [[ "$RC" != "0" ]] && ok "negative: genuinely-unrecorded item still FAILS validation (structural fix is not a rubber stamp)" || no "expected a genuinely-unrecorded item to fail validation, got $RC"
   grep -q "NOT found in" "$D/validate-err.txt" 2>/dev/null && ok "check-2 correctly reports NOT found for the genuinely-unrecorded item" || no "expected a 'NOT found in' FAIL line for check 2"
 
+  # ================================================================
+  # Scenario 10 (nl-issues ledger 2026-07-07, orchestrator-assigned batch-2
+  # fix): guards against a WRITE-TRUNCATES-BUT-VALIDATE-COMPARES-FULL
+  # mismatch on top of fb7ab9a's structural fix — this scenario runs the
+  # REAL `write` verb (not a hand-built manifest like scenarios 8/9), so
+  # if cmd_write's item-building jq expression ever got a `[0:60]`-style
+  # truncation added (or any other length cap) while check-2's jq compare
+  # stayed a full-string `==` against the reconstructed gate/check/message
+  # (as it does today), a message longer than the cut point would produce
+  # a manifest whose `item` no longer equals the ledger's own full
+  # reconstruction — and validate would FAIL forever on every real gap
+  # whose message exceeds the cut. Seeds a message >60 chars (well past
+  # any plausible display-only truncation length) in the REAL
+  # stop-verdict-dispatcher.sh downgrade line format (separate gate/check/
+  # message JSON fields under ${HOME}/.claude/state/unresolved-gaps.jsonl,
+  # matching scenario 8/9's real-shape convention), then calls `write`
+  # for real (the flagless-shape requirement: exact same verb/argument
+  # shape stop-verdict-dispatcher.sh's own end-manifest write call uses)
+  # and asserts the resulting manifest's `unresolved[0].item` is the FULL,
+  # untruncated concatenation, and that `validate` PASSes.
+  #
+  # RED-BEFORE / GREEN-AFTER evidence (verified live during this fix,
+  # recorded in the report-back — not left in the shipped file): with a
+  # temporary `[0:60]` truncation spliced into cmd_write's item-building
+  # jq expression (line ~221, simulating the exact bug shape "write
+  # truncates unresolved item text... but validate compares FULL
+  # reconstructed equality"), this scenario FAILs — the manifest's
+  # 60-char-truncated item no longer equals check-2's full reconstruction
+  # once the message exceeds the cut point, and `grep -q "found in"`
+  # instead sees "NOT found in". Reverting removes the failure. This
+  # confirms the scenario actually exercises the code path it guards.
+  # Investigation note: the CURRENT code (as of this fix) already builds
+  # cmd_write's item as the full, untruncated concatenation — no
+  # production truncation bug was found in the live code (the only
+  # `${item:0:60}` in this file is in check-2's own ECHOED PASS/FAIL
+  # display text, which does not feed the comparison). This scenario is
+  # the regression guard the orchestrator instruction asked for, so this
+  # class of write/validate divergence can never regress silently.
+  # ================================================================
+  _setup_scenario s10; D="$SCEN_DIR"
+  REPO=$(_build_repo "$D" repo)
+  REAL_GAPS="${HOME}/.claude/state/unresolved-gaps.jsonl"
+  LONG_MSG="this unresolved-gap message is deliberately much longer than the sixty-character display-truncation cut point used only in check-2's echoed PASS/FAIL text, so that a write-side truncation bug reintroduced on top of fb7ab9a's fix would diverge from validate's full reconstruction and fail here"
+  printf '{"ts":"2026-07-07T00:00:00Z","session_id":"sess-s10","gate":"session-honesty-gate","check":"marker-scan","message":"%s"}\n' "$LONG_MSG" > "$REAL_GAPS"
+  WRITE_OUT=""
+  ( cd "$REPO" && WRITE_OUT=$(bash "$script_path" write --session-id sess-s10 2>"$D/write-err.txt") && printf '%s' "$WRITE_OUT" > "$D/write-path.txt" )
+  MPATH="$(cat "$D/write-path.txt" 2>/dev/null)"
+  FULL_ITEM="session-honesty-gate/marker-scan: ${LONG_MSG}"
+  if [[ -f "$MPATH" ]] && [[ "$(jq -r '.unresolved[0].item' "$MPATH" 2>/dev/null)" == "$FULL_ITEM" ]]; then
+    ok "real 'write' verb preserves a >60-char unresolved item untruncated in the manifest"
+  else
+    no "expected write's manifest unresolved[0].item to equal the full untruncated concatenation, got: $(jq -r '.unresolved[0].item // "MISSING"' "$MPATH" 2>/dev/null)"
+  fi
+  RC=0
+  ( cd "$REPO" && bash "$script_path" validate "sess-s10" >/dev/null 2>"$D/validate-err.txt" ) || RC=$?
+  [[ "$RC" == "0" ]] && ok "long (>60 char) unresolved item, written by the REAL write verb, validates PASS end-to-end" || no "expected the real write+validate round-trip on a >60-char item to PASS, got $RC (see $D/validate-err.txt)"
+  grep -q "found in" "$D/validate-err.txt" 2>/dev/null && ok "check-2 reports the long item found (full match, not truncated-string coincidence)" || no "expected a 'found in' PASS line for the long-item scenario"
+
   echo "" >&2
   echo "self-test summary: $passed passed, $failed failed" >&2
   if [[ "$failed" -eq 0 ]]; then

@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "_comment": "NL Observability Program Wave O, task O.1 (specs-o §O.0.3 contract C3 / §O.1 deliverable 4). Seeded with ALL signal-ledger event types observed in this repo as of Wave O batch 1: the 8 pre-existing classes (ADR 058 D6 + Wave E/F callers) plus the 10 new Wave-O lifecycle/spawn/task/turn-trace classes (contract C2). Every entry names >=1 REAL consumer that exists on disk today (grep-verified against this repo, not aspirational). UPDATED by task O.3 (batch 2): the cli:nl-* consumers that O.1 named as 'not-yet-landed this batch' now exist and are grep-verified live in hooks/lib/observability-derive.sh (od_sessions/od_costs/od_why) and scripts/nl.sh (nl status/costs/why) — annotations below say 'landed by O.3' with the exact function name. O.6's check_obs_consumer_map doctor predicate is still the enforcing check for law 2 (every event type has >=1 named consumer); this file being builder-editable (per specs-o §O.0.1 dispatch note) means O.3 updates its own now-real consumers directly rather than leaving the stale not-yet-landed tag for the orchestrator to fix. ORCHESTRATOR UPDATE (batch 2 integration): O.6's check_obs_consumer_map livesmoke (tests/fixtures/wave-o/O.6/doctor-predicate.md item 4) found 4 real, currently-emitted event names this map never enumerated — session-resumer.sh's own normalized vocabulary (classify-skip, would-have-resumed, via ledger_emit \"resumer\" \"$normalized\" ...) and stop-verdict-dispatcher.sh's own vocabulary (stop-cycle, protocol-downgrade, via its _svd_ledger wrapper) — both pre-date Wave O and were never covered by the frozen C2 vocabulary. Confirmed RED on this real machine's real ledger before this fix (bash hooks/harness-doctor.sh --quick: 'unmapped ledger event type(s): classify-skip,protocol-downgrade,stop-cycle,would-have-resumed'). Added below with cli:nl-why + doctor:check_obs_consumer_map as consumers (nl why already renders arbitrary ledger events per-session; digest:feed_ledger_summary also renders any event type generically). No push:* consumer references existed anywhere in this file prior to this edit (O.5 was descoped by the operator 2026-07-07 before ever touching this file), so the plan's 'remove every push:* consumer reference' step is a no-op here — verified via grep across the whole file.",
+  "event_types": {
+    "block": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "kpi:harness-kpis.sh",
+        "waiver-density:waiver-density.sh"
+      ]
+    },
+    "warn": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "kpi:harness-kpis.sh"
+      ]
+    },
+    "waiver": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "kpi:harness-kpis.sh",
+        "waiver-density:waiver-density.sh",
+        "gate-demotion:gate-demotion.sh"
+      ]
+    },
+    "downgrade": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "kpi:harness-kpis.sh",
+        "waiver-density:waiver-density.sh"
+      ]
+    },
+    "skip": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "waiver-density:waiver-density.sh"
+      ]
+    },
+    "flush": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "writer:signal-ledger-flush.sh (self-emits its own segment terminator; read back by any tailing consumer as an ordinary ledger line)"
+      ]
+    },
+    "demote": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "gate-demotion:gate-demotion.sh (self-consumes for idempotency — a gate already demoted is not re-demoted)",
+        "doctor:harness-doctor.sh (budget-blocking-gates remediation references scripts/gate-demotion.sh)"
+      ]
+    },
+    "soft-counter": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "tool-call-counter:tool-call-counter.sh (self-emits threshold crossings; read back by any tailing consumer)"
+      ]
+    },
+    "session-start": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "cli:nl-status (landed by O.3 — hooks/lib/observability-derive.sh:od_sessions, scripts/nl.sh:cmd_status)"
+      ]
+    },
+    "session-stop": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "cli:nl-status (landed by O.3 — hooks/lib/observability-derive.sh:od_sessions, scripts/nl.sh:cmd_status)",
+        "cli:nl-costs (landed by O.3 — hooks/lib/observability-derive.sh:od_costs, scripts/nl.sh:cmd_costs)"
+      ]
+    },
+    "session-compact": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "cli:nl-status (landed by O.3 — hooks/lib/observability-derive.sh:od_sessions, scripts/nl.sh:cmd_status)"
+      ]
+    },
+    "session-resume": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "digest-feed:session-resumer.sh emit_digest_feed (original-vocabulary sibling; ~/.claude/state/resumer/digest-feed.jsonl)",
+        "cli:nl-status (landed by O.3 — hooks/lib/observability-derive.sh:od_sessions, scripts/nl.sh:cmd_status)"
+      ]
+    },
+    "throttle-detected": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "digest-feed:session-resumer.sh emit_digest_feed (original-vocabulary sibling; ~/.claude/state/resumer/digest-feed.jsonl)",
+        "cli:nl-costs (landed by O.3 — hooks/lib/observability-derive.sh:od_costs, scripts/nl.sh:cmd_costs; throttle events + estimated time lost)"
+      ]
+    },
+    "spawn-dispatched": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "cli:nl-why (landed by O.3 — hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why; 024-class causal-chain fixture in tests/fixtures/wave-o/O.3/024-ledger.jsonl)"
+      ]
+    },
+    "spawn-concluded": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "cli:nl-why (landed by O.3 — hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why)"
+      ]
+    },
+    "bg-task-started": {
+      "consumers": [
+        "digest:feed_ledger_summary",
+        "cli:nl-status (landed by O.3 — hooks/lib/observability-derive.sh:od_sessions, scripts/nl.sh:cmd_status)"
+      ]
+    },
+    "bg-task-finished": {
+      "consumers": [
+        "digest:feed_ledger_summary (NEVER EMITTED as of O.1 — no mechanical tap exists for background-dispatch completion; see workstreams-emit.sh's own documented COMPLETION-SIGNAL CEILING and this task's report-back. Entry present to satisfy law 2's 'every event type in C2 has a named consumer' even though the writer side is an honest, documented gap, not yet a real emission.)"
+      ]
+    },
+    "turn-trace": {
+      "consumers": [
+        "cli:nl-why (landed by O.3 — hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why; per-Stop hook-timing breakdown)"
+      ]
+    },
+    "classify-skip": {
+      "consumers": [
+        "cli:nl-why (hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why — renders any per-session ledger event, including this pre-Wave-O resumer vocabulary, in its causal chain)",
+        "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
+        "digest:feed_ledger_summary"
+      ]
+    },
+    "protocol-downgrade": {
+      "consumers": [
+        "cli:nl-why (hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why — renders any per-session ledger event, including this pre-Wave-O stop-verdict-dispatcher.sh vocabulary, in its causal chain)",
+        "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
+        "digest:feed_ledger_summary"
+      ]
+    },
+    "stop-cycle": {
+      "consumers": [
+        "cli:nl-why (hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why — renders any per-session ledger event, including this pre-Wave-O stop-verdict-dispatcher.sh vocabulary, in its causal chain)",
+        "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
+        "digest:feed_ledger_summary"
+      ]
+    },
+    "would-have-resumed": {
+      "consumers": [
+        "cli:nl-why (hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why — renders any per-session ledger event, including this pre-Wave-O resumer vocabulary, in its causal chain)",
+        "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
+        "digest:feed_ledger_summary"
+      ]
+    }
+  }
+}
