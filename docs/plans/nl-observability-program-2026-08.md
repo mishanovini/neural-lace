@@ -98,6 +98,20 @@ new `adapters/claude-code/scripts/session-heartbeat.sh`, `workstreams-ui/`
 `settings.json.template` + doctor (orchestrator-only at integration),
 `observability-consumer-map.json` (new, doctor-read).
 
+## In-flight scope updates
+- 2026-07-06: `adapters/claude-code/hooks/harness-hygiene-scan.sh` — GAP-55 hygiene sweep (operator LEAVE directive): cross-cutting maintenance commit, not observability work; listed because the scope gate intersects ALL active plans' scopes and this plan is now ACTIVE alongside the overhaul program.
+- 2026-07-06: `docs/backlog.md` — same GAP-55 sweep commit (disposition update), same intersection reason.
+- 2026-07-06: `docs/conventions/worktree-per-session.md` — same GAP-55 sweep commit (redaction), same intersection reason.
+- 2026-07-06: `docs/decisions/037-file-lifecycle-session-artifacts.md` — same GAP-55 sweep commit (redaction), same intersection reason.
+- 2026-07-06: `docs/discoveries/2026-05-30-conv-tree-work-first-reframe-design.md` — same GAP-55 sweep commit (redaction), same intersection reason.
+- 2026-07-06: `docs/discoveries/2026-06-03-workstreams-tree-design-misread-and-repo-tier.md` — same GAP-55 sweep commit (redaction), same intersection reason.
+- 2026-07-06: `docs/plans/archive/workstreams-ui-status-surface-redesign-2026-06-11-evidence.md` — same GAP-55 sweep commit (redaction), same intersection reason.
+- 2026-07-06: `docs/plans/archive/workstreams-ui-status-surface-redesign-2026-06-11-evidence/tasks-1-2-6.evidence.md` — same GAP-55 sweep commit (redaction), same intersection reason.
+- 2026-07-06: `docs/reviews/2026-05-20-conv-tree-session-harness-gaps.md` — same GAP-55 sweep commit (reword), same intersection reason.
+- 2026-07-06: `docs/reviews/2026-06-02-workstreams-gui-8-bug-regression.md` — same GAP-55 sweep commit (redaction), same intersection reason.
+- 2026-07-06: `docs/plans/nl-overhaul-program-2026-07.md` — same GAP-55 sweep commit (In-flight bullets for the sweep files), same intersection reason.
+- 2026-07-06: `docs/plans/nl-observability-program-2026-08.md` — this section itself.
+
 ## Assumptions
 
 Wave E's ledger/digest/NEEDS-YOU/resumer are live and stable (they are the

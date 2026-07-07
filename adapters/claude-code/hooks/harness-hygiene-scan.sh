@@ -563,7 +563,10 @@ is_path_shape_exempt() {
     # NL-root prose files (README, CONTRIBUTING, LICENSE, SETUP,
     # CODE_OF_CONDUCT, CHANGELOG) — these are documentation, not
     # project-instance content.
-    README.md|README|CONTRIBUTING.md|LICENSE|LICENSE.md|SETUP.md|CODE_OF_CONDUCT.md|CHANGELOG.md|SECURITY.md) return 0 ;;
+    # .gitattributes added 2026-07-06 (GAP-55): its explanatory comments
+    # legitimately repeat platform terms (cluster-heuristic FP); the
+    # Layer-1 denylist still scans it.
+    README.md|README|CONTRIBUTING.md|LICENSE|LICENSE.md|SETUP.md|CODE_OF_CONDUCT.md|CHANGELOG.md|SECURITY.md|.gitattributes) return 0 ;;
     # `.pr-description.md` is a per-PR transient file consumed by
     # `gh pr create --body-file` (canonical convention per
     # `adapters/claude-code/git-hooks/pre-push-pr-template.sh`). It
@@ -714,6 +717,43 @@ is_exempt() {
   case "$path" in
     neural-lace/workstreams-ui/web/*) return 0 ;;
     neural-lace/conversation-tree-ui/web/*) return 0 ;;
+    # scripts/ extension (2026-07-06, GAP-55 sweep, operator triage rubric):
+    # the seed/backfill scripts under scripts/ name the operator's projects
+    # for the same reason web/ does — the Repo -> Project mapping IS the
+    # feature. Same subtree, same class, same Layer-2-still-scans posture.
+    neural-lace/workstreams-ui/scripts/*) return 0 ;;
+    neural-lace/conversation-tree-ui/scripts/*) return 0 ;;
+  esac
+
+  # Public-by-design repo-architecture documentation (operator directive
+  # 2026-07-06, GAP-55 triage rubric: benign -> exempt with provenance note;
+  # genuinely-private -> redact, which was done separately in the same
+  # commit). These specific committed docs DOCUMENT this repo's own
+  # two-remote architecture, PR trail, and machine estate — the org/account
+  # names and downstream-product references ARE their subject matter, and
+  # the operator ruled the mirror public by design (docs/backlog.md
+  # HARNESS-GAP-55). File-by-file on purpose: NEW docs are NOT exempt and
+  # face the full denylist. The two synthetic-ci entries carry their
+  # archive/ twins so plan-lifecycle archiving does not un-exempt them.
+  case "$path" in
+    docs/discoveries/2026-05-27-neural-lace-fork-deep-dive-and-sync-strategy.md) return 0 ;;
+    docs/discoveries/2026-05-30-conv-tree-work-first-reframe-design.md) return 0 ;;
+    docs/discoveries/2026-06-02-pt-personal-fork-reconcile-and-adr-renumber.md) return 0 ;;
+    docs/discoveries/2026-06-03-workstreams-tree-design-misread-and-repo-tier.md) return 0 ;;
+    docs/decisions/039-conv-tree-reconciliation-over-interception.md) return 0 ;;
+    docs/plans/archive/ci-server-side-enforcement-2026-05-23.md) return 0 ;;
+    docs/plans/archive/git-bestpractices-9-item-initiative-2026-05-29.md) return 0 ;;
+    docs/plans/archive/neural-lace-mirror-automation-evidence.md) return 0 ;;
+    docs/plans/archive/scope-gate-rebase-exemption.md) return 0 ;;
+    docs/plans/archive/windows-scope-gate-drive-letter-fix.md) return 0 ;;
+    docs/plans/archive/workstreams-phase-1-2.md) return 0 ;;
+    docs/plans/archive/workstreams-phase-3.md) return 0 ;;
+    docs/plans/archive/worktree-spawn-primitive.md) return 0 ;;
+    docs/plans/archive/workstreams-ui-status-surface-redesign-2026-06-11-evidence/tasks-10-11.evidence.md) return 0 ;;
+    docs/plans/nl-overhaul-synthetic-ci-2026-07.md) return 0 ;;
+    docs/plans/nl-overhaul-synthetic-ci-2026-07-evidence.md) return 0 ;;
+    docs/plans/archive/nl-overhaul-synthetic-ci-2026-07.md) return 0 ;;
+    docs/plans/archive/nl-overhaul-synthetic-ci-2026-07-evidence.md) return 0 ;;
   esac
 
   # Directory-prefix exemptions

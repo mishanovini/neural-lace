@@ -15,7 +15,7 @@
 
 On 2026-05-25 four design sessions (Patterns 1/3/4/5 of the plan-lifecycle
 redesign arc) ran **in parallel in the single main checkout**
-(`C:/Users/misha/dev/Pocket Technician/neural-lace`). Because they shared one
+(`<abs-path-to-main-checkout>`). Because they shared one
 working tree they collided on two shared resources:
 
 1. **`SCRATCHPAD.md` write race** — each session rewrote the shared SCRATCHPAD, clobbering the others' state.

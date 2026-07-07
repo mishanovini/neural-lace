@@ -101,7 +101,7 @@ copy that arrives via merge).
 
 - `neural-lace/conversation-tree-ui/scripts/backfill-from-sessions.js` → **track**.
   It is a reusable tool. Before tracking, sanitize the personal-path example in its
-  header comment (`C:\Users\misha\dev\Pocket Technician\neural-lace`) to a generic
+  header comment (`<abs-path-to-main-checkout>`) to a generic
   placeholder per `harness-hygiene.md` (the pre-commit `harness-hygiene-scan.sh`
   would otherwise flag it).
 - `add-pending-items.js` → **do NOT track**. It is a dated instance (hardcoded
