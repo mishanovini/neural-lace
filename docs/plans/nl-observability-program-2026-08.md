@@ -115,6 +115,7 @@ enumerates each task's exact file ownership, disjoint by design (parallel worktr
 builders). Entries below name concrete files the per-task spec assigns that weren't
 individually spelled out above:
 
+- 2026-07-07: `adapters/claude-code/patterns/harness-denylist.txt` — GAP-56 fix (operator REMEDIATE-ALL): relocate literal test-credential VALUES to the machine-local layer; cross-cutting security maintenance, not observability work; listed because the scope gate intersects ALL active plans and this plan is ACTIVE alongside the overhaul program.
 - 2026-07-06: `adapters/claude-code/hooks/harness-hygiene-scan.sh` — GAP-55 hygiene sweep (operator LEAVE directive): cross-cutting maintenance commit, not observability work; listed because the scope gate intersects ALL active plans' scopes and this plan is now ACTIVE alongside the overhaul program.
 - 2026-07-06: `docs/backlog.md` — same GAP-55 sweep commit (disposition update), same intersection reason.
 - 2026-07-06: `docs/conventions/worktree-per-session.md` — same GAP-55 sweep commit (redaction), same intersection reason.
