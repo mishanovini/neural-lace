@@ -164,6 +164,7 @@ The operator (the harness's user) can, after this program: (a) run `harness-doct
 - Live mirror `~/.claude/**` via install.sh runs only; main-checkout git state (B.7); git remotes config (B.8)
 
 ## In-flight scope updates
+- 2026-07-07: `adapters/claude-code/patterns/harness-denylist.txt` — GAP-56 fix: relocate the literal test-credential VALUES out of the public denylist into the machine-local layer. `adapters/claude-code/patterns/**` is named on the line-161 Files bullet but is not its first backtick token — same documented first-backtick parser-limitation class as the entries below.
 - 2026-07-06: `docs/conventions/worktree-per-session.md` — GAP-55 hygiene sweep (operator LEAVE directive 2026-07-06): personal-path redaction; docs/conventions is not covered by any Files bullet's first backtick token.
 - 2026-07-06: `docs/decisions/037-file-lifecycle-session-artifacts.md` — GAP-55 sweep: personal-path redaction (docs/decisions/** is a non-first token on the line-163 bullet, same parser-limitation class).
 - 2026-07-06: `docs/discoveries/2026-05-30-conv-tree-work-first-reframe-design.md` — GAP-55 sweep: personal-path redaction (docs/discoveries/** non-first token, line 163).
