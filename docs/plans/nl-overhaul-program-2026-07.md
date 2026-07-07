@@ -164,6 +164,12 @@ The operator (the harness's user) can, after this program: (a) run `harness-doct
 - Live mirror `~/.claude/**` via install.sh runs only; main-checkout git state (B.7); git remotes config (B.8)
 
 ## In-flight scope updates
+- 2026-07-06: `docs/conventions/worktree-per-session.md` — GAP-55 hygiene sweep (operator LEAVE directive 2026-07-06): personal-path redaction; docs/conventions is not covered by any Files bullet's first backtick token.
+- 2026-07-06: `docs/decisions/037-file-lifecycle-session-artifacts.md` — GAP-55 sweep: personal-path redaction (docs/decisions/** is a non-first token on the line-163 bullet, same parser-limitation class).
+- 2026-07-06: `docs/discoveries/2026-05-30-conv-tree-work-first-reframe-design.md` — GAP-55 sweep: personal-path redaction (docs/discoveries/** non-first token, line 163).
+- 2026-07-06: `docs/discoveries/2026-06-03-workstreams-tree-design-misread-and-repo-tier.md` — GAP-55 sweep: personal-path redaction (same class).
+- 2026-07-06: `docs/reviews/2026-05-20-conv-tree-session-harness-gaps.md` — GAP-55 sweep: org-dir path placeholder reword (docs/reviews/** non-first token, line 163).
+- 2026-07-06: `docs/reviews/2026-06-02-workstreams-gui-8-bug-regression.md` — GAP-55 sweep: personal-path redaction (same class).
 - 2026-07-06: `docs/reviews/2026-07-06-pre-commit-chain-exit2-review.md` — new dated review record: harness-reviewer CONDITIONAL-PASS on the GAP-54 exit-2 wiring fix + the deferral decision and activation preconditions (audit results persisted per constitution §5). Same first-backtick parser-limitation class (`docs/reviews/**` is not the first token on its line-163 bullet).
 - 2026-07-06: `docs/reviews/2026-07-06-nl-overhaul-status.md` — hygiene remediation: the F.5 status table named the denylisted product codename in prose; reworded to "cross-repo guard" (same fix class as the manifest golden_scenario reword landing in the same commit). `docs/reviews/**` on line 163 is not the first backticked token on its bullet — same documented first-backtick parser-limitation class as the other entries in this section.
 - 2026-07-03: `.pr-description.md` — tracked per-PR body file refreshed for PR #74 (attic/lib re-source shims + NL-FINDING-018, spawned decision-context self-test root-cause task); commit required by work-integrity gate (tracked-file modification at session end).

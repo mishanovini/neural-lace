@@ -538,7 +538,7 @@ Checks run:
    Result: PASS
 5. Isolation discipline (verified live, then torn down)
    Command: curl http://127.0.0.1:7799/api/health
-   Output: state_file = C:/Users/misha/AppData/Local/Temp/<tmp>/tree-state.json (the copy, never the canonical file); my 7799 server killed by PID after the run, port confirmed down
+   Output: state_file = <local-temp>/<tmp>/tree-state.json (the copy, never the canonical file); my 7799 server killed by PID after the run, port confirmed down
    Result: PASS
 6. User-journey corroboration (committed artifacts in 67a09a3)
    Output: 10 userpass-*.jpg screenshots cover the full journey; spot-read userpass-07 (incomplete ask: needs-enrichment panel, resolution disabled, single respond affordance) and userpass-10 (post-promote cockpit: promoted toast, NEXT pill incremented, amber discipline intact, the disclosed duplicate "My tasks" live-data wrinkle visible — honestly documented as pre-existing, not introduced)

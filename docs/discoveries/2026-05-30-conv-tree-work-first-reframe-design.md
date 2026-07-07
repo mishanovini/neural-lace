@@ -96,7 +96,7 @@ Plus three new-scope items:
 - Inclusive substance threshold + auto-transition mechanics
 - All 6 phases with definitions of done and protocols (notify-and-continue vs PAUSE)
 - Phase 5 deep-dive: reconciler-on-existing-GUI-server architecture, Agent SDK spawn approach (Option 1b from ADR-031 adopted for autonomous loop), cascade brakes (concurrency cap + rate limit + daily $ ceiling)
-- Phase 6 deep-dive: `mishanovini/workstreams-state` repo (personal account; local at `C:\Users\misha\dev\Personal\workstreams-state\`), append-only event log merge semantics, claim-and-lease primitive, GitHub Action approach for cloud-Routine bridge
+- Phase 6 deep-dive: `mishanovini/workstreams-state` repo (personal account; local at `<home>\dev\Personal\workstreams-state\`), append-only event log merge semantics, claim-and-lease primitive, GitHub Action approach for cloud-Routine bridge
 - 8 open questions (Q1+Q2 are pre-Phase-1 blockers; Q5a–Q5c, Q6a–Q6c are Phase-4-PAUSE decisions)
 - Recommended sequence: Phase 1+2 next, after Misha answers Q1+Q2
 
