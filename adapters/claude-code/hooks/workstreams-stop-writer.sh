@@ -189,4 +189,13 @@ if command -v ledger_emit >/dev/null 2>&1; then
   ledger_emit "workstreams-stop-writer" "turn-trace" "$(printf '{"hooks":%s,"total_ms":%s}' "$_wsw_hooks_json" "$_wsw_total_ms")"
 fi
 
+# ---- WAVE-O O.2 CALLSITE: turn-end liveness heartbeat -------------------
+# Best-effort, never-blocks. marker_state defaults to "none" (orchestrator
+# decision, specs-o §O.2 callsite-wiring.md: do NOT wire a marker scan this
+# batch — no Stop-chain member currently exports a scanned MARKER_KEYWORD
+# for this hook to reuse).
+marker_state="${SESSION_HEARTBEAT_MARKER_STATE:-none}"
+"$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event turn-end --marker "$marker_state" >/dev/null 2>&1 || true
+# ---- END WAVE-O O.2 CALLSITE ----------------------------------------------
+
 exit 0

@@ -860,6 +860,15 @@ perform_resume() {
   # ---- LIVE path: actually invoke the CLI. Never reached under
   # --self-test / HARNESS_SELFTEST=1 (see gate above). ----
   emit_action "$sid" "resume-attempt" "attempt ${next_attempt}/${MAX_ATTEMPTS}: ${reason}"
+  # ---- WAVE-O O.2 CALLSITE: resume-event liveness heartbeat --------------
+  # Best-effort, never-blocks, tolerates the script being absent (mirrors
+  # the callsite-wiring.md guard style: session-heartbeat.sh touch always
+  # exits 0, but we don't even assume the file exists on every checkout).
+  # Orchestrator-added per specs-o §O.2 "Note on resume event" — the O.2
+  # builder's fragment names this as an orchestrator TODO since
+  # session-resumer.sh is not in O.1's or O.2's owned-files list.
+  [[ -x "$SCRIPT_DIR/session-heartbeat.sh" ]] && "$SCRIPT_DIR/session-heartbeat.sh" touch --event resume >/dev/null 2>&1 || true
+  # ---- END WAVE-O O.2 CALLSITE ----------------------------------------------
   local out rc
   out=$(claude -p --resume "$sid" "$RESUME_NUDGE" 2>&1)
   rc=$?

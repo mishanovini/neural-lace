@@ -931,6 +931,13 @@ run_digest() {
   # ---- END WAVE-O O.1 EMIT -------------------------------------------------
 
   local -a lines=()
+
+  # ---- WAVE-O O.2 CALLSITE: session-start liveness heartbeat -------------
+  # Best-effort, never-blocks (session-heartbeat.sh touch always exits 0).
+  # Per specs-o §O.2 fragment callsite-wiring.md item 1 (orchestrator splice).
+  "$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event start >/dev/null 2>&1 || true
+  # ---- END WAVE-O O.2 CALLSITE ---------------------------------------------
+
   local doctor_line
   doctor_line="$(feed_doctor "$cwd")"
   [[ -n "$doctor_line" ]] && lines+=("$doctor_line")

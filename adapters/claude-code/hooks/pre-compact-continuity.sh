@@ -255,6 +255,10 @@ _run_live() {
   trigger="$(printf '%s' "$input" | jq -r '.trigger // empty' 2>/dev/null)"
 
   _run_precompact "$transcript" "$session_id" "$_SNAPSHOT_SCRIPT_DEFAULT" "$trigger"
+  # ---- WAVE-O O.2 CALLSITE: compact-event liveness heartbeat -------------
+  # Best-effort, never-blocks (session-heartbeat.sh touch always exits 0).
+  "$SCRIPT_DIR/../scripts/session-heartbeat.sh" touch --event compact >/dev/null 2>&1 || true
+  # ---- END WAVE-O O.2 CALLSITE ---------------------------------------------
   exit 0
 }
 
