@@ -13,7 +13,14 @@ Design: docs/reviews/2026-07-04-observability-design-sketch.md (normative — th
 laws, the six operator questions, surfaces, non-goals, success metrics).
 Backlog items absorbed: WORKSTREAMS-UI-PURPOSE-AUDIT-01 (P1 — dispositioned by the
 sketch: rebuild cockpit as a thin view over derived truth); ntfy.sh phone-notification
-item (absorb at activation; mark both in backlog in the activation commit).
+item (absorb at activation; mark both in backlog in the activation commit);
+CANONICAL-COUNTERS-01 → O.3 (derivation lib = canonical-oracle host);
+SCHEDULED-TASK-HEALTH-01 → O.6 (Last Result==0 doctor check);
+E6-HEADER-HARDENING-01 → O.6 (4-header predicate) — rows deleted from backlog in the
+O.0 commit per planning doctrine.
+Specs: docs/plans/nl-observability-program-2026-08-specs-o.md (O.0 output 2026-07-06;
+NORMATIVE for builders — dispatch map §O.0.2, frozen interface contracts §O.0.3,
+serialization rules §O.0.1). Decisions: docs/decisions/060-wave-o-observability-architecture.md.
 
 ## Goal
 
