@@ -45,11 +45,11 @@ surfacers, additional dashboards, cross-machine ledger sync beyond read-both.
   Parallelizable: no — Verification: mechanical
   - Done-when: specs-o exists with per-task exact specs, dispatch map, serialization
     rules (orchestrator-only: settings template, manifest, doctor, install).
-- [ ] O.1 Emit extension: lifecycle/spawn/task events + turn-trace spans via the D6
+- [x] O.1 Emit extension: lifecycle/spawn/task events + turn-trace spans via the D6
   shared lib; every new event type registered in a consumer-map file — Model: sonnet
   - Done-when: self-test proves each event class lands; consumer-map covers 100% of
     event types (doctor predicate fragment).
-- [ ] O.2 Session heartbeat: liveness file per session (pid, cwd, branch,
+- [x] O.2 Session heartbeat: liveness file per session (pid, cwd, branch,
   last-activity, marker-state, model); staleness = crash signal — Model: sonnet
   - Done-when: kill-drill — killed session's heartbeat goes stale and `nl status`
     reports stalled within one refresh.
@@ -85,7 +85,7 @@ surfacers, additional dashboards, cross-machine ledger sync beyond read-both.
 
 - [ ] O.9 Backlog accountability loop (operator directive 2026-07-06 — "I do not look at the backlog and I forget about it; Claude manages it"): (1) digest feed — age-tiered surfacing (high>7d, medium>30d, low>90d) with one-word disposition proposals (SCHEDULE/FOLD-INTO-<plan>/DEMOTE/WONTFIX), idempotent per item-week, F.1-staleness-proposal pattern; (2) plan-time absorption matching — plan-edit validation greps backlog rows naming the plan-touched surfaces; header must absorb or explicitly defer each match; (3) KPI backlog-health section (adds vs closes, aging histogram) + periodic terminal-state batch proposal (F.3 one-word format); every row ends done/absorbed/wontfix-with-reason. Immediate increment (digest feed + validator warn + KPI section) ships pre-activation as BACKLOG-LOOP-01 — this task hardens + derives it from ground truth in the O.3 lib — Model: sonnet
   - Done-when: seeded aged-fixture rows surface exactly once per tier with correct proposals; a fixture plan touching a backlog-named surface without absorbing warns; KPI fixture renders the health section; drill — operator answers one digest proposal word and the row reaches terminal state.
-- [ ] O.8 Estate-coordination protocol (from NL-FINDING-031 + the 2026-07-04 manual run):
+- [x] O.8 Estate-coordination protocol (from NL-FINDING-031 + the 2026-07-04 manual run):
   `/coordinate-estate` skill + doctrine compact encoding what the origin session did by
   hand — inventory sessions (list_sessions), classify (active / stalled>2h / wedged-
   undeliverable / superseded), re-home orphans via nl-issue, stand-down superseded
