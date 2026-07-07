@@ -1,6 +1,9 @@
 # Wave C specs — exact per-task build specs (appendix to nl-overhaul-program-2026-07.md)
 Status: REFERENCE (spec appendix, not an independent plan — task C.0 deliverable)
 prd-ref: n/a — harness-development
+rung: 1
+architecture: coding-harness
+frozen: true
 
 Builder contract (applies to every dispatched task): you work on a worker branch cut from `claude/nl-overhaul-wave-c` (first action: `git checkout -b worker-<task-id> claude/nl-overhaul-wave-c`; verify with `git log --oneline -1` that HEAD is at or past commit `82da767`). Read the master plan section for your task + this appendix section. Edit ONLY the files your section names (plus new files it names). Run your Done-when assertions before committing. Commit on your worker branch with message `overhaul(<task-id>): <summary>`. Do NOT invoke task-verifier, do NOT edit the plan file or this appendix, do NOT edit `settings.json.template` (the orchestrator owns wiring), do NOT touch `~/.claude/` (live mirror is install-only), do NOT touch `adapters/claude-code/rules/` or `INDEX.md` (C.5 owns all deletions/moves there). Return: verdict, commit SHAs, ≤5-sentence summary, blockers.
 

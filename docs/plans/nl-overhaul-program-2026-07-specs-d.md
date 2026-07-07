@@ -1,4 +1,9 @@
 # Wave D specs — design freeze + exact per-task build specs (appendix to nl-overhaul-program-2026-07.md)
+Status: REFERENCE (spec appendix, not an independent plan — task D.0 deliverable)
+prd-ref: n/a — harness-development
+rung: 1
+architecture: coding-harness
+frozen: true
 
 Authored by the Wave-D orchestrator (D.0), 2026-07-03. The operator veto window on the
 ADR 058 D5 gate-retirement map CLOSES with this freeze (Decisions Log: "Gate-retirement
