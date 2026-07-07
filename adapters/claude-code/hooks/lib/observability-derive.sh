@@ -168,10 +168,19 @@ _od_needs_you_bin() {
 }
 
 # ----------------------------------------------------------------------
-# _od_backlog_path — resolve docs/backlog.md. Override:
-# OBS_BACKLOG_PATH env var (self-test / explicit).
+# _od_backlog_path — resolve docs/backlog.md. Override (checked in
+# order): BACKLOG_MD_PATH (the convention the three real od_backlog_health
+# consumers — session-start-digest.sh, plan-edit-validator.sh,
+# harness-kpis.sh — and O.9's own self-tests actually set), then
+# OBS_BACKLOG_PATH (specs-o §O.0.1-3 sandbox var list / this file's own
+# --self-test). Both resolve identically; kept so neither caller's
+# convention silently breaks (orchestrator reconciliation, batch 2).
 # ----------------------------------------------------------------------
 _od_backlog_path() {
+  if [[ -n "${BACKLOG_MD_PATH:-}" ]]; then
+    printf '%s' "$BACKLOG_MD_PATH"
+    return 0
+  fi
   if [[ -n "${OBS_BACKLOG_PATH:-}" ]]; then
     printf '%s' "$OBS_BACKLOG_PATH"
     return 0
@@ -1084,22 +1093,27 @@ od_costs() {
 }
 
 # ============================================================
-# od_backlog_health [--json] — THE backlog oracle
+# od_backlog_health [--json] — THE backlog oracle (contract C4)
 # ============================================================
 #
-# Extracted/mirrored from harness-kpis.sh's _kpi_backlog_section (the
-# richest of the three BACKLOG-LOOP-01 consumers) — same position-
-# anchored terminal-marker detection (_backlog_row_is_terminal, R1-R4),
-# same per-priority open-row counts, same age-tier histogram
-# (high>7d/medium>30d/low>90d per specs-o; the sibling's own histogram
-# buckets are 0-7/8-30/31-90/>90 which is the SAME boundary set restated
-# per-priority-independent — this function keeps that exact boundary
-# set so a human comparing this output to the KPI report never sees a
-# mismatch), same adds-vs-terminal-transitions-in-window flow count.
-# O.9 owns re-pointing session-start-digest.sh/harness-kpis.sh/
-# plan-edit-validator.sh's own three copies at this function; until that
-# re-point lands, this is a byte-faithful mirror of the KPI sibling's
-# algorithm, not yet the actual single implementation those three call.
+# SPLICED from tests/fixtures/wave-o/O.9/od-backlog-health-functions.md
+# (orchestrator integration, batch 2) — the row-parsing / position-
+# anchored terminal-marker detection (R1-R4, the 87f357f fix) / age-tier
+# / adds-vs-terminal-flow logic extracted VERBATIM from the live
+# `feed_backlog_accountability` algorithm, reviewed by O.9 as THE single
+# implementation. This REPLACES O.3's original summary-only mirror of
+# harness-kpis.sh's _kpi_backlog_section (that version had no `rows`
+# array; all three real consumers — session-start-digest.sh,
+# plan-edit-validator.sh, harness-kpis.sh — parse `doc.rows` +
+# `doc.summary.overdue_ids` from the JSON output via node, so the
+# row-level schema below is the one actually load-bearing).
+#
+# ENV VAR NOTE (orchestrator reconciliation): the three real consumers
+# and O.9's own self-tests set `BACKLOG_MD_PATH` (never `OBS_BACKLOG_PATH`)
+# when pointing at a fixture backlog file. `_od_backlog_path` (defined
+# earlier in this file) is extended below to check BACKLOG_MD_PATH first,
+# then the original OBS_BACKLOG_PATH (specs-o §O.0.1-3 sandbox var list),
+# so both conventions resolve identically and neither caller breaks.
 # ============================================================
 _OD_BACKLOG_TERM_U='(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)'
 _od_backlog_row_is_terminal() {
@@ -1117,36 +1131,48 @@ _od_backlog_date_epoch() {
     || echo ""
 }
 
+# od_backlog_health [--json] — contract C4. Emits the canonical JSON
+# document (rows + summary) for every consumer to render from. Both
+# flag-states print the SAME JSON (per C4 note in the fragment: this
+# oracle has no separate human-readable mode of its own — the three
+# consumers own their own presentation).
 od_backlog_health() {
-  local json_mode=0
-  local a
-  for a in "$@"; do [[ "$a" == "--json" ]] && json_mode=1; done
-
   local backlog; backlog="$(_od_backlog_path)"
-  local window_days="${KPI_WINDOW_DAYS:-7}"
-
-  if [[ -z "$backlog" || ! -f "$backlog" ]]; then
-    if [[ "$json_mode" == "1" ]]; then
-      printf '{"schema":1,"oracle":"od_backlog_health","error":"no backlog file"}\n'
-    else
-      printf '0 open row(s) (oracle: od_backlog_health) — no backlog file at %s\n' "${backlog:-<unresolved>}"
-    fi
-    return 0
-  fi
-
   local tier_high="${BACKLOG_TIER_HIGH_DAYS:-7}"
   local tier_medium="${BACKLOG_TIER_MEDIUM_DAYS:-30}"
   local tier_low="${BACKLOG_TIER_LOW_DAYS:-90}"
+  local window_days="${BACKLOG_HEALTH_WINDOW_DAYS:-${KPI_WINDOW_DAYS:-7}}"
+  local now; now="$(_od_now_epoch)"
+  local now_iso; now_iso="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  local window_start=$((now - window_days * 86400))
 
-  local now window_start_epoch
-  now="$(_od_now_epoch)"
-  window_start_epoch=$((now - window_days * 86400))
+  if [[ -z "$backlog" || ! -f "$backlog" ]]; then
+    if command -v node >/dev/null 2>&1; then
+      node -e '
+        var doc = {schema:1, oracle:"od_backlog_health", generated_at:process.argv[1],
+          backlog_path:process.argv[2], window_days:Number(process.argv[3]), rows:[],
+          summary:{open_total:0, terminal_total:0,
+            priority_counts:{high:0,medium:0,low:0,unlabeled:0},
+            age_tiers:{"0_7":0,"8_30":0,"31_90":0,over_90:0,undated:0},
+            overdue_ids:[], adds_in_window:0, terminal_in_window:0, terminal_undated:0},
+          note:"no backlog file at backlog_path"};
+        process.stdout.write(JSON.stringify(doc));
+      ' "$now_iso" "${backlog:-<unresolved>}" "$window_days"
+    else
+      printf '{"schema":1,"oracle":"od_backlog_health","degraded":"node unavailable","rows":[],"summary":{}}'
+    fi
+    printf '\n'
+    return 0
+  fi
 
-  local open_high=0 open_medium=0 open_low=0 open_unlabeled=0
-  local age_0_7=0 age_8_30=0 age_31_90=0 age_over_90=0 open_undated=0
-  local adds_window=0 terminal_window=0 terminal_undated=0 terminal_total=0
-  local line id added added_epoch age_days prio term_date term_epoch
+  # Build a JSONL of per-row facts (one line each), then hand the whole
+  # thing to node for the final summary/JSON assembly — bash parses text
+  # with grep/sed, node assembles JSON (same division of labor as the
+  # rest of this hook family).
+  local rows_tmp; rows_tmp="$(mktemp 2>/dev/null || mktemp -t odbacklog)"
+  trap 'rm -f "$rows_tmp"' RETURN
 
+  local line id added added_epoch age_days prio_label prio threshold is_terminal term_date term_epoch
   while IFS= read -r line; do
     id="$(printf '%s' "$line" | grep -oE '^- \*\*[A-Z][A-Z0-9-]{3,}' | sed 's/^- \*\*//')"
     [[ -z "$id" ]] && continue
@@ -1154,62 +1180,119 @@ od_backlog_health() {
     added="$(printf '%s' "$line" | grep -oE 'added [0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n1 | sed 's/^added //')"
     added_epoch=""
     [[ -n "$added" ]] && added_epoch="$(_od_backlog_date_epoch "$added")"
+    age_days=""
+    [[ -n "$added_epoch" ]] && age_days=$(( (now - added_epoch) / 86400 ))
 
-    if [[ -n "$added_epoch" ]] && [[ "$added_epoch" -ge "$window_start_epoch" ]]; then
-      adds_window=$((adds_window + 1))
-    fi
-
-    if _od_backlog_row_is_terminal "$line"; then
-      terminal_total=$((terminal_total + 1))
-      term_date="$(printf '%s' "$line" \
-        | grep -oiE '(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)[^0-9]{0,12}[0-9]{4}-[0-9]{2}-[0-9]{2}' \
-        | head -n1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
-      if [[ -n "$term_date" ]]; then
-        term_epoch="$(_od_backlog_date_epoch "$term_date")"
-        if [[ -n "$term_epoch" ]] && [[ "$term_epoch" -ge "$window_start_epoch" ]]; then
-          terminal_window=$((terminal_window + 1))
-        fi
-      else
-        terminal_undated=$((terminal_undated + 1))
-      fi
-      continue
-    fi
-
-    prio="$(printf '%s' "$line" | grep -oE 'priority:(high|medium|low)' | head -n1 | sed 's/^priority://')"
+    prio_label="$(printf '%s' "$line" | grep -oE 'priority:(high|medium|low)' | head -n1 | sed 's/^priority://')"
+    prio="$prio_label"
+    [[ -z "$prio" ]] && prio="low"
     case "$prio" in
-      high)   open_high=$((open_high + 1)) ;;
-      medium) open_medium=$((open_medium + 1)) ;;
-      low)    open_low=$((open_low + 1)) ;;
-      *)      open_unlabeled=$((open_unlabeled + 1)) ;;
+      high)   threshold="$tier_high" ;;
+      medium) threshold="$tier_medium" ;;
+      *)      threshold="$tier_low" ;;
     esac
-    if [[ -z "$added_epoch" ]]; then
-      open_undated=$((open_undated + 1))
-      continue
+
+    is_terminal="false"
+    term_date=""
+    term_epoch=""
+    if _od_backlog_row_is_terminal "$line"; then
+      is_terminal="true"
+      term_date="$(printf '%s' "$line" \
+        | grep -oiE "${_OD_BACKLOG_TERM_U}[^0-9]{0,12}[0-9]{4}-[0-9]{2}-[0-9]{2}" \
+        | head -n1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
+      [[ -n "$term_date" ]] && term_epoch="$(_od_backlog_date_epoch "$term_date")"
     fi
-    age_days=$(( (now - added_epoch) / 86400 ))
-    if   [[ "$age_days" -le 7 ]];  then age_0_7=$((age_0_7 + 1))
-    elif [[ "$age_days" -le 30 ]]; then age_8_30=$((age_8_30 + 1))
-    elif [[ "$age_days" -le 90 ]]; then age_31_90=$((age_31_90 + 1))
-    else                                age_over_90=$((age_over_90 + 1))
-    fi
+
+    # Emit one JSON row fact via node (keeps quoting/escaping correct for
+    # arbitrary prose in $line).
+    node -e '
+      var a = process.argv.slice(1);
+      var row = {id:a[0], line:a[1], terminal: a[2] === "true",
+        added: a[3] || null, added_epoch: a[4] ? Number(a[4]) : null,
+        age_days: a[5] ? Number(a[5]) : null,
+        priority_label: a[6] || "", priority: a[7],
+        threshold_days: Number(a[8]),
+        terminal_date: a[9] || null,
+        terminal_epoch: a[10] ? Number(a[10]) : null};
+      process.stdout.write(JSON.stringify(row) + "\n");
+    ' "$id" "$line" "$is_terminal" "$added" "$added_epoch" "$age_days" \
+      "$prio_label" "$prio" "$threshold" "$term_date" "$term_epoch" >> "$rows_tmp" 2>/dev/null
   done < <(grep -E '^- \*\*[A-Z]' "$backlog" 2>/dev/null)
 
-  local open_total=$((open_high + open_medium + open_low + open_unlabeled))
-
-  if [[ "$json_mode" == "1" ]]; then
-    printf '{"schema":1,"oracle":"od_backlog_health","open_total":%d,"terminal_total":%d,"priority":{"high":%d,"medium":%d,"low":%d,"unlabeled":%d},"age":{"0_7d":%d,"8_30d":%d,"31_90d":%d,"over_90d":%d,"undated":%d},"flow_%dd":{"adds":%d,"terminal":%d,"terminal_undated":%d},"tiers":{"high_days":%d,"medium_days":%d,"low_days":%d}}\n' \
-      "$open_total" "$terminal_total" \
-      "$open_high" "$open_medium" "$open_low" "$open_unlabeled" \
-      "$age_0_7" "$age_8_30" "$age_31_90" "$age_over_90" "$open_undated" \
-      "$window_days" "$adds_window" "$terminal_window" "$terminal_undated" \
-      "$tier_high" "$tier_medium" "$tier_low"
+  if ! command -v node >/dev/null 2>&1; then
+    printf '{"schema":1,"oracle":"od_backlog_health","degraded":"node unavailable","rows":[],"summary":{}}\n'
+    rm -f "$rows_tmp"
     return 0
   fi
 
-  printf '%d open row(s), %d terminal (oracle: od_backlog_health)\n' "$open_total" "$terminal_total"
-  printf '  priority: high=%d medium=%d low=%d unlabeled=%d\n' "$open_high" "$open_medium" "$open_low" "$open_unlabeled"
-  printf '  age: 0-7d=%d 8-30d=%d 31-90d=%d >90d=%d undated=%d\n' "$age_0_7" "$age_8_30" "$age_31_90" "$age_over_90" "$open_undated"
-  printf '  flow (%dd): adds=%d terminal=%d terminal_undated=%d\n' "$window_days" "$adds_window" "$terminal_window" "$terminal_undated"
+  node -e '
+    "use strict";
+    var fs = require("fs");
+    var rowsPath = process.argv[1], backlogPath = process.argv[2];
+    var nowIso = process.argv[3], windowDays = Number(process.argv[4]);
+    var windowStart = Number(process.argv[5]);
+    var raw = "";
+    try { raw = fs.readFileSync(rowsPath, "utf8"); } catch (e) {}
+    var rows = raw.split("\n").filter(Boolean).map(function (l) {
+      try { return JSON.parse(l); } catch (e) { return null; }
+    }).filter(Boolean);
+
+    var summary = {
+      open_total: 0, terminal_total: 0,
+      priority_counts: {high:0, medium:0, low:0, unlabeled:0},
+      age_tiers: {"0_7":0, "8_30":0, "31_90":0, over_90:0, undated:0},
+      overdue_ids: [], adds_in_window: 0, terminal_in_window: 0, terminal_undated: 0
+    };
+    var overdue = [];
+
+    rows.forEach(function (r) {
+      if (r.added_epoch !== null && r.added_epoch >= windowStart) {
+        summary.adds_in_window++;
+      }
+      if (r.terminal) {
+        summary.terminal_total++;
+        if (r.terminal_epoch !== null) {
+          if (r.terminal_epoch >= windowStart) summary.terminal_in_window++;
+        } else {
+          summary.terminal_undated++;
+        }
+        r.is_overdue = false;
+        r.terminal_in_window = (r.terminal_epoch !== null && r.terminal_epoch >= windowStart);
+        return;
+      }
+      summary.open_total++;
+      var pl = r.priority_label || "";
+      if (pl === "high") summary.priority_counts.high++;
+      else if (pl === "medium") summary.priority_counts.medium++;
+      else if (pl === "low") summary.priority_counts.low++;
+      else summary.priority_counts.unlabeled++;
+
+      if (r.age_days === null) {
+        summary.age_tiers.undated++;
+      } else if (r.age_days <= 7) summary.age_tiers["0_7"]++;
+      else if (r.age_days <= 30) summary.age_tiers["8_30"]++;
+      else if (r.age_days <= 90) summary.age_tiers["31_90"]++;
+      else summary.age_tiers.over_90++;
+
+      r.is_overdue = (r.age_days !== null && r.age_days > r.threshold_days);
+      r.terminal_in_window = false;
+      if (r.is_overdue) overdue.push(r);
+    });
+
+    overdue.sort(function (a, b) { return (b.age_days||0) - (a.age_days||0); });
+    summary.overdue_ids = overdue.map(function (r) { return r.id; });
+
+    var doc = {
+      schema: 1, oracle: "od_backlog_health", generated_at: nowIso,
+      backlog_path: backlogPath, window_days: windowDays,
+      rows: rows, summary: summary
+    };
+    process.stdout.write(JSON.stringify(doc));
+  ' "$rows_tmp" "$backlog" "$now_iso" "$window_days" "$window_start"
+  printf '\n'
+
+  rm -f "$rows_tmp"
+  trap - RETURN
   return 0
 }
 
@@ -1514,7 +1597,7 @@ EOF
     fail "expected sess-waiting classified waiting-on-me: $out3b"
   fi
 
-  echo "Scenario 4: od_backlog_health — priority counts, age tiers, terminal detection"
+  echo "Scenario 4: od_backlog_health — priority counts, age tiers, terminal detection (rows+summary JSON, C4)"
   today="$(date -u '+%Y-%m-%d')"
   old_date="$(date -u -d '100 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-100d '+%Y-%m-%d' 2>/dev/null)"
   cat > "$OBS_BACKLOG_PATH" <<EOF
@@ -1526,25 +1609,52 @@ EOF
 - **REFS-ANOTHER-01** priority:medium added ${today} — distinct from CLOSED-01 (IMPLEMENTED ${today}) but itself still open
 EOF
   out4="$(od_backlog_health)"
-  if printf '%s' "$out4" | grep -q "oracle: od_backlog_health"; then
+  out4_flag="$(od_backlog_health --json)"
+  if printf '%s' "$out4" | grep -q '"oracle":"od_backlog_health"'; then
     pass "od_backlog_health names its oracle inline"
   else
     fail "od_backlog_health missing oracle name: $out4"
   fi
-  if printf '%s' "$out4" | grep -qE "3 open row\(s\), 1 terminal"; then
-    pass "od_backlog_health counts 3 open / 1 terminal (position-anchored: REFS-ANOTHER-01 not falsely skipped)"
+  # Strip the volatile generated_at timestamp (the two calls above run a
+  # couple seconds apart) before comparing shape-equality of flagless vs
+  # --json output.
+  out4_norm="$(printf '%s' "$out4" | sed -E 's/"generated_at":"[^"]*"/"generated_at":"NORMALIZED"/')"
+  out4_flag_norm="$(printf '%s' "$out4_flag" | sed -E 's/"generated_at":"[^"]*"/"generated_at":"NORMALIZED"/')"
+  if [[ "$out4_norm" == "$out4_flag_norm" ]]; then
+    pass "od_backlog_health with/without --json print the identical JSON doc shape (C4: no separate human mode)"
   else
-    fail "expected '3 open row(s), 1 terminal', got: $out4"
+    fail "od_backlog_health output differs in shape between flagless and --json: [$out4_norm] vs [$out4_flag_norm]"
   fi
-  if printf '%s' "$out4" | grep -qE "high=1 medium=1 low=1"; then
-    pass "od_backlog_health per-priority counts correct (CLOSED-01/high excluded as terminal; OPEN-HIGH-01/high, REFS-ANOTHER-01/medium, OPEN-OLD-01/low counted)"
+  if command -v jq >/dev/null 2>&1; then
+    open_total="$(printf '%s' "$out4" | jq '.summary.open_total')"
+    terminal_total="$(printf '%s' "$out4" | jq '.summary.terminal_total')"
+    if [[ "$open_total" == "3" && "$terminal_total" == "1" ]]; then
+      pass "od_backlog_health counts 3 open / 1 terminal (position-anchored: REFS-ANOTHER-01 not falsely skipped)"
+    else
+      fail "expected open_total=3 terminal_total=1, got open_total=$open_total terminal_total=$terminal_total: $out4"
+    fi
+    high="$(printf '%s' "$out4" | jq '.summary.priority_counts.high')"
+    medium="$(printf '%s' "$out4" | jq '.summary.priority_counts.medium')"
+    low="$(printf '%s' "$out4" | jq '.summary.priority_counts.low')"
+    if [[ "$high" == "1" && "$medium" == "1" && "$low" == "1" ]]; then
+      pass "od_backlog_health per-priority counts correct (CLOSED-01/high excluded as terminal; OPEN-HIGH-01/high, REFS-ANOTHER-01/medium, OPEN-OLD-01/low counted)"
+    else
+      fail "expected high=1 medium=1 low=1, got high=$high medium=$medium low=$low: $out4"
+    fi
+    over90="$(printf '%s' "$out4" | jq '.summary.age_tiers.over_90')"
+    if [[ "$over90" == "1" ]]; then
+      pass "od_backlog_health age-tier histogram places the 100d-old row in >90d"
+    else
+      fail "expected age_tiers.over_90=1, got $over90: $out4"
+    fi
+    n_rows="$(printf '%s' "$out4" | jq '.rows | length')"
+    if [[ "$n_rows" == "4" ]]; then
+      pass "od_backlog_health emits a rows[] array (4 rows) for consumer re-derivation (session-start-digest/plan-edit-validator/harness-kpis all parse doc.rows)"
+    else
+      fail "expected 4 rows in rows[], got $n_rows: $out4"
+    fi
   else
-    fail "expected high=1 medium=1 low=1, got: $out4"
-  fi
-  if printf '%s' "$out4" | grep -qE '>90d=1'; then
-    pass "od_backlog_health age-tier histogram places the 100d-old row in >90d"
-  else
-    fail "expected >90d=1 in age histogram, got: $out4"
+    echo "  (jq unavailable — skipping strict JSON assertions)"
   fi
 
   echo "Scenario 5: od_harness_health reads the doctor cache and per-gate ledger counts"
@@ -1778,13 +1888,19 @@ EOF
     fail "flagless self-test invocation produced no output"
   fi
 
-  echo "Scenario 11: every count-emitting function's default (non-JSON) output names its oracle (CANONICAL-COUNTERS-01)"
+  echo "Scenario 11: every count-emitting function's default output names its oracle (CANONICAL-COUNTERS-01)"
+  # od_backlog_health (out4) is JSON-only in BOTH flag states (C4: no
+  # separate human mode of its own — orchestrator reconciliation batch 2),
+  # so it names its oracle via the JSON convention '"oracle":"<name>"'
+  # rather than the human-text convention 'oracle: <name>' the other
+  # functions' flagless output uses. Both satisfy CANONICAL-COUNTERS-01;
+  # accept either quoting.
   all_named=1
   for fn_out in "$out1" "$out3" "$out4" "$out5" "$out6" "$out7" "$out8"; do
-    printf '%s' "$fn_out" | grep -q "oracle:" || all_named=0
+    printf '%s' "$fn_out" | grep -qE '"oracle":|oracle:' || all_named=0
   done
   if [[ "$all_named" == "1" ]]; then
-    pass "every od_* function's human-readable output names its oracle inline (CANONICAL-COUNTERS-01)"
+    pass "every od_* function's default output names its oracle inline (CANONICAL-COUNTERS-01)"
   else
     fail "at least one od_* function's output is missing an 'oracle:' tag"
   fi
