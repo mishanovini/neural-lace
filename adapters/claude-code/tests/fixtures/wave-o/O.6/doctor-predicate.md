@@ -152,7 +152,18 @@ check_obs_heartbeats_fresh() {
 
   local -a live_sids=()
   local f mtime age_min sid
+  # ORCHESTRATOR FIX (verifier-round FAIL, O.6 conf 9): a session's
+  # subagent transcripts live under <sid>/subagents/*.jsonl (and future
+  # workflow sub-transcripts under <sid>/workflows/*.jsonl) — these are
+  # NOT independent sessions and never write their own heartbeat file
+  # (only the top-level session heartbeat writer runs), so counting them
+  # as "sessions requiring a heartbeat" false-REDs this check on any
+  # estate with recent agent/subagent activity, which is the common case.
+  # Exclude both path shapes from enumeration entirely.
   while IFS= read -r -d '' f; do
+    case "$f" in
+      */subagents/*|*/workflows/*) continue ;;
+    esac
     mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
     age_min=$(( (now_epoch - mtime) / 60 ))
     if [[ "$age_min" -lt 30 ]]; then
@@ -206,6 +217,16 @@ session). Assert `[doctor] RED obs-heartbeats-fresh` naming
 it to now. Assert no RED for this check-id. Also cover the "zero live
 sessions" GREEN: no transcripts <30min at all (dir empty or all old) —
 assert no RED/WARN-as-failure for this check-id.
+
+**GREEN fixture (subagent-transcript exclusion, verifier-round fix):**
+write a FRESH subagent transcript at
+`$D/transcripts/proj/<sid>/subagents/<subagent-sid>.jsonl` (touch to now)
+and NO heartbeat file anywhere — this is RED-fixture-adjacent (a fresh,
+un-heartbeated transcript exists on disk) but must stay GREEN because a
+subagent transcript is never an independent session requiring its own
+heartbeat. Assert no RED/WARN-as-failure for this check-id. Also add the
+same shape under `.../workflows/<id>.jsonl` to cover both excluded path
+segments.
 
 ---
 

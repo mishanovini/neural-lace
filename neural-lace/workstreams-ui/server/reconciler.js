@@ -104,13 +104,38 @@ function _sigOf(mismatches) {
 // a tree-claimed branch that disagrees with the derived branch for that
 // same session_id.
 //
+// DEGRADATION HONESTY (O.4-fix1 item 5): when the derived-truth side
+// itself is unavailable (the `status` cache entry's last refresh failed,
+// rc!=0, AND there is no last-known-good session data to compare
+// against), the comparator has nothing trustworthy to diff tree claims
+// against — reporting "drift: N" in that state would be comparing real
+// tree claims to an EMPTY set purely because the oracle is down, which
+// reads as "N sessions drifted" when the true statement is "we don't know
+// right now". This was measured live during the CLI-outage acceptance
+// scenario (S8): drift read "9" (the outage-induced empty-set artifact)
+// instead of naming the outage. The badge now renders a distinct
+// "oracle_unavailable" state instead of fabricating a drift count against
+// a dead comparator.
+//
 // Returns the render-ready badge payload:
 //   { checked_at, drift_count, mismatches: [{session_id, tree_branch,
 //     derived_state, note}], ledger_event_id (or null if none emitted
-//     this call) }
+//     this call), oracle_unavailable: bool }
 function check(stateLib, deriveCache, ledgerEmit) {
   const treeClaims = readTreeStateClaims(stateLib);
   const statusEntry = deriveCache.get('status');
+  const oracleUnavailable = !!(statusEntry && statusEntry.rc !== 0 &&
+    !(statusEntry.data && Array.isArray(statusEntry.data.sessions) && statusEntry.data.sessions.length > 0));
+  if (oracleUnavailable) {
+    return {
+      schema: 1,
+      checked_at: nowIso(),
+      drift_count: null,
+      mismatches: [],
+      ledger_event_id: null,
+      oracle_unavailable: true,
+    };
+  }
   const derivedSessions = (statusEntry && statusEntry.data && Array.isArray(statusEntry.data.sessions))
     ? statusEntry.data.sessions
     : [];
@@ -164,6 +189,7 @@ function check(stateLib, deriveCache, ledgerEmit) {
     drift_count: mismatches.length,
     mismatches: mismatches,
     ledger_event_id: ledgerEventId,
+    oracle_unavailable: false,
   };
 }
 

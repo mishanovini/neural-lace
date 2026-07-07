@@ -180,7 +180,15 @@ const server = http.createServer((req, res) => {
     return sendJson(res, 200, paneResponse('shipped', cache.get('shipped'), '--since ' + lastLookSince));
   }
   if (url === '/api/pane/health') { // Q4 (harness health, distinct from /api/health above)
-    return sendJson(res, 200, paneResponse('status', cache.get('status'))); // doctor verdict rides on the status entry (nl status's Q4 header, contract C5)
+    // O.4-fix1 item 1: the `health` cache entry is populated by
+    // derive-cache.js's runHealth() (sources the C4 lib directly and calls
+    // od_harness_health --json), NOT by nl.sh's `status` subcommand — that
+    // path drops .gates entirely (see derive-cache.js's SUBCOMMANDS/
+    // runHealth comments). The doctor verdict+ts still ride on this same
+    // .doctor sub-object (od_harness_health computes both), so this one
+    // pane read carries everything Q4 needs: doctor verdict + per-gate 7d
+    // block/waiver/downgrade/dominant counts.
+    return sendJson(res, 200, paneResponse('health', cache.get('health')));
   }
   if (url === '/api/pane/costs') { // Q5
     return sendJson(res, 200, paneResponse('costs', cache.get('costs')));

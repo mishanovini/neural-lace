@@ -21,7 +21,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // ---- element handles ---------------------------------------------------
-  var reconcilerBadge = $('reconcilerBadge'),
+  var reconcilerBadge = $('reconcilerBadge'), reconcilerDisclosureBody = $('reconcilerDisclosureBody'),
       refreshBtn = $('refreshBtn'), refreshFeedback = $('refreshFeedback'),
       interruptStrip = $('interruptStrip'),
       needsMeBody = $('needsMeBody'), statusBody = $('statusBody'),
@@ -356,11 +356,22 @@
   }
 
   // ---- Q4 health pane ----
+  // O.4-fix1 item 1 (Q4 strip FAIL): the oracle (od_harness_health --json,
+  // shelled directly by derive-cache.js's runHealth — see that file's
+  // header for why `nl status` itself can't supply this) returns 15 gates
+  // with 7d block/waiver/downgrade counts; this pane used to render only
+  // the doctor verdict+age and NOTHING from .gates. Renders one expandable
+  // row per gate (interaction-table amendment 8: "gate name click -> its
+  // 7d numbers") via <details>/<summary> (natively keyboard-operable — no
+  // custom JS focus handling needed), with waiver-dominant gates visibly
+  // flagged (text label, not color-only — a11y baseline) using the ONE
+  // --interrupt accent already reserved for interrupt-worthy classes.
   function renderHealth(resp) {
     setAge('health', resp.derived_at, resp.rc !== 0 && !isLoading(resp));
     if (isLoading(resp)) { renderLoading(healthBody); return; }
     if (resp.rc !== 0 && !(resp.data && resp.data.doctor)) { renderError(healthBody, resp); return; }
     var doctor = (resp.data && resp.data.doctor) || {};
+    var gates = (resp.data && Array.isArray(resp.data.gates)) ? resp.data.gates : [];
     healthBody.innerHTML = '';
     var verdictRow = document.createElement('div');
     verdictRow.className = 'health-verdict';
@@ -375,15 +386,56 @@
     age.textContent = ' as of ' + (doctor.ts ? formatAge(doctor.ts) : 'unknown');
     verdictRow.appendChild(age);
     healthBody.appendChild(verdictRow);
+
+    if (gates.length === 0) return;
+    var gateCount = document.createElement('div');
+    gateCount.className = 'health-gate-count';
+    gateCount.textContent = gates.length + ' gate(s) with block/waiver/downgrade activity in trailing 7d (oracle: od_harness_health)';
+    healthBody.appendChild(gateCount);
+
+    var list = document.createElement('div');
+    list.className = 'health-gate-list';
+    gates.forEach(function (g) {
+      var det = document.createElement('details');
+      det.className = 'health-gate-row' + (g.dominant === 'waiver' ? ' waiver-dominant' : '');
+      var sum = document.createElement('summary');
+      sum.className = 'health-gate-summary';
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'health-gate-name';
+      nameSpan.textContent = g.gate;
+      sum.appendChild(nameSpan);
+      if (g.dominant === 'waiver') {
+        var flag = document.createElement('span');
+        flag.className = 'chip health-gate-flag';
+        flag.textContent = 'waiver-dominant';
+        sum.appendChild(flag);
+      }
+      det.appendChild(sum);
+      var nums = document.createElement('div');
+      nums.className = 'health-gate-numbers';
+      nums.textContent = 'block=' + (g.block_7d || 0) + ' waiver=' + (g.waiver_7d || 0) +
+        ' downgrade=' + (g.downgrade_7d || 0) + ' (dominant=' + (g.dominant || 'block') + ')';
+      det.appendChild(nums);
+      list.appendChild(det);
+    });
+    healthBody.appendChild(list);
   }
 
   // ---- Q5 costs pane ----
+  // O.4-fix1 item 2 (Q5 strip FAIL): the oracle (od_costs --json) returns a
+  // per-session breakdown (.sessions[], each with totals + transcript_status)
+  // but this pane rendered ONLY the aggregate totals/throttle/truncation —
+  // zero session rows against the oracle's 10-session set. Renders one
+  // compact row per session (session id + totals + an honest
+  // transcript_status label so the stale/partial per-session edge has a
+  // surface to render on, per the FAIL's own note).
   function renderCosts(resp) {
     setAge('costs', resp.derived_at, resp.rc !== 0 && !isLoading(resp));
     if (isLoading(resp)) { renderLoading(costsBody); return; }
     if (resp.rc !== 0 && !(resp.data && resp.data.total)) { renderError(costsBody, resp); return; }
     var d = resp.data || {};
     var t = d.total || {};
+    var sessions = Array.isArray(d.sessions) ? d.sessions : [];
     costsBody.innerHTML = '';
     var row = document.createElement('div');
     row.className = 'costs-row';
@@ -399,6 +451,30 @@
       note.className = 'costs-note';
       note.textContent = '(truncated to the most-recently-modified transcripts)';
       costsBody.appendChild(note);
+    }
+    if (sessions.length > 0) {
+      var table = document.createElement('table');
+      table.className = 'costs-session-table';
+      sessions.forEach(function (s) {
+        var tr = document.createElement('tr');
+        tr.className = 'costs-session-row';
+        var sidTd = document.createElement('td');
+        sidTd.className = 'costs-session-id';
+        sidTd.textContent = s.session_id;
+        tr.appendChild(sidTd);
+        var totalsTd = document.createElement('td');
+        totalsTd.className = 'costs-session-totals';
+        totalsTd.textContent = 'in=' + (s.input_tokens || 0) + ' out=' + (s.output_tokens || 0) +
+          ' cache_read=' + (s.cache_read_input_tokens || 0);
+        tr.appendChild(totalsTd);
+        var statusTd = document.createElement('td');
+        var st = s.transcript_status || 'unknown';
+        statusTd.className = 'chip costs-session-status costs-status-' + st;
+        statusTd.textContent = st; // text + color, never color-only (a11y baseline)
+        tr.appendChild(statusTd);
+        table.appendChild(tr);
+      });
+      costsBody.appendChild(table);
     }
   }
 
@@ -466,20 +542,61 @@
   // per-mismatch list. Clears on reconvergence (never latched — this is
   // recomputed fresh every poll from the server's check()).
   // ============================================================
+  // renderBadgeDisclosure(mismatches) — O.4-fix1 item 4. Renders the
+  // per-mismatch detail into the KEYBOARD-REACHABLE <details> body
+  // (#reconcilerDisclosureBody) instead of the hover-only title=
+  // tooltip the badge also still carries (kept for mouse users / as a
+  // redundant cue, never the ONLY path to the same information — WCAG
+  // 2.2 AA "content on hover" expectations). null/empty -> the body is
+  // cleared so a stale mismatch list never lingers under an unrelated
+  // badge state (e.g. after reconvergence or during an oracle-unavailable
+  // state).
+  function renderBadgeDisclosure(mismatches) {
+    reconcilerDisclosureBody.innerHTML = '';
+    if (!mismatches || mismatches.length === 0) return;
+    var ul = document.createElement('ul');
+    ul.className = 'reconciler-mismatch-list';
+    mismatches.forEach(function (m) {
+      var li = document.createElement('li');
+      li.textContent = m.note;
+      ul.appendChild(li);
+    });
+    reconcilerDisclosureBody.appendChild(ul);
+  }
+
   function renderReconciler(result) {
     if (!result) {
       reconcilerBadge.textContent = 'reconciler: unavailable';
       reconcilerBadge.className = 'reconciler-badge reconciler-unknown';
+      renderBadgeDisclosure(null);
+      return;
+    }
+    // Degradation honesty (O.4-fix1 item 5): when the derived-truth oracle
+    // itself is down (server.js's status cache entry has no usable
+    // session data), the comparator has nothing trustworthy to diff
+    // against — render an honest "oracle unavailable" (unknown/muted)
+    // state, NEVER a drift count computed against an empty/dead
+    // comparator (the real S8 bug: "drift: 9" during a simulated CLI
+    // outage, which read as 9 REAL drifted sessions rather than "unknown
+    // right now").
+    if (result.oracle_unavailable) {
+      reconcilerBadge.textContent = 'reconciler: oracle unavailable';
+      reconcilerBadge.className = 'reconciler-badge reconciler-unknown';
+      reconcilerBadge.title = 'derived-truth oracle (nl status) is currently unavailable — drift cannot be computed';
+      renderBadgeDisclosure(null);
       return;
     }
     if (result.drift_count === 0) {
       reconcilerBadge.textContent = 'reconciler: 0 drift (checked ' + formatAge(result.checked_at) + ')';
       reconcilerBadge.className = 'reconciler-badge reconciler-quiet';
       reconcilerBadge.title = '';
+      renderBadgeDisclosure(null);
     } else {
       reconcilerBadge.textContent = 'drift: ' + result.drift_count + ' claim(s)';
       reconcilerBadge.className = 'reconciler-badge reconciler-firing';
-      reconcilerBadge.title = result.mismatches.map(function (m) { return m.note; }).join('\n');
+      reconcilerBadge.title = result.mismatches.map(function (m) { return m.note; }).join('\n') +
+        '\n(Enter/click to see full details below)';
+      renderBadgeDisclosure(result.mismatches);
     }
   }
 
@@ -525,6 +642,21 @@
         note.textContent = '(no transcript found for this session — ledger-only chain)';
         whyBody.appendChild(note);
       }
+      // O.4-fix1 item 3 (Q6 verdict line FAIL): render the mandated
+      // one-line verdict (what blocked, which state it read, what
+      // happened next) whenever the payload carries one. server.js's
+      // derive-cache.js runWhy() attaches `data.verdict` either straight
+      // from od_why --json (once the lib fix lands — see that file's
+      // header for the LIB DEPENDENCY this doesn't fix here) or, today,
+      // via a text-mode fallback shell-out — so this render path is
+      // agnostic to WHICH source produced the field and needs no future
+      // change when the lib catches up.
+      if (resp.data.verdict) {
+        var verdictRow = document.createElement('div');
+        verdictRow.className = 'why-verdict';
+        verdictRow.textContent = resp.data.verdict;
+        whyBody.appendChild(verdictRow);
+      }
     });
   }
   function closeWhyDrawer() {
@@ -534,11 +666,34 @@
   }
   whyClose.addEventListener('click', closeWhyDrawer);
   whyScrim.addEventListener('click', closeWhyDrawer);
+
+  // Focus trap (O.4-fix1 item 4 — "trap sensibly", standard modal-dialog
+  // convention / WCAG 2.4.11): while the why-drawer is open, Tab from the
+  // LAST focusable descendant wraps to the FIRST, and Shift+Tab from the
+  // FIRST wraps to the LAST, so keyboard focus can never escape into the
+  // page behind the modal scrim. Queries focusable descendants fresh on
+  // every keydown (the drawer body's content is re-rendered per session).
+  function focusableIn(container) {
+    return Array.prototype.slice.call(
+      container.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+    ).filter(function (el) { return !el.disabled && el.offsetParent !== null; });
+  }
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
       if (!whyDrawer.hidden) closeWhyDrawer();
       else if (!docModal.hidden) closeDocModal();
       else if (!docsPanel.hidden) closeDocsPanel();
+      return;
+    }
+    if (e.key === 'Tab' && !whyDrawer.hidden) {
+      var focusables = focusableIn(whyDrawer);
+      if (focusables.length === 0) return;
+      var first = focusables[0], last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus();
+      }
     }
   });
 

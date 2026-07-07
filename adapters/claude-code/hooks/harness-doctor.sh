@@ -1001,7 +1001,18 @@ check_obs_heartbeats_fresh() {
 
   local -a live_sids=()
   local f mtime age_min sid
+  # ORCHESTRATOR FIX (verifier-round FAIL, O.6 conf 9): a session's
+  # subagent transcripts live under <sid>/subagents/*.jsonl (and future
+  # workflow sub-transcripts under <sid>/workflows/*.jsonl) — these are
+  # NOT independent sessions and never write their own heartbeat file
+  # (only the top-level session heartbeat writer runs), so counting them
+  # as "sessions requiring a heartbeat" false-REDs this check on any
+  # estate with recent agent/subagent activity, which is the common case.
+  # Exclude both path shapes from enumeration entirely.
   while IFS= read -r -d '' f; do
+    case "$f" in
+      */subagents/*|*/workflows/*) continue ;;
+    esac
     mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
     age_min=$(( (now_epoch - mtime) / 60 ))
     if [[ "$age_min" -lt 30 ]]; then
@@ -3063,6 +3074,31 @@ MANIFEST_EOF
     FAILED=$((FAILED + 1))
   else
     echo "self-test (o6-obs-heartbeats-fresh-green-idle): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- obs-heartbeats-fresh: GREEN (RED-fixture-adjacent) — a fresh
+  # SUBAGENT transcript (under <sid>/subagents/) and a fresh WORKFLOW
+  # sub-transcript (under <sid>/workflows/), neither with any heartbeat
+  # file anywhere, must stay GREEN. Subagent/workflow transcripts are not
+  # independent sessions and never get their own heartbeat writer; before
+  # this fix, this exact fixture false-REDed (verifier-round FAIL, O.6
+  # conf 9) ----
+  D=$(_scenario_dir o6-hb-green-subagent)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/transcripts/proj/parent-sid/subagents" "$D/transcripts/proj/parent-sid/workflows"
+  printf '{}\n' > "$D/transcripts/proj/parent-sid/subagents/sub-sid.jsonl"
+  touch "$D/transcripts/proj/parent-sid/subagents/sub-sid.jsonl"
+  printf '{}\n' > "$D/transcripts/proj/parent-sid/workflows/wf-sid.jsonl"
+  touch "$D/transcripts/proj/parent-sid/workflows/wf-sid.jsonl"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(OBS_TRANSCRIPTS_DIR="$D/transcripts" _run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "RED obs-heartbeats-fresh"; then
+    echo "self-test (o6-obs-heartbeats-fresh-green-subagent): FAIL (unexpected RED on subagent/workflow-only transcripts with no heartbeats)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-obs-heartbeats-fresh-green-subagent): PASS" >&2
     PASSED=$((PASSED + 1))
   fi
 
