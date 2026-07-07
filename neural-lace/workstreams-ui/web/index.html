@@ -7,124 +7,115 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <!-- Workstreams (formerly Conversation Tree) — v2 work-first reframe
-       2026-05-30. Left: four-tier Project → Workstream → WorkItem → Sub-task
-       hierarchy with focus-project default expansion. Right: filter-driven
-       single pane with a detail card on selection. Adjustable divider between
-       the two, persisted to localStorage. The GUI is a passive observer
-       (ADR-031 Option 2): it reads the file-mediated state via SSE and writes
-       GUI mutations as single appended events through POST /api/event. It
-       NEVER spawns / feeds / steers a Claude Code session. -->
+  <!-- Workstreams cockpit — NL Observability Program Wave O, task O.4
+       (specs-o §O.4). REBUILT as a THIN VIEW over the derivation lib: every
+       pane below is a read of `nl <sub> --json` via the server's
+       derive-cache.js. This UI is READ-ONLY (Q2 v1 disposition,
+       docs/reviews/2026-07-06-o4-cockpit-ux-review.md bottom section) —
+       there are NO write affordances (no capture, no my-tasks, no backlog
+       promote, no decision approve/decline, no branch retitle). Answers to
+       "what needs me" happen in sessions/chat, never via a button here.
+       The cockpit NEVER renders the old event-sourced tree-state as truth
+       (law 1) — the divergence reconciler only ever COMPARES it and shows a
+       drift badge; it never feeds a pane. -->
   <header>
     <h1>Workstreams</h1>
-    <label class="archtoggle"><input type="checkbox" id="showCompleted"> show completed</label>
-    <label class="archtoggle"><input type="checkbox" id="showArchived"> show archived</label>
     <span class="spacer"></span>
     <button id="docsBtn" class="ghost" title="browse docs across projects">📁 Docs</button>
-    <button id="addBacklogBtn" class="btn-info outline" title="capture a not-yet-started work item">+ capture</button>
-    <span id="freshness" class="freshness" aria-live="polite" title="How recently the state file changed AND when the heartbeat last ran. Red if heartbeat is stale (&gt;10min).">—</span>
-    <span id="status" class="status" aria-live="polite">connecting…</span>
+    <button id="refreshBtn" class="ghost" title="force a refresh of every pane now">⟳ Refresh</button>
+    <span id="refreshFeedback" class="refresh-feedback" aria-live="polite"></span>
+    <span id="reconcilerBadge" class="reconciler-badge" aria-live="polite" tabindex="0" role="button"
+          title="derived-vs-displayed drift check">reconciler: checking…</span>
   </header>
 
-  <!-- Global corruption banner (UX-I4 / C1d). -->
-  <div id="corruptBanner" class="banner corrupt" role="alert" hidden></div>
-  <!-- Transient saved/error feedback. -->
-  <div id="toast" class="toast" role="status" hidden></div>
+  <!-- Interrupt-priority strip (specs-o §O.4.3b — BINDING: on cold load,
+       WAITING-ON-ME session rows sort above all other states and open
+       NEEDS-YOU entries render above Q3/Q4/Q5, both inside the initial
+       viewport, with ONE accent color spent only on interrupt-worthy
+       classes). This element is populated by renderInterruptStrip() in
+       app.js from the SAME od_sessions/od_needs_me data the Q1/Q2 panes
+       render — it is a re-sorted VIEW of that data, not a separate source. -->
+  <div id="interruptStrip" class="interrupt-strip" aria-live="polite"></div>
 
-  <main id="layout">
-    <!-- LEFT: four-tier hierarchy. Project (proj-* roots) → Workstream →
-         WorkItem → Sub-task. Sessions (sess-*) are NEVER rendered as their own
-         row — they surface only as provenance in the detail card. Focus
-         project expanded; others collapsed. "Orphans this week" section at the
-         bottom surfaces in-flight work that isn't moving. -->
-    <section id="treePane" class="pane tree-pane" aria-label="workstreams hierarchy">
+  <main id="cockpit">
+    <!-- Q2 — WHAT NEEDS ME. Sorted first per ux-review amendment 9
+         (attention-semantics: "Q2 on top"). READ-ONLY: renders the §3-format
+         block inline; the link-resolver handles every link; NO action
+         buttons (Q2 v1 disposition). -->
+    <section id="paneNeedsMe" class="pane pane-needs-me" aria-label="what needs me">
       <div class="pane-head">
-        <span class="pane-title">Projects</span>
-        <span id="treeSummary" class="crumb" aria-live="polite"></span>
+        <span class="pane-title">2 · What needs me</span>
+        <span class="pane-age" data-age-for="needs-me">—</span>
       </div>
-      <div id="treeScroll" class="pane-body tree-scroll">
-        <div id="treeCanvas" class="tree-canvas"></div>
-        <div id="orphanSection" class="orphan-section" hidden>
-          <div class="orphan-head" title="Dispatch sessions that opened but were never concluded (>24h). Internal sub-agent sessions are excluded.">⚠️ Stale sessions <span id="orphanCount" class="count-badge"></span></div>
-          <div id="orphanBody" class="orphan-body"></div>
-        </div>
-      </div>
-      <div id="treeState" class="pane-state" hidden></div>
+      <div class="pane-body" id="needsMeBody"></div>
     </section>
 
-    <!-- Adjustable divider — drag to resize the two panes; width persists to
-         localStorage (key: workstreams.paneSplit). -->
-    <div id="divider" class="divider" role="separator" aria-orientation="vertical"
-         aria-label="resize panes" tabindex="0" title="drag to resize (← / → with keyboard)"></div>
-
-    <!-- RIGHT: filter-driven single pane. The filter chips replace the old
-         stacked Waiting/Backlog/Decisions/Questions accordion. Selecting an
-         item replaces the filtered list with a detail card; deselecting
-         restores the list. Default filter = "Awaiting me" with non-complete
-         states only (shipped/closed hidden until "All" or "Recently shipped"). -->
-    <aside id="sidePanel" class="side-panel" aria-label="filtered work items">
-      <div id="filterBar" class="filter-bar" role="tablist" aria-label="work item filters">
-        <button class="chip" data-filter="in-flight"      role="tab" title="Work in motion — building / running / awaiting verification, tracked toward deployed">In flight <span class="chip-count" data-count="in-flight">0</span></button>
-        <button class="chip" data-filter="awaiting-me"   role="tab" title="The bounded global list — every item that needs YOUR decision / answer / action, plus blocked work">Waiting on you <span class="chip-count" data-count="awaiting-me">0</span></button>
-        <button class="chip" data-filter="blocked"        role="tab" title="Work stopped on a dependency / missing input">Blocked <span class="chip-count" data-count="blocked">0</span></button>
-        <!-- C6 (Task 10): amber = needs-you/blocked ONLY. The shipped-not-
-             deployed and stale-sessions counts are pipeline states, not
-             operator-asks — their counts are NEUTRAL. The amber accent is
-             applied dynamically (updateChipCounts) to the Waiting-on-you and
-             Blocked counts when > 0, the two chips inside the amber semantic. -->
-        <button class="chip" data-filter="shipped-not-deployed" role="tab" title="Merged / shipped but NOT yet live in production — every effort that hasn't reached deployed">Shipped · not deployed <span class="chip-count" data-count="shipped-not-deployed">0</span></button>
-        <button class="chip" data-filter="deployed"       role="tab" title="Live in production — fully done">Deployed <span class="chip-count" data-count="deployed">0</span></button>
-        <button class="chip" data-filter="orphaned"       role="tab" title="Dispatch sessions never concluded (>24h); internal sub-agent sessions excluded">Stale sessions <span class="chip-count" data-count="orphaned">0</span></button>
-        <button class="chip" data-filter="recently-shipped" role="tab" title="Shipped in the last 7 days">Recently shipped <span class="chip-count" data-count="recently-shipped">0</span></button>
-        <button class="chip" data-filter="my-tasks"       role="tab" title="Your hand-authored task list — add / edit / reorder / complete / remove">My tasks <span class="chip-count" data-count="my-tasks">0</span></button>
-        <button class="chip" data-filter="backlog"        role="tab" title="Captured but not yet started">Backlog <span class="chip-count" data-count="backlog">0</span></button>
-        <button class="chip" data-filter="all"            role="tab" title="Every work item across all projects">All <span class="chip-count" data-count="all">0</span></button>
+    <!-- Q1 — WHAT'S RUNNING. Session board with state chips; stalled/crashed/
+         waiting-on-me sorted first per ux-review amendment 9. -->
+    <section id="paneStatus" class="pane pane-status" aria-label="what's running">
+      <div class="pane-head">
+        <span class="pane-title">1 · What's running</span>
+        <span class="pane-age" data-age-for="status">—</span>
       </div>
+      <div class="pane-body" id="statusBody"></div>
+    </section>
 
-      <!-- Inline capture form for new backlog items (toggled by + capture). -->
-      <div id="backlogCapture" class="capture" hidden>
-        <input id="blText" type="text" placeholder="What's the not-yet-started work?" aria-label="backlog item text">
-        <textarea id="blContext" placeholder="context — what you know, why it matters, related docs (multi-line)" aria-label="context note"></textarea>
-        <div class="capture-row">
-          <select id="blPriority" aria-label="priority">
-            <option value="high">high</option>
-            <option value="medium" selected>medium</option>
-            <option value="low">low</option>
-          </select>
-          <button id="blSave" class="btn-go">Add</button>
-          <button id="blCancel" class="btn-neutral outline">cancel</button>
-        </div>
+    <!-- Q4 — IS THE HARNESS WORKING. Compact strip. -->
+    <section id="paneHealth" class="pane pane-health" aria-label="is the harness working">
+      <div class="pane-head">
+        <span class="pane-title">4 · Harness health</span>
+        <span class="pane-age" data-age-for="health">—</span>
       </div>
+      <div class="pane-body" id="healthBody"></div>
+    </section>
 
-      <div id="filterBody" class="pane-body list-body" aria-live="polite"></div>
-      <div id="filterState" class="pane-state" hidden></div>
-    </aside>
+    <!-- Q5 — WHAT'S IT COSTING. Compact strip. -->
+    <section id="paneCosts" class="pane pane-costs" aria-label="what's it costing">
+      <div class="pane-head">
+        <span class="pane-title">5 · What's it costing</span>
+        <span class="pane-age" data-age-for="costs">—</span>
+      </div>
+      <div class="pane-body" id="costsBody"></div>
+    </section>
+
+    <!-- Q3 — WHAT HAPPENED (diff-since-last-look). Last-look anchor is
+         explicit + a Mark-seen control (ux-review amendment 3). -->
+    <section id="paneShipped" class="pane pane-shipped" aria-label="what happened since your last look">
+      <div class="pane-head">
+        <span class="pane-title">3 · What happened</span>
+        <span class="pane-age" data-age-for="shipped">—</span>
+      </div>
+      <div class="last-look-row">
+        <span id="lastLookAnchor" class="last-look-anchor"></span>
+        <button id="markSeenBtn" class="ghost small">Mark seen</button>
+      </div>
+      <div class="pane-body" id="shippedBody"></div>
+    </section>
+
+    <!-- Backlog health strip (od_backlog_health — not one of the six sketch
+         questions, same CANONICAL-COUNTERS-01 discipline). -->
+    <section id="paneBacklog" class="pane pane-backlog" aria-label="backlog health">
+      <div class="pane-head">
+        <span class="pane-title">Backlog health</span>
+        <span class="pane-age" data-age-for="backlog">—</span>
+      </div>
+      <div class="pane-body" id="backlogBody"></div>
+    </section>
   </main>
 
-  <!-- Item DETAIL MODAL (Phase D, 2026-06-09). Replaces the prior right-pane
-       detailCard that filled the side panel. Selecting a work item now opens
-       this dismissible modal OVERLAY in front of everything (click-scrim / Esc
-       to close); the filter list stays put behind it. Carries the full
-       self-contained context (Background / the ask / Options / Recommendation /
-       Links — the Phase-C `details` payload) plus context-appropriate action
-       buttons (approve / decline / submit-a-decision for decisions; mark-done
-       for actions; and ALWAYS a respond-with-details / ask-clarifying-question
-       affordance) wired to the answered / action-done / action-responded /
-       item-details-set lifecycle events via POST /api/event. -->
-  <div id="detailScrim" class="modal-scrim" hidden></div>
-  <div id="detailModal" class="modal-card detail-modal" hidden role="dialog"
-       aria-label="work item detail" aria-modal="true">
+  <!-- Q6 — WHY DID X HAPPEN. On-demand drawer, opened from a session row's
+       "Why" affordance (interaction table, ux-review amendment 8). -->
+  <div id="whyScrim" class="modal-scrim" hidden></div>
+  <div id="whyDrawer" class="modal-card why-drawer" hidden role="dialog" aria-label="why drawer" aria-modal="true">
     <div class="dm-head">
-      <span id="dmTitle" class="dm-title">work item</span>
-      <button id="dmClose" class="ghost dm-close" title="close (Esc)" aria-label="close item detail">✕</button>
+      <span id="whyTitle" class="dm-title">why</span>
+      <button id="whyClose" class="ghost dm-close" title="close (Esc)" aria-label="close why drawer">✕</button>
     </div>
-    <div id="dmBody" class="dm-body"></div>
-    <div id="dmActions" class="dm-actions"></div>
+    <div id="whyBody" class="dm-body"></div>
   </div>
 
-  <!-- Cross-project docs browser (restored 2026-06-02 — bug #6). Shared scrim
-       for the drawer + the doc viewer modal. /api/docs, /api/doc, /api/doc/open
-       endpoints are live in server.js. -->
+  <!-- Docs browser (KEPT — becomes the ONE link-resolver backend per
+       ux-review amendment 6: no pane grows its own link handling). -->
   <div id="docScrim" class="modal-scrim" hidden></div>
   <aside id="docsPanel" hidden aria-label="docs browser">
     <div class="dp-head">
