@@ -29,12 +29,16 @@ harness-health gate counts, token costs), use `nl` instead.
 | Q1 | What is every session doing? | `nl status` |
 | Q2 | What needs MY decision? | `nl needs-me` |
 | Q3 | What shipped since I last looked? | `nl shipped [--since <ts>]` |
-| Q4 | Is the harness healthy? | `nl status` (header line) |
+| Q4 | Is the harness healthy? | `nl status` (header line, one-line summary) / `nl health` (full: per-gate 7d block/waiver/downgrade + waiver-dominant flags) |
 | Q5 | What did this cost? | `nl costs [<session>]` |
 | Q6 | Why did session X do that? | `nl why <session> [--last-block]` |
 
 Plus `nl backlog` (the backlog oracle — BACKLOG-LOOP-01's digest/KPI/plan-
 edit-validator consumers all read this one definition). Every subcommand
-accepts `--json`. Full field/state semantics (session states, the `nl why`
-causal-chain format, backlog disposition words, the C1-C5 frozen contracts,
-per-question read sources): doctrine/observability-full.md.
+accepts `--json`. `nl status --json` deliberately does NOT carry
+`od_harness_health`'s `.gates[]` array (it composes `{sessions, doctor}` only
+— the Q1 board is that subcommand's job); a consumer that needs the full
+per-gate breakdown calls `nl health --json` instead of re-deriving it or
+reading it out of `status`. Full field/state semantics (session states, the
+`nl why` causal-chain format, backlog disposition words, the C1-C5 frozen
+contracts, per-question read sources): doctrine/observability-full.md.

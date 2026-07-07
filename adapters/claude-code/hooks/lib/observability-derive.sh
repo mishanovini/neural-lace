@@ -929,29 +929,54 @@ od_harness_health() {
 # must never change od_costs's answer, only its speed).
 #
 # HONEST RESIDUAL GAP (livesmoke against the real estate, verifier-
-# round v2): the cache eliminates recomputation for QUIET transcripts
-# (measured: ~0.2s/file on a cache hit, vs ~1-2.5s/file on a miss for
-# this machine's largest real transcripts) — this is its full intended
-# win, and it fires correctly for the common real-world shape (a
-# `nl costs <session-id>` single-session lookup on a session that isn't
-# still being written to: measured 2.65s cold -> 1.6s warm on this
-# machine, both under the 10s bar). HOWEVER: the flagless, no-arg
-# `nl costs` AGGREGATE scan's "10 most-recently-modified transcripts"
-# selection, when run FROM an interactive session, always includes that
-# session's OWN transcript (and its subagents') — files which are being
-# actively appended to by the very act of running this command, so
-# their mtime/size changes between every invocation and they can never
-# be a cache hit. Measured on this machine: 3 of the top-10 files are
-# always this kind of unavoidable miss, each costing ~1-2.5s, plus
-# ~0.2s x 7 cache hits plus ~0.5-1s fixed overhead (bash startup, ledger
-# throttle-count jq pass, cache load/flush) — consecutive live runs
-# measured 13-28s (see this task's evidence), i.e. NOT reliably under
-# the <10s bar for this specific self-referential measurement shape,
-# even though the cache mechanism itself is correct and the common
-# (single-session, or aggregate-scan-from-a-non-participating-caller)
-# case is comfortably under 10s. This is named here rather than
-# silently claimed fixed — see the builder report for the full
-# before/after numbers and the honest verdict.
+# round v2 AND this task's own 3-run timing): the cache eliminates
+# recomputation for QUIET transcripts (measured: ~0.2s/file on a cache
+# hit, vs ~1-2.5s/file on a miss for this machine's largest real
+# transcripts) — this is its full intended win, and it fires correctly
+# for the common real-world shape (a `nl costs <session-id>`
+# single-session lookup on a session that isn't still being written to:
+# measured 2.65s cold -> 1.6s warm on this machine, both under the 10s
+# bar). HOWEVER: the flagless, no-arg `nl costs` AGGREGATE scan's "10
+# most-recently-modified transcripts" selection, when run FROM an
+# interactive session, always included that session's OWN transcript —
+# a file being actively appended to by the very act of running this
+# command, so its mtime/size changes between every invocation and it can
+# never be a cache hit. THIS TASK's fix: the CALLING session's own
+# transcript (identified via $CLAUDE_CODE_SESSION_ID, see the exclusion
+# block in od_costs above) is now fully EXCLUDED from the aggregate's
+# candidate list, with an honest "(this session excluded:
+# self-referential)" note in both text and --json (`self_excluded`)
+# output — verified live: `nl costs`'s own transcript no longer appears
+# in the row list on 3 consecutive timed runs against the real estate.
+#
+# THIS DOES NOT, BY ITSELF, GUARANTEE <10s ON EVERY MACHINE (measured
+# HONESTLY, not claimed fixed): on a machine running MANY CONCURRENT
+# agent sessions at once (this builder's own dev machine had ~9+ other
+# active `agent-*`/session worktrees mid-run), the top-10-by-mtime
+# selection still lands on OTHER sessions' transcripts that are ALSO
+# being actively appended to right now by their own separate live
+# processes — not this calling session, so the $CLAUDE_CODE_SESSION_ID
+# exclusion correctly does not touch them (excluding a different live
+# session's transcript would hide real, currently-relevant cost data,
+# which would be a worse defect than the slowness). On that machine, 3
+# consecutive timed `nl costs` runs (this task's own evidence) measured
+# 58.96s / 69.13s / 71.43s — ALL 10 non-excluded candidates were cache
+# MISSES every single run, because literally every one of them was being
+# written to by a different concurrently-running agent at the moment of
+# measurement, so the incremental cache (correct, and effective for
+# quiescent transcripts) had nothing quiescent left to hit. This is a
+# BROADER phenomenon than the single-calling-session case this task was
+# scoped to fix, and is named here rather than silently claimed solved:
+# the smallest honest fix (exclude the CALLING session only) is
+# implemented and verified; a machine with many simultaneously-live
+# agents will still see a slow flagless aggregate `nl costs` because
+# most of its "recent" candidates are genuinely, correctly still hot.
+# A future fix (out of this task's scope) could widen the exclusion to
+# "any transcript whose mtime changed again during this very
+# invocation" (a moving-target detector, not identity-based), or lower
+# OBS_COSTS_MAX_TRANSCRIPTS on busy estates — neither is implemented
+# here; naming the gap honestly is preferred over a speculative fix
+# unverified against this shape.
 # ============================================================
 _od_costs_cache_path() {
   if [[ -n "${OBS_COSTS_CACHE:-}" ]]; then
@@ -1252,6 +1277,40 @@ od_costs() {
       done < <(find "$dir" -maxdepth 4 -type f -name '*.jsonl' -printf '%T@\t%p\n' 2>/dev/null \
                 | sort -t$'\t' -k1,1nr | cut -f2- \
                 || find "$dir" -maxdepth 4 -type f -name '*.jsonl' 2>/dev/null | sort)
+
+      # SELF-REFERENTIAL EXCLUSION (verifier-round fix, this task): the
+      # calling session's OWN transcript is being actively appended to by
+      # the very act of running `nl costs` (every tool_use/hook_progress
+      # line this invocation itself produces lands in it), so its
+      # mtime+size change on every call and it can NEVER be an
+      # _od_costs_cache_lookup hit — measured 13-28s across consecutive
+      # live runs when 3 of the flagless aggregate's top-10 files were
+      # this kind of unavoidable miss (see the INCREMENTAL COST CACHE
+      # header comment above for the full before/after numbers). The
+      # smallest honest fix: drop the CALLING session's own transcript
+      # (identified by $CLAUDE_CODE_SESSION_ID, the same env var the
+      # heartbeat writer and every other Wave O consumer already treats
+      # as this process's session identity) from the aggregate's
+      # candidate list before the top-N selection, and say so explicitly
+      # in the output — this is a full exclusion, not a truncation, since
+      # a self-costing session reporting its own live, still-growing
+      # number would be self-referential and misleading, not merely slow.
+      local self_sid="${CLAUDE_CODE_SESSION_ID:-}"
+      local self_excluded=0
+      if [[ -n "$self_sid" ]]; then
+        local -a filtered_files=()
+        local fbase
+        for tf in "${all_files[@]}"; do
+          fbase="$(basename "$tf" .jsonl)"
+          if [[ "$fbase" == "$self_sid" ]]; then
+            self_excluded=1
+            continue
+          fi
+          filtered_files+=("$tf")
+        done
+        all_files=("${filtered_files[@]}")
+      fi
+
       local total_files="${#all_files[@]}"
       if [[ "$max_transcripts" -gt 0 ]] && [[ "$total_files" -gt "$max_transcripts" ]]; then
         truncated_all=1
@@ -1334,10 +1393,14 @@ od_costs() {
   fi
   local est_minutes_lost=$((throttle_count * 5))
 
+  local self_excluded_flag=0
+  [[ "${self_excluded:-0}" == "1" ]] && self_excluded_flag=1
+
   if [[ "$json_mode" == "1" ]]; then
-    printf '{"schema":1,"oracle":"od_costs","total":{"input_tokens":%d,"output_tokens":%d,"cache_creation_input_tokens":%d,"cache_read_input_tokens":%d},"throttle_events":%d,"est_minutes_lost":%d,"truncated_to_recent":%s,"sessions":[' \
+    printf '{"schema":1,"oracle":"od_costs","total":{"input_tokens":%d,"output_tokens":%d,"cache_creation_input_tokens":%d,"cache_read_input_tokens":%d},"throttle_events":%d,"est_minutes_lost":%d,"truncated_to_recent":%s,"self_excluded":%s,"sessions":[' \
       "$total_in" "$total_out" "$total_cc" "$total_cr" "$throttle_count" "$est_minutes_lost" \
-      "$([[ "$truncated_all" == "1" ]] && echo true || echo false)"
+      "$([[ "$truncated_all" == "1" ]] && echo true || echo false)" \
+      "$([[ "$self_excluded_flag" == "1" ]] && echo true || echo false)"
     local first=1 row
     for row in "${rows[@]}"; do
       IFS=$'\t' read -r r_sid r_in r_out r_cc r_cr r_note <<< "$row"
@@ -1353,6 +1416,9 @@ od_costs() {
   printf '%d session(s) costed (oracle: od_costs)\n' "${#rows[@]}"
   if [[ "$truncated_all" == "1" ]]; then
     printf '  (truncated to the %d most-recently-modified transcripts; set OBS_COSTS_MAX_TRANSCRIPTS=0 for a full scan)\n' "${#rows[@]}"
+  fi
+  if [[ "$self_excluded_flag" == "1" ]]; then
+    printf '  (this session excluded: self-referential — its own transcript is being actively appended to by this very command and can never be a cache hit)\n'
   fi
   printf '  total input=%d output=%d cache_create=%d cache_read=%d\n' "$total_in" "$total_out" "$total_cc" "$total_cr"
   printf '%d throttle event(s), ~%d min lost (oracle: od_costs)\n' "$throttle_count" "$est_minutes_lost"
@@ -1702,9 +1768,34 @@ od_why() {
     fi
   fi
 
+  # One-line verdict: what blocked, what state it read, what happened next.
+  # Computed ONCE, ahead of the json_mode branch below, so both the JSON
+  # and text output paths emit the identical verdict text (verifier-round
+  # fix: the JSON payload previously omitted this field entirely because
+  # the printf computing it sat after the json_mode early-return — a
+  # cockpit/CLI consumer parsing --json output never saw a verdict at
+  # all, even though the human text mode always has one).
+  local blk_gate="" blk_detail="" next_ev="" next_gate=""
+  local k
+  for k in "${!sorted[@]}"; do
+    IFS=$'\t' read -r _t g ev d <<< "${sorted[$k]}"
+    if [[ "$ev" == "block" ]]; then
+      blk_gate="$g"; blk_detail="$d"
+      if [[ $((k + 1)) -lt "${#sorted[@]}" ]]; then
+        IFS=$'\t' read -r _t2 next_gate next_ev _d2 <<< "${sorted[$((k+1))]}"
+      fi
+    fi
+  done
+  local verdict_text
+  if [[ -n "$blk_gate" ]]; then
+    verdict_text="blocked by ${blk_gate} (${blk_detail}); next: ${next_gate:-none} ${next_ev:-n/a}"
+  else
+    verdict_text="no block event found for this session"
+  fi
+
   if [[ "$json_mode" == "1" ]]; then
-    printf '{"schema":1,"oracle":"od_why","session_id":"%s","transcript_status":"%s","chain":[' \
-      "$(_od_json_escape "$sid")" "$(_od_json_escape "$transcript_status")"
+    printf '{"schema":1,"oracle":"od_why","session_id":"%s","transcript_status":"%s","verdict":"%s","chain":[' \
+      "$(_od_json_escape "$sid")" "$(_od_json_escape "$transcript_status")" "$(_od_json_escape "$verdict_text")"
     local first=1 row
     for row in "${sorted[@]}"; do
       IFS=$'\t' read -r r_ts r_gate r_ev r_detail <<< "$row"
@@ -1730,23 +1821,7 @@ od_why() {
     printf '%s  %s  %s  %s\n' "$r_ts" "$r_gate" "$r_ev" "$r_detail"
   done
 
-  # One-line verdict: what blocked, what state it read, what happened next.
-  local blk_gate="" blk_detail="" next_ev="" next_gate=""
-  local k
-  for k in "${!sorted[@]}"; do
-    IFS=$'\t' read -r _t g ev d <<< "${sorted[$k]}"
-    if [[ "$ev" == "block" ]]; then
-      blk_gate="$g"; blk_detail="$d"
-      if [[ $((k + 1)) -lt "${#sorted[@]}" ]]; then
-        IFS=$'\t' read -r _t2 next_gate next_ev _d2 <<< "${sorted[$((k+1))]}"
-      fi
-    fi
-  done
-  if [[ -n "$blk_gate" ]]; then
-    printf 'verdict: blocked by %s (%s); next: %s %s\n' "$blk_gate" "$blk_detail" "${next_gate:-none}" "${next_ev:-n/a}"
-  else
-    printf 'verdict: no block event found for this session\n'
-  fi
+  printf 'verdict: %s\n' "$verdict_text"
   return 0
 }
 
@@ -1809,6 +1884,15 @@ EOF
   cat > "$HEARTBEAT_STATE_DIR/sess-stale.json" <<EOF
 {"schema":1,"session_id":"sess-stale","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
 EOF
+  # sess-midturn-fresh: heartbeat says old (mimics a long tool-heavy turn
+  # where no Stop-time touch has landed yet) but the transcript was just
+  # written — the nl-issues 2026-07-07 mid-turn false-stall shape. Must
+  # classify "working", NOT stalled/crashed, because od_sessions' shared
+  # hb_classify implementation joins transcript mtime into staleness.
+  cat > "$HEARTBEAT_STATE_DIR/sess-midturn-fresh.json" <<EOF
+{"schema":1,"session_id":"sess-midturn-fresh","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+  printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-midturn-fresh.jsonl"
   out1="$(od_sessions)"
   if printf '%s' "$out1" | grep -q "oracle: od_sessions"; then
     pass "od_sessions names its oracle inline"
@@ -1825,8 +1909,13 @@ EOF
   else
     fail "od_sessions did not classify sess-stale as stalled: $out1"
   fi
+  if printf '%s' "$out1" | grep "sess-midturn-fresh" | grep -q "working"; then
+    pass "od_sessions: heartbeat-stale-but-transcript-fresh classifies working (mid-turn false-stall fix, nl-issues 2026-07-07)"
+  else
+    fail "od_sessions did not classify sess-midturn-fresh as working: $out1"
+  fi
 
-  echo "Scenario 2: od_sessions --json produces valid JSON with both sessions"
+  echo "Scenario 2: od_sessions --json produces valid JSON with all fixture sessions"
   out2="$(od_sessions --json)"
   if command -v jq >/dev/null 2>&1; then
     if printf '%s' "$out2" | jq -e . >/dev/null 2>&1; then
@@ -1835,10 +1924,16 @@ EOF
       fail "od_sessions --json is NOT valid JSON: $out2"
     fi
     n_sess="$(printf '%s' "$out2" | jq '.sessions | length' 2>/dev/null)"
-    if [[ "$n_sess" == "2" ]]; then
-      pass "od_sessions --json lists both fixture sessions (got $n_sess)"
+    if [[ "$n_sess" == "3" ]]; then
+      pass "od_sessions --json lists all 3 fixture sessions (got $n_sess)"
     else
-      fail "expected 2 sessions in --json output, got $n_sess"
+      fail "expected 3 sessions in --json output, got $n_sess"
+    fi
+    mt_state="$(printf '%s' "$out2" | jq -r '.sessions[] | select(.session_id=="sess-midturn-fresh") | .state' 2>/dev/null)"
+    if [[ "$mt_state" == "working" ]]; then
+      pass "od_sessions --json: sess-midturn-fresh.state == working"
+    else
+      fail "od_sessions --json: expected sess-midturn-fresh.state == working, got '$mt_state'"
     fi
   else
     echo "  (jq unavailable — skipping strict JSON assertions)"
@@ -2028,6 +2123,48 @@ EOF
     fail "expected >=5 sessions with the cap disabled, got: $n6c_full"
   fi
   rm -f "$OBS_TRANSCRIPTS_ROOT"/agg-sid-*.jsonl "$OBS_TRANSCRIPTS_ROOT/sess-cost.jsonl" "$OBS_TRANSCRIPTS_ROOT/sess-partial.jsonl" "$OBS_TRANSCRIPTS_ROOT/sess-blocked.jsonl" 2>/dev/null
+
+  echo "Scenario 6c2: od_costs aggregate scan excludes the CALLING session's own transcript (self-referential slowness fix, this task)"
+  for i in 1 2 3; do
+    printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/other-sid-$i.jsonl"
+  done
+  printf '{"type":"assistant","message":{"usage":{"input_tokens":9,"output_tokens":9,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/self-caller-sid.jsonl"
+  out6c2="$(CLAUDE_CODE_SESSION_ID="self-caller-sid" OBS_COSTS_MAX_TRANSCRIPTS=0 od_costs)"
+  if printf '%s' "$out6c2" | grep -q "self-caller-sid"; then
+    fail "od_costs aggregate scan included the calling session's own transcript (self-caller-sid) — should be excluded"
+  else
+    pass "od_costs aggregate scan excludes the calling session's own transcript (self-caller-sid never appears in the row list)"
+  fi
+  if printf '%s' "$out6c2" | grep -q "this session excluded: self-referential"; then
+    pass "od_costs honestly notes the self-referential exclusion in text output"
+  else
+    fail "expected an honest 'this session excluded: self-referential' note, got: $out6c2"
+  fi
+  out6c2j="$(CLAUDE_CODE_SESSION_ID="self-caller-sid" OBS_COSTS_MAX_TRANSCRIPTS=0 od_costs --json)"
+  if command -v jq >/dev/null 2>&1; then
+    self_excl_json="$(printf '%s' "$out6c2j" | jq -r '.self_excluded' 2>/dev/null)"
+    if [[ "$self_excl_json" == "true" ]]; then
+      pass "od_costs --json carries self_excluded:true when the caller's own transcript was dropped"
+    else
+      fail "expected .self_excluded == true in --json output, got '$self_excl_json'"
+    fi
+    has_self_sess="$(printf '%s' "$out6c2j" | jq -r '.sessions[] | select(.session_id=="self-caller-sid") | .session_id' 2>/dev/null)"
+    if [[ -z "$has_self_sess" ]]; then
+      pass "od_costs --json .sessions[] does not include the calling session"
+    else
+      fail "od_costs --json .sessions[] unexpectedly includes the calling session: $has_self_sess"
+    fi
+  fi
+  # Without CLAUDE_CODE_SESSION_ID set (unset in production for non-Claude-Code
+  # callers), the exclusion is a no-op — no session is excluded, self_excluded
+  # stays false, and every transcript is eligible exactly as before this fix.
+  out6c2_noself="$(unset CLAUDE_CODE_SESSION_ID; OBS_COSTS_MAX_TRANSCRIPTS=0 od_costs)"
+  if printf '%s' "$out6c2_noself" | grep -q "self-caller-sid"; then
+    pass "with CLAUDE_CODE_SESSION_ID unset, no transcript is excluded (self-caller-sid still counted)"
+  else
+    fail "expected self-caller-sid to be counted when CLAUDE_CODE_SESSION_ID is unset, got: $out6c2_noself"
+  fi
+  rm -f "$OBS_TRANSCRIPTS_ROOT"/other-sid-*.jsonl "$OBS_TRANSCRIPTS_ROOT/self-caller-sid.jsonl" 2>/dev/null
 
   echo "Scenario 6d: od_costs incremental cache — a cache HIT skips recomputation and still returns the correct sum (verifier-round fix, O.3 conf 9)"
   # Reset the in-process cache state so this scenario starts from a

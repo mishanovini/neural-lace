@@ -47,7 +47,10 @@ level.
 
 - **`nl status`** (Q1 + Q4 header) — one doctor-verdict header line
   (`od_harness_health`'s cached verdict), then the session board
-  (`od_sessions`). Session states, EACH with a written ground-truth
+  (`od_sessions`). `nl status --json` composes `{sessions, doctor}` and
+  deliberately does NOT carry `od_harness_health`'s `.gates[]` array (the
+  Q1 board is this subcommand's job) — see `nl health` below for the full
+  Q4 answer. Session states, EACH with a written ground-truth
   derivation rule (advocate plan-time review 2026-07-06 — specs-o §O.0.3
   contract C4, binding; builders/consumers never invent a rule):
   - `waiting-on-me` — a NEEDS-YOU OPEN ledger entry names this
@@ -81,7 +84,13 @@ level.
   lines for that session_id (time-ordered, every gate) into a causal
   chain, one line per step: `ts  gate  event  detail`. Ends with a
   one-line verdict: what blocked, what state it read, what the session
-  did next. `--last-block` narrows to the newest `block` event +/- 2
+  did next. `--json` mode carries this SAME verdict text as a top-level
+  `"verdict"` string field (verifier-round fix: the JSON payload used to
+  omit it entirely — the printf building it sat after the json_mode
+  early-return — so a JSON consumer never saw a verdict at all even
+  though text mode always had one; the verdict is now computed once,
+  ahead of the json_mode branch, and both output modes read the same
+  value). `--last-block` narrows to the newest `block` event +/- 2
   lines of surrounding context, capped so the drill's <=20-output-line
   bar is always achievable. This is the sketch's "024 diagnosis in
   ~2 min" turned into a mechanical oracle: given a spawn-writer/gate
@@ -147,6 +156,15 @@ level.
   re-point lands, `od_backlog_health` is a byte-faithful mirror of the
   richest existing copy, not yet the single implementation those three
   call.
+- **`nl health`** (Q4, full) — direct passthrough to `od_harness_health`:
+  the cached doctor verdict PLUS the full per-gate 7-day
+  block/waiver/downgrade breakdown (`.gates[]`, each entry
+  `{gate,block_7d,waiver_7d,downgrade_7d,dominant}`) with a
+  `[waiver-dominant]` flag in text mode when a gate's waiver count
+  exceeds both its block and downgrade counts. `nl status`'s header line
+  stays a one-line summary (verdict + cache timestamp only) by design —
+  `nl health` is the subcommand that answers Q4 in full without a
+  consumer having to re-derive the per-gate breakdown itself.
 
 ## Read-only; zero state writes
 

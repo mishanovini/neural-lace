@@ -27,6 +27,21 @@
 #   nl costs [<session>]       - Q5 (od_costs)
 #   nl shipped [--since <ts>]  - Q3 (od_shipped_since)
 #   nl backlog                 - od_backlog_health
+#   nl health                  - Q4 full passthrough (od_harness_health:
+#                                doctor verdict + per-gate 7d
+#                                block/waiver/downgrade counts, incl.
+#                                waiver-dominant flags). `nl status`'s own
+#                                header line stays a ONE-line doctor
+#                                summary only (Q1 board is the point of
+#                                that subcommand) — `nl health` is the
+#                                full Q4 answer; `nl status --json` does
+#                                NOT carry `.gates[]` (verifier-round fix:
+#                                it used to compose {sessions, doctor} and
+#                                silently discard od_harness_health's
+#                                gates array — `nl health --json` is the
+#                                one place that array is exposed, rather
+#                                than duplicating it into every `status`
+#                                payload).
 #   each subcommand accepts --json for machine-readable output.
 #
 # Installed via the existing scripts/*.sh install glob — no install
@@ -74,6 +89,10 @@ subcommands:
   shipped [--since <iso-ts>]
                       Q3 what shipped since a timestamp (default: 24h ago)
   backlog             backlog health oracle (od_backlog_health)
+  health              Q4 full harness-health passthrough (doctor verdict
+                      + per-gate 7d block/waiver/downgrade counts,
+                      od_harness_health in full — `nl status`'s header
+                      line is a one-line summary only)
 
 Each subcommand accepts --json for machine-readable output.
 EOF
@@ -166,6 +185,10 @@ cmd_backlog() {
   od_backlog_health "$@"
 }
 
+cmd_health() {
+  od_harness_health "$@"
+}
+
 # ============================================================
 # CLI dispatch (only when executed directly, not sourced)
 # ============================================================
@@ -180,6 +203,7 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
     costs)      shift; cmd_costs "$@"; exit $? ;;
     shipped)    shift; cmd_shipped "$@"; exit $? ;;
     backlog)    shift; cmd_backlog "$@"; exit $? ;;
+    health)     shift; cmd_health "$@"; exit $? ;;
     -h|--help|"")
       _nl_usage
       exit 0
@@ -300,6 +324,20 @@ EOF
     pass "nl backlog delegates to od_backlog_health"
   else
     fail "nl backlog missing expected content: $out6"
+  fi
+
+  echo "Scenario 6b: nl health (Q4 full passthrough, incl. gates the fixture ledger's block event produced)"
+  out6b="$(bash "$SELF_ABS" health)"
+  if printf '%s' "$out6b" | grep -q "oracle: od_harness_health" && printf '%s' "$out6b" | grep -q "fixture-gate"; then
+    pass "nl health delegates to od_harness_health and surfaces per-gate activity"
+  else
+    fail "nl health missing expected content: $out6b"
+  fi
+  out6bj="$(bash "$SELF_ABS" health --json)"
+  if _nl_have jq && printf '%s' "$out6bj" | jq -e '.gates | type == "array" and length > 0' >/dev/null 2>&1; then
+    pass "nl health --json exposes a non-empty .gates[] array (the array 'nl status --json' deliberately omits)"
+  else
+    fail "nl health --json missing non-empty .gates[]: $out6bj"
   fi
 
   echo "Scenario 7: unknown subcommand exits 1 with usage on stderr"

@@ -39,6 +39,31 @@
 #           AND no fresh transcript mtime for that session
 #   crashed = stale AND pid not alive
 #
+# THE TRANSCRIPT-MTIME JOIN (nl-issues 2026-07-07 mid-turn false-stall
+# fix): heartbeats only refresh at Stop (touch --event turn-end), so a
+# long-running turn is normal and produces NO new heartbeat write for
+# its entire duration — last_activity_ts alone therefore false-positives
+# a LIVE mid-turn session as stale/stalled/crashed. hb_is_stale resolves
+# this session's transcript (OBS_TRANSCRIPTS_ROOT-aware, same convention
+# as observability-derive.sh's _od_find_transcript) and treats a
+# transcript mtime within OBS_STALE_MIN of "now" as proof the session is
+# still working, overriding the heartbeat-age-alone verdict. This is the
+# ONE classification implementation both `session-heartbeat.sh sweep`
+# and `od_sessions` call (see WHY THIS EXISTS above) — fixing it here
+# fixes both consumers.
+#
+# HONEST PLATFORM CAVEAT (pid liveness on MSYS/Git-Bash): `_hb_pid_alive`
+# uses `kill -0`/`ps -p`, which key off MSYS's own pid table — checking a
+# native-Windows pid this way from an MSYS shell is UNRELIABLE (MSYS does
+# not reliably see arbitrary Windows PIDs the way it sees its own
+# subshells). This lib does NOT attempt a native-Windows liveness check
+# (tasklist/wmic) to compensate — instead it leans on the transcript-
+# mtime signal ABOVE the pid check in priority: a fresh transcript mtime
+# is direct, platform-independent evidence of liveness, so on this
+# platform "crashed" only fires when heartbeat AND transcript both agree
+# nothing fresh happened, which is the honest, cheaply-available signal
+# rather than a pid check this platform cannot make trustworthy.
+#
 # marker_state is populated by the writer from the last Stop-time scan of
 # the final assistant message (same regex family as session-honesty-gate.sh:
 # DONE:/PAUSING:/BLOCKED:/CONTINUING:, else "none").
@@ -238,10 +263,19 @@ _hb_epoch() {
 # _hb_pid_alive <pid> — best-effort liveness check, cross-platform. `kill
 # -0` works on POSIX; on Git-Bash/MSYS (Windows) PIDs are the MSYS
 # subshell's own numbering and `kill -0` against a foreign real PID is
-# unreliable, so this also tries `ps -p` and, as a last resort, treats an
-# empty/zero/non-numeric pid as "not alive" (a heartbeat with no usable
-# pid can never be proven live, so it degrades to stale-eligible rather
-# than silently claiming liveness forever).
+# UNRELIABLE — this lib cannot prove a native-Windows pid live or dead
+# from an MSYS shell with any confidence (`kill -0`/`ps -p` both key off
+# MSYS's own pid table, which does not include arbitrary Windows PIDs the
+# way it does its own subshells). This is why `hb_is_stale`'s transcript-
+# mtime signal (below) is preferred over the pid check wherever both are
+# available: a fresh transcript mtime is direct, platform-independent
+# evidence the session is still writing, whereas `_hb_pid_alive` on this
+# platform can only be trusted to correctly detect a pid this same MSYS
+# tree spawned (see the self-test's "just-exited subshell" scenario,
+# which is exactly that trustworthy case). Treats an empty/zero/
+# non-numeric pid as "not alive" (a heartbeat with no usable pid can
+# never be proven live, so it degrades to stale-eligible rather than
+# silently claiming liveness forever).
 # ----------------------------------------------------------------------
 _hb_pid_alive() {
   local pid="$1"
@@ -257,10 +291,72 @@ _hb_pid_alive() {
 }
 
 # ----------------------------------------------------------------------
+# _hb_transcripts_dir — same resolution convention as
+# observability-derive.sh's _od_transcripts_dir (OBS_TRANSCRIPTS_ROOT
+# override, else the real per-user transcripts root), duplicated locally
+# (single-file portability: this lib is sourced BY observability-
+# derive.sh, not the other way around, and must not assume a sibling is
+# present — see file header). Frozen contract: specs-o §O.0.1-3 names
+# OBS_TRANSCRIPTS_ROOT as the one sandboxing var for every transcript
+# reader in this wave, so both libs honor the identical variable.
+# ----------------------------------------------------------------------
+_hb_transcripts_dir() {
+  if [[ -n "${OBS_TRANSCRIPTS_ROOT:-}" ]]; then
+    printf '%s' "$OBS_TRANSCRIPTS_ROOT"
+    return 0
+  fi
+  printf '%s/.claude/projects' "${HOME:-$PWD}"
+}
+
+# ----------------------------------------------------------------------
+# _hb_find_transcript <session-id> — locate the transcript JSONL file for
+# a session id anywhere under the transcripts dir (real layout nests by
+# sanitized-cwd; self-test/fixture layout is flat) — same technique as
+# observability-derive.sh's _od_find_transcript. Prints the first match
+# or empty. Never errors.
+# ----------------------------------------------------------------------
+_hb_find_transcript() {
+  local sid="$1" dir
+  dir="$(_hb_transcripts_dir)"
+  [[ -n "$sid" && -d "$dir" ]] || { printf ''; return 0; }
+  find "$dir" -maxdepth 4 -type f -name "${sid}.jsonl" 2>/dev/null | head -n1
+}
+
+# ----------------------------------------------------------------------
+# _hb_transcript_fresh_min <session-id> — prints the transcript's age in
+# minutes (mtime vs now), or empty if no transcript is found for this
+# session id. Never errors.
+# ----------------------------------------------------------------------
+_hb_transcript_fresh_min() {
+  local sid="$1" tf mtime now_epoch
+  tf="$(_hb_find_transcript "$sid")"
+  [[ -n "$tf" && -f "$tf" ]] || { printf ''; return 0; }
+  mtime="$(date -u -r "$tf" +%s 2>/dev/null || stat -c %Y "$tf" 2>/dev/null || stat -f %m "$tf" 2>/dev/null || echo 0)"
+  [[ "$mtime" -gt 0 ]] || { printf ''; return 0; }
+  now_epoch="$(date -u +%s 2>/dev/null || echo 0)"
+  printf '%d' $(( (now_epoch - mtime) / 60 ))
+}
+
+# ----------------------------------------------------------------------
 # hb_is_stale <file> [stale-min] — exit 0 (true) if the heartbeat file's
 # last_activity_ts is older than <stale-min> (default $OBS_STALE_MIN,
-# else 30) minutes ago. A missing file is treated as stale (exit 0) —
-# there is nothing fresher to report. Never errors.
+# else 30) minutes ago AND there is no fresher transcript activity for
+# this session (C1's actual read-side contract: "stale = last_activity_ts
+# old AND no fresh transcript mtime for that session"). A missing file
+# is treated as stale (exit 0) — there is nothing fresher to report.
+#
+# WHY THE TRANSCRIPT JOIN (nl-issues 2026-07-07 mid-turn false-stall):
+# heartbeats only refresh at Stop (`touch --event turn-end`) — a long
+# tool-heavy turn can run well past OBS_STALE_MIN with NO new heartbeat
+# write even though the session is fully live, so last_activity_ts alone
+# false-positives that session as stale/stalled/crashed mid-turn. The
+# session's own transcript JSONL, however, is appended to continuously
+# during a turn (every tool_use/hook_progress line), so a fresh
+# transcript mtime is direct evidence of "still working" independent of
+# the heartbeat cadence. A session is genuinely stale only when BOTH
+# signals agree nothing fresh has happened.
+#
+# Never errors.
 # ----------------------------------------------------------------------
 hb_is_stale() {
   local file="$1"
@@ -274,7 +370,21 @@ hb_is_stale() {
   [[ "$epoch" -gt 0 ]] || return 0
   now_epoch="$(date -u +%s 2>/dev/null || echo 0)"
   age_min=$(( (now_epoch - epoch) / 60 ))
-  [[ "$age_min" -gt "$stale_min" ]]
+  [[ "$age_min" -gt "$stale_min" ]] || return 1
+
+  # Heartbeat says old — before declaring stale, check for a fresher
+  # transcript. A transcript mtime younger than stale_min means the
+  # session is mid-turn (heartbeats only refresh at Stop) and NOT stale,
+  # regardless of how old last_activity_ts has become.
+  local sid transcript_age_min
+  sid="$(_hb_field "$file" "session_id")"
+  if [[ -n "$sid" ]]; then
+    transcript_age_min="$(_hb_transcript_fresh_min "$sid")"
+    if [[ -n "$transcript_age_min" ]] && [[ "$transcript_age_min" -le "$stale_min" ]]; then
+      return 1
+    fi
+  fi
+  return 0
 }
 
 # ----------------------------------------------------------------------
@@ -430,6 +540,55 @@ EOF
     pass "hb_classify: nonexistent file -> missing"
   else
     fail "hb_classify: expected 'missing', got '$cls4'"
+  fi
+
+  echo "Scenario 6b: heartbeat-stale-but-transcript-fresh -> working (nl-issues 2026-07-07 mid-turn false-stall fix)"
+  (
+    export OBS_TRANSCRIPTS_ROOT="$TMP/transcripts"
+    mkdir -p "$OBS_TRANSCRIPTS_ROOT"
+    # A heartbeat whose last_activity_ts is old (mimics a long tool-heavy
+    # turn where no Stop-time touch has happened yet) but whose pid IS
+    # this test's own $$ (alive) and whose transcript was just written —
+    # the mid-turn-false-stall shape: heartbeat-old, transcript-fresh.
+    cat > "$HEARTBEAT_STATE_DIR/sess-midturn.json" <<EOF
+{"schema":1,"session_id":"sess-midturn","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+    printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-midturn.jsonl"
+    if hb_is_stale "$HEARTBEAT_STATE_DIR/sess-midturn.json" 30; then
+      exit 1
+    fi
+    cls="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-midturn.json" 30)"
+    [[ "$cls" == "live" ]] || exit 1
+    exit 0
+  )
+  if [[ $? -eq 0 ]]; then
+    pass "hb_is_stale/hb_classify: old heartbeat + fresh transcript mtime -> NOT stale (live/working), not stalled/crashed"
+  else
+    fail "hb_is_stale/hb_classify: fresh transcript did not override a stale heartbeat timestamp"
+  fi
+
+  echo "Scenario 6c: dead-pid + stale-transcript (or no transcript) -> crashed, UNCHANGED by the transcript join"
+  (
+    export OBS_TRANSCRIPTS_ROOT="$TMP/transcripts-empty"
+    mkdir -p "$OBS_TRANSCRIPTS_ROOT"
+    dead_pid=""
+    ( : ) & dead_pid=$!
+    wait "$dead_pid" 2>/dev/null
+    cat > "$HEARTBEAT_STATE_DIR/sess-crashed2.json" <<EOF
+{"schema":1,"session_id":"sess-crashed2","pid":$dead_pid,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+    # No transcript file written for sess-crashed2 under this OBS_TRANSCRIPTS_ROOT
+    # (or an equally stale one would also not save it) — the dead-pid +
+    # no-fresh-transcript case must still classify crashed, exactly as
+    # before this fix.
+    cls="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-crashed2.json" 30)"
+    [[ "$cls" == "crashed" ]] || exit 1
+    exit 0
+  )
+  if [[ $? -eq 0 ]]; then
+    pass "hb_classify: dead pid + no fresh transcript -> crashed (unchanged by the transcript-mtime join)"
+  else
+    fail "hb_classify: dead-pid+stale-transcript case regressed away from 'crashed'"
   fi
 
   echo "Scenario 7: hb_write never blocks even on an unwritable target"
