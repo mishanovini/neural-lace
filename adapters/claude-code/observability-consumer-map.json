@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "_comment": "NL Observability Program Wave O, task O.1 (specs-o §O.0.3 contract C3 / §O.1 deliverable 4). Seeded with ALL signal-ledger event types observed in this repo as of Wave O batch 1: the 8 pre-existing classes (ADR 058 D6 + Wave E/F callers) plus the 10 new Wave-O lifecycle/spawn/task/turn-trace classes (contract C2). Every entry names >=1 REAL consumer that exists on disk today (grep-verified against this repo, not aspirational) EXCEPT where a consumer is O.3/O.6-owned and does not exist yet in this batch — those name the future consumer explicitly per the O.0.3 instruction ('the C4/C5 consumers count once O.3 lands -- name them now, that is the point of the map'), tagged not-yet-landed so O.6's check_obs_consumer_map doctor predicate can distinguish 'named, pending a later Wave-O task' from 'genuinely unmapped'. Law 2 (every event type has >=1 named consumer) is the invariant this file exists to satisfy; O.6 owns the enforcing doctor check (check_obs_consumer_map).",
+  "_comment": "NL Observability Program Wave O, task O.1 (specs-o §O.0.3 contract C3 / §O.1 deliverable 4). Seeded with ALL signal-ledger event types observed in this repo as of Wave O batch 1: the 8 pre-existing classes (ADR 058 D6 + Wave E/F callers) plus the 10 new Wave-O lifecycle/spawn/task/turn-trace classes (contract C2). Every entry names >=1 REAL consumer that exists on disk today (grep-verified against this repo, not aspirational). UPDATED by task O.3 (batch 2): the cli:nl-* consumers that O.1 named as 'not-yet-landed this batch' now exist and are grep-verified live in hooks/lib/observability-derive.sh (od_sessions/od_costs/od_why) and scripts/nl.sh (nl status/costs/why) — annotations below say 'landed by O.3' with the exact function name. O.6's check_obs_consumer_map doctor predicate is still the enforcing check for law 2 (every event type has >=1 named consumer); this file being builder-editable (per specs-o §O.0.1 dispatch note) means O.3 updates its own now-real consumers directly rather than leaving the stale not-yet-landed tag for the orchestrator to fix.",
   "event_types": {
     "block": {
       "consumers": [
@@ -58,52 +58,52 @@
     "session-start": {
       "consumers": [
         "digest:feed_ledger_summary",
-        "cli:nl-status (O.3, not-yet-landed this batch — od_sessions per contract C4)"
+        "cli:nl-status (landed by O.3 — hooks/lib/observability-derive.sh:od_sessions, scripts/nl.sh:cmd_status)"
       ]
     },
     "session-stop": {
       "consumers": [
         "digest:feed_ledger_summary",
-        "cli:nl-status (O.3, not-yet-landed this batch — od_sessions per contract C4)",
-        "cli:nl-costs (O.3, not-yet-landed this batch — od_costs per contract C4)"
+        "cli:nl-status (landed by O.3 — hooks/lib/observability-derive.sh:od_sessions, scripts/nl.sh:cmd_status)",
+        "cli:nl-costs (landed by O.3 — hooks/lib/observability-derive.sh:od_costs, scripts/nl.sh:cmd_costs)"
       ]
     },
     "session-compact": {
       "consumers": [
         "digest:feed_ledger_summary",
-        "cli:nl-status (O.3, not-yet-landed this batch — od_sessions per contract C4)"
+        "cli:nl-status (landed by O.3 — hooks/lib/observability-derive.sh:od_sessions, scripts/nl.sh:cmd_status)"
       ]
     },
     "session-resume": {
       "consumers": [
         "digest:feed_ledger_summary",
         "digest-feed:session-resumer.sh emit_digest_feed (original-vocabulary sibling; ~/.claude/state/resumer/digest-feed.jsonl)",
-        "cli:nl-status (O.3, not-yet-landed this batch — od_sessions per contract C4)"
+        "cli:nl-status (landed by O.3 — hooks/lib/observability-derive.sh:od_sessions, scripts/nl.sh:cmd_status)"
       ]
     },
     "throttle-detected": {
       "consumers": [
         "digest:feed_ledger_summary",
         "digest-feed:session-resumer.sh emit_digest_feed (original-vocabulary sibling; ~/.claude/state/resumer/digest-feed.jsonl)",
-        "cli:nl-costs (O.3, not-yet-landed this batch — od_costs per contract C4, throttle events + estimated time lost)"
+        "cli:nl-costs (landed by O.3 — hooks/lib/observability-derive.sh:od_costs, scripts/nl.sh:cmd_costs; throttle events + estimated time lost)"
       ]
     },
     "spawn-dispatched": {
       "consumers": [
         "digest:feed_ledger_summary",
-        "cli:nl-why (O.3, not-yet-landed this batch — od_why per contract C4, 024-class causal-chain fixture)"
+        "cli:nl-why (landed by O.3 — hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why; 024-class causal-chain fixture in tests/fixtures/wave-o/O.3/024-ledger.jsonl)"
       ]
     },
     "spawn-concluded": {
       "consumers": [
         "digest:feed_ledger_summary",
-        "cli:nl-why (O.3, not-yet-landed this batch — od_why per contract C4)"
+        "cli:nl-why (landed by O.3 — hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why)"
       ]
     },
     "bg-task-started": {
       "consumers": [
         "digest:feed_ledger_summary",
-        "cli:nl-status (O.3, not-yet-landed this batch — od_sessions per contract C4)"
+        "cli:nl-status (landed by O.3 — hooks/lib/observability-derive.sh:od_sessions, scripts/nl.sh:cmd_status)"
       ]
     },
     "bg-task-finished": {
@@ -113,7 +113,7 @@
     },
     "turn-trace": {
       "consumers": [
-        "cli:nl-why (O.3, not-yet-landed this batch — od_why per contract C4, per-Stop hook-timing breakdown)"
+        "cli:nl-why (landed by O.3 — hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why; per-Stop hook-timing breakdown)"
       ]
     }
   }
