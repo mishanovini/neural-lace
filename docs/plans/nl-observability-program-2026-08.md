@@ -91,6 +91,26 @@ new `adapters/claude-code/scripts/session-heartbeat.sh`, `workstreams-ui/`
 `settings.json.template` + doctor (orchestrator-only at integration),
 `observability-consumer-map.json` (new, doctor-read).
 
+## In-flight scope updates
+
+This list was written at O.0 wave-spec time (high-level); the per-task NORMATIVE
+spec (`docs/plans/nl-observability-program-2026-08-specs-o.md` §O.0.2 dispatch map)
+enumerates each task's exact file ownership, disjoint by design (parallel worktree
+builders). Entries below name concrete files the per-task spec assigns that weren't
+individually spelled out above:
+
+- 2026-07-06: `adapters/claude-code/scripts/ntfy-push.sh` (new) — O.5 push
+  implementation (send/scan verbs), per specs-o.md §O.5 dispatch map row
+  (build/wave-o-o5).
+- 2026-07-06: `adapters/claude-code/scripts/needs-you.sh` (edit — one guarded call
+  in `cmd_add`) — O.5's "NEEDS-YOU created" push call site, per specs-o.md §O.5
+  deliverable 2.
+- 2026-07-06: `adapters/claude-code/tests/fixtures/wave-o/O.5/*.md` (new) — O.5
+  orchestrator-integration fragments (manifest-amendments, scan-tick-wiring,
+  doctor-predicate, install-sync, template-wiring), per §O.0.1 serialization rules
+  (builders ship fragments for orchestrator-only surfaces, never edit them
+  directly).
+
 ## Assumptions
 
 Wave E's ledger/digest/NEEDS-YOU/resumer are live and stable (they are the
