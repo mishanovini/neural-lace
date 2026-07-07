@@ -1965,13 +1965,32 @@
       "budget_class": "none"
     },
     {
+      "id": "workstreams-extract-pending",
+      "kind": "writer",
+      "doctrine_file": "doctrine/workstreams-state.md",
+      "hooks": [
+        "workstreams-extract-pending.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "retired to attic at O.4 cutover (attic + exit-0 shim, per manifest-amendments.md fragment adapters/claude-code/tests/fixtures/wave-o/O.4/manifest-amendments.md Entry 2) — superseded by needs-you.sh per that file's own header; item-extraction from Stop-time transcript scanning is no longer the mechanism. Removed from workstreams-stop-writer.sh's MEMBERS array in the same integration commit."
+    },
+    {
       "id": "workstreams-emitters",
       "kind": "writer",
       "doctrine_file": "doctrine/workstreams-state.md",
       "hooks": [
         "workstreams-emit-reconciler.sh",
         "workstreams-emit.sh",
-        "workstreams-extract-pending.sh",
         "workstreams-orchestrator-queue.sh",
         "workstreams-read.sh"
       ],
@@ -1990,7 +2009,7 @@
       },
       "blocking": false,
       "budget_class": "none",
-      "honest_status": "workstreams-emit.sh wired directly (SessionStart + spawn PreToolUse); Stop-side members dispatched via workstreams-stop-writer.sh since D.5."
+      "honest_status": "workstreams-emit.sh wired directly (SessionStart + spawn PreToolUse); Stop-side members dispatched via workstreams-stop-writer.sh since D.5. workstreams-extract-pending.sh split out to its own entry (id: workstreams-extract-pending) and retired at O.4 cutover; removed from workstreams-stop-writer.sh's MEMBERS array in the same commit."
     },
     {
       "id": "workstreams-spawn-gate",
@@ -2002,17 +2021,15 @@
       "events": [
         "PreToolUse"
       ],
-      "wired_template": true,
-      "selftest": true,
+      "wired_template": false,
+      "selftest": false,
       "jit_triggers": {
-        "paths": [
-          "workstreams-ui/"
-        ],
+        "paths": [],
         "keywords": []
       },
-      "blocking": true,
-      "budget_class": "pretool",
-      "waiver_path": "conv-tree-spawn-waiver-*.txt, fresh <1h, purpose-clause validated (lib/waiver-purpose-clause.sh) — explicitly modeled on bug-persistence-gate.sh."
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "retired at O.4 cutover (attic + exit-0 shim, per template-wiring.md fragment adapters/claude-code/tests/fixtures/wave-o/O.4/template-wiring.md) — the ONLY protected consumer (workstreams-ui's tree-state read) was replaced by derived-truth reads (nl <sub> --json); law 2 (EVERY-SIGNAL-HAS-A-CONSUMER) has no consumer left to protect. Closes NL-FINDING-024 at the root (the spawn writer -> gate PreToolUse race this finding describes can no longer fire). Blocking-gate budget 10/12 -> 8/12."
     },
     {
       "id": "workstreams-stop-gate",
@@ -2085,13 +2102,13 @@
         "manual"
       ],
       "wired_template": false,
-      "selftest": true,
+      "selftest": false,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
       "blocking": false,
-      "honest_status": "pending wiring — deterministic every-turn writer exists with green self-tests but is not wired in settings.json.template (doctor claim-honesty item)",
+      "honest_status": "retired to attic at O.4 cutover, unwired — item-extraction is superseded by needs-you.sh; this deterministic every-turn writer was built but never connected to settings.json.template and is no longer needed now that tree-state.json is not the cockpit's truth source.",
       "budget_class": "none"
     },
     {

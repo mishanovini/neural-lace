@@ -1,6 +1,6 @@
 # workstreams-ui
 
-<!-- last-verified: 2026-07-06 (O.4 cockpit rebuild) -->
+<!-- last-verified: 2026-07-07 (doctor-checked) -->
 
 The Workstreams cockpit — a localhost, READ-ONLY operator dashboard answering
 the NL Observability Program's six operator questions (design sketch:

@@ -15,9 +15,9 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 101 |
+| Total manifest entries | 109 |
 | Unique hook scripts | 101 |
-| Blocking gates (`blocking: true`) | 32 |
+| Blocking gates (`blocking: true`) | 31 |
 
 ## Hooks by event
 
@@ -31,7 +31,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PostToolUse | gh-account-hint | surfacer | no | gh-account-blindness-hint.sh |
 | PostToolUse | plan-lifecycle | writer | no | plan-auto-closure.sh, plan-lifecycle.sh, plan-status-archival-sweep.sh |
 | PostToolUse | task-verifier-reminder | surfacer | no | post-tool-task-verifier-reminder.sh |
-| PostToolUse | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-extract-pending.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
+| PostToolUse | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
 | PreCompact | pre-compact-continuity | writer | no | pre-compact-continuity.sh |
 | PreToolUse | agent-teams | gate | yes | task-completed-evidence-gate.sh, task-created-validator.sh, teammate-spawn-validator.sh |
 | PreToolUse | claude-md-hygiene | gate | yes | claude-md-hygiene-gate.sh |
@@ -55,8 +55,8 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreToolUse | spec-freeze | gate | yes | scope-enforcement-gate.sh, spec-freeze-gate.sh |
 | PreToolUse | vaporware-volume | gate | no | vaporware-volume-gate.sh |
 | PreToolUse | wire-check | gate | yes | wire-check-gate.sh |
-| PreToolUse | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-extract-pending.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
-| PreToolUse | workstreams-spawn-gate | gate | yes | workstreams-state-gate.sh |
+| PreToolUse | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
+| PreToolUse | workstreams-spawn-gate | gate | no | workstreams-state-gate.sh |
 | SessionStart | background-work-tracking | surfacer | no | stalled-work-surfacer.sh |
 | SessionStart | decision-context-emitters | writer | no | decision-context-pending-surfacer.sh, decision-context-reply-emit.sh |
 | SessionStart | discovery-cheatsheet | surfacer | no | session-start-discovery-cheatsheet.sh |
@@ -73,7 +73,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | SessionStart | session-start-surfacer-pack | surfacer | no | session-start-surfacer-pack.sh |
 | SessionStart | spawn-task-report-back | surfacer | no | spawned-task-result-surfacer.sh |
 | SessionStart | stale-plan-surfacer | surfacer | no | stale-active-plan-surfacer.sh |
-| SessionStart | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-extract-pending.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
+| SessionStart | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
 | SessionStart | workstreams-task-binding | gate | no | workstreams-task-binding.sh |
 | SessionStart | worktree-advisor | surfacer | no | session-start-worktree-advisor.sh |
 | Stop | bug-persistence | gate | yes | bug-persistence-gate.sh |
@@ -82,21 +82,23 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | Stop | signal-ledger-flush | writer | no | signal-ledger-flush.sh |
 | Stop | stop-verdict-dispatcher | gate | yes | stop-verdict-dispatcher.sh |
 | Stop | work-integrity | gate | yes | work-integrity-gate.sh |
-| Stop | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-extract-pending.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
+| Stop | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
 | Stop | workstreams-stop-gate | gate | no | workstreams-stop-gate.sh |
 | Stop | workstreams-stop-writer | writer | no | workstreams-stop-writer.sh |
 | Stop | workstreams-task-binding | gate | no | workstreams-task-binding.sh |
 | TaskCompleted | agent-teams | gate | yes | task-completed-evidence-gate.sh, task-created-validator.sh, teammate-spawn-validator.sh |
 | TaskCreated | agent-teams | gate | yes | task-completed-evidence-gate.sh, task-created-validator.sh, teammate-spawn-validator.sh |
 | UserPromptSubmit | decision-context-emitters | writer | no | decision-context-pending-surfacer.sh, decision-context-reply-emit.sh |
-| UserPromptSubmit | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-extract-pending.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
+| UserPromptSubmit | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
 | manual | harness-doctor | surfacer | no | harness-doctor.sh |
 | manual | harness-hygiene-scan | gate | yes | harness-hygiene-scan.sh |
+| manual | ntfy-push | surfacer | no | — |
 | manual | plan-reviewer | gate | yes | plan-reviewer.sh |
 | manual | propagation-engine | writer | no | propagation-trigger-router.sh |
 | manual | secret-scan-ci-backstop | gate | yes | — |
 | manual | synthetic-runner-ci | gate | yes | — |
 | manual | wave-d-retired-shims | writer | no | check-harness-sync.sh, completion-criteria-gate.sh, continuation-enforcer.sh, cross-repo-drift-warn.sh, customer-facing-review-gate.sh, dag-review-waiver-gate.sh, decision-context-gate.sh, decision-context-replay.sh, deferral-counter.sh, goal-coverage-on-stop.sh, goal-extraction-on-prompt.sh, imperative-evidence-linker.sh, narrate-and-wait-gate.sh, pr-health-snapshot-gate.sh, pre-stop-verifier.sh, principles-compliance-gate.sh, product-acceptance-gate.sh, register-progress-gate.sh, settings-divergence-detector.sh, tool-call-budget.sh, transcript-lie-detector.sh, worktree-teardown-gate.sh |
+| manual | workstreams-extract-pending | writer | no | workstreams-extract-pending.sh |
 | manual | workstreams-turn-emit | writer | no | workstreams-turn-emit.sh |
 | precommit | backlog-plan-atomicity | gate | yes | backlog-plan-atomicity.sh |
 | precommit | decisions-index | gate | yes | decisions-index-gate.sh |
@@ -114,11 +116,11 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
-| gate | 32 | 11 |
-| writer | 0 | 18 |
-| surfacer | 0 | 16 |
-| pattern | 0 | 22 |
-| convention | 0 | 2 |
+| gate | 31 | 12 |
+| writer | 0 | 21 |
+| surfacer | 0 | 18 |
+| pattern | 0 | 24 |
+| convention | 0 | 3 |
 
 ## Budgets
 
@@ -131,9 +133,9 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 |---|---|
 | stop | 8 |
 | session-start | 15 |
-| pretool | 23 |
+| pretool | 22 |
 | posttool | 6 |
-| none | 49 |
+| none | 58 |
 
 ## Doctrine index
 
@@ -160,6 +162,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/design-mode-planning.md | 1 (design-mode-planning) |
 | doctrine/diagnosis.md | 1 (diagnosis) |
 | doctrine/discovery-protocol.md | 1 (discovery-protocol) |
+| doctrine/estate-coordination.md | 1 (estate-coordination) |
 | doctrine/findings-ledger.md | 1 (findings-ledger) |
 | doctrine/friction-reflexion.md | 1 (friction-reflexion) |
 | doctrine/frontend-conventions.md | 1 (frontend-conventions) |
@@ -169,6 +172,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/interactive-process-fidelity.md | 1 (interactive-process-fidelity) |
 | doctrine/local-edit-authorization.md | 1 (local-edit-authorization) |
 | doctrine/mechanical-evidence.md | 1 (mechanical-evidence) |
+| doctrine/observability.md | 3 (nl-cli, observability, observability-consumer-map) |
 | doctrine/observed-errors-first.md | 1 (observed-errors-first) |
 | doctrine/orchestrator-pattern.md | 1 (orchestrator-pattern) |
 | doctrine/parallel-dev-discipline.md | 1 (parallel-dev-migration-naming) |
@@ -185,11 +189,11 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/vaporware-prevention.md | 2 (runtime-verification, vaporware-volume) |
 | doctrine/work-shapes.md | 1 (work-shapes) |
 | doctrine/workstream-memory-ecology.md | 1 (workstream-memory-ecology) |
-| doctrine/workstreams-state.md | 6 (workstreams-emitters, workstreams-spawn-gate, workstreams-stop-gate, workstreams-stop-writer, workstreams-task-binding, workstreams-turn-emit) |
+| doctrine/workstreams-state.md | 7 (workstreams-emitters, workstreams-extract-pending, workstreams-spawn-gate, workstreams-stop-gate, workstreams-stop-writer, workstreams-task-binding, workstreams-turn-emit) |
 | doctrine/worktree-isolation.md | 1 (worktree-advisor) |
 | rules/constitution.md | 1 (constitution) |
 
-Entries with no doctrine_file (`-`): 20.
+Entries with no doctrine_file (`-`): 23.
 
 ## Full entry listing
 
@@ -226,6 +230,7 @@ Entries with no doctrine_file (`-`): 20.
 | effort-policy-warn | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | end-manifest | writer | — | no | none | scripts/end-manifest.sh (E.12) — session end-manifest writer+validator; invoked by the dispatcher when a manifest is present, not event-wired. |
 | env-local-protection | gate | PreToolUse | yes | pretool | — |
+| estate-coordination | pattern | — | no | none | docs+skill unit only (skills/coordinate-estate.md + doctrine/estate-coordination.md); no hook, no wiring; jit_triggers fire doctrine-jit.sh's paths-match on any edit whose file_path contains SCRATCHPAD.md (keywords reserved for v2 per schema, not yet matched). |
 | external-monitor-alerts | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | findings-ledger | gate | PreToolUse | yes | pretool | — |
 | friction-reflexion | pattern | — | no | none | — |
@@ -244,8 +249,12 @@ Entries with no doctrine_file (`-`): 20.
 | mechanical-evidence | pattern | — | no | none | — |
 | migration-claude-md | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
 | needs-you-ledger | writer | — | no | none | scripts/needs-you.sh — maintains NEEDS-YOU.md (E.6); called by decision-log flow + digest, not event-wired. |
+| nl-cli | surfacer | — | no | none | scripts/nl.sh (C5 dispatcher) + hooks/lib/observability-derive.sh (C4 pure-read derivation lib: od_sessions/od_needs_me/od_shipped_since/od_harness_health/od_costs/od_backlog_health/od_why) — the six-question observability CLI (specs-o §O.3). Read-only, zero state writes; not event-wired (invoked on demand by the operator or by the future §O.4 cockpit server shelling out to `nl <sub> --json`). |
 | nl-issue-capture-loop | pattern | — | no | none | scripts/nl-issue.sh + skill (E.8) — cross-project capture; not event-wired. |
 | no-test-skip | gate | PreToolUse | yes | pretool | — |
+| ntfy-push | surfacer | manual | no | none | — |
+| observability | pattern | — | no | none | CANONICAL-COUNTERS-01 rule + the six operator questions + nl usage (specs-o §O.3 deliverable 1). doctrine/observability.md (compact) + doctrine/observability-full.md (detail, per the estate-coordination.md compact/full split precedent). No hook; the rule is self-applied discipline (per Pattern kind), same class as `estate-coordination`. ORCHESTRATOR RECONCILIATION (batch 2): O.3's fragment proposed the same jit_triggers.paths (scripts/nl.sh, hooks/lib/observability-derive.sh) as the sibling `nl-cli` entry above; doctrine-jit.sh's _compute_injection returns on the FIRST array-order match (see hooks/doctrine-jit.sh ~line 283), so with identical paths on both entries `nl-cli` (earlier in array order) would always win and this entry's own trigger would never fire — a dead, shadowed config. Resolved toward path-disjoint triggers: `nl-cli` (the mechanism entry) keeps the paths; this entry (the doctrine entry, same doctrine_file) keeps only its keywords, which the schema documents as reserved/not yet mechanically matched in v1 but preserved as documentation-of-intent. |
+| observability-consumer-map | convention | — | no | none | Data contract (specs-o §O.0.3 contract C3): every signal-ledger event type observed in the ledger or emitted anywhere in the repo MUST have >=1 named entry here (law 2). Seeded by O.1 (batch 1) with all 18 known types (8 pre-existing + 10 Wave-O new); enforced by O.6's check_obs_consumer_map doctor predicate. doctrine_file backfilled to "doctrine/observability.md" at orchestrator integration (batch 2) per O.3's report-back — that file now exists. |
 | observed-errors-first | gate | PreToolUse | no | pretool | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
 | orchestrator-pattern | pattern | — | no | none | — |
 | outcome-evidence | gate | PreToolUse | no | pretool | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
@@ -266,8 +275,10 @@ Entries with no doctrine_file (`-`): 20.
 | review-finding-fix | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
 | risk-tiered-verification | pattern | — | no | none | — |
 | runtime-verification | gate | Stop | yes | none | invoked via pre-stop-verifier.sh (Stop chain); not directly wired in settings.json.template |
+| scheduled-task-health | writer | — | no | none | scripts/scheduled-task-health.sh — one-line-per-task Last-Result report for every NL-owned (NL-*) Windows scheduled task (O.6); called by harness-doctor.sh's check_obs_scheduled_tasks predicate, not event-wired as its own settings.json entry. Reports raw values only; makes no pass/fail judgment itself. |
 | secret-hygiene-prepush | gate | prepush | yes | none | wired via git-hooks/pre-push dispatcher (core.hooksPath), not settings.json.template |
 | secret-scan-ci-backstop | gate | manual | yes | none | GitHub Actions workflow (.github/workflows/secret-backstop.yml), not a Claude Code hook; events:["manual"] is a schema-gap stand-in for CI push+PR triggers (same convention as the synthetic-runner-ci entry). Re-invokes the EXISTING pre-push-scan.sh + harness-hygiene-scan.sh scripts against the diff range server-side — the compensating control the F.3 disposition on secret-hygiene-prepush's --no-verify bypass required. Deliberately overlaps server-side-enforcement.yml's credential-scan/harness-hygiene jobs (defense-in-depth, documented in the workflow file's header) rather than being the sole CI coverage. |
+| session-heartbeat | writer | — | no | none | scripts/session-heartbeat.sh (touch/sweep) + hooks/lib/session-heartbeat-lib.sh (hb_path_for/hb_write/hb_is_stale/hb_classify, the shared C1 read-side implementation) — per-session liveness file (O.2); called by one-line splices in session-start-digest.sh / workstreams-stop-writer.sh / pre-compact-continuity.sh / session-resumer.sh, not event-wired as its own settings.json entry. |
 | session-honesty | gate | Stop | yes | stop | Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact. |
 | session-resumer | writer | — | no | none | scripts/session-resumer.sh — OS-scheduled watchdog (E.7); schtasks registration is a §E.W.6 step, not a settings.json hook. |
 | session-start-auto-install | writer | SessionStart | no | session-start | — |
@@ -289,10 +300,11 @@ Entries with no doctrine_file (`-`): 20.
 | work-integrity | gate | Stop | yes | stop | Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact. |
 | work-shapes | pattern | — | no | none | — |
 | workstream-memory-ecology | pattern | — | no | none | — |
-| workstreams-emitters | writer | PostToolUse, PreToolUse, SessionStart, Stop, UserPromptSubmit | no | none | workstreams-emit.sh wired directly (SessionStart + spawn PreToolUse); Stop-side members dispatched via workstreams-stop-writer.sh since D.5. |
-| workstreams-spawn-gate | gate | PreToolUse | yes | pretool | — |
+| workstreams-emitters | writer | PostToolUse, PreToolUse, SessionStart, Stop, UserPromptSubmit | no | none | workstreams-emit.sh wired directly (SessionStart + spawn PreToolUse); Stop-side members dispatched via workstreams-stop-writer.sh since D.5. workstreams-extract-pending.sh split out to its own entry (id: workstreams-extract-pending) and retired at O.4 cutover; removed from workstreams-stop-writer.sh's MEMBERS array in the same commit. |
+| workstreams-extract-pending | writer | manual | no | none | retired to attic at O.4 cutover (attic + exit-0 shim, per manifest-amendments.md fragment adapters/claude-code/tests/fixtures/wave-o/O.4/manifest-amendments.md Entry 2) — superseded by needs-you.sh per that file's own header; item-extraction from Stop-time transcript scanning is no longer the mechanism. Removed from workstreams-stop-writer.sh's MEMBERS array in the same integration commit. |
+| workstreams-spawn-gate | gate | PreToolUse | no | none | retired at O.4 cutover (attic + exit-0 shim, per template-wiring.md fragment adapters/claude-code/tests/fixtures/wave-o/O.4/template-wiring.md) — the ONLY protected consumer (workstreams-ui's tree-state read) was replaced by derived-truth reads (nl <sub> --json); law 2 (EVERY-SIGNAL-HAS-A-CONSUMER) has no consumer left to protect. Closes NL-FINDING-024 at the root (the spawn writer -> gate PreToolUse race this finding describes can no longer fire). Blocking-gate budget 10/12 -> 8/12. |
 | workstreams-stop-gate | gate | Stop | no | stop | retired at D.5 cutover (attic + exit-0 shim); consolidated into the single workstreams Stop writer per ADR 058 D5 / specs-d |
 | workstreams-stop-writer | writer | Stop | no | stop | — |
 | workstreams-task-binding | gate | SessionStart, Stop | no | stop | retired at D.5 cutover (attic + exit-0 shim); consolidated into the single workstreams Stop writer (D.0 collision resolution) per ADR 058 D5 / specs-d |
-| workstreams-turn-emit | writer | manual | no | none | pending wiring — deterministic every-turn writer exists with green self-tests but is not wired in settings.json.template (doctor claim-honesty item) |
+| workstreams-turn-emit | writer | manual | no | none | retired to attic at O.4 cutover, unwired — item-extraction is superseded by needs-you.sh; this deterministic every-turn writer was built but never connected to settings.json.template and is no longer needed now that tree-state.json is not the cockpit's truth source. |
 | worktree-advisor | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |

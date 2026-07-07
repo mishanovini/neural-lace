@@ -216,8 +216,38 @@ The `Description` body field is required substantive content explaining the obse
 - **Scope:** canon
 - **Source:** orchestrator session 2026-07-03 ~18:25Z — spawn_task "Launch NL overhaul Wave E (E.0–E.10)" BLOCKED by workstreams-state-gate ("verified snapshot has no live node naming this spawn's branch") despite the writer firing correctly in the same attempt
 - **Location:** adapters/claude-code/hooks/workstreams-emit.sh (--on-spawn, PreToolUse entry 29) × workstreams-state-gate.sh (PreToolUse entry 30, same matcher); design comment in --on-spawn claims it "genuinely satisfies the gate that runs immediately after (the ADR-031 r7 intended design)"
-- **Status:** open
+- **Status:** closed
 - **Description:** PROVEN from ~/.claude/logs/conversation-tree-emit.log: at the blocked attempt the writer completed both sinks (18:24:57 main-checkout GUI sink, 18:24:58 the worktree tree-state.json — the exact file the gate's _resolve_state_path targets) and logged branch-opened sp-87e4cf216648 with the verbatim title; the gate still blocked. The retry ~6 min later passed with the SAME dedup'd node id — attempt 1's write persisted, so the pass needed no new state. HYPOTHESIZED mechanism (refuter: documentation/observation that Claude Code runs multiple matching PreToolUse hooks serially in listed order): matching PreToolUse hooks execute CONCURRENTLY, so the gate can read the state file before the writer finishes — the "writer runs immediately before the gate" design assumption does not hold, and every first spawn of a fresh title risks a spurious block. Incentive impact (ADR 058 pin e): the block message's path-of-least-resistance is the waiver (agents will not guess "just retry"); prior sessions' conv-tree-spawn-waiver files are consistent with this class firing before. Remediation candidates (E.10): gate performs its own write-then-verify inline (call the writer synchronously before checking — eliminates the race in one hook); or a bounded re-read retry (~2s) before blocking; or block message adds "if you JUST spawned this, the writer may still be flushing — retry once before waiving". Also note the live gate file still self-identifies as "conversation-tree-state-gate" in its block JSON (naming residue, same class as NL-FINDING-022's neighbors).
+
+  **CLOSURE NOTE (O.4, specs-o §O.4 deliverable 4/5):** the race's SECOND
+  party — `workstreams-state-gate.sh`'s two PreToolUse entries — is retired
+  at the template layer (see `adapters/claude-code/tests/fixtures/wave-o/
+  O.4/template-wiring.md`, `manifest-amendments.md`) once the Workstreams
+  cockpit (`workstreams-ui/`) stopped reading `tree-state.json` as truth —
+  its ONLY protected consumer. The race cannot recur because the gate that
+  raced against the writer no longer runs. This is root closure, not a
+  race-condition fix within the gate: per decision D-O4 (specs-o §O.0.5),
+  the class of bug (a PreToolUse gate reading state before its sibling
+  writer's fs write lands) is eliminated by removing the gate rather than
+  hardening it, since law 2 (EVERY-SIGNAL-HAS-A-CONSUMER) says an
+  unconsumed protection is dead weight, not defense-in-depth.
+
+  Demonstrated mechanically (not just asserted): `nl why <session>
+  --last-block` (contract C4/C5, task O.3) reconstructs this EXACT
+  historical failure shape from a seeded fixture — see
+  `adapters/claude-code/tests/fixtures/wave-o/O.3/` for the 024-class
+  ledger fixture and `hooks/lib/observability-derive.sh`'s od_why
+  self-test scenario asserting the reconstructed chain names the writer,
+  the gate, the block reason, and the retry-then-allow outcome in <=20
+  output lines — i.e. the ~40-minute manual log-archaeology this finding's
+  own Source line describes is now a <2-minute `nl why` query, AND the
+  underlying gate that produced the block is gone. Both the mechanical
+  diagnosis tool (O.3) and the root-cause retirement (O.4) ship in the same
+  Wave. Re-verified live at integration time (2026-07-07): `bash
+  adapters/claude-code/hooks/lib/observability-derive.sh --self-test`
+  Scenario 8/8a/8b all PASS (42/42 total), and the two
+  `workstreams-state-gate.sh` PreToolUse entries are absent from
+  `settings.json.template` on this tree.
 
 ### NL-FINDING-025 — work-integrity-gate --self-test intermittently fails should-pass scenarios with exit 2 and EMPTY stderr (environmental flake; misattribution risk)
 - **Severity:** warn

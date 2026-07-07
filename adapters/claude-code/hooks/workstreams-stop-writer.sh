@@ -42,7 +42,6 @@ MEMBERS=(
   "workstreams-stop-gate.sh"
   "workstreams-emit.sh --on-stop"
   "workstreams-task-binding.sh --on-stop"
-  "workstreams-extract-pending.sh"
   "workstreams-emit-reconciler.sh"
   "workstreams-orchestrator-queue.sh"
 )
@@ -85,7 +84,6 @@ if [[ "${1:-}" == "--self-test" ]]; then
       "workstreams-stop-gate.sh:silent" \
       "workstreams-emit.sh:silent" \
       "workstreams-task-binding.sh:silent" \
-      "workstreams-extract-pending.sh:silent" \
       "workstreams-emit-reconciler.sh:warn" \
       "workstreams-orchestrator-queue.sh:silent"; do
       _wsw_mf="${_wsw_member_spec%%:*}"

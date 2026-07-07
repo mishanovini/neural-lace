@@ -165,6 +165,22 @@ individually spelled out above:
   map, omitted from the header list at plan-creation time (predates specs-o's
   per-task detail); added here rather than opened as a separate plan since
   O.8 is this plan's own declared task.
+- 2026-07-07: O.4 integration (orchestrator-applied, specs-o §O.4 deliverable
+  4/5) — `adapters/claude-code/settings.json.template` (removed the two
+  `workstreams-state-gate.sh` PreToolUse entries), `adapters/claude-code/
+  manifest.json` (workstreams-spawn-gate retired honest_status; new
+  workstreams-extract-pending standalone retired entry split out of
+  workstreams-emitters; workstreams-turn-emit honest_status updated),
+  `adapters/claude-code/hooks/workstreams-stop-writer.sh` (MEMBERS array +
+  self-test fixture list drop workstreams-extract-pending.sh),
+  `adapters/claude-code/hooks/{workstreams-state-gate,workstreams-extract-
+  pending,workstreams-turn-emit}.sh` (attic'd; thin exit-0 shims left at the
+  original hooks/ path so manifest-check.sh's hooks[]<->disk coverage
+  contract stays satisfiable without scanning attic/), `docs/findings.md`
+  (NL-FINDING-024 status -> closed) — none of these were individually named
+  in the header Files-to-Modify list (which said "doctor (orchestrator-only
+  at integration)" generically); listed here per this section's own stated
+  purpose.
 
 ## Assumptions
 
