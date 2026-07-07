@@ -332,13 +332,50 @@ cmd_validate() {
   done
 
   # ---- check 2: every unresolved[].recorded_at file exists + contains item ----
+  #
+  # NL-issues ledger entry 2026-07-07 (orchestrator-authorized fix, Wave-O
+  # batch-1 integration): the ORIGINAL version of this check did a literal
+  # `grep -qF -- "$item" "$recorded_at"` — a byte-substring search for the
+  # CONCATENATED string cmd_write built at write time
+  # ("<gate>/<check>: <message>") against unresolved-gaps.jsonl, whose real
+  # lines (written by stop-verdict-dispatcher.sh's protocol-downgrade path,
+  # `{"ts":...,"gate":"...","check":"...","message":"..."}`) carry gate/
+  # check/message as SEPARATE JSON fields — that concatenated string never
+  # appears verbatim in the file, so the old check-2 could never match a
+  # real downgrade-path gap and re-blocked with end-manifest/validate-failed
+  # on EVERY later Stop, forever, once a session had one protocol-downgrade
+  # in its history. Fixed to match STRUCTURALLY: for each line in
+  # recorded_at, reconstruct the SAME concatenation from that line's own
+  # gate/check/message fields via jq and compare to item for an exact
+  # match (not a substring test on raw bytes) — this is what "the item is
+  # actually recorded" means when recorded_at is a JSONL ledger. A
+  # jq-less fallback (substring grep, consistent with this file's existing
+  # jq-optional style elsewhere) covers environments without jq, at the
+  # cost of the same false-negative risk the structural check exists to
+  # close (acceptable degradation, not a silent behavior change — jq is
+  # required for every other check in this validator already).
   local item recorded_at n_unresolved
   n_unresolved=$(jq '.unresolved | length' "$path" 2>/dev/null || echo 0)
   i=0
   while [[ "$i" -lt "$n_unresolved" ]]; do
     item=$(jq -r ".unresolved[$i].item" "$path" 2>/dev/null)
     recorded_at=$(jq -r ".unresolved[$i].recorded_at" "$path" 2>/dev/null)
-    if [[ -f "$recorded_at" ]] && grep -qF -- "$item" "$recorded_at" 2>/dev/null; then
+    local found=0
+    if [[ -f "$recorded_at" ]]; then
+      if command -v jq >/dev/null 2>&1; then
+        if jq -e --arg item "$item" \
+             '(.gate // "?") + "/" + (.check // "?") + ": " + (.message // "") == $item' \
+             "$recorded_at" >/dev/null 2>&1; then
+          found=1
+        fi
+      elif grep -qF -- "$item" "$recorded_at" 2>/dev/null; then
+        # jq-less fallback: substring match on raw bytes (best-effort;
+        # will not match structured JSONL fields the way the jq path
+        # does, but this validator already requires jq for checks 1/3/4).
+        found=1
+      fi
+    fi
+    if [[ "$found" -eq 1 ]]; then
       echo "PASS: unresolved item '${item:0:60}...' found in ${recorded_at}" >&2
     else
       echo "FAIL: unresolved item '${item:0:60}...' NOT found in ${recorded_at} (missing recorded_at / item not actually recorded)" >&2
@@ -575,6 +612,53 @@ _em_self_test() {
   RC=0
   ( cd "$REPO" && bash "$script_path" validate "sess-s7" --transcript "$T" >/dev/null 2>"$D/validate-err.txt" ) || RC=$?
   [[ "$RC" == "0" ]] && ok "incidental-toucher: manifest making no claim about the foreign plan validates PASS (no inherited remedy)" || no "expected incidental-toucher manifest to validate clean, got $RC"
+
+  # ================================================================
+  # Scenario 8 (nl-issues 2026-07-07 defect fix, RED-before/GREEN-after):
+  # reproduces the EXACT mismatch shape that made check-2 unfixable-forever
+  # once a session had a protocol-downgrade in its history. recorded_at
+  # points at a ledger file written in stop-verdict-dispatcher.sh's REAL
+  # flagless downgrade-path shape (separate gate/check/message JSON
+  # fields, `{"ts":...,"session_id":...,"gate":"...","check":"...",
+  # "message":"..."}` — see that file's protocol-downgrade loop), NOT a
+  # fixture-only pre-concatenated string. cmd_write's own item-building
+  # expression ((.gate // "?") + "/" + (.check // "?") + ": " + (.message
+  # // "")) is mirrored here by hand for item, exactly as cmd_write would
+  # have built it FROM that same ledger line. Before the fix, `grep -qF`
+  # searching for the concatenated string as literal bytes inside a file
+  # that only ever contains separate JSON fields could never match — this
+  # scenario is that exact failure shape. After the fix (structural jq
+  # reconstruction + compare), it validates PASS.
+  # ================================================================
+  _setup_scenario s8; D="$SCEN_DIR"
+  REPO=$(_build_repo "$D" repo)
+  REAL_GAPS="$D/state/unresolved-gaps.jsonl"
+  printf '{"ts":"2026-07-07T00:00:00Z","session_id":"sess-s8","gate":"session-honesty-gate","check":"marker-scan","message":"final line missing a DONE/PAUSING/BLOCKED/CONTINUING marker"}\n' > "$REAL_GAPS"
+  MPATH="$D/state/sess-s8.json"
+  jq -n --arg rec "$REAL_GAPS" '{schema_version:1,session_id:"sess-s8",created_at:"2026-07-07T00:00:00Z",torn_down:false,shipped:[],unresolved:[{item:"session-honesty-gate/marker-scan: final line missing a DONE/PAUSING/BLOCKED/CONTINUING marker",recorded_at:$rec}],needs_operator:[],marker:"DONE: fake"}' > "$MPATH"
+  RC=0
+  ( cd "$REPO" && bash "$script_path" validate "sess-s8" >/dev/null 2>"$D/validate-err.txt" ) || RC=$?
+  [[ "$RC" == "0" ]] && ok "GAP-defect fix: real downgrade-path ledger shape (separate gate/check/message fields) now validates PASS structurally" || no "expected the real downgrade-path ledger shape to validate PASS after the structural fix, got $RC (see $D/validate-err.txt)"
+  grep -q "found in" "$D/validate-err.txt" 2>/dev/null && ok "check-2 reports the item found (structural match), not a false miss" || no "expected a 'found in' PASS line for check 2"
+
+  # ================================================================
+  # Scenario 9 (negative — item genuinely NOT recorded): same real ledger
+  # line shape as scenario 8, but the manifest's unresolved[].item names a
+  # gap that was never actually written to that ledger file. The
+  # structural fix must still FAIL this — proving the fix didn't turn
+  # check-2 into a rubber stamp that passes anything pointed at an
+  # existing file.
+  # ================================================================
+  _setup_scenario s9; D="$SCEN_DIR"
+  REPO=$(_build_repo "$D" repo)
+  REAL_GAPS="$D/state/unresolved-gaps.jsonl"
+  printf '{"ts":"2026-07-07T00:00:00Z","session_id":"sess-s9","gate":"session-honesty-gate","check":"marker-scan","message":"final line missing a DONE/PAUSING/BLOCKED/CONTINUING marker"}\n' > "$REAL_GAPS"
+  MPATH="$D/state/sess-s9.json"
+  jq -n --arg rec "$REAL_GAPS" '{schema_version:1,session_id:"sess-s9",created_at:"2026-07-07T00:00:00Z",torn_down:false,shipped:[],unresolved:[{item:"some-other-gate/some-other-check: a gap that was never actually recorded to this ledger",recorded_at:$rec}],needs_operator:[],marker:"DONE: fake"}' > "$MPATH"
+  RC=0
+  ( cd "$REPO" && bash "$script_path" validate "sess-s9" >/dev/null 2>"$D/validate-err.txt" ) || RC=$?
+  [[ "$RC" != "0" ]] && ok "negative: genuinely-unrecorded item still FAILS validation (structural fix is not a rubber stamp)" || no "expected a genuinely-unrecorded item to fail validation, got $RC"
+  grep -q "NOT found in" "$D/validate-err.txt" 2>/dev/null && ok "check-2 correctly reports NOT found for the genuinely-unrecorded item" || no "expected a 'NOT found in' FAIL line for check 2"
 
   echo "" >&2
   echo "self-test summary: $passed passed, $failed failed" >&2
