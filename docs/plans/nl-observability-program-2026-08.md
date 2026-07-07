@@ -13,7 +13,14 @@ Design: docs/reviews/2026-07-04-observability-design-sketch.md (normative — th
 laws, the six operator questions, surfaces, non-goals, success metrics).
 Backlog items absorbed: WORKSTREAMS-UI-PURPOSE-AUDIT-01 (P1 — dispositioned by the
 sketch: rebuild cockpit as a thin view over derived truth); ntfy.sh phone-notification
-item (absorb at activation; mark both in backlog in the activation commit).
+item (absorb at activation; mark both in backlog in the activation commit);
+CANONICAL-COUNTERS-01 → O.3 (derivation lib = canonical-oracle host);
+SCHEDULED-TASK-HEALTH-01 → O.6 (Last Result==0 doctor check);
+E6-HEADER-HARDENING-01 → O.6 (4-header predicate) — rows deleted from backlog in the
+O.0 commit per planning doctrine.
+Specs: docs/plans/nl-observability-program-2026-08-specs-o.md (O.0 output 2026-07-06;
+NORMATIVE for builders — dispatch map §O.0.2, frozen interface contracts §O.0.3,
+serialization rules §O.0.1). Decisions: docs/decisions/060-wave-o-observability-architecture.md.
 
 ## Goal
 
@@ -124,3 +131,15 @@ labels stale sections); ledger growth (rotation policy + `nl` reads tail-first).
 Per-task self-tests (sandboxed, RETRY_GUARD_STATE_DIR + HARNESS_SELFTEST — findings
 028/025 discipline); drills as Done-whens (kill-drill, push-drill, time-to-answer
 drill); doctor red-fixtures; UX acceptance run on the cockpit (§4).
+
+## Acceptance Scenarios (O.4)
+
+Authored plan-time 2026-07-06 by end-user-advocate (doctrine/acceptance-scenarios.md
+loop). Canonical full text — runtime conventions, the 10 runtime-executable
+scenarios (q1..q6 + drift-badge + degraded-cli + unobserved-cloud +
+interrupt-priority), seeding commands, out-of-scope list with owners:
+docs/reviews/2026-07-06-o4-acceptance-scenarios.md. The runtime acceptance run
+executes that file verbatim against http://localhost:7733 and records the PASS/FAIL
+artifact O.4's Done-when requires. All plan-time feedback gaps were folded into
+specs-o (§O.0.1-3 env overrides, C4 state derivation rules, §O.4.3 badge lifecycle,
+§O.4.3b interrupt-priority + freshness) on 2026-07-06.
