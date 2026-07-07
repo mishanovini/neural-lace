@@ -82,6 +82,12 @@ set -uo pipefail
 
 # shellcheck disable=SC1091
 { source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/nl-paths.sh" 2>/dev/null; } || true
+# NL Observability Program Wave O, task O.1 (specs-o §O.1 deliverable 3):
+# spawn-dispatched/spawn-concluded ledger events, sourced best-effort so a
+# tree missing this lib (should not happen — same repo) never breaks a
+# tool call (writer hooks never block, per this file's own header).
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/signal-ledger.sh" 2>/dev/null; } || true
 
 MODE="${1:-}"
 
@@ -635,6 +641,15 @@ _run_on_spawn() {
   # observability floor for spawns that carry no sentinels at all.
   _warn_no_rich_details "$input" "$title"
 
+  # ---- WAVE-O O.1 EMIT: spawn-dispatched (contract C2) --------------------
+  # ONE marked emit line, per specs-o §O.1 deliverable 3. Never blocks
+  # (ledger_emit's own contract); guarded by command -v for a tree missing
+  # the lib. child_id/title/serves_item_id are already resolved above.
+  if command -v ledger_emit >/dev/null 2>&1; then
+    ledger_emit "workstreams-emit" "spawn-dispatched" "child=${child_id} title=\"${title}\" tool=${tool} serves=${serves_item_id:-none}"
+  fi
+  # ---- END WAVE-O O.1 EMIT --------------------------------------------------
+
   exit 0
 }
 
@@ -876,6 +891,16 @@ _run_on_stop() {
     _emit_dual "$lib" "$ef"
     rm -f "$ef" 2>/dev/null || true
     _log "stop session=$sid concluded=$n_cc shipped=$n_ship"
+
+    # ---- WAVE-O O.1 EMIT: spawn-concluded (contract C2) -------------------
+    # ONE marked emit line, per specs-o §O.1 deliverable 3. Only fires when
+    # this Stop actually concluded >=1 branch ($first==0, same guard as the
+    # _emit_dual call above) — a session that opened nothing has nothing to
+    # conclude (mirrors the pre-existing silent-no-op-at-top guard).
+    if command -v ledger_emit >/dev/null 2>&1; then
+      ledger_emit "workstreams-emit" "spawn-concluded" "session=${sid} concluded=${n_cc} shipped=${n_ship}"
+    fi
+    # ---- END WAVE-O O.1 EMIT ------------------------------------------------
   fi
   rm -f "$ledger" 2>/dev/null || true   # idempotent: a re-fired Stop is a no-op
   exit 0
@@ -1648,7 +1673,8 @@ _self_test() {
 
   # BD5: Workflow launch — PostToolUse is launch-ack, NOT completion -> stays open.
   local spB5="$tmp/bd-5.json"
-  CONV_TREE_STATE_PATH="$spB5" CLAUDE_SESSION_ID="sess-bd-5" \
+  local obs_bg_ledger="$tmp/obs-bg-ledger.jsonl"
+  SIGNAL_LEDGER_PATH="$obs_bg_ledger" CONV_TREE_STATE_PATH="$spB5" CLAUDE_SESSION_ID="sess-bd-5" \
     bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Workflow","tool_input":{"meta":{"name":"Nightly sweep"},"prompt":"body"},"session_id":"sess-bd-5"}' >/dev/null 2>&1
   CONV_TREE_STATE_PATH="$spB5" CLAUDE_SESSION_ID="sess-bd-5" \
     bash "$SELF" --on-builder-complete <<<'{"tool_name":"Workflow","tool_input":{"meta":{"name":"Nightly sweep"},"prompt":"body"},"tool_response":"launched id=wf-1","session_id":"sess-bd-5"}' >/dev/null 2>&1
@@ -1659,6 +1685,27 @@ _self_test() {
     echo "FAIL: BD5 (item='$idB5' checked='$(_bd_item "$spB5" "$idB5" 'checked')')"; fail=$((fail+1))
   fi
   _ck "BD5b Workflow title from meta.name" "$(_bd_item "$spB5" "$idB5" 'text')" "Nightly sweep"
+
+  # OBS4 (Wave O task O.1, contract C2): --on-builder-dispatch for a
+  # genuinely-background dispatch (Workflow, bg==1 per _builder_is_background)
+  # emits bg-task-started. Reuses the SIGNAL_LEDGER_PATH set alongside BD5's
+  # own --on-builder-dispatch call immediately above.
+  if [[ -f "$obs_bg_ledger" ]] && grep -q '"gate":"workstreams-emit".*"event":"bg-task-started"' "$obs_bg_ledger" 2>/dev/null && grep -q 'Nightly sweep' "$obs_bg_ledger" 2>/dev/null; then
+    echo "PASS: OBS4 --on-builder-dispatch (background Workflow) emits bg-task-started"; pass=$((pass+1))
+  else
+    echo "FAIL: OBS4 --on-builder-dispatch (background Workflow) emits bg-task-started (expected a workstreams-emit/bg-task-started line naming 'Nightly sweep' in $obs_bg_ledger)"; fail=$((fail+1))
+  fi
+
+  # OBS5: a FOREGROUND dispatch (bg==0, e.g. BD1's plain Task) must NOT emit
+  # bg-task-started (the emit is scoped strictly to bg=="1").
+  local obs_fg_ledger="$tmp/obs-fg-ledger.jsonl"
+  SIGNAL_LEDGER_PATH="$obs_fg_ledger" CONV_TREE_STATE_PATH="$tmp/obs-fg.json" CLAUDE_SESSION_ID="sess-obs-fg" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Foreground only"},"session_id":"sess-obs-fg"}' >/dev/null 2>&1
+  if [[ ! -f "$obs_fg_ledger" ]] || ! grep -q '"event":"bg-task-started"' "$obs_fg_ledger" 2>/dev/null; then
+    echo "PASS: OBS5 foreground dispatch (bg==0) emits NO bg-task-started"; pass=$((pass+1))
+  else
+    echo "FAIL: OBS5 foreground dispatch (bg==0) emits NO bg-task-started"; fail=$((fail+1))
+  fi
 
   # BD6: Agent run_in_background:true -> completion NOT emitted at PostToolUse.
   local spB6="$tmp/bd-6.json"
@@ -1697,6 +1744,46 @@ _self_test() {
     bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"description":"Pre was missed"},"tool_response":"ok","session_id":"sess-bd-10"}' >/dev/null 2>&1
   local idB10; idB10=$(_bd_itemid_of "$spB10")
   _ck "BD10 complete-without-pre -> item created + checked" "$(_bd_item "$spB10" "$idB10" 'checked')" "true"
+
+  # ================================================================
+  # OBS1/OBS2 (Wave O task O.1, specs-o §O.1 deliverable 3, contract C2):
+  # --on-spawn emits spawn-dispatched; --on-stop emits spawn-concluded.
+  # SIGNAL_LEDGER_PATH is set explicitly (rather than relying on the
+  # HARNESS_SELFTEST=1 PID-scoped default) so both the spawn and the stop
+  # calls below — two separate `bash "$SELF"` child processes with two
+  # different PIDs — write to the SAME fixture ledger file this scenario
+  # asserts against.
+  # ================================================================
+  local spOBS="$tmp/obs-1.json"
+  local obs_ledger="$tmp/obs-ledger.jsonl"
+  CONV_TREE_STATE_PATH="$spOBS" SIGNAL_LEDGER_PATH="$obs_ledger" CLAUDE_SESSION_ID="sess-obs-1" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Obs Spawn"},"session_id":"sess-obs-1"}' >/dev/null 2>&1
+  if [[ -f "$obs_ledger" ]] && grep -q '"gate":"workstreams-emit".*"event":"spawn-dispatched"' "$obs_ledger" 2>/dev/null && grep -q 'title=\\"Obs Spawn\\"' "$obs_ledger" 2>/dev/null; then
+    echo "PASS: OBS1 --on-spawn emits spawn-dispatched (contract C2, title carried in detail)"; pass=$((pass+1))
+  else
+    echo "FAIL: OBS1 --on-spawn emits spawn-dispatched (expected a workstreams-emit/spawn-dispatched line naming 'Obs Spawn' in $obs_ledger)"; fail=$((fail+1))
+    [[ -f "$obs_ledger" ]] && cat "$obs_ledger"
+  fi
+  CONV_TREE_STATE_PATH="$spOBS" SIGNAL_LEDGER_PATH="$obs_ledger" CLAUDE_SESSION_ID="sess-obs-1" \
+    bash "$SELF" --on-stop <<<'{"session_id":"sess-obs-1"}' >/dev/null 2>&1
+  if grep -q '"gate":"workstreams-emit".*"event":"spawn-concluded"' "$obs_ledger" 2>/dev/null && grep -q 'session=sess-obs-1 concluded=' "$obs_ledger" 2>/dev/null; then
+    echo "PASS: OBS2 --on-stop emits spawn-concluded (contract C2)"; pass=$((pass+1))
+  else
+    echo "FAIL: OBS2 --on-stop emits spawn-concluded (expected a workstreams-emit/spawn-concluded line in $obs_ledger)"; fail=$((fail+1))
+    [[ -f "$obs_ledger" ]] && cat "$obs_ledger"
+  fi
+
+  # OBS3: a Stop with NOTHING to conclude (no prior spawn — mirrors ST12's
+  # silent-no-op fixture) emits NO spawn-concluded event (the guard only
+  # fires when $first==0, i.e. >=1 branch was actually concluded).
+  local obs_ledger3="$tmp/obs-ledger-3.json"
+  SIGNAL_LEDGER_PATH="$obs_ledger3" CLAUDE_SESSION_ID="sess-obs-3-never-spawned" \
+    bash "$SELF" --on-stop <<<'{"session_id":"sess-obs-3-never-spawned"}' >/dev/null 2>&1
+  if [[ ! -f "$obs_ledger3" ]] || ! grep -q '"event":"spawn-concluded"' "$obs_ledger3" 2>/dev/null; then
+    echo "PASS: OBS3 --on-stop with nothing to conclude emits no spawn-concluded event"; pass=$((pass+1))
+  else
+    echo "FAIL: OBS3 --on-stop with nothing to conclude emits no spawn-concluded event"; fail=$((fail+1))
+  fi
 
   rm -rf "$tmp" 2>/dev/null || true
   echo "self-test: $pass passed, $fail failed"
@@ -2144,6 +2231,22 @@ _run_on_builder_dispatch() {
       "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null || true
   fi
   _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid"
+
+  # ---- WAVE-O O.1 EMIT: bg-task-started (contract C2) --------------------
+  # ONE marked emit line, per specs-o §O.1 deliverable 3. Scoped HONESTLY:
+  # this is the closest existing mechanical tap for "a background task
+  # started" (PreToolUse on Task|Agent|Workflow, bg=="1" derived from
+  # _builder_is_background — run_in_background:true or a Workflow launch)
+  # but it does NOT cover EVERY background-task shape in this harness — a
+  # `Bash` tool call with run_in_background:true (or the `Monitor` tool)
+  # has no PreToolUse/PostToolUse hook wired anywhere that would fire this
+  # event. See this task's report-back for the documented gap; no
+  # cooperative-discipline convention was invented to paper over it.
+  if [[ "$bg" == "1" ]] && command -v ledger_emit >/dev/null 2>&1; then
+    ledger_emit "workstreams-emit" "bg-task-started" "item=${item_id} node=${child_id} tool=${tool} title=\"${title}\" session=${sid}"
+  fi
+  # ---- END WAVE-O O.1 EMIT --------------------------------------------------
+
   exit 0
 }
 
@@ -2167,6 +2270,17 @@ _run_on_builder_complete() {
   if [[ "$bg" == "1" ]]; then
     events="$events]"
     _log "builder-complete DEFERRED (background $tool) item=$item_id — launch-ack is not completion (ADR-054 ceiling)"
+    # NL Observability Program Wave O, task O.1 (specs-o §O.1 deliverable 3):
+    # deliberately NO bg-task-finished emit here. This branch fires at
+    # LAUNCH-RETURN for a background dispatch, not at its actual
+    # completion (the COMPLETION-SIGNAL CEILING documented above this
+    # function: "NO stable local hook event ... for background-dispatch
+    # completion"). Emitting bg-task-finished here would be a false
+    # completion claim, exactly the failure mode this file's own ADR-054
+    # ceiling was written to avoid. Per specs-o §O.1 deliverable 3's own
+    # instruction ("if none exists, document the gap ... do NOT invent a
+    # cooperative-discipline convention"), this gap is left unfilled and
+    # named in this task's report-back rather than papered over.
   else
     # SAME derivation as _run_resolve_item resolution=done, so a manual
     # resolve and this automatic one dedupe to one event.

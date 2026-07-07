@@ -109,6 +109,11 @@ if [ -f "$SCRIPT_DIR/lib/nl-paths.sh" ]; then
   # shellcheck disable=SC1091
   source "$SCRIPT_DIR/lib/nl-paths.sh" 2>/dev/null || true
 fi
+# shellcheck source=lib/signal-ledger.sh
+if [ -f "$SCRIPT_DIR/lib/signal-ledger.sh" ]; then
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+fi
 
 _SNAPSHOT_SCRIPT_DEFAULT="$SCRIPT_DIR/../scripts/session-snapshot.sh"
 
@@ -162,6 +167,15 @@ CATEGORIES
 # ============================================================
 _run_precompact() {
   local transcript="$1" session_id="$2" snapshot_script="$3" trigger="${4:-}"
+
+  # ---- WAVE-O O.1 EMIT: session-compact (contract C2) --------------------
+  # ONE marked lifecycle-event emit call, per specs-o §O.1 deliverable 2.
+  # Never blocks: ledger_emit's own contract; guarded by command -v so a
+  # tree where signal-ledger.sh failed to source is still a silent no-op.
+  if command -v ledger_emit >/dev/null 2>&1; then
+    ledger_emit "pre-compact-continuity" "session-compact" "trigger=${trigger:-unknown}"
+  fi
+  # ---- END WAVE-O O.1 EMIT -------------------------------------------------
 
   local instructions header body
   instructions="$(_six_category_instructions)"
@@ -408,6 +422,50 @@ NY
     echo "  T10 snapshot output sandboxed under HARNESS_SELFTEST_DIR: PASS"; pass=$((pass+1))
   else
     echo "  T10 snapshot output sandboxed under HARNESS_SELFTEST_DIR: FAIL (path=$snap_path)"; fail=$((fail+1))
+  fi
+
+  # T11 (Wave O task O.1, contract C2): _run_precompact emits exactly one
+  # session-compact ledger event per invocation, carrying the trigger value
+  # in its detail. Sandboxed via SIGNAL_LEDGER_PATH per signal-ledger.sh's
+  # own contract (never touches the real machine ledger).
+  local t11_ledger="$tmp/t11-ledger.jsonl"
+  ( export SIGNAL_LEDGER_PATH="$t11_ledger"; \
+    _run_precompact "$transcript" "sess-pc-1" "$snapshot_script" "auto" >/dev/null )
+  if [[ -f "$t11_ledger" ]] && grep -q '"gate":"pre-compact-continuity".*"event":"session-compact"' "$t11_ledger" 2>/dev/null; then
+    echo "  T11 session-compact ledger event emitted (contract C2): PASS"; pass=$((pass+1))
+  else
+    echo "  T11 session-compact ledger event emitted (contract C2): FAIL (expected a pre-compact-continuity/session-compact line in $t11_ledger)"; fail=$((fail+1))
+  fi
+  if grep -q 'trigger=auto' "$t11_ledger" 2>/dev/null; then
+    echo "  T11b session-compact detail carries the trigger value: PASS"; pass=$((pass+1))
+  else
+    echo "  T11b session-compact detail carries the trigger value: FAIL"; fail=$((fail+1))
+  fi
+  local t11_count
+  t11_count=$(grep -c '"event":"session-compact"' "$t11_ledger" 2>/dev/null | tr -d ' ')
+  [[ -z "$t11_count" ]] && t11_count=0
+  if [[ "$t11_count" == "1" ]]; then
+    echo "  T11c exactly one session-compact event per invocation: PASS"; pass=$((pass+1))
+  else
+    echo "  T11c exactly one session-compact event per invocation: FAIL (got $t11_count)"; fail=$((fail+1))
+  fi
+
+  # T12 (Wave O task O.1, specs-o §O.0.1 rule 4 — flagless-shape mandate):
+  # invokes the REAL PreCompact entry path (bash "$0", stdin JSON, no CLI
+  # flags — the exact production invocation shape a live PreCompact event
+  # gives this hook) with only env-var sandboxing (HARNESS_SELFTEST_DIR +
+  # SIGNAL_LEDGER_PATH), and asserts the session-compact ledger event lands
+  # via that real subprocess path (not merely via the internal
+  # _run_precompact function call T1-T11 above use).
+  local t12_ledger="$tmp/t12-ledger.jsonl"
+  local t12_transcript="$tmp/sess-fixture-t12.jsonl"
+  printf '{"type":"user","session_id":"sess-pc-t12","message":{"role":"user","content":"hi"}}\n' > "$t12_transcript"
+  printf '%s\n' "$(printf '{"transcript_path":"%s","session_id":"sess-pc-t12","trigger":"auto"}' "$t12_transcript")" \
+    | HARNESS_SELFTEST=1 HARNESS_SELFTEST_DIR="$HARNESS_SELFTEST_DIR" SIGNAL_LEDGER_PATH="$t12_ledger" bash "$0" >/dev/null 2>&1
+  if [[ -f "$t12_ledger" ]] && grep -q '"gate":"pre-compact-continuity".*"event":"session-compact"' "$t12_ledger" 2>/dev/null; then
+    echo "  T12 real flagless PreCompact invocation emits session-compact: PASS"; pass=$((pass+1))
+  else
+    echo "  T12 real flagless PreCompact invocation emits session-compact: FAIL (expected a line in $t12_ledger)"; fail=$((fail+1))
   fi
 
   unset SESSION_SNAPSHOT_MAIN_ROOT

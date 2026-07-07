@@ -194,6 +194,48 @@ ledger_emit() {
 }
 
 # ----------------------------------------------------------------------
+# ledger_emit_typed <gate> <event> [detail]
+#
+# NL Observability Program Wave O, task O.1 (specs-o §O.1 deliverable 1).
+# ALIAS of ledger_emit — same signature, same 5-field JSONL line, same
+# never-blocks contract. NO SCHEMA CHANGE: this frozen line shape
+# ({ts,session_id,gate,event,detail}) is unchanged by Wave O. The alias
+# exists purely so O.1's new lifecycle/spawn/task/turn-trace call sites can
+# read as "typed" emissions (their event value is one of the KNOWN-TYPE
+# registry below, not a gate-specific ad-hoc string) without implying any
+# behavioral difference from a plain ledger_emit call — callers may use
+# either name interchangeably; this file's own self-test exercises both.
+# ----------------------------------------------------------------------
+ledger_emit_typed() {
+  ledger_emit "$@"
+}
+
+# ----------------------------------------------------------------------
+# KNOWN EVENT TYPES (comment registry — not machine-enforced here; the
+# machine-enforced invariant is observability-consumer-map.json + O.6's
+# check_obs_consumer_map doctor predicate, per contract C3/law 2).
+#
+# Pre-Wave-O (ADR 058 D6 + Wave E callers):
+#   block | warn | waiver | downgrade | skip | flush | demote | soft-counter
+#
+# Wave O additions (specs-o §O.0.3 contract C2 — session lifecycle,
+# spawn/dispatch, background tasks, turn-traces):
+#   session-start | session-stop | session-compact | session-resume |
+#   throttle-detected | spawn-dispatched | spawn-concluded |
+#   bg-task-started | bg-task-finished | turn-trace
+#
+# Every one of the 18 types above MUST have >=1 entry in
+# observability-consumer-map.json (adapters/claude-code/
+# observability-consumer-map.json) naming its real consumer(s) — see that
+# file's own header and O.6's check_obs_consumer_map (doctor-enforced).
+# A new event type introduced by a future caller is not schema-rejected
+# here (ledger_emit never hard-allow-lists event values — see the
+# original ADR 058 D6 contract note above), but it SHOULD be added to both
+# this comment registry and the consumer map in the same commit, or it
+# will show up as "unknown-in-map" (RED) at the next doctor run.
+# ----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # ledger_tail [<n>] [<path>]
 #
 # Print the last <n> (default 20) lines of the resolved ledger (or an
@@ -403,6 +445,59 @@ a second line'
     pass "ledger_emit returns 0 even when the target path is unwritable"
   else
     fail "ledger_emit propagated a non-zero exit on an unwritable path"
+  fi
+
+  echo "Scenario 8 (Wave O task O.1): ledger_emit_typed is an alias — each new"
+  echo "Wave-O event class lands exactly one schema-valid JSONL line"
+  rm -f "$LEDGER"
+  for ev in session-start session-stop session-compact session-resume \
+            throttle-detected spawn-dispatched spawn-concluded \
+            bg-task-started bg-task-finished turn-trace; do
+    ledger_emit_typed "test-gate-o1" "$ev" "detail for $ev"
+  done
+  n_lines_o1=$(wc -l < "$LEDGER" 2>/dev/null | tr -d ' ')
+  if [[ "$n_lines_o1" == "10" ]]; then
+    pass "ten Wave-O event classes produced ten lines via ledger_emit_typed (got $n_lines_o1)"
+  else
+    fail "expected 10 lines, got $n_lines_o1"
+  fi
+  all_valid_o1=1
+  while IFS= read -r o1line; do
+    _valid_json_line "$o1line" || all_valid_o1=0
+  done < "$LEDGER"
+  if [[ "$all_valid_o1" == "1" ]]; then
+    pass "every ledger_emit_typed line is valid JSON"
+  else
+    fail "one or more ledger_emit_typed lines are not valid JSON"
+  fi
+  if grep -q '"event":"turn-trace"' "$LEDGER" && grep -q '"event":"session-start"' "$LEDGER" \
+     && grep -q '"event":"spawn-dispatched"' "$LEDGER" && grep -q '"event":"bg-task-started"' "$LEDGER"; then
+    pass "representative Wave-O event types present verbatim (turn-trace/session-start/spawn-dispatched/bg-task-started)"
+  else
+    fail "one or more Wave-O event types missing from the ledger"
+  fi
+
+  echo "Scenario 9 (Wave O task O.1): turn-trace detail is a compact JSON string"
+  echo "that round-trips through jq (per contract C2)"
+  rm -f "$LEDGER"
+  TRACE_DETAIL='{"hooks":[{"n":"work-integrity-gate","ms":42,"v":"allow"},{"n":"session-honesty-gate","ms":11,"v":"allow"}],"total_ms":53}'
+  ledger_emit_typed "stop-verdict-dispatcher" "turn-trace" "$TRACE_DETAIL"
+  TRACE_LINE="$(cat "$LEDGER")"
+  if command -v jq >/dev/null 2>&1; then
+    inner_valid="$(printf '%s' "$TRACE_LINE" | jq -r '.detail' 2>/dev/null | jq -e . >/dev/null 2>&1 && echo yes || echo no)"
+    if [[ "$inner_valid" == "yes" ]]; then
+      pass "turn-trace detail round-trips as valid nested JSON through jq"
+    else
+      fail "turn-trace detail did not round-trip as valid nested JSON"
+    fi
+    total_ms_rt="$(printf '%s' "$TRACE_LINE" | jq -r '.detail' 2>/dev/null | jq -r '.total_ms' 2>/dev/null)"
+    if [[ "$total_ms_rt" == "53" ]]; then
+      pass "turn-trace detail.total_ms survives the round-trip (got $total_ms_rt)"
+    else
+      fail "turn-trace detail.total_ms mismatch (got $total_ms_rt, expected 53)"
+    fi
+  else
+    echo "  (jq unavailable — skipping strict turn-trace round-trip assertion)"
   fi
 
   echo ""
