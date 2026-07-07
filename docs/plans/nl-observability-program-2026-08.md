@@ -40,7 +40,7 @@ surfacers, additional dashboards, cross-machine ledger sync beyond read-both.
 
 ## Waves (D9 pattern: strong-model wave-spec first, then ≤5 sonnet builders)
 
-- [ ] O.0 Wave-spec refinement: `*-specs-o.md` from the sketch + Wave-E as-built
+- [x] O.0 Wave-spec refinement: `*-specs-o.md` from the sketch + Wave-E as-built
   (ledger schema, digest, NEEDS-YOU, resumer) — Model: strongest available —
   Parallelizable: no — Verification: mechanical
   - Done-when: specs-o exists with per-task exact specs, dispatch map, serialization
@@ -63,7 +63,7 @@ surfacers, additional dashboards, cross-machine ledger sync beyond read-both.
   flags derived-vs-displayed drift — Model: sonnet — needs ux acceptance run
   - Done-when: operator exercises the six questions in the GUI; acceptance scenario
     recorded (constitution §4 — demonstrated, not shipped-as-components).
-- [ ] O.5 Push (ntfy.sh): exactly three rules — NEEDS-YOU created, session
+- [x] O.5 Push (ntfy.sh): exactly three rules — NEEDS-YOU created, session
   stalled/throttled >N min, doctor RED; registration + drill — Model: sonnet
   - Done-when: drill fires all three to the operator's phone; no other event class
     can reach push (test the negative).

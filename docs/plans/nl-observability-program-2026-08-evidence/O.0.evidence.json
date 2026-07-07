@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "task_id": "O.0",
+  "verdict": "PASS",
+  "commit_sha": "d141119a623a809516af5e07203a2a2c13f06ad6",
+  "files_modified": [
+    "docs/backlog.md",
+    "docs/decisions/060-wave-o-observability-architecture.md",
+    "docs/plans/nl-observability-program-2026-08-specs-o.md",
+    "docs/plans/nl-observability-program-2026-08.md",
+    "docs/reviews/2026-07-06-o4-acceptance-scenarios.md",
+    "docs/reviews/2026-07-06-o4-cockpit-ux-review.md"
+  ],
+  "mechanical_checks": {
+    "exists:docs/plans/nl-observability-program-2026-08-specs-o.md": {
+      "passed": true,
+      "detail": "docs/plans/nl-observability-program-2026-08-specs-o.md exists",
+      "command": "test -e docs/plans/nl-observability-program-2026-08-specs-o.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'O.0.1 Serialization rules' docs/plans/nl-observability-program-2026-08-specs-o.md && grep -q 'settings.json.template' docs/plans/nl-observability-program-2026-08-specs-o.md && grep -q 'manifest.json' docs/plans/nl-observability-program-2026-08-specs-o.md && grep -q 'harness-doctor.sh' docs/plans/nl-observability-program-2026-08-specs-o.md && grep -q 'install.sh' docs/plans/nl-observability-program-2026-08-specs-o.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'O.0.1 Serialization rules' docs/plans/nl-observability-program-2026-08-specs-o.md && grep -q 'settings.json.template' docs/plans/nl-observability-program-2026-08-specs-o.md && grep -q 'manifest.json' docs/plans/nl-observability-program-2026-08-specs-o.md && grep -q 'harness-doctor.sh' docs/plans/nl-observability-program-2026-08-specs-o.md && grep -q 'install.sh' docs/plans/nl-observability-program-2026-08-specs-o.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'O.0.2 Dispatch map' docs/plans/nl-observability-program-2026-08-specs-o.md && grep -q 'build/wave-o-o1' docs/plans/nl-observability-program-2026-08-specs-o.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'O.0.2 Dispatch map' docs/plans/nl-observability-program-2026-08-specs-o.md && grep -q 'build/wave-o-o1' docs/plans/nl-observability-program-2026-08-specs-o.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'O.0.3 Contracted interfaces (FROZEN' docs/plans/nl-observability-program-2026-08-specs-o.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'O.0.3 Contracted interfaces (FROZEN' docs/plans/nl-observability-program-2026-08-specs-o.md",
+      "exit_code": 0
+    },
+    "command:test $(grep -cE '^## ..O\\.[1-9] ' docs/plans/nl-observability-program-2026-08-specs-o.md) -eq 9": {
+      "passed": true,
+      "detail": "",
+      "command": "test $(grep -cE '^## ..O\\.[1-9] ' docs/plans/nl-observability-program-2026-08-specs-o.md) -eq 9",
+      "exit_code": 0
+    },
+    "command:test $(git ls-remote origin 'refs/heads/build/wave-o-*' | wc -l) -eq 7": {
+      "passed": true,
+      "detail": "",
+      "command": "test $(git ls-remote origin 'refs/heads/build/wave-o-*' | wc -l) -eq 7",
+      "exit_code": 0
+    },
+    "command:git ls-tree -r --name-only origin/build/wave-o-o1 | grep -q 'fixtures/wave-o/O.1/manifest-amendments.md' && git ls-tree -r --name-only origin/build/wave-o-o3 | grep -q 'fixtures/wave-o/O.3/manifest-amendments.md'": {
+      "passed": true,
+      "detail": "",
+      "command": "git ls-tree -r --name-only origin/build/wave-o-o1 | grep -q 'fixtures/wave-o/O.1/manifest-amendments.md' && git ls-tree -r --name-only origin/build/wave-o-o3 | grep -q 'fixtures/wave-o/O.3/manifest-amendments.md'",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-07T09:00:16Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/nl-observability-program-2026-08.md"
+}
