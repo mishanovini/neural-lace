@@ -39,6 +39,27 @@ if [[ -f "$_KPI_SIGNAL_LEDGER_LIB" ]]; then
   source "$_KPI_SIGNAL_LEDGER_LIB"
 fi
 
+# ---- WAVE-O O.9: od_backlog_health oracle, guarded source + feature-detect ----
+# Contract C4 (specs-o §O.0.3): observability-derive.sh is owned/built by task
+# O.3 (parallel; O.9 never creates/edits that file — §O.0.1 rule 2). Source it
+# if present; if it doesn't yet supply od_backlog_health (pre-merge, or the
+# file doesn't exist at all), fall back to the private test shim so this
+# script still has a real oracle to call. Once O.3 merges the real lib, the
+# guarded source above wins the declare -F check and this fallback is never
+# invoked.
+_KPI_OBS_DERIVE="$_KPI_SELF_DIR/../hooks/lib/observability-derive.sh"
+_KPI_OD_SHIM="$_KPI_SELF_DIR/../tests/fixtures/wave-o/O.9/od-backlog-shim.sh"
+if [[ -f "$_KPI_OBS_DERIVE" ]]; then
+  # shellcheck disable=SC1090,SC1091
+  { source "$_KPI_OBS_DERIVE" 2>/dev/null; } || true
+fi
+if ! declare -F od_backlog_health >/dev/null 2>&1; then
+  if [[ -f "$_KPI_OD_SHIM" ]]; then
+    # shellcheck disable=SC1090,SC1091
+    { source "$_KPI_OD_SHIM" 2>/dev/null; } || true
+  fi
+fi
+
 # ============================================================
 # _kpi_repo_root — resolve the repo root (harness self-test pinning)
 # ============================================================
@@ -220,24 +241,6 @@ _kpi_backlog_date_epoch() {
 }
 
 # ============================================================
-# _backlog_row_is_terminal <row line> -> 0 (terminal) / 1 (open).
-# MIRRORED VERBATIM from session-start-digest.sh (see the rationale
-# comment there: position-anchored R1-R4 rules; a naive whole-line scan
-# falsely skipped open rows whose prose references ANOTHER row's
-# terminal state). The three BACKLOG-LOOP-01 consumers must agree on
-# what "open" means.
-# ============================================================
-_BACKLOG_TERM_U='(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)'
-_backlog_row_is_terminal() {
-  local line="$1"
-  printf '%s' "$line" | grep -qE "^- \*\*[^*]*\b${_BACKLOG_TERM_U}\b" && return 0
-  printf '%s' "$line" | grep -qE "\*\*[[:space:]]+(—|--?)[[:space:]]+${_BACKLOG_TERM_U}\b" && return 0
-  printf '%s' "$line" | grep -qiE '\*\*\((dispositioned|implemented|absorbed|closed|superseded|wontfix)\b' && return 0
-  printf '%s' "$line" | grep -qE "\*\*((PARTIALLY|LARGELY)[[:space:]]+)?${_BACKLOG_TERM_U}\b" && return 0
-  return 1
-}
-
-# ============================================================
 # _kpi_backlog_section <backlog_path> [window_days] — render the
 # Backlog Health section (BACKLOG-LOOP-01 part 3):
 #   - open-row count by priority (high/medium/low/unlabeled)
@@ -245,13 +248,14 @@ _backlog_row_is_terminal() {
 #   - adds vs terminal transitions inside the report window
 #     (default KPI_WINDOW_DAYS=7 — this is a weekly report)
 #
-# Row grammar mirrors session-start-digest.sh feed_backlog_accountability:
-# structured rows "- **<ID>"; terminal markers DISPOSITIONED/IMPLEMENTED/
-# ABSORBED/CLOSED/SUPERSEDED/WONTFIX (case-insensitive, word-bounded) on
-# the row line; age from the first "added YYYY-MM-DD"; priority from the
-# first "priority:high|medium|low" label. Terminal transitions in-window
-# are counted from the date adjacent to the terminal marker; terminal
-# rows without an adjacent date are reported as undated.
+# ORACLE (Wave O task O.9): row-parsing + position-anchored
+# terminal-marker detection + per-priority/age-tier/flow counting is
+# delegated to the od_backlog_health oracle (contract C4; guarded source
+# + feature-detect fallback near the top of this file). This function is
+# now PURE presentation: it renders the oracle's own summary fields as
+# markdown tables. If the oracle isn't available (neither the real lib
+# nor the fallback shim could be sourced), report that honestly rather
+# than silently going blank.
 # ============================================================
 _kpi_backlog_section() {
   local backlog_path="$1"
@@ -262,66 +266,46 @@ _kpi_backlog_section() {
     printf 'No backlog file at %s.\n\n' "$backlog_path"
     return 0
   fi
+  if ! declare -F od_backlog_health >/dev/null 2>&1; then
+    printf 'od_backlog_health oracle unavailable (observability-derive.sh not yet present and no fallback shim found).\n\n'
+    return 0
+  fi
 
-  local now window_start_epoch
-  now="$(date -u +%s)"
-  window_start_epoch=$((now - window_days * 86400))
+  local oracle_json
+  oracle_json="$(BACKLOG_MD_PATH="$backlog_path" BACKLOG_HEALTH_WINDOW_DAYS="$window_days" od_backlog_health --json 2>/dev/null)"
+  if [[ -z "$oracle_json" ]]; then
+    printf 'od_backlog_health returned no data for %s.\n\n' "$backlog_path"
+    return 0
+  fi
 
   local open_high=0 open_medium=0 open_low=0 open_unlabeled=0
   local age_0_7=0 age_8_30=0 age_31_90=0 age_over_90=0 open_undated=0
-  local adds_window=0 terminal_window=0 terminal_undated=0 terminal_total=0
-  local line id added added_epoch age_days prio term_date term_epoch
-
-  while IFS= read -r line; do
-    id="$(printf '%s' "$line" | grep -oE '^- \*\*[A-Z][A-Z0-9-]{3,}' | sed 's/^- \*\*//')"
-    [[ -z "$id" ]] && continue
-
-    added="$(printf '%s' "$line" | grep -oE 'added [0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n1 | sed 's/^added //')"
-    added_epoch=""
-    [[ -n "$added" ]] && added_epoch="$(_kpi_backlog_date_epoch "$added")"
-
-    # Adds inside the report window (regardless of current state).
-    if [[ -n "$added_epoch" ]] && [[ "$added_epoch" -ge "$window_start_epoch" ]]; then
-      adds_window=$((adds_window + 1))
-    fi
-
-    if _backlog_row_is_terminal "$line"; then
-      terminal_total=$((terminal_total + 1))
-      term_date="$(printf '%s' "$line" \
-        | grep -oiE '(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)[^0-9]{0,12}[0-9]{4}-[0-9]{2}-[0-9]{2}' \
-        | head -n1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
-      if [[ -n "$term_date" ]]; then
-        term_epoch="$(_kpi_backlog_date_epoch "$term_date")"
-        if [[ -n "$term_epoch" ]] && [[ "$term_epoch" -ge "$window_start_epoch" ]]; then
-          terminal_window=$((terminal_window + 1))
-        fi
-      else
-        terminal_undated=$((terminal_undated + 1))
-      fi
-      continue
-    fi
-
-    # Open row: priority + aging histogram.
-    prio="$(printf '%s' "$line" | grep -oE 'priority:(high|medium|low)' | head -n1 | sed 's/^priority://')"
-    case "$prio" in
-      high)   open_high=$((open_high + 1)) ;;
-      medium) open_medium=$((open_medium + 1)) ;;
-      low)    open_low=$((open_low + 1)) ;;
-      *)      open_unlabeled=$((open_unlabeled + 1)) ;;
-    esac
-    if [[ -z "$added_epoch" ]]; then
-      open_undated=$((open_undated + 1))
-      continue
-    fi
-    age_days=$(( (now - added_epoch) / 86400 ))
-    if   [[ "$age_days" -le 7 ]];  then age_0_7=$((age_0_7 + 1))
-    elif [[ "$age_days" -le 30 ]]; then age_8_30=$((age_8_30 + 1))
-    elif [[ "$age_days" -le 90 ]]; then age_31_90=$((age_31_90 + 1))
-    else                                age_over_90=$((age_over_90 + 1))
-    fi
-  done < <(grep -E '^- \*\*[A-Z]' "$backlog_path" 2>/dev/null)
-
-  local open_total=$((open_high + open_medium + open_low + open_unlabeled))
+  local adds_window=0 terminal_window=0 terminal_undated=0 terminal_total=0 open_total=0
+  eval "$(printf '%s' "$oracle_json" | node -e '
+    "use strict";
+    var doc = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    var s = doc.summary || {};
+    var pc = s.priority_counts || {};
+    var at = s.age_tiers || {};
+    function n(v) { return Number(v || 0); }
+    var out = [
+      "open_high=" + n(pc.high),
+      "open_medium=" + n(pc.medium),
+      "open_low=" + n(pc.low),
+      "open_unlabeled=" + n(pc.unlabeled),
+      "age_0_7=" + n(at["0_7"]),
+      "age_8_30=" + n(at["8_30"]),
+      "age_31_90=" + n(at["31_90"]),
+      "age_over_90=" + n(at.over_90),
+      "open_undated=" + n(at.undated),
+      "adds_window=" + n(s.adds_in_window),
+      "terminal_window=" + n(s.terminal_in_window),
+      "terminal_undated=" + n(s.terminal_undated),
+      "terminal_total=" + n(s.terminal_total),
+      "open_total=" + n(s.open_total)
+    ];
+    process.stdout.write(out.join("\n"));
+  ' 2>/dev/null)"
 
   printf 'Open structured rows: %d (terminal-marked: %d)\n\n' "$open_total" "$terminal_total"
   printf '| Priority | Open rows |\n'
