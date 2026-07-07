@@ -98,6 +98,16 @@ new `adapters/claude-code/scripts/session-heartbeat.sh`, `workstreams-ui/`
 `settings.json.template` + doctor (orchestrator-only at integration),
 `observability-consumer-map.json` (new, doctor-read).
 
+## In-flight scope updates
+
+- 2026-07-06: `adapters/claude-code/skills/coordinate-estate.md` (new),
+  `adapters/claude-code/doctrine/estate-coordination.md` (new),
+  `adapters/claude-code/tests/fixtures/wave-o/` (new, builder-fragment output
+  for orchestrator-only files) — O.8's file list per specs-o §O.0.2 dispatch
+  map, omitted from the header list at plan-creation time (predates specs-o's
+  per-task detail); added here rather than opened as a separate plan since
+  O.8 is this plan's own declared task.
+
 ## Assumptions
 
 Wave E's ledger/digest/NEEDS-YOU/resumer are live and stable (they are the
