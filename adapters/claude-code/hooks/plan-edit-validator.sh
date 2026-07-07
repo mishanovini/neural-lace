@@ -39,6 +39,21 @@
 
 set -e
 
+# ---- WAVE-O O.9: od_backlog_health oracle, guarded source + feature-detect ----
+# Contract C4 (specs-o §O.0.3): observability-derive.sh is owned/built by task
+# O.3 (parallel; O.9 never creates/edits that file — §O.0.1 rule 2). Source it
+# if present; if it doesn't yet supply od_backlog_health (pre-merge, or the
+# file doesn't exist at all), fall back to the private test shim so this hook
+# still has a real oracle to call. Once O.3 merges the real lib, the guarded
+# source above wins the declare -F check and this fallback is never invoked.
+_PEV_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck disable=SC1091
+{ source "$_PEV_SELF_DIR/lib/observability-derive.sh" 2>/dev/null; } || true
+if ! declare -F od_backlog_health >/dev/null 2>&1; then
+  # shellcheck disable=SC1091
+  { source "$_PEV_SELF_DIR/../tests/fixtures/wave-o/O.9/od-backlog-shim.sh" 2>/dev/null; } || true
+fi
+
 # ============================================================
 # Lock helpers (plan-edit-validator concurrency protection)
 # ============================================================
@@ -206,22 +221,13 @@ trap 'release_plan_lock' EXIT INT TERM
 # NOTE: defined ABOVE the --self-test block (unlike check_docs_impact_warn,
 # which self-tests against an inline replica) so F13/F14 exercise THIS
 # function — no replica to drift.
-
-# _backlog_row_is_terminal <row line> -> 0 (terminal) / 1 (open).
-# MIRRORED VERBATIM from session-start-digest.sh (see the rationale
-# comment there: position-anchored R1-R4 rules; a naive whole-line scan
-# falsely skipped open rows whose prose references ANOTHER row's
-# terminal state). The three BACKLOG-LOOP-01 consumers must agree on
-# what "open" means.
-_BACKLOG_TERM_U='(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)'
-_backlog_row_is_terminal() {
-  local line="$1"
-  printf '%s' "$line" | grep -qE "^- \*\*[^*]*\b${_BACKLOG_TERM_U}\b" && return 0
-  printf '%s' "$line" | grep -qE "\*\*[[:space:]]+(—|--?)[[:space:]]+${_BACKLOG_TERM_U}\b" && return 0
-  printf '%s' "$line" | grep -qiE '\*\*\((dispositioned|implemented|absorbed|closed|superseded|wontfix)\b' && return 0
-  printf '%s' "$line" | grep -qE "\*\*((PARTIALLY|LARGELY)[[:space:]]+)?${_BACKLOG_TERM_U}\b" && return 0
-  return 1
-}
+#
+# ORACLE (Wave O task O.9): row-parsing + position-anchored
+# terminal-marker detection is delegated to the od_backlog_health oracle
+# (contract C4; guarded source + feature-detect fallback near the top of
+# this file) rather than re-parsed here. This function now only does its
+# own presentation-layer job: token-match the oracle's OPEN rows against
+# the plan's declared surfaces.
 
 check_backlog_absorption_warn() {
   local plan_path_norm="$1"
@@ -234,6 +240,7 @@ check_backlog_absorption_warn() {
   fi
   [[ -f "$backlog" ]] || return 0
   [[ -z "$prospective" ]] && return 0
+  declare -F od_backlog_health >/dev/null 2>&1 || return 0
 
   # Declared surfaces: the "## Files to Modify/Create" section (tolerant
   # header match: "Files to Modify", "Files to Create", "Files to
@@ -255,11 +262,23 @@ check_backlog_absorption_warn() {
     | sort -u)"
   [[ -z "$tokens" ]] && return 0
 
+  # Open rows (id + full line text) from the oracle — no local re-parse,
+  # no local terminal-marker logic (contract C4; the oracle's "terminal"
+  # field already applied the position-anchored R1-R4 rules).
+  local open_rows
+  open_rows="$(BACKLOG_MD_PATH="$backlog" od_backlog_health --json 2>/dev/null | node -e '
+    "use strict";
+    var doc = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    (doc.rows || []).forEach(function (r) {
+      if (r.terminal) return;
+      process.stdout.write(r.id + "\t" + r.line + "\n");
+    });
+  ' 2>/dev/null)"
+  [[ -z "$open_rows" ]] && return 0
+
   local match_ids="" line id token base stem
-  while IFS= read -r line; do
-    id="$(printf '%s' "$line" | grep -oE '^- \*\*[A-Z][A-Z0-9-]{3,}' | sed 's/^- \*\*//')"
+  while IFS=$'\t' read -r id line; do
     [[ -z "$id" ]] && continue
-    _backlog_row_is_terminal "$line" && continue
     # Already named by the plan (absorbed header or explicit deferral
     # note anywhere in the prospective content) -> handled, no warn.
     if printf '%s' "$prospective" | grep -qF -- "$id"; then
@@ -278,7 +297,7 @@ check_backlog_absorption_warn() {
         break
       fi
     done <<< "$tokens"
-  done < <(grep -E '^- \*\*[A-Z]' "$backlog" 2>/dev/null)
+  done <<< "$open_rows"
 
   match_ids="$(printf '%s' "$match_ids" | grep -E . | sort -u || true)"
   [[ -z "$match_ids" ]] && return 0
