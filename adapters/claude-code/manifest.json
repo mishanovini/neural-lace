@@ -942,6 +942,25 @@
       "honest_status": "scripts/needs-you.sh — maintains NEEDS-YOU.md (E.6); called by decision-log flow + digest, not event-wired."
     },
     {
+      "id": "nl-cli",
+      "kind": "surfacer",
+      "doctrine_file": "doctrine/observability.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/scripts/nl.sh",
+          "adapters/claude-code/hooks/lib/observability-derive.sh"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/nl.sh (C5 dispatcher) + hooks/lib/observability-derive.sh (C4 pure-read derivation lib: od_sessions/od_needs_me/od_shipped_since/od_harness_health/od_costs/od_backlog_health/od_why) — the six-question observability CLI (specs-o §O.3). Read-only, zero state writes; not event-wired (invoked on demand by the operator or by the future §O.4 cockpit server shelling out to `nl <sub> --json`)."
+    },
+    {
       "id": "nl-issue-capture-loop",
       "kind": "pattern",
       "doctrine_file": null,
@@ -1002,9 +1021,28 @@
       "honesty_rationale": "Not a gate — a best-effort external notification writer. send/scan never block or fail any caller (needs-you.sh's call site is fire-and-forget; the scheduled scan tick's own exit code is not consumed by anything blocking)."
     },
     {
+      "id": "observability",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/observability.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": [
+          "estate count",
+          "nl status"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "CANONICAL-COUNTERS-01 rule + the six operator questions + nl usage (specs-o §O.3 deliverable 1). doctrine/observability.md (compact) + doctrine/observability-full.md (detail, per the estate-coordination.md compact/full split precedent). No hook; the rule is self-applied discipline (per Pattern kind), same class as `estate-coordination`. ORCHESTRATOR RECONCILIATION (batch 2): O.3's fragment proposed the same jit_triggers.paths (scripts/nl.sh, hooks/lib/observability-derive.sh) as the sibling `nl-cli` entry above; doctrine-jit.sh's _compute_injection returns on the FIRST array-order match (see hooks/doctrine-jit.sh ~line 283), so with identical paths on both entries `nl-cli` (earlier in array order) would always win and this entry's own trigger would never fire — a dead, shadowed config. Resolved toward path-disjoint triggers: `nl-cli` (the mechanism entry) keeps the paths; this entry (the doctrine entry, same doctrine_file) keeps only its keywords, which the schema documents as reserved/not yet mechanically matched in v1 but preserved as documentation-of-intent."
+    },
+    {
       "id": "observability-consumer-map",
       "kind": "convention",
-      "doctrine_file": null,
+      "doctrine_file": "doctrine/observability.md",
       "hooks": [],
       "events": [],
       "wired_template": false,
@@ -1017,7 +1055,7 @@
       },
       "blocking": false,
       "budget_class": "none",
-      "honest_status": "Data contract (specs-o §O.0.3 contract C3): every signal-ledger event type observed in the ledger or emitted anywhere in the repo MUST have >=1 named entry here (law 2). Seeded by O.1 (batch 1) with all 18 known types (8 pre-existing + 10 Wave-O new); enforced by O.6's check_obs_consumer_map doctor predicate (not yet landed as of batch-1 integration). doctrine_file is null until O.3 (doctrine/observability.md) merges — orchestrator TODO: set doctrine_file to \"doctrine/observability.md\" once that file lands."
+      "honest_status": "Data contract (specs-o §O.0.3 contract C3): every signal-ledger event type observed in the ledger or emitted anywhere in the repo MUST have >=1 named entry here (law 2). Seeded by O.1 (batch 1) with all 18 known types (8 pre-existing + 10 Wave-O new); enforced by O.6's check_obs_consumer_map doctor predicate. doctrine_file backfilled to \"doctrine/observability.md\" at orchestrator integration (batch 2) per O.3's report-back — that file now exists."
     },
     {
       "id": "observed-errors-first",
@@ -1417,6 +1455,28 @@
       "honest_status": "invoked via pre-stop-verifier.sh (Stop chain); not directly wired in settings.json.template",
       "budget_class": "none",
       "honesty_rationale": "ADR 059 D2 verification-class Stop block — NEVER downgraded under a DONE claim by explicit design; this is the load-bearing case the no-waiver rule exists FOR."
+    },
+    {
+      "id": "scheduled-task-health",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "scripts/scheduled-task-health.sh"
+        ],
+        "keywords": [
+          "scheduled task",
+          "schtasks",
+          "Last Result"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/scheduled-task-health.sh — one-line-per-task Last-Result report for every NL-owned (NL-*) Windows scheduled task (O.6); called by harness-doctor.sh's check_obs_scheduled_tasks predicate, not event-wired as its own settings.json entry. Reports raw values only; makes no pass/fail judgment itself."
     },
     {
       "id": "secret-hygiene-prepush",
