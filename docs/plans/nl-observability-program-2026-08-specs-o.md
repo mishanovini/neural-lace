@@ -52,7 +52,11 @@ Evidence base folded in at O.0 (per activation directive):
 3. **Self-tests sandbox ALL writes** (findings 025/028/034): `HARNESS_SELFTEST=1`
    plumbing + explicit env overrides (`SIGNAL_LEDGER_PATH`, `NEEDS_YOU_STATE_DIR`,
    `NEEDS_YOU_MD_PATH`, `RETRY_GUARD_STATE_DIR`, new vars this wave:
-   `HEARTBEAT_STATE_DIR`, `NTFY_STATE_DIR`, `NTFY_TOPIC_FILE`, `OBS_CONSUMER_MAP`).
+   `HEARTBEAT_STATE_DIR`, `NTFY_STATE_DIR`, `NTFY_TOPIC_FILE`, `OBS_CONSUMER_MAP`,
+   and — advocate review 2026-07-06: every C4 ground-truth input is redirectable —
+   `OBS_TRANSCRIPTS_ROOT` (transcripts dir for od_costs/od_why/od_sessions),
+   `OBS_MAIN_CHECKOUT` (git root for od_shipped_since), `OBS_DOCTOR_CACHE_DIR`
+   (od_harness_health), `OBS_BACKLOG_PATH` (od_backlog_health)).
    No test writes to `~/.claude/state/`, `~/.claude/backups/`, or the real repo docs.
 4. **Every fix ships a self-test mirroring the REAL flagless invocation shape**
    (findings 034/035/036 masked-defect class): at least one scenario invokes the
@@ -156,9 +160,21 @@ oracle inline (CANONICAL-COUNTERS-01 rule: `"<n> <thing> (oracle: <definition-id
 
 - `od_sessions [--json]` — Q1. Enumerates heartbeat files + transcript mtimes +
   resumer classification signals; per session: state ∈
-  `working|blocked|waiting-on-me|throttled|stalled|unobserved-cloud`; joins
+  `working|blocked|waiting-on-me|throttled|stalled|crashed|unobserved-cloud`; joins
   NEEDS-YOU `has-entry-for-session` for waiting-on-me; honest `unobserved: cloud`
   for sessions with no local heartbeat (sketch edge case).
+  DERIVATION RULES (advocate plan-time review 2026-07-06 — every enum value has a
+  written ground-truth rule; builders never invent one): `waiting-on-me` =
+  needs-you open entry joined on session id (trumps all below); `crashed` = C1
+  stale AND pid not alive; `stalled` = C1 stale AND pid alive (chip detail carries
+  pid-liveness); `throttled` = ledger `throttle-detected` (or resumer 429-class
+  event) newer than the session's last activity; `blocked` = newest ledger `block`
+  event for the session is newer than its last transcript activity (a block it has
+  not yet responded past); `unobserved-cloud` = session id appears in ledger
+  lifecycle/spawn events or a remote ledger but has NO local heartbeat AND no
+  local transcript — unknown fields render as unknown, never fabricated;
+  `working` = fresh heartbeat, none of the above. Priority on ties: waiting-on-me
+  > crashed > stalled > throttled > blocked > working.
 - `od_needs_me [--json]` — Q2. Parses `~/.claude/state/needs-you/ledger.json`
   (THE oracle; never re-derives from the rendered md).
 - `od_shipped_since <iso-ts> [--json]` — Q3. git log on main checkout master:
@@ -316,7 +332,21 @@ the GUI, PASS artifact recorded (constitution §4).
    consumer remains, a reconciler compares tree-state-derived session/branch claims
    vs `nl status --json` and renders a visible "derived-vs-displayed drift" badge +
    emits ledger event `warn` gate=cockpit-reconciler on mismatch. The cockpit NEVER
-   renders tree-state as truth.
+   renders tree-state as truth. LIFECYCLE (advocate review): badge renders in the
+   primary viewport; quiet state reads "reconciler: 0 drift (checked <ts>)"; it
+   CLEARS on reconvergence (reflects current state, never latched); the warn event
+   is emitted once per distinct mismatch SIGNATURE (dedup key = sorted
+   session/branch claims), never per refresh tick.
+3b. **Interrupt priority + freshness (BINDING layout rules, ux-designer +
+   advocate reviews 2026-07-06 — see docs/reviews/2026-07-06-o4-cockpit-ux-review.md
+   for the full 13 amendments, all binding):** on load, WAITING-ON-ME rows sort
+   above all other session states and open NEEDS-YOU entries render above
+   Q3/Q4/Q5 content, both inside the initial viewport with mechanically distinct
+   emphasis (ONE accent color, spent only on interrupt-worthy classes). Every pane
+   shows its derived-as-of timestamp; cache served during derivation failure is
+   explicitly labeled stale (rc≠0 renders ERROR, never empty); a visible Refresh
+   control triggers the on-demand endpoint with in-flight/failed feedback; Q3
+   shows its last-look timestamp with an explicit Mark-seen control.
 4. **Trust-path retirement** (fragments; orchestrator integrates + decides timing):
    the UI stops reading `tree-state.json`; then per law 2 the consumer map shows the
    tree pipeline consumer-less → retirement fragments: REMOVE from template+manifest:
@@ -343,6 +373,11 @@ scenario recorded (end-user-advocate artifact). Verifier flips only after that
 artifact exists.
 
 ## §O.5 Push (ntfy.sh) — exactly three rules
+
+> **DESCOPED by operator 2026-07-07** (no phone observability wanted; see plan O.5
+> terminal disposition + memory `no-phone-observability`). The built script stays
+> dormant (topic-absent no-op is self-tested); scan-tick wiring and the phone drill
+> are cancelled. Spec text below retained for the record.
 
 **Deliverables.**
 1. `scripts/ntfy-push.sh`: verbs `send --class <needs-you|stalled|doctor-red>

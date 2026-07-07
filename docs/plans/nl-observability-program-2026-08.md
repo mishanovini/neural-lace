@@ -67,6 +67,15 @@ surfacers, additional dashboards, cross-machine ledger sync beyond read-both.
   stalled/throttled >N min, doctor RED; registration + drill — Model: sonnet
   - Done-when: drill fires all three to the operator's phone; no other event class
     can reach push (test the negative).
+  - DESCOPED by operator 2026-07-07 ("no interest in ntfy... don't need
+    observability from my phone" — no mobile interaction path; Dispatch app
+    incompatible with harness). Terminal disposition: build landed in batch-1
+    (d8741b0, 18/18 incl. the negative) and stays DORMANT by design (silent no-op
+    without ~/.claude/local/ntfy-topic); scan-tick wiring and phone drill
+    permanently cancelled — Done-when superseded; task closes as
+    descoped-by-operator. Consumer-map: push:* consumers removed at batch-2
+    integration; the three event classes keep digest/cockpit/cli consumers
+    (law 2 intact).
 - [ ] O.6 Pipeline health in doctor: writers firing, ledger growing, heartbeats
   fresh, cockpit regenerated recently, consumer-map 100% — Model: sonnet
   - Done-when: red-fixtures per check; live green.
@@ -176,3 +185,15 @@ labels stale sections); ledger growth (rotation policy + `nl` reads tail-first).
 Per-task self-tests (sandboxed, RETRY_GUARD_STATE_DIR + HARNESS_SELFTEST — findings
 028/025 discipline); drills as Done-whens (kill-drill, push-drill, time-to-answer
 drill); doctor red-fixtures; UX acceptance run on the cockpit (§4).
+
+## Acceptance Scenarios (O.4)
+
+Authored plan-time 2026-07-06 by end-user-advocate (doctrine/acceptance-scenarios.md
+loop). Canonical full text — runtime conventions, the 10 runtime-executable
+scenarios (q1..q6 + drift-badge + degraded-cli + unobserved-cloud +
+interrupt-priority), seeding commands, out-of-scope list with owners:
+docs/reviews/2026-07-06-o4-acceptance-scenarios.md. The runtime acceptance run
+executes that file verbatim against http://localhost:7733 and records the PASS/FAIL
+artifact O.4's Done-when requires. All plan-time feedback gaps were folded into
+specs-o (§O.0.1-3 env overrides, C4 state derivation rules, §O.4.3 badge lifecycle,
+§O.4.3b interrupt-priority + freshness) on 2026-07-06.
