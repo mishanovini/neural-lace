@@ -1453,21 +1453,14 @@ od_costs() {
 # then the original OBS_BACKLOG_PATH (specs-o §O.0.1-3 sandbox var list),
 # so both conventions resolve identically and neither caller breaks.
 # ============================================================
-_OD_BACKLOG_TERM_U='(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)'
-_od_backlog_row_is_terminal() {
-  local line="$1"
-  printf '%s' "$line" | grep -qE "^- \*\*[^*]*\b${_OD_BACKLOG_TERM_U}\b" && return 0
-  printf '%s' "$line" | grep -qE "\*\*[[:space:]]+(—|--?)[[:space:]]+${_OD_BACKLOG_TERM_U}\b" && return 0
-  printf '%s' "$line" | grep -qiE '\*\*\((dispositioned|implemented|absorbed|closed|superseded|wontfix)\b' && return 0
-  printf '%s' "$line" | grep -qE "\*\*((PARTIALLY|LARGELY)[[:space:]]+)?${_OD_BACKLOG_TERM_U}\b" && return 0
-  return 1
-}
-_od_backlog_date_epoch() {
-  local d="$1"
-  date -u -d "$d" +%s 2>/dev/null \
-    || date -u -j -f '%Y-%m-%d' "$d" +%s 2>/dev/null \
-    || echo ""
-}
+# The R1-R4 position-anchored terminal-marker rules and the
+# YYYY-MM-DD -> epoch conversion that used to live here as bash helpers
+# (_od_backlog_row_is_terminal / _od_backlog_date_epoch, per-row grep/date
+# subprocesses) now live INSIDE od_backlog_health's single node pass
+# below — see the PERFORMANCE NOTE there. The regexes are 1:1
+# translations; the fragment doc
+# (tests/fixtures/wave-o/O.9/od-backlog-health-functions.md) remains the
+# algorithm's provenance record.
 
 # od_backlog_health [--json] — contract C4. Emits the canonical JSON
 # document (rows + summary) for every consumer to render from. Both
@@ -1503,77 +1496,93 @@ od_backlog_health() {
     return 0
   fi
 
-  # Build a JSONL of per-row facts (one line each), then hand the whole
-  # thing to node for the final summary/JSON assembly — bash parses text
-  # with grep/sed, node assembles JSON (same division of labor as the
-  # rest of this hook family).
-  local rows_tmp; rows_tmp="$(mktemp 2>/dev/null || mktemp -t odbacklog)"
-  trap 'rm -f "$rows_tmp"' RETURN
-
-  local line id added added_epoch age_days prio_label prio threshold is_terminal term_date term_epoch
-  while IFS= read -r line; do
-    id="$(printf '%s' "$line" | grep -oE '^- \*\*[A-Z][A-Z0-9-]{3,}' | sed 's/^- \*\*//')"
-    [[ -z "$id" ]] && continue
-
-    added="$(printf '%s' "$line" | grep -oE 'added [0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n1 | sed 's/^added //')"
-    added_epoch=""
-    [[ -n "$added" ]] && added_epoch="$(_od_backlog_date_epoch "$added")"
-    age_days=""
-    [[ -n "$added_epoch" ]] && age_days=$(( (now - added_epoch) / 86400 ))
-
-    prio_label="$(printf '%s' "$line" | grep -oE 'priority:(high|medium|low)' | head -n1 | sed 's/^priority://')"
-    prio="$prio_label"
-    [[ -z "$prio" ]] && prio="low"
-    case "$prio" in
-      high)   threshold="$tier_high" ;;
-      medium) threshold="$tier_medium" ;;
-      *)      threshold="$tier_low" ;;
-    esac
-
-    is_terminal="false"
-    term_date=""
-    term_epoch=""
-    if _od_backlog_row_is_terminal "$line"; then
-      is_terminal="true"
-      term_date="$(printf '%s' "$line" \
-        | grep -oiE "${_OD_BACKLOG_TERM_U}[^0-9]{0,12}[0-9]{4}-[0-9]{2}-[0-9]{2}" \
-        | head -n1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
-      [[ -n "$term_date" ]] && term_epoch="$(_od_backlog_date_epoch "$term_date")"
-    fi
-
-    # Emit one JSON row fact via node (keeps quoting/escaping correct for
-    # arbitrary prose in $line).
-    node -e '
-      var a = process.argv.slice(1);
-      var row = {id:a[0], line:a[1], terminal: a[2] === "true",
-        added: a[3] || null, added_epoch: a[4] ? Number(a[4]) : null,
-        age_days: a[5] ? Number(a[5]) : null,
-        priority_label: a[6] || "", priority: a[7],
-        threshold_days: Number(a[8]),
-        terminal_date: a[9] || null,
-        terminal_epoch: a[10] ? Number(a[10]) : null};
-      process.stdout.write(JSON.stringify(row) + "\n");
-    ' "$id" "$line" "$is_terminal" "$added" "$added_epoch" "$age_days" \
-      "$prio_label" "$prio" "$threshold" "$term_date" "$term_epoch" >> "$rows_tmp" 2>/dev/null
-  done < <(grep -E '^- \*\*[A-Z]' "$backlog" 2>/dev/null)
-
+  # PERFORMANCE NOTE (livesmoke-driven fix, same class as the
+  # _od_ledger_lifecycle_sids / od_costs / od_harness_health notes
+  # above): this function originally ran a bash while-read loop over
+  # every backlog row, spawning ~a dozen grep/sed/head/date forks
+  # (_od_backlog_row_is_terminal alone was up to 4 greps; each date
+  # parse was a `date` subprocess) PLUS one `node -e` startup PER ROW
+  # just to JSON-encode that row. Against this machine's real 82-row
+  # docs/backlog.md that measured ~51s wall (14.3s user / 23.1s sys —
+  # MSYS process-spawn dominated) during the O.4 cockpit livesmoke,
+  # while every other nl subcommand answered in <1s. Row parsing
+  # therefore now happens in exactly ONE node invocation over the WHOLE
+  # file: the R1-R4 position-anchored terminal-marker rules (87f357f)
+  # and the YYYY-MM-DD -> epoch conversion are 1:1 translations of the
+  # bash helpers this rewrite replaced (Date.parse of a date-only
+  # string is UTC midnight, exactly `date -u -d "$d" +%s`; the JS char
+  # class [\t\v\f\r ] mirrors POSIX [[:space:]] within a single line).
   if ! command -v node >/dev/null 2>&1; then
     printf '{"schema":1,"oracle":"od_backlog_health","degraded":"node unavailable","rows":[],"summary":{}}\n'
-    rm -f "$rows_tmp"
     return 0
   fi
 
   node -e '
     "use strict";
     var fs = require("fs");
-    var rowsPath = process.argv[1], backlogPath = process.argv[2];
-    var nowIso = process.argv[3], windowDays = Number(process.argv[4]);
-    var windowStart = Number(process.argv[5]);
+    var backlogPath = process.argv[1], nowIso = process.argv[2];
+    var windowDays = Number(process.argv[3]), windowStart = Number(process.argv[4]);
+    var now = Number(process.argv[5]);
+    var tierHigh = Number(process.argv[6]), tierMedium = Number(process.argv[7]);
+    var tierLow = Number(process.argv[8]);
+
     var raw = "";
-    try { raw = fs.readFileSync(rowsPath, "utf8"); } catch (e) {}
-    var rows = raw.split("\n").filter(Boolean).map(function (l) {
-      try { return JSON.parse(l); } catch (e) { return null; }
-    }).filter(Boolean);
+    try { raw = fs.readFileSync(backlogPath, "utf8"); } catch (e) {}
+
+    var TERM = "(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)";
+    var SP = "[\\t\\v\\f\\r ]";
+    var reId = /^- \*\*([A-Z][A-Z0-9-]{3,})/;
+    var reAdded = /added ([0-9]{4}-[0-9]{2}-[0-9]{2})/;
+    var rePrio = /priority:(high|medium|low)/;
+    // R1: terminal marker inside the leading bold id segment
+    var reTermR1 = new RegExp("^- \\*\\*[^*]*\\b" + TERM + "\\b");
+    // R2: bold close, then em-dash / - / --, then the marker
+    var reTermR2 = new RegExp("\\*\\*" + SP + "+(—|--?)" + SP + "+" + TERM + "\\b");
+    // R3: "**(dispositioned ..." (case-insensitive)
+    var reTermR3 = /\*\*\((dispositioned|implemented|absorbed|closed|superseded|wontfix)\b/i;
+    // R4: "**MARKER" incl. the PARTIALLY/LARGELY prefixed forms
+    var reTermR4 = new RegExp("\\*\\*((PARTIALLY|LARGELY)" + SP + "+)?" + TERM + "\\b");
+    var reTermDate = new RegExp(TERM + "[^0-9]{0,12}([0-9]{4}-[0-9]{2}-[0-9]{2})", "i");
+
+    function dateEpoch(d) {
+      var ms = Date.parse(d);
+      return isNaN(ms) ? null : Math.floor(ms / 1000);
+    }
+
+    var rows = [];
+    raw.split("\n").forEach(function (line) {
+      var mId = line.match(reId);
+      if (!mId) return;
+
+      var added = null, addedEpoch = null, ageDays = null;
+      var mAdded = line.match(reAdded);
+      if (mAdded) {
+        added = mAdded[1];
+        addedEpoch = dateEpoch(mAdded[1]);
+        // Math.trunc == bash $(( )) integer division (truncate toward 0)
+        if (addedEpoch !== null) ageDays = Math.trunc((now - addedEpoch) / 86400);
+      }
+
+      var mPrio = line.match(rePrio);
+      var prioLabel = mPrio ? mPrio[1] : "";
+      var prio = prioLabel || "low";
+      var threshold = prio === "high" ? tierHigh
+        : prio === "medium" ? tierMedium : tierLow;
+
+      var terminal = reTermR1.test(line) || reTermR2.test(line)
+        || reTermR3.test(line) || reTermR4.test(line);
+      var termDate = null, termEpoch = null;
+      if (terminal) {
+        var mTerm = line.match(reTermDate);
+        if (mTerm) { termDate = mTerm[2]; termEpoch = dateEpoch(mTerm[2]); }
+      }
+
+      rows.push({id: mId[1], line: line, terminal: terminal,
+        added: added, added_epoch: addedEpoch, age_days: ageDays,
+        priority_label: prioLabel, priority: prio,
+        threshold_days: threshold,
+        terminal_date: termDate, terminal_epoch: termEpoch});
+    });
 
     var summary = {
       open_total: 0, terminal_total: 0,
@@ -1626,11 +1635,9 @@ od_backlog_health() {
       rows: rows, summary: summary
     };
     process.stdout.write(JSON.stringify(doc));
-  ' "$rows_tmp" "$backlog" "$now_iso" "$window_days" "$window_start"
+  ' "$backlog" "$now_iso" "$window_days" "$window_start" "$now" \
+    "$tier_high" "$tier_medium" "$tier_low"
   printf '\n'
-
-  rm -f "$rows_tmp"
-  trap - RETURN
   return 0
 }
 
