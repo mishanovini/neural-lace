@@ -149,6 +149,13 @@ individually spelled out above:
   doctor-predicate, install-sync, template-wiring), per §O.0.1 serialization rules
   (builders ship fragments for orchestrator-only surfaces, never edit them
   directly).
+- 2026-07-06: `adapters/claude-code/skills/coordinate-estate.md` (new),
+  `adapters/claude-code/doctrine/estate-coordination.md` (new),
+  `adapters/claude-code/tests/fixtures/wave-o/` (new, builder-fragment output
+  for orchestrator-only files) — O.8's file list per specs-o §O.0.2 dispatch
+  map, omitted from the header list at plan-creation time (predates specs-o's
+  per-task detail); added here rather than opened as a separate plan since
+  O.8 is this plan's own declared task.
 
 ## Assumptions
 
