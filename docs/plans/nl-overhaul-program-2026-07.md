@@ -231,6 +231,9 @@ B.1 (harness-doctor) + B.6 (first green run against the live mirror) is the walk
 
 ## Decisions Log
 
+### Decision: Observability program activated EARLY by operator (2026-07-06)
+- **Tier:** 2 (operator) — **Status:** executed — **Chosen:** nl-observability-program-2026-08 flipped ACTIVE/unfrozen on the operator's direct instruction ("Since you are now done updating Neural Lace, Let's do the full redesign on the Workstreams UI") — the O.1-O.4 arc IS the Workstreams redesign. Supersedes the F.4-report activation-proposal trigger (that §F.4-PROTOCOL clause is now pre-satisfied; F.4 retro still runs Jul 24 for the overhaul itself). ACTIVE plans: 2/3 budget. Fresh orchestrator session spawned for O.0 wave-spec first.
+
 ### Decision: F.3 estate dispositions (operator-approved 2026-07-06, one-word replies)
 - **Tier:** 2 (operator) — **Status:** executed same turn — **Chosen:** (1) orchestrator-prime ABANDONED-superseded (goals absorbed by overhaul doctrine + O.8; archive-salvageable); (2) secret-scan --no-verify ACCEPT-DOCUMENTED + SECRET-SCAN-CI-BACKSTOP-01 backlog item (CI-side denylist defense-in-depth); (3) worker-E.2 sandbox-lib branch CLOSED-SUPERSEDED (hook-by-hook fix shipped; branch parked on origin). — **Context:** the remainder of F.3 after DEC-2026-07-02-002 executed the bulk; workstreams-completed-filter-fix already COMPLETED; discovery 2026-06-17 already decided; nl-finding-030 plan closed COMPLETED same day. — **To reverse:** each is one status/ref flip.
 

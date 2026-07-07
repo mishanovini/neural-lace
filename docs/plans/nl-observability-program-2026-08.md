@@ -1,12 +1,12 @@
 # NL Observability Program — derived-truth cockpit + six-questions estate visibility
 
-Status: DRAFT
-frozen: true
+Status: ACTIVE
+frozen: false
 Mode: design
 Execution Mode: orchestrator
 rung: 1
 Owner: operator (greenlit as a build commitment 2026-07-04: "Let's please make sure
-this gets into an actual build"); START TRIGGER: nl-overhaul F.4 retro complete —
+this gets into an actual build"); START TRIGGER: SUPERSEDED — operator activated early 2026-07-06 ("Let's do the full redesign on the Workstreams UI"); F.4 retro (Jul 24) proceeds independently for the overhaul program —
 the F.4 completion report MUST carry this program's activation proposal (wired into
 specs-f §F.4-PROTOCOL). Flip Status: ACTIVE only then (ACTIVE ≤3 budget applies).
 Design: docs/reviews/2026-07-04-observability-design-sketch.md (normative — the two
