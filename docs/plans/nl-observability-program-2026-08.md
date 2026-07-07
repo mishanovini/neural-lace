@@ -98,6 +98,17 @@ new `adapters/claude-code/scripts/session-heartbeat.sh`, `workstreams-ui/`
 `settings.json.template` + doctor (orchestrator-only at integration),
 `observability-consumer-map.json` (new, doctor-read).
 
+## In-flight scope updates
+
+- 2026-07-06: `adapters/claude-code/hooks/stop-verdict-dispatcher.sh` — specs-o §O.1 (NORMATIVE) assigns turn-trace + session-stop emission here; top-level list undercounted it.
+- 2026-07-06: `adapters/claude-code/hooks/workstreams-stop-writer.sh` — specs-o §O.1 assigns member-timing + turn-trace emission here.
+- 2026-07-06: `adapters/claude-code/hooks/session-start-digest.sh` — specs-o §O.1 assigns the one marked session-start emit call here.
+- 2026-07-06: `adapters/claude-code/hooks/pre-compact-continuity.sh` — specs-o §O.1 assigns the one marked session-compact emit line here.
+- 2026-07-06: `adapters/claude-code/hooks/workstreams-emit.sh` — specs-o §O.1 assigns spawn-dispatched/spawn-concluded/bg-task-started emit lines here.
+- 2026-07-06: `adapters/claude-code/scripts/session-resumer.sh` — specs-o §O.1 assigns C2 event-name normalization here.
+- 2026-07-06: `adapters/claude-code/tests/fixtures/wave-o/` — O.1's fragment deliverables (manifest-amendments.md, install-sync.md, doctor-predicate.md, template-wiring.md) per specs-o §O.0.1 serialization rules.
+- 2026-07-06: `adapters/claude-code/observability-consumer-map.json` — the top-level Files-to-Modify entry named this bare (no path prefix); this bullet gives the full repo-relative path so the scope gate's glob match resolves it.
+
 ## Assumptions
 
 Wave E's ledger/digest/NEEDS-YOU/resumer are live and stable (they are the

@@ -918,6 +918,18 @@ run_digest() {
   local seen_path; seen_path="${3:-$(_digest_seen_path)}"
   local input="${DIGEST_STDIN:-}"
 
+  # ---- WAVE-O O.1 EMIT: session-start (contract C2) ----------------------
+  # ONE marked lifecycle-event emit call, per specs-o §O.1 deliverable 2.
+  # Fires at the top of the real flagless SessionStart invocation (before
+  # any feed runs), so a session that crashes mid-digest still recorded its
+  # start. Never blocks: ledger_emit's own contract (never fails the
+  # caller) plus the `_have` guard below (no-op if signal-ledger.sh failed
+  # to source, e.g. a stripped-down fixture tree).
+  if _have ledger_emit; then
+    ledger_emit "session-start-digest" "session-start" "cwd=${cwd}"
+  fi
+  # ---- END WAVE-O O.1 EMIT -------------------------------------------------
+
   local -a lines=()
   local doctor_line
   doctor_line="$(feed_doctor "$cwd")"
@@ -1520,6 +1532,66 @@ EOF
   local out13d
   out13d="$(DIGEST_SEEN_PATH="$s13d_seen" run_digest "$s13d" "$tmp/s13d-no-alerts" "$s13d_seen" 2>/dev/null)"
   _ck_contains "S13d run_digest carries the backlog feed line" "$out13d" "backlog: WIRED-ROW-01 (high, 8d)"
+
+  # ---- S14 (Wave O task O.1): run_digest emits a session-start ledger
+  # event exactly once per invocation. Invoked via the REAL flagless
+  # production call shape (run_digest "$cwd") -- no extra flags, only env
+  # sandboxing (SIGNAL_LEDGER_PATH) per specs-o §O.0.1 rule 4 -- so this
+  # scenario mirrors the mandated flagless-invocation-shape requirement.
+  local s14="$tmp/s14"
+  _seed_repo "$s14"
+  local s14_seen="$tmp/s14-seen.jsonl"
+  local s14_ledger="$tmp/s14-ledger.jsonl"
+  ( export SIGNAL_LEDGER_PATH="$s14_ledger"; \
+    DIGEST_SEEN_PATH="$s14_seen" run_digest "$s14" "$tmp/s14-no-alerts" "$s14_seen" >/dev/null 2>&1 )
+  if [[ -f "$s14_ledger" ]] && grep -q '"gate":"session-start-digest".*"event":"session-start"' "$s14_ledger" 2>/dev/null; then
+    echo "PASS: S14 run_digest emits a session-start ledger event (contract C2, flagless shape)"; pass=$((pass + 1))
+  else
+    echo "FAIL: S14 run_digest emits a session-start ledger event (expected a session-start-digest/session-start line in $s14_ledger)" >&2
+    fail=$((fail + 1))
+  fi
+  local s14_count
+  s14_count=$(grep -c '"event":"session-start"' "$s14_ledger" 2>/dev/null | tr -d ' ')
+  [[ -z "$s14_count" ]] && s14_count=0
+  _ck_le "S14 exactly one session-start line per run_digest invocation" "$s14_count" "1"
+  if [[ "$s14_count" -ge 1 ]]; then
+    echo "PASS: S14 at least one session-start line emitted"; pass=$((pass + 1))
+  else
+    echo "FAIL: S14 at least one session-start line emitted (got 0)" >&2
+    fail=$((fail + 1))
+  fi
+
+  # ---- S15 (Wave O task O.1, specs-o §O.0.1 rule 4 -- flagless-shape
+  # mandate): every OTHER scenario in this file calls feed_*/run_digest as
+  # internal bash functions; this one invokes the REAL production entry
+  # path instead -- `bash session-start-digest.sh` with stdin (empty, the
+  # normal SessionStart shape) and NO CLI flags, only env-var sandboxing
+  # (HOME + SIGNAL_LEDGER_PATH + DIGEST_SEEN_PATH), exactly mirroring how
+  # settings.json.template actually wires this hook.
+  local s15="$tmp/s15"
+  _seed_repo "$s15"
+  local s15_ledger="$tmp/s15-ledger.jsonl"
+  local s15_seen="$tmp/s15-seen.jsonl"
+  local s15_home="$tmp/s15-home"
+  mkdir -p "$s15_home/.claude/state"
+  # BASH_SOURCE[0] resolved to an ABSOLUTE path via HOOKS_DIR (already
+  # computed at top-of-script) BEFORE the `cd` below — the self-test was
+  # invoked with a RELATIVE path in earlier iterations of this scenario,
+  # and once the subshell `cd`'d into the fixture dir, that relative path
+  # no longer resolved to the real script, which hung the whole suite
+  # indefinitely at this exact call (root-caused via `bash -x` tracing).
+  local s15_script="$HOOKS_DIR/$(basename "${BASH_SOURCE[0]}")"
+  (
+    cd "$s15" && \
+    HOME="$s15_home" HARNESS_SELFTEST=1 SIGNAL_LEDGER_PATH="$s15_ledger" DIGEST_SEEN_PATH="$s15_seen" \
+      bash "$s15_script" </dev/null >/dev/null 2>&1
+  )
+  if [[ -f "$s15_ledger" ]] && grep -q '"gate":"session-start-digest".*"event":"session-start"' "$s15_ledger" 2>/dev/null; then
+    echo "PASS: S15 real flagless invocation (bash session-start-digest.sh, no flags) emits session-start"; pass=$((pass + 1))
+  else
+    echo "FAIL: S15 real flagless invocation (bash session-start-digest.sh, no flags) emits session-start (expected a line in $s15_ledger)" >&2
+    fail=$((fail + 1))
+  fi
 
   rm -rf "$tmp" 2>/dev/null || true
   echo ""
