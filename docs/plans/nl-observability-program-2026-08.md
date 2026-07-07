@@ -67,6 +67,15 @@ surfacers, additional dashboards, cross-machine ledger sync beyond read-both.
   stalled/throttled >N min, doctor RED; registration + drill — Model: sonnet
   - Done-when: drill fires all three to the operator's phone; no other event class
     can reach push (test the negative).
+  - DESCOPED by operator 2026-07-07 ("no interest in ntfy... don't need
+    observability from my phone" — no mobile interaction path; Dispatch app
+    incompatible with harness). Terminal disposition: build landed in batch-1
+    (d8741b0, 18/18 incl. the negative) and stays DORMANT by design (silent no-op
+    without ~/.claude/local/ntfy-topic); scan-tick wiring and phone drill
+    permanently cancelled — Done-when superseded; task closes as
+    descoped-by-operator. Consumer-map: push:* consumers removed at batch-2
+    integration; the three event classes keep digest/cockpit/cli consumers
+    (law 2 intact).
 - [ ] O.6 Pipeline health in doctor: writers firing, ledger growing, heartbeats
   fresh, cockpit regenerated recently, consumer-map 100% — Model: sonnet
   - Done-when: red-fixtures per check; live green.

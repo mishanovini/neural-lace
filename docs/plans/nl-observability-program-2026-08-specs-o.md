@@ -374,6 +374,11 @@ artifact exists.
 
 ## §O.5 Push (ntfy.sh) — exactly three rules
 
+> **DESCOPED by operator 2026-07-07** (no phone observability wanted; see plan O.5
+> terminal disposition + memory `no-phone-observability`). The built script stays
+> dormant (topic-absent no-op is self-tested); scan-tick wiring and the phone drill
+> are cancelled. Spec text below retained for the record.
+
 **Deliverables.**
 1. `scripts/ntfy-push.sh`: verbs `send --class <needs-you|stalled|doctor-red>
    --title <t> --body <b>` (reads topic from `${NTFY_TOPIC_FILE:-$HOME/.claude/local/ntfy-topic}`;

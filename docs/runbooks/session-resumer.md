@@ -177,13 +177,41 @@ backoff arithmetic, max-attempts escalation, unresumable fallback, storm cap
 skip, and shadow-mode logs-but-does-not-execute. All state sandboxed; the
 real `claude` binary is never invoked under `--self-test`.
 
-## Registration pattern (REQUIRED — quoting lesson 2026-07-06)
+## Registration pattern (REQUIRED — quoting lesson 2026-07-06, location + hidden-window lessons 2026-07-07)
 Do NOT inline the bash -c command in /TR: schtasks collapses nested quotes (observed live: the
-inner path quotes truncated the -c argument -> every tick exit 1, silently). Instead create
-%USERPROFILE%\.claude\scripts\resumer-shadow.cmd containing:
+inner path quotes truncated the -c argument -> every tick exit 1, silently).
 
-    @echo off
-    "C:\Program Files\Git\bin\bash.exe" -c "export PATH=/usr/bin:/mingw64/bin:$PATH; cd '<nl-repo-root-msys>' && RESUMER_SHADOW=1 bash adapters/claude-code/scripts/session-resumer.sh >> <log> 2>&1"
+Wrapper files live in **%USERPROFILE%\.claude\state\task-wrappers\** — NEVER in
+~/.claude/scripts: install.sh re-syncs that dir from the repo and machine-local
+wrappers placed there were wiped by a later install (observed 2026-07-07: the task's
+/TR pointed at a deleted .cmd; resumer popped a visible console per tick meanwhile).
+state/ is machine state and is never purged.
 
-and point /TR at the .cmd. Verify after registering: force one run (schtasks /Run), then
-schtasks /Query /V must show Last Result: 0 (267009 = still running; wait). Per-machine step.
+Two files there:
+
+1. `run-hidden.vbs` (shared launcher — schtasks running a .cmd directly flashes a
+   visible console window every tick; wscript with window-style 0 is the fix):
+
+       Set sh = CreateObject("WScript.Shell")
+       cmd = ""
+       For i = 0 To WScript.Arguments.Count - 1
+         cmd = cmd & """" & WScript.Arguments(i) & """" & " "
+       Next
+       sh.Run Trim(cmd), 0, False
+
+2. `resumer-shadow.cmd`:
+
+       @echo off
+       "C:\Program Files\Git\bin\bash.exe" -c "export PATH=/usr/bin:/mingw64/bin:$PATH; cd '<nl-repo-root-msys>' && RESUMER_SHADOW=1 bash adapters/claude-code/scripts/session-resumer.sh >> <log> 2>&1"
+
+Register /TR as (all paths space-free, so quote-collapse-proof):
+
+    schtasks /Change /TN "NL-session-resumer" /TR "C:\Windows\System32\wscript.exe C:\Users\<user>\.claude\state\task-wrappers\run-hidden.vbs C:\Users\<user>\.claude\state\task-wrappers\resumer-shadow.cmd"
+
+Same pattern for NL-workstreams-heartbeat (its `heartbeat-tick.cmd` runs
+`bash ~/.claude/hooks/workstreams-emit.sh --heartbeat` — the LIVE mirror path, never
+a repo-worktree or /tmp path; the 0x80070002-every-5-min failure of 2026-07-06/07 was
+a /TR pointing at a dead MSYS tempdir). Verify after registering: force one run
+(schtasks /Run), then schtasks /Query /V must show Last Result: 0 (267009 = still
+running; 267011 = not yet run). Per-machine step; auto-mode classifiers treat
+schtasks /Change as persistence — expect to run this operator-supervised.
