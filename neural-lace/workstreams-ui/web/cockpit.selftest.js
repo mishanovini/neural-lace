@@ -103,6 +103,62 @@ ok('R21 every flex-styled hideable container (.modal-card, .modal-scrim, #docsPa
   /\.modal-scrim\[hidden\]\s*\{[^}]*display:\s*none/.test(C) &&
   /#docsPanel\[hidden\]\s*\{[^}]*display:\s*none/.test(C));
 
+// ============================================================
+// O.4-fix1 regression locks (acceptance-drill FAILs, 2026-07-07)
+// ============================================================
+
+// --- item 4 (keyboard-only FAIL, part 1): #whyDrawer must be
+// programmatically focusable (tabindex="-1") so app.js's whyDrawer.focus()
+// on open actually moves focus into the role=dialog. Without tabindex,
+// .focus() silently no-ops on a plain <div> — exactly the defect the
+// acceptance drill's keyboard-only pass caught. --------------------------
+ok('R22 #whyDrawer has tabindex so focus() can move into the dialog on open (keyboard-only FAIL fix)',
+  /id="whyDrawer"[^>]*tabindex="-1"/.test(html) || /tabindex="-1"[^>]*id="whyDrawer"/.test(html));
+ok('R22b app.js calls whyDrawer.focus() when opening the drawer',
+  /whyDrawer\.focus\(\)/.test(js));
+ok('R22c app.js implements a Tab-wrap focus trap scoped to the why-drawer (sensible trapping, not just Esc-close)',
+  /focusableIn/.test(js) && /shiftKey/.test(js));
+
+// --- item 4 (keyboard-only FAIL, part 2): the reconciler drift-badge
+// mismatch detail must be keyboard-reachable, not hover-title-only. A
+// <details>/<summary> disclosure is natively focusable + Enter/Space-
+// activatable (no custom JS needed for the open/close mechanic itself). --
+ok('R23 reconciler badge mismatch detail is a keyboard-reachable <details> disclosure, not hover-title-only',
+  /<details id="reconcilerDetails"/.test(html) && /<summary id="reconcilerBadge"/.test(html) &&
+  /id="reconcilerDisclosureBody"/.test(html));
+ok('R23b app.js populates the disclosure body (renderBadgeDisclosure), not just badge.title',
+  /function renderBadgeDisclosure/.test(js) && /renderBadgeDisclosure\(/.test(js));
+
+// --- item 1 (Q4 strip FAIL): per-gate 7d block/waiver/downgrade table,
+// waiver-dominant gates visibly flagged (text, not color-only). ----------
+ok('R24 app.js renders a per-gate table from resp.data.gates (Q4 FAIL: was doctor-verdict-only)',
+  /resp\.data\.gates/.test(js) && /health-gate-row/.test(js));
+ok('R24b waiver-dominant gates get a visible text flag, not color-only',
+  /health-gate-flag/.test(js) && /['"]waiver-dominant['"]/.test(js));
+
+// --- item 2 (Q5 strip FAIL): per-session rows rendered from
+// resp.data.sessions (was 0 rows against a 10-session oracle). -----------
+ok('R25 app.js renders per-session cost rows from resp.data.sessions (Q5 FAIL: was 0 rows)',
+  /costs-session-row/.test(js) && /d\.sessions/.test(js));
+ok('R25b per-session transcript_status renders as a text+color chip (a11y baseline, never color-only)',
+  /transcript_status/.test(js) && /costs-session-status/.test(js));
+
+// --- item 3 (Q6 drawer FAIL): the mandated one-line verdict renders when
+// the payload carries one. ------------------------------------------------
+ok('R26 app.js renders resp.data.verdict as a visible why-verdict line',
+  /resp\.data\.verdict/.test(js) && /why-verdict/.test(js));
+
+// --- item 5 (reconciler degradation-honesty): an oracle-unavailable state
+// distinct from a fabricated drift count. ---------------------------------
+ok('R27 app.js and reconciler.js both handle an oracle_unavailable state (never a fabricated drift count on outage)',
+  /oracle_unavailable/.test(js) && /oracle_unavailable/.test(fs.readFileSync(path.join(D, '..', 'server', 'reconciler.js'), 'utf8')));
+
+// --- item 6 (backlog permanent rc=124): per-subcommand timeout override +
+// a higher built-in default for the known-slow backlog oracle. -----------
+ok('R28 derive-cache.js supports a per-subcommand timeout override with a higher backlog default',
+  /OBS_NL_TIMEOUT_MS_/.test(fs.readFileSync(path.join(D, '..', 'server', 'derive-cache.js'), 'utf8')) &&
+  /360000/.test(fs.readFileSync(path.join(D, '..', 'server', 'derive-cache.js'), 'utf8')));
+
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail === 0 ? 0 : 1);

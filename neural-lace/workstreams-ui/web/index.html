@@ -24,8 +24,19 @@
     <button id="docsBtn" class="ghost" title="browse docs across projects">📁 Docs</button>
     <button id="refreshBtn" class="ghost" title="force a refresh of every pane now">⟳ Refresh</button>
     <span id="refreshFeedback" class="refresh-feedback" aria-live="polite"></span>
-    <span id="reconcilerBadge" class="reconciler-badge" aria-live="polite" tabindex="0" role="button"
-          title="derived-vs-displayed drift check">reconciler: checking…</span>
+    <!-- O.4-fix1 item 4 (keyboard-only FAIL): the drift-badge mismatch
+         detail used to live ONLY in a hover title= tooltip, unreachable by
+         keyboard/AT users. <details>/<summary> is natively focusable +
+         keyboard-activatable (Enter/Space toggles, no JS needed for the
+         open/close mechanic itself) and gives every mismatch its own
+         visible text row instead of a tooltip. reconcilerBadge (id kept
+         for existing hooks/tests) is now the <summary>; the mismatch list
+         renders into #reconcilerDisclosureBody by renderBadgeDisclosure(). -->
+    <details id="reconcilerDetails" class="reconciler-details" aria-live="polite">
+      <summary id="reconcilerBadge" class="reconciler-badge"
+                title="derived-vs-displayed drift check — click/Enter for details">reconciler: checking…</summary>
+      <div id="reconcilerDisclosureBody" class="reconciler-disclosure-body"></div>
+    </details>
   </header>
 
   <!-- Interrupt-priority strip (specs-o §O.4.3b — BINDING: on cold load,
@@ -104,9 +115,17 @@
   </main>
 
   <!-- Q6 — WHY DID X HAPPEN. On-demand drawer, opened from a session row's
-       "Why" affordance (interaction table, ux-review amendment 8). -->
+       "Why" affordance (interaction table, ux-review amendment 8).
+       tabindex="-1" (O.4-fix1 item 4 — keyboard-only FAIL): the drawer is
+       not part of the normal tab order (it's not an input), but MUST be
+       programmatically focusable so app.js's whyDrawer.focus() on open
+       actually moves focus into the role=dialog per WCAG 2.2 §2.4.11 /
+       standard modal-dialog focus-management convention. Without
+       tabindex, .focus() silently no-ops on a plain <div>, which is
+       exactly the defect the acceptance drill's keyboard-only pass
+       caught (focus never left the invoking "Why?" button). -->
   <div id="whyScrim" class="modal-scrim" hidden></div>
-  <div id="whyDrawer" class="modal-card why-drawer" hidden role="dialog" aria-label="why drawer" aria-modal="true">
+  <div id="whyDrawer" class="modal-card why-drawer" hidden role="dialog" aria-label="why drawer" aria-modal="true" tabindex="-1">
     <div class="dm-head">
       <span id="whyTitle" class="dm-title">why</span>
       <button id="whyClose" class="ghost dm-close" title="close (Esc)" aria-label="close why drawer">✕</button>
