@@ -98,6 +98,21 @@ new `adapters/claude-code/scripts/session-heartbeat.sh`, `workstreams-ui/`
 `settings.json.template` + doctor (orchestrator-only at integration),
 `observability-consumer-map.json` (new, doctor-read).
 
+## In-flight scope updates
+
+- 2026-07-06: `adapters/claude-code/hooks/lib/session-heartbeat-lib.sh` — the
+  O.2 builder split the C1 read-side classification functions
+  (hb_path_for/hb_write/hb_is_stale/hb_classify) into a shared lib file
+  (mirrors the `hooks/lib/signal-ledger.sh` precedent) so
+  `scripts/session-heartbeat.sh`'s own `sweep` verb and the future §O.3
+  `od_sessions` call the identical implementation. Named in specs-o §O.2
+  deliverable 2; not itself listed in this section's original
+  `session-heartbeat.sh` line.
+- 2026-07-06: `adapters/claude-code/tests/fixtures/wave-o/O.2/` — per specs-o
+  §O.0.1 serialization rules, builders ship orchestrator-splice fragments
+  (`manifest-amendments.md`, `callsite-wiring.md`) under this path rather
+  than editing `manifest.json`/`settings.json.template` directly.
+
 ## Assumptions
 
 Wave E's ledger/digest/NEEDS-YOU/resumer are live and stable (they are the
