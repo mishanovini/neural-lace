@@ -58,7 +58,7 @@ surfacers, additional dashboards, cross-machine ledger sync beyond read-both.
   Model: sonnet (lib) + strongest-available review of `nl why` output quality
   - Done-when: drill — each of Q1–Q5 answered <10s on live estate; `nl why`
     reconstructs a seeded gate-block chain end-to-end (024-class fixture).
-- [ ] O.4 Cockpit rebuild: Workstreams UI reads the derivation lib (delete/retire
+- [x] O.4 Cockpit rebuild: Workstreams UI reads the derivation lib (delete/retire
   its event-sourced truth path per the sketch disposition); divergence-reconciler
   flags derived-vs-displayed drift — Model: sonnet — needs ux acceptance run
   - Done-when: operator exercises the six questions in the GUI; acceptance scenario
