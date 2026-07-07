@@ -15,7 +15,7 @@ in-flight workflow registry. Companion docs: ADR 058 (architecture), ADR 059
 | C — context diet | C.0–C.6 (7/7) | ✅ always-loaded 883,882B → ~9.8KB (−99%); constitution live; JIT doctrine |
 | D — gate consolidation | D.0–D.6 (7/7) | ✅ Stop 22→6, SessionStart 24→8, blocking units 10/12; cutover verified |
 | E — signals/continuity | E.0–E.12 except E.7 (12/13) | ✅ digest, sandbox sweep, waiver-density, synthetic runner, KPIs, NEEDS-YOU, nl-issue, pre-compaction, incentive pins, batched Stop verdict (ADR 059), end-manifest; §E.W live cutover (Stop 6→4) verified doctor-full GREEN |
-| F — governance/closure | F.5 (audit+demotion+remedy-chain+Circuit guard) | ✅ flipped after adversarial verification |
+| F — governance/closure | F.5 (audit+demotion+remedy-chain+cross-repo guard) | ✅ flipped after adversarial verification |
 | F.3 substance | estate dispositions | ✅ executed + operator-approved 2026-07-06 (checkbox awaits task-verifier) |
 
 Also live beyond the plan's letter: functional-link warn (F.L, operator directive),

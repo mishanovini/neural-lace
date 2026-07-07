@@ -2444,7 +2444,7 @@ MANIFEST_EOF
       "blocking": true,
       "honest_status": "fixture stub",
       "added_after": "2026-07",
-      "golden_scenario": "Circuit incident 2026-07-03 cross-repo write",
+      "golden_scenario": "Downstream-product incident 2026-07-03 cross-repo write",
       "fp_expectation": "legitimate cross-repo harness sessions must not warn",
       "retirement_condition": "zero fires for 30 days post-GA",
       "waiver_path": "fixture-waiver-*.txt",
