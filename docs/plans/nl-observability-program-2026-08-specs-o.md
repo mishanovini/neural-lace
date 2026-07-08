@@ -413,7 +413,18 @@ output — this keeps doctor thin and testable):
 1. `check_obs_writers_firing` — ledger mtime <24h AND line-count grew since the
    doctor cache's last stamp (stamp file in doctor cache dir).
 2. `check_obs_heartbeats_fresh` — every session with a transcript mtime <30min has a
-   heartbeat file <30min (else RED naming sids); zero live sessions = GREEN.
+   heartbeat file (else RED naming sids); zero live sessions = GREEN. MUST consume
+   the canonical read-side oracle in `hooks/lib/session-heartbeat-lib.sh`
+   (`hb_classify`/`hb_is_stale`, C1 transcript-mtime join) rather than
+   re-implementing heartbeat-file-mtime staleness math locally — a raw-mtime
+   re-implementation cannot see that heartbeats only refresh at Stop, so it
+   false-REDs any session whose current turn runs past the 30min window even
+   though the session is demonstrably alive (fixed 2026-07-06, duplicated-
+   staleness-oracle / mid-turn false-stall, O.6 re-verifier FAIL conf 9). RED
+   fires ONLY when `hb_classify` returns `missing` (no heartbeat file at all for a
+   live-transcript session — the genuine writer-not-wired signal); a present
+   heartbeat that is stale-by-mtime-but-transcript-fresh classifies `live` via the
+   lib's own join and must NOT RED.
 3. `check_obs_scheduled_tasks` — SCHEDULED-TASK-HEALTH-01: every registered NL-owned
    task has Last Result ∈ {0, 267009 running, 267011 not-yet-run}; else RED naming
    task + code. Not-registered stays the existing WARN semantics.
