@@ -80,6 +80,36 @@ level.
   `~/.claude/state/needs-you/ledger.json` (via `needs-you.sh`'s own
   reader — THE oracle; never re-derived from the rendered
   `NEEDS-YOU.md`, which is a display artifact, not ground truth).
+
+  **§decisions — the cold-reader-lint anatomy (constitution §3 amendment
+  53d3bee, operator directive 2026-07-06/07).** Every decision surface
+  renders three questions from the entry structure: WHAT-is-this-thing
+  (the entry's own context prose), WHAT-changes-per-answer (the per-option
+  outcome text), and WHY-is-it-yours (why the call belongs to the
+  operator, not the session). `needs-you.sh add --section decision` scores
+  every new entry against these at write time (`_ny_lint_decision_text`)
+  and stores the result as a `lint_warnings` array on the item — WARN-only,
+  never blocking (`add` always exits 0; the ledger's availability outranks
+  its tidiness). Both consuming surfaces render the array HONESTLY rather
+  than rejecting the entry:
+    - `nl needs-me` (text mode) prints a `needs context: <gap list> (id:
+      ...)` line under any item whose `lint_warnings` is non-empty; a
+      clean item gets no such line. `--json` mode carries `lint_warnings`
+      verbatim as a field on each item (no separate flag needed — the
+      array itself IS the signal, empty meaning clean).
+    - The cockpit Q2 pane (`neural-lace/workstreams-ui/web/app.js`
+      `renderNeedsMe`) renders a `needs context` chip + a plain-text detail
+      line on the card when `it.lint_warnings.length > 0` — a DEGRADED
+      card, never a dropped one. The chip is text+color (`--warn`), never
+      color-only, per the pane's own WCAG 2.2 AA baseline.
+  A companion WARN lives in `stop-verdict-dispatcher.sh`
+  (`_svd_cold_reader_lint_check`, following `_svd_functional_link_check`'s
+  exact FUNCTIONAL-LINK precedent): the final assistant message of a Stop
+  transcript is scanned for a §3-format "Decision needed" block, and a
+  block missing an artifact anchor or per-option outcome text gets ONE
+  `ledger_emit` warn (gate `stop-verdict-dispatcher`) + a stderr notice —
+  same WARN-only, never-blocks, never-cycle-counted contract as
+  FUNCTIONAL-LINK.
 - **`nl why <session> [--last-block]`** (Q6) — merges signal-ledger
   lines for that session_id (time-ordered, every gate) into a causal
   chain, one line per step: `ts  gate  event  detail`. Ends with a

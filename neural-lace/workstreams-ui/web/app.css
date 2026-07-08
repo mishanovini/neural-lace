@@ -245,6 +245,12 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .nm-session.session-gone { color: var(--warn); font-style: italic; }
 .nm-text { font-size: 13px; white-space: pre-wrap; margin-bottom: 6px; }
 .nm-links { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Cold-reader lint (constitution §3 amendment 53d3bee): a degraded-card
+   notice, never a rejection — text+color per the a11y baseline above, same
+   pattern as .health-gate-flag's waiver-dominant chip. */
+.nm-lint-warning { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+.nm-lint-chip { color: var(--warn); border-color: var(--warn); font-size: 11px; }
+.nm-lint-detail { font-size: 11px; color: var(--muted); font-style: italic; }
 
 /* ---- Q3 shipped ---- */
 .last-look-row {
