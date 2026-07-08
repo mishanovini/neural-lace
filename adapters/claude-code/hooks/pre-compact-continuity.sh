@@ -114,6 +114,11 @@ if [ -f "$SCRIPT_DIR/lib/signal-ledger.sh" ]; then
   # shellcheck disable=SC1091
   source "$SCRIPT_DIR/lib/signal-ledger.sh" 2>/dev/null || true
 fi
+# shellcheck source=lib/hook-reentry-guard.sh
+if [ -f "$SCRIPT_DIR/lib/hook-reentry-guard.sh" ]; then
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/lib/hook-reentry-guard.sh" 2>/dev/null || true
+fi
 
 _SNAPSHOT_SCRIPT_DEFAULT="$SCRIPT_DIR/../scripts/session-snapshot.sh"
 
@@ -239,6 +244,15 @@ _run_precompact() {
 # Live entry path
 # ============================================================
 _run_live() {
+  # NL-FINDING-040 keystone guard: this hook spawns session-snapshot.sh
+  # (via _run_precompact) and session-heartbeat.sh on every real PreCompact
+  # fire. Under NL_HOOK_REENTRY=1 (automation-spawned/re-entrant child),
+  # no-op before reading stdin or spawning anything.
+  if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+    hook_reentry_note "pre-compact-continuity" 2>/dev/null || true
+    exit 0
+  fi
+
   local input
   input="${CLAUDE_TOOL_INPUT:-}"
   if [ -z "$input" ] && [ ! -t 0 ]; then

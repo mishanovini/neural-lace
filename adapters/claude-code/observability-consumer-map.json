@@ -143,6 +143,27 @@
         "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
         "digest:feed_ledger_summary"
       ]
+    },
+    "resume-spawn-breaker-tripped": {
+      "consumers": [
+        "cli:nl-why (hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why — renders any per-session ledger event, including this NL-FINDING-040 resumer hardening vocabulary, in its causal chain)",
+        "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
+        "digest:feed_ledger_summary"
+      ]
+    },
+    "reentry-suppressed": {
+      "consumers": [
+        "cli:nl-why (hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why — renders any per-session ledger event, including this NL-FINDING-040 hook-reentry-guard.sh vocabulary, in its causal chain)",
+        "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
+        "digest:feed_ledger_summary"
+      ]
+    },
+    "stop-refire-ceiling-tripped": {
+      "consumers": [
+        "cli:nl-why (hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why — renders any per-session ledger event, including this NL-FINDING-040 stop-verdict-dispatcher.sh vocabulary, in its causal chain)",
+        "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
+        "digest:feed_ledger_summary"
+      ]
     }
   }
 }
