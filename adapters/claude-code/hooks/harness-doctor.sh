@@ -966,9 +966,11 @@ check_obs_writers_firing() {
 }
 
 # ------------------------------------------------------------
-# Check: obs-heartbeats-fresh (specs-o §O.6 item 2). Every session with a
-# transcript mtime <30min must have a heartbeat file <30min old (else RED
-# naming the stale/missing sids). Zero live sessions is GREEN.
+# Check: obs-heartbeats-fresh (specs-o §O.6 item 2, re-fixed 2026-07-06 —
+# see "CANONICAL-ORACLE FIX" below). Every session with a transcript
+# mtime <30min must have a heartbeat file that is NOT classified `missing`
+# by the canonical read-side oracle (else RED naming the missing sids).
+# Zero live sessions is GREEN.
 #
 # ORCHESTRATOR FIX (found running this predicate's own self-test
 # scenarios against the full suite, batch 2): the fragment's original
@@ -984,6 +986,30 @@ check_obs_writers_firing() {
 # HARNESS_DOCTOR_HOME automatically isolates transcripts too; explicit
 # OBS_TRANSCRIPTS_DIR still overrides for fixtures that want a flat
 # (non-nested) layout.
+#
+# CANONICAL-ORACLE FIX (O.6 re-verifier round, FAIL conf 9 —
+# duplicated-staleness-oracle / mid-turn false-stall): this predicate used
+# to re-implement its OWN raw heartbeat-file-mtime staleness math (an
+# equal 30/30-minute window against the heartbeat file's mtime alone).
+# That duplicated (and silently diverged from) the canonical read-side
+# oracle in hooks/lib/session-heartbeat-lib.sh (`hb_classify`/
+# `hb_is_stale`), which already carries the C1 transcript-mtime join: a
+# long, tool-heavy turn produces no NEW heartbeat write for its entire
+# duration (heartbeats only refresh at Stop), so a session whose current
+# turn simply runs past 30 minutes has a stale-BY-MTIME heartbeat file
+# while being demonstrably alive (its transcript is still being appended
+# to). The old raw-mtime math could not see that and false-REDed the
+# session's own heartbeat mid-turn. Fixed by sourcing the canonical lib
+# and reusing `hb_classify` instead of re-deriving staleness locally —
+# per CANONICAL-COUNTERS-01, two implementations of "is this heartbeat
+# stale" drifting apart is exactly the bug class this predicate must not
+# reintroduce. RED now fires ONLY on `missing` (the genuine
+# writer-not-wired signal: no heartbeat file exists at all for a session
+# with a fresh transcript) — a PRESENT-but-stale-by-mtime heartbeat
+# resolves through the lib's own transcript-mtime join and is classified
+# `live` (or, if genuinely stalled/crashed by the lib's own pid check,
+# `stale`/`crashed` — neither of which this doctor predicate treats as a
+# writer-wiring failure; only `missing` is).
 # ------------------------------------------------------------
 check_obs_heartbeats_fresh() {
   local live_home="$1" repo_root="$2"
@@ -1032,23 +1058,43 @@ check_obs_heartbeats_fresh() {
     return 0
   fi
 
+  # Source the canonical read-side oracle (hb_classify/hb_is_stale) once.
+  # Guarded by the lib's own source-guard (_SESSION_HEARTBEAT_LIB_SOURCED),
+  # so re-sourcing across repeated check invocations in the same process
+  # is a safe no-op.
+  local hb_lib="${SCRIPT_DIR}/lib/session-heartbeat-lib.sh"
+  if [[ -f "$hb_lib" ]]; then
+    # shellcheck disable=SC1090
+    source "$hb_lib"
+  fi
+
   local -a stale_sids=()
   for sid in "${live_sids[@]}"; do
     local hbf="${hb_dir}/${sid}.json"
-    if [[ ! -f "$hbf" ]]; then
-      stale_sids+=("${sid}:missing")
+    if ! command -v hb_classify >/dev/null 2>&1; then
+      # Canonical lib unavailable (should not happen on an installed
+      # estate) — degrade to the one check we CAN still make honestly:
+      # file presence. Never re-derive mtime staleness locally here again.
+      if [[ ! -f "$hbf" ]]; then
+        stale_sids+=("${sid}:missing")
+      fi
       continue
     fi
-    local hb_mtime hb_age_min
-    hb_mtime=$(stat -c %Y "$hbf" 2>/dev/null || stat -f %m "$hbf" 2>/dev/null || echo 0)
-    hb_age_min=$(( (now_epoch - hb_mtime) / 60 ))
-    if [[ "$hb_age_min" -ge 30 ]]; then
-      stale_sids+=("${sid}:${hb_age_min}min")
+    # HEARTBEAT_STATE_DIR / OBS_TRANSCRIPTS_ROOT bridge this doctor
+    # predicate's own sandboxing vars (HARNESS_DOCTOR_HOME-derived
+    # $hb_dir / $transcripts_dir) into the lib's env-var contract so its
+    # transcript-mtime join (_hb_find_transcript) looks in the SAME
+    # sandboxed fixture tree this check just enumerated, not the real
+    # machine's $HOME/.claude estate.
+    local cls
+    cls="$(HEARTBEAT_STATE_DIR="$hb_dir" OBS_TRANSCRIPTS_ROOT="$transcripts_dir" hb_classify "$hbf" 30)"
+    if [[ "$cls" == "missing" ]]; then
+      stale_sids+=("${sid}:missing")
     fi
   done
 
   if [[ "${#stale_sids[@]}" -gt 0 ]]; then
-    _red "obs-heartbeats-fresh" "$(IFS=,; echo "${stale_sids[*]}") — session(s) with a transcript <30min old have a missing/stale (>=30min) heartbeat file; the heartbeat writer may not be wired into this session's chain (see tests/fixtures/wave-o/O.2/callsite-wiring.md)"
+    _red "obs-heartbeats-fresh" "$(IFS=,; echo "${stale_sids[*]}") — session(s) with a transcript <30min old have NO heartbeat file at all; the heartbeat writer may not be wired into this session's chain (see tests/fixtures/wave-o/O.2/callsite-wiring.md)"
   fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
@@ -3099,6 +3145,39 @@ MANIFEST_EOF
     FAILED=$((FAILED + 1))
   else
     echo "self-test (o6-obs-heartbeats-fresh-green-subagent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- obs-heartbeats-fresh: GREEN — CANONICAL-ORACLE FIX (O.6
+  # re-verifier round, FAIL conf 9, duplicated-staleness-oracle / mid-turn
+  # false-stall). A FRESH transcript (touched to now) whose matching
+  # heartbeat file has a last_activity_ts 45 minutes old (stale by raw
+  # mtime/JSON-timestamp math alone — simulates a long tool-heavy turn
+  # with no Stop-time touch yet) and a pid that is genuinely alive (this
+  # self-test process's own $$). Before this fix, the predicate computed
+  # heartbeat staleness from the heartbeat file's own mtime/age alone and
+  # would have false-REDed this exact shape ("sess-midturn:45min"). After
+  # the fix (sourcing hooks/lib/session-heartbeat-lib.sh and calling
+  # hb_classify, which joins against transcript mtime per contract C1),
+  # this must classify `live` (not `missing`) and stay GREEN — proving a
+  # long-running turn no longer false-stalls its own session. ----
+  D=$(_scenario_dir o6-hb-green-midturn)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/transcripts/proj" "$D/live/state/heartbeats"
+  printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}\n' > "$D/transcripts/proj/sess-midturn.jsonl"
+  touch "$D/transcripts/proj/sess-midturn.jsonl"
+  OLD_TS="$(date -u -d '45 minutes ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-45M '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo '2020-01-01T00:00:00Z')"
+  cat > "$D/live/state/heartbeats/sess-midturn.json" <<EOF
+{"schema":1,"session_id":"sess-midturn","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"${OLD_TS}","last_event":"turn-end","marker_state":"none"}
+EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(OBS_TRANSCRIPTS_DIR="$D/transcripts" _run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "RED obs-heartbeats-fresh"; then
+    echo "self-test (o6-obs-heartbeats-fresh-green-midturn): FAIL (unexpected RED — a fresh transcript with a stale-by-mtime-but-present heartbeat must classify live via the canonical oracle's transcript join, not false-stall)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-obs-heartbeats-fresh-green-midturn): PASS" >&2
     PASSED=$((PASSED + 1))
   fi
 
