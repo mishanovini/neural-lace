@@ -26,6 +26,20 @@
 #     to already be (or to be wrapped as) a compact constitution-§3 block; see
 #     "SECTION SEMANTICS" below for the exact rendering each section gets.
 #
+#     COLD-READER LINT (operator directive 2026-07-07, constitution §3
+#     amendment 53d3bee "the cold-reader bar"): for --section decision only,
+#     the text is scored against three zero-session-context requirements —
+#     (a) background/context (does it say WHAT this thing is, not just a
+#     bare title), (b) >=1 concrete artifact anchor (a repo path, a URL, or
+#     an id pattern like NL-FINDING-035/NY-123/#456/a 7-40 char hex SHA),
+#     (c) per-option outcome text (does it say WHAT CHANGES per answer, not
+#     just list bare option words). Any failing check WARNS — a stderr
+#     notice, plus the stored item gains a `lint_warnings` array naming
+#     which check(s) failed — but NEVER blocks: `add` always exits 0 for a
+#     well-formed invocation, lint or no lint. The ledger's availability
+#     invocation, lint or no lint. The ledger's availability outranks its
+#     tidiness; see _ny_lint_decision_text() for the exact heuristics.
+#
 #   needs-you.sh resolve <id> [--note <str>]
 #     Marks entry <id> resolved (moves it out of its open section and into
 #     "Recently decided for your §8 review" with today's date), re-renders,
@@ -248,6 +262,93 @@ _ny_write_ledger() {
 _ny_read_ledger() { cat "$(_ny_ledger_file)"; }
 
 # ----------------------------------------------------------------------
+# _ny_lint_decision_text <text>
+#   Cold-reader lint (constitution §3 amendment 53d3bee, operator directive
+#   2026-07-07): scores a --section decision --text block against the three
+#   zero-session-context requirements. Prints ZERO or more warning codes,
+#   one per line, to stdout (empty output == clean); NEVER exits non-zero,
+#   NEVER blocks anything — this is a pure scoring function, the caller
+#   decides what to do with the codes. Deliberately heuristic (regex/grep
+#   over the raw text, not an LLM judgment call — this runs synchronously
+#   inside `add`, on every machine, with no model available) and
+#   deliberately biased toward NOT crying wolf: each check looks for the
+#   PRESENCE of a plausible signal, not the absence of a specific keyword,
+#   so a well-written block in an unanticipated shape is not penalized.
+#
+#   Codes (each maps 1:1 to one cold-reader-bar clause):
+#     no-context   — no background/WHAT-is-this-thing prose detected.
+#                    Heuristic: the text must be more than a single bare
+#                    line (a title alone tells a cold reader nothing) AND
+#                    contain at least one line of real prose >= 40 chars
+#                    (a line long enough to plausibly explain something,
+#                    not just another short label/option line).
+#     no-anchor    — no concrete artifact anchor detected. Heuristic: at
+#                    least one of (i) a URL (http(s)://), (ii) a repo-path-
+#                    shaped token (contains a "/" and a file extension, or
+#                    a bare multi-segment path like docs/plans/foo), (iii)
+#                    an id-pattern token (WORD-WORD-123 / WORD-123 / #123 /
+#                    a 7-40 char hex SHA).
+#     no-outcomes  — no per-option outcome text detected. Heuristic: EITHER
+#                    the block has no option-shaped structure at all (no
+#                    "Option"/"My pick"/table-row/bulleted-choice markers —
+#                    nothing to check outcomes against, so this check is
+#                    skipped, not failed) OR it has option structure but
+#                    none of the option-adjacent lines contain an outcome
+#                    connective (->, →, "means", "triggers", "results in",
+#                    "changes", "happens", or a markdown table pipe row,
+#                    which by the §3 table format's own column 2 IS the
+#                    outcome text).
+# ----------------------------------------------------------------------
+_ny_lint_decision_text() {
+  local text="$1"
+  local -a warnings=()
+
+  # --- (a) no-context ---------------------------------------------------
+  local line_count long_line_found=0
+  line_count=$(printf '%s\n' "$text" | wc -l | tr -d ' ')
+  while IFS= read -r _ny_l; do
+    [[ "${#_ny_l}" -ge 40 ]] && long_line_found=1 && break
+  done <<< "$text"
+  if [[ "$line_count" -le 1 || "$long_line_found" -eq 0 ]]; then
+    warnings+=("no-context")
+  fi
+
+  # --- (b) no-anchor ------------------------------------------------------
+  local has_anchor=0
+  if printf '%s' "$text" | grep -qE 'https?://[^[:space:]]+'; then
+    has_anchor=1
+  elif printf '%s' "$text" | grep -qE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.[A-Za-z0-9]+'; then
+    has_anchor=1
+  elif printf '%s' "$text" | grep -qE '[A-Za-z0-9_.-]+/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+'; then
+    has_anchor=1
+  elif printf '%s' "$text" | grep -qE '\b[A-Z]{2,}(-[A-Z0-9]+)*-[0-9]+\b'; then
+    has_anchor=1
+  elif printf '%s' "$text" | grep -qE '#[0-9]+\b'; then
+    has_anchor=1
+  elif printf '%s' "$text" | grep -qE '\b[0-9a-f]{7,40}\b'; then
+    has_anchor=1
+  fi
+  [[ "$has_anchor" -eq 0 ]] && warnings+=("no-anchor")
+
+  # --- (c) no-outcomes ------------------------------------------------------
+  local has_option_structure=0
+  if printf '%s' "$text" | grep -qiE '(^|[^A-Za-z])(option|my pick|reply with)([^A-Za-z]|$)|^\s*\|.*\|.*\|'; then
+    has_option_structure=1
+  fi
+  if [[ "$has_option_structure" -eq 1 ]]; then
+    if ! printf '%s' "$text" | grep -qE -- '->|→|\bmeans\b|\btriggers?\b|\bresults? in\b|\bchanges?\b|\bhappens\b|^\s*\|[^|]*\|[^|]*\|'; then
+      warnings+=("no-outcomes")
+    fi
+  fi
+
+  local w
+  for w in "${warnings[@]:-}"; do
+    [[ -n "$w" ]] && printf '%s\n' "$w"
+  done
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # cmd_add
 # ----------------------------------------------------------------------
 cmd_add() {
@@ -274,27 +375,51 @@ cmd_add() {
   local id; id="$(_ny_gen_id)"
   local ts; ts="$(_ny_now)"
 
+  # Cold-reader lint (constitution §3 amendment 53d3bee): --section decision
+  # only. WARN-only — never blocks add, never touches $?. See
+  # _ny_lint_decision_text's own header comment for the three checks.
+  local -a lint_warnings=()
+  if [[ "$section" == "decision" ]]; then
+    while IFS= read -r _ny_lw; do
+      [[ -n "$_ny_lw" ]] && lint_warnings+=("$_ny_lw")
+    done < <(_ny_lint_decision_text "$text")
+    if [[ "${#lint_warnings[@]}" -gt 0 ]]; then
+      err "cold-reader lint: this decision entry is missing: ${lint_warnings[*]} (added anyway — the ledger's availability outranks its lint; see needs-you.sh header 'COLD-READER LINT' for what each code means)"
+    fi
+  fi
+
   # Single jq call builds the item AND appends it to the current ledger.
   # links[] is passed via --args + $ARGS.positional (handles zero-or-more
   # links without per-link jq calls); session/tier are passed as
   # possibly-empty --arg strings, normalized to null inside the filter.
+  # lint_warnings[] is passed the same way as links[] would be, but jq only
+  # accepts ONE positional array via $ARGS.positional, so lint_warnings is
+  # instead pre-joined into a single comma-separated --arg and split back
+  # out inside the filter (keeps this a single jq invocation — see the
+  # jq-subprocess-count-sensitive note below).
   # Kept to one jq invocation deliberately — this environment has shown
   # jq-subprocess-count-sensitive hangs under heavy sequential spawning
   # within a single long-lived bash process (see doctor-predicate.md's
   # "environment note" for this task's diagnosis); minimizing jq spawns
   # per verb call is a defensive mitigation, not just a style preference.
+  local lint_warnings_csv=""
+  if [[ "${#lint_warnings[@]}" -gt 0 ]]; then
+    lint_warnings_csv=$(IFS=,; echo "${lint_warnings[*]}")
+  fi
   local cur; cur=$(_ny_read_ledger)
   local new
   new=$(echo "$cur" | jq \
     --arg id "$id" --arg ts "$ts" --arg section "$section" --arg text "$text" \
-    --arg session_id "$session_id" --arg tier "$tier" \
+    --arg session_id "$session_id" --arg tier "$tier" --arg lint_csv "$lint_warnings_csv" \
     '
     ($session_id | if . == "" then null else . end) as $session
     | ($tier | if . == "" then null else . end) as $tier_v
+    | ($lint_csv | if . == "" then [] else split(",") end) as $lint_warnings
     | .items += [{
         id: $id, created_at: $ts, updated_at: $ts, section: $section, text: $text,
         links: $ARGS.positional, session: $session, tier: $tier_v,
-        state: "open", resolved_at: null, resolution_note: null
+        state: "open", resolved_at: null, resolution_note: null,
+        lint_warnings: $lint_warnings
       }]
     ' \
     --args -- "${links[@]}")
@@ -926,6 +1051,76 @@ cmd_selftest() {
   [[ "$q_count5" == "1" ]] && ok "T21 well-formed file untouched by bootstrap-migrate (no re-migration)" \
     || fail_ "T21 expected exactly 1 occurrence, got $q_count5 (possible spurious re-migration)"
   rm -rf "$sandbox5"
+
+  # ----------------------------------------------------------------------
+  # T22-T25: cold-reader lint (constitution §3 amendment 53d3bee, operator
+  # directive 2026-07-07). Fresh sandbox so lint_warnings assertions aren't
+  # muddied by earlier fixtures' ledger items.
+  # ----------------------------------------------------------------------
+  local sandbox6; sandbox6=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox6/state"
+  export NEEDS_YOU_MD_PATH="$sandbox6/NEEDS-YOU.md"
+
+  # T22: a GOOD decision entry (context prose + a repo-path anchor + a
+  # §3-style Options table whose column 2 carries per-option outcome text)
+  # gets an EMPTY lint_warnings array — no false-positive warn on a
+  # well-formed block.
+  local good_text
+  good_text=$'### Ship the O.9 dashboard tonight?\nThe backlog KPI dashboard (adapters/claude-code/docs/kpis.md) has been green in staging for 3 days; shipping now vs Monday only changes who is on call if it regresses.\n| Option | What happens |\n|---|---|\n| Ship tonight | goes live now, I am on call |\n| Wait for Monday | ships Monday, no weekend on-call risk |\nMy pick: ship tonight.'
+  local id22
+  id22=$(cmd_add --section decision --text "$good_text" --session "sess-t22")
+  local lint22
+  lint22=$(jq -r --arg id "$id22" '.items[] | select(.id == $id) | .lint_warnings | length' "$NEEDS_YOU_STATE_DIR/ledger.json" 2>/dev/null)
+  if [[ "$lint22" == "0" ]]; then
+    ok "T22 well-formed decision entry gets empty lint_warnings (no false-positive)"
+  else
+    fail_ "T22 expected 0 lint_warnings for a well-formed entry, got $lint22"
+  fi
+
+  # T23: an ANCHORLESS bare-shorthand decision (no path/URL/id-pattern
+  # anywhere, and too short to carry real context either) WARNS: stderr
+  # carries a lint notice, and the stored item's lint_warnings is non-empty
+  # and specifically names no-anchor (plus no-context, since this fixture
+  # is also just a bare title).
+  local bad_text="Ship tonight? My pick: yes."
+  local id23_out; id23_out=$(mktemp)
+  local stderr23 id23
+  stderr23=$(cmd_add --section decision --text "$bad_text" --session "sess-t23" 2>&1 >"$id23_out")
+  id23=$(cat "$id23_out" 2>/dev/null); rm -f "$id23_out"
+  if printf '%s' "$stderr23" | grep -qi "cold-reader lint"; then
+    ok "T23 anchorless bare-shorthand decision warns on stderr"
+  else
+    fail_ "T23 expected a cold-reader lint stderr warning, got: $stderr23"
+  fi
+  local lint23
+  lint23=$(jq -r --arg id "$id23" '.items[] | select(.id == $id) | .lint_warnings | join(",")' "$NEEDS_YOU_STATE_DIR/ledger.json" 2>/dev/null)
+  if [[ "$lint23" == *"no-anchor"* ]]; then
+    ok "T23b anchorless entry's stored lint_warnings names no-anchor"
+  else
+    fail_ "T23b expected lint_warnings to include no-anchor, got: $lint23"
+  fi
+
+  # T24: `add` NEVER blocks on a lint warning — exit code is still 0 even
+  # for the worst-case bare-shorthand fixture from T23, and an id is still
+  # returned (the ledger's availability outranks its lint).
+  local rc24
+  ( cmd_add --section decision --text "x" --session "sess-t24" >/dev/null 2>&1 )
+  rc24=$?
+  [[ "$rc24" == "0" ]] && ok "T24 add never blocks on a lint warning (exit 0 even for the worst-case bare text)" \
+    || fail_ "T24 add exited non-zero ($rc24) on a lint-only warning — must never block"
+
+  # T25: the lint is scoped to --section decision only — a question/inflight
+  # entry with the same bare-shorthand shape gets no lint_warnings key
+  # populated with content (empty array), proving the lint does not fire
+  # outside its declared section.
+  local id25
+  id25=$(cmd_add --section question --text "x" --session "sess-t25")
+  local lint25
+  lint25=$(jq -r --arg id "$id25" '.items[] | select(.id == $id) | .lint_warnings | length' "$NEEDS_YOU_STATE_DIR/ledger.json" 2>/dev/null)
+  [[ "$lint25" == "0" ]] && ok "T25 lint scoped to --section decision only (question entry gets empty lint_warnings)" \
+    || fail_ "T25 expected 0 lint_warnings for a non-decision section, got $lint25"
+
+  rm -rf "$sandbox6"
 
   echo ""
   echo "RESULT: $pass passed, $fail failed"

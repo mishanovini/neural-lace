@@ -1023,7 +1023,26 @@ od_needs_me() {
   n="$(printf '%s' "$open_items" | jq 'length' 2>/dev/null || echo 0)"
   printf '%d open item(s) (oracle: od_needs_me)\n' "$n"
   if _od_have jq && [[ "$n" -gt 0 ]]; then
+    # Cold-reader anatomy (constitution §3 amendment 53d3bee, operator
+    # directive 2026-07-07): render the base line as before, then — for a
+    # decision item that carries a non-empty lint_warnings array (written
+    # by needs-you.sh's cold-reader lint at add-time; see that script's
+    # _ny_lint_decision_text) — an honest "needs context: ..." line naming
+    # exactly which cold-reader-bar clause(s) this entry is missing. This
+    # is a DEGRADED-CARD render, not a rejection: the entry always prints;
+    # the lint gap is surfaced, never hidden and never a reason to drop
+    # the item (the ledger is append-honest — see needs-you.sh's own
+    # "never blocks" contract).
     printf '%s' "$open_items" | jq -r '.[] | "  [\(.section)] \(.text | split("\n")[0]) (session: \(.session // "unknown"), id: \(.id))"' 2>/dev/null
+    printf '%s' "$open_items" | jq -r '
+      .[] | select((.lint_warnings // []) | length > 0)
+      | "    needs context: " + ((.lint_warnings // []) | map(
+          if . == "no-context" then "no background/what-is-this prose"
+          elif . == "no-anchor" then "no artifact anchor (path/URL/id)"
+          elif . == "no-outcomes" then "no per-option outcome text"
+          else . end
+        ) | join("; ")) + " (id: \(.id))"
+    ' 2>/dev/null
   fi
   return 0
 }
@@ -2543,6 +2562,30 @@ EOF
     pass "od_sessions joins needs-you has-entry-for-session -> waiting-on-me overrides 'working'"
   else
     fail "expected sess-waiting classified waiting-on-me: $out3b"
+  fi
+
+  echo "Scenario 3c: od_needs_me renders the cold-reader anatomy honestly (constitution §3 amendment 53d3bee)"
+  cat > "$NEEDS_YOU_STATE_DIR/ledger.json" <<'EOF'
+{"schema_version":1,"items":[
+  {"id":"ny-good","created_at":"2026-07-07T00:00:00Z","updated_at":"2026-07-07T00:00:00Z","section":"decision","text":"### Ship the O.9 dashboard tonight?\nThe backlog KPI dashboard (adapters/claude-code/docs/kpis.md) has been green in staging for 3 days.\nMy pick: ship tonight.","links":[],"session":"sess-good","tier":null,"state":"open","resolved_at":null,"resolution_note":null,"lint_warnings":[]},
+  {"id":"ny-bad","created_at":"2026-07-07T00:00:00Z","updated_at":"2026-07-07T00:00:00Z","section":"decision","text":"Ship tonight? My pick: yes.","links":[],"session":"sess-bad","tier":null,"state":"open","resolved_at":null,"resolution_note":null,"lint_warnings":["no-context","no-anchor"]}
+]}
+EOF
+  out3c="$(od_needs_me)"
+  if printf '%s' "$out3c" | grep -q "Ship the O.9 dashboard tonight?" && ! printf '%s' "$out3c" | grep -A1 "Ship the O.9 dashboard tonight?" | grep -q "needs context:"; then
+    pass "od_needs_me: a clean (empty lint_warnings) decision item renders with NO 'needs context' line"
+  else
+    fail "od_needs_me: clean item unexpectedly got a 'needs context' line: $out3c"
+  fi
+  if printf '%s' "$out3c" | grep -q "needs context:.*no background/what-is-this prose.*no artifact anchor.*id: ny-bad"; then
+    pass "od_needs_me: a lint-flagged decision item renders an honest 'needs context' line naming its exact gaps (never rejected, always surfaced)"
+  else
+    fail "od_needs_me: expected a 'needs context: no background/what-is-this prose; no artifact anchor (path/URL/id) (id: ny-bad)' line: $out3c"
+  fi
+  if printf '%s' "$out3c" | grep -q "2 open item(s)"; then
+    pass "od_needs_me: both items (clean and lint-flagged) still count as open — lint never drops an entry"
+  else
+    fail "od_needs_me: expected both items still counted as open: $out3c"
   fi
 
   echo "Scenario 4: od_backlog_health — priority counts, age tiers, terminal detection (rows+summary JSON, C4)"

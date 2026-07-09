@@ -159,6 +159,18 @@ ok('R28 derive-cache.js supports a per-subcommand timeout override with a higher
   /OBS_NL_TIMEOUT_MS_/.test(fs.readFileSync(path.join(D, '..', 'server', 'derive-cache.js'), 'utf8')) &&
   /360000/.test(fs.readFileSync(path.join(D, '..', 'server', 'derive-cache.js'), 'utf8')));
 
+// ============================================================
+// cold-reader-lint (constitution §3 amendment 53d3bee, operator directive
+// 2026-07-07): Q2 pane renders the lint_warnings anatomy honestly — a
+// degraded "needs context" notice, never a rejected/dropped entry.
+// ============================================================
+ok('R29 app.js renders it.lint_warnings as a "needs context" notice on the Q2 card (never drops the entry)',
+  /it\.lint_warnings/.test(js) && /needs context/.test(js));
+ok('R29b the lint notice is text+color (a11y baseline): a chip element plus a detail text node, not color-only',
+  /nm-lint-chip/.test(js) && /nm-lint-detail/.test(js));
+ok('R29c CSS renders the lint chip with --warn (text+color, matching the health-gate waiver-dominant precedent)',
+  /\.nm-lint-chip\s*\{[^}]*var\(--warn\)/.test(C));
+
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail === 0 ? 0 : 1);

@@ -136,6 +136,45 @@
 # remedy is to add more resolution roots (e.g. a configured list of
 # additional checkout-relative roots), not to remove the check.
 
+# ============================================================
+# COLD-READER-LINT check (constitution §3 amendment 53d3bee "the cold-reader
+# bar", operator directive 2026-07-06/07) — follows FUNCTIONAL-LINK's exact
+# precedent immediately above: WARN-ONLY, never contributes to the block/gap
+# verdict, never participates in cycle-counting/DONE-refusal, never touches
+# stdout (a pure signal-ledger + stderr side-channel warn).
+# ============================================================
+# Scans the FINAL assistant message for a §3-format "Decision needed" block
+# (heuristic: a line matching /Decision needed/i, OR the compact block's own
+# "My pick:"/"Reply with:" markers, OR a markdown options table — any of
+# these is treated as "this message is trying to be a §3 decision block").
+# For every such block found, checks the SAME two structural signals
+# needs-you.sh's cold-reader lint checks for --section decision (see that
+# script's _ny_lint_decision_text for the shared heuristic definitions):
+#   (b) >=1 concrete artifact anchor (URL / repo-path / id-pattern / SHA)
+#   (c) per-option outcome text (an outcome connective near option markers,
+#       or a two-column-plus table row — skipped, not failed, if the block
+#       has no option-shaped structure to check outcomes against at all)
+# Missing either -> ONE combined warn ledger_emit (gate=cold-reader-lint)
+# + a stderr notice, exactly mirroring FUNCTIONAL-LINK's own emission shape.
+# The (a) "no-context" background/prose check needs-you.sh also runs is
+# DELIBERATELY NOT duplicated here: a chat message that already contains a
+# "Decision needed:" line by definition has SOME context sentence right
+# there (the §3 template's own "Context: <=5 lines" field) — re-checking
+# prose-length against a live chat message (as opposed to a stored ledger
+# --text string) risks false-warning on legitimately terse-but-complete
+# decisions more than it catches real cold-reader violations; the artifact-
+# anchor and per-option-outcome checks are the two that translate cleanly.
+#
+# FP expectation (same bar as FUNCTIONAL-LINK): a decision block that names
+# its artifact only in a PRIOR chat message (not repeated in this one) will
+# false-positive-warn missing-anchor; accepted for the same three reasons
+# FUNCTIONAL-LINK's own FP note gives (never blocks, remediation is
+# harmless even when transiently over-cautious, and re-deriving cross-
+# message context is out of scope for a single-message mechanical check).
+# Retirement condition: same as FUNCTIONAL-LINK — if ledger-visible FP rate
+# proves high, extend the heuristic (e.g. scan the last 2 assistant
+# messages instead of 1), not remove the check.
+
 set -u
 
 SCRIPT_NAME="stop-verdict-dispatcher.sh"
@@ -826,6 +865,84 @@ _svd_functional_link_check() {
 }
 
 # ----------------------------------------------------------------------
+# _svd_message_has_decision_block <text>
+#   True (0) iff $text looks like it is trying to be a constitution-§3
+#   "Decision needed" block: a "Decision needed" line, OR the compact
+#   block's own "My pick:"/"Reply with:" markers, OR a markdown table row
+#   (the §3 Options table). Any one of these is sufficient — the check
+#   that follows only fires on messages that look like a decision ask at
+#   all; ordinary prose is never scanned.
+# ----------------------------------------------------------------------
+_svd_message_has_decision_block() {
+  local text="$1"
+  printf '%s' "$text" | grep -qiE 'decision needed|my pick:|reply with:|^[[:space:]]*\|.*\|.*\|'
+}
+
+# ----------------------------------------------------------------------
+# _svd_text_has_artifact_anchor <text>
+#   Mirrors needs-you.sh's _ny_lint_decision_text check (b): a URL, a
+#   repo-path-shaped token, or an id/SHA pattern.
+# ----------------------------------------------------------------------
+_svd_text_has_artifact_anchor() {
+  local text="$1"
+  printf '%s' "$text" | grep -qE 'https?://[^[:space:]]+' && return 0
+  printf '%s' "$text" | grep -qE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.[A-Za-z0-9]+' && return 0
+  printf '%s' "$text" | grep -qE '[A-Za-z0-9_.-]+/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+' && return 0
+  printf '%s' "$text" | grep -qE '\b[A-Z]{2,}(-[A-Z0-9]+)*-[0-9]+\b' && return 0
+  printf '%s' "$text" | grep -qE '#[0-9]+\b' && return 0
+  printf '%s' "$text" | grep -qE '\b[0-9a-f]{7,40}\b' && return 0
+  return 1
+}
+
+# ----------------------------------------------------------------------
+# _svd_text_has_option_outcomes <text>
+#   Mirrors needs-you.sh's _ny_lint_decision_text check (c): if the text
+#   has option-shaped structure (Option/My pick/Reply with markers or a
+#   table row), at least one outcome connective or a >=2-column table row
+#   must be present. Returns 0 (pass) when there is no option structure to
+#   check at all (nothing to fail against).
+# ----------------------------------------------------------------------
+_svd_text_has_option_outcomes() {
+  local text="$1"
+  printf '%s' "$text" | grep -qiE '(^|[^A-Za-z])(option|my pick|reply with)([^A-Za-z]|$)|^[[:space:]]*\|.*\|.*\|' || return 0
+  printf '%s' "$text" | grep -qE -- '->|→|\bmeans\b|\btriggers?\b|\bresults? in\b|\bchanges?\b|\bhappens\b|^[[:space:]]*\|[^|]*\|[^|]*\|'
+}
+
+# ----------------------------------------------------------------------
+# _svd_cold_reader_lint_check <transcript_path>
+#   WARN-only (see header comment above). If the final assistant message
+#   contains a §3-format decision block missing an artifact anchor or
+#   per-option outcome text, emits ONE combined signal-ledger "warn" event
+#   (gate cold-reader-lint) + a stderr notice. Never writes to stdout, never
+#   returns non-zero — same fail-open contract as
+#   _svd_functional_link_check.
+# ----------------------------------------------------------------------
+_svd_cold_reader_lint_check() {
+  local transcript_path="$1"
+  local text
+  text=$(_svd_final_assistant_message "$transcript_path")
+  [[ -n "$text" ]] || return 0
+  _svd_message_has_decision_block "$text" || return 0
+
+  local -a missing=()
+  _svd_text_has_artifact_anchor "$text" || missing+=("no-artifact-anchor")
+  _svd_text_has_option_outcomes "$text" || missing+=("no-per-option-outcomes")
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    local joined; joined=$(IFS=,; echo "${missing[*]}")
+    local detail="cold-reader-lint: Decision needed block missing: ${joined}"
+    _svd_ledger "warn" "$detail"
+    {
+      echo ""
+      echo "---- COLD-READER-LINT (WARN, non-blocking) ----"
+      echo "  [missing] ${joined}"
+      echo "    -> a reader with zero session context could not act on this decision block alone (constitution §3 'the cold-reader bar', 53d3bee). Name the concrete artifact (path/URL/id) and say what changes per option."
+    } >&2
+  fi
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # Main (production execution) — skipped entirely under --self-test.
 # ----------------------------------------------------------------------
 _svd_main() {
@@ -882,6 +999,11 @@ _svd_main() {
   # capture site unambiguous) as resolution root (a), alongside the main
   # checkout root (b) inside the helper itself.
   _svd_functional_link_check "$transcript_path" "$(pwd)"
+
+  # COLD-READER-LINT check (constitution §3 amendment 53d3bee): WARN-only,
+  # same non-contributing shape as FUNCTIONAL-LINK immediately above — see
+  # the header comment block for the full mechanism.
+  _svd_cold_reader_lint_check "$transcript_path"
 
   # ADR 059 D6 / specs-e §E.12: write + validate THIS session's end-manifest
   # BEFORE the member gates run, so work-integrity-gate.sh's manifest-scoping
@@ -1948,6 +2070,120 @@ STUBEOF
     failed=$((failed+1))
   fi
   unset RETRY_GUARD_STOP_REFIRE_CEILING
+
+  # Scenario 20 (task cold-reader-lint, constitution §3 amendment 53d3bee):
+  # a "Decision needed" block with NO artifact anchor and NO per-option
+  # outcome text warns (ledger + stderr), never blocks (exit 0, no real gap
+  # in this fixture).
+  # ================================================================
+  _setup_scenario s20
+  HOOKS=$(_build_dispatcher_repo s20)
+  REPO="$tmproot/s20/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T20=$(_write_transcript "$tmproot/s20" $'Decision needed: ship tonight?\nOption A or option B.\nMy pick: A.\n\nDONE: nothing to report')
+  RC20=$(_run_dispatcher "$HOOKS" "$REPO" "$T20" "sess-s20")
+  _expect "cold-reader-lint-warn-never-blocks" "$RC20" "0"
+  if grep -q '"gate":"stop-verdict-dispatcher".*cold-reader-lint.*no-artifact-anchor' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (cold-reader-lint-anchorless-decision-block-warns): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (cold-reader-lint-anchorless-decision-block-warns): FAIL (expected a cold-reader-lint warn naming no-artifact-anchor)" >&2
+    failed=$((failed+1))
+  fi
+  if grep -q 'no-per-option-outcomes' "$tmproot/last-stderr.txt" 2>/dev/null; then
+    echo "self-test (cold-reader-lint-no-outcome-text-also-flagged): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (cold-reader-lint-no-outcome-text-also-flagged): FAIL (expected no-per-option-outcomes on stderr too)" >&2
+    failed=$((failed+1))
+  fi
+  if grep -q "cold-reader bar" "$tmproot/last-stderr.txt" 2>/dev/null; then
+    echo "self-test (cold-reader-lint-remediation-names-the-bar): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (cold-reader-lint-remediation-names-the-bar): FAIL (expected the remediation text to reference the cold-reader bar)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 21: a WELL-FORMED decision block (repo-path anchor + a table
+  # whose column 2 carries per-option outcomes) never warns.
+  # ================================================================
+  _setup_scenario s21
+  HOOKS=$(_build_dispatcher_repo s21)
+  REPO="$tmproot/s21/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T21=$(_write_transcript "$tmproot/s21" $'Decision needed: ship the change in adapters/claude-code/scripts/needs-you.sh tonight?\n| Option | What happens |\n|---|---|\n| Ship | goes live now |\n| Wait | ships Monday |\nMy pick: ship.\n\nDONE: nothing to report')
+  RC21=$(_run_dispatcher "$HOOKS" "$REPO" "$T21" "sess-s21")
+  _expect "cold-reader-lint-well-formed-block-never-blocks" "$RC21" "0"
+  if ! grep -q '"gate":"stop-verdict-dispatcher".*cold-reader-lint' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (cold-reader-lint-well-formed-block-no-warn): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (cold-reader-lint-well-formed-block-no-warn): FAIL (a well-formed decision block with an anchor + table outcomes was incorrectly warned on)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 22: ordinary prose with NO decision-block markers at all is
+  # never scanned (proves the check only fires on messages that look like
+  # a decision ask, matching needs-you.sh's own section-scoping precedent).
+  # ================================================================
+  _setup_scenario s22
+  HOOKS=$(_build_dispatcher_repo s22)
+  REPO="$tmproot/s22/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T22=$(_write_transcript "$tmproot/s22" $'Just shipped the fix, no decision needed here.\n\nDONE: nothing to report')
+  RC22=$(_run_dispatcher "$HOOKS" "$REPO" "$T22" "sess-s22")
+  _expect "cold-reader-lint-ordinary-prose-never-blocks" "$RC22" "0"
+  if ! grep -q '"gate":"stop-verdict-dispatcher".*cold-reader-lint' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (cold-reader-lint-ordinary-prose-not-scanned): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (cold-reader-lint-ordinary-prose-not-scanned): FAIL (ordinary prose with no decision-block markers was incorrectly warned on)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 23: a WARN never appears in the combined BLOCK message and
+  # never contributes to gap_count — a real blocking gap (no marker) PLUS
+  # an anchorless decision block in the same final message still blocks on
+  # the real gap, and the cold-reader-lint warn stays out of the block JSON.
+  # ================================================================
+  _setup_scenario s23
+  HOOKS=$(_build_dispatcher_repo s23)
+  REPO="$tmproot/s23/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T23=$(_write_transcript "$tmproot/s23" $'Decision needed: ship tonight?\nMy pick: yes.\n\ntrailing off with no marker at all')
+  RC23=$(_run_dispatcher "$HOOKS" "$REPO" "$T23" "sess-s23")
+  _expect "cold-reader-lint-warn-plus-real-gap-still-blocks-on-the-real-gap" "$RC23" "2"
+  if grep -q "marker-format" "$tmproot/last-stderr.txt" 2>/dev/null \
+     && ! grep -q "cold-reader-lint" "$tmproot/last-stdout.txt" 2>/dev/null; then
+    echo "self-test (cold-reader-lint-warn-channel-separate-from-block-json): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (cold-reader-lint-warn-channel-separate-from-block-json): FAIL (expected the cold-reader-lint WARN to stay out of the block-JSON reason string on stdout)" >&2
+    failed=$((failed+1))
+  fi
+  if grep -q 'cold-reader-lint' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (cold-reader-lint-warn-still-ledgered-alongside-a-real-block): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (cold-reader-lint-warn-still-ledgered-alongside-a-real-block): FAIL (expected the cold-reader-lint warn to still be ledgered even though a real gap also blocked)" >&2
+    failed=$((failed+1))
+  fi
 
   echo "" >&2
   echo "self-test summary: $passed passed, $failed failed" >&2

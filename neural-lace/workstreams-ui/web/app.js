@@ -305,6 +305,28 @@
       text.className = 'nm-text';
       text.textContent = it.text;
       card.appendChild(text);
+      // Cold-reader anatomy (constitution §3 amendment 53d3bee, operator
+      // directive 2026-07-07): render lint_warnings HONESTLY when present —
+      // a degraded "needs context" card, never a rejected entry (the
+      // ledger is append-honest; needs-you.sh's add never blocks on lint).
+      if (it.lint_warnings && it.lint_warnings.length) {
+        var lintRow = document.createElement('div');
+        lintRow.className = 'nm-lint-warning';
+        var lintChip = document.createElement('span');
+        lintChip.className = 'chip nm-lint-chip';
+        lintChip.textContent = 'needs context';
+        lintRow.appendChild(lintChip);
+        var lintDetail = document.createElement('span');
+        lintDetail.className = 'nm-lint-detail';
+        lintDetail.textContent = it.lint_warnings.map(function (w) {
+          if (w === 'no-context') return 'no background on what this is';
+          if (w === 'no-anchor') return 'no artifact anchor (path/URL/id)';
+          if (w === 'no-outcomes') return 'no per-option outcome text';
+          return w;
+        }).join('; ');
+        lintRow.appendChild(lintDetail);
+        card.appendChild(lintRow);
+      }
       if (it.links && it.links.length) {
         var linksRow = document.createElement('div');
         linksRow.className = 'nm-links';
