@@ -20,7 +20,21 @@ Pocket-Technician
 pocket-technician
 pt-leads
 Pocket\sTechnician
-(^|[^-A-Za-z0-9])Circuit(?:\s|$|[^A-Za-z])
+# The codename below is also a generic electrical-engineering noun. Its
+# pattern must catch the codename standalone (prose either case, file paths,
+# identifiers, end-of-line) but must NOT catch the generic two-word idiom
+# "<word> breaker" / "<word>-breaker" (nl-issue [47]: the old right boundary
+# `(?:\s|$|[^A-Za-z])` false-blocked PR #91's spawn-cascade prose until the
+# guards were renamed). POSIX ERE has no lookahead, so "not followed by
+# 'breaker'" is spelled as the prefix-complement alternation below: after the
+# word, allow (spaces/hyphens then EOL) | (any non-letter that is not a
+# space/hyphen) | (spaces/hyphens then a word that is NOT 'breaker'-prefixed).
+# The scanner greps -iE, and GNU grep folds bracket expressions under -i, so
+# [^b] etc. also exclude 'B'. Accepted narrowings (proven in the scanner's
+# --self-test, scenarios c1-c9): "<word>[ -]breaker..." never trips; the
+# truncated forms "<word> b" / "<word> br" / ... / "<word> breake" at
+# end-of-line never trip (six near-impossible strings, accepted).
+(^|[^-A-Za-z0-9])Circuit([[:space:]-]*$|[^-A-Za-z[:space:]]|[[:space:]-]+([^b[:space:]-]|b[^r]|br[^e]|bre[^a]|brea[^k]|break[^e]|breake[^r]))
 (^|[^-A-Za-z0-9])Foresight(?:\s|$|[^A-Za-z])
 
 # === Filesystem markers revealing personal setup ===

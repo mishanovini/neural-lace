@@ -288,6 +288,80 @@ if [ "${1:-}" = "--self-test" ]; then
   ST_W5_RC=$?
   rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-weak.txt"
 
+  # ---- Codename-pattern scenarios (nl-issue [47]) ----
+  # These run against the REAL shipped denylist (copied verbatim into a
+  # second temp repo) so they exercise the actual pattern that ships —
+  # including that the whole patterns file still compiles under
+  # `grep -iE -f` (one invalid ERE makes grep exit 2, which the scanner
+  # reads as "no match": ALL of Layer 1 would silently no-op).
+  # One product codename is also a generic electrical-engineering noun; the
+  # shipped pattern must catch it standalone (prose either case, file paths,
+  # identifiers, end-of-line) but must NOT catch the generic two-word idiom
+  # "<word> breaker" / "<word>-breaker", which false-blocked PR #91.
+  # Loud SKIP when the real denylist is not reachable (e.g. the script runs
+  # from a live ~/.claude copy outside the repo checkout).
+  ST_C_SKIP=1
+  REAL_ROOT=$(git -C "$(dirname "$SCRIPT_PATH")" rev-parse --show-toplevel 2>/dev/null || true)
+  REAL_DENYLIST="$REAL_ROOT/adapters/claude-code/patterns/harness-denylist.txt"
+  if [ -n "$REAL_ROOT" ] && [ -f "$REAL_DENYLIST" ]; then
+    ST_C_SKIP=0
+    TMPDIR_C="$TMPDIR_ST/codename-repo"
+    mkdir -p "$TMPDIR_C/adapters/claude-code/patterns"
+    cp "$REAL_DENYLIST" "$TMPDIR_C/adapters/claude-code/patterns/harness-denylist.txt"
+    (
+      cd "$TMPDIR_C" || exit 1
+      git init -q . >/dev/null 2>&1
+      git config user.email "selftest@example.com"
+      git config user.name "selftest"
+    )
+    # Positives — the codename must still trip in every real leak context:
+    printf '%s\n' 'the circuit rollout is delayed'                  > "$TMPDIR_C/c1-prose-lower.md"
+    printf '%s\n' 'The Circuit rollout starts tomorrow.'            > "$TMPDIR_C/c2-prose-upper.md"
+    printf '%s\n' 'stored under repos/circuit/config.yaml today'    > "$TMPDIR_C/c3-filepath.md"
+    printf '%s\n' 'export circuit_env=prod for the test run'        > "$TMPDIR_C/c4-identifier.md"
+    printf '%s\n' 'first enable circuit'                            > "$TMPDIR_C/c5-eol.md"
+    # Negatives — the generic idiom must NOT trip (nl-issue [47] / PR #91):
+    printf '%s\n' 'a circuit breaker guards the spawn path'         > "$TMPDIR_C/c6-idiom-space.md"
+    printf '%s\n' 'add a circuit-breaker to the retry loop'         > "$TMPDIR_C/c7-idiom-hyphen.md"
+    printf '%s\n' 'The Circuit Breaker pattern is well documented.' > "$TMPDIR_C/c8-idiom-caps.md"
+    printf '%s\n' 'plain control prose with nothing special'        > "$TMPDIR_C/c9-clean.md"
+
+    ST_C1_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c1-prose-lower.md" 2>&1); ST_C1_RC=$?
+    ST_C2_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c2-prose-upper.md" 2>&1); ST_C2_RC=$?
+    ST_C3_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c3-filepath.md" 2>&1); ST_C3_RC=$?
+    ST_C4_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c4-identifier.md" 2>&1); ST_C4_RC=$?
+    ST_C5_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c5-eol.md" 2>&1); ST_C5_RC=$?
+    ST_C6_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c6-idiom-space.md" 2>&1); ST_C6_RC=$?
+    ST_C7_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c7-idiom-hyphen.md" 2>&1); ST_C7_RC=$?
+    ST_C8_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c8-idiom-caps.md" 2>&1); ST_C8_RC=$?
+    ST_C9_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c9-clean.md" 2>&1); ST_C9_RC=$?
+  fi
+
+  # ---- Machine-local secret-layer scenario (nl-issue [25] / GAP-56) ----
+  # The literal credential VALUE relocated out of the shipped denylist must
+  # never re-enter this repo's tracked tree. When the machine-local layer
+  # (~/.claude/business-patterns.d/*.txt) exists, grep every tracked file of
+  # the REAL repo for each of its patterns — zero matches required. Loud
+  # SKIP where the layer or the repo checkout is absent (e.g. CI runners).
+  ST_D_SKIP=1
+  ST_D_OUT=""
+  ST_D_RC=1
+  BPD_DIR="$HOME/.claude/business-patterns.d"
+  if [ -n "$REAL_ROOT" ] && [ -d "$BPD_DIR" ]; then
+    BPD_PATS="$TMPDIR_ST/bpd-patterns.txt"
+    cat "$BPD_DIR"/*.txt 2>/dev/null | awk '
+      { gsub(/\r$/, "") }
+      /^[[:space:]]*$/ { next }
+      /^[[:space:]]*#/ { next }
+      { print }
+    ' > "$BPD_PATS"
+    if [ -s "$BPD_PATS" ]; then
+      ST_D_SKIP=0
+      ST_D_OUT=$(git -C "$REAL_ROOT" grep -I -i -l -E -f "$BPD_PATS" 2>&1)
+      ST_D_RC=$?
+    fi
+  fi
+
   set -e
 
   FAIL=0
@@ -428,6 +502,75 @@ if [ "${1:-}" = "--self-test" ]; then
   if [ "$ST_W5_RC" -ne 1 ]; then
     echo "self-test: FAIL (w5) — weak waiver (no purpose-clauses) expected exit 1, got $ST_W5_RC" >&2
     echo "$ST_W5_OUT" >&2
+    FAIL=1
+  fi
+
+  # ---- Codename-pattern assertions (nl-issue [47]) ----
+  if [ "$ST_C_SKIP" -eq 1 ]; then
+    echo "self-test: SKIP (c1-c9) — real shipped denylist not reachable from this script location; run from the repo checkout to exercise the codename-pattern scenarios" >&2
+  else
+    # c1-c5: the codename must trip, and via Layer 1 ([denylist] label) —
+    # a heuristic-caused block would be a false pass for the pattern.
+    if [ "$ST_C1_RC" -ne 1 ] || ! printf '%s' "$ST_C1_OUT" | grep -q '\[denylist\]'; then
+      echo "self-test: FAIL (c1) — lowercase codename in prose must trip the denylist (expected exit 1 + [denylist], got $ST_C1_RC)" >&2
+      echo "$ST_C1_OUT" >&2
+      FAIL=1
+    fi
+    if [ "$ST_C2_RC" -ne 1 ] || ! printf '%s' "$ST_C2_OUT" | grep -q '\[denylist\]'; then
+      echo "self-test: FAIL (c2) — capitalized codename in prose must trip the denylist (expected exit 1 + [denylist], got $ST_C2_RC)" >&2
+      echo "$ST_C2_OUT" >&2
+      FAIL=1
+    fi
+    if [ "$ST_C3_RC" -ne 1 ] || ! printf '%s' "$ST_C3_OUT" | grep -q '\[denylist\]'; then
+      echo "self-test: FAIL (c3) — codename inside a file path must trip the denylist (expected exit 1 + [denylist], got $ST_C3_RC)" >&2
+      echo "$ST_C3_OUT" >&2
+      FAIL=1
+    fi
+    if [ "$ST_C4_RC" -ne 1 ] || ! printf '%s' "$ST_C4_OUT" | grep -q '\[denylist\]'; then
+      echo "self-test: FAIL (c4) — codename inside an identifier must trip the denylist (expected exit 1 + [denylist], got $ST_C4_RC)" >&2
+      echo "$ST_C4_OUT" >&2
+      FAIL=1
+    fi
+    if [ "$ST_C5_RC" -ne 1 ] || ! printf '%s' "$ST_C5_OUT" | grep -q '\[denylist\]'; then
+      echo "self-test: FAIL (c5) — codename at end-of-line must trip the denylist (expected exit 1 + [denylist], got $ST_C5_RC)" >&2
+      echo "$ST_C5_OUT" >&2
+      FAIL=1
+    fi
+    # c6-c8: the generic "<word> breaker" idiom must NOT trip (PR #91 class)
+    if [ "$ST_C6_RC" -ne 0 ]; then
+      echo "self-test: FAIL (c6) — generic '<word> breaker' prose must NOT trip (nl-issue [47]), expected exit 0, got $ST_C6_RC" >&2
+      echo "$ST_C6_OUT" >&2
+      FAIL=1
+    fi
+    if [ "$ST_C7_RC" -ne 0 ]; then
+      echo "self-test: FAIL (c7) — generic '<word>-breaker' prose must NOT trip (nl-issue [47]), expected exit 0, got $ST_C7_RC" >&2
+      echo "$ST_C7_OUT" >&2
+      FAIL=1
+    fi
+    if [ "$ST_C8_RC" -ne 0 ]; then
+      echo "self-test: FAIL (c8) — capitalized '<Word> Breaker' prose must NOT trip (scan is -i; nl-issue [47]), expected exit 0, got $ST_C8_RC" >&2
+      echo "$ST_C8_OUT" >&2
+      FAIL=1
+    fi
+    # c9: clean control — guards against an "everything matches" pathology
+    # (e.g. an invalid ERE degrading grep, or an over-broad new pattern).
+    if [ "$ST_C9_RC" -ne 0 ]; then
+      echo "self-test: FAIL (c9) — clean control file must pass with the full real denylist, expected exit 0, got $ST_C9_RC" >&2
+      echo "$ST_C9_OUT" >&2
+      FAIL=1
+    fi
+  fi
+
+  # ---- Machine-local secret-layer assertion (nl-issue [25] / GAP-56) ----
+  if [ "$ST_D_SKIP" -eq 1 ]; then
+    echo "self-test: SKIP (d) — machine-local ~/.claude/business-patterns.d layer absent or repo checkout not reachable (expected on CI runners)" >&2
+  elif [ "$ST_D_RC" -eq 0 ]; then
+    echo "self-test: FAIL (d) — a machine-local secret-layer pattern matches tracked file(s) in this repo; the relocated literal (or another local-layer secret) has re-entered the tree:" >&2
+    echo "$ST_D_OUT" >&2
+    FAIL=1
+  elif [ "$ST_D_RC" -ne 1 ]; then
+    echo "self-test: FAIL (d) — git grep errored (exit $ST_D_RC) while checking the machine-local secret layer against the tree:" >&2
+    echo "$ST_D_OUT" >&2
     FAIL=1
   fi
 

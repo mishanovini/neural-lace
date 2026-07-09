@@ -101,11 +101,20 @@ const SUBCOMMANDS = {
 // accommodation, not a fix to od_backlog_health's performance; operators
 // on a smaller/faster estate can lower it via OBS_NL_TIMEOUT_MS_BACKLOG.
 const SUBCOMMAND_TIMEOUT_DEFAULTS_MS = { backlog: 360000 };
+// GLOBAL default (nl-issue [39], NL-FINDING-040/FM-037): 180s, raised from
+// 60s. The 2026-07-08 incident measured `nl status --json` at 93s SOLO and
+// rc=124 kills at 150s under contention — a 60s default was killing
+// healthy-but-slow derivations every cycle, and each timeout-kill fed the
+// thundering herd (the killed derivation re-spawned on the next tick while
+// the estate was still saturated). 180s clears the worst measured healthy
+// latency (150s) with headroom; operators on a fast estate can lower it
+// via OBS_NL_TIMEOUT_MS.
+const GLOBAL_TIMEOUT_DEFAULT_MS = 180000;
 function timeoutMsFor(sub) {
   const perSubKey = 'OBS_NL_TIMEOUT_MS_' + sub.toUpperCase().replace(/-/g, '_');
   if (process.env[perSubKey]) return Number(process.env[perSubKey]);
   if (process.env.OBS_NL_TIMEOUT_MS) return Number(process.env.OBS_NL_TIMEOUT_MS);
-  return SUBCOMMAND_TIMEOUT_DEFAULTS_MS[sub] || 60000;
+  return SUBCOMMAND_TIMEOUT_DEFAULTS_MS[sub] || GLOBAL_TIMEOUT_DEFAULT_MS;
 }
 
 // spawnAsync(cmd, args, timeoutMs, timeoutLabel) -> Promise<{rc, stdout,
@@ -164,7 +173,7 @@ function spawnAsync(cmd, args, timeoutMs, timeoutLabel) {
 // runNl(sub, extraArgs) -> Promise<{rc, stdout, stderr}> — spawns
 // `bash <nl-bin> <sub> ...extraArgs --json` ASYNCHRONOUSLY. Per-subcommand
 // timeout (O.4-fix1 item 6): OBS_NL_TIMEOUT_MS_<SUB> overrides
-// OBS_NL_TIMEOUT_MS overrides the 60s (180s for backlog) default — see
+// OBS_NL_TIMEOUT_MS overrides the 180s (360s for backlog) default — see
 // timeoutMsFor above.
 function runNl(sub, extraArgs) {
   const bin = nlBin();
@@ -211,6 +220,8 @@ function DeriveCache(opts) {
   };
   this.entries = {}; // sub -> {data, rc, stderr_tail, derived_at}
   this.inFlight = {}; // sub -> boolean (refresh in progress)
+  this._cycleInFlight = false; // whole-cycle single-flight guard ([37]) — see refreshAll
+  this.skippedCycles = 0; // ticks skipped because the previous cycle was still running
   this.listeners = []; // called after every refresh cycle (for SSE push)
   Object.keys(SUBCOMMANDS).forEach((sub) => {
     this.entries[sub] = { data: null, rc: null, stderr_tail: '', derived_at: null };
@@ -289,10 +300,32 @@ DeriveCache.prototype.refreshOne = function (sub) {
 // not delay the others. Notifies listeners (SSE push) once ALL panes have
 // settled, matching the prior batch-refresh semantics from the caller's
 // point of view.
+//
+// SINGLE-FLIGHT ACROSS THE POLL TIMER (nl-issue [37], NL-FINDING-040/
+// FM-037): when oracle latency exceeds the poll interval (14m44s latency
+// vs a 30s tick was measured at the 2026-07-08 incident; 45 live nl
+// processes observed), the timer must SKIP the tick, not pile a new cycle
+// onto the running one. The per-sub inFlight dedup (refreshOne) already
+// prevented duplicate child processes per subcommand, but a piled-on cycle
+// still resolved immediately with stale entries and fired _notify() — one
+// spurious SSE broadcast per tick, forever, on every instance. A skipped
+// tick is counted (skippedCycles) and logged so a saturated estate is
+// diagnosable from the server log instead of invisible.
 DeriveCache.prototype.refreshAll = function () {
   const self = this;
+  if (this._cycleInFlight) {
+    this.skippedCycles += 1;
+    process.stderr.write('[derive-cache] refresh cycle skipped — previous cycle still in flight (' +
+      this.skippedCycles + ' skipped so far)\n');
+    return Promise.resolve();
+  }
+  this._cycleInFlight = true;
   return Promise.all(Object.keys(SUBCOMMANDS).map((sub) => self.refreshOne(sub))).then(() => {
+    self._cycleInFlight = false;
     self._notify();
+  }, (err) => {
+    self._cycleInFlight = false; // never let a rejected cycle wedge the guard shut
+    throw err;
   });
 };
 

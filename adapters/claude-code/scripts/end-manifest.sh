@@ -21,6 +21,13 @@
 #     session created since --shipped-since, the unresolved-gaps ledger,
 #     NEEDS-YOU session entries, the transcript's final marker line) and
 #     writes it to ~/.claude/state/end-manifest/<session-id>.json.
+#     Stale-gap resolution (nl-issue [53]): ledger gaps whose blocking
+#     predicate is mechanically re-derivable (currently only
+#     work-integrity-gate/check-c-dirty) are re-checked NOW and excluded
+#     from manifest.unresolved iff the predicate provably no longer holds,
+#     with an audit line appended to ~/.claude/state/resolved-gaps.jsonl —
+#     the unresolved ledger itself is never mutated, and gap classes
+#     without a re-check predicate are always listed unchanged.
 #
 #   end-manifest.sh validate <session-id-or-path>
 #     Re-derives and checks every claim in the manifest MECHANICALLY:
@@ -143,6 +150,80 @@ _em_final_marker_line() {
 }
 
 # ----------------------------------------------------------------------
+# _em_gap_resolved_by_recheck <gap-json-line> <resolved-ledger> <session-id>
+#   nl-issue [53] (live repro: session 442916d1 — check-c-dirty gap
+#   recorded while the worktree was dirty; the session then committed
+#   e3e5b6c + pushed, worktree clean, yet every later Stop rebuilt the
+#   gap from the append-only unresolved-gaps.jsonl and re-failed forever;
+#   the only escape was ledger-line deletion, which the auto-mode
+#   classifier rightly blocks as audit-trail tampering).
+#
+#   Resolution model (ADR-059 D4-compatible): for gap classes whose
+#   blocking predicate is mechanically RE-DERIVABLE, re-evaluate the
+#   predicate NOW and return 0 (resolved) IFF it provably no longer
+#   holds — appending an audit note to the append-only resolved-gaps
+#   sidecar (NEVER mutating unresolved-gaps.jsonl). Resolution requires
+#   POSITIVE re-derived evidence; every other case returns 1 (still
+#   unresolved): unknown gap class, worktree path missing/not-a-repo
+#   (evidence cannot be re-derived — cautious default, gap stays listed),
+#   predicate still true, any probe failure. No silent vanishing:
+#   exclusion happens only when the gate's own check, re-run now, passes.
+#
+#   Implemented classes:
+#     work-integrity-gate/check-c-dirty — re-runs the SAME cleanliness
+#     check the gate uses (work-integrity-gate.sh _wig_check_worktree:
+#     git diff --quiet + --cached --quiet + untracked files excluding
+#     .claude/state/, NL-FINDING-026 class 2 — same exclusion as this
+#     file's check 3) against the worktree path the gap message names in
+#     single quotes ("... session ending in worktree '<path>' with ...").
+# ----------------------------------------------------------------------
+_em_gap_resolved_by_recheck() {
+  local gap_line="$1" resolved_ledger="$2" session_id="$3"
+  command -v jq >/dev/null 2>&1 || return 1
+  command -v git >/dev/null 2>&1 || return 1
+
+  local gate check
+  gate=$(jq -r '.gate // ""' <<<"$gap_line" 2>/dev/null | tr -d '\r')
+  check=$(jq -r '.check // ""' <<<"$gap_line" 2>/dev/null | tr -d '\r')
+  [[ "$gate" == "work-integrity-gate" && "$check" == "check-c-dirty" ]] || return 1
+
+  local message wt_path
+  message=$(jq -r '.message // ""' <<<"$gap_line" 2>/dev/null | tr -d '\r')
+  # Fail-closed template strip (harness-reviewer Major, 2026-07-09): strip the
+  # gate's FIXED message prefix/suffix literally instead of sed's greedy
+  # single-quote capture, so an embedded apostrophe yields either the full
+  # path or a non-existent one — never a truncated-but-valid clean dir. A
+  # non-absolute result (relative path from a mangled parse) is rejected:
+  # resolving it against write-time cwd could name an unrelated clean repo.
+  wt_path="${message#*"in worktree '"}"
+  [[ "$wt_path" != "$message" ]] || return 1
+  wt_path="${wt_path%"' with uncommitted changes"*}"
+  [[ "$wt_path" == /* || "$wt_path" == [A-Za-z]:[/\\]* ]] || return 1
+  [[ -n "$wt_path" && -d "$wt_path" ]] || return 1
+  git -C "$wt_path" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+
+  # Same three dirt probes as the gate — ANY dirt keeps the gap listed.
+  git -C "$wt_path" diff --quiet 2>/dev/null || return 1
+  git -C "$wt_path" diff --cached --quiet 2>/dev/null || return 1
+  if git -C "$wt_path" ls-files --others --exclude-standard 2>/dev/null \
+       | grep -v -E '(^|[/\\])\.claude[/\\]state([/\\]|$)' | grep -q .; then
+    return 1
+  fi
+
+  # Predicate provably no longer holds — append the audit note (one line
+  # per suppressed ledger line; duplicates in the unresolved ledger yield
+  # duplicate notes, preserving the 1:1 rebuild trail).
+  mkdir -p "$(dirname "$resolved_ledger")" 2>/dev/null || true
+  jq -cn --arg ts "$(_em_now)" --arg sid "$session_id" --arg wt "$wt_path" \
+     --argjson gap "$gap_line" \
+     '{ts:$ts, resolved_by:"end-manifest-write-recheck",
+       predicate:"check-c-dirty: worktree re-checked clean (diff+cached+untracked-outside-.claude/state)",
+       session_id:$sid, worktree:$wt, gap:$gap}' \
+     >> "$resolved_ledger" 2>/dev/null || return 1
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # cmd_write [--session-id <id>] [--transcript <path>] [--shipped-since <ref>]
 #           [--torn-down]
 # ----------------------------------------------------------------------
@@ -212,15 +293,36 @@ cmd_write() {
   # unresolved-gaps.jsonl ledger stop-verdict-dispatcher.sh writes
   # (task E.11) — every line already carries session_id/gate/check/message
   # and is durably recorded IN THAT SAME FILE, so recorded_at is simply
-  # the ledger path itself. ----
+  # the ledger path itself.
+  #
+  # nl-issue [53]: the ledger is APPEND-ONLY, so a gap whose real-world
+  # condition was later fixed (canonical: check-c-dirty recorded while
+  # the worktree was dirty, session then commits + pushes) used to be
+  # rebuilt into manifest.unresolved on EVERY Stop with no resolution
+  # path short of ledger tampering. Each line is now first offered to
+  # _em_gap_resolved_by_recheck (see its docstring): gap classes with a
+  # mechanically re-derivable predicate are re-evaluated NOW and excluded
+  # only when the predicate provably no longer holds (audit note appended
+  # to the resolved-gaps sidecar); every other gap keeps the exact
+  # previous behavior — listed, full item, no silent vanishing. ----
   local unresolved_json="[]"
   local gaps_path="${HOME:-$PWD}/.claude/state/unresolved-gaps.jsonl"
+  local resolved_path="${HOME:-$PWD}/.claude/state/resolved-gaps.jsonl"
   if [[ -f "$gaps_path" ]] && command -v jq >/dev/null 2>&1; then
-    local u
-    u=$(jq -cs --arg sid "$session_id" --arg path "$gaps_path" '
-      [ .[] | select(.session_id == $sid) | { item: ((.gate // "?") + "/" + (.check // "?") + ": " + (.message // "")), recorded_at: $path } ]
-    ' "$gaps_path" 2>/dev/null)
-    [[ -n "$u" ]] && unresolved_json="$u"
+    local entries="" gap_line entry
+    while IFS= read -r gap_line; do
+      gap_line="${gap_line%$'\r'}"
+      [[ -z "$gap_line" ]] && continue
+      if _em_gap_resolved_by_recheck "$gap_line" "$resolved_path" "$session_id"; then
+        continue   # predicate re-derived clean; audit note already appended
+      fi
+      entry=$(jq -c --arg path "$gaps_path" \
+        '{ item: ((.gate // "?") + "/" + (.check // "?") + ": " + (.message // "")), recorded_at: $path }' \
+        <<<"$gap_line" 2>/dev/null)
+      [[ -n "$entry" ]] && entries+="${entry},"
+    done < <(jq -c --arg sid "$session_id" 'select(type == "object" and .session_id == $sid)' "$gaps_path" 2>/dev/null)
+    entries="${entries%,}"
+    [[ -n "$entries" ]] && unresolved_json="[${entries}]"
   fi
 
   # ---- needs-operator: this session's NEEDS-YOU ledger entries (any
@@ -354,6 +456,18 @@ cmd_validate() {
   # cost of the same false-negative risk the structural check exists to
   # close (acceptable degradation, not a silent behavior change — jq is
   # required for every other check in this validator already).
+  #
+  # nl-issue [45] (observed live in sessions f7060d7f + 442916d1,
+  # 2026-07-07): the structural fix above originally streamed the JSONL
+  # through a PER-LINE jq program (`jq -e '<reconstruct> == $item'`),
+  # which emits one true/false PER ledger line — and `jq -e`'s exit
+  # status tracks only the LAST output. Any newer entry appended after
+  # this session's gap (e.g. by another session sharing the machine-wide
+  # ledger) made a genuinely-recorded item report "NOT found", re-wedging
+  # the session forever. Fixed to slurp (-s) and test MEMBERSHIP across
+  # ALL lines: reconstruct every object line's "<gate>/<check>: <message>"
+  # and pass iff ANY equals $item. select(type == "object") guards
+  # against non-object JSONL lines aborting the reconstruction.
   local item recorded_at n_unresolved
   n_unresolved=$(jq '.unresolved | length' "$path" 2>/dev/null || echo 0)
   i=0
@@ -363,8 +477,10 @@ cmd_validate() {
     local found=0
     if [[ -f "$recorded_at" ]]; then
       if command -v jq >/dev/null 2>&1; then
-        if jq -e --arg item "$item" \
-             '(.gate // "?") + "/" + (.check // "?") + ": " + (.message // "") == $item' \
+        if jq -es --arg item "$item" \
+             '[ .[] | select(type == "object")
+                | (.gate // "?") + "/" + (.check // "?") + ": " + (.message // "") ]
+              | index($item) != null' \
              "$recorded_at" >/dev/null 2>&1; then
           found=1
         fi
@@ -717,6 +833,133 @@ _em_self_test() {
   ( cd "$REPO" && bash "$script_path" validate "sess-s10" >/dev/null 2>"$D/validate-err.txt" ) || RC=$?
   [[ "$RC" == "0" ]] && ok "long (>60 char) unresolved item, written by the REAL write verb, validates PASS end-to-end" || no "expected the real write+validate round-trip on a >60-char item to PASS, got $RC (see $D/validate-err.txt)"
   grep -q "found in" "$D/validate-err.txt" 2>/dev/null && ok "check-2 reports the long item found (full match, not truncated-string coincidence)" || no "expected a 'found in' PASS line for the long-item scenario"
+
+  # ================================================================
+  # Scenario 11 (nl-issue [45], RED-before/GREEN-after): a genuinely-
+  # recorded item that is NOT the ledger's LAST line must validate PASS.
+  # Reproduces the live failure (sessions f7060d7f + 442916d1,
+  # 2026-07-07): check-2's original per-line `jq -e` program produced one
+  # true/false output PER ledger line, and jq -e's exit status tracks only
+  # the LAST output — so any newer entry (e.g. from another session)
+  # appended after this session's gap made a genuinely-recorded item
+  # report "NOT found". Ledger here: this session's gap FIRST, a foreign
+  # session's gap as the LAST line. write + validate via the real verbs.
+  # ================================================================
+  _setup_scenario s11; D="$SCEN_DIR"
+  REPO=$(_build_repo "$D" repo)
+  REAL_GAPS="${HOME}/.claude/state/unresolved-gaps.jsonl"
+  printf '{"ts":"2026-07-09T00:00:00Z","session_id":"sess-s11","gate":"session-honesty-gate","check":"marker-scan","message":"final line missing a DONE/PAUSING/BLOCKED/CONTINUING marker"}\n' > "$REAL_GAPS"
+  printf '{"ts":"2026-07-09T00:00:01Z","session_id":"sess-OTHER","gate":"session-honesty-gate","check":"marker-scan","message":"a NEWER foreign-session gap occupying the ledger LAST line"}\n' >> "$REAL_GAPS"
+  ( cd "$REPO" && bash "$script_path" write --session-id sess-s11 >"$D/write-out.txt" 2>"$D/write-err.txt" )
+  RC=0
+  ( cd "$REPO" && bash "$script_path" validate "sess-s11" >/dev/null 2>"$D/validate-err.txt" ) || RC=$?
+  [[ "$RC" == "0" ]] && ok "[45] recorded item that is NOT the ledger's last line validates PASS (any-line match)" || no "expected non-last-line recorded item to validate PASS, got $RC (see $D/validate-err.txt)"
+  grep -q "PASS: unresolved item" "$D/validate-err.txt" 2>/dev/null && ok "[45] check-2 reports the non-last-line item found" || no "expected a 'PASS: unresolved item' line for the non-last-line item"
+
+  # ================================================================
+  # Scenario 12 (nl-issue [53], RED-before/GREEN-after): a check-c-dirty
+  # gap whose named worktree is NOW CLEAN is resolved-by-recheck at write
+  # time — EXCLUDED from manifest.unresolved and logged to the append-only
+  # resolved-gaps.jsonl sidecar (never by deleting the unresolved ledger
+  # line). Reproduces live session 442916d1: gap recorded while dirty,
+  # session then committed + pushed, worktree clean — but every later
+  # Stop rebuilt the gap from the append-only ledger and re-failed
+  # forever. Gap message uses work-integrity-gate's EXACT check-c wording
+  # (worktree path in single quotes) — the recheck parses that path.
+  # ================================================================
+  _setup_scenario s12; D="$SCEN_DIR"
+  REPO=$(_build_repo "$D" repo)   # committed + pushed → provably clean NOW
+  REAL_GAPS="${HOME}/.claude/state/unresolved-gaps.jsonl"
+  jq -cn --arg msg "Work-integrity gate (check c): session ending in worktree '${REPO}' with uncommitted changes; preserve (commit/stash/push) before stop." \
+    '{ts:"2026-07-09T00:00:00Z",session_id:"sess-s12",gate:"work-integrity-gate",check:"check-c-dirty",message:$msg}' > "$REAL_GAPS"
+  ( cd "$REPO" && bash "$script_path" write --session-id sess-s12 >"$D/write-out.txt" 2>"$D/write-err.txt" )
+  MPATH=$(cat "$D/write-out.txt" 2>/dev/null)
+  if [[ -f "$MPATH" ]] && [[ "$(jq -r '.unresolved | length' "$MPATH" 2>/dev/null)" == "0" ]]; then
+    ok "[53] check-c-dirty gap with now-clean worktree is excluded from manifest.unresolved (resolved-by-recheck)"
+  else
+    no "expected now-clean check-c-dirty gap to be excluded, manifest has: $(jq -c '.unresolved' "$MPATH" 2>/dev/null)"
+  fi
+  SIDECAR="${HOME}/.claude/state/resolved-gaps.jsonl"
+  if [[ -f "$SIDECAR" ]] && jq -e 'select(.gap.check == "check-c-dirty" and .session_id == "sess-s12")' "$SIDECAR" >/dev/null 2>&1; then
+    ok "[53] resolution logged to resolved-gaps.jsonl sidecar (audit trail, unresolved ledger untouched)"
+  else
+    no "expected a resolved-by-recheck audit line in $SIDECAR"
+  fi
+  RC=0
+  ( cd "$REPO" && bash "$script_path" validate "sess-s12" >/dev/null 2>"$D/validate-err.txt" ) || RC=$?
+  [[ "$RC" == "0" ]] && ok "[53] manifest with recheck-resolved gap validates PASS (session no longer wedged)" || no "expected recheck-resolved manifest to validate PASS, got $RC"
+
+  # ================================================================
+  # Scenario 13 (negative — NO over-resolution): a check-c-dirty gap whose
+  # worktree is STILL DIRTY stays listed; a check-c-dirty gap naming a
+  # NONEXISTENT worktree also stays listed (resolution requires POSITIVE
+  # re-derived evidence of cleanliness — absence of evidence never
+  # resolves). No sidecar entry is written for either.
+  # ================================================================
+  _setup_scenario s13; D="$SCEN_DIR"
+  REPO=$(_build_repo "$D" repo)
+  ( cd "$REPO" && echo dirty >> seed.txt )   # still dirty NOW
+  REAL_GAPS="${HOME}/.claude/state/unresolved-gaps.jsonl"
+  jq -cn --arg msg "Work-integrity gate (check c): session ending in worktree '${REPO}' with uncommitted changes; preserve (commit/stash/push) before stop." \
+    '{ts:"2026-07-09T00:00:00Z",session_id:"sess-s13",gate:"work-integrity-gate",check:"check-c-dirty",message:$msg}' > "$REAL_GAPS"
+  jq -cn --arg msg "Work-integrity gate (check c): session ending in worktree '${D}/worktree-that-no-longer-exists' with uncommitted changes; preserve (commit/stash/push) before stop." \
+    '{ts:"2026-07-09T00:00:01Z",session_id:"sess-s13",gate:"work-integrity-gate",check:"check-c-dirty",message:$msg}' >> "$REAL_GAPS"
+  ( cd "$REPO" && bash "$script_path" write --session-id sess-s13 >"$D/write-out.txt" 2>"$D/write-err.txt" )
+  MPATH=$(cat "$D/write-out.txt" 2>/dev/null)
+  if [[ -f "$MPATH" ]] && [[ "$(jq -r '.unresolved | length' "$MPATH" 2>/dev/null)" == "2" ]]; then
+    ok "negative: still-dirty AND missing-worktree check-c-dirty gaps BOTH stay listed (no over-resolution)"
+  else
+    no "expected both unresolvable check-c-dirty gaps to stay listed, manifest has: $(jq -c '.unresolved' "$MPATH" 2>/dev/null)"
+  fi
+  [[ ! -f "${HOME}/.claude/state/resolved-gaps.jsonl" ]] && ok "negative: no sidecar entry written when nothing was resolved" || no "expected NO resolved-gaps.jsonl sidecar for unresolvable gaps"
+  RC=0
+  ( cd "$REPO" && bash "$script_path" validate "sess-s13" >/dev/null 2>"$D/validate-err.txt" ) || RC=$?
+  [[ "$RC" == "0" ]] && ok "negative: still-listed gaps validate PASS (both genuinely recorded in ledger, any-line match)" || no "expected still-listed recorded gaps to validate PASS, got $RC (see $D/validate-err.txt)"
+
+  # -- s13b (reviewer Minor, 2026-07-09): untracked-dirt branch + exclusion --
+  # An untracked file OUTSIDE .claude/state/ is dirt (gap stays listed); the
+  # same file INSIDE .claude/state/ is excluded (gap resolves) — proving the
+  # recheck's untracked probe and its NL-FINDING-026 exclusion both fire.
+  REPO2=$(_build_repo "$D" repo2)
+  ( cd "$REPO2" && echo stray > untracked-stray.txt )
+  jq -cn --arg msg "Work-integrity gate (check c): session ending in worktree '${REPO2}' with uncommitted changes; preserve (commit/stash/push) before stop." \
+    '{ts:"2026-07-09T00:00:02Z",session_id:"sess-s13b",gate:"work-integrity-gate",check:"check-c-dirty",message:$msg}' > "$REAL_GAPS"
+  ( cd "$REPO2" && bash "$script_path" write --session-id sess-s13b >"$D/write-out-b.txt" 2>/dev/null )
+  MPATH=$(cat "$D/write-out-b.txt" 2>/dev/null)
+  [[ "$(jq -r '.unresolved | length' "$MPATH" 2>/dev/null)" == "1" ]] && ok "s13b: untracked file outside .claude/state keeps gap listed" || no "expected untracked dirt to keep gap listed"
+  ( cd "$REPO2" && rm untracked-stray.txt && mkdir -p .claude/state && echo stray > .claude/state/untracked-stray.txt )
+  ( cd "$REPO2" && bash "$script_path" write --session-id sess-s13b >"$D/write-out-b2.txt" 2>/dev/null )
+  MPATH=$(cat "$D/write-out-b2.txt" 2>/dev/null)
+  [[ "$(jq -r '.unresolved | length' "$MPATH" 2>/dev/null)" == "0" ]] && ok "s13b: same file inside .claude/state is excluded — gap resolves" || no "expected .claude/state-only dirt to resolve, got: $(jq -c '.unresolved' "$MPATH" 2>/dev/null)"
+
+  # -- s13c (reviewer Major, 2026-07-09): apostrophe-path parse fails CLOSED --
+  # A gap message whose worktree path contains a single quote must NEVER
+  # resolve (the old sed parse truncated it to a possibly-clean prefix dir).
+  jq -cn --arg msg "Work-integrity gate (check c): session ending in worktree '${D}/o'brien-wt' with uncommitted changes; preserve (commit/stash/push) before stop." \
+    '{ts:"2026-07-09T00:00:03Z",session_id:"sess-s13c",gate:"work-integrity-gate",check:"check-c-dirty",message:$msg}' > "$REAL_GAPS"
+  mkdir -p "$D/o"   # the truncated-prefix dir EXISTS and is clean-ish — the trap the old parse fell into
+  ( cd "$REPO2" && bash "$script_path" write --session-id sess-s13c >"$D/write-out-c.txt" 2>/dev/null )
+  MPATH=$(cat "$D/write-out-c.txt" 2>/dev/null)
+  [[ "$(jq -r '.unresolved | length' "$MPATH" 2>/dev/null)" == "1" ]] && ok "s13c: apostrophe-containing path fails closed (gap stays listed)" || no "expected apostrophe path to fail closed, got: $(jq -c '.unresolved' "$MPATH" 2>/dev/null)"
+
+  # ================================================================
+  # Scenario 14 (no-predicate class unchanged): a gap class with NO
+  # re-check predicate keeps exactly the current behavior — listed in
+  # manifest.unresolved with the full untruncated item, no sidecar entry,
+  # no silent vanishing.
+  # ================================================================
+  _setup_scenario s14; D="$SCEN_DIR"
+  REPO=$(_build_repo "$D" repo)
+  REAL_GAPS="${HOME}/.claude/state/unresolved-gaps.jsonl"
+  printf '{"ts":"2026-07-09T00:00:00Z","session_id":"sess-s14","gate":"some-future-gate","check":"no-recheck-predicate","message":"a gap class the recheck does not know"}\n' > "$REAL_GAPS"
+  ( cd "$REPO" && bash "$script_path" write --session-id sess-s14 >"$D/write-out.txt" 2>"$D/write-err.txt" )
+  MPATH=$(cat "$D/write-out.txt" 2>/dev/null)
+  if [[ -f "$MPATH" ]] && [[ "$(jq -r '.unresolved[0].item' "$MPATH" 2>/dev/null)" == "some-future-gate/no-recheck-predicate: a gap class the recheck does not know" ]]; then
+    ok "no-predicate gap class is still listed unchanged (full item, current behavior preserved)"
+  else
+    no "expected no-predicate gap to be listed unchanged, manifest has: $(jq -c '.unresolved' "$MPATH" 2>/dev/null)"
+  fi
+  [[ ! -f "${HOME}/.claude/state/resolved-gaps.jsonl" ]] && ok "no-predicate class writes no sidecar entry" || no "expected NO sidecar entry for a no-predicate gap class"
 
   echo "" >&2
   echo "self-test summary: $passed passed, $failed failed" >&2

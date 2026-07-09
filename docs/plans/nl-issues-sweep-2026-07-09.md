@@ -41,6 +41,7 @@ Out: arming the resumer (operator-gated, ADR-061 Phase 2); GAP-54 exit-1→exit-
 - [ ] B5 [37]+[39]+[55] cockpit/derive-cache: single-instance lock or listen-gate before cache.start(); single-flight poll guard; OBS_NL_TIMEOUT_MS review
 - [ ] B6 [23]+[35]+[38] doctrine/docs: orchestrator-pattern brief-template worktree-check + branch-verify-before-commit + ls-remote-after-push; acceptance conventions registered-event-types-only + scrub coordination
 - [ ] B7 [24] set-e assignment-from-failing-pipeline audit across hooks/*.sh; verify plan-edit-validator instance fix merged
+- [ ] B8 [59] (added mid-sweep) pr-template-inline-gate: expand shell vars in --body-file path before the existence test (or skip when path contains '$') — false-WARNed 3× this session; WARN-only hook, still harness-reviewer per doctrine
 
 **ROUTE / DEFER (persist, no build):**
 - [ ] R1 [34] shared-checkout branch guard proposal + [46] credentials/403 JIT-trigger proposal + [40] cold-reader mechanical layer + [43]/[44] bg-agent auto-retry → backlog rows with fold-in points
@@ -96,6 +97,15 @@ Master HEAD = `3c2bf7a` branch tip; findings are against the current tree (== or
 - Fold-ins **[33] and [36] are already fixed at master** → ADR-061 D3 cites them as confirmed-implemented precedent, not new work.
 - A6 [54] narrows to a `--renormalize` check, not a .gitattributes change.
 - A1 [48]/[52] and A2–A5 stand as written.
+
+## Build evidence (batch 2, 2026-07-09 — orchestrator-verified; checkbox flips await task-verifier)
+
+- A1 [48]/[52]: `daf812f` (from builder 8f59ca5) — digest self-test 70/1 → 74/0; re-run green on integrated branch (74/74). Convention-matching env-override chain verified in diff.
+- A3 [51]: `2041059` (from fa655b1) — dispatcher self-test 61/1 → 66/0; pre-existing failing scenario 22 WAS the [51] symptom, now green; new scenario 24 red-green both directions.
+- A5 [47]/[25]: from `a40b5d0` — harness-reviewer **PASS** (independent 24-shape no-weakening battery; 3 Minor, none blocking). CORRECTED COUNT per reviewer finding 1: hygiene-scan FAIL-capable assertion blocks 12 → 23 (builder's "20→30" was unreproducible; derivation = `grep -c 'self-test: FAIL ('`). [25]'s literal was already relocated at master (bebe811); A5's delta = narrowed line-23 pattern + bidirectional oracle + scenario (d). Reviewer Minors recorded: fixture-token hardening only-as-class-sweep; scenario-(d) exemption-scope divergence is intentional (one comment line owed on next touch).
+- B1 [45]/[53]: `0d1d476` + hardening `86cd4b8` (from 3cc7901+bad2d9e) — harness-reviewer **PASS with one Major follow-up**, Major FIXED same-day (fail-closed template-strip parse; s13c proves the apostrophe trap fails closed with the clean prefix dir existing); end-manifest self-test 19 → 32; wedged-session 442916d1 replay validates PASS. Class-generalization (structured wt_path field) filed as ledger row.
+- B6 [23]/[34-doctrine]/[35]/[38]/[63]: `52d98b5` (from b3347f9) — docs-only; three shared-checkout git-state disciplines in orchestrator doctrine (compact + full), two acceptance-run conventions; one contradicting sentence amended (scope call, defensible).
+- A5 residual filed by builder (verified by reviewer): scanner treats grep exit-2 as no-match → one invalid ERE silently no-ops Layer 1; three non-POSIX `(?:` lines remain (ubuntu-grep CI canary now covers the class via c1-c9).
 
 ## Decisions Log
 

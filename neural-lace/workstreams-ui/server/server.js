@@ -76,7 +76,12 @@ function broadcastRefresh() {
 }
 
 cache.onRefresh(broadcastRefresh);
-cache.start();
+// cache.start() deliberately does NOT happen here — it moved inside the
+// 'listening' callback at the bottom of this file (nl-issue [55],
+// NL-FINDING-040/FM-037): starting the poll loop before listen() succeeds
+// means N concurrently-launched instances (15+ worktree-launched copies at
+// the 2026-07-08 incident) EACH poll the nl.sh oracle independently even
+// though only one can ever own the port. Listen-success is the mutex.
 
 function serveStatic(res, file) {
   fs.readFile(path.join(WEB_DIR, file), (err, buf) => {
@@ -279,9 +284,34 @@ const server = http.createServer((req, res) => {
   res.writeHead(404).end('not found');
 });
 
+// ---- Single-instance guard (nl-issue [55], NL-FINDING-040/FM-037 — the
+// 2026-07-08 machine-crash amplification engine). The port itself is the
+// mutex: whichever instance binds 127.0.0.1:PORT first owns BOTH the HTTP
+// surface AND the nl.sh poll loop; every later instance launched against
+// the SAME port gets EADDRINUSE here, logs one line, and exits 0 WITHOUT
+// ever having started the cache (cache.start() only runs inside the
+// 'listening' success callback below). This is defense-in-depth UNDER the
+// launcher layer's own probe (launch-gui.ps1 Test-ServerUp / ensure-
+// cockpit.sh): the launcher probe races (N sessions can all probe "down"
+// before any of them binds); the bind itself cannot. A deliberately
+// different CTREE_PORT is a deliberate second instance (e.g. the sandboxed
+// self-test) and correctly gets its own poll loop — the guard keys on the
+// port, not on a global lock, by design.
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    process.stdout.write('[server] http://' + HOST + ':' + PORT +
+      ' already owned by another instance — exiting 0 without starting the poll loop (single-instance guard, FM-037)\n');
+    process.exit(0);
+  }
+  process.stderr.write('[server] listen failed: ' + String(err && err.message || err) + '\n');
+  process.exit(1);
+});
+
 server.listen(PORT, HOST, () => {
   process.stdout.write('[server] workstreams-ui (O.4 cockpit) listening on http://' + HOST + ':' + PORT + '\n');
   process.stdout.write('[server] nl bin: ' + require('./derive-cache.js').nlBin() + '\n');
+  // Poll loop starts ONLY after a successful bind — see the guard above.
+  cache.start();
 });
 
 module.exports = { server, cache };

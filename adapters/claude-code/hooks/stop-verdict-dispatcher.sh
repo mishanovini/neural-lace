@@ -866,16 +866,39 @@ _svd_functional_link_check() {
 
 # ----------------------------------------------------------------------
 # _svd_message_has_decision_block <text>
-#   True (0) iff $text looks like it is trying to be a constitution-§3
-#   "Decision needed" block: a "Decision needed" line, OR the compact
-#   block's own "My pick:"/"Reply with:" markers, OR a markdown table row
-#   (the §3 Options table). Any one of these is sufficient — the check
-#   that follows only fires on messages that look like a decision ask at
-#   all; ordinary prose is never scanned.
+#   True (0) iff $text carries the constitution-§3 "Decision needed" block
+#   SHAPE: a POSITIVE "Decision needed" cue line AND an options signal (a
+#   "Reply with:"/"My pick:"/"Option" marker, or a markdown Options table
+#   row). BOTH are required — the §3 template always pairs a "Decision
+#   needed:" header (bullet 1) with an Options block (bullets 3-5), so a
+#   bare "decision needed" SUBSTRING, a lone "My pick:", or an unrelated
+#   data table no longer trips the check.
+#
+#   nl-issue [51]: the prior naive substring match ('decision needed' OR
+#   'my pick:' OR any table row) false-positive-warned on ordinary prose —
+#   most notably NEGATED forms like "no decision needed here" and
+#   "without a decision, this ships". Two guards fix that:
+#     (1) the cue is anchored to the START of a line (after optional
+#         markdown emphasis / list-number / blockquote marker chars), so a
+#         mid-sentence "...no decision needed here" — where the phrase is
+#         not line-initial — and a line literally opening "No decision
+#         needed" (the leading "No" is a letter, not an allowed marker
+#         char) both fail to match; and
+#     (2) an options signal is ALSO required, so negated prose that happens
+#         to mention a decision without any §3 Options structure is never
+#         treated as a decision block.
+#   Still WARN-only: this only gates whether _svd_cold_reader_lint_check
+#   proceeds to its (WARN-only) anchor/outcome checks — it never blocks and
+#   never touches the exit code (see the header COLD-READER-LINT block).
 # ----------------------------------------------------------------------
 _svd_message_has_decision_block() {
   local text="$1"
-  printf '%s' "$text" | grep -qiE 'decision needed|my pick:|reply with:|^[[:space:]]*\|.*\|.*\|'
+  # (1) Positive, line-anchored "Decision needed" cue (excludes negations:
+  #     a leading negation word is a letter, not an allowed marker char, so
+  #     it breaks the anchor).
+  printf '%s' "$text" | grep -qiE '^[[:space:]*_>#.)(0-9-]*decision needed' || return 1
+  # (2) An options signal: a §3 Options-block marker or a markdown table row.
+  printf '%s' "$text" | grep -qiE 'reply with:|my pick:|(^|[^[:alnum:]])options?([[:space:]]|:)|^[[:space:]]*\|.*\|.*\|'
 }
 
 # ----------------------------------------------------------------------
@@ -2182,6 +2205,59 @@ STUBEOF
     passed=$((passed+1))
   else
     echo "self-test (cold-reader-lint-warn-still-ledgered-alongside-a-real-block): FAIL (expected the cold-reader-lint warn to still be ledgered even though a real gap also blocked)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 24 (nl-issue [51], task A3): _svd_message_has_decision_block
+  # now requires the constitution §3 decision-block SHAPE (a line-anchored
+  # "Decision needed" cue AND an options signal) and excludes NEGATED forms.
+  # Two transcripts prove both directions:
+  #   (b) NEGATED "decision needed" in ordinary prose ("...no decision needed
+  #       here, and without a decision the job just proceeds") is NOT treated
+  #       as a §3 block and therefore never warns — the exact false-positive
+  #       of nl-issue [51]. RED-GREEN GUARD: against the OLD naive-substring
+  #       regex this text matched 'decision needed' and warned (anchorless);
+  #       the new line-anchored-cue + required-options-signal shape does not,
+  #       so this assertion FAILS on the pre-fix code and PASSES post-fix.
+  #   (a) a genuine, anchorless §3 block ("**Decision needed:**" + "**Reply
+  #       with:**", no artifact anchor) IS still detected and DOES warn —
+  #       proving the tightened matcher was not neutered into never firing.
+  # ================================================================
+  # ---- (b) negated "decision needed" prose must NOT warn ----
+  _setup_scenario s24neg
+  HOOKS=$(_build_dispatcher_repo s24neg)
+  REPO="$tmproot/s24neg/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T24N=$(_write_transcript "$tmproot/s24neg" $'Rolled back the migration; there is no decision needed here, and without a decision the job just proceeds.\n\nDONE: nothing to report')
+  RC24N=$(_run_dispatcher "$HOOKS" "$REPO" "$T24N" "sess-s24neg")
+  _expect "cold-reader-lint-negated-decision-needed-never-blocks" "$RC24N" "0"
+  if ! grep -q '"gate":"stop-verdict-dispatcher".*cold-reader-lint' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (cold-reader-lint-negated-decision-needed-not-flagged): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (cold-reader-lint-negated-decision-needed-not-flagged): FAIL (a negated 'no decision needed' in prose was incorrectly treated as a §3 decision block -- nl-issue [51] regression)" >&2
+    failed=$((failed+1))
+  fi
+  # ---- (a) a genuine anchorless §3 block MUST still be detected + warn ----
+  _setup_scenario s24pos
+  HOOKS=$(_build_dispatcher_repo s24pos)
+  REPO="$tmproot/s24pos/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T24P=$(_write_transcript "$tmproot/s24pos" $'**Decision needed:** cut the release tonight?\n**Reply with:** cut / hold\n\nDONE: nothing to report')
+  RC24P=$(_run_dispatcher "$HOOKS" "$REPO" "$T24P" "sess-s24pos")
+  _expect "cold-reader-lint-real-sec3-block-never-blocks" "$RC24P" "0"
+  if grep -q '"gate":"stop-verdict-dispatcher".*cold-reader-lint.*no-artifact-anchor' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (cold-reader-lint-real-sec3-block-still-detected): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (cold-reader-lint-real-sec3-block-still-detected): FAIL (a genuine anchorless §3 'Decision needed:' + 'Reply with:' block was no longer detected -- the tightened matcher was neutered)" >&2
     failed=$((failed+1))
   fi
 

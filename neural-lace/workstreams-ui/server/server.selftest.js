@@ -14,6 +14,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const net = require('net');
+const { spawn } = require('child_process');
 
 let PASSED = 0, FAILED = 0;
 function ok(name, cond, detail) {
@@ -365,8 +367,14 @@ async function main() {
     const dc2 = require('./derive-cache.js');
     ok('S16 backlog gets a higher built-in default (360s, comfortably above the measured ~258s) that beats the old fixed 60s causing permanent rc=124',
       dc2.timeoutMsFor('backlog') === 360000, 'got ' + dc2.timeoutMsFor('backlog'));
-    ok('S16b every other subcommand still defaults to 60s',
-      dc2.timeoutMsFor('status') === 60000 && dc2.timeoutMsFor('costs') === 60000);
+    // [39] (NL-FINDING-040/FM-037 incident review): the global default is
+    // now 180s, NOT 60s — the incident measured `nl status --json` at 93s
+    // SOLO and rc=124 at 150s under contention, so the old 60s default was
+    // killing healthy-but-slow derivations on this estate and re-spawning
+    // them every cycle (timeout-kill -> retry churn amplifying load).
+    ok('S16b every other subcommand defaults to 180s ([39]: 60s killed healthy-but-slow derivations — 93s solo status measured)',
+      dc2.timeoutMsFor('status') === 180000 && dc2.timeoutMsFor('costs') === 180000,
+      'status=' + dc2.timeoutMsFor('status') + ' costs=' + dc2.timeoutMsFor('costs'));
     process.env.OBS_NL_TIMEOUT_MS = '90000';
     ok('S16c OBS_NL_TIMEOUT_MS (global override) applies to backlog too when set',
       dc2.timeoutMsFor('backlog') === 90000);
@@ -375,6 +383,92 @@ async function main() {
       dc2.timeoutMsFor('backlog') === 240000 && dc2.timeoutMsFor('status') === 90000);
     delete process.env.OBS_NL_TIMEOUT_MS;
     delete process.env.OBS_NL_TIMEOUT_MS_BACKLOG;
+
+    // ---- Scenario 17 ([37], NL-FINDING-040/FM-037 regression lock —
+    // refresh-cycle single-flight): when oracle latency exceeds the poll
+    // interval, the timer must SKIP the tick, not start a new cycle on top
+    // of the running one. The per-sub inFlight dedup already prevented
+    // duplicate child processes per subcommand, but a piled-on cycle still
+    // resolved immediately with stale entries and fired _notify() — a
+    // spurious SSE refresh broadcast per tick, every 30s, forever, on every
+    // one of the N instances at the incident. Asserts: (a) a second
+    // refreshAll while the first is in flight is counted as skipped, (b) a
+    // skipped cycle never notifies listeners, (c) after the cycle settles
+    // the next refreshAll runs normally.
+    const slowAllStub = path.join(tmp, 'nl-slow-all-stub.sh');
+    fs.writeFileSync(slowAllStub, [
+      '#!/bin/bash',
+      'sleep 1.5',
+      'echo "{}"',
+    ].join('\n'));
+    fs.chmodSync(slowAllStub, 0o755);
+    const prevNlBin = process.env.NL_BIN;
+    process.env.NL_BIN = slowAllStub;
+    delete require.cache[require.resolve('./derive-cache.js')];
+    const dc3 = require('./derive-cache.js');
+    const c3 = new dc3.DeriveCache({});
+    let notifyCount = 0;
+    c3.onRefresh(() => { notifyCount++; });
+    const firstCycle = c3.refreshAll();
+    const secondCycle = c3.refreshAll(); // fired while the first is mid-flight (stub sleeps 1.5s)
+    ok('S17 refreshAll while a cycle is in flight is SKIPPED and counted ([37] single-flight guard)',
+      c3.skippedCycles === 1, 'skippedCycles=' + c3.skippedCycles);
+    await secondCycle;
+    ok('S17b a skipped cycle never notifies listeners (no spurious SSE refresh from stale entries)',
+      notifyCount === 0, 'notifyCount=' + notifyCount);
+    await firstCycle;
+    ok('S17c the real cycle still completes and notifies exactly once', notifyCount === 1,
+      'notifyCount=' + notifyCount);
+    await c3.refreshAll();
+    ok('S17d the next cycle after settlement runs normally (not skipped)',
+      c3.skippedCycles === 1 && notifyCount === 2,
+      'skippedCycles=' + c3.skippedCycles + ' notifyCount=' + notifyCount);
+    process.env.NL_BIN = prevNlBin;
+
+    // ---- Scenario 18 ([55], NL-FINDING-040/FM-037 regression lock —
+    // single-instance guard): at the 2026-07-08 incident, 15+ worktree-
+    // launched server instances EACH started the 30s nl.sh polling loop
+    // unconditionally BEFORE listen(), then crashed (or worse, kept
+    // polling) on EADDRINUSE — N independent poll loops amplifying oracle
+    // load ~Nx. The listen success is now the mutex: a second instance on
+    // an occupied port must exit 0 cleanly, log one line, and NEVER spawn
+    // a single nl child. The nl stub for the child writes a marker file on
+    // ANY invocation; its absence is the no-poll proof.
+    const blocker = net.createServer();
+    await new Promise((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+    const busyPort = blocker.address().port;
+    const pollMarker = path.join(tmp, 'SECOND_INSTANCE_POLLED');
+    const markerStub = path.join(tmp, 'nl-marker-stub.sh');
+    fs.writeFileSync(markerStub, [
+      '#!/bin/bash',
+      'echo polled > "' + pollMarker.replace(/\\/g, '/') + '"',
+      'echo "{}"',
+    ].join('\n'));
+    fs.chmodSync(markerStub, 0o755);
+    const childEnv = Object.assign({}, process.env, {
+      CTREE_PORT: String(busyPort),
+      NL_BIN: markerStub,
+      OBS_REFRESH_MS: '999999',
+    });
+    const child = spawn(process.execPath, [path.join(__dirname, 'server.js')], { env: childEnv });
+    let childOut = '';
+    child.stdout.on('data', (d) => { childOut += d; });
+    child.stderr.on('data', (d) => { childOut += d; });
+    const childExit = await new Promise((resolve) => {
+      const killer = setTimeout(() => { try { child.kill(); } catch (_) {} resolve('timeout-killed'); }, 10000);
+      child.on('exit', (code) => { clearTimeout(killer); resolve(code); });
+    });
+    // Give any (buggy, pre-listen) poll spawn time to land its marker —
+    // the bash stub outlives the node child, so a short settle window
+    // keeps this assertion honest rather than racing the stub's write.
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    ok('S18 second instance on an occupied port exits 0 ([55] single-instance guard)',
+      childExit === 0, 'exit=' + childExit + ' out=' + childOut.slice(0, 300).replace(/\n/g, ' | '));
+    ok('S18b second instance logs the one-line guard message', childOut.includes('single-instance guard'),
+      childOut.slice(0, 300).replace(/\n/g, ' | '));
+    ok('S18c second instance NEVER starts the poll loop (no nl spawn side-effect marker)',
+      !fs.existsSync(pollMarker));
+    await new Promise((resolve) => blocker.close(resolve));
 
   } finally {
     server.close();

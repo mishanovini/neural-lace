@@ -21,8 +21,17 @@ interrupt-priority rule now binds the builder.
   NEEDS-YOU entries ONLY via `needs-you.sh add` (capture printed id; never hand-edit);
   tree-state via `resolve_workstreams_state_path` (ALWAYS back up, restore after).
 - Cleanup after every run: delete `acc-o4-*` heartbeats; `needs-you.sh resolve <id>
-  --note "O.4 acceptance fixture"`; restore tree-state backups. Seeded ledger lines
-  remain (append-only by design).
+  --note "O.4 acceptance fixture"`; restore tree-state backups. Seeded `acc-o4-*`
+  ledger lines are scrubbed too, backup kept (amended 2026-07-07 — append-only ≠
+  harmless: fixture lines on the PRODUCTION ledger turned obs-consumer-map RED).
+- REGISTERED-EVENT-TYPES-ONLY (incident 2026-07-07): seeded ledger events use ONLY
+  event types registered in the observability-consumer-map — an invented type
+  `allow` (no production emitter) turned the obs-consumer-map check RED until the
+  lines were scrubbed. Cost: one doctor check RED on the production ledger.
+- FIXTURE-SCRUB COORDINATION (incident 2026-07-07): fixture cleanup is keyed to
+  INACTIVE session-ids and coordinated with any active acceptance run before
+  deleting anything — an external `acc-o4` sweep (17:58Z) deleted live seeded
+  fixtures mid-run. Cost: one broken acceptance run.
 - "Force refresh" = the cockpit's refresh affordance / documented endpoint, else one
   cache cycle (35s). Exact selectors, tolerances, and fixture strings stay private to
   the advocate's runtime run (assertions-private discipline).

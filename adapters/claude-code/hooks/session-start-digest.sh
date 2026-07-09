@@ -588,9 +588,28 @@ feed_waiver_density() {
 
 # ----------------------------------------------------------------------
 # Feed 12: unresolved-gaps entries (§E.11). Tolerate absent file.
+#
+# State path resolution mirrors _staleness_proposals_path (and lib/
+# signal-ledger.sh): an explicit UNRESOLVED_GAPS_PATH override wins;
+# otherwise HARNESS_SELFTEST=1 sandboxes the path under TMPDIR so a
+# self-test scenario never reads the real machine's unresolved-gaps
+# ledger (which is why S2 "all quiet" used to false-FAIL on any dev
+# box with real gaps — nl-issue [48]/[52]); otherwise the real default.
 # ----------------------------------------------------------------------
+_unresolved_gaps_path() {
+  if [[ -n "${UNRESOLVED_GAPS_PATH:-}" ]]; then
+    printf '%s' "$UNRESOLVED_GAPS_PATH"
+    return 0
+  fi
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/digest-selftest/%s/unresolved-gaps.jsonl' "${TMPDIR:-/tmp}" "${$}"
+    return 0
+  fi
+  printf '%s/.claude/state/unresolved-gaps.jsonl' "${HOME:-$PWD}"
+}
+
 feed_unresolved_gaps() {
-  local path="${HOME:-$PWD}/.claude/state/unresolved-gaps.jsonl"
+  local path; path="$(_unresolved_gaps_path)"
   [[ -f "$path" ]] || return 0
   local count
   count="$(grep -c . "$path" 2>/dev/null || true)"
@@ -1242,6 +1261,14 @@ EOF
   # its own contract) with a PRIMED doctor cache (so the doctor feed
   # renders a real verdict line instead of the "no cache yet" nag) — the
   # true floor for "all quiet" in production.
+  #
+  # feed_unresolved_gaps (feed 12) is pinned to a NONEXISTENT fixture path
+  # via UNRESOLVED_GAPS_PATH so "all quiet" is deterministic regardless of
+  # the real machine's ~/.claude/state/unresolved-gaps.jsonl — on any dev
+  # box with real gaps this feed would otherwise emit a line and displace
+  # "all quiet", false-FAILing S2 (nl-issue [48]/[52]). The HARNESS_SELFTEST
+  # sandbox tier already covers this, but pinning the override makes the
+  # intent explicit and independent of that global export.
   local s2main="$tmp/s2-main"
   _seed_repo "$s2main"
   ( cd "$s2main" && git worktree add --quiet "$tmp/s2" -b s2-wt-branch ) >/dev/null 2>&1
@@ -1250,7 +1277,7 @@ EOF
   printf '{"ts":"%s","verdict_line":"[doctor] GREEN — 7 checks passed","exit_code":0}\n' \
     "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$s2_cache"
   local out2
-  out2="$(DIGEST_SEEN_PATH="$tmp/s2-seen.jsonl" DOCTOR_CACHE_PATH="$s2_cache" run_digest "$s2" "$tmp/s2-alerts-nonexistent" "$tmp/s2-seen.jsonl" 2>/dev/null)"
+  out2="$(DIGEST_SEEN_PATH="$tmp/s2-seen.jsonl" DOCTOR_CACHE_PATH="$s2_cache" UNRESOLVED_GAPS_PATH="$tmp/s2-gaps-nonexistent.jsonl" run_digest "$s2" "$tmp/s2-alerts-nonexistent" "$tmp/s2-seen.jsonl" 2>/dev/null)"
   local n2; n2="$(printf '%s\n' "$out2" | grep -c .)"
   if [[ "$n2" -eq 2 ]]; then
     echo "PASS: S2 quiet harness -> exactly 2 lines (doctor + all quiet)"
@@ -1261,6 +1288,18 @@ EOF
     fail=$((fail + 1))
   fi
   _ck_contains "S2 'all quiet' present" "$out2" "all quiet"
+  _ck_not_contains "S2 no unresolved-gaps line (override -> absent fixture)" "$out2" "unresolved-gaps:"
+
+  # ---- S2b: UNRESOLVED_GAPS_PATH override emits when the fixture HAS
+  # entries — proves the override changes the RENDERED digest output in
+  # both directions (absent -> silent above; present -> a line here), so
+  # the S2 quiet result is a real sandbox, not the feed being dead. ----
+  local s2b_gaps="$tmp/s2b-gaps.jsonl"
+  printf '{"gap":"a"}\n{"gap":"b"}\n{"gap":"c"}\n' > "$s2b_gaps"
+  local out2b
+  out2b="$(DIGEST_SEEN_PATH="$tmp/s2b-seen.jsonl" DOCTOR_CACHE_PATH="$s2_cache" UNRESOLVED_GAPS_PATH="$s2b_gaps" run_digest "$s2" "$tmp/s2b-alerts-nonexistent" "$tmp/s2b-seen.jsonl" 2>/dev/null)"
+  _ck_contains "S2b override-populated fixture -> unresolved-gaps line present" "$out2b" "unresolved-gaps: 3 entries"
+  _ck_not_contains "S2b populated gaps -> not 'all quiet'" "$out2b" "all quiet"
 
   # ---- S3: dedup collapse (item seen >=3 sessions -> +N repeats suffix) ----
   local s3="$tmp/s3"

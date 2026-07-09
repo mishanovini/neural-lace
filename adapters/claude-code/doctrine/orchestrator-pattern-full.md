@@ -102,6 +102,16 @@ Instead, the dispatch prompt MUST instruct a cross-repo builder to: (1) `pwd`-de
 
 Observed failure (2026-06-02): a cross-repo builder dispatched from a neural-lace orchestrator got a neural-lace-rooted worktree; without the self-detect-and-reroot workaround a downstream-product artifact (product/person names) could have landed in the harness repo and tripped the harness-hygiene denylist (or harness content could leak into the product repo). See **HARNESS-GAP-46** for the proposed spawn-validator warning that would surface this rooting caveat at spawn time.
 
+### Shared-checkout git-state disciplines (incident-derived)
+
+Three disciplines, each paid for by a real incident. They bind every dispatch brief the orchestrator writes and any session committing in a shared (non-worktree) checkout.
+
+**WORKTREE-CHECK LINE IN EVERY BRIEF.** Every builder dispatch brief includes the standard worktree-verification line: before any checkout or commit, the builder confirms `git rev-parse --show-toplevel` resolves to its OWN isolated worktree — never the shared main checkout. Incident 2026-07-06: a brief omitted the line → the builder ran `git checkout -b` in the SHARED main checkout; cost: one vanished commit, recovered via reflog + cherry-pick. Recurrence 2026-07-07: a worktree-isolated builder ended with the shared main checkout switched to its branch (uncommitted state stranded there); the orchestrator's next merge nearly landed on the wrong branch — caught only by a `git branch --show-current` check. Mechanism guard proposal tracked as SHARED-CHECKOUT-BRANCH-GUARD-01 (docs/backlog.md); until it exists this line is the control.
+
+**BRANCH-VERIFY-BEFORE-COMMIT + LS-REMOTE-AFTER-PUSH.** In a shared checkout, never commit without first verifying the current branch (`git branch --show-current`) — never assume it is master; another agent may have switched it. And push success is proven only by `git ls-remote <remote> <branch>` showing the pushed SHA — local `origin/*` refs reflect the last fetch, not the remote's actual state, and can mislead. Same 2026-07-06 incident; cost: one vanished commit.
+
+**COMMIT-VERIFY-AFTER-DENIAL.** When a permission layer denies a compound command (`git add && git commit && git push`), the ENTIRE command died — including the steps that look independent of the denied one. Verify with `git log -1` that the commit actually exists before any step that assumes it (a push, a PR, a merge, a report), and never chain a commit with a deniable push in one command. Live instance 2026-07-09: a merged PR was silently missing its intended edits because the denied compound command never committed them; the Stop gate caught the dirty tree.
+
 ### Build-in-parallel, verify-sequentially
 
 This is the critical discipline. Parallel builders can race on build work (tests, file edits, commits in their own worktrees). But the **plan file + evidence file** are shared resources that CANNOT be updated in parallel safely:
