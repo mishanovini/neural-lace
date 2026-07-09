@@ -7,9 +7,9 @@
 # lifecycle replacing the `ConversationTreeUI-AutoStart` logon scheduled
 # task (operator preference: no scheduled-task sprawl). The logon task's
 # retirement is a RECORDED integration step, not an implied future: it was
-# unregistered (register-autostart.ps1 -Unregister) in the same integration
-# that merged this file to master (2026-07-09; the merge commit records
-# it). This script is
+# unregistered (register-autostart.ps1 -Unregister; verified gone) in the
+# same 2026-07-09 integration that landed this file on master, recorded in
+# docs/HANDOFF.md. This script is
 # invoked from the EXISTING session-start-digest.sh SessionStart hook's
 # run_digest() (one line, folded in — NOT a new SessionStart hooks[] entry;
 # that array is already at its 8/8 cap), mirroring the

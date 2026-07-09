@@ -1052,8 +1052,8 @@ run_digest() {
   # Operator directive 2026-07-09: the Workstreams UI node server (port
   # 7733) should be up whenever the operator is in an NL Claude session —
   # session-tied lifecycle replacing the `ConversationTreeUI-AutoStart`
-  # logon scheduled task (retired at integration 2026-07-09 via
-  # register-autostart.ps1 -Unregister; the merge commit records it).
+  # logon scheduled task (retired at the 2026-07-09 integration via
+  # register-autostart.ps1 -Unregister, verified gone; docs/HANDOFF.md).
   # Folded in here (NOT a new SessionStart hooks[] entry — that array is
   # already at its 8/8 cap) because this is the general-purpose
   # SessionStart surfacer every session already runs through. Resolution

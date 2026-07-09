@@ -29,32 +29,38 @@ is broken; the estate is at a clean stopping point.
 ## Live now on this machine
 
 - **Cockpit server up on http://localhost:7733** (rebuilt derive-cache server).
-- **Logon autostart registered**: scheduled task `ConversationTreeUI-AutoStart`
-  (AtLogon, hidden, restart-3×, points at the rebuilt `server.js`). NOTE: this becomes
-  redundant once the in-flight SessionStart integration lands — see below.
-- Both remotes tree-synced at `f727fe5`.
+- **Logon autostart RETIRED** (2026-07-09): scheduled task `ConversationTreeUI-AutoStart`
+  was unregistered (`register-autostart.ps1 -Unregister`, verified gone) as part of the
+  cockpit-ensure integration below — the cockpit is now ensured-up per-session instead,
+  machine-wide, so there is zero scheduled-task footprint for it.
+- Both remotes tree-synced (master advanced past `f727fe5` — see below).
 
-## FIRST TASK for the new session — integrate the finished cockpit-ensure branch
+## FIRST TASK — integrate cockpit-ensure branch — ✅ DONE (2026-07-09)
 
-**`build/cockpit-sessionstart` @ `afdedee` (pushed to origin) — BUILT + VERIFIED, not
-yet merged.** Operator's better design (2026-07-09): the cockpit is ensured-up on every
-NL **SessionStart** (tied to session lifecycle) instead of a boot-time scheduled task.
-As-built: a one-line best-effort callsite in `session-start-digest.sh`'s `run_digest()`
-(no new SessionStart entry — 8/8 cap respected, settings template zero-diff) calling a
-new `adapters/claude-code/scripts/ensure-cockpit.sh` (idempotent wrapper over
-`launch-gui.ps1 -NoBrowser`). Guards all present: Windows-only, skip-under-
-HARNESS_SELFTEST, MAIN-checkout resolution via nl-paths.sh, `nohup … & disown` non-
-blocking (proven ~1s return), tolerate-absent. Self-test 16/16; `session-start-digest.sh`
-baseline unchanged (70/71 — the 1 is the known S2 flake). Real Windows dispatch verified
-live against the running cockpit.
+**Integrated as `build/cockpit-sessionstart-r2` → master.** The cockpit is now
+ensured-up on every NL **SessionStart** (session-tied lifecycle) instead of a boot-time
+scheduled task: a one-line best-effort callsite in `session-start-digest.sh`'s
+`run_digest()` (no new SessionStart entry — 8/8 cap respected, settings template
+zero-diff) calls `adapters/claude-code/scripts/ensure-cockpit.sh` (idempotent wrapper
+over `launch-gui.ps1 -NoBrowser`).
 
-**To integrate (this is the new session's warm-up — confirms the handoff works):**
-(1) **harness-review the diff** (required — it's a core-hook change; run the
-harness-reviewer agent); (2) if PASS, merge `origin/build/cockpit-sessionstart` to
-master + push both remotes; (3) run `install.sh`; (4) then **unregister the now-redundant
-logon task**: `powershell -File "neural-lace\workstreams-ui\scripts\register-autostart.ps1"
--Unregister`. After that the cockpit auto-starts with every session and there is zero
-scheduled-task footprint for it.
+What shipped (base `afdedee` + review remediation `097a91a` + honesty tighten):
+- **Adversarial harness-review + code-review** run (parallel, every Major
+  independently verified NOT-refuted). Full record + dispositions:
+  `docs/reviews/2026-07-09-cockpit-sessionstart-review.md`. Delta re-review returned
+  PASS after the fixes.
+- **Machine-wide launcher resolution** (the load-bearing review fix): resolves via
+  `nl_repo_root()` (install config) normalized through `nl_main_checkout_root()`, so the
+  cockpit is ensured from **any** project's session — not only NL-repo-rooted ones. This
+  matched the machine-wide coverage of the retired logon task. **Proven live** from a
+  non-NL, non-git cwd (dispatch reached the launcher; cockpit stayed HTTP 200).
+- **manifest.json** `ensure-cockpit` writer entry added (was inventory-drift);
+  manifest-check GREEN (111 entries). Operator kill-switch
+  (`ENSURE_COCKPIT_DISABLE=1` / `~/.claude/local/cockpit-disabled`), log rotation, and
+  self-test hardening (16→23 scenarios, all pass) added.
+- **Logon task unregistered + verified gone** in this same integration (above).
+- Coverage decision (decide-and-go, §8): **MACHINE-WIDE** — recorded in the review doc
+  and the `097a91a` commit message.
 
 ## Residual follow-ups (all filed; none blocking)
 
