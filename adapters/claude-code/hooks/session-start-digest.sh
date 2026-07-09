@@ -1048,6 +1048,21 @@ run_digest() {
   "$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event start >/dev/null 2>&1 || true
   # ---- END WAVE-O O.2 CALLSITE ---------------------------------------------
 
+  # ---- COCKPIT-SESSIONSTART CALLSITE: ensure the observability cockpit --
+  # Operator directive 2026-07-09: the Workstreams UI node server (port
+  # 7733) should be up whenever the operator is in an NL Claude session —
+  # session-tied lifecycle, replacing the `ConversationTreeUI-AutoStart`
+  # logon scheduled task. Folded in here (NOT a new SessionStart hooks[]
+  # entry — that array is already at its 8/8 cap) because this is the
+  # general-purpose SessionStart surfacer every session already runs
+  # through. `cd "$cwd"` first so the digest's own testable cwd-override
+  # argument is honored (mirrors feed_needs_you's nl_main_checkout_root
+  # cwd caveat above); best-effort, never-blocks (ensure-cockpit.sh is
+  # itself OS-gated, self-test-gated, tolerate-absent, and backgrounds its
+  # own real dispatch — see that script's header for the full contract).
+  ( cd "$cwd" 2>/dev/null && "$HOOKS_DIR/../scripts/ensure-cockpit.sh" >/dev/null 2>&1 ) || true
+  # ---- END COCKPIT-SESSIONSTART CALLSITE ------------------------------
+
   local doctor_line
   doctor_line="$(feed_doctor "$cwd")"
   [[ -n "$doctor_line" ]] && lines+=("$doctor_line")
