@@ -1544,6 +1544,31 @@ od_backlog_health() {
     var reTermR4 = new RegExp("\\*\\*((PARTIALLY|LARGELY)" + SP + "+)?" + TERM + "\\b");
     var reTermDate = new RegExp(TERM + "[^0-9]{0,12}([0-9]{4}-[0-9]{2}-[0-9]{2})", "i");
 
+    // ---- DISPOSITIONED-IN-FLIGHT (O.9 build-escalation follow-on fix) ----
+    // The operator answered a backlog proposal (SCHEDULE / FOLD / DEMOTE --
+    // WONTFIX is already a TERMINAL word above) but the underlying work
+    // has not MERGED yet. Per the invariant this fix encodes: the set of
+    // disposition words the digest PROPOSES (session-start-digest.sh
+    // reply-word contract: SCHEDULE (spawn task) / FOLD (name plan) /
+    // DEMOTE (lower tier) / WONTFIX (reason)) must be a subset of the
+    // states this oracle recognizes as no-longer-awaiting-a-proposal, or
+    // a row the operator already answered re-nags forever (the exact bug:
+    // a real SCHEDULED-2026-07-07-marked row kept reading terminal:false
+    // and is_overdue:true and re-surfaced next session despite being
+    // answered). An in-flight row is DISTINCT from TERMINAL: it does not
+    // count as done or closed (the row closes DONE only when the
+    // scheduled build actually merges and gets a real terminal marker),
+    // but it MUST be suppressed from overdue_ids (never re-propose a row
+    // the operator already answered) and MUST NOT be escalated by
+    // session-start-digest.sh build-escalation tier (escalation exists to
+    // provoke a disposition; a disposition already happened).
+    var INFLIGHT = "(SCHEDULED|DEFERRED|DEMOTED|FOLDED|FOLD-INTO-[^*]+)";
+    var reInflightR1 = new RegExp("^- \\*\\*[^*]*\\b" + INFLIGHT + "\\b", "i");
+    var reInflightR2 = new RegExp("\\*\\*" + SP + "+(—|--?)" + SP + "+" + INFLIGHT + "\\b", "i");
+    var reInflightR3 = new RegExp("\\*\\*\\((scheduled|deferred|demoted|folded|fold-into[^)]*)\\b", "i");
+    var reInflightR4 = new RegExp("\\*\\*((PARTIALLY|LARGELY)" + SP + "+)?" + INFLIGHT + "\\b", "i");
+    var reInflightDate = new RegExp(INFLIGHT + "[^0-9]{0,12}([0-9]{4}-[0-9]{2}-[0-9]{2})", "i");
+
     function dateEpoch(d) {
       var ms = Date.parse(d);
       return isNaN(ms) ? null : Math.floor(ms / 1000);
@@ -1577,20 +1602,36 @@ od_backlog_health() {
         if (mTerm) { termDate = mTerm[2]; termEpoch = dateEpoch(mTerm[2]); }
       }
 
+      // Only checked when NOT terminal -- a row cannot be both; terminal
+      // (done/absorbed/wontfix) always wins if somehow both match.
+      var inflight = false, inflightDate = null, inflightEpoch = null;
+      if (!terminal) {
+        inflight = reInflightR1.test(line) || reInflightR2.test(line)
+          || reInflightR3.test(line) || reInflightR4.test(line);
+        if (inflight) {
+          var mInflight = line.match(reInflightDate);
+          if (mInflight) { inflightDate = mInflight[2]; inflightEpoch = dateEpoch(mInflight[2]); }
+        }
+      }
+
       rows.push({id: mId[1], line: line, terminal: terminal,
+        dispositioned_in_flight: inflight,
         added: added, added_epoch: addedEpoch, age_days: ageDays,
         priority_label: prioLabel, priority: prio,
         threshold_days: threshold,
-        terminal_date: termDate, terminal_epoch: termEpoch});
+        terminal_date: termDate, terminal_epoch: termEpoch,
+        inflight_date: inflightDate, inflight_epoch: inflightEpoch});
     });
 
     var summary = {
       open_total: 0, terminal_total: 0,
       priority_counts: {high:0, medium:0, low:0, unlabeled:0},
       age_tiers: {"0_7":0, "8_30":0, "31_90":0, over_90:0, undated:0},
-      overdue_ids: [], adds_in_window: 0, terminal_in_window: 0, terminal_undated: 0
+      overdue_ids: [], adds_in_window: 0, terminal_in_window: 0, terminal_undated: 0,
+      dispositioned_in_flight_total: 0, dispositioned_in_flight_ids: []
     };
     var overdue = [];
+    var inflightRows = [];
 
     rows.forEach(function (r) {
       if (r.added_epoch !== null && r.added_epoch >= windowStart) {
@@ -1605,6 +1646,19 @@ od_backlog_health() {
         }
         r.is_overdue = false;
         r.terminal_in_window = (r.terminal_epoch !== null && r.terminal_epoch >= windowStart);
+        return;
+      }
+      // DISPOSITIONED-IN-FLIGHT: the operator already answered (SCHEDULED/
+      // DEFERRED/DEMOTED/FOLDED) but the row is not done yet. Distinct from
+      // terminal (not counted as closed/terminal_total) AND distinct from
+      // open (not counted in open_total/priority_counts/age_tiers, and
+      // NEVER pushed to overdue — an answered row must never re-nag).
+      if (r.dispositioned_in_flight) {
+        summary.dispositioned_in_flight_total++;
+        summary.dispositioned_in_flight_ids.push(r.id);
+        r.is_overdue = false;
+        r.terminal_in_window = false;
+        inflightRows.push(r);
         return;
       }
       summary.open_total++;
