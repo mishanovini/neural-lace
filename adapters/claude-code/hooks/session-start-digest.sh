@@ -836,6 +836,64 @@ feed_staleness_proposals() {
 # function now ONLY applies the digest's own presentation policy
 # (weekly idempotency via seen.jsonl, the cap, the proposal line format)
 # on top of the oracle's overdue_ids + row facts.
+#
+# BUILD-ESCALATION TIER (operator directive 2026-07-07: "I need Neural
+# Lace to be more proactive about resurfacing backlog items to me to
+# actually be built"). THE GAP this closes: the neutral 4-way proposal
+# above surfaces a row for ACKNOWLEDGEMENT, but a busy operator can
+# ignore it indefinitely — GH-AUTH-AUTOSWITCH-WORKORG-01 sat OPEN and
+# overdue for 36 DAYS with the loop nagging every week and nothing ever
+# escalating it toward actually being BUILT. This tier makes ignoring a
+# row costlier than dispositioning it:
+#
+#   - FESTER COUNT: a separate persistent per-row counter (seen.jsonl
+#     feed="backlog-fester", item_key=<ID>, deliberately NOT isoweek-
+#     suffixed) increments every digest run that surfaces the row,
+#     regardless of the weekly dedup collapse below. This is "how many
+#     digests has a human seen this row in, undisposed" — reusing the
+#     existing _seen_lookup/_seen_bump count infra (same mechanism as
+#     the weekly key, just a second independent key living alongside
+#     it), NOT a third piece of state.
+#   - ESCALATION TRIGGER (env-tunable; either condition fires it):
+#       (a) fester count (INCLUDING this digest) >= BACKLOG_ESCALATION_DIGESTS
+#           (default 3), OR
+#       (b) age crosses a hard bound BEYOND the normal overdue tier (a
+#           genuine grace window between "just became overdue, surface
+#           neutrally" and "old enough to hard-escalate on age alone") —
+#           BACKLOG_ESCALATION_AGE_HIGH_DAYS (default 14, vs. the 7-day
+#           high overdue tier) for high-priority rows,
+#           BACKLOG_ESCALATION_AGE_MEDIUM_DAYS (default 60, vs. the
+#           30-day medium overdue tier) for medium-priority rows. Each
+#           default is 2x its own tier, mirroring the high/medium ratio.
+#           MUST stay strictly greater than the matching
+#           BACKLOG_TIER_*_DAYS value in observability-derive.sh's
+#           od_backlog_health — equal defaults would hard-escalate a row
+#           the instant it becomes overdue, collapsing the neutral tier
+#           to nothing (regression caught by S13a/S16b). Low-priority
+#           rows escalate on fester count only (no hard age bound — the
+#           90-day overdue tier is already generous for low, and a
+#           tighter bound would out-nag the operator on a class they
+#           already deliberately deprioritized).
+#   - PRESENTATION: an escalated row's digest line leads with the BUILD
+#     action (not the neutral 4-way), states the fester count + age
+#     inline, and sorts ABOVE every non-escalated row. It is EXEMPT from
+#     the weekly seen.jsonl dedup gate that silences neutral rows for
+#     the rest of the ISO week — recurring every session IS the point
+#     (the whole gap being closed is "the neutral nag stopped mattering
+#     once ignored once"). The visual footprint is still capped
+#     honestly: escalated rows count against the same BACKLOG_DIGEST_CAP
+#     row budget (they take priority within it since they sort first),
+#     and a compact summary line ("N build-ready rows") is emitted
+#     instead of N full lines once escalated rows exceed
+#     BACKLOG_ESCALATION_SUMMARY_THRESHOLD (default 2), naming only the
+#     single oldest as the actionable pointer.
+#   - MECHANISM UNCHANGED: an escalated row reaches terminal state via
+#     the exact same one operator word (SCHEDULE/FOLD/DEMOTE/WONTFIX)
+#     as a neutral row — escalation is louder, not a different contract.
+#     The moment a row gets a terminal marker in docs/backlog.md, the
+#     oracle's terminal-marker detection (R1-R4) drops it from
+#     overdue_ids entirely and it stops escalating (and stops fester-
+#     counting) on the very next digest.
 # ----------------------------------------------------------------------
 
 feed_backlog_accountability() {
@@ -844,6 +902,10 @@ feed_backlog_accountability() {
   [[ -f "$backlog" ]] || return 0
   declare -F od_backlog_health >/dev/null 2>&1 || return 0
   local cap="${BACKLOG_DIGEST_CAP:-3}"
+  local esc_digests="${BACKLOG_ESCALATION_DIGESTS:-3}"
+  local esc_age_high="${BACKLOG_ESCALATION_AGE_HIGH_DAYS:-14}"
+  local esc_age_medium="${BACKLOG_ESCALATION_AGE_MEDIUM_DAYS:-60}"
+  local esc_summary_threshold="${BACKLOG_ESCALATION_SUMMARY_THRESHOLD:-2}"
   local isoweek; isoweek="$(date -u '+%G-W%V' 2>/dev/null || echo unknown)"
 
   local oracle_json
@@ -867,18 +929,78 @@ feed_backlog_accountability() {
   ' 2>/dev/null)"
   [[ -z "$candidates" ]] && return 0
 
-  # Weekly idempotency filter: drop rows already surfaced this ISO week.
-  local filtered="" line age_days id prio prior
+  # Classify every overdue candidate as ESCALATED or neutral BEFORE the
+  # weekly-dedup filter (escalated rows bypass that filter entirely), and
+  # bump each row's fester count exactly once per candidate per digest
+  # invocation (mirrors the neutral path's one-bump-per-surfaced-row rule).
+  local esc_rows="" neu_candidates="" age_days id prio prior_fester fester_count
+  while IFS=$'\t' read -r age_days id prio; do
+    [[ -z "$id" ]] && continue
+    prior_fester="$(_seen_lookup "$seen_path" "backlog-fester" "$id")"
+    prior_fester="${prior_fester%%$'\t'*}"
+    [[ "$prior_fester" =~ ^[0-9]+$ ]] || prior_fester=0
+    fester_count=$((prior_fester + 1))
+
+    local hard_bound_hit=0
+    if [[ "$prio" == "high" && "$age_days" -gt "$esc_age_high" ]]; then
+      hard_bound_hit=1
+    elif [[ "$prio" == "medium" && "$age_days" -gt "$esc_age_medium" ]]; then
+      hard_bound_hit=1
+    fi
+
+    if [[ "$fester_count" -ge "$esc_digests" || "$hard_bound_hit" -eq 1 ]]; then
+      esc_rows+="${age_days}"$'\t'"${id}"$'\t'"${prio}"$'\t'"${fester_count}"$'\n'
+    else
+      neu_candidates+="${age_days}"$'\t'"${id}"$'\t'"${prio}"$'\n'
+    fi
+    _seen_bump "$seen_path" "backlog-fester" "$id"
+  done <<< "$candidates"
+
+  # Weekly idempotency filter applies ONLY to the neutral path — escalated
+  # rows are deliberately exempt (recurring every digest is the mechanism).
+  local filtered=""
   while IFS=$'\t' read -r age_days id prio; do
     [[ -z "$id" ]] && continue
     prior="$(_seen_lookup "$seen_path" "backlog" "${id}-${isoweek}")"
     [[ -n "$prior" ]] && continue
     filtered+="${age_days}"$'\t'"${id}"$'\t'"${prio}"$'\n'
-  done <<< "$candidates"
-  [[ -z "$filtered" ]] && return 0
+  done <<< "$neu_candidates"
 
-  local total emitted=0
-  total="$(printf '%s' "$filtered" | grep -c .)"
+  local esc_total=0
+  [[ -n "$esc_rows" ]] && esc_total="$(printf '%s' "$esc_rows" | grep -c .)"
+  local neu_total=0
+  [[ -n "$filtered" ]] && neu_total="$(printf '%s' "$filtered" | grep -c .)"
+  if [[ "$esc_total" -eq 0 && "$neu_total" -eq 0 ]]; then
+    return 0
+  fi
+
+  local emitted=0
+
+  # Escalated rows first (oldest-first), up to the cap. When more than
+  # esc_summary_threshold rows are escalated, collapse to ONE compact
+  # summary line naming only the oldest as the actionable pointer —
+  # "cap the visual footprint honestly" (spec) even though escalated
+  # rows themselves are dedup-exempt.
+  if [[ "$esc_total" -gt "$esc_summary_threshold" ]]; then
+    local top_age top_id top_prio top_fester
+    IFS=$'\t' read -r top_age top_id top_prio top_fester <<< "$(printf '%s' "$esc_rows" | sort -t$'\t' -k1,1 -rn | head -n 1)"
+    printf 'backlog: %d build-ready rows escalated -> top: %s (%s, %sd, undisposed %d digests) -> reply SCHEDULE (spawn builder) / DEMOTE / WONTFIX <reason>\n' \
+      "$esc_total" "$top_id" "$top_prio" "$top_age" "$top_fester"
+    emitted=$((emitted + 1))
+  else
+    while IFS=$'\t' read -r age_days id prio fester_count; do
+      [[ -z "$id" ]] && continue
+      [[ "$emitted" -lt "$cap" ]] || break
+      printf 'backlog ESCALATED: %s undisposed across %d digests, %sd -> propose BUILD NOW: reply SCHEDULE (spawn builder) / or DEMOTE / WONTFIX <reason>\n' \
+        "$id" "$fester_count" "$age_days"
+      emitted=$((emitted + 1))
+    done < <(printf '%s' "$esc_rows" | sort -t$'\t' -k1,1 -rn)
+  fi
+
+  # Neutral rows fill any remaining cap budget, oldest-first, exactly as
+  # before escalation existed. neu_emitted tracked explicitly (not
+  # back-derived from `emitted`) so the overflow line below is exact.
+  local neu_emitted=0
   while IFS=$'\t' read -r age_days id prio; do
     [[ -z "$id" ]] && continue
     [[ "$emitted" -lt "$cap" ]] || break
@@ -886,9 +1008,11 @@ feed_backlog_accountability() {
       "$id" "$prio" "$age_days"
     _seen_bump "$seen_path" "backlog" "${id}-${isoweek}"
     emitted=$((emitted + 1))
+    neu_emitted=$((neu_emitted + 1))
   done < <(printf '%s' "$filtered" | sort -t$'\t' -k1,1 -rn)
-  if [[ "$total" -gt "$cap" ]]; then
-    printf 'backlog: +%d more overdue row(s) -> docs/backlog.md\n' "$((total - cap))"
+
+  if [[ "$neu_total" -gt "$neu_emitted" ]]; then
+    printf 'backlog: +%d more overdue row(s) -> docs/backlog.md\n' "$((neu_total - neu_emitted))"
   fi
   return 0
 }
@@ -1484,6 +1608,16 @@ EOF
   # S13c: cap overflow — 5 overdue rows, default cap 3 -> the 3 OLDEST
   # surface + one "+2 more" overflow line; the 2 newest are NOT seen-bumped
   # and surface on the NEXT session (cap never silently eats rows).
+  # Priority deliberately LOW (not high): this scenario tests the cap/
+  # dedup/drain mechanics, which are orthogonal to the BUILD-ESCALATION
+  # tier (S16). Low priority never hard-bound-escalates on age (by
+  # design — see feed_backlog_accountability's esc_age_* comment), and 2
+  # calls never reach the fester-count trigger (esc_digests default 3),
+  # so these rows stay on the neutral path throughout, exactly as before
+  # the escalation tier existed. High-priority 96-100d-old rows would
+  # all instantly hard-bound-escalate (esc_age_high default 14) and
+  # collapse to the escalated summary line instead, which is a real
+  # regression this fixture must not trip.
   local _d100 _d99 _d98 _d97 _d96
   _d100="$(date -u -d '100 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-100d '+%Y-%m-%d' 2>/dev/null)"
   _d99="$(date -u -d '99 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-99d '+%Y-%m-%d' 2>/dev/null)"
@@ -1493,11 +1627,11 @@ EOF
   local s13c="$tmp/s13c"
   mkdir -p "$s13c/docs"
   cat > "$s13c/docs/backlog.md" <<EOF
-- **CAP-A-01 — oldest** (added $_d100; \`priority:high\`). Prose.
-- **CAP-B-01 — second-oldest** (added $_d99; \`priority:high\`). Prose.
-- **CAP-C-01 — third-oldest** (added $_d98; \`priority:high\`). Prose.
-- **CAP-D-01 — fourth** (added $_d97; \`priority:high\`). Prose.
-- **CAP-E-01 — fifth** (added $_d96; \`priority:high\`). Prose.
+- **CAP-A-01 — oldest** (added $_d100; \`priority:low\`). Prose.
+- **CAP-B-01 — second-oldest** (added $_d99; \`priority:low\`). Prose.
+- **CAP-C-01 — third-oldest** (added $_d98; \`priority:low\`). Prose.
+- **CAP-D-01 — fourth** (added $_d97; \`priority:low\`). Prose.
+- **CAP-E-01 — fifth** (added $_d96; \`priority:low\`). Prose.
 EOF
   local s13c_seen="$tmp/s13c-seen.jsonl"
   local out13c
@@ -1525,6 +1659,148 @@ EOF
   local out13d
   out13d="$(DIGEST_SEEN_PATH="$s13d_seen" run_digest "$s13d" "$tmp/s13d-no-alerts" "$s13d_seen" 2>/dev/null)"
   _ck_contains "S13d run_digest carries the backlog feed line" "$out13d" "backlog: WIRED-ROW-01 (high, 8d)"
+
+  # ---- S16: BUILD-ESCALATION tier (operator directive 2026-07-07: "I need
+  #           Neural Lace to be more proactive about resurfacing backlog
+  #           items to me to actually be built"). THE GAP this closes:
+  #           GH-AUTH-AUTOSWITCH-WORKORG-01 sat OPEN/overdue for 36 DAYS —
+  #           the neutral 4-way nag never escalated toward BUILD. Sandboxed
+  #           fixture backlog + sandboxed seen.jsonl throughout (025/028/034
+  #           discipline unchanged).
+  local _d15 _d31h _d9
+  _d15="$(date -u -d '15 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-15d '+%Y-%m-%d' 2>/dev/null)"
+  _d31h="$(date -u -d '31 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-31d '+%Y-%m-%d' 2>/dev/null)"
+  _d9="$(date -u -d '9 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-9d '+%Y-%m-%d' 2>/dev/null)"
+
+  # S16a: hard-age-bound trigger — a HIGH row at 15d (> esc_age_high default
+  # 14) escalates on its VERY FIRST surfaced digest (fester count 1), with
+  # the BUILD-leading line, fester count, and age all present.
+  local s16a="$tmp/s16a"
+  mkdir -p "$s16a/docs"
+  cat > "$s16a/docs/backlog.md" <<EOF
+- **ESC-HARDBOUND-01 — fixture high row past the hard age bound** (added $_d15; \`priority:high\`). Prose body.
+EOF
+  local s16a_seen="$tmp/s16a-seen.jsonl"
+  local out16a
+  out16a="$(feed_backlog_accountability "$s16a_seen" "$s16a")"
+  _ck_contains "S16a hard-age-bound row escalates on first digest (BUILD-leading line)" "$out16a" "backlog ESCALATED: ESC-HARDBOUND-01 undisposed across 1 digests, 15d -> propose BUILD NOW"
+  _ck_contains "S16a escalated line offers SCHEDULE/DEMOTE/WONTFIX (not the 4-way FOLD form)" "$out16a" "reply SCHEDULE (spawn builder) / or DEMOTE / WONTFIX <reason>"
+
+  # S16b: a row that JUST crossed its normal overdue tier (medium, 31d —
+  # over the 30d medium overdue tier but well under the 60d medium
+  # escalation hard bound) does NOT escalate on its first digest (fester
+  # count 1, under both the fester-count and age-hard-bound triggers) —
+  # it surfaces as a plain neutral proposal only. This is the regression
+  # this tier must never reintroduce: a row becoming overdue is not the
+  # same event as a row becoming escalation-worthy.
+  local s16b="$tmp/s16b"
+  mkdir -p "$s16b/docs"
+  cat > "$s16b/docs/backlog.md" <<EOF
+- **ESC-FRESH-01 — fixture medium row freshly crossed, not yet escalated** (added $_d31h; \`priority:medium\`). Prose body.
+EOF
+  local s16b_seen="$tmp/s16b-seen.jsonl"
+  local out16b
+  out16b="$(feed_backlog_accountability "$s16b_seen" "$s16b")"
+  _ck_contains "S16b freshly-crossed row still surfaces neutrally" "$out16b" "backlog: ESC-FRESH-01 (medium, 31d)"
+  _ck_not_contains "S16b freshly-crossed row does NOT escalate (fester count 1, not past hard bound)" "$out16b" "ESCALATED"
+
+  # S16c: fester-count trigger — a HIGH row at 9d (crosses the 7d high
+  # overdue tier but sits UNDER the 14d escalation hard bound, isolating
+  # the fester-count path cleanly from S16a's hard-bound path) surfaced
+  # across 3 digests crosses BACKLOG_ESCALATION_DIGESTS (default 3) on the
+  # third call and escalates with the correct cumulative fester count.
+  # Same real seen_path each call, same real ISO week (self-tests cannot
+  # time-travel the system clock) — runs 2 land silently on the NEUTRAL
+  # line per the weekly dedup (S13b), which is exactly what proves S16d
+  # below: the fester counter itself bumps unconditionally regardless of
+  # that neutral-path dedup, so escalation still fires on schedule.
+  local s16c="$tmp/s16c"
+  mkdir -p "$s16c/docs"
+  cat > "$s16c/docs/backlog.md" <<EOF
+- **ESC-FESTER-01 — fixture high row nagged repeatedly, never dispositioned** (added $_d9; \`priority:high\`). Prose body.
+EOF
+  local s16c_seen="$tmp/s16c-seen.jsonl"
+  local out16c_1 out16c_2 out16c_3
+  out16c_1="$(feed_backlog_accountability "$s16c_seen" "$s16c")"
+  _ck_not_contains "S16c fester run 1/3 not yet escalated" "$out16c_1" "ESCALATED"
+  _ck_contains "S16c fester run 1/3 surfaces neutrally" "$out16c_1" "backlog: ESC-FESTER-01 (high, 9d)"
+  out16c_2="$(feed_backlog_accountability "$s16c_seen" "$s16c")"
+  out16c_3="$(feed_backlog_accountability "$s16c_seen" "$s16c")"
+  _ck_contains "S16c fester run 3/3 crosses threshold and escalates (undisposed across 3 digests)" "$out16c_3" "backlog ESCALATED: ESC-FESTER-01 undisposed across 3 digests, 9d -> propose BUILD NOW"
+
+  # S16d: escalated rows are EXEMPT from the weekly dedup collapse that
+  # silences neutral rows — recur every session even within the same ISO
+  # week (the whole point: ignoring costs more than dispositioning).
+  local out16d
+  out16d="$(feed_backlog_accountability "$s16c_seen" "$s16c")"
+  _ck_contains "S16d escalated row recurs on the VERY NEXT digest, same ISO week (dedup-exempt)" "$out16d" "backlog ESCALATED: ESC-FESTER-01"
+
+  # S16e: a DISPOSITIONED row (SCHEDULED marker) never escalates and drops
+  # out of the feed entirely — the oracle-level dispositioned-in-flight
+  # fix (od_backlog_health) suppresses it from overdue_ids, so it never
+  # reaches this function's candidate list at all.
+  local s16e="$tmp/s16e"
+  mkdir -p "$s16e/docs"
+  cat > "$s16e/docs/backlog.md" <<EOF
+- **ESC-DISPOSITIONED-01 — fixture high row the operator already answered** (added $_d15; \`priority:high\`). Prose. **SCHEDULED $_d9** (operator disposition — build in flight, row closes DONE when it merges).
+EOF
+  local s16e_seen="$tmp/s16e-seen.jsonl"
+  local out16e
+  out16e="$(feed_backlog_accountability "$s16e_seen" "$s16e")"
+  if [[ -z "$out16e" ]]; then
+    echo "PASS: S16e SCHEDULED-marked row is silent (dispositioned-in-flight, never re-nags)"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: S16e expected silence for a SCHEDULED-marked row, got:" >&2
+    printf '%s\n' "$out16e" | sed 's/^/    /' >&2
+    fail=$((fail + 1))
+  fi
+
+  # S16f: multi-escalation summary — more than BACKLOG_ESCALATION_SUMMARY_
+  # THRESHOLD (default 2) rows escalated collapses to ONE compact summary
+  # line naming only the oldest as the actionable pointer, instead of N
+  # full ESCALATED lines (visual-footprint honesty per spec). All three
+  # rows must actually hard-bound-escalate on their FIRST digest (fester
+  # count 1): C-01 is `high` (not `medium`) at 15d because 15 clears
+  # esc_age_high's default 14 but sits well under esc_age_medium's
+  # default 60 — a medium row here would not escalate at all.
+  local s16f="$tmp/s16f"
+  mkdir -p "$s16f/docs"
+  cat > "$s16f/docs/backlog.md" <<EOF
+- **ESC-MULTI-A-01 — oldest escalated** (added $_d31h; \`priority:high\`). Prose.
+- **ESC-MULTI-B-01 — second escalated** (added $_d15; \`priority:high\`). Prose.
+- **ESC-MULTI-C-01 — third escalated** (added $_d15; \`priority:high\`). Prose.
+EOF
+  local s16f_seen="$tmp/s16f-seen.jsonl"
+  local out16f
+  out16f="$(BACKLOG_DIGEST_CAP=10 feed_backlog_accountability "$s16f_seen" "$s16f")"
+  _ck_contains "S16f 3 escalated rows collapse to ONE summary line" "$out16f" "backlog: 3 build-ready rows escalated -> top: ESC-MULTI-A-01"
+  _ck_not_contains "S16f summary mode suppresses the per-row ESCALATED line for the top row" "$out16f" "backlog ESCALATED: ESC-MULTI-A-01"
+  _ck_not_contains "S16f summary mode does not also print the second row individually" "$out16f" "ESC-MULTI-B-01"
+
+  # S16g: flagless-shape scenario — the real production entry path (`bash
+  # session-start-digest.sh`, no CLI flags, stdin closed) surfaces an
+  # escalated row exactly as the unit-level S16a scenario does, proving
+  # the tier is wired all the way through run_digest's real invocation
+  # shape, not just reachable as an internal bash function.
+  local s16g="$tmp/s16g"
+  _seed_repo "$s16g"
+  mkdir -p "$s16g/docs"
+  cat > "$s16g/docs/backlog.md" <<EOF
+- **ESC-FLAGLESS-01 — fixture high row past the hard age bound** (added $_d15; \`priority:high\`). Prose body.
+EOF
+  local s16g_ledger="$tmp/s16g-ledger.jsonl"
+  local s16g_seen="$tmp/s16g-seen.jsonl"
+  local s16g_home="$tmp/s16g-home"
+  mkdir -p "$s16g_home/.claude/state"
+  local s16g_script="$HOOKS_DIR/$(basename "${BASH_SOURCE[0]}")"
+  local out16g
+  out16g="$(
+    cd "$s16g" && \
+    HOME="$s16g_home" HARNESS_SELFTEST=1 SIGNAL_LEDGER_PATH="$s16g_ledger" DIGEST_SEEN_PATH="$s16g_seen" \
+      bash "$s16g_script" </dev/null 2>/dev/null
+  )"
+  _ck_contains "S16g real flagless invocation surfaces the escalated build-leading line" "$out16g" "backlog ESCALATED: ESC-FLAGLESS-01 undisposed across 1 digests, 15d -> propose BUILD NOW"
 
   # ---- S14 (Wave O task O.1): run_digest emits a session-start ledger
   # event exactly once per invocation. Invoked via the REAL flagless
