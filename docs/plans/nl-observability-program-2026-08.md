@@ -79,7 +79,7 @@ surfacers, additional dashboards, cross-machine ledger sync beyond read-both.
 - [x] O.6 Pipeline health in doctor: writers firing, ledger growing, heartbeats
   fresh, cockpit regenerated recently, consumer-map 100% — Model: sonnet
   - Done-when: red-fixtures per check; live green.
-- [ ] O.7 Retro vs pre-registered metrics (sketch §success-metrics): time-to-answer
+- [x] O.7 Retro vs pre-registered metrics (sketch §success-metrics): time-to-answer
   drill Q1–Q6, zero unmapped event types, operator-trust check — Model: strongest
   available — Done-when: completion review doc with measured numbers.
 
