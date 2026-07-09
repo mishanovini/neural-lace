@@ -172,6 +172,31 @@ _od_needs_you_bin() {
 }
 
 # ----------------------------------------------------------------------
+# _od_waiting_sids <ledger-file> — print every session_id with an OPEN
+# needs-you item, one per line (dedup not required — the caller folds
+# into a set).
+#
+# PERFORMANCE (O.3 perf fix, task-verifier conf 9): bulk equivalent of
+# `needs-you.sh has-entry-for-session <sid>`, read directly via jq — same
+# ledger.json file, same `state == "open"` predicate — replacing what
+# used to be od_sessions calling out to a full `bash needs-you.sh
+# has-entry-for-session <sid>` PROCESS (a whole separate script startup
+# plus its own internal jq call) ONCE PER SESSION. Measured ~6.9s for 32
+# sessions on this machine's real estate; collapsed here to ONE jq pass
+# over the ledger regardless of session count, mirroring od_needs_me's
+# own direct read of the identical file above (same NEEDS_YOU_STATE_DIR
+# override convention, so both agree on which file is "the ledger"
+# without needing needs-you.sh's own script logic at all for this
+# read-only membership check).
+# ----------------------------------------------------------------------
+_od_waiting_sids() {
+  local ledger_file="$1"
+  [[ -f "$ledger_file" ]] || return 0
+  _od_have jq || return 0
+  jq -r '.items[]? | select(.state == "open") | (.session // empty)' "$ledger_file" 2>/dev/null | tr -d '\r'
+}
+
+# ----------------------------------------------------------------------
 # _od_backlog_path — resolve docs/backlog.md. Override (checked in
 # order): BACKLOG_MD_PATH (the convention the three real od_backlog_health
 # consumers — session-start-digest.sh, plan-edit-validator.sh,
@@ -210,15 +235,72 @@ _od_transcripts_dir() {
 }
 
 # ----------------------------------------------------------------------
+# _od_transcript_index_build — populate the global sid->path index
+# (_OD_TRANSCRIPT_INDEX) via ONE find/-printf pass over the transcripts
+# dir, instead of one `find` PER SESSION.
+#
+# PERFORMANCE (livesmoke-measured, O.3 perf fix, task-verifier conf 9):
+# od_sessions used to call _od_find_transcript (a full-tree `find`) once
+# per heartbeat file — O(sessions x full-tree-scan). Against this
+# machine's real estate (916 transcripts / 332MB / 32 heartbeat files)
+# that measured ~50-55s wall for `nl status` alone. A caller that needs
+# to resolve MANY session ids in a loop (od_sessions) now calls this
+# ONCE up front; every subsequent _od_find_transcript lookup then costs
+# one O(1) hash-array access instead of a fresh tree walk. Rebuilt fresh
+# on every call (never cached across calls) so a transcript created or
+# removed between two calls in the same process — the self-test sources
+# this file once and drives many scenarios in sequence — is never served
+# stale; production is one process per `nl` invocation anyway, so this
+# costs nothing there.
+# ----------------------------------------------------------------------
+declare -gA _OD_TRANSCRIPT_INDEX 2>/dev/null || true
+_OD_TRANSCRIPT_INDEX_BUILT=0
+_od_transcript_index_build() {
+  _OD_TRANSCRIPT_INDEX=()
+  _OD_TRANSCRIPT_INDEX_BUILT=1
+  local dir; dir="$(_od_transcripts_dir)"
+  [[ -d "$dir" ]] || return 0
+  local fname fpath sid
+  while IFS=$'\t' read -r fname fpath; do
+    [[ -z "$fname" ]] && continue
+    sid="${fname%.jsonl}"
+    # first-match-wins — matches _od_find_transcript's original `head -n1`
+    # semantics if a session id somehow ever appears more than once.
+    [[ -n "${_OD_TRANSCRIPT_INDEX[$sid]:-}" ]] && continue
+    _OD_TRANSCRIPT_INDEX["$sid"]="$fpath"
+  done < <(find "$dir" -maxdepth 4 -type f -name '*.jsonl' -printf '%f\t%p\n' 2>/dev/null)
+}
+
+# _od_transcript_index_reset — drop the index so subsequent
+# _od_find_transcript calls fall back to a direct per-call `find` again.
+# Called at the end of od_sessions so a LATER od_costs/od_why call in the
+# same process (only realistic in --self-test — production is one
+# invocation per process) never serves a lookup from an index some
+# earlier od_sessions call built and never refreshed.
+_od_transcript_index_reset() {
+  _OD_TRANSCRIPT_INDEX=()
+  _OD_TRANSCRIPT_INDEX_BUILT=0
+}
+
+# ----------------------------------------------------------------------
 # _od_find_transcript <session-id> — locate the transcript JSONL file for
 # a session id anywhere under the transcripts dir (real layout nests by
 # sanitized-cwd; self-test layout is flat). Prints the first match or
-# empty. Never errors.
+# empty. Never errors. Serves from _OD_TRANSCRIPT_INDEX at O(1) when a
+# caller has built one via _od_transcript_index_build (od_sessions);
+# otherwise falls back to the original per-call `find` — correct, just
+# O(full-tree), which is fine for a single lookup (od_why, `od_costs
+# --session`) that never runs this in a per-session loop.
 # ----------------------------------------------------------------------
 _od_find_transcript() {
   local sid="$1" dir
+  [[ -n "$sid" ]] || { printf ''; return 0; }
+  if [[ "$_OD_TRANSCRIPT_INDEX_BUILT" == "1" ]]; then
+    printf '%s' "${_OD_TRANSCRIPT_INDEX[$sid]:-}"
+    return 0
+  fi
   dir="$(_od_transcripts_dir)"
-  [[ -n "$sid" && -d "$dir" ]] || { printf ''; return 0; }
+  [[ -d "$dir" ]] || { printf ''; return 0; }
   find "$dir" -maxdepth 4 -type f -name "${sid}.jsonl" 2>/dev/null | head -n1
 }
 
@@ -328,14 +410,28 @@ _od_json_escape() {
 # best-known "last activity" epoch for a session: heartbeat
 # last_activity_ts when a heartbeat file exists, else the transcript
 # file's mtime, else 0 (unresolvable — never fabricated).
+#
+# Optional 3rd arg <pre-resolved-last_activity_ts>: a caller that already
+# read the heartbeat file for OTHER fields (od_sessions reads marker/
+# branch/worktree/cwd from the same file) can pass the last_activity_ts
+# value it already extracted, skipping this function's own
+# cat+_od_json_field re-read of the identical file — PERFORMANCE
+# (livesmoke-measured, this task): od_sessions used to read each
+# heartbeat file 5 TIMES total (4 fields in its own loop + this
+# function's independent 5th read of last_activity_ts), each a
+# cat+jq subprocess pair; against this machine's 32-heartbeat estate
+# that measured ~3.8s just for this function's redundant re-reads on top
+# of the ~10.7s the other 4 fields already cost. Omit the 3rd arg for
+# unchanged 2-arg-call behavior (self-contained, still correct — just
+# re-reads the file itself).
 _od_session_last_activity() {
-  local sid="$1" hbfile="$2"
-  if [[ -n "$hbfile" && -f "$hbfile" ]]; then
-    local ts; ts="$(_od_json_field "$(cat "$hbfile" 2>/dev/null)" "last_activity_ts")"
-    if [[ -n "$ts" ]]; then
-      _od_epoch "$ts"
-      return 0
-    fi
+  local sid="$1" hbfile="$2" ts="${3:-}"
+  if [[ -z "$ts" && -n "$hbfile" && -f "$hbfile" ]]; then
+    ts="$(_od_json_field "$(cat "$hbfile" 2>/dev/null)" "last_activity_ts")"
+  fi
+  if [[ -n "$ts" ]]; then
+    _od_epoch "$ts"
+    return 0
   fi
   local tf; tf="$(_od_find_transcript "$sid")"
   if [[ -n "$tf" && -f "$tf" ]]; then
@@ -378,42 +474,82 @@ _od_ledger_prefilter() {
   fi
 }
 
-# _od_session_last_block_epoch <sid> <ledger-path> — epoch of the newest
-# `block` event for this session_id, or 0 if none. ONE jq pass (no
-# per-line subprocess spawn).
-_od_session_last_block_epoch() {
-  local sid="$1" ledger="$2"
-  [[ -f "$ledger" ]] || { echo 0; return 0; }
-  local ts=""
-  if _od_have jq; then
-    ts="$(_od_jq -r --arg sid "$sid" '
-      select(.session_id == $sid and .event == "block") | .ts
-    ' "$ledger" | sort | tail -n1)"
-  else
-    ts="$(_od_ledger_prefilter "$ledger" "$sid" | grep '"event":"block"' \
-      | sed -nE 's/.*"ts":"([^"]*)".*/\1/p' | sort | tail -n1)"
-  fi
-  [[ -z "$ts" ]] && { echo 0; return 0; }
-  _od_epoch "$ts"
-}
+# ----------------------------------------------------------------------
+# _od_sessions_epoch_index_build <ledger-path> — populates
+# _OD_BLOCK_EPOCH_BY_SID and _OD_THROTTLE_EPOCH_BY_SID (session_id ->
+# newest matching-event epoch, absent key == none) in exactly ONE pass
+# over the ledger.
+#
+# REPLACES (O.3 perf fix, task-verifier conf 9): the two per-session
+# functions this used to be (_od_session_last_block_epoch /
+# _od_session_last_throttle_epoch), each ONE jq invocation but called
+# ONCE PER SESSION from od_sessions' loop — for N sessions that was 2N
+# full-ledger jq scans. Livesmoke-measured against this machine's real
+# estate (32 heartbeat files): 64 separate jq subprocess invocations,
+# each re-reading and re-parsing the whole ledger from disk, contributing
+# directly to `nl status`'s ~50-55s wall time. Collapsed here to exactly
+# ONE jq pass (2 subprocess forks total via _od_jq: jq + tr) regardless
+# of session count — the same "ONE pass over the WHOLE file" discipline
+# already used by _od_ledger_lifecycle_sids / od_harness_health /
+# od_shipped_since above. Epoch conversion happens INSIDE jq via
+# fromdateiso8601 (no `date` subprocess per ledger line — same technique
+# as od_harness_health's per-gate tally), so bash only ever does cheap
+# integer comparisons on already-computed epochs.
+# ----------------------------------------------------------------------
+declare -gA _OD_BLOCK_EPOCH_BY_SID 2>/dev/null || true
+declare -gA _OD_THROTTLE_EPOCH_BY_SID 2>/dev/null || true
+_od_sessions_epoch_index_build() {
+  local ledger="$1"
+  _OD_BLOCK_EPOCH_BY_SID=()
+  _OD_THROTTLE_EPOCH_BY_SID=()
+  [[ -f "$ledger" ]] || return 0
 
-# _od_session_last_throttle_epoch <sid> <ledger-path> — epoch of the
-# newest gate=resumer event=throttle-detected event for this session_id,
-# or 0 if none. ONE jq pass.
-_od_session_last_throttle_epoch() {
-  local sid="$1" ledger="$2"
-  [[ -f "$ledger" ]] || { echo 0; return 0; }
-  local ts=""
+  local sid kind epoch
   if _od_have jq; then
-    ts="$(_od_jq -r --arg sid "$sid" '
-      select(.session_id == $sid and .gate == "resumer" and .event == "throttle-detected") | .ts
-    ' "$ledger" | sort | tail -n1)"
+    while IFS=$'\t' read -r sid kind epoch; do
+      [[ -z "$sid" ]] && continue
+      case "$kind" in
+        block)
+          if [[ -z "${_OD_BLOCK_EPOCH_BY_SID[$sid]:-}" ]] || [[ "$epoch" -gt "${_OD_BLOCK_EPOCH_BY_SID[$sid]}" ]]; then
+            _OD_BLOCK_EPOCH_BY_SID["$sid"]="$epoch"
+          fi
+          ;;
+        throttle)
+          if [[ -z "${_OD_THROTTLE_EPOCH_BY_SID[$sid]:-}" ]] || [[ "$epoch" -gt "${_OD_THROTTLE_EPOCH_BY_SID[$sid]}" ]]; then
+            _OD_THROTTLE_EPOCH_BY_SID["$sid"]="$epoch"
+          fi
+          ;;
+      esac
+    done < <(_od_jq -r '
+      select(.event == "block" or (.gate == "resumer" and .event == "throttle-detected"))
+      | (try (.ts | fromdateiso8601) catch 0) as $epoch
+      | [(.session_id // "unknown"), (if .event == "block" then "block" else "throttle" end), $epoch]
+      | @tsv
+    ' "$ledger")
   else
-    ts="$(_od_ledger_prefilter "$ledger" "$sid" | grep '"gate":"resumer"' | grep '"event":"throttle-detected"' \
-      | sed -nE 's/.*"ts":"([^"]*)".*/\1/p' | sort | tail -n1)"
+    # jq-less fallback: two grep passes TOTAL (never one pair per
+    # session) — still no per-session re-scan, just no jq available to
+    # collapse it to one.
+    local line ts_raw
+    while IFS= read -r line; do
+      sid="$(printf '%s' "$line" | sed -nE 's/.*"session_id":"([^"]*)".*/\1/p')"
+      [[ -z "$sid" ]] && sid="unknown"
+      ts_raw="$(printf '%s' "$line" | sed -nE 's/.*"ts":"([^"]*)".*/\1/p')"
+      epoch="$(_od_epoch "$ts_raw")"
+      if [[ -z "${_OD_BLOCK_EPOCH_BY_SID[$sid]:-}" ]] || [[ "$epoch" -gt "${_OD_BLOCK_EPOCH_BY_SID[$sid]}" ]]; then
+        _OD_BLOCK_EPOCH_BY_SID["$sid"]="$epoch"
+      fi
+    done < <(grep '"event":"block"' "$ledger" 2>/dev/null)
+    while IFS= read -r line; do
+      sid="$(printf '%s' "$line" | sed -nE 's/.*"session_id":"([^"]*)".*/\1/p')"
+      [[ -z "$sid" ]] && sid="unknown"
+      ts_raw="$(printf '%s' "$line" | sed -nE 's/.*"ts":"([^"]*)".*/\1/p')"
+      epoch="$(_od_epoch "$ts_raw")"
+      if [[ -z "${_OD_THROTTLE_EPOCH_BY_SID[$sid]:-}" ]] || [[ "$epoch" -gt "${_OD_THROTTLE_EPOCH_BY_SID[$sid]}" ]]; then
+        _OD_THROTTLE_EPOCH_BY_SID["$sid"]="$epoch"
+      fi
+    done < <(grep '"gate":"resumer"' "$ledger" 2>/dev/null | grep '"event":"throttle-detected"')
   fi
-  [[ -z "$ts" ]] && { echo 0; return 0; }
-  _od_epoch "$ts"
 }
 
 # _od_ledger_lifecycle_sids <ledger-path> — print every session_id that
@@ -491,7 +627,35 @@ od_sessions() {
     [[ "$known" == "0" ]] && all_sids+=("$lsid")
   done
 
-  local ny_bin; ny_bin="$(_od_needs_you_bin)"
+  # PERFORMANCE (O.3 perf fix, task-verifier conf 9): build every per-call
+  # index ONCE, before the per-session loop below, instead of doing a
+  # full-tree `find`, two full-ledger jq scans, AND a full external
+  # `bash needs-you.sh ...` script invocation PER SESSION (measured
+  # ~50-55s wall against this machine's real 916-transcript/32-heartbeat
+  # estate — see the PERFORMANCE comments on _od_transcript_index_build,
+  # _od_sessions_epoch_index_build, and _od_waiting_sids for the full
+  # before/after accounting). Transcript/ledger indexes reset at the end
+  # of this function (see below) so a later od_costs/od_why call in the
+  # same process never serves a lookup from a stale index.
+  _od_transcript_index_build
+  _od_sessions_epoch_index_build "$ledger"
+
+  # PERFORMANCE (this task): replaces one `bash needs-you.sh
+  # has-entry-for-session <sid>` subprocess invocation PER SESSION
+  # (measured ~6.9s for 32 sessions on this machine — a whole separate
+  # bash script startup + its own jq call, per session) with ONE direct
+  # jq read of the SAME ledger.json file needs-you.sh itself reads (same
+  # path resolution convention as od_needs_me above: NEEDS_YOU_STATE_DIR
+  # override, else the real production dir), building an O(1) lookup set
+  # of every session_id with an open item.
+  local ny_ledger_dir="${NEEDS_YOU_STATE_DIR:-$HOME/.claude/state/needs-you}"
+  local ny_ledger_file="$ny_ledger_dir/ledger.json"
+  declare -A _od_waiting_set=()
+  local wsid
+  while IFS= read -r wsid; do
+    [[ -z "$wsid" ]] && continue
+    _od_waiting_set["$wsid"]=1
+  done < <(_od_waiting_sids "$ny_ledger_file")
 
   local -a out_rows=()
   local state marker branch worktree cwd hbfile detail
@@ -499,18 +663,32 @@ od_sessions() {
   for sid in "${all_sids[@]}"; do
     hbfile=""
     marker=""; branch=""; worktree=""; cwd=""; detail=""
+    local hb_last_activity_ts=""
     if [[ -f "$hbdir/${sid}.json" ]]; then
       hbfile="$hbdir/${sid}.json"
-      marker="$(_od_json_field "$(cat "$hbfile" 2>/dev/null)" "marker_state")"
-      branch="$(_od_json_field "$(cat "$hbfile" 2>/dev/null)" "branch")"
-      worktree="$(_od_json_field "$(cat "$hbfile" 2>/dev/null)" "worktree_root")"
-      cwd="$(_od_json_field "$(cat "$hbfile" 2>/dev/null)" "cwd")"
+      # PERFORMANCE (this task): ONE cat + ONE jq call extracting all 5
+      # fields this loop needs from the heartbeat file, replacing 4
+      # separate cat+jq subprocess PAIRS (one per field) that each
+      # re-read and re-parsed the identical file — measured ~10.7s for
+      # 32 heartbeat files on this machine. last_activity_ts is included
+      # here too and handed straight to _od_session_last_activity below
+      # (its optional 3rd arg), so that function's own independent 5th
+      # re-read of the same file (~3.8s measured) is skipped entirely.
+      if _od_have jq; then
+        IFS=$'\t' read -r marker branch worktree cwd hb_last_activity_ts \
+          <<< "$(jq -r '[(.marker_state//""),(.branch//""),(.worktree_root//""),(.cwd//""),(.last_activity_ts//"")] | @tsv' "$hbfile" 2>/dev/null | tr -d '\r')"
+      else
+        local hbcontent; hbcontent="$(cat "$hbfile" 2>/dev/null)"
+        marker="$(_od_json_field "$hbcontent" "marker_state")"
+        branch="$(_od_json_field "$hbcontent" "branch")"
+        worktree="$(_od_json_field "$hbcontent" "worktree_root")"
+        cwd="$(_od_json_field "$hbcontent" "cwd")"
+        hb_last_activity_ts="$(_od_json_field "$hbcontent" "last_activity_ts")"
+      fi
     fi
 
     local waiting=0
-    if [[ -n "$ny_bin" ]]; then
-      bash "$ny_bin" has-entry-for-session "$sid" >/dev/null 2>&1 && waiting=1
-    fi
+    [[ -n "${_od_waiting_set[$sid]:-}" ]] && waiting=1
 
     local hbcls="missing"
     if [[ -n "$hbfile" ]]; then
@@ -521,14 +699,25 @@ od_sessions() {
       fi
     fi
 
-    local transcript_file; transcript_file="$(_od_find_transcript "$sid")"
-    local last_activity_epoch; last_activity_epoch="$(_od_session_last_activity "$sid" "$hbfile")"
-    local last_block_epoch; last_block_epoch="$(_od_session_last_block_epoch "$sid" "$ledger")"
-    local last_throttle_epoch; last_throttle_epoch="$(_od_session_last_throttle_epoch "$sid" "$ledger")"
-    local transcript_mtime=0
-    if [[ -n "$transcript_file" && -f "$transcript_file" ]]; then
-      transcript_mtime="$(date -u -r "$transcript_file" +%s 2>/dev/null || stat -c %Y "$transcript_file" 2>/dev/null || echo 0)"
+    # PERFORMANCE (fix c, O.3 perf fix): only resolve a transcript path at
+    # all when there is NO local heartbeat file — the heartbeat, when
+    # present, is C1's fresher signal (session-heartbeat-lib.sh's own
+    # mid-turn-fresh join already prefers it over a raw transcript mtime),
+    # so a session WITH a heartbeat never needs its transcript looked up
+    # here: _od_session_last_activity below independently prefers the
+    # heartbeat's last_activity_ts and only falls back to the transcript
+    # (via the same O(1) index) when that field is absent, and the
+    # 'blocked' derivation below is keyed off last_activity_epoch (not a
+    # separate transcript-mtime probe) for the same reason. transcript_file
+    # is only actually consumed further down by the unobserved-cloud
+    # branch, which requires an empty $hbfile anyway.
+    local transcript_file=""
+    if [[ -z "$hbfile" ]]; then
+      transcript_file="$(_od_find_transcript "$sid")"
     fi
+    local last_activity_epoch; last_activity_epoch="$(_od_session_last_activity "$sid" "$hbfile" "$hb_last_activity_ts")"
+    local last_block_epoch="${_OD_BLOCK_EPOCH_BY_SID[$sid]:-0}"
+    local last_throttle_epoch="${_OD_THROTTLE_EPOCH_BY_SID[$sid]:-0}"
 
     # Priority order: waiting-on-me > crashed > stalled > throttled >
     # blocked > working (unobserved-cloud is a distinct branch below,
@@ -542,7 +731,7 @@ od_sessions() {
       detail="pid alive"
     elif [[ "$last_throttle_epoch" -gt 0 && "$last_throttle_epoch" -gt "$last_activity_epoch" ]]; then
       state="throttled"
-    elif [[ "$last_block_epoch" -gt 0 && "$last_block_epoch" -gt "$transcript_mtime" ]]; then
+    elif [[ "$last_block_epoch" -gt 0 && "$last_block_epoch" -gt "$last_activity_epoch" ]]; then
       state="blocked"
     elif [[ "$hbcls" == "live" ]]; then
       state="working"
@@ -560,6 +749,11 @@ od_sessions() {
     [[ -z "$marker" ]] && marker="unknown"
     out_rows+=("${sid}"$'\t'"${state}"$'\t'"${branch}"$'\t'"${worktree:-$cwd}"$'\t'"${marker}"$'\t'"${detail}")
   done
+
+  # Drop both per-call indexes now that the loop is done with them — see
+  # _od_transcript_index_reset's own header for why this matters (only
+  # in a long-lived process like --self-test; a no-op cost in production).
+  _od_transcript_index_reset
 
   if [[ "$json_mode" == "1" ]]; then
     printf '{"schema":1,"oracle":"od_sessions","sessions":['
@@ -1245,6 +1439,31 @@ od_costs() {
     esac
   done
 
+  # CACHE-PERSISTENCE FIX (task-verifier conf 9): load the on-disk cost
+  # cache ONCE HERE, in this PARENT scope, BEFORE the per-transcript loop
+  # below. _od_costs_one_transcript also calls _od_costs_cache_load, but
+  # that function runs inside a command-substitution SUBSHELL (`res="$(
+  # _od_costs_one_transcript ...)"` further down) — any array mutation a
+  # subshell makes (including populating _OD_COSTS_CACHE from disk) is
+  # discarded the instant that subshell exits, so a load that happens
+  # ONLY inside the subshell never reaches this parent scope. Without
+  # this line, _OD_COSTS_CACHE stays empty here for the entire run: every
+  # per-file HIT is correctly detected inside its own subshell (which
+  # redundantly reloads the whole cache from disk on EVERY file, itself
+  # wasteful) but never recorded in the parent, so _od_costs_cache_store
+  # below only ever adds THIS run's MISSES, and _od_costs_cache_flush's
+  # write-back then overwrites the cache file with just those misses —
+  # every previously-cached hit silently vanishes from disk, and the
+  # cache file's entry count oscillates (e.g. 10 -> 2 -> 10 -> 2) run over
+  # run instead of growing/persisting. Loading here means: (a) this
+  # parent's _OD_COSTS_CACHE starts pre-populated with every valid
+  # existing entry, so the flush at the end preserves them alongside any
+  # new misses; (b) _OD_COSTS_CACHE_LOADED is now already 1 by the time
+  # each subshell forks, so _od_costs_cache_load's early-return short-
+  # circuits inside every subshell too — removing the redundant per-file
+  # disk reload as a side effect.
+  _od_costs_cache_load
+
   local -a targets=()
   local truncated_all=0
   if [[ -n "$session" ]]; then
@@ -1278,23 +1497,40 @@ od_costs() {
                 | sort -t$'\t' -k1,1nr | cut -f2- \
                 || find "$dir" -maxdepth 4 -type f -name '*.jsonl' 2>/dev/null | sort)
 
-      # SELF-REFERENTIAL EXCLUSION (verifier-round fix, this task): the
-      # calling session's OWN transcript is being actively appended to by
-      # the very act of running `nl costs` (every tool_use/hook_progress
-      # line this invocation itself produces lands in it), so its
-      # mtime+size change on every call and it can NEVER be an
-      # _od_costs_cache_lookup hit — measured 13-28s across consecutive
-      # live runs when 3 of the flagless aggregate's top-10 files were
-      # this kind of unavoidable miss (see the INCREMENTAL COST CACHE
-      # header comment above for the full before/after numbers). The
-      # smallest honest fix: drop the CALLING session's own transcript
-      # (identified by $CLAUDE_CODE_SESSION_ID, the same env var the
-      # heartbeat writer and every other Wave O consumer already treats
-      # as this process's session identity) from the aggregate's
+      # SELF-REFERENTIAL EXCLUSION (verifier-round fix; widened this
+      # task, conf 9): the calling session's OWN transcript is being
+      # actively appended to by the very act of running `nl costs` (every
+      # tool_use/hook_progress line this invocation itself produces lands
+      # in it), so its mtime+size change on every call and it can NEVER
+      # be an _od_costs_cache_lookup hit — measured 13-28s across
+      # consecutive live runs when 3 of the flagless aggregate's top-10
+      # files were this kind of unavoidable miss (see the INCREMENTAL
+      # COST CACHE header comment above for the full before/after
+      # numbers). The smallest honest fix: drop the CALLING session's own
+      # transcript (identified by $CLAUDE_CODE_SESSION_ID, the same env
+      # var the heartbeat writer and every other Wave O consumer already
+      # treats as this process's session identity) from the aggregate's
       # candidate list before the top-N selection, and say so explicitly
       # in the output — this is a full exclusion, not a truncation, since
       # a self-costing session reporting its own live, still-growing
       # number would be self-referential and misleading, not merely slow.
+      #
+      # WIDENED (this task): the ORIGINAL exclusion only matched the
+      # exact basename `${self_sid}.jsonl` (the caller's own MAIN
+      # transcript) — but every subagent this calling session spawns
+      # writes ITS OWN transcript under
+      # `<project-dir>/<self_sid>/subagents/agent-*.jsonl` (confirmed
+      # against this machine's real ~/.claude/projects layout), i.e. a
+      # path containing `/<self_sid>/` as a directory component, NOT
+      # matching that basename check. Those subagent transcripts churn on
+      # every run of a builder/orchestrator session (new agent-*.jsonl
+      # files appear constantly while this very `nl costs` invocation is
+      # running under an active session), so they dominate the
+      # top-N-most-recently-modified selection and are guaranteed cache
+      # MISSES forever, exactly like the un-widened main-transcript case
+      # this fix originally targeted. The exclusion now drops the WHOLE
+      # self-session subtree (any path with `/${self_sid}/` in it), not
+      # just the one exact basename.
       local self_sid="${CLAUDE_CODE_SESSION_ID:-}"
       local self_excluded=0
       if [[ -n "$self_sid" ]]; then
@@ -1302,7 +1538,7 @@ od_costs() {
         local fbase
         for tf in "${all_files[@]}"; do
           fbase="$(basename "$tf" .jsonl)"
-          if [[ "$fbase" == "$self_sid" ]]; then
+          if [[ "$fbase" == "$self_sid" || "$tf" == *"/${self_sid}/"* ]]; then
             self_excluded=1
             continue
           fi
@@ -2250,6 +2486,88 @@ EOF
     fail "expected _od_costs_cache_path() to equal \$OBS_COSTS_CACHE ($OBS_COSTS_CACHE), got: $(_od_costs_cache_path)"
   fi
 
+  echo "Scenario 6h: od_costs cache PERSISTS previously-cached hit entries across separate runs (cache-persistence fix, task-verifier conf 9)"
+  # Start from a clean, empty on-disk cache and clean in-process state so
+  # this scenario is not affected by any residual entries from 6d-6g.
+  rm -f "$OBS_COSTS_CACHE" 2>/dev/null
+  _OD_COSTS_CACHE=(); _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
+  printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-persist-a.jsonl"
+  printf '{"type":"assistant","message":{"usage":{"input_tokens":2,"output_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-persist-b.jsonl"
+  printf '{"type":"assistant","message":{"usage":{"input_tokens":3,"output_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-persist-c.jsonl"
+  # RUN 1 (cold): a/b/c are all misses.
+  out6h_run1="$(OBS_COSTS_MAX_TRANSCRIPTS=0 od_costs)"
+  n6h_run1_keys="$(jq '[.entries | keys[] | select(contains("sess-persist-"))] | length' "$OBS_COSTS_CACHE" 2>/dev/null)"
+  if [[ "$n6h_run1_keys" == "3" ]]; then
+    pass "od_costs writes cache entries for all 3 fixture transcripts after the cold run"
+  else
+    fail "expected 3 sess-persist-* cache entries after the cold run, got $n6h_run1_keys: $(cat "$OBS_COSTS_CACHE" 2>/dev/null)"
+  fi
+  # Add a FOURTH, previously-unseen transcript (forces at least one MISS
+  # on run 2, which is what triggers _OD_COSTS_CACHE_DIRTY and therefore an
+  # actual flush — the bug this scenario catches only manifests when a
+  # flush happens; an all-hit run is a flush no-op that would hide it).
+  printf '{"type":"assistant","message":{"usage":{"input_tokens":4,"output_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-persist-d.jsonl"
+  # RUN 2 (fresh-process simulation via in-process state reset): a/b/c are
+  # unchanged (must HIT), d is new (MISS, triggers the flush). Under the
+  # ORIGINAL bug, _od_costs_cache_load was only ever called inside
+  # _od_costs_one_transcript's own command-substitution SUBSHELL, so this
+  # PARENT's _OD_COSTS_CACHE stayed empty here regardless of what was on
+  # disk — a/b/c's hits were correctly detected inside their own throwaway
+  # subshells but never recorded in this parent scope, so the flush at the
+  # end wrote ONLY d's new entry, silently dropping a/b/c from the cache
+  # file (the "10 -> 2 -> 10 -> 2"-style oscillation named in the bug
+  # report). The fix (calling _od_costs_cache_load once here in od_costs,
+  # before the loop) makes this parent's _OD_COSTS_CACHE start pre-loaded
+  # with all 3 prior entries, so they survive the flush alongside d.
+  _OD_COSTS_CACHE=(); _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
+  out6h_run2="$(OBS_COSTS_MAX_TRANSCRIPTS=0 od_costs)"
+  n6h_run2_keys="$(jq '[.entries | keys[] | select(contains("sess-persist-"))] | length' "$OBS_COSTS_CACHE" 2>/dev/null)"
+  if [[ "$n6h_run2_keys" == "4" ]]; then
+    pass "od_costs cache PERSISTS run-1's 3 hit entries AND adds run-2's new miss (d) — 4 total, no 10->2-style drop"
+  else
+    fail "expected 4 sess-persist-* cache entries after run 2 (3 preserved hits + 1 new miss), got $n6h_run2_keys: $(cat "$OBS_COSTS_CACHE" 2>/dev/null)"
+  fi
+  has_a="$(jq -r '.entries | keys[] | select(contains("sess-persist-a"))' "$OBS_COSTS_CACHE" 2>/dev/null)"
+  if [[ -n "$has_a" ]]; then
+    pass "od_costs cache still names sess-persist-a's entry specifically after run 2 (not silently dropped)"
+  else
+    fail "expected sess-persist-a's cache entry to survive run 2, got: $(cat "$OBS_COSTS_CACHE" 2>/dev/null)"
+  fi
+  rm -f "$OBS_TRANSCRIPTS_ROOT"/sess-persist-*.jsonl 2>/dev/null
+
+  echo "Scenario 6i: od_costs aggregate scan excludes the CALLING session's SUBAGENT transcripts too (self-exclusion subtree widening, task-verifier conf 9)"
+  # Real ~/.claude/projects layout (confirmed against this machine's own
+  # estate): a subagent spawned by session <sid> writes its OWN transcript
+  # at <project-dir>/<sid>/subagents/agent-*.jsonl — a path containing
+  # "/<sid>/" as a directory component, which the ORIGINAL exclusion
+  # (exact basename match on "${self_sid}.jsonl" only) never caught. Those
+  # subagent transcripts churn on every run of an active builder/
+  # orchestrator session, dominating the top-N-by-mtime selection and
+  # guaranteeing perpetual cache misses — the same slowness class Scenario
+  # 6c2 already covers for the main transcript, now covered for the whole
+  # self-session subtree.
+  SELF_SUBTREE_SID="self-subtree-sid"
+  mkdir -p "$OBS_TRANSCRIPTS_ROOT/${SELF_SUBTREE_SID}/subagents"
+  printf '{"type":"assistant","message":{"usage":{"input_tokens":5,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/${SELF_SUBTREE_SID}/subagents/agent-xyz.jsonl"
+  printf '{"type":"assistant","message":{"usage":{"input_tokens":6,"output_tokens":6,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/other-subtree-sid.jsonl"
+  out6i="$(CLAUDE_CODE_SESSION_ID="$SELF_SUBTREE_SID" OBS_COSTS_MAX_TRANSCRIPTS=0 od_costs --json)"
+  if command -v jq >/dev/null 2>&1; then
+    has_subagent="$(printf '%s' "$out6i" | jq -r '.sessions[] | select(.session_id=="agent-xyz") | .session_id' 2>/dev/null)"
+    if [[ -z "$has_subagent" ]]; then
+      pass "od_costs excludes the caller's own SUBAGENT transcript nested under <self_sid>/subagents/ (not just the exact <self_sid>.jsonl basename)"
+    else
+      fail "od_costs aggregate scan included a transcript under the caller's own session subtree (agent-xyz.jsonl under $SELF_SUBTREE_SID/subagents/) — should be excluded"
+    fi
+    has_other="$(printf '%s' "$out6i" | jq -r '.sessions[] | select(.session_id=="other-subtree-sid") | .session_id' 2>/dev/null)"
+    if [[ -n "$has_other" ]]; then
+      pass "od_costs does NOT over-exclude an unrelated transcript with no relation to the self subtree"
+    else
+      fail "expected other-subtree-sid to still be counted (only the self subtree should be excluded), got: $out6i"
+    fi
+  fi
+  rm -rf "$OBS_TRANSCRIPTS_ROOT/${SELF_SUBTREE_SID}" 2>/dev/null
+  rm -f "$OBS_TRANSCRIPTS_ROOT/other-subtree-sid.jsonl" 2>/dev/null
+
   echo "Scenario 7: od_shipped_since (against THIS repo, real git history — falls back to HEAD if 'master' absent)"
   out7="$(OBS_SHIPPED_BRANCH=HEAD od_shipped_since "1970-01-01T00:00:00Z")"
   if printf '%s' "$out7" | grep -q "oracle: od_shipped_since"; then
@@ -2340,21 +2658,25 @@ EOF
     fail "expected exit 0 + no-data message for unknown sid, got rc=$rc8b out=$out8b"
   fi
 
-  echo "Scenario 8c: od_sessions dedicated 'blocked' derivation — newest ledger block event newer than last transcript activity"
+  echo "Scenario 8c: od_sessions dedicated 'blocked' derivation — newest ledger block event newer than last known activity"
+  # O.3 perf fix (this task): the 'blocked' derivation now compares
+  # against last_activity_epoch (heartbeat last_activity_ts when present
+  # — the fresher C1 signal — else transcript mtime), NOT a separately
+  # re-found transcript mtime (that redundant per-session `find` is
+  # exactly the O(sessions x full-tree-find) bug this task fixes). So the
+  # fixture backdates the HEARTBEAT's last_activity_ts (same idiom as
+  # Scenario 8d's throttled case below), not the transcript file's mtime,
+  # to create the deterministic margin the block event must exceed.
+  OLD_BLOCKED_HB_TS="$(date -u -d '10 minutes ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-10M '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
   cat > "$HEARTBEAT_STATE_DIR/sess-blocked.json" <<EOF
-{"schema":1,"session_id":"sess-blocked","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"$(date -u '+%Y-%m-%dT%H:%M:%SZ')","last_event":"turn-end","marker_state":"none"}
+{"schema":1,"session_id":"sess-blocked","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"${OLD_BLOCKED_HB_TS}","last_event":"turn-end","marker_state":"none"}
 EOF
   mkdir -p "$OBS_TRANSCRIPTS_ROOT"
   printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-blocked.jsonl"
-  # Backdate the transcript's mtime so the block event (emitted "now") is
-  # unambiguously NEWER than the transcript's last-activity mtime — the
-  # exact condition the 'blocked' rule tests for.
-  OLD_TOUCH_TS="$(date -u -d '10 minutes ago' '+%Y%m%d%H%M.%S' 2>/dev/null || date -u -v-10M '+%Y%m%d%H%M.%S' 2>/dev/null)"
-  [[ -n "$OLD_TOUCH_TS" ]] && touch -t "$OLD_TOUCH_TS" "$OBS_TRANSCRIPTS_ROOT/sess-blocked.jsonl" 2>/dev/null
   printf '{"ts":"%s","session_id":"sess-blocked","gate":"some-gate","event":"block","detail":"fixture block"}\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$SIGNAL_LEDGER_PATH"
   out8c="$(od_sessions)"
   if printf '%s' "$out8c" | grep -q "sess-blocked" && printf '%s' "$out8c" | grep -q "blocked"; then
-    pass "od_sessions classifies sess-blocked as 'blocked' (newest ledger block event newer than transcript mtime)"
+    pass "od_sessions classifies sess-blocked as 'blocked' (newest ledger block event newer than last_activity_epoch)"
   else
     fail "expected sess-blocked classified 'blocked', got: $out8c"
   fi
