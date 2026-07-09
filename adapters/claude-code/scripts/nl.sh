@@ -72,8 +72,55 @@ else
   echo "nl: cannot find hooks/lib/observability-derive.sh (looked in $_NL_HOOKS_LIB)" >&2
   exit 1
 fi
+# shellcheck disable=SC1091
+{ source "$_NL_HOOKS_LIB/hook-reentry-guard.sh" 2>/dev/null; } || true
 
 _nl_have() { command -v "$1" >/dev/null 2>&1; }
+
+# ----------------------------------------------------------------------
+# _nl_spawn_breaker_tripped — NL-FINDING-040 item C: a cheap guard bounding
+# the nl.sh-dominant amplification signature from the spawn-cascade
+# incident (workstreams-ui's derive-cache.js polls `bash nl.sh <sub>
+# --json` on a 30s timer per running cockpit server instance — see
+# neural-lace/workstreams-ui/server/derive-cache.js; every additional
+# concurrently-running cockpit instance, e.g. one per worktree checkout,
+# multiplies the spawn rate). Trips (returns 0/true) when EITHER:
+#   - NL_HOOK_REENTRY=1 (this invocation is itself inside an automation-
+#     spawned/re-entrant chain — see lib/hook-reentry-guard.sh), OR
+#   - the live sibling process count of nl.sh/observability-derive.sh
+#     processes on this machine right now is >= NL_SPAWN_CEILING (default
+#     10, env-overridable; 0 disables this specific signal).
+# Never blocks on an undetermined process count (tolerates ps/tasklist
+# both being unavailable — fails OPEN on the diagnostic, exactly like
+# session-resumer.sh's own live_process_count).
+# ----------------------------------------------------------------------
+_nl_spawn_breaker_tripped() {
+  if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+    printf 'NL_HOOK_REENTRY set (automation-spawned/re-entrant invocation)'
+    return 0
+  fi
+  local ceiling="${NL_SPAWN_CEILING:-10}"
+  [[ "$ceiling" =~ ^[0-9]+$ ]] || ceiling=10
+  [[ "$ceiling" -eq 0 ]] && return 1
+  local count=""
+  if [[ -n "${NL_SPAWN_PROCESS_COUNT_OVERRIDE:-}" ]]; then
+    count="$NL_SPAWN_PROCESS_COUNT_OVERRIDE"
+  elif command -v ps >/dev/null 2>&1; then
+    # ps -ef FIRST (full command lines), ps -W fallback. Exclude the grep
+    # itself and this process's own pid so the probe agrees with
+    # session-resumer.sh's live_process_count (FIX-3 consistency).
+    count=$(ps -ef 2>/dev/null | grep -iE 'nl\.sh|observability-derive\.sh' 2>/dev/null | grep -vE 'grep' 2>/dev/null | awk -v self="$$" '$0 !~ ("(^| )" self "( |$)")' 2>/dev/null | grep -c '' 2>/dev/null)
+    if [[ -z "$count" ]] || ! [[ "$count" =~ ^[0-9]+$ ]] || [[ "$count" -eq 0 ]]; then
+      count=$(ps -W 2>/dev/null | grep -ciE 'nl\.sh|observability-derive\.sh' 2>/dev/null)
+    fi
+  fi
+  [[ "$count" =~ ^[0-9]+$ ]] || return 1
+  if [[ "$count" -ge "$ceiling" ]]; then
+    printf 'live nl.sh/observability-derive process count %s >= ceiling %s (NL_SPAWN_CEILING)' "$count" "$ceiling"
+    return 0
+  fi
+  return 1
+}
 
 _nl_usage() {
   cat <<'EOF'
@@ -193,6 +240,24 @@ cmd_health() {
 # CLI dispatch (only when executed directly, not sourced)
 # ============================================================
 if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
+  # NL-FINDING-040 item C: a real (non-self-test, non-help) subcommand
+  # invocation checks the generic spawn breaker FIRST — before any od_*
+  # derivation function runs (some of which, e.g. od_backlog_health, are
+  # measured at 80-258s on the real estate; see derive-cache.js's own
+  # per-subcommand timeout comments). Skipped entirely for --self-test/
+  # -h/--help/bare so the self-test suite and interactive help are never
+  # affected by ambient machine process counts.
+  case "${1:-}" in
+    --self-test|-h|--help|"") ;;
+    *)
+      _nl_breaker_reason="$(_nl_spawn_breaker_tripped)"
+      if [[ -n "$_nl_breaker_reason" ]]; then
+        echo "nl: spawn breaker tripped — skipping derivation (${_nl_breaker_reason})" >&2
+        exit 0
+      fi
+      ;;
+  esac
+
   case "${1:-}" in
     --self-test)
       : # handled below, after function defs
@@ -249,6 +314,15 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   export DOCTOR_CACHE_PATH="$TMP/doctor-cache.json"
   mkdir -p "$HEARTBEAT_STATE_DIR" "$NEEDS_YOU_STATE_DIR" "$OBS_TRANSCRIPTS_DIR"
   unset CLAUDE_CODE_SESSION_ID
+  # FIX-5 (test hygiene): every scenario below shells `bash $SELF_ABS <sub>`,
+  # each of which now runs the NL-FINDING-040 spawn breaker. If this suite
+  # is itself run inside a reentrant env (NL_HOOK_REENTRY=1) or a machine
+  # over the sibling-process ceiling, those sub-invocations would no-op and
+  # every scenario would self-fail. Scrub both signals for the suite so the
+  # real subcommand code paths are exercised deterministically regardless
+  # of the ambient env this suite happens to run under.
+  unset NL_HOOK_REENTRY NL_SPAWN_PROCESS_COUNT_OVERRIDE
+  export NL_SPAWN_CEILING=0
 
   SELF_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
@@ -364,7 +438,11 @@ EOF
 
   echo "Scenario 9: flagless-shape scenario — 'nl status' exactly as production/cockpit would invoke it (only env sandboxing, no fixture-scoped CLI flags)"
   set +e
-  out9="$(bash "$SELF_ABS" status)"
+  # FIX-5: explicitly scrub NL_HOOK_REENTRY for this sub-invocation (env -u)
+  # in addition to the suite-wide scrub above — this scenario asserts the
+  # REAL flagless production/cockpit invocation runs clean, so it must not
+  # be silently skipped by the spawn breaker via an inherited reentrancy signal.
+  out9="$(env -u NL_HOOK_REENTRY bash "$SELF_ABS" status)"
   rc9=$?
   set -e
   if [[ "$rc9" -eq 0 ]] && [[ -n "$out9" ]]; then

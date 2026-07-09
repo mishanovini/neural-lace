@@ -67,6 +67,8 @@ HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 { source "$HOOKS_DIR/lib/nl-paths.sh" 2>/dev/null; } || true
 # shellcheck disable=SC1091
 { source "$HOOKS_DIR/lib/signal-ledger.sh" 2>/dev/null; } || true
+# shellcheck disable=SC1091
+{ source "$HOOKS_DIR/lib/hook-reentry-guard.sh" 2>/dev/null; } || true
 
 # ---- WAVE-O O.9: od_backlog_health oracle, guarded source + feature-detect ----
 # Contract C4 (specs-o §O.0.3): observability-derive.sh is owned/built by task
@@ -1914,6 +1916,18 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
       exit $?
       ;;
     *)
+      # NL-FINDING-040 keystone guard: an automation-spawned/re-entrant
+      # invocation (NL_HOOK_REENTRY=1, e.g. a session-resumer.sh-launched
+      # `claude` child) no-ops here BEFORE any feed runs, any subprocess
+      # spawns (workstreams-emit.sh, session-heartbeat.sh), or the doctor
+      # cache refresh happens. A normal interactive SessionStart is
+      # completely unaffected (NL_HOOK_REENTRY unset by default) — see
+      # lib/hook-reentry-guard.sh.
+      if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+        hook_reentry_note "session-start-digest" 2>/dev/null || true
+        echo "[session-start-digest] reentrant/automation-spawned invocation — skipping digest (NL-FINDING-040 guard)"
+        exit 0
+      fi
       DIGEST_STDIN=""
       if [[ ! -t 0 ]]; then
         DIGEST_STDIN="$(cat 2>/dev/null || true)"

@@ -88,8 +88,24 @@ set -uo pipefail
 # tool call (writer hooks never block, per this file's own header).
 # shellcheck disable=SC1091
 { source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/signal-ledger.sh" 2>/dev/null; } || true
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/hook-reentry-guard.sh" 2>/dev/null; } || true
 
 MODE="${1:-}"
+
+# NL-FINDING-040 keystone guard: several MODE branches below spawn further
+# subprocesses (bash "$SELF" --on-stop from within builder-dispatch flows,
+# workstreams-task-bridge.js, etc.). Under NL_HOOK_REENTRY=1 (automation-
+# spawned/re-entrant child), no-op for every LIVE mode. --self-test is
+# deliberately EXEMPT (it internally re-invokes this
+# same script with HARNESS_SELFTEST=1 to exercise --on-stop etc. as a
+# controlled, bounded, sandboxed fixture — that is not the reentrancy
+# scenario this guard targets, and suppressing it would break the self-test
+# suite itself rather than protect anything).
+if [[ "$MODE" != "--self-test" ]] && command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+  hook_reentry_note "workstreams-emit" 2>/dev/null || true
+  exit 0
+fi
 
 # Log + ledger destinations: sandboxed when HARNESS_SELFTEST=1 OR the
 # invocation is --self-test itself (self-test isolation — E.2 remediation;

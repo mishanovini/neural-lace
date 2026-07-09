@@ -17,6 +17,8 @@ HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck disable=SC1091
 [[ -f "$HOOKS_DIR/lib/signal-ledger.sh" ]] && source "$HOOKS_DIR/lib/signal-ledger.sh"
+# shellcheck disable=SC1091
+{ source "$HOOKS_DIR/lib/hook-reentry-guard.sh" 2>/dev/null; } || true
 
 # ----------------------------------------------------------------------
 # _wsw_now_ms — current epoch time in milliseconds (best-effort; falls
@@ -148,6 +150,20 @@ if [[ "${1:-}" == "--self-test" ]]; then
   fi
 
   exit $fails
+fi
+
+# NL-FINDING-040 keystone guard: this writer forks 5 member subprocesses
+# on EVERY live Stop (workstreams-stop-gate, workstreams-emit --on-stop,
+# workstreams-task-binding --on-stop, workstreams-emit-reconciler,
+# workstreams-orchestrator-queue — see MEMBERS above). Under
+# NL_HOOK_REENTRY=1 (automation-spawned/re-entrant child), skip the entire
+# fork loop and exit 0 — this hook is pure WRITER semantics (never blocks;
+# see header), so suppressing it changes nothing about session
+# correctness, only whether an automation-spawned child re-triggers 5 more
+# forks per Stop.
+if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+  hook_reentry_note "workstreams-stop-writer" 2>/dev/null || true
+  exit 0
 fi
 
 # ---- WAVE-O O.1: member timing -> ONE turn-trace event (contract C2) ----

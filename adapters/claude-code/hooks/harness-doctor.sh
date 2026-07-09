@@ -136,6 +136,8 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck disable=SC1091
+{ source "$SCRIPT_DIR/lib/hook-reentry-guard.sh" 2>/dev/null; } || true
 
 # ------------------------------------------------------------
 # resolve_repo_root — echoes the repo root, or empty if unresolvable.
@@ -3497,6 +3499,20 @@ fi
 # ============================================================
 # Normal (non-self-test) invocation
 # ============================================================
+
+# NL-FINDING-040 keystone guard: an automation-spawned/re-entrant
+# invocation (NL_HOOK_REENTRY=1) exits fast here, BEFORE run_quick_checks
+# (which does real filesystem/git scanning work across the live mirror +
+# repo) ever runs. --self-test is UNAFFECTED (this check sits after the
+# --self-test dispatch above, which already returned/exited). Exit 0 (not
+# an error — doctor is advisory, never blocking; see header "DEPENDENCIES"
+# note).
+if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+  hook_reentry_note "harness-doctor" 2>/dev/null || true
+  echo "[doctor] reentrant/automation-spawned invocation — skipping checks (NL-FINDING-040 guard)"
+  exit 0
+fi
+
 MODE="${1:-quick}"
 case "$MODE" in
   --quick|quick) MODE="quick" ;;

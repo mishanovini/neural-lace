@@ -147,6 +147,8 @@ source "$_SVD_DIR/lib/signal-ledger.sh"
 source "$_SVD_DIR/lib/stop-hook-retry-guard.sh"
 # shellcheck disable=SC1091
 source "$_SVD_DIR/lib/nl-paths.sh"
+# shellcheck disable=SC1091
+{ source "$_SVD_DIR/lib/hook-reentry-guard.sh" 2>/dev/null; } || true
 
 # The three member gates this dispatcher aggregates, in the order they
 # used to run in the Stop chain (work-integrity, session-honesty,
@@ -173,6 +175,123 @@ _svd_ledger() {
   if command -v ledger_emit >/dev/null 2>&1; then
     ledger_emit "stop-verdict-dispatcher" "$event" "$detail"
   fi
+}
+
+# ----------------------------------------------------------------------
+# _svd_refire_count_path <session_id> — persistent PER-SESSION counter of
+# how many times this dispatcher has fired for this session, REGARDLESS
+# of gap-set/failure-signature (distinct from retry-guard's own per-
+# signature cycle_count above: this counts EVERY Stop invocation for the
+# session, so a session that keeps generating a DIFFERENT gap-set each
+# time — which would reset cycle_count to 1 every time and never hit the
+# protocol-downgrade path — is still bounded).
+# ----------------------------------------------------------------------
+_svd_refire_count_path() {
+  local sid="$1" short
+  short=$(_retry_guard_session_short "$sid" 2>/dev/null || printf '%s' "$sid" | tr -c 'a-zA-Z0-9' '_' | cut -c1-24)
+  printf '%s/stop-verdict-refires-%s.count' "${RETRY_GUARD_STATE_DIR:-.claude/state}" "$short"
+}
+
+# ----------------------------------------------------------------------
+# _svd_session_is_automation — 0 (true) iff THIS Stop is running inside an
+# automation-spawned / re-entrant session (NL_HOOK_REENTRY=1, exported by
+# session-resumer.sh into every `claude` child it spawns; or the explicit
+# NL_AUTOMATION_SESSION=1 signal, provided as a forward-compatible alias
+# for any future non-resumer automation launcher). A HUMAN interactive
+# session sets NEITHER and is therefore NOT automation.
+#
+# WHY THIS EXISTS (FIX-1, adversarial review of NL-FINDING-040): the
+# Stop-refire ceiling below MUST NOT weaken the ADR-059 DONE-refusal
+# never-downgrade rule for human interactive sessions — that rule is a
+# core §1 honesty invariant. The ceiling is therefore SCOPED to automation
+# sessions only: it caps the cascade threat (the actual incident driver —
+# an automation-spawned session looping and re-forking the member-gate
+# chain), while leaving a human session's DONE-refusal genuinely
+# never-downgraded, byte-identical to origin/master. NOTE the layering:
+# _svd_main's top-of-function hook_reentry_should_suppress guard already
+# EXITS 0 for a cleanly-signalled NL_HOOK_REENTRY=1 child before the
+# verdict tree runs at all; this ceiling is the defense-in-depth backstop
+# for an automation session that reaches the verdict tree anyway (e.g. a
+# NL_AUTOMATION_SESSION signal without the full reentry early-exit, or a
+# partial env-propagation case).
+# ----------------------------------------------------------------------
+_svd_session_is_automation() {
+  [[ "${NL_HOOK_REENTRY:-0}" == "1" ]] && return 0
+  [[ "${NL_AUTOMATION_SESSION:-0}" == "1" ]] && return 0
+  return 1
+}
+
+# ----------------------------------------------------------------------
+# _svd_stop_refire_ceiling_check <session_id> — coordinator directive
+# (operator concern, spawn-cascade incident): an ABSOLUTE per-session
+# ceiling on how many times this dispatcher may fire+block for ONE
+# AUTOMATION-SPAWNED session, independent of the DONE-refusal / cycle-count
+# logic above.
+#
+# HONESTY SCOPING (FIX-1): this ceiling NEVER trips for a human interactive
+# session — the first thing it does is return "0" (not tripped) unless
+# _svd_session_is_automation is true. For a human session the DONE-refusal
+# path below therefore behaves EXACTLY as origin/master does (genuinely
+# never-downgraded — the §1 honesty invariant is untouched, and no ADR-059
+# amendment is needed). For an AUTOMATION session, the DONE-refusal rule is
+# not a meaningful honesty signal anyway (an automation-spawned resume
+# nudge is not a human making a completion claim), so a genuinely-stuck
+# automation session that re-fires this dispatcher — and EVERY fire forks 3
+# member-gate subprocesses + end-manifest.sh — is capped: this trades
+# "never downgrade an automation child's DONE" for "never let an automation
+# session hang the machine in an unbounded Stop-refire loop", which was the
+# actual incident driver.
+#
+# SEPARATE, HARD ceiling (default 5, env RETRY_GUARD_STOP_REFIRE_CEILING;
+# 0 disables). Fail-OPEN on any I/O error (never blocks the caller from
+# proceeding to its normal decision tree just because the counter file
+# could not be read/written).
+#
+# Echoes "1" (tripped — caller must force-allow) or "0" (not tripped,
+# proceed normally) on stdout. Side effect: increments+persists the
+# counter ONLY for automation sessions (a human session never touches the
+# counter file, so a human session leaves zero on-disk footprint from this
+# mechanism).
+# ----------------------------------------------------------------------
+_svd_stop_refire_ceiling_check() {
+  local sid="$1"
+  # HONESTY SCOPING (FIX-1): human interactive session ⇒ never trip, never
+  # even touch the counter — DONE-refusal stays identical to origin/master.
+  _svd_session_is_automation || { printf '0'; return 0; }
+  local ceiling="${RETRY_GUARD_STOP_REFIRE_CEILING:-5}"
+  [[ "$ceiling" =~ ^[0-9]+$ ]] || ceiling=5
+  if [[ "$ceiling" -eq 0 ]]; then
+    printf '0'
+    return 0
+  fi
+  local path
+  path="$(_svd_refire_count_path "$sid")"
+  mkdir -p "$(dirname "$path")" 2>/dev/null || true
+  local count=0
+  if [[ -f "$path" ]]; then
+    count="$(cat "$path" 2>/dev/null || echo 0)"
+    count="${count//[!0-9]/}"
+    [[ -z "$count" ]] && count=0
+  fi
+  count=$((count + 1))
+  printf '%s' "$count" > "$path" 2>/dev/null || true
+  if [[ "$count" -gt "$ceiling" ]]; then
+    printf '1'
+  else
+    printf '0'
+  fi
+}
+
+# ----------------------------------------------------------------------
+# _svd_refire_ceiling_clear <session_id> — resets the per-session refire
+# counter. Called on a clean pass (gap_count==0) so a session that
+# eventually resolves its gaps doesn't carry a stale high count into some
+# LATER unrelated block sequence within the same session id.
+# ----------------------------------------------------------------------
+_svd_refire_ceiling_clear() {
+  local sid="$1" path
+  path="$(_svd_refire_count_path "$sid")"
+  rm -f "$path" 2>/dev/null || true
 }
 
 # ----------------------------------------------------------------------
@@ -721,6 +840,26 @@ _svd_main() {
   local session_id
   session_id=$(retry_guard_session_id "$input")
 
+  # NL-FINDING-040 keystone guard: this dispatcher forks real subprocesses
+  # on EVERY live Stop (the 3 member gates via _svd_run_report, end-
+  # manifest.sh write+validate, needs-you.sh add on protocol-downgrade) —
+  # there is no way to "run its verification logic but never spawn" because
+  # the logic IS delegated via subprocess. Under NL_HOOK_REENTRY=1 (an
+  # automation-spawned/re-entrant child — see lib/hook-reentry-guard.sh)
+  # this dispatcher deliberately skips the whole verification+fork chain
+  # and exits 0: an automation-spawned resume nudge is not the place a
+  # fresh honesty/work-integrity ceremony needs to fire (the ORIGINAL
+  # session's own Stop already governs that work), and letting it run
+  # would re-fork 3+ member-gate processes plus end-manifest.sh on every
+  # such Stop — exactly the cascade-amplifying pattern this guard exists to
+  # cut off. A normal interactive session (NL_HOOK_REENTRY unset) is
+  # completely unaffected.
+  if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+    hook_reentry_note "stop-verdict-dispatcher" 2>/dev/null || true
+    echo "[stop-verdict-dispatcher] reentrant/automation-spawned invocation — skipping verification+fork chain (NL-FINDING-040 guard)" >&2
+    exit 0
+  fi
+
   local transcript_path=""
   if [[ -n "$input" ]] && command -v jq >/dev/null 2>&1; then
     transcript_path=$(echo "$input" | jq -r '.transcript_path // .session.transcript_path // empty' 2>/dev/null || echo "")
@@ -780,8 +919,42 @@ _svd_main() {
   [[ -z "$gap_count" ]] && gap_count=0
 
   if [[ "$gap_count" -eq 0 ]]; then
+    _svd_refire_ceiling_clear "$session_id"
     _svd_ledger "stop-cycle" "gaps=0 verdict=pass"
     _svd_emit_stop_and_trace "$_svd_start_ms" "verdict=pass gaps=0"
+    exit 0
+  fi
+
+  # HARD PER-SESSION STOP-REFIRE CEILING (coordinator directive, spawn-
+  # cascade incident; AUTOMATION-SCOPED per FIX-1): checked BEFORE the
+  # DONE-refusal/cycle-count tree below. It trips ONLY for automation-
+  # spawned sessions (_svd_session_is_automation) — a human interactive
+  # session's DONE-refusal below is genuinely never-downgraded, identical
+  # to origin/master. See _svd_stop_refire_ceiling_check's own header for
+  # the full rationale. A tripped ceiling force-allows the (automation)
+  # session to end: loud ledger event, stderr explanation, exit 0.
+  local refire_tripped
+  refire_tripped="$(_svd_stop_refire_ceiling_check "$session_id")"
+  if [[ "$refire_tripped" == "1" ]]; then
+    _svd_ledger "stop-cycle" "gaps=${gap_count} verdict=refire-ceiling-tripped"
+    _svd_ledger "stop-refire-ceiling-tripped" "session=${session_id} (automation-spawned) exceeded ${RETRY_GUARD_STOP_REFIRE_CEILING:-5} dispatcher fires; force-allowing session end"
+    cat >&2 <<MSG
+================================================================
+[stop-verdict-dispatcher] STOP-REFIRE CEILING TRIPPED (automation-scoped)
+================================================================
+This AUTOMATION-SPAWNED session's dispatcher has now fired more than
+${RETRY_GUARD_STOP_REFIRE_CEILING:-5} times (regardless of whether the
+gap-set changed each time, which would otherwise keep resetting the
+ordinary cycle counter). To guarantee an automation session can never
+hang a machine in an unbounded Stop-refire loop, it is FORCE-ALLOWED to
+end now. This ceiling is AUTOMATION-ONLY — a human interactive session's
+DONE-refusal is never subject to it. ${gap_count} gap(s) remain
+unresolved; they are NOT recorded to unresolved-gaps.jsonl by this path
+(the ceiling is a spawn breaker, not the designed protocol-downgrade —
+review this session's transcript directly for what actually happened).
+================================================================
+MSG
+    _svd_emit_stop_and_trace "$_svd_start_ms" "verdict=refire-ceiling-tripped gaps=${gap_count}"
     exit 0
   fi
 
@@ -1659,6 +1832,122 @@ STUBEOF
     echo "self-test (warn-still-ledgered-alongside-a-real-block): FAIL (expected the dead link to still be ledgered even though a real gap also blocked)" >&2
     failed=$((failed+1))
   fi
+
+  # _run_dispatcher_auto — like _run_dispatcher but exports the explicit
+  # NL_AUTOMATION_SESSION=1 automation signal into the child's env (NOT
+  # NL_HOOK_REENTRY, which would trip the top-of-_svd_main full-suppress
+  # early-exit and never reach the verdict tree the ceiling lives in — see
+  # _svd_session_is_automation's header). This is how the FIX-2 ceiling
+  # scenarios below drive a session that (a) reaches the verdict tree and
+  # (b) is classified automation, so the automation-scoped ceiling is
+  # genuinely exercised end-to-end through the REAL script invocation.
+  _run_dispatcher_auto() {
+    local hooks_dir="$1" repo_cwd="$2" transcript="$3" sid="$4"
+    (
+      cd "$repo_cwd" || exit 99
+      export STOP_VERDICT_DISPATCHER_TRANSCRIPT="$transcript"
+      export CLAUDE_SESSION_ID="$sid"
+      export NL_AUTOMATION_SESSION=1
+      printf '{"transcript_path":"%s","session_id":"%s"}' "$transcript" "$sid" \
+        | bash "$hooks_dir/stop-verdict-dispatcher.sh" >"$tmproot/last-stdout.txt" 2>"$tmproot/last-stderr.txt"
+      echo $?
+    )
+  }
+
+  # ================================================================
+  # Scenario 18 (FIX-2a — AUTOMATION-SCOPED STOP-REFIRE CEILING): an
+  # automation-spawned session (NL_AUTOMATION_SESSION=1) with a persistent
+  # DONE-claim + verification-class gap blocks (exit 2) on fires 1..ceiling,
+  # then FORCE-ALLOWS (exit 0) on fire ceiling+1 with the automation-scoped
+  # ceiling-tripped message. Ceiling pinned to 2 so the scenario is fast
+  # and deterministic. Exercised through the REAL script invocation
+  # (_run_dispatcher_auto), mirroring Scenario 5's DONE-claim replication.
+  # ================================================================
+  _setup_scenario s18
+  export RETRY_GUARD_STOP_REFIRE_CEILING=2
+  HOOKS=$(_build_dispatcher_repo s18)
+  REPO="$tmproot/s18/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    { echo "# Plan: s18-plan"; echo "Status: ACTIVE"; echo; echo "## Tasks"; echo "- [ ] A.1 do the thing"; } > docs/plans/s18-plan.md; \
+    git add -A; git commit -q -m seed )
+  TFILE="$tmproot/s18/done-transcript.jsonl"
+  {
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"%s/docs/plans/s18-plan.md"}}]}}\n' "$REPO"
+    printf '%s\n' "$(jq -cn '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Shipped everything.\n\nDONE: merged abc1234"}]}}' 2>/dev/null)"
+  } > "$TFILE"
+  RC1=$(_run_dispatcher_auto "$HOOKS" "$REPO" "$TFILE" "sess-s18")
+  _expect "automation-ceiling-fire-1-blocks" "$RC1" "2"
+  RC2=$(_run_dispatcher_auto "$HOOKS" "$REPO" "$TFILE" "sess-s18")
+  _expect "automation-ceiling-fire-2-blocks" "$RC2" "2"
+  RC3=$(_run_dispatcher_auto "$HOOKS" "$REPO" "$TFILE" "sess-s18")
+  _expect "automation-ceiling-fire-3-force-allows-exit-0" "$RC3" "0"
+  if grep -q "STOP-REFIRE CEILING TRIPPED" "$tmproot/last-stderr.txt" 2>/dev/null \
+     && grep -qi "automation" "$tmproot/last-stderr.txt" 2>/dev/null \
+     && grep -qi "gap(s) remain" "$tmproot/last-stderr.txt" 2>/dev/null; then
+    echo "self-test (automation-ceiling-tripped-message-with-gaps-remain-count): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (automation-ceiling-tripped-message-with-gaps-remain-count): FAIL (expected automation-scoped ceiling-tripped message + gaps-remain count on stderr)" >&2
+    cat "$tmproot/last-stderr.txt" 2>/dev/null >&2
+    failed=$((failed+1))
+  fi
+  if grep -q '"event":"stop-refire-ceiling-tripped"' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (automation-ceiling-tripped-ledger-event): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (automation-ceiling-tripped-ledger-event): FAIL (expected a stop-refire-ceiling-tripped ledger event)" >&2
+    failed=$((failed+1))
+  fi
+  unset RETRY_GUARD_STOP_REFIRE_CEILING
+
+  # ================================================================
+  # Scenario 19 (FIX-2b — HUMAN SESSION NEVER FORCE-ALLOWED): the SAME
+  # DONE-claim + verification-class gap, the SAME low ceiling, but a HUMAN
+  # (non-automation) session — no NL_AUTOMATION_SESSION, no NL_HOOK_REENTRY.
+  # It must block (exit 2) on EVERY fire, well past the ceiling count,
+  # proving FIX-1: a human DONE-refusal is genuinely never-downgraded,
+  # identical to origin/master. Run 4 times (ceiling is 2) — every one
+  # blocks.
+  # ================================================================
+  _setup_scenario s19
+  export RETRY_GUARD_STOP_REFIRE_CEILING=2
+  HOOKS=$(_build_dispatcher_repo s19)
+  REPO="$tmproot/s19/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    { echo "# Plan: s19-plan"; echo "Status: ACTIVE"; echo; echo "## Tasks"; echo "- [ ] A.1 do the thing"; } > docs/plans/s19-plan.md; \
+    git add -A; git commit -q -m seed )
+  TFILE="$tmproot/s19/done-transcript.jsonl"
+  {
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"%s/docs/plans/s19-plan.md"}}]}}\n' "$REPO"
+    printf '%s\n' "$(jq -cn '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Shipped everything.\n\nDONE: merged abc1234"}]}}' 2>/dev/null)"
+  } > "$TFILE"
+  human_all_blocked=1
+  for _fire in 1 2 3 4; do
+    RCx=$(_run_dispatcher "$HOOKS" "$REPO" "$TFILE" "sess-s19")
+    [[ "$RCx" == "2" ]] || human_all_blocked=0
+  done
+  if [[ "$human_all_blocked" == "1" ]]; then
+    echo "self-test (human-session-DONE-refusal-never-force-allowed-past-ceiling): PASS (exit 2 on all 4 fires, ceiling=2)" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (human-session-DONE-refusal-never-force-allowed-past-ceiling): FAIL (a human session was force-allowed past the ceiling — FIX-1 honesty invariant violated)" >&2
+    cat "$tmproot/last-stderr.txt" 2>/dev/null >&2
+    failed=$((failed+1))
+  fi
+  # And prove the human path never even wrote the ceiling counter file
+  # (zero on-disk footprint from this mechanism for a human session).
+  if ! ls "$RETRY_GUARD_STATE_DIR"/stop-verdict-refires-*.count >/dev/null 2>&1; then
+    echo "self-test (human-session-leaves-no-ceiling-counter-file): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (human-session-leaves-no-ceiling-counter-file): FAIL (a human session wrote a refire-counter file; the ceiling must be automation-only)" >&2
+    failed=$((failed+1))
+  fi
+  unset RETRY_GUARD_STOP_REFIRE_CEILING
 
   echo "" >&2
   echo "self-test summary: $passed passed, $failed failed" >&2
