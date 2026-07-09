@@ -323,27 +323,62 @@ _hb_find_transcript() {
 }
 
 # ----------------------------------------------------------------------
-# _hb_transcript_fresh_min <session-id> — prints the transcript's age in
-# minutes (mtime vs now), or empty if no transcript is found for this
-# session id. Never errors.
+# _hb_transcript_fresh_min <session-id> [transcript-path] [now-epoch] —
+# prints the transcript's age in minutes (mtime vs now), or empty if no
+# transcript is found for this session id. Never errors.
+#
+# OPTIONAL 2ND ARG (O.3 hb-perf fix — see file header "WHY THIS EXISTS"
+# for the sibling-file duplication this closes): when the caller already
+# knows the transcript path (od_sessions resolves it via its own O(1)
+# _OD_TRANSCRIPT_INDEX, built once per `nl status` call instead of a
+# full-tree `find` PER SESSION), it can pass that path directly and this
+# function skips _hb_find_transcript's own full-tree find entirely.
+# Distinguished by ARGUMENT COUNT, not by the value being non-empty: an
+# explicitly-passed EMPTY string ("no transcript exists for this sid",
+# per the caller's own index) is honored as-is and must NOT fall back to
+# a local find (that find would re-scan the whole tree only to confirm
+# the same absence the caller's index already established). Omit the
+# arg entirely for unchanged standalone behavior (still correct, just
+# resolves its own path via _hb_find_transcript) — this is what
+# session-heartbeat.sh's `sweep` verb and harness-doctor.sh's
+# heartbeats-fresh check both do today, and continue to do unmodified.
+#
+# OPTIONAL 3RD ARG <now-epoch> (O.3 hb-perf2 fork-batching fix): a caller
+# looping over many sessions in one process (od_sessions) computes "now"
+# via ONE `date -u +%s` call up front and can pass it here, skipping this
+# function's own independent `date` subprocess for "now" — see hb_is_stale
+# and hb_classify's own headers for the full fork-elimination rationale.
+# Distinguished by argument count (requires the 2nd arg to also be
+# supplied, even if empty, to reach position 3). Omit for unchanged
+# standalone behavior (still correct, just forks its own `date -u +%s`).
 # ----------------------------------------------------------------------
 _hb_transcript_fresh_min() {
   local sid="$1" tf mtime now_epoch
-  tf="$(_hb_find_transcript "$sid")"
+  if [[ $# -ge 2 ]]; then
+    tf="$2"
+  else
+    tf="$(_hb_find_transcript "$sid")"
+  fi
   [[ -n "$tf" && -f "$tf" ]] || { printf ''; return 0; }
   mtime="$(date -u -r "$tf" +%s 2>/dev/null || stat -c %Y "$tf" 2>/dev/null || stat -f %m "$tf" 2>/dev/null || echo 0)"
   [[ "$mtime" -gt 0 ]] || { printf ''; return 0; }
-  now_epoch="$(date -u +%s 2>/dev/null || echo 0)"
+  if [[ $# -ge 3 ]]; then
+    now_epoch="$3"
+  else
+    now_epoch="$(date -u +%s 2>/dev/null || echo 0)"
+  fi
   printf '%d' $(( (now_epoch - mtime) / 60 ))
 }
 
 # ----------------------------------------------------------------------
-# hb_is_stale <file> [stale-min] — exit 0 (true) if the heartbeat file's
-# last_activity_ts is older than <stale-min> (default $OBS_STALE_MIN,
-# else 30) minutes ago AND there is no fresher transcript activity for
-# this session (C1's actual read-side contract: "stale = last_activity_ts
-# old AND no fresh transcript mtime for that session"). A missing file
-# is treated as stale (exit 0) — there is nothing fresher to report.
+# hb_is_stale <file> [stale-min] [transcript-path] [session-id]
+#             [last-activity-epoch] [now-epoch]
+#   — exit 0 (true) if the heartbeat file's last_activity_ts is older
+# than <stale-min> (default $OBS_STALE_MIN, else 30) minutes ago AND
+# there is no fresher transcript activity for this session (C1's actual
+# read-side contract: "stale = last_activity_ts old AND no fresh
+# transcript mtime for that session"). A missing file is treated as
+# stale (exit 0) — there is nothing fresher to report.
 #
 # WHY THE TRANSCRIPT JOIN (nl-issues 2026-07-07 mid-turn false-stall):
 # heartbeats only refresh at Stop (`touch --event turn-end`) — a long
@@ -356,19 +391,94 @@ _hb_transcript_fresh_min() {
 # the heartbeat cadence. A session is genuinely stale only when BOTH
 # signals agree nothing fresh has happened.
 #
+# OPTIONAL 3RD ARG <transcript-path> (O.3 hb-perf fix): threaded straight
+# through to _hb_transcript_fresh_min — see that function's header for
+# the argument-count-vs-value distinction (an explicit empty string is
+# honored, not treated as "not passed"). Omit for unchanged behavior.
+#
+# OPTIONAL 4TH-6TH ARGS <session-id> <last-activity-epoch> <now-epoch>
+# (O.3 hb-perf2 fork-batching fix — docs/backlog.md HARNESS-PERF-O3-HB):
+# profiling proved the dominant residual `nl status` cost was per-session
+# subprocess forks INSIDE this function and hb_classify — od_sessions
+# already extracts marker/branch/worktree/cwd/last_activity_ts from every
+# heartbeat file in ONE BATCHED jq call (see observability-derive.sh's
+# _od_heartbeat_batch_build) and already knows the session id (its own
+# loop variable), yet this function used to re-derive BOTH via its own
+# `_hb_field` calls (2 more jq subprocess forks per session) and convert
+# the timestamp to an epoch via its own `_hb_epoch` (`date`) call, on top
+# of `date -u +%s` for "now" — all fully redundant with data/values the
+# caller already has. When supplied:
+#   - <session-id>: skips this function's own `_hb_field "$file"
+#     "session_id"` call (used only to resolve the transcript when no
+#     transcript-path was already given/known).
+#   - <last-activity-epoch>: an ALREADY-CONVERTED epoch (seconds since
+#     the Unix epoch — NOT the ISO-8601 string; od_sessions converts once
+#     per session via jq's `fromdateiso8601` inside its own single
+#     batched jq call, never via a bash `date` subprocess), skipping this
+#     function's own `_hb_field` + `_hb_epoch` (`date -d`) calls
+#     entirely. 0 means "unparseable/absent" (same convention `_hb_epoch`
+#     itself uses on failure) and is honored as-is (falls through to the
+#     same "no usable timestamp -> stale" verdict `_hb_epoch` returning 0
+#     already produced before this fix).
+#   - <now-epoch>: computed ONCE per od_sessions call (a single
+#     `date -u +%s`, not one per session) and threaded through here (and
+#     on to `_hb_transcript_fresh_min`'s own 3rd arg) instead of this
+#     function calling `date -u +%s` again for every session.
+# Distinguished by ARGUMENT COUNT (same convention as the transcript-path
+# arg): to reach position 5 or 6 the caller must also supply position 4
+# (and 5), even with an intentionally "empty"/0 value — od_sessions
+# always has all three together, so this is never a hardship in
+# practice. Omit all three for unchanged standalone behavior (still
+# correct, just re-derives everything itself) — this is what
+# session-heartbeat.sh's `sweep` verb and harness-doctor.sh's
+# heartbeats-fresh check both do today (2-arg calls), and continue to do
+# unmodified: neither passes a 4th+ arg, so neither is affected by this
+# change in any way.
+#
 # Never errors.
 # ----------------------------------------------------------------------
 hb_is_stale() {
   local file="$1"
   local stale_min="${2:-$OBS_STALE_MIN}"
+  local transcript_path_given=0 transcript_path=""
+  local sid_given=0 sid_pre=""
+  local epoch_given=0 epoch_pre=""
+  local now_given=0 now_pre=""
+  if [[ $# -ge 3 ]]; then
+    transcript_path_given=1
+    transcript_path="$3"
+  fi
+  if [[ $# -ge 4 ]]; then
+    sid_given=1
+    sid_pre="$4"
+  fi
+  if [[ $# -ge 5 ]]; then
+    epoch_given=1
+    epoch_pre="$5"
+  fi
+  if [[ $# -ge 6 ]]; then
+    now_given=1
+    now_pre="$6"
+  fi
   [[ -f "$file" ]] || return 0
 
-  local ts epoch now_epoch age_min
-  ts="$(_hb_field "$file" "last_activity_ts")"
-  [[ -n "$ts" ]] || return 0
-  epoch="$(_hb_epoch "$ts")"
+  local epoch now_epoch age_min
+  if [[ "$epoch_given" == "1" ]]; then
+    epoch="$epoch_pre"
+  else
+    local ts
+    ts="$(_hb_field "$file" "last_activity_ts")"
+    [[ -n "$ts" ]] || return 0
+    epoch="$(_hb_epoch "$ts")"
+  fi
+  [[ -n "$epoch" ]] || epoch=0
   [[ "$epoch" -gt 0 ]] || return 0
-  now_epoch="$(date -u +%s 2>/dev/null || echo 0)"
+
+  if [[ "$now_given" == "1" ]]; then
+    now_epoch="$now_pre"
+  else
+    now_epoch="$(date -u +%s 2>/dev/null || echo 0)"
+  fi
   age_min=$(( (now_epoch - epoch) / 60 ))
   [[ "$age_min" -gt "$stale_min" ]] || return 1
 
@@ -377,9 +487,21 @@ hb_is_stale() {
   # session is mid-turn (heartbeats only refresh at Stop) and NOT stale,
   # regardless of how old last_activity_ts has become.
   local sid transcript_age_min
-  sid="$(_hb_field "$file" "session_id")"
+  if [[ "$sid_given" == "1" ]]; then
+    sid="$sid_pre"
+  else
+    sid="$(_hb_field "$file" "session_id")"
+  fi
   if [[ -n "$sid" ]]; then
-    transcript_age_min="$(_hb_transcript_fresh_min "$sid")"
+    if [[ "$transcript_path_given" == "1" ]]; then
+      if [[ "$now_given" == "1" ]]; then
+        transcript_age_min="$(_hb_transcript_fresh_min "$sid" "$transcript_path" "$now_epoch")"
+      else
+        transcript_age_min="$(_hb_transcript_fresh_min "$sid" "$transcript_path")"
+      fi
+    else
+      transcript_age_min="$(_hb_transcript_fresh_min "$sid")"
+    fi
     if [[ -n "$transcript_age_min" ]] && [[ "$transcript_age_min" -le "$stale_min" ]]; then
       return 1
     fi
@@ -388,8 +510,10 @@ hb_is_stale() {
 }
 
 # ----------------------------------------------------------------------
-# hb_classify <file> [stale-min] — print one of: live | stale | crashed |
-# missing. Never errors, always prints exactly one word.
+# hb_classify <file> [stale-min] [transcript-path] [session-id]
+#             [last-activity-epoch] [now-epoch] [pid]
+#   — print one of: live | stale | crashed | missing. Never errors,
+# always prints exactly one word.
 #
 #   missing  - file does not exist.
 #   crashed  - stale (per hb_is_stale) AND the recorded pid is not alive.
@@ -397,6 +521,47 @@ hb_is_stale() {
 #              process, or a pid reused by an unrelated process — the
 #              distinction the sketch's "stalled" state maps onto).
 #   live     - not stale.
+#
+# NOTE this function ALREADY only pays the `_hb_pid_alive` (`kill -0`)
+# cost for the stale-candidate subset, never for every session: the pid
+# check below is reached only when `hb_is_stale` returns true (rc 0), and
+# hb_is_stale's own transcript-mtime join (C1) already resolves a
+# heartbeat-stale-but-transcript-fresh session straight to "not stale"
+# (rc 1) before this function ever looks at pid/kill at all. So the
+# O.3-hb-perf2 fork-batching fix below (passing pre-resolved fields
+# through) is what shrinks the PER-SESSION jq/date cost; the kill-only-
+# for-stale-candidates property was already true and is unchanged here.
+#
+# OPTIONAL 3RD ARG <transcript-path> (O.3 hb-perf fix — eliminates the
+# redundant per-session full-tree `find` this lib used to run
+# independently of observability-derive.sh's own od_sessions index; see
+# _hb_transcript_fresh_min's header for the full rationale): a caller
+# that already resolved this session's transcript path (od_sessions, via
+# its O(1) _OD_TRANSCRIPT_INDEX built once per `nl status` call) passes
+# it here and hb_is_stale/_hb_transcript_fresh_min use it directly
+# instead of re-deriving it via _hb_find_transcript. Distinguished by
+# ARGUMENT COUNT: pass "" explicitly when the caller's index already
+# proved no transcript exists for this sid (honored as-is, no fallback
+# find). Omit the arg entirely for unchanged standalone behavior — every
+# OTHER caller (session-heartbeat.sh's `sweep` verb, harness-doctor.sh's
+# heartbeats-fresh check) calls this with 1-2 args and is unaffected;
+# this does NOT change WHAT hb_classify decides, only HOW it finds the
+# transcript when a caller already knows the path.
+#
+# OPTIONAL 4TH-7TH ARGS <session-id> <last-activity-epoch> <now-epoch>
+# <pid> (O.3 hb-perf2 fork-batching fix — docs/backlog.md
+# HARNESS-PERF-O3-HB): forwarded straight through to hb_is_stale (args
+# 4-6 there; see that function's header for the full rationale — the
+# short version: od_sessions already read all of these out of ONE
+# batched jq call over every heartbeat file, so re-deriving them here via
+# more `_hb_field`/`_hb_epoch`/`date` subprocess forks, per session, was
+# pure redundant cost). The 7th arg <pid> additionally skips this
+# function's own `_hb_field "$file" "pid"` call in the stale-candidate
+# branch. Distinguished by ARGUMENT COUNT exactly as above: reaching
+# position 7 requires positions 3-6 to also be supplied. Omit all four
+# for unchanged standalone behavior — session-heartbeat.sh's `sweep` verb
+# and harness-doctor.sh's heartbeats-fresh check both call this with 1-2
+# args today and are completely unaffected.
 # ----------------------------------------------------------------------
 hb_classify() {
   local file="$1"
@@ -407,9 +572,43 @@ hb_classify() {
     return 0
   fi
 
-  if hb_is_stale "$file" "$stale_min"; then
+  local pid_given=0 pid_pre=""
+  if [[ $# -ge 7 ]]; then
+    pid_given=1
+    pid_pre="$7"
+  fi
+
+  local stale_rc
+  case "$#" in
+    0|1|2)
+      hb_is_stale "$file" "$stale_min"
+      stale_rc=$?
+      ;;
+    3)
+      hb_is_stale "$file" "$stale_min" "$3"
+      stale_rc=$?
+      ;;
+    4)
+      hb_is_stale "$file" "$stale_min" "$3" "$4"
+      stale_rc=$?
+      ;;
+    5)
+      hb_is_stale "$file" "$stale_min" "$3" "$4" "$5"
+      stale_rc=$?
+      ;;
+    *)
+      hb_is_stale "$file" "$stale_min" "$3" "$4" "$5" "$6"
+      stale_rc=$?
+      ;;
+  esac
+
+  if [[ "$stale_rc" -eq 0 ]]; then
     local pid
-    pid="$(_hb_field "$file" "pid")"
+    if [[ "$pid_given" == "1" ]]; then
+      pid="$pid_pre"
+    else
+      pid="$(_hb_field "$file" "pid")"
+    fi
     if _hb_pid_alive "$pid"; then
       printf 'stale'
     else
@@ -589,6 +788,152 @@ EOF
     pass "hb_classify: dead pid + no fresh transcript -> crashed (unchanged by the transcript-mtime join)"
   else
     fail "hb_classify: dead-pid+stale-transcript case regressed away from 'crashed'"
+  fi
+
+  echo "Scenario 6d: hb_classify — a caller-supplied transcript path (O.3 hb-perf fix) skips _hb_find_transcript entirely and matches the find-based verdict"
+  (
+    export OBS_TRANSCRIPTS_ROOT="$TMP/transcripts-perf"
+    mkdir -p "$OBS_TRANSCRIPTS_ROOT"
+    # Same mid-turn shape as scenario 6b: heartbeat old + pid alive (this
+    # test's own $$) + transcript fresh -> must classify live either way.
+    cat > "$HEARTBEAT_STATE_DIR/sess-perf.json" <<EOF
+{"schema":1,"session_id":"sess-perf","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+    printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-perf.jsonl"
+
+    # Baseline: no path passed -> unchanged behavior, falls back to this
+    # lib's own _hb_find_transcript (a full-tree find).
+    cls_find="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-perf.json" 30)"
+
+    # Instrument _hb_find_transcript (shadow it in this subshell only) to
+    # prove it is NEVER invoked when a caller (e.g. od_sessions, which
+    # already resolved the path via its own O(1) index) passes the
+    # transcript path as hb_classify's optional 3rd arg.
+    FIND_CALLS=0
+    _hb_find_transcript() { FIND_CALLS=$((FIND_CALLS+1)); printf ''; }
+
+    resolved_path="$OBS_TRANSCRIPTS_ROOT/sess-perf.jsonl"
+    cls_passed="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-perf.json" 30 "$resolved_path")"
+
+    [[ "$cls_find" == "live" ]] || exit 1
+    [[ "$cls_passed" == "live" ]] || exit 2
+    [[ "$cls_find" == "$cls_passed" ]] || exit 3
+    [[ "$FIND_CALLS" == "0" ]] || exit 4
+    exit 0
+  )
+  rc_perf=$?
+  if [[ "$rc_perf" -eq 0 ]]; then
+    pass "hb_classify: passed-in transcript path skips _hb_find_transcript entirely and matches the find-based verdict (live == live)"
+  else
+    fail "hb_classify passed-in-path scenario failed (rc=$rc_perf): verdict or find-call-count check did not hold"
+  fi
+
+  echo "Scenario 6e: hb_classify — an explicitly-EMPTY passed-in transcript path (index says 'no transcript exists') is honored as-is, no find fallback, and correctly still classifies crashed/stale (not incorrectly rescued to live)"
+  (
+    export OBS_TRANSCRIPTS_ROOT="$TMP/transcripts-perf-empty"
+    mkdir -p "$OBS_TRANSCRIPTS_ROOT"
+    dead_pid=""
+    ( : ) & dead_pid=$!
+    wait "$dead_pid" 2>/dev/null
+    cat > "$HEARTBEAT_STATE_DIR/sess-perf-crashed.json" <<EOF
+{"schema":1,"session_id":"sess-perf-crashed","pid":$dead_pid,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+    FIND_CALLS=0
+    _hb_find_transcript() { FIND_CALLS=$((FIND_CALLS+1)); printf ''; }
+    cls="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-perf-crashed.json" 30 "")"
+    [[ "$cls" == "crashed" ]] || exit 1
+    [[ "$FIND_CALLS" == "0" ]] || exit 2
+    exit 0
+  )
+  rc_empty=$?
+  if [[ "$rc_empty" -eq 0 ]]; then
+    pass "hb_classify: explicit empty transcript-path arg is honored (no find fallback) and still classifies crashed correctly"
+  else
+    fail "hb_classify: explicit empty transcript-path arg scenario failed (rc=$rc_empty)"
+  fi
+
+  echo "Scenario 6f: hb_classify/hb_is_stale — pre-resolved session-id/last-activity-epoch/now-epoch/pid (O.3 hb-perf2 fork-batching fix, docs/backlog.md HARNESS-PERF-O3-HB) skip _hb_field and _hb_epoch ENTIRELY across a fresh-heartbeat case, a mid-turn-live (transcript-join) case, and a crashed case; kill still runs exactly once, only for the stale-candidate case"
+  (
+    export OBS_TRANSCRIPTS_ROOT="$TMP/transcripts-batch"
+    mkdir -p "$OBS_TRANSCRIPTS_ROOT"
+    NOW_EPOCH="$(date -u +%s 2>/dev/null || echo 0)"
+
+    # File-based call counters, NOT plain shell variables: every
+    # classification below is captured via command substitution
+    # (`x="$(hb_classify ...)"`), which forks a subshell to run the
+    # pipeline — a variable incremented by a shadowed function INSIDE
+    # that subshell would never be visible out here once it exits. A
+    # file write, by contrast, is a real side effect on disk and
+    # survives the subshell boundary, so it is the only reliable way to
+    # count subprocess-fork-avoidance from outside a captured call.
+    FIELD_LOG="$TMP/field-calls.log"
+    EPOCH_LOG="$TMP/epoch-calls.log"
+    PIDALIVE_LOG="$TMP/pidalive-calls.log"
+    _hb_calls() { local log="$1"; [[ -f "$log" ]] && wc -l < "$log" | tr -d ' [:space:]' || printf '0'; }
+
+    # --- sub-case A: fresh heartbeat (age well under stale_min) — the
+    # common/dominant real-world case. hb_is_stale must short-circuit at
+    # the age check alone: NEITHER _hb_field NOR _hb_epoch NOR
+    # _hb_pid_alive (kill) should ever run.
+    cat > "$HEARTBEAT_STATE_DIR/sess-batch-fresh.json" <<EOF
+{"schema":1,"session_id":"sess-batch-fresh","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"$(date -u '+%Y-%m-%dT%H:%M:%SZ')","last_event":"turn-end","marker_state":"none"}
+EOF
+    : > "$FIELD_LOG"; : > "$EPOCH_LOG"; : > "$PIDALIVE_LOG"
+    _hb_field() { printf 'x\n' >> "$FIELD_LOG"; printf ''; }
+    _hb_epoch() { printf 'x\n' >> "$EPOCH_LOG"; printf '0'; }
+    _hb_pid_alive() { printf 'x\n' >> "$PIDALIVE_LOG"; return 0; }
+
+    cls_a="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-batch-fresh.json" 30 "" "sess-batch-fresh" "$NOW_EPOCH" "$NOW_EPOCH" "$$")"
+    [[ "$cls_a" == "live" ]] || exit 1
+    [[ "$(_hb_calls "$FIELD_LOG")" == "0" ]] || exit 2
+    [[ "$(_hb_calls "$EPOCH_LOG")" == "0" ]] || exit 3
+    [[ "$(_hb_calls "$PIDALIVE_LOG")" == "0" ]] || exit 4
+
+    # --- sub-case B: heartbeat old (pre-resolved epoch = 2020, far past
+    # stale_min), pid alive, transcript fresh — the C1 mid-turn-live
+    # shape. Must classify live (transcript join rescues it); still never
+    # calls _hb_field/_hb_epoch (all pre-resolved), and _hb_pid_alive
+    # must ALSO stay at 0 here (hb_is_stale resolves not-stale via the
+    # transcript join before hb_classify's pid branch is ever reached).
+    printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-batch-midturn.jsonl"
+    cat > "$HEARTBEAT_STATE_DIR/sess-batch-midturn.json" <<EOF
+{"schema":1,"session_id":"sess-batch-midturn","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+    : > "$FIELD_LOG"; : > "$EPOCH_LOG"; : > "$PIDALIVE_LOG"
+    cls_b="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-batch-midturn.json" 30 "$OBS_TRANSCRIPTS_ROOT/sess-batch-midturn.jsonl" "sess-batch-midturn" 1577836800 "$NOW_EPOCH" "$$")"
+    [[ "$cls_b" == "live" ]] || exit 5
+    [[ "$(_hb_calls "$FIELD_LOG")" == "0" ]] || exit 6
+    [[ "$(_hb_calls "$EPOCH_LOG")" == "0" ]] || exit 7
+    [[ "$(_hb_calls "$PIDALIVE_LOG")" == "0" ]] || exit 8
+
+    # --- sub-case C: heartbeat old (pre-resolved epoch), pid dead, no
+    # transcript — must classify crashed. _hb_field/_hb_epoch still never
+    # called (all fields pre-resolved, including pid), but _hb_pid_alive
+    # IS called exactly once: pre-resolving the pid VALUE only skips the
+    # _hb_field lookup, not the liveness check itself, which is the
+    # entire point of the stale-candidate-only gating this scenario
+    # verifies.
+    dead_pid=""
+    ( : ) & dead_pid=$!
+    wait "$dead_pid" 2>/dev/null
+    cat > "$HEARTBEAT_STATE_DIR/sess-batch-crashed.json" <<EOF
+{"schema":1,"session_id":"sess-batch-crashed","pid":$dead_pid,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+    : > "$FIELD_LOG"; : > "$EPOCH_LOG"; : > "$PIDALIVE_LOG"
+    _hb_pid_alive() { printf 'x\n' >> "$PIDALIVE_LOG"; [[ "$1" == "$dead_pid" ]] && return 1 || return 0; }
+    cls_c="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-batch-crashed.json" 30 "" "sess-batch-crashed" 1577836800 "$NOW_EPOCH" "$dead_pid")"
+    [[ "$cls_c" == "crashed" ]] || exit 9
+    [[ "$(_hb_calls "$FIELD_LOG")" == "0" ]] || exit 10
+    [[ "$(_hb_calls "$EPOCH_LOG")" == "0" ]] || exit 11
+    [[ "$(_hb_calls "$PIDALIVE_LOG")" == "1" ]] || exit 12
+
+    exit 0
+  )
+  rc_batch=$?
+  if [[ "$rc_batch" -eq 0 ]]; then
+    pass "hb_classify/hb_is_stale: pre-resolved session-id/epoch/now-epoch/pid skip _hb_field and _hb_epoch entirely across fresh/mid-turn-live/crashed cases; kill runs exactly once, only for the stale-candidate case"
+  else
+    fail "hb_classify pre-resolved-fields fork-batching scenario failed (rc=$rc_batch) — see sub-case exit codes 1-4=fresh, 5-8=mid-turn-live, 9-12=crashed"
   fi
 
   echo "Scenario 7: hb_write never blocks even on an unwritable target"
