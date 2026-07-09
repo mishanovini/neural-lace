@@ -283,6 +283,15 @@
             "command": "CMD=$(jq -r '.tool_input.command // \"\"'); if echo \"$CMD\" | grep -qE '(^|[[:space:];&|])git[[:space:]]+commit([[:space:]]|$)' && ! echo \"$CMD\" | grep -qE 'git[[:space:]]+commit-tree'; then bash ~/.claude/hooks/pre-commit-gate.sh || exit 1; fi"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/gh-account-autoswitch.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
