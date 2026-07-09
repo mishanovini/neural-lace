@@ -11,6 +11,7 @@
 - PR descriptions: what changed, why, how to test; call out breaking changes.
 - Never leave uncommitted work at session end — commit or stash.
 - **A gh/git "repo not found" / 404 / 403 is wrong-account evidence until the other account is checked.** With two GitHub accounts active, a 404/403 most often means the active `gh auth` account cannot see a repo owned by the other account — NOT that the repo is missing. Run `gh auth switch -u <owner>`, retry, then switch back, before concluding "the repo doesn't exist."
+- **`gh-account-autoswitch.sh` (PreToolUse, GH-AUTH-AUTOSWITCH-WORKORG-01) pre-empts the above reactively-discovered case proactively.** It resolves the target repo's owner (via the command's `--repo` flag, the git remote's URL, or the cwd repo's origin) before a `gh pr merge/create/view/checkout/...` or `git push <remote>` command runs, and pre-emptively runs `gh auth switch -u <owner>` if it differs from the currently-active account — so the 404/403 usually never happens at all. It never blocks (every path exits 0); it only prepares the environment ahead of the tool call. The reactive hint in `gh-account-blindness-hint.sh` (PostToolUse) remains the safety net for command shapes the proactive resolver doesn't recognize. Read-only gh/git commands (`gh pr list`, `gh repo list`, plain `git fetch`/`git pull`) are excluded from the write-scope regex and never trigger a switch.
 
 ## Rule 1 — Never force-push. No exceptions.
 
