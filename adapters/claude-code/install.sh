@@ -3,7 +3,7 @@
 # install.sh — Deploy Neural Lace's Claude Code adapter to ~/.claude/
 #
 # What it does:
-#   1. Syncs rules/agents/templates/hooks/docs/scripts into ~/.claude/
+#   1. Syncs rules/agents/templates/skills/hooks/docs/scripts into ~/.claude/
 #   2. Copies settings.json.template to ~/.claude/settings.json (if missing)
 #   3. Makes all hook scripts executable
 #   4. Sets `git config --global core.hooksPath` for the pre-push scanner
@@ -447,7 +447,9 @@ if [ "$MODE" = "dry-run" ]; then
   }
 
   check_sync_target "$ADAPTER_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
-  for dir in rules agents hooks scripts pipeline-prompts pipeline-templates commands doctrine; do
+  # skills + templates included here to mirror the real sync loop below
+  # (parity with session-start-auto-install.sh's SYNC_SUBDIRS — nl-issue [31]).
+  for dir in rules agents hooks scripts pipeline-prompts pipeline-templates commands doctrine skills templates; do
     if [ -d "$ADAPTER_DIR/$dir" ]; then
       check_sync_target "$ADAPTER_DIR/$dir" "$CLAUDE_DIR/$dir" "$dir/"
     fi
@@ -491,9 +493,9 @@ if [ "$MODE" = "dry-run" ]; then
   if [ -d "$ADAPTER_DIR/schemas" ]; then
     check_sync_target "$ADAPTER_DIR/schemas" "$CLAUDE_DIR/schemas" "schemas/"
   fi
-  if [ -d "$NEURAL_LACE_ROOT/patterns/templates" ]; then
-    check_sync_target "$NEURAL_LACE_ROOT/patterns/templates" "$CLAUDE_DIR/templates" "templates/"
-  fi
+  # templates/ previewed via the main loop above (sourced from the adapter dir);
+  # the former repo-root patterns/templates preview was removed with its real-flow
+  # counterpart — nl-issue [31].
   if [ -d "$NEURAL_LACE_ROOT/docs" ]; then
     check_sync_target "$NEURAL_LACE_ROOT/docs" "$CLAUDE_DIR/docs" "docs/"
   fi
@@ -913,7 +915,17 @@ echo ""
 sync_file "$ADAPTER_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
 
 # Sync adapter directories to ~/.claude/
-for dir in rules agents hooks scripts pipeline-prompts pipeline-templates commands doctrine; do
+# skills + templates MUST be in this loop so install.sh delivers the SAME
+# canonical set as session-start-auto-install.sh's SYNC_SUBDIRS
+# ("hooks scripts agents rules templates skills doctrine"). They were absent
+# before: skills/ was never synced by install.sh at all, and templates/ was
+# synced further down from the repo-root patterns/templates/ (a STALE 3-file
+# subset, incl. an out-of-date plan-template.md). A Wave-O merge that added
+# skills/coordinate-estate.md was therefore missing from live ~/.claude until
+# the next SessionStart tick ran auto-install. Sourcing both from the adapter
+# dir here (same source AND target auto-install reads) closes that drift —
+# nl-issue [31].
+for dir in rules agents hooks scripts pipeline-prompts pipeline-templates commands doctrine skills templates; do
   if [ -d "$ADAPTER_DIR/$dir" ]; then
     sync_directory "$ADAPTER_DIR/$dir" "$CLAUDE_DIR/$dir" "$dir"
   fi
@@ -1016,10 +1028,13 @@ if [ -d "$ADAPTER_DIR/schemas" ]; then
   sync_directory "$ADAPTER_DIR/schemas" "$CLAUDE_DIR/schemas" "schemas"
 fi
 
-# Sync shared templates from patterns/ (tool-agnostic)
-if [ -d "$NEURAL_LACE_ROOT/patterns/templates" ]; then
-  sync_directory "$NEURAL_LACE_ROOT/patterns/templates" "$CLAUDE_DIR/templates" "templates (from patterns/)"
-fi
+# templates/ now syncs from $ADAPTER_DIR/templates via the main directory loop
+# above (alongside skills/), NOT from the repo-root patterns/templates/. The old
+# patterns/ source shipped a STALE 3-file subset (an out-of-date plan-template.md
+# among them) and, running AFTER the main loop, would rm -rf and clobber the
+# canonical 8-file adapter set. Removing it makes install.sh converge on exactly
+# what session-start-auto-install.sh delivers (same adapter source + target), so
+# the two installers no longer drift — nl-issue [31].
 
 # Sync docs from neural-lace root
 if [ -d "$NEURAL_LACE_ROOT/docs" ]; then

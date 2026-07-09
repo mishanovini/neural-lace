@@ -167,6 +167,7 @@
     },
     "info": {
       "consumers": [
+        "selftest:stop-verdict-dispatcher.sh (the 'work-integrity-gate-consumed-the-dispatcher-written-manifest-same-stop' self-test greps the ledger for work-integrity-gate.sh's only info emission — 'manifest-scoping active: <path>', work-integrity-gate.sh line ~956 — as the mechanical proof that work-integrity-gate consumed the dispatcher-written end-manifest in the SAME Stop cycle. This is the REAL purpose-built consumer of the info event; it is NOT noise, so the emitter must NOT be removed/renamed. Named here to close NL-issue [49] as option (a): the info event carries real signal a consumer depends on, so the fix is a named-consumer map entry, not constraining the emitter.)",
         "digest:feed_ledger_summary",
         "cli:nl-status (landed by O.3 — hooks/lib/observability-derive.sh:od_sessions, scripts/nl.sh:cmd_status; renders any per-session ledger event generically)"
       ]

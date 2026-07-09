@@ -1,7 +1,7 @@
 # Decision 061 — Session-continuity supervision: heartbeat-first liveness, bounded resume, limit-aware deferral
 
 - **Date:** 2026-07-09
-- **Status:** PROPOSED — design approved for review, implementation NOT started, resumer stays DISABLED/unarmed. Arming remains operator-gated (see Phase 2 checklist). This ADR changes no runtime behavior by itself.
+- **Status:** ACCEPTED (design) — operator APPROVE-BUILD 2026-07-09; Phase 1 build authorized. Resumer stays DISABLED/unarmed; **arming remains a separate operator gate** (Phase 2 checklist) untouched by this approval. Live captured instance for D4's account-cap class: this design session itself was paused mid-work by the usage-credits monthly pool hitting 101% ($201.51, resets Aug 1) while the Fable weekly window sat at 0% — two background agents died pre-final-write ([43]/[44] class), one recovered via transcript-resume.
 - **Drivers:** NL-FINDING-040 / FM-037 (2026-07-08 spawn-cascade machine crash), the disabled `NL-session-resumer` watchdog, operator priority in `docs/handoffs/2026-07-09-spawn-cascade-handoff.md` §3.5.
 - **Supersedes/amends:** the detection design inside E.7's spec (`docs/plans/nl-overhaul-program-2026-07-specs-e.md` §E.7). E.7's activation guardrails (storm cap, tombstones, liveness guard, shadow-first, kill-switch runbook) are RETAINED. The overhaul plan's E.7 task text is to be amended to cite this ADR when implementation starts; F.4 (retro) is unaffected.
 - **Review:** harness-reviewer returned REFORMULATE (design sound, 3 Major + 4 Minor one-pass text fixes, denylist scan clean 0/105); all findings addressed in this revision — verdict + resolutions recorded at the bottom of this file.
