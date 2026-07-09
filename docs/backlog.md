@@ -943,3 +943,17 @@ Anthropic-side" theme).
 **Trigger:** 9 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 0d old (threshold >7d).
 **Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
 **Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## NL-ISSUES-TRIAGE-20260708 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 26 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 2d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## NL-ISSUES-TRIAGE-20260709 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 27 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 2d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).

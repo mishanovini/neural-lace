@@ -76,7 +76,7 @@ surfacers, additional dashboards, cross-machine ledger sync beyond read-both.
     descoped-by-operator. Consumer-map: push:* consumers removed at batch-2
     integration; the three event classes keep digest/cockpit/cli consumers
     (law 2 intact).
-- [ ] O.6 Pipeline health in doctor: writers firing, ledger growing, heartbeats
+- [x] O.6 Pipeline health in doctor: writers firing, ledger growing, heartbeats
   fresh, cockpit regenerated recently, consumer-map 100% — Model: sonnet
   - Done-when: red-fixtures per check; live green.
 - [ ] O.7 Retro vs pre-registered metrics (sketch §success-metrics): time-to-answer
