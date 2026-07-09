@@ -79,20 +79,22 @@ scheduled-task footprint for it.
 
 ## How to resume (branch/worktree + prompt)
 
-**Launch in the MAIN checkout** (NOT a worktree): `C:\Users\misha\dev\Pocket
-Technician\neural-lace`. It is currently on branch `tmp/o4-flip`, whose content ==
-`origin/master`. First actions in the new session: `git fetch origin && git merge
---no-edit origin/master` (sync), then continue committing to master via `git push
-origin HEAD:master` (the pattern used all program). For personal-mirror sync do the
-`gh auth switch -u mishanovini` → push → `gh auth switch -u MishaPT` dance (until the
-gh-account-autoswitch hook is wired live). Read `SCRATCHPAD.md` first (per global
-CLAUDE.md), then this file, then the retro.
+**Launch in a fresh WORKTREE off `master`** — in the Claude Desktop launcher keep
+`Local / neural-lace / master` with the **worktree box CHECKED**. This gives a clean
+isolated worktree off the latest master and sidesteps the main checkout's branch tangle
+(the main checkout is parked on `tmp/o4-flip` and the `master` ref is held by another
+worktree, so "main checkout on master" is not cleanly available). All the first-task
+work (harness-review, merge, install, unregister) runs fine from a worktree — that is how
+every builder in this program ran. Push integration to master via `git push origin
+HEAD:master` (or a PR); personal-mirror sync uses the `gh auth switch -u mishanovini` →
+push → `gh auth switch -u MishaPT` dance (until the gh-account-autoswitch hook is wired
+live). Read `SCRATCHPAD.md` first (per global CLAUDE.md), then this file, then the retro.
 
 **Suggested resume prompt** (paste into the new Fable session):
 
-> You are resuming as the NL Observability Program orchestrator on this machine
-> (`C:\Users\misha\dev\Pocket Technician\neural-lace`, main checkout). Read
-> `SCRATCHPAD.md`, then `docs/HANDOFF.md`, then `docs/reviews/wave-o-retro.md`. The
+> You are resuming as the NL Observability Program orchestrator (neural-lace repo, in a
+> fresh worktree off master). Read `SCRATCHPAD.md`, then `docs/HANDOFF.md`, then
+> `docs/reviews/wave-o-retro.md`. The
 > program is COMPLETE on master `f727fe5`; the cockpit is live on :7733. Your immediate
 > job is the one in-flight item in HANDOFF.md — verify + harness-review + integrate
 > `build/cockpit-sessionstart @ afdedee` (SessionStart cockpit-ensure), then unregister
