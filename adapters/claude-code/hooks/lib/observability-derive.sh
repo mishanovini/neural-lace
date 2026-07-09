@@ -690,31 +690,40 @@ od_sessions() {
     local waiting=0
     [[ -n "${_od_waiting_set[$sid]:-}" ]] && waiting=1
 
+    # PERFORMANCE (this task, O.3 hb-perf fix — sibling to the O.3 index
+    # fix above): resolve this session's transcript path ONCE via the
+    # _OD_TRANSCRIPT_INDEX already built at the top of this function (O(1)
+    # hash lookup), and hand it to hb_classify so session-heartbeat-lib.sh
+    # never runs its OWN independent per-session full-tree `find`
+    # (_hb_find_transcript, via hb_classify -> hb_is_stale ->
+    # _hb_transcript_fresh_min). Measured ~9.2s remaining wall time for
+    # `nl status` on this machine's real 305-transcript/34-heartbeat
+    # estate was entirely this redundant sibling-file find, on top of the
+    # od_sessions-side index fix already landed (530b675). Passed
+    # unconditionally (even when empty — "no transcript for this sid" is
+    # itself a fact the index already established) so hb_classify never
+    # falls back to its own find; see hb_classify's own header for the
+    # argument-count-vs-value contract this relies on. Does NOT change
+    # WHAT hb_classify decides (the C1 transcript-mtime join is untouched
+    # in session-heartbeat-lib.sh), only HOW it resolves the path.
+    local sid_transcript; sid_transcript="$(_od_find_transcript "$sid")"
+
     local hbcls="missing"
     if [[ -n "$hbfile" ]]; then
       if _od_have hb_classify; then
-        hbcls="$(hb_classify "$hbfile" "$OBS_STALE_MIN")"
+        hbcls="$(hb_classify "$hbfile" "$OBS_STALE_MIN" "$sid_transcript")"
       else
         hbcls="live"
       fi
     fi
 
-    # PERFORMANCE (fix c, O.3 perf fix): only resolve a transcript path at
-    # all when there is NO local heartbeat file — the heartbeat, when
-    # present, is C1's fresher signal (session-heartbeat-lib.sh's own
-    # mid-turn-fresh join already prefers it over a raw transcript mtime),
-    # so a session WITH a heartbeat never needs its transcript looked up
-    # here: _od_session_last_activity below independently prefers the
-    # heartbeat's last_activity_ts and only falls back to the transcript
-    # (via the same O(1) index) when that field is absent, and the
-    # 'blocked' derivation below is keyed off last_activity_epoch (not a
-    # separate transcript-mtime probe) for the same reason. transcript_file
-    # is only actually consumed further down by the unobserved-cloud
-    # branch, which requires an empty $hbfile anyway.
+    # PERFORMANCE (fix c, O.3 perf fix): transcript_file (consumed only by
+    # the unobserved-cloud branch further down, which requires an empty
+    # $hbfile anyway) reuses the SAME already-resolved $sid_transcript
+    # above rather than a second _od_find_transcript call — both are O(1)
+    # against the index now, this just avoids the redundant lookup.
     local transcript_file=""
-    if [[ -z "$hbfile" ]]; then
-      transcript_file="$(_od_find_transcript "$sid")"
-    fi
+    [[ -z "$hbfile" ]] && transcript_file="$sid_transcript"
     local last_activity_epoch; last_activity_epoch="$(_od_session_last_activity "$sid" "$hbfile" "$hb_last_activity_ts")"
     local last_block_epoch="${_OD_BLOCK_EPOCH_BY_SID[$sid]:-0}"
     local last_throttle_epoch="${_OD_THROTTLE_EPOCH_BY_SID[$sid]:-0}"

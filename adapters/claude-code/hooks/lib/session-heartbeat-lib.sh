@@ -323,13 +323,33 @@ _hb_find_transcript() {
 }
 
 # ----------------------------------------------------------------------
-# _hb_transcript_fresh_min <session-id> — prints the transcript's age in
-# minutes (mtime vs now), or empty if no transcript is found for this
-# session id. Never errors.
+# _hb_transcript_fresh_min <session-id> [transcript-path] — prints the
+# transcript's age in minutes (mtime vs now), or empty if no transcript
+# is found for this session id. Never errors.
+#
+# OPTIONAL 2ND ARG (O.3 hb-perf fix — see file header "WHY THIS EXISTS"
+# for the sibling-file duplication this closes): when the caller already
+# knows the transcript path (od_sessions resolves it via its own O(1)
+# _OD_TRANSCRIPT_INDEX, built once per `nl status` call instead of a
+# full-tree `find` PER SESSION), it can pass that path directly and this
+# function skips _hb_find_transcript's own full-tree find entirely.
+# Distinguished by ARGUMENT COUNT, not by the value being non-empty: an
+# explicitly-passed EMPTY string ("no transcript exists for this sid",
+# per the caller's own index) is honored as-is and must NOT fall back to
+# a local find (that find would re-scan the whole tree only to confirm
+# the same absence the caller's index already established). Omit the
+# arg entirely for unchanged standalone behavior (still correct, just
+# resolves its own path via _hb_find_transcript) — this is what
+# session-heartbeat.sh's `sweep` verb and harness-doctor.sh's
+# heartbeats-fresh check both do today, and continue to do unmodified.
 # ----------------------------------------------------------------------
 _hb_transcript_fresh_min() {
   local sid="$1" tf mtime now_epoch
-  tf="$(_hb_find_transcript "$sid")"
+  if [[ $# -ge 2 ]]; then
+    tf="$2"
+  else
+    tf="$(_hb_find_transcript "$sid")"
+  fi
   [[ -n "$tf" && -f "$tf" ]] || { printf ''; return 0; }
   mtime="$(date -u -r "$tf" +%s 2>/dev/null || stat -c %Y "$tf" 2>/dev/null || stat -f %m "$tf" 2>/dev/null || echo 0)"
   [[ "$mtime" -gt 0 ]] || { printf ''; return 0; }
@@ -338,12 +358,13 @@ _hb_transcript_fresh_min() {
 }
 
 # ----------------------------------------------------------------------
-# hb_is_stale <file> [stale-min] — exit 0 (true) if the heartbeat file's
-# last_activity_ts is older than <stale-min> (default $OBS_STALE_MIN,
-# else 30) minutes ago AND there is no fresher transcript activity for
-# this session (C1's actual read-side contract: "stale = last_activity_ts
-# old AND no fresh transcript mtime for that session"). A missing file
-# is treated as stale (exit 0) — there is nothing fresher to report.
+# hb_is_stale <file> [stale-min] [transcript-path] — exit 0 (true) if the
+# heartbeat file's last_activity_ts is older than <stale-min> (default
+# $OBS_STALE_MIN, else 30) minutes ago AND there is no fresher transcript
+# activity for this session (C1's actual read-side contract: "stale =
+# last_activity_ts old AND no fresh transcript mtime for that session").
+# A missing file is treated as stale (exit 0) — there is nothing fresher
+# to report.
 #
 # WHY THE TRANSCRIPT JOIN (nl-issues 2026-07-07 mid-turn false-stall):
 # heartbeats only refresh at Stop (`touch --event turn-end`) — a long
@@ -356,11 +377,21 @@ _hb_transcript_fresh_min() {
 # the heartbeat cadence. A session is genuinely stale only when BOTH
 # signals agree nothing fresh has happened.
 #
+# OPTIONAL 3RD ARG <transcript-path> (O.3 hb-perf fix): threaded straight
+# through to _hb_transcript_fresh_min — see that function's header for
+# the argument-count-vs-value distinction (an explicit empty string is
+# honored, not treated as "not passed"). Omit for unchanged behavior.
+#
 # Never errors.
 # ----------------------------------------------------------------------
 hb_is_stale() {
   local file="$1"
   local stale_min="${2:-$OBS_STALE_MIN}"
+  local transcript_path_given=0 transcript_path=""
+  if [[ $# -ge 3 ]]; then
+    transcript_path_given=1
+    transcript_path="$3"
+  fi
   [[ -f "$file" ]] || return 0
 
   local ts epoch now_epoch age_min
@@ -379,7 +410,11 @@ hb_is_stale() {
   local sid transcript_age_min
   sid="$(_hb_field "$file" "session_id")"
   if [[ -n "$sid" ]]; then
-    transcript_age_min="$(_hb_transcript_fresh_min "$sid")"
+    if [[ "$transcript_path_given" == "1" ]]; then
+      transcript_age_min="$(_hb_transcript_fresh_min "$sid" "$transcript_path")"
+    else
+      transcript_age_min="$(_hb_transcript_fresh_min "$sid")"
+    fi
     if [[ -n "$transcript_age_min" ]] && [[ "$transcript_age_min" -le "$stale_min" ]]; then
       return 1
     fi
@@ -388,8 +423,9 @@ hb_is_stale() {
 }
 
 # ----------------------------------------------------------------------
-# hb_classify <file> [stale-min] — print one of: live | stale | crashed |
-# missing. Never errors, always prints exactly one word.
+# hb_classify <file> [stale-min] [transcript-path] — print one of: live |
+# stale | crashed | missing. Never errors, always prints exactly one
+# word.
 #
 #   missing  - file does not exist.
 #   crashed  - stale (per hb_is_stale) AND the recorded pid is not alive.
@@ -397,6 +433,22 @@ hb_is_stale() {
 #              process, or a pid reused by an unrelated process — the
 #              distinction the sketch's "stalled" state maps onto).
 #   live     - not stale.
+#
+# OPTIONAL 3RD ARG <transcript-path> (O.3 hb-perf fix — eliminates the
+# redundant per-session full-tree `find` this lib used to run
+# independently of observability-derive.sh's own od_sessions index; see
+# _hb_transcript_fresh_min's header for the full rationale): a caller
+# that already resolved this session's transcript path (od_sessions, via
+# its O(1) _OD_TRANSCRIPT_INDEX built once per `nl status` call) passes
+# it here and hb_is_stale/_hb_transcript_fresh_min use it directly
+# instead of re-deriving it via _hb_find_transcript. Distinguished by
+# ARGUMENT COUNT: pass "" explicitly when the caller's index already
+# proved no transcript exists for this sid (honored as-is, no fallback
+# find). Omit the arg entirely for unchanged standalone behavior — every
+# OTHER caller (session-heartbeat.sh's `sweep` verb, harness-doctor.sh's
+# heartbeats-fresh check) calls this with 1-2 args and is unaffected;
+# this does NOT change WHAT hb_classify decides, only HOW it finds the
+# transcript when a caller already knows the path.
 # ----------------------------------------------------------------------
 hb_classify() {
   local file="$1"
@@ -407,7 +459,16 @@ hb_classify() {
     return 0
   fi
 
-  if hb_is_stale "$file" "$stale_min"; then
+  local stale_rc
+  if [[ $# -ge 3 ]]; then
+    hb_is_stale "$file" "$stale_min" "$3"
+    stale_rc=$?
+  else
+    hb_is_stale "$file" "$stale_min"
+    stale_rc=$?
+  fi
+
+  if [[ "$stale_rc" -eq 0 ]]; then
     local pid
     pid="$(_hb_field "$file" "pid")"
     if _hb_pid_alive "$pid"; then
@@ -589,6 +650,68 @@ EOF
     pass "hb_classify: dead pid + no fresh transcript -> crashed (unchanged by the transcript-mtime join)"
   else
     fail "hb_classify: dead-pid+stale-transcript case regressed away from 'crashed'"
+  fi
+
+  echo "Scenario 6d: hb_classify — a caller-supplied transcript path (O.3 hb-perf fix) skips _hb_find_transcript entirely and matches the find-based verdict"
+  (
+    export OBS_TRANSCRIPTS_ROOT="$TMP/transcripts-perf"
+    mkdir -p "$OBS_TRANSCRIPTS_ROOT"
+    # Same mid-turn shape as scenario 6b: heartbeat old + pid alive (this
+    # test's own $$) + transcript fresh -> must classify live either way.
+    cat > "$HEARTBEAT_STATE_DIR/sess-perf.json" <<EOF
+{"schema":1,"session_id":"sess-perf","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+    printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-perf.jsonl"
+
+    # Baseline: no path passed -> unchanged behavior, falls back to this
+    # lib's own _hb_find_transcript (a full-tree find).
+    cls_find="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-perf.json" 30)"
+
+    # Instrument _hb_find_transcript (shadow it in this subshell only) to
+    # prove it is NEVER invoked when a caller (e.g. od_sessions, which
+    # already resolved the path via its own O(1) index) passes the
+    # transcript path as hb_classify's optional 3rd arg.
+    FIND_CALLS=0
+    _hb_find_transcript() { FIND_CALLS=$((FIND_CALLS+1)); printf ''; }
+
+    resolved_path="$OBS_TRANSCRIPTS_ROOT/sess-perf.jsonl"
+    cls_passed="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-perf.json" 30 "$resolved_path")"
+
+    [[ "$cls_find" == "live" ]] || exit 1
+    [[ "$cls_passed" == "live" ]] || exit 2
+    [[ "$cls_find" == "$cls_passed" ]] || exit 3
+    [[ "$FIND_CALLS" == "0" ]] || exit 4
+    exit 0
+  )
+  rc_perf=$?
+  if [[ "$rc_perf" -eq 0 ]]; then
+    pass "hb_classify: passed-in transcript path skips _hb_find_transcript entirely and matches the find-based verdict (live == live)"
+  else
+    fail "hb_classify passed-in-path scenario failed (rc=$rc_perf): verdict or find-call-count check did not hold"
+  fi
+
+  echo "Scenario 6e: hb_classify — an explicitly-EMPTY passed-in transcript path (index says 'no transcript exists') is honored as-is, no find fallback, and correctly still classifies crashed/stale (not incorrectly rescued to live)"
+  (
+    export OBS_TRANSCRIPTS_ROOT="$TMP/transcripts-perf-empty"
+    mkdir -p "$OBS_TRANSCRIPTS_ROOT"
+    dead_pid=""
+    ( : ) & dead_pid=$!
+    wait "$dead_pid" 2>/dev/null
+    cat > "$HEARTBEAT_STATE_DIR/sess-perf-crashed.json" <<EOF
+{"schema":1,"session_id":"sess-perf-crashed","pid":$dead_pid,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+    FIND_CALLS=0
+    _hb_find_transcript() { FIND_CALLS=$((FIND_CALLS+1)); printf ''; }
+    cls="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-perf-crashed.json" 30 "")"
+    [[ "$cls" == "crashed" ]] || exit 1
+    [[ "$FIND_CALLS" == "0" ]] || exit 2
+    exit 0
+  )
+  rc_empty=$?
+  if [[ "$rc_empty" -eq 0 ]]; then
+    pass "hb_classify: explicit empty transcript-path arg is honored (no find fallback) and still classifies crashed correctly"
+  else
+    fail "hb_classify: explicit empty transcript-path arg scenario failed (rc=$rc_empty)"
   fi
 
   echo "Scenario 7: hb_write never blocks even on an unwritable target"
