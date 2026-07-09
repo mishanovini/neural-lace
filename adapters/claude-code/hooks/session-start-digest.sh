@@ -855,11 +855,20 @@ feed_staleness_proposals() {
 #   - ESCALATION TRIGGER (env-tunable; either condition fires it):
 #       (a) fester count (INCLUDING this digest) >= BACKLOG_ESCALATION_DIGESTS
 #           (default 3), OR
-#       (b) age crosses a hard bound tighter than the normal overdue
-#           tier — BACKLOG_ESCALATION_AGE_HIGH_DAYS (default 14) for
-#           high-priority rows, BACKLOG_ESCALATION_AGE_MEDIUM_DAYS
-#           (default 30) for medium-priority rows. Low-priority rows
-#           escalate on fester count only (no hard age bound — the
+#       (b) age crosses a hard bound BEYOND the normal overdue tier (a
+#           genuine grace window between "just became overdue, surface
+#           neutrally" and "old enough to hard-escalate on age alone") —
+#           BACKLOG_ESCALATION_AGE_HIGH_DAYS (default 14, vs. the 7-day
+#           high overdue tier) for high-priority rows,
+#           BACKLOG_ESCALATION_AGE_MEDIUM_DAYS (default 60, vs. the
+#           30-day medium overdue tier) for medium-priority rows. Each
+#           default is 2x its own tier, mirroring the high/medium ratio.
+#           MUST stay strictly greater than the matching
+#           BACKLOG_TIER_*_DAYS value in observability-derive.sh's
+#           od_backlog_health — equal defaults would hard-escalate a row
+#           the instant it becomes overdue, collapsing the neutral tier
+#           to nothing (regression caught by S13a/S16b). Low-priority
+#           rows escalate on fester count only (no hard age bound — the
 #           90-day overdue tier is already generous for low, and a
 #           tighter bound would out-nag the operator on a class they
 #           already deliberately deprioritized).
@@ -893,7 +902,7 @@ feed_backlog_accountability() {
   local cap="${BACKLOG_DIGEST_CAP:-3}"
   local esc_digests="${BACKLOG_ESCALATION_DIGESTS:-3}"
   local esc_age_high="${BACKLOG_ESCALATION_AGE_HIGH_DAYS:-14}"
-  local esc_age_medium="${BACKLOG_ESCALATION_AGE_MEDIUM_DAYS:-30}"
+  local esc_age_medium="${BACKLOG_ESCALATION_AGE_MEDIUM_DAYS:-60}"
   local esc_summary_threshold="${BACKLOG_ESCALATION_SUMMARY_THRESHOLD:-2}"
   local isoweek; isoweek="$(date -u '+%G-W%V' 2>/dev/null || echo unknown)"
 
@@ -1597,6 +1606,16 @@ EOF
   # S13c: cap overflow — 5 overdue rows, default cap 3 -> the 3 OLDEST
   # surface + one "+2 more" overflow line; the 2 newest are NOT seen-bumped
   # and surface on the NEXT session (cap never silently eats rows).
+  # Priority deliberately LOW (not high): this scenario tests the cap/
+  # dedup/drain mechanics, which are orthogonal to the BUILD-ESCALATION
+  # tier (S16). Low priority never hard-bound-escalates on age (by
+  # design — see feed_backlog_accountability's esc_age_* comment), and 2
+  # calls never reach the fester-count trigger (esc_digests default 3),
+  # so these rows stay on the neutral path throughout, exactly as before
+  # the escalation tier existed. High-priority 96-100d-old rows would
+  # all instantly hard-bound-escalate (esc_age_high default 14) and
+  # collapse to the escalated summary line instead, which is a real
+  # regression this fixture must not trip.
   local _d100 _d99 _d98 _d97 _d96
   _d100="$(date -u -d '100 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-100d '+%Y-%m-%d' 2>/dev/null)"
   _d99="$(date -u -d '99 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-99d '+%Y-%m-%d' 2>/dev/null)"
@@ -1606,11 +1625,11 @@ EOF
   local s13c="$tmp/s13c"
   mkdir -p "$s13c/docs"
   cat > "$s13c/docs/backlog.md" <<EOF
-- **CAP-A-01 — oldest** (added $_d100; \`priority:high\`). Prose.
-- **CAP-B-01 — second-oldest** (added $_d99; \`priority:high\`). Prose.
-- **CAP-C-01 — third-oldest** (added $_d98; \`priority:high\`). Prose.
-- **CAP-D-01 — fourth** (added $_d97; \`priority:high\`). Prose.
-- **CAP-E-01 — fifth** (added $_d96; \`priority:high\`). Prose.
+- **CAP-A-01 — oldest** (added $_d100; \`priority:low\`). Prose.
+- **CAP-B-01 — second-oldest** (added $_d99; \`priority:low\`). Prose.
+- **CAP-C-01 — third-oldest** (added $_d98; \`priority:low\`). Prose.
+- **CAP-D-01 — fourth** (added $_d97; \`priority:low\`). Prose.
+- **CAP-E-01 — fifth** (added $_d96; \`priority:low\`). Prose.
 EOF
   local s13c_seen="$tmp/s13c-seen.jsonl"
   local out13c
@@ -1666,10 +1685,12 @@ EOF
   _ck_contains "S16a escalated line offers SCHEDULE/DEMOTE/WONTFIX (not the 4-way FOLD form)" "$out16a" "reply SCHEDULE (spawn builder) / or DEMOTE / WONTFIX <reason>"
 
   # S16b: a row that JUST crossed its normal overdue tier (medium, 31d —
-  # over the 30d medium tier but under the 30d escalation hard bound is a
-  # tie against the 30d medium escalation hard bound too) does NOT
-  # escalate on its first digest (fester count 1, under both triggers) —
-  # it surfaces as a plain neutral proposal only.
+  # over the 30d medium overdue tier but well under the 60d medium
+  # escalation hard bound) does NOT escalate on its first digest (fester
+  # count 1, under both the fester-count and age-hard-bound triggers) —
+  # it surfaces as a plain neutral proposal only. This is the regression
+  # this tier must never reintroduce: a row becoming overdue is not the
+  # same event as a row becoming escalation-worthy.
   local s16b="$tmp/s16b"
   mkdir -p "$s16b/docs"
   cat > "$s16b/docs/backlog.md" <<EOF
@@ -1736,13 +1757,17 @@ EOF
   # S16f: multi-escalation summary — more than BACKLOG_ESCALATION_SUMMARY_
   # THRESHOLD (default 2) rows escalated collapses to ONE compact summary
   # line naming only the oldest as the actionable pointer, instead of N
-  # full ESCALATED lines (visual-footprint honesty per spec).
+  # full ESCALATED lines (visual-footprint honesty per spec). All three
+  # rows must actually hard-bound-escalate on their FIRST digest (fester
+  # count 1): C-01 is `high` (not `medium`) at 15d because 15 clears
+  # esc_age_high's default 14 but sits well under esc_age_medium's
+  # default 60 — a medium row here would not escalate at all.
   local s16f="$tmp/s16f"
   mkdir -p "$s16f/docs"
   cat > "$s16f/docs/backlog.md" <<EOF
 - **ESC-MULTI-A-01 — oldest escalated** (added $_d31h; \`priority:high\`). Prose.
 - **ESC-MULTI-B-01 — second escalated** (added $_d15; \`priority:high\`). Prose.
-- **ESC-MULTI-C-01 — third escalated** (added $_d15; \`priority:medium\`). Prose.
+- **ESC-MULTI-C-01 — third escalated** (added $_d15; \`priority:high\`). Prose.
 EOF
   local s16f_seen="$tmp/s16f-seen.jsonl"
   local out16f
