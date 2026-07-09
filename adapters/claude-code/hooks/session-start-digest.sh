@@ -1051,15 +1051,19 @@ run_digest() {
   # ---- COCKPIT-SESSIONSTART CALLSITE: ensure the observability cockpit --
   # Operator directive 2026-07-09: the Workstreams UI node server (port
   # 7733) should be up whenever the operator is in an NL Claude session —
-  # session-tied lifecycle, replacing the `ConversationTreeUI-AutoStart`
-  # logon scheduled task. Folded in here (NOT a new SessionStart hooks[]
-  # entry — that array is already at its 8/8 cap) because this is the
-  # general-purpose SessionStart surfacer every session already runs
-  # through. `cd "$cwd"` first so the digest's own testable cwd-override
-  # argument is honored (mirrors feed_needs_you's nl_main_checkout_root
-  # cwd caveat above); best-effort, never-blocks (ensure-cockpit.sh is
-  # itself OS-gated, self-test-gated, tolerate-absent, and backgrounds its
-  # own real dispatch — see that script's header for the full contract).
+  # session-tied lifecycle replacing the `ConversationTreeUI-AutoStart`
+  # logon scheduled task (retired at integration 2026-07-09 via
+  # register-autostart.ps1 -Unregister; the merge commit records it).
+  # Folded in here (NOT a new SessionStart hooks[] entry — that array is
+  # already at its 8/8 cap) because this is the general-purpose
+  # SessionStart surfacer every session already runs through. Resolution
+  # is MACHINE-WIDE (nl_repo_root config; review fix 2026-07-09) so this
+  # works from ANY project's session; `cd "$cwd"` first so the digest's
+  # testable cwd-override argument is honored on the script's session-cwd
+  # FALLBACK branch (mirrors feed_needs_you's nl_main_checkout_root cwd
+  # caveat above); best-effort, never-blocks (ensure-cockpit.sh is itself
+  # kill-switchable, OS-gated, self-test-gated, tolerate-absent, and
+  # backgrounds its own real dispatch — see that script's header).
   ( cd "$cwd" 2>/dev/null && "$HOOKS_DIR/../scripts/ensure-cockpit.sh" >/dev/null 2>&1 ) || true
   # ---- END COCKPIT-SESSIONSTART CALLSITE ------------------------------
 
