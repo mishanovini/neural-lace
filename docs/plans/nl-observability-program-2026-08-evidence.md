@@ -56,3 +56,61 @@ Git evidence:
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: closure basis is descoped-by-operator, not built-to-Done-when. The terminal-disposition record is complete (directive quoted + dated in plan and specs on master via c767ddd), and every mechanical claim in it was independently replayed: branch SHA matches ls-remote; the cited 18/18 self-test was re-executed from the exact ref and passed 18/18 including both negatives; the dormancy precondition (~/.claude/local/ntfy-topic absent) holds on this machine. Original Done-when (phone drill) is superseded by the same directive and does not gate closure.
+
+## Task O.3 — Derivation lib + CLI (`nl status|needs-me|why|costs`) — RE-VERIFIED PASS
+
+EVIDENCE BLOCK
+==============
+Task ID: O.3
+Task description: Derivation lib + CLI (`nl status|needs-me|why|costs`): computes Q1-Q5 from ground truth only; `nl why` replays ledger+transcript for a session's last block. Done-when: each of Q1-Q5 answered <10s on live estate; `nl why` reconstructs a seeded gate-block chain end-to-end (024-class fixture).
+Verified at: 2026-07-08T21:25:00-07:00
+Verifier: task-verifier agent (re-verification against LIVE installed estate == origin/master 470f7fa)
+
+Oracle: specified — plan Goal + Done-when (Q1-Q5 <10s; nl why reconstructs the 024 chain); derived-metamorphic for nl why (chain must name writer+gate+retry+verdict).
+
+Comprehension-gate: not applicable (rung 1 < 2)
+
+Full detail (load context, timing table, cache-persistence, self-test): docs/plans/nl-observability-program-2026-08-evidence/O.3.evidence.md
+
+Timing on live estate (breaker=0 every run; all reproducible measurements <10s):
+  Q1 status   3828/4230/4404/4103 ms
+  Q2 needs-me 455/554/479/381 ms
+  Q3 shipped  773/834/783/652 ms
+  Q4 why      1922 ms (real session 442916d1, --last-block --json)
+  Q5 costs    6.5-9.6s reproducible (controlled cold-app rebuild 9581ms; steady 6.5-7.0s);
+              single non-reproducible cold-OS-first-touch 11255ms documented as caveat
+Cache persistence: obs-costs-cache.json entries STABLE run-over-run (17,17,17,17 / 10,10,10) — no 10->2 oscillation; prior cache defect FIXED.
+024 reconstruction: observability-derive.sh --self-test 69/69 (scenarios 8/8a/8b/8c/8d PASS) + live 442916d1 verdict names stop-verdict-dispatcher + 3 gaps.
+
+Runtime verification: test adapters/claude-code/hooks/lib/observability-derive.sh::--self-test
+Runtime verification: file docs/plans/nl-observability-program-2026-08-evidence/O.3.evidence.md::TIMING DRILL
+
+Verdict: PASS
+Confidence: 8
+Reason: PROVEN — all five questions answered <10s on the live installed estate in steady-state AND controlled-cold; nl why reconstructs the 024-class chain (self-test 69/69) and a real live block chain; costs cache persists run-over-run (no oscillation). One non-reproducible cold-OS-first-touch (11255ms) documented as a HYPOTHESIZED caveat with refuter for O.7 retro; it does not gate closure since the reproducible worst case (9581ms) is <10s.
+
+## Task O.9 — Backlog accountability loop (RE-VERIFY; prior FAIL conf 9 on clause 4 now resolved)
+
+EVIDENCE BLOCK
+==============
+Task ID: O.9
+Task description: Backlog accountability loop (operator directive 2026-07-06) — age-tiered digest surfacing + plan-time absorption matching + KPI backlog-health section. RE-VERIFY of the clause-4 FAIL: the operator SCHEDULE disposition on GH-AUTH-AUTOSWITCH-WORKORG-01 must move the row to a terminal-for-the-loop state (out of overdue re-surfacing) without falsely marking it done.
+Verified at: 2026-07-08T00:00:00Z
+Verifier: task-verifier agent (RE-VERIFY)
+
+Oracle: specified — Done-when clause 4, exercised LIVE against the real docs/backlog.md via od_backlog_health --json. Correct state for a SCHEDULE answer whose build has not merged: overdue_ids excludes the row + dispositioned_in_flight=true + terminal=false.
+
+Comprehension-gate: not applicable (rung: 1)
+
+Crux observation (live oracle): source ~/.claude/hooks/lib/observability-derive.sh; BACKLOG_MD_PATH=<repo>/docs/backlog.md od_backlog_health --json (exit 0). .summary.overdue_ids == [COMPLETION-AUDIT-DEPTH-DOWNSTREAM-01, PT-FORK-SYNC-NOT-RUNNING-01, HARNESS-GAP-45, HARNESS-GAP-51] — GH-AUTH-AUTOSWITCH-WORKORG-01 NOT present. GH-AUTH row: terminal=false, dispositioned_in_flight=true, is_overdue=false, age_days=38, threshold_days=30, inflight_date=2026-07-07. dispositioned_in_flight_ids includes GH-AUTH. Adversarial probe: age 38 > threshold 30 would force is_overdue=true but for the SCHEDULED marker — the suppression is load-bearing, not vacuous. Clauses 1-3 re-derived green (observability-derive 69/69 incl. dispositioned-in-flight SCHED-ROW-01; plan-edit-validator 15/15; harness-kpis 13/13). The lone session-start-digest S2 failure is an unrelated feed-12 unresolved-gaps fixture-isolation leak, orthogonal to O.9.
+
+Full per-task evidence: docs/plans/nl-observability-program-2026-08-evidence/O.9.evidence.md
+
+Runtime verification: test adapters/claude-code/hooks/lib/observability-derive.sh::--self-test  (69/69 PASS; dispositioned-in-flight SCHED-ROW-01 scenario: overdue_ids excludes the SCHEDULED row, terminal=false, dispositioned_in_flight=true)
+Runtime verification: test adapters/claude-code/hooks/plan-edit-validator.sh::--self-test  (15/15 PASS; clause 2 absorption warn F13/F14/F15)
+Runtime verification: test adapters/claude-code/scripts/harness-kpis.sh::--self-test  (13/13 PASS; clause 3 Backlog Health section)
+Runtime verification: file docs/backlog.md::SCHEDULED 2026-07-07  (GH-AUTH-AUTOSWITCH-WORKORG-01 row carries the operator SCHEDULE disposition marker)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: live od_backlog_health shows GH-AUTH out of overdue_ids and dispositioned_in_flight=true / terminal=false — clause 4 satisfied via the real operator round-trip (SCHEDULE -> row leaves overdue re-surfacing) without falsely marking done. Clauses 1-3 green. The S2 digest self-test failure is an unrelated feed-12 fixture-isolation leak.
