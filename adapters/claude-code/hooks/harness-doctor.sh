@@ -1232,26 +1232,48 @@ check_obs_consumer_map() {
 # ------------------------------------------------------------
 # Check: obs-cockpit-fresh (specs-o §O.6 item 5). WARN-only, never RED
 # (per specs-o §O.6 exactly). GREEN when the cockpit is intentionally not
-# running (optional per machine). Fires only when NL-workstreams-cockpit
-# is registered for autostart AND sessions are live AND the derived-cache
-# stamp is >60min stale.
+# running (optional per machine). Fires only when the cockpit's launch
+# mechanism is installed AND sessions are live AND the cockpit does not
+# answer an HTTP probe on its port.
+#
+# Gate 1 — cockpit code present: ${repo_root}/neural-lace/workstreams-ui/
+# server (the ACTUAL O.4 build location; the spec's `workstreams-ui/**`
+# root-level path was never where the build landed — checking the flat
+# path made this gate permanently false, nl-issue [56] drift layer 2).
+# Gate 2 — launch mechanism installed: ${live_home}/scripts/
+# ensure-cockpit.sh — the session-tied SessionStart ensure (invoked from
+# session-start-digest.sh -> launch-gui.ps1) that replaced logon
+# scheduled tasks. History (nl-issue [56] drift layer 1): this check
+# originally gated on `schtasks /Query /TN "NL-workstreams-cockpit"`, a
+# task name nothing ever registered (vs the actual
+# ConversationTreeUI-AutoStart task) — so the WARN could never fire. The
+# logon task itself was then retired in the cockpit-sessionstart
+# integration (bf2b8c7, 2026-07-09, unregistered + verified gone per
+# docs/HANDOFF.md), making ensure-cockpit.sh presence the canonical
+# "cockpit expected here" signal.
+# Liveness — direct HTTP probe of http://127.0.0.1:7733/ (the server's
+# fixed default; launch-gui.ps1 -Port default matches). The spec designed
+# a derived-cache stamp read here, but no stamp producer was ever built
+# (verified 2026-07-09: zero `derived-cache-stamp` writers repo-wide and
+# in the running server tree) — the stamp branch could only false-WARN on
+# a healthy cockpit. The probe observes the real user-facing surface
+# instead. Self-test controls it via a PATH-injected `curl` stub (same
+# idiom as the retired schtasks stub).
 # ------------------------------------------------------------
 check_obs_cockpit_fresh() {
   local live_home="$1" repo_root="$2"
   local cockpit_dir=""
-  [[ -n "$repo_root" && -d "${repo_root}/workstreams-ui/server" ]] \
-    && cockpit_dir="${repo_root}/workstreams-ui/server"
+  [[ -n "$repo_root" && -d "${repo_root}/neural-lace/workstreams-ui/server" ]] \
+    && cockpit_dir="${repo_root}/neural-lace/workstreams-ui/server"
 
   if [[ -z "$cockpit_dir" ]]; then
     CHECKS_RUN=$((CHECKS_RUN + 1))
     return 0
   fi
 
-  local registered=0
-  if command -v schtasks >/dev/null 2>&1; then
-    MSYS_NO_PATHCONV=1 schtasks /Query /TN "NL-workstreams-cockpit" >/dev/null 2>&1 && registered=1
-  fi
-  if [[ "$registered" -eq 0 ]]; then
+  # Session-tied launch mechanism absent -> cockpit not expected on this
+  # machine (e.g. non-Windows, or ensure never installed): GREEN skip.
+  if [[ -z "$live_home" || ! -f "${live_home}/scripts/ensure-cockpit.sh" ]]; then
     CHECKS_RUN=$((CHECKS_RUN + 1))
     return 0
   fi
@@ -1272,18 +1294,14 @@ check_obs_cockpit_fresh() {
     return 0
   fi
 
-  local stamp="${live_home}/state/workstreams-cache/derived-cache-stamp.txt"
-  if [[ ! -f "$stamp" ]]; then
-    _warn "obs-cockpit-fresh" "cockpit registered for autostart (NL-workstreams-cockpit) and sessions are live, but no derived-cache stamp found at ${stamp} — cockpit server may not be running or has never refreshed"
+  # No curl on this machine: liveness unobservable -> GREEN skip (this
+  # predicate is WARN-only best-effort; never guess).
+  if ! command -v curl >/dev/null 2>&1; then
     CHECKS_RUN=$((CHECKS_RUN + 1))
     return 0
   fi
-
-  local stamp_mtime stamp_age_min
-  stamp_mtime=$(stat -c %Y "$stamp" 2>/dev/null || stat -f %m "$stamp" 2>/dev/null || echo 0)
-  stamp_age_min=$(( (now_epoch - stamp_mtime) / 60 ))
-  if [[ "$stamp_age_min" -gt 60 ]]; then
-    _warn "obs-cockpit-fresh" "cockpit derived-cache stamp is ${stamp_age_min}min old (budget 60min) while sessions are live and autostart is registered — cockpit may be stalled; check workstreams-ui/server process"
+  if ! curl -s -o /dev/null --max-time 3 "http://127.0.0.1:7733/" 2>/dev/null; then
+    _warn "obs-cockpit-fresh" "cockpit is not answering on http://127.0.0.1:7733/ while sessions are live and the launch mechanism (scripts/ensure-cockpit.sh) is installed — cockpit may be down or stalled; the next SessionStart digest re-ensures it, or run neural-lace/workstreams-ui/scripts/launch-gui.ps1"
   fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
@@ -3320,30 +3338,24 @@ EOF
   fi
 
   # ---- obs-cockpit-fresh: WARN-analog (this predicate is never RED) —
-  # cockpit registered, sessions live, stamp stale ----
+  # launch mechanism installed (live scripts/ensure-cockpit.sh — the
+  # session-tied ensure that replaced the retired logon schtask, nl-issue
+  # [56]), sessions live, cockpit NOT answering (curl PATH stub exits 7,
+  # curl's real connection-refused code) ----
   D=$(_scenario_dir o6-cockpit-warn)
   _stamp_claim_honesty_green "$D"
-  mkdir -p "$D/repo/workstreams-ui/server" "$D/live/state/heartbeats" "$D/live/state/workstreams-cache"
-  printf 'stub\n' > "$D/repo/workstreams-ui/server/server.js"
+  mkdir -p "$D/repo/neural-lace/workstreams-ui/server" "$D/live/state/heartbeats" \
+           "$D/live/scripts" "$D/fakebin"
+  printf 'stub\n' > "$D/repo/neural-lace/workstreams-ui/server/server.js"
+  printf '#!/bin/bash\n# fixture stub of ensure-cockpit.sh\n' > "$D/live/scripts/ensure-cockpit.sh"
   printf '{"schema":1}\n' > "$D/live/state/heartbeats/sess-x.json"
   touch "$D/live/state/heartbeats/sess-x.json"
-  : > "$D/live/state/workstreams-cache/derived-cache-stamp.txt"
-  touch -d '2 hours ago' "$D/live/state/workstreams-cache/derived-cache-stamp.txt" 2>/dev/null \
-    || touch -A -020000 "$D/live/state/workstreams-cache/derived-cache-stamp.txt" 2>/dev/null || true
-  mkdir -p "$D/fakebin"
-  cat > "$D/fakebin/schtasks" <<'STUBEOF'
-#!/bin/bash
-for a in "$@"; do
-  if [[ "$a" == "NL-workstreams-cockpit" ]]; then exit 0; fi
-done
-exit 0
-STUBEOF
-  chmod +x "$D/fakebin/schtasks"
+  printf '#!/bin/bash\nexit 7\n' > "$D/fakebin/curl"
+  chmod +x "$D/fakebin/curl"
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(PATH="$D/fakebin:$PATH" _run_quick "$D")"; RC=$?
-  # Never RED (max severity is WARN) regardless of whether the stamp-age
-  # arithmetic landed >60min on this platform's touch fallback.
+  # Never RED (max severity is WARN).
   if printf '%s' "$OUT" | grep -q "RED obs-cockpit-fresh"; then
     echo "self-test (o6-obs-cockpit-fresh-never-red): FAIL (obs-cockpit-fresh must never RED)" >&2
     FAILED=$((FAILED + 1))
@@ -3352,6 +3364,65 @@ STUBEOF
     PASSED=$((PASSED + 1))
   fi
   _assert "o6-obs-cockpit-fresh-warn-rc" 0 "$RC" "" "$OUT"
+  # The [56] naming-drift bug made this WARN unreachable (gate queried a
+  # schtask name nothing registered; gate 1 checked a repo path where the
+  # cockpit never lived) — prove the WARN now actually fires.
+  if printf '%s' "$OUT" | grep -q "WARN obs-cockpit-fresh"; then
+    echo "self-test (o6-obs-cockpit-fresh-warn-fires): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (o6-obs-cockpit-fresh-warn-fires): FAIL (mechanism installed + live session + probe down did not WARN)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- obs-cockpit-fresh: GREEN — healthy cockpit (probe answers; curl
+  # stub exits 0): must NOT warn. This is the operator's normal state —
+  # the false-positive guard for the probe design ----
+  D=$(_scenario_dir o6-cockpit-green-up)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/neural-lace/workstreams-ui/server" "$D/live/state/heartbeats" \
+           "$D/live/scripts" "$D/fakebin"
+  printf 'stub\n' > "$D/repo/neural-lace/workstreams-ui/server/server.js"
+  printf '#!/bin/bash\n# fixture stub of ensure-cockpit.sh\n' > "$D/live/scripts/ensure-cockpit.sh"
+  printf '{"schema":1}\n' > "$D/live/state/heartbeats/sess-x.json"
+  touch "$D/live/state/heartbeats/sess-x.json"
+  printf '#!/bin/bash\nexit 0\n' > "$D/fakebin/curl"
+  chmod +x "$D/fakebin/curl"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(PATH="$D/fakebin:$PATH" _run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -qE "(RED|WARN) obs-cockpit-fresh"; then
+    echo "self-test (o6-obs-cockpit-fresh-green-up): FAIL (warned although the probe answered)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-obs-cockpit-fresh-green-up): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+  _assert "o6-obs-cockpit-fresh-green-up-rc" 0 "$RC" "" "$OUT"
+
+  # ---- obs-cockpit-fresh: GREEN — mechanism-absent gate (nl-issue [56]
+  # regression): cockpit dir present, sessions live, probe would fail,
+  # but NO live scripts/ensure-cockpit.sh -> cockpit is not expected on
+  # this machine; the check must stay silent ----
+  D=$(_scenario_dir o6-cockpit-green-nomech)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/neural-lace/workstreams-ui/server" "$D/live/state/heartbeats" "$D/fakebin"
+  printf 'stub\n' > "$D/repo/neural-lace/workstreams-ui/server/server.js"
+  printf '{"schema":1}\n' > "$D/live/state/heartbeats/sess-x.json"
+  touch "$D/live/state/heartbeats/sess-x.json"
+  printf '#!/bin/bash\nexit 7\n' > "$D/fakebin/curl"
+  chmod +x "$D/fakebin/curl"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(PATH="$D/fakebin:$PATH" _run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -qE "(RED|WARN) obs-cockpit-fresh"; then
+    echo "self-test (o6-obs-cockpit-fresh-green-nomech): FAIL (fired without ensure-cockpit.sh installed)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-obs-cockpit-fresh-green-nomech): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+  _assert "o6-obs-cockpit-fresh-green-nomech-rc" 0 "$RC" "" "$OUT"
 
   # ---- obs-cockpit-fresh: GREEN — the common case (workstreams-ui not
   # installed at all) ----

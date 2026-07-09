@@ -44,6 +44,14 @@
 #   --body=<value>          (both quoted + bare-token shapes)
 #   --body "$(cat <<EOF ... EOF)" and <<'EOF' / <<"EOF" / arbitrary tag
 #   --body-file <path>      (relative path resolves vs repo root)
+#   --body-file "$VAR/path" (unexpanded shell construct — nl-issue 59:
+#                           conservative env-only expansion is attempted
+#                           ($VAR/${VAR}/leading ~, from the hook's own
+#                           environment; NEVER command substitution). If
+#                           expansion resolves to an existing file it is
+#                           validated normally; otherwise the existence
+#                           test is SKIPPED (the gate cannot statically
+#                           know the runtime path) — no false WARN.
 #   --body-file -           (stdin — not supported; BLOCKS with hint)
 #   --fill                  (gh derives body from commit messages) → PASS
 #                           through (the existing pre-push hook handles
@@ -103,12 +111,69 @@ ${body}" \
 }
 
 # ============================================================
+# _ptig_expand_path <path> — conservative env-only expansion (nl-issue 59).
+#
+# Expands a leading `~` (to $HOME) and `$VAR` / `${VAR}` occurrences
+# where VAR is defined in the hook's own environment. NEVER performs
+# command substitution (`$(...)` or backticks → refuse immediately).
+# Echoes the expanded path and returns 0 only when NO unexpanded
+# construct remains; returns 1 when any construct is unresolvable
+# (undefined var, `~user` form, `${VAR:-...}` operators, `$(`, backtick).
+# ============================================================
+_ptig_expand_path() {
+  local p="$1"
+  # Command substitution: never attempt (could hide arbitrary commands).
+  if [[ "$p" == *'$('* ]] || [[ "$p" == *'`'* ]]; then
+    return 1
+  fi
+  # Leading tilde: bare `~` or `~/...` → $HOME; `~user` form → unresolvable.
+  if [[ "${p:0:1}" == "~" ]]; then
+    if [[ "$p" == "~" ]] || [[ "${p:1:1}" == "/" ]]; then
+      p="${HOME}${p:1}"
+    else
+      return 1
+    fi
+  fi
+  local guard=0 m var
+  while [[ "$p" == *'$'* ]]; do
+    guard=$((guard + 1))
+    if [[ $guard -gt 16 ]]; then
+      return 1
+    fi
+    if [[ "$p" =~ \$\{[A-Za-z_][A-Za-z0-9_]*\} ]]; then
+      m="${BASH_REMATCH[0]}"
+      var="${m:2:${#m}-3}"
+    elif [[ "$p" =~ \$[A-Za-z_][A-Za-z0-9_]* ]]; then
+      m="${BASH_REMATCH[0]}"
+      var="${m:1}"
+    else
+      # A `$` that is not a plain $VAR/${VAR} reference (e.g. ${VAR:-x},
+      # trailing `$`) — unresolvable conservatively.
+      return 1
+    fi
+    if [[ -z "${!var+x}" ]]; then
+      # Variable not defined in the hook's environment.
+      return 1
+    fi
+    # Replacement quoted: under bash>=5.2 patsub_replacement, an unquoted
+    # replacement re-expands `&` to the matched pattern (harness-reviewer
+    # finding, proven on this machine's bash 5.2.37).
+    p="${p/"$m"/"${!var}"}"
+  done
+  printf '%s\n' "$p"
+  return 0
+}
+
+# ============================================================
 # extract_body_from_command — parse the inline body from the
 # tokenized `gh pr create/edit` invocation.
 #
 # Echoes the body content to stdout. Returns 0 on successful
 # extraction OR 0 with empty stdout when no body source is present.
 # Returns 2 on a body-file path that does not exist or stdin (`-`).
+# Returns 3 (BODY_FILE_UNEXPANDABLE sentinel) on a body-file path
+# containing an unexpanded shell construct the hook cannot resolve
+# from its own environment — caller skips the existence test.
 #
 # Implementation note: uses bash parameter expansion (not sed) because
 # `sed` operates line-by-line and cannot capture multi-line `"..."`
@@ -157,6 +222,31 @@ extract_body_from_command() {
       # is the hook-input JSON, not the user's PR body. Block with hint.
       printf 'STDIN_NOT_SUPPORTED\n'
       return 2
+    fi
+    # nl-issue 59: the extracted path is the UNEXPANDED command string.
+    # A path containing a shell construct (`$`, backtick, leading `~`)
+    # cannot be `-f`-tested as-is — doing so false-WARNed "does not
+    # exist" while the actual gh call succeeded. Try conservative
+    # env-only expansion; validate normally if it resolves to an
+    # existing file, otherwise SKIP the existence test entirely.
+    if [[ "$body_file" == *'$'* ]] || [[ "$body_file" == *'`'* ]] || [[ "${body_file:0:1}" == "~" ]]; then
+      local expanded=""
+      if expanded=$(_ptig_expand_path "$body_file"); then
+        local eresolved="$expanded"
+        if [[ "${eresolved:0:1}" != "/" ]] && [[ ! "${eresolved:1:1}" == ":" ]]; then
+          eresolved="$repo_root/$eresolved"
+        fi
+        if [[ -f "$eresolved" ]]; then
+          printf '[pr-template-inline-gate] validated after env expansion: %s -> %s\n' "$body_file" "$eresolved" >&2
+          cat "$eresolved"
+          return 0
+        fi
+      fi
+      # Unresolvable (undefined var / $(...) / ~user) or the expanded
+      # path is absent from the HOOK's view — the runtime shell may
+      # expand differently. Never false-WARN; downstream gh + CI validate.
+      printf 'BODY_FILE_UNEXPANDABLE\t%s\n' "$body_file"
+      return 3
     fi
     # Resolve relative to repo root if not absolute (POSIX or Windows-style).
     local resolved="$body_file"
@@ -321,6 +411,7 @@ No template sections at all here.'
     local command_str="$2"
     local expected_warn="$3"   # 1=expect WARN detected (stderr), 0=silent allow
     local label="$4"
+    local required_marker="${5:-}"  # optional: stderr must contain this string
 
     local input
     input=$(jq -nc --arg cmd "$command_str" '{tool_input: {command: $cmd}}')
@@ -337,6 +428,12 @@ No template sections at all here.'
 
     if [[ $exit_code -ne 0 ]]; then
       echo "self-test ($name) [$label]: FAIL — expected exit=0 always post-demotion, got exit=$exit_code" >&2
+      FAILED=1
+      return
+    fi
+
+    if [[ -n "$required_marker" ]] && ! printf '%s' "$stderr_out" | grep -qF "$required_marker"; then
+      echo "self-test ($name) [$label]: FAIL — stderr missing required marker '$required_marker'" >&2
       FAILED=1
       return
     fi
@@ -425,8 +522,56 @@ EOF
     "ls -la /tmp" \
     0 "non-gh Bash → ALLOW (pass-through silent)"
 
+  # --- nl-issue 59 scenarios: unexpanded shell constructs in --body-file ---
+
+  # T12: LITERAL nonexistent path → real "does not exist" WARN still fires
+  # (unchanged behavior — the skip applies only to unexpandable paths).
+  run_scenario "T12-body-file-literal-missing" \
+    "gh pr create --title test --body-file $TMPDIR_TEST/definitely-absent-body.md" \
+    1 "--body-file <literal nonexistent> → ALLOW + WARN does-not-exist (unchanged)"
+
+  # T13: $VAR path where VAR is UNDEFINED in the hook env → skipped as
+  # unexpandable; NO false "does not exist" WARN (RED on pre-fix code).
+  unset PTIG_TEST_UNDEFINED_VAR_XYZ
+  run_scenario "T13-body-file-undefined-var" \
+    'gh pr create --title test --body-file "$PTIG_TEST_UNDEFINED_VAR_XYZ/pr-body.md"' \
+    0 '--body-file "$UNDEFINED/..." → ALLOW, skipped-unexpandable, no false WARN' \
+    "skipped: unexpandable path"
+
+  # T14: $VAR path where VAR IS defined and file exists (valid body) →
+  # env-expanded and validated normally; silent allow + expansion log line.
+  export PTIG_TEST_BODY_DIR="$TMPDIR_TEST"
+  run_scenario "T14-body-file-defined-var-valid" \
+    'gh pr create --title test --body-file "$PTIG_TEST_BODY_DIR/valid-body.md"' \
+    0 '--body-file "$DEFINED/valid" → ALLOW after env expansion' \
+    "validated after env expansion"
+
+  # T15: $VAR path, VAR defined, file exists but content INVALID → content
+  # validation runs on the expanded file and the template WARN fires
+  # (proves expansion feeds the real validator, not a silent skip).
+  run_scenario "T15-body-file-defined-var-invalid" \
+    'gh pr create --title test --body-file "$PTIG_TEST_BODY_DIR/invalid-body.md"' \
+    1 '--body-file "$DEFINED/invalid" → ALLOW + template WARN after env expansion' \
+    "validated after env expansion"
+  unset PTIG_TEST_BODY_DIR
+
+  # T16 (harness-reviewer Major): command-substitution path → REFUSED
+  # (never executed, never expanded) → skipped-unexpandable. This is the
+  # safety-critical refusal property of _ptig_expand_path.
+  run_scenario "T16-body-file-command-substitution" \
+    'gh pr create --title test --body-file "$(mktemp)/pr-body.md"' \
+    0 '--body-file "$(cmd)/..." → ALLOW, refusal → skipped-unexpandable' \
+    "skipped: unexpandable path"
+
+  # T17 (harness-reviewer Major): ${VAR:-default} operator form → refused
+  # (only plain $VAR/${VAR} are expanded) → skipped-unexpandable.
+  run_scenario "T17-body-file-operator-form" \
+    'gh pr create --title test --body-file "${PTIG_UNDEF:-/tmp}/pr-body.md"' \
+    0 '--body-file "${VAR:-x}/..." → ALLOW, refusal → skipped-unexpandable' \
+    "skipped: unexpandable path"
+
   if [[ $FAILED -eq 0 ]]; then
-    echo "all 11 self-tests passed" >&2
+    echo "all 17 self-tests passed" >&2
     exit 0
   else
     echo "self-test failures detected" >&2
@@ -494,6 +639,16 @@ fi
 EXTRACT_RESULT=""
 EXTRACT_EXIT=0
 EXTRACT_RESULT=$(extract_body_from_command "$COMMAND" "$REPO_ROOT") || EXTRACT_EXIT=$?
+
+# nl-issue 59: unexpandable --body-file path — the gate cannot statically
+# know the runtime path. Skip the existence test with a one-line log
+# (NOT a WARN); gh itself and the server-side PR Template Check still
+# validate downstream.
+if [[ $EXTRACT_EXIT -eq 3 ]]; then
+  skipped_path="${EXTRACT_RESULT#BODY_FILE_UNEXPANDABLE$'\t'}"
+  echo "[pr-template-inline-gate] skipped: unexpandable path '$skipped_path' — cannot statically resolve shell constructs at hook time (or the resolved file is not visible to the hook); gh + server-side PR Template Check still validate" >&2
+  exit 0
+fi
 
 # Handle parser-recognized error sentinels.
 if [[ $EXTRACT_EXIT -eq 2 ]]; then

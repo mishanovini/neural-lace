@@ -1143,7 +1143,7 @@ MSG
   if [[ "$done_refusal" -eq 1 ]]; then
     _svd_ledger "stop-cycle" "gaps=${gap_count} cycle=${cycle_count} verdict=block-done-refusal"
     _svd_ledger "block" "done-refusal: verification-class gap(s) present with a DONE: claim; never downgraded"
-    _svd_emit_block_message "$all_gaps" "$gap_count" 1
+    _svd_emit_block_message "$all_gaps" "$gap_count" 1 "$session_id"
     _svd_emit_stop_and_trace "$_svd_start_ms" "verdict=block-done-refusal gaps=${gap_count} cycle=${cycle_count}"
     exit 2
   fi
@@ -1152,7 +1152,7 @@ MSG
     # FIRST blocking Stop this session for this gap-set.
     _svd_ledger "stop-cycle" "gaps=${gap_count} cycle=${cycle_count} verdict=block-first"
     _svd_ledger "block" "combined verdict: ${gap_count} gap(s) across member gates (cycle ${cycle_count})"
-    _svd_emit_block_message "$all_gaps" "$gap_count" 0
+    _svd_emit_block_message "$all_gaps" "$gap_count" 0 "$session_id"
     _svd_emit_stop_and_trace "$_svd_start_ms" "verdict=block-first gaps=${gap_count} cycle=${cycle_count}"
     exit 2
   fi
@@ -1211,14 +1211,55 @@ MSG
 }
 
 # ----------------------------------------------------------------------
-# _svd_emit_block_message <all_gaps_jsonl> <gap_count> <is_done_refusal>
+# _svd_write_full_verdict_file <session_id> <text>
+#   nl-issue [42]: when the block-JSON reason field is truncated (see
+#   _svd_emit_block_message below), the FULL combined verdict is written
+#   here so the truncation note can point at a real file. Path follows
+#   _svd_refire_count_path's convention (${RETRY_GUARD_STATE_DIR:-.claude/
+#   state} + per-session-short filename) so the self-test's per-scenario
+#   RETRY_GUARD_STATE_DIR sandboxing automatically applies. Echoes the
+#   ABSOLUTE path on success, empty on any failure (best-effort: a state-
+#   write failure must never break the block JSON itself).
+# ----------------------------------------------------------------------
+_svd_write_full_verdict_file() {
+  local sid="${1:-session}" text="$2"
+  local short dir path
+  short=$(_retry_guard_session_short "$sid" 2>/dev/null || printf '%s' "$sid" | tr -c 'a-zA-Z0-9' '_' | cut -c1-24)
+  dir="${RETRY_GUARD_STATE_DIR:-.claude/state}"
+  case "$dir" in
+    /*|[A-Za-z]:[/\\]*) ;;
+    *) dir="${PWD}/${dir}" ;;
+  esac
+  mkdir -p "$dir" 2>/dev/null || { printf ''; return 0; }
+  path="${dir}/stop-verdict-full-${short}.txt"
+  if printf '%s\n' "$text" > "$path" 2>/dev/null; then
+    printf '%s' "$path"
+  else
+    printf ''
+  fi
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# _svd_emit_block_message <all_gaps_jsonl> <gap_count> <is_done_refusal> \
+#                         [session_id]
 #   Builds and prints the ONE combined block message (ADR 059 D1), grouped
 #   per gate, each gap with its pin-d remediation. Prints the Stop-hook
 #   contract JSON to stdout and the human-readable stanza to stderr, then
 #   returns (caller does the exit).
+#
+#   nl-issue [42] (two live incidents 2026-07-07): hook stderr NEVER
+#   reaches the blocked session's context — the stdout JSON's reason field
+#   is the ONLY text the session sees, so the combined verdict itself
+#   (per-gate [gate/check] lines + pin-d remediation) is carried IN the
+#   reason, bounded by STOP_VERDICT_REASON_MAX_CHARS (default 2000). On
+#   truncation the reason names the dropped-gap count and the full-verdict
+#   state file (_svd_write_full_verdict_file). The stderr stanza is kept
+#   unchanged for humans/logs. PRESENTATION ONLY — verdict logic, cycle
+#   counting, ceiling and DONE-refusal semantics are untouched.
 # ----------------------------------------------------------------------
 _svd_emit_block_message() {
-  local all_gaps="$1" gap_count="$2" is_done_refusal="$3"
+  local all_gaps="$1" gap_count="$2" is_done_refusal="$3" session_id="${4:-}"
 
   {
     echo ""
@@ -1277,7 +1318,56 @@ _svd_emit_block_message() {
     echo "================================================================"
   } >&2
 
-  local reason="Stop-verdict dispatcher: ${gap_count} gap(s) found across end-manifest/work-integrity-gate/session-honesty-gate/bug-persistence-gate. See stderr for the combined verdict grouped per gate with remediation."
+  # nl-issue [42]: build the reason from the SAME per-gate verdict the
+  # stderr stanza above shows — the reason is what actually reaches the
+  # blocked session. all_gaps is already grouped per gate by construction
+  # (_svd_main appends end-manifest first, then each member gate's
+  # --report output in _SVD_MEMBER_GATES order), so one linear pass
+  # preserves the same per-gate grouping.
+  local reason_max="${STOP_VERDICT_REASON_MAX_CHARS:-2000}"
+  [[ "$reason_max" =~ ^[0-9]+$ ]] || reason_max=2000
+
+  local header
+  if [[ "$is_done_refusal" == "1" ]]; then
+    header="Stop-verdict dispatcher BLOCKED (DONE-refusal: never downgraded): ${gap_count} gap(s) across the member Stop gates, listed below. A verification-class gap is present while the final message claims DONE: — change the marker to PAUSING:/BLOCKED: naming the gap, or actually finish the work. Fix ALL gaps (or take each named escape hatch), then re-end the turn."
+  else
+    header="Stop-verdict dispatcher BLOCKED (combined verdict): ${gap_count} gap(s) across the member Stop gates, listed below. Fix ALL of them (or take the named escape hatch per gap), then re-end the turn — one combined verdict, not serial whack-a-mole."
+  fi
+
+  local reason="$header" full_text="" entries_added=0 truncated=0
+  local rline rgate_f rcheck_f rmsg_f entry
+  while IFS= read -r rline; do
+    [[ -z "$rline" ]] && continue
+    if command -v jq >/dev/null 2>&1; then
+      rgate_f=$(_svd_strip_cr "$(printf '%s' "$rline" | jq -r '.gate // "?"' 2>/dev/null)")
+      rcheck_f=$(_svd_strip_cr "$(printf '%s' "$rline" | jq -r '.check // "?"' 2>/dev/null)")
+      rmsg_f=$(_svd_strip_cr "$(printf '%s' "$rline" | jq -r '.message // ""' 2>/dev/null)")
+    else
+      rgate_f="?"; rcheck_f="?"; rmsg_f="$rline"
+    fi
+    entry=$'\n'"[${rgate_f}/${rcheck_f}] ${rmsg_f}"$'\n'"  -> $(_svd_pin_d_remediation "$rgate_f" "$rcheck_f")"
+    full_text+="$entry"
+    if [[ "$truncated" -eq 0 ]]; then
+      if [[ $(( ${#reason} + ${#entry} )) -le "$reason_max" ]]; then
+        reason+="$entry"
+        entries_added=$((entries_added + 1))
+      else
+        truncated=1
+      fi
+    fi
+  done <<< "$all_gaps"
+
+  if [[ "$truncated" -eq 1 ]]; then
+    local remaining=$((gap_count - entries_added))
+    local full_path
+    full_path=$(_svd_write_full_verdict_file "$session_id" "${header}${full_text}")
+    if [[ -n "$full_path" ]]; then
+      reason+=$'\n'"... and ${remaining} more gap(s) (reason capped at ${reason_max} chars) — full combined verdict: ${full_path}"
+    else
+      reason+=$'\n'"... and ${remaining} more gap(s) (reason capped at ${reason_max} chars; full-verdict state file could not be written) — re-run each member gate locally (bash <gate>.sh, normal mode) for the rest."
+    fi
+  fi
+
   printf '{"decision": "block", "reason": "%s"}\n' "$(_svd_json_escape "$reason")"
 }
 
@@ -2260,6 +2350,94 @@ STUBEOF
     echo "self-test (cold-reader-lint-real-sec3-block-still-detected): FAIL (a genuine anchorless §3 'Decision needed:' + 'Reply with:' block was no longer detected -- the tightened matcher was neutered)" >&2
     failed=$((failed+1))
   fi
+
+  # ================================================================
+  # Scenario 25 (nl-issue [42], RED-GREEN GUARD): the block-JSON reason
+  # field carries the combined verdict ITSELF — per-gate [gate/check]
+  # lines + pin-d remediation — because hook stderr never reaches the
+  # blocked session's context (two live incidents 2026-07-07: the session
+  # saw only "see stderr" and had to guess the gap). Against the pre-fix
+  # code the reason was a bare "See stderr for the combined verdict ..."
+  # pointer, so every positive assertion below FAILS pre-fix and PASSES
+  # post-fix, and the stale-pointer assertion proves the pointer is gone.
+  # Two-gap fixture (scenario 2's shape: trigger phrase + no marker).
+  # ================================================================
+  _setup_scenario s25
+  HOOKS=$(_build_dispatcher_repo s25)
+  REPO="$tmproot/s25/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T25=$(_write_transcript "$tmproot/s25" $'We should also handle the X case. Let me flag this for follow-up.\n\ntrailing off with no marker at all')
+  RC25=$(_run_dispatcher "$HOOKS" "$REPO" "$T25" "sess-s25")
+  _expect "reason-carries-verdict-still-blocks" "$RC25" "2"
+  if grep -q 'session-honesty-gate/marker-format' "$tmproot/last-stdout.txt" 2>/dev/null \
+     && grep -q 'Append ONE line with the correct terminal marker' "$tmproot/last-stdout.txt" 2>/dev/null; then
+    echo "self-test (nl-issue-42-reason-carries-per-gate-line-with-remediation): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (nl-issue-42-reason-carries-per-gate-line-with-remediation): FAIL (expected the [session-honesty-gate/marker-format...] line + its pin-d remediation INSIDE the block-JSON reason on stdout — stderr never reaches the session)" >&2
+    cat "$tmproot/last-stdout.txt" 2>/dev/null >&2
+    failed=$((failed+1))
+  fi
+  if grep -q 'bug-persistence-gate/trigger-phrases-not-persisted' "$tmproot/last-stdout.txt" 2>/dev/null; then
+    echo "self-test (nl-issue-42-reason-lists-EVERY-gate-not-just-the-first): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (nl-issue-42-reason-lists-EVERY-gate-not-just-the-first): FAIL (expected the bug-persistence-gate gap in the reason too)" >&2
+    failed=$((failed+1))
+  fi
+  if ! grep -q 'See stderr for the combined verdict' "$tmproot/last-stdout.txt" 2>/dev/null \
+     && ! grep -q 'more gap(s)' "$tmproot/last-stdout.txt" 2>/dev/null; then
+    echo "self-test (nl-issue-42-stale-see-stderr-pointer-gone-and-no-truncation-at-default-cap): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (nl-issue-42-stale-see-stderr-pointer-gone-and-no-truncation-at-default-cap): FAIL (reason still points at stderr, or a 2-gap verdict was truncated at the default cap)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 26 (nl-issue [42], truncation): with the reason cap pinned
+  # low (STOP_VERDICT_REASON_MAX_CHARS=700 — same env-pinning technique
+  # as scenario 18's ceiling), a gap list that exceeds the cap yields a
+  # CAPPED reason (first entry kept, overflow entry dropped) plus an
+  # "... and K more gap(s)" note naming a full-verdict state file that is
+  # actually written (under this scenario's sandboxed
+  # RETRY_GUARD_STATE_DIR) and contains the dropped entries.
+  # ================================================================
+  _setup_scenario s26
+  export STOP_VERDICT_REASON_MAX_CHARS=700
+  HOOKS=$(_build_dispatcher_repo s26)
+  REPO="$tmproot/s26/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T26=$(_write_transcript "$tmproot/s26" $'We should also handle the X case. Let me flag this for follow-up.\n\ntrailing off with no marker at all')
+  RC26=$(_run_dispatcher "$HOOKS" "$REPO" "$T26" "sess-s26")
+  _expect "truncated-reason-still-blocks" "$RC26" "2"
+  if grep -q 'marker-format' "$tmproot/last-stdout.txt" 2>/dev/null \
+     && ! grep -q 'trigger-phrases-not-persisted' "$tmproot/last-stdout.txt" 2>/dev/null \
+     && grep -q 'more gap(s)' "$tmproot/last-stdout.txt" 2>/dev/null \
+     && grep -q 'stop-verdict-full-' "$tmproot/last-stdout.txt" 2>/dev/null; then
+    echo "self-test (nl-issue-42-truncation-caps-reason-and-names-full-verdict-file): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (nl-issue-42-truncation-caps-reason-and-names-full-verdict-file): FAIL (expected first entry kept, overflow entry dropped, and an '... and K more gap(s)' note naming stop-verdict-full-*.txt)" >&2
+    cat "$tmproot/last-stdout.txt" 2>/dev/null >&2
+    failed=$((failed+1))
+  fi
+  FULL26=$(ls "$RETRY_GUARD_STATE_DIR"/stop-verdict-full-*.txt 2>/dev/null | head -1)
+  if [[ -n "$FULL26" ]] && grep -q 'marker-format' "$FULL26" 2>/dev/null \
+     && grep -q 'trigger-phrases-not-persisted' "$FULL26" 2>/dev/null; then
+    echo "self-test (nl-issue-42-full-verdict-state-file-written-with-ALL-gaps): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (nl-issue-42-full-verdict-state-file-written-with-ALL-gaps): FAIL (expected ${RETRY_GUARD_STATE_DIR}/stop-verdict-full-*.txt to exist and contain BOTH gaps)" >&2
+    failed=$((failed+1))
+  fi
+  unset STOP_VERDICT_REASON_MAX_CHARS
 
   echo "" >&2
   echo "self-test summary: $passed passed, $failed failed" >&2
