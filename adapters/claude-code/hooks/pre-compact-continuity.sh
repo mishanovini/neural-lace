@@ -249,6 +249,17 @@ _run_live() {
   # fire. Under NL_HOOK_REENTRY=1 (automation-spawned/re-entrant child),
   # no-op before reading stdin or spawning anything.
   if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+    # ---- ADR-061 D2 HOIST: reentry-safe liveness heartbeat --------------
+    # An automation-spawned child (NL_HOOK_REENTRY=1 — the guard's ONLY
+    # trigger) must still be VISIBLE to the heartbeat liveness layer: an
+    # invisible child that looks dead gets re-resumed — the FM-037
+    # "branching growth" root (ADR-061 §2). The touch is bounded, spawns
+    # no `claude`, and never blocks (session-heartbeat.sh touch exits 0 on
+    # every path). Event name carries the -auto suffix — a new last_event
+    # VALUE only; C1 schema unchanged. The snapshot/emission work below
+    # stays suppressed exactly as before.
+    bash "$SCRIPT_DIR/../scripts/session-heartbeat.sh" touch --event compact-auto >/dev/null 2>&1 || true
+    # ---- END ADR-061 D2 HOIST --------------------------------------------
     hook_reentry_note "pre-compact-continuity" 2>/dev/null || true
     exit 0
   fi
@@ -271,7 +282,7 @@ _run_live() {
   _run_precompact "$transcript" "$session_id" "$_SNAPSHOT_SCRIPT_DEFAULT" "$trigger"
   # ---- WAVE-O O.2 CALLSITE: compact-event liveness heartbeat -------------
   # Best-effort, never-blocks (session-heartbeat.sh touch always exits 0).
-  "$SCRIPT_DIR/../scripts/session-heartbeat.sh" touch --event compact >/dev/null 2>&1 || true
+  bash "$SCRIPT_DIR/../scripts/session-heartbeat.sh" touch --event compact >/dev/null 2>&1 || true
   # ---- END WAVE-O O.2 CALLSITE ---------------------------------------------
   exit 0
 }
@@ -484,6 +495,63 @@ NY
     echo "  T12 real flagless PreCompact invocation emits session-compact: PASS"; pass=$((pass+1))
   else
     echo "  T12 real flagless PreCompact invocation emits session-compact: FAIL (expected a line in $t12_ledger)"; fail=$((fail+1))
+  fi
+
+  # T13 (ADR-061 D2 hoist): under NL_HOOK_REENTRY=1 the real flagless
+  # invocation still writes a heartbeat (last_event compact-auto) BEFORE the
+  # reentry guard returns, while everything else stays suppressed (no
+  # snapshot file, no six-category emission on stdout).
+  local t13_hb_dir="$tmp/t13-hb"
+  mkdir -p "$t13_hb_dir"
+  # Stage a sandbox tree with the hook + the REAL heartbeat writer as its
+  # sibling (../scripts/), mirroring workstreams-stop-writer.sh's proven-on-CI
+  # pattern: the CI hooks-selftest workflow runs hooks from a copied location
+  # where "$0"'s ../scripts sibling does not exist, so invoking "$0" directly
+  # makes the best-effort touch silently no-op and T13/T14 false-fail.
+  local t13_stage="$tmp/pc-stage"
+  mkdir -p "$t13_stage/hooks/lib" "$t13_stage/scripts"
+  cp "$0" "$t13_stage/hooks/pre-compact-continuity.sh"
+  cp "$SCRIPT_DIR/lib/hook-reentry-guard.sh" "$t13_stage/hooks/lib/" 2>/dev/null || true
+  cp "$SCRIPT_DIR/lib/session-heartbeat-lib.sh" "$t13_stage/hooks/lib/" 2>/dev/null || true
+  cp "$SCRIPT_DIR/lib/signal-ledger.sh" "$t13_stage/hooks/lib/" 2>/dev/null || true
+  cp "$SCRIPT_DIR/../scripts/session-heartbeat.sh" "$t13_stage/scripts/" 2>/dev/null || true
+  cp "$SCRIPT_DIR/../scripts/session-snapshot.sh" "$t13_stage/scripts/" 2>/dev/null || true
+  local t13_hook="$t13_stage/hooks/pre-compact-continuity.sh"
+  local t13_transcript="$tmp/sess-fixture-t13.jsonl"
+  printf '{"type":"user","session_id":"sess-pc-t13","message":{"role":"user","content":"hi"}}\n' > "$t13_transcript"
+  local t13_out t13_rc
+  t13_out="$(printf '{"transcript_path":"%s","session_id":"sess-pc-t13","trigger":"auto"}' "$t13_transcript" \
+    | NL_HOOK_REENTRY=1 HARNESS_SELFTEST=1 HARNESS_SELFTEST_DIR="$HARNESS_SELFTEST_DIR" \
+      HEARTBEAT_STATE_DIR="$t13_hb_dir" SIGNAL_LEDGER_PATH="$tmp/t13-ledger.jsonl" \
+      CLAUDE_CODE_SESSION_ID="sess-pc-t13" bash "$t13_hook" 2>/dev/null)"
+  t13_rc=$?
+  if [ "$t13_rc" -eq 0 ] && grep -q '"last_event":"compact-auto","marker_state"' "$t13_hb_dir/sess-pc-t13.json" 2>/dev/null; then
+    echo "  T13 reentry (NL_HOOK_REENTRY=1) writes heartbeat with compact-auto event, exit 0: PASS"; pass=$((pass+1))
+  else
+    echo "  T13 reentry (NL_HOOK_REENTRY=1) writes heartbeat with compact-auto event, exit 0: FAIL (rc=$t13_rc, file: $(cat "$t13_hb_dir/sess-pc-t13.json" 2>/dev/null))"; fail=$((fail+1))
+  fi
+  if [ ! -f "$(_state_dir)/sess-pc-t13.md" ] && ! printf '%s' "$t13_out" | grep -q 'COMPACTION IS HAPPENING NOW'; then
+    echo "  T13b reentry still suppresses snapshot + six-category emission: PASS"; pass=$((pass+1))
+  else
+    echo "  T13b reentry still suppresses snapshot + six-category emission: FAIL (snapshot exists or instructions emitted)"; fail=$((fail+1))
+  fi
+
+  # T14 (ADR-061 D2 hoist): WITHOUT the env, the non-reentry path is
+  # unchanged — the live heartbeat event name stays exactly "compact"
+  # (never the -auto variant).
+  local t14_hb_dir="$tmp/t14-hb"
+  mkdir -p "$t14_hb_dir"
+  local t14_transcript="$tmp/sess-fixture-t14.jsonl"
+  printf '{"type":"user","session_id":"sess-pc-t14","message":{"role":"user","content":"hi"}}\n' > "$t14_transcript"
+  printf '{"transcript_path":"%s","session_id":"sess-pc-t14","trigger":"auto"}' "$t14_transcript" \
+    | HARNESS_SELFTEST=1 HARNESS_SELFTEST_DIR="$HARNESS_SELFTEST_DIR" \
+      HEARTBEAT_STATE_DIR="$t14_hb_dir" SIGNAL_LEDGER_PATH="$tmp/t14-ledger.jsonl" \
+      CLAUDE_CODE_SESSION_ID="sess-pc-t14" bash "$t13_hook" >/dev/null 2>&1
+  if grep -q '"last_event":"compact","marker_state"' "$t14_hb_dir/sess-pc-t14.json" 2>/dev/null \
+     && ! grep -q 'compact-auto' "$t14_hb_dir/sess-pc-t14.json" 2>/dev/null; then
+    echo "  T14 non-reentry event name unchanged (compact, not compact-auto): PASS"; pass=$((pass+1))
+  else
+    echo "  T14 non-reentry event name unchanged (compact, not compact-auto): FAIL (file: $(cat "$t14_hb_dir/sess-pc-t14.json" 2>/dev/null))"; fail=$((fail+1))
   fi
 
   unset SESSION_SNAPSHOT_MAIN_ROOT

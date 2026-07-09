@@ -26,27 +26,39 @@ Out: arming the resumer (operator-gated, ADR-061 Phase 2); GAP-54 exit-1→exit-
 ## Tasks
 
 **WAVE A — small mechanical (parallel builders, file-disjoint):**
-- [ ] A1 [48]+[52] sandbox unresolved-gaps feed path under HARNESS_SELFTEST in session-start-digest self-test S2
-- [ ] A2 [49] add `info` (work-integrity-gate) to observability-consumer-map with named consumer, or constrain emitter
-- [ ] A3 [51] cold-reader-lint: require §3 block shape, exclude negation; self-test scenario
-- [ ] A4 [31] install.sh sync loops gain skills/ + templates/
-- [ ] A5 [47]+[25] denylist: narrow codename pattern (word-boundary/case-aware; stop matching the generic two-word idiom) + relocate literal test-password VALUE to gitignored business-patterns.d — harness-reviewer REQUIRED (security control)
-- [ ] A6 [54] verify/extend .gitattributes eol=lf coverage for workflow .js paths
+- [x] A.1 [48]+[52] sandbox unresolved-gaps feed path under HARNESS_SELFTEST in session-start-digest self-test S2
+  - verifier 2026-07-09: PASS — self-test re-run 74/74 green; UNRESOLVED_GAPS_PATH override at :600 exercised both directions (S2/S2b) @ origin/master 43f76c2 (evidence file A.1)
+- [x] A.2 [49] add `info` (work-integrity-gate) to observability-consumer-map with named consumer, or constrain emitter
+  - verifier 2026-07-09: PASS — jq-valid; event_types.info.consumers[0] names the dispatcher self-test consumer of work-integrity-gate's emission, closing [49] as option (a) @ origin/master 43f76c2 (evidence file A.2)
+- [x] A.3 [51] cold-reader-lint: require §3 block shape, exclude negation; self-test scenario
+  - verifier 2026-07-09: PASS — dispatcher self-test re-run 66/66 green; scenario 24 passes both directions (negated prose exit 0, real §3 block still detected) @ origin/master 43f76c2 (evidence file A.3)
+- [x] A.4 [31] install.sh sync loops gain skills/ + templates/
+  - verifier 2026-07-09: PASS — sync loop :928 enumerates skills+templates (preview loop :452 mirrors); bash -n clean; install.sh not executed per directive @ origin/master 43f76c2 (evidence file A.4)
+- [x] A.5 [47]+[25] denylist: narrow codename pattern (word-boundary/case-aware; stop matching the generic two-word idiom) + relocate literal test-password VALUE to gitignored business-patterns.d — harness-reviewer REQUIRED (security control)
+  - verifier 2026-07-09: PASS — scan self-test OK (0 SKIP/0 FAIL, c1-c9 exercised); independent fixture probe: idiom exits 0 (space+hyphen), codename trips [denylist] exit 1 (prose+EOL); [25] literal relocated pre-sweep (bebe811) @ origin/master 43f76c2 (evidence file A.5)
+- [x] A.6 [54] verify/extend .gitattributes eol=lf coverage for workflow .js paths
+  - verifier 2026-07-09: PASS — .gitattributes:21 pins *.js eol=lf; zero CR matches in committed .js blobs on origin/master (grep control-proven against a known-CR .md blob) @ origin/master 43f76c2 (evidence file A.6)
 
 **WAVE B — medium (verify-first; Stop-gate diffs get harness-reviewer):**
-- [ ] B1 [26]+[27]+[30]+[45]+[53] end-manifest cluster: establish what fb7ab9a/wave-o-integration already fixed; then residuals — truncation mutual-prefix match, per-line jq -e → slurp any(), and a sanctioned resolution path for stale gaps ([53] class; decide-and-go with trail)
+- [x] B.1 [26]+[27]+[30]+[45]+[53] end-manifest cluster: establish what fb7ab9a/wave-o-integration already fixed; then residuals — truncation mutual-prefix match, per-line jq -e → slurp any(), and a sanctioned resolution path for stale gaps ([53] class; decide-and-go with trail)
+  - verifier 2026-07-09: PASS — end-manifest self-test re-run 32/32 green incl. s13b (both directions) + s13c (apostrophe path fails closed) @ origin/master 43f76c2 (evidence file B.1)
 - [ ] B2 [42] dispatcher: surface combined verdict in the block message (stderr never reaches session context)
 - [ ] B3 [22] live ~/.claude CRLF drift: extend doctor line-endings check to $live_home OR normalize-on-copy (verify "live CRLF deliberate" memory first)
 - [ ] B4 [56] scheduled-task naming drift: repoint/rename doctor↔registration; coordinate with sweet-hamilton session (it plans to unregister ConversationTreeUI-AutoStart); sequence after B3 (same file)
-- [ ] B5 [37]+[39]+[55] cockpit/derive-cache: single-instance lock or listen-gate before cache.start(); single-flight poll guard; OBS_NL_TIMEOUT_MS review
-- [ ] B6 [23]+[35]+[38] doctrine/docs: orchestrator-pattern brief-template worktree-check + branch-verify-before-commit + ls-remote-after-push; acceptance conventions registered-event-types-only + scrub coordination
+- [x] B.5 [37]+[39]+[55] cockpit/derive-cache: single-instance lock or listen-gate before cache.start(); single-flight poll guard; OBS_NL_TIMEOUT_MS review
+  - verifier 2026-07-09: PASS — node server/server.selftest.js re-run 35/35 green incl. S17a-d single-flight poll guard ([39]) and S18a-c single-instance guard ([55]) @ origin/master 43f76c2 (evidence file B.5)
+- [x] B.6 [23]+[35]+[38] doctrine/docs: orchestrator-pattern brief-template worktree-check + branch-verify-before-commit + ls-remote-after-push; acceptance conventions registered-event-types-only + scrub coordination
+  - verifier 2026-07-09: PASS — full.md:105 has Shared-checkout git-state disciplines; compact 2870B (<3000) with all three disciplines; acceptance doc has REGISTERED-EVENT-TYPES-ONLY + FIXTURE-SCRUB COORDINATION; rules-index-coverage.sh 4/4 exit 0 @ origin/master 43f76c2 (evidence file B.6)
 - [ ] B7 [24] set-e assignment-from-failing-pipeline audit across hooks/*.sh; verify plan-edit-validator instance fix merged
 - [ ] B8 [59] (added mid-sweep) pr-template-inline-gate: expand shell vars in --body-file path before the existence test (or skip when path contains '$') — false-WARNed 3× this session; WARN-only hook, still harness-reviewer per doctrine
 
 **ROUTE / DEFER (persist, no build):**
-- [ ] R1 [34] shared-checkout branch guard proposal + [46] credentials/403 JIT-trigger proposal + [40] cold-reader mechanical layer + [43]/[44] bg-agent auto-retry → backlog rows with fold-in points
-- [ ] R2 [21] GAP-54 → confirm backlog row current; stays deferred. [32] Claude_Preview parent-worktree launch.json → document-upstream note in doctrine
-- [ ] R3 mark every ledger row's disposition via nl-issue.sh (terminal state; zero untriaged)
+- [x] R.1 [34] shared-checkout branch guard proposal + [46] credentials/403 JIT-trigger proposal + [40] cold-reader mechanical layer + [43]/[44] bg-agent auto-retry → backlog rows with fold-in points
+  - verifier 2026-07-09: PASS — all four rows in docs/backlog.md (:15 SHARED-CHECKOUT-BRANCH-GUARD-01, :17 CRED-403-JIT-TRIGGER-01, :19 COLD-READER-MECH-LAYER-01, :21 BG-AGENT-AUTO-RETRY-01), each with fold-in point @ origin/master 43f76c2 (evidence file R.1)
+- [x] R.2 [21] GAP-54 → confirm backlog row current; stays deferred. [32] Claude_Preview parent-worktree launch.json → document-upstream note in doctrine
+  - verifier 2026-07-09: PASS — backlog.md:928 HARNESS-GAP-54 current; :29 CLAUDE-PREVIEW-WORKTREE-01 upstream-labeled note (caveat: [32] note homed in backlog, not doctrine/ — substance present, location deviates) @ origin/master 43f76c2 (evidence file R.2)
+- [x] R.3 mark every ledger row's disposition via nl-issue.sh (terminal state; zero untriaged)
+  - verifier 2026-07-09: PASS — nl-issue.sh --list --untriaged shows only post-sweep rows ([57][58][61][66]-[70]); zero untriaged in sweep scope [21]-[56] @ origin/master 43f76c2 (evidence file R.3)
 
 ## Files to Modify/Create
 

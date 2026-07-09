@@ -144,8 +144,29 @@ if [[ "${1:-}" == "--self-test" ]]; then
   ( cd "$D" && git add -A ) >/dev/null 2>&1
   _st_expect "D-mock-ban-still-fires-under-e2e" "1" "$(_st_run "$D")"
 
+  # Scenario E: deletion-only staged change to a test file → ALLOWED (rc 0).
+  # nl-issue [24] class regression guard: Layer 5's
+  #   added=$(git diff --cached -U0 ... | grep -E '^\+' | grep -vE '^\+{3}')
+  # ran unguarded under `set -e`; a staged test file with NO added lines
+  # (e.g. deleting a stale test case) made the final grep exit 1, killing
+  # the gate silently (rc 1, no layer message) — a mystery commit block.
+  E="$ST_TMP/e"; _st_mkrepo "$E"
+  (
+    cd "$E" &&
+    git config core.hooksPath "" &&
+    git config user.email selftest@local &&
+    git config user.name selftest &&
+    printf '{"name":"e"}' > package.json &&
+    mkdir -p tests &&
+    printf 'it("one", () => { expect(1).toEqual(1); });\nit("two", () => { expect(2).toEqual(2); });\n' > tests/x.test.ts &&
+    git add -A && git commit -qm init &&
+    printf 'it("one", () => { expect(1).toEqual(1); });\n' > tests/x.test.ts &&
+    git add tests/x.test.ts
+  ) >/dev/null 2>&1
+  _st_expect "E-deletion-only-test-diff-allowed" "0" "$(_st_run "$E")"
+
   if [[ "$st_fails" -eq 0 ]]; then
-    echo "ALL SELF-TESTS PASSED (5/5)" >&2
+    echo "ALL SELF-TESTS PASSED (6/6)" >&2
     exit 0
   fi
   echo "$st_fails SELF-TEST(S) FAILED" >&2
@@ -551,7 +572,10 @@ while IFS= read -r file; do
   [[ -f "$file" ]] || continue
 
   # Extract added lines from the staged diff (lines starting with +, excluding +++)
-  added=$(git diff --cached -U0 -- "$file" 2>/dev/null | grep -E '^\+' | grep -vE '^\+{3}')
+  # `|| true`: a deletion-only diff has no added lines, so the final grep
+  # exits 1 — unguarded under `set -e` that killed the whole gate (nl-issue
+  # [24] class). The empty-check on the next line is the intended handler.
+  added=$(git diff --cached -U0 -- "$file" 2>/dev/null | grep -E '^\+' | grep -vE '^\+{3}' || true)
   [[ -z "$added" ]] && continue
 
   # Two patterns: runtime-conditional skip, and unconditional .skip defining a test

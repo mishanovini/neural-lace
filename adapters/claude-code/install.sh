@@ -1243,6 +1243,83 @@ register_workstreams_heartbeat_task() {
 register_workstreams_heartbeat_task
 
 # ============================================================
+# NL-health-tick scheduled-task registration (ADR-061 D6)
+# ============================================================
+#
+# health-tick.sh is the session-independent, PASSIVE hourly watchdog that
+# closes the "who notices a RED while no session is open" gap: it runs
+# the doctor --quick cache refresh, scheduled-task-health capture, and
+# heartbeat reap, and writes an alert file the existing SessionStart
+# surfacer picks up. It spawns NO `claude` ever and does NOT set
+# NL_HOOK_REENTRY (the doctor would self-suppress — ADR-061 D6).
+#
+# Registration follows register_workstreams_heartbeat_task's exact
+# probe-before-create idempotent pattern, but uses the TWO-FILE WRAPPER
+# /TR pattern (docs/runbooks/session-resumer.md "Registration pattern"):
+# never inline `bash -c` in /TR (schtasks collapses nested quotes — every
+# tick exit 1, silently), and wrappers live under
+# %USERPROFILE%\.claude\state\task-wrappers\ — NEVER ~/.claude/scripts,
+# which install re-sync wipes (the 2026-07-07 dead-/TR lesson). state/ is
+# machine state and never purged. Wrapper files are (re)generated at
+# install time so the .cmd always points at the LIVE mirror path.
+
+register_health_tick_task() {
+  local task_name="NL-health-tick"
+  local tick_script="$CLAUDE_DIR/scripts/health-tick.sh"
+
+  if ! command -v schtasks >/dev/null 2>&1; then
+    echo "  (schtasks not available on this platform — skipping ${task_name} scheduled-task registration; non-Windows machines get no session-independent health tick, tracked via the doctor's honest WARN)"
+    return 0
+  fi
+
+  if [ ! -f "$tick_script" ]; then
+    echo "  WARNING: ${tick_script} not found — skipping ${task_name} registration (run install.sh again after scripts/ sync completes)"
+    return 0
+  fi
+
+  local wrapper_dir="$CLAUDE_DIR/state/task-wrappers"
+  mkdir -p "$wrapper_dir"
+
+  # Shared hidden-window launcher (runbook-verbatim). Only written when
+  # absent — other tasks (session-resumer) share this exact file.
+  local vbs="$wrapper_dir/run-hidden.vbs"
+  if [ ! -f "$vbs" ]; then
+    printf 'Set sh = CreateObject("WScript.Shell")\r\ncmd = ""\r\nFor i = 0 To WScript.Arguments.Count - 1\r\n  cmd = cmd & """" & WScript.Arguments(i) & """" & " "\r\nNext\r\nsh.Run Trim(cmd), 0, False\r\n' > "$vbs"
+    echo "  wrote shared hidden-window launcher: $vbs"
+  fi
+
+  # health-tick.cmd — paths baked literally at install time (runbook
+  # precedent), pointing at the LIVE mirror ~/.claude/scripts path, never
+  # a repo worktree or tempdir (the 0x80070002-every-tick lesson).
+  local bash_win home_msys
+  bash_win="$(cygpath -w "$(command -v bash)" 2>/dev/null || echo 'C:\Program Files\Git\bin\bash.exe')"
+  home_msys="${HOME:-/c/Users/${USER:-unknown}}"
+  local cmdfile="$wrapper_dir/health-tick.cmd"
+  {
+    printf '@echo off\r\n'
+    printf '"%s" -c "export PATH=/usr/bin:/mingw64/bin:$PATH; mkdir -p '\''%s/.claude/state/health-tick'\''; bash '\''%s/.claude/scripts/health-tick.sh'\'' >> '\''%s/.claude/state/health-tick/tick.log'\'' 2>&1"\r\n' \
+      "$bash_win" "$home_msys" "$home_msys" "$home_msys"
+  } > "$cmdfile"
+
+  if MSYS_NO_PATHCONV=1 schtasks /Query /TN "$task_name" >/dev/null 2>&1; then
+    echo "  scheduled task '${task_name}' already registered — skipping (idempotent; wrapper files refreshed above)"
+    return 0
+  fi
+
+  local wrapper_dir_win
+  wrapper_dir_win="$(cygpath -w "$wrapper_dir" 2>/dev/null || echo "$wrapper_dir")"
+  local tr_cmd="C:\\Windows\\System32\\wscript.exe ${wrapper_dir_win}\\run-hidden.vbs ${wrapper_dir_win}\\health-tick.cmd"
+
+  if MSYS_NO_PATHCONV=1 schtasks /Create /TN "$task_name" /TR "$tr_cmd" /SC HOURLY /F >/dev/null 2>&1; then
+    echo "  registered scheduled task '${task_name}' (health-tick.sh, hourly, hidden window; log: ~/.claude/state/health-tick/tick.log)"
+  else
+    echo "  WARNING: schtasks /Create failed for '${task_name}' — the session-independent health tick will not run on a schedule until this is fixed (verify: schtasks /Query /TN ${task_name})"
+  fi
+}
+
+# register_health_tick_task  # Phase-1 ops step — orchestrator enables after integration (ADR-061 D6)
+
+# ============================================================
 # Clean up legacy per-repo hooks
 # ============================================================
 

@@ -79,9 +79,16 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _wsw_tt_tmp=$(mktemp -d 2>/dev/null || mktemp -d -t wswst)
   if [[ -n "$_wsw_tt_tmp" && -d "$_wsw_tt_tmp" ]]; then
     trap 'rm -rf "${_wsw_tt_tmp:-}"' EXIT
-    mkdir -p "$_wsw_tt_tmp/hooks/lib"
+    mkdir -p "$_wsw_tt_tmp/hooks/lib" "$_wsw_tt_tmp/scripts"
     cp "${BASH_SOURCE[0]}" "$_wsw_tt_tmp/hooks/workstreams-stop-writer.sh"
     cp "$HOOKS_DIR/lib/signal-ledger.sh" "$_wsw_tt_tmp/hooks/lib/signal-ledger.sh" 2>/dev/null
+    # ADR-061 D2: give the fixture tree the REAL heartbeat writer + its lib
+    # (+ the reentry guard) so the fixture run below can also prove the
+    # non-reentry heartbeat event name is unchanged ("turn-end", O.2
+    # callsite) — sandboxed via HEARTBEAT_STATE_DIR.
+    cp "$HOOKS_DIR/lib/hook-reentry-guard.sh" "$_wsw_tt_tmp/hooks/lib/hook-reentry-guard.sh" 2>/dev/null
+    cp "$HOOKS_DIR/lib/session-heartbeat-lib.sh" "$_wsw_tt_tmp/hooks/lib/session-heartbeat-lib.sh" 2>/dev/null
+    cp "$HOOKS_DIR/../scripts/session-heartbeat.sh" "$_wsw_tt_tmp/scripts/session-heartbeat.sh" 2>/dev/null
     for _wsw_member_spec in \
       "workstreams-stop-gate.sh:silent" \
       "workstreams-emit.sh:silent" \
@@ -99,7 +106,9 @@ if [[ "${1:-}" == "--self-test" ]]; then
     done
 
     _wsw_tt_ledger="$_wsw_tt_tmp/ledger.jsonl"
-    _wsw_tt_out=$(printf '{}' | HARNESS_SELFTEST=1 SIGNAL_LEDGER_PATH="$_wsw_tt_ledger" bash "$_wsw_tt_tmp/hooks/workstreams-stop-writer.sh" 2>&1)
+    _wsw_tt_hb_dir="$_wsw_tt_tmp/hb-nonreentry"
+    mkdir -p "$_wsw_tt_hb_dir"
+    _wsw_tt_out=$(printf '{}' | HARNESS_SELFTEST=1 SIGNAL_LEDGER_PATH="$_wsw_tt_ledger" HEARTBEAT_STATE_DIR="$_wsw_tt_hb_dir" CLAUDE_CODE_SESSION_ID="sess-wsw-nonreentry" bash "$_wsw_tt_tmp/hooks/workstreams-stop-writer.sh" 2>&1)
     _wsw_tt_rc=$?
 
     if [[ "$_wsw_tt_rc" -eq 0 ]]; then
@@ -147,6 +156,42 @@ if [[ "${1:-}" == "--self-test" ]]; then
       echo "self-test FAIL: expected the pre-existing workstreams-emit-reconciler/warn ledger event to still land" >&2
       fails=1
     fi
+
+    # ---- ADR-061 D2 scenarios ------------------------------------------
+    # Non-reentry (the fixture run above, no NL_HOOK_REENTRY in its env):
+    # the O.2 callsite heartbeat event name is byte-identical to before —
+    # "turn-end", never the -auto variant.
+    if grep -q '"last_event":"turn-end","marker_state"' "$_wsw_tt_hb_dir/sess-wsw-nonreentry.json" 2>/dev/null \
+       && ! grep -q 'turn-end-auto' "$_wsw_tt_hb_dir/sess-wsw-nonreentry.json" 2>/dev/null; then
+      echo "self-test PASS: non-reentry heartbeat event name unchanged (turn-end, not turn-end-auto)"
+    else
+      echo "self-test FAIL: expected last_event turn-end (not -auto) in $_wsw_tt_hb_dir/sess-wsw-nonreentry.json; got: $(cat "$_wsw_tt_hb_dir/sess-wsw-nonreentry.json" 2>/dev/null)" >&2
+      fails=1
+    fi
+
+    # Reentry: run the REAL writer (safe — the guard exits before the
+    # member fork loop) under NL_HOOK_REENTRY=1 with a sandboxed heartbeat
+    # dir + ledger. Assert: exit 0; heartbeat written with turn-end-auto;
+    # the member fork loop stayed suppressed (no turn-trace ledger event —
+    # the known side effect every non-reentry run emits, asserted above).
+    _wsw_re_hb_dir="$_wsw_tt_tmp/hb-reentry"
+    _wsw_re_ledger="$_wsw_tt_tmp/ledger-reentry.jsonl"
+    mkdir -p "$_wsw_re_hb_dir"
+    printf '{}' | NL_HOOK_REENTRY=1 HARNESS_SELFTEST=1 SIGNAL_LEDGER_PATH="$_wsw_re_ledger" HEARTBEAT_STATE_DIR="$_wsw_re_hb_dir" CLAUDE_CODE_SESSION_ID="sess-wsw-reentry" bash "${BASH_SOURCE[0]}" >/dev/null 2>&1
+    _wsw_re_rc=$?
+    if [[ "$_wsw_re_rc" -eq 0 ]] && grep -q '"last_event":"turn-end-auto","marker_state"' "$_wsw_re_hb_dir/sess-wsw-reentry.json" 2>/dev/null; then
+      echo "self-test PASS: reentry (NL_HOOK_REENTRY=1) writes heartbeat with turn-end-auto event, exit 0"
+    else
+      echo "self-test FAIL: expected turn-end-auto heartbeat under reentry (rc=$_wsw_re_rc, file: $(cat "$_wsw_re_hb_dir/sess-wsw-reentry.json" 2>/dev/null))" >&2
+      fails=1
+    fi
+    if ! grep -q '"event":"turn-trace"' "$_wsw_re_ledger" 2>/dev/null; then
+      echo "self-test PASS: reentry run still suppresses the member fork loop (no turn-trace event)"
+    else
+      echo "self-test FAIL: reentry run emitted a turn-trace event — member fork loop was NOT suppressed" >&2
+      fails=1
+    fi
+    # ---- END ADR-061 D2 scenarios ---------------------------------------
   fi
 
   exit $fails
@@ -162,6 +207,18 @@ fi
 # correctness, only whether an automation-spawned child re-triggers 5 more
 # forks per Stop.
 if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+  # ---- ADR-061 D2 HOIST: reentry-safe liveness heartbeat -----------------
+  # An automation-spawned child (NL_HOOK_REENTRY=1 — the guard's ONLY
+  # trigger) must still be VISIBLE to the heartbeat liveness layer: an
+  # invisible child that looks dead gets re-resumed — the FM-037 "branching
+  # growth" root (ADR-061 §2). The touch is bounded, spawns no `claude`,
+  # and never blocks (session-heartbeat.sh touch exits 0 on every path).
+  # Event name carries the -auto suffix — a new last_event VALUE only; C1
+  # schema unchanged. The member fork loop below stays suppressed exactly
+  # as before.
+  marker_state="${SESSION_HEARTBEAT_MARKER_STATE:-none}"
+  bash "$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event turn-end-auto --marker "$marker_state" >/dev/null 2>&1 || true
+  # ---- END ADR-061 D2 HOIST -----------------------------------------------
   hook_reentry_note "workstreams-stop-writer" 2>/dev/null || true
   exit 0
 fi
@@ -209,7 +266,7 @@ fi
 # batch — no Stop-chain member currently exports a scanned MARKER_KEYWORD
 # for this hook to reuse).
 marker_state="${SESSION_HEARTBEAT_MARKER_STATE:-none}"
-"$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event turn-end --marker "$marker_state" >/dev/null 2>&1 || true
+bash "$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event turn-end --marker "$marker_state" >/dev/null 2>&1 || true
 # ---- END WAVE-O O.2 CALLSITE ----------------------------------------------
 
 exit 0

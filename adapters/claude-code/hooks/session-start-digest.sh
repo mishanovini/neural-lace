@@ -1064,7 +1064,7 @@ run_digest() {
   # ---- WAVE-O O.2 CALLSITE: session-start liveness heartbeat -------------
   # Best-effort, never-blocks (session-heartbeat.sh touch always exits 0).
   # Per specs-o §O.2 fragment callsite-wiring.md item 1 (orchestrator splice).
-  "$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event start >/dev/null 2>&1 || true
+  bash "$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event start >/dev/null 2>&1 || true
   # ---- END WAVE-O O.2 CALLSITE ---------------------------------------------
 
   # ---- COCKPIT-SESSIONSTART CALLSITE: ensure the observability cockpit --
@@ -1920,6 +1920,55 @@ EOF
     fail=$((fail + 1))
   fi
 
+  # ---- S17 (ADR-061 D2 hoist): reentry-safe heartbeat at the entry point.
+  # S17a: under NL_HOOK_REENTRY=1 the real flagless invocation writes a
+  # heartbeat with the start-auto event BEFORE the guard returns, while the
+  # digest itself stays suppressed (skip message only — no feed lines).
+  local s17="$tmp/s17"
+  _seed_repo "$s17"
+  local s17_hb="$tmp/s17-hb"
+  local s17_home="$tmp/s17-home"
+  mkdir -p "$s17_hb" "$s17_home/.claude/state"
+  local s17_script="$HOOKS_DIR/$(basename "${BASH_SOURCE[0]}")"
+  local out17a
+  out17a="$(
+    cd "$s17" && \
+    NL_HOOK_REENTRY=1 HOME="$s17_home" HARNESS_SELFTEST=1 \
+    SIGNAL_LEDGER_PATH="$tmp/s17-ledger.jsonl" DIGEST_SEEN_PATH="$tmp/s17-seen.jsonl" \
+    HEARTBEAT_STATE_DIR="$s17_hb" CLAUDE_CODE_SESSION_ID="sess-digest-reentry" \
+      bash "$s17_script" </dev/null 2>/dev/null
+  )"
+  _ck_contains "S17a reentry invocation still prints the guard skip message" "$out17a" "skipping digest"
+  _ck_not_contains "S17a reentry invocation suppresses the digest feeds (no doctor line)" "$out17a" "doctor:"
+  if grep -q '"last_event":"start-auto","marker_state"' "$s17_hb/sess-digest-reentry.json" 2>/dev/null; then
+    echo "PASS: S17a reentry (NL_HOOK_REENTRY=1) writes heartbeat with start-auto event"; pass=$((pass + 1))
+  else
+    echo "FAIL: S17a reentry (NL_HOOK_REENTRY=1) writes heartbeat with start-auto event (got: $(cat "$s17_hb/sess-digest-reentry.json" 2>/dev/null))" >&2
+    fail=$((fail + 1))
+  fi
+
+  # S17b: WITHOUT the env, the non-reentry flagless run is unchanged — the
+  # heartbeat event name stays exactly "start" (never the -auto variant)
+  # and the digest renders normally.
+  local s17b_hb="$tmp/s17b-hb"
+  mkdir -p "$s17b_hb"
+  local out17b
+  out17b="$(
+    cd "$s17" && \
+    HOME="$s17_home" HARNESS_SELFTEST=1 \
+    SIGNAL_LEDGER_PATH="$tmp/s17b-ledger.jsonl" DIGEST_SEEN_PATH="$tmp/s17b-seen.jsonl" \
+    HEARTBEAT_STATE_DIR="$s17b_hb" CLAUDE_CODE_SESSION_ID="sess-digest-normal" \
+      bash "$s17_script" </dev/null 2>/dev/null
+  )"
+  _ck_contains "S17b non-reentry invocation renders the digest (doctor line present)" "$out17b" "doctor:"
+  if grep -q '"last_event":"start","marker_state"' "$s17b_hb/sess-digest-normal.json" 2>/dev/null \
+     && ! grep -q 'start-auto' "$s17b_hb/sess-digest-normal.json" 2>/dev/null; then
+    echo "PASS: S17b non-reentry heartbeat event name unchanged (start, not start-auto)"; pass=$((pass + 1))
+  else
+    echo "FAIL: S17b non-reentry heartbeat event name unchanged (got: $(cat "$s17b_hb/sess-digest-normal.json" 2>/dev/null))" >&2
+    fail=$((fail + 1))
+  fi
+
   rm -rf "$tmp" 2>/dev/null || true
   echo ""
   echo "self-test summary: $pass passed, $fail failed"
@@ -1982,6 +2031,17 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
       # completely unaffected (NL_HOOK_REENTRY unset by default) — see
       # lib/hook-reentry-guard.sh.
       if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+        # ---- ADR-061 D2 HOIST: reentry-safe liveness heartbeat ---------
+        # An automation-spawned child (NL_HOOK_REENTRY=1 — the guard's
+        # ONLY trigger) must still be VISIBLE to the heartbeat liveness
+        # layer: an invisible child that looks dead gets re-resumed — the
+        # FM-037 "branching growth" root (ADR-061 §2). The touch is
+        # bounded, spawns no `claude`, and never blocks (session-heartbeat.sh
+        # touch exits 0 on every path). Event name carries the -auto
+        # suffix — a new last_event VALUE only; C1 schema unchanged.
+        # Everything else in this hook stays suppressed exactly as before.
+        bash "$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event start-auto >/dev/null 2>&1 || true
+        # ---- END ADR-061 D2 HOIST --------------------------------------
         hook_reentry_note "session-start-digest" 2>/dev/null || true
         echo "[session-start-digest] reentrant/automation-spawned invocation — skipping digest (NL-FINDING-040 guard)"
         exit 0

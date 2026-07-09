@@ -914,7 +914,10 @@ JSON
   selftest_check_docs_impact_warn() {
     local old_content="$1" new_content="$2"
     local new_task_lines
-    new_task_lines="$(echo "$new_content" | grep -E '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' 2>/dev/null)"
+    # `|| true` mirrors the fixed production check_docs_impact_warn (nl-issue
+    # [24]): unguarded grep-no-match here is only survivable via bash's
+    # no-inherit_errexit quirk in $() calls — keep the replica truly a replica.
+    new_task_lines="$(echo "$new_content" | grep -E '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' 2>/dev/null || true)"
     [[ -z "$new_task_lines" ]] && { echo "NONE"; return 0; }
     local any_warned=0
     while IFS= read -r line; do

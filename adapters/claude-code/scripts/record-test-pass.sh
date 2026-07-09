@@ -21,7 +21,10 @@
 
 set -euo pipefail
 
-repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
+# `|| true`: outside a git repo, rev-parse exits 128 — unguarded under
+# `set -euo pipefail` that killed the script silently (nl-issue [24] class),
+# making the graceful not-a-repo message below unreachable dead code.
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
 if [ -z "$repo_root" ]; then
   echo "[record-test-pass] not inside a git repo" >&2
   exit 2
