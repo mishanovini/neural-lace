@@ -1,6 +1,6 @@
 # NL Observability Program — derived-truth cockpit + six-questions estate visibility
 
-Status: ACTIVE
+Status: COMPLETED
 frozen: false
 Mode: design
 Execution Mode: orchestrator
@@ -214,3 +214,40 @@ executes that file verbatim against http://localhost:7733 and records the PASS/F
 artifact O.4's Done-when requires. All plan-time feedback gaps were folded into
 specs-o (§O.0.1-3 env overrides, C4 state derivation rules, §O.4.3 badge lifecycle,
 §O.4.3b interrupt-priority + freshness) on 2026-07-06.
+
+## Completion Report (2026-07-08)
+
+**All 10 tasks (O.0–O.9) verified by adversarial task-verifier; program COMPLETE.**
+Landed at master `2e54528` (both remotes tree-synced). Full retro with measured
+numbers: `docs/reviews/wave-o-retro.md`.
+
+Pre-registered metrics (sketch §success-metrics): **#1 Q1–Q6 answered <10s** —
+ACHIEVED (median ~1.3s; `nl status` 3.8s, `needs-me` 0.4s, `shipped` 0.8s, `costs`
+6.5–7s, `why` 1.9s; one non-reproducible cold-touch caveat recorded). **#2 zero
+unmapped ledger event types** — ACHIEVED (100% coverage, 27 types, doctor-audited by
+`check_obs_consumer_map`). **#3 operator trusts the cockpit** — DELIVERED as an
+accepted live surface (rebuilt on derived truth, :7733, 10/10 adversarial acceptance);
+trust-in-use is the operator's to confirm over the coming weeks (retro does not
+self-certify it).
+
+What shipped: the D6 signal ledger extended to 10 lifecycle/spawn/turn-trace event
+types with a consumer-map invariant (O.1); per-session heartbeats with staleness =
+crash signal + a reaper (O.2); the `nl status|needs-me|why|costs|shipped|health|backlog`
+derivation CLI computing all six questions from ground truth (O.3); the Workstreams UI
+rebuilt as a thin six-question view over derived truth, event-sourced trust path (both
+gates + item-extraction) retired to attic/ — closing NL-FINDING-024 at the root (O.4);
+six doctor pipeline-health checks (O.6); the estate-coordination skill + doctrine (O.8);
+the backlog accountability loop with build-escalation + dispositioned-in-flight state
+(O.9). O.5 (ntfy push) was **descoped by operator** (no phone observability).
+
+Mid-program: absorbed three operator directives (O.5 descope; cold-reader decision-lint
+per constitution §3; gh-account auto-switch), survived a process crash (all work
+recovered from master + salvaged branches; exposed the agent-model-floor gap) and a
+Fable→Opus model-limit switch. Decisions: `docs/decisions/060-*`.
+
+Residual follow-ups (all filed via nl-issue/backlog; none block completion): cold-reader
+decision-block regex false-fires on negation (WARN-only); `session-start-digest` S2
+self-test reads live unresolved-gaps (fixture-isolation leak); `NL-session-resumer`
+scheduled task disabled (E.7/ops decision); `gh-account-autoswitch` hook not yet wired
+into live settings.json (surgical step for future sessions); `session-heartbeat reap`
+has no scheduled call-site; HARNESS-PERF-O3-HB (optional further `nl status` speedup).
