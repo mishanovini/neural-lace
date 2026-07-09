@@ -963,7 +963,7 @@
       },
       "blocking": false,
       "budget_class": "none",
-      "honest_status": "scripts/needs-you.sh — maintains NEEDS-YOU.md (E.6); called by decision-log flow + digest, not event-wired."
+      "honest_status": "scripts/needs-you.sh — maintains NEEDS-YOU.md (E.6); called by decision-log flow + digest, not event-wired. Cold-reader lint (constitution §3 amendment 53d3bee, operator directive 2026-07-07): `add --section decision` scores every new entry's --text against three zero-session-context checks (background/context, a concrete artifact anchor, per-option outcome text — see _ny_lint_decision_text) and stores the result as a `lint_warnings` array on the item. WARN-only: a stderr notice is printed but `add` NEVER blocks (always exits 0 regardless of lint result) — the ledger's availability outranks its tidiness. Self-tested (T22-T25)."
     },
     {
       "id": "nl-cli",
@@ -1755,7 +1755,7 @@
       },
       "blocking": true,
       "budget_class": "stop",
-      "honest_status": "E.11 batched Stop verdict; invokes work-integrity/session-honesty/bug-persistence in --report mode, aggregates one verdict; replaces their 3 blocking Stop entries at §E.W (Stop 6->4). pin-f: delegates to the gates that validate purpose clauses.",
+      "honest_status": "E.11 batched Stop verdict; invokes work-integrity/session-honesty/bug-persistence in --report mode, aggregates one verdict; replaces their 3 blocking Stop entries at §E.W (Stop 6->4). pin-f: delegates to the gates that validate purpose clauses. Cold-reader-lint WARN (constitution §3 amendment 53d3bee, operator directive 2026-07-07), following FUNCTIONAL-LINK's own precedent immediately above it in this same file: scans the final assistant message for a §3-format \"Decision needed\" block and, if it is missing an artifact anchor or per-option outcome text, emits ONE ledger_emit warn + a stderr notice. WARN-only — never contributes to the block/gap verdict above, never participates in cycle-counting/DONE-refusal, never touches stdout. Self-tested (scenarios renumbered 20-23 at batch-integration to avoid colliding with the FIX-2a/FIX-2b automation-ceiling scenarios 18-19 already on master; 3 of 4 pass). KNOWN BUG (found during batch integration, confirmed pre-existing on the source branch in isolation, not introduced by the merge): `_svd_message_has_decision_block`'s heuristic does a naive case-insensitive substring match for `decision needed`, so prose that negates it (e.g. \"no decision needed here\") still matches and false-positive-warns as a decision block missing an anchor — 1 self-test scenario (ordinary-prose-not-scanned) fails on this. Low severity (WARN-only, never blocks) but real; follow-up filed to require the heuristic to exclude a preceding negation token.",
       "honesty_rationale": "Aggregator; delegates to bug-persistence/work-integrity/session-honesty's own waiver postures (already stated in its honest_status)."
     },
     {
