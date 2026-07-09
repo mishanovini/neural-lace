@@ -318,6 +318,118 @@ _od_epoch() {
 }
 
 # ----------------------------------------------------------------------
+# _od_heartbeat_batch_build <file1> [file2 ...] — populate the global
+# per-session heartbeat field maps (_OD_HB_MARKER, _OD_HB_BRANCH,
+# _OD_HB_WORKTREE, _OD_HB_CWD, _OD_HB_LAST_ACTIVITY_TS,
+# _OD_HB_LAST_ACTIVITY_EPOCH, _OD_HB_PID) via exactly ONE jq invocation
+# over ALL heartbeat files at once, keyed by the FILENAME-derived session
+# id (matching od_sessions' own `basename "$f" .json` convention exactly
+# — never the JSON's internal session_id field, so a hypothetical
+# mismatched/malformed fixture can't silently join under the wrong key).
+# Sets _OD_HB_BATCH_OK=1 on success, 0 on any failure (no jq, zero files,
+# or — critically — ANY malformed heartbeat file among the batch, since
+# `jq -n 'inputs | ...'` is all-or-nothing: one invalid-JSON file aborts
+# the WHOLE invocation with empty stdout, see the jq behavior this was
+# verified against). On failure od_sessions' caller falls back to the
+# original per-file jq loop, so correctness never depends on every file
+# being well-formed — only the FAST PATH does.
+#
+# PERFORMANCE (O.3 hb-perf2 fork-batching fix, docs/backlog.md
+# HARNESS-PERF-O3-HB): this replaces the per-FILE jq call od_sessions
+# used to run inside its session loop (one `jq -r '[...] | @tsv'` process
+# PER heartbeat file — already a 5x improvement over the original
+# per-FIELD calls, but still N jq forks for N sessions) with ONE jq
+# process for the whole heartbeat directory, using `-n`+`inputs` so each
+# file is read as its own JSON document and `input_filename` names its
+# source. The epoch conversion for last_activity_ts also happens INSIDE
+# this jq call via `fromdateiso8601` (same technique already used by
+# od_harness_health / _od_sessions_epoch_index_build above) — a caller
+# threading `_OD_HB_LAST_ACTIVITY_EPOCH[$sid]` through to
+# hb_is_stale/hb_classify's own pre-resolved-epoch arg therefore never
+# forks a `date`/`_hb_epoch` subprocess for this value AT ALL, on top of
+# never forking the `_hb_field` jq calls those functions used to run
+# themselves. Combined with od_sessions passing a single shared
+# `_od_now_epoch` call for "now" (instead of hb_is_stale forking its own
+# `date -u +%s` per session), this is the fix for the ~0.3-0.4s-per-
+# heartbeat-file fork density the O.3/hb-perf task's profiling
+# identified as the dominant residual `nl status` cost after the
+# sibling-find fix (a524474) — see that backlog entry for the full
+# before/after measurement.
+# ----------------------------------------------------------------------
+declare -gA _OD_HB_MARKER 2>/dev/null || true
+declare -gA _OD_HB_BRANCH 2>/dev/null || true
+declare -gA _OD_HB_WORKTREE 2>/dev/null || true
+declare -gA _OD_HB_CWD 2>/dev/null || true
+declare -gA _OD_HB_LAST_ACTIVITY_TS 2>/dev/null || true
+declare -gA _OD_HB_LAST_ACTIVITY_EPOCH 2>/dev/null || true
+declare -gA _OD_HB_PID 2>/dev/null || true
+_OD_HB_BATCH_OK=0
+_od_heartbeat_batch_build() {
+  _OD_HB_MARKER=(); _OD_HB_BRANCH=(); _OD_HB_WORKTREE=(); _OD_HB_CWD=()
+  _OD_HB_LAST_ACTIVITY_TS=(); _OD_HB_LAST_ACTIVITY_EPOCH=(); _OD_HB_PID=()
+  _OD_HB_BATCH_OK=0
+
+  local -a files=("$@")
+  if [[ "${#files[@]}" -eq 0 ]]; then
+    _OD_HB_BATCH_OK=1
+    return 0
+  fi
+  _od_have jq || return 0
+
+  local raw jq_rc
+  raw="$(jq -rn '
+    [ inputs
+      | { file: (input_filename // ""),
+          marker: (.marker_state // ""),
+          branch: (.branch // ""),
+          worktree: (.worktree_root // ""),
+          cwd: (.cwd // ""),
+          last_activity_ts: (.last_activity_ts // ""),
+          last_activity_epoch: (try (.last_activity_ts | fromdateiso8601) catch 0),
+          pid: (.pid // "")
+        }
+    ]
+    | .[]
+    | [.file, .marker, .branch, .worktree, .cwd, .last_activity_ts, .last_activity_epoch, .pid]
+    | @tsv
+  ' "${files[@]}" 2>/dev/null)"
+  jq_rc=$?
+  raw="$(printf '%s' "$raw" | tr -d '\r')"
+  # All-or-nothing failure (one malformed file kills the whole batch,
+  # exit != 0, empty stdout) — degrade honestly to the caller's per-file
+  # fallback rather than silently dropping every session's data.
+  if [[ "$jq_rc" -ne 0 ]]; then
+    return 0
+  fi
+
+  local file marker branch worktree cwd ts epoch pid sid
+  while IFS=$'\t' read -r file marker branch worktree cwd ts epoch pid; do
+    [[ -z "$file" ]] && continue
+    sid="$(basename "$file" .json)"
+    [[ -z "$sid" ]] && continue
+    _OD_HB_MARKER["$sid"]="$marker"
+    _OD_HB_BRANCH["$sid"]="$branch"
+    _OD_HB_WORKTREE["$sid"]="$worktree"
+    _OD_HB_CWD["$sid"]="$cwd"
+    _OD_HB_LAST_ACTIVITY_TS["$sid"]="$ts"
+    _OD_HB_LAST_ACTIVITY_EPOCH["$sid"]="${epoch:-0}"
+    _OD_HB_PID["$sid"]="$pid"
+  done <<< "$raw"
+
+  _OD_HB_BATCH_OK=1
+  return 0
+}
+
+# _od_heartbeat_batch_reset — drop the batch maps so a LATER call in the
+# same long-lived process (only realistic in --self-test — production is
+# one invocation per `nl` call) never serves a lookup from a stale batch.
+_od_heartbeat_batch_reset() {
+  _OD_HB_MARKER=(); _OD_HB_BRANCH=(); _OD_HB_WORKTREE=(); _OD_HB_CWD=()
+  _OD_HB_LAST_ACTIVITY_TS=(); _OD_HB_LAST_ACTIVITY_EPOCH=(); _OD_HB_PID=()
+  _OD_HB_BATCH_OK=0
+}
+
+# ----------------------------------------------------------------------
 # _od_json_field <json-line> <field> — extract a top-level string field
 # from a flat single-line JSON object (ledger/heartbeat shape). jq when
 # present, sed fallback otherwise. Empty on any failure.
@@ -406,8 +518,9 @@ _od_json_escape() {
 # crashed > stalled > throttled > blocked > working.
 # ============================================================
 
-# _od_session_last_activity <sid> <heartbeat-file-or-empty> — print the
-# best-known "last activity" epoch for a session: heartbeat
+# _od_session_last_activity <sid> <heartbeat-file-or-empty>
+#   [pre-resolved-last_activity_ts] [pre-resolved-last_activity_epoch]
+#   — print the best-known "last activity" epoch for a session: heartbeat
 # last_activity_ts when a heartbeat file exists, else the transcript
 # file's mtime, else 0 (unresolvable — never fabricated).
 #
@@ -424,13 +537,36 @@ _od_json_escape() {
 # of the ~10.7s the other 4 fields already cost. Omit the 3rd arg for
 # unchanged 2-arg-call behavior (self-contained, still correct — just
 # re-reads the file itself).
+#
+# Optional 4TH arg <pre-resolved-last_activity_epoch> (O.3 hb-perf2
+# fork-batching fix, docs/backlog.md HARNESS-PERF-O3-HB): even with the
+# 3rd arg supplied, this function used to ALWAYS convert it via
+# `_od_epoch` (a `date -d` subprocess) — one more per-session fork on top
+# of everything hb_is_stale/hb_classify's own fixes eliminate.
+# od_sessions' batched heartbeat read (_od_heartbeat_batch_build) already
+# computes this epoch via jq's `fromdateiso8601` inside its ONE
+# whole-directory jq call, so passing it through here skips this
+# function's `_od_epoch` fork entirely too. Distinguished by ARGUMENT
+# COUNT (must also supply the 3rd arg to reach the 4th, even if it is the
+# same string the caller already has). Omit for unchanged 3-arg-or-fewer
+# behavior — no other caller of this function exists outside od_sessions,
+# so this is purely an internal optimization.
 _od_session_last_activity() {
   local sid="$1" hbfile="$2" ts="${3:-}"
+  local epoch_given=0 epoch_pre=""
+  if [[ $# -ge 4 ]]; then
+    epoch_given=1
+    epoch_pre="$4"
+  fi
   if [[ -z "$ts" && -n "$hbfile" && -f "$hbfile" ]]; then
     ts="$(_od_json_field "$(cat "$hbfile" 2>/dev/null)" "last_activity_ts")"
   fi
   if [[ -n "$ts" ]]; then
-    _od_epoch "$ts"
+    if [[ "$epoch_given" == "1" ]]; then
+      printf '%s' "${epoch_pre:-0}"
+    else
+      _od_epoch "$ts"
+    fi
     return 0
   fi
   local tf; tf="$(_od_find_transcript "$sid")"
@@ -586,12 +722,14 @@ od_sessions() {
   local ledger; ledger="${SIGNAL_LEDGER_PATH:-$HOME/.claude/state/signal-ledger.jsonl}"
 
   local -a sids=()
+  local -a hb_files=()
   local f sid
   if [[ -d "$hbdir" ]]; then
     while IFS= read -r f; do
       [[ -z "$f" ]] && continue
       sid="$(basename "$f" .json)"
       sids+=("$sid")
+      hb_files+=("$f")
     done < <(find "$hbdir" -maxdepth 1 -type f -name '*.json' 2>/dev/null | sort)
   fi
 
@@ -640,6 +778,26 @@ od_sessions() {
   _od_transcript_index_build
   _od_sessions_epoch_index_build "$ledger"
 
+  # PERFORMANCE (O.3 hb-perf2 fork-batching fix, docs/backlog.md
+  # HARNESS-PERF-O3-HB): read every heartbeat file's marker/branch/
+  # worktree/cwd/last_activity_ts/pid (+ the last_activity_ts epoch
+  # conversion, via jq's fromdateiso8601) in ONE jq invocation over the
+  # WHOLE heartbeat directory, instead of one jq call PER FILE (this
+  # loop used to fork exactly one `jq -r '[...] | @tsv'` process per
+  # heartbeat file — already a 5x win over the original per-FIELD calls,
+  # but still O(sessions) forks). "now" is likewise computed ONCE here
+  # (one `date -u +%s`) instead of hb_is_stale forking its own per
+  # session. Falls back to the untouched per-file loop below when the
+  # batch call fails for any reason (no jq, or one malformed heartbeat
+  # file among many — see _od_heartbeat_batch_build's own header for the
+  # all-or-nothing jq behavior this guards against): correctness never
+  # depends on every heartbeat file being well-formed, only the fast path
+  # does. Reset at the end of this function alongside the transcript
+  # index, for the same reason (a later od_costs/od_why call in the same
+  # long-lived --self-test process must never see a stale batch).
+  _od_heartbeat_batch_build "${hb_files[@]}"
+  local _od_hb_now_epoch; _od_hb_now_epoch="$(_od_now_epoch)"
+
   # PERFORMANCE (this task): replaces one `bash needs-you.sh
   # has-entry-for-session <sid>` subprocess invocation PER SESSION
   # (measured ~6.9s for 32 sessions on this machine — a whole separate
@@ -663,18 +821,29 @@ od_sessions() {
   for sid in "${all_sids[@]}"; do
     hbfile=""
     marker=""; branch=""; worktree=""; cwd=""; detail=""
-    local hb_last_activity_ts=""
+    local hb_last_activity_ts="" hb_last_activity_epoch="0" hb_pid=""
     if [[ -f "$hbdir/${sid}.json" ]]; then
       hbfile="$hbdir/${sid}.json"
-      # PERFORMANCE (this task): ONE cat + ONE jq call extracting all 5
-      # fields this loop needs from the heartbeat file, replacing 4
-      # separate cat+jq subprocess PAIRS (one per field) that each
-      # re-read and re-parsed the identical file — measured ~10.7s for
-      # 32 heartbeat files on this machine. last_activity_ts is included
-      # here too and handed straight to _od_session_last_activity below
-      # (its optional 3rd arg), so that function's own independent 5th
-      # re-read of the same file (~3.8s measured) is skipped entirely.
-      if _od_have jq; then
+      if [[ "$_OD_HB_BATCH_OK" == "1" ]]; then
+        # PERFORMANCE (O.3 hb-perf2 fork-batching fix): every field this
+        # loop needs (plus pid and the last_activity_ts epoch) already
+        # came out of the ONE whole-directory jq call above
+        # (_od_heartbeat_batch_build) — zero additional jq/date forks
+        # per session on this path.
+        marker="${_OD_HB_MARKER[$sid]:-}"
+        branch="${_OD_HB_BRANCH[$sid]:-}"
+        worktree="${_OD_HB_WORKTREE[$sid]:-}"
+        cwd="${_OD_HB_CWD[$sid]:-}"
+        hb_last_activity_ts="${_OD_HB_LAST_ACTIVITY_TS[$sid]:-}"
+        hb_last_activity_epoch="${_OD_HB_LAST_ACTIVITY_EPOCH[$sid]:-0}"
+        hb_pid="${_OD_HB_PID[$sid]:-}"
+      elif _od_have jq; then
+        # Fallback (batch failed — no jq, or a malformed heartbeat file
+        # elsewhere in the directory poisoned the whole-directory read):
+        # ONE cat + ONE jq call extracting the 5 fields this loop needs
+        # from JUST this file, replacing 4 separate cat+jq subprocess
+        # PAIRS (one per field) — the pre-existing O.3 perf fix, kept
+        # verbatim as the safety net under the new batched fast path.
         IFS=$'\t' read -r marker branch worktree cwd hb_last_activity_ts \
           <<< "$(jq -r '[(.marker_state//""),(.branch//""),(.worktree_root//""),(.cwd//""),(.last_activity_ts//"")] | @tsv' "$hbfile" 2>/dev/null | tr -d '\r')"
       else
@@ -711,7 +880,22 @@ od_sessions() {
     local hbcls="missing"
     if [[ -n "$hbfile" ]]; then
       if _od_have hb_classify; then
-        hbcls="$(hb_classify "$hbfile" "$OBS_STALE_MIN" "$sid_transcript")"
+        if [[ "$_OD_HB_BATCH_OK" == "1" ]]; then
+          # PERFORMANCE (O.3 hb-perf2 fork-batching fix): pass every
+          # field hb_classify/hb_is_stale would otherwise re-derive via
+          # their own _hb_field (jq)/_hb_epoch (date) forks — session id,
+          # the already-jq-converted last_activity_ts epoch, the ONE
+          # shared "now" epoch, and pid. This is the fix for the
+          # ~0.3-0.4s-per-heartbeat-file fork density docs/backlog.md
+          # HARNESS-PERF-O3-HB identified as the dominant residual `nl
+          # status` cost. Does NOT change WHAT hb_classify decides (see
+          # that function's own header — the C1 contract, including the
+          # transcript-mtime join, is byte-for-byte unchanged), only HOW
+          # it gets the values it needs.
+          hbcls="$(hb_classify "$hbfile" "$OBS_STALE_MIN" "$sid_transcript" "$sid" "$hb_last_activity_epoch" "$_od_hb_now_epoch" "$hb_pid")"
+        else
+          hbcls="$(hb_classify "$hbfile" "$OBS_STALE_MIN" "$sid_transcript")"
+        fi
       else
         hbcls="live"
       fi
@@ -724,7 +908,12 @@ od_sessions() {
     # against the index now, this just avoids the redundant lookup.
     local transcript_file=""
     [[ -z "$hbfile" ]] && transcript_file="$sid_transcript"
-    local last_activity_epoch; last_activity_epoch="$(_od_session_last_activity "$sid" "$hbfile" "$hb_last_activity_ts")"
+    local last_activity_epoch
+    if [[ "$_OD_HB_BATCH_OK" == "1" && -n "$hbfile" ]]; then
+      last_activity_epoch="$(_od_session_last_activity "$sid" "$hbfile" "$hb_last_activity_ts" "$hb_last_activity_epoch")"
+    else
+      last_activity_epoch="$(_od_session_last_activity "$sid" "$hbfile" "$hb_last_activity_ts")"
+    fi
     local last_block_epoch="${_OD_BLOCK_EPOCH_BY_SID[$sid]:-0}"
     local last_throttle_epoch="${_OD_THROTTLE_EPOCH_BY_SID[$sid]:-0}"
 
@@ -759,10 +948,12 @@ od_sessions() {
     out_rows+=("${sid}"$'\t'"${state}"$'\t'"${branch}"$'\t'"${worktree:-$cwd}"$'\t'"${marker}"$'\t'"${detail}")
   done
 
-  # Drop both per-call indexes now that the loop is done with them — see
-  # _od_transcript_index_reset's own header for why this matters (only
-  # in a long-lived process like --self-test; a no-op cost in production).
+  # Drop every per-call index/batch now that the loop is done with them —
+  # see _od_transcript_index_reset's own header for why this matters
+  # (only in a long-lived process like --self-test; a no-op cost in
+  # production).
   _od_transcript_index_reset
+  _od_heartbeat_batch_reset
 
   if [[ "$json_mode" == "1" ]]; then
     printf '{"schema":1,"oracle":"od_sessions","sessions":['
@@ -2189,6 +2380,80 @@ EOF
     fi
   else
     echo "  (jq unavailable — skipping strict JSON assertions)"
+  fi
+
+  echo "Scenario 2b: O.3 hb-perf2 fork-batching fix (docs/backlog.md HARNESS-PERF-O3-HB) — od_sessions' heartbeat read makes O(1) jq calls regardless of session count, not O(N)"
+  (
+    if ! command -v jq >/dev/null 2>&1; then
+      echo "  (jq unavailable — skipping O(1) jq-call-count scenario)"
+      exit 0
+    fi
+    REAL_JQ="$(command -v jq)"
+    JQ_SHIM_DIR="$TMP/jq-shim"
+    mkdir -p "$JQ_SHIM_DIR"
+    JQ_CALL_LOG="$TMP/jq-calls.log"
+    cat > "$JQ_SHIM_DIR/jq" <<SHIM
+#!/bin/bash
+printf 'x\n' >> "$JQ_CALL_LOG"
+exec "$REAL_JQ" "\$@"
+SHIM
+    chmod +x "$JQ_SHIM_DIR/jq"
+
+    # Isolated, EMPTY-of-ledger sandbox (own HEARTBEAT_STATE_DIR + a
+    # SIGNAL_LEDGER_PATH/needs-you ledger that do NOT exist) so the ONLY
+    # jq invocation od_sessions makes, for this fixture set, is the one
+    # whole-directory batched heartbeat read — the tightest possible
+    # proof that it does not scale with session count: with zero ledger
+    # files present, every OTHER jq call site in od_sessions is guarded
+    # by an `[[ -f ... ]] || return 0` and never fires at all.
+    export HEARTBEAT_STATE_DIR="$TMP/hb-jqcount"
+    mkdir -p "$HEARTBEAT_STATE_DIR"
+    export SIGNAL_LEDGER_PATH="$TMP/hb-jqcount-ledger-absent.jsonl"
+    export NEEDS_YOU_STATE_DIR="$TMP/hb-jqcount-needs-you-absent"
+    export OBS_REMOTE_LEDGERS_DIR="$TMP/hb-jqcount-remote-absent"
+    export OBS_TRANSCRIPTS_ROOT="$TMP/hb-jqcount-transcripts"
+    mkdir -p "$OBS_TRANSCRIPTS_ROOT"
+
+    i=1
+    while [[ "$i" -le 3 ]]; do
+      cat > "$HEARTBEAT_STATE_DIR/sess-jqcount-$i.json" <<EOF
+{"schema":1,"session_id":"sess-jqcount-$i","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"$(date -u '+%Y-%m-%dT%H:%M:%SZ')","last_event":"turn-end","marker_state":"none"}
+EOF
+      i=$((i+1))
+    done
+    : > "$JQ_CALL_LOG"
+    PATH="$JQ_SHIM_DIR:$PATH" od_sessions >/dev/null
+    calls_3="$(wc -l < "$JQ_CALL_LOG" 2>/dev/null | tr -d ' \r\n')"
+
+    while [[ "$i" -le 8 ]]; do
+      cat > "$HEARTBEAT_STATE_DIR/sess-jqcount-$i.json" <<EOF
+{"schema":1,"session_id":"sess-jqcount-$i","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"$(date -u '+%Y-%m-%dT%H:%M:%SZ')","last_event":"turn-end","marker_state":"none"}
+EOF
+      i=$((i+1))
+    done
+    : > "$JQ_CALL_LOG"
+    PATH="$JQ_SHIM_DIR:$PATH" od_sessions >/dev/null
+    calls_8="$(wc -l < "$JQ_CALL_LOG" 2>/dev/null | tr -d ' \r\n')"
+
+    printf '%s:%s\n' "${calls_3:-0}" "${calls_8:-0}" > "$TMP/jq-call-counts-result.txt"
+
+    # Sanity: the shim/counting mechanism itself must have actually
+    # observed jq being invoked (else this scenario would trivially
+    # "pass" by counting nothing at all).
+    [[ "${calls_3:-0}" -ge 1 ]] || exit 1
+    # The real assertion: O(1), not O(N) — call count must NOT grow when
+    # the session count more than doubles (3 -> 8 heartbeat files).
+    [[ "${calls_3:-0}" == "${calls_8:-0}" ]] || exit 2
+    exit 0
+  )
+  rc_jqcount=$?
+  counts="$(cat "$TMP/jq-call-counts-result.txt" 2>/dev/null)"
+  if [[ "$rc_jqcount" -eq 0 ]]; then
+    pass "od_sessions' heartbeat read makes O(1) jq calls regardless of session count (3-session estate: ${counts%%:*} jq call(s); 8-session estate: ${counts##*:} jq call(s) — equal, not scaling with N)"
+  elif [[ "$rc_jqcount" -eq 1 ]]; then
+    fail "od_sessions jq-call-count scenario: the counting shim never observed a jq call at all (mechanism broken, not a real pass)"
+  else
+    fail "od_sessions jq-call-count scenario: call count SCALED WITH SESSION COUNT (3-session: ${counts%%:*}, 8-session: ${counts##*:}) — expected O(1), got O(N)"
   fi
 
   echo "Scenario 3: od_needs_me reads the needs-you ledger (THE oracle, never re-derives from md)"
