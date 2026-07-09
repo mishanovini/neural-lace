@@ -2045,6 +2045,7 @@ EOF
 - **OPEN-OLD-01** priority:low added ${old_date} — an ancient open row (>90d)
 - **CLOSED-01** priority:high added ${today} — **IMPLEMENTED ${today}** and done
 - **REFS-ANOTHER-01** priority:medium added ${today} — distinct from CLOSED-01 (IMPLEMENTED ${today}) but itself still open
+- **SCHED-ROW-01** priority:medium added ${old_date} — an ancient row (>90d, would be overdue AND high-fester if miscounted) the operator already answered, **SCHEDULED ${today}** (operator disposition, build in flight — row closes DONE only when it merges)
 EOF
   out4="$(od_backlog_health)"
   out4_flag="$(od_backlog_health --json)"
@@ -2086,11 +2087,52 @@ EOF
       fail "expected age_tiers.over_90=1, got $over90: $out4"
     fi
     n_rows="$(printf '%s' "$out4" | jq '.rows | length')"
-    if [[ "$n_rows" == "4" ]]; then
-      pass "od_backlog_health emits a rows[] array (4 rows) for consumer re-derivation (session-start-digest/plan-edit-validator/harness-kpis all parse doc.rows)"
+    if [[ "$n_rows" == "5" ]]; then
+      pass "od_backlog_health emits a rows[] array (5 rows) for consumer re-derivation (session-start-digest/plan-edit-validator/harness-kpis all parse doc.rows)"
     else
-      fail "expected 4 rows in rows[], got $n_rows: $out4"
+      fail "expected 5 rows in rows[], got $n_rows: $out4"
     fi
+
+    # ---- Scenario 4b: DISPOSITIONED-IN-FLIGHT (O.9 build-escalation
+    # follow-on fix, the crux fix this task delivers). SCHED-ROW-01 is
+    # ~100 days old (would be a slam-dunk overdue_ids entry AND, per the
+    # build-escalation tier, an instant hard-bound escalation candidate
+    # if miscounted) but carries a "**SCHEDULED <date>**" marker -- the
+    # operator already answered. It must be counted as
+    # dispositioned_in_flight (distinct third state), NOT terminal (the
+    # row isn't done -- it closes DONE only when the scheduled build
+    # actually merges and gets a real terminal marker), and NEVER appear
+    # in overdue_ids (the exact re-nag regression this fix closes: a
+    # SCHEDULED row must never resurface as if unanswered).
+    disp_total="$(printf '%s' "$out4" | jq '.summary.dispositioned_in_flight_total')"
+    if [[ "$disp_total" == "1" ]]; then
+      pass "od_backlog_health counts exactly 1 dispositioned-in-flight row (SCHED-ROW-01)"
+    else
+      fail "expected summary.dispositioned_in_flight_total=1, got $disp_total: $out4"
+    fi
+    disp_ids="$(printf '%s' "$out4" | jq -c '.summary.dispositioned_in_flight_ids')"
+    if printf '%s' "$disp_ids" | grep -q "SCHED-ROW-01"; then
+      pass "od_backlog_health.summary.dispositioned_in_flight_ids names SCHED-ROW-01"
+    else
+      fail "expected dispositioned_in_flight_ids to contain SCHED-ROW-01, got $disp_ids"
+    fi
+    overdue_ids="$(printf '%s' "$out4" | jq -c '.summary.overdue_ids')"
+    if printf '%s' "$overdue_ids" | grep -q "SCHED-ROW-01"; then
+      fail "REGRESSION: SCHED-ROW-01 (SCHEDULED, dispositioned) appears in overdue_ids -- this is the exact re-nag bug the dispositioned-in-flight fix exists to close: $overdue_ids"
+    else
+      pass "od_backlog_health.summary.overdue_ids does NOT contain the SCHEDULED row (no re-nag)"
+    fi
+    disp_terminal="$(printf '%s' "$out4" | jq -c '[.rows[] | select(.id == "SCHED-ROW-01") | {terminal, dispositioned_in_flight}]')"
+    if [[ "$disp_terminal" == '[{"terminal":false,"dispositioned_in_flight":true}]' ]]; then
+      pass "SCHED-ROW-01 row facts: terminal=false, dispositioned_in_flight=true (distinct third state, not done/closed)"
+    else
+      fail "expected SCHED-ROW-01 row facts {terminal:false,dispositioned_in_flight:true}, got $disp_terminal"
+    fi
+    # open_total/terminal_total/priority_counts stay UNCHANGED from the
+    # pre-SCHED-ROW-01 assertions above (3/1, high=1/medium=1/low=1) --
+    # this proves the dispositioned-in-flight row is excluded from BOTH
+    # the open bucket AND the terminal bucket, not silently folded into
+    # either.
   else
     echo "  (jq unavailable — skipping strict JSON assertions)"
   fi
