@@ -1,0 +1,131 @@
+# Decision 061 — Session-continuity supervision: heartbeat-first liveness, bounded resume, limit-aware deferral
+
+- **Date:** 2026-07-09
+- **Status:** PROPOSED — design approved for review, implementation NOT started, resumer stays DISABLED/unarmed. Arming remains operator-gated (see Phase 2 checklist). This ADR changes no runtime behavior by itself.
+- **Drivers:** NL-FINDING-040 / FM-037 (2026-07-08 spawn-cascade machine crash), the disabled `NL-session-resumer` watchdog, operator priority in `docs/handoffs/2026-07-09-spawn-cascade-handoff.md` §3.5.
+- **Supersedes/amends:** the detection design inside E.7's spec (`docs/plans/nl-overhaul-program-2026-07-specs-e.md` §E.7). E.7's activation guardrails (storm cap, tombstones, liveness guard, shadow-first, kill-switch runbook) are RETAINED. The overhaul plan's E.7 task text is to be amended to cite this ADR when implementation starts; F.4 (retro) is unaffected.
+- **Review:** harness-reviewer returned REFORMULATE (design sound, 3 Major + 4 Minor one-pass text fixes, denylist scan clean 0/105); all findings addressed in this revision — verdict + resolutions recorded at the bottom of this file.
+
+## 1. Problem
+
+Three failure classes keep leaving work parked with nobody moving it forward:
+
+1. **Stalls** — a session dies or wedges mid-task (crash, hang, closed window) with `CONTINUING:`-class work in flight. Nothing resumes it.
+2. **API-limit / spend-limit pauses** — transient 429/529 throttles, the 5-hour rolling window, and weekly/monthly caps (the Fable pauses seen the week of 2026-07-06) leave a session idle. Today these are indistinguishable from stalls, and any naive retry loop risks re-igniting the FM-037 cascade.
+3. **Orphaned idle agents** — dispatched builder/agent sessions that finished, died, or are waiting forever on a peer message that cannot arrive (agent-to-agent `send_message` requires per-call operator confirmation on the target — proven unusable unattended, O.8 / NL-FINDING-031).
+
+The existing answer, `adapters/claude-code/scripts/session-resumer.sh`, is disabled after it contributed to the 2026-07-08 incident. Its guards were hardened post-incident (PR #91, merged), but its **detection layer is structurally wrong** and must be replaced before arming is ever considered.
+
+## 2. What the evidence established (PROVEN unless labeled otherwise)
+
+**The transcript death-scan is unbounded and error-prone:**
+- `scan_and_resume()` walks every `*.jsonl` under `~/.claude/projects/*/` modified in 48h (hardcoded), sequentially, with **no per-pass time budget and no candidate ceiling**; per candidate it runs up to two full-file `jq -s` slurps plus one full-file grep per ACTIVE plan file (24 on this checkout). The real estate is ~362 MB / 961 transcripts. The storm cap and spawn breaker bound *actions*, not *classification work* (`session-resumer.sh:122-126, 784-894, 1241-1280`).
+- The self-test (39 assertions) never invokes `scan_and_resume()` itself and has zero coverage of the most expensive branch (`has_active_plan_activity`) — the code path that ran away in production is exactly the untested one.
+- The handoff's claim that the production hang "exited 124 on a hard timeout" is **asserted-not-corroborated**: no timeout construct exists in the script or its registration, and no independent record of that exit was found. The unbounded scan structure is proven and is a sufficient explanation on its own.
+- The API-error death signature is an unanchored substring regex (`429|529|rate.?limit|overloaded`) over the stringified last line. **Live false positive proven:** session `988f8535` was flagged "would-have-resumed (API-error signature)" **recurring across 2026-07-06 → 2026-07-08** (multiple occurrences, not a single window) because a UUID in its last line contains `5294`, which the alternative `529` matches (`~/.claude/state/resumer/digest-feed.jsonl`; transcript last-line check 2026-07-09).
+- `BLOCKED:` (waiting-on-operator) has **no** skip-always branch in `classify_transcript()` — only `DONE:`/`PAUSING:` do — so a blocked session can fall through to the resume path (`session-resumer.sh:951-996`).
+- The tombstone directory is documented as `state/session-resumer/never/` but coded as `state/resumer/never/` (`session-resumer.sh:140-142` vs `:268,297-299`) — doc/code drift to fix in implementation.
+
+**The heartbeat layer is the right substrate but has a blind spot exactly where the supervisor needs sight:**
+- O.2 heartbeats (`~/.claude/state/heartbeats/<sid>.json`, atomic ~200-byte writes at SessionStart / turn-end / PreCompact) with read-side classification joining transcript mtime and pid liveness cost ~3.8s estate-wide with the batched-jq pattern — categorically cheaper than transcript scanning (`session-heartbeat-lib.sh`, backlog HARNESS-PERF-O3-HB).
+- **The NL-FINDING-040 reentrancy guard suppresses all three production heartbeat write call-sites before the touch line runs.** An automation-spawned child (`NL_HOOK_REENTRY=1`) therefore writes NO heartbeat — the supervisor's own children are invisible to the liveness layer. An invisible child that looks dead gets re-resumed: this is the "branching growth with many different parent PIDs" incident shape at its root (`session-start-digest.sh:1918-1929`, `workstreams-stop-writer.sh:164-167`, `pre-compact-continuity.sh:251-254`).
+- The resumer's own `--event resume` heartbeat touch never passes the target session id, so it attributes to the literal sid `unknown` (`session-resumer.sh:1198`; `session-heartbeat-lib.sh:172`).
+- `hb_classify` deliberately collapses "stalled" and "throttled" into one `stale` state; `ntfy-push.sh:_scan_stalled` tests for literal `stalled|throttled` values that are never produced — a dead branch (`session-heartbeat-lib.sh:512-523`; `ntfy-push.sh:324-364`).
+- `session-heartbeat.sh reap` exists and is self-tested but has **no scheduled caller** — heartbeat files grow unbounded.
+
+**Limit pauses have no mechanical signal — locally or upstream:**
+- Across the **sampled** local transcript corpus, assistant-message `error` values are only `rate_limit / server_error / unknown / authentication_failed / model_not_found`. **No usage-limit/billing/quota-style structured event was found** (falsifiable empirical claim — the sweep sampled, did not exhaustively scan all ~1,000 transcripts; absence here is strong but not proof). Fable monthly/weekly-limit hits appear only as narrative prose inside transcripts. (This session's own Fable spend-limit pause, 2026-07-09, is a live confirming instance — it surfaced as an agent-termination error string, not a structured transcript event.)
+- Two real API-error envelope shapes exist (captured, to become fixtures): (a) terminal assistant message with top-level `error:"rate_limit"`, `isApiErrorMessage:true`, `apiErrorStatus:429`; (b) `type:"system", subtype:"api_error"` retry events carrying `retryAttempt/maxRetries/retryInMs`. In every sampled case the session self-recovered — these are usually NOT death signatures.
+- Official docs (fetched 2026-07-09): no hook, exit code, or transcript event distinguishes usage-limit exhaustion from any other failure; `SessionEnd` has no reason field; newer CLIs auto-retry transient errors internally. **The installed CLI is 2.1.69** (PROVEN — `claude --version` on this machine, 2026-07-09), which predates the documented retry/stream-watchdog/`--bare` features (≥2.1.15x–2.1.20x) — a CLI upgrade is a named prerequisite below.
+
+**Existing machinery to build on (do NOT reinvent):**
+- O.6 scheduled-task health: `scripts/scheduled-task-health.sh` + doctor predicate `check_obs_scheduled_tasks` are **BUILT, wired, verified (PASS conf 9), and already RED the disabled resumer task**. The 2026-07-09 handoff's "O.6 — UNBUILT" line is factually wrong; the real gap is narrower: the doctor only runs at SessionStart or manually, so **nothing notices a RED while no session is open.**
+- O.8 doctrine: file-based coordination only (`SCRATCHPAD` coordination sections, `nl-issue.sh`, `spawned-task-results/<task-id>.json` host-written completion records). `send_message` is out.
+- Guards from PR #91: reentrancy guard, spawn breaker (windowed count + live-process probe), per-session cooldown, shadow-until-armed marker, automation-scoped Stop-refire ceiling — all retained unchanged by this design.
+- Windows substrate rules: OS schtasks survives the app being closed (MCP scheduled tasks do not); `/TR` must use the two-file wrapper pattern under `%USERPROFILE%\.claude\state\task-wrappers\` (never inline `bash -c` quoting, never `~/.claude/scripts` which auto-install overwrites).
+
+## 3. Decisions
+
+### D1 — Detection becomes a two-stage, heartbeat-first funnel with hard per-pass bounds
+The supervisor's per-tick work is: (stage 1) batched read of the heartbeat directory joined with transcript mtime + pid — cheap, bounded by file count, using the existing `observability-derive` batching pattern; (stage 2) transcript inspection (final marker + last-line shape) **only** for sessions stage 1 classifies as `stale`/`crashed` with in-flight-work signals. Hard bounds, both env-tunable and both **fail-closed to "do less, log it"**: a per-pass wall-clock budget (default 60s — graceful early exit that logs `pass-budget-exhausted`, never kills mid-write) and a per-pass candidate ceiling (default 10, oldest-first). **Every pass — not only on exhaustion — emits one `supervisor-pass` digest/ledger record carrying `elapsed_ms`, `candidates_seen`, `candidates_classified`, and `budget_tripped` (bool)**, so the §7 p95-pass-cost and budget-trip-rate metrics are computable from the emitted data (a metric with no emitted denominator is not a metric — reviewer finding, Major). A live-scale self-test scenario drives `scan_and_resume()` (not just its helpers) over a synthesized 1,000-transcript estate and asserts the budget holds. This retires the 48h full-estate transcript walk — the proven unbounded-cost class.
+
+### D2 — Automation children become visible: a reentry-safe heartbeat write path
+The heartbeat touch is a pure, bounded, spawn-free atomic write — suppressing it inside reentry-guarded hooks was collateral damage, not a safety requirement. Implementation: hoist a minimal heartbeat touch (no jq, printf+mv only) to run BEFORE `hook_reentry_should_suppress` returns in the three write call-sites, tagging `last_event` with an `-auto` suffix (e.g. `turn-end-auto`) when `NL_HOOK_REENTRY=1`; everything else in those hooks stays suppressed exactly as today. Additionally the supervisor passes the target session id explicitly to its own `--event resume` touch (fixing the `unknown` sid bug). This is NOT a one-line change: `session-heartbeat.sh cmd_touch` and `hb_write` currently derive the sid solely from `$CLAUDE_CODE_SESSION_ID` and parse no id argument — both gain an explicit `--session <sid>` parameter (overriding the env fallback) as part of this work (reviewer finding, Minor). **Live named consumer: D1's stage-1 classifier** — a live child is never re-resumed (root-cause fix for branching growth, belt to the cooldown's suspenders); this consumer is built in Phase 1 of this same design, so the signal is never orphaned. (A cockpit sessions pane reading this is a *possible future* consumer — it does NOT exist today and is not claimed as live; see §5 invariant 5.) C1 schema is unchanged (no new fields; only new `last_event` values).
+
+### D3 — Classification taxonomy: add `throttled`, make `BLOCKED:` skip-always, kill substring matching
+`hb_classify` (read-side only, derive-don't-maintain) gains a distinct `throttled` output: `stale` + pid alive + last transcript event parses (field-aware: `subtype=="api_error"` or `isApiErrorMessage==true` / `apiErrorStatus`) as an API-error shape. Matching is on **parsed JSON fields of the last event, never unanchored regex over the stringified line** — the `5294`-in-UUID false-positive class becomes structurally impossible. Fixtures are the two captured real shapes, not hand-authored guesses. The supervisor's classifier gives `BLOCKED:` the same unconditional skip-always treatment as `DONE:`/`PAUSING:` (waiting-on-operator is never resumable). **Live named consumer: the supervisor's own D4 deferral gate** (a `throttled` session is deferred, not spawned). Two *dormant/future* consumers become correct-when-activated but are NOT counted as live: `ntfy-push.sh:_scan_stalled` (permanently dormant by operator directive — O.5) would finally have its `throttled` value produced, and a cockpit stalled-vs-throttled split (pane not yet built). Producing a value a dormant consumer *would* read is a latent fix, not a live-consumer claim.
+
+### D4 — Limit pauses: defer by policy, never busy-retry, park the long windows
+On `throttled`: no spawn. Write a deferral record (`~/.claude/state/resumer/deferrals/<sid>.json`: reason, first-seen, next-check) with a widening schedule (30min, 60min, 2h, then every 5h — aligned to the shortest known reset window) and a **cooldown floor of 30min** so an external resume can never race the CLI's own internal retry loop. After the deferral ladder exhausts (>24h still throttled) or when the last event narrative suggests an account-level cap (weekly/monthly — no mechanical signal exists, so this is HYPOTHESIZED classification at best): park the session (`awaiting-limit-reset` tombstone-class marker), emit one digest + NEEDS-YOU line, and stop checking except twice daily. Honest ambiguity is accepted: where stall vs limit-pause cannot be distinguished, the classifier says `stale`, the deferral policy still applies its floor, and no claim of "limit detected" is fabricated. **Live named consumers: the supervisor's own gate and the digest feed** (`~/.claude/state/resumer/digest-feed.jsonl`, verified live — 2,499 entries; surfaced by the session-start digest). The cockpit needs-me pane is a possible future consumer, not claimed live.
+
+### D5 — Action layer: unchanged guards, one-spawn-per-tick, shadow mode that actually rehearses
+The hardened spawn path stays byte-identical in policy: `NL_HOOK_REENTRY=1 claude -p --resume <sid> "<nudge>"`, never-DONE nudge, storm cap, spawn breaker, cooldown, tombstones, backoff ladder, armed-marker gate. Two additions: (1) a per-tick live-spawn ceiling of **1** — machine safety dominates throughput; a 10-minute cadence still clears N stalled sessions in N ticks; (2) shadow mode is reworked to **exercise the full backoff/escalation state machine** (writing its state under a shadow-scoped state dir) so a shadow observation period produces real evidence about post-arming behavior — today shadow never advances attempt counts, so no amount of shadow history validates the ladder (proven from the 2,499-line digest feed: zero backoff/escalation events ever).
+
+### D6 — A session-independent health tick closes the "who notices when nothing is running" gap
+One new **passive** scheduled task (`NL-health-tick`, hourly, registered via the install.sh probe-before-create idempotent pattern — allowed because it spawns no `claude` ever): runs `harness-doctor.sh --quick` cache refresh, `scheduled-task-health.sh`, and `session-heartbeat.sh reap` (fixing unbounded heartbeat growth), then writes any RED/anomaly as an alert file into `~/.claude/state/external-monitor-alerts/` — consumed by the **existing** `external-monitor-alert-surfacer.sh` at next SessionStart. **Critical wiring: the tick must NOT export `NL_HOOK_REENTRY=1`** — `harness-doctor.sh` honors the reentry guard and would no-op `run_quick_checks`, silently defeating the tick's purpose (reviewer finding, Minor). It is a passive, `claude`-free tick that legitimately needs the doctor/reap to actually run. Uses the two-file wrapper pattern (`run-hidden.vbs` + `.cmd` under `%USERPROFILE%\.claude\state\task-wrappers\`, defined in `docs/runbooks/session-resumer.md:180-217`; note the current only-live registration, install.sh's heartbeat task, still uses inline `/TR` — D6/E.7 establish the wrapper as the standard). Bounded: the tick respects the `nl.sh` spawn breaker and its own 5-minute internal budget. This makes the already-built O.6 check autonomous instead of session-gated, without any new SessionStart/Stop hook entries (ADR-058 D5 budgets untouched: SessionStart stays 8/8, Stop 4/6).
+
+### D7 — Orphaned agents: detect and surface, never auto-kill, never message
+Per O.8, no `send_message`. The supervisor's orphan sweep (part of stage 1) joins three existing file signals — the workstreams correlation ledger (dispatches this session opened), `spawned-task-results/<task-id>.json` (host-written completions), and heartbeats whose `cwd` sits under `.claude/worktrees/agent-*` — and flags `dispatched > 4h ago AND no result file AND heartbeat stale/crashed` as an orphan: **one digest line (the live consumer)** + optional future cockpit surfacing, resolution stays with the operator/orchestrator. `bg-task-finished` remains deliberately unfilled (no mechanical completion signal exists for generic background work — inventing one would be theater).
+
+### D8 — Automation-child `DONE:` claims: mechanical detection, honestly-scoped non-prevention
+Prevention is impossible while the child's Stop chain is suppressed by the reentry guard. Instead the supervisor gains a post-hoc check: when a session **it spawned** ends with a `DONE:` final marker, it records a `automation-done-claim` event to the unresolved-gaps ledger + digest. This upgrades NL-FINDING-040 residual risk (v) from "prompt-level only" to "prompt-level + mechanically detected", and says exactly that — no claim of enforcement.
+
+## 4. Explicitly out of scope (tracked elsewhere, not silently ignored)
+
+- Cockpit multi-instance polling amplification (no single-instance lock; `DeriveCache.start()` before `listen()`) — separate nl-issue; a confirmed incident engine but architecturally independent of this supervisor.
+- Scheduled-task naming drift (`NL-workstreams-cockpit` doctor expectation vs `ConversationTreeUI-AutoStart` actual; three heartbeat-shaped tasks under different owners) — separate nl-issue.
+- Desktop-app session resume — no programmatic mechanism exists (docs-verified); only CLI-transcript sessions are resumable.
+- Phone push (O.5) — permanently dormant by operator directive; D6's alert files surface at next SessionStart instead.
+- Hygiene-denylist narrowing — already filed (nl-issue 47).
+
+## 5. Safety invariants preserved (checklist for the reviewer)
+
+1. Human interactive DONE-refusal (ADR-059) untouched — no code path in this design reaches it; automation scoping continues to use only the audited `NL_HOOK_REENTRY` / `NL_AUTOMATION_SESSION` contract.
+2. No auto-arming: the armed-marker gate, its shadow default, and the operator-opt-in + kill-drill requirement are unchanged; this ADR ships nothing armed.
+3. Every spawn path exports `NL_HOOK_REENTRY=1` into the child only; every new mechanism has an independent hard ceiling that fails open on an undetermined probe (FM-037 prevention rule) and reuses the existing spawn-breaker machinery rather than inventing a third breaker.
+4. ADR-058 budgets: zero new SessionStart/Stop hook entries (D2 modifies existing call-sites; D6 is an OS scheduled task).
+5. Every new signal has a **currently-live** named consumer (ADR-060 law 2 requires a consumer that EXISTS, not one that is planned): D2→D1 stage-1 classifier (built Phase 1); D3→D4 deferral gate; D4→supervisor gate + digest feed (verified live, 2,499 entries); D7→digest feed; D8→unresolved-gaps ledger + digest. A cockpit "sessions" pane and the dormant `ntfy` path are named ONLY as possible-future/latent consumers, never counted toward this invariant — reviewer finding (Major) corrected here: an earlier draft cited the not-yet-built cockpit pane as if live.
+6. No capability tokens; all state under `~/.claude/state/`; nothing new in the always-loaded rule budget.
+7. Writer scripts never block (exit 0 on every path), matching house style.
+
+## 6. Prerequisites and phasing
+
+- **P0 (this ADR):** merge as PROPOSED; no behavior change. Operator reviews the design and the Phase-2 arming checklist.
+- **Prerequisite:** upgrade the CLI from 2.1.69 and re-verify `claude -p --resume` semantics + internal-retry behavior on the installed version (the docs describe ≥2.1.19x behavior the current binary does not have).
+- **Phase 1 — build + observe (all passive, no operator gate needed):** D1–D4 detection rework with live-scale self-test; D5 shadow-state rework; D6 health tick registered; D2 heartbeat carve-out. Run ≥5 days in shadow. Re-enabling `NL-workstreams-heartbeat` is part of this phase after verifying its payload is spawn-free.
+- **Phase 2 — arm (OPERATOR-GATED):** preconditions, all mandatory: (i) Phase-1 shadow metrics green (below); (ii) live-machine verification of the process probe; (iii) a kill-drill (kill a real session, watch one supervised resume, verify cooldown prevents a second); (iv) explicit operator opt-in creating `~/.claude/local/resumer-armed.txt`. Rollback is one file delete + task disable (documented kill-switch runbook retained).
+- **Phase 3 — extend:** D7 orphan sweep, D8 DONE-claim detection.
+
+## 7. Success metrics / refutation criteria
+
+- **Shadow false-positive rate:** over ≥5 days, zero would-have-resumed events on sessions later shown alive or naturally ended (the 988f8535 class); if any occur, D3's classifier is mis-designed — fix before arming.
+- **Pass cost:** p95 per-tick wall clock ≤ 60s on the real estate (961+ transcripts), computed from the D1 `supervisor-pass` records (`elapsed_ms` percentile); budget-trip-rate = `count(budget_tripped) / count(supervisor-pass)` — if >10% of passes trip, D1's funnel is under-filtering. Both are now derivable because D1 emits one record per pass.
+- **Post-arming week 1:** zero supervisor-attributable spawn-breaker or storm-cap trips; kill-drill session resumed within 2 ticks; no session resumed twice within its cooldown window. **Auto-disarm trigger (reviewer finding, Major — corrected):** the machine-wide live-process count in the spawn breaker cannot attribute a trip to the supervisor (a busy dev machine trips it on unrelated load), so auto-disarm is gated on the supervisor's OWN windowed spawn-count log (`spawn-window.log`, the `RESUMER_MAX_SPAWNS_PER_HOUR` signal it writes itself) exceeding its ceiling — that IS supervisor-attributable. A machine-wide live-process trip instead **defers the pass** (already the breaker's behavior) and logs it; it does not disarm. When the spawn-window ceiling trips, the supervisor renames its armed marker to shadow, logs `supervisor-auto-disarmed`, and surfaces it for operator re-arming.
+- **Health tick:** a deliberately-broken scheduled task (drill) surfaces as an alert at the next SessionStart within one tick cadence; heartbeat file count stays bounded (reap works) over 30 days.
+- **Program-level refutation:** if after Phase 2 the supervisor resumes fewer than 1 genuinely-dead session per week while generating >1 operator interruption per week, the mechanism costs more attention than it saves and should be demoted to detection-only (D1–D4, D6–D8 retained; D5 spawn path retired).
+
+## 8. Decision trail
+
+- Handoff correction recorded: O.6 is built and verified; the true gap (session-gated doctor) is what D6 addresses.
+- The "exit 124" production-hang mechanism is asserted-not-corroborated; the unbounded scan structure is the proven defect D1 fixes.
+- Reversibility: every phase is one revert/one file-flip reversible; the only irreversible-adjacent step (arming) is operator-gated by construction — per constitution §8 this ADR itself is decide-and-go, presented for review with the work not yet started.
+
+---
+
+## harness-reviewer verdict + resolutions (2026-07-09)
+
+**Verdict: REFORMULATE** — "design fundamentally sound; every defect is a one-pass ADR-text fix, not a redesign. No Critical findings (nothing ships armed; no honesty-invariant conflict)." The reviewer independently re-verified ~15 factual claims against source (all held), confirmed the no-auto-arm invariant is genuinely preserved, and scanned the full ADR text against all 105 denylist patterns with the real scanner's `grep -iE` — **0 hits, denylist PASS**. All 7 findings resolved in this revision:
+
+| # | Sev | Finding | Resolution |
+|---|---|---|---|
+| 1 | Major | Vaporware consumers — D2/D3/D4/D7 cited a cockpit "sessions" pane (not built) + dormant ntfy as if live, to pass ADR-060 law 2 | Rewrote every consumer claim: digest feed + supervisor's own gate/classifier are the live consumers; cockpit pane + ntfy explicitly labeled future/dormant and NOT counted (D2, D3, D4, D7, §5 inv 5) |
+| 2 | Major | Over-firing auto-disarm — trigger said "attributable to the supervisor" but used the machine-wide live-process count, which auto-disarms on ambient load | §7 auto-disarm re-gated on the supervisor's OWN `spawn-window.log` (`RESUMER_MAX_SPAWNS_PER_HOUR`); machine-wide trips defer+log, never disarm |
+| 3 | Major | Unmeasurable pass-cost metric — p95/trip-rate not computable from an exhaustion-only log | D1 now emits one `supervisor-pass` record every pass (`elapsed_ms`, candidate counts, `budget_tripped`); §7 metrics cite it |
+| 4 | Minor | Understated dependency — `--event resume` sid fix needs a `cmd_touch`/`hb_write` signature change, not a one-liner | D2 notes the explicit `--session <sid>` param addition |
+| 5 | Minor | D6 reentry gotcha — if `NL-health-tick` sets `NL_HOOK_REENTRY=1`, the doctor self-suppresses | D6 states the tick must NOT set `NL_HOOK_REENTRY` |
+| 6 | Minor | Two-file wrapper cited without a definition | D6 now cites `docs/runbooks/session-resumer.md:180-217` + notes inline `/TR` is the current heartbeat precedent |
+| 7 | Minor | `988f8535` "~5 hours" understated the false positive | §2 corrected to "recurring across 2026-07-06 → 07-08" |
+
+Two reviewer honesty-flags (not findings): CLI **2.1.69** is PROVEN (locally verified `claude --version`), now labeled as such; the "no usage-limit structured event" claim softened to "sampled corpus, falsifiable" with this session's own Fable spend-limit pause added as a live confirming instance.
+
+*Status remains PROPOSED pending operator review of the design + Phase-2 arming checklist. Nothing armed.*
