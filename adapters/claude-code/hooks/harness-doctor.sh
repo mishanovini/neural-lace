@@ -1348,8 +1348,22 @@ check_obs_cockpit_fresh() {
 
   local health_url="${OBS_COCKPIT_HEALTH_URL:-http://127.0.0.1:7733/api/health}"
   local body=""
-  if ! body="$(curl -s --max-time 3 "$health_url" 2>/dev/null)" || [[ -z "$body" ]]; then
+  # -f: HTTP >=400 fails the probe (a 404/500 responder is NOT a healthy
+  # cockpit). Harness-review Major 2026-07-09: without positive
+  # identification, any responder on :7733 graded GREEN — the silent-GREEN
+  # class this check exists to kill, reincarnated.
+  if ! body="$(curl -sf --max-time 3 "$health_url" 2>/dev/null)" || [[ -z "$body" ]]; then
     _warn "obs-cockpit-fresh" "cockpit not up (${health_url} not answering) while sessions are live — the SessionStart ensure (scripts/ensure-cockpit.sh) should have started it; the next SessionStart digest re-ensures, or run neural-lace/workstreams-ui/scripts/launch-gui.ps1"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  # Positive identification: every O.4+ cockpit build emits the
+  # any_pane_failed key. A responder without it (foreign listener's HTML,
+  # a proxy error page, a pre-O.4 build) is graded as NOT-a-cockpit —
+  # WARN, never GREEN.
+  if ! printf '%s' "$body" | grep -q '"any_pane_failed"'; then
+    _warn "obs-cockpit-fresh" "unrecognized listener on ${health_url} (response lacks the any_pane_failed health marker) — something else holds port 7733, or the server predates the O.4 rebuild; the cockpit is effectively down. Identify the process holding the port, then restart via neural-lace/workstreams-ui/scripts/launch-gui.ps1"
     CHECKS_RUN=$((CHECKS_RUN + 1))
     return 0
   fi
@@ -1370,7 +1384,7 @@ check_obs_cockpit_fresh() {
   fi
 
   if [[ "$lob" == "true" ]]; then
-    _red "obs-cockpit-fresh" "cockpit up but lobotomized — panes not deriving (rc!=0 across all panes with uptime >120s, per ${health_url}); the UI is rendering stale/empty panes; check the workstreams-ui server log / restart via neural-lace/workstreams-ui/scripts/launch-gui.ps1"
+    _red "obs-cockpit-fresh" "cockpit up but lobotomized — panes not deriving (rc!=0 across all panes with uptime >120s, per ${health_url}); the UI is rendering stale/empty panes; restart via neural-lace/workstreams-ui/scripts/launch-gui.ps1. DISCRIMINATOR: if a FRESH instance reports lobotomized again within minutes, the cause is the nl estate (CLI broken / all panes timing out), not the server env — run 'nl status --json' by hand and read the per-pane stderr_tails at ${health_url}"
   elif [[ "$lob" == "absent" && "$apf" == "true" ]]; then
     _warn "obs-cockpit-fresh" "cockpit up with >=1 failing pane (any_pane_failed=true; older server build without the lobotomized field, so transient-vs-wedged cannot be distinguished) — check ${health_url}"
   fi
@@ -3461,6 +3475,31 @@ EOF
       '{"ok":true,"any_pane_failed":true,"lobotomized":true,"oldest_pane_age_ms":900000}' 0)
   OUT="$(PATH="$D/fakebin:$PATH" OBS_COCKPIT_UNAME_OVERRIDE=MINGW64_NT-fixture _run_quick "$D")"; RC=$?
   _assert "o6-obs-cockpit-fresh-red-lobotomized" 1 "$RC" "RED obs-cockpit-fresh" "$OUT"
+
+  # ---- obs-cockpit-fresh: WARN — unrecognized responder (harness-review
+  # Major 2026-07-09): something answers 200 on :7733 but the body lacks
+  # the any_pane_failed health marker (foreign listener / proxy error
+  # page / pre-O.4 build). Must WARN, never GREEN — grading an
+  # unidentified responder healthy is the silent-GREEN class this check
+  # exists to kill. ----
+  D=$(_cockpit_fixture o6-cockpit-warn-unrecognized-responder \
+      '<html>totally not a cockpit</html>' 0)
+  OUT="$(PATH="$D/fakebin:$PATH" OBS_COCKPIT_UNAME_OVERRIDE=MINGW64_NT-fixture _run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "WARN obs-cockpit-fresh.*unrecognized listener"; then
+    echo "self-test (o6-obs-cockpit-fresh-unrecognized-warns): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (o6-obs-cockpit-fresh-unrecognized-warns): FAIL (non-cockpit responder must WARN as unrecognized, not pass silently)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+  if printf '%s' "$OUT" | grep -q "RED obs-cockpit-fresh"; then
+    echo "self-test (o6-obs-cockpit-fresh-unrecognized-not-red): FAIL (unrecognized responder must cap at WARN)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-obs-cockpit-fresh-unrecognized-not-red): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+  _assert "o6-obs-cockpit-fresh-unrecognized-rc" 0 "$RC" "" "$OUT"
 
   # ---- obs-cockpit-fresh: WARN — older server build (lobotomized field
   # ABSENT) with any_pane_failed:true -> WARN fallback, never RED ----

@@ -1070,8 +1070,14 @@ run_digest() {
   # accumulated unbounded (55 deep at audit). Reap is idempotent,
   # O(heartbeat-count), removes only DEFINITIVELY-dead entries (heartbeat
   # mtime AND the session's own transcript mtime both past the 24h
-  # threshold), keeping the set bounded. Best-effort, never blocks.
-  bash "$HOOKS_DIR/../scripts/session-heartbeat.sh" reap >/dev/null 2>&1 || true
+  # threshold), keeping the set bounded. BACKGROUNDED (harness-review
+  # Major, 2026-07-09): measured ~11s synchronous on the live estate
+  # (_hb_field forks over every heartbeat file) — that violates the
+  # digest's own latency principle (see feed-8's refusal to run the
+  # doctor inline), so it is fire-and-forget like the cockpit-ensure
+  # splice below; reap needs no output and has no ordering dependency
+  # (the current session's own touch above precedes it synchronously).
+  ( nohup bash "$HOOKS_DIR/../scripts/session-heartbeat.sh" reap >/dev/null 2>&1 < /dev/null & disown 2>/dev/null ) || true
   # ---- END WAVE-O O.2 CALLSITE ---------------------------------------------
 
   # ---- COCKPIT-SESSIONSTART CALLSITE: ensure the observability cockpit --

@@ -502,6 +502,17 @@ this check-id.
 
 ## 5. `check_obs_cockpit_fresh`
 
+> **SUPERSEDED 2026-07-09** — this section describes the original WARN-only
+> stamp-file/schtasks design, which shipped as unreachable theater (the stamp
+> was never written by production code; the task name never registered) and
+> failed silent-GREEN through the all-day-lobotomized-cockpit incident of
+> 2026-07-09. The shipped check now grades `GET /api/health` directly
+> (no-listener → WARN, unrecognized responder → WARN, `lobotomized:true` →
+> RED) — see the §10 gate-change record in `check_obs_cockpit_fresh`'s header
+> in `adapters/claude-code/hooks/harness-doctor.sh` for golden scenario,
+> expected-FP model, and retirement condition. Kept unedited below as the
+> historical wave-O spec artifact.
+
 WARN (not RED) — per specs-o §O.6 exactly. GREEN when the cockpit is
 intentionally not running (optional per machine, per the design sketch's
 non-goals). The condition this predicate is FOR: the cockpit IS
