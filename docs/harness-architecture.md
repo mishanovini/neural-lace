@@ -15,8 +15,8 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 109 |
-| Unique hook scripts | 101 |
+| Total manifest entries | 111 |
+| Unique hook scripts | 102 |
 | Blocking gates (`blocking: true`) | 31 |
 
 ## Hooks by event
@@ -42,6 +42,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreToolUse | doc-gate | gate | no | doc-gate.sh |
 | PreToolUse | env-local-protection | gate | yes | env-local-protection.sh |
 | PreToolUse | findings-ledger | gate | yes | findings-ledger-schema-gate.sh |
+| PreToolUse | gh-account-autoswitch | surfacer | no | gh-account-autoswitch.sh |
 | PreToolUse | local-edit-authorization | gate | yes | local-edit-gate.sh |
 | PreToolUse | no-test-skip | gate | yes | no-test-skip-gate.sh |
 | PreToolUse | observed-errors-first | gate | no | observed-errors-gate.sh |
@@ -117,8 +118,8 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
 | gate | 31 | 12 |
-| writer | 0 | 21 |
-| surfacer | 0 | 18 |
+| writer | 0 | 22 |
+| surfacer | 0 | 19 |
 | pattern | 0 | 24 |
 | convention | 0 | 3 |
 
@@ -133,9 +134,9 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 |---|---|
 | stop | 8 |
 | session-start | 15 |
-| pretool | 22 |
+| pretool | 23 |
 | posttool | 6 |
-| none | 58 |
+| none | 59 |
 
 ## Doctrine index
 
@@ -167,7 +168,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/friction-reflexion.md | 1 (friction-reflexion) |
 | doctrine/frontend-conventions.md | 1 (frontend-conventions) |
 | doctrine/gate-respect.md | 1 (gate-respect) |
-| doctrine/git.md | 5 (cross-repo-drift-gate, deploy-automation-mode, gh-account-hint, git-freshness, pre-push-divergence) |
+| doctrine/git.md | 6 (cross-repo-drift-gate, deploy-automation-mode, gh-account-autoswitch, gh-account-hint, git-freshness, pre-push-divergence) |
 | doctrine/harness-dev.md | 9 (claude-md-hygiene, discovery-cheatsheet, docs-freshness, harness-doctor, harness-hygiene-scan, session-start-auto-install, session-start-surfacer-pack, signal-ledger-flush, wave-d-retired-shims) |
 | doctrine/interactive-process-fidelity.md | 1 (interactive-process-fidelity) |
 | doctrine/local-edit-authorization.md | 1 (local-edit-authorization) |
@@ -193,7 +194,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/worktree-isolation.md | 1 (worktree-advisor) |
 | rules/constitution.md | 1 (constitution) |
 
-Entries with no doctrine_file (`-`): 23.
+Entries with no doctrine_file (`-`): 24.
 
 ## Full entry listing
 
@@ -229,6 +230,7 @@ Entries with no doctrine_file (`-`): 23.
 | doctrine-jit | writer | PostToolUse | no | posttool | — |
 | effort-policy-warn | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | end-manifest | writer | — | no | none | scripts/end-manifest.sh (E.12) — session end-manifest writer+validator; invoked by the dispatcher when a manifest is present, not event-wired. |
+| ensure-cockpit | writer | — | no | none | scripts/ensure-cockpit.sh — best-effort SessionStart ensure for the observability cockpit (workstreams-ui node server, port 7733); called by a one-line splice in session-start-digest.sh run_digest() (mirrors the session-heartbeat splice convention), not event-wired as its own settings.json entry. Guards: operator kill-switch (~/.claude/local/cockpit-disabled or ENSURE_COCKPIT_DISABLE=1), Windows-only, HARNESS_SELFTEST stub, machine-wide nl_repo_root resolution normalized to the MAIN checkout (never a worktree) with session-cwd fallback, nohup+disown non-blocking dispatch, tolerate-absent (always exit 0). Replaces the ConversationTreeUI-AutoStart logon scheduled task (retired at integration 2026-07-09). |
 | env-local-protection | gate | PreToolUse | yes | pretool | — |
 | estate-coordination | pattern | — | no | none | docs+skill unit only (skills/coordinate-estate.md + doctrine/estate-coordination.md); no hook, no wiring; jit_triggers fire doctrine-jit.sh's paths-match on any edit whose file_path contains SCRATCHPAD.md (keywords reserved for v2 per schema, not yet matched). |
 | external-monitor-alerts | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
@@ -238,6 +240,7 @@ Entries with no doctrine_file (`-`): 23.
 | gate-demotion | pattern | — | no | none | — |
 | gate-respect | pattern | — | no | none | — |
 | gen-architecture-doc | writer | — | no | none | scripts/gen-architecture-doc.sh (F.2) -- regenerates docs/harness-architecture.md from manifest.json; --check is the doctor drift predicate (tests/fixtures/wave-f/F.2/doctor-predicate.md); not event-wired (manual + doctor-invoked). |
+| gh-account-autoswitch | surfacer | PreToolUse | no | pretool | — |
 | gh-account-hint | surfacer | PostToolUse, SessionStart | no | posttool | — |
 | git-freshness | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | harness-changelog | writer | — | no | none | scripts/harness-changelog.sh (F.2b) -- machine-wide 'what's new' ledger + --digest-line consumed by session-start-digest.sh's feed 15; not event-wired. |
@@ -248,7 +251,7 @@ Entries with no doctrine_file (`-`): 23.
 | local-edit-authorization | gate | PreToolUse | yes | pretool | — |
 | mechanical-evidence | pattern | — | no | none | — |
 | migration-claude-md | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
-| needs-you-ledger | writer | — | no | none | scripts/needs-you.sh — maintains NEEDS-YOU.md (E.6); called by decision-log flow + digest, not event-wired. |
+| needs-you-ledger | writer | — | no | none | scripts/needs-you.sh — maintains NEEDS-YOU.md (E.6); called by decision-log flow + digest, not event-wired. Cold-reader lint (constitution §3 amendment 53d3bee, operator directive 2026-07-07): `add --section decision` scores every new entry's --text against three zero-session-context checks (background/context, a concrete artifact anchor, per-option outcome text — see _ny_lint_decision_text) and stores the result as a `lint_warnings` array on the item. WARN-only: a stderr notice is printed but `add` NEVER blocks (always exits 0 regardless of lint result) — the ledger's availability outranks its tidiness. Self-tested (T22-T25). |
 | nl-cli | surfacer | — | no | none | scripts/nl.sh (C5 dispatcher) + hooks/lib/observability-derive.sh (C4 pure-read derivation lib: od_sessions/od_needs_me/od_shipped_since/od_harness_health/od_costs/od_backlog_health/od_why) — the six-question observability CLI (specs-o §O.3). Read-only, zero state writes; not event-wired (invoked on demand by the operator or by the future §O.4 cockpit server shelling out to `nl <sub> --json`). |
 | nl-issue-capture-loop | pattern | — | no | none | scripts/nl-issue.sh + skill (E.8) — cross-project capture; not event-wired. |
 | no-test-skip | gate | PreToolUse | yes | pretool | — |
@@ -278,7 +281,7 @@ Entries with no doctrine_file (`-`): 23.
 | scheduled-task-health | writer | — | no | none | scripts/scheduled-task-health.sh — one-line-per-task Last-Result report for every NL-owned (NL-*) Windows scheduled task (O.6); called by harness-doctor.sh's check_obs_scheduled_tasks predicate, not event-wired as its own settings.json entry. Reports raw values only; makes no pass/fail judgment itself. |
 | secret-hygiene-prepush | gate | prepush | yes | none | wired via git-hooks/pre-push dispatcher (core.hooksPath), not settings.json.template |
 | secret-scan-ci-backstop | gate | manual | yes | none | GitHub Actions workflow (.github/workflows/secret-backstop.yml), not a Claude Code hook; events:["manual"] is a schema-gap stand-in for CI push+PR triggers (same convention as the synthetic-runner-ci entry). Re-invokes the EXISTING pre-push-scan.sh + harness-hygiene-scan.sh scripts against the diff range server-side — the compensating control the F.3 disposition on secret-hygiene-prepush's --no-verify bypass required. Deliberately overlaps server-side-enforcement.yml's credential-scan/harness-hygiene jobs (defense-in-depth, documented in the workflow file's header) rather than being the sole CI coverage. |
-| session-heartbeat | writer | — | no | none | scripts/session-heartbeat.sh (touch/sweep) + hooks/lib/session-heartbeat-lib.sh (hb_path_for/hb_write/hb_is_stale/hb_classify, the shared C1 read-side implementation) — per-session liveness file (O.2); called by one-line splices in session-start-digest.sh / workstreams-stop-writer.sh / pre-compact-continuity.sh / session-resumer.sh, not event-wired as its own settings.json entry. |
+| session-heartbeat | writer | — | no | none | scripts/session-heartbeat.sh (touch/sweep/reap) + hooks/lib/session-heartbeat-lib.sh (hb_path_for/hb_write/hb_is_stale/hb_classify, the shared C1 read-side implementation) — per-session liveness file (O.2); touch called by one-line splices in session-start-digest.sh / workstreams-stop-writer.sh / pre-compact-continuity.sh / session-resumer.sh, reap called by a best-effort splice in session-start-digest.sh run_digest() (review fix 2026-07-09: reaper previously had no production call-site; bounds the heartbeat set by removing definitively-dead entries), not event-wired as its own settings.json entry. |
 | session-honesty | gate | Stop | yes | stop | Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact. |
 | session-resumer | writer | — | no | none | scripts/session-resumer.sh — OS-scheduled watchdog (E.7); schtasks registration is a §E.W.6 step, not a settings.json hook. |
 | session-start-auto-install | writer | SessionStart | no | session-start | — |
@@ -288,7 +291,7 @@ Entries with no doctrine_file (`-`): 23.
 | spawn-task-report-back | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | spec-freeze | gate | PreToolUse | yes | pretool | — |
 | stale-plan-surfacer | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
-| stop-verdict-dispatcher | gate | Stop | yes | stop | E.11 batched Stop verdict; invokes work-integrity/session-honesty/bug-persistence in --report mode, aggregates one verdict; replaces their 3 blocking Stop entries at §E.W (Stop 6->4). pin-f: delegates to the gates that validate purpose clauses. |
+| stop-verdict-dispatcher | gate | Stop | yes | stop | E.11 batched Stop verdict; invokes work-integrity/session-honesty/bug-persistence in --report mode, aggregates one verdict; replaces their 3 blocking Stop entries at §E.W (Stop 6->4). pin-f: delegates to the gates that validate purpose clauses. Cold-reader-lint WARN (constitution §3 amendment 53d3bee, operator directive 2026-07-07), following FUNCTIONAL-LINK's own precedent immediately above it in this same file: scans the final assistant message for a §3-format "Decision needed" block and, if it is missing an artifact anchor or per-option outcome text, emits ONE ledger_emit warn + a stderr notice. WARN-only — never contributes to the block/gap verdict above, never participates in cycle-counting/DONE-refusal, never touches stdout. Self-tested (scenarios renumbered 20-23 at batch-integration to avoid colliding with the FIX-2a/FIX-2b automation-ceiling scenarios 18-19 already on master; 3 of 4 pass). KNOWN BUG (found during batch integration, confirmed pre-existing on the source branch in isolation, not introduced by the merge): `_svd_message_has_decision_block`'s heuristic does a naive case-insensitive substring match for `decision needed`, so prose that negates it (e.g. "no decision needed here") still matches and false-positive-warns as a decision block missing an anchor — 1 self-test scenario (ordinary-prose-not-scanned) fails on this. Low severity (WARN-only, never blocks) but real; follow-up filed to require the heuristic to exclude a preceding negation token. |
 | synthetic-runner-ci | gate | manual | yes | none | GitHub Actions workflow (.github/workflows/synthetic-runner.yml), not a Claude Code hook; events:["manual"] is a schema-gap stand-in for CI cron+PR triggers. |
 | task-verifier-reminder | surfacer | PostToolUse | no | posttool | — |
 | tdd-gate | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |

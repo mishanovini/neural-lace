@@ -1065,6 +1065,13 @@ run_digest() {
   # Best-effort, never-blocks (session-heartbeat.sh touch always exits 0).
   # Per specs-o §O.2 fragment callsite-wiring.md item 1 (orchestrator splice).
   bash "$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event start >/dev/null 2>&1 || true
+  # Reap splice (review fix 2026-07-09): the reaper existed and was
+  # self-tested but had NO production call-site, so stale heartbeats
+  # accumulated unbounded (55 deep at audit). Reap is idempotent,
+  # O(heartbeat-count), removes only DEFINITIVELY-dead entries (heartbeat
+  # mtime AND the session's own transcript mtime both past the 24h
+  # threshold), keeping the set bounded. Best-effort, never blocks.
+  bash "$HOOKS_DIR/../scripts/session-heartbeat.sh" reap >/dev/null 2>&1 || true
   # ---- END WAVE-O O.2 CALLSITE ---------------------------------------------
 
   # ---- COCKPIT-SESSIONSTART CALLSITE: ensure the observability cockpit --
