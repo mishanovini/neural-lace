@@ -98,6 +98,18 @@ function bashBin() {
 function spawnEnv() {
   return Object.assign({}, process.env, {
     HOME: process.env.HOME || String(process.env.USERPROFILE || '').replace(/\\/g, '/'),
+    // Spawn-breaker headroom (2026-07-10): nl.sh's spawn-cascade circuit
+    // breaker (post-NL-FINDING-040) skips derivation with a LYING rc=0 +
+    // empty stdout once live nl/derive processes reach NL_SPAWN_CEILING
+    // (default 10). The cockpit's own batch refresh legitimately runs
+    // panes concurrently (two lanes, see refreshAll) — count 13 was
+    // measured tripping the default ceiling all night 2026-07-09 while
+    // the operator also used the CLI. 32 accommodates the lanes + normal
+    // interactive/digest use while a true unbounded cascade (45+ observed
+    // at the 2026-07-08 incident) still trips. Precedence: explicit
+    // cockpit knob > operator's global setting > 32.
+    NL_SPAWN_CEILING: process.env.NL_COCKPIT_SPAWN_CEILING ||
+      process.env.NL_SPAWN_CEILING || '32',
   });
 }
 
@@ -384,7 +396,31 @@ DeriveCache.prototype.refreshAll = function () {
     return Promise.resolve();
   }
   this._cycleInFlight = true;
-  return Promise.all(Object.keys(SUBCOMMANDS).map((sub) => self.refreshOne(sub))).then(() => {
+  // TWO SERIAL LANES (2026-07-10, spawn-breaker collision): the previous
+  // all-parallel fan-out (6 concurrent nl invocations) tripped nl.sh's
+  // spawn-cascade breaker (NL_SPAWN_CEILING; each nl forks several
+  // observability-derive children, so 6 panes ≈ 13+ live processes vs a
+  // ceiling of 10) — every pane then "succeeded" empty (rc=0, no stdout)
+  // and rendered as a parse failure. Lanes cap peak concurrency at TWO nl
+  // process trees while keeping fast panes from queueing behind slow ones:
+  // fast lane = sub-second oracles; slow lane = status/costs/backlog
+  // (77s/29s/minutes on this estate). Each pane still stamps its entry
+  // individually inside refreshOne; _notify fires once per settled cycle
+  // as before. Belt-and-suspenders with the spawnEnv ceiling raise above.
+  const laneSlow = { status: true, costs: true, backlog: true };
+  const subs = Object.keys(SUBCOMMANDS);
+  const lanes = [
+    subs.filter(function (s) { return !laneSlow[s]; }),
+    subs.filter(function (s) { return laneSlow[s]; }),
+  ];
+  const runLane = function (lane) {
+    return lane.reduce(function (p, sub) {
+      // refreshOne captures per-entry failures; the catch keeps the lane
+      // rolling even if a refresh promise itself rejects.
+      return p.then(function () { return self.refreshOne(sub); }).catch(function () {});
+    }, Promise.resolve());
+  };
+  return Promise.all(lanes.map(runLane)).then(() => {
     self._cycleInFlight = false;
     self._notify();
   }, (err) => {
