@@ -51,6 +51,38 @@ const WEB_DIR = path.join(__dirname, '..', 'web');
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.CTREE_PORT) || 7733;
 
+// ---- Server start time + lobotomy detection (2026-07-09 incident): a
+// logon-task-spawned instance with a minimal registry env held the port all
+// day while EVERY pane failed (rc=127 spawn-bash-ENOENT, then rc=1
+// empty-stdout) — "up" to any TCP/HTTP probe, useless to the operator.
+// /api/health now self-reports that shape so the launcher (launch-gui.ps1)
+// can kill-and-restart it with a healthy environment.
+const SERVER_START_MS = Date.now();
+
+// Grace window before the flag can go true: a FRESH instance (uptime <=
+// 120s) is never lobotomized, which bounds the launcher's restart-on-
+// lobotomy to at most ONE restart per launcher invocation (the replacement
+// instance reports false by construction — no restart loop possible).
+const LOBOTOMY_MIN_UPTIME_MS = 120000;
+
+// isLobotomized(cacheObj, uptimeMs) — true when EVERY pane's most recent
+// refresh attempt FAILED (rc a non-null, NONZERO number) AND the server is
+// past the first-refresh grace window. rc === null is deliberately NOT
+// "failed": it means "no refresh attempt has settled yet" (loading), and a
+// healthy-but-slow estate can legitimately still be in its first refresh
+// near the window's edge (status/backlog timeouts are 180s/360s) — killing
+// that instance would be a false positive. Exported for the self-test
+// (fabricated cache states + uptimes; a real >120s all-failed instance
+// can't be produced inside the test's time budget).
+function isLobotomized(cacheObj, uptimeMs) {
+  if (uptimeMs <= LOBOTOMY_MIN_UPTIME_MS) return false;
+  const subs = Object.keys(require('./derive-cache.js').SUBCOMMANDS);
+  return subs.every((s) => {
+    const rc = cacheObj.get(s).rc;
+    return typeof rc === 'number' && rc !== 0;
+  });
+}
+
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 var CT = 'Content-Ty' + 'pe'; // split-literal keeps the hygiene heuristic from false-positiving on a standard HTTP primitive
 
@@ -148,6 +180,7 @@ const server = http.createServer((req, res) => {
         if (uiBuild === null || m > uiBuild) uiBuild = m;
       });
     } catch (_) { uiBuild = null; }
+    const uptimeMs = Date.now() - SERVER_START_MS;
     sendJson(res, 200, {
       ok: true,
       now_ms: Date.now(),
@@ -155,6 +188,11 @@ const server = http.createServer((req, res) => {
       any_pane_failed: anyFailed,
       refresh_interval_ms: cache.refreshIntervalMs,
       ui_build_ms: uiBuild,
+      // 2026-07-09 lobotomy incident fields — see SERVER_START_MS /
+      // isLobotomized headers above. The launcher keys restart-on-lobotomy
+      // off `lobotomized`.
+      server_uptime_ms: uptimeMs,
+      lobotomized: isLobotomized(cache, uptimeMs),
     });
     return;
   }
@@ -314,4 +352,4 @@ server.listen(PORT, HOST, () => {
   cache.start();
 });
 
-module.exports = { server, cache };
+module.exports = { server, cache, isLobotomized };

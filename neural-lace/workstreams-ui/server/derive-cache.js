@@ -27,6 +27,7 @@
 // stub script); CTREE_PORT is server.js's own concern, not this module's.
 
 const { spawn } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 // Resolve the real `nl` CLI location: adapters/claude-code/scripts/nl.sh.
@@ -58,6 +59,46 @@ function defaultDeriveLib() {
 
 function deriveLib() {
   return process.env.NL_DERIVE_LIB || defaultDeriveLib();
+}
+
+// bashBin() — resolve the bash executable by ABSOLUTE PATH, never by bare
+// name (2026-07-09 cockpit-lobotomy incident). WHY: this server is spawned
+// at logon by a Windows scheduled task whose environment is the MINIMAL
+// registry env — its PATH carries only Git\cmd (git.exe's shim dir, NO
+// bash.exe) — so `spawn('bash', ...)` fails rc=127 "spawn bash ENOENT" for
+// EVERY pane, permanently, on every refresh tick, while the server itself
+// keeps the port bound and looks "up" to any TCP probe. Any spawn parent
+// with a minimal/non-login env (scheduled tasks, services, some IDE
+// launchers) reproduces this; resolving bash by absolute path makes the
+// spawn independent of the parent's PATH entirely.
+// Order: NL_BASH env override (tests / non-standard installs) -> the two
+// standard Git-for-Windows locations -> bare 'bash' (non-Windows or
+// PATH-resolvable estates).
+const BASH_CANDIDATES = [
+  'C:\\Program Files\\Git\\bin\\bash.exe',
+  'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
+];
+function bashBin() {
+  if (process.env.NL_BASH) return process.env.NL_BASH;
+  for (let i = 0; i < BASH_CANDIDATES.length; i++) {
+    try { if (fs.existsSync(BASH_CANDIDATES[i])) return BASH_CANDIDATES[i]; } catch (_) { /* probe next */ }
+  }
+  return 'bash';
+}
+
+// spawnEnv() — env for every bash spawn. HOME is force-filled from
+// USERPROFILE (forward slashes) when absent: the logon-task spawn parent
+// provides no HOME, and a bash without HOME can't locate ~/.bash_profile,
+// so even a login shell (-l, below) would fail to rebuild the user PATH
+// (~/bin — where jq, which the derive lib calls 132×, lives). Proven
+// premise (2026-07-09): `"C:\Program Files\Git\bin\bash.exe" -lc
+// 'command -v jq'` on a stripped PATH returns /c/Users/misha/bin/jq with
+// HOME=/c/Users/misha — a login shell rebuilds the full user environment
+// regardless of spawn parent, given HOME resolves.
+function spawnEnv() {
+  return Object.assign({}, process.env, {
+    HOME: process.env.HOME || String(process.env.USERPROFILE || '').replace(/\\/g, '/'),
+  });
 }
 
 // The subcommands this cache refreshes. Each maps to one `nl` invocation.
@@ -100,7 +141,11 @@ const SUBCOMMANDS = {
 // before the next perf fix lands) since this is a client-side
 // accommodation, not a fix to od_backlog_health's performance; operators
 // on a smaller/faster estate can lower it via OBS_NL_TIMEOUT_MS_BACKLOG.
-const SUBCOMMAND_TIMEOUT_DEFAULTS_MS = { backlog: 360000 };
+// `status` is PINNED at 180000ms explicitly (2026-07-09): live `nl status
+// --json` currently takes ~77s — a filed perf regression, open elsewhere —
+// so honest-slow beats a timeout-kill while that's open; the pin also
+// survives any future lowering of the global default below.
+const SUBCOMMAND_TIMEOUT_DEFAULTS_MS = { backlog: 360000, status: 180000 };
 // GLOBAL default (nl-issue [39], NL-FINDING-040/FM-037): 180s, raised from
 // 60s. The 2026-07-08 incident measured `nl status --json` at 93s SOLO and
 // rc=124 kills at 150s under contention — a 60s default was killing
@@ -140,7 +185,9 @@ function spawnAsync(cmd, args, timeoutMs, timeoutLabel) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(cmd, args, { encoding: 'utf8' });
+      // env: spawnEnv() — every bash child gets HOME force-filled (see
+      // spawnEnv's header; the logon-task spawn parent provides none).
+      child = spawn(cmd, args, { encoding: 'utf8', env: spawnEnv() });
     } catch (err) {
       resolve({ rc: 127, stdout: '', stderr: String(err && err.message || err) });
       return;
@@ -171,15 +218,22 @@ function spawnAsync(cmd, args, timeoutMs, timeoutLabel) {
 }
 
 // runNl(sub, extraArgs) -> Promise<{rc, stdout, stderr}> — spawns
-// `bash <nl-bin> <sub> ...extraArgs --json` ASYNCHRONOUSLY. Per-subcommand
-// timeout (O.4-fix1 item 6): OBS_NL_TIMEOUT_MS_<SUB> overrides
-// OBS_NL_TIMEOUT_MS overrides the 180s (360s for backlog) default — see
-// timeoutMsFor above.
+// `<bashBin()> -l <nl-bin> <sub> ...extraArgs --json` ASYNCHRONOUSLY.
+// `-l` (LOGIN shell) is load-bearing (2026-07-09 lobotomy incident, second
+// failure shape): a non-login/profile-less bash inherits the spawn
+// parent's PATH verbatim, so ~/bin (where jq lives — the derive lib calls
+// jq 132×) is missing under a minimal-env parent and every subcommand
+// yields empty stdout. A login shell sources the profile and rebuilds the
+// full user PATH regardless of how the server itself was spawned. The
+// nl-bin path is passed with forward slashes (bash-native; backslashes
+// depend on msys path-translation heuristics). Per-subcommand timeout
+// (O.4-fix1 item 6): OBS_NL_TIMEOUT_MS_<SUB> overrides OBS_NL_TIMEOUT_MS
+// overrides the 180s (360s for backlog) default — see timeoutMsFor above.
 function runNl(sub, extraArgs) {
-  const bin = nlBin();
-  const args = [bin, sub].concat(extraArgs || [], ['--json']);
+  const bin = nlBin().replace(/\\/g, '/');
+  const args = ['-l', bin, sub].concat(extraArgs || [], ['--json']);
   const timeoutMs = timeoutMsFor(sub);
-  return spawnAsync('bash', args, timeoutMs, 'nl ' + sub);
+  return spawnAsync(bashBin(), args, timeoutMs, 'nl ' + sub);
 }
 
 // runHealth() -> Promise<{rc, stdout, stderr}> — Q4 fix (O.4-fix1 item 1).
@@ -191,10 +245,12 @@ function runNl(sub, extraArgs) {
 // invocation of an existing C4 contract function; it does not modify
 // hooks/lib/observability-derive.sh. NL_DERIVE_LIB overrides for tests.
 function runHealth() {
-  const lib = deriveLib();
+  const lib = deriveLib().replace(/\\/g, '/');
   const script = 'source "' + lib.replace(/"/g, '\\"') + '" && od_harness_health --json';
   const timeoutMs = timeoutMsFor('health');
-  return spawnAsync('bash', ['-c', script], timeoutMs, 'nl health (od_harness_health)');
+  // '-lc' (login shell) + bashBin() absolute path — same environment
+  // hardening as runNl (see its header + bashBin/spawnEnv above).
+  return spawnAsync(bashBin(), ['-lc', script], timeoutMs, 'nl health (od_harness_health)');
 }
 
 function tail(s, n) {
@@ -268,10 +324,18 @@ DeriveCache.prototype.refreshOne = function (sub) {
         parseErr = e;
       }
       if (parseErr) {
+        // APPEND the child's REAL stderr + rc (2026-07-09 incident: this
+        // branch used to discard stderr entirely, so a profile-less bash
+        // whose jq was missing surfaced only 'produced non-JSON output: '
+        // with EMPTY stdout — the actual cause ('jq: command not found')
+        // was thrown away, which cost an hour of diagnosis). Appended (not
+        // prepended) so it survives the tail(…, 20) window even when
+        // stdout is many lines of garbage.
         entry = {
           data: this.entries[sub] && this.entries[sub].data, // keep last-known-good
           rc: 1,
-          stderr_tail: tail('nl ' + sub + ' --json produced non-JSON output: ' + r.stdout, 20),
+          stderr_tail: tail('nl ' + sub + ' --json produced non-JSON output: ' + r.stdout +
+            '\n[child rc=' + r.rc + '] child stderr: ' + (r.stderr && String(r.stderr).trim() ? r.stderr : '(empty)'), 20),
           derived_at: nowIso(),
         };
       } else {
@@ -376,11 +440,14 @@ var VERDICT_LINE_RE = /^verdict:.*$/m;
 // failure here resolves null (caller falls back to no verdict line rather
 // than erroring the whole drawer over a missing nice-to-have).
 function fetchVerdictFromTextMode(sessionId, lastBlock) {
-  const bin = nlBin();
-  const args = [bin, 'why', sessionId];
+  // bashBin() + '-l' — same environment hardening as runNl (this is the
+  // one other nl spawn in this module; a bare-'bash' spawn here would
+  // fail rc=127 under the same minimal-env parents — see bashBin).
+  const bin = nlBin().replace(/\\/g, '/');
+  const args = ['-l', bin, 'why', sessionId];
   if (lastBlock) args.push('--last-block');
   const timeoutMs = timeoutMsFor('why');
-  return spawnAsync('bash', args, timeoutMs, 'nl why ' + sessionId).then((r) => {
+  return spawnAsync(bashBin(), args, timeoutMs, 'nl why ' + sessionId).then((r) => {
     if (r.rc !== 0 || !r.stdout) return null;
     const m = VERDICT_LINE_RE.exec(r.stdout);
     return m ? m[0].trim() : null;
@@ -411,7 +478,15 @@ function runWhy(sessionId, lastBlock) {
       let parsed = null, parseErr = null;
       try { parsed = JSON.parse(r.stdout); } catch (e) { parseErr = e; }
       if (parseErr) {
-        return { data: null, rc: 1, stderr_tail: tail('nl why --json produced non-JSON output: ' + r.stdout, 20), derived_at: nowIso() };
+        // Same append-the-real-stderr discipline as refreshOne's parse-
+        // failure branch (2026-07-09 incident — never discard child stderr).
+        return {
+          data: null,
+          rc: 1,
+          stderr_tail: tail('nl why --json produced non-JSON output: ' + r.stdout +
+            '\n[child rc=' + r.rc + '] child stderr: ' + (r.stderr && String(r.stderr).trim() ? r.stderr : '(empty)'), 20),
+          derived_at: nowIso(),
+        };
       }
       if (parsed && !('verdict' in parsed) && Array.isArray(parsed.chain) && parsed.chain.length > 0) {
         return fetchVerdictFromTextMode(sessionId, lastBlock).then((verdict) => {
@@ -425,4 +500,4 @@ function runWhy(sessionId, lastBlock) {
   });
 }
 
-module.exports = { DeriveCache, runWhy, nlBin, SUBCOMMANDS, timeoutMsFor };
+module.exports = { DeriveCache, runWhy, runNl, nlBin, bashBin, spawnEnv, SUBCOMMANDS, timeoutMsFor };

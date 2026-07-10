@@ -38,6 +38,7 @@
 
 const { spawnSync } = require('child_process');
 const path = require('path');
+const { bashBin, spawnEnv } = require('./derive-cache.js');
 
 function nowIso() { return new Date().toISOString(); }
 
@@ -208,10 +209,14 @@ function defaultLedgerEmit(gate, event, detail) {
     // a sibling of neural-lace/, not of workstreams-ui/ — see that
     // function's comment for the verified-live layout note).
     const repoRoot = path.join(__dirname, '..', '..', '..', 'adapters', 'claude-code');
-    const libPath = path.join(repoRoot, 'hooks', 'lib', 'signal-ledger.sh');
+    const libPath = path.join(repoRoot, 'hooks', 'lib', 'signal-ledger.sh').replace(/\\/g, '/');
     const script = 'source "' + libPath.replace(/"/g, '\\"') + '" && ledger_emit "' + gate + '" "' + event + '" "' +
       String(detail).replace(/"/g, '\\"') + '"';
-    spawnSync('bash', ['-c', script], { encoding: 'utf8', timeout: 5000 });
+    // bashBin() (absolute path, never bare 'bash') + '-lc' (login shell) +
+    // spawnEnv() (HOME fallback) — same 2026-07-09 minimal-env hardening as
+    // derive-cache.js's runNl/runHealth: under a logon-task spawn parent a
+    // bare-'bash' spawn is ENOENT and a non-login shell has no ~/bin/jq.
+    spawnSync(bashBin(), ['-lc', script], { encoding: 'utf8', timeout: 5000, env: spawnEnv() });
   } catch (_) { /* best-effort; badge still renders the drift */ }
   return 'cockpit-reconciler-' + Date.now();
 }

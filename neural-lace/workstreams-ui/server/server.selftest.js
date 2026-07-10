@@ -470,6 +470,119 @@ async function main() {
       !fs.existsSync(pollMarker));
     await new Promise((resolve) => blocker.close(resolve));
 
+    // ---- Scenario 19 (2026-07-09 cockpit-lobotomy regression lock, part
+    // 1 — bash by bare name): bashBin() must honor the NL_BASH override,
+    // then probe the two standard Git-for-Windows locations IN ORDER, then
+    // fall back to bare 'bash'. A bare-'bash' spawn under the logon
+    // scheduled task's minimal registry env (PATH has Git\cmd only, no
+    // bash.exe dir) failed rc=127 ENOENT for every pane, all day.
+    const prevNlBash = process.env.NL_BASH;
+    process.env.NL_BASH = '/custom/override/bash';
+    ok('S19 bashBin() honors the NL_BASH env override', dc3.bashBin() === '/custom/override/bash',
+      'got ' + dc3.bashBin());
+    delete process.env.NL_BASH;
+    const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
+    const gitUsrBash = 'C:\\Program Files\\Git\\usr\\bin\\bash.exe';
+    const expectedProbe = fs.existsSync(gitBash) ? gitBash
+      : (fs.existsSync(gitUsrBash) ? gitUsrBash : 'bash');
+    ok('S19b bashBin() probe order: Git\\bin, then Git\\usr\\bin, then bare bash fallback',
+      dc3.bashBin() === expectedProbe, 'got ' + dc3.bashBin() + ' expected ' + expectedProbe);
+    ok('S19c bashBin() without override resolves an absolute existing bash or the literal fallback',
+      dc3.bashBin() === 'bash' || (path.isAbsolute(dc3.bashBin()) && fs.existsSync(dc3.bashBin())),
+      'got ' + dc3.bashBin());
+    if (prevNlBash !== undefined) process.env.NL_BASH = prevNlBash;
+
+    // ---- Scenario 20 (2026-07-09 lobotomy regression lock, part 2 — the
+    // /api/health flag the launcher keys restart-on-lobotomy off).
+    // isLobotomized is the REAL exported function the /api/health handler
+    // calls, exercised with fabricated cache states + uptimes (a live
+    // >120s-uptime all-panes-failed server can't be produced inside this
+    // test's time budget).
+    const { isLobotomized } = require('./server.js');
+    const allFail = { get: () => ({ data: null, rc: 127, stderr_tail: 'spawn bash ENOENT', derived_at: '2026-07-09T00:00:00Z' }) };
+    const oneOk = { get: (s) => (s === 'costs'
+      ? { data: {}, rc: 0, stderr_tail: '', derived_at: '2026-07-09T00:00:00Z' }
+      : { data: null, rc: 127, stderr_tail: 'spawn bash ENOENT', derived_at: '2026-07-09T00:00:00Z' }) };
+    const neverSettled = { get: () => ({ data: null, rc: null, stderr_tail: '', derived_at: null }) };
+    ok('S20 lobotomized: EVERY pane failed + uptime past the 120s grace -> true (the incident shape)',
+      isLobotomized(allFail, 120001) === true);
+    ok('S20b lobotomized: every pane failed but uptime <= 120s -> false (fresh-instance grace = the no-restart-loop bound)',
+      isLobotomized(allFail, 120000) === false && isLobotomized(allFail, 30000) === false);
+    ok('S20c lobotomized: one healthy pane -> false even at high uptime',
+      isLobotomized(oneOk, 600000) === false);
+    ok('S20d lobotomized: rc=null (never settled) is loading, not failure -> false',
+      isLobotomized(neverSettled, 600000) === false);
+    const healthGlobal2 = await httpGet(PORT, '/api/health');
+    ok('S20e /api/health carries server_uptime_ms + lobotomized (false on this healthy fixture server)',
+      healthGlobal2.json && typeof healthGlobal2.json.server_uptime_ms === 'number' &&
+      healthGlobal2.json.server_uptime_ms >= 0 && healthGlobal2.json.lobotomized === false,
+      JSON.stringify(healthGlobal2.json));
+
+    // ---- Scenario 21 (2026-07-09 lobotomy regression lock, part 3 — the
+    // discarded-stderr hour): a child that exits 0 with unparseable/empty
+    // stdout but a REAL error on stderr (the exact minimal-env shape:
+    // profile-less bash, jq missing -> empty stdout + 'command not found'
+    // on stderr) must surface that stderr in the pane entry instead of
+    // discarding it.
+    const garbageStub = path.join(tmp, 'nl-garbage-stub.sh');
+    fs.writeFileSync(garbageStub, [
+      '#!/bin/bash',
+      'echo "jq: command not found (fixture)" >&2',
+      'exit 0',
+    ].join('\n'));
+    fs.chmodSync(garbageStub, 0o755);
+    process.env.NL_BIN = garbageStub;
+    delete require.cache[require.resolve('./derive-cache.js')];
+    const dc4 = require('./derive-cache.js');
+    const c4 = new dc4.DeriveCache({});
+    const parseFailEntry = await c4.refreshOne('status');
+    ok('S21 parse-failure entry (rc=1 synthetic) carries the child\'s REAL stderr, never discards it',
+      parseFailEntry.rc === 1 && parseFailEntry.stderr_tail.includes('jq: command not found (fixture)'),
+      JSON.stringify(parseFailEntry));
+    ok('S21b parse-failure entry still names the non-JSON symptom alongside the child stderr',
+      parseFailEntry.stderr_tail.includes('produced non-JSON output'));
+    process.env.NL_BIN = prevNlBin;
+
+    // ---- Scenario 22 (2026-07-09 environment-independence smoke — THE
+    // incident shape, end to end): a CHILD node process with a STRIPPED
+    // environment (registry-minimal PATH with no bash dir, HOME absent —
+    // exactly what the logon scheduled task hands the server) must still
+    // complete runNl('status') with rc=0 and parseable JSON, because
+    // bashBin() resolves bash by ABSOLUTE path (PATH-independent) and '-l'
+    // (login shell) rebuilds the full user environment from the profile,
+    // while spawnEnv() fills HOME from USERPROFILE.
+    const smokeChild = path.join(tmp, 'minimal-env-smoke.js');
+    fs.writeFileSync(smokeChild, [
+      'const dc = require(' + JSON.stringify(path.join(__dirname, 'derive-cache.js')) + ');',
+      "dc.runNl('status').then((r) => {",
+      '  let parsed = null;',
+      '  try { parsed = JSON.parse(r.stdout); } catch (_) {}',
+      "  console.log(JSON.stringify({ rc: r.rc, parsed_ok: !!parsed, bash: dc.bashBin(), stderr: String(r.stderr).slice(0, 200) }));",
+      '  process.exit(r.rc === 0 && parsed ? 0 : 1);',
+      '});',
+    ].join('\n'));
+    const minimalEnv = process.platform === 'win32'
+      ? {
+          PATH: 'C:\\Windows\\System32;C:\\Windows', // registry-minimal: NO bash dir, NO ~/bin
+          SystemRoot: process.env.SystemRoot || 'C:\\Windows',
+          USERPROFILE: process.env.USERPROFILE,      // HOME deliberately ABSENT -> spawnEnv fallback path
+          NL_BIN: stubPath,
+        }
+      : { PATH: '/usr/bin:/bin', HOME: process.env.HOME, NL_BIN: stubPath };
+    const smokeResult = await new Promise((resolve) => {
+      const ch = spawn(process.execPath, [smokeChild], { env: minimalEnv });
+      let out = '', errOut = '';
+      ch.stdout.on('data', (d) => { out += d; });
+      ch.stderr.on('data', (d) => { errOut += d; });
+      const killer = setTimeout(() => { try { ch.kill(); } catch (_) {} resolve({ code: 'timeout', out: out, errOut: errOut }); }, 30000);
+      ch.on('exit', (code) => { clearTimeout(killer); resolve({ code: code, out: out, errOut: errOut }); });
+    });
+    ok('S22 runNl succeeds (rc=0, JSON parsed) from a child with the registry-minimal logon-task env (absolute bash + login-shell rebuild + HOME fallback)',
+      smokeResult.code === 0,
+      'exit=' + smokeResult.code + ' out=' + String(smokeResult.out).slice(0, 300).replace(/\n/g, ' | ') +
+      ' err=' + String(smokeResult.errOut).slice(0, 200).replace(/\n/g, ' | '));
+    console.log('  S22 smoke evidence: ' + String(smokeResult.out).trim());
+
   } finally {
     server.close();
     cache.stop();
