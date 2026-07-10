@@ -1317,7 +1317,7 @@ register_health_tick_task() {
   fi
 }
 
-# register_health_tick_task  # Phase-1 ops step — orchestrator enables after integration (ADR-061 D6)
+register_health_tick_task  # ADR-061 D6 — enabled 2026-07-09 (Phase-1 ops, orchestrator; passive task, no claude spawn; probe-before-create idempotent)
 
 # ============================================================
 # Clean up legacy per-repo hooks

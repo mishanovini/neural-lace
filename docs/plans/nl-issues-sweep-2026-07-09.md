@@ -1,6 +1,18 @@
 # Plan: nl-issues ledger triage + fix sweep (2026-07-09)
 
-- **Status:** ACTIVE
+## Completion report (2026-07-09)
+
+**All 36 in-scope ledger rows [21]–[56] reached terminal dispositions; all 17 plan tasks verifier-flipped; five batches merged to master + public mirror same-day.**
+
+- **Merged batches:** #94 `4504db0` (A2/A4 + ADR approval trail) · #95 `43f76c2` (A1/A3/A5/B1/B5/B6 — end-manifest false-block, cockpit FM-037 engine, denylist narrowing) · #96 `3ba155c` (B2/B3/B4/B8 — dispatcher verdict visibility, doctor cockpit re-point) · #97 `08a3351` (B7 set-e sweep + ADR-061 P1b: reentry-safe heartbeats, health tick) · #98 `4fd706a` (ADR-061 P1a supervisor core + final flips). Plus #92/#93 (the ADR itself + decision trail).
+- **Dispositions:** 16 rows FIXED with merged SHAs · 4 already-fixed-at-master (verify-first) · 2 not-a-bug/wontfix · 8 routed to new backlog rows with fold-in points · 6 folded into ADR-061 (evidence/ops steps) · 1 junk (accidental probe). Zero untriaged in scope; rows [57]/[58]/[61] (other sessions', <1d old) left for weekly triage.
+- **Reviews:** harness-reviewer on A5 (security control — PASS, independent 24-shape battery), B1 (PASS + Major hardened same-day), B8 (builder-self-routed, PASS), P1a (REFORMULATE → 5/5 findings fixed same-day; reviewer mutation-tested the hang-class regression scenario). Every reviewed diff's findings closed before merge.
+- **Verification:** task-verifier two rounds, 17/17 PASS conf 8–9, all oracles re-run foreground at master tips; orchestrator re-ran every touched suite on each integrated branch before its PR.
+- **Incidents absorbed en route (all ledgered):** three live limit-pauses (usage-credits ×2, session-window ×1 — recovered via transcript-resume; direct D4 evidence); a mid-run worktree sweep against a live verifier; the gh-auth account race (3×); the compound-command-denial silent-kill (Stop gate caught it); the 100644-exec-bit Linux class (six call-sites fixed).
+- **Follow-ups spawned (tracked):** 8 backlog rows (SHARED-CHECKOUT-BRANCH-GUARD-01, CRED-403-JIT-TRIGGER-01, COLD-READER-MECH-LAYER-01, BG-AGENT-AUTO-RETRY-01, CLAUDE-PREVIEW-WORKTREE-01, PERF-BUDGET-SELFTEST-01, GH-AUTH-RACE-01, INSTALL-SYNC-PARITY-01) + post-sweep ledger rows (denylist grep-exit-2 class, end-manifest structured-path generalization, stale manifest honest_status, worktree-sweep-liveness).
+- **ADR-061 state at close:** design ACCEPTED; Phase 1 BUILT and merged (unarmed, shadow default); health-tick registration enabled in install.sh this commit — live registration + doctor green is the session's final ops step; Phase 2 (arming) remains operator-gated behind the shadow-metrics checklist.
+
+- **Status:** COMPLETED
 - **Mode:** code
 - **Execution Mode:** orchestrator
 - **Owner session:** angry-hypatia-45f5b0 (Fable continuation)
