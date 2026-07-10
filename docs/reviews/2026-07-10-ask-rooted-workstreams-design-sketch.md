@@ -94,19 +94,47 @@ ASK (short summary — verbatim original one click away; when; which session)
  │                        amended: +task 12" — the primary read; drift
  │                        badges appear inline where the auditor disagrees
  ├─ PLAN  docs/plans/<slug>.md          [██████░░░░] 6 done · 2 in flight · 4 not started
+ │   │    ^ HYPERLINK to the live plan doc (operator addition 2026-07-10):
+ │   │      renders the CURRENT file via the existing /api/doc endpoint +
+ │   │      an open-in-editor affordance (/api/doc/open) — always the most
+ │   │      recently updated version, since plans are living files.
  │   ├─ done:       task list, each with verifier-flip evidence link
  │   ├─ in flight:  from "task started" events, audited vs heartbeats
  │   └─ not started
  ├─ WAITING ON YOU (n)   each item: §3 context block + one-word reply options
+ │                       + the SOURCE SESSION named and linked (operator
+ │                       addition): deep-link into the desktop app if it
+ │                       exposes a URL scheme (build-time spike — not
+ │                       assumed); guaranteed fallback: session id + title +
+ │                       copy button, and the owning session badged in the
+ │                       SESSIONS list below.
  ├─ ARTIFACTS            PRs, master SHAs, review docs, completion reports
- └─ SESSIONS             live/stalled/done sessions attached to this ask
+ └─ SESSIONS             live/stalled/done sessions attached to this ask,
+                         with PARENT→CHILD SPAWN EDGES (operator addition):
+                         lineage captured MECHANICALLY where a mechanism
+                         exists (spawn_task provenance, orchestrator
+                         dispatch records, resume chains, handoff-doc
+                         references); where no edge is capturable the
+                         session still attaches to the ask, so lineage
+                         gaps degrade to flat grouping — never to a lost
+                         session. Sessions holding an open waiting-item
+                         are badged "waiting on you".
 ```
 
 Plan evolution: when conversation changes the scope, the TRACKED PLAN is
 updated (normal planning doctrine) and the amendment lands in the progress
 log — the ask node stays stable as the root.
 
-Tabs (not landing): **My To-Do** — ONE list, two item sources: (a)
+Layout (operator preference 2026-07-10, final call deferred to the
+ux-designer plan review): **My To-Do and Backlog are PANES on the landing
+page, not tabs** — a persistent right sidebar: To-Do on top (always
+visible), Backlog below it as a compact collapsible view (top-N by tier;
+one click opens the full list). Harness Health stays a separate tab.
+Rationale: the operator's glance loop is ask-tree + "what do I owe" +
+"what's queued" in one viewport; backlog volume (hundreds of rows) is why
+it collapses rather than tabs away.
+
+Panes/tabs: **My To-Do** — ONE list, two item sources: (a)
 operator-created free items, freely editable; (b) Claude-created POINTER
 items, auto-added by the same mechanism that appends a decision/question to
 NEEDS-YOU.md (never by model memory) — each pointer carries its §3 context
@@ -217,6 +245,15 @@ Architecture amendment (operator): log-first with mechanism-emitted events;
 Q6 (operator addition, 2026-07-10): ask nodes GROUPED BY PROJECT on the
    landing page — derived-by-default from repo provenance via projects.js,
    operator-overridable (move/rename/custom cross-repo projects).
+Q7 (operator addition): plan node hyperlinks to the LIVE plan doc
+   (existing /api/doc + /api/doc/open reused).
+Q8 (operator addition): waiting-items name + link their source session —
+   deep-link is a build-time spike (desktop-app URL scheme not assumed);
+   guaranteed fallback = session id/title + copy + badge in SESSIONS.
+   Session SPAWN LINEAGE rendered from mechanical sources only; gaps
+   degrade to ask-level grouping, never lost sessions.
+Q9 (operator preference): To-Do + Backlog as landing-page PANES (sidebar)
+   rather than tabs; ux-designer review makes the final layout call.
 
 Next: plan doc per planning doctrine (ux-designer + systems-designer
 plan-time reviews), then build under the orchestrator pattern. Done-whens
