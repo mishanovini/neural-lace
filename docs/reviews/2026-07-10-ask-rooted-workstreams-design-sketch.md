@@ -36,13 +36,28 @@ ground truth) but silently replaced the IA with six harness-centric panes —
 and its one value metric (operator trust) shipped with no mechanism, so the
 value regression went unmeasured until the operator screenshotted it.
 
-Laws carried into this design:
+Laws carried into this design (law 1 AMENDED per operator direction
+2026-07-10 — "the original data layer approach was not the problem; the
+problem was in the implementation: sessions forgot, emitted wrong, went
+stale"):
 
-1. **Derive, don't maintain** (kept from wave O, non-negotiable). Every
-   rendered fact recomputes from ground truth: git, plan files, heartbeats,
-   transcripts, the ledgers. Writes from the UI go to the SAME durable files
-   sessions already read (NEEDS-YOU.md, backlog.md, the to-do file) — never to
-   a parallel state store.
+1. **Log-first, derive-to-audit.** The primary read surface is an
+   append-only per-ask PROGRESS LOG — cheap, instant, chronological,
+   readable as a narrative ("what's done, what's in flight, what remains").
+   The failure class of the original implementation is closed MECHANICALLY,
+   not by hoping sessions remember: **every log event is emitted by a
+   mechanism, never by model memory** — the task-verifier checkbox flip
+   emits "task done"; the orchestrator's dispatch emits "task started"; a
+   NEEDS-YOU append emits "decision waiting on operator"; a master merge
+   emits the SHA; a plan amendment emits "plan updated." The wave-O
+   derivation layer is DEMOTED from sole-truth to AUDITOR: background
+   reconciliation (relaxed cadence — no more real-time derivation on the
+   landing path) compares log vs ground truth and badges drift on exactly
+   the divergent item. This is wave-O law 1's own escape clause ("event-
+   sourced views are acceptable only with a ground-truth reconciler that
+   flags divergence") — chosen this time instead of the purist extreme.
+   Writes from the UI go to the SAME durable files sessions already read
+   (NEEDS-YOU.md, backlog.md, the to-do file) — never a parallel store.
 2. **Operator-altitude only on the landing page** (new — the anti-noise law).
    Every item rendered on the landing surface must be something the operator
    can act on or learn from *as the owner of asks*. Harness telemetry (gate
@@ -63,21 +78,38 @@ Laws carried into this design:
 Landing page = **the ask tree** (one card per ask, newest activity first):
 
 ```
-ASK (operator's verbatim words, when, from which session)
+ASK (short summary — verbatim original one click away; when; which session)
+ ├─ PROGRESS LOG          chronological, mechanism-emitted narrative:
+ │                        "task 3 verified done (SHA) · builder dispatched
+ │                        on task 5 · decision D waiting on you · plan
+ │                        amended: +task 12" — the primary read; drift
+ │                        badges appear inline where the auditor disagrees
  ├─ PLAN  docs/plans/<slug>.md          [██████░░░░] 6 done · 2 in flight · 4 not started
  │   ├─ done:       task list, each with verifier-flip evidence link
- │   ├─ in flight:  task ↔ live session(s) (heartbeat + dispatch derivation)
+ │   ├─ in flight:  from "task started" events, audited vs heartbeats
  │   └─ not started
  ├─ WAITING ON YOU (n)   each item: §3 context block + one-word reply options
  ├─ ARTIFACTS            PRs, master SHAs, review docs, completion reports
  └─ SESSIONS             live/stalled/done sessions attached to this ask
 ```
 
-Tabs (not landing): **My To-Do** (operator-owned, freely editable, optional
-links to asks) · **Backlog** (docs/backlog.md rendered; disposition words as
-buttons — SCHEDULE / DEMOTE / FOLD / WONTFIX write the disposition the loop
-already understands) · **Harness Health** (the six wave-O panes, demoted
-verbatim) · **Team** (empty shell in P1; see §6).
+Plan evolution: when conversation changes the scope, the TRACKED PLAN is
+updated (normal planning doctrine) and the amendment lands in the progress
+log — the ask node stays stable as the root.
+
+Tabs (not landing): **My To-Do** — ONE list, two item sources: (a)
+operator-created free items, freely editable; (b) Claude-created POINTER
+items, auto-added by the same mechanism that appends a decision/question to
+NEEDS-YOU.md (never by model memory) — each pointer carries its §3 context
+and links back to the waiting item; in P1 clicking navigates to full
+context (answer in-session), in P2 answering happens in place; the box
+auto-checks when the underlying item resolves (derived, not manual).
+· **Backlog** (docs/backlog.md rendered; BOTH Claude and operator can add —
+operator via a small append form in the UI; disposition words as buttons —
+SCHEDULE / DEMOTE / FOLD / WONTFIX write the disposition the loop already
+understands) · **Harness Health** (the six wave-O panes, demoted verbatim —
+operator condition: they stay only if they work and stay quiet) · **Team**
+(empty shell in P1; see §6).
 
 Progress semantics (per plan): `done` = checkbox flipped by task-verifier
 (mechanical); `in flight` = §2 law 4 derivation; `not started` = remainder.
@@ -89,16 +121,18 @@ Nothing today records the operator's ask verbatim — plans are Claude's
 interpretation. New: `~/.claude/state/ask-registry.jsonl` (machine-local,
 per-user) + an in-repo mirror for team flow later.
 
-Capture: **automatic-with-promotion** — every session's opening operator
-message becomes a candidate ask (registered by the SessionStart digest,
-derived from the transcript, zero operator ceremony). The UI lets the
-operator promote / merge / rename / dismiss candidates. Plan creation links
-plan-slug ↔ ask-id (the planning doctrine gains one line: record the ask-id
-in the plan header). Sessions attach via first-message match + explicit
-resume references; multi-session asks share one node.
+Capture: **fully automatic** (operator decision 2026-07-10) — every
+session's opening operator request is registered as an ask by the
+SessionStart machinery, zero ceremony. Display form is a SHORT SUMMARY
+(operator: "does not need to be verbatim — a summary is fine as long as I
+can remember what I asked for"); the verbatim original stays one click away
+in the detail view. Merge / rename / dismiss are optional UI actions, never
+required. Plan creation links plan-slug ↔ ask-id (the planning doctrine
+gains one line: record the ask-id in the plan header). Sessions attach via
+origin + explicit resume references; multi-session asks share one node.
 
-Schema (per entry): `{ask_id, user, machine, repo, verbatim, ts,
-origin_session, status: candidate|active|done|dismissed, plan_slugs[],
+Schema (per entry): `{ask_id, user, machine, repo, summary, verbatim_ref,
+ts, origin_session, status: active|done|dismissed, plan_slugs[],
 merged_into?}`.
 
 ## 5. Reuse map (nothing rebuilt that already exists)
@@ -127,12 +161,16 @@ merged_into?}`.
 
 ## 7. Phases + the usefulness bar
 
-- **P1 (the priority):** ask registry + ask-tree landing page + plan progress
-  + waiting-on-you (cold-reader-enforced) + editable My To-Do + Backlog tab +
-  Harness Health demotion. Read-only except To-Do edits + backlog
-  dispositions. **Acceptance = operator walkthrough:** cold-start any ask and
-  answer "what did I ask, what's the plan, how far along, what needs me" in
-  under 60 seconds without opening a transcript.
+- **P1 (the priority):** the mechanism-emitted PROGRESS LOG (emission hooks
+  on verifier-flip / dispatch / NEEDS-YOU append / merge / plan amendment) +
+  ask registry (automatic, summary-form) + ask-tree landing page reading the
+  log + plan progress counts + waiting-on-you (cold-reader-enforced) + My
+  To-Do (operator items + auto-added Claude pointer items) + Backlog tab
+  (both can add) + Harness Health demotion + background auditor with drift
+  badges. Read-only except To-Do edits + backlog adds/dispositions.
+  **Acceptance = operator walkthrough:** cold-start any ask and answer "what
+  did I ask, what's the plan, how far along, what needs me" in under 60
+  seconds without opening a transcript.
 - **P2:** inline answering from the surface (decision replies written to
   NEEDS-YOU.md / the session-readable ledger — the old UI's inline-response
   pattern, resurrected).
@@ -153,20 +191,22 @@ merged_into?}`.
 4. Invariant-class health (not snapshots): the P1 surface inherits the
    lobotomy/health/restart contract that now exists (master `02ff2f3`).
 
-## 9. Open questions for the operator (answer to unblock the plan)
+## 9. Operator decisions — RESOLVED 2026-07-10
 
-Q1 ask-capture ceremony: automatic-with-promotion as specced (my pick) — OK?
-Q2 six panes: demote to tab (my pick) vs delete?
-Q3 P1 tree depth: shallow cards + plan drill-down (my pick) vs full artifact
-   tree immediately?
-Q4 To-Do storage: operator-editable file in the repo (flows to team later,
-   visible in git) vs machine-local under ~/.claude (private)? My pick:
-   in-repo (`docs/operator-todo.md`), since the team goal makes it shared
-   eventually anyway.
-Q5 Anything in §3's layout that doesn't match what you pictured?
+Q1 ask capture: **completely automatic** (no promotion ceremony).
+Q2 six panes: **demote** to Harness Health tab — conditional on them
+   actually working and not being noisy.
+Q3 tree depth: **shallow first** (cards + plan drill-down; deepen later).
+Q4 answering from the surface: **phase 2**; phase 1 = trustworthy read +
+   editable to-do.
+Q4b to-do storage (decide-and-go, one-revert reversible): in-repo
+   `docs/operator-todo.md` — Claude-pointer items require Claude write
+   access anyway, and the team goal makes it shared eventually.
+Architecture amendment (operator): log-first with mechanism-emitted events;
+   derivation demoted to auditor (§2 law 1 as amended).
 
-After sign-off: plan doc per planning doctrine (with ux-designer +
-systems-designer plan-time reviews), then build under the orchestrator
-pattern. The plan's Done-whens will be written invariant-class where the
-property must survive respawns/growth (audit lesson), and every task carries
-the §7 usefulness bar, not component evidence.
+Next: plan doc per planning doctrine (ux-designer + systems-designer
+plan-time reviews), then build under the orchestrator pattern. Done-whens
+written invariant-class where the property must survive respawns/growth
+(audit lesson); every task carries the §7 usefulness bar, not component
+evidence.
