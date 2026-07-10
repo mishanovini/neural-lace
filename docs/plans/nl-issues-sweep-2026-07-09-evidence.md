@@ -268,3 +268,125 @@ Runtime verification: test ~/.claude/scripts/nl-issue.sh::--list --untriaged zer
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: the ledger CLI re-queried this session; every sweep-scope row 21-56 has a terminal disposition (absent from the untriaged listing).
+
+EVIDENCE BLOCK
+==============
+Task ID: B.2
+Task description: B2 [42] dispatcher: surface combined verdict in the block message (stderr never reaches session context)
+Verified at: 2026-07-10T00:57:15Z
+Verifier: task-verifier agent (round 2)
+Oracle: house self-test - stop-verdict-dispatcher.sh --self-test (specified: block-JSON reason on stdout carries per-gate verdict + pin-d remediation; truncation names a full-verdict state file)
+Comprehension-gate: not applicable (plan has no rung field; treated as rung 0)
+Checks run:
+1. Re-ran self-test: bash adapters/claude-code/hooks/stop-verdict-dispatcher.sh --self-test
+   Output: self-test summary: 73 passed, 0 failed
+   Result: PASS (matches expected 73)
+2. [42] scenarios green in this run: s25 (reason-carries-per-gate-line-with-remediation,
+   reason-lists-EVERY-gate-not-just-the-first, stale-see-stderr-pointer-gone-and-no-truncation-
+   at-default-cap) and s26 (truncation-caps-reason-and-names-full-verdict-file,
+   full-verdict-state-file-written-with-ALL-gaps)
+3. Diff correspondence (3ba155c): reason entries built as "[gate/check] msg -> pin-d
+   remediation" INSIDE the stdout block-JSON; truncation writes state/stop-verdict-full-<short>.txt
+Anomaly note: first run this session reported 61/12 FAIL — root-caused to the agent worktree
+being externally pruned MID-RUN (tree emptied, exit 127 inside scenarios; subsequent invocation
+"No such file or directory"). Worktree re-registered on build/sweep-verifier-flips-2 at 08a3351;
+clean re-run is 73/0. Not a product defect.
+Runtime verification: test adapters/claude-code/hooks/stop-verdict-dispatcher.sh::--self-test
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: oracle re-executed 73/73 at origin/master 08a3351 including both [42] scenario groups; diff shows the per-gate+remediation reason construction and the full-verdict state file writer.
+
+EVIDENCE BLOCK
+==============
+Task ID: B.3
+Task description: B3 [22] live ~/.claude CRLF drift — docs-only close (verify-first: both remedies already landed 1d6954a; drift converged 0/166 CR)
+Verified at: 2026-07-10T00:57:15Z
+Verifier: task-verifier agent (round 2)
+Oracle: derived-preexisting - the 1d6954a mechanism (doctor live-mirror scan + install.sh normalize-on-copy) is the fix; the plan Decisions-Log entry is the docs deliverable
+Comprehension-gate: not applicable (plan has no rung field; treated as rung 0)
+Checks run:
+1. grep -c LIVE-MIRROR-CRLF adapters/claude-code/hooks/harness-doctor.sh -> 5 occurrences
+   (live-mirror WARN scan present at master tip)
+2. git merge-base --is-ancestor 1d6954a 08a3351 -> yes (fix commit is on master)
+3. cp_normalized present in install.sh (:134; call sites :364, :857) — normalize-on-copy live
+4. Plan note present: Decisions Log :131 records the B3 verify-first (already-fixed 1d6954a,
+   live convergence 0/166 CR, stale-memory note routed to orchestrator)
+5. Doctor self-test re-run this session: 83 passed, 0 failed — includes the line-endings
+   live-mirror fixtures (line-endings-live-mirror-warns/-lib-warns/-green/-never-red)
+Runtime verification: file adapters/claude-code/hooks/harness-doctor.sh::LIVE-MIRROR-CRLF
+Runtime verification: test adapters/claude-code/hooks/harness-doctor.sh::--self-test
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: docs-only close verified — the claimed pre-existing fix is on master ancestry, its scan + fixtures re-exercised green (83/83), and the plan carries the verify-first record at :131.
+
+EVIDENCE BLOCK
+==============
+Task ID: B.4
+Task description: B4 [56] scheduled-task naming drift: doctor check_obs_cockpit_fresh re-pointed (mechanism gate = ensure-cockpit.sh presence, nested workstreams-ui path, curl liveness probe; WARN-never-RED)
+Verified at: 2026-07-10T00:57:15Z
+Verifier: task-verifier agent (round 2)
+Oracle: house self-test - harness-doctor.sh --self-test (incl. cockpit fixtures warn-fires / green-up / green-nomech)
+Comprehension-gate: not applicable (plan has no rung field; treated as rung 0)
+Checks run:
+1. Re-ran self-test: bash adapters/claude-code/hooks/harness-doctor.sh --self-test
+   Output: self-test summary: 83 passed, 0 failed
+   Result: PASS (matches expected 83)
+2. Static correspondence, check_obs_cockpit_fresh (:1263-1307): mechanism gate =
+   ${live_home}/scripts/ensure-cockpit.sh presence (:1276); cockpit dir = nested canonical
+   ${repo_root}/neural-lace/workstreams-ui/server (:1266-1267); liveness = curl probe of
+   http://127.0.0.1:7733/ (:1303) with curl-absent green skip (:1299); sole non-green path
+   is one _warn call (:1304) — WARN-never-RED preserved
+3. Dead layers gone: no schtasks query and no derived-cache-stamp read remain in the function
+   (full function read this session)
+Runtime verification: test adapters/claude-code/hooks/harness-doctor.sh::--self-test
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: oracle re-executed 83/83 at 08a3351; the re-pointed gates match the task's three claimed fixes line-for-line and the WARN-only contract is structurally intact.
+
+EVIDENCE BLOCK
+==============
+Task ID: B.7
+Task description: B7 [24] set-e assignment-from-failing-pipeline audit across hooks/*.sh; tdd-gate deletion-only-diff guard + record-test-pass outside-repo guard + plan-edit-validator replica alignment
+Verified at: 2026-07-10T00:57:15Z
+Verifier: task-verifier agent (round 2)
+Oracle: house self-tests - pre-commit-tdd-gate.sh --self-test AND plan-edit-validator.sh --self-test
+Comprehension-gate: not applicable (plan has no rung field; treated as rung 0)
+Checks run:
+1. Re-ran: bash adapters/claude-code/hooks/pre-commit-tdd-gate.sh --self-test
+   Output: ALL SELF-TESTS PASSED (6/6) — incl. E-deletion-only-test-diff-allowed
+   Result: PASS (matches expected 6/6)
+2. Re-ran: bash adapters/claude-code/hooks/plan-edit-validator.sh --self-test
+   Output: self-test summary: 15 passed, 0 failed (of 15 scenarios)
+   Result: PASS (matches expected 15/15)
+3. Diff correspondence (08a3351): tdd-gate Layer-5 added=$(... | grep ... || true) guard +
+   scenario E (suite 5/5 -> 6/6, red-green per commit message); record-test-pass.sh
+   repo_root=$(git rev-parse ... || true) making the graceful not-a-repo exit-2 reachable;
+   plan-edit-validator selftest_check_docs_impact_warn replica gains || true mirroring the
+   fixed production check_docs_impact_warn
+Runtime verification: test adapters/claude-code/hooks/pre-commit-tdd-gate.sh::--self-test
+Runtime verification: test adapters/claude-code/hooks/plan-edit-validator.sh::--self-test
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: both oracles re-executed green at 08a3351 (6/6 incl. the deletion-only scenario; 15/15) and all three claimed [24]-class guards are present in the merged diff.
+
+EVIDENCE BLOCK
+==============
+Task ID: B.8
+Task description: B8 [59] pr-template-inline-gate: skip existence test on unexpandable --body-file paths (expand shell vars where defined; never false-WARN)
+Verified at: 2026-07-10T00:57:15Z
+Verifier: task-verifier agent (round 2)
+Oracle: house self-test - pr-template-inline-gate.sh --self-test
+Comprehension-gate: not applicable (plan has no rung field; treated as rung 0)
+Checks run:
+1. Re-ran self-test: bash adapters/claude-code/hooks/pr-template-inline-gate.sh --self-test
+   Output: all 17 self-tests passed
+   Result: PASS (matches expected 17/17)
+2. [59] scenarios individually green in this run: T13 undefined var -> ALLOW,
+   skipped-unexpandable, no false WARN; T14 defined var valid -> ALLOW after env expansion;
+   T15 defined var invalid -> ALLOW + template WARN after expansion (gate still does its job
+   when the path IS expandable); T16 command substitution -> skipped-unexpandable;
+   T17 ${VAR:-x} operator form -> skipped-unexpandable
+Runtime verification: test adapters/claude-code/hooks/pr-template-inline-gate.sh::--self-test
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: oracle re-executed 17/17 at 08a3351; the false-WARN class from the ledger ([59], 3x this session) is covered both directions — unexpandable paths skip, expandable paths still validate.

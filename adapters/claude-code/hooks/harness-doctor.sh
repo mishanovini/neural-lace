@@ -1009,9 +1009,10 @@ check_obs_writers_firing() {
 # writer-not-wired signal: no heartbeat file exists at all for a session
 # with a fresh transcript) — a PRESENT-but-stale-by-mtime heartbeat
 # resolves through the lib's own transcript-mtime join and is classified
-# `live` (or, if genuinely stalled/crashed by the lib's own pid check,
-# `stale`/`crashed` — neither of which this doctor predicate treats as a
-# writer-wiring failure; only `missing` is).
+# `live` (or, if genuinely stalled/throttled/crashed by the lib's own
+# pid + api-error-tail checks, `stale`/`throttled`/`crashed` — none of
+# which this doctor predicate treats as a writer-wiring failure; only
+# `missing` is).
 # ------------------------------------------------------------
 check_obs_heartbeats_fresh() {
   local live_home="$1" repo_root="$2"

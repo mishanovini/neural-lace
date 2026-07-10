@@ -4,11 +4,24 @@
 
 **What it is.** A Windows Scheduled Task that runs OUTSIDE the Claude Code
 API entirely, so an API throttle (429/529/rate-limit/overloaded) cannot kill
-the watchdog itself. It scans recent transcripts for a DEATH SIGNATURE — an
-API-error tail, or a stale transcript (>30 min) with in-flight work signals
-(`TodoWrite` in-progress entry, a `CONTINUING:` marker, or a referenced ACTIVE
-plan with unchecked tasks) — and resumes the session via `claude -p --resume
-<session-id> "<nudge>"` directly (Wave E task E.7).
+the watchdog itself. Detection is a two-stage, heartbeat-first funnel
+(ADR-061 D1 — `docs/decisions/061-session-continuity-supervision.md`):
+stage 1 batch-reads the heartbeat directory joined with transcript mtimes
+(cheap, bounded); stage 2 inspects transcripts ONLY for stale/crashed
+candidates with in-flight-work signals (bounded by a per-pass candidate
+ceiling, default 10, and a wall-clock budget, default 60s — both env-tunable,
+both fail closed to "do less, log it"). Death signals: a FIELD-AWARE
+API-error tail (`subtype=="api_error"` / `isApiErrorMessage` /
+`apiErrorStatus` — never substring regex) past a 30-min cooldown floor, or a
+stale transcript with in-flight work (`TodoWrite` in-progress entry, a
+`CONTINUING:` marker, or a referenced ACTIVE plan with unchecked tasks).
+`DONE:`/`PAUSING:`/`BLOCKED:` endings are never resumed. A `throttled`
+session (pid alive + api-error tail) is DEFERRED on a widening schedule
+(30m/60m/2h/5h; parked `awaiting-limit-reset` after 24h), never busy-retried
+(ADR-061 D4). Eligible dead sessions are resumed via `claude -p --resume
+<session-id> "<nudge>"` — at most ONE spawn per pass (ADR-061 D5). Every
+pass emits one `supervisor-pass` digest record (elapsed_ms, candidates_seen,
+candidates_classified, budget_tripped).
 
 Five ACTIVATION GUARDRAILS sit between classification and any real resume
 action (operator concern 2026-07-06, BINDING before this is armed for real):
@@ -26,13 +39,22 @@ bash adapters/claude-code/scripts/session-resumer.sh
 
 **Step 1 — register in shadow mode.** The scheduled task's `/TR` command
 wraps the script with `RESUMER_SHADOW=1` set. In shadow mode, classification
-and every guardrail (storm cap, tombstone, liveness) run exactly as they
-would live, but no `claude` process is ever spawned and no backoff state is
-ever written — instead one digest-feed line per would-be action:
+and every guardrail (storm cap, spawn breaker, tombstone, liveness, cooldown)
+run exactly as they would live, but no `claude` process is ever spawned —
+instead one digest-feed line per would-be action:
 
 ```json
-{"ts":"...","session_id":"<id>","event":"would-have-resumed","detail":"would-have-resumed <id> (<reason>)"}
+{"ts":"...","session_id":"<id>","event":"would-have-resumed","detail":"would-have-resumed <id> (<reason>) [shadow attempt N/5]"}
 ```
+
+Shadow mode EXERCISES the full backoff/escalation ladder (ADR-061 D5):
+attempt counts advance, backoff windows apply, escalation fires at the
+5-attempt cap — all state written under the shadow-scoped subdir
+`~/.claude/state/resumer/shadow/` (backoff files, storm-cap log,
+spawn-window log, cooldown marks, deferral records), so shadow observation
+produces real evidence about post-arming ladder behavior without ever
+touching the live-state files. Tombstones and the digest feed are shared
+between modes.
 
 Register (orchestrator-supervised step):
 
@@ -112,9 +134,12 @@ should never be headlessly resumed. Mark it:
 bash adapters/claude-code/scripts/session-resumer.sh --never <session-id>
 ```
 
-This touches `~/.claude/state/session-resumer/never/<session-id>` — the
+This touches `~/.claude/state/resumer/never/<session-id>` — the
 scan skips ANY transcript matching that id, permanently, until the marker
-file is removed (`rm ~/.claude/state/session-resumer/never/<session-id>`).
+file is removed (`rm ~/.claude/state/resumer/never/<session-id>`).
+(Path corrected per ADR-061 §2 — earlier docs said
+`state/session-resumer/never/` while the code always used
+`state/resumer/never/`; the docs now match the code.)
 
 Archiving a session via the CCD session store's own archive action is
 **not** the same thing as a tombstone: archival is not exposed as a
@@ -141,19 +166,35 @@ detail `"liveness guard: interactive session live on <repo-root>"`.
 **4. Shadow mode.** `RESUMER_SHADOW=1` — see the rollout section above.
 Distinct from `--self-test`'s `HARNESS_SELFTEST=1` dry-run plumbing: shadow
 mode runs against REAL transcripts with REAL classification and REAL
-guardrail checks, it just never executes the final action or writes
-backoff state.
+guardrail checks, and rehearses the full backoff/escalation ladder in the
+shadow-scoped state subdir — it just never executes the final action.
 
-**5. Kill switch.** This section.
+**5. Kill switch.** This section. Additionally the supervisor disarms
+ITSELF (ADR-061 D5/§7) when its OWN spawn-window log trips
+`RESUMER_MAX_SPAWNS_PER_HOUR` while armed: the armed marker is renamed to
+`resumer-armed.txt.auto-disarmed-<ts>`, a `supervisor-auto-disarmed` line
+is emitted, and every later pass runs in shadow until the operator re-arms
+(rename the marker back after review). Machine-wide live-process trips
+only defer the pass — they never disarm.
 
 ## Where its output lands
 
 Resumed sessions receive the nudge directly via the `claude` CLI's
 `--resume` mechanism (not a file). Every action (classify-skip, resume-
 attempt, resume-fallback, backoff-wait, escalation, storm-cap-queued,
-would-have-resumed, tombstone) appends one line to
-`~/.claude/state/resumer/digest-feed.jsonl` and calls `ledger_emit`. Per-
-session backoff state lives at `~/.claude/state/resumer/<session-id>.json`.
+would-have-resumed, tombstone, throttle-deferred, throttle-deferral-cleared,
+parked-awaiting-limit-reset, tick-ceiling-deferred, pass-budget-exhausted,
+supervisor-auto-disarmed) appends one line to
+`~/.claude/state/resumer/digest-feed.jsonl` and calls `ledger_emit`; every
+pass additionally appends one `supervisor-pass` record carrying elapsed_ms /
+candidates_seen / candidates_classified / budget_tripped as top-level JSON
+fields (the ADR-061 §7 metric source — p95 pass cost:
+`jq 'select(.event=="supervisor-pass") | .elapsed_ms'` over the feed).
+Per-session backoff state lives at `~/.claude/state/resumer/<session-id>.json`
+(shadow passes: `~/.claude/state/resumer/shadow/...`); throttle-deferral
+records at `~/.claude/state/resumer/deferrals/<session-id>.json`; park
+markers at `~/.claude/state/resumer/never/<session-id>.awaiting-limit-reset`
+(NOT tombstones — distinct suffix).
 
 ## Check if it's registered
 
@@ -171,11 +212,18 @@ distinguished from an error.
 bash adapters/claude-code/scripts/session-resumer.sh --self-test
 ```
 
-Covers: dead-429 / stale-in-flight / natural-DONE / PAUSING classification,
-backoff arithmetic, max-attempts escalation, unresumable fallback, storm cap
-(3 dead + cap 2 -> 2 resumes + 1 queued), tombstone skip, liveness-guard
-skip, and shadow-mode logs-but-does-not-execute. All state sandboxed; the
-real `claude` binary is never invoked under `--self-test`.
+Covers: dead-429 (real rate_limit shape) / system-api_error retry shape /
+stale-in-flight / natural-DONE / PAUSING / BLOCKED-skip-always
+classification, the field-aware 529-in-UUID negative, the fresh-api-error
+cooldown floor, backoff arithmetic, max-attempts escalation, unresumable
+fallback, storm cap (3 dead + cap 2 -> 2 resumes + 1 queued), tombstone
+skip, liveness-guard skip, shadow-mode ladder rehearsal (shadow-scoped
+backoff advance + escalation), throttle deferral (record + widening + park
++ cooldown floor), auto-disarm (spawn-window trip renames the armed marker;
+live-process trip never disarms), the per-tick spawn ceiling, and the
+REQUIRED live-scale funnel regression (1,000-transcript estate: budget +
+candidate ceiling hold, supervisor-pass record emitted). All state
+sandboxed; the real `claude` binary is never invoked under `--self-test`.
 
 ## Registration pattern (REQUIRED — quoting lesson 2026-07-06, location + hidden-window lessons 2026-07-07)
 Do NOT inline the bash -c command in /TR: schtasks collapses nested quotes (observed live: the

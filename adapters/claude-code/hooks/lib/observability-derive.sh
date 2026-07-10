@@ -494,7 +494,10 @@ _od_json_escape() {
 #   stalled           - C1 heartbeat stale AND recorded pid alive
 #                       (hb_classify == stale); detail carries pid-liveness
 #                       (reported as marker_state passthrough + "pid alive").
-#   throttled         - the session's most recent signal-ledger
+#   throttled         - hb_classify == throttled (ADR-061 D3: heartbeat
+#                       stale + pid alive + the transcript's LAST event
+#                       is api-error-shaped, field-aware), OR the
+#                       session's most recent signal-ledger
 #                       `throttle-detected` event (gate=resumer, or any
 #                       resumer 429-class event normalized to that name)
 #                       is NEWER than the session's last activity
@@ -927,6 +930,13 @@ od_sessions() {
     elif [[ "$hbcls" == "stale" ]]; then
       state="stalled"
       detail="pid alive"
+    elif [[ "$hbcls" == "throttled" ]]; then
+      # ADR-061 D3: hb_classify now distinguishes an API-limit pause
+      # (stale + pid alive + field-aware api-error transcript tail) from
+      # a plain stall — map it onto C4's existing `throttled` enum value
+      # directly (previously only reachable via ledger throttle events).
+      state="throttled"
+      detail="pid alive, api-error tail"
     elif [[ "$last_throttle_epoch" -gt 0 && "$last_throttle_epoch" -gt "$last_activity_epoch" ]]; then
       state="throttled"
     elif [[ "$last_block_epoch" -gt 0 && "$last_block_epoch" -gt "$last_activity_epoch" ]]; then
@@ -2409,6 +2419,15 @@ EOF
 {"schema":1,"session_id":"sess-midturn-fresh","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
 EOF
   printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-midturn-fresh.jsonl"
+  # sess-throttle-tail: stale heartbeat + ALIVE pid + a STALE transcript
+  # whose last event is api-error-shaped (ADR-061 D3 — hb_classify returns
+  # `throttled`; od_sessions must map it onto C4's `throttled` state).
+  cat > "$HEARTBEAT_STATE_DIR/sess-throttle-tail.json" <<EOF
+{"schema":1,"session_id":"sess-throttle-tail","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+  printf '{"type":"system","subtype":"api_error","retryAttempt":3,"maxRetries":10,"retryInMs":8000}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-throttle-tail.jsonl"
+  touch -d "@$(( $(date -u +%s) - 3600 ))" "$OBS_TRANSCRIPTS_ROOT/sess-throttle-tail.jsonl" 2>/dev/null \
+    || touch -t "$(date -u -v-3600S +%Y%m%d%H%M.%S 2>/dev/null)" "$OBS_TRANSCRIPTS_ROOT/sess-throttle-tail.jsonl" 2>/dev/null || true
   out1="$(od_sessions)"
   if printf '%s' "$out1" | grep -q "oracle: od_sessions"; then
     pass "od_sessions names its oracle inline"
@@ -2430,6 +2449,11 @@ EOF
   else
     fail "od_sessions did not classify sess-midturn-fresh as working: $out1"
   fi
+  if printf '%s' "$out1" | grep "sess-throttle-tail" | grep -q "throttled"; then
+    pass "od_sessions: hb_classify's throttled (stale + pid alive + api-error tail, ADR-061 D3) maps to state=throttled"
+  else
+    fail "od_sessions did not classify sess-throttle-tail as throttled: $out1"
+  fi
 
   echo "Scenario 2: od_sessions --json produces valid JSON with all fixture sessions"
   out2="$(od_sessions --json)"
@@ -2440,10 +2464,10 @@ EOF
       fail "od_sessions --json is NOT valid JSON: $out2"
     fi
     n_sess="$(printf '%s' "$out2" | jq '.sessions | length' 2>/dev/null)"
-    if [[ "$n_sess" == "3" ]]; then
-      pass "od_sessions --json lists all 3 fixture sessions (got $n_sess)"
+    if [[ "$n_sess" == "4" ]]; then
+      pass "od_sessions --json lists all 4 fixture sessions (got $n_sess)"
     else
-      fail "expected 3 sessions in --json output, got $n_sess"
+      fail "expected 4 sessions in --json output (live/stale/midturn/throttle-tail), got $n_sess"
     fi
     mt_state="$(printf '%s' "$out2" | jq -r '.sessions[] | select(.session_id=="sess-midturn-fresh") | .state' 2>/dev/null)"
     if [[ "$mt_state" == "working" ]]; then

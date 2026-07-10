@@ -88,8 +88,19 @@
 #   source "${BASH_SOURCE%/*}/session-heartbeat-lib.sh"
 #   f="$(hb_path_for "$session_id")"
 #   hb_write "turn-end" "DONE"
+#   hb_write --session "$target_sid" "resume"   # explicit sid override (ADR-061 D2)
 #   hb_is_stale "$f" && echo stale
-#   hb_classify "$f"   # -> live | stale | crashed | missing
+#   hb_classify "$f"   # -> live | stale | throttled | crashed | missing
+#
+# `throttled` (ADR-061 D3): stale + pid alive + the session's transcript's
+# LAST event parses (field-aware JSON, never substring regex) as an
+# API-error shape (subtype=="api_error" / isApiErrorMessage==true /
+# apiErrorStatus present). Consumers that only branch on the pre-existing
+# values keep working: session-heartbeat.sh `sweep` prints the value
+# verbatim; harness-doctor.sh's obs-heartbeats-fresh check REDs only on
+# `missing`; observability-derive.sh's od_sessions maps it to its own C4
+# `throttled` state; ntfy-push.sh's dormant _scan_stalled already tested
+# for the literal `throttled` (previously never produced).
 
 # ----------------------------------------------------------------------
 # Source-guard
@@ -149,13 +160,20 @@ _hb_json_escape() {
 }
 
 # ----------------------------------------------------------------------
-# hb_write <event> [marker] — build the C1 JSON object for THIS process's
-# session and atomically write it (tmp+mv) to hb_path_for(session_id).
+# hb_write [--session <sid>] <event> [marker] — build the C1 JSON object
+# and atomically write it (tmp+mv) to hb_path_for(session_id).
 # NEVER blocks the caller: every failure path is swallowed, exit 0 always
 # (mirrors ledger_emit's writer-never-blocks contract). Session id comes
-# from $CLAUDE_CODE_SESSION_ID (or "unknown", same fallback as
+# from the explicit --session override when given, else
+# $CLAUDE_CODE_SESSION_ID (or "unknown", same fallback as
 # signal-ledger.sh). Prints the resolved path to stdout on success.
 #
+#   --session <sid> - explicit target session id (ADR-061 D2: the
+#            session-resumer's own `--event resume` touch attributes to
+#            the RESUMED session, not to whatever
+#            $CLAUDE_CODE_SESSION_ID happens to be in the watchdog's own
+#            environment — which was unset, so every resume heartbeat
+#            landed under the literal sid "unknown").
 #   event  - one of start|turn-end|compact|resume (not enforced as a hard
 #            allow-list here — the writer script validates against the
 #            allowed verb set before calling this; this lib stores
@@ -165,11 +183,18 @@ _hb_json_escape() {
 #            omitted or empty).
 # ----------------------------------------------------------------------
 hb_write() {
+  local sid_override=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --session) sid_override="${2:-}"; shift 2 ;;
+      *) break ;;
+    esac
+  done
   local event="${1:-}"
   local marker="${2:-none}"
   [[ -n "$marker" ]] || marker="none"
 
-  local sid="${CLAUDE_CODE_SESSION_ID:-unknown}"
+  local sid="${sid_override:-${CLAUDE_CODE_SESSION_ID:-unknown}}"
   local ts
   ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo 'unknown')"
   local pid="$$"
@@ -371,6 +396,36 @@ _hb_transcript_fresh_min() {
 }
 
 # ----------------------------------------------------------------------
+# _hb_last_event_api_error <transcript-path> — 0 (true) iff the
+# transcript's LAST line parses as JSON and carries an API-error shape on
+# its OWN FIELDS (ADR-061 D3: field-aware, never an unanchored substring
+# regex over the stringified line — the proven `5294`-inside-a-UUID false
+# positive class is structurally impossible here). The two REAL captured
+# shapes this matches (ADR-061 §2, fixtures built from live transcripts):
+#   (a) terminal assistant message: top-level `isApiErrorMessage:true`
+#       and/or `apiErrorStatus:429` (with `error:"rate_limit"`);
+#   (b) retry event: `type:"system","subtype":"api_error"` carrying
+#       retryAttempt/maxRetries/retryInMs.
+# FAIL-CLOSED: no jq, no file, empty/unparseable last line -> 1 (false).
+# A liveness classifier must never CLAIM an API-error shape it could not
+# actually parse.
+# ----------------------------------------------------------------------
+_hb_last_event_api_error() {
+  local transcript="$1"
+  [[ -n "$transcript" && -f "$transcript" ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  local last_line
+  last_line=$(tail -n 1 "$transcript" 2>/dev/null)
+  [[ -z "$last_line" ]] && return 1
+  printf '%s' "$last_line" | jq -e '
+    (type == "object") and (
+      (.subtype? == "api_error")
+      or (.isApiErrorMessage? == true)
+      or ((.apiErrorStatus? // null) != null)
+    )' >/dev/null 2>&1
+}
+
+# ----------------------------------------------------------------------
 # hb_is_stale <file> [stale-min] [transcript-path] [session-id]
 #             [last-activity-epoch] [now-epoch]
 #   — exit 0 (true) if the heartbeat file's last_activity_ts is older
@@ -512,15 +567,22 @@ hb_is_stale() {
 # ----------------------------------------------------------------------
 # hb_classify <file> [stale-min] [transcript-path] [session-id]
 #             [last-activity-epoch] [now-epoch] [pid]
-#   — print one of: live | stale | crashed | missing. Never errors,
-# always prints exactly one word.
+#   — print one of: live | stale | throttled | crashed | missing. Never
+# errors, always prints exactly one word.
 #
-#   missing  - file does not exist.
-#   crashed  - stale (per hb_is_stale) AND the recorded pid is not alive.
-#   stale    - stale but the pid IS still alive (e.g. a hung/throttled
-#              process, or a pid reused by an unrelated process — the
-#              distinction the sketch's "stalled" state maps onto).
-#   live     - not stale.
+#   missing   - file does not exist.
+#   crashed   - stale (per hb_is_stale) AND the recorded pid is not alive.
+#   throttled - stale AND the pid IS alive AND the session transcript's
+#               LAST event is API-error-shaped per
+#               _hb_last_event_api_error (ADR-061 D3: the process is up
+#               but its API traffic is erroring — a limit pause, not a
+#               stall; consumers defer instead of nudging). The extra
+#               transcript-tail read costs one tail+jq and is paid ONLY
+#               for the stale-with-alive-pid subset, never per session.
+#   stale     - stale, pid alive, transcript tail NOT API-error-shaped
+#               (a hung process, or a pid reused by an unrelated
+#               process — the sketch's "stalled" state).
+#   live      - not stale.
 #
 # NOTE this function ALREADY only pays the `_hb_pid_alive` (`kill -0`)
 # cost for the stale-candidate subset, never for every session: the pid
@@ -572,6 +634,23 @@ hb_classify() {
     return 0
   fi
 
+  # Capture the optional transcript-path / session-id args locally too:
+  # the throttled check below (stale-with-alive-pid branch only) needs
+  # the transcript path, honoring the SAME argument-count contract as
+  # hb_is_stale (an explicitly-passed EMPTY path means "the caller's
+  # index proved no transcript exists" — honored as-is, no find
+  # fallback, and a session with no transcript can never be throttled).
+  local tp_given=0 tp=""
+  if [[ $# -ge 3 ]]; then
+    tp_given=1
+    tp="$3"
+  fi
+  local sid_given=0 sid_pre=""
+  if [[ $# -ge 4 ]]; then
+    sid_given=1
+    sid_pre="$4"
+  fi
+
   local pid_given=0 pid_pre=""
   if [[ $# -ge 7 ]]; then
     pid_given=1
@@ -610,7 +689,29 @@ hb_classify() {
       pid="$(_hb_field "$file" "pid")"
     fi
     if _hb_pid_alive "$pid"; then
-      printf 'stale'
+      # Stale but the process is alive — distinguish a genuine stall from
+      # an API-limit pause (ADR-061 D3): if the transcript's LAST event is
+      # API-error-shaped (field-aware), the session is `throttled`, not
+      # merely `stale`. Transcript resolution honors the caller-supplied
+      # path (argument-count contract, incl. explicit-empty); only when
+      # NO path arg was given does this fall back to _hb_find_transcript.
+      local tf
+      if [[ "$tp_given" == "1" ]]; then
+        tf="$tp"
+      else
+        local sid_for_tf
+        if [[ "$sid_given" == "1" ]]; then
+          sid_for_tf="$sid_pre"
+        else
+          sid_for_tf="$(_hb_field "$file" "session_id")"
+        fi
+        tf="$(_hb_find_transcript "$sid_for_tf")"
+      fi
+      if _hb_last_event_api_error "$tf"; then
+        printf 'throttled'
+      else
+        printf 'stale'
+      fi
     else
       printf 'crashed'
     fi
@@ -934,6 +1035,104 @@ EOF
     pass "hb_classify/hb_is_stale: pre-resolved session-id/epoch/now-epoch/pid skip _hb_field and _hb_epoch entirely across fresh/mid-turn-live/crashed cases; kill runs exactly once, only for the stale-candidate case"
   else
     fail "hb_classify pre-resolved-fields fork-batching scenario failed (rc=$rc_batch) — see sub-case exit codes 1-4=fresh, 5-8=mid-turn-live, 9-12=crashed"
+  fi
+
+  echo "Scenario 6g: hb_classify — throttled = stale + alive pid + field-aware API-error transcript tail (ADR-061 D3); substring matches (529 inside a UUID) NEVER classify throttled"
+  (
+    export OBS_TRANSCRIPTS_ROOT="$TMP/transcripts-throttle"
+    mkdir -p "$OBS_TRANSCRIPTS_ROOT"
+    backdate() { # <file> <seconds-ago> — best-effort GNU/BSD touch
+      local target=$(( $(date -u +%s) - $2 ))
+      touch -d "@${target}" "$1" 2>/dev/null \
+        || touch -t "$(date -u -v-"$2"S +%Y%m%d%H%M.%S 2>/dev/null)" "$1" 2>/dev/null || true
+    }
+    mk_hb() { # <sid> <pid> — old heartbeat (2020 ts)
+      cat > "$HEARTBEAT_STATE_DIR/$1.json" <<EOF
+{"schema":1,"session_id":"$1","pid":$2,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+    }
+
+    # (a) REAL captured shape: terminal assistant message with top-level
+    # error:"rate_limit", isApiErrorMessage:true, apiErrorStatus:429.
+    mk_hb "sess-thr-a" "$$"
+    {
+      printf '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"go"}]}}\n'
+      printf '{"type":"assistant","error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429,"message":{"role":"assistant","content":[{"type":"text","text":"API Error: 429 rate_limit_error"}]}}\n'
+    } > "$OBS_TRANSCRIPTS_ROOT/sess-thr-a.jsonl"
+    backdate "$OBS_TRANSCRIPTS_ROOT/sess-thr-a.jsonl" 3600
+    cls_a="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-thr-a.json" 30 "$OBS_TRANSCRIPTS_ROOT/sess-thr-a.jsonl")"
+    [[ "$cls_a" == "throttled" ]] || exit 1
+
+    # (b) REAL captured shape: system/api_error retry event.
+    mk_hb "sess-thr-b" "$$"
+    {
+      printf '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"go"}]}}\n'
+      printf '{"type":"system","subtype":"api_error","retryAttempt":3,"maxRetries":10,"retryInMs":8000,"message":"Retrying after API error"}\n'
+    } > "$OBS_TRANSCRIPTS_ROOT/sess-thr-b.jsonl"
+    backdate "$OBS_TRANSCRIPTS_ROOT/sess-thr-b.jsonl" 3600
+    # No explicit path this time — prove the standalone find-based
+    # resolution reaches the same verdict.
+    cls_b="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-thr-b.json" 30)"
+    [[ "$cls_b" == "throttled" ]] || exit 2
+
+    # NEGATIVE (the 988f8535 class): last line contains "529" INSIDE a
+    # UUID but carries NO api-error field — must classify stale, never
+    # throttled. This is the substring false positive ADR-061 §2 proved.
+    mk_hb "sess-thr-uuid" "$$"
+    printf '{"type":"assistant","uuid":"ab5294cd-1111-2222-3333-444455556666","message":{"role":"assistant","content":[{"type":"text","text":"still thinking"}]}}\n' \
+      > "$OBS_TRANSCRIPTS_ROOT/sess-thr-uuid.jsonl"
+    backdate "$OBS_TRANSCRIPTS_ROOT/sess-thr-uuid.jsonl" 3600
+    cls_u="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-thr-uuid.json" 30 "$OBS_TRANSCRIPTS_ROOT/sess-thr-uuid.jsonl")"
+    [[ "$cls_u" == "stale" ]] || exit 3
+
+    # DEAD pid + api-error tail stays crashed (throttled requires a live
+    # process — a dead one is a death, whatever its last event was).
+    dead_pid=""
+    ( : ) & dead_pid=$!
+    wait "$dead_pid" 2>/dev/null
+    mk_hb "sess-thr-dead" "$dead_pid"
+    printf '{"type":"system","subtype":"api_error","retryAttempt":1,"maxRetries":10,"retryInMs":500}\n' \
+      > "$OBS_TRANSCRIPTS_ROOT/sess-thr-dead.jsonl"
+    backdate "$OBS_TRANSCRIPTS_ROOT/sess-thr-dead.jsonl" 3600
+    cls_d="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-thr-dead.json" 30 "$OBS_TRANSCRIPTS_ROOT/sess-thr-dead.jsonl")"
+    [[ "$cls_d" == "crashed" ]] || exit 4
+
+    # Explicit EMPTY transcript path (caller's index says "no transcript")
+    # can never be throttled — stays stale, no find fallback.
+    mk_hb "sess-thr-none" "$$"
+    cls_n="$(hb_classify "$HEARTBEAT_STATE_DIR/sess-thr-none.json" 30 "")"
+    [[ "$cls_n" == "stale" ]] || exit 5
+    exit 0
+  )
+  rc_thr=$?
+  if [[ "$rc_thr" -eq 0 ]]; then
+    pass "hb_classify: throttled for both REAL api-error shapes (explicit path + find-resolved); 529-in-UUID stays stale (field-aware, no substring); dead pid stays crashed; empty path stays stale"
+  else
+    fail "hb_classify throttled scenario failed (rc=$rc_thr: 1=shape-a 2=shape-b 3=uuid-negative 4=dead-pid 5=empty-path)"
+  fi
+
+  echo "Scenario 6h: hb_write --session <sid> overrides the CLAUDE_CODE_SESSION_ID fallback (ADR-061 D2 — fixes the resumer's 'unknown' attribution)"
+  (
+    export CLAUDE_CODE_SESSION_ID="sess-env-ambient"
+    hb_write --session "sess-explicit-target" "resume" >/dev/null
+  )
+  tf_explicit="$HEARTBEAT_STATE_DIR/sess-explicit-target.json"
+  if [[ -f "$tf_explicit" ]]; then
+    pass "hb_write --session wrote under the TARGET sid's path, not the ambient env sid"
+  else
+    fail "expected $tf_explicit after hb_write --session sess-explicit-target"
+  fi
+  sid_in_file="$(_hb_field "$tf_explicit" "session_id")"
+  ev_in_file="$(_hb_field "$tf_explicit" "last_event")"
+  if [[ "$sid_in_file" == "sess-explicit-target" && "$ev_in_file" == "resume" ]]; then
+    pass "hb_write --session round-trips session_id=target + last_event=resume in the JSON body"
+  else
+    fail "expected session_id=sess-explicit-target/last_event=resume, got sid='$sid_in_file' event='$ev_in_file'"
+  fi
+  if [[ ! -f "$HEARTBEAT_STATE_DIR/sess-env-ambient.json" ]]; then
+    pass "hb_write --session did NOT also write under the ambient env sid"
+  else
+    fail "hb_write --session leaked a write under the ambient env sid"
   fi
 
   echo "Scenario 7: hb_write never blocks even on an unwritable target"

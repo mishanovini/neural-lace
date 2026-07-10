@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"look into the flaky test"}]}}
+{"type":"assistant","uuid":"ab5294cd-1111-2222-3333-444455556666","message":{"role":"assistant","content":[{"type":"text","text":"Still investigating the flaky test."}]}}

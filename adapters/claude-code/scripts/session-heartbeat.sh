@@ -24,7 +24,8 @@
 #
 #   session-heartbeat.sh touch --event <start|turn-end|compact|resume>
 #                               [--marker <DONE|PAUSING|BLOCKED|CONTINUING|none>]
-#     Atomically writes/overwrites this session's heartbeat file (schema
+#                               [--session <sid>]
+#     Atomically writes/overwrites a session's heartbeat file (schema
 #     per C1; see hooks/lib/session-heartbeat-lib.sh's header for the exact
 #     JSON shape). NEVER BLOCKS — exit 0 always, on every code path
 #     (mirrors ledger_emit / needs-you.sh add's writer-never-blocks
@@ -32,11 +33,14 @@
 #     pid ($$), cwd ($PWD), branch (`git branch --show-current` in
 #     ${CLAUDE_PROJECT_DIR:-$PWD}), and model from env
 #     ($CLAUDE_MODEL/$ANTHROPIC_MODEL) — see the lib's hb_write for the
-#     exact resolution.
+#     exact resolution. --session <sid> (ADR-061 D2) targets an EXPLICIT
+#     session id, overriding the $CLAUDE_CODE_SESSION_ID fallback — the
+#     session-resumer's `--event resume` touch attributes to the RESUMED
+#     session this way instead of the literal sid "unknown".
 #
 #   session-heartbeat.sh sweep [--json] [--stale-min <n>]
 #     Report-only: lists every heartbeat file's session id + classification
-#     (live|stale|crashed) per hb_classify, using the SAME lib functions
+#     (live|stale|throttled|crashed) per hb_classify, using the SAME lib functions
 #     §O.3's `od_sessions` will call — the computation lives in
 #     session-heartbeat-lib.sh once, shared here and there. Never blocks;
 #     exit 0 always (a listing is not a verdict this script enforces).
@@ -132,11 +136,12 @@ _sh_in_list() {
 # never fails the calling hook chain.
 # ----------------------------------------------------------------------
 cmd_touch() {
-  local event="" marker="none"
+  local event="" marker="none" session=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --event) event="${2:-}"; shift 2 ;;
       --marker) marker="${2:-none}"; shift 2 ;;
+      --session) session="${2:-}"; shift 2 ;;
       *) echo "session-heartbeat.sh touch: unknown flag '$1' (ignored, never blocks)" >&2; shift ;;
     esac
   done
@@ -152,7 +157,13 @@ cmd_touch() {
     echo "session-heartbeat.sh touch: unknown --marker '$marker' (expected one of: ${ALLOWED_MARKERS[*]}; writing anyway)" >&2
   fi
 
-  hb_write "$event" "$marker" >/dev/null 2>&1 || true
+  # ADR-061 D2: explicit --session overrides the env-derived sid (see
+  # hb_write's own --session contract in the lib).
+  if [[ -n "$session" ]]; then
+    hb_write --session "$session" "$event" "$marker" >/dev/null 2>&1 || true
+  else
+    hb_write "$event" "$marker" >/dev/null 2>&1 || true
+  fi
   return 0
 }
 
@@ -372,6 +383,31 @@ cmd_selftest() {
     pass "marker_state DONE round-trips through touch"
   else
     fail "expected marker_state DONE, got '$marker_v'"
+  fi
+
+  echo "Scenario B2: touch --event resume --session <sid> targets the explicit sid, not the ambient env sid (ADR-061 D2 — the resumer's resume-touch attribution fix)"
+  (
+    export CLAUDE_CODE_SESSION_ID="sess-ambient-watchdog"
+    bash "$SCRIPT_DIR/session-heartbeat.sh" touch --event resume --session "sess-resume-target"
+  )
+  local fb2="$HEARTBEAT_STATE_DIR/sess-resume-target.json"
+  if [[ -f "$fb2" ]]; then
+    pass "touch --session wrote the heartbeat under the TARGET sid"
+  else
+    fail "expected $fb2 after touch --event resume --session sess-resume-target"
+  fi
+  local sid_b2 ev_b2
+  sid_b2="$(_hb_field "$fb2" "session_id")"
+  ev_b2="$(_hb_field "$fb2" "last_event")"
+  if [[ "$sid_b2" == "sess-resume-target" && "$ev_b2" == "resume" ]]; then
+    pass "touch --session round-trips session_id=target + last_event=resume"
+  else
+    fail "expected session_id=sess-resume-target/last_event=resume, got sid='$sid_b2' event='$ev_b2'"
+  fi
+  if [[ ! -f "$HEARTBEAT_STATE_DIR/sess-ambient-watchdog.json" ]]; then
+    pass "touch --session did NOT write under the ambient env sid (no 'unknown'-class misattribution)"
+  else
+    fail "touch --session leaked a write under the ambient env sid"
   fi
 
   echo "Scenario C: sweep lists a fresh session as live and an old one as stale"
@@ -609,12 +645,14 @@ case "${1:-}" in
 session-heartbeat.sh — per-session liveness file (NL Observability Program O.2)
 
 Verbs:
-  touch --event <start|turn-end|compact|resume> [--marker <state>]
-                          Atomically write/refresh this session's heartbeat
-                          file. Never blocks; exit 0 always.
+  touch --event <start|turn-end|compact|resume> [--marker <state>] [--session <sid>]
+                          Atomically write/refresh a session's heartbeat
+                          file (--session targets an explicit sid,
+                          overriding $CLAUDE_CODE_SESSION_ID — ADR-061 D2).
+                          Never blocks; exit 0 always.
   sweep [--json] [--stale-min <n>]
                           Report-only: list every heartbeat file's
-                          classification (live|stale|crashed) per
+                          classification (live|stale|throttled|crashed) per
                           hooks/lib/session-heartbeat-lib.sh's hb_classify.
   reap [--json] [--reap-min <n>] [--dry-run]
                           Hygiene: remove heartbeat files for sessions

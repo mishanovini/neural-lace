@@ -115,5 +115,7 @@ MSYS_NO_PATHCONV=1 schtasks /Query /TN "NL-session-resumer" /V /FO LIST | grep -
 
 Kill switch (documented fully in the runbook): `schtasks /Change /TN
 "NL-session-resumer" /DISABLE`. Tombstone verb: `session-resumer.sh --never
-<session-id>` (writes `~/.claude/state/session-resumer/never/<session-id>`).
+<session-id>` (writes `~/.claude/state/resumer/never/<session-id>` — path
+corrected per ADR-061 §2; earlier docs said `state/session-resumer/never/`
+while the code always used `state/resumer/never/`).
 Storm-cap tuning: `RESUMER_STORM_CAP` env var (default 2/hour, 0=uncapped).

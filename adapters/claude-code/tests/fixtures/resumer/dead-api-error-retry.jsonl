@@ -1,0 +1,3 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"keep going"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Continuing the build."}]}}
+{"type":"system","subtype":"api_error","level":"warning","retryAttempt":3,"maxRetries":10,"retryInMs":8000,"message":"Retrying after API error (attempt 3/10, next retry in 8000ms)"}

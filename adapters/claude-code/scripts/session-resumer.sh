@@ -1,7 +1,7 @@
 #!/bin/bash
-# session-resumer.sh — OS-level session-death watchdog (NL Overhaul Wave E,
-# task E.7; operator directive 2026-07-02, API-throttle survival; plan
-# Decisions Log entry "E.7 session-resumer watchdog added").
+# session-resumer.sh — OS-level session-continuity supervisor (NL Overhaul
+# Wave E task E.7, detection layer replaced per ADR-061 —
+# docs/decisions/061-session-continuity-supervision.md, Phase 1a).
 #
 # ============================================================
 # WHY THIS EXISTS
@@ -13,9 +13,53 @@
 # nudge INTO a session-mediated channel and dropped 330/330 messages
 # because a dead session cannot consume anything. This script acts at the
 # OS level instead: it is invoked by a Windows Scheduled Task (outside the
-# API entirely, so throttling cannot kill the watchdog itself), scans
-# recent transcripts for a death signature, and resumes via the `claude`
-# CLI directly (`claude -p --resume <session-id> "<nudge>"`).
+# API entirely, so throttling cannot kill the watchdog itself), detects
+# dead/stalled sessions, and resumes via the `claude` CLI directly
+# (`claude -p --resume <session-id> "<nudge>"`).
+#
+# ============================================================
+# DETECTION FUNNEL (ADR-061 D1 — replaces the unbounded 48h transcript walk)
+# ============================================================
+#
+# The per-pass work is a two-stage, heartbeat-first funnel with HARD
+# BOUNDS, both env-tunable, both failing CLOSED to "do less, log it":
+#
+#   STAGE 1 (cheap, bounded by file count): ONE batched jq read of the
+#   heartbeat directory (pid / last_activity_epoch / marker_state per
+#   file — the observability-derive.sh _od_heartbeat_batch_build
+#   pattern) joined via ONE awk pass with the in-window transcript mtime
+#   list (ONE GNU-find enumeration). A session is a stage-2 CANDIDATE
+#   only when its heartbeat AND transcript mtime are BOTH stale
+#   (contract-C1 join) and its heartbeat marker is not a natural end
+#   (DONE/PAUSING/BLOCKED). Sessions with NO heartbeat file are
+#   classified via transcript mtime only and are NEVER resumed
+#   (heartbeat coverage is not universal yet — do not resume what you
+#   cannot see clearly; aggregated classify-skip with reason).
+#
+#   STAGE 2 (bounded by RESUMER_PASS_CANDIDATE_CEILING, default 10,
+#   oldest-transcript-first): per candidate, hb_classify (canonical
+#   read-side oracle, pre-resolved fields — zero redundant forks) ->
+#   live (mid-turn rescue) | throttled (-> D4 deferral, never spawned) |
+#   stale/crashed (-> full transcript inspection: final marker +
+#   field-aware last-event shape + in-flight-work signals).
+#
+#   BOUNDS: RESUMER_PASS_BUDGET_SECONDS (default 60) — wall-clock budget
+#   checked between candidates (graceful early exit logging
+#   `pass-budget-exhausted`, never killed mid-write); the candidate
+#   ceiling above; RESUMER_SCAN_WINDOW_HOURS (default 48) transcript
+#   mtime window; a per-tick live-spawn ceiling (ADR-061 D5,
+#   RESUMER_TICK_SPAWN_CEILING default 1) — at most ONE resume/spawn
+#   action per pass, remaining eligible sessions log
+#   `tick-ceiling-deferred` and are reconsidered next pass.
+#
+#   EVERY pass — not only on exhaustion — appends one `supervisor-pass`
+#   record to the digest feed carrying elapsed_ms / candidates_seen /
+#   candidates_classified / budget_tripped (the §7 p95-pass-cost and
+#   budget-trip-rate metric source; a metric with no emitted denominator
+#   is not a metric):
+#     {"ts","session_id":"-","event":"supervisor-pass","detail":"...",
+#      "elapsed_ms":N,"candidates_seen":N,"candidates_classified":N,
+#      "budget_tripped":bool}
 #
 # ============================================================
 # REGISTRATION (ORCHESTRATOR STEP — NOT done by this builder; §E.W step 6)
@@ -45,8 +89,16 @@
 #
 # A transcript (JSONL, modified within the last 48h) is DEAD when EITHER:
 #
-#   (a) API-error tail: the last event in the transcript, stringified,
-#       matches (case-insensitively) `429|529|rate.?limit|overloaded`.
+#   (a) API-error tail (ADR-061 D3 — FIELD-AWARE): the last event in the
+#       transcript parses as JSON and carries an API-error shape on its
+#       OWN FIELDS (subtype=="api_error" / isApiErrorMessage==true /
+#       apiErrorStatus present — the two REAL captured shapes in ADR-061
+#       §2), never an unanchored substring regex over the stringified
+#       line (the proven `5294`-inside-a-UUID false-positive class).
+#       ADDITIONALLY the transcript must be ≥RESUMER_THROTTLE_FLOOR_MIN
+#       (default 30) minutes stale — the D4 cooldown floor: newer CLIs
+#       retry transient API errors internally, and an external resume
+#       must never race that internal retry loop.
 #   (b) Stale-with-in-flight-work: the transcript's mtime is >30 minutes
 #       old AND at least one of:
 #         - the most recent TodoWrite tool_use call's todos[] contains an
@@ -61,7 +113,9 @@
 #
 # A NATURAL END (the final assistant message's last non-empty line
 # carries DONE: or PAUSING:) is never resumed regardless of the above —
-# classified skip, logged, left alone.
+# classified skip, logged, left alone. BLOCKED: gets the SAME
+# unconditional skip-always treatment (ADR-061 D3: waiting-on-operator is
+# never resumable — a nudge cannot answer the operator's question).
 #
 # ============================================================
 # RESUME MECHANICS
@@ -139,7 +193,10 @@
 # (2) TOMBSTONES — a session that was deliberately ended (not crashed) is
 #     marked never-resume via a marker FILE (not a marker line in a shared
 #     log, so a single `rm` retracts it) at:
-#       ~/.claude/state/session-resumer/never/<session-id>
+#       ~/.claude/state/resumer/never/<session-id>
+#     (path corrected per ADR-061 §2 — the docs used to say
+#     state/session-resumer/never/ while the code always used
+#     state/resumer/never/; docs now match the code, state not moved).
 #     New verb: `session-resumer.sh --never <session-id>` touches that file
 #     (idempotent; mkdir -p the dir first). The scan skips ANY transcript
 #     whose session id has a tombstone, logging "classify-skip" with detail
@@ -173,24 +230,75 @@
 #     Resolved repo root: the transcript's own `cwd` field (same field
 #     perform_resume already reads for the fallback path).
 #
-# (4) SHADOW MODE — RESUMER_SHADOW=1 (env var, distinct from --self-test's
-#     HARNESS_SELFTEST=1 dry-run plumbing) runs classification AND every
-#     guardrail (storm cap / tombstone / liveness) exactly as in a live
-#     pass, but the final resume/fallback command is NEVER executed —
-#     instead ONE digest-feed line is appended per would-be action:
+# (4) SHADOW MODE (reworked per ADR-061 D5) — RESUMER_SHADOW=1 (env var,
+#     distinct from --self-test's HARNESS_SELFTEST=1 dry-run plumbing) —
+#     and equally the NOT-ARMED default (guardrail 5) — runs
+#     classification AND every guardrail (storm cap / spawn breaker /
+#     tombstone / liveness / cooldown) exactly as in a live pass, but the
+#     final resume/fallback command is NEVER executed — instead ONE
+#     digest-feed line is appended per would-be action:
 #       event="would-have-resumed", detail="would-have-resumed <session-id>
-#       (<reason>)"
-#     No backoff state is written in shadow mode (a shadow pass must be
-#     re-runnable indefinitely without mutating the real backoff schedule
-#     that governs live behavior later). This is the mode the scheduled
-#     task registers with FIRST — see docs/runbooks/session-resumer.md for
-#     the shadow -> armed rollout procedure and the kill switch.
+#       (<reason>) [shadow attempt N/5]"
+#     Shadow mode EXERCISES the full backoff/escalation state machine —
+#     attempt counts advance, backoff windows apply, escalation fires at
+#     MAX_ATTEMPTS — writing ALL its state (backoff files, storm-cap log,
+#     spawn-window log, cooldown marks, deferral records) under a
+#     shadow-scoped subdir (~/.claude/state/resumer/shadow/), so a shadow
+#     observation period produces REAL evidence about post-arming ladder
+#     behavior while never mutating the live-state files that govern
+#     armed behavior later (ADR-061 §2 proved the old
+#     never-advance-anything shadow produced zero backoff/escalation
+#     evidence across 2,499 digest lines). Tombstones and the digest
+#     feed itself are deliberately UN-scoped (a tombstone means never,
+#     in both modes; the feed is the one observation channel). This is
+#     the mode the scheduled task registers with FIRST — see
+#     docs/runbooks/session-resumer.md for the shadow -> armed rollout
+#     procedure and the kill switch.
 #
 # (5) KILL SWITCH — documented in docs/runbooks/session-resumer.md: what
 #     the watchdog does, the shadow->armed rollout, the one-liner to
 #     disable the scheduled task (`schtasks /Change /TN "NL-session-
 #     resumer" /DISABLE`), the `--never` tombstone verb, and storm-cap
 #     tuning (RESUMER_STORM_CAP).
+#
+# ============================================================
+# LIMIT-PAUSE DEFERRAL (ADR-061 D4 — throttled sessions are deferred,
+# never busy-retried)
+# ============================================================
+#
+# A `throttled` classification (heartbeat stale + pid ALIVE + the
+# transcript's last event API-error-shaped, per hb_classify) means the
+# process is up but its API traffic is erroring — a limit pause, not a
+# death. NO spawn. Instead a deferral record is written at
+#   <state>/deferrals/<session-id>.json
+#   {schema, session_id, reason, first_seen, last_throttled, next_check,
+#    checks, parked}
+# with the widening re-check schedule 30min -> 60min -> 2h -> then every
+# 5h (aligned to the shortest known reset window). A 30-minute cooldown
+# floor applies EVERYWHERE (RESUMER_THROTTLE_FLOOR_MIN): a session whose
+# throttle signal is <30min old is never resumed — the CLI's own
+# internal retry loop must never be raced. After >24h still-throttled
+# the session is PARKED: an `awaiting-limit-reset` marker is written
+# beside the tombstones (<never-dir>/<sid>.awaiting-limit-reset — NOT a
+# tombstone; a separate suffix so `--never` semantics stay untouched),
+# ONE `parked-awaiting-limit-reset` digest line is emitted, and checks
+# drop to twice daily. A session observed live again has its deferral
+# record cleared (`throttle-deferral-cleared`).
+#
+# ============================================================
+# AUTO-DISARM (ADR-061 D5/§7 — supervisor-attributable trips only)
+# ============================================================
+#
+# When the WINDOWED SPAWN COUNT signal trips — the supervisor's OWN
+# spawn-window.log exceeding RESUMER_MAX_SPAWNS_PER_HOUR, the one signal
+# that is supervisor-attributable by construction — while the resumer is
+# ARMED and live, the script disarms ITSELF: the armed marker is renamed
+# to <name>.auto-disarmed-<ts>, a `supervisor-auto-disarmed` ledger +
+# digest line is emitted, and every subsequent pass runs in shadow until
+# the operator re-arms. A MACHINE-WIDE live-process-count trip
+# (RESUMER_MAX_LIVE_PROCESSES) only DEFERS the pass and logs it — a busy
+# dev machine trips that signal on unrelated load, so it must never
+# disarm (reviewer finding, ADR-061 §7).
 #
 # ============================================================
 # SANDBOXING (HARNESS_SELFTEST)
@@ -205,10 +313,16 @@
 # like a "would run: <cmd>" trace.
 #
 # Usage:
-#   session-resumer.sh                    # live scan + resume pass
+#   session-resumer.sh                    # supervisor pass (funnel + act)
 #   session-resumer.sh --self-test         # exercise fixtures, never invokes claude
 #   session-resumer.sh --never <session-id>  # tombstone: never resume this id
-#   RESUMER_SHADOW=1 session-resumer.sh   # classify + guardrails, log would-have, never exec
+#   RESUMER_SHADOW=1 session-resumer.sh   # full rehearsal in shadow-scoped state, never exec
+#
+# Env knobs (all optional): RESUMER_PASS_BUDGET_SECONDS (60),
+# RESUMER_PASS_CANDIDATE_CEILING (10), RESUMER_SCAN_WINDOW_HOURS (48),
+# RESUMER_TICK_SPAWN_CEILING (1), RESUMER_THROTTLE_FLOOR_MIN (30),
+# RESUMER_STORM_CAP (2), RESUMER_MAX_SPAWNS_PER_HOUR (3),
+# RESUMER_MAX_LIVE_PROCESSES (8), RESUMER_COOLDOWN_MIN (15).
 #
 # Bash 3.2 / Git-Bash on Windows portable (no mapfile, no declare -A).
 
@@ -224,6 +338,13 @@ source "$SCRIPT_DIR/../hooks/lib/nl-paths.sh" 2>/dev/null || true
 source "${ISL_LIB_PATH:-$SCRIPT_DIR/../hooks/lib/interactive-session-lock.sh}" 2>/dev/null || true
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/../hooks/lib/hook-reentry-guard.sh" 2>/dev/null || true
+# ADR-061 D1/D3: the heartbeat read-side lib (hb_classify / hb_state_dir /
+# _hb_last_event_api_error) is the stage-1 classification oracle for the
+# two-stage funnel — best-effort sourced; every use below degrades
+# honestly when absent (a session this script cannot see clearly is
+# skipped, never resumed).
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/../hooks/lib/session-heartbeat-lib.sh" 2>/dev/null || true
 
 # NL-FINDING-040 (adversarial-review addendum): the nudge instructs the
 # resumed child to end CONTINUING:/PAUSING:, NEVER DONE:. An automation-
@@ -269,8 +390,54 @@ _resumer_state_dir() {
 }
 
 # ----------------------------------------------------------------------
+# _resumer_shadow_active — 0 (true) when this pass runs in shadow: either
+# RESUMER_SHADOW=1 explicitly, or (outside --self-test) the armed marker
+# is absent (guardrail 5's not-armed-defaults-to-shadow, NL-FINDING-040
+# item b4). Under HARNESS_SELFTEST=1 the default is the dryrun (armed)
+# path — self-test scenarios opt INTO shadow via RESUMER_SHADOW=1
+# deliberately, exactly as before.
+#
+# PASS-MODE CACHE (harness-reviewer MINOR 5, mode-flip-mid-transaction):
+# when _RESUMER_PASS_MODE is set ("shadow"|"live"), it WINS over every
+# probe below. scan_and_resume caches the mode ONCE at pass start and
+# clears it at pass end, so a mid-pass armed-marker change (e.g. the
+# auto-disarm rename) can never flip the state scope mid-transaction —
+# one pass reads and writes exactly one scope.
+# ----------------------------------------------------------------------
+_RESUMER_PASS_MODE=""
+_resumer_shadow_active() {
+  if [[ -n "${_RESUMER_PASS_MODE:-}" ]]; then
+    [[ "$_RESUMER_PASS_MODE" == "shadow" ]]
+    return $?
+  fi
+  [[ "${RESUMER_SHADOW:-0}" == "1" ]] && return 0
+  [[ "${HARNESS_SELFTEST:-0}" == "1" ]] && return 1
+  resumer_is_armed && return 1
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# _resumer_scope_dir — the MUTABLE-state root for the current mode
+# (ADR-061 D5): shadow passes write ALL their rehearsal state (backoff
+# files, storm-cap log, spawn-window log, cooldown marks, deferral
+# records) under <state>/shadow/ so the ladder can be exercised for real
+# without ever mutating the live-state files that govern armed behavior.
+# Tombstones (never/) and the digest feed stay on _resumer_state_dir —
+# deliberately UN-scoped (a tombstone means never in both modes; the
+# feed is the one observation channel).
+# ----------------------------------------------------------------------
+_resumer_scope_dir() {
+  if _resumer_shadow_active; then
+    printf '%s/shadow' "$(_resumer_state_dir)"
+  else
+    _resumer_state_dir
+  fi
+}
+
+# ----------------------------------------------------------------------
 # _resumer_digest_feed — resolve the digest-feed JSONL path (E.1 consumer
-# contract). Sandboxed the same way as the backoff state dir.
+# contract). Sandboxed the same way as the backoff state dir; NEVER
+# shadow-scoped (one feed for both modes).
 # ----------------------------------------------------------------------
 _resumer_digest_feed() {
   printf '%s/digest-feed.jsonl' "$(_resumer_state_dir)"
@@ -335,7 +502,7 @@ tombstone_session() {
 # resume/fallback action taken; sandboxed the same way as the backoff dir.
 # ----------------------------------------------------------------------
 _resumer_storm_cap_log() {
-  printf '%s/storm-cap.log' "$(_resumer_state_dir)"
+  printf '%s/storm-cap.log' "$(_resumer_scope_dir)"
 }
 
 # ----------------------------------------------------------------------
@@ -468,7 +635,7 @@ resumer_is_armed() {
 # semantics).
 # ----------------------------------------------------------------------
 _resumer_spawn_window_log() {
-  printf '%s/spawn-window.log' "$(_resumer_state_dir)"
+  printf '%s/spawn-window.log' "$(_resumer_scope_dir)"
 }
 
 # spawn_window_count_last_hour — same prune-then-count pattern as
@@ -632,7 +799,7 @@ spawn_breaker_tripped() {
 # classifier to naturally skip it.
 # ----------------------------------------------------------------------
 _resumer_cooldown_dir() {
-  printf '%s/cooldown' "$(_resumer_state_dir)"
+  printf '%s/cooldown' "$(_resumer_scope_dir)"
 }
 
 # cooldown_mark <session_id> — record that this id was just
@@ -661,6 +828,201 @@ cooldown_active() {
   cutoff_min="${RESUMER_COOLDOWN_MIN:-15}"
   [[ "$cutoff_min" =~ ^[0-9]+$ ]] || cutoff_min=15
   [[ $(( (now - marked) / 60 )) -lt "$cutoff_min" ]]
+}
+
+# ----------------------------------------------------------------------
+# LIMIT-PAUSE DEFERRAL (ADR-061 D4) — see the header section of the same
+# name. Deferral records live under <scope>/deferrals/<sid>.json (shadow
+# passes rehearse deferral under the shadow scope like every other
+# mutable state). The park marker lives beside the tombstones with a
+# distinct suffix so `--never` semantics are untouched.
+# ----------------------------------------------------------------------
+# Widening re-check schedule in minutes, indexed by check number
+# (1-based; clamped to the last entry): 30 -> 60 -> 2h -> every 5h.
+DEFERRAL_MINUTES=(30 60 120 300)
+# Parked sessions (>24h still throttled) are checked twice daily.
+DEFERRAL_PARKED_MINUTES=720
+DEFERRAL_PARK_AFTER_SECONDS=86400
+
+_resumer_deferral_dir() {
+  printf '%s/deferrals' "$(_resumer_scope_dir)"
+}
+
+_resumer_deferral_path() {
+  printf '%s/%s.json' "$(_resumer_deferral_dir)" "$1"
+}
+
+# Scope-aware (harness-reviewer MINOR 3, rehearsal-state-leak): a SHADOW
+# park writes its marker under <state>/shadow/never/, never into the live
+# never/ dir — shadow rehearsal must not leave live-visible artifacts.
+# Live mode resolves to the same <state>/never/ dir as before. The
+# --never TOMBSTONES themselves (is_tombstoned/_resumer_tombstone_dir)
+# stay deliberately UN-scoped: a tombstone means never in both modes.
+_resumer_park_marker_path() {
+  printf '%s/never/%s.awaiting-limit-reset' "$(_resumer_scope_dir)" "$1"
+}
+
+# _resumer_deferral_field <sid> <field> [default] — jq field read from the
+# deferral record; prints the default (or empty) on any failure.
+_resumer_deferral_field() {
+  local sid="$1" field="$2" def="${3:-}"
+  local path v
+  path="$(_resumer_deferral_path "$sid")"
+  [[ -f "$path" ]] || { printf '%s' "$def"; return 0; }
+  command -v jq >/dev/null 2>&1 || { printf '%s' "$def"; return 0; }
+  v="$(jq -r --arg f "$field" '.[$f] // empty' "$path" 2>/dev/null | tr -d '\r')"
+  [[ -n "$v" ]] && printf '%s' "$v" || printf '%s' "$def"
+}
+
+# _resumer_deferral_write <sid> <reason> <first_seen> <last_throttled>
+#                         <next_check> <checks> <parked(true|false)>
+_resumer_deferral_write() {
+  local sid="$1" reason="$2" first_seen="$3" last_throttled="$4" next_check="$5" checks="$6" parked="$7"
+  local path dir
+  path="$(_resumer_deferral_path "$sid")"
+  dir="$(dirname "$path")"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  if command -v jq >/dev/null 2>&1; then
+    jq -cn --arg sid "$sid" --arg r "$reason" \
+      --argjson fs "$first_seen" --argjson lt "$last_throttled" \
+      --argjson nc "$next_check" --argjson ck "$checks" --argjson pk "$parked" \
+      '{schema:1, session_id:$sid, reason:$r, first_seen:$fs, last_throttled:$lt, next_check:$nc, checks:$ck, parked:$pk}' \
+      > "$path" 2>/dev/null || true
+  else
+    printf '{"schema":1,"session_id":"%s","reason":"%s","first_seen":%s,"last_throttled":%s,"next_check":%s,"checks":%s,"parked":%s}\n' \
+      "$sid" "${reason//\"/\\\"}" "$first_seen" "$last_throttled" "$next_check" "$checks" "$parked" > "$path" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# throttle_defer <sid> <reason> — the D4 gate: called when a session
+# classifies `throttled`. NEVER spawns. Creates/advances the deferral
+# record on the widening schedule; parks after >24h still-throttled
+# (marker + ONE digest line + twice-daily checks). Exit 0 always.
+# ----------------------------------------------------------------------
+throttle_defer() {
+  local sid="$1" reason="$2"
+  local now path
+  now=$(date -u +%s)
+  path="$(_resumer_deferral_path "$sid")"
+
+  if [[ ! -f "$path" ]]; then
+    local first_wait="${DEFERRAL_MINUTES[0]}"
+    _resumer_deferral_write "$sid" "$reason" "$now" "$now" $((now + first_wait * 60)) 1 false
+    emit_action "$sid" "throttle-deferred" "throttled (${reason}): deferral check 1 recorded — next check in ${first_wait}min; no spawn"
+    return 0
+  fi
+
+  local first_seen next_check checks parked
+  first_seen="$(_resumer_deferral_field "$sid" "first_seen" 0)"
+  next_check="$(_resumer_deferral_field "$sid" "next_check" 0)"
+  checks="$(_resumer_deferral_field "$sid" "checks" 1)"
+  parked="$(_resumer_deferral_field "$sid" "parked" false)"
+  [[ "$first_seen" =~ ^[0-9]+$ ]] || first_seen="$now"
+  [[ "$next_check" =~ ^[0-9]+$ ]] || next_check=0
+  [[ "$checks" =~ ^[0-9]+$ ]] || checks=1
+
+  if [[ "$now" -lt "$next_check" ]]; then
+    # Still inside the current deferral window — refresh last_throttled
+    # (the cooldown-floor signal) quietly; no digest noise per pass.
+    _resumer_deferral_write "$sid" "$reason" "$first_seen" "$now" "$next_check" "$checks" "$parked"
+    return 0
+  fi
+
+  local new_checks=$((checks + 1))
+  if [[ $((now - first_seen)) -gt "$DEFERRAL_PARK_AFTER_SECONDS" ]]; then
+    if [[ "$parked" != "true" ]]; then
+      # Park ONCE: marker (scope-aware path) + ONE digest line.
+      local park_path
+      park_path="$(_resumer_park_marker_path "$sid")"
+      mkdir -p "$(dirname "$park_path")" 2>/dev/null || true
+      : > "$park_path" 2>/dev/null || true
+      emit_action "$sid" "parked-awaiting-limit-reset" ">24h still throttled (${reason}) — parked awaiting limit reset; checks drop to twice daily"
+      # ADR-061 D4 promises "digest + NEEDS-YOU" on park (harness-reviewer
+      # MAJOR 2: the digest feed has no machine consumer, so the NEEDS-YOU
+      # ledger line is the load-bearing operator surface). LIVE mode only —
+      # a shadow park is a rehearsal and must not page the operator.
+      # Best-effort, writer-never-blocks; needs-you.sh self-sandboxes under
+      # HARNESS_SELFTEST, and RESUMER_NEEDS_YOU_BIN lets tests stub it.
+      if ! _resumer_shadow_active; then
+        local ny_bin="${RESUMER_NEEDS_YOU_BIN:-$SCRIPT_DIR/needs-you.sh}"
+        if [[ -f "$ny_bin" ]]; then
+          bash "$ny_bin" add --section inflight \
+            --text "Session ${sid} parked awaiting API-limit reset: >24h continuously throttled (${reason}); the resumer now checks it twice daily and will not resume inside the cooldown floor. Un-park: rm ${park_path} and $(_resumer_deferral_path "$sid")." \
+            --session "$sid" >/dev/null 2>&1 || true
+        fi
+      fi
+    fi
+    _resumer_deferral_write "$sid" "$reason" "$first_seen" "$now" $((now + DEFERRAL_PARKED_MINUTES * 60)) "$new_checks" true
+    return 0
+  fi
+
+  local idx=$((new_checks - 1))
+  local last_idx=$(( ${#DEFERRAL_MINUTES[@]} - 1 ))
+  [[ "$idx" -gt "$last_idx" ]] && idx=$last_idx
+  local wait_min="${DEFERRAL_MINUTES[$idx]}"
+  _resumer_deferral_write "$sid" "$reason" "$first_seen" "$now" $((now + wait_min * 60)) "$new_checks" false
+  emit_action "$sid" "throttle-deferred" "still throttled (${reason}): deferral check ${new_checks} — next check in ${wait_min}min; no spawn"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# throttle_floor_active <sid> — 0 (true) if this session carries a
+# deferral record whose last_throttled is within the 30-minute cooldown
+# floor (RESUMER_THROTTLE_FLOOR_MIN). Applied before ANY spawn: a
+# recently-throttled session is never resumed inside the floor, even if
+# it now classifies dead — the CLI's internal retry must never be raced
+# (ADR-061 D4 "cooldown floor everywhere").
+# ----------------------------------------------------------------------
+throttle_floor_active() {
+  local sid="$1"
+  local path
+  path="$(_resumer_deferral_path "$sid")"
+  [[ -f "$path" ]] || return 1
+  # Fail closed to "do less": an unreadable record keeps the floor on.
+  command -v jq >/dev/null 2>&1 || return 0
+  local last floor_min now
+  last="$(_resumer_deferral_field "$sid" "last_throttled" 0)"
+  [[ "$last" =~ ^[0-9]+$ ]] || last=0
+  floor_min="${RESUMER_THROTTLE_FLOOR_MIN:-30}"
+  [[ "$floor_min" =~ ^[0-9]+$ ]] || floor_min=30
+  now=$(date -u +%s)
+  [[ $((now - last)) -lt $((floor_min * 60)) ]]
+}
+
+# ----------------------------------------------------------------------
+# throttle_deferral_clear <sid> — remove the deferral record (+ park
+# marker) for a session observed live again; ONE digest line.
+# ----------------------------------------------------------------------
+throttle_deferral_clear() {
+  local sid="$1"
+  local path
+  path="$(_resumer_deferral_path "$sid")"
+  [[ -f "$path" ]] || return 0
+  rm -f "$path" 2>/dev/null || true
+  rm -f "$(_resumer_park_marker_path "$sid")" 2>/dev/null || true
+  emit_action "$sid" "throttle-deferral-cleared" "session live again — deferral record cleared"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# _resumer_auto_disarm <breaker-reason> — ADR-061 D5/§7: called ONLY when
+# the supervisor's OWN windowed spawn count trips while armed and live.
+# Renames the armed marker to <name>.auto-disarmed-<ts> (one file rename
+# — the operator re-arms by renaming back after review), emits
+# supervisor-auto-disarmed. Never disarms on machine-wide live-process
+# trips (not supervisor-attributable; those only defer the pass).
+# ----------------------------------------------------------------------
+_resumer_auto_disarm() {
+  local breaker_reason="$1"
+  local marker ts
+  marker="$(_resumer_armed_marker_path)"
+  [[ -f "$marker" ]] || return 0
+  ts="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo unknown)"
+  mv "$marker" "${marker}.auto-disarmed-${ts}" 2>/dev/null || return 0
+  emit_action "-" "supervisor-auto-disarmed" "windowed spawn count tripped (${breaker_reason}) — armed marker renamed to $(basename "$marker").auto-disarmed-${ts}; resumer reverts to shadow until the operator re-arms"
+  return 0
 }
 
 # ----------------------------------------------------------------------
@@ -734,13 +1096,74 @@ _resumer_normalize_event() {
     resume-attempt|resume-fallback|resume-unresumable|would-have-resumed|tombstone)
       printf 'session-resume'
       ;;
-    backoff-wait|storm-cap-queued|escalation)
+    backoff-wait|storm-cap-queued|escalation|throttle-deferred|parked-awaiting-limit-reset|tick-ceiling-deferred)
+      # ADR-061 D4/D5 additions: a deferral/park/tick-ceiling event is a
+      # rate/volume constraint holding an action back — contract C2's
+      # throttle-detected class, same as backoff-wait/storm-cap-queued.
       printf 'throttle-detected'
       ;;
     *)
+      # supervisor-pass / pass-budget-exhausted / supervisor-auto-disarmed
+      # / throttle-deferral-cleared / classify-skip pass through unchanged
+      # (lifecycle + metrics events, not resume/throttle events).
       printf '%s' "$event"
       ;;
   esac
+}
+
+# ----------------------------------------------------------------------
+# _resumer_now_ms — wall-clock milliseconds (GNU date %N on Git-Bash;
+# degrades to seconds*1000 elsewhere). Used ONLY for the supervisor-pass
+# elapsed_ms metric — budget checks inside the pass use bash's $SECONDS
+# builtin (zero forks per iteration).
+# ----------------------------------------------------------------------
+_resumer_now_ms() {
+  local ms
+  ms="$(date -u +%s%3N 2>/dev/null)"
+  if [[ "$ms" =~ ^[0-9]+$ ]]; then
+    printf '%s' "$ms"
+  else
+    printf '%s000' "$(date -u +%s 2>/dev/null || echo 0)"
+  fi
+}
+
+# ----------------------------------------------------------------------
+# emit_supervisor_pass <elapsed_ms> <candidates_seen>
+#                      <candidates_classified> <budget_tripped(0|1)>
+#                      <detail>
+# ADR-061 D1 (reviewer-mandated metric source): EVERY pass — not only on
+# exhaustion — appends exactly one supervisor-pass record to the digest
+# feed, carrying the metric fields as TOP-LEVEL JSON (additive to the
+# frozen 4-field feed shape; consumers selecting .event are unaffected)
+# so §7's p95(elapsed_ms) and budget-trip-rate are directly derivable:
+#   jq 'select(.event=="supervisor-pass") | .elapsed_ms' digest-feed.jsonl
+# Also mirrored to the signal ledger (passthrough event name). Exit 0
+# always.
+# ----------------------------------------------------------------------
+emit_supervisor_pass() {
+  local elapsed_ms="$1" seen="$2" classified="$3" tripped="$4" detail="$5"
+  [[ "$elapsed_ms" =~ ^[0-9]+$ ]] || elapsed_ms=0
+  [[ "$seen" =~ ^[0-9]+$ ]] || seen=0
+  [[ "$classified" =~ ^[0-9]+$ ]] || classified=0
+  local trip_json="false"
+  [[ "$tripped" == "1" ]] && trip_json="true"
+  local path ts
+  path="$(_resumer_digest_feed)"
+  mkdir -p "$(dirname "$path")" 2>/dev/null || true
+  ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo 'unknown')"
+  if command -v jq >/dev/null 2>&1; then
+    jq -cn --arg ts "$ts" --arg d "$detail" \
+      --argjson ms "$elapsed_ms" --argjson seen "$seen" --argjson cl "$classified" --argjson bt "$trip_json" \
+      '{ts:$ts, session_id:"-", event:"supervisor-pass", detail:$d, elapsed_ms:$ms, candidates_seen:$seen, candidates_classified:$cl, budget_tripped:$bt}' \
+      >> "$path" 2>/dev/null || true
+  else
+    printf '{"ts":"%s","session_id":"-","event":"supervisor-pass","detail":"%s","elapsed_ms":%s,"candidates_seen":%s,"candidates_classified":%s,"budget_tripped":%s}\n' \
+      "$ts" "${detail//\"/\\\"}" "$elapsed_ms" "$seen" "$classified" "$trip_json" >> "$path" 2>/dev/null || true
+  fi
+  if command -v ledger_emit >/dev/null 2>&1; then
+    ledger_emit "resumer" "supervisor-pass" "elapsed_ms=${elapsed_ms} candidates_seen=${seen} candidates_classified=${classified} budget_tripped=${trip_json} ${detail}"
+  fi
+  return 0
 }
 
 # ----------------------------------------------------------------------
@@ -824,18 +1247,39 @@ final_marker_keyword() {
 }
 
 # ----------------------------------------------------------------------
-# last_event_matches_api_error <transcript> — 0 (true) if the last JSONL
-# line, stringified, matches the death-signature regex.
+# last_event_is_api_error <transcript> — 0 (true) if the last JSONL line
+# parses as JSON with an API-error shape on its OWN FIELDS (ADR-061 D3:
+# field-aware — subtype=="api_error" / isApiErrorMessage==true /
+# apiErrorStatus present; the two REAL captured shapes from ADR-061 §2).
+# Replaces the retired substring regex (`429|529|rate.?limit|overloaded`
+# over the stringified line), whose `529` alternative matched `5294`
+# inside a UUID — a PROVEN recurring live false positive (session
+# 988f8535, 2026-07-06 -> 07-08).
+#
+# Delegates to the canonical lib implementation
+# (_hb_last_event_api_error, session-heartbeat-lib.sh) when sourced; the
+# local fallback is the IDENTICAL jq expression (duplicate-by-
+# portability, same convention as the lib's own _hb_transcripts_dir
+# note). FAIL-CLOSED: no jq / no file / unparseable last line -> 1
+# (false) — never claim an API-error shape that was not actually parsed.
 # ----------------------------------------------------------------------
-API_ERROR_REGEX='429|529|rate.?limit|overloaded'
-
-last_event_matches_api_error() {
+last_event_is_api_error() {
   local transcript="$1"
-  [[ -f "$transcript" ]] || return 1
+  if command -v _hb_last_event_api_error >/dev/null 2>&1; then
+    _hb_last_event_api_error "$transcript"
+    return $?
+  fi
+  [[ -n "$transcript" && -f "$transcript" ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
   local last_line
   last_line=$(tail -n 1 "$transcript" 2>/dev/null)
   [[ -z "$last_line" ]] && return 1
-  printf '%s' "$last_line" | grep -qiE "$API_ERROR_REGEX"
+  printf '%s' "$last_line" | jq -e '
+    (type == "object") and (
+      (.subtype? == "api_error")
+      or (.isApiErrorMessage? == true)
+      or ((.apiErrorStatus? // null) != null)
+    )' >/dev/null 2>&1
 }
 
 # ----------------------------------------------------------------------
@@ -959,19 +1403,39 @@ classify_transcript() {
     return 0
   fi
 
-  # (a) API-error tail.
-  if last_event_matches_api_error "$transcript"; then
-    CLASSIFY_VERDICT="resume"
-    CLASSIFY_REASON="dead: last event matches API-error signature (429/529/rate-limit/overloaded)"
+  # ADR-061 D3(a): BLOCKED gets the SAME unconditional skip-always
+  # treatment — waiting-on-operator is never resumable (a headless nudge
+  # cannot answer the operator's question; resuming just burns a spawn
+  # and re-asks). Previously BLOCKED fell through to the resume signals.
+  if [[ "$keyword" == "BLOCKED" ]]; then
+    CLASSIFY_VERDICT="skip"
+    CLASSIFY_REASON="waiting-on-operator (BLOCKED: marker) — never resumable, classify-skip"
     return 0
   fi
 
-  # (b) stale + in-flight work.
   local now mtime age_min
   now=$(date -u +%s)
   mtime=$(mtime_epoch "$transcript")
   age_min=$(( (now - mtime) / 60 ))
 
+  # (a) API-error tail — FIELD-AWARE (ADR-061 D3), gated by the D4
+  # cooldown floor: the CLI retries transient API errors internally, so a
+  # transcript whose api-error tail is fresher than the floor may still
+  # self-recover; an external resume must never race that retry loop.
+  if last_event_is_api_error "$transcript"; then
+    local floor_min="${RESUMER_THROTTLE_FLOOR_MIN:-30}"
+    [[ "$floor_min" =~ ^[0-9]+$ ]] || floor_min=30
+    if [[ "$age_min" -lt "$floor_min" ]]; then
+      CLASSIFY_VERDICT="skip"
+      CLASSIFY_REASON="api-error tail but transcript only ${age_min}min old (< ${floor_min}min cooldown floor — CLI internal retry may still be running) — classify-skip"
+      return 0
+    fi
+    CLASSIFY_VERDICT="resume"
+    CLASSIFY_REASON="dead: last event is API-error-shaped (field-aware: subtype/isApiErrorMessage/apiErrorStatus) + ${age_min}min past the cooldown floor"
+    return 0
+  fi
+
+  # (b) stale + in-flight work.
   if [[ "$age_min" -gt 30 ]]; then
     if [[ "$keyword" == "CONTINUING" ]]; then
       CLASSIFY_VERDICT="resume"
@@ -997,11 +1461,14 @@ classify_transcript() {
 }
 
 # ----------------------------------------------------------------------
-# backoff state read/write — ~/.claude/state/resumer/<session-id>.json
+# backoff state read/write — <scope>/<session-id>.json
 # {attempts, next_eligible_epoch, last_event}
+# <scope> = ~/.claude/state/resumer (live/armed) or its shadow/ subdir
+# when shadow mode is active (ADR-061 D5 — shadow rehearses the ladder
+# in scoped state; see _resumer_scope_dir).
 # ----------------------------------------------------------------------
 backoff_state_path() {
-  printf '%s/%s.json' "$(_resumer_state_dir)" "$1"
+  printf '%s/%s.json' "$(_resumer_scope_dir)" "$1"
 }
 
 read_backoff_attempts() {
@@ -1086,19 +1553,30 @@ build_fallback_command() {
 perform_resume() {
   local sid="$1" transcript="$2" reason="$3" repo_root="$4"
 
+  # ADR-061 D5: one mode decision per call — shadow (explicit
+  # RESUMER_SHADOW=1, or not-armed outside --self-test) runs the ENTIRE
+  # state machine below (escalation, backoff, breaker, storm cap) against
+  # the shadow-scoped state dir (_resumer_scope_dir), so shadow evidence
+  # rehearses real post-arming ladder behavior; it differs from live ONLY
+  # at the final dispatch (a would-have-resumed line instead of a spawn).
+  local shadow_mode=0
+  _resumer_shadow_active && shadow_mode=1
+  local shadow_tag=""
+  [[ "$shadow_mode" == "1" ]] && shadow_tag=" [shadow]"
+
   local attempts next_eligible now
   attempts="$(read_backoff_attempts "$sid")"
   next_eligible="$(read_backoff_next_eligible "$sid")"
   now=$(date -u +%s)
 
   if [[ "$attempts" -ge "$MAX_ATTEMPTS" ]]; then
-    emit_action "$sid" "escalation" "max attempts (${MAX_ATTEMPTS}) reached — no further resume attempted; ${reason}"
+    emit_action "$sid" "escalation" "max attempts (${MAX_ATTEMPTS}) reached — no further resume attempted${shadow_tag}; ${reason}"
     return 0
   fi
 
   if [[ "$next_eligible" -gt "$now" ]]; then
     local wait_min=$(( (next_eligible - now) / 60 ))
-    emit_action "$sid" "backoff-wait" "not yet eligible (${wait_min}min remaining); ${reason}"
+    emit_action "$sid" "backoff-wait" "not yet eligible (${wait_min}min remaining)${shadow_tag}; ${reason}"
     return 0
   fi
 
@@ -1106,43 +1584,31 @@ perform_resume() {
   local cmd
   cmd="$(build_resume_command "$sid")"
 
-  # Guardrail 4: SHADOW MODE — classification + every guardrail above
-  # already ran for real; log what WOULD happen and stop. No backoff state
-  # is written (a shadow pass must be safely re-runnable indefinitely) and
-  # no storm-cap slot is consumed (shadow mode never contends with live
-  # resume traffic for the cap). Checked before the storm cap itself so a
-  # shadow pass's digest line always reflects "this session would have
-  # been resumed", independent of how much of the live cap happens to be
-  # free at the moment the shadow pass runs.
-  #
-  # NL-FINDING-040 item b4: an UNARMED machine (no
-  # ~/.claude/local/resumer-armed.txt marker) is treated EXACTLY like
-  # RESUMER_SHADOW=1 — the script defaults to no-op-but-log even if some
-  # caller (a scheduled task, a stray manual invocation) runs it with no
-  # shadow env var set at all. HARNESS_SELFTEST=1 bypasses this (self-test
-  # scenarios exercise the live/dryrun path deliberately and assert
-  # specific dryrun-log content; requiring a real armed marker would make
-  # every existing self-test scenario fail on a machine that has never
-  # armed the resumer).
-  if [[ "${RESUMER_SHADOW:-0}" == "1" ]]; then
-    emit_action "$sid" "would-have-resumed" "would-have-resumed ${sid} (${reason})"
-    return 0
-  fi
-  if [[ "${HARNESS_SELFTEST:-0}" != "1" ]] && ! resumer_is_armed; then
-    emit_action "$sid" "would-have-resumed" "would-have-resumed ${sid} (${reason}) [NOT ARMED — $(_resumer_armed_marker_path) absent; resumer defaults to shadow behavior until armed]"
-    return 0
-  fi
-
   # Guardrail 6: HARD SPAWN BREAKER (NL-FINDING-040 item b2) —
   # independent of, and checked BEFORE, the storm cap. Either the windowed
   # spawn count or the live process count being over ceiling aborts the
   # spawn entirely: no `claude` command is constructed/executed, no
   # storm-cap slot is consumed (a tripped breaker is not a normal action),
-  # no backoff state is written (re-evaluated fresh next pass).
+  # no backoff state is written (re-evaluated fresh next pass). In shadow
+  # mode the windowed signal reads the SHADOW-scoped spawn-window log, so
+  # the rehearsal exercises the breaker without live contention.
+  #
+  # ADR-061 D5/§7 AUTO-DISARM: a WINDOWED-SPAWN-COUNT trip while ARMED
+  # and live is supervisor-attributable by construction (it is the
+  # supervisor's own spawn log) — the script disarms itself
+  # (_resumer_auto_disarm: marker rename + supervisor-auto-disarmed
+  # line). A machine-wide LIVE-PROCESS trip only defers + logs; a busy
+  # dev machine trips that signal on unrelated load, so it must never
+  # disarm (ADR-061 reviewer finding, Major).
   local breaker_reason
   breaker_reason="$(spawn_breaker_tripped)"
   if [[ -n "$breaker_reason" ]]; then
-    emit_action "$sid" "resume-spawn-breaker-tripped" "spawn ABORTED for ${sid}: ${breaker_reason}; ${reason}"
+    if [[ "$shadow_mode" != "1" ]] && resumer_is_armed; then
+      case "$breaker_reason" in
+        "windowed spawn count"*) _resumer_auto_disarm "$breaker_reason" ;;
+      esac
+    fi
+    emit_action "$sid" "resume-spawn-breaker-tripped" "spawn ABORTED for ${sid}: ${breaker_reason}${shadow_tag}; ${reason}"
     return 0
   fi
 
@@ -1153,15 +1619,43 @@ perform_resume() {
   # `claude` process. Logged, re-evaluated next pass; no backoff state
   # written (this is not a failure, just a deferral).
   if ! storm_cap_has_room; then
-    emit_action "$sid" "storm-cap-queued" "resume queued (storm cap); ${reason}"
+    emit_action "$sid" "storm-cap-queued" "resume queued (storm cap)${shadow_tag}; ${reason}"
     return 0
   fi
   # Committed to taking an action this pass — record it against the
-  # rolling-hour cap BEFORE dispatching, whether via the self-test dryrun
-  # path or the live path (both count identically toward the cap).
+  # rolling-hour cap BEFORE dispatching, on every dispatch flavor
+  # (shadow, self-test dryrun, live — each counts identically toward its
+  # scope's cap).
   storm_cap_record_action
 
+  # Guardrail 4 (REWORKED, ADR-061 D5): SHADOW MODE dispatches a
+  # would-have-resumed line instead of a spawn, but ADVANCES the full
+  # backoff/escalation state machine in the shadow-scoped state dir —
+  # attempt counts increment, backoff windows apply, escalation fires at
+  # MAX_ATTEMPTS, the spawn-window log and cooldown mark are written —
+  # so a shadow observation period produces REAL ladder evidence (the
+  # old never-advance shadow produced zero backoff/escalation events
+  # across 2,499 digest lines; ADR-061 §2). NL-FINDING-040 item b4: the
+  # not-armed default rides this same branch, with the NOT-ARMED note
+  # preserved in the detail text.
+  if [[ "$shadow_mode" == "1" ]]; then
+    local unarmed_note=""
+    if [[ "${RESUMER_SHADOW:-0}" != "1" ]]; then
+      unarmed_note=" [NOT ARMED — $(_resumer_armed_marker_path) absent; resumer defaults to shadow behavior until armed]"
+    fi
+    emit_action "$sid" "would-have-resumed" "would-have-resumed ${sid} (${reason})${unarmed_note} [shadow attempt ${next_attempt}/${MAX_ATTEMPTS}]"
+    spawn_window_record
+    cooldown_mark "$sid"
+    local wait_min
+    wait_min="$(backoff_minutes_for_attempt "$next_attempt")"
+    write_backoff_state "$sid" "$next_attempt" $((now + wait_min * 60)) "would-have-resumed"
+    RESUMER_PASS_ACTIONS=$(( ${RESUMER_PASS_ACTIONS:-0} + 1 ))
+    return 0
+  fi
+
   if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    RESUMER_PASS_ACTIONS=$(( ${RESUMER_PASS_ACTIONS:-0} + 1 ))
+    cooldown_mark "$sid"
     printf '%s\n' "$cmd" >> "${RESUMER_DRYRUN_LOG:-/dev/null}" 2>/dev/null || true
     local rc="${RESUMER_SELFTEST_RESUME_RC:-0}"
     if [[ "$rc" -eq 0 ]]; then
@@ -1187,15 +1681,17 @@ perform_resume() {
 
   # ---- LIVE path: actually invoke the CLI. Never reached under
   # --self-test / HARNESS_SELFTEST=1 (see gate above). ----
+  RESUMER_PASS_ACTIONS=$(( ${RESUMER_PASS_ACTIONS:-0} + 1 ))
   emit_action "$sid" "resume-attempt" "attempt ${next_attempt}/${MAX_ATTEMPTS}: ${reason}"
   # ---- WAVE-O O.2 CALLSITE: resume-event liveness heartbeat --------------
   # Best-effort, never-blocks, tolerates the script being absent (mirrors
   # the callsite-wiring.md guard style: session-heartbeat.sh touch always
   # exits 0, but we don't even assume the file exists on every checkout).
-  # Orchestrator-added per specs-o §O.2 "Note on resume event" — the O.2
-  # builder's fragment names this as an orchestrator TODO since
-  # session-resumer.sh is not in O.1's or O.2's owned-files list.
-  [[ -x "$SCRIPT_DIR/session-heartbeat.sh" ]] && "$SCRIPT_DIR/session-heartbeat.sh" touch --event resume >/dev/null 2>&1 || true
+  # ADR-061 D2: the touch passes the TARGET session id explicitly
+  # (--session) — the watchdog's own environment has no
+  # CLAUDE_CODE_SESSION_ID, so the old flagless call attributed every
+  # resume heartbeat to the literal sid "unknown".
+  [[ -x "$SCRIPT_DIR/session-heartbeat.sh" ]] && "$SCRIPT_DIR/session-heartbeat.sh" touch --event resume --session "$sid" >/dev/null 2>&1 || true
   # ---- END WAVE-O O.2 CALLSITE ----------------------------------------------
   # NL-FINDING-040 item b1: NL_HOOK_REENTRY=1 exported into the CHILD's env
   # only (a shell prefix assignment, not `export` in THIS process) so the
@@ -1228,55 +1724,306 @@ perform_resume() {
 }
 
 # ----------------------------------------------------------------------
-# scan_and_resume — the live entry point: enumerate transcripts under
-# ~/.claude/projects/*/, filter to last-48h mtime, classify, act.
+# scan_and_resume — the per-tick entry point, REBUILT per ADR-061 D1 as
+# the two-stage heartbeat-first funnel (see the DETECTION FUNNEL header
+# section for the full design). This RETIRES the unbounded 48h
+# full-estate transcript walk (no per-pass time budget, no candidate
+# ceiling, up to two full-file jq slurps + one grep per ACTIVE plan per
+# candidate — the proven runaway-cost class behind the 2026-07-08
+# incident's hang shape).
 #
 # Candidates are processed OLDEST-TRANSCRIPT-MTIME-FIRST across the WHOLE
-# scan (not just within one project dir) so that when the storm cap (E.7
-# activation guardrail 1) is exhausted mid-pass, the sessions that get
-# queued are consistently the newer-mtime ones — a stable, predictable
-# "oldest first" ordering rather than an accident of directory iteration
-# order.
+# scan so the candidate ceiling / storm cap consistently defer the
+# newer-mtime sessions. Every pass emits ONE supervisor-pass record.
+# Fail-closed-to-do-less: budget exhaustion exits the loop gracefully
+# (pass-budget-exhausted logged, record still emitted, exit 0).
+# Bash 3.2 safe: the heartbeat join uses temp files + ONE awk pass, no
+# declare -A / mapfile.
 # ----------------------------------------------------------------------
 scan_and_resume() {
+  local pass_start_ms pass_start_s
+  pass_start_ms="$(_resumer_now_ms)"
+  pass_start_s=$SECONDS
+
+  local budget_s ceiling window_h tick_ceiling stale_min
+  budget_s="${RESUMER_PASS_BUDGET_SECONDS:-60}"
+  [[ "$budget_s" =~ ^[0-9]+$ ]] || budget_s=60
+  ceiling="${RESUMER_PASS_CANDIDATE_CEILING:-10}"
+  [[ "$ceiling" =~ ^[0-9]+$ ]] || ceiling=10
+  window_h="${RESUMER_SCAN_WINDOW_HOURS:-48}"
+  [[ "$window_h" =~ ^[0-9]+$ ]] || window_h=48
+  tick_ceiling="${RESUMER_TICK_SPAWN_CEILING:-1}"
+  [[ "$tick_ceiling" =~ ^[0-9]+$ ]] || tick_ceiling=1
+  stale_min="${OBS_STALE_MIN:-30}"
+  [[ "$stale_min" =~ ^[0-9]+$ ]] || stale_min=30
+
+  RESUMER_PASS_ACTIONS=0
+  local budget_tripped=0 candidates_seen=0 candidates_classified=0
+  local live_count=0 marker_skips=0 nohb_stale=0 nohb_stale_sample=""
+  local deferred_waiting=0 _def_next=0
+
+  # MINOR 5 (harness-reviewer, mode-flip-mid-transaction): decide the
+  # pass mode ONCE and cache it for the whole pass — every scope-dir
+  # resolution below honors the cache, so a mid-pass auto-disarm (armed
+  # marker renamed while the pass is running) cannot flip the state
+  # scope mid-transaction. Cleared on every return path.
+  _RESUMER_PASS_MODE=""
+  if _resumer_shadow_active; then
+    _RESUMER_PASS_MODE="shadow"
+  else
+    _RESUMER_PASS_MODE="live"
+  fi
+
   local projects_root repo_root
   projects_root="$(_resumer_projects_root)"
-  [[ -d "$projects_root" ]] || { echo "session-resumer: no projects root at ${projects_root} — nothing to scan"; return 0; }
+  if [[ ! -d "$projects_root" ]]; then
+    echo "session-resumer: no projects root at ${projects_root} — nothing to scan"
+    emit_supervisor_pass "$(( $(_resumer_now_ms) - pass_start_ms ))" 0 0 0 "no projects root"
+    _RESUMER_PASS_MODE=""
+    return 0
+  fi
   repo_root="$(nl_repo_root 2>/dev/null || echo "")"
 
-  local now cutoff
+  local now cutoff stale_sec
   now=$(date -u +%s)
-  cutoff=$((now - 48*3600))
+  cutoff=$((now - window_h * 3600))
+  stale_sec=$((stale_min * 60))
 
-  # Build a "mtime<TAB>path" list of in-window transcripts, then sort
-  # numerically ascending on mtime (oldest first) before acting on any of
-  # them — portable (no mapfile/declare -A; bash 3.2 / Git-Bash safe).
-  local proj_dir f mtime sid list_file
+  # ---- STAGE 1a: in-window transcript enumeration (mtime<TAB>path,
+  # oldest first). Fast path: ONE GNU-find -printf process for the whole
+  # estate; fallback: the portable glob loop with per-file stat (only
+  # taken when the fast path yields nothing, e.g. non-GNU find).
+  local list_file
   list_file="$(mktemp 2>/dev/null || printf '%s/resumer-scan.%s' "${TMPDIR:-/tmp}" "$$")"
-  : > "$list_file"
-  for proj_dir in "$projects_root"/*/; do
-    [[ -d "$proj_dir" ]] || continue
-    for f in "$proj_dir"*.jsonl; do
-      [[ -f "$f" ]] || continue
-      mtime=$(mtime_epoch "$f")
-      [[ "$mtime" -lt "$cutoff" ]] && continue
-      printf '%s\t%s\n' "$mtime" "$f" >> "$list_file"
+  find "$projects_root" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl' -printf '%T@\t%p\n' 2>/dev/null \
+    | awk -F'\t' -v c="$cutoff" '{ mt = int($1); if (mt >= c) printf "%d\t%s\n", mt, $2 }' \
+    | sort -n -k1,1 > "$list_file" 2>/dev/null || : > "$list_file"
+  if [[ ! -s "$list_file" ]]; then
+    local proj_dir f mtime
+    : > "$list_file"
+    for proj_dir in "$projects_root"/*/; do
+      [[ -d "$proj_dir" ]] || continue
+      for f in "$proj_dir"*.jsonl; do
+        [[ -f "$f" ]] || continue
+        mtime=$(mtime_epoch "$f")
+        [[ "$mtime" -lt "$cutoff" ]] && continue
+        printf '%s\t%s\n' "$mtime" "$f" >> "$list_file"
+      done
     done
-  done
+    sort -n -k1,1 "$list_file" > "${list_file}.sorted" 2>/dev/null \
+      && mv "${list_file}.sorted" "$list_file" 2>/dev/null || true
+  fi
 
-  local line
-  while IFS=$'\t' read -r mtime f; do
+  # ---- STAGE 1b: batched heartbeat field read — ONE jq invocation over
+  # every heartbeat file (the observability-derive _od_heartbeat_batch_
+  # build pattern: -n + inputs + input_filename), emitting
+  # sid<TAB>pid<TAB>last_activity_epoch<TAB>marker. All-or-nothing on a
+  # malformed file (empty output) — the funnel then degrades to "no
+  # heartbeat visibility", which is fail-closed-to-do-less (nothing gets
+  # resumed without heartbeat sight; classify-skip, never spawn).
+  local hb_dir="" hb_tsv have_hb=0
+  command -v hb_state_dir >/dev/null 2>&1 && hb_dir="$(hb_state_dir)"
+  hb_tsv="$(mktemp 2>/dev/null || printf '%s/resumer-hb.%s' "${TMPDIR:-/tmp}" "$$")"
+  : > "$hb_tsv"
+  if [[ -n "$hb_dir" && -d "$hb_dir" ]]; then
+    local _hbf
+    for _hbf in "$hb_dir"/*.json; do
+      [[ -f "$_hbf" ]] && have_hb=1
+      break
+    done
+  fi
+  if [[ "$have_hb" == "1" ]] && command -v jq >/dev/null 2>&1; then
+    jq -rn '
+      [ inputs
+        | { file: (input_filename // ""),
+            pid: ((.pid // "") | tostring),
+            epoch: (try (.last_activity_ts | fromdateiso8601) catch 0),
+            marker: (.marker_state // "none") } ]
+      | .[] | [.file, .pid, .epoch, .marker] | @tsv
+    ' "$hb_dir"/*.json 2>/dev/null | tr -d '\r' \
+      | awk -F'\t' -v OFS='\t' '{
+          n = split($1, a, "/"); sid = a[n]; sub(/\.json$/, "", sid)
+          if (sid != "") print sid, $2, $3, $4
+        }' > "$hb_tsv" 2>/dev/null || : > "$hb_tsv"
+  fi
+
+  # ---- STAGE 1c: join transcripts with heartbeat fields in ONE awk pass
+  # (mtime order preserved). Output rows:
+  #   mtime<TAB>path<TAB>sid<TAB>hb|nohb<TAB>pid<TAB>epoch<TAB>marker
+  local joined_file
+  joined_file="$(mktemp 2>/dev/null || printf '%s/resumer-join.%s' "${TMPDIR:-/tmp}" "$$")"
+  # Empty fields are emitted as the placeholder "-" (harness-reviewer
+  # MINOR 4, tsv-join-empty-field-collapse): bash `read` with IFS=$'\t'
+  # COLLAPSES consecutive tabs (tab is IFS whitespace), so an empty pid
+  # would shift epoch/marker one field left — a pid-less DONE heartbeat
+  # would sail past the marker pre-filter. The loop below translates "-"
+  # back to empty/none.
+  awk -F'\t' -v OFS='\t' '
+    NR==FNR { pid[$1]=$2; ep[$1]=$3; mk[$1]=$4; has[$1]=1; next }
+    {
+      path = $2; n = split(path, a, "/"); sid = a[n]; sub(/\.jsonl$/, "", sid)
+      if (sid == "") next
+      if (has[sid]) {
+        p = pid[sid]; if (p == "") p = "-"
+        e = ep[sid];  if (e == "") e = "0"
+        m = mk[sid];  if (m == "") m = "-"
+        print $1, path, sid, "hb", p, e, m
+      } else {
+        print $1, path, sid, "nohb", "-", "0", "-"
+      }
+    }
+  ' "$hb_tsv" "$list_file" > "$joined_file" 2>/dev/null || : > "$joined_file"
+
+  # ---- Stage-1 classification + stage-2 dispatch, oldest first.
+  # Budget checks use $SECONDS (zero forks per row); the heavy stage-2
+  # work happens only for candidates under the ceiling.
+  local mtime f sid hbflag hb_pid hb_epoch hb_marker
+  local t_age_sec hb_stale hbf hbcls
+  while IFS=$'\t' read -r mtime f sid hbflag hb_pid hb_epoch hb_marker; do
     [[ -z "$f" ]] && continue
-    sid="$(basename "$f" .jsonl)"
-    classify_transcript "$f" "$repo_root" "$sid"
-    if [[ "$CLASSIFY_VERDICT" == "skip" ]]; then
-      emit_action "$sid" "classify-skip" "$CLASSIFY_REASON"
-    else
-      perform_resume "$sid" "$f" "$CLASSIFY_REASON" "$repo_root"
+    if [[ $((SECONDS - pass_start_s)) -ge "$budget_s" ]]; then
+      budget_tripped=1
+      emit_action "-" "pass-budget-exhausted" "pass budget (${budget_s}s, RESUMER_PASS_BUDGET_SECONDS) exhausted — graceful early exit; remaining sessions reconsidered next pass"
+      break
     fi
-  done < <(sort -n -k1,1 "$list_file" 2>/dev/null)
+    # Translate the MINOR-4 placeholders back (see the join awk above).
+    [[ "$hb_pid" == "-" ]] && hb_pid=""
+    [[ "$hb_marker" == "-" ]] && hb_marker="none"
 
-  rm -f "$list_file" 2>/dev/null || true
+    t_age_sec=$((now - mtime))
+
+    if [[ "$hbflag" == "nohb" ]]; then
+      # ADR-061 D1: heartbeat coverage is not universal yet — a session
+      # with NO heartbeat file is classified via transcript mtime ONLY
+      # and NEVER resumed (do not resume what you cannot see clearly).
+      if [[ "$t_age_sec" -gt "$stale_sec" ]]; then
+        nohb_stale=$((nohb_stale + 1))
+        if [[ "$nohb_stale" -le 5 ]]; then
+          nohb_stale_sample="${nohb_stale_sample:+$nohb_stale_sample, }${sid}"
+        fi
+      else
+        live_count=$((live_count + 1))
+      fi
+      continue
+    fi
+
+    # Heartbeat-backed. Cheap conservative pre-filter mirroring
+    # hb_is_stale's C1 join (heartbeat old AND transcript old); the
+    # authoritative verdict for candidates comes from hb_classify below.
+    [[ "$hb_epoch" =~ ^[0-9]+$ ]] || hb_epoch=0
+    hb_stale=0
+    if [[ "$hb_epoch" -le 0 ]] || [[ $((now - hb_epoch)) -gt "$stale_sec" ]]; then
+      [[ "$t_age_sec" -gt "$stale_sec" ]] && hb_stale=1
+    fi
+    if [[ "$hb_stale" == "0" ]]; then
+      live_count=$((live_count + 1))
+      # A previously-throttled session observed live again: clear its
+      # deferral record (D4).
+      [[ -f "$(_resumer_deferral_path "$sid")" ]] && throttle_deferral_clear "$sid"
+      continue
+    fi
+    # Stage-1 in-flight-work pre-filter: a heartbeat whose marker is a
+    # natural end / waiting-on-operator never reaches stage 2 (the
+    # authoritative transcript-final-marker check would re-derive the
+    # same verdict at full-file cost).
+    case "$hb_marker" in
+      DONE|PAUSING|BLOCKED)
+        marker_skips=$((marker_skips + 1))
+        continue
+        ;;
+    esac
+
+    # KNOWN-DEFERRED pre-filter (harness-reviewer MAJOR 1,
+    # quota-consumed-by-known-deferred-work): a session already inside
+    # its throttle-deferral window is known-deferred work — its verdict
+    # is predetermined (wait), so it must NOT consume a candidate-ceiling
+    # slot. Without this, >=ceiling simultaneously-throttled OLD sessions
+    # (oldest-first sort) would starve every newer dead session for up to
+    # the whole deferral ladder. Cost: one -f test per stale row; one jq
+    # only for record-bearing sids. Due records (next_check passed) fall
+    # through to stage 2 for re-classification as normal.
+    if [[ -f "$(_resumer_deferral_path "$sid")" ]]; then
+      _def_next="$(_resumer_deferral_field "$sid" "next_check" 0)"
+      [[ "$_def_next" =~ ^[0-9]+$ ]] || _def_next=0
+      if [[ "$_def_next" -gt "$now" ]]; then
+        deferred_waiting=$((deferred_waiting + 1))
+        continue
+      fi
+    fi
+
+    # Stage-2 CANDIDATE.
+    candidates_seen=$((candidates_seen + 1))
+    if [[ "$candidates_classified" -ge "$ceiling" ]]; then
+      # Ceiling reached: seen, not classified this pass; oldest-first
+      # ordering guarantees these get the earliest slots next pass.
+      continue
+    fi
+
+    # ---- STAGE 2: canonical classification (hb_classify with every
+    # field pre-resolved — zero redundant forks), then full transcript
+    # inspection only for stale/crashed.
+    if ! command -v hb_classify >/dev/null 2>&1; then
+      # Heartbeat lib unavailable — cannot classify honestly; treat as
+      # cannot-see-clearly (never resume), counted with the nohb class.
+      nohb_stale=$((nohb_stale + 1))
+      continue
+    fi
+    hbf="$hb_dir/$sid.json"
+    hbcls="$(hb_classify "$hbf" "$stale_min" "$f" "$sid" "$hb_epoch" "$now" "$hb_pid")"
+    candidates_classified=$((candidates_classified + 1))
+    case "$hbcls" in
+      live)
+        # Rescued by the lib's own finer-grained join (e.g. pid/mtime
+        # nuance) — mid-turn, not a candidate after all.
+        live_count=$((live_count + 1))
+        [[ -f "$(_resumer_deferral_path "$sid")" ]] && throttle_deferral_clear "$sid"
+        ;;
+      throttled)
+        # ADR-061 D4: limit pause — defer by policy, never busy-retry.
+        throttle_defer "$sid" "heartbeat stale + pid alive + api-error transcript tail"
+        ;;
+      stale|crashed)
+        classify_transcript "$f" "$repo_root" "$sid"
+        if [[ "$CLASSIFY_VERDICT" == "skip" ]]; then
+          emit_action "$sid" "classify-skip" "$CLASSIFY_REASON"
+        elif throttle_floor_active "$sid"; then
+          # D4 cooldown floor everywhere: recently-throttled sessions
+          # are never resumed inside the floor, even once dead.
+          emit_action "$sid" "classify-skip" "resume-eligible but throttle cooldown floor active (last_throttled < ${RESUMER_THROTTLE_FLOOR_MIN:-30}min ago) — never race the CLI's internal retry; ${CLASSIFY_REASON}"
+        elif [[ "${RESUMER_PASS_ACTIONS:-0}" -ge "$tick_ceiling" ]]; then
+          # ADR-061 D5: per-tick live-spawn ceiling — at most ONE
+          # resume/spawn action per pass; classification continues.
+          emit_action "$sid" "tick-ceiling-deferred" "resume deferred to a later pass (per-tick spawn ceiling ${tick_ceiling}, RESUMER_TICK_SPAWN_CEILING); ${CLASSIFY_REASON}"
+        else
+          perform_resume "$sid" "$f" "$CLASSIFY_REASON" "$repo_root"
+        fi
+        ;;
+      *)
+        # missing/unexpected — the heartbeat vanished between stages;
+        # treat as cannot-see-clearly (never resume).
+        nohb_stale=$((nohb_stale + 1))
+        ;;
+    esac
+  done < "$joined_file"
+
+  rm -f "$list_file" "$hb_tsv" "$joined_file" 2>/dev/null || true
+
+  # ONE aggregated line for the no-heartbeat-but-stale class (bounded
+  # noise: one line per pass, first 5 sids named), per D1's
+  # classify-skip-with-reason requirement for sessions the funnel
+  # cannot see clearly.
+  if [[ "$nohb_stale" -gt 0 ]]; then
+    emit_action "-" "classify-skip" "stage1: ${nohb_stale} session(s) with a stale in-window transcript but NO heartbeat file — transcript-mtime-only classification; not resumable without heartbeat visibility (sample: ${nohb_stale_sample})"
+  fi
+
+  # ADR-061 D1 (reviewer-mandated): EVERY pass emits one supervisor-pass
+  # record — the §7 p95-pass-cost / budget-trip-rate metric source.
+  emit_supervisor_pass \
+    "$(( $(_resumer_now_ms) - pass_start_ms ))" \
+    "$candidates_seen" "$candidates_classified" "$budget_tripped" \
+    "live=${live_count} marker_skips=${marker_skips} nohb_stale=${nohb_stale} deferred_waiting=${deferred_waiting} actions=${RESUMER_PASS_ACTIONS:-0} ceiling=${ceiling} budget_s=${budget_s}"
+  _RESUMER_PASS_MODE=""
+  return 0
 }
 
 # ============================================================
@@ -1329,6 +2076,17 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   # scenario.
   unset RESUMER_ARMED_MARKER
 
+  # MAJOR-2 sandboxing: a LIVE-mode park calls needs-you.sh add
+  # (best-effort). needs-you.sh self-sandboxes under HARNESS_SELFTEST,
+  # but pin a no-op stub globally anyway so no scenario ever touches the
+  # real ledger machinery; the dedicated park scenario swaps in a
+  # RECORDING stub to assert the invocation.
+  cat > "$TMP/needs-you-noop.sh" <<'NYSTUB'
+#!/bin/bash
+exit 0
+NYSTUB
+  export RESUMER_NEEDS_YOU_BIN="$TMP/needs-you-noop.sh"
+
   FIXDIR_SRC="$SCRIPT_DIR/../tests/fixtures/resumer"
   # Work on COPIES under TMP so the self-test never mutates the checked-in
   # fixture files' mtimes on disk (mtime is load-bearing for this script's
@@ -1369,6 +2127,10 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   echo "Scenario 1: dead-429 classifies resume; resume command asserted verbatim"
   : > "$RESUMER_DRYRUN_LOG"
   rm -f "$RESUMER_STATE_DIR"/*.json "$RESUMER_STATE_DIR"/storm-cap.log
+  # ADR-061 D3/D4: the api-error path now requires the transcript to be
+  # past the 30min cooldown floor (never race the CLI's internal retry) —
+  # backdate the fixture so it represents a genuinely-dead session.
+  backdate_mtime "$FIXDIR/dead-429.jsonl" 3600
   classify_transcript "$FIXDIR/dead-429.jsonl" ""
   if [[ "$CLASSIFY_VERDICT" == "resume" ]]; then
     ok "dead-429 classifies as resume"
@@ -1431,6 +2193,61 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     ok "PAUSING classifies as skip ($CLASSIFY_REASON)"
   else
     no "expected natural-end skip, got $CLASSIFY_VERDICT ($CLASSIFY_REASON)"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 4b (ADR-061 D3a): BLOCKED: is skip-always — even with a
+  # stale transcript AND an in-progress TodoWrite entry (signals that
+  # would otherwise classify resume), waiting-on-operator is never
+  # resumable. Under the pre-ADR classifier this fixture RESUMED.
+  # ------------------------------------------------------------
+  echo "Scenario 4b: BLOCKED classifies skip-always (stale + in-progress todo would otherwise resume)"
+  backdate_mtime "$FIXDIR/BLOCKED-with-in-flight.jsonl" 7200
+  classify_transcript "$FIXDIR/BLOCKED-with-in-flight.jsonl" ""
+  if [[ "$CLASSIFY_VERDICT" == "skip" ]] && printf '%s' "$CLASSIFY_REASON" | grep -qi "waiting-on-operator"; then
+    ok "BLOCKED: final marker skips unconditionally ($CLASSIFY_REASON)"
+  else
+    no "expected waiting-on-operator skip for BLOCKED:, got $CLASSIFY_VERDICT ($CLASSIFY_REASON)"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 4c (ADR-061 D3b — the 988f8535 false-positive class): a
+  # transcript whose LAST line contains '529' only INSIDE a UUID (no
+  # api-error field) must NOT classify as an API-error death. Under the
+  # retired substring regex this fixture RESUMED (recurring live false
+  # positive 2026-07-06 -> 07-08).
+  # ------------------------------------------------------------
+  echo "Scenario 4c: field-aware negative — 529 inside a UUID is NOT an API-error death"
+  backdate_mtime "$FIXDIR/uuid-529-false-positive.jsonl" 3600
+  classify_transcript "$FIXDIR/uuid-529-false-positive.jsonl" ""
+  if [[ "$CLASSIFY_VERDICT" == "skip" ]] && ! printf '%s' "$CLASSIFY_REASON" | grep -qi "api-error"; then
+    ok "UUID-529 transcript classifies skip with a non-api-error reason ($CLASSIFY_REASON)"
+  else
+    no "expected non-api-error skip for the UUID fixture, got $CLASSIFY_VERDICT ($CLASSIFY_REASON)"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 4d (ADR-061 D3b + D4 floor): the SECOND real captured shape
+  # (system/api_error retry event) classifies resume once stale; the SAME
+  # shape with a FRESH mtime is held back by the 30min cooldown floor
+  # (the CLI's internal retry loop may still recover it).
+  # ------------------------------------------------------------
+  echo "Scenario 4d: system/api_error retry shape resumes when stale; fresh api-error tail is floor-gated"
+  backdate_mtime "$FIXDIR/dead-api-error-retry.jsonl" 3600
+  classify_transcript "$FIXDIR/dead-api-error-retry.jsonl" ""
+  if [[ "$CLASSIFY_VERDICT" == "resume" ]] && printf '%s' "$CLASSIFY_REASON" | grep -qi "API-error-shaped"; then
+    ok "stale system/api_error retry shape classifies resume ($CLASSIFY_REASON)"
+  else
+    no "expected api-error resume for the stale retry-shape fixture, got $CLASSIFY_VERDICT ($CLASSIFY_REASON)"
+  fi
+  FRESH_API_ERR="$TMP/fresh-api-error.jsonl"
+  cp "$FIXDIR/dead-api-error-retry.jsonl" "$FRESH_API_ERR"
+  touch "$FRESH_API_ERR" 2>/dev/null || true
+  classify_transcript "$FRESH_API_ERR" ""
+  if [[ "$CLASSIFY_VERDICT" == "skip" ]] && printf '%s' "$CLASSIFY_REASON" | grep -qi "cooldown floor"; then
+    ok "fresh api-error tail is floor-gated, not resumed ($CLASSIFY_REASON)"
+  else
+    no "expected cooldown-floor skip for a fresh api-error tail, got $CLASSIFY_VERDICT ($CLASSIFY_REASON)"
   fi
 
   # ------------------------------------------------------------
@@ -1591,8 +2408,12 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   LIVE_TRANSCRIPT="$TMP/liveness-fixture.jsonl"
   {
     printf '{"cwd":"%s","type":"user","message":{"role":"user","content":[{"type":"text","text":"go ahead"}]}}\n' "$LIVE_REPO"
-    printf '{"cwd":"%s","type":"system","subtype":"api_error","isApiErrorMessage":true,"result":"error","message":"Error: 429 rate_limit_error"}\n' "$LIVE_REPO"
+    printf '{"cwd":"%s","type":"system","subtype":"api_error","retryAttempt":9,"maxRetries":10,"retryInMs":16000,"message":"Retrying after API error"}\n' "$LIVE_REPO"
   } > "$LIVE_TRANSCRIPT"
+  # Past the D4 cooldown floor, so the api-error tail is a genuine
+  # resume signal and the ONLY thing standing between this fixture and a
+  # resume is the liveness guard under test.
+  backdate_mtime "$LIVE_TRANSCRIPT" 3600
   # Sanity check: WITHOUT any liveness signal, this fixture resumes (proves
   # the skip below is caused by the liveness guard, not some other factor).
   classify_transcript "$LIVE_TRANSCRIPT" "" "liveness-sanity-sess"
@@ -1615,12 +2436,16 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   fi
 
   # ------------------------------------------------------------
-  # Scenario 13 (activation guardrail 4 — SHADOW MODE): RESUMER_SHADOW=1
-  # logs "would-have-resumed" and does NOT construct/execute any command
-  # or write backoff state.
+  # Scenario 13 (activation guardrail 4 — SHADOW MODE, reworked per
+  # ADR-061 D5): RESUMER_SHADOW=1 logs "would-have-resumed", never
+  # constructs/executes any command, and ADVANCES the backoff ladder in
+  # the SHADOW-scoped state dir while the LIVE backoff state stays
+  # untouched (the old shadow never advanced attempt counts — proven
+  # useless as arming evidence, ADR-061 §2).
   # ------------------------------------------------------------
-  echo "Scenario 13: shadow mode logs would-have-resumed, never executes, never writes backoff state"
+  echo "Scenario 13: shadow mode logs would-have-resumed, never executes, advances SHADOW-scoped backoff only"
   rm -f "$RESUMER_STATE_DIR"/shadow-sess.json
+  rm -rf "$RESUMER_STATE_DIR/shadow"
   rm -f "$TMP/resumer-state/digest-feed.jsonl"
   : > "$RESUMER_DRYRUN_LOG"
   RESUMER_SHADOW=1 perform_resume "shadow-sess" "$FIXDIR/dead-429.jsonl" "test reason" ""
@@ -1631,11 +2456,30 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
      && grep -q 'would-have-resumed shadow-sess' "$TMP/resumer-state/digest-feed.jsonl"; then
     shadow_logged=1
   fi
-  shadow_backoff_attempts="$(read_backoff_attempts "shadow-sess")"
-  if [[ "$shadow_cmd_lines" == "0" ]] && [[ "$shadow_logged" == "1" ]] && [[ "$shadow_backoff_attempts" == "0" ]]; then
-    ok "shadow mode logs would-have-resumed, executes nothing, writes no backoff state"
+  live_backoff_attempts="$(read_backoff_attempts "shadow-sess")"
+  shadow_scope_attempts="$(RESUMER_SHADOW=1 read_backoff_attempts "shadow-sess")"
+  if [[ "$shadow_cmd_lines" == "0" ]] && [[ "$shadow_logged" == "1" ]] && [[ "$live_backoff_attempts" == "0" ]]; then
+    ok "shadow mode logs would-have-resumed, executes nothing, writes NO live backoff state"
   else
-    no "expected 0 dryrun-log lines + would-have-resumed logged + 0 backoff attempts; got cmd_lines=$shadow_cmd_lines logged=$shadow_logged attempts=$shadow_backoff_attempts"
+    no "expected 0 dryrun-log lines + would-have-resumed logged + 0 LIVE backoff attempts; got cmd_lines=$shadow_cmd_lines logged=$shadow_logged live_attempts=$live_backoff_attempts"
+  fi
+  if [[ "$shadow_scope_attempts" == "1" ]]; then
+    ok "shadow mode ADVANCES the shadow-scoped backoff ladder (attempts=1 under shadow scope — real rehearsal evidence, ADR-061 D5)"
+  else
+    no "expected shadow-scoped backoff attempts=1 after one shadow pass, got $shadow_scope_attempts"
+  fi
+  # Drive the shadow ladder to escalation: seed the shadow-scoped state
+  # at MAX_ATTEMPTS and confirm the next shadow pass emits escalation —
+  # the full state machine, not just attempt increments. (The feed is
+  # NOT cleared here: Scenario 14 below re-asserts the would-have-resumed
+  # lines this scenario already wrote.)
+  RESUMER_SHADOW=1 write_backoff_state "shadow-sess" 5 "$(date -u +%s)" "would-have-resumed"
+  RESUMER_SHADOW=1 perform_resume "shadow-sess" "$FIXDIR/dead-429.jsonl" "test reason" ""
+  if [[ -f "$TMP/resumer-state/digest-feed.jsonl" ]] \
+     && grep -q '"event":"escalation".*\[shadow\]' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null; then
+    ok "shadow ladder escalates at MAX_ATTEMPTS with a [shadow]-tagged escalation event"
+  else
+    no "expected a [shadow]-tagged escalation event from the shadow ladder at MAX_ATTEMPTS"
   fi
   # Shadow mode also never consumes a storm-cap slot: run it repeatedly
   # past the default cap and confirm live resume capacity is untouched.
@@ -1924,6 +2768,453 @@ PSOUT2
     ok "Claude Desktop app (bare claude.exe, no -p) is NOT counted — false-trip-when-Desktop-open bug fixed (got $desktop_count)"
   else
     no "expected 0 for a Desktop-only fixture (the FIX-3 bug), got $desktop_count"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 22 (ADR-061 D4 — THROTTLE DEFERRAL): a throttled session
+  # (stale heartbeat + ALIVE pid + api-error transcript tail) discovered
+  # by the FULL scan_and_resume funnel is deferred (record written,
+  # widening schedule), never spawned; the record widens 30->60min,
+  # parks after >24h, and the 30min cooldown floor blocks a resume even
+  # after the session later dies.
+  # ------------------------------------------------------------
+  echo "Scenario 22: throttled -> deferral record + widening + park + cooldown floor (scan-driven, no spawn)"
+  S22_PR="$TMP/projects-throttle"
+  S22_HB="$TMP/hb-throttle"
+  mkdir -p "$S22_PR/proj" "$S22_HB"
+  rm -rf "$RESUMER_STATE_DIR/deferrals" "$RESUMER_STATE_DIR/never"
+  rm -f "$RESUMER_STATE_DIR"/storm-cap.log "$RESUMER_STATE_DIR"/spawn-window.log
+  rm -f "$TMP/resumer-state/digest-feed.jsonl"
+  : > "$RESUMER_DRYRUN_LOG"
+  {
+    printf '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"go"}]}}\n'
+    printf '{"type":"assistant","error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429,"message":{"role":"assistant","content":[{"type":"text","text":"API Error: 429 rate_limit_error"}]}}\n'
+  } > "$S22_PR/proj/sess-throt.jsonl"
+  backdate_mtime "$S22_PR/proj/sess-throt.jsonl" 7200
+  cat > "$S22_HB/sess-throt.json" <<EOF
+{"schema":1,"session_id":"sess-throt","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+  RESUMER_PROJECTS_ROOT="$S22_PR" HEARTBEAT_STATE_DIR="$S22_HB" scan_and_resume >/dev/null
+  s22_def="$RESUMER_STATE_DIR/deferrals/sess-throt.json"
+  s22_cmds=$(wc -l < "$RESUMER_DRYRUN_LOG" 2>/dev/null | tr -d ' '); [[ -z "$s22_cmds" ]] && s22_cmds=0
+  if [[ -f "$s22_def" ]] && [[ "$s22_cmds" == "0" ]] \
+     && grep -q '"event":"throttle-deferred"' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null; then
+    ok "scan classifies throttled -> deferral record written, throttle-deferred logged, NO spawn"
+  else
+    no "expected deferral record + throttle-deferred event + 0 commands; record=$([[ -f "$s22_def" ]] && echo yes || echo no) cmds=$s22_cmds"
+  fi
+  s22_checks="$(_resumer_deferral_field "sess-throt" "checks" 0)"
+  s22_next="$(_resumer_deferral_field "sess-throt" "next_check" 0)"
+  s22_now=$(date -u +%s)
+  s22_wait=$(( s22_next - s22_now ))
+  if [[ "$s22_checks" == "1" ]] && [[ "$s22_wait" -gt 1700 ]] && [[ "$s22_wait" -le 1800 ]]; then
+    ok "first deferral schedules the 30min floor (checks=1, next_check in ${s22_wait}s)"
+  else
+    no "expected checks=1 + next_check ~30min out, got checks=$s22_checks wait=${s22_wait}s"
+  fi
+  # A second pass INSIDE the deferral window stays quiet (no new
+  # throttle-deferred line) — the deferral is the state, not the feed.
+  RESUMER_PROJECTS_ROOT="$S22_PR" HEARTBEAT_STATE_DIR="$S22_HB" scan_and_resume >/dev/null
+  s22_defer_lines=$(grep -c '"event":"throttle-deferred"' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null | tr -d ' ')
+  if [[ "$s22_defer_lines" == "1" ]]; then
+    ok "a pass inside the deferral window adds no new throttle-deferred noise (still 1 line)"
+  else
+    no "expected exactly 1 throttle-deferred line after a within-window pass, got $s22_defer_lines"
+  fi
+  # Widening: force the record due (next_check in the past) -> next
+  # deferral widens to 60min.
+  _resumer_deferral_write "sess-throt" "test" "$(( $(date -u +%s) - 7200 ))" "$(( $(date -u +%s) - 3600 ))" "$(( $(date -u +%s) - 10 ))" 1 false
+  throttle_defer "sess-throt" "test"
+  s22_checks2="$(_resumer_deferral_field "sess-throt" "checks" 0)"
+  s22_next2="$(_resumer_deferral_field "sess-throt" "next_check" 0)"
+  s22_wait2=$(( s22_next2 - $(date -u +%s) ))
+  if [[ "$s22_checks2" == "2" ]] && [[ "$s22_wait2" -gt 3500 ]] && [[ "$s22_wait2" -le 3600 ]]; then
+    ok "second due check widens to 60min (checks=2, next in ${s22_wait2}s)"
+  else
+    no "expected checks=2 + ~60min widening, got checks=$s22_checks2 wait=${s22_wait2}s"
+  fi
+  # Park after >24h still-throttled: marker (scope-aware never/ path) +
+  # ONE digest line + twice-daily cadence + (LIVE mode) a NEEDS-YOU
+  # ledger line (ADR-061 D4 "digest + NEEDS-YOU"; harness-reviewer
+  # MAJOR 2) — asserted via a recording stub.
+  cat > "$TMP/ny-record.sh" <<NYREC
+#!/bin/bash
+printf '%s\n' "\$*" >> "$TMP/ny-record.log"
+exit 0
+NYREC
+  rm -f "$TMP/ny-record.log"
+  _resumer_deferral_write "sess-throt" "test" "$(( $(date -u +%s) - 90000 ))" "$(( $(date -u +%s) - 3600 ))" "$(( $(date -u +%s) - 10 ))" 3 false
+  RESUMER_NEEDS_YOU_BIN="$TMP/ny-record.sh" throttle_defer "sess-throt" "test"
+  s22_park="$(_resumer_park_marker_path "sess-throt")"
+  s22_next3="$(_resumer_deferral_field "sess-throt" "next_check" 0)"
+  s22_wait3=$(( s22_next3 - $(date -u +%s) ))
+  if [[ -f "$s22_park" ]] \
+     && grep -q '"event":"parked-awaiting-limit-reset"' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null \
+     && [[ "$s22_wait3" -gt 43000 ]] && [[ "$s22_wait3" -le 43200 ]]; then
+    ok ">24h still-throttled parks: awaiting-limit-reset marker + ONE digest line + twice-daily cadence (next in ${s22_wait3}s)"
+  else
+    no "expected park marker + parked event + ~12h next_check; marker=$([[ -f "$s22_park" ]] && echo yes || echo no) wait=${s22_wait3}s"
+  fi
+  # MAJOR 2: the LIVE park surfaced to the operator via needs-you.sh add
+  # (--section inflight --session <sid>), recorded by the stub.
+  if [[ -f "$TMP/ny-record.log" ]] \
+     && grep -q 'add --section inflight' "$TMP/ny-record.log" 2>/dev/null \
+     && grep -q -- '--session sess-throt' "$TMP/ny-record.log" 2>/dev/null; then
+    ok "LIVE park invokes needs-you.sh add --section inflight --session <sid> (ADR-061 D4 NEEDS-YOU line)"
+  else
+    no "expected the live park to invoke the needs-you stub with 'add --section inflight ... --session sess-throt'; got: $(cat "$TMP/ny-record.log" 2>/dev/null)"
+  fi
+  # The park marker is NOT a tombstone — `--never` semantics untouched.
+  if ! is_tombstoned "sess-throt"; then
+    ok "park marker does not tombstone the session (distinct suffix)"
+  else
+    no "park marker incorrectly registered as a tombstone"
+  fi
+  # MINOR 3 (rehearsal-state-leak) + MAJOR 2 shadow exclusion: a SHADOW
+  # park writes its marker under the SHADOW scope (shadow/never/), leaves
+  # the live never/ dir untouched, and does NOT page the operator.
+  rm -f "$TMP/ny-record.log"
+  RESUMER_SHADOW=1 _resumer_deferral_write "sess-shadow-park" "test" "$(( $(date -u +%s) - 90000 ))" "$(( $(date -u +%s) - 3600 ))" "$(( $(date -u +%s) - 10 ))" 3 false
+  RESUMER_SHADOW=1 RESUMER_NEEDS_YOU_BIN="$TMP/ny-record.sh" throttle_defer "sess-shadow-park" "test"
+  s22_shadow_park="$RESUMER_STATE_DIR/shadow/never/sess-shadow-park.awaiting-limit-reset"
+  s22_live_leak="$RESUMER_STATE_DIR/never/sess-shadow-park.awaiting-limit-reset"
+  if [[ -f "$s22_shadow_park" ]] && [[ ! -f "$s22_live_leak" ]]; then
+    ok "SHADOW park writes under shadow/never/ and leaks nothing into the live never/ dir (MINOR 3)"
+  else
+    no "expected shadow park at $s22_shadow_park and NO live leak; shadow=$([[ -f "$s22_shadow_park" ]] && echo yes || echo no) leak=$([[ -f "$s22_live_leak" ]] && echo YES || echo no)"
+  fi
+  if [[ ! -f "$TMP/ny-record.log" ]]; then
+    ok "SHADOW park does NOT invoke needs-you.sh (rehearsals never page the operator)"
+  else
+    no "shadow park incorrectly invoked the needs-you stub: $(cat "$TMP/ny-record.log")"
+  fi
+  # COOLDOWN FLOOR EVERYWHERE: the session later DIES (pid dead) and its
+  # api-error tail would classify resume — the deferral record is DUE
+  # (next_check passed, so the MAJOR-1 known-deferred pre-filter lets it
+  # through to stage 2) but last_throttled is only 10min ago, so the
+  # 30min floor still blocks the spawn.
+  _resumer_deferral_write "sess-throt" "test" "$(( $(date -u +%s) - 7200 ))" "$(( $(date -u +%s) - 600 ))" "$(( $(date -u +%s) - 10 ))" 2 false
+  cat > "$S22_HB/sess-throt.json" <<EOF
+{"schema":1,"session_id":"sess-throt","pid":999999,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+  rm -f "$TMP/resumer-state/digest-feed.jsonl"
+  : > "$RESUMER_DRYRUN_LOG"
+  RESUMER_PROJECTS_ROOT="$S22_PR" HEARTBEAT_STATE_DIR="$S22_HB" scan_and_resume >/dev/null
+  s22_floor_cmds=$(wc -l < "$RESUMER_DRYRUN_LOG" 2>/dev/null | tr -d ' '); [[ -z "$s22_floor_cmds" ]] && s22_floor_cmds=0
+  if [[ "$s22_floor_cmds" == "0" ]] && grep -q 'throttle cooldown floor active' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null; then
+    ok "a recently-throttled session that died is still floor-gated (no spawn, floor skip logged)"
+  else
+    no "expected 0 commands + a cooldown-floor skip; got cmds=$s22_floor_cmds"
+  fi
+  rm -rf "$RESUMER_STATE_DIR/deferrals" "$RESUMER_STATE_DIR/never" 2>/dev/null
+
+  # ------------------------------------------------------------
+  # Scenario 23 (ADR-061 D5/§7 — AUTO-DISARM): a WINDOWED-SPAWN-COUNT
+  # breaker trip while ARMED renames the armed marker
+  # (<name>.auto-disarmed-<ts>) and logs supervisor-auto-disarmed; a
+  # machine-wide LIVE-PROCESS trip defers + logs but NEVER disarms.
+  # ------------------------------------------------------------
+  echo "Scenario 23: auto-disarm on spawn-window trip; NO disarm on live-process trip"
+  rm -f "$RESUMER_STATE_DIR"/disarm-sess.json "$RESUMER_STATE_DIR"/storm-cap.log "$RESUMER_STATE_DIR"/spawn-window.log
+  rm -f "$TMP/resumer-state/digest-feed.jsonl"
+  : > "$RESUMER_DRYRUN_LOG"
+  S23_ARMED="$TMP/s23-armed.txt"
+  : > "$S23_ARMED"
+  s23_now=$(date -u +%s)
+  { echo "$s23_now"; echo "$s23_now"; echo "$s23_now"; } > "$RESUMER_STATE_DIR/spawn-window.log"
+  RESUMER_ARMED_MARKER="$S23_ARMED" perform_resume "disarm-sess" "$FIXDIR/dead-429.jsonl" "test" ""
+  s23_renamed=0
+  for _f in "$S23_ARMED".auto-disarmed-*; do [[ -f "$_f" ]] && s23_renamed=1; break; done
+  if [[ ! -f "$S23_ARMED" ]] && [[ "$s23_renamed" == "1" ]] \
+     && grep -q '"event":"supervisor-auto-disarmed"' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null \
+     && grep -q '"event":"resume-spawn-breaker-tripped"' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null; then
+    ok "windowed spawn-count trip while armed: marker renamed to .auto-disarmed-<ts>, supervisor-auto-disarmed logged, spawn aborted"
+  else
+    no "expected marker rename + supervisor-auto-disarmed + breaker-tripped; marker_present=$([[ -f "$S23_ARMED" ]] && echo yes || echo no) renamed=$s23_renamed"
+  fi
+  s23_cmds=$(wc -l < "$RESUMER_DRYRUN_LOG" 2>/dev/null | tr -d ' '); [[ -z "$s23_cmds" ]] && s23_cmds=0
+  if [[ "$s23_cmds" == "0" ]]; then
+    ok "auto-disarm pass constructed no resume command"
+  else
+    no "expected 0 commands during auto-disarm, got $s23_cmds"
+  fi
+  # (b) machine-wide live-process trip: defers + logs, NEVER disarms.
+  rm -f "$RESUMER_STATE_DIR"/spawn-window.log "$TMP/resumer-state/digest-feed.jsonl"
+  rm -f "$S23_ARMED".auto-disarmed-* 2>/dev/null
+  : > "$S23_ARMED"
+  RESUMER_ARMED_MARKER="$S23_ARMED" RESUMER_LIVE_PROCESS_COUNT_OVERRIDE=99 perform_resume "disarm-sess-b" "$FIXDIR/dead-429.jsonl" "test" ""
+  if [[ -f "$S23_ARMED" ]] \
+     && ! grep -q '"event":"supervisor-auto-disarmed"' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null \
+     && grep -q 'live process count' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null; then
+    ok "live-process trip defers + logs but the armed marker survives (not supervisor-attributable — never disarms)"
+  else
+    no "expected marker intact + breaker log + NO supervisor-auto-disarmed on a live-process trip"
+  fi
+  rm -f "$S23_ARMED" "$S23_ARMED".auto-disarmed-* 2>/dev/null
+  # MINOR 5 (mode-flip-mid-transaction): the pass-mode cache keeps the
+  # SAME pass scope-stable after an auto-disarm removes the armed marker
+  # mid-pass — with _RESUMER_PASS_MODE=live cached, a vanished marker
+  # still reports live (the pass finishes in the scope it started in);
+  # only the NEXT pass (cache empty) resolves to shadow. Subshells
+  # isolate the global.
+  s23_cached_mode="unset"
+  if ( _RESUMER_PASS_MODE="live"; HARNESS_SELFTEST=0; RESUMER_ARMED_MARKER="$TMP/s23-marker-gone.txt"; _resumer_shadow_active ); then
+    s23_cached_mode="shadow"
+  else
+    s23_cached_mode="live"
+  fi
+  s23_next_pass_mode="unset"
+  if ( _RESUMER_PASS_MODE=""; HARNESS_SELFTEST=0; RESUMER_ARMED_MARKER="$TMP/s23-marker-gone.txt"; _resumer_shadow_active ); then
+    s23_next_pass_mode="shadow"
+  else
+    s23_next_pass_mode="live"
+  fi
+  s23_cached_scope="$( _RESUMER_PASS_MODE="live" HARNESS_SELFTEST=0 RESUMER_ARMED_MARKER="$TMP/s23-marker-gone.txt" _resumer_scope_dir )"
+  if [[ "$s23_cached_mode" == "live" ]] && [[ "$s23_next_pass_mode" == "shadow" ]] \
+     && [[ "$s23_cached_scope" == "$RESUMER_STATE_DIR" ]]; then
+    ok "pass-mode cache: post-disarm SAME pass stays live-scoped (scope=$s23_cached_scope); the NEXT pass (cache cleared) resolves to shadow"
+  else
+    no "expected cached=live / next=shadow / scope=\$RESUMER_STATE_DIR; got cached=$s23_cached_mode next=$s23_next_pass_mode scope=$s23_cached_scope"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 24 (ADR-061 D5 — PER-TICK SPAWN CEILING): two resume-
+  # eligible dead sessions in one pass -> exactly ONE resume command
+  # (oldest first); the second logs tick-ceiling-deferred; the pass
+  # record reports actions=1.
+  # ------------------------------------------------------------
+  echo "Scenario 24: per-tick live-spawn ceiling — 2 eligible dead sessions, 1 spawn + 1 tick-ceiling-deferred"
+  S24_PR="$TMP/projects-tick"
+  S24_HB="$TMP/hb-tick"
+  mkdir -p "$S24_PR/proj" "$S24_HB"
+  rm -f "$RESUMER_STATE_DIR"/tick-a.json "$RESUMER_STATE_DIR"/tick-b.json
+  rm -f "$RESUMER_STATE_DIR"/storm-cap.log "$RESUMER_STATE_DIR"/spawn-window.log
+  rm -rf "$RESUMER_STATE_DIR/cooldown" "$RESUMER_STATE_DIR/deferrals"
+  rm -f "$TMP/resumer-state/digest-feed.jsonl"
+  : > "$RESUMER_DRYRUN_LOG"
+  for s24_sid in tick-a tick-b; do
+    {
+      printf '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"go"}]}}\n'
+      printf '{"type":"system","subtype":"api_error","retryAttempt":9,"maxRetries":10,"retryInMs":16000,"message":"Retrying after API error"}\n'
+    } > "$S24_PR/proj/${s24_sid}.jsonl"
+    cat > "$S24_HB/${s24_sid}.json" <<EOF
+{"schema":1,"session_id":"${s24_sid}","pid":999999,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+  done
+  backdate_mtime "$S24_PR/proj/tick-a.jsonl" 10800
+  backdate_mtime "$S24_PR/proj/tick-b.jsonl" 7200
+  RESUMER_PROJECTS_ROOT="$S24_PR" HEARTBEAT_STATE_DIR="$S24_HB" scan_and_resume >/dev/null
+  s24_cmds=$(wc -l < "$RESUMER_DRYRUN_LOG" 2>/dev/null | tr -d ' '); [[ -z "$s24_cmds" ]] && s24_cmds=0
+  s24_first_cmd="$(head -1 "$RESUMER_DRYRUN_LOG" 2>/dev/null)"
+  s24_deferred=0
+  grep -q '"event":"tick-ceiling-deferred"' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null \
+    && grep -q 'tick-b' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null && s24_deferred=1
+  if [[ "$s24_cmds" == "1" ]] && printf '%s' "$s24_first_cmd" | grep -q 'resume tick-a' && [[ "$s24_deferred" == "1" ]]; then
+    ok "one pass spawns exactly 1 (the oldest, tick-a); tick-b logs tick-ceiling-deferred"
+  else
+    no "expected 1 command (tick-a) + tick-ceiling-deferred for tick-b; got cmds=$s24_cmds first=[$s24_first_cmd] deferred=$s24_deferred"
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    s24_actions="$(jq -s '[ .[] | select(.event=="supervisor-pass") ] | last | .detail' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null | tr -d '\r')"
+    if printf '%s' "$s24_actions" | grep -q 'actions=1'; then
+      ok "supervisor-pass record reports actions=1"
+    else
+      no "expected actions=1 in the supervisor-pass detail, got: $s24_actions"
+    fi
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 25 (ADR-061 D1 — LIVE-SCALE / the hang-class regression
+  # test, REQUIRED): scan_and_resume() itself over a synthesized
+  # 1,000-transcript estate (950 fresh no-heartbeat + 50 stale with dead
+  # heartbeats). Asserts: the pass TERMINATES inside the budget, the
+  # candidate ceiling holds (50 seen, <=10 classified), no spawns, and
+  # ONE supervisor-pass record with the metric fields is emitted. Then a
+  # zero-budget re-run proves the graceful budget trip
+  # (pass-budget-exhausted + budget_tripped=true + record still emitted).
+  # ------------------------------------------------------------
+  echo "Scenario 25: live-scale funnel — 1,000-transcript estate: budget + ceiling hold, supervisor-pass emitted"
+  S25_PR="$TMP/projects-scale"
+  S25_HB="$TMP/hb-scale"
+  mkdir -p "$S25_PR/proj" "$S25_HB"
+  rm -f "$RESUMER_STATE_DIR"/storm-cap.log "$RESUMER_STATE_DIR"/spawn-window.log
+  rm -rf "$RESUMER_STATE_DIR/cooldown" "$RESUMER_STATE_DIR/deferrals"
+  rm -f "$TMP/resumer-state/digest-feed.jsonl"
+  : > "$RESUMER_DRYRUN_LOG"
+  s25_i=1
+  while [[ "$s25_i" -le 950 ]]; do
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"working"}]}}\n' \
+      > "$S25_PR/proj/fresh-${s25_i}.jsonl"
+    s25_i=$((s25_i + 1))
+  done
+  s25_stale_files=""
+  s25_i=1
+  while [[ "$s25_i" -le 50 ]]; do
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"went quiet"}]}}\n' \
+      > "$S25_PR/proj/stale-${s25_i}.jsonl"
+    cat > "$S25_HB/stale-${s25_i}.json" <<EOF
+{"schema":1,"session_id":"stale-${s25_i}","pid":999999,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+    s25_stale_files="$s25_stale_files $S25_PR/proj/stale-${s25_i}.jsonl"
+    s25_i=$((s25_i + 1))
+  done
+  # Backdate all 50 stale transcripts in ONE touch call.
+  s25_target=$(( $(date -u +%s) - 7200 ))
+  # shellcheck disable=SC2086
+  touch -d "@${s25_target}" $s25_stale_files 2>/dev/null || true
+  # Run A pins an EXPLICIT generous budget (240s) rather than the default
+  # 60s: the contract under test is BOUNDEDNESS (the pass terminates, the
+  # candidate ceiling holds, one supervisor-pass record is emitted) — not
+  # this machine's fork speed. Under load a Windows dev box can
+  # legitimately cross 60s of wall clock on 1,000 rows, in which case the
+  # 60s budget TRIPS CORRECTLY (observed live 2026-07-09: seen=9,
+  # budget_tripped=true at 63s — the mechanism doing its job) and a
+  # <60s-wall-clock assertion would flake on machine speed, not on any
+  # regression. The default-budget TRIP path is deterministically proven
+  # by the zero-budget Run B below.
+  s25_t0=$SECONDS
+  RESUMER_PASS_BUDGET_SECONDS=240 RESUMER_PROJECTS_ROOT="$S25_PR" HEARTBEAT_STATE_DIR="$S25_HB" scan_and_resume >/dev/null
+  s25_elapsed=$((SECONDS - s25_t0))
+  s25_cmds=$(wc -l < "$RESUMER_DRYRUN_LOG" 2>/dev/null | tr -d ' '); [[ -z "$s25_cmds" ]] && s25_cmds=0
+  if [[ "$s25_elapsed" -lt 240 ]]; then
+    ok "1,000-transcript pass terminated in ${s25_elapsed}s (bounded — the unbounded-walk hang class is gone)"
+  else
+    no "1,000-transcript pass took ${s25_elapsed}s (>= its 240s test budget)"
+  fi
+  if [[ "$s25_cmds" == "0" ]]; then
+    ok "live-scale pass constructed no resume commands (no in-flight-work signals in the estate)"
+  else
+    no "expected 0 resume commands from the live-scale estate, got $s25_cmds"
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    s25_rec="$(jq -sc '[ .[] | select(.event=="supervisor-pass") ] | last' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null | tr -d '\r')"
+    s25_seen="$(printf '%s' "$s25_rec" | jq -r '.candidates_seen' 2>/dev/null)"
+    s25_cl="$(printf '%s' "$s25_rec" | jq -r '.candidates_classified' 2>/dev/null)"
+    s25_bt="$(printf '%s' "$s25_rec" | jq -r '.budget_tripped' 2>/dev/null)"
+    s25_ms="$(printf '%s' "$s25_rec" | jq -r '.elapsed_ms' 2>/dev/null)"
+    if [[ "$s25_seen" == "50" ]] && [[ "$s25_cl" == "10" ]] && [[ "$s25_bt" == "false" ]] \
+       && [[ "$s25_ms" =~ ^[0-9]+$ ]]; then
+      ok "supervisor-pass record: candidates_seen=50, candidates_classified=10 (ceiling held), budget_tripped=false, elapsed_ms=${s25_ms}"
+    else
+      no "expected seen=50 classified=10 tripped=false numeric elapsed_ms; got rec=$s25_rec"
+    fi
+  fi
+  # Zero-budget re-run: graceful early exit, pass-budget-exhausted
+  # logged, supervisor-pass STILL emitted with budget_tripped=true.
+  rm -f "$TMP/resumer-state/digest-feed.jsonl"
+  RESUMER_PASS_BUDGET_SECONDS=0 RESUMER_PROJECTS_ROOT="$S25_PR" HEARTBEAT_STATE_DIR="$S25_HB" scan_and_resume >/dev/null
+  s25b_ok=0
+  if grep -q '"event":"pass-budget-exhausted"' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
+      s25b_bt="$(jq -s '[ .[] | select(.event=="supervisor-pass") ] | last | .budget_tripped' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null | tr -d '\r')"
+      [[ "$s25b_bt" == "true" ]] && s25b_ok=1
+    else
+      s25b_ok=1
+    fi
+  fi
+  if [[ "$s25b_ok" == "1" ]]; then
+    ok "zero-budget pass trips gracefully: pass-budget-exhausted logged + supervisor-pass emitted with budget_tripped=true"
+  else
+    no "expected pass-budget-exhausted + budget_tripped=true on a zero-budget pass"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 26 (harness-reviewer MAJOR 1 — known-deferred work must not
+  # consume ceiling quota): 12 OLD throttle-deferred sessions (records
+  # in-window) + 1 NEWER genuinely-dead session, ceiling 10. The newer
+  # session MUST be classified and resumed — without the pre-filter the
+  # 12 older deferred sids (oldest-first sort) would exhaust the ceiling
+  # and starve it for the whole deferral ladder.
+  # ------------------------------------------------------------
+  echo "Scenario 26: 12 deferred-throttled old sids + 1 newer dead sid, ceiling 10 -> the newer sid IS classified + resumed"
+  S26_PR="$TMP/projects-deferred"
+  S26_HB="$TMP/hb-deferred"
+  mkdir -p "$S26_PR/proj" "$S26_HB"
+  rm -rf "$RESUMER_STATE_DIR/deferrals" "$RESUMER_STATE_DIR/cooldown"
+  rm -f "$RESUMER_STATE_DIR"/storm-cap.log "$RESUMER_STATE_DIR"/spawn-window.log "$RESUMER_STATE_DIR"/newer-dead.json
+  rm -f "$TMP/resumer-state/digest-feed.jsonl"
+  : > "$RESUMER_DRYRUN_LOG"
+  s26_now=$(date -u +%s)
+  s26_old_files=""
+  s26_i=1
+  while [[ "$s26_i" -le 12 ]]; do
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"throttled work"}]}}\n' \
+      > "$S26_PR/proj/throt-old-${s26_i}.jsonl"
+    cat > "$S26_HB/throt-old-${s26_i}.json" <<EOF
+{"schema":1,"session_id":"throt-old-${s26_i}","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+    _resumer_deferral_write "throt-old-${s26_i}" "test" "$s26_now" "$s26_now" $((s26_now + 3600)) 1 false
+    s26_old_files="$s26_old_files $S26_PR/proj/throt-old-${s26_i}.jsonl"
+    s26_i=$((s26_i + 1))
+  done
+  # shellcheck disable=SC2086
+  touch -d "@$((s26_now - 14400))" $s26_old_files 2>/dev/null || true
+  {
+    printf '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"go"}]}}\n'
+    printf '{"type":"system","subtype":"api_error","retryAttempt":9,"maxRetries":10,"retryInMs":16000,"message":"Retrying after API error"}\n'
+  } > "$S26_PR/proj/newer-dead.jsonl"
+  backdate_mtime "$S26_PR/proj/newer-dead.jsonl" 7200
+  cat > "$S26_HB/newer-dead.json" <<EOF
+{"schema":1,"session_id":"newer-dead","pid":999999,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+  RESUMER_PROJECTS_ROOT="$S26_PR" HEARTBEAT_STATE_DIR="$S26_HB" scan_and_resume >/dev/null
+  if grep -q 'resume newer-dead' "$RESUMER_DRYRUN_LOG" 2>/dev/null; then
+    ok "the newer dead session was classified + resumed despite 12 older deferred-throttled sids ahead of it"
+  else
+    no "expected 'resume newer-dead' in the dryrun log; got: $(cat "$RESUMER_DRYRUN_LOG" 2>/dev/null)"
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    s26_rec="$(jq -sc '[ .[] | select(.event=="supervisor-pass") ] | last' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null | tr -d '\r')"
+    s26_seen="$(printf '%s' "$s26_rec" | jq -r '.candidates_seen' 2>/dev/null)"
+    if [[ "$s26_seen" == "1" ]] && printf '%s' "$s26_rec" | grep -q 'deferred_waiting=12'; then
+      ok "supervisor-pass: deferred_waiting=12, candidates_seen=1 — known-deferred work consumed zero ceiling quota"
+    else
+      no "expected candidates_seen=1 + deferred_waiting=12, got: $s26_rec"
+    fi
+  fi
+  rm -rf "$RESUMER_STATE_DIR/deferrals" 2>/dev/null
+
+  # ------------------------------------------------------------
+  # Scenario 27 (harness-reviewer MINOR 4 — tsv-join-empty-field
+  # collapse): pid-LESS heartbeat files must not shift fields. A pid-less
+  # DONE-marker heartbeat is still marker-skipped (without the "-"
+  # placeholders, bash read's tab-collapse would shift DONE out of the
+  # marker column and the session would leak into stage 2); a pid-less
+  # marker-none dead session still classifies + resumes correctly.
+  # ------------------------------------------------------------
+  echo "Scenario 27: pid-less heartbeats — field alignment holds (DONE still marker-skips; candidate still resumes)"
+  S27_PR="$TMP/projects-nopid"
+  S27_HB="$TMP/hb-nopid"
+  mkdir -p "$S27_PR/proj" "$S27_HB"
+  rm -f "$RESUMER_STATE_DIR"/nopid-cand.json "$RESUMER_STATE_DIR"/storm-cap.log "$RESUMER_STATE_DIR"/spawn-window.log
+  rm -rf "$RESUMER_STATE_DIR/cooldown"
+  rm -f "$TMP/resumer-state/digest-feed.jsonl"
+  : > "$RESUMER_DRYRUN_LOG"
+  printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"all shipped"}]}}\n' \
+    > "$S27_PR/proj/nopid-done.jsonl"
+  backdate_mtime "$S27_PR/proj/nopid-done.jsonl" 10800
+  cat > "$S27_HB/nopid-done.json" <<'EOF'
+{"schema":1,"session_id":"nopid-done","cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"DONE"}
+EOF
+  {
+    printf '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"go"}]}}\n'
+    printf '{"type":"system","subtype":"api_error","retryAttempt":9,"maxRetries":10,"retryInMs":16000,"message":"Retrying after API error"}\n'
+  } > "$S27_PR/proj/nopid-cand.jsonl"
+  backdate_mtime "$S27_PR/proj/nopid-cand.jsonl" 7200
+  cat > "$S27_HB/nopid-cand.json" <<'EOF'
+{"schema":1,"session_id":"nopid-cand","cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
+EOF
+  RESUMER_PROJECTS_ROOT="$S27_PR" HEARTBEAT_STATE_DIR="$S27_HB" scan_and_resume >/dev/null
+  s27_rec="$(jq -sc '[ .[] | select(.event=="supervisor-pass") ] | last' "$TMP/resumer-state/digest-feed.jsonl" 2>/dev/null | tr -d '\r')"
+  if printf '%s' "$s27_rec" | grep -q 'marker_skips=1'; then
+    ok "pid-less DONE heartbeat still marker-skips (fields aligned through the tsv join)"
+  else
+    no "expected marker_skips=1 for the pid-less DONE heartbeat, got: $s27_rec"
+  fi
+  if grep -q 'resume nopid-cand' "$RESUMER_DRYRUN_LOG" 2>/dev/null; then
+    ok "pid-less marker-none dead session still classifies + resumes (pid degrades to not-alive, not to a shifted field)"
+  else
+    no "expected 'resume nopid-cand' in the dryrun log; got: $(cat "$RESUMER_DRYRUN_LOG" 2>/dev/null)"
   fi
 
   echo ""
