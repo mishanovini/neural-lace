@@ -1,16 +1,39 @@
 # NL Observability Program — status & handoff
 
-Last updated: 2026-07-09 (handoff for a Claude-account switch; same machine/repo).
+Last updated: 2026-07-10 (cockpit-health fix wave shipped + demonstrated).
 This is the single reference for what shipped, what's live, and what remains.
 
 ## TL;DR
 
-The **NL Observability Program is COMPLETE** — all 10 tasks (O.0–O.9) verified by an
-adversarial task-verifier, merged to **master `f727fe5`** (both remotes), plan archived
-`Status: COMPLETED`. The full record with measured numbers is the retro:
-`docs/reviews/wave-o-retro.md`. One small follow-on (a cockpit auto-start refinement) is
-in flight on a pushed branch; a short list of non-blocking residuals is filed. Nothing
-is broken; the estate is at a clean stopping point.
+The **NL Observability Program is COMPLETE** (all 10 tasks verified; retro:
+`docs/reviews/wave-o-retro.md`) and the cockpit is **live, healthy, and demonstrated**:
+all six panes derive rc=0 at http://localhost:7733, `/api/health` reports
+`any_pane_failed:false, lobotomized:false`, the reconciler polices drift, and the
+doctor's rewritten `obs-cockpit-fresh` check judges it honestly (GREEN healthy, RED
+up-but-lobotomized). **Master `02ff2f3`**, both remotes; the MAIN checkout now serves
+master (flipped off `tmp/o4-flip` 2026-07-10; that branch still exists, unmerged work
+none — it was parked at old master).
+
+### 2026-07-09/10 incident + fix wave (addendum)
+
+The cockpit ran a full day lobotomized (every pane failing) with zero doctor signal —
+operator caught it by screenshot. Three root causes, all fixed on master `02ff2f3`
+(review record: `docs/reviews/2026-07-09-cockpit-sessionstart-review.md`; findings
+filed as nl-issues): (1) the derive layer spawned `bash` by BARE NAME — dead under
+minimal-env spawn parents like the old logon task (registry PATH has no bash.exe dir);
+now absolute-path **login-shell** spawns with HOME fallback (environment-independent);
+(2) even healthy-env spawns got a profile-less bash — `nl` emitted empty stdout (jq
+lives in ~/bin); same fix covers it; (3) nl.sh's spawn-cascade breaker (ceiling 10)
+collided with the cockpit's own 6-concurrent batch refresh — every pane "succeeded"
+empty (rc=0, a lying success); now a two-lane serial refresh + `NL_SPAWN_CEILING=32`
+for cockpit children. Defense-in-depth added: `/api/health` self-reports `lobotomized`
+(all panes failing + uptime>120s), launch-gui.ps1 positively identifies the server and
+restarts on lobotomy (bounded), the doctor's `obs-cockpit-fresh` was de-theatered
+(was double-dead: schtasks-gated on a retired task + keyed on a never-written stamp),
+and the heartbeat reaper finally has a (backgrounded) production call-site.
+Known-open, filed: `nl status` ~77s vs the <10s metric-1 bar (transcript-count
+scaling — top perf item), the breaker's lying rc=0-empty semantics, launcher actuator
+minors, `supervisor-pass` unmapped event (ADR-061 landing gap).
 
 ## What shipped (DONE, on master f727fe5)
 
