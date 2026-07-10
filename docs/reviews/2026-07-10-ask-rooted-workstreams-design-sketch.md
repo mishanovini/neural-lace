@@ -75,7 +75,16 @@ stale"):
 
 ## 3. Information architecture
 
-Landing page = **the ask tree** (one card per ask, newest activity first):
+Landing page = **the ask tree, grouped by PROJECT** (operator addition
+2026-07-10): collapsible project sections, ask cards within each, newest
+activity first. Project membership is DERIVED by default from the ask's
+repo/project root (the existing `workstreams-ui/config/projects.js`
+cross-repo resolver supplies id→name — zero ceremony, consistent with
+fully-automatic capture), with optional operator overrides: move an ask,
+rename a project, or define a custom project spanning repos. Projects are
+also the grouping dimension for the future Team view (§6).
+
+Each ask card:
 
 ```
 ASK (short summary — verbatim original one click away; when; which session)
@@ -131,9 +140,10 @@ required. Plan creation links plan-slug ↔ ask-id (the planning doctrine
 gains one line: record the ask-id in the plan header). Sessions attach via
 origin + explicit resume references; multi-session asks share one node.
 
-Schema (per entry): `{ask_id, user, machine, repo, summary, verbatim_ref,
-ts, origin_session, status: active|done|dismissed, plan_slugs[],
-merged_into?}`.
+Schema (per entry): `{ask_id, user, machine, repo, project, summary,
+verbatim_ref, ts, origin_session, status: active|done|dismissed,
+plan_slugs[], merged_into?}` — `project` defaults from the repo→project
+mapping (projects.js); operator overrides persist in the registry.
 
 ## 5. Reuse map (nothing rebuilt that already exists)
 
@@ -204,6 +214,9 @@ Q4b to-do storage (decide-and-go, one-revert reversible): in-repo
    access anyway, and the team goal makes it shared eventually.
 Architecture amendment (operator): log-first with mechanism-emitted events;
    derivation demoted to auditor (§2 law 1 as amended).
+Q6 (operator addition, 2026-07-10): ask nodes GROUPED BY PROJECT on the
+   landing page — derived-by-default from repo provenance via projects.js,
+   operator-overridable (move/rename/custom cross-repo projects).
 
 Next: plan doc per planning doctrine (ux-designer + systems-designer
 plan-time reviews), then build under the orchestrator pattern. Done-whens
