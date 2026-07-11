@@ -72,6 +72,13 @@ stale"):
 4. **In-progress is derived, never declared.** "Currently being worked on" =
    live heartbeat attached to the plan's branch/worktree + orchestrator
    dispatch records. A builder saying "I'm on task 3" is not evidence.
+5. **All links absolute, always** (operator directive, repeated 2026-07-09
+   chat + 2026-07-10 for this surface: relative links in the Claude desktop
+   app routinely don't work). Every hyperlink the surface renders — plan
+   docs, files, sessions, PRs, artifacts — is an absolute URL or absolute
+   path; relative hrefs are a DEFECT. Mechanism: the payload schema
+   self-test rejects any relative href (same enforcement pattern as the
+   anti-noise landing-page check), so this cannot regress silently.
 
 ## 3. Information architecture
 
