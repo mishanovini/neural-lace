@@ -11,11 +11,13 @@ architecture: hybrid
 <!-- hybrid: spans coding-harness (emission splices into hooks/scripts, manifest,
 doctrine, templates) and orchestration (dispatch/verifier/merge lifecycle events
 + the operator-facing workstreams surface that renders them). -->
-frozen: false
-<!-- Plan-time reviews ROUND 1 LANDED 2026-07-10: ux-designer FAIL + systems-designer
-FAIL, all findings amendment-level. Amendments applied in full — see
-"## Review round 1 (2026-07-10) — applied amendments" at the end of this file.
-Flip to true after re-review returns PASS; amendments before freeze need no thaw cycle. -->
+frozen: true
+<!-- Both plan-time reviews LANDED. Round 1 (2026-07-10): ux-designer FAIL +
+systems-designer FAIL, all amendments applied. Round 2 re-review (2026-07-11):
+ux-designer PASS + systems-designer PASS-WITH-CONCERNS (no Critical/Major, zero
+unresolved round-1 findings); the five round-2 minors are applied — see
+"## Review round 1 (2026-07-10) — applied amendments" (incl. the Round 2 index)
+at the end of this file. Plan frozen for build. -->
 lifecycle-schema: v2
 owner: misha
 target-completion-date: 2026-07-24
@@ -152,7 +154,10 @@ seconds without opening a transcript**. Concretely, after this plan ships:
    identifiers and must NOT be inherited verbatim (anti-noise applies to state
    copy too). Per-surface empties: My To-Do = positive empty + add affordance;
    ask card with no linked plan = narrative + "no plan linked yet" (the common
-   case, not an error); drill-down with no tasks = honest empty line.
+   case, not an error); drill-down with no tasks = honest empty line;
+   collapsed completed group with no completed asks = "no completed asks yet"
+   (hidden or muted — never an expanded empty shell; review round 2); Backlog
+   pane with no rows = honest empty line + the add affordance (review round 2).
    `server.selftest.js`/`cockpit.selftest.js` gain error-state and
    anti-noise-in-copy fixtures.
 9. **Affordance + a11y laws (review round 1):** every clickable card region
@@ -185,8 +190,9 @@ seconds without opening a transcript**. Concretely, after this plan ships:
 
 <!-- Dispatch per orchestrator pattern: [parallel] groups are file-disjoint.
 Mandatory reviews: ux-designer + systems-designer at PLAN time (round 1 LANDED
-2026-07-10, both FAIL; all amendments applied — see "## Review round 1" at the end;
-re-review required before freeze); harness-reviewer post-build on every hook/script
+2026-07-10, both FAIL, all amendments applied; round 2 re-review LANDED 2026-07-11,
+ux PASS + systems PASS-WITH-CONCERNS, minors applied — see "## Review round 1" at
+the end); harness-reviewer post-build on every hook/script
 splice (Tasks 1, 3–7, 9, 10); end-user-advocate owns Acceptance Scenarios;
 task-verifier is the only checkbox-flipper.
 Serialization added in round 1:
@@ -233,8 +239,11 @@ Serialization added in round 1:
   | `waiting_on_operator` | **needs_you_id** | each parked decision has its own id |
   | `merged` | repo+**sha** | every merge is its own sha |
   | `plan_amended` | plan_slug+**content-hash of the delta** | second amendment = new delta hash |
-  | `plan_completed` | plan_slug | re-close after reopen: content-hash of Status line ts |
+  | `plan_completed` | plan_slug+**content-hash of the Status-line ts** | re-close after reopen = new Status-line ts → new hash |
   | `ask_registered` / `session_attached` | ask_id(+session_id) | attach per (ask, session) pair |
+  (Superset rule, review round 2: every row's dedup-key column must be a
+  superset of the discriminators its recurrence column names — audited across
+  all rows 2026-07-11; `plan_completed` was the one divergent row, fixed above.)
   Emitter allowlist (constraint 10): `emit` validates `--emitter` against the
   known-mechanism list (plan-lifecycle, workstreams-emit, needs-you, post-commit,
   close-plan, ask-registry, auditor); unknown emitters are recorded but flagged
@@ -283,6 +292,10 @@ Serialization added in round 1:
   subject/body — one-line PR/squash-body convention added to
   `adapters/claude-code/doctrine/git.md` in this task — with (2) fallback: the
   commit's diff touches `docs/plans/<slug>.md` or that plan's evidence dir.
+  Multi-match tie-break (review round 2): when one commit's diff touches MORE
+  THAN ONE plan's files, the fallback emits a `merged` event per matched ask —
+  never guesses a single winner (the repo+sha natural key keeps each per-ask
+  log to exactly one event).
   Commits with no resolvable plan-slug are SKIPPED (routine non-plan commits are
   not noise-orphaned). Multi-repo scan set: the auditor iterates the repo roots
   from `neural-lace/workstreams-ui/config/projects.js` (per-machine
@@ -443,6 +456,17 @@ Serialization added in round 1:
     by default with done/dismissed/merged asks behind a COLLAPSED "completed"
     group — the operator-override half of the ask exit (constraint 7; the
     mechanical half is Task 12's derivation).
+  - COMPLETED-GROUP HEADER (review round 2): the collapsed group's header
+    carries a count + newest-completed recency ("Completed (N · newest <age>)")
+    so a Task 12 mechanical auto-move is visible on the next glance — no
+    banner or toast (anti-noise).
+  - MULTI-PLAN CARDS (review round 2): when an ask's `plan_slugs[]` has >1
+    entry, the card renders ONE aggregate progress bar (task counts summed
+    across linked plans) with one live-doc link per plan, and the drill-down
+    groups per-task rows by plan. Chosen over stacked per-plan bars because it
+    reuses the existing single-bar card and per-task drill-down unchanged and
+    matches Task 12's all-linked-plans-terminal derivation (the cheaper fit to
+    this plan's structure).
   - DRILL-DOWN SIGNIFIER: an explicit control beside the plan bar (chevron +
     "N tasks" link); the bar is never the sole click target and may also be
     clickable with hover/cursor signifiers (constraint 9).
@@ -754,7 +778,7 @@ Modify:
 
 - **Libs/splices (Tasks 1–10):** per-script `--self-test` under `HARNESS_SELFTEST=1` + `HARNESS_SELFTEST_DIR` (concurrency, replay-dedup AND legitimate-recurrence fixtures, orphan lane, unknown-emitter, from-worktree durable-write fixtures, sandbox-only-writes assertions); harness-reviewer pass on every splice diff; `manifest-check.sh` + doctor `--quick` after Task 7; splice hosts' EXISTING self-tests re-run green (no regression in `needs-you.sh --self-test`, `plan-lifecycle` fixtures, `close-plan.sh` fixtures, etc.).
 - **Server (Tasks 11–12):** `server.selftest.js` extended — new routes incl. the lifecycle endpoint, payload allowlist with NEGATIVE fixtures (gate-identifier field → FAIL; relative href → FAIL; gate identifier in STATE COPY → FAIL), landing-latency assertion, auditor divergence fixtures (each class in the Task 12 table produces exactly its specified action — backfill classes HEAL, badge classes badge exactly once), count-reconciliation fixture pinned to `needs-you.sh` render output.
-- **UI (Tasks 13–16):** `cockpit.selftest.js` extended — DOM anti-noise denylist (incl. state/empty/error copy), absolute-href sweep, empty-state render, error-state render (constraint 8), color-only-signal + real-button assertions (constraint 9); live checks in each task's Prove-it-works against the real running server (the user path, not components).
+- **UI (Tasks 13–16):** `cockpit.selftest.js` extended — DOM anti-noise denylist (incl. state/empty/error copy), absolute-href sweep, empty-state render (per surface, incl. the collapsed completed-group and Backlog-pane empties — review round 2), error-state render (constraint 8), color-only-signal + real-button assertions (constraint 9); live checks in each task's Prove-it-works against the real running server (the user path, not components).
 - **Doctor (Task 17):** predicates fail-closed in fixtures (seeded violation → RED) before being trusted GREEN.
 - **Acceptance (Task 18):** advocate browser-automation runtime + the human operator walkthrough — the plan-level oracle; no AI-output surface in P1 beyond the optional haiku summarizer, whose live check is one real capture with `ASK_SUMMARIZER=haiku` verifying summary quality + non-blocking failure.
 
@@ -846,7 +870,7 @@ Consolidated decision record `docs/decisions/06x-ask-rooted-workstreams-p1.md` (
 
 ## Review round 1 (2026-07-10) — applied amendments
 
-Both plan-time reviews returned FAIL with amendment-level fixes: ux-designer (2 Critical, 7 Important, 1 polish, + the binding Q9 layout ruling) and systems-designer (1 Critical, 5 Major, 3 Minor). Review source: the plan-pipeline output consumed by the orchestrator on 2026-07-10. Every finding is applied; each line below names the finding and exactly where this plan was amended. Re-review is required before `frozen: true`.
+Both plan-time reviews returned FAIL with amendment-level fixes: ux-designer (2 Critical, 7 Important, 1 polish, + the binding Q9 layout ruling) and systems-designer (1 Critical, 5 Major, 3 Minor). Review source: the plan-pipeline output consumed by the orchestrator on 2026-07-10. Every finding is applied; each line below names the finding and exactly where this plan was amended. Re-review LANDED 2026-07-11: ux PASS, systems PASS-WITH-CONCERNS (no Critical/Major, zero unresolved round-1 findings) — the round-2 minors are applied per the index at the end of this section, and the plan is frozen.
 
 **ux-designer findings:**
 1. Critical — no ask lifecycle on the surface (unbounded card growth) → Hard constraint 7 (exit-mechanism law); Task 11 (`status:active` default + completed group + `POST /api/ask/<id>/lifecycle`); Task 12 (auditor-derived ask-done row in the divergence table); Task 13 (done/dismiss/merge card affordances, collapsed completed group); Task 8 (status vocabulary + set-status callers); new acceptance scenario `ask-lifecycle-exit`; Decisions Log D10.
@@ -871,3 +895,10 @@ Q9 layout ruling (binding) → encoded verbatim in Tasks 13/16 (sidebar spec, he
 7. Minor — open emit CLI as self-reporting side door → Task 2 (emitter allowlist + `provenance:unknown` flag); Task 12 (unknown-emitter badge row); constraint 10 (provenance-trust rules for oracle-less event types).
 8. Minor — doctor predicate population mismatch → Task 17(c) (counts only operator-origin sessions via the SAME shared classification function as the Task 9 guard, in `progress-log-lib.sh`).
 9. Minor — pointer items without operator recourse → Task 14 (dismiss/mark-handled override writing the durable file with an auditor-respected flag + prove-it #5); constraint 7; Edge Cases.
+
+**Round 2 (re-review) minors — applied (2026-07-11; ux PASS, systems PASS-WITH-CONCERNS, no Critical/Major):**
+1. systems Minor — `plan_completed` dedup key omitted its own recurrence discriminator (bare `plan_slug` would suppress a legitimate re-close after reopen) → Task 2 table (key now `plan_slug+content-hash of the Status-line ts`) + the superset rule noted under the table; all rows audited — only this row diverged.
+2. ux nice-to-have — the new collapsed completed group and the Backlog pane had no named empty states in constraint 8's enumeration → constraint 8 (completed-group empty "no completed asks yet", hidden or muted; Backlog-pane empty + add affordance); Testing Strategy (cockpit.selftest empty-state fixture covers both).
+3. ux nice-to-have — mechanical auto-move to the completed group was invisible on the landing (H1 visibility) → Task 13 COMPLETED-GROUP HEADER (count + newest-completed recency; no banner/toast — anti-noise).
+4. ux nice-to-have — card rendering unspecified when `plan_slugs[]` has >1 entry (single bar vs plural lifecycle logic) → Task 13 MULTI-PLAN CARDS (aggregate bar + per-plan drill-down grouping + one live-doc link per plan; cheapest fit to the existing structure, stated in-task).
+5. systems Minor — Task 5 diff-touches-plan-file fallback had no multi-match tie-break → Task 5 (multi-plan-file match emits one `merged` event per matched ask; never guesses a single winner).
