@@ -761,3 +761,58 @@ ever references the orphaned id.
   necessary mid-build when the FIRST server-wiring harness attempt showed the auditor resolving
   production paths despite the self-test's env vars being set (they were set AFTER
   `require('./server.js')`, which constructs the auditor); fixed before commit, not left as a gap.
+
+---
+
+## Task 10 — Plan↔ask linkage convention + ADR 062 (merged: master 20fd90e; builder commit 48d0a4b)
+
+Substance (mechanical): start-plan.sh --self-test 12/12 (incl. S10 real ask-registry e2e, S11
+no-ask-id-no-registry-call); plan-reviewer Check 16 direct-tested (cc8 WARN-non-blocking rc0, cc9
+populated-silent, cc10 grandfathered-no-v2-silent); ADR 062 + DECISIONS |062| row present;
+registry backfill of ask-20260710-workstreams-rebuild PRESENT + mirror under MAIN checkout.
+
+### Comprehension Articulation
+
+#### Spec meaning
+Task 10 makes plan↔ask linkage a real bidirectional convention. Doctrine one-liner in planning.md
+states the law; template's new `ask-id: <id | none — no linked ask>` field + comment makes it
+concrete. start-plan.sh operationalizes both directions: `parse_flags` accepts --ask-id,
+`generate_plan_file`'s awk substitutes it onto the ask-id: line, then `start_plan` calls
+`ask-registry.sh link-plan` so the registry's `"record_type":"plan_linked"` back-link lands with
+the header field (plan→registry via field, registry→plan via link-plan). plan-reviewer.sh gains
+Check 16: computes ASK_ID_MISSING, and ONLY inside the existing `lifecycle-schema: v2` grandfather
+gate prints a WARN to stderr, never calls add_finding (advisory, non-blocking). ADR 062 + DECISIONS
+row record the redesign. Self-demonstrates by backfilling its own ask-20260710-workstreams-rebuild.
+
+#### Edge cases covered
+- Omitted --ask-id → `if [[ -n "${ASK_ID:-}" ]]` guards the back-link; S11 asserts blank field + no
+  registry file created.
+- Grandfathered legacy plans → Check 16 inside the `LIFECYCLE_SCHEMA_VALUE == v2` block; cc10 pins a
+  no-v2 fixture staying silent rc0.
+- WARN must not block → cc8 asserts rc0 AND "Check 16" appears (stderr note without touching blocking exit).
+- Populated ask-id stays silent → cc9 (`ask-id: ask-selftest-1` → no "Check 16" output).
+- Missing/best-effort registry script → back-link guarded by `if [[ -f "$ar_script" ]]` + `|| true`.
+- Worktree durability → real backfill w/ --repo pinned to nl_main_checkout_root; mirror landed under
+  MAIN checkout (docs/asks/ask-registry.jsonl), not the worktree.
+- Placeholder value → Check 16 treats the literal `<id | none — no linked ask>` as missing → still WARNs.
+
+#### Edge cases NOT covered
+- No validation of the ask-id's existence → link-plan appends a plan_linked record for any string; a
+  typo'd id creates a dangling link with no `created` record (deferred to auditor/reader-fold, Tasks 11/12).
+- No dedup of repeated links → re-running --ask-id X for the same slug appends a 2nd plan_linked record
+  (append-only fold tolerates; no idempotency guard added).
+- Check 16 single-field only → verifies presence/non-placeholder, not that the value resolves to a
+  registry entry nor that the registry back-links this slug (a hand-edited header could carry ask-id: w/o a link).
+- CRLF/\r on the header value → awk trims surrounding whitespace but no explicit \r-strip; repo eol=lf pin is the backstop.
+
+#### Assumptions
+- start-plan.sh's SCRIPT_DIR (via BASH_SOURCE) reaches the real scripts/, so `$SCRIPT_DIR/ask-registry.sh`
+  hits Task 8's CLI even in a fixture repo — verified by S10 w/ sandboxed ASK_REGISTRY_STATE_DIR/MIRROR_PATH.
+- Template ask-id: line format stable + matches the awk guard (em-dash included); template + substitution
+  changed in the SAME commit so they can't drift.
+- Check 16 belongs in the v2 grandfather block (convention post-dates every existing plan); WARN-not-finding
+  is the correct altitude per ADR 036-d (governing Checks 14/15).
+- DECISIONS index tolerates out-of-numeric-order rows (058/059/057 already out of order); appending |062|
+  satisfies decisions-index-gate's atomicity (record + row staged together) without reflowing.
+- Backfill verbatim ref (docs/reviews/2026-07-10-ask-rooted-workstreams-design-sketch.md#1) is canonical
+  for ask-20260710-workstreams-rebuild per the plan header bootstrap note.
