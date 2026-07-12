@@ -255,7 +255,7 @@ Serialization added in round 1:
   + unknown-emitter + CRLF-safety scenarios; repo pins `eol=lf`) —
   Verification: mechanical — Docs impact: schema section in
   `docs/runbooks/ask-workstreams.md` + `adapters/claude-code/schemas/progress-log-event.schema.json`
-- [ ] 3. [parallel] Dispatch emission splice: `task_started` events from the
+- [x] 3. [parallel] Dispatch emission splice: `task_started` events from the
   already-wired `hooks/workstreams-emit.sh` `--on-builder-dispatch` / `--on-spawn`
   call sites (PreToolUse on Task, verified wired in `settings.json.template`),
   carrying plan slug + task id + child session provenance (the same provenance
