@@ -2,7 +2,7 @@
 
 OPERATOR GREENLIGHT REQUIRED before Task 1 — see NEEDS-YOU.md
 
-Status: DRAFT
+Status: ACTIVE
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none
@@ -186,7 +186,7 @@ acknowledged/resolved (state file returns to CONVERGED).
 
 ## Tasks
 
-- [ ] 1. operator greenlight recorded — Verification: mechanical — Docs impact: none — the greenlight itself is recorded here (checkbox + date + the operator's exact reply pasted below this line) and the NEEDS-YOU.md entry is closed in the same commit. Flips Status: DRAFT → ACTIVE and frozen: false → true.
+- [x] Task 1: operator greenlight recorded — operator replied "greenlight" in-session 2026-07-12 ~15:0x (see checkpoint OPERATOR DIRECTIVES block) — Verification: mechanical — Docs impact: none — the greenlight itself is recorded here (checkbox + date + the operator's exact reply pasted below this line) and the NEEDS-YOU.md entry is closed in the same commit. Flips Status: DRAFT → ACTIVE and frozen: false → true.
 - [ ] 2. Build `adapters/claude-code/scripts/master-drift-autocorrect.sh` — dedicated-clone bootstrap (reuse the F.6 pattern from `sync-pt-to-personal.sh`), ISL sourcing with F.6 verdict-branching, FF-only compare/push logic per the mechanism sketch, single-instance lock (`mkdir`-based, inside the clone dir), status-file writer, `--self-test` covering the full scenario matrix (see Testing Strategy) — Verification: mechanical — Docs impact: none — runbook authored in Task 5; script carries the full header contract.
 - [ ] 3. Extend `adapters/claude-code/hooks/session-start-git-freshness.sh`: remote-vs-remote master SHA comparison; backgrounded dispatch of the corrector on inequality; status-file → digest-line rendering for CORRECTED / DIVERGED / PUSH-REJECTED; extend its `--self-test` matrix accordingly — Verification: mechanical — Docs impact: hook header comment gains the new feed description.
 - [ ] 4. Register the mechanism: `adapters/claude-code/manifest.json` entry + `harness-doctor.sh` predicate (script exists, is executable, `--self-test` exits 0, hook wiring present), so the doctor arbitrates the mechanism claim per constitution §10 — Verification: mechanical — Docs impact: manifest entry is the doc.

@@ -137,3 +137,14 @@ NEEDS-YOU item 7 added (GAP-45 schedule rec). IN FLIGHT: fix-builder applying ga
 (repo-scope claims) + minors in wt-1; on return: verify self-tests (expect 19+), cherry-pick
 gate commits, union manifest.json + regen harness-architecture.md (gen-architecture-doc.sh)
 if conflicts, single dual-push, install.sh, doctor refresh, task-verifier on gate plan, wrap.
+
+## OPERATOR DIRECTIVES (~15:0x, in-session reply) — execution queue
+1 MIRROR_PAT: operator deleted it themselves. 2 RECLAIM: greenlit — run guarded script.
+3 DRIFT PLAN: greenlit — flip DRAFT→ACTIVE, dispatch builder. 4 doc-agents: DROP (mark
+proposals dropped). 5 health cron: ENABLE (register 30-min schedule, task-wrappers pattern).
+6 prerequisite doctrine: MERGE (cherry-pick 63bad35+561d5bd, now operator-authorized).
+7 GAP-45: SCHEDULE (spawn builder chip). 8 orchestrator-prime: ARCHIVE plan+skill+task dir
+(Claude Dispatch abandoned — operator rationale). 9 tranche-4: audit via sub-agent
+(value vs superseded). 10 business-context handoff: assess salvage vs moot; archive if moot.
+ARM (resumer): NOT yet answered — re-ask. Also: flip flat-skills discovery to implemented
+(registration CONFIRMED live this session).

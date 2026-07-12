@@ -550,3 +550,8 @@ These Claude Code plugins are typically active (configured in `settings.json.tem
 | `explanatory-output-style` | Provides educational insights alongside code changes |
 | `frontend-design` | Production-grade frontend component generation |
 | `security-guidance` | Proactive security recommendations |
+
+<!-- 2026-07-12: orchestrator-prime skill removed from the inventory (plan ABANDONED →
+docs/plans/archive/orchestrator-prime.md). It was built for the Claude Dispatch direction,
+which the operator has abandoned; harness-native orchestration is the worktree
+orchestrator-pattern + ask-rooted workstreams. -->

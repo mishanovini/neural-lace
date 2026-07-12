@@ -1,3 +1,4 @@
+> Disposition: DROPPED (operator reply "drop", 2026-07-12) — redundant with documentation-auditor + audience-content-reviewer agents and the product doc skills. Kept as archived proposal only.
 ---
 name: docs-verifier
 description: >
