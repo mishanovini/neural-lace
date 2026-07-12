@@ -462,3 +462,72 @@ close call site both lanes share (cmd_close). Constraint 6: OBSERVES, never flip
   pre/post → interpreted "reuse the existing new-task-line parse" as reusing its PRINCIPLE
   (new-id-not-in-prior-content) generalized to a full-content SET diff (documented at :317-330), not a
   verbatim fragment-scoped copy (which would under-detect this plan's own plain-numeric IDs).
+
+---
+
+## Task 11 — Server read surface (merged: master TBD; builder commit 281afb9)
+
+Substance: server.selftest.js 77/77 PASS in the BUILDER's worktree (re-run by orchestrator;
+byte-identical to the cherry-pick), incl. both required negative fixtures (S27a gate-identifier
+field→FAIL, S27c relative-href→FAIL) + S23-S26 (landing groups/progress/waiting, completed
+group + status filter, detail narrative/plan_rows/§3-block/defect-form-never-bare-ID/absolute
+raw_link/lineage/404, real ask-registry.sh lifecycle round-trip). Existing S1-S22 green (no
+regression). NOTE: server.selftest.js ECONNRESETs at S23 in the ORCHESTRATOR's integration
+worktree (environmental — passes in builder's worktree; revisit at acceptance). Files:
+payload-schema.js (new 198), server.js +717/-50, server.selftest.js +308, README +56.
+Follow-ups: (a) ask-registry.sh merge has no --emitter → UI merge stamped emitter=ask-registry
+not operator-ui (Task 8 follow-up); (b) drift_badges ships [] until Task 12 auditor lands (field
+present now, no later migration).
+
+### Comprehension Articulation
+
+#### Spec meaning
+Task 11 is the read/lifecycle surface between the mechanism-emitted data layer (Tasks 1-8) and
+the UI (Task 13): turn append-only ask-registry.jsonl + per-ask progress-logs + rendered
+NEEDS-YOU.md + dispatch-provenance markers + heartbeats into two schema-validated payloads plus
+one operator-override write. Load-bearing phrases implemented literally: "DEFAULTS to status:active"
+(buildAsksLandingPayload's `filter = statusFilter || 'active'`, completed asks always folded into a
+separate completed group regardless of filter); "the form is never terminal" (buildWaitingItems
+always emits `{defect,message,raw_link,session_id}` — never a bare id — on missing/failed §3
+context); "an ALLOWLIST of fields" (payload-schema.js walk errors on any key not in
+LANDING_ALLOWED_KEYS/DETAIL_ALLOWED_KEYS); "no new link handling" (projectDocRefFor returns a
+plan_doc {project,path} for the existing /api/doc resolver, the one absolute-href exemption).
+
+#### Edge cases covered
+- Thin/missing/unresolvable §3 context → buildWaitingItems routes all three to the defect form
+  (hasGenuineContext mirrors needs-you.sh's `_ny_lint_decision_text` no-context heuristic);
+  S25f/S25g prove bad-but-present + entirely-unresolvable both render defect forms, never bare ids.
+- NEEDS-YOU.md unreadable → readNeedsYouDecisionsResult returns {available:false}; computeWaitingCount
+  counts every referencing event so a parse gap never hides a real waiting item.
+- In-flight derivation (constraint 2 law 4) → computePlanRows marks in_flight only when
+  `!t.done && startedSet[t.id] && !doneMap[t.id]`; S25c asserts task 2 in_flight, task 3 not.
+- Corrupt/missing files → readJsonlLines skips unparseable; readDispatchProvenanceMarkers try/catches
+  per-file; countPlanTasks returns null on missing plan file — landing never 500s on one bad record.
+- Anti-noise vs the required NEEDS-YOU.md link → dropped the bare `needs-you` denylist token so the
+  mandated absolute ledger link passes while `/\.sh\b/` still denies the actual script name; S27a
+  still proves a real gate identifier FAILs.
+
+#### Edge cases NOT covered
+- Live heartbeat classification best-effort → classifySessions resolves empty (all→missing) on spawn
+  failure/timeout; a slow-but-alive session could read missing. Off the landing path (only
+  /api/ask/<id>); Task 12 auditor is the continuous reconciler.
+- plan_progress is a read-time snapshot, not continuously reconciled → aggregatePlanProgress reflects
+  plan file + events at request time; a checkbox flipped without a task_done event (log-behind-truth)
+  isn't drift-badged here — Task 12's divergence-class job (drift_badges ships []).
+- Multi-repo plan resolution → resolvePlanAbsPath tries the ask's repo then this repo root only; a plan
+  in a third project root resolves to no plan file (honest empty row, never crash), not a full sweep.
+- Merge emitter attribution → lifecycleArgsFor's merge branch can't pass --emitter (Task 8's merge
+  verb doesn't accept it) — surfaced as a follow-up.
+
+#### Assumptions
+- Registry fold contract → foldAskRegistry implements "last-write-wins per non-empty field, ts order"
+  plus accumulated plan_slugs[] from plan_linked records (a list per the MULTI-PLAN CARDS round-2
+  decision). Assumes the header fold contract is authoritative.
+- NEEDS-YOU.md rendered shape is the contract → parseDecisionBlocks/DECISION_META_RE parse exactly what
+  _ny_render_decision_block emits; the self-test pins this against the REAL needs-you.sh add, not a
+  hand sample.
+- projects.selfRepoRoot() is the correct main-repo anchor → mainRepoRoot/needsYouMdPath reuse it (the
+  worktree-pool-aware resolver projects.js already trusts), not git rev-parse from a worktree cwd.
+- bashBin()+`-lc` is the right spawn idiom → classifySessions/runAskRegistryCli reuse derive-cache.js's
+  bashBin/spawnEnv (absolute bash + login shell, inheriting the 2026-07-09 lobotomy lessons); 180s
+  timeouts assume the machine's measured worst-case spawn latency.
