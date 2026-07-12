@@ -263,3 +263,16 @@ a /TR pointing at a dead MSYS tempdir). Verify after registering: force one run
 (schtasks /Run), then schtasks /Query /V must show Last Result: 0 (267009 = still
 running; 267011 = not yet run). Per-machine step; auto-mode classifiers treat
 schtasks /Change as persistence — expect to run this operator-supervised.
+
+## Registration record — 2026-07-12 (this machine)
+Registered during the overnight session (operator-prioritized): `NL-session-resumer`
+/SC MINUTE /MO 10 via the wrapper pattern above, with ONE deviation from the older
+`resumer-shadow.cmd` example: the wrapper is `resumer-tick.cmd` and bakes NO
+`RESUMER_SHADOW=1` — per ADR-061 D5 the armed-marker file
+(`~/.claude/local/resumer-armed.txt`) now governs live-vs-shadow, and an unarmed
+machine already behaves as shadow. This makes arming a one-file action with no
+schtasks edit (and un-arming = deleting the marker). `NL-workstreams-heartbeat`
+was repointed the same way (its old /TR used MSYS paths → 0x80070002 every tick).
+Verified: both LastTaskResult=0, resumer `tick-rc=0` in
+`~/.claude/state/session-resumer/task.log`, clean `supervisor-pass` in the digest
+feed with the liveness guard excluding a live interactive session.
