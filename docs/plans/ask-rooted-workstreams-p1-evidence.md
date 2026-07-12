@@ -408,3 +408,51 @@ OBSERVES merges, never flips a checkbox.
   pre-existing commits rely wholly on the diff fallback.
 - Task 12 enumerates projects.js roots + passes each as <repo-root> (lib deliberately repo-scoped-
   per-call). Emitting from `cd "$repo_root"` (:262) gives pl_emit the correct repo field.
+
+---
+
+## Task 6 — Plan-amendment + plan-completion splices (merged: master TBD; builder commit aae9507)
+
+Substance: plan-lifecycle.sh --self-test 19/19 OK (incl. 6 new scenarios; 14m under contention);
+close-plan.sh new behavior proven by direct real-invocation (standalone close → plan_completed w/
+correct slug/ask_id/emitter) + dedup test (same close-ts → 1 line; distinct → 2). Task 1's task_done
+splice UNTOUCHED. emit CLI unchanged. Files: plan-lifecycle.sh +164, close-plan.sh +201/-3.
+
+### Comprehension Articulation
+
+#### Spec meaning
+Task 6 (plan 305-316) is one task hosting two splices sharing the writer-family review: (a)
+plan-lifecycle.sh detects newly-introduced task lines / scope-section edits on ACTIVE plans and emits
+plan_amended, reusing plan-edit-validator.sh's new-task-line parse principle; (b) close-plan.sh's
+successful-close path emits plan_completed (the 6th lane), reached via BOTH the wired
+plan-auto-closure.sh hook AND manual closes, deduped by plan_slug + content-hash of the Status-line ts
+(Task 2 table). Implemented (a) as emit_plan_amended_progress_log_events (plan-lifecycle.sh:395) invoked
+at :529; (b) as emit_plan_completed_progress_log_event (close-plan.sh:146) invoked ONCE at the single
+close call site both lanes share (cmd_close). Constraint 6: OBSERVES, never flips a checkbox.
+
+#### Edge cases covered
+- Fresh plan creation (pre="") guarded out of amendment detection (plan-lifecycle.sh:401
+  `[ -n "$pre" ] || return 0`) so a new plan's initial tasks don't burst false amendments (Scenario 19).
+- Non-ACTIVE plans excluded (:406-408, matches "on ACTIVE plans") (Scenario 18).
+- close_ts dedup (close-plan.sh:157/1209) proven direct: same close_ts → 1 line; later distinct close_ts
+  → distinct 2nd line (DIRECT-DEDUP-TEST PASS).
+- Both live task-ID conventions matched: plain-numeric "1." + lettered "A.1"/"F.2b" via
+  extract_all_task_line_ids combined regex (:349-354), verified against real docs/plans/*.md.
+
+#### Edge cases NOT covered
+- Task-line REMOVAL not detected as amendment — only additions ("newly-introduced task lines"); a plan
+  deleting tasks produces no plan_amended event.
+- Full 21-scenario close-plan.sh self-test NOT run synchronously (prohibitive subprocess-spawn latency —
+  each scenario spawns a full close-plan.sh); substituted two direct real-invocation tests of the new
+  behavior (task's explicit fallback authorization).
+- Multi-segment trailing-letter ID (e.g. "F.2.3b") not fully captured by the single-trailing-letter
+  regex — no such ID exists in any live plan.
+
+#### Assumptions
+- "content-hash of the Status-line ts" (plan 241-242 + schema) requires the CALLER to pre-hash before
+  --dedup-extra → added compute_content_hash/cp_compute_content_hash mirroring progress-log-lib's
+  _pl_hash (equivalent dedup either way, but matches the literal schema wording).
+- plan-edit-validator.sh's check_docs_impact_warn only sees an Edit fragment (old/new_string), never full
+  pre/post → interpreted "reuse the existing new-task-line parse" as reusing its PRINCIPLE
+  (new-id-not-in-prior-content) generalized to a full-content SET diff (documented at :317-330), not a
+  verbatim fragment-scoped copy (which would under-detect this plan's own plain-numeric IDs).
