@@ -116,4 +116,18 @@ conv-tree gate (it is bootstrapping the very orchestrator that will own the tree
 
 ## Implementation log
 
-(empty — no fix applied this session)
+- 2026-07-12 — migration landed 2142ca4a2ba98e5d23d157069a583a90a0f0d841 (worktree
+  branch, pre-merge): premise re-confirmed structurally (all live dir-form skills
+  present in a fresh session's available-skills list; all live flat `.md` absent —
+  the one apparent exception, grant-local-edit, registers from `~/.claude/commands/`,
+  not skills/). All 12 repo flat skills `git mv`'d to `<name>/SKILL.md` byte-for-byte;
+  `session-start-auto-install.sh` fixed (its non-recursive `git ls-tree` NEVER synced
+  directory-form skills live — the nl-issue/ template proved it) with recursive sync +
+  stale-flat prune + self-test scenarios 14–15 (15/15 PASS); `install.sh` verified
+  needing no change (`sync_directory()` mirrors recursively). Plan:
+  `docs/plans/flat-skills-directory-form-migration.md`. Status stays **pending**:
+  end-to-end Skill-tool registration confirmation requires a fresh scheduled-context
+  session AFTER the merge to master syncs live `~/.claude/skills/` — not demonstrable
+  from this worktree. Note: teaching-moments/SKILL.md frontmatter has `description:`
+  but no `name:` (pre-existing; preserved byte-for-byte) — if it alone fails to
+  register, add `name: teaching-moments`.
