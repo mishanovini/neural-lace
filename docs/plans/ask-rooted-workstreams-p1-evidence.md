@@ -589,3 +589,56 @@ doctor filters the SAME population (parity by construction).
   (session-heartbeat/session-resumer treat it stable); refuted if a resumed session presents a new id.
 - `DISPATCH_PROVENANCE_STATE_DIR` resolution in `_pl_dispatch_provenance_dir` byte-identical to
   dispatch-provenance.sh's `_dp_state_dir` — asserted by progress-log-lib Scenario 15.
+
+---
+
+## Task 13 — UI landing, ask tree (merged: master TBD; builder commit 6c29fd0)
+
+Substance: web/cockpit.selftest.js 68/68 PASS (re-run by orchestrator). Builder verified
+end-to-end via curl + LIVE Claude_Browser MCP against a sandboxed server (port 18844/18845,
+never :7733) — real browser render confirmed. Files: web/asks.js (rewrite), web/app.css,
+web/app.js, index.html, README (IA section). Note: builder reproduced the S23 ECONNRESET on
+CLEAN origin/master HEAD → the earlier "environmental" assessment is REVISED (real pre-existing
+Task 11/12 test issue; task_e41fc644 fixing in parallel).
+
+### Comprehension Articulation
+
+#### Spec meaning
+Task 13 builds the first operator-facing surface — web/asks.js renders project sections → ask
+cards (shallow: narrative_excerpt, plan_progress, waiting_count, drift_badges) with a lazy per-ask
+drill-down (`getAskDetail`/`renderDrilldownBody`) that fetches Task 11's GET /api/ask/<id> only on
+first <details> expand ("shallow-first with plan drill-down"). Lifecycle affordances
+(`renderLifecycleRow`, `postLifecycle`) call POST /api/ask/<id>/lifecycle — the operator-override
+exit (constraint 7) with success feedback + an 8s undo (`UNDO_WINDOW_MS`) before the card moves to
+the collapsed completed group (`renderCompletedGroup`). MULTI-PLAN CARDS render one aggregate bar
+(server-summed plan_progress) plus, in drill-down, one `renderPlanBlock` per plan_slug with its own
+live-doc link (`openPlanDocModal`, reusing the shared docModal).
+
+#### Edge cases covered
+- No-plan card (`renderProgressArea` `!pp.total` → "no plan linked yet", no bar/control).
+- Drill-down-no-tasks per plan (`renderPlanBlock` `!row.tasks.length`) — distinct from the no-plan
+  card since it can occur on one plan of a multi-plan ask while a sibling has real rows.
+- Empty completed group (`renderCompletedGroup` returns null → hidden entirely).
+- §3-defect waiting item vs a real decision block (`renderWaitingItem` `item.defect` branch — both
+  verified live vs real needs-you.sh fixtures).
+- Session lineage vs flat (`renderSessionsList` `childrenOf`/`isChild`/`seen` cycle guard — never a lost session).
+- Non-absolute reference values never becoming a relative <a href> (`absoluteLinkNode`).
+
+#### Edge cases NOT covered
+- Fetch-failure/Retry state (`renderError`) implemented + self-test-locked (T13-20) but NOT fired live
+  — killing the server routed the tab to a Chrome error page instead of the in-page .catch(); flagged
+  not assumed.
+- `renderDriftBadges` is generic/defensive since Task 12 hasn't defined the real badge shape yet.
+- Concurrent lifecycle writes across two tabs not reconciled vs the client's optimistic undo window.
+- The `claude://` deep-link's actual resume grammar deliberately never fired live (copy-button fallback
+  shipped; deep-link PROVEN registered in HKEY_CLASSES_ROOT\claude but resume grammar HYPOTHESIZED).
+
+#### Assumptions
+- `plan_progress.total === 0` treated uniformly as "no plan linked yet" at card level (payload can't
+  distinguish linked-but-unresolvable; drill-down surfaces the honest per-plan empty separately).
+- Completed cards show only "Reopen" (Done/Dismiss/Merge meaningless on a terminal ask) — follows from
+  Task 8's status vocabulary.
+- Session-lineage rendering assumes resumed_from only points within the same ask's session set (per
+  buildSessions in server.js).
+- `app.js` "becomes shell/router" is Task 16's job — Task 13 adds only a doc note (no functional coupling
+  beyond the shared docModal).
