@@ -79,3 +79,77 @@ NOT the full feature — grouping/drift-badges/lifecycle/auto-capture are later 
   `tr -d '\r'` defensively given MSYS/CRLF history; repo pins `eol=lf`.
 - Additive UI — `app.js` need not know about `asks.js` in this task (it becomes
   shell/router only at Task 13); `asks.js` no-ops if its container is absent (`asks.js:21`).
+
+---
+
+## Task 8 — Ask registry lib (merged: master `bfd6c7a`; builder worktree commit `efcc5e1`)
+
+Substance verified independently (orchestrator re-run: ask-registry.sh `--self-test` 24/24
+PASS incl. sandbox-hygiene "wrote only under its own sandboxed tempdir" + the from-worktree
+mirror fixture proving `nl_main_checkout_root` resolution). Emit-CLI signature confirmed
+unchanged. Carry-forwards: (a) ask-id path sanitization belongs at the `pl_path_for` lib
+boundary → routed to Task 2 (owns progress-log-lib.sh); (b) haiku summarizer syntax
+HYPOTHESIZED (test-injection seam) → Task 18 acceptance proves it live.
+
+### Comprehension Articulation
+
+#### Spec meaning
+Replace the Task 1 stub with the full ask-registry primitive: six verbs
+(register/attach-session/link-plan/set-status/merge/override-project) writing
+`~/.claude/state/ask-registry.jsonl` with sketch §4 `{user,machine,repo,project}`
+provenance, `active|done|dismissed|merged` status vocab drivable by BOTH the auditor
+(mechanical exit) and the UI (operator exit), a heuristic-first ≤140-char summarizer with
+optional non-blocking `ASK_SUMMARIZER=haiku` (never Fable), verbatim ref, best-effort
+in-repo mirror at `docs/asks/ask-registry.jsonl`, sandboxed `--self-test`. Load-bearing
+intent: an APPEND-ONLY provenance ledger the server reader (Tasks 11/12) folds into current
+state — never a mutable store; every status change is a new record, history never rewritten.
+The verbs are dispatch call sites for Tasks 9 (register/attach), 10 (link-plan), 11
+(set-status/merge from the lifecycle endpoint), 12 (set-status --emitter auditor).
+
+#### Edge cases covered
+- **Status-vocab validation:** `cmd_set_status` rejects values outside `_AR_VALID_STATUSES`
+  (line 238; checked line 672 via `_ar_in_list`) — no-op, file byte-unchanged. Scenario G2.
+- **Append-only + per-field fold:** all verbs route through `_ar_append_record` (line 514,
+  `>>`-only); the `record_type` taxonomy + "last-write-wins per non-empty field, blanks
+  never overwrite" fold contract documented lines 126–162 — mutation records deliberately
+  blank `repo`/`project`/`summary` so an auditor/UI running from an unrelated cwd never
+  clobbers the `created` record's origin values.
+- **Project default:** `_ar_resolve_project` (line 482) reverse-matches repo against
+  `projects.js loadProjects()` (deepest root wins), falls back to `basename(repo)` when node
+  absent/no match (wired line 570). Scenario O asserts the fallback.
+- **From-worktree mirror:** `_ar_mirror_path` resolves via `nl_main_checkout_root` (lines
+  272–279), never worktree cwd (constraint 11). Scenario L (synthetic repo + linked worktree)
+  asserts mirror under MAIN (L1), absent under worktree (L2).
+- **Auto-id:** omitting `--ask-id` → `_ar_gen_ask_id` (line 431) → `ask-<YYYYMMDD>-<slug>-<4hex>`;
+  slug via `_ar_slugify` (line 419) is path-safe by construction. Scenario B.
+- **Summarizer:** `_ar_heuristic_summarize` (line 359) markdown-strips + first-sentence
+  (line 364); `_ar_truncate140` (line 338) word-boundary trims. Scenarios C/C2.
+
+#### Edge cases NOT covered
+- **merge does NOT auto-absorb `plan_slugs`:** `cmd_merge` (line 684) appends only the source's
+  `merged`/`merged_into` record; callers re-`link-plan` if needed. Deferred — plan schema names
+  only `merged_into?`, no absorption rule.
+- **Haiku syntax HYPOTHESIZED:** `_ar_haiku_summarize` (line 376) uses `claude --model haiku -p`;
+  no live call — self-test exercises the async path via `_AR_HAIKU_CMD` seam (Scenarios M/N), so
+  "async upgrade appends `summary_updated`, failure degrades silently" is PROVEN but the real flag
+  string is HYPOTHESIZED (Task 18 refutes/confirms).
+- **ask-id path sanitization DEFERRED with caveat:** within ask-registry.sh there is NO traversal
+  surface (registry file + mirror are fixed filenames; `ask_id` is only a JSON value via
+  `_ar_json_escape`). BUT register/attach pass caller-supplied `--ask-id` unsanitized into
+  `pl_emit --ask` (lines 591, 626), and Task 1's `pl_path_for` composes `<dir>/<ask_id>.jsonl` —
+  so a `/`- or `..`-bearing ask-id WOULD traverse in that lib. A shared sanitizer belongs in
+  `progress-log-lib.sh` (Task 2), not duplicated here. Flagged for Task 2/9 to close at the lib boundary.
+
+#### Assumptions
+- **Emit CLI signature unchanged (constraint honored):** calls `pl_emit` via the stable Task 1
+  signature `--type/--ask/--session-id/--summary/--emitter ask-registry` (lines 591, 626), sourcing
+  `progress-log-lib.sh`, changing nothing in that CLI; `ask-registry` already in `_PL_KNOWN_EMITTERS`.
+- **`projects.js loadProjects()` returns `{key: absoluteRoot}`**, config path via `nl_workstreams_ui`;
+  verified live (keys neural-lace/workstreams-coordination). Read-only, never edits projects.js.
+- **Reader-fold contract is the Tasks 11/12 interface:** iterate all records per ask_id in ts order,
+  last-write-wins-per-non-empty-field (lines 141–162); writer blanks non-identity fields on mutation
+  records to make that fold correct. Naive whole-record last-wins would null origin fields — this task
+  pins that contract.
+- **Tool/platform:** assumes git/hostname/date -u, flat-JSON via shell string ops (no jq on write
+  path), node for project resolution (graceful basename fallback), Git-Bash drive-letter repo paths
+  marshalled via the `TARGET`/`PROJJS` env-var seam (not argv) to sidestep MSYS path mangling.
