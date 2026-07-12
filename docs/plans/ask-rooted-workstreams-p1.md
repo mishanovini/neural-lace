@@ -302,7 +302,7 @@ Serialization added in round 1:
   `config/projects.json` carries the real absolute roots), not just this repo —
   Verification: mechanical — Docs impact: attribution rule in runbook + one line
   in `doctrine/git.md`; splice covered by Task 7 manifest entry
-- [ ] 6. [parallel] Plan-amendment + plan-completion emission splices:
+- [x] 6. [parallel] Plan-amendment + plan-completion emission splices:
   (a) `hooks/plan-lifecycle.sh` detects newly-introduced task lines /
   scope-section edits on ACTIVE plans (reuse `plan-edit-validator.sh`'s existing
   new-task-line parse) and emits `plan_amended` ("+task 12", scope delta summary);
