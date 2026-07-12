@@ -60,7 +60,7 @@ The `--self-test` of the gate passing IS the demonstration (constitution §4).
 
 ## Tasks
 
-- [ ] 1. Author `adapters/claude-code/hooks/concurrent-ownership-gate.sh` —
+- [x] 1. Author `adapters/claude-code/hooks/concurrent-ownership-gate.sh` —
   PreToolUse gate with command-segment parsing (cd/Set-Location tracking +
   `git -C` composition per scope-enforcement-gate.sh's pattern), Edit/Write
   payload handling, ownership check (other-worktree checkout via
@@ -70,19 +70,19 @@ The `--self-test` of the gate passing IS the demonstration (constitution §4).
   scoped, ledger-logged via `lib/signal-ledger.sh`), and a sandboxed
   `--self-test` covering the golden scenario + clean pass + waiver honored —
   Verification: mechanical — Docs impact: none — gate header comment is the doc; manifest entry carries the §10 evidence fields
-- [ ] 2. Extend `adapters/claude-code/scripts/broadcast-active-session.sh`
+- [x] 2. Extend `adapters/claude-code/scripts/broadcast-active-session.sh`
   with same-machine worktree visibility (`worktrees` array in state JSON,
   additive) and local per-branch claims (`claim` / `unclaim` subcommands +
   claims surfaced by `check`), keeping existing state.json consumers
   compatible (field-extraction via sed tolerates added fields; verified: the
   only consumers are this script's own `check` and the SessionStart template
   invocation) — Verification: mechanical — Docs impact: none — usage text inside the script is updated in the same change
-- [ ] 3. Register the gate in `adapters/claude-code/manifest.json` (kind:
+- [x] 3. Register the gate in `adapters/claude-code/manifest.json` (kind:
   gate, blocking: true, golden_scenario / fp_expectation /
   retirement_condition from the lesson) and wire it in
   `adapters/claude-code/settings.json.template` under PreToolUse for both
   `Bash|PowerShell` and `Edit|Write|MultiEdit` matchers — Verification: mechanical — Docs impact: none — manifest IS the enforcement inventory doc
-- [ ] 4. Run `bash adapters/claude-code/hooks/concurrent-ownership-gate.sh
+- [x] 4. Run `bash adapters/claude-code/hooks/concurrent-ownership-gate.sh
   --self-test` and `bash adapters/claude-code/scripts/broadcast-active-session.sh
   --self-test`; both must exit 0 with all scenarios PASS — Verification: mechanical — Docs impact: none — evidence is the pasted summary lines in the builder report
 
