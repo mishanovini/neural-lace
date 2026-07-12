@@ -260,15 +260,16 @@ provenance via the finalized `progress-log.sh emit` CLI; (b) a dispatch-provenan
 scripts/dispatch-provenance.sh (script+lib split mirroring Task 2's convention).
 
 #### Edge cases covered
-- Plan-less dispatch (Explore/research, no docs/plans/*.md ref) → silent no-op (:1799-1806, PL3)
-  — prevents anti-noise orphan-lane flooding.
+- Plan-less dispatch (Explore/research, no docs/plans/*.md ref) → silent no-op (PL3 scenario
+  workstreams-emit.sh:1831-1841; implementing guard `[[ -z "$slug" ]] && return 0` at :2456)
+  — prevents anti-noise orphan-lane flooding. [citation corrected per comprehension re-review]
 - Replay of identical dispatch → pl_emit natural-key dedup (plan_slug+task_id+session_id) holds
   through the splice (:1808-1814, PL1b).
 - Missing progress-log.sh/dispatch-provenance.sh CLIs → `[[ -f ]]` guards + `|| true` keep rc=0
-  (:1855-1861, PL5).
+  (PL5 scenario :1859-1866).
 - Pre-existing plans lacking an `ask-id:` header → `_resolve_ask_id_for_plan_slug` (:2412-2427)
   returns empty, pl_emit's orphan lane (unlinked.jsonl) absorbs it — same as Task 1, no new mode.
-- `--on-spawn` with explicit tool_input.cwd hint → marker worktree_path populated (:1836-1845, PL4).
+- `--on-spawn` with explicit tool_input.cwd hint → marker worktree_path populated (PL4 scenario :1843-1856).
 
 #### Edge cases NOT covered
 - True child worktree path for generic Task|Agent|Workflow is fundamentally unavailable at
