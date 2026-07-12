@@ -48,18 +48,21 @@
        render — it is a re-sorted VIEW of that data, not a separate source. -->
   <div id="interruptStrip" class="interrupt-strip" aria-live="polite"></div>
 
-  <!-- Ask-rooted workstreams — ask-rooted-workstreams-p1, Task 1 WALKING
-       SKELETON. This is the FIRST landing card, deliberately minimal (one
-       event, end to end). Task 13 REPLACES this whole section with the
-       full ask-tree landing (project groups, plan drill-down, lifecycle
-       affordances) and app.js becomes shell/router at that point — until
-       then this section is additive and does not touch the six-pane
-       cockpit below. -->
-  <section id="paneAsksSkeleton" class="pane asks-skeleton-section" aria-label="asks (walking skeleton)">
-    <div class="pane-head">
-      <span class="pane-title">Asks (walking skeleton)</span>
+  <!-- Ask-rooted workstreams landing — ask-rooted-workstreams-p1, Task 13
+       "UI landing — ask tree". REPLACES the Task 1 walking-skeleton stub
+       wholesale: project sections (collapsible) -> ask cards (summary +
+       one-click verbatim reference, progress narrative, aggregate plan
+       progress bar + an explicit drill-down control, waiting count, drift
+       badges) with lifecycle affordances (done/dismiss/merge) and a
+       collapsed "completed" group. This is now the PRIMARY landing
+       surface (User-facing Outcome: "opening / shows asks grouped by
+       project"); the six-pane cockpit below is unchanged here and will be
+       demoted to a Harness Health tab by Task 16 (Layout integration). -->
+  <section id="askTreeSection" class="ask-tree-section" aria-label="asks">
+    <div class="ask-tree-head">
+      <h2 class="ask-tree-title">Asks</h2>
     </div>
-    <div class="pane-body" id="asksSkeletonBody"></div>
+    <div class="ask-tree-body" id="askTreeBody"></div>
   </section>
 
   <main id="cockpit">

@@ -16,6 +16,19 @@
  * (never color-only), real buttons/anchors, visible focus, aria-live
  * regions on every pane body, drawer is role=dialog with focus management +
  * Esc-close, targets >=24px, text contrast >=4.5:1 (see app.css).
+ *
+ * ask-rooted-workstreams-p1 Task 13 note: the ask-tree landing
+ * (`web/asks.js`, `#askTreeSection`) is now the PRIMARY view above this
+ * six-pane cockpit and is a fully independent module — it shares only the
+ * docs-viewer modal DOM (`docModal`/`docTitle`/`docBody`/`docOpenEditor`,
+ * whose close affordances this file already wires: Esc, `docClose`,
+ * `docScrim`) so plan-doc links reuse the existing viewer rather than
+ * growing a second one (ux-review amendment 6). This file does not yet
+ * "become shell/router" in the tab-shell sense the plan describes for
+ * Task 13/16 together — Task 16 ("Layout integration + Harness Health
+ * demotion") is the task that moves this six-pane grid verbatim into a
+ * Harness Health tab and turns this file into the tab router; until then
+ * both surfaces render on one page, unchanged in relative order.
  */
 (function () {
   var $ = function (id) { return document.getElementById(id); };
