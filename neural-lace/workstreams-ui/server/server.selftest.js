@@ -25,9 +25,20 @@ function ok(name, cond, detail) {
   else { FAILED++; console.log('  FAIL: ' + name + (detail ? ' (' + detail + ')' : '')); }
 }
 
+// NOTE (Node >=19 keep-alive footgun): every helper below passes
+// `agent: false` so each request opens a FRESH socket and sends
+// `Connection: close`. Node 19 flipped http.globalAgent's default to
+// keepAlive:true, so without this the agent POOLS and REUSES sockets across
+// requests. The server's default keepAliveTimeout is 5000ms; whenever this
+// test does >5s of *synchronous* work between two requests (e.g. the S22
+// smoke-child spawn + S22b's two real needs-you.sh spawnSync calls), the
+// server reaps the idle pooled socket, and the next request (S23
+// /api/asks) writes onto that dead socket and dies with `read ECONNRESET`
+// before ever reaching the handler. Pooling buys a sequential in-process
+// test nothing; agent:false removes the race entirely.
 function httpGet(port, urlPath) {
   return new Promise((resolve, reject) => {
-    http.get({ host: '127.0.0.1', port: port, path: urlPath }, (res) => {
+    http.get({ host: '127.0.0.1', port: port, path: urlPath, agent: false }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
       res.on('end', () => {
@@ -41,7 +52,7 @@ function httpGet(port, urlPath) {
 
 function httpPost(port, urlPath) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port: port, path: urlPath, method: 'POST' }, (res) => {
+    const req = http.request({ host: '127.0.0.1', port: port, path: urlPath, method: 'POST', agent: false }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
       res.on('end', () => {
@@ -59,7 +70,7 @@ function httpPostJson(port, urlPath, obj) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(obj || {});
     const req = http.request({
-      host: '127.0.0.1', port: port, path: urlPath, method: 'POST',
+      host: '127.0.0.1', port: port, path: urlPath, method: 'POST', agent: false,
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
     }, (res) => {
       let body = '';
