@@ -38,6 +38,18 @@
 # (b) local per-branch claim files under $STATE_DIR/claims/, freshness by
 # file mtime, consumed by hooks/concurrent-ownership-gate.sh.
 #
+# v2.1 (2026-07-12, harness-review round 1): claims carry a "repo" identity
+# field (origin push URL, else absolute git common dir) and every consumer
+# (this script's _check_local + the gate's _load_fresh_claims) filters on it —
+# the claims dir is machine-global, so without the filter a claim from repo A
+# would block same-named branches/plans in repo B. Claims WITHOUT the field
+# (pre-v2.1) are skipped (fail-open); a re-claim from the live owning session
+# repo-scopes them. Lifecycle: claims are written at SessionStart (write) and
+# refreshed at each Stop (settings.json.template); there is no session-end
+# unclaim hook yet, so a claim persists up to CLAIM_FRESH_SECONDS (2h) past
+# the session's last turn — stale-claim blocks in that window are expected,
+# and the gate's structured waiver is the valve.
+#
 # DESIGN DECISIONS (v1, 2026-05-29)
 # - Push target: origin only. Cross-remote (PT + personal) visibility
 #   would need cross-account gh auth switching per remote. v2 work.
@@ -106,6 +118,22 @@ _origin_owner_name() {
     https://*/*/*)        url="${url#https://*/}"; url="${url%.git}"; printf '%s' "$url" ;;
     *) printf '' ;;
   esac
+}
+
+# Repo identity for claim scoping (v2.1, harness-review round 1): claims are
+# REPO-scoped, not machine-global — a claim on branch X of repo A must never
+# block (or surface as an ownership signal for) operations on repo B.
+# Identity = the origin push URL when one exists (stable across all worktrees
+# and clones of the same repo), else the absolute git common dir (shared by
+# all linked worktrees of one repo). Empty outside a git repo.
+_repo_identity() {
+  local url
+  url=$(git remote get-url --push origin 2>/dev/null || echo "")
+  if [ -n "$url" ]; then
+    printf '%s' "$url"
+    return 0
+  fi
+  git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo ""
 }
 
 # Get current hostname (best-effort).
@@ -209,11 +237,12 @@ _claim_key() {
 # Write a local per-branch claim file (v2). $1 = branch (default: current),
 # $2 = plan slug (optional). Never fails the caller.
 _cmd_claim() {
-  local branch="${1:-}" plan="${2:-}" wt key
+  local branch="${1:-}" plan="${2:-}" wt key repo_id
   [ -n "$branch" ] || branch="$(_current_branch)"
   [ -n "$branch" ] || return 0
   [ "$branch" = "(detached)" ] && return 0
   wt=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  repo_id="$(_repo_identity)"
   key="$(_claim_key "$branch")"
   mkdir -p "$CLAIMS_DIR" 2>/dev/null || return 0
   cat > "$CLAIMS_DIR/${key}.json" 2>/dev/null <<JSON
@@ -221,6 +250,7 @@ _cmd_claim() {
   "branch": "$(_json_str "$branch")",
   "plan": "$(_json_str "$plan")",
   "worktree": "$(_json_str "$wt")",
+  "repo": "$(_json_str "$repo_id")",
   "hostname": "$(_json_str "$(_hostname)")",
   "pid": "$$",
   "iso_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -242,9 +272,10 @@ _cmd_unclaim() {
 # Surface same-machine coordination state (v2): other worktrees of this
 # repo + fresh other-session claims. Informational, never blocks.
 _check_local() {
-  local cur_root cur_branch out="" count=0 line p b
+  local cur_root cur_branch cur_repo_id out="" count=0 line p b
   cur_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
   cur_branch="$(_current_branch)"
+  cur_repo_id="$(_repo_identity)"
 
   while IFS=$'\t' read -r p b; do
     [ -z "$p" ] && continue
@@ -252,9 +283,14 @@ _check_local() {
     out+="  • worktree ${p} — branch '${b}'"$'\n'
   done < <(_other_worktrees)
 
-  # Fresh claims from other sessions (worktree != ours, branch != ours).
+  # Fresh claims from other sessions (worktree != ours, branch != ours),
+  # REPO-scoped (v2.1): claims for a different repo are another project's
+  # signals, not ours — surfacing them here would misreport foreign-repo
+  # claims as same-machine ownership of THIS repo. Claims lacking the repo
+  # field (pre-v2.1 schema) are skipped too (fail-open; a re-claim from the
+  # live owning session repo-scopes them within one throttle window).
   if [ -d "$CLAIMS_DIR" ]; then
-    local cutoff f br wt ts
+    local cutoff f br wt ts rid
     cutoff=$(date -d "-${CLAIM_FRESH_SECONDS} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "")
     if [ -n "$cutoff" ]; then
       while IFS= read -r f; do
@@ -262,7 +298,10 @@ _check_local() {
         br=$(sed -nE 's/.*"branch"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)
         wt=$(sed -nE 's/.*"worktree"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)
         ts=$(sed -nE 's/.*"iso_timestamp"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)
+        rid=$(sed -nE 's/.*"repo"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)
         [ -z "$br" ] && continue
+        [ -z "$rid" ] && continue                      # pre-v2.1 schema — skip
+        [ "$rid" != "$cur_repo_id" ] && continue       # foreign repo — not ours
         [ "$br" = "$cur_branch" ] && continue
         [ -n "$cur_root" ] && [ "$wt" = "$cur_root" ] && continue
         count=$((count + 1))
@@ -577,6 +616,7 @@ _self_test() {
        && grep -q '"branch": "feat/selftest-claim"' "$f" \
        && grep -q '"plan": "selftest-plan"' "$f" \
        && grep -q '"worktree"' "$f" \
+       && grep -q '"repo"' "$f" \
        && grep -q '"iso_timestamp"' "$f"; then
       echo "  S7 claim file schema: PASS"
     else
@@ -622,6 +662,36 @@ _self_test() {
     fi
   ) && pass=$((pass+1)) || fail=$((fail+1))
 
+  # S10 — _check_local is repo-scoped (v2.1): a fresh claim whose repo field
+  # points at a DIFFERENT repo is not surfaced; a same-repo claim is; a claim
+  # with NO repo field (pre-v2.1 schema) is skipped (fail-open).
+  (
+    tmp=$(mktemp -d)
+    CLAIMS_DIR="$tmp/claims"
+    mkdir -p "$CLAIMS_DIR"
+    cd "$tmp"
+    mkdir repo && cd repo
+    git init --quiet
+    git config user.email "t@example.com" && git config user.name "T"
+    git commit --allow-empty -q -m init
+    rid="$(_repo_identity)"
+    now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '{"branch":"feat/same-repo-claim","plan":"","worktree":"%s","repo":"%s","hostname":"h","iso_timestamp":"%s"}\n' \
+      "$tmp/elsewhere" "$rid" "$now_iso" > "$CLAIMS_DIR/feat-same-repo-claim.json"
+    printf '{"branch":"feat/foreign-repo-claim","plan":"","worktree":"%s","repo":"%s","hostname":"h","iso_timestamp":"%s"}\n' \
+      "$tmp/other" "/somewhere/else/entirely/.git" "$now_iso" > "$CLAIMS_DIR/feat-foreign-repo-claim.json"
+    printf '{"branch":"feat/oldschema-claim","plan":"","worktree":"%s","hostname":"h","iso_timestamp":"%s"}\n' \
+      "$tmp/old" "$now_iso" > "$CLAIMS_DIR/feat-oldschema-claim.json"
+    out="$(_check_local 2>&1)"
+    if printf '%s' "$out" | grep -q 'feat/same-repo-claim' \
+       && ! printf '%s' "$out" | grep -q 'feat/foreign-repo-claim' \
+       && ! printf '%s' "$out" | grep -q 'feat/oldschema-claim'; then
+      echo "  S10 check_local repo-scoping: PASS"
+    else
+      echo "  S10 check_local repo-scoping: FAIL (got: $out)"; exit 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
   echo ""
   echo "[self-test] $pass passed, $fail failed"
   return $fail
@@ -663,7 +733,9 @@ written via the GitHub Contents API. Stale broadcasts (older than the
 freshness window) are filtered out by check; no explicit cleanup needed.
 Same-machine (v2): per-branch claim files under $STATE_DIR/claims/ (mtime
 freshness, no cleanup needed) + a 'worktrees' array in state.json; consumed
-by hooks/concurrent-ownership-gate.sh for ownership checks.
+by hooks/concurrent-ownership-gate.sh for ownership checks. Claims are
+REPO-scoped via a 'repo' identity field (v2.1); claims without it are
+skipped by all consumers.
 BROADCAST_USAGE_END
     exit 2
     ;;

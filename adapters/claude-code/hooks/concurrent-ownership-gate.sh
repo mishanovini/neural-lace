@@ -53,7 +53,12 @@
 #      missing; cheapest, most reliable signal).
 #   2. A fresh (<COG_CLAIM_FRESH_SECONDS, default 7200s by file mtime) claim
 #      file from another session in $COG_CLAIMS_DIR (written by
-#      broadcast-active-session.sh `claim` / `write`).
+#      broadcast-active-session.sh `claim` / `write`). Claims are REPO-scoped
+#      (harness-review round 1): the claims dir is machine-global, so each
+#      claim carries a "repo" identity field (origin push URL, else absolute
+#      git common dir) and _load_fresh_claims SKIPS claims whose identity
+#      differs from the current repo's — a claim on repo A never blocks
+#      same-named branches/plans in repo B.
 #
 # Slug↔branch matching: plan slug minus its trailing -YYYY-MM-DD date suffix
 # ("slug core") is substring-matched against candidate branch names (harness
@@ -72,9 +77,29 @@
 #   - A single-file in-place edit through a shell VARIABLE path with no loop
 #     (`sed -i ... "$plan"`) is not extractable from the command string and
 #     passes; the loop/glob forms (the lesson's actual shape) are caught.
-#   - In-place-edit detection requires the string `Status` in the command
-#     (the gate guards Status flips, not prose edits); mv/git mv of a plan
-#     file needs no Status marker — the move itself is the mutation.
+#   - In-place-edit detection requires the string `Status` AND a terminal-
+#     state token (DEFERRED|COMPLETED|ABANDONED|SUPERSEDED) in the command
+#     (the gate guards terminal Status flips, not prose edits — a sed over
+#     '## Status quo' passes); mv/git mv of a plan file needs no Status
+#     marker — the move itself is the mutation.
+#   - PowerShell-NATIVE mutations (Set-Content / Move-Item / Rename-Item /
+#     Out-File over docs/plans/) are NOT parsed — only bash-idiom command
+#     strings (sed/mv/git/redirects) are recognized, whichever tool carries
+#     them. A PowerShell-cmdlet rewrite of a plan passes unexamined.
+#   - Script-wrapped mutations (`bash foo.sh` where foo.sh flips plan Status)
+#     pass unexamined — the gate sees only the command string, not what the
+#     script does.
+#   - Claims lacking the "repo" identity field (pre-repo-scoping schema) are
+#     SKIPPED with a stderr note (fail-open): a missing field on a fresh
+#     same-machine claim is ambiguous, and reviewer intent is that foreign-
+#     repo claims must never block; the live owning session re-scopes its
+#     claim at its next SessionStart write / Stop refresh.
+#   - Claim lifecycle: claims are written at SessionStart and refreshed at
+#     each Stop, but there is NO session-end unclaim hook yet — claims
+#     persist up to 2h (COG_CLAIM_FRESH_SECONDS) past a session's last turn.
+#     Expect stale-claim blocks in that window; the structured waiver is the
+#     valve. Lifecycle wiring is queued in docs/backlog.md
+#     (CLAIM-LIFECYCLE-01).
 #
 # Env knobs:
 #   COG_CLAIMS_DIR            claims directory (default
@@ -269,6 +294,20 @@ _slug_core() {
   printf '%s' "$s" | sed -E 's/-[0-9]{4}-[0-9]{2}-[0-9]{2}$//'
 }
 
+# Repo identity of $1 (a repo root) for claim scoping — MUST mirror
+# broadcast-active-session.sh's _repo_identity: the origin push URL when one
+# exists (stable across worktrees/clones of the same repo), else the absolute
+# git common dir (shared by all linked worktrees of one repo).
+_repo_identity() {
+  local url
+  url=$(git -C "$1" remote get-url --push origin 2>/dev/null || echo "")
+  if [[ -n "$url" ]]; then
+    printf '%s' "$url"
+    return 0
+  fi
+  git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo ""
+}
+
 # Load OTHER worktrees of $REPO_ROOT (excluding $REPO_ROOT itself).
 # Populates parallel arrays OTHER_WT_PATHS / OTHER_WT_BRANCHES.
 _load_other_worktrees() {
@@ -291,21 +330,37 @@ _load_other_worktrees() {
   done < <(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null)
 }
 
-# Load fresh claims from OTHER sessions (claim worktree != $REPO_ROOT).
+# Load fresh claims from OTHER sessions (claim worktree != $REPO_ROOT),
+# REPO-scoped: the claims dir is machine-global, so claims whose "repo"
+# identity differs from $REPO_ROOT's are another repo's ownership state and
+# are SKIPPED — a claim on branch X of repo A must never block repo B.
 # Populates CLAIM_BRANCHES / CLAIM_WORKTREES.
 _load_fresh_claims() {
   CLAIM_BRANCHES=()
   CLAIM_WORKTREES=()
   [[ -d "$COG_CLAIMS_DIR" ]] || return 0
-  local root_norm cutoff f br wt
+  local root_norm cutoff f br wt rid cur_repo_id
   root_norm=$(_norm_path "$REPO_ROOT")
+  cur_repo_id=$(_repo_identity "$REPO_ROOT")
   cutoff=$(date -d "-${COG_CLAIM_FRESH_SECONDS} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "")
   [[ -z "$cutoff" ]] && return 0
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
     br=$(sed -nE 's/.*"branch"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)
     wt=$(sed -nE 's/.*"worktree"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)
+    rid=$(sed -nE 's/.*"repo"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)
     [[ -z "$br" ]] && continue
+    if [[ -z "$rid" ]]; then
+      # Pre-repo-scoping schema (no "repo" field): SKIP, fail-open — a
+      # missing field on a same-machine fresh claim is ambiguous, and
+      # foreign-repo claims must never block (see KNOWN LIMITS). The live
+      # owning session re-scopes its claim at its next write/refresh.
+      echo "[concurrent-ownership-gate] note: claim $(basename "$f") has no repo field (old schema) — skipped, not enforced." >&2
+      continue
+    fi
+    if [[ "$rid" != "$cur_repo_id" ]] && [[ "$(_norm_path "$rid")" != "$(_norm_path "$cur_repo_id")" ]]; then
+      continue  # foreign-repo claim — another repo's ownership state
+    fi
     if [[ -n "$wt" ]] && [[ "$(_norm_path "$wt")" == "$root_norm" ]]; then
       continue  # our own session's claim
     fi
@@ -424,6 +479,10 @@ _block() {
     echo "owns yanks the work out from under it — this is the exact incident in"
     echo "docs/lessons/2026-07-11-bulk-shared-state-mutation-without-ownership-check.md."
     echo ""
+    echo "NOTE: this block stopped the ENTIRE command from running — no part of"
+    echo "it executed (including any unrelated segments chained with && or ;)."
+    echo "After remediation, re-run the FULL command."
+    echo ""
     echo "Coordination path (in order):"
     echo "  1. See who is live:"
     echo "       git worktree list"
@@ -431,6 +490,9 @@ _block() {
     echo "  2. If the owning worktree is finished/abandoned work of YOURS:"
     echo "     close it properly first (merge or close its plan, then"
     echo "     \`git worktree remove $OWNER_PATH\`), then re-run this command."
+    echo "     (That removal can itself re-block if a fresh claim still covers"
+    echo "     the worktree — the SAME waiver below covers both operations, as"
+    echo "     it is matched on the target string, not the command.)"
     echo "  3. If another session is actively building it: coordinate via the"
     echo "     orchestrator — do NOT mutate its plan/branch."
     echo "  4. Bulk operations: re-run per-file, EXCLUDING the owned target(s)."
@@ -446,8 +508,13 @@ _block() {
     echo "    echo \"Purpose: this gate exists to prevent mutating plan/branch state owned by another live session\""
     echo "    echo \"Because: <why that does not apply to this specific target>\""
     echo "    echo \"Target: $target\""
+    if [[ -n "$OWNER_BRANCH" ]] && [[ "$target" != *"$OWNER_BRANCH"* ]]; then
+      echo "    echo \"Target: $OWNER_BRANCH\""
+    fi
     echo "  } > \"$REPO_ROOT/.claude/state/concurrent-ownership-waiver-\$(date +%s).txt\""
-    echo "Then re-run the command."
+    echo "Then re-run the command. (Waivers match on the target string, so this"
+    echo "one waiver also covers a follow-up \`git worktree remove\` re-block on"
+    echo "the same branch.)"
     echo ""
     echo "================================================================"
   } >&2
@@ -530,6 +597,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
   )
   if [[ ! -d "$TMPROOT/wt-owned" ]]; then
     echo "self-test: fixture worktree creation failed" >&2
+    exit 2
+  fi
+  # Repo identity of the fixture repo (no origin remote → git common dir),
+  # exactly what _repo_identity computes at gate runtime. Claim fixtures
+  # carry it so they read as THIS repo's claims (claims are repo-scoped).
+  MAIN_REPO_ID=$(git -C "$MAIN" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+  if [[ -z "$MAIN_REPO_ID" ]]; then
+    echo "self-test: cannot resolve fixture repo identity" >&2
     exit 2
   fi
 
@@ -628,7 +703,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
 
   # ---- 9: git worktree remove under a fresh other-session claim → BLOCK ----
   cat > "$COG_CLAIMS_DIR/feat-owned-plan.json" <<CLAIMJSON
-{"branch":"feat/owned-plan","plan":"owned-plan","worktree":"$TMPROOT/wt-owned","hostname":"selftest-host","iso_timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+{"branch":"feat/owned-plan","plan":"owned-plan","worktree":"$TMPROOT/wt-owned","repo":"$MAIN_REPO_ID","hostname":"selftest-host","iso_timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 CLAIMJSON
   RC=$(_run_cmd "$MAIN" "git worktree remove $TMPROOT/wt-owned")
   OK=0; [[ "$RC" == "2" ]] && OK=1
@@ -642,7 +717,7 @@ CLAIMJSON
 
   # ---- 11: claim-based plan ownership (no worktree checkout) → BLOCK ----
   cat > "$COG_CLAIMS_DIR/feat-claimed-plan.json" <<CLAIMJSON
-{"branch":"feat/claimed-plan","plan":"claimed-plan","worktree":"$TMPROOT/elsewhere","hostname":"selftest-host","iso_timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+{"branch":"feat/claimed-plan","plan":"claimed-plan","worktree":"$TMPROOT/elsewhere","repo":"$MAIN_REPO_ID","hostname":"selftest-host","iso_timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 CLAIMJSON
   RC=$(_run_cmd "$MAIN" 'sed -i "s/^Status: ACTIVE/Status: DEFERRED/" docs/plans/claimed-plan-2026-07-09.md')
   ERR=$(cat "$TMPROOT/last-stderr" 2>/dev/null)
@@ -682,6 +757,23 @@ CLAIMJSON
   RC=$(_run_cmd "$TMPROOT" "cd $MAIN && $BULK_CMD")
   OK=0; [[ "$RC" == "2" ]] && OK=1
   _report "17 cd-tracked-target-repo" "$OK" "(rc=$RC, expected 2)"
+
+  # ---- 18: fresh claim from a FOREIGN repo → ALLOW (claims are repo-scoped) ----
+  # Same shape as scenario 11 but the claim's repo identity points at a
+  # DIFFERENT repo — machine-global claims must not cross repo boundaries.
+  cat > "$COG_CLAIMS_DIR/feat-claimed-plan.json" <<CLAIMJSON
+{"branch":"feat/claimed-plan","plan":"claimed-plan","worktree":"$TMPROOT/elsewhere","repo":"/somewhere/else/entirely/.git","hostname":"selftest-host","iso_timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+CLAIMJSON
+  RC=$(_run_cmd "$MAIN" 'sed -i "s/^Status: ACTIVE/Status: DEFERRED/" docs/plans/claimed-plan-2026-07-09.md')
+  OK=0; [[ "$RC" == "0" ]] && OK=1
+  _report "18 foreign-repo-claim-does-not-block" "$OK" "(rc=$RC, expected 0)"
+  rm -f "$COG_CLAIMS_DIR/feat-claimed-plan.json"
+
+  # ---- 19: prose edit mentioning '## Status quo' on an OWNED plan → ALLOW ----
+  # 'Status' with no terminal-state token is prose, not a terminal flip.
+  RC=$(_run_cmd "$MAIN" 'sed -i "s/^## Status quo/## Status quo (revised)/" docs/plans/owned-plan-2026-07-11.md')
+  OK=0; [[ "$RC" == "0" ]] && OK=1
+  _report "19 owned-plan-prose-status-quo-edit-allowed" "$OK" "(rc=$RC, expected 0)"
 
   echo "" >&2
   echo "self-test summary: $PASSED passed, $FAILED failed (of $((PASSED+FAILED)) scenarios)" >&2
@@ -874,14 +966,21 @@ if [[ "$MENTIONS_PLANS" -eq 1 ]]; then
   echo "$CMD" | grep -Eq '>[[:space:]]*"?docs/plans/' && MUT_EDIT=1
   echo "$CMD" | grep -Eq '(^|[|;&[:space:]])mv[[:space:]][^|;&]*docs/plans/' && MUT_MV=1
   [[ "$GIT_MV_SEEN" -eq 1 ]] && MUT_MV=1
+  # Terminal-status heuristic (harness-review round 1): 'Status' alone would
+  # block ANY in-place prose edit mentioning e.g. '## Status quo' on an owned
+  # plan; require a terminal-state token alongside it — the gate guards
+  # terminal Status flips, not prose.
   STATUS_TOUCH=0
-  echo "$CMD" | grep -q 'Status' && STATUS_TOUCH=1
+  if echo "$CMD" | grep -q 'Status' \
+     && echo "$CMD" | grep -qE 'DEFERRED|COMPLETED|ABANDONED|SUPERSEDED'; then
+    STATUS_TOUCH=1
+  fi
 
   TRIGGER=0
   if [[ "$MUT_MV" -eq 1 ]]; then
     TRIGGER=1  # moving a plan file is a mutation regardless of content
   elif [[ "$MUT_EDIT" -eq 1 ]] && [[ "$STATUS_TOUCH" -eq 1 ]]; then
-    TRIGGER=1  # in-place edit that touches a Status line
+    TRIGGER=1  # in-place edit that flips a Status line to a terminal state
   fi
 
   if [[ "$TRIGGER" -eq 1 ]]; then

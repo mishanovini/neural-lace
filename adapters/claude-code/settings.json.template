@@ -477,6 +477,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/scripts/session-wrap.sh refresh"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/scripts/broadcast-active-session.sh claim 2>/dev/null || true"
           }
         ]
       }
