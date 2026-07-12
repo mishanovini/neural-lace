@@ -205,7 +205,7 @@ Serialization added in round 1:
 - Task 11's lifecycle write endpoint precedes Task 13's card affordances (already
   ordered 11 → 13, both [serial]). -->
 
-- [ ] 1. **Walking skeleton** — one event end-to-end: minimal
+- [x] 1. **Walking skeleton** — one event end-to-end: minimal
   `hooks/lib/progress-log-lib.sh` (`pl_emit`, `pl_path_for`, sandbox-aware) +
   `scripts/progress-log.sh emit` CLI + a verifier-flip splice in
   `hooks/plan-lifecycle.sh` + a hand-registered ask entry + a minimal
