@@ -157,17 +157,63 @@ pl_state_dir() {
 }
 
 # ----------------------------------------------------------------------
-# pl_path_for <ask-id> — print the resolved per-ask JSONL path. An empty
-# ask-id resolves to the literal "unlinked" file (mirrors hb_path_for's
-# "unknown" fallback) — a full orphan lane keyed by plan-slug is Task 2/12's
-# job; this is the honest, no-events-lost stopgap so a splice that cannot
-# yet resolve an ask-id still logs SOMEWHERE deterministic instead of
-# silently no-op-ing (Edge Cases: "estate-growth safe: old plans never
-# break the surface").
+# _pl_sanitize_ask_id <raw-ask-id> — print a filesystem-SAFE single-path-
+# component derived from the raw ask-id. This is the SECURITY BOUNDARY that
+# protects EVERY emitter (plan-lifecycle, workstreams-emit, needs-you,
+# post-commit, close-plan, ask-registry, auditor) at once: it lives in the
+# shared lib, not in any one caller, so no caller can forget it. Without it,
+# pl_path_for would compose <state-dir>/<ask_id>.jsonl from an unsanitized
+# ask_id, and a `/`- or `..`-bearing ask_id (e.g. `../../evil`) would write
+# OUTSIDE the state dir — a path-traversal write primitive.
+#
+# Guarantee: the returned string contains NO path separator (`/` or `\`) and
+# NO `..` run, so pl_path_for's `<dir>/<result>.jsonl` is ALWAYS a single
+# path component directly under <dir> — categorically unable to escape.
+#   1. Empty raw -> the documented "unlinked" orphan-lane file (unchanged
+#      behavior; a splice that cannot yet resolve an ask-id still logs
+#      somewhere deterministic).
+#   2. Otherwise allowlist-normalize: every char outside [A-Za-z0-9._-]
+#      (crucially the separators / and \, plus whitespace/control) -> `_`.
+#      A legitimate registry ask-id (e.g. `ask-20260710-workstreams-rebuild`)
+#      is entirely in the allowlist and passes through UNCHANGED — no
+#      regression for the real-world id shape.
+#   3. Collapse any residual `..` run (belt-and-suspenders: already harmless
+#      once separators are gone, but keeps the filename unambiguous).
+#   4. Degenerate results (`.`, `_`, or empty after the above) -> a
+#      deterministic `sanitized-<hash-of-RAW>` token so two DISTINCT bad ids
+#      still get DISTINCT files (never silently merged) while staying a
+#      single safe component.
+# Uses only bash parameter expansion (no fork) so it stays within the splice
+# budget (<=50ms), matching pl_emit's no-jq-on-the-write-path convention.
+# ----------------------------------------------------------------------
+_pl_sanitize_ask_id() {
+  local raw="${1:-}"
+  if [[ -z "$raw" ]]; then
+    printf 'unlinked'
+    return 0
+  fi
+  local s="${raw//[!A-Za-z0-9._-]/_}"
+  while [[ "$s" == *..* ]]; do s="${s//../_}"; done
+  if [[ -z "$s" || "$s" == "." || "$s" == "_" ]]; then
+    s="sanitized-$(_pl_hash "$raw")"
+  fi
+  printf '%s' "$s"
+}
+
+# ----------------------------------------------------------------------
+# pl_path_for <ask-id> — print the resolved per-ask JSONL path. The ask-id
+# is run through _pl_sanitize_ask_id first (see above), so the result is
+# ALWAYS a single path component under pl_state_dir — a `/`- or `..`-bearing
+# ask-id can never escape the state directory. An empty ask-id resolves to
+# the literal "unlinked" file (mirrors hb_path_for's "unknown" fallback) — a
+# full orphan lane keyed by plan-slug is Task 2/12's job; this is the honest,
+# no-events-lost stopgap so a splice that cannot yet resolve an ask-id still
+# logs SOMEWHERE deterministic instead of silently no-op-ing (Edge Cases:
+# "estate-growth safe: old plans never break the surface").
 # ----------------------------------------------------------------------
 pl_path_for() {
-  local ask_id="${1:-}"
-  [[ -n "$ask_id" ]] || ask_id="unlinked"
+  local ask_id
+  ask_id="$(_pl_sanitize_ask_id "${1:-}")"
   printf '%s/%s.jsonl' "$(pl_state_dir)" "$ask_id"
 }
 
@@ -435,6 +481,45 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     pass "pl_path_for('') resolves to unlinked.jsonl"
   else
     fail "expected $PROGRESS_LOG_STATE_DIR/unlinked.jsonl, got $pu"
+  fi
+
+  echo "Scenario 1c: SECURITY — a path-traversal / separator-bearing ask-id CANNOT escape the state dir (pl_path_for sanitizes; the resolved path's parent is ALWAYS exactly pl_state_dir)"
+  state_dir_resolved="$(pl_state_dir)"
+  traversal_ok=1
+  # Each of these, if composed unsanitized as <dir>/<id>.jsonl, would
+  # traverse OUT of the state dir (../.. climbs above it; a/b/c writes into
+  # a nested subtree; a leading / is an absolute-path attempt).
+  for evil in "../../evil" "a/b/c" "/etc/passwd" "foo/../../../bar" '..\..\evil' ".." "."; do
+    resolved="$(pl_path_for "$evil")"
+    parent="$(dirname "$resolved")"
+    if [[ "$parent" != "$state_dir_resolved" ]]; then
+      fail "ask-id '$evil' ESCAPED: resolved parent '$parent' != state dir '$state_dir_resolved' (resolved=$resolved)"
+      traversal_ok=0
+    fi
+    case "$resolved" in
+      *.jsonl) : ;;
+      *) fail "ask-id '$evil' did not resolve to a .jsonl file: $resolved"; traversal_ok=0 ;;
+    esac
+  done
+  [[ "$traversal_ok" == "1" ]] && pass "every path-traversal ask-id ('../../evil', 'a/b/c', '/etc/passwd', 'foo/../../../bar', backslash variant, '..', '.') stays a single component directly under pl_state_dir"
+
+  echo "Scenario 1d: sanitizer preserves a legitimate registry ask-id UNCHANGED (no regression for the real id shape) and actually WRITES the traversal event inside the state dir, not outside it"
+  legit="$(pl_path_for "ask-20260710-workstreams-rebuild")"
+  if [[ "$legit" == "$PROGRESS_LOG_STATE_DIR/ask-20260710-workstreams-rebuild.jsonl" ]]; then
+    pass "a legitimate ask-id passes through the sanitizer byte-for-byte unchanged"
+  else
+    fail "legitimate ask-id was altered by the sanitizer: got $legit"
+  fi
+  # Emit-level proof: a real emit with a traversal ask-id must land a file
+  # UNDER the state dir (the sanitized name) and create NOTHING outside it.
+  pl_emit --type task_done --ask "../../evil" --plan-slug "sec-plan" --task-id "1" \
+    --sha "secsha1" --summary "traversal attempt" --emitter plan-lifecycle >/dev/null 2>&1
+  escaped_hits=$(find "$TMP" -name 'evil.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+  under_state=$(find "$PROGRESS_LOG_STATE_DIR" -maxdepth 1 -name '*evil*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "$escaped_hits" == "0" ]] && [[ "$under_state" -ge "1" ]]; then
+    pass "emit('../../evil') created a sanitized log file INSIDE the state dir and NO literal 'evil.jsonl' anywhere (no separator survived to traverse)"
+  else
+    fail "traversal emit misbehaved: literal-evil.jsonl hits=$escaped_hits (want 0), sanitized-under-state=$under_state (want >=1)"
   fi
 
   echo "Scenario 2: pl_emit writes a schema-valid task_done event"

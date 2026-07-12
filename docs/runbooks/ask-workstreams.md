@@ -123,6 +123,25 @@ outside this list is still recorded verbatim (never dropped) but stamped
 de-emphasizes them; never rendered as mechanism truth. The open CLI cannot
 impersonate a mechanism by lying about its emitter name.
 
+### ask-id path-traversal sanitizer (Task 2, security boundary)
+
+`pl_path_for` composes `<state-dir>/<ask_id>.jsonl`, so an `ask_id`
+containing `/`, `\`, or `..` would be a path-traversal write primitive. The
+shared lib closes this at the boundary that protects EVERY emitter at once:
+`_pl_sanitize_ask_id` allowlist-normalizes the id (every char outside
+`[A-Za-z0-9._-]` — crucially the path separators — becomes `_`, then any
+residual `..` run is collapsed), so the composed path is ALWAYS a single
+component directly under the state dir and can never escape. A legitimate
+registry ask-id (e.g. `ask-20260710-workstreams-rebuild`) is entirely
+in-allowlist and passes through unchanged; a degenerate result (`.`, `_`,
+empty) falls back to a deterministic `sanitized-<hash>` token so two
+distinct bad ids never silently merge. Because this lives in the lib, no
+individual caller (plan-lifecycle, ask-registry, needs-you, …) can forget
+it. Self-test scenarios 1c/1d prove `../../evil`, `a/b/c`, `/etc/passwd`,
+and the backslash variant all stay under `pl_state_dir` and that a real
+emit with a traversal id writes inside the state dir with no literal
+`evil.jsonl` escaping.
+
 ### Writer hardening (Task 2)
 
 `pl_emit`'s dedup-check + append is wrapped in a `mkdir`-based inter-process
