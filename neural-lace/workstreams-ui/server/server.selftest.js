@@ -210,8 +210,9 @@ async function main() {
       health.json.data.gates[0].block_7d === 33 && health.json.data.gates[0].waiver_7d === 41,
       JSON.stringify(health.json && health.json.data));
     ok('S4c waiver-dominant gate is flagged in the gate data (dominant field)',
-      health.json && health.json.data.gates[0].dominant === 'waiver' &&
-      health.json.data.gates[1].dominant === 'block');
+      health.json && health.json.data && Array.isArray(health.json.data.gates) &&
+      health.json.data.gates[0] && health.json.data.gates[0].dominant === 'waiver' &&
+      health.json.data.gates[1] && health.json.data.gates[1].dominant === 'block');
 
     const costs = await httpGet(PORT, '/api/pane/costs');
     ok('S5 /api/pane/costs returns fixture totals', costs.json && costs.json.rc === 0 &&
