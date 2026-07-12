@@ -269,7 +269,7 @@ Serialization added in round 1:
   best-effort splice; the old
   tree-state write path is untouched (it remains the auditor's comparison input) —
   Verification: mechanical — Docs impact: none — splice documented via Task 7 manifest entry
-- [ ] 4. [parallel] NEEDS-YOU emission splice: `scripts/needs-you.sh add` emits
+- [x] 4. [parallel] NEEDS-YOU emission splice: `scripts/needs-you.sh add` emits
   `waiting_on_operator` (needs-you id, section, tier, session id, cold-reader
   lint result carried as the §3-context-present flag) AND appends the auto-pointer
   item to `docs/operator-todo.md` (marker-delimited auto-section; operator section
