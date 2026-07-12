@@ -48,6 +48,20 @@
        render — it is a re-sorted VIEW of that data, not a separate source. -->
   <div id="interruptStrip" class="interrupt-strip" aria-live="polite"></div>
 
+  <!-- Ask-rooted workstreams — ask-rooted-workstreams-p1, Task 1 WALKING
+       SKELETON. This is the FIRST landing card, deliberately minimal (one
+       event, end to end). Task 13 REPLACES this whole section with the
+       full ask-tree landing (project groups, plan drill-down, lifecycle
+       affordances) and app.js becomes shell/router at that point — until
+       then this section is additive and does not touch the six-pane
+       cockpit below. -->
+  <section id="paneAsksSkeleton" class="pane asks-skeleton-section" aria-label="asks (walking skeleton)">
+    <div class="pane-head">
+      <span class="pane-title">Asks (walking skeleton)</span>
+    </div>
+    <div class="pane-body" id="asksSkeletonBody"></div>
+  </section>
+
   <main id="cockpit">
     <!-- Q2 — WHAT NEEDS ME. Sorted first per ux-review amendment 9
          (attention-semantics: "Q2 on top"). READ-ONLY: renders the §3-format
@@ -152,6 +166,7 @@
     <div class="doc-body" id="docBody"></div>
   </div>
 
+  <script src="/asks.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

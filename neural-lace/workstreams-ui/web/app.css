@@ -134,6 +134,27 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   color: var(--text);
 }
 
+/* ---- asks (walking skeleton) — ask-rooted-workstreams-p1 Task 1.
+   Task 13 replaces this section's markup/styling wholesale with the full
+   ask-tree landing; this block stays deliberately small in the meantime. */
+.asks-skeleton-section {
+  max-width: 1400px;
+  margin: 12px auto 0;
+}
+.ask-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: var(--panel2);
+}
+.ask-card:last-child { margin-bottom: 0; }
+.ask-card h3 { margin: 0 0 4px; font-size: 13px; }
+.ask-card-meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.ask-narrative { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+.ask-narrative li { padding: 2px 0; }
+.ask-narrative-empty { font-size: 12px; color: var(--muted); font-style: italic; }
+
 /* ---- cockpit grid: six panes, Q2 first (attention semantics) ---- */
 #cockpit {
   display: grid;

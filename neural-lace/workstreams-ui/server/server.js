@@ -28,6 +28,7 @@
 
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const projects = require('../config/projects.js');
@@ -150,6 +151,93 @@ function paneResponse(sub, entry, extraArgsLabel) {
   };
 }
 
+// ============================================================
+// Ask-rooted workstreams (ask-rooted-workstreams-p1, Task 1 WALKING
+// SKELETON). Deliberately the THINNEST read: hand-registered
+// ask-registry.jsonl entries + each ask's own progress-log JSONL file,
+// rendered into one card per ask with a plain-text narrative line per
+// event. Task 11 REPLACES this with the full landing payload (project
+// grouping via config/projects.js, plan-progress counts, waiting-item
+// §3 blocks, drift badges, the payload-schema.js allowlist enforcing the
+// anti-noise + absolute-href laws) — see that task's spec. No gate/hook
+// identifiers are ever exposed here: every rendered field is either the
+// operator-authored `summary` or a progress-log `summary` a mechanism
+// wrote (e.g. "task 3 verified done"), never an oracle/gate name.
+//
+// State-dir resolution mirrors the shell writer libs (progress-log-lib.sh
+// / ask-registry.sh) so the SAME env-var overrides sandbox both sides for
+// a manual walkthrough or a future automated test: PROGRESS_LOG_STATE_DIR
+// / ASK_REGISTRY_STATE_DIR, else the real $HOME/.claude/state/* paths.
+// ============================================================
+function progressLogStateDir() {
+  return process.env.PROGRESS_LOG_STATE_DIR ||
+    path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'progress-logs');
+}
+function askRegistryFile() {
+  const dir = process.env.ASK_REGISTRY_STATE_DIR ||
+    path.join(process.env.HOME || os.homedir(), '.claude', 'state');
+  return path.join(dir, 'ask-registry.jsonl');
+}
+
+// readJsonlLines(file) — best-effort JSONL reader: a missing file or a
+// corrupt/unparseable line is silently skipped (Edge Cases: "readers skip
+// bad lines and surface a diagnostics-tab count; landing page never 500s
+// on one bad record" — the diagnostics-tab count itself is Task 11/16;
+// this Task 1 reader just never crashes on bad input).
+function readJsonlLines(file) {
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { return []; }
+  return raw.split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => { try { return JSON.parse(l); } catch (_) { return null; } })
+    .filter(Boolean);
+}
+
+function readAskRegistry() { return readJsonlLines(askRegistryFile()); }
+
+function readAskEvents(askId) {
+  const dir = progressLogStateDir();
+  const file = path.join(dir, (askId || 'unlinked') + '.jsonl');
+  return readJsonlLines(file);
+}
+
+// buildAsksPayload() — one entry per registered ask_id (registry is
+// append-only; latest-record-wins per ask_id for mutable fields, per the
+// plan's registry contract), each carrying its own event log sorted
+// chronologically and a `narrative` array of plain-text lines (the exact
+// strings the landing card renders). Sorted newest-activity-first.
+function buildAsksPayload() {
+  const registryLines = readAskRegistry();
+  const byAsk = {};
+  registryLines.forEach((rec) => {
+    if (rec && rec.ask_id) byAsk[rec.ask_id] = Object.assign({}, byAsk[rec.ask_id], rec);
+  });
+
+  const asks = Object.keys(byAsk).map((askId) => {
+    const reg = byAsk[askId];
+    const events = readAskEvents(askId).sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    const narrative = events.map((e) => e.summary || e.type).filter(Boolean);
+    return {
+      ask_id: askId,
+      summary: reg.summary || '',
+      project: reg.project || '',
+      repo: reg.repo || '',
+      status: reg.status || 'active',
+      events: events,
+      narrative: narrative,
+    };
+  });
+
+  asks.sort((a, b) => {
+    const at = a.events.length ? a.events[a.events.length - 1].ts : '';
+    const bt = b.events.length ? b.events[b.events.length - 1].ts : '';
+    return String(bt).localeCompare(String(at)); // newest activity first
+  });
+
+  return asks;
+}
+
 const server = http.createServer((req, res) => {
   const parsedUrl = require('url').parse(req.url, true);
   const url = parsedUrl.pathname;
@@ -158,7 +246,20 @@ const server = http.createServer((req, res) => {
   if (url === '/' || url === '/index.html') return serveStatic(res, 'index.html');
   if (url === '/app.js') return serveStatic(res, 'app.js');
   if (url === '/app.css') return serveStatic(res, 'app.css');
+  if (url === '/asks.js') return serveStatic(res, 'asks.js');
   if (url === '/favicon.ico') { res.writeHead(204); res.end(); return; }
+
+  // ---- /api/asks — ask-rooted-workstreams-p1 Task 1 walking skeleton.
+  // See buildAsksPayload() above for the exact (minimal) shape; Task 11
+  // replaces this route's implementation with the schema-checked landing
+  // payload without changing this URL.
+  if (url === '/api/asks') {
+    try {
+      return sendJson(res, 200, { ok: true, asks: buildAsksPayload() });
+    } catch (e) {
+      return sendJson(res, 200, { ok: false, error: String(e && e.message || e), asks: [] });
+    }
+  }
 
   // ---- /api/health — freshness header (ux-review amendment 4: re-specced
   // onto derived-cache stamps, NOT the retired state-file/heartbeat-file

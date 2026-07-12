@@ -70,6 +70,16 @@ set -u
 
 SCRIPT_NAME="plan-lifecycle.sh"
 
+# Resolved ONCE at load time, before anything else runs a `cd` (the
+# --self-test path below `cd`s into a synthetic fixture repo for its
+# scenarios) — BASH_SOURCE[0] may be a path RELATIVE to the invocation
+# cwd, and resolving it lazily inside a function called AFTER a `cd`
+# elsewhere in this same process silently breaks (dirname/cd against the
+# wrong base). emit_task_done_progress_log_events uses this pre-resolved
+# absolute path to locate scripts/progress-log.sh instead of re-deriving
+# BASH_SOURCE[0] at call time.
+_PL_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
 # ---------- helpers ----------------------------------------------------
 
 # Normalize a path for matching: forward slashes only.
@@ -207,6 +217,103 @@ pre_edit_content() {
   git -C "$root" show "HEAD:$rel" 2>/dev/null || true
 }
 
+# ---------- progress-log emission (ask-rooted-workstreams-p1 Task 1) --------
+#
+# Walking-skeleton splice: observe a genuine "- [ ] N." -> "- [x] N."
+# transition between pre-edit and post-edit plan content and emit ONE
+# task_done progress-log event per newly-checked task, via
+# scripts/progress-log.sh (hooks/lib/progress-log-lib.sh's pl_emit). This
+# NEVER flips a checkbox itself and never adds a second done-bit — it only
+# OBSERVES a flip the task-verifier already made (constraint 6: verifier
+# monopoly preserved). Best-effort, never blocks (constraint 5): every
+# failure path is swallowed with `|| true`.
+
+# extract_checked_task_ids — print one task number per line for every
+# "- [x] N." / "- [X] N." line in a plan-file content blob (stdin).
+extract_checked_task_ids() {
+  awk '
+    /^- \[[xX]\][ \t]*[0-9]+\./ {
+      line = $0
+      sub(/^- \[[xX]\][ \t]*/, "", line)
+      sub(/\..*$/, "", line)
+      print line
+    }
+  '
+}
+
+# extract_ask_id — print the plan header's `ask-id: <token>` value (first
+# match) from a plan-file content blob (stdin), or empty if absent. Every
+# pre-existing plan lacks this field (Task 10 adds it going forward) —
+# absence is a first-class, non-fatal case: the event still lands (see
+# emit_task_done_progress_log_events), just in the "unlinked" per-ask log
+# file (hooks/lib/progress-log-lib.sh's pl_path_for fallback) rather than
+# being dropped. A full orphan-lane reattachment (matching an unlinked
+# event back to an ask once linkage appears) is Task 2/12's job.
+extract_ask_id() {
+  awk '
+    /^ask-id:[[:space:]]*[^[:space:]]+/ {
+      sub(/^ask-id:[[:space:]]*/, "", $0)
+      sub(/[[:space:]].*$/, "", $0)
+      print $0
+      exit
+    }
+  '
+}
+
+# emit_task_done_progress_log_events <repo_root> <rel-path> <pre> <post>
+#   Diffs the checked-task-id sets between pre and post content; for every
+# NEWLY checked task number (present in post, absent in pre — a re-save
+# with no new flips naturally produces an empty diff and emits nothing,
+# satisfying the "distinguish a fresh flip from a re-save" integration
+# point), emits one task_done event. Resolves ask-id from the plan header
+# in the POST content (the just-written version). PROGRESS_LOG_CLI is
+# resolved once, relative to this hook's own location (mirrors the
+# resolution style other splices in this repo use for sibling scripts).
+emit_task_done_progress_log_events() {
+  local repo_root="$1" rel="$2" pre="$3" post="$4"
+
+  local ask_id
+  ask_id="$(printf '%s\n' "$post" | extract_ask_id)"
+
+  local post_ids
+  post_ids="$(printf '%s\n' "$post" | extract_checked_task_ids)"
+  [ -n "$post_ids" ] || return 0
+
+  local pre_ids
+  pre_ids="$(printf '%s\n' "$pre" | extract_checked_task_ids)"
+
+  local slug
+  slug="$(basename "$rel")"
+  slug="${slug%.md}"
+
+  local progress_log_cli
+  progress_log_cli="$_PL_HOOK_DIR/../scripts/progress-log.sh"
+  [ -f "$progress_log_cli" ] || return 0
+
+  local evidence_link="$repo_root/$rel"
+
+  local n
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    if printf '%s\n' "$pre_ids" | grep -qxF "$n"; then
+      continue  # already checked pre-edit -- not a fresh flip, no-op
+    fi
+    bash "$progress_log_cli" emit \
+      --type task_done \
+      --ask "$ask_id" \
+      --plan-slug "$slug" \
+      --task-id "$n" \
+      --summary "task $n verified done" \
+      --evidence-link "$evidence_link" \
+      --emitter plan-lifecycle \
+      >/dev/null 2>&1 || true
+  done <<TASK_IDS_EOF
+$post_ids
+TASK_IDS_EOF
+
+  return 0
+}
+
 # Run the lifecycle logic for one file_path. Used both by the
 # real-invocation path and by --self-test.
 #
@@ -249,6 +356,12 @@ process_lifecycle_event() {
   local file_repo_root rel
   file_repo_root=$(resolve_file_repo_root "$norm")
   rel=$(to_repo_relative "$norm" "$file_repo_root")
+
+  # ---- (0) Progress-log emission: task-verifier flip -> task_done event ----
+  # (ask-rooted-workstreams-p1 Task 1 walking skeleton.) Fires on every
+  # Edit/Write reaching this point regardless of Status transition — a task
+  # can be flipped independently of any archival move.
+  emit_task_done_progress_log_events "$file_repo_root" "$rel" "$pre_content" "$post_content"
 
   # ---- (1) Commit-on-creation warning ----
   # Triggered when the file is new (no pre_content from git HEAD AND
@@ -407,6 +520,16 @@ if [ "${1:-}" = "--self-test" ]; then
   TMP=$(mktemp -d)
   OTHER=$(mktemp -d)
   trap 'rm -rf "$TMP" "$OTHER"' EXIT
+
+  # Sandbox EVERY progress-log emission this self-test triggers (constraint
+  # 4): the splice shells out to scripts/progress-log.sh, which resolves its
+  # state dir via PROGRESS_LOG_STATE_DIR/HARNESS_SELFTEST — without this
+  # export, running `plan-lifecycle.sh --self-test` on a real machine would
+  # write task_done fixtures into the OPERATOR's real
+  # ~/.claude/state/progress-logs.
+  export HARNESS_SELFTEST=1
+  export PROGRESS_LOG_STATE_DIR="$TMP/progress-logs"
+  mkdir -p "$PROGRESS_LOG_STATE_DIR"
 
   cd "$TMP" || exit 2
   git init -q .
@@ -699,6 +822,108 @@ EOP
   if git status --porcelain | grep -q "case10"; then
     echo "FAIL scenario 10: session repo (cwd) has staged/dirty case10 state." >&2
     git status --porcelain >&2
+    exit 1
+  fi
+
+  # ---- Scenario 11: a fresh "- [ ] N." -> "- [x] N." flip emits ONE
+  # task_done progress-log event (ask-rooted-workstreams-p1 Task 1 walking
+  # skeleton) carrying plan slug + task id + an ISO ts, resolved to the
+  # plan header's ask-id ----
+  cat > docs/plans/case11.md <<'EOP'
+# Plan: Case 11
+Status: ACTIVE
+ask-id: ask-selftest-case11
+
+## Tasks
+- [ ] 1. first task
+- [ ] 2. second task
+EOP
+  git add docs/plans/case11.md
+  git commit -q -m "plan: case11"
+  PRE11=$(git show HEAD:docs/plans/case11.md)
+  cat > docs/plans/case11.md <<'EOP'
+# Plan: Case 11
+Status: ACTIVE
+ask-id: ask-selftest-case11
+
+## Tasks
+- [x] 1. first task
+- [ ] 2. second task
+EOP
+  POST11=$(cat docs/plans/case11.md)
+  process_lifecycle_event "$TMP/docs/plans/case11.md" "Edit" "$PRE11" "$POST11" >/dev/null 2>&1 || true
+  F11="$PROGRESS_LOG_STATE_DIR/ask-selftest-case11.jsonl"
+  if [ ! -f "$F11" ]; then
+    echo "FAIL scenario 11: expected a task_done event log at $F11" >&2
+    exit 1
+  fi
+  if ! grep -q '"type":"task_done"' "$F11"; then
+    echo "FAIL scenario 11: log file exists but has no task_done event. Contents:" >&2
+    cat "$F11" >&2
+    exit 1
+  fi
+  if ! grep -q '"plan_slug":"case11"' "$F11" || ! grep -q '"task_id":"1"' "$F11"; then
+    echo "FAIL scenario 11: task_done event missing plan_slug=case11/task_id=1. Contents:" >&2
+    cat "$F11" >&2
+    exit 1
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    TS11=$(jq -r '.ts' "$F11" 2>/dev/null | tr -d '\r')
+    case "$TS11" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*Z) : ;;
+      *) echo "FAIL scenario 11: ts '$TS11' is not ISO-8601 UTC" >&2; exit 1 ;;
+    esac
+  fi
+
+  # ---- Scenario 12: re-saving the SAME plan with NO new flip emits no
+  # additional task_done event (distinguishes a fresh flip from a re-save,
+  # per Task 1's Integration point) ----
+  LINES12_BEFORE=$(wc -l < "$F11" | tr -d ' ')
+  PRE12="$POST11"
+  cat > docs/plans/case11.md <<'EOP'
+# Plan: Case 11
+Status: ACTIVE
+ask-id: ask-selftest-case11
+
+## Tasks
+- [x] 1. first task
+- [ ] 2. second task
+
+Some unrelated prose edit.
+EOP
+  POST12=$(cat docs/plans/case11.md)
+  process_lifecycle_event "$TMP/docs/plans/case11.md" "Edit" "$PRE12" "$POST12" >/dev/null 2>&1 || true
+  LINES12_AFTER=$(wc -l < "$F11" | tr -d ' ')
+  if [ "$LINES12_BEFORE" != "$LINES12_AFTER" ]; then
+    echo "FAIL scenario 12: a re-save with no new flip should not append another event (before=$LINES12_BEFORE after=$LINES12_AFTER)" >&2
+    exit 1
+  fi
+
+  # ---- Scenario 13: a plan flip with NO ask-id header still emits (lands
+  # in the "unlinked" per-ask log, never silently dropped — Edge Cases:
+  # "estate-growth safe: old plans never break the surface") ----
+  cat > docs/plans/case13.md <<'EOP'
+# Plan: Case 13 (no ask-id — pre-existing-plan shape)
+Status: ACTIVE
+
+## Tasks
+- [ ] 1. only task
+EOP
+  git add docs/plans/case13.md
+  git commit -q -m "plan: case13"
+  PRE13=$(git show HEAD:docs/plans/case13.md)
+  cat > docs/plans/case13.md <<'EOP'
+# Plan: Case 13 (no ask-id — pre-existing-plan shape)
+Status: ACTIVE
+
+## Tasks
+- [x] 1. only task
+EOP
+  POST13=$(cat docs/plans/case13.md)
+  process_lifecycle_event "$TMP/docs/plans/case13.md" "Edit" "$PRE13" "$POST13" >/dev/null 2>&1 || true
+  F13="$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
+  if [ ! -f "$F13" ] || ! grep -q '"plan_slug":"case13"' "$F13"; then
+    echo "FAIL scenario 13: expected a task_done event for the ask-id-less plan in the unlinked log" >&2
     exit 1
   fi
 
