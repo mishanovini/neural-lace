@@ -154,6 +154,62 @@
 #      as an absolute last resort so the script never silently no-ops.
 #
 # ============================================================
+# TASK 4 SPLICE — progress-log emission + operator-todo.md auto-pointer
+# (ask-rooted-workstreams-p1, plan Task 4)
+# ============================================================
+#
+# `add` (decision|question sections ONLY — see rationale below) additionally,
+# best-effort, never-blocking (writer semantics, constraint 5):
+#
+#   1. Emits one `waiting_on_operator` progress-log event via the STABLE
+#      `progress-log.sh emit` CLI (adapters/claude-code/scripts/progress-log.sh
+#      -- this script never sources hooks/lib/progress-log-lib.sh directly;
+#      it shells out to the CLI, same convention as every other splice)
+#      carrying: --needs-you-id <id>, --session-id <session>, --emitter
+#      needs-you, and a --summary narrative that folds in the fields the
+#      FROZEN v1 event schema has no dedicated column for (section, tier, and
+#      the cold-reader lint's §3-context-present flag) — schema.json's
+#      additionalProperties:false means new columns are Task 2's call, not
+#      this splice's; folding them into the human-readable `summary` string
+#      is the same technique Task 1 used for its "task N verified done"
+#      narrative. The natural key for `waiting_on_operator` is needs_you_id
+#      alone (progress-log-lib.sh's _pl_natural_key), so each ledger entry's
+#      pointer event is idempotent by construction — no --dedup-extra needed.
+#      No --ask is passed (this script has no ask-id in scope yet); the event
+#      lands in the "unlinked" orphan lane by design (pl_path_for's documented
+#      fallback) for Task 12's auditor to reconcile later.
+#
+#   2. Appends ONE auto-pointer bullet line to docs/operator-todo.md, inside a
+#      marker-delimited AUTO section (`<!-- AUTO:START -->`/`<!-- AUTO:END
+#      -->`); any operator-authored content above the markers is NEVER
+#      touched. Path resolves via `nl_main_checkout_root` (constraint 11 —
+#      the SAME resolver this script already uses for NEEDS-YOU.md itself, in
+#      `_ny_md_path` above), so a splice firing inside a builder worktree
+#      still lands the pointer in the MAIN checkout, never the ephemeral
+#      worktree. The file is created (operator section + empty AUTO markers)
+#      the first time it's needed if absent. Resolution/auto-check of a
+#      pointer is explicitly NOT this splice's job -- Task 12's auditor
+#      derives that from the underlying NEEDS-YOU ledger state, so a pointer
+#      here survives an operator resolving the item through a path that
+#      bypasses this script entirely (e.g. hand-editing the ledger).
+#
+# SCOPING DECISION (decide-and-go, constitution §8): only --section decision
+# and --section question fire this splice. Design-sketch §3 ("My To-Do")
+# names the pointer mechanism explicitly as "the same mechanism that appends
+# a DECISION/QUESTION to NEEDS-YOU.md" -- inflight is a status narrative, not
+# something the operator owes an action on, and `decided` is the resolve()
+# target shape, never a fresh ask. Emitting "waiting_on_operator" or a To-Do
+# pointer for an inflight/decided entry would misrepresent it as something
+# the operator is blocked on (the exact O.4 noise regression this whole plan
+# exists to reverse). See needs-you.sh's own header "SECTION SEMANTICS" above
+# for what each of the four sections means.
+#
+# Both writes are wrapped so a failure in EITHER (missing progress-log.sh,
+# an unwritable operator-todo.md path, a worktree with no resolvable root)
+# can never fail `add` itself -- `add` always exits 0 for a well-formed
+# invocation exactly as it did before this task (see cmd_add).
+#
+# ============================================================
 
 set -u
 
@@ -214,6 +270,119 @@ _ny_md_path() {
     root="$PWD"
   fi
   printf '%s/NEEDS-YOU.md' "$root"
+}
+
+# ----------------------------------------------------------------------
+# _ny_operator_todo_path — resolve docs/operator-todo.md's path (Task 4;
+# constraint 11: durable in-repo write, MAIN-CHECKOUT root only).
+# Resolution order mirrors _ny_md_path above:
+#   1. OPERATOR_TODO_PATH env var, if set (explicit override for tests/CI).
+#   2. HARNESS_SELFTEST=1 and OPERATOR_TODO_PATH unset -> a sandboxed path
+#      under ${TMPDIR:-/tmp}/needs-you-selftest/<pid>/operator-todo.md.
+#   3. Default: "$(nl_main_checkout_root)/docs/operator-todo.md" — same
+#      resolver _ny_md_path uses, NEVER a worktree cwd (constraint 11).
+#      Falls back to `git rev-parse --show-toplevel`, then cwd, exactly like
+#      _ny_md_path's own fallback chain (defensive; keeps this function total).
+# ----------------------------------------------------------------------
+_ny_operator_todo_path() {
+  if [[ -n "${OPERATOR_TODO_PATH:-}" ]]; then
+    printf '%s' "$OPERATOR_TODO_PATH"
+    return 0
+  fi
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/needs-you-selftest/%s/operator-todo.md' "${TMPDIR:-/tmp}" "$$"
+    return 0
+  fi
+  local root=""
+  if command -v nl_main_checkout_root >/dev/null 2>&1; then
+    root="$(nl_main_checkout_root)"
+  fi
+  if [[ -z "$root" ]]; then
+    root="$(git rev-parse --show-toplevel 2>/dev/null)"
+  fi
+  if [[ -z "$root" ]]; then
+    root="$PWD"
+  fi
+  printf '%s/docs/operator-todo.md' "$root"
+}
+
+_NY_OPERATOR_TODO_AUTO_START="<!-- AUTO:START -->"
+_NY_OPERATOR_TODO_AUTO_END="<!-- AUTO:END -->"
+
+# ----------------------------------------------------------------------
+# _ny_operator_todo_ensure <path> — create docs/operator-todo.md with the
+# operator section + empty AUTO markers if it does not already exist. A
+# no-op (returns 0 immediately) if the file is already present in ANY shape
+# — this never re-templates or touches an existing file, matching the "never
+# touched by automation" guarantee for the operator section. Returns 1 (best-
+# effort signal to the caller, who must never let this fail `add`) if the
+# containing directory cannot be created.
+# ----------------------------------------------------------------------
+_ny_operator_todo_ensure() {
+  local path="$1"
+  [[ -f "$path" ]] && return 0
+  local dir; dir="$(dirname "$path")"
+  mkdir -p "$dir" 2>/dev/null || return 1
+  {
+    printf '# Operator To-Do\n\n'
+    printf 'Operator-authored items live in "## Operator items" below and are never\n'
+    printf 'touched by automation. Auto-added pointer items (mirroring a decision or\n'
+    printf 'question just appended to NEEDS-YOU.md) live between the AUTO markers and\n'
+    printf 'are mechanically appended by\n'
+    printf '`adapters/claude-code/scripts/needs-you.sh` (the `add` splice,\n'
+    printf 'ask-rooted-workstreams-p1 Task 4) — never hand-edit inside the markers;\n'
+    printf 're-appending only ever ADDS a line, never rewrites one. A pointer'\''s\n'
+    printf 'resolved/checked state is DERIVED (a later auditor pass, plan Task 12)\n'
+    printf 'from the underlying NEEDS-YOU ledger, not tracked here — entries in this\n'
+    printf 'file are an append-only log, not removed when the ledger item resolves.\n\n'
+    printf '## Operator items\n\n'
+    printf '_(add your own free-form to-do items in this section — never overwritten)_\n\n'
+    printf '%s\n' "$_NY_OPERATOR_TODO_AUTO_START"
+    printf '%s\n' "$_NY_OPERATOR_TODO_AUTO_END"
+  } > "$path" 2>/dev/null || return 1
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# _ny_operator_todo_append_pointer <id> <section> <tier> <session_id> <title>
+#   Insert one "- [ ] AUTO: ..." bullet immediately before the AUTO:END
+# marker. Best-effort: any failure (unresolvable path, unwritable dir, a
+# foreign-shaped file missing one or both markers) is swallowed and returns 0
+# — this NEVER fails the caller (`add`). Uses a plain read/printf loop (not
+# awk -v) specifically so an entry's title text can never be misinterpreted
+# as a backslash escape sequence by the insertion mechanism itself.
+# ----------------------------------------------------------------------
+_ny_operator_todo_append_pointer() {
+  local id="$1" section="$2" tier="$3" session_id="$4" title="$5"
+  local path; path="$(_ny_operator_todo_path)"
+  [[ -n "$path" ]] || return 0
+  _ny_operator_todo_ensure "$path" || return 0
+  grep -qF "$_NY_OPERATOR_TODO_AUTO_START" "$path" 2>/dev/null || return 0
+  grep -qF "$_NY_OPERATOR_TODO_AUTO_END" "$path" 2>/dev/null || return 0
+
+  local tier_txt="${tier:-untiered}"
+  local session_txt="${session_id:-unknown}"
+  local line
+  line="$(printf -- '- [ ] AUTO: %s waiting on operator — "%s" (needs-you `%s`, tier %s, session `%s`) — see NEEDS-YOU.md' \
+    "$section" "$title" "$id" "$tier_txt" "$session_txt")"
+
+  local tmp; tmp=$(mktemp "${path}.XXXXXX") || return 0
+  local inserted=0 l
+  {
+    while IFS= read -r l || [[ -n "$l" ]]; do
+      if [[ "$l" == "$_NY_OPERATOR_TODO_AUTO_END" && "$inserted" == "0" ]]; then
+        printf '%s\n' "$line"
+        inserted=1
+      fi
+      printf '%s\n' "$l"
+    done < "$path"
+  } > "$tmp" 2>/dev/null
+  if [[ "$inserted" == "1" ]]; then
+    mv "$tmp" "$path" 2>/dev/null || rm -f "$tmp"
+  else
+    rm -f "$tmp" 2>/dev/null
+  fi
+  return 0
 }
 
 _ny_ledger_file() { printf '%s/ledger.json' "$(_ny_state_dir)"; }
@@ -426,6 +595,41 @@ cmd_add() {
   _ny_write_ledger "$new"
 
   cmd_render >/dev/null
+
+  # ------------------------------------------------------------------
+  # TASK 4 CALL POINT (ask-rooted-workstreams-p1): progress-log
+  # waiting_on_operator emission + docs/operator-todo.md auto-pointer. See
+  # this file's "TASK 4 SPLICE" header comment for the full contract + the
+  # decision/question-only scoping rationale. Best-effort: wrapped so
+  # neither write can ever fail `add` (writer semantics, constraint 5).
+  # ------------------------------------------------------------------
+  case "$section" in
+    decision|question)
+      local _ny_ctx_flag="n/a"
+      if [[ "$section" == "decision" ]]; then
+        if [[ "${#lint_warnings[@]}" -eq 0 ]]; then
+          _ny_ctx_flag="present"
+        else
+          _ny_ctx_flag="missing(${lint_warnings_csv})"
+        fi
+      fi
+      local _ny_title
+      _ny_title="$(printf '%s' "$text" | head -1)"
+      [[ -n "$_ny_title" ]] || _ny_title="(untitled $section)"
+
+      local _ny_pl_summary
+      _ny_pl_summary="$(printf 'waiting on operator: %s "%s" (tier %s; §3-context %s)' \
+        "$section" "$_ny_title" "${tier:-untiered}" "$_ny_ctx_flag")"
+      local _ny_pl_cli="$_NY_SELF_DIR/progress-log.sh"
+      if [[ -f "$_ny_pl_cli" ]]; then
+        ( bash "$_ny_pl_cli" emit --type waiting_on_operator \
+            --needs-you-id "$id" --session-id "$session_id" \
+            --summary "$_ny_pl_summary" --emitter needs-you >/dev/null 2>&1 || true )
+      fi
+
+      ( _ny_operator_todo_append_pointer "$id" "$section" "$tier" "$session_id" "$_ny_title" || true )
+      ;;
+  esac
 
   # ------------------------------------------------------------------
   # O.5 CALL POINT (Wave O, NL Observability Program): best-effort phone
@@ -788,6 +992,17 @@ cmd_selftest() {
   export NEEDS_YOU_STATE_DIR="$sandbox/state"
   export NEEDS_YOU_MD_PATH="$sandbox/NEEDS-YOU.md"
   unset HARNESS_SELFTEST 2>/dev/null || true
+  # Task 4 splice sandboxing (constraint 4): HARNESS_SELFTEST is explicitly
+  # unset above (see the pre-existing comment on the prior line's intent —
+  # this self-test exercises its own explicit env-var overrides rather than
+  # the HARNESS_SELFTEST branch), so the progress-log CLI and the
+  # operator-todo path resolver would otherwise fall through to the REAL
+  # $HOME/.claude/state/progress-logs and a real-repo docs/operator-todo.md.
+  # Explicit overrides keep every scenario below sandboxed; the FROM-WORKTREE
+  # fixture (T30) later clears OPERATOR_TODO_PATH deliberately to exercise
+  # the real nl_main_checkout_root() resolution path instead.
+  export PROGRESS_LOG_STATE_DIR="$sandbox/progress-logs"
+  export OPERATOR_TODO_PATH="$sandbox/operator-todo.md"
   local pass=0 fail=0
   local -a errors=()
   ok()   { pass=$((pass+1)); echo "  PASS: $1"; }
@@ -945,6 +1160,16 @@ cmd_selftest() {
   fi
 
   rm -rf "$sandbox"
+
+  # Task 4 splice: $sandbox (holding PROGRESS_LOG_STATE_DIR/OPERATOR_TODO_PATH)
+  # was just removed above; re-point both at a fresh dir so the remaining
+  # scenarios below (T18+, several of which call cmd_add --section
+  # decision|question) don't silently resurrect the just-deleted path via
+  # pl_emit/_ny_operator_todo_ensure's own `mkdir -p`. Cleaned up at the very
+  # end of this self-test alongside sandbox6.
+  local _ny_t4_sandbox; _ny_t4_sandbox=$(mktemp -d)
+  export PROGRESS_LOG_STATE_DIR="$_ny_t4_sandbox/progress-logs"
+  export OPERATOR_TODO_PATH="$_ny_t4_sandbox/operator-todo.md"
 
   # ----------------------------------------------------------------------
   # T18-T21: NL-FINDING-035 bootstrap-migrate. T18 mirrors the EXACT live
@@ -1121,6 +1346,175 @@ cmd_selftest() {
     || fail_ "T25 expected 0 lint_warnings for a non-decision section, got $lint25"
 
   rm -rf "$sandbox6"
+
+  # ----------------------------------------------------------------------
+  # T26-T30: Task 4 splice (ask-rooted-workstreams-p1) — progress-log
+  # waiting_on_operator emission + docs/operator-todo.md auto-pointer.
+  # Fresh sandbox so line-count assertions aren't muddied by earlier
+  # fixtures (T1/T22/T23 already exercised --section decision, which now
+  # ALSO fires this splice).
+  # ----------------------------------------------------------------------
+  local sandbox7; sandbox7=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox7/state"
+  export NEEDS_YOU_MD_PATH="$sandbox7/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox7/progress-logs"
+  export OPERATOR_TODO_PATH="$sandbox7/operator-todo.md"
+
+  echo "Scenario T26: --section decision fires BOTH the waiting_on_operator progress-log event AND the operator-todo.md auto-pointer"
+  local good_text26
+  good_text26=$'### Ship the T26 fixture?\nContext lives at adapters/claude-code/scripts/needs-you.sh, ref NL-FINDING-999.\n| Option | What happens |\n|---|---|\n| Yes | ships |\nMy pick: yes.'
+  local id26
+  id26=$(cmd_add --section decision --text "$good_text26" --session "sess-t26" --tier 2)
+  local pl_file26="$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
+  if [[ -f "$pl_file26" ]] && grep -qF "\"needs_you_id\":\"$id26\"" "$pl_file26" && grep -qF '"type":"waiting_on_operator"' "$pl_file26"; then
+    ok "T26a decision add emitted a waiting_on_operator progress-log event (unlinked lane) carrying the needs-you id"
+  else
+    fail_ "T26a expected a waiting_on_operator event carrying needs_you_id=$id26 in $pl_file26"
+  fi
+  if grep -qF '§3-context present' "$pl_file26" 2>/dev/null; then
+    ok "T26b well-formed decision text's progress-log summary carries §3-context present (no lint warnings)"
+  else
+    fail_ "T26b expected the progress-log summary to carry a §3-context present flag for a well-formed decision"
+  fi
+  if [[ -f "$OPERATOR_TODO_PATH" ]] && grep -qF "needs-you \`$id26\`" "$OPERATOR_TODO_PATH" \
+     && grep -qF "AUTO: decision waiting on operator" "$OPERATOR_TODO_PATH"; then
+    ok "T26c decision add appended an AUTO pointer bullet to docs/operator-todo.md naming the needs-you id"
+  else
+    fail_ "T26c expected an AUTO pointer bullet referencing needs-you \`$id26\` in $OPERATOR_TODO_PATH"
+  fi
+
+  echo "Scenario T26d: a lint-flagged (anchorless) decision's progress-log summary carries §3-context missing(...), not a false 'present'"
+  local id26d
+  id26d=$(cmd_add --section decision --text "Ship tonight? My pick: yes." --session "sess-t26d")
+  if grep -qF "\"needs_you_id\":\"$id26d\"" "$pl_file26" 2>/dev/null && grep -q '§3-context missing(' "$pl_file26" 2>/dev/null; then
+    ok "T26d anchorless decision's progress-log summary carries §3-context missing(...) (not falsely 'present')"
+  else
+    fail_ "T26d expected §3-context missing(...) for the anchorless decision fixture"
+  fi
+
+  echo "Scenario T27: --section inflight does NOT emit a progress-log event or an operator-todo.md pointer (scoping decision: inflight is FYI, not owed by the operator)"
+  local pl_lines_before27 todo_lines_before27
+  pl_lines_before27=$(wc -l < "$pl_file26" 2>/dev/null | tr -d ' ')
+  todo_lines_before27=$(wc -l < "$OPERATOR_TODO_PATH" 2>/dev/null | tr -d ' ')
+  local id27
+  id27=$(cmd_add --section inflight --text "Some in-flight status update" --session "sess-t27")
+  local pl_lines_after27 todo_lines_after27
+  pl_lines_after27=$(wc -l < "$pl_file26" 2>/dev/null | tr -d ' ')
+  todo_lines_after27=$(wc -l < "$OPERATOR_TODO_PATH" 2>/dev/null | tr -d ' ')
+  if [[ "$pl_lines_before27" == "$pl_lines_after27" ]]; then
+    ok "T27a inflight add did not append a new progress-log line to the unlinked lane"
+  else
+    fail_ "T27a expected unlinked.jsonl line count unchanged after inflight add (before=$pl_lines_before27 after=$pl_lines_after27)"
+  fi
+  if [[ "$todo_lines_before27" == "$todo_lines_after27" ]] && ! grep -q "$id27" "$OPERATOR_TODO_PATH"; then
+    ok "T27b inflight add did not append an operator-todo.md pointer"
+  else
+    fail_ "T27b expected operator-todo.md unchanged after inflight add (before=$todo_lines_before27 after=$todo_lines_after27)"
+  fi
+
+  echo "Scenario T28: pre-existing operator-authored content above the AUTO markers survives untouched across multiple pointer appends"
+  local sandbox8; sandbox8=$(mktemp -d)
+  local todo8="$sandbox8/operator-todo.md"
+  {
+    printf '# Operator To-Do\n\n'
+    printf '## Operator items\n\n'
+    printf -- '- [ ] Buy more coffee for the office\n\n'
+    printf '%s\n' "$_NY_OPERATOR_TODO_AUTO_START"
+    printf '%s\n' "$_NY_OPERATOR_TODO_AUTO_END"
+  } > "$todo8"
+  (
+    export NEEDS_YOU_STATE_DIR="$sandbox8/state"
+    export NEEDS_YOU_MD_PATH="$sandbox8/NEEDS-YOU.md"
+    export PROGRESS_LOG_STATE_DIR="$sandbox8/progress-logs"
+    export OPERATOR_TODO_PATH="$todo8"
+    cmd_add --section decision --text "First pointer fixture" --session "sess-t28a" >/dev/null
+    cmd_add --section question --text "Second pointer fixture" --session "sess-t28b" >/dev/null
+  )
+  if grep -qF "Buy more coffee for the office" "$todo8"; then
+    ok "T28a pre-existing operator-authored line survives pointer appends"
+  else
+    fail_ "T28a operator-authored content was lost/altered by pointer appends"
+  fi
+  local auto_bullets28
+  auto_bullets28=$(awk -v s="$_NY_OPERATOR_TODO_AUTO_START" -v e="$_NY_OPERATOR_TODO_AUTO_END" '$0==s{f=1;next}$0==e{f=0}f' "$todo8" | grep -c "^- \[ \] AUTO:")
+  if [[ "$auto_bullets28" == "2" ]]; then
+    ok "T28b both pointer bullets landed between the AUTO markers (2 distinct entries, none dropped/overwritten)"
+  else
+    fail_ "T28b expected 2 AUTO bullets between the markers, found $auto_bullets28"
+  fi
+  rm -rf "$sandbox8"
+
+  echo "Scenario T29: an unwritable operator-todo.md path (parent exists as a FILE, not a dir) never fails 'add' (writer semantics, constraint 5)"
+  local sandbox9; sandbox9=$(mktemp -d)
+  : > "$sandbox9/blocked"
+  local rc29
+  (
+    export NEEDS_YOU_STATE_DIR="$sandbox9/state"
+    export NEEDS_YOU_MD_PATH="$sandbox9/NEEDS-YOU.md"
+    export PROGRESS_LOG_STATE_DIR="$sandbox9/progress-logs"
+    export OPERATOR_TODO_PATH="$sandbox9/blocked/operator-todo.md"
+    cmd_add --section decision --text "Should still succeed despite a blocked operator-todo path" --session "sess-t29" >/dev/null
+  )
+  rc29=$?
+  if [[ "$rc29" == "0" ]]; then
+    ok "T29 add still exits 0 when the operator-todo.md path is unwritable (never blocks)"
+  else
+    fail_ "T29 add exited non-zero ($rc29) when the operator-todo.md path was unwritable — must never block"
+  fi
+  rm -rf "$sandbox9"
+
+  echo "Scenario T30: FROM-WORKTREE fixture (constraint 11) — operator-todo.md pointer resolves to the MAIN checkout, never the worktree cwd, via nl_main_checkout_root"
+  (
+    set -e
+    local repo_dir="$sandbox7/t30-repo" wt_dir="$sandbox7/t30-wt"
+    mkdir -p "$repo_dir"
+    ( cd "$repo_dir" && git init -q . && git config core.hooksPath "" \
+        && git config user.email "t@example.test" && git config user.name "T" \
+        && echo x > f && git add f && git commit -q -m init ) >/dev/null 2>&1
+    ( cd "$repo_dir" && git worktree add -q -b ny-selftest-wt "$wt_dir" ) >/dev/null 2>&1
+
+    # Isolate ledger/progress-log state from the real machine WITHOUT
+    # HARNESS_SELFTEST's short-circuit (that would skip the real
+    # nl_main_checkout_root resolution this scenario exists to prove) and
+    # WITHOUT OPERATOR_TODO_PATH set (clearing it IS the point: the real
+    # resolver must run and decide where the pointer lands).
+    local wt_ny_state="$sandbox7/t30-ny-state" wt_pl_state="$sandbox7/t30-pl-state"
+    mkdir -p "$wt_ny_state" "$wt_pl_state"
+
+    ( cd "$wt_dir" \
+        && HARNESS_SELFTEST=0 \
+           NEEDS_YOU_STATE_DIR="$wt_ny_state" \
+           NEEDS_YOU_MD_PATH="$wt_dir/NEEDS-YOU.md" \
+           PROGRESS_LOG_STATE_DIR="$wt_pl_state" \
+           OPERATOR_TODO_PATH="" \
+           bash "$_NY_SELF_DIR/needs-you.sh" add --section decision \
+             --text "From-worktree fixture: the operator-todo pointer must land in the MAIN checkout" \
+             --session "sess-t30" >/dev/null 2>&1 )
+
+    local expected_main="$repo_dir/docs/operator-todo.md"
+    if [[ -f "$expected_main" ]] && grep -q "sess-t30" "$expected_main"; then
+      echo "  PASS: T30a operator-todo.md pointer landed under the MAIN checkout ($expected_main)"
+    else
+      echo "  FAIL: T30a expected $expected_main to exist and reference sess-t30" >&2
+      exit 1
+    fi
+    local leaked_in_worktree="$wt_dir/docs/operator-todo.md"
+    if [[ ! -f "$leaked_in_worktree" ]]; then
+      echo "  PASS: T30b operator-todo.md did NOT land under the worktree cwd ($leaked_in_worktree absent)"
+    else
+      echo "  FAIL: T30b operator-todo.md incorrectly landed under the worktree ($leaked_in_worktree exists)" >&2
+      exit 1
+    fi
+    ( cd "$repo_dir" && git worktree remove --force "$wt_dir" >/dev/null 2>&1 || true )
+    ( cd "$repo_dir" && git branch -D ny-selftest-wt >/dev/null 2>&1 || true )
+  )
+  if [[ "$?" == "0" ]]; then
+    ok "T30: from-worktree operator-todo.md pointer fixture (see T30a/T30b lines above)"
+  else
+    fail_ "T30: from-worktree operator-todo.md pointer fixture failed (see T30a/T30b lines above)"
+  fi
+
+  rm -rf "$sandbox7" "$_ny_t4_sandbox"
 
   echo ""
   echo "RESULT: $pass passed, $fail failed"
