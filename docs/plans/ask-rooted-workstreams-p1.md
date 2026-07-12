@@ -494,7 +494,7 @@ Serialization added in round 1:
   **Integration points:**
   - Old conv-tree card/popup patterns salvaged from git history `952c9d6`/`e7393bc` (read-only reference — attic code not resurrected wholesale)
   - Layout per Q9 — the ux-designer round-1 ruling LANDED 2026-07-10 and is BINDING (encoded in Task 16): To-Do at the top of a persistent right sidebar with independent scroll + header count, Backlog collapsed below it (top-N by tier), ask tree as the main column; below ~1200px the sidebar stacks under the tree rather than compressing cards; Harness Health as a tab (Team tab hidden in P1)
-- [ ] 14. [parallel] My To-Do pane: new `web/todo.js` + `GET/POST /api/todo`
+- [x] 14. [parallel] My To-Do pane: new `web/todo.js` + `GET/POST /api/todo`
   reading/writing `docs/operator-todo.md` (NEW file: operator free-form section +
   marker-delimited auto-pointer section) — operator items: add/edit/check freely
   from the UI; pointer items: rendered with their §3 context, click navigates to

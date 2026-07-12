@@ -142,6 +142,43 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
    NOT spent here; drift badges and waiting counts use --warn/--info
    (text+color, never color-only, per the a11y baseline this file already
    states at the top). */
+/* ---- ws-layout: ask tree (main column) + sidebar (My To-Do / Backlog).
+   Placeholder assembly for Task 14 — Task 16 "Layout integration" owns the
+   FINAL responsive grid + Harness Health tab per the binding ux-designer
+   round-1 ruling (independent-scroll sidebar, header count, stacks under
+   the tree below ~1200px — the breakpoint below matches that ruling
+   verbatim). */
+.ws-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  max-width: 1600px;
+  margin: 12px auto 0;
+  padding: 0 16px;
+}
+.ws-layout .ask-tree-section {
+  flex: 1 1 0;
+  min-width: 0; /* allow the flex child to shrink below its content's natural width */
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+.sidebar {
+  flex: 0 0 320px;
+  width: 320px;
+  position: sticky;
+  top: 68px; /* clears the sticky header */
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+@media (max-width: 1200px) {
+  .ws-layout { flex-direction: column; }
+  .sidebar { position: static; max-height: none; width: 100%; flex: none; }
+}
+
 .ask-tree-section {
   max-width: 1400px;
   margin: 12px auto 0;
@@ -273,6 +310,97 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
    specificity). Every flex-styled element asks.js ever toggles via
    `.hidden` needs this explicit override. */
 .ask-lifecycle-actions[hidden], .ask-merge-chooser[hidden], .ask-feedback-row[hidden] { display: none; }
+
+/* ============================================================
+   My To-Do pane (ask-rooted-workstreams-p1, Task 14). Reuses the shared
+   .pane/.pane-head/.pane-title/.pane-body classes above for visual
+   continuity with the six-question cockpit; .todo-section only adds the
+   sidebar-specific bits (independent scroll body).
+   ============================================================ */
+.todo-count { font-size: 11px; color: var(--muted); }
+.todo-section .pane-body { display: flex; flex-direction: column; gap: 8px; }
+
+.todo-status { padding: 4px 0; }
+
+.todo-global-feedback {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+}
+.todo-global-feedback.todo-feedback-ok { color: var(--ok); }
+.todo-global-feedback.todo-feedback-error { color: var(--err); background: color-mix(in srgb, var(--err) 10%, var(--bg)); }
+/* [hidden]-override footgun (see the ask-lifecycle note above — this file's
+   own established regression: `display` on a class beats the UA [hidden]
+   default at equal specificity). */
+.todo-global-feedback[hidden] { display: none; }
+
+.todo-add-form { display: flex; gap: 6px; }
+.todo-add-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+  min-height: 24px;
+}
+.todo-edit-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+
+.todo-list { display: flex; flex-direction: column; gap: 6px; }
+.todo-empty { padding: 6px 0; }
+
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel2);
+}
+
+/* ---- operator items: freely editable ---- */
+.todo-checkbox {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  margin-top: 1px;
+}
+.todo-item-text { flex: 1; font-size: 13px; align-self: center; word-break: break-word; }
+.todo-item-text.todo-item-checked { color: var(--muted); text-decoration: line-through; }
+.todo-item-text[hidden], .todo-edit-btn[hidden] { display: none; }
+
+/* ---- pointer items: DERIVED, never a checkbox lookalike (review round 1:
+   lock/auto glyph, aria-disabled, tooltip; navigation is the PRIMARY
+   affordance, distinct visual treatment from operator rows). ---- */
+.todo-item-pointer { background: var(--panel); border-style: dashed; }
+.todo-item-pointer.todo-item-resolved { opacity: 0.7; }
+.todo-pointer-glyph { font-size: 15px; line-height: 1; margin-top: 2px; cursor: default; }
+.todo-pointer-body { flex: 1; min-width: 0; }
+.todo-pointer-title { font-size: 13px; }
+.todo-pointer-link { color: var(--info); text-decoration: underline; }
+.todo-pointer-preview {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  margin-top: 2px;
+}
+.todo-pointer-meta { font-size: 11px; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.02em; }
+.todo-override-btn { align-self: center; }
 
 /* ---- cockpit grid: six panes, Q2 first (attention semantics) ---- */
 #cockpit {

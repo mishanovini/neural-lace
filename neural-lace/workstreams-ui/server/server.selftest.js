@@ -964,6 +964,143 @@ async function main() {
       'latencyMs=' + latencyMs);
     await cyclePromise2;
 
+    // ========================================================
+    // Ask-rooted-workstreams-p1 Task 14 — "My To-Do pane" scenarios (S29+).
+    // Reuses the SAME sandboxed `operatorTodoPath`/`nyMdPath`/`nyStateDir`
+    // (constraint 4) the Task 11/12 fixture section above already set up —
+    // S22b's REAL needs-you.sh invocations already appended two AUTO pointer
+    // bullets (goodNeedsYouId, badNeedsYouId) into this file, so S29 reads
+    // real mechanism-written state, not a hand-typed sample.
+    // ========================================================
+    const todoGet = () => httpGet(PORT, '/api/todo');
+    const todoPost = (body) => httpPostJson(PORT, '/api/todo', body);
+
+    const todoS29 = await todoGet();
+    ok('S29 GET /api/todo returns ok:true with the two REAL needs-you.sh pointer bullets from S22b (no UI action taken)',
+      todoS29.json && todoS29.json.ok === true && Array.isArray(todoS29.json.pointer_items) && todoS29.json.pointer_items.length === 2,
+      JSON.stringify(todoS29.json));
+    ok('S29b operator_items is empty (nothing added yet)',
+      todoS29.json && Array.isArray(todoS29.json.operator_items) && todoS29.json.operator_items.length === 0);
+    const goodPointer = todoS29.json && todoS29.json.pointer_items.find((p) => p.needs_you_id === goodNeedsYouId);
+    ok('S29c the good pointer carries its §3 title (first line of the needs-you.sh --text) and full body from the REAL rendered NEEDS-YOU.md',
+      goodPointer && goodPointer.title === 'Ship the fixture tonight?' && /My pick: ship tonight\./.test(goodPointer.body || ''),
+      JSON.stringify(goodPointer));
+    ok('S29d the good pointer is unchecked, not an operator override, and carries an ABSOLUTE raw_link to NEEDS-YOU.md',
+      goodPointer && goodPointer.checked === false && goodPointer.operator_override === false &&
+      typeof goodPointer.raw_link === 'string' && payloadSchema.isAbsoluteHref(goodPointer.raw_link) && goodPointer.raw_link.indexOf('NEEDS-YOU.md') !== -1,
+      JSON.stringify(goodPointer));
+    ok('S29e session_id/tier/section parsed from the real bullet (session=sess-orig-1, tier=untiered since S22b passed none)',
+      goodPointer && goodPointer.session_id === 'sess-orig-1' && goodPointer.tier === 'untiered' && goodPointer.section === 'decision',
+      JSON.stringify(goodPointer));
+
+    // ---- S30/S31/S32: operator add/toggle/edit round-trip, each persisted
+    // to the REAL file (never a parallel store) and visible on the next GET.
+    const addRes = await todoPost({ action: 'add', text: 'buy more coffee' });
+    ok('S30 POST add appends an operator item and returns its index',
+      addRes.json && addRes.json.ok === true && addRes.json.index === 0 && addRes.json.text === 'buy more coffee',
+      JSON.stringify(addRes.json));
+    const todoAfterAdd = fs.readFileSync(operatorTodoPath, 'utf8');
+    ok('S30b the REAL file now contains the operator bullet in the Operator items section (before AUTO:START)',
+      /- \[ \] buy more coffee/.test(todoAfterAdd) && todoAfterAdd.indexOf('- [ ] buy more coffee') < todoAfterAdd.indexOf('<!-- AUTO:START -->'),
+      todoAfterAdd);
+
+    const toggleRes = await todoPost({ action: 'toggle', index: 0 });
+    ok('S31 POST toggle flips the operator item to checked', toggleRes.json && toggleRes.json.ok === true && toggleRes.json.checked === true, JSON.stringify(toggleRes.json));
+    const todoGetAfterToggle = await todoGet();
+    ok('S31b GET reflects the persisted checked state (file is truth, UI is a view)',
+      todoGetAfterToggle.json && todoGetAfterToggle.json.operator_items[0] && todoGetAfterToggle.json.operator_items[0].checked === true);
+
+    const editRes = await todoPost({ action: 'edit', index: 0, text: 'buy even more coffee' });
+    ok('S32 POST edit changes the text and PRESERVES the checked state', editRes.json && editRes.json.ok === true && editRes.json.text === 'buy even more coffee' && editRes.json.checked === true, JSON.stringify(editRes.json));
+
+    // ---- S33: mistake recovery — an out-of-range index is a named,
+    // recoverable 404, never a crash or a silent no-op.
+    const toggleBad = await todoPost({ action: 'toggle', index: 99 });
+    ok('S33 toggle on an out-of-range index is a clean 404 with a recoverable message', toggleBad.status === 404 && toggleBad.json && toggleBad.json.ok === false);
+    const editBad = await todoPost({ action: 'edit', index: 99, text: 'x' });
+    ok('S33b edit on an out-of-range index is a clean 404', editBad.status === 404 && editBad.json && editBad.json.ok === false);
+
+    // ---- S34 NEGATIVE FIXTURE (anti-noise, constraint 1): adding text that
+    // mentions a gate/hook identifier is REJECTED at write time (never
+    // reaches the durable file), mirroring S27a/S27c's payload-level
+    // negative-fixture discipline for the write path instead of the read
+    // path.
+    const beforeBadAdd = fs.readFileSync(operatorTodoPath, 'utf8');
+    const badAdd = await todoPost({ action: 'add', text: 'check work-integrity-gate output' });
+    ok('S34 NEGATIVE FIXTURE: adding text with a denylisted gate identifier is rejected (400, never written)',
+      badAdd.status === 400 && badAdd.json && badAdd.json.ok === false, JSON.stringify(badAdd.json));
+    const afterBadAdd = fs.readFileSync(operatorTodoPath, 'utf8');
+    ok('S34b the rejected text never reached the durable file', afterBadAdd === beforeBadAdd);
+
+    // ---- S35: the constraint-7 operator-override escape hatch ("Mark
+    // handled" — for when the auditor's ledger-derived resolution can't see
+    // a decision that WAS actually resolved).
+    const overrideRes = await todoPost({ action: 'pointer_override', needs_you_id: goodNeedsYouId });
+    ok('S35 POST pointer_override marks the pointer checked + operator_override:true',
+      overrideRes.json && overrideRes.json.ok === true && overrideRes.json.checked === true && overrideRes.json.operator_override === true,
+      JSON.stringify(overrideRes.json));
+    const todoAfterOverride = fs.readFileSync(operatorTodoPath, 'utf8');
+    ok('S35b the REAL file carries the checked box + the operator-override marker on the exact pointer line',
+      new RegExp('- \\[x\\] AUTO: .*' + goodNeedsYouId + '.*\\(marked handled by operator, ').test(todoAfterOverride),
+      todoAfterOverride);
+    const overrideAgain = await todoPost({ action: 'pointer_override', needs_you_id: goodNeedsYouId });
+    ok('S35c overriding an already-handled pointer is a clean 409 (mistake recovery: no silent double-write)', overrideAgain.status === 409 && overrideAgain.json && overrideAgain.json.ok === false);
+
+    // ---- S35d (Prove-it-works step 5): the REAL Task 12 auditor cycle
+    // NEVER reverts/fights the operator override — autoCheckOperatorTodo
+    // only ever flips an UNCHECKED bullet (see its own header); this pointer
+    // is already checked, so a full real auditor cycle (even one that
+    // thinks the id is still "open" ground truth) must leave the file byte
+    // -for-byte unchanged.
+    await auditor.runCycle();
+    const todoAfterAuditorCycle = fs.readFileSync(operatorTodoPath, 'utf8');
+    ok('S35d a REAL auditor.runCycle() never reverts the operator-override (auditor "respects, never fights" by construction, not special-casing)',
+      todoAfterAuditorCycle === todoAfterOverride, todoAfterAuditorCycle);
+
+    // ---- S36: concurrent-writer safety (Integration point: "Concurrent
+    // writes (session appends pointer while operator edits) — marker-
+    // delimited sections + atomic rewrite of only the touched section").
+    // Interleaves a SECOND real needs-you.sh append (an independent bash
+    // read-modify-write of the SAME file) with this test's own operator
+    // writes above, then verifies every prior write (both operator items AND
+    // both original pointers AND the override) survived untouched, and the
+    // new pointer is ALSO present — proving the two writers' marker-scoped
+    // sections never clobber each other across sequential interleaving (the
+    // achievable guarantee this codebase's atomic-rewrite-no-locking model
+    // provides; a true simultaneous-write race is last-writer-wins by
+    // design, same accepted tradeoff as Task 12's autoCheckOperatorTodo).
+    const thirdRes = spawnSync(nyBash, [needsYouSh, 'add', '--section', 'question', '--text', 'Third fixture pointer for the concurrency check', '--session', 'sess-smoke-3'], { env: nyEnv, encoding: 'utf8' });
+    const thirdNeedsYouId = String(thirdRes.stdout || '').trim();
+    ok('S36 (setup) a THIRD real needs-you.sh add produced a new NY- id', /^NY-/.test(thirdNeedsYouId) && thirdNeedsYouId !== goodNeedsYouId && thirdNeedsYouId !== badNeedsYouId, thirdNeedsYouId);
+
+    const todoS36 = await todoGet();
+    const opItems36 = (todoS36.json && todoS36.json.operator_items) || [];
+    const ptrItems36 = (todoS36.json && todoS36.json.pointer_items) || [];
+    ok('S36b the operator item survives the interleaved needs-you.sh write, unchanged',
+      opItems36.length === 1 && opItems36[0].text === 'buy even more coffee' && opItems36[0].checked === true, JSON.stringify(opItems36));
+    ok('S36c all THREE pointers are present (good override + bad + the new third), none clobbered by the other writer',
+      ptrItems36.length === 3 &&
+      ptrItems36.some((p) => p.needs_you_id === goodNeedsYouId && p.checked === true && p.operator_override === true) &&
+      ptrItems36.some((p) => p.needs_you_id === badNeedsYouId && p.checked === false) &&
+      ptrItems36.some((p) => p.needs_you_id === thirdNeedsYouId && p.checked === false && p.section === 'question'),
+      JSON.stringify(ptrItems36));
+
+    // ---- S37 NEGATIVE FIXTURE (anti-noise, read path): a foreign/hand-
+    // edited line in the Operator items section carrying a denylisted
+    // identifier fails GET's defensive scan (500, never leaks to the UI) —
+    // this exercises the SAME containsDenylistedIdentifier scanner
+    // /api/asks already relies on, on the read side this time. Runs last
+    // (this test's own tmp dir is discarded in `finally` right after) so no
+    // restore is needed.
+    const foreignText = fs.readFileSync(operatorTodoPath, 'utf8').replace(
+      '<!-- AUTO:START -->',
+      '- [ ] check the work-integrity-gate output\n<!-- AUTO:START -->'
+    );
+    fs.writeFileSync(operatorTodoPath, foreignText);
+    const todoS37 = await todoGet();
+    ok('S37 NEGATIVE FIXTURE: GET /api/todo fails closed (500, diagnostic error) on a foreign line carrying a gate identifier, never leaking it',
+      todoS37.status === 500 && todoS37.json && todoS37.json.ok === false, JSON.stringify(todoS37.json));
+
   } finally {
     server.close();
     cache.stop();

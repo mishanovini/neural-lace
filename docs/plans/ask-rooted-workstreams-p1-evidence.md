@@ -816,3 +816,89 @@ row record the redesign. Self-demonstrates by backfilling its own ask-20260710-w
   satisfies decisions-index-gate's atomicity (record + row staged together) without reflowing.
 - Backfill verbatim ref (docs/reviews/2026-07-10-ask-rooted-workstreams-design-sketch.md#1) is canonical
   for ask-20260710-workstreams-rebuild per the plan header bootstrap note.
+
+## Task 7 — Manifest writer family + doctor-green (MECHANICAL HALF ONLY) (merged: master `6832eba`; builder commit `2a60e3f`)
+
+> NOTE: Task 7's Done-when has TWO halves. This evidence + the checkbox cover ONLY the
+> mechanical half (manifest.json + doctor-green). The SECOND half — a mandatory
+> harness-reviewer (Fable) pass over the Tasks 1,3-6 splice diffs with findings folded in —
+> is OUTSTANDING (see FABLE-HANDOFF.md). Task 7's checkbox stays UNFLIPPED until the Fable
+> review lands and its findings are folded in.
+
+**Spec meaning:** Task 7 requires one `manifest.json` entry `id: progress-log, kind: writer`
+with `honest_status` naming every splice site verbatim (session-heartbeat is the template
+shape), plus `doctor --quick` staying GREEN. Dispatch scoped this builder to the
+manifest+doctor mechanical half only — the harness-reviewer pass over Tasks 1,3-6 splice
+diffs runs separately on Fable (untouched here).
+
+**Edge cases covered:** (1) Alphabetical insertion — verified all four new ids
+(`ask-registry`, `dispatch-provenance`, `merge-scan`, `progress-log`) sort against their
+neighbors; confirmed the ONE pre-existing ordering anomaly
+(`workstreams-extract-pending`/`workstreams-emitters`) predates this diff (pure-addition,
+0 deletions near it). (2) Schema conformance — `hooks: []`/`events: []` for non-hook-file
+writers avoids tripping the disk-coverage check (which only scans `hooks/*.sh` top-level).
+(3) Doc-generation drift — `gen-architecture-doc.sh --check` surfaced a RED; `git stash`
+confirmed baseline GREEN pre-edit, so the drift was this edit's to fix, regenerated via
+`--gen`.
+
+**Edge cases NOT covered:** Did not resolve the other 8 doctor REDs (manifest-freshness vs
+live ~/.claude, obs-scheduled-tasks, obs-consumer-map `supervisor-pass`, budget-chains,
+budget-active-plans, budget-worktrees-branches) — all confirmed pre-existing (present in
+both before/after doctor runs, unrelated to progress-log manifest content) and outside
+`manifest.json`-only file ownership. Did not exercise splice functions' runtime behavior —
+Task 7 is `Verification: mechanical`; Tasks 1-6/9 functional evidence landed with those
+tasks.
+
+**Assumptions:** `manifest-freshness` RED against live `~/.claude` is structurally expected
+for any unmerged branch (per CLAUDE.md: harness changes durable only once MERGED TO MASTER);
+did not run `install.sh` against live config from a WIP worktree (would push unreviewed
+content to the shared machine ahead of merge). "doctor stays GREEN" read as "no NEW RED
+relative to baseline," confirmed by diffing doctor output before/after.
+
+Evidence: `manifest-check.sh` GREEN — 116 entries, 103 hooks covered, 0 warn (up from 112
+pre-edit); self-test 12/12; `node -e "JSON.parse(...)"` valid JSON. Integrated on master at
+`274c9b6`→rebased→`6832eba`.
+
+## Task 14 — My To-Do sidebar pane (merged: master TBD; builder commit `a9017ae`; integ `b23905c`)
+
+**Spec meaning:** Task 14 requires ONE To-Do list in a new sidebar pane built from TWO
+sources in `docs/operator-todo.md`: the `## Operator items` section (freely add/edit/check,
+writing back only there) and the marker-delimited AUTO section whose bullets `needs-you.sh`'s
+Task 4 splice (`_ny_operator_todo_append_pointer`) appends and whose checked state is DERIVED
+exclusively by Task 12's auditor (`autoCheckOperatorTodo`) — this task RENDERS that
+derivation, never computes it, plus adds ONE operator-initiated escape hatch ("Mark handled")
+for when the auditor can't see a real resolution. Server: `GET`/`POST /api/todo` in
+`server.js`'s routing chain, resolving the path like `needsYouMdPath`/auditor.js's
+`operatorTodoPath`. Client: new `web/todo.js` (same IIFE/no-op-if-root-missing convention as
+`asks.js`), four UI states, mounted via a sidebar wrapper in `web/index.html`.
+
+**Edge cases covered:** absent file → GET positive empty state vs POST `ensureOperatorTodoFile`
+(byte-identical template to `_ny_operator_todo_ensure`); out-of-range index → named 404
+(S33/S33b); anti-noise on both write (`containsDenylistedIdentifier` reject, S34) and read
+(hand-injected foreign line, S37); double-override → 409 (S35c); auditor-never-reverts proven
+against real `auditor.runCycle()` (S35d); real concurrent-writer interleaving via a second
+`needs-you.sh` process (S36); `raw_link` re-checked with `payloadSchema.isAbsoluteHref`
+before the wire.
+
+**Edge cases NOT covered:** true simultaneous (same-millisecond) writes remain
+last-writer-wins — no locking anywhere in this codebase (`autoCheckOperatorTodo` has the
+identical exposure); only sequential interleaving tested. Deletion of operator items
+intentionally absent — spec names only add/edit/check. An operator hand-reordering lines
+between a GET and a subsequent toggle/edit POST can make an in-range index target the wrong
+line — accepted limitation of index-based addressing for a solo-operator local tool.
+
+**Assumptions:** the pointer bullet's embedded title (first line of `--text`) is sufficient §3
+context once a decision drops out of NEEDS-YOU.md's open-decisions section, with
+`readNeedsYouDecisionsResult` cross-reference as best-effort enrichment. "Navigate to the
+ask's waiting item" (P1 scope) satisfied by an absolute link to the raw NEEDS-YOU.md file,
+mirroring `buildWaitingItems`'s defect-form `raw_link` precedent, since no per-decision anchor
+exists and `asks.js` is off-limits. Task 16 owns the FINAL sidebar layout — the
+`.ws-layout`/`.sidebar` CSS here is a working, visible placeholder Task 16 refines.
+
+Evidence: builder direct-HTTP proof against sandbox (CTREE_PORT=17811) — add/toggle/edit
+round-trip + persist, real `needs-you.sh add` produced an AUTO pointer surfaced with correct
+§3-body/section/tier/session/absolute raw_link, override flips box + real auditor cycle left
+file byte-identical, all error paths named/recoverable. Orchestrator independent smoke
+(CTREE_PORT=17812): `GET /api/todo` → HTTP 200 `{"ok":true,...,"operator_items":[],
+"pointer_items":[]}`; `todo.js` → HTTP 200. Automated S29-S37 blocked upstream by the
+pre-existing `S22b→S23 ECONNRESET` (task_e41fc644), before any Task 14 code path runs.
