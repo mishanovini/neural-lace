@@ -15,7 +15,9 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const net = require('net');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const payloadSchema = require('./payload-schema.js');
+const projects = require('../config/projects.js');
 
 let PASSED = 0, FAILED = 0;
 function ok(name, cond, detail) {
@@ -53,8 +55,32 @@ function httpPost(port, urlPath) {
   });
 }
 
+function httpPostJson(port, urlPath, obj) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(obj || {});
+    const req = http.request({
+      host: '127.0.0.1', port: port, path: urlPath, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+    }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        let parsed = null;
+        try { parsed = JSON.parse(body); } catch (_) {}
+        resolve({ status: res.statusCode, body: body, json: parsed });
+      });
+    });
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+
 async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'o4-server-st-'));
+  // Hoisted (not `const` inside the try block below) so the `finally`
+  // block's cleanup can see it regardless of where inside `try` it's
+  // assigned — see the Task 11 ask-rooted-workstreams fixture section.
+  let planAbsPath;
 
   // ---- Fixture NL_BIN stub: a bash script that answers every subcommand
   // this server calls with a fixed, schema-valid JSON payload, and lets
@@ -584,10 +610,290 @@ async function main() {
       ' err=' + String(smokeResult.errOut).slice(0, 200).replace(/\n/g, ' | '));
     console.log('  S22 smoke evidence: ' + String(smokeResult.out).trim());
 
+    // ========================================================
+    // Ask-rooted-workstreams-p1 Task 11 — "Server read surface" scenarios
+    // (S23+). Sandboxed under this test's own `tmp` dir via the SAME
+    // env-var overrides the shell writer libs use (PROGRESS_LOG_STATE_DIR /
+    // ASK_REGISTRY_STATE_DIR / NEEDS_YOU_MD_PATH / DISPATCH_PROVENANCE_STATE_DIR
+    // / HEARTBEAT_STATE_DIR) — constraint 4 sandboxing, never the real
+    // machine state.
+    // ========================================================
+    const askTmp = path.join(tmp, 'ask-p1');
+    const plStateDir = path.join(askTmp, 'progress-logs');
+    const arStateDir = path.join(askTmp, 'ar-state');
+    const dpStateDir = path.join(askTmp, 'dispatch-provenance');
+    const hbStateDir = path.join(askTmp, 'heartbeats');
+    const nyStateDir = path.join(askTmp, 'ny-state');
+    const nyMdPath = path.join(askTmp, 'NEEDS-YOU.md');
+    const fixtureRepoDir = path.join(askTmp, 'fixture-repo');
+    fs.mkdirSync(plStateDir, { recursive: true });
+    fs.mkdirSync(arStateDir, { recursive: true });
+    fs.mkdirSync(dpStateDir, { recursive: true });
+    fs.mkdirSync(hbStateDir, { recursive: true });
+    fs.mkdirSync(nyStateDir, { recursive: true });
+    fs.mkdirSync(path.join(fixtureRepoDir, 'docs', 'plans'), { recursive: true });
+
+    process.env.PROGRESS_LOG_STATE_DIR = plStateDir;
+    process.env.ASK_REGISTRY_STATE_DIR = arStateDir;
+    process.env.DISPATCH_PROVENANCE_STATE_DIR = dpStateDir;
+    process.env.HEARTBEAT_STATE_DIR = hbStateDir;
+    process.env.NEEDS_YOU_MD_PATH = nyMdPath;
+
+    // ---- fixture plan file (ground truth for plan_progress derivation).
+    // Deliberately placed under the REAL self-repo root (config/projects.js's
+    // stable `neural-lace` alias — projects.selfRepoRoot()), NOT the
+    // sandboxed temp dir: this is the ONLY way to exercise plan_doc's
+    // {project, path} resolution positively (it resolves through the REAL
+    // projects.js map, which only knows registered project roots — an
+    // arbitrary temp dir is correctly unresolvable, per that function's own
+    // documented behavior). Cleaned up in the `finally` block below since it
+    // lives outside `tmp`.
+    const planRepoRoot = projects.selfRepoRoot();
+    const fixtureSlug = 'selftest-task11-fixture-plan';
+    planAbsPath = path.join(planRepoRoot, 'docs', 'plans', fixtureSlug + '.md');
+    fs.writeFileSync(planAbsPath, [
+      '# Plan: Fixture',
+      '',
+      '- [x] 1. Task one done.',
+      '- [ ] 2. Task two dispatched, not yet done (in-flight).',
+      '- [ ] 3. Task three not started.',
+      '',
+    ].join('\n'));
+
+    // ---- fixture ask-registry.jsonl (raw lines per the documented FOLD
+    // CONTRACT: ask-fix-1 active w/ a linked plan; ask-fix-2 completed
+    // (done); ask-fix-3 active planless (defect-form waiting item);
+    // ask-fix-4 active planless (lifecycle endpoint round-trip)).
+    function regLine(fields) {
+      return JSON.stringify(Object.assign({
+        ask_id: '', record_type: '', ts: '', user: 't', machine: 'm', repo: '', project: '',
+        summary: '', verbatim_ref: '', origin_session: '', status: '', plan_slug: '',
+        session_id: '', resumed_from: '', merged_into: '', emitter: 'ask-registry',
+      }, fields));
+    }
+    const registryLines = [
+      regLine({ ask_id: 'ask-fix-1', record_type: 'created', ts: '2026-07-01T00:00:00Z', repo: planRepoRoot, project: 'demo-project', summary: 'Fixture ask one', origin_session: 'sess-orig-1', status: 'active' }),
+      regLine({ ask_id: 'ask-fix-1', record_type: 'plan_linked', ts: '2026-07-01T00:01:00Z', plan_slug: fixtureSlug }),
+      regLine({ ask_id: 'ask-fix-2', record_type: 'created', ts: '2026-07-02T00:00:00Z', project: 'demo-project', summary: 'Fixture ask two (completed)', status: 'active' }),
+      regLine({ ask_id: 'ask-fix-2', record_type: 'status_change', ts: '2026-07-03T00:00:00Z', status: 'done', emitter: 'auditor' }),
+      regLine({ ask_id: 'ask-fix-3', record_type: 'created', ts: '2026-07-01T05:00:00Z', project: 'other-project', summary: 'Fixture ask three', status: 'active' }),
+      regLine({ ask_id: 'ask-fix-4', record_type: 'created', ts: '2026-07-01T06:00:00Z', project: 'demo-project', summary: 'Fixture ask four (lifecycle)', status: 'active' }),
+    ].join('\n') + '\n';
+    fs.writeFileSync(path.join(arStateDir, 'ask-registry.jsonl'), registryLines);
+
+    // ---- fixture NEEDS-YOU.md via the REAL needs-you.sh (Integration
+    // point: "parser fixture pinned against needs-you.sh --self-test
+    // output, not a hand-written sample" — this is that same real render
+    // path, not a hand-typed markdown sample). Uses derive-cache.js's
+    // bashBin() (absolute-path bash, not a bare 'bash' spawn) for the same
+    // minimal-env robustness every other child spawn in this file relies on.
+    const needsYouSh = path.join(__dirname, '..', '..', '..', 'adapters', 'claude-code', 'scripts', 'needs-you.sh');
+    let goodNeedsYouId = '', badNeedsYouId = '';
+    if (fs.existsSync(needsYouSh)) {
+      const dcForNy = require('./derive-cache.js');
+      const nyBash = dcForNy.bashBin();
+      const nyEnv = Object.assign({}, process.env, { NEEDS_YOU_STATE_DIR: nyStateDir, NEEDS_YOU_MD_PATH: nyMdPath });
+      const goodText = 'Ship the fixture tonight?\nThe fixture (docs/plans/demo-plan-fixture.md) has been green for 3 days; shipping now vs later only changes who is on call.\nMy pick: ship tonight.';
+      const goodRes = spawnSync(nyBash, [needsYouSh, 'add', '--section', 'decision', '--text', goodText, '--session', 'sess-orig-1', '--link', 'https://example.test/pr/1'], { env: nyEnv, encoding: 'utf8' });
+      goodNeedsYouId = String(goodRes.stdout || '').trim();
+      const badRes = spawnSync(nyBash, [needsYouSh, 'add', '--section', 'decision', '--text', 'x', '--session', 'sess-orig-1'], { env: nyEnv, encoding: 'utf8' });
+      badNeedsYouId = String(badRes.stdout || '').trim();
+    }
+    ok('S22b (setup) needs-you.sh fixture produced a good and a bad NY- id via the REAL script',
+      /^NY-/.test(goodNeedsYouId) && /^NY-/.test(badNeedsYouId) && goodNeedsYouId !== badNeedsYouId,
+      'good=' + goodNeedsYouId + ' bad=' + badNeedsYouId);
+
+    // ---- fixture progress-log events for ask-fix-1 ----
+    function mkEvent(overrides) {
+      return JSON.stringify(Object.assign({
+        v: 1, event_id: 'ev-' + Math.random().toString(36).slice(2), ts: '2026-07-01T00:00:00Z',
+        ask_id: 'ask-fix-1', type: '', plan_slug: '', task_id: '', sha: '', needs_you_id: '',
+        session_id: '', summary: '', evidence_link: '', emitter: 'plan-lifecycle', provenance: 'known',
+        user: 't', machine: 'm', repo: fixtureRepoDir,
+      }, overrides));
+    }
+    const ask1Events = [
+      mkEvent({ type: 'task_started', plan_slug: fixtureSlug, task_id: '1', session_id: 'sess-orch-1', summary: 'task 1 dispatched', ts: '2026-07-01T00:05:00Z' }),
+      mkEvent({ type: 'task_done', plan_slug: fixtureSlug, task_id: '1', sha: 'abc1234', evidence_link: planAbsPath, summary: 'task 1 verified done', ts: '2026-07-01T00:10:00Z' }),
+      mkEvent({ type: 'task_started', plan_slug: fixtureSlug, task_id: '2', session_id: 'sess-orch-1', summary: 'task 2 dispatched', ts: '2026-07-01T00:11:00Z' }),
+      mkEvent({ type: 'waiting_on_operator', needs_you_id: goodNeedsYouId, session_id: 'sess-orig-1', ts: '2026-07-01T00:12:00Z' }),
+      mkEvent({ type: 'waiting_on_operator', needs_you_id: badNeedsYouId, session_id: 'sess-orig-1', ts: '2026-07-01T00:13:00Z' }),
+      mkEvent({ type: 'waiting_on_operator', needs_you_id: 'NY-does-not-exist-at-all', session_id: 'sess-orig-1', ts: '2026-07-01T00:14:00Z' }),
+      mkEvent({ type: 'merged', sha: 'def5678', evidence_link: planAbsPath, ts: '2026-07-01T00:15:00Z' }),
+    ].join('\n') + '\n';
+    fs.writeFileSync(path.join(plStateDir, 'ask-fix-1.jsonl'), ask1Events);
+
+    // ---- fixture dispatch-provenance marker (lineage edge: sess-orch-1 -> sess-child-2) ----
+    fs.writeFileSync(path.join(dpStateDir, 'fixture-marker__1.json'), JSON.stringify({
+      v: 1, ts: '2026-07-01T00:05:00Z', ask_id: 'ask-fix-1', plan_slug: fixtureSlug,
+      task_id: '2', session_id: 'sess-orch-1', child_id: 'sess-child-2', worktree_path: '',
+    }));
+
+    // ---- fixture heartbeat (sess-orig-1 fresh -> should classify live) ----
+    fs.writeFileSync(path.join(hbStateDir, 'sess-orig-1.json'), JSON.stringify({
+      schema: 1, session_id: 'sess-orig-1', pid: process.pid, cwd: fixtureRepoDir, repo_root: fixtureRepoDir,
+      worktree_root: fixtureRepoDir, branch: 'main', model: 'sonnet',
+      last_activity_ts: new Date().toISOString(), last_event: 'turn-end', marker_state: 'none',
+    }));
+
+    // ---- Scenario 23: GET /api/asks default (status:active) groups by
+    // project, newest activity first, plan_progress derived from the real
+    // fixture plan file + this ask's own task_started/task_done events.
+    const landing = await httpGet(PORT, '/api/asks');
+    ok('S23 /api/asks returns ok:true with status_filter=active by default',
+      landing.json && landing.json.ok === true && landing.json.status_filter === 'active',
+      JSON.stringify(landing.json && landing.json.status_filter));
+    const demoGroup = landing.json && (landing.json.groups || []).find((g) => g.project === 'demo-project');
+    ok('S23b landing groups by project (demo-project present)', !!demoGroup, JSON.stringify(landing.json && landing.json.groups));
+    const card1 = demoGroup && demoGroup.asks.find((a) => a.ask_id === 'ask-fix-1');
+    ok('S23c ask-fix-1 card present under demo-project', !!card1);
+    ok('S23d plan_progress derived from the fixture plan file + events (1 done, 1 in-flight, 1 not-started, total 3)',
+      card1 && card1.plan_progress && card1.plan_progress.done === 1 && card1.plan_progress.in_flight === 1 &&
+      card1.plan_progress.not_started === 1 && card1.plan_progress.total === 3,
+      JSON.stringify(card1 && card1.plan_progress));
+    ok('S23e ask-fix-4 (planless, active) also present under demo-project', !!(demoGroup && demoGroup.asks.find((a) => a.ask_id === 'ask-fix-4')));
+    ok('S23f ask-fix-2 (status:done) is NOT in the active demo-project group', !(demoGroup && demoGroup.asks.find((a) => a.ask_id === 'ask-fix-2')));
+    ok('S23g waiting_count counts only OPEN needs-you entries (good+bad-but-open=2; the unresolvable id is not counted)',
+      card1 && card1.waiting_count === 2, JSON.stringify(card1 && card1.waiting_count));
+
+    // ---- Scenario 24: completed group always present, independent of filter.
+    ok('S24 completed group carries ask-fix-2 (done) with a count + newest_completed_ts',
+      landing.json && landing.json.completed && landing.json.completed.count >= 1 &&
+      landing.json.completed.asks.some((a) => a.ask_id === 'ask-fix-2') &&
+      typeof landing.json.completed.newest_completed_ts === 'string',
+      JSON.stringify(landing.json && landing.json.completed));
+
+    // ---- Scenario 24b: ?status=done filters the main groups to done asks
+    // (a real filter, not just the always-on completed group).
+    const landingDone = await httpGet(PORT, '/api/asks?status=done');
+    const doneGroupAsks = ((landingDone.json && landingDone.json.groups) || []).reduce((acc, g) => acc.concat(g.asks), []);
+    ok('S24b ?status=done groups contain ask-fix-2 and status_filter echoes back',
+      landingDone.json && landingDone.json.status_filter === 'done' && doneGroupAsks.some((a) => a.ask_id === 'ask-fix-2'),
+      JSON.stringify(landingDone.json && landingDone.json.status_filter));
+
+    // ---- Scenario 25: GET /api/ask/<id> full detail — chronological
+    // narrative, plan_rows matching the fixture plan file's real
+    // checkboxes, a REAL §3 waiting item, the never-terminal defect form
+    // for a thin/unresolvable needs_you_id, artifacts from the merged
+    // event, and sessions/lineage.
+    const detail = await httpGet(PORT, '/api/ask/ask-fix-1');
+    ok('S25 /api/ask/ask-fix-1 returns ok:true', detail.json && detail.json.ok === true, JSON.stringify(detail.json));
+    ok('S25b narrative is chronological (task 1 dispatched before task 1 verified done)',
+      detail.json && detail.json.narrative && detail.json.narrative.length >= 2 &&
+      detail.json.narrative[0].summary === 'task 1 dispatched' && detail.json.narrative[1].summary === 'task 1 verified done',
+      JSON.stringify(detail.json && detail.json.narrative));
+    const planRow1 = detail.json && detail.json.plan_rows && detail.json.plan_rows.find((r) => r.plan_slug === fixtureSlug);
+    ok('S25c plan_rows carries per-task done/in_flight rows matching the real plan file (3 tasks)',
+      planRow1 && planRow1.tasks.length === 3 &&
+      planRow1.tasks[0].done === true && planRow1.tasks[1].in_flight === true && planRow1.tasks[2].done === false && !planRow1.tasks[2].in_flight,
+      JSON.stringify(planRow1));
+    ok('S25d plan_doc resolves a REAL {project, path} pair through the EXISTING projects.js resolver (no new link handling)',
+      planRow1 && planRow1.plan_doc && typeof planRow1.plan_doc.project === 'string' && planRow1.plan_doc.path === 'docs/plans/' + fixtureSlug + '.md',
+      JSON.stringify(planRow1 && planRow1.plan_doc));
+    const goodWaiting = detail.json && detail.json.waiting_items && detail.json.waiting_items.find((w) => w.needs_you_id === goodNeedsYouId);
+    ok('S25e a well-formed §3 decision resolves to a real context block (defect:false, title/body/links present)',
+      goodWaiting && goodWaiting.defect === false && /Ship the fixture tonight/.test(goodWaiting.title) &&
+      goodWaiting.links.length === 1 && goodWaiting.body.length > 0,
+      JSON.stringify(goodWaiting));
+    const badWaiting = detail.json && detail.json.waiting_items && detail.json.waiting_items.find((w) => w.needs_you_id === badNeedsYouId);
+    ok('S25f a thin (bare) decision entry renders the NEVER-TERMINAL defect form (defect:true, violation message, absolute raw_link, session id) — never a bare id',
+      badWaiting && badWaiting.defect === true && /context missing/.test(badWaiting.message) &&
+      payloadSchema.isAbsoluteHref(badWaiting.raw_link) && badWaiting.session_id === 'sess-orig-1',
+      JSON.stringify(badWaiting));
+    const missingWaiting = detail.json && detail.json.waiting_items && detail.json.waiting_items.find((w) => w.needs_you_id === 'NY-does-not-exist-at-all');
+    ok('S25g an unresolvable needs_you_id ALSO renders the defect form (never dropped, never a bare id)',
+      missingWaiting && missingWaiting.defect === true && payloadSchema.isAbsoluteHref(missingWaiting.raw_link));
+    ok('S25h artifacts carries the merged event\'s sha', detail.json && detail.json.artifacts && detail.json.artifacts.some((a) => a.sha === 'def5678'));
+    ok('S25i sessions includes the dispatching session and the dispatch-provenance lineage child, each with a heartbeat-classified state (reused from session-heartbeat-lib.sh, not re-derived)',
+      detail.json && detail.json.sessions &&
+      detail.json.sessions.some((s) => s.session_id === 'sess-orch-1') &&
+      detail.json.sessions.some((s) => s.session_id === 'sess-child-2' && s.resumed_from === 'sess-orch-1') &&
+      detail.json.sessions.every((s) => ['live', 'stale', 'throttled', 'crashed', 'missing'].indexOf(s.state) !== -1),
+      JSON.stringify(detail.json && detail.json.sessions));
+
+    // ---- Scenario 25j: /api/ask/<unknown-id> is a clean 404, never a crash.
+    const detailMissing = await httpGet(PORT, '/api/ask/ask-does-not-exist');
+    ok('S25j /api/ask/<unknown> is a clean 404', detailMissing.status === 404 && detailMissing.json && detailMissing.json.ok === false);
+
+    // ---- Scenario 26: POST /api/ask/<id>/lifecycle — the
+    // operator-override exit path (constraint 7), delegating to the REAL
+    // ask-registry.sh CLI (Task 8) so this proves actual delegation, not a
+    // fake.
+    const dismissRes = await httpPostJson(PORT, '/api/ask/ask-fix-4/lifecycle', { action: 'dismiss' });
+    ok('S26 lifecycle dismiss returns ok:true with the new status', dismissRes.json && dismissRes.json.ok === true && dismissRes.json.status === 'dismissed', JSON.stringify(dismissRes.json));
+    const regAfterDismiss = fs.readFileSync(path.join(arStateDir, 'ask-registry.jsonl'), 'utf8');
+    ok('S26b the REAL ask-registry.sh appended a status_change record (status=dismissed, emitter=operator-ui) — real delegation, not a fake',
+      /"ask_id":"ask-fix-4".*"record_type":"status_change".*"status":"dismissed".*"emitter":"operator-ui"/.test(regAfterDismiss));
+    const landingAfterDismiss = await httpGet(PORT, '/api/asks');
+    const demoGroupAfter = landingAfterDismiss.json && (landingAfterDismiss.json.groups || []).find((g) => g.project === 'demo-project');
+    ok('S26c dismissed ask leaves the active landing and appears in completed',
+      !(demoGroupAfter && demoGroupAfter.asks.find((a) => a.ask_id === 'ask-fix-4')) &&
+      landingAfterDismiss.json.completed.asks.some((a) => a.ask_id === 'ask-fix-4'));
+    const lifecycleMissing = await httpPostJson(PORT, '/api/ask/ask-does-not-exist/lifecycle', { action: 'done' });
+    ok('S26d lifecycle on an unknown ask is a clean 404', lifecycleMissing.status === 404);
+    const lifecycleBadAction = await httpPostJson(PORT, '/api/ask/ask-fix-1/lifecycle', { action: 'bogus' });
+    ok('S26e lifecycle with an unknown action is a clean 400', lifecycleBadAction.status === 400);
+    const lifecycleMergeNoInto = await httpPostJson(PORT, '/api/ask/ask-fix-1/lifecycle', { action: 'merge' });
+    ok('S26f lifecycle merge without "into" is a clean 400', lifecycleMergeNoInto.status === 400);
+
+    // ---- Scenario 27: the TWO negative fixtures the plan requires,
+    // verbatim ("payload with a gate identifier field -> FAIL"; "payload
+    // with a relative href -> FAIL"), run directly against payload-schema.js
+    // (fast/deterministic; the live-server scenarios above already prove
+    // the SAME checks run at serve time via server.js's own
+    // schema-validation branch).
+    const cleanLanding = {
+      ok: true, status_filter: 'active', generated_at: '2026-07-01T00:00:00Z',
+      groups: [{ project: 'demo', asks: [{
+        ask_id: 'a', summary: 'a clean summary', project: 'demo', repo: '', status: 'active',
+        activity_ts: '2026-07-01T00:00:00Z', plan_progress: { done: 1, in_flight: 0, not_started: 0, total: 1 },
+        waiting_count: 0, drift_badges: [], narrative_excerpt: 'task 1 verified done',
+      }] }],
+      completed: { count: 0, newest_completed_ts: null, asks: [] },
+    };
+    ok('S27 a clean, real-shaped landing payload PASSES validateLanding (no false positive)',
+      payloadSchema.validateLanding(cleanLanding).ok, JSON.stringify(payloadSchema.validateLanding(cleanLanding).errors));
+
+    const gateIdentifierLanding = JSON.parse(JSON.stringify(cleanLanding));
+    gateIdentifierLanding.groups[0].asks[0].narrative_excerpt = 'blocked by workstreams-state-gate.sh';
+    const gateCheck = payloadSchema.validateLanding(gateIdentifierLanding);
+    ok('S27a NEGATIVE FIXTURE (required by plan): a payload with a gate/hook identifier field FAILS validateLanding',
+      gateCheck.ok === false && gateCheck.errors.some((e) => /gate\/hook identifier/.test(e)),
+      JSON.stringify(gateCheck.errors));
+
+    const cleanDetail = {
+      ok: true, ask_id: 'a', summary: 's', project: 'p', repo: '', status: 'active', verbatim_ref: '',
+      plan_slugs: [], narrative: [{ ts: '2026-07-01T00:00:00Z', summary: 'ok', evidence_link: '' }],
+      plan_rows: [], waiting_items: [], artifacts: [], sessions: [],
+    };
+    ok('S27b a clean, real-shaped detail payload PASSES validateAskDetail (no false positive)',
+      payloadSchema.validateAskDetail(cleanDetail).ok, JSON.stringify(payloadSchema.validateAskDetail(cleanDetail).errors));
+
+    const relativeHrefDetail = JSON.parse(JSON.stringify(cleanDetail));
+    relativeHrefDetail.narrative[0].evidence_link = 'docs/plans/foo.md';
+    const hrefCheck = payloadSchema.validateAskDetail(relativeHrefDetail);
+    ok('S27c NEGATIVE FIXTURE (required by plan): a payload with a relative href FAILS validateAskDetail',
+      hrefCheck.ok === false && hrefCheck.errors.some((e) => /relative href/.test(e)),
+      JSON.stringify(hrefCheck.errors));
+
+    // A relative path carried inside the EXEMPT plan_doc {project, path}
+    // shape must NOT trip the absolute-href check (ux-review amendment 6 —
+    // "no new link handling", the existing /api/doc resolver's own contract).
+    const planDocDetail = JSON.parse(JSON.stringify(cleanDetail));
+    planDocDetail.plan_rows = [{ plan_slug: 'x', plan_doc: { project: 'demo', path: 'docs/plans/x.md' }, tasks: [] }];
+    ok('S27d plan_doc {project, path} is EXEMPT from the absolute-href check (the existing /api/doc resolver contract, not a rendered href)',
+      payloadSchema.validateAskDetail(planDocDetail).ok, JSON.stringify(payloadSchema.validateAskDetail(planDocDetail).errors));
+
   } finally {
     server.close();
     cache.stop();
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
+    // planAbsPath (Task 11 ask-rooted-workstreams fixture) is deliberately
+    // OUTSIDE `tmp` (it lives under the real self-repo root so plan_doc
+    // resolution has a real project root to resolve against) — clean it up
+    // explicitly so this self-test never leaves a fixture file behind in
+    // the real docs/plans/ directory.
+    try { if (typeof planAbsPath === 'string') fs.rmSync(planAbsPath, { force: true }); } catch (_) {}
   }
 
   console.log('');

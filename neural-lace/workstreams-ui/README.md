@@ -35,6 +35,62 @@ straight from the CLI invocation the server made (`server/derive-cache.js`)
 — a failed derivation renders a named ERROR state with the exact failing
 command line, never a blank pane (see the acceptance scenarios below).
 
+## Ask-rooted workstreams API (ask-rooted-workstreams-p1, Task 11)
+
+The read surface for the ask-tree landing page (Task 13 builds the UI over
+this; see `docs/plans/ask-rooted-workstreams-p1.md`). Every payload here is
+validated against `server/payload-schema.js`'s ALLOWLIST before it reaches
+the wire — a validation failure degrades to `{ok:false, diagnostics:[...]}`
+at HTTP 500, never a leaking payload. Two laws are mechanically enforced on
+every field: **no gate/hook identifier ever appears** (anti-noise law) and
+**every href/path is absolute**, except the `plan_doc: {project, path}`
+shape, which is a resolver argument for the EXISTING `/api/doc` +
+`/api/doc/open` handlers (ux-review amendment 6: "no new link handling"),
+not a rendered href.
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/asks` | GET | Landing payload: `groups` (project → ask cards, filtered by `?status=`, default `active`) + `completed` (done/dismissed/merged asks, always present, independent of the filter, for the UI's collapsed group). |
+| `/api/ask/<id>` | GET | Full detail: chronological `narrative`, per-plan `plan_rows` (per-task done/in-flight/not-started rows crossed against the real plan file's checkboxes), `waiting_items` (a real §3 context block, or the never-terminal defect form when the underlying NEEDS-YOU.md entry is missing/thin), `artifacts` (merge SHAs), `sessions` (dispatch lineage + heartbeat-classified state). |
+| `/api/ask/<id>/lifecycle` | POST | The operator-override exit path (constraint 7): `{"action":"done"\|"dismiss"\|"reopen"}` or `{"action":"merge","into":"<target-ask-id>"}`. Delegates to the UNCHANGED `ask-registry.sh set-status`/`merge` CLI (Task 8) — never writes the registry file directly. |
+
+Ask card shape (`/api/asks`):
+
+```json
+{
+  "ask_id": "ask-20260710-workstreams-rebuild",
+  "summary": "Rebuild the workstreams view",
+  "project": "neural-lace",
+  "repo": "C:\\Users\\...\\neural-lace",
+  "status": "active",
+  "activity_ts": "2026-07-10T12:00:00Z",
+  "plan_progress": { "done": 8, "in_flight": 1, "not_started": 9, "total": 18 },
+  "waiting_count": 1,
+  "drift_badges": [],
+  "narrative_excerpt": "task 8 verified done"
+}
+```
+
+`drift_badges` is always `[]` until Task 12 (the background auditor) lands —
+the field ships now so the schema/UI contract doesn't need a later
+migration. `waiting_count` counts only needs-you.sh entries currently OPEN
+under "Awaiting your decision" (best-effort: if NEEDS-YOU.md itself can't be
+read, every referencing event counts, so a real waiting item is never
+silently hidden by a parse gap).
+
+Waiting-item shapes (`/api/ask/<id>`'s `waiting_items[]`) — exactly one of:
+
+```json
+{ "needs_you_id": "NY-...", "defect": false, "title": "...", "body": "...", "links": ["https://..."], "session_id": "sess-...", "added": "2026-07-10" }
+```
+```json
+{ "needs_you_id": "NY-...", "defect": true, "message": "context missing — session violated §3", "raw_link": "C:\\...\\NEEDS-YOU.md", "session_id": "sess-..." }
+```
+
+The defect form is NEVER terminal: it always carries the violation notice,
+an absolute link to the raw NEEDS-YOU.md file, and the source session id
+(the UI, Task 13, adds the copy affordance + resume microcopy).
+
 ## Layout
 
 | Path | Contents |
