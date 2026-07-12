@@ -228,6 +228,19 @@ function needsYouMdPath() {
   return process.env.NEEDS_YOU_MD_PATH || path.join(mainRepoRoot(), 'NEEDS-YOU.md');
 }
 
+// operator-todo.md path — Task 14 "My To-Do pane". Mirrors needsYouMdPath()'s
+// own shape (OPERATOR_TODO_PATH env override, else MAIN-CHECKOUT root per
+// constraint 11) exactly, and duplicates (rather than requires)
+// auditor.js's identically-shaped `operatorTodoPath()` — this codebase's own
+// established convention for small per-file resolvers (see auditor.js's
+// header "WHY THE READERS BELOW ARE DUPLICATED"); server.js already
+// `require`s auditor.js (one-directional), so reuse would have been safe
+// too, but duplicating keeps this reader independently correct even if
+// auditor.js's module shape changes.
+function operatorTodoPath() {
+  return process.env.OPERATOR_TODO_PATH || path.join(mainRepoRoot(), 'docs', 'operator-todo.md');
+}
+
 function dispatchProvenanceStateDir() {
   return process.env.DISPATCH_PROVENANCE_STATE_DIR ||
     path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'dispatch-provenance');
@@ -236,6 +249,155 @@ function dispatchProvenanceStateDir() {
 function heartbeatStateDir() {
   return process.env.HEARTBEAT_STATE_DIR ||
     path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'heartbeats');
+}
+
+// ============================================================
+// Task 14 — "My To-Do pane". Reads/writes docs/operator-todo.md: an
+// operator-authored free-form section (add/edit/check freely from the UI)
+// plus a marker-delimited AUTO section whose pointer bullets
+// `needs-you.sh`'s Task 4 splice appends (`_ny_operator_todo_append_pointer`)
+// and Task 12's auditor auto-checks (`autoCheckOperatorTodo`) — this module
+// NEVER auto-checks a pointer itself (that stays the auditor's exclusive
+// derivation, constraint 6: "nothing here ... adds a second done-bit" for
+// the CHECKED semantics; this reader/writer only ever flips a pointer's box
+// via the explicit operator-override action below, which is a deliberate
+// OPERATOR write, not a derivation).
+// ============================================================
+
+const OPERATOR_TODO_AUTO_START = '<!-- AUTO:START -->';
+const OPERATOR_TODO_AUTO_END = '<!-- AUTO:END -->';
+const OPERATOR_TODO_HEADING_RE = /^##\s+Operator items\s*$/;
+const OPERATOR_TODO_ITEM_RE = /^- \[( |x|X)\] (.*)$/;
+
+// AUTO_POINTER_RE — the exact bullet shape needs-you.sh's
+// `_ny_operator_todo_append_pointer` writes (that function's own header
+// quotes this shape verbatim):
+//   - [ ] AUTO: <section> waiting on operator — "<title>" (needs-you `<id>`, tier <tier>, session `<session_id>`) — see NEEDS-YOU.md
+// Group 7 (trailing) captures anything appended AFTER the fixed suffix —
+// this is where the operator-override marker (below) lands, so an
+// overridden line still matches this same regex.
+const AUTO_POINTER_RE = /^- \[( |x|X)\] AUTO: (.+?) waiting on operator — "(.*)" \(needs-you `([^`]+)`, tier ([^,]+), session `([^`]*)`\) — see NEEDS-YOU\.md(.*)$/;
+
+// The operator-override marker this module appends when "Mark handled" is
+// used (constraint 7's escape hatch). Once appended the line's checkbox is
+// ALSO flipped to `[x]`, so Task 12's autoCheckOperatorTodo (which only ever
+// touches an UNCHECKED bullet — see its own header) skips this line forever:
+// the auditor "respects, never fights" the override by construction, not by
+// special-casing this marker.
+const OPERATOR_OVERRIDE_RE = /\(marked handled by operator, ([^)]*)\)\s*$/;
+
+const OPERATOR_TODO_TEMPLATE =
+  '# Operator To-Do\n\n' +
+  'Operator-authored items live in "## Operator items" below and are never\n' +
+  'touched by automation. Auto-added pointer items (mirroring a decision or\n' +
+  'question just appended to NEEDS-YOU.md) live between the AUTO markers and\n' +
+  'are mechanically appended by\n' +
+  '`adapters/claude-code/scripts/needs-you.sh` (the `add` splice,\n' +
+  'ask-rooted-workstreams-p1 Task 4) — never hand-edit inside the markers;\n' +
+  're-appending only ever ADDS a line, never rewrites one. A pointer\'s\n' +
+  'resolved/checked state is DERIVED (a later auditor pass, plan Task 12)\n' +
+  'from the underlying NEEDS-YOU ledger, not tracked here — entries in this\n' +
+  'file are an append-only log, not removed when the ledger item resolves.\n\n' +
+  '## Operator items\n\n' +
+  '_(add your own free-form to-do items in this section — never overwritten)_\n\n' +
+  OPERATOR_TODO_AUTO_START + '\n' + OPERATOR_TODO_AUTO_END + '\n';
+
+// ensureOperatorTodoFile(path) — creates the file (SAME template
+// needs-you.sh's `_ny_operator_todo_ensure` writes, word-for-word) only if
+// entirely absent; a no-op for an existing file in ANY shape (never
+// re-templates, never touches operator-authored content). Best-effort: a
+// mkdir/write failure is swallowed — the caller's subsequent read/write
+// simply fails with its own honest error rather than crashing the request.
+function ensureOperatorTodoFile(p) {
+  if (fs.existsSync(p)) return;
+  try { fs.mkdirSync(path.dirname(p), { recursive: true }); } catch (_) { /* best-effort */ }
+  try { fs.writeFileSync(p, OPERATOR_TODO_TEMPLATE); } catch (_) { /* best-effort */ }
+}
+
+// parseOperatorTodoLines(lines) — locates the "## Operator items" heading +
+// AUTO markers, then splits into two item arrays. Operator items are ANY
+// line matching the checkbox-bullet grammar between the heading and
+// AUTO:START (the static intro prose + the italic placeholder line never
+// match this grammar, so they are transparently excluded — no special-casing
+// needed). Pointer items are AUTO-block lines matching the exact bullet
+// shape needs-you.sh writes; a foreign/malformed AUTO-block line is simply
+// skipped (Edge Cases: never crash on one bad record). `lineIndex` on every
+// item is the file's actual line-array index, used by the writers below to
+// surgically replace exactly one line without disturbing any other byte.
+function parseOperatorTodoLines(lines) {
+  let headingIdx = -1, autoStartIdx = -1, autoEndIdx = -1;
+  lines.forEach((l, i) => {
+    if (headingIdx === -1 && OPERATOR_TODO_HEADING_RE.test(l.trim())) headingIdx = i;
+    if (autoStartIdx === -1 && l.trim() === OPERATOR_TODO_AUTO_START) autoStartIdx = i;
+    if (l.trim() === OPERATOR_TODO_AUTO_END) autoEndIdx = i;
+  });
+  const operatorItems = [];
+  const opStart = headingIdx === -1 ? 0 : headingIdx + 1;
+  const opEnd = autoStartIdx === -1 ? lines.length : autoStartIdx;
+  for (let i = opStart; i < opEnd; i++) {
+    const m = OPERATOR_TODO_ITEM_RE.exec(lines[i]);
+    if (m) operatorItems.push({ lineIndex: i, index: operatorItems.length, checked: /x/i.test(m[1]), text: m[2] });
+  }
+  const pointerItems = [];
+  if (autoStartIdx !== -1 && autoEndIdx !== -1 && autoEndIdx > autoStartIdx) {
+    for (let i = autoStartIdx + 1; i < autoEndIdx; i++) {
+      const m = AUTO_POINTER_RE.exec(lines[i]);
+      if (!m) continue;
+      const overrideM = OPERATOR_OVERRIDE_RE.exec(m[7] || '');
+      pointerItems.push({
+        lineIndex: i,
+        checked: /x/i.test(m[1]),
+        section: m[2],
+        title: m[3],
+        needsYouId: m[4],
+        tier: m[5],
+        sessionId: m[6],
+        operatorOverride: !!overrideM,
+        overrideTs: overrideM ? overrideM[1] : '',
+      });
+    }
+  }
+  return { headingIdx, autoStartIdx, autoEndIdx, operatorItems, pointerItems };
+}
+
+// writeOperatorTodoAtomic(path, text) — tmp-file + rename, mirroring
+// auditor.js's autoCheckOperatorTodo (the SAME atomic-rewrite technique this
+// codebase already uses for this exact file) so a reader mid-write never
+// observes a torn file.
+function writeOperatorTodoAtomic(p, text) {
+  const tmp = p + '.server-tmp-' + process.pid + '-' + Date.now();
+  fs.writeFileSync(tmp, text);
+  fs.renameSync(tmp, p);
+}
+
+// withOperatorTodoFile(mutatorFn) — the ONE place every POST /api/todo write
+// goes through. Ensures the file exists, re-reads + re-parses it FRESH
+// (never memoized — a concurrent needs-you.sh pointer append or a hand-edit
+// between requests is picked up), hands the mutable `lines` array + the
+// parsed sections to `mutatorFn`, then atomically rewrites the WHOLE file
+// (marker-delimited sections mean the mutator only ever touches one line/
+// splices one new line, so a concurrent writer's OWN untouched lines are
+// preserved in this copy — this is the "atomic rewrite of only the touched
+// section" behavior the Integration point names; true simultaneous-write
+// races still last-writer-wins, same accepted tradeoff as Task 12's
+// autoCheckOperatorTodo, which has no locking either).
+// `mutatorFn(lines, parsed) -> {result: {...}} | {error: 'message'}`.
+function withOperatorTodoFile(mutatorFn) {
+  const todoPath = operatorTodoPath();
+  ensureOperatorTodoFile(todoPath);
+  let text;
+  try { text = fs.readFileSync(todoPath, 'utf8'); }
+  catch (_) { return { ok: false, error: 'could not read the to-do file' }; }
+  const lines = text.split('\n');
+  const parsed = parseOperatorTodoLines(lines);
+  const r = mutatorFn(lines, parsed) || {};
+  if (r.error) return { ok: false, error: r.error };
+  try {
+    writeOperatorTodoAtomic(todoPath, lines.join('\n'));
+  } catch (_) {
+    return { ok: false, error: 'could not save the to-do file' };
+  }
+  return Object.assign({ ok: true }, r.result || {});
 }
 
 // ----------------------------------------------------------------------
@@ -834,6 +996,7 @@ const server = http.createServer((req, res) => {
   if (url === '/app.js') return serveStatic(res, 'app.js');
   if (url === '/app.css') return serveStatic(res, 'app.css');
   if (url === '/asks.js') return serveStatic(res, 'asks.js');
+  if (url === '/todo.js') return serveStatic(res, 'todo.js');
   if (url === '/favicon.ico') { res.writeHead(204); res.end(); return; }
 
   // ---- /api/asks — ask-rooted-workstreams-p1 Task 11 landing payload
@@ -894,6 +1057,137 @@ const server = http.createServer((req, res) => {
       });
       return;
     }
+  }
+
+  // ---- Task 14 "My To-Do pane" — GET reads docs/operator-todo.md (operator
+  // free-form section + AUTO pointer section); POST is the ONE write path
+  // (operator add/edit/toggle + the pointer operator-override escape hatch,
+  // constraint 7). Anti-noise (constraint 1) + absolute-links (constraint 2)
+  // apply exactly as they do for /api/asks — reusing payload-schema.js's
+  // exported scanners rather than re-inventing the pattern list.
+  if (url === '/api/todo' && req.method === 'GET') {
+    const todoPath = operatorTodoPath();
+    let text = '';
+    try {
+      text = fs.readFileSync(todoPath, 'utf8');
+    } catch (e) {
+      if (!e || e.code !== 'ENOENT') {
+        return sendJson(res, 200, { ok: false, error: 'could not read the to-do file', operator_items: [], pointer_items: [] });
+      }
+      text = ''; // no file yet — a legitimate EMPTY state (constraint 8), never a fetch failure
+    }
+    const parsed = parseOperatorTodoLines(text.split('\n'));
+    const ny = readNeedsYouDecisionsResult();
+    const byId = {};
+    ny.decisions.forEach((d) => { byId[d.id] = d; });
+
+    const operatorItemsOut = parsed.operatorItems.map((it) => ({ index: it.index, text: it.text, checked: it.checked }));
+    const rawLinkAbs = payloadSchema.isAbsoluteHref(needsYouMdPath()) ? needsYouMdPath() : '';
+    const pointerItemsOut = parsed.pointerItems.map((p) => {
+      const dec = byId[p.needsYouId];
+      return {
+        needs_you_id: p.needsYouId,
+        section: p.section,
+        tier: p.tier,
+        session_id: p.sessionId,
+        title: p.title,
+        checked: p.checked,
+        operator_override: p.operatorOverride,
+        body: (dec && dec.body) || '',
+        raw_link: rawLinkAbs,
+      };
+    });
+
+    const antiNoiseHit = operatorItemsOut.map((i) => i.text)
+      .concat(pointerItemsOut.map((p) => p.title))
+      .concat(pointerItemsOut.map((p) => p.body))
+      .map((s) => payloadSchema.containsDenylistedIdentifier(s))
+      .find(Boolean);
+    if (antiNoiseHit) {
+      return sendJson(res, 500, { ok: false, error: 'to-do payload failed the anti-noise check', operator_items: [], pointer_items: [] });
+    }
+
+    return sendJson(res, 200, {
+      ok: true,
+      generated_at: new Date().toISOString(),
+      operator_items: operatorItemsOut,
+      pointer_items: pointerItemsOut,
+    });
+  }
+
+  if (url === '/api/todo' && req.method === 'POST') {
+    let bodyBuf = '';
+    req.on('data', (c) => { bodyBuf += c; if (bodyBuf.length > 1e5) req.destroy(); });
+    req.on('end', () => {
+      let input;
+      try { input = bodyBuf ? JSON.parse(bodyBuf) : {}; } catch (_) { return sendJson(res, 400, { ok: false, error: 'bad json' }); }
+      const action = input.action;
+
+      if (action === 'add') {
+        const text = typeof input.text === 'string' ? input.text.trim() : '';
+        if (!text) return sendJson(res, 400, { ok: false, error: 'to-do text cannot be empty' });
+        const hit = payloadSchema.containsDenylistedIdentifier(text);
+        if (hit) return sendJson(res, 400, { ok: false, error: 'that text mentions an internal harness identifier — please rephrase' });
+        const r = withOperatorTodoFile((lines, parsed) => {
+          const insertAt = parsed.autoStartIdx === -1 ? lines.length : parsed.autoStartIdx;
+          lines.splice(insertAt, 0, '- [ ] ' + text.replace(/\r?\n/g, ' '));
+          return { result: { index: parsed.operatorItems.length, text: text, checked: false } };
+        });
+        return sendJson(res, r.ok ? 200 : 500, r);
+      }
+
+      if (action === 'toggle') {
+        const idx = Number(input.index);
+        const r = withOperatorTodoFile((lines, parsed) => {
+          const item = parsed.operatorItems[idx];
+          if (!item) return { error: 'could not find that item — reload and try again' };
+          const newChecked = !item.checked;
+          lines[item.lineIndex] = '- [' + (newChecked ? 'x' : ' ') + '] ' + item.text;
+          return { result: { index: idx, checked: newChecked } };
+        });
+        return sendJson(res, r.ok ? 200 : 404, r);
+      }
+
+      if (action === 'edit') {
+        const idx = Number(input.index);
+        const text = typeof input.text === 'string' ? input.text.trim() : '';
+        if (!text) return sendJson(res, 400, { ok: false, error: 'to-do text cannot be empty' });
+        const hit = payloadSchema.containsDenylistedIdentifier(text);
+        if (hit) return sendJson(res, 400, { ok: false, error: 'that text mentions an internal harness identifier — please rephrase' });
+        const r = withOperatorTodoFile((lines, parsed) => {
+          const item = parsed.operatorItems[idx];
+          if (!item) return { error: 'could not find that item — reload and try again' };
+          lines[item.lineIndex] = '- [' + (item.checked ? 'x' : ' ') + '] ' + text.replace(/\r?\n/g, ' ');
+          return { result: { index: idx, text: text, checked: item.checked } };
+        });
+        return sendJson(res, r.ok ? 200 : 404, r);
+      }
+
+      // pointer_override — constraint 7's operator-override exit path: "a
+      // dismiss/mark-handled action on any pointer item ... an
+      // operator-override flag the auditor respects (never fights)". Setting
+      // the box to [x] IS what the auditor "respects" (autoCheckOperatorTodo
+      // only ever touches an unchecked bullet); the appended marker is
+      // additionally what tells THIS reader (and the UI) it was a manual
+      // override rather than a ledger-derived auto-check.
+      if (action === 'pointer_override') {
+        const needsYouId = typeof input.needs_you_id === 'string' ? input.needs_you_id : '';
+        if (!needsYouId) return sendJson(res, 400, { ok: false, error: 'missing needs_you_id' });
+        const r = withOperatorTodoFile((lines, parsed) => {
+          const item = parsed.pointerItems.find((p) => p.needsYouId === needsYouId);
+          if (!item) return { error: 'could not find that pointer item — reload and try again' };
+          if (item.checked) return { error: 'already marked handled' };
+          const line = lines[item.lineIndex].replace('- [ ] AUTO:', '- [x] AUTO:') +
+            ' (marked handled by operator, ' + new Date().toISOString() + ')';
+          lines[item.lineIndex] = line;
+          return { result: { needs_you_id: needsYouId, checked: true, operator_override: true } };
+        });
+        return sendJson(res, r.ok ? 200 : (r.error === 'already marked handled' ? 409 : 404), r);
+      }
+
+      return sendJson(res, 400, { ok: false, error: 'unknown action: ' + String(action) });
+    });
+    return;
   }
 
   // ---- /api/health — freshness header (ux-review amendment 4: re-specced

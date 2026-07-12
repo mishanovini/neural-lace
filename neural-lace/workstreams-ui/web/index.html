@@ -48,22 +48,46 @@
        render — it is a re-sorted VIEW of that data, not a separate source. -->
   <div id="interruptStrip" class="interrupt-strip" aria-live="polite"></div>
 
-  <!-- Ask-rooted workstreams landing — ask-rooted-workstreams-p1, Task 13
-       "UI landing — ask tree". REPLACES the Task 1 walking-skeleton stub
-       wholesale: project sections (collapsible) -> ask cards (summary +
-       one-click verbatim reference, progress narrative, aggregate plan
-       progress bar + an explicit drill-down control, waiting count, drift
-       badges) with lifecycle affordances (done/dismiss/merge) and a
-       collapsed "completed" group. This is now the PRIMARY landing
-       surface (User-facing Outcome: "opening / shows asks grouped by
-       project"); the six-pane cockpit below is unchanged here and will be
-       demoted to a Harness Health tab by Task 16 (Layout integration). -->
-  <section id="askTreeSection" class="ask-tree-section" aria-label="asks">
-    <div class="ask-tree-head">
-      <h2 class="ask-tree-title">Asks</h2>
-    </div>
-    <div class="ask-tree-body" id="askTreeBody"></div>
-  </section>
+  <!-- Ask-rooted landing + sidebar wrapper. Task 16 "Layout integration"
+       owns the FINAL persistent-right-sidebar assembly per the ux-designer
+       round-1 ruling (LANDED 2026-07-10, binding): To-Do at the top with
+       independent scroll + a header count, Backlog collapsed below it,
+       stacking under the ask tree below ~1200px. This wrapper is the
+       functional placeholder Task 14 ("My To-Do pane") needs to ship a
+       working, visible pane now; Task 15 (Backlog) adds a sibling section
+       inside #sidebarSection, Task 16 finalizes the responsive grid/tabs. -->
+  <div class="ws-layout">
+    <!-- Ask-rooted workstreams landing — ask-rooted-workstreams-p1, Task 13
+         "UI landing — ask tree". REPLACES the Task 1 walking-skeleton stub
+         wholesale: project sections (collapsible) -> ask cards (summary +
+         one-click verbatim reference, progress narrative, aggregate plan
+         progress bar + an explicit drill-down control, waiting count, drift
+         badges) with lifecycle affordances (done/dismiss/merge) and a
+         collapsed "completed" group. This is now the PRIMARY landing
+         surface (User-facing Outcome: "opening / shows asks grouped by
+         project"); the six-pane cockpit below is unchanged here and will be
+         demoted to a Harness Health tab by Task 16 (Layout integration). -->
+    <section id="askTreeSection" class="ask-tree-section" aria-label="asks">
+      <div class="ask-tree-head">
+        <h2 class="ask-tree-title">Asks</h2>
+      </div>
+      <div class="ask-tree-body" id="askTreeBody"></div>
+    </section>
+
+    <!-- My To-Do — ask-rooted-workstreams-p1, Task 14. ONE list, two sources
+         (docs/operator-todo.md): operator items (add/edit/check freely) +
+         AUTO pointer items (read-only, derived checked-state, navigate to
+         source). See web/todo.js header for the full behavior contract. -->
+    <aside id="sidebarSection" class="sidebar" aria-label="to-do and backlog">
+      <section id="todoSection" class="pane todo-section" aria-label="my to-do">
+        <div class="pane-head">
+          <span class="pane-title">My To-Do</span>
+          <span class="todo-count" id="todoCount" aria-live="off">—</span>
+        </div>
+        <div class="pane-body todo-body" id="todoBody"></div>
+      </section>
+    </aside>
+  </div>
 
   <main id="cockpit">
     <!-- Q2 — WHAT NEEDS ME. Sorted first per ux-review amendment 9
@@ -170,6 +194,7 @@
   </div>
 
   <script src="/asks.js"></script>
+  <script src="/todo.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
