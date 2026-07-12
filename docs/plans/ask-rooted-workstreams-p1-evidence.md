@@ -531,3 +531,61 @@ plan_doc {project,path} for the existing /api/doc resolver, the one absolute-hre
 - bashBin()+`-lc` is the right spawn idiom → classifySessions/runAskRegistryCli reuse derive-cache.js's
   bashBin/spawnEnv (absolute bash + login shell, inheriting the 2026-07-09 lobotomy lessons); 180s
   timeouts assume the machine's measured worst-case spawn latency.
+
+---
+
+## Task 9 — Automatic ask-capture splices (merged: master TBD; builder commit 5e240cb)
+
+Substance: progress-log-lib.sh 29/29 (8 new classify scenarios), workstreams-read.sh 45/45
+(AC1 first-prompt registers via real ask-registry.sh; AC2 second no re-register; AC3
+spawned-worktree cwd never registers; AC4 derived ask_id consistent guard↔register),
+session-start-digest _ask_session_attach direct e2e 8/8. Classification fn (Task 17c consumes):
+`pl_classify_session` (+ `pl_ask_id_for_session`). ZERO new settings entries; both splices
+subshelled + `|| true`. RECOVERY NOTE: reboot had left _ask_session_attach DEFINED but UN-WIRED
+(built-but-not-wired) — builder added the run_digest call site + fixed a $PWD-vs-JSON-.cwd
+classification bug.
+
+### Comprehension Articulation
+
+#### Spec meaning
+Task 9 makes ask-capture fully automatic, zero ceremony, zero new settings entries. Splice (a):
+first operator prompt registers the ask — spliced into the wired UserPromptSubmit hook `_run_read`,
+calling `_ask_capture_on_prompt` → `ask-registry.sh register`, first-prompt-guarded by a per-session
+marker (`[[ -f "$marker" ]] && return 0`). Splice (b): resume/spawn attaches — `_ask_session_attach`
+in `run_digest` → `ask-registry.sh attach-session`. Load-bearing review-round-1 requirement: the
+builder-session guard (spawned sessions must NOT register). Its mechanical predicate is
+`pl_classify_session` (spawned/operator) testing `*/.claude/worktrees/*` on cwd OR a Task-3
+dispatch-provenance marker whose worktree_path matches — placed in progress-log-lib.sh so Task 17(c)'s
+doctor filters the SAME population (parity by construction).
+
+#### Edge cases covered
+- Second+ prompts short-circuit on the marker (`_ask_capture_on_prompt` `[[ -f "$marker" ]]`).
+- Resume duplicate prevented by `pl_ask_id_for_session` re-deriving the identical `ask-auto-<hash>` from
+  the stable session_id (no file lookup, no race).
+- Spawned classification handles Windows backslash + forward-slash cwd (`norm="${cwd//\//}"`); matches
+  a marker's worktree_path exactly OR as path-ancestor (`"$norm" == "$wt"/*`).
+- UNRESOLVED marker (empty worktree_path, the honest PreToolUse gap) never false-matches
+  (`[[ -z "$wt" ]] && continue`).
+- No resolvable prompt text → honest marker `skipped=no-prompt-text`, never a fabricated ask.
+- `_ask_session_attach` attaches only on resume/compact, never fresh startup; spawned session w/ no
+  resolvable marker returns without fabricating.
+- FIXED bug: `_ask_capture_on_prompt` classified by $PWD → hook from within a worktree self-mislabeled;
+  now uses `_ask_capture_cwd` reading JSON .cwd (matching `_ask_session_attach`).
+
+#### Edge cases NOT covered
+- Cross-machine / multi-machine resume chains out of scope (P3). `pl_ask_id_for_session` assumes a
+  machine-local stable session_id.
+- If Claude Code ever changes session_id across --resume (assumption below), resume attach derives a
+  different id → lands on a fresh node not the original; no observable SessionStart-JSON signal to detect.
+- Haiku summarizer async path (ASK_SUMMARIZER=haiku) exercised by Task 8's self-test, not re-tested here.
+- Manifest/runbook doc updates (Task 9 "Docs impact") = orchestrator follow-on per Task 7 convention.
+
+#### Assumptions
+- UserPromptSubmit stdin JSON carries prompt under `.prompt` — VERIFIED vs live sibling hook
+  decision-context-reply-emit.sh (`.prompt // .user_prompt // .message // empty`); mirrored, not guessed.
+- SessionStart JSON carries `.source` (startup/resume/compact) + `.cwd` — VERIFIED vs workstreams-emit.sh
+  `_run_on_session_start`.
+- Claude Code keeps session_id stable across --resume — assumed from the harness resume model
+  (session-heartbeat/session-resumer treat it stable); refuted if a resumed session presents a new id.
+- `DISPATCH_PROVENANCE_STATE_DIR` resolution in `_pl_dispatch_provenance_dir` byte-identical to
+  dispatch-provenance.sh's `_dp_state_dir` — asserted by progress-log-lib Scenario 15.
