@@ -1,4 +1,5 @@
 ---
+name: teaching-moments
 description: Capture or browse teaching moments — interactions where the user pushed back and Claude's revised position became substantively better. Used to teach developers good prompting patterns. Use when the user asks "capture this", "this was a good prompt", or wants to see existing examples. Companion to ~/.claude/doctrine/teaching-moments.md.
 ---
 
