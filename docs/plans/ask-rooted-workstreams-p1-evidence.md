@@ -153,3 +153,82 @@ The verbs are dispatch call sites for Tasks 9 (register/attach), 10 (link-plan),
 - **Tool/platform:** assumes git/hostname/date -u, flat-JSON via shell string ops (no jq on write
   path), node for project resolution (graceful basename fallback), Git-Bash drive-letter repo paths
   marshalled via the `TARGET`/`PROJJS` env-var seam (not argv) to sidestep MSYS path mangling.
+
+---
+
+## Task 2 — Progress-log format finalization + writer hardening (merged: master TBD; builder commits `2ddd720`+`83a27db`)
+
+Substance verified independently (orchestrator re-run: progress-log-lib 16/16 incl. sanitizer
+scenarios 1c/1d + concurrent-append + CRLF + schema-parity; progress-log.sh 6/6; ask-registry
+7/7 no-regression). Emit CLI signature UNCHANGED. Orchestrator addition folded in by the
+builder's own hand: the ask-id path-traversal sanitizer at the `pl_path_for` shared boundary
+(protects all emitters). Known P1 limitation (documented, not blocking): `task_done`'s sha
+discriminator is empty because the plan-lifecycle flip fires BEFORE the commit exists — the
+re-verify-after-revert distinction is a P2/auditor-reconciliation refinement.
+
+### Comprehension Articulation
+
+#### Spec meaning
+Task 2 finalizes the versioned JSONL event format Task 1's skeleton already implemented
+end-to-end and hardens the WRITER around it — it does not re-author the format. Binds: (a) the
+versioned schema + per-event-type natural-key dedup table (plan 235-246) whose central rule is
+that a single hash formula must never be used — each type keys on the discriminators separating
+legitimate recurrence from replay (`task_started`+session_id; `plan_completed`+Status-line-ts
+content-hash per the round-2 superset fix); (b) the emitter allowlist (constraint 10) — unknown
+emitters recorded but `provenance:unknown`; (c) atomic single-line O_APPEND + orphan lane +
+`--self-test` battery (concurrent-append/replay-dedup/legitimate-recurrence/unknown-emitter/
+CRLF), all HARNESS_SELFTEST-sandboxed; (d) machine-checked schemas/progress-log-event.schema.json.
+Load-bearing interface constraint: the `emit` CLI shape is a STABLE contract four splice builders
+write against — harden internals only, never rename/break. The table + allowlist were already in
+Task 1 (`_pl_natural_key` lib:272; `_PL_KNOWN_EMITTERS` lib:140), so the delta is the schema file,
+writer hardening, the sanitizer, and expanded self-tests.
+
+#### Edge cases covered
+- **Splice/auditor double-append race:** `_pl_acquire_lock`/`_pl_release_lock` (lib:306/327)
+  wrap the dedup-check+append critical section in a `mkdir`-based mutex (atomic on NTFS via Git
+  Bash, no flock needed), bounded ~150ms spin then proceed unlocked (constraint 5 — never hang).
+  Proven by Scenario 8 (lib:640, 6 racing procs → 1 line) + progress-log.sh Scenario E (5 racing
+  OS procs → 1 line) + Scenario 7 (10 distinct-key concurrent → 10 intact lines).
+- **`trap RETURN` scoping bug (fixed):** first release design used a RETURN trap; bash's RETURN
+  trap once set in a called function re-fires on the CALLER's later return, dereferencing torn-down
+  `local path` under `set -u` (broke ask-registry --self-test). Fixed with explicit
+  `_pl_release_lock` at each of pl_emit's three post-lock exits (lib:412-444), no trap.
+- **Schema field-parity drift:** Scenario 10 (lib:695) asserts emitted event fields exactly match
+  the schema's `additionalProperties:false` allowlist (schema:12) — a new writer field without a
+  schema update is a self-test failure, not silent drift.
+- **CRLF byte-safety:** Scenario 9 (lib:673) emits raw CR/LF/tab and asserts via `od -tx1` hex
+  (not MSYS-maskable grep/cat) zero 0x0d bytes reach the file; escaped to literals, not dropped.
+- **ask-id path-traversal sanitizer (orchestrator addition, builder-authored):**
+  `_pl_sanitize_ask_id` (lib:189) allowlist-normalizes chars outside `[A-Za-z0-9._-]` (incl. `/`
+  `\`) to `_` and collapses `..` runs (lib:196), so `pl_path_for` (lib:214) always composes a
+  single component under `pl_state_dir`. Scenario 1c (lib:486): 7 traversal vectors keep resolved
+  parent == pl_state_dir; 1d (lib:506): legit id unchanged, real traversal emit writes inside the
+  state dir, no `evil.jsonl` escapes. Degenerate results → `sanitized-<hash>` (distinct bad ids
+  never merge); empty ask-id keeps `unlinked` fallback.
+
+#### Edge cases NOT covered
+- **`task_done` sha discriminator not yet supplied by the splice:** natural key is
+  `plan_slug+task_id+sha`, but Task 1's plan-lifecycle.sh emits without `--sha` (the flip fires on
+  the Edit PostToolUse, BEFORE any commit sha exists), so every task_done dedups on empty sha —
+  the re-verify-after-revert=new-event recurrence does NOT fire today. Honest, out of Task 2's file
+  ownership; the lib keys on sha the moment the splice supplies it. Orchestrator disposition: P1
+  documented limitation (the auditor can reconcile; rare edge), not a blocking fix.
+- **Lock fairness/starvation:** the ~150ms spin can, under pathological sustained contention, time
+  out and proceed unlocked, reintroducing a duplicate-line possibility for that one emit —
+  deliberate constraint-5 tradeoff (never block the host hook), documented, but the
+  timeout-then-proceed path is not itself forced by a test.
+- **`_pl_hash` cksum-fallback collision space:** the sha1sum→openssl→cksum chain's cksum last-resort
+  has a weak collision space; no distinct-input→distinct-hash test on that path (portability
+  last-resort, unlikely on target).
+
+#### Assumptions
+- **`mkdir` is atomic create-if-absent** on every target FS (NTFS via Git Bash + POSIX tmpfs in
+  self-tests) — the mutex primitive basis (no reliable flock/lockfile on Windows). Verified
+  behaviorally by the race scenarios, not a FS-level atomicity proof.
+- **`ask_id` is a controlled registry-generated id (Task 8)** so the sanitizer is defense-in-depth;
+  the sanitizer normalizes only the FILE PATH, leaving the stored `ask_id` JSON field as the raw
+  caller value — if a future consumer (Task 11 reader) keys grouping on the field not the filename,
+  that field is unsanitized by design (one-line follow-up if that assumption breaks).
+- **`od -tx1` reflects true on-disk bytes** (not MSYS-filtered) per repo CRLF doctrine.
+- **exit-124 timeouts are environmental** (~19s machine-wide bash-spawn latency), not code hangs —
+  supported by the full 16-green run at lower latency + isolated fast checks of scenarios 9/10.
