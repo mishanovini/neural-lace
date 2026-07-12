@@ -1,5 +1,5 @@
 # Plan: SECRET-SCAN-CI-BACKSTOP-01 — CI backstop for `--no-verify` secret bypass (design-skip)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: direct
 Mode: design-skip
 Backlog items absorbed: SECRET-SCAN-CI-BACKSTOP-01
@@ -74,7 +74,8 @@ so a bypassed local scan cannot ship a secret to the remote unnoticed.
   proving the oracle locally (planted fake AWS key -> RED; clean diff ->
   GREEN). — DONE.
 - 3. Validate the new workflow YAML with `js-yaml` (via `npx`). — DONE.
-- 4. Mark the backlog entry dispositioned-in-progress with the branch ref.
+- 4. Mark the backlog entry dispositioned-in-progress with the branch ref. — DONE
+  (docs/backlog.md SECRET-SCAN-CI-BACKSTOP-01 entry; updated to merged state at close).
 
 ## Files to Modify/Create
 - `.github/workflows/secret-backstop.yml` — new CI workflow.
@@ -159,10 +160,26 @@ collide with something real.
 - Branch pushed (per environment discipline — no master push/PR/checkbox
   flips from this session).
 
-## Completion
+## Completion Report (2026-07-12, closure session)
 
-Pending verification run of the fixture-check script + backlog update;
-this plan stays ACTIVE until both land in this branch's commits, then
-Status flips per protocol (report first, flip last) — deferred to the
-orchestrator since this is a worktree builder session per its own
-instructions (no direct master pushes).
+All deliverables merged to master in `f25132a` (verified master-ancestor of
+HEAD `4f861df` at close): `.github/workflows/secret-backstop.yml`,
+`adapters/claude-code/tests/secret-backstop-fixture-check.sh`, backlog
+disposition, manifest entries. Definition of Done re-verified at close:
+
+- Fixture-check oracle re-run at master state:
+  `secret-backstop-fixture-check: 3 passed, 0 failed` — planted AWS-key
+  fixture → `pre-push-scan.sh` exit 1 naming the file (RED); clean diff →
+  exit 0 (GREEN); denylist fixture → `harness-hygiene-scan.sh` exit 1 (RED).
+- Workflow YAML present and previously js-yaml-validated (Task 3).
+- Backlog entry SECRET-SCAN-CI-BACKSTOP-01 updated at close from
+  dispositioned-in-progress to merged (`f25132a`).
+- Remaining operator-side item (unchanged, out of repo-content scope):
+  wire `secret-backstop` into GitHub branch-protection
+  required-status-checks (repo-admin action).
+
+Closure path: manual equivalent of close-plan.sh — the script exits 2
+("no tasks found") on design-skip prose task records; report first,
+Status flip last, archive, pathspec-limited commit. Backlog reconciliation
+(absorbed item SECRET-SCAN-CI-BACKSTOP-01) satisfied by the merged-state
+disposition note.

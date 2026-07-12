@@ -823,7 +823,10 @@ is_exempt() {
   # header) — a fixture that intentionally names the pattern it tests.
   case "$path" in
     adapters/claude-code/tests/secret-backstop-fixture-check.sh) return 0 ;;
+    # Plan archived on closure (2026-07-12) — exemption follows the file;
+    # pre-archive path kept for historical-blob rescans.
     docs/plans/secret-scan-ci-backstop-skip.md) return 0 ;;
+    docs/plans/archive/secret-scan-ci-backstop-skip.md) return 0 ;;
   esac
 
   # Instance-specific operations tooling exemptions.
