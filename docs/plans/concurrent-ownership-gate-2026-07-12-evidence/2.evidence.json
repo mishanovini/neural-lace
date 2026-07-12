@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "task_id": "2",
+  "verdict": "PASS",
+  "commit_sha": "e6939504843b3fc316ab4511e6abb1fa051dec60",
+  "files_modified": [
+    "docs/plans/concurrent-ownership-gate-2026-07-12-evidence.md",
+    "docs/plans/concurrent-ownership-gate-2026-07-12.md"
+  ],
+  "mechanical_checks": {
+    "files-in-commit": {
+      "passed": true,
+      "detail": "2 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-12T22:38:57Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "concurrent-ownership-gate-2026-07-12"
+}
