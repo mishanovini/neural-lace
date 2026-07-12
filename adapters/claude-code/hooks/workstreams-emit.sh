@@ -657,6 +657,14 @@ _run_on_spawn() {
   # observability floor for spawns that carry no sentinels at all.
   _warn_no_rich_details "$input" "$title"
 
+  # ask-rooted-workstreams-p1 Task 3: best-effort task_started progress-log
+  # emission + dispatch-provenance marker (see the section above
+  # _run_on_builder_dispatch for the full contract; silent no-op when the
+  # dispatch names no plan). sid/child_id here are the SAME values just used
+  # for the branch-opened/session-bound events above -- "the same provenance
+  # the SESSIONS lineage rendering consumes" per the plan's Task 3 spec.
+  _emit_dispatch_provenance "$input" "$sid" "$child_id" || true
+
   # ---- WAVE-O O.1 EMIT: spawn-dispatched (contract C2) --------------------
   # ONE marked emit line, per specs-o §O.1 deliverable 3. Never blocks
   # (ledger_emit's own contract); guarded by command -v for a tree missing
@@ -1762,6 +1770,102 @@ _self_test() {
   _ck "BD10 complete-without-pre -> item created + checked" "$(_bd_item "$spB10" "$idB10" 'checked')" "true"
 
   # ================================================================
+  # PL1-PL6 (ask-rooted-workstreams-p1 Task 3 -- dispatch emission splice):
+  # task_started progress-log emission + dispatch-provenance marker, spliced
+  # into --on-builder-dispatch / --on-spawn alongside the conv-tree emission
+  # above. A fixture plan file with an `ask-id:` header proves the SAME
+  # ask-id resolution Task 1's plan-lifecycle.sh splice established.
+  # ================================================================
+  local plfix="$tmp/planfix"
+  mkdir -p "$plfix/docs/plans"
+  cat >"$plfix/docs/plans/pl-fixture-plan.md" <<'PLANEOF'
+# Plan: PL fixture
+Status: ACTIVE
+ask-id: ask-pl-fixture-1
+PLANEOF
+  if command -v git >/dev/null 2>&1; then
+    ( cd "$plfix" && git init -q . && git config core.hooksPath "" \
+        && git config user.email t@e.test && git config user.name t \
+        && git add -A && git commit -qm init ) >/dev/null 2>&1
+  fi
+
+  # PL1: --on-builder-dispatch with a "Task N of ... docs/plans/<slug>.md"
+  # prompt emits ONE task_started event with the right plan_slug/task_id,
+  # resolved to the fixture plan's ask-id, via the UNCHANGED progress-log.sh
+  # emit CLI (Task 2).
+  local plog1="$tmp/pl-progresslog-1" dpdir1="$tmp/dispatch-provenance-1"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1" \
+      CONV_TREE_STATE_PATH="$tmp/pl-1.json" CLAUDE_SESSION_ID="sess-pl-1" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1"}' >/dev/null 2>&1 )
+  local plfile1="$plog1/ask-pl-fixture-1.jsonl"
+  if [[ -f "$plfile1" ]] && grep -q '"type":"task_started"' "$plfile1" && grep -q '"plan_slug":"pl-fixture-plan"' "$plfile1" && grep -q '"task_id":"3"' "$plfile1" && grep -q '"emitter":"workstreams-emit"' "$plfile1"; then
+    echo "PASS: PL1 --on-builder-dispatch emits task_started (plan_slug/task_id/ask_id resolved, emitter=workstreams-emit) via the unchanged progress-log.sh CLI"; pass=$((pass+1))
+  else
+    echo "FAIL: PL1 expected a task_started event with plan_slug=pl-fixture-plan task_id=3 in $plfile1"; fail=$((fail+1))
+    [[ -f "$plfile1" ]] && cat "$plfile1"
+  fi
+
+  # PL1b: re-firing the SAME dispatch (replay) does not double the event --
+  # pl_emit's own natural-key dedup (plan_slug+task_id+session_id) is
+  # exercised end-to-end through this splice, not just in isolation.
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1" \
+      CONV_TREE_STATE_PATH="$tmp/pl-1.json" CLAUDE_SESSION_ID="sess-pl-1" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1"}' >/dev/null 2>&1 )
+  local ts_count_pl1; ts_count_pl1=$(grep -c '"type":"task_started"' "$plfile1" 2>/dev/null || echo 0)
+  _ck "PL1b replay of the identical dispatch dedups (still exactly 1 task_started)" "$ts_count_pl1" "1"
+
+  # PL2: the SAME dispatch also writes a dispatch-provenance marker file
+  # (Task 9's future guard input) with the resolved fields.
+  local dpfile1; dpfile1=$(ls "$dpdir1"/*.json 2>/dev/null | head -n1)
+  if [[ -n "$dpfile1" && -f "$dpfile1" ]] && grep -q '"ask_id":"ask-pl-fixture-1"' "$dpfile1" && grep -q '"plan_slug":"pl-fixture-plan"' "$dpfile1" && grep -q '"task_id":"3"' "$dpfile1" && grep -q '"session_id":"sess-pl-1"' "$dpfile1"; then
+    echo "PASS: PL2 dispatch-provenance marker written with resolved ask_id/plan_slug/task_id/session_id"; pass=$((pass+1))
+  else
+    echo "FAIL: PL2 expected a populated dispatch-provenance marker under $dpdir1 (got '$dpfile1')"; fail=$((fail+1))
+    [[ -n "$dpfile1" ]] && cat "$dpfile1"
+  fi
+  case "$(basename "${dpfile1:-}" 2>/dev/null || echo)" in
+    UNRESOLVED__*) echo "PASS: PL2b marker filename honestly says UNRESOLVED (no worktree hint on the Task/Agent surface)"; pass=$((pass+1)) ;;
+    *) echo "FAIL: PL2b expected an UNRESOLVED-prefixed marker filename (Task/Agent carries no cwd), got '$(basename "${dpfile1:-}" 2>/dev/null)'"; fail=$((fail+1)) ;;
+  esac
+
+  # PL3: anti-noise guard — a dispatch with NO plan reference emits nothing
+  # (no task_started event, no marker file): not every builder dispatch
+  # serves a plan task.
+  local plog3="$tmp/pl-progresslog-3" dpdir3="$tmp/dispatch-provenance-3"
+  CONV_TREE_STATE_PATH="$tmp/pl-3.json" PROGRESS_LOG_STATE_DIR="$plog3" DISPATCH_PROVENANCE_STATE_DIR="$dpdir3" CLAUDE_SESSION_ID="sess-pl-3" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Investigate a flaky test","prompt":"look into why the CI job is flaky"},"session_id":"sess-pl-3"}' >/dev/null 2>&1
+  if [[ ! -d "$plog3" || -z "$(ls -A "$plog3" 2>/dev/null)" ]] && [[ ! -d "$dpdir3" || -z "$(ls -A "$dpdir3" 2>/dev/null)" ]]; then
+    echo "PASS: PL3 anti-noise: a plan-less dispatch emits NO task_started event and writes NO marker"; pass=$((pass+1))
+  else
+    echo "FAIL: PL3 expected no progress-log/marker output for a plan-less dispatch (plog3=$(ls -A "$plog3" 2>/dev/null) dpdir3=$(ls -A "$dpdir3" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # PL4: --on-spawn (mcp__ccd_session__spawn_task) with an explicit
+  # tool_input.cwd hint -> the marker's worktree_path is populated (the one
+  # surface that CAN carry a pre-dispatch location hint; see this splice's
+  # header comment on the Task/Agent surface's honest gap).
+  local plog4="$tmp/pl-progresslog-4" dpdir4="$tmp/dispatch-provenance-4"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog4" DISPATCH_PROVENANCE_STATE_DIR="$dpdir4" \
+      CONV_TREE_STATE_PATH="$tmp/pl-4.json" CLAUDE_SESSION_ID="sess-pl-4" \
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Spawn PL","prompt":"Build Task 5 of the FROZEN plan docs/plans/pl-fixture-plan.md","cwd":"/tmp/some/project/root"},"session_id":"sess-pl-4"}' >/dev/null 2>&1 )
+  local dpfile4; dpfile4=$(ls "$dpdir4"/*.json 2>/dev/null | head -n1)
+  if [[ -n "$dpfile4" ]] && grep -q '"worktree_path":"/tmp/some/project/root"' "$dpfile4" && grep -q '"task_id":"5"' "$dpfile4"; then
+    echo "PASS: PL4 --on-spawn with a tool_input.cwd hint populates the marker's worktree_path"; pass=$((pass+1))
+  else
+    echo "FAIL: PL4 expected worktree_path=/tmp/some/project/root task_id=5 in $dpfile4"; fail=$((fail+1))
+    [[ -n "$dpfile4" ]] && cat "$dpfile4"
+  fi
+
+  # PL5: failure isolation — missing progress-log.sh/dispatch-provenance.sh
+  # CLIs (simulated via the override env vars) never blocks the caller.
+  local rcPL5
+  PL_PROGRESS_LOG_CLI_OVERRIDE="$tmp/does-not-exist-pl.sh" DISPATCH_PROVENANCE_CLI_OVERRIDE="$tmp/does-not-exist-dp.sh" \
+    CONV_TREE_STATE_PATH="$tmp/pl-5.json" CLAUDE_SESSION_ID="sess-pl-5" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Task 1 of the FROZEN plan docs/plans/pl-fixture-plan.md"},"session_id":"sess-pl-5"}' >/dev/null 2>&1
+  rcPL5=$?
+  _ck "PL5 missing progress-log.sh/dispatch-provenance.sh CLIs -> exit 0 (never blocks)" "$rcPL5" "0"
+
+  # ================================================================
   # OBS1/OBS2 (Wave O task O.1, specs-o §O.1 deliverable 3, contract C2):
   # --on-spawn emits spawn-dispatched; --on-stop emits spawn-concluded.
   # SIGNAL_LEDGER_PATH is set explicitly (rather than relying on the
@@ -2219,6 +2323,170 @@ _builder_classify() {
   printf '%s\t%s\t%s\t%s\t%s\t%s' "$tool" "$sid" "$child_id" "$item_id" "$title" "$bg"
 }
 
+# ============================================================================
+# Progress-log `task_started` emission + DISPATCH-PROVENANCE MARKER
+# (ask-rooted-workstreams-p1, Task 3 — "Dispatch emission splice").
+#
+# WHY: the plan's log-first law (constraint 6, verifier monopoly preserved —
+# this NEVER flips a checkbox, only OBSERVES a dispatch) requires every
+# dispatch to be recorded by a MECHANISM. This best-effort addition runs
+# inside the ALREADY-WIRED --on-builder-dispatch (PreToolUse Task|Agent|
+# Workflow) and --on-spawn (PreToolUse mcp__ccd_session__spawn_task |
+# mcp__ccd_session_mgmt__start_code_task) hooks, alongside their existing
+# conv-tree emission (untouched). It:
+#   (a) emits ONE `task_started` progress-log event via the STABLE, UNCHANGED
+#       scripts/progress-log.sh `emit` CLI (Task 2) when the dispatch text
+#       names a plan (`docs/plans/<slug>.md`) + a task number — the same
+#       shape Task 1's plan-lifecycle.sh splice already established;
+#   (b) writes the DISPATCH-PROVENANCE MARKER Task 9's spawned-session
+#       classification guard consumes, via scripts/dispatch-provenance.sh.
+#
+# ANTI-NOISE GUARD: a dispatch whose text names no plan is a SILENT no-op —
+# not every builder/spawn dispatch serves a plan task (Explore, ad-hoc
+# research, etc.), and emitting an empty-plan_slug event for every one of
+# them would violate the anti-noise law and flood the orphan lane.
+#
+# HONEST LIMITATION (documented, not papered over — mirrors this file's own
+# ADR-054 background-completion-ceiling discipline above): the true CHILD
+# worktree path is not visible to a PreToolUse hook on the generic
+# Task/Agent/Workflow dispatch surface. Harness/SDK `isolation: worktree`
+# creates the worktree as part of EXECUTING the tool call and returns the
+# path only in the PostToolUse result (this hook's --on-builder-complete
+# mode) — not before. This splice therefore records `--worktree` best-effort:
+# populated only from `.tool_input.cwd` when the dispatching tool_input
+# happens to carry one (the mcp__ccd_session__spawn_task surface accepts an
+# optional `cwd` project-root override), left UNRESOLVED otherwise. Task 9
+# (out of this task's scope) is expected to correlate primarily via its own
+# cwd-under-`.claude/worktrees/` predicate and treat this marker as an
+# ADDITIONAL, not sole, signal — see dispatch-provenance.sh's own header for
+# the full marker schema.
+#
+# Never blocks: every external call is best-effort (`|| true`); missing CLIs
+# are silently skipped via `[[ -f ]]` guards.
+# ============================================================================
+
+# Resolve scripts/progress-log.sh next to this hook's own hooks/ dir. Override
+# for tests (mirrors CONV_TREE_STATE_LIB's env-override convention).
+_pl_progress_log_cli() {
+  if [[ -n "${PL_PROGRESS_LOG_CLI_OVERRIDE:-}" ]]; then
+    printf '%s' "$PL_PROGRESS_LOG_CLI_OVERRIDE"; return 0
+  fi
+  printf '%s/../scripts/progress-log.sh' "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+}
+
+# Resolve scripts/dispatch-provenance.sh. Override for tests.
+_dispatch_provenance_cli() {
+  if [[ -n "${DISPATCH_PROVENANCE_CLI_OVERRIDE:-}" ]]; then
+    printf '%s' "$DISPATCH_PROVENANCE_CLI_OVERRIDE"; return 0
+  fi
+  printf '%s/../scripts/dispatch-provenance.sh' "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+}
+
+# The combined prompt/description/content text a dispatch tool_input may
+# carry, in ONE string (the same field set _builder_title / _spawn_title /
+# _extract_rich_details already read from tool_input).
+_dispatch_text() {
+  local input="$1"
+  _have jq || { printf ''; return 0; }
+  printf '%s' "$input" | jq -r '
+    [(.tool_input.prompt // ""),(.tool_input.description // ""),(.tool_input.content // "")] | join("\n")' 2>/dev/null || echo ""
+}
+
+# First `docs/plans/<slug>.md` reference in the dispatch text, or empty.
+_extract_plan_slug() {
+  local text="$1" ref
+  ref=$(printf '%s' "$text" | grep -oE 'docs/plans/[A-Za-z0-9_.-]+\.md' | head -n1)
+  [[ -z "$ref" ]] && { printf ''; return 0; }
+  local slug="${ref#docs/plans/}"
+  slug="${slug%.md}"
+  printf '%s' "$slug"
+}
+
+# Best-effort task number: prefers the "Task N of" convention this harness's
+# orchestrator dispatch prompts use (matches this exact plan's own dispatch
+# prompt shape); falls back to the first bare "Task N" mention. N may be
+# dotted (e.g. 3.2). Empty when no task number is found.
+_extract_task_id() {
+  local text="$1" m
+  m=$(printf '%s' "$text" | grep -oE '[Tt]ask[[:space:]]+[0-9]+(\.[0-9]+)?[[:space:]]+of\b' | head -n1)
+  if [[ -z "$m" ]]; then
+    m=$(printf '%s' "$text" | grep -oE '[Tt]ask[[:space:]]+[0-9]+(\.[0-9]+)?' | head -n1)
+  fi
+  [[ -z "$m" ]] && { printf ''; return 0; }
+  printf '%s' "$m" | grep -oE '[0-9]+(\.[0-9]+)?' | head -n1
+}
+
+# Read the plan header's `ask-id:` value from docs/plans/<slug>.md, resolved
+# against the CURRENT repo's toplevel (ephemeral-ok READ, constraint 11 --
+# this is not a durable in-repo WRITE). Deliberately duplicates
+# plan-lifecycle.sh's extract_ask_id awk pattern rather than sourcing that
+# hook: this hook does not depend on plan-lifecycle.sh, keeping the two
+# splices independently best-effort per this file's own failure-isolation
+# contract. Empty when the plan/header/repo is unresolvable -- pl_emit's own
+# orphan lane (pl_path_for("") -> unlinked.jsonl) absorbs it, same as Task 1.
+_resolve_ask_id_for_plan_slug() {
+  local slug="$1"
+  [[ -z "$slug" ]] && { printf ''; return 0; }
+  local root
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || { printf ''; return 0; }
+  local planfile="$root/docs/plans/$slug.md"
+  [[ -f "$planfile" ]] || { printf ''; return 0; }
+  awk '
+    /^ask-id:[[:space:]]*[^[:space:]]+/ {
+      sub(/^ask-id:[[:space:]]*/, "", $0)
+      sub(/[[:space:]].*$/, "", $0)
+      print $0
+      exit
+    }
+  ' "$planfile" 2>/dev/null
+}
+
+# _emit_dispatch_provenance <input> <sid> <child_id>
+#   Best-effort task_started progress-log emission + dispatch-provenance
+#   marker write. Silent no-op when the dispatch text names no plan
+#   (anti-noise: not every builder/spawn dispatch is plan-rooted). sid/
+#   child_id are the SAME dispatching-session-derived values the caller
+#   already computed for the conv-tree SESSIONS lineage rendering -- this is
+#   "the same provenance the SESSIONS lineage rendering consumes" per the
+#   plan's Task 3 spec, not a newly-invented session concept.
+_emit_dispatch_provenance() {
+  local input="$1" sid="$2" child_id="$3"
+  local text; text=$(_dispatch_text "$input")
+  local slug; slug=$(_extract_plan_slug "$text")
+  [[ -z "$slug" ]] && return 0
+  local task_id; task_id=$(_extract_task_id "$text")
+  local ask_id; ask_id=$(_resolve_ask_id_for_plan_slug "$slug")
+
+  local pl_cli; pl_cli=$(_pl_progress_log_cli)
+  if [[ -f "$pl_cli" ]]; then
+    bash "$pl_cli" emit --type task_started --ask "$ask_id" --plan-slug "$slug" \
+      --task-id "$task_id" --session-id "$sid" \
+      --summary "task ${task_id:-?} dispatched" --emitter workstreams-emit \
+      >/dev/null 2>&1 || true
+  fi
+
+  # Best-effort worktree hint: only the spawn_task surface's optional `cwd`
+  # override is ever visible pre-dispatch (see the section header above) --
+  # empty on the generic Task|Agent|Workflow surface, which is an honest
+  # gap, not a guessed value (dispatch-provenance.sh records it as such).
+  local wt_hint
+  wt_hint=$(printf '%s' "$input" | jq -r '.tool_input.cwd // empty' 2>/dev/null || echo "")
+
+  local dp_cli; dp_cli=$(_dispatch_provenance_cli)
+  if [[ -f "$dp_cli" ]]; then
+    if [[ -n "$wt_hint" ]]; then
+      bash "$dp_cli" write --ask "$ask_id" --plan-slug "$slug" --task-id "$task_id" \
+        --session-id "$sid" --child-id "$child_id" --worktree "$wt_hint" \
+        >/dev/null 2>&1 || true
+    else
+      bash "$dp_cli" write --ask "$ask_id" --plan-slug "$slug" --task-id "$task_id" \
+        --session-id "$sid" --child-id "$child_id" \
+        >/dev/null 2>&1 || true
+    fi
+  fi
+  return 0
+}
+
 # ----------------------------------------------------------------------------
 # --on-builder-dispatch  (PreToolUse on Task|Agent|Workflow)
 # ----------------------------------------------------------------------------
@@ -2247,6 +2515,12 @@ _run_on_builder_dispatch() {
       "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null || true
   fi
   _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid"
+
+  # ask-rooted-workstreams-p1 Task 3: best-effort task_started progress-log
+  # emission + dispatch-provenance marker (see the section above this
+  # function for the full contract; silent no-op when the dispatch names no
+  # plan).
+  _emit_dispatch_provenance "$input" "$sid" "$child_id" || true
 
   # ---- WAVE-O O.1 EMIT: bg-task-started (contract C2) --------------------
   # ONE marked emit line, per specs-o §O.1 deliverable 3. Scoped HONESTLY:
