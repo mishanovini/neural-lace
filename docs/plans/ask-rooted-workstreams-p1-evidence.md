@@ -289,3 +289,62 @@ scripts/dispatch-provenance.sh (script+lib split mirroring Task 2's convention).
 - Resolving ask_id by reading the plan file's `ask-id:` header directly (mirroring Task 1's
   extract_ask_id) is preferable to adding a reverse-lookup verb to ask-registry.sh (out of file
   ownership; the header-read is the already-reviewed established convention).
+
+---
+
+## Task 4 — NEEDS-YOU emission splice + operator-todo pointer (merged: master TBD; builder commit ce8a961)
+
+Substance verified: needs-you.sh --self-test 41/41 PASS (T1-T30 incl. new T26-T30), focused
+Task-4 re-run 9/9 incl. the constraint-11 from-worktree fixture T30 (T30a pointer under MAIN
+checkout; T30b absent from worktree). emit CLI unchanged; durable write via nl_main_checkout_root.
+
+### Comprehension Articulation
+
+#### Spec meaning
+Task 4 (plan 272-282): a best-effort never-blocking splice in needs-you.sh's `add` path that (a)
+emits ONE `waiting_on_operator` progress-log event through the STABLE progress-log.sh emit CLI
+(needs-you.sh:625-628: `--type waiting_on_operator --needs-you-id --session-id --summary
+--emitter needs-you`), carrying needs-you id/section/tier/session-id + the cold-reader lint result
+as a §3-context-present flag; and (b) appends an AUTO-pointer to docs/operator-todo.md in a
+marker-delimited section, operator-authored section untouched, path via nl_main_checkout_root
+(constraint 11). Intent: the pointer IS "the same mechanism that appends to NEEDS-YOU.md" —
+fires where the ledger append already happens (cmd_add), never model memory. Resolution/auto-check
+NOT emitted here — derived by the Task 12 auditor so a pointer survives resolutions bypassing the script.
+
+#### Edge cases covered
+- Section scoping (needs-you.sh:602 `case decision|question`): only decision/question fire; inflight/
+  decided don't (would recreate O.4 noise). T27a/T27b + existing T5.
+- §3-context-present flag honesty (:604-611): reuses cmd_add's lint_warnings; `present` on zero
+  warnings else `missing(<csv>)`, `n/a` for questions. T26b/T26d/T29.
+- AUTO-append insert-before-END, append-only (_ny_operator_todo_append_pointer :355-388): read/printf
+  loop inserts before `<!-- AUTO:END -->`, never rewrites; plain loop (not awk -v) so backslash
+  titles aren't misread. T28b (two distinct bullets), T28a (operator line above markers survives).
+- Constraint-11 durable write (_ny_operator_todo_path :287-308): nl_main_checkout_root (same as
+  _ny_md_path), never worktree cwd. From-worktree fixture T30 (:1466-1516): real linked worktree,
+  add fires from inside w/ OPERATOR_TODO_PATH="" → pointer under MAIN (T30a), absent from worktree (T30b).
+- Never-blocks (constraint 5): both writes in `( ... || true )`; CLI only if file exists (:624). T29
+  proves add exits 0 when operator-todo path unwritable.
+- First-use file creation (_ny_operator_todo_ensure :321-345): seeds only if absent; never re-templates.
+
+#### Edge cases NOT covered
+- No `--ask` on the event (:626-627): needs-you.sh has no ask-id in scope → event lands in `unlinked`
+  orphan lane by design; attaching to the right ask is the Task 12 auditor's job. Fixtures assert unlinked.jsonl.
+- Pointer resolution/auto-check not implemented here — out of scope; operator-todo.md is append-only,
+  resolved ledger item does NOT remove/check its pointer (file header documents). Auditor Task 12.
+- Malformed operator-todo.md missing a marker: _ny_operator_todo_append_pointer (:360-361) bails
+  silently (return 0) rather than repairing — best-effort, left for human/auditor.
+- No dedup fixture for replayed waiting_on_operator — key is needs_you_id alone (Task 2 proven), each
+  add mints a fresh id so real replay can't occur; relied on Task 2's dedup coverage.
+- Concurrent appends to operator-todo.md not stress-tested (add is single-session-serial in practice).
+
+#### Assumptions
+- progress-log.sh emit CLI is a frozen contract — call only --type/--needs-you-id/--session-id/
+  --summary/--emitter, change nothing; `needs-you` already in _PL_KNOWN_EMITTERS (provenance:known).
+- Frozen v1 schema has no section/tier/context-flag column (additionalProperties:false) → fold them
+  into the human-readable summary string (Task 1's technique), not a new field (Task 2 owns schema).
+- nl_main_checkout_root (hooks/lib/nl-paths.sh) already sourced by needs-you.sh (:162-165); my
+  _ny_operator_todo_path mirrors _ny_md_path's fallback chain (nl_main_checkout_root → git
+  rev-parse --show-toplevel → $PWD), total.
+- Sandboxing (constraint 4): self-test unsets HARNESS_SELFTEST + drives env overrides
+  (PROGRESS_LOG_STATE_DIR + OPERATOR_TODO_PATH :1004-1005); T30 clears OPERATOR_TODO_PATH to
+  exercise the real resolver.
