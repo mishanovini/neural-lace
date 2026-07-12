@@ -146,3 +146,22 @@ build-doctrine/telemetry/propagation.jsonl
 # docs/plans/archive/repo-cleanup-dispatch-worktree-gitlinks-2026-05-22.md.
 # The glob below prevents recurrence. HARNESS-GAP-41 (2026-05-24).
 /[a-z]*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]/
+
+# conversation-tree-ui runtime state (ephemeral; was swept into the index by check-harness-sync git add -A — RWR-27)
+neural-lace/conversation-tree-ui/state/.versions/
+neural-lace/conversation-tree-ui/state/*.tmp.*
+neural-lace/conversation-tree-ui/state/*.audit.log
+neural-lace/conversation-tree-ui/state/tree-state.before-ws.json
+neural-lace/conversation-tree-ui/state/tree-state.json.20*
+# live operational tree state + walking-skeleton fixtures (per-machine accumulated session
+# state with real ULIDs/timestamps; not a versioned fixture — RWR-27 follow-up 2026-06-19)
+neural-lace/conversation-tree-ui/state/tree-state.json
+neural-lace/conversation-tree-ui/state/walking-skeleton-*.json
+
+# machine-local workstreams state-path pointer: holds an ABSOLUTE per-machine path.
+# Belongs in the local layer, never the committed harness kit (harness-hygiene:
+# no absolute paths with usernames). RWR-27 follow-up.
+adapters/claude-code/config/workstreams-state-path
+
+# per-machine scheduler runtime lock (untracked 2026-07-12; was committed in v1.0 by accident)
+.claude/scheduled_tasks.lock
