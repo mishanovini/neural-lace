@@ -134,7 +134,7 @@ When the planner is certain a heuristic match is a legitimate one-off false posi
 - **Hook-enforced (Layer 1 — literal denylist):** `adapters/claude-code/hooks/harness-hygiene-scan.sh` runs as a pre-commit hook in the harness repo. It reads `adapters/claude-code/patterns/harness-denylist.txt` and rejects any commit whose staged diff matches a denylisted pattern. This is the mechanical layer and cannot be bypassed by forgetting a rule.
 - **Hook-enforced (Layer 2 — heuristic detection):** the same scanner runs `check_heuristics()` per file, catching project-internal path shapes and repeated capitalized-term clusters that the literal denylist cannot enumerate. See "Layer 2 heuristic detection" above for what it catches and how to add exemptions.
 - **Pattern-enforced:** the `harness-reviewer` agent checks for hygiene violations on every rule, agent, or hook change before commit. This catches cases the denylist patterns don't cover, such as stylistic leakage and overly-specific incident citations.
-- **Runtime-enforced:** the `/harness-review` skill (`adapters/claude-code/skills/harness-review.md`) runs across the full tree (not just the staged diff), catching any drift that slipped through pre-commit and producing a dated review under `docs/reviews/`. Full-tree scans can also be run manually via `adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree`.
+- **Runtime-enforced:** the `/harness-review` skill (`adapters/claude-code/skills/harness-review/SKILL.md`) runs across the full tree (not just the staged diff), catching any drift that slipped through pre-commit and producing a dated review under `docs/reviews/`. Full-tree scans can also be run manually via `adapters/claude-code/hooks/harness-hygiene-scan.sh --full-tree`.
 
 ## Scope
 

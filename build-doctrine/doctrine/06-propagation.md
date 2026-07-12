@@ -14,7 +14,7 @@ references:
   - ~/.claude/hooks/plan-edit-validator.sh
   - ~/.claude/hooks/decisions-index-gate.sh
   - ~/.claude/hooks/docs-freshness-gate.sh
-  - ~/.claude/skills/harness-review.md
+  - ~/.claude/skills/harness-review/SKILL.md
 revision_notes:
   - 2026-05-01 v1: initial 7-trigger taxonomy with mechanical-enforcement boundaries
   - 2026-05-03 v3: NL propagation hooks cross-referenced (plan-lifecycle, plan-edit-validator, decisions-index-gate, docs-freshness-gate); /harness-review skill cited as T4-trigger mechanism; C12 propagation-event hook generalization cited as forthcoming Phase 1d-C; trigger naming PT-1..PT-7 to disambiguate from "Tier" usage.
@@ -200,7 +200,7 @@ Cross-repo propagation is the only category where the rule explicitly does **not
 
 ### Composition with NL's `/harness-review` skill
 
-When a doctrine change of severity ≥ "structure" fires (PT-4), `/harness-review` should re-run on every downstream project to verify their canon is consistent with the new doctrine. The skill (defined at `~/.claude/skills/harness-review.md` per NL adapter conventions) is today the closest mechanism to a doctrine-fan-out propagation hook:
+When a doctrine change of severity ≥ "structure" fires (PT-4), `/harness-review` should re-run on every downstream project to verify their canon is consistent with the new doctrine. The skill (defined at `~/.claude/skills/harness-review/SKILL.md` per NL adapter conventions) is today the closest mechanism to a doctrine-fan-out propagation hook:
 
 - The skill scans the project's harness state for drift, missing rules, hygiene violations, and stale references.
 - It reads `docs/failure-modes.md` to check whether new doctrine guidance addresses observed failure classes.

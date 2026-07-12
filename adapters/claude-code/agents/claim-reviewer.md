@@ -249,4 +249,4 @@ You are NOT redundant with `functionality-verifier`: it exercises the live syste
 - Claims discipline (PROVEN/HYPOTHESIZED): `~/.claude/doctrine/claims.md`
 - Diagnostic-first / FM-catalog: `~/.claude/doctrine/diagnosis.md`, `docs/failure-modes.md`
 - Sibling agents: `~/.claude/agents/functionality-verifier.md`, `~/.claude/agents/end-user-advocate.md`, `~/.claude/agents/domain-expert-tester.md`
-- Companion skill: `~/.claude/skills/verify-feature.md` — ripgrep citation lookup the builder uses to ground claims before drafting.
+- Companion skill: `~/.claude/skills/verify-feature/SKILL.md` — ripgrep citation lookup the builder uses to ground claims before drafting.

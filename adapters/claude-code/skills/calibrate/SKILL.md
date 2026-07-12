@@ -228,10 +228,10 @@ TMP=$(mktemp -d)
 cd "$TMP" && git init -q
 
 # Case 1
-bash ~/.claude/skills/calibrate.md 2>&1 | grep -q "Usage:" && echo "PASS: case 1" || echo "FAIL: case 1"
+bash ~/.claude/skills/calibrate/SKILL.md 2>&1 | grep -q "Usage:" && echo "PASS: case 1" || echo "FAIL: case 1"
 
 # Case 5
-bash ~/.claude/skills/calibrate.md task-verifier shortcut "verifier returned PASS without runtime check" \
+bash ~/.claude/skills/calibrate/SKILL.md task-verifier shortcut "verifier returned PASS without runtime check" \
   && [[ -f .claude/state/calibration/task-verifier.md ]] \
   && grep -q "Calibration entries — task-verifier" .claude/state/calibration/task-verifier.md \
   && grep -q "shortcut" .claude/state/calibration/task-verifier.md \
@@ -287,7 +287,7 @@ counter-incentive prompt update or a new mechanical gate.
 
 ## Related
 
-- `~/.claude/skills/harness-review.md` Check 12 — the roll-up consumer.
+- `~/.claude/skills/harness-review/SKILL.md` Check 12 — the roll-up consumer.
 - `docs/decisions/queued-tranche-1.5.md` G.1, G.2 — decisions backing the
   storage location and manual-vs-mechanized cadence.
 - `docs/decisions/026-harness-catches-up-to-doctrine.md` — the framing this

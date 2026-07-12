@@ -35,7 +35,7 @@ Do not hand-edit: regenerate with `bash adapters/claude-code/scripts/manifest-ch
 | effort-policy-warn | surfacer | — | effort-policy-warn.sh | no | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | end-manifest | writer | — | — | no | scripts/end-manifest.sh (E.12) — session end-manifest writer+validator; invoked by the dispatcher when a manifest is present, not event-wired. |
 | env-local-protection | gate | [doctrine/security.md](security.md) | env-local-protection.sh | yes | — |
-| estate-coordination | pattern | [doctrine/estate-coordination.md](estate-coordination.md) | — | no | docs+skill unit only (skills/coordinate-estate.md + doctrine/estate-coordination.md); no hook, no wiring; jit_triggers fire doctrine-jit.sh's paths-match on any edit whose file_path contains SCRATCHPAD.md (keywords reserved for v2 per schema, not yet matched). |
+| estate-coordination | pattern | [doctrine/estate-coordination.md](estate-coordination.md) | — | no | docs+skill unit only (skills/coordinate-estate/SKILL.md + doctrine/estate-coordination.md); no hook, no wiring; jit_triggers fire doctrine-jit.sh's paths-match on any edit whose file_path contains SCRATCHPAD.md (keywords reserved for v2 per schema, not yet matched). |
 | external-monitor-alerts | surfacer | — | external-monitor-alert-surfacer.sh | no | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | findings-ledger | gate | [doctrine/findings-ledger.md](findings-ledger.md) | findings-ledger-schema-gate.sh | yes | — |
 | friction-reflexion | pattern | [doctrine/friction-reflexion.md](friction-reflexion.md) | — | no | — |

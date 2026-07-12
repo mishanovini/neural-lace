@@ -627,7 +627,7 @@
       },
       "blocking": false,
       "budget_class": "none",
-      "honest_status": "docs+skill unit only (skills/coordinate-estate.md + doctrine/estate-coordination.md); no hook, no wiring; jit_triggers fire doctrine-jit.sh's paths-match on any edit whose file_path contains SCRATCHPAD.md (keywords reserved for v2 per schema, not yet matched)."
+      "honest_status": "docs+skill unit only (skills/coordinate-estate/SKILL.md + doctrine/estate-coordination.md); no hook, no wiring; jit_triggers fire doctrine-jit.sh's paths-match on any edit whose file_path contains SCRATCHPAD.md (keywords reserved for v2 per schema, not yet matched)."
     },
     {
       "id": "external-monitor-alerts",

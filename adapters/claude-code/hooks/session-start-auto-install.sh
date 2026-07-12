@@ -45,7 +45,7 @@
 #   its wiring; every subsequent change — including future versions of this hook —
 #   then self-propagates automatically.
 #
-# Self-test: invoke with --self-test to exercise the scenario matrix (12 cases).
+# Self-test: invoke with --self-test to exercise the scenario matrix (15 cases).
 
 set -u
 
@@ -225,10 +225,18 @@ sync_canonical_files() {
   local ext; ext=$(_subdir_ext "$subdir")
   mkdir -p "$live_sub" 2>/dev/null || true
 
-  # Canonical basenames for this subdir at the ref (extension per subdir).
+  # Canonical paths for this subdir at the ref (extension per subdir),
+  # RELATIVE to the subdir. `-r` (recursive) is required: skills are
+  # directory-form (`skills/<name>/SKILL.md` — the only form the Skill tool
+  # registers; flat `skills/<name>.md` is silently non-invocable, see
+  # docs/discoveries/2026-06-02-flat-md-skills-not-skill-tool-invocable.md).
+  # A non-recursive ls-tree lists `<name>` as a tree entry with no .md
+  # extension and silently skips every directory-form skill. Recursion also
+  # picks up nested content in other subdirs (e.g. hooks/lib/*.sh) that the
+  # flat listing previously missed.
   local canon_list
-  canon_list=$(git -C "$nl" ls-tree --name-only "$ref" "adapters/claude-code/$subdir/" 2>/dev/null \
-    | grep "\\.${ext}\$" | sed 's#.*/##' | sort -u)
+  canon_list=$(git -C "$nl" ls-tree -r --name-only "$ref" "adapters/claude-code/$subdir/" 2>/dev/null \
+    | grep "\\.${ext}\$" | sed "s#^adapters/claude-code/$subdir/##" | sort -u)
   [ -z "$canon_list" ] && return 0
 
   local b tmp target
@@ -240,13 +248,14 @@ sync_canonical_files() {
       continue
     fi
     target="$live_sub/$b"
+    mkdir -p "$(dirname "$target")" 2>/dev/null || true
     if [ ! -e "$target" ]; then
       cp "$tmp" "$target" 2>/dev/null && { [ "$ext" = sh ] && chmod +x "$target" 2>/dev/null; :; }
       N_INSTALLED=$((N_INSTALLED + 1))
       _log "installed $subdir/$b (was missing)"
     elif ! _content_same "$tmp" "$target"; then
-      # master-wins, but back up the prior live copy first.
-      mkdir -p "$BACKUP_DIR/$subdir" 2>/dev/null || true
+      # master-wins, but back up the prior live copy first ($b may be nested).
+      mkdir -p "$BACKUP_DIR/$subdir/$(dirname "$b")" 2>/dev/null || true
       cp "$target" "$BACKUP_DIR/$subdir/$b" 2>/dev/null || true
       cp "$tmp" "$target" 2>/dev/null && { [ "$ext" = sh ] && chmod +x "$target" 2>/dev/null; :; }
       N_UPDATED=$((N_UPDATED + 1))
@@ -257,12 +266,27 @@ sync_canonical_files() {
     rm -f "$tmp"
   done <<< "$canon_list"
 
-  # Count live files NOT in canonical (informational drift; never touched).
+  # Count live files NOT in canonical (informational drift; never touched —
+  # with ONE exception below for migrated flat skills).
   local f base
   for f in "$live_sub"/*."$ext"; do
     [ -e "$f" ] || continue
     base=$(basename "$f")
     if ! printf '%s\n' "$canon_list" | grep -qx "$base"; then
+      # Flat-skill migration prune (2026-07): a live flat `skills/<name>.md`
+      # whose canonical twin is now directory-form `skills/<name>/SKILL.md`
+      # is a stale pre-migration remnant, not operator drift — the Skill tool
+      # never registers it, so it is dead weight that shadows nothing. Back
+      # it up, then remove. Files with NO canonical twin in either form are
+      # still counted as drift and never touched.
+      if [ "$subdir" = "skills" ] \
+         && printf '%s\n' "$canon_list" | grep -qx "${base%.md}/SKILL.md"; then
+        mkdir -p "$BACKUP_DIR/$subdir" 2>/dev/null || true
+        cp "$f" "$BACKUP_DIR/$subdir/$base" 2>/dev/null || true
+        rm -f "$f" 2>/dev/null || true
+        _log "pruned stale flat skills/$base (canonical is now skills/${base%.md}/SKILL.md; backed up)"
+        continue
+      fi
       N_DRIFT=$((N_DRIFT + 1))
     fi
   done
@@ -425,6 +449,10 @@ run_self_test() {
   printf '%s\n' '#!/bin/bash' 'echo script-gamma v1' > "$CANON/adapters/claude-code/scripts/gamma.sh"
   # A content surface (.md) — exercises the agents/rules/templates/skills sync path.
   printf '%s\n' '# agent-delta' 'content v1' > "$CANON/adapters/claude-code/agents/delta.md"
+  # A directory-form skill (skills/<name>/SKILL.md) — the ONLY Skill-tool-
+  # registrable form; exercises the recursive/nested sync path.
+  mkdir -p "$CANON/adapters/claude-code/skills/epsilon"
+  printf '%s\n' '---' 'name: epsilon' '---' 'skill v1' > "$CANON/adapters/claude-code/skills/epsilon/SKILL.md"
   # A canonical settings.json.template with two SessionStart entries, one of which
   # is the auto-install self-wire entry, plus one Stop entry.
   cat > "$CANON/adapters/claude-code/settings.json.template" <<'TMPL'
@@ -576,6 +604,31 @@ LIVE
   if echo "$out" | grep -qE "0 updated" && [ "$crlf_before" = "$crlf_after" ]; then
     echo "PASS: crlf-identical-not-updated"; pass=$((pass+1))
   else echo "FAIL: crlf-identical-not-updated (out: $out; before=$crlf_before after=$crlf_after)"; fail=$((fail+1)); fi
+
+  # ---- Scenario 14: dir-form-skill-installs ----
+  # skills/<name>/SKILL.md (the only Skill-tool-registrable form) must be
+  # synced into live, nested path intact.
+  local L14="$tmp/live14"; mkdir -p "$L14"
+  out=$(_run_main "$L14")
+  if [ -f "$L14/skills/epsilon/SKILL.md" ] \
+     && diff -q "$L14/skills/epsilon/SKILL.md" <(git -C "$CANON" show master:adapters/claude-code/skills/epsilon/SKILL.md) >/dev/null 2>&1; then
+    echo "PASS: dir-form-skill-installs"; pass=$((pass+1))
+  else echo "FAIL: dir-form-skill-installs (out: $out)"; fail=$((fail+1)); fi
+
+  # ---- Scenario 15: stale-flat-skill-pruned-with-backup ----
+  # A live flat skills/<name>.md whose canonical twin is now directory-form
+  # must be backed up + removed; a flat skill with NO canonical twin in
+  # either form must be preserved as drift.
+  local L15="$tmp/live15"; mkdir -p "$L15/skills"
+  printf '%s\n' 'old flat epsilon' > "$L15/skills/epsilon.md"
+  printf '%s\n' 'operator-local skill' > "$L15/skills/zeta.md"
+  out=$(_run_main "$L15")
+  if [ ! -e "$L15/skills/epsilon.md" ] \
+     && ls "$L15"/.backup-auto-install-*/skills/epsilon.md >/dev/null 2>&1 \
+     && [ -f "$L15/skills/zeta.md" ] \
+     && [ -f "$L15/skills/epsilon/SKILL.md" ]; then
+    echo "PASS: stale-flat-skill-pruned-with-backup"; pass=$((pass+1))
+  else echo "FAIL: stale-flat-skill-pruned-with-backup (out: $out; ls: $(ls -R "$L15/skills" 2>/dev/null))"; fail=$((fail+1)); fi
 
   echo ""
   echo "[self-test] $pass passed, $fail failed"

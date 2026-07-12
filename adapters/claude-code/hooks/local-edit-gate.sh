@@ -16,7 +16,7 @@
 # Plan:    docs/plans/context-aware-permission-gates.md (Task 5)
 # ADR:     docs/decisions/029-local-edit-authorization-mechanism.md
 # Rule:    ~/.claude/doctrine/local-edit-authorization.md
-# Skill:   ~/.claude/skills/grant-local-edit.md
+# Skill:   ~/.claude/skills/grant-local-edit/SKILL.md
 #
 # Behavior:
 #   - Tool not in {Edit, Write, MultiEdit}     -> allow (silent, exit 0)

@@ -1,5 +1,5 @@
 # Estate coordination — compact
-> Enforcement: Pattern — self-applied via `skills/coordinate-estate.md`. No hook.
+> Enforcement: Pattern — self-applied via `skills/coordinate-estate/SKILL.md`. No hook.
 > Full: doctrine/estate-coordination-full.md
 > Applies: any session managing/dispatching multiple concurrent sessions across
 > the estate (this machine's other checkouts/worktrees), and any freeze-window
@@ -7,7 +7,7 @@
 
 Mechanizes the 2026-07-04 manual estate-coordination run (NL-FINDING-031),
 recorded live in the main checkout's `SCRATCHPAD.md` `## COORDINATION ORDER` /
-`COORD UPDATE` sections. Full protocol: `skills/coordinate-estate.md`.
+`COORD UPDATE` sections. Full protocol: `skills/coordinate-estate/SKILL.md`.
 
 ## The one rule: file-based channels ONLY
 

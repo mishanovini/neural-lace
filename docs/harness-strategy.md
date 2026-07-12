@@ -273,7 +273,7 @@ Golden scenarios — run after any change to settings.json, hooks, or agents:
 ### Layer C: Strategic Review (weekly during active development)
 
 The `/harness-review` skill runs weekly (**implemented in v1.1** — see
-`adapters/claude-code/skills/harness-review.md`). Cadence adjusts based on
+`adapters/claude-code/skills/harness-review/SKILL.md`). Cadence adjusts based on
 development intensity — weekly during active harness work, biweekly during
 maintenance periods.
 

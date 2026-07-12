@@ -415,7 +415,7 @@ Gap-analysis (enforcement-gap-analyzer, if FAIL):
 
 ### Knowledge integration ritual — the doctrine evolves on cadence + triggers
 
-**Classification:** Hybrid (Pattern + Mechanism). The 7-trigger taxonomy (KIT-1..KIT-7) is documented as Pattern in `build-doctrine/doctrine/07-knowledge-integration.md`. The mechanism layer is `~/.claude/skills/harness-review.md` Check 13 (KIT sweep) + `~/.claude/scripts/analyze-propagation-audit-log.sh` (KIT-6 consumer) + `~/.claude/templates/pilot-friction.md` (Tranche-4 capture standardization).
+**Classification:** Hybrid (Pattern + Mechanism). The 7-trigger taxonomy (KIT-1..KIT-7) is documented as Pattern in `build-doctrine/doctrine/07-knowledge-integration.md`. The mechanism layer is `~/.claude/skills/harness-review/SKILL.md` Check 13 (KIT sweep) + `~/.claude/scripts/analyze-propagation-audit-log.sh` (KIT-6 consumer) + `~/.claude/templates/pilot-friction.md` (Tranche-4 capture standardization).
 
 **The rule.** The doctrine itself is a living artifact whose updates propagate on observed signals from running projects, not on imagined cadence. 7 triggers — calibration patterns, findings patterns, discovery accumulation, ADR-cross-reference staleness, `/harness-review` cadence, propagation-engine audit-log evidence, drift signal — collectively decide when the doctrine needs revision. `/harness-review` Check 13 sweeps each KIT against existing capture substrates and emits a structured ritual-trigger summary. `analyze-propagation-audit-log.sh` consumes the propagation engine's JSONL audit log and produces rule-fire frequency, conjectural-rule promotion candidates, unmatched-event-type negative-space, and slow-rule reports.
 
@@ -695,7 +695,7 @@ The failure mode that drives this rule is not laziness — it's optimism. "I'll 
 
 A weekly cadence balances cost and drift tolerance. Shorter cadences (per-session) add friction without catching meaningful new drift. Longer cadences (monthly) let drift accumulate past the point where any one finding is easy to triage.
 
-**How the harness enforces it.** `adapters/claude-code/skills/harness-review.md` defines the skill — the checks it runs, the output shape, the remediation expectations. Findings are written to `docs/reviews/YYYY-MM-DD-harness-audit.md` for traceability.
+**How the harness enforces it.** `adapters/claude-code/skills/harness-review/SKILL.md` defines the skill — the checks it runs, the output shape, the remediation expectations. Findings are written to `docs/reviews/YYYY-MM-DD-harness-audit.md` for traceability.
 
 **When to break it.** Running the skill less often than weekly is a judgment call — a stable harness may run it monthly without meaningful drift. Skipping the skill entirely is not advisable; the checks it performs are not duplicated elsewhere.
 

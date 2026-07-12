@@ -121,7 +121,7 @@ jq 'select(.conjectural == true and .verdict == "fired")' \
 
 Rules tagged `conjectural: true` ship with thresholds + actions that are hypotheses pending evidence. Disposition happens once the audit log accumulates enough events:
 
-1. **Periodic review** (per `~/.claude/skills/harness-review.md`) reads the audit log and asks: "for each conjectural rule, do the firings match the intended pattern?"
+1. **Periodic review** (per `~/.claude/skills/harness-review/SKILL.md`) reads the audit log and asks: "for each conjectural rule, do the firings match the intended pattern?"
 2. **If YES** — promote to proven (flip `conjectural: false`, remove `pending_evidence`). Rule version-bumps; CHANGELOG entry.
 3. **If NO** — adjust the threshold or action based on evidence; the rule stays conjectural until the next review confirms the new shape.
 4. **If the rule fires NEVER** — either the trigger never happens (de-prioritize the rule, possibly remove) or the trigger detection is broken (check the `event_type` source).

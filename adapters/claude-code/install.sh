@@ -921,7 +921,7 @@ sync_file "$ADAPTER_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
 # before: skills/ was never synced by install.sh at all, and templates/ was
 # synced further down from the repo-root patterns/templates/ (a STALE 3-file
 # subset, incl. an out-of-date plan-template.md). A Wave-O merge that added
-# skills/coordinate-estate.md was therefore missing from live ~/.claude until
+# skills/coordinate-estate/SKILL.md was therefore missing from live ~/.claude until
 # the next SessionStart tick ran auto-install. Sourcing both from the adapter
 # dir here (same source AND target auto-install reads) closes that drift —
 # nl-issue [31].

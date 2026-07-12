@@ -116,7 +116,7 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 
   **Implementation sketch.** Two-file shape, matches the propagation-engine precedent (Tranche 6a, 2026-05-06):
   - **Script: `adapters/claude-code/scripts/audit-hook-empirical-firings.sh`** — reads settings + audit logs, emits classification. `--self-test` covers: (a) matched-tool-with-self-test-only entries flagged, (b) matched-tool-with-production entries cleared, (c) local-tool hook ignored, (d) hook with no audit log surfaces as `unknown-coverage` (also worth flagging — silence is not absence), (e) ≤ 14-day-old hook in shakedown window not flagged.
-  - **Skill extension: `~/.claude/skills/harness-review.md` Check 14** — sweeps `audit-hook-empirical-firings.sh suspicious-wirings` and lists the candidates in the weekly review output. Composes with Check 12 (calibration roll-up) and Check 13 (Knowledge-Integration ritual). Pattern-class — Check 14 surfaces, the operator decides; no auto-block.
+  - **Skill extension: `~/.claude/skills/harness-review/SKILL.md` Check 14** — sweeps `audit-hook-empirical-firings.sh suspicious-wirings` and lists the candidates in the weekly review output. Composes with Check 12 (calibration roll-up) and Check 13 (Knowledge-Integration ritual). Pattern-class — Check 14 surfaces, the operator decides; no auto-block.
   - **Audit-log convention:** establish that every PreToolUse hook matching an MCP tool MUST write to `~/.claude/logs/<hook-name>.log` so this lint has a substrate to read. Hooks that already log here (`conversation-tree-emit.sh`, `propagation-trigger-router.sh`) are compliant; hooks that don't log at all are silently uncheckable and should be enumerated as a separate finding.
 
   **Out-of-scope notes.**

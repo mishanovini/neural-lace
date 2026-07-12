@@ -202,7 +202,7 @@ The block lands in the calling task-verifier's evidence file under `Runtime veri
 - Sibling agent: `~/.claude/agents/end-user-advocate.md` — adversarial product observer (whole-plan, plan-time + session-end). Different role; same browser-MCP toolchain.
 - Sibling agent: `~/.claude/agents/task-verifier.md` — the entity that flips checkboxes. Requires your evidence on `Verification: full` runtime tasks.
 - Sibling rule: `~/.claude/doctrine/risk-tiered-verification.md` — the rule that scopes when you fire (only `Verification: full`).
-- Sibling skill: `~/.claude/skills/verify-feature.md` — ripgrep-based code citation helper. NOT a substitute for you — that skill proves the code exists; you prove the code WORKS.
+- Sibling skill: `~/.claude/skills/verify-feature/SKILL.md` — ripgrep-based code citation helper. NOT a substitute for you — that skill proves the code exists; you prove the code WORKS.
 - Failure mode: `FM-006` self-reported task completion without evidence — the class this agent exists to mechanically close on runtime tasks.
 - Failure-modes catalog: `docs/failure-modes.md` — consult before PASS-ing; if the task pattern matches a catalogued symptom, the agent's Prevention field is what you must demonstrate satisfied.
 

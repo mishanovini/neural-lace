@@ -4,7 +4,7 @@
 
 Mechanizes the 2026-07-04 manual estate-coordination run (NL-FINDING-031),
 recorded live in the main checkout's `SCRATCHPAD.md` `## COORDINATION ORDER` /
-`COORD UPDATE` sections. Full protocol: `skills/coordinate-estate.md`.
+`COORD UPDATE` sections. Full protocol: `skills/coordinate-estate/SKILL.md`.
 
 ## The one rule: file-based channels ONLY
 

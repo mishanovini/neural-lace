@@ -12,7 +12,7 @@ references:
   - ~/.claude/rules/calibration-loop.md (Tranche G — observation capture)
   - ~/.claude/rules/findings-ledger.md (Tranche 1 — finding capture)
   - ~/.claude/rules/discovery-protocol.md (Tranche 1d-D — discovery capture)
-  - ~/.claude/skills/harness-review.md (existing periodic-audit skill — extends in 5a as ritual driver)
+  - ~/.claude/skills/harness-review/SKILL.md (existing periodic-audit skill — extends in 5a as ritual driver)
   - docs/decisions/queued-tranche-1.5.md (G.1 — calibration storage; the 5a ritual extends the bootstrap pattern from G to doctrine-level)
 revision_notes:
   - 2026-05-06 v1: Tranche 5a — process shape + trigger taxonomy + cadence-as-hypothesis + versioning policy. Cadence numbers (monthly default) and trigger thresholds (N=3 calibration, M=3 findings within 7 days) are explicitly conjectural per AP16 mitigation. To be revised in Tranche 5b based on pilot evidence.
@@ -277,7 +277,7 @@ Per the original Phase 5 scope, this section would specify:
 - **Calibration loop:** `~/.claude/rules/calibration-loop.md` — Tranche G; KIT-1 trigger source
 - **Findings ledger:** `~/.claude/rules/findings-ledger.md` — C9 from Tranche 1; KIT-2 trigger source
 - **Discovery protocol:** `~/.claude/rules/discovery-protocol.md` — Tranche 1d-D; KIT-3 trigger source
-- **`/harness-review` skill:** `~/.claude/skills/harness-review.md` — KIT-5 trigger source
+- **`/harness-review` skill:** `~/.claude/skills/harness-review/SKILL.md` — KIT-5 trigger source
 - **Tranche 5a plan:** `docs/plans/build-doctrine-tranche-5a-knowledge-integration-ritual.md` (when authored)
 - **Q9 sequencing decision:** `~/claude-projects/Build Doctrine/outputs/unified-methodology-recommendation.md` §9 Q9 — this Tranche 5a partially overrides Q9 by shipping the structurally-derivable parts; Q9's full-deferral applies to Tranches 5b + 5c.
 
