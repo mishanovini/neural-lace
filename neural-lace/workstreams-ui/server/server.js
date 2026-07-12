@@ -35,6 +35,14 @@ const projects = require('../config/projects.js');
 const { DeriveCache, runWhy } = require('./derive-cache.js');
 const reconciler = require('./reconciler.js');
 const payloadSchema = require('./payload-schema.js');
+// Ask-rooted-workstreams-p1 Task 12 — background drift auditor. Mounted
+// (start()'d) only after a successful port bind (same single-instance-guard
+// timing `cache.start()` already uses, below) and read on every /api/asks +
+// /api/ask/<id> build via getBadgesForAsk() — a pure in-memory read, never
+// an oracle shell on the request path (auditor.js's own header + Behavioral
+// Contracts perf budget).
+const auditorMod = require('./auditor.js');
+const auditor = auditorMod.createAuditor();
 
 // stateLib for the reconciler's COMPARISON-ONLY read. Best-effort require:
 // if trust-path retirement has already removed/broken this module on a
@@ -345,6 +353,12 @@ function computePlanRows(reg, events) {
       doneEvByPlan[e.plan_slug][e.task_id] = e.evidence_link || '';
     }
   });
+  // Task 12 — every task-level drift badge (Task 12's auditor) the ask
+  // carries gets routed to the matching plan_slug+task_id row here; the
+  // detail payload's ask-level `drift_badges` (buildAskDetailPayload) is
+  // the full set, this is the per-row subset a future click-through
+  // (Task 13) can attach to the right task.
+  const askBadges = auditor.getBadgesForAsk(reg.ask_id);
   return slugs.map((slug) => {
     const absPath = resolvePlanAbsPath(reg.repo, slug);
     const planTasks = absPath ? countPlanTasks(absPath) : null;
@@ -352,7 +366,8 @@ function computePlanRows(reg, events) {
     const doneMap = doneEvByPlan[slug] || {};
     const tasks = (planTasks || []).map((t) => {
       const inFlight = !t.done && !!startedSet[t.id] && !doneMap[t.id];
-      return { id: t.id, done: t.done, in_flight: inFlight, evidence_link: doneMap[t.id] || '' };
+      const rowBadges = askBadges.filter((b) => b.plan_slug === slug && b.task_id === t.id);
+      return { id: t.id, done: t.done, in_flight: inFlight, evidence_link: doneMap[t.id] || '', drift_badges: rowBadges };
     });
     return { plan_slug: slug, plan_doc: projectDocRefFor(absPath), tasks: tasks };
   });
@@ -666,7 +681,7 @@ function buildAskCard(reg, events) {
     activity_ts: activityTs,
     plan_progress: planProgress,
     waiting_count: waitingCount,
-    drift_badges: [], // Task 12 (auditor) populates; always [] until it lands
+    drift_badges: auditor.getBadgesForAsk(reg.ask_id), // Task 12 (background auditor)
     narrative_excerpt: lastEvent ? narrativeSummary(lastEvent) : '',
   };
 }
@@ -744,6 +759,7 @@ function buildAskDetailPayload(askId) {
     waiting_items: waitingItems,
     artifacts: artifacts,
     sessions: sessions.map((s) => Object.assign({}, s, { state: clsMap[s.session_id] || 'missing' })),
+    drift_badges: auditor.getBadgesForAsk(askId), // Task 12 (background auditor) — ask-level badges
   }));
 }
 
@@ -969,6 +985,18 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ---- Task 12 diagnostics detail — the background auditor's FULL internal
+  // state (healed backfills, backfill errors, the §8-3 count-reconciliation
+  // detail, and the raw per-ask badge map). Deliberately NOT schema-
+  // validated (unlike /api/asks + /api/ask/<id>): this is the diagnostics-
+  // tab surface (Task 16, not built by this task), which the anti-noise law
+  // (constraint 1) explicitly scopes to the LANDING payload/DOM, not this
+  // internal view — same precedent as the existing /api/reconciler endpoint
+  // just below.
+  if (url === '/api/diagnostics/drift') {
+    return sendJson(res, 200, auditor.getDiagnostics());
+  }
+
   // ---- Divergence reconciler badge (specs-o §O.4 deliverable 3 / §O.4.3).
   if (url === '/api/reconciler') {
     const result = reconciler.check(stateLib, cache, reconciler.defaultLedgerEmit);
@@ -1070,6 +1098,11 @@ server.listen(PORT, HOST, () => {
   process.stdout.write('[server] nl bin: ' + require('./derive-cache.js').nlBin() + '\n');
   // Poll loop starts ONLY after a successful bind — see the guard above.
   cache.start();
+  // Task 12 — background drift auditor. SAME single-instance-guard timing
+  // as cache.start(): a losing EADDRINUSE instance exits above and never
+  // reaches this callback, so at most one auditor cadence loop runs against
+  // a given port.
+  auditor.start();
 });
 
-module.exports = { server, cache, isLobotomized };
+module.exports = { server, cache, isLobotomized, auditor };

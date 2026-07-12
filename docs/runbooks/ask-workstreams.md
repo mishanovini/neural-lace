@@ -168,10 +168,87 @@ mask CRLF), and schema-field-parity (an emitted event's field set matches
 `progress-log-event.schema.json`'s allowlist exactly, so an undocumented
 field addition is self-test-visible, not silent drift).
 
+## Background auditor + drift badges (Task 12)
+
+`neural-lace/workstreams-ui/server/auditor.js` — a background reconciler
+that compares the progress log against several independent ground-truth
+sources and either HEALS a gap (backfills a missing event, silently) or
+BADGES it (when the log claims something ground truth does not support).
+It reuses `derive-cache.js`'s `bashBin()`/`spawnEnv()` spawn plumbing and
+shells to the SAME mechanism CLIs every splice already uses — it never
+re-implements their logic:
+
+- `scripts/progress-log.sh emit` — backfills a missing `task_done` event.
+- `scripts/ask-registry.sh set-status` — the mechanical ask-done exit
+  (`--emitter auditor`).
+- `hooks/lib/merge-scan-lib.sh scan-repo` — the GUARANTEED `merged`-backfill
+  lane (Task 5b); this is the module Task 5b's header names as its caller.
+
+**Cadence:** default 120000ms (2 minutes), env-tunable via
+`AUDITOR_CADENCE_MS`. Deliberately relaxed relative to `derive-cache.js`'s
+30s pane refresh — nothing on the `GET /api/asks` read path depends on the
+auditor's freshness (the log is primary; Behavioral Contracts: "auditor
+down -> landing still serves"). Single-flight guarded (a slow cycle SKIPS
+the next tick rather than stacking, mirroring `DeriveCache`'s own
+`_cycleInFlight`). `AUDITOR_REPO_ROOTS` (a `path.delimiter`-separated list)
+overrides the repo-scan set for a sandboxed run; production resolves every
+distinct root from `config/projects.js`'s `loadProjects()` map.
+`AUDITOR_DISABLED=1` gates the autostart timer/immediate-fire only — a
+direct `runCycle()` call is always honored (used by self-tests that need
+sandboxing in place first).
+
+### Drift taxonomy (the divergence-class table)
+
+| Divergence | Authoritative side | Auditor action |
+|---|---|---|
+| checkbox `[x]`, no `task_done` event (truth ahead) | plan file | BACKFILL `task_done`, `emitter=auditor` — HEALS, no permanent badge |
+| master SHA, no `merged` event (truth ahead) | git | BACKFILL `merged` via merge-scan-lib.sh's GUARANTEED lane |
+| NEEDS-YOU item resolved, pointer unchecked (truth ahead) | ledger (NEEDS-YOU.md's rendered "Awaiting your decision" section) | derive resolution -> auto-check the `docs/operator-todo.md` AUTO pointer bullet |
+| all linked plans terminal (`Status: COMPLETED`), ask still `active` (truth ahead) | plan Status | `ask-registry.sh set-status done`, `emitter=auditor` — the mechanical ask exit (constraint 7) |
+| `task_done` event, checkbox unflipped (log ahead) | plan file | BADGE `log_ahead_task_not_flipped` — never un-emit, never flip (constraint 6) |
+| `task_started` with no matching dispatch-provenance marker (log ahead) | dispatch records | BADGE `unmatched_dispatch` |
+| `waiting_on_operator` with no ground truth anywhere (log ahead) | ledger | BADGE `orphaned_waiting_item` |
+| event with `provenance:unknown` emitter (no oracle) | — | BADGE `unknown_provenance` + `de_emphasize:true` (constraint 10) |
+
+"Terminal" for the plan-Status row is scoped strictly to the literal value
+`COMPLETED` — deliberately not `ABANDONED`/`DEFERRED`/`SUPERSEDED` (this
+estate's other terminal-ish plan statuses), since those mean "this plan
+stopped", not "the ask this plan served is done."
+
+Every drift badge carries a `detail_ref` (an opaque, stable id) and a
+`message` (plain operator prose — never a raw event `type`/hook/script
+name); `divergence_class` is a short, prose-safe label. Badges reach
+`GET /api/asks` (ask-card level, `drift_badges[]`) and `GET /api/ask/<id>`
+(ask-level `drift_badges[]` AND the matching `plan_rows[].tasks[].drift_badges[]`
+row) through `payload-schema.js`'s allowlist like every other field — Task
+13 (not built by this task) owns the actual click-through UI.
+
+### §8-3 count reconciliation
+
+Every cycle also compares the count of currently-OPEN NEEDS-YOU decisions
+(parsed from NEEDS-YOU.md, the same shape `server.js`'s own reader parses)
+against the count of those ids actually reflected across every ask's
+`waiting_on_operator` events. A mismatch (an open decision no ask's log
+references at all — it would otherwise silently vanish from the landing)
+is recorded ONLY in `diagnostics.count_reconciliation`
+(`GET /api/diagnostics/drift`) — deliberately NEVER a per-ask badge and
+NEVER a landing-page banner (anti-noise, constraints 1/2): a systemic
+mismatch may not trace to any single ask card, so the diagnostics tab
+(Task 16, not built by this task) is its home.
+
+### Diagnostics endpoint
+
+`GET /api/diagnostics/drift` returns the auditor's FULL internal state
+(healed backfills, backfill errors, the count-reconciliation detail, the
+raw per-ask badge map) — deliberately NOT schema-validated (unlike
+`/api/asks`/`/api/ask/<id>`), matching the existing `/api/reconciler`
+precedent: the anti-noise law scopes to the LANDING payload/DOM, not this
+diagnostics-only surface.
+
 ## What Task 17 adds here
 
-Drift-taxonomy table (Task 12's divergence classes), the symptom -> diagnosis
--> fix table (Behavioral Contracts §"Failure modes"), auditor cadence
-tuning guidance, the JSONL archival convention for done/dismissed asks, and
-the "surface looks wrong" triage order (doctor predicates -> diagnostics tab
+The symptom -> diagnosis -> fix table (Behavioral Contracts §"Failure
+modes"), auditor cadence TUNING guidance (beyond the default documented
+above), the JSONL archival convention for done/dismissed asks, and the
+"surface looks wrong" triage order (doctor predicates -> diagnostics tab
 -> logs -> never trust the UI over the files).

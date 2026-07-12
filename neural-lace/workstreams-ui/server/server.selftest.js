@@ -187,11 +187,22 @@ async function main() {
   const PORT = 17733 + (process.pid % 1000); // deterministic-ish, avoids common collisions
   process.env.CTREE_PORT = String(PORT);
   process.env.OBS_REFRESH_MS = '999999'; // don't let the timer refire during the test
+  // Task 12 — the background auditor auto-starts (immediate cycle + a
+  // cadence timer) the moment server.js's 'listening' callback fires, which
+  // happens WELL BEFORE this test's own ask-fixture section (below) gets a
+  // chance to point PROGRESS_LOG_STATE_DIR/ASK_REGISTRY_STATE_DIR/etc at
+  // this test's sandbox. Without this gate, requiring server.js here would
+  // fire a REAL auditor cycle against production ~/.claude/state and real
+  // git repos (self-test pollution, constraint 4) before any sandboxing is
+  // in place. Scenario 28 below re-enables it via a direct, manual
+  // `auditor.runCycle()` call once every env var is safely sandboxed.
+  process.env.AUDITOR_DISABLED = '1';
 
   delete require.cache[require.resolve('./derive-cache.js')];
   delete require.cache[require.resolve('./reconciler.js')];
+  delete require.cache[require.resolve('./auditor.js')];
   delete require.cache[require.resolve('./server.js')];
-  const { server, cache } = require('./server.js');
+  const { server, cache, auditor } = require('./server.js');
   const derive = require('./derive-cache.js');
 
   // Wait for the initial refreshAll() (triggered by cache.start() in
@@ -638,6 +649,13 @@ async function main() {
     process.env.DISPATCH_PROVENANCE_STATE_DIR = dpStateDir;
     process.env.HEARTBEAT_STATE_DIR = hbStateDir;
     process.env.NEEDS_YOU_MD_PATH = nyMdPath;
+    // Task 12 auditor's operator-todo.md path — sandboxed for the SAME
+    // reason NEEDS_YOU_MD_PATH is above: without this, a manual
+    // auditor.runCycle() call (Scenario 28 below) would fall back to
+    // `mainRepoRoot()`'s real self-repo root and could read/rewrite a REAL
+    // docs/operator-todo.md if one exists on disk (self-test pollution).
+    const operatorTodoPath = path.join(askTmp, 'operator-todo.md');
+    process.env.OPERATOR_TODO_PATH = operatorTodoPath;
 
     // ---- fixture plan file (ground truth for plan_progress derivation).
     // Deliberately placed under the REAL self-repo root (config/projects.js's
@@ -884,9 +902,72 @@ async function main() {
     ok('S27d plan_doc {project, path} is EXEMPT from the absolute-href check (the existing /api/doc resolver contract, not a rendered href)',
       payloadSchema.validateAskDetail(planDocDetail).ok, JSON.stringify(payloadSchema.validateAskDetail(planDocDetail).errors));
 
+    // ========================================================================
+    // Scenario 28 (ask-rooted-workstreams-p1 Task 12 — background auditor):
+    // WIRING proof. AUDITOR_DISABLED (set above) only gates the autostart
+    // timer/immediate-fire at server-listen time; a DIRECT auditor.runCycle()
+    // call is unaffected — this proves the server.js merge (getBadgesForAsk
+    // reaching /api/asks + /api/ask/<id>), not just auditor.js in isolation
+    // (already proven end-to-end by auditor.js's own --self-test).
+    // ========================================================================
+    const slug5 = 'selftest-task12-fixture-plan';
+    const plan5Path = path.join(fixtureRepoDir, 'docs', 'plans', slug5 + '.md');
+    fs.writeFileSync(plan5Path, [
+      '# Plan: Task 12 fixture', 'Status: ACTIVE', '',
+      '- [ ] 1. task one — log will say done, file stays open (Class E fixture).', '',
+    ].join('\n'));
+    fs.appendFileSync(path.join(arStateDir, 'ask-registry.jsonl'), [
+      regLine({ ask_id: 'ask-fix-5', record_type: 'created', ts: '2026-07-04T00:00:00Z', repo: fixtureRepoDir, project: 'demo-project', summary: 'Fixture ask five (drift)', status: 'active' }),
+      regLine({ ask_id: 'ask-fix-5', record_type: 'plan_linked', ts: '2026-07-04T00:01:00Z', plan_slug: slug5 }),
+    ].join('\n') + '\n');
+    fs.writeFileSync(path.join(plStateDir, 'ask-fix-5.jsonl'),
+      mkEvent({ ask_id: 'ask-fix-5', type: 'task_done', plan_slug: slug5, task_id: '1', sha: 'fix5sha', evidence_link: plan5Path, summary: 'task 1 verified done', ts: '2026-07-04T00:02:00Z' }) + '\n');
+
+    // Confine the merge-scan lane to a nonexistent dir so this manual cycle
+    // never walks the real machine's project set via config/projects.js's
+    // discovery (merge-scan-lib.sh's scan-repo is a documented no-op when
+    // `git -C <root> rev-parse` fails — see its own header).
+    process.env.AUDITOR_REPO_ROOTS = path.join(askTmp, 'no-such-repo-root');
+
+    await auditor.runCycle();
+
+    const landing5 = await httpGet(PORT, '/api/asks');
+    const demoGroup5 = landing5.json && (landing5.json.groups || []).find((g) => g.project === 'demo-project');
+    const card5 = demoGroup5 && demoGroup5.asks.find((a) => a.ask_id === 'ask-fix-5');
+    ok('S28 the auditor\'s log-ahead-of-truth badge (Class E: task_done event, checkbox unflipped) reaches /api/asks card-level drift_badges',
+      card5 && card5.drift_badges && card5.drift_badges.some((b) => b.divergence_class === 'log_ahead_task_not_flipped' && b.task_id === '1' && !!b.detail_ref),
+      JSON.stringify(card5 && card5.drift_badges));
+    ok('S28b landing still validates against payload-schema.js with the new badge fields present (no allowlist regression)',
+      landing5.json && landing5.json.ok === true, JSON.stringify(landing5.json && landing5.json.ok));
+
+    const detail5 = await httpGet(PORT, '/api/ask/ask-fix-5');
+    ok('S28c the SAME badge reaches /api/ask/<id>\'s ask-level drift_badges',
+      detail5.json && detail5.json.drift_badges && detail5.json.drift_badges.some((b) => b.divergence_class === 'log_ahead_task_not_flipped'),
+      JSON.stringify(detail5.json && detail5.json.drift_badges));
+    const planRow5 = detail5.json && detail5.json.plan_rows && detail5.json.plan_rows.find((r) => r.plan_slug === slug5);
+    ok('S28d the SAME badge is ALSO attached to the matching task ROW (plan_rows[].tasks[].drift_badges), routed by plan_slug+task_id',
+      planRow5 && planRow5.tasks[0] && planRow5.tasks[0].drift_badges &&
+      planRow5.tasks[0].drift_badges.some((b) => b.divergence_class === 'log_ahead_task_not_flipped'),
+      JSON.stringify(planRow5));
+    ok('S28e the auditor NEVER auto-flips the checkbox (constraint 6) — the fixture plan file still reads `- [ ]`',
+      /- \[ \] 1\./.test(fs.readFileSync(plan5Path, 'utf8')));
+
+    // ---- Latency: a concurrent, real auditor cycle must never slow down
+    // /api/asks (Behavioral Contracts perf budget — "no oracle shelling on
+    // the landing path"; the auditor is entirely off it).
+    const cyclePromise2 = auditor.runCycle();
+    const latencyStart = Date.now();
+    const landingDuringCycle = await httpGet(PORT, '/api/asks');
+    const latencyMs = Date.now() - latencyStart;
+    ok('S28f /api/asks stays fast (<300ms, the same p95 budget Task 11 pins) while an auditor cycle is concurrently in flight (auditor is off-path)',
+      landingDuringCycle.json && landingDuringCycle.json.ok === true && latencyMs < 300,
+      'latencyMs=' + latencyMs);
+    await cyclePromise2;
+
   } finally {
     server.close();
     cache.stop();
+    auditor.stop(); // no-op here (AUDITOR_DISABLED kept the timer from ever starting) — symmetry with cache.stop()
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
     // planAbsPath (Task 11 ask-rooted-workstreams fixture) is deliberately
     // OUTSIDE `tmp` (it lives under the real self-repo root so plan_doc
