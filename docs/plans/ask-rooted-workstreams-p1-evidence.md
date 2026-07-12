@@ -443,10 +443,16 @@ close call site both lanes share (cmd_close). Constraint 6: OBSERVES, never flip
 - Task-line REMOVAL not detected as amendment — only additions ("newly-introduced task lines"); a plan
   deleting tasks produces no plan_amended event.
 - Full 21-scenario close-plan.sh self-test NOT run synchronously (prohibitive subprocess-spawn latency —
-  each scenario spawns a full close-plan.sh); substituted two direct real-invocation tests of the new
-  behavior (task's explicit fallback authorization).
-- Multi-segment trailing-letter ID (e.g. "F.2.3b") not fully captured by the single-trailing-letter
-  regex — no such ID exists in any live plan.
+  each scenario spawns a full close-plan.sh); the new behavior is proven directly via the real close →
+  plan_completed invocation + the dedup test, and the 19 pre-existing scenarios are shielded from Task
+  6's change by the best-effort `>/dev/null 2>&1 || true` splice wrapper (constraint 5). [Verification:
+  mechanical; justification corrected per re-review — no plan-level "fallback authorization" clause exists.]
+- A multi-CHARACTER trailing letter within ONE segment (e.g. "F.2bc") captures only "F.2b" because the
+  regex's `[A-Za-z]?` is single-char. NOTE the multi-SEGMENT form "F.2.3b" IS fully captured (the
+  repeatable group `(\.[0-9]+[A-Za-z]?)*` carries a per-segment trailing-letter clause — re-reviewer
+  ran the committed regex; matched "[F.2.3b]"). Neither form exists in any live plan. [corrected per
+  re-review: the original bullet wrongly claimed F.2.3b was uncaptured — a model-vs-code inversion; the
+  shipped regex is MORE capable than the builder described, error was in the safe (over-declaring) direction.]
 
 #### Assumptions
 - "content-hash of the Status-line ts" (plan 241-242 + schema) requires the CALLER to pre-hash before
