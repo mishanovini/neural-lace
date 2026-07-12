@@ -177,6 +177,20 @@
         "cli:nl-why (hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why — resolves reaped session-ids by rendering any per-session ledger event, including this O.3 hb-perf2 session-heartbeat.sh `reap` verb vocabulary, in its causal chain)",
         "digest:feed_ledger_summary"
       ]
+    },
+    "supervisor-pass": {
+      "consumers": [
+        "cli:nl-why (hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why — renders any per-session ledger event; emitted once per resumer supervisor pass, scripts/session-resumer.sh)",
+        "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
+        "digest:feed_ledger_summary"
+      ]
+    },
+    "pass-budget-exhausted": {
+      "consumers": [
+        "cli:nl-why (hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why — renders any per-session ledger event; emitted when the resumer supervisor hits its per-tick pass budget, scripts/session-resumer.sh)",
+        "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
+        "digest:feed_ledger_summary"
+      ]
     }
   }
 }
