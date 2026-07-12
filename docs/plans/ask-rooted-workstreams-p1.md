@@ -359,7 +359,7 @@ Serialization added in round 1:
   **Integration points:**
   - UserPromptSubmit stdin JSON carries the prompt text — builder verifies the field name against a live hook invocation before relying on it
   - Sub-agent / builder / spawned-worktree sessions must NOT register new asks. The guard's MECHANICAL PREDICATE (review round 1 — "guard on session type" named no signal): a session is classified SPAWNED when (a) its cwd resolves inside a `.claude/worktrees/` pool — the layout `spawn-worktree.sh` itself creates (`$MAIN/.claude/worktrees/<slug>`) and the desktop app / `--worktree` flag also use — OR (b) a Task 3 dispatch-provenance marker matches the session's worktree path. NO spawn-time marker exists today (verified 2026-07-10: neither `spawn-worktree.sh` nor `nl.sh` writes one) — Task 3 creates it, hence the Task 3 → Task 9 serialization in the dispatch comment. Spawned sessions ATTACH to the dispatching ask via the marker instead of registering. The classification function lives in `hooks/lib/progress-log-lib.sh` and is the SAME function Task 17(c)'s doctor predicate filters by — population parity by construction, never a re-derivation. Prove-it addition: dispatch a real worktree builder → NO new registry entry appears; the child session shows attached to the dispatching ask
-- [ ] 10. [serial] Plan↔ask linkage convention: one line in
+- [x] 10. [serial] Plan↔ask linkage convention: one line in
   `adapters/claude-code/doctrine/planning.md` ("plan headers record `ask-id:`;
   plan creation back-links the registry"), `ask-id:` field + comment block in
   `adapters/claude-code/templates/plan-template.md`, `--ask-id` flag in
