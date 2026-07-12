@@ -1,4 +1,5 @@
 # Tranche 4 (canonical pilot) — Handoff doc
+> SUPERSEDED 2026-07-12 (audit, operator-directed): all four prerequisites resolved or mooted 2026-05-07 when the product repo ran as the canonical pilot via the gap-audit path; every checklist here is duplicated in build-doctrine-roadmap.md / the orchestrator README / archived tranche plans. Unshipped value extracted to backlog rows BUILD-DOCTRINE-FEEDBACK-LOOP-01 + BUILD-DOCTRINE-ORCHESTRATOR-FATE-01.
 
 **Status:** HANDOFF — needs user decisions before any session can proceed.
 **Authored:** 2026-05-06 by the autonomous Build Doctrine continuation session that shipped Tranches 2, 3, and 6-scaffolding.

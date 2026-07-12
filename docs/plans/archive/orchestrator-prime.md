@@ -1,4 +1,5 @@
 # Plan: orchestrator-prime — the always-on harness-native orchestrator
+> ABANDONED 2026-07-12 (operator): built for the Claude Dispatch direction, which we have since decided not to use. Superseded by ask-rooted workstreams + harness-native orchestration.
 Status: ABANDONED
 Execution Mode: orchestrator
 Mode: design
