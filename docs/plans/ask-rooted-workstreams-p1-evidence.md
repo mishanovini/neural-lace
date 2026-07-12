@@ -348,3 +348,60 @@ NOT emitted here — derived by the Task 12 auditor so a pointer survives resolu
 - Sandboxing (constraint 4): self-test unsets HARNESS_SELFTEST + drives env overrides
   (PROGRESS_LOG_STATE_DIR + OPERATOR_TODO_PATH :1004-1005); T30 clears OPERATOR_TODO_PATH to
   exercise the real resolver.
+
+---
+
+## Task 5 — Master-merge emission (merged: master 9ba85c2; builder commit 6deab2d)
+
+Substance: merge-scan-lib.sh --self-test 12/0 (attribution + emission + idempotency + multi-match
++ sandbox). emit CLI unchanged (called as OS subprocess, never sourced). Files: merge-scan-lib.sh
+(NEW ~480), git-hooks/post-commit (+19), doctrine/git.md (+1 plan:token). Task 12 consumes
+`ms_scan_repo_for_merges <repo-root> [--since <ref>] [--limit <n>] [--emitter <name>]`
+(merge-scan-lib.sh:281, guaranteed lane) + `ms_emit_merged_for_commit <root> <sha> [--emitter]` (:239).
+
+### Comprehension Articulation
+
+#### Spec meaning
+Two mechanical lanes emitting `merged` events. Lane (a): best-effort splice in git-hooks/post-commit
+(step 3, :41-59) firing only when the local commit landed on main (`_ms_is_master_branch` :319),
+emitting for HEAD via ms_emit_merged_for_commit. Lane (b): GUARANTEED lane ms_scan_repo_for_merges
+(:281) that Task 12's auditor consumes — derives merged events w/ SHA by walking git log origin/master
+(remote squash-merges via gh pr merge never fire local hooks; plan D2). SHA→ask attribution:
+sha→plan-slug→plan-header ask-id:→per-ask JSONL. Slug from a `plan: <slug>` commit-body trailer
+(_ms_plan_token_slugs :139; convention at doctrine/git.md:13) else diff touching docs/plans/<slug>.md
+(_ms_plan_slugs_from_diff :152); ask-id reads the header (_ms_resolve_ask_id :201). Constraint 6:
+OBSERVES merges, never flips a checkbox.
+
+#### Edge cases covered
+- Multi-match tie-break (review round 2): commit touching >1 plan emits one merged event PER matched
+  ask, never a guessed winner (_ms_commit_plan_slugs returns all deduped; loop :273-279; Scenario 3).
+- No-resolvable-slug → SKIP (`[[ -z "$slugs" ]] && return 0` :262; Scenario 4) so non-plan commits
+  never flood the orphan lane.
+- Matched plan lacking ask-id: (pre-Task-10 plans) still emits w/ empty --ask → unlinked.jsonl orphan
+  lane, never dropped (Scenario 5).
+- Idempotency: re-emit same SHA is a no-op via merged's repo+sha natural key (Scenarios 6+8); two
+  slugs → same ask-id collapse to one line free.
+- Ask-id resolution tries archived path + `git show <sha>:docs/plans/<slug>.md` for moved/vanished
+  plans (:210-224). All writes sandboxed (Scenario 10).
+
+#### Edge cases NOT covered
+- diff-fallback lists changed files via `git diff-tree ... --root` (first-parent) — a true two-parent
+  local merge commit with a file changed only on the merged-in side vs common ancestor (not vs first
+  parent) wouldn't surface. Documented in lib header. Only affects local merge commits (the additive
+  lane); plan:token path + remote squash-merges (single-parent) unaffected.
+- Auditor's iteration over config/projects.js roots + --since incremental bookkeeping = Task 12's
+  (this lib is one-repo-per-call by design).
+- Malformed `plan:` slug w/ chars outside [A-Za-z0-9_.-] fails the token regex → falls to diff path
+  (not separately asserted).
+- post-commit splice's LIVE end-to-end (real master commit → live event) NOT exercised — hook not
+  installed on this branch; verification is self-test + syntax (runtime-of-hook not exercised).
+
+#### Assumptions
+- origin/master is the correct remote-tracking ref (:294; plan D2). Main branch = `master`
+  (_ms_is_master_branch default + MS_MASTER_BRANCH override :320-321; must change if estate renames).
+- progress-log.sh emit contract stable (Task 2) — called as OS subprocess, never sourced, so
+  natural-key dedup (repo+sha for merged), orphan-lane, never-blocks are inherited.
+- `plan:` trailer (Co-Authored-By: shape) is the go-forward convention (doctrine/git.md:13);
+  pre-existing commits rely wholly on the diff fallback.
+- Task 12 enumerates projects.js roots + passes each as <repo-root> (lib deliberately repo-scoped-
+  per-call). Emitting from `cd "$repo_root"` (:264) gives pl_emit the correct repo field.
