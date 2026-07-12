@@ -1036,6 +1036,99 @@ feed_backlog_accountability() {
   return 0
 }
 
+# ============================================================================
+# ASK-CAPTURE SESSION-ATTACH SPLICE (ask-rooted-workstreams-p1, Task 9b) —
+# best-effort, never-blocks session-attach on resume/spawn, called from
+# run_digest beside the existing heartbeat/ensure-cockpit SessionStart
+# splices. Calls `scripts/ask-registry.sh attach-session` to resolve
+# origin-session + resume chains to the EXISTING ask node — this splice
+# NEVER registers a new ask (registration is Task 9a's job, at the first
+# UserPromptSubmit, since the opening ask does not exist yet at
+# SessionStart — Decisions Log D3).
+#
+# Two cases attach; a fresh "startup" of a never-before-seen session does
+# nothing here (there is no ask yet for it to attach to):
+#   (a) SPAWNED sessions (hooks/lib/progress-log-lib.sh's
+#       `pl_classify_session` — the SAME shared predicate Task 9a's guard
+#       and Task 17(c)'s doctor use) resolve the DISPATCHING ask from a
+#       Task 3 dispatch-provenance marker match and attach to it,
+#       regardless of `source` (a dispatched child is a brand-new Claude
+#       Code session from the CLI's own point of view — `source` here is
+#       "startup" too, just spawned by the harness into a different cwd).
+#   (b) operator-origin sessions whose SessionStart `source` is "resume" or
+#       "compact" (i.e., NOT a fresh "startup" — the session already
+#       existed, so its ask was already registered by Task 9a on some
+#       EARLIER prompt) re-derive the SAME ask_id via
+#       `pl_ask_id_for_session` (Claude Code keeps `session_id` stable
+#       across --resume, so this is a pure re-derivation, no file lookup,
+#       no race) and attach — idempotent by Task 2's (ask_id+session_id)
+#       natural key, so a repeat resume/compact attach is a safe no-op at
+#       the progress-log layer even though the registry append itself is
+#       not deduped (append-only bookkeeping, harmless).
+# ============================================================================
+_ask_session_attach_cli() {
+  if [[ -n "${ASK_REGISTRY_CLI_OVERRIDE:-}" ]]; then printf '%s' "$ASK_REGISTRY_CLI_OVERRIDE"; return 0; fi
+  printf '%s/../scripts/ask-registry.sh' "$HOOKS_DIR"
+}
+
+_ask_session_attach_pllib() {
+  if [[ -n "${PROGRESS_LOG_LIB_OVERRIDE:-}" ]]; then printf '%s' "$PROGRESS_LOG_LIB_OVERRIDE"; return 0; fi
+  printf '%s/lib/progress-log-lib.sh' "$HOOKS_DIR"
+}
+
+# _ask_session_attach <cwd> <stdin-json-input>
+_ask_session_attach() {
+  local cwd="$1" input="$2"
+  _have jq || return 0
+  # `src` (not `source`) deliberately: a local named `source` would shadow
+  # the `source` builtin used just below to load the lib. Distinct name =
+  # no shadowing, no save/restore dance, no leaked variable.
+  local sid src
+  sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || echo "")
+  src=$(printf '%s' "$input" | jq -r '.source // empty' 2>/dev/null || echo "")
+  [[ -z "$sid" ]] && sid="${CLAUDE_SESSION_ID:-}"
+  [[ -z "$sid" ]] && return 0
+
+  local pllib; pllib="$(_ask_session_attach_pllib)"
+  [[ -f "$pllib" ]] || return 0
+  # shellcheck disable=SC1090
+  source "$pllib" 2>/dev/null || return 0
+  command -v pl_classify_session >/dev/null 2>&1 || return 0
+
+  local ar_cli; ar_cli="$(_ask_session_attach_cli)"
+  [[ -f "$ar_cli" ]] || return 0
+
+  local classify_out classify_rc ask_id
+  classify_out="$(pl_classify_session --cwd "$cwd" 2>/dev/null)"
+  classify_rc=$?
+  if [[ "$classify_rc" -eq 0 ]]; then
+    # Spawned: resolve the DISPATCHING ask from the marker match (predicate
+    # b). classify_out is "spawned <ask_id-or-empty>".
+    ask_id="${classify_out#spawned }"
+    ask_id="${ask_id# }"
+    [[ -z "$ask_id" ]] && return 0   # honest gap: no resolvable marker — never fabricate
+    bash "$ar_cli" attach-session --ask-id "$ask_id" --session-id "$sid" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  # Operator-origin: attach only on resume/compact (a fresh "startup" has no
+  # ask yet — Task 9a's first-prompt splice will register it). Claude Code
+  # keeps session_id STABLE across --resume, so `pl_ask_id_for_session`
+  # re-derives the EXACT ask_id the first-prompt splice minted — the attach
+  # lands on the existing node, and Task 2's (ask_id+session_id) natural
+  # key makes a repeated resume/compact a safe progress-log no-op. No
+  # `--resumed-from` here: with a stable session_id there is no DISTINCT
+  # origin id to record (it would self-reference), and fabricating one is
+  # exactly the dishonest-provenance trap constraint 10 warns against.
+  if [[ "$src" == "resume" || "$src" == "compact" ]]; then
+    ask_id="$(pl_ask_id_for_session "$sid" 2>/dev/null)"
+    [[ -z "$ask_id" ]] && return 0
+    bash "$ar_cli" attach-session --ask-id "$ask_id" --session-id "$sid" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+# ---- END ASK-CAPTURE SESSION-ATTACH SPLICE ---------------------------------
+
 # ----------------------------------------------------------------------
 # Main assembly. Args: $1 = cwd override (testability), $2 = alert_dir
 # override, $3 = seen_path override. Writes the digest to stdout, capped
@@ -1098,6 +1191,18 @@ run_digest() {
   # backgrounds its own real dispatch — see that script's header).
   ( cd "$cwd" 2>/dev/null && "$HOOKS_DIR/../scripts/ensure-cockpit.sh" >/dev/null 2>&1 ) || true
   # ---- END COCKPIT-SESSIONSTART CALLSITE ------------------------------
+
+  # ---- ASK-CAPTURE SESSION-ATTACH CALLSITE (Task 9b) ------------------
+  # Best-effort session-attach beside the heartbeat/ensure-cockpit splices
+  # above (NOT a new SessionStart hooks[] entry — that array is at its 8/8
+  # cap; this hook is the general-purpose SessionStart surfacer every
+  # session already runs through). Subshelled + `|| true` so ANY internal
+  # failure/`exit` can only terminate that subshell, never the digest's own
+  # exit-0 contract (constraint 5: never blocks session start). Passes the
+  # digest's real cwd (honoring the testable cwd-override) and the same
+  # SessionStart stdin JSON the pending-decisions feed already consumes.
+  ( _ask_session_attach "$cwd" "$input" ) >/dev/null 2>&1 || true
+  # ---- END ASK-CAPTURE SESSION-ATTACH CALLSITE -----------------------
 
   local doctor_line
   doctor_line="$(feed_doctor "$cwd")"

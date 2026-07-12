@@ -160,6 +160,148 @@ _session_id() {
   printf '%s' "$sid" | tr -c 'A-Za-z0-9._-' '-' | sed 's/-\+/-/g; s/^-//; s/-$//'
 }
 
+# ============================================================================
+# ASK-CAPTURE SPLICE (ask-rooted-workstreams-p1, Task 9a) — best-effort,
+# never-blocks registration of the FIRST operator prompt of a session as a
+# new ask (`scripts/ask-registry.sh register`). One-line splice into this
+# already-wired UserPromptSubmit hook per plan constraint 3 (SessionStart is
+# at its 8/8 cap; this hook is NOT SessionStart, so it needs zero new
+# settings.json entries either way — the capture point IS UserPromptSubmit,
+# per Decisions Log D3: the opening ask does not exist yet at SessionStart).
+#
+# Guard: a per-session marker file (see _ask_capture_marker_dir) makes every
+# prompt AFTER the session's first one a cheap `-f` stat no-op.
+#
+# Builder/sub-agent/spawned-worktree sessions never register here (review
+# round 1's mechanical guard) — classified via `pl_classify_session`
+# (hooks/lib/progress-log-lib.sh), the SAME shared predicate Task 17(c)'s
+# doctor capture-completeness check filters by. A spawned session's guard
+# marker is written with no ask_id; hooks/session-start-digest.sh's
+# companion splice (Task 9b) is what attaches it to the dispatching ask via
+# the Task 3 dispatch-provenance marker.
+#
+# This entire block is called from a subshell in _run_read (see below) so
+# ANY internal failure/`exit` can only terminate that subshell, never this
+# hook's own UserPromptSubmit exit-0 contract.
+# ============================================================================
+
+_ask_capture_marker_dir() {
+  if [[ -n "${ASK_CAPTURE_MARKER_DIR:-}" ]]; then printf '%s' "$ASK_CAPTURE_MARKER_DIR"; return 0; fi
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/ask-capture' "${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/ask-capture-selftest/$$}"
+    return 0
+  fi
+  printf '%s/.claude/state/ask-capture' "${HOME:-$PWD}"
+}
+
+_ask_registry_cli_path() {
+  if [[ -n "${ASK_REGISTRY_CLI_OVERRIDE:-}" ]]; then printf '%s' "$ASK_REGISTRY_CLI_OVERRIDE"; return 0; fi
+  printf '%s/../scripts/ask-registry.sh' "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+}
+
+_progress_log_lib_path_for_capture() {
+  if [[ -n "${PROGRESS_LOG_LIB_OVERRIDE:-}" ]]; then printf '%s' "$PROGRESS_LOG_LIB_OVERRIDE"; return 0; fi
+  printf '%s/lib/progress-log-lib.sh' "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+}
+
+# Extract the operator's prompt text from the UserPromptSubmit stdin JSON.
+# Field precedence VERIFIED against the live production reader
+# hooks/decision-context-reply-emit.sh (`.prompt // .user_prompt //
+# .message // empty` — its header states plainly: "Read JSON input from
+# stdin (UserPromptSubmit passes {prompt, session_id, cwd, ...})"), so this
+# is not a guess: it is the field name a sibling hook already relies on for
+# every real UserPromptSubmit invocation in production.
+_ask_capture_prompt_text() {
+  local input="$1"
+  command -v jq >/dev/null 2>&1 || { printf ''; return 0; }
+  printf '%s' "$input" | jq -r '.prompt // .user_prompt // .message // empty' 2>/dev/null
+}
+
+_ask_capture_transcript_path() {
+  local input="$1"
+  command -v jq >/dev/null 2>&1 || { printf ''; return 0; }
+  printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null
+}
+
+# The session cwd, from the UserPromptSubmit stdin JSON's `cwd` field (the
+# AUTHORITATIVE session-directory signal — the same field session-start-
+# digest.sh's attach splice classifies by, for parity), falling back to the
+# hook process's own $PWD only when the JSON omits it. Classifying by the
+# JSON cwd rather than raw $PWD is load-bearing: it is what the two splices
+# agree on, and it is what a self-test (or any caller injecting a synthetic
+# cwd) can control.
+_ask_capture_cwd() {
+  local input="$1" c=""
+  if command -v jq >/dev/null 2>&1; then
+    c="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)"
+  fi
+  [[ -n "$c" ]] || c="${PWD:-}"
+  printf '%s' "$c"
+}
+
+# _ask_capture_on_prompt <input-json> <session-id>
+_ask_capture_on_prompt() {
+  local input="$1" sid="$2"
+  [[ -z "$sid" ]] && return 0
+
+  local mdir; mdir="$(_ask_capture_marker_dir)"
+  local marker="$mdir/$sid.marker"
+  [[ -f "$marker" ]] && return 0   # guard: this session already handled
+  mkdir -p "$mdir" 2>/dev/null || return 0
+
+  # Classify via the shared predicate (best-effort: an unsourceable lib
+  # falls through to "operator" — the safer default per pl_classify_
+  # session's own header: a false "spawned" would silently drop a real
+  # operator ask, worse than a false "operator" registering one the
+  # operator can dismiss).
+  local pllib; pllib="$(_progress_log_lib_path_for_capture)"
+  local session_cwd; session_cwd="$(_ask_capture_cwd "$input")"
+  local classification="operator"
+  if [[ -f "$pllib" ]]; then
+    # shellcheck disable=SC1090
+    source "$pllib" 2>/dev/null || true
+    if command -v pl_classify_session >/dev/null 2>&1 \
+       && pl_classify_session --cwd "$session_cwd" >/dev/null 2>&1; then
+      classification="spawned"
+    fi
+  fi
+
+  if [[ "$classification" == "spawned" ]]; then
+    printf 'classification=spawned\n' >"$marker" 2>/dev/null || true
+    return 0
+  fi
+
+  local prompt; prompt="$(_ask_capture_prompt_text "$input")"
+  if [[ -z "$prompt" ]]; then
+    # No prompt text resolvable (field-shape surprise or jq unavailable) —
+    # an honest gap, never a guess. Guard so we don't retry every prompt in
+    # a session that will never yield text, but never fabricate an ask.
+    printf 'classification=operator,skipped=no-prompt-text\n' >"$marker" 2>/dev/null || true
+    return 0
+  fi
+
+  local ar_cli; ar_cli="$(_ask_registry_cli_path)"
+  [[ -f "$ar_cli" ]] || return 0
+
+  # Deterministic ask-id derivation (same session_id -> same ask_id always,
+  # including across a resume — see pl_ask_id_for_session's header). Minted
+  # here and passed explicitly so this splice never depends on parsing
+  # register's stdout contract (which prints the registry FILE path, not
+  # the ask_id — ask-registry.sh's own documented contract).
+  local ask_id; ask_id="$(pl_ask_id_for_session "$sid" 2>/dev/null)"
+  [[ -z "$ask_id" ]] && return 0
+
+  local transcript_path; transcript_path="$(_ask_capture_transcript_path "$input")"
+
+  bash "$ar_cli" register --ask-id "$ask_id" --text "$prompt" \
+    --session-id "$sid" --transcript-path "$transcript_path" \
+    --prompt-offset 0 >/dev/null 2>>"$LOG_FILE" || true
+
+  printf 'classification=operator,ask_id=%s\n' "$ask_id" >"$marker" 2>/dev/null || true
+  return 0
+}
+# ---- END ASK-CAPTURE SPLICE -------------------------------------------------
+
 # ---- the reader program ----------------------------------------------------
 # One node invocation does everything: read state via the FROZEN facade, read
 # the per-session cursor, select new actor=="gui" response-allowlist events,
@@ -364,9 +506,19 @@ NODEJS
 # Mode: (default) UserPromptSubmit read
 # ============================================================================
 _run_read() {
-  _have node || { _log "node unavailable — no-op"; exit 0; }
   local input; input=$(_read_stdin)
   local sid; sid=$(_session_id "$input")
+
+  # ---- ASK-CAPTURE SPLICE call site (Task 9a) ---------------------------
+  # Fires BEFORE the node-availability check and the conv-tree-GUI-state
+  # early-exits below: ask capture is unrelated to the Conversation-Tree
+  # GUI and must not depend on node or on whether that GUI has ever run.
+  # Subshelled so any internal failure/`exit` cannot affect this hook's own
+  # exit-0 contract (constraint 5: never blocks the operator's prompt).
+  ( _ask_capture_on_prompt "$input" "$sid" ) >/dev/null 2>&1 || true
+  # ---- END ASK-CAPTURE SPLICE call site ----------------------------------
+
+  _have node || { _log "node unavailable — no-op"; exit 0; }
   local statef; statef=$(_resolve_gui_state_path)
   local lib;    lib=$(_resolve_state_lib)
   local cdir="${CONV_TREE_READ_CURSOR_DIR:-$CURSOR_DIR_DEFAULT}"
@@ -609,6 +761,60 @@ _self_test() {
   cm2=$(stat -c %Y "$CDIR/sess-r19.json" 2>/dev/null || echo 0)
   _ck_has "R20 new event after fast-path is surfaced" "$out" "fp second reply"
   if [[ "$cm2" != "$cm1" ]]; then echo "PASS: R20 node ran on new event (cursor mtime advanced)"; pass=$((pass+1)); else echo "FAIL: R20 cursor not advanced — new event would be missed next turn"; fail=$((fail+1)); fi
+
+  # ==========================================================================
+  # ASK-CAPTURE SPLICE scenarios (ask-rooted-workstreams-p1, Task 9a) — real
+  # end-to-end exercise against the ACTUAL scripts/ask-registry.sh (not a
+  # stub), fully sandboxed under fixed dirs so the resulting registry file is
+  # inspectable by these assertions.
+  # ==========================================================================
+  local AC_MARKER_DIR="$tmp/ask-capture" AC_AR_DIR="$tmp/ar" AC_PL_DIR="$tmp/pl" \
+        AC_MIRROR="$tmp/mirror/ask-registry.jsonl" AC_DP_DIR="$tmp/dispatch-provenance"
+  mkdir -p "$AC_MARKER_DIR" "$AC_AR_DIR" "$AC_PL_DIR" "$AC_DP_DIR" "$tmp/mirror"
+  local AC_REG="$AC_AR_DIR/ask-registry.jsonl"
+
+  # fire the reader with a CUSTOM prompt + cwd, sandboxed to the ask-capture
+  # fixture dirs above (distinct from _fire's fixed "hello"/$tmp — the
+  # ask-capture scenarios need real prompt text and, for the spawned-session
+  # scenario, a cwd inside a .claude/worktrees/ pool).
+  _fire_ask() { # prompt session cwd
+    local prompt="$1" sess="$2" cwd="$3"
+    printf '{"prompt":"%s","session_id":"%s","cwd":"%s","hook_event_name":"UserPromptSubmit"}' \
+      "$prompt" "$sess" "$cwd" \
+      | ASK_CAPTURE_MARKER_DIR="$AC_MARKER_DIR" ASK_REGISTRY_STATE_DIR="$AC_AR_DIR" \
+        PROGRESS_LOG_STATE_DIR="$AC_PL_DIR" ASK_REGISTRY_MIRROR_PATH="$AC_MIRROR" \
+        DISPATCH_PROVENANCE_STATE_DIR="$AC_DP_DIR" \
+        CONV_TREE_STATE_PATH="$tmp/ac-unused-state.json" CONV_TREE_READ_CURSOR_DIR="$CDIR" \
+        CLAUDE_SESSION_ID="$sess" \
+        bash "$SELF" 2>/dev/null
+  }
+
+  echo "AC1: first operator prompt of a session registers the ask via scripts/ask-registry.sh register"
+  _fire_ask "please rebuild the workstreams view end to end" "sess-ac1" "$tmp/ordinary/repo" >/dev/null
+  ac1_created="$(jq -sc '[.[] | select(.record_type=="created" and .session_id=="sess-ac1")] | length' "$AC_REG" 2>/dev/null)"
+  _ck "AC1 first prompt created exactly one 'created' registry record for sess-ac1" "$ac1_created" "1"
+  ac1_summary="$(jq -r 'select(.record_type=="created" and .session_id=="sess-ac1") | .summary' "$AC_REG" 2>/dev/null | head -n1)"
+  _ck_has "AC1 registry summary carries the prompt text" "$ac1_summary" "rebuild the workstreams view"
+  ac1_marker="$(cat "$AC_MARKER_DIR/sess-ac1.marker" 2>/dev/null)"
+  _ck_has "AC1 guard marker written with the derived ask_id" "$ac1_marker" "classification=operator,ask_id=ask-auto-"
+
+  echo "AC2: second prompt of the SAME session does NOT re-register (first-prompt guard)"
+  _fire_ask "a totally different follow-up prompt" "sess-ac1" "$tmp/ordinary/repo" >/dev/null
+  ac_after_count="$(jq -sc '[.[] | select(.record_type=="created" and .session_id=="sess-ac1")] | length' "$AC_REG" 2>/dev/null)"
+  _ck "AC2 second prompt in the same session did not create a second 'created' record (still exactly 1)" "$ac_after_count" "1"
+
+  echo "AC3: a spawned session (cwd under .claude/worktrees/) never registers a new ask"
+  _fire_ask "some prompt typed inside a dispatched builder session" "sess-ac-spawned" "$tmp/main/.claude/worktrees/agent-xyz" >/dev/null
+  ac3_count="$(jq -sc '[.[] | select(.session_id=="sess-ac-spawned")] | length' "$AC_REG" 2>/dev/null)"
+  _ck "AC3 spawned-worktree session created NO registry entry" "$ac3_count" "0"
+  ac3_marker="$(cat "$AC_MARKER_DIR/sess-ac-spawned.marker" 2>/dev/null)"
+  _ck_has "AC3 guard marker correctly records the spawned classification" "$ac3_marker" "classification=spawned"
+
+  echo "AC4: the derived ask_id is used consistently end-to-end — marker ask_id == registry 'created' record ask_id, and both carry pl_ask_id_for_session's deterministic ask-auto- prefix (the SAME shared derivation Task 9b/17c reuse)"
+  ac1_marker_ask="$(sed -n 's/.*ask_id=\(.*\)$/\1/p' "$AC_MARKER_DIR/sess-ac1.marker" 2>/dev/null | head -n1)"
+  ac1_reg_ask="$(jq -r 'select(.record_type=="created" and .session_id=="sess-ac1") | .ask_id' "$AC_REG" 2>/dev/null | head -n1)"
+  _ck "AC4 marker ask_id == the registry 'created' record's ask_id (deterministic derivation used end-to-end, no drift between guard and register)" "$ac1_marker_ask" "$ac1_reg_ask"
+  _ck_has "AC4 derived ask_id carries the ask-auto- deterministic prefix" "$ac1_reg_ask" "ask-auto-"
 
   rm -rf "$tmp" 2>/dev/null || true
   echo "self-test: $pass passed, $fail failed"

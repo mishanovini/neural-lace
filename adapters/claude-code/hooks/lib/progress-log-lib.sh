@@ -447,6 +447,151 @@ pl_emit() {
 }
 
 # ============================================================
+# SESSION CLASSIFICATION (ask-rooted-workstreams-p1, Task 9) — the ONE
+# shared predicate a spawned/builder/sub-agent session is told apart from
+# an operator-origin session. Task 9's automatic-capture guard
+# (hooks/workstreams-read.sh, hooks/session-start-digest.sh) and Task
+# 17(c)'s doctor capture-completeness predicate BOTH call
+# `pl_classify_session` — population parity by construction: the doctor
+# must count exactly the population the guard excludes, and a
+# re-derivation in two places is exactly the drift review round 1 flagged
+# (systems Minor 8). Do not copy this logic elsewhere; source this file and
+# call the function.
+# ============================================================
+
+# ----------------------------------------------------------------------
+# _pl_dispatch_provenance_dir — resolve the Task 3 dispatch-provenance
+# marker directory. IDENTICAL resolution order to
+# scripts/dispatch-provenance.sh's own `_dp_state_dir` (same env var, same
+# HARNESS_SELFTEST_DIR fallback shape) so a caller that sandboxes one
+# sandboxes the other automatically — no separate wiring needed in tests.
+# ----------------------------------------------------------------------
+_pl_dispatch_provenance_dir() {
+  if [[ -n "${DISPATCH_PROVENANCE_STATE_DIR:-}" ]]; then
+    printf '%s' "$DISPATCH_PROVENANCE_STATE_DIR"
+    return 0
+  fi
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/state/dispatch-provenance' "${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/dispatch-provenance-selftest/$$}"
+    return 0
+  fi
+  printf '%s/.claude/state/dispatch-provenance' "${HOME:-$PWD}"
+}
+
+# ----------------------------------------------------------------------
+# _pl_marker_field <file> <field> — best-effort single-field extraction
+# from a one-line dispatch-provenance marker JSON object, no jq dependency
+# (same sed technique hooks/workstreams-read.sh already uses for
+# `session_id`). Prints empty on any failure; never errors.
+# ----------------------------------------------------------------------
+_pl_marker_field() {
+  local file="$1" field="$2"
+  [[ -f "$file" ]] || { printf ''; return 0; }
+  sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" 2>/dev/null | head -n1
+}
+
+# ----------------------------------------------------------------------
+# pl_classify_session [--cwd <path>] [--dispatch-provenance-dir <dir>]
+#
+# Classifies the CURRENT (or --cwd-overridden) session as SPAWNED
+# (builder/sub-agent/dispatched-worktree) or operator-origin, per the
+# plan's review-round-1 MECHANICAL PREDICATE:
+#   (a) the resolved cwd sits inside a `.claude/worktrees/<slug>` pool —
+#       the layout scripts/spawn-worktree.sh, the `--worktree` CLI flag,
+#       and the desktop app's per-task isolation all create
+#       ($MAIN/.claude/worktrees/<slug>), OR
+#   (b) a Task 3 dispatch-provenance marker
+#       (~/.claude/state/dispatch-provenance/*.json — scripts/
+#       dispatch-provenance.sh's `write` verb, called from
+#       hooks/workstreams-emit.sh's --on-builder-dispatch/--on-spawn
+#       splices) whose `worktree_path` field equals, or is a path-ancestor
+#       of, the resolved cwd.
+# (a) is the PRIMARY practical signal (nearly every spawn lands under the
+# worktrees pool); (b) is ADDITIONAL, not sole (many dispatch call sites
+# cannot see the child's worktree path at PreToolUse time and record an
+# honest empty `worktree_path` — see dispatch-provenance.sh's own header —
+# so a marker match is a bonus resolution, never required for (a) alone to
+# classify SPAWNED).
+#
+# Prints exactly one line to stdout:
+#   "spawned <ask_id>"   — ask_id is the DISPATCHING ask resolved from a
+#                          matching marker, or empty if classified spawned
+#                          via (a) alone with no resolvable marker.
+#   "operator"           — not spawned.
+# Returns 0 when SPAWNED, 1 when operator-origin. NEVER ERRORS: an
+# unresolvable cwd, a missing marker dir, or a malformed marker file all
+# fall through to "operator" — the safer default (a false "operator" lets
+# a spawned session register one spurious ask an operator can dismiss; a
+# false "spawned" would silently DROP a genuine operator ask and break the
+# zero-ceremony capture guarantee — asymmetric costs, so ties resolve
+# toward NOT suppressing capture).
+# ----------------------------------------------------------------------
+pl_classify_session() {
+  local cwd="" dp_dir=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cwd) cwd="${2:-}"; shift 2 ;;
+      --dispatch-provenance-dir) dp_dir="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  [[ -n "$cwd" ]] || cwd="${PWD:-}"
+  [[ -n "$dp_dir" ]] || dp_dir="$(_pl_dispatch_provenance_dir)"
+
+  # Normalize separators: a Windows-shaped cwd (backslash-separated, e.g.
+  # from a hook's stdin JSON `cwd` field) must match the pool substring
+  # exactly as reliably as a Git-Bash-shaped forward-slash path.
+  local norm="${cwd//\\//}"
+
+  local pool_hit=1
+  case "$norm" in
+    */.claude/worktrees/*) pool_hit=0 ;;
+  esac
+
+  local marker_ask=""
+  if [[ -d "$dp_dir" ]]; then
+    local f wt
+    for f in "$dp_dir"/*.json; do
+      [[ -f "$f" ]] || continue
+      wt="$(_pl_marker_field "$f" worktree_path)"
+      [[ -z "$wt" ]] && continue
+      wt="${wt//\\//}"
+      if [[ "$norm" == "$wt" || "$norm" == "$wt"/* ]]; then
+        marker_ask="$(_pl_marker_field "$f" ask_id)"
+        [[ -n "$marker_ask" ]] && break
+      fi
+    done
+  fi
+
+  if [[ "$pool_hit" == "0" || -n "$marker_ask" ]]; then
+    printf 'spawned %s\n' "$marker_ask"
+    return 0
+  fi
+  printf 'operator\n'
+  return 1
+}
+
+# ----------------------------------------------------------------------
+# pl_ask_id_for_session <session-id>
+#
+# Deterministic ask-id derivation for the automatic-capture mechanism
+# (Task 9): the SAME session-id always derives the SAME ask-id. Claude
+# Code keeps `session_id` stable across `--resume` (the resumed session
+# continues the identical transcript file under the identical id), so a
+# resumed session's SessionStart splice re-derives the EXACT ask-id its
+# first-prompt splice minted at registration time — no marker file, no
+# registry lookup, no race: "resume attaches without duplicate" falls out
+# of this function alone. Empty session-id -> empty (nothing to derive;
+# caller must skip). Uses `_pl_hash` (already portable: sha1sum, then
+# openssl, then cksum) so no new external dependency is introduced.
+# ----------------------------------------------------------------------
+pl_ask_id_for_session() {
+  local sid="${1:-}"
+  [[ -z "$sid" ]] && { printf ''; return 0; }
+  printf 'ask-auto-%s' "$(_pl_hash "$sid" | cut -c1-16)"
+}
+
+# ============================================================
 # --self-test (only runs when this file is EXECUTED directly, not sourced)
 # ============================================================
 if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; then
@@ -707,6 +852,103 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     fi
   else
     fail "cannot verify schema field parity: jq or $schema_file unavailable in this environment"
+  fi
+
+  echo "Scenario 11: pl_classify_session — operator cwd (not under a worktrees pool, no marker) classifies operator"
+  DP_DIR_T11="$TMP/dispatch-provenance-t11"; mkdir -p "$DP_DIR_T11"
+  out11="$(pl_classify_session --cwd "$TMP/some/ordinary/repo" --dispatch-provenance-dir "$DP_DIR_T11")"
+  rc11=$?
+  if [[ "$rc11" == "1" && "$out11" == "operator" ]]; then
+    pass "ordinary cwd + empty marker dir -> operator (rc=1)"
+  else
+    fail "expected rc=1/'operator', got rc=$rc11 out='$out11'"
+  fi
+
+  echo "Scenario 12: pl_classify_session — cwd under a .claude/worktrees/<slug> pool classifies spawned (predicate a) even with no marker"
+  out12="$(pl_classify_session --cwd "$TMP/main/.claude/worktrees/agent-xyz" --dispatch-provenance-dir "$DP_DIR_T11")"
+  rc12=$?
+  if [[ "$rc12" == "0" && "$out12" == "spawned " ]]; then
+    pass "cwd under .claude/worktrees/ -> spawned with empty ask_id (rc=0)"
+  else
+    fail "expected rc=0/'spawned ' (empty ask_id), got rc=$rc12 out='$out12'"
+  fi
+
+  echo "Scenario 12b: pl_classify_session — a Windows backslash-separated cwd under the pool still classifies spawned (separator-agnostic)"
+  out12b="$(pl_classify_session --cwd 'C:\Users\x\main\.claude\worktrees\agent-xyz' --dispatch-provenance-dir "$DP_DIR_T11")"
+  rc12b=$?
+  if [[ "$rc12b" == "0" ]]; then
+    pass "backslash-separated pool cwd still classifies spawned"
+  else
+    fail "expected rc=0 for a backslash-separated pool cwd, got rc=$rc12b out='$out12b'"
+  fi
+
+  echo "Scenario 13: pl_classify_session — a NON-pool cwd matching a dispatch-provenance marker's worktree_path classifies spawned AND resolves the dispatching ask_id (predicate b)"
+  DP_DIR_T13="$TMP/dispatch-provenance-t13"; mkdir -p "$DP_DIR_T13"
+  printf '{"v":1,"ts":"2026-07-11T00:00:00Z","ask_id":"ask-dispatcher-1","plan_slug":"demo","task_id":"9","session_id":"sess-parent","child_id":"ss-child","worktree_path":"%s"}\n' \
+    "$TMP/elsewhere/childwt" >"$DP_DIR_T13/marker1.json"
+  out13="$(pl_classify_session --cwd "$TMP/elsewhere/childwt" --dispatch-provenance-dir "$DP_DIR_T13")"
+  rc13=$?
+  if [[ "$rc13" == "0" && "$out13" == "spawned ask-dispatcher-1" ]]; then
+    pass "marker-matched non-pool cwd -> spawned with the dispatching ask_id resolved"
+  else
+    fail "expected rc=0/'spawned ask-dispatcher-1', got rc=$rc13 out='$out13'"
+  fi
+
+  echo "Scenario 13b: pl_classify_session — a cwd INSIDE the marker's worktree (subdirectory) also matches (path-ancestor, not exact-only)"
+  out13b="$(pl_classify_session --cwd "$TMP/elsewhere/childwt/sub/dir" --dispatch-provenance-dir "$DP_DIR_T13")"
+  rc13b=$?
+  if [[ "$rc13b" == "0" && "$out13b" == "spawned ask-dispatcher-1" ]]; then
+    pass "subdirectory of a marker's worktree_path also matches (path-ancestor match)"
+  else
+    fail "expected rc=0/'spawned ask-dispatcher-1', got rc=$rc13b out='$out13b'"
+  fi
+
+  echo "Scenario 13c: pl_classify_session — an UNRESOLVED marker (empty worktree_path, the honest PreToolUse gap) never false-matches an unrelated cwd"
+  printf '{"v":1,"ts":"2026-07-11T00:00:01Z","ask_id":"ask-unresolved-1","plan_slug":"demo","task_id":"2","session_id":"sess-parent2","child_id":"ss-child2","worktree_path":""}\n' \
+    >"$DP_DIR_T13/marker2.json"
+  out13c="$(pl_classify_session --cwd "$TMP/some/totally/unrelated/path" --dispatch-provenance-dir "$DP_DIR_T13")"
+  rc13c=$?
+  if [[ "$rc13c" == "1" && "$out13c" == "operator" ]]; then
+    pass "an UNRESOLVED (empty worktree_path) marker never matches an unrelated cwd"
+  else
+    fail "expected rc=1/'operator', got rc=$rc13c out='$out13c'"
+  fi
+
+  echo "Scenario 14: pl_ask_id_for_session — deterministic (same session_id -> same ask_id every call)"
+  aid14a="$(pl_ask_id_for_session "sess-determinism-check")"
+  aid14b="$(pl_ask_id_for_session "sess-determinism-check")"
+  if [[ -n "$aid14a" && "$aid14a" == "$aid14b" ]]; then
+    pass "pl_ask_id_for_session is deterministic across repeated calls ($aid14a)"
+  else
+    fail "expected two identical non-empty derivations, got '$aid14a' vs '$aid14b'"
+  fi
+
+  echo "Scenario 14b: pl_ask_id_for_session — distinct session ids derive distinct ask ids"
+  aid14c="$(pl_ask_id_for_session "sess-other-session")"
+  if [[ "$aid14a" != "$aid14c" ]]; then
+    pass "distinct session_ids derive distinct ask_ids ($aid14a != $aid14c)"
+  else
+    fail "expected distinct derivations, both were '$aid14a'"
+  fi
+
+  echo "Scenario 14c: pl_ask_id_for_session — empty session_id derives empty (no fabricated ask)"
+  aid14d="$(pl_ask_id_for_session "")"
+  if [[ -z "$aid14d" ]]; then
+    pass "empty session_id derives empty ask_id, never a fabricated value"
+  else
+    fail "expected empty derivation for empty session_id, got '$aid14d'"
+  fi
+
+  echo "Scenario 15: pl_classify_session — DISPATCH_PROVENANCE_STATE_DIR env resolution matches scripts/dispatch-provenance.sh's own (population-parity plumbing, not just the predicate logic)"
+  DP_ENV_T15="$TMP/dispatch-provenance-env-t15"; mkdir -p "$DP_ENV_T15"
+  printf '{"v":1,"ts":"2026-07-11T00:00:02Z","ask_id":"ask-env-1","plan_slug":"demo","task_id":"1","session_id":"s","child_id":"c","worktree_path":"%s"}\n' \
+    "$TMP/env-wt" >"$DP_ENV_T15/m.json"
+  out15="$(DISPATCH_PROVENANCE_STATE_DIR="$DP_ENV_T15" pl_classify_session --cwd "$TMP/env-wt")"
+  rc15=$?
+  if [[ "$rc15" == "0" && "$out15" == "spawned ask-env-1" ]]; then
+    pass "DISPATCH_PROVENANCE_STATE_DIR env override resolves without an explicit --dispatch-provenance-dir flag"
+  else
+    fail "expected rc=0/'spawned ask-env-1' via env-only override, got rc=$rc15 out='$out15'"
   fi
 
   rm -rf "$TMP" 2>/dev/null || true
