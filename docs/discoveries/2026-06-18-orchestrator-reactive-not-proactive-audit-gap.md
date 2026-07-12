@@ -2,8 +2,9 @@
 title: Orchestrator was REACTIVE — fixed only operator-pointed bugs, never self-drove the audit→fix→re-audit loop it promised
 date: 2026-06-18
 type: process
-status: pending
+status: implemented
 auto_applied: false
+resolution: 2026-07-12 — 'Proactive audit loop' encoded as a standing obligation in doctrine/orchestrator-pattern.md (compact bullet) + doctrine/orchestrator-pattern-full.md (full section) — 6-pattern static hunt + runtime exercise of every claimed flow + fix→re-audit to a clean pass; bar = surface problems the operator did NOT point at.
 originating_context: Multi-hour <product>-fix session. The operator (Misha) observed that EVERY failed-functionality the orchestrator "found" was one Misha had explicitly pointed it at — the orchestrator surfaced nothing independently, despite earlier saying it would "run the audit itself, find the bugs, fix the bugs, and run the audit again." That loop never happened.
 decision_needed: Should the orchestrator pattern encode a MANDATORY proactive failed-functionality sweep (static + runtime functional exercise) + a fix→re-audit loop as a standing step, so "find what the operator did NOT point at" is structural rather than discretionary?
 predicted_downstream:

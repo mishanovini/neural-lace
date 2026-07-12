@@ -2,8 +2,9 @@
 title: orchestrator-prime keepalive can't invoke Skill in scheduled context
 date: 2026-06-11
 type: process
-status: pending
+status: decided
 auto_applied: false
+resolution: 2026-07-12 — deferred per DEC-2026-07-02-002 (orchestrator-prime keepalive work parked); task parking: orchestrator session 2026-07-12.
 originating_context: orchestrator-prime-keepalive scheduled task (hourly + on-launch), autonomous run 2026-06-11
 decision_needed: How should the keepalive cold-start orchestrator-prime when the Skill tool cannot see file-based ~/.claude/skills/*.md skills in a scheduled-task session registry?
 predicted_downstream:
@@ -84,9 +85,12 @@ path with high-consequence autonomous actions from the wrong context.
 
 ## Decision
 
-Pending Misha. This run took no respawn action (duplicate risk + broken mechanism) and
-captured the gap here for surfacing.
+Deferred per DEC-2026-07-02-002 — the orchestrator-prime keepalive workstream is parked;
+no registry fix or keepalive rework proceeds until that deferral is lifted. The original
+run took no respawn action (duplicate risk + broken mechanism) and captured the gap here.
 
 ## Implementation log
 
-(empty — pending decision)
+- 2026-07-12: status flipped to `decided` citing the DEC-2026-07-02-002 deferral; the
+  scheduled-task parking itself is handled by the orchestrator (orchestrator session
+  2026-07-12).

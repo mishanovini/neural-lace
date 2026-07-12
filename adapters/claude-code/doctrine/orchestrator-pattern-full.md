@@ -280,6 +280,24 @@ The orchestrator's job is NOT just dispatching — it's also:
 
 The orchestrator is NOT a passive dispatcher. It's the persistent quality layer.
 
+## Proactive audit loop — before declaring a product area done
+
+**Origin:** discovery 2026-06-18 (orchestrator-reactive-not-proactive-audit-gap). Across a multi-hour fix session the orchestrator fixed ~9 real bugs — but EVERY failed-functionality it reported had been pointed at by the operator or fell out of an audit the operator explicitly requested. It surfaced zero problems independently, despite having promised a self-driven audit→fix→re-audit loop. The operator found the bugs by simply clicking the live app. That is the FUNCTIONALITY-OVER-COMPONENTS principle failing at the orchestrator layer: if the orchestrator only verifies what it's pointed at, the failed-functionality class survives everywhere it wasn't pointed.
+
+**The standing obligation (not discretionary):** before declaring any product area done, the orchestrator runs a self-driven audit loop:
+
+1. **Static failed-functionality hunt** over the area's code, six patterns:
+   - *computed-then-discarded* — a value is calculated but never used or displayed
+   - *never-invoked* — a function/handler/job exists but nothing calls it
+   - *placeholder-as-real* — hardcoded/mock data presented as live
+   - *UI-reads-dead-field* — the UI renders a field nothing writes
+   - *endpoint-noop* — a route accepts requests but performs no effect
+   - *dead-flag-path* — a code path gated by a flag that can never be true
+2. **Runtime functional exercise** of EVERY claimed flow: systematically USE each page/feature/flow (the way the operator would click through it) and verify the observed outcome matches the claim — not just per-task verification, a sweep of the whole claimed surface.
+3. **Fix → re-audit to convergence:** fix every confirmed problem, then re-run BOTH audits; repeat until a clean pass. One pass that finds bugs is the start of the loop, not its end.
+
+**The bar:** the audit must surface problems the operator did NOT point at — or the audit has failed. Operator-pointed fixes never substitute for the self-driven loop; the operator must not be the primary discovery mechanism for whether functionality works.
+
 ## Nested verification
 
 Builders invoke `task-verifier` themselves, per the existing `task-verifier` mandate. The orchestrator does NOT re-run the build's verification — but it MUST confirm the verification actually happened before accepting the verdict: read the evidence artifact (the `<plan>-evidence.md` block or `<task-id>.evidence.json`) and the flipped checkbox for the task ID. A verdict is authoritative only when its artifact exists on disk. A builder *reporting* "task-verifier passed" with no artifact present is an unverified claim and is treated as FAIL — dispatch back or verify directly; do not record it as done.

@@ -2,8 +2,9 @@
 title: Engine deploy shipped STALE code — git HTTPS auth failed silently, fetch/pull no-op'd, deploy ran from a behind-HEAD checkout
 date: 2026-06-18
 type: failure-mode
-status: pending
+status: implemented
 auto_applied: false
+resolution: 2026-07-12 — Option A shipped as adapters/claude-code/scripts/deploy-preflight.sh (fail-closed fetch / clean-tree / HEAD==origin/master / intended-commit-ancestor checks; --self-test covers stale-HEAD, missing-ancestor, dirty-tree, fetch-fail + green pass), made mandatory before production deploys in doctrine/git.md.
 originating_context: Deploying the <product> conversation engine to production (One Season, real customer) via `npx trigger.dev@latest deploy`. Misha had just greenlit the engine deploy.
 decision_needed: Should the orchestrator-prime deploy-serialization step (decision c "full") enforce "clean + verified-true-master HEAD" as a hard precondition before any production deploy, so a silent-staleness deploy is structurally impossible?
 predicted_downstream:
