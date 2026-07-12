@@ -249,3 +249,9 @@ Every branch below re-verified NOW: tip is ancestor of origin/master (or cherry-
 | worktree-wf_490488a8-8df-3 (local) | 4f861df5781241af97e73da6dbb8e1d15f6e264c | ancestor |
 | worktree-wf_490488a8-8df-4 (local) | 4f861df5781241af97e73da6dbb8e1d15f6e264c | ancestor |
 | worktree-wf_490488a8-8df-5 (local) | 4f861df5781241af97e73da6dbb8e1d15f6e264c | ancestor |
+
+## EXECUTION RESULT (operator greenlit "reclaim", run 2026-07-12 ~15:2x)
+Guarded script executed: **118 DELETED** (per-branch re-verified ancestor + not-checked-out at
+run time), **20 HOLD/SKIP** (already gone, no-longer-ancestor, or checked out — guards held).
+Run log: session scratchpad reclamation-run.log. Every deleted tip SHA is in the table above;
+recovery = `git branch <name> <SHA>`.
