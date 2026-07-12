@@ -338,7 +338,7 @@ Serialization added in round 1:
   best-effort, never blocks capture; Fable never used — cheap-model-only by
   design) + verbatim ref (transcript path + prompt offset) + `--self-test`
   (sandboxed) — Verification: mechanical — Docs impact: registry section in runbook
-- [ ] 9. [serial] Automatic capture splices: (a) first operator prompt of a session
+- [x] 9. [serial] Automatic capture splices: (a) first operator prompt of a session
   registers the ask — one-line splice in the already-wired UserPromptSubmit hook
   `hooks/workstreams-read.sh` (prompt text from the hook's stdin JSON; first-prompt
   guard via a per-session marker); (b) session-attach on resume/spawn — splice in
@@ -369,7 +369,7 @@ Serialization added in round 1:
   record `docs/decisions/06x-ask-rooted-workstreams-p1.md` (next free number)
   lands in the same commit — Verification: mechanical — Docs impact: doctrine
   line + template field + decision record (that IS the delta)
-- [ ] 11. [serial] Server read surface: `GET /api/asks` (landing payload: project
+- [x] 11. [serial] Server read surface: `GET /api/asks` (landing payload: project
   groups → ask cards with summary, activity ts, plan progress counts, waiting
   count, drift badges; accepts a `status` filter and DEFAULTS to `status:active`,
   returning done/dismissed/merged asks as a separate `completed` group the UI
