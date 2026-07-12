@@ -374,8 +374,9 @@ OBSERVES merges, never flips a checkbox.
 
 #### Edge cases covered
 - Multi-match tie-break (review round 2): commit touching >1 plan emits one merged event PER matched
-  ask, never a guessed winner (_ms_commit_plan_slugs returns all deduped; loop :273-279; Scenario 3).
-- No-resolvable-slug → SKIP (`[[ -z "$slugs" ]] && return 0` :262; Scenario 4) so non-plan commits
+  ask, never a guessed winner (_ms_commit_plan_slugs :183 returns all deduped; the per-slug emit
+  loop in ms_emit_merged_for_commit :259-265; Scenario 3). [citations corrected per re-review]
+- No-resolvable-slug → SKIP (`[[ -z "$slugs" ]] && return 0` :256; Scenario 4) so non-plan commits
   never flood the orphan lane.
 - Matched plan lacking ask-id: (pre-Task-10 plans) still emits w/ empty --ask → unlinked.jsonl orphan
   lane, never dropped (Scenario 5).
@@ -385,10 +386,12 @@ OBSERVES merges, never flips a checkbox.
   plans (:210-224). All writes sandboxed (Scenario 10).
 
 #### Edge cases NOT covered
-- diff-fallback lists changed files via `git diff-tree ... --root` (first-parent) — a true two-parent
-  local merge commit with a file changed only on the merged-in side vs common ancestor (not vs first
-  parent) wouldn't surface. Documented in lib header. Only affects local merge commits (the additive
-  lane); plan:token path + remote squash-merges (single-parent) unaffected.
+- diff-fallback lists changed files via `git diff-tree --no-commit-id --name-only -r --root` (:155)
+  which, on a true two-parent LOCAL merge commit (default mode, no -m/-c/--cc), surfaces NO changed
+  files AT ALL — so the diff-fallback attributes NOTHING for such a commit (a total miss, not partial;
+  empirically confirmed by the re-reviewer). Only the `plan:` token path can still catch such a commit.
+  Guaranteed remote-squash lane (single-parent commits via gh pr merge) UNAFFECTED. Only local merge
+  commits (the additive post-commit lane) are affected. [wording corrected per re-review]
 - Auditor's iteration over config/projects.js roots + --since incremental bookkeeping = Task 12's
   (this lib is one-repo-per-call by design).
 - Malformed `plan:` slug w/ chars outside [A-Za-z0-9_.-] fails the token regex → falls to diff path
@@ -404,4 +407,4 @@ OBSERVES merges, never flips a checkbox.
 - `plan:` trailer (Co-Authored-By: shape) is the go-forward convention (doctrine/git.md:13);
   pre-existing commits rely wholly on the diff fallback.
 - Task 12 enumerates projects.js roots + passes each as <repo-root> (lib deliberately repo-scoped-
-  per-call). Emitting from `cd "$repo_root"` (:264) gives pl_emit the correct repo field.
+  per-call). Emitting from `cd "$repo_root"` (:262) gives pl_emit the correct repo field.
