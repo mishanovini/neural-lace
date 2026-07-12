@@ -6,9 +6,9 @@
 #
 # WHY THIS EXISTS (GH-AUTH-AUTOSWITCH-WORKORG-01, operator-greenlit 2026-07-07)
 #
-# This machine has two GitHub accounts: MishaPT (work, owns
-# Pocket-Technician/* = origin) and mishanovini (personal, owns
-# mishanovini/* = the personal mirror). The active `gh` identity flips to
+# This machine has two GitHub accounts: alice-at-acme (work, owns
+# acme-org/* = origin) and alice-example (personal, owns
+# alice-example/* = the personal mirror). The active `gh` identity flips to
 # whichever account last ran a `gh auth switch` / `gh auth login`. Before
 # this hook, `gh pr merge`/`gh pr create` etc. against the OTHER account's
 # repo 403s ("Repository not found"), and the agent historically STOPPED
@@ -287,8 +287,8 @@ _ghas_self_test() {
   cfg="$tmp/accounts.config.json"
   cat > "$cfg" <<'JSON'
 {
-  "work":     [ { "gh_user": "MishaPT",     "owners": ["Pocket-Technician"] } ],
-  "personal": [ { "gh_user": "mishanovini" } ]
+  "work":     [ { "gh_user": "alice-at-acme",     "owners": ["acme-org"] } ],
+  "personal": [ { "gh_user": "alice-example" } ]
 }
 JSON
 
@@ -314,8 +314,8 @@ STUB
   gitrepo="$tmp/repo"
   mkdir -p "$gitrepo"
   ( cd "$gitrepo" && git init -q 2>/dev/null \
-      && git remote add origin "https://github.com/Pocket-Technician/neural-lace.git" 2>/dev/null \
-      && git remote add personal "https://github.com/mishanovini/neural-lace.git" 2>/dev/null )
+      && git remote add origin "https://github.com/acme-org/neural-lace.git" 2>/dev/null \
+      && git remote add personal "https://github.com/alice-example/neural-lace.git" 2>/dev/null )
 
   _case() {
     local name="$1" active="$2" cmd="$3" cwd="$4" expect_switch_to="$5"
@@ -339,49 +339,49 @@ STUB
     fi
   }
 
-  # S1 — personal-repo merge from work-active -> switches to mishanovini.
-  _case "S1 personal-repo merge from work-active -> switches" "MishaPT" \
-    "gh pr merge --repo mishanovini/neural-lace 42" "$gitrepo" "mishanovini"
+  # S1 — personal-repo merge from work-active -> switches to alice-example.
+  _case "S1 personal-repo merge from work-active -> switches" "alice-at-acme" \
+    "gh pr merge --repo alice-example/neural-lace 42" "$gitrepo" "alice-example"
 
-  # S2 — work-repo push from personal-active -> switches to MishaPT.
-  _case "S2 work-repo push from personal-active -> switches" "mishanovini" \
-    "git push origin build/foo" "$gitrepo" "MishaPT"
+  # S2 — work-repo push from personal-active -> switches to alice-at-acme.
+  _case "S2 work-repo push from personal-active -> switches" "alice-example" \
+    "git push origin build/foo" "$gitrepo" "alice-at-acme"
 
   # S3 — already-correct account -> no-op.
-  _case "S3 already-correct account -> no-op" "mishanovini" \
-    "gh pr merge --repo mishanovini/neural-lace 42" "$gitrepo" ""
+  _case "S3 already-correct account -> no-op" "alice-example" \
+    "gh pr merge --repo alice-example/neural-lace 42" "$gitrepo" ""
 
   # S4 — unresolvable owner -> no-op exit 0 (no --repo, no git repo cwd).
-  _case "S4 unresolvable owner -> no-op" "MishaPT" \
+  _case "S4 unresolvable owner -> no-op" "alice-at-acme" \
     "gh pr list" "$tmp" ""
 
   # S5 — read-only op (gh pr list, resolvable owner but read-only scope) -> no switch.
-  _case "S5 read-only op -> no switch" "mishanovini" \
-    "gh pr list --repo Pocket-Technician/neural-lace" "$gitrepo" ""
+  _case "S5 read-only op -> no switch" "alice-example" \
+    "gh pr list --repo acme-org/neural-lace" "$gitrepo" ""
 
   # S6 — gh pr view (in-scope per spec: 404-prone read) on wrong-account repo -> switches.
-  _case "S6 gh pr view wrong-account -> switches" "MishaPT" \
-    "gh pr view --repo mishanovini/neural-lace 7" "$gitrepo" "mishanovini"
+  _case "S6 gh pr view wrong-account -> switches" "alice-at-acme" \
+    "gh pr view --repo alice-example/neural-lace 7" "$gitrepo" "alice-example"
 
   # S7 — flagless shape: real PreToolUse stdin JSON (tool_input.command + cwd).
   calls="$tmp/calls-flagless.txt"; : > "$calls"
   local json_payload
-  json_payload=$(printf '{"tool_name":"Bash","tool_input":{"command":"gh pr merge --repo mishanovini/neural-lace 9"},"cwd":"%s"}' "$gitrepo")
-  got="$(printf '%s' "$json_payload" | GHBLIND_ACCOUNTS="$cfg" GHBLIND_ACTIVE="MishaPT" GHAS_GH_CMD="$stub" GHAS_STUB_CALLS="$calls" bash "$0")"
-  if grep -q "switch mishanovini" "$calls" 2>/dev/null; then
+  json_payload=$(printf '{"tool_name":"Bash","tool_input":{"command":"gh pr merge --repo alice-example/neural-lace 9"},"cwd":"%s"}' "$gitrepo")
+  got="$(printf '%s' "$json_payload" | GHBLIND_ACCOUNTS="$cfg" GHBLIND_ACTIVE="alice-at-acme" GHAS_GH_CMD="$stub" GHAS_STUB_CALLS="$calls" bash "$0")"
+  if grep -q "switch alice-example" "$calls" 2>/dev/null; then
     echo "  S7 flagless PreToolUse stdin JSON shape -> switches: PASS"; pass=$((pass+1))
   else
     echo "  S7 flagless PreToolUse stdin JSON shape -> switches: FAIL (calls: [$(cat "$calls" 2>/dev/null)])"; fail=$((fail+1))
   fi
 
   # S8 — non-gh/git command -> no-op, never touches gh.
-  _case "S8 non-gh command -> no-op" "MishaPT" "npm test" "$gitrepo" ""
+  _case "S8 non-gh command -> no-op" "alice-at-acme" "npm test" "$gitrepo" ""
 
   # S9 — ledger emits a warn line on an actual switch.
   rm -f "$SIGNAL_LEDGER_PATH"
   calls="$tmp/calls-ledger.txt"; : > "$calls"
-  GHBLIND_ACCOUNTS="$cfg" GHBLIND_ACTIVE="MishaPT" GHAS_GH_CMD="$stub" GHAS_STUB_CALLS="$calls" \
-    GHAS_CMD="gh pr merge --repo mishanovini/neural-lace 1" GHAS_CWD="$gitrepo" bash "$0" >/dev/null
+  GHBLIND_ACCOUNTS="$cfg" GHBLIND_ACTIVE="alice-at-acme" GHAS_GH_CMD="$stub" GHAS_STUB_CALLS="$calls" \
+    GHAS_CMD="gh pr merge --repo alice-example/neural-lace 1" GHAS_CWD="$gitrepo" bash "$0" >/dev/null
   if [ -f "$SIGNAL_LEDGER_PATH" ] && grep -q '"gate":"gh-account-autoswitch"' "$SIGNAL_LEDGER_PATH" && grep -q '"event":"warn"' "$SIGNAL_LEDGER_PATH"; then
     echo "  S9 signal-ledger warn emitted on switch: PASS"; pass=$((pass+1))
   else
@@ -392,10 +392,10 @@ STUB
   # each time they're actually wrong (i.e. re-running against an
   # already-switched-to account is a no-op the second time).
   calls="$tmp/calls-idem.txt"; : > "$calls"
-  GHBLIND_ACCOUNTS="$cfg" GHBLIND_ACTIVE="MishaPT" GHAS_GH_CMD="$stub" GHAS_STUB_CALLS="$calls" \
-    GHAS_CMD="gh pr merge --repo mishanovini/neural-lace 1" GHAS_CWD="$gitrepo" bash "$0" >/dev/null
-  GHBLIND_ACCOUNTS="$cfg" GHBLIND_ACTIVE="mishanovini" GHAS_GH_CMD="$stub" GHAS_STUB_CALLS="$calls" \
-    GHAS_CMD="gh pr merge --repo mishanovini/neural-lace 2" GHAS_CWD="$gitrepo" bash "$0" >/dev/null
+  GHBLIND_ACCOUNTS="$cfg" GHBLIND_ACTIVE="alice-at-acme" GHAS_GH_CMD="$stub" GHAS_STUB_CALLS="$calls" \
+    GHAS_CMD="gh pr merge --repo alice-example/neural-lace 1" GHAS_CWD="$gitrepo" bash "$0" >/dev/null
+  GHBLIND_ACCOUNTS="$cfg" GHBLIND_ACTIVE="alice-example" GHAS_GH_CMD="$stub" GHAS_STUB_CALLS="$calls" \
+    GHAS_CMD="gh pr merge --repo alice-example/neural-lace 2" GHAS_CWD="$gitrepo" bash "$0" >/dev/null
   local n_switches; n_switches="$(grep -c '^switch ' "$calls" 2>/dev/null || echo 0)"
   if [ "$n_switches" = "1" ]; then
     echo "  S10 idempotent — second (already-correct) call performs no extra switch: PASS"; pass=$((pass+1))

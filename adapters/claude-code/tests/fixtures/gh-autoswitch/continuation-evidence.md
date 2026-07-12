@@ -70,40 +70,40 @@ CRLF line terminators on any of the three.
 ## Livesmoke — real `gh`, no stub (operator-authorized: both accounts are
 ## the operator's own)
 
-Before: active account was `MishaPT` (this session's default, per
+Before: active account was `alice-at-acme` (this session's default, per
 `~/.claude/local/accounts.config.json` dir-trigger for
-`~/dev/Pocket Technician`).
+`~/dev/acme workspace`).
 
 ```
-$ payload='{"tool_name":"Bash","tool_input":{"command":"gh pr view 63 --repo mishanovini/neural-lace"},"cwd":"<this-worktree>"}'
+$ payload='{"tool_name":"Bash","tool_input":{"command":"gh pr view 63 --repo alice-example/neural-lace"},"cwd":"<this-worktree>"}'
 $ echo "$payload" | bash adapters/claude-code/hooks/gh-account-autoswitch.sh
 (exit 0, no stdout — hook only side-effects)
 
 $ gh auth status   # re-checked immediately after
-  ✓ Logged in to github.com account mishanovini (keyring)
+  ✓ Logged in to github.com account alice-example (keyring)
   - Active account: true
 ```
 
 The hook pre-emptively switched the REAL `gh` CLI's active account from
-`MishaPT` to `mishanovini` before the tool call ran, using the exact
+`alice-at-acme` to `alice-example` before the tool call ran, using the exact
 flagless PreToolUse stdin-JSON shape Claude Code sends. Then the actual
 command was run for real and succeeded (it would have 403'd
 "Repository not found" pre-switch, since PR #63 lives on the
-`mishanovini`-owned mirror and the active account was `MishaPT`):
+`alice-example`-owned mirror and the active account was `alice-at-acme`):
 
 ```
-$ gh pr view 63 --repo mishanovini/neural-lace
+$ gh pr view 63 --repo alice-example/neural-lace
 title:  doctrine(frontend-conventions): prerequisite unblocking — never a dead end
 state:  OPEN
-author: mishanovini (Misha)
+author: alice-example (Misha)
 number: 63
-url:    https://github.com/mishanovini/neural-lace/pull/63
+url:    https://github.com/alice-example/neural-lace/pull/63
 ...
 ```
 
 After the livesmoke, this session explicitly switched the real `gh` CLI
-back to `MishaPT` (`gh auth switch -u MishaPT`) before doing any further
-`origin`-repo (Pocket-Technician-owned) git/gh work in this same session —
+back to `alice-at-acme` (`gh auth switch -u alice-at-acme`) before doing any further
+`origin`-repo (acme-org-owned) git/gh work in this same session —
 NOT a change to the hook's own documented "leave-on-target, do not
 switch back" design (that design governs what the HOOK itself does
 post-switch for FUTURE tool calls; it does not obligate this human/session

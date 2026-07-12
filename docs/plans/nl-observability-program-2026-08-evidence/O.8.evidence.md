@@ -21,7 +21,7 @@ Checks run:
    Output: kind=pattern, doctrine_file=doctrine/estate-coordination.md, jit_triggers.paths=["SCRATCHPAD.md"], keywords=["freeze","coordinate sessions","stand down"] — matches claim exactly
    Result: PASS
 3. JIT trigger FIRES (functional, sandboxed, live manifest + live doctrine)
-   Command: jq -n --arg fp 'C:\Users\misha\dev\Pocket Technician\neural-lace\SCRATCHPAD.md' '{"tool_name":"Edit","session_id":"o8-verify-test3","tool_input":{"file_path":$fp}}' | HARNESS_SELFTEST=1 HARNESS_SELFTEST_DIR=<mktemp> DOCTRINE_JIT_MANIFEST=~/.claude/manifest.json bash adapters/claude-code/hooks/doctrine-jit.sh
+   Command: jq -n --arg fp 'C:\dev\workspace\neural-lace\SCRATCHPAD.md' '{"tool_name":"Edit","session_id":"o8-verify-test3","tool_input":{"file_path":$fp}}' | HARNESS_SELFTEST=1 HARNESS_SELFTEST_DIR=<mktemp> DOCTRINE_JIT_MANIFEST=~/.claude/manifest.json bash adapters/claude-code/hooks/doctrine-jit.sh
    Output: '[doctrine-jit] estate-coordination — injected once for this session (trigger: SCRATCHPAD.md)' + compact content. Verified with BOTH backslash and forward-slash path styles. Verified no earlier manifest entry shadows SCRATCHPAD.md (estate-coordination at entries[31] is the first path match; first-match-wins semantics).
    Result: PASS
 4. Drill REPLAYED (sandboxed)

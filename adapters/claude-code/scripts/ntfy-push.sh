@@ -427,7 +427,7 @@ exit 0
 RECEOF
   # Substitute the real log path (avoids quoting the sandbox path into the
   # heredoc verbatim in a way that could break on spaces — this repo's path
-  # historically contains a space, "Pocket Technician").
+  # historically contains a space).
   sed -i "s#__LOG__#$recorder_log#" "$recorder" 2>/dev/null || \
     { local tmp; tmp=$(mktemp); sed "s#__LOG__#$recorder_log#" "$recorder" > "$tmp"; mv "$tmp" "$recorder"; }
   chmod +x "$recorder"

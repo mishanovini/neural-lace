@@ -92,14 +92,14 @@ function bashBin() {
 // so even a login shell (-l, below) would fail to rebuild the user PATH
 // (~/bin — where jq, which the derive lib calls 132×, lives). Proven
 // premise (2026-07-09): `"C:\Program Files\Git\bin\bash.exe" -lc
-// 'command -v jq'` on a stripped PATH returns /c/Users/misha/bin/jq with
-// HOME=/c/Users/misha — a login shell rebuilds the full user environment
+// 'command -v jq'` on a stripped PATH returns <HOME>/bin/jq with
+// HOME=<the user home> — a login shell rebuilds the full user environment
 // regardless of spawn parent, given HOME resolves.
 function spawnEnv() {
   return Object.assign({}, process.env, {
     HOME: process.env.HOME || String(process.env.USERPROFILE || '').replace(/\\/g, '/'),
-    // Spawn-breaker headroom (2026-07-10): nl.sh's spawn-cascade circuit
-    // breaker (post-NL-FINDING-040) skips derivation with a LYING rc=0 +
+    // Spawn-breaker headroom (2026-07-10): nl.sh's spawn-cascade
+    // circuit-breaker (post-NL-FINDING-040) skips derivation with a LYING rc=0 +
     // empty stdout once live nl/derive processes reach NL_SPAWN_CEILING
     // (default 10). The cockpit's own batch refresh legitimately runs
     // panes concurrently (two lanes, see refreshAll) — count 13 was
