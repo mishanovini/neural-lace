@@ -2,7 +2,8 @@
 title: Flat-.md skills (incl. orchestrator-prime) are not Skill-tool invocable
 date: 2026-06-02
 type: failure-mode
-status: pending
+status: decided
+resolution: directory-form migration BUILT and landed (12 skills -> <name>/SKILL.md + recursive auto-install sync fix, commit cdf685c local master 2026-07-12); flips to implemented once a fresh post-install session confirms Skill-tool registration (deliberately not overclaimed).
 auto_applied: false
 originating_context: orchestrator-prime-keepalive scheduled-task run (2026-06-02 ~21:30). The keepalive found no orchestrator-prime alive and tried to cold-start it via `Skill(skill="orchestrator-prime")` per its task definition; the Skill tool returned "Unknown skill".
 decision_needed: Should the 13 flat-`<name>.md` skills under `~/.claude/skills/` be migrated to the directory form `~/.claude/skills/<name>/SKILL.md` (and the canonical `adapters/claude-code/skills/` mirror updated + install.sh adjusted) so the Skill tool can invoke them — restoring the keepalive's autonomous orchestrator-prime restart path?
