@@ -93,6 +93,91 @@ iso_timestamp() {
 }
 
 # ---------------------------------------------------------------------------
+# Progress-log emission: plan_completed (ask-rooted-workstreams-p1 Task 6b --
+# the SIXTH emission lane / the ask lifecycle's mechanical exit).
+# ---------------------------------------------------------------------------
+#
+# extract_ask_id_cp <plan_file> -- print the plan header's `ask-id: <token>`
+# value, or empty if absent (pre-existing plans lack this field; Task 10
+# adds it going forward -- an absent ask-id still gets an event via
+# progress-log-lib.sh's "unlinked" orphan lane, never silently dropped;
+# mirrors plan-lifecycle.sh's extract_ask_id).
+extract_ask_id_cp() {
+  local plan_file="$1"
+  grep -E '^ask-id:[[:space:]]*[^[:space:]]+' "$plan_file" 2>/dev/null \
+    | head -1 \
+    | sed -E 's/^ask-id:[[:space:]]*//' \
+    | awk '{print $1}'
+}
+
+# cp_compute_content_hash <string> -- portable best-effort content hash for
+# --dedup-extra values (mirrors progress-log-lib.sh's private _pl_hash and
+# plan-lifecycle.sh's compute_content_hash; duplicated here rather than
+# sourced because this script shells out to progress-log.sh as its own CLI
+# process for the emission -- the same one-process-per-emission convention
+# every other splice in this plan follows).
+cp_compute_content_hash() {
+  local s="$1"
+  if command -v sha1sum >/dev/null 2>&1; then
+    printf '%s' "$s" | sha1sum 2>/dev/null | awk '{print $1}' && return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    printf '%s' "$s" | openssl dgst -sha1 2>/dev/null | awk '{print $NF}' && return 0
+  fi
+  printf '%s' "$s" | cksum 2>/dev/null | awk '{print $1"-"$2}'
+}
+
+# emit_plan_completed_progress_log_event <plan_file> <slug> <close_ts>
+#   Emits ONE plan_completed event from the SUCCESSFUL-CLOSE path (Task 6b).
+# This fires on BOTH closure lanes -- the wired plan-auto-closure.sh
+# PostToolUse hook's `close-plan.sh close <slug> --auto` invocation AND a
+# manual `close-plan.sh close <slug>` run -- because both go through this
+# SAME function at the SAME call site (see cmd_close below), never on a
+# blocked/HOLD/usage-error return. Natural key (progress-log-lib.sh's
+# _pl_natural_key): plan_slug + content-hash of the Status-line ts
+# (--dedup-extra) -- <close_ts> is the timestamp of THIS Status:
+# ACTIVE -> COMPLETED flip, so a re-close after a reopen (a fresh ACTIVE ->
+# COMPLETED transition, necessarily at a later ts) hashes to a NEW key and
+# is logged as a legitimately-distinct event, while re-running this same
+# function twice for the identical close (e.g. an auditor backfill racing
+# the live splice) hashes to the SAME key and dedupes (Task 2 table).
+# Best-effort, never blocks the caller (constraint 5): every failure path is
+# swallowed and this NEVER affects close-plan.sh's own exit code.
+emit_plan_completed_progress_log_event() {
+  local plan_file="$1" slug="$2" close_ts="$3"
+
+  local progress_log_cli
+  progress_log_cli="$SCRIPT_DIR/progress-log.sh"
+  [[ -f "$progress_log_cli" ]] || return 0
+
+  local ask_id
+  ask_id="$(extract_ask_id_cp "$plan_file" 2>/dev/null || true)"
+
+  local hash
+  hash="$(cp_compute_content_hash "$close_ts")"
+
+  local repo_root_abs evidence_link
+  repo_root_abs=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  if [[ "$plan_file" = /* ]]; then
+    evidence_link="$plan_file"
+  else
+    evidence_link="$repo_root_abs/$plan_file"
+  fi
+
+  bash "$progress_log_cli" emit \
+    --type plan_completed \
+    --ask "$ask_id" \
+    --plan-slug "$slug" \
+    --summary "plan $slug completed" \
+    --evidence-link "$evidence_link" \
+    --emitter close-plan \
+    --dedup-extra "$hash" \
+    >/dev/null 2>&1 || true
+
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Plan-file locator. Active first, then archive.
 # ---------------------------------------------------------------------------
 locate_plan_file() {
@@ -1120,7 +1205,8 @@ cmd_close() {
   # inline fallback in EVERY close-plan flow; plan-lifecycle.sh archives only
   # manual Edit-tool Status flips made outside this script.
   printf '[close-plan] flipping Status: ACTIVE → COMPLETED...\n' >&2
-  local tmp_plan
+  local tmp_plan close_ts
+  close_ts="$(iso_timestamp)"
   tmp_plan=$(mktemp)
   sed -e 's/^Status:[[:space:]]*ACTIVE[[:space:]]*$/Status: COMPLETED/' "$plan_file" > "$tmp_plan"
   cp "$tmp_plan" "$plan_file"
@@ -1195,6 +1281,13 @@ cmd_close() {
     fi
   fi
 
+  # Progress-log emission: plan_completed (Task 6b -- sixth lane / the ask
+  # lifecycle's mechanical exit). Fires ONLY on this successful-close path --
+  # every early return above (blocked verification, auto-mode HOLD, usage
+  # errors) never reaches here -- so both the auto-closure PostToolUse lane
+  # and a manual close each emit exactly once, from this one call site.
+  emit_plan_completed_progress_log_event "$plan_file" "$slug" "$close_ts"
+
   printf '[close-plan] DONE: plan %s closed.\n' "$slug" >&2
 
   # Auto-push (per E.2) unless --no-push.
@@ -1254,10 +1347,23 @@ run_self_test() {
   fi
   export CP_SELFTEST=1
 
+  # Sandbox EVERY progress-log emission any closure scenario below triggers
+  # (Task 6b splice; constraint 4). Every `bash "$SELF_PATH" close ...`
+  # subprocess spawned by a scenario below inherits these exports, so a
+  # successful synthetic closure's plan_completed event lands under THIS
+  # self-test's own tempdir, never the operator's real
+  # ~/.claude/state/progress-logs (mirrors plan-lifecycle.sh --self-test's
+  # identical sandboxing of Task 1's task_done splice).
+  export HARNESS_SELFTEST=1
+  local CP_ST_PL_DIR
+  CP_ST_PL_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t cpplst)
+  export PROGRESS_LOG_STATE_DIR="$CP_ST_PL_DIR/progress-logs"
+  mkdir -p "$PROGRESS_LOG_STATE_DIR"
+
   local PASSED=0 FAILED=0
   local saved_pwd="$PWD"
 
-  printf 'close-plan.sh self-test (15 scenarios)\n\n' >&2
+  printf 'close-plan.sh self-test (21 scenarios)\n\n' >&2
 
   # ----- S1: all-mechanical-tasks-closure -----
   local D1; D1=$(setup_synthetic_repo "S1" "p-mech")
@@ -2146,9 +2252,98 @@ EOF
   fi
   rm -rf "$D19"
 
-  cd "$saved_pwd"
+  # ----- S20 (Task 6b): plan_completed is emitted from a REAL end-to-end
+  # close -- the wire check `close-plan.sh` successful-close path ->
+  # `progress-log.sh emit`. -----
+  local D20; D20=$(setup_synthetic_repo "S20" "p-plcomp")
+  (
+    cd "$D20" || exit 1
+    cat > docs/plans/p-plcomp.md <<'EOF'
+# Plan: P Plcomp
+Status: ACTIVE
+Backlog items absorbed: none
+ask-id: ask-selftest-close-plan-completed
 
-  printf '\nself-test summary: %d passed, %d failed (of 19 scenarios)\n' "$PASSED" "$FAILED" >&2
+## Goal
+test plan_completed emission on successful close
+
+## Scope
+- IN: x
+- OUT: y
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-plcomp.md`
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-plcomp-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-plcomp-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+    bash "$SELF_PATH" close p-plcomp --no-push >/dev/null 2>&1
+  )
+  local S20_LOG
+  S20_LOG="$PROGRESS_LOG_STATE_DIR/ask-selftest-close-plan-completed.jsonl"
+  if [[ -f "$D20/docs/plans/archive/p-plcomp.md" ]] \
+     && [[ -f "$S20_LOG" ]] \
+     && grep -q '"type":"plan_completed"' "$S20_LOG" \
+     && grep -q '"plan_slug":"p-plcomp"' "$S20_LOG" \
+     && grep -q '"emitter":"close-plan"' "$S20_LOG"; then
+    printf 'self-test (S20) plan-completed-emitted-on-successful-close: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S20) plan-completed-emitted-on-successful-close: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D20"
+
+  # ----- S21 (Task 6b): plan_completed's dedup key is
+  # plan_slug + content-hash of the Status-line ts (Task 2 table). Replaying
+  # the IDENTICAL close_ts (e.g. an auditor backfill racing the live splice)
+  # dedupes to ONE event; a LATER close at a genuinely DIFFERENT close_ts
+  # (a re-close after reopen) is a legitimately-distinct SECOND event.
+  # Exercises emit_plan_completed_progress_log_event directly (in-process --
+  # no full close-plan.sh subprocess spawn needed to prove this natural-key
+  # contract specifically). -----
+  local D21; D21=$(setup_synthetic_repo "S21" "p-dedup")
+  (
+    cd "$D21" || exit 1
+    cat > docs/plans/p-dedup.md <<'EOF'
+# Plan: P Dedup
+Status: ACTIVE
+ask-id: ask-selftest-plcomp-dedup
+EOF
+    git add . && git commit -q -m "init"
+  )
+  local S21_LOG lines_replay lines_reclose
+  S21_LOG="$PROGRESS_LOG_STATE_DIR/ask-selftest-plcomp-dedup.jsonl"
+  rm -f "$S21_LOG"
+  (
+    cd "$D21" || exit 1
+    emit_plan_completed_progress_log_event "docs/plans/p-dedup.md" "p-dedup" "2026-01-01T00:00:00Z"
+    emit_plan_completed_progress_log_event "docs/plans/p-dedup.md" "p-dedup" "2026-01-01T00:00:00Z"
+  )
+  lines_replay=$(wc -l < "$S21_LOG" 2>/dev/null | tr -d ' ')
+  (
+    cd "$D21" || exit 1
+    emit_plan_completed_progress_log_event "docs/plans/p-dedup.md" "p-dedup" "2026-02-02T00:00:00Z"
+  )
+  lines_reclose=$(wc -l < "$S21_LOG" 2>/dev/null | tr -d ' ')
+  if [[ "$lines_replay" == "1" ]] && [[ "$lines_reclose" == "2" ]]; then
+    printf 'self-test (S21) plan-completed-dedup-by-status-line-ts-hash: PASS (replay=1 line, re-close-after-reopen=2nd distinct line)\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S21) plan-completed-dedup-by-status-line-ts-hash: FAIL (replay_lines=%s reclose_lines=%s)\n' "$lines_replay" "$lines_reclose" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D21"
+
+  cd "$saved_pwd"
+  rm -rf "$CP_ST_PL_DIR" 2>/dev/null || true
+
+  printf '\nself-test summary: %d passed, %d failed (of 21 scenarios)\n' "$PASSED" "$FAILED" >&2
   if [[ $FAILED -eq 0 ]]; then
     return 0
   fi

@@ -314,6 +314,164 @@ TASK_IDS_EOF
   return 0
 }
 
+# ---------- progress-log emission (ask-rooted-workstreams-p1 Task 6a) ------
+#
+# Plan-amendment splice: detect a genuine AMENDMENT to an ACTIVE plan --
+# either a newly-introduced task line or an edited `## Scope` section -- and
+# emit ONE plan_amended event per distinct delta found in a single edit.
+#
+# REUSE NOTE: this is the same "new task line" principle
+# adapters/claude-code/hooks/plan-edit-validator.sh's check_docs_impact_warn
+# already established for its Docs-impact WARN (a task line is "new" when
+# its task-id token has no counterpart in the prior content). That function
+# only ever sees an EDIT's old_string/new_string fragment, so it falls back
+# to a substring search (`grep -qF "$tid" <<< "$old_content"`) across the
+# whole prior file. This hook always has the FULL pre/post plan content (see
+# emit_task_done_progress_log_events above), so it diffs task-id SETS
+# instead -- the same technique this file already uses for task_done -- which
+# is strictly more precise than a substring search for the plain-numeric ids
+# ("1.", "6.") this technique would otherwise risk false-negating against
+# (a bare "6" substring-matches inside "2026-07-10" all over a plan file;
+# check_docs_impact_warn's own ids are letter-prefixed ("A.1"/"F.2b"), which
+# happens to make that collision rarer for ITS callers but not for ours).
+# Task-id token grammar below accepts BOTH conventions live in docs/plans/
+# today (verified 2026-07-12): plain-numeric ("1", "6") and lettered
+# ("A.1", "B.0", "D.2", "F.2b" -- optional letter-prefix + mandatory dot,
+# then digits, then an optional trailing letter, repeatable).
+
+# extract_all_task_line_ids -- print one task-id token per line for EVERY
+# checkbox task line ("- [ ] " or "- [x]"/"- [X]"), regardless of check
+# state (unlike extract_checked_task_ids above, which only looks at checked
+# boxes -- amendment cares about a task line EXISTING, not its check state).
+extract_all_task_line_ids() {
+  awk '
+    /^- \[[ xX]\][ \t]+/ {
+      line = $0
+      sub(/^- \[[ xX]\][ \t]+/, "", line)
+      if (match(line, /^([A-Za-z]+\.)?[0-9]+[A-Za-z]?(\.[0-9]+[A-Za-z]?)*/)) {
+        print substr(line, RSTART, RLENGTH)
+      }
+    }
+  '
+}
+
+# extract_scope_section -- print the body of the plan's `## Scope` section
+# (between the `## Scope` heading and the next `## ` heading), or empty if
+# absent. Mirrors plan-edit-validator.sh's check_backlog_absorption_warn
+# section-extraction awk idiom.
+extract_scope_section() {
+  awk '
+    /^##[[:space:]]*Scope[[:space:]]*$/ { insec=1; next }
+    /^##[[:space:]]/ { insec=0 }
+    insec { print }
+  '
+}
+
+# compute_content_hash <string> -- portable best-effort content hash for
+# --dedup-extra values (mirrors progress-log-lib.sh's private _pl_hash;
+# duplicated here rather than sourced because this hook shells out to
+# scripts/progress-log.sh as its own CLI process for every emission --
+# same one-process-per-emission convention emit_task_done_progress_log_events
+# above already follows -- rather than sourcing the writer lib in-process).
+compute_content_hash() {
+  local s="$1"
+  if command -v sha1sum >/dev/null 2>&1; then
+    printf '%s' "$s" | sha1sum 2>/dev/null | awk '{print $1}' && return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    printf '%s' "$s" | openssl dgst -sha1 2>/dev/null | awk '{print $NF}' && return 0
+  fi
+  printf '%s' "$s" | cksum 2>/dev/null | awk '{print $1"-"$2}'
+}
+
+# emit_plan_amended_progress_log_events <repo_root> <rel-path> <pre> <post>
+#   Emits up to two plan_amended events for one edit: one for newly-
+# introduced task lines (summary "+task <ids>"), one for an edited `## Scope`
+# section (summary "scope delta"). Each is deduped by
+# plan_slug + content-hash-of-its-own-delta (Task 2 table's --dedup-extra
+# convention), so a SECOND, DIFFERENT amendment in a later edit is a
+# genuinely distinct event (new delta -> new hash) while re-saving the
+# IDENTICAL delta (e.g. a hook replay) is a no-op.
+emit_plan_amended_progress_log_events() {
+  local repo_root="$1" rel="$2" pre="$3" post="$4"
+
+  # A brand-new plan file (no pre-edit content at all) is a CREATION, not an
+  # amendment -- every one of its initial task lines would otherwise look
+  # "new" against an empty pre and spuriously burst plan_amended events on
+  # the plan's very first commit. Amendment tracking applies only to an
+  # EXISTING plan gaining tasks/scope after the fact.
+  [ -n "$pre" ] || return 0
+
+  # Scope of this splice (Task 6a spec): ACTIVE plans only.
+  local post_status
+  post_status="$(printf '%s\n' "$post" | extract_status)"
+  [ "$post_status" = "ACTIVE" ] || return 0
+
+  local ask_id
+  ask_id="$(printf '%s\n' "$post" | extract_ask_id)"
+
+  local slug
+  slug="$(basename "$rel")"
+  slug="${slug%.md}"
+
+  local progress_log_cli
+  progress_log_cli="$_PL_HOOK_DIR/../scripts/progress-log.sh"
+  [ -f "$progress_log_cli" ] || return 0
+
+  local evidence_link="$repo_root/$rel"
+
+  # ---- (a) newly-introduced task lines ----
+  local post_ids pre_ids new_ids n
+  post_ids="$(printf '%s\n' "$post" | extract_all_task_line_ids)"
+  pre_ids="$(printf '%s\n' "$pre" | extract_all_task_line_ids)"
+  new_ids=""
+  if [ -n "$post_ids" ]; then
+    while IFS= read -r n; do
+      [ -n "$n" ] || continue
+      if ! printf '%s\n' "$pre_ids" | grep -qxF "$n"; then
+        new_ids="$new_ids$n,"
+      fi
+    done <<TASK_AMEND_IDS_EOF
+$post_ids
+TASK_AMEND_IDS_EOF
+  fi
+  new_ids="${new_ids%,}"
+
+  if [ -n "$new_ids" ]; then
+    local task_hash
+    task_hash="$(compute_content_hash "newtasks:$new_ids")"
+    bash "$progress_log_cli" emit \
+      --type plan_amended \
+      --ask "$ask_id" \
+      --plan-slug "$slug" \
+      --summary "+task $new_ids" \
+      --evidence-link "$evidence_link" \
+      --emitter plan-lifecycle \
+      --dedup-extra "$task_hash" \
+      >/dev/null 2>&1 || true
+  fi
+
+  # ---- (b) ## Scope section delta ----
+  local pre_scope post_scope
+  pre_scope="$(printf '%s\n' "$pre" | extract_scope_section)"
+  post_scope="$(printf '%s\n' "$post" | extract_scope_section)"
+  if [ -n "$post_scope" ] && [ "$pre_scope" != "$post_scope" ]; then
+    local scope_hash
+    scope_hash="$(compute_content_hash "scope:$post_scope")"
+    bash "$progress_log_cli" emit \
+      --type plan_amended \
+      --ask "$ask_id" \
+      --plan-slug "$slug" \
+      --summary "scope delta" \
+      --evidence-link "$evidence_link" \
+      --emitter plan-lifecycle \
+      --dedup-extra "$scope_hash" \
+      >/dev/null 2>&1 || true
+  fi
+
+  return 0
+}
+
 # Run the lifecycle logic for one file_path. Used both by the
 # real-invocation path and by --self-test.
 #
@@ -362,6 +520,13 @@ process_lifecycle_event() {
   # Edit/Write reaching this point regardless of Status transition — a task
   # can be flipped independently of any archival move.
   emit_task_done_progress_log_events "$file_repo_root" "$rel" "$pre_content" "$post_content"
+
+  # ---- (0b) Progress-log emission: plan amendment -> plan_amended event ----
+  # (ask-rooted-workstreams-p1 Task 6a.) Added ALONGSIDE the task_done splice
+  # above -- it does not replace or alter it. Fires on every Edit/Write
+  # reaching this point; the function itself gates on ACTIVE status and on
+  # this not being a fresh plan creation.
+  emit_plan_amended_progress_log_events "$file_repo_root" "$rel" "$pre_content" "$post_content"
 
   # ---- (1) Commit-on-creation warning ----
   # Triggered when the file is new (no pre_content from git HEAD AND
@@ -926,6 +1091,187 @@ EOP
     echo "FAIL scenario 13: expected a task_done event for the ask-id-less plan in the unlinked log" >&2
     exit 1
   fi
+
+  # ---- Scenario 14: a newly-introduced task line on an ACTIVE plan emits a
+  # plan_amended event summarizing "+task <id>" (Task 6a) ----
+  cat > docs/plans/case14.md <<'EOP'
+# Plan: Case 14 (plan amendment)
+Status: ACTIVE
+ask-id: ask-selftest-case14
+
+## Scope
+- IN: original scope
+
+## Tasks
+- [ ] 1. first task
+EOP
+  git add docs/plans/case14.md
+  git commit -q -m "plan: case14"
+  PRE14=$(git show HEAD:docs/plans/case14.md)
+  cat > docs/plans/case14.md <<'EOP'
+# Plan: Case 14 (plan amendment)
+Status: ACTIVE
+ask-id: ask-selftest-case14
+
+## Scope
+- IN: original scope
+
+## Tasks
+- [ ] 1. first task
+- [ ] 2. second task (newly added)
+EOP
+  POST14=$(cat docs/plans/case14.md)
+  process_lifecycle_event "$TMP/docs/plans/case14.md" "Edit" "$PRE14" "$POST14" >/dev/null 2>&1 || true
+  F14="$PROGRESS_LOG_STATE_DIR/ask-selftest-case14.jsonl"
+  if [ ! -f "$F14" ] || ! grep -q '"type":"plan_amended"' "$F14" || ! grep -q '"summary":"+task 2"' "$F14"; then
+    echo "FAIL scenario 14: expected a plan_amended event with summary '+task 2' at $F14. Contents:" >&2
+    cat "$F14" 2>/dev/null >&2
+    exit 1
+  fi
+
+  # ---- Scenario 15: re-saving with NO new task and NO scope change emits
+  # no additional plan_amended event (idempotent; mirrors Scenario 12's
+  # re-save-is-a-no-op discipline for task_done) ----
+  PRE15="$POST14"
+  cat > docs/plans/case14.md <<'EOP'
+# Plan: Case 14 (plan amendment)
+Status: ACTIVE
+ask-id: ask-selftest-case14
+
+## Scope
+- IN: original scope
+
+## Tasks
+- [ ] 1. first task
+- [ ] 2. second task (newly added)
+
+Some unrelated prose edit -- no new tasks, no scope change.
+EOP
+  POST15=$(cat docs/plans/case14.md)
+  process_lifecycle_event "$TMP/docs/plans/case14.md" "Edit" "$PRE15" "$POST15" >/dev/null 2>&1 || true
+  LINES15=$(grep -c '"type":"plan_amended"' "$F14" 2>/dev/null || echo 0)
+  if [ "$LINES15" != "1" ]; then
+    echo "FAIL scenario 15: expected still 1 plan_amended event after a delta-free re-save, got $LINES15" >&2
+    exit 1
+  fi
+
+  # ---- Scenario 16: an edited `## Scope` section (no new task line) emits
+  # a SECOND, DISTINCT plan_amended event summarizing "scope delta" ----
+  PRE16="$POST15"
+  cat > docs/plans/case14.md <<'EOP'
+# Plan: Case 14 (plan amendment)
+Status: ACTIVE
+ask-id: ask-selftest-case14
+
+## Scope
+- IN: original scope
+- IN: an added scope line
+
+## Tasks
+- [ ] 1. first task
+- [ ] 2. second task (newly added)
+
+Some unrelated prose edit -- no new tasks, no scope change.
+EOP
+  POST16=$(cat docs/plans/case14.md)
+  process_lifecycle_event "$TMP/docs/plans/case14.md" "Edit" "$PRE16" "$POST16" >/dev/null 2>&1 || true
+  if ! grep -q '"summary":"scope delta"' "$F14"; then
+    echo "FAIL scenario 16: expected a plan_amended event with summary 'scope delta'. Contents:" >&2
+    cat "$F14" >&2
+    exit 1
+  fi
+  LINES16=$(grep -c '"type":"plan_amended"' "$F14" 2>/dev/null || echo 0)
+  if [ "$LINES16" != "2" ]; then
+    echo "FAIL scenario 16: expected 2 total plan_amended events (task-add + scope-delta), got $LINES16" >&2
+    exit 1
+  fi
+
+  # ---- Scenario 17: a SECOND, DIFFERENT new-task amendment emits a THIRD,
+  # DISTINCT event -- "second amendment = new delta hash" (Task 2 table),
+  # never suppressed by the first amendment's dedup key ----
+  PRE17="$POST16"
+  cat > docs/plans/case14.md <<'EOP'
+# Plan: Case 14 (plan amendment)
+Status: ACTIVE
+ask-id: ask-selftest-case14
+
+## Scope
+- IN: original scope
+- IN: an added scope line
+
+## Tasks
+- [ ] 1. first task
+- [ ] 2. second task (newly added)
+- [ ] 3. third task (second amendment)
+
+Some unrelated prose edit -- no new tasks, no scope change.
+EOP
+  POST17=$(cat docs/plans/case14.md)
+  process_lifecycle_event "$TMP/docs/plans/case14.md" "Edit" "$PRE17" "$POST17" >/dev/null 2>&1 || true
+  if ! grep -q '"summary":"+task 3"' "$F14"; then
+    echo "FAIL scenario 17: expected a second, distinct plan_amended event for the new task 3. Contents:" >&2
+    cat "$F14" >&2
+    exit 1
+  fi
+  LINES17=$(grep -c '"type":"plan_amended"' "$F14" 2>/dev/null || echo 0)
+  if [ "$LINES17" != "3" ]; then
+    echo "FAIL scenario 17: expected 3 total plan_amended events, got $LINES17" >&2
+    exit 1
+  fi
+
+  # ---- Scenario 18: a non-ACTIVE (DEFERRED) plan gaining a new task line
+  # emits NO plan_amended event -- amendment tracking is scoped to ACTIVE
+  # plans only (Task 6a spec) ----
+  cat > docs/plans/case18.md <<'EOP'
+# Plan: Case 18 (non-active -- no amendment tracking)
+Status: DEFERRED
+ask-id: ask-selftest-case18
+
+## Tasks
+- [ ] 1. only task
+EOP
+  git add docs/plans/case18.md
+  git commit -q -m "plan: case18"
+  PRE18=$(git show HEAD:docs/plans/case18.md)
+  cat > docs/plans/case18.md <<'EOP'
+# Plan: Case 18 (non-active -- no amendment tracking)
+Status: DEFERRED
+ask-id: ask-selftest-case18
+
+## Tasks
+- [ ] 1. only task
+- [ ] 2. a new task added while deferred
+EOP
+  POST18=$(cat docs/plans/case18.md)
+  process_lifecycle_event "$TMP/docs/plans/case18.md" "Edit" "$PRE18" "$POST18" >/dev/null 2>&1 || true
+  F18="$PROGRESS_LOG_STATE_DIR/ask-selftest-case18.jsonl"
+  if [ -f "$F18" ] && grep -q '"type":"plan_amended"' "$F18"; then
+    echo "FAIL scenario 18: a DEFERRED (non-ACTIVE) plan should NOT get amendment tracking. Contents:" >&2
+    cat "$F18" >&2
+    exit 1
+  fi
+
+  # ---- Scenario 19: a brand-new plan (no pre-edit content at all) does NOT
+  # burst-emit plan_amended for its initial task lines -- creation is not
+  # amendment ----
+  cat > docs/plans/case19.md <<'EOP'
+# Plan: Case 19 (fresh creation should not burst-amend)
+Status: ACTIVE
+ask-id: ask-selftest-case19
+
+## Tasks
+- [ ] 1. first
+- [ ] 2. second
+EOP
+  process_lifecycle_event "$TMP/docs/plans/case19.md" "Write" "" "$(cat docs/plans/case19.md)" >/dev/null 2>&1 || true
+  F19="$PROGRESS_LOG_STATE_DIR/ask-selftest-case19.jsonl"
+  if [ -f "$F19" ] && grep -q '"type":"plan_amended"' "$F19"; then
+    echo "FAIL scenario 19: a brand-new plan (no pre-edit content) should not emit plan_amended for its initial tasks. Contents:" >&2
+    cat "$F19" >&2
+    exit 1
+  fi
+  git add docs/plans/case19.md
+  git commit -q -m "plan: case19" 2>/dev/null || true
 
   echo "OK ($SCRIPT_NAME --self-test)"
   exit 0
