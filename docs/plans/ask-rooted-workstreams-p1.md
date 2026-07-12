@@ -280,7 +280,7 @@ Serialization added in round 1:
   Resolution is NOT emitted here — it is derived (auditor, Task 12)
   so pointer auto-check survives resolutions that bypass the script —
   Verification: mechanical — Docs impact: none — covered by Task 7 manifest entry + runbook
-- [ ] 5. [parallel] Master-merge emission: two lanes, both mechanical —
+- [x] 5. [parallel] Master-merge emission: two lanes, both mechanical —
   (a) splice in `git-hooks/post-commit` for local commits landing on master;
   (b) auditor git-scan backfill (Task 12 consumes this lib function, defined here)
   deriving `merged` events with SHA from `git log origin/master` — the GUARANTEED
