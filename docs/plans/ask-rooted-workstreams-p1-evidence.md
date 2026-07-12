@@ -642,3 +642,122 @@ live-doc link (`openPlanDocModal`, reusing the shared docModal).
   buildSessions in server.js).
 - `app.js` "becomes shell/router" is Task 16's job — Task 13 adds only a doc note (no functional coupling
   beyond the shared docModal).
+
+## Task 12 — Background auditor + drift badges (merged: master TBD; builder branch `build/askp1-t12`)
+
+Substance: new `server/auditor.js` (1146 lines) implementing all seven divergence-class rows +
+the §8-3 count reconciliation; `node server/auditor.js --self-test` 18/18 PASS, including REAL
+(non-mocked) end-to-end runs against `progress-log.sh emit`, `ask-registry.sh set-status`, and
+`merge-scan-lib.sh scan-repo` (a real git fixture repo, real HEAD sha backfilled). Server wiring
+(`server.js` +39/-1, `payload-schema.js` +10 for the new badge field names) verified via a
+standalone runtime harness (`verify-task12-wire.js`, 8/8 PASS) proving: the auditor's badges reach
+BOTH `GET /api/asks` (card-level) and `GET /api/ask/<id>` (ask-level + the matching
+`plan_rows[].tasks[].drift_badges` row); the checkbox is never auto-flipped; `/api/asks` stays
+<300ms while a real auditor cycle is concurrently in flight; the new `/api/diagnostics/drift`
+endpoint answers. `server.selftest.js` also gained an additive Scenario 28 (+83 lines) covering
+the identical assertions in-repo, gated behind a new `AUDITOR_DISABLED=1` self-test env var (the
+auditor's `start()` otherwise fires an immediate, unsandboxed cycle at server-listen time, before
+the shared self-test's own ask-fixture env vars are set — a genuine self-test-pollution risk this
+task's own change introduced and fixed in the same commit).
+
+NOTE (environmental, not this task's regression): running `node server/server.selftest.js` in
+THIS worktree crashes with `ECONNRESET` at Scenario 23 — reproduced byte-identically via
+`git stash` against the file BEFORE this task's changes, so Scenario 28 (and the pre-existing
+S23-27) never execute via that entrypoint here. Task 11's own evidence entry above already flagged
+the same symptom ("ECONNRESETs at S23 in the ORCHESTRATOR's integration worktree — environmental —
+passes in builder's worktree"), so this is a known, pre-existing class of flake, not a defect this
+task introduced. Flagged as a follow-up task (`task_c0d7d962`, "Fix ECONNRESET crash in
+workstreams-ui server.selftest.js") rather than fixed here (out of Task 12's file-ownership scope).
+The standalone harness above gives equivalent runtime proof of THIS task's own wiring independent
+of that unrelated crash.
+
+Follow-ups:
+(a) the §8-3 count-reconciliation metric has a documented honest limitation — a NEEDS-YOU.md
+parse-format regression that makes the "Awaiting your decision" section unparseable collapses both
+sides of the comparison to 0 and reads as a trivial match rather than a visible mismatch (partially,
+not fully, mitigated by Class G's independent operator-todo.md-pointer ground-truth set) — see
+`auditor.js`'s count-reconciliation comment;
+(b) the diagnostics-tab UI that would actually render `/api/diagnostics/drift` and the badge
+click-through is Task 13/16's job, not built here;
+(c) the pre-existing `server.selftest.js` ECONNRESET (task_c0d7d962, spawned this task).
+
+### Comprehension Articulation
+
+#### Spec meaning
+Task 12 is the safety net the log-first law needs: every mechanism splice is explicitly
+best-effort/never-blocks, so the log CAN legitimately miss an event, and this auditor is the ONLY
+thing that ever reconciles it against ground truth — on a cadence explicitly kept OFF the
+`GET /api/asks` request path (Behavioral Contracts: "no oracle shelling on the landing path — that
+was the O.4 mistake"). Every load-bearing phrase from the divergence-class table is implemented
+literally, one function per row: `auditAsk`'s Class-A branch (`backfillTaskDoneList.push(...)`,
+executed by `backfillTaskDone`) never badges a healed task — verified by S1b/S1c in
+`auditor.js --self-test`. `auditAsk`'s Class-E branch pushes a `log_ahead_task_not_flipped` badge
+and NEVER touches the plan file — `autoCheckOperatorTodo` is the ONLY function in this module that
+ever writes to a source-of-truth file the operator also edits, and it is scoped to exactly the
+checkbox character on an AUTO-marked line (S2c/S3c prove both halves: the plan file is untouched,
+the operator section above the AUTO markers is untouched). "The mechanical ask exit" (constraint 7)
+is `backfillAskDone`, gated by `auditAsk`'s `setStatusDoneNeeded` (`reg.status === 'active' &&
+allTerminal`, where `allTerminal` requires `plan.status === 'COMPLETED'` on EVERY linked plan) —
+S5 proves this is a REAL `ask-registry.sh set-status` call, not a simulated one. "Reused
+derive-cache.js plumbing" is literal: `runCli` shells via `bashBin()`/`spawnEnv()` imported from
+`derive-cache.js`, the same idiom `server.js`'s own `runAskRegistryCli`/`classifySessions` already
+use. "Never a landing-page banner" (§8-3) is why the count-reconciliation result lives ONLY in
+`getDiagnostics()`, never in `buildAskCard`'s `drift_badges` — S3e asserts no ask's badge array
+ever references the orphaned id.
+
+#### Edge cases covered
+- Idempotent re-cycling → `runCycle`'s single-flight guard (`state._cycleInFlight`) plus every
+  backfill call routing through `progress-log.sh`'s own natural-key dedup means re-running a cycle
+  over an already-healed ask is a no-op (S1d: exactly one backfilled line after two cycles).
+- Legitimate re-dispatch vs a genuinely orphaned `task_started` → Class F's match key is
+  `(ask_id, plan_slug, task_id, session_id)`, the EXACT four fields `workstreams-emit.sh`'s
+  `_emit_dispatch_provenance` stamps from the same call-site variables onto BOTH the `task_started`
+  event and the dispatch-provenance marker — a precise match, not a fuzzy heuristic.
+- Concurrent read during a slow cycle → `getBadgesForAsk` reads a plain in-memory object, never
+  awaiting the in-flight cycle's promise; S6 (`auditor.js`) proves a badge read completes in <50ms
+  while a real cycle (with several bash spawns) is running, and S28f (harness proof) proves the SAME
+  for a live HTTP `/api/asks` request.
+- Multi-repo merge scanning without flooding the machine → `repoRootsForCycle`'s `AUDITOR_REPO_ROOTS`
+  env override (checked BEFORE the `config/projects.js` full-discovery fallback) lets a sandboxed
+  caller confine the scan to one fixture repo — used by both `auditor.js`'s own self-test and the
+  server-wiring harness to avoid walking the real machine's project set on every assertion.
+- Path-traversal-safe operator-todo.md rewrite → `autoCheckOperatorTodo` never rewrites a line it
+  didn't itself match via `POINTER_RE`, and only ever flips `[ ]`→`[x]` on the FIRST occurrence of
+  the exact substring `- [ ] AUTO:`, preserving every other byte via a tmp-file+rename atomic write.
+
+#### Edge cases NOT covered
+- The §8-3 count-reconciliation's own blind spot (a total NEEDS-YOU.md parse-format regression
+  collapsing both sides to 0) — documented as Follow-up (a) above, not fixed; Class G provides
+  partial, not complete, coverage of the same failure mode.
+- Task 13's click-through UI for a badge's `detail_ref` and Task 16's diagnostics-tab consumer of
+  `/api/diagnostics/drift` are not built by this task — the DATA contract is complete and tested,
+  the rendering is explicitly out of scope (file-ownership boundary: `web/*` is Task 13's).
+- `AUDITOR_CLI_TIMEOUT_MS` (default 60000ms) could theoretically be too short for a genuinely
+  overloaded machine mirroring the 94-119s slow-spawn characteristic `server.js`'s own comments
+  document for OTHER (heavier, jq-132-call) oracle scripts — `progress-log.sh`/`ask-registry.sh`/
+  `merge-scan-lib.sh` are lightweight standalone scripts, not the heavy `nl`/derive-lib chain, so
+  this budget was not stress-tested against that specific documented slow-spawn class.
+- Multi-match merge attribution (one commit touching >1 plan's files) is entirely `merge-scan-lib.sh`
+  Task 5b's own tested behavior (`ms_scan_repo_for_merges`'s own self-test Scenario 3); this task
+  only calls it and does not re-verify that behavior independently.
+
+#### Assumptions
+- Circular-require avoidance is worth the reader duplication → `auditor.js` deliberately does NOT
+  `require('./server.js')` (would be a real circular require: `server.js` requires `auditor.js` at
+  load time, before its own `module.exports` assignment) — instead `foldAskRegistry`/`readAskEvents`/
+  `parsePlanFile`/etc. are independently re-implemented, matching this codebase's own established
+  precedent (`merge-scan-lib.sh`'s `_ms_resolve_ask_id` duplicating `plan-lifecycle.sh`'s ask-id-header
+  parse rather than sourcing across hook boundaries).
+- "Terminal" for the mechanical ask-exit means literally `Status: COMPLETED`, not any of this
+  estate's other terminal-ish plan statuses (`ABANDONED`/`DEFERRED`/`SUPERSEDED`) — an abandoned
+  plan should never silently mark its ask done; scoped deliberately narrower than "not ACTIVE".
+- `operatorTodoPath()`'s fallback (`mainRepoRoot()` + `docs/operator-todo.md`) assumes this server
+  process always runs from the MAIN checkout in production (never a builder worktree) — the same
+  assumption `server.js`'s own `needsYouMdPath()` fallback already makes for `NEEDS-YOU.md`; not a
+  new risk this task introduces.
+- Dynamic (never-memoized) path resolution is required for correct sandboxing → every stateful path
+  resolver (`rProgressLogStateDir`, `rAskRegistryFile`, etc.) re-reads its env var on EVERY
+  `runCycle()` call rather than freezing it at `createAuditor()` construction time — discovered as
+  necessary mid-build when the FIRST server-wiring harness attempt showed the auditor resolving
+  production paths despite the self-test's env vars being set (they were set AFTER
+  `require('./server.js')`, which constructs the auditor); fixed before commit, not left as a gap.
