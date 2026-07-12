@@ -232,3 +232,59 @@ writer hardening, the sanitizer, and expanded self-tests.
 - **`od -tx1` reflects true on-disk bytes** (not MSYS-filtered) per repo CRLF doctrine.
 - **exit-124 timeouts are environmental** (~19s machine-wide bash-spawn latency), not code hangs —
   supported by the full 16-green run at lower latency + isolated fast checks of scenarios 9/10.
+
+---
+
+## Task 3 — Dispatch emission splice + provenance marker (merged: master TBD; builder commit `a25e9d9`)
+
+Substance verified: builder directly invoked the REAL hook (not just self-test) proving all 5
+new behaviors (task_started emit w/ plan_slug+task_id+ask_id+emitter; replay-dedup; plan-less
+no-op; --on-spawn cwd-hint; missing-CLI rc=0 isolation). dispatch-provenance.sh 10/10;
+progress-log.sh 6/6 (no regression). Full workstreams-emit suite couldn't finish under
+contention (killed at ST25, all PASS) — orchestrator background re-run confirms the standalone
+suites. emit CLI unchanged. Marker format for Task 9: `~/.claude/state/dispatch-provenance/
+<sanitized-worktree-or-UNRESOLVED>__<ts>.json` = {v,ts,ask_id,plan_slug,task_id,session_id,
+child_id,worktree_path}. worktree_path="" for generic Task/Agent/Workflow (path unavailable
+at PreToolUse — only spawn_task supplies a cwd hint); honest gap, documented.
+
+### Comprehension Articulation
+
+#### Spec meaning
+Task 3 (plan 258-271) bundles two things as one splice: (a) a `task_started` progress-log event
+from `--on-builder-dispatch`/`--on-spawn` carrying plan slug + task id + child session
+provenance via the finalized `progress-log.sh emit` CLI; (b) a dispatch-provenance marker under
+`~/.claude/state/dispatch-provenance/` pre-attaching a spawned child to the dispatching ask
+(no such marker existed — verified against spawn-worktree.sh/nl.sh). Implemented as
+`_emit_dispatch_provenance()` (workstreams-emit.sh:2452), called from `_run_on_builder_dispatch`
+(:2523) and `_run_on_spawn` (:666), marker written by a new dedicated CLI
+scripts/dispatch-provenance.sh (script+lib split mirroring Task 2's convention).
+
+#### Edge cases covered
+- Plan-less dispatch (Explore/research, no docs/plans/*.md ref) → silent no-op (:1799-1806, PL3)
+  — prevents anti-noise orphan-lane flooding.
+- Replay of identical dispatch → pl_emit natural-key dedup (plan_slug+task_id+session_id) holds
+  through the splice (:1808-1814, PL1b).
+- Missing progress-log.sh/dispatch-provenance.sh CLIs → `[[ -f ]]` guards + `|| true` keep rc=0
+  (:1855-1861, PL5).
+- Pre-existing plans lacking an `ask-id:` header → `_resolve_ask_id_for_plan_slug` (:2412-2427)
+  returns empty, pl_emit's orphan lane (unlinked.jsonl) absorbs it — same as Task 1, no new mode.
+- `--on-spawn` with explicit tool_input.cwd hint → marker worktree_path populated (:1836-1845, PL4).
+
+#### Edge cases NOT covered
+- True child worktree path for generic Task|Agent|Workflow is fundamentally unavailable at
+  PreToolUse (the SDK creates the worktree DURING tool execution, returning the path only in the
+  PostToolUse result) — marker honestly records worktree_path:"" (dispatch-provenance.sh header +
+  :2350-2367); no invented workaround convention.
+- Multi-plan-reference dispatch text takes only the first docs/plans/*.md match — not distinct.
+- Task-id extraction is best-effort regex ("Task N of" preferred, bare "Task N" fallback) — can
+  mis-extract on unconventional phrasing; inherent to parsing free-text prompts, out of scope for
+  a one-line best-effort splice.
+
+#### Assumptions
+- "The same provenance the SESSIONS lineage rendering consumes" (plan 262) = reuse the existing
+  sid/child_id values `_builder_classify`/`_run_on_spawn` already compute (dispatching-session-
+  derived synthetic ids), not a newly-invented child-session concept — no true child session id
+  exists at PreToolUse for either surface.
+- Resolving ask_id by reading the plan file's `ask-id:` header directly (mirroring Task 1's
+  extract_ask_id) is preferable to adding a reverse-lookup verb to ask-registry.sh (out of file
+  ownership; the header-read is the already-reviewed established convention).
