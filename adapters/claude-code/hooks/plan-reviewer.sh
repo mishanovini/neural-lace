@@ -1277,8 +1277,10 @@ CHECK13_HI4
   #   $3 = owner_line      (full line, e.g. "owner: Misha"; "" to omit)
   #   $4 = target_line     (full line, e.g. "target-completion-date: 2026-07-15"; "" to omit)
   #   $5 = contract_mode   ("populated" | "missing" | "placeholder")
+  #   $6 = ask_id_line     (full line, e.g. "ask-id: ask-selftest-1"; "" to omit —
+  #                         Check 16, ask-rooted-workstreams-p1 Task 10)
   write_lifecycle_plan() {
-    local out="$1" schema_line="$2" owner_line="$3" target_line="$4" contract_mode="$5"
+    local out="$1" schema_line="$2" owner_line="$3" target_line="$4" contract_mode="$5" ask_id_line="${6:-}"
     {
       echo "# Plan: Self-test Check 14/15 lifecycle fixture"
       echo "Status: ACTIVE"
@@ -1292,6 +1294,7 @@ CHECK13_HI4
       [[ -n "$owner_line" ]] && echo "$owner_line"
       [[ -n "$target_line" ]] && echo "$target_line"
       echo "prd-ref: n/a — harness-development"
+      [[ -n "$ask_id_line" ]] && echo "$ask_id_line"
       echo ""
       echo "## Goal"
       echo "Exercise Check 14 (accountability fields) and Check 15 (Closure"
@@ -1416,6 +1419,55 @@ CHECK13_HI4
     FAILED=1
   else
     echo "self-test (cc7) check15-v2-placeholder-closure-contract: FAIL (expected)" >&2
+  fi
+
+  # ============================================================
+  # Check 16 scenarios (cc8..cc10) — ask<->plan linkage convention
+  # (ask-rooted-workstreams-p1 Task 10, planning.md: "plan headers record
+  # ask-id:"). WARN only — never blocks the commit, unlike Checks 14/15.
+  # ============================================================
+
+  # (cc8) v2 ACTIVE plan, owner/target/contract all populated, ask-id line
+  #       OMITTED → Check 16 WARNs on stderr but the exit code stays 0
+  #       (non-blocking is the whole point of this check).
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc8.md" "lifecycle-schema: v2" \
+    "owner: Misha" "target-completion-date: 2026-07-15" "populated" ""
+  CC8_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/cc8.md" 2>&1 >/dev/null)
+  CC8_RC=$?
+  if [[ $CC8_RC -eq 0 ]] && printf '%s' "$CC8_OUT" | grep -q "Check 16"; then
+    echo "self-test (cc8) check16-ask-id-missing-warns-non-blocking: PASS (expected)" >&2
+  else
+    echo "self-test (cc8) check16-ask-id-missing-warns-non-blocking: FAIL (rc=$CC8_RC)" >&2
+    printf '%s\n' "$CC8_OUT" >&2
+    FAILED=1
+  fi
+
+  # (cc9) v2 ACTIVE plan with ask-id POPULATED → Check 16 stays silent, exit 0.
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc9.md" "lifecycle-schema: v2" \
+    "owner: Misha" "target-completion-date: 2026-07-15" "populated" "ask-id: ask-selftest-1"
+  CC9_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/cc9.md" 2>&1 >/dev/null)
+  CC9_RC=$?
+  if [[ $CC9_RC -eq 0 ]] && ! printf '%s' "$CC9_OUT" | grep -q "Check 16"; then
+    echo "self-test (cc9) check16-ask-id-populated-silent: PASS (expected)" >&2
+  else
+    echo "self-test (cc9) check16-ask-id-populated-silent: FAIL (rc=$CC9_RC)" >&2
+    printf '%s\n' "$CC9_OUT" >&2
+    FAILED=1
+  fi
+
+  # (cc10) Grandfathered: no lifecycle-schema: v2 marker at all (mirrors cc1)
+  #        → Check 16 is gated on v2 exactly like Checks 14/15 and must stay
+  #        silent even though ask-id is also omitted here — no false-positive
+  #        nagging on legacy pre-Task-10 plans.
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc10.md" "" "" "" "missing" ""
+  CC10_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/cc10.md" 2>&1 >/dev/null)
+  CC10_RC=$?
+  if [[ $CC10_RC -eq 0 ]] && ! printf '%s' "$CC10_OUT" | grep -q "Check 16"; then
+    echo "self-test (cc10) check16-grandfathered-no-v2-silent: PASS (expected)" >&2
+  else
+    echo "self-test (cc10) check16-grandfathered-no-v2-silent: FAIL (rc=$CC10_RC)" >&2
+    printf '%s\n' "$CC10_OUT" >&2
+    FAILED=1
   fi
 
   if [[ $FAILED -eq 0 ]]; then
@@ -2716,6 +2768,29 @@ if { [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; } && [[ "$LIFECY
         add_finding "Check 15 (plan-lifecycle Closure Contract): '## Closure Contract' contains only placeholder text (the '[populate me ...]' template prompts). Replace each field with the plan's concrete closure target. See Decision 036-b."
       fi
     fi
+  fi
+
+  # ----- Check 16: ask<->plan linkage convention — WARN ONLY, NEVER BLOCKS -----
+  #
+  # ask-rooted-workstreams-p1 Task 10 (planning.md: "plan headers record
+  # ask-id:; plan creation back-links the registry"). Gated on the SAME
+  # lifecycle-schema: v2 grandfather signal as Checks 14/15 (this outer
+  # if-block) so pre-Task-10 plans never get flagged for a field that did
+  # not exist when they were created. Unlike Checks 14/15, a missing/
+  # unpopulated ask-id is advisory: not every plan originates from a
+  # captured ask (some are hand-authored, some predate ask-registry.sh
+  # entirely), so this is a stderr note that never calls add_finding and
+  # therefore never contributes to FINDING_COUNT / the blocking exit.
+  ASK_ID_VALUE=$(awk -F: '/^ask-id:/ { sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2; exit }' "$PLAN_FILE" 2>/dev/null)
+  if ! grep -qE '^ask-id:' "$PLAN_FILE" 2>/dev/null; then
+    ASK_ID_MISSING=1
+  elif [[ -z "$ASK_ID_VALUE" ]] || [[ "$ASK_ID_VALUE" == "<id | none — no linked ask>" ]]; then
+    ASK_ID_MISSING=1
+  else
+    ASK_ID_MISSING=0
+  fi
+  if [[ "$ASK_ID_MISSING" == "1" ]]; then
+    echo "[plan-reviewer] WARN (non-blocking) Check 16 (ask-registry linkage, ask-rooted-workstreams-p1 Task 10): this ACTIVE lifecycle-schema: v2 plan lacks a populated 'ask-id:' header field. Plan headers should record the ask-registry entry this plan serves (adapters/claude-code/doctrine/planning.md); link one via 'start-plan.sh --ask-id <id>' at creation, or backfill via 'ask-registry.sh link-plan --ask-id <id> --plan-slug <slug>'. Advisory only — this never blocks the commit." >&2
   fi
 fi
 
