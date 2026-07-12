@@ -126,6 +126,42 @@ cmd_selftest() {
     fail "self-test unexpectedly created a .claude path under $TMP"
   fi
 
+  echo "Scenario E: real-OS-process concurrency — separate 'bash progress-log.sh emit' invocations (not same-process function calls) racing the SAME natural key still dedup to exactly one line"
+  # This is the production-faithful shape: every real splice invokes this
+  # CLI as its OWN process (see plan-lifecycle.sh's `bash "$progress_log_cli"
+  # emit ...`); Scenario 8 in progress-log-lib.sh's own self-test already
+  # proves the underlying mkdir-lock holds for backgrounded function calls
+  # within one process — this scenario proves it ALSO holds across the
+  # process boundary real hooks actually cross.
+  self_cli="$SCRIPT_DIR/progress-log.sh"
+  race_ask_cli="ask-cli-race-1"
+  race_file_cli="$PROGRESS_LOG_STATE_DIR/$race_ask_cli.jsonl"
+  race_barrier_cli="$TMP/cli-race-barrier"
+  rm -f "$race_barrier_cli" 2>/dev/null
+  n_race_cli=5
+  race_pids_cli=()
+  for i in $(seq 1 $n_race_cli); do
+    (
+      tries=0
+      while [[ ! -f "$race_barrier_cli" ]] && [[ $tries -lt 2000 ]]; do
+        sleep 0.001 2>/dev/null || true
+        tries=$((tries + 1))
+      done
+      bash "$self_cli" emit --type task_done --ask "$race_ask_cli" --plan-slug "cli-race-plan" \
+        --task-id "1" --sha "clirace1" --summary "cli racer $i" --emitter plan-lifecycle >/dev/null 2>&1
+    ) &
+    race_pids_cli+=("$!")
+  done
+  sleep 0.05
+  : > "$race_barrier_cli"
+  for p in "${race_pids_cli[@]}"; do wait "$p" 2>/dev/null; done
+  race_lines_cli=$(wc -l < "$race_file_cli" 2>/dev/null | tr -d ' ')
+  if [[ "$race_lines_cli" == "1" ]]; then
+    pass "$n_race_cli racing 'progress-log.sh emit' OS processes on the IDENTICAL natural key produced exactly 1 line"
+  else
+    fail "expected 1 line after $n_race_cli concurrent CLI-process identical-key emits, got '$race_lines_cli'"
+  fi
+
   rm -rf "$TMP" 2>/dev/null || true
 
   echo ""

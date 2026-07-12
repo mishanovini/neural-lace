@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-lace.dev/schemas/progress-log-event.v1.json",
+  "title": "Progress-log event (v1) — ask-rooted-workstreams-p1",
+  "description": "One mechanism-emitted progress-log event, written by adapters/claude-code/hooks/lib/progress-log-lib.sh's pl_emit (via adapters/claude-code/scripts/progress-log.sh emit) as a single LF-terminated JSONL line under ~/.claude/state/progress-logs/<ask-id>.jsonl (or unlinked.jsonl when the ask-id cannot yet be resolved — the orphan lane). Every optional field not supplied by a given event type is still present as an empty string, never omitted, so every event line has this EXACT field set (additionalProperties:false below — a future field added to the writer without updating this schema is a self-test-visible drift, per progress-log-lib.sh Task 2 Scenario 10). See docs/plans/ask-rooted-workstreams-p1.md Task 2 and docs/runbooks/ask-workstreams.md for the full per-event-type natural-key dedup table and emitter-allowlist/provenance rules this schema documents but does not itself enforce (dedup + allowlist are pl_emit's job at write time; this schema is the machine-checked shape contract).",
+  "type": "object",
+  "required": [
+    "v", "event_id", "ts", "ask_id", "type", "plan_slug", "task_id", "sha",
+    "needs_you_id", "session_id", "summary", "evidence_link", "emitter",
+    "provenance", "user", "machine", "repo"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "v": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently always 1. Readers skip lines whose v they don't recognize (forward compatibility for the estate-growth case: old event lines must never break a future reader)."
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Content hash of the event's per-event-type natural key (see `type` enum values below for the dedup formula per type). Used for idempotent dedup: an identical natural key already present in the target file makes a re-emit a no-op. Hash algorithm is best-effort portable (sha1sum, then openssl dgst -sha1, then cksum fallback), so the exact charset/length is not pinned by this schema beyond non-empty."
+    },
+    "ts": {
+      "type": "string",
+      "pattern": "^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z|unknown)$",
+      "description": "ISO-8601 UTC timestamp at emit time (`date -u '+%Y-%m-%dT%H:%M:%SZ'`), or the literal string 'unknown' on the rare host where `date` itself is unavailable (writer semantics: never block the caller over a missing coreutil)."
+    },
+    "ask_id": {
+      "type": "string",
+      "description": "The ask this event belongs to. Empty string is NOT valid here (an empty ask-id resolves to the literal 'unlinked' orphan-lane file at write time, per pl_path_for — but the event object's own ask_id field carries whatever the caller passed, which may legitimately be empty for genuinely-unresolvable events pending the auditor's retroactive attach)."
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Event type. Known mechanism types (plan Task 2 table — each has its own dedup natural key, computed by progress-log-lib.sh's _pl_natural_key): task_done (plan_slug+task_id+sha), task_started (plan_slug+task_id+session_id — a re-dispatch with a NEW session_id is a legitimate second event, not a dedup collision), waiting_on_operator (needs_you_id), merged (repo+sha), plan_amended (plan_slug+content-hash-of-the-delta, passed via --dedup-extra), plan_completed (plan_slug+content-hash-of-the-Status-line-ts, passed via --dedup-extra), ask_registered / session_attached (ask_id+session_id). Any OTHER type falls through to a superset natural key (every field joined) so a future/unrecognized type still dedups sanely instead of colliding everything to one key or never deduping at all — this field is intentionally NOT a closed enum for that forward-compatibility reason."
+    },
+    "plan_slug": {
+      "type": "string",
+      "description": "Plan file slug (docs/plans/<slug>.md, extension stripped), when the event pertains to a plan. Empty string when not applicable to this event type."
+    },
+    "task_id": {
+      "type": "string",
+      "description": "Plan task identifier (matches the task-verifier checkbox numbering, e.g. '3', '7'). Empty string when not applicable."
+    },
+    "sha": {
+      "type": "string",
+      "description": "Git commit SHA, when the event pertains to one (task_done's evidence commit, or a merged event's landed SHA). Empty string when not applicable."
+    },
+    "needs_you_id": {
+      "type": "string",
+      "description": "The NEEDS-YOU ledger entry id, for waiting_on_operator events. Empty string when not applicable."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Claude Code session id, for task_started/ask_registered/session_attached events (part of task_started's natural key — see `type`). Empty string when not applicable."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Human-readable one-line narrative for this event (e.g. 'task 3 verified done'). Rendered verbatim in the ask-tree landing card's chronological narrative (Task 13) — subject to the anti-noise law (constraint 1: no gate/hook identifier may appear here) at the RENDERING layer; this schema does not itself content-filter the string."
+    },
+    "evidence_link": {
+      "type": "string",
+      "description": "Absolute path or URL to the evidence for this event (e.g. the plan file's absolute path for a task_done event). SHOULD be absolute when non-empty per the plan's absolute-links law (constraint 2) — enforcement of that rule lives in server/payload-schema.js (Task 11), which rejects any relative href reaching the landing payload; this writer-side schema documents the expectation but does not reject non-absolute values itself (writer semantics: never block/drop a caller's event over a link-shape issue)."
+    },
+    "emitter": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The mechanism that emitted this event, e.g. 'plan-lifecycle', 'workstreams-emit', 'needs-you', 'post-commit', 'close-plan', 'ask-registry', 'auditor'. Checked against progress-log-lib.sh's _PL_KNOWN_EMITTERS allowlist (constraint 10) at emit time to compute `provenance` below; an emitter outside the allowlist is still recorded verbatim (the open CLI cannot impersonate a mechanism by lying about its name, but it also isn't silently dropped) — not a closed enum here for the same forward-compatibility reason as `type`."
+    },
+    "provenance": {
+      "type": "string",
+      "enum": ["known", "unknown"],
+      "description": "'known' when `emitter` is in the allowlist at emit time, else 'unknown'. Task 12's auditor badges provenance:unknown events and the UI de-emphasizes them (constraint 10) — never rendered as mechanism truth."
+    },
+    "user": {
+      "type": "string",
+      "description": "git config user.name at emit time, falling back to $USER/$USERNAME, else 'unknown'. Provenance field (sketch §6/P3 groundwork); not used for access control."
+    },
+    "machine": {
+      "type": "string",
+      "description": "Hostname at emit time, or 'unknown'. Provenance field (sketch §6/P3 groundwork)."
+    },
+    "repo": {
+      "type": "string",
+      "description": "Absolute path to the repo toplevel at emit time (git rev-parse --show-toplevel), or empty string when not inside a git repo. Part of `merged` events' natural key (repo+sha) since a SHA is only unique within its own repo."
+    }
+  }
+}
