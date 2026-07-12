@@ -201,6 +201,30 @@
       "budget_class": "none"
     },
     {
+      "id": "concurrent-ownership-gate",
+      "kind": "gate",
+      "doctrine_file": "doctrine/parallel-dev-discipline.md",
+      "hooks": [
+        "concurrent-ownership-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool",
+      "added_after": "2026-07",
+      "golden_scenario": "Lesson 2026-07-11 (docs/lessons/2026-07-11-bulk-shared-state-mutation-without-ownership-check.md, nl-issue [35]): a session under operator pressure bulk-flips every ACTIVE docs/plans/*.md to DEFERRED and pushes to master, including a plan whose feature branch is checked out RIGHT THEN in another same-machine worktree — the gate blocks the Status flip / git mv and names the owning worktree path + branch.",
+      "fp_expectation": "low — fires only on plan-Status flips, bulk plan mutations, git branch -D, and git worktree remove, and only when a live other-worktree checkout or a fresh (<2h) competing claim exists. Own-plan mutation (slug matches the current worktree's branch) never fires; worktree removal blocks only under a fresh other-session claim (never on mere existence); read-only bulk commands never fire. 17/17 self-test scenarios green including the golden bulk-defer block, an unowned clean pass, and waiver-honored/stale/clause-less waiver paths.",
+      "retirement_condition": "if worktree-per-session claiming is enforced upstream (e.g. the launcher writes an authoritative per-branch lock the gate can trust exclusively), the git-worktree-list heuristic simplifies to a lock read; retire the heuristic half then. Also demotion-eligible via waiver-density per ADR 059 D7.",
+      "honesty_rationale": "Promotes parallel-dev-discipline Practice 8 (claim-before-touch) from self-applied Pattern to Mechanism — the lesson's root cause 4. World-fact check (git worktree list + fresh claims). Structured waiver hatch (fresh <1h, purpose clauses via lib/waiver-purpose-clause.sh, target-scoped, ledger-logged) per the ADR 059 D4 house pattern — present-moment friction, not consequence-deferred theater."
+    },
+    {
       "id": "consolidation-discipline",
       "kind": "pattern",
       "doctrine_file": "doctrine/consolidation-discipline.md",

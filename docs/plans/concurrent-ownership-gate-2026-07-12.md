@@ -94,7 +94,7 @@ The `--self-test` of the gate passing IS the demonstration (constitution §4).
 - `adapters/claude-code/settings.json.template` — wire the gate under PreToolUse (both matcher groups)
 
 ## In-flight scope updates
-(no in-flight changes yet)
+- 2026-07-12: `docs/harness-architecture.md` — docs-freshness gate (Rule 8) requires the architecture doc in the same commit as a new hook; regenerated via `scripts/gen-architecture-doc.sh` from the manifest (generation, not hand-edit)
 
 ## Assumptions
 - `git worktree list --porcelain` output is stable across the git versions in

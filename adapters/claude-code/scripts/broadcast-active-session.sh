@@ -15,10 +15,28 @@
 #   write      — push current state to the reserved branch (idempotent;
 #                throttled — skipped silently if last broadcast was
 #                less than $BROADCAST_THROTTLE_SECONDS ago, default 300).
-#   check      — list other-hostname recent broadcasts and surface them.
+#                ALSO writes a local same-machine per-branch claim (v2).
+#   check      — list other-hostname recent broadcasts and surface them,
+#                PLUS same-machine other worktrees + fresh other-session
+#                claims (v2 — the lesson-2026-07-11 same-machine hole).
+#   claim      — [<branch>] [<plan-slug>]: write a local per-branch claim
+#                file to $STATE_DIR/claims/ so the concurrent-ownership
+#                gate can see same-machine ownership. Defaults: current
+#                branch, no plan slug.
+#   unclaim    — [<branch>]: remove this session's claim file.
 #   clear      — best-effort: PUT an empty state to mark this hostname
 #                no-longer-active (call from end-of-session manually).
 #   --self-test
+#
+# v2 EXTENSION (2026-07-12, concurrent-ownership-gate plan; lesson
+# 2026-07-11-bulk-shared-state-mutation-without-ownership-check):
+# v1 was per-hostname and other-machines-only — structurally blind to a
+# same-machine concurrent worktree, the exact collision the lesson records.
+# v2 adds (a) a `worktrees` array in state.json (ADDITIVE — the only
+# state.json consumers are this script's own `check` sed-extraction and the
+# SessionStart template invocation, both tolerant of new fields) and
+# (b) local per-branch claim files under $STATE_DIR/claims/, freshness by
+# file mtime, consumed by hooks/concurrent-ownership-gate.sh.
 #
 # DESIGN DECISIONS (v1, 2026-05-29)
 # - Push target: origin only. Cross-remote (PT + personal) visibility
@@ -53,8 +71,18 @@ BROADCAST_THROTTLE_SECONDS="${BROADCAST_THROTTLE_SECONDS:-300}"
 BROADCAST_FRESH_HOURS="${BROADCAST_FRESH_HOURS:-2}"
 BROADCAST_BRANCH_PREFIX="harness/active-sessions"
 BROADCAST_STATE_FILE="state.json"
-STATE_DIR="${HOME}/.claude/state/active-session-broadcast"
+# STATE_DIR is env-overridable (BROADCAST_STATE_DIR) and sandboxed under
+# HARNESS_SELFTEST=1 so self-tests never touch the operator's real state.
+if [ "${HARNESS_SELFTEST:-0}" = "1" ]; then
+  STATE_DIR="${BROADCAST_STATE_DIR:-${TMPDIR:-/tmp}/broadcast-selftest-$$}"
+else
+  STATE_DIR="${BROADCAST_STATE_DIR:-${HOME}/.claude/state/active-session-broadcast}"
+fi
 LOCAL_THROTTLE_FILE="$STATE_DIR/last-broadcast"
+# Same-machine per-branch claims (v2). Shared with
+# hooks/concurrent-ownership-gate.sh (its COG_CLAIMS_DIR default).
+CLAIMS_DIR="${BROADCAST_CLAIMS_DIR:-$STATE_DIR/claims}"
+CLAIM_FRESH_SECONDS="${BROADCAST_CLAIM_FRESH_SECONDS:-7200}"
 
 # ============================================================
 # Helpers
@@ -103,18 +131,62 @@ _has_uncommitted() {
   fi
 }
 
+# JSON string escaping — escape backslashes and quotes in string values.
+_json_str() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# Same-machine worktrees of the current repo as a JSON array (v2):
+#   [{"path":"...","branch":"..."}, ...]
+# Detached-HEAD entries (no branch line) are skipped. Emits [] outside a
+# git repo or on any parse failure — additive field, never load-bearing
+# for v1 consumers.
+_worktrees_json() {
+  local out="" cur_path="" line first=1
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*) cur_path="${line#worktree }" ;;
+      "branch refs/heads/"*)
+        local br="${line#branch refs/heads/}"
+        if [ -n "$cur_path" ]; then
+          [ "$first" -eq 1 ] && first=0 || out+=","
+          out+="{\"path\":\"$(_json_str "$cur_path")\",\"branch\":\"$(_json_str "$br")\"}"
+        fi
+        ;;
+      "") cur_path="" ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null)
+  printf '[%s]' "$out"
+}
+
+# List OTHER worktrees of the current repo (excluding the current one) as
+# tab-separated "path<TAB>branch" lines. Used by the check subcommand.
+_other_worktrees() {
+  local cur_root cur_path="" line
+  cur_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  [ -n "$cur_root" ] || return 0
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*) cur_path="${line#worktree }" ;;
+      "branch refs/heads/"*)
+        local br="${line#branch refs/heads/}"
+        if [ -n "$cur_path" ] && [ "$cur_path" != "$cur_root" ]; then
+          printf '%s\t%s\n' "$cur_path" "$br"
+        fi
+        ;;
+      "") cur_path="" ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null)
+}
+
 # Build the state JSON for the current session.
 _build_state_json() {
-  local hostname iso_ts cwd current_branch dirty origin_url
+  local hostname iso_ts cwd current_branch dirty origin_url worktrees
   hostname="$(_hostname)"
   iso_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   cwd="$(pwd)"
   current_branch="$(_current_branch)"
   dirty="$(_has_uncommitted)"
   origin_url="$(git remote get-url --push origin 2>/dev/null || echo '')"
-
-  # JSON via printf — escape backslashes and quotes in string values.
-  _json_str() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+  worktrees="$(_worktrees_json)"
 
   cat <<JSON
 {
@@ -123,9 +195,91 @@ _build_state_json() {
   "working_directory": "$(_json_str "$cwd")",
   "current_branch": "$(_json_str "$current_branch")",
   "git_remote_url": "$(_json_str "$origin_url")",
-  "uncommitted_changes": $dirty
+  "uncommitted_changes": $dirty,
+  "worktrees": $worktrees
 }
 JSON
+}
+
+# Sanitize a branch name into a claim filename segment.
+_claim_key() {
+  printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-'
+}
+
+# Write a local per-branch claim file (v2). $1 = branch (default: current),
+# $2 = plan slug (optional). Never fails the caller.
+_cmd_claim() {
+  local branch="${1:-}" plan="${2:-}" wt key
+  [ -n "$branch" ] || branch="$(_current_branch)"
+  [ -n "$branch" ] || return 0
+  [ "$branch" = "(detached)" ] && return 0
+  wt=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  key="$(_claim_key "$branch")"
+  mkdir -p "$CLAIMS_DIR" 2>/dev/null || return 0
+  cat > "$CLAIMS_DIR/${key}.json" 2>/dev/null <<JSON
+{
+  "branch": "$(_json_str "$branch")",
+  "plan": "$(_json_str "$plan")",
+  "worktree": "$(_json_str "$wt")",
+  "hostname": "$(_json_str "$(_hostname)")",
+  "pid": "$$",
+  "iso_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+JSON
+  _log "claim written: ${branch} -> $CLAIMS_DIR/${key}.json"
+}
+
+# Remove a claim file. $1 = branch (default: current).
+_cmd_unclaim() {
+  local branch="${1:-}" key
+  [ -n "$branch" ] || branch="$(_current_branch)"
+  [ -n "$branch" ] || return 0
+  key="$(_claim_key "$branch")"
+  rm -f "$CLAIMS_DIR/${key}.json" 2>/dev/null
+  _log "claim removed: ${branch}"
+}
+
+# Surface same-machine coordination state (v2): other worktrees of this
+# repo + fresh other-session claims. Informational, never blocks.
+_check_local() {
+  local cur_root cur_branch out="" count=0 line p b
+  cur_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  cur_branch="$(_current_branch)"
+
+  while IFS=$'\t' read -r p b; do
+    [ -z "$p" ] && continue
+    count=$((count + 1))
+    out+="  • worktree ${p} — branch '${b}'"$'\n'
+  done < <(_other_worktrees)
+
+  # Fresh claims from other sessions (worktree != ours, branch != ours).
+  if [ -d "$CLAIMS_DIR" ]; then
+    local cutoff f br wt ts
+    cutoff=$(date -d "-${CLAIM_FRESH_SECONDS} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "")
+    if [ -n "$cutoff" ]; then
+      while IFS= read -r f; do
+        [ -f "$f" ] || continue
+        br=$(sed -nE 's/.*"branch"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)
+        wt=$(sed -nE 's/.*"worktree"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)
+        ts=$(sed -nE 's/.*"iso_timestamp"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)
+        [ -z "$br" ] && continue
+        [ "$br" = "$cur_branch" ] && continue
+        [ -n "$cur_root" ] && [ "$wt" = "$cur_root" ] && continue
+        count=$((count + 1))
+        out+="  • claim: branch '${br}' by session in '${wt}' (since ${ts})"$'\n'
+      done < <(find "$CLAIMS_DIR" -maxdepth 1 -type f -name '*.json' -newermt "$cutoff" 2>/dev/null)
+    fi
+  fi
+
+  if [ "$count" -gt 0 ]; then
+    echo ""
+    echo "[active-session-broadcast] same-machine ownership signals (${count}):"
+    printf '%s' "$out"
+    echo "  Do not mutate these branches/plans without coordinating — the"
+    echo "  concurrent-ownership gate will block Status flips / branch deletes"
+    echo "  targeting them."
+    echo ""
+  fi
 }
 
 # Convert ISO 8601 timestamp to epoch seconds (best-effort across
@@ -168,6 +322,10 @@ _default_branch_sha() {
 
 _cmd_write() {
   local owner_name hostname branch_name state_json existing_sha default_sha b64
+  # Local same-machine claim first (v2) — cheap, filesystem-only, NOT
+  # throttled (the throttle protects the GitHub API, not local writes).
+  _cmd_claim || true
+
   owner_name="$(_origin_owner_name)"
   [ -n "$owner_name" ] || _die "could not parse origin URL"
 
@@ -227,6 +385,9 @@ _cmd_write() {
 
 _cmd_check() {
   local owner_name my_hostname now_epoch fresh_seconds
+  # Same-machine signals first (v2) — these work even with no origin remote.
+  _check_local
+
   owner_name="$(_origin_owner_name)"
   [ -n "$owner_name" ] || return 0  # Not a github repo or no origin → silent.
 
@@ -401,6 +562,66 @@ _self_test() {
     else echo "  S6 check no-origin silent: FAIL (got: $out)"; return 1; fi
   ) && pass=$((pass+1)) || fail=$((fail+1))
 
+  # S7 — claim writes a schema-valid per-branch claim file (v2, sandboxed).
+  (
+    tmp=$(mktemp -d)
+    CLAIMS_DIR="$tmp/claims"
+    cd "$tmp"
+    git init --quiet
+    git config user.email "t@example.com" && git config user.name "T"
+    git commit --allow-empty -q -m init
+    git checkout -q -b feat/selftest-claim
+    _cmd_claim "" "selftest-plan" >/dev/null 2>&1
+    f="$CLAIMS_DIR/feat-selftest-claim.json"
+    if [ -f "$f" ] \
+       && grep -q '"branch": "feat/selftest-claim"' "$f" \
+       && grep -q '"plan": "selftest-plan"' "$f" \
+       && grep -q '"worktree"' "$f" \
+       && grep -q '"iso_timestamp"' "$f"; then
+      echo "  S7 claim file schema: PASS"
+    else
+      echo "  S7 claim file schema: FAIL"; exit 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
+  # S8 — state.json carries the same-machine worktrees array (v2, additive).
+  (
+    tmp=$(mktemp -d)
+    cd "$tmp"
+    mkdir main && cd main
+    git init --quiet
+    git config user.email "t@example.com" && git config user.name "T"
+    git commit --allow-empty -q -m init
+    git worktree add ../wt2 -b feat/selftest-wt >/dev/null 2>&1
+    json="$(_build_state_json)"
+    if echo "$json" | grep -q '"worktrees":' \
+       && echo "$json" | grep -q 'feat/selftest-wt'; then
+      echo "  S8 worktrees array in state.json: PASS"
+    else
+      echo "  S8 worktrees array in state.json: FAIL (got: $json)"; exit 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
+  # S9 — unclaim removes this session's claim file (v2).
+  (
+    tmp=$(mktemp -d)
+    CLAIMS_DIR="$tmp/claims"
+    cd "$tmp"
+    git init --quiet
+    git config user.email "t@example.com" && git config user.name "T"
+    git commit --allow-empty -q -m init
+    git checkout -q -b feat/selftest-unclaim
+    _cmd_claim >/dev/null 2>&1
+    f="$CLAIMS_DIR/feat-selftest-unclaim.json"
+    [ -f "$f" ] || { echo "  S9 unclaim: FAIL (claim not written)"; exit 1; }
+    _cmd_unclaim >/dev/null 2>&1
+    if [ ! -f "$f" ]; then
+      echo "  S9 unclaim removes claim: PASS"
+    else
+      echo "  S9 unclaim removes claim: FAIL (file survived)"; exit 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
   echo ""
   echo "[self-test] $pass passed, $fail failed"
   return $fail
@@ -413,6 +634,8 @@ _self_test() {
 case "${1:-}" in
   write)        _cmd_write ;;
   check)        _cmd_check ;;
+  claim)        _cmd_claim "${2:-}" "${3:-}" ;;
+  unclaim)      _cmd_unclaim "${2:-}" ;;
   clear)        _cmd_clear ;;
   --self-test)  _self_test; exit $? ;;
   -h|--help|"")
@@ -420,19 +643,27 @@ case "${1:-}" in
 broadcast-active-session.sh — cross-computer active-session coordination.
 
 USAGE
-  broadcast-active-session.sh write       # push current state to reserved branch
-  broadcast-active-session.sh check       # surface other-hostname recent broadcasts
+  broadcast-active-session.sh write       # push current state to reserved branch (+ local claim)
+  broadcast-active-session.sh check       # surface other-hostname broadcasts + same-machine worktrees/claims
+  broadcast-active-session.sh claim [<branch>] [<plan-slug>]   # write local per-branch claim
+  broadcast-active-session.sh unclaim [<branch>]               # remove this session's claim
   broadcast-active-session.sh clear       # mark this hostname no-longer-active
   broadcast-active-session.sh --self-test
 
 ENV
-  BROADCAST_THROTTLE_SECONDS  Throttle window for write (default 300 = 5 min)
-  BROADCAST_FRESH_HOURS       Freshness window for check (default 2h)
+  BROADCAST_THROTTLE_SECONDS    Throttle window for write (default 300 = 5 min)
+  BROADCAST_FRESH_HOURS         Freshness window for remote check (default 2h)
+  BROADCAST_STATE_DIR           Local state dir override (sandboxed under HARNESS_SELFTEST=1)
+  BROADCAST_CLAIMS_DIR          Claims dir override (default $STATE_DIR/claims)
+  BROADCAST_CLAIM_FRESH_SECONDS Claim freshness for check (default 7200, by mtime)
 
 Storage: a single state.json file on branch
 'harness/active-sessions/<hostname>' on the canonical remote (origin),
 written via the GitHub Contents API. Stale broadcasts (older than the
 freshness window) are filtered out by check; no explicit cleanup needed.
+Same-machine (v2): per-branch claim files under $STATE_DIR/claims/ (mtime
+freshness, no cleanup needed) + a 'worktrees' array in state.json; consumed
+by hooks/concurrent-ownership-gate.sh for ownership checks.
 BROADCAST_USAGE_END
     exit 2
     ;;

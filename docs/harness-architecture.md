@@ -15,9 +15,9 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 111 |
-| Unique hook scripts | 102 |
-| Blocking gates (`blocking: true`) | 31 |
+| Total manifest entries | 112 |
+| Unique hook scripts | 103 |
+| Blocking gates (`blocking: true`) | 32 |
 
 ## Hooks by event
 
@@ -35,6 +35,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreCompact | pre-compact-continuity | writer | no | pre-compact-continuity.sh |
 | PreToolUse | agent-teams | gate | yes | task-completed-evidence-gate.sh, task-created-validator.sh, teammate-spawn-validator.sh |
 | PreToolUse | claude-md-hygiene | gate | yes | claude-md-hygiene-gate.sh |
+| PreToolUse | concurrent-ownership-gate | gate | yes | concurrent-ownership-gate.sh |
 | PreToolUse | cross-repo-nl-touch-warn | surfacer | no | cross-repo-nl-touch-warn.sh |
 | PreToolUse | definition-on-first-use | gate | no | definition-on-first-use-gate.sh |
 | PreToolUse | deploy-automation-mode | gate | yes | automation-mode-gate.sh |
@@ -117,7 +118,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
-| gate | 31 | 12 |
+| gate | 32 | 12 |
 | writer | 0 | 22 |
 | surfacer | 0 | 19 |
 | pattern | 0 | 24 |
@@ -134,7 +135,7 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 |---|---|
 | stop | 8 |
 | session-start | 15 |
-| pretool | 23 |
+| pretool | 24 |
 | posttool | 6 |
 | none | 59 |
 
@@ -176,7 +177,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/observability.md | 3 (nl-cli, observability, observability-consumer-map) |
 | doctrine/observed-errors-first.md | 1 (observed-errors-first) |
 | doctrine/orchestrator-pattern.md | 1 (orchestrator-pattern) |
-| doctrine/parallel-dev-discipline.md | 1 (parallel-dev-migration-naming) |
+| doctrine/parallel-dev-discipline.md | 2 (concurrent-ownership-gate, parallel-dev-migration-naming) |
 | doctrine/planning.md | 11 (backlog-plan-atomicity, decisions-index, plan-deletion-protection, plan-edit-validator, plan-lifecycle, plan-reviewer, pr-template-inline, stale-plan-surfacer, task-verifier-reminder, wire-check, work-integrity) |
 | doctrine/pr-health-snapshot.md | 1 (pr-health-snapshot) |
 | doctrine/prd-validity.md | 1 (prd-validity) |
@@ -211,6 +212,7 @@ Entries with no doctrine_file (`-`): 24.
 | code-conventions | convention | — | no | none | — |
 | completion-criteria | pattern | — | no | none | — |
 | comprehension-gate | pattern | — | no | none | — |
+| concurrent-ownership-gate | gate | PreToolUse | yes | pretool | — |
 | consolidation-discipline | pattern | — | no | none | — |
 | constitution | pattern | — | no | none | — |
 | context-watermark | writer | PostToolUse | no | posttool | E.9a early-warning context watermark; wired PostToolUse at §E.W. |
