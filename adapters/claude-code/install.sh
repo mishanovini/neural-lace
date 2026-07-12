@@ -783,7 +783,11 @@ _hash_path() {
     # the comparison is order-independent and catches any file diff.
     (
       cd "$p" 2>/dev/null || exit 1
-      find . -type f -print0 | sort -z | while IFS= read -r -d '' f; do
+      # -L: hash LOGICAL content (follow symlinks). The backup copy is
+      # `cp -R`, which dereferences symlinks — without -L a symlinked
+      # entry (e.g. a skills/<name> link) enumerates differently on the
+      # two sides and verification can never match (nl-issue [27]).
+      find -L . -type f -print0 | sort -z | while IFS= read -r -d '' f; do
         if command -v sha1sum >/dev/null 2>&1; then
           sha1sum "$f" 2>/dev/null
         elif command -v shasum >/dev/null 2>&1; then
