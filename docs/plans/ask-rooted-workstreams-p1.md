@@ -321,7 +321,7 @@ Serialization added in round 1:
   pass over Tasks 1, 3–6 splice diffs** with findings fixed — Verification:
   mechanical — Docs impact: manifest entry IS the doc; regen via manifest tooling,
   never hand-drift (MANIFEST-NEEDS-YOU-DRIFT-01 lesson)
-- [ ] 8. [parallel] Ask registry lib: `scripts/ask-registry.sh`
+- [x] 8. [parallel] Ask registry lib: `scripts/ask-registry.sh`
   (register/attach-session/link-plan/set-status/merge/override-project) writing
   `~/.claude/state/ask-registry.jsonl` (sketch §4 schema incl. `{user, machine,
   repo, project}` provenance; project defaulted via
