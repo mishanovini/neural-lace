@@ -227,7 +227,7 @@ Serialization added in round 1:
   - `plan-lifecycle.sh` is PostToolUse-wired in `settings.json.template` (verified) — the splice sees the post-edit plan content; confirm it can distinguish a fresh `- [x]` flip from a re-save (diff against prior content or the tool-input JSON)
   - Server port 7733 / lobotomy-health contract (master `02ff2f3`) — skeleton inherits it unchanged; verify `/api/health` still grades GREEN after the route addition
 
-- [ ] 2. [parallel] Progress-log format finalization + writer hardening: versioned
+- [x] 2. [parallel] Progress-log format finalization + writer hardening: versioned
   JSONL event schema (`{v, event_id, ts, ask_id, type, plan_slug?, task_id?, sha?,
   needs_you_id?, session_id?, summary, evidence_link, emitter, user, machine,
   repo}`), event-id dedup by PER-EVENT-TYPE NATURAL KEY (review round 1 — a single
