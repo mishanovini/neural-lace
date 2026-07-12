@@ -403,7 +403,7 @@ Serialization added in round 1:
   **Integration points:**
   - Waiting items parse `NEEDS-YOU.md` via the same shape `scripts/needs-you.sh` renders — parser fixture pinned against `needs-you.sh --self-test` output, not a hand-written sample
   - Heartbeats (`session-heartbeat.sh` files) supply live/stalled session states — reuse `hooks/lib/session-heartbeat-lib.sh` classification, don't re-derive
-- [ ] 12. [serial] Background auditor + drift badges: new `server/auditor.js`
+- [x] 12. [serial] Background auditor + drift badges: new `server/auditor.js`
   reusing `server/derive-cache.js` plumbing on a RELAXED cadence (default 120s,
   env-tunable; never on the landing request path) comparing the log against
   ground truth — plan checkboxes (done), heartbeats + dispatch records (in
@@ -441,7 +441,7 @@ Serialization added in round 1:
   **Integration points:**
   - `server/reconciler.js` (tree-state comparison) stays as-is for the Harness Health tab; auditor.js is a SIBLING, not a replacement — no shared mutable state
   - Heartbeat reap (master `02ff2f3`) already bounds the session set the auditor reads
-- [ ] 13. [serial] UI landing — ask tree: project sections (collapsible), ask cards
+- [x] 13. [serial] UI landing — ask tree: project sections (collapsible), ask cards
   (summary + verbatim-one-click, progress narrative excerpt, plan progress bar +
   live-doc hyperlink, waiting count, drift badges inline), shallow-first with plan
   drill-down (per-task rows: done/in-flight/not-started with evidence links);
