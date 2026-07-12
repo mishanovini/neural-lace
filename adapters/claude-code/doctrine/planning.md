@@ -5,6 +5,7 @@
 - FUNCTIONALITY OVER COMPONENTS (constitution §4): a task is done when a user can do the thing, not when code compiles. When a pre-existing oracle exists (original test suite, consumer contract, golden outputs), it IS the done criterion.
 - Write plans to `docs/plans/<slug>.md` with all seven required sections populated (Goal, Scope, Tasks, Files to Modify/Create, Assumptions, Edge Cases, Testing Strategy). No placeholders. Commit the plan immediately.
 - Declare `Mode: code` (default) or `Mode: design` (infra/workflows/migrations — see doctrine/design-mode-planning.md). Multi-task plans declare `Execution Mode: orchestrator` (see doctrine/orchestrator-pattern.md).
+- Plan headers record `ask-id:`; plan creation back-links the registry (`start-plan.sh --ask-id <id>` calls `ask-registry.sh link-plan`; `plan-reviewer.sh` WARNs, never blocks, when an ACTIVE `lifecycle-schema: v2` plan lacks it).
 - Scope is mechanical: whatever is in the plan's task list. Never drop, defer, or narrow a planned task to finish faster. Legitimate deferral = dependency-blocked, user-deferred this session, or never in the plan.
 - Decompose sweep tasks ("fix X across all forms") before starting: grep the codebase, write one sub-task per file, verify each file individually.
 - Only task-verifier flips checkboxes (`- [ ]` → `- [x]`). Never self-flip; never write your own evidence blocks.

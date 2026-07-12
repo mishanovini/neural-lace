@@ -359,7 +359,7 @@ Serialization added in round 1:
   **Integration points:**
   - UserPromptSubmit stdin JSON carries the prompt text — builder verifies the field name against a live hook invocation before relying on it
   - Sub-agent / builder / spawned-worktree sessions must NOT register new asks. The guard's MECHANICAL PREDICATE (review round 1 — "guard on session type" named no signal): a session is classified SPAWNED when (a) its cwd resolves inside a `.claude/worktrees/` pool — the layout `spawn-worktree.sh` itself creates (`$MAIN/.claude/worktrees/<slug>`) and the desktop app / `--worktree` flag also use — OR (b) a Task 3 dispatch-provenance marker matches the session's worktree path. NO spawn-time marker exists today (verified 2026-07-10: neither `spawn-worktree.sh` nor `nl.sh` writes one) — Task 3 creates it, hence the Task 3 → Task 9 serialization in the dispatch comment. Spawned sessions ATTACH to the dispatching ask via the marker instead of registering. The classification function lives in `hooks/lib/progress-log-lib.sh` and is the SAME function Task 17(c)'s doctor predicate filters by — population parity by construction, never a re-derivation. Prove-it addition: dispatch a real worktree builder → NO new registry entry appears; the child session shows attached to the dispatching ask
-- [ ] 10. [serial] Plan↔ask linkage convention: one line in
+- [x] 10. [serial] Plan↔ask linkage convention: one line in
   `adapters/claude-code/doctrine/planning.md` ("plan headers record `ask-id:`;
   plan creation back-links the registry"), `ask-id:` field + comment block in
   `adapters/claude-code/templates/plan-template.md`, `--ask-id` flag in
@@ -403,7 +403,7 @@ Serialization added in round 1:
   **Integration points:**
   - Waiting items parse `NEEDS-YOU.md` via the same shape `scripts/needs-you.sh` renders — parser fixture pinned against `needs-you.sh --self-test` output, not a hand-written sample
   - Heartbeats (`session-heartbeat.sh` files) supply live/stalled session states — reuse `hooks/lib/session-heartbeat-lib.sh` classification, don't re-derive
-- [ ] 12. [serial] Background auditor + drift badges: new `server/auditor.js`
+- [x] 12. [serial] Background auditor + drift badges: new `server/auditor.js`
   reusing `server/derive-cache.js` plumbing on a RELAXED cadence (default 120s,
   env-tunable; never on the landing request path) comparing the log against
   ground truth — plan checkboxes (done), heartbeats + dispatch records (in
@@ -441,7 +441,7 @@ Serialization added in round 1:
   **Integration points:**
   - `server/reconciler.js` (tree-state comparison) stays as-is for the Harness Health tab; auditor.js is a SIBLING, not a replacement — no shared mutable state
   - Heartbeat reap (master `02ff2f3`) already bounds the session set the auditor reads
-- [ ] 13. [serial] UI landing — ask tree: project sections (collapsible), ask cards
+- [x] 13. [serial] UI landing — ask tree: project sections (collapsible), ask cards
   (summary + verbatim-one-click, progress narrative excerpt, plan progress bar +
   live-doc hyperlink, waiting count, drift badges inline), shallow-first with plan
   drill-down (per-task rows: done/in-flight/not-started with evidence links);

@@ -141,6 +141,22 @@ Required by `plan-reviewer.sh` Check 10.
 See `~/.claude/doctrine/prd-validity.md` and `adapters/claude-code/templates/prd-template.md`.
 -->
 
+ask-id: <id | none — no linked ask>
+<!--
+ask-id — the ask-registry entry (`~/.claude/state/ask-registry.jsonl`) this
+plan serves. Plan headers record it, and plan creation back-links the
+registry in the other direction (the registry entry's `plan_slugs[]` gains
+this plan's slug) — see `adapters/claude-code/doctrine/planning.md`. Pass at
+creation via `start-plan.sh --ask-id <id>`, which calls `ask-registry.sh
+link-plan --ask-id <id> --plan-slug <slug>` for you; a plan with no
+originating ask may state `ask-id: none — no linked ask`.
+
+`plan-reviewer.sh` WARNS (never blocks) when an ACTIVE `lifecycle-schema: v2`
+plan lacks a populated value here — advisory only, since grandfathered plans
+predate this field and not every plan is asked for through a captured
+session prompt. See docs/decisions/062-ask-rooted-workstreams-p1.md.
+-->
+
 <!--
 acceptance-exempt values:
   false   Default. The plan undergoes end-user-advocate review at plan-time

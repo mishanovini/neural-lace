@@ -134,26 +134,145 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   color: var(--text);
 }
 
-/* ---- asks (walking skeleton) — ask-rooted-workstreams-p1 Task 1.
-   Task 13 replaces this section's markup/styling wholesale with the full
-   ask-tree landing; this block stays deliberately small in the meantime. */
-.asks-skeleton-section {
+/* ---- ask-tree landing — ask-rooted-workstreams-p1 Task 13 (REPLACES the
+   Task 1 walking-skeleton block wholesale). Project sections (collapsible,
+   native <details>/<summary> — same keyboard-accessible convention this
+   file already uses for the reconciler badge / per-gate health rows) ->
+   ask cards -> a collapsed "completed" group. One accent (--interrupt) is
+   NOT spent here; drift badges and waiting counts use --warn/--info
+   (text+color, never color-only, per the a11y baseline this file already
+   states at the top). */
+.ask-tree-section {
   max-width: 1400px;
   margin: 12px auto 0;
+  padding: 0 16px;
 }
+.ask-tree-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.ask-tree-title { font-size: 15px; margin: 0; font-weight: 600; }
+.ask-tree-status { padding: 8px 0; }
+
+.ask-project-group { margin-bottom: 14px; }
+.ask-project-summary {
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 0;
+  list-style: revert;
+}
+.ask-project-body { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+
+.ask-completed-group { margin: 16px 0 24px; border-top: 1px solid var(--border); padding-top: 10px; }
+.ask-completed-summary { color: var(--muted); font-size: 13px; cursor: pointer; list-style: revert; }
+.ask-completed-body { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+
 .ask-card {
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
-  margin-bottom: 8px;
+  border-radius: 8px;
+  padding: 10px 12px;
   background: var(--panel2);
 }
-.ask-card:last-child { margin-bottom: 0; }
-.ask-card h3 { margin: 0 0 4px; font-size: 13px; }
-.ask-card-meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
-.ask-narrative { list-style: none; margin: 0; padding: 0; font-size: 12px; }
-.ask-narrative li { padding: 2px 0; }
-.ask-narrative-empty { font-size: 12px; color: var(--muted); font-style: italic; }
+.ask-card-completed { opacity: 0.85; }
+.ask-card-head { margin-bottom: 4px; }
+.ask-card-title { margin: 0 0 2px; font-size: 14px; }
+.ask-card-meta { font-size: 11px; color: var(--muted); }
+
+.ask-verbatim-details { margin: 4px 0; }
+.ask-verbatim-summary { font-size: 11px; color: var(--info); cursor: pointer; list-style: revert; }
+.ask-verbatim-body { font-size: 12px; margin-top: 4px; padding: 6px 8px; background: var(--bg); border-radius: 6px; }
+.ask-verbatim-label { color: var(--muted); font-size: 11px; margin-bottom: 2px; }
+
+.ask-narrative-excerpt { font-size: 13px; margin: 6px 0; }
+
+.ask-noplan-note { font-size: 12px; color: var(--muted); font-style: italic; margin: 6px 0; }
+
+/* ---- aggregate plan progress bar + explicit drill-down control (review
+   round 1: the bar is NEVER the sole click target — the chevron+"N tasks"
+   <summary> beside it is the mandatory control; native <details> gives a
+   real chevron + keyboard/AT operability for free). ---- */
+.ask-progress-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+.ask-progress-bar {
+  display: flex;
+  width: 160px;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--border2);
+}
+.ask-progress-seg.seg-done { background: var(--ok); }
+.ask-progress-seg.seg-inflight { background: var(--info); }
+.ask-progress-seg.seg-notstarted { background: transparent; }
+.ask-progress-text { font-size: 11px; color: var(--muted); }
+.ask-drilldown-details { font-size: 12px; }
+.ask-drilldown-summary { cursor: pointer; color: var(--info); }
+.ask-drilldown-body { margin-top: 8px; padding: 8px 10px; background: var(--bg); border-radius: 6px; display: flex; flex-direction: column; gap: 12px; }
+
+.ask-status-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.chip.ask-waiting-btn { color: var(--warn); border-color: var(--warn); cursor: pointer; }
+.ask-badges-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.ask-badge-details { display: inline-block; }
+.chip.ask-badge { color: var(--interrupt); border-color: var(--interrupt); cursor: pointer; list-style: revert; }
+.ask-badge-detail-body { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+.ask-subhead { font-weight: 600; font-size: 12px; margin-bottom: 4px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.02em; }
+.ask-plans-section, .ask-waiting-section, .ask-sessions-section, .ask-artifacts-section { }
+.ask-plan-block { margin-bottom: 10px; }
+.ask-plan-block:last-child { margin-bottom: 0; }
+.ask-plan-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.ask-plan-slug { font-family: monospace; font-size: 12px; }
+.ask-plan-nodoc { font-size: 11px; color: var(--muted); font-style: italic; }
+.ask-task-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.ask-task-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.chip.ask-task-status.task-status-done { color: var(--ok); border-color: var(--ok); }
+.chip.ask-task-status.task-status-in_flight { color: var(--info); border-color: var(--info); }
+.chip.ask-task-status.task-status-not_started { color: var(--muted); border-color: var(--border2); }
+.ask-task-id { font-family: monospace; }
+.ask-task-evidence { font-size: 11px; color: var(--muted); }
+.ask-plan-empty { margin-top: 4px; }
+
+.ask-waiting-item { border: 1px solid var(--border2); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; background: var(--panel); }
+.ask-waiting-item:last-child { margin-bottom: 0; }
+.ask-waiting-title { font-weight: 600; font-size: 12px; margin-bottom: 2px; }
+.ask-waiting-body { font-size: 12px; white-space: pre-wrap; margin-bottom: 4px; }
+.ask-waiting-links { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-defect-form { border-color: var(--warn); }
+.ask-defect-message { font-size: 12px; color: var(--warn); font-weight: 600; margin-bottom: 4px; }
+.ask-defect-recovery { font-size: 11px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.ask-defect-session { margin-top: 4px; }
+
+.ask-session-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ask-session-row { display: flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; }
+.chip.ask-session-chip.hb-live { color: var(--ok); border-color: var(--ok); }
+.chip.ask-session-chip.hb-stale { color: var(--warn); border-color: var(--warn); }
+.chip.ask-session-chip.hb-throttled { color: var(--warn); border-color: var(--warn); }
+.chip.ask-session-chip.hb-crashed { color: var(--interrupt); border-color: var(--interrupt); }
+.chip.ask-session-chip.hb-missing { color: var(--muted); border-color: var(--border2); font-style: italic; }
+.ask-session-role { font-size: 11px; color: var(--muted); }
+.ask-session-id { font-family: monospace; font-size: 11px; }
+.ask-session-copy-caption { font-size: 10px; color: var(--muted); font-style: italic; }
+
+.ask-artifact-row { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 4px; }
+.ask-artifact-sha { font-family: monospace; background: var(--bg); padding: 1px 4px; border-radius: 3px; }
+.ask-artifact-ts { color: var(--muted); font-size: 11px; }
+
+.ask-link-resolved a { color: var(--info); }
+.ask-copy-btn { margin-left: 2px; }
+
+.ask-lifecycle-row { margin-top: 8px; }
+.ask-lifecycle-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.ask-merge-chooser { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; padding: 6px; background: var(--bg); border-radius: 6px; }
+.ask-merge-none { font-size: 11px; color: var(--muted); font-style: italic; }
+.ask-feedback-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.ask-feedback-text { color: var(--ok); }
+.ask-undo-btn {}
+/* [hidden]-override footgun (same regression class this file already
+   documents for .modal-card/.modal-scrim/#docsPanel, live-browser-verified
+   here too during Task 13 build: the merge chooser and feedback row were
+   both rendering VISIBLE despite `.hidden = true` in asks.js, because
+   `display: flex` on the class beat the UA [hidden] default at equal
+   specificity). Every flex-styled element asks.js ever toggles via
+   `.hidden` needs this explicit override. */
+.ask-lifecycle-actions[hidden], .ask-merge-chooser[hidden], .ask-feedback-row[hidden] { display: none; }
 
 /* ---- cockpit grid: six panes, Q2 first (attention semantics) ---- */
 #cockpit {

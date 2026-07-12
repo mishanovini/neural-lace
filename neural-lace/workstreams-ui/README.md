@@ -91,17 +91,64 @@ The defect form is NEVER terminal: it always carries the violation notice,
 an absolute link to the raw NEEDS-YOU.md file, and the source session id
 (the UI, Task 13, adds the copy affordance + resume microcopy).
 
+## Ask-tree landing (ask-rooted-workstreams-p1, Task 13)
+
+The PRIMARY view when you open `/` (User-facing Outcome: "the operator can
+cold-start ANY active ask ... in under 60 seconds"). Built by `web/asks.js`
+over the Task 11 read surface above; the six-question cockpit still renders
+below it on this page (Task 16 moves it verbatim into a Harness Health tab —
+not done yet).
+
+- **Project sections** (collapsible, expanded by default) group ask cards
+  by `config/projects.js` project, newest activity first.
+- **Ask cards** are shallow-first: summary, a one-click "Verbatim" reveal
+  (currently shows the capture reference — transcript path + prompt offset —
+  since no server read surface resolves that pointer into the original
+  prompt text yet; a real follow-up, not routed around), a progress
+  narrative excerpt, an aggregate plan-progress bar (summed across every
+  linked plan when `plan_slugs[]` has more than one entry — MULTI-PLAN
+  CARDS, review round 2), a waiting-on-you count naming its destination,
+  and drift-badge slots (`drift_badges` renders `[]` until Task 12's
+  auditor lands; the click-through affordance is built now).
+- **Plan drill-down** is an explicit control beside the bar (never the bar
+  alone — review round 1) — a native `<details>`/`<summary>` (chevron +
+  "N tasks") that lazily fetches `GET /api/ask/<id>` on first expand and
+  renders per-plan blocks (one live-doc link per plan via the EXISTING
+  `/api/doc` viewer modal, per-task done/in-flight/not-started rows with
+  evidence links), the ask's waiting items (a real §3 block or the
+  never-terminal defect form), and its sessions with spawn-lineage edges
+  where a Task 3 dispatch-provenance marker resolves one (flat grouping
+  otherwise — no session is ever dropped for lacking provenance).
+- **Lifecycle affordances** — Done / Dismiss / Merge-into (operator exit
+  path, constraint 7) call `POST /api/ask/<id>/lifecycle`; every action
+  shows inline success feedback with an ~8s Undo (`reopen`) before the ask
+  moves to the collapsed **Completed** group (header: `Completed (N ·
+  newest <age>)`, hidden entirely when empty — never an expanded empty
+  shell).
+- Every session id anywhere on this surface carries a copy button with the
+  microcopy `copy session id — resume with \`claude --resume <id>\``.
+- **Desktop-app deep-link spike (Task 13, timeboxed):** a `claude://`
+  protocol IS registered on this machine (`HKEY_CLASSES_ROOT\claude` →
+  the Claude Desktop app), but its accepted URL grammar for resuming a
+  specific CLI session by id is undocumented and unverified — firing it
+  live to probe behavior was judged an unnecessary side effect on the
+  operator's desktop for a non-committal spike. The UI therefore ships
+  ONLY the guaranteed copy-button fallback, per the plan ("guaranteed
+  fallback ... is IN"); a verified deep link is a future increment, not
+  a false affordance shipped today.
+
 ## Layout
 
 | Path | Contents |
 |---|---|
-| `server/server.js` | Node HTTP server: static asset serving, the six `/api/pane/*` endpoints, `/api/reconciler`, `/api/refresh`, SSE push, the KEPT docs browser (`/api/docs`, `/api/doc`, `/api/doc/open`). No write endpoint — `POST /api/event` is RETIRED. |
+| `server/server.js` | Node HTTP server: static asset serving, the six `/api/pane/*` endpoints, `/api/reconciler`, `/api/refresh`, SSE push, the KEPT docs browser (`/api/docs`, `/api/doc`, `/api/doc/open`), and the ask-rooted-workstreams read + lifecycle-write surface (`/api/asks`, `/api/ask/<id>`, `/api/ask/<id>/lifecycle` — see above). No legacy write endpoint — `POST /api/event` is RETIRED. |
 | `server/derive-cache.js` | The server-side derived-JSON cache: shells `nl <sub> --json` (NL_BIN overridable), batch-refreshes every 30s, keeps last-known-good data alongside the latest rc/stderr for honest error rendering. |
 | `server/reconciler.js` | The divergence reconciler (specs-o §O.4 deliverable 3): compares any REMAINING legacy tree-state session/branch claims against derived truth and flags mismatches — comparison-only, never a data source for a pane. |
-| `web/` | The six-question front end (`index.html`, `app.js`, `app.css`). `app.js` polls the pane endpoints and renders; ONE link-resolver component (`resolveLink`) backs every pane's links. |
+| `server/payload-schema.js` | The ask-tree payload allowlist (Task 11): anti-noise + absolute-href enforcement, at serve time and in the self-test. |
+| `web/` | `index.html`, `app.js`, `app.css` (the six-question cockpit, still present below the landing), `web/asks.js` (the ask-tree landing, now the primary view — see above). `app.js` polls the pane endpoints and renders; ONE link-resolver component (`resolveLink`) backs every pane's links; `asks.js` is a fully independent module sharing only the docs-viewer modal DOM with `app.js`. |
 | `state/` | The (mostly legacy) event-sourced state library. Still used ONLY by `reconciler.js`'s comparison read while any tree-state consumer remains elsewhere in the harness; no longer the cockpit's data source. |
 | `scripts/` | Launcher/autostart PowerShell scripts. The Node state-population scripts here (`add-pending-items.js`, `backfill-from-sessions.js`, etc.) targeted the retired write path and are no longer relevant to this app's day-to-day operation. |
-| `config/` | Runtime configuration (topology/project-root mapping) — still used by the docs browser. |
+| `config/` | Runtime configuration (topology/project-root mapping) — still used by the docs browser and the ask-tree's project grouping. |
 | `attic/` | Retired pre-O.4 test files, kept per salvage-before-reset. See `attic/README.md`. |
 
 ## Running it
@@ -126,7 +173,7 @@ pattern — see `docs/runbooks/session-resumer.md` §Registration pattern).
 
 ```bash
 node server/server.selftest.js   # server wiring: pane endpoints, error-state rendering, reconciler
-node web/cockpit.selftest.js     # DOM-free structural self-test of the six-question layout
+node web/cockpit.selftest.js     # DOM-free structural self-test: six-question layout + ask-tree landing
 ```
 
 ## Where the enforcement side lives

@@ -17,6 +17,7 @@ const D = __dirname;
 const css = fs.readFileSync(path.join(D, 'app.css'), 'utf8');
 const html = fs.readFileSync(path.join(D, 'index.html'), 'utf8');
 const js = fs.readFileSync(path.join(D, 'app.js'), 'utf8');
+const asksJs = fs.readFileSync(path.join(D, 'asks.js'), 'utf8');
 
 let pass = 0, fail = 0;
 function ok(name, cond) {
@@ -170,6 +171,152 @@ ok('R29b the lint notice is text+color (a11y baseline): a chip element plus a de
   /nm-lint-chip/.test(js) && /nm-lint-detail/.test(js));
 ok('R29c CSS renders the lint chip with --warn (text+color, matching the health-gate waiver-dominant precedent)',
   /\.nm-lint-chip\s*\{[^}]*var\(--warn\)/.test(C));
+
+// ============================================================
+// ask-rooted-workstreams-p1 Task 13 — "UI landing — ask tree"
+// (structural self-test extension). Same DOM-free technique as the rest
+// of this file: source-text regex, not a headless-browser DOM check
+// (behavioral rendering against the real /api/asks + /api/ask/<id> shapes
+// is covered by this task's own Prove-it-works run against a sandboxed
+// server instance — see the plan's Task 13 evidence).
+// ============================================================
+
+// The anti-noise denylist (constraint 1) is checked against RENDERED
+// copy, not developer comments explaining the mechanism (this file itself
+// is full of such comments, by convention, same as server.js/app.js) — so
+// comments are stripped before scanning, matching what an operator would
+// actually see on screen.
+function stripJsComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+const asksJsNoComments = stripJsComments(asksJs);
+const GATE_HOOK_DENYLIST = [
+  /\.sh\b/i,
+  /\bod_[a-z0-9_]+\b/i,
+  /[a-z0-9_-]*-gate\b/i,
+  /\b(pretooluse|posttooluse|sessionstart|userpromptsubmit)\b/i,
+  /\b(plan-lifecycle|workstreams-emit|workstreams-read|session-start-digest|post-commit|close-plan|ask-registry|dispatch-provenance|plan-auto-closure|plan-edit-validator)\b/i,
+];
+
+// --- ask-tree landing container present, and precedes the six-pane
+// cockpit in source order (it is the PRIMARY view — User-facing Outcome:
+// "opening / shows asks grouped by project") ---------------------------
+ok('T13-1 ask-tree landing container present (#askTreeSection / #askTreeBody)',
+  /id="askTreeSection"/.test(html) && /id="askTreeBody"/.test(html));
+ok('T13-2 ask-tree section precedes the six-pane cockpit in document source order (primary landing)',
+  html.indexOf('id="askTreeSection"') !== -1 && html.indexOf('id="askTreeSection"') < html.indexOf('id="cockpit"'));
+ok('T13-3 the retired Task-1 walking-skeleton ids do not survive (asksSkeletonBody/paneAsksSkeleton)',
+  html.indexOf('id="asksSkeletonBody"') === -1 && html.indexOf('id="paneAsksSkeleton"') === -1);
+ok('T13-4 asks.js is included by index.html', /<script src="\/asks\.js"><\/script>/.test(html));
+
+// --- anti-noise law (hard constraint 1): zero gate/hook identifiers in
+// any rendered copy — comments stripped first (see stripJsComments above),
+// same denylist server/payload-schema.js enforces at the wire. ----------
+const asksDenylistHits = GATE_HOOK_DENYLIST.filter((re) => re.test(asksJsNoComments));
+ok('T13-5 asks.js (comments stripped) contains ZERO gate/hook/oracle identifiers anywhere a user could see them',
+  asksDenylistHits.length === 0,
+  asksDenylistHits.map((re) => re.toString()).join(', '));
+
+// --- absolute-links law (hard constraint 2): exactly ONE function ever
+// assigns a real <a href>, and it gates on the same 5 absolute shapes
+// payload-schema.js's isAbsoluteHref checks (mirrors R13's "one
+// link-resolving function" precedent for app.js). ------------------------
+ok('T13-6 asks.js has exactly ONE href-gating function (absoluteLinkNode) used for every link it ever renders',
+  (asksJs.match(/function absoluteLinkNode/g) || []).length === 1 && /absoluteLinkNode\(/.test(asksJs));
+ok('T13-7 asks.js mirrors payload-schema.js\'s 5-shape isAbsoluteHref check (https, file://, drive-letter, UNC, POSIX)',
+  /function isAbsoluteHref/.test(asksJs) &&
+  /\^https\?/.test(asksJs) && /file:\\\/\\\//.test(asksJs) && /A-Za-z\]:/.test(asksJs));
+const hrefAssignCount = (asksJs.match(/\.href\s*=/g) || []).length;
+ok('T13-8 asks.js sets .href only inside the two guarded branches of absoluteLinkNode (http(s) passthrough + best-effort file:// conversion) — never a bare/relative href',
+  hrefAssignCount === 2);
+
+// --- plan-doc links reuse the EXISTING docModal (ux-review amendment 6:
+// "no pane grows its own link handling") — no second modal/viewer. ------
+ok('T13-9 asks.js reuses the shared docModal/docTitle/docBody DOM (no new doc viewer)',
+  /\$\('docModal'\)/.test(asksJs) && /\$\('docTitle'\)/.test(asksJs) && /\$\('docBody'\)/.test(asksJs));
+ok('T13-9b asks.js does not define a second modal-scrim/close mechanism for docs (reuses app.js\'s existing close wiring)',
+  !/docScrim2|planDocModal|planDocScrim/.test(asksJs));
+
+// --- exit-mechanism law (constraint 7) / review round 1+2: lifecycle
+// affordances, undo, and the collapsed completed group with its
+// count+recency header, hidden entirely when empty. ---------------------
+ok('T13-10 lifecycle actions call POST /api/ask/<id>/lifecycle for done/dismiss/merge/reopen',
+  /\/api\/ask\/'\s*\+\s*encodeURIComponent\(askId\)\s*\+\s*'\/lifecycle'/.test(asksJs) &&
+  /'done'/.test(asksJs) && /'dismiss'/.test(asksJs) && /'merge'/.test(asksJs) && /'reopen'/.test(asksJs));
+ok('T13-11 every lifecycle action shows success feedback with an Undo affordance (constraint 9)',
+  /ask-feedback-text/.test(asksJs) && /ask-undo-btn/.test(asksJs) && /UNDO_WINDOW_MS/.test(asksJs));
+ok('T13-12 the completed group is HIDDEN entirely when count is 0 (never an expanded empty shell — review round 2)',
+  /completed\.count === 0\) return null/.test(asksJs));
+ok('T13-13 the completed-group header names the count + newest-completed recency (review round 2)',
+  /'Completed \(' \+ completed\.count \+ ' · newest '/.test(asksJs));
+
+// --- DRILL-DOWN SIGNIFIER (review round 1): an explicit control beside
+// the bar, native <details>/<summary> (real chevron + keyboard/AT support,
+// same convention as the reconciler badge / per-gate health rows). ------
+ok('T13-14 the plan progress bar has an explicit drill-down control beside it (ask-drilldown-details), never itself the sole click target',
+  /ask-drilldown-details/.test(asksJs) && /ask-progress-bar/.test(asksJs));
+ok('T13-15 the drill-down control fetches /api/ask/<id> lazily on first expand only (perf budget: no oracle shelling on the landing path)',
+  /details\.addEventListener\('toggle'/.test(asksJs) && /details\.open && !fetched/.test(asksJs));
+
+// --- MULTI-PLAN CARDS (review round 2): per-plan blocks grouped by
+// plan_slug, one live-doc link per plan. ---------------------------------
+ok('T13-16 drill-down groups per-task rows BY PLAN (renderPlanBlock over plan_rows, one per plan_slug)',
+  /function renderPlanBlock/.test(asksJs) && /planRows\.forEach/.test(asksJs));
+ok('T13-16b one live-doc link per plan (View live plan doc button per plan_doc)',
+  /View live plan doc/.test(asksJs));
+
+// --- four UI states (constraint 8), operator-altitude copy (no od_*/
+// oracle/gate/hook identifiers inherited from app.js's state copy). -----
+ok('T13-17 landing empty state (no asks yet) names the capture mechanism, not a blank page',
+  /No asks registered yet\. New sessions register their opening ask automatically/.test(asksJs));
+ok('T13-18 no-plan-card empty state ("no plan linked yet") distinct from an error',
+  /no plan linked yet/.test(asksJs));
+ok('T13-19 drill-down-no-tasks empty state is an honest line, not silently blank',
+  /no tasks found for this plan/.test(asksJs));
+ok('T13-20 fetch-failure states render a named error + a real Retry control (server restarts are real)',
+  (asksJs.match(/className = 'btn-go small'/g) || []).length >= 1 && /retry\.textContent = 'Retry'/.test(asksJs) &&
+  /Could not load asks/.test(asksJs));
+ok('T13-21 loading state is aria-busy and distinct from the error state (rc===null vs rc!==0 distinction, inherited convention)',
+  /aria-busy="true">loading/.test(asksJs));
+
+// --- a11y (constraint 9): real buttons (never clickable divs) for every
+// interactive control this module renders; text+color for every chip. --
+const askButtonCount = (asksJs.match(/createElement\('button'\)/g) || []).length;
+ok('T13-22 every interactive control in asks.js is a real <button> (createElement(\'button\') used repeatedly, not a clickable div)',
+  askButtonCount >= 8, 'count=' + askButtonCount);
+ok('T13-23 asks.js never wires a click handler onto a bare div (no div.addEventListener(\'click\' pattern)',
+  !/[Dd]iv\.addEventListener\('click'/.test(asksJs));
+ok('T13-24 task-status chips render textContent from a label map (text + color, never color-only)',
+  /chip\.textContent = TASK_STATUS_LABEL\[status\]/.test(asksJs));
+ok('T13-25 session heartbeat-state chips render textContent from a label map (text + color, never color-only)',
+  /chip\.textContent = HB_STATE_LABEL\[st\] \|\| st/.test(asksJs));
+ok('T13-26 drift badges render as real <summary> elements with visible text (never color-only), forward-compatible with Task 12',
+  /sum\.className = 'chip ask-badge'/.test(asksJs) && /sum\.textContent = String\(label\)/.test(asksJs));
+ok('T13-27 session-id copy affordance carries the mandated resume microcopy verbatim',
+  /copy session id — resume with `claude --resume ' \+ s\.session_id \+ '`/.test(asksJs));
+
+// --- desktop deep-link spike (Task 13, timeboxed <=2h): guaranteed
+// copy-button fallback ships regardless of spike outcome; no unverified
+// claude:// affordance is rendered (the registered protocol's session-
+// resume URL grammar is undocumented — shipping an unverified link would
+// be a false affordance). -------------------------------------------------
+ok('T13-28 no unverified claude:// deep-link is rendered as a clickable affordance (spike outcome: guaranteed copy-button fallback only)',
+  !/claude:\/\//.test(asksJs));
+ok('T13-29 the guaranteed copy-button + resume-microcopy fallback IS present for every session id (spike\'s committed path)',
+  /Copy session id/.test(asksJs));
+
+// --- [hidden]-override regression lock (REAL bug found via live-browser
+// verification during this task's build: the merge chooser + feedback row
+// rendered VISIBLE despite `.hidden = true` in asks.js, because their
+// `display: flex` CSS beat the UA [hidden] default at equal specificity —
+// same regression class R21 already locks for .modal-card/.modal-scrim/
+// #docsPanel). ------------------------------------------------------------
+ok('T13-30 every flex-styled element asks.js toggles via .hidden has an explicit [hidden] { display: none } override (ask-lifecycle-actions, ask-merge-chooser, ask-feedback-row)',
+  /\.ask-lifecycle-actions\[hidden\][^{]*\{[^}]*display:\s*none/.test(C) &&
+  /\.ask-merge-chooser\[hidden\][^{]*\{[^}]*display:\s*none/.test(C) &&
+  /\.ask-feedback-row\[hidden\][^{]*\{[^}]*display:\s*none/.test(C));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

@@ -589,3 +589,230 @@ doctor filters the SAME population (parity by construction).
   (session-heartbeat/session-resumer treat it stable); refuted if a resumed session presents a new id.
 - `DISPATCH_PROVENANCE_STATE_DIR` resolution in `_pl_dispatch_provenance_dir` byte-identical to
   dispatch-provenance.sh's `_dp_state_dir` — asserted by progress-log-lib Scenario 15.
+
+---
+
+## Task 13 — UI landing, ask tree (merged: master TBD; builder commit 6c29fd0)
+
+Substance: web/cockpit.selftest.js 68/68 PASS (re-run by orchestrator). Builder verified
+end-to-end via curl + LIVE Claude_Browser MCP against a sandboxed server (port 18844/18845,
+never :7733) — real browser render confirmed. Files: web/asks.js (rewrite), web/app.css,
+web/app.js, index.html, README (IA section). Note: builder reproduced the S23 ECONNRESET on
+CLEAN origin/master HEAD → the earlier "environmental" assessment is REVISED (real pre-existing
+Task 11/12 test issue; task_e41fc644 fixing in parallel).
+
+### Comprehension Articulation
+
+#### Spec meaning
+Task 13 builds the first operator-facing surface — web/asks.js renders project sections → ask
+cards (shallow: narrative_excerpt, plan_progress, waiting_count, drift_badges) with a lazy per-ask
+drill-down (`getAskDetail`/`renderDrilldownBody`) that fetches Task 11's GET /api/ask/<id> only on
+first <details> expand ("shallow-first with plan drill-down"). Lifecycle affordances
+(`renderLifecycleRow`, `postLifecycle`) call POST /api/ask/<id>/lifecycle — the operator-override
+exit (constraint 7) with success feedback + an 8s undo (`UNDO_WINDOW_MS`) before the card moves to
+the collapsed completed group (`renderCompletedGroup`). MULTI-PLAN CARDS render one aggregate bar
+(server-summed plan_progress) plus, in drill-down, one `renderPlanBlock` per plan_slug with its own
+live-doc link (`openPlanDocModal`, reusing the shared docModal).
+
+#### Edge cases covered
+- No-plan card (`renderProgressArea` `!pp.total` → "no plan linked yet", no bar/control).
+- Drill-down-no-tasks per plan (`renderPlanBlock` `!row.tasks.length`) — distinct from the no-plan
+  card since it can occur on one plan of a multi-plan ask while a sibling has real rows.
+- Empty completed group (`renderCompletedGroup` returns null → hidden entirely).
+- §3-defect waiting item vs a real decision block (`renderWaitingItem` `item.defect` branch — both
+  verified live vs real needs-you.sh fixtures).
+- Session lineage vs flat (`renderSessionsList` `childrenOf`/`isChild`/`seen` cycle guard — never a lost session).
+- Non-absolute reference values never becoming a relative <a href> (`absoluteLinkNode`).
+
+#### Edge cases NOT covered
+- Fetch-failure/Retry state (`renderError`) implemented + self-test-locked (T13-20) but NOT fired live
+  — killing the server routed the tab to a Chrome error page instead of the in-page .catch(); flagged
+  not assumed.
+- `renderDriftBadges` is generic/defensive since Task 12 hasn't defined the real badge shape yet.
+- Concurrent lifecycle writes across two tabs not reconciled vs the client's optimistic undo window.
+- The `claude://` deep-link's actual resume grammar deliberately never fired live (copy-button fallback
+  shipped; deep-link PROVEN registered in HKEY_CLASSES_ROOT\claude but resume grammar HYPOTHESIZED).
+
+#### Assumptions
+- `plan_progress.total === 0` treated uniformly as "no plan linked yet" at card level (payload can't
+  distinguish linked-but-unresolvable; drill-down surfaces the honest per-plan empty separately).
+- Completed cards show only "Reopen" (Done/Dismiss/Merge meaningless on a terminal ask) — follows from
+  Task 8's status vocabulary.
+- Session-lineage rendering assumes resumed_from only points within the same ask's session set (per
+  buildSessions in server.js).
+- `app.js` "becomes shell/router" is Task 16's job — Task 13 adds only a doc note (no functional coupling
+  beyond the shared docModal).
+
+## Task 12 — Background auditor + drift badges (merged: master TBD; builder branch `build/askp1-t12`)
+
+Substance: new `server/auditor.js` (1146 lines) implementing all seven divergence-class rows +
+the §8-3 count reconciliation; `node server/auditor.js --self-test` 18/18 PASS, including REAL
+(non-mocked) end-to-end runs against `progress-log.sh emit`, `ask-registry.sh set-status`, and
+`merge-scan-lib.sh scan-repo` (a real git fixture repo, real HEAD sha backfilled). Server wiring
+(`server.js` +39/-1, `payload-schema.js` +10 for the new badge field names) verified via a
+standalone runtime harness (`verify-task12-wire.js`, 8/8 PASS) proving: the auditor's badges reach
+BOTH `GET /api/asks` (card-level) and `GET /api/ask/<id>` (ask-level + the matching
+`plan_rows[].tasks[].drift_badges` row); the checkbox is never auto-flipped; `/api/asks` stays
+<300ms while a real auditor cycle is concurrently in flight; the new `/api/diagnostics/drift`
+endpoint answers. `server.selftest.js` also gained an additive Scenario 28 (+83 lines) covering
+the identical assertions in-repo, gated behind a new `AUDITOR_DISABLED=1` self-test env var (the
+auditor's `start()` otherwise fires an immediate, unsandboxed cycle at server-listen time, before
+the shared self-test's own ask-fixture env vars are set — a genuine self-test-pollution risk this
+task's own change introduced and fixed in the same commit).
+
+NOTE (environmental, not this task's regression): running `node server/server.selftest.js` in
+THIS worktree crashes with `ECONNRESET` at Scenario 23 — reproduced byte-identically via
+`git stash` against the file BEFORE this task's changes, so Scenario 28 (and the pre-existing
+S23-27) never execute via that entrypoint here. Task 11's own evidence entry above already flagged
+the same symptom ("ECONNRESETs at S23 in the ORCHESTRATOR's integration worktree — environmental —
+passes in builder's worktree"), so this is a known, pre-existing class of flake, not a defect this
+task introduced. Flagged as a follow-up task (`task_c0d7d962`, "Fix ECONNRESET crash in
+workstreams-ui server.selftest.js") rather than fixed here (out of Task 12's file-ownership scope).
+The standalone harness above gives equivalent runtime proof of THIS task's own wiring independent
+of that unrelated crash.
+
+Follow-ups:
+(a) the §8-3 count-reconciliation metric has a documented honest limitation — a NEEDS-YOU.md
+parse-format regression that makes the "Awaiting your decision" section unparseable collapses both
+sides of the comparison to 0 and reads as a trivial match rather than a visible mismatch (partially,
+not fully, mitigated by Class G's independent operator-todo.md-pointer ground-truth set) — see
+`auditor.js`'s count-reconciliation comment;
+(b) the diagnostics-tab UI that would actually render `/api/diagnostics/drift` and the badge
+click-through is Task 13/16's job, not built here;
+(c) the pre-existing `server.selftest.js` ECONNRESET (task_c0d7d962, spawned this task).
+
+### Comprehension Articulation
+
+#### Spec meaning
+Task 12 is the safety net the log-first law needs: every mechanism splice is explicitly
+best-effort/never-blocks, so the log CAN legitimately miss an event, and this auditor is the ONLY
+thing that ever reconciles it against ground truth — on a cadence explicitly kept OFF the
+`GET /api/asks` request path (Behavioral Contracts: "no oracle shelling on the landing path — that
+was the O.4 mistake"). Every load-bearing phrase from the divergence-class table is implemented
+literally, one function per row: `auditAsk`'s Class-A branch (`backfillTaskDoneList.push(...)`,
+executed by `backfillTaskDone`) never badges a healed task — verified by S1b/S1c in
+`auditor.js --self-test`. `auditAsk`'s Class-E branch pushes a `log_ahead_task_not_flipped` badge
+and NEVER touches the plan file — `autoCheckOperatorTodo` is the ONLY function in this module that
+ever writes to a source-of-truth file the operator also edits, and it is scoped to exactly the
+checkbox character on an AUTO-marked line (S2c/S3c prove both halves: the plan file is untouched,
+the operator section above the AUTO markers is untouched). "The mechanical ask exit" (constraint 7)
+is `backfillAskDone`, gated by `auditAsk`'s `setStatusDoneNeeded` (`reg.status === 'active' &&
+allTerminal`, where `allTerminal` requires `plan.status === 'COMPLETED'` on EVERY linked plan) —
+S5 proves this is a REAL `ask-registry.sh set-status` call, not a simulated one. "Reused
+derive-cache.js plumbing" is literal: `runCli` shells via `bashBin()`/`spawnEnv()` imported from
+`derive-cache.js`, the same idiom `server.js`'s own `runAskRegistryCli`/`classifySessions` already
+use. "Never a landing-page banner" (§8-3) is why the count-reconciliation result lives ONLY in
+`getDiagnostics()`, never in `buildAskCard`'s `drift_badges` — S3e asserts no ask's badge array
+ever references the orphaned id.
+
+#### Edge cases covered
+- Idempotent re-cycling → `runCycle`'s single-flight guard (`state._cycleInFlight`) plus every
+  backfill call routing through `progress-log.sh`'s own natural-key dedup means re-running a cycle
+  over an already-healed ask is a no-op (S1d: exactly one backfilled line after two cycles).
+- Legitimate re-dispatch vs a genuinely orphaned `task_started` → Class F's match key is
+  `(ask_id, plan_slug, task_id, session_id)`, the EXACT four fields `workstreams-emit.sh`'s
+  `_emit_dispatch_provenance` stamps from the same call-site variables onto BOTH the `task_started`
+  event and the dispatch-provenance marker — a precise match, not a fuzzy heuristic.
+- Concurrent read during a slow cycle → `getBadgesForAsk` reads a plain in-memory object, never
+  awaiting the in-flight cycle's promise; S6 (`auditor.js`) proves a badge read completes in <50ms
+  while a real cycle (with several bash spawns) is running, and S28f (harness proof) proves the SAME
+  for a live HTTP `/api/asks` request.
+- Multi-repo merge scanning without flooding the machine → `repoRootsForCycle`'s `AUDITOR_REPO_ROOTS`
+  env override (checked BEFORE the `config/projects.js` full-discovery fallback) lets a sandboxed
+  caller confine the scan to one fixture repo — used by both `auditor.js`'s own self-test and the
+  server-wiring harness to avoid walking the real machine's project set on every assertion.
+- Path-traversal-safe operator-todo.md rewrite → `autoCheckOperatorTodo` never rewrites a line it
+  didn't itself match via `POINTER_RE`, and only ever flips `[ ]`→`[x]` on the FIRST occurrence of
+  the exact substring `- [ ] AUTO:`, preserving every other byte via a tmp-file+rename atomic write.
+
+#### Edge cases NOT covered
+- The §8-3 count-reconciliation's own blind spot (a total NEEDS-YOU.md parse-format regression
+  collapsing both sides to 0) — documented as Follow-up (a) above, not fixed; Class G provides
+  partial, not complete, coverage of the same failure mode.
+- Task 13's click-through UI for a badge's `detail_ref` and Task 16's diagnostics-tab consumer of
+  `/api/diagnostics/drift` are not built by this task — the DATA contract is complete and tested,
+  the rendering is explicitly out of scope (file-ownership boundary: `web/*` is Task 13's).
+- `AUDITOR_CLI_TIMEOUT_MS` (default 60000ms) could theoretically be too short for a genuinely
+  overloaded machine mirroring the 94-119s slow-spawn characteristic `server.js`'s own comments
+  document for OTHER (heavier, jq-132-call) oracle scripts — `progress-log.sh`/`ask-registry.sh`/
+  `merge-scan-lib.sh` are lightweight standalone scripts, not the heavy `nl`/derive-lib chain, so
+  this budget was not stress-tested against that specific documented slow-spawn class.
+- Multi-match merge attribution (one commit touching >1 plan's files) is entirely `merge-scan-lib.sh`
+  Task 5b's own tested behavior (`ms_scan_repo_for_merges`'s own self-test Scenario 3); this task
+  only calls it and does not re-verify that behavior independently.
+
+#### Assumptions
+- Circular-require avoidance is worth the reader duplication → `auditor.js` deliberately does NOT
+  `require('./server.js')` (would be a real circular require: `server.js` requires `auditor.js` at
+  load time, before its own `module.exports` assignment) — instead `foldAskRegistry`/`readAskEvents`/
+  `parsePlanFile`/etc. are independently re-implemented, matching this codebase's own established
+  precedent (`merge-scan-lib.sh`'s `_ms_resolve_ask_id` duplicating `plan-lifecycle.sh`'s ask-id-header
+  parse rather than sourcing across hook boundaries).
+- "Terminal" for the mechanical ask-exit means literally `Status: COMPLETED`, not any of this
+  estate's other terminal-ish plan statuses (`ABANDONED`/`DEFERRED`/`SUPERSEDED`) — an abandoned
+  plan should never silently mark its ask done; scoped deliberately narrower than "not ACTIVE".
+- `operatorTodoPath()`'s fallback (`mainRepoRoot()` + `docs/operator-todo.md`) assumes this server
+  process always runs from the MAIN checkout in production (never a builder worktree) — the same
+  assumption `server.js`'s own `needsYouMdPath()` fallback already makes for `NEEDS-YOU.md`; not a
+  new risk this task introduces.
+- Dynamic (never-memoized) path resolution is required for correct sandboxing → every stateful path
+  resolver (`rProgressLogStateDir`, `rAskRegistryFile`, etc.) re-reads its env var on EVERY
+  `runCycle()` call rather than freezing it at `createAuditor()` construction time — discovered as
+  necessary mid-build when the FIRST server-wiring harness attempt showed the auditor resolving
+  production paths despite the self-test's env vars being set (they were set AFTER
+  `require('./server.js')`, which constructs the auditor); fixed before commit, not left as a gap.
+
+---
+
+## Task 10 — Plan↔ask linkage convention + ADR 062 (merged: master 20fd90e; builder commit 48d0a4b)
+
+Substance (mechanical): start-plan.sh --self-test 12/12 (incl. S10 real ask-registry e2e, S11
+no-ask-id-no-registry-call); plan-reviewer Check 16 direct-tested (cc8 WARN-non-blocking rc0, cc9
+populated-silent, cc10 grandfathered-no-v2-silent); ADR 062 + DECISIONS |062| row present;
+registry backfill of ask-20260710-workstreams-rebuild PRESENT + mirror under MAIN checkout.
+
+### Comprehension Articulation
+
+#### Spec meaning
+Task 10 makes plan↔ask linkage a real bidirectional convention. Doctrine one-liner in planning.md
+states the law; template's new `ask-id: <id | none — no linked ask>` field + comment makes it
+concrete. start-plan.sh operationalizes both directions: `parse_flags` accepts --ask-id,
+`generate_plan_file`'s awk substitutes it onto the ask-id: line, then `start_plan` calls
+`ask-registry.sh link-plan` so the registry's `"record_type":"plan_linked"` back-link lands with
+the header field (plan→registry via field, registry→plan via link-plan). plan-reviewer.sh gains
+Check 16: computes ASK_ID_MISSING, and ONLY inside the existing `lifecycle-schema: v2` grandfather
+gate prints a WARN to stderr, never calls add_finding (advisory, non-blocking). ADR 062 + DECISIONS
+row record the redesign. Self-demonstrates by backfilling its own ask-20260710-workstreams-rebuild.
+
+#### Edge cases covered
+- Omitted --ask-id → `if [[ -n "${ASK_ID:-}" ]]` guards the back-link; S11 asserts blank field + no
+  registry file created.
+- Grandfathered legacy plans → Check 16 inside the `LIFECYCLE_SCHEMA_VALUE == v2` block; cc10 pins a
+  no-v2 fixture staying silent rc0.
+- WARN must not block → cc8 asserts rc0 AND "Check 16" appears (stderr note without touching blocking exit).
+- Populated ask-id stays silent → cc9 (`ask-id: ask-selftest-1` → no "Check 16" output).
+- Missing/best-effort registry script → back-link guarded by `if [[ -f "$ar_script" ]]` + `|| true`.
+- Worktree durability → real backfill w/ --repo pinned to nl_main_checkout_root; mirror landed under
+  MAIN checkout (docs/asks/ask-registry.jsonl), not the worktree.
+- Placeholder value → Check 16 treats the literal `<id | none — no linked ask>` as missing → still WARNs.
+
+#### Edge cases NOT covered
+- No validation of the ask-id's existence → link-plan appends a plan_linked record for any string; a
+  typo'd id creates a dangling link with no `created` record (deferred to auditor/reader-fold, Tasks 11/12).
+- No dedup of repeated links → re-running --ask-id X for the same slug appends a 2nd plan_linked record
+  (append-only fold tolerates; no idempotency guard added).
+- Check 16 single-field only → verifies presence/non-placeholder, not that the value resolves to a
+  registry entry nor that the registry back-links this slug (a hand-edited header could carry ask-id: w/o a link).
+- CRLF/\r on the header value → awk trims surrounding whitespace but no explicit \r-strip; repo eol=lf pin is the backstop.
+
+#### Assumptions
+- start-plan.sh's SCRIPT_DIR (via BASH_SOURCE) reaches the real scripts/, so `$SCRIPT_DIR/ask-registry.sh`
+  hits Task 8's CLI even in a fixture repo — verified by S10 w/ sandboxed ASK_REGISTRY_STATE_DIR/MIRROR_PATH.
+- Template ask-id: line format stable + matches the awk guard (em-dash included); template + substitution
+  changed in the SAME commit so they can't drift.
+- Check 16 belongs in the v2 grandfather block (convention post-dates every existing plan); WARN-not-finding
+  is the correct altitude per ADR 036-d (governing Checks 14/15).
+- DECISIONS index tolerates out-of-numeric-order rows (058/059/057 already out of order); appending |062|
+  satisfies decisions-index-gate's atomicity (record + row staged together) without reflowing.
+- Backfill verbatim ref (docs/reviews/2026-07-10-ask-rooted-workstreams-design-sketch.md#1) is canonical
+  for ask-20260710-workstreams-rebuild per the plan header bootstrap note.

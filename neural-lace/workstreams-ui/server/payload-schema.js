@@ -125,6 +125,14 @@ const LANDING_ALLOWED_KEYS = new Set([
   'ask_id', 'summary', 'repo', 'status', 'activity_ts',
   'plan_progress', 'done', 'in_flight', 'not_started', 'total',
   'waiting_count', 'drift_badges', 'narrative_excerpt',
+  // drift-badge fields (Task 12 — background auditor). `divergence_class` is
+  // a short, prose-safe label (never a raw event `type`/hook/script name);
+  // `detail_ref` is an opaque, stable id for the future click-through
+  // (Task 13); `plan_slug`/`task_id` name which row a badge belongs to;
+  // `message` is plain operator prose; `de_emphasize` flags a
+  // provenance:unknown event per constraint 10 (never rendered as
+  // mechanism truth).
+  'divergence_class', 'detail_ref', 'de_emphasize', 'message', 'plan_slug', 'task_id',
 ]);
 
 const DETAIL_ALLOWED_KEYS = new Set([
@@ -138,6 +146,8 @@ const DETAIL_ALLOWED_KEYS = new Set([
   'artifacts', 'sha',
   'sessions', 'role', 'state', 'resumed_from', 'task_id',
   'drift_badges',
+  // drift-badge fields (Task 12) — see LANDING_ALLOWED_KEYS comment above.
+  'divergence_class', 'detail_ref', 'de_emphasize',
 ]);
 
 // ----------------------------------------------------------------------

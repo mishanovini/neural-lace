@@ -28,6 +28,9 @@
 #   --prd-ref <slug>              default "n/a — harness-development"
 #   --owner <name>                default "" (Check 14 requires it on v2 ACTIVE plans)
 #   --target-date <YYYY-MM-DD>    default "" (Check 14 requires it on v2 ACTIVE plans)
+#   --ask-id <id>                 default "" (ask-registry.sh Task 8; back-links via
+#                                 `ask-registry.sh link-plan`; plan-reviewer.sh Check 16
+#                                 WARNs, never blocks, when a v2 ACTIVE plan lacks it)
 #   --execution-mode <name>       default orchestrator
 #   --acceptance-exempt           default false (set flag to be exempt)
 #   --acceptance-exempt-reason "<reason>"
@@ -185,6 +188,7 @@ generate_plan_file() {
   local absorbed="${ABSORB_BACKLOG:-none}"
   local owner="${OWNER:-}"
   local target_date="${TARGET_DATE:-}"
+  local ask_id="${ASK_ID:-}"
 
   # Compose the header block. We rebuild the top-of-file lines in one pass
   # rather than using sed -i in a loop (sed in-place varies across platforms).
@@ -199,7 +203,7 @@ generate_plan_file() {
       -v frozen="$frozen" -v prd_ref="$prd_ref" -v exec_mode="$exec_mode" \
       -v acc_exempt="$acc_exempt" -v acc_reason="$acc_reason" \
       -v absorbed="$absorbed" -v scope_hint="$scope_hint" \
-      -v owner="$owner" -v target_date="$target_date" '
+      -v owner="$owner" -v target_date="$target_date" -v ask_id="$ask_id" '
     BEGIN { seen_first_in = 0 }
     /^# Plan: \[Task Title\]$/                  { print "# Plan: " title; next }
     /^Execution Mode: orchestrator$/            { print "Execution Mode: " exec_mode; next }
@@ -219,6 +223,7 @@ generate_plan_file() {
     /^architecture: <coding-harness/            { print "architecture: " arch; next }
     /^frozen: false$/                           { print "frozen: " frozen; next }
     /^prd-ref: <slug \| n\/a — harness-development>$/ { print "prd-ref: " prd_ref; next }
+    /^ask-id: <id \| none — no linked ask>$/    { print "ask-id: " ask_id; next }
     /^owner: <name>$/                           { print "owner: " owner; next }
     /^target-completion-date: <YYYY-MM-DD>$/    { print "target-completion-date: " target_date; next }
     /^- IN: \[what.s included/                  {
@@ -306,6 +311,7 @@ parse_flags() {
   ABSORB_BACKLOG=""
   OWNER=""
   TARGET_DATE=""
+  ASK_ID=""
   NO_QUEUE=0
   NO_STAGE=0
 
@@ -319,6 +325,7 @@ parse_flags() {
       --prd-ref)           PRD_REF="$2"; shift 2;;
       --owner)             OWNER="$2"; shift 2;;
       --target-date)       TARGET_DATE="$2"; shift 2;;
+      --ask-id)            ASK_ID="$2"; shift 2;;
       --execution-mode)    EXECUTION_MODE="$2"; shift 2;;
       --acceptance-exempt) ACCEPTANCE_EXEMPT="true"; shift;;
       --acceptance-exempt-reason) ACCEPTANCE_EXEMPT_REASON="$2"; shift 2;;
@@ -332,7 +339,7 @@ parse_flags() {
     esac
   done
   export TIER RUNG ARCHITECTURE MODE FROZEN PRD_REF EXECUTION_MODE \
-    ACCEPTANCE_EXEMPT ACCEPTANCE_EXEMPT_REASON ABSORB_BACKLOG OWNER TARGET_DATE
+    ACCEPTANCE_EXEMPT ACCEPTANCE_EXEMPT_REASON ABSORB_BACKLOG OWNER TARGET_DATE ASK_ID
   return 0
 }
 
@@ -386,6 +393,17 @@ start_plan() {
   generate_plan_file "$template_path" "$plan_path" "$slug" "$scope_hint"
   printf '%s: created %s\n' "$SCRIPT_NAME" "docs/plans/$slug.md" >&2
 
+  # Back-link the ask registry (planning doctrine: "plan creation back-links
+  # the registry") when --ask-id was passed. Best-effort: a missing
+  # ask-registry.sh (e.g. a minimal self-test fixture repo) or a failing
+  # call never blocks plan creation.
+  if [[ -n "${ASK_ID:-}" ]]; then
+    local ar_script="$SCRIPT_DIR/ask-registry.sh"
+    if [[ -f "$ar_script" ]]; then
+      bash "$ar_script" link-plan --ask-id "$ASK_ID" --plan-slug "$slug" >/dev/null 2>&1 || true
+    fi
+  fi
+
   if [[ "$NO_QUEUE" -eq 0 ]]; then
     generate_decisions_queue "$queue_path" "$slug"
     printf '%s: created %s\n' "$SCRIPT_NAME" "docs/decisions/queued-$slug.md" >&2
@@ -437,6 +455,7 @@ lifecycle-schema: v2
 owner: <name>
 target-completion-date: <YYYY-MM-DD>
 prd-ref: <slug | n/a — harness-development>
+ask-id: <id | none — no linked ask>
 
 ## Goal
 [stub]
@@ -610,6 +629,52 @@ run_self_test() {
     FAILED=$((FAILED+1))
   fi
   rm -rf "$D9"
+
+  # ----- S10: --ask-id propagates in the header AND back-links the registry
+  # (Task 10 — plan<->ask linkage convention). SCRIPT_DIR resolves to this
+  # repo's REAL adapters/claude-code/scripts/ directory (BASH_SOURCE of the
+  # script under test, not the synthetic fixture repo), so the real
+  # ask-registry.sh is exercised end-to-end; its state/mirror are pinned to
+  # sandboxed paths here (rather than HARNESS_SELFTEST's PID-keyed dir) so
+  # this scenario can assert on the written content afterward. -----
+  local D10 ar_state ar_mirror
+  D10=$(setup_synthetic_repo "S10")
+  ar_state="$D10/ar-state"
+  ar_mirror="$D10/ar-mirror.jsonl"
+  mkdir -p "$ar_state"
+  (cd "$D10" && ASK_REGISTRY_STATE_DIR="$ar_state" ASK_REGISTRY_MIRROR_PATH="$ar_mirror" \
+    bash "$SELF_PATH" start asked-plan "scope" --ask-id "ask-selftest-demo" --no-stage >/dev/null 2>&1)
+  if [[ -f "$D10/docs/plans/asked-plan.md" ]] \
+     && grep -q '^ask-id: ask-selftest-demo$' "$D10/docs/plans/asked-plan.md" \
+     && [[ -f "$ar_state/ask-registry.jsonl" ]] \
+     && grep -q '"ask_id":"ask-selftest-demo"' "$ar_state/ask-registry.jsonl" \
+     && grep -q '"record_type":"plan_linked"' "$ar_state/ask-registry.jsonl" \
+     && grep -q '"plan_slug":"asked-plan"' "$ar_state/ask-registry.jsonl"; then
+    printf 'self-test (S10) ask-id-propagates-and-back-links-registry: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S10) ask-id-propagates-and-back-links-registry: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D10"
+
+  # ----- S11: omitting --ask-id leaves the header field blank and makes NO
+  # ask-registry call (no state dir/file created at all). -----
+  local D11 ar_state11
+  D11=$(setup_synthetic_repo "S11")
+  ar_state11="$D11/ar-state"
+  (cd "$D11" && ASK_REGISTRY_STATE_DIR="$ar_state11" ASK_REGISTRY_MIRROR_PATH="$D11/ar-mirror.jsonl" \
+    bash "$SELF_PATH" start unasked-plan "scope" --no-stage >/dev/null 2>&1)
+  if [[ -f "$D11/docs/plans/unasked-plan.md" ]] \
+     && grep -q '^ask-id: $' "$D11/docs/plans/unasked-plan.md" \
+     && [[ ! -f "$ar_state11/ask-registry.jsonl" ]]; then
+    printf 'self-test (S11) no-ask-id-no-registry-call: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S11) no-ask-id-no-registry-call: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D11"
 
   printf '\nself-test summary: %d passed, %d failed (of %d scenarios)\n' \
     "$PASSED" "$FAILED" "$((PASSED+FAILED))" >&2
