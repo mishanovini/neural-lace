@@ -572,7 +572,7 @@ Serialization added in round 1:
   - Harness Health tab → existing `/api/pane/*` routes in `neural-lace/workstreams-ui/server/server.js` (unchanged)
   **Integration points:**
   - Existing autostart/launcher (`scripts/launch-gui.ps1`, heartbeat/reconciler registrations) keep working — port + health contract unchanged
-- [ ] 17. [serial] Mechanized metrics + doctor wiring (sketch §8): (a) anti-noise
+- [x] 17. [serial] Mechanized metrics + doctor wiring (sketch §8): (a) anti-noise
   schema check + absolute-href check running in `server.selftest.js` AND surfaced
   as a doctor predicate (extend the existing `obs-cockpit-fresh` doctor check);
   (b) waiting-on-you count reconciliation live (Task 12) with a doctor-visible
