@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "task_id": "4",
+  "verdict": "PASS",
+  "commit_sha": "82fb5bf43ac31c689efed6991606c31504ebf164",
+  "files_modified": [
+    "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/manifest.json",
+    "docs/failure-modes.md"
+  ],
+  "mechanical_checks": {
+    "command:grep -q 'A configurable control — toggle, feature flag, setting, permission cell' adapters/claude-code/agents/functionality-verifier.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'A configurable control — toggle, feature flag, setting, permission cell' adapters/claude-code/agents/functionality-verifier.md",
+      "exit_code": 0
+    },
+    "command:grep -q '## Config-control protocol' adapters/claude-code/agents/functionality-verifier.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q '## Config-control protocol' adapters/claude-code/agents/functionality-verifier.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'Config-control.*Config-control protocol' adapters/claude-code/agents/functionality-verifier.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'Config-control.*Config-control protocol' adapters/claude-code/agents/functionality-verifier.md",
+      "exit_code": 0
+    },
+    "command:grep -qi 'governed surface' adapters/claude-code/agents/functionality-verifier.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -qi 'governed surface' adapters/claude-code/agents/functionality-verifier.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'survives reload' adapters/claude-code/agents/functionality-verifier.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'survives reload' adapters/claude-code/agents/functionality-verifier.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'FM-038' adapters/claude-code/agents/functionality-verifier.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'FM-038' adapters/claude-code/agents/functionality-verifier.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'wired ≠ reached ≠ behaving' adapters/claude-code/agents/functionality-verifier.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'wired ≠ reached ≠ behaving' adapters/claude-code/agents/functionality-verifier.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T00:12:31Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/vaporware-config-controls.md"
+}

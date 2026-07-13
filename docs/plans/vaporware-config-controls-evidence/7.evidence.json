@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "task_id": "7",
+  "verdict": "PASS",
+  "commit_sha": "82fb5bf43ac31c689efed6991606c31504ebf164",
+  "files_modified": [
+    "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/manifest.json",
+    "docs/failure-modes.md"
+  ],
+  "mechanical_checks": {
+    "command:jq -e '.entries[] | select(.id==\"vaporware-config-control\") | select(.kind==\"pattern\" and .doctrine_file==\"doctrine/vaporware-prevention.md\" and .blocking==false)' adapters/claude-code/manifest.json": {
+      "passed": true,
+      "detail": "time-verification Stop chain on Verification: full tasks; standing surfaces via functionality-auditor's registry-vs-callsite sweep; no dedicated hook by design (plan vaporware-config-controls D-2)\"\r\n}",
+      "command": "jq -e '.entries[] | select(.id==\"vaporware-config-control\") | select(.kind==\"pattern\" and .doctrine_file==\"doctrine/vaporware-prevention.md\" and .blocking==false)' adapters/claude-code/manifest.json",
+      "exit_code": 0
+    },
+    "command:bash adapters/claude-code/scripts/manifest-check.sh": {
+      "passed": true,
+      "detail": "[manifest-check] GREEN — 113 entries, 103 hooks covered, 0 warn",
+      "command": "bash adapters/claude-code/scripts/manifest-check.sh",
+      "exit_code": 0
+    },
+    "command:grep -q 'vaporware-config-control' adapters/claude-code/doctrine/INDEX.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'vaporware-config-control' adapters/claude-code/doctrine/INDEX.md",
+      "exit_code": 0
+    },
+    "command:test -z \"$(git diff --name-only d6baf6d..HEAD -- adapters/claude-code/hooks/)\"": {
+      "passed": true,
+      "detail": "",
+      "command": "test -z \"$(git diff --name-only d6baf6d..HEAD -- adapters/claude-code/hooks/)\"",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T00:13:18Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/vaporware-config-controls.md"
+}

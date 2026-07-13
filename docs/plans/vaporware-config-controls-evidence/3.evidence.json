@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "task_id": "3",
+  "verdict": "PASS",
+  "commit_sha": "82fb5bf43ac31c689efed6991606c31504ebf164",
+  "files_modified": [
+    "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/manifest.json",
+    "docs/failure-modes.md"
+  ],
+  "mechanical_checks": {
+    "command:grep -q 'configurable control' adapters/claude-code/doctrine/planning.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'configurable control' adapters/claude-code/doctrine/planning.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'never-flipped shadow-mode' adapters/claude-code/doctrine/planning.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'never-flipped shadow-mode' adapters/claude-code/doctrine/planning.md",
+      "exit_code": 0
+    },
+    "command:test $(wc -c < adapters/claude-code/doctrine/planning.md) -le 3000": {
+      "passed": true,
+      "detail": "",
+      "command": "test $(wc -c < adapters/claude-code/doctrine/planning.md) -le 3000",
+      "exit_code": 0
+    },
+    "command:grep -q 'decorative-control corollary' adapters/claude-code/doctrine/planning-full.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'decorative-control corollary' adapters/claude-code/doctrine/planning-full.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'DIFFERENT behavior' adapters/claude-code/doctrine/planning-full.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'DIFFERENT behavior' adapters/claude-code/doctrine/planning-full.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T00:11:01Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/vaporware-config-controls.md"
+}

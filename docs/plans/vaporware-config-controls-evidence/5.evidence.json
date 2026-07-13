@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "task_id": "5",
+  "verdict": "PASS",
+  "commit_sha": "82fb5bf43ac31c689efed6991606c31504ebf164",
+  "files_modified": [
+    "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/manifest.json",
+    "docs/failure-modes.md"
+  ],
+  "mechanical_checks": {
+    "command:grep -q 'Registry-vs-callsite sweep' adapters/claude-code/agents/functionality-auditor.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'Registry-vs-callsite sweep' adapters/claude-code/agents/functionality-auditor.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'DECORATIVE CONFIG CONTROL' adapters/claude-code/agents/functionality-auditor.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'DECORATIVE CONFIG CONTROL' adapters/claude-code/agents/functionality-auditor.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'enforce-mode call site' adapters/claude-code/agents/functionality-auditor.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'enforce-mode call site' adapters/claude-code/agents/functionality-auditor.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'vaporware-prevention-full.md' adapters/claude-code/agents/functionality-auditor.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'vaporware-prevention-full.md' adapters/claude-code/agents/functionality-auditor.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'FM-038' adapters/claude-code/agents/functionality-auditor.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'FM-038' adapters/claude-code/agents/functionality-auditor.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T00:11:35Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/vaporware-config-controls.md"
+}

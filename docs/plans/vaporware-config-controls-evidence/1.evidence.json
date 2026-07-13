@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "82fb5bf43ac31c689efed6991606c31504ebf164",
+  "files_modified": [
+    "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/manifest.json",
+    "docs/failure-modes.md"
+  ],
+  "mechanical_checks": {
+    "command:grep -q 'Decorative config control' adapters/claude-code/doctrine/vaporware-prevention.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'Decorative config control' adapters/claude-code/doctrine/vaporware-prevention.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'config control' adapters/claude-code/doctrine/vaporware-prevention.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'config control' adapters/claude-code/doctrine/vaporware-prevention.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'The toggle renders and saves, so the permission works' adapters/claude-code/doctrine/vaporware-prevention.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'The toggle renders and saves, so the permission works' adapters/claude-code/doctrine/vaporware-prevention.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'vaporware-prevention-full.md' adapters/claude-code/doctrine/vaporware-prevention.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'vaporware-prevention-full.md' adapters/claude-code/doctrine/vaporware-prevention.md",
+      "exit_code": 0
+    },
+    "command:test $(wc -c < adapters/claude-code/doctrine/vaporware-prevention.md) -le 3000": {
+      "passed": true,
+      "detail": "",
+      "command": "test $(wc -c < adapters/claude-code/doctrine/vaporware-prevention.md) -le 3000",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T00:10:29Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/vaporware-config-controls.md"
+}
