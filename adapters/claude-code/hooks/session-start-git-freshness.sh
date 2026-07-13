@@ -137,17 +137,22 @@ _md_log_file() {
   fi
 }
 
-# Mirror remote discovery (read-only; the F.6 _discover_mirror_remote
-# pattern): first remote whose push URL differs from origin's. Echoes the
-# remote NAME or empty.
+# Mirror remote discovery (read-only): first remote whose FETCH URL differs
+# from origin's. Echoes the remote NAME or empty. FETCH urls deliberately
+# (not push urls, unlike sync-pt-to-personal.sh's pattern): real checkouts
+# here configure origin as a DUAL-PUSH remote whose first push url equals
+# the mirror's, so push-URL comparison finds no mirror at all; what this
+# feed compares are the remotes' FETCH identities (their remote-tracking
+# master refs). Must match master-drift-autocorrect.sh's
+# _discover_mirror_remote.
 _md_mirror_remote() {
   local canonical_url name mirror_url
-  canonical_url="$(git remote get-url --push origin 2>/dev/null || echo "")"
+  canonical_url="$(git remote get-url origin 2>/dev/null || echo "")"
   [ -z "$canonical_url" ] && return 0
   while IFS= read -r name; do
     [ -z "$name" ] && continue
     [ "$name" = "origin" ] && continue
-    mirror_url="$(git remote get-url --push "$name" 2>/dev/null || echo "")"
+    mirror_url="$(git remote get-url "$name" 2>/dev/null || echo "")"
     if [ -n "$mirror_url" ] && [ "$mirror_url" != "$canonical_url" ]; then
       printf '%s' "$name"
       return 0
@@ -448,7 +453,11 @@ _self_test() {
   ) && pass=$((pass+1)) || fail=$((fail+1))
 
   # ---- master-drift feed scenarios (item 4 in the header) ----
-  # Two-remote fixture: origin + a distinct-URL mirror, initially converged.
+  # Two-remote fixture: origin + a distinct-FETCH-URL mirror, initially
+  # converged. origin is deliberately given the REAL checkouts' dual-push
+  # shape (remote.origin.pushurl twice: mirror URL first, own URL second) —
+  # push-URL-based discovery sees "same URL" and finds no mirror, which is
+  # exactly the silent-no-op regression these scenarios must catch.
   ( cd "$tmp" && mkdir bare-md-origin bare-md-mirror \
       && git init --bare --quiet bare-md-origin && git init --bare --quiet bare-md-mirror \
       && mkdir mdrepo && cd mdrepo \
@@ -456,9 +465,12 @@ _self_test() {
       && git config core.hooksPath "" \
       && git config user.email "t@example.com" && git config user.name "T" \
       && git remote add origin "$tmp/bare-md-origin" \
+      && git config --add remote.origin.pushurl "$tmp/bare-md-mirror" \
+      && git config --add remote.origin.pushurl "$tmp/bare-md-origin" \
       && git remote add acme-mirror "$tmp/bare-md-mirror" \
       && echo a > a && git add a && git commit --quiet -m init \
-      && git push --quiet origin HEAD:master && git push --quiet acme-mirror HEAD:master \
+      && git push --quiet "$tmp/bare-md-origin" HEAD:master \
+      && git push --quiet "$tmp/bare-md-mirror" HEAD:master \
       && git checkout --quiet master 2>/dev/null || git checkout --quiet -b master
   ) || { echo "  (md fixture setup FAIL)"; fail=$((fail+1)); }
 

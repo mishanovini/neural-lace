@@ -167,23 +167,35 @@ _bounded() {
 # F.6 helpers (same shapes as sync-pt-to-personal.sh — reused pattern)
 # ============================================================
 
-# Discover the mirror remote FROM A GIVEN REPO DIR: any remote with a push
-# URL distinct from the canonical remote's push URL. Echoes "name<TAB>url" of
-# the first match, or empty. Read-only — never mutates.
+# Discover the mirror remote FROM A GIVEN REPO DIR: any remote with a FETCH
+# URL distinct from the canonical remote's FETCH url. Echoes "name<TAB>url"
+# of the first match, or empty. Read-only — never mutates.
+#
+# FETCH urls (not push urls, deliberately diverging from sync-pt-to-
+# personal.sh's pattern): this repo's real checkouts configure origin as a
+# DUAL-PUSH remote (remote.origin.pushurl listed twice: work-org URL +
+# personal URL) whose FIRST push url equals the mirror remote's — push-URL
+# comparison therefore sees "same URL" and discovers no mirror at all,
+# silently no-opping the whole mechanism. What this corrector actually
+# compares and corrects are the two remotes' FETCH identities
+# (origin/master vs <mirror>/master remote-tracking refs), so fetch URLs
+# are the honest discovery key. The dedicated clone is then wired with one
+# single-URL remote per repo (no pushurl inheritance — see
+# _ensure_sync_clone), so a push inside the clone targets exactly one repo.
 _discover_mirror_remote() {
   local repo_dir="$1"
-  local canonical_url mirror_url
-  canonical_url="$(git -C "$repo_dir" remote get-url --push "$CANONICAL_REMOTE" 2>/dev/null || echo "")"
+  local canonical_url name mirror_url
+  canonical_url="$(git -C "$repo_dir" remote get-url "$CANONICAL_REMOTE" 2>/dev/null || echo "")"
   [ -z "$canonical_url" ] && return 0
-  while IFS=$'\t' read -r name rest; do
+  while IFS= read -r name; do
     [ -z "$name" ] && continue
     [ "$name" = "$CANONICAL_REMOTE" ] && continue
-    mirror_url="$(git -C "$repo_dir" remote get-url --push "$name" 2>/dev/null || echo "")"
+    mirror_url="$(git -C "$repo_dir" remote get-url "$name" 2>/dev/null || echo "")"
     if [ -n "$mirror_url" ] && [ "$mirror_url" != "$canonical_url" ]; then
       printf '%s\t%s\n' "$name" "$mirror_url"
       return 0
     fi
-  done < <(git -C "$repo_dir" remote -v 2>/dev/null | awk '$3=="(push)"{print $1"\t"$2}' | awk '!seen[$1]++')
+  done < <(git -C "$repo_dir" remote 2>/dev/null)
 }
 
 # Normalize a path for cross-spelling comparison (Windows-native vs MSYS
@@ -241,6 +253,12 @@ _ensure_sync_clone() {
   else
     git -C "$clone_dir" remote add "$mirror_name" "$mirror_url" >/dev/null 2>&1 || true
   fi
+
+  # Single-push invariant: each clone remote targets exactly ONE repo — a
+  # push inside the clone must never dual-push (the caller's checkout may
+  # configure multi-pushurl remotes; the clone must not inherit or keep any).
+  git -C "$clone_dir" config --unset-all "remote.${CANONICAL_REMOTE}.pushurl" 2>/dev/null || true
+  git -C "$clone_dir" config --unset-all "remote.${mirror_name}.pushurl" 2>/dev/null || true
 
   [ -d "$clone_dir/.git" ]
 }
@@ -331,7 +349,9 @@ _main_correct() {
   fi
   mirror_name="${mirror_line%%$'\t'*}"
   mirror_url="${mirror_line#*$'\t'}"
-  canonical_url="$(git -C "$caller_repo_dir" remote get-url --push "$CANONICAL_REMOTE" 2>/dev/null || echo "")"
+  # FETCH url (see _discover_mirror_remote header note: push urls lie on
+  # dual-push checkouts; the clone gets one single-URL remote per repo).
+  canonical_url="$(git -C "$caller_repo_dir" remote get-url "$CANONICAL_REMOTE" 2>/dev/null || echo "")"
   if [ -z "$canonical_url" ]; then
     _phase "abort" "no-canonical-url (remote '$CANONICAL_REMOTE' unresolved)"
     return 0
@@ -702,6 +722,33 @@ _self_test() {
       echo "  T10 fresh-machine bootstrap -> clone + CORRECTED: PASS"
     else
       echo "  T10 fresh-machine bootstrap -> clone + CORRECTED: FAIL (rc=$rc clone=$([ -d "$SYNC_CLONE_DIR/.git" ] && echo yes || echo no) status=$(cat "$STATUS_FILE" 2>/dev/null))"
+      sed 's/^/    /' "$tmp/run.out"; return 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
+  # T11: the REAL checkouts' remote topology — origin has TWO pushurls
+  # (mirror URL first, own URL second: the dual-push shape) while its FETCH
+  # url stays its own repo. Push-URL-based discovery sees origin's first
+  # pushurl == the mirror's URL and finds NO mirror (silent no-op — the
+  # regression this scenario pins); fetch-URL discovery must find the
+  # mirror, and the correction must land on exactly ONE repo (the clone's
+  # single-push invariant), leaving the caller's dual-push config untouched.
+  (
+    rm -f "$STATUS_FILE"; rm -rf "$SYNC_CLONE_DIR"
+    git -C "$WORK" config --add remote.origin.pushurl "$MIRROR_BARE"
+    git -C "$WORK" config --add remote.origin.pushurl "$ORIGIN_BARE"
+    _advance "$ORIGIN_BARE"   # mirror strictly behind again
+    local o_sha; o_sha="$(_sha "$ORIGIN_BARE")"
+    _run "$WORK"; rc=$?
+    git -C "$WORK" config --unset-all remote.origin.pushurl 2>/dev/null || true
+    if [ "$rc" -eq 0 ] \
+       && grep -q "^CORRECTED acme-mirror $(printf '%.7s' "$o_sha")$" "$STATUS_FILE" 2>/dev/null \
+       && [ "$(_sha "$MIRROR_BARE")" = "$o_sha" ] \
+       && [ -z "$(git -C "$SYNC_CLONE_DIR" config --get-all remote.origin.pushurl 2>/dev/null)" ] \
+       && [ -z "$(git -C "$SYNC_CLONE_DIR" config --get-all remote.acme-mirror.pushurl 2>/dev/null)" ]; then
+      echo "  T11 dual-pushurl topology -> mirror discovered via fetch URLs + single-push clone: PASS"
+    else
+      echo "  T11 dual-pushurl topology -> mirror discovered via fetch URLs: FAIL (rc=$rc status=$(cat "$STATUS_FILE" 2>/dev/null))"
       sed 's/^/    /' "$tmp/run.out"; return 1
     fi
   ) && pass=$((pass+1)) || fail=$((fail+1))
