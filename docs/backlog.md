@@ -997,3 +997,10 @@ Anthropic-side" theme).
 - **BUILD-DOCTRINE-FEEDBACK-LOOP-01 — close or retire the Tranche-4 pilot feedback loop** (added 2026-07-12 from tranche-4 supersession audit; label: `build-doctrine`, `priority:medium`). The canonical pilot RAN 2026-05-07 (product repo gap-audit; state.yaml + friction file prove it) and produced 5 concrete floor-change proposals (product repo docs/sessions/2026-05-07-pilot-friction-run-1.md) that were never applied to build-doctrine-templates/ and are tracked nowhere else. Also: build-doctrine-roadmap.md row 4 still says "NOT STARTED" — false in substance (2 of 3 done-when clauses met). Action: apply-or-explicitly-retire the 5 proposals + fix the roadmap row. Forcing function for the keep/retire call on the dormant Build-Doctrine program (no operator statement since 2026-05-17).
 
 - **BUILD-DOCTRINE-ORCHESTRATOR-FATE-01 — validate or delete build-doctrine-orchestrator/** (added 2026-07-12 from tranche-4 supersession audit; label: `build-doctrine`, `priority:low`). Single commit ever (8e843fb scaffolding), never pytest-validated, _TODO_PILOT_VALIDATE_ sentinels throughout, 2 months dormant; plausibly obsoleted by the worktree orchestrator-pattern (the harness's real orchestration route). Vaporware-prevention: validate it or delete it — don't let it sit.
+
+## NL-ISSUES-TRIAGE-20260713 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 35 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 5d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
