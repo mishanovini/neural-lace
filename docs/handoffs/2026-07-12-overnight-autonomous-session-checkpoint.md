@@ -161,3 +161,20 @@ dual-push → install.sh → doctor → task-verifier (T2-T7) → close-plan →
 Reclamation recorded (118/20, ledger committed). Tranche-4 SPLIT executed. NEEDS-YOU: ARM +
 auth-session-401 remain. Reviewer sweep item: sync-pt-to-personal.sh shares push-URL + ISL
 quirks — nl-issue already filed by builder; fold into next sweep.
+
+## UPDATE ~19:xx (Opus, post-Fable-limit) — DRIFT BUILD FULLY LANDED
+Fable spend-limit → switched to Opus. Fix-builder had died on the limit before applying
+anything, so I applied all 6 harness-review findings MYSELF in worktree agent-a60d03e20c93bfb92:
+MAJOR-1 (dup digest line → suppress when nonquiet status rendered; hook T9b pins it),
+MAJOR-2 (MASTER_DRIFT_PUSH_TIMEOUT=60s + divergence-hook phrase → non-ff classification + runbook line),
+MAJOR-3 (repo identity via --git-common-dir; corrector skips linked worktrees, T12 pins),
+MINOR-4/5/6 (ISL_BYPASS header, lock→state-dir-before-bootstrap, CORRECTED honesty note).
+Re-ran self-tests: corrector 12/12, hook 15/15. Cherry-picked all 9 commits to master (clean,
+no conflicts) → 2e44afb → dual-push → install.sh (live corrector confirmed) → task-verifier
+6/6 PASS → close-plan (fixed task-1 ID format, task-7 awk "Task description" delimiter, closure-
+contract inline-content; all nl-issued) → COMPLETED+archived → e72bf6d. Masters converged.
+Cleaned my 2 dead-agent worktrees (drift + fix-builder); the live ownership gate correctly
+blocked the compound branch-delete until worktrees were gone, then allowed it.
+aeed9a16 (GAP-45 chip) LEFT ALONE — operator's separate session, 5 active commits.
+REMAINING FOR OPERATOR: resumer ARM (1 word) + product auth-session 401 (health monitor's
+real catch). Both in NEEDS-YOU. Doctor re-run in flight; no unaccounted reds expected.
