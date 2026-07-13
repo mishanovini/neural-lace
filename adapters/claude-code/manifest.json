@@ -1882,6 +1882,22 @@
       "budget_class": "none"
     },
     {
+      "id": "vaporware-config-control",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/vaporware-prevention.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "pattern — checked via functionality-verifier's config-control protocol inside the runtime-verification Stop chain on Verification: full tasks; standing surfaces via functionality-auditor's registry-vs-callsite sweep; no dedicated hook by design (plan vaporware-config-controls D-2)"
+    },
+    {
       "id": "vaporware-volume",
       "kind": "gate",
       "doctrine_file": "doctrine/vaporware-prevention.md",
