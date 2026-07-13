@@ -138,3 +138,13 @@ For product-code PRs: track the PR until merged — don't report DONE until it's
 **Confirmation signal after merging:** the production URL (not preview); a clear summary of what merged and is now live; a note on any migrations applied.
 
 **Customer-tier branching policy:** pre-customer projects (no real users): feature-branch merges to master and direct master commits are acceptable; the cost of a bad push is self-inflicted and reversible via revert + redeploy. Once a project has real users: all work goes through a `dev`/`preview` branch with deployment-validation gates before merging to the customer-facing branch; branch protection at the GitHub level enforces it. Auto-merge on verified-complete uses `--no-ff` merge commits to preserve the feature-branch audit trail; skip auto-merge only when the user said "preview only"/"don't merge"/"wait" in their most-recent message, or the branch contains genuinely unreviewed risky work (irreversible operations, schema migrations, auth changes).
+
+## Plan-rooted commit attribution
+
+When a PR/squash-merge serves an active plan, add a trailer line `plan: <slug>` (e.g. `plan: ask-rooted-workstreams-p1`) to the squash-commit subject/body. It is the primary SHA→plan-slug attribution signal the merge-emission auditor uses (ask-rooted-workstreams-p1 Task 5). A diff-touches-`docs/plans/<slug>.md` fallback covers commits missing the trailer, but the token is the fast, unambiguous path.
+
+## Deploy preflight
+
+**Deploy preflight is mandatory before any production deploy:** run `~/.claude/scripts/deploy-preflight.sh <intended-commit>... [--repo <deploy-checkout>]` before deploying. It FAILS CLOSED on fetch failure, dirty tree, HEAD != origin/master, or a named commit missing from HEAD.
+
+**Why:** incident 2026-06-18 — a silent git-auth failure produced a stale checkout that deployed with a green "success" result, masking that the intended commit never actually reached production. The preflight script exists specifically to catch this class of failure before it recurs.

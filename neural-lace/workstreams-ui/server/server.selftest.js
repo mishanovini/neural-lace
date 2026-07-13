@@ -1240,6 +1240,136 @@ async function main() {
     const antiNoiseAddRes = await backlogPost({ action: 'add', title: 'audit needs-you.sh and the work-integrity-gate output', priority: 'low' });
     ok('S49b a title naming real hook/gate identifiers is accepted (backlog content is legitimately ABOUT harness internals — anti-noise law is scoped to the ask-tree/My-To-Do narrative, not this pane; see server.js header)',
       antiNoiseAddRes.json && antiNoiseAddRes.json.ok === true, JSON.stringify(antiNoiseAddRes.json));
+    // Ask-rooted-workstreams-p1 Task 17 — "Mechanized metrics + doctor
+    // wiring" scenarios (S50–S59). These pin the two CONTRACTS the doctor
+    // predicates (Task 17 a/b, in hooks/harness-doctor.sh's extended
+    // obs-cockpit-fresh check) read off the wire — so a future server change
+    // that renamed the schema-failure error string or altered the auditor's
+    // count_reconciliation shape would break the standing self-test (CI of
+    // record), not just the operator's next doctor run.
+    //
+    // DELIBERATELY SELF-CONTAINED on payload-schema.js + a FRESH sandboxed
+    // auditor (require('./auditor.js').createAuditor) — no dependency on the
+    // live HTTP server OR the S22b needs-you.sh fixture chain — so they are
+    // runnable in isolation via a direct require even when the pre-existing
+    // S22b→S23 ECONNRESET (task_e41fc644, NOT this task's bug) aborts the
+    // live-server portion of the suite upstream.
+    // ========================================================
+    const { createAuditor } = require('./auditor.js');
+
+    // ---- S50/S51/S52/S53: Task 17(a) — the anti-noise schema check + the
+    // absolute-href check that the extended obs-cockpit-fresh doctor
+    // predicate surfaces (it reads the SERVER's own validateLanding verdict
+    // off /api/asks; these assert that verdict's underlying checks behave).
+    const t17CleanLanding = {
+      ok: true, status_filter: 'active', generated_at: '2026-07-01T00:00:00Z',
+      groups: [{ project: 'demo', asks: [{
+        ask_id: 'a', summary: 'a clean summary', project: 'demo', repo: '', status: 'active',
+        activity_ts: '2026-07-01T00:00:00Z', plan_progress: { done: 1, in_flight: 0, not_started: 0, total: 1 },
+        waiting_count: 0, drift_badges: [], narrative_excerpt: 'task 1 verified done',
+      }] }],
+      completed: { count: 0, newest_completed_ts: null, asks: [] },
+    };
+    ok('S50 Task17a: validateLanding PASSES a clean landing payload (the anti-noise/href check runs in the self-test with no false positive)',
+      payloadSchema.validateLanding(t17CleanLanding).ok, JSON.stringify(payloadSchema.validateLanding(t17CleanLanding).errors));
+
+    const t17GateLanding = JSON.parse(JSON.stringify(t17CleanLanding));
+    t17GateLanding.groups[0].asks[0].narrative_excerpt = 'blocked by task-completed-evidence-gate';
+    const t17GateCheck = payloadSchema.validateLanding(t17GateLanding);
+    ok('S51 Task17a ANTI-NOISE: a landing payload carrying a gate/hook identifier FAILS validateLanding (the check the doctor predicate mirrors off the wire)',
+      t17GateCheck.ok === false && t17GateCheck.errors.some((e) => /gate\/hook identifier/.test(e)),
+      JSON.stringify(t17GateCheck.errors));
+
+    const t17DetailRel = {
+      ok: true, ask_id: 'a', summary: 's', project: 'p', repo: '', status: 'active', verbatim_ref: '',
+      plan_slugs: [], narrative: [{ ts: '2026-07-01T00:00:00Z', summary: 'ok', evidence_link: 'docs/plans/foo.md' }],
+      plan_rows: [], waiting_items: [], artifacts: [], sessions: [],
+    };
+    const t17HrefCheck = payloadSchema.validateAskDetail(t17DetailRel);
+    ok('S52 Task17a ABSOLUTE-HREF: a detail payload carrying a relative href FAILS validateAskDetail',
+      t17HrefCheck.ok === false && t17HrefCheck.errors.some((e) => /relative href/.test(e)),
+      JSON.stringify(t17HrefCheck.errors));
+
+    ok('S53 Task17a: isAbsoluteHref classifies absolute (http/https/file/leading-slash) vs relative correctly — the helper both Task 11 and the doctor predicate rely on',
+      payloadSchema.isAbsoluteHref('http://127.0.0.1:7733/x') === true &&
+      payloadSchema.isAbsoluteHref('https://example.test/pr/1') === true &&
+      payloadSchema.isAbsoluteHref('file:///c/Users/x/NEEDS-YOU.md') === true &&
+      payloadSchema.isAbsoluteHref('/absolute/path') === true &&
+      payloadSchema.isAbsoluteHref('docs/plans/foo.md') === false &&
+      payloadSchema.isAbsoluteHref('../rel') === false);
+
+    // ---- S54/S55/S56: Task 17(b) — waiting-on-you count reconciliation.
+    // The doctor predicate reads auditor.getDiagnostics().count_reconciliation
+    // .mismatch off GET /api/diagnostics/drift; these pin that field's SHAPE
+    // and prove it flips true on a real seeded divergence and stays false on
+    // a matched population — the doctor-visible failure mode's data source.
+    const t17dir = path.join(tmp, 't17-recon');
+    const t17plDir = path.join(t17dir, 'progress-logs');
+    const t17arFile = path.join(t17dir, 'ask-registry.jsonl');
+    const t17nyPath = path.join(t17dir, 'NEEDS-YOU.md');
+    const t17todoPath = path.join(t17dir, 'operator-todo.md');
+    const t17dpDir = path.join(t17dir, 'dispatch-provenance');
+    fs.mkdirSync(t17plDir, { recursive: true });
+    fs.mkdirSync(t17dpDir, { recursive: true });
+
+    // One active ask with one waiting_on_operator event referencing NY-match.
+    fs.writeFileSync(t17arFile,
+      JSON.stringify({ ask_id: 'ask-t17', record_type: 'created', ts: '2026-07-01T00:00:00Z', project: 'demo', repo: t17dir, summary: 'recon fixture', status: 'active', emitter: 'ask-registry' }) + '\n');
+    fs.writeFileSync(path.join(t17plDir, 'ask-t17.jsonl'),
+      JSON.stringify({ v: 1, event_id: 'e1', ts: '2026-07-01T00:05:00Z', ask_id: 'ask-t17', type: 'waiting_on_operator', needs_you_id: 'NY-match', session_id: 's1', emitter: 'needs-you', provenance: 'known' }) + '\n');
+
+    function t17MakeAuditor() {
+      return createAuditor({
+        progressLogStateDir: t17plDir,
+        askRegistryFile: t17arFile,
+        needsYouMdPath: t17nyPath,
+        operatorTodoPath: t17todoPath,
+        dispatchProvenanceDir: t17dpDir,
+        mainRepoRoot: t17dir,
+        repoRoots: [path.join(t17dir, 'no-such-repo')], // merge-scan no-op
+        cliTimeoutMs: 2000,
+      });
+    }
+
+    // MATCH case: NEEDS-YOU.md has exactly the one open id (NY-match) that
+    // the one ask's waiting_on_operator event references -> sizes equal.
+    fs.writeFileSync(t17nyPath, [
+      '## Awaiting your decision', '',
+      '### Ship it?', 'Some §3 context body.',
+      '*(added 2026-07-01, session `s1`, id `NY-match`)*', '',
+      '## In flight', '',
+    ].join('\n'));
+    const t17auditorMatch = t17MakeAuditor();
+    await t17auditorMatch.runCycle();
+    const t17reconMatch = t17auditorMatch.getDiagnostics().count_reconciliation;
+    ok('S54 Task17b CONTRACT: getDiagnostics().count_reconciliation carries the exact fields the doctor predicate reads (a boolean `mismatch`, plus ledger/rendered counts)',
+      t17reconMatch && typeof t17reconMatch.mismatch === 'boolean' &&
+      typeof t17reconMatch.ledger_open_count === 'number' && typeof t17reconMatch.rendered_waiting_count === 'number' &&
+      Array.isArray(t17reconMatch.unaccounted_needs_you_ids),
+      JSON.stringify(t17reconMatch));
+    ok('S55 Task17b NO-FALSE-POSITIVE: a matched population (open id referenced by an ask event) reports mismatch:false',
+      t17reconMatch && t17reconMatch.mismatch === false && t17reconMatch.ledger_open_count === 1 && t17reconMatch.rendered_waiting_count === 1,
+      JSON.stringify(t17reconMatch));
+
+    // MISMATCH case: add a SECOND open decision (NY-orphan) that no ask's
+    // log references at all -> it would silently vanish from the landing;
+    // the reconciliation must flag it (the doctor-visible failure mode).
+    fs.writeFileSync(t17nyPath, [
+      '## Awaiting your decision', '',
+      '### Ship it?', 'Some §3 context body.',
+      '*(added 2026-07-01, session `s1`, id `NY-match`)*', '',
+      '### An orphaned decision', 'No ask references this one.',
+      '*(added 2026-07-02, session `s2`, id `NY-orphan`)*', '',
+      '## In flight', '',
+    ].join('\n'));
+    const t17auditorMismatch = t17MakeAuditor();
+    await t17auditorMismatch.runCycle();
+    const t17reconMismatch = t17auditorMismatch.getDiagnostics().count_reconciliation;
+    ok('S56 Task17b FAILURE MODE: a genuinely orphaned open decision (in the ledger, referenced by no ask) reports mismatch:true and lists the id in unaccounted_needs_you_ids — the exact signal the doctor predicate REDs on',
+      t17reconMismatch && t17reconMismatch.mismatch === true &&
+      t17reconMismatch.ledger_open_count === 2 && t17reconMismatch.rendered_waiting_count === 1 &&
+      t17reconMismatch.unaccounted_needs_you_ids.indexOf('NY-orphan') !== -1,
+      JSON.stringify(t17reconMismatch));
 
   } finally {
     server.close();
