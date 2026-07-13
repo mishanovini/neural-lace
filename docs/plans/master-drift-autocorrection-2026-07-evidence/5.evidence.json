@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "task_id": "5",
+  "verdict": "PASS",
+  "commit_sha": "dc3d41bd93c9032644ee468aee6746ad050af716",
+  "files_modified": [
+    "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/hooks/harness-doctor.sh",
+    "adapters/claude-code/manifest.json",
+    "docs/harness-architecture.md"
+  ],
+  "mechanical_checks": {
+    "exists:docs/runbooks/master-drift-autocorrect.md": {
+      "passed": true,
+      "detail": "docs/runbooks/master-drift-autocorrect.md exists",
+      "command": "test -e docs/runbooks/master-drift-autocorrect.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'MASTER_DRIFT_AUTOCORRECT=0' docs/runbooks/master-drift-autocorrect.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'MASTER_DRIFT_AUTOCORRECT=0' docs/runbooks/master-drift-autocorrect.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'gh auth switch -u' docs/runbooks/master-drift-autocorrect.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'gh auth switch -u' docs/runbooks/master-drift-autocorrect.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'UNION' docs/runbooks/master-drift-autocorrect.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'UNION' docs/runbooks/master-drift-autocorrect.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T00:49:06Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/master-drift-autocorrection-2026-07.md"
+}
