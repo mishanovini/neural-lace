@@ -48,6 +48,54 @@ header {
 header h1 { font-size: 16px; margin: 0; font-weight: 600; }
 header .spacer { flex: 1; }
 
+/* ---- tab shell (ask-rooted-workstreams-p1 Task 16 "Layout integration +
+   Harness Health demotion"). Two tabs: Asks (default landing) and Harness
+   Health (the six wave-O panes, demoted here per the anti-noise law — the
+   markup lives verbatim inside <template id="harnessHealthTemplate"> in
+   index.html, inert until app.js's initHarnessHealthTab() first clones it
+   in). No Team tab in P1 (review round 1 — no empty shell surfaces): there
+   is no third button here. The active-tab signal is never color-only
+   (WCAG 1.4.1): the selected button keeps its full-strength text color +
+   an underline, on top of the programmatic `aria-selected` state app.js
+   sets — a screen reader announces the state even with CSS off. ---- */
+.tab-nav { display: flex; gap: 4px; }
+.tab-btn {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 24px;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.tab-panel[hidden] { display: none; } /* same [hidden]-override footgun this file already documents below */
+
+/* ---- Harness Health tab's own toolbar (refresh + reconciler badge —
+   moved verbatim out of the global header, since both are wave-O-specific
+   actions, not landing chrome). ---- */
+.hh-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+/* ---- Diagnostics section (Task 16 — auditor + reconciler internals,
+   "Diagnostics ... live here too"). Reuses .pane/.pane-head/.pane-body for
+   visual continuity; healed/error counts are ALWAYS text (never a bare
+   color dot — WCAG 1.4.1), color is an additive cue only. ---- */
+.diagnostics-section { max-width: 1400px; margin: 0 auto 24px; }
+.diag-row { font-size: 13px; margin-bottom: 4px; }
+.diag-row:last-child { margin-bottom: 0; }
+.diag-healed { color: var(--ok); }
+.diag-errors { color: var(--err); font-weight: 600; }
+
 button.ghost {
   background: transparent;
   border: 1px solid var(--border2);

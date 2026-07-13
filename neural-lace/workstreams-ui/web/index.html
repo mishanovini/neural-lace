@@ -7,189 +7,209 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <!-- Workstreams cockpit — NL Observability Program Wave O, task O.4
-       (specs-o §O.4). REBUILT as a THIN VIEW over the derivation lib: every
-       pane below is a read of `nl <sub> --json` via the server's
-       derive-cache.js. This UI is READ-ONLY (Q2 v1 disposition,
-       docs/reviews/2026-07-06-o4-cockpit-ux-review.md bottom section) —
-       there are NO write affordances (no capture, no my-tasks, no backlog
-       promote, no decision approve/decline, no branch retitle). Answers to
-       "what needs me" happen in sessions/chat, never via a button here.
-       The cockpit NEVER renders the old event-sourced tree-state as truth
-       (law 1) — the divergence reconciler only ever COMPARES it and shows a
-       drift badge; it never feeds a pane. -->
+  <!-- Workstreams cockpit — ask-rooted-workstreams-p1, Task 16 "Layout
+       integration + Harness Health demotion" (per the ux-designer round-1
+       ruling, LANDED 2026-07-10, binding). The ASK TREE is now the landing
+       surface; the six wave-O panes (specs-o §O.4) are DEMOTED to a
+       Harness Health tab — moved VERBATIM (see <template
+       id="harnessHealthTemplate"> below) so they keep working exactly as
+       built, but they NEVER form part of the landing DOM (anti-noise law,
+       hard constraint 1): a native <template>'s content is inert — not
+       parsed into the live document, not visible to the accessibility
+       tree, not matched by document.getElementById — until app.js's
+       initHarnessHealthTab() explicitly clones it in, the first time the
+       operator opens this tab. -->
   <header>
     <h1>Workstreams</h1>
+    <nav id="tabNav" class="tab-nav" role="tablist" aria-label="workstreams views">
+      <button type="button" id="tabAsksBtn" class="tab-btn" role="tab"
+              aria-selected="true" aria-controls="tabAsksPanel">Asks</button>
+      <button type="button" id="tabHealthBtn" class="tab-btn" role="tab"
+              aria-selected="false" aria-controls="tabHealthPanel">Harness Health</button>
+    </nav>
     <span class="spacer"></span>
     <button id="docsBtn" class="ghost" title="browse docs across projects">📁 Docs</button>
-    <button id="refreshBtn" class="ghost" title="force a refresh of every pane now">⟳ Refresh</button>
-    <span id="refreshFeedback" class="refresh-feedback" aria-live="polite"></span>
-    <!-- O.4-fix1 item 4 (keyboard-only FAIL): the drift-badge mismatch
-         detail used to live ONLY in a hover title= tooltip, unreachable by
-         keyboard/AT users. <details>/<summary> is natively focusable +
-         keyboard-activatable (Enter/Space toggles, no JS needed for the
-         open/close mechanic itself) and gives every mismatch its own
-         visible text row instead of a tooltip. reconcilerBadge (id kept
-         for existing hooks/tests) is now the <summary>; the mismatch list
-         renders into #reconcilerDisclosureBody by renderBadgeDisclosure(). -->
-    <details id="reconcilerDetails" class="reconciler-details" aria-live="polite">
-      <summary id="reconcilerBadge" class="reconciler-badge"
-                title="derived-vs-displayed drift check — click/Enter for details">reconciler: checking…</summary>
-      <div id="reconcilerDisclosureBody" class="reconciler-disclosure-body"></div>
-    </details>
   </header>
 
-  <!-- Interrupt-priority strip (specs-o §O.4.3b — BINDING: on cold load,
-       WAITING-ON-ME session rows sort above all other states and open
-       NEEDS-YOU entries render above Q3/Q4/Q5, both inside the initial
-       viewport, with ONE accent color spent only on interrupt-worthy
-       classes). This element is populated by renderInterruptStrip() in
-       app.js from the SAME od_sessions/od_needs_me data the Q1/Q2 panes
-       render — it is a re-sorted VIEW of that data, not a separate source. -->
-  <div id="interruptStrip" class="interrupt-strip" aria-live="polite"></div>
-
-  <!-- Ask-rooted landing + sidebar wrapper. Task 16 "Layout integration"
-       owns the FINAL persistent-right-sidebar assembly per the ux-designer
-       round-1 ruling (LANDED 2026-07-10, binding): To-Do at the top with
-       independent scroll + a header count, Backlog collapsed below it,
-       stacking under the ask tree below ~1200px. This wrapper is the
-       functional placeholder Task 14 ("My To-Do pane") needs to ship a
-       working, visible pane now; Task 15 (Backlog) adds a sibling section
-       inside #sidebarSection, Task 16 finalizes the responsive grid/tabs. -->
-  <div class="ws-layout">
-    <!-- Ask-rooted workstreams landing — ask-rooted-workstreams-p1, Task 13
-         "UI landing — ask tree". REPLACES the Task 1 walking-skeleton stub
-         wholesale: project sections (collapsible) -> ask cards (summary +
-         one-click verbatim reference, progress narrative, aggregate plan
-         progress bar + an explicit drill-down control, waiting count, drift
-         badges) with lifecycle affordances (done/dismiss/merge) and a
-         collapsed "completed" group. This is now the PRIMARY landing
-         surface (User-facing Outcome: "opening / shows asks grouped by
-         project"); the six-pane cockpit below is unchanged here and will be
-         demoted to a Harness Health tab by Task 16 (Layout integration). -->
-    <section id="askTreeSection" class="ask-tree-section" aria-label="asks">
-      <div class="ask-tree-head">
-        <h2 class="ask-tree-title">Asks</h2>
-      </div>
-      <div class="ask-tree-body" id="askTreeBody"></div>
-    </section>
-
-    <!-- My To-Do — ask-rooted-workstreams-p1, Task 14. ONE list, two sources
-         (docs/operator-todo.md): operator items (add/edit/check freely) +
-         AUTO pointer items (read-only, derived checked-state, navigate to
-         source). See web/todo.js header for the full behavior contract. -->
-    <aside id="sidebarSection" class="sidebar" aria-label="to-do and backlog">
-      <section id="todoSection" class="pane todo-section" aria-label="my to-do">
-        <div class="pane-head">
-          <span class="pane-title">My To-Do</span>
-          <span class="todo-count" id="todoCount" aria-live="off">—</span>
+  <!-- ============================================================
+       TAB 1 — Asks (the landing surface). ask-rooted-workstreams-p1
+       Task 13/14/15: ask tree (main column) + My To-Do / Backlog
+       (persistent right sidebar, independent scroll, stacks under the
+       tree below ~1200px). UNCHANGED from Tasks 13-15 — Task 16 only
+       wraps it in the tab shell.
+       ============================================================ -->
+  <div id="tabAsksPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabAsksBtn">
+    <div class="ws-layout">
+      <section id="askTreeSection" class="ask-tree-section" aria-label="asks">
+        <div class="ask-tree-head">
+          <h2 class="ask-tree-title">Asks</h2>
         </div>
-        <div class="pane-body todo-body" id="todoBody"></div>
+        <div class="ask-tree-body" id="askTreeBody"></div>
       </section>
 
-      <!-- Backlog — ask-rooted-workstreams-p1, Task 15. Compact top-N-per-
-           tier view of docs/backlog.md (collapsible to the full list),
-           add form, and SCHEDULE/DEMOTE/FOLD/WONTFIX disposition buttons.
-           See web/backlog.js header for the full behavior contract. Task 16
-           finalizes the collapsed-by-default sizing per the ux-designer
-           round-1 ruling ("Backlog collapsed below it, top-N by tier"). -->
-      <section id="backlogSection" class="pane backlog-section" aria-label="backlog">
-        <div class="pane-head">
-          <span class="pane-title">Backlog</span>
-          <span class="backlog-count" id="backlogCount" aria-live="off">—</span>
-        </div>
-        <div class="pane-body backlog-body" id="backlogBody"></div>
-      </section>
-    </aside>
-  </div>
+      <aside id="sidebarSection" class="sidebar" aria-label="to-do and backlog">
+        <section id="todoSection" class="pane todo-section" aria-label="my to-do">
+          <div class="pane-head">
+            <span class="pane-title">My To-Do</span>
+            <span class="todo-count" id="todoCount" aria-live="off">—</span>
+          </div>
+          <div class="pane-body todo-body" id="todoBody"></div>
+        </section>
 
-  <main id="cockpit">
-    <!-- Q2 — WHAT NEEDS ME. Sorted first per ux-review amendment 9
-         (attention-semantics: "Q2 on top"). READ-ONLY: renders the §3-format
-         block inline; the link-resolver handles every link; NO action
-         buttons (Q2 v1 disposition). -->
-    <section id="paneNeedsMe" class="pane pane-needs-me" aria-label="what needs me">
-      <div class="pane-head">
-        <span class="pane-title">2 · What needs me</span>
-        <span class="pane-age" data-age-for="needs-me">—</span>
-      </div>
-      <div class="pane-body" id="needsMeBody"></div>
-    </section>
-
-    <!-- Q1 — WHAT'S RUNNING. Session board with state chips; stalled/crashed/
-         waiting-on-me sorted first per ux-review amendment 9. -->
-    <section id="paneStatus" class="pane pane-status" aria-label="what's running">
-      <div class="pane-head">
-        <span class="pane-title">1 · What's running</span>
-        <span class="pane-age" data-age-for="status">—</span>
-      </div>
-      <div class="pane-body" id="statusBody"></div>
-    </section>
-
-    <!-- Q4 — IS THE HARNESS WORKING. Compact strip. -->
-    <section id="paneHealth" class="pane pane-health" aria-label="is the harness working">
-      <div class="pane-head">
-        <span class="pane-title">4 · Harness health</span>
-        <span class="pane-age" data-age-for="health">—</span>
-      </div>
-      <div class="pane-body" id="healthBody"></div>
-    </section>
-
-    <!-- Q5 — WHAT'S IT COSTING. Compact strip. -->
-    <section id="paneCosts" class="pane pane-costs" aria-label="what's it costing">
-      <div class="pane-head">
-        <span class="pane-title">5 · What's it costing</span>
-        <span class="pane-age" data-age-for="costs">—</span>
-      </div>
-      <div class="pane-body" id="costsBody"></div>
-    </section>
-
-    <!-- Q3 — WHAT HAPPENED (diff-since-last-look). Last-look anchor is
-         explicit + a Mark-seen control (ux-review amendment 3). -->
-    <section id="paneShipped" class="pane pane-shipped" aria-label="what happened since your last look">
-      <div class="pane-head">
-        <span class="pane-title">3 · What happened</span>
-        <span class="pane-age" data-age-for="shipped">—</span>
-      </div>
-      <div class="last-look-row">
-        <span id="lastLookAnchor" class="last-look-anchor"></span>
-        <button id="markSeenBtn" class="ghost small">Mark seen</button>
-      </div>
-      <div class="pane-body" id="shippedBody"></div>
-    </section>
-
-    <!-- Backlog health strip (od_backlog_health — not one of the six sketch
-         questions, same CANONICAL-COUNTERS-01 discipline). -->
-    <section id="paneBacklog" class="pane pane-backlog" aria-label="backlog health">
-      <div class="pane-head">
-        <span class="pane-title">Backlog health</span>
-        <span class="pane-age" data-age-for="backlog">—</span>
-      </div>
-      <div class="pane-body" id="backlogBody"></div>
-    </section>
-  </main>
-
-  <!-- Q6 — WHY DID X HAPPEN. On-demand drawer, opened from a session row's
-       "Why" affordance (interaction table, ux-review amendment 8).
-       tabindex="-1" (O.4-fix1 item 4 — keyboard-only FAIL): the drawer is
-       not part of the normal tab order (it's not an input), but MUST be
-       programmatically focusable so app.js's whyDrawer.focus() on open
-       actually moves focus into the role=dialog per WCAG 2.2 §2.4.11 /
-       standard modal-dialog focus-management convention. Without
-       tabindex, .focus() silently no-ops on a plain <div>, which is
-       exactly the defect the acceptance drill's keyboard-only pass
-       caught (focus never left the invoking "Why?" button). -->
-  <div id="whyScrim" class="modal-scrim" hidden></div>
-  <div id="whyDrawer" class="modal-card why-drawer" hidden role="dialog" aria-label="why drawer" aria-modal="true" tabindex="-1">
-    <div class="dm-head">
-      <span id="whyTitle" class="dm-title">why</span>
-      <button id="whyClose" class="ghost dm-close" title="close (Esc)" aria-label="close why drawer">✕</button>
+        <section id="backlogSection" class="pane backlog-section" aria-label="backlog">
+          <div class="pane-head">
+            <span class="pane-title">Backlog</span>
+            <span class="backlog-count" id="backlogCount" aria-live="off">—</span>
+          </div>
+          <div class="pane-body backlog-body" id="backlogBody"></div>
+        </section>
+      </aside>
     </div>
-    <div id="whyBody" class="dm-body"></div>
   </div>
 
-  <!-- Docs browser (KEPT — becomes the ONE link-resolver backend per
-       ux-review amendment 6: no pane grows its own link handling). -->
+  <!-- ============================================================
+       TAB 2 — Harness Health. Mount point (empty until first activation)
+       + the inert <template> carrying the six wave-O panes VERBATIM, plus
+       the reconciler badge, interrupt strip, why-drawer, and a new
+       Diagnostics section (auditor + reconciler internals — "Diagnostics
+       ... live here too", Task 16). No Team tab ships in P1 (review
+       round 1 — no empty shell surfaces): there is no nav entry, no
+       markup, nothing to hide — it simply was never built here.
+       ============================================================ -->
+  <div id="tabHealthPanel" class="tab-panel" hidden role="tabpanel" aria-labelledby="tabHealthBtn"></div>
+
+  <template id="harnessHealthTemplate">
+    <div class="hh-toolbar">
+      <button id="refreshBtn" class="ghost" title="force a refresh of every pane now">⟳ Refresh</button>
+      <span id="refreshFeedback" class="refresh-feedback" aria-live="polite"></span>
+      <!-- O.4-fix1 item 4 (keyboard-only FAIL): the drift-badge mismatch
+           detail used to live ONLY in a hover title= tooltip, unreachable by
+           keyboard/AT users. <details>/<summary> is natively focusable +
+           keyboard-activatable (Enter/Space toggles, no JS needed for the
+           open/close mechanic itself) and gives every mismatch its own
+           visible text row instead of a tooltip. reconcilerBadge (id kept
+           for existing hooks/tests) is now the <summary>; the mismatch list
+           renders into #reconcilerDisclosureBody by renderBadgeDisclosure(). -->
+      <details id="reconcilerDetails" class="reconciler-details" aria-live="polite">
+        <summary id="reconcilerBadge" class="reconciler-badge"
+                  title="derived-vs-displayed drift check — click/Enter for details">reconciler: checking…</summary>
+        <div id="reconcilerDisclosureBody" class="reconciler-disclosure-body"></div>
+      </details>
+    </div>
+
+    <!-- Interrupt-priority strip (specs-o §O.4.3b — BINDING: on cold load,
+         WAITING-ON-ME session rows sort above all other states and open
+         NEEDS-YOU entries render above Q3/Q4/Q5, both inside the initial
+         viewport, with ONE accent color spent only on interrupt-worthy
+         classes). Populated by renderInterruptStrip() in app.js from the
+         SAME od_sessions/od_needs_me data the Q1/Q2 panes render below —
+         it is a re-sorted VIEW of that data, not a separate source. -->
+    <div id="interruptStrip" class="interrupt-strip" aria-live="polite"></div>
+
+    <main id="cockpit">
+      <!-- Q2 — WHAT NEEDS ME. Sorted first per ux-review amendment 9
+           (attention-semantics: "Q2 on top"). READ-ONLY: renders the §3-format
+           block inline; the link-resolver handles every link; NO action
+           buttons (Q2 v1 disposition). -->
+      <section id="paneNeedsMe" class="pane pane-needs-me" aria-label="what needs me">
+        <div class="pane-head">
+          <span class="pane-title">2 · What needs me</span>
+          <span class="pane-age" data-age-for="needs-me">—</span>
+        </div>
+        <div class="pane-body" id="needsMeBody"></div>
+      </section>
+
+      <!-- Q1 — WHAT'S RUNNING. Session board with state chips; stalled/crashed/
+           waiting-on-me sorted first per ux-review amendment 9. -->
+      <section id="paneStatus" class="pane pane-status" aria-label="what's running">
+        <div class="pane-head">
+          <span class="pane-title">1 · What's running</span>
+          <span class="pane-age" data-age-for="status">—</span>
+        </div>
+        <div class="pane-body" id="statusBody"></div>
+      </section>
+
+      <!-- Q4 — IS THE HARNESS WORKING. Compact strip. -->
+      <section id="paneHealth" class="pane pane-health" aria-label="is the harness working">
+        <div class="pane-head">
+          <span class="pane-title">4 · Harness health</span>
+          <span class="pane-age" data-age-for="health">—</span>
+        </div>
+        <div class="pane-body" id="healthBody"></div>
+      </section>
+
+      <!-- Q5 — WHAT'S IT COSTING. Compact strip. -->
+      <section id="paneCosts" class="pane pane-costs" aria-label="what's it costing">
+        <div class="pane-head">
+          <span class="pane-title">5 · What's it costing</span>
+          <span class="pane-age" data-age-for="costs">—</span>
+        </div>
+        <div class="pane-body" id="costsBody"></div>
+      </section>
+
+      <!-- Q3 — WHAT HAPPENED (diff-since-last-look). Last-look anchor is
+           explicit + a Mark-seen control (ux-review amendment 3). -->
+      <section id="paneShipped" class="pane pane-shipped" aria-label="what happened since your last look">
+        <div class="pane-head">
+          <span class="pane-title">3 · What happened</span>
+          <span class="pane-age" data-age-for="shipped">—</span>
+        </div>
+        <div class="last-look-row">
+          <span id="lastLookAnchor" class="last-look-anchor"></span>
+          <button id="markSeenBtn" class="ghost small">Mark seen</button>
+        </div>
+        <div class="pane-body" id="shippedBody"></div>
+      </section>
+
+      <!-- Backlog health strip (od_backlog_health — not one of the six sketch
+           questions, same CANONICAL-COUNTERS-01 discipline). -->
+      <section id="paneBacklog" class="pane pane-backlog" aria-label="backlog health">
+        <div class="pane-head">
+          <span class="pane-title">Backlog health</span>
+          <span class="pane-age" data-age-for="backlog">—</span>
+        </div>
+        <div class="pane-body" id="backlogHealthBody"></div>
+      </section>
+    </main>
+
+    <!-- Diagnostics — reconciler/auditor internals ("Diagnostics
+         (reconciler internals, drift detail) live here too", Task 16). NOT
+         schema-validated like /api/asks (server.js's own header comment on
+         /api/diagnostics/drift): this is the diagnostics-tab surface the
+         anti-noise law explicitly scopes OUT of (constraint 1 governs the
+         LANDING payload/DOM only). Loaded once when this tab first opens. -->
+    <section id="diagnosticsSection" class="pane diagnostics-section" aria-label="diagnostics">
+      <div class="pane-head">
+        <span class="pane-title">Diagnostics — auditor + reconciler internals</span>
+      </div>
+      <div class="pane-body" id="diagnosticsBody"></div>
+    </section>
+
+    <!-- Q6 — WHY DID X HAPPEN. On-demand drawer, opened from a session row's
+         "Why" affordance (interaction table, ux-review amendment 8).
+         tabindex="-1" (O.4-fix1 item 4 — keyboard-only FAIL): the drawer is
+         not part of the normal tab order (it's not an input), but MUST be
+         programmatically focusable so app.js's whyDrawer.focus() on open
+         actually moves focus into the role=dialog per WCAG 2.2 §2.4.11 /
+         standard modal-dialog focus-management convention. Without
+         tabindex, .focus() silently no-ops on a plain <div>, which is
+         exactly the defect the acceptance drill's keyboard-only pass
+         caught (focus never left the invoking "Why?" button). -->
+    <div id="whyScrim" class="modal-scrim" hidden></div>
+    <div id="whyDrawer" class="modal-card why-drawer" hidden role="dialog" aria-label="why drawer" aria-modal="true" tabindex="-1">
+      <div class="dm-head">
+        <span id="whyTitle" class="dm-title">why</span>
+        <button id="whyClose" class="ghost dm-close" title="close (Esc)" aria-label="close why drawer">✕</button>
+      </div>
+      <div id="whyBody" class="dm-body"></div>
+    </div>
+  </template>
+
+  <!-- Docs browser (KEPT — the ONE link-resolver backend per ux-review
+       amendment 6: no pane grows its own link handling). GLOBAL — shared by
+       BOTH tabs (asks.js's plan-doc drill-down reuses this same modal), so
+       it stays outside the Harness Health template and is wired immediately
+       at page load, not lazily. -->
   <div id="docScrim" class="modal-scrim" hidden></div>
   <aside id="docsPanel" hidden aria-label="docs browser">
     <div class="dp-head">

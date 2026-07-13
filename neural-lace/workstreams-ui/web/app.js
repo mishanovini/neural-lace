@@ -18,35 +18,62 @@
  * Esc-close, targets >=24px, text contrast >=4.5:1 (see app.css).
  *
  * ask-rooted-workstreams-p1 Task 13 note: the ask-tree landing
- * (`web/asks.js`, `#askTreeSection`) is now the PRIMARY view above this
- * six-pane cockpit and is a fully independent module — it shares only the
- * docs-viewer modal DOM (`docModal`/`docTitle`/`docBody`/`docOpenEditor`,
- * whose close affordances this file already wires: Esc, `docClose`,
- * `docScrim`) so plan-doc links reuse the existing viewer rather than
- * growing a second one (ux-review amendment 6). This file does not yet
- * "become shell/router" in the tab-shell sense the plan describes for
- * Task 13/16 together — Task 16 ("Layout integration + Harness Health
- * demotion") is the task that moves this six-pane grid verbatim into a
- * Harness Health tab and turns this file into the tab router; until then
- * both surfaces render on one page, unchanged in relative order.
+ * (`web/asks.js`, `#askTreeSection`) is the PRIMARY view (`#tabAsksPanel`)
+ * and is a fully independent module — it shares only the docs-viewer modal
+ * DOM (`docModal`/`docTitle`/`docBody`/`docOpenEditor`, whose close
+ * affordances this file wires: Esc, `docClose`, `docScrim`) so plan-doc
+ * links reuse the existing viewer rather than growing a second one
+ * (ux-review amendment 6).
+ *
+ * Task 16 ("Layout integration + Harness Health demotion") turned this file
+ * into the TAB ROUTER: every element below (reconciler badge, interrupt
+ * strip, the six panes, the why-drawer) now lives inside
+ * `<template id="harnessHealthTemplate">` in index.html — a native
+ * <template>'s content is inert (not parsed into the live document, not in
+ * the accessibility tree, not matched by `document.getElementById`) until
+ * `initHarnessHealthTab()` below clones it into `#tabHealthPanel` the FIRST
+ * time the operator opens the Harness Health tab. Every render function in
+ * this file is UNCHANGED from the six-question-cockpit build — only the
+ * element-handle variables' assignment moved from module-load time to
+ * first-tab-activation time (they're declared here, assigned there), and
+ * the bottom "poll loop / SSE / Mark-seen / Refresh" wiring moved inside
+ * that same lazy init so nothing touches a still-template-bound element.
  */
 (function () {
   var $ = function (id) { return document.getElementById(id); };
 
-  // ---- element handles ---------------------------------------------------
-  var reconcilerBadge = $('reconcilerBadge'), reconcilerDisclosureBody = $('reconcilerDisclosureBody'),
-      refreshBtn = $('refreshBtn'), refreshFeedback = $('refreshFeedback'),
-      interruptStrip = $('interruptStrip'),
-      needsMeBody = $('needsMeBody'), statusBody = $('statusBody'),
-      healthBody = $('healthBody'), costsBody = $('costsBody'),
-      shippedBody = $('shippedBody'), backlogBody = $('backlogBody'),
-      lastLookAnchor = $('lastLookAnchor'), markSeenBtn = $('markSeenBtn'),
-      whyScrim = $('whyScrim'), whyDrawer = $('whyDrawer'),
-      whyTitle = $('whyTitle'), whyBody = $('whyBody'), whyClose = $('whyClose'),
+  // ---- global element handles (always present in the live DOM at parse
+  // time — the tab shell + the docs browser, shared by both tabs) --------
+  var tabAsksBtn = $('tabAsksBtn'), tabHealthBtn = $('tabHealthBtn'),
+      tabAsksPanel = $('tabAsksPanel'), tabHealthPanel = $('tabHealthPanel'),
+      harnessHealthTemplate = $('harnessHealthTemplate'),
       docsBtn = $('docsBtn'), docScrim = $('docScrim'), docsPanel = $('docsPanel'),
       docsFilter = $('docsFilter'), docsBody = $('docsBody'), docsClose = $('docsClose'),
       docModal = $('docModal'), docTitle = $('docTitle'), docBody = $('docBody'),
       docOpenEditor = $('docOpenEditor'), docClose = $('docClose');
+
+  // ---- Harness Health tab element handles (Task 16) — declared here,
+  // UNINITIALIZED, so every render function below keeps referencing them by
+  // ordinary closure exactly as the six-question-cockpit build always did.
+  // Assigned once, inside initHarnessHealthTab(), the first time the
+  // operator opens the Harness Health tab (see the bottom of this file).
+  // `backlogHealthBody` is deliberately its OWN name, distinct from
+  // backlog.js's sidebar `#backlogBody` — the six-pane cockpit's own
+  // "Backlog health" strip used the SAME id="backlogBody" as the Task 15
+  // sidebar pane in the pre-Task-16 markup (a real, pre-existing DOM-id
+  // collision: `document.getElementById('backlogBody')` always resolves to
+  // the FIRST match in document order, so this file's own renderBacklog()
+  // was silently racing backlog.js's sidebar pane for the same node).
+  // index.html now gives the six-pane strip a distinct id
+  // (`backlogHealthBody`) precisely so cloning it into the Harness Health
+  // tab can never again collide with the sidebar's `#backlogBody`.
+  var reconcilerBadge, reconcilerDisclosureBody,
+      refreshBtn, refreshFeedback,
+      interruptStrip,
+      needsMeBody, statusBody, healthBody, costsBody, shippedBody, backlogHealthBody,
+      lastLookAnchor, markSeenBtn,
+      whyScrim, whyDrawer, whyTitle, whyBody, whyClose,
+      diagnosticsBody;
 
   // ============================================================
   // Link resolver (ux-review amendment 6) — the ONE component Q2/Q3/Q6 use.
@@ -516,19 +543,19 @@
   // ---- backlog health strip ----
   function renderBacklog(resp) {
     setAge('backlog', resp.derived_at, resp.rc !== 0 && !isLoading(resp));
-    if (isLoading(resp)) { renderLoading(backlogBody); return; }
-    if (resp.rc !== 0 && !(resp.data && 'open_total' in (resp.data || {}))) { renderError(backlogBody, resp); return; }
+    if (isLoading(resp)) { renderLoading(backlogHealthBody); return; }
+    if (resp.rc !== 0 && !(resp.data && 'open_total' in (resp.data || {}))) { renderError(backlogHealthBody, resp); return; }
     var d = resp.data || {};
-    backlogBody.innerHTML = '';
+    backlogHealthBody.innerHTML = '';
     var row = document.createElement('div');
     row.className = 'backlog-row';
     row.textContent = (d.open_total || 0) + ' open row(s), ' + (d.terminal_total || 0) + ' terminal (oracle: od_backlog_health)';
-    backlogBody.appendChild(row);
+    backlogHealthBody.appendChild(row);
     if (d.priority) {
       var p = document.createElement('div');
       p.className = 'backlog-row';
       p.textContent = 'priority: high=' + d.priority.high + ' medium=' + d.priority.medium + ' low=' + d.priority.low;
-      backlogBody.appendChild(p);
+      backlogHealthBody.appendChild(p);
     }
   }
 
@@ -699,8 +726,9 @@
     whyDrawer.hidden = true;
     if (whyLastFocused && whyLastFocused.focus) whyLastFocused.focus();
   }
-  whyClose.addEventListener('click', closeWhyDrawer);
-  whyScrim.addEventListener('click', closeWhyDrawer);
+  // whyClose/whyScrim listeners are wired inside initHarnessHealthTab()
+  // below (whyClose/whyScrim don't exist until the Harness Health template
+  // is cloned in) — see that function.
 
   // Focus trap (O.4-fix1 item 4 — "trap sensibly", standard modal-dialog
   // convention / WCAG 2.4.11): while the why-drawer is open, Tab from the
@@ -713,14 +741,18 @@
       container.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
     ).filter(function (el) { return !el.disabled && el.offsetParent !== null; });
   }
+  // whyDrawer is null until the Harness Health tab's first activation
+  // (Task 16 lazy-template convention — see the header comment above) —
+  // every reference below is guarded so Esc/Tab keep working globally
+  // (docModal/docsPanel are always present) without throwing before then.
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
-      if (!whyDrawer.hidden) closeWhyDrawer();
+      if (whyDrawer && !whyDrawer.hidden) closeWhyDrawer();
       else if (!docModal.hidden) closeDocModal();
       else if (!docsPanel.hidden) closeDocsPanel();
       return;
     }
-    if (e.key === 'Tab' && !whyDrawer.hidden) {
+    if (e.key === 'Tab' && whyDrawer && !whyDrawer.hidden) {
       var focusables = focusableIn(whyDrawer);
       if (focusables.length === 0) return;
       var first = focusables[0], last = focusables[focusables.length - 1];
@@ -745,7 +777,9 @@
   function setStoredLastLook(iso) {
     try { localStorage.setItem(LAST_LOOK_KEY, iso); } catch (_) {}
   }
-  markSeenBtn.addEventListener('click', function () {
+  // markSeenBtn's click listener is wired inside initHarnessHealthTab()
+  // below (the button doesn't exist until the template is cloned in).
+  function onMarkSeenClick() {
     var now = new Date().toISOString();
     setStoredLastLook(now);
     lastLookAnchor.dataset.since = now;
@@ -753,7 +787,7 @@
     markSeenBtn.textContent = 'Seen ✓';
     setTimeout(function () { markSeenBtn.textContent = 'Mark seen'; }, 1200);
     fetchPane('shipped', '?since=' + encodeURIComponent(now)).then(renderShipped);
-  });
+  }
 
   // ============================================================
   // Docs browser (kept — link-resolver backend)
@@ -830,7 +864,8 @@
         refreshBtn.disabled = false;
       });
   }
-  refreshBtn.addEventListener('click', forceRefresh);
+  // refreshBtn's click listener is wired inside initHarnessHealthTab()
+  // below (the button doesn't exist until the template is cloned in).
 
   // ============================================================
   // Poll loop — one pass fetches all six panes + the reconciler, renders
@@ -853,29 +888,146 @@
     ]).then(renderInterruptStrip);
   }
   function renderLoadingIfEmpty() {
-    [statusBody, needsMeBody, shippedBody, healthBody, costsBody, backlogBody].forEach(function (el) {
+    [statusBody, needsMeBody, shippedBody, healthBody, costsBody, backlogHealthBody].forEach(function (el) {
       if (!el.hasChildNodes()) renderLoading(el);
     });
   }
 
-  // ---- init ----
-  var storedSince = getStoredLastLook();
-  if (storedSince) {
-    lastLookAnchor.dataset.since = storedSince;
-  } else {
-    lastLookAnchor.dataset.since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  // ============================================================
+  // Diagnostics — auditor + reconciler internals (Task 16: "Diagnostics
+  // (reconciler internals, drift detail) live here too"). Deliberately NOT
+  // schema-validated like /api/asks (server.js's own header comment on
+  // /api/diagnostics/drift: this is the diagnostics-tab surface the
+  // anti-noise law explicitly scopes OUT of — constraint 1 governs the
+  // LANDING payload/DOM only). Fetched once, when the Harness Health tab
+  // first opens — not polled (this is background-auditor internals, not a
+  // trust-bearing operator surface that needs live freshness).
+  // ============================================================
+  function renderDiagnostics(d) {
+    diagnosticsBody.innerHTML = '';
+    if (!d || d.ok === false) {
+      var err = document.createElement('div');
+      err.className = 'pane-error';
+      err.setAttribute('role', 'alert');
+      err.textContent = 'Diagnostics unavailable.';
+      diagnosticsBody.appendChild(err);
+      return;
+    }
+    var cycleRow = document.createElement('div');
+    cycleRow.className = 'diag-row';
+    cycleRow.textContent = 'cycle ' + (d.cycle_count || 0) + ' · last run ' + formatAge(d.last_cycle_ts) +
+      ' · took ' + (d.last_cycle_duration_ms === null || d.last_cycle_duration_ms === undefined ? 'n/a' : d.last_cycle_duration_ms + 'ms') +
+      ' · cadence ' + Math.round((d.cadence_ms || 0) / 1000) + 's';
+    diagnosticsBody.appendChild(cycleRow);
+
+    var healedCount = (d.healed_recent || []).length;
+    var healedRow = document.createElement('div');
+    healedRow.className = 'diag-row diag-healed';
+    healedRow.textContent = healedCount + ' healed backfill(s) recorded'; // text + color, never color-only
+    diagnosticsBody.appendChild(healedRow);
+
+    var errCount = (d.backfill_errors || []).length;
+    var errRow = document.createElement('div');
+    errRow.className = 'diag-row' + (errCount > 0 ? ' diag-errors' : '');
+    errRow.textContent = errCount + ' backfill error(s)'; // text + color, never color-only
+    diagnosticsBody.appendChild(errRow);
+
+    var cr = d.count_reconciliation;
+    if (cr) {
+      var crRow = document.createElement('div');
+      crRow.className = 'diag-row' + (cr.mismatch ? ' diag-errors' : '');
+      crRow.textContent = 'waiting-on-you count reconciliation: ledger=' +
+        (cr.ledger_open_count === null || cr.ledger_open_count === undefined ? 'n/a' : cr.ledger_open_count) +
+        ' rendered=' + cr.rendered_waiting_count + ' (' + (cr.mismatch ? 'MISMATCH' : 'match') + ')';
+      diagnosticsBody.appendChild(crRow);
+    }
+
+    var badgesByAsk = d.badges_by_ask || {};
+    var askCountWithBadges = Object.keys(badgesByAsk).filter(function (k) { return (badgesByAsk[k] || []).length > 0; }).length;
+    var badgeRow = document.createElement('div');
+    badgeRow.className = 'diag-row';
+    badgeRow.textContent = askCountWithBadges + ' ask(s) currently carrying a drift badge';
+    diagnosticsBody.appendChild(badgeRow);
   }
-  lastLookAnchor.textContent = 'last look: ' + formatAge(lastLookAnchor.dataset.since);
 
-  pollAll();
-  setInterval(pollAll, REFRESH_INTERVAL_MS + 2000); // small offset so this poll lands just after the server's own tick
+  function loadDiagnostics() {
+    diagnosticsBody.innerHTML = '<div class="pane-loading" aria-busy="true">loading diagnostics…</div>';
+    fetch('/api/diagnostics/drift')
+      .then(function (r) { return r.json(); })
+      .then(renderDiagnostics)
+      .catch(function (err) {
+        diagnosticsBody.innerHTML = '';
+        var e = document.createElement('div');
+        e.className = 'pane-error';
+        e.setAttribute('role', 'alert');
+        e.textContent = 'Could not load diagnostics: ' + String(err);
+        diagnosticsBody.appendChild(e);
+      });
+  }
 
-  var es = new EventSource('/api/events');
-  es.addEventListener('refresh', function () { pollAll(); });
-  es.onerror = function () { /* SSE reconnects automatically; polling loop is the fallback truth source regardless */ };
+  // ============================================================
+  // Tab router (Task 16 "Layout integration + Harness Health demotion").
+  // Asks is the default landing tab; Harness Health is lazily assembled the
+  // FIRST time it's opened — cloning <template id="harnessHealthTemplate">
+  // (the six wave-O panes + reconciler + interrupt strip + why-drawer +
+  // diagnostics, moved VERBATIM) into #tabHealthPanel, resolving every
+  // element handle declared above, wiring the listeners that reference
+  // them, and starting the poll loop / SSE subscription — none of which can
+  // run before the template exists in the live document. No Team tab: P1
+  // ships no nav entry and no markup for it (review round 1).
+  // ============================================================
+  var harnessHealthInitialized = false;
+  function initHarnessHealthTab() {
+    if (harnessHealthInitialized) return;
+    harnessHealthInitialized = true;
+
+    tabHealthPanel.appendChild(harnessHealthTemplate.content.cloneNode(true));
+
+    reconcilerBadge = $('reconcilerBadge'); reconcilerDisclosureBody = $('reconcilerDisclosureBody');
+    refreshBtn = $('refreshBtn'); refreshFeedback = $('refreshFeedback');
+    interruptStrip = $('interruptStrip');
+    needsMeBody = $('needsMeBody'); statusBody = $('statusBody');
+    healthBody = $('healthBody'); costsBody = $('costsBody');
+    shippedBody = $('shippedBody'); backlogHealthBody = $('backlogHealthBody');
+    lastLookAnchor = $('lastLookAnchor'); markSeenBtn = $('markSeenBtn');
+    whyScrim = $('whyScrim'); whyDrawer = $('whyDrawer');
+    whyTitle = $('whyTitle'); whyBody = $('whyBody'); whyClose = $('whyClose');
+    diagnosticsBody = $('diagnosticsBody');
+
+    whyClose.addEventListener('click', closeWhyDrawer);
+    whyScrim.addEventListener('click', closeWhyDrawer);
+    markSeenBtn.addEventListener('click', onMarkSeenClick);
+    refreshBtn.addEventListener('click', forceRefresh);
+
+    var storedSince = getStoredLastLook();
+    lastLookAnchor.dataset.since = storedSince || new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    lastLookAnchor.textContent = 'last look: ' + formatAge(lastLookAnchor.dataset.since);
+
+    pollAll();
+    setInterval(pollAll, REFRESH_INTERVAL_MS + 2000); // small offset so this poll lands just after the server's own tick
+
+    var es = new EventSource('/api/events');
+    es.addEventListener('refresh', function () { pollAll(); });
+    es.onerror = function () { /* SSE reconnects automatically; polling loop is the fallback truth source regardless */ };
+
+    loadDiagnostics();
+  }
+
+  function activateTab(name) {
+    var isAsks = name === 'asks';
+    tabAsksPanel.hidden = !isAsks;
+    tabHealthPanel.hidden = isAsks;
+    tabAsksBtn.setAttribute('aria-selected', String(isAsks));
+    tabHealthBtn.setAttribute('aria-selected', String(!isAsks));
+    if (!isAsks) initHarnessHealthTab();
+  }
+  tabAsksBtn.addEventListener('click', function () { activateTab('asks'); });
+  tabHealthBtn.addEventListener('click', function () { activateTab('health'); });
+  activateTab('asks'); // Asks is the landing tab (User-facing Outcome: "opening / shows asks grouped by project")
 
   // ui_build auto-reload (kept from the old server): poll /api/health,
-  // reload if the served web assets changed under us.
+  // reload if the served web assets changed under us. Global — unrelated to
+  // which tab is active.
   var bootUiBuild = null;
   function pollHealth() {
     fetch('/api/health').then(function (r) { return r.json(); }).then(function (j) {

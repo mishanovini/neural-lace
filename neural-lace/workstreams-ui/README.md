@@ -95,9 +95,9 @@ an absolute link to the raw NEEDS-YOU.md file, and the source session id
 
 The PRIMARY view when you open `/` (User-facing Outcome: "the operator can
 cold-start ANY active ask ... in under 60 seconds"). Built by `web/asks.js`
-over the Task 11 read surface above; the six-question cockpit still renders
-below it on this page (Task 16 moves it verbatim into a Harness Health tab —
-not done yet).
+over the Task 11 read surface above. The six-question cockpit is demoted to
+a **Harness Health** tab (Task 16 — see below); it is never part of the
+landing DOM.
 
 - **Project sections** (collapsible, expanded by default) group ask cards
   by `config/projects.js` project, newest activity first.
@@ -137,15 +137,39 @@ not done yet).
   fallback ... is IN"); a verified deep link is a future increment, not
   a false affordance shipped today.
 
+## Tab shell + Harness Health demotion (ask-rooted-workstreams-p1, Task 16)
+
+`web/index.html` is a two-tab shell: **Asks** (the landing tab, default) and
+**Harness Health**. The six wave-O panes + the reconciler badge + the
+interrupt-priority strip + the why-drawer + a new **Diagnostics** section
+(auditor cadence/cycle stats, healed-backfill/backfill-error counts, the
+waiting-on-you count-reconciliation result, and the drift-badge count —
+`GET /api/diagnostics/drift`) all moved VERBATIM into
+`<template id="harnessHealthTemplate">`. A native `<template>`'s content is
+inert — not parsed into the live document, not in the accessibility tree,
+not matched by `document.getElementById` — until `app.js`'s
+`initHarnessHealthTab()` clones it into `#tabHealthPanel` the first time the
+operator opens that tab, so the landing DOM carries ZERO pane-family
+identifiers (anti-noise law, mechanically checked in `cockpit.selftest.js`).
+No Team tab ships in P1 (review round 1 — no empty shell surfaces): there is
+no nav entry and no markup for it anywhere.
+
+A pre-existing DOM-id collision was fixed in passing: the six-pane cockpit's
+own "Backlog health" strip previously shared `id="backlogBody"` with the
+Task 15 sidebar's Backlog pane (`document.getElementById` always resolves
+the first match in document order, so the two features were silently
+racing for the same node). The six-pane strip now has its own id
+(`backlogHealthBody`).
+
 ## Layout
 
 | Path | Contents |
 |---|---|
-| `server/server.js` | Node HTTP server: static asset serving, the six `/api/pane/*` endpoints, `/api/reconciler`, `/api/refresh`, SSE push, the KEPT docs browser (`/api/docs`, `/api/doc`, `/api/doc/open`), and the ask-rooted-workstreams read + lifecycle-write surface (`/api/asks`, `/api/ask/<id>`, `/api/ask/<id>/lifecycle` — see above). No legacy write endpoint — `POST /api/event` is RETIRED. |
+| `server/server.js` | Node HTTP server: static asset serving, the six `/api/pane/*` endpoints, `/api/reconciler`, `/api/diagnostics/drift`, `/api/refresh`, SSE push, the KEPT docs browser (`/api/docs`, `/api/doc`, `/api/doc/open`), and the ask-rooted-workstreams read + lifecycle-write surface (`/api/asks`, `/api/ask/<id>`, `/api/ask/<id>/lifecycle` — see above). No legacy write endpoint — `POST /api/event` is RETIRED. |
 | `server/derive-cache.js` | The server-side derived-JSON cache: shells `nl <sub> --json` (NL_BIN overridable), batch-refreshes every 30s, keeps last-known-good data alongside the latest rc/stderr for honest error rendering. |
 | `server/reconciler.js` | The divergence reconciler (specs-o §O.4 deliverable 3): compares any REMAINING legacy tree-state session/branch claims against derived truth and flags mismatches — comparison-only, never a data source for a pane. |
 | `server/payload-schema.js` | The ask-tree payload allowlist (Task 11): anti-noise + absolute-href enforcement, at serve time and in the self-test. |
-| `web/` | `index.html`, `app.js`, `app.css` (the six-question cockpit, still present below the landing), `web/asks.js` (the ask-tree landing, now the primary view — see above). `app.js` polls the pane endpoints and renders; ONE link-resolver component (`resolveLink`) backs every pane's links; `asks.js` is a fully independent module sharing only the docs-viewer modal DOM with `app.js`. |
+| `web/` | `index.html` (the tab shell — Asks landing + Harness Health template, see above), `app.js` (the ask-tree's shared docs-viewer wiring, global tab router, and the six-pane/reconciler/diagnostics render logic — unchanged from the six-question-cockpit build, just lazily bound), `app.css`, `web/asks.js`/`web/todo.js`/`web/backlog.js` (the ask-tree landing + sidebar panes). ONE link-resolver component (`resolveLink`) backs every Harness Health pane's links; `asks.js`/`todo.js`/`backlog.js` are fully independent modules sharing only the docs-viewer modal DOM with `app.js`. |
 | `state/` | The (mostly legacy) event-sourced state library. Still used ONLY by `reconciler.js`'s comparison read while any tree-state consumer remains elsewhere in the harness; no longer the cockpit's data source. |
 | `scripts/` | Launcher/autostart PowerShell scripts. The Node state-population scripts here (`add-pending-items.js`, `backfill-from-sessions.js`, etc.) targeted the retired write path and are no longer relevant to this app's day-to-day operation. |
 | `config/` | Runtime configuration (topology/project-root mapping) — still used by the docs browser and the ask-tree's project grouping. |

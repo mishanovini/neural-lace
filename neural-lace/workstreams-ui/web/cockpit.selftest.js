@@ -18,6 +18,8 @@ const css = fs.readFileSync(path.join(D, 'app.css'), 'utf8');
 const html = fs.readFileSync(path.join(D, 'index.html'), 'utf8');
 const js = fs.readFileSync(path.join(D, 'app.js'), 'utf8');
 const asksJs = fs.readFileSync(path.join(D, 'asks.js'), 'utf8');
+const todoJs = fs.readFileSync(path.join(D, 'todo.js'), 'utf8');
+const backlogJs = fs.readFileSync(path.join(D, 'backlog.js'), 'utf8');
 
 let pass = 0, fail = 0;
 function ok(name, cond) {
@@ -317,6 +319,110 @@ ok('T13-30 every flex-styled element asks.js toggles via .hidden has an explicit
   /\.ask-lifecycle-actions\[hidden\][^{]*\{[^}]*display:\s*none/.test(C) &&
   /\.ask-merge-chooser\[hidden\][^{]*\{[^}]*display:\s*none/.test(C) &&
   /\.ask-feedback-row\[hidden\][^{]*\{[^}]*display:\s*none/.test(C));
+
+// ============================================================
+// ask-rooted-workstreams-p1 Task 16 — "Layout integration + Harness Health
+// demotion" (structural self-test extension, constraint 9). The six
+// wave-O panes + reconciler + interrupt strip + why-drawer are quarantined
+// inside <template id="harnessHealthTemplate"> in index.html — a native
+// <template>'s content is inert (not parsed into the live document, not in
+// the accessibility tree, not matched by document.getElementById) until
+// app.js's initHarnessHealthTab() explicitly clones it in, the first time
+// the operator opens the Harness Health tab. This section proves the
+// quarantine holds at the source level (a), then re-verifies the
+// color-only-signal and real-button invariants (b, c) across the FULLY
+// ASSEMBLED landing surface — the point where every module (asks.js,
+// todo.js, backlog.js, the new tab shell) comes together for the first
+// time.
+// ============================================================
+
+// --- (a) anti-noise landing-DOM check: every pane-family id appears ONLY
+// between the <template id="harnessHealthTemplate"> open/close tags, never
+// in the landing (#tabAsksPanel) portion of the document. -----------------
+const templateOpenTag = '<template id="harnessHealthTemplate">';
+const templateOpenIdx = html.indexOf(templateOpenTag);
+const templateCloseIdx = html.indexOf('</template>');
+ok('T16-1 <template id="harnessHealthTemplate"> exists and wraps a closing </template>',
+  templateOpenIdx !== -1 && templateCloseIdx !== -1 && templateCloseIdx > templateOpenIdx);
+
+const PANE_FAMILY_IDS = ['paneNeedsMe', 'paneStatus', 'paneHealth', 'paneCosts', 'paneShipped', 'paneBacklog',
+  'interruptStrip', 'reconcilerBadge', 'reconcilerDetails', 'whyDrawer', 'whyScrim', 'diagnosticsBody'];
+const outsideTemplate = templateOpenIdx === -1 ? html
+  : html.slice(0, templateOpenIdx) + html.slice(templateCloseIdx + '</template>'.length);
+const paneLeaks = PANE_FAMILY_IDS.filter((id) => outsideTemplate.indexOf('id="' + id + '"') !== -1);
+ok('T16-2 landing DOM (everything outside the Harness Health <template>) contains ZERO pane-family identifiers (anti-noise, mechanized)',
+  paneLeaks.length === 0, paneLeaks.join(', '));
+
+// every one of those ids DOES still exist somewhere (R1/R3/R4/R7 already
+// assert this positively) — T16-2 additionally proves their ONLY home is
+// inside the template, i.e. quarantined, not merely present twice.
+ok('T16-2b every pane-family id is present inside the template (moved, not deleted)',
+  PANE_FAMILY_IDS.every((id) => html.indexOf('id="' + id + '"') !== -1));
+
+// --- Harness Health tab wire check: index.html tab shell -> app.js router
+// (the plan's own Wire checks block). ---------------------------------
+ok('T16-3 index.html defines the tab nav (#tabAsksBtn / #tabHealthBtn) driving app.js\'s router',
+  /id="tabAsksBtn"/.test(html) && /id="tabHealthBtn"/.test(html) &&
+  /id="tabAsksPanel"/.test(html) && /id="tabHealthPanel"/.test(html));
+ok('T16-4 app.js implements initHarnessHealthTab() which clones the template and activateTab() which drives the tab nav',
+  /function initHarnessHealthTab/.test(js) && /function activateTab/.test(js) &&
+  /harnessHealthTemplate\.content\.cloneNode\(true\)/.test(js));
+ok('T16-5 Asks is the default landing tab (activateTab(\'asks\') called at load, #tabHealthPanel starts hidden)',
+  /activateTab\('asks'\)/.test(js) && /id="tabHealthPanel"[^>]*\bhidden\b/.test(html));
+
+// --- no Team tab anywhere in P1 (review round 1 — no empty shell surfaces,
+// binding constraint carried through Task 16's own assembly). -------------
+ok('T16-6 no Team tab nav entry or markup exists anywhere in the assembled shell',
+  !/Team/.test(html.replace(/<!--[\s\S]*?-->/g, '')) && !/tabTeamBtn|tabTeamPanel/.test(html) && !/tabTeamBtn|tabTeamPanel/.test(js));
+
+// --- (b) COLOR-ONLY-SIGNAL check (WCAG 1.4.1), across the FULLY ASSEMBLED
+// surface — every color-bearing state/badge class this app defines pairs
+// its color rule with a textContent assignment in the module that renders
+// it (aggregates the individual per-task precedents — R16/R24b/R25b/
+// T13-24-26 — into one cross-cutting check, plus the NEW tab-active
+// indicator and diagnostics counts Task 16 itself introduces). -----------
+const badgeInvariants = [
+  ['state-waiting-on-me', js, /chip\.textContent = s\.state/],
+  ['doctor-red', js, /chip\.textContent = doctor\.verdict/],
+  ['health-gate-flag', js, /flag\.textContent = 'waiver-dominant'/],
+  ['costs-status-stale', js, /statusTd\.textContent = st/],
+  ['ask-badge', asksJsNoComments, /sum\.textContent = String\(label\)/],
+  ['ask-task-status', asksJsNoComments, /chip\.textContent = TASK_STATUS_LABEL\[status\]/],
+  ['backlog-badge', backlogJs, /badge\.textContent = row\.disposition_word/],
+];
+const badgeFailures = badgeInvariants.filter(([cls, src, textRe]) => !(new RegExp('\\.' + cls + '\\b').test(C)) || !textRe.test(src));
+ok('T16-7 every color-bearing state/badge class across the assembled surface (session/doctor/gate/costs/ask/task/backlog) also sets visible text, never color-only (WCAG 1.4.1)',
+  badgeFailures.length === 0, badgeFailures.map((f) => f[0]).join(', '));
+ok('T16-8 the tab-active indicator carries a PROGRAMMATIC state (aria-selected) in addition to any visual underline, never color-only',
+  /setAttribute\('aria-selected'/.test(js) && /aria-selected="true"/.test(html));
+ok('T16-9 diagnostics healed/error counts render as visible TEXT, never a bare color dot',
+  /diag-healed/.test(js) && /diag-errors/.test(js) && /healedRow\.textContent/.test(js) && /errRow\.textContent/.test(js));
+
+// --- (c) REAL-BUTTON check — every interactive control across the
+// assembled landing (index.html's tab nav + todo.js + backlog.js; asks.js
+// already covered by T13-22/23) is a real <button>/<a>, never a clickable
+// <div>. ------------------------------------------------------------------
+ok('T16-10 the tab-nav controls are real <button> elements, never clickable divs',
+  /<button[^>]+id="tabAsksBtn"/.test(html) && /<button[^>]+id="tabHealthBtn"/.test(html));
+ok('T16-11 todo.js never wires a click handler onto a bare div (real buttons/inputs only)',
+  !/[Dd]iv\.addEventListener\('click'/.test(todoJs));
+ok('T16-12 backlog.js never wires a click handler onto a bare div (real buttons only)',
+  !/[Dd]iv\.addEventListener\('click'/.test(backlogJs));
+ok('T16-13 todo.js and backlog.js build their interactive controls with createElement(\'button\'), not divs',
+  (todoJs.match(/createElement\('button'\)/g) || []).length >= 3 &&
+  (backlogJs.match(/createElement\('button'\)/g) || []).length >= 3);
+
+// --- DOM-id collision regression lock (REAL bug found during this task's
+// build: the pre-Task-16 markup gave the six-pane cockpit's "Backlog
+// health" strip the SAME id="backlogBody" as the Task 15 sidebar Backlog
+// pane — document.getElementById always resolves to the first match in
+// document order, so app.js's renderBacklog() was silently racing
+// backlog.js's sidebar pane for the same node. index.html now gives the
+// six-pane strip its own id (backlogHealthBody); this locks the fix. -----
+ok('T16-14 the six-pane cockpit\'s backlog-health strip has its OWN id (backlogHealthBody), distinct from the Task 15 sidebar\'s #backlogBody',
+  /id="backlogHealthBody"/.test(html) && (html.match(/id="backlogBody"/g) || []).length === 1);
+ok('T16-14b app.js\'s renderBacklog() targets backlogHealthBody, never the sidebar\'s backlogBody id',
+  /backlogHealthBody/.test(js) && !/\$\('backlogBody'\)/.test(js));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

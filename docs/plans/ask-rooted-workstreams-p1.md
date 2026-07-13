@@ -634,7 +634,7 @@ Modify:
 - `adapters/claude-code/hooks/plan-reviewer.sh` — WARN on missing ask-id (never block)
 - `neural-lace/workstreams-ui/server/server.js` — new routes + auditor mount
 - `neural-lace/workstreams-ui/server/server.selftest.js` — schema/negative fixtures + new-route coverage
-- `neural-lace/workstreams-ui/web/index.html`, `web/app.js`, `web/app.css` — shell/router/layout
+- `neural-lace/workstreams-ui/web/index.html`, `neural-lace/workstreams-ui/web/app.js`, `neural-lace/workstreams-ui/web/app.css` — shell/router/layout
 - `neural-lace/workstreams-ui/web/cockpit.selftest.js` — landing DOM anti-noise/absolute-href assertions
 - `neural-lace/workstreams-ui/README.md` — IA + API docs
 - `docs/backlog.md` — header line re UI write path (+ PROGRESS-FIELD-01 cross-ref at completion)
