@@ -219,7 +219,10 @@ Modify:
 
 ## In-flight scope updates
 
-(no in-flight changes yet)
+- 2026-07-12 (build, Tasks 2+3): mirror discovery keys on FETCH urls, not
+  push urls — a deliberate divergence from the reused F.6
+  `_discover_mirror_remote` pattern (see Decisions Log D5). Same files, same
+  scope; commit `5b00692`.
 
 ## Assumptions
 
@@ -383,6 +386,23 @@ build step).
   stale-ACTIVE sweep and defers the ACTIVE-plan header enforcement to the
   moment the operator answers. Precedent: the observability program plan
   (DRAFT, frozen) uses the same greenlight-gated posture.
+- **D5 (2026-07-12, build-time, decide-and-go §8): mirror discovery compares
+  FETCH urls, not push urls.** Caught preparing Task 7's live run, before
+  any real invocation: this machine's checkouts configure `origin` as a
+  DUAL-PUSH remote (`remote.origin.pushurl` twice — work-org URL first,
+  personal URL second), so origin's first push URL EQUALS the mirror
+  remote's and the reused F.6 push-URL `_discover_mirror_remote` pattern
+  finds NO mirror — the whole mechanism silently no-ops on the real repo.
+  Since what the corrector compares and corrects are the remotes' FETCH
+  identities (`origin/master` vs `<mirror>/master` tracking refs), fetch
+  URLs are the honest discovery key; the dedicated clone additionally
+  enforces a single-push invariant (`--unset-all remote.<name>.pushurl`) so
+  a push inside the clone targets exactly one repo. Pinned by corrector
+  self-test T11 (reproduces the real dual-pushurl topology; reverting to
+  push-URL discovery fails it) and the hardened hook fixture (T9-T14).
+  `sync-pt-to-personal.sh` shares the latent pattern but is Scope OUT —
+  filed on the machine-wide ledger via nl-issue.sh. Reversible: one-line
+  discovery-key change. Commit `5b00692`.
 
 ## Pre-Submission Audit
 
