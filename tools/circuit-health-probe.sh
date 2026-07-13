@@ -60,8 +60,15 @@ ROUTES=(
   "GET|/login|200|15|login-page"
   "GET|/signup|200,302,307|15|signup-page"
 
+  # The auth framework's OWN session-status endpoint is NOT middleware-gated
+  # like the routes below: an unauthenticated caller gets a STATUS CODE (401,
+  # or 200 with a null session body), never an HTML login redirect — a
+  # redirect would be wrong for a programmatic session check. The original
+  # 307,302 expectation over-generalized the "auth API -> redirect" rule to
+  # this special endpoint (2026-07-13: probe flagged 401 three ticks running;
+  # investigated — benign, expectation corrected).
+  "GET|/api/auth/session|200,401|15|auth-session"
   # Auth-required API routes (expect 307 redirect to /login)
-  "GET|/api/auth/session|307,302|15|auth-session"
   "GET|/api/booking?org_id=00000000-0000-0000-0000-000000000000|307,302|15|booking"
   "GET|/api/campaigns?org_id=00000000-0000-0000-0000-000000000000|307,302|15|campaigns"
   "GET|/api/reps?org_id=00000000-0000-0000-0000-000000000000|307,302|15|reps"
