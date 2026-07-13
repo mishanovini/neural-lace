@@ -222,6 +222,28 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   flex-direction: column;
   gap: 12px;
 }
+/* BUGFIX (Task 18 runtime-acceptance fix-forward, 2026-07-13): .pane has
+   `overflow: hidden` (below, ~L577+) for its border-radius clipping, which
+   per the flexbox spec makes a flex item's AUTOMATIC MINIMUM SIZE resolve
+   to 0 (the auto-min-size content-based floor only applies when overflow
+   is `visible`). Combined with the default `flex-shrink: 1`, the real
+   Backlog pane's content (dozens of open rows, easily 1000s of px tall)
+   was enough to shrink #todoSection down to its ~49px header-only height
+   whenever the sidebar's own max-height was exceeded — .todo-list and the
+   add-to-do form then rendered BELOW that shrunk box's clipped bottom,
+   invisible and unreachable by any scroll (the sidebar's own overflow-y:
+   auto never engaged, because flexbox had already made everything "fit"
+   by shrinking the pane instead of overflowing it). `flex-shrink: 0` on
+   both direct pane children removes the shrink pressure entirely: each
+   pane always renders at its own natural (unclipped) content height, and
+   if the two together exceed the sidebar's max-height, THIS container's
+   existing overflow-y: auto is what scrolls to reach the rest — never a
+   pane's own `overflow: hidden` silently eating content. My To-Do is
+   first in source/flex order, so it renders fully visible from the top
+   of the sidebar with zero scrolling; Backlog (collapsed below it, per
+   the binding ux-designer round-1 ruling) is reached via that same
+   sidebar scroll when its real volume runs long. */
+.sidebar > .pane { flex-shrink: 0; }
 @media (max-width: 1200px) {
   .ws-layout { flex-direction: column; }
   .sidebar { position: static; max-height: none; width: 100%; flex: none; }
