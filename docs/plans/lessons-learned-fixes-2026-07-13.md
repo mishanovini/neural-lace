@@ -80,7 +80,7 @@ The deliverable outcome is each artifact's `--self-test` passing and `harness-do
 - [ ] 3. Fix stale `~/.claude/rules/{diagnosis,claims}.md` cross-refs (now under `doctrine/`) in FM-029 (`docs/failure-modes.md`) and `docs/decisions/035-diagnostic-first-protocol.md` — Verification: mechanical — Docs impact: corrects two doc cross-references post ADR-058 consolidation.
 - [ ] 4. Add a pure-bash substring pre-filter to `scope-enforcement-gate.sh` (guard `*commit*`) and `plan-deletion-protection.sh` (guard `*rm*|*mv*|*clean*|*stash*|*checkout*|*restore*|*reset*`), placed after the `--self-test` capture and before the first `jq`/`sed` spawn; re-export `CLAUDE_TOOL_INPUT` so the existing input-load path is unaffected — Verification: mechanical — Docs impact: none — behavior-preserving perf change, documented via in-file comment.
 - [ ] 5. Create `adapters/claude-code/hooks/find-scan-warn.sh` (PreToolUse/Bash, always exit 0, warns only on broad `find /` / `find ~` / `find $HOME` roots, never scoped finds), wire it in `settings.json.template`, register in `manifest.json`, `chmod +x` — Verification: mechanical — Docs impact: adds a `manifest.json` hook entry.
-- [ ] 6. Create `adapters/claude-code/hooks/lib/sessionstart-singleflight.sh` (mkdir-based `ss_singleflight <name> <ttl>`, fail-open on error, stale-lock reclaim by mtime) with a racing-N-processes `--self-test`; gate `session-start-auto-install.sh` and `session-start-digest.sh` main bodies (skip-and-exit-0 when another session holds the lock); register the lib in `manifest.json` — Verification: mechanical — Docs impact: adds a `manifest.json` lib entry.
+- [ ] 6. Create `adapters/claude-code/hooks/lib/sessionstart-singleflight.sh` (mkdir-based `ss_singleflight <name> <ttl>` ttl-debounce, fail-open on error, stale-stamp reclaim) with a `--self-test`; gate `session-start-auto-install.sh` main body (skip-and-return-0 when another session synced within the window); inventory the lib in `manifest.json`. Digest is intentionally NOT gated — see Decisions Log — Verification: mechanical — Docs impact: adds the lib to the auto-install `manifest.json` entry.
 - [ ] 7. Route the two behavior-touching changes (Task 4 pre-filters, Task 6 single-flight lock) through the `harness-reviewer` agent; address any Critical/Major findings before merge — Verification: mechanical — Docs impact: none — review artifact captured in evidence.
 - [ ] 8. File deferred backlog rows `PRETOOLUSE-DISPATCHER-01` (rec 4) and `HOOK-SHIM-RETIRE-01` (rec 3) with deferral rationale; annotate `SESSIONSTART-SINGLEFLIGHT-01` (lock part landed here; Defender part = shipped helper) and mark recs 5/6 resolved in `docs/backlog.md` — Verification: mechanical — Docs impact: edits `docs/backlog.md` (Lesson 3 §8 bookkeeping reconciliation).
 
@@ -94,9 +94,9 @@ The deliverable outcome is each artifact's `--self-test` passing and `harness-do
 - `adapters/claude-code/hooks/find-scan-warn.sh` — Create (non-blocking find-scan warn hook).
 - `adapters/claude-code/settings.json.template` — Modify (wire find-scan-warn).
 - `adapters/claude-code/hooks/lib/sessionstart-singleflight.sh` — Create (mkdir-lock lib).
-- `adapters/claude-code/hooks/session-start-auto-install.sh` — Modify (gate main body with lock).
-- `adapters/claude-code/hooks/session-start-digest.sh` — Modify (gate main body with lock).
-- `adapters/claude-code/hooks/harness-doctor.sh` — Modify (only if the SessionStart --quick invocation is gated; else untouched).
+- `adapters/claude-code/hooks/session-start-auto-install.sh` — Modify (gate main body with the debounce; add `SSF_DISABLE=1` to its self-test harness).
+- `adapters/claude-code/hooks/session-start-digest.sh` — NOT modified (digest is per-session operator output; gating it would suppress a second concurrent session's summary — see Decisions Log).
+- `adapters/claude-code/hooks/harness-doctor.sh` — NOT modified (the digest already reads a cached doctor verdict, so doctor is not re-run per session; nothing to debounce).
 - `adapters/claude-code/manifest.json` — Modify (register find-scan-warn.sh + sessionstart-singleflight.sh).
 - `docs/backlog.md` — Modify (file deferred rows + §8 bookkeeping reconciliation).
 - `docs/decisions/queued-lessons-learned-fixes-2026-07-13.md` — Create (start-plan queued-decisions scaffold for this plan; empty unless a mid-build decision needs async operator override).
@@ -184,6 +184,19 @@ vertical proof.
   Scope OUT — high blast radius / removal-needs-live-reconcile respectively. Both filed
   as backlog rows (Task 8) rather than rushed (rushing under pressure is itself the
   anti-pattern the 2026-07-11 lesson documents).
+- 2026-07-13: **Single-flight gates auto-install ONLY; digest + doctor-quick NOT gated.**
+  The debounce suppresses re-running work across concurrent starts. That is correct for
+  `session-start-auto-install.sh` because its product is a SHARED side-effect (syncing
+  the one `~/.claude` all sessions read) — the first session's sync covers the rest.
+  It is WRONG for `session-start-digest.sh`: the digest is PER-SESSION operator-facing
+  output (the SessionStart summary), so debouncing it would leave a second concurrent
+  session's operator with no summary at all — a UX regression. And the digest already
+  reads a CACHED doctor verdict, so the expensive part isn't re-run per session anyway
+  (the assessment called the digest the "lowest-value of the three" to gate). Net: the
+  fork-storm's biggest source (auto-install's git fetch + full sync) is gated; the
+  per-session summary is preserved. A cheaper-digest optimization is out of scope here.
+  Design choice: a ttl-DEBOUNCE (stamp ages out; no release/EXIT-trap) over a held mutex
+  — simpler, no release-on-crash hazard, and it also covers the just-finished case.
 
 ## Definition of Done
 - [ ] All tasks checked off

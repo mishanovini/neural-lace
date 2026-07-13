@@ -1763,7 +1763,8 @@
       "kind": "writer",
       "doctrine_file": "doctrine/harness-dev.md",
       "hooks": [
-        "session-start-auto-install.sh"
+        "session-start-auto-install.sh",
+        "hooks/lib/sessionstart-singleflight.sh"
       ],
       "events": [
         "SessionStart"

@@ -393,6 +393,24 @@ main() {
     return 0
   fi
 
+  # --- Single-flight debounce (SessionStart fork-storm prevention) ----------
+  # If another session already ran auto-install within the last ~2 min, SKIP:
+  # it synced the shared ~/.claude, which covers this session too. This kills
+  # the concurrent-SessionStart CreateProcess storm (measured 34->81 bash.exe,
+  # MsMpEng pinning a core) at its biggest source — the git fetch + full sync.
+  # Fail-open (a broken lock never blocks a start). Keyed to LIVE_DIR so the
+  # self-test's temp LIVE_DIR isolates the stamp; bypassed via SSF_DISABLE=1.
+  # Ref: docs/lessons/2026-07-13-agent-efficiency-bottlenecks-process-spawn-and-hook-latency.md rec 2
+  #      (SESSIONSTART-SINGLEFLIGHT-01).
+  # shellcheck source=lib/sessionstart-singleflight.sh
+  source "$(dirname "${BASH_SOURCE[0]}")/lib/sessionstart-singleflight.sh" 2>/dev/null || true
+  if declare -F ss_singleflight >/dev/null 2>&1; then
+    if ! SSF_STATE_DIR="$LIVE_DIR/state/singleflight" ss_singleflight "auto-install" 120; then
+      echo "[auto-install] another session synced within ~2 min — skipping (shared ~/.claude is already fresh)" >&2
+      return 0
+    fi
+  fi
+
   ensure_fresh_origin_master "$nl"
   ref=$(pick_source_ref "$nl")
   if [ -z "$ref" ]; then
@@ -476,8 +494,10 @@ TMPL
   _run_main() {
     local live="$1"
     ( export NL_CHECKOUT_OVERRIDE="$CANON" LIVE_DIR_OVERRIDE="$live" AUTO_INSTALL_NO_FETCH=1 \
-             AUTO_INSTALL_TS_OVERRIDE="selftest"
+             AUTO_INSTALL_TS_OVERRIDE="selftest" SSF_DISABLE=1
       # Re-derive globals that main() reads from env-driven LIVE_DIR.
+      # SSF_DISABLE=1 bypasses the single-flight debounce so every scenario
+      # runs main() fully (the debounce has its own lib self-test).
       bash "$SELF_PATH" 2>&1 )
   }
 
