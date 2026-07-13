@@ -86,6 +86,20 @@
         </div>
         <div class="pane-body todo-body" id="todoBody"></div>
       </section>
+
+      <!-- Backlog — ask-rooted-workstreams-p1, Task 15. Compact top-N-per-
+           tier view of docs/backlog.md (collapsible to the full list),
+           add form, and SCHEDULE/DEMOTE/FOLD/WONTFIX disposition buttons.
+           See web/backlog.js header for the full behavior contract. Task 16
+           finalizes the collapsed-by-default sizing per the ux-designer
+           round-1 ruling ("Backlog collapsed below it, top-N by tier"). -->
+      <section id="backlogSection" class="pane backlog-section" aria-label="backlog">
+        <div class="pane-head">
+          <span class="pane-title">Backlog</span>
+          <span class="backlog-count" id="backlogCount" aria-live="off">—</span>
+        </div>
+        <div class="pane-body backlog-body" id="backlogBody"></div>
+      </section>
     </aside>
   </div>
 
@@ -195,6 +209,7 @@
 
   <script src="/asks.js"></script>
   <script src="/todo.js"></script>
+  <script src="/backlog.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -4,6 +4,8 @@
 
 Outstanding improvements to the Claude Code harness (rules, agents, hooks, skills). Project-level backlogs live in individual project repos; this file tracks harness-level work.
 
+UI write path (ask-rooted-workstreams-p1, Task 15): the workstreams-ui Backlog pane (`neural-lace/workstreams-ui/web/backlog.js` + `GET`/`POST /api/backlog` in `server/server.js`) reads and writes rows in this file directly — adds append a well-formed row to "Open work — substantive deferrals"; SCHEDULE/DEMOTE/FOLD/WONTFIX dispositions append the same marker vocabulary the O.9 triage loop's parser already understands, row-scoped. No parallel store; this file stays the one source of truth either way.
+
 ## Next pickup (recommended)
 
 **HARNESS-GAP-13 — harness-hygiene-scan expansion** is the next-cleanest pickup once GAP-08 ships. Full original scope per user 2026-05-05: ~9-10 hr; layers 1-4 (denylist additions + heuristic detection + periodic full-tree audit + sanitization helper).
