@@ -138,3 +138,53 @@ For product-code PRs: track the PR until merged — don't report DONE until it's
 **Confirmation signal after merging:** the production URL (not preview); a clear summary of what merged and is now live; a note on any migrations applied.
 
 **Customer-tier branching policy:** pre-customer projects (no real users): feature-branch merges to master and direct master commits are acceptable; the cost of a bad push is self-inflicted and reversible via revert + redeploy. Once a project has real users: all work goes through a `dev`/`preview` branch with deployment-validation gates before merging to the customer-facing branch; branch protection at the GitHub level enforces it. Auto-merge on verified-complete uses `--no-ff` merge commits to preserve the feature-branch audit trail; skip auto-merge only when the user said "preview only"/"don't merge"/"wait" in their most-recent message, or the branch contains genuinely unreviewed risky work (irreversible operations, schema migrations, auth changes).
+
+## Deploy preflight — mandatory before any production deploy
+
+**Before any production deploy, run the deploy preflight:**
+
+```
+~/.claude/scripts/deploy-preflight.sh <intended-commit>... [--repo <deploy-checkout>]
+```
+
+Pass every commit SHA you intend to have live. The script **FAILS CLOSED** — a
+non-zero exit blocks the deploy — on any of:
+
+- **fetch failure** — the remote could not be reached / authenticated, so local refs
+  cannot be trusted;
+- **dirty working tree** in the deploy checkout — uncommitted state means what deploys
+  is not what is committed;
+- **`HEAD != origin/master`** — the checkout is behind or ahead of the deploy target;
+- **a named commit missing from HEAD** — a SHA you intended to ship is not actually in
+  what would deploy.
+
+**Incident 2026-06-18 (why this gate exists):** a silent `git` auth failure left a
+deploy checkout stale; the fetch failed quietly, the pipeline reported a green
+"success", and a stale checkout shipped to production without the intended commits.
+Because the failure was silent, the "success" was a lie. The preflight makes each of
+those conditions an explicit, fail-closed check: a green preflight is a *proof* the
+intended commits are on `origin/master` and present in the checkout that will deploy —
+not an assumption. Never deploy on a skipped or errored preflight; a preflight that
+cannot run is a preflight that failed.
+
+## Plan-rooted work — the `plan:` attribution trailer
+
+**When a PR or squash-merge serves an active plan, add a trailer line to the
+squash-commit subject/body:**
+
+```
+plan: <slug>
+```
+
+e.g. `plan: ask-rooted-workstreams-p1`. This trailer is the **primary
+SHA → plan-slug attribution signal** the merge-emission auditor reads
+(ask-rooted-workstreams-p1 Task 5) to tie a merged commit back to the plan it
+advanced. It is the fast, unambiguous path: one exact token the auditor greps for,
+rather than an inference.
+
+A **fallback** covers commits that omit the trailer: the auditor treats a diff that
+touches `docs/plans/<slug>.md` as attributing the commit to `<slug>`. The fallback is
+a safety net, not a substitute — a commit that advances a plan without touching the
+plan file (e.g. a pure code change under an already-frozen plan) is invisible to the
+fallback and MUST carry the trailer to be attributed. Prefer the trailer always; rely
+on the fallback only for the incidental case where the plan file is edited anyway.
