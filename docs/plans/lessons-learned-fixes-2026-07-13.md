@@ -103,7 +103,7 @@ The deliverable outcome is each artifact's `--self-test` passing and `harness-do
 - `docs/plans/lessons-learned-fixes-2026-07-13-evidence.md` — Create (task-verifier evidence blocks for this plan's tasks).
 
 ## In-flight scope updates
-(no in-flight changes yet)
+- 2026-07-13: `docs/DECISIONS.md` — the decisions-index-gate requires index consistency when `docs/decisions/035-*.md` is edited (Task 3); the 035 index row also carries the same stale `~/.claude/rules/` pointer, so the fix belongs here too.
 
 ## Assumptions
 - The audit's on-disk evidence (26-agent workflow, every verdict re-verified) is current

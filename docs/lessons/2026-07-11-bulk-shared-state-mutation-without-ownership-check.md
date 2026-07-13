@@ -64,7 +64,9 @@ The missing middle is **claim-before-touch / check-ownership-before-mutating-sha
 
 - This lesson.
 - nl-issue filed: concurrent-ownership gate (promote Practice 8 to Mechanism) + broadcast same-machine / per-branch extension.
-- (Pending build — the gate + broadcast extension go through the normal harness-reviewer + `--self-test` process; deliberately NOT rushed, since rushing is a contributing cause above.)
+- **SHIPPED 2026-07-12 — both halves landed and are live:**
+  - **`concurrent-ownership-gate.sh`** — a PreToolUse (Bash|PowerShell) Mechanism that BLOCKS a plan `Status:` flip, a `git mv` in/out of `docs/plans/`, a bulk plan loop, or a `git branch -D` / `git worktree remove` when the target branch is checked out in another live worktree (`git worktree list --porcelain`) or claimed by a fresh competing session; the block names the owning worktree and requires an explicit in-session operator override. Hook: `adapters/claude-code/hooks/concurrent-ownership-gate.sh`, live-wired in `~/.claude/settings.json` PreToolUse; `--self-test` passes 19/19 scenarios, including the golden bulk-defer-of-an-owned-plan case. Build plan (COMPLETED, archived): `docs/plans/archive/concurrent-ownership-gate-2026-07-12.md`.
+  - **`broadcast-active-session.sh` same-machine + per-branch extension** — now records same-machine worktrees (`_worktrees_json`) into `state.json` and writes per-branch/per-plan claim files (`_cmd_claim`), so the gate has branch-level ownership to read (the original was per-hostname-only and blind to same-machine worktrees). Script: `adapters/claude-code/scripts/broadcast-active-session.sh`; `--self-test` passes 10/10. This supplies exactly the ownership signal the "extend broadcast" proposal above called for — landed inside the script rather than as a separate hook.
 
 ## Meta-note (a second, smaller lesson this same session)
 
