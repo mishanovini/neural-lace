@@ -54,7 +54,13 @@ _ssf_is_stale() {
   if [[ "$age" -ge 0 ]] 2>/dev/null; then
     [[ "$age" -ge "$ttl" ]]; return
   fi
-  # Unknown epoch → coarse mtime fallback (minute granularity).
+  # Unknown epoch → coarse mtime fallback (minute granularity). If `find` is
+  # unavailable we cannot assess age at all: return 0 (stale → reclaim → RUN) so
+  # the fail-open contract holds even on this conjunction — an indeterminate lock
+  # must never make a session skip its setup. (A WORKING find that returns empty
+  # is a genuinely-young lock → not stale → skip; that is the intended debounce,
+  # not an error path.)
+  command -v find >/dev/null 2>&1 || return 0
   ttl_min=$(( (ttl + 59) / 60 )); [[ "$ttl_min" -lt 1 ]] && ttl_min=1
   [[ -n "$(find "$lockdir" -maxdepth 0 -mmin +"$ttl_min" 2>/dev/null)" ]]
 }

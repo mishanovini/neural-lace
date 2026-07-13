@@ -86,13 +86,23 @@ fi
 # git stash -u / git checkout|restore / git reset / mv). Every other command is
 # a guaranteed pass. On Windows Git Bash the common-path early-exit cost is
 # dominated by the jq/sed subprocess spawns below (measured ~1194ms -> ~125ms
-# with this guard). The trigger set is a strict SUPERSET of the five detectors
-# (detect_rm / detect_git_clean / detect_git_stash /
+# with this guard). The trigger set covers every UN-OBFUSCATED destructive verb
+# the five detectors act on (detect_rm / detect_git_clean / detect_git_stash /
 # detect_git_checkout_restore_reset / detect_mv — verbs rm|clean|stash|checkout|
-# restore|reset|mv), so a miss here can NEVER be a false skip. It is skipped
-# entirely under --self-test (SELF_TEST=1) so the scenario harness is unaffected.
-# Consume the input ONCE (env var else stdin) and re-export so load_input below
-# is unaffected.
+# restore|reset|mv). ACCEPTED RESIDUAL: this matches the RAW payload substring,
+# but the full logic below tokenizes (strips quotes/backslashes) first, so a
+# quote/escape-obfuscated verb (`r""m`, `r''m`, `r\m`) skips this pre-filter while
+# the tokenizer reconstructs and BLOCKS it. It is therefore NOT a strict superset
+# of the tokenizer — the gap is scoped to the threat model (accidental deletion,
+# not adversarial obfuscation; nobody types `r""m` to delete a plan by accident)
+# and is pinned by the obfuscation-boundary self-test scenario below. Pre-existing
+# full-logic gaps (Remove-Item / truncate / `>` redirect / `/usr/bin/rm`) are
+# unchanged by this pre-filter — anything containing a trigger substring still
+# falls through to the identical full logic. Skipped in the PARENT self-test
+# process (SELF_TEST=1, direct function calls); child subprocess scenarios do
+# traverse it (SELF_TEST is not exported), so the harness exercises it on natural
+# verbs. Consume the input ONCE (env var else stdin) and re-export so load_input
+# below is unaffected.
 # Ref: docs/lessons/2026-07-13-agent-efficiency-bottlenecks-process-spawn-and-hook-latency.md rec 5.
 if [[ "${SELF_TEST:-0}" != "1" ]]; then
   _PDP_PF="${CLAUDE_TOOL_INPUT:-}"
@@ -1000,6 +1010,17 @@ run_self_test() {
   run_scenario "18. weak-waiver-no-purpose-clauses: rm docs/plans/foo.md → BLOCK" \
     BLOCK setup_uncommitted_plan_with_weak_waiver \
     "rm docs/plans/foo.md"
+
+  # KNOWN, INTENTIONAL pre-filter gap (pinned per harness-review 2026-07-13):
+  # the cheap substring pre-filter matches the RAW payload, so a quote-obfuscated
+  # verb has no "rm" substring and SKIPS the gate (PASS) even though the full
+  # tokenizer would reconstruct `r""m`->`rm` and BLOCK it. Accepted under the
+  # accidental-deletion threat model (nobody types `r""m` to delete a plan by
+  # accident). This scenario PINS that PASS so any future pre-filter change that
+  # closes the gap will flip this to BLOCK and force an explicit review here.
+  run_scenario "19. obfuscated-verb pre-filter gap: r\"\"m docs/plans/foo.md → PASS (KNOWN)" \
+    PASS setup_uncommitted_plan \
+    'r""m docs/plans/foo.md'
 
   echo "==================================="
   echo "passed: $passed / $total"

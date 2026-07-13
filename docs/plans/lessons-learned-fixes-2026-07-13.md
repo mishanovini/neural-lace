@@ -197,6 +197,20 @@ vertical proof.
   per-session summary is preserved. A cheaper-digest optimization is out of scope here.
   Design choice: a ttl-DEBOUNCE (stamp ages out; no release/EXIT-trap) over a held mutex
   — simpler, no release-on-crash hazard, and it also covers the just-finished case.
+- 2026-07-13 (post harness-review): **Accepted residuals, named per §8.** (1) The
+  single-flight stamp is claimed BEFORE the sync runs, so a session that crashes
+  mid-sync leaves a fresh stamp and up to one ttl-window of skipping sessions get its
+  partial sync. Accepted over moving the stamp after sync (which would let the first
+  concurrent burst all sync — defeating the primary fork-storm benefit): auto-install
+  writes per-file with backups and self-repairs on the next non-skipped session.
+  (2) The two giant-gate pre-filters match the RAW payload, so a quote/escape-obfuscated
+  destructive verb (`r""m`, `git co""mmit`) skips the pre-filter while the full tokenizer
+  would block it. Accepted under the accidental-scope/accidental-deletion threat model
+  (no human or LLM types `r""m` by accident); the comments were corrected to drop the
+  false "strict SUPERSET / NEVER a false skip" claim and each gate now ships a self-test
+  scenario that PINS the residual (plan-deletion S19, scope-enforcement S34). Both from
+  the harness-reviewer PASS/REFORMULATE verdict (Change 2 PASS; Change 1 REFORMULATE →
+  fixed here).
 
 ## Definition of Done
 - [ ] All tasks checked off

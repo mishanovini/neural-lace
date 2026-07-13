@@ -379,7 +379,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   #            empty and `git add`-ed)
   #       $4 = optional secondary plan content (for new-plan-staged scenario)
   _run_scenario() {
-    local label="$1" plan_body="$2" staged_csv="$3" secondary_plan_body="${4:-}"
+    local label="$1" plan_body="$2" staged_csv="$3" secondary_plan_body="${4:-}" cmd_override="${5:-}"
     local repo="$TMPROOT/$label"
     mkdir -p "$repo"
     (
@@ -415,7 +415,15 @@ if [[ "${1:-}" == "--self-test" ]]; then
         git add "docs/plans/hotfix-newplan.md" 2>/dev/null
       fi
 
-      local input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}'
+      local input
+      if [[ -n "$cmd_override" ]]; then
+        # Custom command (e.g. an obfuscation-boundary probe). JSON-escape it.
+        local _esc; _esc=$(printf '%s' "$cmd_override" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        input="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$_esc\"}}"
+      else
+        # Default path — byte-identical to the original literal (no regression).
+        input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}'
+      fi
       printf '%s' "$input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
       echo $? > rc.txt
     )
@@ -1365,8 +1373,24 @@ Test goal.
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 34: obfuscated-verb pre-filter gap (KNOWN, pinned per harness-review 2026-07-13) ----
+  # `git co""mmit` has no "commit" substring in the RAW payload, so the cheap
+  # pre-filter SKIPS it (rc 0) even though an out-of-scope staged file is present
+  # that the full tokenizer-based logic would BLOCK (rc 2). Accepted residual:
+  # the threat model is accidental scope violations, not adversarial obfuscation.
+  # This PINS the PASS so any future pre-filter that strips quotes flips it to 2
+  # and forces an explicit review here.
+  RC=$(_run_scenario s34 "$PLAN_NORMAL" "unrelated/file.ts" "" 'git co""mmit -m x')
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (34) obfuscated-verb-prefilter-gap: PASS (KNOWN pre-filter skip; full logic would block)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (34) obfuscated-verb-prefilter-gap: FAIL (rc=$RC, expected 0 — pre-filter should skip the obfuscated verb)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 33 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 34 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1383,10 +1407,16 @@ fi
 # guaranteed pass. On Windows Git Bash the dominant early-exit cost is the jq/sed
 # subprocess spawns below, NOT lexing the file (measured: ~612ms common path ->
 # ~182ms with this guard, whole file still parsed). A pure-bash substring guard
-# here exits the common non-commit path before any spawn. The guard is a strict
-# SUPERSET of the trigger — a real git-commit segment always contains the literal
-# "commit" — so a miss here can never be a false skip. Consume the input ONCE
-# (env var else stdin) and re-export it so the read below is unaffected.
+# here exits the common non-commit path before any spawn. The guard covers every
+# UN-OBFUSCATED git-commit invocation: a real `git commit` segment contains the
+# literal substring "commit". ACCEPTED RESIDUAL: a quote/escape-obfuscated form
+# (e.g. `git co""mmit`) has no "commit" substring in the RAW payload, so it skips
+# this pre-filter — while the tokenizer below would reconstruct and act on it.
+# This is NOT a strict superset of the tokenizer; it is deliberately scoped to the
+# threat model (accidental scope violations, not adversarial obfuscation — no
+# human or LLM types `co""mmit` by accident). Pinned by the obfuscation-boundary
+# self-test scenario. Consume the input ONCE (env var else stdin) and re-export
+# it so the read below is unaffected.
 # Ref: docs/lessons/2026-07-13-agent-efficiency-bottlenecks-process-spawn-and-hook-latency.md rec 5.
 _SCOPE_PF="${CLAUDE_TOOL_INPUT:-}"
 if [[ -z "$_SCOPE_PF" ]] && [[ ! -t 0 ]]; then

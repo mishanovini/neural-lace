@@ -27,8 +27,11 @@
 # search root is a filesystem root or a home dir — NOT any absolute path.
 # Deliberately does NOT match `find /specific/scoped/path` (scoped) — only bare
 # roots followed by whitespace, a slash, or end-of-string.
-#   Broad roots: /  ~  $HOME  /c/Users  /mnt/c
-_FIND_SCAN_RE='(^|[[:space:];&|(])find[[:space:]]+(/|~|\$HOME|/c/Users|/mnt/c)([[:space:]]|/|$)'
+#   Broad roots matched: /  ~  $HOME  ${HOME}  "$HOME"  bare drive mounts
+#   /c /d … (the most disk-wide MSYS form)  and  /mnt/<letter> (WSL mounts).
+#   A single-letter root followed by more letters (/etc, /home, /usr) is NOT a
+#   drive → stays silent (scoped). Trailing space/slash/quote/end anchors it.
+_FIND_SCAN_RE='(^|[[:space:];&|(])find[[:space:]]+"?(~|\$[{]?HOME[}]?|/mnt/[a-z]([[:space:]/"]|$)|/[a-z]?([[:space:]/"]|$))'
 
 _find_scan_is_broad() {
   # $1 = raw command string; returns 0 if it looks like a disk-wide find
@@ -77,11 +80,18 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _t "find ~ recursive"                    'find ~ -name "*.md"'                            warn
   _t "find \$HOME"                          'find $HOME -type d'                             warn
   _t "find /c/Users broad"                 'find /c/Users -iname foo'                       warn
+  _t "find /c bare drive"                  'find /c -iname foo'                             warn
+  _t "find /d bare drive"                  'find /d -type f'                                warn
+  _t "find /mnt/d WSL mount"               'find /mnt/d -name x'                            warn
+  _t "find quoted \$HOME"                   'find "$HOME" -type d'                           warn
+  _t "find brace \${HOME}"                  'find ${HOME} -name y'                           warn
   _t "cd then find /"                       'cd /tmp && find / -name x'                      warn
   _t "find . scoped"                        'find . -name "*.sh"'                            silent
   _t "find ./adapters scoped"              'find ./adapters -type f'                        silent
   _t "find adapters/ relative"             'find adapters/ -name x'                         silent
   _t "find src scoped"                      'find src -name "*.ts"'                          silent
+  _t "find /etc scoped (not a drive)"      'find /etc -name hosts'                          silent
+  _t "find /home/x scoped"                 'find /home/user -name z'                        silent
   _t "no find at all"                       'ls -la /'                                       silent
   _t "grep mentioning /"                    'grep -rn foo /etc/hosts'                        silent
   echo "" >&2
