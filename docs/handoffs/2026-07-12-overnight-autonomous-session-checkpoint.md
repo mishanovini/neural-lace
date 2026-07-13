@@ -186,3 +186,20 @@ MASTER PLAN = nl-overhaul-program-2026-07 (Great Consolidation), from 2026-07-01
 - F.4 retro: WRITTEN + committed → docs/reviews/nl-overhaul-completion-2026-07.md. Findings: rules-dir 883,882→10,385B (-98.8%, 61→1 file) ✓; Stop-chain 22→9 (target ≤6, 3 over — the ONE structural residual); metrics 1-3 machine-local (baseline=laptop, retro=desktop) NON-COMPARABLE + honest caveat; D7 NOT refuted. 3 follow-ups filed (laptop re-measure, 587-waiver self-test pollution [nl-issue filed], Stop-chain ≤6).
 CLOSURE-CONTRACT BLOCKER (honest): requires doctor --full green. Doctor reds now = 26 budget-worktrees-branches (40 local branches w/ unique-looking commits — need PR-merged check, squash makes git-cherry unreliable) + 1 budget-chains (the Stop-chain 9>6 residual). Cleaned 21 local branches (merged+cherry-empty) already.
 IN FLIGHT: task-verifier (E.7+F.4 flips); #100 takeover builder (agent a1a33171, merge-master-in + fix golden test, NO force-push, report-don't-merge). LEFT: local-branch reclamation (PR-merged ledger) to clear branch reds → then either close w/ documented Stop-chain residual OR resolve Stop-chain ≤6. #101 (sleepy-albattani LIVE) left to its session.
+
+## UPDATE 2026-07-13 ~15:xx — MASTER PLAN CLOSED + SESSION-CLOSER ROLE ACTIVE
+Both operator decisions executed:
+- SESSION-CLOSER: PR #100 (GAP-45, stalled beautiful-mcnulty session) — diagnosed as pure
+  master-drift (stale branch carried over-cap doctrine files; NOT a GAP-45 defect); builder
+  merged master in (no force), golden test green; I MERGED it (squash, #100). First estate
+  close-out. PR #101 (sleepy-albattani) LEFT — live session lands its own.
+- MASTER PLAN nl-overhaul-program-2026-07: DRIVEN TO CLOSURE. E.7 verified+armed, F.4 retro
+  (docs/reviews/nl-overhaul-completion-2026-07.md: rules-dir 883,882→10,385B -98.8%, Stop-chain
+  22→9, D7 NOT refuted, machine-provenance caveat on state metrics), all Wave B-F verified,
+  doctor GREEN (0 red after reclaiming 33 stale local branches — ledgered
+  docs/reviews/2026-07-13-local-branch-reclamation-ledger.md), DoD 6/6, Status COMPLETED +
+  archived. close-plan.sh had staged the close (uncommitted); I finished DoD + committed + pushed.
+- Reconciled 2 dual-master divergences (ask-p1 active pushes + PR #100 squash landing pt-only).
+  All 3 masters converged @ 1aac3ee. Master plan COMPLETED on all.
+3 F.4 follow-ups filed: laptop re-measure of state metrics; 587-waiver self-test pollution
+(nl-issue); Stop-chain 9→≤6 (3 over budget, the one structural residual). GAP-45 plan also CLOSED.
