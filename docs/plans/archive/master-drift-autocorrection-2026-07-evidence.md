@@ -61,7 +61,7 @@ Verdict: PASS
 EVIDENCE BLOCK
 ==============
 Task ID: 7
-Task description: Live demonstration against the real remote pair
+Description: Live demonstration against the real remote pair
 Verified at: 2026-07-13T02:44:24Z
 Verifier: task-verifier agent
 Oracle: specified — Prove-it-works: CONVERGED status file, EQUAL remote-master SHAs in the sync clone, wire checks, zero live-checkout writes; CORRECTED path honestly stated as fixture-covered (7.corrected-path-honesty-note.md)
