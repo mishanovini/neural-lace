@@ -1593,6 +1593,16 @@ EOF
     (
       export NEEDS_YOU_STATE_DIR="$s9/state"
       export NEEDS_YOU_MD_PATH="$s9/NEEDS-YOU.md"
+      # `needs-you add` also side-emits a progress-log entry (the Task-4/7
+      # splice). With HARNESS_SELFTEST unset (below, to exercise the real
+      # render path) AND no PROGRESS_LOG_STATE_DIR / OPERATOR_TODO_PATH
+      # override, that emission would fall through to the REAL
+      # ~/.claude/state/progress-logs/unlinked.jsonl and the REAL
+      # docs/operator-todo.md — polluting production state with sess-s9a/s9b
+      # fixture rows on every digest --self-test run (any machine, via doctor
+      # or CI). Sandbox BOTH so the fixture stays contained.
+      export PROGRESS_LOG_STATE_DIR="$s9/progress-logs"
+      export OPERATOR_TODO_PATH="$s9/operator-todo.md"
       unset HARNESS_SELFTEST 2>/dev/null || true
       bash "$s9_needsyou" add --section decision --text $'Ship tonight?\nTier 1 — reversible.\nMy pick: yes.' --session "sess-s9a" >/dev/null
       bash "$s9_needsyou" add --section decision --text $'Ship tomorrow?\nTier 1 — reversible.\nMy pick: yes.' --session "sess-s9b" >/dev/null
