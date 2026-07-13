@@ -178,3 +178,11 @@ blocked the compound branch-delete until worktrees were gone, then allowed it.
 aeed9a16 (GAP-45 chip) LEFT ALONE — operator's separate session, 5 active commits.
 REMAINING FOR OPERATOR: resumer ARM (1 word) + product auth-session 401 (health monitor's
 real catch). Both in NEEDS-YOU. Doctor re-run in flight; no unaccounted reds expected.
+
+## UPDATE 2026-07-13 — MASTER PLAN CLOSURE (operator: drive nl-overhaul to closure + own session-closer role)
+Operator answered 2 decisions: (1) I OWN estate session-closer role (land finished sessions' green PRs, coordinate via ownership gate, leave LIVE sessions); (2) DRIVE master plan nl-overhaul-program-2026-07 to closure.
+MASTER PLAN = nl-overhaul-program-2026-07 (Great Consolidation), from 2026-07-01 effectiveness audit. 46/52 → E.7+F.4 the substantive remainder.
+- E.7 session-resumer: BUILD merged (4fd706a/08a3351/b682227 ADR-061 P1) + ARMED by me 2026-07-13. DONE.
+- F.4 retro: WRITTEN + committed → docs/reviews/nl-overhaul-completion-2026-07.md. Findings: rules-dir 883,882→10,385B (-98.8%, 61→1 file) ✓; Stop-chain 22→9 (target ≤6, 3 over — the ONE structural residual); metrics 1-3 machine-local (baseline=laptop, retro=desktop) NON-COMPARABLE + honest caveat; D7 NOT refuted. 3 follow-ups filed (laptop re-measure, 587-waiver self-test pollution [nl-issue filed], Stop-chain ≤6).
+CLOSURE-CONTRACT BLOCKER (honest): requires doctor --full green. Doctor reds now = 26 budget-worktrees-branches (40 local branches w/ unique-looking commits — need PR-merged check, squash makes git-cherry unreliable) + 1 budget-chains (the Stop-chain 9>6 residual). Cleaned 21 local branches (merged+cherry-empty) already.
+IN FLIGHT: task-verifier (E.7+F.4 flips); #100 takeover builder (agent a1a33171, merge-master-in + fix golden test, NO force-push, report-don't-merge). LEFT: local-branch reclamation (PR-merged ledger) to clear branch reds → then either close w/ documented Stop-chain residual OR resolve Stop-chain ≤6. #101 (sleepy-albattani LIVE) left to its session.
