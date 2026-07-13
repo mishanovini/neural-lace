@@ -2,7 +2,7 @@
 # NEURAL-LACE-HOOK
 # session-start-git-freshness.sh — SessionStart hook for git freshness.
 #
-# Surfaces three kinds of state at session start so the next session does
+# Surfaces four kinds of state at session start so the next session does
 # not unknowingly work from a stale or conflicted starting point:
 #
 #   1. (Item 1) Local master behind a remote master. Fetches all remotes
@@ -20,6 +20,20 @@
 #
 #   3. (Item 9 / convenience) Current branch + ahead/behind summary, so
 #      the operator sees at a glance where they are.
+#
+#   4. (master-drift feed — docs/plans/master-drift-autocorrection-2026-07.md)
+#      REMOTE-vs-REMOTE master drift: compares origin/master against the
+#      mirror remote's master (the refs this hook already fetched — zero
+#      extra network calls) and, on inequality OR a non-quiet status file,
+#      dispatches scripts/master-drift-autocorrect.sh BACKGROUNDED (zero
+#      blocking seconds; output to the corrector's own log). Renders the
+#      corrector's status file (~/.claude/state/master-drift/<repo>.status)
+#      as at most ONE digest line per session for the non-quiet states
+#      (CORRECTED / DIVERGED / PUSH-REJECTED); CONVERGED/absent render
+#      nothing. DIVERGED is never auto-merged — the line points at
+#      docs/runbooks/master-drift-autocorrect.md (reviewed merge). Kill
+#      switch: MASTER_DRIFT_AUTOCORRECT=0 skips dispatch entirely
+#      (detection line still renders).
 #
 # Design notes:
 # - Reads JSON on stdin per the SessionStart contract but ignores the
@@ -43,6 +57,9 @@ set -u
 FETCH_TIMEOUT_SECONDS="${FETCH_TIMEOUT_SECONDS:-10}"
 # Branches where uncommitted work is expected and not worth flagging:
 WIP_BRANCH_PATTERN='^(wip|feat|feature|fix|bugfix|salvage|backup|rebase|reconverge|sync|sync-pt-to-personal)/'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+MD_RUNBOOK="docs/runbooks/master-drift-autocorrect.md"
 
 # ============================================================
 # Helpers
@@ -92,6 +109,138 @@ _ahead_count() {
 }
 
 # ============================================================
+# master-drift feed helpers (item 4 in the header)
+# ============================================================
+
+# Status-dir resolution — MUST match master-drift-autocorrect.sh's
+# _resolve_state_dir (same env override, same HARNESS_SELFTEST sandbox) so
+# the hook reads exactly where the corrector writes.
+_md_state_dir() {
+  if [ -n "${MASTER_DRIFT_STATE_DIR:-}" ]; then
+    printf '%s' "$MASTER_DRIFT_STATE_DIR"
+  elif [ "${HARNESS_SELFTEST:-0}" = "1" ]; then
+    printf '%s' "${TMPDIR:-/tmp}/master-drift-state.selftest"
+  else
+    printf '%s' "${HOME}/.claude/state/master-drift"
+  fi
+}
+
+# Corrector-log resolution — matches the corrector's _resolve_log_file so
+# the backgrounded dispatch appends to the corrector's own log.
+_md_log_file() {
+  if [ -n "${MASTER_DRIFT_LOG_FILE:-}" ]; then
+    printf '%s' "$MASTER_DRIFT_LOG_FILE"
+  elif [ "${HARNESS_SELFTEST:-0}" = "1" ]; then
+    printf '%s' "${TMPDIR:-/tmp}/master-drift-autocorrect.selftest.log"
+  else
+    printf '%s' "${HOME}/.claude/logs/master-drift-autocorrect.log"
+  fi
+}
+
+# Mirror remote discovery (read-only; the F.6 _discover_mirror_remote
+# pattern): first remote whose push URL differs from origin's. Echoes the
+# remote NAME or empty.
+_md_mirror_remote() {
+  local canonical_url name mirror_url
+  canonical_url="$(git remote get-url --push origin 2>/dev/null || echo "")"
+  [ -z "$canonical_url" ] && return 0
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    [ "$name" = "origin" ] && continue
+    mirror_url="$(git remote get-url --push "$name" 2>/dev/null || echo "")"
+    if [ -n "$mirror_url" ] && [ "$mirror_url" != "$canonical_url" ]; then
+      printf '%s' "$name"
+      return 0
+    fi
+  done < <(git remote 2>/dev/null)
+}
+
+# Backgrounded corrector dispatch: at most one per session start, zero
+# blocking seconds (output to the corrector's own log; `&` + disown). The
+# corrector self-discovers the repo from cwd — no arguments.
+_md_dispatch_corrector() {
+  local corrector log_file
+  corrector="${MASTER_DRIFT_CORRECTOR:-$SCRIPT_DIR/../scripts/master-drift-autocorrect.sh}"
+  [ -f "$corrector" ] || return 1
+  log_file="$(_md_log_file)"
+  mkdir -p "$(dirname "$log_file")" 2>/dev/null || true
+  nohup bash "$corrector" </dev/null >>"$log_file" 2>&1 &
+  disown 2>/dev/null || true
+  return 0
+}
+
+# The master-drift check (item 4): remote-vs-remote master comparison over
+# refs ALREADY fetched by _safe_fetch_all (zero additional network calls),
+# status-file rendering, and the backgrounded corrector dispatch. Appends to
+# the caller's out_lines (bash dynamic scoping). Never blocks, never exits.
+_md_check() {
+  local toplevel repo_base mirror status_file status_line
+  local origin_sha mirror_sha o7 m7 unequal=0 nonquiet=0
+
+  toplevel="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+  [ -z "$toplevel" ] && return 0
+  repo_base="$(basename "$toplevel")"
+
+  mirror="$(_md_mirror_remote)"
+
+  # Remote-vs-remote comparison (only meaningful with a mirror remote and
+  # both master refs present).
+  if [ -n "$mirror" ]; then
+    origin_sha="$(git rev-parse --verify --quiet origin/master 2>/dev/null || echo "")"
+    mirror_sha="$(git rev-parse --verify --quiet "${mirror}/master" 2>/dev/null || echo "")"
+    if [ -n "$origin_sha" ] && [ -n "$mirror_sha" ] && [ "$origin_sha" != "$mirror_sha" ]; then
+      unequal=1
+      o7="$(printf '%.7s' "$origin_sha")"; m7="$(printf '%.7s' "$mirror_sha")"
+    fi
+  fi
+
+  # Status file from the corrector's LAST completed run — at most ONE line
+  # rendered per session, non-quiet states only (CONVERGED/absent = quiet).
+  status_file="$(_md_state_dir)/${repo_base}.status"
+  status_line=""
+  [ -f "$status_file" ] && status_line="$(head -n 1 "$status_file" 2>/dev/null)"
+  case "$status_line" in
+    CORRECTED\ *)
+      set -- $status_line
+      out_lines+=("[git-freshness] [master-drift] CORRECTED: ${2:-remote}/master fast-forwarded to ${3:-?}")
+      nonquiet=1
+      ;;
+    DIVERGED\ *)
+      set -- $status_line
+      out_lines+=("[git-freshness] [master-drift] DIVERGED origin/master=${2:-?} ${mirror:-mirror}/master=${3:-?} — auto-sync refused; reviewed merge required (${MD_RUNBOOK})")
+      nonquiet=1
+      ;;
+    PUSH-REJECTED\ *)
+      set -- $status_line
+      out_lines+=("[git-freshness] [master-drift] PUSH-REJECTED pushing ${2:-remote}/master (${3:-unknown}) — triage: ${MD_RUNBOOK}")
+      nonquiet=1
+      ;;
+    *) : ;;  # CONVERGED, absent, or unparsable → quiet
+  esac
+
+  # Nothing to do (converged AND quiet status) → no dispatch, no lines.
+  [ "$unequal" = "0" ] && [ "$nonquiet" = "0" ] && return 0
+
+  # Kill switch: skip dispatch entirely; detection line still renders.
+  if [ "${MASTER_DRIFT_AUTOCORRECT:-1}" = "0" ]; then
+    if [ "$unequal" = "1" ]; then
+      out_lines+=("[git-freshness] [master-drift] remote masters differ: origin/master=${o7} ${mirror}/master=${m7} — auto-correction disabled (MASTER_DRIFT_AUTOCORRECT=0)")
+    fi
+    return 0
+  fi
+
+  # Dispatch the corrector backgrounded: on SHA inequality (correct the
+  # drift) OR on a non-quiet status with equal SHAs (re-evaluate so the
+  # status returns to CONVERGED and the digest line retires).
+  local dispatched="corrector dispatched (backgrounded)"
+  _md_dispatch_corrector || dispatched="corrector missing — run: bash adapters/claude-code/install.sh"
+  if [ "$unequal" = "1" ]; then
+    out_lines+=("[git-freshness] [master-drift] remote masters differ: origin/master=${o7} ${mirror}/master=${m7} — ${dispatched}")
+  fi
+  return 0
+}
+
+# ============================================================
 # Main check
 # ============================================================
 
@@ -122,6 +271,11 @@ _main_check() {
       fi
     done < <(_remote_names)
   fi
+
+  # 2.5. Remote-vs-remote master drift (item 4 in the header): comparison
+  #      over the refs step 1 already fetched, status-file digest rendering,
+  #      and the backgrounded master-drift-autocorrect.sh dispatch.
+  _md_check
 
   # 3. Current branch state.
   current="$(_current_branch)"
@@ -166,6 +320,28 @@ _self_test() {
   tmp="$(mktemp -d)"
   trap "rm -rf '$tmp'" RETURN
   echo "[self-test] tmpdir=$tmp"
+
+  # Sandbox the master-drift feed for EVERY scenario (never read the real
+  # ~/.claude/state, never dispatch the real corrector from a fixture): a
+  # stub corrector records invocations to a log this suite asserts on.
+  export HARNESS_SELFTEST=1
+  export MASTER_DRIFT_STATE_DIR="$tmp/md-state"
+  export MASTER_DRIFT_LOG_FILE="$tmp/md-corrector.log"
+  export MASTER_DRIFT_CORRECTOR="$tmp/stub-corrector.sh"
+  unset MASTER_DRIFT_AUTOCORRECT 2>/dev/null || true
+  mkdir -p "$MASTER_DRIFT_STATE_DIR"
+  printf '#!/bin/bash\necho "stub-invoked cwd=$(pwd)" >> "%s"\nexit 0\n' "$tmp/stub-invocations.log" > "$MASTER_DRIFT_CORRECTOR"
+
+  # Wait (bounded) for the backgrounded stub dispatch to land.
+  _md_stub_invoked() {
+    local i=0
+    while [ $i -lt 25 ]; do
+      [ -s "$tmp/stub-invocations.log" ] && return 0
+      sleep 0.2 2>/dev/null || sleep 1
+      i=$((i+1))
+    done
+    return 1
+  }
 
   # Reusable bare repo to act as origin
   ( cd "$tmp" && mkdir bare-canonical && cd bare-canonical && git init --bare --quiet )
@@ -269,6 +445,136 @@ _self_test() {
     out="$(_main_check 2>/dev/null)"
     if [ -z "$out" ]; then echo "  T8 clean-tree silent: PASS"
     else echo "  T8 clean-tree silent: FAIL (got: $out)"; return 1; fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
+  # ---- master-drift feed scenarios (item 4 in the header) ----
+  # Two-remote fixture: origin + a distinct-URL mirror, initially converged.
+  ( cd "$tmp" && mkdir bare-md-origin bare-md-mirror \
+      && git init --bare --quiet bare-md-origin && git init --bare --quiet bare-md-mirror \
+      && mkdir mdrepo && cd mdrepo \
+      && git init --quiet \
+      && git config core.hooksPath "" \
+      && git config user.email "t@example.com" && git config user.name "T" \
+      && git remote add origin "$tmp/bare-md-origin" \
+      && git remote add acme-mirror "$tmp/bare-md-mirror" \
+      && echo a > a && git add a && git commit --quiet -m init \
+      && git push --quiet origin HEAD:master && git push --quiet acme-mirror HEAD:master \
+      && git checkout --quiet master 2>/dev/null || git checkout --quiet -b master
+  ) || { echo "  (md fixture setup FAIL)"; fail=$((fail+1)); }
+
+  # T9: remote-vs-remote inequality → detection line renders AND the
+  # corrector is dispatched (stub on MASTER_DRIFT_CORRECTOR records it).
+  (
+    # Advance ONLY the mirror bare (throwaway clone; no force pushes).
+    ( cd "$tmp" && git clone --quiet bare-md-mirror md-advancer 2>/dev/null \
+        && cd md-advancer && git config core.hooksPath "" \
+        && git config user.email "t@example.com" && git config user.name "T" \
+        && echo b > b && git add b && git commit --quiet -m adv \
+        && git push --quiet origin HEAD:master ) && rm -rf "$tmp/md-advancer"
+    cd "$tmp/mdrepo"
+    git fetch --quiet origin 2>/dev/null; git fetch --quiet acme-mirror 2>/dev/null
+    git pull --ff-only --quiet acme-mirror master 2>/dev/null || true  # keep LOCAL master current so only the remote-vs-remote line fires... (local==mirror, ahead of origin — behind-warning may still render for origin; tolerated)
+    rm -f "$tmp/stub-invocations.log"
+    out="$(_main_check 2>/dev/null)"
+    if echo "$out" | grep -q '\[master-drift\] remote masters differ: origin/master=' \
+       && echo "$out" | grep -q 'corrector dispatched (backgrounded)' \
+       && _md_stub_invoked; then
+      echo "  T9 remote-vs-remote inequality -> detection + dispatch: PASS"
+    else
+      echo "  T9 remote-vs-remote inequality -> detection + dispatch: FAIL (got: $out; stub=$(cat "$tmp/stub-invocations.log" 2>/dev/null))"
+      return 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
+  # T14 (runs on the still-unequal fixture): kill switch skips dispatch but
+  # keeps detection.
+  (
+    cd "$tmp/mdrepo"
+    rm -f "$tmp/stub-invocations.log"
+    out="$(MASTER_DRIFT_AUTOCORRECT=0 _main_check 2>/dev/null)"
+    sleep 1
+    if echo "$out" | grep -q '\[master-drift\] remote masters differ:.*auto-correction disabled (MASTER_DRIFT_AUTOCORRECT=0)' \
+       && [ ! -s "$tmp/stub-invocations.log" ]; then
+      echo "  T14 kill-switch -> detection kept, dispatch skipped: PASS"
+    else
+      echo "  T14 kill-switch -> detection kept, dispatch skipped: FAIL (got: $out; stub=$(cat "$tmp/stub-invocations.log" 2>/dev/null))"
+      return 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
+  # Reconverge the two bares for the status-rendering scenarios (plain FF
+  # push of the mirror's tip to origin — no force).
+  (
+    cd "$tmp/mdrepo"
+    git fetch --quiet acme-mirror 2>/dev/null
+    git push --quiet origin "$(git rev-parse acme-mirror/master)":master 2>/dev/null
+    git fetch --quiet origin 2>/dev/null
+    [ "$(git rev-parse origin/master)" = "$(git rev-parse acme-mirror/master)" ]
+  ) || { echo "  (md fixture reconverge FAIL)"; fail=$((fail+1)); }
+
+  # T10: status DIVERGED → exactly ONE [master-drift] line naming both SHAs
+  # and the runbook.
+  (
+    cd "$tmp/mdrepo"
+    printf 'DIVERGED abc1234 def5678\n' > "$MASTER_DRIFT_STATE_DIR/mdrepo.status"
+    out="$(_main_check 2>/dev/null)"
+    count="$(echo "$out" | grep -c '\[master-drift\]')"
+    if [ "$count" = "1" ] \
+       && echo "$out" | grep -q '\[master-drift\] DIVERGED origin/master=abc1234 acme-mirror/master=def5678 — auto-sync refused; reviewed merge required (docs/runbooks/master-drift-autocorrect.md)'; then
+      echo "  T10 status DIVERGED -> one digest line: PASS"
+    else
+      echo "  T10 status DIVERGED -> one digest line: FAIL (count=$count got: $out)"
+      return 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
+  # T11: status CORRECTED → exactly ONE line; ALSO dispatches a
+  # re-evaluation run (so the status can return to CONVERGED and retire).
+  (
+    cd "$tmp/mdrepo"
+    printf 'CORRECTED acme-mirror abc1234\n' > "$MASTER_DRIFT_STATE_DIR/mdrepo.status"
+    rm -f "$tmp/stub-invocations.log"
+    out="$(_main_check 2>/dev/null)"
+    count="$(echo "$out" | grep -c '\[master-drift\]')"
+    if [ "$count" = "1" ] \
+       && echo "$out" | grep -q '\[master-drift\] CORRECTED: acme-mirror/master fast-forwarded to abc1234' \
+       && _md_stub_invoked; then
+      echo "  T11 status CORRECTED -> one line + re-evaluation dispatch: PASS"
+    else
+      echo "  T11 status CORRECTED -> one line + re-evaluation dispatch: FAIL (count=$count got: $out)"
+      return 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
+  # T12: status PUSH-REJECTED → exactly ONE line with the reason + runbook.
+  (
+    cd "$tmp/mdrepo"
+    printf 'PUSH-REJECTED origin auth\n' > "$MASTER_DRIFT_STATE_DIR/mdrepo.status"
+    out="$(_main_check 2>/dev/null)"
+    count="$(echo "$out" | grep -c '\[master-drift\]')"
+    if [ "$count" = "1" ] \
+       && echo "$out" | grep -q '\[master-drift\] PUSH-REJECTED pushing origin/master (auth) — triage: docs/runbooks/master-drift-autocorrect.md'; then
+      echo "  T12 status PUSH-REJECTED -> one digest line: PASS"
+    else
+      echo "  T12 status PUSH-REJECTED -> one digest line: FAIL (count=$count got: $out)"
+      return 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
+  # T13: status CONVERGED (and equal remotes) → ZERO master-drift lines and
+  # no dispatch.
+  (
+    cd "$tmp/mdrepo"
+    printf 'CONVERGED abc1234\n' > "$MASTER_DRIFT_STATE_DIR/mdrepo.status"
+    rm -f "$tmp/stub-invocations.log"
+    out="$(_main_check 2>/dev/null)"
+    sleep 1
+    if ! echo "$out" | grep -q '\[master-drift\]' && [ ! -s "$tmp/stub-invocations.log" ]; then
+      echo "  T13 status CONVERGED -> zero lines, no dispatch: PASS"
+    else
+      echo "  T13 status CONVERGED -> zero lines, no dispatch: FAIL (got: $out; stub=$(cat "$tmp/stub-invocations.log" 2>/dev/null))"
+      return 1
+    fi
   ) && pass=$((pass+1)) || fail=$((fail+1))
 
   echo ""
