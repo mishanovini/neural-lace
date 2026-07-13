@@ -111,7 +111,16 @@ compact byte-caps respected, manifest-check green, harness-reviewer PASS.
 
 ## In-flight scope updates
 
-(no in-flight changes yet)
+- 2026-07-12: `adapters/claude-code/agents/task-verifier.md` — harness-reviewer Finding 3 (Major): the caller's normative class list at :155 omitted Config-control; one-line enumeration fix so task-verifier routes config-control tasks to functionality-verifier dispatch.
+
+## Review record (task 8)
+
+- **harness-reviewer round 1 (agent aa2460edec78938df): REFORMULATE** — 1 Critical, 2 Major, 1 Minor, all PROVEN. Dispositions:
+  - **F1 Critical (enforcement theater):** landed text claimed the class is checked "inside the blocking runtime-verification Stop chain" — that chain is dead wiring since Wave D.5 (pre-stop-verifier.sh is an exit-0 shim; no live invoker of runtime-verification-executor/reviewer). FIXED: reworded to the true path (functionality-verifier dispatched by task-verifier pre-flip; backstops plan-edit-validator.sh PreToolUse + work-integrity via stop-verdict-dispatcher.sh Stop) in manifest.json row, FM-038 Detection, vaporware-prevention-full.md; INDEX regenerated. Sweep `runtime-verification Stop chain` → 0 hits.
+  - **F2 Major (pre-existing stale inventory):** planning.md:2 Enforcement header named the retired shim — FIXED (stop-verdict-dispatcher.sh). The upstream `runtime-verification` manifest row's stale honest_status + the 22-retired-shims sweep class: FILED via nl-issue.sh (out of this plan's scope; row is load-bearing ADR 059 D2 — re-wiring is its own scoped decision per reviewer).
+  - **F3 Major (stale class enumerations):** Config-control added to task-verifier.md:155 parenthetical, verifier frontmatter description, escalation list, and dependency-order line. Sweep `UI / API / AI / Data)` → 0 hits.
+  - **F4 Minor (pointer to superseded section):** planning.md mid-build-decisions pointer → "(constitution §8)". FIXED.
+  - planning.md re-trimmed to 2998 bytes after the header fix (cap 3000).
 
 ## Assumptions
 

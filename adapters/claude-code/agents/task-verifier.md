@@ -152,7 +152,7 @@ If the task is user-facing and you cannot produce one of these, the verdict is *
 
 ### functionality-verifier requirement (`Verification: full` runtime tasks)
 
-For any `Verification: full` task whose surface is user-observable (UI / API / AI / Data / harness-internal mechanism with `--self-test`), the evidence block MUST include `Runtime verification: functionality-verifier <slug>::<verdict>` referencing a corresponding PASS block from the `functionality-verifier` agent. This is Step 1 of the four-step pipeline (see `manifest.json` for the pipeline registration). The other formats attest COMPONENTS work or CODE SHAPE is correct; the functionality-verifier line attests a USER-SHAPED EXERCISE produced the USER-SHAPED OUTCOME — they are complementary and the functionality-verifier line is load-bearing.
+For any `Verification: full` task whose surface is user-observable (UI / API / AI / Data / Config-control / harness-internal mechanism with `--self-test`), the evidence block MUST include `Runtime verification: functionality-verifier <slug>::<verdict>` referencing a corresponding PASS block from the `functionality-verifier` agent. This is Step 1 of the four-step pipeline (see `manifest.json` for the pipeline registration). The other formats attest COMPONENTS work or CODE SHAPE is correct; the functionality-verifier line attests a USER-SHAPED EXERCISE produced the USER-SHAPED OUTCOME — they are complementary and the functionality-verifier line is load-bearing.
 
 Workflow:
 1. Decide if the task class is user-observable per the functionality-verifier agent's task-class table.

@@ -1895,7 +1895,7 @@
       },
       "blocking": false,
       "budget_class": "none",
-      "honest_status": "pattern — checked via functionality-verifier's config-control protocol inside the runtime-verification Stop chain on Verification: full tasks; standing surfaces via functionality-auditor's registry-vs-callsite sweep; no dedicated hook by design (plan vaporware-config-controls D-2)"
+      "honest_status": "pattern — checked via functionality-verifier's config-control protocol, dispatched by task-verifier (the sole checkbox-flipper) before flipping any Verification: full user-observable task; the flip is mechanically backstopped by plan-edit-validator.sh (blocking PreToolUse — evidence block with a Runtime verification: line required) and work-integrity-gate via stop-verdict-dispatcher.sh (blocking Stop — checked tasks require evidence blocks); standing surfaces via functionality-auditor's registry-vs-callsite sweep; no dedicated hook by design (plan vaporware-config-controls D-2)"
     },
     {
       "id": "vaporware-volume",

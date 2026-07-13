@@ -28,7 +28,7 @@ Log-only (shadow-mode) wiring is a legitimate rollout state ONLY while it is **d
 
 ## The two verification-time paths this enables
 
-- **`agents/functionality-verifier.md` — the config-control protocol (per-task, forward).** On `Verification: full` tasks that claim a control governs behavior, the verifier exercises the control at ≥2 values the spec claims produce DIFFERENT behavior and observes the GOVERNED surface, not the settings page. Fires inside the blocking runtime-verification Stop chain.
+- **`agents/functionality-verifier.md` — the config-control protocol (per-task, forward).** On `Verification: full` tasks that claim a control governs behavior, the verifier exercises the control at ≥2 values the spec claims produce DIFFERENT behavior and observes the GOVERNED surface, not the settings page. Dispatched by task-verifier (the sole checkbox-flipper) before any flip; the flip is mechanically backstopped by `plan-edit-validator.sh` (blocking PreToolUse — evidence block with a `Runtime verification:` line required) and work-integrity-gate via `stop-verdict-dispatcher.sh` (blocking Stop).
 - **`agents/functionality-auditor.md` — the registry-vs-callsite sweep (standing surfaces).** The auditor enumerates every registry entry on an audited surface as an auditable element and def-use traces each to an enforce-mode call site, routing every decorative verdict through the Chesterton's-fence / indirect-consumption checklist first.
 
 ## Cross-references

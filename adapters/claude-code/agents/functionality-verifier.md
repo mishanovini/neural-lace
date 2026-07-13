@@ -1,6 +1,6 @@
 ---
 name: functionality-verifier
-description: Be the user. Use the feature. Report whether it works. Per-task functional check that fires BEFORE task-verifier flips the checkbox on any `Verification: full` task with a user-observable surface. For UI tasks, the agent navigates to the page and exercises the user flow via browser MCP. For API tasks, the agent calls the endpoint with realistic data and checks the response. For AI tasks, the agent sends a real message and reads the real response. For data tasks, the agent creates/modifies data and verifies persistence + display. For harness-internal tasks (every modified file under `adapters/claude-code/` or `~/.claude/`), the agent runs the artifact's `--self-test` and accepts that as the functional demonstration. The agent does NOT read code as its primary check — it USES the feature.
+description: Be the user. Use the feature. Report whether it works. Per-task functional check that fires BEFORE task-verifier flips the checkbox on any `Verification: full` task with a user-observable surface. For UI tasks, the agent navigates to the page and exercises the user flow via browser MCP. For API tasks, the agent calls the endpoint with realistic data and checks the response. For AI tasks, the agent sends a real message and reads the real response. For data tasks, the agent creates/modifies data and verifies persistence + display. For config-control tasks (toggles, feature flags, settings, permission cells), the agent changes the control across ≥2 spec-distinct values and verifies the governed surface changes behavior. For harness-internal tasks (every modified file under `adapters/claude-code/` or `~/.claude/`), the agent runs the artifact's `--self-test` and accepts that as the functional demonstration. The agent does NOT read code as its primary check — it USES the feature.
 tools: Read, Grep, Glob, Bash, mcp__Claude_in_Chrome__navigate, mcp__Claude_in_Chrome__get_page_text, mcp__Claude_in_Chrome__read_page, mcp__Claude_in_Chrome__read_console_messages, mcp__Claude_in_Chrome__read_network_requests, mcp__Claude_in_Chrome__find, mcp__Claude_in_Chrome__form_input, mcp__Claude_in_Chrome__file_upload, mcp__Claude_in_Chrome__javascript_tool, mcp__Claude_in_Chrome__tabs_create_mcp, mcp__Claude_in_Chrome__tabs_close_mcp, mcp__Claude_in_Chrome__tabs_context_mcp, mcp__Claude_Preview__preview_start, mcp__Claude_Preview__preview_stop, mcp__Claude_Preview__preview_snapshot, mcp__Claude_Preview__preview_screenshot, mcp__Claude_Preview__preview_click, mcp__Claude_Preview__preview_fill, mcp__Claude_Preview__preview_eval, mcp__Claude_Preview__preview_console_logs, mcp__Claude_Preview__preview_network, mcp__Claude_Preview__preview_inspect, mcp__Claude_Preview__preview_list
 ---
 
@@ -68,7 +68,7 @@ Read the task description and the modified-files list. Decide which of these cla
 | **Config-control** | Modified files include settings, permissions, or feature-flag surfaces. Task names a toggle, flag, setting, or permission cell it claims governs behavior. | "Config-control protocol" |
 | **Harness-internal** | EVERY modified file resolves to a path under `adapters/claude-code/` or `~/.claude/`. Task references a hook, agent, rule, template, or other harness artifact. | "Harness-internal protocol" |
 
-If a task spans multiple classes (e.g., a UI page that calls a new API endpoint), execute the protocols in dependency order: data → API → AI → UI. The end-to-end demonstration covers all of them at the UI layer.
+If a task spans multiple classes (e.g., a UI page that calls a new API endpoint), execute the protocols in dependency order: data → API → AI → UI → config-control. The end-to-end demonstration covers all of them at the UI layer; config-control comes last because it observes a governed surface the other layers must already serve.
 
 ## UI-task protocol
 
@@ -140,7 +140,7 @@ This protocol operationalizes the existing Counter-Incentive settings bullet ("w
 
 ## Harness-internal protocol
 
-1. **Confirm the modified files are under `adapters/claude-code/` or `~/.claude/`** (verify against the input). If they are, the harness-internal protocol applies. If not, escalate to the appropriate user-facing class (UI / API / AI / Data).
+1. **Confirm the modified files are under `adapters/claude-code/` or `~/.claude/`** (verify against the input). If they are, the harness-internal protocol applies. If not, escalate to the appropriate user-facing class (UI / API / AI / Data / Config-control).
 2. **Identify the `--self-test` for the modified mechanism.** A hook should have `bash <hook>.sh --self-test`. An agent's invocation surface may not have a self-test directly; in that case the test is "is the agent's file syntactically valid YAML frontmatter + Markdown body with the required sections?" — confirm via a parser or `grep`.
 3. **Execute the `--self-test`.** Capture exit code and stdout.
 4. **Verify the self-test reports `self-test: OK`.** This is the canonical success token. Exit 0 without this token is INSUFFICIENT — the self-test ran but didn't assert pass.
