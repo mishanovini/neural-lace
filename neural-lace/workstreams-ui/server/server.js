@@ -458,24 +458,83 @@ const BACKLOG_RE_INFLIGHT_R4 = new RegExp('\\*\\*((PARTIALLY|LARGELY)' + BACKLOG
 const BACKLOG_RE_WORD_TERM = /\b(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)\b/i;
 const BACKLOG_RE_WORD_INFLIGHT = /\b(SCHEDULED|DEFERRED|DEMOTED|FOLDED|FOLD-INTO-[^*\s)]+)\b/i;
 
+// ADD-PATH GRAMMAR-COLLISION GUARD (comprehension-review Stage 3c fix).
+// A freshly-ADDED open row must classify OPEN under the REAL od_backlog_health
+// even when the operator's title/description contains a bare disposition word
+// ("Document WONTFIX semantics", "how SCHEDULED rows re-nag"). The oracle's
+// R1 rule scans the ENTIRE leading `**...**` segment, so anything a keyword
+// can reach inside it mis-reads the row as done/in-flight and it VANISHES
+// from the open list. Three coordinated guards (each proven against the real
+// oracle — see the S42d-f self-test scenarios + the build-evidence probe):
+//   1. structural: only the machine-generated ID sits inside the leading
+//      bold; the verbatim title moves OUT, after a COLON separator (NOT the
+//      em-dash real rows use inside the bold) so a keyword-LEADING title can't
+//      chain off the ID's closing `**` via R2 ("** — WONTFIX" matches; "**:
+//      WONTFIX" does not — probe C vs D).
+//   2. ID guard: backlogIdBaseFromTitle strips keyword TOKENS from the
+//      synthetic slug so the ID itself (which DOES sit inside the bold, R1's
+//      reach) can never carry one (probe E).
+//   3. markdown guard: backlogNeutralizeMarkdown collapses any `**` the
+//      operator typed in title/description down to a single `*`, so verbatim
+//      text can't smuggle a `**KEYWORD` bold segment that R2/R3/R4 anchor on
+//      (probe G/H) — a BARE keyword in free text is already OPEN-safe (probe
+//      F), so no WORD the operator wrote is altered.
+// BACKLOG_DISPOSITION_KEYWORDS is DERIVED from the SAME ported fragment
+// strings above (BACKLOG_TERM + BACKLOG_INFLIGHT), never a second hand-typed
+// list, so the guard can never drift out of lockstep with the classification
+// regexes it must track. Every all-caps token (>=3 chars) in both fragments:
+// DISPOSITIONED/IMPLEMENTED/ABSORBED/CLOSED/SUPERSEDED/WONTFIX (TERM) +
+// SCHEDULED/DEFERRED/DEMOTED/FOLDED/FOLD/INTO (INFLIGHT, incl. FOLD-INTO split
+// into its word tokens — guarding FOLD and INTO independently is strictly
+// safer than only the literal).
+const BACKLOG_DISPOSITION_KEYWORDS = (function () {
+  const seen = {};
+  (BACKLOG_TERM + '|' + BACKLOG_INFLIGHT).replace(/[^A-Z]+/g, ' ').trim().split(/\s+/)
+    .forEach((w) => { if (w.length >= 3) seen[w] = true; });
+  return Object.keys(seen);
+})();
+
+function backlogNeutralizeMarkdown(s) {
+  return String(s).replace(/\*{2,}/g, '*').replace(/[\r\n]+/g, ' ').trim();
+}
+
 const BACKLOG_TIER_HIGH_DAYS = Number(process.env.BACKLOG_TIER_HIGH_DAYS) || 7;
 const BACKLOG_TIER_MEDIUM_DAYS = Number(process.env.BACKLOG_TIER_MEDIUM_DAYS) || 30;
 const BACKLOG_TIER_LOW_DAYS = Number(process.env.BACKLOG_TIER_LOW_DAYS) || 90;
 const BACKLOG_COMPACT_CAP = Number(process.env.BACKLOG_COMPACT_CAP) || 5;
 const BACKLOG_ADD_SECTION_HEADING = '## Open work — substantive deferrals';
 
-function backlogRowTitle(line, id) {
+// backlogRowParts(line, id) — the DISPLAY title + preview, handling BOTH row
+// shapes this module ever sees:
+//   - canonical existing rows:  `- **ID — title** (added ...) body`   (title
+//     INSIDE the leading bold)
+//   - add-path rows (post-Stage-3c fix): `- **ID**: title (added ...) body`
+//     (title OUTSIDE the leading bold, after a colon — see the guard block
+//     above for why the title cannot live inside the bold anymore)
+// The classification (terminal/inflight/open) is UNAFFECTED by this — it is
+// computed from the raw line by the R1-R4 ports; this function only shapes the
+// human-readable title/preview strings.
+function backlogRowParts(line, id) {
+  const escId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const m = BACKLOG_RE_TITLE_SEGMENT.exec(line);
-  if (!m) return id;
-  const seg = m[1];
-  const stripped = seg.replace(new RegExp('^' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[—\\-:]*\\s*'), '');
-  return stripped || seg;
-}
-
-function backlogRowPreview(line) {
-  const m = BACKLOG_RE_TITLE_SEGMENT.exec(line);
-  const rest = m ? line.slice(m[0].length).trim() : line.trim();
-  return rest.length > 220 ? rest.slice(0, 220) + '…' : rest;
+  let title = '';
+  let rest = m ? line.slice(m[0].length) : line;
+  if (m) {
+    const inBold = m[1].replace(new RegExp('^' + escId + '\\s*[—:\\-]*\\s*'), '').trim();
+    if (inBold) {
+      // canonical `**ID — title**`
+      title = inBold;
+      rest = rest.replace(/^\s*[—:\-]+\s*/, '');
+    } else {
+      // add-path `**ID**: title (added ...)` — title is the run before "(added"
+      const afterBold = rest.replace(/^\s*[—:\-]+\s*/, '');
+      title = afterBold.split(/\s*\(added\b/)[0].trim();
+      rest = afterBold.slice(title.length).replace(/^\s*/, '');
+    }
+  }
+  if (!title) title = id;
+  const preview = rest.trim();
+  return { title: title, preview: preview.length > 220 ? preview.slice(0, 220) + '…' : preview };
 }
 
 // parseBacklogRows(text) — one pass over the file, mirroring
@@ -520,9 +579,10 @@ function parseBacklogRows(text) {
     const status = terminal ? 'terminal' : (inflight ? 'inflight' : 'open');
     const isOverdue = status === 'open' && ageDays !== null && ageDays > thresholdDays;
 
+    const parts = backlogRowParts(line, id);
     rows.push({
-      id: id, lineIndex: lineIndex, title: backlogRowTitle(line, id),
-      preview: backlogRowPreview(line), added: added, age_days: ageDays,
+      id: id, lineIndex: lineIndex, title: parts.title,
+      preview: parts.preview, added: added, age_days: ageDays,
       priority: priorityBucket, priority_label: priorityLabel, status: status,
       disposition_word: dispositionWord, is_overdue: isOverdue,
     });
@@ -578,11 +638,18 @@ function findBacklogLineIndexForId(lines, id) {
 }
 
 function backlogIdBaseFromTitle(title) {
-  let base = String(title).toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  // Guard 2 (Stage 3c): drop any TERM/INFLIGHT keyword TOKEN before building
+  // the slug, so the synthetic ID — which sits INSIDE the leading bold, R1's
+  // reach — can never carry a disposition word (probe E). The ID is a
+  // machine-generated slug, NOT the operator's verbatim title, so dropping a
+  // token here mangles nothing they wrote (the title is preserved verbatim
+  // OUTSIDE the bold — see the add rowLine).
+  const words = String(title).toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim().split(/\s+/)
+    .filter((w) => w && BACKLOG_DISPOSITION_KEYWORDS.indexOf(w) === -1);
+  let base = words.join('-');
   if (base.length > 40) base = base.slice(0, 40).replace(/-+$/g, '');
-  if (!/^[A-Z]/.test(base)) base = 'ROW-' + base;
-  if (base.replace(/-/g, '').length < 3) base = base + '-ROW';
-  return base || 'ROW';
+  if (!/^[A-Z]/.test(base) || base.replace(/[^A-Z0-9]/g, '').length < 3) base = 'ROW';
+  return base;
 }
 
 function backlogExistingIds(lines) {
@@ -1481,15 +1548,25 @@ const server = http.createServer((req, res) => {
       // endpoint) write the SAME shape the O.9 loop already parses — no
       // separate "Claude path".
       if (action === 'add') {
-        const title = typeof input.title === 'string' ? input.title.trim().replace(/[\r\n]+/g, ' ') : '';
+        // Guard 3 (Stage 3c): neutralize markdown `**` in the VERBATIM title /
+        // description so operator text can't smuggle a `**KEYWORD` bold
+        // segment (probe G/H). backlogNeutralizeMarkdown collapses `**`->`*`
+        // and flattens newlines — no WORD is altered.
+        const title = typeof input.title === 'string' ? backlogNeutralizeMarkdown(input.title) : '';
         if (!title) return sendJson(res, 400, { ok: false, error: 'title cannot be empty' });
         const priority = ['high', 'medium', 'low'].indexOf(input.priority) !== -1 ? input.priority : 'medium';
-        const description = typeof input.description === 'string' ? input.description.trim().replace(/[\r\n]+/g, ' ') : '';
+        const description = typeof input.description === 'string' ? backlogNeutralizeMarkdown(input.description) : '';
         const today = new Date().toISOString().slice(0, 10);
         const r = withBacklogFile((lines) => {
           const id = generateBacklogId(lines, title);
           const body = description ? (' ' + description) : '';
-          const rowLine = '- **' + id + ' — ' + title + '** (added ' + today + '; label: `workstreams-ui`; priority:' + priority + ').' + body;
+          // Guard 1 (Stage 3c): ONLY the (keyword-guarded) id sits inside the
+          // leading bold; the verbatim title follows a COLON (not the em-dash
+          // real rows use inside the bold), so a keyword-leading title can't
+          // chain off the id's closing `**` via R2 (probe C vs D). Result: a
+          // fresh open row classifies OPEN under od_backlog_health regardless
+          // of what disposition words the title/description contain.
+          const rowLine = '- **' + id + '**: ' + title + ' (added ' + today + '; label: `workstreams-ui`; priority:' + priority + ').' + body;
           const insertAt = findBacklogInsertIndex(lines);
           const toInsert = (insertAt > 0 && lines[insertAt - 1].trim() !== '') ? ['', rowLine] : [rowLine];
           lines.splice(insertAt, 0, ...toInsert);

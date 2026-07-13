@@ -1180,10 +1180,50 @@ async function main() {
     ok('S42c reload (a second GET) reflects the persisted add (file is truth)',
       (await backlogGet()).json.counts.open_total === 6);
 
+    // ---- S42d-f (comprehension-review Stage 3c REGRESSION ORACLE): a row
+    // ADDed with a bare disposition keyword in its title/description must
+    // classify OPEN under the REAL od_backlog_health, not merely under this
+    // module's own ported regexes (the bug was exactly a divergence: the add
+    // path built a row the real loop read as terminal/in-flight, so it
+    // VANISHED from the open list). Verified by shelling the ACTUAL oracle
+    // (source observability-derive.sh; od_backlog_health --json) over the
+    // post-add fixture — the SAME real-oracle check the three production
+    // consumers run, never an eyeball. Uses derive-cache.js's bashBin() for
+    // the absolute-bash, minimal-env robustness every child spawn here relies
+    // on (see the S22b needs-you.sh precedent above).
+    const deriveLibSh = path.join(__dirname, '..', '..', '..', 'adapters', 'claude-code', 'hooks', 'lib', 'observability-derive.sh');
+    function realOracleStatus(rowId) {
+      const dc = require('./derive-cache.js');
+      const bash = dc.bashBin();
+      const script = 'source "' + deriveLibSh.replace(/\\/g, '/') + '" 2>/dev/null; ' +
+        'BACKLOG_MD_PATH="' + backlogFixturePath.replace(/\\/g, '/') + '" od_backlog_health --json';
+      const res = spawnSync(bash, ['-c', script], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+      let doc; try { doc = JSON.parse(String(res.stdout || '')); } catch (_) { return 'PARSE-FAIL'; }
+      const r = (doc.rows || []).find((x) => x.id === rowId);
+      if (!r) return 'NO-ROW';
+      return r.terminal ? 'TERMINAL' : (r.dispositioned_in_flight ? 'INFLIGHT' : 'OPEN');
+    }
+    const kwTitleAdd = await backlogPost({ action: 'add', title: 'Document WONTFIX semantics and how SCHEDULED rows re-nag', priority: 'low', description: 'see the **DEMOTED** and **CLOSED** cases inline' });
+    ok('S42d add with disposition keywords in BOTH title and description returns ok:true, id carries no keyword token, title preserved verbatim',
+      kwTitleAdd.json && kwTitleAdd.json.ok === true &&
+      !/\b(WONTFIX|SCHEDULED|DEMOTED|CLOSED|DEFERRED|FOLDED|DISPOSITIONED|IMPLEMENTED|ABSORBED|SUPERSEDED)\b/.test(kwTitleAdd.json.id) &&
+      kwTitleAdd.json.line.indexOf('Document WONTFIX semantics and how SCHEDULED rows re-nag') !== -1,
+      JSON.stringify(kwTitleAdd.json));
+    ok('S42e the keyword-laden freshly-added row classifies OPEN under the REAL od_backlog_health (regression oracle for the fix — NOT this module\'s own regexes)',
+      fs.existsSync(deriveLibSh) ? realOracleStatus(kwTitleAdd.json.id) === 'OPEN' : true,
+      'real-oracle verdict=' + (fs.existsSync(deriveLibSh) ? realOracleStatus(kwTitleAdd.json.id) : 'lib-absent-skipped'));
+    const bl42 = await backlogGet();
+    const kwRow = bl42.json.full.find((r) => r.id === kwTitleAdd.json.id);
+    ok('S42f this module\'s OWN GET also classifies the keyword row OPEN + shows the verbatim title (not the id), so the ported parser and the real oracle stay in lockstep',
+      !!kwRow && kwRow.status === 'open' && kwRow.title.indexOf('Document WONTFIX semantics') === 0, JSON.stringify(kwRow));
+
     // ---- S43: mistake recovery — empty title is a clean 400, never written.
+    // (snapshot taken HERE, after the S42d keyword-add, so the byte-compare
+    // is against the CURRENT file state, not a stale pre-S42d capture.)
+    const beforeBlankAdd = fs.readFileSync(backlogFixturePath, 'utf8');
     const addBadRes = await backlogPost({ action: 'add', title: '   ', priority: 'low' });
     ok('S43 POST add with a blank title is a clean 400, not written', addBadRes.status === 400 && addBadRes.json && addBadRes.json.ok === false);
-    ok('S43b the rejected add never touched the file (byte-identical to just before it)', fs.readFileSync(backlogFixturePath, 'utf8') === afterAddText);
+    ok('S43b the rejected add never touched the file (byte-identical to just before it)', fs.readFileSync(backlogFixturePath, 'utf8') === beforeBlankAdd);
 
     // ---- S44: WONTFIX dispose — row-scoped (Prove-it-works step 4: "no
     // other row disturbed") + loop-parseable (verified structurally here;
