@@ -2073,6 +2073,79 @@ check_byte_budget() {
 # ------------------------------------------------------------
 # Check 8: selftest-sweep (--full only)
 # ------------------------------------------------------------
+# ------------------------------------------------------------
+# Check: master-drift-autocorrect (docs/plans/master-drift-autocorrection-
+# 2026-07.md Task 4, constitution §10: the doctor arbitrates the mechanism
+# claim). Quick predicates (structural, tolerate-absent like the E.6/E.7/
+# E.8 sub-checks — a bare fixture repo simply hasn't installed this
+# mechanism):
+#   1. repo scripts/master-drift-autocorrect.sh exists (WARN when absent)
+#      and carries a --self-test entrypoint (RED when present without one —
+#      the manifest entry claims selftest).
+#   2. hook wiring: when session-start-git-freshness.sh exists (repo side
+#      preferred, live fallback) it must reference the corrector — a
+#      freshness hook that never dispatches it is a silent no-op mechanism
+#      (RED; same pattern as the E.8 nl-issue digest-wiring predicate).
+# The "--self-test exits 0" half of the predicate runs in --full mode only
+# (check_master_drift_selftest below), matching the doctor's quick<2s
+# contract; the hooks selftest-sweep cannot cover it (scripts/ is not
+# hooks/).
+# ------------------------------------------------------------
+check_master_drift_autocorrect() {
+  local live_home="$1" repo_root="$2"
+
+  local md_script=""
+  [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/scripts/master-drift-autocorrect.sh" ]] \
+    && md_script="${repo_root}/adapters/claude-code/scripts/master-drift-autocorrect.sh"
+  [[ -z "$md_script" && -f "${live_home}/scripts/master-drift-autocorrect.sh" ]] \
+    && md_script="${live_home}/scripts/master-drift-autocorrect.sh"
+
+  if [[ -z "$md_script" ]]; then
+    _warn "master-drift-autocorrect" "master-drift-autocorrect.sh missing (repo scripts/ and live scripts/) — mechanism not yet installed on this machine/fixture"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! grep -q -- '--self-test' "$md_script" 2>/dev/null; then
+    _red "master-drift-autocorrect" "master-drift-autocorrect.sh has no --self-test entrypoint despite its manifest selftest claim (${md_script})"
+  fi
+
+  local md_hook=""
+  [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/hooks/session-start-git-freshness.sh" ]] \
+    && md_hook="${repo_root}/adapters/claude-code/hooks/session-start-git-freshness.sh"
+  [[ -z "$md_hook" && -f "${live_home}/hooks/session-start-git-freshness.sh" ]] \
+    && md_hook="${live_home}/hooks/session-start-git-freshness.sh"
+  if [[ -n "$md_hook" ]]; then
+    if ! grep -q "master-drift-autocorrect.sh" "$md_hook" 2>/dev/null; then
+      _red "master-drift-autocorrect" "session-start-git-freshness.sh exists but never dispatches master-drift-autocorrect.sh (silent no-op mechanism) — ${md_hook}"
+    fi
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# --full companion: the corrector's --self-test must exit 0 (sandboxed via
+# HARNESS_SELFTEST=1, same timeout discipline as check_selftest_sweep).
+# Absence-tolerant: quick's structural predicate already WARNed.
+check_master_drift_selftest() {
+  local live_home="$1" repo_root="$2"
+  local md_script=""
+  [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/scripts/master-drift-autocorrect.sh" ]] \
+    && md_script="${repo_root}/adapters/claude-code/scripts/master-drift-autocorrect.sh"
+  [[ -z "$md_script" && -f "${live_home}/scripts/master-drift-autocorrect.sh" ]] \
+    && md_script="${live_home}/scripts/master-drift-autocorrect.sh"
+  if [[ -z "$md_script" ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  local out rc last_line
+  out="$(HARNESS_SELFTEST=1 timeout "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$md_script" --self-test </dev/null 2>&1)"
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    last_line="$(printf '%s\n' "$out" | tail -n 1)"
+    _red "master-drift-autocorrect" "master-drift-autocorrect.sh --self-test exited ${rc}: ${last_line}"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
 check_selftest_sweep() {
   local live_home="$1"
   local hooks_dir="${live_home}/hooks"
@@ -2131,6 +2204,7 @@ run_quick_checks() {
   check_budget_active_plans "$live_home" "$repo_root"
   check_budget_worktrees_branches "$live_home" "$repo_root"
   check_new_gate_evidence_bar "$live_home" "$repo_root"
+  check_master_drift_autocorrect "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -3780,6 +3854,7 @@ run_quick_checks "$LIVE_HOME" "$REPO_ROOT"
 
 if [[ "$MODE" == "full" ]]; then
   check_selftest_sweep "$LIVE_HOME"
+  check_master_drift_selftest "$LIVE_HOME" "$REPO_ROOT"
 fi
 
 if [[ "$RED_COUNT" -eq 0 ]]; then

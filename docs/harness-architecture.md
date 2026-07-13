@@ -15,7 +15,7 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 116 |
+| Total manifest entries | 117 |
 | Unique hook scripts | 103 |
 | Blocking gates (`blocking: true`) | 32 |
 
@@ -119,7 +119,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
 | gate | 32 | 12 |
-| writer | 0 | 26 |
+| writer | 0 | 27 |
 | surfacer | 0 | 19 |
 | pattern | 0 | 24 |
 | convention | 0 | 3 |
@@ -137,7 +137,7 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 | session-start | 15 |
 | pretool | 24 |
 | posttool | 6 |
-| none | 63 |
+| none | 64 |
 
 ## Doctrine index
 
@@ -195,7 +195,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/worktree-isolation.md | 1 (worktree-advisor) |
 | rules/constitution.md | 1 (constitution) |
 
-Entries with no doctrine_file (`-`): 28.
+Entries with no doctrine_file (`-`): 29.
 
 ## Full entry listing
 
@@ -253,6 +253,7 @@ Entries with no doctrine_file (`-`): 28.
 | harness-kpis | writer | — | no | none | scripts/harness-kpis.sh — weekly KPI report from the signal ledger (E.5); scheduled-task registration documented, not a hook. |
 | interactive-process-fidelity | pattern | — | no | none | — |
 | local-edit-authorization | gate | PreToolUse | yes | pretool | — |
+| master-drift-autocorrect | writer | — | no | none | scripts/master-drift-autocorrect.sh — FF-only remote-master drift corrector (docs/plans/master-drift-autocorrection-2026-07.md). Not event-wired itself: dispatched BACKGROUNDED by hooks/session-start-git-freshness.sh (the git-freshness entry's hook) on remote-vs-remote master SHA inequality or a non-quiet ~/.claude/state/master-drift/<repo>.status, and directly invocable by hand. All mutating git ops run in the F.6 dedicated sync clone (~/.claude/sync-clone/<repo>); true divergence is surfaced (one digest line), never auto-merged; kill switch MASTER_DRIFT_AUTOCORRECT=0. Doctor predicate: check_master_drift_autocorrect (quick: script + --self-test entrypoint + hook wiring; --full additionally runs the script's --self-test). Runbook: docs/runbooks/master-drift-autocorrect.md. |
 | mechanical-evidence | pattern | — | no | none | — |
 | merge-scan | writer | — | no | none | hooks/lib/merge-scan-lib.sh — ms_emit_merged_for_commit (per-commit `merged` progress-log event, natural-keyed on commit SHA) + ms_scan_repo_for_merges (git-log backfill lane reconciling any missed `merged` events, Task 5b/12). Called by adapters/claude-code/git-hooks/post-commit's post-commit hook body (local-only, best-effort, never blocks the commit) and by the workstreams-ui background auditor's git-log comparison pass. Lives under hooks/lib/ — a subdirectory manifest-check's disk-coverage check (b) never scans (only top-level hooks/*.sh is scanned), so it carries no hooks[] entry of its own; this entry is inventory-only, included for honesty per the filed nl-issue note on manifest-check's disk-scope. |
 | migration-claude-md | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |

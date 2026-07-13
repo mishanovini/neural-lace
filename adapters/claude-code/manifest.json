@@ -992,6 +992,27 @@
       "waiver_path": "~/.claude/state/local-edit-<slug>-<ISO8601>.txt, fresh <30min, written only by the operator-invoked /grant-local-edit skill."
     },
     {
+      "id": "master-drift-autocorrect",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/master-drift-autocorrect.sh — FF-only remote-master drift corrector (docs/plans/master-drift-autocorrection-2026-07.md). Not event-wired itself: dispatched BACKGROUNDED by hooks/session-start-git-freshness.sh (the git-freshness entry's hook) on remote-vs-remote master SHA inequality or a non-quiet ~/.claude/state/master-drift/<repo>.status, and directly invocable by hand. All mutating git ops run in the F.6 dedicated sync clone (~/.claude/sync-clone/<repo>); true divergence is surfaced (one digest line), never auto-merged; kill switch MASTER_DRIFT_AUTOCORRECT=0. Doctor predicate: check_master_drift_autocorrect (quick: script + --self-test entrypoint + hook wiring; --full additionally runs the script's --self-test). Runbook: docs/runbooks/master-drift-autocorrect.md.",
+      "added_after": "2026-07",
+      "golden_scenario": "The repo's two masters (origin = personal remote, mirror = work-org remote) push-race-diverged SIX times on 2026-07-12 alone: local sessions dual-push both masters, but a GitHub SERVER-SIDE PR merge lands on exactly one of them, stranding the other until a human discovers the drift mid-push days later (the failure that cost the 2026-07-11 reconciliation session). This mechanism fast-forwards the strictly-behind master within one session start (FF-behind shape) and surfaces true divergence as exactly one [master-drift] DIVERGED digest line pointing at the runbook (surface-only shape) — never an auto-merge.",
+      "fp_expectation": "Near-zero: the corrector never blocks anything (exit 0 in every path, backgrounded off the session-start blocking path) and mutates only when `git merge-base --is-ancestor` proves one master strictly behind the other; a converged pair is a pure read (CONVERGED, zero digest lines). The riskiest legitimate shape — a human dual-push racing the check-to-push window — degrades to the server's non-FF rejection recorded as PUSH-REJECTED (no retry loop, next session re-evaluates), never to a forced or wrong push. A legitimately diverged pair is surfaced for a reviewed merge, never touched.",
+      "retirement_condition": "Retire if the dual-remote topology is consolidated to a single remote (no second master to drift), if server-side merges stop landing on exactly one remote (e.g. a platform-native mirror is adopted, reversing the 5bf55c7 operator revert), or if a full quarter of ~/.claude/state/master-drift/ status history shows only CONVERGED (the drift class has gone extinct and detection alone suffices).",
+      "honesty_rationale": "Never blocks and never refuses an action — a background writer: it either fast-forwards the strictly-behind master (plain push, server rejection as backstop) or records a one-line status for the digest to surface. There is no gate verdict to waive; the operator-facing off-switch is the MASTER_DRIFT_AUTOCORRECT=0 kill switch honored by both the dispatching hook and the script itself."
+    },
+    {
       "id": "mechanical-evidence",
       "kind": "pattern",
       "doctrine_file": "doctrine/mechanical-evidence.md",
