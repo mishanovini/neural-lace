@@ -1976,6 +1976,22 @@
       "budget_class": "none"
     },
     {
+      "id": "vaporware-config-control",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/vaporware-prevention.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "pattern — checked via functionality-verifier's config-control protocol, dispatched by task-verifier (the sole checkbox-flipper) before flipping any Verification: full user-observable task; the flip is mechanically backstopped by plan-edit-validator.sh (blocking PreToolUse — evidence block with a Runtime verification: line required) and work-integrity-gate via stop-verdict-dispatcher.sh (blocking Stop — checked tasks require evidence blocks); standing surfaces via functionality-auditor's registry-vs-callsite sweep; no dedicated hook by design (plan vaporware-config-controls D-2)"
+    },
+    {
       "id": "vaporware-volume",
       "kind": "gate",
       "doctrine_file": "doctrine/vaporware-prevention.md",
