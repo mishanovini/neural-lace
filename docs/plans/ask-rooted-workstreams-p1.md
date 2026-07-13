@@ -548,7 +548,7 @@ Serialization added in round 1:
   - `neural-lace/workstreams-ui/server/server.js` disposition handler → `docs/backlog.md` row-scoped writer
   **Integration points:**
   - O.9 triage loop parser is the contract — its fixture corpus is the golden oracle for rows/dispositions this UI writes
-- [ ] 16. [serial] Layout integration + Harness Health demotion: sidebar assembly
+- [x] 16. [serial] Layout integration + Harness Health demotion: sidebar assembly
   per the ux-designer round-1 ruling (LANDED 2026-07-10, binding): To-Do at the
   top of a persistent right sidebar with INDEPENDENT SCROLL + a header count,
   Backlog collapsed below it (top-N by tier), ask tree as the main column;
