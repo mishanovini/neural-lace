@@ -903,17 +903,89 @@ file byte-identical, all error paths named/recoverable. Orchestrator independent
 "pointer_items":[]}`; `todo.js` → HTTP 200. Automated S29-S37 blocked upstream by the
 pre-existing `S22b→S23 ECONNRESET` (task_e41fc644), before any Task 14 code path runs.
 
-## Task 15 — Backlog pane (render/add/dispose) (merged: master TBD; builder commit `82aa7e3`; integ `6b1bcf5`)
+## Task 15 — Backlog sidebar pane (builder worktree commit `82aa7e3`; Stage-3c fix follow-up commit TBD)
 
-**Spec meaning:** Task 15 (`Verification: full`) — render `docs/backlog.md` compact top-N by tier (collapsible; full list one click), an ADD form appending a well-formed row the O.9 triage/digest loop parses, and disposition buttons SCHEDULE/DEMOTE/FOLD/WONTFIX writing the EXACT vocabulary that loop understands, row-scoped, to the REAL file (no parallel store). Load-bearing constraint: the O.9 loop's parser — `od_backlog_health` in `observability-derive.sh` — is the golden oracle; rows/dispositions must classify identically under it. Honored literally by porting its R1–R4 regexes verbatim into `parseBacklogRows` (`BACKLOG_RE_TERM_R1..R4`, `BACKLOG_RE_INFLIGHT_R1..R4`, `BACKLOG_TERM`, `BACKLOG_INFLIGHT`), so `GET /api/backlog` and the real oracle agree on every row's status; `dispose` appends markers (`**WONTFIX …**`, `**DEMOTED …**`, `**SCHEDULED …**`, `**FOLD-INTO-<slug> …**`) whose words come from `BACKLOG_DISPOSITION_WORD` (the same tokens the loop's terminal/in-flight rules match). WONTFIX is TERMINAL in the oracle; SCHEDULE/DEMOTE/FOLD are dispositioned-in-flight — that asymmetry is why `renderOpenRow` gives WONTFIX a CONFIRM and the other three an Undo.
+**Spec meaning:** Task 15 renders `docs/backlog.md` compact top-N-per-tier (collapsible to a
+full list), an ADD form, and SCHEDULE/DEMOTE/FOLD/WONTFIX disposition buttons — writing the
+EXACT marker vocabulary the O.9 triage loop's golden oracle (`od_backlog_health` in
+`observability-derive.sh`) understands, row-scoped, to the REAL file (no parallel store). The
+loop's parser is the done-criterion oracle. `parseBacklogRows` ports that oracle's R1–R4
+terminal/in-flight regexes VERBATIM (`BACKLOG_RE_TERM_R1..R4` / `BACKLOG_RE_INFLIGHT_R1..R4`
+from the `BACKLOG_TERM` / `BACKLOG_INFLIGHT` fragment constants), so a row this module READS
+classifies the same way the loop reads it. The `dispose` handler appends markers whose words
+come from `BACKLOG_DISPOSITION_WORD`. CALIBRATED CLAIM (post-Stage-3c): the port makes GET
+classification agree with the loop; the ADD path does NOT preserve "whatever bytes the operator
+typed" verbatim — it preserves their WORDS while restructuring the row (id-only in the bold
+lead, verbatim title after a colon, `**`→`*` in verbatim text) precisely so a freshly-added
+OPEN row classifies OPEN under the real oracle EVEN when the title/description contains a bare
+disposition keyword. "IDENTICALLY" holds for the read/GET path and for dispositions; for the
+ADD path the guarantee is narrower and explicit: the emitted row is a well-formed row the loop
+classifies OPEN, with the operator's title text intact.
 
-**Edge cases covered:** (1) Row-scoped writes: `findBacklogLineIndexForId` uses negative-lookahead `(?![A-Z0-9-])` so disposing `OPEN-01` never touches `OPEN-01-FOLLOWUP` (S44c: exactly one line changes). (2) Byte-exact undo: `undo` removes exactly the `appended_suffix` a prior `dispose` returned, refuses (409) if the row tail no longer matches (concurrent edit) — S45d/S46. (3) Insert location: `findBacklogInsertIndex` appends before the next `## ` heading in "Open work — substantive deferrals", blank separator only if preceding line isn't blank (S42b). (4) Missing file: `readBacklogRaw` → `''` on ENOENT → empty state (constraint 8). (5) ID gen: `generateBacklogId`/`backlogIdBaseFromTitle` slugify + de-dup against `backlogExistingIds`, guarantee `[A-Z][A-Z0-9-]{3,}` id the oracle's `reId` accepts. (6) FOLD target slugified via `backlogSlugifyFoldTarget`. (7) Anti-noise deliberately NOT applied to row CONTENT (backlog rows are legitimately about harness internals — S49b accepts a title naming `needs-you.sh`); absolute-links law still enforced on the one `file_path` href via `payloadSchema.isAbsoluteHref` in `buildBacklogPayload`. (8) Atomic writes via `writeBacklogAtomic` (tmp+rename), mirroring `withOperatorTodoFile`.
+**Edge cases covered:** row-scoped writes via `findBacklogLineIndexForId` (negative-lookahead so
+`OPEN-01` never hits `OPEN-01-FOLLOWUP`; S44c = exactly one line changes); byte-exact undo
+(`undo` removes exactly the returned `appended_suffix`, 409 on tail-mismatch — S45d/S46);
+insert location before the next `## ` heading (`findBacklogInsertIndex`; S42b leaves the
+sibling section untouched); missing file → `''` empty state; keyword-guarded id generation
+(`backlogIdBaseFromTitle` drops every TERM/INFLIGHT token so the id — which sits inside R1's
+bold reach — can never carry one, probe E). **ADD-PATH GRAMMAR-COLLISION GUARD
+(comprehension-review Stage 3c):** a freshly-ADDED open row whose title or description contains
+a bare disposition/terminal keyword ("Document WONTFIX semantics", "how SCHEDULED rows re-nag",
+"Add a CLOSED-state badge") now classifies OPEN under the REAL `od_backlog_health`, via THREE
+coordinated guards proven together against the real oracle — (1) structural: only the
+keyword-guarded id sits inside the leading `**...**`; the verbatim title moves out after a
+COLON separator (`- **ID**: title`, not the em-dash real rows use inside the bold) so a
+keyword-LEADING title can't chain off the id's closing `**` via R2 (probe C=TERMINAL vs
+D=OPEN); (2) `backlogIdBaseFromTitle` keyword-token strip (probe E); (3)
+`backlogNeutralizeMarkdown` collapses operator-typed `**`→`*` in title+description so verbatim
+text can't smuggle a `**KEYWORD` bold segment R2/R3/R4 anchor on (probe G/H) — a BARE keyword
+in free text is already OPEN-safe (probe F), so no WORD is altered. `BACKLOG_DISPOSITION_KEYWORDS`
+is DERIVED from the same ported `BACKLOG_TERM`+`BACKLOG_INFLIGHT` fragments (never a second
+hand-list), so the guard can't drift from the classification regexes. `backlogRowParts` reads
+the verbatim title from BOTH the canonical `**ID — title**` form and the new `**ID**: title`
+form, so display is unaffected. Regression oracle: S42d/S42e/S42f — S42e shells the REAL
+`od_backlog_health` over the post-add fixture and asserts OPEN.
 
-**Edge cases NOT covered:** (1) True simultaneous-writer races: `withBacklogFile` re-reads fresh per call but has no lock — last-writer-wins, the same tradeoff `withOperatorTodoFile`/`autoCheckOperatorTodo` carry; undo's tail-match check limits but doesn't eliminate the race. (2) Multiple rows sharing an identical leading bold id: `findBacklogLineIndexForId` returns FIRST match (oracle extraction is likewise first-wins; real ids unique → theoretical). (3) Full `server.selftest.js` still can't reach S40–S49 due to the pre-existing S22b→S23 ECONNRESET (`task_e41fc644`) — proved via standalone runner with byte-identical scenarios; upstream hang out of scope. (4) Compact-cap overflow ("+N more") in `renderTierGroup` exercised structurally + numerically (real-file GET confirms `total > rows.length`) but no DOM assertion. (5) No browser-level DOM assertion — UI states verified by construction + JSON payload; end-user-advocate (Task 18) owns rendered-pixel check.
+**Edge cases NOT covered:** true simultaneous (same-millisecond) writes remain last-writer-wins
+— `withBacklogFile` re-reads fresh each call but has no lock (the same accepted exposure
+`withOperatorTodoFile` / `autoCheckOperatorTodo` carry); the undo tail-match bounds the blast
+radius but does not eliminate the race. A row whose leading bold id is a strict prefix of a
+longer real id would resolve to the first match — the oracle's own extraction is likewise
+first-wins and real ids are unique, so this is theoretical. The full `server.selftest.js` suite
+still cannot REACH S40–S49/S42d-f in THIS environment because of the pre-existing S22b→S23
+ECONNRESET (`task_e41fc644`); the scenarios are proven via a standalone runner (byte-identical
+assertions) and direct live-server HTTP — the upstream hang is out of scope and unfixed. No
+browser-DOM assertion (advocate/Preview owns that); UI states verified by construction + the
+JSON payload.
 
-**Assumptions:** (1) The O.9 parser to match is `od_backlog_health` (contract C4) — verified it is THE implementation the three real consumers (`session-start-digest.sh`, `plan-edit-validator.sh`, `harness-kpis.sh`) parse; ported its regexes rather than re-deriving. (2) New rows belong in "Open work — substantive deferrals" (heading is constant `BACKLOG_ADD_SECTION_HEADING`). (3) Sandbox env override is `BACKLOG_MD_PATH` — the exact var `od_backlog_health` + consumers already honor, so a fixture is read identically by code + oracle. (4) WONTFIX is the only disposition without Undo — enforced CLIENT-side (`renderOpenRow`); the write API stays uniform (server accepts undo of any suffix). (5) `docs/plans/selftest-task11-fixture-plan.md` was self-test pollution from a crashed run — left untracked/unstaged.
+**Assumptions:** the O.9 parser to match is `od_backlog_health` (contract C4) — the three
+production consumers parse its output, and the plan's Integration point names "the O.9 loop
+parser / its fixture corpus" as the oracle, so I ported its regexes rather than re-deriving.
+New rows belong in "Open work — substantive deferrals" (`BACKLOG_ADD_SECTION_HEADING`, a
+constant). `BACKLOG_MD_PATH` is the sandbox env override (the same var the real oracle honors,
+so a fixture is read identically by both). WONTFIX is the only disposition without an Undo —
+the server accepts an undo of any suffix uniformly; the CLIENT enforces "CONFIRM not undo" for
+WONTFIX. On the Stage-3c row-structure deviation: real open rows put the title INSIDE the bold
+lead (`- **ID — title**`), which is itself vulnerable to this exact collision; since the spec
+requires preserving the title verbatim AND classifying OPEN, and those two cannot both hold with
+the title inside the bold, the id-only-in-bold + colon structure is the correct resolution
+(authorized in the review), preserving the operator's words at the cost of a minor,
+documented structural variance from the legacy corpus.
 
-Evidence: builder standalone S40–S49 24/24 pass; live `CTREE_PORT=17820` against byte-copy of real 993-line backlog — `GET /api/backlog` HTTP 200 ~7ms, `counts={open:50,inflight:3,terminal:14}`, compact caps per tier, `full.length=67`; ORACLE PARITY vs REAL `od_backlog_health` — WONTFIX→terminal_total 14→15, DEMOTE→`dispositioned_in_flight` + dropped from `overdue_ids`, undo→byte-identical `diff`; added row parses `terminal:false,priority:high,age_days:0`; error paths 404/400/409/400. Orchestrator smoke (`CTREE_PORT=17823`): `GET /api/backlog` HTTP 200 (open_total:50, by_tier high2/med15/low10/unlabeled23), `backlog.js` HTTP 200.
+Evidence (all against the REAL `od_backlog_health`, not eyeball): probe of 8 candidate ADD
+structures — current-buggy `- **ID — title**` with keyword title → TERMINAL (bug reproduced);
+em-dash id-outside with keyword-leading title → TERMINAL (R2); unguarded keyword-in-id →
+TERMINAL; colon id-outside + keyword-leading title → OPEN; colon + bare keywords in
+title/description → OPEN; literal `**WONTFIX**`/`**SCHEDULED**` in description → TERMINAL/INFLIGHT
+(fixed by the `**`-neutralizer). Live server CTREE_PORT=17830: five keyword-laden titles ADDed
+("Document WONTFIX semantics", "how SCHEDULED rows re-nag the operator", "Add a CLOSED-state
+badge", "WONTFIX and CLOSED handling"+`**DEMOTED**`/`**SUPERSEDED**` description, "normal
+title"+"please DEMOTE and check CLOSED policy") → real `od_backlog_health` reads ALL FIVE OPEN
+(open_total=5, terminal=0, inflight=0); GET shows each title verbatim, not the id. Standalone
+runner (bypasses the S22b hang): 27/27 PASS incl. S42e "keyword row classifies OPEN under the
+REAL od_backlog_health (regression oracle, run post-close)". Prior-commit runtime evidence
+(WONTFIX→terminal, DEMOTE→dispositioned-in-flight-and-dropped-from-overdue, byte-exact undo,
+real-file add+revert) unchanged and still valid.
 
 ## Task 17 — Mechanized metrics + doctor wiring (sketch §8) (merged: master TBD; builder commit `a56212e`; integ `c72e9f3`)
 
