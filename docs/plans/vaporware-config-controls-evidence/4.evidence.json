@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "task_id": "4",
+  "verdict": "PASS",
+  "commit_sha": "cf35399cbe675028ec4c5f7b1fab1affa8e74e68",
+  "files_modified": [
+    "adapters/claude-code/agents/functionality-verifier.md",
+    "adapters/claude-code/agents/task-verifier.md",
+    "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/doctrine/planning.md",
+    "adapters/claude-code/doctrine/vaporware-prevention-full.md",
+    "adapters/claude-code/manifest.json",
+    "docs/failure-modes.md",
+    "docs/plans/vaporware-config-controls.md"
+  ],
+  "mechanical_checks": {
+    "command:grep -q \"A configurable control\" adapters/claude-code/agents/functionality-verifier.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q \"A configurable control\" adapters/claude-code/agents/functionality-verifier.md",
+      "exit_code": 0
+    },
+    "command:grep -qF \"| **Config-control** |\" adapters/claude-code/agents/functionality-verifier.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -qF \"| **Config-control** |\" adapters/claude-code/agents/functionality-verifier.md",
+      "exit_code": 0
+    },
+    "command:grep -q \"^## Config-control protocol\" adapters/claude-code/agents/functionality-verifier.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q \"^## Config-control protocol\" adapters/claude-code/agents/functionality-verifier.md",
+      "exit_code": 0
+    },
+    "command:grep -q \"FM-038\" adapters/claude-code/agents/functionality-verifier.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q \"FM-038\" adapters/claude-code/agents/functionality-verifier.md",
+      "exit_code": 0
+    },
+    "command:grep -qF \"UI-task | API-task | AI-task | Data-task | Config-control | Harness-internal\" adapters/claude-code/agents/functionality-verifier.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -qF \"UI-task | API-task | AI-task | Data-task | Config-control | Harness-internal\" adapters/claude-code/agents/functionality-verifier.md",
+      "exit_code": 0
+    },
+    "command:awk \"/^## Cross-references/,/^## Why this role exists/\" adapters/claude-code/agents/functionality-verifier.md | grep -q \"FM-038\"": {
+      "passed": true,
+      "detail": "",
+      "command": "awk \"/^## Cross-references/,/^## Why this role exists/\" adapters/claude-code/agents/functionality-verifier.md | grep -q \"FM-038\"",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T00:53:42Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/vaporware-config-controls.md"
+}
