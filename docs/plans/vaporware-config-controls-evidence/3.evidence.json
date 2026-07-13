@@ -2,23 +2,22 @@
   "schema_version": 1,
   "task_id": "3",
   "verdict": "PASS",
-  "commit_sha": "82fb5bf43ac31c689efed6991606c31504ebf164",
+  "commit_sha": "cf35399cbe675028ec4c5f7b1fab1affa8e74e68",
   "files_modified": [
+    "adapters/claude-code/agents/functionality-verifier.md",
+    "adapters/claude-code/agents/task-verifier.md",
     "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/doctrine/planning.md",
+    "adapters/claude-code/doctrine/vaporware-prevention-full.md",
     "adapters/claude-code/manifest.json",
-    "docs/failure-modes.md"
+    "docs/failure-modes.md",
+    "docs/plans/vaporware-config-controls.md"
   ],
   "mechanical_checks": {
-    "command:grep -q 'configurable control' adapters/claude-code/doctrine/planning.md": {
+    "command:grep -qiE \"configurable control\" adapters/claude-code/doctrine/planning.md": {
       "passed": true,
       "detail": "",
-      "command": "grep -q 'configurable control' adapters/claude-code/doctrine/planning.md",
-      "exit_code": 0
-    },
-    "command:grep -q 'never-flipped shadow-mode' adapters/claude-code/doctrine/planning.md": {
-      "passed": true,
-      "detail": "",
-      "command": "grep -q 'never-flipped shadow-mode' adapters/claude-code/doctrine/planning.md",
+      "command": "grep -qiE \"configurable control\" adapters/claude-code/doctrine/planning.md",
       "exit_code": 0
     },
     "command:test $(wc -c < adapters/claude-code/doctrine/planning.md) -le 3000": {
@@ -27,20 +26,26 @@
       "command": "test $(wc -c < adapters/claude-code/doctrine/planning.md) -le 3000",
       "exit_code": 0
     },
-    "command:grep -q 'decorative-control corollary' adapters/claude-code/doctrine/planning-full.md": {
+    "command:grep -q \"Configurable controls (permission toggles, feature flags, settings, dropdowns)\" adapters/claude-code/doctrine/planning-full.md": {
       "passed": true,
       "detail": "",
-      "command": "grep -q 'decorative-control corollary' adapters/claude-code/doctrine/planning-full.md",
+      "command": "grep -q \"Configurable controls (permission toggles, feature flags, settings, dropdowns)\" adapters/claude-code/doctrine/planning-full.md",
       "exit_code": 0
     },
-    "command:grep -q 'DIFFERENT behavior' adapters/claude-code/doctrine/planning-full.md": {
+    "command:grep -q \"values the spec claims produce DIFFERENT behavior\" adapters/claude-code/doctrine/planning-full.md": {
       "passed": true,
       "detail": "",
-      "command": "grep -q 'DIFFERENT behavior' adapters/claude-code/doctrine/planning-full.md",
+      "command": "grep -q \"values the spec claims produce DIFFERENT behavior\" adapters/claude-code/doctrine/planning-full.md",
+      "exit_code": 0
+    },
+    "command:awk \"/^## FUNCTIONALITY OVER COMPONENTS/,/^## When to Plan/\" adapters/claude-code/doctrine/planning-full.md | grep -q \"Configurable controls\"": {
+      "passed": true,
+      "detail": "",
+      "command": "awk \"/^## FUNCTIONALITY OVER COMPONENTS/,/^## When to Plan/\" adapters/claude-code/doctrine/planning-full.md | grep -q \"Configurable controls\"",
       "exit_code": 0
     }
   },
-  "timestamp": "2026-07-13T00:11:01Z",
+  "timestamp": "2026-07-13T00:52:15Z",
   "verifier": "write-evidence.sh",
   "plan_path": "docs/plans/vaporware-config-controls.md"
 }

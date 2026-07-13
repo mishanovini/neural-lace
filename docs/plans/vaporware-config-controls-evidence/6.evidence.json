@@ -2,45 +2,50 @@
   "schema_version": 1,
   "task_id": "6",
   "verdict": "PASS",
-  "commit_sha": "82fb5bf43ac31c689efed6991606c31504ebf164",
+  "commit_sha": "cf35399cbe675028ec4c5f7b1fab1affa8e74e68",
   "files_modified": [
+    "adapters/claude-code/agents/functionality-verifier.md",
+    "adapters/claude-code/agents/task-verifier.md",
     "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/doctrine/planning.md",
+    "adapters/claude-code/doctrine/vaporware-prevention-full.md",
     "adapters/claude-code/manifest.json",
-    "docs/failure-modes.md"
+    "docs/failure-modes.md",
+    "docs/plans/vaporware-config-controls.md"
   ],
   "mechanical_checks": {
-    "command:grep -q '^## FM-038 — Vaporware: decorative config control (renders but does not change behavior)' docs/failure-modes.md": {
+    "command:grep -q \"^## FM-038\" docs/failure-modes.md": {
       "passed": true,
       "detail": "",
-      "command": "grep -q '^## FM-038 — Vaporware: decorative config control (renders but does not change behavior)' docs/failure-modes.md",
+      "command": "grep -q \"^## FM-038\" docs/failure-modes.md",
       "exit_code": 0
     },
-    "command:grep -A20 '^## FM-038' docs/failure-modes.md | grep -q '\\*\\*Symptom\\.\\*\\*'": {
+    "command:test $(awk \"/^## FM-038/,0\" docs/failure-modes.md | grep -cE \"^- \\*\\*(Symptom|Root cause|Detection|Prevention|Example|Discriminator)\\.\\*\\*\") -eq 6": {
       "passed": true,
       "detail": "",
-      "command": "grep -A20 '^## FM-038' docs/failure-modes.md | grep -q '\\*\\*Symptom\\.\\*\\*'",
+      "command": "test $(awk \"/^## FM-038/,0\" docs/failure-modes.md | grep -cE \"^- \\*\\*(Symptom|Root cause|Detection|Prevention|Example|Discriminator)\\.\\*\\*\") -eq 6",
       "exit_code": 0
     },
-    "command:grep -A20 '^## FM-038' docs/failure-modes.md | grep -q '\\*\\*Discriminator\\.\\*\\*'": {
+    "command:awk \"/^## FM-038/,0\" docs/failure-modes.md | grep -q \"6 were decorative\"": {
       "passed": true,
       "detail": "",
-      "command": "grep -A20 '^## FM-038' docs/failure-modes.md | grep -q '\\*\\*Discriminator\\.\\*\\*'",
+      "command": "awk \"/^## FM-038/,0\" docs/failure-modes.md | grep -q \"6 were decorative\"",
       "exit_code": 0
     },
-    "command:grep -q '6 were decorative' docs/failure-modes.md": {
+    "command:awk \"/^## FM-038/,0\" docs/failure-modes.md | grep -q \"vaporware-config-control\"": {
       "passed": true,
       "detail": "",
-      "command": "grep -q '6 were decorative' docs/failure-modes.md",
+      "command": "awk \"/^## FM-038/,0\" docs/failure-modes.md | grep -q \"vaporware-config-control\"",
       "exit_code": 0
     },
-    "command:grep -A20 '^## FM-038' docs/failure-modes.md | grep -q 'A downstream product'": {
+    "command:! grep -q \"runtime-verification Stop chain\" docs/failure-modes.md": {
       "passed": true,
       "detail": "",
-      "command": "grep -A20 '^## FM-038' docs/failure-modes.md | grep -q 'A downstream product'",
+      "command": "! grep -q \"runtime-verification Stop chain\" docs/failure-modes.md",
       "exit_code": 0
     }
   },
-  "timestamp": "2026-07-13T00:13:53Z",
+  "timestamp": "2026-07-13T00:56:26Z",
   "verifier": "write-evidence.sh",
   "plan_path": "docs/plans/vaporware-config-controls.md"
 }

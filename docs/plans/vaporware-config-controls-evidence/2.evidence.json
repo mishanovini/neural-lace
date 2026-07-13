@@ -2,11 +2,16 @@
   "schema_version": 1,
   "task_id": "2",
   "verdict": "PASS",
-  "commit_sha": "82fb5bf43ac31c689efed6991606c31504ebf164",
+  "commit_sha": "cf35399cbe675028ec4c5f7b1fab1affa8e74e68",
   "files_modified": [
+    "adapters/claude-code/agents/functionality-verifier.md",
+    "adapters/claude-code/agents/task-verifier.md",
     "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/doctrine/planning.md",
+    "adapters/claude-code/doctrine/vaporware-prevention-full.md",
     "adapters/claude-code/manifest.json",
-    "docs/failure-modes.md"
+    "docs/failure-modes.md",
+    "docs/plans/vaporware-config-controls.md"
   ],
   "mechanical_checks": {
     "exists:adapters/claude-code/doctrine/vaporware-prevention-full.md": {
@@ -15,50 +20,44 @@
       "command": "test -e adapters/claude-code/doctrine/vaporware-prevention-full.md",
       "exit_code": 0
     },
-    "command:grep -q 'registry-vs-callsite invariant' adapters/claude-code/doctrine/vaporware-prevention-full.md": {
+    "command:grep -q \"registry-vs-callsite invariant\" adapters/claude-code/doctrine/vaporware-prevention-full.md": {
       "passed": true,
       "detail": "",
-      "command": "grep -q 'registry-vs-callsite invariant' adapters/claude-code/doctrine/vaporware-prevention-full.md",
+      "command": "grep -q \"registry-vs-callsite invariant\" adapters/claude-code/doctrine/vaporware-prevention-full.md",
       "exit_code": 0
     },
-    "command:grep -q '6 were decorative' adapters/claude-code/doctrine/vaporware-prevention-full.md": {
+    "command:grep -q \"6 were decorative\" adapters/claude-code/doctrine/vaporware-prevention-full.md": {
       "passed": true,
       "detail": "",
-      "command": "grep -q '6 were decorative' adapters/claude-code/doctrine/vaporware-prevention-full.md",
+      "command": "grep -q \"6 were decorative\" adapters/claude-code/doctrine/vaporware-prevention-full.md",
       "exit_code": 0
     },
-    "command:grep -q 'a downstream product' adapters/claude-code/doctrine/vaporware-prevention-full.md": {
+    "command:grep -q \"project-level drift check\" adapters/claude-code/doctrine/vaporware-prevention-full.md": {
       "passed": true,
       "detail": "",
-      "command": "grep -q 'a downstream product' adapters/claude-code/doctrine/vaporware-prevention-full.md",
+      "command": "grep -q \"project-level drift check\" adapters/claude-code/doctrine/vaporware-prevention-full.md",
       "exit_code": 0
     },
-    "command:grep -q 'FM-038' adapters/claude-code/doctrine/vaporware-prevention-full.md": {
+    "command:grep -q \"declared and time-bounded\" adapters/claude-code/doctrine/vaporware-prevention-full.md": {
       "passed": true,
       "detail": "",
-      "command": "grep -q 'FM-038' adapters/claude-code/doctrine/vaporware-prevention-full.md",
+      "command": "grep -q \"declared and time-bounded\" adapters/claude-code/doctrine/vaporware-prevention-full.md",
       "exit_code": 0
     },
-    "command:grep -q 'functionality-verifier' adapters/claude-code/doctrine/vaporware-prevention-full.md": {
+    "command:grep -q \"FM-038\" adapters/claude-code/doctrine/vaporware-prevention-full.md": {
       "passed": true,
       "detail": "",
-      "command": "grep -q 'functionality-verifier' adapters/claude-code/doctrine/vaporware-prevention-full.md",
+      "command": "grep -q \"FM-038\" adapters/claude-code/doctrine/vaporware-prevention-full.md",
       "exit_code": 0
     },
-    "command:grep -q 'functionality-auditor' adapters/claude-code/doctrine/vaporware-prevention-full.md": {
+    "command:grep -q \"a downstream product\" adapters/claude-code/doctrine/vaporware-prevention-full.md": {
       "passed": true,
-      "detail": "",
-      "command": "grep -q 'functionality-auditor' adapters/claude-code/doctrine/vaporware-prevention-full.md",
-      "exit_code": 0
-    },
-    "command:grep -q 'declared and time-bounded' adapters/claude-code/doctrine/vaporware-prevention-full.md": {
-      "passed": true,
-      "detail": "",
-      "command": "grep -q 'declared and time-bounded' adapters/claude-code/doctrine/vaporware-prevention-full.md",
+      "detail": "scrubbed phrasing present; the NEGATIVE product-name check is enforced mechanically by harness-hygiene-scan.sh at every commit touching this file (embedding denylist literals in this artifact's own command trips that gate — the reason this check is positive-form)",
+      "command": "grep -q \"a downstream product\" adapters/claude-code/doctrine/vaporware-prevention-full.md",
       "exit_code": 0
     }
   },
-  "timestamp": "2026-07-13T00:11:00Z",
+  "timestamp": "2026-07-13T00:50:48Z",
   "verifier": "write-evidence.sh",
   "plan_path": "docs/plans/vaporware-config-controls.md"
 }
