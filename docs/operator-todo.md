@@ -16,10 +16,4 @@ file are an append-only log, not removed when the ledger item resolves.
 _(add your own free-form to-do items in this section — never overwritten)_
 
 <!-- AUTO:START -->
-- [ ] AUTO: decision waiting on operator — "Ship tonight?" (needs-you `NY-1783920152-f4f7`, tier untiered, session `sess-s9a`) — see NEEDS-YOU.md
-- [ ] AUTO: decision waiting on operator — "Ship tomorrow?" (needs-you `NY-1783920160-744b`, tier untiered, session `sess-s9b`) — see NEEDS-YOU.md
-- [ ] AUTO: decision waiting on operator — "Ship tonight?" (needs-you `NY-1783920191-12f4`, tier untiered, session `sess-s9a`) — see NEEDS-YOU.md
-- [ ] AUTO: decision waiting on operator — "Ship tomorrow?" (needs-you `NY-1783920206-6ea0`, tier untiered, session `sess-s9b`) — see NEEDS-YOU.md
-- [ ] AUTO: decision waiting on operator — "Ship tonight?" (needs-you `NY-1783954262-7093`, tier untiered, session `sess-s9a`) — see NEEDS-YOU.md
-- [ ] AUTO: decision waiting on operator — "Ship tomorrow?" (needs-you `NY-1783954267-17c5`, tier untiered, session `sess-s9b`) — see NEEDS-YOU.md
 <!-- AUTO:END -->
