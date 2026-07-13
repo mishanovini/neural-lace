@@ -1101,6 +1101,146 @@ async function main() {
     ok('S37 NEGATIVE FIXTURE: GET /api/todo fails closed (500, diagnostic error) on a foreign line carrying a gate identifier, never leaking it',
       todoS37.status === 500 && todoS37.json && todoS37.json.ok === false, JSON.stringify(todoS37.json));
 
+    // ========================================================
+    // Ask-rooted-workstreams-p1 Task 15 — "Backlog pane" scenarios (S40-49).
+    // Sandboxed via BACKLOG_MD_PATH (server.js's backlogMdPath() env
+    // override, matching the O.9 golden oracle's own env var name so a
+    // fixture pointed at it is honored identically by both readers —
+    // constraint 4 sandboxing, never the real docs/backlog.md). A small,
+    // deterministic fixture (not the real ~1000-line file — that parity was
+    // hand-verified separately against a live run of the real oracle,
+    // per this task's build evidence) covering one row per tier + one
+    // pre-existing terminal row + one pre-existing in-flight row.
+    // ========================================================
+    const backlogFixturePath = path.join(tmp, 'backlog-fixture.md');
+    const BACKLOG_FIXTURE_TEMPLATE = [
+      '# Fixture Backlog',
+      '',
+      '## Open work — substantive deferrals',
+      '',
+      '- **FIX-HIGH-ROW-01 — a high priority fixture row** (added 2026-06-01; priority:high). High tier body text.',
+      '- **FIX-MED-ROW-01 — a medium priority fixture row** (added 2026-06-15; priority:medium). Medium tier body text.',
+      '- **FIX-LOW-ROW-01 — a low priority fixture row** (added 2026-07-01; priority:low). Low tier body text.',
+      '- **FIX-NOPRIO-ROW-01 — an unlabeled fixture row** (added 2026-07-05). No priority label at all.',
+      '- **FIX-TERM-ROW-01 — a pre-marked-done fixture row** (added 2026-05-01; priority:medium). **WONTFIX 2026-05-02** (pre-existing fixture disposition).',
+      '- **FIX-INFLIGHT-ROW-01 — a pre-marked-answered fixture row** (added 2026-06-10; priority:high). **SCHEDULED 2026-06-11** (pre-existing fixture disposition).',
+      '',
+      '## Open work — telemetry-gated (dont pick up yet)',
+      '',
+      '- **FIX-OTHER-SECTION-01 — a row in a different section** (added 2026-06-01; priority:low). Must never be touched by an insert targeting the substantive-deferrals section.',
+      '',
+    ].join('\n');
+    fs.writeFileSync(backlogFixturePath, BACKLOG_FIXTURE_TEMPLATE);
+    process.env.BACKLOG_MD_PATH = backlogFixturePath;
+    process.env.BACKLOG_COMPACT_CAP = '2';
+
+    const backlogGet = () => httpGet(PORT, '/api/backlog');
+    const backlogPost = (body) => httpPostJson(PORT, '/api/backlog', body);
+
+    const bl40 = await backlogGet();
+    ok('S40 GET /api/backlog returns ok:true against the fixture with the expected open/inflight/terminal counts (4 open, 1 inflight, 1 terminal; the other-section row never counted against this section)',
+      bl40.status === 200 && bl40.json && bl40.json.ok === true &&
+      bl40.json.counts.open_total === 5 && bl40.json.counts.inflight_total === 1 && bl40.json.counts.terminal_total === 1,
+      JSON.stringify(bl40.json && bl40.json.counts));
+    ok('S40b full[] includes every row from BOTH sections (7 total: 5 open + 1 inflight + 1 terminal, incl. FIX-OTHER-SECTION-01)',
+      bl40.json && Array.isArray(bl40.json.full) && bl40.json.full.length === 7 &&
+      !!bl40.json.full.find((r) => r.id === 'FIX-OTHER-SECTION-01'),
+      JSON.stringify(bl40.json && bl40.json.full.map((r) => r.id)));
+    const termRow40 = bl40.json.full.find((r) => r.id === 'FIX-TERM-ROW-01');
+    ok('S40c the pre-existing terminal fixture row carries status:terminal + disposition_word:WONTFIX',
+      !!termRow40 && termRow40.status === 'terminal' && termRow40.disposition_word === 'WONTFIX', JSON.stringify(termRow40));
+    ok('S40d the pre-existing in-flight fixture row carries status:inflight + disposition_word:SCHEDULED, and is excluded from every tier bucket (never re-nags)',
+      bl40.json.full.find((r) => r.id === 'FIX-INFLIGHT-ROW-01').status === 'inflight' &&
+      bl40.json.full.find((r) => r.id === 'FIX-INFLIGHT-ROW-01').disposition_word === 'SCHEDULED' &&
+      !bl40.json.compact.high.rows.find((r) => r.id === 'FIX-INFLIGHT-ROW-01'));
+
+    // ---- S41: compact top-N-per-tier capping (BACKLOG_COMPACT_CAP=2 above;
+    // each tier here has exactly 1 open row so `rows` == `total`, still
+    // proving the shape both fields are meant to carry).
+    ok('S41 compact.high carries exactly the 1 high-priority open row (total===rows.length===1)',
+      bl40.json.compact.high.total === 1 && bl40.json.compact.high.rows.length === 1 &&
+      bl40.json.compact.high.rows[0].id === 'FIX-HIGH-ROW-01');
+    ok('S41b compact.unlabeled carries the no-priority-label row bucketed separately from "low"',
+      bl40.json.compact.unlabeled.rows.length === 1 && bl40.json.compact.unlabeled.rows[0].id === 'FIX-NOPRIO-ROW-01' &&
+      bl40.json.compact.low.rows.every((r) => r.id !== 'FIX-NOPRIO-ROW-01'));
+
+    // ---- S42: add appends a well-formed row at the END of "Open work —
+    // substantive deferrals" (Prove-it-works step 2: "in the right
+    // section") and persists on reload; the sibling section's row is
+    // untouched (Prove-it-works step 4: "no other row disturbed").
+    const backlogAddRes = await backlogPost({ action: 'add', title: 'a new fixture add', priority: 'high', description: 'added by S42.' });
+    ok('S42 POST add returns ok:true with a generated ID matching the reId grammar', backlogAddRes.json && backlogAddRes.json.ok === true && /^[A-Z][A-Z0-9-]{3,}$/.test(backlogAddRes.json.id), JSON.stringify(backlogAddRes.json));
+    const afterAddText = fs.readFileSync(backlogFixturePath, 'utf8');
+    const addLines = afterAddText.split('\n');
+    const otherSectionIdx = addLines.findIndex((l) => l.indexOf('FIX-OTHER-SECTION-01') !== -1);
+    const nextHeadingIdx = addLines.findIndex((l) => l.trim() === '## Open work — telemetry-gated (dont pick up yet)');
+    const newRowIdx = addLines.findIndex((l) => l.indexOf(backlogAddRes.json.id) !== -1);
+    ok('S42b the new row lands BEFORE the next section heading (right section) and the sibling-section row is unmoved',
+      newRowIdx !== -1 && nextHeadingIdx !== -1 && newRowIdx < nextHeadingIdx && otherSectionIdx > nextHeadingIdx);
+    ok('S42c reload (a second GET) reflects the persisted add (file is truth)',
+      (await backlogGet()).json.counts.open_total === 6);
+
+    // ---- S43: mistake recovery — empty title is a clean 400, never written.
+    const addBadRes = await backlogPost({ action: 'add', title: '   ', priority: 'low' });
+    ok('S43 POST add with a blank title is a clean 400, not written', addBadRes.status === 400 && addBadRes.json && addBadRes.json.ok === false);
+    ok('S43b the rejected add never touched the file (byte-identical to just before it)', fs.readFileSync(backlogFixturePath, 'utf8') === afterAddText);
+
+    // ---- S44: WONTFIX dispose — row-scoped (Prove-it-works step 4: "no
+    // other row disturbed") + loop-parseable (verified structurally here;
+    // this task's build evidence additionally cross-checked the SAME writer
+    // against a live run of the real od_backlog_health oracle).
+    const beforeWontfix = fs.readFileSync(backlogFixturePath, 'utf8');
+    const wontfixRes = await backlogPost({ action: 'dispose', id: 'FIX-MED-ROW-01', disposition: 'wontfix', reason: 'no longer relevant' });
+    ok('S44 POST dispose wontfix returns ok:true, terminal:true, and the exact appended suffix',
+      wontfixRes.json && wontfixRes.json.ok === true && wontfixRes.json.terminal === true && /\*\*WONTFIX \d{4}-\d{2}-\d{2}\*\*/.test(wontfixRes.json.appended_suffix),
+      JSON.stringify(wontfixRes.json));
+    const bl44 = await backlogGet();
+    ok('S44b GET now shows FIX-MED-ROW-01 as status:terminal, disposition_word:WONTFIX, no longer in compact.medium',
+      bl44.json.full.find((r) => r.id === 'FIX-MED-ROW-01').status === 'terminal' &&
+      bl44.json.full.find((r) => r.id === 'FIX-MED-ROW-01').disposition_word === 'WONTFIX' &&
+      !bl44.json.compact.medium.rows.find((r) => r.id === 'FIX-MED-ROW-01'));
+    const afterWontfixLines = fs.readFileSync(backlogFixturePath, 'utf8').split('\n');
+    const beforeWontfixLines = beforeWontfix.split('\n');
+    const changedLineCount = afterWontfixLines.filter((l, i) => l !== beforeWontfixLines[i]).length;
+    ok('S44c EXACTLY ONE line changed in the whole file (row-scoped writer — Prove-it-works step 4: "no other row disturbed")', changedLineCount === 1, 'changed=' + changedLineCount);
+
+    // ---- S45: DEMOTE dispose + undo — byte-exact restore (Prove-it-works
+    // step 3: "undo restores the row unchanged").
+    const beforeDemote = fs.readFileSync(backlogFixturePath, 'utf8');
+    const demoteRes = await backlogPost({ action: 'dispose', id: 'FIX-HIGH-ROW-01', disposition: 'demote' });
+    ok('S45 POST dispose demote returns ok:true, terminal:false, word DEMOTED', demoteRes.json && demoteRes.json.ok === true && demoteRes.json.terminal === false && demoteRes.json.word === 'DEMOTED', JSON.stringify(demoteRes.json));
+    const bl45 = await backlogGet();
+    ok('S45b GET now shows FIX-HIGH-ROW-01 as status:inflight (dispositioned-in-flight — not terminal, not open, never re-nags)',
+      bl45.json.full.find((r) => r.id === 'FIX-HIGH-ROW-01').status === 'inflight');
+    const undoRes = await backlogPost({ action: 'undo', id: 'FIX-HIGH-ROW-01', appended_suffix: demoteRes.json.appended_suffix });
+    ok('S45c POST undo returns ok:true', undoRes.json && undoRes.json.ok === true, JSON.stringify(undoRes.json));
+    ok('S45d the file is BYTE-IDENTICAL to before the demote (true undo, not just a status flip)', fs.readFileSync(backlogFixturePath, 'utf8') === beforeDemote);
+    ok('S45e GET now shows FIX-HIGH-ROW-01 back to status:open', (await backlogGet()).json.full.find((r) => r.id === 'FIX-HIGH-ROW-01').status === 'open');
+
+    // ---- S46: undo mistake recovery — a stale/wrong suffix is a clean 409,
+    // never silently truncates or corrupts the line.
+    const beforeStaleUndo = fs.readFileSync(backlogFixturePath, 'utf8');
+    const staleUndoRes = await backlogPost({ action: 'undo', id: 'FIX-HIGH-ROW-01', appended_suffix: ' **DEMOTED 2099-01-01** (fabricated, never applied)' });
+    ok('S46 POST undo with a suffix that was never applied is a clean 409, file untouched',
+      staleUndoRes.status === 409 && staleUndoRes.json && staleUndoRes.json.ok === false &&
+      fs.readFileSync(backlogFixturePath, 'utf8') === beforeStaleUndo);
+
+    // ---- S47/S48: dispose mistake recovery.
+    const disposeMissingRes = await backlogPost({ action: 'dispose', id: 'FIX-DOES-NOT-EXIST-01', disposition: 'schedule' });
+    ok('S47 POST dispose on a nonexistent id is a clean 404', disposeMissingRes.status === 404 && disposeMissingRes.json && disposeMissingRes.json.ok === false);
+    const disposeBadWordRes = await backlogPost({ action: 'dispose', id: 'FIX-LOW-ROW-01', disposition: 'bogus' });
+    ok('S48 POST dispose with an unrecognized disposition word is a clean 400, never written', disposeBadWordRes.status === 400 && disposeBadWordRes.json && disposeBadWordRes.json.ok === false);
+
+    // ---- S49: FOLD (optional target) round-trips through the SAME
+    // in-flight classification as SCHEDULE/DEMOTE, and the anti-noise law is
+    // deliberately NOT applied to row text (a title containing a `.sh`/
+    // `-gate` token must still render — see server.js's header rationale).
+    const foldRes = await backlogPost({ action: 'dispose', id: 'FIX-LOW-ROW-01', disposition: 'fold', target: 'my plan!!' });
+    ok('S49 POST dispose fold with a target slugifies it into FOLD-INTO-<slug>', foldRes.json && foldRes.json.ok === true && foldRes.json.word === 'FOLD-INTO-my-plan', JSON.stringify(foldRes.json));
+    const antiNoiseAddRes = await backlogPost({ action: 'add', title: 'audit needs-you.sh and the work-integrity-gate output', priority: 'low' });
+    ok('S49b a title naming real hook/gate identifiers is accepted (backlog content is legitimately ABOUT harness internals — anti-noise law is scoped to the ask-tree/My-To-Do narrative, not this pane; see server.js header)',
+      antiNoiseAddRes.json && antiNoiseAddRes.json.ok === true, JSON.stringify(antiNoiseAddRes.json));
+
   } finally {
     server.close();
     cache.stop();

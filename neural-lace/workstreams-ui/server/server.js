@@ -400,6 +400,269 @@ function withOperatorTodoFile(mutatorFn) {
   return Object.assign({ ok: true }, r.result || {});
 }
 
+// ============================================================
+// Task 15 — "Backlog pane". Reads/writes docs/backlog.md through the SAME
+// row grammar the O.9 triage loop's golden oracle already defines
+// (`od_backlog_health`, adapters/claude-code/hooks/lib/observability-
+// derive.sh) — every regex below is a byte-for-byte PORT of that function's
+// R1-R4 position-anchored terminal/in-flight rules (see that function's own
+// header for the full rationale), not a re-derivation, so a row this UI
+// reads/writes classifies IDENTICALLY under the real loop. Parity was
+// hand-verified against a live run of the real oracle over the actual
+// docs/backlog.md (including its own quirks — e.g. HARNESS-GAP-48's title
+// containing the prose "not folded into ..." false-positives as
+// dispositioned_in_flight under the REAL oracle too; this port reproduces
+// that, deliberately, rather than "fixing" it — fidelity to the contract,
+// warts included, is the point).
+//
+// ANTI-NOISE LAW SCOPING (constraint 1) — deliberate, documented decision:
+// this reader/writer does NOT run payloadSchema.containsDenylistedIdentifier
+// over row titles/previews/add-form text, unlike todo.js's operator-text
+// scan. Rationale: docs/backlog.md IS the harness's own engineering backlog
+// ("Outstanding improvements to the Claude Code harness (rules, agents,
+// hooks, skills)") — every legitimate row is ABOUT hook/gate/script
+// identifiers by definition (that is the row's actual subject matter, not
+// mechanism-attribution noise leaking into an operator-facing narrative,
+// which is what constraint 1 targets on the ask-tree/My-To-Do surfaces).
+// Applying the denylist here would 500 the pane against the real file (see
+// this task's build evidence: rows routinely match `.sh\b`/`-gate\b`/hook-
+// lifecycle-name patterns) and block legitimate adds. The absolute-links
+// law (constraint 2) still applies to the one href this module emits (the
+// backlog file's own absolute path, for an "open file" affordance) via the
+// same payloadSchema.isAbsoluteHref check todo.js/asks.js already use.
+// ============================================================
+function backlogMdPath() {
+  return process.env.BACKLOG_MD_PATH || path.join(mainRepoRoot(), 'docs', 'backlog.md');
+}
+
+const BACKLOG_TERM = '(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)';
+const BACKLOG_SP = '[\\t\\v\\f\\r ]';
+const BACKLOG_RE_ID = /^- \*\*([A-Z][A-Z0-9-]{3,})/;
+const BACKLOG_RE_TITLE_SEGMENT = /^- \*\*([^*]*)\*\*/;
+const BACKLOG_RE_ADDED = /added ([0-9]{4}-[0-9]{2}-[0-9]{2})/;
+const BACKLOG_RE_PRIO = /priority:(high|medium|low)/;
+// R1-R4, ported verbatim from od_backlog_health (terminal words).
+const BACKLOG_RE_TERM_R1 = new RegExp('^- \\*\\*[^*]*\\b' + BACKLOG_TERM + '\\b');
+const BACKLOG_RE_TERM_R2 = new RegExp('\\*\\*' + BACKLOG_SP + '+(—|--?)' + BACKLOG_SP + '+' + BACKLOG_TERM + '\\b');
+const BACKLOG_RE_TERM_R3 = /\*\*\((dispositioned|implemented|absorbed|closed|superseded|wontfix)\b/i;
+const BACKLOG_RE_TERM_R4 = new RegExp('\\*\\*((PARTIALLY|LARGELY)' + BACKLOG_SP + '+)?' + BACKLOG_TERM + '\\b');
+// R1-R4, ported verbatim from od_backlog_health (dispositioned-in-flight —
+// SCHEDULE/DEMOTE/FOLD replies; WONTFIX is already a TERMINAL word above).
+const BACKLOG_INFLIGHT = '(SCHEDULED|DEFERRED|DEMOTED|FOLDED|FOLD-INTO-[^*]+)';
+const BACKLOG_RE_INFLIGHT_R1 = new RegExp('^- \\*\\*[^*]*\\b' + BACKLOG_INFLIGHT + '\\b', 'i');
+const BACKLOG_RE_INFLIGHT_R2 = new RegExp('\\*\\*' + BACKLOG_SP + '+(—|--?)' + BACKLOG_SP + '+' + BACKLOG_INFLIGHT + '\\b', 'i');
+const BACKLOG_RE_INFLIGHT_R3 = /\*\*\((scheduled|deferred|demoted|folded|fold-into[^)]*)\b/i;
+const BACKLOG_RE_INFLIGHT_R4 = new RegExp('\\*\\*((PARTIALLY|LARGELY)' + BACKLOG_SP + '+)?' + BACKLOG_INFLIGHT + '\\b', 'i');
+// Cosmetic-only label extractors (badge text) — independent of the strict
+// booleans above so a display nuance can never influence classification.
+const BACKLOG_RE_WORD_TERM = /\b(DISPOSITIONED|IMPLEMENTED|ABSORBED|CLOSED|SUPERSEDED|WONTFIX)\b/i;
+const BACKLOG_RE_WORD_INFLIGHT = /\b(SCHEDULED|DEFERRED|DEMOTED|FOLDED|FOLD-INTO-[^*\s)]+)\b/i;
+
+const BACKLOG_TIER_HIGH_DAYS = Number(process.env.BACKLOG_TIER_HIGH_DAYS) || 7;
+const BACKLOG_TIER_MEDIUM_DAYS = Number(process.env.BACKLOG_TIER_MEDIUM_DAYS) || 30;
+const BACKLOG_TIER_LOW_DAYS = Number(process.env.BACKLOG_TIER_LOW_DAYS) || 90;
+const BACKLOG_COMPACT_CAP = Number(process.env.BACKLOG_COMPACT_CAP) || 5;
+const BACKLOG_ADD_SECTION_HEADING = '## Open work — substantive deferrals';
+
+function backlogRowTitle(line, id) {
+  const m = BACKLOG_RE_TITLE_SEGMENT.exec(line);
+  if (!m) return id;
+  const seg = m[1];
+  const stripped = seg.replace(new RegExp('^' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[—\\-:]*\\s*'), '');
+  return stripped || seg;
+}
+
+function backlogRowPreview(line) {
+  const m = BACKLOG_RE_TITLE_SEGMENT.exec(line);
+  const rest = m ? line.slice(m[0].length).trim() : line.trim();
+  return rest.length > 220 ? rest.slice(0, 220) + '…' : rest;
+}
+
+// parseBacklogRows(text) — one pass over the file, mirroring
+// od_backlog_health's single-node-invocation performance discipline (no
+// per-row subprocess/spawn — the file is read once, scanned in pure JS).
+function parseBacklogRows(text) {
+  const lines = text.split('\n');
+  const now = Date.now();
+  const rows = [];
+  lines.forEach((line, lineIndex) => {
+    const mId = BACKLOG_RE_ID.exec(line);
+    if (!mId) return;
+    const id = mId[1];
+
+    let added = null, ageDays = null;
+    const mAdded = BACKLOG_RE_ADDED.exec(line);
+    if (mAdded) {
+      added = mAdded[1];
+      const ms = Date.parse(mAdded[1]);
+      if (!isNaN(ms)) ageDays = Math.trunc((now - ms) / 86400000);
+    }
+    const mPrio = BACKLOG_RE_PRIO.exec(line);
+    const priorityLabel = mPrio ? mPrio[1] : '';
+    const priorityBucket = priorityLabel || 'unlabeled';
+    const thresholdDays = priorityLabel === 'high' ? BACKLOG_TIER_HIGH_DAYS
+      : priorityLabel === 'medium' ? BACKLOG_TIER_MEDIUM_DAYS : BACKLOG_TIER_LOW_DAYS;
+
+    const terminal = BACKLOG_RE_TERM_R1.test(line) || BACKLOG_RE_TERM_R2.test(line) ||
+      BACKLOG_RE_TERM_R3.test(line) || BACKLOG_RE_TERM_R4.test(line);
+    const inflight = !terminal && (BACKLOG_RE_INFLIGHT_R1.test(line) || BACKLOG_RE_INFLIGHT_R2.test(line) ||
+      BACKLOG_RE_INFLIGHT_R3.test(line) || BACKLOG_RE_INFLIGHT_R4.test(line));
+
+    let dispositionWord = null;
+    if (terminal) {
+      const m = BACKLOG_RE_WORD_TERM.exec(line);
+      dispositionWord = m ? m[1].toUpperCase() : 'DISPOSITIONED';
+    } else if (inflight) {
+      const m = BACKLOG_RE_WORD_INFLIGHT.exec(line);
+      dispositionWord = m ? m[1].toUpperCase() : 'SCHEDULED';
+    }
+
+    const status = terminal ? 'terminal' : (inflight ? 'inflight' : 'open');
+    const isOverdue = status === 'open' && ageDays !== null && ageDays > thresholdDays;
+
+    rows.push({
+      id: id, lineIndex: lineIndex, title: backlogRowTitle(line, id),
+      preview: backlogRowPreview(line), added: added, age_days: ageDays,
+      priority: priorityBucket, priority_label: priorityLabel, status: status,
+      disposition_word: dispositionWord, is_overdue: isOverdue,
+    });
+  });
+  return rows;
+}
+
+function backlogPublicRow(r) {
+  return {
+    id: r.id, title: r.title, preview: r.preview, added: r.added, age_days: r.age_days,
+    priority: r.priority, status: r.status, disposition_word: r.disposition_word, is_overdue: r.is_overdue,
+  };
+}
+
+function readBacklogRaw() {
+  try { return fs.readFileSync(backlogMdPath(), 'utf8'); }
+  catch (e) { if (e && e.code === 'ENOENT') return ''; throw e; }
+}
+
+function writeBacklogAtomic(text) {
+  const p = backlogMdPath();
+  const tmp = p + '.server-tmp-' + process.pid + '-' + Date.now();
+  fs.writeFileSync(tmp, text);
+  fs.renameSync(tmp, p);
+}
+
+// withBacklogFile(mutatorFn) — the ONE place every POST /api/backlog write
+// goes through; re-reads fresh every call (never memoized) and rewrites the
+// WHOLE file atomically (tmp+rename), mirroring withOperatorTodoFile's exact
+// discipline above. `mutatorFn(lines) -> {result: {...}} | {error: 'msg'}`.
+function withBacklogFile(mutatorFn) {
+  let text;
+  try { text = readBacklogRaw(); }
+  catch (_) { return { ok: false, error: 'could not read the backlog file' }; }
+  const lines = text.split('\n');
+  const r = mutatorFn(lines) || {};
+  if (r.error) return { ok: false, error: r.error };
+  try { writeBacklogAtomic(lines.join('\n')); }
+  catch (_) { return { ok: false, error: 'could not save the backlog file' }; }
+  return Object.assign({ ok: true }, r.result || {});
+}
+
+// findBacklogLineIndexForId — locates the ONE line whose leading bold id
+// segment is EXACTLY `id` (negative lookahead against further id-class
+// chars so "OPEN-01" never matches inside "OPEN-01-FOLLOWUP" — the oracle's
+// own extraction is greedy over the SAME char class, so a shorter target id
+// is never actually a prefix of a real different row's id in practice, but
+// this guards the case defensively).
+function findBacklogLineIndexForId(lines, id) {
+  const re = new RegExp('^- \\*\\*' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Z0-9-])');
+  for (let i = 0; i < lines.length; i++) { if (re.test(lines[i])) return i; }
+  return -1;
+}
+
+function backlogIdBaseFromTitle(title) {
+  let base = String(title).toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (base.length > 40) base = base.slice(0, 40).replace(/-+$/g, '');
+  if (!/^[A-Z]/.test(base)) base = 'ROW-' + base;
+  if (base.replace(/-/g, '').length < 3) base = base + '-ROW';
+  return base || 'ROW';
+}
+
+function backlogExistingIds(lines) {
+  const set = new Set();
+  lines.forEach((l) => { const m = BACKLOG_RE_ID.exec(l); if (m) set.add(m[1]); });
+  return set;
+}
+
+function generateBacklogId(lines, title) {
+  const base = backlogIdBaseFromTitle(title);
+  const existing = backlogExistingIds(lines);
+  for (let n = 1; n < 1000; n++) {
+    const candidate = base + '-' + (n < 10 ? '0' + n : String(n));
+    if (!existing.has(candidate)) return candidate;
+  }
+  return base + '-' + Date.now();
+}
+
+// findBacklogInsertIndex — new rows land at the END of the "Open work —
+// substantive deferrals" section (Prove-it-works step 2: "shows one
+// well-formed row in the right section"), i.e. right before the NEXT `## `
+// heading. Missing heading (never crash — Edge Cases discipline): append at
+// end of file instead of guessing a different location.
+function findBacklogInsertIndex(lines) {
+  let headingIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() === BACKLOG_ADD_SECTION_HEADING) { headingIdx = i; break; }
+  }
+  if (headingIdx === -1) return lines.length;
+  for (let i = headingIdx + 1; i < lines.length; i++) {
+    if (/^## /.test(lines[i])) return i;
+  }
+  return lines.length;
+}
+
+function backlogSlugifyFoldTarget(s) {
+  const slug = String(s || '').trim().replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/-+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
+  return slug;
+}
+
+const BACKLOG_DISPOSITION_WORD = { schedule: 'SCHEDULED', demote: 'DEMOTED', fold: 'FOLDED', wontfix: 'WONTFIX' };
+
+// buildBacklogPayload() — GET /api/backlog response: compact top-N-per-tier
+// (open rows only, oldest-first) + the full row list (every row, any
+// status) + counts. No payload-schema.js allowlist walk here (deliberate —
+// this is a NEW payload shape outside the ask-tree LANDING_ALLOWED_KEYS/
+// DETAIL_ALLOWED_KEYS contract Task 11 owns; extending that allowlist with
+// backlog-specific fields would blur two independently-scoped contracts).
+function buildBacklogPayload() {
+  const text = readBacklogRaw();
+  const rows = parseBacklogRows(text);
+  const openRows = rows.filter((r) => r.status === 'open');
+  const tiers = { high: [], medium: [], low: [], unlabeled: [] };
+  ['high', 'medium', 'low', 'unlabeled'].forEach((tier) => {
+    tiers[tier] = openRows.filter((r) => r.priority === tier)
+      .sort((a, b) => (b.age_days === null ? -1 : b.age_days) - (a.age_days === null ? -1 : a.age_days));
+  });
+  const compact = {};
+  Object.keys(tiers).forEach((tier) => {
+    compact[tier] = { total: tiers[tier].length, rows: tiers[tier].slice(0, BACKLOG_COMPACT_CAP).map(backlogPublicRow) };
+  });
+  const counts = {
+    open_total: openRows.length,
+    inflight_total: rows.filter((r) => r.status === 'inflight').length,
+    terminal_total: rows.filter((r) => r.status === 'terminal').length,
+    by_tier: { high: tiers.high.length, medium: tiers.medium.length, low: tiers.low.length, unlabeled: tiers.unlabeled.length },
+  };
+  const bp = backlogMdPath();
+  const filePathAbs = payloadSchema.isAbsoluteHref(bp) ? bp : '';
+  return {
+    ok: true,
+    generated_at: new Date().toISOString(),
+    file_path: filePathAbs,
+    compact_cap: BACKLOG_COMPACT_CAP,
+    counts: counts,
+    compact: compact,
+    full: rows.map(backlogPublicRow),
+  };
+}
+
 // ----------------------------------------------------------------------
 // foldAskRegistry() — read ALL ask-registry.jsonl records and fold them
 // per the reader FOLD CONTRACT documented in ask-registry.sh's header:
@@ -997,6 +1260,7 @@ const server = http.createServer((req, res) => {
   if (url === '/app.css') return serveStatic(res, 'app.css');
   if (url === '/asks.js') return serveStatic(res, 'asks.js');
   if (url === '/todo.js') return serveStatic(res, 'todo.js');
+  if (url === '/backlog.js') return serveStatic(res, 'backlog.js');
   if (url === '/favicon.ico') { res.writeHead(204); res.end(); return; }
 
   // ---- /api/asks — ask-rooted-workstreams-p1 Task 11 landing payload
@@ -1183,6 +1447,107 @@ const server = http.createServer((req, res) => {
           return { result: { needs_you_id: needsYouId, checked: true, operator_override: true } };
         });
         return sendJson(res, r.ok ? 200 : (r.error === 'already marked handled' ? 409 : 404), r);
+      }
+
+      return sendJson(res, 400, { ok: false, error: 'unknown action: ' + String(action) });
+    });
+    return;
+  }
+
+  // ---- Task 15 "Backlog pane" — GET renders docs/backlog.md (compact
+  // top-N-per-tier + full list); POST is the ONE write path (add / dispose /
+  // undo — constraint 9's disposition UX: SCHEDULE/DEMOTE/FOLD/WONTFIX
+  // writing the EXACT vocabulary the O.9 loop's golden oracle
+  // (od_backlog_health) already understands, row-scoped, to the REAL file —
+  // never a parallel store). See buildBacklogPayload()/withBacklogFile()
+  // above for the anti-noise scoping rationale (deliberately NOT run over
+  // row content) and the row-grammar parity notes.
+  if (url === '/api/backlog' && req.method === 'GET') {
+    try { return sendJson(res, 200, buildBacklogPayload()); }
+    catch (e) { return sendJson(res, 200, { ok: false, error: String(e && e.message || e), compact: {}, full: [] }); }
+  }
+
+  if (url === '/api/backlog' && req.method === 'POST') {
+    let bodyBuf = '';
+    req.on('data', (c) => { bodyBuf += c; if (bodyBuf.length > 2e5) req.destroy(); });
+    req.on('end', () => {
+      let input;
+      try { input = bodyBuf ? JSON.parse(bodyBuf) : {}; } catch (_) { return sendJson(res, 400, { ok: false, error: 'bad json' }); }
+      const action = input.action;
+
+      // ---- add: appends a well-formed row (Prove-it-works step 2) at the
+      // end of the "Open work — substantive deferrals" section. Both the
+      // operator (via this form) and Claude (any future caller of this same
+      // endpoint) write the SAME shape the O.9 loop already parses — no
+      // separate "Claude path".
+      if (action === 'add') {
+        const title = typeof input.title === 'string' ? input.title.trim().replace(/[\r\n]+/g, ' ') : '';
+        if (!title) return sendJson(res, 400, { ok: false, error: 'title cannot be empty' });
+        const priority = ['high', 'medium', 'low'].indexOf(input.priority) !== -1 ? input.priority : 'medium';
+        const description = typeof input.description === 'string' ? input.description.trim().replace(/[\r\n]+/g, ' ') : '';
+        const today = new Date().toISOString().slice(0, 10);
+        const r = withBacklogFile((lines) => {
+          const id = generateBacklogId(lines, title);
+          const body = description ? (' ' + description) : '';
+          const rowLine = '- **' + id + ' — ' + title + '** (added ' + today + '; label: `workstreams-ui`; priority:' + priority + ').' + body;
+          const insertAt = findBacklogInsertIndex(lines);
+          const toInsert = (insertAt > 0 && lines[insertAt - 1].trim() !== '') ? ['', rowLine] : [rowLine];
+          lines.splice(insertAt, 0, ...toInsert);
+          return { result: { id: id, line: rowLine } };
+        });
+        return sendJson(res, r.ok ? 200 : 500, r);
+      }
+
+      // ---- dispose: appends the disposition marker to the ROW'S OWN first
+      // line (the same line the golden oracle's R1-R4 rules scan — see the
+      // helper block header). Returns `appended_suffix` verbatim so the
+      // client can request an EXACT, byte-safe `undo` (constraint 9: a
+      // non-destructive disposition offers undo; WONTFIX is terminal and the
+      // client deliberately never offers undo for it, though the server
+      // itself does not special-case that — the UI is the one enforcing
+      // "CONFIRM instead of undo" for WONTFIX).
+      if (action === 'dispose') {
+        const id = typeof input.id === 'string' ? input.id.trim() : '';
+        const disposition = typeof input.disposition === 'string' ? input.disposition.toLowerCase() : '';
+        if (!id) return sendJson(res, 400, { ok: false, error: 'missing id' });
+        if (!BACKLOG_DISPOSITION_WORD[disposition]) return sendJson(res, 400, { ok: false, error: 'unknown disposition: ' + String(input.disposition) });
+        const today = new Date().toISOString().slice(0, 10);
+        let word = BACKLOG_DISPOSITION_WORD[disposition];
+        if (disposition === 'fold') {
+          const target = backlogSlugifyFoldTarget(input.target);
+          if (target) word = 'FOLD-INTO-' + target;
+        }
+        let note = disposition + ' via workstreams-ui';
+        if (disposition === 'wontfix' && typeof input.reason === 'string' && input.reason.trim()) {
+          note += ': ' + input.reason.trim().replace(/[\r\n]+/g, ' ').slice(0, 200);
+        }
+        const suffix = ' **' + word + ' ' + today + '** (' + note + ')';
+        const r = withBacklogFile((lines) => {
+          const idx = findBacklogLineIndexForId(lines, id);
+          if (idx === -1) return { error: 'could not find backlog row ' + id + ' — reload and try again' };
+          lines[idx] = lines[idx] + suffix;
+          return { result: { id: id, disposition: disposition, word: word, appended_suffix: suffix, terminal: disposition === 'wontfix' } };
+        });
+        return sendJson(res, r.ok ? 200 : 404, r);
+      }
+
+      // ---- undo: removes EXACTLY the suffix a prior `dispose` call
+      // returned, restoring the row byte-unchanged (Prove-it-works step 3:
+      // "undo restores the row unchanged"). Refuses (409) if the row no
+      // longer ends with that exact suffix — e.g. a concurrent edit — rather
+      // than guessing and corrupting an unrelated byte range.
+      if (action === 'undo') {
+        const id = typeof input.id === 'string' ? input.id.trim() : '';
+        const suffix = typeof input.appended_suffix === 'string' ? input.appended_suffix : '';
+        if (!id || !suffix) return sendJson(res, 400, { ok: false, error: 'missing id or appended_suffix' });
+        const r = withBacklogFile((lines) => {
+          const idx = findBacklogLineIndexForId(lines, id);
+          if (idx === -1) return { error: 'could not find backlog row ' + id + ' — reload and try again' };
+          if (lines[idx].slice(-suffix.length) !== suffix) return { error: 'row changed since the disposition — reload to check its current state' };
+          lines[idx] = lines[idx].slice(0, lines[idx].length - suffix.length);
+          return { result: { id: id, undone: true } };
+        });
+        return sendJson(res, r.ok ? 200 : 409, r);
       }
 
       return sendJson(res, 400, { ok: false, error: 'unknown action: ' + String(action) });
