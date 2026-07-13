@@ -587,7 +587,7 @@ Serialization added in round 1:
   (calendar mechanism, not vibes — model: `install-weekly-hygiene-task.ps1`)
   that ASKS the cold-start question — Verification: mechanical — Docs impact:
   runbook "metrics + falsifiers" section mirroring sketch §8
-- [ ] 18. [serial] Acceptance: end-user-advocate runtime pass over the Acceptance
+- [x] 18. [serial] Acceptance: end-user-advocate runtime pass over the Acceptance
   Scenarios below + the OPERATOR cold-start walkthrough — the operator (not
   Claude) cold-starts a real ask and answers the four questions in <60s without
   opening a transcript; result recorded in this plan's completion report with the
