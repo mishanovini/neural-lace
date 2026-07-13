@@ -525,7 +525,7 @@ Serialization added in round 1:
   - `adapters/claude-code/scripts/needs-you.sh` splice (Task 4) → `docs/operator-todo.md` auto-section
   **Integration points:**
   - Concurrent writes (session appends pointer while operator edits) — marker-delimited sections + atomic rewrite of only the touched section; fixture in selftest
-- [ ] 15. [parallel] Backlog pane: new `web/backlog.js` + endpoints — render
+- [x] 15. [parallel] Backlog pane: new `web/backlog.js` + endpoints — render
   `docs/backlog.md` (compact top-N by tier, collapsible, full list one click);
   ADD form appending a well-formed row (both Claude and operator can add —
   operator's rows follow the same shape the O.9 triage loop parses); disposition
