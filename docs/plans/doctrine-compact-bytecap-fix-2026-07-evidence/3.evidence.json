@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "task_id": "3",
+  "verdict": "PASS",
+  "commit_sha": "ad8ce7d36df9814a135e0371cc0903b3b0ca7728",
+  "files_modified": [
+    "adapters/claude-code/doctrine/orchestrator-pattern.md"
+  ],
+  "mechanical_checks": {
+    "command:test $(wc -c < adapters/claude-code/doctrine/orchestrator-pattern.md) -le 3000": {
+      "passed": true,
+      "detail": "",
+      "command": "test $(wc -c < adapters/claude-code/doctrine/orchestrator-pattern.md) -le 3000",
+      "exit_code": 0
+    },
+    "command:bash evals/golden/rules-index-coverage.sh": {
+      "passed": true,
+      "detail": "Checks passed: 4\nPASS: rules/ holds only constitution.md; doctrine/INDEX.md covers every compact within the 3000-byte cap",
+      "command": "bash evals/golden/rules-index-coverage.sh",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "1 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T03:39:24Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/doctrine-compact-bytecap-fix-2026-07.md"
+}

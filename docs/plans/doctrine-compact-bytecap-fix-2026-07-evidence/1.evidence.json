@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "task_id": "1",
+  "verdict": "PASS",
+  "commit_sha": "ad8ce7d36df9814a135e0371cc0903b3b0ca7728",
+  "files_modified": [
+    "adapters/claude-code/doctrine/orchestrator-pattern.md"
+  ],
+  "mechanical_checks": {
+    "exists:adapters/claude-code/doctrine/git-full.md": {
+      "passed": true,
+      "detail": "adapters/claude-code/doctrine/git-full.md exists",
+      "command": "test -e adapters/claude-code/doctrine/git-full.md",
+      "exit_code": 0
+    },
+    "command:grep -q '## Deploy preflight' adapters/claude-code/doctrine/git-full.md && grep -q '## Plan-rooted work' adapters/claude-code/doctrine/git-full.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q '## Deploy preflight' adapters/claude-code/doctrine/git-full.md && grep -q '## Plan-rooted work' adapters/claude-code/doctrine/git-full.md",
+      "exit_code": 0
+    },
+    "files-in-commit": {
+      "passed": true,
+      "detail": "1 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T03:39:06Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/doctrine-compact-bytecap-fix-2026-07.md"
+}
