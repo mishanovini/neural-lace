@@ -148,3 +148,16 @@ proposals dropped). 5 health cron: ENABLE (register 30-min schedule, task-wrappe
 (value vs superseded). 10 business-context handoff: assess salvage vs moot; archive if moot.
 ARM (resumer): NOT yet answered — re-ask. Also: flip flat-skills discovery to implemented
 (registration CONFIRMED live this session).
+
+## UPDATE ~17:2x — drift build reviewed; fix pass in flight
+Drift builder DONE (T2-T7, worktree agent-a60d03e20c93bfb92, commits cbf7920..7facadd; my
+re-runs: corrector 11/11, hook-feed 14/14; live CONVERGED status written by real run).
+harness-reviewer: CONDITIONAL-PASS, 3 Major (two-digest-line steady state; real pushes traverse
+global pre-push chain inside 10s bound untested → push timeout 60s + reason classification;
+worktree-basename repo-identity keying) + 3 Minor (ISL_BYPASS doc, bootstrap TOCTOU lock,
+evidence honesty clause). Fix-builder dispatched with verbatim blocks. ON RETURN: re-run both
+self-tests myself → cherry-pick all commits → resolve manifest/arch conflicts (regen) →
+dual-push → install.sh → doctor → task-verifier (T2-T7) → close-plan → final delta.
+Reclamation recorded (118/20, ledger committed). Tranche-4 SPLIT executed. NEEDS-YOU: ARM +
+auth-session-401 remain. Reviewer sweep item: sync-pt-to-personal.sh shares push-URL + ISL
+quirks — nl-issue already filed by builder; fold into next sweep.
