@@ -1,5 +1,5 @@
 # Plan: NL Overhaul Program — The Great Consolidation (Phases 0–5)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -127,7 +127,7 @@ The operator (the harness's user) can, after this program: (a) run `harness-doct
 - [x] E.6 Needs-You ledger (operator directive 2026-07-02 — the accurate awaiting-operator tracker the Workstreams UI failed to be, rebuilt file-first on the NEW data layer): one canonical NEEDS-YOU.md at the main-checkout root with four sections — Awaiting your decision (compact §3 blocks + links) / Open questions / In flight (sessions + waves) / Recently decided for your §8 review (7-day window). Maintained mechanically by the decision-log + digest machinery; D.3 extension warns to the ledger when a decision block in a final message lacks a same-turn NEEDS-YOU entry; doctor freshness check; digest links it — Model: sonnet — Parallelizable: yes — Verification: mechanical
   - Done-when: self-tests prove add/resolve/expire flows exit 0; the file exists with all four sections; digest output contains its link.
 
-- [ ] E.7 Session-resumer watchdog — **DETECTION DESIGN SUPERSEDED by ADR-061** (`docs/decisions/061-session-continuity-supervision.md`, ACCEPTED + operator APPROVE-BUILD 2026-07-09, after NL-FINDING-040 disabled the original transcript-scan design): detection is now the heartbeat-first two-stage funnel with hard per-pass bounds (D1), field-aware limit classification + deferral (D3/D4), reworked shadow/arming ladder (D5); Phase-1 build on `build/adr061-phase1a-supervisor-core`; this task's activation guardrails (storm cap, tombstones, liveness guard, shadow-first, kill-switch runbook) RETAINED; arming stays operator-gated (ADR Phase 2); this checkbox now flips on the ADR Phase-1 Done-state, not the original spec below. Original spec (action layer retained; detection clause superseded): an OS-level scheduled task (outside the API, so throttling cannot kill it) that (1) scans recent session transcripts for the death signature — last event is an API-limit/overload error (429/529/rate_limit/overloaded) OR transcript mtime stale beyond threshold while the session had in-flight work (in_progress tasks, ACTIVE-plan activity, or a CONTINUING marker — the D.3 marker vocabulary is the machine-readable "intended to continue" signal); (2) classifies resumable-death vs natural end (DONE/PAUSING marker → leave alone); (3) resumes via `claude -p --resume <session-id> "<resume nudge: re-read SCRATCHPAD/NEEDS-YOU + continue>"` with exponential backoff (5→15→45→120 min — quota-window exhaustion just means later attempts succeed); (4) falls back to spawning a FRESH session against the continuation substrate (SCRATCHPAD + plan + NEEDS-YOU) when a session is unresumable; (5) logs every action to the signal ledger and the digest ("session X died 02:14 [429], auto-resumed 02:31") with a max-attempts cap against burn loops. Design note: this is the wake-queue's intent done right — it failed (330/330 dropped) because it delivered into a session-mediated channel; the resumer acts at the OS level via the CLI directly. Orchestrator-side companion: builder dispatches that die on terminal API errors are retried-later, not treated as lost — Model: sonnet (+ one supervised scheduled-task registration step) — Parallelizable: yes — Verification: mechanical
+- [x] E.7 Session-resumer watchdog — **DETECTION DESIGN SUPERSEDED by ADR-061** (`docs/decisions/061-session-continuity-supervision.md`, ACCEPTED + operator APPROVE-BUILD 2026-07-09, after NL-FINDING-040 disabled the original transcript-scan design): detection is now the heartbeat-first two-stage funnel with hard per-pass bounds (D1), field-aware limit classification + deferral (D3/D4), reworked shadow/arming ladder (D5); Phase-1 build on `build/adr061-phase1a-supervisor-core`; this task's activation guardrails (storm cap, tombstones, liveness guard, shadow-first, kill-switch runbook) RETAINED; arming stays operator-gated (ADR Phase 2); this checkbox now flips on the ADR Phase-1 Done-state, not the original spec below. Original spec (action layer retained; detection clause superseded): an OS-level scheduled task (outside the API, so throttling cannot kill it) that (1) scans recent session transcripts for the death signature — last event is an API-limit/overload error (429/529/rate_limit/overloaded) OR transcript mtime stale beyond threshold while the session had in-flight work (in_progress tasks, ACTIVE-plan activity, or a CONTINUING marker — the D.3 marker vocabulary is the machine-readable "intended to continue" signal); (2) classifies resumable-death vs natural end (DONE/PAUSING marker → leave alone); (3) resumes via `claude -p --resume <session-id> "<resume nudge: re-read SCRATCHPAD/NEEDS-YOU + continue>"` with exponential backoff (5→15→45→120 min — quota-window exhaustion just means later attempts succeed); (4) falls back to spawning a FRESH session against the continuation substrate (SCRATCHPAD + plan + NEEDS-YOU) when a session is unresumable; (5) logs every action to the signal ledger and the digest ("session X died 02:14 [429], auto-resumed 02:31") with a max-attempts cap against burn loops. Design note: this is the wake-queue's intent done right — it failed (330/330 dropped) because it delivered into a session-mediated channel; the resumer acts at the OS level via the CLI directly. Orchestrator-side companion: builder dispatches that die on terminal API errors are retried-later, not treated as lost — Model: sonnet (+ one supervised scheduled-task registration step) — Parallelizable: yes — Verification: mechanical
   - Done-when: self-test proves detect/classify/backoff/resume-command-construction against fixture transcripts (dead-429, dead-stale, natural-DONE, PAUSING) exits 0; scheduled task registered and doctor-checked; a live kill-and-resume drill on a sacrificial session succeeds end-to-end.
 
 - [x] E.8 NL self-improvement loop (operator directive 2026-07-03): (1) CAPTURE — `nl-issue.sh "<one line>"` script + skill: any session in ANY project appends {ts, project, session, text} to ~/.claude/state/nl-issues.jsonl (machine-local = cross-project by construction; constitution §5 carries the one-line pointer); (2) SURFACE — digest (E.1) shows untriaged count + age; >5 untriaged or >7 days oldest → escalation line with an auto-drafted backlog entry (waiver-density-alarm pattern); (3) CONVERT — weekly KPI run (E.5) includes the triage section; each triaged issue becomes a backlog entry, plan task, or explicit wont-fix with reason; (4) doctor checks the capture path exists + digest wiring — Model: sonnet — Parallelizable: yes — Verification: mechanical
@@ -148,7 +148,7 @@ The operator (the harness's user) can, after this program: (a) run `harness-doct
   - Done-when: architecture doc inventory counts match manifest counts (script assertion).
 - [x] F.3 Plan-estate + discovery dispositions: batch proposal to operator for the 6 pre-program ACTIVE plans, 1 DRAFT, 3 pending discoveries (recommendations prepared; operator approves per the no-silent-deferral rule; includes permanent dispositions for the two administratively-frozen plans from B.11) — Model: opus (main session) — Parallelizable: no — Verification: mechanical
   - Done-when: every listed artifact carries a terminal or explicitly-renewed status recorded with operator approval in Decisions Log.
-- [ ] F.4 Program retro vs baseline (B.10) + refutation-criteria check (ADR 058) + completion report — Model: opus — Parallelizable: no — Verification: mechanical
+- [x] F.4 Program retro vs baseline (B.10) + refutation-criteria check (ADR 058) + completion report — Model: opus — Parallelizable: no — Verification: mechanical
   - Done-when: `docs/reviews/nl-overhaul-completion-2026-07.md` exists with before/after numbers for all six baseline metrics.
 - [x] F.6 Sync-daemon durable fix — dedicated sync clone (option C from discovery 2026-06-02; B.12's stopgap lock stays as defense-in-depth; design in specs-e §SYNC-CLONE-C per B.12's "defined in specs-e" clause) — Model: sonnet — Parallelizable: yes — Verification: mechanical
   - Done-when: `scripts/sync-pt-to-personal.sh` operates from the dedicated clone (grep); a live sync run succeeds while an interactive session is open; the interactive-session-lock refusal log shows zero interactive-checkout touches from the daemon path.
@@ -364,9 +364,90 @@ B.1 (harness-doctor) + B.6 (first green run against the live mirror) is the walk
 
 ## Definition of Done
 
-- [ ] All Wave B–F tasks checked (task-verifier)
+- [x] All Wave B–F tasks checked (task-verifier) — E.7 (last build task) verified+armed 2026-07-13; awk-confirmed no unchecked Wave B–F task
 - [x] Closure Contract commands pass on temp-HOME install AND live mirror
 - [x] Golden + synthetic evals green in CI on master
-- [ ] F.4 completion report exists with baseline comparison
-- [ ] SCRATCHPAD/backlog/plan-estate reconciled (B.9, F.3)
-- [ ] Completion report appended to this plan file
+- [x] F.4 completion report exists with baseline comparison — docs/reviews/nl-overhaul-completion-2026-07.md
+- [x] SCRATCHPAD/backlog/plan-estate reconciled (B.9, F.3)
+- [x] Completion report appended to this plan file — ## Completion Report section (close-plan.sh 2026-07-13T15:11Z)
+
+## Completion Report
+
+_Generated by close-plan.sh on 2026-07-13T15:11:28Z._
+
+### 1. Implementation Summary
+
+Plan: `docs/plans/nl-overhaul-program-2026-07.md` (slug: `nl-overhaul-program-2026-07`).
+
+Files touched (per plan's `## Files to Modify/Create`):
+
+- `Live`
+- `adapters/claude-code/hooks/`
+- `adapters/claude-code/manifest.json`
+- `adapters/claude-code/rules/`
+- `adapters/claude-code/settings.json.template`
+- `docs/plans/`
+- `evals/`
+
+Commits referencing these files:
+
+```
+0090d4b feat(hook): bug-persistence-gate.sh — mechanical enforcement of testing.md rule
+00d5db8 feat(cold-reader-lint): decision-entry lint, WARN-only (constitution §3 amendment 53d3bee)
+00f8173 feat(agents): encode validation-discipline lesson into verifier/builder agents (#65)
+015b1b5 chore(plans): apply 5 salvaged closures (3 COMPLETED→archive, 2 DEFERRED→deferred) + supersede r2/r7 phase plans (subsumed by closed consolidation) + remove dishonest UI-plan exemption on cross-machine; legacy identifiers anonymized per harness-hygiene
+01bc9ba feat(rules): pre-existing-oracle paragraph in FUNCTIONALITY-OVER-COMPONENTS (#37)
+01d0d5c overhaul(C.2): live-probe result PASS recorded — C.5 gate OPEN (3 witnesses: marker, transcript grep, agent report; +4th: injector fired in the orchestrator session itself on this very edit)
+01d3867 docs: recover unique-to-this-machine audit + conv-tree-v4 design discovery (#42)
+026c694 lifecycle-test: Status: COMPLETED + auto-archived (F.3 dogfood step 4)
+0291279 feat(workstreams): shared canonical-state-path resolver — converge 9-file scatter onto one file
+03645c3 verify(1d-C-4): Task 3 evidence + checkbox flip
+038503e fix(D.5 remediation): doctor --full REDs — pr-template repo-root class fix + pin-d command repair, extract-pending runtime repoint (feature was dead live), heartbeat-theater doc honesty — findings 022/023
+03a7827 evidence(D.5 addendum): doctor --full LITERAL GREEN 8/8 — first full-sweep green; backlog v64
+03c2fa4 chore(plan): close pr-health-snapshot-gate-2026-06-01 (Status COMPLETED, archived)
+03f2a8e chore(closure): close 8 plans via close-plan.sh — Tranche 1.5 substantively complete
+04c80e3 overhaul(C.3-draft + wave-b-close): constitution draft (7,316B — operator review pending); B.6+B.7 verified PASS 11/11 Wave B complete; baseline §6 backfilled (Stop 20→22 by design, GREEN 6/6)
+04f524d fix(harness): remove trust/keep-going instigators behind the 2026-06-09 false-DONE incident
+04f6e79 plan(workstreams-ui): shared status-surface redesign — cockpit + waiting + per-project tree + editable tasks/backlog + context-completeness gate
+05315ae feat(agents): apply 4 A/B-verified prompt upgrades (claim-reviewer, comprehension-reviewer, plan-evidence-reviewer, harness-evaluator)
+055deb9 verify(wave-o): O.1+O.2+O.8 flipped by verifier workflow (PASS conf 8-9, drills independently replayed) + evidence blocks
+057de4c close(5a-integration): ritual wired + audit analyzer + pilot template — DONE via close-plan.sh
+05db587 chore(wave-o): orchestrator fragment application — manifest, template, consumer-map
+062456d plan: claude-remote-adoption — Status: COMPLETED + completion report + auto-archived
+07615fb plan(amend): capture-codify — third-pass systems-designer fixes
+07691d5 feat(conv-tree): Claude-side event emitter — Dispatch conversations auto-populate the GUI
+07a114d NL Overhaul Wave E batch 2: E.3 waiver-density, E.4 synthetic-runner, E.5 KPIs, E.6 NEEDS-YOU, E.10 incentive-pin retrofit (#82)
+0826b5b evidence(wave-o): orchestrator drill measurements — Q1-Q3 PASS, Q5 16.4s FAIL-cold, kill-drill PASS 9.0s, Q6 fixture 42/42
+082be8b fix(harness): scope product-acceptance plan discovery to the current repo
+0861153 chore(plans): close ws-ui-modal-doc-links-2026-06-11 (COMPLETED + completion report, archived with evidence)
+086e8b8 feat(docs): README rewrite — front-door restructure for public-repo audience
+086fcd5 NL Overhaul §E.W integration cutover: template wiring + manifest merge (Wave-E live wiring) (#86)
+```
+
+Backlog items absorbed: see plan header `Backlog items absorbed:` field;
+the orchestrator can amend this section post-procedure with shipped/deferred
+status per item.
+
+### 2. Design Decisions & Plan Deviations
+
+See the plan's `## Decisions Log` section for the inline record. Tier 2+
+decisions should each have a `docs/decisions/NNN-*.md` record landed in
+their implementing commit per `~/.claude/rules/planning.md`.
+
+### 3. Known Issues & Gotchas
+
+(orchestrator may amend post-procedure)
+
+### 4. Manual Steps Required
+
+(orchestrator may amend post-procedure — env vars, deploys, third-party setup)
+
+### 5. Testing Performed & Recommended
+
+See the plan's `## Testing Strategy` and `## Evidence Log` sections.
+This procedure verifies that every task has its declared verification level
+satisfied before allowing closure.
+
+### 6. Cost Estimates
+
+(orchestrator may amend; harness-development plans typically have no recurring cost — n/a)
