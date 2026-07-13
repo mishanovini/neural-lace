@@ -85,9 +85,17 @@ Read the reason word in the status line / the `phase=push` log line:
   hand and switch back. No token is ever created for this — the corrector uses
   whatever the credential store already holds.
 - **`non-ff`**: a concurrent push advanced the target between the ancestor
-  check and the push (the designed race backstop). No action needed — the next
-  session start re-evaluates; it is usually CONVERGED by then.
-- **`timeout`**: network. No action; next session retries.
+  check and the push (the designed race backstop). This also covers the case
+  where the machine-global `pre-push-divergence-check` hook blocks the clone's
+  push locally ("advanced since your last fetch") — same self-healing meaning.
+  No action needed — the next session start re-evaluates; usually CONVERGED by then.
+- **`timeout`**: the corrective push is bounded by `MASTER_DRIFT_PUSH_TIMEOUT`
+  (default 60s). Note the clone's pushes traverse the **global pre-push hook
+  chain** (credential scanner + divergence check) inside that bound, so a
+  timeout may be the chain running long, not the network. No action; next
+  session retries. If it recurs, time a manual `git -C ~/.claude/sync-clone/<repo>
+  push` to see which stage is slow (never bypass the chain — it runs the
+  credential scanner).
 - **`rejected`** (anything else, e.g. a server-side hook declined): inspect the
   `phase=push` log line for the server's message; if branch protection changed,
   reconcile by hand per the DIVERGED procedure's push step.

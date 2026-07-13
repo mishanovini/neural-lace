@@ -69,8 +69,15 @@
 #   MASTER_DRIFT_CLONE_TIMEOUT bootstrap `git clone` timeout (default 300).
 #   MASTER_DRIFT_LOCK_STALE_MIN break a held lock older than this (default 30).
 #   ISL_LIB_PATH               override the interactive-session-lock lib path.
-#   ISL_BYPASS=1               operator-attended override of the ISL guard
-#                              (still logged).
+#   ISL_BYPASS=1               on the LOG-AND-PROCEED path (caller is a distinct
+#                              interactive checkout) forces the "bypassed" log
+#                              word. The degenerate caller==dedicated-clone
+#                              refusal is UNBYPASSABLE by design — ISL_BYPASS
+#                              does NOT override it (that shape is never safe).
+#   MASTER_DRIFT_PUSH_TIMEOUT  seconds bounding the corrective push (default 60;
+#                              the push traverses the global pre-push hook chain
+#                              (scanner + divergence check), so it needs more
+#                              headroom than the fetch bound).
 #
 # GUARANTEES
 #   - FF-only: a push happens ONLY after `git merge-base --is-ancestor`
@@ -270,7 +277,7 @@ _push_reject_reason() {
     printf 'timeout'
   elif printf '%s' "$out" | grep -qiE '403|authentication|authoriz|denied|permission|could not read Username'; then
     printf 'auth'
-  elif printf '%s' "$out" | grep -qiE 'non-fast-forward|fetch first|stale info'; then
+  elif printf '%s' "$out" | grep -qiE 'non-fast-forward|fetch first|stale info|advanced since your last fetch|DIVERGENCE CHECK'; then
     printf 'non-ff'
   else
     printf 'rejected'
@@ -294,6 +301,26 @@ _main_correct() {
     return 0
   fi
   caller_repo_dir="$git_toplevel"
+
+  # 0a. Repo IDENTITY must be the MAIN checkout, never an ephemeral linked
+  #     worktree (else clone/status/lock key on the worktree basename, orphan
+  #     clones pile up, and DIVERGED status surfaces to no future session).
+  #     In a linked worktree `--git-common-dir` points at the MAIN repo's .git;
+  #     its parent is the main root. If the caller is a linked worktree, skip —
+  #     the main checkout's own session-start covers correction.
+  local common_dir main_root
+  common_dir="$(git -C "$caller_repo_dir" rev-parse --git-common-dir 2>/dev/null || echo "")"
+  case "$common_dir" in
+    /*|[A-Za-z]:[\\/]*) : ;;                              # already absolute
+    "" ) common_dir="$caller_repo_dir/.git" ;;           # fallback
+    * ) common_dir="$caller_repo_dir/$common_dir" ;;      # relative to toplevel
+  esac
+  main_root="$(cd "$(dirname "$common_dir")" 2>/dev/null && pwd || echo "$caller_repo_dir")"
+  if [ "$(_normalize_path "$main_root")" != "$(_normalize_path "$caller_repo_dir")" ]; then
+    REPO_BASENAME="$(basename "$main_root")"
+    _phase "abort" "linked-worktree (main checkout is $main_root) — main session covers drift; skipping"
+    return 0
+  fi
   REPO_BASENAME="$(basename "$caller_repo_dir")"
   _phase "dispatch" "run starting (cwd repo: $caller_repo_dir)"
 
@@ -357,17 +384,15 @@ _main_correct() {
     return 0
   fi
 
-  # 5. Bootstrap/repair the dedicated clone. All mutation below runs with
-  #    `git -C "$clone_dir"` — the caller's tree is never touched again.
-  if ! _ensure_sync_clone "$clone_dir" "$canonical_url" "$mirror_name" "$mirror_url"; then
-    _phase "abort" "bootstrap-failed for $clone_dir — next session start retries"
-    return 0
-  fi
-
-  # 6. Single-instance lock (mkdir-based, inside the clone dir). Loser exits
-  #    0 silently; stale (> MASTER_DRIFT_LOCK_STALE_MIN min) locks from a
-  #    crashed run are broken by age.
-  local lock_dir="$clone_dir/.master-drift-lock"
+  # 5. Single-instance lock (mkdir-based) — acquired in the STATE dir BEFORE
+  #    bootstrap so two concurrent first-runs cannot race `git clone` (a mutex
+  #    must not live inside the resource whose creation it serializes). Loser
+  #    exits 0 silently; a stale (> MASTER_DRIFT_LOCK_STALE_MIN min) lock from a
+  #    crashed run is broken by age.
+  local md_state_dir lock_dir
+  md_state_dir="$(_resolve_state_dir)"
+  mkdir -p "$md_state_dir" 2>/dev/null || true
+  lock_dir="${md_state_dir}/${REPO_BASENAME}.lock"
   if ! mkdir "$lock_dir" 2>/dev/null; then
     local stale_min="${MASTER_DRIFT_LOCK_STALE_MIN:-30}"
     if [ -d "$lock_dir" ] && [ -n "$(find "$lock_dir" -maxdepth 0 -mmin "+$stale_min" 2>/dev/null)" ]; then
@@ -385,6 +410,14 @@ _main_correct() {
   _MD_LOCK_DIR="$lock_dir"
   trap '[ -n "${_MD_LOCK_DIR:-}" ] && rmdir "$_MD_LOCK_DIR" 2>/dev/null || true' EXIT
   _phase "lock" "acquired $lock_dir"
+
+  # 6. Bootstrap/repair the dedicated clone (now serialized under the lock).
+  #    All mutation below runs with `git -C "$clone_dir"` — the caller's tree
+  #    is never touched again.
+  if ! _ensure_sync_clone "$clone_dir" "$canonical_url" "$mirror_name" "$mirror_url"; then
+    _phase "abort" "bootstrap-failed for $clone_dir — next session start retries"
+    return 0
+  fi
 
   # 7. Fetch both remotes IN THE CLONE (timeout-bounded). On failure: exit 0
   #    without writing a scary status — stale CONVERGED is acceptable;
@@ -436,7 +469,7 @@ _main_correct() {
   # 10. Plain push (never forced; only master; by SHA so the clone's local
   #     branches are irrelevant).
   local push_out push_rc
-  push_out="$(_bounded "$fetch_secs" git -C "$clone_dir" push "$push_target" "${push_sha}:master" 2>&1)"
+  push_out="$(_bounded "${MASTER_DRIFT_PUSH_TIMEOUT:-60}" git -C "$clone_dir" push "$push_target" "${push_sha}:master" 2>&1)"
   push_rc=$?
   if [ "$push_rc" -ne 0 ]; then
     local reason
@@ -636,10 +669,12 @@ _self_test() {
   # untouched. (Fixture still has mirror strictly behind from T5's advance.)
   (
     rm -f "$STATUS_FILE"
-    mkdir -p "$SYNC_CLONE_DIR/.master-drift-lock"
+    # Lock now lives in the STATE dir keyed on the caller's basename (MINOR-5:
+    # acquired before bootstrap so it cannot live inside the clone it guards).
+    mkdir -p "$tmp/state/work.lock"
     local m_before; m_before="$(_sha "$MIRROR_BARE")"
     _run "$WORK"; rc=$?
-    rmdir "$SYNC_CLONE_DIR/.master-drift-lock" 2>/dev/null || true
+    rmdir "$tmp/state/work.lock" 2>/dev/null || true
     if [ "$rc" -eq 0 ] && [ ! -f "$STATUS_FILE" ] \
        && [ "$(_sha "$MIRROR_BARE")" = "$m_before" ] \
        && grep -q "lock-held" "$tmp/master-drift.log"; then
@@ -749,6 +784,31 @@ _self_test() {
       echo "  T11 dual-pushurl topology -> mirror discovered via fetch URLs + single-push clone: PASS"
     else
       echo "  T11 dual-pushurl topology -> mirror discovered via fetch URLs: FAIL (rc=$rc status=$(cat "$STATUS_FILE" 2>/dev/null))"
+      sed 's/^/    /' "$tmp/run.out"; return 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
+  # T12 (MAJOR-3): invoked from a LINKED WORKTREE of the caller repo → identity
+  # resolves to the MAIN checkout via --git-common-dir, so the run SKIPS (the
+  # main session covers correction) instead of keying clone/status/lock on the
+  # ephemeral worktree basename. Assert: exit 0, "linked-worktree" logged, no
+  # status file, no mutation — even with real drift present.
+  (
+    rm -f "$STATUS_FILE"; rm -rf "$SYNC_CLONE_DIR"
+    _advance "$ORIGIN_BARE"   # real drift present, to prove the SKIP stops it
+    local o_before m_before wt
+    o_before="$(_sha "$ORIGIN_BARE")"; m_before="$(_sha "$MIRROR_BARE")"
+    wt="$tmp/linked-wt"
+    git -C "$WORK" worktree add -q "$wt" -b md-selftest-linked >/dev/null 2>&1
+    _run "$wt"; rc=$?
+    git -C "$WORK" worktree remove --force "$wt" 2>/dev/null || true
+    git -C "$WORK" branch -D md-selftest-linked 2>/dev/null || true
+    if [ "$rc" -eq 0 ] && [ ! -f "$STATUS_FILE" ] \
+       && grep -q "linked-worktree" "$tmp/master-drift.log" \
+       && [ "$(_sha "$ORIGIN_BARE")" = "$o_before" ] && [ "$(_sha "$MIRROR_BARE")" = "$m_before" ]; then
+      echo "  T12 linked-worktree caller -> SKIP (main session covers), no mutation: PASS"
+    else
+      echo "  T12 linked-worktree caller -> SKIP: FAIL (rc=$rc status-exists=$([ -f "$STATUS_FILE" ] && echo yes || echo no))"
       sed 's/^/    /' "$tmp/run.out"; return 1
     fi
   ) && pass=$((pass+1)) || fail=$((fail+1))

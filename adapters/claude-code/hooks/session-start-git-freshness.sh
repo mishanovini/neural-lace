@@ -184,7 +184,18 @@ _md_check() {
 
   toplevel="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
   [ -z "$toplevel" ] && return 0
-  repo_base="$(basename "$toplevel")"
+  # Repo identity keys on the MAIN checkout, not an ephemeral linked worktree
+  # (kept aligned with master-drift-autocorrect.sh, which skips linked-worktree
+  # callers). In a linked worktree --git-common-dir points at the main .git.
+  local _md_common _md_main_root
+  _md_common="$(git rev-parse --git-common-dir 2>/dev/null || echo "")"
+  case "$_md_common" in
+    /*|[A-Za-z]:[\\/]*) : ;;
+    "" ) _md_common="$toplevel/.git" ;;
+    * ) _md_common="$toplevel/$_md_common" ;;
+  esac
+  _md_main_root="$(cd "$(dirname "$_md_common")" 2>/dev/null && pwd || echo "$toplevel")"
+  repo_base="$(basename "$_md_main_root")"
 
   mirror="$(_md_mirror_remote)"
 
@@ -226,9 +237,11 @@ _md_check() {
   # Nothing to do (converged AND quiet status) → no dispatch, no lines.
   [ "$unequal" = "0" ] && [ "$nonquiet" = "0" ] && return 0
 
-  # Kill switch: skip dispatch entirely; detection line still renders.
+  # Kill switch: skip dispatch entirely; detection line still renders — but
+  # ONLY when no non-quiet status line already rendered (else two lines per
+  # session in the persistent diverged state — MAJOR-1).
   if [ "${MASTER_DRIFT_AUTOCORRECT:-1}" = "0" ]; then
-    if [ "$unequal" = "1" ]; then
+    if [ "$unequal" = "1" ] && [ "$nonquiet" = "0" ]; then
       out_lines+=("[git-freshness] [master-drift] remote masters differ: origin/master=${o7} ${mirror}/master=${m7} — auto-correction disabled (MASTER_DRIFT_AUTOCORRECT=0)")
     fi
     return 0
@@ -239,7 +252,11 @@ _md_check() {
   # status returns to CONVERGED and the digest line retires).
   local dispatched="corrector dispatched (backgrounded)"
   _md_dispatch_corrector || dispatched="corrector missing — run: bash adapters/claude-code/install.sh"
-  if [ "$unequal" = "1" ]; then
+  # Detection line ONLY when no non-quiet status line already rendered — in the
+  # steady diverged/push-rejected state the status line already tells the story;
+  # emitting both is the two-lines-per-session bug (MAJOR-1). Dispatch still
+  # happens above regardless, so correction is not gated on the line.
+  if [ "$unequal" = "1" ] && [ "$nonquiet" = "0" ]; then
     out_lines+=("[git-freshness] [master-drift] remote masters differ: origin/master=${o7} ${mirror}/master=${m7} — ${dispatched}")
   fi
   return 0
@@ -498,10 +515,34 @@ _self_test() {
     fi
   ) && pass=$((pass+1)) || fail=$((fail+1))
 
+  # T9b (MAJOR-1): remotes UNEQUAL *and* a non-quiet DIVERGED status present →
+  # STILL exactly ONE [master-drift] line (the status line), never two. This is
+  # the persistent steady state the plan/manifest promise "≤1 line" for; pre-fix
+  # it emitted the DIVERGED status line AND the "remote masters differ …
+  # dispatched" detection line. Dispatch must still fire (fix suppresses the
+  # duplicate LINE, not the correction).
+  (
+    cd "$tmp/mdrepo"
+    printf 'DIVERGED abc1234 def5678\n' > "$MASTER_DRIFT_STATE_DIR/mdrepo.status"
+    rm -f "$tmp/stub-invocations.log"
+    out="$(_main_check 2>/dev/null)"
+    count="$(echo "$out" | grep -c '\[master-drift\]')"
+    if [ "$count" = "1" ] \
+       && echo "$out" | grep -q '\[master-drift\] DIVERGED origin/master=abc1234' \
+       && ! echo "$out" | grep -q 'remote masters differ' \
+       && _md_stub_invoked; then
+      echo "  T9b unequal+DIVERGED -> exactly ONE line (no duplicate), dispatch still fires: PASS"
+    else
+      echo "  T9b unequal+DIVERGED -> exactly ONE line: FAIL (count=$count got: $out)"
+      return 1
+    fi
+  ) && pass=$((pass+1)) || fail=$((fail+1))
+
   # T14 (runs on the still-unequal fixture): kill switch skips dispatch but
   # keeps detection.
   (
     cd "$tmp/mdrepo"
+    rm -f "$MASTER_DRIFT_STATE_DIR/mdrepo.status"   # quiet status: pure kill-switch case
     rm -f "$tmp/stub-invocations.log"
     out="$(MASTER_DRIFT_AUTOCORRECT=0 _main_check 2>/dev/null)"
     sleep 1
