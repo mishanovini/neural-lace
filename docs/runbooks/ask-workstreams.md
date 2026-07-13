@@ -245,10 +245,95 @@ raw per-ask badge map) — deliberately NOT schema-validated (unlike
 precedent: the anti-noise law scopes to the LANDING payload/DOM, not this
 diagnostics-only surface.
 
-## What Task 17 adds here
+## Metrics + falsifiers (Task 17 — mirrors design sketch §8)
 
-The symptom -> diagnosis -> fix table (Behavioral Contracts §"Failure
-modes"), auditor cadence TUNING guidance (beyond the default documented
-above), the JSONL archival convention for done/dismissed asks, and the
-"surface looks wrong" triage order (doctor predicates -> diagnostics tab
--> logs -> never trust the UI over the files).
+Each P1 success metric is PRE-REGISTERED with a mechanism that keeps it
+honest and a falsifier that says what "broken" looks like — so the metric
+cannot silently rot the way the old event-sourced tracker did (0 production
+decision-events ever recorded, with nothing that ever went RED).
+
+| # | Metric | Mechanism (what makes it true) | Falsifier (what "broken" looks like) |
+|---|---|---|---|
+| 1 | **Context-reestablishment** — operator cold-starts any active ask in <60s via the surface | Task 18 acceptance walkthrough at real registry volume, RE-FIRED every 2 weeks by a CALENDAR task (`scripts/ask-cockpit-checkin.sh` registered via `install-weekly-hygiene-task.ps1 -Checkin`) that writes the cold-start question into `~/.claude/state/external-monitor-alerts/`, surfaced at the next session by the wired `hooks/external-monitor-alert-surfacer.sh` | operator observed scroll-hunting a transcript again instead of reading the card |
+| 2 | **Zero telemetry on the landing page** — landing payload/DOM carry no gate/hook identifier and no relative href | `server/payload-schema.js` `validateLanding`/`validateAskDetail` run at serve time (500-on-fail, never leak) AND in `server.selftest.js` (S27/S27a–d Task 11 + S50–S53 Task 17) AND surfaced live by the doctor: `harness-doctor.sh`'s `obs-cockpit-fresh` reads `/api/asks` and REDs on the server's own `"payload schema validation failed"` verdict | a gate/hook identifier or relative href reaches the landing builder (doctor REDs; serve-time validation 500s) |
+| 3 | **Waiting-on-you completeness+dedup** — every open NEEDS-YOU item is accounted for across the landing | `server/auditor.js`'s `count_reconciliation` (ledger-parsed open ids vs ids rendered across every ask's `waiting_on_operator` events) every cadence; pinned by `server.selftest.js` S54–S56; surfaced live by the doctor: `obs-cockpit-fresh` reads `/api/diagnostics/drift` and REDs on `count_reconciliation.mismatch:true` | an open decision exists that no ask's log references — it would vanish from the landing (doctor REDs; the id is listed in `unaccounted_needs_you_ids`) |
+| 3b | **Automatic-capture completeness** — every trailing-24h OPERATOR-origin session has a registered ask | `harness-doctor.sh`'s `obs-ask-capture-completeness` predicate counts ONLY operator-origin sessions — classified by the SAME `pl_classify_session` (`hooks/lib/progress-log-lib.sh`) the Task 9 capture guard uses (POPULATION PARITY: spawned/worktree sessions are excluded by construction, so orchestrated days never false-RED) — and derives each session's expected ask via the SAME `pl_ask_id_for_session` derivation the capture splice uses | a real operator session ran with no `ask_registered` record (doctor REDs, naming the session ids) — the Task 9 splice mis-fired or the registry write failed |
+| 4 | **Invariant-class health** — the surface inherits the lobotomy/health/restart contract | `/api/health` grading (master `02ff2f3`); `obs-cockpit-fresh` RED on `lobotomized:true` | a lobotomized cockpit renders stale/empty panes (pre-existing doctor RED) |
+
+Where the mechanism lives, verbatim: the doctor predicates (metrics 2, 3,
+3b) are all in `adapters/claude-code/hooks/harness-doctor.sh` —
+`check_obs_cockpit_fresh` was EXTENDED (not duplicated) for metrics 2 and 3;
+`check_obs_ask_capture_completeness` is the new predicate for metric 3b. The
+2-week check-in (metric 1) is `adapters/claude-code/scripts/ask-cockpit-checkin.sh`
++ the `-Checkin` mode of `adapters/claude-code/scripts/install-weekly-hygiene-task.ps1`.
+
+**Population-parity law (why metric 3b cannot false-fire).** A doctor
+predicate that audits a population MUST name its population filter
+IDENTICALLY to the mechanism it audits. `obs-ask-capture-completeness`
+sources `progress-log-lib.sh` and calls `pl_classify_session` — the exact
+function Task 9's `hooks/workstreams-read.sh` capture splice calls to decide
+who registers an ask — so a spawned/builder/sub-agent session (cwd under a
+`.claude/worktrees/` pool, OR matched by a Task 3 dispatch-provenance
+marker) is excluded from BOTH sides by construction. A re-derived or looser
+filter here would RED on every orchestrated day, which is the exact drift
+review round 1 (systems Minor 8) flagged; the parity is verified by the
+`o6-capture-parity-spawned-excluded` doctor self-test fixture (a registered
+operator session + an UNregistered spawned session → stays GREEN).
+
+## Auditor cadence tuning
+
+Default `120000ms` (2 min), env-tunable via `AUDITOR_CADENCE_MS`. Raise it
+when the estate has many repos and the git-scan lane dominates a cycle
+(check `GET /api/diagnostics/drift`'s `last_cycle_duration_ms`); lower it
+only if a specific workflow needs faster drift-badge convergence and the
+cycle is comfortably under the interval. The cadence is deliberately relaxed
+relative to `derive-cache.js`'s 30s pane refresh — nothing on the
+`GET /api/asks` read path depends on the auditor's freshness (the log is
+primary), so a slow auditor degrades to STALER drift badges, never a slower
+landing. Single-flight guarded: a cycle that overruns the interval SKIPS the
+next tick rather than stacking.
+
+## JSONL archival convention (done/dismissed asks)
+
+Per-ask log files (`~/.claude/state/progress-logs/<ask-id>.jsonl`) are
+append-only and bounded by being per-ask. When an ask reaches `done` or
+`dismissed` AND has had no new event for a long retention window, its log
+file may be moved to `~/.claude/state/progress-logs/archive/` — the readers
+(`server.js`, `auditor.js`) scan only the top-level dir, so an archived log
+drops out of the active surface without deletion (recoverable). P1 ships the
+CONVENTION only; automated enforcement lands when volume warrants it (per
+Systems Analysis §9 — volume is tens of events/day/ask today, so no sweep is
+needed yet).
+
+## "Surface looks wrong" triage order
+
+When the landing looks wrong, trust the FILES over the UI, in this order:
+
+1. **Doctor predicates first** — run `bash adapters/claude-code/hooks/harness-doctor.sh --quick`
+   and read `obs-cockpit-fresh` (schema-leak / reconciliation-mismatch /
+   lobotomy) and `obs-ask-capture-completeness` (a session with no
+   registered ask). A RED here names the mechanism that broke.
+2. **Diagnostics tab / endpoint** — `curl http://127.0.0.1:7733/api/diagnostics/drift`
+   for the full auditor state: `count_reconciliation` (incl.
+   `unaccounted_needs_you_ids`), `healed_recent`, `backfill_errors`, the raw
+   per-ask badge map.
+3. **The logs** — `~/.claude/logs/progress-log-emit.log` for emission
+   failures; the per-ask `~/.claude/state/progress-logs/<ask-id>.jsonl` for
+   the raw event stream; `~/.claude/state/ask-registry.jsonl` for the
+   registry records.
+4. **Never trust the UI over the files.** The UI is a view; the JSONL logs +
+   registry + git history fully replay any card's state (Systems Analysis
+   §6). If the UI disagrees with the files, the UI is stale or wrong — fix
+   the reader, never "correct" the files to match the render.
+
+## Symptom → diagnosis → fix (from Behavioral Contracts §"Failure modes")
+
+| Symptom | Diagnosis | Fix |
+|---|---|---|
+| A card's narrative has a gap (an expected event missing) | emission splice failed at emit time (best-effort, never blocks its host) | the auditor BACKFILLS truth-ahead-of-log classes (checkbox-done, merged) within one cadence; log-ahead classes wear a drift badge — check `/api/diagnostics/drift` `healed_recent`/`backfill_errors` |
+| `obs-ask-capture-completeness` RED | a real operator session ran with no `ask_registered` record | check `~/.claude/logs/progress-log-emit.log` and the session's first-prompt marker under `~/.claude/state/ask-capture/`; confirm `hooks/workstreams-read.sh`'s splice fired |
+| `obs-cockpit-fresh` RED "schema validation" | a gate/hook identifier or relative href reached the landing builder | `curl /api/asks` for the `diagnostics[]` detail; fix the offending field at its SOURCE (the payload builder), never by loosening `payload-schema.js` |
+| `obs-cockpit-fresh` RED "reconciliation MISMATCH" | an open NEEDS-YOU decision is referenced by no ask's log | read `count_reconciliation.unaccounted_needs_you_ids`; either the NEEDS-YOU parse broke or a decision was added without a `waiting_on_operator` event |
+| registry down / capture lost | file locked or a corrupt line | readers skip bad lines and surface a diagnostics count; capture-completeness predicate goes RED; re-register happens on the next prompt-marker miss |
+| landing serves but badges are stale | auditor down (log is primary; landing still serves) | the existing freshness header shows age; restart the server (auditor state rebuilds on boot — stateless) |
+| server down entirely | every writer keeps writing files (nothing depends on the UI being alive — the E.6 lesson) | restart via `neural-lace/workstreams-ui/scripts/launch-gui.ps1`; no data is lost |

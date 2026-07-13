@@ -1387,7 +1387,192 @@ check_obs_cockpit_fresh() {
     _red "obs-cockpit-fresh" "cockpit up but lobotomized — panes not deriving (rc!=0 across all panes with uptime >120s, per ${health_url}); the UI is rendering stale/empty panes; restart via neural-lace/workstreams-ui/scripts/launch-gui.ps1. DISCRIMINATOR: if a FRESH instance reports lobotomized again within minutes, the cause is the nl estate (CLI broken / all panes timing out), not the server env — run 'nl status --json' by hand and read the per-pane stderr_tails at ${health_url}"
   elif [[ "$lob" == "absent" && "$apf" == "true" ]]; then
     _warn "obs-cockpit-fresh" "cockpit up with >=1 failing pane (any_pane_failed=true; older server build without the lobotomized field, so transient-vs-wedged cannot be distinguished) — check ${health_url}"
+  else
+    # --------------------------------------------------------
+    # ask-rooted-workstreams-p1 Task 17(a)/(b) EXTENSION (not a new
+    # predicate — same obs-cockpit-fresh name, per the plan's explicit
+    # "extend the existing check, don't duplicate" instruction). Only
+    # reached when the health body ITSELF graded clean above (neither
+    # lobotomized nor the legacy any_pane_failed fallback) — a cockpit
+    # that is already RED/WARN for a health reason is not further
+    # diagnosed here; these two probes add FINER-GRAINED failure
+    # detection on top of an otherwise-healthy cockpit, they do not
+    # re-derive cockpit health.
+    #
+    # (a) Anti-noise/absolute-href schema check, surfaced live: the
+    # server already self-validates every /api/asks response against
+    # payload-schema.js's allowlist BEFORE it hits the wire (Task 11,
+    # server.js) and degrades to a 500 `{ok:false,
+    # error:"payload schema validation failed", diagnostics:[...]}`
+    # rather than ever leaking the bad payload. This predicate does NOT
+    # re-run validateLanding/validateAskDetail itself (that would be a
+    # re-derivation, exactly the class this check exists to avoid) — it
+    # reads the mechanism's OWN verdict off the wire, the same way the
+    # lobotomized grading above reads the server's own judgment rather
+    # than re-deriving pane health locally. Deliberately no `-f` on this
+    # curl: `-f` discards the body on HTTP>=400, and the failure body
+    # (the exact diagnostic this check greps for) rides on a 500.
+    local asks_url="${OBS_COCKPIT_ASKS_URL:-http://127.0.0.1:7733/api/asks}"
+    local asks_body
+    asks_body="$(curl -s --max-time 3 "$asks_url" 2>/dev/null)"
+    if [[ -n "$asks_body" ]] \
+       && printf '%s' "$asks_body" | grep -q '"error"[[:space:]]*:[[:space:]]*"payload schema validation failed"'; then
+      _red "obs-cockpit-fresh" "ask-landing payload at ${asks_url} is FAILING its own anti-noise/absolute-href schema validation (payload-schema.js, Task 11) — a gate/hook identifier or a relative href reached the landing builder and the server correctly refused to ship it; curl ${asks_url} for the diagnostics[] detail and fix the offending field at its source"
+    fi
+
+    # (b) Waiting-on-you count reconciliation (sketch §8-3): the
+    # background auditor (Task 12) already compares the ledger-parsed
+    # open-decision count against the count actually rendered across
+    # every ask's waiting_count and publishes the verdict at
+    # GET /api/diagnostics/drift (`count_reconciliation.mismatch`). This
+    # predicate reads that PUBLISHED verdict — it does not re-parse
+    # NEEDS-YOU.md or re-walk progress logs itself (that would duplicate
+    # auditor.js's own reconciliation, the exact drift class review
+    # round 1 flagged for a re-derived population filter). A mismatch
+    # means an open decision exists that no ask's log references at all
+    # — it would otherwise silently vanish from the landing.
+    local drift_url="${OBS_COCKPIT_DIAGNOSTICS_URL:-http://127.0.0.1:7733/api/diagnostics/drift}"
+    local drift_body
+    drift_body="$(curl -s --max-time 3 "$drift_url" 2>/dev/null)"
+    if [[ -n "$drift_body" ]]; then
+      local recon_mismatch="false"
+      if command -v jq >/dev/null 2>&1 && printf '%s' "$drift_body" | jq -e . >/dev/null 2>&1; then
+        recon_mismatch="$(printf '%s' "$drift_body" | jq -r '.count_reconciliation.mismatch // false | tostring' 2>/dev/null || echo false)"
+      else
+        printf '%s' "$drift_body" | grep -qE '"count_reconciliation"[^}]*"mismatch"[[:space:]]*:[[:space:]]*true' && recon_mismatch="true"
+      fi
+      if [[ "$recon_mismatch" == "true" ]]; then
+        _red "obs-cockpit-fresh" "waiting-on-you count reconciliation MISMATCH at ${drift_url} (design sketch §8-3) — the auditor's ledger-parsed open-decision count disagrees with the count actually rendered across every ask's waiting_count; an open NEEDS-YOU decision may be silently missing from the landing. See ${drift_url}'s count_reconciliation.unaccounted_needs_you_ids for the specific id(s)"
+      fi
+    fi
   fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: obs-ask-capture-completeness (ask-rooted-workstreams-p1 Task 17c;
+# Task 9's own invariant, restated in its "Prove it works" step 5: "doctor
+# predicate from Task 17 counts trailing-24h sessions lacking a registered
+# ask — must be 0 on every future doctor run, so regressions surface
+# without anyone re-testing by hand").
+#
+# POPULATION-PARITY LAW (review round 1, systems Minor 8 — the single most
+# important correctness property of this predicate): the population this
+# check audits MUST be filtered by the IDENTICAL predicate Task 9's
+# automatic-capture guard uses to decide who registers an ask in the first
+# place — `pl_classify_session` in hooks/lib/progress-log-lib.sh. A
+# RE-DERIVED filter here (e.g. "skip anything under .claude/worktrees/"
+# reimplemented locally) is exactly the drift class that would silently
+# diverge from the guard's own logic and false-RED every orchestrated day
+# (spawned/builder sessions never register asks BY DESIGN — they attach to
+# the dispatching ask instead — so counting them as a capture gap is a bug,
+# not a finding). This check sources the SAME lib file and calls the SAME
+# function; it never reimplements the classification.
+#
+# Population source: every heartbeat file (${live_home}/state/heartbeats/
+# *.json — the O.2 liveness files, one per top-level session; subagent/
+# workflow transcripts never write their own heartbeat, so no extra
+# filtering is needed here the way check_obs_heartbeats_fresh needs it for
+# TRANSCRIPTS) whose mtime falls within the trailing 24h. For each such
+# session classified OPERATOR (not SPAWNED) by pl_classify_session, this
+# check derives the ask_id the Task 9 capture splice would have minted
+# (`pl_ask_id_for_session <session_id>` — the SAME deterministic derivation
+# hooks/workstreams-read.sh's splice uses at registration time, per its own
+# header) and confirms a record for that ask_id exists in
+# ${live_home}/state/ask-registry.jsonl. A session whose cwd/heartbeat
+# fields cannot be read is SKIPPED, never guessed into the population (a
+# false RED here is a false alarm; a false skip merely narrows the audited
+# set for one cycle).
+#
+# Gates (each a silent GREEN skip):
+#   1. progress-log-lib.sh absent (mechanism not installed) -> nothing to
+#      audit (mirrors check_obs_heartbeats_fresh's own canonical-oracle
+#      sourcing convention: source once, guarded by the lib's own
+#      re-source guard).
+#   2. pl_classify_session/pl_ask_id_for_session not resolvable after
+#      sourcing (should not happen on an installed estate; degrade
+#      honestly rather than guess).
+#   3. no heartbeats directory -> zero live sessions, nothing to check.
+#   4. zero OPERATOR-classified sessions in the trailing-24h population
+#      (e.g. every session in the window was spawned/builder/sub-agent —
+#      the exact "orchestrated day" case population parity exists to
+#      protect) -> GREEN, nothing to check. This is NOT the same as "zero
+#      heartbeats" — it is reached only AFTER classification.
+# ------------------------------------------------------------
+check_obs_ask_capture_completeness() {
+  local live_home="$1" repo_root="$2"
+
+  local pllib="${SCRIPT_DIR}/lib/progress-log-lib.sh"
+  if [[ ! -f "$pllib" ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  # shellcheck disable=SC1090
+  source "$pllib"
+  if ! command -v pl_classify_session >/dev/null 2>&1 \
+     || ! command -v pl_ask_id_for_session >/dev/null 2>&1; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local hb_dir="${live_home}/state/heartbeats"
+  if [[ ! -d "$hb_dir" ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local dp_dir="${live_home}/state/dispatch-provenance"
+  local registry_file="${live_home}/state/ask-registry.jsonl"
+
+  local now_epoch
+  now_epoch=$(date -u +%s 2>/dev/null || echo 0)
+
+  local -a checked_sids=()
+  local -a missing_sids=()
+  local f mtime age_min sid cwd
+
+  while IFS= read -r -d '' f; do
+    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
+    age_min=$(( (now_epoch - mtime) / 60 ))
+    [[ "$age_min" -lt 1440 ]] || continue  # trailing-24h population window
+
+    sid="$(_pl_marker_field "$f" session_id)"
+    [[ -n "$sid" ]] || continue
+
+    cwd="$(_pl_marker_field "$f" cwd)"
+    # An unresolvable cwd cannot be safely classified — skip rather than
+    # guess (see header: a false skip is cheap, a false RED is not).
+    [[ -n "$cwd" ]] || continue
+
+    if pl_classify_session --cwd "$cwd" --dispatch-provenance-dir "$dp_dir" >/dev/null 2>&1; then
+      continue  # SPAWNED — excluded from the population BY CONSTRUCTION,
+                # not re-derived: population parity with Task 9's guard.
+    fi
+
+    checked_sids+=("$sid")
+    local expected_ask
+    expected_ask="$(pl_ask_id_for_session "$sid")"
+    [[ -n "$expected_ask" ]] || continue
+
+    if [[ ! -f "$registry_file" ]] || ! grep -qF "\"ask_id\":\"${expected_ask}\"" "$registry_file"; then
+      missing_sids+=("$sid")
+    fi
+  done < <(find "$hb_dir" -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null)
+
+  if [[ "${#checked_sids[@]}" -eq 0 ]]; then
+    # Nothing operator-origin in the trailing-24h window — GREEN. This is
+    # the population-parity guarantee made visible: an estate with only
+    # orchestrated/worktree activity in the window stays silent, exactly
+    # because those sessions were correctly excluded above, not because
+    # there was nothing to look at.
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  if [[ "${#missing_sids[@]}" -gt 0 ]]; then
+    _red "obs-ask-capture-completeness" "${#missing_sids[@]} of ${#checked_sids[@]} trailing-24h OPERATOR-origin session(s) have NO registered ask in ${registry_file} (Task 9's automatic-capture invariant) — session(s): $(printf '%s, ' "${missing_sids[@]}" | sed 's/, $//'). Check whether hooks/workstreams-read.sh's ask-capture splice fired for these sessions (see ~/.claude/logs/progress-log-emit.log if present, or re-check the session's own first-prompt marker under ~/.claude/state/ask-capture/)"
+  fi
+
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
 
@@ -2195,6 +2380,7 @@ run_quick_checks() {
   check_obs_scheduled_tasks "$live_home" "$repo_root"
   check_obs_consumer_map "$live_home" "$repo_root"
   check_obs_cockpit_fresh "$live_home" "$repo_root"
+  check_obs_ask_capture_completeness "$live_home" "$repo_root"
   check_needs_you_headers "$live_home" "$repo_root"
   check_pin_f_waiver_purpose_clauses "$live_home" "$repo_root"
   check_line_endings "$live_home" "$repo_root"
@@ -3680,6 +3866,163 @@ EOF
     FAILED=$((FAILED + 1))
   else
     echo "self-test (o6-obs-cockpit-fresh-green-absent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ==========================================================
+  # ask-rooted-workstreams-p1 Task 17(a)/(b) — obs-cockpit-fresh EXTENSION
+  # fixtures. Same _scenario_dir base + Windows-override + a MULTI-URL curl
+  # stub answering /api/health (clean, so the else branch is reached),
+  # /api/asks, and /api/diagnostics/drift independently. Predicates
+  # fail-closed: a seeded schema-failure / reconciliation-mismatch -> RED
+  # BEFORE the clean case is trusted GREEN (plan Testing Strategy §Doctor).
+  # ==========================================================
+  _cockpit_multi_fixture() {
+    # $1=label $2=health_body $3=asks_body $4=drift_body (all clean-JSON,
+    # no embedded single-quotes so the single-quote wrapping below is safe).
+    local d
+    d=$(_scenario_dir "$1")
+    mkdir -p "$d/repo/neural-lace/workstreams-ui/server" "$d/live/state/heartbeats" \
+             "$d/live/scripts" "$d/fakebin"
+    printf 'stub\n' > "$d/repo/neural-lace/workstreams-ui/server/server.js"
+    printf '#!/bin/bash\n# fixture stub of ensure-cockpit.sh\n' > "$d/live/scripts/ensure-cockpit.sh"
+    printf '{"schema":1}\n' > "$d/live/state/heartbeats/sess-x.json"
+    touch "$d/live/state/heartbeats/sess-x.json"
+    {
+      printf '#!/bin/bash\n'
+      printf 'url="${@: -1}"\n'
+      printf 'case "$url" in\n'
+      printf "  *api/asks*) printf %%s '%s' ;;\n" "$3"
+      printf "  *api/diagnostics/drift*) printf %%s '%s' ;;\n" "$4"
+      printf "  *) printf %%s '%s' ;;\n" "$2"
+      printf 'esac\n'
+      printf 'exit 0\n'
+    } > "$d/fakebin/curl"
+    chmod +x "$d/fakebin/curl"
+    _write_settings "$d/live/settings.json"
+    cp "$d/live/settings.json" "$d/repo/adapters/claude-code/settings.json.template"
+    printf '%s\n' "$d"
+  }
+
+  # Bare assignments (NOT `local`): this block is the top-level
+  # `if [[ --self-test ]]` scope, not a function — `local` here is a
+  # runtime error.
+  CLEAN_HEALTH='{"ok":true,"any_pane_failed":false,"lobotomized":false,"oldest_pane_age_ms":5000}'
+  CLEAN_ASKS='{"ok":true,"status_filter":"active","groups":[]}'
+  CLEAN_DRIFT='{"ok":true,"count_reconciliation":{"mismatch":false,"ledger_open_count":1,"rendered_waiting_count":1}}'
+
+  # ---- Task 17(a): GREEN — healthy cockpit + clean /api/asks schema +
+  # clean reconciliation must NOT fire the extension (false-positive guard).
+  D=$(_cockpit_multi_fixture o6-cockpit-t17-green "$CLEAN_HEALTH" "$CLEAN_ASKS" "$CLEAN_DRIFT")
+  OUT="$(PATH="$D/fakebin:$PATH" OBS_COCKPIT_UNAME_OVERRIDE=MINGW64_NT-fixture _run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -qE "(RED|WARN) obs-cockpit-fresh"; then
+    echo "self-test (o6-cockpit-t17-extension-green): FAIL (extension fired on a clean cockpit/schema/reconciliation)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-cockpit-t17-extension-green): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- Task 17(a): RED — /api/asks returns the server's own
+  # schema-validation-failure verdict (anti-noise/absolute-href) -> RED.
+  D=$(_cockpit_multi_fixture o6-cockpit-t17-schema-red "$CLEAN_HEALTH" \
+      '{"ok":false,"error":"payload schema validation failed","diagnostics":["field narrative_excerpt contains a gate/hook identifier"]}' "$CLEAN_DRIFT")
+  OUT="$(PATH="$D/fakebin:$PATH" OBS_COCKPIT_UNAME_OVERRIDE=MINGW64_NT-fixture _run_quick "$D")"; RC=$?
+  _assert "o6-cockpit-t17-schema-red" 1 "$RC" "RED obs-cockpit-fresh.*schema validation" "$OUT"
+
+  # ---- Task 17(b): RED — /api/diagnostics/drift reports a
+  # count_reconciliation mismatch (an open decision missing from the
+  # landing) -> RED (the doctor-visible failure mode sketch §8-3 requires).
+  D=$(_cockpit_multi_fixture o6-cockpit-t17-recon-red "$CLEAN_HEALTH" "$CLEAN_ASKS" \
+      '{"ok":true,"count_reconciliation":{"ledger_open_count":2,"rendered_waiting_count":1,"mismatch":true,"unaccounted_needs_you_ids":["NY-orphan-1"]}}')
+  OUT="$(PATH="$D/fakebin:$PATH" OBS_COCKPIT_UNAME_OVERRIDE=MINGW64_NT-fixture _run_quick "$D")"; RC=$?
+  _assert "o6-cockpit-t17-recon-red" 1 "$RC" "RED obs-cockpit-fresh.*reconciliation MISMATCH" "$OUT"
+
+  # ==========================================================
+  # ask-rooted-workstreams-p1 Task 17(c) — obs-ask-capture-completeness
+  # fixtures. POPULATION PARITY is the load-bearing property: the predicate
+  # sources the REAL hooks/lib/progress-log-lib.sh and calls the SAME
+  # pl_classify_session / pl_ask_id_for_session the Task 9 guard uses, so a
+  # spawned/worktree session (cwd under .claude/worktrees/) is excluded BY
+  # CONSTRUCTION and never false-REDs an orchestrated day.
+  # ==========================================================
+  PLLIB_ST="$SCRIPT_DIR/lib/progress-log-lib.sh"
+
+  # ---- Task 17(c): RED — a trailing-24h OPERATOR session with NO
+  # registered ask (the automatic-capture invariant broke).
+  D=$(_scenario_dir o6-capture-red)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/live/state/heartbeats"
+  printf '{"schema":1,"session_id":"sess-cap-missing","pid":1,"cwd":"%s/repo","last_activity_ts":"now"}\n' "$D" \
+    > "$D/live/state/heartbeats/sess-cap-missing.json"
+  touch "$D/live/state/heartbeats/sess-cap-missing.json"
+  # (no ask-registry.jsonl at all -> the operator session has no registered ask)
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "RED obs-ask-capture-completeness"; then
+    echo "self-test (o6-capture-red-fires): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (o6-capture-red-fires): FAIL (operator session with no registered ask did not RED)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- Task 17(c): GREEN — the SAME operator session WITH its
+  # deterministically-derived ask registered (pl_ask_id_for_session, the
+  # exact derivation Task 9's capture splice uses).
+  D=$(_scenario_dir o6-capture-green)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/live/state/heartbeats"
+  printf '{"schema":1,"session_id":"sess-cap-ok","pid":1,"cwd":"%s/repo","last_activity_ts":"now"}\n' "$D" \
+    > "$D/live/state/heartbeats/sess-cap-ok.json"
+  touch "$D/live/state/heartbeats/sess-cap-ok.json"
+  if [[ -f "$PLLIB_ST" ]]; then
+    ASK_OK_ST="$(source "$PLLIB_ST"; pl_ask_id_for_session sess-cap-ok)"
+    printf '{"ask_id":"%s","record_type":"created","ts":"2026-07-01T00:00:00Z"}\n' "$ASK_OK_ST" \
+      > "$D/live/state/ask-registry.jsonl"
+  fi
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "obs-ask-capture-completeness"; then
+    echo "self-test (o6-capture-green-registered): FAIL (fired although the operator session has a registered ask)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-capture-green-registered): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- Task 17(c): POPULATION PARITY — a registered operator session PLUS
+  # a SPAWNED session (cwd under .claude/worktrees/<slug>, UNregistered by
+  # design) must stay GREEN, because pl_classify_session excludes the
+  # spawned one from the audited population. This is the load-bearing
+  # correctness property: without parity, every orchestrated day would
+  # false-RED.
+  D=$(_scenario_dir o6-capture-parity)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/live/state/heartbeats"
+  printf '{"schema":1,"session_id":"sess-op-ok","pid":1,"cwd":"%s/repo","last_activity_ts":"now"}\n' "$D" \
+    > "$D/live/state/heartbeats/sess-op-ok.json"
+  printf '{"schema":1,"session_id":"sess-spawned","pid":2,"cwd":"%s/repo/.claude/worktrees/agent-child","last_activity_ts":"now"}\n' "$D" \
+    > "$D/live/state/heartbeats/sess-spawned.json"
+  touch "$D/live/state/heartbeats/sess-op-ok.json" "$D/live/state/heartbeats/sess-spawned.json"
+  if [[ -f "$PLLIB_ST" ]]; then
+    ASK_OP_ST="$(source "$PLLIB_ST"; pl_ask_id_for_session sess-op-ok)"
+    # ONLY the operator session is registered; the spawned session is NOT
+    # (it would attach to the dispatching ask, never register) — yet the
+    # check must stay GREEN because parity excludes it.
+    printf '{"ask_id":"%s","record_type":"created","ts":"2026-07-01T00:00:00Z"}\n' "$ASK_OP_ST" \
+      > "$D/live/state/ask-registry.jsonl"
+  fi
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "RED obs-ask-capture-completeness"; then
+    echo "self-test (o6-capture-parity-spawned-excluded): FAIL (population parity broke — a spawned/worktree session false-RED'd the capture check)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (o6-capture-parity-spawned-excluded): PASS" >&2
     PASSED=$((PASSED + 1))
   fi
 
