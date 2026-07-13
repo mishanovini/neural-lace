@@ -312,6 +312,30 @@
       "budget_class": "posttool"
     },
     {
+      "id": "find-scan-warn",
+      "kind": "surfacer",
+      "doctrine_file": null,
+      "hooks": [
+        "find-scan-warn.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "pretool",
+      "added_after": "2026-07",
+      "golden_scenario": "Agent-efficiency lesson 2026-07-13 Finding 3 — a session runs `find / -maxdepth 6 -iname <repo>` (a disk-wide scan) at ~65% of a core to locate the repo root instead of using Glob / git rev-parse.",
+      "fp_expectation": "scoped finds (`find .`, `find ./src`, `find adapters/`) must stay silent — 11/11 self-test scenarios; a false positive costs one stderr line, never a block.",
+      "retirement_condition": "zero fires for 30 days, or superseded by a stronger agent-doctrine mechanism that prevents disk-wide finds at the source.",
+      "honesty_rationale": "WARN-only by design (rec 6 of the efficiency lesson) — never blocks; scoped finds are common and legitimate; every code path exits 0. Nudges toward Glob/Grep/git rev-parse."
+    },
+    {
       "id": "cross-repo-nl-touch-warn",
       "kind": "surfacer",
       "doctrine_file": null,

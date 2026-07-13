@@ -15,8 +15,8 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 117 |
-| Unique hook scripts | 103 |
+| Total manifest entries | 119 |
+| Unique hook scripts | 104 |
 | Blocking gates (`blocking: true`) | 32 |
 
 ## Hooks by event
@@ -42,6 +42,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreToolUse | design-mode-planning | gate | no | systems-design-gate.sh |
 | PreToolUse | doc-gate | gate | no | doc-gate.sh |
 | PreToolUse | env-local-protection | gate | yes | env-local-protection.sh |
+| PreToolUse | find-scan-warn | surfacer | no | find-scan-warn.sh |
 | PreToolUse | findings-ledger | gate | yes | findings-ledger-schema-gate.sh |
 | PreToolUse | gh-account-autoswitch | surfacer | no | gh-account-autoswitch.sh |
 | PreToolUse | local-edit-authorization | gate | yes | local-edit-gate.sh |
@@ -120,8 +121,8 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 |---|---|---|
 | gate | 32 | 12 |
 | writer | 0 | 27 |
-| surfacer | 0 | 19 |
-| pattern | 0 | 24 |
+| surfacer | 0 | 20 |
+| pattern | 0 | 25 |
 | convention | 0 | 3 |
 
 ## Budgets
@@ -135,9 +136,9 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 |---|---|
 | stop | 8 |
 | session-start | 15 |
-| pretool | 24 |
+| pretool | 25 |
 | posttool | 6 |
-| none | 64 |
+| none | 65 |
 
 ## Doctrine index
 
@@ -188,14 +189,14 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/spec-freeze.md | 1 (spec-freeze) |
 | doctrine/teaching-moments.md | 1 (teaching-moments) |
 | doctrine/testing.md | 6 (bug-persistence, no-test-skip, outcome-evidence, pre-push-test, review-finding-fix, tdd-gate) |
-| doctrine/vaporware-prevention.md | 2 (runtime-verification, vaporware-volume) |
+| doctrine/vaporware-prevention.md | 3 (runtime-verification, vaporware-config-control, vaporware-volume) |
 | doctrine/work-shapes.md | 1 (work-shapes) |
 | doctrine/workstream-memory-ecology.md | 1 (workstream-memory-ecology) |
 | doctrine/workstreams-state.md | 7 (workstreams-emitters, workstreams-extract-pending, workstreams-spawn-gate, workstreams-stop-gate, workstreams-stop-writer, workstreams-task-binding, workstreams-turn-emit) |
 | doctrine/worktree-isolation.md | 1 (worktree-advisor) |
 | rules/constitution.md | 1 (constitution) |
 
-Entries with no doctrine_file (`-`): 29.
+Entries with no doctrine_file (`-`): 30.
 
 ## Full entry listing
 
@@ -238,6 +239,7 @@ Entries with no doctrine_file (`-`): 29.
 | env-local-protection | gate | PreToolUse | yes | pretool | — |
 | estate-coordination | pattern | — | no | none | docs+skill unit only (skills/coordinate-estate/SKILL.md + doctrine/estate-coordination.md); no hook, no wiring; jit_triggers fire doctrine-jit.sh's paths-match on any edit whose file_path contains SCRATCHPAD.md (keywords reserved for v2 per schema, not yet matched). |
 | external-monitor-alerts | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
+| find-scan-warn | surfacer | PreToolUse | no | pretool | — |
 | findings-ledger | gate | PreToolUse | yes | pretool | — |
 | friction-reflexion | pattern | — | no | none | — |
 | frontend-conventions | convention | — | no | none | — |
@@ -303,6 +305,7 @@ Entries with no doctrine_file (`-`): 29.
 | task-verifier-reminder | surfacer | PostToolUse | no | posttool | — |
 | tdd-gate | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
 | teaching-moments | pattern | — | no | none | — |
+| vaporware-config-control | pattern | — | no | none | pattern — checked via functionality-verifier's config-control protocol, dispatched by task-verifier (the sole checkbox-flipper) before flipping any Verification: full user-observable task; the flip is mechanically backstopped by plan-edit-validator.sh (blocking PreToolUse — evidence block with a Runtime verification: line required) and work-integrity-gate via stop-verdict-dispatcher.sh (blocking Stop — checked tasks require evidence blocks); standing surfaces via functionality-auditor's registry-vs-callsite sweep; no dedicated hook by design (plan vaporware-config-controls D-2) |
 | vaporware-volume | gate | PreToolUse | no | pretool | RETIRED from live PreToolUse 2026-07-06 per synth-ci plan task 2 — coverage relocated to .github/workflows/synthetic-runner.yml (first scheduled live run GREEN: actions/runs/28785582207). Hook file retained for the CI path. |
 | waiver-density-alarm | pattern | — | no | none | scripts/waiver-density.sh — invoked by the digest (--digest-line) + E.5 KPI (--report); not an event-wired hook. |
 | wave-d-retired-shims | writer | manual | no | none | Exit-0 shims at retired live paths for one release (live-session safety, ADR 058 D5 pin c); originals in attic/. Hard-delete next release. |

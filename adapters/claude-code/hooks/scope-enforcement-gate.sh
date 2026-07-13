@@ -1378,6 +1378,26 @@ fi
 # Main hook logic
 # ============================================================
 
+# --- Cheap pre-filter (perf; behavior-preserving) ---------------------------
+# This gate only ever ACTS on a `git commit` command; every other command is a
+# guaranteed pass. On Windows Git Bash the dominant early-exit cost is the jq/sed
+# subprocess spawns below, NOT lexing the file (measured: ~612ms common path ->
+# ~182ms with this guard, whole file still parsed). A pure-bash substring guard
+# here exits the common non-commit path before any spawn. The guard is a strict
+# SUPERSET of the trigger — a real git-commit segment always contains the literal
+# "commit" — so a miss here can never be a false skip. Consume the input ONCE
+# (env var else stdin) and re-export it so the read below is unaffected.
+# Ref: docs/lessons/2026-07-13-agent-efficiency-bottlenecks-process-spawn-and-hook-latency.md rec 5.
+_SCOPE_PF="${CLAUDE_TOOL_INPUT:-}"
+if [[ -z "$_SCOPE_PF" ]] && [[ ! -t 0 ]]; then
+  _SCOPE_PF=$(cat 2>/dev/null || echo "")
+fi
+case "$_SCOPE_PF" in
+  *commit*) : ;;                 # possible git commit — fall through to full logic
+  *) exit 0 ;;                   # no "commit" substring — cannot be a git commit
+esac
+export CLAUDE_TOOL_INPUT="$_SCOPE_PF"
+
 # --- Read tool input (env var OR stdin, supporting both Claude Code shapes) ---
 INPUT="${CLAUDE_TOOL_INPUT:-}"
 if [[ -z "$INPUT" ]] && [[ ! -t 0 ]]; then

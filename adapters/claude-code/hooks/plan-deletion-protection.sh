@@ -81,6 +81,31 @@ if [[ "${1:-}" == "--self-test" ]]; then
   SELF_TEST=1
 fi
 
+# --- Cheap pre-filter (perf; behavior-preserving) ---------------------------
+# This gate only ACTS on a destructive command shape (rm / git clean /
+# git stash -u / git checkout|restore / git reset / mv). Every other command is
+# a guaranteed pass. On Windows Git Bash the common-path early-exit cost is
+# dominated by the jq/sed subprocess spawns below (measured ~1194ms -> ~125ms
+# with this guard). The trigger set is a strict SUPERSET of the five detectors
+# (detect_rm / detect_git_clean / detect_git_stash /
+# detect_git_checkout_restore_reset / detect_mv — verbs rm|clean|stash|checkout|
+# restore|reset|mv), so a miss here can NEVER be a false skip. It is skipped
+# entirely under --self-test (SELF_TEST=1) so the scenario harness is unaffected.
+# Consume the input ONCE (env var else stdin) and re-export so load_input below
+# is unaffected.
+# Ref: docs/lessons/2026-07-13-agent-efficiency-bottlenecks-process-spawn-and-hook-latency.md rec 5.
+if [[ "${SELF_TEST:-0}" != "1" ]]; then
+  _PDP_PF="${CLAUDE_TOOL_INPUT:-}"
+  if [[ -z "$_PDP_PF" ]] && [[ ! -t 0 ]]; then
+    _PDP_PF=$(cat 2>/dev/null || echo "")
+  fi
+  case "$_PDP_PF" in
+    *rm*|*mv*|*clean*|*stash*|*checkout*|*restore*|*reset*) : ;;  # possible plan deletion — run full logic
+    *) exit 0 ;;                                                   # no destructive verb — cannot delete a plan
+  esac
+  export CLAUDE_TOOL_INPUT="$_PDP_PF"
+fi
+
 # ============================================================
 # Input loading — support both CLAUDE_TOOL_INPUT and stdin
 # ============================================================

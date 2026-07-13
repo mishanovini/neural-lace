@@ -104,6 +104,7 @@ The deliverable outcome is each artifact's `--self-test` passing and `harness-do
 
 ## In-flight scope updates
 - 2026-07-13: `docs/DECISIONS.md` — the decisions-index-gate requires index consistency when `docs/decisions/035-*.md` is edited (Task 3); the 035 index row also carries the same stale `~/.claude/rules/` pointer, so the fix belongs here too.
+- 2026-07-13: `docs/harness-architecture.md` — GENERATED from `manifest.json` via `gen-architecture-doc.sh`; regenerated (not hand-edited) so it reflects the new `find-scan-warn` entry (Task 5), as the doc-gate requires for a new hook.
 
 ## Assumptions
 - The audit's on-disk evidence (26-agent workflow, every verdict re-verified) is current
