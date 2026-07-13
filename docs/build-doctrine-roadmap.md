@@ -1,6 +1,6 @@
 # Build Doctrine + NL Integration — Roadmap
 
-**Last updated:** 2026-05-17 (table-vs-headline reconciliation only — see provenance note below; **no Build-Doctrine tranche work occurred 2026-05-06→2026-05-17**)
+**Last updated:** 2026-07-12 — Tranche-4 bookkeeping corrected (row 4: the canonical pilot RAN 2026-05-07 via the product-repo gap-audit path, not "NOT STARTED"); the handoff plan was SUPERSEDED + archived and its two unshipped items filed as backlog rows BUILD-DOCTRINE-FEEDBACK-LOOP-01 (close/retire the pilot feedback loop) + BUILD-DOCTRINE-ORCHESTRATOR-FATE-01 (validate-or-delete the dormant orchestrator scaffolding). No new tranche *work* occurred; this is a status-accuracy correction. _(Prior: 2026-05-17 table-vs-headline reconciliation only — no Build-Doctrine tranche work occurred 2026-05-06→2026-05-17.)_
 **Owner:** Misha
 **Status:** ACTIVE — primary tracker for end-to-end completion of the Build Doctrine integration into Neural Lace
 **Source of truth:** this file. Other artifacts (per-phase plan files in `docs/plans/`, the Build Doctrine plan in `~/claude-projects/Build Doctrine/outputs/build-doctrine-plan.md`, decision records 011-024) are referenced from here, not the other way around.
