@@ -263,6 +263,25 @@ Defender scans. Reserve `Bash` for things only a shell can do (git, builds, runn
   review session to triage): retire dead `exit 0` hook shims (rec 3); PreToolUse dispatcher coalescing
   (rec 4); cheap pre-filter for giant hooks (rec 5); `find /` warn-hook (rec 6).
 
+### 8b. Disposition (2026-07-13 review session — `docs/plans/lessons-learned-fixes-2026-07-13.md`)
+
+An assess+adversarially-verify audit (26 agents, 0 disagreements) classified every rec, then a
+fix plan landed the actionable ones:
+- **rec 5 (giant-hook pre-filter) — IMPLEMENTED.** `scope-enforcement-gate.sh` + `plan-deletion-protection.sh`
+  now short-circuit the common non-matching path before any jq/sed spawn (measured ~612→205 ms on
+  scope-enforcement); self-tests unchanged (34/33, 18/18).
+- **rec 6 (`find /` warn-hook) — IMPLEMENTED.** New `find-scan-warn.sh` (non-blocking, 11/11 self-test).
+- **rec 2 (single-flight lock) — PARTIALLY IMPLEMENTED.** `lib/sessionstart-singleflight.sh` ttl-debounce
+  now gates `session-start-auto-install.sh` (the fork-storm's biggest source); digest left ungated
+  (per-session operator output). `SESSIONSTART-SINGLEFLIGHT-01` annotated with what remains.
+- **rec 1 (Defender exclusions) — OPERATOR-ONLY, artifact already shipped** (`setup-defender-exclusions.ps1`).
+- **rec 3 (retire dead shim) — DEFERRED** → backlog `HOOK-SHIM-RETIRE-01` (removal needs a live settings
+  reconcile that would race concurrent sessions).
+- **rec 4 (PreToolUse dispatcher) — DEFERRED** → backlog `PRETOOLUSE-DISPATCHER-01` (high blast radius;
+  needs its own plan + harness-reviewer).
+- **rec 7 (tool-result trimming) — OBSOLETE** (unbuildable as a hook; the warning half already ships as
+  `context-watermark.sh`).
+
 ## 9. Reproducing the measurements
 
 All timings are `date +%s%N` deltas around loops, run in the repo root under Git Bash on the host
