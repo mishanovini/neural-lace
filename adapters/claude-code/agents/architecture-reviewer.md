@@ -230,3 +230,32 @@ WHAT WOULD CHANGE MY VERDICT: …
 **The bar:** an author reading your review must know exactly what to change, why, and what happens if
 they don't — and must not be able to dismiss a single finding as taste. Be decisive. Be measured. Be
 impossible to ignore.
+
+---
+
+## GOLDEN CASE (doctrine/artifact-evidence-bar.md — no golden case, no agent)
+
+**The case (real, 2026-07-14):** a plan proposed replacing a read-time plan-markdown parse with a
+deterministic projector pushing into a JSON store, so "the GUI is fast and always current." It read as
+obviously correct — an author, an operator, and *five other adversarial reviewers* all accepted the
+premise. The naive reviewer approves it: push beats pull, everyone knows that.
+
+**What this agent must catch (and a generic reviewer misses):**
+1. **Phase 1 (measure) →** the read-time parse it exists to eliminate costs **3.5 ms** for every active
+   plan (0.57 ms for the plans actually touched). **ONE spawn of the replacement costs ~87 ms** — 25×
+   more. *Nobody had measured it. The entire premise was false.*
+2. **Phase 2 (break the premises) →** the projection carries `in_flight`, which comes from the EVENT log,
+   not the plan file — so the plan-file staleness stamp is structurally blind to half its own inputs. The
+   projector's own interface (`plan-project.sh <plan-file>`) has no ask-id and is therefore
+   *mathematically incapable* of producing the field its schema mandates.
+3. **Failure-mode-first →** a missing store renders `progress{done:0,total:0}` → `0/0` — indistinguishable
+   from a real plan with no work done. **A confident lie, worse than being slow.**
+4. **Reverse Chesterton →** the incumbent pull is *correct by construction*: it has no store to corrupt,
+   no bootstrap, no schema, no writer to serialize — and it sees a `git checkout` for free, with zero
+   mechanism. It is the only shape in the space with **no drift class at all**.
+5. **Silent-healing / failure-mode →** the proposed auto-healing loop would fire on **cherry-pick — the
+   harness's own default orchestrator flow** — auto-filing issues demanding a fix for something that
+   *cannot be fixed* (a git op cannot fire a hook), DoS-ing the improvement ledger with self-inflicted drift.
+
+**Verdict it must reach:** NEEDS-RESHAPING, with the deciding evidence being *a measurement the plan never
+took*. If a candidate architecture-reviewer approves this design, it is not this agent.

@@ -1,126 +1,115 @@
-# Cockpit v2 — push-projected, staleness-detecting plan store
+# Cockpit v2 — cross-machine plan store (push-projected, staleness-detecting)
 
-Status: DRAFT (v2 — RESHAPED after a 5-lens adversarial plan review returned 5/5 FAIL)
+Status: DRAFT (v3 — operator chose STORE; incorporates the architecture-reviewer's mandatory corrections)
 Mode: build
 rung: 3
 lifecycle-schema: v2
 ask-id: <id | none — no linked ask>
 prd-ref: none
 
-## The operator's requirement (2026-07-14)
-Plan file = source of truth, kept as a living document. A deterministic mechanism pushes its state into
-a JSON store as work happens (push, not pull). The GUI reads the store → fast, responsive, current,
-spanning many plans. Detected problems must feed back automatically as **fixes to Neural Lace itself**.
+## The decision, and the ONLY thing that justifies it
+The `architecture-reviewer` verdict (`docs/reviews/2026-07-14-cockpit-v2-architecture-review.md`) was
+**NEEDS-RESHAPING**, on a measurement: the read-time parse the store exists to eliminate costs **3.5 ms**
+for every active plan, while **one spawn** of the proposed projector costs **~87 ms**. It named exactly
+one condition under which the store nonetheless wins:
 
-## What the adversarial review killed (and what replaces it)
-A 5-lens plan review (`docs/reviews/2026-07-14-cockpit-v2-plan-review.md`) failed the naive design 5/5.
-The load-bearing corrections:
+> *"(i) a **non-Node / cross-machine consumer** must read plan state — then an on-disk store is genuinely
+> justified, and THAT is the argument the plan should be making."*
 
-1. **"Push ⇒ cannot drift" is FALSE.** `plan-lifecycle.sh` is registered on `Edit|Write` (not
-   `MultiEdit`), and **no git operation fires a PostToolUse hook at all** — cherry-pick (this harness's
-   default orchestrator flow), pull, merge, checkout, `close-plan.sh`'s own `git mv`. This harness
-   already learned this once (`docs/discoveries/2026-05-04-sed-status-flip-bypasses-plan-lifecycle.md`).
-   ⇒ **We do not claim no-drift. We guarantee drift is always DETECTED, healed, and reported.**
-2. **A missing store must never render as `0/0`.** Deleting the plan-file read made absence
-   indistinguishable from "a real plan with no work done" — a confident lie. ⇒ **Explicit
-   unknown/stale/damaged states; the GUI renders honesty, never a plausible zero.**
-3. **`in_flight` came from EVENTS, not plan edits.** `task_started` fires on builder *dispatch*, which
-   edits no plan file — a plan-edit-only trigger would show **zero in-flight while three builders run**.
-   ⇒ **Two trigger sources: plan edits AND event emissions.**
-4. **One machine-global JSON blob = lost updates.** Read-modify-write across 59 worktrees + a second
-   machine; `tmp+rename` makes a *write* atomic, not an *update*. ⇒ **One projection FILE PER PLAN.**
-5. **Unmerged worktree flips would render as "done".** ⇒ **Only the main checkout's plans project;**
-   worktree edits never overwrite the operator's view.
-6. **Fork storms.** ~160ms of spawns per edit vs the ≤50ms splice budget; a 246-plan sweep reincarnates
-   the confirmed fork-per-file defect. ⇒ **Bounded work: one plan per push; staleness by `stat`, not
-   re-parse; no `jq` on the write path.**
-7. **Three divergent plan parsers already exist** (server/auditor accept numeric ids only; 176
-   lettered-id tasks are invisible to them). ⇒ **ONE parser — the projector. Node never parses plan
-   markdown again; the auditor re-projects by CALLING the projector.**
-8. **Task descriptions would be REJECTED by the payload anti-noise denylist** (it scans every string for
-   `.sh`, `posttooluse`, `plan-lifecycle` — which plan text legitimately contains). ⇒ **Explicit
-   carve-out**, mirroring the precedent already set for the backlog pane.
-9. **No in-repo mirror** — a per-second-mutating derived blob committed into a repo with 59 worktrees
-   (and a public mirror) is a landmine. ⇒ **Projections live only in `~/.claude/state/`. Never committed.**
+**The operator has now asserted that condition: cross-machine is a CURRENT requirement, not a future one.**
+So the store is justified — **but only as a cross-machine artifact.** This changes the design:
 
-## Architecture (v2)
-- **Truth:** the plan markdown, in the MAIN checkout.
-- **Projection:** one file per plan — `~/.claude/state/plan-projections/<repo-key>__<plan-slug>.json` —
-  written atomically (tmp+rename). Carries `schema_version`, `source_path`, `source_mtime`,
-  `source_size`, `last_projected_ts`, `status`, `tasks[{id, description, done, in_flight,
-  evidence_link, drift_badges}]`, `progress{done,in_flight,not_started,total}`.
-- **Push (fast path, bounded):** the mechanisms that change a plan's state re-project **that one plan** —
-  plan edit (`Edit|Write|MultiEdit`), `task_started` emission (in-flight), start-plan, close-plan.
-- **Staleness detection (the honesty guarantee, cheap):** a reader compares the plan file's CURRENT
-  mtime/size to the projection's recorded `source_mtime`/`source_size`. A mismatch = the projection is
-  STALE (a git op or unhooked write happened). This is a `stat`, not a parse — O(1) per plan. Stale ⇒
-  re-project that one plan on the spot (cheap) and **report the drift**. **Drift becomes impossible to
-  hide, even though it is impossible to prevent.**
-- **Honest states:** `fresh` · `stale-healed` · `unknown` (never projected) · `damaged` (unparseable /
-  schema-skew). The GUI renders each distinctly. **A missing projection NEVER renders as 0/0.**
-- **Auditor = safety net + the auto-healing loop** (below). Never a second parser, never a second writer.
+> ### ⚠ CRITICAL — the v2 store did not actually deliver cross-machine
+> v2 put projections in `~/.claude/state/plan-projections/` — **machine-local**. That delivers *nothing*
+> cross-machine, and therefore fails the only test that justifies it. Plan *files* already sync via git;
+> what does NOT sync is the ask/event/session state. **The store must therefore SYNC.**
+>
+> **Use the channel this harness already has:** `broadcast-active-session.sh` publishes cross-computer
+> state to dedicated git refs (`harness/active-sessions/<hostname>`) on the remote — *not* to the working
+> tree. The plan store uses the same pattern: a **dedicated ref**, not a working-tree file. This is also
+> the only shape that dodges the landmine the panel flagged (a per-second-mutating blob committed into a
+> repo with 59 worktrees and a public mirror).
+
+**If cross-machine is ever dropped as a requirement, this store must be deleted and replaced by the
+mtime/SHA-keyed in-memory cache** — which the reviewer proved is superior on every other axis. Record
+that as the retirement condition.
+
+## Mandatory corrections from the architecture review (non-negotiable)
+- **C1 — `in_flight` STAYS a read-time join.** It is derived from the event JSONL, *not* the plan
+  markdown; the plan-file staleness stamp cannot see it. Projecting it would show "zero in-flight while
+  three builders run" *stamped `fresh`* — asserting the lie is current. It also deletes trigger (b) and
+  with it the same-plan write race.
+- **C2 — the HTTP request path NEVER forks and NEVER writes.** It stats, compares, and renders `stale`.
+  Healing happens ONLY in the existing in-process auditor loop (the single writer). A fork on the request
+  path re-incarnates the documented "cockpit lobotomy" (lying rc=0, empty stdout).
+- **C3 — git-side drift is a METRIC, never an auto-filed issue.** Cherry-pick IS the orchestrator's
+  default flow, so *every orchestrated task completion arrives via the drift path*. Filing those would
+  DoS the improvement ledger with reports of a thing that cannot be fixed. **Partition:**
+  ARCHITECTURALLY-EXPECTED (git-side: cherry-pick/pull/merge/checkout/`git mv`) → counted, never filed.
+  UNEXPECTED (hook registered but did not fire; matcher hole; out-of-band working-tree write) → filed.
+- **C3b — point the auto-healing loop at the auditor's REAL divergences.** It already computes genuine
+  harness bugs (`log_ahead_task_not_flipped` et al.) that are **wired to nothing**. That is the operator's
+  actual intent; self-inflicted drift is not a finding about Neural Lace.
+- **M1 — use a CONTENT HASH, not mtime+size.** `source_size` is a no-op (a checkbox flip is
+  byte-size-preserving: `- [ ] 1.` → `- [x] 1.`, 27 bytes both). SHA-256 over all active plans costs
+  **1.4 ms** — cheaper than parsing them. Stamp-ordering must be `stat → read → stat`, retry on mismatch,
+  or a TOCTOU produces a **permanently unhealable** lie.
+- **M4 — the honest cause classifier is two forks:** `git hash-object <plan>` vs `git rev-parse HEAD:<plan>`.
+  Equal ⇒ a git operation wrote it (expected → metric). Not equal ⇒ an out-of-band write (unexpected →
+  file it). The 10-value enum was fiction.
+- **M5 — task 1 owns the RESOLVER too, not just the parser.** `server.js:789` searches only `docs/plans/`;
+  `auditor.js:247` searches `docs/plans/` AND `archive/`. That is the half that actually diverges today.
+- **m1 — the denylist carve-out is by KEY, not provenance.** `payload-schema.js walk()` scans string
+  VALUES and cannot observe where a string came from. Add `description` to `DETAIL_ALLOWED_KEYS` + a
+  `DENYLIST_EXEMPT_KEYS` set (as `HREF_KEYS` already does), with a length cap — and state plainly that
+  this knowingly widens the anti-noise constraint.
+- **m2 — the UI polish items do not ride this plan.** Split into their own.
 
 ## Tasks
 
-- [ ] 1. [serial] **The projector (the ONE parser) + projection schema.** New
-  `adapters/claude-code/scripts/plan-project.sh <plan-file>` — parse ONE plan, write ONE projection file
-  atomically. It is the **only** plan-markdown parser in the system. Must handle what the existing three
-  divergent parsers do not: **lettered task ids** (176 exist today), continuation lines, the `[serial]`
-  prefix, the `— Verification: X` suffix, and **correct JSON escaping** (a description containing a `"`
-  must not corrupt the store). No `jq` on the write path (harness convention); bounded to one plan.
-  Records `source_mtime`/`source_size` for staleness detection. `--self-test` covering: numeric+lettered
-  ids, quotes/backslashes/newlines in descriptions, an empty plan, a malformed plan (→ `damaged`, never
-  a silent zero) — Verification: mechanical
-- [ ] 2. [serial] **Push triggers — BOTH sources.** (a) plan-edit: `plan-lifecycle.sh` on
-  `Edit|Write|**MultiEdit**` (the missing matcher is a real hole — fix it) → project that plan; (b)
-  **event: `task_started` emission → re-project that plan so `in_flight` is live** (without this the
-  cockpit shows zero in-flight while builders run — the review's #1 finding); (c) start-plan (create),
-  close-plan (terminal/prune). Subshelled + non-fatal (constraint 5) **AND time-boxed** (`|| true` bounds
-  errors, not runtime — add an explicit timeout). Only the MAIN checkout projects; a worktree edit must
-  never overwrite the operator's view — Verification: full
-- [ ] 3. [serial] **Staleness detection + honest states.** The read path compares live plan
-  mtime/size to the projection's recorded values. Mismatch ⇒ stale ⇒ re-project that one plan + report.
-  Implement the four states (`fresh`/`stale-healed`/`unknown`/`damaged`) end to end. **Acceptance: a
-  `git checkout` of a plan (which fires NO hook) must be DETECTED, healed, and reported — not silently
-  wrong, and not silently right either** — Verification: full
-- [ ] 4. [serial] **The auto-healing feedback loop (operator directive — SILENT HEALING IS FORBIDDEN).**
-  A divergence means *the push mechanism is broken*: some write path mutated a plan without triggering
-  the projector. Healing the data while saying nothing fixes the symptom forever and never the cause.
-  Every detected divergence does four things: (1) **HEAL** — re-project so the GUI is never wrong for
-  long; (2) **CLASSIFY THE CAUSE** — not "drift happened" but *which write path bypassed the projector*:
-  `git-checkout|git-pull|git-merge|cherry-pick|multiedit|external-editor|script-write|hook-not-fired|
-  other-machine|unknown` (from plan mtime vs `last_projected_ts`, git reflog, whether the hook's marker
-  fired); an unclassifiable drift is reported as `unknown`, never swallowed; (3) **AUTO-FILE THE FIX** —
-  emit a cause-classified defect via `nl-issue.sh` into the machine-wide improvement ledger (→ weekly
-  triage → build-ready backlog row): **the system's own detected divergence becomes a queued fix to
-  Neural Lace itself**; (4) **ESCALATE ON RECURRENCE** — the same cause-class ≥3 times is a real hole in
-  the push mechanism: auto-promote to a build-ready backlog row with evidence. Dedup so one recurring
-  cause files one escalating item. Expose `heals_this_cycle` in diagnostics so a rising heal rate is
-  visible as a mechanism regression — Verification: full
-- [ ] 5. [serial] **GUI reads the store only.** Repoint `server.js` at the projections; **DELETE
-  `countPlanTasks`** and every request-time plan-markdown parse (node must never parse a plan again).
-  Preserve `drift_badges` (currently assembled per-task from the auditor — the naive schema dropped
-  them). Render the honest states from task 3. Backfill all existing plans once (batched, NOT
-  fork-per-plan). Prune projections for archived/renamed/deleted plans — Verification: full
-- [ ] 6. [serial] **Payload contract for descriptions.** `description` must be added to
-  `DETAIL_ALLOWED_KEYS`, and plan-derived description text must be **exempted from
-  `GATE_HOOK_DENYLIST_PATTERNS`** — the anti-noise law is scoped to the ask-tree *narrative*, not to plan
-  *content* (plan text legitimately says "plan-lifecycle.sh"). Precedent: the backlog pane already carries
-  exactly this carve-out. Without this, task descriptions are rejected outright — Verification: full
-- [ ] 7. [serial] **UI polish (operator items).** (a) panes RESIZABLE + each independently SCROLLABLE
-  (must not reintroduce the shipped clipping bug where panes inherited `overflow:hidden` and flex-shrink
-  starved the To-Do pane at >1200px); (b) backlog rows compact/collapsed by default, EXPANDABLE; (c) task
-  list shows each task's DESCRIPTION (from the projection) and DROPS the repeated per-row plan-path link —
-  the single "View live plan doc" button covers it; (d) REMOVE the Artifacts list. [operator's item 5 —
-  their message was cut off; fold in when supplied] — Verification: full
+- [ ] 1. [serial] **The ONE parser + the ONE resolver (shared module).** The highest-value item in the
+  plan and a prerequisite for every shape. Today there are THREE divergent plan grammars (server + auditor
+  accept numeric task ids only; `plan-lifecycle.sh` also accepts lettered — and **176 lettered-id task
+  lines exist today, invisible to the server**) and TWO resolvers that disagree about `archive/`. Build one
+  parser + one resolver, used by every consumer. Handles: numeric AND lettered ids, continuation lines, the
+  `[serial]` prefix, the `— Verification: X` suffix, and correct JSON escaping (a `"` in a description must
+  not corrupt anything). `--self-test` incl. a malformed plan → `damaged`, never a silent zero —
+  Verification: mechanical
+- [ ] 2. [serial] **Projection schema + projector (content-hashed).** One projection per plan, written
+  atomically. Carries `schema_version`, `source_path`, **`source_sha256`** (NOT size), `last_projected_ts`,
+  `status`, `tasks[{id, description, done, evidence_link}]`, `progress{...}`. **NO `in_flight`** (C1).
+  Stamp ordering per M1 — Verification: mechanical
+- [ ] 3. [serial] **CROSS-MACHINE SYNC — the thing that justifies this store.** Publish/consume projections
+  via a dedicated git ref, following `broadcast-active-session.sh`'s existing cross-computer pattern. NEVER
+  the working tree. Each machine publishes its own projections; the cockpit merges the set and shows which
+  machine each came from. **Acceptance: a plan whose work is happening on the OTHER machine appears,
+  current, in this machine's cockpit** — Verification: full
+- [ ] 4. [serial] **Push triggers (bounded, time-boxed).** `plan-lifecycle.sh` on `Edit|Write|**MultiEdit**`
+  (the missing matcher is a real hole — fix it), start-plan, close-plan. Subshelled + non-fatal AND with an
+  explicit timeout (`|| true` bounds errors, not runtime). Honest classification in the plan text: **for
+  orchestrated work this is NOT a push — cherry-pick fires no hook — it is a bake+detect.** Say so —
+  Verification: full
+- [ ] 5. [serial] **Staleness detection + honest states, READ-ONLY.** The request path hashes/stats and
+  compares; renders `fresh` / `stale` / `unknown` / `damaged`. **It never forks and never writes** (C2).
+  **A missing projection NEVER renders as `0/0`** — Verification: full
+- [ ] 6. [serial] **The auto-healing feedback loop (corrected).** Heal in the auditor (the single writer).
+  Classify cause via `hash-object` vs `HEAD:` (M4). **Git-side = METRIC. Unexpected = auto-file via
+  `nl-issue.sh` → triage → build-ready row, escalating on recurrence.** AND wire the auditor's EXISTING
+  real divergences into that loop (C3b) — that is the actual auto-healing the operator asked for. Silent
+  healing remains FORBIDDEN — Verification: full
+- [ ] 7. [serial] **GUI reads the store; `in_flight` stays a read-time join.** Delete `countPlanTasks`.
+  Preserve `drift_badges`. Payload contract per m1. Backfill batched (NOT fork-per-plan) — Verification: full
 
 ## Acceptance
-1. Flip a checkbox → projection updates in the same action; GUI reflects it with no plan-markdown read.
-2. **Dispatch 3 builders → the cockpit shows 3 in-flight** (the regression the review caught).
-3. **`git checkout` a plan behind the hook's back → drift is DETECTED, healed, cause-classified, and an
-   nl-issue is auto-filed.** Do it 3× → it auto-escalates to a build-ready backlog row.
-4. **Delete/corrupt a projection → the GUI shows `unknown`/`damaged`, never `0/0`.**
-5. A worktree's unmerged checkbox flip does NOT render as "done" in the cockpit.
-6. `grep` proves no request path parses plan markdown.
-7. Long/quoted/multiline descriptions render safely and keep the list scannable.
-8. Per-edit projector cost stays within the splice budget; the backfill does not fork-per-plan.
+1. **A plan being worked on the OTHER machine shows up, current, in this cockpit.** (The justification.)
+2. Dispatch 3 builders → the cockpit shows 3 in-flight (read-time join preserved).
+3. `git checkout` a plan behind the hook's back → detected, healed, counted as an EXPECTED metric — **and
+   NOT auto-filed as a defect.**
+4. Simulate a hook that is registered but did not fire → UNEXPECTED → auto-filed, escalating at 3×.
+5. Delete/corrupt a projection → `unknown`/`damaged`, never `0/0`.
+6. `grep` proves the request path never spawns a process and never writes a projection.
+7. A description containing `"`, a newline, and `plan-lifecycle.sh` renders safely and is not denylist-rejected.
+
+## Retirement condition
+If cross-machine ceases to be a requirement, **delete this store** and replace it with the mtime/SHA-keyed
+in-memory cache — proven superior on every other axis (3.5 ms, zero drift classes, absence-is-null).
