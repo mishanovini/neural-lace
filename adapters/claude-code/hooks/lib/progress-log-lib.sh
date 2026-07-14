@@ -43,7 +43,17 @@
 # DEDUP — PER-EVENT-TYPE NATURAL KEY (plan Task 2 table, implemented here
 # so Task 1's walking-skeleton event already writes the FINAL format):
 #   task_done             -> plan_slug + task_id + sha
-#   task_started           -> plan_slug + task_id + session_id
+#   task_started           -> plan_slug + task_id + session_id + --dedup-extra
+#     (2026-07-14 ask-splice review panel, Finding 2: the caller's
+#     session_id is the DISPATCHING orchestrator's CLAUDE_SESSION_ID, which
+#     is INVARIANT across every dispatch it makes -- a within-session
+#     re-dispatch of a failed task therefore has an identical plan_slug+
+#     task_id+session_id triple and was being silently dropped, violating
+#     this row's own "re-dispatch = new child session" recurrence rule.
+#     workstreams-emit.sh's `_emit_dispatch_provenance` now passes a coarse
+#     per-dispatch wall-clock time-bucket as --dedup-extra: fine enough that
+#     a genuine re-dispatch seconds/minutes later is a NEW event, coarse
+#     enough that a true same-dispatch double-fire replay still dedups.)
 #   waiting_on_operator     -> needs_you_id
 #   merged                  -> repo + sha
 #   plan_amended            -> plan_slug + --dedup-extra (content-hash of the delta; caller-computed)
@@ -276,7 +286,10 @@ _pl_natural_key() {
     task_done)
       printf 'task_done|%s|%s|%s' "$plan_slug" "$task_id" "$sha" ;;
     task_started)
-      printf 'task_started|%s|%s|%s' "$plan_slug" "$task_id" "$session_id" ;;
+      # dedup_extra carries the caller's per-dispatch discriminator (see the
+      # DEDUP header comment above, Finding 2) -- included so an invariant
+      # dispatching session_id no longer collapses a genuine re-dispatch.
+      printf 'task_started|%s|%s|%s|%s' "$plan_slug" "$task_id" "$session_id" "$dedup_extra" ;;
     waiting_on_operator)
       printf 'waiting_on_operator|%s' "$needs_you_id" ;;
     merged)
@@ -491,6 +504,51 @@ _pl_marker_field() {
 }
 
 # ----------------------------------------------------------------------
+# _pl_marker_field_from_line <line> <field> — the SAME extraction as
+# _pl_marker_field above, but operating on an ALREADY-READ line and using
+# ONLY bash parameter expansion. Result is returned in the global
+# `_PL_MARKER_FIELD_OUT`, NOT printed — deliberately: capturing a printed
+# value with `$(...)` command substitution FORKS A SUBSHELL, which would
+# reintroduce exactly the per-marker fork cost this exists to remove. Call
+# it as a bare statement and read the global:
+#
+#     _pl_marker_field_from_line "$line" worktree_path
+#     wt="$_PL_MARKER_FIELD_OUT"
+#
+# TOTAL FORKS: ZERO (vs _pl_marker_field's `sed | head` = ~2 per call).
+#
+# WHY THIS EXISTS (FINDING 1, 2026-07-14 ask-splice review panel): the
+# marker scan in pl_classify_session below runs on the SESSION HOT PATH
+# (every SessionStart + first UserPromptSubmit). Bounding that scan to the
+# newest N markers alone is NOT enough — for the COMMON case (an operator
+# session whose cwd matches NOTHING) the loop still visits every one of
+# those N markers and, at ~2 forks each via _pl_marker_field, would pay
+# ~2N synchronous subprocess spawns (brutally slow on this harness's
+# Windows/Git-Bash target, where a fork is ~10s of ms).
+#
+# _pl_marker_field is deliberately left in place, unchanged: it is the
+# convenient file-oriented form and hooks/harness-doctor.sh calls it (for
+# `session_id` / `cwd`) OFF the hot path, where 2 forks per call is fine.
+#
+# Both forms are best-effort and never error: an absent field, a malformed
+# line, or an empty input all yield empty.
+# ----------------------------------------------------------------------
+_pl_marker_field_from_line() {
+  _PL_MARKER_FIELD_OUT=""
+  local line="${1:-}" field="${2:-}"
+  [[ -z "$line" || -z "$field" ]] && return 0
+  local needle="\"${field}\":\""
+  # Field absent -> the prefix-strip is a no-op and leaves `line` intact.
+  local rest="${line#*$needle}"
+  [[ "$rest" == "$line" ]] && return 0
+  # Value runs to the next `"` (marker values are written by
+  # dispatch-provenance.sh's _dp_json_escape, which escapes any embedded
+  # quote — so the first bare `"` is genuinely the value's end).
+  _PL_MARKER_FIELD_OUT="${rest%%\"*}"
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # pl_classify_session [--cwd <path>] [--dispatch-provenance-dir <dir>]
 #
 # Classifies the CURRENT (or --cwd-overridden) session as SPAWNED
@@ -505,13 +563,31 @@ _pl_marker_field() {
 #       dispatch-provenance.sh's `write` verb, called from
 #       hooks/workstreams-emit.sh's --on-builder-dispatch/--on-spawn
 #       splices) whose `worktree_path` field equals, or is a path-ancestor
-#       of, the resolved cwd.
+#       of, the resolved cwd, AND whose `worktree_path` is ITSELF inside a
+#       `.claude/worktrees/` pool (see Finding 3 note below).
 # (a) is the PRIMARY practical signal (nearly every spawn lands under the
 # worktrees pool); (b) is ADDITIONAL, not sole (many dispatch call sites
 # cannot see the child's worktree path at PreToolUse time and record an
 # honest empty `worktree_path` — see dispatch-provenance.sh's own header —
-# so a marker match is a bonus resolution, never required for (a) alone to
-# classify SPAWNED).
+# so a marker match is a bonus resolution: it never triggers SPAWNED for a
+# cwd that (a) wouldn't already cover on its own; its real value is
+# resolving `marker_ask` when (a) has already matched, since (a) alone
+# yields "spawned" with an EMPTY ask_id — see self-test Scenario 12).
+#
+# FINDING 3 (2026-07-14 ask-splice review panel): a marker's `worktree_path`
+# used to be honored verbatim regardless of shape. A cross-repo
+# `mcp__ccd_session__spawn_task` dispatch (documented estate workflow) can
+# supply a `cwd` override that is a bare PROJECT ROOT, not a
+# `.claude/worktrees/<slug>` child — recording THAT as `worktree_path` meant
+# a LATER, wholly unrelated operator session that merely happens to work at
+# that same root (or a subdirectory of it) matched this ancestor predicate
+# and was misclassified SPAWNED, silently dropping its opening ask. The
+# guard below requires a marker's `worktree_path` to itself sit inside a
+# `.claude/worktrees/` pool before it can contribute to classification at
+# all — the writer side (workstreams-emit.sh's `_emit_dispatch_provenance`)
+# also now refuses to record a non-pool cwd as `--worktree` in the first
+# place (defense in depth: this guard still protects against a
+# pre-existing/stale marker written before that writer-side fix landed).
 #
 # Prints exactly one line to stdout:
 #   "spawned <ask_id>"   — ask_id is the DISPATCHING ask resolved from a
@@ -550,17 +626,73 @@ pl_classify_session() {
 
   local marker_ask=""
   if [[ -d "$dp_dir" ]]; then
-    local f wt
+    # FINDING 1 (2026-07-14 ask-splice review panel): markers are written
+    # per plan-rooted dispatch and (absent dispatch-provenance.sh's own
+    # write-time prune, which this fix also adds) accumulate without bound
+    # as the estate ages. This function runs on the SESSION HOT PATH (every
+    # SessionStart + first UserPromptSubmit), so the previous "fork ~2
+    # subprocesses per marker (_pl_marker_field) across the ENTIRE
+    # directory" scan paid synchronous, ever-growing latency (precedent:
+    # session-start-digest.sh already backgrounds an analogous unbounded
+    # heartbeat-reap scan, measured ~11s). The fix is BOTH halves -- either
+    # alone is insufficient:
+    #   (i)  BOUND the population: build a "<ts_compact>\t<path>" index with
+    #        pure parameter expansion (zero forks), then fork exactly ONE
+    #        `sort | head | cut` pipeline to take the newest
+    #        PL_DISPATCH_PROVENANCE_SCAN_LIMIT (default 200) markers by the
+    #        dispatch timestamp embedded in their filename
+    #        (dispatch-provenance.sh names them `<key>__<ts_compact>.json`).
+    #   (ii) Make the PER-MARKER cost ZERO forks: read each single-line
+    #        marker with the `read` BUILTIN and slice fields out with
+    #        _pl_marker_field_from_line (parameter expansion only). Without
+    #        (ii), the COMMON case -- an operator session matching NOTHING --
+    #        still visits all N markers and pays ~2N forks.
+    # Net: the whole scan is 3 forks, flat, regardless of estate age. A
+    # genuinely live child-worktree marker is always among the newest few,
+    # so the bound never mis-classifies a real spawn (self-test Scenario 16).
+    local scan_limit="${PL_DISPATCH_PROVENANCE_SCAN_LIMIT:-200}"
+    local f base ts idx=""
     for f in "$dp_dir"/*.json; do
       [[ -f "$f" ]] || continue
-      wt="$(_pl_marker_field "$f" worktree_path)"
-      [[ -z "$wt" ]] && continue
-      wt="${wt//\\//}"
-      if [[ "$norm" == "$wt" || "$norm" == "$wt"/* ]]; then
-        marker_ask="$(_pl_marker_field "$f" ask_id)"
-        [[ -n "$marker_ask" ]] && break
-      fi
+      base="${f##*/}"
+      ts="${base%.json}"; ts="${ts##*__}"
+      [[ "$ts" =~ ^[0-9]+$ ]] || ts="0"
+      idx="${idx}${ts}"$'\t'"${f}"$'\n'
     done
+    if [[ -n "$idx" ]]; then
+      local newest line wt
+      newest="$(printf '%s' "$idx" | sort -r -t $'\t' -k1,1 | head -n "$scan_limit" | cut -f2-)"
+      while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        # `read` builtin: no fork. Markers are single-line JSON objects.
+        line=""
+        IFS= read -r line <"$f" 2>/dev/null || true
+        [[ -z "$line" ]] && continue
+        # Bare call + read the out-global: a `$(...)` capture here would
+        # fork a subshell per marker and defeat the whole point.
+        _pl_marker_field_from_line "$line" worktree_path
+        wt="$_PL_MARKER_FIELD_OUT"
+        [[ -z "$wt" ]] && continue
+        # A Windows path was written through _dp_json_escape, which doubles
+        # backslashes -- undo that before normalizing separators, or
+        # `C:\\Users` would normalize to `C://Users` and never match.
+        wt="${wt//\\\\/\\}"
+        wt="${wt//\\//}"
+        # FINDING 3: only ever honor a marker whose worktree_path is
+        # ITSELF inside a `.claude/worktrees/` pool (see header note above)
+        # -- never let a bare project-root (or any other non-pool) marker
+        # path contribute to classification.
+        case "$wt" in
+          */.claude/worktrees/*) ;;
+          *) continue ;;
+        esac
+        if [[ "$norm" == "$wt" || "$norm" == "$wt"/* ]]; then
+          _pl_marker_field_from_line "$line" ask_id
+          marker_ask="$_PL_MARKER_FIELD_OUT"
+          [[ -n "$marker_ask" ]] && break
+        fi
+      done <<<"$newest"
+    fi
   fi
 
   if [[ "$pool_hit" == "0" || -n "$marker_ask" ]]; then
@@ -729,6 +861,28 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     fail "expected still 2 task_started events after replay, got $ts_count2"
   fi
 
+  echo "Scenario 4c (Finding 2 fix, lib-level): task_started with the IDENTICAL session_id but a DIFFERENT --dedup-extra is a distinct event -- this is the exact mechanism workstreams-emit.sh's _emit_dispatch_provenance now relies on, since its session_id is the DISPATCHING (parent) session and is invariant across every dispatch it makes"
+  pl_emit --type task_started --ask "ask-1" --plan-slug "demo-plan" --task-id "6" \
+    --session-id "sess-parent-invariant" --dedup-extra "1000" --summary "task 6 dispatched" --emitter workstreams-emit >/dev/null
+  pl_emit --type task_started --ask "ask-1" --plan-slug "demo-plan" --task-id "6" \
+    --session-id "sess-parent-invariant" --dedup-extra "2000" --summary "task 6 re-dispatched" --emitter workstreams-emit >/dev/null
+  ts_count4c=$(grep -c '"plan_slug":"demo-plan".*"task_id":"6"' "$f1" 2>/dev/null || echo 0)
+  if [[ "$ts_count4c" == "2" ]]; then
+    pass "SAME session_id + DIFFERENT dedup_extra logs TWO task_started events (re-dispatch preserved even when session_id can't vary)"
+  else
+    fail "expected 2 task_started events for task 6 (same session_id, different dedup_extra), got $ts_count4c"
+  fi
+
+  echo "Scenario 4d: task_started with the IDENTICAL session_id AND IDENTICAL --dedup-extra still dedups (a true double-fire replay, not a new dispatch)"
+  pl_emit --type task_started --ask "ask-1" --plan-slug "demo-plan" --task-id "6" \
+    --session-id "sess-parent-invariant" --dedup-extra "2000" --summary "task 6 re-dispatched (replay)" --emitter workstreams-emit >/dev/null
+  ts_count4d=$(grep -c '"plan_slug":"demo-plan".*"task_id":"6"' "$f1" 2>/dev/null || echo 0)
+  if [[ "$ts_count4d" == "2" ]]; then
+    pass "SAME session_id + SAME dedup_extra did NOT create a 3rd task_started event for task 6"
+  else
+    fail "expected still 2 task_started events for task 6 after an identical-dedup_extra replay, got $ts_count4d"
+  fi
+
   echo "Scenario 5: unknown emitter is flagged provenance:unknown, never trusted as mechanism truth"
   pl_emit --type task_done --ask "ask-2" --plan-slug "other-plan" --task-id "1" \
     --sha "cafef00d" --summary "suspicious self-report" --emitter "some-random-cli" >/dev/null
@@ -882,20 +1036,20 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     fail "expected rc=0 for a backslash-separated pool cwd, got rc=$rc12b out='$out12b'"
   fi
 
-  echo "Scenario 13: pl_classify_session — a NON-pool cwd matching a dispatch-provenance marker's worktree_path classifies spawned AND resolves the dispatching ask_id (predicate b)"
+  echo "Scenario 13: pl_classify_session — a POOL-SHAPED cwd matching a dispatch-provenance marker's worktree_path classifies spawned AND resolves the dispatching ask_id (predicate b enriches predicate a with the ask_id — see Finding 3 note: predicate b's worktree_path must ALSO be pool-shaped, updated 2026-07-14)"
   DP_DIR_T13="$TMP/dispatch-provenance-t13"; mkdir -p "$DP_DIR_T13"
   printf '{"v":1,"ts":"2026-07-11T00:00:00Z","ask_id":"ask-dispatcher-1","plan_slug":"demo","task_id":"9","session_id":"sess-parent","child_id":"ss-child","worktree_path":"%s"}\n' \
-    "$TMP/elsewhere/childwt" >"$DP_DIR_T13/marker1.json"
-  out13="$(pl_classify_session --cwd "$TMP/elsewhere/childwt" --dispatch-provenance-dir "$DP_DIR_T13")"
+    "$TMP/main13/.claude/worktrees/childwt" >"$DP_DIR_T13/marker1__20260711000000.json"
+  out13="$(pl_classify_session --cwd "$TMP/main13/.claude/worktrees/childwt" --dispatch-provenance-dir "$DP_DIR_T13")"
   rc13=$?
   if [[ "$rc13" == "0" && "$out13" == "spawned ask-dispatcher-1" ]]; then
-    pass "marker-matched non-pool cwd -> spawned with the dispatching ask_id resolved"
+    pass "marker-matched pool-shaped cwd -> spawned with the dispatching ask_id resolved"
   else
     fail "expected rc=0/'spawned ask-dispatcher-1', got rc=$rc13 out='$out13'"
   fi
 
   echo "Scenario 13b: pl_classify_session — a cwd INSIDE the marker's worktree (subdirectory) also matches (path-ancestor, not exact-only)"
-  out13b="$(pl_classify_session --cwd "$TMP/elsewhere/childwt/sub/dir" --dispatch-provenance-dir "$DP_DIR_T13")"
+  out13b="$(pl_classify_session --cwd "$TMP/main13/.claude/worktrees/childwt/sub/dir" --dispatch-provenance-dir "$DP_DIR_T13")"
   rc13b=$?
   if [[ "$rc13b" == "0" && "$out13b" == "spawned ask-dispatcher-1" ]]; then
     pass "subdirectory of a marker's worktree_path also matches (path-ancestor match)"
@@ -905,13 +1059,34 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
 
   echo "Scenario 13c: pl_classify_session — an UNRESOLVED marker (empty worktree_path, the honest PreToolUse gap) never false-matches an unrelated cwd"
   printf '{"v":1,"ts":"2026-07-11T00:00:01Z","ask_id":"ask-unresolved-1","plan_slug":"demo","task_id":"2","session_id":"sess-parent2","child_id":"ss-child2","worktree_path":""}\n' \
-    >"$DP_DIR_T13/marker2.json"
+    >"$DP_DIR_T13/marker2__20260711000001.json"
   out13c="$(pl_classify_session --cwd "$TMP/some/totally/unrelated/path" --dispatch-provenance-dir "$DP_DIR_T13")"
   rc13c=$?
   if [[ "$rc13c" == "1" && "$out13c" == "operator" ]]; then
     pass "an UNRESOLVED (empty worktree_path) marker never matches an unrelated cwd"
   else
     fail "expected rc=1/'operator', got rc=$rc13c out='$out13c'"
+  fi
+
+  echo "Scenario 13d (FINDING 3 REGRESSION, 2026-07-14 review panel): a marker whose worktree_path is a BARE PROJECT ROOT (not itself under .claude/worktrees/ -- the exact shape a cross-repo spawn_task cwd override produces) must NEVER classify a later cwd match as spawned"
+  DP_DIR_T13D="$TMP/dispatch-provenance-t13d"; mkdir -p "$DP_DIR_T13D"
+  printf '{"v":1,"ts":"2026-07-11T00:00:02Z","ask_id":"ask-crossrepo-1","plan_slug":"demo","task_id":"4","session_id":"sess-parent3","child_id":"ss-child3","worktree_path":"%s"}\n' \
+    "$TMP/some/other-project-root" >"$DP_DIR_T13D/marker3__20260711000002.json"
+  out13d="$(pl_classify_session --cwd "$TMP/some/other-project-root" --dispatch-provenance-dir "$DP_DIR_T13D")"
+  rc13d=$?
+  if [[ "$rc13d" == "1" && "$out13d" == "operator" ]]; then
+    pass "a non-pool (bare project-root) marker never triggers spawned for an EXACT cwd match -- an unrelated later operator session at that same root is safely classified operator, not silently dropped"
+  else
+    fail "expected rc=1/'operator' for a non-pool marker's project-root cwd, got rc=$rc13d out='$out13d'"
+  fi
+
+  echo "Scenario 13e: same non-pool marker, a SUBDIRECTORY of the project root also must not match (path-ancestor variant of the Finding 3 regression)"
+  out13e="$(pl_classify_session --cwd "$TMP/some/other-project-root/some/subdir" --dispatch-provenance-dir "$DP_DIR_T13D")"
+  rc13e=$?
+  if [[ "$rc13e" == "1" && "$out13e" == "operator" ]]; then
+    pass "a subdirectory of a non-pool marker's project-root also classifies operator, not spawned"
+  else
+    fail "expected rc=1/'operator' for a subdirectory of a non-pool marker's project-root, got rc=$rc13e out='$out13e'"
   fi
 
   echo "Scenario 14: pl_ask_id_for_session — deterministic (same session_id -> same ask_id every call)"
@@ -942,13 +1117,67 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   echo "Scenario 15: pl_classify_session — DISPATCH_PROVENANCE_STATE_DIR env resolution matches scripts/dispatch-provenance.sh's own (population-parity plumbing, not just the predicate logic)"
   DP_ENV_T15="$TMP/dispatch-provenance-env-t15"; mkdir -p "$DP_ENV_T15"
   printf '{"v":1,"ts":"2026-07-11T00:00:02Z","ask_id":"ask-env-1","plan_slug":"demo","task_id":"1","session_id":"s","child_id":"c","worktree_path":"%s"}\n' \
-    "$TMP/env-wt" >"$DP_ENV_T15/m.json"
-  out15="$(DISPATCH_PROVENANCE_STATE_DIR="$DP_ENV_T15" pl_classify_session --cwd "$TMP/env-wt")"
+    "$TMP/env-root/.claude/worktrees/env-wt" >"$DP_ENV_T15/m__20260711000002.json"
+  out15="$(DISPATCH_PROVENANCE_STATE_DIR="$DP_ENV_T15" pl_classify_session --cwd "$TMP/env-root/.claude/worktrees/env-wt")"
   rc15=$?
   if [[ "$rc15" == "0" && "$out15" == "spawned ask-env-1" ]]; then
     pass "DISPATCH_PROVENANCE_STATE_DIR env override resolves without an explicit --dispatch-provenance-dir flag"
   else
     fail "expected rc=0/'spawned ask-env-1' via env-only override, got rc=$rc15 out='$out15'"
+  fi
+
+  echo "Scenario 16 (FINDING 1 REGRESSION, 2026-07-14 review panel): pl_classify_session scans only the newest PL_DISPATCH_PROVENANCE_SCAN_LIMIT markers, not the entire (potentially unbounded) dispatch-provenance directory"
+  # NOTE on what is asserted here. Both target cwds below are pool-shaped
+  # (post-Finding-3, ONLY a `.claude/worktrees/` marker can ever match), so
+  # predicate (a) alone already makes both classify `spawned` regardless of
+  # any marker. The signal the SCAN actually controls is therefore the
+  # RESOLVED ASK_ID: a marker inside the scan window resolves it
+  # ("spawned <ask_id>"); a marker outside the window is never read, so the
+  # ask_id comes back EMPTY ("spawned "). That is the precise, non-vacuous
+  # observable for "was this marker scanned or not".
+  DP_DIR_T16="$TMP/dispatch-provenance-t16"; mkdir -p "$DP_DIR_T16"
+  T16_STALE_WT="$TMP/main16/.claude/worktrees/stale-target"
+  T16_LIVE_WT="$TMP/main16/.claude/worktrees/live-target"
+  # 500 unrelated, non-matching dummy markers with sequential embedded
+  # timestamps -- enough to fill the default 200-wide window several times
+  # over, so the stale marker below genuinely falls outside it.
+  for i in $(seq 1 500); do
+    ts16=$(printf '2020%010d' "$i")
+    printf '{"v":1,"ts":"x","ask_id":"ask-dummy-%s","plan_slug":"d","task_id":"1","session_id":"s","child_id":"c","worktree_path":"%s"}\n' \
+      "$i" "$TMP/main16/.claude/worktrees/dummy-$i" >"$DP_DIR_T16/dummy${i}__${ts16}.json"
+  done
+  # The OLDEST marker of all 502 -- an EXHAUSTIVE scan would read it and
+  # resolve its ask_id; a bounded newest-N scan (default 200) must never
+  # reach it.
+  printf '{"v":1,"ts":"x","ask_id":"ask-stale-match","plan_slug":"d","task_id":"1","session_id":"s","child_id":"c","worktree_path":"%s"}\n' \
+    "$T16_STALE_WT" >"$DP_DIR_T16/stalematch__00000000000001.json"
+  # The NEWEST marker of all 502 -- must still be found (bounded != broken).
+  printf '{"v":1,"ts":"x","ask_id":"ask-live-match","plan_slug":"d","task_id":"1","session_id":"s","child_id":"c","worktree_path":"%s"}\n' \
+    "$T16_LIVE_WT" >"$DP_DIR_T16/livematch__99999999999999.json"
+
+  out16a="$(pl_classify_session --cwd "$T16_STALE_WT" --dispatch-provenance-dir "$DP_DIR_T16")"
+  rc16a=$?
+  if [[ "$rc16a" == "0" && "$out16a" == "spawned " ]]; then
+    pass "the oldest-of-502 marker (outside the bounded newest-N window) was NEVER READ -- its ask_id is unresolved (empty), direct proof the scan is bounded and not O(directory size)"
+  else
+    fail "expected rc=0/'spawned ' (empty ask_id: marker outside the bounded scan window must not be read; an unbounded scan would have resolved 'ask-stale-match'), got rc=$rc16a out='$out16a'"
+  fi
+
+  out16b="$(pl_classify_session --cwd "$T16_LIVE_WT" --dispatch-provenance-dir "$DP_DIR_T16")"
+  rc16b=$?
+  if [[ "$rc16b" == "0" && "$out16b" == "spawned ask-live-match" ]]; then
+    pass "the newest-of-502 marker IS still read and its ask_id resolved, despite the directory holding 500+ markers (the bound preserves correctness for a genuinely live child worktree)"
+  else
+    fail "expected rc=0/'spawned ask-live-match' for the newest marker in a 502-marker directory, got rc=$rc16b out='$out16b'"
+  fi
+
+  echo "Scenario 16b: an explicit PL_DISPATCH_PROVENANCE_SCAN_LIMIT override widens the window -- confirms 16a's exclusion is the scan LIMIT doing its job, not an unrelated bug"
+  out16c="$(PL_DISPATCH_PROVENANCE_SCAN_LIMIT=1000 pl_classify_session --cwd "$T16_STALE_WT" --dispatch-provenance-dir "$DP_DIR_T16")"
+  rc16c=$?
+  if [[ "$rc16c" == "0" && "$out16c" == "spawned ask-stale-match" ]]; then
+    pass "widening PL_DISPATCH_PROVENANCE_SCAN_LIMIT past the directory size DOES resolve the oldest marker's ask_id -- so 16a's empty ask_id is provably the bound, not a broken matcher"
+  else
+    fail "expected rc=0/'spawned ask-stale-match' with an explicitly widened scan limit, got rc=$rc16c out='$out16c'"
   fi
 
   rm -rf "$TMP" 2>/dev/null || true

@@ -384,6 +384,91 @@ compute_content_hash() {
   printf '%s' "$s" | cksum 2>/dev/null | awk '{print $1"-"$2}'
 }
 
+# _amendment_state_dir -- resolve the progress-log state dir with the SAME
+# order progress-log-lib.sh's pl_state_dir uses, so a caller that sandboxes
+# the progress log (this file's own --self-test exports
+# PROGRESS_LOG_STATE_DIR) automatically sandboxes the debounce files below.
+_amendment_state_dir() {
+  if [ -n "${PROGRESS_LOG_STATE_DIR:-}" ]; then
+    printf '%s' "$PROGRESS_LOG_STATE_DIR"; return 0
+  fi
+  if [ "${HARNESS_SELFTEST:-0}" = "1" ]; then
+    printf '%s/progress-log-selftest/%s' "${TMPDIR:-/tmp}" "$$"; return 0
+  fi
+  printf '%s/.claude/state/progress-logs' "${HOME:-$PWD}"
+}
+
+# _amendment_replay_token <slug> <delta_hash> -- the recurrence
+# discriminator for the plan_amended dedup key (FINDING 4, 2026-07-14
+# ask-splice review panel).
+#
+# THE PROBLEM. The key hashed the FULL RESULTING SCOPE, so editing the scope
+# back to a PREVIOUSLY-SEEN exact state dropped a genuine amendment: in the
+# sequence A->A,B / A,B->A / A->A,B, the 3rd edit's post-scope equals the
+# 1st's and collided with it. Hashing the pre->post DELTA instead is
+# necessary but NOT sufficient -- in that same sequence the 1st and 3rd
+# transitions are textually IDENTICAL in BOTH pre and post, so a pure
+# content hash still collides. Some time-varying component is required.
+#
+# WHY NOT A WALL-CLOCK BUCKET (floor(now/N)): a bucket has BOUNDARIES, and a
+# hook re-firing for ONE edit milliseconds later can straddle one -- which
+# would emit a spurious DUPLICATE plan_amended. Same trap, same fix as
+# workstreams-emit.sh's `_dispatch_replay_token` (Finding 2): debounce
+# anchored at the FIRST fire, so there is no boundary to straddle.
+#
+# The first fire for a given (slug, delta_hash) records `<epoch> <token>`
+# and returns that token; any re-fire within
+# AMENDMENT_REPLAY_DEBOUNCE_SECONDS (default 30) returns the SAME token (a
+# replay of one edit -> deduped). A later edit that happens to reproduce the
+# same delta mints a NEW token -> a genuinely distinct amendment. Never
+# blocks: an unwritable state dir or missing `date` degrades to a
+# conservative constant, never a crash.
+#
+# SIZING THE WINDOW (30s): it must exceed the wall-clock gap between two
+# fires of ONE edit -- and that gap is NOT sub-second, because each fire
+# forks progress-log.sh (bash + git + sha1sum), which costs SECONDS on the
+# Windows/Git-Bash target (a 5s window was measurably too tight and let a
+# replay mint a fresh token). Two genuinely-distinct scope edits that revert
+# and reproduce the exact same state inside 30s are implausible, so the
+# window stays far from the other bound.
+# NOTE: every variable below is `local`. Bash uses DYNAMIC scoping, so a
+# bare assignment here would reach up and clobber the CALLER's same-named
+# local -- and this function is called from
+# emit_plan_amended_progress_log_events, which has its own `slug` and `dir`.
+_amendment_replay_token() {
+  local slug="$1" delta_hash="$2"
+  local now; now=$(date -u +%s 2>/dev/null)
+  [ -n "$now" ] || { printf 'noclock'; return 0; }
+
+  local debounce="${AMENDMENT_REPLAY_DEBOUNCE_SECONDS:-30}"
+  local adir; adir="$(_amendment_state_dir)"
+  mkdir -p "$adir" 2>/dev/null || { printf '%s' "$now"; return 0; }
+
+  local key; key="$(compute_content_hash "${slug}|${delta_hash}" | cut -c1-16)"
+  local f="$adir/.amend-replay-$key"
+
+  local prev_ts="" prev_token=""
+  if [ -f "$f" ]; then
+    read -r prev_ts prev_token <"$f" 2>/dev/null || true
+    case "$prev_ts" in
+      ''|*[!0-9]*) : ;;
+      *)
+        if [ -n "$prev_token" ] && [ $(( now - prev_ts )) -le "$debounce" ] \
+           && [ $(( now - prev_ts )) -ge 0 ]; then
+          # Replay of the SAME edit -> reuse the token. Window stays
+          # anchored at the first fire (never refreshed).
+          printf '%s' "$prev_token"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+
+  printf '%s %s\n' "$now" "$now" >"$f" 2>/dev/null || true
+  printf '%s' "$now"
+  return 0
+}
+
 # emit_plan_amended_progress_log_events <repo_root> <rel-path> <pre> <post>
 #   Emits up to two plan_amended events for one edit: one for newly-
 # introduced task lines (summary "+task <ids>"), one for an edited `## Scope`
@@ -456,8 +541,18 @@ TASK_AMEND_IDS_EOF
   pre_scope="$(printf '%s\n' "$pre" | extract_scope_section)"
   post_scope="$(printf '%s\n' "$post" | extract_scope_section)"
   if [ -n "$post_scope" ] && [ "$pre_scope" != "$post_scope" ]; then
-    local scope_hash
-    scope_hash="$(compute_content_hash "scope:$post_scope")"
+    # FINDING 4 fix (2026-07-14 ask-splice review panel): hash the pre->post
+    # DELTA, not just post_scope (the original bug: returning the scope to a
+    # previously-seen exact post-state collided with the earlier amendment's
+    # key), PLUS a replay-debounce token (see _amendment_replay_token above)
+    # so even a repeat of the IDENTICAL delta (same pre AND post -- e.g.
+    # amendment 1 and amendment 3 in an A->A,B / A,B->A / A->A,B sequence)
+    # still gets a genuinely distinct key, while a hook re-fire for ONE edit
+    # still dedups.
+    local scope_hash scope_delta scope_token
+    scope_delta="$(compute_content_hash "scope-delta:${pre_scope}$(printf '\036')${post_scope}")"
+    scope_token="$(_amendment_replay_token "$slug" "$scope_delta")"
+    scope_hash="$(compute_content_hash "scope-delta:${scope_delta}:${scope_token}")"
     bash "$progress_log_cli" emit \
       --type plan_amended \
       --ask "$ask_id" \
@@ -1272,6 +1367,125 @@ EOP
   fi
   git add docs/plans/case19.md
   git commit -q -m "plan: case19" 2>/dev/null || true
+
+  # ---- Scenario 20 (FINDING 4 REGRESSION, 2026-07-14 ask-splice review
+  # panel): a scope amendment that returns to a PREVIOUSLY-SEEN exact state
+  # (A->A,B / A,B->A / A->A,B) must emit a THIRD, DISTINCT plan_amended
+  # event. The 1st and 3rd transitions below have the IDENTICAL pre_scope
+  # AND post_scope -- hashing content alone (even the pre->post delta, not
+  # just post_scope) collides between them without a time-bucket
+  # discriminator (_amendment_time_bucket). ----
+  cat > docs/plans/case20.md <<'EOP'
+# Plan: Case 20 (repeat-scope-state amendment)
+Status: ACTIVE
+ask-id: ask-selftest-case20
+
+## Scope
+- IN: state A
+
+## Tasks
+- [ ] 1. only task
+EOP
+  git add docs/plans/case20.md
+  git commit -q -m "plan: case20"
+  PRE20A=$(git show HEAD:docs/plans/case20.md)
+  cat > docs/plans/case20.md <<'EOP'
+# Plan: Case 20 (repeat-scope-state amendment)
+Status: ACTIVE
+ask-id: ask-selftest-case20
+
+## Scope
+- IN: state A
+- IN: state B
+
+## Tasks
+- [ ] 1. only task
+EOP
+  POST20A=$(cat docs/plans/case20.md)
+  process_lifecycle_event "$TMP/docs/plans/case20.md" "Edit" "$PRE20A" "$POST20A" >/dev/null 2>&1 || true
+  F20="$PROGRESS_LOG_STATE_DIR/ask-selftest-case20.jsonl"
+  LINES20A=$(grep -c '"type":"plan_amended"' "$F20" 2>/dev/null || echo 0)
+  if [ "$LINES20A" != "1" ]; then
+    echo "FAIL scenario 20a: expected 1 plan_amended event after A->A,B (1st amendment), got $LINES20A" >&2
+    cat "$F20" 2>/dev/null >&2
+    exit 1
+  fi
+
+  # A,B -> A (revert -- a genuinely different delta from 20a).
+  PRE20B="$POST20A"
+  cat > docs/plans/case20.md <<'EOP'
+# Plan: Case 20 (repeat-scope-state amendment)
+Status: ACTIVE
+ask-id: ask-selftest-case20
+
+## Scope
+- IN: state A
+
+## Tasks
+- [ ] 1. only task
+EOP
+  POST20B=$(cat docs/plans/case20.md)
+  process_lifecycle_event "$TMP/docs/plans/case20.md" "Edit" "$PRE20B" "$POST20B" >/dev/null 2>&1 || true
+  LINES20B=$(grep -c '"type":"plan_amended"' "$F20" 2>/dev/null || echo 0)
+  if [ "$LINES20B" != "2" ]; then
+    echo "FAIL scenario 20b: expected 2 plan_amended events after A,B->A (2nd amendment), got $LINES20B" >&2
+    cat "$F20" 2>/dev/null >&2
+    exit 1
+  fi
+
+  # Cross _amendment_replay_token's debounce window so the 3rd transition
+  # counts as a NEW amendment rather than a hook re-fire of 20a's edit.
+  # AMENDMENT_REPLAY_DEBOUNCE_SECONDS=1 compresses the clock instead of
+  # sleeping past the real 30s production window (a 31s sleep in a self-test
+  # is not worth it) -- same mechanism, same boundary, only the width is
+  # parameterized via the documented knob. Scenario 20d below then runs at
+  # the PRODUCTION DEFAULT to assert the other side of the window (a replay
+  # still dedups), so both sides are covered.
+  sleep 3
+  AMENDMENT_REPLAY_DEBOUNCE_SECONDS=1
+  export AMENDMENT_REPLAY_DEBOUNCE_SECONDS
+
+  # A -> A,B AGAIN: pre_scope/post_scope here are byte-identical to 20a's
+  # (PRE20A == POST20B, POST20A == the heredoc below) -- the load-bearing
+  # assertion.
+  PRE20C="$POST20B"
+  cat > docs/plans/case20.md <<'EOP'
+# Plan: Case 20 (repeat-scope-state amendment)
+Status: ACTIVE
+ask-id: ask-selftest-case20
+
+## Scope
+- IN: state A
+- IN: state B
+
+## Tasks
+- [ ] 1. only task
+EOP
+  POST20C=$(cat docs/plans/case20.md)
+  process_lifecycle_event "$TMP/docs/plans/case20.md" "Edit" "$PRE20C" "$POST20C" >/dev/null 2>&1 || true
+  LINES20C=$(grep -c '"type":"plan_amended"' "$F20" 2>/dev/null || echo 0)
+  if [ "$LINES20C" != "3" ]; then
+    echo "FAIL scenario 20c: expected 3 plan_amended events once A->A,B repeats a previously-seen exact state (3rd amendment), got $LINES20C. This is the Finding 4 regression: a content-only hash (even of the pre->post delta) collides here because the 1st and 3rd transitions are textually identical." >&2
+    cat "$F20" 2>/dev/null >&2
+    exit 1
+  fi
+
+  # ---- Scenario 20d (FINDING 4, the OTHER half): a hook RE-FIRE for the
+  # SAME single edit -- identical pre AND post, immediately, inside
+  # _amendment_replay_token's debounce window -- must STILL dedup to no new
+  # event. Without this, the time-varying component added for 20c would just
+  # have traded a dropped amendment for a duplicated one.
+  #
+  # Runs at the PRODUCTION DEFAULT window (the 20c override is dropped here),
+  # so this asserts the shipped behavior, not a test-only setting. ----
+  unset AMENDMENT_REPLAY_DEBOUNCE_SECONDS
+  process_lifecycle_event "$TMP/docs/plans/case20.md" "Edit" "$PRE20C" "$POST20C" >/dev/null 2>&1 || true
+  LINES20D=$(grep -c '"type":"plan_amended"' "$F20" 2>/dev/null || echo 0)
+  if [ "$LINES20D" != "3" ]; then
+    echo "FAIL scenario 20d: an immediate hook re-fire of the SAME edit must NOT emit a 4th plan_amended event (replay must still dedup), got $LINES20D" >&2
+    cat "$F20" 2>/dev/null >&2
+    exit 1
+  fi
 
   echo "OK ($SCRIPT_NAME --self-test)"
   exit 0

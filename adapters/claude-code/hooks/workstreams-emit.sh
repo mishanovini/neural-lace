@@ -1805,14 +1805,43 @@ PLANEOF
     [[ -f "$plfile1" ]] && cat "$plfile1"
   fi
 
-  # PL1b: re-firing the SAME dispatch (replay) does not double the event --
-  # pl_emit's own natural-key dedup (plan_slug+task_id+session_id) is
-  # exercised end-to-end through this splice, not just in isolation.
+  # PL1b (FINDING 2 REGRESSION, half 1 -- REPLAY MUST STILL DEDUP): re-fire
+  # the SAME dispatch IMMEDIATELY (a true hook double-fire: same
+  # session_id, same prompt, back-to-back) -> still exactly ONE
+  # task_started. This runs at PRODUCTION DEFAULTS (no debounce override):
+  # both fires land inside _dispatch_replay_token's default 5s window, so
+  # the second one reuses the first's token and pl_emit's natural key
+  # (plan_slug+task_id+session_id+dedup_extra) collapses it.
   ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1" \
       CONV_TREE_STATE_PATH="$tmp/pl-1.json" CLAUDE_SESSION_ID="sess-pl-1" \
       bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1"}' >/dev/null 2>&1 )
   local ts_count_pl1; ts_count_pl1=$(grep -c '"type":"task_started"' "$plfile1" 2>/dev/null || echo 0)
-  _ck "PL1b replay of the identical dispatch dedups (still exactly 1 task_started)" "$ts_count_pl1" "1"
+  _ck "PL1b true double-fire (same session_id, back-to-back, within the replay-debounce window) dedups (still exactly 1 task_started)" "$ts_count_pl1" "1"
+
+  # PL1c (FINDING 2 REGRESSION, half 2 -- THE LOAD-BEARING TEST): drive the
+  # REAL caller path a THIRD time with the IDENTICAL plan-rooted prompt and
+  # the SAME CLAUDE_SESSION_ID -- exactly the real-world shape, since an
+  # orchestrator's CLAUDE_SESSION_ID is INVARIANT across its own
+  # re-dispatches. That invariance is precisely what the OLD key got wrong:
+  # it keyed on that sid and silently DROPPED the re-dispatch. Nothing is
+  # hand-fed here -- same sid, same prompt, same plan, same task; the ONLY
+  # difference is WALL-CLOCK TIME, which is the only thing that genuinely
+  # distinguishes a re-dispatch from a replay.
+  #
+  # DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 compresses the clock rather than
+  # sleeping past the real 30s production window (a 31s sleep in a self-test
+  # is not worth it). This is the SAME mechanism and the SAME boundary the
+  # shipped default crosses -- only the window's width is parameterized, via
+  # the documented knob. The COMPLEMENTARY assertion (PL1b, immediately
+  # above) runs at the PRODUCTION DEFAULT, so between them both sides of the
+  # window are covered: replay-inside dedups, re-dispatch-outside does not.
+  sleep 3
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1" \
+      CONV_TREE_STATE_PATH="$tmp/pl-1.json" CLAUDE_SESSION_ID="sess-pl-1" \
+      DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1"}' >/dev/null 2>&1 )
+  local ts_count_pl1c; ts_count_pl1c=$(grep -c '"type":"task_started"' "$plfile1" 2>/dev/null || echo 0)
+  _ck "PL1c re-dispatch of the SAME task from the SAME dispatching session_id, past the debounce window, is NOT dropped (2 task_started events total, not still 1)" "$ts_count_pl1c" "2"
 
   # PL2: the SAME dispatch also writes a dispatch-provenance marker file
   # (Task 9's future guard input) with the resolved fields.
@@ -1841,20 +1870,45 @@ PLANEOF
   fi
 
   # PL4: --on-spawn (mcp__ccd_session__spawn_task) with an explicit
-  # tool_input.cwd hint -> the marker's worktree_path is populated (the one
-  # surface that CAN carry a pre-dispatch location hint; see this splice's
-  # header comment on the Task/Agent surface's honest gap).
+  # tool_input.cwd hint that IS a real worktrees-pool path -> the marker's
+  # worktree_path is populated (the one surface that CAN carry a
+  # pre-dispatch location hint; see this splice's header comment on the
+  # Task/Agent surface's honest gap).
   local plog4="$tmp/pl-progresslog-4" dpdir4="$tmp/dispatch-provenance-4"
   ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog4" DISPATCH_PROVENANCE_STATE_DIR="$dpdir4" \
       CONV_TREE_STATE_PATH="$tmp/pl-4.json" CLAUDE_SESSION_ID="sess-pl-4" \
-      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Spawn PL","prompt":"Build Task 5 of the FROZEN plan docs/plans/pl-fixture-plan.md","cwd":"/tmp/some/project/root"},"session_id":"sess-pl-4"}' >/dev/null 2>&1 )
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Spawn PL","prompt":"Build Task 5 of the FROZEN plan docs/plans/pl-fixture-plan.md","cwd":"/tmp/some/project/root/.claude/worktrees/agent-pl4"},"session_id":"sess-pl-4"}' >/dev/null 2>&1 )
   local dpfile4; dpfile4=$(ls "$dpdir4"/*.json 2>/dev/null | head -n1)
-  if [[ -n "$dpfile4" ]] && grep -q '"worktree_path":"/tmp/some/project/root"' "$dpfile4" && grep -q '"task_id":"5"' "$dpfile4"; then
-    echo "PASS: PL4 --on-spawn with a tool_input.cwd hint populates the marker's worktree_path"; pass=$((pass+1))
+  if [[ -n "$dpfile4" ]] && grep -q '"worktree_path":"/tmp/some/project/root/.claude/worktrees/agent-pl4"' "$dpfile4" && grep -q '"task_id":"5"' "$dpfile4"; then
+    echo "PASS: PL4 --on-spawn with a pool-shaped tool_input.cwd hint populates the marker's worktree_path"; pass=$((pass+1))
   else
-    echo "FAIL: PL4 expected worktree_path=/tmp/some/project/root task_id=5 in $dpfile4"; fail=$((fail+1))
+    echo "FAIL: PL4 expected worktree_path=/tmp/some/project/root/.claude/worktrees/agent-pl4 task_id=5 in $dpfile4"; fail=$((fail+1))
     [[ -n "$dpfile4" ]] && cat "$dpfile4"
   fi
+
+  # PL4b (FINDING 3 REGRESSION, 2026-07-14 review panel): --on-spawn with a
+  # tool_input.cwd hint that is a BARE PROJECT ROOT (the documented
+  # cross-repo spawn_task workflow's actual shape, NOT a
+  # `.claude/worktrees/` child) must NOT be recorded as the marker's
+  # worktree_path -- recording it verbatim previously let a later,
+  # unrelated operator session at that same root get misclassified
+  # spawned by pl_classify_session. The marker must land honestly
+  # UNRESOLVED, exactly like the generic Task/Agent surface's gap.
+  local plog4b="$tmp/pl-progresslog-4b" dpdir4b="$tmp/dispatch-provenance-4b"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog4b" DISPATCH_PROVENANCE_STATE_DIR="$dpdir4b" \
+      CONV_TREE_STATE_PATH="$tmp/pl-4b.json" CLAUDE_SESSION_ID="sess-pl-4b" \
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Cross-repo Spawn","prompt":"Build Task 6 of the FROZEN plan docs/plans/pl-fixture-plan.md","cwd":"/tmp/some/other-project-root"},"session_id":"sess-pl-4b"}' >/dev/null 2>&1 )
+  local dpfile4b; dpfile4b=$(ls "$dpdir4b"/*.json 2>/dev/null | head -n1)
+  if [[ -n "$dpfile4b" ]] && grep -q '"worktree_path":""' "$dpfile4b" && grep -q '"task_id":"6"' "$dpfile4b"; then
+    echo "PASS: PL4b a bare-project-root tool_input.cwd is NOT recorded as worktree_path (honest UNRESOLVED, not a misleading non-pool value)"; pass=$((pass+1))
+  else
+    echo "FAIL: PL4b expected worktree_path=\"\" task_id=6 (bare project root must never populate worktree_path) in $dpfile4b"; fail=$((fail+1))
+    [[ -n "$dpfile4b" ]] && cat "$dpfile4b"
+  fi
+  case "$(basename "${dpfile4b:-}" 2>/dev/null || echo)" in
+    UNRESOLVED__*) echo "PASS: PL4c marker filename honestly says UNRESOLVED for a bare-project-root cwd hint"; pass=$((pass+1)) ;;
+    *) echo "FAIL: PL4c expected an UNRESOLVED-prefixed marker filename for a bare-project-root cwd hint, got '$(basename "${dpfile4b:-}" 2>/dev/null)'"; fail=$((fail+1)) ;;
+  esac
 
   # PL5: failure isolation — missing progress-log.sh/dispatch-provenance.sh
   # CLIs (simulated via the override env vars) never blocks the caller.
@@ -2355,8 +2409,14 @@ _builder_classify() {
 # mode) — not before. This splice therefore records `--worktree` best-effort:
 # populated only from `.tool_input.cwd` when the dispatching tool_input
 # happens to carry one (the mcp__ccd_session__spawn_task surface accepts an
-# optional `cwd` project-root override), left UNRESOLVED otherwise. Task 9
-# (out of this task's scope) is expected to correlate primarily via its own
+# optional `cwd` project-root override) AND that hint itself already looks
+# like a real `.claude/worktrees/` pool path (`_looks_like_worktree_pool`,
+# FINDING 3 fix, 2026-07-14 review panel); left UNRESOLVED otherwise — a
+# cross-repo spawn's `cwd` override is frequently a bare PROJECT ROOT, and
+# recording that verbatim previously let a later, unrelated operator
+# session at the same root get misclassified spawned by
+# pl_classify_session's ancestor predicate. Task 9 (out of this task's
+# scope) is expected to correlate primarily via its own
 # cwd-under-`.claude/worktrees/` predicate and treat this marker as an
 # ADDITIONAL, not sole, signal — see dispatch-provenance.sh's own header for
 # the full marker schema.
@@ -2441,6 +2501,118 @@ _resolve_ask_id_for_plan_slug() {
   ' "$planfile" 2>/dev/null
 }
 
+# _dispatch_state_dir -- resolve the dispatch-provenance state dir with the
+# SAME order scripts/dispatch-provenance.sh's `_dp_state_dir` and
+# progress-log-lib.sh's `_pl_dispatch_provenance_dir` use, so a caller that
+# sandboxes one sandboxes all three. Used only to park the replay-debounce
+# files below (named WITHOUT a .json suffix so they never collide with the
+# `*.json` marker glob that pl_classify_session / _dp_prune walk).
+_dispatch_state_dir() {
+  if [[ -n "${DISPATCH_PROVENANCE_STATE_DIR:-}" ]]; then
+    printf '%s' "$DISPATCH_PROVENANCE_STATE_DIR"; return 0
+  fi
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/state/dispatch-provenance' "${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/dispatch-provenance-selftest/$$}"
+    return 0
+  fi
+  printf '%s/.claude/state/dispatch-provenance' "${HOME:-$PWD}"
+}
+
+# _dispatch_replay_token <sid> <slug> <task_id>
+#   The per-dispatch DISCRIMINATOR for the task_started dedup key (FINDING 2,
+#   2026-07-14 ask-splice review panel).
+#
+# THE PROBLEM. The natural key's session_id is the DISPATCHING orchestrator's
+# CLAUDE_SESSION_ID -- INVARIANT across every dispatch it makes (and child_id
+# is a pure function of that same sid, so it is no help either). A
+# within-session RE-DISPATCH of a failed task therefore produced an identical
+# plan_slug+task_id+session_id key and was silently DROPPED. But the key must
+# STILL absorb a genuine hook double-fire (the same PreToolUse firing twice
+# for ONE tool call) -- so the discriminator has to tell "the same dispatch,
+# fired twice" apart from "the same task, dispatched twice", and the ONLY
+# thing that distinguishes those two is WHEN they happened.
+#
+# WHY NOT A WALL-CLOCK TIME BUCKET (floor(now/N), the obvious first answer --
+# and the one this function replaces): a bucket has BOUNDARIES, and two fires
+# milliseconds apart can straddle one. That makes a double-fire produce a
+# DUPLICATE event whenever it happens to land on a boundary -- a real,
+# silently-wrong outcome, not just a flaky test. (It is what made this file's
+# own PL1b regression scenario fail.)
+#
+# WHAT THIS DOES INSTEAD -- a debounce anchored at the FIRST fire, so there is
+# no boundary to straddle: the first fire of a given (sid, slug, task_id)
+# records `<epoch> <token>` in a small state file and returns that token. Any
+# re-fire within DISPATCH_REPLAY_DEBOUNCE_SECONDS (default 30) reads the file
+# and returns the SAME token -> identical natural key -> deduped (a replay).
+# A fire after the window mints a NEW token -> new key -> a distinct event (a
+# genuine re-dispatch).
+#
+# SIZING THE WINDOW (30s). It must exceed the wall-clock gap between two fires
+# of ONE dispatch, and stay well under the gap between two GENUINE dispatches
+# of the same task. The lower bound is NOT "sub-second": this hook forks a
+# whole bash process (plus git + sha1sum) per fire, which on the Windows/Git-
+# Bash target costs SECONDS -- a 5s window was measurably too tight and let a
+# replay mint a fresh token (caught by this file's own PL1b scenario). The
+# upper bound is generous: an orchestrator must dispatch, let the builder run,
+# and verify before it can re-dispatch -- minutes, not seconds. 30s sits with
+# large margin on both sides. Override via the env var for tests that need to
+# compress the clock rather than sleep past a real window.
+#
+# Best-effort and NEVER BLOCKS: if the state dir is unwritable or `date` is
+# missing, it falls back to a value that is merely conservative (never a
+# crash). Two truly-concurrent first-fires could both mint a token and produce
+# one duplicate line -- exactly the pre-existing worst case, never a lost or
+# blocked write.
+_dispatch_replay_token() {
+  local sid="${1:-}" slug="${2:-}" task_id="${3:-}"
+  local now; now=$(date -u +%s 2>/dev/null)
+  # No usable clock -> return a constant so a replay still dedups (the
+  # conservative direction: never manufacture a spurious second event).
+  [[ -n "$now" ]] || { printf 'noclock'; return 0; }
+
+  local debounce="${DISPATCH_REPLAY_DEBOUNCE_SECONDS:-30}"
+  local dir; dir="$(_dispatch_state_dir)"
+  mkdir -p "$dir" 2>/dev/null || { printf '%s' "$now"; return 0; }
+
+  local key; key=$(printf '%s|%s|%s' "$sid" "$slug" "$task_id" | _sha1 | cut -c1-16)
+  local f="$dir/.replay-$key"
+
+  local prev_ts="" prev_token=""
+  if [[ -f "$f" ]]; then
+    read -r prev_ts prev_token <"$f" 2>/dev/null || true
+    if [[ "$prev_ts" =~ ^[0-9]+$ ]] && [[ -n "$prev_token" ]] \
+       && [[ $(( now - prev_ts )) -le "$debounce" ]] && [[ $(( now - prev_ts )) -ge 0 ]]; then
+      # Within the debounce window -> this is a REPLAY of the dispatch the
+      # stored token already represents. Deliberately do NOT refresh the
+      # stored ts: the window stays anchored at the FIRST fire, so a long
+      # chain of replays can never keep extending it.
+      printf '%s' "$prev_token"
+      return 0
+    fi
+  fi
+
+  # First fire (or past the window) -> mint a new token and anchor the window.
+  printf '%s %s\n' "$now" "$now" >"$f" 2>/dev/null || true
+  printf '%s' "$now"
+  return 0
+}
+
+# _looks_like_worktree_pool <path> -- true iff <path> (after normalizing
+# backslashes) sits inside a `.claude/worktrees/` pool. Mirrors
+# progress-log-lib.sh's pl_classify_session pool predicate exactly (same
+# case pattern) so the writer side and the reader side agree on what
+# "looks like a real child worktree" means (FINDING 3, 2026-07-14 review
+# panel -- see below).
+_looks_like_worktree_pool() {
+  local p="${1:-}"
+  [[ -z "$p" ]] && return 1
+  local norm="${p//\\//}"
+  case "$norm" in
+    */.claude/worktrees/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # _emit_dispatch_provenance <input> <sid> <child_id>
 #   Best-effort task_started progress-log emission + dispatch-provenance
 #   marker write. Silent no-op when the dispatch text names no plan
@@ -2459,8 +2631,14 @@ _emit_dispatch_provenance() {
 
   local pl_cli; pl_cli=$(_pl_progress_log_cli)
   if [[ -f "$pl_cli" ]]; then
+    # FINDING 2 fix: --dedup-extra carries a per-dispatch replay-debounce
+    # token (see _dispatch_replay_token above) so this dispatch's
+    # task_started event is NOT collapsed with a LATER re-dispatch of the
+    # same task from the same (invariant) dispatching session_id, while a
+    # hook double-fire of THIS dispatch still dedups to one event.
+    local dispatch_token; dispatch_token=$(_dispatch_replay_token "$sid" "$slug" "$task_id")
     bash "$pl_cli" emit --type task_started --ask "$ask_id" --plan-slug "$slug" \
-      --task-id "$task_id" --session-id "$sid" \
+      --task-id "$task_id" --session-id "$sid" --dedup-extra "$dispatch_token" \
       --summary "task ${task_id:-?} dispatched" --emitter workstreams-emit \
       >/dev/null 2>&1 || true
   fi
@@ -2469,12 +2647,26 @@ _emit_dispatch_provenance() {
   # override is ever visible pre-dispatch (see the section header above) --
   # empty on the generic Task|Agent|Workflow surface, which is an honest
   # gap, not a guessed value (dispatch-provenance.sh records it as such).
+  #
+  # FINDING 3 fix (2026-07-14 review panel): a cross-repo spawn_task's cwd
+  # override is frequently a PROJECT ROOT (the documented estate workflow
+  # for spawning into a different project entirely), not the
+  # `.claude/worktrees/<slug>` child the harness's own per-task isolation
+  # actually creates. Recording that bare project-root as worktree_path
+  # made a LATER, wholly unrelated operator session at that same root (or a
+  # subdirectory of it) match pl_classify_session's ancestor predicate and
+  # get misclassified spawned -- silently dropping its opening ask. Only
+  # ever record --worktree when the hint itself already looks like a real
+  # worktrees-pool path; otherwise this is the SAME honest UNRESOLVED gap
+  # the generic Task/Agent/Workflow surface already produces (never a
+  # guess) -- predicate (a) in pl_classify_session catches the real child
+  # unconditionally when the harness's own isolation actually creates one.
   local wt_hint
   wt_hint=$(printf '%s' "$input" | jq -r '.tool_input.cwd // empty' 2>/dev/null || echo "")
 
   local dp_cli; dp_cli=$(_dispatch_provenance_cli)
   if [[ -f "$dp_cli" ]]; then
-    if [[ -n "$wt_hint" ]]; then
+    if [[ -n "$wt_hint" ]] && _looks_like_worktree_pool "$wt_hint"; then
       bash "$dp_cli" write --ask "$ask_id" --plan-slug "$slug" --task-id "$task_id" \
         --session-id "$sid" --child-id "$child_id" --worktree "$wt_hint" \
         >/dev/null 2>&1 || true
