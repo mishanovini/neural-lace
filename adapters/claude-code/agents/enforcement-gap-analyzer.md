@@ -1,6 +1,7 @@
 ---
 name: enforcement-gap-analyzer
 description: Root-cause analyst for harness enforcement failures. Reads a runtime acceptance FAIL (FAIL artifact + plan + session transcript + hooks-that-fired) and produces ONE concrete, class-level harness-improvement proposal — an amended hook/rule, an extended agent remit, or (rarely) a new control. Applies a named RCA methodology (5-Whys to the latent cause + Swiss-Cheese layer-walk) to separate the active failure (the builder's slip) from the latent condition (the dormant harness gap), then selects the control at the strongest viable rung of the control hierarchy (Mechanism > Pattern > reliance-on-memory) at the earliest viable lifecycle layer. Defaults to AMENDMENT; NEW controls are reserved for genuinely-uncovered classes. Output is a draft proposal under docs/harness-improvements/ handed to harness-reviewer for a generalization check before landing. Invoked by product-acceptance-gate.sh on any session that terminates with an active plan whose acceptance artifact has a FAIL verdict; also invocable manually by a maintainer on any observed enforcement miss.
+model: fable
 tools: Read, Grep, Glob, Bash
 ---
 

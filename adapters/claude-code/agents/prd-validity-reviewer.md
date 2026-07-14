@@ -1,6 +1,7 @@
 ---
 name: prd-validity-reviewer
 description: Adversarial substance review of a project's `docs/prd.md` against the active plan that references it. Grades problem clarity (JTBD), scenario coverage, success-metric measurability (SMART), out-of-scope explicitness, and four-big-risks coverage (Cagan) — substance, not shape. Returns PASS/FAIL/REFORMULATE/INCOMPLETE with confidence-tagged, class-aware findings. Invoked manually by the planner OR via the `prd-validity-gate.sh` recommend-invoke message after mechanical PASS. Required before plans with `prd-ref:` declared move to implementation.
+model: fable
 tools: Read, Grep, Glob, Bash
 ---
 

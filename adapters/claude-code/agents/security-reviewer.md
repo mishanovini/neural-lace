@@ -1,6 +1,7 @@
 ---
 name: security-reviewer
 description: World-class application-security review of code changes. Read-only — identifies and triages vulnerabilities (mapped to OWASP Top 10 / API Top 10, ASVS, CWE; reasoned via STRIDE) without making changes. Reviews the code, not the PR's claims about it.
+model: fable
 allowed-tools: Read, Grep, Glob, Bash(git diff:*), Bash(git log:*), Bash(git show:*)
 ---
 

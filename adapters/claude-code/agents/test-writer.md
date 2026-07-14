@@ -1,6 +1,7 @@
 ---
 name: test-writer
 description: Generates high-signal tests for specified files or components — tests that catch the real bugs a user would hit, derived with named test-design techniques (equivalence partitioning, boundary value analysis, property/metamorphic relations), validated by a fail-when-broken self-check, and matched exactly to project conventions and the harness's no-mock-the-SUT / no-trivial-assertion gates.
+model: sonnet
 allowed-tools: Read, Write, Grep, Glob, Bash
 ---
 

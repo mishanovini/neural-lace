@@ -8,7 +8,7 @@ mechanical_checks:
   - "test -f adapters/claude-code/agents/<name>.md"
   - "grep -q '^name: ' adapters/claude-code/agents/<name>.md"
   - "grep -q '^description: ' adapters/claude-code/agents/<name>.md"
-  - "grep -q -E '^(model|tools): ' adapters/claude-code/agents/<name>.md"
+  - "grep -q -E '^model:' adapters/claude-code/agents/<name>.md"
   - "diff -q adapters/claude-code/agents/<name>.md ~/.claude/agents/<name>.md"
 worked_example: adapters/claude-code/agents/task-verifier.md
 ---
@@ -24,7 +24,7 @@ When the work creates or modifies a sub-agent prompt under `adapters/claude-code
 A compliant agent produces two artifacts:
 
 1. **The canonical agent file** at `adapters/claude-code/agents/<name>.md`. Required elements:
-   - **YAML frontmatter** declaring `name`, `description`, `model` (or `tools`), and any allowed-tool restrictions.
+   - **YAML frontmatter** declaring `name`, `description`, a mandatory `model:` field (per `adapters/claude-code/config/model-policy.json` — chain[0] for this agent name; see `doctrine/model-selection.md`), plus `tools`/`allowed-tools` restrictions. `model:` is required regardless of whether `tools:` is present — a silent model-inherit is the failure mode this exists to prevent (operator directive 2026-07-14).
    - **Body** structured as: persona declaration, scope, rubric / output format, examples (PASS / FAIL / INCOMPLETE).
    - **Output format requirements** that downstream consumers (other agents, hooks) can parse mechanically — a structured verdict line, a class-aware feedback block, etc.
    - **Cross-references** to the rules and hooks that invoke or compose with the agent.

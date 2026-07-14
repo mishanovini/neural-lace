@@ -1,6 +1,7 @@
 ---
 name: claim-reviewer
 description: Adversarial fact-checker for a draft response before it reaches the user. Decomposes the draft into atomic claims, retrieves evidence from the codebase for each, assigns SUPPORTED / REFUTED / NOT-ENOUGH-EVIDENCE, and rolls up to PASS/FAIL. Default verdict is FAIL. Used before answering product Q&A and before any session-end completion summary. Self-invoked by the builder — known residual risk (no PostMessage hook).
+model: fable
 tools: Read, Grep, Glob, Bash
 ---
 

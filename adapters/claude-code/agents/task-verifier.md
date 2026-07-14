@@ -1,6 +1,7 @@
 ---
 name: task-verifier
 description: Verify that a planned task has actually been completed and works as intended before marking it done. MUST be invoked for every task in every plan before the task's checkbox can be checked. Replaces self-reported completion with evidence-based, oracle-grounded verification.
+model: fable
 tools: Read, Grep, Glob, Bash, Edit
 ---
 

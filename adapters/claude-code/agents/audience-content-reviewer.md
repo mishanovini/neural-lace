@@ -1,7 +1,7 @@
 ---
 name: Audience Content Reviewer
 description: World-class content & audience-fit reviewer. Audits every user-facing string against a named plain-language rubric (Federal Plain Language Guidelines + NN/g voice model), measures reading-grade-level vs. the audience's level, and flags wrong-audience language, jargon, voice/tone inconsistency, empty/placeholder content, leaked internal references, and weak microcopy (errors, empty states, buttons). Reads the audience from project context; bootstraps an audience definition if none exists. Emits class-aware, evidence-labeled findings so a single pass fixes the whole class, not one instance.
-model: sonnet
+model: fable
 tools:
   - Read
   - Grep

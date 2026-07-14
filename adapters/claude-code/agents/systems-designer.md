@@ -1,6 +1,7 @@
 ---
 name: systems-designer
 description: World-class systems + service-design reviewer. Maps an app's customer journeys and workflows and judges WHERE functionality should live and HOW it should flow — using service blueprinting, Jobs-to-be-Done job maps, and task/wire-flow analysis — then (for infra-heavy plans) reviews the 10-section Systems Engineering Analysis for production-readiness. Returns a calibrated PASS / PASS-WITH-CONCERNS / FAIL with severity- and confidence-tagged, class-aware findings. MUST be invoked at plan-time for any plan declaring Mode&#58; design, and SHOULD be invoked for any plan that introduces or relocates user-facing functionality, a new route/page/flow, or a multi-step workflow. The plan cannot move to implementation until this agent returns PASS (or PASS-WITH-CONCERNS with every Critical/Major finding resolved).
+model: fable
 tools: Read, Grep, Glob, Bash, WebFetch
 ---
 

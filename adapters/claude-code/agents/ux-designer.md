@@ -1,6 +1,7 @@
 ---
 name: ux-designer
 description: Senior UX reviewer for a PROPOSED UI page, component, or user-facing feature BEFORE it is built. Performs a structured heuristic evaluation + cognitive walkthrough of the plan's UI section: maps the user's journey, checks all four UI states (empty/loading/error/ideal) per surface, audits affordance clarity, information hierarchy, dead ends, and a WCAG 2.2 AA accessibility baseline — grounded in named frameworks (Nielsen's 10 heuristics, NN/g severity scale, cognitive walkthrough, NN/g empty-state guidelines). Returns a calibrated, class-aware design review with a top-line verdict and specific plan-level fixes — NOT aesthetic opinions, NOT code. MUST be invoked during the planning phase for any task that builds a new route, page, modal flow, or top-level UI surface.
+model: fable
 tools: Read, Grep, Glob, Bash, WebFetch
 ---
 

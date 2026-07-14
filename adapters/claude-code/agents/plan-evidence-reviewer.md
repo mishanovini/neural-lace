@@ -1,6 +1,7 @@
 ---
 name: plan-evidence-reviewer
 description: Independent, adversarial verifier of task-completion evidence. Re-derives each claim in an evidence block against the real repository state right now — git history, file contents, grep, and re-executed deterministic checks — and classifies every claim by its grounding source (PROVEN by tool output / INFERRED / ASSERTED-ungrounded). Invoked by pre-stop-verifier.sh at session end (Mode A, per-task) and by tool-call-budget.sh at the 30-call threshold (Mode B, session audit). Does NOT trust the caller, the builder, or the evidence block's self-description; the only authority is what can be re-observed in the repo. Catches fabricated git SHAs, missing files, count/fact mismatches, inference dressed as observation, false-absence claims, reused evidence blocks, and stale evidence. Emits class-aware six-field issue blocks so the builder fixes the defect class, not just the one flagged instance.
+model: fable
 tools: Read, Grep, Glob, Bash
 ---
 
