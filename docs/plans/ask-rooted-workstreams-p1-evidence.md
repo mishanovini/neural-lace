@@ -1031,3 +1031,36 @@ Evidence: builder browser-MCP verification (CTREE_PORT=17850, real accessibility
 **Known caveat (tracked, not blocking this scenario):** the full `server.selftest.js` still crashes at the pre-existing S22b→S23 `ECONNRESET` (task_e41fc644 / operator's task_c0d7d962), so the closure-contract "every self-test full-PASS" is not yet met; anti-noise negatives S50–S52 were proven directly against `payload-schema.js`. Fold in that fix before final plan closure.
 
 **Checkbox rationale:** flipped on Part A (mechanized acceptance) all-6-PASS + the fix-forward runtime re-verification; Part B is a non-gating demonstration per operator directive; Task 7's Fable-half + the ECONNRESET fix remain before the plan itself can flip Status:COMPLETED.
+
+## Task 7 — SECOND HALF: splice harness-review + findings fixed (merged: master TBD; fixes `9a32933` + `3229d20`)
+
+Fable was CANCELLED by the operator (no longer subsidized; not worth regular API rate). Replaced by a
+**diverse Opus review panel + adversarial verify** (7 failure-class lenses, 15 agents) —
+`docs/reviews/2026-07-14-ask-splice-review-panel.md`. Result: 3 classes CLEAN (never-flips /
+anti-noise-allowlist / injection), **7 confirmed defects** (each live-reproduced by an independent
+skeptic), 1 refuted.
+
+ALL 7 FIXED, each with a RED→GREEN regression self-test proven to fail against the pre-fix code:
+- **MAJOR 1** — `pl_classify_session` scanned a never-pruned dispatch-provenance dir (~2 forks/marker) on
+  every SessionStart + first prompt → unbounded latency growth. Fixed: TTL + cap-on-write prune, newest-N
+  bounded scan, AND a fork-free per-marker extractor (bounding the scan alone was insufficient — the
+  common no-match case still visited every marker). **Now 3 forks flat regardless of estate age.**
+- **MAJOR 2** — `task_started` deduped on the PARENT orchestrator session id → a within-session
+  re-dispatch was silently DROPPED. Fixed via a replay-debounce anchored at first fire. (The builder's
+  first attempt used a wall-clock bucket; its own test caught that two fires straddling a boundary would
+  DUPLICATE the event — bucket replaced with debounce.)
+- **MAJOR 3** — `_emit_dispatch_provenance` recorded a cross-repo project-ROOT cwd as `worktree_path` →
+  a later operator session at that root misclassified as spawned → its opening ask silently dropped AND
+  grafted onto the wrong ask. Fixed on BOTH sides (writer refuses a non-pool cwd → honest UNRESOLVED;
+  reader refuses a non-pool marker) because pre-fix markers already exist on disk.
+- **MINOR 4** — `plan_amended` scope key hashed the full post-scope → a return to a prior scope state
+  dropped a genuine amendment. (Hashing the delta was ALSO insufficient — in A→A,B / A,B→A / A→A,B the
+  1st and 3rd transitions are byte-identical in both pre and post; a time component is unavoidable.)
+- **MINORS 5-7** (merge-attribution) — evidence-dir `.md` mis-routed to a bogus slug (case-arm ordering;
+  bash `case` `*` spans `/`); `diff-tree` emits NOTHING for a 2-parent merge (and the HONEST LIMITATION
+  comment was factually false) → fixed with `-m`; the `plan:` token short-circuit returned an
+  unresolvable slug without falling back to the reliable diff signal.
+
+Evidence on the INTEGRATED tree: `progress-log-lib.sh --self-test` **36 passed / 0 failed**;
+`merge-scan-lib.sh --self-test` **20 passed / 0 failed**. Builder suites: dispatch-provenance 13/0,
+workstreams-emit 81/0, plan-lifecycle OK, ms_self_test 20/0.

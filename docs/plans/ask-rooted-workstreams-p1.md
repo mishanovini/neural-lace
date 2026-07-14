@@ -314,7 +314,7 @@ Serialization added in round 1:
   `close-plan.sh close <slug> --auto`) AND via manual `close-plan.sh close` runs,
   so every closure lane emits. Task 12's auditor derives ask-done from it —
   Verification: mechanical — Docs impact: none — covered by Task 7 manifest entry
-- [ ] 7. [serial] Manifest + review closure for the writer family: one
+- [x] 7. [serial] Manifest + review closure for the writer family: one
   `manifest.json` entry (`id: progress-log`, `kind: writer`, `honest_status`
   naming EVERY splice site verbatim — the `session-heartbeat` entry is the
   template), doctor `--quick` stays GREEN, and a **mandatory harness-reviewer
