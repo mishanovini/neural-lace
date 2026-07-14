@@ -1,0 +1,50 @@
+{
+  "schema": "model-policy/v1",
+  "note": "SOURCE OF TRUTH for subagent model assignment (operator directive 2026-07-14). Each value is an ordered PRIMARY->FALLBACK chain: use the first model; fall back to the next only if the first is unavailable. Fable is a PREMIUM tier and MUST NEVER be reached by inherit/default — only by explicit pin. agents/*.md frontmatter pins the PRIMARY (chain[0]); the fallback is a documented preference (the Agent frontmatter model: field holds a single value). Enforced by hooks/model-pin-gate.sh (PreToolUse Task|Agent) + a harness-doctor check that every agents/*.md carries model: and names a model in this file. See doctrine/model-selection.md.",
+  "model_ids": {
+    "fable": "claude-fable-5",
+    "opus": "claude-opus-4-8",
+    "sonnet": "claude-sonnet-5",
+    "haiku": "claude-haiku-4-5-20251001"
+  },
+  "categories": {
+    "review": ["fable", "opus"],
+    "design": ["fable", "opus"],
+    "cheap": ["haiku", "sonnet"],
+    "build": ["sonnet"]
+  },
+  "agents": {
+    "claim-reviewer": { "category": "review", "chain": ["fable", "opus"] },
+    "code-reviewer": { "category": "review", "chain": ["fable", "opus"] },
+    "comprehension-reviewer": { "category": "review", "chain": ["fable", "opus"] },
+    "documentation-auditor": { "category": "review", "chain": ["fable", "opus"] },
+    "domain-expert-tester": { "category": "review", "chain": ["fable", "opus"] },
+    "end-user-advocate": { "category": "review", "chain": ["fable", "opus"] },
+    "enforcement-gap-analyzer": { "category": "review", "chain": ["fable", "opus"] },
+    "functionality-auditor": { "category": "review", "chain": ["fable", "opus"] },
+    "functionality-verifier": { "category": "review", "chain": ["fable", "opus"] },
+    "harness-evaluator": { "category": "review", "chain": ["fable", "opus"] },
+    "harness-reviewer": { "category": "review", "chain": ["fable", "opus"] },
+    "plan-evidence-reviewer": { "category": "review", "chain": ["fable", "opus"] },
+    "prd-validity-reviewer": { "category": "review", "chain": ["fable", "opus"] },
+    "security-reviewer": { "category": "review", "chain": ["fable", "opus"] },
+    "task-verifier": { "category": "review", "chain": ["fable", "opus"] },
+    "audience-content-reviewer": { "category": "review", "chain": ["fable", "opus"], "was": "sonnet" },
+    "ux-end-user-tester": { "category": "review", "chain": ["fable", "opus"] },
+    "systems-designer": { "category": "design", "chain": ["fable", "opus"] },
+    "ux-designer": { "category": "design", "chain": ["fable", "opus"] },
+    "ux-ia-auditor": { "category": "design", "chain": ["fable", "opus"] },
+    "explorer": { "category": "cheap", "chain": ["haiku", "sonnet"], "was": "haiku" },
+    "research": { "category": "cheap", "chain": ["haiku", "sonnet"] },
+    "plan-phase-builder": { "category": "build", "chain": ["sonnet"] },
+    "test-writer": { "category": "build", "chain": ["sonnet"] }
+  },
+  "spawn_default": {
+    "note": "For a raw Agent/Task spawn whose subagent_type has no entry above, the gate BLOCKS and requires an explicit model — it never silently inherits. There is deliberately NO catch-all default that could hide an un-triaged category.",
+    "on_unknown_type": "block-require-explicit"
+  },
+  "ungate_able_paths": {
+    "note": "These spawn surfaces expose no model field a PreToolUse hook can inspect/block — covered by doctrine convention + lint ONLY, not a hard gate (honest residual, not overclaimed).",
+    "paths": ["Workflow agent() inline model:", "mcp__ccd_session__spawn_task (no model param)", "CronCreate / scheduled-tasks / RemoteTrigger (no model param)", "workstreams-ui reconciler headless-local (--model only if spawnModel set)"]
+  }
+}
