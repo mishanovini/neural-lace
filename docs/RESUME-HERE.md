@@ -1,5 +1,34 @@
 # RESUME HERE — cross-machine handoff (updated 2026-07-14)
 
+## ⭐ LATEST STATE (end of session, 2026-07-14) — read this first
+- **ask-rooted-workstreams-p1 is COMPLETE: 18/18**, deployed live on `:7733`. Done.
+- **Process-explosion crisis FIXED (was the recurring machine-killer / 3 reboots).** Root cause: a
+  timeout-without-kill leak in `neural-lace/workstreams-ui/server/auditor.js` `runCli()` — the timeout
+  resolved the promise but never killed the bash tree. Fixed with `killTree()` (Windows needs
+  `taskkill /T`, not `child.kill()`). Landed `01e2045`, deployed, verified bounded in production.
+  Lesson encoded as `doctrine/reap-what-you-spawn.md`. **Follow-up (filed, non-urgent):** the
+  merge-scan backfill still exceeds its 60s timeout each cycle (killed, so no leak, but the backfill
+  lane is non-functional) — make `scan-repo` INCREMENTAL (persist a last-scanned-SHA cursor).
+- **The "world-class / evidence bar" standard landed:** `doctrine/artifact-evidence-bar.md` (+full) —
+  no artifact ships without evidence it beats naive; gates need a golden scenario, AGENTS need a GOLDEN
+  CASE, DESIGNS need an architecture review before build. Plus a new **`architecture-reviewer` agent**
+  (`agents/architecture-reviewer.md`) — a 6-phase adversarial protocol that attacks the SHAPE of a
+  design; on its first run it killed the cockpit-v2 design with a measurement (3.5ms vs 87ms).
+- **⚠ ENFORCEMENT for the evidence bar is BUILT-BUT-UNVERIFIED on branch
+  `wip/evidence-bar-enforcement-gates` (commit `4b175ff`).** Two gates (architecture-review-before-build
+  in `plan-reviewer.sh`; agent golden-case gate `agent-design-gate.sh` + settings wiring). The builder
+  ended before its self-tests completed, so it is UNVERIFIED. TO FINISH: run each gate's self-test
+  (fires-on-bad / silent-on-good), resolve INDEX.md + manifest.json conflicts vs master (both changed on
+  master via `7511ce8`), flip the `artifact-evidence-bar` manifest `honest_status` from "NOT WIRED" to
+  wired, then land. Until this lands, the standard is a PATTERN (documented) not a MECHANISM (enforced).
+- **cockpit-v2 is the next BUILD.** `docs/plans/cockpit-v2-push-materialized-store.md` is v3 (operator
+  chose STORE because cross-machine is a CURRENT requirement) — planned AND architecture-reviewed
+  (`docs/reviews/2026-07-14-cockpit-v2-architecture-review.md`), all mandatory corrections applied. Ready
+  to build. CRITICAL correction baked in: the store must sync via a dedicated git ref (like
+  `broadcast-active-session.sh`), NOT a machine-local file, or it delivers zero cross-machine.
+- There is NO item 5 (operator confirmed the earlier UI list was 4 items).
+
+
 **You are picking up the ask-rooted Workstreams cockpit work on a fresh machine/session.**
 `SCRATCHPAD.md` is gitignored and did NOT travel — this file is the durable record. Everything
 below is on `origin/master`.
