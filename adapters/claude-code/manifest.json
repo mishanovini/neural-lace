@@ -1606,6 +1606,31 @@
       "budget_class": "none"
     },
     {
+      "id": "reap-what-you-spawn",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/reap-what-you-spawn.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": [
+          "spawn",
+          "setTimeout",
+          "child_process",
+          "kill",
+          "lock",
+          "timeout",
+          "orphan",
+          "reap"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "PATTERN — self-applied. The law (reap what you initiate, on every exit path) is doctrine, NOT yet a Mechanism: the code-reviewer/architecture-reviewer lens that would flag timeout-without-kill and spawn-without-tree-kill is proposed in the -full companion but not wired. Golden case: auditor.js runCli timeout-without-kill leaked 781 bash.exe / 3 reboots (fixed 2026-07-14)."
+    },
+    {
       "id": "register-surfacer",
       "kind": "surfacer",
       "doctrine_file": "doctrine/session-end-protocol.md",
