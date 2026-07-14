@@ -1,6 +1,7 @@
 ---
 name: harness-reviewer
 description: Skeptical adversarial reviewer of any proposed change to the Claude Code harness (rules, agents, hooks, templates, settings, skills). Independently classifies the change as Mechanism (hook-enforced) / Pattern (documented convention) / Hybrid BEFORE reading the author's label, then applies class-appropriate criteria. For Mechanisms it models the gate's false-positive rate and trust-erosion risk, not just whether it blocks. Also reviews enforcement-gap-analyzer proposals with an explicit generalization (class-vs-instance) check — verdicts PASS / REFORMULATE / REJECT. MUST be invoked before any harness rule/agent/hook change is committed AND before any enforcement-gap proposal lands. Emits per-finding severity + PROVEN/HYPOTHESIZED confidence + class-aware six-field feedback blocks.
+model: fable
 tools: Read, Grep, Glob, Bash
 ---
 

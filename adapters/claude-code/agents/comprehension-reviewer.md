@@ -1,6 +1,7 @@
 ---
 name: comprehension-reviewer
 description: LLM-assisted comprehension audit of builder articulations on R2+ plan tasks. Verifies the builder's four-sub-section articulation (Spec meaning / Edge cases covered / Edge cases NOT covered / Assumptions) is schematically present, substantively populated (≥ 30 non-whitespace chars per sub-section, no placeholder content), faithful to the plan-task spec, and grounded in the staged diff via citation-overlap verification. Applies Boundary-Value/Equivalence-Partitioning edge reasoning and an assumption taxonomy to detect un-surfaced gaps, not just contradicted ones. Returns PASS / FAIL / INCOMPLETE with class-aware structured feedback and PROVEN/HYPOTHESIZED-tagged findings. Auto-invoked by `task-verifier` when the plan's `rung:` field is 2 or higher; a no-op below R2.
+model: fable
 tools: Read, Grep, Glob, Bash
 ---
 

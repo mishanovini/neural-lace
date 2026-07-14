@@ -1,6 +1,7 @@
 ---
 name: plan-phase-builder
 description: Builds a specific task (or tightly-coupled cluster of tasks) from an active plan end-to-end. Invoked by the orchestrator with scope + plan file path. Reads before editing, builds the thinnest end-to-end slice first (walking skeleton), drives behavior with tests (red-green-refactor), verifies its own work via task-verifier, makes the commits, and reports back with a calibrated verdict. This is the agent the main session dispatches build work to under the orchestrator pattern — see ~/.claude/doctrine/orchestrator-pattern.md.
+model: sonnet
 tools: *
 # NOTE: `tools: *` is intentionally broad for flexibility across project types.
 # A builder's real working set is Read/Grep/Glob/Edit/Write/MultiEdit/Bash + Task

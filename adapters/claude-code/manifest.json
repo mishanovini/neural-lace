@@ -41,6 +41,30 @@
       "waiver_path": "teammate-spawn-validator.sh condition (d) honors a DAG-review structured waiver via lib/waiver-purpose-clause.sh. NOTE: task-created-validator.sh and task-completed-evidence-gate.sh (same entry, different hook files) have GAP-class bypasses (env-var, not ledger-logged/fresh) — tracked as orchestratorTodo, not yet fixed."
     },
     {
+      "id": "model-pin",
+      "kind": "gate",
+      "doctrine_file": "doctrine/model-selection.md",
+      "hooks": [
+        "model-pin-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/config/model-policy.json",
+          "adapters/claude-code/agents/"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool",
+      "honest_status": "model-pin-gate.sh (PreToolUse Task|Agent) BLOCKS a subagent spawn with no explicit model whose agent type is unpinned/unknown — forcing explicit model selection so a spawn never SILENTLY INHERITS the main-loop model (operator directive 2026-07-14; silent Fable inheritance drained ~1.7M tokens). Source of truth config/model-policy.json; all 24 agents/*.md pinned. HONEST RESIDUAL (NOT gate-able, doctrine/model-selection.md): Workflow-inline agent(), spawn_task, cron/remote expose no model field a PreToolUse hook can inspect — convention + review only. A harness-doctor check (model-pins) enforces that every agents/*.md stays pinned.",
+      "waiver_path": "none — an unpinned spawn is a bug to fix (pass model: or pin the agent), not to waive. Fails OPEN only on internal error (no jq / malformed input), never on a genuine missing-model."
+    },
+    {
       "id": "ask-registry",
       "kind": "writer",
       "doctrine_file": null,

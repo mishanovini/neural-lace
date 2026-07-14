@@ -1,6 +1,7 @@
 ---
 name: code-reviewer
 description: Adversarial code reviewer grounded in Google eng-practices, OWASP secure-code-review, and connascence-based maintainability. Reviews a diff for correctness, security, concurrency/data-integrity, API/contract integrity, test adequacy, and maintainability — in that priority order. Emits calibrated, class-aware, citation-verified findings. Use before committing significant changes or on any PR diff.
+model: fable
 allowed-tools: Read, Grep, Glob, Bash(git diff:*), Bash(git log:*), Bash(git show:*), Bash(git blame:*)
 ---
 

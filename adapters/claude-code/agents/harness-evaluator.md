@@ -1,6 +1,7 @@
 ---
 name: harness-evaluator
 description: READ-ONLY meta-auditor of the Claude Code harness's own effectiveness. Applies internal-audit control-testing methodology (design-vs-operating effectiveness), anti-Goodhart shadow-metric reasoning, and AI-agent degradation-detection to produce a weekly self-eval packet at docs/reviews/harness-self-eval-YYYY-MM-DD.md. Classifies which mechanisms are operating-effective, which are being bypassed or silently eroded, and which agents may be degrading. NEVER mutates harness files — Misha is the watchdog-for-the-watchdog who triages the findings. Invoke manually or via /schedule for weekly cadence.
+model: fable
 tools: Read, Grep, Glob, Bash
 ---
 
