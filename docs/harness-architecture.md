@@ -36,6 +36,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreToolUse | agent-teams | gate | yes | task-completed-evidence-gate.sh, task-created-validator.sh, teammate-spawn-validator.sh |
 | PreToolUse | claude-md-hygiene | gate | yes | claude-md-hygiene-gate.sh |
 | PreToolUse | concurrent-ownership-gate | gate | yes | concurrent-ownership-gate.sh |
+| PreToolUse | model-pin | gate | yes | model-pin-gate.sh |
 | PreToolUse | cross-repo-nl-touch-warn | surfacer | no | cross-repo-nl-touch-warn.sh |
 | PreToolUse | definition-on-first-use | gate | no | definition-on-first-use-gate.sh |
 | PreToolUse | deploy-automation-mode | gate | yes | automation-mode-gate.sh |

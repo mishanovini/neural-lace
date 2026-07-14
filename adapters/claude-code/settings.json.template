@@ -312,6 +312,15 @@
         ]
       },
       {
+        "matcher": "Task|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/model-pin-gate.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Task|Agent|Workflow",
         "hooks": [
           {
