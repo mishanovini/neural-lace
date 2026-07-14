@@ -50,4 +50,19 @@ Design (from the exploration — EXTEND, do not duplicate):
 - **Done when:** the mechanism is on master (both remotes), live-synced, self-tests green, harness-reviewer PASS (or CONDITIONAL-PASS with findings fixed).
 
 ## Evidence Log
-- (filled at close)
+- Task 1 — `agent-heartbeat.sh` (emit/conclude/watch/reap) built in the dedicated
+  `heartbeats/agents/` namespace; `--self-test` 19/19 (emit→agents namespace not session board,
+  fresh-not-flagged, stale-flagged, `--long` 3x grace, `.ack` suppression, corrupt-ts mtime
+  fallback, conclude self-removal, 20m boundary 19m/21m, path-traversal sanitization, reap, no-op
+  on missing --agent). Registered in manifest.json. commit: 3cb9f3b (+ review fixes ba7ac46).
+- Task 2 — dispatch-prompt heartbeat+conclude convention added to
+  `doctrine/background-work-tracking.md` (2621B, under 3000 cap) with the honest Pattern/residual
+  label; `agent-heartbeat.sh watch` + `reap` spliced into `stalled-work-surfacer.sh run()`;
+  surfacer `--self-test` 6/6 incl. new T6 (stalled agent surfaces through the surfacer). commit: 3cb9f3b.
+- Task 3 — harness-reviewer verdict CONDITIONAL-PASS (Pattern classification agreed; board-namespace
+  isolation + path resolution + graceful degradation all PROVEN). All findings fixed in ba7ac46:
+  Major-1 completion-blind cry-wolf → `conclude` terminal beat + mandate + tests; Major-2 dead reap
+  → wired into the surfacer SessionStart tick; Minor-1 boundary+traversal self-tests; Minor-2 softened
+  the "5h hang" overclaim. Post-fix self-tests green (19/19, 6/6). commit: ba7ac46.
+- Follow-ups filed (non-goals): runtime auto-heartbeat primitive (out of repo reach) + wiring the
+  agent heartbeat into the orphaned-worktree-guard `_live_owner` join (GUARD-REFORMULATE-01).
