@@ -76,11 +76,26 @@ scan() {
 }
 
 run() {
-  [ -d "$SCAN_ROOT" ] || exit 0
-  scan
-  if [ "${STALL_COUNT:-0}" -gt 0 ]; then
-    echo "  Per ~/.claude/doctrine/background-work-tracking.md: a launched background task is a tracked"
-    echo "  obligation until its result is consumed. Never report it 'running' without checking it."
+  # (1) Stalled background WORKFLOWS (journal started>result + stale mtime).
+  local did_workflow_note=0
+  if [ -d "$SCAN_ROOT" ]; then
+    scan
+    if [ "${STALL_COUNT:-0}" -gt 0 ]; then
+      echo "  Per ~/.claude/doctrine/background-work-tracking.md: a launched background task is a tracked"
+      echo "  obligation until its result is consumed. Never report it 'running' without checking it."
+      did_workflow_note=1
+    fi
+  fi
+  # (2) Stalled background AGENTS (per-agent heartbeat watchdog — the interim
+  #     Pattern from docs/lessons/2026-07-14-background-agent-heartbeat-watchdog.md).
+  local agent_hb; agent_hb="$(dirname "$0")/../scripts/agent-heartbeat.sh"
+  [ -f "$agent_hb" ] || agent_hb="$HOME/.claude/scripts/agent-heartbeat.sh"
+  if [ -f "$agent_hb" ]; then
+    local agentout; agentout="$(bash "$agent_hb" watch 2>/dev/null)"
+    if [ -n "$agentout" ]; then
+      printf '%s\n' "$agentout"
+      [ "$did_workflow_note" -eq 0 ] && echo "  Per ~/.claude/doctrine/background-work-tracking.md: a launched background task is a tracked obligation until its result is consumed."
+    fi
   fi
   exit 0
 }
@@ -102,7 +117,10 @@ self_test() {
     touch -d "@$(( $(date +%s) - secs ))" "$d/journal.jsonl" 2>/dev/null \
       || touch -t "$(date -d "@$(( $(date +%s) - secs ))" +%Y%m%d%H%M.%S 2>/dev/null)" "$d/journal.jsonl" 2>/dev/null || true
   }
-  run_scan() { STALLED_WORK_SCAN_ROOT="$tmp/projects" STALLED_WORK_STALE_MIN=10 bash "$0" </dev/null 2>/dev/null; }
+  # Sandbox the agent-heartbeat namespace too, so run() step (2) never scans the
+  # real ~/.claude/state/heartbeats/agents and pollutes these workflow scenarios.
+  mkdir -p "$tmp/hb/agents"
+  run_scan() { STALLED_WORK_SCAN_ROOT="$tmp/projects" STALLED_WORK_STALE_MIN=10 HEARTBEAT_STATE_DIR="$tmp/hb" bash "$0" </dev/null 2>/dev/null; }
 
   # T1 stalled: 4 started, 3 result, 30 min old → surfaced
   mkrun wf_stall 4 3 30
@@ -124,9 +142,16 @@ self_test() {
   out="$(run_scan)"
   if ! echo "$out" | grep -q "wf_acked"; then echo "T4 acked-suppressed: PASS"; pass=$((pass+1)); else echo "T4 acked-suppressed: FAIL"; fail=$((fail+1)); fi
 
-  # T5 no workflows at all → silent
-  out="$(STALLED_WORK_SCAN_ROOT="$tmp/empty" bash "$0" </dev/null 2>/dev/null)"
+  # T5 no workflows at all (and empty agent namespace) → silent
+  out="$(STALLED_WORK_SCAN_ROOT="$tmp/empty" HEARTBEAT_STATE_DIR="$tmp/hb" bash "$0" </dev/null 2>/dev/null)"
   if [ -z "$out" ]; then echo "T5 no-workflows-silent: PASS"; pass=$((pass+1)); else echo "T5 no-workflows-silent: FAIL"; fail=$((fail+1)); fi
+
+  # T6 stalled AGENT (heartbeat 40 min old) surfaces through the surfacer's step (2)
+  local old6=$(( $(date +%s) - 40*60 ))
+  printf '{"schema":"agent-heartbeat/v1","agent_id":"agent-wedged","step":"committed","note":"hung","ts":%s,"pid":1,"long":false}\n' "$old6" > "$tmp/hb/agents/agent-wedged.json"
+  out="$(run_scan)"
+  if echo "$out" | grep -q "agent-wedged"; then echo "T6 stalled-agent-surfaced: PASS"; pass=$((pass+1)); else echo "T6 stalled-agent-surfaced: FAIL"; fail=$((fail+1)); fi
+  rm -f "$tmp/hb/agents/agent-wedged.json"
 
   rm -rf "$tmp"
   echo "self-test: $pass passed, $fail failed"

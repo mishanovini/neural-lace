@@ -1722,6 +1722,24 @@
       "honest_status": "scripts/session-heartbeat.sh (touch/sweep/reap) + hooks/lib/session-heartbeat-lib.sh (hb_path_for/hb_write/hb_is_stale/hb_classify, the shared C1 read-side implementation) — per-session liveness file (O.2); touch called by one-line splices in session-start-digest.sh / workstreams-stop-writer.sh / pre-compact-continuity.sh / session-resumer.sh, reap called by a best-effort splice in session-start-digest.sh run_digest() (review fix 2026-07-09: reaper previously had no production call-site; bounds the heartbeat set by removing definitively-dead entries), not event-wired as its own settings.json entry."
     },
     {
+      "id": "agent-heartbeat",
+      "kind": "writer",
+      "doctrine_file": "doctrine/background-work-tracking.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "scripts/agent-heartbeat.sh"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/agent-heartbeat.sh (emit/watch/reap) — per-AGENT liveness heartbeat in the heartbeats/agents/ namespace (2026-07-14 lesson: background agents need a push heartbeat + watchdog, not orchestrator output-polling). watch is spliced into hooks/stalled-work-surfacer.sh run() so stalled agents surface at SessionStart alongside stalled Workflow runs. INTERIM PATTERN: relies on the dispatched agent calling emit at its milestones (dispatch-prompt convention in doctrine/background-work-tracking.md); the true runtime auto-heartbeat is not in-repo. Detection covers agents that emitted then stopped (the worked-then-wedged / 5h-hang class). Not event-wired as its own settings.json entry — a splice inside the already-wired stalled-work-surfacer.sh; inventory-only per the manifest-check disk-coverage note (scripts/ is not disk-scanned)."
+    },
+    {
       "id": "session-honesty",
       "kind": "gate",
       "doctrine_file": "doctrine/session-end-protocol.md",
