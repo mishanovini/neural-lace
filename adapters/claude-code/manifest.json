@@ -17,6 +17,24 @@
       "budget_class": "none"
     },
     {
+      "id": "agent-heartbeat",
+      "kind": "writer",
+      "doctrine_file": "doctrine/background-work-tracking.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "scripts/agent-heartbeat.sh"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/agent-heartbeat.sh (emit/conclude/watch/reap) — per-AGENT liveness heartbeat in the heartbeats/agents/ namespace (2026-07-14 lesson: background agents need a push heartbeat + watchdog, not orchestrator output-polling). watch AND reap are spliced into hooks/stalled-work-surfacer.sh run() (watch surfaces stalled agents at SessionStart alongside stalled Workflow runs; reap bounds the namespace — the session-heartbeat reaper's 2026-07-09 dead-reaper defect, avoided here by wiring reap in the same commit). conclude is the terminal beat: an agent self-removes on clean completion so a COMPLETED agent is never surfaced as stalled (mirrors the workflow half's started==result suppression; without it every finished agent false-fires — the cry-wolf that REFORMULATE'd orphaned-worktree-guard, fixed here per harness-review CONDITIONAL-PASS 2026-07-14). INTERIM PATTERN: relies on the dispatched agent calling emit/conclude (dispatch-prompt convention in doctrine/background-work-tracking.md); the true runtime auto-heartbeat is not in-repo. Detection covers agents that emitted then stopped (the worked-then-wedged class). Not event-wired as its own settings.json entry — a splice inside the already-wired stalled-work-surfacer.sh; inventory-only per the manifest-check disk-coverage note (scripts/ is not disk-scanned)."
+    },
+    {
       "id": "agent-teams",
       "kind": "gate",
       "doctrine_file": "doctrine/agent-teams.md",
@@ -39,6 +57,31 @@
       "blocking": true,
       "budget_class": "pretool",
       "waiver_path": "teammate-spawn-validator.sh condition (d) honors a DAG-review structured waiver via lib/waiver-purpose-clause.sh. NOTE: task-created-validator.sh and task-completed-evidence-gate.sh (same entry, different hook files) have GAP-class bypasses (env-var, not ledger-logged/fresh) — tracked as orchestratorTodo, not yet fixed."
+    },
+    {
+      "id": "artifact-evidence-bar",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/artifact-evidence-bar.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/agents/",
+          "docs/plans/"
+        ],
+        "keywords": [
+          "agent",
+          "architecture",
+          "design",
+          "review",
+          "world-class"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "PATTERN — self-applied, NOT YET A MECHANISM. The law (constitution §10 generalized: no artifact ships without evidence it beats naive) is documented; the two gates that would ENFORCE it are NOT WIRED: (1) a plan-reviewer check blocking build-dispatch on a qualifying plan with no architecture-reviewer verdict; (2) an agent-design gate blocking an agent file lacking the 7 properties + a GOLDEN CASE. Until those land this is documentation, not a control. Named here explicitly because §10 calls undelivered enforcement THEATER and the cardinal harness defect. Operator directive 2026-07-14; enforcement is the next build task."
     },
     {
       "id": "ask-registry",
@@ -310,30 +353,6 @@
       },
       "blocking": false,
       "budget_class": "posttool"
-    },
-    {
-      "id": "find-scan-warn",
-      "kind": "surfacer",
-      "doctrine_file": null,
-      "hooks": [
-        "find-scan-warn.sh"
-      ],
-      "events": [
-        "PreToolUse"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "pretool",
-      "added_after": "2026-07",
-      "golden_scenario": "Agent-efficiency lesson 2026-07-13 Finding 3 — a session runs `find / -maxdepth 6 -iname <repo>` (a disk-wide scan) at ~65% of a core to locate the repo root instead of using Glob / git rev-parse.",
-      "fp_expectation": "scoped finds (`find .`, `find ./src`, `find adapters/`) must stay silent — 11/11 self-test scenarios; a false positive costs one stderr line, never a block.",
-      "retirement_condition": "zero fires for 30 days, or superseded by a stronger agent-doctrine mechanism that prevents disk-wide finds at the source.",
-      "honesty_rationale": "WARN-only by design (rec 6 of the efficiency lesson) — never blocks; scoped finds are common and legitimate; every code path exits 0. Nudges toward Glob/Grep/git rev-parse."
     },
     {
       "id": "cross-repo-nl-touch-warn",
@@ -732,6 +751,30 @@
       "blocking": false,
       "budget_class": "session-start",
       "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
+    },
+    {
+      "id": "find-scan-warn",
+      "kind": "surfacer",
+      "doctrine_file": null,
+      "hooks": [
+        "find-scan-warn.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "pretool",
+      "added_after": "2026-07",
+      "golden_scenario": "Agent-efficiency lesson 2026-07-13 Finding 3 — a session runs `find / -maxdepth 6 -iname <repo>` (a disk-wide scan) at ~65% of a core to locate the repo root instead of using Glob / git rev-parse.",
+      "fp_expectation": "scoped finds (`find .`, `find ./src`, `find adapters/`) must stay silent — 11/11 self-test scenarios; a false positive costs one stderr line, never a block.",
+      "retirement_condition": "zero fires for 30 days, or superseded by a stronger agent-doctrine mechanism that prevents disk-wide finds at the source.",
+      "honesty_rationale": "WARN-only by design (rec 6 of the efficiency lesson) — never blocks; scoped finds are common and legitimate; every code path exits 0. Nudges toward Glob/Grep/git rev-parse."
     },
     {
       "id": "findings-ledger",
@@ -1722,24 +1765,6 @@
       "honest_status": "scripts/session-heartbeat.sh (touch/sweep/reap) + hooks/lib/session-heartbeat-lib.sh (hb_path_for/hb_write/hb_is_stale/hb_classify, the shared C1 read-side implementation) — per-session liveness file (O.2); touch called by one-line splices in session-start-digest.sh / workstreams-stop-writer.sh / pre-compact-continuity.sh / session-resumer.sh, reap called by a best-effort splice in session-start-digest.sh run_digest() (review fix 2026-07-09: reaper previously had no production call-site; bounds the heartbeat set by removing definitively-dead entries), not event-wired as its own settings.json entry."
     },
     {
-      "id": "agent-heartbeat",
-      "kind": "writer",
-      "doctrine_file": "doctrine/background-work-tracking.md",
-      "hooks": [],
-      "events": [],
-      "wired_template": false,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [
-          "scripts/agent-heartbeat.sh"
-        ],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "none",
-      "honest_status": "scripts/agent-heartbeat.sh (emit/conclude/watch/reap) — per-AGENT liveness heartbeat in the heartbeats/agents/ namespace (2026-07-14 lesson: background agents need a push heartbeat + watchdog, not orchestrator output-polling). watch AND reap are spliced into hooks/stalled-work-surfacer.sh run() (watch surfaces stalled agents at SessionStart alongside stalled Workflow runs; reap bounds the namespace — the session-heartbeat reaper's 2026-07-09 dead-reaper defect, avoided here by wiring reap in the same commit). conclude is the terminal beat: an agent self-removes on clean completion so a COMPLETED agent is never surfaced as stalled (mirrors the workflow half's started==result suppression; without it every finished agent false-fires — the cry-wolf that REFORMULATE'd orphaned-worktree-guard, fixed here per harness-review CONDITIONAL-PASS 2026-07-14). INTERIM PATTERN: relies on the dispatched agent calling emit/conclude (dispatch-prompt convention in doctrine/background-work-tracking.md); the true runtime auto-heartbeat is not in-repo. Detection covers agents that emitted then stopped (the worked-then-wedged class). Not event-wired as its own settings.json entry — a splice inside the already-wired stalled-work-surfacer.sh; inventory-only per the manifest-check disk-coverage note (scripts/ is not disk-scanned)."
-    },
-    {
       "id": "session-honesty",
       "kind": "gate",
       "doctrine_file": "doctrine/session-end-protocol.md",
@@ -2184,26 +2209,6 @@
       "budget_class": "none"
     },
     {
-      "id": "workstreams-extract-pending",
-      "kind": "writer",
-      "doctrine_file": "doctrine/workstreams-state.md",
-      "hooks": [
-        "workstreams-extract-pending.sh"
-      ],
-      "events": [
-        "manual"
-      ],
-      "wired_template": false,
-      "selftest": false,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "none",
-      "honest_status": "retired to attic at O.4 cutover (attic + exit-0 shim, per manifest-amendments.md fragment adapters/claude-code/tests/fixtures/wave-o/O.4/manifest-amendments.md Entry 2) — superseded by needs-you.sh per that file's own header; item-extraction from Stop-time transcript scanning is no longer the mechanism. Removed from workstreams-stop-writer.sh's MEMBERS array in the same integration commit."
-    },
-    {
       "id": "workstreams-emitters",
       "kind": "writer",
       "doctrine_file": "doctrine/workstreams-state.md",
@@ -2229,6 +2234,26 @@
       "blocking": false,
       "budget_class": "none",
       "honest_status": "workstreams-emit.sh wired directly (SessionStart + spawn PreToolUse); Stop-side members dispatched via workstreams-stop-writer.sh since D.5. workstreams-extract-pending.sh split out to its own entry (id: workstreams-extract-pending) and retired at O.4 cutover; removed from workstreams-stop-writer.sh's MEMBERS array in the same commit."
+    },
+    {
+      "id": "workstreams-extract-pending",
+      "kind": "writer",
+      "doctrine_file": "doctrine/workstreams-state.md",
+      "hooks": [
+        "workstreams-extract-pending.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "retired to attic at O.4 cutover (attic + exit-0 shim, per manifest-amendments.md fragment adapters/claude-code/tests/fixtures/wave-o/O.4/manifest-amendments.md Entry 2) — superseded by needs-you.sh per that file's own header; item-extraction from Stop-time transcript scanning is no longer the mechanism. Removed from workstreams-stop-writer.sh's MEMBERS array in the same integration commit."
     },
     {
       "id": "workstreams-spawn-gate",
