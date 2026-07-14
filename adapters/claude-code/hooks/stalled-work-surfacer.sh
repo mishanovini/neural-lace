@@ -96,6 +96,8 @@ run() {
       printf '%s\n' "$agentout"
       [ "$did_workflow_note" -eq 0 ] && echo "  Per ~/.claude/doctrine/background-work-tracking.md: a launched background task is a tracked obligation until its result is consumed."
     fi
+    # Production reap tick (bounds the agents/ namespace; best-effort, never blocks).
+    bash "$agent_hb" reap >/dev/null 2>&1 || true
   fi
   exit 0
 }

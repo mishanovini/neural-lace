@@ -32,11 +32,13 @@ what closes the mid-session gap.
 
 **Agent heartbeat (interim Pattern).** Output-absence can't tell a hung agent
 from a busy one, so agents PUSH liveness. When you dispatch a long background
-agent, tell it in the prompt to emit at each milestone:
-`bash ~/.claude/scripts/agent-heartbeat.sh emit --agent <id> --step <n> --note <what> [--long]`
-(`--long` triples that step's staleness grace). `agent-heartbeat.sh watch`
-(wired above) flags any agent whose last beat aged past threshold (default 20m).
-Honest scope: this is a PATTERN (relies on the agent emitting; the true runtime
-auto-heartbeat is not in-repo) and it catches the "worked, then wedged" class —
-exactly the 5h hang in the 2026-07-14 lesson. Ack a handled stall:
-`touch ~/.claude/state/heartbeats/agents/<id>.ack`.
+agent, tell it in the prompt to emit at each milestone AND to conclude when done:
+- milestone: `bash ~/.claude/scripts/agent-heartbeat.sh emit --agent <id> --step <n> --note <what> [--long]` (`--long` triples that step's grace)
+- final action: `bash ~/.claude/scripts/agent-heartbeat.sh conclude --agent <id>`
+
+`watch` (wired above) flags any agent whose last beat aged past threshold (default
+20m); `conclude` self-removes so a COMPLETED agent is never flagged — omit it and
+every finished agent false-fires at the next session. Honest scope: a PATTERN
+(relies on the agent emitting; the true runtime auto-heartbeat is not in-repo) that
+catches the worked-then-wedged class the 2026-07-14 lesson exemplifies. Ack a
+handled stall: `touch ~/.claude/state/heartbeats/agents/<id>.ack`.

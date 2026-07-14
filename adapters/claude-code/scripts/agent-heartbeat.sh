@@ -19,10 +19,12 @@
 # repo. This ships the INTERIM PATTERN: dispatched agents CALL `emit` at their
 # milestones (per the dispatch convention in doctrine/background-work-tracking.md),
 # and `watch` (wired into stalled-work-surfacer.sh) flags stale ones. Detection
-# therefore covers agents that emitted at least one heartbeat then stopped — which
-# is exactly the 5-hour-hang class (the agent WAS working, then wedged). Agents
-# that never emit are out of this mechanism's reach (workflows are separately
-# covered by stalled-work-surfacer.sh's started>result signature).
+# therefore covers agents that emitted at least one heartbeat then stopped — the
+# worked-then-wedged class the 2026-07-14 lesson exemplifies (conditional on the
+# emit convention being followed by future dispatches; the lesson's own agent
+# predated it and emitted nothing). Agents that never emit are out of this
+# mechanism's reach (workflows are separately covered by stalled-work-surfacer.sh's
+# started>result signature).
 #
 # The session-level equivalent is session-heartbeat.sh (frozen schema C1); this
 # is deliberately a SEPARATE agent-scoped namespace (heartbeats/agents/<id>.json)
@@ -37,6 +39,11 @@
 #       always) — a liveness tick is observability, not enforcement. --long
 #       marks the NEXT step as expected-slow, tripling that agent's own
 #       staleness grace so a legitimately long step does not cry wolf.
+#
+#   agent-heartbeat.sh conclude --agent <id>
+#       The agent's FINAL milestone on clean completion — removes its heartbeat so
+#       a concluded agent is never surfaced as stalled (a hung agent that never
+#       concludes ages out and IS surfaced). NEVER BLOCKS (exit 0).
 #
 #   agent-heartbeat.sh watch [--json] [--stale-min N]
 #       Scans heartbeats/agents/*.json; prints each STALLED agent (age past
@@ -149,6 +156,21 @@ cmd_watch() {
   return 0
 }
 
+cmd_conclude() {
+  # Terminal beat — the agent's FINAL milestone on clean completion. Removes its
+  # heartbeat so `watch` never surfaces a concluded agent as stalled (mirrors the
+  # workflow half's started==result "never flagged" semantics). A hung agent that
+  # never concludes ages out and IS surfaced — which is the whole point.
+  local agent=""
+  while [[ $# -gt 0 ]]; do case "$1" in --agent) agent="${2:-}"; shift 2 ;; *) shift ;; esac; done
+  [[ -z "$agent" ]] && return 0
+  local safe; safe="$(printf '%s' "$agent" | tr -c 'A-Za-z0-9._-' '_')"
+  [[ -z "$safe" ]] && return 0
+  local dir; dir="$(agents_dir)"
+  rm -f "$dir/$safe.json" "$dir/$safe.ack" 2>/dev/null
+  return 0
+}
+
 cmd_reap() {
   local max_min="$AGENT_HB_REAP_MIN"
   while [[ $# -gt 0 ]]; do
@@ -206,6 +228,26 @@ run_self_test() {
   touch -d "@$old" "$tmp/hb/agents/agent-badts.json" 2>/dev/null   # $old = 40 min ago (epoch)
   _ok "corrupt-ts agent ages out via mtime fallback"          '[[ "$(cmd_watch)" == *agent-badts* ]]'
 
+  # 6b. conclude removes a stale agent's heartbeat → never surfaced (completion signal)
+  printf '{"schema":"agent-heartbeat/v1","agent_id":"agent-done","step":"finished","note":"","ts":%s,"pid":1,"long":false}\n' "$old" > "$tmp/hb/agents/agent-done.json"
+  cmd_conclude --agent "agent-done"
+  _ok "conclude removes the heartbeat file"                   '[[ ! -f "$tmp/hb/agents/agent-done.json" ]]'
+  _ok "concluded agent not surfaced by watch"                '[[ "$(cmd_watch)" != *agent-done* ]]'
+
+  # 6c. threshold boundary at 20m: 19m under → fresh, 21m over → stale
+  local t19 t21; t19=$(( $(date -u +%s) - 19*60 )); t21=$(( $(date -u +%s) - 21*60 ))
+  printf '{"schema":"agent-heartbeat/v1","agent_id":"agent-19m","step":"x","note":"","ts":%s,"pid":1,"long":false}\n' "$t19" > "$tmp/hb/agents/agent-19m.json"
+  printf '{"schema":"agent-heartbeat/v1","agent_id":"agent-21m","step":"x","note":"","ts":%s,"pid":1,"long":false}\n' "$t21" > "$tmp/hb/agents/agent-21m.json"
+  _ok "19m agent under 20m threshold not surfaced"           '[[ "$(cmd_watch)" != *agent-19m* ]]'
+  _ok "21m agent over 20m threshold surfaced"                '[[ "$(cmd_watch)" == *agent-21m* ]]'
+  rm -f "$tmp/hb/agents/agent-19m.json" "$tmp/hb/agents/agent-21m.json"
+
+  # 6d. path-traversal: --agent "../../evil" is sanitized to stay inside agents/
+  cmd_emit --agent "../../evil" --step x
+  _ok "traversal id sanitized into agents/ namespace"        '[[ -f "$tmp/hb/agents/.._.._evil.json" ]]'
+  _ok "traversal wrote nothing outside agents/"              '[[ ! -e "$tmp/hb/evil.json" && ! -e "$tmp/evil.json" && ! -e "$tmp/hb/agents/../../evil.json" ]]'
+  rm -f "$tmp/hb/agents/.._.._evil.json"
+
   # 7. reap prunes old files
   cmd_reap --max-age-min 30
   _ok "reap removed the 40-min-old hung agent"                '[[ ! -f "$tmp/hb/agents/agent-hung.json" ]]'
@@ -226,12 +268,13 @@ run_self_test() {
 main() {
   local verb="${1:-}"; shift || true
   case "$verb" in
-    emit)  cmd_emit "$@" ;;
-    watch) cmd_watch "$@" ;;
-    reap)  cmd_reap "$@" ;;
+    emit)     cmd_emit "$@" ;;
+    conclude) cmd_conclude "$@" ;;
+    watch)    cmd_watch "$@" ;;
+    reap)     cmd_reap "$@" ;;
     --self-test) run_self_test ;;
     --help|"") sed -n '2,60p' "$0"; ;;
-    *) echo "unknown verb: $verb (emit|watch|reap|--self-test)" >&2; return 0 ;;
+    *) echo "unknown verb: $verb (emit|conclude|watch|reap|--self-test)" >&2; return 0 ;;
   esac
 }
 main "$@"
