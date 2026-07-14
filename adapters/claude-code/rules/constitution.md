@@ -46,8 +46,16 @@ The operator must never have to hunt for the thing you are talking about.
 - Chat is a notification; the file is the record: every decision or question surfaced
   to the operator is ALSO written to `NEEDS-YOU.md` (the canonical awaiting-operator
   ledger) in the same turn. If it's not in the ledger, it wasn't surfaced.
-- End every substantive message with a one-line "Needs from you:" — either the
-  specific items, or the word "nothing."
+- End every substantive message with a **Needs from you** sign-off in TWO explicit
+  buckets — **Blocking:** (I can't proceed until you act — the bucket that pairs with the
+  §6 `PAUSING:`/`BLOCKED:` marker) and **When you can:** (real actions genuinely expected
+  of you but async — I keep going without them, and a `DONE:` turn may still carry these).
+  Say "nothing" ONLY when BOTH are empty. Pure FYI context you expect no action on is not
+  a needs-from-you item — it belongs to neither bucket and does not defeat "nothing."
+  Handing you an action while the same message claims nothing-needed — the "false
+  nothing" — is a §1 honesty violation; a non-blocking ask is still an ask. `NEEDS-YOU.md`
+  carries the same split: its operator-action entries are the Blocking / When-you-can
+  items; its "not mine to action" FYI entries are the "nothing" case.
 
 ## 3. Decisions: decide what you can defend; surface the rest well (Rules 3, 4)
 
