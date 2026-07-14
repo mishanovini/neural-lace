@@ -32,4 +32,4 @@ rule, and record the lesson.
 - Task 1: harness-reviewer CONDITIONAL-PASS (Pattern-class); the one Major (inverted/nonexistent
   `NEEDS-YOU.md` cross-reference in the first draft) + two Minors (FYI carve-out, Blocking↔§6 link)
   all applied before commit. Constitution 11136B (< 24000 cap). Warn-mode Stop-lint deferred to an
-  nl-issue with the reviewer's FP caveat. commit: <filled at close>
+  nl-issue with the reviewer's FP caveat. commit: 919fc30
