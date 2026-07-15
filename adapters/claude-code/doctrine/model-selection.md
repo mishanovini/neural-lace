@@ -30,6 +30,12 @@ The gate resolves the agent def by filename slug OR by display `name:` (so a
 `fork` subagent_type is EXEMPT — it always inherits the parent model by design and takes
 no `model` override, so blocking it would be an un-remediable false-positive.
 
+**Why BLOCK not auto-assign (decision 063).** PreToolUse hooks CAN rewrite tool input via
+`hookSpecificOutput.updatedInput`, BUT the Claude Code docs explicitly exclude subagent
+spawns ("`updatedInput` does not apply to Task and Agent tool calls"), and `SubagentStart`
+has no decision control. So deny is the ONLY deterministic lever for this surface — auto-
+assign is not buildable today. Assignment is the author's job; the gate enforces it.
+
 **HONEST RESIDUAL (§10 — NOT hard-gated).** A PreToolUse hook can only inspect the Task/Agent
 tool surface. It CANNOT reach: Workflow-inline `agent({model})` (model lives inside the script
 string), `spawn_task` (no model param), `CronCreate`/scheduled-tasks/RemoteTrigger (no model
