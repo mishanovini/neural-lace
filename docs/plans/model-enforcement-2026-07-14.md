@@ -73,3 +73,11 @@ Reviewer ran on **opus** (fable hit its monthly spend limit mid-review — the `
 | Major | Major | gate self-test missed the real FP surface (display-name, fork, fence) | added 3 gate scenarios + 1 doctor scenario | gate 12/12; doctor sweep green |
 
 - **Confirmed-good by reviewer (no change):** input-shape parsing (matches sibling gates), fail-open scoped to internal limits only, honest residual documented honestly in doctrine+manifest+policy, live `~/.claude/agents` resolves (24 pinned).
+
+### Re-review (opus) — verdict PASS
+Fresh opus dispatch (SendMessage-resume reverted to the fable pin and re-hit the spend cap — nl-issue filed; a fresh dispatch with `model:opus` was required). Verdict **PASS**: all 5 findings CLOSED, **zero new false-negative** — confirmed by 10 hand-built probes against the live gate (display-name→UNPINNED blocks; `forked`/`fork-worker` block; `FORK` allows; built-in `Explore`/`general-purpose` no-model block; body-only `model:` blocks; fence-less file blocks; pinned display-name allows). Gate wired live at settings.json.template L319 (not theater). Two non-blocking Minor advisories, both actioned:
+- **Minor-1 (done, this session):** added a negative self-test — display-name resolving to an UNPINNED agent must BLOCK (regression-proofs the M1 branch). Gate self-test now **13/13**.
+- **Minor-2 (nl-issue re-scoped):** the evidence-bar evasion is STRUCTURAL — the fix must ASSERT `added_after` presence on every `blocking:true` entry (after backfilling the 31 legacy entries), not merely backfill. Corrected nl-issue filed.
+
+### Live + durable state
+- On the primary origin's master (the personal-account fetch remote); live-synced via install.sh; live gate verified (fork/display-name→allow, Explore-no-model/unknown→BLOCK). pt remote reconcile deferred (see Non-goals).
