@@ -44,6 +44,9 @@ RULE: explicit always; **Fable never reached by inherit/default — only explici
 ## Non-goals / follow-ups
 - The runtime layer-1 policy default for Workflow-inline `agent()` / spawn_task / cron (no repo control point) — doctrine convention + lint only; nl-issue if a runtime hook becomes available.
 - The evidence-before-fix commit gate (Directive 1) — SEPARATE plan `evidence-before-fix-gate-2026-07-14.md`.
+- **pt/master reconcile (deferred to a focused session).** pt/master is behind-14/ahead-5 of local; its 14 commits include a NEW `architecture-reviewer` agent whose `.md` is UNPINNED. When that merge happens it MUST pin `architecture-reviewer.md` `model: fable` (category: design) AND add it to `config/model-policy.json`, or `check_model_pins` REDs and the gate blocks its no-model spawns. Blocker: `git fetch github-pt` currently fails on access rights (work-account SSH).
+- **Built-in-type strictness = operator decision (default: strict).** The gate blocks no-model spawns of Claude Code built-ins (`Explore`/`Plan`/`general-purpose`/`claude`) — they have no `.md` to pin, remedy = pass `model:`. Kept strict per the directive; operator may relax (see NEEDS-YOU).
+- **Evidence-bar evasion-by-omission (nl-issue filed).** `check_new_gate_evidence_bar` skips manifest entries lacking `added_after`; 32 legacy blocking gates lack it → a future gate could evade the §10 bar. Needs a backfill + its own review.
 
 ## Closure Contract
 - **Commands that run:** `bash adapters/claude-code/hooks/model-pin-gate.sh --self-test`; `bash adapters/claude-code/scripts/harness-doctor.sh --check model-pins` (or the quick doctor); `jq -r '.agents' adapters/claude-code/config/model-policy.json`; `grep -L '^model:' adapters/claude-code/agents/*.md` (must be empty).
