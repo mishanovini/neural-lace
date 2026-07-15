@@ -2331,6 +2331,73 @@ check_master_drift_selftest() {
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
 
+# _agent_frontmatter_model <file> — echo the `model:` value from a file's
+# FIRST YAML frontmatter block (first ---…--- fence). Empty if none. Pure
+# bash + CRLF-safe (strips \r); fence-scoped so a body line starting `model:`
+# does NOT count (never grep/awk for fence detection — MSYS mangles \r).
+_agent_frontmatter_model() {
+  local f="$1" in_fm=0 line
+  [ -f "$f" ] || return 0
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [ "$line" = "---" ]; then
+      if [ "$in_fm" -eq 0 ]; then in_fm=1; continue; else break; fi
+    fi
+    if [ "$in_fm" -eq 1 ]; then
+      case "$line" in model:*) printf '%s' "${line#model:}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; return 0 ;; esac
+    fi
+  done < "$f"
+  return 0
+}
+
+# ------------------------------------------------------------
+# Check: model-pins -- every agents/*.md has ^model: and the value
+# matches a model_id key in config/model-policy.json (operator
+# directive 2026-07-14). Keeps agents pinned over time so the
+# model-pin-gate.sh PreToolUse backstop is never the only line of
+# defence against silent premium-tier (Fable) model-inherit.
+# RED per unpinned or unknown-model agent. WARN (skip) when repo
+# unresolved or no agents dir.
+# ------------------------------------------------------------
+check_model_pins() {
+  local live_home="$1" repo_root="$2"
+  [[ -z "$repo_root" ]] && { _warn "model-pins" "repo root unresolved -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local agents_dir="${repo_root}/adapters/claude-code/agents"
+  [[ -d "$agents_dir" ]] || { _warn "model-pins" "no agents directory at ${agents_dir} -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local policy="${repo_root}/adapters/claude-code/config/model-policy.json"
+  local valid_models=""
+  if [[ -f "$policy" ]] && command -v jq >/dev/null 2>&1; then
+    # tr -d '\r' FIRST: jq on Windows/git-bash emits CRLF, so each key
+    # carries a trailing \r that would poison the alternation (fable\r
+    # never matches fable). Strip CR before folding newlines to pipes.
+    valid_models="$(jq -r '.model_ids | keys[]' "$policy" 2>/dev/null | tr -d '\r' | tr '\n' '|')"
+    valid_models="${valid_models%|}"
+  fi
+
+  local agent_file model_val any_found=0
+  for agent_file in "$agents_dir"/*.md; do
+    [[ -f "$agent_file" ]] || continue
+    any_found=1
+    local basename_f
+    basename_f="$(basename "$agent_file")"
+    model_val="$(_agent_frontmatter_model "$agent_file")"
+    if [[ -z "$model_val" ]]; then
+      _red "model-pins" "${basename_f} has no model: frontmatter -- silent model-inherit risk (operator directive 2026-07-14)"
+      continue
+    fi
+    if [[ -n "$valid_models" ]]; then
+      if ! printf '%s' "$model_val" | grep -qE "^(${valid_models})$"; then
+        _red "model-pins" "${basename_f} pins model: ${model_val} which is not in model-policy.json model_ids (valid: ${valid_models//|/, })"
+      fi
+    fi
+  done
+
+  [[ "$any_found" -eq 0 ]] && _warn "model-pins" "no *.md files found in ${agents_dir}"
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
 check_selftest_sweep() {
   local live_home="$1"
   local hooks_dir="${live_home}/hooks"
@@ -2391,6 +2458,7 @@ run_quick_checks() {
   check_budget_worktrees_branches "$live_home" "$repo_root"
   check_new_gate_evidence_bar "$live_home" "$repo_root"
   check_master_drift_autocorrect "$live_home" "$repo_root"
+  check_model_pins "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -4109,6 +4177,62 @@ EOF
   else
     echo "self-test (o6-needs-you-headers-green-gate-not-triggered): SKIP (jq unavailable)" >&2
   fi
+
+  # ---- model-pins: RED fixture -- an agent with no model: frontmatter ----
+  D=$(_scenario_dir model-pins-red)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/adapters/claude-code/agents"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf -- '---\nname: pinned-ok\nmodel: fable\n---\nbody\n' > "$D/repo/adapters/claude-code/agents/pinned-ok.md"
+  printf -- '---\nname: unpinned-bad\ntools: Read\n---\nbody\n' > "$D/repo/adapters/claude-code/agents/unpinned-bad.md"
+  printf '{"model_ids":{"fable":"f","opus":"o","sonnet":"s","haiku":"h"}}\n' > "$D/repo/adapters/claude-code/config/model-policy.json"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "model-pins-red-missing" 1 "$RC" "RED model-pins" "$OUT"
+
+  # ---- model-pins: RED fixture -- model value not in policy ----
+  D=$(_scenario_dir model-pins-red-bad-val)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/adapters/claude-code/agents"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf -- '---\nname: bad-model\nmodel: gpt4\n---\nbody\n' > "$D/repo/adapters/claude-code/agents/bad-model.md"
+  printf '{"model_ids":{"fable":"f","opus":"o","sonnet":"s","haiku":"h"}}\n' > "$D/repo/adapters/claude-code/config/model-policy.json"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "model-pins-red-bad-value" 1 "$RC" "RED model-pins" "$OUT"
+
+  # ---- model-pins: GREEN fixture -- all agents pinned with valid models ----
+  D=$(_scenario_dir model-pins-green)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/adapters/claude-code/agents"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf -- '---\nname: agent-a\nmodel: fable\n---\nbody\n' > "$D/repo/adapters/claude-code/agents/agent-a.md"
+  printf -- '---\nname: agent-b\nmodel: sonnet\n---\nbody\n' > "$D/repo/adapters/claude-code/agents/agent-b.md"
+  printf '{"model_ids":{"fable":"f","opus":"o","sonnet":"s","haiku":"h"}}\n' > "$D/repo/adapters/claude-code/config/model-policy.json"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "RED model-pins"; then
+    echo "self-test (model-pins-green): FAIL (unexpected RED)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (model-pins-green): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- model-pins: RED fixture -- a body `model:` line is NOT frontmatter ----
+  D=$(_scenario_dir model-pins-red-body-line)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/adapters/claude-code/agents"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf -- '---\nname: body-only\ntools: Read\n---\nmodel: not-in-frontmatter\n' > "$D/repo/adapters/claude-code/agents/body-only.md"
+  printf '{"model_ids":{"fable":"f","opus":"o","sonnet":"s","haiku":"h"}}\n' > "$D/repo/adapters/claude-code/config/model-policy.json"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "model-pins-red-body-line" 1 "$RC" "RED model-pins" "$OUT"
 
   # ---- Check 8 (--full only): RED fixture — a stub hook's --self-test fails ----
   D=$(_scenario_dir c7-red)

@@ -17,6 +17,64 @@
 #   NEVER on a genuine missing-model, which is precisely the thing to block.
 set -uo pipefail
 
+# --- helpers: CRLF-safe, frontmatter-fence-scoped agent-def resolution -------
+# All three read ONLY the first YAML frontmatter block (first ---…--- fence),
+# strip trailing \r (Windows), and never use grep/sed/awk for fence detection
+# (MSYS silently mangles \r — see doctrine). A body line starting `model:` or
+# `name:` therefore does NOT count.
+
+# Print the frontmatter `name:` value (empty if none).
+_frontmatter_name() {
+  local f="$1" in_fm=0 line
+  [ -f "$f" ] || return 0
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [ "$line" = "---" ]; then
+      if [ "$in_fm" -eq 0 ]; then in_fm=1; continue; else break; fi
+    fi
+    if [ "$in_fm" -eq 1 ]; then
+      case "$line" in name:*) printf '%s' "${line#name:}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; return 0 ;; esac
+    fi
+  done < "$f"
+  return 0
+}
+
+# Return 0 iff the frontmatter carries a `model:` line.
+_frontmatter_pins_model() {
+  local f="$1" in_fm=0 line
+  [ -f "$f" ] || return 1
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [ "$line" = "---" ]; then
+      if [ "$in_fm" -eq 0 ]; then in_fm=1; continue; else break; fi
+    fi
+    if [ "$in_fm" -eq 1 ]; then
+      case "$line" in model:*) return 0 ;; esac
+    fi
+  done < "$f"
+  return 1
+}
+
+# Echo the agent-definition path for a subagent_type: filename slug FIRST, then
+# by display `name:` frontmatter (M1 — subagent_type may be the DISPLAY name,
+# e.g. "Domain Expert Tester", while the file is the slug). Empty if unresolved.
+_resolve_agent_def() {
+  local atype="$1" dir="$2" f name atype_lc
+  [ -n "$atype" ] || return 0
+  [ -d "$dir" ] || return 0
+  if [ -f "$dir/$atype.md" ]; then printf '%s' "$dir/$atype.md"; return 0; fi
+  atype_lc="$(printf '%s' "$atype" | tr '[:upper:]' '[:lower:]')"
+  for f in "$dir"/*.md; do
+    [ -f "$f" ] || continue
+    name="$(_frontmatter_name "$f")"
+    [ -n "$name" ] || continue
+    if [ "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" = "$atype_lc" ]; then
+      printf '%s' "$f"; return 0
+    fi
+  done
+  return 0
+}
+
 run_gate() {
   local input="${CLAUDE_TOOL_INPUT:-}"
   [ -z "$input" ] && input="$(cat 2>/dev/null || true)"
@@ -33,12 +91,20 @@ run_gate() {
   # Explicit model on the spawn → the goal; allow.
   if [ -n "$model" ] && [ "$model" != "null" ]; then return 0; fi
 
-  # No explicit model → the agent definition MUST pin one.
+  # 'fork' ALWAYS inherits the parent model by design and cannot be pinned or
+  # model-overridden (the Agent tool ignores `model` for fork). Blocking it
+  # would be an un-remediable false-positive → exempt.
+  local atype_lc; atype_lc="$(printf '%s' "$atype" | tr '[:upper:]' '[:lower:]')"
+  [ "$atype_lc" = "fork" ] && return 0
+
+  # No explicit model → the agent definition MUST pin one. Resolve by filename
+  # slug first, then by display name: frontmatter (M1); accept only a model
+  # pinned INSIDE the frontmatter fence (not a body line).
   local agents_dir def
   agents_dir="${MODEL_PIN_AGENTS_DIR:-$HOME/.claude/agents}"
   [ -d "$agents_dir" ] || agents_dir="$(dirname "$0")/../agents"
-  def="$agents_dir/$atype.md"
-  if [ -n "$atype" ] && [ -f "$def" ] && grep -qE '^model:' "$def" 2>/dev/null; then
+  def="$(_resolve_agent_def "$atype" "$agents_dir")"
+  if [ -n "$def" ] && _frontmatter_pins_model "$def"; then
     return 0                                         # frontmatter pins it → allow
   fi
 
@@ -69,6 +135,10 @@ run_self_test() {
   mkdir -p "$fix/agents"
   printf -- '---\nname: pinned-agent\nmodel: fable\n---\nbody\n' > "$fix/agents/pinned-agent.md"
   printf -- '---\nname: unpinned-agent\ntools: Read\n---\nbody\n' > "$fix/agents/unpinned-agent.md"
+  # M1: display name differs from filename slug (real FP surface).
+  printf -- '---\nname: Display Agent\nmodel: fable\n---\nbody\n' > "$fix/agents/display-agent.md"
+  # Fence-scoping: a body line starting `model:` must NOT count as pinned.
+  printf -- '---\nname: body-model-agent\ntools: Read\n---\nmodel: not-in-frontmatter\n' > "$fix/agents/body-model-agent.md"
 
   _rc() { # <expected-rc> <name> <json>
     local exp="$1" name="$2" json="$3" got
@@ -80,6 +150,9 @@ run_self_test() {
 
   _rc 0 "explicit model → allow"            '{"tool_name":"Agent","tool_input":{"subagent_type":"unpinned-agent","model":"sonnet"}}'
   _rc 0 "empty model + pinned agent → allow" '{"tool_name":"Agent","tool_input":{"subagent_type":"pinned-agent"}}'
+  _rc 0 "display-name subagent_type resolves via name: → allow" '{"tool_name":"Agent","tool_input":{"subagent_type":"Display Agent"}}'
+  _rc 0 "fork subagent_type → exempt (inherits parent by design)" '{"tool_name":"Agent","tool_input":{"subagent_type":"fork"}}'
+  _rc 2 "body model: line is NOT frontmatter → BLOCK" '{"tool_name":"Agent","tool_input":{"subagent_type":"body-model-agent"}}'
   _rc 2 "empty model + unpinned agent → BLOCK" '{"tool_name":"Agent","tool_input":{"subagent_type":"unpinned-agent"}}'
   _rc 2 "empty model + unknown type → BLOCK" '{"tool_name":"Agent","tool_input":{"subagent_type":"does-not-exist"}}'
   _rc 2 "empty model + no type → BLOCK"      '{"tool_name":"Task","tool_input":{"prompt":"x"}}'

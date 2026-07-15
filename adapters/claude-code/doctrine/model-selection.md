@@ -25,6 +25,10 @@ applies the fallback if the primary is unavailable).
 **How to spawn:** pass an explicit `model` on every Agent/Workflow spawn, OR rely on the
 target agent's pinned frontmatter. Cheap search → `explorer`/`research` (haiku). Real code
 build → `plan-phase-builder` (sonnet). Adversarial review → the reviewers (fable/opus).
+The gate resolves the agent def by filename slug OR by display `name:` (so a
+`subagent_type` of "Domain Expert Tester" still matches domain-expert-tester.md). The
+`fork` subagent_type is EXEMPT — it always inherits the parent model by design and takes
+no `model` override, so blocking it would be an un-remediable false-positive.
 
 **HONEST RESIDUAL (§10 — NOT hard-gated).** A PreToolUse hook can only inspect the Task/Agent
 tool surface. It CANNOT reach: Workflow-inline `agent({model})` (model lives inside the script

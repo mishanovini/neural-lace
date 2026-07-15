@@ -52,4 +52,21 @@ RULE: explicit always; **Fable never reached by inherit/default — only explici
 - **Done when:** the gate + frontmatter + doctor check are on master (both remotes), live-synced, self-tests green, harness-reviewer PASS/CONDITIONAL-PASS with findings fixed.
 
 ## Evidence Log
-- (filled at close)
+
+### Build (Tasks 1–4)
+- Tasks 1–3 built + merged to master @ `f97bfb8` (policy `fb762b9`, frontmatter `c5041eb`, gate+wiring `1d80926`). Gate self-test 9/9; all 24 agents pinned.
+- Task 4 (`check_model_pins` in harness-doctor.sh) built this session. Bug caught by its own GREEN self-test fixture: Windows `jq` emits policy keys with trailing `\r`, so every valid model was flagged invalid — fixed with `tr -d '\r'`. Doctor self-test 104/104.
+
+### harness-review (Task 5) — verdict REJECT → all findings resolved
+Reviewer ran on **opus** (fable hit its monthly spend limit mid-review — the `fable → opus` reviewer chain executing as designed). Verdict REJECT with 3 Critical/Major + 2 lesser. Resolutions:
+
+| # | Sev | Finding (PROVEN unless noted) | Resolution | Verified |
+|---|-----|-------------------------------|------------|----------|
+| C1 | Critical | manifest `model-pin` entry lacked `added_after`+3 §10 fields; `check_new_gate_evidence_bar` `continue`s past entries with no `added_after` → newest blocking gate structurally EVADED the §10 check | Added `added_after:2026-07` + golden_scenario + fp_expectation + retirement_condition to the manifest entry | node evidence-bar check: all fields present ✓ |
+| C1-gen | — | class: any new blocking gate can evade by omitting `added_after` (32 legacy blocking entries lack it → can't assert presence without a backfill) | Filed nl-issue (separate plan — needs backfill + own review); NOT bundled | nl-issue recorded |
+| C3 | Critical (HYPOTHESIZED) | claimed the Task/Agent `model` spawn-param may not exist → remedy #1 inert, built-in types deadlock | **REFUTED**: Agent-tool schema documents `model`; used in-session (reviewer dispatched with `model:opus`). Real edge kept: `fork` can't be pinned/overridden → **exempted** in the gate | gate self-test: fork → allow ✓ |
+| M1 | Major | gate resolved agent by filename only; `domain-expert-tester`/`ux-end-user-tester`/`audience-content-reviewer` are spawned by DISPLAY name → 3 pinned fable agents wrongly BLOCKED | gate now resolves by filename slug OR `name:` frontmatter (`_resolve_agent_def`) | gate self-test: "Display Agent" → allow ✓ |
+| Minor | Minor | `^model:` matched anywhere (body line = false pin) in both gate + doctor | both now fence-scoped to the first `---…---` block (pure-bash, CRLF-safe) | gate + doctor self-test: body-`model:` → BLOCK/RED ✓ |
+| Major | Major | gate self-test missed the real FP surface (display-name, fork, fence) | added 3 gate scenarios + 1 doctor scenario | gate 12/12; doctor sweep green |
+
+- **Confirmed-good by reviewer (no change):** input-shape parsing (matches sibling gates), fail-open scoped to internal limits only, honest residual documented honestly in doctrine+manifest+policy, live `~/.claude/agents` resolves (24 pinned).
