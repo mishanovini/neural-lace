@@ -4,7 +4,15 @@ Status: ACTIVE
 Mode: design
 acceptance-exempt: true (harness-internal; the maintainer is the user, self-tests are the demonstration)
 Created: 2026-07-15
-Owner: handed off — a fresh session executes this (see docs/handoffs/2026-07-15-followup-batch-handoff.md)
+Owner: handed off — a fresh session ORCHESTRATES this end-to-end (see docs/handoffs/2026-07-15-followup-batch-handoff.md)
+
+**Execution contract (non-negotiable — constitution §8 + orchestrator pattern):** the executing
+session is the ORCHESTRATOR. It dispatches worktree-isolated builder/reviewer subagents, integrates
+their commits, verifies on-disk evidence (never trusts a builder's claim), and does NOT do the
+build work itself. It runs until EVERY task is completed, reviewed, AND deployed (merged to BOTH
+masters + live-synced + verified live) — it never pauses to ask whether to continue; continuing to
+full completion is the only acceptable end state. The sole exception is a genuinely irreversible
+operator-only action, which it surfaces while continuing all parallel work.
 
 ## Problem
 
@@ -27,6 +35,24 @@ copy-into-a-fresh-session brief with full context is
   substrate; design it once.
 
 ## Tasks
+
+FOUNDATION — do FIRST; the batch builds on a unified, clean master. Full procedure:
+`docs/runbooks/master-reconcile-and-estate-cleanup.md`.
+
+- [ ] R1. **Reconcile the two masters to convergence (0/0).** Runbook Part A: fetch pt on the work
+  account, merge (only manifest.json + backlog.md conflict — resolve by UNION), pin the
+  architecture-reviewer that arrives from pt (`model: fable` + add to config/model-policy.json),
+  verify (self-tests + doctor), harness-review BEFORE push, push BOTH remotes. Verification: full —
+  `git rev-list --left-right --count pt/master...master` == `0 0` AND doctor green live.
+- [ ] R2. **Clean the branch/worktree estate.** Runbook Part B: remove only merged/stale UNOWNED
+  worktrees + branches; respect the ownership broadcast + concurrent-ownership gate (never force).
+  Verification: full — a report of what was removed vs kept, with the reason for each keep.
+- [ ] R3. **Never-diverge design fix.** Diagnose why the masters diverged and why the fork-sync
+  isn't running (PT-FORK-SYNC-NOT-RUNNING-01); DECIDE the design that makes recurrence structurally
+  impossible (decision-log entry, decide-and-go per §8); architecture-review it; build + review +
+  deploy. Verification: full.
+
+BATCH — after the foundation lands (unified master):
 
 - [ ] 1. **Design the review-record primitive** — a structured record (à la close-plan's
   `.evidence.json`) keyed to a change/commit, carrying a `harness-reviewer` PASS verdict. Decide the
@@ -52,9 +78,8 @@ copy-into-a-fresh-session brief with full context is
 
 ## Out of scope / separate tracks
 
-- pt/master reconcile mechanics (14 commits, pin `architecture-reviewer` design→fable) — estate hygiene,
-  its own session; blocker: `github-pt` SSH access. See the handoff §7.
-- Built-in-strictness operator decision (live default STRICT) — handoff §6.
+- Built-in-strictness operator decision (live default STRICT) — handoff §6. (Now folded into the
+  execution contract: the orchestrating session surfaces it but does not block; default stays STRICT.)
 - Status-page → Workstreams-UI adoption — `docs/design-notes/status-page-for-ws-ui-adoption.md`,
   backlog `WS-UI-STATUS-PAGE-ADOPTION-01`. Unrelated track.
 
@@ -66,7 +91,8 @@ copy-into-a-fresh-session brief with full context is
 - `docs/decisions/063-model-pin-gate-blocks-not-injects.md` — the block-not-inject decision.
 - `adapters/claude-code/doctrine/model-selection.md` — the "why block not inject" note.
 - `docs/backlog.md` — the ws-UI adoption row.
-- (build tasks 1–5 create their own files in the executing session.)
+- `docs/runbooks/master-reconcile-and-estate-cleanup.md` — the reusable reconcile+cleanup procedure (tasks R1–R2).
+- (build tasks R3 + 1–5 create their own files in the executing session.)
 
 ## Evidence Log
 - (filled by the executing session)
