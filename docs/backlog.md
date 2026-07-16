@@ -1026,3 +1026,23 @@ Anthropic-side" theme).
 **Trigger:** 49 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 7d old (threshold >7d).
 **Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
 **Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## REVIEW-RECORD-ANTI-FABRICATION-ANCHOR-01 — review-record verdict quotes are unverifiable (added 2026-07-16, harness-governance-batch task 2)
+
+**Severity:** P2 (a named, honestly-documented control gap — the review-before-deploy gate's own honesty_rationale + docs/design-notes/review-record-primitive.md's Writer section both point here).
+
+**Gap:** `write-review-record.sh capture --quote "<verbatim>"` requires the orchestrator to paste a substring of a reviewer agent's actual returned message, but nothing verifies the pasted quote came from a real reviewer invocation — zero `SubagentStop`/`TaskCompleted` capture hooks exist anywhere in this harness to retrieve the real transcript and diff it against the claimed quote. The record `docs/reviews/records/*.json` writes today is an audit + honesty anchor (a citable, timestamped, content-addressed artifact), NOT a deploy-path anti-fabrication control — the deploy gate (install.sh hard-block / session-start-auto-install.sh skip+warn) checks record EXISTENCE + content-match only and structurally cannot check whether the quoted verdict is genuine.
+
+**Fix (not yet built):** a capture hook on `SubagentStop` (or `TaskCompleted` for Task-tool dispatches) that writes the reviewer agent's actual final message to a location `write-review-record.sh` can read back and diff against the claimed `--quote` at capture time — turning "the orchestrator says the reviewer said X" into "the transcript captured at dispatch time says X." `plan-evidence-reviewer` is a plausible extension point (it already spot-checks evidence blocks the same way).
+
+**Cross-refs:** `docs/design-notes/review-record-primitive.md` (Writer + anti-fabrication residual section, Amendment C), `adapters/claude-code/manifest.json`'s `review-before-deploy` entry `honesty_rationale` field, `adapters/claude-code/doctrine/review-before-deploy.md`.
+
+## REVIEW-RECORD-SURFACE-EXCLUDES-CARRIERS-01 — install.sh + session-start-auto-install.sh themselves are not in their own gate's trigger surface (added 2026-07-16, harness-governance-batch task 2)
+
+**Severity:** P3 (self-referential blind spot, low near-term risk — noticed while implementing, not fixed unilaterally since it would expand the architecture-reviewed Amendment A surface without a second review pass).
+
+**Gap:** the review-before-deploy trigger surface (Amendment A) is `adapters/claude-code/{hooks/**/*.sh, scripts/**/*.sh, agents/*.md, config/**, manifest.json, settings.json.template, rules/**}` — `adapters/claude-code/install.sh` is a direct top-level file, not under `hooks/` or `scripts/`, so it is literally NOT in-surface. A future unreviewed edit to `install.sh` itself (e.g., someone weakening or removing the hard-block splice this task added) would not be caught by the gate it implements. `session-start-auto-install.sh` IS covered (it lives under `hooks/`).
+
+**Fix (not yet built, needs its own review):** either move `install.sh`'s logic into a `scripts/`-resident script `hooks`-style entrypoint calls, or add a narrow, explicitly-reviewed surface carve-out for `adapters/claude-code/install.sh` specifically (not a broad top-level glob — that would re-widen the surface well past what Amendment A scoped).
+
+**Cross-refs:** `docs/design-notes/review-record-primitive.md` Trigger surface section, `adapters/claude-code/install.sh`'s review-before-deploy splice.

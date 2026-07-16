@@ -90,6 +90,16 @@ docs/decisions/*
 !docs/decisions/queued-*.md
 docs/reviews/*
 !docs/reviews/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
+# docs/reviews/records/ (harness-governance-batch-2026-07-15, task 2): the
+# review-record primitive's records + content-keyed index. MUST be
+# committed (never gitignored) -- session-start-auto-install.sh reads
+# canonical content via `git show origin/master:<path>` on every machine,
+# so anything not committed+merged to master is invisible to the deploy
+# gate everywhere but the one machine that wrote it. Directory itself must
+# be un-ignored too (a bare `docs/reviews/*` match blocks git from ever
+# descending into it to apply a per-file re-include).
+!docs/reviews/records/
+!docs/reviews/records/*.json
 docs/sessions/*
 !docs/sessions/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
 

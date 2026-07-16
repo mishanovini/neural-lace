@@ -160,7 +160,8 @@ BATCH — after the foundation lands (unified master):
 - 2026-07-16 (task 2 build): `docs/harness-architecture.md` — regenerated.
 - 2026-07-16 (task 2 build): `docs/reviews/records/index.json` — bootstrap content-keyed index.
 - 2026-07-16 (task 2 build): `docs/reviews/records/grandfather-manifest.json` — cutover grandfather snapshot.
-- 2026-07-16 (task 2 build): `docs/reviews/records/2026-07-16-harness-change-review-batch1.json` — bootstrap exercise record for this batch's own changes.
+- 2026-07-16 (task 2 build): `docs/reviews/records/2026-07-16-harness-change-review-513a1f66.json` — bootstrap exercise record for this batch's own changes (written-by-orchestrator-pending-review placeholder).
+- 2026-07-16 (task 2 build): `.gitignore` — un-ignore `docs/reviews/records/` (a blanket `docs/reviews/*` rule was silently excluding the committed-by-design records dir).
 - 2026-07-16 (task 2 build): `docs/backlog.md` — anti-fabrication-anchor follow-up row.
 - 2026-07-16 (task 2 build): `adapters/claude-code/doctrine/INDEX.md` — regenerated (new manifest entry).
 - 2026-07-16 (task 2 build): `adapters/claude-code/doctrine/review-before-deploy.md` — new compact doctrine note for the gate.

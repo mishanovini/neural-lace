@@ -2510,11 +2510,23 @@ check_review_surface_cross_check() {
   fi
 
   local names name resolved
-  names=$(jq -r '.entries[] | .hooks[]?' "$manifest" 2>/dev/null | sort -u)
+  # tr -d '\r' FIRST: jq on Windows/git-bash emits CRLF, so each name would
+  # otherwise carry a trailing \r that can never match a real filename (the
+  # same gotcha check_model_pins already works around).
+  names=$(jq -r '.entries[] | .hooks[]?' "$manifest" 2>/dev/null | tr -d '\r' | sort -u)
   while IFS= read -r name; do
     [[ -z "$name" ]] && continue
     resolved=""
-    if [[ -f "${repo_root}/adapters/claude-code/hooks/${name}" ]]; then
+    if [[ "$name" == */* ]]; then
+      # Some pre-existing manifest entries carry an already-qualified
+      # sub-path (e.g. "hooks/lib/sessionstart-singleflight.sh") rather
+      # than a bare basename -- schema-invalid per hooks[]'s
+      # ^[A-Za-z0-9._-]+\.sh$ pattern (a separate, pre-existing RED this
+      # check does not duplicate), but still checkable here: resolve it
+      # directly relative to adapters/claude-code/ instead of re-prepending
+      # hooks/, hooks/lib/, or scripts/ in front of an already-qualified path.
+      [[ -f "${repo_root}/adapters/claude-code/${name}" ]] && resolved="$name"
+    elif [[ -f "${repo_root}/adapters/claude-code/hooks/${name}" ]]; then
       resolved="hooks/${name}"
     elif [[ -f "${repo_root}/adapters/claude-code/hooks/lib/${name}" ]]; then
       resolved="hooks/lib/${name}"

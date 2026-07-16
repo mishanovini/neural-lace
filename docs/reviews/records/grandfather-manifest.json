@@ -1,0 +1,859 @@
+{
+  "schema_version": 1,
+  "cutover_ref": "HEAD",
+  "generated_at": "2026-07-16T02:58:10Z",
+  "entries": [
+    {
+      "path": "adapters/claude-code/agents/architecture-reviewer.md",
+      "blob_sha": "501d60e8321e269ad7e30b11eaac5067fb37dc6b"
+    },
+    {
+      "path": "adapters/claude-code/agents/audience-content-reviewer.md",
+      "blob_sha": "7874dc2d5eeabd395537cc5d07f9f90e65c04c00"
+    },
+    {
+      "path": "adapters/claude-code/agents/claim-reviewer.md",
+      "blob_sha": "0b2c85c6693bab5236691cad9e23603040cc9ea7"
+    },
+    {
+      "path": "adapters/claude-code/agents/code-reviewer.md",
+      "blob_sha": "bfc40bd55041ff4ddc46965273f5dc112908665a"
+    },
+    {
+      "path": "adapters/claude-code/agents/comprehension-reviewer.md",
+      "blob_sha": "971197fc3d19d4c665d0d0373ab0aa3450d00c35"
+    },
+    {
+      "path": "adapters/claude-code/agents/documentation-auditor.md",
+      "blob_sha": "cdf1fc186636038ec6233a69cd47dbc204fbafc5"
+    },
+    {
+      "path": "adapters/claude-code/agents/domain-expert-tester.md",
+      "blob_sha": "aaa2ffa0b385d42a235f761292782aef411cea38"
+    },
+    {
+      "path": "adapters/claude-code/agents/end-user-advocate.md",
+      "blob_sha": "acb99eaff784aa427953b55d6e086b31d1739108"
+    },
+    {
+      "path": "adapters/claude-code/agents/enforcement-gap-analyzer.md",
+      "blob_sha": "84537c167271cf507fc32a254474f9b845affacd"
+    },
+    {
+      "path": "adapters/claude-code/agents/explorer.md",
+      "blob_sha": "959c45fd74adcedbe0e7183be1999e51b241ddef"
+    },
+    {
+      "path": "adapters/claude-code/agents/functionality-auditor.md",
+      "blob_sha": "bb3abbeb7b0495585442d9693fc908862544daa9"
+    },
+    {
+      "path": "adapters/claude-code/agents/functionality-verifier.md",
+      "blob_sha": "38c1225b3370360c1b13ce21dfe84281ad01ffe7"
+    },
+    {
+      "path": "adapters/claude-code/agents/harness-evaluator.md",
+      "blob_sha": "b956359cd7fd26c2b276338c8ad852d5335a7c9d"
+    },
+    {
+      "path": "adapters/claude-code/agents/harness-reviewer.md",
+      "blob_sha": "5ccc8583ca822aca6426c3632d3c6f4c691214bc"
+    },
+    {
+      "path": "adapters/claude-code/agents/plan-evidence-reviewer.md",
+      "blob_sha": "152ed7af78b7a8dae371d80e321ffa62dfd153b6"
+    },
+    {
+      "path": "adapters/claude-code/agents/plan-phase-builder.md",
+      "blob_sha": "16aeb168cf048e946536bf4f4775f22068e565a5"
+    },
+    {
+      "path": "adapters/claude-code/agents/prd-validity-reviewer.md",
+      "blob_sha": "8e3703c0e9d7a32361a0c8ae0158bfcb45028343"
+    },
+    {
+      "path": "adapters/claude-code/agents/research.md",
+      "blob_sha": "438ff4f63f092b027fecaf6aa6cc79ac3bcdef41"
+    },
+    {
+      "path": "adapters/claude-code/agents/security-reviewer.md",
+      "blob_sha": "1f492f35ebda904d4289f1f91c30c2897e4e8e1d"
+    },
+    {
+      "path": "adapters/claude-code/agents/systems-designer.md",
+      "blob_sha": "98b0130ac892385e1738dc93d8592d882ffe42ed"
+    },
+    {
+      "path": "adapters/claude-code/agents/task-verifier.md",
+      "blob_sha": "0afa82891a3adc4b400063916be181d2689ceea3"
+    },
+    {
+      "path": "adapters/claude-code/agents/test-writer.md",
+      "blob_sha": "f531b2c5c6626855e1aaf05c7f2250a0898e565d"
+    },
+    {
+      "path": "adapters/claude-code/agents/ux-designer.md",
+      "blob_sha": "7064e6a59012d58dade67a87a0046614f2b3d424"
+    },
+    {
+      "path": "adapters/claude-code/agents/ux-end-user-tester.md",
+      "blob_sha": "0041a6cc15e4a268c0a464d958b73700e4ea6ad6"
+    },
+    {
+      "path": "adapters/claude-code/agents/ux-ia-auditor.md",
+      "blob_sha": "1fd7343fe1a2f3dc9d0e638ca0b21cda0919ade8"
+    },
+    {
+      "path": "adapters/claude-code/config/model-policy.json",
+      "blob_sha": "5d63ea00022b47f06a922dffb096c41c68660361"
+    },
+    {
+      "path": "adapters/claude-code/config/register-path.example",
+      "blob_sha": "e156e546d1834801d8f33b51543365dfa3c6a07e"
+    },
+    {
+      "path": "adapters/claude-code/hooks/automation-mode-gate.sh",
+      "blob_sha": "cd92765d03829d43036991584e678b430112d586"
+    },
+    {
+      "path": "adapters/claude-code/hooks/backlog-plan-atomicity.sh",
+      "blob_sha": "95a61ca1f86e590cb53989c2043d0b5f4346c51f"
+    },
+    {
+      "path": "adapters/claude-code/hooks/bug-persistence-gate.sh",
+      "blob_sha": "64f55d57f47038c9335b6f18ef0474d0432b3ff9"
+    },
+    {
+      "path": "adapters/claude-code/hooks/check-harness-sync.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/claude-md-hygiene-gate.sh",
+      "blob_sha": "7eb12a88a18f10e0f71d87a945841e8350ad1d6b"
+    },
+    {
+      "path": "adapters/claude-code/hooks/completion-criteria-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/concurrent-ownership-gate.sh",
+      "blob_sha": "7b42123982ca0b304b5eb0ad8f1d118718ac31f5"
+    },
+    {
+      "path": "adapters/claude-code/hooks/context-watermark.sh",
+      "blob_sha": "364a3ed1d289677cdb96871587848d1eb323de65"
+    },
+    {
+      "path": "adapters/claude-code/hooks/continuation-enforcer.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/cross-repo-drift-postpush-gate.sh",
+      "blob_sha": "f664372c2005ecc9f94c29e6d5e275af34a01202"
+    },
+    {
+      "path": "adapters/claude-code/hooks/cross-repo-drift-warn.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/cross-repo-nl-touch-warn.sh",
+      "blob_sha": "8965d0e4a1234d17159fcfb812037348dcd99681"
+    },
+    {
+      "path": "adapters/claude-code/hooks/customer-facing-review-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/dag-review-waiver-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/decision-context-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/decision-context-pending-surfacer.sh",
+      "blob_sha": "88217525ccc1e4d7eb97f000f43322b727b811b0"
+    },
+    {
+      "path": "adapters/claude-code/hooks/decision-context-replay.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/decision-context-reply-emit.sh",
+      "blob_sha": "7cbec6155c6c7628b935e493846eed9a71443e43"
+    },
+    {
+      "path": "adapters/claude-code/hooks/decisions-index-gate.sh",
+      "blob_sha": "4ca6fb8177d3f6e9c8c2ba7da127be4ea9acc3d8"
+    },
+    {
+      "path": "adapters/claude-code/hooks/deferral-counter.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/definition-on-first-use-gate.sh",
+      "blob_sha": "38ebd962dd820e242bd72ab77e14cdd55444382e"
+    },
+    {
+      "path": "adapters/claude-code/hooks/discovery-surfacer.sh",
+      "blob_sha": "fcb8d8ec802f501cee4fd7dc18b6108f3043bad2"
+    },
+    {
+      "path": "adapters/claude-code/hooks/doc-gate.sh",
+      "blob_sha": "e17196356d4ea5c3bf120772f6c623d50ef26a12"
+    },
+    {
+      "path": "adapters/claude-code/hooks/docs-freshness-gate.sh",
+      "blob_sha": "7ce31f6496e4d25c3594e40212a71084f1b5345c"
+    },
+    {
+      "path": "adapters/claude-code/hooks/doctrine-jit.sh",
+      "blob_sha": "3f49813ec96f4c92185adab2831b126ad4c2da91"
+    },
+    {
+      "path": "adapters/claude-code/hooks/effort-policy-warn.sh",
+      "blob_sha": "c790f63ce4dc8fbf52144cfb2a54afaf4052c3c9"
+    },
+    {
+      "path": "adapters/claude-code/hooks/env-local-protection.sh",
+      "blob_sha": "0eaba1e472239a7d73c798e7e2552d296d458c9c"
+    },
+    {
+      "path": "adapters/claude-code/hooks/external-monitor-alert-surfacer.sh",
+      "blob_sha": "991e5967e1bc35a77bec9338c480a5415d868447"
+    },
+    {
+      "path": "adapters/claude-code/hooks/find-scan-warn.sh",
+      "blob_sha": "c8a86661d9161b26b8f254dd23ddd9e4cb7fa42d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/findings-ledger-schema-gate.sh",
+      "blob_sha": "4ac0135ae3d403f616711612b74a2b7669516bed"
+    },
+    {
+      "path": "adapters/claude-code/hooks/gh-account-autoswitch.sh",
+      "blob_sha": "6291649868884c48bc88730b3c602dfe8e8075f2"
+    },
+    {
+      "path": "adapters/claude-code/hooks/gh-account-blindness-hint.sh",
+      "blob_sha": "f8175ddec6ec5661c681b0538ecde20923eba31b"
+    },
+    {
+      "path": "adapters/claude-code/hooks/goal-coverage-on-stop.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/goal-extraction-on-prompt.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "9d5ca9fcf9491a157082bf0564ba9924c1cf40b3"
+    },
+    {
+      "path": "adapters/claude-code/hooks/harness-hygiene-scan.sh",
+      "blob_sha": "2d2c8b92ec1381421403872837bdbcedac003ac6"
+    },
+    {
+      "path": "adapters/claude-code/hooks/imperative-evidence-linker.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/extract-backtick-paths.sh",
+      "blob_sha": "d24a293febe12ce201d742d5cccf47afdaf48d87"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/gh-account-lib.sh",
+      "blob_sha": "3850c2a6aab7db12ab973c2e9c25cba9b8d022ad"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/hook-reentry-guard.sh",
+      "blob_sha": "883eaae050e4fd07b0127a19aadd29cf390cfb9f"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/interactive-session-lock.sh",
+      "blob_sha": "c9772f7b3e6d612c5af5e240b6fbbd7f26853829"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/merge-scan-lib.sh",
+      "blob_sha": "e1d06da63ed60677241c33a3fad87a7bf80ff16d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/nl-paths.sh",
+      "blob_sha": "707680db86734c318499b2afb41c7b83993debf1"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/observability-derive.sh",
+      "blob_sha": "b022259e7653cf68a0b24e9701c99bab4e2422bd"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/progress-log-lib.sh",
+      "blob_sha": "9e2e6849bbf10ef3e553b1d8716fcf8ab4d5c21b"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/review-record-gate-lib.sh",
+      "blob_sha": "33341d94311a2296463e6eb7b5755a92e016cbb4"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/session-heartbeat-lib.sh",
+      "blob_sha": "27045f8de968af623eeeb340f5f34f05b2f9a9fb"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/sessionstart-singleflight.sh",
+      "blob_sha": "49ae50478e624cffcd1753b75c07fe03be38543e"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/signal-ledger.sh",
+      "blob_sha": "4a92d352d93b8933dc99f257376972dd6a1d3bc3"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh",
+      "blob_sha": "6b443f61a2867ad60027c7e21530d736007675e9"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/waiver-purpose-clause.sh",
+      "blob_sha": "e123947f82072e51946ffceefe5e10e1b966c534"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/workstreams-state-resolver.sh",
+      "blob_sha": "79830a4a58a9b6d9f32abbea842ecb2bbcba8bff"
+    },
+    {
+      "path": "adapters/claude-code/hooks/local-edit-gate.sh",
+      "blob_sha": "0cc1ca314ec91a095d952c432acd092fefceff47"
+    },
+    {
+      "path": "adapters/claude-code/hooks/migration-claude-md-gate.sh",
+      "blob_sha": "f7dba1612d952591c6268e35117dc87862de0a8c"
+    },
+    {
+      "path": "adapters/claude-code/hooks/migration-naming-gate.sh",
+      "blob_sha": "eae69ed17a832227214ffc048a982dc5ccba049d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/model-pin-gate.sh",
+      "blob_sha": "a5c80516038470fb22be7406a7be3e63182e7214"
+    },
+    {
+      "path": "adapters/claude-code/hooks/narrate-and-wait-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/no-test-skip-gate.sh",
+      "blob_sha": "3927f1f98e459a34cf1c4de4d52a260f559a5c88"
+    },
+    {
+      "path": "adapters/claude-code/hooks/observed-errors-gate.sh",
+      "blob_sha": "1e86795dda96884f9680f485c48cb296b447e9e1"
+    },
+    {
+      "path": "adapters/claude-code/hooks/outcome-evidence-gate.sh",
+      "blob_sha": "02e25adf33dbe4dd3f34ff39841aa7aba22404eb"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-auto-closure.sh",
+      "blob_sha": "2eb27f60656afee83e008ef924ffcd15c5e60037"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-deletion-protection.sh",
+      "blob_sha": "9fe46e273bfd849ba34181314fe8ea12913b57fc"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-edit-validator.sh",
+      "blob_sha": "707865903bb4e28ca3de008d8b649f0eb89b4126"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-lifecycle.sh",
+      "blob_sha": "1891d26e6a066bae1ed331b4db9d19f4c44b31c3"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-reviewer.sh",
+      "blob_sha": "b136882ed1b80454b8eb80926e3141527495ccc2"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-status-archival-sweep.sh",
+      "blob_sha": "65d14d259ed6860d5df74b44ec58d26a54738b2b"
+    },
+    {
+      "path": "adapters/claude-code/hooks/post-tool-task-verifier-reminder.sh",
+      "blob_sha": "6f0eeaab2797b2b9a3a03af888b34a20037c4b71"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pr-health-snapshot-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pr-template-inline-gate.sh",
+      "blob_sha": "17d1754c54148ea86774452a16d9ccad90998420"
+    },
+    {
+      "path": "adapters/claude-code/hooks/prd-validity-gate.sh",
+      "blob_sha": "a6715f73b06a398e67db8f63effc2cfb11fc8098"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-commit-gate.sh",
+      "blob_sha": "7c705f3f69b844bddf104f1d075bfc54624b8dc6"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-commit-tdd-gate.sh",
+      "blob_sha": "fb915719f714b064a3b73f5c84a8a3bed2580666"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-compact-continuity.sh",
+      "blob_sha": "066c9f2878636e7727666cf547d5ae6b0b635252"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-push-divergence-check.sh",
+      "blob_sha": "6e62deb31ae2e7c6518540f54abc6da22b359ab4"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-push-scan.sh",
+      "blob_sha": "6797deca08b8e7944d05c10b40f40d84c0b871bd"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-push-test-gate.sh",
+      "blob_sha": "6a1880e2d1efce74af39336bb4529b82c87a3141"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-stop-verifier.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/principles-compliance-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/product-acceptance-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/propagation-trigger-router.sh",
+      "blob_sha": "6213ec76e18c89b74752da31431b5bf509975165"
+    },
+    {
+      "path": "adapters/claude-code/hooks/register-progress-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/register-surfacer.sh",
+      "blob_sha": "78e36f72a58e4d110113dd815b2205fbc192105c"
+    },
+    {
+      "path": "adapters/claude-code/hooks/review-finding-fix-gate.sh",
+      "blob_sha": "e92e16a7e29fc86808498ff2c588663b89911439"
+    },
+    {
+      "path": "adapters/claude-code/hooks/runtime-verification-executor.sh",
+      "blob_sha": "eeb28a99b0e82bdc0dddf08f2870a47db514a793"
+    },
+    {
+      "path": "adapters/claude-code/hooks/runtime-verification-reviewer.sh",
+      "blob_sha": "aa0ca151fe54a57d30f3ead5dd28c4339ea600c7"
+    },
+    {
+      "path": "adapters/claude-code/hooks/scope-enforcement-gate.sh",
+      "blob_sha": "ac9e97f808e879add7cc8cc88971be419a37de79"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-honesty-gate.sh",
+      "blob_sha": "3fef649e8683e1651cda4e397cf966b8ff1d37f7"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-auto-install.sh",
+      "blob_sha": "e023440269c101d87d6f60c79216e8d36649e39f"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-digest.sh",
+      "blob_sha": "757d77db3984f515194ad0be9bc9b846081c0fcd"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-discovery-cheatsheet.sh",
+      "blob_sha": "a529bc577227c72f612c906ff2ea84da68ec3105"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-git-freshness.sh",
+      "blob_sha": "a7f4b31b7c56946cd0dde419baa0c0c38a7e06ca"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-surfacer-pack.sh",
+      "blob_sha": "6918aaed6cd033b733552892b34fe918cdbce4b0"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-worktree-advisor.sh",
+      "blob_sha": "294fa57199fe2878d97f078c22f3ec1ebc75d64e"
+    },
+    {
+      "path": "adapters/claude-code/hooks/settings-divergence-detector.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/signal-ledger-flush.sh",
+      "blob_sha": "2e82fe84336cd9e868bfe7b4235cb1f391eb76aa"
+    },
+    {
+      "path": "adapters/claude-code/hooks/spawned-task-result-surfacer.sh",
+      "blob_sha": "c152522ade26a16ea3d39a8a6d7110431a8b4463"
+    },
+    {
+      "path": "adapters/claude-code/hooks/spec-freeze-gate.sh",
+      "blob_sha": "827067b3547ee28d44b9d9e03a56c1e7009ae2a9"
+    },
+    {
+      "path": "adapters/claude-code/hooks/stale-active-plan-surfacer.sh",
+      "blob_sha": "3d4ae6aaf4f051473eaad6cafaa9142a6827094c"
+    },
+    {
+      "path": "adapters/claude-code/hooks/stalled-work-surfacer.sh",
+      "blob_sha": "2f4868bd2e3d54f40d155578fdae4a4dab0b65ae"
+    },
+    {
+      "path": "adapters/claude-code/hooks/stop-verdict-dispatcher.sh",
+      "blob_sha": "ad8a474065540de95a27498fa1941366e7833f75"
+    },
+    {
+      "path": "adapters/claude-code/hooks/systems-design-gate.sh",
+      "blob_sha": "ee6b17494ffca0322ae2dfc61a03efa701d7d1a4"
+    },
+    {
+      "path": "adapters/claude-code/hooks/task-completed-evidence-gate.sh",
+      "blob_sha": "5e5d63230fb62a25f4fd129e66c9ef0b156d460b"
+    },
+    {
+      "path": "adapters/claude-code/hooks/task-created-validator.sh",
+      "blob_sha": "1fd18e621f3eb50411717584d7674d11bf546814"
+    },
+    {
+      "path": "adapters/claude-code/hooks/teammate-spawn-validator.sh",
+      "blob_sha": "90eb68b0a592edbc6acca655ccf78413d1b77e12"
+    },
+    {
+      "path": "adapters/claude-code/hooks/tool-call-budget.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/transcript-lie-detector.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/vaporware-volume-gate.sh",
+      "blob_sha": "1514ebab4e9989d96eb5e937dad6de6a671ff31c"
+    },
+    {
+      "path": "adapters/claude-code/hooks/wire-check-gate.sh",
+      "blob_sha": "57d192f77c224af519ef1d4b99c839f73fa230b0"
+    },
+    {
+      "path": "adapters/claude-code/hooks/work-integrity-gate.sh",
+      "blob_sha": "95b99a9c2695b66578b371f02762cfe92c17e6a1"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-emit-reconciler.sh",
+      "blob_sha": "5db04394e8062dac80beb4410eea35b3c8240959"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-emit.sh",
+      "blob_sha": "31b1d6180f19ca85a01773ff6ed4773d6433c6a1"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-extract-pending.sh",
+      "blob_sha": "b8016157bd647e3c23499a6d3d6903062e556950"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-orchestrator-queue.sh",
+      "blob_sha": "d6cd9e537abdcec4d5b1359581e70d61ba6e8015"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-read.sh",
+      "blob_sha": "b7becdd28dd2638658e05ab41dd4cde80ee630e9"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-state-gate.sh",
+      "blob_sha": "44ea2b13cb5585f24d31cef81de18ec4d3f4c796"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-stop-gate.sh",
+      "blob_sha": "be898bbae21c1813944737b2916773a5c627b7e1"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-stop-writer.sh",
+      "blob_sha": "7c49603a73678f00418d85af00d0cf089819d2ca"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-task-binding.sh",
+      "blob_sha": "7726a68a90b32020b18fd1d93f9f292794dca0b5"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-turn-emit.sh",
+      "blob_sha": "52dd29118c6586f993a4db8a664333fd9ec6aa11"
+    },
+    {
+      "path": "adapters/claude-code/hooks/worktree-teardown-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "e2d962cb257267fcac79fef61e877d12cf4bfde1"
+    },
+    {
+      "path": "adapters/claude-code/rules/constitution.md",
+      "blob_sha": "7d34b3f1271da9e5140a3f0ef581828ce4f1ee40"
+    },
+    {
+      "path": "adapters/claude-code/scripts/agent-heartbeat.sh",
+      "blob_sha": "a5c4eb3fc58a25f447aa6ac97001732a64f79f1a"
+    },
+    {
+      "path": "adapters/claude-code/scripts/analyze-propagation-audit-log.sh",
+      "blob_sha": "7aa78bfef345419ef258b57451000e0c98172123"
+    },
+    {
+      "path": "adapters/claude-code/scripts/ask-cockpit-checkin.sh",
+      "blob_sha": "3ef1e2d0718c99f72f2c23ea62df5a639f1ad276"
+    },
+    {
+      "path": "adapters/claude-code/scripts/ask-registry.sh",
+      "blob_sha": "42d49f98a48fd23652b1f942237db2f68fc543a6"
+    },
+    {
+      "path": "adapters/claude-code/scripts/audit-merged-prs.sh",
+      "blob_sha": "7bc9141b67e2cd580ccaac8f1dfd84ba3b8d37fc"
+    },
+    {
+      "path": "adapters/claude-code/scripts/broadcast-active-session.sh",
+      "blob_sha": "1023f2b9c6d95c9467b8860170e249d862b386d3"
+    },
+    {
+      "path": "adapters/claude-code/scripts/check-cross-repo-drift.sh",
+      "blob_sha": "e76b63405fe1e3e8ec23e4270c3cbf7a313e6190"
+    },
+    {
+      "path": "adapters/claude-code/scripts/close-plan.sh",
+      "blob_sha": "10e0e4ca610466e63a948fa627d1fe7b2c427203"
+    },
+    {
+      "path": "adapters/claude-code/scripts/coord-pull.sh",
+      "blob_sha": "043c9e77dafab6cbc745ec13f4abafd88c8e04c9"
+    },
+    {
+      "path": "adapters/claude-code/scripts/coord-push.sh",
+      "blob_sha": "8d74979df0dc1d9033d9054f7380d7720dcecf59"
+    },
+    {
+      "path": "adapters/claude-code/scripts/decision-queue.sh",
+      "blob_sha": "94f07d77f07354f4f9124ddd1e46b2c271aedba4"
+    },
+    {
+      "path": "adapters/claude-code/scripts/deploy-preflight.sh",
+      "blob_sha": "1b6ccc95dd7f6279d2c5d2f36e54727390ea8b00"
+    },
+    {
+      "path": "adapters/claude-code/scripts/dispatch-ci-watcher.sh",
+      "blob_sha": "369f965d6c81896742d1be011eede3fd5ba93b7c"
+    },
+    {
+      "path": "adapters/claude-code/scripts/dispatch-provenance.sh",
+      "blob_sha": "958d564f663889640e25a5dd52df1d4b550f1e2d"
+    },
+    {
+      "path": "adapters/claude-code/scripts/end-manifest.sh",
+      "blob_sha": "bcdd710fb1dc3900bfef869442bb571c050a0935"
+    },
+    {
+      "path": "adapters/claude-code/scripts/ensure-cockpit.sh",
+      "blob_sha": "58bf25b61d6fea724a7d2d96c23104d6ab9ef042"
+    },
+    {
+      "path": "adapters/claude-code/scripts/f4-retro.sh",
+      "blob_sha": "ebd11b1a50d4945aed8d5419ff6f7d5636913ff6"
+    },
+    {
+      "path": "adapters/claude-code/scripts/find-plan-file.sh",
+      "blob_sha": "604c3a31d46af492348730fc951977565c371cdb"
+    },
+    {
+      "path": "adapters/claude-code/scripts/gate-demotion.sh",
+      "blob_sha": "b7d8180a007b4b8bc57b17b0856b8eca983c3faa"
+    },
+    {
+      "path": "adapters/claude-code/scripts/gen-architecture-doc.sh",
+      "blob_sha": "0e08a57ed1a1e5ca56dab1560af164432627095a"
+    },
+    {
+      "path": "adapters/claude-code/scripts/git-no-verify-friction.sh",
+      "blob_sha": "aaffb79d7d90ca7f14bcaa253beeb17bb27dfb0a"
+    },
+    {
+      "path": "adapters/claude-code/scripts/harness-changelog.sh",
+      "blob_sha": "3ff8922877029e70154ac736ba3cc79923213f00"
+    },
+    {
+      "path": "adapters/claude-code/scripts/harness-eval-decision-queue-bridge.sh",
+      "blob_sha": "6252d0bb7c4b75c6e2b37b20e5ef68236e94f7ac"
+    },
+    {
+      "path": "adapters/claude-code/scripts/harness-evaluator-daily.sh",
+      "blob_sha": "98acf8558f5d665601a72e1280cb15c2a86032c8"
+    },
+    {
+      "path": "adapters/claude-code/scripts/harness-evaluator.sh",
+      "blob_sha": "df616a0950b2bb39047f7cc6ed6a5914e48ae4c5"
+    },
+    {
+      "path": "adapters/claude-code/scripts/harness-hygiene-sanitize.sh",
+      "blob_sha": "b81acc8f23aacb5b38acddcad814e6848a6ef7ec"
+    },
+    {
+      "path": "adapters/claude-code/scripts/harness-hygiene-weekly.sh",
+      "blob_sha": "cc913e0a2a4baf1339a7da590c1d1c9c0be33cca"
+    },
+    {
+      "path": "adapters/claude-code/scripts/harness-kpis.sh",
+      "blob_sha": "eb572a1ae1587d921b1a683b4eefd9cefa159919"
+    },
+    {
+      "path": "adapters/claude-code/scripts/health-tick.sh",
+      "blob_sha": "ad1804cbf751b4e8d2e725daba6d819116c5e8ff"
+    },
+    {
+      "path": "adapters/claude-code/scripts/install-git-friction.sh",
+      "blob_sha": "ad8eaf8f43cb2c02e178867dda0f20c9394c4e05"
+    },
+    {
+      "path": "adapters/claude-code/scripts/install-pr-template.sh",
+      "blob_sha": "b0f72ea547dcdb2246d78411905b17170bbcdb15"
+    },
+    {
+      "path": "adapters/claude-code/scripts/install-repo-hooks.sh",
+      "blob_sha": "4ccb6b3b47a442a5d22bb69e7ca233c32518b503"
+    },
+    {
+      "path": "adapters/claude-code/scripts/lib/imperative-classifier.sh",
+      "blob_sha": "13ebac3e9a90e1a1949e35e9457ac8848898db91"
+    },
+    {
+      "path": "adapters/claude-code/scripts/manifest-check.sh",
+      "blob_sha": "7a053608c5cd52f0230936017bdbf5ccb9af77a6"
+    },
+    {
+      "path": "adapters/claude-code/scripts/master-drift-autocorrect.sh",
+      "blob_sha": "fb3b79ffc566fc94066899472aeeefe1cc16e54a"
+    },
+    {
+      "path": "adapters/claude-code/scripts/measure-claim-reviewer-rate.sh",
+      "blob_sha": "8d236c59404a450af1711834d6fe52443aa746c0"
+    },
+    {
+      "path": "adapters/claude-code/scripts/mine-misha-asked.sh",
+      "blob_sha": "ba279670d17142ca24275344012051233759ffd6"
+    },
+    {
+      "path": "adapters/claude-code/scripts/needs-you.sh",
+      "blob_sha": "83d1c51e8af2c9496c1b050b1104e9183ace62d9"
+    },
+    {
+      "path": "adapters/claude-code/scripts/nl-issue.sh",
+      "blob_sha": "b84c6d8ddc0440138b5710dda09d1fd668460ace"
+    },
+    {
+      "path": "adapters/claude-code/scripts/nl.sh",
+      "blob_sha": "809ed470e1b0e5b1692cae0e0a2a25c24f012473"
+    },
+    {
+      "path": "adapters/claude-code/scripts/ntfy-push.sh",
+      "blob_sha": "531d037be488832b7a4028bb4818a2fce2bdf188"
+    },
+    {
+      "path": "adapters/claude-code/scripts/page-doc-accuracy-audit.sh",
+      "blob_sha": "d729784a94bd19c2ef7985491aeda9748a408623"
+    },
+    {
+      "path": "adapters/claude-code/scripts/pr-health-snapshot.sh",
+      "blob_sha": "aa44c8bdce79f90ba247e18c754c3e4936e22b12"
+    },
+    {
+      "path": "adapters/claude-code/scripts/progress-log.sh",
+      "blob_sha": "4e40f0d7a078d645666ff8e79c662ce648609dec"
+    },
+    {
+      "path": "adapters/claude-code/scripts/purge-selftest-pollution.sh",
+      "blob_sha": "5473e0bccdbc8ee04891dad50283ed88efb230b2"
+    },
+    {
+      "path": "adapters/claude-code/scripts/read-local-config.sh",
+      "blob_sha": "83c594d1173c4bcc73ec203b87476a14e51d77e7"
+    },
+    {
+      "path": "adapters/claude-code/scripts/record-test-pass.sh",
+      "blob_sha": "1a2b5c4e85b10c875397534cfdad90d53d147ad8"
+    },
+    {
+      "path": "adapters/claude-code/scripts/scheduled-task-health.sh",
+      "blob_sha": "00b38d5aa87263568e7c0d5eb9ebb2bc46658cf2"
+    },
+    {
+      "path": "adapters/claude-code/scripts/session-heartbeat.sh",
+      "blob_sha": "989f14732d9886e3ed08c6b0aea16a0e4cb7dd36"
+    },
+    {
+      "path": "adapters/claude-code/scripts/session-resumer.sh",
+      "blob_sha": "6479cbd5a1640e7bdb98757a1b50a7ae1dd3ca55"
+    },
+    {
+      "path": "adapters/claude-code/scripts/session-snapshot.sh",
+      "blob_sha": "7eb2bf5903ca94ea3d09b072537c67a39a2fe2cd"
+    },
+    {
+      "path": "adapters/claude-code/scripts/session-wrap.sh",
+      "blob_sha": "9c0c0147f40e3d00e8c5be232389a765423c545d"
+    },
+    {
+      "path": "adapters/claude-code/scripts/spawn-worktree.sh",
+      "blob_sha": "461f101f18928084b117082f1c3b7fbbd51af261"
+    },
+    {
+      "path": "adapters/claude-code/scripts/start-plan.sh",
+      "blob_sha": "94b97478d3ec665b4f0b2c954af1f127954f3c90"
+    },
+    {
+      "path": "adapters/claude-code/scripts/state-summary.sh",
+      "blob_sha": "bbd6320b494c4c45a5351a6fba7d4e6b57e32dd6"
+    },
+    {
+      "path": "adapters/claude-code/scripts/static-trace.sh",
+      "blob_sha": "5d4939b48588b75347b26c369b051d49e33f7733"
+    },
+    {
+      "path": "adapters/claude-code/scripts/sync-pt-to-personal.sh",
+      "blob_sha": "602258143c260d8ddce5f8219909f5c3dbdefec7"
+    },
+    {
+      "path": "adapters/claude-code/scripts/tool-call-counter.sh",
+      "blob_sha": "19670afcb655f40f2468ef259a210338a67921dc"
+    },
+    {
+      "path": "adapters/claude-code/scripts/waiver-density.sh",
+      "blob_sha": "a1a33477fed78207f0085e240a2cdc70a1d759fc"
+    },
+    {
+      "path": "adapters/claude-code/scripts/worktree-hygiene-sweep.sh",
+      "blob_sha": "d4132bef5bbc9ac50aefd19b657f5ec57af35aa2"
+    },
+    {
+      "path": "adapters/claude-code/scripts/worktree-prune.sh",
+      "blob_sha": "7a4ec863799f76d813bd0e38441abee524b749bf"
+    },
+    {
+      "path": "adapters/claude-code/scripts/write-evidence.sh",
+      "blob_sha": "e4518aa9d4d44b651d871642f01260c5e6c4466d"
+    },
+    {
+      "path": "adapters/claude-code/scripts/write-review-record.sh",
+      "blob_sha": "8211cf30327175f201ce0d40f5b8e3143eff98ff"
+    },
+    {
+      "path": "adapters/claude-code/settings.json.template",
+      "blob_sha": "4b919c2358ca600d088e964875d84d07d75a3b97"
+    }
+  ]
+}

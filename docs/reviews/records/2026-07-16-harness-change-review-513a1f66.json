@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260716-513a1f66",
+  "created_at": "2026-07-16T02:59:46Z",
+  "verdict": "PASS",
+  "reviewer": "none (orchestrator self-attestation -- pending real harness-reviewer dispatch)",
+  "reviewer_model": "n/a",
+  "plan_ref": "docs/plans/harness-governance-batch-2026-07-15.md#task-2",
+  "change_ref": {
+    "commit_sha": "7a451569094872c1acb85f04026fb01edb1c40fe",
+    "branch": "worktree-agent-afcf419ea529b1ca0"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "9d5ca9fcf9491a157082bf0564ba9924c1cf40b3"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/review-record-gate-lib.sh",
+      "blob_sha": "33341d94311a2296463e6eb7b5755a92e016cbb4"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-auto-install.sh",
+      "blob_sha": "e023440269c101d87d6f60c79216e8d36649e39f"
+    },
+    {
+      "path": "adapters/claude-code/install.sh",
+      "blob_sha": "eb287f344a9e87cbf5e1bb9bbe8f877ab503d234"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "e2d962cb257267fcac79fef61e877d12cf4bfde1"
+    },
+    {
+      "path": "adapters/claude-code/scripts/write-review-record.sh",
+      "blob_sha": "8211cf30327175f201ce0d40f5b8e3143eff98ff"
+    },
+    {
+      "path": "adapters/claude-code/doctrine/review-before-deploy.md",
+      "blob_sha": "a3f722808a53ffe831581f68fea7def125b41b8a"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PLACEHOLDER -- no real reviewer agent has evaluated this batch yet. This record exists to exercise the write-review-record.sh schema end-to-end and bootstrap docs/reviews/records/index.json with one real (non-fixture) entry; it is NOT a substitute for a genuine harness-reviewer PASS. The orchestrator MUST dispatch a real harness-reviewer run against commits f310e5e..HEAD and REPLACE this record with the actual verdict before this batch is treated as reviewed.",
+    "findings_summary": "N/A -- placeholder record, no findings collected (no real review has occurred)."
+  },
+  "written_by": "orchestrator-pending-review (placeholder, batch task 2 build session)",
+  "payload": {}
+}

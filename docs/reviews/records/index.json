@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "path": "adapters/claude-code/doctrine/review-before-deploy.md",
+      "blob_sha": "a3f722808a53ffe831581f68fea7def125b41b8a",
+      "record_id": "hcr-20260716-513a1f66",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "created_at": "2026-07-16T02:59:46Z"
+    },
+    {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "9d5ca9fcf9491a157082bf0564ba9924c1cf40b3",
+      "record_id": "hcr-20260716-513a1f66",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "created_at": "2026-07-16T02:59:46Z"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/review-record-gate-lib.sh",
+      "blob_sha": "33341d94311a2296463e6eb7b5755a92e016cbb4",
+      "record_id": "hcr-20260716-513a1f66",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "created_at": "2026-07-16T02:59:46Z"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-auto-install.sh",
+      "blob_sha": "e023440269c101d87d6f60c79216e8d36649e39f",
+      "record_id": "hcr-20260716-513a1f66",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "created_at": "2026-07-16T02:59:46Z"
+    },
+    {
+      "path": "adapters/claude-code/install.sh",
+      "blob_sha": "eb287f344a9e87cbf5e1bb9bbe8f877ab503d234",
+      "record_id": "hcr-20260716-513a1f66",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "created_at": "2026-07-16T02:59:46Z"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "e2d962cb257267fcac79fef61e877d12cf4bfde1",
+      "record_id": "hcr-20260716-513a1f66",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "created_at": "2026-07-16T02:59:46Z"
+    },
+    {
+      "path": "adapters/claude-code/scripts/write-review-record.sh",
+      "blob_sha": "8211cf30327175f201ce0d40f5b8e3143eff98ff",
+      "record_id": "hcr-20260716-513a1f66",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "created_at": "2026-07-16T02:59:46Z"
+    }
+  ]
+}
