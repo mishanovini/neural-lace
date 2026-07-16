@@ -25,18 +25,20 @@ const UNIT_MAP = {
   'env-local-protection': 'command-safety',
   'deploy-automation-mode': 'command-safety',
   // commit-boundary unit: gates firing only on git-commit-shaped Bash commands (#11;
-  // vaporware-volume added at D.5 — as-built amendment, CI relocation follows E.4;
-  // evidence-before-fix added at harness-governance-batch-2026-07-15 task 3 — it
-  // fires on the SAME git-commit-shaped-command detection as the rest of this
-  // unit, wired as its own top-level PreToolUse entry only because it needs the
-  // CURRENT commit message, which the nested pre-commit-gate.sh chain cannot see
-  // — see evidence-before-fix-gate.sh's header comment for why)
+  // vaporware-volume added at D.5 — as-built amendment, CI relocation follows E.4).
+  // NOTE: evidence-before-fix (harness-governance-batch-2026-07-15 task 3) was
+  // briefly consolidated here, then REMOVED (2026-07-16 harness-review REJECT
+  // remediation) when the gate was converted to warn-mode (blocking:false) --
+  // the filter below already excludes non-blocking entries, so a UNIT_MAP row
+  // for a non-blocking id is dead weight, not merely redundant. If it is ever
+  // promoted back to blocking:true (see its manifest entry's PROMOTION
+  // CONDITION), re-add 'evidence-before-fix': 'commit-boundary' here at the
+  // same time -- it is definitionally the same class as this unit's members.
   'pre-commit-chain': 'commit-boundary',
   'findings-ledger': 'commit-boundary',
   'plan-deletion-protection': 'commit-boundary',
   'claude-md-hygiene': 'commit-boundary',
   'vaporware-volume': 'commit-boundary',
-  'evidence-before-fix': 'commit-boundary',
   // agent-teams unit: spawn/task validation (#12; workstreams-state-gate is the
   // same spawn-validation class — counted here, formal fold deferred to F-wave)
   'agent-teams': 'agent-teams',

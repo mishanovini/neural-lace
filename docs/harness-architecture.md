@@ -17,7 +17,7 @@ Tier-4 exhaustive machine-derived inventory.
 |---|---|
 | Total manifest entries | 126 |
 | Unique hook scripts | 108 |
-| Blocking gates (`blocking: true`) | 36 |
+| Blocking gates (`blocking: true`) | 35 |
 
 ## Hooks by event
 
@@ -42,7 +42,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreToolUse | design-mode-planning | gate | no | systems-design-gate.sh |
 | PreToolUse | doc-gate | gate | no | doc-gate.sh |
 | PreToolUse | env-local-protection | gate | yes | env-local-protection.sh |
-| PreToolUse | evidence-before-fix | gate | yes | evidence-before-fix-gate.sh |
+| PreToolUse | evidence-before-fix | gate | no | evidence-before-fix-gate.sh |
 | PreToolUse | find-scan-warn | surfacer | no | find-scan-warn.sh |
 | PreToolUse | findings-ledger | gate | yes | findings-ledger-schema-gate.sh |
 | PreToolUse | gh-account-autoswitch | surfacer | no | gh-account-autoswitch.sh |
@@ -124,7 +124,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
-| gate | 36 | 12 |
+| gate | 35 | 13 |
 | writer | 0 | 28 |
 | surfacer | 0 | 20 |
 | pattern | 0 | 27 |
@@ -251,7 +251,7 @@ Entries with no doctrine_file (`-`): 30.
 | ensure-cockpit | writer | — | no | none | scripts/ensure-cockpit.sh — best-effort SessionStart ensure for the observability cockpit (workstreams-ui node server, port 7733); called by a one-line splice in session-start-digest.sh run_digest() (mirrors the session-heartbeat splice convention), not event-wired as its own settings.json entry. Guards: operator kill-switch (~/.claude/local/cockpit-disabled or ENSURE_COCKPIT_DISABLE=1), Windows-only, HARNESS_SELFTEST stub, machine-wide nl_repo_root resolution normalized to the MAIN checkout (never a worktree) with session-cwd fallback, nohup+disown non-blocking dispatch, tolerate-absent (always exit 0). Replaces the ConversationTreeUI-AutoStart logon scheduled task (retired at integration 2026-07-09). |
 | env-local-protection | gate | PreToolUse | yes | pretool | — |
 | estate-coordination | pattern | — | no | none | docs+skill unit only (skills/coordinate-estate/SKILL.md + doctrine/estate-coordination.md); no hook, no wiring; jit_triggers fire doctrine-jit.sh's paths-match on any edit whose file_path contains SCRATCHPAD.md (keywords reserved for v2 per schema, not yet matched). |
-| evidence-before-fix | gate | PreToolUse | yes | pretool | — |
+| evidence-before-fix | gate | PreToolUse | no | pretool | WARN-MODE-PENDING-CALIBRATION (harness-review REJECT remediation, 2026-07-16): evidence-before-fix-gate.sh ALWAYS exits 0 -- it never blocks a commit. On a triggering fix(/fix: commit lacking evidence it prints the full teaching banner (stderr + hookSpecificOutput.additionalContext) but the commit proceeds regardless. blocking:false reflects ACTUAL current behavior, not a designed end-state kept hidden behind a default -- unlike claude-md-hygiene's entry (blocking:true with a warn-mode default via env var), this entry is honest about the runtime being warn-only right now. PROMOTION CONDITION (tracked docs/backlog.md EVIDENCE-BEFORE-FIX-PROMOTION-01): promote to blocking:true only after a measured calibration period (method: the reviewer's own sweep, `git log -N --format=%s` bucketed into {incident-shaped, review/audit-remediation, refactor/typo, other}) shows the over-fire class (non-incident maintenance/review-remediation fixes, measured ~13-15% of this repo's fix(/fix: commits at the 2026-07-16 baseline) is EITHER separable by a trigger refinement OR acceptably rare once the parser-reach fixes below are reflected in a fresh measurement. |
 | external-monitor-alerts | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | find-scan-warn | surfacer | PreToolUse | no | pretool | — |
 | findings-ledger | gate | PreToolUse | yes | pretool | — |

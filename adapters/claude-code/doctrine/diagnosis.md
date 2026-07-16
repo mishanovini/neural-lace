@@ -1,9 +1,14 @@
 # Diagnosis before fixing — compact
 > Enforcement: Pattern (this rule) — self-applied. Mechanism (the commit gate
-> below) — hook-enforced. Full: doctrine/diagnosis-full.md
+> below) — hook-enforced, currently WARN-MODE (teaches, never blocks; see
+> below and doctrine/evidence-before-fix.md's PROMOTION CONDITION). Full:
+> doctrine/diagnosis-full.md
 > Applies: any investigation, debug, or root-cause session — data/behavior/
 > state defects included, not just crashes (broadened 2026-07-16, batch task
-> 3; see below).
+> 3; see below). NOTE (scope mismatch, named not hidden): the RULE below is
+> scoped to observed defects; the gate's TRIGGER (any fix(/fix: commit) is
+> broader than that by construction — see doctrine/evidence-before-fix.md for
+> why, and why that gap is exactly what warn-mode is calibrating.
 
 **First tool call on any production-failure investigation: pull runtime logs.**
 Vercel logs, Sentry/Datadog, Supabase logs, webhook delivery logs, job-runner
@@ -34,17 +39,25 @@ proceed without it, the fix's blast radius must be bounded to fail-safe
 (fail-open / feature-flagged / shadow-first) precisely because the cause is
 unconfirmed — say so explicitly in the fix.
 
-**Mechanism, not just Pattern: the evidence-before-fix commit gate.** Because
-"read this rule before you commit" is a Pattern that a long, frustrating
-investigation reliably erodes under shipping-momentum pressure, a `fix(...)`/
-`fix:` commit is gated: it must carry either (a) a `## Root cause (evidenced)`
-message section with a PROVEN-tagged, citation-backed line (an ONLY-INFERRED
-section is mechanically rejected), or (b) a reference to a `kind:
-fix-root-cause` review record (verdict PASS, covering a staged file, tagged
-PROVEN or INFERRED-with-bounded-blast-radius). See
-`evidence-before-fix-gate.sh` / `doctrine/evidence-before-fix.md` for the
-full mechanism, its structured-waiver escape hatch, and the `fix-trivial:`
-lighter path for genuinely trivial fixes.
+**Mechanism, not just Pattern (currently warn-mode, not yet blocking): the
+evidence-before-fix commit gate.** Because "read this rule before you commit"
+is a Pattern that a long, frustrating investigation reliably erodes under
+shipping-momentum pressure, a `fix(...)`/`fix:` commit is checked: it should
+carry either (a) a `## Root cause (evidenced)` message section with a
+PROVEN-tagged, citation-backed line (an ONLY-INFERRED section does not
+satisfy this), or (b) a reference to a `kind: fix-root-cause` review record
+(verdict PASS, covering a staged file, tagged PROVEN or INFERRED-with-
+bounded-blast-radius). A commit missing both gets a teaching banner, not a
+block — a 2026-07-16 harness-review measured this repo's own fix(/fix:
+commits at ~13-15% of total history, dominated by harness-maintenance /
+review-remediation fixes that don't fit the observed-incident shape this
+rule describes (see doctrine/evidence-before-fix.md's scope-mismatch note),
+so blocking on the current trigger would have bricked ordinary maintenance
+work. See `evidence-before-fix-gate.sh` / `doctrine/evidence-before-fix.md`
+for the full mechanism, its structured-waiver escape hatch, the
+`fix-trivial:` lighter path for changes touching no runtime/product code,
+and the PROMOTION CONDITION tracked at `docs/backlog.md`
+`EVIDENCE-BEFORE-FIX-PROMOTION-01`.
 
 **Before that, grep the failure-mode catalog first.** `grep -in '<symptom
 keywords>' docs/failure-modes.md`. A `Discriminator` match means you've found a
