@@ -199,7 +199,13 @@ for (const e of manifest.entries || []) {
   }
   if (!Array.isArray(e.hooks)) problems.push(`${id}: hooks must be an array`);
   else for (const h of e.hooks) {
-    if (typeof h !== "string" || !/^[A-Za-z0-9._-]+\.sh$/.test(h)) problems.push(`${id}: hook '"'"'${h}'"'"' is not a .sh basename`);
+    // A plain basename is a wired hook; "lib/<name>.sh" is a SOURCED LIBRARY
+    // under hooks/lib/ — never wired directly, referenced by other hooks via
+    // `source`. Accept both forms; do not loosen anything else (no other
+    // subdir, no nested lib/ path).
+    const isBasename = /^[A-Za-z0-9._-]+\.sh$/.test(h);
+    const isLibRef = /^lib\/[A-Za-z0-9._-]+\.sh$/.test(h);
+    if (typeof h !== "string" || !(isBasename || isLibRef)) problems.push(`${id}: hook '"'"'${h}'"'"' is not a .sh basename or lib/<name>.sh reference`);
   }
   if (!Array.isArray(e.events)) problems.push(`${id}: events must be an array`);
   else for (const ev of e.events) {
@@ -412,7 +418,14 @@ run_check() {
     return 1
   fi
 
-  # (b) hooks -> disk
+  # (b) hooks -> disk. A "lib/<name>.sh" entry (sourced library under
+  # hooks/lib/, never wired directly) resolves correctly through this SAME
+  # generic join — hooks_dir + "/" + "lib/<name>.sh" IS hooks/lib/<name>.sh,
+  # with no double "hooks/hooks/" prefix, precisely because the manifest
+  # value is stored relative to hooks_dir (like a plain basename) rather
+  # than relative to adapters/claude-code/ root. No special-case code is
+  # needed here; the prior bug was a bad manifest VALUE ("hooks/lib/..."
+  # duplicating the hooks_dir segment), not this join formula.
   local manifest_hooks
   manifest_hooks="$(printf '%s\n' "$stream" | awk -F'|' '$1=="H"{print $3}' | LC_ALL=C sort -u)"
   while IFS= read -r h; do
@@ -432,7 +445,13 @@ run_check() {
     fi
   done
 
-  # (c) wired_template:true entries' hooks all present in the template
+  # (c) wired_template:true entries' hooks all present in the template.
+  # EXEMPTION: a "lib/<name>.sh" hook entry is a SOURCED library, never a
+  # wired hook — other hooks `source` it directly, it never appears as its
+  # own settings.json.template command entry. A wired_template:true entry
+  # can legitimately mix a wired basename (checked normally) with a
+  # lib/-prefixed reference (skipped here); this does not loosen the check
+  # for any plain-basename hook.
   if [[ -f "$template" ]]; then
     local wired_ids id
     wired_ids="$(printf '%s\n' "$stream" | awk -F'|' '$1=="E" && $5=="1"{print $2}')"
@@ -440,6 +459,9 @@ run_check() {
       [[ -z "$id" ]] && continue
       while IFS= read -r h; do
         [[ -z "$h" ]] && continue
+        case "$h" in
+          lib/*) continue ;;
+        esac
         if ! grep -qF "$h" "$template"; then
           _red "wired-template" "entry '${id}' claims wired_template true but hook '${h}' does not appear in settings.json.template"
         fi
@@ -788,6 +810,50 @@ EOF
     > "$D/adapters/claude-code/manifest.json"
   OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
   _assert "s10d-new-gate-evidence-bar-grandfather-leak-red" 1 "$RC" "RED new-gate-evidence-bar: not-grandfathered.*missing" "$OUT"
+
+  # S11 — lib/<name>.sh sourced-library reference (fixup, session-start-auto-
+  # install false-RED fix): a-gate's hooks[] also lists "lib/mylib.sh", which
+  # exists on disk at hooks/lib/mylib.sh and is NOT in the template (sourced,
+  # never wired). All three checks (schema, hooks-exist, wired-template) must
+  # pass: GREEN.
+  D="$TMPROOT/s11"; _fixture "$D"
+  mkdir -p "$D/adapters/claude-code/hooks/lib"
+  printf '#!/bin/bash\n# sourced library, never wired directly\n' > "$D/adapters/claude-code/hooks/lib/mylib.sh"
+  _valid_manifest | sed 's/"hooks": \["a-gate\.sh"\]/"hooks": ["a-gate.sh", "lib\/mylib.sh"]/' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  _assert "s11-lib-reference-green" 0 "$RC" "GREEN" "$OUT"
+
+  # S12 — a lib/<name>.sh reference to a library that does NOT exist on
+  # disk: the existence check still bites (RED hooks-exist), proving the
+  # exemption only waives schema-shape and wired-template, never existence.
+  D="$TMPROOT/s12"; _fixture "$D"
+  _valid_manifest | sed 's/"hooks": \["a-gate\.sh"\]/"hooks": ["a-gate.sh", "lib\/missing-lib.sh"]/' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  _assert "s12-lib-reference-missing-red" 1 "$RC" "RED hooks-exist.*lib/missing-lib\.sh" "$OUT"
+
+  # S13 — no loosening leak: a manifest that ALSO carries a valid lib/
+  # reference (a-gate + lib/mylib.sh, same as S11) but where a DIFFERENT
+  # plain-basename entry (b-pending) claims wired_template:true while its
+  # hook is absent from the template. Must still RED on b-pending — proves
+  # the lib/ exemption is scoped to lib/-prefixed entries only and does not
+  # leak into loosening the plain-basename check elsewhere in the same
+  # manifest. The RED output must name b-pending, never lib/mylib.sh.
+  D="$TMPROOT/s13"; _fixture "$D"
+  mkdir -p "$D/adapters/claude-code/hooks/lib"
+  printf '#!/bin/bash\n# sourced library, never wired directly\n' > "$D/adapters/claude-code/hooks/lib/mylib.sh"
+  _valid_manifest | sed 's/"hooks": \["a-gate\.sh"\]/"hooks": ["a-gate.sh", "lib\/mylib.sh"]/; s/"wired_template": false/"wired_template": true/' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  _assert "s13-lib-exemption-no-leak-red" 1 "$RC" "RED wired-template: entry 'b-pending'" "$OUT"
+  if printf '%s' "$OUT" | grep -qE "wired-template.*lib/mylib\.sh"; then
+    echo "self-test (s13-lib-exemption-no-false-red): FAIL (the exempt lib/ reference RED'd — exemption leaked)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (s13-lib-exemption-no-false-red): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
 
   echo "" >&2
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed" >&2

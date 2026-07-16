@@ -64,9 +64,9 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^[A-Za-z0-9._-]+\\.sh$"
+              "pattern": "^([A-Za-z0-9._-]+\\.sh|lib/[A-Za-z0-9._-]+\\.sh)$"
             },
-            "description": "Basenames of hook scripts under adapters/claude-code/hooks/ implementing this unit. Empty for pattern/convention units. Each disk hook must appear in exactly one entry (coverage checked both ways by manifest-check.sh)."
+            "description": "Basenames of hook scripts under adapters/claude-code/hooks/ implementing this unit, OR a `lib/<name>.sh` reference to a SOURCED LIBRARY under hooks/lib/ (never wired directly — other hooks `source` it; exempt from the wired_template coverage check). Empty for pattern/convention units. Each disk hook must appear in exactly one entry (coverage checked both ways by manifest-check.sh)."
           },
           "events": {
             "type": "array",

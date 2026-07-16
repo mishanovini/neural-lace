@@ -165,6 +165,15 @@ BATCH — after the foundation lands (unified master):
 - 2026-07-16 (task 2 build): `docs/backlog.md` — anti-fabrication-anchor follow-up row.
 - 2026-07-16 (task 2 build): `adapters/claude-code/doctrine/INDEX.md` — regenerated (new manifest entry).
 - 2026-07-16 (task 2 build): `adapters/claude-code/doctrine/review-before-deploy.md` — new compact doctrine note for the gate.
+- 2026-07-16 (task 5 residual, coordinator-directed): `adapters/claude-code/scripts/manifest-check.sh`, `adapters/claude-code/schemas/manifest.schema.json`, `adapters/claude-code/manifest.json`, `docs/harness-architecture.md` — a second, later touch of the same four files.
+  Fixed 3 pre-existing manifest-check.sh false REDs on the session-start-auto-install entry's
+  hooks/lib/sessionstart-singleflight.sh reference (a sourced library under hooks/lib/, never
+  wired, mis-handled by the schema/existence/wired-template checks as if it were a plain wired
+  hook). Checker now recognizes a lib/name.sh hooks[] entry as a sourced-library reference
+  (schema accepts it, existence check resolves it without a double hooks/hooks/ prefix,
+  wired-template check exempts it); corrected the one entry's redundant hooks/lib/... value to
+  the canonical lib/... form to match; regenerated the architecture doc for the resulting
+  table-row diff. 4 new self-tests (S11/S12/S13 + inline no-leak assertion).
 
 ## Evidence Log
 
