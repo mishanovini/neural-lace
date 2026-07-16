@@ -153,6 +153,11 @@ BATCH — after the foundation lands (unified master):
 
 - 2026-07-16 (task 2 build, review-before-deploy gate): `adapters/claude-code/hooks/lib/review-record-gate-lib.sh` — shared trigger-surface + coverage lib.
 - 2026-07-16 (task 2 build): `adapters/claude-code/scripts/write-review-record.sh` — orchestrator-invoked record writer.
+- 2026-07-16 (task 3 build, evidence-before-fix commit gate): `adapters/claude-code/hooks/evidence-before-fix-gate.sh` — the new gate.
+- 2026-07-16 (task 3 build): `adapters/claude-code/doctrine/evidence-before-fix.md` — the new compact doctrine.
+- 2026-07-16 (task 3 build): `adapters/claude-code/doctrine/diagnosis.md` — broadened beyond prod-crashes to data/behavior bugs + the gate pointer.
+- 2026-07-16 (task 3 build): `adapters/claude-code/settings.json.template` — wires the new PreToolUse Bash hook.
+- 2026-07-16 (task 3 build): `adapters/claude-code/scripts/blocking-budget-check.js` — consolidated the new gate into the existing "commit-boundary" UNIT_MAP entry to keep the blocking session-event budget at 12/12 (adding it as its own unit would have pushed to 13/12 RED).
 - 2026-07-16 (task 2 build): `adapters/claude-code/install.sh` — hard-block wiring.
 - 2026-07-16 (task 2 build): `adapters/claude-code/hooks/session-start-auto-install.sh` — fail-open skip+warn wiring.
 - 2026-07-16 (task 2 build): `adapters/claude-code/manifest.json` — new `review-before-deploy` entry.

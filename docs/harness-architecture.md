@@ -42,6 +42,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreToolUse | design-mode-planning | gate | no | systems-design-gate.sh |
 | PreToolUse | doc-gate | gate | no | doc-gate.sh |
 | PreToolUse | env-local-protection | gate | yes | env-local-protection.sh |
+| PreToolUse | evidence-before-fix | gate | yes | evidence-before-fix-gate.sh |
 | PreToolUse | find-scan-warn | surfacer | no | find-scan-warn.sh |
 | PreToolUse | findings-ledger | gate | yes | findings-ledger-schema-gate.sh |
 | PreToolUse | gh-account-autoswitch | surfacer | no | gh-account-autoswitch.sh |
@@ -171,6 +172,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/diagnosis.md | 1 (diagnosis) |
 | doctrine/discovery-protocol.md | 1 (discovery-protocol) |
 | doctrine/estate-coordination.md | 1 (estate-coordination) |
+| doctrine/evidence-before-fix.md | 1 (evidence-before-fix) |
 | doctrine/findings-ledger.md | 1 (findings-ledger) |
 | doctrine/friction-reflexion.md | 1 (friction-reflexion) |
 | doctrine/frontend-conventions.md | 1 (frontend-conventions) |
@@ -249,6 +251,7 @@ Entries with no doctrine_file (`-`): 30.
 | ensure-cockpit | writer | — | no | none | scripts/ensure-cockpit.sh — best-effort SessionStart ensure for the observability cockpit (workstreams-ui node server, port 7733); called by a one-line splice in session-start-digest.sh run_digest() (mirrors the session-heartbeat splice convention), not event-wired as its own settings.json entry. Guards: operator kill-switch (~/.claude/local/cockpit-disabled or ENSURE_COCKPIT_DISABLE=1), Windows-only, HARNESS_SELFTEST stub, machine-wide nl_repo_root resolution normalized to the MAIN checkout (never a worktree) with session-cwd fallback, nohup+disown non-blocking dispatch, tolerate-absent (always exit 0). Replaces the ConversationTreeUI-AutoStart logon scheduled task (retired at integration 2026-07-09). |
 | env-local-protection | gate | PreToolUse | yes | pretool | — |
 | estate-coordination | pattern | — | no | none | docs+skill unit only (skills/coordinate-estate/SKILL.md + doctrine/estate-coordination.md); no hook, no wiring; jit_triggers fire doctrine-jit.sh's paths-match on any edit whose file_path contains SCRATCHPAD.md (keywords reserved for v2 per schema, not yet matched). |
+| evidence-before-fix | gate | PreToolUse | yes | pretool | — |
 | external-monitor-alerts | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | find-scan-warn | surfacer | PreToolUse | no | pretool | — |
 | findings-ledger | gate | PreToolUse | yes | pretool | — |

@@ -25,12 +25,18 @@ const UNIT_MAP = {
   'env-local-protection': 'command-safety',
   'deploy-automation-mode': 'command-safety',
   // commit-boundary unit: gates firing only on git-commit-shaped Bash commands (#11;
-  // vaporware-volume added at D.5 — as-built amendment, CI relocation follows E.4)
+  // vaporware-volume added at D.5 — as-built amendment, CI relocation follows E.4;
+  // evidence-before-fix added at harness-governance-batch-2026-07-15 task 3 — it
+  // fires on the SAME git-commit-shaped-command detection as the rest of this
+  // unit, wired as its own top-level PreToolUse entry only because it needs the
+  // CURRENT commit message, which the nested pre-commit-gate.sh chain cannot see
+  // — see evidence-before-fix-gate.sh's header comment for why)
   'pre-commit-chain': 'commit-boundary',
   'findings-ledger': 'commit-boundary',
   'plan-deletion-protection': 'commit-boundary',
   'claude-md-hygiene': 'commit-boundary',
   'vaporware-volume': 'commit-boundary',
+  'evidence-before-fix': 'commit-boundary',
   // agent-teams unit: spawn/task validation (#12; workstreams-state-gate is the
   // same spawn-validation class — counted here, formal fold deferred to F-wave)
   'agent-teams': 'agent-teams',

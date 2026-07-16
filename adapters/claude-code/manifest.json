@@ -1758,6 +1758,34 @@
       "honesty_rationale": "Anti-fabrication residual named, not solved (Amendment C): the gate checks review-record EXISTENCE + content-match only, and CANNOT verify the reviewer's quoted verdict is genuine -- zero SubagentStop/TaskCompleted capture hooks exist in this harness to retrieve a real transcript. This record is an audit + honesty anchor, not a deploy-path anti-fabrication control; see docs/design-notes/review-record-primitive.md's Writer section and the REVIEW-RECORD-ANTI-FABRICATION-ANCHOR-01 backlog follow-up."
     },
     {
+      "id": "evidence-before-fix",
+      "kind": "gate",
+      "doctrine_file": "doctrine/evidence-before-fix.md",
+      "hooks": [
+        "evidence-before-fix-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "docs/lessons/2026-07-14-root-cause-must-be-evidenced-before-fix.md",
+          "adapters/claude-code/doctrine/diagnosis.md"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool",
+      "added_after": "2026-07",
+      "golden_scenario": "2026-07-14: three successive investigations of a live duplicate-appointment bug each reasoned from a plausible code path (missing per-contact uniqueness) to a shipped fix (#972), without ever observing the SPECIFIC incident's evidence (the two rows' created_at gap, booked_via, service_type, property). The fix shipped on an inferred-not-observed cause and introduced a multi-property regression the operator had to catch. This gate blocks a fix(...)/fix: commit unless its message carries a PROVEN-tagged, citation-backed Root cause (evidenced) section, or references a verdict:PASS fix-root-cause review record covering a staged file with root_cause.tag PROVEN (or INFERRED with blast_radius_bounded true) -- so the same mechanism-sufficient-fix shape cannot recur silently.",
+      "fp_expectation": "Low. Trigger is a literal fix(/fix: subject-line prefix match, not a keyword heuristic, so feat/chore/docs/refactor commits never trigger. Deliberate lighter path: fix-trivial: (a different prefix, never matches) for one-line/typo/no-runtime-symptom fixes -- decided over stacking a docs-only exemption on top. Known over-inclusion: a fix(...) commit touching only *.md files still triggers (no docs-only carve-out). Merge/rebase/cherry-pick replay contexts (MERGE_HEAD, CHERRY_PICK_HEAD, rebase-apply, rebase-merge, or a 'Merge branch' message) are fully skipped -- a replayed commit's cause was evidenced (or not) at its original authoring time.",
+      "retirement_condition": "Retire when harness-reviewer/code-reviewer natively enforce evidenced-root-cause at PR-review time with transcript-verifiable evidence (closing the same anti-fabrication residual review-before-deploy names), or when commit messages are structurally replaced by a form that cannot express free-text sections.",
+      "waiver_path": ".claude/state/evidence-before-fix-waiver-*.txt",
+      "honesty_rationale": "STRUCTURE-NOT-TRUTH (named, not solved): the gate verifies a PROVEN-tagged line carries a citation-SHAPED token (file:line, backtick-quoted command/output, or a command:/output:/log: label) and, for the record-reference path, that a fix-root-cause record exists with verdict PASS and the required tag -- it CANNOT verify the citation is real, that the cited command was actually run, or that the record's quoted verdict is genuine (same anti-fabrication residual as review-before-deploy's Amendment C; the record path inherits its append-only audit trail as the compensating control, not a guarantee). A determined agent can fabricate a citation-shaped string or an inline section; this gate raises the cost, it does not make fabrication impossible."
+    },
+    {
       "id": "review-finding-fix",
       "kind": "gate",
       "doctrine_file": "doctrine/testing.md",

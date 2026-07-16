@@ -125,6 +125,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ~/.claude/hooks/evidence-before-fix-gate.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
             "command": "bash ~/.claude/hooks/find-scan-warn.sh"
           }
         ]
