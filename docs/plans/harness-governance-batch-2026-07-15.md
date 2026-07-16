@@ -94,5 +94,28 @@ BATCH — after the foundation lands (unified master):
 - `docs/runbooks/master-reconcile-and-estate-cleanup.md` — the reusable reconcile+cleanup procedure (tasks R1–R2).
 - (build tasks R3 + 1–5 create their own files in the executing session.)
 
+## In-flight scope updates
+
+- 2026-07-15 (R3): `docs/decisions/064-never-diverge-single-canonical-master.md` — the R3
+  design decision record (decide-and-go per §8).
+- 2026-07-15 (R1/R3/batch, executing session): `adapters/claude-code/manifest.json`,
+  `adapters/claude-code/config/model-policy.json`, `adapters/claude-code/agents/architecture-reviewer.md`,
+  `docs/harness-architecture.md` — R1 merge-invariant surface (union + pins + regenerated doc).
+- 2026-07-15 (residue capture, task 6): `docs/handoffs/2026-07-14-model-enforcement-and-rootcause-gate-checkpoint.md`,
+  `docs/lessons/2026-07-14-credentials-are-available-inject-dont-surrender.md`,
+  `docs/plans/model-enforcement-2026-07-14-evidence/` — prior-session on-disk artifacts needing a home.
+
 ## Evidence Log
-- (filled by the executing session)
+
+### R1 (2026-07-15, orchestrating session)
+- pt reachable on the work gh account (active at session start); `git fetch pt master` OK. Divergence pre-merge: `14 10` (pt-only / local-only).
+- Conflict surface pre-verified via merge-base `974aa22` + `comm -12`: exactly `adapters/claude-code/manifest.json` + `docs/backlog.md` (as runbook predicted).
+- Merge commit **`937e8cb`** (parents `0085781` local + `6db4c3e` pt). Unions: manifest kept BOTH new entries (model-pin + artifact-evidence-bar), JSON validated; backlog kept HEAD's GUARD-REFORMULATE-01 superset + WS-UI row, dropped pt's older duplicate.
+- Invariant fixes in the merge commit: `agents/architecture-reviewer.md` pinned `model: fable`; `config/model-policy.json` + architecture-reviewer (design, [fable,opus]); `docs/harness-architecture.md` regenerated (gen --check GREEN).
+- Verify: model-pin-gate self-test 13/13; harness-doctor self-test 105/105. doctor --quick REDs triaged: all pre-existing on BOTH parents (manifest-check path-join bug on sessionstart-singleflight — **nl-issue filed**), or clear-on-install (manifest-freshness), or R2 scope (worktree budget), or environmental (cockpit port / ask-capture / needs-you headers / live Stop-chain budget).
+- Incident (self-caused, resolved): a baseline `git stash` snapshot destroyed MERGE_HEAD mid-merge; restored via `git rev-parse pt/master > .git/MERGE_HEAD` before committing, so `937e8cb` has correct dual parents. Gates behaved correctly throughout (scope gate's merge full-skip resumed once MERGE_HEAD was restored; docs-freshness correctly demanded the regenerated architecture doc).
+- harness-reviewer (FRESH dispatch, model: opus — Fable spend-capped) dispatched on `937e8cb` BEFORE push, per runbook step 7. Verdict: (pending)
+- PUSH: (pending review PASS)
+
+### R2 (inventory so far)
+- 7 worktrees; broadcast marks 5 signals live-owned (main, nl-ux-wt, agent-aeed9a16, agent-afdcb723, workstreams-ui-server) + sleepy-albattani claim. Non-owned candidates: `beautiful-mcnulty-e8bc42` worktree (clean, detached @6149a45, PR #100 MERGED on pt 2026-07-13) and branches `claude/beautiful-mcnulty-e8bc42` (ahead-of-origin by 1 doc commit) + `close-100` (12 commits, unpushed, content landed via PR 100→pt→master — verified: archived plan + FM-038 + vaporware doctrine present in master). Neither branch is ancestry-merged nor stale >7d → runbook says KEEP; revisit via estate coordination (are the broadcast signals themselves stale?).
