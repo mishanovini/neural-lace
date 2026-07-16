@@ -131,6 +131,16 @@ BATCH — after the foundation lands (unified master):
 - 2026-07-15 (residue capture, task 6): `docs/handoffs/2026-07-14-model-enforcement-and-rootcause-gate-checkpoint.md`,
   `docs/lessons/2026-07-14-credentials-are-available-inject-dont-surrender.md`,
   `docs/plans/model-enforcement-2026-07-14-evidence/**` — prior-session on-disk artifacts needing a home.
+- 2026-07-16: `adapters/claude-code/hooks/gh-merge-canonical-gate.sh` — R3 new gate (decision 064).
+- 2026-07-16: `adapters/claude-code/doctrine/gh-merge-canonical.md` — R3 new doctrine for the gate.
+- 2026-07-16: `adapters/claude-code/settings.json.template` — R3 PreToolUse Bash wiring for the gate.
+- 2026-07-16: `adapters/claude-code/attic/sync-pt-to-personal.sh` — R3 retirement (A6), git mv from scripts/.
+- 2026-07-16: `adapters/claude-code/install.sh` — R3 prune_retired_files mechanism (A6).
+- 2026-07-16: `adapters/claude-code/hooks/cross-repo-drift-postpush-gate.sh` — R3 message repointed to the runbook (A6).
+- 2026-07-16: `adapters/claude-code/sync.sh` — R3 A5 posture-comment update (PT-canonical -> personal-canonical).
+- 2026-07-16: `adapters/claude-code/attic/README.md` — R3 non-hook-retirement clarifying note.
+- 2026-07-16: `adapters/claude-code/doctrine/INDEX.md` — R3 regenerated (new gate entry).
+- 2026-07-16: `docs/harness-architecture.md` — R3 regenerated (new gate entry).
 
 ## Evidence Log
 
@@ -184,3 +194,66 @@ BATCH — after the foundation lands (unified master):
 
 ### R2 (inventory so far)
 - 7 worktrees; broadcast marks 5 signals live-owned (main, nl-ux-wt, agent-aeed9a16, agent-afdcb723, workstreams-ui-server) + sleepy-albattani claim. Non-owned candidates: `beautiful-mcnulty-e8bc42` worktree (clean, detached @6149a45, PR #100 MERGED on pt 2026-07-13) and branches `claude/beautiful-mcnulty-e8bc42` (ahead-of-origin by 1 doc commit) + `close-100` (12 commits, unpushed, content landed via PR 100→pt→master — verified: archived plan + FM-038 + vaporware doctrine present in master). Neither branch is ancestry-merged nor stale >7d → runbook says KEEP; revisit via estate coordination (are the broadcast signals themselves stale?).
+
+### R3 (built 2026-07-16, PARALLEL worktree builder, per amended decision 064 A1-A6)
+- **Gate:** `hooks/gh-merge-canonical-gate.sh` (PreToolUse Bash) blocks `gh pr merge` / `gh api
+  .../pulls/N/merge` when the RESOLVED target repo == the `pt` remote's repo (`git remote get-url pt`
+  at runtime, never hardcoded). Target resolution (A4), fully offline (no `gh api`/network call in the
+  hook path): explicit `--repo`/`-R`/API-path repo wins; else `gh repo set-default` state
+  (`remote.<name>.gh-resolved base`); else the sole github.com-hosted remote (an SSH host-alias remote
+  like `pt` via `github-pt` is NOT a candidate here — empirically verified: `gh repo view` in this repo
+  resolves to the personal repo despite `pt` existing, because gh itself doesn't recognize the alias
+  host); 0 or >1 candidates -> AMBIGUOUS -> loud fail + block (never guess either direction).
+- **Self-test: 17/17 PASS** (`bash adapters/claude-code/hooks/gh-merge-canonical-gate.sh --self-test`)
+  — explicit --repo pt/personal (BLOCK/ALLOW), `gh api` explicit-path pt/personal (BLOCK/ALLOW),
+  case-insensitive pt match, non-merge `gh` commands, non-Bash tool, malformed/empty input (fail-open),
+  bare merge via sole-github-remote resolving to pt (BLOCK) and to personal (ALLOW — the FP the design
+  fears), 2-remote ambiguous (BLOCK, distinct message asserted via grep), `gh-resolved` default among 2
+  candidates resolving to pt (BLOCK) and to personal (ALLOW), and no-`pt`-remote-configured (fail-open
+  ALLOW — an unrelated repo elsewhere on the estate is never blocked).
+- **Manual smoke (verification-bar requirement):** piped a fabricated PreToolUse JSON
+  (`{"tool_name":"Bash","tool_input":{"command":"gh pr merge 100 --repo <work-org>/neural-lace"}}`)
+  through the hook against a throwaway fixture repo with `pt`/`origin` remotes shaped like the real
+  dual-hosted setup (an SSH host-alias `pt` remote + a github.com `origin`) — printed the full BLOCK
+  teaching message (canonical flow, branch-protection-primary note, in-flight-PR migration note) and
+  exited 2.
+- **Manifest + wiring:** `manifest.json` `gh-merge-canonical` entry (kind gate, blocking true,
+  `added_after: "2026-07"`, `golden_scenario`/`fp_expectation` defined against the RESOLVED target per
+  A4, `retirement_condition` = pt archived OR branch protection enabled) — 124 entries total.
+  `settings.json.template` PreToolUse Bash wiring added (JSON-validated). `doctrine/gh-merge-canonical.md`
+  new compact doctrine file; `doctrine/INDEX.md` + `docs/harness-architecture.md` regenerated (`gen-
+  architecture-doc.sh --check` GREEN).
+- **Retirement (task 4/A6):** `git mv adapters/claude-code/scripts/sync-pt-to-personal.sh
+  adapters/claude-code/attic/` — NO exit-0 shim (attic/README.md's shim rule is scoped to
+  settings.json-wired `hooks/`; this was an unwired `scripts/` utility with no live invocation path a
+  session could have pre-loaded — added a short clarifying note to attic/README.md). `install.sh` gained
+  a minimal `PRUNED_FILES` / `prune_retired_files` mechanism (none existed before for single-file, as
+  opposed to whole-directory, retirements) naming this path so a stray live copy at
+  `~/.claude/scripts/sync-pt-to-personal.sh` is removed on next install. `cross-repo-drift-postpush-
+  gate.sh`'s block message (~line 126) repointed from the retired script to
+  `docs/runbooks/master-reconcile-and-estate-cleanup.md` — re-ran that hook's own self-test (7/7 PASS)
+  to confirm the message edit didn't regress it. Chesterton check: grepped all live (non-archive,
+  non-attic) references to `sync-pt-to-personal`; the only other hits
+  (`master-drift-autocorrect.sh`, `session-start-git-freshness.sh`, `session-resumer.sh`) are historical/
+  pattern-naming comments, not functional callsites — left untouched.
+- **A5 posture sweep:** grepped the live repo (excluding archived plans/decisions, which are historical
+  record) for "PT is canonical"/"PT canonical" framing. Found and updated one live hit:
+  `sync.sh:67-74`'s header comment (WHY TREE HASH AND NOT COMMIT SHA) — reworded from "PT canonical;
+  personal receives content via cherry-pick" to cite decision 064 and frame the cherry-pick-produces-
+  divergent-SHAs fact as a property of a MANUAL RECONCILE (via the runbook), not of the (now-retired)
+  PT-canonical sync direction. Re-ran `sync.sh --self-test` (7/7 PASS) after the edit. `docs/backlog.md`
+  and `docs/harness-architecture-history.md` had only unrelated "canonical" substring matches (not
+  posture claims) — no change needed. `docs/RESUME-HERE.md` already routes cross-machine work through
+  `origin/master` (per decision 064's own note) — verified consistent, left as-is.
+- **Verify:** `manifest-check.sh` — 3 pre-existing RED (sessionstart-singleflight path-join bug, filed
+  as an nl-issue by the R1 session; unrelated to this task, added none) — 124 entries, no new REDs.
+  `harness-doctor.sh --self-test` — **105/105 PASS**. `harness-doctor.sh --quick` (against the currently-
+  installed LIVE `~/.claude`, pre-deploy) shows the expected not-yet-installed drift for a worktree
+  builder (`template-live-drift` for the new hook, `manifest-freshness` live-vs-repo hash mismatch) —
+  both clear once this branch merges to master and `install.sh` runs; the remaining REDs/WARN (obs-
+  cockpit-fresh, obs-ask-capture-completeness, budget-chains, budget-worktrees-branches) are pre-existing
+  and unrelated to this task (matches the R1 session's own triage of the same classes).
+- **Deferred (named, not silently dropped):** the decision's "new doctor check candidate" (assert the
+  post-commit dual-push hook / `core.hooksPath` is installed) is explicitly a *candidate* in decision
+  064's Consequences section, not one of the 6 build items dispatched for R3 — left as a follow-up
+  rather than scope-expanded into this build.

@@ -978,6 +978,42 @@ prune_stale_rules() {
 prune_stale_rules
 
 # ============================================================
+# Prune individually-retired files (decision 064 A6): a whole-directory diff
+# (prune_stale_rules above) is overkill when a SINGLE file moves out of an
+# otherwise-still-live directory (e.g. one scripts/*.sh retired to attic/,
+# which is NOT in the sync_directory loop above and therefore never
+# overwrites/removes its old live twin). This is a minimal named-list
+# mechanism: add the live-side relative path here whenever a file is
+# deliberately retired (git mv'd to attic/ or deleted outright) so it stops
+# lingering on already-installed machines forever (sync_directory only
+# ADDS/UPDATES, never deletes — same class of gap prune_stale_rules fixed
+# for rules/*.md, generalized here to any single retired path).
+# ============================================================
+
+PRUNED_FILES=(
+  # retired 2026-07-16, decision 064 element 4/A6: unwired (no hook, no
+  # schedule, no manifest entry), bug-carrying, superseded by
+  # docs/runbooks/master-reconcile-and-estate-cleanup.md; moved to
+  # adapters/claude-code/attic/. Its ISL guard + dedicated-clone + FF-only
+  # push make a stray live copy near-harmless even if this list is ever
+  # forgotten (accept-as-dead-drift is the A6 fallback if this list rots).
+  "scripts/sync-pt-to-personal.sh"
+)
+
+prune_retired_files() {
+  local rel f
+  for rel in "${PRUNED_FILES[@]}"; do
+    f="$CLAUDE_DIR/$rel"
+    if [ -f "$f" ]; then
+      rm -f "$f"
+      echo "  pruned retired $rel (superseded — see install.sh PRUNED_FILES)"
+    fi
+  done
+}
+
+prune_retired_files
+
+# ============================================================
 # Install completeness (B.3): sync directories self-tests and doctor
 # checks need but which weren't previously deployed at all, or were only
 # deployed as a side effect of the hooks/ sweep above (hooks/lib/ -- kept

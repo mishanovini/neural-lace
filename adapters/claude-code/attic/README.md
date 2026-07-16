@@ -45,6 +45,20 @@ one-cycle safety buffer). Concretely:
   the shim, (4) note the retiring wave/date so the next wave knows when the
   one-release clock started.
 
+## Non-hook (`scripts/`) retirements don't need the shim
+
+The exit-0-shim requirement above is scoped to `hooks/` files a session's
+Stop/PreToolUse chain may have already loaded at session start. A `scripts/`
+utility that is NOT wired into any `settings.json` hooks array (no live
+invocation path a running session could have pre-loaded) doesn't carry that
+mid-session-breakage risk — a manual invocation of the old path simply fails
+"file not found," which is an honest, immediate signal, not a silent
+corruption. Example: `sync-pt-to-personal.sh` (retired 2026-07-16, decision
+064 element 4/A6 — unwired, bug-carrying, superseded by
+`docs/runbooks/master-reconcile-and-estate-cleanup.md`) moved here WITHOUT a
+shim; `install.sh`'s `prune_retired_files` step removes any stray live copy
+instead.
+
 ## What NOT to do
 
 - Do not treat this directory as a place to "park" a hook you are unsure about

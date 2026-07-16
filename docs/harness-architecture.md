@@ -15,9 +15,9 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 123 |
-| Unique hook scripts | 106 |
-| Blocking gates (`blocking: true`) | 33 |
+| Total manifest entries | 124 |
+| Unique hook scripts | 107 |
+| Blocking gates (`blocking: true`) | 34 |
 
 ## Hooks by event
 
@@ -45,6 +45,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreToolUse | find-scan-warn | surfacer | no | find-scan-warn.sh |
 | PreToolUse | findings-ledger | gate | yes | findings-ledger-schema-gate.sh |
 | PreToolUse | gh-account-autoswitch | surfacer | no | gh-account-autoswitch.sh |
+| PreToolUse | gh-merge-canonical | gate | yes | gh-merge-canonical-gate.sh |
 | PreToolUse | local-edit-authorization | gate | yes | local-edit-gate.sh |
 | PreToolUse | model-pin | gate | yes | model-pin-gate.sh |
 | PreToolUse | no-test-skip | gate | yes | no-test-skip-gate.sh |
@@ -120,7 +121,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
-| gate | 33 | 12 |
+| gate | 34 | 12 |
 | writer | 0 | 28 |
 | surfacer | 0 | 20 |
 | pattern | 0 | 27 |
@@ -137,7 +138,7 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 |---|---|
 | stop | 8 |
 | session-start | 15 |
-| pretool | 26 |
+| pretool | 27 |
 | posttool | 6 |
 | none | 68 |
 
@@ -172,6 +173,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/friction-reflexion.md | 1 (friction-reflexion) |
 | doctrine/frontend-conventions.md | 1 (frontend-conventions) |
 | doctrine/gate-respect.md | 1 (gate-respect) |
+| doctrine/gh-merge-canonical.md | 1 (gh-merge-canonical) |
 | doctrine/git.md | 6 (cross-repo-drift-gate, deploy-automation-mode, gh-account-autoswitch, gh-account-hint, git-freshness, pre-push-divergence) |
 | doctrine/harness-dev.md | 9 (claude-md-hygiene, discovery-cheatsheet, docs-freshness, harness-doctor, harness-hygiene-scan, session-start-auto-install, session-start-surfacer-pack, signal-ledger-flush, wave-d-retired-shims) |
 | doctrine/interactive-process-fidelity.md | 1 (interactive-process-fidelity) |
@@ -254,6 +256,7 @@ Entries with no doctrine_file (`-`): 30.
 | gen-architecture-doc | writer | — | no | none | scripts/gen-architecture-doc.sh (F.2) -- regenerates docs/harness-architecture.md from manifest.json; --check is the doctor drift predicate (tests/fixtures/wave-f/F.2/doctor-predicate.md); not event-wired (manual + doctor-invoked). |
 | gh-account-autoswitch | surfacer | PreToolUse | no | pretool | — |
 | gh-account-hint | surfacer | PostToolUse, SessionStart | no | posttool | — |
+| gh-merge-canonical | gate | PreToolUse | yes | pretool | gh-merge-canonical-gate.sh (PreToolUse Bash) BLOCKS `gh pr merge` / `gh api .../pulls/N/merge` when the RESOLVED target repo equals the `pt` remote's repo (read from `git remote get-url pt` at runtime, never hardcoded). DEFENSE-IN-DEPTH ONLY (decision 064 amendments A1/A2) — the PRIMARY structural mechanism is server-side branch protection on pt/master (operator-only, not agent-executable, surfaced as a standing NEEDS-YOU item until enabled). HONEST RESIDUAL (not covered by this gate): GitHub web-UI merges, a machine that hasn't yet synced this hook (deploy-lag window), un-harnessed/external machines, CI/GitHub Actions, scheduled/cloud agents (Decision 011 — no PreToolUse), direct `git push pt master`. |
 | git-freshness | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | harness-changelog | writer | — | no | none | scripts/harness-changelog.sh (F.2b) -- machine-wide 'what's new' ledger + --digest-line consumed by session-start-digest.sh's feed 15; not event-wired. |
 | harness-doctor | surfacer | SessionStart, manual | no | session-start | diagnostic tool — invoked on demand (harness-doctor.sh --quick); chain wiring is a post-Wave-D decision |
