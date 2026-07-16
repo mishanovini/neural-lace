@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "cutover_ref": "HEAD",
-  "generated_at": "2026-07-16T02:58:10Z",
+  "generated_at": "2026-07-16T03:36:36Z",
   "entries": [
     {
       "path": "adapters/claude-code/agents/architecture-reviewer.md",
@@ -249,7 +249,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/harness-doctor.sh",
-      "blob_sha": "9d5ca9fcf9491a157082bf0564ba9924c1cf40b3"
+      "blob_sha": "4a0125d00d3ef2e27726eec00836ee7bd4a444d5"
     },
     {
       "path": "adapters/claude-code/hooks/harness-hygiene-scan.sh",
