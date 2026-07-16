@@ -2464,6 +2464,120 @@ check_model_pins() {
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
 
+# ------------------------------------------------------------
+# Check: review-surface-cross-check (harness-governance-batch-2026-07-15,
+# task 2, Amendment A). The review-before-deploy gate's trigger surface is
+# now a PATH-GLOB match (adapters/claude-code/{hooks/**/*.sh, scripts/**/*.sh,
+# agents/*.md, config/**, manifest.json, settings.json.template, rules/**}),
+# not manifest-derived -- but the manifest is a CROSS-CHECK against it: every
+# basename in every manifest entry's hooks[] array must resolve to a real
+# file under hooks/, hooks/lib/, or scripts/, AND that resolved path must
+# itself be in-surface. manifest-check.sh's own "hooks-exist" check only
+# disk-scans TOP-LEVEL hooks/*.sh (documented scope), so a hooks[] entry
+# naming a file that only exists under hooks/lib/ or scripts/ would pass
+# THAT check silently -- this check widens the resolution search to close
+# exactly that gap.
+#   RED  : a hooks[] basename resolves to nothing anywhere under hooks/,
+#          hooks/lib/, or scripts/, OR resolves to a path outside the
+#          trigger-surface glob (structurally shouldn't happen given the
+#          glob's own breadth, but asserted rather than assumed).
+#   WARN : manifest/lib prerequisites missing (pre-cutover checkout).
+# ------------------------------------------------------------
+check_review_surface_cross_check() {
+  local live_home="$1" repo_root="$2"
+  [[ -z "$repo_root" ]] && { _warn "review-surface-cross-check" "repo root unresolved -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local manifest
+  if ! manifest="$(resolve_manifest "$live_home" "$repo_root")"; then
+    _warn "review-surface-cross-check" "no manifest.json found -- skipped (pre-C.1 machine)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  command -v jq >/dev/null 2>&1 || { _warn "review-surface-cross-check" "jq unavailable -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local lib="${repo_root}/adapters/claude-code/hooks/lib/review-record-gate-lib.sh"
+  if [[ ! -f "$lib" ]]; then
+    _warn "review-surface-cross-check" "review-record-gate-lib.sh not present at ${lib} -- skipped (pre-cutover checkout)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  # shellcheck source=lib/review-record-gate-lib.sh
+  source "$lib" 2>/dev/null
+  if ! command -v rrg_in_surface >/dev/null 2>&1; then
+    _warn "review-surface-cross-check" "could not source review-record-gate-lib.sh -- skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local names name resolved
+  names=$(jq -r '.entries[] | .hooks[]?' "$manifest" 2>/dev/null | sort -u)
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    resolved=""
+    if [[ -f "${repo_root}/adapters/claude-code/hooks/${name}" ]]; then
+      resolved="hooks/${name}"
+    elif [[ -f "${repo_root}/adapters/claude-code/hooks/lib/${name}" ]]; then
+      resolved="hooks/lib/${name}"
+    elif [[ -f "${repo_root}/adapters/claude-code/scripts/${name}" ]]; then
+      resolved="scripts/${name}"
+    fi
+    if [[ -z "$resolved" ]]; then
+      _red "review-surface-cross-check" "manifest hooks[] entry '${name}' does not resolve to any file under hooks/, hooks/lib/, or scripts/ (Amendment A cross-check)"
+      continue
+    fi
+    if ! rrg_in_surface "$resolved"; then
+      _red "review-surface-cross-check" "manifest hooks[] entry '${name}' resolves to ${resolved}, which is OUT of the review-before-deploy trigger surface (Amendment A cross-check)"
+    fi
+  done <<< "$names"
+
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: review-index-consistency (harness-governance-batch-2026-07-15,
+# task 2, Amendment D). docs/reviews/records/index.json is claimed to be a
+# pure, faithful rebuild of the records directory (never hand-edited, never
+# incrementally patched). This check re-derives the index from scratch via
+# write-review-record.sh's own `rebuild-index --stdout` and byte-compares
+# (order-independent, via jq -S) against the committed index.json.
+#   RED  : the committed index disagrees with a fresh rebuild -- someone
+#          hand-edited it, or a record was added/removed without refreshing
+#          the index.
+#   WARN : no records directory / index.json / writer script yet (pre-
+#          bootstrap checkout) -- vacuously nothing to compare.
+# ------------------------------------------------------------
+check_review_index_consistency() {
+  local live_home="$1" repo_root="$2"
+  [[ -z "$repo_root" ]] && { _warn "review-index-consistency" "repo root unresolved -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local records_dir="${repo_root}/docs/reviews/records"
+  if [[ ! -d "$records_dir" ]] || [[ ! -f "$records_dir/index.json" ]]; then
+    _warn "review-index-consistency" "no docs/reviews/records/index.json yet -- skipped (pre-bootstrap checkout)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  local writer="${repo_root}/adapters/claude-code/scripts/write-review-record.sh"
+  if [[ ! -f "$writer" ]]; then
+    _warn "review-index-consistency" "write-review-record.sh not present -- skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  command -v jq >/dev/null 2>&1 || { _warn "review-index-consistency" "jq unavailable -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local committed rebuilt
+  committed=$(jq -S . "$records_dir/index.json" 2>/dev/null)
+  rebuilt=$(bash "$writer" rebuild-index --repo-root "$repo_root" --stdout 2>/dev/null | jq -S . 2>/dev/null)
+  if [[ -z "$rebuilt" ]]; then
+    _warn "review-index-consistency" "rebuild-index produced no output -- skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if [[ "$committed" != "$rebuilt" ]]; then
+    _red "review-index-consistency" "docs/reviews/records/index.json does not match a fresh rebuild of the records directory -- run 'bash adapters/claude-code/scripts/write-review-record.sh rebuild-index' and commit the result"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
 check_selftest_sweep() {
   local live_home="$1"
   local hooks_dir="${live_home}/hooks"
@@ -2525,6 +2639,8 @@ run_quick_checks() {
   check_new_gate_evidence_bar "$live_home" "$repo_root"
   check_master_drift_autocorrect "$live_home" "$repo_root"
   check_model_pins "$live_home" "$repo_root"
+  check_review_surface_cross_check "$live_home" "$repo_root"
+  check_review_index_consistency "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -2579,6 +2695,22 @@ if [[ "${1:-}" == "--self-test" ]]; then
     [[ -f "$checker_src" && -f "$schema_src" ]] || return 1
     cp "$checker_src" "$dir/repo/adapters/claude-code/scripts/manifest-check.sh"
     cp "$schema_src" "$dir/repo/adapters/claude-code/schemas/manifest.schema.json"
+    return 0
+  }
+
+  # Copies the real review-record-gate-lib.sh + write-review-record.sh into
+  # a fixture repo so check_review_surface_cross_check / check_review_index_
+  # consistency can exercise the REAL surface glob + rebuild logic rather
+  # than a re-implemented stub. Returns 1 (caller should SKIP) when the real
+  # files are not present next to this doctor (e.g. a partial install).
+  _copy_review_gate_tooling() {
+    local dir="$1"
+    local lib_src="$SCRIPT_DIR/lib/review-record-gate-lib.sh"
+    local writer_src="$SCRIPT_DIR/../scripts/write-review-record.sh"
+    [[ -f "$lib_src" && -f "$writer_src" ]] || return 1
+    mkdir -p "$dir/repo/adapters/claude-code/hooks/lib" "$dir/repo/adapters/claude-code/scripts"
+    cp "$lib_src" "$dir/repo/adapters/claude-code/hooks/lib/review-record-gate-lib.sh"
+    cp "$writer_src" "$dir/repo/adapters/claude-code/scripts/write-review-record.sh"
     return 0
   }
 
@@ -4426,6 +4558,96 @@ EOF
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "model-pins-red-body-line" 1 "$RC" "RED model-pins" "$OUT"
+
+  # ---- review-surface-cross-check: RED fixture -- a manifest hooks[]
+  # entry names a file that resolves nowhere under hooks/, hooks/lib/, or
+  # scripts/ ----
+  D=$(_scenario_dir review-surface-red)
+  _stamp_claim_honesty_green "$D"
+  if _copy_review_gate_tooling "$D"; then
+    cat > "$D/repo/adapters/claude-code/manifest.json" <<'EOF'
+{"schema_version": 1, "entries": [
+  {"id": "ghost", "kind": "pattern", "hooks": ["ghost-hook-does-not-exist.sh"]}
+]}
+EOF
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(_run_quick "$D")"; RC=$?
+    _assert "review-surface-cross-check-red" 1 "$RC" "RED review-surface-cross-check" "$OUT"
+  else
+    echo "self-test (review-surface-cross-check-red): SKIP (real review-record-gate-lib.sh/write-review-record.sh not found next to doctor)" >&2
+  fi
+
+  # ---- review-surface-cross-check: GREEN fixture -- a manifest hooks[]
+  # entry names a file that DOES exist under hooks/lib/ (exercises the
+  # widened resolution search this check adds beyond top-level hooks/*.sh) ----
+  D=$(_scenario_dir review-surface-green)
+  _stamp_claim_honesty_green "$D"
+  if _copy_review_gate_tooling "$D"; then
+    mkdir -p "$D/repo/adapters/claude-code/hooks/lib"
+    printf '#!/bin/bash\necho real-lib-hook\n' > "$D/repo/adapters/claude-code/hooks/lib/real-lib-hook.sh"
+    cat > "$D/repo/adapters/claude-code/manifest.json" <<'EOF'
+{"schema_version": 1, "entries": [
+  {"id": "real", "kind": "pattern", "hooks": ["real-lib-hook.sh"]}
+]}
+EOF
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(_run_quick "$D")"
+    if printf '%s' "$OUT" | grep -q "RED review-surface-cross-check"; then
+      echo "self-test (review-surface-cross-check-green): FAIL (unexpected RED)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (review-surface-cross-check-green): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (review-surface-cross-check-green): SKIP (real tooling not found)" >&2
+  fi
+
+  # ---- review-index-consistency: RED fixture -- committed index.json
+  # disagrees with a fresh rebuild of the records directory ----
+  D=$(_scenario_dir review-index-red)
+  _stamp_claim_honesty_green "$D"
+  if _copy_review_gate_tooling "$D"; then
+    mkdir -p "$D/repo/docs/reviews/records"
+    cat > "$D/repo/docs/reviews/records/2026-07-16-harness-change-review-fixture.json" <<'EOF'
+{"schema_version":1,"kind":"harness-change-review","record_id":"hcr-fixture","created_at":"2026-07-16T00:00:00Z","verdict":"PASS","reviewer":"harness-reviewer","reviewer_model":"opus","plan_ref":"x","change_ref":{"commit_sha":"abc","branch":"master"},"covered_files":[{"path":"adapters/claude-code/hooks/real.sh","blob_sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}],"dispatch_evidence":{"transcript_ref":"","verdict_quote":"PASS","findings_summary":""},"written_by":"test","payload":{}}
+EOF
+    # A STALE index.json that does NOT reflect the record file above.
+    printf '{"schema_version":1,"entries":[]}\n' > "$D/repo/docs/reviews/records/index.json"
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(_run_quick "$D")"; RC=$?
+    _assert "review-index-consistency-red" 1 "$RC" "RED review-index-consistency" "$OUT"
+  else
+    echo "self-test (review-index-consistency-red): SKIP (real tooling not found)" >&2
+  fi
+
+  # ---- review-index-consistency: GREEN fixture -- index.json IS a faithful
+  # rebuild of the one record file present ----
+  D=$(_scenario_dir review-index-green)
+  _stamp_claim_honesty_green "$D"
+  if _copy_review_gate_tooling "$D"; then
+    mkdir -p "$D/repo/docs/reviews/records"
+    cat > "$D/repo/docs/reviews/records/2026-07-16-harness-change-review-fixture.json" <<'EOF'
+{"schema_version":1,"kind":"harness-change-review","record_id":"hcr-fixture","created_at":"2026-07-16T00:00:00Z","verdict":"PASS","reviewer":"harness-reviewer","reviewer_model":"opus","plan_ref":"x","change_ref":{"commit_sha":"abc","branch":"master"},"covered_files":[{"path":"adapters/claude-code/hooks/real.sh","blob_sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}],"dispatch_evidence":{"transcript_ref":"","verdict_quote":"PASS","findings_summary":""},"written_by":"test","payload":{}}
+EOF
+    bash "$D/repo/adapters/claude-code/scripts/write-review-record.sh" rebuild-index \
+      --repo-root "$D/repo" >/dev/null 2>&1
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(_run_quick "$D")"
+    if printf '%s' "$OUT" | grep -q "RED review-index-consistency"; then
+      echo "self-test (review-index-consistency-green): FAIL (unexpected RED: $OUT)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (review-index-consistency-green): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (review-index-consistency-green): SKIP (real tooling not found)" >&2
+  fi
 
   # ---- Check 8 (--full only): RED fixture — a stub hook's --self-test fails ----
   D=$(_scenario_dir c7-red)
