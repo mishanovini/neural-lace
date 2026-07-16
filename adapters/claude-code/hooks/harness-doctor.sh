@@ -119,7 +119,13 @@
 #                             (waiver_path OR honesty_rationale) —
 #                             ADR 059 D4. Doctor-side half only; the
 #                             constitution §10 prose half is
-#                             orchestrator-owned.
+#                             orchestrator-owned. ALSO: every blocking:true
+#                             entry (any added_after) MUST have a non-empty
+#                             added_after at all — a missing field used to
+#                             let a new gate evade the whole bar by simply
+#                             omitting it (exactly how model-pin evaded it
+#                             before being fixed; batch task 5,
+#                             harness-governance-batch-2026-07-15).
 #
 # Staleness ESCALATION (deferral/removal proposals) is NOT here — it
 # lives in session-start-digest.sh (a SessionStart feed), per specs-f
@@ -2055,6 +2061,20 @@ check_budget_worktrees_branches() {
 # doctor check does not itself require the schema/manifest to carry the
 # fields — it degrades to "no added_after entries found" silently, since
 # a manifest with zero added_after entries has nothing to validate).
+#
+# EVASION-BY-OMISSION CLOSE (harness-governance-batch-2026-07-15, task 5):
+# the check above only ever inspected entries that ALREADY carry
+# `added_after`. A new `blocking:true` gate that simply never sets the
+# field skipped the whole bar silently — exactly how `model-pin` evaded
+# it before 2026-07-14's fix. This is now a SECOND, independent assertion
+# below the first: every `blocking:true` manifest entry, regardless of
+# its added_after value or absence, MUST have a non-empty `added_after`.
+# A missing field is itself a RED naming the entry id and the remedy
+# (backfill it — pre-"2026-07" for a legacy entry that predates the ADR
+# 059 D4 bar, an accurate landing month for a new one). The 31 legacy
+# `blocking:true` entries that predated this assertion were backfilled in
+# the same commit that added it (see manifest.json diff) so this does not
+# regress the doctor to RED on landing.
 # ------------------------------------------------------------
 check_new_gate_evidence_bar() {
   local live_home="$1" repo_root="$2"
@@ -2078,7 +2098,12 @@ const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
 const problems = [];
 for (const e of m.entries || []) {
   const addedAfter = e.added_after;
-  if (typeof addedAfter !== "string" || addedAfter.trim().length === 0) continue;
+  const hasAddedAfter = typeof addedAfter === "string" && addedAfter.trim().length > 0;
+  if (e.blocking === true && !hasAddedAfter) {
+    problems.push(e.id + ": missing added_after (every blocking:true manifest entry must declare added_after — a missing field evades the evidence bar by omission; backfill a YYYY-MM landing month, pre-2026-07 for a legacy entry)");
+    continue;
+  }
+  if (!hasAddedAfter) continue;
   if (addedAfter < "2026-07") continue;
   const missing = [];
   if (typeof e.golden_scenario !== "string" || e.golden_scenario.trim().length === 0) missing.push("golden_scenario");
@@ -2093,14 +2118,16 @@ for (const p of problems) console.log(p);
 ' "$manifest" 2>/dev/null)"
   else
     out="$(jq -r '
-.entries[] | select((.added_after // "") >= "2026-07") as $e |
+(.entries[] | select(.blocking == true) | select((.added_after // "") | length == 0) |
+  "\(.id): missing added_after (every blocking:true manifest entry must declare added_after — a missing field evades the evidence bar by omission; backfill a YYYY-MM landing month, pre-2026-07 for a legacy entry)"),
+(.entries[] | select((.added_after // "") >= "2026-07") as $e |
 (
   [ (if (($e.golden_scenario // "") | length) > 0 then empty else "golden_scenario" end),
     (if (($e.fp_expectation // "") | length) > 0 then empty else "fp_expectation" end),
     (if (($e.retirement_condition // "") | length) > 0 then empty else "retirement_condition" end),
     (if ((($e.waiver_path // "") | length) > 0) or ((($e.honesty_rationale // "") | length) > 0) then empty else "waiver_path-or-honesty_rationale" end)
   ] | select(length > 0)
-) as $missing | select(($missing | length) > 0) | "\($e.id): missing \($missing | join(\", \"))"
+) as $missing | select(($missing | length) > 0) | "\($e.id): missing \($missing | join(\", \"))")
 ' "$manifest" 2>/dev/null)"
   fi
 
@@ -2108,7 +2135,11 @@ for (const p of problems) console.log(p);
     local line
     while IFS= read -r line; do
       [[ -z "$line" ]] && continue
-      _red "new-gate-evidence-bar" "${line} (added_after >= 2026-07 requires the full evidence bar per ADR 059 D4)"
+      if [[ "$line" == *"missing added_after"* ]]; then
+        _red "new-gate-evidence-bar" "${line}"
+      else
+        _red "new-gate-evidence-bar" "${line} (added_after >= 2026-07 requires the full evidence bar per ADR 059 D4)"
+      fi
     done <<< "$out"
   fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
@@ -2701,7 +2732,8 @@ EOF
       "jit_triggers": { "paths": [], "keywords": [] },
       "blocking": true,
       "honesty_rationale": "fixture: waiver-parity satisfied for this manifest-check/claim-honesty fixture",
-      "budget_class": "stop"
+      "budget_class": "stop",
+      "added_after": "2026-04"
     },
     {
       "id": "pending-gate",
@@ -2715,7 +2747,8 @@ EOF
       "blocking": true,
       "waiver_path": "fixture-waiver-*.txt",
 ${honest_line}
-      "budget_class": "none"
+      "budget_class": "none",
+      "added_after": "2026-04"
     }
   ]
 }
@@ -2820,7 +2853,7 @@ MANIFEST_EOF
   mkdir -p "$D/repo/docs"
   cp "$SCRIPT_DIR/../scripts/gen-architecture-doc.sh" "$D/repo/adapters/claude-code/scripts/gen-architecture-doc.sh"
   cat > "$D/repo/adapters/claude-code/manifest.json" <<'F2MANIFEST_EOF'
-{"schema_version":1,"entries":[{"id":"a","kind":"gate","hooks":["a.sh"],"events":["precommit"],"blocking":true,"selftest":true,"wired_template":true,"honest_status":"x","budget_class":"none"}]}
+{"schema_version":1,"entries":[{"id":"a","kind":"gate","hooks":["a.sh"],"events":["precommit"],"blocking":true,"selftest":true,"wired_template":true,"honest_status":"x","budget_class":"none","added_after":"2026-04"}]}
 F2MANIFEST_EOF
   ( cd "$D/repo" && bash adapters/claude-code/scripts/gen-architecture-doc.sh >/dev/null 2>&1 )
   echo "hand-edited drift line" >> "$D/repo/docs/harness-architecture.md"
@@ -2836,7 +2869,7 @@ F2MANIFEST_EOF
   mkdir -p "$D/repo/docs"
   cp "$SCRIPT_DIR/../scripts/gen-architecture-doc.sh" "$D/repo/adapters/claude-code/scripts/gen-architecture-doc.sh"
   cat > "$D/repo/adapters/claude-code/manifest.json" <<'F2MANIFEST_EOF'
-{"schema_version":1,"entries":[{"id":"a","kind":"gate","hooks":["a.sh"],"events":["precommit"],"blocking":true,"selftest":true,"wired_template":true,"honest_status":"x","budget_class":"none"}]}
+{"schema_version":1,"entries":[{"id":"a","kind":"gate","hooks":["a.sh"],"events":["precommit"],"blocking":true,"selftest":true,"wired_template":true,"honest_status":"x","budget_class":"none","added_after":"2026-04"}]}
 F2MANIFEST_EOF
   ( cd "$D/repo" && bash adapters/claude-code/scripts/gen-architecture-doc.sh >/dev/null 2>&1 )
   _write_settings "$D/live/settings.json"
@@ -3016,7 +3049,7 @@ EOF
     local entries="" i
     for ((i = 0; i < count; i++)); do
       [[ -n "$entries" ]] && entries="${entries},"
-      entries="${entries}{\"id\":\"fixture-gate-${i}\",\"kind\":\"gate\",\"doctrine_file\":null,\"hooks\":[],\"events\":[\"PreToolUse\"],\"wired_template\":true,\"selftest\":false,\"jit_triggers\":{\"paths\":[],\"keywords\":[]},\"blocking\":true,\"honest_status\":\"fixture stub\",\"budget_class\":\"pretool\"}"
+      entries="${entries}{\"id\":\"fixture-gate-${i}\",\"kind\":\"gate\",\"doctrine_file\":null,\"hooks\":[],\"events\":[\"PreToolUse\"],\"wired_template\":true,\"selftest\":false,\"jit_triggers\":{\"paths\":[],\"keywords\":[]},\"blocking\":true,\"honest_status\":\"fixture stub\",\"budget_class\":\"pretool\",\"added_after\":\"2026-04\"}"
     done
     printf '{"schema_version":1,"entries":[%s]}' "$entries" > "$dir/repo/adapters/claude-code/manifest.json"
   }
@@ -3060,7 +3093,7 @@ const fs = require("fs");
 const p = process.argv[1];
 const m = JSON.parse(fs.readFileSync(p, "utf8"));
 for (let i = 0; i < 13; i++) {
-  m.entries.push({ id: `fixture-noncounting-${i}`, kind: "gate", doctrine_file: null, hooks: [], events: ["precommit"], wired_template: false, selftest: false, jit_triggers: { paths: [], keywords: [] }, blocking: true, honest_status: "fixture: git-boundary, not wired live", budget_class: "none" });
+  m.entries.push({ id: `fixture-noncounting-${i}`, kind: "gate", doctrine_file: null, hooks: [], events: ["precommit"], wired_template: false, selftest: false, jit_triggers: { paths: [], keywords: [] }, blocking: true, honest_status: "fixture: git-boundary, not wired live", budget_class: "none", added_after: "2026-04" });
 }
 fs.writeFileSync(p, JSON.stringify(m));
 ' "$D/repo/adapters/claude-code/manifest.json"
@@ -3338,6 +3371,73 @@ MANIFEST_EOF
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "new-gate-evidence-bar-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: new-gate-evidence-bar EVASION-BY-OMISSION close (batch task 5,
+  # harness-governance-batch-2026-07-15). RED fixture — a blocking:true entry
+  # with NO added_after field at all (not merely a pre-2026-07 value; the
+  # field is absent). This is the exact evasion class that let model-pin skip
+  # the whole bar before it was fixed: the OLD check logic only ever
+  # inspected entries that ALREADY carried added_after and silently
+  # `continue`d past ones missing it, so this fixture would have passed
+  # doctor GREEN before this task's assertion landed ----
+  D=$(_scenario_dir nge-omit-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "new-gate-no-added-after",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": { "paths": [], "keywords": [] },
+      "blocking": true,
+      "honest_status": "fixture stub",
+      "budget_class": "none"
+    }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "new-gate-evidence-bar-omission-red" 1 "$RC" "RED new-gate-evidence-bar.*new-gate-no-added-after.*missing added_after" "$OUT"
+
+  # ---- Check: new-gate-evidence-bar EVASION-BY-OMISSION GREEN fixture — same
+  # entry, added_after now backfilled to a pre-bar month. A legacy entry does
+  # NOT need golden_scenario/fp_expectation/retirement_condition — only that
+  # the field exists and is present ----
+  D=$(_scenario_dir nge-omit-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "id": "new-gate-no-added-after",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": false,
+      "jit_triggers": { "paths": [], "keywords": [] },
+      "blocking": true,
+      "honest_status": "fixture stub",
+      "added_after": "2026-04",
+      "budget_class": "none"
+    }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "new-gate-evidence-bar-omission-green" 0 "$RC" "" "$OUT"
 
   # ---- Check: line-endings (NL-FINDING-038). RED fixture — a repo shell
   # surface carries CRLF bytes (the Wave-F F.1 whole-file-conversion class).

@@ -56,6 +56,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-04",
       "waiver_path": "teammate-spawn-validator.sh condition (d) honors a DAG-review structured waiver via lib/waiver-purpose-clause.sh. NOTE: task-created-validator.sh and task-completed-evidence-gate.sh (same entry, different hook files) have GAP-class bypasses (env-var, not ledger-logged/fresh) — tracked as orchestratorTodo, not yet fixed."
     },
     {
@@ -183,6 +184,7 @@
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
       "budget_class": "none",
+      "added_after": "2026-04",
       "honesty_rationale": "Commit-time atomicity check (new plan must declare absorbed backlog items in its own header) — resolvable by editing the same commit; not a world-state assertion."
     },
     {
@@ -203,6 +205,7 @@
       },
       "blocking": true,
       "budget_class": "stop",
+      "added_after": "2026-04",
       "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact.",
       "waiver_path": "ATTEST_FILE (structured waiver via lib/waiver-purpose-clause.sh, waiver_has_purpose_clauses gate) — the canonical reference implementation other hooks were retrofitted to match."
     },
@@ -239,6 +242,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-05",
       "waiver_path": "CLAUDE_MD_HYGIENE_DISABLE=1 env var (full no-op); note DEFAULT MODE is warn (exit 0 always) pending 24h calibration — blocking:true reflects the designed end-state."
     },
     {
@@ -462,6 +466,7 @@
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
       "budget_class": "none",
+      "added_after": "2026-04",
       "honesty_rationale": "Commit-time atomicity check (Tier-2+ decision needs its DECISIONS.md index row in the same commit) — resolvable by the session that created the gap."
     },
     {
@@ -504,6 +509,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-04",
       "honesty_rationale": "Policy switch, not a per-session block — the escape hatch IS changing the project/user automation-mode config (see doctrine/automation-modes.md), not a waiver file."
     },
     {
@@ -643,6 +649,7 @@
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
       "budget_class": "none",
+      "added_after": "2026-04",
       "honesty_rationale": "Commit-time atomicity check (structural harness change needs its doc delta in the same commit) — resolvable by the session."
     },
     {
@@ -736,6 +743,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-05",
       "waiver_path": "inline ENV_LOCAL_OVERWRITE_OK=1 command-prefix sentinel (documented equivalent; hook auto-backs-up before honoring it)."
     },
     {
@@ -824,6 +832,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-05",
       "honesty_rationale": "Schema-validity check on the session's own docs/findings.md edit — checked-box-without-evidence shape, unwaivable by ADR 059 D4 design."
     },
     {
@@ -1033,6 +1042,7 @@
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain and manual --full-tree runs; not directly wired in settings.json.template",
       "budget_class": "none",
+      "added_after": "2026-04",
       "honesty_rationale": "GAP (F.5 waiver-parity-audit.md row 12): denylist-pattern scan with a plan-time exempt-list but NO session-time waiver for a genuine false positive. Proposal 3 fix (structured lib/waiver-purpose-clause.sh waiver) not yet applied — tracked as orchestratorTodo."
     },
     {
@@ -1084,6 +1094,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-05",
       "waiver_path": "~/.claude/state/local-edit-<slug>-<ISO8601>.txt, fresh <30min, written only by the operator-invoked /grant-local-edit skill."
     },
     {
@@ -1159,6 +1170,7 @@
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
       "budget_class": "none",
+      "added_after": "2026-04",
       "honesty_rationale": "Commit-time atomicity check (migration + CLAUDE.md line move together) — resolvable by the session."
     },
     {
@@ -1230,6 +1242,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-04",
       "honesty_rationale": "New-skip-without-issue-reference check on the session's own commit; adding a real issue/finding reference IS the intended escape hatch (recommend the block message name this explicitly — see audit row 15)."
     },
     {
@@ -1366,6 +1379,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-06",
       "honesty_rationale": "New-file naming-convention check on the session's own newly-added migration — resolvable by renaming in the same commit."
     },
     {
@@ -1386,6 +1400,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-04",
       "honesty_rationale": "GAP (F.5 waiver-parity-audit.md row 17): block message's only remedy is manual out-of-band editing, not a real mechanical waiver. Proposal 3 fix (structured waiver for deliberate non-archive removal) not yet applied — tracked as orchestratorTodo."
     },
     {
@@ -1408,6 +1423,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-04",
       "honesty_rationale": "Checkbox-flip authorization is the canonical checked-box-without-evidence honesty assertion (ADR 059 D4) — deliberately unwaivable; TASK_VERIFIER_MODE=1 back door was removed 2026-05-04 for this reason."
     },
     {
@@ -1453,6 +1469,7 @@
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain and plan-edit flows; not directly wired in settings.json.template",
       "budget_class": "none",
+      "added_after": "2026-04",
       "honesty_rationale": "Adversarial content review of the session's own plan edit — resolvable by fixing the plan."
     },
     {
@@ -1530,6 +1547,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-04",
       "honesty_rationale": "Aggregator; dispatches 6 independently-audited sub-checks (see backlog-plan-atomicity, decisions-index, docs-freshness, migration-claude-md, plan-reviewer, review-finding-fix, tdd-gate) — no separate waiver posture of its own."
     },
     {
@@ -1571,6 +1589,7 @@
       "blocking": true,
       "honest_status": "wired via git-hooks/pre-push dispatcher (core.hooksPath), not settings.json.template",
       "budget_class": "none",
+      "added_after": "2026-05",
       "waiver_path": "git push --no-verify (git-native, documented at git-hooks/pre-push dispatcher level); world-state fact (remote moved) is more honestly fixed by fetch+merge/rebase than waived."
     },
     {
@@ -1592,6 +1611,7 @@
       "blocking": true,
       "honest_status": "wired via git-hooks/pre-push dispatcher (core.hooksPath) with per-repo opt-in marker; not settings.json.template",
       "budget_class": "none",
+      "added_after": "2026-04",
       "waiver_path": "git push --no-verify, plus a per-repo structural opt-in marker (stronger than a per-session waiver — a repo can opt out of the check entirely)."
     },
     {
@@ -1697,6 +1717,7 @@
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
       "budget_class": "none",
+      "added_after": "2026-04",
       "honesty_rationale": "Commit-time atomicity check (review-finding-referencing commit needs the review file touched) — resolvable by the session."
     },
     {
@@ -1734,6 +1755,7 @@
       "blocking": true,
       "honest_status": "invoked via pre-stop-verifier.sh (Stop chain); not directly wired in settings.json.template",
       "budget_class": "none",
+      "added_after": "2026-04",
       "honesty_rationale": "ADR 059 D2 verification-class Stop block — NEVER downgraded under a DONE claim by explicit design; this is the load-bearing case the no-waiver rule exists FOR."
     },
     {
@@ -1777,6 +1799,7 @@
       "blocking": true,
       "honest_status": "wired via git-hooks/pre-push dispatcher (core.hooksPath), not settings.json.template",
       "budget_class": "none",
+      "added_after": "2026-04",
       "waiver_path": "git push --no-verify (git-native). F.3 disposition (2026-07-06, operator-approved): ACCEPT-DOCUMENTED — the bypass stays available per constitution §9, on condition of a genuine CI-side backstop; see the sibling 'secret-scan-ci-backstop' manifest entry (SECRET-SCAN-CI-BACKSTOP-01, .github/workflows/secret-backstop.yml). Previously an open question in tests/fixtures/wave-f/F.5/waiver-parity-audit.md row 25 — now resolved."
     },
     {
@@ -1795,6 +1818,7 @@
       },
       "blocking": true,
       "budget_class": "none",
+      "added_after": "2026-06",
       "honest_status": "GitHub Actions workflow (.github/workflows/secret-backstop.yml), not a Claude Code hook; events:[\"manual\"] is a schema-gap stand-in for CI push+PR triggers (same convention as the synthetic-runner-ci entry). Re-invokes the EXISTING pre-push-scan.sh + harness-hygiene-scan.sh scripts against the diff range server-side — the compensating control the F.3 disposition on secret-hygiene-prepush's --no-verify bypass required. Deliberately overlaps server-side-enforcement.yml's credential-scan/harness-hygiene jobs (defense-in-depth, documented in the workflow file's header) rather than being the sole CI coverage.",
       "honesty_rationale": "GitHub Actions required-status-check, not a session-time hook; a waiver here is a GitHub branch-protection admin override, outside this manifest's waiver-file scope by construction (same rationale as synthetic-runner-ci)."
     },
@@ -1835,6 +1859,7 @@
       },
       "blocking": true,
       "budget_class": "stop",
+      "added_after": "2026-06",
       "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact.",
       "honesty_rationale": "ADR 059 D2/D4: reads OTHER gates' waiver state to detect already-resolved blocks, but its own resolved-vs-live assertion is never itself waivable by design (pin-f-doctor-exempt, hook comment line 297)."
     },
@@ -1972,6 +1997,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-05",
       "honesty_rationale": "scope-enforcement-gate.sh half: repo-boundary world-fact check, waiver deliberately REMOVED 2026-05-04 (honesty-class, correct). spec-freeze-gate.sh half (same entry, different hook file): GAP — no real waiver for a substantive time-boxed frozen-plan touch; OPEN operator/harness-reviewer decision, not resolved here (see tests/fixtures/wave-f/F.5/waiver-parity-audit.md row 27)."
     },
     {
@@ -2012,6 +2038,7 @@
       },
       "blocking": true,
       "budget_class": "stop",
+      "added_after": "2026-06",
       "honest_status": "E.11 batched Stop verdict; invokes work-integrity/session-honesty/bug-persistence in --report mode, aggregates one verdict; replaces their 3 blocking Stop entries at §E.W (Stop 6->4). pin-f: delegates to the gates that validate purpose clauses. Cold-reader-lint WARN (constitution §3 amendment 53d3bee, operator directive 2026-07-07), following FUNCTIONAL-LINK's own precedent immediately above it in this same file: scans the final assistant message for a §3-format \"Decision needed\" block and, if it is missing an artifact anchor or per-option outcome text, emits ONE ledger_emit warn + a stderr notice. WARN-only — never contributes to the block/gap verdict above, never participates in cycle-counting/DONE-refusal, never touches stdout. Self-tested (scenarios renumbered 20-23 at batch-integration to avoid colliding with the FIX-2a/FIX-2b automation-ceiling scenarios 18-19 already on master; 3 of 4 pass). KNOWN BUG (found during batch integration, confirmed pre-existing on the source branch in isolation, not introduced by the merge): `_svd_message_has_decision_block`'s heuristic does a naive case-insensitive substring match for `decision needed`, so prose that negates it (e.g. \"no decision needed here\") still matches and false-positive-warns as a decision block missing an anchor — 1 self-test scenario (ordinary-prose-not-scanned) fails on this. Low severity (WARN-only, never blocks) but real; follow-up filed to require the heuristic to exclude a preceding negation token.",
       "honesty_rationale": "Aggregator; delegates to bug-persistence/work-integrity/session-honesty's own waiver postures (already stated in its honest_status)."
     },
@@ -2031,6 +2058,7 @@
       },
       "blocking": true,
       "budget_class": "none",
+      "added_after": "2026-06",
       "honest_status": "GitHub Actions workflow (.github/workflows/synthetic-runner.yml), not a Claude Code hook; events:[\"manual\"] is a schema-gap stand-in for CI cron+PR triggers.",
       "honesty_rationale": "GitHub Actions required-status-check, not a session-time hook; a waiver here is a GitHub branch-protection admin override, outside this manifest's waiver-file scope by construction."
     },
@@ -2077,6 +2105,7 @@
       "blocking": true,
       "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
       "budget_class": "none",
+      "added_after": "2026-04",
       "honesty_rationale": "New-runtime-code-needs-tests check on the session's own commit — resolvable by writing the test; the harness's single most important mechanical enforcement, deliberately hard to waive."
     },
     {
@@ -2208,6 +2237,7 @@
       },
       "blocking": true,
       "budget_class": "pretool",
+      "added_after": "2026-05",
       "honesty_rationale": "GAP (F.5 waiver-parity-audit.md row 32): no waiver mechanism beyond the plan-time n/a carve-out, which does not cover a flip-time false-negative. Proposal 3 fix (structured waiver) not yet applied — tracked as orchestratorTodo."
     },
     {
@@ -2228,6 +2258,7 @@
       },
       "blocking": true,
       "budget_class": "stop",
+      "added_after": "2026-06",
       "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact.",
       "waiver_path": "Structured waiver via lib/waiver-purpose-clause.sh (sourced directly); checks (a)/(b) are waiver-gated per ADR 059 D4 scoping (world-state assertions only — never the checked-box-without-evidence honesty assertion). Canonical reference implementation."
     },
