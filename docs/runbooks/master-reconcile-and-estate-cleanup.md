@@ -40,12 +40,17 @@ fix lands (see the harness-governance-batch plan); keep this runbook until then.
       `MB=$(git merge-base <local-parent> <pt-parent>)`; for each file in
       `git diff --name-only "$MB" <side>`: if `side:file != MB:file` and
       `MERGE:file == MB:file` → DROPPED. Run once per side.
-   b. **Manifest id-set union**: `union(parent id-sets) == merged id-set` (jq + comm);
-      also every `doctrine/*.md` on disk has a manifest entry.
-   c. **Generated-doc check against the committed blob**:
-      `GEN_ARCH_DOC_MANIFEST=<(git show HEAD:adapters/claude-code/manifest.json) bash
-      adapters/claude-code/scripts/gen-architecture-doc.sh --check` — GREEN against the
-      worktree does NOT certify the commit.
+   b. **Manifest id-set union AND per-entry faithfulness**: `union(parent id-sets) ==
+      merged id-set` (jq + comm); every `doctrine/*.md` on disk has a manifest entry; AND
+      every shared id's entry is canonical-JSON-equal (`jq -S`) to at least one parent —
+      an id-set check alone would pass a merge that flipped a shared entry's field
+      (e.g. `blocking:true→false`) with the id-set intact.
+   c. **Generated-doc check against the committed blob** (use a real temp file — NEVER
+      `VAR=<(...)` for a path the tool stats or re-reads; a FIFO fails `-f` guards and
+      single-uses):
+      `M=$(mktemp); git show HEAD:adapters/claude-code/manifest.json > "$M";
+      GEN_ARCH_DOC_MANIFEST="$M" bash adapters/claude-code/scripts/gen-architecture-doc.sh --check;
+      rm -f "$M"` — GREEN against the worktree does NOT certify the commit.
    d. `bash adapters/claude-code/hooks/model-pin-gate.sh --self-test`;
       `bash adapters/claude-code/hooks/harness-doctor.sh --self-test`;
       `harness-doctor.sh --quick` shows no NEW reds vs the pre-merge baseline.
