@@ -74,7 +74,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | SessionStart | plan-lifecycle | writer | no | plan-auto-closure.sh, plan-lifecycle.sh, plan-status-archival-sweep.sh |
 | SessionStart | register-surfacer | surfacer | no | register-surfacer.sh |
 | SessionStart | review-before-deploy | gate | yes | — |
-| SessionStart | session-start-auto-install | writer | no | hooks/lib/sessionstart-singleflight.sh, session-start-auto-install.sh |
+| SessionStart | session-start-auto-install | writer | no | lib/sessionstart-singleflight.sh, session-start-auto-install.sh |
 | SessionStart | session-start-digest | surfacer | no | session-start-digest.sh |
 | SessionStart | session-start-surfacer-pack | surfacer | no | session-start-surfacer-pack.sh |
 | SessionStart | spawn-task-report-back | surfacer | no | spawned-task-result-surfacer.sh |
