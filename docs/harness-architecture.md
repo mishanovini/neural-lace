@@ -15,9 +15,9 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 119 |
-| Unique hook scripts | 105 |
-| Blocking gates (`blocking: true`) | 32 |
+| Total manifest entries | 123 |
+| Unique hook scripts | 106 |
+| Blocking gates (`blocking: true`) | 33 |
 
 ## Hooks by event
 
@@ -36,7 +36,6 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreToolUse | agent-teams | gate | yes | task-completed-evidence-gate.sh, task-created-validator.sh, teammate-spawn-validator.sh |
 | PreToolUse | claude-md-hygiene | gate | yes | claude-md-hygiene-gate.sh |
 | PreToolUse | concurrent-ownership-gate | gate | yes | concurrent-ownership-gate.sh |
-| PreToolUse | model-pin | gate | yes | model-pin-gate.sh |
 | PreToolUse | cross-repo-nl-touch-warn | surfacer | no | cross-repo-nl-touch-warn.sh |
 | PreToolUse | definition-on-first-use | gate | no | definition-on-first-use-gate.sh |
 | PreToolUse | deploy-automation-mode | gate | yes | automation-mode-gate.sh |
@@ -47,6 +46,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreToolUse | findings-ledger | gate | yes | findings-ledger-schema-gate.sh |
 | PreToolUse | gh-account-autoswitch | surfacer | no | gh-account-autoswitch.sh |
 | PreToolUse | local-edit-authorization | gate | yes | local-edit-gate.sh |
+| PreToolUse | model-pin | gate | yes | model-pin-gate.sh |
 | PreToolUse | no-test-skip | gate | yes | no-test-skip-gate.sh |
 | PreToolUse | observed-errors-first | gate | no | observed-errors-gate.sh |
 | PreToolUse | outcome-evidence | gate | no | outcome-evidence-gate.sh |
@@ -120,10 +120,10 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
-| gate | 32 | 12 |
-| writer | 0 | 27 |
+| gate | 33 | 12 |
+| writer | 0 | 28 |
 | surfacer | 0 | 20 |
-| pattern | 0 | 25 |
+| pattern | 0 | 27 |
 | convention | 0 | 3 |
 
 ## Budgets
@@ -137,9 +137,9 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 |---|---|
 | stop | 8 |
 | session-start | 15 |
-| pretool | 25 |
+| pretool | 26 |
 | posttool | 6 |
-| none | 65 |
+| none | 68 |
 
 ## Doctrine index
 
@@ -153,8 +153,9 @@ it rather than duplicating it, so the two generators cannot disagree).
 |---|---|
 | doctrine/acceptance-scenarios.md | 1 (acceptance-scenarios) |
 | doctrine/agent-teams.md | 1 (agent-teams) |
+| doctrine/artifact-evidence-bar.md | 1 (artifact-evidence-bar) |
 | doctrine/automation-modes.md | 1 (automation-modes) |
-| doctrine/background-work-tracking.md | 1 (background-work-tracking) |
+| doctrine/background-work-tracking.md | 2 (agent-heartbeat, background-work-tracking) |
 | doctrine/claims.md | 1 (claims) |
 | doctrine/code-conventions.md | 3 (code-conventions, doc-gate, migration-claude-md) |
 | doctrine/completion-criteria.md | 1 (completion-criteria) |
@@ -176,6 +177,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/interactive-process-fidelity.md | 1 (interactive-process-fidelity) |
 | doctrine/local-edit-authorization.md | 1 (local-edit-authorization) |
 | doctrine/mechanical-evidence.md | 1 (mechanical-evidence) |
+| doctrine/model-selection.md | 1 (model-pin) |
 | doctrine/observability.md | 3 (nl-cli, observability, observability-consumer-map) |
 | doctrine/observed-errors-first.md | 1 (observed-errors-first) |
 | doctrine/orchestrator-pattern.md | 1 (orchestrator-pattern) |
@@ -183,6 +185,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/planning.md | 11 (backlog-plan-atomicity, decisions-index, plan-deletion-protection, plan-edit-validator, plan-lifecycle, plan-reviewer, pr-template-inline, stale-plan-surfacer, task-verifier-reminder, wire-check, work-integrity) |
 | doctrine/pr-health-snapshot.md | 1 (pr-health-snapshot) |
 | doctrine/prd-validity.md | 1 (prd-validity) |
+| doctrine/reap-what-you-spawn.md | 1 (reap-what-you-spawn) |
 | doctrine/risk-tiered-verification.md | 1 (risk-tiered-verification) |
 | doctrine/security.md | 3 (env-local-protection, secret-hygiene-prepush, secret-scan-ci-backstop) |
 | doctrine/session-end-protocol.md | 2 (register-surfacer, session-honesty) |
@@ -204,7 +207,9 @@ Entries with no doctrine_file (`-`): 30.
 | id | kind | events | blocking | budget_class | honest_status |
 |---|---|---|---|---|---|
 | acceptance-scenarios | pattern | — | no | none | — |
+| agent-heartbeat | writer | — | no | none | scripts/agent-heartbeat.sh (emit/conclude/watch/reap) — per-AGENT liveness heartbeat in the heartbeats/agents/ namespace (2026-07-14 lesson: background agents need a push heartbeat + watchdog, not orchestrator output-polling). watch AND reap are spliced into hooks/stalled-work-surfacer.sh run() (watch surfaces stalled agents at SessionStart alongside stalled Workflow runs; reap bounds the namespace — the session-heartbeat reaper's 2026-07-09 dead-reaper defect, avoided here by wiring reap in the same commit). conclude is the terminal beat: an agent self-removes on clean completion so a COMPLETED agent is never surfaced as stalled (mirrors the workflow half's started==result suppression; without it every finished agent false-fires — the cry-wolf that REFORMULATE'd orphaned-worktree-guard, fixed here per harness-review CONDITIONAL-PASS 2026-07-14). INTERIM PATTERN: relies on the dispatched agent calling emit/conclude (dispatch-prompt convention in doctrine/background-work-tracking.md); the true runtime auto-heartbeat is not in-repo. Detection covers agents that emitted then stopped (the worked-then-wedged class). Not event-wired as its own settings.json entry — a splice inside the already-wired stalled-work-surfacer.sh; inventory-only per the manifest-check disk-coverage note (scripts/ is not disk-scanned). |
 | agent-teams | gate | PreToolUse, TaskCompleted, TaskCreated | yes | pretool | — |
+| artifact-evidence-bar | pattern | — | no | none | PATTERN — self-applied, NOT YET A MECHANISM. The law (constitution §10 generalized: no artifact ships without evidence it beats naive) is documented; the two gates that would ENFORCE it are NOT WIRED: (1) a plan-reviewer check blocking build-dispatch on a qualifying plan with no architecture-reviewer verdict; (2) an agent-design gate blocking an agent file lacking the 7 properties + a GOLDEN CASE. Until those land this is documentation, not a control. Named here explicitly because §10 calls undelivered enforcement THEATER and the cardinal harness defect. Operator directive 2026-07-14; enforcement is the next build task. |
 | ask-registry | writer | — | no | none | scripts/ask-registry.sh — the ask-registry CLI (register/attach-session/link-plan/set-status/merge/override-project) writing ~/.claude/state/ask-registry.jsonl plus a best-effort in-repo mirror at docs/asks/ask-registry.jsonl (path resolved via nl_main_checkout_root, never a worktree) and a heuristic-first summarizer (optional ASK_SUMMARIZER=haiku upgrade, async, best-effort). Called by hooks/workstreams-read.sh's first-prompt capture splice (register, guarded by hooks/lib/progress-log-lib.sh's pl_classify_session against spawned/builder sessions) and by hooks/session-start-digest.sh's session-attach splice (attach-session, beside the existing heartbeat splice); set-status/merge are also called by the workstreams-ui server's POST /api/ask/<id>/lifecycle endpoint (operator override) and by the background auditor (mechanical completion). Not event-wired as its own settings.json entry — a one-line splice call-site inside already-wired hooks, mirroring the session-heartbeat/ensure-cockpit convention. Inventory-only per the filed nl-issue note that manifest-check's disk-coverage check (b) only disk-scans hooks/*.sh top-level, never scripts/ — this entry exists for honesty, not enforcement. |
 | automation-modes | pattern | — | no | none | — |
 | background-work-tracking | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
@@ -260,6 +265,7 @@ Entries with no doctrine_file (`-`): 30.
 | mechanical-evidence | pattern | — | no | none | — |
 | merge-scan | writer | — | no | none | hooks/lib/merge-scan-lib.sh — ms_emit_merged_for_commit (per-commit `merged` progress-log event, natural-keyed on commit SHA) + ms_scan_repo_for_merges (git-log backfill lane reconciling any missed `merged` events, Task 5b/12). Called by adapters/claude-code/git-hooks/post-commit's post-commit hook body (local-only, best-effort, never blocks the commit) and by the workstreams-ui background auditor's git-log comparison pass. Lives under hooks/lib/ — a subdirectory manifest-check's disk-coverage check (b) never scans (only top-level hooks/*.sh is scanned), so it carries no hooks[] entry of its own; this entry is inventory-only, included for honesty per the filed nl-issue note on manifest-check's disk-scope. |
 | migration-claude-md | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
+| model-pin | gate | PreToolUse | yes | pretool | model-pin-gate.sh (PreToolUse Task|Agent) BLOCKS a subagent spawn with no explicit model whose agent type is unpinned/unknown — forcing explicit model selection so a spawn never SILENTLY INHERITS the main-loop model (operator directive 2026-07-14; silent Fable inheritance drained ~1.7M tokens). Source of truth config/model-policy.json; all 24 agents/*.md pinned. HONEST RESIDUAL (NOT gate-able, doctrine/model-selection.md): Workflow-inline agent(), spawn_task, cron/remote expose no model field a PreToolUse hook can inspect — convention + review only. A harness-doctor check (model-pins) enforces that every agents/*.md stays pinned. |
 | needs-you-ledger | writer | — | no | none | scripts/needs-you.sh — maintains NEEDS-YOU.md (E.6); called by decision-log flow + digest, not event-wired. Cold-reader lint (constitution §3 amendment 53d3bee, operator directive 2026-07-07): `add --section decision` scores every new entry's --text against three zero-session-context checks (background/context, a concrete artifact anchor, per-option outcome text — see _ny_lint_decision_text) and stores the result as a `lint_warnings` array on the item. WARN-only: a stderr notice is printed but `add` NEVER blocks (always exits 0 regardless of lint result) — the ledger's availability outranks its tidiness. Self-tested (T22-T25). |
 | nl-cli | surfacer | — | no | none | scripts/nl.sh (C5 dispatcher) + hooks/lib/observability-derive.sh (C4 pure-read derivation lib: od_sessions/od_needs_me/od_shipped_since/od_harness_health/od_costs/od_backlog_health/od_why) — the six-question observability CLI (specs-o §O.3). Read-only, zero state writes; not event-wired (invoked on demand by the operator or by the future §O.4 cockpit server shelling out to `nl <sub> --json`). |
 | nl-issue-capture-loop | pattern | — | no | none | scripts/nl-issue.sh + skill (E.8) — cross-project capture; not event-wired. |
@@ -284,6 +290,7 @@ Entries with no doctrine_file (`-`): 30.
 | pre-push-test | gate | prepush | yes | none | wired via git-hooks/pre-push dispatcher (core.hooksPath) with per-repo opt-in marker; not settings.json.template |
 | progress-log | writer | — | no | none | hooks/lib/progress-log-lib.sh (pl_emit/pl_path_for/pl_classify_session — the shared writer lib: natural-key dedup, sandbox-only-writes, per-ask JSONL under ~/.claude/state/progress-logs) + scripts/progress-log.sh (the stable `emit` CLI wrapper every splice below shells out to; no splice sources the lib directly) — the ask-rooted-workstreams-p1 progress-log writer family (Tasks 1-6, 9). Every emission site is a one-line splice inside an ALREADY-wired hook or script, never its own settings.json entry, mirroring the session-heartbeat convention. Emitting splices, named verbatim: (1) hooks/plan-lifecycle.sh's emit_task_done_progress_log_events (task_done, on task-verifier checkbox flip) and emit_plan_amended_progress_log_events (plan_amended, on newly-introduced task lines / scope-section edits); (2) hooks/workstreams-emit.sh's task_started splice (best-effort on --on-builder-dispatch) firing alongside scripts/dispatch-provenance.sh's marker write (cmd_write) for the same dispatch; (3) scripts/needs-you.sh's Task-4 splice: waiting_on_operator emission plus a docs/operator-todo.md auto-pointer append, each independently best-effort-wrapped; (4) hooks/lib/merge-scan-lib.sh's ms_emit_merged_for_commit (merged event) called from adapters/claude-code/git-hooks/post-commit's post-commit hook body, backfilled by the auditor's ms_scan_repo_for_merges git-log scan (Task 5b/12); (5) scripts/close-plan.sh's emit_plan_completed_progress_log_event (plan_completed, the sixth/exit lane), reached via both the wired plan-auto-closure.sh PostToolUse hook and manual `close-plan.sh close` runs; (6) hooks/workstreams-read.sh's first-prompt ask_registered capture splice (calls scripts/ask-registry.sh register, guarded against spawned/builder/sub-agent sessions via pl_classify_session) and hooks/session-start-digest.sh's session_attached splice beside the existing heartbeat splice (calls scripts/ask-registry.sh attach-session on resume/spawn). See the sibling `ask-registry`, `dispatch-provenance`, and `merge-scan` manifest entries for those three scripts' own honest_status detail. |
 | propagation-engine | writer | manual | no | none | invoked manually or by future PostToolUse wiring (Tranche 6a); not wired in settings.json.template |
+| reap-what-you-spawn | pattern | — | no | none | PATTERN — self-applied. The law (reap what you initiate, on every exit path) is doctrine, NOT yet a Mechanism: the code-reviewer/architecture-reviewer lens that would flag timeout-without-kill and spawn-without-tree-kill is proposed in the -full companion but not wired. Golden case: auditor.js runCli timeout-without-kill leaked 781 bash.exe / 3 reboots (fixed 2026-07-14). |
 | register-surfacer | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | review-finding-fix | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
 | risk-tiered-verification | pattern | — | no | none | — |
