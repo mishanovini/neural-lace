@@ -101,6 +101,16 @@ BATCH — after the foundation lands (unified master):
 - `docs/plans/model-enforcement-2026-07-14-evidence/5.evidence.json` — task 6 residue.
 - `docs/decisions/064-never-diverge-single-canonical-master.md` — R3 decision (amended per review).
 - `docs/design-notes/review-record-primitive.md` — batch task 1 design draft.
+- `adapters/claude-code/hooks/harness-doctor.sh` — batch task 5 assertion + task-2 doctor checks.
+- `adapters/claude-code/hooks/session-start-auto-install.sh` — batch task 2 deploy-gate (fail-open path).
+- `adapters/claude-code/install.sh` — batch task 2 deploy-gate (hard-block path) + R3 prune step.
+- `adapters/claude-code/scripts/write-review-record.sh` — batch task 2 record writer.
+- `adapters/claude-code/hooks/gh-merge-canonical-gate.sh` — R3 write-discipline gate (name may vary).
+- `adapters/claude-code/hooks/cross-repo-drift-postpush-gate.sh` — R3 block-message repoint.
+- `adapters/claude-code/attic/**` — R3 sync-pt-to-personal retirement.
+- `adapters/claude-code/scripts/sync-pt-to-personal.sh` — R3 retirement (moved to attic).
+- `adapters/claude-code/sync.sh` — R3 A5 posture-comment reconcile.
+- `adapters/claude-code/settings.json.template` — R3 + task-2 hook wiring.
 - (build tasks R3 + 1–5 create their own files in the executing session.)
 
 ## In-flight scope updates
@@ -155,6 +165,22 @@ BATCH — after the foundation lands (unified master):
   27d-unpushed server branch) — classifier-denied, operator to run or decline.
 - nl-issues filed: broadcast should label claim-backed vs existence-only signals; no reaper for
   completed-plan builder worktrees (cite reap-what-you-spawn doctrine).
+
+### R3 + batch design reviews (2026-07-16)
+- Decision 064 architecture-review: SOUND-WITH-AMENDMENTS; A1-A6 folded (branch protection on the
+  work repo PROMOTED to primary mechanism — operator-only, NEEDS-YOU; gh-merge gate demoted to
+  defense-in-depth with honest residual-writer coverage + A4 target resolution). Committed e2cf8b8.
+- Review-record primitive architecture-review: SOUND-WITH-AMENDMENTS; amendments A-F handed to the
+  task-2 builder verbatim (path-glob surface NOT manifest-union — 3 of the 5 files 937e8cb reverted
+  are in no manifest hooks[]; content-presence-only coverage contract; anti-fabrication downgraded to
+  audit-anchor; index read path; grandfather cutover; fail-open posture stated).
+- Batch 5 build: engine BLESSED by harness-review but verdict REJECT on data honesty — 5 July-landing
+  entries were encoded added_after "2026-06" to sit below the bar cutoff PER A WRONG ORCHESTRATOR
+  INSTRUCTION (owned: the dispatch prompt said "use a pre-bar sentinel month"; §1 violation). Fix in
+  flight: true 2026-07 months + explicit documented grandfather exempt-list in the doctor check +
+  remedy-string reword (no more under-dating invitation) + jq type-guard parity. Original commit
+  message amended with the true record (e546ed9). Builder-report mismatch also noted (report said
+  sentinel "2026-04", artifact carried "2026-06") — calibration note for plan-phase-builder.
 
 ### R2 (inventory so far)
 - 7 worktrees; broadcast marks 5 signals live-owned (main, nl-ux-wt, agent-aeed9a16, agent-afdcb723, workstreams-ui-server) + sleepy-albattani claim. Non-owned candidates: `beautiful-mcnulty-e8bc42` worktree (clean, detached @6149a45, PR #100 MERGED on pt 2026-07-13) and branches `claude/beautiful-mcnulty-e8bc42` (ahead-of-origin by 1 doc commit) + `close-100` (12 commits, unpushed, content landed via PR 100→pt→master — verified: archived plan + FM-038 + vaporware doctrine present in master). Neither branch is ancestry-merged nor stale >7d → runbook says KEEP; revisit via estate coordination (are the broadcast signals themselves stale?).
