@@ -95,10 +95,10 @@ as empty strings, never omitted:
 | type | natural key (dedup) | legitimate recurrence preserved |
 |---|---|---|
 | `task_done` | plan_slug+task_id+sha | re-verify after revert = new sha |
-| `task_started` | plan_slug+task_id+session_id | re-dispatch of a failed task = new child session |
+| `task_started` | plan_slug+task_id+session_id+**per-dispatch replay token** (`--dedup-extra`) | re-dispatch of a failed task = new dispatch (see note) |
 | `waiting_on_operator` | needs_you_id | each parked decision has its own id |
 | `merged` | repo+sha | every merge is its own sha |
-| `plan_amended` | plan_slug+content-hash of the delta (`--dedup-extra`) | second amendment = new delta hash |
+| `plan_amended` | plan_slug+content-hash of the **pre→post delta + a replay token** (`--dedup-extra`) | second amendment = new hash, *even if it repeats a prior scope state* |
 | `plan_completed` | plan_slug+content-hash of the Status-line ts (`--dedup-extra`) | re-close after reopen = new Status-line ts → new hash |
 | `ask_registered` / `session_attached` | ask_id(+session_id) | attach per (ask, session) pair |
 | (any other/future type) | a superset hash of every field supplied | never silently un-deduped, never wrongly collapses a real recurrence |
@@ -107,6 +107,51 @@ Superset rule (round-2 review, binding): every row's dedup-key column must
 be a superset of the discriminators its recurrence column names — audited
 across all rows; `plan_completed` is the one row this caught (a bare
 `plan_slug` key would have suppressed a legitimate re-close after reopen).
+
+**Superset-rule re-audit (2026-07-14 ask-splice review panel) — two rows
+were violating it in the REAL caller, and both are fixed:**
+
+- **`task_started` (was Major).** The key named `session_id` and the
+  recurrence column named "new child session" — but the real emitter,
+  `hooks/workstreams-emit.sh`'s `_emit_dispatch_provenance`, passes the
+  **dispatching orchestrator's** `CLAUDE_SESSION_ID`, which is *invariant
+  across every dispatch it makes*. So a within-session **re-dispatch of a
+  failed task produced an identical key and was silently DROPPED** — the
+  key was not a superset of its own recurrence discriminator. (`child_id`
+  is no help: it is a pure function of that same sid.) The emitter now also
+  passes a **per-dispatch replay token** as `--dedup-extra`
+  (`_dispatch_replay_token`), and `_pl_natural_key` includes it. That token
+  is a DEBOUNCE anchored at the FIRST fire of a given (session, plan, task):
+  a re-fire within `DISPATCH_REPLAY_DEBOUNCE_SECONDS` (default **30**) reuses
+  the same token (hook double-fire → still deduped), while a dispatch after
+  that window mints a new one (genuine re-dispatch → a new event). Two
+  sizing notes learned the hard way, both caught by the regression tests:
+  (a) a naive `floor(now/N)` wall-clock bucket is NOT safe — two fires
+  milliseconds apart can straddle a bucket boundary and DUPLICATE the event;
+  a first-fire debounce has no boundary to straddle. (b) The window's lower
+  bound is NOT sub-second: each fire forks a whole hook process (bash + git +
+  sha1sum), which costs SECONDS on the Windows/Git-Bash target — a 5s window
+  was measurably too tight. 30s clears a double-fire with margin and stays far
+  below any real re-dispatch cycle (dispatch → build → verify = minutes).
+- **`plan_amended` (was Minor).** The key hashed the **full resulting
+  scope**, not the delta, so returning the scope to a previously-seen exact
+  state (`A → A,B` / `A,B → A` / `A → A,B`) made the 3rd amendment collide
+  with the 1st. `hooks/plan-lifecycle.sh`'s
+  `emit_plan_amended_progress_log_events` now hashes the **pre→post delta
+  plus a replay token** (`_amendment_replay_token` — the same first-fire
+  debounce, `AMENDMENT_REPLAY_DEBOUNCE_SECONDS`) — a repeat of a prior scope
+  state is a genuinely distinct amendment, while a hook re-fire of ONE edit
+  still dedups. (Hashing the delta alone is NOT sufficient: in the
+  `A → A,B` / `A,B → A` / `A → A,B` sequence the 1st and 3rd transitions are
+  textually identical in BOTH pre and post.)
+
+Lesson for future rows: the superset audit must be done against **what the
+real caller actually passes**, not against the field's name. A self-test
+that hand-feeds two different `session_id`s "proves" a recurrence the
+production call site can never produce — that false assurance is exactly
+what hid the `task_started` defect. The regression tests now drive the real
+caller (`workstreams-emit.sh --on-builder-dispatch`, twice, with the SAME
+session id).
 
 Implemented in `hooks/lib/progress-log-lib.sh`'s `_pl_natural_key`; the
 `emit` CLI's invocation shape (verbs/flags) is UNCHANGED from Task 1 — the

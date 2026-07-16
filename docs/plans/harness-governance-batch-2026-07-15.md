@@ -101,6 +101,14 @@ BATCH — after the foundation lands (unified master):
 - 2026-07-15 (R1/R3/batch, executing session): `adapters/claude-code/manifest.json`,
   `adapters/claude-code/config/model-policy.json`, `adapters/claude-code/agents/architecture-reviewer.md`,
   `docs/harness-architecture.md` — R1 merge-invariant surface (union + pins + regenerated doc).
+- 2026-07-16 (R1 merge-fix, reviewer-REJECT remediation): the 11 pt-side files dropped from
+  `937e8cb` by the stash/index corruption — `adapters/claude-code/doctrine/INDEX.md`,
+  `adapters/claude-code/hooks/lib/merge-scan-lib.sh`, `adapters/claude-code/hooks/lib/progress-log-lib.sh`,
+  `adapters/claude-code/hooks/plan-lifecycle.sh`, `adapters/claude-code/hooks/workstreams-emit.sh`,
+  `adapters/claude-code/schemas/progress-log-event.schema.json`, `adapters/claude-code/scripts/dispatch-provenance.sh`,
+  `docs/plans/ask-rooted-workstreams-p1-evidence.md`, `docs/plans/ask-rooted-workstreams-p1.md`,
+  `docs/runbooks/ask-workstreams.md`, `neural-lace/workstreams-ui/server/auditor.js` — plus the
+  manifest 123-union, the model-policy entry, and the runbook verification hardening.
 - 2026-07-15 (residue capture, task 6): `docs/handoffs/2026-07-14-model-enforcement-and-rootcause-gate-checkpoint.md`,
   `docs/lessons/2026-07-14-credentials-are-available-inject-dont-surrender.md`,
   `docs/plans/model-enforcement-2026-07-14-evidence/` — prior-session on-disk artifacts needing a home.

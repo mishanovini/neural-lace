@@ -31,6 +31,7 @@
     "task-verifier": { "category": "review", "chain": ["fable", "opus"] },
     "audience-content-reviewer": { "category": "review", "chain": ["fable", "opus"], "was": "sonnet" },
     "ux-end-user-tester": { "category": "review", "chain": ["fable", "opus"] },
+    "architecture-reviewer": { "category": "design", "chain": ["fable", "opus"] },
     "systems-designer": { "category": "design", "chain": ["fable", "opus"] },
     "ux-designer": { "category": "design", "chain": ["fable", "opus"] },
     "ux-ia-auditor": { "category": "design", "chain": ["fable", "opus"] },

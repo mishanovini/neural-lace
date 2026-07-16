@@ -47,9 +47,18 @@
 #     worktree as part of EXECUTING the tool call and only returns the path
 #     in the PostToolUse result. See workstreams-emit.sh's
 #     `_emit_dispatch_provenance` header comment for the full reasoning and
-#     which callers CAN supply --worktree (the spawn_task `cwd` override).
+#     which callers CAN supply --worktree (the spawn_task `cwd` override,
+#     and only when that hint is itself a `.claude/worktrees/` pool path —
+#     see that header's FINDING 3 note).
 #     NEVER BLOCKS the caller: every failure path is swallowed, exit 0 on
 #     every code path (writer semantics, plan constraint 5).
+#     After writing, prunes the marker directory (FINDING 1, 2026-07-14
+#     review panel — see `_dp_prune`'s own header below): deletes markers
+#     older than DISPATCH_PROVENANCE_TTL_DAYS (default 14), then caps the
+#     survivors to the newest DISPATCH_PROVENANCE_MAX_MARKERS (default
+#     200). Keeps progress-log-lib.sh's `pl_classify_session` scan (which
+#     reads this same directory on every SessionStart/first prompt) from
+#     paying unbounded latency as the estate ages.
 #
 #   dispatch-provenance.sh --self-test
 #     Self-contained assertion suite, entirely sandboxed (see SANDBOXING) —
@@ -123,6 +132,92 @@ _dp_json_escape() {
 }
 
 # ----------------------------------------------------------------------
+# _dp_prune <dir> — bound the marker directory's growth (FINDING 1,
+# 2026-07-14 ask-splice review panel). Markers are written per plan-rooted
+# dispatch and were NEVER pruned, so progress-log-lib.sh's
+# pl_classify_session -- which runs on every SessionStart and first
+# UserPromptSubmit -- paid unbounded, ever-growing, fork-heavy synchronous
+# latency as the estate aged (precedent: session-start-digest.sh already
+# BACKGROUNDS an analogous heartbeat-reap scan for this identical
+# anti-pattern). Runs at the end of every `write`, so the directory is
+# self-bounding without a separate cron/reap process. Best-effort, NEVER
+# BLOCKS the caller (writer semantics): every failure here is swallowed.
+#
+#   TTL pass:  delete any marker whose embedded ts_compact is older than
+#              DISPATCH_PROVENANCE_TTL_DAYS (default 14).
+#   CAP pass:  of what survives, keep only the newest
+#              DISPATCH_PROVENANCE_MAX_MARKERS (default 200) by
+#              ts_compact; delete the rest.
+#
+# Timestamps are parsed from the FILENAME (not mtime) -- same convention
+# install.sh's prune_stale_backups already uses ("parse the timestamp from
+# the directory name, not mtime, which is unreliable"), and it also lets
+# the TTL comparison be a pure STRING compare: ts_compact is a fixed-width
+# 14-digit YYYYMMDDHHMMSS (from `date -u '+%Y-%m-%dT%H:%M:%SZ' | tr -cd
+# '0-9'`), so lexicographic order IS chronological order. That matters:
+# this prune runs inside a PreToolUse-dispatched hook, so it must not fork
+# per marker (a `date` call per file would make the prune itself the
+# fork-heavy hot-path cost Finding 1 exists to remove). Total forks here:
+# ONE `date` for the cutoff + ONE `sort` for the cap pass, flat.
+# A marker whose filename doesn't carry a recognizable numeric ts_compact
+# (any foreign or malformed file in this dir) is never touched by either
+# pass -- caution favors leaking over misdeleting.
+# ----------------------------------------------------------------------
+_dp_prune() {
+  local dir="$1"
+  [[ -d "$dir" ]] || return 0
+  local ttl_days="${DISPATCH_PROVENANCE_TTL_DAYS:-14}"
+  local max_markers="${DISPATCH_PROVENANCE_MAX_MARKERS:-200}"
+
+  # Cutoff as a 14-digit compact stamp (ONE fork). Bail out silently if the
+  # platform's `date` can't do relative arithmetic -- never block a write.
+  local cutoff_compact
+  cutoff_compact="$(date -u -d "${ttl_days} days ago" '+%Y%m%d%H%M%S' 2>/dev/null \
+    || date -u -v-"${ttl_days}"d '+%Y%m%d%H%M%S' 2>/dev/null || echo "")"
+
+  local f base ts
+  local entries="" count=0
+
+  # ---- TTL pass (zero forks: fixed-width lexicographic compare) ----
+  if [[ -n "$cutoff_compact" ]]; then
+    for f in "$dir"/*.json; do
+      [[ -f "$f" ]] || continue
+      base="${f##*/}"
+      base="${base%.json}"
+      ts="${base##*__}"
+      # Only a full 14-digit stamp is comparable against the cutoff; a
+      # shorter/garbled one is left alone (never misdelete).
+      [[ "$ts" =~ ^[0-9]{14}$ ]] || continue
+      if [[ "$ts" < "$cutoff_compact" ]]; then
+        rm -f "$f" 2>/dev/null || true
+      fi
+    done
+  fi
+
+  # ---- CAP pass (re-glob: the TTL pass above may have deleted some) ----
+  for f in "$dir"/*.json; do
+    [[ -f "$f" ]] || continue
+    base="${f##*/}"
+    base="${base%.json}"
+    ts="${base##*__}"
+    [[ "$ts" =~ ^[0-9]{8,}$ ]] || continue
+    entries="${entries}${ts}"$'\t'"${f}"$'\n'
+    count=$((count + 1))
+  done
+  [[ "$count" -le "$max_markers" ]] && return 0
+
+  local i=0 ts_s path_s
+  while IFS=$'\t' read -r ts_s path_s; do
+    [[ -n "$ts_s" ]] || continue
+    i=$((i + 1))
+    if [[ "$i" -gt "$max_markers" ]]; then
+      rm -f "$path_s" 2>/dev/null || true
+    fi
+  done < <(printf '%s' "$entries" | sort -r -t $'\t' -k1,1)
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # cmd_write — parse `write` args and emit ONE marker file. Never blocks:
 # every failure path returns 0 without printing (mirrors pl_emit).
 # ----------------------------------------------------------------------
@@ -164,6 +259,13 @@ cmd_write() {
     "$ts" "$ask_e" "$slug_e" "$task_e" "$sid_e" "$child_e" "$wt_e")"
 
   printf '%s\n' "$json" >"$path" 2>/dev/null || return 0
+
+  # FINDING 1 fix (2026-07-14 review panel): bound the directory's growth
+  # on every write so it never accumulates unboundedly (see _dp_prune
+  # above). Best-effort/non-fatal -- a prune failure never blocks the
+  # caller or suppresses the just-written path below.
+  _dp_prune "$dir" 2>/dev/null || true
+
   printf '%s\n' "$path"
   return 0
 }
@@ -252,6 +354,58 @@ cmd_selftest() {
     pass "write with no args still exits 0 (writer semantics: never blocks the caller)"
   else
     fail "write with no args should still exit 0"
+  fi
+
+  echo "Scenario F (FINDING 1 REGRESSION, 2026-07-14 review panel): a marker older than DISPATCH_PROVENANCE_TTL_DAYS is pruned by the very next write"
+  local old_ts_human old_ts_compact stale_marker
+  old_ts_human="$(date -u -d '20 days ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-20d '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+  old_ts_compact="$(printf '%s' "$old_ts_human" | tr -cd '0-9')"
+  stale_marker="$DISPATCH_PROVENANCE_STATE_DIR/stalewt__${old_ts_compact}.json"
+  printf '{"v":1,"ts":"%s","ask_id":"ask-stale","plan_slug":"p","task_id":"1","session_id":"s","child_id":"c","worktree_path":""}\n' \
+    "$old_ts_human" >"$stale_marker"
+  if [[ ! -f "$stale_marker" ]]; then
+    fail "Scenario F setup: could not create the stale fixture marker"
+  else
+    cmd_write --ask "ask-fresh-f" --plan-slug "p" --task-id "2" --session-id "s2" --child-id "c2" >/dev/null
+    if [[ -f "$stale_marker" ]]; then
+      fail "Scenario F: a marker older than the default 14-day TTL (fixture is 20 days old) survived a subsequent write -- prune did not fire"
+    else
+      pass "a marker older than DISPATCH_PROVENANCE_TTL_DAYS (default 14d; fixture 20d old) was pruned by the next write"
+    fi
+  fi
+
+  echo "Scenario G (FINDING 1 REGRESSION): DISPATCH_PROVENANCE_MAX_MARKERS caps the directory to the newest N markers, regardless of TTL"
+  local capdir="$TMP/dp-cap"; mkdir -p "$capdir"
+  local now_epoch_g; now_epoch_g=$(date -u +%s 2>/dev/null)
+  local ig eg human_g ts_g
+  for ig in $(seq 1 15); do
+    eg=$(( now_epoch_g - ig ))
+    human_g="$(date -u -d "@$eg" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -r "$eg" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+    ts_g="$(printf '%s' "$human_g" | tr -cd '0-9')"
+    printf '{"v":1,"ts":"%s","ask_id":"ask-g-%s","plan_slug":"p","task_id":"1","session_id":"s","child_id":"c","worktree_path":""}\n' \
+      "$human_g" "$ig" >"$capdir/capwt${ig}__${ts_g}.json"
+  done
+  local precount_g; precount_g=$(ls "$capdir"/*.json 2>/dev/null | wc -l | tr -d ' ')
+  ( export DISPATCH_PROVENANCE_STATE_DIR="$capdir"
+    export DISPATCH_PROVENANCE_MAX_MARKERS=5
+    cmd_write --ask "ask-g-new" --plan-slug "p" --task-id "2" --session-id "s-new" --child-id "c-new" >/dev/null )
+  local postcount_g; postcount_g=$(ls "$capdir"/*.json 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "$precount_g" == "15" && "$postcount_g" == "5" ]]; then
+    pass "cap pass pruned a 16-marker directory down to the newest 5 (DISPATCH_PROVENANCE_MAX_MARKERS override)"
+  else
+    fail "expected 15 markers pre-write and 5 post-write (cap=5), got pre=$precount_g post=$postcount_g"
+  fi
+  local survivors_ok=1 isv
+  for isv in 1 2 3 4; do
+    ls "$capdir"/capwt${isv}__*.json >/dev/null 2>&1 || survivors_ok=0
+  done
+  for isv in 5 6 7 8 9 10 11 12 13 14 15; do
+    if ls "$capdir"/capwt${isv}__*.json >/dev/null 2>&1; then survivors_ok=0; fi
+  done
+  if [[ "$survivors_ok" == "1" ]]; then
+    pass "the cap pass kept exactly the newest 4 pre-existing markers and pruned the older 11 (plus the brand-new 5th)"
+  else
+    fail "cap pass did not keep exactly the expected newest pre-existing markers"
   fi
 
   rm -rf "$TMP" 2>/dev/null || true

@@ -314,7 +314,7 @@ Serialization added in round 1:
   `close-plan.sh close <slug> --auto`) AND via manual `close-plan.sh close` runs,
   so every closure lane emits. Task 12's auditor derives ask-done from it —
   Verification: mechanical — Docs impact: none — covered by Task 7 manifest entry
-- [ ] 7. [serial] Manifest + review closure for the writer family: one
+- [x] 7. [serial] Manifest + review closure for the writer family: one
   `manifest.json` entry (`id: progress-log`, `kind: writer`, `honest_status`
   naming EVERY splice site verbatim — the `session-heartbeat` entry is the
   template), doctor `--quick` stays GREEN, and a **mandatory harness-reviewer
@@ -608,6 +608,7 @@ Create:
 - `adapters/claude-code/hooks/lib/progress-log-lib.sh` — writer lib (pl_emit/pl_path_for/dedup/sandbox)
 - `adapters/claude-code/scripts/progress-log.sh` — CLI verbs + `--self-test` (mirrors session-heartbeat split)
 - `adapters/claude-code/scripts/ask-registry.sh` — registry CLI + summarizer + mirror + `--self-test`
+- `adapters/claude-code/scripts/dispatch-provenance.sh` — DISPATCH-PROVENANCE MARKER writer CLI + write-time prune + `--self-test` (the Task 3 marker Task 9's classification guard consumes). Scope-table omission corrected 2026-07-14: Task 3 mandates this marker and the file was created for it, but the table never named the script — surfaced by `scope-enforcement-gate` on the splice-review fix commit.
 - `adapters/claude-code/schemas/progress-log-event.schema.json` — versioned event schema
 - `neural-lace/workstreams-ui/server/auditor.js` — background reconciler (derive-cache reuse, relaxed cadence)
 - `neural-lace/workstreams-ui/server/payload-schema.js` — landing allowlist schema + href checks

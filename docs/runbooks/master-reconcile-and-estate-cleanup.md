@@ -33,9 +33,25 @@ fix lands (see the harness-governance-batch plan); keep this runbook until then.
 5. Post-merge invariant fix: every `agents/*.md` that arrived from the other side must be pinned or
    `check_model_pins` REDs. In particular pin `agents/architecture-reviewer.md` `model: fable` and
    add it to `config/model-policy.json` (design category).
-6. VERIFY: `bash adapters/claude-code/hooks/model-pin-gate.sh --self-test`;
-   `bash adapters/claude-code/hooks/harness-doctor.sh --self-test`;
-   `harness-doctor.sh --quick` shows no NEW reds vs the pre-merge baseline.
+6. VERIFY — against the COMMITTED merge, not the working tree (added 2026-07-16 after a
+   reviewer-caught dropped-side merge; a dirty worktree can mask a broken commit):
+   a. **Dropped-side sweep, both directions, must be EMPTY** (proves neither side's
+      modifications-to-existing-files were silently reverted to base):
+      `MB=$(git merge-base <local-parent> <pt-parent>)`; for each file in
+      `git diff --name-only "$MB" <side>`: if `side:file != MB:file` and
+      `MERGE:file == MB:file` → DROPPED. Run once per side.
+   b. **Manifest id-set union**: `union(parent id-sets) == merged id-set` (jq + comm);
+      also every `doctrine/*.md` on disk has a manifest entry.
+   c. **Generated-doc check against the committed blob**:
+      `GEN_ARCH_DOC_MANIFEST=<(git show HEAD:adapters/claude-code/manifest.json) bash
+      adapters/claude-code/scripts/gen-architecture-doc.sh --check` — GREEN against the
+      worktree does NOT certify the commit.
+   d. `bash adapters/claude-code/hooks/model-pin-gate.sh --self-test`;
+      `bash adapters/claude-code/hooks/harness-doctor.sh --self-test`;
+      `harness-doctor.sh --quick` shows no NEW reds vs the pre-merge baseline.
+   NEVER run `git stash` while a merge is in progress — stash push succeeds, destroys
+   MERGE_HEAD, and the pop restores the working tree WITHOUT the index, so a later commit
+   silently captures pre-merge content for every file you didn't re-add by hand.
 7. REVIEW BEFORE PUSH — the merged master deploys estate-wide via auto-install. Dispatch
    `harness-reviewer` (model: fable, or opus if Fable is spend-capped — FRESH dispatch, a resume
    reverts to the fable pin) on the two conflict resolutions + the pin. Fix Critical/Major first.

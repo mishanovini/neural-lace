@@ -382,6 +382,32 @@ function readDispatchMarkers(dir) {
 // ----------------------------------------------------------------------
 function shQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
 
+// killTree() -- kill a spawned child AND its descendants.
+//
+// NL-FINDING (2026-07-14, PROVEN in production): runCli()'s timeout used to
+// merely resolve() the promise and walk away, leaving the child ALIVE. Every
+// auditor cycle whose merge-scan exceeded the timeout leaked an entire process
+// tree, forever. Measured on the operator's machine: 781 live bash.exe (435
+// merge-scan-lib.sh + 194 progress-log.sh), accumulating ~1 tree / 120s cadence
+// over hours, until a bare `date` took 4.6s and the box had to be rebooted --
+// three times. The single-flight guard did NOT help: the auditor BELIEVED the
+// cycle had finished (the timeout told it so) and happily started the next one.
+//
+// On Windows child.kill() reaps ONLY the `bash -lc` shell, not the inner
+// `bash script.sh` / git / progress-log.sh grandchildren -- so a bare kill()
+// leaks the exact processes that matter. taskkill /T (tree) /F is required.
+function killTree(child) {
+  if (!child || child.pid == null) return;
+  try {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/T', '/F', '/PID', String(child.pid)], { stdio: 'ignore', windowsHide: true })
+        .on('error', () => { try { child.kill('SIGKILL'); } catch (_) {} });
+    } else {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (_) { try { child.kill('SIGKILL'); } catch (_) {} }
+    }
+  } catch (_) { /* best-effort: never throw out of a reaper */ }
+}
+
 function runCli(scriptPath, args, timeoutMs) {
   return new Promise((resolve) => {
     if (!fs.existsSync(scriptPath)) {
@@ -389,7 +415,14 @@ function runCli(scriptPath, args, timeoutMs) {
     }
     const cmd = 'bash ' + shQuote(scriptPath) + ' ' + args.map(shQuote).join(' ');
     let settled = false;
-    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+    let t = null;
+    // Clearing the timer on settle also stops the timer itself from leaking per call.
+    const done = (r) => {
+      if (settled) return;
+      settled = true;
+      if (t) { clearTimeout(t); t = null; }
+      resolve(r);
+    };
     let child;
     try { child = spawn(bashBin(), ['-lc', cmd], { env: spawnEnv() }); }
     catch (e) { return done({ ok: false, rc: 127, stdout: '', stderr: String(e && e.message || e) }); }
@@ -398,7 +431,11 @@ function runCli(scriptPath, args, timeoutMs) {
     child.stderr.on('data', (d) => { err += d; });
     child.on('error', (e) => done({ ok: false, rc: 127, stdout: out, stderr: String(e && e.message || e) }));
     child.on('close', (code) => done({ ok: code === 0, rc: code == null ? 1 : code, stdout: out, stderr: err }));
-    const t = setTimeout(() => done({ ok: false, rc: 124, stdout: out, stderr: 'auditor CLI call timed out after ' + timeoutMs + 'ms' }), timeoutMs || DEFAULT_CLI_TIMEOUT_MS);
+    t = setTimeout(() => {
+      // THE FIX: kill the tree BEFORE resolving. Resolving alone orphans it.
+      killTree(child);
+      done({ ok: false, rc: 124, stdout: out, stderr: 'auditor CLI call timed out after ' + timeoutMs + 'ms (child tree killed)' });
+    }, timeoutMs || DEFAULT_CLI_TIMEOUT_MS);
     if (t.unref) t.unref();
   });
 }

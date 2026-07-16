@@ -43,10 +43,15 @@
 #   1. TOKEN: a `plan: <slug>` line anywhere in the commit subject/body (the
 #      doctrine/git.md one-line convention this task also adds — a trailer
 #      line, same shape as `Co-Authored-By:`). Every `plan:` line yields one
-#      slug; multiple lines are all kept (deduped).
-#   2. FALLBACK (no token found): the commit's changed-file list touches
-#      `docs/plans/<slug>.md`, `docs/plans/archive/<slug>.md` (closed plans
-#      move there — see close-plan.sh), or that plan's evidence file/dir
+#      slug; multiple lines are all kept (deduped) -- BUT ONLY IF at least
+#      one of those slugs resolves to a REAL plan file (current tree,
+#      archive, or the commit's own tree — finding 7 fix,
+#      _ms_plan_file_exists). A stray/typo'd `plan:` line naming no real
+#      plan does NOT short-circuit; step 2 still runs.
+#   2. FALLBACK (no token found, OR no token slug resolved to a real plan
+#      file): the commit's changed-file list touches `docs/plans/<slug>.md`,
+#      `docs/plans/archive/<slug>.md` (closed plans move there — see
+#      close-plan.sh), or that plan's evidence file/dir
 #      (`docs/plans/<slug>-evidence.md` or `docs/plans/<slug>-evidence/...`).
 #      EVERY distinct slug matched this way is kept — never guesses a single
 #      winner (review round 2's multi-match tie-break).
@@ -97,16 +102,28 @@
 # does all git-repo fixture work under its own mktemp dirs, torn down on
 # exit.
 #
-# HONEST LIMITATION: the diff-fallback (step 2 above) lists a commit's
-# changed files via `git diff-tree --no-commit-id --name-only -r --root`,
-# which diffs against the FIRST parent. A true two-parent local merge
-# commit (as opposed to a `gh pr merge` squash commit, which is always a
-# single-parent ordinary commit) is diffed against its first parent same as
-# any other commit here — a file that changed only on the merged-in side
-# relative to a common ancestor, but not vs. the first parent, would not
-# surface. The TOKEN path (step 1) is unaffected either way, since it only
-# reads the commit message. This is the same scope boundary constraint 5's
-# "best-effort, never blocks" already accepts for this whole task.
+# MERGE-COMMIT COVERAGE (splice-review-panel finding 6 — this paragraph
+# corrects an earlier, factually WRONG version of itself): the diff-fallback
+# (step 2 above) lists a commit's changed files via `git diff-tree
+# --no-commit-id --name-only -r --root -m`. The earlier comment here claimed
+# a merge commit "is diffed against its first parent same as any other
+# commit" -- that was false. Without `-m`, `git diff-tree` on a true
+# multi-parent merge commit emits NOTHING AT ALL (not a first-parent diff,
+# an EMPTY diff), so a plan-file touch that exists only on the merged-in
+# side (conflict-resolution edits, or any change unique to the non-first
+# parent) was silently dropped. With `-m`, diff-tree diffs the merge commit
+# against EACH parent independently and this loop sees the union of both
+# parents' changed-file lists (the existing `awk '!seen[$0]++'` dedup below
+# already collapses any file listed twice); a plan-file touch that differs
+# from EITHER parent now surfaces. A `gh pr merge` squash commit is always a
+# single-parent ordinary commit and was never affected either way. The
+# TOKEN path (step 1) is unaffected regardless, since it only reads the
+# commit message. Residual (acceptably narrow) limitation: a file whose
+# merge-commit content is byte-identical to BOTH parents cannot surface via
+# a diff against either one -- unreachable for a normal two-way clean merge
+# that actually changed the file, but theoretically possible via a
+# contrived octopus merge or manual tree surgery. Constraint 5's
+# "best-effort, never blocks" already accepts that residual gap.
 
 set -u
 
@@ -152,11 +169,22 @@ _ms_plan_token_slugs() {
 _ms_plan_slugs_from_diff() {
   local repo_root="$1" sha="$2"
   local files
-  files="$(git -C "$repo_root" diff-tree --no-commit-id --name-only -r --root "$sha" 2>/dev/null)"
+  files="$(git -C "$repo_root" diff-tree --no-commit-id --name-only -r --root -m "$sha" 2>/dev/null)"
   [[ -z "$files" ]] && return 0
   local f base
   printf '%s\n' "$files" | while IFS= read -r f; do
     case "$f" in
+      docs/plans/*-evidence/*)
+        # MUST be checked BEFORE the `docs/plans/*.md)` arm below (splice-
+        # review-panel finding 5): bash `case` globs span `/`, so
+        # `docs/plans/foo-evidence/summary.md` also matches `*.md` and,
+        # if that arm ran first, would derive the mangled slug
+        # `foo-evidence/summary` instead of `foo`.
+        base="${f#docs/plans/}"
+        base="${base#archive/}"
+        base="${base%%/*}"
+        printf '%s\n' "${base%-evidence}"
+        ;;
       docs/plans/*.md)
         base="${f#docs/plans/}"
         base="${base#archive/}"
@@ -165,20 +193,38 @@ _ms_plan_slugs_from_diff() {
           *) printf '%s\n' "${base%.md}" ;;
         esac
         ;;
-      docs/plans/*-evidence/*)
-        base="${f#docs/plans/}"
-        base="${base%%/*}"
-        printf '%s\n' "${base%-evidence}"
-        ;;
       *) ;;
     esac
   done | awk '!seen[$0]++'
 }
 
 # ----------------------------------------------------------------------
+# _ms_plan_file_exists <repo-root> <slug> <sha> — true if <slug> resolves to
+# a REAL plan file via any of the 3 lookups _ms_resolve_ask_id also uses:
+# (1) current working tree docs/plans/<slug>.md, (2) .../archive/<slug>.md,
+# (3) the commit's own tree (docs/plans/<slug>.md as of <sha>). Used by
+# _ms_commit_plan_slugs (splice-review-panel finding 7) to verify a
+# `plan: <token>` trailer names a plan that actually exists before letting
+# it short-circuit the more reliable diff fallback.
+# ----------------------------------------------------------------------
+_ms_plan_file_exists() {
+  local repo_root="$1" slug="$2" sha="$3"
+  [[ -f "$repo_root/docs/plans/$slug.md" ]] && return 0
+  [[ -f "$repo_root/docs/plans/archive/$slug.md" ]] && return 0
+  git -C "$repo_root" cat-file -e "$sha:docs/plans/$slug.md" 2>/dev/null && return 0
+  return 1
+}
+
+# ----------------------------------------------------------------------
 # _ms_commit_plan_slugs <repo-root> <sha> — the full step 1 -> step 2
 # plan-slug resolution (see SHA -> ASK ATTRIBUTION RULE above). Empty when
 # neither step resolves anything (SKIP the commit — anti-noise).
+#
+# Finding 7 fix: the TOKEN path only short-circuits when at least one
+# token slug resolves to a REAL plan file (_ms_plan_file_exists). A stray/
+# typo'd `plan: <token>` line that names no real plan now falls through to
+# the diff fallback instead of silently orphaning a commit that genuinely
+# touches a real plan's files.
 # ----------------------------------------------------------------------
 _ms_commit_plan_slugs() {
   local repo_root="$1" sha="$2"
@@ -186,8 +232,20 @@ _ms_commit_plan_slugs() {
   msg="$(git -C "$repo_root" log -1 --format=%B "$sha" 2>/dev/null)"
   tok="$(_ms_plan_token_slugs "$msg")"
   if [[ -n "$tok" ]]; then
-    printf '%s\n' "$tok"
-    return 0
+    local slug any_resolved=0
+    while IFS= read -r slug; do
+      [[ -z "$slug" ]] && continue
+      if _ms_plan_file_exists "$repo_root" "$slug" "$sha"; then
+        any_resolved=1
+        break
+      fi
+    done <<< "$tok"
+    if [[ "$any_resolved" == "1" ]]; then
+      printf '%s\n' "$tok"
+      return 0
+    fi
+    # None of the token slugs resolve to a real plan file -- fall through
+    # to the diff fallback rather than trusting an unresolvable token.
   fi
   _ms_plan_slugs_from_diff "$repo_root" "$sha"
 }
@@ -353,6 +411,7 @@ ms_self_test() {
   (
     cd "$REPO" || exit 1
     git init -q
+    git config core.hooksPath ""
     git config user.email "test@example.test"
     git config user.name "Test"
     mkdir -p docs/plans
@@ -382,6 +441,8 @@ EOF
     echo "hello" > README.md
     git add . && git commit -q -m "init"
   )
+  local FIXTURE_BRANCH
+  FIXTURE_BRANCH="$(git -C "$REPO" rev-parse --abbrev-ref HEAD)"
 
   echo "Scenario 1: plan: token in commit body -> resolves plan-a via TOKEN path"
   local sha1
@@ -547,6 +608,142 @@ EOF
     pass "self-test wrote only under its own sandboxed tempdir"
   else
     fail "self-test unexpectedly created a .claude path under $TMP"
+  fi
+
+  echo ""
+  echo "---- Regression fixtures for splice-review-panel Findings 5, 6, 7 (fresh log dir; more commits on \$REPO) ----"
+  export PROGRESS_LOG_STATE_DIR="$TMP/pl-state-findings"
+  mkdir -p "$PROGRESS_LOG_STATE_DIR"
+  local f_fa="$PROGRESS_LOG_STATE_DIR/ask-fixture-a.jsonl"
+  local f_fd="$PROGRESS_LOG_STATE_DIR/ask-fixture-d.jsonl"
+
+  (
+    cd "$REPO" || exit 1
+    mkdir -p docs/plans/plan-d-evidence
+    cat > docs/plans/plan-d.md <<'EOF'
+# Plan: D (finding 5/7 fixture)
+Status: ACTIVE
+ask-id: ask-fixture-d
+
+## Tasks
+- [ ] 1. first task
+EOF
+    git add docs/plans/plan-d.md
+    git commit -q -m "chore: add plan-d fixture (no plan token)"
+  )
+
+  echo "Scenario 11a (FINDING 5 regression): a commit touching ONLY docs/plans/plan-d-evidence/summary.md derives PLAN slug 'plan-d', not the mangled 'plan-d-evidence/summary'"
+  # DISCRIMINATING BY CONSTRUCTION: the evidence .md is the ONLY file in this
+  # commit. An earlier draft of this scenario also touched a .json sibling in
+  # the same commit -- but the .json hits the `-evidence/*` arm correctly even
+  # in the BUGGY ordering, so it MASKED the .md mis-route and this assertion
+  # passed against the pre-fix code (a green test proving nothing). Keep the
+  # .md alone here; the .json/plan.md siblings get their own scenarios below.
+  local sha11a
+  (
+    cd "$REPO" || exit 1
+    echo "run output" > docs/plans/plan-d-evidence/summary.md
+    git add docs/plans/plan-d-evidence/summary.md
+    git commit -q -m "chore: plan-d evidence .md ONLY (no plan token, no json sibling)"
+  )
+  sha11a="$(git -C "$REPO" rev-parse HEAD)"
+  ms_emit_merged_for_commit "$REPO" "$sha11a" --emitter post-commit
+  if [[ -f "$f_fd" ]] && grep -qF "\"sha\":\"$sha11a\"" "$f_fd" && grep -qF '"plan_slug":"plan-d"' "$f_fd"; then
+    pass "FINDING 5: evidence-dir .md ALONE derives plan slug 'plan-d' (landed in ask-fixture-d.jsonl)"
+  else
+    fail "FINDING 5: expected sha11a attributed to plan-d in $f_fd"
+  fi
+  if grep -rqF '"plan_slug":"plan-d-evidence/summary"' "$PROGRESS_LOG_STATE_DIR" 2>/dev/null; then
+    fail "FINDING 5: the mangled slug 'plan-d-evidence/summary' must never appear"
+  else
+    pass "FINDING 5: mangled slug 'plan-d-evidence/summary' does not appear anywhere"
+  fi
+
+  echo "Scenario 11b (FINDING 5 regression): a .json sibling in the evidence dir still routes to 'plan-d' (the arm reorder did not regress the non-.md case)"
+  local sha11b
+  (
+    cd "$REPO" || exit 1
+    echo '{"ok":true}' > docs/plans/plan-d-evidence/summary.json
+    git add docs/plans/plan-d-evidence/summary.json
+    git commit -q -m "chore: plan-d evidence .json sibling (no plan token)"
+  )
+  sha11b="$(git -C "$REPO" rev-parse HEAD)"
+  ms_emit_merged_for_commit "$REPO" "$sha11b" --emitter post-commit
+  if grep -qF "\"sha\":\"$sha11b\"" "$f_fd" 2>/dev/null && grep -qF '"plan_slug":"plan-d"' "$f_fd" 2>/dev/null; then
+    pass "FINDING 5: evidence-dir .json sibling still routes to plan-d"
+  else
+    fail "FINDING 5: expected sha11b attributed to plan-d in $f_fd"
+  fi
+
+  echo "Scenario 11c (FINDING 5 regression): a change to plan-d.md ITSELF still routes to 'plan-d' (the plain plan-file arm still works after the reorder)"
+  local sha11c
+  (
+    cd "$REPO" || exit 1
+    echo "task 1 done" >> docs/plans/plan-d.md
+    git commit -q -am "chore: edit plan-d.md itself (no plan token)"
+  )
+  sha11c="$(git -C "$REPO" rev-parse HEAD)"
+  ms_emit_merged_for_commit "$REPO" "$sha11c" --emitter post-commit
+  if grep -qF "\"sha\":\"$sha11c\"" "$f_fd" 2>/dev/null && grep -qF '"plan_slug":"plan-d"' "$f_fd" 2>/dev/null; then
+    pass "FINDING 5: a change to plan-d.md itself still routes to plan-d"
+  else
+    fail "FINDING 5: expected sha11c attributed to plan-d in $f_fd"
+  fi
+
+  echo "Scenario 12 (FINDING 6 regression): a true 2-parent merge commit's merge-side plan-file touch surfaces via 'diff-tree -m' (was invisible without -m)"
+  local sha_merge
+  (
+    cd "$REPO" || exit 1
+    git checkout -q -b feature-finding6
+    echo "feature-branch-only edit" >> docs/plans/plan-a.md
+    git commit -q -am "feat: feature-branch edit to plan-a (no plan token)"
+    git checkout -q "$FIXTURE_BRANCH"
+    echo "unrelated base-branch change" >> README.md
+    git commit -q -am "chore: unrelated base-branch change (no plan token)"
+    git merge --no-ff -q feature-finding6 -m "Merge feature-finding6 (no plan token)"
+  )
+  sha_merge="$(git -C "$REPO" rev-parse HEAD)"
+  ms_emit_merged_for_commit "$REPO" "$sha_merge" --emitter post-commit
+  if grep -qF "\"sha\":\"$sha_merge\"" "$f_fa" 2>/dev/null && grep -qF '"plan_slug":"plan-a"' "$f_fa" 2>/dev/null; then
+    pass "FINDING 6: 2-parent merge commit's plan-a.md touch surfaces via diff-tree -m (was invisible before)"
+  else
+    fail "FINDING 6: expected sha_merge attributed to plan-a in $f_fa"
+  fi
+
+  echo "Scenario 13 (FINDING 7 regression): unresolvable 'plan: <typo>' trailer falls through to the diff fallback instead of orphaning a real plan touch"
+  local sha13
+  (
+    cd "$REPO" || exit 1
+    echo "another plan-a edit" >> docs/plans/plan-a.md
+    git commit -q -am "$(printf 'fix(plan-a): flip task 3\n\nplan: someday-nonexistent-slug\n')"
+  )
+  sha13="$(git -C "$REPO" rev-parse HEAD)"
+  ms_emit_merged_for_commit "$REPO" "$sha13" --emitter post-commit
+  if grep -qF "\"sha\":\"$sha13\"" "$f_fa" 2>/dev/null && grep -qF '"plan_slug":"plan-a"' "$f_fa" 2>/dev/null; then
+    pass "FINDING 7: unresolvable 'plan: someday-nonexistent-slug' token falls through to the diff fallback -> correctly attributed to plan-a"
+  else
+    fail "FINDING 7: expected sha13 attributed to plan-a via diff fallback despite unresolvable token"
+  fi
+  if grep -rqF '"plan_slug":"someday-nonexistent-slug"' "$PROGRESS_LOG_STATE_DIR" 2>/dev/null; then
+    fail "FINDING 7: the unresolvable token slug must not be used as an attributed plan_slug"
+  else
+    pass "FINDING 7: unresolvable token slug never appears as an attributed plan_slug"
+  fi
+
+  echo "Scenario 14 (FINDING 7 regression, no false positive): a VALID 'plan: plan-a' trailer still short-circuits correctly even when the diff touches no plan file"
+  local sha14
+  (
+    cd "$REPO" || exit 1
+    echo "some unrelated code, no plan file touched" > unrelated-code.txt
+    git add unrelated-code.txt
+    git commit -q -am "$(printf 'feat: unrelated code change\n\nplan: plan-a\n')"
+  )
+  sha14="$(git -C "$REPO" rev-parse HEAD)"
+  ms_emit_merged_for_commit "$REPO" "$sha14" --emitter post-commit
+  if grep -qF "\"sha\":\"$sha14\"" "$f_fa" 2>/dev/null && grep -qF '"plan_slug":"plan-a"' "$f_fa" 2>/dev/null; then
+    pass "FINDING 7: a VALID 'plan: plan-a' trailer still short-circuits correctly (no unnecessary fallback to diff)"
+  else
+    fail "FINDING 7: expected sha14 attributed to plan-a via the valid token path"
   fi
 
   rm -rf "$TMP" 2>/dev/null || true
