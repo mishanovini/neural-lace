@@ -251,6 +251,21 @@ BATCH — after the foundation lands (unified master):
 - PUSH remAINS GATED on: task-2 fixup round → re-review PASS → real harness-change-review record
   written via write-review-record.sh (deleting the placeholder) → push both → install → live verify.
 
+### Task-3 review + warn-mode decision (2026-07-16)
+- Task-3 build integrated @ 209cc90 (independent PreToolUse wiring justified by an empirically
+  reproduced stale-COMMIT_EDITMSG defect in the nested chain — filed REVIEW-FINDING-FIX-GATE-
+  COMMIT-EDITMSG-STALE-01). Review verdict: REJECT — PROVEN over-fire on ~13% of real commits
+  (maintenance/review-remediation fix: commits with no observable defect) vs a false near-zero FP
+  claim, + silent fail-open on glued -m/--message=/multi-m shapes.
+- ORCHESTRATOR DECISION (decide-and-go §8, reversible): convert evidence-before-fix to WARN-MODE
+  (exit 0 + teaching banner; blocking:false; consumes no blocking-budget unit) with a named
+  promotion condition + calibration backlog row (EVIDENCE-BEFORE-FIX-PROMOTION-01, sweep-query
+  method). Rationale: shipping a proven-miscalibrated hard block trains reflexive bypass and
+  violates §10's honest-FP bar; warn-mode IS the calibration §10 demands before a block ships.
+  Reversal: flip to blocking once the promotion condition is met. Parser-reach fixes required even
+  in warn-mode (a warn that never fires can't calibrate). Budget correction to task-2: cap = the
+  MEASURED count (13), rationale names only the two consuming gates.
+
 ### R2 (inventory so far)
 - 7 worktrees; broadcast marks 5 signals live-owned (main, nl-ux-wt, agent-aeed9a16, agent-afdcb723, workstreams-ui-server) + sleepy-albattani claim. Non-owned candidates: `beautiful-mcnulty-e8bc42` worktree (clean, detached @6149a45, PR #100 MERGED on pt 2026-07-13) and branches `claude/beautiful-mcnulty-e8bc42` (ahead-of-origin by 1 doc commit) + `close-100` (12 commits, unpushed, content landed via PR 100→pt→master — verified: archived plan + FM-038 + vaporware doctrine present in master). Neither branch is ancestry-merged nor stale >7d → runbook says KEEP; revisit via estate coordination (are the broadcast signals themselves stale?).
 
