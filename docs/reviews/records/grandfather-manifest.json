@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "cutover_ref": "HEAD",
-  "generated_at": "2026-07-16T03:36:36Z",
+  "generated_at": "2026-07-16T03:50:48Z",
   "entries": [
     {
       "path": "adapters/claude-code/agents/architecture-reviewer.md",
@@ -149,7 +149,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/cross-repo-drift-postpush-gate.sh",
-      "blob_sha": "f664372c2005ecc9f94c29e6d5e275af34a01202"
+      "blob_sha": "629d7662047486e602f71af8f076442c0bb1730c"
     },
     {
       "path": "adapters/claude-code/hooks/cross-repo-drift-warn.sh",
@@ -240,6 +240,10 @@
       "blob_sha": "f8175ddec6ec5661c681b0538ecde20923eba31b"
     },
     {
+      "path": "adapters/claude-code/hooks/gh-merge-canonical-gate.sh",
+      "blob_sha": "0ec32aa83b5e23773f34f17f1e48f9f921d3f5e1"
+    },
+    {
       "path": "adapters/claude-code/hooks/goal-coverage-on-stop.sh",
       "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
     },
@@ -249,7 +253,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/harness-doctor.sh",
-      "blob_sha": "4a0125d00d3ef2e27726eec00836ee7bd4a444d5"
+      "blob_sha": "e4033970c363795307fec0784ca3532d7a215a8a"
     },
     {
       "path": "adapters/claude-code/hooks/harness-hygiene-scan.sh",
@@ -473,7 +477,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/session-start-git-freshness.sh",
-      "blob_sha": "a7f4b31b7c56946cd0dde419baa0c0c38a7e06ca"
+      "blob_sha": "1b687146bf28527211c20249448932940d6943d2"
     },
     {
       "path": "adapters/claude-code/hooks/session-start-surfacer-pack.sh",
@@ -593,7 +597,7 @@
     },
     {
       "path": "adapters/claude-code/manifest.json",
-      "blob_sha": "e2d962cb257267fcac79fef61e877d12cf4bfde1"
+      "blob_sha": "bdd0037bb70799cf3601c045b934e179ed8ff16d"
     },
     {
       "path": "adapters/claude-code/rules/constitution.md",
@@ -733,7 +737,7 @@
     },
     {
       "path": "adapters/claude-code/scripts/manifest-check.sh",
-      "blob_sha": "7a053608c5cd52f0230936017bdbf5ccb9af77a6"
+      "blob_sha": "368ea1155a938cd19640746b8747479598e24d49"
     },
     {
       "path": "adapters/claude-code/scripts/master-drift-autocorrect.sh",
@@ -824,10 +828,6 @@
       "blob_sha": "5d4939b48588b75347b26c369b051d49e33f7733"
     },
     {
-      "path": "adapters/claude-code/scripts/sync-pt-to-personal.sh",
-      "blob_sha": "602258143c260d8ddce5f8219909f5c3dbdefec7"
-    },
-    {
       "path": "adapters/claude-code/scripts/tool-call-counter.sh",
       "blob_sha": "19670afcb655f40f2468ef259a210338a67921dc"
     },
@@ -853,7 +853,7 @@
     },
     {
       "path": "adapters/claude-code/settings.json.template",
-      "blob_sha": "4b919c2358ca600d088e964875d84d07d75a3b97"
+      "blob_sha": "d699425d1367b4a49fa221824fdc1fdab401d4b4"
     }
   ]
 }
