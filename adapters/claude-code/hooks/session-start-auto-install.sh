@@ -464,10 +464,28 @@ main() {
   done
 
   # settings.json merge: template is the canonical wiring source from the same ref.
+  # Review-before-deploy gate (harness-review REFORMULATE fixup, finding
+  # 1b): the template is itself an in-surface file whose CONTENT drives
+  # every hook-wiring merge_settings applies -- gate it the same way a
+  # per-file sync is gated, skipping the whole merge (never partially) with
+  # the same loud WARN pattern when it's uncovered.
   local tmpl
   tmpl=$(mktemp 2>/dev/null)
   if [ -n "$tmpl" ] && git -C "$nl" show "$ref:adapters/claude-code/settings.json.template" > "$tmpl" 2>/dev/null; then
-    merge_settings "$tmpl" "$LIVE_DIR/settings.json"
+    local tmpl_gated=1
+    if declare -F rrg_in_surface >/dev/null 2>&1 && rrg_in_surface "settings.json.template"; then
+      local tmpl_sha
+      tmpl_sha=$(rrg_blob_sha_of_file "$tmpl" 2>/dev/null)
+      if ! rrg_is_covered "$nl" "$ref" "adapters/claude-code/settings.json.template" "$tmpl_sha"; then
+        tmpl_gated=0
+        N_REVIEW_SKIPPED=$((N_REVIEW_SKIPPED + 1))
+        _log "REVIEW-GATE SKIP: settings.json.template merge skipped (stale-not-blocked) -- no PASS harness-change-review record covers blob_sha ${tmpl_sha:-<unresolved>}"
+        echo "[auto-install] REVIEW-GATE WARN: settings.json.template changed but has NO PASS harness-change-review record -- SKIPPING the settings merge entirely (stale-not-blocked; run install.sh for the hard-block/authoritative path). See doctrine/review-before-deploy.md." >&2
+      fi
+    fi
+    if [ "$tmpl_gated" -eq 1 ]; then
+      merge_settings "$tmpl" "$LIVE_DIR/settings.json"
+    fi
   fi
   rm -f "$tmpl" 2>/dev/null || true
 
@@ -740,6 +758,46 @@ EOF
     echo "PASS: review-gate-leaves-stale-reviewed-copy-in-place"; pass=$((pass+1))
   else
     echo "FAIL: review-gate-leaves-stale-reviewed-copy-in-place (out: $out; live content: $(cat "$L17/hooks/uncovered.sh" 2>/dev/null))"
+    fail=$((fail+1))
+  fi
+
+  # ---- Scenario 18: settings.json.template itself is gated (harness-review
+  # REFORMULATE fixup, finding 1b) -- an uncovered template change skips the
+  # WHOLE merge_settings call (0 settings-entries added), warns loudly, and
+  # counts toward review-gate-skipped; live settings.json is left untouched. ----
+  local CANON3="$tmp/nl3"
+  mkdir -p "$CANON3/adapters/claude-code/hooks"
+  printf '%s\n' '# NEURAL-LACE-INSTALLER' 'echo installer' > "$CANON3/adapters/claude-code/install.sh"
+  cat > "$CANON3/adapters/claude-code/settings.json.template" <<'TMPL'
+{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"bash ~/.claude/hooks/session-start-auto-install.sh"}]}]}}
+TMPL
+  mkdir -p "$CANON3/docs/reviews/records"
+  ( cd "$CANON3" && git init --quiet && git config core.hooksPath "" && git config user.email t@example.com && git config user.name T )
+  local tmpl_v1_sha
+  tmpl_v1_sha=$(git -C "$CANON3" hash-object "$CANON3/adapters/claude-code/settings.json.template")
+  cat > "$CANON3/docs/reviews/records/grandfather-manifest.json" <<EOF
+{"entries":[{"path":"adapters/claude-code/settings.json.template","blob_sha":"$tmpl_v1_sha"}]}
+EOF
+  printf '{"entries":[]}\n' > "$CANON3/docs/reviews/records/index.json"
+  ( cd "$CANON3" && git add -A && git commit --quiet -m "v1 (grandfathered)" && git branch -M master )
+
+  # Bump the template with a NEW unreviewed hook-wiring, no new review record.
+  cat > "$CANON3/adapters/claude-code/settings.json.template" <<'TMPL'
+{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"bash ~/.claude/hooks/session-start-auto-install.sh"}]},{"matcher":"","hooks":[{"type":"command","command":"bash ~/.claude/hooks/unreviewed-new-hook.sh"}]}]}}
+TMPL
+  ( cd "$CANON3" && git commit --quiet -am "v2 settings.json.template (unreviewed new wiring)" )
+
+  local L18="$tmp/live18"; mkdir -p "$L18"
+  out=$( export NL_CHECKOUT_OVERRIDE="$CANON3" LIVE_DIR_OVERRIDE="$L18" AUTO_INSTALL_NO_FETCH=1 \
+           AUTO_INSTALL_TS_OVERRIDE="selftest" SSF_DISABLE=1
+         bash "$SELF_PATH" 2>&1 )
+  if echo "$out" | grep -q "REVIEW-GATE WARN: settings.json.template" \
+     && echo "$out" | grep -q "0 settings-entries added" \
+     && echo "$out" | grep -qE "[1-9][0-9]* review-gate-skipped" \
+     && { [ ! -f "$L18/settings.json" ] || ! grep -q "unreviewed-new-hook" "$L18/settings.json" 2>/dev/null; }; then
+    echo "PASS: review-gate-skips-uncovered-settings-template"; pass=$((pass+1))
+  else
+    echo "FAIL: review-gate-skips-uncovered-settings-template (out: $out; settings: $(cat "$L18/settings.json" 2>/dev/null))"
     fail=$((fail+1))
   fi
 

@@ -30,6 +30,26 @@ records directory itself is audit-only and is NEVER scanned on the deploy
 gate's hot path — only the index is read (doctor check `review-index-consistency`
 verifies the index stays a faithful rebuild of the records directory).
 
+**Enforced set == admitted-and-deployed set (harness-review REFORMULATE
+fixup, 2026-07-16).** Both carriers walk `hooks/**/*.sh` and `scripts/**/*.sh`
+RECURSIVELY (a `find`, not a flat top-level glob) — a flat `scripts/*.sh`
+glob previously missed `scripts/lib/*.sh` (e.g. `imperative-classifier.sh`)
+entirely, and would silently miss any future `scripts/host-setup/*.sh`
+too, even though `sync_directory`/`git ls-tree -r` deploy those files just
+the same as top-level ones. `rules/**` is walked recursively for the same
+reason (no nested `rules/*.md` exists today, but the surface glob is
+recursive and a flat glob would silently miss one added later).
+`settings.json.template` is gated at BOTH its real call sites — the
+`--replace-settings` mode (which always applies it) and the normal flow's
+missing-`settings.json` copy — not just the one a narrower fix might touch.
+**Named, deliberate residual:** `config/**` is part of the trigger surface
+(Amendment A) but is **never deployed by either carrier** — neither
+`install.sh` nor `session-start-auto-install.sh` syncs `adapters/claude-code/
+config/` anywhere (verified: `config/model-policy.json` reaches no live
+mirror today). The gate therefore has nothing to check for it; this is not
+a hole in the gate, it is a pre-existing gap in deployment coverage,
+tracked separately from this batch.
+
 **Posture differs by carrier (Amendment F):** `install.sh` (operator present)
 is a loud HARD BLOCK — the whole install aborts before touching any file,
 naming every uncovered file + its blob_sha + the remedy. `session-start-
@@ -49,6 +69,19 @@ capture hooks exist to retrieve the real transcript). The record is an audit
 + honesty anchor, NOT a deploy-path anti-fabrication control. Follow-up
 (`REVIEW-RECORD-ANTI-FABRICATION-ANCHOR-01`, `docs/backlog.md`): a capture
 hook feeding `write-review-record.sh` a verifiable transcript reference.
+
+**The grandfather manifest + records dir are TRUST ANCHORS, not self-verifying
+(harness-review REFORMULATE fixup, finding 3).** `grandfather-manifest.json`
+records a `cutover_ref` that is a RESOLVED commit SHA (never the literal
+string "HEAD"). Two detection mechanisms guard against a hand-edit or a
+silent re-bootstrap: (1) doctor check `review-grandfather-integrity`
+re-derives the manifest at its own recorded `cutover_ref` via
+`write-review-record.sh bootstrap-grandfather --ref <cutover_ref>` and REDs
+on divergence from the committed file, and separately REDs when the records
+directory is absent while the gate's lib is present (bootstrapped-then-
+emptied is a defect, distinct from the legitimate pre-cutover fail-open
+case); (2) the file's own git history is an independent audit trail. Neither
+prevents a bad edit at write time -- both make it detectable after.
 
 **What this gate does NOT catch (Amendment B):** it is content-presence only
 — blind to (i) absence of expected forward content (a silent merge/rebase
