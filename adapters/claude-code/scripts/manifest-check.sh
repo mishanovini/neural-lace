@@ -277,6 +277,16 @@ def allowed: req + ["honest_status"];
 # ADR 059 D4 waiver-parity + specs-f §F.1 new-gate-evidence-bar. Emits RED
 # lines itself via _red. Graceful degradation (WARN + return 0) when neither
 # node nor jq is available, matching validate_schema's posture.
+#
+# PRE_BAR_GRANDFATHERED (harness-governance-batch-2026-07-15, task 5 fixup):
+# mirrors harness-doctor.sh's check_new_gate_evidence_bar exempt-list — see
+# that function's header comment for the full rationale. These 5 ids landed
+# 2026-07-02..06 (their true added_after), before the evidence-bar CONCEPT
+# entered the manifest (2026-07-05+), so they are pre-bar in substance
+# though not by date and are exempted from the full bar fields by this
+# EXPLICIT, CLOSED list — never by under-dating added_after. Keep this list
+# in sync with harness-doctor.sh's copy; shrink both as each id gains real
+# bar fields.
 # ------------------------------------------------------------
 check_waiver_parity_and_evidence_bar() {
   local manifest="$1"
@@ -290,6 +300,13 @@ try { manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); }
 catch (err) { process.exit(0); } // parse failure already reported by validate_schema
 
 const nonEmpty = (v) => typeof v === "string" && v.trim().length > 0;
+const PRE_BAR_GRANDFATHERED = [
+  "session-honesty",
+  "stop-verdict-dispatcher",
+  "work-integrity",
+  "secret-scan-ci-backstop",
+  "synthetic-runner-ci",
+];
 const problems = [];
 
 for (const e of manifest.entries || []) {
@@ -300,8 +317,9 @@ for (const e of manifest.entries || []) {
     problems.push(`waiver-parity|${id}: blocking:true entry has neither a non-empty waiver_path nor honesty_rationale (ADR 059 D4)`);
   }
 
-  // (g) new-gate-evidence-bar: added_after >= "2026-07" (lexicographic YYYY-MM) needs the full bar.
-  if (nonEmpty(e.added_after) && e.added_after >= "2026-07") {
+  // (g) new-gate-evidence-bar: added_after >= "2026-07" (lexicographic YYYY-MM) needs the full bar,
+  // unless the id is on the closed PRE_BAR_GRANDFATHERED exempt-list.
+  if (nonEmpty(e.added_after) && e.added_after >= "2026-07" && !PRE_BAR_GRANDFATHERED.includes(id)) {
     const missing = [];
     if (!nonEmpty(e.golden_scenario)) missing.push("golden_scenario");
     if (!nonEmpty(e.fp_expectation)) missing.push("fp_expectation");
@@ -329,12 +347,13 @@ process.exit(problems.length ? 1 : 0);
   if have_jq; then
     local bad
     bad="$(jq -r '
+["session-honesty","stop-verdict-dispatcher","work-integrity","secret-scan-ci-backstop","synthetic-runner-ci"] as $prebar |
 [ .entries[] |
   . as $e |
   ( if ($e.blocking == true) and (($e.waiver_path // "") | length) == 0 and (($e.honesty_rationale // "") | length) == 0
     then ["waiver-parity|\($e.id): blocking:true entry has neither a non-empty waiver_path nor honesty_rationale (ADR 059 D4)"]
     else [] end ) +
-  ( if (($e.added_after // "") | length) > 0 and ($e.added_after >= "2026-07") then
+  ( if (($e.added_after // "") | length) > 0 and ($e.added_after >= "2026-07") and (($prebar | index($e.id)) == null) then
       ( [ (if (($e.golden_scenario // "") | length) > 0 then empty else "golden_scenario" end),
           (if (($e.fp_expectation // "") | length) > 0 then empty else "fp_expectation" end),
           (if (($e.retirement_condition // "") | length) > 0 then empty else "retirement_condition" end),
@@ -751,6 +770,24 @@ EOF
     > "$D/adapters/claude-code/manifest.json"
   OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
   _assert "s10b-new-gate-evidence-bar-green" 0 "$RC" "GREEN" "$OUT"
+
+  # S10c — PRE_BAR_GRANDFATHERED exempt-list (fixup, harness-governance-batch
+  # task 5): a grandfathered id (session-honesty) at added_after "2026-07"
+  # with NO golden_scenario/fp_expectation/retirement_condition: GREEN (the
+  # exempt-list waives the bar fields for exactly this id).
+  D="$TMPROOT/s10c"; _fixture "$D"
+  _valid_manifest | sed 's/"id": "a-gate"/"id": "session-honesty"/; s/"budget_class": "stop"/"budget_class": "stop", "added_after": "2026-07"/' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  _assert "s10c-new-gate-evidence-bar-grandfather-green" 0 "$RC" "GREEN" "$OUT"
+
+  # S10d — the exempt-list is closed, not a date pattern: a NON-listed id at
+  # the same added_after "2026-07" with no bar fields still REDs.
+  D="$TMPROOT/s10d"; _fixture "$D"
+  _valid_manifest | sed 's/"id": "a-gate"/"id": "not-grandfathered"/; s/"budget_class": "stop"/"budget_class": "stop", "added_after": "2026-07"/' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  _assert "s10d-new-gate-evidence-bar-grandfather-leak-red" 1 "$RC" "RED new-gate-evidence-bar: not-grandfathered.*missing" "$OUT"
 
   echo "" >&2
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed" >&2

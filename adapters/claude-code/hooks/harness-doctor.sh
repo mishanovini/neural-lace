@@ -2068,13 +2068,33 @@ check_budget_worktrees_branches() {
 # field skipped the whole bar silently — exactly how `model-pin` evaded
 # it before 2026-07-14's fix. This is now a SECOND, independent assertion
 # below the first: every `blocking:true` manifest entry, regardless of
-# its added_after value or absence, MUST have a non-empty `added_after`.
-# A missing field is itself a RED naming the entry id and the remedy
-# (backfill it — pre-"2026-07" for a legacy entry that predates the ADR
-# 059 D4 bar, an accurate landing month for a new one). The 31 legacy
-# `blocking:true` entries that predated this assertion were backfilled in
-# the same commit that added it (see manifest.json diff) so this does not
-# regress the doctor to RED on landing.
+# its added_after value or absence, MUST have a non-empty STRING
+# `added_after` set to its TRUE git-history landing month. A missing (or
+# non-string) field is itself a RED naming the entry id and the remedy.
+#
+# GRANDFATHER EXEMPT-LIST (fixup, harness-review REJECT on the first cut of
+# this task): the first cut of this fix backfilled 5 entries that landed
+# 2026-07-02..06 (session-honesty, stop-verdict-dispatcher, work-integrity,
+# secret-scan-ci-backstop, synthetic-runner-ci) with an UNDER-DATED
+# added_after (2026-06) so they would not need the full bar fields. REJECTED:
+# under-dating teaches every future legacy entry to dodge the bar by picking
+# an earlier month, which is worse than the hole it closes. Corrected: these
+# 5 now carry their TRUE added_after ("2026-07", verified via `git log
+# --diff-filter=A --follow`), and are instead exempted from the full-bar
+# fields (golden_scenario/fp_expectation/retirement_condition) by the
+# EXPLICIT, CLOSED `PRE_BAR_GRANDFATHERED` id list below — because they
+# landed before the evidence-bar CONCEPT itself entered the manifest (first
+# golden_scenario field 2026-07-05; model-pin/artifact-evidence-bar
+# 2026-07-12+), i.e. pre-bar in substance though not by date. added_after
+# presence is still REQUIRED for grandfathered ids — only the extra
+# evidence fields are waived. RETIREMENT: shrink this list as each id gains
+# real golden_scenario/fp_expectation/retirement_condition; it must reach
+# empty. The list is a closed enumeration, not a date-range pattern — a
+# NEW, non-listed 2026-07+ blocking entry without the bar fields still REDs.
+#
+# The 31 legacy `blocking:true` entries that predated this assertion were
+# backfilled in the same commit that added it (see manifest.json diff) so
+# this does not regress the doctor to RED on landing.
 # ------------------------------------------------------------
 check_new_gate_evidence_bar() {
   local live_home="$1" repo_root="$2"
@@ -2095,16 +2115,29 @@ check_new_gate_evidence_bar() {
     out="$(node -e '
 const fs = require("fs");
 const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+
+// PRE_BAR_GRANDFATHERED: see the check header comment above for the full
+// rationale. Closed enumeration — shrink it as each id gains real bar
+// fields; never grow it by pattern-matching a date range.
+const PRE_BAR_GRANDFATHERED = [
+  "session-honesty",
+  "stop-verdict-dispatcher",
+  "work-integrity",
+  "secret-scan-ci-backstop",
+  "synthetic-runner-ci",
+];
+
 const problems = [];
 for (const e of m.entries || []) {
   const addedAfter = e.added_after;
   const hasAddedAfter = typeof addedAfter === "string" && addedAfter.trim().length > 0;
   if (e.blocking === true && !hasAddedAfter) {
-    problems.push(e.id + ": missing added_after (every blocking:true manifest entry must declare added_after — a missing field evades the evidence bar by omission; backfill a YYYY-MM landing month, pre-2026-07 for a legacy entry)");
+    problems.push(e.id + ": missing added_after (every blocking:true manifest entry must declare its TRUE git-landing YYYY-MM month — a missing field evades the evidence bar by omission; a genuinely pre-bar legacy gate is grandfathered via the PRE_BAR_GRANDFATHERED exempt-list, never by under-dating)");
     continue;
   }
   if (!hasAddedAfter) continue;
   if (addedAfter < "2026-07") continue;
+  if (PRE_BAR_GRANDFATHERED.includes(e.id)) continue;
   const missing = [];
   if (typeof e.golden_scenario !== "string" || e.golden_scenario.trim().length === 0) missing.push("golden_scenario");
   if (typeof e.fp_expectation !== "string" || e.fp_expectation.trim().length === 0) missing.push("fp_expectation");
@@ -2118,16 +2151,18 @@ for (const p of problems) console.log(p);
 ' "$manifest" 2>/dev/null)"
   else
     out="$(jq -r '
-(.entries[] | select(.blocking == true) | select((.added_after // "") | length == 0) |
-  "\(.id): missing added_after (every blocking:true manifest entry must declare added_after — a missing field evades the evidence bar by omission; backfill a YYYY-MM landing month, pre-2026-07 for a legacy entry)"),
+["session-honesty","stop-verdict-dispatcher","work-integrity","secret-scan-ci-backstop","synthetic-runner-ci"] as $prebar |
+(.entries[] | select(.blocking == true) | select((.added_after|type) != "string" or (.added_after|length) == 0) |
+  "\(.id): missing added_after (every blocking:true manifest entry must declare its TRUE git-landing YYYY-MM month — a missing field evades the evidence bar by omission; a genuinely pre-bar legacy gate is grandfathered via the PRE_BAR_GRANDFATHERED exempt-list, never by under-dating)"),
 (.entries[] | select((.added_after // "") >= "2026-07") as $e |
+ select(($prebar | index($e.id)) == null) |
 (
   [ (if (($e.golden_scenario // "") | length) > 0 then empty else "golden_scenario" end),
     (if (($e.fp_expectation // "") | length) > 0 then empty else "fp_expectation" end),
     (if (($e.retirement_condition // "") | length) > 0 then empty else "retirement_condition" end),
     (if ((($e.waiver_path // "") | length) > 0) or ((($e.honesty_rationale // "") | length) > 0) then empty else "waiver_path-or-honesty_rationale" end)
   ] | select(length > 0)
-) as $missing | select(($missing | length) > 0) | "\($e.id): missing \($missing | join(\", \"))")
+) as $missing | select(($missing | length) > 0) | "\($e.id): missing \($missing | join(", "))")
 ' "$manifest" 2>/dev/null)"
   fi
 
@@ -3438,6 +3473,64 @@ MANIFEST_EOF
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "new-gate-evidence-bar-omission-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: new-gate-evidence-bar GRANDFATHER exempt-list GREEN fixture
+  # (fixup, harness-review REJECT findings 1-3). All 5 PRE_BAR_GRANDFATHERED
+  # ids, each carrying their TRUE added_after "2026-07" and NO
+  # golden_scenario/fp_expectation/retirement_condition/waiver_path — proves
+  # the exempt-list actually exempts them from the full bar (they would
+  # otherwise RED on every missing field, same as any other 2026-07+ entry) ----
+  D=$(_scenario_dir nge-grandfather-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "session-honesty", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "added_after": "2026-07", "budget_class": "none" },
+    { "id": "stop-verdict-dispatcher", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "added_after": "2026-07", "budget_class": "none" },
+    { "id": "work-integrity", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "added_after": "2026-07", "budget_class": "none" },
+    { "id": "secret-scan-ci-backstop", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "added_after": "2026-07", "budget_class": "none" },
+    { "id": "synthetic-runner-ci", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "added_after": "2026-07", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "new-gate-evidence-bar-grandfather-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: new-gate-evidence-bar GRANDFATHER exempt-list is CLOSED, not
+  # a date pattern. RED fixture — the same 5 grandfathered ids (still exempt,
+  # must NOT appear in the RED output) PLUS one extra NON-listed id at the
+  # same added_after "2026-07" with no bar fields — that sixth id must still
+  # RED, proving a new 2026-07+ gate cannot piggyback on the grandfather list
+  # just by sharing its month ----
+  D=$(_scenario_dir nge-grandfather-leak-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "session-honesty", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "added_after": "2026-07", "budget_class": "none" },
+    { "id": "stop-verdict-dispatcher", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "added_after": "2026-07", "budget_class": "none" },
+    { "id": "work-integrity", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "added_after": "2026-07", "budget_class": "none" },
+    { "id": "secret-scan-ci-backstop", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "added_after": "2026-07", "budget_class": "none" },
+    { "id": "synthetic-runner-ci", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "added_after": "2026-07", "budget_class": "none" },
+    { "id": "new-gate-not-grandfathered", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "added_after": "2026-07", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "new-gate-evidence-bar-grandfather-leak-red" 1 "$RC" "RED new-gate-evidence-bar.*new-gate-not-grandfathered" "$OUT"
+  if printf '%s' "$OUT" | grep -qE "new-gate-evidence-bar: (session-honesty|stop-verdict-dispatcher|work-integrity|secret-scan-ci-backstop|synthetic-runner-ci):"; then
+    echo "self-test (new-gate-evidence-bar-grandfather-leak-no-false-red): FAIL (a grandfathered id RED'd — exempt-list leaked)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (new-gate-evidence-bar-grandfather-leak-no-false-red): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
 
   # ---- Check: line-endings (NL-FINDING-038). RED fixture — a repo shell
   # surface carries CRLF bytes (the Wave-F F.1 whole-file-conversion class).

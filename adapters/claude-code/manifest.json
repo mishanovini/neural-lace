@@ -1849,7 +1849,7 @@
       },
       "blocking": true,
       "budget_class": "none",
-      "added_after": "2026-06",
+      "added_after": "2026-07",
       "honest_status": "GitHub Actions workflow (.github/workflows/secret-backstop.yml), not a Claude Code hook; events:[\"manual\"] is a schema-gap stand-in for CI push+PR triggers (same convention as the synthetic-runner-ci entry). Re-invokes the EXISTING pre-push-scan.sh + harness-hygiene-scan.sh scripts against the diff range server-side — the compensating control the F.3 disposition on secret-hygiene-prepush's --no-verify bypass required. Deliberately overlaps server-side-enforcement.yml's credential-scan/harness-hygiene jobs (defense-in-depth, documented in the workflow file's header) rather than being the sole CI coverage.",
       "honesty_rationale": "GitHub Actions required-status-check, not a session-time hook; a waiver here is a GitHub branch-protection admin override, outside this manifest's waiver-file scope by construction (same rationale as synthetic-runner-ci)."
     },
@@ -1890,7 +1890,7 @@
       },
       "blocking": true,
       "budget_class": "stop",
-      "added_after": "2026-06",
+      "added_after": "2026-07",
       "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact.",
       "honesty_rationale": "ADR 059 D2/D4: reads OTHER gates' waiver state to detect already-resolved blocks, but its own resolved-vs-live assertion is never itself waivable by design (pin-f-doctor-exempt, hook comment line 297)."
     },
@@ -2069,7 +2069,7 @@
       },
       "blocking": true,
       "budget_class": "stop",
-      "added_after": "2026-06",
+      "added_after": "2026-07",
       "honest_status": "E.11 batched Stop verdict; invokes work-integrity/session-honesty/bug-persistence in --report mode, aggregates one verdict; replaces their 3 blocking Stop entries at §E.W (Stop 6->4). pin-f: delegates to the gates that validate purpose clauses. Cold-reader-lint WARN (constitution §3 amendment 53d3bee, operator directive 2026-07-07), following FUNCTIONAL-LINK's own precedent immediately above it in this same file: scans the final assistant message for a §3-format \"Decision needed\" block and, if it is missing an artifact anchor or per-option outcome text, emits ONE ledger_emit warn + a stderr notice. WARN-only — never contributes to the block/gap verdict above, never participates in cycle-counting/DONE-refusal, never touches stdout. Self-tested (scenarios renumbered 20-23 at batch-integration to avoid colliding with the FIX-2a/FIX-2b automation-ceiling scenarios 18-19 already on master; 3 of 4 pass). KNOWN BUG (found during batch integration, confirmed pre-existing on the source branch in isolation, not introduced by the merge): `_svd_message_has_decision_block`'s heuristic does a naive case-insensitive substring match for `decision needed`, so prose that negates it (e.g. \"no decision needed here\") still matches and false-positive-warns as a decision block missing an anchor — 1 self-test scenario (ordinary-prose-not-scanned) fails on this. Low severity (WARN-only, never blocks) but real; follow-up filed to require the heuristic to exclude a preceding negation token.",
       "honesty_rationale": "Aggregator; delegates to bug-persistence/work-integrity/session-honesty's own waiver postures (already stated in its honest_status)."
     },
@@ -2089,7 +2089,7 @@
       },
       "blocking": true,
       "budget_class": "none",
-      "added_after": "2026-06",
+      "added_after": "2026-07",
       "honest_status": "GitHub Actions workflow (.github/workflows/synthetic-runner.yml), not a Claude Code hook; events:[\"manual\"] is a schema-gap stand-in for CI cron+PR triggers.",
       "honesty_rationale": "GitHub Actions required-status-check, not a session-time hook; a waiver here is a GitHub branch-protection admin override, outside this manifest's waiver-file scope by construction."
     },
@@ -2289,7 +2289,7 @@
       },
       "blocking": true,
       "budget_class": "stop",
-      "added_after": "2026-06",
+      "added_after": "2026-07",
       "honest_status": "Invoked by stop-verdict-dispatcher.sh in --report mode (E.11, §E.W); no longer a direct Stop-chain entry. --self-test + blocking logic intact.",
       "waiver_path": "Structured waiver via lib/waiver-purpose-clause.sh (sourced directly); checks (a)/(b) are waiver-gated per ADR 059 D4 scoping (world-state assertions only — never the checked-box-without-evidence honesty assertion). Canonical reference implementation."
     },

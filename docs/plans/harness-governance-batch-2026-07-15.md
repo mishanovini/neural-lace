@@ -141,6 +141,14 @@ BATCH — after the foundation lands (unified master):
 - 2026-07-16: `adapters/claude-code/attic/README.md` — R3 non-hook-retirement clarifying note.
 - 2026-07-16: `adapters/claude-code/doctrine/INDEX.md` — R3 regenerated (new gate entry).
 - 2026-07-16: `docs/harness-architecture.md` — R3 regenerated (new gate entry).
+- 2026-07-16 (task 5 fixup, harness-review REJECT remediation): `adapters/claude-code/scripts/manifest-check.sh`
+  — it carries an INDEPENDENT copy of the same new-gate-evidence-bar rule as
+  `harness-doctor.sh`'s `check_new_gate_evidence_bar` (task 5's target). Correcting the 5
+  under-dated `manifest.json` entries to their true "2026-07" landing month regressed this
+  script's own copy of the rule (it started RED-ing on all 5), so the same closed
+  `PRE_BAR_GRANDFATHERED` exempt-list had to be mirrored into it (both node and jq paths) plus
+  two self-tests (S10c/S10d) to keep task 5's own "manifest-check.sh must not regress"
+  constraint honest.
 
 ## Evidence Log
 
