@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "task_id": "2",
+  "verdict": "PASS",
+  "commit_sha": "5bc3d556e3b2a9608057f069a9520d12adfaff3a",
+  "files_modified": [
+    "adapters/claude-code/hooks/model-pin-gate.sh",
+    "docs/plans/model-enforcement-2026-07-14.md"
+  ],
+  "mechanical_checks": {
+    "files-in-commit": {
+      "passed": true,
+      "detail": "2 file(s) in HEAD",
+      "command": "git diff-tree --no-commit-id --name-only -r HEAD",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-15T05:41:10Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "model-enforcement-2026-07-14"
+}

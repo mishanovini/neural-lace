@@ -1,7 +1,7 @@
 # 064 — Never-diverge: single canonical master + write-discipline gate + FF-only convergence
 
 **Date:** 2026-07-15
-**Status:** DECIDED (decide-and-go per constitution §8; pending architecture-reviewer design pass before build — R3 of `docs/plans/harness-governance-batch-2026-07-15.md`)
+**Status:** DECIDED, architecture-reviewed 2026-07-16: **SOUND-WITH-AMENDMENTS** — amendments A1–A6 folded in below (R3 of `docs/plans/harness-governance-batch-2026-07-15.md`). The review's ONE THING: the client gate alone does NOT deliver "structurally impossible" — server-side branch protection is the only layer covering every writer; it is hereby promoted to PRIMARY mechanism and the gate demoted to defense-in-depth.
 **Tier:** 2 (reversible — every element is a config flip or gate removal; no history rewrite, no data surgery)
 **Backlog anchor:** PT-FORK-SYNC-NOT-RUNNING-01 (marked RESOLVED 2026-07-13 by shipping `master-drift-autocorrect.sh`; the class RECURRED 2026-07-15 as a 14/10 divergence — that resolution was partial: it FF-syncs a strictly-behind side but by design refuses true divergence)
 
@@ -43,17 +43,32 @@ scripts/master-drift-autocorrect.sh:174-189 documents the silent no-op failure m
    (`session-start-auto-install.sh`) already reads `origin/master` ONLY — choosing origin
    as canonical means zero change to the deploy path and zero added deploy lag. (PT-canonical
    would put every harness deploy behind a mirror hop.)
-2. **Write-discipline gate (the Mechanism):** a PreToolUse gate on `gh pr merge` /
-   `gh api .../merge` that blocks merging PRs on the NON-canonical work-org repo
-   (resolved from the `pt` remote's URL at runtime — never hardcoded), with a block
-   message teaching the canonical flow
-   (retarget the PR to the personal repo, or push the branch and open it there). Deployed
-   estate-wide via the normal install path, it covers every harnessed machine — including
-   the other machine that merged PT-side PRs (the actual source of this divergence).
-   §10 evidence bar: golden scenario = PR #100 merged PT-side 2026-07-13 → 14-commit
-   divergence 2026-07-15; fp_expectation = zero legitimate PT-repo `gh pr merge` calls
-   post-cutover (any PT-side PR is itself the defect); retirement = pt repo archived or
-   operator enables server-side branch protection making the gate redundant.
+2. **Write-discipline gate (DEFENSE-IN-DEPTH, not the guarantee — amended A1/A4):** a
+   PreToolUse gate on `gh pr merge` / `gh api .../merge` that blocks merging PRs on the
+   NON-canonical work-org repo, with a block message teaching the canonical flow
+   (retarget the PR to the personal repo, or push the branch and open it there).
+   **Target resolution (A4):** the gate resolves the merge TARGET the way gh does
+   (explicit `--repo` flag, else the checkout's default repo), and blocks only when the
+   resolved target equals the `pt` remote's repo (resolved from the remote URL at
+   runtime — never hardcoded). On an ambiguous/unresolvable target it fails
+   loud-and-asks, never silently allows. fp_expectation is defined against the resolved
+   target, not the raw command string.
+   **Honest coverage (A1):** this makes divergence impossible only *from a gate-synced
+   harnessed machine performing the merge via the gh CLI*. **Residual writers the gate
+   does NOT cover:** GitHub web-UI "Merge pull request"; a machine that hasn't yet synced
+   the gate (deploy-lag window — auto-install syncs the hook only at a NEW session, so
+   even the deploying machine's current session is unprotected until restart, the same
+   class as the observed agents-registry snapshot lag); un-harnessed machines / external
+   collaborators; CI/GitHub Actions; scheduled/cloud agents (Decision 011 — no
+   PreToolUse); direct `git push pt master`. Only server-side branch protection closes
+   these.
+   **§10 evidence bar (A3):** merge path of PR #100 is UNKNOWN (server-side merges via
+   web UI and gh CLI are indistinguishable in the API record) — so the 2026-07-15
+   divergence golden scenario validates BRANCH PROTECTION, not this gate; the gate is
+   labeled defense-in-depth accordingly and carries fp_expectation = zero legitimate
+   pt-repo `gh pr merge` calls post-cutover; retirement = pt repo archived OR operator
+   enables server-side branch protection (at which point the gate is a redundant
+   teaching surface and may be retired or kept as UX).
 3. **Convergence stays FF-only** (`master-drift-autocorrect.sh` unchanged in semantics):
    with a single writer, mirror-behind is the only reachable drift state, and it self-heals
    at SessionStart. Divergence-refusal remains as the tripwire for out-of-model writes
@@ -62,11 +77,24 @@ scripts/master-drift-autocorrect.sh:174-189 documents the silent no-op failure m
    remaining "manual recovery" role is superseded by the runbook
    `docs/runbooks/master-reconcile-and-estate-cleanup.md`); update the
    `cross-repo-drift-postpush-gate.sh` block message that references it to point at the
-   runbook instead. (Chesterton check done: its only live reference is that block message.)
-5. **Operator-optional hardening (surfaced, not blocking, NOT agent-executable):** enable
-   GitHub branch protection on pt/master restricting direct pushes/merges (access-control
-   change = operator-only by policy). Until then the gate covers all harnessed machines,
-   which the evidence says is where every historical divergence originated.
+   runbook instead. (Chesterton check done — reviewer independently re-verified: its only
+   live reference is that block message; all other hits are comments/history. Its
+   PT→personal cherry-pick direction encodes the OLD PT-canonical posture — directionally
+   obsolete, a further retirement reason.) **Drift note (A6):** auto-install never deletes
+   live files, so `~/.claude/scripts/sync-pt-to-personal.sh` lingers on every machine
+   after the attic move — add it to install.sh's prune step, or accept as dead drift (its
+   ISL guard + dedicated-clone + FF-only push make an accidental run near-harmless).
+5. **PRIMARY STRUCTURAL MECHANISM (A2 — promoted from "optional"): GitHub branch
+   protection / restricted-push on `pt/master`, enabled FIRST.** It is server-side,
+   instant, machine-independent, and the ONLY layer that covers web-UI, CLI, CI, and
+   collaborator writes uniformly — it does not wait for any harness deploy, closing the
+   gate's rollout window. It is an access-control change and therefore OPERATOR-ONLY by
+   policy (never agent-executed); it is surfaced as the batch's top NEEDS-YOU item. The
+   PreToolUse gate (element 2) is defense-in-depth for the harnessed gh-CLI path and a
+   teaching surface; it does not deliver the invariant on its own. Until branch
+   protection is enabled, the invariant is NOT guaranteed — divergence remains possible
+   via every residual writer listed in element 2, and the SessionStart detector + FF
+   autocorrect + reconcile runbook remain the safety net.
 
 ## Why this is mine to decide (and what would reverse it)
 
@@ -78,8 +106,17 @@ the mirror direction reverses — the design is symmetric in which side is canon
 
 ## Consequences
 
-- The two masters can no longer truly diverge from any harnessed machine; the manual
-  reconcile runbook becomes a recovery tool for external-writer incidents only.
+- With branch protection enabled (primary), the two masters cannot truly diverge from ANY
+  writer; with only the gate deployed (interim), divergence is prevented solely on the
+  gate-synced harnessed gh-CLI path and the reconcile runbook remains the recovery tool.
+- **Posture reversal acknowledged (A5):** this REVERSES the recorded 2026-05-29 "PT is
+  canonical" posture (sync.sh:68-74 and sync-pt-to-personal.sh:5-11 headers say personal
+  is synced FROM PT). Residual "PT-canonical" assumptions across the estate must be
+  grepped and reconciled as part of the R3 build. Recent PRs #49-57 and #100 were merged
+  WORK-side — the STANDING work-side PR-merge habit (not only in-flight PRs) must migrate
+  to personal-side. `docs/RESUME-HERE.md` already routes cross-machine work through
+  `origin/master`, so the documented flow is consistent; it is the observed merge
+  behavior that migrates.
 - PT-side PRs in flight at cutover must be merged canonical-side (one-time migration note
   in the gate's block message).
 - `check_model_pins`/doctor unaffected. New doctor check candidate (builder scope): assert

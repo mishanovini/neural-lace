@@ -92,6 +92,15 @@ BATCH — after the foundation lands (unified master):
 - `adapters/claude-code/doctrine/model-selection.md` — the "why block not inject" note.
 - `docs/backlog.md` — the ws-UI adoption row.
 - `docs/runbooks/master-reconcile-and-estate-cleanup.md` — the reusable reconcile+cleanup procedure (tasks R1–R2).
+- `docs/handoffs/2026-07-14-model-enforcement-and-rootcause-gate-checkpoint.md` — task 6 residue.
+- `docs/lessons/2026-07-14-credentials-are-available-inject-dont-surrender.md` — task 6 residue.
+- `docs/plans/model-enforcement-2026-07-14-evidence/1.evidence.json` — task 6 residue.
+- `docs/plans/model-enforcement-2026-07-14-evidence/2.evidence.json` — task 6 residue.
+- `docs/plans/model-enforcement-2026-07-14-evidence/3.evidence.json` — task 6 residue.
+- `docs/plans/model-enforcement-2026-07-14-evidence/4.evidence.json` — task 6 residue.
+- `docs/plans/model-enforcement-2026-07-14-evidence/5.evidence.json` — task 6 residue.
+- `docs/decisions/064-never-diverge-single-canonical-master.md` — R3 decision (amended per review).
+- `docs/design-notes/review-record-primitive.md` — batch task 1 design draft.
 - (build tasks R3 + 1–5 create their own files in the executing session.)
 
 ## In-flight scope updates
@@ -111,7 +120,7 @@ BATCH — after the foundation lands (unified master):
   manifest 123-union, the model-policy entry, and the runbook verification hardening.
 - 2026-07-15 (residue capture, task 6): `docs/handoffs/2026-07-14-model-enforcement-and-rootcause-gate-checkpoint.md`,
   `docs/lessons/2026-07-14-credentials-are-available-inject-dont-surrender.md`,
-  `docs/plans/model-enforcement-2026-07-14-evidence/` — prior-session on-disk artifacts needing a home.
+  `docs/plans/model-enforcement-2026-07-14-evidence/**` — prior-session on-disk artifacts needing a home.
 
 ## Evidence Log
 
@@ -124,6 +133,28 @@ BATCH — after the foundation lands (unified master):
 - Incident (self-caused, resolved): a baseline `git stash` snapshot destroyed MERGE_HEAD mid-merge; restored via `git rev-parse pt/master > .git/MERGE_HEAD` before committing, so `937e8cb` has correct dual parents. Gates behaved correctly throughout (scope gate's merge full-skip resumed once MERGE_HEAD was restored; docs-freshness correctly demanded the regenerated architecture doc).
 - harness-reviewer (FRESH dispatch, model: opus — Fable spend-capped) dispatched on `937e8cb` BEFORE push, per runbook step 7. Verdict: (pending)
 - PUSH: (pending review PASS)
+
+### R2 (executed 2026-07-16)
+- Classification (explorer, PROVEN): broadcast signals 1-4 are existence-only (`git worktree list`);
+  the concurrent-ownership gate blocks only fresh claims (<2h mtime) or checked-out branches. Only
+  sleepy-albattani had a fresh claim.
+- REMOVED: worktree `agent-afdcb7239ab5755d9` + its branch (ancestry-merged into master; plan
+  model-enforcement COMPLETED+archived; no claim; clean). `git worktree prune` run.
+- KEPT with reasons: `sleepy-albattani-0d9012` (fresh claim, live session); `workstreams-ui-server`
+  (operator-designated hands-off server checkout); `agent-aeed9a16399bf88e6` (vaporware-cc COMPLETED,
+  content landed via PR#100, but not ancestry-merged and only 3d old — qualifies under >7d rule
+  2026-07-19); `beautiful-mcnulty-e8bc42` worktree+branch (PR#100 MERGED, content in master, but
+  unmerged-by-ancestry local tip + only 3d old — revisit 2026-07-20); `close-100` branch (12 unpushed
+  commits, content landed via pt merge, not stale); `agent-af4788a454e6087f0` (this session's batch-1
+  design builder — removed after cherry-pick).
+- OPERATOR ITEMS (classifier-denied, not retried): (a) `nl-ux-wt` is a husk — Temp-dir contents wiped,
+  1205 phantom deletions, ZERO modified/untracked, branch `feat/prerequisite-unblocking-pattern`
+  pushed+in-sync; needs `git worktree remove --force "$LOCALAPPDATA/Temp/claude-scratch/nl-ux-wt"`
+  run by the operator (auto-mode classifier denies both --force removal and the restore-then-remove
+  path). (b) `git push -u origin ws-ui-server-stable` (doctor-recommended upstream creation for the
+  27d-unpushed server branch) — classifier-denied, operator to run or decline.
+- nl-issues filed: broadcast should label claim-backed vs existence-only signals; no reaper for
+  completed-plan builder worktrees (cite reap-what-you-spawn doctrine).
 
 ### R2 (inventory so far)
 - 7 worktrees; broadcast marks 5 signals live-owned (main, nl-ux-wt, agent-aeed9a16, agent-afdcb723, workstreams-ui-server) + sleepy-albattani claim. Non-owned candidates: `beautiful-mcnulty-e8bc42` worktree (clean, detached @6149a45, PR #100 MERGED on pt 2026-07-13) and branches `claude/beautiful-mcnulty-e8bc42` (ahead-of-origin by 1 doc commit) + `close-100` (12 commits, unpushed, content landed via PR 100→pt→master — verified: archived plan + FM-038 + vaporware doctrine present in master). Neither branch is ancestry-merged nor stale >7d → runbook says KEEP; revisit via estate coordination (are the broadcast signals themselves stale?).
