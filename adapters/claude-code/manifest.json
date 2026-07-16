@@ -1730,6 +1730,34 @@
       "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
+      "id": "review-before-deploy",
+      "kind": "gate",
+      "doctrine_file": "doctrine/review-before-deploy.md",
+      "hooks": [],
+      "events": [
+        "manual",
+        "SessionStart"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/install.sh",
+          "adapters/claude-code/hooks/session-start-auto-install.sh",
+          "docs/design-notes/review-record-primitive.md"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "none",
+      "added_after": "2026-07",
+      "honest_status": "Not represented in hooks[] (the schema restricts hooks[] to bare *.sh basenames directly under adapters/claude-code/hooks/, which excludes both scripts/ and hooks/lib/). The actual mechanism: scripts/write-review-record.sh (writer, self-test) + hooks/lib/review-record-gate-lib.sh (shared surface/coverage lib, self-test), consumed by a hard-block splice in adapters/claude-code/install.sh (manual, operator-present) and a fail-open skip+warn splice in adapters/claude-code/hooks/session-start-auto-install.sh (SessionStart -- already separately cataloged under the session-start-auto-install entry, whose own hooks[] is unaffected by this addition).",
+      "golden_scenario": "2026-07-14 (two proven misses, model-enforcement workstream): a prior session live-synced a buggy model-pin-gate.sh to ~/.claude with zero harness-reviewer PASS; the same session later `install.sh`-deployed a fix before its re-review returned. The gate blocks (install.sh) or skips+warns (auto-install) any covered changed file lacking a PASS harness-change-review record, so neither miss can recur silently. NOTE: 937e8cb (a merge that silently dropped 5 pt-side files) is explicitly OUT of this gate's coverage per Amendment B -- it is a content-ABSENCE defect, not a content-presence one; the merge-time dropped-side sweep (docs/runbooks/master-reconcile-and-estate-cleanup.md step 6) is the mechanism for that class.",
+      "fp_expectation": "Low-moderate on install.sh (hard block, operator-present -- a false block is immediately visible and the remedy is always 'get a PASS review or wait'). A fresh/long-stale machine cannot be bricked: the cutover grandfather-manifest.json covers every trigger-surface file's pre-cutover blob_sha, so only genuinely NEW content ever requires a record. Known deliberate over-inclusion: an agents/*.md wording-only edit still requires a PASS (no cheap way to distinguish cosmetic from behavioral agent-prompt edits). session-start-auto-install.sh's skip+warn path has effectively ZERO fp COST (it never blocks a session; it only leaves one file stale one sync cycle later than usual).",
+      "retirement_condition": "Retire the install.sh hard-block half when install.sh itself is retired in favor of a single continuously-reconciling sync path; retire entirely if a real anti-fabrication anchor (see honesty_rationale) plus a native platform review-gate make this record-based check redundant.",
+      "honesty_rationale": "Anti-fabrication residual named, not solved (Amendment C): the gate checks review-record EXISTENCE + content-match only, and CANNOT verify the reviewer's quoted verdict is genuine -- zero SubagentStop/TaskCompleted capture hooks exist in this harness to retrieve a real transcript. This record is an audit + honesty anchor, not a deploy-path anti-fabrication control; see docs/design-notes/review-record-primitive.md's Writer section and the REVIEW-RECORD-ANTI-FABRICATION-ANCHOR-01 backlog follow-up."
+    },
+    {
       "id": "review-finding-fix",
       "kind": "gate",
       "doctrine_file": "doctrine/testing.md",

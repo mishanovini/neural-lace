@@ -15,9 +15,9 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 124 |
+| Total manifest entries | 125 |
 | Unique hook scripts | 107 |
-| Blocking gates (`blocking: true`) | 34 |
+| Blocking gates (`blocking: true`) | 35 |
 
 ## Hooks by event
 
@@ -73,6 +73,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | SessionStart | harness-doctor | surfacer | no | harness-doctor.sh |
 | SessionStart | plan-lifecycle | writer | no | plan-auto-closure.sh, plan-lifecycle.sh, plan-status-archival-sweep.sh |
 | SessionStart | register-surfacer | surfacer | no | register-surfacer.sh |
+| SessionStart | review-before-deploy | gate | yes | — |
 | SessionStart | session-start-auto-install | writer | no | hooks/lib/sessionstart-singleflight.sh, session-start-auto-install.sh |
 | SessionStart | session-start-digest | surfacer | no | session-start-digest.sh |
 | SessionStart | session-start-surfacer-pack | surfacer | no | session-start-surfacer-pack.sh |
@@ -100,6 +101,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | manual | ntfy-push | surfacer | no | — |
 | manual | plan-reviewer | gate | yes | plan-reviewer.sh |
 | manual | propagation-engine | writer | no | propagation-trigger-router.sh |
+| manual | review-before-deploy | gate | yes | — |
 | manual | secret-scan-ci-backstop | gate | yes | — |
 | manual | synthetic-runner-ci | gate | yes | — |
 | manual | wave-d-retired-shims | writer | no | check-harness-sync.sh, completion-criteria-gate.sh, continuation-enforcer.sh, cross-repo-drift-warn.sh, customer-facing-review-gate.sh, dag-review-waiver-gate.sh, decision-context-gate.sh, decision-context-replay.sh, deferral-counter.sh, goal-coverage-on-stop.sh, goal-extraction-on-prompt.sh, imperative-evidence-linker.sh, narrate-and-wait-gate.sh, pr-health-snapshot-gate.sh, pre-stop-verifier.sh, principles-compliance-gate.sh, product-acceptance-gate.sh, register-progress-gate.sh, settings-divergence-detector.sh, tool-call-budget.sh, transcript-lie-detector.sh, worktree-teardown-gate.sh |
@@ -121,7 +123,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
-| gate | 34 | 12 |
+| gate | 35 | 12 |
 | writer | 0 | 28 |
 | surfacer | 0 | 20 |
 | pattern | 0 | 27 |
@@ -140,7 +142,7 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 | session-start | 15 |
 | pretool | 27 |
 | posttool | 6 |
-| none | 68 |
+| none | 69 |
 
 ## Doctrine index
 
@@ -188,6 +190,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/pr-health-snapshot.md | 1 (pr-health-snapshot) |
 | doctrine/prd-validity.md | 1 (prd-validity) |
 | doctrine/reap-what-you-spawn.md | 1 (reap-what-you-spawn) |
+| doctrine/review-before-deploy.md | 1 (review-before-deploy) |
 | doctrine/risk-tiered-verification.md | 1 (risk-tiered-verification) |
 | doctrine/security.md | 3 (env-local-protection, secret-hygiene-prepush, secret-scan-ci-backstop) |
 | doctrine/session-end-protocol.md | 2 (register-surfacer, session-honesty) |
@@ -295,6 +298,7 @@ Entries with no doctrine_file (`-`): 30.
 | propagation-engine | writer | manual | no | none | invoked manually or by future PostToolUse wiring (Tranche 6a); not wired in settings.json.template |
 | reap-what-you-spawn | pattern | — | no | none | PATTERN — self-applied. The law (reap what you initiate, on every exit path) is doctrine, NOT yet a Mechanism: the code-reviewer/architecture-reviewer lens that would flag timeout-without-kill and spawn-without-tree-kill is proposed in the -full companion but not wired. Golden case: auditor.js runCli timeout-without-kill leaked 781 bash.exe / 3 reboots (fixed 2026-07-14). |
 | register-surfacer | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
+| review-before-deploy | gate | SessionStart, manual | yes | none | Not represented in hooks[] (the schema restricts hooks[] to bare *.sh basenames directly under adapters/claude-code/hooks/, which excludes both scripts/ and hooks/lib/). The actual mechanism: scripts/write-review-record.sh (writer, self-test) + hooks/lib/review-record-gate-lib.sh (shared surface/coverage lib, self-test), consumed by a hard-block splice in adapters/claude-code/install.sh (manual, operator-present) and a fail-open skip+warn splice in adapters/claude-code/hooks/session-start-auto-install.sh (SessionStart -- already separately cataloged under the session-start-auto-install entry, whose own hooks[] is unaffected by this addition). |
 | review-finding-fix | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |
 | risk-tiered-verification | pattern | — | no | none | — |
 | runtime-verification | gate | Stop | yes | none | invoked via pre-stop-verifier.sh (Stop chain); not directly wired in settings.json.template |

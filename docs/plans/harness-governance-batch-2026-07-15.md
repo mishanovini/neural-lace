@@ -151,6 +151,20 @@ BATCH — after the foundation lands (unified master):
   constraint honest.
 - 2026-07-16: `adapters/claude-code/hooks/session-start-git-freshness.sh` — R3 harness-review fixup: dropped the dangling `sync-pt-to-personal` entry from WIP_BRANCH_PATTERN (retired script, dead reference).
 
+- 2026-07-16 (task 2 build, review-before-deploy gate): `adapters/claude-code/hooks/lib/review-record-gate-lib.sh` — shared trigger-surface + coverage lib.
+- 2026-07-16 (task 2 build): `adapters/claude-code/scripts/write-review-record.sh` — orchestrator-invoked record writer.
+- 2026-07-16 (task 2 build): `adapters/claude-code/install.sh` — hard-block wiring.
+- 2026-07-16 (task 2 build): `adapters/claude-code/hooks/session-start-auto-install.sh` — fail-open skip+warn wiring.
+- 2026-07-16 (task 2 build): `adapters/claude-code/manifest.json` — new `review-before-deploy` entry.
+- 2026-07-16 (task 2 build): `adapters/claude-code/hooks/harness-doctor.sh` — two new checks (surface cross-check + index consistency).
+- 2026-07-16 (task 2 build): `docs/harness-architecture.md` — regenerated.
+- 2026-07-16 (task 2 build): `docs/reviews/records/index.json` — bootstrap content-keyed index.
+- 2026-07-16 (task 2 build): `docs/reviews/records/grandfather-manifest.json` — cutover grandfather snapshot.
+- 2026-07-16 (task 2 build): `docs/reviews/records/2026-07-16-harness-change-review-batch1.json` — bootstrap exercise record for this batch's own changes.
+- 2026-07-16 (task 2 build): `docs/backlog.md` — anti-fabrication-anchor follow-up row.
+- 2026-07-16 (task 2 build): `adapters/claude-code/doctrine/INDEX.md` — regenerated (new manifest entry).
+- 2026-07-16 (task 2 build): `adapters/claude-code/doctrine/review-before-deploy.md` — new compact doctrine note for the gate.
+
 ## Evidence Log
 
 ### R1 (2026-07-15, orchestrating session)
