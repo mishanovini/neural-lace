@@ -190,8 +190,8 @@ BATCH — after the foundation lands (unified master):
 - Invariant fixes in the merge commit: `agents/architecture-reviewer.md` pinned `model: fable`; `config/model-policy.json` + architecture-reviewer (design, [fable,opus]); `docs/harness-architecture.md` regenerated (gen --check GREEN).
 - Verify: model-pin-gate self-test 13/13; harness-doctor self-test 105/105. doctor --quick REDs triaged: all pre-existing on BOTH parents (manifest-check path-join bug on sessionstart-singleflight — **nl-issue filed**), or clear-on-install (manifest-freshness), or R2 scope (worktree budget), or environmental (cockpit port / ask-capture / needs-you headers / live Stop-chain budget).
 - Incident (self-caused, resolved): a baseline `git stash` snapshot destroyed MERGE_HEAD mid-merge; restored via `git rev-parse pt/master > .git/MERGE_HEAD` before committing, so `937e8cb` has correct dual parents. Gates behaved correctly throughout (scope gate's merge full-skip resumed once MERGE_HEAD was restored; docs-freshness correctly demanded the regenerated architecture doc).
-- harness-reviewer (FRESH dispatch, model: opus — Fable spend-capped) dispatched on `937e8cb` BEFORE push, per runbook step 7. Verdict: (pending)
-- PUSH: (pending review PASS)
+- harness-reviewer (FRESH dispatch, model: opus — Fable spend-capped) dispatched on `937e8cb` BEFORE push, per runbook step 7. Verdict: REJECT (4 PROVEN findings — stash-mid-merge index corruption dropped 11 pt files + 2 manifest entries); remediated at `9fe4aba`; re-review PASS.
+- PUSH: both remotes after re-review PASS; converged `0 0` (see the R1 deploy evidence below and the final consolidated PASS at `59e338f`).
 
 ### R2 (executed 2026-07-16)
 - Classification (explorer, PROVEN): broadcast signals 1-4 are existence-only (`git worktree list`);
