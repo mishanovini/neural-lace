@@ -225,6 +225,27 @@ BATCH — after the foundation lands (unified master):
   message amended with the true record (e546ed9). Builder-report mismatch also noted (report said
   sentinel "2026-04", artifact carried "2026-06") — calibration note for plan-phase-builder.
 
+### Integration + consolidated pre-push reviews (2026-07-16, unpushed stack e546ed9..df787e6+)
+- Integrated: batch-5 (e546ed9 amended-record) + fixup (40f7034); R3 gate (1fa7fd9) + fixup (5c38f43);
+  task-1 design finalize + task-2 build (55120cb, 8d8c765, cf2e126, daba4c9, 2c131bd, 04c8bfc); lib-path
+  fix (60e1d3d); grandfather re-bootstrap at integrated HEAD (df787e6). Battery at df787e6: doctor
+  self-test 114/0; manifest-check GREEN 125 entries + 18/18; lib 25/25; writer 11/11; auto-install
+  17/17; gh-merge 23/23 (+ orchestrator probes: pt-URL/flat-shape BLOCK, personal-URL ALLOW).
+- Closure re-review (independent): batch-5 fixup CLOSED (5 true 2026-07 months git-verified; closed
+  exempt-list both files/both paths; remedy no longer teaches under-dating; teeth proven). R3 fixup
+  CLOSED (all parser forms re-probed independently). lib-path fix NOT-CLOSED: normalization tripped
+  2 new doctor REDs (surface-cross-check */* branch resolves lib/ against wrong root; architecture
+  doc regen claimed in 60e1d3d's message but never committed — §1 record defect) + budget-blocking-
+  gates 13/12 overrun from the batch's new gates. All three folded into the task-2 fixup round.
+- Task-2 first review: REFORMULATE (no redesign; no-brick fail-open posture PASSED). Majors: declared-
+  surface ⊋ enforced-surface (settings.json.template deployed but ungated in BOTH carriers; install.sh
+  non-recursive scripts/ enumeration weaker than the fail-open path); index launders the placeholder
+  self-attested PASS (writer must refuse reviewer:none PASS; index rows carry reviewer); grandfather/
+  records-dir = unpinned trust anchor (resolved cutover SHA + doctor pin + named residual). Placeholder
+  record must NOT be replaced until re-review PASS. Builder resumed with all items.
+- PUSH remAINS GATED on: task-2 fixup round → re-review PASS → real harness-change-review record
+  written via write-review-record.sh (deleting the placeholder) → push both → install → live verify.
+
 ### R2 (inventory so far)
 - 7 worktrees; broadcast marks 5 signals live-owned (main, nl-ux-wt, agent-aeed9a16, agent-afdcb723, workstreams-ui-server) + sleepy-albattani claim. Non-owned candidates: `beautiful-mcnulty-e8bc42` worktree (clean, detached @6149a45, PR #100 MERGED on pt 2026-07-13) and branches `claude/beautiful-mcnulty-e8bc42` (ahead-of-origin by 1 doc commit) + `close-100` (12 commits, unpushed, content landed via PR 100→pt→master — verified: archived plan + FM-038 + vaporware doctrine present in master). Neither branch is ancestry-merged nor stale >7d → runbook says KEEP; revisit via estate coordination (are the broadcast signals themselves stale?).
 
