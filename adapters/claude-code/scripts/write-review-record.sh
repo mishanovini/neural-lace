@@ -110,6 +110,13 @@ _rrg_rebuild_index() {
     return 0
   fi
 
+  # `reviewer` is carried into every index row (harness-review REFORMULATE
+  # fixup, finding 2b) so a derived row can NEVER drop the honesty
+  # qualifier -- an index reader must always be able to see WHO passed a
+  # record, not just that some record says PASS. This is what makes the
+  # existing placeholder record ("none (orchestrator self-attestation...)")
+  # read honestly once rebuilt, without deleting or rewriting the record
+  # itself.
   jq -s '
     [ .[] | . as $rec | ($rec.covered_files // [])[] | {
         path: .path,
@@ -117,6 +124,7 @@ _rrg_rebuild_index() {
         record_id: $rec.record_id,
         kind: $rec.kind,
         verdict: $rec.verdict,
+        reviewer: $rec.reviewer,
         created_at: $rec.created_at
       } ]
     | sort_by(.path, .blob_sha, .created_at, .record_id)
@@ -209,6 +217,24 @@ cmd_capture() {
     *) echo "$SCRIPT_NAME: --verdict must be PASS|REFORMULATE|REJECT (got '$verdict')" >&2; return 2 ;;
   esac
   [[ -z "$reviewer" ]] && { echo "$SCRIPT_NAME: --reviewer is required" >&2; return 2; }
+  # Honesty-laundering refusal (harness-review REFORMULATE fixup, finding
+  # 2a): a PASS record whose --reviewer is empty/"none"/a self-attestation/
+  # a placeholder reads, once buried in index.json, as an indistinguishable
+  # bare PASS -- exactly the fabrication risk Amendment C names. Refuse to
+  # WRITE such a record at all rather than rely on a human reading the
+  # reviewer string later. REFORMULATE/REJECT records are NOT refused here
+  # (they never unblock anything, so there is nothing to launder).
+  if [[ "$verdict" == "PASS" ]]; then
+    local reviewer_lc="${reviewer,,}"
+    if [[ -z "${reviewer_lc//[[:space:]]/}" ]] \
+       || [[ "$reviewer_lc" == *"none"* ]] \
+       || [[ "$reviewer_lc" == *"self-attest"* ]] \
+       || [[ "$reviewer_lc" == *"self attest"* ]] \
+       || [[ "$reviewer_lc" == *"placeholder"* ]]; then
+      echo "$SCRIPT_NAME: refusing to write a PASS record -- --reviewer '$reviewer' reads as empty/none/self-attestation/placeholder, not a real reviewer identity. A PASS record's reviewer must name an actual reviewer (e.g. 'harness-reviewer'). Use --verdict REFORMULATE or REJECT for a non-reviewed placeholder, or supply the real reviewer's identity." >&2
+      return 2
+    fi
+  fi
   [[ -z "$plan_ref" ]] && { echo "$SCRIPT_NAME: --plan-ref is required" >&2; return 2; }
   [[ -z "$quote" ]] && { echo "$SCRIPT_NAME: --quote is required (verbatim substring of the reviewer's returned message)" >&2; return 2; }
   [[ "${#files[@]}" -eq 0 ]] && { echo "$SCRIPT_NAME: at least one --file is required" >&2; return 2; }
@@ -230,6 +256,16 @@ cmd_capture() {
     if [[ -z "$sha" ]]; then
       echo "$SCRIPT_NAME: cannot resolve blob sha for --file '$f' (expected at $abs)" >&2
       return 2
+    fi
+    # Non-blocking sanity WARN (harness-review REFORMULATE fixup, finding
+    # 4 optional): a --file outside the review-before-deploy trigger
+    # surface is usually a typo'd path, not a deliberate choice -- the
+    # record is still written (it's a valid audit artifact either way, and
+    # some callers legitimately capture broader evidence), but flag it
+    # loudly so a mistake doesn't silently produce a record that can never
+    # actually gate anything.
+    if command -v rrg_in_surface >/dev/null 2>&1 && ! rrg_in_surface "$f"; then
+      echo "$SCRIPT_NAME: WARN -- --file '$f' is OUTSIDE the review-before-deploy trigger surface; this record will never gate a deploy for it (check for a typo'd path)" >&2
     fi
     cov=$(printf '%s' "$cov" | jq --arg p "$f" --arg s "$sha" '. + [{path:$p, blob_sha:$s}]')
   done
@@ -350,6 +386,20 @@ cmd_bootstrap_grandfather() {
   done
   command -v git >/dev/null 2>&1 || { echo "$SCRIPT_NAME: git is required" >&2; return 2; }
   repo_root="$(_repo_root_default "$repo_root")"
+
+  # Resolve $ref to a concrete commit SHA (harness-review REFORMULATE
+  # fixup, finding 3a): a literal "HEAD" (or "master", or any symbolic ref)
+  # stored verbatim in cutover_ref is unpinned -- it silently means
+  # something DIFFERENT every time the branch moves, defeating the whole
+  # point of a cutover marker (a fixed point in history "content existed at
+  # or before"). The recorded cutover_ref must be an immutable commit SHA.
+  local resolved_ref
+  resolved_ref=$(git -C "$repo_root" rev-parse --verify --quiet "$ref" 2>/dev/null)
+  if [[ -z "$resolved_ref" ]]; then
+    echo "$SCRIPT_NAME: cannot resolve --ref '$ref' to a commit in $repo_root" >&2
+    return 2
+  fi
+  ref="$resolved_ref"
 
   local files f sha entries="[]"
   files=$(git -C "$repo_root" ls-tree -r --name-only "$ref" 2>/dev/null)
@@ -596,6 +646,82 @@ run_self_test() {
     PASSED=$((PASSED+1))
   else
     echo "self-test (S11) bootstrap-covers-unchanged-tracked-file: FAIL (rc=$rc out=$out)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S12: honesty-laundering refusal (harness-review REFORMULATE fixup,
+  # finding 2a) -- a PASS record is REFUSED when --reviewer is empty, "none",
+  # a self-attestation, or a placeholder (case-insensitive). ----
+  local bad_reviewer
+  for bad_reviewer in "none" "None (orchestrator self-attestation)" "SELF-ATTEST" "placeholder-pending-review" "   "; do
+    "$SELF_PATH" capture --kind harness-change-review --reviewer "$bad_reviewer" \
+      --verdict PASS --plan-ref x --quote y \
+      --file "adapters/claude-code/hooks/alpha.sh" --repo-root "$REPO" >/dev/null 2>&1
+    rc=$?
+    if [[ "$rc" -ne 2 ]]; then
+      echo "self-test (S12) honesty-laundering-refused: FAIL (reviewer '$bad_reviewer' was accepted, rc=$rc, expected 2)" >&2
+      FAILED=$((FAILED+1))
+      break
+    fi
+  done
+  if [[ "$rc" -eq 2 ]]; then
+    echo "self-test (S12) honesty-laundering-refused: PASS" >&2
+    PASSED=$((PASSED+1))
+  fi
+
+  # ---- S13: a genuine reviewer identity is still accepted for PASS ----
+  # (NOTE: must use "$REPO/docs/reviews/records", NOT a bare relative path
+  # -- this fixture runs with the REAL cwd, and a relative rm -rf here would
+  # delete the real repo's records directory instead of the fixture's.)
+  rm -rf "$REPO/docs/reviews/records" 2>/dev/null
+  "$SELF_PATH" capture --kind harness-change-review --reviewer "harness-reviewer" \
+    --verdict PASS --plan-ref x --quote "PASS -- looks good." \
+    --file "adapters/claude-code/hooks/alpha.sh" --repo-root "$REPO" >/dev/null 2>&1
+  rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    echo "self-test (S13) genuine-reviewer-still-accepted: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S13) genuine-reviewer-still-accepted: FAIL (rc=$rc)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S14: REFORMULATE/REJECT are NOT refused for a placeholder reviewer
+  # (they never unblock anything, so there is nothing to launder) ----
+  "$SELF_PATH" capture --kind harness-change-review --reviewer "none (placeholder)" \
+    --verdict REJECT --plan-ref x --quote "REJECT placeholder" \
+    --file "adapters/claude-code/hooks/beta.sh" --repo-root "$REPO" >/dev/null 2>&1
+  rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    echo "self-test (S14) reject-not-refused-for-placeholder-reviewer: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S14) reject-not-refused-for-placeholder-reviewer: FAIL (rc=$rc)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S15: index.json rows carry the `reviewer` field (finding 2b) so a
+  # derived row can never drop the honesty qualifier ----
+  local idx_reviewer
+  idx_reviewer=$(jq -r '.entries[] | select(.path == "adapters/claude-code/hooks/alpha.sh") | .reviewer' "$REPO/docs/reviews/records/index.json" 2>/dev/null | head -1)
+  if [[ "$idx_reviewer" == "harness-reviewer" ]]; then
+    echo "self-test (S15) index-rows-carry-reviewer-field: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S15) index-rows-carry-reviewer-field: FAIL (got reviewer='$idx_reviewer')" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S16: bootstrap-grandfather resolves cutover_ref to a real commit
+  # SHA, never the literal ref name (finding 3a) ----
+  out=$("$SELF_PATH" bootstrap-grandfather --repo-root "$REPO" --ref HEAD --stdout 2>&1)
+  local cutover_val
+  cutover_val=$(printf '%s' "$out" | jq -r '.cutover_ref' 2>/dev/null)
+  if [[ "$cutover_val" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "self-test (S16) bootstrap-cutover-ref-is-resolved-sha: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S16) bootstrap-cutover-ref-is-resolved-sha: FAIL (cutover_ref='$cutover_val')" >&2
     FAILED=$((FAILED+1))
   fi
 
