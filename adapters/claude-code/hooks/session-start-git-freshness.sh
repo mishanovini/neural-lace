@@ -56,7 +56,7 @@ set -u
 
 FETCH_TIMEOUT_SECONDS="${FETCH_TIMEOUT_SECONDS:-10}"
 # Branches where uncommitted work is expected and not worth flagging:
-WIP_BRANCH_PATTERN='^(wip|feat|feature|fix|bugfix|salvage|backup|rebase|reconverge|sync|sync-pt-to-personal)/'
+WIP_BRANCH_PATTERN='^(wip|feat|feature|fix|bugfix|salvage|backup|rebase|reconverge|sync)/'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 MD_RUNBOOK="docs/runbooks/master-drift-autocorrect.md"

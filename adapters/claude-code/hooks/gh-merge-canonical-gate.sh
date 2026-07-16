@@ -28,16 +28,24 @@
 # entirely OFFLINE (no `gh api`/network call in the hook path, so a network
 # hiccup can never turn into a false BLOCK of a legitimate personal-side merge):
 #   1. An explicit repo in the command itself wins: `gh api repos/OWNER/REPO/
-#      pulls/N/merge`, or an explicit `--repo`/`-R` flag on `gh pr merge`.
-#   2. Else, the checkout's `gh repo set-default` state (`git config
+#      pulls/N/merge` (unless OWNER/REPO is a literal `{owner}`/`{repo}`
+#      gh-api template placeholder — those are substituted by gh from the
+#      CURRENT repo context, so they fall through to step 3/4 instead), or an
+#      explicit `--repo`/`-R` flag on `gh pr merge`.
+#   2. Else, a POSITIONAL target on `gh pr merge` that itself encodes a repo —
+#      a pasted PR URL (`https://HOST/OWNER/REPO/pull/N`) or the
+#      `OWNER/REPO#N` shorthand — which `gh` honors over the default repo. A
+#      bare PR number or branch name positional encodes no repo and falls
+#      through, unchanged.
+#   3. Else, the checkout's `gh repo set-default` state (`git config
 #      remote.<name>.gh-resolved base` — the exact mechanism `gh repo
 #      set-default` writes).
-#   3. Else, a REMOTE HEURISTIC: the sole recognized (github.com-hosted) remote
+#   4. Else, a REMOTE HEURISTIC: the sole recognized (github.com-hosted) remote
 #      is the default, matching gh's own resolution (an SSH host-ALIAS remote,
 #      e.g. `pt` via `github-pt`, is not textually github.com-shaped and is NOT
 #      a candidate here — exactly why `pt`'s IDENTITY, below, is read directly
 #      from the `pt` remote by name rather than inferred from this heuristic).
-#   4. If the heuristic finds zero or more-than-one candidate, the target is
+#   5. If the heuristic finds zero or more-than-one candidate, the target is
 #      AMBIGUOUS -> FAIL LOUD and BLOCK (never silently allow, and never
 #      silently reinterpret ambiguity as "must be pt" either) — the message
 #      teaches `--repo owner/name` or `gh repo set-default`.
@@ -46,7 +54,24 @@
 # AT RUNTIME — never a hardcoded org/repo name (hygiene denylist). If this
 # checkout has no remote literally named `pt`, the gate does not apply here
 # (fail OPEN — an unrelated repo elsewhere on the estate must never be blocked
-# just because IT lacks the concept of a "pt" mirror).
+# just because IT lacks the concept of a "pt" mirror). NOTE: this scopes the
+# gate by the remote NAME `pt`, which is a neural-lace-specific convention —
+# the gate is wired estate-wide (every harnessed repo), so on any OTHER
+# dual-hosted repo that doesn't happen to name its mirror remote `pt`, this
+# gate is a silent no-op (fail-open), not a guarantee, for that repo.
+#
+# HONEST RESIDUAL (parser reach, named per harness-review 2026-07-16): a
+# runtime-interpolated command (e.g. `gh pr merge $N --repo "$REPO_VAR"`) is
+# inspected as the LITERAL pre-expansion string the tool call carries, so a
+# shell-variable value is invisible here and falls through to default-repo
+# resolution; a bundled short flag with no space (`-Rowner/repo`) is not
+# matched by the `-R` extraction (which requires a separating space) and also
+# falls through; a `gh pr merge` invoked through a shell alias/function whose
+# name doesn't literally contain adjacent `gh`/`pr`/`merge` tokens is not
+# recognized as a merge command at all. All three fall through to (or past)
+# default-repo resolution rather than being silently misclassified as a
+# non-pt target — see `_resolve_target_repo`'s ambiguous-branch as the
+# ultimate backstop when that resolution is itself inconclusive.
 #
 # ALLOW when: not a Bash tool call; not a merge-shaped `gh` command; no `pt`
 #   remote configured in this checkout; the resolved target != the `pt` repo.
@@ -92,23 +117,61 @@ _lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 # house style (same shape as the force-push/public-repo gates in
 # settings.json.template) — a hook inspects the literal Bash command about to
 # run, not an arbitrary free-text string, so light over-matching is acceptable.
+# Matches on [[:space:]]+ (not a literal single space) so `gh  pr  merge`
+# (double/tab-spaced, e.g. from a generated or reformatted command string)
+# still matches — a literal `gh\ pr\ merge` glob silently fails-open on that
+# shape (harness-review finding, 2026-07-16).
 _is_merge_command() {
   local cmd="$1"
-  case "$cmd" in
-    *gh\ pr\ merge*) return 0 ;;
-  esac
+  printf '%s' "$cmd" | grep -qE 'gh[[:space:]]+pr[[:space:]]+merge' && return 0
   printf '%s' "$cmd" | grep -qE 'repos/[^/[:space:]]+/[^/[:space:]]+/pulls/[0-9]+/merge' && return 0
   return 1
 }
 
 # Explicit repo in a `gh api .../repos/OWNER/REPO/pulls/N/merge` path. Empty if
-# no match.
+# no match. If the extracted owner or repo is a literal `{owner}`/`{repo}`
+# gh-api template placeholder (gh substitutes these from the CURRENT repo
+# context at runtime, not from this string), this is NOT an explicit target —
+# fall through to default-repo resolution instead of treating the literal
+# brace text as a real (never-matching-pt) owner/repo (harness-review finding,
+# 2026-07-16: silently ALWAYS-ALLOWs a templated pt-targeting command
+# otherwise, since "{owner}/{repo}" can never equal the real pt owner/repo).
 _extract_api_merge_owner_repo() {
-  local cmd="$1" m
+  local cmd="$1" m owner repo
   m="$(printf '%s' "$cmd" | grep -oE 'repos/[^/[:space:]"'"'"']+/[^/[:space:]"'"'"']+/pulls/[0-9]+/merge' | head -1)"
   [ -z "$m" ] && return 1
-  printf '%s' "$m" | sed -E 's#repos/([^/]+)/([^/]+)/pulls/.*#\1/\2#'
+  owner="$(printf '%s' "$m" | sed -E 's#repos/([^/]+)/([^/]+)/pulls/.*#\1#')"
+  repo="$(printf '%s' "$m" | sed -E 's#repos/([^/]+)/([^/]+)/pulls/.*#\2#')"
+  case "$owner" in *'{'*) return 1 ;; esac
+  case "$repo" in *'{'*) return 1 ;; esac
+  printf '%s/%s' "$owner" "$repo"
   return 0
+}
+
+# Positional target on `gh pr merge` — gh honors a positional PR reference
+# over the default-repo resolution when the positional itself encodes an
+# owner/repo: a pasted PR URL (`https://HOST/OWNER/REPO/pull/N` — the natural
+# human idiom, e.g. copy-pasted from a browser) or the `OWNER/REPO#N`
+# shorthand. A bare PR NUMBER or branch name positional encodes no repo and is
+# intentionally NOT matched here (falls through to default-repo resolution,
+# unchanged). Echoes lowercased "owner/repo" and returns 0 on a match; returns
+# 1 (try the next resolution step) otherwise. (harness-review finding,
+# 2026-07-16 — previously unparsed, silently ALLOWed via default-repo
+# resolution even when the pasted URL/shorthand named the pt repo explicitly.)
+_extract_positional_target() {
+  local cmd="$1" tok
+  tok="$(printf '%s' "$cmd" | grep -oE 'https?://[^/[:space:]]+/[^/[:space:]]+/[^/[:space:]]+/pull/[0-9]+' | head -1)"
+  if [ -n "$tok" ]; then
+    tok="$(printf '%s' "$tok" | sed -E 's#/pull/[0-9]+$##')"
+    _owner_repo_from_url "$tok"
+    return 0
+  fi
+  tok="$(printf '%s' "$cmd" | grep -oE '[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#[0-9]+' | head -1)"
+  if [ -n "$tok" ]; then
+    printf '%s' "${tok%%#*}"
+    return 0
+  fi
+  return 1
 }
 
 # Explicit `--repo`/`-R` flag value off a `gh pr merge` command (raw value —
@@ -180,7 +243,7 @@ _resolve_via_heuristic() {
 # the file header. Echoes the target and returns 0 on success; returns 1 iff
 # genuinely ambiguous/unresolvable.
 _resolve_target_repo() {
-  local cmd="$1" dir="$2" owner_repo val default_remote default_url heuristic
+  local cmd="$1" dir="$2" owner_repo val default_remote default_url heuristic positional
 
   owner_repo="$(_extract_api_merge_owner_repo "$cmd")"
   if [ -n "$owner_repo" ]; then
@@ -194,6 +257,12 @@ _resolve_target_repo() {
       https://*|git@*) val="$(_owner_repo_from_url "$val")" ;;
     esac
     [ -n "$val" ] && { _lower "$val"; return 0; }
+  fi
+
+  positional="$(_extract_positional_target "$cmd")"
+  if [ -n "$positional" ]; then
+    _lower "$positional"
+    return 0
   fi
 
   default_remote="$(_default_remote_via_gh_resolved "$dir")"
@@ -228,7 +297,7 @@ run_gate() {
   tool="$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null || true)"
   [ "$tool" = "Bash" ] || return 0                  # only the Bash surface
 
-  cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null || true)"
+  cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // .command // ""' 2>/dev/null || true)"
   [ -n "$cmd" ] || return 0
 
   _is_merge_command "$cmd" || return 0              # not a merge-shaped command -> allow
@@ -339,6 +408,35 @@ run_self_test() {
     '{"tool_name":"Edit","tool_input":{"command":"gh pr merge 1 --repo acme-work/proj"}}'
   _rc 0 "malformed json -> fail-open allow" "$repoA" 'this is not json'
   _rc 0 "empty input -> fail-open allow" "$repoA" ''
+
+  # --- harness-review fixup (2026-07-16) fixtures ------------------------
+
+  # CRITICAL: flat-shape payload (.command directly on the tool call object,
+  # no nested .tool_input.command) must still BLOCK, not silently fail-open.
+  _rc 2 "flat-shape payload (.command, no tool_input wrapper) -> BLOCK" "$repoA" \
+    '{"tool_name":"Bash","command":"gh pr merge 42 --repo acme-work/proj"}'
+
+  # MAJOR (i): multi-space `gh  pr  merge` (whitespace-normalized match).
+  _rc 2 "multi-space 'gh  pr  merge' with --repo pt -> BLOCK" "$repoA" \
+    '{"tool_name":"Bash","tool_input":{"command":"gh  pr  merge 42 --repo acme-work/proj"}}'
+
+  # MAJOR (ii)/(iii): positional PR-URL and OWNER/REPO#N targets, honored
+  # over default-repo resolution, BEFORE any --repo/-R flag is even present.
+  _rc 2 "positional pt-PR-URL (no --repo) -> BLOCK" "$repoA" \
+    '{"tool_name":"Bash","tool_input":{"command":"gh pr merge https://github.com/acme-work/proj/pull/42"}}'
+  _rc 0 "positional personal-PR-URL (no --repo) -> ALLOW" "$repoA" \
+    '{"tool_name":"Bash","tool_input":{"command":"gh pr merge https://github.com/myuser/proj/pull/42"}}'
+  _rc 2 "positional <pt-owner>/<repo>#N shorthand -> BLOCK" "$repoA" \
+    '{"tool_name":"Bash","tool_input":{"command":"gh pr merge acme-work/proj#42"}}'
+
+  # MINOR: gh-api {owner}/{repo} template placeholders are NOT an explicit
+  # target (gh substitutes them from context) -> falls through to default-repo
+  # resolution. On repoA (2 owners, no gh-resolved default -> heuristic
+  # candidate is the sole github-remote "origin" == myuser/proj == personal)
+  # this correctly ALLOWs rather than treating the literal brace text as a
+  # (never-matching) resolved target.
+  _rc 0 "gh api {owner}/{repo} template placeholders -> falls through, ALLOW" "$repoA" \
+    '{"tool_name":"Bash","tool_input":{"command":"gh api -X PUT repos/{owner}/{repo}/pulls/{pull_number}/merge"}}'
 
   # Fixture B: single github.com-shaped remote (origin) == pt's owner/repo ->
   # a BARE merge resolves via default-repo heuristic to pt -> BLOCK.

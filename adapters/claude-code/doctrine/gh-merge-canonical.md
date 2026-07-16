@@ -20,21 +20,45 @@ Until enabled, this gate + the FF-only `master-drift-autocorrect.sh` + the manua
 reconcile runbook are the safety net, not a guarantee.
 
 **Target resolution (A4), fully offline:**
-1. Explicit repo in the command wins — `gh api repos/OWNER/REPO/pulls/N/merge`, or
-   `--repo`/`-R` on `gh pr merge`.
-2. Else the checkout's `gh repo set-default` state (`remote.<name>.gh-resolved base`).
-3. Else a remote heuristic: the sole github.com-hosted remote (an SSH host-ALIAS remote,
+1. Explicit repo in the command wins — `gh api repos/OWNER/REPO/pulls/N/merge` (unless
+   OWNER/REPO is a literal `{owner}`/`{repo}` gh-api template placeholder, which gh fills
+   from the CURRENT repo context, not from this string — that falls through to step 3/4),
+   or `--repo`/`-R` on `gh pr merge`.
+2. Else a positional target on `gh pr merge` that itself encodes a repo — a pasted PR URL
+   (`https://HOST/OWNER/REPO/pull/N`) or the `OWNER/REPO#N` shorthand — which gh honors
+   over the default repo. A bare PR number/branch positional encodes no repo and falls
+   through, unchanged.
+3. Else the checkout's `gh repo set-default` state (`remote.<name>.gh-resolved base`).
+4. Else a remote heuristic: the sole github.com-hosted remote (an SSH host-ALIAS remote,
    e.g. `pt` via `github-pt`, is NOT github.com-shaped and is not a candidate — matching
    gh's own resolution; verified empirically: `gh repo view` in this repo resolves to the
    personal repo despite `pt` existing, precisely because `pt`'s host token isn't literal
    `github.com`).
-4. Zero or >1 candidates -> AMBIGUOUS -> **fail loud and block**, never guess. Never
+5. Zero or >1 candidates -> AMBIGUOUS -> **fail loud and block**, never guess. Never
    silently allow (could hide a real pt-merge) and never silently reinterpret ambiguity as
    pt (could block a legitimate personal merge) — the message teaches `--repo` or
    `gh repo set-default`.
 
 `pt`'s identity is read from `git remote get-url pt` at runtime — never hardcoded (a repo
 with no remote literally named `pt` is out of scope for this gate; fail OPEN, not block).
+**This scopes the gate by the remote NAME `pt`, a neural-lace-specific convention.** The
+gate is wired estate-wide (every harnessed repo gets it), so on any OTHER dual-hosted repo
+that names its mirror remote something other than `pt`, this gate is a silent no-op for
+that repo — not a guarantee, and not repo-specific in its deployment even though its
+identity check is repo-specific in effect.
+
+**Parser residual (named, harness-review 2026-07-16 fixup):** the command shape read is
+also fallback-checked at `.command` (flat tool-call payloads, not only nested
+`.tool_input.command`), the merge-command match tolerates irregular whitespace, and
+positional PR-URL/`OWNER/REPO#N` targets are parsed — but the parser inspects only the
+LITERAL pre-expansion command string. Still uncovered: a runtime-interpolated value
+(`gh pr merge $N --repo "$REPO_VAR"` — the variable's value is invisible to a static-string
+check) falls through to default-repo resolution; a bundled short flag with no space
+(`-Rowner/repo`) is not matched by the `-R` extractor and also falls through; a `gh pr
+merge` invoked via a shell alias/function whose name doesn't literally contain adjacent
+`gh`/`pr`/`merge` tokens is not recognized as a merge command at all. None of these
+silently misclassify a resolved target — they fall through to the next resolution step (or
+to the loud ambiguous-block) rather than being read as a false ALLOW/BLOCK.
 
 **§10 evidence bar (A3).** PR #100's actual merge PATH (web-UI vs `gh` CLI) is UNKNOWN —
 server-side merges are indistinguishable in the API record — so the 2026-07-15 divergence

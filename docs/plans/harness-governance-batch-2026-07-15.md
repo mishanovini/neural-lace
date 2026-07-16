@@ -149,6 +149,7 @@ BATCH — after the foundation lands (unified master):
   `PRE_BAR_GRANDFATHERED` exempt-list had to be mirrored into it (both node and jq paths) plus
   two self-tests (S10c/S10d) to keep task 5's own "manifest-check.sh must not regress"
   constraint honest.
+- 2026-07-16: `adapters/claude-code/hooks/session-start-git-freshness.sh` — R3 harness-review fixup: dropped the dangling `sync-pt-to-personal` entry from WIP_BRANCH_PATTERN (retired script, dead reference).
 
 ## Evidence Log
 
@@ -265,3 +266,51 @@ BATCH — after the foundation lands (unified master):
   post-commit dual-push hook / `core.hooksPath` is installed) is explicitly a *candidate* in decision
   064's Consequences section, not one of the 6 build items dispatched for R3 — left as a follow-up
   rather than scope-expanded into this build.
+
+### R3 harness-review fixup (2026-07-16, same worktree, commit after review REJECT)
+- **Verdict on the R3 commit:** REJECT with narrow, exactly-specified fixes — design, FP-restraint,
+  ambiguity fail-loud, retirement safety, docs coupling, and honesty framing all explicitly PASSED
+  (not reworked). Fixed:
+- **CRITICAL** (`hooks/gh-merge-canonical-gate.sh`): the command read only checked
+  `.tool_input.command`; a flat-shape payload (`.command` directly on the tool-call object, no nested
+  `tool_input`) silently fail-opened on EVERY merge while self-test stayed green. Fixed to
+  `jq -r '.tool_input.command // .command // ""'`; added a self-test fixture feeding exactly that flat
+  shape, asserting BLOCK.
+- **MAJOR — parser coverage:** (i) `_is_merge_command` matched a literal single-space glob
+  (`*gh\ pr\ merge*`); a multi-space/tab-spaced command (`gh  pr  merge`) silently fell through to
+  ALLOW. Fixed to `grep -qE 'gh[[:space:]]+pr[[:space:]]+merge'`. (ii) `_resolve_target_repo` had no
+  positional-target parsing; a pasted PR URL (`https://HOST/OWNER/REPO/pull/N` — the natural
+  copy-paste idiom) or `OWNER/REPO#N` shorthand fell straight to default-repo resolution, which could
+  resolve to the WRONG (non-pt) repo even when the positional itself named pt. Added
+  `_extract_positional_target`, spliced into `_resolve_target_repo` between the explicit `--repo`/`-R`
+  step and the `gh-resolved`/heuristic steps (gh itself honors a positional target over the default
+  repo). (iii) Added self-test fixtures: pt-PR-URL -> BLOCK, `<pt-owner>/<repo>#42` -> BLOCK,
+  multi-space `gh  pr  merge --repo <pt>` -> BLOCK, personal-PR-URL -> ALLOW.
+- **MINOR** (`_extract_api_merge_owner_repo`): a literal gh-api `{owner}/{repo}` template placeholder
+  (gh substitutes these from the CURRENT repo context, not from the string) was being read as if it
+  were the resolved owner/repo — which can never equal the real pt owner/repo, so a templated
+  pt-targeting command would silently ALWAYS ALLOW. Fixed: if the extracted owner or repo contains
+  `{`, treat as NOT-explicit and fall through to default-repo resolution. Self-test fixture added.
+- **MINOR** (`doctrine/gh-merge-canonical.md`): added a line noting the gate scopes itself by the
+  remote NAME `pt` (a neural-lace-specific convention) and is wired estate-wide — on any other
+  dual-hosted repo that names its mirror remote something else, the gate is a silent no-op for that
+  repo, not a guarantee.
+- **OPTIONAL** (`hooks/session-start-git-freshness.sh`): dropped the dangling `sync-pt-to-personal`
+  entry from `WIP_BRANCH_PATTERN` (a dead reference to the retired script's old temp-branch prefix; no
+  behavioral effect since that prefix can never be created again). Self-test re-run: 15/15 PASS.
+- **manifest.json `honest_status`/`fp_expectation` updated** (not merely bumped) to name the parser's
+  new reach exactly AND the residual that remains uncovered even after the fixup: a
+  runtime-interpolated value (`gh pr merge $N --repo "$REPO_VAR"` — invisible to a static-string
+  check), a bundled short flag with no space (`-Rowner/repo`), and a `gh pr merge` invoked via a shell
+  alias/function whose name doesn't literally contain adjacent `gh`/`pr`/`merge` tokens. All three
+  fall through to (or past) default-repo resolution rather than being silently misread as a false
+  ALLOW/BLOCK — named explicitly rather than left as an implicit gap.
+- **Verify (fixup):** `gh-merge-canonical-gate.sh --self-test` — **23/23 PASS** (17 original + 6 new:
+  flat-shape BLOCK, multi-space BLOCK, pt-PR-URL BLOCK, personal-PR-URL ALLOW, `OWNER/REPO#N` BLOCK,
+  `{owner}/{repo}` placeholder ALLOW). `session-start-git-freshness.sh --self-test` — 15/15 PASS
+  (unchanged, confirms the WIP-pattern edit didn't regress it). `manifest-check.sh` — 124 entries, same
+  3 pre-existing sessionstart-singleflight REDs, no new REDs. `gen-architecture-doc.sh --check` —
+  GREEN after regenerating `doctrine/INDEX.md` + `docs/harness-architecture.md` (honest_status text
+  changed). `harness-doctor.sh --self-test` — **105/105 PASS** (this worktree's base does not carry
+  batch-5's doctor-check addition — that would bring the count to 107; noting explicitly per the
+  reviewer's ask rather than implying a mismatch is a regression).
