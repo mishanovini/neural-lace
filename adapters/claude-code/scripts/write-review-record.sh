@@ -35,6 +35,14 @@
 #   rebuild-index [--records-dir <dir>] [--repo-root <path>] [--stdout]
 #   check --path <repo-relative-path> [--blob-sha <sha>] [--ref <ref>]
 #         [--repo-root <path>]
+#   bootstrap-grandfather [--ref <ref>] [--repo-root <path>] [--stdout]
+#     Snapshots every CURRENT trigger-surface file's {path, blob_sha} at
+#     <ref> (default HEAD) into grandfather-manifest.json -- Amendment E: a
+#     one-time cutover marker so content that already existed at bootstrap
+#     time never needs a retroactive review record. Re-running replaces the
+#     file with a fresh snapshot at the given ref (intentionally not
+#     additive -- the grandfather set is defined by "what existed at ref",
+#     not an accumulating history).
 #   --self-test
 #   --help
 #
@@ -62,6 +70,7 @@ Usage: $SCRIPT_NAME capture --kind <k> --reviewer <agent> --verdict <v> \\
          [--written-by <text>] [--payload <json>] [--repo-root <path>]
        $SCRIPT_NAME rebuild-index [--records-dir <dir>] [--repo-root <path>] [--stdout]
        $SCRIPT_NAME check --path <path> [--blob-sha <sha>] [--ref <ref>] [--repo-root <path>]
+       $SCRIPT_NAME bootstrap-grandfather [--ref <ref>] [--repo-root <path>] [--stdout]
        $SCRIPT_NAME --self-test
        $SCRIPT_NAME --help
 EOF
@@ -327,6 +336,57 @@ cmd_rebuild_index() {
 }
 
 # ---------------------------------------------------------------------------
+# bootstrap-grandfather
+# ---------------------------------------------------------------------------
+cmd_bootstrap_grandfather() {
+  local repo_root="" ref="HEAD" stdout_only=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root) repo_root="$2"; shift 2 ;;
+      --ref) ref="$2"; shift 2 ;;
+      --stdout) stdout_only=1; shift ;;
+      *) echo "$SCRIPT_NAME: unknown arg: $1" >&2; return 2 ;;
+    esac
+  done
+  command -v git >/dev/null 2>&1 || { echo "$SCRIPT_NAME: git is required" >&2; return 2; }
+  repo_root="$(_repo_root_default "$repo_root")"
+
+  local files f sha entries="[]"
+  files=$(git -C "$repo_root" ls-tree -r --name-only "$ref" 2>/dev/null)
+  if [[ -z "$files" ]]; then
+    echo "$SCRIPT_NAME: no tracked files resolved at ref '$ref' in $repo_root" >&2
+    return 2
+  fi
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    rrg_in_surface "$f" || continue
+    sha=$(git -C "$repo_root" rev-parse --verify --quiet "${ref}:${f}" 2>/dev/null)
+    [[ -z "$sha" ]] && continue
+    entries=$(printf '%s' "$entries" | jq --arg p "$f" --arg s "$sha" '. + [{path:$p, blob_sha:$s}]')
+  done <<< "$files"
+
+  local out
+  out=$(printf '%s' "$entries" | jq --arg ref "$ref" --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+    '{schema_version: 1, cutover_ref: $ref, generated_at: $ts, entries: (sort_by(.path))}')
+
+  if ! printf '%s' "$out" | jq empty >/dev/null 2>&1; then
+    echo "$SCRIPT_NAME: internal error -- generated grandfather manifest is not valid JSON" >&2
+    return 2
+  fi
+
+  if [[ "$stdout_only" -eq 1 ]]; then
+    printf '%s\n' "$out"
+  else
+    local records_dir; records_dir="$(_records_dir_for "$repo_root")"
+    mkdir -p "$records_dir" || { echo "$SCRIPT_NAME: cannot create $records_dir" >&2; return 2; }
+    printf '%s\n' "$out" > "$records_dir/grandfather-manifest.json"
+    echo "$records_dir/grandfather-manifest.json" >&2
+    echo "$(printf '%s' "$out" | jq '.entries | length') entries" >&2
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # check
 # ---------------------------------------------------------------------------
 cmd_check() {
@@ -510,6 +570,35 @@ run_self_test() {
   fi
   unset SIGNAL_LEDGER_PATH
 
+  # ---- S10: bootstrap-grandfather snapshots every in-surface tracked file
+  # at HEAD, and NOT files outside the surface ----
+  mkdir -p "$REPO/docs/some-other-doc"
+  printf 'not in surface\n' > "$REPO/docs/some-other-doc/notes.md"
+  ( cd "$REPO" && git add -A && git commit -q -m "self-test snapshot for bootstrap" )
+  out=$("$SELF_PATH" bootstrap-grandfather --repo-root "$REPO" --ref HEAD --stdout 2>&1)
+  if printf '%s' "$out" | jq -e '.entries[] | select(.path == "adapters/claude-code/hooks/alpha.sh")' >/dev/null 2>&1 \
+     && ! printf '%s' "$out" | jq -e '.entries[] | select(.path == "docs/some-other-doc/notes.md")' >/dev/null 2>&1 \
+     && ! printf '%s' "$out" | jq -e '.entries[] | select(.path | test("docs/reviews/records/"))' >/dev/null 2>&1; then
+    echo "self-test (S10) bootstrap-grandfather-scopes-to-surface: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S10) bootstrap-grandfather-scopes-to-surface: FAIL (out: $out)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S11: after bootstrap, an unchanged tracked file is COVERED with NO
+  # capture needed ----
+  "$SELF_PATH" bootstrap-grandfather --repo-root "$REPO" --ref HEAD >/dev/null 2>&1
+  out=$("$SELF_PATH" check --path "adapters/claude-code/hooks/alpha.sh" --repo-root "$REPO" 2>&1)
+  rc=$?
+  if [[ "$rc" -eq 0 ]] && printf '%s' "$out" | grep -q "^COVERED"; then
+    echo "self-test (S11) bootstrap-covers-unchanged-tracked-file: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S11) bootstrap-covers-unchanged-tracked-file: FAIL (rc=$rc out=$out)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   cd "$saved_pwd" 2>/dev/null || true
   echo "" >&2
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed (of $((PASSED+FAILED)) scenarios)" >&2
@@ -525,5 +614,6 @@ case "${1:-}" in
   capture) shift; cmd_capture "$@"; exit $? ;;
   rebuild-index) shift; cmd_rebuild_index "$@"; exit $? ;;
   check) shift; cmd_check "$@"; exit $? ;;
+  bootstrap-grandfather) shift; cmd_bootstrap_grandfather "$@"; exit $? ;;
   *) usage >&2; exit 2 ;;
 esac

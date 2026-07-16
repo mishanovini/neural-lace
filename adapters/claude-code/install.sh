@@ -912,6 +912,117 @@ sync_directory() {
   fi
 }
 
+# ============================================================
+# Review-before-deploy gate (harness-governance-batch-2026-07-15, task 2;
+# design: docs/design-notes/review-record-primitive.md, Amendment F).
+#
+# install.sh is the LOUD HARD-BLOCK path (operator present): if a changed
+# in-surface file lacks a PASS harness-change-review record covering its
+# EXACT content (or a cutover grandfather entry -- Amendment E, so a fresh
+# or long-stale machine can never be bricked by pre-cutover content), the
+# ENTIRE install aborts BEFORE any file is touched. Contrast with
+# session-start-auto-install.sh, which is fail-open by platform contract and
+# instead skips + loudly warns on just the uncovered file (see that hook's
+# own review-gate splice).
+#
+# Fails OPEN only on genuine infra unavailability (the shared lib missing,
+# or git/jq unavailable) -- never on a resolvable "not covered" verdict,
+# which is exactly what this gate exists to catch.
+# ============================================================
+REVIEW_GATE_LIB="$ADAPTER_DIR/hooks/lib/review-record-gate-lib.sh"
+if [ -f "$REVIEW_GATE_LIB" ]; then
+  # shellcheck source=hooks/lib/review-record-gate-lib.sh
+  . "$REVIEW_GATE_LIB" 2>/dev/null || true
+fi
+
+if command -v rrg_in_surface >/dev/null 2>&1 && command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  REVIEW_GATE_UNCOVERED=()
+
+  # $1 = path relative to $ADAPTER_DIR (e.g. hooks/foo.sh, agents/bar.md)
+  _review_gate_check_file() {
+    local rel="$1"
+    rrg_in_surface "$rel" || return 0
+    local repo_file="$ADAPTER_DIR/$rel"
+    local live_file="$CLAUDE_DIR/$rel"
+    [ -f "$repo_file" ] || return 0
+    # A live copy byte-identical to the repo copy is not a CHANGE -- nothing
+    # new is being deployed for this file, so it needs no fresh review.
+    if [ -f "$live_file" ] && cmp -s "$repo_file" "$live_file" 2>/dev/null; then
+      return 0
+    fi
+    local sha
+    sha=$(rrg_blob_sha_of_file "$repo_file")
+    if rrg_is_covered "$NEURAL_LACE_ROOT" "" "adapters/claude-code/$rel" "$sha"; then
+      return 0
+    fi
+    REVIEW_GATE_UNCOVERED+=("$rel (blob_sha ${sha:-<unresolved>})")
+  }
+
+  if [ -d "$ADAPTER_DIR/hooks" ]; then
+    for f in "$ADAPTER_DIR"/hooks/*.sh; do
+      [ -f "$f" ] || continue
+      _review_gate_check_file "hooks/$(basename "$f")"
+    done
+  fi
+  if [ -d "$ADAPTER_DIR/hooks/lib" ]; then
+    for f in "$ADAPTER_DIR"/hooks/lib/*.sh; do
+      [ -f "$f" ] || continue
+      _review_gate_check_file "hooks/lib/$(basename "$f")"
+    done
+  fi
+  if [ -d "$ADAPTER_DIR/scripts" ]; then
+    for f in "$ADAPTER_DIR"/scripts/*.sh; do
+      [ -f "$f" ] || continue
+      _review_gate_check_file "scripts/$(basename "$f")"
+    done
+  fi
+  if [ -d "$ADAPTER_DIR/agents" ]; then
+    for f in "$ADAPTER_DIR"/agents/*.md; do
+      [ -f "$f" ] || continue
+      _review_gate_check_file "agents/$(basename "$f")"
+    done
+  fi
+  if [ -d "$ADAPTER_DIR/rules" ]; then
+    for f in "$ADAPTER_DIR"/rules/*.md; do
+      [ -f "$f" ] || continue
+      _review_gate_check_file "rules/$(basename "$f")"
+    done
+  fi
+  if [ -f "$ADAPTER_DIR/manifest.json" ]; then
+    _review_gate_check_file "manifest.json"
+  fi
+
+  if [ "${#REVIEW_GATE_UNCOVERED[@]}" -gt 0 ]; then
+    echo "" >&2
+    echo "================================================================" >&2
+    echo "  REVIEW-BEFORE-DEPLOY GATE — INSTALL BLOCKED" >&2
+    echo "================================================================" >&2
+    echo "" >&2
+    echo "  The following changed harness file(s) are in the review-before-" >&2
+    echo "  deploy trigger surface but carry NO PASS harness-change-review" >&2
+    echo "  record covering their exact content. NOTHING was installed." >&2
+    echo "" >&2
+    for u in "${REVIEW_GATE_UNCOVERED[@]}"; do
+      echo "    - $u" >&2
+    done
+    echo "" >&2
+    echo "  Remedy: get a harness-reviewer PASS on this change, then run:" >&2
+    echo "    bash adapters/claude-code/scripts/write-review-record.sh capture \\" >&2
+    echo "      --kind harness-change-review --reviewer harness-reviewer \\" >&2
+    echo "      --verdict PASS --plan-ref <plan.md#task> \\" >&2
+    echo "      --quote \"<verbatim substring of the reviewer's returned message>\" \\" >&2
+    echo "      --file <path> [--file <path> ...]" >&2
+    echo "  then re-run ./install.sh." >&2
+    echo "" >&2
+    echo "  Design: docs/design-notes/review-record-primitive.md" >&2
+    echo "  Doctrine: adapters/claude-code/doctrine/review-before-deploy.md" >&2
+    echo "================================================================" >&2
+    exit 1
+  fi
+elif [ ! -f "$REVIEW_GATE_LIB" ]; then
+  echo "  [review-before-deploy] shared lib not present at $REVIEW_GATE_LIB -- skipping the gate (pre-cutover checkout; run install.sh again after this lib lands to enable it)" >&2
+fi
+
 echo "Deploying Claude Code adapter..."
 echo ""
 

@@ -69,6 +69,18 @@ LIVE_DIR="${LIVE_DIR_OVERRIDE:-$HOME/.claude}"
 # install.sh's rules-prune step is the one place stale rules/*.md get removed.)
 SYNC_SUBDIRS="hooks scripts agents rules templates skills doctrine"
 
+# Review-before-deploy gate (harness-governance-batch-2026-07-15, task 2;
+# design: docs/design-notes/review-record-primitive.md, Amendment F). This
+# hook is fail-open BY PLATFORM CONTRACT (always exits 0 -- a background
+# SessionStart script must never wedge a session), so its posture here is
+# SKIP the uncovered file + WARN LOUDLY, never a hard block. Contrast with
+# install.sh (operator present), which hard-blocks the whole run. Sourced
+# best-effort: if the lib is missing (a checkout that predates this batch),
+# every file syncs with the pre-existing, ungated behavior.
+# shellcheck source=lib/review-record-gate-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/review-record-gate-lib.sh" 2>/dev/null || true
+N_REVIEW_SKIPPED=0
+
 # Per-subdir canonical file extension: executable (.sh) vs content (.md).
 _subdir_ext() {
   case "$1" in
@@ -249,11 +261,34 @@ sync_canonical_files() {
     fi
     target="$live_sub/$b"
     mkdir -p "$(dirname "$target")" 2>/dev/null || true
+
+    local full_rel="$subdir/$b"
+    local is_missing=0 is_diff=0
     if [ ! -e "$target" ]; then
+      is_missing=1
+    elif ! _content_same "$tmp" "$target"; then
+      is_diff=1
+    fi
+
+    if [ "$is_missing" -eq 1 ] || [ "$is_diff" -eq 1 ]; then
+      if declare -F rrg_in_surface >/dev/null 2>&1 && rrg_in_surface "$full_rel"; then
+        local rsha
+        rsha=$(rrg_blob_sha_of_file "$tmp" 2>/dev/null)
+        if ! rrg_is_covered "$nl" "$ref" "adapters/claude-code/$full_rel" "$rsha"; then
+          N_REVIEW_SKIPPED=$((N_REVIEW_SKIPPED + 1))
+          _log "REVIEW-GATE SKIP: $full_rel left un-synced (stale-not-blocked) -- no PASS harness-change-review record covers blob_sha ${rsha:-<unresolved>}"
+          echo "[auto-install] REVIEW-GATE WARN: $full_rel changed but has NO PASS harness-change-review record -- SKIPPING this file (stale-not-blocked; run install.sh for the hard-block/authoritative path). See doctrine/review-before-deploy.md." >&2
+          rm -f "$tmp"
+          continue
+        fi
+      fi
+    fi
+
+    if [ "$is_missing" -eq 1 ]; then
       cp "$tmp" "$target" 2>/dev/null && { [ "$ext" = sh ] && chmod +x "$target" 2>/dev/null; :; }
       N_INSTALLED=$((N_INSTALLED + 1))
       _log "installed $subdir/$b (was missing)"
-    elif ! _content_same "$tmp" "$target"; then
+    elif [ "$is_diff" -eq 1 ]; then
       # master-wins, but back up the prior live copy first ($b may be nested).
       mkdir -p "$BACKUP_DIR/$subdir/$(dirname "$b")" 2>/dev/null || true
       cp "$target" "$BACKUP_DIR/$subdir/$b" 2>/dev/null || true
@@ -437,9 +472,9 @@ main() {
   rm -f "$tmpl" 2>/dev/null || true
 
   # Summary (always, on a real run).
-  echo "[auto-install] $N_INSTALLED installed, $N_UPDATED updated, $N_UNCHANGED unchanged, $N_SETTINGS_ADDED settings-entries added, $N_DRIFT preserved-as-drift (NL: $nl ref: $ref)" >&2
-  if [ "$N_INSTALLED" -gt 0 ] || [ "$N_UPDATED" -gt 0 ] || [ "$N_SETTINGS_ADDED" -gt 0 ]; then
-    _log "summary: $N_INSTALLED installed, $N_UPDATED updated, $N_UNCHANGED unchanged, $N_SETTINGS_ADDED settings-added, $N_DRIFT drift (ref $ref)"
+  echo "[auto-install] $N_INSTALLED installed, $N_UPDATED updated, $N_UNCHANGED unchanged, $N_SETTINGS_ADDED settings-entries added, $N_DRIFT preserved-as-drift, $N_REVIEW_SKIPPED review-gate-skipped (NL: $nl ref: $ref)" >&2
+  if [ "$N_INSTALLED" -gt 0 ] || [ "$N_UPDATED" -gt 0 ] || [ "$N_SETTINGS_ADDED" -gt 0 ] || [ "$N_REVIEW_SKIPPED" -gt 0 ]; then
+    _log "summary: $N_INSTALLED installed, $N_UPDATED updated, $N_UNCHANGED unchanged, $N_SETTINGS_ADDED settings-added, $N_DRIFT drift, $N_REVIEW_SKIPPED review-gate-skipped (ref $ref)"
   fi
   return 0
 }
@@ -649,6 +684,64 @@ LIVE
      && [ -f "$L15/skills/epsilon/SKILL.md" ]; then
     echo "PASS: stale-flat-skill-pruned-with-backup"; pass=$((pass+1))
   else echo "FAIL: stale-flat-skill-pruned-with-backup (out: $out; ls: $(ls -R "$L15/skills" 2>/dev/null))"; fail=$((fail+1)); fi
+
+  # ---- Scenario 16/17: review-before-deploy gate (Amendment F: fail-open
+  # skip+warn, never a hard block) -- a SEPARATE fixture repo (CANON2) with
+  # its own bootstrapped docs/reviews/records/, so scenarios 1-15 above (run
+  # against the bootstrap-less CANON) are entirely unaffected. ----
+  local CANON2="$tmp/nl2"
+  mkdir -p "$CANON2/adapters/claude-code/hooks" "$CANON2/adapters/claude-code/scripts"
+  printf '%s\n' '# NEURAL-LACE-INSTALLER' 'echo installer' > "$CANON2/adapters/claude-code/install.sh"
+  printf '#!/bin/bash\necho covered-v1\n' > "$CANON2/adapters/claude-code/hooks/covered.sh"
+  printf '#!/bin/bash\necho uncovered-v1\n' > "$CANON2/adapters/claude-code/hooks/uncovered.sh"
+  mkdir -p "$CANON2/docs/reviews/records"
+  ( cd "$CANON2" && git init --quiet && git config core.hooksPath "" && git config user.email t@example.com && git config user.name T )
+  local covered_v1_sha uncovered_v1_sha
+  covered_v1_sha=$(git -C "$CANON2" hash-object "$CANON2/adapters/claude-code/hooks/covered.sh")
+  uncovered_v1_sha=$(git -C "$CANON2" hash-object "$CANON2/adapters/claude-code/hooks/uncovered.sh")
+  cat > "$CANON2/docs/reviews/records/grandfather-manifest.json" <<EOF
+{"entries":[
+  {"path":"adapters/claude-code/hooks/covered.sh","blob_sha":"$covered_v1_sha"},
+  {"path":"adapters/claude-code/hooks/uncovered.sh","blob_sha":"$uncovered_v1_sha"}
+]}
+EOF
+  printf '{"entries":[]}\n' > "$CANON2/docs/reviews/records/index.json"
+  ( cd "$CANON2" && git add -A && git commit --quiet -m "v1 (grandfathered)" && git branch -M master )
+
+  # ---- Scenario 16: fresh install -- covered file installs, unreviewed file is skipped+warned ----
+  # First bump uncovered.sh to v2 with NO new review record (simulating an
+  # unreviewed change landing on master), leaving covered.sh untouched.
+  printf '#!/bin/bash\necho uncovered-v2-UNREVIEWED\n' > "$CANON2/adapters/claude-code/hooks/uncovered.sh"
+  ( cd "$CANON2" && git commit --quiet -am "v2 uncovered.sh (unreviewed)" )
+  local L16="$tmp/live16"; mkdir -p "$L16"
+  out=$( export NL_CHECKOUT_OVERRIDE="$CANON2" LIVE_DIR_OVERRIDE="$L16" AUTO_INSTALL_NO_FETCH=1 \
+           AUTO_INSTALL_TS_OVERRIDE="selftest" SSF_DISABLE=1
+         bash "$SELF_PATH" 2>&1 )
+  if [ -f "$L16/hooks/covered.sh" ] && [ ! -e "$L16/hooks/uncovered.sh" ] \
+     && echo "$out" | grep -q "REVIEW-GATE WARN: hooks/uncovered.sh" \
+     && echo "$out" | grep -qE "[1-9][0-9]* review-gate-skipped"; then
+    echo "PASS: review-gate-skips-uncovered-fresh-install"; pass=$((pass+1))
+  else
+    echo "FAIL: review-gate-skips-uncovered-fresh-install (out: $out; covered exists: $([ -f "$L16/hooks/covered.sh" ] && echo y || echo n); uncovered exists: $([ -e "$L16/hooks/uncovered.sh" ] && echo y || echo n))"
+    fail=$((fail+1))
+  fi
+
+  # ---- Scenario 17: stale-not-blocked -- a previously-installed (reviewed
+  # v1) copy is LEFT IN PLACE when master's content becomes uncovered,
+  # rather than being wiped or force-updated. ----
+  local L17="$tmp/live17"; mkdir -p "$L17/hooks"
+  printf '#!/bin/bash\necho uncovered-v1\n' > "$L17/hooks/uncovered.sh"
+  out=$( export NL_CHECKOUT_OVERRIDE="$CANON2" LIVE_DIR_OVERRIDE="$L17" AUTO_INSTALL_NO_FETCH=1 \
+           AUTO_INSTALL_TS_OVERRIDE="selftest" SSF_DISABLE=1
+         bash "$SELF_PATH" 2>&1 )
+  if grep -q "uncovered-v1" "$L17/hooks/uncovered.sh" 2>/dev/null \
+     && ! grep -q "UNREVIEWED" "$L17/hooks/uncovered.sh" 2>/dev/null \
+     && echo "$out" | grep -q "REVIEW-GATE WARN: hooks/uncovered.sh"; then
+    echo "PASS: review-gate-leaves-stale-reviewed-copy-in-place"; pass=$((pass+1))
+  else
+    echo "FAIL: review-gate-leaves-stale-reviewed-copy-in-place (out: $out; live content: $(cat "$L17/hooks/uncovered.sh" 2>/dev/null))"
+    fail=$((fail+1))
+  fi
 
   echo ""
   echo "[self-test] $pass passed, $fail failed"

@@ -135,12 +135,27 @@ rrg_is_covered() {
 
   local gf idx
   gf="$(_rrg_read_json "$repo_root" "$ref" "${RRG_RECORDS_RELDIR}/grandfather-manifest.json")"
+  idx="$(_rrg_read_json "$repo_root" "$ref" "${RRG_RECORDS_RELDIR}/index.json")"
+
+  # Bootstrap fail-open: if NEITHER coverage file exists at all on this
+  # checkout/ref, the review-before-deploy gate has never been bootstrapped
+  # here (a checkout that predates this batch's bootstrap commit, or a
+  # throwaway fixture repo with no docs/reviews/records/ at all) --
+  # every file is treated as covered rather than blocking/skipping
+  # everything. This is Amendment E's "never brick a fresh/stale machine"
+  # extended one step further: a checkout where the gate's own bootstrap
+  # data doesn't exist yet must not be bricked by the gate either. Distinct
+  # from "the files exist but have no matching entry" (a real, correctly-
+  # enforced non-coverage case, handled below).
+  if [[ -z "$gf" ]] && [[ -z "$idx" ]]; then
+    return 0
+  fi
+
   if [[ -n "$gf" ]] && printf '%s' "$gf" | jq -e --arg p "$relpath" --arg s "$sha" \
        '(.entries // [])[] | select(.path == $p and .blob_sha == $s)' >/dev/null 2>&1; then
     return 0
   fi
 
-  idx="$(_rrg_read_json "$repo_root" "$ref" "${RRG_RECORDS_RELDIR}/index.json")"
   if [[ -n "$idx" ]] && printf '%s' "$idx" | jq -e --arg p "$relpath" --arg s "$sha" \
        '(.entries // [])[] | select(.path == $p and .blob_sha == $s and .kind == "harness-change-review" and .verdict == "PASS")' >/dev/null 2>&1; then
     return 0
@@ -231,12 +246,25 @@ _rrg_self_test() {
     echo "FAIL: grandfathered blob should be covered"; fail=$((fail+1))
   fi
 
-  # ---- coverage: NOT covered (no grandfather, no index) ----
+  # ---- coverage: NOT covered (grandfather + index exist, both empty) ----
   printf '{"entries":[]}\n' > "$tmp/repo/docs/reviews/records/grandfather-manifest.json"
   if rrg_is_covered "$tmp/repo" "" "adapters/claude-code/hooks/alpha.sh" "$sha"; then
     echo "FAIL: uncovered blob reported covered"; fail=$((fail+1))
   else
     echo "PASS: uncovered blob reported NOT covered"; pass=$((pass+1))
+  fi
+
+  # ---- coverage: bootstrap fail-open (NEITHER file exists at all -- a
+  # checkout that predates the gate's own bootstrap, e.g. a throwaway
+  # fixture repo) must be treated as COVERED, not blocked ----
+  mkdir -p "$tmp/repo-nobootstrap/adapters/claude-code/hooks"
+  printf '#!/bin/bash\necho v1\n' > "$tmp/repo-nobootstrap/adapters/claude-code/hooks/alpha.sh"
+  local nb_sha
+  nb_sha=$(rrg_blob_sha_of_file "$tmp/repo-nobootstrap/adapters/claude-code/hooks/alpha.sh")
+  if rrg_is_covered "$tmp/repo-nobootstrap" "" "adapters/claude-code/hooks/alpha.sh" "$nb_sha"; then
+    echo "PASS: bootstrap fail-open (no records dir at all -> covered)"; pass=$((pass+1))
+  else
+    echo "FAIL: bootstrap fail-open should have reported covered"; fail=$((fail+1))
   fi
 
   # ---- coverage: index PASS match ----
