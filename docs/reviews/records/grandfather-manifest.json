@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "cutover_ref": "HEAD",
-  "generated_at": "2026-07-16T03:50:48Z",
+  "cutover_ref": "3ab7fa50c7386e08357de4b9eda98ae01b9de7be",
+  "generated_at": "2026-07-16T05:49:47Z",
   "entries": [
     {
       "path": "adapters/claude-code/agents/architecture-reviewer.md",
@@ -220,6 +220,10 @@
       "blob_sha": "0eaba1e472239a7d73c798e7e2552d296d458c9c"
     },
     {
+      "path": "adapters/claude-code/hooks/evidence-before-fix-gate.sh",
+      "blob_sha": "3b96ed5a506f5b33999a79bc5cb923f43778c0d1"
+    },
+    {
       "path": "adapters/claude-code/hooks/external-monitor-alert-surfacer.sh",
       "blob_sha": "991e5967e1bc35a77bec9338c480a5415d868447"
     },
@@ -253,7 +257,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/harness-doctor.sh",
-      "blob_sha": "e4033970c363795307fec0784ca3532d7a215a8a"
+      "blob_sha": "4b152d5c081523aba7f8809a21c0472c73eb3e1a"
     },
     {
       "path": "adapters/claude-code/hooks/harness-hygiene-scan.sh",
@@ -465,7 +469,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/session-start-auto-install.sh",
-      "blob_sha": "e023440269c101d87d6f60c79216e8d36649e39f"
+      "blob_sha": "80af5ecc365fa6c4e9c588c4c25ff5d929a4e726"
     },
     {
       "path": "adapters/claude-code/hooks/session-start-digest.sh",
@@ -597,7 +601,7 @@
     },
     {
       "path": "adapters/claude-code/manifest.json",
-      "blob_sha": "bdd0037bb70799cf3601c045b934e179ed8ff16d"
+      "blob_sha": "6414125ed9031ce2f89467c8286a717241c8eaf1"
     },
     {
       "path": "adapters/claude-code/rules/constitution.md",
@@ -849,11 +853,11 @@
     },
     {
       "path": "adapters/claude-code/scripts/write-review-record.sh",
-      "blob_sha": "8211cf30327175f201ce0d40f5b8e3143eff98ff"
+      "blob_sha": "59559fdd3804bdf62c5a7f11df69cf175c80d383"
     },
     {
       "path": "adapters/claude-code/settings.json.template",
-      "blob_sha": "d699425d1367b4a49fa221824fdc1fdab401d4b4"
+      "blob_sha": "de765570ae6d3082a5573b8199dc8205e391c938"
     }
   ]
 }
