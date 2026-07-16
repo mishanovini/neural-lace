@@ -6,6 +6,12 @@ Batch task 1 of `docs/plans/harness-governance-batch-2026-07-15.md`. Feeds tasks
 review) before any builder is dispatched against tasks 2-4 — this doc is that review's
 input, not a build spec to execute directly.
 
+**Status: SOUND-WITH-AMENDMENTS (architecture-reviewer verdict, 2026-07-16).** The six
+binding amendments are folded into the relevant sections below (marked `[amended A-F]`)
+and summarized in full in "Architecture-review amendments (2026-07-16, folded)" near
+the end of this doc. This doc is now a build spec for task 2 (task 3/4 still need their
+own consumer-side build).
+
 ## Problem
 
 Three follow-ups from the model-enforcement postmortem share one root gap: **§10
@@ -139,25 +145,43 @@ not the plan-task id alone.
   `PASS` unblocks. A rejected record sitting in history is informational (why did the
   first attempt fail), not itself enforced beyond "still no PASS, still blocked."
 
-## Trigger surface + fp expectation
+## Trigger surface + fp expectation `[amended A]`
 
-**Recommended surface, derived from the manifest itself rather than a hand-maintained
-glob list:** every file named in any `manifest.json` entry's `hooks[]` array, **plus**
-`agents/*.md`, `config/**`, `manifest.json` itself, `settings.json.template`, and
-`rules/**`. Tying the surface to the manifest's own `hooks[]` union means a new gate
-that registers itself is automatically in-surface without a second place to remember to
-update it.
+**Surface = path-match, NOT manifest-derived** (reversed from the pre-review draft's
+"derive the surface from the manifest's own `hooks[]` union" — see Amendment A for why).
+A file is in-surface **iff its repo-relative path matches**
+`adapters/claude-code/{hooks/**/*.sh, scripts/**/*.sh, agents/*.md, config/**,
+manifest.json, settings.json.template, rules/**}`. This closes the exact hole the
+pre-review draft had: `hooks/lib/merge-scan-lib.sh`, `hooks/lib/progress-log-lib.sh`,
+and `scripts/dispatch-provenance.sh` — three of the five files reverted by merge
+`937e8cb` — appear in **no** `manifest.json` entry's `hooks[]` array, so a manifest-
+derived surface would have silently excluded them from review-before-deploy coverage
+even though they are exactly the kind of executable harness content the gate exists to
+protect. `hooks/**/*.sh` and `scripts/**/*.sh` (recursive, includes `lib/`) close that
+hole directly — a file's blast radius comes from being an executable/behavioral surface
+under `adapters/claude-code/`, not from whether some manifest author remembered to list
+it in a `hooks[]` array.
+
+**The manifest is now a CROSS-CHECK, not the source of the surface:** every filename
+named in any `manifest.json` entry's `hooks[]` array MUST resolve to a path that is
+itself in-surface per the glob above — if a manifest entry names a hook file the glob
+wouldn't match, that is a manifest/surface inconsistency and the doctor REDs (see the
+new `check_review_surface_cross_check` doctor check, task 2 build). This is the
+inverse relationship of the pre-review draft: before, the manifest was upstream of the
+surface (and could silently narrow it by omission); now the path-glob is upstream and
+the manifest is checked against it, so an omission is a doctor RED instead of a silent
+gap.
 
 **Explicitly excluded:** `doctrine/**`, `templates/**`, `skills/**`, `commands/**`,
 `examples/**`, `patterns/**`, `business-patterns*`, `data/**`, `work-shapes/**`,
 `pipeline-*/**` — these are documentation/content surfaces whose failure mode is "a
 maintainer reads something wrong," not "every machine's enforcement silently changes."
 
-**Named residual, not silently dropped:** `scripts/*.sh` invoked *by* hooks or by
-orchestrator-run procedures (`write-evidence.sh`, `close-plan.sh`,
-`plan-lifecycle.sh`) have hook-equivalent blast radius but are **not** in a
-`manifest.json` `hooks[]` array today, so this surface excludes them — flagged as
-Open Question 1, not resolved unilaterally (a scope call with real fp cost).
+**Open Question 1 resolved (per Amendment A):** `scripts/*.sh` invoked *by* hooks or by
+orchestrator-run procedures (`write-evidence.sh`, `close-plan.sh`, `plan-lifecycle.sh`)
+are now IN-SURFACE by construction — `scripts/**/*.sh` is part of the glob, not a
+residual carved out. There is no longer a class of hook-equivalent-blast-radius script
+sitting outside the surface.
 
 **fp_expectation: low-moderate.** A pure-prose doctrine/rules-content edit is scoped
 out entirely. The one deliberate over-inclusion: an `agents/*.md` wording-only edit
@@ -165,7 +189,7 @@ still requires a PASS, because an agent's prompt *is* its enforcement logic and 
 is no cheap way to distinguish cosmetic from behavioral prose edits — trading rare
 friction on cosmetic-only edits for never missing a behavioral one dressed as cosmetic.
 
-## Writer + anti-fabrication residual
+## Writer + anti-fabrication residual `[amended C]`
 
 **Neither `harness-reviewer` nor `architecture-reviewer` can write the record** — both
 are `tools: Read, Grep, Glob, Bash`, no Write/Edit (verified against
@@ -176,16 +200,32 @@ are `tools: Read, Grep, Glob, Bash`, no Write/Edit (verified against
 The script computes each file's live `blob_sha` via `git hash-object` (or
 `git ls-tree`), and requires a non-empty `dispatch_evidence.verdict_quote`.
 
-**Honest residual (not solved, named):** the orchestrator is an LLM and can fabricate
-`dispatch_evidence.verdict_quote` — paste a plausible PASS no reviewer actually said.
-Same trust gap `plan-evidence-reviewer` already exists to police for ordinary evidence
-blocks; not a new hole, and this design does not claim to close it. Two mitigations,
-both raising cost rather than eliminating the gap: (1) `verdict_quote` must be a
-**verbatim substring of the reviewer agent's actual returned message**, not a
-paraphrase; (2) `plan-evidence-reviewer` is extended to spot-check review records the
-same way it spot-checks evidence blocks: re-derive `covered_files` blob SHAs against
-the live repo, and grep the session transcript for the quoted string where available.
-Not full prevention — a fabrication that also fakes a transcript reference survives.
+**Downgrade (per Amendment C — do not oversell this record):** the record's
+`dispatch_evidence.verdict_quote` is **NOT independently verifiable at deploy time**.
+Zero `SubagentStop`/`TaskCompleted` capture hooks exist anywhere in this harness that
+would let a downstream check retrieve the reviewer's actual transcript and confirm the
+quote is real (verified: grepped `settings.json.template` and every hook under
+`hooks/` for a capture wired to either event — none feeds this record). The pre-review
+draft's "verbatim substring + `plan-evidence-reviewer` spot-check" mitigation is
+**honestly insufficient as an anti-fabrication control** — a spot-check that runs
+*after* the fact, on the same LLM-authored record, with no independent transcript to
+check the quote against, cannot rule out fabrication; it can only make fabrication
+slightly more effortful.
+
+**What this record IS, restated:** an audit trail + honesty anchor (it makes the claim
+"a review happened and said PASS" a citable, timestamped, content-addressed artifact
+instead of an unrecorded verbal claim) — **NOT a deploy-path anti-fabrication
+control.** The deploy gate (task 2) checks record **EXISTENCE and content-match only**;
+it structurally cannot check whether the quoted verdict is genuine. This is a real,
+named gap, not a solved one.
+
+**Follow-up (out of scope for this batch, named not silently dropped):** a real anchor
+requires a capture hook on `SubagentStop` (or `TaskCompleted` for Task-tool dispatches)
+that writes the reviewer's actual final message to a location `write-review-record.sh`
+can read back and diff against the claimed `verdict_quote` — turning "the orchestrator
+says the reviewer said X" into "the transcript captured at dispatch time says X." Log
+this in `docs/backlog.md` as a follow-up (`REVIEW-RECORD-ANTI-FABRICATION-ANCHOR-01`)
+when task 2 lands.
 
 ## Verdict lifecycle
 
@@ -199,13 +239,45 @@ addressing already makes the old record inapplicable to changed content.
 
 ## Consumer contracts
 
-**1. Review-before-deploy gate (task 2).** At `install.sh` / `session-start-
-auto-install.sh` sync time, for every file in the trigger surface whose live
-`blob_sha` differs from what's already installed at the target, scan
-`docs/reviews/records/*.json` for a `kind: harness-change-review` record with
-`verdict: PASS` whose `covered_files` includes that exact `{path, blob_sha}`. Missing
-→ block that file's sync (not the whole deploy, where separable) and name the specific
-uncovered file + its blob_sha.
+**1. Review-before-deploy gate (task 2).** `[amended D, E, F]` At `install.sh` /
+`session-start-auto-install.sh` sync time, for every file in the trigger surface whose
+live `blob_sha` differs from what's already installed at the target: (a) check the
+grandfather marker first (Amendment E — pre-cutover content is covered with no record
+lookup); (b) else do an **index lookup** (Amendment D — `docs/reviews/records/
+index.json`, a content-keyed `{path, blob_sha} -> record_id` map, rebuildable from the
+records directory but never rebuilt on the hot path) for a `kind: harness-change-review`
+row with `verdict: PASS` matching that exact `{path, blob_sha}`. **The records directory
+itself (`docs/reviews/records/*.json`) is audit-only and is never scanned by the deploy
+gate** — only the index is read at deploy time, and every subprocess the gate runs
+(git, jq) carries a timeout, so an unbounded/growing records directory never slows or
+hangs a deploy.
+
+**Posture differs by carrier (Amendment F — do not describe both the same way):**
+- **`install.sh` (operator present) = loud HARD BLOCK.** Any uncovered changed file
+  aborts the *entire* install run before any file is touched, with a teaching message
+  naming every uncovered file + its blob_sha and the exact remedy (get a PASS review,
+  or wait for the fresh dispatch). The operator is present to act on it immediately.
+- **`session-start-auto-install.sh` (fail-open by platform contract, always exits 0)
+  = SKIP + loud WARN.** An uncovered file is left un-synced (stale-not-blocked,
+  stated explicitly, never silently) while every other file still syncs normally; a
+  loud warning names the file. This composes with the hook's existing fail-open
+  posture rather than fighting it — making this ONE hook the sole hard-blocking
+  exception on an otherwise-always-exits-0 script would be a bigger behavioral change
+  than this batch's blast-radius budget allows, and would reintroduce the exact
+  "a background SessionStart hook can wedge every session" risk the fail-open contract
+  exists to prevent. **Rollout-lag consequence, stated honestly:** a machine relying
+  solely on auto-install can run a stale (but never unreviewed-and-silently-applied)
+  copy of a covered file for at least one more session after a change lands unreviewed
+  — `install.sh` remains the authoritative, immediate enforcement point.
+
+**Bootstrap/grandfather (Amendment E):** enforcement applies only to a file whose
+**blob content first appears on master at/after the cutover** (mirrors the manifest's
+own `added_after >= "2026-07"` convention, applied per-blob instead of per-manifest-
+entry). A `docs/reviews/records/grandfather-manifest.json` snapshot, taken once at the
+cutover commit, lists every in-surface file's `{path, blob_sha}` as of that commit —
+anything matching it is covered with no review record needed. This is what makes a
+fresh machine (nothing installed yet) or a long-stale machine (everything pre-cutover)
+never get bricked by this gate: only *new* content earns the requirement.
 
 **2. Evidence-before-fix commit gate (task 3).** On a commit whose message matches
 `^fix(...)`, require a `kind: fix-root-cause` record whose `covered_files` matches the
@@ -219,15 +291,25 @@ artifact-evidence` record with `verdict: PASS` exist whose `covered_files` match
 design doc / this agent file's current content." Direct reuse of pt's already-named
 required fields, carried in `payload`.
 
-## Location + format
+## Location + format `[amended D]`
 
 `docs/reviews/records/<yyyy-mm-dd>-<kind>-<short-id>.json`, **committed** (not
 gitignored, not `.claude/state/`) — forced by the deploy gate's own mechanism:
 `session-start-auto-install.sh` reads canonical content via `git show
 origin/master:<path>` on every machine, so anything not committed and merged to master
-is invisible to the check on every machine but the one that wrote it. A derived local
-index/cache under `.claude/state/` is fine as a rebuildable convenience, never the
-source of truth.
+is invisible to the check on every machine but the one that wrote it.
+
+**The index (Amendment D, cost model) is ALSO committed, at `docs/reviews/records/
+index.json`** — this is the one file the deploy gate actually reads on its hot path (a
+single `jq`/`node` lookup against one small JSON file), never the records directory.
+Committing the index (rather than treating it as a `.claude/state/` cache) is required
+by the exact same reasoning as the records themselves: `session-start-auto-install.sh`
+resolves canonical content via `git show <ref>:<path>`, so an uncommitted index would
+be invisible on every machine but the one that built it. The index is fully
+**rebuildable** from the records directory (`write-review-record.sh --rebuild-index`
+recomputes it from scratch) — it is a derived read-optimization, never a second source
+of truth, and a doctor check (`check_review_index_consistency`, task 2 build) REDs if
+the committed index and a from-scratch rebuild disagree.
 
 **One file per record, never a shared ledger** — a single JSONL ledger would reproduce
 the exact merge-conflict class the batch plan's own R1 task names as the recurring pain
@@ -249,23 +331,66 @@ convention) is merge-conflict-free by construction.
 | Reviewer agent writes its own record | Not buildable — `harness-reviewer`/`plan-evidence-reviewer` have no Write/Edit tool |
 | Three separate schemas (one per consumer) | Triplicates identical identity/staleness/anti-fabrication logic for no behavioral gain |
 
-## Open questions for the architecture reviewer
+## Open questions for the architecture reviewer — ANSWERED (2026-07-16)
 
-1. **Trigger-surface scope:** should `scripts/*.sh` invoked by hooks/orchestrator
-   procedures (`write-evidence.sh`, `close-plan.sh`, `plan-lifecycle.sh`) be added to
-   the trigger surface despite not appearing in any `manifest.json` `hooks[]` array?
-   They have hook-equivalent blast radius.
-2. **Anti-fabrication bar:** is quoted-verbatim-substring + `plan-evidence-reviewer`
-   spot-check sufficient given the residual is explicitly unsolved, or does "gates every
-   harness deploy on every machine" warrant a stronger control (e.g. requiring a
-   retrievable session/transcript reference the spot-check can independently fetch,
-   not just grep)?
-3. **REJECT escalation:** should repeated REJECTs on the same file set (e.g. 2
-   consecutive) require operator sign-off, or is "blocks until a materially different
-   diff earns PASS" sufficient?
-4. **Revert-silently-revalidates:** content-addressing means a file reverted to a
-   previously-PASS'd blob_sha is silently covered again by the old record, with no new
-   review. Acceptable, or should records also carry a TTL independent of content match?
-5. **Retention:** `docs/reviews/records/` accumulates one file per review forever — is
-   unbounded accumulation acceptable given it is the audit trail the append-only
-   anti-fabrication property depends on, or does this need a pruning/archival policy?
+1. **Trigger-surface scope: ANSWERED = A.** Path-glob surface
+   (`adapters/claude-code/{hooks/**/*.sh, scripts/**/*.sh, agents/*.md, config/**,
+   manifest.json, settings.json.template, rules/**}`), manifest is a cross-check not
+   the source. See "Trigger surface + fp expectation" above.
+2. **Anti-fabrication bar: ANSWERED = insufficient, downgraded.** Quoted-verbatim +
+   spot-check does NOT meet the bar "gates every harness deploy on every machine"
+   implies. Downgraded per Amendment C: the record is an audit + honesty anchor, NOT a
+   deploy-path anti-fabrication control, until a real capture-hook anchor is built
+   (named follow-up, out of scope here).
+3. **REJECT escalation: ANSWERED = ledger-log only, no operator gate.** No operator
+   sign-off requirement on a single REJECT. `write-review-record.sh` logs a ledger
+   entry (via the existing signal-ledger convention) when the **same file set** earns
+   **2+ consecutive** `REJECT`/`REFORMULATE` records — informational surfacing, not a
+   block; "blocks until a materially different diff earns PASS" remains sufficient as
+   the actual gate.
+4. **Revert-silently-revalidates: ANSWERED = accept, no TTL.** A file reverted to a
+   previously-PASS'd `blob_sha` is covered again by the old record with no new review
+   — accepted as correct, not a gap: if the content is byte-identical to something a
+   human reviewer already looked at and passed, re-reviewing it teaches nothing. No
+   TTL (rejected: a clock-based expiry adds timer-drift complexity for zero additional
+   safety — content that hasn't changed cannot have grown a NEW defect from the mere
+   passage of time).
+5. **Retention: ANSWERED = unbounded is fine, records are audit-only.** Per Amendment
+   D, the records directory is never on the deploy gate's hot path (the index is), so
+   unbounded growth costs disk, not deploy latency. It is the audit trail the
+   append-only anti-fabrication property depends on — pruning it would destroy that
+   property. No pruning/archival policy for this batch.
+
+## Architecture-review amendments (2026-07-16, folded)
+
+**Verdict: SOUND-WITH-AMENDMENTS.** Six binding amendments, folded into the sections
+above (marked `[amended <letter>]`) rather than kept as a separate patch layer, so the
+doc stays internally coherent for anyone building tasks 2-4 from it going forward.
+
+| # | Amendment | Section amended |
+|---|---|---|
+| A | Trigger surface = path-glob match (`adapters/claude-code/{hooks/**/*.sh, scripts/**/*.sh, agents/*.md, config/**, manifest.json, settings.json.template, rules/**}`); manifest is a cross-check, not the source. Rationale: 3 of the 5 files reverted by merge `937e8cb` (`hooks/lib/merge-scan-lib.sh`, `hooks/lib/progress-log-lib.sh`, `scripts/dispatch-provenance.sh`) are in NO manifest `hooks[]` array — a manifest-derived surface is silently holed. | Trigger surface + fp expectation |
+| B | New "What this gate does NOT catch" section (below): content-presence only — blind to (i) absence of expected forward content (silent drop, the `937e8cb` class) and (ii) reverts to a previously-PASS'd blob. Merge-integrity is the merge-time dropped-side sweep (a separate mechanism, runbook step 6). No TTL (rejected — see OQ4). | New section below + OQ4/OQ5 |
+| C | Anti-fabrication downgrade: the deploy gate checks record EXISTENCE only, cannot verify the reviewer quote (zero `SubagentStop`/`TaskCompleted` capture hooks exist). The record is an audit + honesty anchor, NOT deploy-path anti-fabrication. A real anchor is a named follow-up, out of scope. | Writer + anti-fabrication residual |
+| D | Cost: the deploy gate reads a content-keyed INDEX file (`docs/reviews/records/index.json`, committed, rebuildable from records) on its hot path; the records dir is audit-only and never scanned by the gate; every gate subprocess gets a timeout. Records unbounded is fine for audit-only. | Consumer contracts (task 2) + Location + format |
+| E | Bootstrap/cutover grandfather: enforcement applies only to blobs first appearing on master at/after the cutover (mirrors the manifest's `added_after >= "2026-07"` pattern, applied per-blob). A fresh or long-stale machine is never bricked. | Consumer contracts (task 2) |
+| F | Posture per carrier: `session-start-auto-install.sh` is fail-open by platform contract (exits 0 always) — SKIPS the unreviewed file + warns loudly (stale-not-blocked, stated explicitly); `install.sh` (operator-present) is the loud HARD-BLOCK path; rollout lag of ≥1 session on the auto-install path is stated, not hidden. | Consumer contracts (task 2) |
+
+## What this gate does NOT catch `[amendment B]`
+
+Stated explicitly so nobody mistakes this record for more than it is: this is a
+**content-presence** check — "does a PASS record's `covered_files` include this exact
+`{path, blob_sha}`" — and nothing more. Named blind spots:
+
+- **Absence of expected forward content (the `937e8cb` class).** A merge or rebase
+  that silently DROPS a file the source branch carried is not something a per-file
+  content-presence check can see, because there is no "expected file" model here — the
+  gate only ever asks "is THIS file, which IS present, covered," never "should a file
+  be present that isn't." Merge-integrity (did every file the merge's source side
+  carried survive into the result) is a **different mechanism**: the merge-time
+  dropped-side sweep at runbook step 6 of
+  `docs/runbooks/master-reconcile-and-estate-cleanup.md`. This record does not
+  substitute for it and does not claim to.
+- **Reverts to a previously-PASS'd blob.** By design (see OQ4) — accepted, not a gap.
+- **No TTL / staleness clock.** Rejected per OQ4 — timer-drift complexity for zero
+  additional safety over content-addressing.
