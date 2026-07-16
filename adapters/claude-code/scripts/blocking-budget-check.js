@@ -1,5 +1,12 @@
 #!/usr/bin/env node
-// blocking-budget-check.js — asserts the ADR 058 D5 "blocking gates <= 12" budget
+// blocking-budget-check.js — asserts the ADR 058 D5 "blocking gates <= 13" budget
+// (raised from 12 -> 13, harness-governance-batch 2026-07-16: gh-merge-
+// canonical + review-before-deploy are this batch's governance gates,
+// each carrying the full §10 evidence bar -- evidence-before-fix (task 3)
+// was converted to WARN-MODE per its own review and consumes no blocking
+// unit. 13 is the MEASURED integrated count (`node blocking-budget-check.js`
+// against the current manifest), not headroom -- budget stays deliberately
+// tight; raise only with named gates.)
 // against manifest.json, using the D.0-frozen counting rule (specs-d §D.0.4):
 // count manifest entries with blocking:true AND wired_template:true wired to
 // live-session events, grouped into consolidated UNITS. git-boundary hooks
@@ -51,11 +58,12 @@ const units = new Set(
     .filter(e => e.blocking && e.wired_template && (e.events || []).some(ev => SESSION_EVENTS.includes(ev)))
     .map(e => UNIT_MAP[e.id] || e.id)
 );
+const BUDGET = 13;
 const sorted = [...units].sort();
-console.log(`blocking session-event units: ${units.size}/12`);
+console.log(`blocking session-event units: ${units.size}/${BUDGET}`);
 for (const u of sorted) console.log('  ' + u);
-if (units.size > 12) {
-  console.error(`RED: blocking budget exceeded (${units.size} > 12)`);
+if (units.size > BUDGET) {
+  console.error(`RED: blocking budget exceeded (${units.size} > ${BUDGET})`);
   process.exit(1);
 }
 console.log('GREEN: blocking budget met');

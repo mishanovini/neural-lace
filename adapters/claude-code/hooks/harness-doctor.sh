@@ -92,7 +92,15 @@
 #   budget-chains           : Stop <= 6, SessionStart <= 8 total hook
 #                             entries, checked against BOTH the live
 #                             settings.json and the committed template.
-#   budget-blocking-gates   : <= 12 blocking session-event UNITS per the
+#   budget-blocking-gates   : <= 13 blocking session-event UNITS (raised from
+#                             12 -> 13, harness-governance-batch 2026-07-16:
+#                             gh-merge-canonical + review-before-deploy are
+#                             this batch's governance gates, each carrying
+#                             the full §10 evidence bar; evidence-before-fix
+#                             (task 3) is WARN-MODE, consumes no unit. 13 is
+#                             the MEASURED integrated count, not headroom;
+#                             budget stays deliberately tight, raise only
+#                             with named gates) per the
 #                             specs-d §D.0.4 frozen counting rule (wired_
 #                             template:true + live-session event + same-
 #                             class consolidation), via
@@ -1806,7 +1814,7 @@ check_budget_blocking_gates() {
   if [[ "$rc" -ne 0 ]]; then
     local units_line
     units_line="$(printf '%s\n' "$out" | grep -m1 'blocking session-event units:' || true)"
-    _red "budget-blocking-gates" "${units_line:-blocking-budget-check.js reported over-budget} (budget <= 12 consolidated units per specs-d §D.0.4) — ${manifest}; remediation: demote via scripts/gate-demotion.sh (F.5) or consolidate per ADR 059 D7"
+    _red "budget-blocking-gates" "${units_line:-blocking-budget-check.js reported over-budget} (budget <= 13 consolidated units per specs-d §D.0.4, raised from 12 harness-governance-batch 2026-07-16) — ${manifest}; remediation: demote via scripts/gate-demotion.sh (F.5) or consolidate per ADR 059 D7"
   fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
@@ -2517,14 +2525,21 @@ check_review_surface_cross_check() {
   while IFS= read -r name; do
     [[ -z "$name" ]] && continue
     resolved=""
-    if [[ "$name" == */* ]]; then
-      # Some pre-existing manifest entries carry an already-qualified
-      # sub-path (e.g. "hooks/lib/sessionstart-singleflight.sh") rather
-      # than a bare basename -- schema-invalid per hooks[]'s
-      # ^[A-Za-z0-9._-]+\.sh$ pattern (a separate, pre-existing RED this
-      # check does not duplicate), but still checkable here: resolve it
-      # directly relative to adapters/claude-code/ instead of re-prepending
-      # hooks/, hooks/lib/, or scripts/ in front of an already-qualified path.
+    if [[ "$name" == lib/*.sh ]]; then
+      # manifest-check.sh's convention (its own schema + disk-coverage
+      # check, "isLibRef"): a "lib/<name>.sh" hooks[] value is a SOURCED
+      # LIBRARY reference, resolved hooks_dir-RELATIVE -- i.e.
+      # "lib/sessionstart-singleflight.sh" means
+      # adapters/claude-code/hooks/lib/sessionstart-singleflight.sh, NOT
+      # adapters/claude-code/lib/sessionstart-singleflight.sh (harness-review
+      # REFORMULATE fixup finding 5 -- this branch previously resolved the
+      # normalized lib/<name>.sh form against the wrong base directory,
+      # producing a false RED on every real doctor run against master).
+      [[ -f "${repo_root}/adapters/claude-code/hooks/${name}" ]] && resolved="hooks/${name}"
+    elif [[ "$name" == */* ]]; then
+      # Any OTHER already-qualified sub-path a manifest entry might carry
+      # (forward-compat with a convention not yet named) -- resolve it
+      # directly relative to adapters/claude-code/.
       [[ -f "${repo_root}/adapters/claude-code/${name}" ]] && resolved="$name"
     elif [[ -f "${repo_root}/adapters/claude-code/hooks/${name}" ]]; then
       resolved="hooks/${name}"
@@ -2586,6 +2601,92 @@ check_review_index_consistency() {
   fi
   if [[ "$committed" != "$rebuilt" ]]; then
     _red "review-index-consistency" "docs/reviews/records/index.json does not match a fresh rebuild of the records directory -- run 'bash adapters/claude-code/scripts/write-review-record.sh rebuild-index' and commit the result"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: review-grandfather-integrity (harness-review REFORMULATE fixup,
+# finding 3). The grandfather manifest and the records directory are TRUST
+# ANCHORS -- content the deploy gate treats as "already covered, no PASS
+# needed" purely because it existed at a recorded cutover point. Neither had
+# any integrity check: a hand-edit (add an entry for content that was NEVER
+# actually reviewed) or a silent re-bootstrap (quietly moving the cutover
+# forward to grandfather something that should have required a real
+# review) would be invisible. This check makes both detectable:
+#
+#   RED (absence-while-mechanism-present): the review-record-gate-lib
+#   exists in this checkout (the mechanism has landed) but
+#   docs/reviews/records/grandfather-manifest.json is MISSING -- a
+#   bootstrapped-then-emptied checkout (or a records dir deleted without
+#   re-bootstrapping) is a DEFECT, not the pre-cutover fail-open case (that
+#   case is "the lib itself doesn't exist yet", handled by the graceful
+#   WARN below).
+#
+#   RED (content divergence): grandfather-manifest.json's own recorded
+#   cutover_ref is re-derived via `write-review-record.sh bootstrap-
+#   grandfather --ref <cutover_ref> --stdout` and byte-compared (minus the
+#   generated_at timestamp, which legitimately differs between runs)
+#   against the committed file. A mismatch means the committed file is NOT
+#   a faithful snapshot of what existed at its own claimed cutover point --
+#   detectable via this check AND via git history (the grandfather file's
+#   own commit history shows every edit).
+#
+#   WARN (graceful, pre-cutover): the lib itself is absent (mechanism not
+#   yet landed on this checkout) -- nothing to verify.
+# ------------------------------------------------------------
+check_review_grandfather_integrity() {
+  local live_home="$1" repo_root="$2"
+  [[ -z "$repo_root" ]] && { _warn "review-grandfather-integrity" "repo root unresolved -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local lib="${repo_root}/adapters/claude-code/hooks/lib/review-record-gate-lib.sh"
+  if [[ ! -f "$lib" ]]; then
+    _warn "review-grandfather-integrity" "review-record-gate-lib.sh not present -- skipped (pre-cutover checkout)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local records_dir="${repo_root}/docs/reviews/records"
+  local gf="${records_dir}/grandfather-manifest.json"
+  if [[ ! -d "$records_dir" ]] || [[ ! -f "$gf" ]]; then
+    _red "review-grandfather-integrity" "the review-record-gate-lib exists but docs/reviews/records/grandfather-manifest.json is ABSENT -- a bootstrapped-then-emptied checkout (or a deleted-without-re-bootstrapping records dir) is a defect; run 'bash adapters/claude-code/scripts/write-review-record.sh bootstrap-grandfather'"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  command -v jq >/dev/null 2>&1 || { _warn "review-grandfather-integrity" "jq unavailable -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+  command -v git >/dev/null 2>&1 || { _warn "review-grandfather-integrity" "git unavailable -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local cutover_ref
+  cutover_ref=$(jq -r '.cutover_ref // empty' "$gf" 2>/dev/null)
+  if [[ -z "$cutover_ref" ]]; then
+    _red "review-grandfather-integrity" "docs/reviews/records/grandfather-manifest.json has no cutover_ref -- cannot verify integrity; regenerate via bootstrap-grandfather"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! git -C "$repo_root" cat-file -e "${cutover_ref}^{commit}" 2>/dev/null; then
+    _red "review-grandfather-integrity" "docs/reviews/records/grandfather-manifest.json's cutover_ref (${cutover_ref}) does not resolve to a commit in this repo -- possibly hand-edited or corrupted"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local writer="${repo_root}/adapters/claude-code/scripts/write-review-record.sh"
+  if [[ ! -f "$writer" ]]; then
+    _warn "review-grandfather-integrity" "write-review-record.sh not present -- skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local rederived committed
+  rederived=$(bash "$writer" bootstrap-grandfather --repo-root "$repo_root" --ref "$cutover_ref" --stdout 2>/dev/null | jq -S 'del(.generated_at)' 2>/dev/null)
+  committed=$(jq -S 'del(.generated_at)' "$gf" 2>/dev/null)
+  if [[ -z "$rederived" ]]; then
+    _warn "review-grandfather-integrity" "could not re-derive the grandfather manifest at cutover_ref ${cutover_ref} -- skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if [[ "$committed" != "$rederived" ]]; then
+    _red "review-grandfather-integrity" "docs/reviews/records/grandfather-manifest.json does not match a fresh re-derivation at its own recorded cutover_ref (${cutover_ref}) -- a hand-edit or silent re-bootstrap is detectable this way, and via the file's own git history; regenerate honestly via bootstrap-grandfather at a NEW cutover if content genuinely needs to change"
   fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
@@ -2653,6 +2754,7 @@ run_quick_checks() {
   check_model_pins "$live_home" "$repo_root"
   check_review_surface_cross_check "$live_home" "$repo_root"
   check_review_index_consistency "$live_home" "$repo_root"
+  check_review_grandfather_integrity "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -3222,7 +3324,12 @@ EOF
   # (PreToolUse here) to be counted at all; each fixture id is distinct so
   # none of them hit the UNIT_MAP consolidation table (that table's own
   # behavior is exercised live against the real manifest, not re-tested
-  # here — this fixture only needs to prove the RED/GREEN threshold at 12).
+  # here — this fixture only needs to prove the RED/GREEN threshold at 13,
+  # raised from 12 harness-governance-batch 2026-07-16 (gh-merge-canonical +
+  # review-before-deploy, each carrying the full §10 evidence bar;
+  # evidence-before-fix / task 3 is WARN-MODE, consumes no unit). 13 is the
+  # MEASURED integrated count, not headroom; budget stays deliberately
+  # tight — raise only with named gates).
   _write_blocking_manifest_fixture() {
     local dir="$1" count="$2"
     local entries="" i
@@ -3242,17 +3349,17 @@ EOF
   }
   D=$(_scenario_dir bbg-red)
   _stamp_claim_honesty_green "$D"
-  _write_blocking_manifest_fixture "$D" 13
+  _write_blocking_manifest_fixture "$D" 14
   _copy_blocking_budget_tooling "$D"
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
-  _assert "budget-blocking-gates-red" 1 "$RC" "RED budget-blocking-gates.*blocking session-event units: 13" "$OUT"
+  _assert "budget-blocking-gates-red" 1 "$RC" "RED budget-blocking-gates.*blocking session-event units: 14" "$OUT"
 
-  # ---- Check: budget-blocking-gates GREEN fixture — 12 units (at budget) ----
+  # ---- Check: budget-blocking-gates GREEN fixture — 13 units (at budget) ----
   D=$(_scenario_dir bbg-green)
   _stamp_claim_honesty_green "$D"
-  _write_blocking_manifest_fixture "$D" 12
+  _write_blocking_manifest_fixture "$D" 13
   _copy_blocking_budget_tooling "$D"
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
@@ -3263,10 +3370,10 @@ EOF
   # wired_template (a GAP entry) or fires only on a git-boundary event must
   # NOT count toward the budget (proves the fix: this used to inflate the
   # count under the old bare-blocking:true method). 13 non-counting entries
-  # + the budget-class fixture at exactly 12 counting entries -> still GREEN.
+  # + the budget-class fixture at exactly 13 counting entries -> still GREEN.
   D=$(_scenario_dir bbg-noncounting-green)
   _stamp_claim_honesty_green "$D"
-  _write_blocking_manifest_fixture "$D" 12
+  _write_blocking_manifest_fixture "$D" 13
   node -e '
 const fs = require("fs");
 const p = process.argv[1];
@@ -4617,6 +4724,35 @@ EOF
     echo "self-test (review-surface-cross-check-green): SKIP (real tooling not found)" >&2
   fi
 
+  # ---- review-surface-cross-check: GREEN fixture -- a manifest hooks[]
+  # entry uses manifest-check's normalized "lib/<name>.sh" sourced-library
+  # form (harness-review REFORMULATE fixup finding 5; mirrors manifest-
+  # check.sh's own S11 fixture) -- must resolve hooks_dir-relative
+  # (hooks/lib/<name>.sh), not adapters/claude-code/lib/<name>.sh ----
+  D=$(_scenario_dir review-surface-libref-green)
+  _stamp_claim_honesty_green "$D"
+  if _copy_review_gate_tooling "$D"; then
+    mkdir -p "$D/repo/adapters/claude-code/hooks/lib"
+    printf '#!/bin/bash\n# sourced library, never wired directly\necho mylib\n' > "$D/repo/adapters/claude-code/hooks/lib/mylib.sh"
+    cat > "$D/repo/adapters/claude-code/manifest.json" <<'EOF'
+{"schema_version": 1, "entries": [
+  {"id": "a-gate", "kind": "gate", "hooks": ["lib/mylib.sh"], "blocking": false, "honest_status": "test"}
+]}
+EOF
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(_run_quick "$D")"
+    if printf '%s' "$OUT" | grep -q "RED review-surface-cross-check"; then
+      echo "self-test (review-surface-cross-check-libref-green): FAIL (unexpected RED: $OUT)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (review-surface-cross-check-libref-green): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (review-surface-cross-check-libref-green): SKIP (real tooling not found)" >&2
+  fi
+
   # ---- review-index-consistency: RED fixture -- committed index.json
   # disagrees with a fresh rebuild of the records directory ----
   D=$(_scenario_dir review-index-red)
@@ -4659,6 +4795,68 @@ EOF
     fi
   else
     echo "self-test (review-index-consistency-green): SKIP (real tooling not found)" >&2
+  fi
+
+  # ---- review-grandfather-integrity: RED fixture -- the lib exists but
+  # docs/reviews/records/grandfather-manifest.json is ABSENT entirely
+  # (bootstrapped-then-emptied class, harness-review REFORMULATE fixup
+  # finding 3b) ----
+  D=$(_scenario_dir review-grandfather-absent-red)
+  _stamp_claim_honesty_green "$D"
+  if _copy_review_gate_tooling "$D"; then
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(_run_quick "$D")"; RC=$?
+    _assert "review-grandfather-integrity-absent-red" 1 "$RC" "RED review-grandfather-integrity" "$OUT"
+  else
+    echo "self-test (review-grandfather-integrity-absent-red): SKIP (real tooling not found)" >&2
+  fi
+
+  # ---- review-grandfather-integrity: RED fixture -- grandfather-manifest.json
+  # was hand-edited (or silently re-bootstrapped) -- its content does NOT
+  # match a fresh re-derivation at its own recorded cutover_ref ----
+  D=$(_scenario_dir review-grandfather-tamper-red)
+  _stamp_claim_honesty_green "$D"
+  if _copy_review_gate_tooling "$D"; then
+    ( cd "$D/repo" && git init -q && git config user.email t@example.com && git config user.name T \
+        && git add -A && git commit -q -m init )
+    CUTOVER_SHA=$(git -C "$D/repo" rev-parse HEAD)
+    mkdir -p "$D/repo/docs/reviews/records"
+    cat > "$D/repo/docs/reviews/records/grandfather-manifest.json" <<EOF
+{"schema_version":1,"cutover_ref":"${CUTOVER_SHA}","generated_at":"2026-07-16T00:00:00Z","entries":[{"path":"adapters/claude-code/hooks/nonexistent-hand-edited.sh","blob_sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}]}
+EOF
+    printf '{"schema_version":1,"entries":[]}\n' > "$D/repo/docs/reviews/records/index.json"
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(_run_quick "$D")"; RC=$?
+    _assert "review-grandfather-integrity-tamper-red" 1 "$RC" "RED review-grandfather-integrity" "$OUT"
+  else
+    echo "self-test (review-grandfather-integrity-tamper-red): SKIP (real tooling not found)" >&2
+  fi
+
+  # ---- review-grandfather-integrity: GREEN fixture -- grandfather-manifest.json
+  # IS a faithful bootstrap-grandfather snapshot at its own recorded
+  # cutover_ref ----
+  D=$(_scenario_dir review-grandfather-integrity-green)
+  _stamp_claim_honesty_green "$D"
+  if _copy_review_gate_tooling "$D"; then
+    ( cd "$D/repo" && git init -q && git config user.email t@example.com && git config user.name T \
+        && git add -A && git commit -q -m init )
+    bash "$D/repo/adapters/claude-code/scripts/write-review-record.sh" bootstrap-grandfather \
+      --repo-root "$D/repo" --ref HEAD >/dev/null 2>&1
+    printf '{"schema_version":1,"entries":[]}\n' > "$D/repo/docs/reviews/records/index.json"
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(_run_quick "$D")"
+    if printf '%s' "$OUT" | grep -q "RED review-grandfather-integrity"; then
+      echo "self-test (review-grandfather-integrity-green): FAIL (unexpected RED: $OUT)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (review-grandfather-integrity-green): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (review-grandfather-integrity-green): SKIP (real tooling not found)" >&2
   fi
 
   # ---- Check 8 (--full only): RED fixture — a stub hook's --self-test fails ----

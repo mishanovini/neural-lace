@@ -394,3 +394,22 @@ Stated explicitly so nobody mistakes this record for more than it is: this is a
 - **Reverts to a previously-PASS'd blob.** By design (see OQ4) — accepted, not a gap.
 - **No TTL / staleness clock.** Rejected per OQ4 — timer-drift complexity for zero
   additional safety over content-addressing.
+- **The grandfather manifest and the records directory are themselves TRUST
+  ANCHORS, not self-verifying data** (harness-review REFORMULATE fixup, finding 3,
+  2026-07-16). Before this fixup, nothing checked whether `grandfather-manifest.json`
+  actually reflected reality — a hand-edit (add an entry for content that was NEVER
+  reviewed) or a silent re-bootstrap (quietly moving the cutover forward to
+  grandfather something that should have required a real review) would have been
+  invisible. This is now DETECTABLE two ways: (1) the doctor's
+  `review-grandfather-integrity` check re-derives the grandfather manifest at its own
+  recorded `cutover_ref` (a resolved commit SHA, never the literal string `HEAD` — see
+  Bootstrap section) via `bootstrap-grandfather --ref <cutover_ref>` and REDs on any
+  divergence from the committed file, and separately REDs if the records directory is
+  absent while the gate's own lib is present (a bootstrapped-then-emptied checkout is
+  a defect, distinct from the legitimate pre-cutover fail-open case where the lib
+  itself doesn't exist yet); (2) `grandfather-manifest.json`'s own git history is a
+  second, independent audit trail — every edit to it is a normal commit, reviewable
+  the same way any other harness change is. Neither mechanism PREVENTS a bad edit at
+  write time (there is no commit-time gate on this specific file yet); both make a bad
+  edit detectable after the fact, which is the same class of residual as the
+  anti-fabrication gap above — raising the cost of dishonesty, not eliminating it.

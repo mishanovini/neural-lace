@@ -115,6 +115,7 @@ BATCH — after the foundation lands (unified master):
 
 ## In-flight scope updates
 
+- 2026-07-16 (task 2 REFORMULATE fixup, addendum finding 7): `adapters/claude-code/scripts/blocking-budget-check.js` — raise the blocking-gate budget 12 -> 13.
 - 2026-07-15 (R3): `docs/decisions/064-never-diverge-single-canonical-master.md` — the R3
   design decision record (decide-and-go per §8).
 - 2026-07-15 (R1/R3/batch, executing session): `adapters/claude-code/manifest.json`,
