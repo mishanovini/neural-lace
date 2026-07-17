@@ -169,3 +169,107 @@ Git evidence:
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: every binding amendment re-derived, not trusted. A4 — export-state.js require-graph (and its transitive deps) contains no require('./server.js'), and the live-port trap self-test (Scenario 8) writes a real export with a server bound on the port (11/11, exit 0; no leftover node.exe post-run). A3c/A5/provenance — a real fixture export artifact re-derived by the verifier shows raw last_heartbeat_at (no state field), EXPORT_HOSTNAME honored in filename+provenance, and all 6 provenance fields. A3ii keepalive — runExport()'s KEEPALIVE_MS branch + Scenario 5 green. Behavior-identical refactor — the pre-existing black-box HTTP oracle (server.selftest.js) is 148/0 unchanged and cockpit.selftest.js is 84/84, with server.js reduced to a pure deriveLib consumer. Seam closure — no inline TASK_LINE_RE remains in derive-lib.js (delegates to plan-parse.js), and a fixture export of a lettered-task plan carries A.1/A.2 through while the checklist-bullet negative case stays invisible. Verification: mechanical ⇒ comprehension-gate exempt (Step-0 routing).
+## Task 3 — Transport (coord-sync cadence + coord-push A2 fixes) (builder commit d96bbbe)
+
+Substance verified independently (task-verifier): coord-push.sh self-test 12/12 (5 new A2
+scenarios), coord-sync.sh self-test 11/11, coord-pull.sh self-test 6/6 (unchanged, sanity
+re-run); A2a proven differentially against pre-fix code (`.claude/state/observed-errors.md`
+carries the verbatim repro); the verifier's own falsification probe on the A2c dedup guard
+(disabling it and re-running) confirmed the "exactly ONE alert" assertion goes FAIL without it.
+
+### Spec meaning
+
+Task 3's "transport" bundles three binding amendments. A2 fixes two real defects in
+coord-push.sh under its own WARN+exit-0-BY-DESIGN contract (which must NOT change): the
+no-op gate must retry an existing unpushed local commit even when there is nothing NEW
+staged (A2a — otherwise one transient push/rebase failure on a quiet estate defers
+publication forever), and every invocation must expose its outcome via a status file
+(pushed|local-commit|noop + ts) for a caller to consume (A2b) without ever touching the exit
+code. A1 wires a DEDICATED 600s-cadence scheduled task (NL-coord-sync) that is the exporter's
+ONLY invoker — that exclusivity IS the single-writer-per-machine enforcement (F4) — running
+exporter -> coord-push -> coord-pull in that literal order, with a no-overlap policy (OS-level
+ignore-new-instance + a script-level lock, since bash spawns here measure 94-119s). A2c closes
+the loop: that same cadence watches coord-push's new status file and raises the EXISTING
+health-tick alert path on a persistent (>3 consecutive) local-commit streak, so a genuinely
+stuck writer surfaces loudly instead of exit-0ing into silence indefinitely.
+
+### Edge cases covered
+
+- Ahead-of-origin with NO new staged changes: `_ahead_of_origin` (coord-push.sh) compares HEAD
+  against the clone's cached `origin/<branch>` ref (no fetch) and triggers a retry-push even
+  when `git diff --cached --quiet` is clean. Proven differentially: reproduced the OLD bug
+  against pre-fix code first (verbatim "no changes to push" while a real unpushed commit sat
+  there, logged in `.claude/state/observed-errors.md`), then re-ran the identical repro against
+  the fixed code and confirmed origin advanced to the local commit.
+- Genuine unresolvable rebase conflict (add/add on the same path, `claims.json`): coord-push.sh
+  self-test scenario 9 forces a real conflict, proving `_commit_and_push`'s local-commit outcome
+  is reached via the rebase-then-abort path AND that origin is never force-pushed over
+  (`git --git-dir=$bare rev-parse main` still equals the peer's SHA after the attempt).
+- `_write_status_file` fires on EVERY exit path of `_run_push`, not just the three
+  case-statement outcomes — including the throttled-skip and no-clone-resolved early returns —
+  so a consumer never sees a stale/missing file just because a cycle degraded early.
+- Overlapping coord-sync invocations: `_main` takes the STATE_DIR/coord-sync.lock mkdir lock
+  BEFORE calling `_run_cycle`. Self-test scenario 2 pre-creates the lock, confirms none of
+  exporter/push/pull ran, releases it, confirms the next invocation runs all three normally, and
+  confirms the lock directory is gone afterward (`trap _release_lock EXIT`).
+- Persistent local-commit alerting is deduped PER EPISODE, not per run: `_track_local_commit_streak`
+  writes `ALERT_ACTIVE_FILE` the first time the streak exceeds threshold and suppresses further
+  alerts while that marker exists. Self-test scenario 3 ran 5 consecutive local-commit cycles
+  (exactly 1 alert file), then broke the streak with one `pushed` cycle and ran 4 more
+  local-commit cycles (a SECOND alert file — dedup is per-stuck-episode, not permanent).
+- Exporter must never write into a non-git COORD_CLONE_DIR: `_run_cycle` calls
+  `_ensure_clone_bootstrap` BEFORE invoking the exporter step, specifically because
+  coord-push.sh's own `_ensure_clone` refuses to `git clone` into a non-empty directory — if the
+  exporter ran first and created plain directories there, coord-push's later bootstrap would break.
+- No coord repo configured at all: `_ensure_clone_bootstrap` returns 1 (WARN, named-state
+  degradation) and `_run_cycle` logs a `skipped-no-coord-repo` cycle line rather than crashing or
+  silently doing nothing unlogged (self-test scenario 4).
+- Installer never mutates the real Task Scheduler under test: `install-coord-sync-task.ps1`'s
+  `[CmdletBinding(SupportsShouldProcess=$true)]` + `-WhatIf`, verified LIVE (not just read) via a
+  real `-WhatIf` invocation plus `Get-ScheduledTask -TaskName 'NL-CoordSync'` returning nothing
+  both before and after. `-MultipleInstances IgnoreNew` is the settings block's OS-level
+  no-overlap backstop, paired with the script-level mkdir lock as defense in depth.
+
+### Edge cases NOT covered
+
+- coord-sync.sh's REAL scheduled-task registration was never exercised end-to-end — only
+  `-WhatIf`. The task's own text is explicit that live registration is deploy-time and
+  operator-run, never from a builder/self-test session, so this is a deliberate scope boundary,
+  not an oversight.
+- Real SSH-auth death against the actual private coord repo was never tested. The "persistent
+  local-commit" scenario (coord-sync.sh self-test 3) simulates a dead remote via a stubbed
+  `COORD_SYNC_PUSH_CMD` that writes the status file directly, not a genuine repeated git push
+  failure. coord-push.sh's own self-test (scenario 9) DOES exercise a real git-level failure (an
+  add/add conflict), but that path and coord-sync's alert logic were never combined in one
+  end-to-end run.
+- Two REAL machines running coord-sync.sh concurrently against the SAME shared coord repo (the
+  actual deployed topology) was never exercised — the lock self-test proves same-machine mutual
+  exclusion only. Cross-machine near-simultaneous pushes are covered by coord-push.sh's existing
+  pull-rebase retry logic (its own scenario 5), not by anything added in this task.
+- `-MultipleInstances IgnoreNew` was never actually triggered (would require two real overlapping
+  Task Scheduler firings) — I'm relying on it being a documented, standard Task Scheduler setting
+  rather than having observed it fire.
+- The `EXPORT_HOSTNAME`-simulated two-"machine" acceptance (task 8's own explicit design) was not
+  run here — that's task 8's job. My coord-sync self-test's full-cycle scenario proves ONE real
+  machine's export reaches origin, not that a peer subsequently reads it back distinctly.
+
+### Assumptions
+
+- coord-push.sh's remote-tracking ref (`origin/<branch>`) is updated by a normal `git push`, so
+  `_ahead_of_origin`'s no-fetch comparison reflects reality without its own network round trip; a
+  genuinely stale cached ref just costs one wasted push attempt (still WARN+exit-0-safe), never a
+  false negative that skips a real retry.
+- coord-push.sh's existing WARN+exit-0 exit-code contract is permanent and load-bearing for
+  callers outside this plan; this task never changed it, only added the status-file side channel.
+- The `plan-export/` subdirectory name chosen for the exporter's per-host file inside the coord
+  clone is not pinned anywhere else in the codebase yet (task 4, which reads it, does not exist
+  yet) — assumed acceptable and schema-distinct from coord-push's own `tree-state/`; if task 4
+  needs a different name it is a one-line change in `_run_cycle` and this plan's Files table note.
+- `git rebase --abort` always fully restores the pre-rebase HEAD (relied on by both coord-push.sh's
+  pre-existing logic and my new conflict scenario) — a standard git guarantee, not independently
+  re-verified beyond the passing self-test.
+- Windows PowerShell 5.1's script-file parser defaults to a non-UTF-8 codepage when no BOM is
+  present (the root cause of the em-dash parse bug found and fixed in the new installer) — treated
+  as a durable platform fact going forward (plain ASCII in real code lines), not something needing
+  a BOM added; the sibling precedent file exhibits the identical symptom, confirmed via the same
+  `[System.Management.Automation.Language.Parser]::ParseFile` check.
