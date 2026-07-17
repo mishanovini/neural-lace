@@ -112,7 +112,18 @@ is_agent_file() {
 
 emit_block() {
   local reason="$1"
-  printf '{"decision":"block","reason":"%s"}\n' "$reason"
+  # Observe-first rollout (harness-review 2026-07-17, block-mode-before-FP-calibrated):
+  # default records the would-block verdict and ALLOWS; set AGENT_DESIGN_GATE_ENFORCE=1
+  # to actually block. Flip criterion (manifest): N real fires observed with zero
+  # false positives on the would-block log.
+  if [ "${AGENT_DESIGN_GATE_ENFORCE:-0}" = "1" ]; then
+    printf '{"decision":"block","reason":"%s"}\n' "$reason"
+  else
+    ( mkdir -p "${HOME}/.claude/state" 2>/dev/null && \
+      printf '{"ts":"%s","would_block":true,"reason":"%s"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$reason" \
+        >> "${HOME}/.claude/state/agent-design-gate-probe.jsonl" 2>/dev/null ) || true
+  fi
 }
 
 # Check content for the GOLDEN CASE heading + substantive body. Returns
@@ -227,8 +238,8 @@ run_gate() {
 
   if [[ -z "$content" ]]; then
     emit_block "agent-design-gate: could not read tool_input.content for new agent file $(basename "$file_path") (jq unavailable or empty content) — cannot verify the GOLDEN CASE + seven-properties bar. See doctrine/artifact-evidence-bar.md."
-    echo "[agent-design-gate] BLOCK: could not extract content for $(basename "$file_path")" >&2
-    return 2
+    echo "[agent-design-gate] $([ "${AGENT_DESIGN_GATE_ENFORCE:-0}" = "1" ] && echo BLOCK || echo WOULD-BLOCK): could not extract content for $(basename "$file_path")" >&2
+    [ "${AGENT_DESIGN_GATE_ENFORCE:-0}" = "1" ] && return 2 || return 0
   fi
 
   local reasons=""
@@ -247,8 +258,8 @@ run_gate() {
 
   if [[ -n "$reasons" ]]; then
     emit_block "agent-design-gate: new agent $(basename "$file_path") does not meet the artifact-evidence-bar (constitution §10 generalized) — ${reasons}Add a '## GOLDEN CASE' section (a real historical defect this agent catches that a generic agent misses) and evidence of all seven properties. See doctrine/artifact-evidence-bar.md and doctrine/artifact-evidence-bar-full.md."
-    echo "[agent-design-gate] BLOCK: $(basename "$file_path") — ${reasons}" >&2
-    return 2
+    echo "[agent-design-gate] $([ "${AGENT_DESIGN_GATE_ENFORCE:-0}" = "1" ] && echo BLOCK || echo WOULD-BLOCK): $(basename "$file_path") — ${reasons}" >&2
+    [ "${AGENT_DESIGN_GATE_ENFORCE:-0}" = "1" ] && return 2 || return 0
   fi
 
   echo "[agent-design-gate] ALLOW: $(basename "$file_path") — GOLDEN CASE + all seven properties detected." >&2
@@ -286,8 +297,16 @@ cmd_self_test() {
   }
 
   run_with() {
+    # scenarios assert BLOCK semantics -> run in enforce mode (the shipped
+    # default is observe-first; S8 below covers that posture explicitly)
     local input="$1"
-    CLAUDE_TOOL_INPUT="$input" run_gate >/dev/null 2>&1
+    CLAUDE_TOOL_INPUT="$input" AGENT_DESIGN_GATE_ENFORCE=1 run_gate >/dev/null 2>&1
+    echo $?
+  }
+
+  run_with_observe() {
+    local input="$1"
+    CLAUDE_TOOL_INPUT="$input" AGENT_DESIGN_GATE_ENFORCE=0 HOME="$TMPROOT/home" run_gate >/dev/null 2>&1
     echo $?
   }
 
@@ -428,6 +447,25 @@ steelman placeholder'
   fi
 
   echo "" >&2
+  # ---- S8: OBSERVE posture (the shipped default) — a golden-case-less new
+  # agent is ALLOWED (rc 0) and the would-block verdict lands in the probe log.
+  if command -v jq >/dev/null 2>&1; then
+    mkdir -p "$TMPROOT/home/.claude/state"
+    rc=$(run_with_observe "$(build_input_write "$TMPROOT/adapters/claude-code/agents/observe-case.md" "---
+name: observe-case
+description: naive agent with no golden case
+---
+# observe-case
+just vibes")")
+    if [[ "$rc" == "0" ]] && grep -q '"would_block":true' "$TMPROOT/home/.claude/state/agent-design-gate-probe.jsonl" 2>/dev/null; then
+      echo "self-test (S8) observe-default-allows-and-records: PASS" >&2; PASSED=$((PASSED+1))
+    else
+      echo "self-test (S8) observe-default-allows-and-records: FAIL (rc=$rc)" >&2; FAILED=$((FAILED+1))
+    fi
+  else
+    echo "self-test (S8) observe-default-allows-and-records: SKIP (no jq)" >&2
+  fi
+
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed (of $((PASSED + FAILED)) scenarios)" >&2
   if [[ "$FAILED" -gt 0 ]]; then return 1; fi
   return 0

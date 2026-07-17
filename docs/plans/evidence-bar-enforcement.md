@@ -118,6 +118,21 @@ its 7/7 self-test in this session.
 
 ## Decisions Log
 
+- (2026-07-17) **Observe-first rollout for BOTH new gates** (harness-review REFORMULATE, 4 majors):
+  agent-commit-gate and agent-design-gate land with `blocking:false` — they compute and LOG their
+  would-block verdicts (upgraded probe: raw cwd + session_id + rotation) but exit 0, flipping to
+  enforce only against named criteria (GATE 3: probe proves cwd == the stopping agent's OWN
+  agent-<id> worktree AND stop_hook_active observed on a block→retry pair; GATE 2: N real fires,
+  0 false positives). Rationale: (a) the review PROVED the data-loss tail — if SubagentStop's cwd
+  is the PARENT's worktree, a blocked subagent following the stash advice would stash the
+  orchestrator's live WIP; (b) blocking-before-FP-calibration is the cry-wolf failure that
+  REFORMULATE'd orphaned-worktree-guard; (c) it resolves the D5 blocking budget (14/13 RED from
+  agate-2) to 13/13 GREEN without weakening GATE 1 (hosted inside plan-reviewer, already counted).
+  Also per review: SESSION_EVENTS in blocking-budget-check.js gains SubagentStop (partial-enum-
+  widening fix), fp_expectation corrected (reviewers are silent because each gets its OWN clean
+  worktree, not because the gate knows roles), block message softened for read-only agents, and a
+  defense-in-depth loop bound independent of stop_hook_active added for the enforce path.
+
 - (2026-07-16) GATE 3 hosts on SubagentStop (not PostToolUse:Agent) — PostToolUse fires at async
   LAUNCH, not completion; SubagentStop is the only per-agent stop event. Risk (field contract) is
   bounded by the probe + a named rehost condition. Reversible: one hook entry.

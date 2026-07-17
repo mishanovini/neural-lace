@@ -52,7 +52,11 @@ const UNIT_MAP = {
   'workstreams-spawn-gate': 'agent-teams',
 };
 
-const SESSION_EVENTS = ['Stop', 'SessionStart', 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'TaskCreated', 'TaskCompleted'];
+// SubagentStop included deliberately (harness-review 2026-07-17, partial-enum-widening
+// finding): a blocking SubagentStop gate interrupts live-session agent flow and counts
+// against the D5 budget like any other session-event block. (agent-commit-gate currently
+// ships observe-first / blocking:false, so it does not consume budget until flipped.)
+const SESSION_EVENTS = ['Stop', 'SubagentStop', 'SessionStart', 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'TaskCreated', 'TaskCompleted'];
 const units = new Set(
   m.entries
     .filter(e => e.blocking && e.wired_template && (e.events || []).some(ev => SESSION_EVENTS.includes(ev)))
