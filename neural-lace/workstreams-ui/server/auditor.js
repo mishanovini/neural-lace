@@ -173,6 +173,24 @@ function askRegistryCliPath() {
   return process.env.ASK_REGISTRY_CLI ||
     path.join(__dirname, '..', '..', '..', 'adapters', 'claude-code', 'scripts', 'ask-registry.sh');
 }
+// nl-issue.sh -- C3b (cockpit-v2-push-materialized-store Task 7). Resolved
+// the SAME way as the three CLI paths above: repo-relative to the CANONICAL
+// source in THIS repo (adapters/claude-code/scripts/), not the installed
+// $HOME/.claude/scripts/ copy -- mirrors progressLogCliPath()/
+// askRegistryCliPath() exactly.
+function nlIssueCliPath() {
+  return process.env.NL_ISSUE_CLI ||
+    path.join(__dirname, '..', '..', '..', 'adapters', 'claude-code', 'scripts', 'nl-issue.sh');
+}
+// The auditor's OWN dedup/recurrence state (distinct from nl-issue.sh's own
+// internal 24h text-dedup ledger) -- "already-filed divergence ids", so a
+// still-open divergence badge (which persists every cycle until resolved,
+// per constraint 6) is filed exactly ONCE per divergence lifetime, never
+// once per cycle.
+function auditorNlIssueStatePath() {
+  return process.env.AUDITOR_NL_ISSUE_STATE_PATH ||
+    path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'auditor-nl-issue-state.json');
+}
 
 // ----------------------------------------------------------------------
 // readJsonlLines / foldAskRegistry / readAskEvents -- small, deliberately
@@ -573,6 +591,177 @@ function auditAsk(askId, reg, events, ctx) {
 }
 
 // ========================================================================
+// C3b (cockpit-v2-push-materialized-store Task 7) -- wire the auditor's
+// REAL log-ahead divergences into nl-issue.sh.
+//
+// WHICH CLASSES: exactly the four LOG-AHEAD rows of the divergence-class
+// table at the top of this file (the ones that BADGE rather than heal --
+// truth can never catch up to an un-emittable log entry, so these are the
+// genuine, permanent "the mechanism disagrees with itself" cases the
+// operator's actual auto-healing intent is about). Read off the table by
+// its OWN divergence_class STRING CONSTANTS (not the plan task's prose
+// names, which paraphrase the table row descriptions rather than quoting
+// the literal badge.divergence_class values this file actually pushes):
+//   'log_ahead_task_not_flipped' -- "task_done event, checkbox unflipped"
+//   'unmatched_dispatch'         -- "task_started, no matching dispatch record"
+//   'orphaned_waiting_item'      -- "waiting_on_operator, no ground truth anywhere"
+//   'unknown_provenance'         -- "event with provenance:unknown emitter"
+// 'unknown_provenance' additionally carries de_emphasize:true on the UI
+// side (constraint 10) -- that governs RENDERING only; it is still a real
+// divergence worth an operator's attention via nl-issue, so it is filed
+// exactly like the other three.
+//
+// DEDUP: a persisted state file (auditorNlIssueStatePath()) records every
+// badge.detail_ref ever filed -- detail_ref is already a stable, globally-
+// unique id per divergence (each construction site above embeds askId +
+// plan_slug/task_id/needs_you_id/event key), so "already filed" is a
+// single Set-membership check. This is a SEPARATE dedup layer from
+// nl-issue.sh's own internal 24h byte-identical-text dedup: that one
+// exists to stop an unrelated CALLER from spamming near-duplicate free-text
+// notes; this one exists because a STILL-OPEN divergence badge is
+// re-computed and re-pushed into newBadgesByAsk on EVERY cycle for as long
+// as it remains unresolved (constraint 6: never un-emit, never auto-flip)
+// -- without this layer, one stuck divergence would file a new nl-issue
+// note every single cadence tick forever.
+//
+// RECURRENCE ESCALATION: per divergence_class, once 3 DISTINCT ids have
+// been filed within a rolling 7-day window, file ONE additional escalated
+// summary note (never repeated for that class again -- "ONE escalated
+// summary filing" is read literally: once per class, ever, not a
+// re-escalation on every subsequent new id). Computed from the PERSISTED
+// filed-state's timestamps, not just the current cycle's badge set, since
+// an older id can still count toward the window even after its own badge
+// has since resolved and stopped appearing in newBadgesByAsk.
+//
+// SPAWN CONVENTION: reuses runCli() verbatim (bashBin()/spawnEnv() +ve
+// killTree-on-timeout reaping, exactly like backfillTaskDone/
+// backfillAskDone/scanRepoForMerges above) rather than a fire-and-forget
+// unawaited spawn -- this file's own header already documents "sequential,
+// never parallel-fan-out" as the house convention for cycle side effects,
+// and awaiting (bounded by the SAME timeout+killTree safety net runCli
+// already provides) keeps the auditor's own self-test deterministic
+// without a polling race, while still never letting a hung nl-issue.sh
+// wedge the cycle indefinitely. "Fire-and-forget" in the operational sense
+// the plan text means: the auditor never retries, never propagates a
+// failure into backfill_errors/diagnostics, and never lets nl-issue's
+// outcome affect the cycle's own success.
+//
+// SANDBOX-AWARENESS: gates on env vars ALREADY set by every self-test
+// entry point in this codebase that can produce a real badge --
+// HARNESS_SELFTEST=1 (set by this file's OWN --self-test) and
+// AUDITOR_DISABLED=1 (set for the ENTIRE duration of server.selftest.js's
+// run, including its Scenario 28 direct `auditor.runCycle()` call --
+// "Production never sets this", per start()'s own comment above). Checked
+// FRESH on every call (never memoized), matching this file's existing
+// sandboxing convention for every other stateful path.
+// ========================================================================
+const NL_ISSUE_BADGE_CLASSES = new Set([
+  'log_ahead_task_not_flipped',
+  'unmatched_dispatch',
+  'orphaned_waiting_item',
+  'unknown_provenance',
+]);
+const NL_ISSUE_RECURRENCE_THRESHOLD = 3;
+const NL_ISSUE_RECURRENCE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isNlIssueSandboxed() {
+  return process.env.HARNESS_SELFTEST === '1' || process.env.AUDITOR_DISABLED === '1';
+}
+
+function loadNlIssueState(statePath) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    return {
+      filed: (parsed && typeof parsed.filed === 'object' && parsed.filed) || {},
+      escalated: (parsed && typeof parsed.escalated === 'object' && parsed.escalated) || {},
+    };
+  } catch (_) {
+    return { filed: {}, escalated: {} };
+  }
+}
+
+function saveNlIssueState(statePath, st) {
+  try {
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(statePath, JSON.stringify(st));
+  } catch (_) { /* best-effort -- a lost write just re-files next cycle */ }
+}
+
+// nlIssueMessageForBadge -- the one-line text handed to nl-issue.sh. Plain
+// operator prose (no JSON); nl-issue.sh's own _nli_json_escape handles the
+// on-disk encoding.
+function nlIssueMessageForBadge(askId, badge) {
+  const where = badge.plan_slug ? (' (plan ' + badge.plan_slug + (badge.task_id ? ', task ' + badge.task_id : '') + ')') : '';
+  return 'auditor drift [' + badge.divergence_class + ']' + where + ' ask ' + askId + ': ' + badge.message + ' (ref ' + badge.detail_ref + ')';
+}
+
+// fileNlIssueDivergences(newBadgesByAsk, opts) -- the C3b entry point.
+// `opts`: { cliPath, statePath, cliTimeoutMs }. Async (sequential awaits,
+// per the SPAWN CONVENTION note above); every failure is swallowed --
+// never lets an nl-issue problem affect the cycle's own outcome.
+async function fileNlIssueDivergences(newBadgesByAsk, opts) {
+  if (process.env.AUDITOR_NL_ISSUE_DISABLED === '1') return;
+  if (isNlIssueSandboxed()) return;
+
+  const cliPath = opts.cliPath;
+  const statePath = opts.statePath;
+  const timeoutMs = opts.cliTimeoutMs;
+  const st = loadNlIssueState(statePath);
+  const nowTs = nowIso();
+  let changed = false;
+
+  const askIds = Object.keys(newBadgesByAsk);
+  for (let i = 0; i < askIds.length; i++) {
+    const askId = askIds[i];
+    const badges = newBadgesByAsk[askId] || [];
+    for (let j = 0; j < badges.length; j++) {
+      const badge = badges[j];
+      if (!badge || !NL_ISSUE_BADGE_CLASSES.has(badge.divergence_class)) continue;
+      const id = badge.detail_ref;
+      if (!id || st.filed[id]) continue; // no stable id, or already filed -- once per divergence lifetime
+
+      const text = nlIssueMessageForBadge(askId, badge);
+      try { await runCli(cliPath, [text], timeoutMs); } catch (_) { /* best-effort */ }
+      st.filed[id] = { ts: nowTs, divergence_class: badge.divergence_class };
+      changed = true;
+    }
+  }
+
+  // Recurrence escalation -- computed from the PERSISTED filed-state (not
+  // just this cycle's badges), grouped by divergence_class, counting
+  // DISTINCT ids whose filed-ts falls within the rolling window.
+  const nowMs = Date.now();
+  const byClass = {};
+  Object.keys(st.filed).forEach((id) => {
+    const rec = st.filed[id];
+    if (!rec || !rec.ts) return;
+    const ageMs = nowMs - Date.parse(rec.ts);
+    if (!(ageMs >= 0) || ageMs > NL_ISSUE_RECURRENCE_WINDOW_MS) return;
+    const cls = rec.divergence_class;
+    if (!byClass[cls]) byClass[cls] = [];
+    byClass[cls].push(id);
+  });
+
+  const classes = Object.keys(byClass);
+  for (let k = 0; k < classes.length; k++) {
+    const cls = classes[k];
+    const ids = byClass[cls];
+    if (ids.length < NL_ISSUE_RECURRENCE_THRESHOLD) continue;
+    if (st.escalated[cls]) continue; // ONE escalated summary filing per class, EVER
+
+    const sortedIds = ids.slice().sort();
+    const text = 'auditor RECURRENCE [' + cls + ']: ' + ids.length +
+      ' distinct occurrences filed in the last 7 days (' + sortedIds.join(', ') +
+      ') -- investigate the root cause, not just the individual instances.';
+    try { await runCli(cliPath, [text], timeoutMs); } catch (_) { /* best-effort */ }
+    st.escalated[cls] = { ts: nowTs, count: ids.length, ids: sortedIds };
+    changed = true;
+  }
+
+  if (changed) saveNlIssueState(statePath, st);
+}
+
+// ========================================================================
 // createAuditor(userOpts) -- the auditor instance server.js mounts.
 // ========================================================================
 function createAuditor(userOpts) {
@@ -586,6 +775,7 @@ function createAuditor(userOpts) {
     progressLogCli: userOpts.progressLogCli || progressLogCliPath(),
     askRegistryCli: userOpts.askRegistryCli || askRegistryCliPath(),
     mergeScanLib: userOpts.mergeScanLib || mergeScanLibPath(),
+    nlIssueCli: userOpts.nlIssueCli || nlIssueCliPath(),
   };
 
   // Dynamic resolvers -- re-read env/opts EVERY cycle, never memoized (see
@@ -599,6 +789,7 @@ function createAuditor(userOpts) {
   function rOperatorTodoPath() { return userOpts.operatorTodoPath || operatorTodoPath(); }
   function rDispatchProvenanceDir() { return userOpts.dispatchProvenanceDir || dispatchProvenanceStateDir(); }
   function rMainRepoRoot() { return userOpts.mainRepoRoot || mainRepoRoot(); }
+  function rAuditorNlIssueStatePath() { return userOpts.auditorNlIssueStatePath || auditorNlIssueStatePath(); }
 
   // repoRootsForCycle -- resolution order: (1) explicit `repoRoots` opt
   // (construction-time), (2) AUDITOR_REPO_ROOTS env var (path.delimiter-
@@ -752,6 +943,19 @@ function createAuditor(userOpts) {
         catch (_) { /* best-effort */ }
       }
 
+      // C3b (Task 7): file this cycle's REAL log-ahead badges into
+      // nl-issue.sh (dedup + recurrence escalation) -- see the block
+      // comment at fileNlIssueDivergences() above for the full contract.
+      // Runs LAST, once every badge for this cycle is final in
+      // newBadgesByAsk; never wedges the cycle on a failure.
+      try {
+        await fileNlIssueDivergences(newBadgesByAsk, {
+          cliPath: staticOpts.nlIssueCli,
+          statePath: rAuditorNlIssueStatePath(),
+          cliTimeoutMs: staticOpts.cliTimeoutMs,
+        });
+      } catch (_) { /* best-effort; never wedges the cycle */ }
+
       // §8-3 count reconciliation -- see header for why this is
       // diagnostics-only (never a per-card badge, never a landing banner).
       // HONEST LIMITATION: this metric intersects `renderedWaitingIdSet`
@@ -868,6 +1072,12 @@ module.exports = {
   mergeScanLibPath: mergeScanLibPath,
   progressLogCliPath: progressLogCliPath,
   askRegistryCliPath: askRegistryCliPath,
+  // C3b (Task 7) exports -- for the self-test / a future diagnostics reader.
+  nlIssueCliPath: nlIssueCliPath,
+  auditorNlIssueStatePath: auditorNlIssueStatePath,
+  fileNlIssueDivergences: fileNlIssueDivergences,
+  NL_ISSUE_BADGE_CLASSES: NL_ISSUE_BADGE_CLASSES,
+  isNlIssueSandboxed: isNlIssueSandboxed,
 };
 
 // ============================================================
@@ -1008,6 +1218,109 @@ async function selfTest() {
   await auditor.runCycle();
   ok('S2d the badge persists (never un-emitted, never one-shot) across a second cycle',
     auditor.getBadgesForAsk('ask-a').some((b) => b.divergence_class === 'log_ahead_task_not_flipped' && b.task_id === '2'));
+
+  // ======================================================================
+  // Scenario 2e-2i (C3b, Task 7): the auditor's REAL log-ahead divergences
+  // wired into nl-issue.sh -- dedup, sandbox-awareness, and recurrence
+  // escalation. Reuses the S2 fixture's already-persistent
+  // log_ahead_task_not_flipped badge for ask-a task 2 (still present --
+  // S2d just proved it survives a second cycle) as the "one real badge" to
+  // file.
+  //
+  // This self-test itself runs with HARNESS_SELFTEST=1 set globally (see
+  // the top of this function) -- which is EXACTLY one of the two sandbox
+  // signals isNlIssueSandboxed() checks. S2e/S2f/S2h/S2i below temporarily
+  // clear it (and confirm AUDITOR_DISABLED is not set, which it never is
+  // in this file's own self-test) to exercise the REAL, un-sandboxed
+  // filing path -- restored to '1' immediately after, before Scenario 3
+  // resumes, so every OTHER cycle in this self-test stays exactly as
+  // sandboxed as before this task existed.
+  // ======================================================================
+  const nlLedger1 = path.join(tmp, 'nl-issues-s2e.jsonl');
+  const nlState1 = path.join(tmp, 'nl-issue-state-s2e.json');
+  delete process.env.HARNESS_SELFTEST;
+  process.env.NL_ISSUES_PATH = nlLedger1;
+  process.env.AUDITOR_NL_ISSUE_STATE_PATH = nlState1;
+
+  await auditor.runCycle();
+  const ledger1Lines = fs.existsSync(nlLedger1) ? readJsonlLines(nlLedger1) : [];
+  ok('S2e un-sandboxed: the persistent log-ahead badge for ask-a task 2 files EXACTLY ONE real nl-issue.sh entry',
+    ledger1Lines.length === 1 && /log_ahead_task_not_flipped/.test(ledger1Lines[0].text || '') && /ask-a/.test(ledger1Lines[0].text || ''),
+    JSON.stringify(ledger1Lines));
+  ok('S2e2 the auditor\'s OWN dedup state file recorded the divergence id as filed',
+    fs.existsSync(nlState1) && Object.keys(JSON.parse(fs.readFileSync(nlState1, 'utf8')).filed || {}).some((id) => /log-ahead-auditor-fixture-a-2/.test(id)),
+    fs.existsSync(nlState1) ? fs.readFileSync(nlState1, 'utf8') : '(missing)');
+
+  await auditor.runCycle();
+  const ledger1LinesAfter = fs.existsSync(nlLedger1) ? readJsonlLines(nlLedger1) : [];
+  ok('S2f a SECOND cycle over the SAME still-open badge does NOT re-file (one filing per divergence lifetime, not per cycle)',
+    ledger1LinesAfter.length === 1, JSON.stringify(ledger1LinesAfter));
+
+  // ---- S2g: sandbox mode (HARNESS_SELFTEST=1 restored) -> NO filing at
+  // all, even though the exact same badge is still present.
+  const nlLedger2 = path.join(tmp, 'nl-issues-s2g.jsonl');
+  const nlState2 = path.join(tmp, 'nl-issue-state-s2g.json');
+  process.env.HARNESS_SELFTEST = '1';
+  process.env.NL_ISSUES_PATH = nlLedger2;
+  process.env.AUDITOR_NL_ISSUE_STATE_PATH = nlState2;
+  await auditor.runCycle();
+  ok('S2g sandbox mode (HARNESS_SELFTEST=1) files NOTHING, even with a real eligible badge present',
+    !fs.existsSync(nlLedger2), fs.existsSync(nlLedger2) ? fs.readFileSync(nlLedger2, 'utf8') : '(absent, as expected)');
+
+  // ---- S2h: recurrence escalation. Un-sandbox again, fresh ledger/state,
+  // and give the SAME divergence class a 3rd distinct id (tasks 3 and 4
+  // added to plan A, real progress-log.sh emit each, checkbox left
+  // unflipped) -- combined with the pre-existing task-2 badge, this cycle
+  // sees 3 DISTINCT log_ahead_task_not_flipped ids for the FIRST time under
+  // this fresh state file, which must fire exactly one extra escalation
+  // filing alongside the 3 individual ones (4 ledger lines total).
+  fs.appendFileSync(planAPath, '- [ ] 3. task three, not started.\n- [ ] 4. task four, not started.\n');
+  ['3', '4'].forEach((taskId) => {
+    const r = spawnSync(bashBin(), [emitCli, 'emit', '--type', 'task_done', '--ask', 'ask-a',
+      '--plan-slug', slugA, '--task-id', taskId, '--sha', 'deadbeef' + taskId,
+      '--summary', 'task ' + taskId + ' verified done', '--evidence-link', planAPath,
+      '--emitter', 'plan-lifecycle'], { env: spawnEnv(), encoding: 'utf8' });
+    ok('S2h (setup) real progress-log.sh emit for task ' + taskId + ' succeeded', r.status === 0, r.stderr);
+  });
+  const nlLedger3 = path.join(tmp, 'nl-issues-s2h.jsonl');
+  const nlState3 = path.join(tmp, 'nl-issue-state-s2h.json');
+  delete process.env.HARNESS_SELFTEST;
+  process.env.NL_ISSUES_PATH = nlLedger3;
+  process.env.AUDITOR_NL_ISSUE_STATE_PATH = nlState3;
+
+  await auditor.runCycle();
+  ok('S2h2 3 distinct badges now exist for ask-a (tasks 2, 3, 4) under log_ahead_task_not_flipped',
+    ['2', '3', '4'].every((tid) => auditor.getBadgesForAsk('ask-a').some((b) => b.divergence_class === 'log_ahead_task_not_flipped' && b.task_id === tid)));
+  const ledger3Lines = fs.existsSync(nlLedger3) ? readJsonlLines(nlLedger3) : [];
+  ok('S2h3 escalation at 3: exactly 4 ledger lines (3 individual filings + 1 escalation summary)',
+    ledger3Lines.length === 4, JSON.stringify(ledger3Lines.map((l) => l.text)));
+  ok('S2h4 exactly one of the 4 lines is the RECURRENCE escalation summary, naming the divergence class + a count of 3',
+    ledger3Lines.filter((l) => /RECURRENCE/.test(l.text || '') && /log_ahead_task_not_flipped/.test(l.text || '') && /\b3\b/.test(l.text || '')).length === 1,
+    JSON.stringify(ledger3Lines.map((l) => l.text)));
+  const state3 = JSON.parse(fs.readFileSync(nlState3, 'utf8'));
+  ok('S2h5 the state file marks the class permanently escalated', !!(state3.escalated && state3.escalated.log_ahead_task_not_flipped));
+
+  await auditor.runCycle();
+  const ledger3LinesAfter = fs.existsSync(nlLedger3) ? readJsonlLines(nlLedger3) : [];
+  ok('S2i a SECOND cycle over the SAME 3 badges does NOT re-escalate (still exactly 4 lines, not 5) -- ONE escalated summary filing, ever, per class',
+    ledger3LinesAfter.length === 4, JSON.stringify(ledger3LinesAfter.map((l) => l.text)));
+
+  // ---- S2j: the env kill-switch suppresses filing even when NOT sandboxed
+  // (a fresh ledger/state, un-sandboxed, but AUDITOR_NL_ISSUE_DISABLED=1).
+  const nlLedger4 = path.join(tmp, 'nl-issues-s2j.jsonl');
+  const nlState4 = path.join(tmp, 'nl-issue-state-s2j.json');
+  process.env.NL_ISSUES_PATH = nlLedger4;
+  process.env.AUDITOR_NL_ISSUE_STATE_PATH = nlState4;
+  process.env.AUDITOR_NL_ISSUE_DISABLED = '1';
+  await auditor.runCycle();
+  ok('S2j AUDITOR_NL_ISSUE_DISABLED=1 kill-switch files NOTHING even when un-sandboxed with real eligible badges present',
+    !fs.existsSync(nlLedger4), fs.existsSync(nlLedger4) ? fs.readFileSync(nlLedger4, 'utf8') : '(absent, as expected)');
+  delete process.env.AUDITOR_NL_ISSUE_DISABLED;
+
+  // Restore the default sandbox posture for every scenario after this point.
+  process.env.HARNESS_SELFTEST = '1';
+  delete process.env.NL_ISSUES_PATH;
+  delete process.env.AUDITOR_NL_ISSUE_STATE_PATH;
 
   // ======================================================================
   // Scenario 3 (Class C -- NEEDS-YOU resolved, pointer unchecked): a

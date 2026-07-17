@@ -24,7 +24,16 @@
 # meaningless).
 #
 # Activation rules:
-#   - Tool must be Edit or Write
+#   - Tool must be Edit, Write, or MultiEdit (cockpit-v2-push-materialized-
+#     store Task 5, 2026-07-17: the settings.json.template matcher AND this
+#     script's own TOOL_NAME dispatch below were BOTH "Edit|Write" only —
+#     a real hole, since a MultiEdit to a plan file fired NO plan-lifecycle
+#     splice at all. This hook never reads tool_input.edits either way (pre-
+#     and post-edit content both come from git HEAD / a plain disk read —
+#     see pre_edit_content()/the main path below), so MultiEdit needed no
+#     special-casing beyond widening both gates. Self-test scenario 21
+#     regression-locks this via the FULL end-to-end dispatch, not just
+#     process_lifecycle_event() called directly.
 #   - file_path must be under docs/plans/ (top-level)
 #   - file_path must NOT already be under docs/plans/archive/
 #   - file_path must end with .md
@@ -1487,6 +1496,45 @@ EOP
     exit 1
   fi
 
+  # ---- Scenario 21 (cockpit-v2-push-materialized-store Task 5 regression):
+  # a MultiEdit-shaped PostToolUse event routes through the FULL end-to-end
+  # dispatch (main path's TOOL_NAME case statement below + the settings-
+  # template matcher, which this scenario cannot exercise directly but the
+  # main-path case statement IS the same gate that matcher feeds). Every
+  # scenario above calls process_lifecycle_event() directly, which never
+  # touches the jq-based tool_name/file_path extraction at all -- this
+  # scenario is the ONLY one that drives the hook as its OWN subprocess via
+  # CLAUDE_TOOL_INPUT (the exact env-var path the main path reads FIRST,
+  # before falling back to stdin), so it is the only scenario that would
+  # have caught the real 2026-07-17 hole: pre-fix, "MultiEdit" hit the
+  # dispatch's `*) exit 0 ;;` branch and every assertion below would fail
+  # silently (no output, no archival).
+  cat > docs/plans/case21.md <<'EOP'
+# Plan: Case 21 (MultiEdit dispatch regression)
+Status: ACTIVE
+EOP
+  git add docs/plans/case21.md
+  git commit -q -m "plan: case21"
+  cat > docs/plans/case21.md <<'EOP'
+# Plan: Case 21 (MultiEdit dispatch regression)
+Status: COMPLETED
+EOP
+  MULTIEDIT_INPUT=$(printf '{"tool_name":"MultiEdit","tool_input":{"file_path":"%s","edits":[{"old_string":"ACTIVE","new_string":"COMPLETED"}]}}' "$TMP/docs/plans/case21.md")
+  OUT21=$(CLAUDE_TOOL_INPUT="$MULTIEDIT_INPUT" bash "$_PL_HOOK_DIR/plan-lifecycle.sh" 2>&1 || true)
+  if ! printf '%s' "$OUT21" | grep -q "auto-archived"; then
+    echo "FAIL scenario 21: a MultiEdit-shaped event did not route through to archival (the main-path TOOL_NAME case statement may still exclude MultiEdit). Got:" >&2
+    echo "$OUT21" >&2
+    exit 1
+  fi
+  if [ ! -f docs/plans/archive/case21.md ]; then
+    echo "FAIL scenario 21: MultiEdit-driven archival did not actually move the file." >&2
+    exit 1
+  fi
+  if [ -f docs/plans/case21.md ]; then
+    echo "FAIL scenario 21: source file still present after a MultiEdit-driven archival." >&2
+    exit 1
+  fi
+
   echo "OK ($SCRIPT_NAME --self-test)"
   exit 0
 fi
@@ -1503,7 +1551,7 @@ fi
 
 TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)
 case "$TOOL_NAME" in
-  Edit|Write) ;;
+  Edit|Write|MultiEdit) ;;
   *) exit 0 ;;
 esac
 

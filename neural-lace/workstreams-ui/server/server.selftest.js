@@ -1672,6 +1672,54 @@ async function main() {
     delete process.env.COORD_CLONE_DIR;
     delete process.env.EXPORT_HOSTNAME;
 
+    // ========================================================================
+    // Scenario 70 (cockpit-v2-push-materialized-store Task 6 — payload
+    // `description` carve-out): direct payload-schema.js checks, in the same
+    // "DELIBERATELY SELF-CONTAINED" style as the S27/S50 blocks above (no
+    // live server/fixture needed — these assert the schema module itself).
+    // ========================================================================
+    const cleanDetailWithDescription = JSON.parse(JSON.stringify(cleanDetail));
+    cleanDetailWithDescription.plan_rows = [{
+      plan_slug: 'x', plan_doc: { project: 'demo', path: 'docs/plans/x.md' }, tasks: [],
+      description: 'fix the plan-lifecycle.sh PostToolUse matcher so a MultiEdit routes through',
+    }];
+    const s70 = payloadSchema.validateAskDetail(cleanDetailWithDescription);
+    ok('S70 a `description` field containing a real hook/script identifier (plan-lifecycle.sh) PASSES validateAskDetail (the Task 6 carve-out)',
+      s70.ok, JSON.stringify(s70.errors));
+
+    const sameStringInSummary = JSON.parse(JSON.stringify(cleanDetail));
+    sameStringInSummary.summary = 'fix the plan-lifecycle.sh PostToolUse matcher so a MultiEdit routes through';
+    const s70a = payloadSchema.validateAskDetail(sameStringInSummary);
+    ok('S70a NEGATIVE FIXTURE: the IDENTICAL string in `summary` (not `description`) still FAILS validateAskDetail — the exemption is scoped BY KEY, not by content',
+      s70a.ok === false && s70a.errors.some((e) => /gate\/hook identifier/.test(e)),
+      JSON.stringify(s70a.errors));
+
+    const sameStringInNarrative = JSON.parse(JSON.stringify(cleanDetail));
+    sameStringInNarrative.narrative = [{ ts: '2026-07-01T00:00:00Z', summary: 'a posttooluse hook update', evidence_link: '' }];
+    const s70b = payloadSchema.validateAskDetail(sameStringInNarrative);
+    ok('S70b NEGATIVE FIXTURE: a hook-lifecycle-name string ("posttooluse") in `narrative[].summary` (not `description`) still FAILS validateAskDetail',
+      s70b.ok === false && s70b.errors.some((e) => /gate\/hook identifier/.test(e)),
+      JSON.stringify(s70b.errors));
+
+    const overCapDetail = JSON.parse(JSON.stringify(cleanDetail));
+    overCapDetail.plan_rows = [{
+      plan_slug: 'x', plan_doc: { project: 'demo', path: 'docs/plans/x.md' }, tasks: [],
+      description: 'x'.repeat(payloadSchema.DENYLIST_EXEMPT_MAX_LEN + 1),
+    }];
+    const s70c = payloadSchema.validateAskDetail(overCapDetail);
+    ok('S70c NEGATIVE FIXTURE: a `description` over the ' + payloadSchema.DENYLIST_EXEMPT_MAX_LEN + '-char cap FAILS validateAskDetail (an ERROR, never a silent truncation)',
+      s70c.ok === false && s70c.errors.some((e) => /exceeds max length/.test(e)),
+      JSON.stringify(s70c.errors));
+
+    const atCapDetail = JSON.parse(JSON.stringify(cleanDetail));
+    atCapDetail.plan_rows = [{
+      plan_slug: 'x', plan_doc: { project: 'demo', path: 'docs/plans/x.md' }, tasks: [],
+      description: 'x'.repeat(payloadSchema.DENYLIST_EXEMPT_MAX_LEN),
+    }];
+    const s70d = payloadSchema.validateAskDetail(atCapDetail);
+    ok('S70d a `description` at EXACTLY the cap length PASSES (boundary check: cap is inclusive)',
+      s70d.ok, JSON.stringify(s70d.errors));
+
   } finally {
     server.close();
     cache.stop();

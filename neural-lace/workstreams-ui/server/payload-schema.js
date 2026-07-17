@@ -101,6 +101,34 @@ function containsDenylistedIdentifier(value) {
 // ----------------------------------------------------------------------
 const HREF_KEYS = new Set(['evidence_link', 'raw_link']);
 
+// ----------------------------------------------------------------------
+// DENYLIST_EXEMPT_KEYS — cockpit-v2-push-materialized-store Task 6: a
+// KNOWING, DELIBERATE widening of the anti-noise constraint (hard
+// constraint 1), scoped to EXACTLY this one field name.
+//
+// WHY THIS EXISTS: `description` carries verbatim PLAN-CONTENT prose (a
+// plan's own task text / scope text, quoted for display) — and plan
+// content in THIS repo routinely and legitimately names the very
+// mechanisms GATE_HOOK_DENYLIST_PATTERNS exists to keep OUT of rendered
+// UI copy (e.g. a task literally titled "fix the plan-lifecycle.sh
+// PostToolUse matcher", or scope prose mentioning "posttooluse"). Running
+// the denylist scan against `description` would make it impossible to
+// ever render this plan's own task list without a false-positive
+// validation failure — the scan is right to exist for operator-authored
+// STATUS/narrative copy (summary, narrative_excerpt), but plan content
+// text is a different animal: it is expected to name scripts/hooks/gates
+// because that IS the subject matter.
+//
+// The length cap below is the compensating constraint: since the
+// denylist can no longer bound this field's content, a cap on RAW SIZE
+// still bounds how much arbitrary text can ride through the payload
+// under this carve-out (over-cap is a validation ERROR, never a silent
+// truncation — truncating would just hide the size problem from the
+// caller instead of surfacing it).
+// ----------------------------------------------------------------------
+const DENYLIST_EXEMPT_KEYS = new Set(['description']);
+const DENYLIST_EXEMPT_MAX_LEN = 2000;
+
 function isAbsoluteHref(value) {
   if (typeof value !== 'string' || value === '') return true; // empty is a legitimate "no link yet"
   if (/^https?:\/\//i.test(value)) return true;
@@ -163,6 +191,11 @@ const DETAIL_ALLOWED_KEYS = new Set([
   'drift_badges',
   // drift-badge fields (Task 12) — see LANDING_ALLOWED_KEYS comment above.
   'divergence_class', 'detail_ref', 'de_emphasize',
+  // cockpit-v2-push-materialized-store Task 6 — plan-content prose (a
+  // task/scope excerpt quoted verbatim for display). See the
+  // DENYLIST_EXEMPT_KEYS block above for why this field is ALSO exempt
+  // from the gate/hook-identifier scan (by key, not by payload).
+  'description',
 ]);
 
 // ----------------------------------------------------------------------
@@ -186,8 +219,20 @@ function walk(node, allowedKeys, pathLabel, errors) {
       }
       const val = node[key];
       if (typeof val === 'string') {
-        const hit = containsDenylistedIdentifier(val);
-        if (hit) errors.push('gate/hook identifier leaked at ' + here + ' (matched ' + hit + '): ' + JSON.stringify(val).slice(0, 120));
+        // DENYLIST_EXEMPT_KEYS — by KEY, exactly the HREF_KEYS precedent
+        // above: `description` skips the gate/hook-identifier scan (see the
+        // block comment at DENYLIST_EXEMPT_KEYS's definition for why), but
+        // is bounded instead by a raw length cap. Over-cap is a validation
+        // ERROR (never a silent truncation — truncating would hide the
+        // size problem rather than surface it).
+        if (DENYLIST_EXEMPT_KEYS.has(key)) {
+          if (val.length > DENYLIST_EXEMPT_MAX_LEN) {
+            errors.push('exempt field exceeds max length (' + DENYLIST_EXEMPT_MAX_LEN + ' chars) at ' + here + ': ' + val.length + ' chars');
+          }
+        } else {
+          const hit = containsDenylistedIdentifier(val);
+          if (hit) errors.push('gate/hook identifier leaked at ' + here + ' (matched ' + hit + '): ' + JSON.stringify(val).slice(0, 120));
+        }
         if (HREF_KEYS.has(key) && !isAbsoluteHref(val)) {
           errors.push('relative href at ' + here + ' (must be absolute): ' + JSON.stringify(val));
         }
@@ -220,4 +265,6 @@ module.exports = {
   LANDING_ALLOWED_KEYS,
   DETAIL_ALLOWED_KEYS,
   HREF_KEYS,
+  DENYLIST_EXEMPT_KEYS,
+  DENYLIST_EXEMPT_MAX_LEN,
 };
