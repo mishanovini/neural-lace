@@ -845,3 +845,5 @@ relaunch + resume demonstrated once**. Ordered; ⊘ marks operator-touch points.
 Deferred to P2 by name (so deferral is a decision, not a leak): engine-check relaunch branch + the
 orchestrator singleton lock (§4.5), Circuit `automation-mode.json` full-auto flip + unattended
 deploy path (§5), Team tab un-hide + resting-state rendering (§3), Tier-2 window derivation (§4.3).
+
+**D1 folder confirmation (operator, 2026-07-17): "create as proposed"** — one Drive folder "Circuit Meeting Notes" in the Pocket Tech account (sub-folders included; membership IS the contract), docs named `YYYY-MM-DD <meeting name>`. Folder creation + ID pinning happens at Circuit P1 kickoff (connector task).
