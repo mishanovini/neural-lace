@@ -28,14 +28,21 @@
 
 const http = require('http');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const projects = require('../config/projects.js');
 const { DeriveCache, runWhy } = require('./derive-cache.js');
 const reconciler = require('./reconciler.js');
 const payloadSchema = require('./payload-schema.js');
-const planParse = require('./plan-parse.js');
+// cockpit-v2-push-materialized-store Task 2 / amendment A4 — every
+// local-disk derivation function (plan-row computation, ask-registry fold,
+// session heartbeat classification, etc.) now lives in this requireable
+// module so server/export-state.js can re-derive the SAME state WITHOUT
+// requiring server.js (server.js's own module load binds an HTTP port
+// unconditionally — see the `server.listen(...)` call near the bottom of
+// this file). server.js is a pure consumer of derive-lib.js below; nothing
+// in this file re-implements what derive-lib.js already owns.
+const deriveLib = require('./derive-lib.js');
 // Ask-rooted-workstreams-p1 Task 12 — background drift auditor. Mounted
 // (start()'d) only after a successful port bind (same single-instance-guard
 // timing `cache.start()` already uses, below) and read on every /api/asks +
@@ -182,48 +189,12 @@ function paneResponse(sub, entry, extraArgsLabel) {
 // / HEARTBEAT_STATE_DIR, else the real $HOME/.claude/state/* paths + the
 // real main-checkout NEEDS-YOU.md.
 // ============================================================
-function progressLogStateDir() {
-  return process.env.PROGRESS_LOG_STATE_DIR ||
-    path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'progress-logs');
-}
-function askRegistryFile() {
-  const dir = process.env.ASK_REGISTRY_STATE_DIR ||
-    path.join(process.env.HOME || os.homedir(), '.claude', 'state');
-  return path.join(dir, 'ask-registry.jsonl');
-}
-
-// readJsonlLines(file) — best-effort JSONL reader: a missing file or a
-// corrupt/unparseable line is silently skipped (Edge Cases: "readers skip
-// bad lines and surface a diagnostics-tab count; landing page never 500s
-// on one bad record" — the diagnostics-tab count itself is Task 16's job;
-// this reader just never crashes on bad input).
-function readJsonlLines(file) {
-  let raw;
-  try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { return []; }
-  return raw.split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((l) => { try { return JSON.parse(l); } catch (_) { return null; } })
-    .filter(Boolean);
-}
-
-function readAskRegistry() { return readJsonlLines(askRegistryFile()); }
-
-function readAskEvents(askId) {
-  const dir = progressLogStateDir();
-  const file = path.join(dir, (askId || 'unlinked') + '.jsonl');
-  return readJsonlLines(file);
-}
-
-// mainRepoRoot() — best-effort "this repo's root" for resolving plan files
-// and NEEDS-YOU.md when a per-ask `repo` field is absent/unreachable.
-// config/projects.js's selfRepoRoot() already computes exactly this (the
-// conv-tree-ui repo root, worktree-pool-aware) — reused rather than
-// re-derived (no git dependency at read time, matches this module's own
-// no-oracle-shelling-on-the-landing-path budget).
-function mainRepoRoot() {
-  try { return projects.selfRepoRoot(); } catch (_) { return process.cwd(); }
-}
+// progressLogStateDir/askRegistryFile/readJsonlLines/readAskRegistry/
+// readAskEvents/mainRepoRoot now live in derive-lib.js (cockpit-v2 Task 2 —
+// the exporter needs these same reads without requiring this HTTP-bound
+// module); this file calls straight through, e.g. `deriveLib.mainRepoRoot()`
+// below, for behavior-identical results.
+function mainRepoRoot() { return deriveLib.mainRepoRoot(); }
 
 function needsYouMdPath() {
   return process.env.NEEDS_YOU_MD_PATH || path.join(mainRepoRoot(), 'NEEDS-YOU.md');
@@ -242,15 +213,9 @@ function operatorTodoPath() {
   return process.env.OPERATOR_TODO_PATH || path.join(mainRepoRoot(), 'docs', 'operator-todo.md');
 }
 
-function dispatchProvenanceStateDir() {
-  return process.env.DISPATCH_PROVENANCE_STATE_DIR ||
-    path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'dispatch-provenance');
-}
-
-function heartbeatStateDir() {
-  return process.env.HEARTBEAT_STATE_DIR ||
-    path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'heartbeats');
-}
+// dispatchProvenanceStateDir/heartbeatStateDir now live in derive-lib.js
+// (their only two callers, readDispatchProvenanceMarkers and
+// classifySessions, moved there too — see below).
 
 // ============================================================
 // Task 14 — "My To-Do pane". Reads/writes docs/operator-todo.md: an
@@ -731,150 +696,19 @@ function buildBacklogPayload() {
   };
 }
 
-// ----------------------------------------------------------------------
-// foldAskRegistry() — read ALL ask-registry.jsonl records and fold them
-// per the reader FOLD CONTRACT documented in ask-registry.sh's header:
-// "last-write-wins per NON-EMPTY field, in timestamp order" for the mutable
-// scalar fields, PLUS an accumulated `plan_slugs[]` (every `plan_linked`
-// record's plan_slug, deduped — a list, never a last-wins scalar, since an
-// ask can link >1 plan; MULTI-PLAN CARDS, review round 2).
-// ----------------------------------------------------------------------
-function foldAskRegistry() {
-  const lines = readAskRegistry().slice().sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-  const byAsk = {};
-  lines.forEach((rec) => {
-    if (!rec || !rec.ask_id) return;
-    const cur = byAsk[rec.ask_id] || { plan_slugs: [] };
-    ['repo', 'project', 'summary', 'verbatim_ref', 'status'].forEach((f) => {
-      if (rec[f]) cur[f] = rec[f];
-    });
-    if (rec.record_type === 'plan_linked' && rec.plan_slug && cur.plan_slugs.indexOf(rec.plan_slug) === -1) {
-      cur.plan_slugs.push(rec.plan_slug);
-    }
-    if (rec.record_type === 'created' && rec.ts) {
-      cur.created_ts = rec.ts;
-    }
-    byAsk[rec.ask_id] = cur;
-  });
-  Object.keys(byAsk).forEach((k) => {
-    if (!byAsk[k].status) byAsk[k].status = 'active';
-  });
-  return byAsk;
-}
+// foldAskRegistry() now lives in derive-lib.js (cockpit-v2 Task 2 — the
+// exporter folds the SAME registry); call sites below use
+// `deriveLib.foldAskRegistry()`.
 
-// ----------------------------------------------------------------------
-// Plan-file task counting (plan progress bars / drill-down rows). The
-// grammar + resolver themselves now live in the ONE shared module
-// (./plan-parse.js, cockpit-v2-push-materialized-store Task 1) — used by
-// this file AND auditor.js, replacing what used to be two independently
-// duplicated, numeric-id-only, archive-blind implementations. See
-// plan-parse.js's own header for the full "why" + the exact corpus delta.
-// ----------------------------------------------------------------------
-
-// countPlanTasks(absPath) — thin wrapper preserving this file's prior
-// return shape (an array, or null on any read failure) for its one call
-// site below; loadPlanFile's honest absent/damaged distinction is
-// available to future consumers via planParse.loadPlanFile directly.
-function countPlanTasks(absPath) {
-  const r = planParse.loadPlanFile(absPath);
-  return r.ok ? r.tasks : null;
-}
-
-// resolveAskPlanAbsPath(repo, slug) — the ask's own `repo` first, falling
-// back to this repo's own root (the common case for harness-development
-// asks like this one) — the SAME priority order this file always used.
-// planParse.resolvePlanAbsPath now checks `docs/plans/` AND
-// `docs/plans/archive/` under EACH root (M5's fix — this file's own prior
-// resolver never checked archive/ at all, unlike auditor.js's), so an ask
-// whose plan has since been archived is now found here too.
-function resolveAskPlanAbsPath(repo, slug) {
-  if (repo) {
-    const p = planParse.resolvePlanAbsPath(repo, slug);
-    if (p) return p;
-  }
-  return planParse.resolvePlanAbsPath(mainRepoRoot(), slug);
-}
-
-// projectDocRefFor(absPath) — best-effort {project, path} pair resolving
-// absPath against config/projects.js's loadProjects() map (deepest matching
-// root wins — same technique ask-registry.sh's _ar_resolve_project uses in
-// its own node snippet), so the UI (Task 13) can drill down through the
-// EXISTING /api/doc + /api/doc/open resolver (ux-review amendment 6: "no
-// pane grows its own link handling") instead of a bespoke absolute-path
-// opener. This {project, path} shape is the ONE named exception to the
-// absolute-href law — see payload-schema.js's header for why.
-function projectDocRefFor(absPath) {
-  if (!absPath) return null;
-  try {
-    const map = projects.loadProjects();
-    const target = path.resolve(absPath);
-    let best = null, bestLen = -1;
-    Object.keys(map).forEach((k) => {
-      let root;
-      try { root = path.resolve(map[k]); } catch (_) { return; }
-      if (target === root || target.indexOf(root + path.sep) === 0) {
-        if (root.length > bestLen) { best = k; bestLen = root.length; }
-      }
-    });
-    if (!best) return null;
-    const rel = path.relative(path.resolve(map[best]), target).split(path.sep).join('/');
-    return { project: best, path: rel };
-  } catch (_) { return null; }
-}
-
-// computePlanRows(reg, events) — per linked plan: the real checkbox state
-// from the plan FILE (ground truth) crossed with this ask's own
-// `task_started`/`task_done` events to derive in-flight (constraint 2 law
-// 4: "in-progress is derived, never declared" — a task is in_flight when it
-// has a task_started event and NO task_done event yet, and its checkbox is
-// still unflipped; Task 12's auditor is the CONTINUOUS reconciler of this —
-// this is the correct-at-read-time snapshot Task 11 owns).
-function computePlanRows(reg, events) {
-  const slugs = (reg.plan_slugs || []).slice();
-  const startedByPlan = {};
-  const doneEvByPlan = {};
-  events.forEach((e) => {
-    if (!e || !e.plan_slug || !e.task_id) return;
-    if (e.type === 'task_started') {
-      startedByPlan[e.plan_slug] = startedByPlan[e.plan_slug] || {};
-      startedByPlan[e.plan_slug][e.task_id] = true;
-    }
-    if (e.type === 'task_done') {
-      doneEvByPlan[e.plan_slug] = doneEvByPlan[e.plan_slug] || {};
-      doneEvByPlan[e.plan_slug][e.task_id] = e.evidence_link || '';
-    }
-  });
-  // Task 12 — every task-level drift badge (Task 12's auditor) the ask
-  // carries gets routed to the matching plan_slug+task_id row here; the
-  // detail payload's ask-level `drift_badges` (buildAskDetailPayload) is
-  // the full set, this is the per-row subset a future click-through
-  // (Task 13) can attach to the right task.
-  const askBadges = auditor.getBadgesForAsk(reg.ask_id);
-  return slugs.map((slug) => {
-    const absPath = resolveAskPlanAbsPath(reg.repo, slug);
-    const planTasks = absPath ? countPlanTasks(absPath) : null;
-    const startedSet = startedByPlan[slug] || {};
-    const doneMap = doneEvByPlan[slug] || {};
-    const tasks = (planTasks || []).map((t) => {
-      const inFlight = !t.done && !!startedSet[t.id] && !doneMap[t.id];
-      const rowBadges = askBadges.filter((b) => b.plan_slug === slug && b.task_id === t.id);
-      return { id: t.id, done: t.done, in_flight: inFlight, evidence_link: doneMap[t.id] || '', drift_badges: rowBadges };
-    });
-    return { plan_slug: slug, plan_doc: projectDocRefFor(absPath), tasks: tasks };
-  });
-}
-
-function aggregatePlanProgress(planRows) {
-  let done = 0, inFlight = 0, total = 0;
-  planRows.forEach((row) => {
-    row.tasks.forEach((t) => {
-      total++;
-      if (t.done) done++;
-      else if (t.in_flight) inFlight++;
-    });
-  });
-  return { done: done, in_flight: inFlight, not_started: total - done - inFlight, total: total };
-}
+// Plan-file task counting/derivation (countPlanTasks, resolvePlanAbsPath,
+// projectDocRefFor, computePlanRows, aggregatePlanProgress) now lives in
+// derive-lib.js (cockpit-v2 Task 2) — call sites below use
+// `deriveLib.computePlanRows(reg, events, auditor.getBadgesForAsk)` /
+// `deriveLib.aggregatePlanProgress(planRows)`. The one behavior change is
+// non-observable here: computePlanRows takes badges via an explicit
+// callback arg instead of reading the module-scope `auditor` singleton
+// directly — this file supplies `auditor.getBadgesForAsk` at every call
+// site, so the badges attached to each row are identical to before.
 
 // ----------------------------------------------------------------------
 // NEEDS-YOU.md parsing — Task 11's "waiting items with §3 context blocks"
@@ -1030,123 +864,12 @@ function buildArtifacts(events) {
   }));
 }
 
-// ----------------------------------------------------------------------
-// Dispatch-provenance markers (Task 3, landed) + sessions/lineage.
-// ----------------------------------------------------------------------
-function readDispatchProvenanceMarkers() {
-  const dir = dispatchProvenanceStateDir();
-  let files;
-  try { files = fs.readdirSync(dir); } catch (_) { return []; }
-  const out = [];
-  files.forEach((f) => {
-    if (!/\.json$/.test(f)) return;
-    try {
-      const obj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-      if (obj) out.push(obj);
-    } catch (_) { /* corrupt marker — skip, never crash */ }
-  });
-  return out;
-}
-
-// buildSessions(askId, events, markers) — union of every session this ask's
-// own events name (ask_registered/session_attached/task_started) PLUS the
-// dispatch-provenance markers matching this ask, each with a lineage edge
-// (parent dispatching session -> child_id). HONEST LIMITATION (documented,
-// not papered over — mirrors dispatch-provenance.sh's own header): the
-// dispatched child's REAL session id is not resolvable until Task 9's
-// attach-session lands; `child_id` is rendered as its own lineage node
-// (role "child") until then, never silently dropped.
-function buildSessions(askId, events, markers) {
-  const bySession = {};
-  function touch(sid, patch) {
-    if (!sid) return;
-    const prev = bySession[sid] || { session_id: sid, role: '', resumed_from: '', plan_slug: '', task_id: '' };
-    bySession[sid] = Object.assign({}, prev, patch, { role: (patch.role && !prev.role) ? patch.role : (prev.role || patch.role || '') });
-  }
-  events.forEach((e) => {
-    if (!e) return;
-    if (e.type === 'ask_registered' && e.session_id) touch(e.session_id, { role: 'origin' });
-    if (e.type === 'session_attached' && e.session_id) touch(e.session_id, { role: 'attached', resumed_from: e.session_id === '' ? '' : (bySession[e.session_id] || {}).resumed_from || '' });
-    if (e.type === 'task_started' && e.session_id) touch(e.session_id, { role: 'dispatcher', plan_slug: e.plan_slug || '', task_id: e.task_id || '' });
-  });
-  markers.filter((m) => m && m.ask_id === askId).forEach((m) => {
-    if (m.session_id) touch(m.session_id, { role: 'dispatcher', plan_slug: m.plan_slug || '', task_id: m.task_id || '' });
-    if (m.child_id && !bySession[m.child_id]) {
-      bySession[m.child_id] = {
-        session_id: m.child_id, role: 'child', resumed_from: m.session_id || '',
-        plan_slug: m.plan_slug || '', task_id: m.task_id || '',
-      };
-    }
-  });
-  return Object.keys(bySession).map((k) => bySession[k]);
-}
-
-// classifySessions(sessionIds) — reuses hooks/lib/session-heartbeat-lib.sh's
-// hb_classify (live|stale|throttled|crashed|missing) via a single batched
-// bash spawn, mirroring derive-cache.js's bashBin()/spawnEnv() conventions
-// (absolute-path bash + login shell — the 2026-07-09 lobotomy lessons).
-// Best-effort: any failure (missing lib, spawn error, timeout) resolves an
-// EMPTY map rather than hanging or crashing the detail request — this is
-// off the landing path entirely (only /api/ask/<id> calls it), so its cost
-// never touches the GET /api/asks p95 budget.
-function sessionHeartbeatLibPath() {
-  return process.env.SESSION_HEARTBEAT_LIB ||
-    path.join(__dirname, '..', '..', '..', 'adapters', 'claude-code', 'hooks', 'lib', 'session-heartbeat-lib.sh');
-}
-function shQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
-
-function classifySessions(sessionIds) {
-  return new Promise((resolve) => {
-    const ids = (sessionIds || []).filter(Boolean);
-    if (!ids.length) return resolve({});
-    const lib = sessionHeartbeatLibPath();
-    if (!fs.existsSync(lib)) return resolve({});
-    let bashBin, spawnEnv;
-    try {
-      const dc = require('./derive-cache.js');
-      bashBin = dc.bashBin; spawnEnv = dc.spawnEnv;
-    } catch (_) { return resolve({}); }
-    const dir = heartbeatStateDir();
-    const script = [
-      'source ' + shQuote(lib) + ' 2>/dev/null || exit 0',
-      'for sid in ' + ids.map(shQuote).join(' ') + '; do',
-      '  f=' + shQuote(dir) + '"/$sid.json"',
-      '  cls="$(hb_classify "$f" 2>/dev/null)"',
-      '  printf "%s\\t%s\\n" "$sid" "${cls:-missing}"',
-      'done',
-    ].join('\n');
-    let settled = false;
-    const done = (result) => { if (!settled) { settled = true; resolve(result); } };
-    let child;
-    try { child = spawn(bashBin(), ['-lc', script], { env: spawnEnv() }); }
-    catch (_) { return done({}); }
-    let out = '';
-    child.stdout.on('data', (d) => { out += d; });
-    child.on('error', () => done({}));
-    child.on('close', () => {
-      const map = {};
-      out.split('\n').forEach((line) => {
-        const idx = line.indexOf('\t');
-        if (idx === -1) return;
-        const sid = line.slice(0, idx).trim();
-        const cls = line.slice(idx + 1).trim();
-        if (sid) map[sid] = cls || 'missing';
-      });
-      done(map);
-    });
-    // 180s budget: this environment's own login-shell bash spawns (bashBin()
-    // + '-lc', the same 2026-07-09-lobotomy-lesson pattern every other
-    // child spawn in this file uses) have been directly measured at 94s and
-    // 119s during this task's own build on this machine (likely the same
-    // AV/behavior-monitoring scan-on-spawn characteristic already diagnosed
-    // on this machine per the operator's own prior notes) — matches
-    // derive-cache.js's own precedent of generous per-subcommand budgets
-    // (180-360s) for exactly this class of slow Windows/Git-Bash spawn. A
-    // short timeout here would misclassify a merely-slow spawn as "no
-    // sessions available" on every request.
-    setTimeout(() => done({}), 180000);
-  });
-}
+// readDispatchProvenanceMarkers/buildSessions/sessionHeartbeatLibPath/
+// shQuote/classifySessions now live in derive-lib.js (cockpit-v2 Task 2 —
+// the exporter needs the raw-heartbeat sibling of classifySessions,
+// listRawHeartbeats, which lives alongside these in the same module for a
+// single source of truth on session derivation). Call sites below use
+// `deriveLib.<name>(...)`.
 
 // ----------------------------------------------------------------------
 // Landing payload — GET /api/asks. Defaults `status:active`; done/dismissed/
@@ -1158,8 +881,8 @@ function classifySessions(sessionIds) {
 // files.
 // ----------------------------------------------------------------------
 function buildAskCard(reg, events) {
-  const planRows = computePlanRows(reg, events);
-  const planProgress = aggregatePlanProgress(planRows);
+  const planRows = deriveLib.computePlanRows(reg, events, auditor.getBadgesForAsk);
+  const planProgress = deriveLib.aggregatePlanProgress(planRows);
   const waitingCount = computeWaitingCount(events);
   const lastEvent = events.length ? events[events.length - 1] : null;
   const activityTs = lastEvent ? (lastEvent.ts || '') : (reg.created_ts || '');
@@ -1180,14 +903,14 @@ function buildAskCard(reg, events) {
 const COMPLETED_STATUSES = ['done', 'dismissed', 'merged'];
 
 function buildAsksLandingPayload(statusFilter) {
-  const registry = foldAskRegistry();
+  const registry = deriveLib.foldAskRegistry();
   const filter = statusFilter || 'active';
   const activeCards = [];
   const completedCards = [];
   Object.keys(registry).forEach((askId) => {
     const reg = registry[askId];
     reg.ask_id = askId;
-    const events = readAskEvents(askId).sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    const events = deriveLib.readAskEvents(askId).sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
     const card = buildAskCard(reg, events);
     if (COMPLETED_STATUSES.indexOf(card.status) !== -1) {
       completedCards.push(card);
@@ -1224,19 +947,19 @@ function buildAsksLandingPayload(statusFilter) {
 // Detail payload — GET /api/ask/<id>.
 // ----------------------------------------------------------------------
 function buildAskDetailPayload(askId) {
-  const registry = foldAskRegistry();
+  const registry = deriveLib.foldAskRegistry();
   const reg = registry[askId];
   if (!reg) return Promise.resolve(null);
   reg.ask_id = askId;
-  const events = readAskEvents(askId).sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-  const planRows = computePlanRows(reg, events);
+  const events = deriveLib.readAskEvents(askId).sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+  const planRows = deriveLib.computePlanRows(reg, events, auditor.getBadgesForAsk);
   const narrative = events.map((e) => ({ ts: e.ts || '', summary: narrativeSummary(e), evidence_link: e.evidence_link || '' }));
   const waitingItems = buildWaitingItems(events);
   const artifacts = buildArtifacts(events);
-  const markers = readDispatchProvenanceMarkers();
-  const sessions = buildSessions(askId, events, markers);
+  const markers = deriveLib.readDispatchProvenanceMarkers();
+  const sessions = deriveLib.buildSessions(askId, events, markers);
   const sessionIds = sessions.map((s) => s.session_id).filter(Boolean);
-  return classifySessions(sessionIds).then((clsMap) => ({
+  return deriveLib.classifySessions(sessionIds).then((clsMap) => ({
     ok: true,
     ask_id: askId,
     summary: reg.summary || '',
@@ -1275,7 +998,7 @@ function runAskRegistryCli(args) {
       const dc = require('./derive-cache.js');
       bashBin = dc.bashBin; spawnEnv = dc.spawnEnv;
     } catch (e) { return resolve({ ok: false, error: 'derive-cache unavailable: ' + String(e && e.message || e) }); }
-    const cmd = 'bash ' + shQuote(cli) + ' ' + args.map(shQuote).join(' ');
+    const cmd = 'bash ' + deriveLib.shQuote(cli) + ' ' + args.map(deriveLib.shQuote).join(' ');
     let settled = false;
     const done = (r) => { if (!settled) { settled = true; resolve(r); } };
     let child;
@@ -1359,7 +1082,7 @@ const server = http.createServer((req, res) => {
       req.on('end', () => {
         let input;
         try { input = bodyBuf ? JSON.parse(bodyBuf) : {}; } catch (_) { return sendJson(res, 400, { ok: false, error: 'bad json' }); }
-        const registry = foldAskRegistry();
+        const registry = deriveLib.foldAskRegistry();
         if (!registry[askId]) return sendJson(res, 404, { ok: false, error: 'ask not found: ' + askId });
         const action = input.action;
         const args = lifecycleArgsFor(action, askId, input.into);

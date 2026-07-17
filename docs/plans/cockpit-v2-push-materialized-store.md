@@ -104,16 +104,29 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
   silent stale render — Verification: full
 
 ## Files to Modify/Create
-- `neural-lace/workstreams-ui/server/plan-parse.js` (task 1, in flight), `server/export-state.js`
-  (new), `server/server.js` (peer-view read + payload carve-out), `server/payload-schema.js`,
-  `server/auditor.js` (C3b), `web/asks.js`/`web/app.css` (peer rows)
-- `adapters/claude-code/scripts/coord-push.sh`/`coord-pull.sh` (cadence wiring only),
-  scheduled-task installer or health-tick splice, `adapters/claude-code/settings.json.template`
-  (MultiEdit matcher), `adapters/claude-code/hooks/plan-lifecycle.sh` (shared fixture corpus check)
+- `neural-lace/workstreams-ui/server/*.js` — every file this plan touches lives directly in this
+  one directory: `plan-parse.js` (task 1, in flight), `export-state.js` (new), `derive-lib.js`
+  (new — task 2's A4 refactor: the requireable local-disk derivation library server.js is
+  repointed at, so the exporter never requires server.js), `server.js` (peer-view read + payload
+  carve-out), `payload-schema.js`, `auditor.js` (C3b). Full-path glob used deliberately (a
+  same-directory-shorthand bullet like `server/server.js` does not match the scope-enforcement-
+  gate's repo-root-relative staged paths — fixed here after task 2 tripped on it).
+- `neural-lace/workstreams-ui/web/asks.js`, `neural-lace/workstreams-ui/web/app.css` (peer rows)
+- `adapters/claude-code/scripts/coord-push.sh`, `adapters/claude-code/scripts/coord-pull.sh`
+  (cadence wiring only), scheduled-task installer or health-tick splice,
+  `adapters/claude-code/settings.json.template` (MultiEdit matcher),
+  `adapters/claude-code/hooks/plan-lifecycle.sh` (shared fixture corpus check)
 - `adapters/claude-code/manifest.json` (exporter/wiring entries with §10 fields)
 
 ## In-flight scope updates
-(none yet)
+- 2026-07-17: `neural-lace/workstreams-ui/server/derive-lib.js` — task 2's own text (amendment
+  A4) explicitly mandated creating this file (factoring computePlanRows/aggregatePlanProgress/
+  countPlanTasks/resolvePlanAbsPath/classifySessions + their direct dependencies out of
+  server.js), but the Files to Modify/Create table above omitted it; added to both sections in
+  the same commit as the task-2 build per scope-enforcement-gate's "update the plan" path. Also
+  rewrote the section's server/* bullets from directory-shorthand to full repo-root-relative
+  paths/globs — the shorthand form doesn't match the gate's staged-path comparison at all,
+  which would have blocked every future task in this plan touching those files, not just task 2.
 
 ## Assumptions
 - The private coordination repo exists and both machines hold SSH access (coord-push.sh header
