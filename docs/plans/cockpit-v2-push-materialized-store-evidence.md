@@ -481,3 +481,136 @@ The other three classes (`unmatched_dispatch`, `orphaned_waiting_item`, `unknown
 
 ### Assumptions
 "Fire-and-forget" in the task's phrasing is interpreted as "the auditor never retries, never propagates an nl-issue failure into `backfill_errors`/diagnostics, and never lets nl-issue's outcome affect the cycle's own success" — NOT as "literally unawaited" — `fileNlIssueDivergences` is `await`ed sequentially inside `runCycle()` (matching this file's own documented house convention, "sequential, never parallel-fan-out bash spawns," already applied to `backfillTaskDone`/`backfillAskDone`/`scanRepoForMerges`), bounded by the SAME `runCli()` killTree-on-timeout reaping used everywhere else in this file. This was a deliberate judgment call over a literal "spawn and don't await" reading, made because an un-awaited spawn would make the self-test's own assertions racy (the ledger write might not have landed by the time `await auditor.runCycle()` resolves) without any compensating benefit, since the auditor already runs on a relaxed, off-request-path cadence where a bounded synchronous nl-issue.sh call (a fast file-append script) costs nothing observable. `detail_ref` is assumed to be a permanently-stable identity for "the same divergence" for as long as its underlying cause remains unresolved (e.g. `'drift-' + askId + '-log-ahead-' + slug + '-' + t.id` never changes shape for the same ask/plan/task triple) — if a future change to `auditAsk()` ever altered a `detail_ref` construction pattern, this task's dedup would treat the new id as a "new" divergence and re-file it once, which is the same re-identification behavior every other `detail_ref` consumer (the UI's click-through, Task 13) already implicitly depends on. The escalation message's inclusion of the raw sorted id list is assumed acceptable content for nl-issue.sh's ledger (an internal operator-facing triage surface, NOT the ask-tree UI payload governed by `payload-schema.js`'s anti-noise law) — mentioning `auditor`/mechanism names/detail_ref strings in this text is fine specifically because nl-issue.sh's ledger is a different, internal-tooling surface than the one `GATE_HOOK_DENYLIST_PATTERNS` protects.
+
+## Task 5 — VERIFICATION (task-verifier, independent re-derivation)
+
+EVIDENCE BLOCK
+==============
+Task ID: 5
+Task description: [serial] plan-lifecycle MultiEdit matcher fix (independent real hole, P8): settings matcher `Edit|Write` -> `Edit|Write|MultiEdit`; regression scenario in its self-test — Verification: mechanical
+Verified at: 2026-07-17T18:04:06Z
+Verifier: task-verifier agent (independent re-derivation against origin/master @23cd526; builder commit d1eb48a cherry-picked to 23cd526)
+Commit: 23cd526a58df235bfa63c36b41f8d58cf27b2b3d
+
+Oracle: derived (pre-existing) — plan-lifecycle.sh's own --self-test suite (20 pre-existing scenarios green before this change) + the settings.json.template JSON contract; PLUS a builder-authored regression scenario (Scenario 21) whose teeth I proved independently by falsification.
+Verification level: mechanical
+Comprehension-gate: delegated — comprehension-reviewer dispatched IN PARALLEL by the orchestrator (rung-3 plan); the builder's "## Comprehension Articulation — Task 5" is present in this evidence file. This verifier does not adjudicate the comprehension gate; the orchestrator flips the checkbox on BOTH gates. (Note: as Verification: mechanical, Step-0 routing would independently exempt this task from the R2+ comprehension-gate.)
+
+Checks run:
+1. settings.json.template matcher fix
+   Command: jq -r of the plan-lifecycle.sh PostToolUse matcher in adapters/claude-code/settings.json.template
+   Output: "Edit|Write|MultiEdit" (git show 23cd526 confirms was "Edit|Write", changed at template line 407)
+   Result: PASS
+2. Internal main-path TOOL_NAME dispatch fix (the SECOND, deeper gap)
+   Command: git show 23cd526 -- adapters/claude-code/hooks/plan-lifecycle.sh (dispatch case at line ~1554)
+   Output: `case "$TOOL_NAME" in Edit|Write) ;;` -> `Edit|Write|MultiEdit) ;;` — the identical Edit|Write-only gate one layer below the matcher, changed in the same commit. Both gaps present and both fixed (verified BOTH, per the task instruction).
+   Result: PASS
+3. settings.json.template valid JSON
+   Command: jq empty adapters/claude-code/settings.json.template
+   Output: exit 0 (valid JSON)
+   Result: PASS
+4. Full self-test (21 scenarios incl. Scenario 21 driving the hook as a real subprocess via CLAUDE_TOOL_INPUT with a MultiEdit-shaped payload)
+   Command: bash adapters/claude-code/hooks/plan-lifecycle.sh --self-test
+   Output: "OK (plan-lifecycle.sh --self-test)", exit 0. Distinct FAIL-scenario guards span 1..21; case21.md fixture created + archived by the subprocess dispatch (asserts "auto-archived", file moved to archive/, source gone).
+   Result: PASS
+5. FALSIFICATION / RED demonstration — proves Scenario 21 has teeth against the internal-dispatch hole
+   Command: mirrored adapters/claude-code into scratchpad, reverted ONLY the internal dispatch (`Edit|Write|MultiEdit) ;;` -> `Edit|Write) ;;`), then ran the copy's --self-test
+   Output: "FAIL scenario 21: a MultiEdit-shaped event did not route through to archival (the main-path TOOL_NAME case statement may still exclude MultiEdit)", exit 1
+   Result: PASS (the test FAILS RED when the fix is absent — the internal-dispatch fix is genuinely load-bearing, not cosmetic; fixing the matcher alone would have left the hook silently no-op'ing one layer deeper)
+
+Runtime verification: test adapters/claude-code/hooks/plan-lifecycle.sh::--self-test (21/21, incl. Scenario 21)
+Runtime verification: mechanical adapters/claude-code/settings.json.template::jq-empty-valid-json (exit 0; matcher == Edit|Write|MultiEdit)
+Runtime verification: file adapters/claude-code/hooks/plan-lifecycle.sh::internal-dispatch-Edit-Write-MultiEdit
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — both the settings matcher AND the hook's own internal TOOL_NAME dispatch were confirmed widened to Edit|Write|MultiEdit (git show + jq); the self-test is green at 21/21 with Scenario 21 exercising the real jq-based subprocess dispatch; and an adversarial revert of the internal dispatch made Scenario 21 fail RED ("did not route through to archival"), proving the regression lock has teeth. Template validates as JSON. Falsification attempted and survived.
+
+## Task 6 — VERIFICATION (task-verifier, independent re-derivation)
+
+EVIDENCE BLOCK
+==============
+Task ID: 6
+Task description: [serial] Payload contract: `description` into `DETAIL_ALLOWED_KEYS` + a `DENYLIST_EXEMPT_KEYS` set with a length cap (by KEY, as HREF_KEYS does — m1), stated plainly as a knowing widening of the anti-noise constraint scoped to plan content — Verification: mechanical
+Verified at: 2026-07-17T18:04:06Z
+Verifier: task-verifier agent (independent re-derivation against origin/master @23cd526)
+Commit: 23cd526a58df235bfa63c36b41f8d58cf27b2b3d
+
+Oracle: derived (pre-existing) — server.selftest.js (160 pre-existing scenarios green before this change) + the new S70-S70d scenarios whose by-key differential (S70 exempt-key PASS vs S70a/S70b same-string-different-key FAIL) is the correctness proof.
+Verification level: mechanical
+Comprehension-gate: delegated — comprehension-reviewer dispatched IN PARALLEL by the orchestrator (rung-3 plan); the builder's "## Comprehension Articulation — Task 6" is present in this evidence file. This verifier does not adjudicate the comprehension gate; the orchestrator flips the checkbox on BOTH gates. (Note: as Verification: mechanical, Step-0 routing would independently exempt this task from the R2+ comprehension-gate.)
+
+Checks run:
+1. `description` added to DETAIL_ALLOWED_KEYS
+   Command: git show 23cd526 -- neural-lace/workstreams-ui/server/payload-schema.js
+   Output: 'description' added to DETAIL_ALLOWED_KEYS (with rationale comment); NOT added to LANDING_ALLOWED_KEYS (scoped as the task specifies).
+   Result: PASS
+2. DENYLIST_EXEMPT_KEYS honored in walk() BY KEY with a 2000-char cap
+   Output: DENYLIST_EXEMPT_KEYS = Set of ['description']; DENYLIST_EXEMPT_MAX_LEN = 2000. walk() branches on DENYLIST_EXEMPT_KEYS.has(key) -> skips containsDenylistedIdentifier and applies a length-cap check (val.length > cap -> pushes 'exempt field exceeds max length...'); the else branch runs the denylist scan UNCHANGED for every other key. Cap is inclusive (> not >=, so exactly 2000 passes). HREF_KEYS absolute-href check runs independently. Both new constants exported. Mirrors the HREF_KEYS-by-key precedent, as required.
+   Result: PASS
+3. server.selftest.js — full suite 165/0 (160 base + 5 new S70-series)
+   Command: node server/server.selftest.js (clean run, alone)
+   Output: "self-test summary: 165 passed, 0 failed"; S70/S70a/S70b/S70c/S70d all PASS.
+   Result: PASS
+4. By-KEY-not-by-content proof (the negative fixtures)
+   Output: S70 (description containing "plan-lifecycle.sh") PASSES; S70a (IDENTICAL string in `summary`) FAILS with a gate/hook-identifier error; S70b ("posttooluse" in narrative[].summary) FAILS with a gate/hook-identifier error; S70c (2001 chars) FAILS with an exceeds-max-length error; S70d (exactly 2000) PASSES. The S70-vs-S70a/S70b differential proves the exemption is scoped by key, not by content.
+   Result: PASS
+
+Runtime verification: test neural-lace/workstreams-ui/server/server.selftest.js::S70-S70d (full suite 165/165)
+Runtime verification: file neural-lace/workstreams-ui/server/payload-schema.js::DENYLIST_EXEMPT_KEYS-description-cap-2000
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — the carve-out is honored in walk() by key with an inclusive 2000-char cap (over-cap = a pushed validation error, never a silent truncation); `description` is in DETAIL_ALLOWED_KEYS; the full suite is green at 165/0; and the by-key scoping is demonstrated by the S70-vs-S70a/S70b differential (identical denylisted string PASSES under `description`, FAILS under `summary`/`narrative[].summary`). A first run showed 160/5 under heavy parallel test load (concurrent with the spawn-heavy plan-lifecycle RED test); a clean re-run alone was 165/0 and the 5 transients were pre-existing non-S70 scenarios, so Task 6's deliverable (S70-S70d) passed in every run. NOTE (out of scope, not a Task-6 defect): server.selftest.js has scenarios that can transiently fail under CPU contention from concurrent spawn-heavy suites on this machine.
+
+## Task 7 — VERIFICATION (task-verifier, independent re-derivation)
+
+EVIDENCE BLOCK
+==============
+Task ID: 7
+Task description: [serial] C3b — wire the auditor's REAL divergences (log_ahead_task_not_flipped et al.) into `nl-issue.sh` with dedup + recurrence escalation (the operator's actual auto-healing intent; self-inflicted-drift reporting died with the projector) — Verification: full
+Verified at: 2026-07-17T18:04:06Z
+Verifier: task-verifier agent (independent re-derivation against origin/master @23cd526)
+Commit: 23cd526a58df235bfa63c36b41f8d58cf27b2b3d
+
+Oracle: derived (pre-existing) — auditor.js --self-test (18 pre-existing scenarios green before this change) + 12 new C3b scenarios exercised END-TO-END against a REAL nl-issue.sh (sandboxed ledger, not a stub); PLUS the file's OWN divergence-class table (lines 33-36) as the authority on the four real divergence_class constants; PLUS an adversarial filesystem check of the real operator ledger as the sandbox-gate oracle.
+Verification level: full
+Comprehension-gate: delegated — comprehension-reviewer dispatched IN PARALLEL by the orchestrator (rung-3 plan); the builder's "## Comprehension Articulation — Task 7" is present in this evidence file. This verifier does not adjudicate the comprehension gate; the orchestrator flips the checkbox on BOTH gates.
+
+Checks run:
+1. auditor.js --self-test — 30/0 (18 base + 12 C3b), zero FAIL lines
+   Command: node server/auditor.js --self-test
+   Output: "self-test summary: 30 passed, 0 failed". C3b scenarios all PASS: S2e (exactly 1 real nl-issue.sh entry, un-sandboxed), S2e2 (dedup state records the id), S2f (2nd cycle does NOT re-file — lifetime dedup), S2g (HARNESS_SELFTEST=1 sandbox files nothing), S2h setup x2 (real progress-log.sh emits), S2h2 (3 distinct badges), S2h3 (escalation at 3 -> exactly 4 ledger lines), S2h4 (exactly 1 RECURRENCE line naming the class + count 3), S2h5 (class permanently escalated in state), S2i (2nd cycle does NOT re-escalate — one summary per class ever), S2j (AUDITOR_NL_ISSUE_DISABLED=1 kill-switch files nothing).
+   Result: PASS
+2. Class-name resolution note is CORRECT against the auditor's own divergence table (the comprehension win)
+   Command: grep -n "divergence_class:" auditor.js + read the DIVERGENCE-CLASS TABLE header (lines 33-36)
+   Output: the four ACTUAL badge-construction constants pushed by auditAsk() are `log_ahead_task_not_flipped` (L526), `unmatched_dispatch` (L552), `orphaned_waiting_item` (L569), `unknown_provenance` (L583) — EXACTLY the four BADGE rows of the divergence table and EXACTLY the members of NL_ISSUE_BADGE_CLASSES. These differ from the plan task's prose paraphrases (task_started_no_dispatch / waiting_no_ground_truth / provenance_unknown); a literal-string-from-plan implementation would have filed NOTHING for three of the four classes. The builder resolved to the real code constants — verified correct.
+   Result: PASS
+3. Mechanism: dedup + recurrence escalation + sandbox + kill-switch (code read)
+   Output: fileNlIssueDivergences() files per NL_ISSUE_BADGE_CLASSES badge whose detail_ref is unfiled (persisted st.filed keyed by detail_ref = lifetime dedup); escalation counts DISTINCT ids per class within a rolling 7-day window from the PERSISTED timestamps, files ONE summary the first time count>=3, guarded by st.escalated[cls] (never repeats); isNlIssueSandboxed() = HARNESS_SELFTEST OR AUDITOR_DISABLED (the two flags set by auditor's own self-test and by server.selftest.js's entire run respectively — a single-flag gate would leak one suite); AUDITOR_NL_ISSUE_DISABLED kill-switch checked first; wired into runCycle() after the merge-scan loop, try/catch so it never wedges the cycle.
+   Result: PASS
+4. ADVERSARIAL sandbox-gate confirmation — no leak into the REAL operator ledger
+   Command: captured ~/.claude/state/nl-issues.jsonl baseline (117 lines, md5 3081c32e..., last ts 2026-07-17T17:13:02Z) BEFORE all test runs; after running server.selftest.js x2 + auditor.js --self-test + plan-lifecycle self-test x2, re-checked.
+   Output: ledger grew by exactly ONE line (118) — the new entry (ts 2026-07-17T17:48:53Z) is from a DIFFERENT concurrent session (project "infallible-montalcini-26a8f0", unrelated PS5.1-parse-safety prose), NOT auditor-formatted. Grep of the ENTIRE real ledger: 0 lines matching the auditor filing prefixes ("auditor drift ["/"auditor RECURRENCE ["), 0 lines matching any test-fixture identifier (log-ahead-auditor-fixture / log_ahead_task_not_flipped / auditor-fixture-a). The real ~/.claude/state/auditor-nl-issue-state.json remains ABSENT (any un-sandboxed auditor filing would have created it via saveNlIssueState). The sandbox gate HELD; the ledger delta is attributable entirely to an unrelated session.
+   Result: PASS
+5. server.selftest.js re-run after auditor changes — 165/0 (no regression; AUDITOR_DISABLED gate suppresses filing in that suite's Scenario 28 direct runCycle())
+   Result: PASS
+
+DEPENDENCY TRACE
+================
+Step 1: a real, persistent log-ahead divergence exists (task_done emitted, checkbox unflipped) — badge pushed by auditAsk()
+  -> Verified at: auditor.js:526 (divergence_class 'log_ahead_task_not_flipped'); S2/S2d fixture
+Step 2: runCycle() calls fileNlIssueDivergences(newBadgesByAsk, ...) after the merge-scan loop, un-sandboxed in production
+  -> Verified at: auditor.js runCycle() wiring (git show hunk @ ~L943); gated by isNlIssueSandboxed()/AUDITOR_NL_ISSUE_DISABLED
+Step 3: exactly one nl-issue.sh ledger line written for that divergence, deduped for its lifetime; escalation summary at 3-in-7-days
+  -> Verified at: S2e (1 line, real nl-issue.sh), S2f (no re-file), S2h3/S2h4 (escalation -> 4 lines, 1 RECURRENCE), S2i (no re-escalate)
+Step 4: NO write to the real operator ledger during any sandboxed self-test run
+  -> Verified at: adversarial filesystem check (0 auditor-format lines, 0 fixture ids, auditor-nl-issue-state.json absent)
+
+Runtime verification: test neural-lace/workstreams-ui/server/auditor.js::--self-test (30/30, incl. 12 C3b scenarios against a real sandboxed nl-issue.sh)
+Runtime verification: sql-equivalent filesystem check ~/.claude/state/nl-issues.jsonl::no-auditor-format-line-leak (0 matches for the auditor filing prefixes; auditor-nl-issue-state.json absent)
+Runtime verification: file neural-lace/workstreams-ui/server/auditor.js::NL_ISSUE_BADGE_CLASSES-real-constants
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — auditor.js --self-test is green at 30/0 including all 12 C3b scenarios exercised end-to-end against a REAL sandboxed nl-issue.sh (not a stub): real filing, lifetime dedup, 3-in-7-days one-shot escalation, HARNESS_SELFTEST sandbox suppression, and the AUDITOR_NL_ISSUE_DISABLED kill-switch. The class-name resolution is confirmed correct against the file's own divergence-class table and the actual badges.push() sites (the four REAL divergence_class constants, not the plan's paraphrases). Adversarial confirmation: after all my test runs the real operator ledger contains ZERO auditor-formatted lines and ZERO test-fixture identifiers, and the real auditor-nl-issue-state.json remains absent — the two-flag sandbox gate held; the sole ledger delta traces to an unrelated concurrent session. Falsification of the sandbox gate attempted and survived.
