@@ -1,115 +1,138 @@
-# Cockpit v2 — cross-machine plan store (push-projected, staleness-detecting)
+# Plan: Cockpit v2 — cross-machine state EXPORT (local truth stays local)
 
-Status: DRAFT (v3 — operator chose STORE; incorporates the architecture-reviewer's mandatory corrections)
+Status: DRAFT (v4 — reshaped per docs/reviews/2026-07-17-cockpit-v2-architecture-review-v3.md;
+v4 implements that review's own Phase-0 candidate design)
 Mode: build
 rung: 3
 lifecycle-schema: v2
 ask-id: <id | none — no linked ask>
 prd-ref: none
+Architecture-review: docs/reviews/2026-07-17-cockpit-v2-architecture-review-v3.md (v3 verdict
+NEEDS-RESHAPING → v4 is the prescribed reshape; re-review required before ACTIVE)
 
-## The decision, and the ONLY thing that justifies it
-The `architecture-reviewer` verdict (`docs/reviews/2026-07-14-cockpit-v2-architecture-review.md`) was
-**NEEDS-RESHAPING**, on a measurement: the read-time parse the store exists to eliminate costs **3.5 ms**
-for every active plan, while **one spawn** of the proposed projector costs **~87 ms**. It named exactly
-one condition under which the store nonetheless wins:
+## Goal
 
-> *"(i) a **non-Node / cross-machine consumer** must read plan state — then an on-disk store is genuinely
-> justified, and THAT is the argument the plan should be making."*
+Give machine B's cockpit an honest view of machine A's working state — plan progress, IN-FLIGHT
+work, session liveness — without regressing the local surface (correct-by-construction read-time
+parse) and without inventing a drift class. Operator-settled: cross-machine is a CURRENT
+requirement (two users, two machines; Circuit's Team tab consumes this).
 
-**The operator has now asserted that condition: cross-machine is a CURRENT requirement, not a future one.**
-So the store is justified — **but only as a cross-machine artifact.** This changes the design:
+## User-facing Outcome
 
-> ### ⚠ CRITICAL — the v2 store did not actually deliver cross-machine
-> v2 put projections in `~/.claude/state/plan-projections/` — **machine-local**. That delivers *nothing*
-> cross-machine, and therefore fails the only test that justifies it. Plan *files* already sync via git;
-> what does NOT sync is the ask/event/session state. **The store must therefore SYNC.**
->
-> **Use the channel this harness already has:** `broadcast-active-session.sh` publishes cross-computer
-> state to dedicated git refs (`harness/active-sessions/<hostname>`) on the remote — *not* to the working
-> tree. The plan store uses the same pattern: a **dedicated ref**, not a working-tree file. This is also
-> the only shape that dodges the landmine the panel flagged (a per-second-mutating blob committed into a
-> repo with 59 worktrees and a public mirror).
+Either operator opens their cockpit and sees, alongside their exact local state: the peer
+machine's plans with done/in-flight per task and session liveness, each row labeled "as of Xm ago
+on <host> (<branch>, unmerged/merged)" — and a loud named state when the peer hasn't been seen
+("peer unreachable since <ts>"), never a silent stale snapshot.
 
-**If cross-machine is ever dropped as a requirement, this store must be deleted and replaced by the
-mtime/SHA-keyed in-memory cache** — which the reviewer proved is superior on every other axis. Record
-that as the retirement condition.
+## Scope
 
-## Mandatory corrections from the architecture review (non-negotiable)
-- **C1 — `in_flight` STAYS a read-time join.** It is derived from the event JSONL, *not* the plan
-  markdown; the plan-file staleness stamp cannot see it. Projecting it would show "zero in-flight while
-  three builders run" *stamped `fresh`* — asserting the lie is current. It also deletes trigger (b) and
-  with it the same-plan write race.
-- **C2 — the HTTP request path NEVER forks and NEVER writes.** It stats, compares, and renders `stale`.
-  Healing happens ONLY in the existing in-process auditor loop (the single writer). A fork on the request
-  path re-incarnates the documented "cockpit lobotomy" (lying rc=0, empty stdout).
-- **C3 — git-side drift is a METRIC, never an auto-filed issue.** Cherry-pick IS the orchestrator's
-  default flow, so *every orchestrated task completion arrives via the drift path*. Filing those would
-  DoS the improvement ledger with reports of a thing that cannot be fixed. **Partition:**
-  ARCHITECTURALLY-EXPECTED (git-side: cherry-pick/pull/merge/checkout/`git mv`) → counted, never filed.
-  UNEXPECTED (hook registered but did not fire; matcher hole; out-of-band working-tree write) → filed.
-- **C3b — point the auto-healing loop at the auditor's REAL divergences.** It already computes genuine
-  harness bugs (`log_ahead_task_not_flipped` et al.) that are **wired to nothing**. That is the operator's
-  actual intent; self-inflicted drift is not a finding about Neural Lace.
-- **M1 — use a CONTENT HASH, not mtime+size.** `source_size` is a no-op (a checkbox flip is
-  byte-size-preserving: `- [ ] 1.` → `- [x] 1.`, 27 bytes both). SHA-256 over all active plans costs
-  **1.4 ms** — cheaper than parsing them. Stamp-ordering must be `stat → read → stat`, retry on mismatch,
-  or a TOCTOU produces a **permanently unhealable** lie.
-- **M4 — the honest cause classifier is two forks:** `git hash-object <plan>` vs `git rev-parse HEAD:<plan>`.
-  Equal ⇒ a git operation wrote it (expected → metric). Not equal ⇒ an out-of-band write (unexpected →
-  file it). The 10-value enum was fiction.
-- **M5 — task 1 owns the RESOLVER too, not just the parser.** `server.js:789` searches only `docs/plans/`;
-  `auditor.js:247` searches `docs/plans/` AND `archive/`. That is the half that actually diverges today.
-- **m1 — the denylist carve-out is by KEY, not provenance.** `payload-schema.js walk()` scans string
-  VALUES and cannot observe where a string came from. Add `description` to `DETAIL_ALLOWED_KEYS` + a
-  `DENYLIST_EXEMPT_KEYS` set (as `HREF_KEYS` already does), with a length cap — and state plainly that
-  this knowingly widens the anti-noise constraint.
-- **m2 — the UI polish items do not ride this plan.** Split into their own.
+IN: the per-machine EXPORT (Node CLI exporter using the shared parser + the server's derive
+logic), coord-repo transport wiring (cadence — coord-push/coord-pull are currently invoked by
+NOTHING; this plan owns wiring them), the peer-view UI (age-labeled rows, named absence states),
+the plan-lifecycle MultiEdit matcher fix, the payload `description` carve-out, C3b (auditor's
+REAL divergences → nl-issue), Task 1's shared parser/resolver (already building — shape-invariant).
+OUT: any local-GUI store consumption (local reads stay on the parse); any hook-push projector or
+drift/heal/classifier machinery (deleted by design); Circuit P1 (does NOT depend on this plan —
+review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
 
 ## Tasks
 
-- [ ] 1. [serial] **The ONE parser + the ONE resolver (shared module).** The highest-value item in the
-  plan and a prerequisite for every shape. Today there are THREE divergent plan grammars (server + auditor
-  accept numeric task ids only; `plan-lifecycle.sh` also accepts lettered — and **176 lettered-id task
-  lines exist today, invisible to the server**) and TWO resolvers that disagree about `archive/`. Build one
-  parser + one resolver, used by every consumer. Handles: numeric AND lettered ids, continuation lines, the
-  `[serial]` prefix, the `— Verification: X` suffix, and correct JSON escaping (a `"` in a description must
-  not corrupt anything). `--self-test` incl. a malformed plan → `damaged`, never a silent zero —
+- [ ] 1. [parallel] **ONE parser + ONE resolver** (`server/plan-parse.js`; server.js + auditor.js
+  repointed; lettered ids — 208 lines currently invisible — now parse; archive/ in the resolver
+  union). ALREADY DISPATCHED (shape-invariant). Bash consumers conform via a SHARED fixture corpus
+  both grammars must pass in --self-test (F7) — plan-lifecycle.sh gains the fixture check, not a
+  rewrite — Verification: mechanical
+- [ ] 2. [serial] **The exporter** — a small Node CLI (`server/export-state.js`): re-derives from
+  local disk at export time using the shared parser + the SAME event-log join the server uses
+  (`in_flight` computed at export = the join RESULT snapshot, F1), plus session liveness (heartbeat
+  classification). Emits per-(machine, repo, slug) records + a sessions block, stamped `hostname`,
+  `branch`, `head_sha`, `dirty`, `exported_at`, `schema_version` (F4). Hash-gated: unchanged estate
+  ⇒ no write. Server-independent (spawnable with the server down). Atomic writes. `--self-test`
+  incl. quotes/newlines in descriptions and a zero-plan estate — Verification: mechanical
+- [ ] 3. [serial] **Transport = the coordination repo** (F3, F8 binding constraint: the PRIVATE
+  `workstreams-coordination` repo via git+SSH — never a mirrored remote, never the working tree,
+  never the gh Contents API). Wire the cadence THIS plan owns: exporter + `coord-push.sh` invoked
+  on an existing scheduled surface (health-tick or a dedicated scheduled task, ≥600s throttle
+  honored); `coord-pull.sh` on the same cadence for the reader side. Numbers in writing (staleness
+  contract, F2): export ≤60s after change (hash check), publish ≤600s throttle, pull ≤600s ⇒
+  peer view ≤ ~20min worst-case behind the peer's disk, and ALWAYS labeled — Verification: full
+- [ ] 4. [serial] **Peer view in the cockpit** — the server reads the LOCAL coord clone (no fork,
+  no network on the request path — the clone is a directory); renders peer rows with provenance +
+  age from receive-time (never the peer's wall clock alone, F2): "as of Xm ago on <host>
+  (<branch>, unmerged)"; named states: `fresh-ish (≤20m)` / `aging (>20m)` / `peer unreachable
+  since <ts>` / `no data yet`; a peer's UNMERGED state never renders as plain done (F4, §1).
+  Local cards stay 100% on local truth; same-slug peer copies are labeled provenance rows, never
+  substituted — Verification: full
+- [ ] 5. [serial] **plan-lifecycle MultiEdit matcher fix** (independent real hole, P8): settings
+  matcher `Edit|Write` → `Edit|Write|MultiEdit`; regression scenario in its self-test —
   Verification: mechanical
-- [ ] 2. [serial] **Projection schema + projector (content-hashed).** One projection per plan, written
-  atomically. Carries `schema_version`, `source_path`, **`source_sha256`** (NOT size), `last_projected_ts`,
-  `status`, `tasks[{id, description, done, evidence_link}]`, `progress{...}`. **NO `in_flight`** (C1).
-  Stamp ordering per M1 — Verification: mechanical
-- [ ] 3. [serial] **CROSS-MACHINE SYNC — the thing that justifies this store.** Publish/consume projections
-  via a dedicated git ref, following `broadcast-active-session.sh`'s existing cross-computer pattern. NEVER
-  the working tree. Each machine publishes its own projections; the cockpit merges the set and shows which
-  machine each came from. **Acceptance: a plan whose work is happening on the OTHER machine appears,
-  current, in this machine's cockpit** — Verification: full
-- [ ] 4. [serial] **Push triggers (bounded, time-boxed).** `plan-lifecycle.sh` on `Edit|Write|**MultiEdit**`
-  (the missing matcher is a real hole — fix it), start-plan, close-plan. Subshelled + non-fatal AND with an
-  explicit timeout (`|| true` bounds errors, not runtime). Honest classification in the plan text: **for
-  orchestrated work this is NOT a push — cherry-pick fires no hook — it is a bake+detect.** Say so —
+- [ ] 6. [serial] **Payload contract**: `description` into `DETAIL_ALLOWED_KEYS` + a
+  `DENYLIST_EXEMPT_KEYS` set with a length cap (by KEY, as HREF_KEYS does — m1), stated plainly as
+  a knowing widening of the anti-noise constraint scoped to plan content — Verification: mechanical
+- [ ] 7. [serial] **C3b — wire the auditor's REAL divergences** (log_ahead_task_not_flipped et al.)
+  into `nl-issue.sh` with dedup + recurrence escalation (the operator's actual auto-healing intent;
+  self-inflicted-drift reporting died with the projector) — Verification: full
+- [ ] 8. [serial] **Acceptance (end-user-advocate runtime)** — two-machine simulation acceptable
+  (a second clone standing in for machine B): flip a checkbox + start a builder on "A" → within
+  the written cadence, "B"'s cockpit shows the new done state AND the in-flight row, age-labeled;
+  kill the export loop → "B" degrades to "peer unreachable", never a silent stale render —
   Verification: full
-- [ ] 5. [serial] **Staleness detection + honest states, READ-ONLY.** The request path hashes/stats and
-  compares; renders `fresh` / `stale` / `unknown` / `damaged`. **It never forks and never writes** (C2).
-  **A missing projection NEVER renders as `0/0`** — Verification: full
-- [ ] 6. [serial] **The auto-healing feedback loop (corrected).** Heal in the auditor (the single writer).
-  Classify cause via `hash-object` vs `HEAD:` (M4). **Git-side = METRIC. Unexpected = auto-file via
-  `nl-issue.sh` → triage → build-ready row, escalating on recurrence.** AND wire the auditor's EXISTING
-  real divergences into that loop (C3b) — that is the actual auto-healing the operator asked for. Silent
-  healing remains FORBIDDEN — Verification: full
-- [ ] 7. [serial] **GUI reads the store; `in_flight` stays a read-time join.** Delete `countPlanTasks`.
-  Preserve `drift_badges`. Payload contract per m1. Backfill batched (NOT fork-per-plan) — Verification: full
 
-## Acceptance
-1. **A plan being worked on the OTHER machine shows up, current, in this cockpit.** (The justification.)
-2. Dispatch 3 builders → the cockpit shows 3 in-flight (read-time join preserved).
-3. `git checkout` a plan behind the hook's back → detected, healed, counted as an EXPECTED metric — **and
-   NOT auto-filed as a defect.**
-4. Simulate a hook that is registered but did not fire → UNEXPECTED → auto-filed, escalating at 3×.
-5. Delete/corrupt a projection → `unknown`/`damaged`, never `0/0`.
-6. `grep` proves the request path never spawns a process and never writes a projection.
-7. A description containing `"`, a newline, and `plan-lifecycle.sh` renders safely and is not denylist-rejected.
+## Files to Modify/Create
+- `neural-lace/workstreams-ui/server/plan-parse.js` (task 1, in flight), `server/export-state.js`
+  (new), `server/server.js` (peer-view read + payload carve-out), `server/payload-schema.js`,
+  `server/auditor.js` (C3b), `web/asks.js`/`web/app.css` (peer rows)
+- `adapters/claude-code/scripts/coord-push.sh`/`coord-pull.sh` (cadence wiring only),
+  scheduled-task installer or health-tick splice, `adapters/claude-code/settings.json.template`
+  (MultiEdit matcher), `adapters/claude-code/hooks/plan-lifecycle.sh` (shared fixture corpus check)
+- `adapters/claude-code/manifest.json` (exporter/wiring entries with §10 fields)
 
-## Retirement condition
-If cross-machine ceases to be a requirement, **delete this store** and replace it with the mtime/SHA-keyed
-in-memory cache — proven superior on every other axis (3.5 ms, zero drift classes, absence-is-null).
+## In-flight scope updates
+(none yet)
+
+## Assumptions
+- The private coordination repo exists and both machines hold SSH access (coord-push.sh header
+  verified; ADR 051). If absent on a machine, the exporter no-ops loudly (named state on the peer).
+- The event-log join and heartbeat classification are reusable as libs from the server modules
+  without the HTTP server running (verify at task 2; if not, factor them — that refactor is in
+  scope).
+- ≤20min worst-case peer staleness satisfies the consumer (Circuit's own sketch accepts ~10min
+  transport; the Team tab is a glance surface, not a control loop).
+
+## Edge Cases
+- Peer clock skew → age from local receive-time (F2). Absent peer data → named state, never empty.
+- Same slug on both machines → labeled provenance rows; local truth drives the local card (F4).
+- Exporter runs during a builder's plan edit → hash-gate re-runs next cadence; export is atomic.
+- Coord push auth failure → git+SSH fails LOUDLY (non-zero), surfaced by the wiring's existing
+  alert path — the silent-freeze class (F3 pre-mortem) is structurally excluded.
+- Dirty/unmerged peer branch state → `dirty`+`branch` fields render "unmerged"; never plain done.
+
+## Acceptance Scenarios
+(see task 8 — the two-machine flip/in-flight/unreachable triple is the §4 demonstration)
+
+## Out-of-scope scenarios
+- Sub-minute cross-machine freshness (would need a different transport class entirely — named in
+  the review's crossover analysis; not the requirement).
+- Multi-user identity/authz (Circuit P2's Team tab owns that).
+
+## Closure Contract
+Closes when: tasks 1-8 verified (task-verifier + rung-3 comprehension), the two-machine acceptance
+demonstrated, manifest GREEN, and the retirement note recorded: **retire the export if
+cross-machine ceases to be a requirement — exercisable cheaply only until Circuit P2 consumes the
+export; after that, retirement is a Circuit change too (F9 decay clause).**
+
+## Testing Strategy
+Exporter + parser self-tests (sandboxed fixtures); the shared grammar fixture corpus run by BOTH
+the Node parser and plan-lifecycle.sh's checker; server.selftest.js extended for the peer-view
+read (fixture coord clone); the acceptance simulation per task 8. No new test infrastructure.
+
+## Walking Skeleton
+Task 2's exporter run once by hand producing one export file consumed by task 4's reader from a
+fixture clone — end-to-end thinnest slice before any cadence wiring.
+
+## Decisions Log
+- (2026-07-17) v4 adopts the v3 review's Phase-0 candidate wholesale: local-reads-truth,
+  single-exporter per machine, snapshot-with-age, coord transport. The projector/store/drift
+  machinery from v2/v3 is DELETED, not deferred — an export re-derived at export time has no drift
+  class to manage. Reversible: the export artifact and reader are additive; nothing local changes
+  shape.
