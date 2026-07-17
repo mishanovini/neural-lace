@@ -78,3 +78,23 @@ see which sub-components have been built, which are in process, which not starte
   to always be modifiable by me at any time." (No mandatory confirm ceremony — auto-name always,
   operator-editable always; drops the "auto — unreviewed" gate idea in favor of edit-anytime.)
 - **Project facet vs swimlane:** undecided, discuss further.
+
+## Round 4 — operator final refinements (2026-07-17/18, verbatim intent)
+
+- **INBOX CONTEXT MANDATE (load-bearing):** "every item waiting on me makes it very clear where
+  that item comes from. It must provide me context, always. I have still been finding plenty of
+  requests waiting on me that provide me no context at all and oftentimes do not even provide me
+  an actual question. Every request from me absolutely needs to provide me the context I need to
+  understand the issue, understand any trade-offs if I need to make a decision, and make it easy
+  to determine what's needed in order to answer the question."
+- **Tree reading (1):** NOT a strict waterline — "easy to look at the entire list in tree form and
+  see which items have been completed, which are in progress, and which have not yet been
+  started." Progress bars on in-progress items welcome if cheap ("we do not need to over-engineer
+  additional granularity"). Expandable "down to the level of granularity that is actually tracked."
+- **Discovered-work insertions (2):** accepted ("Good point").
+- **Completed collapse (3):** recently-completed must stay VISIBLE IN PLACE; operator floats:
+  collapse only when an entire node completes, and/or age out after a day~week into "ancient
+  history"; asked for a recommendation.
+- **(4):** "I do not want to maintain a water line. I just want statuses on every individual item."
+- **(A) Complete reiterated:** "deployed in production, fully functional, nothing else to be done."
+- **(B) Harness chores:** "do not really add any value to my view — leave them out."
