@@ -1070,3 +1070,17 @@ Anthropic-side" theme).
 **Method (the reviewer's own sweep):** `git log -N --format=%s` over a representative trailing window (N=300-400 has been the working sample size), bucket every `^fix(\(|:)` match into `{incident-shaped, review/audit-remediation, refactor/typo, other}`, report the total share and the per-bucket breakdown. Promote to blocking ONLY if EITHER (a) the over-fire class (non-incident maintenance/review-remediation fixes) is separable by a trigger refinement (e.g. excluding a `fix(review)`/`fix(wave-*)`-shaped scope, or requiring an incident/finding-ID reference for the gate to even apply), OR (b) a fresh measurement (post parser-reach fix) shows the over-fire class is acceptably rare. If neither holds, keep warn-mode and re-run the sweep at the next calibration checkpoint.
 
 **Cross-refs:** `adapters/claude-code/hooks/evidence-before-fix-gate.sh` (header comment, WARN-MODE section), `adapters/claude-code/doctrine/evidence-before-fix.md` (PROMOTION CONDITION), `adapters/claude-code/doctrine/diagnosis.md`, `adapters/claude-code/manifest.json`'s `evidence-before-fix` entry (`honest_status`, `fp_expectation`).
+
+## NL-ISSUES-TRIAGE-20260716 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 52 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 7d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## NL-ISSUES-TRIAGE-20260717 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 52 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 7d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).

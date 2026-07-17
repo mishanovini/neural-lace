@@ -67,3 +67,41 @@ built to defeat.* Name the failure. Defeat it **structurally**. Then **prove** i
 ## The retirement condition for this doctrine
 If a future artifact class emerges that cannot be evidenced (no golden case is constructible), that is a
 signal the artifact is not a control at all — not a signal to relax the bar.
+
+## GATE 1 false-positive measurement (2026-07-14, wiring the enforcement)
+
+Building the qualifying-trigger matcher for `plan-reviewer.sh` Check 17 followed the same rule this
+doctrine sets for everything else: **no number, no finding.** An early draft used the operator's keyword
+list as bare word stems — `derive`, `cache`, `store`, `sync`, `project`, `materialize`, `reconcile`,
+"source of truth" — and was measured against this repo's own `docs/plans/` corpus (237 files: 21 active +
+216 archived) before being trusted:
+
+| Matcher | Files matched | Rate |
+|---|---|---|
+| Bare stems (derive/cache/store/sync/project/materialize/reconcile/"source of truth") | 120/237 | 50.6% |
+| Bare `reconcil*` alone | 94/237 | 39.7% |
+| Final phrase-anchored set (shipped) | 64/237 (50/164 excl. `-evidence` artifacts) | 27.0% (30.5%) |
+
+`reconcil*` alone was the dominant false-positive generator: this harness uses "reconcile" generically for
+backlog reconciliation, ADR-renumber reconciliation, and branch/master reconciliation — none of which is a
+data-architecture claim. Sampling confirmed it (`grep -hioE '.{30}reconcil[a-z]*.{30}'` across the corpus):
+hits like "backlog reconciliation pass 1" and "reconcile any outdated language" sit beside genuine
+architecture hits like "orchestrator wake-trigger + reconcile loop." Bare `cache`/`store`/`sync`/
+`derive`/`project` were even less precise (13/25/131/23/102 files respectively) — `project` alone matches
+"this project" as a generic noun in over 100 files.
+
+The shipped matcher drops the noisy bare stems and keeps only phrase-anchored forms with a manually spot-
+checked precision of 100% on a 10-file sample: `source of truth`, `read/write path`, `staleness`,
+`materializ(e|ed|ation|ing)`, `derived (store|data|cache|state|view)`, `data store`, `cach(e|ing)
+(layer|invalidation)`, `consistency contract`, `sync (engine|job)`, `projection`, and `reconcile/
+reconciliation/reconciler loop` (not bare `reconcile`). The residual 27-30% trigger rate is treated as
+topical prevalence, not matcher looseness, given this harness's subject matter IS state stores, caches,
+and sync mechanisms — and it is checked ONLY at the Status: ACTIVE transition (Check 17's gating
+condition), never during iterative Status: DRAFT design work, so the cost of a true positive is "link the
+review you were probably about to write anyway," not friction on every edit.
+
+**Retirement/adjustment condition specific to this matcher:** if a future audit finds the shipped set
+firing on genuinely non-architectural plans at a materially higher rate than this 27-30% baseline (e.g. a
+new common phrase enters the corpus that happens to contain one of these phrases incidentally), re-run the
+same corpus measurement and either drop the offending phrase or add a co-occurrence requirement — the same
+discipline that retired bare `reconcil*` here.

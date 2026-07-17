@@ -1,6 +1,6 @@
 # The evidence bar — no artifact ships without proof it beats naive
 
-> Enforcement: Mechanism — plan-reviewer.sh (architecture-review gate) + harness-reviewer.
+> Enforcement: Mechanism — plan-reviewer.sh Check 17 (GATE 1) + agent-design-gate.sh (GATE 2).
 > Full: doctrine/artifact-evidence-bar-full.md
 > Applies: every gate, agent, design, and review this harness produces.
 

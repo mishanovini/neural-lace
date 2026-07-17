@@ -1470,6 +1470,183 @@ CHECK13_HI4
     FAILED=1
   fi
 
+  # ============================================================
+  # Check 17 scenarios (aa1..aa7) — GATE 1: architecture-review-before-build
+  # (2026-07-14, artifact-evidence-bar enforcement)
+  # ============================================================
+  #
+  # (aa1) ACTIVE plan, no architecture keyword anywhere — expect PASS
+  #       (gate does not fire; nothing to review).
+  # (aa2) ACTIVE plan matches an architecture keyword, links NO review
+  #       artifact — expect FAIL (the missing-review case).
+  # (aa3) ACTIVE plan matches a keyword, links a review file that exists
+  #       on disk with verdict SOUND — expect PASS.
+  # (aa4) ACTIVE plan matches a keyword, links a review file that exists
+  #       with verdict NEEDS-RESHAPING — expect FAIL. This is the real-world
+  #       golden case: docs/plans/cockpit-v2-push-materialized-store.md
+  #       links docs/reviews/2026-07-14-cockpit-v2-architecture-review.md
+  #       whose verdict is NEEDS-RESHAPING; a NEEDS-RESHAPING verdict must
+  #       NOT satisfy this gate.
+  # (aa5) ACTIVE plan matches a keyword, links a review file that does NOT
+  #       exist on disk — expect FAIL.
+  # (aa6) Status: DRAFT plan matches a keyword, links no review — expect
+  #       PASS. Check 17 is gated to ACTIVE (or unset) exactly like Check
+  #       10/14/15 so iterative design-time drafting is never blocked; the
+  #       gate bites only at the ACTIVE transition that precedes builder
+  #       dispatch.
+  # (aa7) ACTIVE plan matches a keyword, links a review file with verdict
+  #       SOUND-WITH-AMENDMENTS — expect PASS (the second legal verdict).
+
+  write_check17_plan() {
+    # $1 = output path, $2 = status, $3 = extra Goal-section line
+    # (injects/omits the architecture keyword), $4 = extra line placed
+    # after Tasks (injects/omits the review-artifact reference).
+    local out="$1" status="${2:-ACTIVE}" arch_line="${3:-}" review_line="${4:-}"
+    {
+      echo "# Plan: Self-test Check 17 architecture-review fixture"
+      echo "Status: $status"
+      echo "Mode: code"
+      echo "Backlog items absorbed: none"
+      echo "tier: 1"
+      echo "rung: 0"
+      echo "architecture: coding-harness"
+      echo "frozen: false"
+      echo "prd-ref: n/a — harness-development"
+      echo ""
+      echo "## Goal"
+      echo "Exercise Check 17 (architecture-review-before-build) in isolation."
+      [[ -n "$arch_line" ]] && echo "$arch_line"
+      echo ""
+      echo "## Scope"
+      echo "- IN: Check 17 enforcement in plan-reviewer.sh"
+      echo "- OUT: anything else; fixture is single-purpose"
+      echo ""
+      echo "## Tasks"
+      echo "- [ ] 1. Synthetic task placeholder for the self-test runner."
+      echo ""
+      if [[ -n "$review_line" ]]; then
+        echo "## Architecture Review"
+        echo "$review_line"
+        echo ""
+      fi
+      echo "## Files to Modify/Create"
+      echo '- `hooks/plan-reviewer.sh` — Check 17 under exercise'
+      echo ""
+      echo "## Assumptions"
+      echo "- Assumes Check 6b passes for this fixture so Check 17 is the"
+      echo "  only variable across the aa1-aa7 scenarios."
+      echo ""
+      echo "## Edge Cases"
+      echo "- The fixture must satisfy Check 6b's required sections so the"
+      echo "  only failing path available is Check 17 itself."
+      echo ""
+      echo "## Testing Strategy"
+      echo "- Run plan-reviewer.sh against this fixture; observe the exit"
+      echo "  code matches the scenario expectation."
+      echo ""
+      echo "Walking Skeleton: n/a — self-test fixture, no runtime user-facing slice."
+      echo ""
+      echo "## Definition of Done"
+      echo "- [ ] Self-test reports the expected verdict per scenario."
+    } > "$out"
+  }
+
+  write_check17_review() {
+    # $1 = output path, $2 = verdict word (SOUND | SOUND-WITH-AMENDMENTS |
+    # NEEDS-RESHAPING). Mirrors the real artifact's title-line convention:
+    # docs/reviews/2026-07-14-cockpit-v2-architecture-review.md opens with
+    # "# ... (verdict: NEEDS-RESHAPING)".
+    mkdir -p "$(dirname "$1")"
+    {
+      echo "# Fixture architecture review (verdict: $2)"
+      echo ""
+      echo "Reviewer: architecture-reviewer (Check 17 self-test fixture)."
+    } > "$1"
+  }
+
+  # (aa1) no keyword anywhere — PASS
+  write_check17_plan "$TMPDIR_SELFTEST/aa1.md" "ACTIVE" "" ""
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa1.md" > /dev/null 2>&1; then
+    echo "self-test (aa1) check17-no-keyword-silent: PASS (expected)" >&2
+  else
+    echo "self-test (aa1) check17-no-keyword-silent: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/aa1.md" >&2 || true
+    FAILED=1
+  fi
+
+  # (aa2) keyword present, no review linked — FAIL
+  write_check17_plan "$TMPDIR_SELFTEST/aa2.md" "ACTIVE" \
+    "This design changes the staleness handling for the sync cache." ""
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa2.md" > /dev/null 2>&1; then
+    echo "self-test (aa2) check17-keyword-no-review-blocks: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (aa2) check17-keyword-no-review-blocks: FAIL (expected)" >&2
+  fi
+
+  # (aa3) keyword + linked review with verdict SOUND — PASS
+  write_check17_review "$TMPDIR_SELFTEST/docs/reviews/aa3-architecture-review.md" "SOUND"
+  write_check17_plan "$TMPDIR_SELFTEST/aa3.md" "ACTIVE" \
+    "This plan establishes a new source of truth for campaign state." \
+    "See docs/reviews/aa3-architecture-review.md for the architecture-reviewer verdict."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa3.md" > /dev/null 2>&1; then
+    echo "self-test (aa3) check17-sound-verdict-passes: PASS (expected)" >&2
+  else
+    echo "self-test (aa3) check17-sound-verdict-passes: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/aa3.md" >&2 || true
+    FAILED=1
+  fi
+
+  # (aa4) keyword + linked review with verdict NEEDS-RESHAPING — FAIL
+  # (real-world golden case: cockpit-v2-push-materialized-store.md /
+  # 2026-07-14-cockpit-v2-architecture-review.md)
+  write_check17_review "$TMPDIR_SELFTEST/docs/reviews/aa4-architecture-review.md" "NEEDS-RESHAPING"
+  write_check17_plan "$TMPDIR_SELFTEST/aa4.md" "ACTIVE" \
+    "This plan adds a derived cache with a staleness contract." \
+    "The architecture-reviewer verdict lives at docs/reviews/aa4-architecture-review.md."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa4.md" > /dev/null 2>&1; then
+    echo "self-test (aa4) check17-needs-reshaping-blocks: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (aa4) check17-needs-reshaping-blocks: FAIL (expected)" >&2
+  fi
+
+  # (aa5) keyword + linked review file that does not exist on disk — FAIL
+  write_check17_plan "$TMPDIR_SELFTEST/aa5.md" "ACTIVE" \
+    "This plan changes the write path for the event log." \
+    "See docs/reviews/aa5-does-not-exist-architecture-review.md."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa5.md" > /dev/null 2>&1; then
+    echo "self-test (aa5) check17-missing-review-file-blocks: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (aa5) check17-missing-review-file-blocks: FAIL (expected)" >&2
+  fi
+
+  # (aa6) Status: DRAFT — keyword present, no review — PASS (pre-ACTIVE
+  # design-time iteration is never blocked; gate bites only at ACTIVE).
+  write_check17_plan "$TMPDIR_SELFTEST/aa6.md" "DRAFT" \
+    "This plan changes the write path and adds staleness handling." ""
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa6.md" > /dev/null 2>&1; then
+    echo "self-test (aa6) check17-draft-status-exempt: PASS (expected)" >&2
+  else
+    echo "self-test (aa6) check17-draft-status-exempt: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/aa6.md" >&2 || true
+    FAILED=1
+  fi
+
+  # (aa7) keyword + linked review with verdict SOUND-WITH-AMENDMENTS — PASS
+  write_check17_review "$TMPDIR_SELFTEST/docs/reviews/aa7-architecture-review.md" "SOUND-WITH-AMENDMENTS"
+  write_check17_plan "$TMPDIR_SELFTEST/aa7.md" "ACTIVE" \
+    "This plan introduces a new materialized view as a derived store." \
+    "Verdict captured in docs/reviews/aa7-architecture-review.md."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa7.md" > /dev/null 2>&1; then
+    echo "self-test (aa7) check17-sound-with-amendments-passes: PASS (expected)" >&2
+  else
+    echo "self-test (aa7) check17-sound-with-amendments-passes: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/aa7.md" >&2 || true
+    FAILED=1
+  fi
+
   if [[ $FAILED -eq 0 ]]; then
     echo "plan-reviewer --self-test: all scenarios matched expectations" >&2
     exit 0
@@ -2791,6 +2968,97 @@ if { [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; } && [[ "$LIFECY
   fi
   if [[ "$ASK_ID_MISSING" == "1" ]]; then
     echo "[plan-reviewer] WARN (non-blocking) Check 16 (ask-registry linkage, ask-rooted-workstreams-p1 Task 10): this ACTIVE lifecycle-schema: v2 plan lacks a populated 'ask-id:' header field. Plan headers should record the ask-registry entry this plan serves (adapters/claude-code/doctrine/planning.md); link one via 'start-plan.sh --ask-id <id>' at creation, or backfill via 'ask-registry.sh link-plan --ask-id <id> --plan-slug <slug>'. Advisory only — this never blocks the commit." >&2
+  fi
+fi
+
+# ============================================================
+# Check 17 (2026-07-14, GATE 1 of the artifact-evidence-bar):
+# architecture-review-before-build
+# ============================================================
+#
+# constitution §10 generalized (doctrine/artifact-evidence-bar.md): "design ->
+# plan -> REVIEW -> build." A plan that introduces or changes a data
+# architecture, a source-of-truth boundary, a read/write path, a
+# cache/derived store, a cross-component data flow, or a consistency/
+# staleness contract MUST carry an architecture-reviewer verdict of SOUND or
+# SOUND-WITH-AMENDMENTS (NOT NEEDS-RESHAPING) before builders can be
+# dispatched — i.e. before the plan is ACTIVE.
+#
+# Gated on STATUS_AWK == ACTIVE (or unset — a brand-new plan authored
+# straight to ACTIVE), same convention as Check 10/14/15. NOT gated on
+# lifecycle-schema: v2 — this is a fresh global requirement, not tied to
+# the v2 rollout, and unlike Checks 14-16 there is no pre-existing field
+# whose ABSENCE would falsely block legacy plans: the qualifying trigger
+# only fires on plans whose text contains the keyword set below, so a plan
+# authored before this check existed is only affected if it happens to be
+# newly edited AND genuinely architecture-shaped.
+#
+# Qualifying trigger (kept deliberately tight — see
+# doctrine/artifact-evidence-bar-full.md "Gate 1 false-positive measurement"
+# for the corpus study this was calibrated against: an early draft using
+# bare stems (cache/store/sync/project/derive/reconcile) fired on 120/237
+# = 50.6% of this repo's plan corpus; bare "reconcil*" alone was 94/237
+# because this harness uses "reconcile" generically for backlog/branch
+# bookkeeping unrelated to a data architecture. The phrase-anchored set
+# below fires on 64/237 = 27.0% of the full corpus (50/164 = 30.5% of
+# plan bodies excluding -evidence artifacts) and was spot-checked: every
+# sampled hit (source of truth / staleness / write path / reconcile loop)
+# was a genuine data-architecture claim, not an incidental word).
+ARCH_KEYWORDS='source of truth|read[- ]path|write[- ]path|staleness|materializ(e|ed|ation|ing)?|derived[- ](store|data|cache|state|view)|data[- ]store|cach(e|ing)[- ](layer|invalidation)|consistency contract|sync[- ](engine|job)|projection|reconcile loop|reconciliation loop|reconciler loop'
+
+if [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; then
+  ARCH_MATCH=$(grep -oiE "$ARCH_KEYWORDS" "$PLAN_FILE" 2>/dev/null | head -1)
+  if [[ -n "$ARCH_MATCH" ]]; then
+    # Look for a referenced architecture-review artifact path anywhere in
+    # the plan text (backtick-quoted or bare).
+    REVIEW_REFS=$(grep -oE 'docs/reviews/[A-Za-z0-9_./-]*architecture-review[A-Za-z0-9_./-]*\.md' "$PLAN_FILE" 2>/dev/null | sort -u)
+
+    if [[ -z "$REVIEW_REFS" ]]; then
+      add_finding "Check 17 (architecture-review-before-build, GATE 1): plan text matches architecture-keyword \"$ARCH_MATCH\" (data architecture / source-of-truth / read-write-path / cache-derived-store / staleness signal) but links no architecture-review artifact. Dispatch the architecture-reviewer agent and link its verdict file (e.g. docs/reviews/<slug>-architecture-review.md) in this plan before marking it ACTIVE. See doctrine/artifact-evidence-bar.md."
+    else
+      # Resolve repo root the same way wire-check-gate.sh does: git
+      # rev-parse from the plan file's directory, falling back to a
+      # .git walk-up, falling back to the plan file's own directory.
+      PLAN_DIR_C17=$(dirname "$PLAN_FILE")
+      REPO_ROOT_C17=$(cd "$PLAN_DIR_C17" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || echo "")
+      if [[ -z "$REPO_ROOT_C17" ]] || [[ ! -d "$REPO_ROOT_C17" ]]; then
+        probe_c17="$PLAN_DIR_C17"
+        while [[ "$probe_c17" != "/" ]] && [[ "$probe_c17" != "." ]]; do
+          if [[ -d "$probe_c17/.git" ]] || [[ -f "$probe_c17/.git" ]]; then
+            REPO_ROOT_C17="$probe_c17"
+            break
+          fi
+          probe_c17=$(dirname "$probe_c17")
+        done
+      fi
+      [[ -z "$REPO_ROOT_C17" ]] && REPO_ROOT_C17="$PLAN_DIR_C17"
+
+      SATISFIED_C17=0
+      WORST_VERDICT_C17=""
+      MISSING_FILES_C17=""
+      while IFS= read -r ref_path; do
+        [[ -z "$ref_path" ]] && continue
+        if [[ ! -f "$REPO_ROOT_C17/$ref_path" ]]; then
+          MISSING_FILES_C17+="$ref_path "
+          continue
+        fi
+        verdict_line=$(grep -oiE 'verdict[^A-Za-z]{0,10}(SOUND-WITH-AMENDMENTS|SOUND|NEEDS-RESHAPING)' "$REPO_ROOT_C17/$ref_path" 2>/dev/null | head -1)
+        verdict_word=$(printf '%s' "$verdict_line" | grep -oiE '(SOUND-WITH-AMENDMENTS|SOUND|NEEDS-RESHAPING)$' | tr '[:lower:]' '[:upper:]')
+        if [[ "$verdict_word" == "SOUND" ]] || [[ "$verdict_word" == "SOUND-WITH-AMENDMENTS" ]]; then
+          SATISFIED_C17=1
+        else
+          WORST_VERDICT_C17="${verdict_word:-<unparseable>}"
+        fi
+      done <<< "$REVIEW_REFS"
+
+      if [[ "$SATISFIED_C17" -eq 0 ]]; then
+        if [[ -n "$MISSING_FILES_C17" ]]; then
+          add_finding "Check 17 (architecture-review-before-build, GATE 1): plan references architecture-review file(s) that do not exist on disk: ${MISSING_FILES_C17}-- and no OTHER linked review states SOUND / SOUND-WITH-AMENDMENTS. See doctrine/artifact-evidence-bar.md."
+        else
+          add_finding "Check 17 (architecture-review-before-build, GATE 1): plan matches architecture-keyword \"$ARCH_MATCH\" and links $(printf '%s' "$REVIEW_REFS" | wc -l | tr -d ' ') architecture-review artifact(s), but none state verdict SOUND or SOUND-WITH-AMENDMENTS (found: ${WORST_VERDICT_C17:-no parseable verdict}). A NEEDS-RESHAPING verdict does not satisfy this gate — re-run architecture-reviewer against the reshaped design and link its new verdict before marking this plan ACTIVE. See doctrine/artifact-evidence-bar.md."
+        fi
+      fi
+    fi
   fi
 fi
 
