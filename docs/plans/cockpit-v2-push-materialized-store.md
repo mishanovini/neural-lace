@@ -112,11 +112,19 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
   same-directory-shorthand bullet like `server/server.js` does not match the scope-enforcement-
   gate's repo-root-relative staged paths — fixed here after task 2 tripped on it).
 - `neural-lace/workstreams-ui/web/asks.js`, `neural-lace/workstreams-ui/web/app.css` (peer rows)
-- `adapters/claude-code/scripts/coord-push.sh`, `adapters/claude-code/scripts/coord-pull.sh`
-  (cadence wiring only), scheduled-task installer or health-tick splice,
-  `adapters/claude-code/settings.json.template` (MultiEdit matcher),
-  `adapters/claude-code/hooks/plan-lifecycle.sh` (shared fixture corpus check)
-- `adapters/claude-code/manifest.json` (exporter/wiring entries with §10 fields)
+- `adapters/claude-code/scripts/coord-push.sh` — A2 ahead-of-origin retry + outcome status file
+- `adapters/claude-code/scripts/coord-pull.sh` — read only; task 3 wires it, does not change it
+- `adapters/claude-code/scripts/coord-sync.sh` — new; task 3's dedicated cadence (A1), the
+  exporter's sole invoker: exporter -> coord-push -> coord-pull, its own mkdir lock, A2c alert
+- `adapters/claude-code/scripts/install-coord-sync-task.ps1` — new; the NL-CoordSync scheduled-
+  task installer, a SIBLING to install-weekly-hygiene-task.ps1 (a sub-10min repeating trigger is
+  a structurally different trigger shape than that script's -Weekly/-Checkin triggers)
+- `adapters/claude-code/settings.json.template` (MultiEdit matcher)
+- `adapters/claude-code/hooks/plan-lifecycle.sh` (shared fixture corpus check)
+- `adapters/claude-code/manifest.json` (exporter/wiring entries with §10 fields — NOT touched by
+  task 3: coord-push.sh/coord-pull.sh/health-tick.sh, the closest precedents, all predate this
+  plan with no manifest entries of their own either; registration is deferred to whichever later
+  task in this plan first requires it, tracked in docs/backlog.md rather than added speculatively)
 
 ## In-flight scope updates
 - 2026-07-17: `neural-lace/workstreams-ui/server/derive-lib.js` — task 2's own text (amendment
@@ -127,6 +135,23 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
   rewrote the section's server/* bullets from directory-shorthand to full repo-root-relative
   paths/globs — the shorthand form doesn't match the gate's staged-path comparison at all,
   which would have blocked every future task in this plan touching those files, not just task 2.
+- 2026-07-17: `adapters/claude-code/scripts/coord-sync.sh` — named explicitly in the Files table
+  above (previously only "scheduled-task installer or health-tick splice", a placeholder task 3's
+  own body text already resolved by naming this exact file). Design choice made in the un-pinned
+  space that text left open: the exporter's per-host file lives under the coord clone's
+  `plan-export/` subdirectory, schema-distinct from coord-push.sh's own `tree-state/` envelope
+  (task 4 reads both).
+- 2026-07-17: `adapters/claude-code/scripts/install-coord-sync-task.ps1` — named explicitly in the
+  Files table above, same placeholder-resolution as the coord-sync.sh entry immediately above.
+  Design choice: a sibling installer (task 3's own text offered this as an explicit alternative to
+  a third mode on install-weekly-hygiene-task.ps1), because a sub-10-minute repeating cadence is a
+  structurally different `New-ScheduledTaskTrigger` shape than that script's existing
+  -Weekly/-Checkin triggers. NOTE (found in passing, out of scope for this task, spawned
+  separately): install-weekly-hygiene-task.ps1 itself has a latent bug of the identical class — a
+  real em-dash character inside a double-quoted string breaks Windows PowerShell 5.1's parser when
+  the file has no BOM (confirmed via `[System.Management.Automation.Language.Parser]::ParseFile`);
+  the whole file fails to parse. This new installer inherited the same pattern while drafting and
+  was fixed here; the precedent file was left untouched.
 
 ## Assumptions
 - The private coordination repo exists and both machines hold SSH access (coord-push.sh header

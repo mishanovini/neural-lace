@@ -36,6 +36,26 @@
 # - Throttled: skips silently if the last successful push was < 600s ago
 #   (override with --force or COORD_PUSH_THROTTLE_SECONDS).
 # - exit 0 on no-op (nothing changed) and on any non-fatal degradation.
+#
+# A2 (cockpit-v2-push-materialized-store Task 3, binding architecture-review
+# amendment): coord-push is WARN+exit-0 on every failure path BY DESIGN — that
+# contract is NOT changed here. Two real gaps in the OLD no-op gate are:
+#   (a) AHEAD-OF-ORIGIN RETRY — the old gate returned 'noop' the instant
+#       `git diff --cached --quiet` found nothing NEW to stage, even when an
+#       EARLIER local commit (e.g. from a prior run whose push/rebase failed)
+#       still sits unpushed. One transient failure + a quiet estate (nobody
+#       touches tree-state again) meant that commit — and everything after it
+#       — never reached origin. Fixed: when there's nothing new to stage,
+#       `_ahead_of_origin` checks whether HEAD still differs from this clone's
+#       last-known `origin/<branch>` and, if so, attempts the push anyway.
+#   (b) OUTCOME STATUS FILE — every invocation now writes
+#       `~/.claude/state/coord-push-status.json` (override:
+#       COORD_PUSH_STATUS_FILE), atomically, with
+#       `{"outcome":"pushed"|"local-commit"|"noop","ts":<iso>,"detail":<str>}`.
+#       This lets a caller (coord-sync.sh, Task 3's dedicated cadence) detect
+#       a persistent 'local-commit' streak and alert on it (A2c) without
+#       parsing stdout/stderr. Writing this file NEVER changes the exit code
+#       — WARN+exit-0 stays load-bearing for every existing caller.
 
 set -u
 
@@ -59,6 +79,7 @@ WORKSTREAMS_STATE_DIR="${WORKSTREAMS_STATE_DIR:-$_WORKSTREAMS_STATE_DIR_DEFAULT}
 STATE_DIR="${STATE_DIR:-${HOME}/.claude/state/coord-sync}"
 LAST_PUSH_FILE="${LAST_PUSH_FILE:-$STATE_DIR/last-push}"
 LOCAL_CONFIG_URL_FILE="${HOME}/.claude/local/coord-repo-url.txt"
+STATUS_FILE="${COORD_PUSH_STATUS_FILE:-${HOME}/.claude/state/coord-push-status.json}"
 REBASE_RETRY_CAP=2
 
 _log()  { printf '[coord-push] %s\n' "$*" >&2; }
@@ -154,6 +175,51 @@ _write_tree_state() {
 }
 
 # ------------------------------------------------------------
+# A2a: is HEAD still ahead of (or diverged from) this clone's last-known
+# origin/<branch>? Deliberately does NOT fetch first — the failure mode this
+# closes is "a PRIOR run's push/rebase failed, leaving a local commit the
+# remote-tracking ref never advanced past"; the clone's cached origin/<branch>
+# ref already reflects that. (A genuinely stale cached ref just means the
+# push attempt below round-trips and, if it turns out there's truly nothing
+# new, no-ops at the git-protocol level — cheap and still WARN+exit-0-safe.)
+# Echoes nothing; rc 0 = attempt the push, rc 1 = nothing to retry.
+# ------------------------------------------------------------
+_ahead_of_origin() {
+  local dir="$1" branch="$2"
+  local head_sha origin_sha
+  head_sha=$(git -C "$dir" rev-parse -q --verify HEAD 2>/dev/null) || return 1
+  origin_sha=$(git -C "$dir" rev-parse -q --verify "origin/$branch" 2>/dev/null)
+  if [ -z "$origin_sha" ]; then
+    # No remote-tracking ref at all (fresh clone / never pushed yet) — a
+    # local HEAD existing is itself "ahead" of an empty/unknown origin.
+    [ -n "$head_sha" ]; return
+  fi
+  [ "$head_sha" != "$origin_sha" ]
+}
+
+# ------------------------------------------------------------
+# A2b: write the outcome status file atomically. Never affects the caller's
+# exit code — this is a WRITER, not a gate. detail is free text (escaped).
+# ------------------------------------------------------------
+_write_status_file() {
+  local outcome="$1" detail="${2:-}"
+  local dir; dir="$(dirname "$STATUS_FILE")"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  local ts; ts=$(_iso_now)
+  local esc="$detail"
+  esc="${esc//\\/\\\\}"
+  esc="${esc//\"/\\\"}"
+  esc="${esc//$'\n'/ }"
+  local tmp="$STATUS_FILE.tmp.$$"
+  if printf '{"outcome":"%s","ts":"%s","detail":"%s"}\n' "$outcome" "$ts" "$esc" > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$STATUS_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  else
+    rm -f "$tmp" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# ------------------------------------------------------------
 # Commit staged changes (if any) and push with pull-rebase-on-non-ff.
 # Echoes "noop" | "pushed" | "local-commit" on stdout.
 # ------------------------------------------------------------
@@ -161,17 +227,26 @@ _commit_and_push() {
   local dir="$1" branch="$2" host="$3"
   git -C "$dir" add -A 2>/dev/null || true
   if git -C "$dir" diff --cached --quiet 2>/dev/null; then
-    printf 'noop'; return 0
-  fi
-  local msg="coord: $host tree-state/claims sync $(_iso_now)"
-  if ! git -C "$dir" commit -m "$msg" >/dev/null 2>&1; then
-    # Retry with a fallback identity (machine-generated sync commit) so the
-    # script works even where no git user.name/user.email is configured.
-    if ! git -C "$dir" \
-          -c user.email="${GIT_AUTHOR_EMAIL:-coord-sync@localhost}" \
-          -c user.name="${GIT_AUTHOR_NAME:-coord-sync}" \
-          commit -m "$msg" >/dev/null 2>&1; then
-      _warn "commit failed"; printf 'noop'; return 0
+    # No NEW staged changes — but A2a: don't treat that as the whole story.
+    # An earlier local commit may still be sitting unpushed (a prior
+    # transient push/rebase failure); retry it rather than deferring
+    # publication indefinitely on a quiet estate.
+    if _ahead_of_origin "$dir" "$branch"; then
+      _log "no new staged changes, but HEAD differs from the last-known origin/$branch — retrying push of the existing unpushed commit(s) (A2a)"
+    else
+      printf 'noop'; return 0
+    fi
+  else
+    local msg="coord: $host tree-state/claims sync $(_iso_now)"
+    if ! git -C "$dir" commit -m "$msg" >/dev/null 2>&1; then
+      # Retry with a fallback identity (machine-generated sync commit) so the
+      # script works even where no git user.name/user.email is configured.
+      if ! git -C "$dir" \
+            -c user.email="${GIT_AUTHOR_EMAIL:-coord-sync@localhost}" \
+            -c user.name="${GIT_AUTHOR_NAME:-coord-sync}" \
+            commit -m "$msg" >/dev/null 2>&1; then
+        _warn "commit failed"; printf 'noop'; return 0
+      fi
     fi
   fi
 
@@ -212,6 +287,7 @@ _run_push() {
     delta=$((now - last))
     if [ "$delta" -lt "$COORD_PUSH_THROTTLE_SECONDS" ]; then
       _log "throttled (${delta}s < ${COORD_PUSH_THROTTLE_SECONDS}s since last push) — skipping"
+      _write_status_file noop "throttled (${delta}s < ${COORD_PUSH_THROTTLE_SECONDS}s since last push)"
       return 0
     fi
   fi
@@ -219,10 +295,12 @@ _run_push() {
   local url; url=$(_resolve_repo_url "$COORD_CLONE_DIR")
   if [ -z "$url" ] && [ ! -d "$COORD_CLONE_DIR/.git" ]; then
     _warn "no coord repo URL (set COORD_REPO_URL or $LOCAL_CONFIG_URL_FILE) and no existing clone — nothing to push"
+    _write_status_file noop "no coord repo URL configured and no existing clone"
     return 0
   fi
   if ! _ensure_clone "$COORD_CLONE_DIR" "$url" "$COORD_BRANCH"; then
     _warn "could not ensure clone at $COORD_CLONE_DIR — skipping"
+    _write_status_file noop "could not ensure clone at $COORD_CLONE_DIR"
     return 0
   fi
 
@@ -231,9 +309,12 @@ _run_push() {
 
   local result; result=$(_commit_and_push "$COORD_CLONE_DIR" "$COORD_BRANCH" "$host")
   case "$result" in
-    pushed)       _log "pushed coordination state ($host)"; _epoch_now > "$LAST_PUSH_FILE" ;;
-    local-commit) _log "committed locally (push deferred)"; _epoch_now > "$LAST_PUSH_FILE" ;;
-    noop)         _log "no changes to push" ;;
+    pushed)       _log "pushed coordination state ($host)"; _epoch_now > "$LAST_PUSH_FILE"
+                  _write_status_file pushed "pushed to origin/$COORD_BRANCH ($host)" ;;
+    local-commit) _log "committed locally (push deferred)"; _epoch_now > "$LAST_PUSH_FILE"
+                  _write_status_file local-commit "commit landed locally; push deferred (non-ff or push failure after ${REBASE_RETRY_CAP} rebase retries)" ;;
+    noop)         _log "no changes to push"
+                  _write_status_file noop "nothing to publish" ;;
   esac
   return 0
 }
@@ -343,6 +424,85 @@ JSON
       bash "$SELF_PATH" push --force >/dev/null 2>&1
   )
   _ck "unresolved URL + no clone exits 0 (non-blocking)" $?
+
+  # --- Scenario 7 (A2a): ahead-of-origin retry — an existing LOCAL commit
+  # that never reached origin (simulating a prior transient push failure)
+  # gets pushed on the NEXT invocation even though there are NO new staged
+  # changes (the OLD gate returned 'noop' here forever — the bug this fixes).
+  git -C "$clone" -c user.email=t@t -c user.name=t commit --allow-empty \
+    -m "simulated-prior-unpushed-commit" >/dev/null 2>&1
+  local pre7_local pre7_origin
+  pre7_local=$(git -C "$clone" rev-parse HEAD 2>/dev/null)
+  pre7_origin=$(git -C "$clone" rev-parse origin/main 2>/dev/null)
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$clone" COORD_BRANCH="main"
+    export WORKSTREAMS_STATE_DIR="$work/wstate" COORD_PUSH_THROTTLE_SECONDS=0
+    export COORD_PUSH_STATUS_FILE="$tmproot/status7.json"
+    STATE_DIR="$tmproot/state" LAST_PUSH_FILE="$tmproot/state/last-push" \
+      bash "$SELF_PATH" push --force >/dev/null 2>&1
+  )
+  local post7_origin; post7_origin=$(git --git-dir="$bare" rev-parse main 2>/dev/null)
+  [ "$pre7_local" != "$pre7_origin" ] && [ "$post7_origin" = "$pre7_local" ]
+  _ck "A2a ahead-of-origin retry: unpushed local commit reaches origin with no new staged changes" $?
+  if command -v jq >/dev/null 2>&1; then
+    jq -e '.outcome=="pushed"' "$tmproot/status7.json" >/dev/null 2>&1
+    _ck "A2a retry: status file records outcome=pushed" $?
+  else
+    _ck "A2a retry: status file records outcome=pushed (jq unavailable, skipped)" 0
+  fi
+
+  # --- Scenario 8 (A2b): status file records outcome=noop when a follow-up
+  # invocation genuinely has nothing new to publish (HEAD == origin, no
+  # staged changes) — confirms the A2a fix does not turn every push into a
+  # forced attempt.
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$clone" COORD_BRANCH="main"
+    export WORKSTREAMS_STATE_DIR="$work/wstate" COORD_PUSH_THROTTLE_SECONDS=0
+    export COORD_PUSH_STATUS_FILE="$tmproot/status8.json"
+    STATE_DIR="$tmproot/state" LAST_PUSH_FILE="$tmproot/state/last-push" \
+      bash "$SELF_PATH" push --force >/dev/null 2>&1
+  )
+  if command -v jq >/dev/null 2>&1; then
+    jq -e '.outcome=="noop" and (.ts|length)>0' "$tmproot/status8.json" >/dev/null 2>&1
+    _ck "status file records outcome=noop with a timestamp when nothing to publish" $?
+  else
+    _ck "status file records outcome=noop (jq unavailable, skipped)" 0
+  fi
+
+  # --- Scenario 9 (A2b): a genuine UNRESOLVABLE rebase conflict (add/add on
+  # the same path, both sides diverged from the same base) -> outcome
+  # local-commit, the status file reflects it, and origin is NEVER
+  # force-pushed over (the peer's commit stays intact).
+  local peer9="$tmproot/peer9"
+  git clone "$bare" "$peer9" >/dev/null 2>&1
+  printf '{"marker":"peer-version"}' > "$peer9/claims.json"
+  git -C "$peer9" -c user.email=r@r -c user.name=r add -A >/dev/null 2>&1
+  git -C "$peer9" -c user.email=r@r -c user.name=r commit -m "peer-claims-add" >/dev/null 2>&1
+  git -C "$peer9" push origin HEAD:main >/dev/null 2>&1
+  # Local clone independently adds the SAME path with different content,
+  # committed WITHOUT fetching first — the two histories diverge on an
+  # add/add conflict at the identical path.
+  printf '{"marker":"local-version"}' > "$clone/claims.json"
+  git -C "$clone" -c user.email=t@t -c user.name=t add -A >/dev/null 2>&1
+  git -C "$clone" -c user.email=t@t -c user.name=t commit -m "local-claims-add" >/dev/null 2>&1
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$clone" COORD_BRANCH="main"
+    export WORKSTREAMS_STATE_DIR="$work/wstate" COORD_PUSH_THROTTLE_SECONDS=0
+    export COORD_PUSH_STATUS_FILE="$tmproot/status9.json"
+    STATE_DIR="$tmproot/state" LAST_PUSH_FILE="$tmproot/state/last-push" \
+      bash "$SELF_PATH" push --force >/dev/null 2>&1
+  )
+  if command -v jq >/dev/null 2>&1; then
+    jq -e '.outcome=="local-commit"' "$tmproot/status9.json" >/dev/null 2>&1
+    _ck "genuine rebase conflict -> outcome local-commit, status file reflects it" $?
+  else
+    _ck "genuine rebase conflict -> outcome local-commit (jq unavailable, skipped)" 0
+  fi
+  local origin9 peer9_sha
+  origin9=$(git --git-dir="$bare" rev-parse main 2>/dev/null)
+  peer9_sha=$(git -C "$peer9" rev-parse HEAD 2>/dev/null)
+  [ -n "$origin9" ] && [ "$origin9" = "$peer9_sha" ]
+  _ck "genuine conflict: origin unchanged (peer's commit intact, NEVER force-pushed over)" $?
 
   rm -rf "$tmproot" 2>/dev/null || true
   echo "[self-test] coord-push: $pass passed, $fail failed"
