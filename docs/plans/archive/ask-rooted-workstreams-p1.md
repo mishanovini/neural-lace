@@ -1,5 +1,5 @@
 # Plan: Ask-rooted Workstreams — P1 (mechanism-emitted progress log + ask registry + ask-tree surface)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: design
 Backlog items absorbed: none
