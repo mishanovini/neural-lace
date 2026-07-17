@@ -123,3 +123,13 @@ When the user reports something looks wrong (screenshot, live app, rendered outp
 ## Don't Overwrite What You're Uncertain About
 
 When updating information (memory entries, documentation, data), don't overwrite existing content based on assumptions. If two sources conflict, verify with the user or the authoritative source before changing. "I think X replaced Y" is not sufficient justification to delete Y — ask first. This applies to memory entries, documentation, and any factual claims about the user's systems.
+
+## Scope: Data and Behavior Bugs, Not Only Prod Crashes (2026-07-16 broadening)
+
+The DIAGNOSTIC-FIRST protocol above is not limited to prod crashes (5xx, hangs, silent failures). A data bug (a duplicate row, a wrong computed value, a corrupted state) and a behavior bug (a UI showing stale data, an event firing twice, a flag not taking effect) are the SAME class as a 5xx crash for this rule's purpose: obtain the OBSERVABLE evidence of the SPECIFIC incident — the actual rows, the actual log line, the actual repro — before proposing a fix. "I found a code path that COULD cause this" is inference; "the logs/data show this IS what happened" is evidence.
+
+**Case study (2026-07-14):** three successive investigations of a live duplicate-appointment bug each reasoned from a plausible code path (a missing per-contact uniqueness guard) straight to a shipped fix, without ever pulling the specific incident's rows (`created_at` gap, `booked_via`, `service_type`, property) — the fix may not have addressed the real cause AND introduced a multi-property regression. Full narrative: `docs/lessons/2026-07-14-root-cause-must-be-evidenced-before-fix.md`.
+
+**If the evidence is access-blocked**, name the exact datum and how to get it as a BLOCKER — not a license to fix on inference. When you must proceed without it, bound the fix's blast radius to fail-safe (fail-open / feature-flagged / shadow-first) precisely because the cause is unconfirmed, and say so explicitly in the fix.
+
+(This section documents the reasoning behind the compact's "Applies to ANY observed defect" line, trimmed 2026-07-17 for the 2800-byte cap — evals/golden/rules-index-coverage.sh. The evidence-before-fix commit-gate mechanism itself — the PROVEN/INFERRED citation criteria, the "shipping-momentum erodes a Pattern" rationale, the ~13-15% fix-commit over-fire measurement, the `fix-trivial:` path, and the PROMOTION CONDITION — is NOT duplicated here because it already lives in full in `doctrine/evidence-before-fix.md`, which both the old and new compact point to directly.)

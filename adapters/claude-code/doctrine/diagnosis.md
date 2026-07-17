@@ -1,4 +1,5 @@
 # Diagnosis before fixing — compact
+
 > Enforcement: Pattern (this rule) — self-applied. Mechanism (the commit gate
 > below) — hook-enforced, currently WARN-MODE (teaches, never blocks; see
 > below and doctrine/evidence-before-fix.md's PROMOTION CONDITION). Full:
@@ -10,78 +11,39 @@
 > broader than that by construction — see doctrine/evidence-before-fix.md for
 > why, and why that gap is exactly what warn-mode is calibrating.
 
-**First tool call on any production-failure investigation: pull runtime logs.**
-Vercel logs, Sentry/Datadog, Supabase logs, webhook delivery logs, job-runner
-logs — whatever the platform is. Inferential evidence (probing, code reading,
-git bisect, dependency analysis) is permitted only AFTER logs are examined, or
-after an explicit "logs are inaccessible because X" with a concrete reason.
-Confidence-sounding diagnoses without log evidence are prohibited — see
-doctrine/claims.md.
+**First tool call on any production-failure investigation: pull runtime
+logs** (Vercel, Sentry/Datadog, Supabase, webhook, job-runner — whatever the
+platform). Inferential evidence (probing, code reading, bisect) is permitted
+only AFTER logs are examined, or after an explicit "logs are inaccessible
+because X" with a concrete reason. Confidence-sounding diagnoses without log
+evidence are prohibited — see doctrine/claims.md.
 
-**This applies to ANY observed defect, not only prod crashes.** A data bug
-(a duplicate row, a wrong computed value, a corrupted state) and a behavior
-bug (a UI showing stale data, an event firing twice, a flag not taking
-effect) are the SAME class as a 5xx crash for this rule's purpose: obtain the
-OBSERVABLE evidence of the SPECIFIC incident — the actual rows, the actual
-log line, the actual repro — before proposing a fix. "I found a code path
-that COULD cause this" is inference; "the logs/data show this IS what
-happened" is evidence. Source case (2026-07-14): three successive
-investigations of a live duplicate-appointment bug each reasoned from a
-plausible code path (a missing per-contact uniqueness guard) straight to a
-shipped fix, without ever pulling the specific incident's rows (`created_at`
-gap, `booked_via`, `service_type`, property) — the fix may not have addressed
-the real cause AND introduced a multi-property regression. Full case study:
-`docs/lessons/2026-07-14-root-cause-must-be-evidenced-before-fix.md`.
+**Applies to ANY observed defect, not only prod crashes** — a data or
+behavior bug needs the SAME observable evidence of the specific incident
+before a fix. If evidence is access-blocked, name it as a BLOCKER and bound
+the fix to fail-safe (fail-open / feature-flagged / shadow-first). Case
+study: `docs/lessons/2026-07-14-root-cause-must-be-evidenced-before-fix.md`.
 
-**If that evidence is access-blocked, that is a BLOCKER to name (the exact
-datum + how to get it), not a license to fix on inference.** When you must
-proceed without it, the fix's blast radius must be bounded to fail-safe
-(fail-open / feature-flagged / shadow-first) precisely because the cause is
-unconfirmed — say so explicitly in the fix.
+**Mechanism (warn-mode, not yet blocking): the evidence-before-fix commit
+gate.** A `fix(...)`/`fix:` commit needs an evidenced `## Root cause
+(evidenced)` section or a passing `kind: fix-root-cause` review record —
+missing both gets a teaching banner, not a block. Full criteria + waiver
+hatch: `doctrine/evidence-before-fix.md`.
 
-**Mechanism, not just Pattern (currently warn-mode, not yet blocking): the
-evidence-before-fix commit gate.** Because "read this rule before you commit"
-is a Pattern that a long, frustrating investigation reliably erodes under
-shipping-momentum pressure, a `fix(...)`/`fix:` commit is checked: it should
-carry either (a) a `## Root cause (evidenced)` message section with a
-PROVEN-tagged, citation-backed line (an ONLY-INFERRED section does not
-satisfy this), or (b) a reference to a `kind: fix-root-cause` review record
-(verdict PASS, covering a staged file, tagged PROVEN or INFERRED-with-
-bounded-blast-radius). A commit missing both gets a teaching banner, not a
-block — a 2026-07-16 harness-review measured this repo's own fix(/fix:
-commits at ~13-15% of total history, dominated by harness-maintenance /
-review-remediation fixes that don't fit the observed-incident shape this
-rule describes (see doctrine/evidence-before-fix.md's scope-mismatch note),
-so blocking on the current trigger would have bricked ordinary maintenance
-work. See `evidence-before-fix-gate.sh` / `doctrine/evidence-before-fix.md`
-for the full mechanism, its structured-waiver escape hatch, the
-`fix-trivial:` lighter path for changes touching no runtime/product code,
-and the PROMOTION CONDITION tracked at `docs/backlog.md`
-`EVIDENCE-BEFORE-FIX-PROMOTION-01`.
+**Grep the failure-mode catalog first:** `grep -in '<symptom keywords>'
+docs/failure-modes.md`. A `Discriminator` match = known class — apply its
+`Recovery`. >~30 min into hypothesis-chasing without running this grep →
+stop and run it now.
 
-**Before that, grep the failure-mode catalog first.** `grep -in '<symptom
-keywords>' docs/failure-modes.md`. A `Discriminator` match means you've found a
-known class in minutes instead of hours — apply its `Recovery`. If you're more
-than ~30 minutes into hypothesis-chasing without having run this grep, stop and
-run it now.
+**Process:** map the full chain (user → frontend → API → backend → external
+service → response), trace ONE concrete example end-to-end, check what's
+hiding behind the first error, and fix every bug in the chain together.
+Typecheck passing is not validation.
 
-Order: pull logs → observe the actual error signature → grep the catalog with
-that precise signature → apply Recovery, or proceed to the full chain-trace
-below with logs in hand.
+**Fix the Class, Not the Instance.** When feedback flags one defect, search
+for every sibling instance before calling it done. Document: `Class-sweep:
+<pattern> — N matches, M fixed, N-M exempt (<reason>)`.
 
-**Process:** map the full chain (user action → frontend → API → backend →
-external service → response). Trace ONE concrete example end-to-end with real
-values. Check what's hiding behind the first error. List every bug across the
-chain and fix them together. Typecheck passing is not validation — trace a real
-value or run it and observe the outcome.
-
-**Fix the Class, Not the Instance.** When feedback (reviewer, test, lint, user
-correction) flags a defect at one location, search for every sibling instance of
-the same class before calling the fix done. Document the sweep in the commit:
-`Class-sweep: <pattern> — N matches, M fixed, N-M exempt (<reason>)`.
-
-**Encode the fix.** When you find a root cause, ask: can this class be prevented
-for every future session? Behavioral pattern → propose a rule. Mechanical →
-propose a gate. Either way, update `docs/failure-modes.md` — extend an existing
-entry or append a new one. A diagnosis that isn't catalogued will be re-paid in
-full by the next session.
+**Encode the fix.** Behavioral pattern → a rule. Mechanical → a gate. Update
+`docs/failure-modes.md` either way — an uncatalogued diagnosis gets re-paid
+in full next session.
