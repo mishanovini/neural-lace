@@ -221,3 +221,36 @@ Git evidence:
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: Enforcement line names Check 17 blocking+verified and gates 2/3 observe-first with flip criteria in manifest; file is 2976 bytes (<= 3000 cap); honest_status stays conservative so the claim never leads the truth.
+
+## Task 4 — Comprehension Articulation (merge-scan incremental cursor; builder a56c2bf4, commit 9d2de18)
+
+> Placed by the orchestrator from the builder's returned report — closing the process deviation the
+> task-verifier documented (articulation existed but was never filed). Grading record: task-verifier
+> independently falsified FM-023 via test-to-spec correspondence (every plan-named edge case has a
+> passing self-test scenario: S18 kill-resilience, S19/19b self-heal, S16 warm steady-state).
+
+**Spec meaning:** The defect is that `ms_scan_repo_for_merges` re-walked the same bounded
+`git log origin/master -n <limit>` window every 120s auditor cycle, getting tree-killed every time
+before finishing (per-commit fan-out × 200 commits exceeds `DEFAULT_CLI_TIMEOUT_MS`). The fix
+persists a cursor and narrows the range to `<cursor>..origin/master` once established, converging
+over a few cycles to a cheap steady state.
+
+**Edge cases covered:** (1) no cursor yet → fallback bounded scan, cursor seeded (scenario 15);
+(2) cursor==HEAD → empty range, instant return, cursor untouched (16); (3) small backlog → scanned
+exactly, cursor advances (17); (4) MID-RUN KILL → `_ms_write_cursor` fires per-commit inside the
+loop, not once at the end, so a killed run leaves the cursor at the last actually-completed commit
+(18) — this required discovering that `git log -n <limit> --reverse` selects the NEWEST N regardless
+of flag order, so the cursor-narrowed branch uses `--reverse | head -n <limit>` for a true
+oldest-first prefix; (5) cursor not a commit / not an ancestor (history moved) → `git cat-file -e` +
+`merge-base --is-ancestor` fail open to full scan (19/19b); (6) explicit `--since` bypasses cursor
+read AND write, so a manual range can never corrupt the automatic frontier.
+
+**Edge cases NOT covered:** concurrent scan-repo invocations against the same repo could race on
+the cursor write — atomic per-write (tmp+mv) but no whole-run lock; an overlapping run could clobber
+a further-advanced cursor with an earlier one (self-heals next cycle; pl_emit dedup makes
+re-emission harmless, progress could regress one cycle). A backlog larger than --limit converges
+over multiple cycles but lacks its own explicit scenario.
+
+**Assumptions:** every SHA written comes from `git log --format=%H` (40 hex), so `_ms_read_cursor`
+matches `^[0-9a-fA-F]{40}$` exactly; `tac` is available (already used elsewhere in this codebase);
+`_ms_repo_key` assumes repo_root is a valid work tree, which the caller validates first.
