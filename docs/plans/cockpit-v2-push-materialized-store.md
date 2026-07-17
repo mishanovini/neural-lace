@@ -95,7 +95,7 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
 - [x] 7. [serial] **C3b — wire the auditor's REAL divergences** (log_ahead_task_not_flipped et al.)
   into `nl-issue.sh` with dedup + recurrence escalation (the operator's actual auto-healing intent;
   self-inflicted-drift reporting died with the projector) — Verification: full
-- [ ] 8. [serial] **Acceptance (end-user-advocate runtime)** — two-machine simulation acceptable
+- [x] 8. [serial] **Acceptance (end-user-advocate runtime)** — two-machine simulation acceptable
   (a second clone standing in for machine B, **using the `EXPORT_HOSTNAME` override — coord keys
   peers by hostname and both sim "machines" share one — and env-injected state thresholds so the
   degradation leg is runnable, A5**): flip a checkbox + start a builder on "A" → within the
@@ -226,3 +226,25 @@ fixture clone — end-to-end thinnest slice before any cadence wiring.
   machinery from v2/v3 is DELETED, not deferred — an export re-derived at export time has no drift
   class to manage. Reversible: the export artifact and reader are additive; nothing local changes
   shape.
+
+## Completion report (2026-07-17)
+
+**8/8 verified.** Every task passed both gates (task-verifier substance + rung-3 comprehension), with
+verifier-authored falsification probes at tasks 3 (dedup guard), 4 (evil-peer clock-skew), and 5
+(re-broken dispatch caught by Scenario 21). Acceptance (Task 8): 4/4 legs via real HTTP + the real
+render code — propagation of done+in-flight cross-machine, HONEST degradation (estate-unchanged →
+peer-unreachable, never silent-stale), self-filter + local-integrity under a poisoned same-slug probe,
+transport health. Artifacts: `~/.claude/state/acceptance/cockpit-v2/`.
+
+**What shipped:** ONE plan grammar (lettered ids parse; 3 divergent grammars dead) · requireable
+derive-lib + exporter (A4 trap closed) · coord transport (single-writer cadence, A2a ahead-of-origin
+fix, per-episode alerting) · the PEER VIEW (age-honest cross-machine visibility — the operator's
+multi-user requirement) · MultiEdit matcher fixed in BOTH places · description payload carve-out ·
+C3b (auditor's real divergences auto-file to nl-issue with dedup/escalation — the operator's
+auto-healing intent, wired at the correct target).
+
+**Deploy residuals:** NL-CoordSync scheduled-task registration is operator-gated (agent sessions are
+permission-blocked from Register-ScheduledTask — joins the existing operator to-do for the 3 harness
+task installers; until registered, the peer view honestly shows no-data/unreachable). The badge-storm
+interaction (marker-prune × auditor oracle) is filed and queued — surfaced by the operator's live
+review, fix direction in the nl-issue; presentation half folds into the UX redesign in flight.
