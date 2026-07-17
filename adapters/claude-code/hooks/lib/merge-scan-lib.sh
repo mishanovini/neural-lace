@@ -124,6 +124,56 @@
 # that actually changed the file, but theoretically possible via a
 # contrived octopus merge or manual tree surgery. Constraint 5's
 # "best-effort, never blocks" already accepts that residual gap.
+#
+# ============================================================
+# INCREMENTAL CURSOR (2026-07-16 production fix -- convergence, not re-scan)
+# ============================================================
+#
+# `ms_scan_repo_for_merges` used to re-walk the SAME bounded `git log
+# origin/master -n <limit>` window on every single auditor cycle (120s
+# cadence), forever. On a repo whose history is deep enough that the
+# per-commit subprocess fan-out (git log -1, git diff-tree -m, git
+# cat-file/show, a progress-log.sh emit spawn) exceeds
+# DEFAULT_CLI_TIMEOUT_MS (60s, auditor.js) across the default 200-commit
+# window, `runCli`'s killTree fires every cycle: no leak (the 2026-07-14
+# kill-the-tree fix holds), but the backfill NEVER COMPLETES and NEVER MAKES
+# PROGRESS -- the exact same window gets killed and re-attempted forever.
+#
+# The fix: a per-repo last-scanned-SHA CURSOR persisted at
+# `~/.claude/state/merge-scan-cursors/<repo-key>` (repo-key derived the same
+# way progress-log-lib.sh's `_pl_sanitize_ask_id` / dispatch-provenance.sh's
+# `_dp_sanitize` derive theirs -- allowlist-normalize a canonical string,
+# every char outside [A-Za-z0-9._-] -> `_`; see _ms_repo_key below).
+#
+#   1. If a cursor exists AND is still an ancestor of origin/master
+#      (`git merge-base --is-ancestor`), scan ONLY `<cursor>..origin/master`
+#      -- only commits that landed since the last successful frontier. A
+#      corrupt file, a SHA that doesn't resolve to a commit in this repo, or
+#      a SHA that is no longer an ancestor (history moved / force-push) all
+#      fail OPEN to the original bounded-window full scan -- never an
+#      error; the cursor self-heals on the next successful write.
+#   2. The commit list (bounded-window OR cursor-narrowed, either way still
+#      capped by --limit) is walked OLDEST FIRST (`git log --reverse`), and
+#      the cursor is advanced to EACH commit's own SHA as it finishes
+#      processing -- NOT only once at the very end. This is the
+#      load-bearing property: the process can still be tree-killed mid-run
+#      (a large backlog, a slow commit), and oldest-first + per-commit
+#      advancement means a killed run leaves the cursor at the last commit
+#      ACTUALLY completed -- never skipping the untouched remainder, never
+#      falsely claiming more progress than was made. The very next cycle
+#      resumes exactly there. (Advancing newest-first would be WRONG: a
+#      kill partway through would leave the cursor pointing at a commit
+#      newer than some still-unprocessed older ones, permanently orphaning
+#      them.)
+#   3. An explicit caller-supplied `--since` bypasses the cursor entirely
+#      (read AND write) -- a manual/one-off range must never clobber the
+#      automatic frontier.
+#
+# Net effect: the backfill converges across a small, bounded number of
+# cycles (each cycle's window is itself bounded by --limit, same as today),
+# and once caught up, every further cycle's range is empty
+# (cursor==origin/master) and returns immediately -- the cheap steady state
+# this fix exists to reach.
 
 set -u
 
@@ -325,24 +375,118 @@ ms_emit_merged_for_commit() {
 }
 
 # ----------------------------------------------------------------------
+# _ms_cursor_state_dir — resolve the incremental-scan cursor directory.
+# Mirrors progress-log-lib.sh's pl_state_dir resolution order exactly
+# (explicit override -> HARNESS_SELFTEST sandbox -> real default), but is
+# its OWN directory/env-var (MS_CURSOR_STATE_DIR) since cursors are a
+# distinct concern from the progress-log event store.
+# ----------------------------------------------------------------------
+_ms_cursor_state_dir() {
+  if [[ -n "${MS_CURSOR_STATE_DIR:-}" ]]; then
+    printf '%s' "$MS_CURSOR_STATE_DIR"
+    return 0
+  fi
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/merge-scan-cursors-selftest/%s' "${TMPDIR:-/tmp}" "$$"
+    return 0
+  fi
+  printf '%s/.claude/state/merge-scan-cursors' "${HOME:-$PWD}"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# _ms_repo_key <repo-root> — filesystem-safe single-path-component cursor
+# filename for <repo-root>, derived from its CANONICAL absolute path (so two
+# different relative/symlinked spellings of the same repo share one cursor)
+# via the same allowlist technique as progress-log-lib.sh's
+# _pl_sanitize_ask_id / dispatch-provenance.sh's _dp_sanitize: every char
+# outside [A-Za-z0-9._-] -> `_`. Never fails -- an unresolvable repo-root
+# (shouldn't happen; the only caller already checked `git rev-parse
+# --is-inside-work-tree`) degrades to a static fallback key rather than an
+# empty/degenerate one.
+# ----------------------------------------------------------------------
+_ms_repo_key() {
+  local repo_root="$1"
+  local abs
+  abs="$(cd "$repo_root" 2>/dev/null && pwd -P)"
+  [[ -z "$abs" ]] && abs="$repo_root"
+  local s="${abs//[!A-Za-z0-9._-]/_}"
+  while [[ "$s" == *..* ]]; do s="${s//../_}"; done
+  if [[ -z "$s" || "$s" == "." || "$s" == "_" ]]; then
+    s="unknown-repo"
+  fi
+  printf '%s' "$s"
+}
+
+# ----------------------------------------------------------------------
+# _ms_cursor_path <repo-root> — the resolved cursor file for <repo-root>.
+# ----------------------------------------------------------------------
+_ms_cursor_path() {
+  printf '%s/%s' "$(_ms_cursor_state_dir)" "$(_ms_repo_key "$1")"
+}
+
+# ----------------------------------------------------------------------
+# _ms_read_cursor <cursor-path> — print the persisted cursor SHA, or empty
+# if the file is missing, unreadable, or does not contain exactly a 40-hex-
+# char SHA (every SHA this lib ever writes comes straight from `git log
+# --format=%H`, always 40 hex chars -- anything else is corruption or a
+# foreign write and is treated as absent). FAIL-OPEN: never errors; the
+# caller (ms_scan_repo_for_merges) falls back to a full scan on empty.
+# ----------------------------------------------------------------------
+_ms_read_cursor() {
+  local path="$1" raw
+  [[ -f "$path" ]] || return 0
+  raw="$(cat "$path" 2>/dev/null)" || return 0
+  raw="${raw//[$'\t\r\n ']/}"
+  if [[ "$raw" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    printf '%s' "$raw"
+  fi
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# _ms_write_cursor <repo-root> <sha> — atomically persist <sha> as the new
+# cursor for <repo-root> (tmp-file + rename, so a concurrent reader never
+# observes a half-written file). Best-effort: a failure to mkdir/write/
+# rename is swallowed, never propagated -- a cursor write is an
+# optimization, not a correctness requirement (worst case, the next run
+# just falls back to a full scan again).
+# ----------------------------------------------------------------------
+_ms_write_cursor() {
+  local repo_root="$1" sha="$2"
+  local path dir tmp
+  path="$(_ms_cursor_path "$repo_root")"
+  dir="$(dirname "$path")"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  tmp="${path}.tmp.$$"
+  printf '%s\n' "$sha" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 0; }
+  mv -f "$tmp" "$path" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # ms_scan_repo_for_merges <repo-root> [--since <sha-or-ref>] [--limit <n>]
 #                          [--emitter <name>]
 #
-#   THE GUARANTEED LANE (Task 12 consumes this). Walks `git log
-# origin/master` (bounded by --limit, default 200; --since narrows the
-# range to `<since>..origin/master` for incremental scanning) and calls
-# ms_emit_merged_for_commit for every sha. Safe to re-run over the same
-# range repeatedly: pl_emit's own repo+sha natural-key dedup makes every
-# call idempotent (Task 12's relaxed-cadence auditor loop relies on this —
-# no bookkeeping of "have I scanned this sha before" needs to live here).
+#   THE GUARANTEED LANE (Task 12 consumes this). Without an explicit
+# --since, resumes from the persisted per-repo CURSOR (see INCREMENTAL
+# CURSOR above): `<cursor>..origin/master` when the cursor is still a valid
+# ancestor, else the original bounded `git log origin/master -n <limit>`
+# window (default 200). Either way the commit list is walked OLDEST FIRST
+# and the cursor is advanced to each commit as it finishes -- so a
+# tree-killed run leaves durable, resumable progress instead of restarting
+# from scratch every cycle. An explicit --since bypasses the cursor
+# entirely (read and write). Safe to re-run over the same range repeatedly
+# regardless: pl_emit's own repo+sha natural-key dedup makes every call
+# idempotent independent of the cursor.
 # ----------------------------------------------------------------------
 ms_scan_repo_for_merges() {
   local repo_root="$1"; shift || true
   [[ -z "${repo_root:-}" ]] && return 0
-  local since="" limit="200" emitter="auditor"
+  local since="" limit="200" emitter="auditor" since_explicit=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --since) since="${2:-}"; shift 2 ;;
+      --since) since="${2:-}"; since_explicit=1; shift 2 ;;
       --limit) limit="${2:-200}"; shift 2 ;;
       --emitter) emitter="${2:-auditor}"; shift 2 ;;
       *) shift ;;
@@ -350,17 +494,52 @@ ms_scan_repo_for_merges() {
   done
   git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
 
+  if [[ "$since_explicit" == "0" ]]; then
+    local cursor_sha
+    cursor_sha="$(_ms_read_cursor "$(_ms_cursor_path "$repo_root")")"
+    if [[ -n "$cursor_sha" ]] \
+       && git -C "$repo_root" cat-file -e "${cursor_sha}^{commit}" 2>/dev/null \
+       && git -C "$repo_root" merge-base --is-ancestor "$cursor_sha" origin/master 2>/dev/null; then
+      since="$cursor_sha"
+    fi
+    # else: no cursor, corrupt cursor, or a stale (non-ancestor) cursor --
+    # fall through to the bounded full scan below; a fresh cursor gets
+    # written as commits are processed (self-heals).
+  fi
+
   local range="origin/master"
   [[ -n "$since" ]] && range="${since}..origin/master"
 
+  # NOTE: git's `-n <limit>` always truncates to the NEWEST <limit> commits
+  # in the range regardless of --reverse (`-n 2 --reverse` and `--reverse -n
+  # 2` both return the two newest, merely printed oldest-first) -- verified
+  # empirically, not an assumption. That is exactly what the FALLBACK window
+  # wants to preserve (today's "newest <limit> commits on origin/master"),
+  # but it is WRONG for the cursor-narrowed catch-up range: truncating a
+  # backlog bigger than <limit> to its newest end would silently skip the
+  # older, still-unprocessed middle forever once the cursor jumps past it.
   local shas
-  shas="$(git -C "$repo_root" log "$range" --format=%H -n "$limit" 2>/dev/null)"
+  if [[ -n "$since" ]]; then
+    # Cursor-narrowed: take the OLDEST <=<limit> commits (full --reverse
+    # walk + head), so a bounded/killed run always advances the frontier
+    # contiguously and a backlog bigger than <limit> converges over
+    # successive cycles instead of losing its middle.
+    shas="$(git -C "$repo_root" log "$range" --format=%H --reverse 2>/dev/null | head -n "$limit")"
+  else
+    # Fallback bounded full scan: preserve today's exact WINDOW (the newest
+    # <limit> commits on origin/master), but still walk it oldest-first so a
+    # mid-window kill -- the file's own historical failure mode, the very
+    # first run over a big repo getting tree-killed partway -- leaves
+    # resumable progress instead of an arbitrary, unresumable subset.
+    shas="$(git -C "$repo_root" log "$range" --format=%H -n "$limit" 2>/dev/null | tac)"
+  fi
   [[ -z "$shas" ]] && return 0
 
   local sha
   while IFS= read -r sha; do
     [[ -z "$sha" ]] && continue
     ms_emit_merged_for_commit "$repo_root" "$sha" --emitter "$emitter"
+    [[ "$since_explicit" == "0" ]] && _ms_write_cursor "$repo_root" "$sha"
   done <<< "$shas"
   return 0
 }
@@ -405,6 +584,11 @@ ms_self_test() {
   export HARNESS_SELFTEST=1
   export PROGRESS_LOG_STATE_DIR="$TMP/pl-state"
   mkdir -p "$PROGRESS_LOG_STATE_DIR"
+  # Explicit override (same convention as PROGRESS_LOG_STATE_DIR above) so
+  # every cursor file this self-test writes lands under $TMP and is swept
+  # up by the final `rm -rf "$TMP"` -- never the real per-machine default.
+  export MS_CURSOR_STATE_DIR="$TMP/cursor-state"
+  mkdir -p "$MS_CURSOR_STATE_DIR"
 
   local REPO="$TMP/fixture-repo"
   mkdir -p "$REPO"
@@ -746,6 +930,207 @@ EOF
     fail "FINDING 7: expected sha14 attributed to plan-a via the valid token path"
   fi
 
+  echo ""
+  echo "---- Incremental-cursor regression fixtures (2026-07-16 fix: scan-repo must CONVERGE, not re-scan the same window forever) ----"
+  export PROGRESS_LOG_STATE_DIR="$TMP/pl-state-cursor"
+  mkdir -p "$PROGRESS_LOG_STATE_DIR"
+
+  local REPO2="$TMP/fixture-repo-cursor"
+  mkdir -p "$REPO2"
+  (
+    cd "$REPO2" || exit 1
+    git init -q
+    git config core.hooksPath ""
+    git config user.email "test@example.test"
+    git config user.name "Test"
+    mkdir -p docs/plans
+    cat > docs/plans/plan-cur.md <<'EOF'
+# Plan: Cursor fixture (incremental-scan regression)
+Status: ACTIVE
+ask-id: ask-fixture-cur
+
+## Tasks
+- [ ] 1. first task
+EOF
+    git add . && git commit -q -m "init"
+  )
+  local sha15_init sha15_t1 sha15_t2 sha15_t3
+  sha15_init="$(git -C "$REPO2" rev-parse HEAD)"
+  (
+    cd "$REPO2" || exit 1
+    echo "task 1 done" >> docs/plans/plan-cur.md
+    git commit -q -am "$(printf 'fix(plan-cur): flip task 1\n\nplan: plan-cur\n')"
+  )
+  sha15_t1="$(git -C "$REPO2" rev-parse HEAD)"
+  (
+    cd "$REPO2" || exit 1
+    echo "task 2 done" >> docs/plans/plan-cur.md
+    git commit -q -am "$(printf 'fix(plan-cur): flip task 2\n\nplan: plan-cur\n')"
+  )
+  sha15_t2="$(git -C "$REPO2" rev-parse HEAD)"
+  (
+    cd "$REPO2" || exit 1
+    echo "task 3 done" >> docs/plans/plan-cur.md
+    git commit -q -am "$(printf 'fix(plan-cur): flip task 3\n\nplan: plan-cur\n')"
+  )
+  sha15_t3="$(git -C "$REPO2" rev-parse HEAD)"
+  git -C "$REPO2" update-ref refs/remotes/origin/master "$sha15_t3"
+  local cur_repo_key cur_path
+  cur_repo_key="$(_ms_repo_key "$REPO2")"
+  cur_path="$(_ms_cursor_path "$REPO2")"
+  local fcur="$PROGRESS_LOG_STATE_DIR/ask-fixture-cur.jsonl"
+
+  echo "Scenario 15: first scan-repo run (no cursor yet) backfills every commit AND leaves the cursor at HEAD"
+  ms_scan_repo_for_merges "$REPO2" --emitter auditor
+  if [[ -f "$fcur" ]] \
+     && grep -qF "\"sha\":\"$sha15_init\"" "$fcur" \
+     && grep -qF "\"sha\":\"$sha15_t1\"" "$fcur" \
+     && grep -qF "\"sha\":\"$sha15_t2\"" "$fcur" \
+     && grep -qF "\"sha\":\"$sha15_t3\"" "$fcur"; then
+    pass "Scenario 15: first run backfilled all 4 commits (init + 3 flips), same as today"
+  else
+    fail "Scenario 15: expected all 4 shas attributed to plan-cur in $fcur"
+  fi
+  local cursor_after15; cursor_after15="$(cat "$cur_path" 2>/dev/null)"
+  if [[ "$cursor_after15" == "$sha15_t3" ]]; then
+    pass "Scenario 15: cursor left at HEAD ($sha15_t3) after the first run"
+  else
+    fail "Scenario 15: expected cursor==$sha15_t3, got '$cursor_after15'"
+  fi
+
+  echo "Scenario 16: second run with no new commits scans ZERO commits, cursor unchanged"
+  local before16; before16="$(wc -l < "$fcur" 2>/dev/null || echo 0)"
+  ms_scan_repo_for_merges "$REPO2" --emitter auditor
+  local after16; after16="$(wc -l < "$fcur" 2>/dev/null || echo 0)"
+  local cursor_after16; cursor_after16="$(cat "$cur_path" 2>/dev/null)"
+  if [[ "$before16" == "$after16" && "$cursor_after16" == "$sha15_t3" ]]; then
+    pass "Scenario 16: no new commits -> no new lines emitted, cursor stays at $sha15_t3"
+  else
+    fail "Scenario 16: expected a no-op (before=$before16 after=$after16 cursor=$cursor_after16)"
+  fi
+
+  echo "Scenario 17: 2 new commits land; scan-repo scans exactly those 2 (via the cursor-narrowed range) and advances the cursor to the new HEAD"
+  (
+    cd "$REPO2" || exit 1
+    echo "task 4 done" >> docs/plans/plan-cur.md
+    git commit -q -am "$(printf 'fix(plan-cur): flip task 4\n\nplan: plan-cur\n')"
+  )
+  local sha17a; sha17a="$(git -C "$REPO2" rev-parse HEAD)"
+  (
+    cd "$REPO2" || exit 1
+    echo "task 5 done" >> docs/plans/plan-cur.md
+    git commit -q -am "$(printf 'fix(plan-cur): flip task 5\n\nplan: plan-cur\n')"
+  )
+  local sha17b; sha17b="$(git -C "$REPO2" rev-parse HEAD)"
+  git -C "$REPO2" update-ref refs/remotes/origin/master "$sha17b"
+  ms_scan_repo_for_merges "$REPO2" --emitter auditor
+  if grep -qF "\"sha\":\"$sha17a\"" "$fcur" && grep -qF "\"sha\":\"$sha17b\"" "$fcur"; then
+    pass "Scenario 17: both newly-landed commits were scanned via the cursor-narrowed range"
+  else
+    fail "Scenario 17: expected both $sha17a and $sha17b in $fcur"
+  fi
+  local cursor_after17; cursor_after17="$(cat "$cur_path" 2>/dev/null)"
+  if [[ "$cursor_after17" == "$sha17b" ]]; then
+    pass "Scenario 17: cursor advanced to the new HEAD ($sha17b)"
+  else
+    fail "Scenario 17: expected cursor==$sha17b, got '$cursor_after17'"
+  fi
+
+  echo "Scenario 18 (KILL-RESILIENCE, load-bearing): a run bounded to --limit 1 makes only PARTIAL progress and advances the cursor to exactly the oldest new commit (never straight to HEAD); a follow-up run resumes FROM THE CURSOR and completes the remainder without re-emitting what already landed"
+  (
+    cd "$REPO2" || exit 1
+    echo "task 6 done" >> docs/plans/plan-cur.md
+    git commit -q -am "$(printf 'fix(plan-cur): flip task 6\n\nplan: plan-cur\n')"
+  )
+  local sha18a; sha18a="$(git -C "$REPO2" rev-parse HEAD)"
+  (
+    cd "$REPO2" || exit 1
+    echo "task 7 done" >> docs/plans/plan-cur.md
+    git commit -q -am "$(printf 'fix(plan-cur): flip task 7\n\nplan: plan-cur\n')"
+  )
+  local sha18b; sha18b="$(git -C "$REPO2" rev-parse HEAD)"
+  git -C "$REPO2" update-ref refs/remotes/origin/master "$sha18b"
+
+  # Simulate the real-world tree-kill: bound this run to exactly the oldest
+  # ONE not-yet-scanned commit -- mirrors what a 60s kill leaves behind:
+  # partial progress, never zero progress.
+  ms_scan_repo_for_merges "$REPO2" --emitter auditor --limit 1
+  local cursor_mid; cursor_mid="$(cat "$cur_path" 2>/dev/null)"
+  if [[ "$cursor_mid" == "$sha18a" ]]; then
+    pass "Scenario 18: the --limit-1 'killed' run advanced the cursor only to the oldest new commit ($sha18a), not straight to HEAD"
+  else
+    fail "Scenario 18: expected cursor==$sha18a after the bounded run, got '$cursor_mid'"
+  fi
+  if grep -qF "\"sha\":\"$sha18a\"" "$fcur" && ! grep -qF "\"sha\":\"$sha18b\"" "$fcur"; then
+    pass "Scenario 18: the bounded run emitted sha18a but NOT YET sha18b (genuinely partial progress)"
+  else
+    fail "Scenario 18: expected sha18a emitted and sha18b absent after the bounded run"
+  fi
+
+  ms_scan_repo_for_merges "$REPO2" --emitter auditor
+  local cursor_final18; cursor_final18="$(cat "$cur_path" 2>/dev/null)"
+  if [[ "$cursor_final18" == "$sha18b" ]]; then
+    pass "Scenario 18: the follow-up run resumed from the cursor and advanced the rest of the way to HEAD ($sha18b)"
+  else
+    fail "Scenario 18: expected cursor==$sha18b after the follow-up run, got '$cursor_final18'"
+  fi
+  if [[ "$(grep -cF "\"sha\":\"$sha18a\"" "$fcur")" == "1" ]]; then
+    pass "Scenario 18: sha18a's event was NOT re-emitted by the follow-up run (the cursor genuinely resumed past it, not merely deduped)"
+  else
+    fail "Scenario 18: expected exactly one sha18a line even after the follow-up run"
+  fi
+  if grep -qF "\"sha\":\"$sha18b\"" "$fcur"; then
+    pass "Scenario 18: sha18b was emitted by the follow-up run (kill-resilience convergence complete)"
+  else
+    fail "Scenario 18: expected sha18b emitted by the follow-up run"
+  fi
+
+  echo "Scenario 19: a format-corrupt cursor file falls back to a full scan and self-heals (never errors)"
+  printf 'not-a-real-sha-xyz\n' > "$cur_path"
+  local before19; before19="$(wc -l < "$fcur" 2>/dev/null || echo 0)"
+  ms_scan_repo_for_merges "$REPO2" --emitter auditor
+  local rc19=$?
+  local after19; after19="$(wc -l < "$fcur" 2>/dev/null || echo 0)"
+  if [[ "$rc19" == "0" ]]; then
+    pass "Scenario 19: scan-repo never errors on a format-corrupt cursor file (exit 0)"
+  else
+    fail "Scenario 19: expected exit 0 despite a corrupt cursor, got $rc19"
+  fi
+  local healed19; healed19="$(cat "$cur_path" 2>/dev/null)"
+  if [[ "$healed19" == "$sha18b" ]]; then
+    pass "Scenario 19: corrupt cursor self-healed to a valid SHA ($sha18b) via the fallback full scan"
+  else
+    fail "Scenario 19: expected cursor to self-heal to $sha18b, got '$healed19'"
+  fi
+  if [[ "$after19" == "$before19" ]]; then
+    pass "Scenario 19: the fallback full-scan re-processing stayed idempotent (no duplicate lines despite ignoring the corrupt cursor)"
+  else
+    fail "Scenario 19: expected idempotent line count, before=$before19 after=$after19"
+  fi
+
+  echo "Scenario 19b: a well-formed-but-nonexistent SHA in the cursor also falls back safely (git cat-file -e catches it, not just the regex)"
+  printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n' > "$cur_path"
+  ms_scan_repo_for_merges "$REPO2" --emitter auditor
+  local rc19b=$?
+  if [[ "$rc19b" == "0" ]]; then
+    pass "Scenario 19b: a well-formed-but-nonexistent cursor SHA never errors (exit 0)"
+  else
+    fail "Scenario 19b: expected exit 0, got $rc19b"
+  fi
+  local healed19b; healed19b="$(cat "$cur_path" 2>/dev/null)"
+  if [[ "$healed19b" == "$sha18b" ]]; then
+    pass "Scenario 19b: the nonexistent-SHA cursor self-healed to a valid SHA ($sha18b)"
+  else
+    fail "Scenario 19b: expected cursor to self-heal to $sha18b, got '$healed19b'"
+  fi
+
+  echo "Scenario 20: cursor writes are sandbox-only -- self-test never touched the real ~/.claude/state/merge-scan-cursors"
+  if [[ ! -e "${HOME:-$PWD}/.claude/state/merge-scan-cursors/$cur_repo_key" ]]; then
+    pass "Scenario 20: self-test never wrote a cursor file under the real state dir"
+  else
+    fail "Scenario 20: unexpected real cursor file under \${HOME}/.claude/state/merge-scan-cursors/$cur_repo_key"
+  fi
+
   rm -rf "$TMP" 2>/dev/null || true
 
   echo ""
@@ -793,6 +1178,10 @@ Verbs:
                           Walk `git log origin/master` and emit one
                           `merged` event per resolvable-plan-slug commit.
                           Idempotent: safe to re-run over the same range.
+                          Without --since, resumes from a persisted
+                          per-repo cursor (~/.claude/state/merge-scan-
+                          cursors/<repo-key>) so steady-state cycles only
+                          scan newly-landed commits.
   scan-commit <repo-root> <sha> [--emitter <name>]
                           Emit `merged` event(s) for exactly one commit.
   --self-test             Run the sandboxed self-test suite.

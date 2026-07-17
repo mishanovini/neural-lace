@@ -609,6 +609,7 @@ Create:
 - `adapters/claude-code/scripts/progress-log.sh` — CLI verbs + `--self-test` (mirrors session-heartbeat split)
 - `adapters/claude-code/scripts/ask-registry.sh` — registry CLI + summarizer + mirror + `--self-test`
 - `adapters/claude-code/scripts/dispatch-provenance.sh` — DISPATCH-PROVENANCE MARKER writer CLI + write-time prune + `--self-test` (the Task 3 marker Task 9's classification guard consumes). Scope-table omission corrected 2026-07-14: Task 3 mandates this marker and the file was created for it, but the table never named the script — surfaced by `scope-enforcement-gate` on the splice-review fix commit.
+- `adapters/claude-code/hooks/lib/merge-scan-lib.sh` — SHA -> ask attribution + `merged` progress-log emission lib (Task 5b, the auditor's GUARANTEED merge-backfill lane); own file header names this plan/task explicitly. Same class of scope-table omission as the dispatch-provenance.sh line above, corrected 2026-07-16: surfaced by `scope-enforcement-gate` on the incremental-cursor production-defect fix commit (auditor's 120s scan-repo cycle was re-scanning the same bounded window forever instead of converging — see the file's own "INCREMENTAL CURSOR" header section).
 - `adapters/claude-code/schemas/progress-log-event.schema.json` — versioned event schema
 - `neural-lace/workstreams-ui/server/auditor.js` — background reconciler (derive-cache reuse, relaxed cadence)
 - `neural-lace/workstreams-ui/server/payload-schema.js` — landing allowlist schema + href checks
