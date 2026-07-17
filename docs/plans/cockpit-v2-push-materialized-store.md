@@ -1,6 +1,6 @@
 # Plan: Cockpit v2 — cross-machine state EXPORT (local truth stays local)
 
-Status: ACTIVE
+Status: COMPLETED
 Mode: build
 rung: 3
 lifecycle-schema: v2
