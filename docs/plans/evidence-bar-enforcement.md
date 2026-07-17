@@ -154,3 +154,35 @@ A maintainer can: watch agent-design-gate block a golden-case-less agent file; w
 qualifying ACTIVE plan without a review; watch agent-commit-gate block a dirty subagent stop; and see
 the auditor's merge backfill converge and stay <5s — each demonstrated by self-test output or live
 fire, all on master, manifest GREEN, honest_status truthful.
+
+## Completion report (2026-07-17)
+
+**All 6 tasks verified by task-verifier (commit 30c9df8, conf 8-9 per task) and landed on master.**
+Master @ 7a41ad6 lineage; Evals CI GREEN; blocking-gate budget 13/13 GREEN; manifest-check GREEN.
+
+**What the maintainer can now do (the §4 demonstration):**
+- A qualifying plan CANNOT go ACTIVE without an architecture-review verdict — plan-reviewer Check 17,
+  BLOCKING, verified by aa1-aa7 (aa2/aa4/aa5 prove the block; aa3/aa7 prove SOUND/S-W-A pass; aa6
+  proves DRAFT exemption). FP-rate measured: 27% trigger rate on the 237-plan corpus, phrase-anchored.
+- A new agent file missing the GOLDEN CASE + seven properties is caught — agent-design-gate, 8/8,
+  OBSERVE-FIRST (would-block logged to probe; flip after N real fires / 0 FPs).
+- A worktree subagent ending with uncommitted work is caught — agent-commit-gate (first SubagentStop
+  hook), 10/10, OBSERVE-FIRST (flip criteria: probe proves own-worktree cwd + stop_hook_active on a
+  block→retry pair + zero false would-blocks).
+- The auditor's merge backfill converges once and stays cheap — incremental cursor, 36/36 incl.
+  kill-resilience, warm scan 2.5s measured.
+
+**Decisions made decide-and-go (per §8, batched here):** observe-first rollout for both new gates
+(closing the harness-review's 4 majors; full rationale in the Decisions Log above); SubagentStop
+added to SESSION_EVENTS so future blocking SubagentStop gates count against the D5 budget;
+GATE 2 stayed PreToolUse-hosted (rehost-to-precommit rejected as needless surgery once observe-first
+resolved the budget).
+
+**Known residuals (tracked, not blockers):** the two observe-first gates need their probe logs
+reviewed and flipped to enforce when criteria are met (queued); crashes/kills remain the detection
+layer's job (orphaned-worktree-guard reformulation, separate); Acceptance Scenario 4's "<5s" was the
+builder's measurement, not re-timed by the verifier (mechanism makes it structurally cheap).
+
+**Process deviation, closed:** Task 4's comprehension articulation existed in the builder's report
+but was never filed; placed in evidence-bar-enforcement-evidence.md during integration, with the
+verifier's independent FM-023 falsification (test-to-spec correspondence) recorded as the grading.
