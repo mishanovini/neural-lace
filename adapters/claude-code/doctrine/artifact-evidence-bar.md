@@ -1,8 +1,7 @@
 # The evidence bar — no artifact ships without proof it beats naive
 
-> Enforcement: Mechanism — plan-reviewer.sh Check 17 (GATE 1, BLOCKING, self-test-verified) +
-> agent-design-gate.sh (GATE 2) + agent-commit-gate.sh (GATE 3), both wired OBSERVE-FIRST
-> (would-block logged, flip-to-enforce criteria in their manifest entries — review 2026-07-17).
+> Enforcement: plan-reviewer.sh Check 17 (blocking, verified) + agent-design-gate.sh +
+> agent-commit-gate.sh (both observe-first; flip criteria in manifest, review 2026-07-17).
 > Full: doctrine/artifact-evidence-bar-full.md
 > Applies: every gate, agent, design, and review this harness produces.
 
