@@ -38,7 +38,7 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
 
 ## Tasks
 
-- [ ] 1. [parallel] **ONE parser + ONE resolver** (`server/plan-parse.js`; server.js + auditor.js
+- [x] 1. [parallel] **ONE parser + ONE resolver** (`server/plan-parse.js`; server.js + auditor.js
   repointed; lettered ids — 208 lines currently invisible — now parse; archive/ in the resolver
   union). ALREADY DISPATCHED (shape-invariant). Bash consumers conform via a SHARED fixture corpus
   both grammars must pass in --self-test (F7) — plan-lifecycle.sh gains the fixture check, not a
