@@ -30,22 +30,22 @@ OUT: the orphaned-worktree-guard reformulation (separate, REFORMULATE-held); coc
 
 ## Tasks
 
-- [ ] 1. [serial] GATE 1 (plan-reviewer.sh Check 17, architecture-review-before-build): verify the
+- [x] 1. [serial] GATE 1 (plan-reviewer.sh Check 17, architecture-review-before-build): verify the
   aa1-aa7 self-test scenarios pass (suite runs detached — ~85s/scenario), then land — Verification:
   mechanical
-- [ ] 2. [serial] GATE 2 (agent-design-gate.sh, agent golden-case): already 7/7 self-tested + wired +
+- [x] 2. [serial] GATE 2 (agent-design-gate.sh, agent golden-case): already 7/7 self-tested + wired +
   §10 manifest fields; land with GATE 1 — Verification: mechanical
-- [ ] 3. [serial] GATE 3 (agent-commit-gate.sh, SubagentStop builder-commit): built this session,
+- [x] 3. [serial] GATE 3 (agent-commit-gate.sh, SubagentStop builder-commit): built this session,
   self-test 7/7 (S5 caught + removed a pwd-fallback false-positive path), wired, §10 manifest entry,
   events enum extended (first SubagentStop hook). Land; confirm the probe log at first live fire —
   Verification: mechanical
-- [ ] 4. [serial] merge-scan incremental cursor (production fix): per-repo last-scanned-SHA cursor
+- [x] 4. [serial] merge-scan incremental cursor (production fix): per-repo last-scanned-SHA cursor
   advanced per-batch so a tree-killed run still makes durable progress and the backfill converges;
   warm-cursor run <5s; full ms_self_test green (builder in flight) — Verification: full
-- [ ] 5. [serial] harness-reviewer pass over GATE 3 + the enum/schema change (GATE 1/2 were built by a
+- [x] 5. [serial] harness-reviewer pass over GATE 3 + the enum/schema change (GATE 1/2 were built by a
   builder against the standard; GATE 3 is orchestrator-authored and needs the independent adversarial
   pass our own doctrine requires), fold in findings — Verification: mechanical
-- [ ] 6. [serial] Flip the artifact-evidence-bar doctrine/manifest honest_status to Mechanism ONLY
+- [x] 6. [serial] Flip the artifact-evidence-bar doctrine/manifest honest_status to Mechanism ONLY
   once gates 1-3 are landed and green — the claim must never lead the truth — Verification: mechanical
 
 ## Files to Modify/Create
