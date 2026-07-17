@@ -309,3 +309,62 @@ A real peer branch name that happens to contain a denylisted substring (e.g. a b
 
 ### Assumptions
 "master" is hardcoded as this codebase's stable main-branch name in `isUnmerged()` (matching this repo's own documented convention) rather than read from any config; a peer machine whose OWN project uses a different default branch name would show every row as unmerged even when genuinely merged into ITS default branch — accepted as a fair simplification since the plan's stated scope is this one estate, not a general multi-convention peer. The `.git/FETCH_HEAD` mtime is trusted as a reliable "last successful fetch" signal on every platform coord-sync.sh runs on, per git's own documented write behavior — this task's tests prove the READ side of that logic against a hand-written fixture file (`fs.utimesSync`), not against a live `git fetch` invocation. The default thresholds (20min fresh / 60min keepalive / 20min margin => 80min unreachable) are taken directly from the plan's own literal amendment text (A1's staleness contract; export-state.js's existing `KEEPALIVE_MS`), not independently re-derived from separate empirical measurement. `plan_doc`'s HREF_KEYS-exemption-by-omission was read as applying identically regardless of which machine (local or peer) produced the `{project,path}` object — no new special-casing was added, relying on the pre-existing mechanism's scope being "any `plan_doc`-shaped object," not "only a locally-produced one."
+
+## Task 4 — VERIFICATION (task-verifier, independent re-derivation)
+
+EVIDENCE BLOCK
+==============
+Task ID: 4
+Task description: [serial] Peer view in the cockpit — server reads the LOCAL coord clone (no fork/no network on the request path; A7 skip-bad-record), renders peer rows with provenance + age from RECEIVE-time (F2), named states with real mechanisms (A3), env-injectable thresholds (A5), unmerged never renders plain done (F4), local cards stay 100% local truth — Verification: full
+Verified at: 2026-07-17 (task-verifier agent, worktree agent-af89de92d44275474)
+Verifier: task-verifier agent
+
+Oracle: specified — plan User-facing Outcome + Task 4's 9 numbered requirements + amendments A3/A5/A7/F2/F4; PLUS derived-metamorphic — a verifier adversarial probe holding "a lying future exported_at must NOT relax computed age" and "a done-on-non-master peer must ADD the unmerged constraint". Functional signal: server.selftest.js S64-S69 drive a REAL running server GET /api/asks over real HTTP asserting user-observable rendered payload fields.
+
+Comprehension-gate: articulation IS filed (evidence file "## Comprehension Articulation — Task 4", 4 substantive sub-sections). rung-3 + Verification: full. Per orchestrator instruction the comprehension-reviewer runs IN PARALLEL (dispatched by the orchestrator, not nest-spawned by this verifier); NOT marked INCOMPLETE — the orchestrator holds the checkbox flip until BOTH gates return.
+
+Checks run:
+1. Unit self-test — Command: node server/peer-view.js --self-test — Output: "32 passed, 0 failed" — Result: PASS (expected 32/0).
+2. Wiring proof over REAL HTTP — Command: node server/server.selftest.js — Output: "160 passed, 0 failed"; S64-S69 all PASS (S64 GET /api/asks 200 + payload-schema validation passes; S64c exactly 2 peers, self+corrupt excluded; S64e corrupt file skipped without throwing; S65b unmerged provenance_label; S66 "peer unreachable since <ts>"; S67 FETCH_HEAD ~5m; S68 local card byte-identical; S69 no-clone -> has_data:false, 200) — Result: PASS (expected 160/0 incl S64-S69).
+3. Structural UI self-test — Command: node web/cockpit.selftest.js — Output: "93 passed, 0 failed"; PV-1..PV-9 all PASS — Result: PASS (expected 93/0 incl PV-1..9).
+4. No-fork/no-network discipline — grep of server/peer-view.js for child_process/exec/spawn/http/fetch — only a RegExp .exec() match (not child_process.exec) — Result: PASS.
+5. Age uses receive-time mtime, never exported_at — grep for exported_at in server/peer-view.js returns none; age math reads f.receivedAt = fs.statSync().mtime only (L147/L271) — Result: PASS.
+6. Load-bearing function spot-check vs requirements — readPeerExportFiles (fs-only, per-file try/catch skip; L134-150) / selfHostname (EXPORT_HOSTNAME; L108-110) / classifyPeerState (fresh-ish<=freshMs, estate-unchanged<=keepaliveMs+marginMs, else peer-unreachable; env-injectable thresholds L115-122) / myCoordRefresh (FETCH_HEAD statSync primary, cycles.log fallback, honest "never refreshed"; L223-253) / isUnmerged+provenanceLabel (dirty||branch not master; label always carries merged|unmerged; L179-192) / classifySessionAge (Date.now()-Date.parse(raw last_heartbeat_at); L202-207) — Result: PASS.
+7. server.js wiring — buildAsksLandingPayload adds a SEPARATE peers key alongside groups/completed (local cards untouched), fail-open buildPeersBlock (L954-968) — Result: PASS (requirement 8: never substituted).
+8. UI rendered-output rule — asks.js renderPeerPlanRow sets prov.textContent = p.provenance_label (L916), renderPeerEntry sets chip.textContent = e.state_label (L951), renderPeersSection sets coordHealth.textContent = my_coord_refresh.label (L986); renderPeersSection called on BOTH landing paths (L1057, L1073) — Result: PASS (visible DOM text, not an intermediate value).
+9. Payload allowlist by KEY — payload-schema.js LANDING_ALLOWED_KEYS extended by literal KEY addition (25 keys incl peers/has_data/my_coord_refresh/state_label/provenance_label/unmerged/branch/received_at); reuses DETAIL vocab; plan_doc HREF-exempt by omission — S64 proves real-HTTP validation passes (200, not 500) — Result: PASS.
+
+Adversarial probe (task-verifier authored, executed against the live module):
+  Scenario: a peer export claiming ALL tasks done on a NON-master branch (build/sneaky-feature), shipping a LYING exported_at 2h in the FUTURE, with file mtime set 90min in the past; plus a corrupt sibling file.
+  Observed: unmerged flag=true; provenance_label = "as of 90m ago on evil-peer (build/sneaky-feature, unmerged)"; state = peer-unreachable (age from mtime=90m; the future exported_at is IGNORED); state_label = "peer unreachable since <ts>"; corrupt sibling skipped, healthy peer still present, no throw.
+  Result: ADVERSARIAL PROBE SURVIVED — F4 (unmerged never plain done), F2 (clock-skew immunity via receive-time mtime), A7 (skip-bad-record) all hold under adversarial input.
+
+Runtime verification: test neural-lace/workstreams-ui/server/peer-view.js::--self-test (32/32, re-run by verifier)
+Runtime verification: test neural-lace/workstreams-ui/server/server.selftest.js::S64-S69 (160/160 total, real-HTTP GET /api/asks, re-run by verifier)
+Runtime verification: test neural-lace/workstreams-ui/web/cockpit.selftest.js::PV-1..PV-9 (93/93 total, re-run by verifier)
+Runtime verification: test task-verifier adversarial probe (done-on-non-master + lying future exported_at + corrupt sibling) — all assertions PASS against server/peer-view.js#computePeerView
+
+Note on functionality-verifier: not separately nest-dispatched in this orchestrated split. The functional axis is satisfied directly — server.selftest.js S64-S69 exercise the user-shaped GET /api/asks path against a REAL running server and assert the user-shaped rendered payload; the verifier's own adversarial probe drove the live computePeerView; the builder additionally captured a live browser DOM extraction (evidence check #5).
+
+Honest gap (disclosed, not blocking): PEER-VIEW-DENYLIST-COLLISION-01 — a peer branch/host name containing a GATE_HOOK_DENYLIST_PATTERNS substring would 500 the whole landing payload (degrades safely, no leak). Deliberately unfixed; persisted to docs/backlog.md L196. Outside Task 4's 9-requirement contract.
+
+DEPENDENCY TRACE
+================
+Step 1: operator opens cockpit -> GET /api/asks
+  Verified at: server.js buildAsksLandingPayload L954 (peers: buildPeersBlock())
+Step 2: server reads LOCAL coord clone plan-export/<host>.json (no fork/no network)
+  Verified at: peer-view.js readPeerExportFiles L134-150 (fs-only) + computePeerView L260-313; grep check 4
+Step 3: per-peer named state + provenance from receive-time mtime; self filtered; corrupt skipped
+  Verified at: server.selftest.js S64-S69 (real HTTP) + verifier adversarial probe
+Step 4: peer rows render to visible DOM with provenance_label / state_label / coord-refresh label
+  Verified at: asks.js L916/L951/L986 (textContent) + cockpit.selftest.js PV-3/PV-5/PV-7
+
+Git evidence:
+  Files modified in b3ba920 (build cockpit-v2 task4):
+    - server/peer-view.js (NEW, 541 lines), server.js (+24), payload-schema.js (+15),
+      server.selftest.js (+119), web/asks.js (+156), web/app.css (+44),
+      cockpit.selftest.js (+41), plan + evidence docs. HEAD = 79e2b47 (== origin/master).
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — all three self-tests re-run at exact expected counts (32/0, 160/0 incl S64-S69, 93/0 incl PV-1..9); every load-bearing function spot-checked against its requirement + amendment; no-fork/no-network and receive-time-mtime disciplines verified by source inspection; a verifier-authored adversarial probe (done-on-non-master + lying future exported_at + corrupt sibling) exercised the live module and F4/F2/A7 all held; the user-facing outcome is demonstrated over real HTTP (S64-S69) and reaches visible DOM textContent (asks.js). Checkbox intentionally NOT flipped — orchestrator flips on both this gate and the parallel comprehension gate.
