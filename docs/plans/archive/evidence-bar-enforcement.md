@@ -1,6 +1,6 @@
 # Plan: Evidence-bar enforcement — turn the world-class standard from Pattern into Mechanism
 
-Status: ACTIVE
+Status: COMPLETED
 Mode: build
 rung: 3
 lifecycle-schema: v2
