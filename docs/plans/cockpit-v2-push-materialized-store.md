@@ -75,7 +75,7 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
   indefinitely); (b) have the wiring consume coord-push's outcome via a status file
   (`pushed|local-commit|noop` + ts); (c) raise the existing health-tick alert path on persistent
   `local-commit` — Verification: full
-- [ ] 4. [serial] **Peer view in the cockpit** — the server reads the LOCAL coord clone (no fork,
+- [x] 4. [serial] **Peer view in the cockpit** — the server reads the LOCAL coord clone (no fork,
   no network on the request path — the clone is a directory; inherits skip-bad-record tolerance
   for mid-`reset --hard` partial files, A7); renders peer rows with provenance + age from
   RECEIVE-time (never the peer's wall clock alone, F2): "as of Xm ago on <host> (<branch>,
