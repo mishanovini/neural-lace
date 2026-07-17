@@ -33,3 +33,33 @@ the right frame, and may reshape docs/plans/cockpit-ui-polish.md.
    should anticipate that convergence rather than invent a parallel taxonomy.
 4. Badges/telemetry must earn their place: grouped, counted, labeled, capped — or demoted off the
    primary surface entirely (anti-noise law applies to OUR OWN telemetry too).
+
+## Round 2 — operator sit-down input (2026-07-17, verbatim intent)
+
+**The origin story (load-bearing):**
+> "It's common for me to make a request that turns into a very long conversation and goes off on
+> all kinds of tangents. This causes me to then lose track of not just my original request, but
+> additional requests that I've made, decisions that I've made, and items that are still waiting
+> on me. So I do want to be able to use this as a way of tracking the requests that I've made and
+> maybe how those requests also get modified by our continued conversation. I want that tracking
+> to also include questions or decisions that are waiting on me."
+
+**The structural question posed:** should (1) conversation/intent tracking and (2) design/plan/
+build tracking be ONE surface or TWO? Their candidate lifecycle: "as we close out conversations
+and turn those into plans or design efforts, we close out the conversation in that surface and
+spawn the designing/planning/building stream in the other surface." Explicitly presented as an
+idea to be pushed on, not a directive.
+
+**Their build-surface mental model:** "a status tracking surface that lists all the plans in the
+order they are intended to be built. Any plan should be openable into its sub-components. Easy to
+see which sub-components have been built, which are in process, which not started."
+
+**Answers to the round-1 questions:**
+1. Work-item framing + distilled-editable titles + promote-as-naming: "Yes, I agree."
+2. Board vs list: maybe offer BOTH; kanban only occasionally; PRIMARY = hierarchical list
+   (intents → plans → sub-components) in intended BUILD ORDER, read as a WATERLINE: "everything
+   above what's currently being worked on is marked as complete, and everything below is still
+   next on the to-do list."
+3. Statuses: **not started / in progress / complete / STALLED-PAUSED — and stalled "should be
+   able to tell me WHY it has stopped and WHAT is needed to get it moving forward again."**
+4. Telemetry quiet: agree — plus click-to-drill-into-detail on any item.
