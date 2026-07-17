@@ -61,7 +61,7 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
   dead; caps idle churn at 24 commits/day/machine). Atomic writes; `EXPORT_HOSTNAME` override for
   test simulation (A5). `--self-test` incl. quotes/newlines in descriptions and a zero-plan
   estate — Verification: mechanical
-- [ ] 3. [serial] **Transport = the coordination repo** (F3, F8 binding constraint: the PRIVATE
+- [x] 3. [serial] **Transport = the coordination repo** (F3, F8 binding constraint: the PRIVATE
   `workstreams-coordination` repo via git+SSH — never a mirrored remote, never the working tree,
   never the gh Contents API). **A1 (binding): wire a DEDICATED scheduled task `NL-coord-sync`
   (600s cadence; ignore-new-instance + a cheap exporter lock as the no-overlap policy — bash
