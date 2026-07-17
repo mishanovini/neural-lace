@@ -2107,7 +2107,18 @@ check_orphaned_worktree_work() {
     local tag path branch dirty unintegrated age liveness
     while IFS="$(printf '\t')" read -r tag path branch dirty unintegrated age liveness; do
       [[ -n "$path" ]] || continue
-      _warn "orphaned-worktree-work" "worktree ${path} (branch ${branch}) holds dirty=${dirty}/unintegrated=${unintegrated} with no live owner (liveness=${liveness}) — salvage then remove: git -C ${path} status; git worktree remove ${path}"
+      local remove_hint="git worktree remove ${path}"
+      # agent-crashed-locked (harness-review round-2 finding): the dispatch
+      # mechanism locks an agent worktree for the dispatch's duration and
+      # only unlocks on clean completion, so a crashed/SIGKILLed/OOM-killed
+      # agent's worktree stays locked forever — `git worktree remove`
+      # refuses on a locked worktree (a real git guard), so the salvage
+      # hint must name the unlock step or the operator hits a confusing
+      # refusal after already doing the git-status/commit/stash salvage.
+      if [[ "$liveness" == "agent-crashed-locked" ]]; then
+        remove_hint="git worktree unlock ${path} && git worktree remove ${path}  (verified: a single --force is NOT enough for a locked worktree — 'git worktree remove -f -f ${path}' [force TWICE] overrides without unlocking, instead)"
+      fi
+      _warn "orphaned-worktree-work" "worktree ${path} (branch ${branch}) holds dirty=${dirty}/unintegrated=${unintegrated} with no live owner (liveness=${liveness}) — salvage then remove: git -C ${path} status; ${remove_hint}"
     done <<< "$out"
   fi
   CHECKS_RUN=$((CHECKS_RUN + 1))

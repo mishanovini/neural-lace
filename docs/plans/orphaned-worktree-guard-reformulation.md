@@ -486,6 +486,51 @@ fixtures.
       completion in-session — see Known gap below) plus the targeted
       `oww-agent-live-green` scenario individually confirmed PASS.
 
+- [ ] 2. ROUND 2 — fix the harness-reviewer re-pass's finding on task 1's own
+      commit: locked agent worktrees never reached the liveness split (the
+      pre-existing `*,locked,*` structural-skip in `classify_worktree`
+      returned before `_live_owner` ever ran, for ANY locked worktree —
+      proven on the review machine via three real dead-pid locked
+      worktrees). A dispatched agent's worktree is `locked` by the
+      isolation/dispatch mechanism for the FULL dispatch duration and only
+      unlocks on clean completion, so a crashed/SIGKILLed/OOM-killed agent
+      leaves it locked FOREVER — exactly the golden_scenario's own
+      "crashes, is SIGKILLed/OOM-killed" claim, unreachable for this
+      topology until this task. Fix: `classify_worktree` no longer lets
+      `locked` preempt an `agent-*`-named worktree (falls through to the
+      normal liveness split instead, with a new `is_locked` guard keeping
+      it OUT of SAFE-PRUNE); `_live_owner` takes a third `is_locked` arg
+      and reports the distinct verdict `agent-crashed-locked` for
+      stale-and-locked; salvage/WARN text in both
+      `worktree-hygiene-sweep.sh` and `harness-doctor.sh` now names the
+      `git worktree unlock <path>` step (verified: a single `--force` on
+      `git worktree remove` is NOT enough for a locked worktree — `-f -f`,
+      force TWICE, or unlock first). Also bumped
+      `_build_agent_tx_cache`'s `find -maxdepth 6` → `7` (measured: the
+      Workflow-dispatch transcript variant sits at EXACTLY depth 6, zero
+      slack) and reconciled `manifest.json`'s golden_scenario/
+      fp_expectation and this durable doc's invariant text with what the
+      code now actually reaches. — Verification: mechanical (same
+      harness-internal class as task 1). Docs impact:
+      `docs/harness-improvements/orphaned-worktree-guard.md` gets a
+      "Round 2" section in the same commit.
+
+      Evidence (captured at build time): `worktree-hygiene-sweep.sh
+      --self-test` → 43/43 (task 1's 39 + 4 new: scenario (d) LOCKED +
+      stale-transcript + content → `agent-crashed-locked` verdict + `git
+      worktree unlock` salvage text present [3 assertions], scenario (e)
+      LOCKED + FRESH transcript → stays LIVE-OWNED, unaffected by lock [1
+      assertion]); `bash -n` clean; `manifest-check.sh` → GREEN, 129
+      entries; `node -e "JSON.parse(...)"` → valid JSON (caught and fixed
+      one literal-newline JSON syntax error introduced while editing the
+      manifest text — parse re-verified clean after the fix);
+      `git worktree lock`/`remove` behavior independently verified against
+      real git (confirms the exact force-twice requirement cited in the
+      salvage text, not assumed); `harness-doctor.sh --self-test` re-run
+      in progress at commit time (see this task's own commit message for
+      the final tally if it completed, or the Known gap note if it did
+      not — same machine-slowness caveat as task 1).
+
 ## Files to Modify/Create
 <!--
 Every file this plan touches, grouped into Create vs Modify when useful.
@@ -759,6 +804,26 @@ layer); the "skeleton" here is the pre-existing WIP's already-integrated
   yet on real agent silent-but-working durations to derive a measured
   optimum; independently overridable via `AGENT_TX_FRESH_MIN` if this proves
   wrong in practice.
+- 2026-07-17 — **Route LOCKED agent worktrees through the liveness split
+  instead of exempting them from SAFE-PRUNE only** (reversible, Tier-1: a
+  control-flow change in one function, revertible by commit revert).
+  Harness-reviewer round-2 finding: the pre-existing `*,locked,*`
+  structural-skip in `classify_worktree` returned before `_live_owner` ever
+  ran for ANY locked worktree, making the crash/SIGKILL/OOM class this
+  entry's own golden_scenario claims to catch unreachable for a locked
+  agent worktree specifically (proven: 3 real dead-pid locked worktrees on
+  the review machine, none reaching the liveness logic). Considered and
+  rejected: leaving the structural-skip in place and instead relying SOLELY
+  on the digest/doctor's own dirty-worktree-count budgets to surface a
+  stuck locked worktree indirectly — rejected because that gives no
+  liveness verdict, no salvage command, and no distinction from a
+  legitimately-locked non-agent worktree (e.g. on removable media); it
+  would have been a weaker, more heuristic signal than reusing the
+  transcript-mtime join already built for exactly this purpose. Took the
+  reviewer's proposed fix directly (route agent-locked worktrees through
+  the existing split, add the `is_locked` parameter, add the
+  `agent-crashed-locked` verdict) since it reuses the already-verified
+  signal rather than inventing a new one.
 
 ## Definition of Done
 - [ ] All tasks checked off (task-verifier, or a documented equivalent

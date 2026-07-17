@@ -256,21 +256,30 @@ _agent_tx_root() {
 }
 
 # _build_agent_tx_cache — walks _agent_tx_root ONCE per sweep-script
-# PROCESS and caches every `agent-*.jsonl` path found (maxdepth 6 covers
-# the real 4-deep layout above with slack for a deeper nesting variant,
-# while still being a single bounded `find`, never an unbounded
-# recursive walk). Idempotent: a second call in the same process is a
-# no-op. This is the bounded-scan discipline this codebase's own history
-# requires (an unbounded fork-a-`find`-PER-WORKTREE-PER-SWEEP scan has
-# shipped as a real defect at least twice before) — every worktree
-# needing a liveness check in this run looks up THIS cache
+# PROCESS and caches every `agent-*.jsonl` path found. maxdepth 7, NOT 6
+# (harness-review round-2 finding, measured): the direct Task/Agent-tool
+# dispatch layout is 4-deep
+# (`<proj>/<session>/subagents/agent-<id>.jsonl`), but the Workflow-
+# dispatch variant nests one level deeper still
+# (`<proj>/<session>/subagents/workflows/wf_<id>/agent-<id>.jsonl` —
+# confirmed on this machine, e.g. .../subagents/workflows/wf_99d337a3-8aa/)
+# and MEASURED to sit at EXACTLY depth 6 — maxdepth 6 included it with
+# ZERO slack (any deeper nesting variant would have silently missed it,
+# same class of bug this whole reformulation exists to close). maxdepth 7
+# restores one level of margin at negligible extra cost (still a single
+# bounded `find`, never an unbounded recursive walk, and still well under
+# a second in measured runs). Idempotent: a second call in the same
+# process is a no-op. This is the bounded-scan discipline this codebase's
+# own history requires (an unbounded fork-a-`find`-PER-WORKTREE-PER-SWEEP
+# scan has shipped as a real defect at least twice before) — every
+# worktree needing a liveness check in this run looks up THIS cache
 # (`_agent_tx_fresh_min`, below) instead of re-walking the tree.
 _AGENT_TX_CACHE_FILE=""
 _AGENT_TX_CACHE_BUILT=0
 _build_agent_tx_cache() {
   [ "$_AGENT_TX_CACHE_BUILT" = "1" ] && return 0
   _AGENT_TX_CACHE_FILE="$(mktemp)"
-  find "$(_agent_tx_root)" -maxdepth 6 -type f -name 'agent-*.jsonl' 2>/dev/null > "$_AGENT_TX_CACHE_FILE"
+  find "$(_agent_tx_root)" -maxdepth 7 -type f -name 'agent-*.jsonl' 2>/dev/null > "$_AGENT_TX_CACHE_FILE"
   _AGENT_TX_CACHE_BUILT=1
   return 0
 }
@@ -327,13 +336,13 @@ _effective_unintegrated() {
   printf '%s' "$raw"
 }
 
-# _live_owner <wt_path> <repo> — true (rc 0) iff worktree $1 of repo $2 is
-# owned by a live process per the signals below. Sets LIVE_OWNER_VERDICT to
-# the label used in reports:
+# _live_owner <wt_path> <repo> [is_locked] — true (rc 0) iff worktree $1 of
+# repo $2 is owned by a live process per the signals below. Sets
+# LIVE_OWNER_VERDICT to the label used in reports:
 #   true  (owned):     agent-transcript-fresh | live | throttled |
 #                       continuing-grace | claim
-#   false (orphaned):  agent-transcript-stale | crashed | stale |
-#                       "no heartbeat/claim"
+#   false (orphaned):  agent-crashed-locked | agent-transcript-stale |
+#                       crashed | stale | "no heartbeat/claim"
 # Priority order (requirement's LIVE_OWNED definition):
 #   0. REFORMULATION fix (agent-<id> worktrees ONLY — see file header):
 #      when basename($wt_path) matches `agent-*` (the harness's own
@@ -361,9 +370,16 @@ _effective_unintegrated() {
 #      positives; see file header CLAIM-LIFECYCLE-01 note): a fresh
 #      same-repo claim naming this worktree.
 # Never errors; a missing lib/dir simply yields "no heartbeat/claim" (or,
-# for a recognized-but-stale agent worktree, "agent-transcript-stale").
+# for a recognized-but-stale agent worktree, "agent-transcript-stale" /
+# "agent-crashed-locked" when $3 signals the caller already determined the
+# worktree is `locked` — see harness-review round-2 finding: `locked` is
+# left SET by a crashed/SIGKILLed/OOM-killed dispatched agent, since the
+# isolation mechanism locks the worktree for the dispatch's duration and
+# only unlocks on clean completion; `classify_worktree` therefore no longer
+# structural-skips a LOCKED `agent-*` worktree before reaching this
+# function — see that function's own locked-handling comment).
 _live_owner() {
-  local wt_path="$1" repo="$2" wt_norm hb_dir h found_hb=0 cls
+  local wt_path="$1" repo="$2" is_locked="${3:-0}" wt_norm hb_dir h found_hb=0 cls
   local agent_id="" agent_tx_age=""
   LIVE_OWNER_VERDICT=""
   wt_norm="$(_norm_path "$wt_path")"
@@ -441,8 +457,18 @@ _live_owner() {
     # Recognized agent worktree with a transcript we found but which is
     # PAST AGENT_TX_FRESH_MIN — more informative than the generic
     # "no heartbeat/claim" (which would otherwise imply "we have no signal
-    # at all" when we in fact have a stale one).
-    LIVE_OWNER_VERDICT="agent-transcript-stale"
+    # at all" when we in fact have a stale one). When the worktree is ALSO
+    # `locked` (harness-review round-2 finding), the stale-and-locked
+    # combination is the SPECIFIC shape a crashed/SIGKILLed/OOM-killed
+    # dispatched agent leaves behind (the isolation mechanism locks on
+    # dispatch, only unlocks on clean completion) — label it distinctly so
+    # the salvage instructions can name the extra `git worktree unlock`
+    # step a plain stale-but-unlocked agent worktree would not need.
+    if [ "$is_locked" = "1" ]; then
+      LIVE_OWNER_VERDICT="agent-crashed-locked"
+    else
+      LIVE_OWNER_VERDICT="agent-transcript-stale"
+    fi
   else
     LIVE_OWNER_VERDICT="no heartbeat/claim"
   fi
@@ -493,11 +519,45 @@ classify_worktree() {
   local repo="$1" wt_path="$2" branch="$3" flags="$4" base="$5"
   R_DIRTY="?"; R_UNIQUE="?"; R_AGE="?"; R_CLASS="HOLDS-CONTENT"; R_NOTE=""; R_LIVENESS=""
 
+  # REFORMULATION fix, round 2 (harness-review finding on the transcript-
+  # mtime rewrite's own rewritten golden_scenario): is this an agent-<id>
+  # worktree? Determined BEFORE the flags case below, because a `locked`
+  # agent worktree must NOT take the plain structural-skip path other
+  # locked worktrees take — see that branch's comment.
+  local is_agent_wt=0 is_locked=0
+  case "$(basename "$wt_path")" in
+    agent-*) is_agent_wt=1 ;;
+  esac
+
   case ",$flags," in
     *,prunable,*)
       R_NOTE="stale-registration (dir missing)"; return 0 ;;
     *,locked,*)
-      R_NOTE="locked"; return 0 ;;
+      is_locked=1
+      if [ "$is_agent_wt" != "1" ]; then
+        # Unchanged pre-existing behavior: a manually `git worktree lock`ed
+        # NON-agent worktree is presumed intentionally persistent (e.g. on
+        # removable media) — structural-skip, never reasoned about further.
+        R_NOTE="locked"; return 0
+      fi
+      # An agent-<id> worktree, by contrast, is locked by the isolation/
+      # dispatch mechanism itself for the FULL DURATION of the dispatch —
+      # a crashed/SIGKILLed/OOM-killed agent leaves it locked FOREVER
+      # (proven on this machine: dead-pid locked worktrees persist after
+      # the owning process is confirmed dead via `tasklist`, since
+      # `kill -0` is unreliable on this MSYS setup). `locked` is therefore
+      # AMBIGUOUS for an agent worktree — a live, actively-working agent is
+      # ALSO locked — so it carries NO liveness information on its own and
+      # must NOT preempt the classification. Fall through (no `return`) to
+      # the normal dirty/unique computation and liveness split below,
+      # exactly as for an unlocked agent worktree; the transcript-mtime
+      # signal (the actual liveness proof) decides. Before this fix, EVERY
+      # locked agent worktree structural-skipped here and NEVER reached
+      # `_live_owner` at all — the crash/SIGKILL/OOM class this file's own
+      # golden_scenario claims to catch was unreachable for the locked
+      # case specifically.
+      R_NOTE="locked (agent worktree — routed through liveness split, not skipped)"
+      ;;
     *,detached,*)
       R_NOTE="detached HEAD"; return 0 ;;
   esac
@@ -525,7 +585,12 @@ classify_worktree() {
   R_UNIQUE="$(git -C "$repo" cherry "$base" "refs/heads/$branch" 2>/dev/null | grep -c '^+' || true)"
   [ -n "$R_UNIQUE" ] || R_UNIQUE=0
 
-  if [ "$R_UNIQUE" = "0" ] && [ "$R_DIRTY" = "0" ] && [ "$R_AGE" != "?" ] && [ "$R_AGE" -gt "$AGE_DAYS" ]; then
+  # A locked worktree is NEVER SAFE-PRUNE: `git worktree remove` refuses on
+  # a locked worktree regardless (a real git-level guard, not just this
+  # script's own math), and "locked" itself signals "do not auto-remove"
+  # independent of the agent-routing fix above (which only ever affects
+  # the LIVENESS split below, never prune-eligibility).
+  if [ "$is_locked" != "1" ] && [ "$R_UNIQUE" = "0" ] && [ "$R_DIRTY" = "0" ] && [ "$R_AGE" != "?" ] && [ "$R_AGE" -gt "$AGE_DAYS" ]; then
     R_CLASS="SAFE-PRUNE"
   fi
 
@@ -540,7 +605,7 @@ classify_worktree() {
       if [ -n "${SELF_TOPLEVEL:-}" ] && [ "$(_norm_path "$wt_path")" = "$(_norm_path "$SELF_TOPLEVEL")" ]; then
         R_CLASS="LIVE-OWNED-HOLDS-CONTENT"
         R_LIVENESS="self"
-      elif _live_owner "$wt_path" "$repo"; then
+      elif _live_owner "$wt_path" "$repo" "$is_locked"; then
         R_CLASS="LIVE-OWNED-HOLDS-CONTENT"
         R_LIVENESS="$LIVE_OWNER_VERDICT"
       else
@@ -688,20 +753,28 @@ _emit_stranded() {
   echo "[stranded-work] ${count} worktree(s) hold uncommitted or unintegrated work with NO live owner:"
   while IFS="$(printf '\t')" read -r path branch dirty unique age liveness; do
     [ -n "$path" ] || continue
-    local hb_note
+    local hb_note locked_note=""
     case "$liveness" in
       "no heartbeat/claim"|"")
         hb_note="no heartbeat/claim" ;;
+      agent-crashed-locked)
+        hb_note="liveness=${liveness}"
+        locked_note=" — LOCKED: \`git worktree remove\` will refuse; run \`git worktree unlock ${path}\` first, then remove (a plain --force is NOT enough for a locked worktree; \`git worktree remove -f -f ${path}\` — force TWICE — overrides without unlocking)"
+        ;;
       agent-transcript-*)
         hb_note="liveness=${liveness}" ;;
       *)
         hb_note="heartbeat=${liveness}" ;;
     esac
-    printf '  \xe2\x80\xa2 %s  branch %s  (dirty=%s, unintegrated=%s, last commit %sd ago; %s)\n' \
-      "$path" "$branch" "$dirty" "$unique" "$age" "$hb_note"
+    printf '  \xe2\x80\xa2 %s  branch %s  (dirty=%s, unintegrated=%s, last commit %sd ago; %s)%s\n' \
+      "$path" "$branch" "$dirty" "$unique" "$age" "$hb_note" "$locked_note"
   done < "$STRANDED_ROWS_FILE"
   echo "  Salvage BEFORE removing (the sweep refuses to prune HOLDS-CONTENT): cd <path> && git status;"
   echo "  commit + cherry-pick to master (or git stash), then \`git worktree remove <path>\`."
+  echo "  A LOCKED row (agent-crashed-locked) additionally needs \`git worktree unlock <path>\`"
+  echo "  BEFORE remove — \`git worktree remove\` refuses on a locked worktree (real git guard,"
+  echo "  independent of anything this script decides; a single --force is NOT enough — verified:"
+  echo "  \`git worktree remove -f -f <path>\` (force TWICE) overrides without unlocking, instead)."
   return 0
 }
 
@@ -1035,6 +1108,45 @@ EOF
   ! echo "$out" | grep -q 'agent-unrelated-other-builder'
   assert "(c) the unrelated fixture agent transcript never itself produces a spurious row (no worktree named after it exists)" "$?"
   rm -f "$HEARTBEAT_STATE_DIR/sess-crashed-c.json"
+
+  # ============================================================
+  # (d)/(e) LOCKED agent-<id> worktree scenarios (harness-review round-2
+  # finding): a dispatched agent's worktree is `locked` by the isolation
+  # mechanism for the FULL dispatch duration — a crashed/SIGKILLed/
+  # OOM-killed agent leaves it locked FOREVER (proven on the reviewing
+  # machine: dead-pid locked worktrees persist after the owning process is
+  # confirmed dead). Before this round's fix, `classify_worktree`'s
+  # pre-existing `*,locked,*` structural-skip returned BEFORE `_live_owner`
+  # ever ran, so a locked agent worktree was NEVER liveness-split — the
+  # crash class this file's own golden_scenario claims to catch was
+  # unreachable for the locked case specifically. These two scenarios are
+  # the DIRECT topology real crashed agents have (the pre-existing (b)
+  # scenario above is deliberately left UNLOCKED — a topology real crashed
+  # agents never have — to isolate the transcript-staleness signal alone;
+  # these prove the SAME signal still decides correctly once `locked` is
+  # ALSO present and no longer preempts).
+  # ============================================================
+  echo "[self-test] (d) LOCKED agent-<id> worktree + STALE transcript + content -> stranded (agent-crashed-locked)"
+  git -C "$srepo" worktree add -q "$T/agent-selftest-locked-stale" -b sw-agent-locked-stale >/dev/null 2>&1
+  echo scratch > "$T/agent-selftest-locked-stale/untracked.txt"
+  _write_agent_tx "agent-selftest-locked-stale" 45
+  git -C "$srepo" worktree lock "$T/agent-selftest-locked-stale" --reason "self-test: simulated crashed dispatch" >/dev/null 2>&1
+  out="$("$0" --stranded "$srepo" 2>&1)"
+  echo "$out" | grep -q 'agent-selftest-locked-stale'
+  assert "(d) LOCKED agent-<id> worktree + stale own-transcript + content -> ORPHANED, stranded (locked no longer structural-skips an agent worktree)" "$?"
+  echo "$out" | grep -q 'liveness=agent-crashed-locked'
+  assert "(d) reported verdict is agent-crashed-locked (distinguishes a crashed-and-still-locked agent from a merely stale-but-unlocked one)" "$?"
+  echo "$out" | grep -q 'git worktree unlock'
+  assert "(d) salvage text names the git worktree unlock step (plain remove refuses on a locked worktree)" "$?"
+
+  echo "[self-test] (e) LOCKED agent-<id> worktree + FRESH transcript -> NOT stranded (live, unaffected by lock)"
+  git -C "$srepo" worktree add -q "$T/agent-selftest-locked-fresh" -b sw-agent-locked-fresh >/dev/null 2>&1
+  echo scratch > "$T/agent-selftest-locked-fresh/untracked.txt"
+  _write_agent_tx "agent-selftest-locked-fresh" ""
+  git -C "$srepo" worktree lock "$T/agent-selftest-locked-fresh" --reason "self-test: simulated live dispatch" >/dev/null 2>&1
+  out="$("$0" --stranded "$srepo" 2>&1)"
+  ! echo "$out" | grep -q 'agent-selftest-locked-fresh'
+  assert "(e) LOCKED agent-<id> worktree + FRESH own-transcript -> LIVE-OWNED, not stranded (a live dispatch is ALSO locked — lock alone must never cause a false ORPHANED)" "$?"
 
   rm -rf "$T"
   echo ""
