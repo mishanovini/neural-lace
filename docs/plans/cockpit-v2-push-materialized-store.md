@@ -1,14 +1,15 @@
 # Plan: Cockpit v2 — cross-machine state EXPORT (local truth stays local)
 
-Status: DRAFT (v4 — reshaped per docs/reviews/2026-07-17-cockpit-v2-architecture-review-v3.md;
-v4 implements that review's own Phase-0 candidate design)
+Status: ACTIVE
 Mode: build
 rung: 3
 lifecycle-schema: v2
 ask-id: <id | none — no linked ask>
 prd-ref: none
-Architecture-review: docs/reviews/2026-07-17-cockpit-v2-architecture-review-v3.md (v3 verdict
-NEEDS-RESHAPING → v4 is the prescribed reshape; re-review required before ACTIVE)
+Architecture-review: docs/reviews/2026-07-17-cockpit-v2-architecture-review-v4.md (VERDICT:
+SOUND-WITH-AMENDMENTS — binding amendments A1-A7 folded into the task text below; lineage:
+v3 review docs/reviews/2026-07-17-cockpit-v2-architecture-review-v3.md NEEDS-RESHAPING → v4
+is its Phase-0 candidate, convergence verified finding-by-finding)
 
 ## Goal
 
@@ -41,28 +42,50 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
   repointed; lettered ids — 208 lines currently invisible — now parse; archive/ in the resolver
   union). ALREADY DISPATCHED (shape-invariant). Bash consumers conform via a SHARED fixture corpus
   both grammars must pass in --self-test (F7) — plan-lifecycle.sh gains the fixture check, not a
-  rewrite — Verification: mechanical
+  rewrite. **A6 (binding): the corpus pins NEGATIVE cases as first-class fixtures — unnumbered
+  checklist bullets (~1,248 of the 1,947 checkbox lines in docs/plans/** are checklist items, NOT
+  tasks) must stay invisible, or a widened grammar silently inflates every progress bar** —
+  Verification: mechanical
 - [ ] 2. [serial] **The exporter** — a small Node CLI (`server/export-state.js`): re-derives from
   local disk at export time using the shared parser + the SAME event-log join the server uses
-  (`in_flight` computed at export = the join RESULT snapshot, F1), plus session liveness (heartbeat
-  classification). Emits per-(machine, repo, slug) records + a sessions block, stamped `hostname`,
-  `branch`, `head_sha`, `dirty`, `exported_at`, `schema_version` (F4). Hash-gated: unchanged estate
-  ⇒ no write. Server-independent (spawnable with the server down). Atomic writes. `--self-test`
-  incl. quotes/newlines in descriptions and a zero-plan estate — Verification: mechanical
+  (`in_flight` computed at export = the join RESULT snapshot, F1). **A4 (binding): the exporter
+  MUST NOT `require('server.js')`** (module load runs `listen()`; with the server up, EADDRINUSE →
+  `process.exit(0)` SILENTLY exporting nothing) — this task explicitly includes factoring
+  `computePlanRows`/`aggregatePlanProgress`/`countPlanTasks`/`resolvePlanAbsPath`/
+  `classifySessions` into a requireable `server/derive-lib.js` with server.js repointed at it.
+  **A3c: sessions export RAW `last_heartbeat_at` timestamps — never a baked live/stale
+  classification** (age-truth cannot survive transport; the READER classifies by age). Emits
+  per-(machine, repo, slug) records + a sessions block, stamped `hostname`, `branch`, `head_sha`,
+  `dirty`, `exported_at`, `schema_version` (F4). Hash-gated with **A3ii's bounded keepalive:
+  refresh `exported_at` at least every 60min even when hash-unchanged** (distinguishes idle from
+  dead; caps idle churn at 24 commits/day/machine). Atomic writes; `EXPORT_HOSTNAME` override for
+  test simulation (A5). `--self-test` incl. quotes/newlines in descriptions and a zero-plan
+  estate — Verification: mechanical
 - [ ] 3. [serial] **Transport = the coordination repo** (F3, F8 binding constraint: the PRIVATE
   `workstreams-coordination` repo via git+SSH — never a mirrored remote, never the working tree,
-  never the gh Contents API). Wire the cadence THIS plan owns: exporter + `coord-push.sh` invoked
-  on an existing scheduled surface (health-tick or a dedicated scheduled task, ≥600s throttle
-  honored); `coord-pull.sh` on the same cadence for the reader side. Numbers in writing (staleness
-  contract, F2): export ≤60s after change (hash check), publish ≤600s throttle, pull ≤600s ⇒
-  peer view ≤ ~20min worst-case behind the peer's disk, and ALWAYS labeled — Verification: full
+  never the gh Contents API). **A1 (binding): wire a DEDICATED scheduled task `NL-coord-sync`
+  (600s cadence; ignore-new-instance + a cheap exporter lock as the no-overlap policy — bash
+  spawns have measured 94-119s here)** running exporter → coord-push → coord-pull; this task
+  being the exporter's ONLY invoker IS the single-writer-per-machine enforcement (F4).
+  **Staleness contract (A1): export+publish ≤600s, pull ≤600s ⇒ peer view ≤ ~20min worst-case
+  behind the peer's disk, ALWAYS labeled.** (health-tick is HOURLY — it cannot host this cadence.)
+  **A2 (binding): coord-push is WARN+exit-0 on every failure path BY DESIGN** — this task must
+  (a) fix its ahead-of-origin path (attempt push whenever HEAD is ahead of origin, not only on
+  new staged changes — today one transient failure + a quiet estate defers publication
+  indefinitely); (b) have the wiring consume coord-push's outcome via a status file
+  (`pushed|local-commit|noop` + ts); (c) raise the existing health-tick alert path on persistent
+  `local-commit` — Verification: full
 - [ ] 4. [serial] **Peer view in the cockpit** — the server reads the LOCAL coord clone (no fork,
-  no network on the request path — the clone is a directory); renders peer rows with provenance +
-  age from receive-time (never the peer's wall clock alone, F2): "as of Xm ago on <host>
-  (<branch>, unmerged)"; named states: `fresh-ish (≤20m)` / `aging (>20m)` / `peer unreachable
-  since <ts>` / `no data yet`; a peer's UNMERGED state never renders as plain done (F4, §1).
-  Local cards stay 100% on local truth; same-slug peer copies are labeled provenance rows, never
-  substituted — Verification: full
+  no network on the request path — the clone is a directory; inherits skip-bad-record tolerance
+  for mid-`reset --hard` partial files, A7); renders peer rows with provenance + age from
+  RECEIVE-time (never the peer's wall clock alone, F2): "as of Xm ago on <host> (<branch>,
+  unmerged)". **Named states with REAL mechanisms (A3): `fresh-ish (≤20m)` / `estate unchanged
+  since <ts>` (content-age, distinct from liveness) / `peer unreachable since <ts>` (keepalive
+  missing — the A3ii mechanism makes this distinguishable from idle) / `no data yet`; plus the
+  reader's OWN transport health: "my coord view last refreshed Xm ago" from the last successful
+  coord-pull.** Peer-state thresholds env-injectable (A5). A peer's UNMERGED state never renders
+  as plain done (F4, §1). Local cards stay 100% on local truth; same-slug peer copies are labeled
+  provenance rows, never substituted — Verification: full
 - [ ] 5. [serial] **plan-lifecycle MultiEdit matcher fix** (independent real hole, P8): settings
   matcher `Edit|Write` → `Edit|Write|MultiEdit`; regression scenario in its self-test —
   Verification: mechanical
@@ -73,10 +96,12 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
   into `nl-issue.sh` with dedup + recurrence escalation (the operator's actual auto-healing intent;
   self-inflicted-drift reporting died with the projector) — Verification: full
 - [ ] 8. [serial] **Acceptance (end-user-advocate runtime)** — two-machine simulation acceptable
-  (a second clone standing in for machine B): flip a checkbox + start a builder on "A" → within
-  the written cadence, "B"'s cockpit shows the new done state AND the in-flight row, age-labeled;
-  kill the export loop → "B" degrades to "peer unreachable", never a silent stale render —
-  Verification: full
+  (a second clone standing in for machine B, **using the `EXPORT_HOSTNAME` override — coord keys
+  peers by hostname and both sim "machines" share one — and env-injected state thresholds so the
+  degradation leg is runnable, A5**): flip a checkbox + start a builder on "A" → within the
+  written cadence, "B"'s cockpit shows the new done state AND the in-flight row, age-labeled;
+  kill the export loop → "B" degrades to "peer unreachable" (via the missing keepalive), never a
+  silent stale render — Verification: full
 
 ## Files to Modify/Create
 - `neural-lace/workstreams-ui/server/plan-parse.js` (task 1, in flight), `server/export-state.js`
@@ -103,8 +128,11 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
 - Peer clock skew → age from local receive-time (F2). Absent peer data → named state, never empty.
 - Same slug on both machines → labeled provenance rows; local truth drives the local card (F4).
 - Exporter runs during a builder's plan edit → hash-gate re-runs next cadence; export is atomic.
-- Coord push auth failure → git+SSH fails LOUDLY (non-zero), surfaced by the wiring's existing
-  alert path — the silent-freeze class (F3 pre-mortem) is structurally excluded.
+- Coord push auth failure → **coord-push is WARN+exit-0 BY DESIGN (A2 corrected the earlier false
+  "fails loudly" claim)**: detection is two-sided — writer-side, the wiring reads coord-push's
+  outcome status file and alerts on persistent `local-commit`; reader-side, the peer's missing
+  keepalive drives "peer unreachable". The silent-freeze class is excluded by MECHANISM, not by
+  the transport's exit code.
 - Dirty/unmerged peer branch state → `dirty`+`branch` fields render "unmerged"; never plain done.
 
 ## Acceptance Scenarios
