@@ -116,7 +116,7 @@ Register-ScheduledTask -TaskName $TaskName `
 Write-Host "Registered scheduled task: $TaskName"
 Write-Host ("  Action  : {0} {1}" -f $NodeExe, $argLine)
 Write-Host ("  Trigger : every {0} minute(s), indefinitely" -f $IntervalMinutes)
-Write-Host "  Mode    : SURFACE-ONLY (config.autoSpawn=false) — safe default"
+Write-Host "  Mode    : SURFACE-ONLY (config.autoSpawn=false) -- safe default"
 
 if ($RunNow) {
     Write-Host ''
