@@ -904,3 +904,43 @@ Q9 layout ruling (binding) → encoded verbatim in Tasks 13/16 (sidebar spec, he
 3. ux nice-to-have — mechanical auto-move to the completed group was invisible on the landing (H1 visibility) → Task 13 COMPLETED-GROUP HEADER (count + newest-completed recency; no banner/toast — anti-noise).
 4. ux nice-to-have — card rendering unspecified when `plan_slugs[]` has >1 entry (single bar vs plural lifecycle logic) → Task 13 MULTI-PLAN CARDS (aggregate bar + per-plan drill-down grouping + one live-doc link per plan; cheapest fit to the existing structure, stated in-task).
 5. systems Minor — Task 5 diff-touches-plan-file fallback had no multi-match tie-break → Task 5 (multi-plan-file match emits one `merged` event per matched ask; never guesses a single winner).
+## Completion report (2026-07-17)
+
+**18/18 tasks verified and flipped; DEPLOYED live.** The operator's ask — "see, across many parallel
+autonomous sessions: what I asked, the plan and its progress, and what's waiting on me, plus an
+editable to-do and backlog, grouped by project" — is a running product at `http://127.0.0.1:7733/`
+(deployed 2026-07-14: deploy-preflight PASS, concurrent work stash-preserved, `/api/asks` serving
+real data). Every task passed TWO gates: task-verifier substance + rung-4 comprehension-review
+(orchestrator-dispatched, Opus).
+
+**Acceptance:** end-user-advocate runtime pass over all 6 scenarios — 5 PASS + 1 FAIL
+(todo-pointer-lifecycle: the My-To-Do pane clipped at >1200px). The FAIL was fixed (@86e9e69,
+`.sidebar>.pane` flex-shrink scoped) and re-verified 6/6 end-to-end at 1920x1080. Artifacts:
+`.claude/state/acceptance/ask-rooted-workstreams-p1/` (reconstructed after worktree auto-cleanup ate
+the originals — nl-issue filed on that plumbing). **Outstanding (operator, non-blocking by their own
+ruling "demonstration, not permission gate"):** the <60s cold-start walkthrough timing.
+
+**Task 7's second half (splice harness-review):** Fable was cancelled mid-plan (operator: not worth
+un-subsidized rate) → replaced by a 7-lens diverse Opus panel + adversarial verify (15 agents):
+3 classes CLEAN, **7 confirmed defects** (3 Major session-lifecycle), 1 refuted — ALL fixed with
+RED→GREEN regression tests (`docs/reviews/2026-07-14-ask-splice-review-panel.md`). Post-plan, the
+merge-scan lane also gained an incremental cursor (36/36) closing the backfill-never-completes
+degradation.
+
+**Self-test bar:** full server suite **139 passed / 0 failed** — its first-ever complete pass
+(unblocked by the ECONNRESET keep-alive fix + an nyBash scoping hoist it unmasked); cockpit.selftest
+84/84; every splice lib suite green.
+
+**Notable §8 decisions (batched):** log-first architecture with mechanism-emitted events (operator
+amendment honored throughout); six-pane cockpit demoted to a Harness Health tab behind a native
+<template> quarantine; Team tab held to P1-hidden with provenance fields shipped; Fable→panel
+methodology swap; three severe machine incidents diagnosed and root-caused during the build
+(orphan-process contention ×2 → reboots; the auditor timeout-without-kill leak → killTree fix +
+reap-what-you-spawn doctrine).
+
+**Legacy this plan leaves in the harness:** the diverse-panel + adversarial-verify deep-review
+pattern (validated: 7 real defects no single pass caught); the artifact-evidence-bar standard + its
+three enforcement gates (closed under `docs/plans/archive/evidence-bar-enforcement.md`); the
+architecture-reviewer agent (whose golden case came from this plan's cockpit-v2 successor design).
+Successor work: `docs/plans/cockpit-v2-push-materialized-store.md` (cross-machine store, v3,
+architecture-reviewed, ready to build).
