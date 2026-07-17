@@ -119,6 +119,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { bashBin, spawnEnv } = require('./derive-cache.js');
 const projects = require('../config/projects.js');
+const planParse = require('./plan-parse.js');
 
 const DEFAULT_CADENCE_MS = 120000;
 const DEFAULT_MERGE_SCAN_LIMIT = 200;
@@ -214,50 +215,36 @@ function readAskEvents(progressLogDir, askId) {
 }
 
 // ----------------------------------------------------------------------
-// Plan-file parsing -- the SAME checkbox grammar server.js's countPlanTasks
-// parses (`- [x] N.` / `- [ ] N.`), plus the plan header's `Status:` line.
-// "Terminal" is scoped STRICTLY to the literal value COMPLETED (the exact
-// target close-plan.sh flips to on a successful close, and the state
-// plan_completed events name) -- deliberately NOT any of the other
-// terminal-ish values this estate's plans also use (ABANDONED, DEFERRED,
-// SUPERSEDED): those mean "this plan stopped", not "the ask this plan
-// served is done" -- an abandoned plan should never silently mark its ask
-// done.
+// Plan-file parsing + resolution -- now the ONE shared module
+// (./plan-parse.js, cockpit-v2-push-materialized-store Task 1), replacing
+// this file's own private (numeric-id-only) grammar. `parsePlanFile` below
+// is a thin wrapper that preserves this file's EXACT prior signature/shape
+// (`{tasks, status, absPath}` | `null`) so every call site below is
+// unchanged; see plan-parse.js's header for the full "why" + the exact
+// corpus delta. "Terminal" is still scoped STRICTLY to the literal value
+// COMPLETED (the exact target close-plan.sh flips to on a successful
+// close, and the state plan_completed events name) -- deliberately NOT any
+// of the other terminal-ish values this estate's plans also use
+// (ABANDONED, DEFERRED, SUPERSEDED): those mean "this plan stopped", not
+// "the ask this plan served is done" -- an abandoned plan should never
+// silently mark its ask done.
 // ----------------------------------------------------------------------
-const TASK_LINE_RE = /^- \[([ xX])\][ \t]*([0-9]+(?:\.[0-9]+)?)\./;
-const STATUS_LINE_RE = /^Status:[ \t]*(.+?)[ \t]*$/;
-
 function parsePlanFile(absPath) {
-  let text;
-  try { text = fs.readFileSync(absPath, 'utf8'); } catch (_) { return null; }
-  const tasks = [];
-  let status = '';
-  text.split('\n').forEach((line) => {
-    const tm = TASK_LINE_RE.exec(line);
-    if (tm) tasks.push({ id: tm[2], done: (tm[1] === 'x' || tm[1] === 'X') });
-    if (!status) {
-      const sm = STATUS_LINE_RE.exec(line);
-      if (sm) status = sm[1].trim();
-    }
-  });
-  return { tasks: tasks, status: status, absPath: absPath };
+  return planParse.parsePlanFile(absPath);
 }
 
 // resolvePlanAbsPath -- mirrors merge-scan-lib.sh's own resolution order
 // (current plan file, then the archived-on-close location) crossed with
-// server.js's own repo-then-main-root fallback.
+// server.js's own repo-then-main-root fallback. planParse.resolvePlanAbsPath
+// owns the per-root "docs/plans/ then docs/plans/archive/" check (M5); this
+// wrapper preserves the EXACT prior repo-then-mainRoot priority order and
+// 3-argument signature every call site below already uses.
 function resolvePlanAbsPath(repo, mainRoot, slug) {
-  const candidates = [];
   if (repo) {
-    candidates.push(path.join(repo, 'docs', 'plans', slug + '.md'));
-    candidates.push(path.join(repo, 'docs', 'plans', 'archive', slug + '.md'));
+    const p = planParse.resolvePlanAbsPath(repo, slug);
+    if (p) return p;
   }
-  candidates.push(path.join(mainRoot, 'docs', 'plans', slug + '.md'));
-  candidates.push(path.join(mainRoot, 'docs', 'plans', 'archive', slug + '.md'));
-  for (let i = 0; i < candidates.length; i++) {
-    try { if (fs.existsSync(candidates[i]) && fs.statSync(candidates[i]).isFile()) return candidates[i]; } catch (_) { /* try next */ }
-  }
-  return null;
+  return planParse.resolvePlanAbsPath(mainRoot, slug);
 }
 
 // ----------------------------------------------------------------------

@@ -18,6 +18,7 @@ const net = require('net');
 const { spawn, spawnSync } = require('child_process');
 const payloadSchema = require('./payload-schema.js');
 const projects = require('../config/projects.js');
+const planParse = require('./plan-parse.js');
 
 let PASSED = 0, FAILED = 0;
 function ok(name, cond, detail) {
@@ -1426,6 +1427,131 @@ async function main() {
       t17reconMismatch.ledger_open_count === 2 && t17reconMismatch.rendered_waiting_count === 1 &&
       t17reconMismatch.unaccounted_needs_you_ids.indexOf('NY-orphan') !== -1,
       JSON.stringify(t17reconMismatch));
+
+    // ========================================================================
+    // Scenario 60-63 (cockpit-v2-push-materialized-store Task 1 — the ONE
+    // shared plan-parse.js parser + resolver): direct unit assertions
+    // against the shared module itself, PLUS the wiring proof that
+    // server.js's own HTTP-facing consumer (computePlanRows -> GET
+    // /api/ask/<id>) now sees lettered-id tasks and resolves an archived
+    // plan — the two things the OLD private server.js grammar/resolver
+    // could never do. auditor.js's own --self-test independently proves
+    // its side of the same shared module (18/18, run separately).
+    // ========================================================================
+
+    // ---- S60: numeric regression unchanged (the exact prior shape).
+    const s60Numeric = planParse.parseTasks([
+      '## Tasks', '',
+      '- [x] 1. Task one done.',
+      '- [ ] 2. Task two dispatched, not yet done.',
+      '- [ ] 6.2. Sub-numbered task.',
+      '',
+    ].join('\n'));
+    ok('S60 numeric-id plan parsing is UNCHANGED (id/done shape identical to the old server.js grammar)',
+      s60Numeric.length === 3 &&
+      s60Numeric[0].id === '1' && s60Numeric[0].done === true &&
+      s60Numeric[1].id === '2' && s60Numeric[1].done === false &&
+      s60Numeric[2].id === '6.2' && s60Numeric[2].done === false,
+      JSON.stringify(s60Numeric));
+
+    // ---- S60b: lettered-id plan parses (id + state + description) — the
+    // 176-line corpus gap this task exists to close.
+    const s60bLettered = planParse.parseTasks([
+      '## Tasks', '',
+      '- [x] A.1 Create the fixture file with the required sections.',
+      '- [ ] A.7 Smoke-test the workflow end-to-end by opening throwaway PRs.',
+      '',
+    ].join('\n'));
+    ok('S60b lettered-id task lines (invisible to the old numeric-only server.js/auditor.js grammar) now parse with correct id/done/description',
+      s60bLettered.length === 2 &&
+      s60bLettered[0].id === 'A.1' && s60bLettered[0].done === true &&
+      /Create the fixture file/.test(s60bLettered[0].description) &&
+      s60bLettered[1].id === 'A.7' && s60bLettered[1].done === false &&
+      /Smoke-test the workflow/.test(s60bLettered[1].description),
+      JSON.stringify(s60bLettered));
+
+    // ---- S60c: a description containing a `"` and a raw newline survives
+    // a JSON.stringify/JSON.parse round-trip unchanged (JSON-safe BY
+    // CONSTRUCTION — plan-parse.js returns JS objects, never hand-built
+    // JSON strings).
+    const s60cQuoted = planParse.parseTasks([
+      '## Tasks', '',
+      '- [ ] 1. A description mentioning `plan-lifecycle.sh` with a "quoted term" and',
+      '  a continuation line that finishes the thought.',
+      '',
+    ].join('\n'));
+    const s60cRoundTrip = JSON.parse(JSON.stringify(s60cQuoted));
+    ok('S60c a description containing a `"` and a newline-joined continuation survives a JSON round-trip intact',
+      s60cRoundTrip.length === 1 &&
+      /"quoted term"/.test(s60cRoundTrip[0].description) &&
+      /plan-lifecycle\.sh/.test(s60cRoundTrip[0].description) &&
+      /continuation line that finishes/.test(s60cRoundTrip[0].description),
+      JSON.stringify(s60cRoundTrip));
+
+    // ---- S61: resolver — docs/plans/ then docs/plans/archive/; absent -> null.
+    const s61Root = path.join(tmp, 's61-resolver-root');
+    fs.mkdirSync(path.join(s61Root, 'docs', 'plans', 'archive'), { recursive: true });
+    fs.writeFileSync(path.join(s61Root, 'docs', 'plans', 's61-current.md'), '# Plan\nStatus: ACTIVE\n\n- [ ] 1. x\n');
+    fs.writeFileSync(path.join(s61Root, 'docs', 'plans', 'archive', 's61-archived.md'), '# Plan\nStatus: COMPLETED\n\n- [x] 1. y\n');
+    ok('S61 resolver finds a plan under docs/plans/',
+      planParse.resolvePlanAbsPath(s61Root, 's61-current') === path.join(s61Root, 'docs', 'plans', 's61-current.md'));
+    ok('S61b resolver finds an ARCHIVED plan under docs/plans/archive/ (M5 — server.js\'s own prior resolver never checked archive/ at all)',
+      planParse.resolvePlanAbsPath(s61Root, 's61-archived') === path.join(s61Root, 'docs', 'plans', 'archive', 's61-archived.md'));
+    ok('S61c resolver returns null honestly (never a guess, never a crash) for a slug matching nothing',
+      planParse.resolvePlanAbsPath(s61Root, 's61-does-not-exist') === null);
+
+    // ---- S62/S63: WIRING proof — server.js's REAL HTTP path (GET
+    // /api/ask/<id> -> buildAskDetailPayload -> computePlanRows ->
+    // resolveAskPlanAbsPath/countPlanTasks) now counts lettered ids AND
+    // resolves an archived plan, using the SAME `fixtureRepoDir` +
+    // `arStateDir`/`plStateDir` sandbox the Task-11/Task-12 fixtures above
+    // already established (registered ask -> plan_slugs -> plan file on
+    // disk), not a hand-called unit function — this is the actual
+    // user-observable fix: a cockpit ask-detail view for a plan using
+    // lettered ids previously undercounted its tasks, and one linked to an
+    // ALREADY-ARCHIVED plan previously showed no plan_doc/tasks at all.
+    const slug6 = 'selftest-task1-lettered-fixture-plan';
+    const plan6Path = path.join(fixtureRepoDir, 'docs', 'plans', slug6 + '.md');
+    fs.writeFileSync(plan6Path, [
+      '# Plan: Lettered fixture', 'Status: ACTIVE', '',
+      '## Tasks', '',
+      '- [x] A.1 Lettered task one, done.',
+      '- [ ] A.2 Lettered task two, not started.',
+      '- [ ] 3. A plain numeric task, not started.',
+      '',
+    ].join('\n'));
+    const slug7 = 'selftest-task1-archived-fixture-plan';
+    fs.mkdirSync(path.join(fixtureRepoDir, 'docs', 'plans', 'archive'), { recursive: true });
+    const plan7Path = path.join(fixtureRepoDir, 'docs', 'plans', 'archive', slug7 + '.md');
+    fs.writeFileSync(plan7Path, [
+      '# Plan: Archived fixture', 'Status: COMPLETED', '',
+      '## Tasks', '',
+      '- [x] 1. Only task, done, archived on close.',
+      '',
+    ].join('\n'));
+    fs.appendFileSync(path.join(arStateDir, 'ask-registry.jsonl'), [
+      regLine({ ask_id: 'ask-fix-6', record_type: 'created', ts: '2026-07-05T00:00:00Z', repo: fixtureRepoDir, project: 'demo-project', summary: 'Fixture ask six (lettered ids)', status: 'active' }),
+      regLine({ ask_id: 'ask-fix-6', record_type: 'plan_linked', ts: '2026-07-05T00:01:00Z', plan_slug: slug6 }),
+      regLine({ ask_id: 'ask-fix-7', record_type: 'created', ts: '2026-07-05T01:00:00Z', repo: fixtureRepoDir, project: 'demo-project', summary: 'Fixture ask seven (archived plan)', status: 'active' }),
+      regLine({ ask_id: 'ask-fix-7', record_type: 'plan_linked', ts: '2026-07-05T01:01:00Z', plan_slug: slug7 }),
+    ].join('\n') + '\n');
+
+    const detail6 = await httpGet(PORT, '/api/ask/ask-fix-6');
+    const planRow6 = detail6.json && detail6.json.plan_rows && detail6.json.plan_rows.find((r) => r.plan_slug === slug6);
+    ok('S62 GET /api/ask/<id> now counts ALL THREE tasks (2 lettered + 1 numeric) — the old numeric-only grammar would have silently reported only 1',
+      planRow6 && planRow6.tasks.length === 3,
+      JSON.stringify(planRow6));
+    ok('S62b the lettered task ids/done-state are correct and in source order',
+      planRow6 && planRow6.tasks[0].id === 'A.1' && planRow6.tasks[0].done === true &&
+      planRow6.tasks[1].id === 'A.2' && planRow6.tasks[1].done === false &&
+      planRow6.tasks[2].id === '3' && planRow6.tasks[2].done === false,
+      JSON.stringify(planRow6 && planRow6.tasks));
+
+    const detail7 = await httpGet(PORT, '/api/ask/ask-fix-7');
+    const planRow7 = detail7.json && detail7.json.plan_rows && detail7.json.plan_rows.find((r) => r.plan_slug === slug7);
+    ok('S63 GET /api/ask/<id> now resolves a plan that lives ONLY under docs/plans/archive/ (M5 — server.js\'s own prior resolver could never find this; plan_rows would have carried plan_doc:null / tasks:[])',
+      planRow7 && planRow7.tasks.length === 1 && planRow7.tasks[0].id === '1' && planRow7.tasks[0].done === true,
+      JSON.stringify(planRow7));
 
   } finally {
     server.close();

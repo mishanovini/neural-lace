@@ -35,6 +35,7 @@ const projects = require('../config/projects.js');
 const { DeriveCache, runWhy } = require('./derive-cache.js');
 const reconciler = require('./reconciler.js');
 const payloadSchema = require('./payload-schema.js');
+const planParse = require('./plan-parse.js');
 // Ask-rooted-workstreams-p1 Task 12 — background drift auditor. Mounted
 // (start()'d) only after a successful port bind (same single-instance-guard
 // timing `cache.start()` already uses, below) and read on every /api/asks +
@@ -762,38 +763,36 @@ function foldAskRegistry() {
 }
 
 // ----------------------------------------------------------------------
-// Plan-file task counting (plan progress bars / drill-down rows). Reuses
-// the SAME task-checkbox line shape `hooks/plan-lifecycle.sh` itself
-// parses (`- [x] N.` / `- [ ] N.`) — no re-invention of the plan-line
-// grammar.
+// Plan-file task counting (plan progress bars / drill-down rows). The
+// grammar + resolver themselves now live in the ONE shared module
+// (./plan-parse.js, cockpit-v2-push-materialized-store Task 1) — used by
+// this file AND auditor.js, replacing what used to be two independently
+// duplicated, numeric-id-only, archive-blind implementations. See
+// plan-parse.js's own header for the full "why" + the exact corpus delta.
 // ----------------------------------------------------------------------
-const TASK_LINE_RE = /^- \[([ xX])\][ \t]*([0-9]+(?:\.[0-9]+)?)\./;
 
+// countPlanTasks(absPath) — thin wrapper preserving this file's prior
+// return shape (an array, or null on any read failure) for its one call
+// site below; loadPlanFile's honest absent/damaged distinction is
+// available to future consumers via planParse.loadPlanFile directly.
 function countPlanTasks(absPath) {
-  let text;
-  try { text = fs.readFileSync(absPath, 'utf8'); } catch (_) { return null; }
-  const tasks = [];
-  text.split('\n').forEach((line) => {
-    const m = TASK_LINE_RE.exec(line);
-    if (m) tasks.push({ id: m[2], done: (m[1] === 'x' || m[1] === 'X') });
-  });
-  return tasks;
+  const r = planParse.loadPlanFile(absPath);
+  return r.ok ? r.tasks : null;
 }
 
-// resolvePlanAbsPath(repo, slug) — the ask's own `repo` first (its plans
-// live at <repo>/docs/plans/<slug>.md), falling back to this repo's own
-// root (the common case for harness-development asks like this one). Null
-// when neither resolves — the caller renders an honest "no plan file found"
-// empty row rather than crashing (Edge Cases: "readers skip bad
-// lines/records ... landing page never 500s").
-function resolvePlanAbsPath(repo, slug) {
-  const candidates = [];
-  if (repo) candidates.push(path.join(repo, 'docs', 'plans', slug + '.md'));
-  candidates.push(path.join(mainRepoRoot(), 'docs', 'plans', slug + '.md'));
-  for (let i = 0; i < candidates.length; i++) {
-    try { if (fs.existsSync(candidates[i]) && fs.statSync(candidates[i]).isFile()) return candidates[i]; } catch (_) { /* try next */ }
+// resolveAskPlanAbsPath(repo, slug) — the ask's own `repo` first, falling
+// back to this repo's own root (the common case for harness-development
+// asks like this one) — the SAME priority order this file always used.
+// planParse.resolvePlanAbsPath now checks `docs/plans/` AND
+// `docs/plans/archive/` under EACH root (M5's fix — this file's own prior
+// resolver never checked archive/ at all, unlike auditor.js's), so an ask
+// whose plan has since been archived is now found here too.
+function resolveAskPlanAbsPath(repo, slug) {
+  if (repo) {
+    const p = planParse.resolvePlanAbsPath(repo, slug);
+    if (p) return p;
   }
-  return null;
+  return planParse.resolvePlanAbsPath(mainRepoRoot(), slug);
 }
 
 // projectDocRefFor(absPath) — best-effort {project, path} pair resolving
@@ -852,7 +851,7 @@ function computePlanRows(reg, events) {
   // (Task 13) can attach to the right task.
   const askBadges = auditor.getBadgesForAsk(reg.ask_id);
   return slugs.map((slug) => {
-    const absPath = resolvePlanAbsPath(reg.repo, slug);
+    const absPath = resolveAskPlanAbsPath(reg.repo, slug);
     const planTasks = absPath ? countPlanTasks(absPath) : null;
     const startedSet = startedByPlan[slug] || {};
     const doneMap = doneEvByPlan[slug] || {};
