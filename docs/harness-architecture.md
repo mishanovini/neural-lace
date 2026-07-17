@@ -15,8 +15,8 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 126 |
-| Unique hook scripts | 108 |
+| Total manifest entries | 129 |
+| Unique hook scripts | 110 |
 | Blocking gates (`blocking: true`) | 35 |
 
 ## Hooks by event
@@ -33,6 +33,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PostToolUse | task-verifier-reminder | surfacer | no | post-tool-task-verifier-reminder.sh |
 | PostToolUse | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
 | PreCompact | pre-compact-continuity | writer | no | pre-compact-continuity.sh |
+| PreToolUse | agent-design-gate | gate | no | agent-design-gate.sh |
 | PreToolUse | agent-teams | gate | yes | task-completed-evidence-gate.sh, task-created-validator.sh, teammate-spawn-validator.sh |
 | PreToolUse | claude-md-hygiene | gate | yes | claude-md-hygiene-gate.sh |
 | PreToolUse | concurrent-ownership-gate | gate | yes | concurrent-ownership-gate.sh |
@@ -93,6 +94,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | Stop | workstreams-stop-gate | gate | no | workstreams-stop-gate.sh |
 | Stop | workstreams-stop-writer | writer | no | workstreams-stop-writer.sh |
 | Stop | workstreams-task-binding | gate | no | workstreams-task-binding.sh |
+| SubagentStop | agent-commit-gate | gate | no | agent-commit-gate.sh |
 | TaskCompleted | agent-teams | gate | yes | task-completed-evidence-gate.sh, task-created-validator.sh, teammate-spawn-validator.sh |
 | TaskCreated | agent-teams | gate | yes | task-completed-evidence-gate.sh, task-created-validator.sh, teammate-spawn-validator.sh |
 | UserPromptSubmit | decision-context-emitters | writer | no | decision-context-pending-surfacer.sh, decision-context-reply-emit.sh |
@@ -124,9 +126,9 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
-| gate | 35 | 13 |
+| gate | 35 | 15 |
 | writer | 0 | 28 |
-| surfacer | 0 | 20 |
+| surfacer | 0 | 21 |
 | pattern | 0 | 27 |
 | convention | 0 | 3 |
 
@@ -141,9 +143,9 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 |---|---|
 | stop | 8 |
 | session-start | 15 |
-| pretool | 28 |
+| pretool | 29 |
 | posttool | 6 |
-| none | 69 |
+| none | 71 |
 
 ## Doctrine index
 
@@ -157,7 +159,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 |---|---|
 | doctrine/acceptance-scenarios.md | 1 (acceptance-scenarios) |
 | doctrine/agent-teams.md | 1 (agent-teams) |
-| doctrine/artifact-evidence-bar.md | 1 (artifact-evidence-bar) |
+| doctrine/artifact-evidence-bar.md | 2 (agent-design-gate, artifact-evidence-bar) |
 | doctrine/automation-modes.md | 1 (automation-modes) |
 | doctrine/background-work-tracking.md | 2 (agent-heartbeat, background-work-tracking) |
 | doctrine/claims.md | 1 (claims) |
@@ -191,7 +193,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/planning.md | 11 (backlog-plan-atomicity, decisions-index, plan-deletion-protection, plan-edit-validator, plan-lifecycle, plan-reviewer, pr-template-inline, stale-plan-surfacer, task-verifier-reminder, wire-check, work-integrity) |
 | doctrine/pr-health-snapshot.md | 1 (pr-health-snapshot) |
 | doctrine/prd-validity.md | 1 (prd-validity) |
-| doctrine/reap-what-you-spawn.md | 1 (reap-what-you-spawn) |
+| doctrine/reap-what-you-spawn.md | 2 (agent-commit-gate, reap-what-you-spawn) |
 | doctrine/review-before-deploy.md | 1 (review-before-deploy) |
 | doctrine/risk-tiered-verification.md | 1 (risk-tiered-verification) |
 | doctrine/security.md | 3 (env-local-protection, secret-hygiene-prepush, secret-scan-ci-backstop) |
@@ -207,16 +209,18 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/worktree-isolation.md | 1 (worktree-advisor) |
 | rules/constitution.md | 1 (constitution) |
 
-Entries with no doctrine_file (`-`): 30.
+Entries with no doctrine_file (`-`): 31.
 
 ## Full entry listing
 
 | id | kind | events | blocking | budget_class | honest_status |
 |---|---|---|---|---|---|
 | acceptance-scenarios | pattern | — | no | none | — |
+| agent-commit-gate | gate | SubagentStop | no | none | — |
+| agent-design-gate | gate | PreToolUse | no | pretool | — |
 | agent-heartbeat | writer | — | no | none | scripts/agent-heartbeat.sh (emit/conclude/watch/reap) — per-AGENT liveness heartbeat in the heartbeats/agents/ namespace (2026-07-14 lesson: background agents need a push heartbeat + watchdog, not orchestrator output-polling). watch AND reap are spliced into hooks/stalled-work-surfacer.sh run() (watch surfaces stalled agents at SessionStart alongside stalled Workflow runs; reap bounds the namespace — the session-heartbeat reaper's 2026-07-09 dead-reaper defect, avoided here by wiring reap in the same commit). conclude is the terminal beat: an agent self-removes on clean completion so a COMPLETED agent is never surfaced as stalled (mirrors the workflow half's started==result suppression; without it every finished agent false-fires — the cry-wolf that REFORMULATE'd orphaned-worktree-guard, fixed here per harness-review CONDITIONAL-PASS 2026-07-14). INTERIM PATTERN: relies on the dispatched agent calling emit/conclude (dispatch-prompt convention in doctrine/background-work-tracking.md); the true runtime auto-heartbeat is not in-repo. Detection covers agents that emitted then stopped (the worked-then-wedged class). Not event-wired as its own settings.json entry — a splice inside the already-wired stalled-work-surfacer.sh; inventory-only per the manifest-check disk-coverage note (scripts/ is not disk-scanned). |
 | agent-teams | gate | PreToolUse, TaskCompleted, TaskCreated | yes | pretool | — |
-| artifact-evidence-bar | pattern | — | no | none | PATTERN — self-applied, NOT YET A MECHANISM. The law (constitution §10 generalized: no artifact ships without evidence it beats naive) is documented; the two gates that would ENFORCE it are NOT WIRED: (1) a plan-reviewer check blocking build-dispatch on a qualifying plan with no architecture-reviewer verdict; (2) an agent-design gate blocking an agent file lacking the 7 properties + a GOLDEN CASE. Until those land this is documentation, not a control. Named here explicitly because §10 calls undelivered enforcement THEATER and the cardinal harness defect. Operator directive 2026-07-14; enforcement is the next build task. |
+| artifact-evidence-bar | pattern | — | no | none | PATTERN, backed by two real MECHANISMS as of 2026-07-14 (this is the doctrine entry; the two gates are their own manifest entries with their own golden_scenario/fp_expectation/retirement_condition). (1) GATE 1 = plan-reviewer.sh Check 17 (see the 'plan-reviewer' entry): blocking, fires on Status: ACTIVE (or unset) plans whose text matches a tight architecture-keyword set (source of truth / read-write path / staleness / materialize / derived store / cache-invalidation / sync engine-job / projection / reconcile loop — calibrated against this repo's own 237-plan corpus to 27.0% hit rate after a bare-stem draft measured 50.6%), requiring a linked docs/reviews/*-architecture-review.md whose verdict is SOUND or SOUND-WITH-AMENDMENTS (NEEDS-RESHAPING does not satisfy it); 7/7 self-test scenarios including the real cockpit-v2-push-materialized-store.md/2026-07-14-cockpit-v2-architecture-review.md NEEDS-RESHAPING golden case. (2) GATE 2 = the 'agent-design-gate' entry (adapters/claude-code/hooks/agent-design-gate.sh): PreToolUse on Edit|Write|MultiEdit, blocks a brand-new adapters/claude-code/agents/*.md Write lacking a '## GOLDEN CASE' section + evidence of the seven properties; grandfathers all pre-bar agents by on-disk-existence check; 7/7 self-test scenarios. Operator directive 2026-07-14. |
 | ask-registry | writer | — | no | none | scripts/ask-registry.sh — the ask-registry CLI (register/attach-session/link-plan/set-status/merge/override-project) writing ~/.claude/state/ask-registry.jsonl plus a best-effort in-repo mirror at docs/asks/ask-registry.jsonl (path resolved via nl_main_checkout_root, never a worktree) and a heuristic-first summarizer (optional ASK_SUMMARIZER=haiku upgrade, async, best-effort). Called by hooks/workstreams-read.sh's first-prompt capture splice (register, guarded by hooks/lib/progress-log-lib.sh's pl_classify_session against spawned/builder sessions) and by hooks/session-start-digest.sh's session-attach splice (attach-session, beside the existing heartbeat splice); set-status/merge are also called by the workstreams-ui server's POST /api/ask/<id>/lifecycle endpoint (operator override) and by the background auditor (mechanical completion). Not event-wired as its own settings.json entry — a one-line splice call-site inside already-wired hooks, mirroring the session-heartbeat/ensure-cockpit convention. Inventory-only per the filed nl-issue note that manifest-check's disk-coverage check (b) only disk-scans hooks/*.sh top-level, never scripts/ — this entry exists for honesty, not enforcement. |
 | automation-modes | pattern | — | no | none | — |
 | background-work-tracking | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
@@ -289,7 +293,7 @@ Entries with no doctrine_file (`-`): 30.
 | plan-deletion-protection | gate | PreToolUse | yes | pretool | — |
 | plan-edit-validator | gate | PreToolUse | yes | pretool | — |
 | plan-lifecycle | writer | PostToolUse, SessionStart | no | posttool | plan-status-archival-sweep.sh dispatched via session-start-surfacer-pack.sh since D.5; plan-auto-closure.sh/plan-lifecycle.sh fire on PostToolUse as before. |
-| plan-reviewer | gate | manual, precommit | yes | none | invoked via pre-commit-gate.sh chain and plan-edit flows; not directly wired in settings.json.template |
+| plan-reviewer | gate | manual, precommit | yes | none | invoked via pre-commit-gate.sh chain and plan-edit flows; not directly wired in settings.json.template. Includes Check 17 (2026-07-14, GATE 1 of artifact-evidence-bar): blocks Status: ACTIVE plans matching an architecture-keyword set that don't link a SOUND/SOUND-WITH-AMENDMENTS architecture-review artifact — see the 'artifact-evidence-bar' entry for golden_scenario/fp_expectation/retirement_condition. |
 | pr-health-snapshot | pattern | — | no | none | — |
 | pr-template-inline | gate | PreToolUse | no | pretool | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
 | prd-validity | gate | PreToolUse | no | pretool | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
@@ -319,6 +323,7 @@ Entries with no doctrine_file (`-`): 30.
 | spec-freeze | gate | PreToolUse | yes | pretool | — |
 | stale-plan-surfacer | surfacer | SessionStart | no | session-start | Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack. |
 | stop-verdict-dispatcher | gate | Stop | yes | stop | E.11 batched Stop verdict; invokes work-integrity/session-honesty/bug-persistence in --report mode, aggregates one verdict; replaces their 3 blocking Stop entries at §E.W (Stop 6->4). pin-f: delegates to the gates that validate purpose clauses. Cold-reader-lint WARN (constitution §3 amendment 53d3bee, operator directive 2026-07-07), following FUNCTIONAL-LINK's own precedent immediately above it in this same file: scans the final assistant message for a §3-format "Decision needed" block and, if it is missing an artifact anchor or per-option outcome text, emits ONE ledger_emit warn + a stderr notice. WARN-only — never contributes to the block/gap verdict above, never participates in cycle-counting/DONE-refusal, never touches stdout. Self-tested (scenarios renumbered 20-23 at batch-integration to avoid colliding with the FIX-2a/FIX-2b automation-ceiling scenarios 18-19 already on master; 3 of 4 pass). KNOWN BUG (found during batch integration, confirmed pre-existing on the source branch in isolation, not introduced by the merge): `_svd_message_has_decision_block`'s heuristic does a naive case-insensitive substring match for `decision needed`, so prose that negates it (e.g. "no decision needed here") still matches and false-positive-warns as a decision block missing an anchor — 1 self-test scenario (ordinary-prose-not-scanned) fails on this. Low severity (WARN-only, never blocks) but real; follow-up filed to require the heuristic to exclude a preceding negation token. |
+| stranded-worktree-work | surfacer | — | no | none | — |
 | synthetic-runner-ci | gate | manual | yes | none | GitHub Actions workflow (.github/workflows/synthetic-runner.yml), not a Claude Code hook; events:["manual"] is a schema-gap stand-in for CI cron+PR triggers. |
 | task-verifier-reminder | surfacer | PostToolUse | no | posttool | — |
 | tdd-gate | gate | precommit | yes | none | invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template |

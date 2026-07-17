@@ -1,9 +1,11 @@
 # Harness improvement: orphaned-worktree-work guard (stranded builder work)
 
-**Status:** BUILT + HARNESS-REVIEWED → **REFORMULATE** (not landed; a headline false-positive
-must be fixed first). Origin: operator directive 2026-07-13 — "how do we resolve this when you
-don't remember? … do we need a hook for every failure mode?" The answer is one cause-agnostic
-detector, not N hooks. This doc is the durable record so the reformulation isn't lost.
+**Status:** BUILT + HARNESS-REVIEWED (REFORMULATE) → **REFORMULATED, pending harness-reviewer
+re-pass** (built on this branch; not yet re-reviewed or merged to master — "landed" per the
+constitution means merged, and this is not that yet). Origin: operator directive 2026-07-13 —
+"how do we resolve this when you don't remember? … do we need a hook for every failure mode?"
+The answer is one cause-agnostic detector, not N hooks. This doc is the durable record so the
+reformulation isn't lost.
 
 ## The invariant (the design's core, which the review endorsed)
 Regardless of HOW a builder stops (clean-end-without-commit, background-standing-by, crash,
@@ -36,23 +38,35 @@ parallel-build day. That is the cry-wolf failure: a detector that false-fires on
 the reader to ignore it — recreating the very "a human must notice" problem it was meant to remove,
 one level up. The review rightly blocks landing on this.
 
-## Reformulation path (the fix)
+## Reformulation path (the fix) — BUILT
 The liveness signal must catch a live subagent builder WITHOUT depending on a subagent heartbeat:
-1. **(Recommended interim) Subagent-transcript-mtime liveness.** A worktree is named
-   `agent-<id>`; the harness writes that agent's transcript to `<session>/tasks/<id>.output` and
-   updates its mtime as the agent works. Map `agent-<id>` → the transcript (search session
-   `tasks/` dirs for `<id>.output`) → fresh mtime (within OBS_STALE_MIN) ⇒ LIVE-OWNED. No subagent
-   heartbeat, no dispatch-path change. This is the direct, already-written liveness signal.
-2. **(Durable P2 — the design's own named retirement condition) Dispatch-time lease.** The
-   builder-dispatch path writes an authoritative per-worktree lease (worktree path + owning agent
-   id + liveness pointer + expiry); a SessionEnd/agent-stop unclaim removes it. The detector then
-   reads the lease instead of inferring liveness. Cleaner, but touches the spawn path.
-
-Until reformulated + re-reviewed, DO NOT land. WARN-only + digest-line means the blast radius of
-the FP is "noise," not "blocks work" — but noise is precisely what erodes the signal, so it still
-must be fixed before landing.
+1. **(Built) Subagent-transcript-mtime liveness.** A worktree is named `agent-<id>`. The REAL
+   layout (verified empirically against a live session, NOT assumed — the original note above
+   guessed wrong):
+   `~/.claude/projects/<project-slug>/<session-id>/subagents/agent-<id>.jsonl` (+ a sidecar
+   `agent-<id>.meta.json` carrying worktreePath/worktreeBranch/agentType, not needed for the join
+   since the worktree's own basename already equals the transcript's filename stem exactly).
+   `worktree-hygiene-sweep.sh`'s `_live_owner` now checks, for any `agent-*`-named worktree,
+   whether that exact transcript's mtime is within `AGENT_TX_FRESH_MIN` (default = OBS_STALE_MIN,
+   30 min) — checked FIRST, before the heartbeat/claim join, since a dispatched subagent has no
+   heartbeat to find. A one-time bounded `find` (`_build_agent_tx_cache`, cached per sweep-script
+   process — never a per-worktree tree-walk) locates every `agent-*.jsonl` under the transcripts
+   root; `_agent_tx_fresh_min` looks up the cache, never re-walking the tree. The heartbeat/claim
+   join is unchanged and remains the ONLY signal for non-agent (named) worktrees. Self-test: 39/39
+   (34 original + 5 new REFORMULATION assertions covering fresh-agent-transcript / stale-agent-
+   transcript / non-agent-worktree-unaffected). manifest.json's stranded-worktree-work
+   fp_expectation/honesty_rationale updated with the new design + residual (an agent silent past
+   the freshness window while genuinely still working could false-fire — accepted for a WARN-
+   only, never-auto-pruning surfacer).
+2. **(Durable P2 — the design's own named retirement condition, unchanged) Dispatch-time lease.**
+   The builder-dispatch path writes an authoritative per-worktree lease (worktree path + owning
+   agent id + liveness pointer + expiry); a SessionEnd/agent-stop unclaim removes it. The detector
+   then reads the lease instead of inferring liveness from either signal above. Cleaner, but
+   touches the spawn path — still not built.
 
 ## Next action
-Reformulate with signal (1), re-run the harness-reviewer (must clear the FP finding), then land via
-install to `~/.claude` (harness change is durable only once merged to master). Tracked as a
-follow-up to the ask-rooted-workstreams-p1 build (not a blocker for it).
+A harness-reviewer re-pass is required before this is considered landed (this doc's Status line
+tracks that explicitly — "landed" means merged to master with a SHA, which has not happened yet).
+Once it clears review: land via merge to master, then install to `~/.claude` (harness change is
+durable only once merged). Tracked as a follow-up to the ask-rooted-workstreams-p1 build (not a
+blocker for it).

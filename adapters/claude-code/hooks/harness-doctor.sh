@@ -2058,6 +2058,62 @@ check_budget_worktrees_branches() {
 }
 
 # ------------------------------------------------------------
+# Check: orphaned-worktree-work — the OUT-OF-SESSION complement to
+# session-start-digest.sh's feed_stranded_work (same shared detector, two
+# surfaces; constitution §5 "persist in the same response" + the
+# understand-phase finding that mode (e) power-loss/reboot survives ONLY
+# as on-disk residue — a SessionStart-only surface would never fire for a
+# machine that stays down past the next session, so the doctor (run
+# out-of-band, e.g. by a scheduled task or an unrelated session's own
+# --quick pass) is the second, cause-independent observation point).
+#
+# Delegates entirely to worktree-hygiene-sweep.sh's `--stranded
+# --porcelain` (never re-implements the git/heartbeat inspection —
+# CANONICAL-COUNTERS-01 discipline: one detector, not a second drifting
+# implementation of "is this worktree's owner alive"). Resolution order
+# for the sweeper script mirrors check_manifest_wired's own
+# repo-then-live-mirror fallback: ${repo_root}/adapters/claude-code/
+# scripts/ first (the real production case — the doctor is normally run
+# FROM the harness repo it is checking), then ${live_home}/scripts/ (the
+# installed mirror) as fallback.
+#
+# WARN, never RED, per ORPHANED row (constitution §10 evidence bar —
+# manifest.json's fp_expectation/retirement_condition for this entry name
+# why): the mode-(b) standing-by/CONTINUING-grace boundary (member
+# script's own false_positive_analysis) means an occasional premature flag
+# is a real, accepted possibility, and this check must never fail an
+# UNRELATED session's own doctor run over another session's own worktree
+# — advisory-only, exactly like the digest's own line. Graceful WARN
+# (fail toward visibility, not silent skip) when repo_root is unresolved,
+# git is unavailable, or the sweeper script itself cannot be found —
+# same posture as check_manifest_wired's checker-missing case.
+# ------------------------------------------------------------
+check_orphaned_worktree_work() {
+  local live_home="$1" repo_root="$2"
+  [[ -z "$repo_root" ]] && { _warn "orphaned-worktree-work" "repo root unresolved — skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+  command -v git >/dev/null 2>&1 || { _warn "orphaned-worktree-work" "git not available — skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local sweeper="${repo_root}/adapters/claude-code/scripts/worktree-hygiene-sweep.sh"
+  [[ -f "$sweeper" ]] || sweeper="${live_home}/scripts/worktree-hygiene-sweep.sh"
+  if [[ ! -f "$sweeper" ]]; then
+    _warn "orphaned-worktree-work" "worktree-hygiene-sweep.sh not found (repo scripts/ or live scripts/) — cannot check for stranded agent-worktree work"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local out
+  out="$(bash "$sweeper" --stranded --porcelain "$repo_root" 2>/dev/null || true)"
+  if [[ -n "$out" ]]; then
+    local tag path branch dirty unintegrated age liveness
+    while IFS="$(printf '\t')" read -r tag path branch dirty unintegrated age liveness; do
+      [[ -n "$path" ]] || continue
+      _warn "orphaned-worktree-work" "worktree ${path} (branch ${branch}) holds dirty=${dirty}/unintegrated=${unintegrated} with no live owner (liveness=${liveness}) — salvage then remove: git -C ${path} status; git worktree remove ${path}"
+    done <<< "$out"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check: new-gate-evidence-bar (Wave F, task F.1, specs-f §F.1 item 3 /
 # ADR 059 D4 — the DOCTOR side; constitution §10's prose side is
 # ORCHESTRATOR-ONLY and shipped separately). Any manifest entry with
@@ -2749,6 +2805,7 @@ run_quick_checks() {
   check_budget_always_loaded "$live_home" "$repo_root"
   check_budget_active_plans "$live_home" "$repo_root"
   check_budget_worktrees_branches "$live_home" "$repo_root"
+  check_orphaned_worktree_work "$live_home" "$repo_root"
   check_new_gate_evidence_bar "$live_home" "$repo_root"
   check_master_drift_autocorrect "$live_home" "$repo_root"
   check_model_pins "$live_home" "$repo_root"
@@ -2825,6 +2882,25 @@ if [[ "${1:-}" == "--self-test" ]]; then
     mkdir -p "$dir/repo/adapters/claude-code/hooks/lib" "$dir/repo/adapters/claude-code/scripts"
     cp "$lib_src" "$dir/repo/adapters/claude-code/hooks/lib/review-record-gate-lib.sh"
     cp "$writer_src" "$dir/repo/adapters/claude-code/scripts/write-review-record.sh"
+    return 0
+  }
+
+  # Copies the real worktree-hygiene-sweep.sh (+ the session-heartbeat-lib.sh
+  # it sources for the liveness join) into a fixture repo so
+  # check_orphaned_worktree_work's scenarios can invoke the REAL shared
+  # detector — same non-duplication discipline as _copy_manifest_tooling
+  # above. Returns 1 (caller should SKIP its orphaned-worktree-work
+  # scenarios) when the real tooling is not present next to this doctor
+  # (e.g. a partial install).
+  _copy_sweeper_tooling() {
+    local dir="$1"
+    local sweeper_src="$SCRIPT_DIR/../scripts/worktree-hygiene-sweep.sh"
+    local hb_lib_src="$SCRIPT_DIR/lib/session-heartbeat-lib.sh"
+    [[ -f "$sweeper_src" ]] || return 1
+    mkdir -p "$dir/repo/adapters/claude-code/scripts" "$dir/repo/adapters/claude-code/hooks/lib"
+    cp "$sweeper_src" "$dir/repo/adapters/claude-code/scripts/worktree-hygiene-sweep.sh"
+    chmod +x "$dir/repo/adapters/claude-code/scripts/worktree-hygiene-sweep.sh" 2>/dev/null
+    [[ -f "$hb_lib_src" ]] && cp "$hb_lib_src" "$dir/repo/adapters/claude-code/hooks/lib/session-heartbeat-lib.sh"
     return 0
   }
 
@@ -3593,6 +3669,145 @@ fs.writeFileSync(p, JSON.stringify(m));
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "budget-worktrees-branches-age-green" 0 "$RC" "" "$OUT"
+
+  # ---- Check: orphaned-worktree-work. WARN fixture — a real secondary
+  # worktree with an untracked file (dirty) and NO heartbeat/claim (both
+  # sandboxed to dedicated empty fixture dirs so this scenario can never
+  # read this machine's real heartbeat/claim state) -> the shared detector
+  # (worktree-hygiene-sweep.sh --stranded --porcelain, copied in via
+  # _copy_sweeper_tooling — never re-implemented here) classifies it
+  # ORPHANED-HOLDS-CONTENT and the doctor WARNs (never RED — this check's
+  # exit code stays 0 even when it fires; WARN_COUNT alone never fails
+  # --quick). ----
+  D=$(_scenario_dir oww-dirty-warn)
+  _stamp_claim_honesty_green "$D"
+  if _copy_sweeper_tooling "$D"; then
+    (
+      cd "$D/repo" \
+        && git init --quiet && git config core.hooksPath "" \
+        && git config user.email t@example.com && git config user.name T \
+        && echo x > f && git add f && git commit --quiet -m init \
+        && git worktree add --quiet -b oww-dirty-branch "$D/oww-dirty" >/dev/null 2>&1
+    ) >/dev/null 2>&1
+    echo scratch > "$D/oww-dirty/untracked.txt"
+    mkdir -p "$D/hb-empty" "$D/claims-empty"
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(HEARTBEAT_STATE_DIR="$D/hb-empty" COG_CLAIMS_DIR="$D/claims-empty" _run_quick "$D")"; RC=$?
+    _assert "orphaned-worktree-work-dirty-warn" 0 "$RC" "WARN orphaned-worktree-work.*oww-dirty-branch" "$OUT"
+  else
+    echo "self-test (orphaned-worktree-work-dirty-warn): SKIP — worktree-hygiene-sweep.sh not present next to this doctor" >&2
+  fi
+
+  # ---- Check: orphaned-worktree-work. GREEN fixture (clean/merged) — a
+  # secondary worktree at base tip, clean, old (>7d) -> SAFE-PRUNE, never
+  # even enters the HOLDS-CONTENT liveness split -> no
+  # orphaned-worktree-work WARN. ----
+  D=$(_scenario_dir oww-clean-green)
+  _stamp_claim_honesty_green "$D"
+  if _copy_sweeper_tooling "$D"; then
+    (
+      _oww_old_ts=$(( $(date -u +%s) - 30 * 86400 )) \
+        && cd "$D/repo" \
+        && git init --quiet && git config core.hooksPath "" \
+        && git config user.email t@example.com && git config user.name T \
+        && echo x > f && git add f \
+        && GIT_AUTHOR_DATE="@${_oww_old_ts} +0000" GIT_COMMITTER_DATE="@${_oww_old_ts} +0000" git commit --quiet -m init \
+        && git worktree add --quiet -b oww-clean-branch "$D/oww-clean" >/dev/null 2>&1
+    ) >/dev/null 2>&1
+    mkdir -p "$D/hb-empty" "$D/claims-empty"
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(HEARTBEAT_STATE_DIR="$D/hb-empty" COG_CLAIMS_DIR="$D/claims-empty" _run_quick "$D")"; RC=$?
+    if printf '%s' "$OUT" | grep -q "orphaned-worktree-work"; then
+      echo "self-test (orphaned-worktree-work-clean-green): FAIL (unexpected WARN for a clean/old/merged worktree)" >&2
+      echo "--- output ---" >&2; printf '%s\n' "$OUT" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (orphaned-worktree-work-clean-green): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (orphaned-worktree-work-clean-green): SKIP — worktree-hygiene-sweep.sh not present next to this doctor" >&2
+  fi
+
+  # ---- Check: orphaned-worktree-work. GREEN fixture (live-owned) — a
+  # dirty secondary worktree, but with a LIVE heartbeat (fresh ts, this
+  # self-test process's own alive $$) naming its worktree_root -> LIVE-
+  # OWNED-HOLDS-CONTENT, excluded from the ORPHANED set -> no WARN despite
+  # being dirty (requirement 5.i: a running builder's dirty tree is not
+  # stranded work). ----
+  D=$(_scenario_dir oww-live-green)
+  _stamp_claim_honesty_green "$D"
+  if _copy_sweeper_tooling "$D"; then
+    (
+      cd "$D/repo" \
+        && git init --quiet && git config core.hooksPath "" \
+        && git config user.email t@example.com && git config user.name T \
+        && echo x > f && git add f && git commit --quiet -m init \
+        && git worktree add --quiet -b oww-live-branch "$D/oww-live" >/dev/null 2>&1
+    ) >/dev/null 2>&1
+    echo scratch > "$D/oww-live/untracked.txt"
+    mkdir -p "$D/hb-live" "$D/claims-empty"
+    cat > "$D/hb-live/sess-oww-live.json" <<EOF
+{"schema":1,"session_id":"sess-oww-live","pid":$$,"cwd":"$D/oww-live","repo_root":"$D/oww-live","worktree_root":"$D/oww-live","branch":"oww-live-branch","model":"sonnet","last_activity_ts":"$(date -u '+%Y-%m-%dT%H:%M:%SZ')","last_event":"turn-end","marker_state":"none"}
+EOF
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(HEARTBEAT_STATE_DIR="$D/hb-live" COG_CLAIMS_DIR="$D/claims-empty" _run_quick "$D")"; RC=$?
+    if printf '%s' "$OUT" | grep -q "orphaned-worktree-work"; then
+      echo "self-test (orphaned-worktree-work-live-owned-green): FAIL (unexpected WARN for a live-owned dirty worktree)" >&2
+      echo "--- output ---" >&2; printf '%s\n' "$OUT" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (orphaned-worktree-work-live-owned-green): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (orphaned-worktree-work-live-owned-green): SKIP — worktree-hygiene-sweep.sh not present next to this doctor" >&2
+  fi
+
+  # ---- Check: orphaned-worktree-work. GREEN fixture (agent-worktree,
+  # subagent-transcript-mtime liveness — REFORMULATION fix,
+  # docs/harness-improvements/orphaned-worktree-guard.md). A dirty
+  # worktree named `agent-<id>` (the harness's own isolation:worktree
+  # dispatch naming) with NO heartbeat coverage AT ALL (sandboxed EMPTY
+  # heartbeat dir — exactly what a real dispatched subagent has, since it
+  # writes no heartbeat of its own) but a FRESH transcript file at the
+  # real nested subagents/ path -> LIVE-OWNED via the transcript-mtime
+  # signal alone, never even reaching the heartbeat join -> no WARN
+  # despite being dirty with zero heartbeat coverage. This is the exact
+  # false positive the harness-review REFORMULATE verdict required fixed:
+  # an actively-running dispatched builder must not be flagged stranded
+  # on every parallel-build day. ----
+  D=$(_scenario_dir oww-agent-live-green)
+  _stamp_claim_honesty_green "$D"
+  if _copy_sweeper_tooling "$D"; then
+    (
+      cd "$D/repo" \
+        && git init --quiet && git config core.hooksPath "" \
+        && git config user.email t@example.com && git config user.name T \
+        && echo x > f && git add f && git commit --quiet -m init \
+        && git worktree add --quiet -b oww-agent-live-branch "$D/agent-oww-fixture" >/dev/null 2>&1
+    ) >/dev/null 2>&1
+    echo scratch > "$D/agent-oww-fixture/untracked.txt"
+    mkdir -p "$D/hb-empty" "$D/claims-empty" "$D/tx/proj/sess/subagents"
+    printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}\n' \
+      > "$D/tx/proj/sess/subagents/agent-oww-fixture.jsonl"
+    _write_settings "$D/live/settings.json"
+    cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+    OUT="$(HEARTBEAT_STATE_DIR="$D/hb-empty" COG_CLAIMS_DIR="$D/claims-empty" OBS_TRANSCRIPTS_ROOT="$D/tx" _run_quick "$D")"; RC=$?
+    if printf '%s' "$OUT" | grep -q "orphaned-worktree-work"; then
+      echo "self-test (orphaned-worktree-work-agent-live-green): FAIL (unexpected WARN for an agent-<id> worktree with a fresh own-transcript and NO heartbeat coverage at all)" >&2
+      echo "--- output ---" >&2; printf '%s\n' "$OUT" >&2
+      FAILED=$((FAILED + 1))
+    else
+      echo "self-test (orphaned-worktree-work-agent-live-green): PASS" >&2
+      PASSED=$((PASSED + 1))
+    fi
+  else
+    echo "self-test (orphaned-worktree-work-agent-live-green): SKIP — worktree-hygiene-sweep.sh not present next to this doctor" >&2
+  fi
 
   # ---- Check: new-gate-evidence-bar. RED fixture — an added_after >=
   # 2026-07 entry missing the full evidence bar ----

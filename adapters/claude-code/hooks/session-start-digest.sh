@@ -34,6 +34,12 @@
 #                                          docs/backlog.md open rows overdue
 #                                          per age tier; one-word disposition
 #                                          proposals, once per <ID>-<ISOweek>)
+#  17. stranded worktree work             (worktree-hygiene-sweep.sh
+#                                          --stranded — agent worktrees
+#                                          holding dirty/unintegrated work
+#                                          with NO live heartbeat/claim
+#                                          owner; ORPHANED-HOLDS-CONTENT
+#                                          only, SILENT otherwise)
 #
 # A quiet harness produces a 2-line digest: doctor verdict + "all quiet".
 #
@@ -428,6 +434,51 @@ feed_worktree_advice() {
   local first
   first="$(printf '%s\n' "$out" | grep -m1 '^\[worktree-advisor\]' | sed -E 's/^\[worktree-advisor\][[:space:]]*//')"
   printf 'worktree: %s\n' "$(printf '%s' "$first" | head -c 110)"
+}
+
+# ----------------------------------------------------------------------
+# Feed: stranded worktree work — invoke worktree-hygiene-sweep.sh's
+# `--stranded` mode (the shared detector; this hook never re-implements
+# the git/heartbeat inspection — same reuse discipline as feed_worktree_
+# advice above, its direct sibling: this is the ORPHANED-HOLDS-CONTENT
+# split of the same per-worktree classifier session-start-worktree-
+# advisor.sh's own SAFE-PRUNE/HOLDS-CONTENT report already reuses).
+# `--stranded` is SILENT (no output) whenever no worktree is
+# ORPHANED-HOLDS-CONTENT (dirty/unintegrated work with NO live owner —
+# see that script's header for the full liveness-join contract), so this
+# feed is silent in the common case, matching every other feed's
+# tolerate-absent contract.
+#
+# Folds the member's multi-line "[stranded-work] N worktree(s) ..." block
+# (one header line + one "  • ..." bullet per row + a 2-line salvage
+# reminder) into ONE digest line: the header's count plus the first
+# bullet's detail, truncated to the sibling feeds' head_limit convention
+# (feed_git_freshness's head -c 110) — full per-row detail stays available
+# on demand via the member script itself, never lost, just not repeated
+# here.
+# ----------------------------------------------------------------------
+feed_stranded_work() {
+  local cwd="${1:-$PWD}"
+  local member="$HOOKS_DIR/../scripts/worktree-hygiene-sweep.sh"
+  [[ -f "$member" ]] || return 0
+  local out
+  out="$(bash "$member" --stranded "$cwd" 2>/dev/null || true)"
+  [[ -z "$out" ]] && return 0
+  local header
+  header="$(printf '%s\n' "$out" | grep -m1 '^\[stranded-work\]')"
+  [[ -z "$header" ]] && return 0
+  local count
+  count="$(printf '%s' "$header" | sed -E 's/^\[stranded-work\][[:space:]]*([0-9]+).*/\1/')"
+  [[ "$count" =~ ^[0-9]+$ ]] || count=1
+  local first
+  first="$(printf '%s\n' "$out" | grep -m1 '^  •' | sed -E 's/^[[:space:]]*•[[:space:]]*//')"
+  if [[ "$count" -le 1 ]]; then
+    printf 'stranded-work: 1 worktree with no live owner: %s -> %s --stranded %s\n' \
+      "$(printf '%s' "$first" | head -c 100)" "$member" "$cwd"
+  else
+    printf 'stranded-work: %d worktrees with no live owner, first: %s -> %s --stranded %s\n' \
+      "$count" "$(printf '%s' "$first" | head -c 80)" "$member" "$cwd"
+  fi
 }
 
 # ----------------------------------------------------------------------
@@ -1222,6 +1273,8 @@ run_digest() {
   body="$(feed_git_freshness "$cwd")"
   [[ -n "$body" ]] && lines+=("$body")
   body="$(feed_worktree_advice "$cwd")"
+  [[ -n "$body" ]] && lines+=("$body")
+  body="$(feed_stranded_work "$cwd")"
   [[ -n "$body" ]] && lines+=("$body")
   body="$(feed_ledger_summary)"
   [[ -n "$body" ]] && lines+=("$body")
@@ -2096,6 +2149,64 @@ EOF
     echo "FAIL: S17b non-reentry heartbeat event name unchanged (got: $(cat "$s17b_hb/sess-digest-normal.json" 2>/dev/null))" >&2
     fail=$((fail + 1))
   fi
+
+  # ---- S18: stranded worktree work feed (worktree-hygiene-sweep.sh
+  #           --stranded — new SessionStart surface for agent worktrees
+  #           holding dirty/unintegrated work with NO live heartbeat
+  #           owner). Exercises feed_stranded_work directly (mirrors S4's
+  #           direct auto_ack_monitor_class call) rather than through the
+  #           full run_digest, since the member script's own --self-test
+  #           already covers the underlying classifier exhaustively
+  #           (34/34 assertions incl. the full liveness join) — this
+  #           suite only proves the DIGEST-LEVEL fold (silent / fires /
+  #           one-line summary / per-worktree liveness granularity),
+  #           never re-deriving the classifier itself. ----
+  local s18repo="$tmp/s18-repo"
+  _seed_repo "$s18repo"
+
+  # S18a: repo with only the primary worktree (no secondaries at all) ->
+  # feed_stranded_work SILENT (empty output) — the common case.
+  local out18a
+  out18a="$(feed_stranded_work "$s18repo")"
+  if [[ -z "$out18a" ]]; then
+    echo "PASS: S18a no secondary worktrees -> feed_stranded_work silent"; pass=$((pass + 1))
+  else
+    echo "FAIL: S18a expected silent output, got: $out18a" >&2
+    fail=$((fail + 1))
+  fi
+
+  # S18b: a secondary worktree with an untracked file (dirty) and NO
+  # heartbeat/claim (HEARTBEAT_STATE_DIR pinned to a dedicated empty dir,
+  # so this scenario can never accidentally pick up a stray heartbeat) ->
+  # ORPHANED-HOLDS-CONTENT -> feed_stranded_work FIRES with a one-line
+  # "stranded-work: ..." summary naming the member script for full detail.
+  ( cd "$s18repo" && git worktree add --quiet "$tmp/s18-wt-b" -b s18-wt-b ) >/dev/null 2>&1
+  echo scratch > "$tmp/s18-wt-b/untracked.txt"
+  mkdir -p "$tmp/s18b-hb-empty"
+  local out18b
+  out18b="$(HEARTBEAT_STATE_DIR="$tmp/s18b-hb-empty" feed_stranded_work "$s18repo")"
+  _ck_contains "S18b dirty worktree with no owner -> feed_stranded_work fires" "$out18b" "stranded-work:"
+  _ck_contains "S18b fired line points at the member script's --stranded invocation for full detail" "$out18b" "--stranded"
+
+  # S18c: a second, INDEPENDENT secondary worktree, also dirty, but with a
+  # LIVE heartbeat (fresh ts, this self-test process's own alive $$) whose
+  # worktree_root names it -> LIVE-OWNED, excluded from the ORPHANED set
+  # entirely (not merely deprioritized) -> feed_stranded_work does NOT
+  # mention it. sw-b (still present, still un-owned under ITS OWN pinned
+  # empty heartbeat dir from S18b) DOES still surface -- proving this is a
+  # per-worktree liveness join, not a global kill switch once any
+  # heartbeat exists anywhere.
+  ( cd "$s18repo" && git worktree add --quiet "$tmp/s18-wt-c" -b s18-wt-c ) >/dev/null 2>&1
+  echo scratch > "$tmp/s18-wt-c/untracked.txt"
+  local s18c_hb="$tmp/s18c-hb"
+  mkdir -p "$s18c_hb"
+  cat > "$s18c_hb/sess-s18c-live.json" <<EOF
+{"schema":1,"session_id":"sess-s18c-live","pid":$$,"cwd":"$tmp/s18-wt-c","repo_root":"$tmp/s18-wt-c","worktree_root":"$tmp/s18-wt-c","branch":"s18-wt-c","model":"sonnet","last_activity_ts":"$(date -u '+%Y-%m-%dT%H:%M:%SZ')","last_event":"turn-end","marker_state":"none"}
+EOF
+  local out18c
+  out18c="$(HEARTBEAT_STATE_DIR="$s18c_hb" feed_stranded_work "$s18repo")"
+  _ck_contains "S18c sibling dirty worktree WITHOUT a heartbeat still surfaces (per-worktree granularity, not a global suppress)" "$out18c" "s18-wt-b"
+  _ck_not_contains "S18c live-heartbeat-owned dirty worktree -> excluded from the ORPHANED set entirely" "$out18c" "s18-wt-c"
 
   rm -rf "$tmp" 2>/dev/null || true
   echo ""
