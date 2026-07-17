@@ -718,10 +718,15 @@ async function main() {
     // minimal-env robustness every other child spawn in this file relies on.
     const needsYouSh = path.join(__dirname, '..', '..', '..', 'adapters', 'claude-code', 'scripts', 'needs-you.sh');
     let goodNeedsYouId = '', badNeedsYouId = '';
+    // Hoisted out of the if-block: S36 (Task 14's concurrent-writer scenario,
+    // union-merged later) reuses these from OUTSIDE this block — block-scoped
+    // consts here crashed the whole suite with "nyBash is not defined" the
+    // first time the ECONNRESET fix let execution actually REACH S36.
+    let nyBash = '', nyEnv = null;
     if (fs.existsSync(needsYouSh)) {
       const dcForNy = require('./derive-cache.js');
-      const nyBash = dcForNy.bashBin();
-      const nyEnv = Object.assign({}, process.env, { NEEDS_YOU_STATE_DIR: nyStateDir, NEEDS_YOU_MD_PATH: nyMdPath });
+      nyBash = dcForNy.bashBin();
+      nyEnv = Object.assign({}, process.env, { NEEDS_YOU_STATE_DIR: nyStateDir, NEEDS_YOU_MD_PATH: nyMdPath });
       const goodText = 'Ship the fixture tonight?\nThe fixture (docs/plans/demo-plan-fixture.md) has been green for 3 days; shipping now vs later only changes who is on call.\nMy pick: ship tonight.';
       const goodRes = spawnSync(nyBash, [needsYouSh, 'add', '--section', 'decision', '--text', goodText, '--session', 'sess-orig-1', '--link', 'https://example.test/pr/1'], { env: nyEnv, encoding: 'utf8' });
       goodNeedsYouId = String(goodRes.stdout || '').trim();
