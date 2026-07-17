@@ -642,7 +642,7 @@ Modify:
 - `docs/backlog.md` — header line re UI write path (+ PROGRESS-FIELD-01 cross-ref at completion)
 
 ## In-flight scope updates
-(no in-flight changes yet)
+- 2026-07-17: docs/reviews/2026-07-17-circuit-continuous-building-design-sketch.md — operator-commissioned Circuit continuous-building design pass (v1 + v2 rewrite integrating operator decisions D1-D4); the sketch consumes this plan's ask-registry/cockpit surfaces (Team-tab reserve, provenance fields, payload allowlist) and is committed on its design branch to satisfy the SubagentStop clean-tree gate. Design-record only — no code in this plan's scope is modified.
 
 ## Assumptions
 
