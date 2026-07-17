@@ -63,3 +63,18 @@ see which sub-components have been built, which are in process, which not starte
 3. Statuses: **not started / in progress / complete / STALLED-PAUSED — and stalled "should be
    able to tell me WHY it has stopped and WHAT is needed to get it moving forward again."**
 4. Telemetry quiet: agree — plus click-to-drill-into-detail on any item.
+
+## Round 3 — operator answers (2026-07-17, verbatim intent)
+
+- **"Complete" oracle:** "Complete means there's nothing else needed to have the item fully
+  functional in production." (The strictest reading — merged AND deployed AND working; pure
+  functionality-over-components. Per-item, not per-repo convention.)
+- **Meeting-sourced items:** "should be proposed to me before being accepted into the status page.
+  Ideally a mechanism for me to accept a proposal or modify a proposal and accept bits and pieces
+  of it. The system could automatically take the items I approve and inject those into the
+  roadmap." (Refines Circuit D2: the promote surface needs accept / modify / PARTIAL-accept, with
+  approved fragments auto-injected.)
+- **Naming:** "Let this system automatically create its own name. And then simply allow that name
+  to always be modifiable by me at any time." (No mandatory confirm ceremony — auto-name always,
+  operator-editable always; drops the "auto — unreviewed" gate idea in favor of edit-anytime.)
+- **Project facet vs swimlane:** undecided, discuss further.
