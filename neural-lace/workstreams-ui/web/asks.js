@@ -851,6 +851,154 @@
   }
 
   // ============================================================
+  // Peers section (cockpit-v2-push-materialized-store Task 4) — reads
+  // payload.peers (server.js's buildPeersBlock -> peer-view.js). Every
+  // string rendered below is either a hardcoded literal or a server-
+  // prepared label (state_label/provenance_label/my_coord_refresh.label)
+  // that already passed payload-schema.js's anti-noise scan before it
+  // reached the wire — same convention as narrative_excerpt elsewhere in
+  // this module. Local ask cards above (renderAskCard etc.) are entirely
+  // untouched by this section — peer rows are ALWAYS additional, labeled
+  // provenance, never substituted into a local card (requirement 8).
+  // ============================================================
+  var PEER_SESSION_STATE_LABEL = { fresh: 'fresh', stale: 'stale', unknown: 'unknown' };
+
+  function renderPeerSessionRow(s) {
+    var row = document.createElement('div');
+    row.className = 'peer-session-row';
+    var chip = document.createElement('span');
+    var st = s.state || 'unknown';
+    chip.className = 'chip peer-session-chip peer-session-' + st;
+    chip.textContent = PEER_SESSION_STATE_LABEL[st] || st; // text + color, never color-only
+    row.appendChild(chip);
+    var idSpan = document.createElement('span');
+    idSpan.className = 'peer-session-id';
+    idSpan.textContent = s.session_id;
+    row.appendChild(idSpan);
+    if (s.role || s.plan_slug) {
+      var meta = document.createElement('span');
+      meta.className = 'peer-session-meta';
+      meta.textContent = [s.role, s.plan_slug, s.task_id ? ('task ' + s.task_id) : ''].filter(Boolean).join(' · ');
+      row.appendChild(meta);
+    }
+    return row;
+  }
+
+  function renderPeerPlanRow(p) {
+    var wrap = document.createElement('div');
+    wrap.className = 'peer-plan-row';
+    var head = document.createElement('div');
+    head.className = 'peer-plan-head';
+    var slug = document.createElement('span');
+    slug.className = 'peer-plan-slug';
+    slug.textContent = p.plan_slug || '(unnamed plan)';
+    head.appendChild(slug);
+    var pct = p.plan_progress || { done: 0, in_flight: 0, not_started: 0, total: 0 };
+    var bar = document.createElement('span');
+    bar.className = 'peer-plan-progress';
+    bar.textContent = pct.done + '/' + pct.total + ' done' + (pct.in_flight ? (', ' + pct.in_flight + ' in-flight') : '');
+    head.appendChild(bar);
+    if (p.plan_doc && p.plan_doc.project && p.plan_doc.path) {
+      var linkBtn = document.createElement('button');
+      linkBtn.type = 'button';
+      linkBtn.className = 'ghost small peer-plan-doc-link';
+      linkBtn.textContent = 'View live plan doc';
+      linkBtn.title = 'open ' + p.plan_doc.project + '/' + p.plan_doc.path + ' in the docs viewer';
+      linkBtn.addEventListener('click', function () { openPlanDocModal(p.plan_doc.project, p.plan_doc.path); });
+      head.appendChild(linkBtn);
+    }
+    wrap.appendChild(head);
+    // F4/requirement 8: the provenance label is ALWAYS shown — a peer row
+    // never renders as a plain checkbox indistinguishable from local truth,
+    // even when every task on it is done.
+    var prov = document.createElement('div');
+    prov.className = 'peer-provenance-label' + (/unmerged/.test(p.provenance_label || '') ? ' peer-unmerged' : '');
+    prov.textContent = p.provenance_label || '';
+    wrap.appendChild(prov);
+    if (p.tasks && p.tasks.length) {
+      var list = document.createElement('ul');
+      list.className = 'peer-task-list';
+      p.tasks.forEach(function (t) {
+        var li = document.createElement('li');
+        li.className = 'peer-task-row';
+        var status = t.done ? 'done' : (t.in_flight ? 'in_flight' : 'not_started');
+        var chip = document.createElement('span');
+        chip.className = 'chip peer-task-status task-status-' + status;
+        chip.textContent = TASK_STATUS_LABEL[status];
+        li.appendChild(chip);
+        var idSpan = document.createElement('span');
+        idSpan.className = 'peer-task-id';
+        idSpan.textContent = 'task ' + t.id;
+        li.appendChild(idSpan);
+        list.appendChild(li);
+      });
+      wrap.appendChild(list);
+    }
+    return wrap;
+  }
+
+  function renderPeerEntry(e) {
+    var box = document.createElement('div');
+    box.className = 'peer-entry';
+    var head = document.createElement('div');
+    head.className = 'peer-entry-head';
+    var hostSpan = document.createElement('span');
+    hostSpan.className = 'peer-entry-host';
+    hostSpan.textContent = e.host;
+    head.appendChild(hostSpan);
+    var chip = document.createElement('span');
+    chip.className = 'chip peer-state peer-state-' + e.state;
+    chip.textContent = e.state_label; // text + color, never color-only
+    head.appendChild(chip);
+    box.appendChild(head);
+    (e.plans || []).forEach(function (p) { box.appendChild(renderPeerPlanRow(p)); });
+    if (e.sessions && e.sessions.length) {
+      var sessWrap = document.createElement('div');
+      sessWrap.className = 'peer-sessions';
+      e.sessions.forEach(function (s) { sessWrap.appendChild(renderPeerSessionRow(s)); });
+      box.appendChild(sessWrap);
+    }
+    return box;
+  }
+
+  // renderPeersSection(peers) — ALWAYS renders a <details> (never returns
+  // null, unlike renderCompletedGroup): a "Peers" section always exists on
+  // the landing so the operator can see cross-machine state is a real
+  // capability, but it starts COLLAPSED when there is nothing to show
+  // (peers.has_data === false — "no data yet"), and OPEN when there is.
+  function renderPeersSection(peers) {
+    peers = peers || { has_data: false, entries: [], my_coord_refresh: null };
+    var details = document.createElement('details');
+    details.className = 'peer-section';
+    details.open = !!peers.has_data;
+    var summary = document.createElement('summary');
+    summary.className = 'peer-summary';
+    summary.textContent = peers.has_data
+      ? ('Peers (' + peers.entries.length + ')')
+      : 'Peers (no data yet)';
+    details.appendChild(summary);
+
+    var body = document.createElement('div');
+    body.className = 'peer-body';
+
+    var coordHealth = document.createElement('div');
+    coordHealth.className = 'peer-coord-health';
+    coordHealth.textContent = (peers.my_coord_refresh && peers.my_coord_refresh.label) || 'my coord view has never refreshed';
+    body.appendChild(coordHealth);
+
+    if (!peers.has_data) {
+      var empty = document.createElement('div');
+      empty.className = 'pane-empty';
+      empty.textContent = 'No peer machine state received yet.';
+      body.appendChild(empty);
+    } else {
+      peers.entries.forEach(function (e) { body.appendChild(renderPeerEntry(e)); });
+    }
+    details.appendChild(body);
+    return details;
+  }
+
+  // ============================================================
   // project groups + completed group
   // ============================================================
   var allActiveAsksFlat = [];
@@ -903,6 +1051,10 @@
     var totalActive = allActiveAsksFlat.length;
     if (totalActive === 0 && completed.count === 0) {
       root.appendChild(renderFullyEmpty());
+      // Peers is an independent capability from ask-tracking — a fresh
+      // install with zero asks yet can still have real cross-machine peer
+      // state to show, so it renders even on this early-empty path.
+      root.appendChild(renderPeersSection(payload.peers));
       return;
     }
     if (totalActive === 0) {
@@ -915,6 +1067,10 @@
     }
     var completedNode = renderCompletedGroup(completed);
     if (completedNode) root.appendChild(completedNode);
+
+    // cockpit-v2-push-materialized-store Task 4 — always rendered (unlike
+    // the completed group above), collapsed when there's nothing to show.
+    root.appendChild(renderPeersSection(payload.peers));
   }
 
   function load() {

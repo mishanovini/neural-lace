@@ -1553,6 +1553,125 @@ async function main() {
       planRow7 && planRow7.tasks.length === 1 && planRow7.tasks[0].id === '1' && planRow7.tasks[0].done === true,
       JSON.stringify(planRow7));
 
+    // ========================================================
+    // cockpit-v2-push-materialized-store Task 4 — "Peers" section wiring
+    // proof (S64+). A fixture coord clone (COORD_CLONE_DIR) with a fresh
+    // peer, a stale/unreachable peer, a corrupt third file, and this
+    // machine's OWN file (self, via EXPORT_HOSTNAME) — driven through the
+    // REAL running server's GET /api/asks over real HTTP (not a unit call),
+    // proving the read-time wiring server.js -> peer-view.js holds.
+    // peer-view.js's OWN --self-test (32/32) already covers the exhaustive
+    // unit-level boundary/threshold/fallback cases; this block is the
+    // INTEGRATION proof only, mirroring S60-S63's own "wiring, not units"
+    // precedent above.
+    // ========================================================
+    const coordClone = path.join(tmp, 'coord-clone-fixture');
+    const peerExportDir = path.join(coordClone, 'plan-export');
+    fs.mkdirSync(peerExportDir, { recursive: true });
+    fs.mkdirSync(path.join(coordClone, '.git'), { recursive: true });
+
+    // "my coord view last refreshed" — a real FETCH_HEAD fixture, 5m old.
+    const fetchHeadFixture = path.join(coordClone, '.git', 'FETCH_HEAD');
+    fs.writeFileSync(fetchHeadFixture, 'deadbeef\t\tbranch \'main\' of ssh://example.test/coord\n');
+    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
+    fs.utimesSync(fetchHeadFixture, fiveMinAgo, fiveMinAgo);
+
+    // fresh peer, unmerged branch (build/peer-feature): 1 done + 1 in-flight task.
+    fs.writeFileSync(path.join(peerExportDir, 'host-fresh.json'), JSON.stringify({
+      schema_version: 1,
+      provenance: { hostname: 'host-fresh', branch: 'build/peer-feature', head_sha: 'deadbeef1234', dirty: false },
+      plans: [{
+        repo: '/peer/repo', plan_slug: 'peer-fixture-plan', plan_doc: null,
+        tasks: [{ id: '1', done: true, in_flight: false, evidence_link: '' }, { id: '2', done: false, in_flight: true, evidence_link: '' }],
+        progress: { done: 1, in_flight: 1, not_started: 0, total: 2 },
+      }],
+      sessions: [{ session_id: 'peer-sess-1', role: 'dispatcher', resumed_from: '', plan_slug: 'peer-fixture-plan', task_id: '2', last_heartbeat_at: new Date().toISOString(), branch: 'build/peer-feature', repo_root: '/peer/repo', worktree_root: '/peer/repo' }],
+      exported_at: new Date().toISOString(), content_hash: 'fixturehash1',
+    }));
+
+    // unreachable peer: keepalive stopped 2h ago (well past the 80min default bound).
+    const unreachableFile = path.join(peerExportDir, 'host-unreachable.json');
+    fs.writeFileSync(unreachableFile, JSON.stringify({
+      schema_version: 1,
+      provenance: { hostname: 'host-unreachable', branch: 'master', head_sha: 'aaa000', dirty: false },
+      plans: [], sessions: [],
+      exported_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), content_hash: 'fixturehash2',
+    }));
+    const twoHoursAgoUnreach = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    fs.utimesSync(unreachableFile, twoHoursAgoUnreach, twoHoursAgoUnreach);
+
+    // corrupt/partial third file (A7 — mid-`reset --hard` tolerance).
+    fs.writeFileSync(path.join(peerExportDir, 'host-corrupt.json'), '{"schema_version":1,"provenance": TRUNCATED-MID-WRITE');
+
+    // self file — must be filtered OUT of the peers list even though it's
+    // sitting right there in plan-export/, fresh mtime and all.
+    fs.writeFileSync(path.join(peerExportDir, 'host-self-test.json'), JSON.stringify({
+      schema_version: 1, provenance: { hostname: 'host-self-test', branch: 'master', head_sha: 'selfsha', dirty: false },
+      plans: [], sessions: [], exported_at: new Date().toISOString(), content_hash: 'selfhash',
+    }));
+
+    process.env.EXPORT_HOSTNAME = 'host-self-test';
+    process.env.COORD_CLONE_DIR = coordClone;
+
+    const peerLanding = await httpGet(PORT, '/api/asks');
+    ok('S64 GET /api/asks (real HTTP) still returns ok:true + 200 with the peers block wired in (payload-schema validation passes)',
+      peerLanding.status === 200 && peerLanding.json && peerLanding.json.ok === true && !!peerLanding.json.peers,
+      JSON.stringify(peerLanding.json && peerLanding.json.peers));
+
+    const peers = peerLanding.json.peers;
+    ok('S64b peers.has_data is true (real peer data present)', peers.has_data === true);
+    ok('S64c exactly 2 peer entries (fresh + unreachable) — self and the corrupt file are NOT among them',
+      peers.entries.length === 2, JSON.stringify(peers.entries.map((e) => e.host)));
+    ok('S64d self (host-self-test) is filtered out of the peers list entirely',
+      !peers.entries.some((e) => e.host === 'host-self-test'));
+    ok('S64e the corrupt file was skipped WITHOUT throwing (no host-corrupt entry, and the request still succeeded)',
+      !peers.entries.some((e) => e.host === 'host-corrupt'));
+
+    const freshEntry = peers.entries.find((e) => e.host === 'host-fresh');
+    ok('S65 fresh peer renders state fresh-ish with an age label',
+      freshEntry && freshEntry.state === 'fresh-ish' && /^fresh-ish \(\d+m ago\)$/.test(freshEntry.state_label),
+      JSON.stringify(freshEntry));
+    ok('S65b fresh peer\'s plan row carries an unmerged provenance_label (branch != master)',
+      freshEntry && freshEntry.unmerged === true && freshEntry.plans[0] &&
+      /on host-fresh/.test(freshEntry.plans[0].provenance_label) && /unmerged/.test(freshEntry.plans[0].provenance_label),
+      JSON.stringify(freshEntry && freshEntry.plans));
+    ok('S65c fresh peer\'s session is classified fresh by age (A3c: from the RAW last_heartbeat_at)',
+      freshEntry && freshEntry.sessions[0] && freshEntry.sessions[0].state === 'fresh');
+
+    const unreachEntry = peers.entries.find((e) => e.host === 'host-unreachable');
+    ok('S66 the 2h-stale peer is named "peer unreachable since <ts>" (not merely "old")',
+      unreachEntry && unreachEntry.state === 'peer-unreachable' && /^peer unreachable since /.test(unreachEntry.state_label),
+      JSON.stringify(unreachEntry));
+
+    ok('S67 "my coord view last refreshed" reads the FETCH_HEAD fixture (~5m ago)',
+      peers.my_coord_refresh && peers.my_coord_refresh.source === 'fetch_head_mtime' &&
+      peers.my_coord_refresh.age_minutes >= 4 && peers.my_coord_refresh.age_minutes <= 6 &&
+      /^my coord view last refreshed \d+m ago$/.test(peers.my_coord_refresh.label),
+      JSON.stringify(peers.my_coord_refresh));
+
+    // ---- S68: LOCAL cards are unaffected — the SAME demo-project card
+    // (ask-fix-1, S23's own assertion) still renders with the SAME
+    // plan_progress, proving the peers wiring never touches the local read
+    // path (requirement 8: local truth stays local).
+    const demoGroupAfterPeers = (peerLanding.json.groups || []).find((g) => g.project === 'demo-project');
+    const card1AfterPeers = demoGroupAfterPeers && demoGroupAfterPeers.asks.find((a) => a.ask_id === 'ask-fix-1');
+    ok('S68 local ask-fix-1 card is UNCHANGED by the peers wiring (same plan_progress as S23d)',
+      card1AfterPeers && card1AfterPeers.plan_progress.done === 1 && card1AfterPeers.plan_progress.in_flight === 1 &&
+      card1AfterPeers.plan_progress.not_started === 1 && card1AfterPeers.plan_progress.total === 3,
+      JSON.stringify(card1AfterPeers && card1AfterPeers.plan_progress));
+
+    // ---- S69: no coord clone configured at all -> has_data:false ("no data
+    // yet"), never a crash/500 (the OTHER named-state edge, alongside
+    // S64-67 proving the populated case).
+    process.env.COORD_CLONE_DIR = path.join(tmp, 'no-such-coord-clone');
+    const noDataLanding = await httpGet(PORT, '/api/asks');
+    ok('S69 with no coord clone present, /api/asks still returns 200 with peers.has_data:false ("no data yet", never a crash)',
+      noDataLanding.status === 200 && noDataLanding.json && noDataLanding.json.peers && noDataLanding.json.peers.has_data === false &&
+      noDataLanding.json.peers.entries.length === 0,
+      JSON.stringify(noDataLanding.json && noDataLanding.json.peers));
+    delete process.env.COORD_CLONE_DIR;
+    delete process.env.EXPORT_HOSTNAME;
+
   } finally {
     server.close();
     cache.stop();

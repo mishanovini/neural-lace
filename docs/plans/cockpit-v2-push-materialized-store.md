@@ -104,14 +104,23 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
   silent stale render — Verification: full
 
 ## Files to Modify/Create
+- `docs/plans/cockpit-v2-push-materialized-store-evidence.md` — the plan's own evidence log,
+  appended once per verified task (already carries Tasks 1-2's blocks); every task in this plan
+  writes here, so it is declared as in-scope up front rather than needing an in-flight fix at
+  every task boundary.
 - `neural-lace/workstreams-ui/server/*.js` — every file this plan touches lives directly in this
   one directory: `plan-parse.js` (task 1, in flight), `export-state.js` (new), `derive-lib.js`
   (new — task 2's A4 refactor: the requireable local-disk derivation library server.js is
-  repointed at, so the exporter never requires server.js), `server.js` (peer-view read + payload
-  carve-out), `payload-schema.js`, `auditor.js` (C3b). Full-path glob used deliberately (a
+  repointed at, so the exporter never requires server.js), `peer-view.js` (new — task 4: the
+  no-fork/no-network read of the local coord clone), `server.js` (peer-view read + payload
+  carve-out), `payload-schema.js` (LANDING_ALLOWED_KEYS extension), `auditor.js` (C3b),
+  `server.selftest.js` (task 4's S64-S69 wiring proof). Full-path glob used deliberately (a
   same-directory-shorthand bullet like `server/server.js` does not match the scope-enforcement-
   gate's repo-root-relative staged paths — fixed here after task 2 tripped on it).
-- `neural-lace/workstreams-ui/web/asks.js`, `neural-lace/workstreams-ui/web/app.css` (peer rows)
+- `neural-lace/workstreams-ui/web/*.js`, `neural-lace/workstreams-ui/web/app.css` — peer rows
+  (`asks.js`, `app.css`) + `cockpit.selftest.js`'s own structural extension (the task text's own
+  Prove-it-works clause: "web/cockpit.selftest.js must stay 84/84 or grow"). Glob used for the
+  same reason the server/ bullet above already documents (repo-root-relative staged-path match).
 - `adapters/claude-code/scripts/coord-push.sh` — A2 ahead-of-origin retry + outcome status file
 - `adapters/claude-code/scripts/coord-pull.sh` — read only; task 3 wires it, does not change it
 - `adapters/claude-code/scripts/coord-sync.sh` — new; task 3's dedicated cadence (A1), the
@@ -152,6 +161,21 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
   the file has no BOM (confirmed via `[System.Management.Automation.Language.Parser]::ParseFile`);
   the whole file fails to parse. This new installer inherited the same pattern while drafting and
   was fixed here; the precedent file was left untouched.
+- 2026-07-17: `docs/plans/cockpit-v2-push-materialized-store-evidence.md` — added to the Files
+  table above. The evidence log has been written to since Task 1 (it isn't a `Status: ACTIVE`
+  plan file itself, so it doesn't qualify for the gate's self-claiming-plan exemption, and it was
+  never previously declared), which the live `scope-enforcement-gate.sh` now enforces strictly
+  enough to block a commit appending Task 4's own evidence block without this entry. Declared
+  once, up front, for every remaining task in this plan rather than re-discovering the same gap
+  at each task boundary.
+- 2026-07-17: `neural-lace/workstreams-ui/server/peer-view.js` (new) and
+  `neural-lace/workstreams-ui/server/server.selftest.js` named explicitly in the Files table above
+  (both already matched by the pre-existing `server/*.js` glob, but named in prose for clarity —
+  same treatment `derive-lib.js` got at task 2). Also widened the `web/` bullet from an explicit
+  two-file list to a `web/*.js` glob + `web/app.css`, to cover `web/cockpit.selftest.js`'s own
+  structural-test extension — the task 4 text's own Prove-it-works clause ("web/cockpit.selftest.js
+  must stay 84/84 or grow") already required touching this file; the original Files table simply
+  didn't enumerate it.
 
 ## Assumptions
 - The private coordination repo exists and both machines hold SSH access (coord-push.sh header

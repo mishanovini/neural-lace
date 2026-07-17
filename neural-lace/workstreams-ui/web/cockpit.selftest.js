@@ -424,6 +424,47 @@ ok('T16-14 the six-pane cockpit\'s backlog-health strip has its OWN id (backlogH
 ok('T16-14b app.js\'s renderBacklog() targets backlogHealthBody, never the sidebar\'s backlogBody id',
   /backlogHealthBody/.test(js) && !/\$\('backlogBody'\)/.test(js));
 
+// ============================================================
+// cockpit-v2-push-materialized-store Task 4 — "Peers" section (structural
+// self-test extension, PV-prefix). Same DOM-free source-regex technique as
+// the rest of this file — the REAL wiring proof (fixture coord clone,
+// real HTTP GET /api/asks) is server/server.selftest.js's S64-S69 above.
+// Anti-noise (T13-5) and absolute-links (T13-6/7/8) already re-scan the
+// WHOLE of asksJs, so this section's additions are automatically covered
+// by those checks without duplicating them here.
+// ============================================================
+
+ok('PV-1 renderPeersSection() exists and is called from renderLanding on BOTH the normal path and the fully-empty (zero-asks) path — Peers is an independent capability from ask-tracking',
+  /function renderPeersSection/.test(asksJsNoComments) &&
+  (asksJsNoComments.match(/renderPeersSection\(payload\.peers\)/g) || []).length === 2);
+
+ok('PV-2 the Peers <details> is COLLAPSED when there is no peer data yet, OPEN when there is (never hidden entirely, unlike the completed group)',
+  /details\.open = !!peers\.has_data/.test(asksJsNoComments));
+
+ok('PV-3 a peer plan row ALWAYS renders its provenance_label (F4: never a bare checkbox that could read as local truth)',
+  /prov\.textContent = p\.provenance_label/.test(asksJsNoComments));
+
+ok('PV-4 an unmerged peer row is visually distinguished via a dedicated CSS hook, not color alone (peer-unmerged class + textual "unmerged" in the label itself)',
+  /peer-unmerged/.test(asksJsNoComments) && /peer-unmerged/.test(C));
+
+ok('PV-5 peer-level state chip renders textContent = the full state_label (text + color, never color-only)',
+  /chip\.className = 'chip peer-state peer-state-' \+ e\.state/.test(asksJsNoComments) &&
+  /chip\.textContent = e\.state_label/.test(asksJsNoComments));
+
+ok('PV-6 peer session chip renders textContent from a label map (text + color, never color-only)',
+  /chip\.textContent = PEER_SESSION_STATE_LABEL\[st\] \|\| st/.test(asksJsNoComments));
+
+ok('PV-7 "my coord view last refreshed" (the reader\'s OWN transport health) renders as visible text',
+  /coordHealth\.textContent = \(peers\.my_coord_refresh/.test(asksJsNoComments));
+
+ok('PV-8 peer plan-doc links reuse the EXISTING openPlanDocModal (no second doc-viewer surface for peer rows)',
+  /openPlanDocModal\(p\.plan_doc\.project, p\.plan_doc\.path\)/.test(asksJsNoComments));
+
+ok('PV-9 CSS defines all three named peer states (fresh-ish/estate-unchanged/peer-unreachable) as distinct text+color chip classes',
+  /\.peer-state-fresh-ish\s*\{[^}]*var\(--ok\)/.test(C) &&
+  /\.peer-state-estate-unchanged\s*\{[^}]*var\(--warn\)/.test(C) &&
+  /\.peer-state-peer-unreachable\s*\{[^}]*var\(--interrupt\)/.test(C));
+
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail === 0 ? 0 : 1);

@@ -133,6 +133,21 @@ const LANDING_ALLOWED_KEYS = new Set([
   // provenance:unknown event per constraint 10 (never rendered as
   // mechanism truth).
   'divergence_class', 'detail_ref', 'de_emphasize', 'message', 'plan_slug', 'task_id',
+  // ----------------------------------------------------------------------
+  // Peer-view fields (cockpit-v2-push-materialized-store Task 4) — the
+  // "Peers" section on GET /api/asks (server.js's buildPeersBlock ->
+  // peer-view.js#computePeerView). `plan_doc`/`tasks`/`id`/`session_id`/
+  // `role`/`state` are REUSED from the existing DETAIL vocabulary (same
+  // meaning as there — a plan-doc {project,path} ref, a task row, a
+  // session row, a session/peer state word — now also legal on the
+  // LANDING payload); everything else here is new to this task. `plan_doc`
+  // stays exempt from the absolute-href check via the SAME "no new link
+  // handling" mechanism documented above (HREF_KEYS never lists it).
+  'peers', 'has_data', 'my_coord_refresh', 'entries', 'host', 'state',
+  'state_label', 'age_minutes', 'received_at', 'branch', 'dirty', 'head_sha',
+  'unmerged', 'plans', 'plan_doc', 'tasks', 'id', 'provenance_label',
+  'sessions', 'session_id', 'role', 'last_heartbeat_at', 'label',
+  'last_refreshed_at', 'source',
 ]);
 
 const DETAIL_ALLOWED_KEYS = new Set([

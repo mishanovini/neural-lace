@@ -382,6 +382,50 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .ask-lifecycle-actions[hidden], .ask-merge-chooser[hidden], .ask-feedback-row[hidden] { display: none; }
 
 /* ============================================================
+   Peers section (cockpit-v2-push-materialized-store Task 4) — cross-
+   machine state. Reuses --ok/--warn/--interrupt/--muted exactly as the
+   local session/task chips above do (no new accent introduced); peer rows
+   are visually distinguished from local ask cards by the always-present
+   .peer-provenance-label line, never by color alone (F4: an unmerged peer
+   row is never mistakable for local "done").
+   ============================================================ */
+.peer-section { margin: 16px 0 24px; border-top: 1px solid var(--border); padding-top: 10px; }
+.peer-summary { color: var(--muted); font-size: 13px; cursor: pointer; list-style: revert; }
+.peer-body { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+.peer-coord-health { font-size: 11px; color: var(--muted); }
+
+.peer-entry { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--panel2); }
+.peer-entry-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.peer-entry-host { font-weight: 600; font-size: 13px; }
+
+.chip.peer-state.peer-state-fresh-ish { color: var(--ok); border-color: var(--ok); }
+.chip.peer-state.peer-state-estate-unchanged { color: var(--warn); border-color: var(--warn); }
+.chip.peer-state.peer-state-peer-unreachable { color: var(--interrupt); border-color: var(--interrupt); }
+
+.peer-plan-row { margin: 6px 0; padding-top: 6px; border-top: 1px dashed var(--border2); }
+.peer-plan-row:first-of-type { border-top: none; padding-top: 0; }
+.peer-plan-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.peer-plan-slug { font-size: 13px; font-weight: 600; }
+.peer-plan-progress { font-size: 11px; color: var(--muted); }
+.peer-provenance-label { font-size: 11px; color: var(--muted); margin: 2px 0 4px; }
+.peer-provenance-label.peer-unmerged { color: var(--warn); font-weight: 600; }
+
+.peer-task-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.peer-task-row { display: flex; align-items: center; gap: 6px; }
+.peer-task-id { font-size: 11px; color: var(--muted); }
+.chip.peer-task-status.task-status-done { color: var(--ok); border-color: var(--ok); }
+.chip.peer-task-status.task-status-in_flight { color: var(--info); border-color: var(--info); }
+.chip.peer-task-status.task-status-not_started { color: var(--muted); border-color: var(--border2); }
+
+.peer-sessions { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.peer-session-row { display: flex; align-items: center; gap: 6px; }
+.peer-session-id { font-family: monospace; font-size: 11px; }
+.peer-session-meta { font-size: 11px; color: var(--muted); }
+.chip.peer-session-chip.peer-session-fresh { color: var(--ok); border-color: var(--ok); }
+.chip.peer-session-chip.peer-session-stale { color: var(--warn); border-color: var(--warn); }
+.chip.peer-session-chip.peer-session-unknown { color: var(--muted); border-color: var(--border2); font-style: italic; }
+
+/* ============================================================
    My To-Do pane (ask-rooted-workstreams-p1, Task 14). Reuses the shared
    .pane/.pane-head/.pane-title/.pane-body classes above for visual
    continuity with the six-question cockpit; .todo-section only adds the

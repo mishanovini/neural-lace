@@ -43,6 +43,11 @@ const payloadSchema = require('./payload-schema.js');
 // this file). server.js is a pure consumer of derive-lib.js below; nothing
 // in this file re-implements what derive-lib.js already owns.
 const deriveLib = require('./derive-lib.js');
+// cockpit-v2-push-materialized-store Task 4 — the "Peers" section on
+// GET /api/asks: a plain, no-fork/no-network READ of the local coord clone
+// (coord-sync.sh, Task 3, keeps it fresh out-of-band on its own cadence).
+// See peer-view.js's own header for the full A3/A5/A7/F2/F4 design.
+const peerView = require('./peer-view.js');
 // Ask-rooted-workstreams-p1 Task 12 — background drift auditor. Mounted
 // (start()'d) only after a successful port bind (same single-instance-guard
 // timing `cache.start()` already uses, below) and read on every /api/asks +
@@ -940,7 +945,26 @@ function buildAsksLandingPayload(statusFilter) {
       newest_completed_ts: completedCards.length ? completedCards[0].activity_ts : null,
       asks: completedCards,
     },
+    // cockpit-v2-push-materialized-store Task 4 — "Peers" section (requirement
+    // 8: local cards above are 100% local truth; this is the ONLY place a
+    // peer machine's state enters the landing payload, always as a labeled
+    // provenance block, never substituted into a local card). Defensively
+    // caught here too (on top of peerView's own internal fail-open design) —
+    // a peer-view bug must never take down the whole landing payload.
+    peers: buildPeersBlock(),
   };
+}
+
+function buildPeersBlock() {
+  try {
+    return peerView.computePeerView();
+  } catch (e) {
+    return {
+      has_data: false,
+      my_coord_refresh: { last_refreshed_at: null, age_minutes: null, label: 'my coord view has never refreshed', source: 'none' },
+      entries: [],
+    };
+  }
 }
 
 // ----------------------------------------------------------------------
