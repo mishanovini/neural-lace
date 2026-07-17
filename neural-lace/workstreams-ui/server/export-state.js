@@ -484,7 +484,17 @@ async function selfTest() {
     const serverWasUp = /listening on/.test(serverOut);
     let r8 = null, r8err = null;
     try { r8 = runExport(exportDirG); } catch (e) { r8err = e; }
-    try { child.kill(); } catch (_) { /* best-effort */ }
+    // A plain child.kill() was observed to leave the spawned server.js
+    // instance (and its bound port) alive on Windows — `taskkill /T /F`
+    // (kill the process tree, forceful) is the reliable Windows-safe
+    // teardown; non-Windows keeps the ordinary child.kill().
+    if (child.pid) {
+      if (process.platform === 'win32') {
+        try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' }); } catch (_) { /* best-effort */ }
+      } else {
+        try { child.kill(); } catch (_) { /* best-effort */ }
+      }
+    }
     const payload8 = (!r8err && r8) ? JSON.parse(fs.readFileSync(r8.file, 'utf8')) : null;
     ok('8. (A4 trap) exporter succeeds and writes a real export while a LIVE cockpit server holds the port — proves no require(./server.js), no EADDRINUSE interference',
       serverWasUp && !r8err && payload8 && Array.isArray(payload8.plans) && payload8.provenance.hostname === 'host-server-up',
