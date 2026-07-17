@@ -436,3 +436,25 @@ sketch is reachable and mostly-built. Building the dream *as if* that primitive 
 that looks autonomous and silently stalls — the precise failure this harness (and its architecture-reviewer)
 exists to prevent. Stage it so the reachable outcomes (A+B+D, then budgeted in-session building) land first,
 and adopt true autonomy the day the upstream primitive arrives.
+
+---
+
+## Operator decisions (2026-07-17, verbatim intent — supersede the §3 block above)
+
+- **D1 — Meeting notes source:** Google Docs, in the operator's Pocket Tech Google account.
+  (Overrides the sketch's synced-folder recommendation; the connector design must handle Google
+  auth via machine-local credentials — never in the repo.)
+- **D2 — Approval gate:** YES — extract → PROPOSED → human promote makes it buildable.
+- **D3 — Spend posture: NO ceiling.** Verbatim: "I wanted to maximize productivity across every
+  period of time and manage restarting yourself when you hit 5-hour limits or weekly limits or
+  API errors." The continuous builder is NOT budget-capped; it must be LIMIT-AWARE and
+  SELF-RESUMING: detect 5-hour window limits, weekly limits, and API errors; park state cleanly;
+  and restart/resume when capacity returns. This is a first-class design requirement, not an
+  afterthought.
+- **D4 — Unattended merge/deploy:** "Anything I tell you to build includes permission to merge
+  and deploy it. There are no reviews required." Standing authorization: operator-requested work
+  auto-merges and auto-deploys with no human review gate. (The harness's own mechanical gates —
+  self-tests, CI, evidence bar — remain, as internal quality controls, not approval gates.)
+- **Model tiering (re-established):** design-tier work (design sketches, architecture review,
+  plan formation for hard problems) runs on FABLE now that access is restored; the
+  architecture-reviewer agent is pinned model: fable by the operator.
