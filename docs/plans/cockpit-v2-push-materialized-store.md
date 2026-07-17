@@ -46,7 +46,7 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
   checklist bullets (~1,248 of the 1,947 checkbox lines in docs/plans/** are checklist items, NOT
   tasks) must stay invisible, or a widened grammar silently inflates every progress bar** —
   Verification: mechanical
-- [ ] 2. [serial] **The exporter** — a small Node CLI (`server/export-state.js`): re-derives from
+- [x] 2. [serial] **The exporter** — a small Node CLI (`server/export-state.js`): re-derives from
   local disk at export time using the shared parser + the SAME event-log join the server uses
   (`in_flight` computed at export = the join RESULT snapshot, F1). **A4 (binding): the exporter
   MUST NOT `require('server.js')`** (module load runs `listen()`; with the server up, EADDRINUSE →

@@ -87,3 +87,85 @@ Git evidence:
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: all four suites re-executed by the verifier (14/14, 18/18, 148/148, 84/84 — outputs observed, not trusted); grammar is a character-identical port of the pre-existing plan-lifecycle.sh oracle; the "176 lettered lines" numeric claim independently re-derived at exactly 176; old private grammars shown DELETED in the diff with call-sites re-routed through plan-parse.js; plan-lifecycle.sh untouched; an adversarial suffix-stripping falsification attempt failed correctly.
+
+## Task 2 — The exporter (Node CLI + A4 derive-lib refactor)
+
+EVIDENCE BLOCK
+==============
+Task ID: 2
+Task description: [serial] **The exporter** — a small Node CLI (`server/export-state.js`): re-derives from local disk at export time using the shared parser + the SAME event-log join the server uses. A4: MUST NOT require('server.js') — factor computePlanRows/aggregatePlanProgress/countPlanTasks/resolvePlanAbsPath/classifySessions into a requireable server/derive-lib.js. A3c: sessions export RAW last_heartbeat_at (never a baked live/stale classification). Emits per-(machine,repo,slug) records + a sessions block, stamped hostname/branch/head_sha/dirty/exported_at/schema_version (F4). Hash-gated with A3ii bounded keepalive (refresh exported_at ≥ every 60min even when hash-unchanged). Atomic writes; EXPORT_HOSTNAME override (A5). --self-test incl. quotes/newlines in descriptions and a zero-plan estate. — Verification: mechanical
+Verified at: 2026-07-17T14:02:00Z
+Verifier: task-verifier agent (Verification: mechanical — full re-derivation of every binding amendment; no reliance on builder claims)
+Commit (build): a82ebf31c005bc861b438341dc362ee7fef99b23
+Commit (integration fixup): ecc52a2b284d2609636e3bd52280756b4134212f
+Tree verified at HEAD: 72ea153ae194173e45c8829ff1992174b3cb0383 (== origin/master)
+
+Oracle: derived (pre-existing) — server.selftest.js's full black-box HTTP suite (148/0, the behavior-identity oracle for the A4 refactor) + web/cockpit.selftest.js (84/84, untouched surface); specified — export-state.js --self-test (11/11, the mechanical oracle for the new exporter behaviors incl. the Scenario-8 A4 live-port trap); metamorphic (inclusion/round-trip) — a real fixture export artifact re-derived by the verifier (lettered-id inclusion, raw-timestamp inclusion, EXPORT_HOSTNAME round-trip).
+Verification level: mechanical
+Comprehension-gate: not applicable (Verification: mechanical — Step 0 routing exempts mechanical tasks from the R2+ comprehension-gate; same routing as Task 1)
+
+Checks run:
+1. A4 — exporter never requires server.js (require-graph re-derived)
+   Command: grep -nE "require\(" export-state.js  +  transitive-dep grep across derive-lib.js / config/projects.js / plan-parse.js / derive-cache.js
+   Output: export-state.js requires ONLY fs, os, path, crypto, child_process, ./derive-lib.js — NO require('./server.js'). The server.js references in the file are (a) A4-explaining comments and (b) a path.join(__dirname,'server.js') that is SPAWNED (not required) as the Scenario-8 live child. No transitive dep of derive-lib.js requires server.js (only a comment mentions it).
+   Result: PASS
+2. A4 — trap proven closed via live self-test (Scenario 8 binds a real server on the port alongside the exporter)
+   Command: node export-state.js --self-test
+   Output: "11 passed, 0 failed" (exit 0), incl. "8. (A4 trap) exporter succeeds and writes a real export while a LIVE cockpit server holds the port — proves no require(./server.js), no EADDRINUSE interference". Post-run Win32_Process check: NO leftover node.exe running server.js (confirms the ecc52a2 Windows-safe taskkill /T /F teardown works — the fixup's whole purpose).
+   Result: PASS
+3. A3c — sessions carry RAW last_heartbeat_at, no baked classification (code + real artifact)
+   Command: read deriveSessionsBlock() (export-state.js:140-162) + listRawHeartbeats() (derive-lib.js:356-369) + inspect a real fixture export
+   Output: deriveSessionsBlock() enriches from listRawHeartbeats() which is a plain fs read of heartbeat JSON with NO hb_classify call / NO live|stale|crashed label. Real fixture artifact: session sess-z carries last_heartbeat_at="2026-07-17T13:57:59.213Z" (byte-identical to the raw ts written) and ('state' in session)===false. classifySessions() (with hb_classify) remains the server's LOCAL-render-only path, unchanged.
+   Result: PASS
+4. A3ii — bounded keepalive (unchanged content + last export ≥60min ⇒ rewritten exported_at)
+   Command: read runExport() (export-state.js:215-235, KEEPALIVE_MS=60*60*1000) + self-test Scenario 5
+   Output: prev.content_hash===hash && age<KEEPALIVE_MS ⇒ {written:false,reason:'unchanged'} (no write); age>=KEEPALIVE_MS ⇒ atomic rewrite with fresh exported_at, SAME content_hash, reason:'keepalive'. Self-test Scenario 5 ("unchanged content + stale (>=60min) exported_at -> rewritten with a fresh exported_at, same content_hash") PASS.
+   Result: PASS
+5. A5 — EXPORT_HOSTNAME override honored (code + real artifact round-trip)
+   Command: read hostname() (export-state.js:55) + real fixture export with EXPORT_HOSTNAME=peer-sim-host
+   Output: hostname()=process.env.EXPORT_HOSTNAME||os.hostname(). Real artifact: file name = "peer-sim-host.json" AND provenance.hostname = "peer-sim-host" (override honored in BOTH the file name and the provenance stamp). Self-test Scenario 6 PASS.
+   Result: PASS
+6. Provenance fields present in a real export artifact
+   Command: inspect the fixture export artifact JSON
+   Output: artifact carries schema_version:1, provenance.{hostname,branch:"worktree-agent-a87a7cb5a461f2b11",head_sha:"72ea153…",dirty:false}, content_hash:"b24ff1b4…", exported_at:"2026-07-17T13:57:59.317Z". ALL SIX named fields (hostname/branch/head_sha/dirty/exported_at/schema_version) present.
+   Result: PASS
+7. Behavior-identical refactor — pre-existing oracle passes unchanged
+   Command: node server.selftest.js  ;  node ../web/cockpit.selftest.js
+   Output: server.selftest.js = "148 passed, 0 failed" (Task 1's S60-S63 included) ; cockpit.selftest.js = "84 passed, 0 failed". server.js dropped 373 lines in a82ebf3 and is now a pure consumer of deriveLib.* (require('./derive-lib.js') at server.js:45; every derivation call routes through deriveLib.<name>). The black-box HTTP suite is the pre-existing oracle and is GREEN unchanged.
+   Result: PASS
+8. Seam closure (ecc52a2 + Task-1 integration) — no third grammar, lettered ids flow into exports
+   Command: grep -nE "TASK_LINE_RE|inline grammar" derive-lib.js  +  read countPlanTasks/resolvePlanAbsPath (derive-lib.js:184-204)  +  real fixture export of a plan with a lettered task
+   Output: NO inline TASK_LINE_RE remains in derive-lib.js (the only match is a comment noting the numeric-only regex "is gone — a THIRD grammar never ships"). countPlanTasks delegates to planParse.loadPlanFile; resolvePlanAbsPath delegates to planParse.resolvePlanAbsPath. Real fixture: a plan with lettered tasks A.1/A.2 + numeric 3 + a checklist bullet exported → tasks=["A.1","A.2","3"] (lettered ids FLOW THROUGH; in_flight snapshot correct: A.1 done, A.2 in-flight, 3 not-started) and the checklist bullet stayed INVISIBLE (3 tasks, not 4 — A6 negative case holds via the shared grammar).
+   Result: PASS
+
+Runtime verification: test neural-lace/workstreams-ui/server/export-state.js::--self-test
+Runtime verification: test neural-lace/workstreams-ui/server/server.selftest.js::S60-S63
+Runtime verification: test neural-lace/workstreams-ui/web/cockpit.selftest.js::regression
+Runtime verification: file neural-lace/workstreams-ui/server/export-state.js::require-graph-no-server.js
+Runtime verification: file neural-lace/workstreams-ui/server/derive-lib.js::countPlanTasks-delegates-planParse
+
+DEPENDENCY TRACE
+================
+Step 1: a per-machine timer (task 3) invokes the exporter CLI
+  ↓ Verified at: export-state.js runExport() (module.exports:237-241) — a requireable + CLI-runnable entry, no HTTP server needed
+Step 2: exporter re-derives plan rows + sessions from local disk via derive-lib (NOT server.js)
+  ↓ Verified at: export-state.js:41 require('./derive-lib.js') only; A4-trap Scenario 8 PASS (live server on the port, exporter still writes)
+Step 3: derive-lib delegates plan grammar to the ONE parser (plan-parse.js) — lettered ids included
+  ↓ Verified at: derive-lib.js:184-204 (countPlanTasks/resolvePlanAbsPath → planParse.*); fixture artifact tasks=["A.1","A.2","3"]
+Step 4: exporter writes an atomic per-hostname JSON with provenance + raw heartbeats
+  ↓ Verified at: real fixture artifact peer-sim-host.json — 6 provenance fields present, sessions carry raw last_heartbeat_at (no state field)
+Step 5: observable outcome — a peer machine can consume this artifact (task 4 reader) with age-truth intact
+  ↓ Verified at: A3c raw-timestamp inclusion (reader classifies by receive-time age) + A3ii keepalive (idle vs dead distinguishable) — self-test Scenarios 5/1b PASS
+
+Git evidence:
+  Files modified in the Task-2 build (a82ebf3, 2026-07-17):
+    - neural-lace/workstreams-ui/server/derive-lib.js (NEW, 397 lines — the A4 requireable derivation lib)
+    - neural-lace/workstreams-ui/server/export-state.js (NEW, +522 lines at build; 532 after fixup)
+    - neural-lace/workstreams-ui/server/server.js (−373 net — repointed at derive-lib.js, behavior-identical)
+    - docs/plans/cockpit-v2-push-materialized-store.md (In-flight scope update: derive-lib.js added to Files-to-Modify + path-shorthand→full-path fix)
+  Integration fixup (ecc52a2, 2026-07-17):
+    - neural-lace/workstreams-ui/server/export-state.js (+11 — Windows-safe taskkill /T /F teardown for Scenario 8)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: every binding amendment re-derived, not trusted. A4 — export-state.js require-graph (and its transitive deps) contains no require('./server.js'), and the live-port trap self-test (Scenario 8) writes a real export with a server bound on the port (11/11, exit 0; no leftover node.exe post-run). A3c/A5/provenance — a real fixture export artifact re-derived by the verifier shows raw last_heartbeat_at (no state field), EXPORT_HOSTNAME honored in filename+provenance, and all 6 provenance fields. A3ii keepalive — runExport()'s KEEPALIVE_MS branch + Scenario 5 green. Behavior-identical refactor — the pre-existing black-box HTTP oracle (server.selftest.js) is 148/0 unchanged and cockpit.selftest.js is 84/84, with server.js reduced to a pure deriveLib consumer. Seam closure — no inline TASK_LINE_RE remains in derive-lib.js (delegates to plan-parse.js), and a fixture export of a lettered-task plan carries A.1/A.2 through while the checklist-bullet negative case stays invisible. Verification: mechanical ⇒ comprehension-gate exempt (Step-0 routing).
