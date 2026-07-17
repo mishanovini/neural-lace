@@ -252,7 +252,7 @@ process.exit(0);
 def req: ["id","kind","doctrine_file","hooks","events","wired_template","selftest","jit_triggers","blocking","budget_class"];
 def kinds: ["gate","writer","surfacer","pattern","convention"];
 def budgets: ["stop","session-start","pretool","posttool","none"];
-def evs: ["Stop","SessionStart","PreToolUse","PostToolUse","UserPromptSubmit","TaskCreated","TaskCompleted","precommit","prepush","manual"];
+def evs: ["Stop","SubagentStop","SessionStart","PreToolUse","PostToolUse","UserPromptSubmit","TaskCreated","TaskCompleted","precommit","prepush","manual"];
 def allowed: req + ["honest_status"];
 [ .entries[] |
   ( (req - keys) | map(. as $k | "missing required key \($k)") ) +

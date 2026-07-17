@@ -76,6 +76,15 @@
         ]
       },
       {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/agent-design-gate.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write",
         "hooks": [
           {
@@ -517,6 +526,17 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/pre-compact-continuity.sh"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/agent-commit-gate.sh"
           }
         ]
       }

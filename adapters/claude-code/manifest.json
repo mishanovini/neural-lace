@@ -17,6 +17,56 @@
       "budget_class": "none"
     },
     {
+      "id": "agent-commit-gate",
+      "kind": "gate",
+      "doctrine_file": "doctrine/reap-what-you-spawn.md",
+      "hooks": [
+        "agent-commit-gate.sh"
+      ],
+      "events": [
+        "SubagentStop"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "none",
+      "added_after": "2026-07",
+      "golden_scenario": "A worktree-isolated builder ends its run with uncommitted work (happened 4x in the 2026-07-13/14 session: background-and-end, process restarts, mid-fix reboot; recovery each time depended on the orchestrator noticing — memory-rung). Gate blocks the stop ONCE with exact preserve commands (commit / stash -u / waiver).",
+      "fp_expectation": "Structurally low: fires only when the event cwd is inside .claude/worktrees/ AND git status --porcelain is non-empty AND no fresh waiver. Read-only reviewers end clean → silent (self-test S2); main-checkout agents excluded (S3); NO pwd-fallback guessing (S5 caught that a session running IN a pool worktree would false-block innocent subagents — removed). Bounded to one block per stop via stop_hook_active (S4). Residual FP: an agent with intentional WIP → stash/waiver named in the block message.",
+      "retirement_condition": "Retire if the platform gains first-class commit-on-stop enforcement for worktree subagents, or if worktree isolation is retired. Re-evaluate if the probe log (~/.claude/state/agent-commit-gate-probe.jsonl) shows SubagentStop events carry no usable cwd (gate would be permanently silent = theater) — then rehost the check.",
+      "honesty_rationale": "Covers CLEAN subagent stops only. Crashes/SIGKILL/reboot/TaskStop fire no hook — that residue belongs to the detection layer (orphaned-worktree-guard, REFORMULATE-held). Post-stop writes by backgrounded children are invisible to a stop-time check (reap-what-you-spawn owns the discipline). SubagentStop field contract (cwd availability, exit-2 blocking semantics) is per platform docs, pending first-live-fire confirmation via the probe line; if the probe shows no cwd, this gate is silently inert and MUST be rehosted rather than left as theater."
+    },
+    {
+      "id": "agent-design-gate",
+      "kind": "gate",
+      "doctrine_file": "doctrine/artifact-evidence-bar.md",
+      "hooks": [
+        "agent-design-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/agents/"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool",
+      "added_after": "2026-07",
+      "golden_scenario": "Pre-architecture-reviewer era: every reviewer this harness had tested correctness-against-spec, and \"not one attacked the SHAPE of the design\" (doctrine/artifact-evidence-bar-full.md). A candidate agent Written today with polished, reasonable-sounding prose but no named failure modes, no canon, no GOLDEN CASE — the exact shape those pre-bar agents had — is GATE 2's target: self-test S4 constructs exactly this file (a 'shape-reviewer' whose entire body is 'read the proposal, think about whether it seems reasonable, approve it') and the gate blocks the Write (rc=2).",
+      "fp_expectation": "Zero retroactive false positives by construction: the gate distinguishes new-vs-existing by ON-DISK PRESENCE at PreToolUse time (grandfather clause), so all ~25 pre-bar agents are unconditionally allowed on every Edit/MultiEdit/overwrite (self-test S3, S6). For genuinely new agents, six of the seven property checks are broad OR-lists of vocabulary already standard across this harness's own agent corpus (verified against architecture-reviewer.md, the reference agent this bar was built to codify — it independently clears all six); the one hard requirement, a literal '## GOLDEN CASE' heading with >= 30 non-whitespace chars, is unambiguous and fully in the author's control (self-test S7 proves a placeholder-thin GOLDEN CASE section still blocks). Residual false-positive class: a new agent with a real golden case that never uses the heading text 'GOLDEN CASE' verbatim (e.g. 'Reference Incident' instead) would be wrongly blocked — accepted as a known, narrow gap rather than loosening the one unambiguous check to fuzzy heading-matching.",
+      "retirement_condition": "Retire the on-disk grandfather heuristic if every existing agent is eventually brought up to the full bar (at that point the distinction collapses and the check can apply uniformly to Edit too). Retire the gate entirely if agent authorship moves to a workflow where architecture-reviewer/harness-reviewer review every new agent file BEFORE it is ever Written (making the point-of-Write gate redundant with an earlier review-time control).",
+      "honesty_rationale": "Blocking, but the only failure mode is 'add a GOLDEN CASE section and cite the seven properties' — always resolvable by the author in the same turn, no external dependency; grandfathered agents can never be blocked so there is no retroactive-breakage risk."
+    },
+    {
       "id": "agent-heartbeat",
       "kind": "writer",
       "doctrine_file": "doctrine/background-work-tracking.md",
@@ -60,65 +110,6 @@
       "waiver_path": "teammate-spawn-validator.sh condition (d) honors a DAG-review structured waiver via lib/waiver-purpose-clause.sh. NOTE: task-created-validator.sh and task-completed-evidence-gate.sh (same entry, different hook files) have GAP-class bypasses (env-var, not ledger-logged/fresh) — tracked as orchestratorTodo, not yet fixed."
     },
     {
-      "id": "model-pin",
-      "kind": "gate",
-      "doctrine_file": "doctrine/model-selection.md",
-      "hooks": [
-        "model-pin-gate.sh"
-      ],
-      "events": [
-        "PreToolUse"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [
-          "adapters/claude-code/config/model-policy.json",
-          "adapters/claude-code/agents/"
-        ],
-        "keywords": []
-      },
-      "blocking": true,
-      "budget_class": "pretool",
-      "added_after": "2026-07",
-      "golden_scenario": "2026-07-14: a Fable (premium-tier) main-loop spawned un-pinned subagents that silently INHERITED Fable, draining ~1.7M tokens before the budget cap. The gate blocks any Task/Agent spawn that passes no explicit model AND whose agent type is unpinned/unknown, forcing an explicit model choice so silent premium-tier inheritance cannot recur.",
-      "fp_expectation": "Low. All 24 repo agents are pinned (enforced by the model-pins doctor check). Known FP surfaces are handled: a display-name subagent_type (e.g. 'Domain Expert Tester') is resolved via name: frontmatter, not filename only; the 'fork' subagent_type is exempted (it always inherits the parent model by design and cannot be pinned or model-overridden). Residual: a brand-new UNPINNED custom agent type spawned with NO model is blocked — that is the intended enforcement, not a false positive, and the remedy (pass model: on the spawn) is always achievable (verified valid Agent-tool param, used in-session 2026-07-14).",
-      "retirement_condition": "Retire when Claude Code natively requires an explicit model on every subagent spawn (making silent inheritance impossible at the tool layer), OR when the main-loop model is guaranteed never to be a premium/budget-sensitive tier.",
-      "honest_status": "model-pin-gate.sh (PreToolUse Task|Agent) BLOCKS a subagent spawn with no explicit model whose agent type is unpinned/unknown — forcing explicit model selection so a spawn never SILENTLY INHERITS the main-loop model (operator directive 2026-07-14; silent Fable inheritance drained ~1.7M tokens). Source of truth config/model-policy.json; all 24 agents/*.md pinned. HONEST RESIDUAL (NOT gate-able, doctrine/model-selection.md): Workflow-inline agent(), spawn_task, cron/remote expose no model field a PreToolUse hook can inspect — convention + review only. A harness-doctor check (model-pins) enforces that every agents/*.md stays pinned.",
-      "waiver_path": "none — an unpinned spawn is a bug to fix (pass model: or pin the agent), not to waive. Fails OPEN only on internal error (no jq / malformed input), never on a genuine missing-model."
-    },
-    {
-      "id": "gh-merge-canonical",
-      "kind": "gate",
-      "doctrine_file": "doctrine/gh-merge-canonical.md",
-      "hooks": [
-        "gh-merge-canonical-gate.sh"
-      ],
-      "events": [
-        "PreToolUse"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [
-          "docs/decisions/064-never-diverge-single-canonical-master.md"
-        ],
-        "keywords": [
-          "gh pr merge",
-          "pt repo",
-          "branch protection"
-        ]
-      },
-      "blocking": true,
-      "budget_class": "pretool",
-      "added_after": "2026-07",
-      "golden_scenario": "2026-07-15: the neural-lace masters diverged 14/10 after server-side PR merges landed on the work-org (pt) repo between reconciles (PR #100, 2026-07-13). PR #100's actual merge PATH (web-UI vs gh CLI) is UNKNOWN — server-side merges are indistinguishable in the API record — so THIS golden scenario validates server-side branch protection (the PRIMARY mechanism, operator-only), not this gate; the gate is honestly labeled defense-in-depth for the gh-CLI path only (decision 064 amendment A3).",
-      "fp_expectation": "Defined against the RESOLVED target, never the raw command string (A4): zero legitimate pt-repo `gh pr merge`/`gh api .../merge` calls are expected post-cutover — any such call is itself the defect the gate exists to catch, not a false positive. A genuinely ambiguous/unresolvable target (multiple or zero recognized remotes, no `gh repo set-default` state) fails loud and blocks rather than guessing; this is a distinct, teaching outcome, not a silent block of a personal-side merge — self-test proves personal-side and gh-resolved-personal targets always ALLOW (23/23, including the explicit FP-fear scenario and the 2026-07-16 harness-review fixup scenarios: flat-shape `.command` payload, multi-space `gh  pr  merge`, positional PR-URL/`OWNER/REPO#N`, and gh-api `{owner}/{repo}` template placeholders).",
-      "retirement_condition": "Retire when the pt repo is archived, OR the operator enables GitHub server-side branch protection on pt/master (at which point this gate is a redundant teaching surface for the gh-CLI path and may be retired or kept as UX).",
-      "honest_status": "gh-merge-canonical-gate.sh (PreToolUse Bash) BLOCKS `gh pr merge` / `gh api .../pulls/N/merge` when the RESOLVED target repo equals the `pt` remote's repo (read from `git remote get-url pt` at runtime, never hardcoded). DEFENSE-IN-DEPTH ONLY (decision 064 amendments A1/A2) — the PRIMARY structural mechanism is server-side branch protection on pt/master (operator-only, not agent-executable, surfaced as a standing NEEDS-YOU item until enabled). Scopes itself by the remote NAME `pt` (a neural-lace-specific convention); on any other repo across the estate that names its mirror remote something else, this gate is a silent no-op for that repo. Target resolution (post 2026-07-16 harness-review fixup) reads `.tool_input.command` with a `.command` flat-shape fallback, tolerates irregular whitespace in `gh pr merge`, and parses positional PR-URL / `OWNER/REPO#N` targets ahead of default-repo resolution; a gh-api `{owner}/{repo}` template placeholder is treated as not-explicit (falls through) rather than as a literal never-matching owner/repo. HONEST RESIDUAL — invocation shapes still uncovered by the parser (fall through to default-repo resolution or the loud ambiguous-block, never misread as a false ALLOW/BLOCK): a runtime-interpolated value (`gh pr merge $N --repo \"$REPO_VAR\"` — invisible to a static-string check); a bundled short flag with no space (`-Rowner/repo`); a `gh pr merge` invoked via a shell alias/function whose name doesn't literally contain adjacent `gh`/`pr`/`merge` tokens. Also not covered by this gate at all (A1): GitHub web-UI merges, a machine that hasn't yet synced this hook (deploy-lag window), un-harnessed/external machines, CI/GitHub Actions, scheduled/cloud agents (Decision 011 — no PreToolUse), direct `git push pt master`.",
-      "waiver_path": "none — a pt-repo merge is the exact defect this gate exists to catch, not to waive. Fails OPEN only on internal error (no jq / malformed input / no `pt` remote configured in this checkout), never on a genuine resolved pt-repo target."
-    },
-    {
       "id": "artifact-evidence-bar",
       "kind": "pattern",
       "doctrine_file": "doctrine/artifact-evidence-bar.md",
@@ -141,7 +132,7 @@
       },
       "blocking": false,
       "budget_class": "none",
-      "honest_status": "PATTERN — self-applied, NOT YET A MECHANISM. The law (constitution §10 generalized: no artifact ships without evidence it beats naive) is documented; the two gates that would ENFORCE it are NOT WIRED: (1) a plan-reviewer check blocking build-dispatch on a qualifying plan with no architecture-reviewer verdict; (2) an agent-design gate blocking an agent file lacking the 7 properties + a GOLDEN CASE. Until those land this is documentation, not a control. Named here explicitly because §10 calls undelivered enforcement THEATER and the cardinal harness defect. Operator directive 2026-07-14; enforcement is the next build task."
+      "honest_status": "PATTERN, backed by two real MECHANISMS as of 2026-07-14 (this is the doctrine entry; the two gates are their own manifest entries with their own golden_scenario/fp_expectation/retirement_condition). (1) GATE 1 = plan-reviewer.sh Check 17 (see the 'plan-reviewer' entry): blocking, fires on Status: ACTIVE (or unset) plans whose text matches a tight architecture-keyword set (source of truth / read-write path / staleness / materialize / derived store / cache-invalidation / sync engine-job / projection / reconcile loop — calibrated against this repo's own 237-plan corpus to 27.0% hit rate after a bare-stem draft measured 50.6%), requiring a linked docs/reviews/*-architecture-review.md whose verdict is SOUND or SOUND-WITH-AMENDMENTS (NEEDS-RESHAPING does not satisfy it); 7/7 self-test scenarios including the real cockpit-v2-push-materialized-store.md/2026-07-14-cockpit-v2-architecture-review.md NEEDS-RESHAPING golden case. (2) GATE 2 = the 'agent-design-gate' entry (adapters/claude-code/hooks/agent-design-gate.sh): PreToolUse on Edit|Write|MultiEdit, blocks a brand-new adapters/claude-code/agents/*.md Write lacking a '## GOLDEN CASE' section + evidence of the seven properties; grandfathers all pre-bar agents by on-disk-existence check; 7/7 self-test scenarios. Operator directive 2026-07-14."
     },
     {
       "id": "ask-registry",
@@ -800,6 +791,35 @@
       "honest_status": "docs+skill unit only (skills/coordinate-estate/SKILL.md + doctrine/estate-coordination.md); no hook, no wiring; jit_triggers fire doctrine-jit.sh's paths-match on any edit whose file_path contains SCRATCHPAD.md (keywords reserved for v2 per schema, not yet matched)."
     },
     {
+      "id": "evidence-before-fix",
+      "kind": "gate",
+      "doctrine_file": "doctrine/evidence-before-fix.md",
+      "hooks": [
+        "evidence-before-fix-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "docs/lessons/2026-07-14-root-cause-must-be-evidenced-before-fix.md",
+          "adapters/claude-code/doctrine/diagnosis.md"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "pretool",
+      "added_after": "2026-07",
+      "golden_scenario": "2026-07-14: three successive investigations of a live duplicate-appointment bug each reasoned from a plausible code path (missing per-contact uniqueness) to a shipped fix (#972), without ever observing the SPECIFIC incident's evidence (the two rows' created_at gap, booked_via, service_type, property). The fix shipped on an inferred-not-observed cause and introduced a multi-property regression the operator had to catch. This gate WARNS (does not yet block, see PROMOTION CONDITION in honest_status) on a fix(...)/fix: commit whose message lacks a PROVEN-tagged, citation-backed Root cause (evidenced) section or a verdict:PASS fix-root-cause review record covering a staged file, so the same mechanism-sufficient-fix shape gets a teaching banner even before the gate is calibrated enough to block it.",
+      "fp_expectation": "MEASURED, not estimated (harness-review REJECT remediation, 2026-07-16): `git log -400 --format=%s | grep -cE '^fix(\\(|:)'` = 61/400 (~15%; reviewer's own -300 sample measured ~13%) of THIS repo's own commits match the trigger. A manual skim of that sample shows the DOMINANT class is harness-maintenance / review-remediation fixes (\"fix(review): address harness-review findings\", \"fix(wave-o): ...\", \"fix(model-pin): resolve REJECT review findings\") -- NOT incident-forensics-shaped bugs with an observable row/log to cite; for that class 'PROVEN root cause' in the incident-evidence sense often doesn't apply (the actual evidence IS a reviewer verdict, closer to path 2's record reference than path 1's citation). The original 'Low' estimate here was wrong -- it assumed the trigger population looked like the source incident, not like this repo's own commit history. Deliberate lighter path: fix-trivial: (a different prefix, never matches) for changes touching NO runtime/product code. Merge/rebase/cherry-pick replay contexts (MERGE_HEAD, CHERRY_PICK_HEAD, rebase-apply, rebase-merge, or a 'Merge branch' message) are fully skipped. See PROMOTION CONDITION below for what closes this gap before blocking is considered again.",
+      "retirement_condition": "Retire when harness-reviewer/code-reviewer natively enforce evidenced-root-cause at PR-review time with transcript-verifiable evidence (closing the same anti-fabrication residual review-before-deploy names), or when commit messages are structurally replaced by a form that cannot express free-text sections.",
+      "waiver_path": ".claude/state/evidence-before-fix-waiver-*.txt",
+      "honest_status": "WARN-MODE-PENDING-CALIBRATION (harness-review REJECT remediation, 2026-07-16): evidence-before-fix-gate.sh ALWAYS exits 0 -- it never blocks a commit. On a triggering fix(/fix: commit lacking evidence it prints the full teaching banner (stderr + hookSpecificOutput.additionalContext) but the commit proceeds regardless. blocking:false reflects ACTUAL current behavior, not a designed end-state kept hidden behind a default -- unlike claude-md-hygiene's entry (blocking:true with a warn-mode default via env var), this entry is honest about the runtime being warn-only right now. PROMOTION CONDITION (tracked docs/backlog.md EVIDENCE-BEFORE-FIX-PROMOTION-01): promote to blocking:true only after a measured calibration period (method: the reviewer's own sweep, `git log -N --format=%s` bucketed into {incident-shaped, review/audit-remediation, refactor/typo, other}) shows the over-fire class (non-incident maintenance/review-remediation fixes, measured ~13-15% of this repo's fix(/fix: commits at the 2026-07-16 baseline) is EITHER separable by a trigger refinement OR acceptably rare once the parser-reach fixes below are reflected in a fresh measurement.",
+      "honesty_rationale": "STRUCTURE-NOT-TRUTH (named, not solved): the gate verifies a PROVEN-tagged line carries a citation-SHAPED token (file:line, backtick-quoted command/output, or a command:/output:/log: label) and, for the record-reference path, that a fix-root-cause record exists with verdict PASS and the required tag -- it CANNOT verify the citation is real, that the cited command was actually run, or that the record's quoted verdict is genuine (same anti-fabrication residual as review-before-deploy's Amendment C; the record path inherits its append-only audit trail as the compensating control, not a guarantee). A determined agent can fabricate a citation-shaped string or an inline section; this gate raises the cost, it does not make fabrication impossible. PARSER RESIDUAL (harness-review PROVEN, fixed for the common shapes, disclosed for the rest): message extraction now handles glued/spaced -m and --message (with or without =), multiple -m segments (concatenated), -F <file>, and a best-effort --amend-with-no-message proxy (git log -1 --format=%B, correct not stale) -- but a message built via complex nested shell interpolation the static command string doesn't literally contain, or an interactive --amend editor session, still silently produces no evidence check (lower-stakes under warn-mode than it was under blocking, since nothing is blocked either way, but a triggering commit in such a shape still gets no teaching banner)."
+    },
+    {
       "id": "external-monitor-alerts",
       "kind": "surfacer",
       "doctrine_file": null,
@@ -993,6 +1013,37 @@
       },
       "blocking": false,
       "budget_class": "posttool"
+    },
+    {
+      "id": "gh-merge-canonical",
+      "kind": "gate",
+      "doctrine_file": "doctrine/gh-merge-canonical.md",
+      "hooks": [
+        "gh-merge-canonical-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "docs/decisions/064-never-diverge-single-canonical-master.md"
+        ],
+        "keywords": [
+          "gh pr merge",
+          "pt repo",
+          "branch protection"
+        ]
+      },
+      "blocking": true,
+      "budget_class": "pretool",
+      "added_after": "2026-07",
+      "golden_scenario": "2026-07-15: the neural-lace masters diverged 14/10 after server-side PR merges landed on the work-org (pt) repo between reconciles (PR #100, 2026-07-13). PR #100's actual merge PATH (web-UI vs gh CLI) is UNKNOWN — server-side merges are indistinguishable in the API record — so THIS golden scenario validates server-side branch protection (the PRIMARY mechanism, operator-only), not this gate; the gate is honestly labeled defense-in-depth for the gh-CLI path only (decision 064 amendment A3).",
+      "fp_expectation": "Defined against the RESOLVED target, never the raw command string (A4): zero legitimate pt-repo `gh pr merge`/`gh api .../merge` calls are expected post-cutover — any such call is itself the defect the gate exists to catch, not a false positive. A genuinely ambiguous/unresolvable target (multiple or zero recognized remotes, no `gh repo set-default` state) fails loud and blocks rather than guessing; this is a distinct, teaching outcome, not a silent block of a personal-side merge — self-test proves personal-side and gh-resolved-personal targets always ALLOW (23/23, including the explicit FP-fear scenario and the 2026-07-16 harness-review fixup scenarios: flat-shape `.command` payload, multi-space `gh  pr  merge`, positional PR-URL/`OWNER/REPO#N`, and gh-api `{owner}/{repo}` template placeholders).",
+      "retirement_condition": "Retire when the pt repo is archived, OR the operator enables GitHub server-side branch protection on pt/master (at which point this gate is a redundant teaching surface for the gh-CLI path and may be retired or kept as UX).",
+      "honest_status": "gh-merge-canonical-gate.sh (PreToolUse Bash) BLOCKS `gh pr merge` / `gh api .../pulls/N/merge` when the RESOLVED target repo equals the `pt` remote's repo (read from `git remote get-url pt` at runtime, never hardcoded). DEFENSE-IN-DEPTH ONLY (decision 064 amendments A1/A2) — the PRIMARY structural mechanism is server-side branch protection on pt/master (operator-only, not agent-executable, surfaced as a standing NEEDS-YOU item until enabled). Scopes itself by the remote NAME `pt` (a neural-lace-specific convention); on any other repo across the estate that names its mirror remote something else, this gate is a silent no-op for that repo. Target resolution (post 2026-07-16 harness-review fixup) reads `.tool_input.command` with a `.command` flat-shape fallback, tolerates irregular whitespace in `gh pr merge`, and parses positional PR-URL / `OWNER/REPO#N` targets ahead of default-repo resolution; a gh-api `{owner}/{repo}` template placeholder is treated as not-explicit (falls through) rather than as a literal never-matching owner/repo. HONEST RESIDUAL — invocation shapes still uncovered by the parser (fall through to default-repo resolution or the loud ambiguous-block, never misread as a false ALLOW/BLOCK): a runtime-interpolated value (`gh pr merge $N --repo \"$REPO_VAR\"` — invisible to a static-string check); a bundled short flag with no space (`-Rowner/repo`); a `gh pr merge` invoked via a shell alias/function whose name doesn't literally contain adjacent `gh`/`pr`/`merge` tokens. Also not covered by this gate at all (A1): GitHub web-UI merges, a machine that hasn't yet synced this hook (deploy-lag window), un-harnessed/external machines, CI/GitHub Actions, scheduled/cloud agents (Decision 011 — no PreToolUse), direct `git push pt master`.",
+      "waiver_path": "none — a pt-repo merge is the exact defect this gate exists to catch, not to waive. Fails OPEN only on internal error (no jq / malformed input / no `pt` remote configured in this checkout), never on a genuine resolved pt-repo target."
     },
     {
       "id": "git-freshness",
@@ -1203,6 +1254,34 @@
       "budget_class": "none",
       "added_after": "2026-04",
       "honesty_rationale": "Commit-time atomicity check (migration + CLAUDE.md line move together) — resolvable by the session."
+    },
+    {
+      "id": "model-pin",
+      "kind": "gate",
+      "doctrine_file": "doctrine/model-selection.md",
+      "hooks": [
+        "model-pin-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/config/model-policy.json",
+          "adapters/claude-code/agents/"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool",
+      "added_after": "2026-07",
+      "golden_scenario": "2026-07-14: a Fable (premium-tier) main-loop spawned un-pinned subagents that silently INHERITED Fable, draining ~1.7M tokens before the budget cap. The gate blocks any Task/Agent spawn that passes no explicit model AND whose agent type is unpinned/unknown, forcing an explicit model choice so silent premium-tier inheritance cannot recur.",
+      "fp_expectation": "Low. All 24 repo agents are pinned (enforced by the model-pins doctor check). Known FP surfaces are handled: a display-name subagent_type (e.g. 'Domain Expert Tester') is resolved via name: frontmatter, not filename only; the 'fork' subagent_type is exempted (it always inherits the parent model by design and cannot be pinned or model-overridden). Residual: a brand-new UNPINNED custom agent type spawned with NO model is blocked — that is the intended enforcement, not a false positive, and the remedy (pass model: on the spawn) is always achievable (verified valid Agent-tool param, used in-session 2026-07-14).",
+      "retirement_condition": "Retire when Claude Code natively requires an explicit model on every subagent spawn (making silent inheritance impossible at the tool layer), OR when the main-loop model is guaranteed never to be a premium/budget-sensitive tier.",
+      "honest_status": "model-pin-gate.sh (PreToolUse Task|Agent) BLOCKS a subagent spawn with no explicit model whose agent type is unpinned/unknown — forcing explicit model selection so a spawn never SILENTLY INHERITS the main-loop model (operator directive 2026-07-14; silent Fable inheritance drained ~1.7M tokens). Source of truth config/model-policy.json; all 24 agents/*.md pinned. HONEST RESIDUAL (NOT gate-able, doctrine/model-selection.md): Workflow-inline agent(), spawn_task, cron/remote expose no model field a PreToolUse hook can inspect — convention + review only. A harness-doctor check (model-pins) enforces that every agents/*.md stays pinned.",
+      "waiver_path": "none — an unpinned spawn is a bug to fix (pass model: or pin the agent), not to waive. Fails OPEN only on internal error (no jq / malformed input), never on a genuine missing-model."
     },
     {
       "id": "needs-you-ledger",
@@ -1498,7 +1577,7 @@
         "keywords": []
       },
       "blocking": true,
-      "honest_status": "invoked via pre-commit-gate.sh chain and plan-edit flows; not directly wired in settings.json.template",
+      "honest_status": "invoked via pre-commit-gate.sh chain and plan-edit flows; not directly wired in settings.json.template. Includes Check 17 (2026-07-14, GATE 1 of artifact-evidence-bar): blocks Status: ACTIVE plans matching an architecture-keyword set that don't link a SOUND/SOUND-WITH-AMENDMENTS architecture-review artifact — see the 'artifact-evidence-bar' entry for golden_scenario/fp_expectation/retirement_condition.",
       "budget_class": "none",
       "added_after": "2026-04",
       "honesty_rationale": "Adversarial content review of the session's own plan edit — resolvable by fixing the plan."
@@ -1756,35 +1835,6 @@
       "fp_expectation": "Low-moderate on install.sh (hard block, operator-present -- a false block is immediately visible and the remedy is always 'get a PASS review or wait'). A fresh/long-stale machine cannot be bricked: the cutover grandfather-manifest.json covers every trigger-surface file's pre-cutover blob_sha, so only genuinely NEW content ever requires a record. Known deliberate over-inclusion: an agents/*.md wording-only edit still requires a PASS (no cheap way to distinguish cosmetic from behavioral agent-prompt edits). session-start-auto-install.sh's skip+warn path has effectively ZERO fp COST (it never blocks a session; it only leaves one file stale one sync cycle later than usual). Enforced-set parity (2026-07-16 REFORMULATE fixup): both carriers walk hooks/**/*.sh, scripts/**/*.sh, and rules/** RECURSIVELY (not a flat top-level glob), so the hard-block path can no longer be weaker than the fail-open path (a flat scripts/*.sh glob previously missed scripts/lib/*.sh); settings.json.template is gated at BOTH its call sites (--replace-settings and the normal missing-settings.json copy). Named residual: config/** is part of the trigger surface but is deployed by NEITHER carrier today (config/model-policy.json reaches no live mirror) -- not a gate hole, a pre-existing deployment gap tracked separately.",
       "retirement_condition": "Retire the install.sh hard-block half when install.sh itself is retired in favor of a single continuously-reconciling sync path; retire entirely if a real anti-fabrication anchor (see honesty_rationale) plus a native platform review-gate make this record-based check redundant.",
       "honesty_rationale": "Anti-fabrication residual named, not solved (Amendment C): the gate checks review-record EXISTENCE + content-match only, and CANNOT verify the reviewer's quoted verdict is genuine -- zero SubagentStop/TaskCompleted capture hooks exist in this harness to retrieve a real transcript. This record is an audit + honesty anchor, not a deploy-path anti-fabrication control; see docs/design-notes/review-record-primitive.md's Writer section and the REVIEW-RECORD-ANTI-FABRICATION-ANCHOR-01 backlog follow-up."
-    },
-    {
-      "id": "evidence-before-fix",
-      "kind": "gate",
-      "doctrine_file": "doctrine/evidence-before-fix.md",
-      "hooks": [
-        "evidence-before-fix-gate.sh"
-      ],
-      "events": [
-        "PreToolUse"
-      ],
-      "wired_template": true,
-      "selftest": true,
-      "jit_triggers": {
-        "paths": [
-          "docs/lessons/2026-07-14-root-cause-must-be-evidenced-before-fix.md",
-          "adapters/claude-code/doctrine/diagnosis.md"
-        ],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "pretool",
-      "added_after": "2026-07",
-      "golden_scenario": "2026-07-14: three successive investigations of a live duplicate-appointment bug each reasoned from a plausible code path (missing per-contact uniqueness) to a shipped fix (#972), without ever observing the SPECIFIC incident's evidence (the two rows' created_at gap, booked_via, service_type, property). The fix shipped on an inferred-not-observed cause and introduced a multi-property regression the operator had to catch. This gate WARNS (does not yet block, see PROMOTION CONDITION in honest_status) on a fix(...)/fix: commit whose message lacks a PROVEN-tagged, citation-backed Root cause (evidenced) section or a verdict:PASS fix-root-cause review record covering a staged file, so the same mechanism-sufficient-fix shape gets a teaching banner even before the gate is calibrated enough to block it.",
-      "fp_expectation": "MEASURED, not estimated (harness-review REJECT remediation, 2026-07-16): `git log -400 --format=%s | grep -cE '^fix(\\(|:)'` = 61/400 (~15%; reviewer's own -300 sample measured ~13%) of THIS repo's own commits match the trigger. A manual skim of that sample shows the DOMINANT class is harness-maintenance / review-remediation fixes (\"fix(review): address harness-review findings\", \"fix(wave-o): ...\", \"fix(model-pin): resolve REJECT review findings\") -- NOT incident-forensics-shaped bugs with an observable row/log to cite; for that class 'PROVEN root cause' in the incident-evidence sense often doesn't apply (the actual evidence IS a reviewer verdict, closer to path 2's record reference than path 1's citation). The original 'Low' estimate here was wrong -- it assumed the trigger population looked like the source incident, not like this repo's own commit history. Deliberate lighter path: fix-trivial: (a different prefix, never matches) for changes touching NO runtime/product code. Merge/rebase/cherry-pick replay contexts (MERGE_HEAD, CHERRY_PICK_HEAD, rebase-apply, rebase-merge, or a 'Merge branch' message) are fully skipped. See PROMOTION CONDITION below for what closes this gap before blocking is considered again.",
-      "retirement_condition": "Retire when harness-reviewer/code-reviewer natively enforce evidenced-root-cause at PR-review time with transcript-verifiable evidence (closing the same anti-fabrication residual review-before-deploy names), or when commit messages are structurally replaced by a form that cannot express free-text sections.",
-      "waiver_path": ".claude/state/evidence-before-fix-waiver-*.txt",
-      "honest_status": "WARN-MODE-PENDING-CALIBRATION (harness-review REJECT remediation, 2026-07-16): evidence-before-fix-gate.sh ALWAYS exits 0 -- it never blocks a commit. On a triggering fix(/fix: commit lacking evidence it prints the full teaching banner (stderr + hookSpecificOutput.additionalContext) but the commit proceeds regardless. blocking:false reflects ACTUAL current behavior, not a designed end-state kept hidden behind a default -- unlike claude-md-hygiene's entry (blocking:true with a warn-mode default via env var), this entry is honest about the runtime being warn-only right now. PROMOTION CONDITION (tracked docs/backlog.md EVIDENCE-BEFORE-FIX-PROMOTION-01): promote to blocking:true only after a measured calibration period (method: the reviewer's own sweep, `git log -N --format=%s` bucketed into {incident-shaped, review/audit-remediation, refactor/typo, other}) shows the over-fire class (non-incident maintenance/review-remediation fixes, measured ~13-15% of this repo's fix(/fix: commits at the 2026-07-16 baseline) is EITHER separable by a trigger refinement OR acceptably rare once the parser-reach fixes below are reflected in a fresh measurement.",
-      "honesty_rationale": "STRUCTURE-NOT-TRUTH (named, not solved): the gate verifies a PROVEN-tagged line carries a citation-SHAPED token (file:line, backtick-quoted command/output, or a command:/output:/log: label) and, for the record-reference path, that a fix-root-cause record exists with verdict PASS and the required tag -- it CANNOT verify the citation is real, that the cited command was actually run, or that the record's quoted verdict is genuine (same anti-fabrication residual as review-before-deploy's Amendment C; the record path inherits its append-only audit trail as the compensating control, not a guarantee). A determined agent can fabricate a citation-shaped string or an inline section; this gate raises the cost, it does not make fabrication impossible. PARSER RESIDUAL (harness-review PROVEN, fixed for the common shapes, disclosed for the rest): message extraction now handles glued/spaced -m and --message (with or without =), multiple -m segments (concatenated), -F <file>, and a best-effort --amend-with-no-message proxy (git log -1 --format=%B, correct not stale) -- but a message built via complex nested shell interpolation the static command string doesn't literally contain, or an interactive --amend editor session, still silently produces no evidence check (lower-stakes under warn-mode than it was under blocking, since nothing is blocked either way, but a triggering commit in such a shape still gets no teaching banner)."
     },
     {
       "id": "review-finding-fix",
