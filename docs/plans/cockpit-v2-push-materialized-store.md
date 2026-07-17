@@ -86,13 +86,13 @@ review F9); the Team-tab full merge (Circuit P2 consumes this plan's export).
   coord-pull.** Peer-state thresholds env-injectable (A5). A peer's UNMERGED state never renders
   as plain done (F4, §1). Local cards stay 100% on local truth; same-slug peer copies are labeled
   provenance rows, never substituted — Verification: full
-- [ ] 5. [serial] **plan-lifecycle MultiEdit matcher fix** (independent real hole, P8): settings
+- [x] 5. [serial] **plan-lifecycle MultiEdit matcher fix** (independent real hole, P8): settings
   matcher `Edit|Write` → `Edit|Write|MultiEdit`; regression scenario in its self-test —
   Verification: mechanical
-- [ ] 6. [serial] **Payload contract**: `description` into `DETAIL_ALLOWED_KEYS` + a
+- [x] 6. [serial] **Payload contract**: `description` into `DETAIL_ALLOWED_KEYS` + a
   `DENYLIST_EXEMPT_KEYS` set with a length cap (by KEY, as HREF_KEYS does — m1), stated plainly as
   a knowing widening of the anti-noise constraint scoped to plan content — Verification: mechanical
-- [ ] 7. [serial] **C3b — wire the auditor's REAL divergences** (log_ahead_task_not_flipped et al.)
+- [x] 7. [serial] **C3b — wire the auditor's REAL divergences** (log_ahead_task_not_flipped et al.)
   into `nl-issue.sh` with dedup + recurrence escalation (the operator's actual auto-healing intent;
   self-inflicted-drift reporting died with the projector) — Verification: full
 - [ ] 8. [serial] **Acceptance (end-user-advocate runtime)** — two-machine simulation acceptable
