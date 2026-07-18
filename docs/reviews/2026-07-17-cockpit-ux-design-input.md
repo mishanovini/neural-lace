@@ -98,3 +98,29 @@ see which sub-components have been built, which are in process, which not starte
 - **(4):** "I do not want to maintain a water line. I just want statuses on every individual item."
 - **(A) Complete reiterated:** "deployed in production, fully functional, nothing else to be done."
 - **(B) Harness chores:** "do not really add any value to my view — leave them out."
+
+## Round 5 — operator (2026-07-18, verbatim intent): event-driven sync + N-machine
+
+> "Instead of updating the repo on a schedule, wouldn't it make more sense to do so whenever
+> there's an actual status change? That would make it much easier to control mechanically."
+> "Both Jaime and I may be using multiple computers running multiple sessions all in parallel.
+> I need the ability to have this same sync between my own computers, in addition to between
+> Jaime and myself."
+
+Design response (agreed hybrid, folded into the redesign plan):
+- EVENT-TRIGGERED publish: status-changing emissions (task_done/task_started/plan_amended/
+  waiting_on_operator/merged) touch a cheap local dirty-marker (never-blocks: no git/network on
+  the hook path); a debounced publisher (the existing NL-CoordSync task at a tighter check
+  interval, idling when clean) publishes within ~a minute of a real change instead of ≤20min.
+- PERIODIC FLOOR STAYS, for two proven reasons: (1) hooks are blind to git ops (cherry-pick/pull
+  mutations fire no event — the coverage hole that killed the v2 store design); (2) the A3ii
+  keepalive REQUIRES periodic publishes — a purely event-driven idle machine is indistinguishable
+  from a crashed one, breaking peer-unreachable honesty.
+- Burst coalescing: an orchestrated build fires dozens of events/min; publish is debounced, at
+  most ~1/min, hash-gated as today.
+- N-MACHINE: already the shipped architecture by construction — exports are per-hostname files;
+  every non-self file renders as a peer, so Misha's own second computer is just another peer.
+  MISSING layer (redesign scope): hostname→person mapping so peers group by PERSON ("Misha:
+  desktop+laptop / Jaime: ..."), and Jaime's account gets push access to the private coord repo.
+  Multiple sessions per machine are already aggregated (the exporter derives from machine-global
+  state).
