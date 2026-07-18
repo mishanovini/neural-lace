@@ -1,4 +1,4 @@
-Last updated: 2026-07-17
+Last updated: 2026-07-18
 
 # Neural Lace — Harness Backlog
 
@@ -16,7 +16,7 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 
 ## Open work — substantive deferrals
 
-- **UX-REDESIGN-CONVERGE-01 — converge sit-down answers + Fable proposal into the cockpit redesign plan (absorbs cockpit-ui-polish)** (added 2026-07-17; priority:high). Inputs: docs/reviews/2026-07-17-cockpit-ux-design-input.md (2 rounds) + -redesign-proposal.md. Open decisions: complete-oracle, board membership. Includes badge-storm presentation fix + request-evolution (amendment-timeline) spec.
+- **UX-REDESIGN-CONVERGE-01 — converge sit-down into redesign plan** (added 2026-07-17; priority:high). **FOLD-INTO 2026-07-18** → absorbed by docs/plans/cockpit-roadmap-redesign.md (DRAFT; 5-round synthesis complete; awaiting arch+ux gates).
 
 - **WS-UI-STATUS-PAGE-ADOPTION-01 — evaluate folding the "Overnight Run Status" page design into the live Workstreams UI** (added 2026-07-15; operator liked the artifact and wants a ws-UI session to consider it; label: `ws-ui`, `design`, `priority:low`). Full reference + design analysis + the artifact URL live in `docs/design-notes/status-page-for-ws-ui-adoption.md`. The page is a static claude.ai artifact (https://claude.ai/code/artifact/47636abb-dd82-4d2c-b294-326908ed3d77) — NOT a ws-UI view. Candidate patterns to adopt: a top-of-page status-verdict banner (green only when both NEEDS-YOU buckets are empty), live stat tiles, per-mechanism LIVE/doctor-state chips, terminal palette. Constraint: ws-UI must DERIVE these from live state (plans / NEEDS-YOU / doctor / worktrees), not hand-author. Separate track from the harness-governance follow-up batch (`docs/handoffs/2026-07-15-followup-batch-handoff.md`).
 
