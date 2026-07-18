@@ -111,3 +111,21 @@ architecture.** That's why the read-time-join shipped. An adversarial architectu
 2. Adversarially review the cockpit-v2 plan (small panel — see §5!), fold findings in.
 3. Build cockpit-v2: projector → push triggers → backfill/auditor-demotion → GUI-reads-store-only → UI polish.
 4. Push to `origin/master` frequently — the operator may switch machines at any time.
+
+## ⭐ STATE @ 2026-07-18 (pre-compaction save — read this first)
+- SHIPPED+CLOSED+DEPLOYED: ask-p1 (18/18) · evidence-bar-enforcement · cockpit-v2 (8/8, peers key
+  LIVE on :7733, 0 entries until NL-CoordSync installers run — operator ask NY-1784327382-f3e8).
+- NEXT DELIVERABLE: **docs/plans/cockpit-roadmap-redesign.md (DRAFT)** — the full synthesis of the
+  5-round operator sit-down (verbatim inputs: docs/reviews/2026-07-17-cockpit-ux-design-input.md;
+  expert proposal: docs/reviews/2026-07-17-cockpit-ux-redesign-proposal.md). TO DO: dispatch
+  architecture-reviewer (model: fable) + ux-designer on the draft → fold amendments → flip ACTIVE
+  (Check 17 needs the review link) → flip cockpit-ui-polish.md to SUPERSEDED → orchestrate build
+  (9 tasks, two-gate verification each, walking skeleton = task 1 derived-status).
+- THEN: Circuit P1 plan (11-task list at the end of docs/reviews/2026-07-17-circuit-continuous-
+  building-design-sketch.md; D1-D4 + folder "create as proposed" settled) → arch-review (fable) →
+  build. Sequenced AFTER the redesign.
+- QUEUED SMALL: GATE 2/3 probe-log review (flip observe→enforce per manifest criteria) · nl-issues
+  triage (~55) · doctor red-spike diagnosis · needs-from-you Stop-gate (nl-issue spec filed;
+  golden scenario = memory feedback_needs_from_you_full_context).
+- STANDING: D4 auto-merge+deploy no reviews · design-tier = FABLE · ≤2 heavy concurrent ·
+  reap-what-you-spawn · evidence-bar gates live · operator asks ALWAYS full-context (memory).
