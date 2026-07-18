@@ -31,9 +31,53 @@
 //   NEEDS-YOU item resolved, pointer unchecked (truth ahead) | ledger     | derive resolution -> auto-check the operator-todo.md pointer
 //   all linked plans terminal, ask still active (truth ahead) | plan Status | ask-registry.sh set-status done, emitter=auditor -- the mechanical ask exit (constraint 7)
 //   task_done event, checkbox unflipped (log ahead)       | plan file     | BADGE -- never un-emit, never flip (constraint 6)
-//   task_started with no matching dispatch record (log ahead) | dispatch records | BADGE
+//   task_started with no matching dispatch record (log ahead) | dispatch records | BADGE -- ONLY when the event is within the marker retention horizon (see EVIDENCE HORIZON below); older events are SKIPPED, not badged
 //   waiting_on_operator with no ground truth anywhere (log ahead) | ledger  | BADGE
 //   event with provenance:unknown emitter (no oracle)     | --            | BADGE + UI de-emphasis (constraint 10)
+//
+// ============================================================
+// EVIDENCE HORIZON (production incident, 2026-07-18 -- badge-storm nl-issue):
+// dispatch-provenance markers are pruned by dispatch-provenance.sh's
+// `_dp_prune` (TTL default 14d, then a newest-N cap, default 200 -- the
+// pl_classify_session hot-path fix) EVERY time a marker is written. The
+// `unmatched_dispatch` oracle above compares a task_started event against
+// `ctx.dispatchMarkers`, which is only ever the CURRENTLY SURVIVING marker
+// set -- so a task_started event old enough that its marker (if one was
+// ever written) has since been pruned looks IDENTICAL to a task_started
+// event that never had a marker at all. Judging the former as drift is
+// wrong: absence of evidence past the retention horizon is not evidence of
+// absence. PROVEN in production (2026-07-18): the operator's real
+// ~/.claude/state/dispatch-provenance held exactly 200 markers (the cap),
+// spanning roughly the last 2.3 HOURS of dispatch activity -- far tighter
+// than the nominal 14-day TTL -- while task_started events for an archived
+// 18-task build (weeks old) had no chance of a surviving marker, producing
+// ~718 false unmatched_dispatch badges every 120s cycle.
+//
+// THE FIX: dispatchMarkerEvidenceHorizonMs() computes the point in time
+// before which "no marker" can no longer be trusted as "never dispatched"
+// -- the LATER (more recent, i.e. more restrictive) of (a) the static TTL
+// cutoff (now - DISPATCH_PROVENANCE_TTL_DAYS) and (b) the empirical cutoff
+// implied by the cap, when the cap is actually binding (marker count >=
+// DISPATCH_PROVENANCE_MAX_MARKERS): the oldest marker CURRENTLY PRESENT,
+// since the cap has by construction already evicted anything older than
+// that regardless of TTL. auditAsk() skips (never badges, never heals) any
+// task_started event older than this horizon. Recent events (within the
+// horizon) are judged exactly as before -- a missing marker for a RECENT
+// event is still real signal.
+//
+// unknown_provenance (Class H) does NOT share this exposure and needed no
+// change: it badges on `event.provenance === 'unknown'`, a field stamped
+// ONCE at write time by progress-log-lib.sh's pl_emit (`_pl_in_list
+// "$emitter" "${_PL_KNOWN_EMITTERS[@]}"`, progress-log-lib.sh:398-401) and
+// persisted permanently on the event itself -- it is not compared against
+// any external, prunable ground-truth source at audit time, so an old event
+// is judged on the exact same fact it was judged on the day it was emitted.
+// orphaned_waiting_item (Class G) was also checked: its ground truth
+// (`allKnownNeedsYouIds`, folded from NEEDS-YOU.md's open section UNION
+// every id ever seen in an operator-todo.md pointer bullet) has no
+// automatic TTL/cap prune anywhere in this codebase -- pointer bullets are
+// only ever checkbox-flipped, never deleted -- so it is not retention-
+// bounded the way dispatch-provenance markers are.
 //
 // PLUS the sketch §8-3 COUNT RECONCILIATION: ledger-parsed open NEEDS-YOU
 // items vs the count actually reflected across every ask's waiting_count
@@ -124,6 +168,11 @@ const planParse = require('./plan-parse.js');
 const DEFAULT_CADENCE_MS = 120000;
 const DEFAULT_MERGE_SCAN_LIMIT = 200;
 const DEFAULT_CLI_TIMEOUT_MS = 60000;
+// Mirrors dispatch-provenance.sh's own `_dp_prune` defaults EXACTLY (same
+// env var names too: DISPATCH_PROVENANCE_TTL_DAYS / _MAX_MARKERS) -- see the
+// "EVIDENCE HORIZON" header block above for why this file needs to know them.
+const DEFAULT_DISPATCH_PROVENANCE_TTL_DAYS = 14;
+const DEFAULT_DISPATCH_PROVENANCE_MAX_MARKERS = 200;
 
 function nowIso() { return new Date().toISOString(); }
 
@@ -160,6 +209,19 @@ function operatorTodoPath() {
 function dispatchProvenanceStateDir() {
   return process.env.DISPATCH_PROVENANCE_STATE_DIR ||
     path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'dispatch-provenance');
+}
+// dispatchProvenanceTtlDays / dispatchProvenanceMaxMarkers -- read FRESH on
+// every call (never memoized, same convention as every other resolver in
+// this file), honoring the SAME env var names dispatch-provenance.sh's own
+// `_dp_prune` reads, so a single override tunes both the writer's actual
+// prune behavior and this file's judgment of it in lockstep.
+function dispatchProvenanceTtlDays() {
+  const v = Number(process.env.DISPATCH_PROVENANCE_TTL_DAYS);
+  return v > 0 ? v : DEFAULT_DISPATCH_PROVENANCE_TTL_DAYS;
+}
+function dispatchProvenanceMaxMarkers() {
+  const v = Number(process.env.DISPATCH_PROVENANCE_MAX_MARKERS);
+  return v > 0 ? v : DEFAULT_DISPATCH_PROVENANCE_MAX_MARKERS;
 }
 function mergeScanLibPath() {
   return process.env.MERGE_SCAN_LIB ||
@@ -380,6 +442,42 @@ function readDispatchMarkers(dir) {
   return out;
 }
 
+// dispatchMarkerEvidenceHorizonMs(dispatchMarkers, nowMs) -- see the
+// "EVIDENCE HORIZON" header block for the full incident + reasoning. Pure
+// (given its inputs; only reads env for the TTL/cap config, same as every
+// other resolver here). Returns an epoch-ms cutoff: a task_started event
+// older than this cannot be trusted to still have a survivable marker, so
+// auditAsk() must skip (not badge) it.
+//
+//   - ttlCutoffMs = nowMs - ttlDays worth of ms (the static floor: the TTL
+//     pass alone would never keep anything older than this).
+//   - When the cap is NOT currently binding (fewer markers present than
+//     DISPATCH_PROVENANCE_MAX_MARKERS), the cap adds no further
+//     restriction -- ttlCutoffMs is the answer.
+//   - When the cap IS binding (marker count >= the max), the cap pass has
+//     already evicted anything older than the OLDEST marker currently
+//     present, REGARDLESS of the TTL -- that empirical bound can be
+//     (and in production, 2026-07-18, WAS) far tighter than the TTL alone.
+//     The horizon is then the LATER (more recent/restrictive) of the two.
+function dispatchMarkerEvidenceHorizonMs(dispatchMarkers, nowMs) {
+  const ttlDays = dispatchProvenanceTtlDays();
+  const maxMarkers = dispatchProvenanceMaxMarkers();
+  const ttlCutoffMs = nowMs - (ttlDays * 24 * 60 * 60 * 1000);
+
+  const markers = Array.isArray(dispatchMarkers) ? dispatchMarkers : [];
+  if (markers.length < maxMarkers) return ttlCutoffMs;
+
+  let oldestMs = null;
+  markers.forEach((m) => {
+    if (!m || !m.ts) return;
+    const t = Date.parse(m.ts);
+    if (!isFinite(t)) return;
+    if (oldestMs === null || t < oldestMs) oldestMs = t;
+  });
+  if (oldestMs === null) return ttlCutoffMs;
+  return Math.max(ttlCutoffMs, oldestMs);
+}
+
 // ----------------------------------------------------------------------
 // shQuote / runCli — the ONE bash-spawn primitive every backfill call uses,
 // mirroring server.js's runAskRegistryCli/classifySessions (bashBin() +
@@ -486,6 +584,14 @@ function scanRepoForMerges(cliPath, repoRoot, limit, timeoutMs) {
 //                          seen in an operator-todo.md pointer bullet --
 //                          the "has SOME real-world trace" ground-truth set
 //                          class F/G checks against)
+//   dispatchEvidenceHorizonMs -> epoch ms | undefined/null. Class F's
+//                          "no marker" verdict is only trusted for
+//                          task_started events at/after this cutoff (see
+//                          "EVIDENCE HORIZON" header block) -- an event
+//                          older than this is SKIPPED, not badged. Omitting
+//                          this field (pre-existing callers, e.g. the pure
+//                          Scenario 7 self-test fixture) preserves the OLD
+//                          unconditional-judge behavior.
 // ========================================================================
 function auditAsk(askId, reg, events, ctx) {
   const badges = [];
@@ -547,15 +653,26 @@ function auditAsk(askId, reg, events, ctx) {
   startedEvents.forEach((e) => {
     const found = ctx.dispatchMarkers.some((m) => m && m.ask_id === askId &&
       m.plan_slug === e.plan_slug && m.task_id === e.task_id && m.session_id === e.session_id);
-    if (!found) {
-      badges.push({
-        divergence_class: 'unmatched_dispatch',
-        message: 'a task-started update for task ' + (e.task_id || '?') + ' has no matching dispatch record',
-        detail_ref: 'drift-' + askId + '-unmatched-dispatch-' + (e.plan_slug || '') + '-' + (e.task_id || '') + '-' + (e.session_id || ''),
-        plan_slug: e.plan_slug || '',
-        task_id: e.task_id || '',
-      });
+    if (found) return;
+
+    // EVIDENCE HORIZON (see header block): a missing marker for an event
+    // OLDER than the marker-retention horizon proves nothing -- the marker
+    // may well have existed and simply aged out via TTL/cap pruning. Only
+    // skip when we can actually determine the event is old (a missing/
+    // unparseable ts is NOT proof of age -- default to judging it, same as
+    // before, rather than silently swallowing a genuine badge).
+    const eventMs = e && e.ts ? Date.parse(e.ts) : NaN;
+    if (isFinite(eventMs) && ctx.dispatchEvidenceHorizonMs != null && eventMs < ctx.dispatchEvidenceHorizonMs) {
+      return; // too old for "no marker" to mean anything -- not drift
     }
+
+    badges.push({
+      divergence_class: 'unmatched_dispatch',
+      message: 'a task-started update for task ' + (e.task_id || '?') + ' has no matching dispatch record',
+      detail_ref: 'drift-' + askId + '-unmatched-dispatch-' + (e.plan_slug || '') + '-' + (e.task_id || '') + '-' + (e.session_id || ''),
+      plan_slug: e.plan_slug || '',
+      task_id: e.task_id || '',
+    });
   });
 
   // Class G: waiting_on_operator with no ground truth anywhere (neither a
@@ -871,6 +988,7 @@ function createAuditor(userOpts) {
       }
 
       const dispatchMarkers = readDispatchMarkers(dpDir);
+      const dispatchEvidenceHorizonMs = dispatchMarkerEvidenceHorizonMs(dispatchMarkers, Date.now());
       const ny = readOpenNeedsYouIds(needsYouPath);
       const todo = readOperatorTodoPointers(todoPath);
       const allKnownNeedsYouIds = new Set(ny.ids);
@@ -890,6 +1008,7 @@ function createAuditor(userOpts) {
             planLookup: (slug) => planLookup(reg.repo || '', slug),
             dispatchMarkers: dispatchMarkers,
             allKnownNeedsYouIds: allKnownNeedsYouIds,
+            dispatchEvidenceHorizonMs: dispatchEvidenceHorizonMs,
           });
           newBadgesByAsk[askId] = result.badges;
           result.backfillTaskDoneList.forEach((b) => backfillCalls.push(Object.assign({ askId: askId }, b)));
@@ -1062,6 +1181,9 @@ module.exports = {
   foldAskRegistry: foldAskRegistry,
   readAskEvents: readAskEvents,
   readDispatchMarkers: readDispatchMarkers,
+  dispatchMarkerEvidenceHorizonMs: dispatchMarkerEvidenceHorizonMs,
+  dispatchProvenanceTtlDays: dispatchProvenanceTtlDays,
+  dispatchProvenanceMaxMarkers: dispatchProvenanceMaxMarkers,
   DEFAULT_CADENCE_MS: DEFAULT_CADENCE_MS,
   // path resolvers exported for the self-test / a future diagnostics reader
   progressLogStateDir: progressLogStateDir,
@@ -1466,6 +1588,58 @@ async function selfTest() {
   ok('S7 a provenance:unknown event badges unknown_provenance with de_emphasize:true',
     pureResult.badges.some((b) => b.divergence_class === 'unknown_provenance' && b.de_emphasize === true),
     JSON.stringify(pureResult.badges));
+
+  // ======================================================================
+  // Scenario 7b/7c (EVIDENCE HORIZON, production incident 2026-07-18):
+  // pure unit tests for dispatchMarkerEvidenceHorizonMs() -- the TTL-only
+  // case and the cap-binding empirical case (the exact mechanism that
+  // produced ~718 false unmatched_dispatch badges in production: the real
+  // dispatch-provenance dir held exactly 200 markers spanning only ~2.3
+  // hours, far tighter than the nominal 14-day TTL).
+  // ======================================================================
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const nowMsFixed = Date.now();
+  const ttlOnlyHorizon = dispatchMarkerEvidenceHorizonMs([], nowMsFixed);
+  ok('S7b with zero markers (cap never binding), the horizon is exactly the TTL cutoff (default 14 days back)',
+    Math.abs(ttlOnlyHorizon - (nowMsFixed - 14 * DAY_MS)) < 5000,
+    'ttlOnlyHorizon=' + ttlOnlyHorizon + ' expected~=' + (nowMsFixed - 14 * DAY_MS));
+
+  const capMarkers = [];
+  for (let i = 0; i < 200; i++) {
+    capMarkers.push({ ts: new Date(nowMsFixed - (200 - i) * 60 * 1000).toISOString() }); // spans only the last ~200 minutes
+  }
+  const capBoundHorizon = dispatchMarkerEvidenceHorizonMs(capMarkers, nowMsFixed);
+  const oldestCapMarkerMs = Date.parse(capMarkers[0].ts);
+  ok('S7c when the marker count is AT the cap (200), the horizon is the oldest SURVIVING marker\'s ts, not the (much looser) 14-day TTL -- reproduces the production incident\'s actual retention window',
+    Math.abs(capBoundHorizon - oldestCapMarkerMs) < 5000 && capBoundHorizon > (nowMsFixed - 14 * DAY_MS),
+    'capBoundHorizon=' + capBoundHorizon + ' oldestCapMarkerMs=' + oldestCapMarkerMs);
+
+  // ======================================================================
+  // Scenario 7d/7e (the "Prove it works" scenarios): auditAsk() honors the
+  // horizon for Class F (unmatched_dispatch) -- an OLD task_started event
+  // with no matching marker is SKIPPED (evidence aged out, not drift); a
+  // RECENT one with no matching marker still badges exactly as before.
+  // ======================================================================
+  const oldTs = new Date(nowMsFixed - 20 * DAY_MS).toISOString(); // 20d old, past the 14d default TTL
+  const recentTs = new Date(nowMsFixed - 1 * DAY_MS).toISOString(); // 1d old, well within horizon
+  const horizonCtx = {
+    planLookup: () => null, dispatchMarkers: [], allKnownNeedsYouIds: new Set(),
+    dispatchEvidenceHorizonMs: dispatchMarkerEvidenceHorizonMs([], nowMsFixed),
+  };
+
+  const oldResult = auditAsk('ask-horizon', { status: 'active', plan_slugs: [] }, [
+    { type: 'task_started', plan_slug: 'some-plan', task_id: '9', emitter: 'workstreams-emit', provenance: 'known', event_id: 'ev-old', ts: oldTs, session_id: 'sess-old' },
+  ], horizonCtx);
+  ok('S7d an OLD task_started (beyond the retention horizon) with NO matching marker produces NO unmatched_dispatch badge',
+    !oldResult.badges.some((b) => b.divergence_class === 'unmatched_dispatch'),
+    JSON.stringify(oldResult.badges));
+
+  const recentResult = auditAsk('ask-horizon', { status: 'active', plan_slugs: [] }, [
+    { type: 'task_started', plan_slug: 'some-plan', task_id: '9', emitter: 'workstreams-emit', provenance: 'known', event_id: 'ev-recent', ts: recentTs, session_id: 'sess-recent' },
+  ], horizonCtx);
+  ok('S7e a RECENT task_started (within the retention horizon) with NO matching marker still badges unmatched_dispatch, exactly as before',
+    recentResult.badges.some((b) => b.divergence_class === 'unmatched_dispatch' && b.task_id === '9'),
+    JSON.stringify(recentResult.badges));
 
   // ======================================================================
   // Scenario 8: sandbox-only writes -- nothing landed outside this
