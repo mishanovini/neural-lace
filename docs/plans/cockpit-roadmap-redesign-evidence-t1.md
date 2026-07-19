@@ -78,3 +78,41 @@ line for the readyMs>=shipMs equal-boundary (port-verbatim adjudicated correct).
 Checkbox NOT flipped. 7/7 covered-edge claims otherwise grounded; NOT-covered list honest.
 
 ### task-verifier (Fable): pending
+
+## Fix round (2026-07-19, builder commit 71c30c4 → master)
+
+All 3 comprehension gaps fixed, each proven RED against old logic first:
+1. present-but-invalid heartbeat → unknown("unreadable heartbeat (present but schema-invalid
+   last_activity_ts)"); absent stays stalled:crashed; store ENOENT (benign) vs unreadable
+   (ok:false) distinguished via listRawHeartbeatsResult(); listRawHeartbeats() wrapper
+   contract unchanged (export-state.js:150 verified).
+2. missing/non-boolean done → unknown("missing required input: done"); explicit false normal.
+3. envMinutes() guard: NaN/invalid env → documented defaults; explicit "0" honored.
+Suites: derive-lib 56/56 (38+18 new), oracle 19/19, peer-view 32/32, plan-parse 14/14,
+server.selftest 165/165. Real-data poisoned-env check: sessions still classify correctly.
+
+### Revised articulation (fix round, citation-backed)
+
+**Spec meaning:** Per-item status must be computed from mechanism-emitted ground truth at
+read time, with every derivation-input failure — including a heartbeat that is present but
+schema-invalid, and a caller that fails to supply a required boolean — rendering a named
+unknown(reason), never a guessed bucket; env-injectable thresholds must degrade to their
+documented defaults on any invalid override, never silently corrupt every downstream
+classification.
+
+**Edge cases covered:** damaged/absent plan file → unknown (derive-lib.js:635-637);
+present-but-invalid heartbeat distinct from genuinely-absent → unknown vs stalled:crashed
+(:534-563, :669-676); corrupt record on one session never overrides real positive evidence
+on another (test 2g); store unreadable (ENOTDIR/EACCES) vs never-created (ENOENT)
+(:364-399); missing/non-boolean done → unknown while explicit done:false proceeds
+(:659-661, tests 7f-7h); DONE item never consults heartbeat evidence (test 7e); non-numeric
+env override → default, explicit "0" honored as real override (:461-467, tests 18-19b).
+
+**Edge cases NOT covered:** two heartbeat files for one session id (writer's invariant, not
+re-validated); waiting-on-you/blocked-on/limit-parked still caller-supplied (no registry
+data source yet); readable→unreadable mid-request TOCTOU (per-file try/catch keeps the
+pre-existing fail-open convention, untouched by this task).
+
+**Assumptions:** zero-task plan (0/0) is never done by vacuous completion — caller passes
+done:false (contract documented); ported predicate readyMs>=shipMs inclusive equal-boundary
+is ADR-056 verbatim semantics (completion-oracle.js:125), not a new choice.
