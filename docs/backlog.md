@@ -1102,3 +1102,10 @@ Anthropic-side" theme).
 **Trigger:** 62 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 8d old (threshold >7d).
 **Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
 **Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## STRIPJSCOMMENTS-PARSER-01 — cockpit selftest comment-stripper class bug
+
+**Severity:** P3 (test-infra correctness)
+**What:** cockpit.selftest.js stripJsComments treats an unclosed `/*` inside a `//` line comment as a block-comment opener, silently swallowing subsequent code from parse checks. Instance defused at asks.js:585 (task 7); the CLASS remains.
+**Fold-in:** redesign task 9 acceptance hardening, or next cockpit selftest task.
+**Filed:** 2026-07-19, task-7 builder report (barred from backlog edits).

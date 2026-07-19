@@ -326,6 +326,8 @@ writer-lib seam — NOT hook splices), `adapters/claude-code/scripts/coord-sync.
 full-cycle floor), a `config/people.js`-style hostname→person map (machine-local overrides).
 
 ## In-flight scope updates
+- 2026-07-19: docs/plans/cockpit-roadmap-redesign-evidence-t7.md — task 7 evidence +
+  articulation companion (gate input).
 - 2026-07-19: docs/reviews/2026-07-19-worktree-salvage-classification.md — salvage sweep
   row-by-row record (doctor-restore track; 43+82 purge-safe, 28+9 orphan-work re-home queue,
   incl. ADR-061 supervisor core feeding the continuous-operation program).
