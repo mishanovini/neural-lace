@@ -326,6 +326,10 @@ writer-lib seam — NOT hook splices), `adapters/claude-code/scripts/coord-sync.
 full-cycle floor), a `config/people.js`-style hostname→person map (machine-local overrides).
 
 ## In-flight scope updates
+- 2026-07-19: docs/reviews/2026-07-19-continuous-operation-design-input.md — operator
+  sit-down record (24/7 continuous-operation design, round 1): steers this plan's task 7
+  (publish cadence/supervision) + task 9 acceptance framing, and seeds the follow-on
+  program plan. Sit-down-record precedent: cockpit-ux-design-input.md.
 - 2026-07-19: docs/reviews/2026-07-19-doctor-red-spike-diagnosis.md — deploy-leg restoration
   prerequisite: doctor spike diagnosis; install/auto-install is this plan's deploy mechanism
   and coord-sync/coord-push must be record-covered before task 7 lands (nl-issue 126).
