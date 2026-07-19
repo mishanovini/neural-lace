@@ -326,7 +326,28 @@ writer-lib seam — NOT hook splices), `adapters/claude-code/scripts/coord-sync.
 full-cycle floor), a `config/people.js`-style hostname→person map (machine-local overrides).
 
 ## In-flight scope updates
-(none yet)
+- 2026-07-19: `neural-lace/workstreams-ui/server/derive-lib.js` — reconciles the
+  original Files to Modify/Create table's BARE `derive-lib.js` token (no
+  directory prefix — scope-enforcement-gate.sh matches the exact repo-root-
+  relative staged path, so a bare filename never matches a nested repo path)
+  to the real path. The same bareness affects `server/server.js` /
+  `server/auditor.js` / `server/payload-schema.js` above (all missing the
+  `neural-lace/workstreams-ui/` prefix the repo root actually requires) —
+  flagged here for whichever task next stages those files to add its own
+  matching in-flight entry; not fixed wholesale in this task to keep this
+  edit scoped to the files Task 1 actually touches.
+- 2026-07-19: `neural-lace/workstreams-ui/server/completion-oracle.js` — Task 1's
+  per-project completion-oracle config (three named classes: deploy-oracle /
+  merged-is-deployed / no-signal, per A4), named only in prose in the original
+  Files to Modify/Create table ("a completion-oracle config (per-project
+  classes; port source: `server/work-in-motion-sweep.js` deploy oracle)") with
+  no concrete path — this reconciles the prose to the actual file.
+- 2026-07-19: `neural-lace/workstreams-ui/config/completion-oracle.example.json` —
+  the tracked, generic per-machine-override placeholder for the same config,
+  mirroring `config/projects.example.json`'s existing two-layer convention.
+- 2026-07-19: `neural-lace/workstreams-ui/config/.gitignore` — adds
+  `completion-oracle.json` to the existing per-machine-override ignore list
+  (same convention already covering `projects.json` / `wim-repos.json`).
 
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store

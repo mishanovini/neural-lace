@@ -6,3 +6,7 @@ projects.json
 # rule: repo paths / org names / gh accounts never ship; the generic
 # wim-repos.example.json IS tracked.
 wim-repos.json
+# Per-machine completion-oracle CLASS overrides (cockpit-roadmap-redesign
+# Task 1, A4). Same rule: the generic completion-oracle.example.json IS
+# tracked; a real override file is per-machine config, not kit content.
+completion-oracle.json
