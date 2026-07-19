@@ -80,12 +80,27 @@ async function main() {
   const stateDir = path.join(tmp, 'state');
   const progressDir = path.join(tmp, 'progress');
   const repoDir = path.join(tmp, 'fixture-repo');
+  const heartbeatDir = path.join(tmp, 'heartbeats');
   fs.mkdirSync(stateDir, { recursive: true });
   fs.mkdirSync(progressDir, { recursive: true });
   fs.mkdirSync(path.join(repoDir, 'docs', 'plans'), { recursive: true });
+  fs.mkdirSync(heartbeatDir, { recursive: true });
 
   process.env.ASK_REGISTRY_STATE_DIR = stateDir;
   process.env.PROGRESS_LOG_STATE_DIR = progressDir;
+  // Task-1 wiring (derive-lib.js's deriveItemStatus) now requires REAL
+  // heartbeat evidence for a task's in-progress classification (the stub's
+  // prior "task_started + unflipped -> in-progress" shortcut is gone — see
+  // roadmap-routes.js's STATUS DERIVATION header). Sandboxed like every
+  // other state dir above; a fresh heartbeat for sess-op-1 (ask-alpha's
+  // demo-plan task 2, started per the fixture events below) keeps S3b/S3d
+  // passing under the real derivation instead of the old mechanical one.
+  process.env.HEARTBEAT_STATE_DIR = heartbeatDir;
+  fs.writeFileSync(path.join(heartbeatDir, 'sess-op-1.json'), JSON.stringify({
+    schema: 1, session_id: 'sess-op-1', pid: 1, cwd: repoDir, repo_root: repoDir,
+    worktree_root: repoDir, branch: 'fixture', model: 'fixture',
+    last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'active',
+  }));
   // Point the CLI delegation at a nonexistent path by default: the rank
   // endpoint must fall back to its overlay store honestly, and the title
   // endpoint must return a NAMED error, never a silent success.

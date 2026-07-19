@@ -43,6 +43,11 @@ const payloadSchema = require('./payload-schema.js');
 // this file). server.js is a pure consumer of derive-lib.js below; nothing
 // in this file re-implements what derive-lib.js already owns.
 const deriveLib = require('./derive-lib.js');
+// cockpit-roadmap-redesign Task 3 — Roadmap view routes (GET /api/roadmap,
+// POST /api/roadmap/rank, POST /api/roadmap/title, GET /roadmap.js). A
+// separate module so the roadmap surface and server.js could build in
+// parallel; handle() returns true when it consumed the request.
+const roadmapRoutes = require('./roadmap-routes.js');
 // cockpit-v2-push-materialized-store Task 4 — the "Peers" section on
 // GET /api/asks: a plain, no-fork/no-network READ of the local coord clone
 // (coord-sync.sh, Task 3, keeps it fresh out-of-band on its own cadence).
@@ -1064,6 +1069,7 @@ function lifecycleResultStatus(action) {
 }
 
 const server = http.createServer((req, res) => {
+  if (roadmapRoutes.handle(req, res)) return;
   const parsedUrl = require('url').parse(req.url, true);
   const url = parsedUrl.pathname;
   const q = parsedUrl.query || {};

@@ -14,7 +14,7 @@
 //   POST /api/roadmap/rank    — keyboard-operable move up/down (A7/R2).
 //   POST /api/roadmap/title   — title edit, DELEGATED to ask-registry.sh
 //                               (A3 one-writer discipline; task 2 owns the
-//                               verb — see STATUS DERIVATION STUB below).
+//                               verb — see STATUS DERIVATION below).
 //
 // ============================================================
 // PAYLOAD CONTRACT (pinned for task-1 merge re-verification)
@@ -38,6 +38,12 @@
 //     reason_class,                 // stalled: waiting-on-you|crashed|blocked-on|limit-parked
 //     label,                        // the operator-facing chip text (named-absence pattern)
 //     since,                        // ISO ts of the transition (I1 recency)
+//     unblock,                      // OPTIONAL {label, hash} for a stalled item whose
+//                                   // reason has a known navigable target (e.g.
+//                                   // waiting-on-you -> #inbox/<id>); absent when no
+//                                   // real cross-reference exists yet (task 4's Inbox
+//                                   // data — not derived by this task, renderer already
+//                                   // treats it as optional).
 //   },
 //   progress: {done,total} | null,  // null = zero tracked children (no fake granularity)
 //   completed_at,                   // ISO ts | '' (completed aging, one 7d knob)
@@ -49,26 +55,56 @@
 // }
 //
 // ============================================================
-// STATUS DERIVATION STUB (the task-1 seam — clearly marked)
+// STATUS DERIVATION (wired to task 1's derive-lib.js — the seam this file
+// used to ship as a mechanical stub between STUB-STATUS-BEGIN/END; see
+// docs/plans/fragments/roadmap-t3-server-fragment.md §2 for the merge note)
 // ============================================================
-// Task 1 owns the real per-item status derivation in derive-lib.js (the
-// six-value enum incl. the three-class completion oracle, heartbeat-backed
-// in-progress, and the stalled reasons). This file ships the plan's PINNED
-// MECHANICAL subset so the view is functional and honest before that merge:
-//   - task:   checkbox done -> complete; task_started event + unflipped ->
-//             in-progress; else not-started.
+// Every per-item status below is computed by calling
+// deriveLib.deriveItemStatus() (the ONE status function, C5's no-default-
+// guess invariant lives there, not here) — this file supplies the INPUTS
+// (ground-truth done/started booleans, session ids, the once-per-request
+// heartbeat read) and stays responsible for the TREE-SHAPE concerns
+// derive-lib deliberately does not own: `since` timestamps, the
+// operator-facing `label` text, and the bottom-up roll-up counts
+// (computeRollUps, below — unchanged by this wiring, since it already reads
+// any child's status.value/reason_class generically).
+//
+// ONE naming translation: derive-lib's internal enum spells the merged-but-
+// unverified state `merged-deploy-unverified`; this route's PINNED payload
+// contract (above) spells it `merged-unverified` (the name pinned by
+// web/roadmap.js + cockpit.selftest.js's T3-* block before this wiring
+// landed). mapDerivedValue() below is the one place that translates.
+//
+//   - task:   checkbox done -> complete, UNCONDITIONALLY (never routed
+//             through the completion-oracle — the oracle answers "has this
+//             SHIPPED unit been deploy-verified", a question that applies at
+//             plan/intent granularity, not to an individual checkbox inside
+//             an unmerged plan; this matches the pinned contract's own
+//             task-level rule, unchanged by this wiring). Not done ->
+//             deriveItemStatus's not-done branch, real heartbeat-backed
+//             in-progress/stalled/unknown (this is the seam that lights up
+//             stalled + unknown at task granularity — the stub never emitted
+//             either).
 //   - plan:   plan file absent/unreadable -> unknown(reason) — NEVER a
-//             confident bucket (C5); all tasks done + NO deploy signal ->
-//             merged-unverified OUTSIDE complete (A4 binding rule; this stub
-//             has no oracle config, i.e. every project is `no-signal`);
-//             else in-progress / not-started from child counts.
-//   - intent: registry status done/merged -> complete (manual done is an
-//             override, LABELED); else rolled up from children.
-//   - stalled(reason) is NOT derived here (heartbeat + ledger inputs are
-//             task 1's); the renderer + roll-up plumbing below carry it the
-//             moment derive-lib emits it.
-// At merge, the block between STUB-STATUS-BEGIN/END is replaced by calls
-// into task 1's derive-lib exports (see the fragment file).
+//             confident bucket (C5), unchanged (plan-parse's own contract,
+//             not task 1's). All tasks done -> deriveItemStatus's done
+//             branch: the REAL per-project completion-oracle now decides
+//             complete vs merged-unverified (a configured project can now
+//             render true complete-PROVEN; an unconfigured one still renders
+//             merged-unverified, OUTSIDE complete — A4). Else: in-progress /
+//             not-started from child counts (tree-aggregation, unchanged —
+//             the ROLL-UP LAW, not this seam, is what surfaces a stalled/
+//             unknown descendant to a parent whose own status stays
+//             in-progress).
+//   - intent: registry status done/merged -> deriveItemStatus with
+//             overrideComplete:true (ALWAYS complete per derive-lib's own
+//             contract — A4's "manual done is always an override, labeled").
+//             All children shipped -> same oracle-backed done branch as
+//             plan-level. Else: rolled up from children (unchanged).
+//   - added_mid_build has NO derive-lib export (task 1 did not ship an
+//     insertion-marker data source) — stays `false` here, same as before
+//     this wiring; a real source is a future task's honest gap, not this
+//     one's (Chesterton's Fence: no mechanism invented for it here).
 
 const fs = require('fs');
 const path = require('path');
@@ -180,8 +216,18 @@ function classifyProvenance(reg) {
 }
 
 // ----------------------------------------------------------------------
-// STUB-STATUS-BEGIN (task-1 seam — see the header block)
+// Status derivation (task-1 seam — see the header block above)
 // ----------------------------------------------------------------------
+
+// mapDerivedValue(value) — the ONE enum-name translation (see header note):
+// derive-lib spells the merged-but-unverified state `merged-deploy-
+// unverified`; this route's pinned payload contract spells it
+// `merged-unverified`. Every other enum value is spelled identically in
+// both places (identity passthrough).
+function mapDerivedValue(value) {
+  return value === 'merged-deploy-unverified' ? 'merged-unverified' : value;
+}
+
 function statusObj(value, opts) {
   const o = opts || {};
   let label;
@@ -194,16 +240,45 @@ function statusObj(value, opts) {
   return { value: value, reason: o.reason || '', reason_class: o.reason_class || '', label: label, since: o.since || '' };
 }
 
-function deriveTaskNode(askId, slug, t, startedTs, doneTs, fromRequests) {
+// statusFromDerived(derived, opts) — wraps a REAL deriveLib.deriveItemStatus()
+// result ({status, reason, oracle_class?, overridden?}) into this route's
+// statusObj shape. A stalled item's `reason` IS its reason_class already
+// (deriveStalledReason's return value is always one of the four named
+// classes — see derive-lib.js) so no separate lookup is needed. `since` is
+// a view-only recency timestamp derive-lib does not carry — the caller
+// supplies it from its own knowledge of the relevant event timestamp.
+function statusFromDerived(derived, opts) {
+  const o = opts || {};
+  const value = mapDerivedValue(derived.status);
+  const reasonClass = derived.status === 'stalled' ? derived.reason : '';
+  const reason = derived.reason || (value === 'merged-unverified' ? 'no deploy signal for this project' : '');
+  return statusObj(value, {
+    reason: reason,
+    reason_class: reasonClass,
+    since: o.since || '',
+    override: !!derived.overridden,
+  });
+}
+
+function deriveTaskNode(askId, slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx) {
   let status;
   let completedAt = '';
   if (t.done) {
+    // Task-level completion is a plan-internal checkbox, never itself the
+    // shippable unit the completion-oracle judges — stays a simple,
+    // unconditional complete (see the header note).
     completedAt = doneTs[t.id] || '';
     status = statusObj('complete', { since: completedAt });
-  } else if (startedTs[t.id]) {
-    status = statusObj('in-progress', { since: startedTs[t.id] });
   } else {
-    status = statusObj('not-started', {});
+    const derived = deriveLib.deriveItemStatus({
+      done: false,
+      startedEvent: !!startedTs[t.id],
+      sessionIds: (sessionsByTask && sessionsByTask[t.id]) || [],
+      heartbeats: hbCtx.heartbeats,
+      heartbeatsStoreOk: hbCtx.heartbeatsStoreOk,
+      nowMs: hbCtx.nowMs,
+    });
+    status = statusFromDerived(derived, { since: startedTs[t.id] || '' });
   }
   return {
     id: askId + '/' + slug + '/' + t.id,
@@ -221,14 +296,21 @@ function deriveTaskNode(askId, slug, t, startedTs, doneTs, fromRequests) {
   };
 }
 
-function derivePlanNode(reg, slug, events, fromRequests) {
+function derivePlanNode(reg, slug, events, fromRequests, hbCtx) {
   const absPath = deriveLib.resolvePlanAbsPath(reg.repo, slug);
   const loaded = planParse.loadPlanFile(absPath);
   const startedTs = {}, doneTs = {};
+  const sessionsByTask = {};
   let latestActivity = '';
   events.forEach((e) => {
     if (!e || e.plan_slug !== slug || !e.task_id) return;
-    if (e.type === 'task_started') startedTs[e.task_id] = e.ts || '';
+    if (e.type === 'task_started') {
+      startedTs[e.task_id] = e.ts || '';
+      if (e.session_id) {
+        sessionsByTask[e.task_id] = sessionsByTask[e.task_id] || [];
+        if (sessionsByTask[e.task_id].indexOf(e.session_id) === -1) sessionsByTask[e.task_id].push(e.session_id);
+      }
+    }
     if (e.type === 'task_done') doneTs[e.task_id] = e.ts || '';
     if (e.ts && e.ts > latestActivity) latestActivity = e.ts;
   });
@@ -254,7 +336,7 @@ function derivePlanNode(reg, slug, events, fromRequests) {
     return node;
   }
   const tasks = loaded.tasks || [];
-  node.children = tasks.map((t) => deriveTaskNode(reg.ask_id, slug, t, startedTs, doneTs, fromRequests));
+  node.children = tasks.map((t) => deriveTaskNode(reg.ask_id, slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx));
   const total = tasks.length;
   const done = tasks.filter((t) => t.done).length;
   const anyInProgress = node.children.some((c) => c.status.value === 'in-progress');
@@ -265,9 +347,18 @@ function derivePlanNode(reg, slug, events, fromRequests) {
       ? statusObj('in-progress', { since: latestActivity })
       : statusObj('not-started', { since: reg.created_ts });
   } else if (done === total) {
-    // All checked, NO deploy signal (this stub has no oracle config —
-    // every project is the `no-signal` class): OUTSIDE Complete (A4).
-    node.status = statusObj('merged-unverified', { reason: 'no deploy signal for this project', since: latestDone });
+    // All checked: the REAL per-project completion-oracle decides complete
+    // vs merged-unverified (A4) — no live deploy-signal collector on a GET
+    // path (A6), so deployReadyAtMs is always null here.
+    const mergedAtMs = latestDone ? Date.parse(latestDone) : null;
+    const derived = deriveLib.deriveItemStatus({
+      done: true,
+      projectKey: reg.project,
+      mergedAtMs: isNaN(mergedAtMs) ? null : mergedAtMs,
+      deployReadyAtMs: null,
+      overrideComplete: false,
+    });
+    node.status = statusFromDerived(derived, { since: latestDone });
     node.completed_at = latestDone;
   } else if (anyInProgress || done > 0) {
     node.status = statusObj('in-progress', { since: latestActivity || latestDone });
@@ -277,11 +368,11 @@ function derivePlanNode(reg, slug, events, fromRequests) {
   return node;
 }
 
-function deriveIntentNode(reg, events) {
+function deriveIntentNode(reg, events, hbCtx) {
   const prov = classifyProvenance(reg);
   const title = reg.operator_title || reg.auto_title || reg.summary || reg.ask_id;
   const fromRequests = [{ id: reg.ask_id, title: title }];
-  const children = (reg.plan_slugs || []).map((slug) => derivePlanNode(reg, slug, events, fromRequests));
+  const children = (reg.plan_slugs || []).map((slug) => derivePlanNode(reg, slug, events, fromRequests, hbCtx));
   const node = {
     id: reg.ask_id,
     kind: 'intent',
@@ -304,10 +395,17 @@ function deriveIntentNode(reg, events) {
   if (total > 0) node.progress = { done: done, total: total };
 
   if (reg.status === 'done' || reg.status === 'merged') {
-    // Manual done is ALWAYS an override, labeled (A4). The stub cannot
-    // consult a completion oracle; task 1's derive-lib refines this into
-    // complete-PROVEN vs override at merge.
-    node.status = statusObj('complete', { since: reg.status_ts, override: true });
+    // Manual done is ALWAYS an override, labeled (A4) — overrideComplete:true
+    // guarantees derive-lib's done branch renders complete regardless of
+    // this project's configured oracle class.
+    const statusTsMs = reg.status_ts ? Date.parse(reg.status_ts) : null;
+    const derived = deriveLib.deriveItemStatus({
+      done: true,
+      projectKey: reg.project,
+      mergedAtMs: isNaN(statusTsMs) ? null : statusTsMs,
+      overrideComplete: true,
+    });
+    node.status = statusFromDerived(derived, { since: reg.status_ts });
     node.completed_at = reg.status_ts || '';
     return node;
   }
@@ -329,7 +427,15 @@ function deriveIntentNode(reg, events) {
     });
   } else if (allShipped) {
     const latest = knownChildren.map((c) => c.completed_at).sort().pop() || reg.status_ts;
-    node.status = statusObj('merged-unverified', { reason: 'no deploy signal for this project', since: latest });
+    const latestMs = latest ? Date.parse(latest) : null;
+    const derived = deriveLib.deriveItemStatus({
+      done: true,
+      projectKey: reg.project,
+      mergedAtMs: isNaN(latestMs) ? null : latestMs,
+      deployReadyAtMs: null,
+      overrideComplete: false,
+    });
+    node.status = statusFromDerived(derived, { since: latest });
     node.completed_at = latest || '';
   } else if (anyInProgress || done > 0) {
     const latestSince = children.map((c) => c.status.since || '').sort().pop() || '';
@@ -339,9 +445,6 @@ function deriveIntentNode(reg, events) {
   }
   return node;
 }
-// ----------------------------------------------------------------------
-// STUB-STATUS-END
-// ----------------------------------------------------------------------
 
 // computeRollUps(node) — bottom-up: one entry PER attention class present
 // in the subtree (delta R4 — precedence never selects), each {count,
@@ -371,13 +474,20 @@ function computeRollUps(node) {
 function buildRoadmapPayload() {
   const byAsk = foldRegistryForRoadmap();
   const overlay = readRankOverlay();
+  // Heartbeats read ONCE per request (derive-lib's own convention — see
+  // derive-lib.js's heartbeat section header) and handed to every item's
+  // derivation below; heartbeatsStoreOk distinguishes a genuinely-absent
+  // store (benign) from one that exists but could not be read (a real
+  // derivation-input failure — C5). Pure fs read, no spawn (A6).
+  const hbResult = deriveLib.listRawHeartbeatsResult();
+  const hbCtx = { heartbeats: hbResult.heartbeats, heartbeatsStoreOk: hbResult.ok, nowMs: Date.now() };
   const items = [];
   Object.keys(byAsk).forEach((askId) => {
     const reg = byAsk[askId];
     if (reg.status === 'dismissed') return; // off the roadmap entirely
     const events = deriveLib.readAskEvents(askId).slice()
       .sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-    const node = deriveIntentNode(reg, events);
+    const node = deriveIntentNode(reg, events, hbCtx);
     // effective rank: registry roadmap_rank record > overlay > none
     node.rank = (reg.roadmap_rank !== null && reg.roadmap_rank !== undefined) ? reg.roadmap_rank
       : (typeof overlay[askId] === 'number' ? overlay[askId] : null);
