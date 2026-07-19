@@ -52,6 +52,10 @@ const roadmapRoutes = require('./roadmap-routes.js');
 // (GET /api/requests, POST /api/requests/title, POST /api/requests/amend/detach,
 // GET /requests.js). Separate module; handle() returns true when it consumed the request.
 const requestsRoutes = require('./requests-routes.js');
+// cockpit-roadmap-redesign Task 4 — Inbox view routes (GET /api/inbox,
+// POST /api/inbox/dismiss, GET /inbox.js). Separate module; handle()
+// returns true when it consumed the request.
+const inboxRoutes = require('./inbox-routes.js');
 // cockpit-v2-push-materialized-store Task 4 — the "Peers" section on
 // GET /api/asks: a plain, no-fork/no-network READ of the local coord clone
 // (coord-sync.sh, Task 3, keeps it fresh out-of-band on its own cadence).
@@ -1075,6 +1079,7 @@ function lifecycleResultStatus(action) {
 const server = http.createServer((req, res) => {
   if (roadmapRoutes.handle(req, res)) return;
   if (requestsRoutes.handle(req, res)) return;
+  if (inboxRoutes.handle(req, res)) return;
   const parsedUrl = require('url').parse(req.url, true);
   const url = parsedUrl.pathname;
   const q = parsedUrl.query || {};
