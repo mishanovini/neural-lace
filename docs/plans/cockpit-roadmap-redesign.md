@@ -79,7 +79,7 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
 
 ## Tasks
 
-- [ ] 1. [serial] **Derived top-level status foundation.** Per-item status computed, never
+- [x] 1. [serial] **Derived top-level status foundation.** Per-item status computed, never
   declared. Fixes the done-renders-ACTIVE defect.
   - **Enum (C5):** not-started / in-progress / merged—deploy-unverified / complete /
     stalled(reason) / **unknown(reason)**. When any derivation input fails (plan-parse error,

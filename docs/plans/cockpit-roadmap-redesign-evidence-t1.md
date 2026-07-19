@@ -77,7 +77,19 @@ Non-blocking: add file:line cites to covered-edge bullets; ### sub-headings; one
 line for the readyMs>=shipMs equal-boundary (port-verbatim adjudicated correct).
 Checkbox NOT flipped. 7/7 covered-edge claims otherwise grounded; NOT-covered list honest.
 
-### task-verifier (Fable): pending
+### task-verifier (Fable): PASS, confidence 8
+All five suites re-derived green matching claimed tallies; five falsification probes survived;
+real-data livesmoke reproduced the defect fix; port byte-identical to work-in-motion-sweep
+(:394-398 — note: lives under scripts/, not server/). Residual R-1 resolved by the fix round;
+R-2 (no-spawn selftest pin) lands with task 3 GET route per plan Testing Strategy.
+
+### comprehension-reviewer DELTA (Fable): PASS, confidence 8 — checkbox flip authorized
+All 3 prior gaps PROVEN fixed at dd75fa5 (both-direction selftest pins re-run independently:
+derive-lib 56/56, oracle 19/19); no new divergence class (invalid propagates through roll-up
+as counted unknown badge, test 12). Two stale line-refs corrected in this file. Negative-env
+minutes observation filed via nl-issue (pre-existing, out of delta scope).
+
+TASK 1 DONE: both rung-3 gates PASS. Checkbox flipped by orchestrator on dual authorization.
 
 ## Fix round (2026-07-19, builder commit 71c30c4 → master)
 
@@ -102,10 +114,10 @@ classification.
 
 **Edge cases covered:** damaged/absent plan file → unknown (derive-lib.js:635-637);
 present-but-invalid heartbeat distinct from genuinely-absent → unknown vs stalled:crashed
-(:534-563, :669-676); corrupt record on one session never overrides real positive evidence
+(:534-563, :684-689, :698-701); corrupt record on one session never overrides real positive evidence
 on another (test 2g); store unreadable (ENOTDIR/EACCES) vs never-created (ENOENT)
 (:364-399); missing/non-boolean done → unknown while explicit done:false proceeds
-(:659-661, tests 7f-7h); DONE item never consults heartbeat evidence (test 7e); non-numeric
+(:642-644, tests 7f-7h); DONE item never consults heartbeat evidence (test 7e); non-numeric
 env override → default, explicit "0" honored as real override (:461-467, tests 18-19b).
 
 **Edge cases NOT covered:** two heartbeat files for one session id (writer's invariant, not
