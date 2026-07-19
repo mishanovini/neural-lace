@@ -1115,8 +1115,12 @@ async function main() {
     );
     fs.writeFileSync(operatorTodoPath, foreignText);
     const todoS37 = await todoGet();
-    ok('S37 NEGATIVE FIXTURE: GET /api/todo fails closed (500, diagnostic error) on a foreign line carrying a gate identifier, never leaking it',
-      todoS37.status === 500 && todoS37.json && todoS37.json.ok === false, JSON.stringify(todoS37.json));
+    ok('S37 (respec 2026-07-19): GET /api/todo stays AVAILABLE (200) on a foreign line carrying a gate identifier — the item renders WITH noise_flag:true (availability outranks lint; the add path S34 remains the rejecting control)',
+      todoS37.status === 200 && todoS37.json && todoS37.json.ok === true &&
+      (todoS37.json.operator_items || []).some((i) => i.noise_flag === true &&
+        /work-integrity-gate/.test(i.text)), JSON.stringify(todoS37.json && todoS37.json.operator_items));
+    ok('S37b clean items in the same payload carry NO noise_flag (per-item scoping, not payload-wide)',
+      (todoS37.json.operator_items || []).some((i) => !i.noise_flag), JSON.stringify((todoS37.json.operator_items||[]).map(i=>({t:i.text.slice(0,30),f:!!i.noise_flag}))));
 
     // ========================================================
     // Ask-rooted-workstreams-p1 Task 15 — "Backlog pane" scenarios (S40-49).

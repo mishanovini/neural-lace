@@ -1186,14 +1186,23 @@ const server = http.createServer((req, res) => {
       };
     });
 
-    const antiNoiseHit = operatorItemsOut.map((i) => i.text)
-      .concat(pointerItemsOut.map((p) => p.title))
-      .concat(pointerItemsOut.map((p) => p.body))
-      .map((s) => payloadSchema.containsDenylistedIdentifier(s))
-      .find(Boolean);
-    if (antiNoiseHit) {
-      return sendJson(res, 500, { ok: false, error: 'to-do payload failed the anti-noise check', operator_items: [], pointer_items: [] });
-    }
+    // Anti-noise, read path — RESPEC 2026-07-19 (was: whole-payload 500).
+    // The operator's to-do list legitimately quotes commands and script
+    // paths (harness-authored needs-you auto-lines literally say "run this
+    // installer") — a fail-closed 500 here nuked the ENTIRE list because
+    // one item mentioned a .ps1 path (live operator-visible outage,
+    // 2026-07-19). Availability outranks lint (same principle as the
+    // needs-you ledger's A1 ledger-never-rejects): noisy items now render
+    // WITH their text plus a per-item noise_flag; the UI shows a marker,
+    // never an empty pane. The ADD path (S34) remains the rejecting control
+    // point for model-authored noise.
+    operatorItemsOut.forEach((i) => {
+      if (payloadSchema.containsDenylistedIdentifier(i.text)) i.noise_flag = true;
+    });
+    pointerItemsOut.forEach((p) => {
+      if (payloadSchema.containsDenylistedIdentifier(p.title) ||
+          payloadSchema.containsDenylistedIdentifier(p.body)) p.noise_flag = true;
+    });
 
     return sendJson(res, 200, {
       ok: true,

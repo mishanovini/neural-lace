@@ -146,6 +146,15 @@
     var textSpan = document.createElement('span');
     textSpan.className = 'todo-item-text' + (item.checked ? ' todo-item-checked' : '');
     textSpan.textContent = item.text;
+    // Respec 2026-07-19: server flags (never withholds) items quoting
+    // internal identifiers — render a small text marker, never hide content.
+    if (item.noise_flag) {
+      var noiseMark = document.createElement('span');
+      noiseMark.className = 'todo-noise-flag';
+      noiseMark.textContent = ' ⚑ quotes internal identifiers';
+      noiseMark.title = 'This item quotes harness-internal command/script names. Rendered in full — flagged for awareness only.';
+      textSpan.appendChild(noiseMark);
+    }
     row.appendChild(textSpan);
 
     var editBtn = document.createElement('button');
