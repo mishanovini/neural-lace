@@ -314,16 +314,20 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   retired ask-p1 walkthrough) — Verification: full
 
 ## Files to Modify/Create
-`neural-lace/workstreams-ui/web/*` (shell + hash routing in app.js; all three views),
-`server/server.js` + `derive-lib.js` (status derivation incl. unknown + roll-up counts,
-work-item layer), a completion-oracle config (per-project classes; port source:
-`server/work-in-motion-sweep.js` deploy oracle), `server/auditor.js` (badge age-bound +
-quarantine auto-defect filing), `server/payload-schema.js`,
-`adapters/claude-code/scripts/needs-you.sh` (interactive-only lint block + `--mechanical`),
-`adapters/claude-code/scripts/ask-registry.sh` (amend verb, `title_source`, `roadmap_rank`),
-`adapters/claude-code/scripts/progress-log-lib.sh` + `ask-registry.sh` (dirty-marker at the
-writer-lib seam — NOT hook splices), `adapters/claude-code/scripts/coord-sync.sh` (debounce +
-full-cycle floor), a `config/people.js`-style hostname→person map (machine-local overrides).
+- `neural-lace/workstreams-ui/web/` — shell + hash routing in app.js; all three views + their
+  selftests
+- `neural-lace/workstreams-ui/server/` — server.js + derive-lib.js (status derivation incl.
+  unknown + roll-up counts, work-item layer), auditor.js (badge age-bound + quarantine
+  auto-defect filing), payload-schema.js, server.selftest.js; completion-oracle port source:
+  work-in-motion-sweep.js deploy oracle
+- `neural-lace/workstreams-ui/config/` — completion-oracle config (per-project classes) + a
+  `people.js`-style hostname→person map (machine-local overrides)
+- `adapters/claude-code/scripts/needs-you.sh` — interactive-only lint block + `--mechanical`
+- `adapters/claude-code/scripts/ask-registry.sh` — amend verb, `title_source`, timeline
+  candidate verbs, `roadmap_rank`, dirty-marker at the writer-lib seam
+- `adapters/claude-code/hooks/lib/progress-log-lib.sh` — dirty-marker at the writer-lib seam
+  (NOT hook splices)
+- `adapters/claude-code/scripts/coord-sync.sh` — debounce + full-cycle floor
 
 ## In-flight scope updates
 - 2026-07-19: docs/plans/cockpit-roadmap-redesign-evidence-t7.md — task 7 evidence +
@@ -370,6 +374,7 @@ full-cycle floor), a `config/people.js`-style hostname→person map (machine-loc
 - 2026-07-19: `neural-lace/workstreams-ui/server/roadmap-routes.js` — task 3 NEW route module (tasks 1/2 own server.js/derive-lib/ask-registry.sh; mount line ships as a fragment)
 - 2026-07-19: `neural-lace/workstreams-ui/server/roadmap-routes.selftest.js` — task 3 NEW sandboxed selftest (own file so task 1's server.selftest.js is never raced)
 - 2026-07-19: `docs/plans/fragments/roadmap-t3-server-fragment.md` — task 3 coordination fragment (server.js mount + task-1/2 seams)
+- 2026-07-19: `adapters/claude-code/hooks/workstreams-read.sh` — Task 2's A2 layer (a) capture splice extends the already-wired UserPromptSubmit ask-capture splice hosted in this hook (the task text mandates the splice; the files list omitted its host file). Same edit reformatted the files list above into gate-parseable bullets (scope-enforcement-gate structural error NO_PARSEABLE_ENTRIES was blocking every commit) — content-preserving; paths made repo-root-relative; no scope added beyond this entry.
 
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store

@@ -131,18 +131,60 @@
 # flat-JSON convention as progress-log-lib.sh / session-heartbeat-lib.sh:
 #
 #   {"ask_id":"...","record_type":"created|session_attached|plan_linked|
-#    status_change|merged|project_override|summary_updated",
+#    status_change|merged|project_override|summary_updated|
+#    amendment_candidate|candidate_classified|amended",
 #    "ts":"ISO-8601-UTC","user":"...","machine":"...",
 #    "repo":"...","project":"...","summary":"...","verbatim_ref":"...",
 #    "origin_session":"...","status":"active|done|dismissed|merged",
 #    "plan_slug":"...","session_id":"...","resumed_from":"...",
-#    "merged_into":"...","emitter":"..."}
+#    "merged_into":"...","emitter":"...",
+#    "title_source":"auto|operator|","candidate_id":"cand-...|",
+#    "classification":"pending|amendment|noise|detached|"}
+#
+# The last three fields are the cockpit-roadmap-redesign Task 2 (A2/A3/I6)
+# additions — always present, empty when not applicable; pre-existing
+# records simply lack them and readers MUST treat a missing `title_source`
+# as "auto" (legacy records are all machine-captured).
 #
 # FOLD CONTRACT (append-only; the file is NEVER rewritten — every mutation
 # is a NEW line): to compute an ask's CURRENT state, a reader iterates every
 # record for a given `ask_id` in timestamp order and, for EACH FIELD
 # independently, keeps the value from the MOST RECENT record in which that
 # field is NON-EMPTY ("last-write-wins per field, blanks never overwrite").
+#
+# TITLE PRECEDENCE EXCEPTION (A3 — BINDING on every reader): the `summary`
+# field (the item's TITLE) does NOT follow plain last-non-empty-wins.
+# Operator-sourced title records (`title_source:"operator"`) ALWAYS outrank
+# auto-sourced ones (`"auto"` or missing) REGARDLESS of timestamp — an
+# async distiller re-run landing after an operator edit must never clobber
+# it. Within the same source class, last-non-empty-wins as usual. Plain
+# last-non-empty-wins is PROVEN insufficient here: capture t0 -> operator
+# edit t1 -> async distiller lands t2>t1 would silently revert the
+# operator's own edit (the exact race the architecture review's F3 names).
+# The writer side also defends (see _ar_async_haiku_upgrade), but the fold
+# rule is the contract.
+#
+# AMENDMENT TIMELINE (A2 — three buildable layers, honestly labeled):
+#   (a) mechanical capture: `capture-candidate` appends EVERY operator
+#       prompt of an ask-attached session (post-first) as an
+#       `amendment_candidate` — transcript ref + minted candidate_id,
+#       NEVER the raw text; classification starts "pending".
+#   (b) classification: the SAME async off-hot-path LLM lane as the title
+#       distiller (gate: ASK_SUMMARIZER=haiku) appends a
+#       `candidate_classified` verdict (amendment + distilled label, or
+#       noise). A failed/absent classifier leaves the candidate PENDING —
+#       a named honest state, never a guess.
+#   (c) correction: operator `detach-candidate` (classification=detached,
+#       the I6 affordance) / `classify-candidate` re-marks; plus the
+#       explicit `amend` verb as the model-invoked supplement (labeled
+#       memory-dependent). Timeline fold: a candidate's CURRENT
+#       classification is the LATEST candidate_classified record for its
+#       candidate_id, else its birth "pending".
+# HONEST LIMIT (state this in UI copy where the timeline renders):
+# amendment detection is BEST-EFFORT classification, not a guarantee — no
+# hook sees intent (UserPromptSubmit carries raw text only), and the
+# `amend` verb fires only when a session remembers to call it.
+#
 # This is why `set-status`/`merge`/`link-plan`/`attach-session` leave
 # `repo`/`project`/`summary`/`verbatim_ref` blank on their own records rather
 # than re-stamping the calling process's cwd: those verbs may run from an
@@ -236,6 +278,13 @@ if [[ -f "$_AR_NLPATHS" ]]; then
 fi
 
 _AR_VALID_STATUSES=(active done dismissed merged)
+# Amendment-candidate classification vocabulary (cockpit-roadmap-redesign
+# Task 2, A2/I6): pending is the birth state stamped by capture-candidate
+# itself; these three are the only values classify-candidate accepts.
+#   amendment — the prompt changed/extended the ask's scope or direction
+#   noise     — conversational (acks, questions, tangents); hidden by default
+#   detached  — operator correction: "not an amendment" (I6 detach)
+_AR_VALID_CLASSIFICATIONS=(amendment noise detached)
 
 # ----------------------------------------------------------------------
 # ar_state_dir — resolve the ask-registry state directory per the order
@@ -397,8 +446,27 @@ _ar_haiku_summarize() {
 }
 
 # ----------------------------------------------------------------------
+# _ar_has_operator_title <ask_id> — 0 (true) when the registry already
+# holds an operator-sourced title record for this ask. Used by the async
+# distiller as a WRITER-SIDE defense (A3): the binding rule remains the
+# reader fold's operator-beats-auto precedence — this check just avoids
+# appending records the fold would discard anyway, and protects any legacy
+# reader that has not learned the precedence rule yet.
+# ----------------------------------------------------------------------
+_ar_has_operator_title() {
+  local ask_id="$1"
+  local f; f="$(ar_registry_file)"
+  [[ -f "$f" ]] || return 1
+  grep -q '"ask_id":"'"$(_ar_json_escape "$ask_id")"'".*"title_source":"operator"' "$f" 2>/dev/null
+}
+
+# ----------------------------------------------------------------------
 # _ar_async_haiku_upgrade <ask_id> <raw-text> — backgrounds the haiku call
 # + the follow-up registry append; NEVER blocks the calling `register`.
+# A3 (cockpit-roadmap-redesign Task 2): the upgrade record stamps
+# title_source=auto, and the append is SKIPPED entirely when an operator
+# title already exists — a distiller (re-)run must never clobber an
+# operator edit, regardless of timestamps.
 # ----------------------------------------------------------------------
 _ar_async_haiku_upgrade() {
   local ask_id="$1" text="$2"
@@ -406,8 +474,82 @@ _ar_async_haiku_upgrade() {
     local better
     better="$(_ar_haiku_summarize "$text")" || exit 0
     [[ -n "$better" ]] || exit 0
+    _ar_has_operator_title "$ask_id" && exit 0
     _ar_append_record "summary_updated" "$ask_id" "" "" "" "$better" \
-      "" "" "" "" "" "" "ask-registry-summarizer" >/dev/null
+      "" "" "" "" "" "" "ask-registry-summarizer" "auto" "" "" >/dev/null
+  ) >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------
+# _ar_gen_candidate_id — cand-<YYYYMMDDTHHMMSS>-<4hex>. Identity for one
+# timeline candidate row, so classification + operator correction (detach)
+# can reference it. Collisions are as harmless as ask-id collisions.
+# ----------------------------------------------------------------------
+_ar_gen_candidate_id() {
+  local ts_part; ts_part="$(date -u '+%Y%m%dT%H%M%S' 2>/dev/null || echo 'unknown')"
+  local rand
+  if [[ -r /dev/urandom ]]; then
+    rand="$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  else
+    rand="$(printf '%04x' "$RANDOM")"
+  fi
+  printf 'cand-%s-%s' "$ts_part" "$rand"
+}
+
+# ----------------------------------------------------------------------
+# _ar_classify_candidate_text <raw-text> — the classification half of the
+# SAME async off-hot-path LLM lane the title distiller uses (A2 layer (b)).
+# Prints EITHER "amendment: <one-line label>" OR "noise" on success; prints
+# nothing and returns non-zero on ANY failure — callers must treat failure
+# as "the candidate stays pending" (a named honest state), never crash.
+# Cheap-model-only, same as the summarizer (model-tiering directive).
+# Test-injection seam: _AR_CLASSIFY_CMD (self-test only; piped the raw
+# text on stdin) — production code paths never set this variable.
+# ----------------------------------------------------------------------
+_ar_classify_candidate_text() {
+  local text="$1"
+  local out=""
+  if [[ -n "${_AR_CLASSIFY_CMD:-}" ]]; then
+    out="$(printf '%s' "$text" | eval "$_AR_CLASSIFY_CMD" 2>/dev/null)"
+  elif command -v claude >/dev/null 2>&1; then
+    out="$(claude --model haiku -p "You label operator prompts inside an ongoing request thread. Reply with EXACTLY 'amendment: <one plain-text sentence label, max 140 chars>' if the prompt changes, extends, or re-scopes the ongoing request; reply with EXACTLY 'noise' if it is conversational (acknowledgement, question, status check, tangent that changes nothing). The prompt: $text" 2>/dev/null)"
+  else
+    printf ''
+    return 1
+  fi
+  out="$(_ar_strip_markdown "$out")"
+  [[ -n "$out" ]] || { printf ''; return 1; }
+  printf '%s' "$out"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# _ar_async_classify_candidate <ask_id> <candidate_id> <raw-text> —
+# backgrounds classification + the candidate_classified append; NEVER
+# blocks the calling `capture-candidate`. Unparseable model output (neither
+# an "amendment"-prefixed line nor "noise") degrades to pending — the
+# classifier writes a verdict record ONLY when it actually has one.
+# ----------------------------------------------------------------------
+_ar_async_classify_candidate() {
+  local ask_id="$1" candidate_id="$2" text="$3"
+  (
+    local verdict
+    verdict="$(_ar_classify_candidate_text "$text")" || exit 0
+    [[ -n "$verdict" ]] || exit 0
+    local lower; lower="$(printf '%s' "$verdict" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$lower" == amendment* ]]; then
+      local label=""
+      case "$verdict" in *:*) label="${verdict#*:}" ;; esac
+      label="$(printf '%s' "$label" | sed -E 's/^ +//; s/ +$//')"
+      label="$(_ar_truncate140 "$label")"
+      _ar_append_record "candidate_classified" "$ask_id" "" "" "" "$label" \
+        "" "" "" "" "" "" "ask-registry-classifier" "" "$candidate_id" "amendment" >/dev/null
+    elif [[ "$lower" == noise* ]]; then
+      _ar_append_record "candidate_classified" "$ask_id" "" "" "" "" \
+        "" "" "" "" "" "" "ask-registry-classifier" "" "$candidate_id" "noise" >/dev/null
+    fi
+    exit 0
   ) >/dev/null 2>&1 &
   disown 2>/dev/null || true
 }
@@ -507,15 +649,20 @@ _ar_resolve_project() {
 # _ar_append_record <record_type> <ask_id> <status> <repo> <project>
 #                    <summary> <verbatim_ref> <origin_session> <plan_slug>
 #                    <session_id> <resumed_from> <merged_into> <emitter>
+#                    [<title_source>] [<candidate_id>] [<classification>]
 #   The ONE writer every verb below calls: builds the flat JSON record,
 #   appends it to the primary registry file, and best-effort mirrors it
 #   (constraint 11). Never fails the caller. Prints the registry file path.
+#   The three TRAILING args are optional (cockpit-roadmap-redesign Task 2):
+#   existing 13-arg call sites keep working; the JSON always emits all 19
+#   fields (empty when not applicable — the flat all-fields convention).
 # ----------------------------------------------------------------------
 _ar_append_record() {
   local record_type="$1" ask_id="$2" status="$3" repo="$4" project="$5" \
         summary="$6" verbatim_ref="$7" origin_session="$8" plan_slug="$9"
   shift 9
   local session_id="$1" resumed_from="$2" merged_into="$3" emitter="$4"
+  local title_source="${5:-}" candidate_id="${6:-}" classification="${7:-}"
 
   local ts; ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo 'unknown')"
   local user machine
@@ -524,7 +671,7 @@ _ar_append_record() {
   machine="$(hostname 2>/dev/null || echo unknown)"
 
   local json
-  json="$(printf '{"ask_id":"%s","record_type":"%s","ts":"%s","user":"%s","machine":"%s","repo":"%s","project":"%s","summary":"%s","verbatim_ref":"%s","origin_session":"%s","status":"%s","plan_slug":"%s","session_id":"%s","resumed_from":"%s","merged_into":"%s","emitter":"%s"}' \
+  json="$(printf '{"ask_id":"%s","record_type":"%s","ts":"%s","user":"%s","machine":"%s","repo":"%s","project":"%s","summary":"%s","verbatim_ref":"%s","origin_session":"%s","status":"%s","plan_slug":"%s","session_id":"%s","resumed_from":"%s","merged_into":"%s","emitter":"%s","title_source":"%s","candidate_id":"%s","classification":"%s"}' \
     "$(_ar_json_escape "$ask_id")" "$(_ar_json_escape "$record_type")" "$ts" \
     "$(_ar_json_escape "$user")" "$(_ar_json_escape "$machine")" \
     "$(_ar_json_escape "$repo")" "$(_ar_json_escape "$project")" \
@@ -532,7 +679,8 @@ _ar_append_record() {
     "$(_ar_json_escape "$origin_session")" "$(_ar_json_escape "$status")" \
     "$(_ar_json_escape "$plan_slug")" "$(_ar_json_escape "$session_id")" \
     "$(_ar_json_escape "$resumed_from")" "$(_ar_json_escape "$merged_into")" \
-    "$(_ar_json_escape "$emitter")")"
+    "$(_ar_json_escape "$emitter")" "$(_ar_json_escape "$title_source")" \
+    "$(_ar_json_escape "$candidate_id")" "$(_ar_json_escape "$classification")")"
 
   local f dir
   f="$(ar_registry_file)"
@@ -595,9 +743,13 @@ cmd_register() {
 
   [[ -n "$ask_id" ]] || ask_id="$(_ar_gen_ask_id "$summary")"
 
+  # title_source=auto ALWAYS on created records: registration is machine
+  # capture (hooks) even when --summary is verbatim; the operator's own
+  # title path is `set-title`, which stamps operator (A3).
   local f
   f="$(_ar_append_record "created" "$ask_id" "active" "$repo" "$project" \
-    "$summary" "$verbatim_ref" "$session_id" "" "$session_id" "" "" "ask-registry")"
+    "$summary" "$verbatim_ref" "$session_id" "" "$session_id" "" "" "ask-registry" \
+    "auto" "" "")"
 
   if command -v pl_emit >/dev/null 2>&1; then
     pl_emit --type ask_registered --ask "$ask_id" --session-id "$session_id" \
@@ -691,14 +843,18 @@ cmd_set_status() {
 }
 
 # ----------------------------------------------------------------------
-# cmd_merge
+# cmd_merge — now accepts --emitter (cockpit-roadmap-redesign Task 2,
+# closing the follow-up server.js:1044-1050 documents: the UI's merge
+# delegation could not label itself operator-ui). Default stays
+# "ask-registry" so every existing flagless caller is byte-identical.
 # ----------------------------------------------------------------------
 cmd_merge() {
-  local ask_id="" into=""
+  local ask_id="" into="" emitter="ask-registry"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --ask-id) ask_id="${2:-}"; shift 2 ;;
       --into) into="${2:-}"; shift 2 ;;
+      --emitter) emitter="${2:-}"; shift 2 ;;
       *) shift ;;
     esac
   done
@@ -711,7 +867,169 @@ cmd_merge() {
     return 0
   fi
   _ar_append_record "merged" "$ask_id" "merged" "" "" "" "" "" "" "" "" \
-    "$into" "ask-registry"
+    "$into" "$emitter"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_set_title — the operator's title edit path (A3, round 3: auto-name
+# always, operator-editable always, no confirm ceremony). Appends a
+# summary_updated record with title_source=operator; the reader fold's
+# operator-beats-auto precedence makes this edit permanent against any
+# later distiller re-run. The UI's title edit MUST delegate here (the same
+# one-writer-implementation discipline as the lifecycle endpoint,
+# server.js runAskRegistryCli) — never write the registry directly.
+# ----------------------------------------------------------------------
+cmd_set_title() {
+  local ask_id="" title="" emitter="operator-ui"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ask-id) ask_id="${2:-}"; shift 2 ;;
+      --title) title="${2:-}"; shift 2 ;;
+      --emitter) emitter="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [[ -z "$ask_id" || -z "$title" ]]; then
+    echo "ask-registry.sh set-title: --ask-id and a non-empty --title are required (no-op; never blocks caller)" >&2
+    return 0
+  fi
+  title="$(_ar_truncate140 "$title")"
+  _ar_append_record "summary_updated" "$ask_id" "" "" "" "$title" "" "" "" \
+    "" "" "" "$emitter" "operator" "" ""
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_capture_candidate — A2 layer (a), mechanical capture: append one
+# operator prompt of an ask-attached session as a timeline CANDIDATE.
+# Stores the transcript ref + minted candidate_id ONLY — never the raw
+# text (the registry stays small). --text, when given, is handed to the
+# async classifier lane (layer (b)) and then discarded; classification
+# runs only under ASK_SUMMARIZER=haiku (the SAME gate as the title
+# distiller — one lane, one switch). Without it, the candidate stays
+# classification=pending: a named honest state, never a guess.
+# ----------------------------------------------------------------------
+cmd_capture_candidate() {
+  local ask_id="" candidate_id="" session_id="" verbatim_ref="" text=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ask-id) ask_id="${2:-}"; shift 2 ;;
+      --candidate-id) candidate_id="${2:-}"; shift 2 ;;
+      --session-id) session_id="${2:-}"; shift 2 ;;
+      --verbatim-ref) verbatim_ref="${2:-}"; shift 2 ;;
+      --text) text="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [[ -z "$ask_id" || -z "$verbatim_ref" ]]; then
+    echo "ask-registry.sh capture-candidate: --ask-id and --verbatim-ref are required (no-op; never blocks caller)" >&2
+    return 0
+  fi
+  [[ -n "$candidate_id" ]] || candidate_id="$(_ar_gen_candidate_id)"
+  _ar_append_record "amendment_candidate" "$ask_id" "" "" "" "" \
+    "$verbatim_ref" "" "" "$session_id" "" "" "ask-capture" \
+    "" "$candidate_id" "pending"
+  if [[ "${ASK_SUMMARIZER:-}" == "haiku" && -n "$text" ]]; then
+    _ar_async_classify_candidate "$ask_id" "$candidate_id" "$text"
+  fi
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_classify_candidate — A2 layers (b)+(c): the classification verdict
+# writer, used by the async lane (emitter=ask-registry-classifier) and by
+# operator corrections (emitter=operator-ui). Vocabulary-validated; the
+# LATEST candidate_classified record for a candidate_id wins at fold time.
+# ----------------------------------------------------------------------
+cmd_classify_candidate() {
+  local ask_id="" candidate_id="" classification="" summary="" emitter="operator-ui"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ask-id) ask_id="${2:-}"; shift 2 ;;
+      --candidate-id) candidate_id="${2:-}"; shift 2 ;;
+      --classification) classification="${2:-}"; shift 2 ;;
+      --summary) summary="${2:-}"; shift 2 ;;
+      --emitter) emitter="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [[ -z "$ask_id" || -z "$candidate_id" || -z "$classification" ]]; then
+    echo "ask-registry.sh classify-candidate: --ask-id, --candidate-id and --classification are required (no-op; never blocks caller)" >&2
+    return 0
+  fi
+  if ! _ar_in_list "$classification" "${_AR_VALID_CLASSIFICATIONS[@]}"; then
+    echo "ask-registry.sh classify-candidate: invalid --classification '$classification' (must be one of: amendment|noise|detached) — no-op, never blocks caller" >&2
+    return 0
+  fi
+  [[ -n "$summary" ]] && summary="$(_ar_truncate140 "$summary")"
+  _ar_append_record "candidate_classified" "$ask_id" "" "" "" "$summary" \
+    "" "" "" "" "" "" "$emitter" "" "$candidate_id" "$classification"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_detach_candidate — I6's detach affordance: operator marks an
+# auto-captured row "not an amendment". Thin wrapper over
+# classify-candidate (classification=detached); the correction record is
+# durable and available to future classifier improvement — today's
+# classifier does NOT consume it live (best-effort honesty, stated).
+# ----------------------------------------------------------------------
+cmd_detach_candidate() {
+  local ask_id="" candidate_id="" emitter="operator-ui"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ask-id) ask_id="${2:-}"; shift 2 ;;
+      --candidate-id) candidate_id="${2:-}"; shift 2 ;;
+      --emitter) emitter="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  cmd_classify_candidate --ask-id "$ask_id" --candidate-id "$candidate_id" \
+    --classification "detached" --emitter "$emitter"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_amend — A2 layer (c)'s explicit verb: the model-invoked supplement
+# for when a session KNOWS the conversation amended the ask (labeled
+# memory-dependent — it fires only when the model remembers to call it,
+# which is exactly why it supplements rather than replaces the mechanical
+# capture lane). Appends a first-class `amended` record: classification=
+# amendment at birth, label from --summary (verbatim, capped) or
+# heuristic-distilled from --text. Text is never stored raw.
+# ----------------------------------------------------------------------
+cmd_amend() {
+  local ask_id="" text="" summary="" session_id="" verbatim_ref="" emitter="model"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ask-id) ask_id="${2:-}"; shift 2 ;;
+      --text) text="${2:-}"; shift 2 ;;
+      --summary) summary="${2:-}"; shift 2 ;;
+      --session-id) session_id="${2:-}"; shift 2 ;;
+      --verbatim-ref) verbatim_ref="${2:-}"; shift 2 ;;
+      --emitter) emitter="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [[ -z "$ask_id" ]]; then
+    echo "ask-registry.sh amend: --ask-id is required (no-op; never blocks caller)" >&2
+    return 0
+  fi
+  local label=""
+  if [[ -n "$summary" ]]; then
+    label="$(_ar_truncate140 "$summary")"
+  elif [[ -n "$text" ]]; then
+    label="$(_ar_heuristic_summarize "$text")"
+  fi
+  if [[ -z "$label" ]]; then
+    echo "ask-registry.sh amend: one of --summary or --text (non-empty) is required (no-op; never blocks caller)" >&2
+    return 0
+  fi
+  local candidate_id; candidate_id="$(_ar_gen_candidate_id)"
+  _ar_append_record "amended" "$ask_id" "" "" "" "$label" \
+    "$verbatim_ref" "" "" "$session_id" "" "" "$emitter" \
+    "" "$candidate_id" "amendment"
   return 0
 }
 
@@ -1050,6 +1368,242 @@ cmd_selftest() {
   else
     fail "expected marker content to name record_type project_override, got: '$(cat "$q_marker" 2>/dev/null)'"
   fi
+  # ==========================================================================
+  # WORK-ITEM LAYER scenarios (cockpit-roadmap-redesign Task 2 — A2/A3/I6):
+  # titles with title_source precedence, amendment-candidate capture +
+  # async classification + operator correction, explicit amend verb.
+  # ==========================================================================
+
+  echo "Scenario Q: set-title appends a summary_updated record with title_source=operator (default emitter operator-ui)"
+  cmd_register --ask-id "ask-selftest-title" --summary "auto captured title" >/dev/null
+  cmd_set_title --ask-id "ask-selftest-title" --title "Operator renamed this item" >/dev/null
+  if grep -q '"ask_id":"ask-selftest-title".*"record_type":"summary_updated".*"summary":"Operator renamed this item".*"emitter":"operator-ui".*"title_source":"operator"' "$REG"; then
+    pass "set-title appended an operator-sourced summary_updated record"
+  else
+    fail "expected an operator-sourced summary_updated record for ask-selftest-title"
+  fi
+
+  echo "Scenario Q1: set-title with an EMPTY --title is a no-op (never a blank clobber record)"
+  before_lines=$(wc -l < "$REG" | tr -d ' ')
+  cmd_set_title --ask-id "ask-selftest-title" --title "" >/dev/null 2>&1
+  after_lines=$(wc -l < "$REG" | tr -d ' ')
+  if [[ "$before_lines" == "$after_lines" ]]; then
+    pass "set-title rejected an empty title (no new record)"
+  else
+    fail "expected no new record for an empty title, lines went $before_lines -> $after_lines"
+  fi
+
+  echo "Scenario Q2: created records stamp title_source=auto (registration is machine capture)"
+  if grep -q '"ask_id":"ask-selftest-title".*"record_type":"created".*"title_source":"auto"' "$REG"; then
+    pass "created record carries title_source=auto"
+  else
+    fail "expected the created record for ask-selftest-title to carry title_source=auto"
+  fi
+
+  echo "Scenario Q3: the async distiller's summary_updated records stamp title_source=auto"
+  if grep -q '"ask_id":"ask-selftest-haiku".*"record_type":"summary_updated".*"title_source":"auto"' "$REG"; then
+    pass "distiller upgrade record carries title_source=auto"
+  else
+    fail "expected ask-selftest-haiku's summary_updated record to carry title_source=auto"
+  fi
+
+  echo "Scenario Q4: a distiller re-run AFTER an operator title edit never appends (writer-side defense; fold precedence remains the binding rule)"
+  # Control leg first: the SAME async lane against an ask with NO operator
+  # title MUST append — proving the lane fires in this run, so the no-append
+  # assertion below discriminates the skip logic, not a dead lane.
+  _AR_HAIKU_CMD='cat'
+  cmd_register --ask-id "ask-selftest-title-ctl" --summary "control ask" >/dev/null
+  _ar_async_haiku_upgrade "ask-selftest-title-ctl" "control raw text for the distiller lane"
+  local q4_waited=0 q4_ctl=0
+  while [[ "$q4_waited" -lt 30 ]]; do
+    if grep -q '"ask_id":"ask-selftest-title-ctl".*"record_type":"summary_updated"' "$REG" 2>/dev/null; then
+      q4_ctl=1
+      break
+    fi
+    sleep 0.2
+    q4_waited=$((q4_waited + 1))
+  done
+  if [[ "$q4_ctl" == "1" ]]; then
+    pass "Q4 control: distiller lane appends for an ask WITHOUT an operator title"
+  else
+    fail "Q4 control: distiller lane never appended for the control ask — the no-append leg below cannot discriminate"
+  fi
+  before_lines=$(wc -l < "$REG" | tr -d ' ')
+  _ar_async_haiku_upgrade "ask-selftest-title" "some raw text the distiller would re-summarize"
+  sleep 3
+  unset _AR_HAIKU_CMD
+  after_lines=$(wc -l < "$REG" | tr -d ' ')
+  if [[ "$before_lines" == "$after_lines" ]]; then
+    pass "distiller re-run skipped the append because an operator title exists"
+  else
+    fail "distiller re-run appended over an operator title (lines $before_lines -> $after_lines)"
+  fi
+
+  echo "Scenario R: capture-candidate appends an amendment_candidate (classification=pending, minted cand- id, ref only — raw text NEVER stored)"
+  cmd_register --ask-id "ask-selftest-cand" --summary "candidate host ask" >/dev/null
+  cmd_capture_candidate --ask-id "ask-selftest-cand" --session-id "sess-cand-1" \
+    --verbatim-ref "/transcripts/t1.jsonl#1" \
+    --text "the raw follow-up prompt text that must never be persisted verbatim-marker-xyzzy" >/dev/null
+  if grep -q '"ask_id":"ask-selftest-cand".*"record_type":"amendment_candidate".*"verbatim_ref":"/transcripts/t1.jsonl#1".*"candidate_id":"cand-.*"classification":"pending"' "$REG"; then
+    pass "capture-candidate appended a pending amendment_candidate with a minted cand- id"
+  else
+    fail "expected a pending amendment_candidate record for ask-selftest-cand"
+  fi
+  if ! grep -q "verbatim-marker-xyzzy" "$REG"; then
+    pass "the candidate's raw prompt text was NOT persisted to the registry (refs only)"
+  else
+    fail "raw prompt text leaked into the registry file"
+  fi
+
+  echo "Scenario R2: ASK_SUMMARIZER=haiku classification lane marks a candidate amendment (async, with a distilled label)"
+  _AR_CLASSIFY_CMD='printf "amendment: scope grew to include the sidebar"'
+  ASK_SUMMARIZER=haiku cmd_capture_candidate --ask-id "ask-selftest-cand" \
+    --session-id "sess-cand-1" --verbatim-ref "/transcripts/t1.jsonl#2" \
+    --text "also please add the sidebar to the rebuild" >/dev/null
+  local r2_cid
+  r2_cid="$(grep '"verbatim_ref":"/transcripts/t1.jsonl#2"' "$REG" | sed -E 's/.*"candidate_id":"([^"]*)".*/\1/' | head -n1)"
+  local waited2=0 classified=0
+  while [[ "$waited2" -lt 30 ]]; do
+    if grep -q '"record_type":"candidate_classified".*"candidate_id":"'"$r2_cid"'".*"classification":"amendment"' "$REG" 2>/dev/null; then
+      classified=1
+      break
+    fi
+    sleep 0.2
+    waited2=$((waited2 + 1))
+  done
+  unset _AR_CLASSIFY_CMD
+  if [[ "$classified" == "1" ]] \
+     && grep -q '"record_type":"candidate_classified".*"summary":"scope grew to include the sidebar".*"candidate_id":"'"$r2_cid"'"' "$REG"; then
+    pass "async classifier appended candidate_classified (amendment + distilled label, emitter=ask-registry-classifier)"
+  else
+    fail "expected an async candidate_classified amendment record for candidate '$r2_cid'"
+  fi
+
+  echo "Scenario R3: classification lane marks conversational text noise"
+  _AR_CLASSIFY_CMD='printf "noise"'
+  ASK_SUMMARIZER=haiku cmd_capture_candidate --ask-id "ask-selftest-cand" \
+    --session-id "sess-cand-1" --verbatim-ref "/transcripts/t1.jsonl#3" \
+    --text "thanks, looks good so far" >/dev/null
+  local r3_cid
+  r3_cid="$(grep '"verbatim_ref":"/transcripts/t1.jsonl#3"' "$REG" | sed -E 's/.*"candidate_id":"([^"]*)".*/\1/' | head -n1)"
+  local waited3=0 noise=0
+  while [[ "$waited3" -lt 30 ]]; do
+    if grep -q '"record_type":"candidate_classified".*"candidate_id":"'"$r3_cid"'".*"classification":"noise"' "$REG" 2>/dev/null; then
+      noise=1
+      break
+    fi
+    sleep 0.2
+    waited3=$((waited3 + 1))
+  done
+  unset _AR_CLASSIFY_CMD
+  if [[ "$noise" == "1" ]]; then
+    pass "async classifier marked the conversational candidate noise"
+  else
+    fail "expected an async candidate_classified noise record for candidate '$r3_cid'"
+  fi
+
+  echo "Scenario R4: a FAILING classifier degrades silently — candidate stays honestly pending, no crash, no bad record"
+  _AR_CLASSIFY_CMD='false'
+  ASK_SUMMARIZER=haiku cmd_capture_candidate --ask-id "ask-selftest-cand" \
+    --session-id "sess-cand-1" --verbatim-ref "/transcripts/t1.jsonl#4" \
+    --text "this classification call will fail on purpose" >/dev/null
+  sleep 0.8
+  unset _AR_CLASSIFY_CMD
+  local r4_cid
+  r4_cid="$(grep '"verbatim_ref":"/transcripts/t1.jsonl#4"' "$REG" | sed -E 's/.*"candidate_id":"([^"]*)".*/\1/' | head -n1)"
+  if [[ -n "$r4_cid" ]] && ! grep -q '"record_type":"candidate_classified".*"candidate_id":"'"$r4_cid"'"' "$REG"; then
+    pass "failing classifier left the candidate pending (named honest state), no crash"
+  else
+    fail "expected candidate '$r4_cid' to remain pending after a failing classifier"
+  fi
+
+  echo "Scenario S: classify-candidate rejects an invalid classification vocabulary value (no-op)"
+  before_lines=$(wc -l < "$REG" | tr -d ' ')
+  cmd_classify_candidate --ask-id "ask-selftest-cand" --candidate-id "$r4_cid" \
+    --classification "bogus-class" >/dev/null 2>&1
+  after_lines=$(wc -l < "$REG" | tr -d ' ')
+  if [[ "$before_lines" == "$after_lines" ]]; then
+    pass "classify-candidate rejected invalid vocabulary (no new record)"
+  else
+    fail "expected no new record for an invalid classification, lines went $before_lines -> $after_lines"
+  fi
+
+  echo "Scenario S2: detach-candidate appends candidate_classified classification=detached emitter=operator-ui (I6 correction affordance)"
+  cmd_detach_candidate --ask-id "ask-selftest-cand" --candidate-id "$r2_cid" >/dev/null
+  if grep -q '"record_type":"candidate_classified".*"emitter":"operator-ui".*"candidate_id":"'"$r2_cid"'".*"classification":"detached"' "$REG"; then
+    pass "detach-candidate appended an operator detached correction record"
+  else
+    fail "expected a detached candidate_classified record for candidate '$r2_cid'"
+  fi
+
+  echo "Scenario T: amend verb appends a first-class amended record (classification=amendment, heuristic label from --text, minted cand- id)"
+  cmd_amend --ask-id "ask-selftest-cand" \
+    --text "**Also** migrate the settings pane. And keep the old URL working." \
+    --session-id "sess-cand-1" >/dev/null
+  if grep -q '"ask_id":"ask-selftest-cand".*"record_type":"amended".*"summary":"Also migrate the settings pane.".*"emitter":"model".*"candidate_id":"cand-.*"classification":"amendment"' "$REG"; then
+    pass "amend appended an amended record with the heuristic-distilled label (default emitter=model, labeled memory-dependent)"
+  else
+    fail "expected an amended record for ask-selftest-cand"
+  fi
+
+  echo "Scenario T2: amend with neither --text nor --summary is a no-op"
+  before_lines=$(wc -l < "$REG" | tr -d ' ')
+  cmd_amend --ask-id "ask-selftest-cand" >/dev/null 2>&1
+  after_lines=$(wc -l < "$REG" | tr -d ' ')
+  if [[ "$before_lines" == "$after_lines" ]]; then
+    pass "amend rejected an empty amendment (no new record)"
+  else
+    fail "expected no new record for an empty amend, lines went $before_lines -> $after_lines"
+  fi
+
+  echo "Scenario U: merge accepts --emitter (operator-ui label reaches the record; default stays ask-registry)"
+  cmd_register --ask-id "ask-selftest-mergesrc" --summary "merge emitter test" >/dev/null
+  cmd_merge --ask-id "ask-selftest-mergesrc" --into "ask-selftest-cand" --emitter "operator-ui" >/dev/null
+  if grep -q '"ask_id":"ask-selftest-mergesrc".*"record_type":"merged".*"emitter":"operator-ui"' "$REG"; then
+    pass "merge --emitter operator-ui stamped the record"
+  else
+    fail "expected a merged record with emitter=operator-ui for ask-selftest-mergesrc"
+  fi
+  if grep -q '"ask_id":"ask-selftest-dup".*"record_type":"merged".*"emitter":"ask-registry"' "$REG"; then
+    pass "merge without --emitter still defaults to ask-registry (Scenario H record unchanged)"
+  else
+    fail "expected the earlier flagless merge record to carry emitter=ask-registry"
+  fi
+
+  echo "Scenario V: PRODUCTION SHAPE — real flagless subprocess invocations (bash ask-registry.sh <verb>), full title+timeline pipeline"
+  local V_DIR="$TMP/prod-shape"
+  mkdir -p "$V_DIR/ar" "$V_DIR/pl"
+  local V_REG="$V_DIR/ar/ask-registry.jsonl"
+  local V_ENV=(ASK_REGISTRY_STATE_DIR="$V_DIR/ar" PROGRESS_LOG_STATE_DIR="$V_DIR/pl" \
+               ASK_REGISTRY_MIRROR_PATH="$V_DIR/mirror.jsonl" HARNESS_SELFTEST=0)
+  env "${V_ENV[@]}" bash "$SCRIPT_DIR/ask-registry.sh" register --ask-id "ask-prod-1" \
+    --text "Please rebuild the roadmap view. It must show statuses." --session-id "sess-prod" >/dev/null 2>&1
+  env "${V_ENV[@]}" bash "$SCRIPT_DIR/ask-registry.sh" set-title --ask-id "ask-prod-1" \
+    --title "Roadmap rebuild" >/dev/null 2>&1
+  env "${V_ENV[@]}" bash "$SCRIPT_DIR/ask-registry.sh" capture-candidate --ask-id "ask-prod-1" \
+    --session-id "sess-prod" --verbatim-ref "/t/prod.jsonl#1" --text "also add kanban" >/dev/null 2>&1
+  local v_cid
+  v_cid="$(grep '"record_type":"amendment_candidate"' "$V_REG" 2>/dev/null | sed -E 's/.*"candidate_id":"([^"]*)".*/\1/' | head -n1)"
+  env "${V_ENV[@]}" bash "$SCRIPT_DIR/ask-registry.sh" detach-candidate --ask-id "ask-prod-1" \
+    --candidate-id "$v_cid" >/dev/null 2>&1
+  env "${V_ENV[@]}" bash "$SCRIPT_DIR/ask-registry.sh" amend --ask-id "ask-prod-1" \
+    --summary "Scope: kanban toggle added" --session-id "sess-prod" >/dev/null 2>&1
+  local v_ok=1
+  grep -q '"record_type":"created".*"title_source":"auto"' "$V_REG" 2>/dev/null || v_ok=0
+  grep -q '"record_type":"summary_updated".*"summary":"Roadmap rebuild".*"title_source":"operator"' "$V_REG" 2>/dev/null || v_ok=0
+  grep -q '"record_type":"amendment_candidate".*"classification":"pending"' "$V_REG" 2>/dev/null || v_ok=0
+  grep -q '"record_type":"candidate_classified".*"classification":"detached"' "$V_REG" 2>/dev/null || v_ok=0
+  grep -q '"record_type":"amended".*"summary":"Scope: kanban toggle added"' "$V_REG" 2>/dev/null || v_ok=0
+  if [[ "$v_ok" == "1" ]]; then
+    pass "production-shape pipeline wrote the full expected record sequence (created/auto -> set-title/operator -> candidate/pending -> detached -> amended)"
+  else
+    fail "production-shape pipeline record sequence incomplete in $V_REG"
+  fi
+  if command -v jq >/dev/null 2>&1 && jq -e . "$V_REG" >/dev/null 2>&1; then
+    pass "production-shape registry file is valid JSONL end-to-end (jq)"
+  else
+    fail "production-shape registry file failed jq validation"
+  fi
 
   rm -rf "$TMP" 2>/dev/null || true
 
@@ -1096,6 +1650,31 @@ case "${1:-}" in
     cmd_override_project "$@"
     exit 0
     ;;
+  set-title)
+    shift
+    cmd_set_title "$@"
+    exit 0
+    ;;
+  capture-candidate)
+    shift
+    cmd_capture_candidate "$@"
+    exit 0
+    ;;
+  classify-candidate)
+    shift
+    cmd_classify_candidate "$@"
+    exit 0
+    ;;
+  detach-candidate)
+    shift
+    cmd_detach_candidate "$@"
+    exit 0
+    ;;
+  amend)
+    shift
+    cmd_amend "$@"
+    exit 0
+    ;;
   list)
     shift
     cmd_list "$@"
@@ -1125,10 +1704,30 @@ Verbs:
   set-status --ask-id <id> --status <active|done|dismissed|merged>
              [--emitter <name>]
                           Append a status change (rejects invalid vocabulary).
-  merge --ask-id <source-id> --into <target-id>
+  merge --ask-id <source-id> --into <target-id> [--emitter <name>]
                           Mark source as a duplicate of target.
   override-project --ask-id <id> --project <name>
                           Operator override of an ask's project grouping.
+  set-title --ask-id <id> --title <text> [--emitter <name>]
+                          Operator title edit (title_source=operator — ALWAYS
+                          outranks auto at fold time, regardless of
+                          timestamps; A3). UI edits delegate here.
+  capture-candidate --ask-id <id> --verbatim-ref <ref> [--candidate-id <id>]
+                    [--session-id <id>] [--text <raw>]
+                          Append one operator prompt as a timeline candidate
+                          (ref only, raw text never stored; classification=
+                          pending; async classify under ASK_SUMMARIZER=haiku).
+  classify-candidate --ask-id <id> --candidate-id <id>
+                     --classification <amendment|noise|detached>
+                     [--summary <label>] [--emitter <name>]
+                          Write a classification verdict (async lane or
+                          operator correction; rejects invalid vocabulary).
+  detach-candidate --ask-id <id> --candidate-id <id> [--emitter <name>]
+                          Operator "not an amendment" correction (I6).
+  amend --ask-id <id> (--summary <label> | --text <raw>) [--session-id <id>]
+        [--verbatim-ref <ref>] [--emitter <name>]
+                          Explicit first-class amendment (model-invoked
+                          supplement; labeled memory-dependent).
   list                    Print the raw registry JSONL (read-only).
   --self-test             Run the self-test suite (sandboxed, incl. a
                           from-worktree in-repo-mirror fixture).

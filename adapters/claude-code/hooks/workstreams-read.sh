@@ -161,9 +161,12 @@ _session_id() {
 }
 
 # ============================================================================
-# ASK-CAPTURE SPLICE (ask-rooted-workstreams-p1, Task 9a) — best-effort,
-# never-blocks registration of the FIRST operator prompt of a session as a
-# new ask (`scripts/ask-registry.sh register`). One-line splice into this
+# ASK-CAPTURE SPLICE (ask-rooted-workstreams-p1, Task 9a; EXTENDED by
+# cockpit-roadmap-redesign Task 2) — best-effort, never-blocks registration
+# of the FIRST operator prompt of a session as a new ask
+# (`scripts/ask-registry.sh register`), plus amendment-candidate capture of
+# every FURTHER prompt in an ask-attached session (`capture-candidate` —
+# see _ask_capture_candidate below). One-line splice into this
 # already-wired UserPromptSubmit hook per plan constraint 3 (SessionStart is
 # at its 8/8 cap; this hook is NOT SessionStart, so it needs zero new
 # settings.json entries either way — the capture point IS UserPromptSubmit,
@@ -239,6 +242,46 @@ _ask_capture_cwd() {
   printf '%s' "$c"
 }
 
+# ----------------------------------------------------------------------------
+# AMENDMENT-CANDIDATE CAPTURE (cockpit-roadmap-redesign Task 2, A2 layer (a)):
+# every operator prompt AFTER a session's first, in an ASK-ATTACHED session
+# (marker carries ask_id=), is appended to the ask registry as a timeline
+# CANDIDATE — transcript ref + prompt ordinal only, NEVER the raw text (the
+# registry stays small). The raw text is handed to ask-registry.sh solely for
+# the async off-hot-path classifier lane (ASK_SUMMARIZER=haiku — the same
+# gate as the title distiller), which marks candidates amendment/noise;
+# detection is BEST-EFFORT classification, never a guarantee (A2's honest
+# limit — no hook sees intent; UserPromptSubmit carries raw text only).
+# Spawned sessions and no-prompt-text-guarded sessions have no ask_id in
+# their marker and never produce candidates. The per-session `.count` file
+# beside the marker holds the last used ordinal (first follow-up prompt = 1;
+# the first-prompt register used offset 0).
+# ----------------------------------------------------------------------------
+_ask_capture_candidate() {
+  local input="$1" sid="$2" mdir="$3" marker="$4"
+  local mline; mline="$(head -n1 "$marker" 2>/dev/null)"
+  case "$mline" in *ask_id=*) : ;; *) return 0 ;; esac
+  local aid="${mline##*ask_id=}"
+  [[ -n "$aid" ]] || return 0
+  local prompt; prompt="$(_ask_capture_prompt_text "$input")"
+  [[ -n "$prompt" ]] || return 0   # no text -> no candidate, never fabricate
+  local ar_cli; ar_cli="$(_ask_registry_cli_path)"
+  [[ -f "$ar_cli" ]] || return 0
+
+  local cfile="$mdir/$sid.count" off=1
+  local prev; prev="$(head -n1 "$cfile" 2>/dev/null | tr -cd '0-9')"
+  [[ -n "$prev" ]] && off=$((prev + 1))
+  printf '%s\n' "$off" >"$cfile" 2>/dev/null || true
+
+  local tp; tp="$(_ask_capture_transcript_path "$input")"
+  local ref
+  if [[ -n "$tp" ]]; then ref="${tp}#${off}"; else ref="session:${sid}#${off}"; fi
+
+  bash "$ar_cli" capture-candidate --ask-id "$aid" --session-id "$sid" \
+    --verbatim-ref "$ref" --text "$prompt" >/dev/null 2>>"$LOG_FILE" || true
+  return 0
+}
+
 # _ask_capture_on_prompt <input-json> <session-id>
 _ask_capture_on_prompt() {
   local input="$1" sid="$2"
@@ -246,7 +289,12 @@ _ask_capture_on_prompt() {
 
   local mdir; mdir="$(_ask_capture_marker_dir)"
   local marker="$mdir/$sid.marker"
-  [[ -f "$marker" ]] && return 0   # guard: this session already handled
+  if [[ -f "$marker" ]]; then
+    # Session already handled by first-prompt capture: every FURTHER prompt
+    # of an ask-attached session is an amendment-timeline candidate (A2).
+    _ask_capture_candidate "$input" "$sid" "$mdir" "$marker"
+    return 0
+  fi
   mkdir -p "$mdir" 2>/dev/null || return 0
 
   # Classify via the shared predicate (best-effort: an unsourceable lib
@@ -815,6 +863,64 @@ _self_test() {
   ac1_reg_ask="$(jq -r 'select(.record_type=="created" and .session_id=="sess-ac1") | .ask_id' "$AC_REG" 2>/dev/null | head -n1)"
   _ck "AC4 marker ask_id == the registry 'created' record's ask_id (deterministic derivation used end-to-end, no drift between guard and register)" "$ac1_marker_ask" "$ac1_reg_ask"
   _ck_has "AC4 derived ask_id carries the ask-auto- deterministic prefix" "$ac1_reg_ask" "ask-auto-"
+
+  # ==========================================================================
+  # AMENDMENT-CANDIDATE CAPTURE scenarios (cockpit-roadmap-redesign Task 2,
+  # A2 layer (a)): every operator prompt AFTER a session's first, in an
+  # ask-attached session, lands as a registry timeline candidate — ref +
+  # ordinal only, never the raw text.
+  # ==========================================================================
+
+  # _fire_ask variant that also carries a transcript_path (the production
+  # UserPromptSubmit JSON shape) so the transcript#ordinal ref is exercised.
+  _fire_ask_tp() { # prompt session cwd transcript_path
+    local prompt="$1" sess="$2" cwd="$3" tp="$4"
+    printf '{"prompt":"%s","session_id":"%s","cwd":"%s","transcript_path":"%s","hook_event_name":"UserPromptSubmit"}' \
+      "$prompt" "$sess" "$cwd" "$tp" \
+      | ASK_CAPTURE_MARKER_DIR="$AC_MARKER_DIR" ASK_REGISTRY_STATE_DIR="$AC_AR_DIR" \
+        PROGRESS_LOG_STATE_DIR="$AC_PL_DIR" ASK_REGISTRY_MIRROR_PATH="$AC_MIRROR" \
+        DISPATCH_PROVENANCE_STATE_DIR="$AC_DP_DIR" \
+        CONV_TREE_STATE_PATH="$tmp/ac-unused-state.json" CONV_TREE_READ_CURSOR_DIR="$CDIR" \
+        CLAUDE_SESSION_ID="$sess" \
+        bash "$SELF" 2>/dev/null
+  }
+
+  echo "AC5: the SECOND prompt of an ask-attached session (AC2's fire) landed as an amendment_candidate (pending, ref+ordinal, session fallback ref shape)"
+  ac5_count="$(jq -sc '[.[] | select(.record_type=="amendment_candidate" and .session_id=="sess-ac1")] | length' "$AC_REG" 2>/dev/null)"
+  _ck "AC5 exactly one amendment_candidate exists for sess-ac1 after the AC2 second prompt" "$ac5_count" "1"
+  ac5_rec="$(jq -c 'select(.record_type=="amendment_candidate" and .session_id=="sess-ac1")' "$AC_REG" 2>/dev/null | head -n1)"
+  _ck_has "AC5 candidate is attached to the SAME derived ask" "$ac5_rec" "\"ask_id\":\"$ac1_reg_ask\""
+  _ck_has "AC5 candidate classification starts pending (named honest state)" "$ac5_rec" '"classification":"pending"'
+  _ck_has "AC5 candidate carries a minted cand- id" "$ac5_rec" '"candidate_id":"cand-'
+  _ck_has "AC5 candidate ref falls back to session:<sid>#<ordinal> when the JSON has no transcript_path" "$ac5_rec" '"verbatim_ref":"session:sess-ac1#1"'
+
+  echo "AC6: a THIRD prompt (with transcript_path) appends a second candidate with the transcript#2 ref and advances the ordinal counter"
+  _fire_ask_tp "please also wire the kanban toggle into the rebuild" "sess-ac1" "$tmp/ordinary/repo" "/transcripts/sess-ac1.jsonl" >/dev/null
+  ac6_count="$(jq -sc '[.[] | select(.record_type=="amendment_candidate" and .session_id=="sess-ac1")] | length' "$AC_REG" 2>/dev/null)"
+  _ck "AC6 second candidate appended (2 total)" "$ac6_count" "2"
+  ac6_ref="$(jq -r 'select(.record_type=="amendment_candidate" and .session_id=="sess-ac1") | .verbatim_ref' "$AC_REG" 2>/dev/null | tail -n1)"
+  _ck "AC6 second candidate ref is transcript_path#2 (ordinal advanced)" "$ac6_ref" "/transcripts/sess-ac1.jsonl#2"
+  ac6_cnt_file="$(cat "$AC_MARKER_DIR/sess-ac1.count" 2>/dev/null)"
+  _ck "AC6 ordinal counter file holds the last used ordinal" "$ac6_cnt_file" "2"
+
+  echo "AC7: the raw prompt text is NEVER persisted to the registry (refs only — the registry stays small)"
+  if ! grep -q "totally different follow-up" "$AC_REG" 2>/dev/null \
+     && ! grep -q "wire the kanban toggle" "$AC_REG" 2>/dev/null; then
+    echo "PASS: AC7 neither follow-up prompt's raw text appears in the registry"; pass=$((pass+1))
+  else
+    echo "FAIL: AC7 raw follow-up prompt text leaked into the registry file"; fail=$((fail+1))
+  fi
+
+  echo "AC8: a spawned session's follow-up prompts never produce candidates (marker has no ask_id)"
+  _fire_ask "a second prompt inside the spawned builder session" "sess-ac-spawned" "$tmp/main/.claude/worktrees/agent-xyz" >/dev/null
+  ac8_count="$(jq -sc '[.[] | select(.session_id=="sess-ac-spawned")] | length' "$AC_REG" 2>/dev/null)"
+  _ck "AC8 spawned session still has ZERO registry records after a follow-up prompt" "$ac8_count" "0"
+
+  echo "AC9: a no-prompt-text-guarded session (marker without ask_id) never produces candidates"
+  printf 'classification=operator,skipped=no-prompt-text\n' > "$AC_MARKER_DIR/sess-ac9.marker"
+  _fire_ask "a prompt in a session whose first prompt yielded no text" "sess-ac9" "$tmp/ordinary/repo" >/dev/null
+  ac9_count="$(jq -sc '[.[] | select(.session_id=="sess-ac9")] | length' "$AC_REG" 2>/dev/null)"
+  _ck "AC9 no candidate for the ask-less guarded session" "$ac9_count" "0"
 
   rm -rf "$tmp" 2>/dev/null || true
   echo "self-test: $pass passed, $fail failed"
