@@ -16,4 +16,5 @@ file are an append-only log, not removed when the ledger item resolves.
 _(add your own free-form to-do items in this section — never overwritten)_
 
 <!-- AUTO:START -->
+- [x] AUTO: question waiting on operator — "Register the NL-CoordSync scheduled task (4th installer, joins the 3 already on your to-do). WHAT: the cross-machine peer view just deployed to :7733 stays honestly empty until each machine publishes on the 600s cadence. DO (once, ~10s, from the main checkout on master): powershell -NoProfile -File adapters\claude-code\scripts\install-coord-sync-task.ps1 -RepoPath "C:\Users\misha\dev\Pocket Technician\neural-lace" — then the same on Jaime's machine. WHY YOURS: Task Scheduler mutation is permission-blocked for agent sessions." (needs-you `NY-1784327382-f3e8`, tier 3, session `unknown`) — see NEEDS-YOU.md
 <!-- AUTO:END -->
