@@ -13,7 +13,7 @@ Composed cockpit.selftest 146/0 on master. Gates: pending.
 - Renderer executed for real: BADGE-LAW-RENDER-BEGIN/END extraction into vm-sandboxed
   fake DOM (no jsdom dep) — behavior, not source-regex.
 
-## Rung-3 articulation (builder-authored, condensed)
+## Rung-3 articulation (ORIGINAL BUILD — SUPERSEDED by the fix-round articulation below; retained for audit only. The cap-not-suppress adjudication and the "redirect deferred" NOT-covered bullet were REVERSED by the fix round: the shipped code SUPPRESSES bookkeeping classes and builds the Harness Health count.)
 **Spec meaning:** one-chip-per-class cap at the renderer (plan 279-282 + proposal §5/D4),
 defense-in-depth vs the shipped auditor age-bound fix (0cb4f9b).
 **Edge cases covered:** 718-identical; mixed out-of-order; zero/undefined; legacy badge
@@ -51,7 +51,7 @@ below-cap (no phantom "+more"); cross-file class-list duplication drift (T6H-4 g
 **Edge cases NOT covered:** real click-through from the Harness Health count to a detail
 view (proposal copy has "→"; a dead arrow would violate the no-fake-affordance convention
 — flagged, not silently dropped).
-**Assumptions:** the classification (1 belief-changing vs 3 bookkeeping) is a decide-and-go
+**Assumptions:** divergence_class draws from the auditor's small fixed enum (auditor.js:27-36) — the chip-count bound relies on this data-shape premise (unranked classes default visible; a hypothetical unbounded class alphabet would unbound the chip row — surfaced per delta-gate note). The Harness Health count is deliberately non-clickable (no-fake-affordance: the spec asks only "counted"; a drill would owe the four-spec cross-view law) — deferred unless demand arises. The classification (1 belief-changing vs 3 bookkeeping) is a decide-and-go
 reading of §5 + the auditor's own table, not an enumerated list in the proposal —
 reversible. The drill-down body's own DOM footprint is capped at 51 elements regardless of
 upstream count — that is the ONLY invulnerable-by-construction claim made; it does not
