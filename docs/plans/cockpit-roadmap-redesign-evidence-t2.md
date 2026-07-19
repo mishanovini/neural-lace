@@ -49,5 +49,5 @@ title endpoint landed via t3-int; ASK_SUMMARIZER not set in production template
 (opt-in-dormant).
 
 ## Gate results
-### task-verifier: pending (Fable, in flight)
+### task-verifier (Fable): FAIL conf 9 — all 4 suites re-derived green (45/0, 56/0, 56/0, 168/0) + 6 probes; falsification succeeded ONCE: D1 amendment labels masquerade as titles (derive-lib.js:122 folds ANY non-empty summary as title-class; candidate_classified/amended stamp labels into summary) — latent (0 such records in production) but reachable on first amend. D2 (routed to task 3): roadmap-routes foldRegistryForRoadmap expects title_set shape NO writer produces; ignores title_source → operator title misreported auto + clobberable on /api/roadmap. Fix builder dispatched (sonnet build/roadmap-title-fold-fix): D1 = title fold restricted to created/summary_updated + pin + FOLD CONTRACT header; D2 = align roadmap-routes fold to summary_updated+title_source. Checkbox held for re-verify.
 ### comprehension-reviewer (Fable): FAIL conf 7 — 2 unconsidered-edge-class gaps (post-close capture continuation; splice/amend double-representation), both articulation-only; bullets added above per reviewer spec; 3a/3b/3d/3e all PASS. Delta re-gate: dispatched (opus).
