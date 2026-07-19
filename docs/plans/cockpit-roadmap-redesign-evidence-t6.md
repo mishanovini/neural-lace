@@ -28,5 +28,5 @@ bookkeeping" vs dispatch fixture "cap ×718" resolved as cap-not-suppress (suppr
 needs out-of-scope files) — ADJUDICATION FOR GATES TO CHECK.
 
 ## Gate results
-### task-verifier: pending
-### comprehension-reviewer: pending
+### task-verifier: pending (opus, in flight)
+### comprehension-reviewer (opus): FAIL conf 5 — 1 gap: drill-down eagerly renders one hidden div per badge (718 in fixture), unsurfaced reliance on upstream auditor age-bound; 'invulnerable by construction' overclaims. CODE fix chosen (cap + '+K more'): T6 builder resumed. Adjudication (cap-not-suppress) ruled SOUND, not scope-laundering.

@@ -48,5 +48,5 @@ rank overlay interim until registry roadmap_rank records exist (precedence regis
 by construction).
 
 ## Gate results
-### task-verifier: pending
-### comprehension-reviewer: pending
+### task-verifier: pending (Fable, in flight)
+### comprehension-reviewer (Fable): FAIL conf 6 — 2 narrow PROVEN residuals, CODE-direction fixes dispatched (sonnet build/roadmap-t3-fix): (1) open-but-unfocused title editor wiped by 30s tick (capture predicate → querySelector, not activeElement); (2) hash id decode-without-encode asymmetry (% URIError; encode at 3 generation sites). All heavyweight probes ruled FAITHFUL (task-done oracle granularity, mapDerivedValue seam, added_mid_build). 5 non-blocking notes in reviewer transcript.

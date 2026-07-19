@@ -61,5 +61,5 @@ inherit the marker; peer-view 80min window stays valid at any floor ≤ 60min ke
 
 ## Gate results
 
-### task-verifier: pending
-### comprehension-reviewer: pending
+### task-verifier: pending (Fable, in flight). NOTE: harness-review F1 (coord-sync × coord-push throttle composition defeats A5 ~1-min publish + starves A2c alert streak; suites masked via THROTTLE=0) = defect in this task's goal — fix dispatched (sonnet build/harness-reform-f123: coord-push push --force in _run_cycle + throttle-ACTIVE scenarios + outcome word throttled). Checkbox HELD until F1 lands regardless of verifier verdict.
+### comprehension-reviewer DELTA (Fable): PASS conf 8 — both prior gaps resolved, 6/6 citations grounded, flip authorized from comprehension side.

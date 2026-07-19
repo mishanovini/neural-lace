@@ -34,7 +34,7 @@ title/amend no-ops; invalid classification vocabulary rejected; classifier failu
 pending, no record; label-less "amendment" verdict; spawned/no-text sessions never produce
 candidates; transcript-less ref fallback session:<sid>#<n>; ordinal advance; raw-text
 non-persistence; legacy records fold as auto; flagless-merge emitter unchanged.
-**NOT covered:** concurrent same-second appends (O_APPEND-safe, ts-tie fold order
+**NOT covered:** capture continues after ask close/merge — the marker is never invalidated; candidates/classifications land on closed asks by append-only design; task-5 timeline rendering must decide how post-'became →' rows display. A prompt that the model also amends explicitly yields TWO timeline rows (candidate + amended); no dedupe/linkage — correction is manual detach; task-5 render decision pending. Also: concurrent same-second appends (O_APPEND-safe, ts-tie fold order
 unpinned); real-model output quality; detach feeding future classification (records
 durable, no live loop); mirror divergence under partial write.
 **Assumptions:** registry consumers tolerate 3 additive JSON fields (verified for
@@ -49,5 +49,5 @@ title endpoint landed via t3-int; ASK_SUMMARIZER not set in production template
 (opt-in-dormant).
 
 ## Gate results
-### task-verifier: pending
-### comprehension-reviewer: pending
+### task-verifier: pending (Fable, in flight)
+### comprehension-reviewer (Fable): FAIL conf 7 — 2 unconsidered-edge-class gaps (post-close capture continuation; splice/amend double-representation), both articulation-only; bullets added above per reviewer spec; 3a/3b/3d/3e all PASS. Delta re-gate: dispatched (opus).
