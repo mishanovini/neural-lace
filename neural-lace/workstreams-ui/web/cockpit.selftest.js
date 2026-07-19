@@ -294,8 +294,8 @@ ok('T13-24 task-status chips render textContent from a label map (text + color, 
   /chip\.textContent = TASK_STATUS_LABEL\[status\]/.test(asksJs));
 ok('T13-25 session heartbeat-state chips render textContent from a label map (text + color, never color-only)',
   /chip\.textContent = HB_STATE_LABEL\[st\] \|\| st/.test(asksJs));
-ok('T13-26 drift badges render as real <summary> elements with visible text (never color-only), forward-compatible with Task 12',
-  /sum\.className = 'chip ask-badge'/.test(asksJs) && /sum\.textContent = String\(label\)/.test(asksJs));
+ok('T13-26 drift badges render as real <summary> elements with visible text (never color-only) — updated by cockpit-roadmap-redesign Task 6 to the class+count label (was String(label))',
+  /sum\.className = 'chip ask-badge'/.test(asksJs) && /sum\.textContent = cls \+ ' ×' \+ members\.length/.test(asksJs));
 ok('T13-27 session-id copy affordance carries the mandated resume microcopy verbatim',
   /copy session id — resume with `claude --resume ' \+ s\.session_id \+ '`/.test(asksJs));
 
@@ -319,6 +319,115 @@ ok('T13-30 every flex-styled element asks.js toggles via .hidden has an explicit
   /\.ask-lifecycle-actions\[hidden\][^{]*\{[^}]*display:\s*none/.test(C) &&
   /\.ask-merge-chooser\[hidden\][^{]*\{[^}]*display:\s*none/.test(C) &&
   /\.ask-feedback-row\[hidden\][^{]*\{[^}]*display:\s*none/.test(C));
+
+// ============================================================
+// cockpit-roadmap-redesign Task 6 — "Badge law + badge-storm fix" (the
+// renderer half; the auditor half already shipped, commit 0cb4f9b).
+// PRODUCTION DEFECT (docs/reviews/2026-07-17-cockpit-ux-redesign-proposal.md
+// D4/§5, badge-storm nl-issue): 718 identical unmatched_dispatch badges
+// rendered as 718 unlabeled "drift" chips (asks.js:213-238 pre-fix) —
+// renderDriftBadges had no grouping/cap/dedup at all.
+//
+// Every other check in this file is DOM-free source-text regex (by design —
+// see the file header). That technique can prove the SHAPE of the fix
+// (a grouping construct exists) but cannot prove the fixture claim the plan
+// makes ("718 badges -> exactly ONE counted chip") — that requires actually
+// running the real function against fixture data and reading the output.
+// So this section sandboxes the ACTUAL renderDriftBadges source (extracted
+// verbatim between the BADGE-LAW-RENDER-BEGIN/END anchors in asks.js — not
+// a reimplementation) inside a minimal hand-rolled fake DOM via Node's
+// built-in `vm` module, staying dependency-free (no jsdom/headless browser,
+// preserving this file's "no build step" property).
+// ============================================================
+const vmMod = require('vm');
+const badgeLawSrc = (function () {
+  const beginMarker = '// BADGE-LAW-RENDER-BEGIN';
+  const endMarker = '// BADGE-LAW-RENDER-END';
+  const bi = asksJs.indexOf(beginMarker);
+  const ei = asksJs.indexOf(endMarker);
+  if (bi === -1 || ei === -1 || ei < bi) return null;
+  return asksJs.slice(bi, ei);
+})();
+ok('T6-0 selftest can locate the BADGE-LAW-RENDER extraction anchors in asks.js (source-execution harness precondition)',
+  !!badgeLawSrc);
+
+function makeFakeDom() {
+  function FakeNode(tag) {
+    this.tagName = tag;
+    this.className = '';
+    this._text = '';
+    this.children = [];
+  }
+  Object.defineProperty(FakeNode.prototype, 'textContent', {
+    get: function () { return this._text; },
+    set: function (v) { this._text = v; this.children = []; },
+  });
+  FakeNode.prototype.appendChild = function (c) { this.children.push(c); return c; };
+  return { createElement: function (tag) { return new FakeNode(tag); } };
+}
+function runBadgeLaw(badgesArray) {
+  if (!badgeLawSrc) return { __error: 'extraction anchors missing' };
+  const sandbox = { document: makeFakeDom() };
+  vmMod.createContext(sandbox);
+  const code = badgeLawSrc + '\nvar __result = renderDriftBadges(' + JSON.stringify(badgesArray === undefined ? null : badgesArray) + ');';
+  try {
+    vmMod.runInContext(code, sandbox);
+  } catch (err) {
+    return { __error: String(err) };
+  }
+  return sandbox.__result;
+}
+function chipLabels(wrapNode) {
+  return (wrapNode && wrapNode.children ? wrapNode.children : []).map((det) => det.children[0].textContent);
+}
+
+// --- fixture: 718 identical unmatched_dispatch badges (the exact live
+// production count, PROVEN in commit 0cb4f9b's message) --------------------
+const fixture718 = [];
+for (let i = 0; i < 718; i++) {
+  fixture718.push({
+    divergence_class: 'unmatched_dispatch',
+    message: 'a task-started update for task ' + i + ' has no matching dispatch record',
+    detail_ref: 'drift-ask-x-unmatched-dispatch-plan-x-' + i,
+    plan_slug: 'plan-x',
+    task_id: String(i),
+  });
+}
+const result718 = runBadgeLaw(fixture718);
+ok('T6-1 718 identical unmatched_dispatch badges render as exactly ONE chip labeled "unmatched_dispatch ×718" (badge-storm regression fixture)',
+  result718 && result718.children && result718.children.length === 1 && chipLabels(result718)[0] === 'unmatched_dispatch ×718',
+  JSON.stringify(chipLabels(result718)));
+ok('T6-2 the one chip\'s drill-down list carries all 718 underlying badge lines on demand (never truncated, never lost)',
+  result718 && result718.children && result718.children[0].children[1].children.length === 718,
+  result718 && result718.children && result718.children[0].children[1].children.length);
+
+// --- fixture: mixed classes, ONE PER CLASS, deliberately submitted OUT OF
+// precedence order — proves the renderer SORTS (precedence), not just
+// echoes insertion order. ---------------------------------------------------
+const mixedInput = [
+  { divergence_class: 'unknown_provenance', message: 'an update came from an unrecognized source and is shown for review only', de_emphasize: true },
+  { divergence_class: 'orphaned_waiting_item', message: 'a waiting-on-you update references a decision that could not be found' },
+  { divergence_class: 'unmatched_dispatch', message: 'a task-started update for task 9 has no matching dispatch record' },
+  { divergence_class: 'log_ahead_task_not_flipped', message: 'the progress log shows task 2 verified done, but the plan file still shows it open' },
+];
+const resultMixed = runBadgeLaw(mixedInput);
+ok('T6-3 mixed classes render ONE chip EACH, precedence-ordered (log_ahead_task_not_flipped > unmatched_dispatch > orphaned_waiting_item > unknown_provenance, per auditor.js\'s own divergence-class table order) regardless of input order',
+  JSON.stringify(chipLabels(resultMixed)) === JSON.stringify([
+    'log_ahead_task_not_flipped ×1', 'unmatched_dispatch ×1', 'orphaned_waiting_item ×1', 'unknown_provenance ×1',
+  ]),
+  JSON.stringify(chipLabels(resultMixed)));
+
+// --- fixture: zero badges -> NO chip, never an empty container ------------
+ok('T6-4 zero badges (empty array) renders null, not an empty wrapping <span> (the pre-fix code always appended an empty container)',
+  runBadgeLaw([]) === null);
+ok('T6-4b zero badges (drift_badges omitted/undefined, the pre-Task-12 shape) also renders null',
+  runBadgeLaw(undefined) === null);
+
+// --- the live ask-card call site must only append the drift-badges node
+// when non-null (source-text check: the DOM-execution fixtures above prove
+// the FUNCTION's contract; this proves the CALL SITE honors it). -----------
+ok('T6-5 the ask-card call site only appends the drift-badges node when non-null (never wires an empty container into the live card)',
+  /var driftBadgesNode = renderDriftBadges\(ask\.drift_badges\);\s*\n\s*if \(driftBadgesNode\) statusRow\.appendChild\(driftBadgesNode\);/.test(asksJs));
 
 // ============================================================
 // ask-rooted-workstreams-p1 Task 16 — "Layout integration + Harness Health
@@ -391,7 +500,7 @@ const badgeInvariants = [
   ['doctor-red', js, /chip\.textContent = doctor\.verdict/],
   ['health-gate-flag', js, /flag\.textContent = 'waiver-dominant'/],
   ['costs-status-stale', js, /statusTd\.textContent = st/],
-  ['ask-badge', asksJsNoComments, /sum\.textContent = String\(label\)/],
+  ['ask-badge', asksJsNoComments, /sum\.textContent = cls \+ ' ×' \+ members\.length/],
   ['ask-task-status', asksJsNoComments, /chip\.textContent = TASK_STATUS_LABEL\[status\]/],
   ['backlog-badge', backlogJs, /badge\.textContent = row\.disposition_word/],
 ];

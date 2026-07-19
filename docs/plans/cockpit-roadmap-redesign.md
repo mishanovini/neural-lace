@@ -386,6 +386,8 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   the http.createServer handler). No other in-scope change to this entry;
   `server/auditor.js` / `server/payload-schema.js` remain unreconciled for
   whichever task next stages those two.
+- 2026-07-19: `neural-lace/workstreams-ui/web/asks.js` — task 6 badge-law renderer fix (already covered by task 3's `web/*` glob entry above; named explicitly here so task 6's commit is unambiguously attributed and doesn't depend on a different task's entry)
+- 2026-07-19: `neural-lace/workstreams-ui/web/cockpit.selftest.js` — task 6 badge-multiplicity fixture tests (T6-0..T6-5), same attribution note as the asks.js entry above
 
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store

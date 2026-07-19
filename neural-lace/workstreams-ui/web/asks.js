@@ -207,35 +207,104 @@
   }
 
   // ============================================================
-  // drift badges (Task 12 populates; always [] until it lands — the
-  // affordance is built now so no later migration is needed).
+  // drift badges (Task 12 populates the array; cockpit-roadmap-redesign
+  // Task 6 is the BADGE LAW at this renderer — defense in depth alongside
+  // the auditor's own age-bound fix, commit 0cb4f9b).
+  //
+  // PROVEN production defect (badge-storm nl-issue, docs/reviews/
+  // 2026-07-17-cockpit-ux-redesign-proposal.md D4/§5): the auditor emitted
+  // 718 `unmatched_dispatch` badges for one ask, and this function rendered
+  // 718 unlabeled "drift" chips (one <details> PER BADGE, falling through to
+  // a hardcoded literal because badges carry `divergence_class`, not
+  // label/type/note). The auditor-side over-emission is fixed upstream
+  // (commit 0cb4f9b ages out unmatched_dispatch past the marker-retention
+  // horizon) — this half is the renderer's OWN invariant, invulnerable to
+  // any future upstream emission bug by construction (§5: "the presentation
+  // layer must be invulnerable to upstream emission bugs by construction").
+  //
+  // THE LAW: at most ONE counted, labeled chip PER divergence_class, ever —
+  // never one chip per badge instance. Precedence orders DISPLAY ONLY (a
+  // higher-precedence class never masks a lower one — every class present
+  // gets its own chip; same "precedence orders, never selects" law as the
+  // roadmap roll-up badges, task 1/3's separate mechanism for a different
+  // surface). Precedence follows the divergence-class table's own top-to-
+  // bottom order (server/auditor.js:27-36, decreasing authority-clarity):
+  // a log claiming done when the plan file disagrees is a direct
+  // contradiction of recorded truth; an unmatched dispatch record is a
+  // bookkeeping gap; an orphaned waiting item is a ledger-truth gap; unknown
+  // provenance is source-unverified (already de-emphasized in the UI, Class
+  // H) and sorts last. Zero badges renders NO chip and no wrapping
+  // container (never an empty <span> — the call site below only appends
+  // when this returns non-null).
   // ============================================================
+  // BADGE-LAW-RENDER-BEGIN (selftest extraction anchor — cockpit.selftest.js
+  // sandboxes exactly this block, verbatim, against fixture badge arrays to
+  // prove the RENDERED OUTPUT of the real function, not a reimplementation.
+  // Keep this block self-contained between the BEGIN/END anchors: no
+  // reference to anything outside it except the global `document`.)
+  var DIVERGENCE_CLASS_PRECEDENCE = [
+    'log_ahead_task_not_flipped',
+    'unmatched_dispatch',
+    'orphaned_waiting_item',
+    'unknown_provenance',
+  ];
+  function divergenceClassRank(cls) {
+    var i = DIVERGENCE_CLASS_PRECEDENCE.indexOf(cls);
+    return i === -1 ? DIVERGENCE_CLASS_PRECEDENCE.length : i; // unknown/future classes sort last, never crash
+  }
   function renderDriftBadges(badges) {
+    var list = badges || [];
+    if (!list.length) return null; // zero badges -> no chip, never an empty container
+
+    // group by divergence_class (a badge with no class at all — legacy/
+    // malformed — groups under the literal 'drift' fallback rather than
+    // being dropped silently).
+    var groups = {};
+    var order = [];
+    list.forEach(function (b) {
+      var cls = (b && b.divergence_class) || 'drift';
+      if (!groups[cls]) { groups[cls] = []; order.push(cls); }
+      groups[cls].push(b);
+    });
+    order.sort(function (a, c) {
+      var ra = divergenceClassRank(a), rc = divergenceClassRank(c);
+      if (ra !== rc) return ra - rc;
+      return a < c ? -1 : (a > c ? 1 : 0); // stable, deterministic tiebreak for unranked classes
+    });
+
     var wrap = document.createElement('span');
     wrap.className = 'ask-badges-row';
-    (badges || []).forEach(function (b) {
-      var label = (b && (b.label || b.type || b.note)) || 'drift';
+    order.forEach(function (cls) {
+      var members = groups[cls];
       var det = document.createElement('details');
       det.className = 'ask-badge-details';
       var sum = document.createElement('summary');
       sum.className = 'chip ask-badge';
-      sum.textContent = String(label); // text + color (a11y baseline) — never color-only
+      sum.textContent = cls + ' ×' + members.length; // ONE counted, labeled chip per class (text + color, never color-only)
       det.appendChild(sum);
       var body = document.createElement('div');
       body.className = 'ask-badge-detail-body';
-      // Task 12 hasn't defined the divergence-detail shape yet — render
-      // whatever fields the badge object carries rather than guessing one.
-      var lines = [];
-      Object.keys(b || {}).forEach(function (k) {
-        if (k === 'label' || k === 'type') return;
-        lines.push(k + ': ' + String(b[k]));
+      // drill-down list on demand: one line per underlying badge instance in
+      // this class, on expand — Task 12 hasn't defined the divergence-detail
+      // shape beyond divergence_class, so render whatever fields the badge
+      // object carries rather than guessing a schema.
+      members.forEach(function (b) {
+        var line = document.createElement('div');
+        line.className = 'ask-badge-detail-line';
+        var lines = [];
+        Object.keys(b || {}).forEach(function (k) {
+          if (k === 'divergence_class') return;
+          lines.push(k + ': ' + String(b[k]));
+        });
+        line.textContent = lines.length ? lines.join(' · ') : 'divergence detail not yet available';
+        body.appendChild(line);
       });
-      body.textContent = lines.length ? lines.join(' · ') : 'divergence detail not yet available';
       det.appendChild(body);
       wrap.appendChild(det);
     });
     return wrap;
   }
+  // BADGE-LAW-RENDER-END
 
   // ============================================================
   // detail fetch — memoized per ask id so the verbatim reveal and the
@@ -846,7 +915,8 @@
       });
       statusRow.appendChild(waitBtn);
     }
-    statusRow.appendChild(renderDriftBadges(ask.drift_badges));
+    var driftBadgesNode = renderDriftBadges(ask.drift_badges);
+    if (driftBadgesNode) statusRow.appendChild(driftBadgesNode); // null when zero badges -> never an empty container
     card.appendChild(statusRow);
 
     card.appendChild(renderLifecycleRow(ask, isCompleted, onMoved));
