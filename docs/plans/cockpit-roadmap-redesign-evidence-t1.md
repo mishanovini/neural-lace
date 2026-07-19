@@ -59,3 +59,22 @@ plan's own Walking Skeleton note.
 - waiting-on-you/blocked-on/limit-parked stalled reasons: named + selectable but
   caller-supplied only (no production data source until tasks 2-4 land their data).
 - server.js untouched — no HTTP wiring (task 3's scope per Walking Skeleton note).
+
+## Gate results
+
+### comprehension-reviewer (Fable, 2026-07-19): FAIL, confidence 8
+Three PROVEN gaps (full report in orchestrator transcript; fix round dispatched to builder):
+1. DRIVER unconsidered-edge-class: heartbeat PRESENT but schema-invalid derives
+   stalled:crashed (derive-lib.js:478,481,589-591) while C5 (plan lines 85-88) and the diff's
+   OWN header comment (:388-392) mandate unknown("unreadable heartbeat"). Fix direction:
+   distinguish present-but-invalid (→unknown) from absent (→conservative crashed).
+2. Unsurfaced caller-contract: missing `done` falls through to not-started (guessed bucket,
+   :523,:573-575) — guard to unknown("missing required input") or articulate.
+3. Env-input invalid partition: non-numeric COCKPIT_SESSION_ACTIVE_MIN/_ACTIVITY_WINDOW_MIN
+   → NaN thresholds → EVERY session classifies crashed (:427-432,:449-455). Guard parse,
+   fallback to defaults on NaN.
+Non-blocking: add file:line cites to covered-edge bullets; ### sub-headings; one Assumptions
+line for the readyMs>=shipMs equal-boundary (port-verbatim adjudicated correct).
+Checkbox NOT flipped. 7/7 covered-edge claims otherwise grounded; NOT-covered list honest.
+
+### task-verifier (Fable): pending
