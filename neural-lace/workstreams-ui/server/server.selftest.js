@@ -1733,6 +1733,55 @@ async function main() {
     try { if (typeof planAbsPath === 'string') fs.rmSync(planAbsPath, { force: true }); } catch (_) {}
   }
 
+  // ========================================================
+  // cockpit-roadmap-redesign Task 2 (A3) — TITLE FOLD PRECEDENCE:
+  // operator-sourced titles ALWAYS outrank auto-sourced ones REGARDLESS
+  // of timestamp (the async-distiller-clobbers-operator-edit race, arch
+  // review F3). Pure-unit: dedicated fixture dir, env saved/restored;
+  // runs after the server fixture is torn down.
+  // ========================================================
+  {
+    const deriveLibT2 = require('./derive-lib.js');
+    const t2Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-t2-fold-'));
+    const t2Prev = process.env.ASK_REGISTRY_STATE_DIR;
+    try {
+      process.env.ASK_REGISTRY_STATE_DIR = t2Dir;
+      const t2Line = (o) => JSON.stringify(Object.assign({
+        ask_id: 'ask-t2', record_type: '', ts: '', user: 't', machine: 'm', repo: '', project: '',
+        summary: '', verbatim_ref: '', origin_session: '', status: '', plan_slug: '',
+        session_id: '', resumed_from: '', merged_into: '', emitter: 'ask-registry',
+        title_source: '', candidate_id: '', classification: '',
+      }, o));
+      fs.writeFileSync(path.join(t2Dir, 'ask-registry.jsonl'), [
+        t2Line({ record_type: 'created', ts: '2026-07-19T10:00:00Z', summary: 'auto captured title', title_source: 'auto', status: 'active' }),
+        t2Line({ record_type: 'summary_updated', ts: '2026-07-19T10:05:00Z', summary: 'Operator renamed this', title_source: 'operator', emitter: 'operator-ui' }),
+        t2Line({ record_type: 'summary_updated', ts: '2026-07-19T10:10:00Z', summary: 'distiller re-run title', title_source: 'auto', emitter: 'ask-registry-summarizer' }),
+      ].join('\n') + '\n');
+      const foldedT2 = deriveLibT2.foldAskRegistry();
+      ok('T2-A3a operator title survives a NEWER auto distiller re-run (operator-beats-auto regardless of ts)',
+        foldedT2['ask-t2'] && foldedT2['ask-t2'].summary === 'Operator renamed this',
+        'got summary=' + JSON.stringify(foldedT2['ask-t2'] && foldedT2['ask-t2'].summary));
+      ok('T2-A3b folded entry labels its title_source operator (views can render the source)',
+        foldedT2['ask-t2'] && foldedT2['ask-t2'].title_source === 'operator',
+        'got title_source=' + JSON.stringify(foldedT2['ask-t2'] && foldedT2['ask-t2'].title_source));
+
+      // Auto-only asks (incl. legacy records with no title_source value):
+      // plain last-non-empty-wins WITHIN the auto class — the distiller
+      // upgrade still lands when no operator edit exists.
+      fs.writeFileSync(path.join(t2Dir, 'ask-registry.jsonl'), [
+        t2Line({ ask_id: 'ask-t2-auto', record_type: 'created', ts: '2026-07-19T10:00:00Z', summary: 'first heuristic', status: 'active' }),
+        t2Line({ ask_id: 'ask-t2-auto', record_type: 'summary_updated', ts: '2026-07-19T10:05:00Z', summary: 'better distilled', title_source: 'auto' }),
+      ].join('\n') + '\n');
+      const foldedT2b = deriveLibT2.foldAskRegistry();
+      ok('T2-A3c auto-only asks keep last-non-empty-wins (distiller upgrade lands when no operator edit exists)',
+        foldedT2b['ask-t2-auto'] && foldedT2b['ask-t2-auto'].summary === 'better distilled',
+        'got summary=' + JSON.stringify(foldedT2b['ask-t2-auto'] && foldedT2b['ask-t2-auto'].summary));
+    } finally {
+      if (t2Prev === undefined) delete process.env.ASK_REGISTRY_STATE_DIR; else process.env.ASK_REGISTRY_STATE_DIR = t2Prev;
+      try { fs.rmSync(t2Dir, { recursive: true, force: true }); } catch (_) {}
+    }
+  }
+
   console.log('');
   console.log('self-test summary: ' + PASSED + ' passed, ' + FAILED + ' failed');
   process.exit(FAILED === 0 ? 0 : 1);

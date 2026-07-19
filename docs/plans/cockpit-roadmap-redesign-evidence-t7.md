@@ -38,8 +38,15 @@ older payload; localStorage unavailable; burst coalescing; debounce-log rotation
 (unbounded-clock case unguarded); one redundant republish when the triggering event
 re-marks mid-cycle (harmless, hash-gated); Jaime-account access documented, not exercised.
 
-**Assumptions:** until scheduled-task re-registration is applied, behavior is exactly
-pre-Task-7 (600s floor) — graceful; t2's title verbs route through _ar_append_record and
+**Assumptions:** until scheduled-task re-registration is applied, the floor governs but
+quantizes to the OLD fire slots — idle full-cycle cadence degrades to ~600-1200s (worst
+~20min export age, inside the 80min peer-unreachable honesty window); event latency
+unchanged (next 600s fire); debounce.log starts appearing (comprehension gap-1 reword:
+behavioral-identity claims only when the state machine is actually identical); env
+tunables (COORD_SYNC_FLOOR_SECONDS, COORD_SYNC_DEBOUNCE_LOG_MAX_LINES) are trusted
+numeric per house convention — a garbled FLOOR value would silence the floor (fails
+toward silence, against the header law) — unguarded, operator-error class, numeric-guard
+queued via nl-issue (gap-2 surface); t2's title verbs route through _ar_append_record and
 inherit the marker; peer-view 80min window stays valid at any floor ≤ 60min keepalive.
 
 ## Orchestrator TODO (from builder, pending)

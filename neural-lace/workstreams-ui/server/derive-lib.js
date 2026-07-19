@@ -107,9 +107,25 @@ function foldAskRegistry() {
   lines.forEach((rec) => {
     if (!rec || !rec.ask_id) return;
     const cur = byAsk[rec.ask_id] || { plan_slugs: [] };
-    ['repo', 'project', 'summary', 'verbatim_ref', 'status'].forEach((f) => {
+    ['repo', 'project', 'verbatim_ref', 'status'].forEach((f) => {
       if (rec[f]) cur[f] = rec[f];
     });
+    // TITLE FOLD PRECEDENCE (cockpit-roadmap-redesign Task 2, A3 — BINDING):
+    // `summary` (the item's title) does NOT follow plain last-non-empty-wins.
+    // Operator-sourced title records (title_source:"operator") ALWAYS outrank
+    // auto-sourced ones REGARDLESS of timestamp — an async distiller re-run
+    // landing after an operator edit must never clobber it (capture t0 ->
+    // operator edit t1 -> distiller lands t2>t1 silently reverted the
+    // operator's own edit under the plain fold). Within the same source
+    // class, last-non-empty-wins as before. Records without a title_source
+    // (legacy) are auto: every legacy record is machine-captured.
+    if (rec.summary) {
+      const src = rec.title_source === 'operator' ? 'operator' : 'auto';
+      if (src === 'operator' || cur.title_source !== 'operator') {
+        cur.summary = rec.summary;
+        cur.title_source = src;
+      }
+    }
     if (rec.record_type === 'plan_linked' && rec.plan_slug && cur.plan_slugs.indexOf(rec.plan_slug) === -1) {
       cur.plan_slugs.push(rec.plan_slug);
     }
