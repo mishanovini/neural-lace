@@ -1553,6 +1553,52 @@ async function main() {
       planRow7 && planRow7.tasks.length === 1 && planRow7.tasks[0].id === '1' && planRow7.tasks[0].done === true,
       JSON.stringify(planRow7));
 
+    // ========================================================================
+    // cockpit-roadmap-redesign Task 8 (absorbed UI-polish item 3 — producer
+    // half): computePlanRows now emits each task's `description` (plan-
+    // parse.js has always produced it; server.js never put it on the
+    // per-task payload object until this task). S62's fixture plan already
+    // has real description text on every task — reuse it (same live-HTTP
+    // wiring proof S62/S63 already exercise) rather than a fresh fixture.
+    // ========================================================================
+    ok('S63b GET /api/ask/<id> plan_rows[].tasks[] now carries a non-empty `description` sourced from the real plan file',
+      planRow6 && planRow6.tasks.every((t) => typeof t.description === 'string' && t.description.length > 0),
+      JSON.stringify(planRow6 && planRow6.tasks));
+
+    // A description that BLOWS PAST payload-schema's DENYLIST_EXEMPT_MAX_LEN
+    // (2000 chars) is a REAL, reproduced-in-this-repo case — this very
+    // plan's own task 3/4 bullets run 4000+ chars once every continuation
+    // line folds in (verified directly against docs/plans/cockpit-roadmap-
+    // redesign.md during this task's build). Un-clamped, GET /api/ask/<id>
+    // would 500 on its own tracking ask the moment the plan's task text
+    // grows past the cap — computePlanRows must clamp BEFORE the payload is
+    // built, never leave it to the schema (whose job is "reject if over
+    // cap", never "silently truncate").
+    const slug8 = 'selftest-task8-long-description-fixture-plan';
+    const longCont = '  this one continuation line pads the description well past the schema cap so the producer-side clamp is actually exercised for real, not a no-op. ';
+    const plan8Lines = ['# Plan: Long description fixture', 'Status: ACTIVE', '', '## Tasks', '',
+      '- [ ] 1. A task whose description grows enormous via many continuation lines.'];
+    for (let i = 0; i < 20; i++) plan8Lines.push(longCont);
+    plan8Lines.push('');
+    const plan8Path = path.join(fixtureRepoDir, 'docs', 'plans', slug8 + '.md');
+    fs.writeFileSync(plan8Path, plan8Lines.join('\n'));
+    fs.appendFileSync(path.join(arStateDir, 'ask-registry.jsonl'), [
+      regLine({ ask_id: 'ask-fix-8', record_type: 'created', ts: '2026-07-05T02:00:00Z', repo: fixtureRepoDir, project: 'demo-project', summary: 'Fixture ask eight (long description)', status: 'active' }),
+      regLine({ ask_id: 'ask-fix-8', record_type: 'plan_linked', ts: '2026-07-05T02:01:00Z', plan_slug: slug8 }),
+    ].join('\n') + '\n');
+    const rawS63c = planParse.parseTasks(fs.readFileSync(plan8Path, 'utf8'));
+    ok('S63c-setup sanity: the fixture\'s RAW parsed description really does exceed the schema\'s DENYLIST_EXEMPT_MAX_LEN (proves the clamp below has actual work to do)',
+      rawS63c[0].description.length > payloadSchema.DENYLIST_EXEMPT_MAX_LEN, rawS63c[0].description.length);
+    const detail8 = await httpGet(PORT, '/api/ask/ask-fix-8');
+    const planRow8 = detail8.json && detail8.json.plan_rows && detail8.json.plan_rows.find((r) => r.plan_slug === slug8);
+    ok('S63d GET /api/ask/<id> returns 200 ok:true (never the payload-schema 500) for a task whose real plan-file description exceeds the schema cap — computePlanRows clamps it first',
+      detail8.status === 200 && detail8.json && detail8.json.ok === true,
+      JSON.stringify({ status: detail8.status, body: detail8.json }));
+    ok('S63e the clamped description stays comfortably under the schema\'s DENYLIST_EXEMPT_MAX_LEN and ends with the truncation marker',
+      planRow8 && planRow8.tasks[0].description.length <= payloadSchema.DENYLIST_EXEMPT_MAX_LEN &&
+      /…$/.test(planRow8.tasks[0].description),
+      JSON.stringify(planRow8 && planRow8.tasks[0].description.length));
+
     // ========================================================
     // cockpit-v2-push-materialized-store Task 4 — "Peers" section wiring
     // proof (S64+). A fixture coord clone (COORD_CLONE_DIR) with a fresh

@@ -264,6 +264,25 @@ function projectDocRefFor(absPath) {
 // `getBadgesForAsk` is OPTIONAL (server.js passes its real
 // auditor.getBadgesForAsk; a caller with no auditor — the exporter — omits
 // it and gets an empty badge set on every row).
+// TASK_DESC_PREVIEW_MAX_LEN (cockpit-roadmap-redesign Task 8, absorbed
+// UI-polish item 3 — producer half): payload-schema.js's `description`
+// carve-out (DENYLIST_EXEMPT_MAX_LEN, cockpit-v2 Task 6) caps the field at
+// 2000 raw chars — a validation ERROR (500 on GET /api/ask/<id>) past that,
+// never a silent truncation, BY DESIGN at the schema layer. plan-parse.js's
+// `description` folds every indented continuation line under a task
+// verbatim, with NO length limit of its own — and this repo's own plans
+// routinely exceed the schema cap (this very plan's task 3/4 bullets run
+// 4000+ chars once every sub-bullet folds in). Clamping HERE, before the
+// payload is ever built, is what keeps the schema's "reject if over cap"
+// contract from becoming a live 500 on this plan's own tracking ask the
+// moment a task's prose grows past 2000 chars — the schema's job stays
+// "catch it if this producer ever regresses", never "do the truncation".
+const TASK_DESC_PREVIEW_MAX_LEN = 500;
+function clampTaskDescription(desc) {
+  const s = desc || '';
+  return s.length > TASK_DESC_PREVIEW_MAX_LEN ? s.slice(0, TASK_DESC_PREVIEW_MAX_LEN) + '…' : s;
+}
+
 function computePlanRows(reg, events, getBadgesForAsk) {
   const badgesFn = typeof getBadgesForAsk === 'function' ? getBadgesForAsk : () => [];
   const slugs = (reg.plan_slugs || []).slice();
@@ -289,7 +308,10 @@ function computePlanRows(reg, events, getBadgesForAsk) {
     const tasks = (planTasks || []).map((t) => {
       const inFlight = !t.done && !!startedSet[t.id] && !doneMap[t.id];
       const rowBadges = askBadges.filter((b) => b.plan_slug === slug && b.task_id === t.id);
-      return { id: t.id, done: t.done, in_flight: inFlight, evidence_link: doneMap[t.id] || '', drift_badges: rowBadges };
+      return {
+        id: t.id, done: t.done, in_flight: inFlight, evidence_link: doneMap[t.id] || '',
+        drift_badges: rowBadges, description: clampTaskDescription(t.description),
+      };
     });
     return { plan_slug: slug, plan_doc: projectDocRefFor(absPath), tasks: tasks };
   });
@@ -795,6 +817,9 @@ module.exports = {
   projectDocRefFor,
   computePlanRows,
   aggregatePlanProgress,
+  // task description clamp (Task 8, cockpit-roadmap-redesign)
+  TASK_DESC_PREVIEW_MAX_LEN,
+  clampTaskDescription,
   // session classification (server-local) + raw export read
   sessionHeartbeatLibPath,
   shQuote,

@@ -1051,6 +1051,84 @@ ok('T5-16 the tree/rows use nested native <details>/<summary> disclosure (C9 key
 ok('T5-17 edit/detach feedback rows are aria-live (C9)', (requestsJs.match(/aria-live/g) || []).length >= 2);
 ok('T5-18 landed rows are programmatically focusable (tabindex="-1" set on row containers)',
   /tabIndex = -1/.test(requestsJs));
+// cockpit-roadmap-redesign Task 8 — "UI polish absorbed" (the four operator
+// items folded from the superseded cockpit-ui-polish.md; standalone
+// My-To-Do pane retirement is OUT of this task's scope — see this task's
+// commit message: task 4 (Inbox "My items" section, A10) has not landed,
+// so removing the pane now would strand operator-authored to-do items with
+// no UI surface at all).
+// ============================================================
+
+// --- item 1: resizable + independently scrollable panes -------------------
+ok('T8-1 both resize handles exist in the DOM as ARIA "window splitter" separators (role=separator, keyboard-focusable)',
+  /id="colResizeHandle"[^>]*role="separator"[^>]*tabindex="0"/.test(html) &&
+  /id="rowResizeHandle"[^>]*role="separator"[^>]*tabindex="0"/.test(html));
+ok('T8-2 the resize feature is wired as its OWN additive IIFE in app.js (non-overlapping with the tab-router IIFE above it)',
+  /function setupHandle/.test(js) && (js.match(/\(function \(\) \{/g) || []).length >= 2);
+ok('T8-3 pointer drag is wired (pointerdown/pointermove + setPointerCapture) for the primary drag-resize interaction',
+  /pointerdown/.test(js) && /pointermove/.test(js) && /setPointerCapture/.test(js));
+ok('T8-4 a11y: resize is KEYBOARD-OPERABLE (arrow keys step + Home/End jump to min/max) — no pointer-only exception needed (WCAG 2.2 SC 2.5.7, same law as roadmap_rank reorder)',
+  /ArrowLeft/.test(js) && /ArrowRight/.test(js) && /ArrowUp/.test(js) && /ArrowDown/.test(js) &&
+  /e\.key === 'Home'/.test(js) && /e\.key === 'End'/.test(js));
+ok('T8-5 resize state PERSISTS across reloads via localStorage, keyed distinctly per handle',
+  /localStorage\.setItem\(key/.test(js) && /localStorage\.getItem\(key/.test(js) &&
+  /cockpit\.paneResize\.sidebarWidthPx/.test(js) && /cockpit\.paneResize\.todoHeightPx/.test(js));
+// REGRESSION LOCK (live-browser-caught): the target lives inside the
+// Requests tab, hidden by default (Roadmap lands first, C2) — measuring
+// the baseline size ONCE at setup time froze a bogus 0-clamped-to-min
+// value every later interaction jumped from. Every interaction must
+// re-measure fresh instead of trusting a cached baseline.
+ok('T8-5b REGRESSION LOCK: no interaction trusts a setup-time-cached baseline — every commit re-measures fresh (currentSize(), never a stale closured "current")',
+  /function currentSize\(\)/.test(js) && (js.match(/currentSize\(\)/g) || []).length >= 3 &&
+  !/startVal = current;/.test(js) && !/commit\(current \+/.test(js));
+ok('T8-5c a11y: aria-valuenow refreshes to the REAL current size on focus (not just after a value-changing action) — correct even if the target started on a hidden tab',
+  /addEventListener\('focus'/.test(js) && /aria-valuenow', String\(Math\.round\(currentSize\(\)\)\)/.test(js));
+ok('T8-6 REGRESSION LOCK: the todo-clip BUGFIX guard (`.sidebar > .pane { flex-shrink: 0 }`) survives this task untouched',
+  /\.sidebar > \.pane\s*\{\s*flex-shrink:\s*0;?\s*\}/.test(C));
+ok('T8-7 each resizable pane body gets independent scroll (overflow-y:auto) with a min-height floor so it is never fully collapsed',
+  /\.todo-section \.pane-body,\s*\.backlog-section \.pane-body\s*\{[^}]*overflow-y:\s*auto[^}]*min-height/.test(C.replace(/\s+/g, ' ')));
+(function () {
+  var mediaIdx = C.indexOf('max-width: 1200px');
+  var handleIdx = C.indexOf('.resize-handle-col');
+  ok('T8-8 the column handle hides at the existing <1200px stacked breakpoint (stacking makes the column split meaningless; the row handle stays)',
+    mediaIdx !== -1 && handleIdx !== -1 && handleIdx > mediaIdx && (handleIdx - mediaIdx) < 400 &&
+    /\.resize-handle-col\s*\{\s*display:\s*none/.test(C));
+})();
+
+// --- item 2: compact, expandable backlog rows ------------------------------
+ok('T8-9 open backlog rows render as a native <details> (collapsed by default — never given .open = true), matching this codebase\'s established keyboard-a11y disclosure convention',
+  /createElement\('details'\)/.test(backlogJs) && !/wrap\.open\s*=\s*true/.test(backlogJs));
+ok('T8-10 the collapsed summary is ONE line carrying id + title + tier + age',
+  /backlog-row-summary-title/.test(backlogJs) && /backlog-row-summary-meta/.test(backlogJs));
+ok('T8-11 disposition action buttons live INSIDE the expanded body only (appended to the detail wrapper, not the collapsed <details> root)',
+  /detail\.appendChild\(actions\)/.test(backlogJs) && /detail\.className = 'backlog-row-detail'/.test(backlogJs));
+ok('T8-11b "N more" per-tier overflow notice preserved',
+  /backlog-tier-more/.test(backlogJs));
+// REGRESSION LOCK (live-browser-caught during this task's build, same
+// [hidden]-override footgun class R21 already locks for modals/docsPanel):
+// `.backlog-row-detail`'s own `display: flex` beats the UA stylesheet's
+// `details:not([open]) > *:not(summary) { display: none }` rule at higher
+// specificity, so the collapsed row's body (incl. disposition buttons)
+// rendered VISIBLE despite `open` being false — the one browser-only
+// failure mode this DOM-free suite cannot see on its own without this
+// explicit CSS-selector pin.
+ok('T8-11c REGRESSION LOCK: a `:not([open])` override forces the detail body hidden while the <details> is closed (the collapsed-by-default guarantee actually holds in a real browser, not just in the JS/HTML source)',
+  /\.backlog-row:not\(\[open\]\)\s*>\s*\.backlog-row-detail\s*\{\s*display:\s*none/.test(C));
+
+// --- item 3: task descriptions rendered + de-duplicated plan links --------
+ok('T8-12 per-task rows in the plan drill-down render each task\'s DESCRIPTION text',
+  /ask-task-desc/.test(asksJs) && /t\.description/.test(asksJs));
+ok('T8-12b a long description gets a native details clamp+expand (this codebase\'s established disclosure pattern), a short one renders plain',
+  /ask-task-desc-details/.test(asksJs) && /ask-task-desc-summary/.test(asksJs) && /ask-task-desc-full/.test(asksJs));
+ok('T8-13 exactly ONE per-plan "View live plan doc" link (ask-plan-doc-link) inside renderPlanBlock — no second, per-task plan-path link exists anywhere in the drill-down render path (peer-plan-doc-link, the unrelated peers-section link, is a DIFFERENT class and correctly excluded)',
+  (asksJsNoComments.match(/ask-plan-doc-link/g) || []).length === 1 &&
+  !/ask-task-row[\s\S]{0,400}ask-plan-doc-link/.test(asksJsNoComments));
+
+// --- item 4: Artifacts section removed -------------------------------------
+ok('T8-14 the Artifacts drill-down section is fully removed (no renderArtifact() call site, no ask-artifacts-section, no "Artifacts" header)',
+  !/renderArtifact\(/.test(asksJsNoComments) &&
+  !/ask-artifacts-section/.test(asksJsNoComments) &&
+  !/artHead\.textContent = 'Artifacts'/.test(asksJsNoComments));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

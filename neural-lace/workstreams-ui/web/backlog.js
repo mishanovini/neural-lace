@@ -156,34 +156,71 @@
   // renderOpenRow(row, onMoved) — onMoved() runs once a disposition's undo
   // window elapses without an undo click (the caller reloads so the row
   // takes its permanent place, mirroring asks.js's renderLifecycleRow).
+  //
+  // cockpit-roadmap-redesign Task 8 (absorbed UI-polish item 2): the row is
+  // now a native <details class="backlog-row"> — COLLAPSED BY DEFAULT (no
+  // `open` attribute), one-line <summary> (id + title + tier + age),
+  // click/keyboard-expandable. Disposition buttons + the preview text move
+  // into the expanded body only. Native <details>/<summary> is this
+  // codebase's own established keyboard-a11y disclosure pattern (same one
+  // roadmap.js's tree nodes and asks.js's plan/verbatim drill-downs already
+  // use) — no separate manual aria-expanded bookkeeping needed, the browser
+  // provides real keyboard operability (Enter/Space) for free.
   function renderOpenRow(row, onMoved) {
-    var wrap = document.createElement('div');
+    var wrap = document.createElement('details');
     wrap.className = 'backlog-row';
 
-    var head = document.createElement('div');
-    head.className = 'backlog-row-head';
-    var title = document.createElement('span');
-    title.className = 'backlog-row-title';
-    title.textContent = row.title;
-    head.appendChild(title);
+    var summary = document.createElement('summary');
+    summary.className = 'backlog-row-summary';
+    var summaryTitle = document.createElement('span');
+    summaryTitle.className = 'backlog-row-summary-title';
+    summaryTitle.textContent = row.title;
+    // LIVE-BROWSER-CAUGHT (this task's build): a long title in the sidebar's
+    // ~260px width, combined with `flex:1; min-width:0`, does NOT overflow
+    // gracefully — it shrinks to a sliver and WORD-WRAPS across dozens of
+    // lines (860px+ tall observed), defeating "one-line collapsed" entirely.
+    // CSS now truncates with text-overflow:ellipsis (single line, always);
+    // the native `title` attribute gives a hover tooltip, and the FULL,
+    // untruncated title is repeated inside the expanded detail body below
+    // (title="..." is mouse-only — expand is the real, keyboard/AT-
+    // reachable way to read it in full).
+    summaryTitle.title = row.title;
+    summary.appendChild(summaryTitle);
+    var summaryMeta = document.createElement('span');
+    summaryMeta.className = 'backlog-row-summary-meta';
+    summaryMeta.textContent = row.id + ' · ' + (row.priority === 'unlabeled' ? 'no priority label' : row.priority) + ' · ' + ageText(row);
+    summary.appendChild(summaryMeta);
     if (row.is_overdue) {
       var overdue = document.createElement('span');
       overdue.className = 'chip backlog-overdue';
       overdue.textContent = 'overdue';
-      head.appendChild(overdue);
+      summary.appendChild(overdue);
     }
-    wrap.appendChild(head);
+    wrap.appendChild(summary);
 
-    var meta = document.createElement('div');
-    meta.className = 'backlog-row-meta';
-    meta.textContent = row.id + ' · ' + (row.priority === 'unlabeled' ? 'no priority label' : row.priority) + ' · ' + ageText(row);
-    wrap.appendChild(meta);
+    var detail = document.createElement('div');
+    detail.className = 'backlog-row-detail';
+
+    // the FULL, untruncated title (the collapsed summary above ellipsizes
+    // it to keep the row genuinely one-line — see the comment on
+    // summaryTitle above). The row is built detached from the document
+    // here (no layout yet, so scrollWidth/clientWidth aren't meaningful) —
+    // a length heuristic is this codebase's own established convention for
+    // this exact judgment call (same threshold class as the 160/200-char
+    // preview clamps elsewhere in this file/asks.js). Only rendered past
+    // the threshold so a short title isn't shown twice for no reason.
+    if (row.title.length > 40) {
+      var fullTitle = document.createElement('div');
+      fullTitle.className = 'backlog-row-title';
+      fullTitle.textContent = row.title;
+      detail.appendChild(fullTitle);
+    }
 
     if (row.preview) {
       var preview = document.createElement('div');
       preview.className = 'backlog-row-preview';
       preview.textContent = row.preview.length > 160 ? row.preview.slice(0, 160) + '…' : row.preview;
-      wrap.appendChild(preview);
+      detail.appendChild(preview);
     }
 
     var actions = document.createElement('div');
@@ -294,9 +331,10 @@
       confirmArea.appendChild(cancelBtn);
     }));
 
-    wrap.appendChild(actions);
-    wrap.appendChild(confirmArea);
-    wrap.appendChild(feedback);
+    detail.appendChild(actions);
+    detail.appendChild(confirmArea);
+    detail.appendChild(feedback);
+    wrap.appendChild(detail);
     return wrap;
   }
 

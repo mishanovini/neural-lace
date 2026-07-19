@@ -247,6 +247,47 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 @media (max-width: 1200px) {
   .ws-layout { flex-direction: column; }
   .sidebar { position: static; max-height: none; width: 100%; flex: none; }
+  /* the column split (requests vs sidebar) stops meaning anything once the
+     layout stacks — hide it; the row handle (My To-Do vs Backlog) still
+     applies stacked, so it stays. */
+  .resize-handle-col { display: none; }
+}
+
+/* ============================================================
+   Resizable + independently scrollable panes (cockpit-roadmap-redesign
+   Task 8, absorbed UI-polish operator item 1). Wired by app.js's own
+   separate, additive IIFE at the bottom of that file — does not touch the
+   flex-shrink:0 BUGFIX above (that guard stays scoped to `.pane`; these
+   handles are plain siblings, not `.pane` elements) and defaults to a
+   no-op (no inline style) until the operator actually resizes something,
+   so the pre-Task-8 layout is bit-for-bit unchanged on first load. Once
+   dragged, the affected pane BODY gets its own `overflow-y: auto` +
+   min-height floor so it scrolls independently of its sibling pane,
+   instead of only the whole sidebar scrolling as one unit. Text handles
+   are ARIA "window splitter" separators (role=separator + tabindex + arrow
+   keys) — a keyboard alternative to the pointer drag, same WCAG 2.2
+   SC 2.5.7 law task 3 already applies to roadmap_rank reorder. ---- */
+.resize-handle {
+  background: transparent;
+  flex: 0 0 auto;
+  border-radius: 3px;
+}
+.resize-handle:hover, .resize-handle:focus-visible { background: var(--accent); }
+.resize-handle-col {
+  width: 6px;
+  min-height: 40px;
+  align-self: stretch;
+  cursor: col-resize;
+  touch-action: none;
+}
+.resize-handle-row {
+  height: 6px;
+  cursor: row-resize;
+  touch-action: none;
+}
+.todo-section .pane-body, .backlog-section .pane-body {
+  overflow-y: auto;
+  min-height: 48px;
 }
 
 .ask-tree-section {
@@ -329,12 +370,20 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .ask-plan-slug { font-family: monospace; font-size: 12px; }
 .ask-plan-nodoc { font-size: 11px; color: var(--muted); font-style: italic; }
 .ask-task-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
-.ask-task-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+/* flex-wrap (cockpit-roadmap-redesign Task 8, absorbed item 3): the
+   description block below wants its own line — .ask-task-desc gets
+   flex-basis:100% so it always wraps onto a new row under the
+   chip/id/evidence line, without changing that line's own layout. */
+.ask-task-row { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
 .chip.ask-task-status.task-status-done { color: var(--ok); border-color: var(--ok); }
 .chip.ask-task-status.task-status-in_flight { color: var(--info); border-color: var(--info); }
 .chip.ask-task-status.task-status-not_started { color: var(--muted); border-color: var(--border2); }
 .ask-task-id { font-family: monospace; }
 .ask-task-evidence { font-size: 11px; color: var(--muted); }
+.ask-task-desc { flex: 1 0 100%; font-size: 12px; color: var(--muted); margin-top: 1px; }
+.ask-task-desc-details { font-size: 12px; }
+.ask-task-desc-summary { cursor: pointer; color: var(--muted); list-style: revert; }
+.ask-task-desc-full { margin-top: 3px; white-space: pre-wrap; }
 .ask-plan-empty { margin-top: 4px; }
 
 .ask-waiting-item { border: 1px solid var(--border2); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; background: var(--panel); }
@@ -584,10 +633,15 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 
 .backlog-full-list { display: flex; flex-direction: column; gap: 12px; }
 
+/* cockpit-roadmap-redesign Task 8 (absorbed UI-polish item 2): open rows
+   are now a native <details class="backlog-row"> — collapsed by default,
+   one-line summary (id + title + tier + age), click/keyboard-expandable
+   (native disclosure, same a11y precedent as the roadmap tree's
+   <details>/<summary> nodes — no custom aria-expanded bookkeeping needed).
+   Disposition action buttons live INSIDE the expanded body only. Dispositioned
+   (already-scheduled/demoted/etc.) rows stay a plain non-expandable <div> —
+   nothing further to disclose once a row has left the open state. */
 .backlog-row {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -596,6 +650,43 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 }
 .backlog-row:last-child { margin-bottom: 0; }
 .backlog-row-done { opacity: 0.75; }
+.backlog-row-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  min-height: 24px;
+}
+.backlog-row-summary::-webkit-details-marker { display: none; }
+/* single-line truncation, not word-wrap (LIVE-BROWSER-CAUGHT: a long title
+   + `flex:1;min-width:0` + `word-break:break-word` shrinks the title to a
+   sliver in the ~260px sidebar and wraps it across dozens of lines —
+   860px+ tall observed — which defeats "one-line collapsed" entirely.
+   text-overflow:ellipsis + white-space:nowrap keeps the row genuinely one
+   line regardless of title length; the full title is in the `title=`
+   tooltip AND repeated untruncated in the expanded body, below). */
+.backlog-row-summary-title {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.backlog-row-summary-meta { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.backlog-row-detail { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+/* THE SAME [hidden]-override footgun this file already documents in three
+   other places (modal-card/scrim, docsPanel, todo/backlog global-feedback)
+   — LIVE-BROWSER-CAUGHT here too during Task 8's build: `display: flex`
+   above beats the UA stylesheet's own `details:not([open]) > *:not(summary)
+   { display: none }` rule at higher specificity, so the detail body (and
+   its disposition buttons) rendered VISIBLE even while the row's <details>
+   was closed — collapsed-by-default silently wasn't. This selector's
+   specificity (.backlog-row + :not([open]) + .backlog-row-detail) beats
+   the bare `.backlog-row-detail` rule above regardless of source order. */
+.backlog-row:not([open]) > .backlog-row-detail { display: none; }
 .backlog-row-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .backlog-row-title { font-size: 13px; font-weight: 600; flex: 1; min-width: 0; word-break: break-word; }
 .backlog-row-meta { font-size: 11px; color: var(--muted); }

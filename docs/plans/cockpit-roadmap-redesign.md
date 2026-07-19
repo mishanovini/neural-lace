@@ -400,6 +400,39 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
 - 2026-07-19: `neural-lace/workstreams-ui/web/cockpit.selftest.js` — task 5 extends the suite with the T5-* block (24 new assertions; 139 -> 163 composed, 0 failing)
 - 2026-07-19: `docs/plans/fragments/roadmap-t5-server-fragment.md` — task 5 coordination fragment (server.js mount + task-2 seams: reused set-title verb + NEW detach-amendment verb pinned)
 - 2026-07-19: `docs/plans/fragments/roadmap-t5-shell-fragment.md` — task 5 coordination fragment (the ONE index.html `<script src="/requests.js">` line; task 5's dispatch excluded direct index.html edits)
+- 2026-07-19: task 8 ("UI polish absorbed") touches `neural-lace/workstreams-ui/server/derive-lib.js` and `neural-lace/workstreams-ui/server/server.selftest.js`
+  (`computePlanRows` — adds a clamped `description` field to each per-task
+  payload object; S63b-e), beyond the task line's literal `web/*` scope. Necessary producer-
+  side wiring: the archived cockpit-ui-polish.md's item 3 assumed the
+  cockpit-v2 Task 6 schema carve-out (`description` in payload-schema.js's
+  DETAIL_ALLOWED_KEYS/DENYLIST_EXEMPT_KEYS) was sufficient, but
+  `computePlanRows` never actually emitted the field — a pure client-side
+  "render `t.description`" would have had nothing to render. Discovered
+  live during this task's build: this plan's OWN task 3/4 bullets parse to
+  4485/4846-char descriptions (verified via `plan-parse.js` directly against
+  this file), 2x+ over payload-schema's 2000-char `DENYLIST_EXEMPT_MAX_LEN`
+  — wiring the raw field through unclamped would 500 `GET /api/ask/<id>` on
+  this plan's own tracking ask the moment its task text grows past the cap
+  (reproduced directly against `payload-schema.js`). `computePlanRows` now
+  clamps to 500 chars server-side before the payload is built; the schema's
+  job stays "reject if this producer ever regresses," never "do the
+  truncation." derive-lib.js's `computePlanRows` is a different function
+  than the title/status-derivation code tasks 1/2 own — no line-level
+  overlap.
+- 2026-07-19: task 8 does NOT retire the standalone My-To-Do pane
+  (`#todoSection`/`web/todo.js`), despite the task line naming it. Task 4
+  (Inbox view + the "My items" section, A10) — the pane's replacement
+  destination — has not landed (not even started; only tasks 5/6 are
+  in flight alongside this one per dispatch). Removing the pane now would
+  strand the operator's existing to-do items (docs/operator-todo.md,
+  verified live: real operator + pointer items render there today) with NO
+  UI surface at all until task 4 ships — a functional regression, not a
+  polish step. The other four items (resize/scroll, compact backlog rows,
+  task descriptions, Artifacts removal) ship in full; pane retirement is
+  deferred to whichever task lands task 4's "My items" section (task 4
+  itself, per its own text: "Task 8 removes the standalone pane" — this
+  reconciles that forward reference now that the actual landing order is
+  known).
 
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store

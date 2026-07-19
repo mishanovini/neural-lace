@@ -76,6 +76,16 @@
         <div class="ask-tree-body" id="askTreeBody"></div>
       </section>
 
+      <!-- Column resize handle (cockpit-roadmap-redesign Task 8, absorbed
+           UI-polish item 1): drag OR arrow-keys widen/narrow the sidebar
+           against the requests column; wired by app.js's own separate,
+           additive IIFE (does not touch the tab-shell code above it).
+           ARIA "window splitter" pattern (role=separator, keyboard
+           alternative to the pointer drag per WCAG 2.2 SC 2.5.7). -->
+      <div id="colResizeHandle" class="resize-handle resize-handle-col" role="separator"
+           aria-orientation="vertical" aria-label="resize requests and sidebar columns"
+           tabindex="0"></div>
+
       <aside id="sidebarSection" class="sidebar" aria-label="to-do and backlog">
         <section id="todoSection" class="pane todo-section" aria-label="my to-do">
           <div class="pane-head">
@@ -84,6 +94,14 @@
           </div>
           <div class="pane-body todo-body" id="todoBody"></div>
         </section>
+
+        <!-- Row resize handle: drag OR arrow-keys resize the My To-Do pane's
+             own scroll height against Backlog below it — each pane body
+             then scrolls INDEPENDENTLY (own overflow-y:auto) rather than
+             only the whole sidebar scrolling as one unit. -->
+        <div id="rowResizeHandle" class="resize-handle resize-handle-row" role="separator"
+             aria-orientation="horizontal" aria-label="resize my to-do and backlog panes"
+             tabindex="0"></div>
 
         <section id="backlogSection" class="pane backlog-section" aria-label="backlog">
           <div class="pane-head">

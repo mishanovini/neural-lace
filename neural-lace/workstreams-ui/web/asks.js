@@ -573,29 +573,52 @@
         ev.appendChild(absoluteLinkNode(t.evidence_link));
         li.appendChild(ev);
       }
+      // cockpit-roadmap-redesign Task 8 (absorbed UI-polish item 3, render
+      // half): each task's own DESCRIPTION text (derive-lib.js's
+      // computePlanRows now sources it from plan-parse.js's per-task
+      // `description`, clamped server-side well under payload-schema's
+      // DENYLIST_EXEMPT_MAX_LEN — see that file's comment for why the raw
+      // plan text can't ride through unclamped). Long descriptions get a
+      // native <details> clamp+expand (this codebase's established
+      // keyboard-a11y disclosure pattern), short ones render plain. NOTE:
+      // the archived plan's "de-duplicate links" half of this item is
+      // already satisfied by THIS function's own single "View live plan
+      // doc" button above (one per plan block) — there has never been a
+      // second, per-task plan-path link anywhere in this render path to
+      // remove.
+      if (t.description) {
+        var desc = document.createElement('div');
+        desc.className = 'ask-task-desc';
+        if (t.description.length > 160) {
+          var descDetails = document.createElement('details');
+          descDetails.className = 'ask-task-desc-details';
+          var descSummary = document.createElement('summary');
+          descSummary.className = 'ask-task-desc-summary';
+          descSummary.textContent = t.description.slice(0, 160) + '…';
+          descDetails.appendChild(descSummary);
+          var descFull = document.createElement('div');
+          descFull.className = 'ask-task-desc-full';
+          descFull.textContent = t.description;
+          descDetails.appendChild(descFull);
+          desc.appendChild(descDetails);
+        } else {
+          desc.textContent = t.description;
+        }
+        li.appendChild(desc);
+      }
       list.appendChild(li);
     });
     block.appendChild(list);
     return block;
   }
 
-  function renderArtifact(a) {
-    var row = document.createElement('div');
-    row.className = 'ask-artifact-row';
-    var sha = document.createElement('span');
-    sha.className = 'ask-artifact-sha';
-    sha.textContent = (a.sha || '').slice(0, 9);
-    row.appendChild(sha);
-    if (a.sha) row.appendChild(makeCopyBtn(a.sha));
-    if (a.ts) {
-      var ts = document.createElement('span');
-      ts.className = 'ask-artifact-ts';
-      ts.textContent = formatAge(a.ts);
-      row.appendChild(ts);
-    }
-    if (a.evidence_link) row.appendChild(absoluteLinkNode(a.evidence_link));
-    return row;
-  }
+  // renderArtifact() / the "Artifacts" drill-down section it backed were
+  // REMOVED here (cockpit-roadmap-redesign Task 8, absorbed UI-polish
+  // operator item 4 — "never see the Artifacts wall again"). The server's
+  // `detail.artifacts` field is UNCHANGED (buildArtifacts() in server.js):
+  // no other consumer was found (grep across web/ + server/), but the field
+  // stays for API compat per the archived plan's own instruction — this is
+  // a UI-only removal, not a payload/schema change.
 
   // ============================================================
   // drill-down body — populated on first expand from the memoized detail
@@ -668,18 +691,8 @@
       sessionsSection.appendChild(sessionsHead);
       sessionsSection.appendChild(renderSessionsList(detail.sessions || []));
       container.appendChild(sessionsSection);
-
-      var artifacts = detail.artifacts || [];
-      if (artifacts.length) {
-        var artSection = document.createElement('div');
-        artSection.className = 'ask-artifacts-section';
-        var artHead = document.createElement('div');
-        artHead.className = 'ask-subhead';
-        artHead.textContent = 'Artifacts';
-        artSection.appendChild(artHead);
-        artifacts.forEach(function (a) { artSection.appendChild(renderArtifact(a)); });
-        container.appendChild(artSection);
-      }
+      // Artifacts section REMOVED (Task 8, absorbed UI-polish item 4) —
+      // see the renderArtifact() removal comment above.
     });
   }
 

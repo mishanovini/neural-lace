@@ -1431,3 +1431,156 @@
   pollHealth();
   setInterval(pollHealth, 20000);
 })();
+
+// ============================================================
+// cockpit-roadmap-redesign Task 8 (absorbed UI-polish operator item 1) —
+// resizable + independently scrollable panes.
+//
+// Deliberately a SEPARATE, self-contained top-level IIFE (own closure, zero
+// shared state with the tab-router IIFE above) — additive and non-
+// overlapping with task 3's shell/tab code by construction: it only reads
+// #colResizeHandle/#rowResizeHandle (new elements, index.html) and sets
+// inline width/height styles on the EXISTING #sidebarSection/#todoBody
+// panes. Defaults to a no-op (no inline style set) until the operator
+// actually resizes something, so the shipped todo-clip fix (app.css's
+// `.sidebar > .pane { flex-shrink: 0 }` BUGFIX) and the pre-Task-8 layout
+// are bit-for-bit unchanged on first load; the sidebar's own overflow-y:
+// auto stays as the whole-sidebar scroll fallback regardless.
+//
+// Two interactions, both required (WCAG 2.2 SC 2.5.7 — a dragging
+// movement must have a single-pointer, non-dragging alternative; the same
+// law task 3 already applies to roadmap_rank reorder buttons):
+//   - pointer drag (Pointer Events, setPointerCapture) — the primary
+//     operator-requested interaction ("drag-resize the sidebar panes").
+//   - keyboard (ARIA "window splitter" pattern: role=separator + tabindex
+//     already on the handles in index.html; arrow keys step, Home/End jump
+//     to min/max) — the WCAG-mandated non-dragging alternative.
+// Both paths converge on the same commit()/clamp()/persist() logic so
+// there is exactly one source of truth for a handle's current value.
+// ============================================================
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  var STORE_COL = 'cockpit.paneResize.sidebarWidthPx';
+  var STORE_ROW = 'cockpit.paneResize.todoHeightPx';
+  var COL_MIN = 240, COL_MAX = 640;
+  var ROW_MIN = 80, ROW_MAX = 640;
+  var KEY_STEP = 16;
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  function readStored(key) {
+    try {
+      var v = parseInt(localStorage.getItem(key), 10);
+      return isFinite(v) ? v : null;
+    } catch (_) { return null; } // private-mode/blocked storage — resize still works this session, just doesn't persist
+  }
+  function writeStored(key, v) {
+    try { localStorage.setItem(key, String(v)); } catch (_) {}
+  }
+
+  // setupHandle(opts) — one resize handle <-> one target element. `opts.read`
+  // gets the element's CURRENT rendered size; `opts.apply` sets a new size.
+  //
+  // LIVE-BROWSER-CAUGHT (this task's build): the shell lands on Roadmap by
+  // default (C2) — the Requests tab (and this handle's target) is inside a
+  // `hidden` panel at page-load time, so `target.getBoundingClientRect()`
+  // reads 0x0 THERE. Measuring the baseline ONCE at setup time (before the
+  // operator ever switches tabs) froze a bogus 0-clamped-to-min value that
+  // every later interaction then jumped from. Fix: never cache a
+  // "current" baseline across time — `currentSize()` re-measures fresh
+  // (from localStorage if ever persisted, else a live re-measurement)
+  // EVERY time an interaction starts, and an interaction can only start
+  // while the operator is actually looking at (and has tabbed/clicked to)
+  // the handle — i.e. while its tab is genuinely visible and the
+  // measurement is real.
+  function setupHandle(opts) {
+    var handle = $(opts.handleId);
+    var target = $(opts.targetId);
+    if (!handle || !target) return; // pane not present on this page — no-op (todo.js/backlog.js precedent)
+
+    var storedAtLoad = readStored(opts.storeKey);
+    if (storedAtLoad !== null) opts.apply(target, clamp(storedAtLoad, opts.min, opts.max));
+    handle.setAttribute('aria-valuemin', String(opts.min));
+    handle.setAttribute('aria-valuemax', String(opts.max));
+    // Cosmetic only at load (may read 0 if the target's tab starts hidden —
+    // see note above); every real interaction re-measures via currentSize().
+    handle.setAttribute('aria-valuenow', String(Math.round(storedAtLoad !== null ? storedAtLoad : opts.read(target))));
+
+    function currentSize() {
+      var stored = readStored(opts.storeKey);
+      return stored !== null ? clamp(stored, opts.min, opts.max) : clamp(opts.read(target), opts.min, opts.max);
+    }
+
+    function commit(next) {
+      next = clamp(next, opts.min, opts.max);
+      opts.apply(target, next);
+      handle.setAttribute('aria-valuenow', String(Math.round(next)));
+      writeStored(opts.storeKey, next);
+    }
+
+    // refresh aria-valuenow to the REAL current size the moment the handle
+    // receives focus — a keyboard/AT user tabbing to it (without pressing
+    // an arrow key yet) must hear the true on-screen size, not the
+    // load-time value (which is only cosmetic/approximate whenever the
+    // target started out on a hidden tab — see the note above).
+    handle.addEventListener('focus', function () {
+      handle.setAttribute('aria-valuenow', String(Math.round(currentSize())));
+    });
+
+    // ---- pointer drag ----------------------------------------------------
+    var dragging = false, startPos = 0, startVal = 0;
+    handle.addEventListener('pointerdown', function (e) {
+      dragging = true;
+      startPos = opts.axis === 'x' ? e.clientX : e.clientY;
+      startVal = currentSize();
+      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+      e.preventDefault();
+    });
+    handle.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      var pos = opts.axis === 'x' ? e.clientX : e.clientY;
+      commit(startVal + opts.sign * (pos - startPos));
+    });
+    function endDrag() { dragging = false; }
+    handle.addEventListener('pointerup', endDrag);
+    handle.addEventListener('pointercancel', endDrag);
+
+    // ---- keyboard alternative (ARIA window-splitter pattern) --------------
+    handle.addEventListener('keydown', function (e) {
+      var delta = 0;
+      if (opts.axis === 'x') {
+        if (e.key === 'ArrowLeft') delta = -KEY_STEP;
+        else if (e.key === 'ArrowRight') delta = KEY_STEP;
+      } else {
+        if (e.key === 'ArrowUp') delta = -KEY_STEP;
+        else if (e.key === 'ArrowDown') delta = KEY_STEP;
+      }
+      if (delta) { commit(currentSize() + delta * opts.sign); e.preventDefault(); return; }
+      if (e.key === 'Home') { commit(opts.min); e.preventDefault(); return; }
+      if (e.key === 'End') { commit(opts.max); e.preventDefault(); return; }
+    });
+  }
+
+  // Column handle: [ask-tree (flex:1)] [handle] [sidebar (resizable width)].
+  // Dragging LEFT (clientX decreases) widens the sidebar — sign:-1.
+  setupHandle({
+    handleId: 'colResizeHandle', targetId: 'sidebarSection', storeKey: STORE_COL,
+    min: COL_MIN, max: COL_MAX, axis: 'x', sign: -1,
+    read: function (el) { return el.getBoundingClientRect().width; },
+    apply: function (el, px) { el.style.width = px + 'px'; el.style.flexBasis = px + 'px'; },
+  });
+
+  // Row handle: [My To-Do pane-body] [handle] [Backlog]. Dragging DOWN
+  // (clientY increases) grows the To-Do pane's own scroll height — sign:+1.
+  // Sets overflow-y:auto on the SAME element being resized so it becomes
+  // independently scrollable the moment it has an explicit height (the
+  // sidebar's own overflow-y:auto remains the fallback for anything this
+  // per-pane scroll doesn't cover, e.g. narrow layouts before any resize).
+  setupHandle({
+    handleId: 'rowResizeHandle', targetId: 'todoBody', storeKey: STORE_ROW,
+    min: ROW_MIN, max: ROW_MAX, axis: 'y', sign: 1,
+    read: function (el) { return el.getBoundingClientRect().height; },
+    apply: function (el, px) { el.style.height = px + 'px'; el.style.overflowY = 'auto'; },
+  });
+})();
