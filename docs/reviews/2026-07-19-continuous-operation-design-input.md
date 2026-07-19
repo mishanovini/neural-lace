@@ -146,3 +146,83 @@ liveness), or does 061 stand as a harder constraint?
 
 Next: operator answers fold here as round 2 → program plan drafted (Fable) → arch review →
 build. The redesign build continues in parallel throughout; nothing here blocks it.
+
+---
+
+# Round 2 — operator answers + worktree-discipline directive (2026-07-19 late)
+
+## Operator (condensed; verbatim in session transcript)
+
+Worktree critique: why so many worktrees; want a deterministic process that doesn't allow
+disparate worktrees/incomplete work; strong bias toward each session cleaning up when done
+instead of a garbage collector after the fact; "doing it right by default instead of fixing
+problems afterward."
+
+Q1 AUTONOMY: harness/mechanical = fully auto PROVIDED the operator can drag-drop backlog
+ordering + modify items. Philosophy: Claude pushes forward with full autonomy + full
+disclosure; operator injects modifications whenever they have time; Claude never waits.
+Q2 THROTTLES: park for builders, downgrade only mechanical sweeps; PROGRESSIVE BACKOFF on
+resume to discover supported throughput; limits vary over time — handling must be dynamic.
+Q3 CHECK-INS: never wait — everything reversible ships, Inbox carries the review trail.
+Q4 MULTI-MACHINE: operator's model — supervisor works per-machine, doesn't coordinate
+across machines; only STATUS coordinates. "Am I thinking of this right?"
+Q5 ADR 061: was a temporary fix; DO want a session resumer restored, but cleanly — past
+resumers/cron jobs created "a whole bunch of extra junk on the machine."
+Q6 COORDSYNC: operator opinion — the installer should be unnecessary if coordination is
+deterministic in-process instead of frequency-based check-ins. Designable, or still cron?
+
+## Orchestrator answers (round 2)
+
+WORKTREES — why 79 accumulated: every builder/reviewer spawn under the mandatory-isolation
+gate creates one; auto-clean removes only UNCHANGED trees; any agent that committed keeps
+its tree as salvage; INTEGRATION NEVER REAPED THEM — the lifecycle had no closing step.
+Deterministic fix (ADOPTED THIS SESSION + binding for the continuous-operation plan):
+the orchestrator's landing step ends with REAP — verify integrated → remove worktree +
+delete branch in the same motion as the cherry-pick+gates. Demonstrated live: 5 worktrees
++ 3 branches reaped at landing this session; 5 conflict-resolved stragglers reap at plan
+close with tree-diff proof (git-cherry can't prove patch-equivalence across union-resolved
+conflicts — a reap-check must use tree-diff, not patch-id, for conflicted landings).
+The hygiene sweep demotes to BACKSTOP (catches crashes), never the mechanism. Doctor
+trend-check: worktree count ≤ live-agent count + small constant.
+
+Q4 — YES, exactly right. The supervisor is strictly per-machine (watch progress mtimes,
+respawn dead orchestrators, enforce single-flight). Cross-machine, only STATUS flows
+(coord-repo publish, already built in task 7); no cross-machine control plane. The one
+nuance: cross-machine WORK-CLAIMING (two machines pulling the same backlog row) needs no
+new mechanism — git serializes it (first push of the claiming commit wins; loser rebases,
+sees the claim, picks the next row). Status-only coordination + git-as-arbiter is the
+whole multi-machine design.
+
+Q5 — resumer redesign constraints (the anti-junk contract): (1) SINGLE-FLIGHT — one
+orchestrator per repo per machine, lock-file with pid+ttl; (2) SPAWN BUDGET — max N
+respawns per hour, breaker trips to an Inbox item instead of a cascade; (3) ONE namespaced
+state dir (~/.claude/state/supervisor/) with TTL'd files, nothing scattered; (4) the
+resumer NEVER creates worktrees/branches — it only launches the orchestrator session,
+which owns its own dispatch hygiene incl. reap-at-landing; (5) liveness = state-file
+mtime progress, not process existence (context-wedged = dead). ADR 061 superseded by
+this design once it ships (operator confirmed 061 was temporary).
+
+Q6 — mostly yes, one heartbeat remains. Task 7 already made the FRESHNESS path
+deterministic: every status-changing write marks dirty at the writer-lib seam → debounced
+publish ~1min. What events CANNOT cover: (a) git-blind changes (cherry-pick/merge fire no
+hook — a floor sweep catches them); (b) LIVENESS — an idle machine that publishes nothing
+is indistinguishable from a dead one; the periodic keepalive is what lets peers render
+"idle alive" vs "unreachable since <t>". So SOME periodic task survives — but it should be
+ONE task: the per-machine SUPERVISOR tick, which absorbs the coord floor (and the health
+tick). DISPOSITION: the standalone NL-CoordSync installer is RETIRED as an operator ask
+(NY-1784327382-f3e8) — cross-machine status ships as part of the supervisor installer when
+the continuous-operation plan builds. Until then peers stay local-only (cockpit renders
+the honest empty state).
+
+Q1/Q2/Q3 adopted as binding for the continuous-operation plan: full-auto + full-disclosure
++ operator-injectable backlog (NOTE: task 3 shipped keyboard rank reorder; drag-drop
+proper + backlog-row editing joins the plan's UI scope); park+progressive-backoff with
+dynamically discovered throughput ceilings (limits drift — measure, don't assume); never
+wait, Inbox carries the trail.
+
+## Disposition
+
+Round 3 = the continuous-operation program plan draft (arch-review gate before build),
+absorbing: supervisor (Q5 contract), reap-at-landing doctrine amendment, backlog
+drag-drop/edit UI, progressive-backoff resume policy, supervisor-tick consolidation
+(coord floor + health tick + doctor cache refresh under one scheduled task).
