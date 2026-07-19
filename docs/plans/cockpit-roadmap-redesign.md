@@ -114,7 +114,7 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
     unknown) — audited against the law, not just stalled. Roll-up counts computed here in
     derive-lib; rendered in task 3. —
   Verification: full
-- [ ] 2. [serial] **Work-item layer.**
+- [x] 2. [serial] **Work-item layer.**
   - **Titles (A3, round 3):** auto-distilled (async LLM, off the hot path); ALWAYS
     operator-editable, no confirm ceremony. Title records carry `title_source: auto|operator`;
     fold rule: operator-sourced ALWAYS outranks auto REGARDLESS of timestamp (incl. distiller

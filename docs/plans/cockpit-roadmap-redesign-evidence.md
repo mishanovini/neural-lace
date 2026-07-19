@@ -257,3 +257,68 @@ Every verification-axis result above STANDS (suites green in pinned worktrees; A
 Checkbox state: flip REVERTED to unchecked in this thread (flipped provisionally at 21:2x, reverted on F1 confirmation).
 Gaps:
   - F1 composition defect (Class: teaching-to-the-test / composed-system functionality gap; Sweep query: grep -rn "COORD_PUSH_THROTTLE_SECONDS=0" adapters/claude-code/scripts/ — every selftest override of a sibling's production default is a mask candidate; Required generalization: E2E scenarios must run at least one leg with ALL sibling defaults active, or pin the composed latency contract mechanically.)
+
+## Task 2 — [serial] Work-item layer
+
+EVIDENCE BLOCK
+==============
+Task ID: 2
+Task description: [serial] Work-item layer. Titles (A3): auto-distilled, always operator-editable, title_source auto|operator; fold rule operator ALWAYS outranks auto regardless of timestamp; UI title edit delegates to ask-registry.sh. Amendment capture (A2) three layers: mechanical UserPromptSubmit candidate splice, async classification, operator correction + `amend` verb. Amendment correction (I6): detach affordance. Merge/split of asks into items. Verification: full
+Verified at: 2026-07-19T22:10:00Z
+Verifier: task-verifier agent (NARROW DELTA RE-VERIFY of the prior FAIL conf 9 defect D1 — amendment-label-as-title fold; everything else from the prior run stands verified per caller scope)
+
+Oracle: derived-preexisting + derived-metamorphic — the pinning selftest suites (derive-lib #21, roadmap-routes S13/S13b, server T2-A3a/b/c, ask-registry Scenario V) AS the fold contract, PLUS a fresh independent A2 metamorphic probe (monotonicity/inclusion: appending a NEWER non-title-bearing record carrying an amendment LABEL in `summary` MUST NOT change the folded title) run by the verifier against BOTH fold paths, differentially RED against the pre-fix code (cdafdc9^) and GREEN against current master.
+
+Comprehension-gate: PASS (delta) — rung 3; comprehension side already authorized on record (delta PASS conf 8), per caller scope; this narrow re-verify addresses the functionality defect D1 only.
+
+Checks run:
+1. FOLD CONTRACT header names the title-bearing types
+   Command: read adapters/claude-code/scripts/ask-registry.sh:167-178
+   Output: "TITLE-BEARING RECORD TYPES ... applies ONLY to `record_type == \"created\"` ... and `record_type == \"summary_updated\"` ... candidate_classified and amended ... is NOT title-bearing and MUST NOT be read into the folded title"
+   Result: PASS
+2. derive-lib.js foldAskRegistry restricts the fold (line 134): `if (rec.summary && (rec.record_type === 'created' || rec.record_type === 'summary_updated'))` with operator-beats-auto precedence (lines 135-139)
+   Result: PASS
+3. roadmap-routes.js foldRegistryForRoadmap: generic summary fold restricted identically (line 152); summary_updated routed to operator_title/auto_title by title_source (lines 184-187); title_set kept back-compat only (no writer produces it)
+   Result: PASS
+4. INDEPENDENT A2 falsification probe — GREEN (current master)
+   Command: node scratchpad/probe-a2.js (fresh mkdtemp sandbox; created/auto title t0 + candidate_classified label t2 + amended label t3, both title_source empty)
+   Output: derive-lib folded title == "Original auto title", title_source == "auto"; roadmap-routes summary == "Original auto title", auto_title == "Original auto title", operator_title empty. ALL PROBES PASSED, rc=0
+   Result: PASS
+5. SAME probe — RED (pre-fix code cdafdc9^, extracted to temp, requires resolved in-place)
+   Command: node scratchpad/probe-red.js
+   Output: PRE-FIX derive-lib folded title == "LABEL: rename the widget"; PRE-FIX roadmap summary == "LABEL: rename the widget" — the amendment label clobbered the real title. RED demonstrated: derive-lib=true roadmap=true, rc=0
+   Result: PASS (probe discriminates; the fix is not a no-op)
+6. derive-lib --self-test: 57 passed, 0 failed, rc=0 (pins #21 classified-amendment-does-not-retitle)
+   Result: PASS
+7. roadmap-routes.selftest: 30 passed, 0 failed, rc=0 (pins S13 operator-survives-newer-auto + title_source:operator, S13b label-never-retitles)
+   Result: PASS
+8. ask-registry --self-test: 45 passed, 0 failed, exit=0 (Scenario V production-shape title+timeline pipeline: created/auto -> set-title/operator -> candidate/pending -> detached -> amended)
+   Result: PASS
+9. server.selftest single run: 168 passed, 0 failed, rc=0 (pins T2-A3a operator survives newer auto, T2-A3b title_source labeled operator, T2-A3c auto-only keeps last-non-empty-wins)
+   Result: PASS
+
+Runtime verification: test neural-lace/workstreams-ui/server/derive-lib.js::--self-test (57/0, #21 classified-amendment-does-not-retitle)
+Runtime verification: test neural-lace/workstreams-ui/server/roadmap-routes.selftest.js::S13,S13b (30/0)
+Runtime verification: test adapters/claude-code/scripts/ask-registry.sh::--self-test (45/0, Scenario V title+timeline pipeline)
+Runtime verification: test neural-lace/workstreams-ui/server/server.selftest.js::T2-A3a,T2-A3b,T2-A3c (168/0)
+Runtime verification: file adapters/claude-code/scripts/ask-registry.sh::TITLE-BEARING RECORD TYPES
+
+DEPENDENCY TRACE
+================
+Step 1: an ask is registered with an auto-distilled title, then an amendment is classified (label stamped into `summary`, title_source empty)
+  v Verified at: probe-a2.js sandbox registry (created + candidate_classified + amended records)
+Step 2: a reader folds the registry to the ask's CURRENT title
+  v Verified at: derive-lib.js foldAskRegistry:134 + roadmap-routes.js foldRegistryForRoadmap:152 (title-bearing types only)
+Step 3: the folded title the user sees is the real title, NOT the amendment label
+  v Verified at: probe-a2.js GREEN (both paths return "Original auto title"); probe-red.js proves pre-fix returned the label (differential)
+
+Git evidence:
+  Fix landed at cdafdc9 fix(cockpit-roadmap-redesign t2): title-fold restricted to title-bearing record types (D1/D2)
+    - neural-lace/workstreams-ui/server/derive-lib.js (foldAskRegistry guard + operator-beats-auto)
+    - neural-lace/workstreams-ui/server/roadmap-routes.js (foldRegistryForRoadmap guard + title_source routing)
+    - neural-lace/workstreams-ui/server/roadmap-routes.selftest.js (S13/S13b added, 28->30)
+    - adapters/claude-code/scripts/ask-registry.sh (FOLD CONTRACT header names created/summary_updated)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: the prior FAIL's sole defect D1 (any-non-empty-summary fold let an amendment label replace the ask's title) is fixed in BOTH fold paths; the verifier's own fresh A2 probe returns the original title against current master AND was proven to return the amendment label against the pre-fix code (cdafdc9^) — a differential test against the pre-fix oracle, not a self-referential green. The FOLD CONTRACT header names the two title-bearing record types (created/summary_updated). All four pinning suites green at expected counts with direct rc (derive-lib 57, roadmap-routes 30, ask-registry 45, server 168). D2 was routed to task 3 per the prior run and is out of this delta's scope. Comprehension side already authorized (delta PASS conf 8 on record).
