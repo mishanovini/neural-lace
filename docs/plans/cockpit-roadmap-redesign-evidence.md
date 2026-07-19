@@ -322,3 +322,137 @@ Git evidence:
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: the prior FAIL's sole defect D1 (any-non-empty-summary fold let an amendment label replace the ask's title) is fixed in BOTH fold paths; the verifier's own fresh A2 probe returns the original title against current master AND was proven to return the amendment label against the pre-fix code (cdafdc9^) — a differential test against the pre-fix oracle, not a self-referential green. The FOLD CONTRACT header names the two title-bearing record types (created/summary_updated). All four pinning suites green at expected counts with direct rc (derive-lib 57, roadmap-routes 30, ask-registry 45, server 168). D2 was routed to task 3 per the prior run and is out of this delta's scope. Comprehension side already authorized (delta PASS conf 8 on record).
+
+## Task 6 — [serial] Badge law + badge-storm fix
+EVIDENCE BLOCK
+==============
+Task ID: 6
+Task description: Badge law + badge-storm fix: renderer caps telemetry to ONE counted, labeled chip per belief-changing class (bookkeeping classes → Harness Health only); auditor's unmatched_dispatch oracle age-bounded to the marker-retention horizon.
+Verified at: 2026-07-19T15:10:00-07:00
+Verifier: task-verifier agent (NARROW RE-VERIFY of the fix round 3c45d62; prior-run badge-storm-cap + auditor age-bound PROVEN conf 9 stand)
+
+Oracle: specified (Acceptance Scenario 4 + proposal §5: bookkeeping classes render NOWHERE on the board, their counted summary in Harness Health; belief-changing classes → ONE counted labeled chip) + derived-metamorphic (RED: pre-fix code → 170/9 failing on exactly the new scenarios; GREEN restored → 179/0). The oracle was exercised directly by extracting the REAL render blocks (BADGE-LAW-RENDER + BOOKKEEPING-DIAG) and running them in a vm sandbox against adversarial fixtures — behavior, not source-regex.
+
+Comprehension-gate: delta re-review dispatched IN PARALLEL by the orchestrator (prior run's comprehension-reviewer FAIL conf 5 — eager 718-div drill-down / "invulnerable by construction" overclaim — addressed by the DRILL_DOWN_LINE_CAP(50)+"+K more" CODE fix in 3c45d62). This narrow functionality re-verify does NOT re-run the comprehension gate; per the orchestrator's explicit instruction the commit is HELD until BOTH this verdict and the comprehension delta land. Checkbox flip here represents the functionality axis only; the orchestrator's commit-hold is the compensating control.
+
+Checks run:
+1. cockpit.selftest.js composed suite (re-run, direct rc)
+   Command: node neural-lace/workstreams-ui/web/cockpit.selftest.js
+   Output: self-test summary: 186 passed, 0 failed
+   Result: PASS (matches the 186 composed expected)
+2. server.selftest.js single-run (re-run, direct rc)
+   Command: node neural-lace/workstreams-ui/server/server.selftest.js
+   Output: self-test summary: 168 passed, 0 failed
+   Result: PASS (matches the 168 single-run expected)
+3. INDEPENDENT falsification harness (verifier-authored, NOT builder's suite) — extracts the real
+   BADGE-LAW-RENDER block from asks.js + the BOOKKEEPING-DIAG block from app.js verbatim into a
+   vm sandbox with a fake DOM, exercises the delta scenarios directly:
+   Command: node <scratchpad>/verify-t6.js
+   Output: 16 passed, 0 failed —
+     (a)  700 pure unmatched_dispatch (Scenario 4's shape) → renderDriftBadges returns null → ZERO board chips (suppression, NOT cap)
+     (a2) 700 across all 3 bookkeeping classes → null (ZERO chips)
+     (b)  mixed 700 bookkeeping + 12 belief-changing → exactly ONE chip "log_ahead_task_not_flipped ×12" (only the belief-changing class)
+     (c)  100-member belief-changing drill-down → ONE chip ×100, drill-down body exactly 51 elements (50 lines + "+50 more"), last line = "+50 more" (the comprehension-gate gap)
+     (d)  one-chip law holds: 718 identical belief-changing → ONE chip ×718, drill-down still capped at 51 (no unbounded 718-div storm)
+     (e)  unranked/future class defaults VISIBLE (safe direction, never silently hidden)
+     (f)  classless legacy badge → visible under "drift ×2" (never silently dropped)
+     (g)  3 belief-changing classes → 3 chips, ranked-first then stable-alpha (precedence orders, never masks)
+     (h)  asks.js BOOKKEEPING set = the auditor bookkeeping trio exactly
+     (H1) Harness Health half: 700 suppressed → bookkeepingDivergenceSummary = {total:700, classCount:1}
+     (H2) aggregate across asks, belief-changing excluded: 3+2 → {total:5, classCount:2}
+     (H3) app.js and asks.js BOOKKEEPING_DIVERGENCE_CLASSES literals identical
+   Result: PASS
+4. Harness Health count render wiring (code-read + T6H-*)
+   Command: file asks.js:990-991 (null-safe append) + auditor.js:1158 (badges_by_ask exposed) + app.js:990-995 (bookkeepingRow)
+   Output: renderDriftBadges → null on all-suppressed → statusRow never gets an empty container (asks.js:991); auditor exposes state.badgesByAsk as badges_by_ask via getDiagnostics (auditor.js:1158); renderDiagnostics reads d.badges_by_ask → bookkeepingDivergenceSummary → appends "progress-log bookkeeping divergences: N (K class(es))" (app.js:990-995)
+   Result: PASS
+5. Belief-changing one-chip law (prior run) — re-confirmed by check 3(d)/(g); Result: PASS
+6. Auditor unmatched_dispatch age-bound to marker-retention horizon — PROVEN conf 9 in the prior run (S7/S7c/S7d/S7e green); OUT of this narrow delta's scope, stands.
+
+Runtime verification: test neural-lace/workstreams-ui/web/cockpit.selftest.js::T6-1 (700 bookkeeping → ZERO board chips, suppressed not capped)
+Runtime verification: test neural-lace/workstreams-ui/web/cockpit.selftest.js::T6-2 (mixed bookkeeping+belief-changing → only the belief-changing chip)
+Runtime verification: test neural-lace/workstreams-ui/web/cockpit.selftest.js::T6-6 (drill-down body capped at 51, not 718)
+Runtime verification: test neural-lace/workstreams-ui/web/cockpit.selftest.js::T6H-2 (Harness Health half: 700-bookkeeping fixture → {total:700, classCount:1})
+Runtime verification: test neural-lace/workstreams-ui/server/server.selftest.js::S7d (unmatched_dispatch beyond retention horizon → NO badge)
+
+DEPENDENCY TRACE
+================
+Step 1: a card accumulates N drift badges (700 bookkeeping / mixed)
+  ↓ Verified at: asks.js:990 renderDriftBadges(ask.drift_badges)
+Step 2: bookkeeping classes filtered out BEFORE grouping; zero survivors → null
+  ↓ Verified at: asks.js:303-307 (BOOKKEEPING_DIVERGENCE_CLASSES filter) + independent harness (a)/(a2)
+Step 3: user-visible board shows ZERO chips for all-bookkeeping; ONE counted labeled chip per surviving belief-changing class; drill-down ≤ 51 elements
+  ↓ Verified at: asks.js:991 null-safe append + independent harness (b)/(c)/(d) asserting rendered summary.textContent + body child count
+Step 4: the suppressed count surfaces in Harness Health
+  ↓ Verified at: auditor.js:1158 badges_by_ask → app.js:990-995 bookkeepingRow + independent harness (H1)/(H2) + T6H-2/T6H-3/T6H-5
+
+Git evidence:
+  Fix landed at 3c45d62 fix(cockpit-roadmap-redesign t6): bookkeeping suppression + drill-down cap (fix round)
+    - neural-lace/workstreams-ui/web/asks.js (renderDriftBadges: bookkeeping suppression + DRILL_DOWN_LINE_CAP)
+    - neural-lace/workstreams-ui/web/app.js (BOOKKEEPING-DIAG block + bookkeepingRow in renderDiagnostics)
+    - neural-lace/workstreams-ui/web/cockpit.selftest.js (T6-1..T6-6c revised + T6H-1..T6H-5 new)
+    - docs/plans/cockpit-roadmap-redesign.md (in-flight entry for the app.js diagnostics-pane touch)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: the prior run's sole FAIL basis (Acceptance Scenario 4's bookkeeping board-suppression unbuilt — the first pass CAPPED to one chip rather than SUPPRESSING to zero) is fixed at 3c45d62 and independently falsified. The verifier extracted the REAL render blocks verbatim and ran them in a vm sandbox against Scenario 4's exact 700-bookkeeping shape → ZERO board chips (null wrap, null-safe at the call site so no empty container), mixed → only the belief-changing chip, the comprehension-gate's 718-div drill-down storm → capped at 51 (50 + "+50 more"), and the Harness Health count → {total:700, classCount:1} from the same suppressed data. Multiple adversarial probes (unranked/future class, classless legacy, precedence ordering) failed to break the one-chip-per-belief-changing-class law or leak a suppressed class onto the board. Composed cockpit.selftest 186/0 + server.selftest 168/0 at the mandated counts with direct rc. HYPOTHESIZED-only residual (out of this delta's scope, orchestrator-held): the comprehension delta re-review — the orchestrator holds the commit until it lands (REFUTED if that re-review returns FAIL, in which case this checkbox flip is premature and the orchestrator's hold prevents the bad commit).
+
+---
+
+## Task 5 — Requests ledger view — NARROW RE-VERIFY (delta after dca80ed splice fix)
+
+EVIDENCE BLOCK
+==============
+Task ID: 5
+Task description: Requests ledger view (timeline anatomy I6, became→ #roadmap/<id> arrow, C8 findability filter + age-grouped closed, I1 recency, C4 four-states, C9 a11y) — Verification: full, rung 3
+Verified at: 2026-07-19T22:27:24Z
+Verifier: task-verifier agent (narrow re-verify — prior run FAILed on ONE defect; server surface 25/0 + falsification probes a-d STAND from that run)
+
+Oracle: specified — the plan's User-facing Outcome §1 (Requests view) + the four-spec cross-view arrow law (target/landed/return/miss); exercised as a live browser render against the running cockpit on :7733.
+
+Comprehension-gate: PASS (confidence 8) — on record from the prior run (rung 3); not re-invoked for this render-only delta (no source-logic change since — dca80ed moved one <script> line only).
+
+Checks run:
+1. index.html tag position + not-inside-comment (delta 1)
+   Command: read neural-lace/workstreams-ui/web/index.html lines 40-50, 283-291 + grep requests.js
+   Output: ONLY occurrence at line 289 = <script src="/requests.js"></script>, immediately after <script src="/roadmap.js"></script> (line 288), before </body> (line 290). Comment block (lines 41-46) no longer contains the tag. git show dca80ed confirms: tag removed from inside the comment, re-added after roadmap.js (1 insertion / 1 deletion).
+   Result: PASS
+2. Real browser render (headless Chrome via puppeteer-core) against http://127.0.0.1:7733/#requests (delta 2)
+   Command: node scratchpad/probe.js (executablePath=C:/Program Files/Google/Chrome/Application/chrome.exe)
+   Output: document.scripts = [asks, todo, backlog, app, roadmap, requests].js IN ORDER (requests.js is now a LIVE PARSED script — prior FAIL had it absent); ledgerMounted=true (#requestsLedgerSection present — prior FAIL had it absent); filterPresent=true; section heads = ["Open (3)","Closed (1)"] (2 heads); state chips = 4; rows = 4.
+   Result: PASS
+3. Filter narrows on a typed term (wired≠reached≠behaving — output changes across states)
+   Command: type "reboot" into #requestsFilter (dispatch input) → observe; then clear
+   Output: rowsAfterFilter=1, sectionHeadsAfterFilter=["Open (1)"] (Closed head gone), filteredRowTitle=["The computer rebooted."]; clear → rowsAfterClear=4. Rendered output observably DIFFERENT across filter states.
+   Result: PASS
+4. Miss behavior on a gone id (C3 — four-spec arrow law)
+   Command: set location.hash=#request/ask-nonexistent-gone-999 → observe #requestsMissBanner
+   Output: missBannerVisible=true, text="This request is no longer in the ledger — it may have been merged, cleared, or never existed." (requests.js's own missInfo — confirms its registerView replaced app.js's placeholder). Never blank/404.
+   Result: PASS
+5. Composed selftest, direct rc (delta 3)
+   Command: node neural-lace/workstreams-ui/web/cockpit.selftest.js ; echo rc=$?
+   Output: "self-test summary: 205 passed, 0 failed" rc=0. (Count is 205 not the prompt's 186 because concurrent T6/T8 blocks landed in the shared file since — growth, not regression; 0 failed.) Task-5's own T5-1..T5-24 block = 24/24 PASS, incl. T5-1 pinning the exact <script src="/requests.js"> ordered after app.js/roadmap.js. The 3 "FAIL"-substring lines (R22/R24/R25) are PASS-line descriptions naming historical bugs, not failures.
+   Result: PASS
+6. Out-of-scope observation (surfaced, non-blocking): one 500 in the console — GET /api/todo (the standalone My-To-Do pane, task 4/8 territory), NOT /api/requests (which returns 200). Does not touch the Requests ledger, which rendered fully. Outside task-5 delta scope.
+
+Runtime verification: file neural-lace/workstreams-ui/web/index.html::<script src="/requests.js">
+Runtime verification: curl http://127.0.0.1:7733/api/requests
+Runtime verification: test neural-lace/workstreams-ui/web/cockpit.selftest.js::T5-1
+Runtime verification: functionality-verifier 5::PASS (live-browser render on :7733 — ledger mounts, Open/Closed heads, filter narrows, gone-id miss banner; prior run's server 25/0 + probes a-d STAND)
+
+DEPENDENCY TRACE
+================
+Step 1: operator opens the cockpit Requests tab (http://127.0.0.1:7733/#requests)
+  ↓ Verified at: probe.js — document.scripts includes /requests.js after /roadmap.js (index.html:289)
+Step 2: requests.js self-mounts + registers the 'requests' view adapter, fetches /api/requests
+  ↓ Verified at: probe.js — #requestsLedgerSection present, 4 rows rendered from live payload; requests.js:124 insertBefore, :571 registerView
+Step 3: operator sees Open/Closed sections, filters, and follows a stale link
+  ↓ Verified at: probe.js — Open(3)/Closed(1) heads; "reboot" narrows to 1 row; #request/gone → honest miss banner (requests.js:480/491 heads, :146 itemMatches, :580 missInfo → app.js:1135 showMissBanner)
+
+Git evidence:
+  Files modified in recent history:
+    - neural-lace/workstreams-ui/web/index.html  (fix commit: dca80ed, 2026-07-19 — the splice-position correction this delta re-verifies)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: the prior run's sole FAIL basis (the <script src="/requests.js"> tag was spliced INSIDE index.html's comment block, so the view never mounted in a real browser — document.scripts lacked requests.js, #requestsLedgerSection was absent) is fixed at dca80ed and INDEPENDENTLY re-derived here in a real headless-Chrome render against the running :7733 server: requests.js is now a live parsed script in correct order, the ledger mounts, Open(3)/Closed(1) heads render, the filter narrows the rendered rows across states, and a gone-id shows the honest miss banner (never blank/404). Composed cockpit.selftest 205/0 with direct rc=0 (T5 block 24/24). The prior run's server-surface 25/0 + live curl + falsification probes a-d STAND. Two adversarial probes this run (filter narrowing showing output change; gone-id miss banner) were attempted and did not break. Out-of-scope residual (non-blocking): a 500 on /api/todo (My-To-Do pane, task 4/8), not /api/requests (200) — does not affect the Requests ledger.

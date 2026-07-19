@@ -256,7 +256,7 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   - **A11y (C9):** as task 3 — details/summary disclosure, focus management, text-never-
     color-only, button chips. —
   Verification: full
-- [ ] 5. [serial] **Requests ledger view.**
+- [x] 5. [serial] **Requests ledger view.**
   - **Timeline anatomy (I6):** collapsed = title + one-line CURRENT state ("became → <plan>"
     or "open, amended 2d ago"); expanded = oldest-first chronology, origin pinned first, every
     event dated, "became →" as the terminal event; amendment rows carry the task-2 detach
@@ -276,7 +276,7 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
     ("requests appear here automatically as you talk to sessions").
   - **A11y (C9):** as task 3. —
   Verification: full
-- [ ] 6. [serial] **Badge law + badge-storm fix**: renderer caps telemetry to ONE counted, labeled
+- [x] 6. [serial] **Badge law + badge-storm fix**: renderer caps telemetry to ONE counted, labeled
   chip per belief-changing class (bookkeeping classes → Harness Health only); auditor's
   unmatched_dispatch oracle age-bounded to the marker-retention horizon (nl-issue spec) —
   Verification: full
