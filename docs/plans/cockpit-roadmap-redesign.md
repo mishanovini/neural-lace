@@ -1,6 +1,6 @@
 # Plan: Cockpit roadmap redesign — one registry, three views
 
-Status: DRAFT
+Status: ACTIVE
 Mode: build
 rung: 3
 lifecycle-schema: v2
@@ -11,7 +11,9 @@ architecture-reviewer (Fable) SOUND-WITH-AMENDMENTS, binding A1-A10
 (`docs/reviews/2026-07-18-cockpit-roadmap-redesign-architecture-review.md`); ux-designer FAIL
 pre-amendment, Criticals C1-C9 + Importants I1-I6
 (`docs/reviews/2026-07-18-cockpit-roadmap-redesign-ux-review.md`). Every binding amendment is
-folded in this revision; the operator's verbatim record
+folded in this revision. DELTA re-review 2026-07-18: ux-designer PASS-WITH-CONCERNS — all
+C1-C9 + I1-I6 confirmed resolved, six sev-1/2 residuals folded as delta R1-R6
+(`docs/reviews/2026-07-18-cockpit-roadmap-redesign-ux-delta.md`). The operator's verbatim record
 (`docs/reviews/2026-07-17-cockpit-ux-design-input.md`) remains the supreme authority where any
 texts conflict. Adjudications between the two reviews are logged in the Decisions Log.
 
@@ -105,9 +107,12 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   - **ROLL-UP LAW (C1):** attention states propagate upward — every collapsed ancestor of an
     attention-state descendant shows a counted, labeled badge ("1 stalled — waiting on you")
     beside its own status chip; badge click expands the path to the item. Badge precedence:
-    waiting-on-you > crashed > blocked-on > limit-parked > unknown. Applies to EVERY
-    leaf-derived attention signal (all stalled reasons + unknown) — audited against the law,
-    not just stalled. Roll-up counts computed here in derive-lib; rendered in task 3. —
+    waiting-on-you > crashed > blocked-on > limit-parked > unknown. MULTIPLICITY (delta R4):
+    an ancestor shows ONE badge PER attention class present in its subtree, each counted +
+    labeled; precedence governs display ORDER only, never selection — a higher class never
+    masks a lower one. Applies to EVERY leaf-derived attention signal (all stalled reasons +
+    unknown) — audited against the law, not just stalled. Roll-up counts computed here in
+    derive-lib; rendered in task 3. —
   Verification: full
 - [ ] 2. [serial] **Work-item layer.**
   - **Titles (A3, round 3):** auto-distilled (async LLM, off the hot path); ALWAYS
@@ -146,7 +151,9 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   - **Build order (A7):** a `roadmap_rank` record on the registry, operator-editable via UI
     delegation to ask-registry.sh; DEFAULT = plan-creation (registry insertion) order. (The
     operator's "order intended to be built" previously had NO data source — this names the
-    mechanism; see Decisions Log adjudication (a).)
+    mechanism; see Decisions Log adjudication (a).) Reorder ships keyboard-operable move
+    up/down controls (real buttons); drag, if offered, is an enhancement, never the only path
+    (WCAG 2.2 2.5.7 — delta R2).
   - **Roadmap→Request (C6):** every roadmap item's drill-down carries "from your request(s):
     <title(s)>", linking via `#request/<id>` to the ledger entry, resolved verbatim one click
     away (the existing Verbatim mechanism). LAW: every promote/became/derived-from
@@ -164,7 +171,8 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
     single aging tunable.
   - **Kanban toggle (I3, decide-and-go default):** cards = TOP-LEVEL roadmap items; columns =
     the derived statuses with stalled visually distinct (merged-unverified and unknown render
-    as their own labeled columns, never inside Complete — see Decisions Log adjudication (d));
+    as their own labeled columns, never inside Complete — see Decisions Log adjudication (d);
+    these two EXCEPTIONAL columns render only when non-empty — delta R5);
     same chips as the tree; toggle + project-chip selections persist (localStorage). LAW:
     every alternate view (kanban here; person-grouped peers in task 7) names its unit-of-card
     and its state persistence.
@@ -190,7 +198,8 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
 - [ ] 4. [serial] **Inbox view + context contract enforcement.**
   - **Item anatomy (I5 — the operator-approved §3 compact format, reused not reinvented):**
     COLLAPSED ROW: type glyph + text label (decision / unblock) + the ask as ONE imperative
-    sentence + source chip (session/plan) + age + "blocks: <item>" when it stalls live work;
+    sentence + source chip (session/plan) + age + "blocks: <item>" when it stalls live work
+    (links `#roadmap/<id>` — the shell's four-spec arrow law applies, delta R3);
     sort = blocking-live-work first, then age. EXPANDED: the constitution §3 anatomy rendered —
     1. Decision/Action needed (one sentence, visually primary); 2. Context ≤5 lines with links
     (provenance folded here: which conversation, when, verbatim one click); 3. Trade-offs
@@ -223,7 +232,9 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   - **Quarantine (I4 + A8):** quarantined items render BELOW answerable ones under "N arrived
     without context — defects filed against the producing sessions"; each shows what the
     system DOES know, the auto-defect link ("defect filed →"), an "open source session" escape
-    hatch, and dismiss; EXCLUDED from the Inbox (N) headline count. Framing law: the system
+    hatch, and dismiss; EXCLUDED from the Inbox (N) headline count. "Open source session"
+    names its target (delta R3): the session's existing Harness Health drill-in when one
+    exists, else a copyable `claude --resume <session-id>` command — never a dead affordance. Framing law: the system
     failed, not the operator — every system-failure surface (quarantine, unknown-status,
     coord-unreachable) names the failing component and shows the remediation already taken.
     Auto-defect mechanics: filed in the AUDITOR cycle only (never on render), keyed by ledger
@@ -232,7 +243,9 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
     recurrence escalates, never re-files. Classification reuses the `lint_warnings`
     needs-you.sh already stamps at add — never a second heuristic.
   - **Win state (C4):** "Nothing waiting on you — all sessions running free. As of <time>."
-    rendered ONLY on successful derivation; a failed/unreadable ledger renders pane-error +
+    SCOPED to the answerable section (delta R1): it renders when zero ANSWERABLE items exist,
+    even while quarantined or "My items" entries remain visible below — those sections never
+    defeat or fake the win; rendered ONLY on successful derivation; a failed/unreadable ledger renders pane-error +
     Retry, NEVER the win state (error-masquerading-as-empty is the worst four-state
     confusion). Loading/error per the existing pane-state convention.
   - **Inbox vs My-To-Do (A10):** the Inbox SUPERSEDES the My-To-Do pane as the canonical
@@ -255,6 +268,9 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
     older") that search reaches inside ("closed (N)" expands). RULE (adopted from the
     proposal): any surface that can exceed ~2 viewports ships a filter escape hatch AT BIRTH —
     roadmap tree at scale, "N completed" roll-ups, and the quarantine group are siblings.
+    ARBITRATION (delta R6): the roadmap tree's at-birth hatch = this SAME substring filter box
+    (shipped in task 3) — project chips are facets, not search, and do not satisfy the rule
+    alone.
   - **Recency (I1):** rows carry "last amended <age>".
   - **Four UI states (C4):** loading/error per pane convention; empty explains auto-capture
     ("requests appear here automatically as you talk to sessions").
@@ -407,6 +423,16 @@ Task 1 first, alone: the derived status of ONE real archived plan rendering corr
   roll-up completed aging (operator asked for recommendation; this is it — one-number tunable);
   chips-not-swimlanes (nodded); auto-name-always-editable; harness chores excluded; event-hybrid
   publish with keepalive floor; person grouping. Inputs doc is authoritative for verbatim intent.
+- (2026-07-18) DELTA REVIEW FOLD (decide-and-go, all six residuals from the PASS-WITH-CONCERNS
+  delta review): R1 win-state scoped to answerable section (quarantine/"My items" never defeat
+  it); R2 roadmap_rank reorder = keyboard-operable buttons, drag optional (WCAG 2.2 2.5.7);
+  R3 "blocks:" links `#roadmap/<id>` + "open source session" targets Harness Health drill-in
+  else copyable resume command; R4 roll-up = one badge PER class, precedence orders never
+  selects; R5 kanban exceptional columns (merged-unverified, unknown) render only when
+  non-empty; R6 tree's at-birth filter hatch = substring filter box, chips are facets only.
+- (2026-07-18) ACTIVATED: Check 17 satisfied — architecture-review SOUND-WITH-AMENDMENTS +
+  ux delta PASS-WITH-CONCERNS, all amendments folded. cockpit-ui-polish.md flipped SUPERSEDED
+  (absorbed by tasks 6+8).
 - (2026-07-18) **Review fold (this revision).** Both gate reviews folded into task text:
   architecture A1-A10 (all binding amendments) + UX C1-C9 Criticals, I1-I6 Importants, and the
   severity-1 roll-up-exemplar polish. Cross-review adjudications (decide-and-go, all reversible):
