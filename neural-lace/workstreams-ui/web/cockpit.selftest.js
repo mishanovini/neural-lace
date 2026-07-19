@@ -591,6 +591,87 @@ let roadmapJs = '';
 try { roadmapJs = fs.readFileSync(path.join(D, 'roadmap.js'), 'utf8'); } catch (_) { /* T3 checks fail honestly below */ }
 const roadmapJsNoComments = stripJsComments(roadmapJs);
 
+// ---- T3 comprehension-gate fixes (both PROVEN, conf 6): the two checks
+// below need real EXECUTION (not source-regex) to prove behavior, so they
+// reuse the T6 badge-law technique — extract the REAL source between
+// anchors / the REAL regex literal, run it in a minimal Node `vm` sandbox
+// (no jsdom/headless browser, per this file's header). --------------------
+
+// FIX 1 — captureUiState must capture an open title editor's uncommitted
+// value by PRESENCE, not focus (a focus-gated capture silently loses the
+// edit when focus is on Save/Cancel or has left the pane).
+const captureUiStateSrc = (function () {
+  const beginMarker = '// CAPTURE-UI-STATE-BEGIN';
+  const endMarker = '// CAPTURE-UI-STATE-END';
+  const bi = roadmapJs.indexOf(beginMarker);
+  const ei = roadmapJs.indexOf(endMarker);
+  if (bi === -1 || ei === -1 || ei < bi) return null;
+  return roadmapJs.slice(bi, ei);
+})();
+ok('T3-27b selftest can locate the CAPTURE-UI-STATE extraction anchors in roadmap.js (source-execution harness precondition)',
+  !!captureUiStateSrc);
+
+function runCaptureUiState(opts) {
+  opts = opts || {};
+  if (!captureUiStateSrc) return { __error: 'extraction anchors missing' };
+  const sandbox = {
+    window: { scrollY: opts.scrollY || 0 },
+    body: {
+      scrollTop: opts.bodyScrollTop || 0,
+      contains: function () { return opts.activeInBody !== false; },
+    },
+    document: {
+      activeElement: opts.activeElement || null,
+      querySelector: function (sel) { return sel === '.rm-title-input' ? (opts.openInput || null) : null; },
+    },
+  };
+  vmMod.createContext(sandbox);
+  const code = captureUiStateSrc + '\nvar __result = captureUiState();';
+  try { vmMod.runInContext(code, sandbox); } catch (err) { return { __error: String(err) }; }
+  return sandbox.__result;
+}
+
+const fakeSaveBtn = { tagName: 'BUTTON', dataset: {} };
+const fakeOpenInput = {
+  classList: { contains: function (c) { return c === 'rm-title-input'; } },
+  dataset: { editFor: 'item-42' },
+  value: 'uncommitted title text',
+  selectionStart: 3, selectionEnd: 7,
+};
+
+// FIX 2 — hash id encode/decode symmetry: extract the REAL ITEM_HASH_RE
+// regex literal from app.js AND the REAL '#request/' generation expression
+// from roadmap.js (not reimplementations of either) and execute both.
+const ITEM_HASH_RE = (function () {
+  const marker = 'var ITEM_HASH_RE = ';
+  const i = js.indexOf(marker);
+  if (i === -1) return null;
+  const end = js.indexOf(';', i);
+  if (end === -1) return null;
+  try { return eval(js.slice(i + marker.length, end)); } catch (_) { return null; }
+})();
+
+// Balanced-paren extraction of shell.navigate(...)'s argument expression,
+// located by an unambiguous literal prefix present in BOTH the pre-fix
+// ('#request/' + r.id) and post-fix ('#request/' + encodeURIComponent(r.id))
+// source shapes, so this proves whatever the source ACTUALLY says today.
+function extractCallArg(src, callPrefixMarker) {
+  const i = src.indexOf(callPrefixMarker);
+  if (i === -1) return null;
+  const openIdx = src.indexOf('(', i);
+  if (openIdx === -1) return null;
+  let depth = 0, j = openIdx;
+  for (; j < src.length; j++) {
+    if (src[j] === '(') depth++;
+    else if (src[j] === ')') { depth--; if (depth === 0) break; }
+  }
+  if (depth !== 0) return null;
+  return src.slice(openIdx + 1, j);
+}
+const requestNavigateArg = extractCallArg(roadmapJs, "shell.navigate('#request/'");
+ok('T3-4a selftest can extract the from-request shell.navigate() argument expression from roadmap.js (source-execution harness precondition)',
+  !!requestNavigateArg);
+
 // --- shell: four tabs, Roadmap lands (C2) --------------------------------
 ok('T3-1 the shell defines all four tabs (Roadmap/Requests/Inbox/Harness Health) as real buttons + panels',
   /<button[^>]+id="tabRoadmapBtn"/.test(html) && /<button[^>]+id="tabRequestsBtn"/.test(html) &&
@@ -605,6 +686,26 @@ ok('T3-3 the Inbox tab carries a LIVE count element and app.js derives N from AN
 // --- hash routing + the landed state (C2) --------------------------------
 ok('T3-4 hash router handles the three item address families (#roadmap/<id> #request/<id> #inbox/<id>) + hashchange',
   /#\(\?:roadmap\|request\|inbox\)|\(roadmap\|request\|inbox\)/.test(js) && /hashchange/.test(js));
+ok('T3-4b hash id encode/decode symmetry: an item id containing \'%\' and \'#\' round-trips generation→parse WITHOUT throwing and lands as the exact original id (the REAL roadmap.js generation expression + REAL app.js ITEM_HASH_RE/decode, extracted+executed — not reimplementations)',
+  (function () {
+    if (!ITEM_HASH_RE || !requestNavigateArg) return false;
+    var rawId = 'weird%25-id#with-hash/slash';
+    var hash, threw = false, family = null, decoded = null;
+    try {
+      // executes the ACTUAL source text found at roadmap.js's from-request
+      // link (whatever it currently says — raw concat or encoded) against a
+      // fake {id: rawId} request object.
+      hash = new Function('r', 'encodeURIComponent', 'return (' + requestNavigateArg + ');')(
+        { id: rawId }, encodeURIComponent);
+      var m = ITEM_HASH_RE.exec(hash);
+      family = m && m[1];
+      decoded = m && decodeURIComponent(m[2]); // the app.js routeFromHash parse formula
+    } catch (e) { threw = true; }
+    return !threw && family === 'request' && decoded === rawId;
+  })());
+ok('T3-4c both in-scope hash-generation call sites encode their interpolated segment (encodeURIComponent), not raw concatenation',
+  /'#request\/' \+ encodeURIComponent\(r\.id\)/.test(roadmapJs) &&
+  /'#' \+ encodeURIComponent\(t\)/.test(js));
 ok('T3-5 landed state = scroll + programmatic focus + a visible highlight class',
   /scrollIntoView/.test(js) && /landing-highlight/.test(js) && /\.focus\(\)/.test(js));
 ok('T3-6 an explicit return affordance is injected on the landed item and drives history.back()',
@@ -682,6 +783,21 @@ ok('T3-26 the view polls on the 30s tick and labels failures "derived <age> — 
 ok('T3-27 re-render is STATE-PRESERVING: open-details set + scroll + focus + uncommitted edits captured and restored',
   /captureUiState/.test(roadmapJs) && /restoreUiState/.test(roadmapJs) &&
   /scrollTop|scrollY/.test(roadmapJs) && /activeElement/.test(roadmapJs));
+ok('T3-27c open-but-unfocused title editor (focus moved to the Save button, NOT the input) still has its uncommitted value CAPTURED by captureUiState — the pre-fix focus-gated code returned edit:null here and the 30s tick silently destroyed the editor',
+  (function () {
+    var r = runCaptureUiState({ activeElement: fakeSaveBtn, openInput: fakeOpenInput });
+    return !r.__error && !!r.edit && r.edit.itemId === 'item-42' && r.edit.value === 'uncommitted title text';
+  })());
+ok('T3-27d open title editor survives capture even when focus has left the pane entirely (activeElement null/outside)',
+  (function () {
+    var r = runCaptureUiState({ activeElement: null, openInput: fakeOpenInput });
+    return !r.__error && !!r.edit && r.edit.itemId === 'item-42';
+  })());
+ok('T3-27e no open editor in the DOM -> captureUiState.edit stays null (presence-based capture does not false-positive)',
+  (function () {
+    var r = runCaptureUiState({ activeElement: fakeSaveBtn, openInput: null });
+    return !r.__error && r.edit === null;
+  })());
 
 // --- title editing + rank reorder (A3 / A7 / R2) -------------------------
 ok('T3-28 title editing reuses the todo.js pattern: an explicit Edit button, Escape cancels, focus returns',

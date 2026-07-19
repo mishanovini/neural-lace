@@ -1180,7 +1180,10 @@
     TABS[t].btn.addEventListener('click', function () {
       var ad = viewAdapters[currentTab];
       if (ad && ad.clearLanding) ad.clearLanding();
-      window.WorkstreamsShell.navigate('#' + t);
+      // T3-fix2: encode defensively at every hash-generation call site (t is
+      // always a fixed tab key today, but the symmetry law is per-site, not
+      // per-value known-safety).
+      window.WorkstreamsShell.navigate('#' + encodeURIComponent(t));
     });
   });
 

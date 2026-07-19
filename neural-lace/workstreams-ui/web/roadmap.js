@@ -298,7 +298,10 @@
     } else {
       fr.forEach(function (r) {
         frRow.appendChild(btn('ghost small rm-request-link', r.title || r.id, function () {
-          if (shell) shell.navigate('#request/' + r.id);
+          // T3-fix2: encode the id segment (encode/decode symmetry with
+          // app.js routeFromHash's decodeURIComponent) — a raw '%' in an id
+          // otherwise throws URIError in the hashchange handler.
+          if (shell) shell.navigate('#request/' + encodeURIComponent(r.id));
         }));
       });
     }
@@ -687,22 +690,29 @@
   // captureUiState/restoreUiState — the C7 law: any auto-refreshing surface
   // preserves expansion + scroll + focus + uncommitted edits. openSet is
   // maintained live by the toggle listeners; here we capture the rest.
+  // CAPTURE-UI-STATE-BEGIN
   function captureUiState() {
     var st = { scrollY: window.scrollY, bodyScrollTop: body.scrollTop, focusKey: null, edit: null };
     var ae = document.activeElement;
     if (ae && body.contains(ae)) {
       if (ae.dataset && ae.dataset.focusKey) st.focusKey = ae.dataset.focusKey;
       else if (ae.dataset && ae.dataset.itemId) st.focusKey = 'item:' + ae.dataset.itemId;
-      if (ae.classList && ae.classList.contains('rm-title-input')) {
-        st.edit = {
-          itemId: ae.dataset.editFor,
-          value: ae.value,
-          selStart: ae.selectionStart, selEnd: ae.selectionEnd,
-        };
-      }
+    }
+    // T3-fix1 (comprehension gate FAIL conf 6): capture any OPEN title editor's
+    // uncommitted value by PRESENCE, not focus — an open-but-unfocused editor
+    // (focus on Save/Cancel, or moved outside the pane entirely) is otherwise
+    // silently destroyed by the 30s tick's renderAll() DOM wipe.
+    var openInput = document.querySelector('.rm-title-input');
+    if (openInput) {
+      st.edit = {
+        itemId: openInput.dataset.editFor,
+        value: openInput.value,
+        selStart: openInput.selectionStart, selEnd: openInput.selectionEnd,
+      };
     }
     return st;
   }
+  // CAPTURE-UI-STATE-END
 
   function restoreUiState(st) {
     if (!st) return;
