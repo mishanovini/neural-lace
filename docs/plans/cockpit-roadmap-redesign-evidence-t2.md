@@ -1,0 +1,53 @@
+# Evidence + rung-3 articulation — cockpit-roadmap-redesign Task 2
+
+Task: 2. Work-item layer (Verification: full, rung 3)
+Builder: plan-phase-builder (Fable), commits 541a8df/f950f1c/45fa815 (build/roadmap-t2)
+→ master a567d59/a948676/6769bbb; derive-lib fragment applied by orchestrator (commit
+"splice(...t2)"), proven composed: derive-lib 56/0, server.selftest 168/0, cockpit 139/0
+(pre-T6; 146/0 post-T6). ask-registry union with T7 marker scenarios: 45/0.
+Gates: pending.
+
+## Builder-reported evidence (gates re-derive)
+- ask-registry.sh --self-test 43/0 (union-composed 45/0; baseline 24; RED first: 12
+  expected FAILs incl. Q4 distiller-clobbers-operator-edit race with control leg).
+- workstreams-read.sh --self-test 56/0 (baseline 45; RED 8).
+- Scenario V = real flagless production shape (subprocess verbs, no seams).
+- Livesmoke: production-shape register + 2× capture-candidate with ASK_SUMMARIZER=haiku
+  → created(title_source:auto) + both candidates pending with correct refs/ids.
+- LIVE DEFECT found+fixed (6769bbb): LLM lane dead from EVERY hook context (CLI nested
+  guard rc=1 stderr-only) — env -u CLAUDECODE on both spawns. HYPOTHESIZED working from
+  operator logged-in env; refuter: one register with ASK_SUMMARIZER=haiku from operator
+  shell not producing summary_updated.
+- Fragment: derive-lib title fold precedence (operator-beats-auto regardless of ts),
+  git apply --check clean, red-green proven (166/2→168/0 in-worktree).
+
+## Rung-3 articulation (builder-authored, condensed)
+**Spec meaning:** title = the folded summary field, not a new field — one name, two writer
+classes, precedence by SOURCE CLASS not timestamp (title_source stamped on every
+summary-writing record; fold exception binding on readers, writer-side skip as defense).
+Amendment capture = three honest layers: mechanical ref-only candidates (never text),
+gated async classification (pending = named state), operator correction
+(detach/classify/amend). One-writer discipline: UI edits via set-title/detach-candidate;
+fold/schema lives in exactly one file's header.
+**Edge cases covered:** operator edit vs newer distiller re-run (Q4 + T2-A3a); empty
+title/amend no-ops; invalid classification vocabulary rejected; classifier failure →
+pending, no record; label-less "amendment" verdict; spawned/no-text sessions never produce
+candidates; transcript-less ref fallback session:<sid>#<n>; ordinal advance; raw-text
+non-persistence; legacy records fold as auto; flagless-merge emitter unchanged.
+**NOT covered:** concurrent same-second appends (O_APPEND-safe, ts-tie fold order
+unpinned); real-model output quality; detach feeding future classification (records
+durable, no live loop); mirror divergence under partial write.
+**Assumptions:** registry consumers tolerate 3 additive JSON fields (verified for
+derive-lib/auditor/export-state readers); .count sidecar single-writer per session;
+per-prompt synchronous bash spawn on UserPromptSubmit acceptable (precedent: first-prompt
+register; watch under AV pressure).
+
+## Orchestrator seams (from builder)
+roadmap_rank verb NOT built (t3 bullet, t2 owns ask-registry — t3 overlay is the interim;
+set-rank verb = queued follow-up); auditor.js duplicate-fold parity t4-owned; server.js
+title endpoint landed via t3-int; ASK_SUMMARIZER not set in production template
+(opt-in-dormant).
+
+## Gate results
+### task-verifier: pending
+### comprehension-reviewer: pending

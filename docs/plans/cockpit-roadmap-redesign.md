@@ -330,6 +330,8 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
 - `adapters/claude-code/scripts/coord-sync.sh` — debounce + full-cycle floor
 
 ## In-flight scope updates
+- 2026-07-19: docs/plans/cockpit-roadmap-redesign-evidence-t2.md — task 2 evidence companion (gate input).
+- 2026-07-19: docs/plans/cockpit-roadmap-redesign-evidence-t6.md — task 6 evidence companion (gate input).
 - 2026-07-19: docs/plans/cockpit-roadmap-redesign-evidence-t7.md — task 7 evidence +
   articulation companion (gate input).
 - 2026-07-19: docs/reviews/2026-07-19-worktree-salvage-classification.md — salvage sweep
