@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260719-6dc53d1c",
+  "created_at": "2026-07-19T03:24:11Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/reviews/2026-07-18-gate23-observe-deploy-harness-review.md",
+  "change_ref": {
+    "commit_sha": "eac6525907a33a7e5f3c40e9d072302ce1e8b84b",
+    "branch": "build/cockpit-health-int"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/agent-design-gate.sh",
+      "blob_sha": "725c5a7037dff9ea18df11309c97c34c6fcbde27"
+    },
+    {
+      "path": "adapters/claude-code/hooks/agent-commit-gate.sh",
+      "blob_sha": "4757bc79b4182976aebe392ef502ca7d4cff2066"
+    },
+    {
+      "path": "adapters/claude-code/settings.json.template",
+      "blob_sha": "f21cc78ac8aac53d7ef7274c986098f793c7c8e9"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "All three files **PASS** for the OBSERVE-mode deployment. Both hooks are provably incapable of returning a blocking exit or wedging a session while their *_ENFORCE env is unset",
+    "findings_summary": "3 Minor advisories (probe-log rotation, message arithmetic, jq-absent FP surface at enforce time); zero blocking-exit paths in observe; template delta = 2 gate wirings + documented plan-lifecycle MultiEdit rider"
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}
