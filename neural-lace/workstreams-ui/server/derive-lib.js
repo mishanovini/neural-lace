@@ -119,7 +119,19 @@ function foldAskRegistry() {
     // operator's own edit under the plain fold). Within the same source
     // class, last-non-empty-wins as before. Records without a title_source
     // (legacy) are auto: every legacy record is machine-captured.
-    if (rec.summary) {
+    //
+    // TITLE-BEARING RECORD TYPES ONLY (task-verifier FAIL fix, D1 — BINDING):
+    // this fold must fire ONLY for `created` and `summary_updated` — the two
+    // record_types ask-registry.sh's schema actually uses to carry a TITLE
+    // (see ask-registry.sh's FOLD CONTRACT header). `candidate_classified`
+    // and `amended` records ALSO stamp non-empty `summary` (an amendment
+    // LABEL, with title_source left empty — see ask-registry.sh's
+    // cmd_amend/_ar_async_haiku_upgrade classifier), and a naive "any
+    // non-empty summary" test previously let that label REPLACE the ask's
+    // folded title. Every other record_type (session_attached, plan_linked,
+    // status_change, merged, project_override, amendment_candidate,
+    // candidate_classified, amended) never touches summary/title_source here.
+    if (rec.summary && (rec.record_type === 'created' || rec.record_type === 'summary_updated')) {
       const src = rec.title_source === 'operator' ? 'operator' : 'auto';
       if (src === 'operator' || cur.title_source !== 'operator') {
         cur.summary = rec.summary;
@@ -1074,6 +1086,37 @@ async function selfTest() {
     if (savedHbDir === undefined) delete process.env.HEARTBEAT_STATE_DIR;
     else process.env.HEARTBEAT_STATE_DIR = savedHbDir;
     try { fs.rmSync(tmp20, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
+  }
+
+  // ---- foldAskRegistry: classified-amendment-does-not-retitle (D1 — the
+  // task-verifier FAIL fix). A `candidate_classified` record landing AFTER
+  // (newer ts than) the `created` record, carrying an amendment LABEL in
+  // `summary` with an EMPTY title_source, must never overwrite the folded
+  // title — only `created`/`summary_updated` are title-bearing record types.
+  const savedArDir21 = process.env.ASK_REGISTRY_STATE_DIR;
+  const tmp21 = fs.mkdtempSync(path.join(os.tmpdir(), 'derive-lib-fold-st-'));
+  try {
+    process.env.ASK_REGISTRY_STATE_DIR = tmp21;
+    const regFields21 = {
+      ask_id: '', record_type: '', ts: '', user: '', machine: '', repo: '',
+      project: '', summary: '', verbatim_ref: '', origin_session: '',
+      status: '', plan_slug: '', session_id: '', resumed_from: '',
+      merged_into: '', emitter: '', title_source: '', candidate_id: '',
+      classification: '',
+    };
+    const rec21 = (o) => JSON.stringify(Object.assign({}, regFields21, o));
+    fs.writeFileSync(path.join(tmp21, 'ask-registry.jsonl'), [
+      rec21({ ask_id: 'ask-fold-21', record_type: 'created', ts: '2026-07-19T10:00:00Z', summary: 'Original distilled title', title_source: 'auto', status: 'active' }),
+      rec21({ ask_id: 'ask-fold-21', record_type: 'candidate_classified', ts: '2026-07-19T11:00:00Z', summary: 'Scope grew to include the sidebar', title_source: '', classification: 'amendment', candidate_id: 'cand-21' }),
+    ].join('\n') + '\n');
+    const folded21 = foldAskRegistry()['ask-fold-21'];
+    ok('21. foldAskRegistry: classified-amendment-does-not-retitle — a NEWER candidate_classified record\'s amendment label never overwrites the folded title (title-bearing types only: created/summary_updated)',
+      folded21 && folded21.summary === 'Original distilled title' && folded21.title_source === 'auto',
+      JSON.stringify(folded21));
+  } finally {
+    if (savedArDir21 === undefined) delete process.env.ASK_REGISTRY_STATE_DIR;
+    else process.env.ASK_REGISTRY_STATE_DIR = savedArDir21;
+    try { fs.rmSync(tmp21, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
   }
 
   console.log('\n' + passed + ' passed, ' + failed + ' failed');

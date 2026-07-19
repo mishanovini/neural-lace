@@ -299,10 +299,44 @@ async function main() {
     ok('S12 rank move with the CLI present delegates set-rank to the registry',
       move2.json && move2.json.ok === true && /set-rank/.test(fs.readFileSync(cliLog, 'utf8')));
 
-    // ---- S13: error honesty — a torn registry file never crashes the route
+    // ---- S13: title precedence (D2 task-verifier FAIL fix) — set-title's
+    // REAL write shape (summary_updated + title_source:"operator", NOT the
+    // title_set{title} shape no writer produces) must survive a NEWER auto
+    // summary_updated (the async distiller re-running) AND report
+    // title_source:"operator" correctly (not misreported "auto") on
+    // /api/roadmap.
+    const regFile = path.join(stateDir, 'ask-registry.jsonl');
+    fs.appendFileSync(regFile, JSON.stringify({
+      ask_id: 'ask-alpha', record_type: 'summary_updated', ts: '2026-07-16T09:00:00Z',
+      summary: 'Alpha feature (operator title)', title_source: 'operator', emitter: 'operator-ui',
+    }) + '\n');
+    fs.appendFileSync(regFile, JSON.stringify({
+      ask_id: 'ask-alpha', record_type: 'summary_updated', ts: '2026-07-16T10:00:00Z',
+      summary: 'Alpha feature (distiller re-run, should be ignored)', title_source: 'auto', emitter: 'ask-registry',
+    }) + '\n');
+    const r13 = await httpGet(PORT, '/api/roadmap');
+    const alpha13 = findItem((r13.json && r13.json.items) || [], 'ask-alpha');
+    ok('S13 operator set-title (summary_updated + title_source:operator) survives a NEWER auto summary_updated (distiller re-run) — title AND title_source:"operator" both correct on /api/roadmap',
+      alpha13 && alpha13.title === 'Alpha feature (operator title)' && alpha13.title_source === 'operator',
+      alpha13 && JSON.stringify({ title: alpha13.title, title_source: alpha13.title_source }));
+
+    // ---- S13b: a candidate_classified amendment LABEL (task 2's timeline
+    // classifier — summary carries the distilled label, title_source is
+    // EMPTY, never "operator"/"auto") must never retitle the ask (D1's rule,
+    // applied identically at this route's own fold).
+    fs.appendFileSync(regFile, JSON.stringify({
+      ask_id: 'ask-alpha', record_type: 'candidate_classified', ts: '2026-07-16T11:00:00Z',
+      summary: 'Scope grew to include the sidebar', title_source: '', classification: 'amendment', candidate_id: 'cand-1',
+    }) + '\n');
+    const r13b = await httpGet(PORT, '/api/roadmap');
+    const alpha13b = findItem((r13b.json && r13b.json.items) || [], 'ask-alpha');
+    ok('S13b a candidate_classified amendment label never retitles the ask — title stays the operator title, unchanged',
+      alpha13b && alpha13b.title === 'Alpha feature (operator title)', alpha13b && alpha13b.title);
+
+    // ---- S14: error honesty — a torn registry file never crashes the route
     fs.writeFileSync(path.join(stateDir, 'ask-registry.jsonl'), '{"broken json\n');
     const r3 = await httpGet(PORT, '/api/roadmap');
-    ok('S13 corrupt registry degrades to an EMPTY-BUT-OK payload (readers skip bad records), never a 500 crash',
+    ok('S14 corrupt registry degrades to an EMPTY-BUT-OK payload (readers skip bad records), never a 500 crash',
       r3.status === 200 && r3.json && r3.json.ok === true && Array.isArray(r3.json.items) && r3.json.items.length === 0);
   } finally {
     server.close();

@@ -164,6 +164,19 @@
 # The writer side also defends (see _ar_async_haiku_upgrade), but the fold
 # rule is the contract.
 #
+# TITLE-BEARING RECORD TYPES (task-verifier FAIL fix — BINDING on every
+# reader): the title-precedence fold above applies ONLY to `record_type
+# == "created"` (the birth summary) and `record_type == "summary_updated"`
+# (both the async distiller's auto upgrade AND `set-title`'s operator
+# write — see cmd_set_title below). Every OTHER record_type that happens to
+# carry a non-empty `summary` — most notably `candidate_classified` and
+# `amended` (the A2 amendment timeline: `summary` there holds a distilled
+# AMENDMENT LABEL, with `title_source` left empty) — is NOT title-bearing
+# and MUST NOT be read into the folded title/title_source by any reader. A
+# reader that tested "any non-empty summary" against ALL record_types (the
+# original derive-lib.js/roadmap-routes.js bug this note documents) let an
+# amendment label silently replace the ask's title.
+#
 # AMENDMENT TIMELINE (A2 — three buildable layers, honestly labeled):
 #   (a) mechanical capture: `capture-candidate` appends EVERY operator
 #       prompt of an ask-attached session (post-first) as an

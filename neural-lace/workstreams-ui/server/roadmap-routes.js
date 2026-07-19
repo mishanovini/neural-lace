@@ -143,7 +143,15 @@ function foldRegistryForRoadmap() {
       created_ts: '', created_emitter: '', origin_session: '', repo: '', project: '',
       summary: '', auto_title: '', operator_title: '', roadmap_rank: null,
     };
-    ['repo', 'project', 'summary'].forEach((f) => { if (rec[f]) cur[f] = rec[f]; });
+    ['repo', 'project'].forEach((f) => { if (rec[f]) cur[f] = rec[f]; });
+    // `summary` is title-bearing (D1's rule, applied identically here): only
+    // `created`/`summary_updated` may set it. Labels stamped by
+    // candidate_classified/amended (task 2's amendment timeline) live in
+    // `summary` too but must NEVER retitle — see derive-lib.js's
+    // foldAskRegistry header for the full rationale (the twin fold).
+    if (rec.summary && (rec.record_type === 'created' || rec.record_type === 'summary_updated')) {
+      cur.summary = rec.summary;
+    }
     if (rec.record_type === 'created') {
       cur.created_ts = rec.ts || '';
       cur.created_emitter = rec.emitter || '';
@@ -158,11 +166,29 @@ function foldRegistryForRoadmap() {
     } else if (rec.record_type === 'created' && rec.status) {
       cur.status = rec.status; cur.status_ts = rec.ts || '';
     }
-    // Title records — task 2's shapes, read-forward-compatibly (A3):
-    // summary_updated {summary} = the async distiller (auto slot);
-    // title_set {title, title_source} = the set-title verb this file's
-    // /api/roadmap/title delegates to.
-    if (rec.record_type === 'summary_updated' && rec.summary) cur.auto_title = rec.summary;
+    // Title records — task 2's REAL write shape (task-verifier FAIL fix,
+    // D2 — BINDING): `set-title` appends `summary_updated` +
+    // `title_source:"operator"` (ask-registry.sh's cmd_set_title; see its
+    // FOLD CONTRACT header) — there is NO `title_set {title}` writer in this
+    // codebase. The route into `operator_title` vs `auto_title` MUST key off
+    // `title_source` on the SAME summary_updated record, not on record_type
+    // alone: routing every summary_updated into auto_title (the prior bug)
+    // (a) misreported title_source as "auto" after an operator edit, and
+    // (b) let a LATER auto summary_updated (the distiller re-run) clobber
+    // the operator's title in the read this file serves (the F3 race, alive
+    // on this one reader). Storing operator/auto in SEPARATE slots — read
+    // side always prefers operator_title (see deriveIntentNode's
+    // `reg.operator_title || reg.auto_title || ...`) — makes "operator
+    // ALWAYS outranks auto REGARDLESS OF TIMESTAMP" hold for free: a later
+    // auto record only ever overwrites auto_title, never operator_title.
+    if (rec.record_type === 'summary_updated' && rec.summary) {
+      if (rec.title_source === 'operator') cur.operator_title = rec.summary;
+      else cur.auto_title = rec.summary;
+    }
+    // `title_set {title, title_source}` — kept for back-compat (trivial;
+    // no writer in this codebase produces it, but a reader that recognizes
+    // it costs nothing and protects a future/external writer using this
+    // shape). Same operator/auto routing rule applies.
     if (rec.record_type === 'title_set' && rec.title) {
       if (rec.title_source === 'operator') cur.operator_title = rec.title;
       else cur.auto_title = rec.title;
