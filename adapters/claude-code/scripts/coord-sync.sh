@@ -71,7 +71,68 @@
 # COORD_SYNC_PULL_CMD — full replacement command lines for the three
 # cadence steps, run via `bash -c`.
 #
-# Subcommands: (default) run one cycle | --self-test | --help
+# ============================================================
+# EVENT-TRIGGERED PUBLISH + PERIODIC FLOOR (cockpit-roadmap-redesign Task 7,
+# BINDING A5 — round-5 operator intent: publish within ~1min of a real
+# status change instead of <=10min, without breaking idle-vs-dead honesty)
+# ============================================================
+#
+# The scheduled task now fires every ~60s (install-coord-sync-task.ps1); each
+# fire is a cheap MARKER CHECK that runs the full cycle only when needed:
+#
+#   dirty marker present  -> FULL cycle (trigger=event). The marker is
+#     touched at the WRITER-LIB seam (progress-log-lib.sh pl_emit fresh
+#     appends + ask-registry.sh _ar_append_record — A5 iii: NOT hooks, so
+#     the GUI's delegated CLI writes and every future writer are covered).
+#   clean, floor due      -> FULL cycle anyway (trigger=floor). THE FLOOR
+#     RUNS THE FULL CYCLE (exporter+push+pull) AT <=COORD_SYNC_FLOOR_SECONDS
+#     (default 600s) REGARDLESS OF THE MARKER — two PROVEN reasons (A5 i):
+#     (1) the A3ii keepalive stamp is only written when the exporter RUNS
+#     (export-state.js runExport, KEEPALIVE_MS=60min) — a naive "if clean:
+#     exit 0" freezes `exported_at` and every healthy IDLE machine renders
+#     peer-unreachable within ~80min (peer-view.js classifyPeerState);
+#     (2) git-blind mutations (cherry-pick/pull/reset) fire no event and
+#     touch no marker — the floor is their ONLY coverage.
+#   clean, floor not due  -> marker-check-only no-op, logged to
+#     STATE_DIR/debounce.log (its OWN small rotating log — NEVER cycles.log,
+#     which stays one-line-per-FULL-cycle so it remains readable AND so
+#     peer-view.js's cycles.log fallback for "my coord view last refreshed"
+#     never mistakes a no-op check for a real refresh — A5 iv).
+#
+# CLEAR-BEFORE-EXPORT (A5 ii): the marker is removed BEFORE the exporter
+# reads state, so an event landing mid-export re-dirties the marker and the
+# NEXT fire republishes it; clear-after would lose that update (classic
+# dirty-flag lost-update).
+#
+# DEBOUNCE / BURST COALESCING: N events between two fires collapse into ONE
+# marker -> ONE cycle; fires are >=60s apart, so publish rate is bounded at
+# ~1/min by construction, hash-gated as before (the exporter's own
+# content-hash gate + coord-push's noop path are unchanged).
+#
+# LOCK THRESHOLD AT THE NEW CADENCE (A5 iv, VERIFIED): the 900s stale-lock
+# reclaim remains correct at a 60s fire interval because (a) a LIVE cycle is
+# hard-bounded by the scheduled task's ExecutionTimeLimit (5min = 300s;
+# install-coord-sync-task.ps1) plus IgnoreNew, so a lock older than 900s
+# (3x that bound) is provably a crashed holder, never a slow live one; and
+# (b) a crashed lock delays publishing by at most 900s — no worse than the
+# pre-Task-7 600s cadence's own worst case + one slot. Self-test Scenario 9
+# pins the 900 > ExecutionTimeLimit cross-file invariant mechanically.
+#
+# FAILURE RENDERINGS (named-absence pattern, task-1 generalization):
+#   - missing/garbled last-full-cycle stamp -> treated as FLOOR DUE (fail
+#     toward publishing, never toward silence).
+#   - un-creatable/unwritable marker path on the writer side -> the write
+#     still succeeds (never-block law); this machine degrades to pure
+#     600s-floor cadence — exactly the pre-Task-7 behavior, never worse.
+#   - no coord repo configured -> the marker is cleared and the floor stamp
+#     written anyway (nothing to publish TO; a later-configured repo gets
+#     full state from the next floor cycle), logged skipped-no-coord-repo —
+#     an unconfigured machine stays at one log line per floor period, not
+#     one per 60s fire.
+#
+# Subcommands: (default) run one debounced fire | --force (run a full cycle
+# regardless of marker/floor — manual verification path) | --self-test |
+# --help
 #
 # Self-test: bash coord-sync.sh --self-test (sandboxed fixture coord repo;
 # never touches the real coord clone, state dir, or alert dir).
@@ -98,6 +159,15 @@ CYCLE_LOG_MAX_LINES="${COORD_SYNC_LOG_MAX_LINES:-500}"
 LOCAL_COMMIT_ALERT_THRESHOLD="${COORD_SYNC_LOCAL_COMMIT_ALERT_THRESHOLD:-3}"
 STATUS_FILE="${COORD_PUSH_STATUS_FILE:-${HOME}/.claude/state/coord-push-status.json}"
 ALERT_DIR="${EXTERNAL_MONITOR_ALERTS_DIR:-${HOME}/.claude/state/external-monitor-alerts}"
+# Task 7 (A5): event-triggered publish + full-cycle floor. The marker default
+# ($STATE_DIR/dirty) meets progress-log-lib.sh's pl_coord_dirty_marker_path
+# default (~/.claude/state/coord-sync/dirty) with zero configuration; the
+# SAME env var (COORD_DIRTY_MARKER_FILE) overrides both ends at once.
+DIRTY_MARKER_FILE="${COORD_DIRTY_MARKER_FILE:-$STATE_DIR/dirty}"
+FLOOR_SECONDS="${COORD_SYNC_FLOOR_SECONDS:-600}"
+LAST_FULL_FILE="$STATE_DIR/last-full-cycle"
+DEBOUNCE_LOG="$STATE_DIR/debounce.log"
+DEBOUNCE_LOG_MAX_LINES="${COORD_SYNC_DEBOUNCE_LOG_MAX_LINES:-300}"
 
 COORD_PUSH_SH="$SELF_DIR/coord-push.sh"
 COORD_PULL_SH="$SELF_DIR/coord-pull.sh"
@@ -249,10 +319,10 @@ _track_local_commit_streak() {
 # for "my coord view last refreshed Xm ago").
 # ============================================================
 _log_cycle() {
-  local outcome="$1" export_rc="$2" push_rc="$3" pull_rc="$4" pull_result="$5" duration_ms="$6"
+  local outcome="$1" export_rc="$2" push_rc="$3" pull_rc="$4" pull_result="$5" duration_ms="$6" trigger="${7:-legacy}"
   mkdir -p "$STATE_DIR" 2>/dev/null || return 0
-  printf 'ts=%s host=%s outcome=%s export_rc=%s push_rc=%s pull_rc=%s pull_result=%s duration_ms=%s\n' \
-    "$(_iso_now)" "$(_hostname)" "$outcome" "$export_rc" "$push_rc" "$pull_rc" "$pull_result" "$duration_ms" \
+  printf 'ts=%s host=%s outcome=%s export_rc=%s push_rc=%s pull_rc=%s pull_result=%s duration_ms=%s trigger=%s\n' \
+    "$(_iso_now)" "$(_hostname)" "$outcome" "$export_rc" "$push_rc" "$pull_rc" "$pull_result" "$duration_ms" "$trigger" \
     >> "$CYCLE_LOG" 2>/dev/null || true
   if [ -f "$CYCLE_LOG" ]; then
     local lines; lines=$(wc -l < "$CYCLE_LOG" 2>/dev/null | tr -d ' ')
@@ -275,16 +345,71 @@ _classify_pull_output() {
 }
 
 # ============================================================
+# Task 7 (A5): floor stamp + debounce-skip logging.
+# ============================================================
+
+# _floor_age_secs — seconds since the last FULL cycle. A missing or garbled
+# stamp prints a huge value: NAMED failure rendering = "floor due" (fail
+# toward publishing, never toward silence).
+_floor_age_secs() {
+  local ts now
+  ts=$(head -n1 "$LAST_FULL_FILE" 2>/dev/null | tr -d '[:space:]')
+  now=$(date -u +%s 2>/dev/null || echo 0)
+  if [[ "$ts" =~ ^[0-9]+$ ]] && [ "$ts" -gt 0 ] && [ "$now" -ge "$ts" ]; then
+    echo $(( now - ts )); return 0
+  fi
+  echo 999999
+  return 0
+}
+
+_stamp_full_cycle() {
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+  date -u +%s > "$LAST_FULL_FILE" 2>/dev/null || true
+  return 0
+}
+
+# _log_debounce_skip <floor_age> — marker-check-only fires log HERE, never
+# to cycles.log (A5 iv: cycles.log stays one-line-per-FULL-cycle, and
+# peer-view.js's cycles.log fallback never mistakes a no-op check for a
+# refresh). Own small rotation.
+_log_debounce_skip() {
+  local floor_age="$1"
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+  printf 'ts=%s host=%s outcome=marker-check-only floor_age_s=%s floor_s=%s\n' \
+    "$(_iso_now)" "$(_hostname)" "$floor_age" "$FLOOR_SECONDS" >> "$DEBOUNCE_LOG" 2>/dev/null || true
+  if [ -f "$DEBOUNCE_LOG" ]; then
+    local lines; lines=$(wc -l < "$DEBOUNCE_LOG" 2>/dev/null | tr -d ' ')
+    if [[ "$lines" =~ ^[0-9]+$ ]] && [ "$lines" -gt "$DEBOUNCE_LOG_MAX_LINES" ]; then
+      local tmp="$DEBOUNCE_LOG.tmp.$$"
+      tail -n "$DEBOUNCE_LOG_MAX_LINES" "$DEBOUNCE_LOG" > "$tmp" 2>/dev/null && mv -f "$tmp" "$DEBOUNCE_LOG" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    fi
+  fi
+  return 0
+}
+
+# ============================================================
 # One cycle: exporter -> coord-push -> coord-pull (A1 binding order).
 # ============================================================
 _run_cycle() {
+  local trigger="${1:-legacy}"
   local t0 t1
   t0=$(_now_ms)
 
   if ! _ensure_clone_bootstrap; then
-    _log_cycle "skipped-no-coord-repo" "-" "-" "-" "-" "$(( $(_now_ms) - t0 ))"
+    # Named degradation: nothing to publish TO. Clear the marker + write the
+    # floor stamp anyway so an unconfigured machine logs ONE skip per floor
+    # period (not one per 60s fire); a later-configured repo gets full state
+    # from the next floor cycle — no event is ever lost, only deferred.
+    rm -f "$DIRTY_MARKER_FILE" 2>/dev/null || true
+    _stamp_full_cycle
+    _log_cycle "skipped-no-coord-repo" "-" "-" "-" "-" "$(( $(_now_ms) - t0 ))" "$trigger"
     return 0
   fi
+
+  # A5 ii (BINDING): clear the marker BEFORE the exporter reads state — an
+  # event landing mid-export re-dirties it and the NEXT fire republishes;
+  # clear-after would lose that update (classic dirty-flag lost-update).
+  rm -f "$DIRTY_MARKER_FILE" 2>/dev/null || true
 
   # ---- step 1: exporter ----
   local export_dir="$COORD_CLONE_DIR/plan-export"
@@ -321,18 +446,43 @@ _run_cycle() {
   local outcome; outcome=$(_read_push_outcome)
   _track_local_commit_streak "$outcome"
 
+  # Floor stamp: a FULL cycle ran (whatever its step rcs — the floor tracks
+  # cycle EXECUTION; step failures surface via outcome/rcs + the A2c alert).
+  _stamp_full_cycle
+
   t1=$(_now_ms)
-  _log_cycle "$outcome" "$export_rc" "$push_rc" "$pull_rc" "$pull_result" "$(( t1 - t0 ))"
+  _log_cycle "$outcome" "$export_rc" "$push_rc" "$pull_rc" "$pull_result" "$(( t1 - t0 ))" "$trigger"
   return 0
 }
 
+# _main <force> — one debounced fire (Task 7 decision logic; see header).
 _main() {
+  local force="${1:-0}"
   if ! _acquire_lock; then
     _log "another coord-sync cycle is already running (lock held) — no-op (overlap prevention)"
     return 0
   fi
   trap _release_lock EXIT
-  _run_cycle
+
+  local dirty=0 floor_age trigger=""
+  [ -f "$DIRTY_MARKER_FILE" ] && dirty=1
+  floor_age=$(_floor_age_secs)
+
+  if [ "$force" = "1" ]; then
+    trigger="forced"
+  elif [ "$dirty" = "1" ] && [ "$floor_age" -ge "$FLOOR_SECONDS" ]; then
+    trigger="event+floor"
+  elif [ "$dirty" = "1" ]; then
+    trigger="event"
+  elif [ "$floor_age" -ge "$FLOOR_SECONDS" ]; then
+    trigger="floor"
+  else
+    # Marker-check-only fire: clean AND inside the floor window — no-op.
+    _log_debounce_skip "$floor_age"
+    return 0
+  fi
+
+  _run_cycle "$trigger"
   return 0
 }
 
@@ -428,6 +578,7 @@ _self_test() {
     (
       export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$s3_clone" COORD_BRANCH="main"
       export STATE_DIR="$s3_state" COORD_PUSH_STATUS_FILE="$s3_status"
+      export COORD_SYNC_FLOOR_SECONDS=0   # Task 7: every run floor-due — this scenario tests ALERTING, not debounce
       export EXTERNAL_MONITOR_ALERTS_DIR="$s3_alerts"
       export COORD_SYNC_EXPORTER_CMD="true"
       export COORD_SYNC_PUSH_CMD="$stub_local_commit"
@@ -467,6 +618,7 @@ _self_test() {
   (
     export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$s3_clone" COORD_BRANCH="main"
     export STATE_DIR="$s3_state" COORD_PUSH_STATUS_FILE="$s3_status"
+    export COORD_SYNC_FLOOR_SECONDS=0   # Task 7: every run floor-due — this scenario tests ALERTING, not debounce
     export EXTERNAL_MONITOR_ALERTS_DIR="$s3_alerts"
     export COORD_SYNC_EXPORTER_CMD="true" COORD_SYNC_PUSH_CMD="$stub_pushed" COORD_SYNC_PULL_CMD="true"
     bash "$SELF_PATH" >/dev/null 2>&1
@@ -475,6 +627,7 @@ _self_test() {
     (
       export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$s3_clone" COORD_BRANCH="main"
       export STATE_DIR="$s3_state" COORD_PUSH_STATUS_FILE="$s3_status"
+      export COORD_SYNC_FLOOR_SECONDS=0   # Task 7: every run floor-due — this scenario tests ALERTING, not debounce
       export EXTERNAL_MONITOR_ALERTS_DIR="$s3_alerts"
       export COORD_SYNC_EXPORTER_CMD="true" COORD_SYNC_PUSH_CMD="$stub_local_commit" COORD_SYNC_PULL_CMD="true"
       bash "$SELF_PATH" >/dev/null 2>&1
@@ -496,6 +649,162 @@ _self_test() {
   [ "$rc4" -eq 0 ]
   _ck "no coord repo configured + no existing clone -> exits 0 (non-blocking)" $?
 
+  # ======== Scenario 5 (Task 7, REAL FLAGLESS SHAPE): debounce skip + event
+  # path end-to-end against the REAL exporter/push/pull and fixture origin —
+  # no *_CMD stubs anywhere in this scenario. ========
+  local s5_cycles="$s1_state/cycles.log"
+  local s5_lines_before s5_lines_after
+  s5_lines_before=$(wc -l < "$s5_cycles" 2>/dev/null | tr -d ' ')
+  # 5a: clean + floor fresh (scenario 1 just ran a full cycle) -> marker-check-only no-op.
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$clone1" COORD_BRANCH="main"
+    export STATE_DIR="$s1_state" COORD_PUSH_STATUS_FILE="$s1_status"
+    export EXTERNAL_MONITOR_ALERTS_DIR="$s1_alerts"
+    export COORD_PUSH_THROTTLE_SECONDS=0
+    export EXPORT_HOSTNAME="$fakehost"
+    export ASK_REGISTRY_STATE_DIR="$s1_ar" PROGRESS_LOG_STATE_DIR="$s1_pl" \
+           DISPATCH_PROVENANCE_STATE_DIR="$s1_dp" HEARTBEAT_STATE_DIR="$s1_hb"
+    bash "$SELF_PATH" >/dev/null 2>&1
+  )
+  s5_lines_after=$(wc -l < "$s5_cycles" 2>/dev/null | tr -d ' ')
+  [ "$s5_lines_before" = "$s5_lines_after" ] && [ -f "$s1_state/debounce.log" ] \
+    && grep -q "outcome=marker-check-only" "$s1_state/debounce.log"
+  _ck "clean fire inside the floor window -> marker-check-only no-op: NO cycles.log line, skip logged DISTINCTLY to debounce.log (A5 iv)" $?
+
+  # 5b: touch the dirty marker (a status-change event) -> the SAME real
+  # cycle runs again, logged trigger=event; marker consumed.
+  printf 'selftest-event\n' > "$s1_state/dirty"
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$clone1" COORD_BRANCH="main"
+    export STATE_DIR="$s1_state" COORD_PUSH_STATUS_FILE="$s1_status"
+    export EXTERNAL_MONITOR_ALERTS_DIR="$s1_alerts"
+    export COORD_PUSH_THROTTLE_SECONDS=0
+    export EXPORT_HOSTNAME="$fakehost"
+    export ASK_REGISTRY_STATE_DIR="$s1_ar" PROGRESS_LOG_STATE_DIR="$s1_pl" \
+           DISPATCH_PROVENANCE_STATE_DIR="$s1_dp" HEARTBEAT_STATE_DIR="$s1_hb"
+    bash "$SELF_PATH" >/dev/null 2>&1
+  )
+  tail -n1 "$s5_cycles" 2>/dev/null | grep -q "trigger=event" && [ ! -f "$s1_state/dirty" ]
+  _ck "dirty marker -> the REAL full cycle runs (trigger=event in cycles.log), marker consumed (event->publish path E2E, no stubs)" $?
+
+  # ======== Scenario 6 (Task 7, THE A5 FLOOR PIN): an IDLE machine (clean
+  # marker) still runs the FULL cycle incl. the exporter once the floor
+  # elapses — the keepalive stamp only updates when the exporter runs;
+  # "if clean: exit 0" would render every healthy idle machine
+  # peer-unreachable within ~80min. ========
+  local s6_state="$tmproot/s6-state" s6_count="$tmproot/s6-exporter-count"
+  mkdir -p "$s6_state"
+  : > "$s6_count"
+  # Floor already elapsed (stamp 700s old, floor 600s), NO marker.
+  echo "$(( $(date -u +%s) - 700 ))" > "$s6_state/last-full-cycle"
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$tmproot/s6-clone" COORD_BRANCH="main"
+    export STATE_DIR="$s6_state" COORD_SYNC_FLOOR_SECONDS=600
+    export COORD_SYNC_EXPORTER_CMD="echo run >> '$s6_count'"
+    export COORD_SYNC_PUSH_CMD="true" COORD_SYNC_PULL_CMD="true"
+    bash "$SELF_PATH" >/dev/null 2>&1
+  )
+  local s6_runs; s6_runs=$(wc -l < "$s6_count" 2>/dev/null | tr -d ' ')
+  [ "$s6_runs" = "1" ] && grep -q "trigger=floor" "$s6_state/cycles.log" 2>/dev/null
+  _ck "IDLE machine, floor elapsed -> FULL cycle runs INCLUDING the exporter (trigger=floor) — the A5 keepalive-honesty floor" $?
+  # Floor NOT elapsed -> no exporter run (the skip is the debounce, the run above is the floor).
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$tmproot/s6-clone" COORD_BRANCH="main"
+    export STATE_DIR="$s6_state" COORD_SYNC_FLOOR_SECONDS=600
+    export COORD_SYNC_EXPORTER_CMD="echo run >> '$s6_count'"
+    export COORD_SYNC_PUSH_CMD="true" COORD_SYNC_PULL_CMD="true"
+    bash "$SELF_PATH" >/dev/null 2>&1
+  )
+  s6_runs=$(wc -l < "$s6_count" 2>/dev/null | tr -d ' ')
+  [ "$s6_runs" = "1" ]
+  _ck "same machine, floor fresh + still clean -> exporter NOT run again (debounce), floor cadence preserved at <=600s" $?
+  # Missing/garbled stamp -> NAMED failure rendering: floor due (fail toward publishing).
+  rm -f "$s6_state/last-full-cycle"
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$tmproot/s6-clone" COORD_BRANCH="main"
+    export STATE_DIR="$s6_state" COORD_SYNC_FLOOR_SECONDS=600
+    export COORD_SYNC_EXPORTER_CMD="echo run >> '$s6_count'"
+    export COORD_SYNC_PUSH_CMD="true" COORD_SYNC_PULL_CMD="true"
+    bash "$SELF_PATH" >/dev/null 2>&1
+  )
+  s6_runs=$(wc -l < "$s6_count" 2>/dev/null | tr -d ' ')
+  [ "$s6_runs" = "2" ]
+  _ck "MISSING floor stamp -> treated as floor-due (named failure rendering: fail toward publishing, never toward silence)" $?
+
+  # ======== Scenario 7 (Task 7, A5 ii): marker cleared BEFORE the exporter
+  # reads state; an event landing MID-EXPORT re-dirties and the next fire
+  # republishes (lost-update prevention). ========
+  local s7_state="$tmproot/s7-state" s7_count="$tmproot/s7-exporter-count"
+  mkdir -p "$s7_state"
+  : > "$s7_count"
+  local s7_marker="$s7_state/dirty"
+  # Exporter stub: records "cleared-ok" iff the marker is ALREADY GONE when
+  # the exporter runs, then simulates a mid-export event by re-touching it.
+  local s7_exporter="[ ! -f '$s7_marker' ] && touch '$tmproot/s7-cleared-ok'; echo mid-export-event > '$s7_marker'; echo run >> '$s7_count'"
+  printf 'pre-existing-event\n' > "$s7_marker"
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$tmproot/s7-clone" COORD_BRANCH="main"
+    export STATE_DIR="$s7_state" COORD_SYNC_FLOOR_SECONDS=999999
+    export COORD_SYNC_EXPORTER_CMD="$s7_exporter"
+    export COORD_SYNC_PUSH_CMD="true" COORD_SYNC_PULL_CMD="true"
+    bash "$SELF_PATH" >/dev/null 2>&1
+  )
+  [ -f "$tmproot/s7-cleared-ok" ] && [ -f "$s7_marker" ]
+  _ck "marker is cleared BEFORE the exporter reads state (A5 ii), and a mid-export event re-dirties it (not lost)" $?
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$tmproot/s7-clone" COORD_BRANCH="main"
+    export STATE_DIR="$s7_state" COORD_SYNC_FLOOR_SECONDS=999999
+    export COORD_SYNC_EXPORTER_CMD="$s7_exporter"
+    export COORD_SYNC_PUSH_CMD="true" COORD_SYNC_PULL_CMD="true"
+    bash "$SELF_PATH" >/dev/null 2>&1
+  )
+  local s7_runs; s7_runs=$(wc -l < "$s7_count" 2>/dev/null | tr -d ' ')
+  [ "$s7_runs" = "2" ]
+  _ck "the re-dirtied marker triggers the NEXT fire's republish (clear-after would have lost this update)" $?
+
+  # ======== Scenario 8 (Task 7): burst coalescing — N events between fires
+  # collapse into ONE cycle; debounce log rotates on its own cap. ========
+  local s8_state="$tmproot/s8-state" s8_count="$tmproot/s8-exporter-count"
+  mkdir -p "$s8_state"
+  : > "$s8_count"
+  date -u +%s > "$s8_state/last-full-cycle"   # floor fresh — only events can trigger
+  local i8
+  for i8 in 1 2 3 4 5; do printf 'burst-event-%s\n' "$i8" > "$s8_state/dirty"; done
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$tmproot/s8-clone" COORD_BRANCH="main"
+    export STATE_DIR="$s8_state" COORD_SYNC_FLOOR_SECONDS=999999
+    export COORD_SYNC_EXPORTER_CMD="echo run >> '$s8_count'"
+    export COORD_SYNC_PUSH_CMD="true" COORD_SYNC_PULL_CMD="true"
+    bash "$SELF_PATH" >/dev/null 2>&1
+  )
+  local s8_runs; s8_runs=$(wc -l < "$s8_count" 2>/dev/null | tr -d ' ')
+  [ "$s8_runs" = "1" ] && [ ! -f "$s8_state/dirty" ]
+  _ck "5 events between fires coalesce into exactly ONE cycle (burst coalescing; publish rate bounded by the fire interval)" $?
+  for i8 in 1 2 3 4 5 6 7 8; do
+    (
+      export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$tmproot/s8-clone" COORD_BRANCH="main"
+      export STATE_DIR="$s8_state" COORD_SYNC_FLOOR_SECONDS=999999
+      export COORD_SYNC_DEBOUNCE_LOG_MAX_LINES=5
+      export COORD_SYNC_EXPORTER_CMD="echo run >> '$s8_count'"
+      export COORD_SYNC_PUSH_CMD="true" COORD_SYNC_PULL_CMD="true"
+      bash "$SELF_PATH" >/dev/null 2>&1
+    )
+  done
+  s8_runs=$(wc -l < "$s8_count" 2>/dev/null | tr -d ' ')
+  local s8_dlines; s8_dlines=$(wc -l < "$s8_state/debounce.log" 2>/dev/null | tr -d ' ')
+  [ "$s8_runs" = "1" ] && [ "$s8_dlines" -le 5 ]
+  _ck "8 clean fires -> zero extra cycles; debounce.log rotated to its own cap (skips never crowd cycles.log)" $?
+
+  # ======== Scenario 9 (Task 7, A5 iv): lock-stale threshold VERIFIED at
+  # the new cadence — 900s default must exceed the scheduled task's
+  # ExecutionTimeLimit (the hard bound on a LIVE cycle's duration), so a
+  # >=900s-old lock is provably crashed, never a slow live holder. ========
+  local s9_ps1="$SELF_DIR/install-coord-sync-task.ps1"
+  local s9_limit_min
+  s9_limit_min=$(grep -oE 'ExecutionTimeLimit \(New-TimeSpan -Minutes [0-9]+' "$s9_ps1" 2>/dev/null | grep -oE '[0-9]+$' | head -n1)
+  [ -n "$s9_limit_min" ] && [ "$LOCK_STALE_SECONDS" -gt $(( s9_limit_min * 60 )) ]
+  _ck "LOCK_STALE_SECONDS default (${LOCK_STALE_SECONDS}s) > installer ExecutionTimeLimit (${s9_limit_min:-?}min) — stale reclaim can never seize a live cycle's lock" $?
+
   rm -rf "$tmproot" 2>/dev/null || true
   echo "[self-test] coord-sync: $pass passed, $fail failed"
   [ "$fail" -eq 0 ]
@@ -509,8 +818,9 @@ SELF_PATH="${BASH_SOURCE[0]}"
 case "${1:-}" in
   --self-test) _self_test; exit $? ;;
   --help|-h)
-    sed -n '2,80p' "$SELF_PATH" | sed 's/^# \{0,1\}//'
+    sed -n '2,140p' "$SELF_PATH" | sed 's/^# \{0,1\}//'
     exit 0 ;;
-  "")            _main; exit $? ;;
+  --force)       _main 1; exit $? ;;
+  "")            _main 0; exit $? ;;
   *)             _warn "unknown subcommand: $1"; exit 0 ;;
 esac

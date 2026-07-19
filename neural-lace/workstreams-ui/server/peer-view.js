@@ -88,6 +88,12 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+// Task 7 (cockpit-roadmap-redesign, round 5): hostname→person map for
+// PERSON grouping of peers ("Misha: desktop + laptop"). Two-layer config
+// (config/people.example.json shipped, config/people.json per-machine,
+// COCKPIT_PEOPLE_FILE override) — see config/people.js for the named
+// failure renderings (absent = unconfigured; malformed = named error).
+const peopleCfg = require('../config/people.js');
 
 // ----------------------------------------------------------------------
 // Config resolution — mirrors coord-push.sh/coord-pull.sh/coord-sync.sh's
@@ -267,6 +273,11 @@ function computePeerView(opts) {
   const files = readPeerExportFiles(cloneDir);
   const peerFiles = files.filter((f) => f.host !== self); // requirement #2: filter out self
 
+  // Task 7: load the person map ONCE per view computation. Fail-open by
+  // construction (loadPeople never throws); a load failure carries a named
+  // error the renderer surfaces, and every host then resolves 'unassigned'.
+  const people = opts.people || peopleCfg.loadPeople();
+
   const entries = peerFiles.map((f) => {
     const ageMs = now - f.receivedAt.getTime();
     const state = classifyPeerState(ageMs, th);
@@ -276,6 +287,9 @@ function computePeerView(opts) {
     const sessions = Array.isArray(f.payload.sessions) ? f.payload.sessions : [];
     return {
       host: f.host,
+      // Task 7: mapped person, or the literal 'unassigned' — a NAMED state
+      // (task-1 named-absence generalization), never a guessed person.
+      person: peopleCfg.personForHost(f.host, people) || 'unassigned',
       state: state,
       state_label: stateLabel(state, ageMs, receivedIso),
       age_minutes: minutesAgo(ageMs),
@@ -305,9 +319,26 @@ function computePeerView(opts) {
     };
   }).sort((a, b) => a.host.localeCompare(b.host));
 
+  // Task 7: aggregate entries into per-person groups for the renderer
+  // ("Misha: desktop + laptop"). Real persons sort alphabetically;
+  // 'unassigned' always sorts LAST (it is the catch-all named state, not a
+  // person). Hosts within a group keep the entries' host-sorted order.
+  const byPerson = {};
+  entries.forEach((e) => { (byPerson[e.person] = byPerson[e.person] || []).push(e.host); });
+  const persons = Object.keys(byPerson).sort((a, b) => {
+    if (a === 'unassigned') return 1;
+    if (b === 'unassigned') return -1;
+    return a.localeCompare(b);
+  }).map((p) => ({ person: p, hosts: byPerson[p] }));
+
   return {
     has_data: entries.length > 0,
     my_coord_refresh: myCoordRefresh(cloneDir),
+    // Named failure surface (framing law): '' when the person map loaded
+    // (or is simply absent); a non-empty string NAMES the failing component
+    // when the map exists but is unreadable/malformed.
+    people_map_error: people.error || '',
+    persons: persons,
     entries: entries,
   };
 }
@@ -343,7 +374,7 @@ async function selfTest() {
   const ENV_KEYS = [
     'COORD_CLONE_DIR', 'EXPORT_HOSTNAME', 'COCKPIT_PEER_FRESH_MIN',
     'COCKPIT_PEER_KEEPALIVE_MIN', 'COCKPIT_PEER_TRANSPORT_MARGIN_MIN',
-    'OBS_STALE_MIN', 'COCKPIT_COORD_SYNC_STATE_DIR',
+    'OBS_STALE_MIN', 'COCKPIT_COORD_SYNC_STATE_DIR', 'COCKPIT_PEOPLE_FILE',
   ];
   ENV_KEYS.forEach((k) => { savedEnv[k] = process.env[k]; });
 
@@ -520,6 +551,66 @@ async function selfTest() {
       view15.entries.length === 1 && view15.entries[0].host === 'sim-peer-a',
       JSON.stringify(view15.entries.map((e) => e.host)));
     delete process.env.EXPORT_HOSTNAME;
+
+    // ---- Scenario 16 (Task 7, round 5): person grouping — mapped hosts
+    // group by PERSON (case-insensitive hostname match); an unmapped host
+    // lands in the named 'unassigned' group, ordered LAST.
+    const s16 = path.join(tmp, 's16-clone');
+    const s16dir = planExportDir(s16);
+    fs.mkdirSync(s16dir, { recursive: true });
+    ['host-a', 'host-b', 'host-c', 'host-d'].forEach((h) => {
+      fs.writeFileSync(path.join(s16dir, h + '.json'), JSON.stringify({
+        schema_version: 1, provenance: { hostname: h, branch: 'master', dirty: false }, plans: [], sessions: [],
+      }));
+    });
+    const s16people = path.join(tmp, 's16-people.json');
+    fs.writeFileSync(s16people, JSON.stringify({
+      _comment: 'fixture', 'host-a': 'Misha', 'HOST-B': 'Misha', 'host-c': 'Jaime',
+    }));
+    process.env.COCKPIT_PEOPLE_FILE = s16people;
+    const view16 = computePeerView({ cloneDir: s16, selfHost: 'not-a-peer-here' });
+    ok('16. every entry carries a person (mapped, case-insensitive) or the literal "unassigned" (named state, never a guess)',
+      view16.entries.length === 4 &&
+      view16.entries.find((e) => e.host === 'host-a').person === 'Misha' &&
+      view16.entries.find((e) => e.host === 'host-b').person === 'Misha' &&
+      view16.entries.find((e) => e.host === 'host-c').person === 'Jaime' &&
+      view16.entries.find((e) => e.host === 'host-d').person === 'unassigned',
+      JSON.stringify((view16.entries || []).map((e) => [e.host, e.person])));
+    ok('16b. persons groups aggregate hosts per person ("Misha: host-a + host-b"), sorted with unassigned LAST',
+      Array.isArray(view16.persons) && view16.persons.length === 3 &&
+      view16.persons[0].person === 'Jaime' && view16.persons[0].hosts.join(',') === 'host-c' &&
+      view16.persons[1].person === 'Misha' && view16.persons[1].hosts.join(',') === 'host-a,host-b' &&
+      view16.persons[2].person === 'unassigned' && view16.persons[2].hosts.join(',') === 'host-d',
+      JSON.stringify(view16.persons));
+    ok('16c. a healthy person map surfaces people_map_error as the empty string (no failure to name)',
+      view16.people_map_error === '');
+
+    // ---- Scenario 17 (Task 7 named failure rendering): a MALFORMED person
+    // map -> people_map_error names the failure; every host renders
+    // unassigned (degraded AND labeled, never silently flat or a crash).
+    const s17people = path.join(tmp, 's17-people.json');
+    fs.writeFileSync(s17people, '{"host-a": "Misha", TRUNCATED');
+    process.env.COCKPIT_PEOPLE_FILE = s17people;
+    const view17 = computePeerView({ cloneDir: s16, selfHost: 'not-a-peer-here' });
+    ok('17. malformed people.json -> people_map_error is non-empty and NAMES the parse failure',
+      typeof view17.people_map_error === 'string' && view17.people_map_error.length > 0 &&
+      /parse failed/.test(view17.people_map_error),
+      JSON.stringify(view17.people_map_error));
+    ok('17b. under a broken map every entry falls back to the named "unassigned" state (never a guessed person, never a throw)',
+      view17.entries.length === 4 && view17.entries.every((e) => e.person === 'unassigned') &&
+      view17.persons.length === 1 && view17.persons[0].person === 'unassigned',
+      JSON.stringify(view17.persons));
+
+    // ---- Scenario 18 (Task 7): an ABSENT person map is unconfigured, not
+    // broken — no error, all hosts under 'unassigned'.
+    process.env.COCKPIT_PEOPLE_FILE = path.join(tmp, 's18-does-not-exist.json');
+    const view18 = computePeerView({ cloneDir: s16, selfHost: 'not-a-peer-here' });
+    ok('18. absent people.json -> people_map_error empty (unconfigured != broken), all hosts grouped under "unassigned"',
+      view18.people_map_error === '' &&
+      view18.persons.length === 1 && view18.persons[0].person === 'unassigned' &&
+      view18.persons[0].hosts.length === 4,
+      JSON.stringify({ err: view18.people_map_error, persons: view18.persons }));
+    delete process.env.COCKPIT_PEOPLE_FILE;
   } finally {
     ENV_KEYS.forEach((k) => {
       if (savedEnv[k] === undefined) delete process.env[k];

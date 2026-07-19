@@ -398,6 +398,14 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .peer-entry-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .peer-entry-host { font-weight: 600; font-size: 13px; }
 
+/* Person-grouped peers (cockpit-roadmap-redesign Task 7, round 5:
+   "Misha: desktop + laptop"). Group = <details> per person; entries nest
+   inside. The map-error line is the labeled system-failure surface. */
+.peer-person-group { margin: 4px 0 8px; }
+.peer-person-summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 2px 0; }
+.peer-person-group > .peer-entry { margin: 4px 0 0 12px; }
+.peer-people-map-error { font-size: 11px; color: var(--warn); margin: 2px 0 6px; }
+
 .chip.peer-state.peer-state-fresh-ish { color: var(--ok); border-color: var(--ok); }
 .chip.peer-state.peer-state-estate-unchanged { color: var(--warn); border-color: var(--warn); }
 .chip.peer-state.peer-state-peer-unreachable { color: var(--interrupt); border-color: var(--interrupt); }

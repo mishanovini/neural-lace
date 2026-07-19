@@ -541,6 +541,18 @@ _ar_append_record() {
 
   _ar_mirror_append "$json"
 
+  # cockpit-roadmap-redesign Task 7 (A5 iii): every registry append is a
+  # publish-worthy state change — touch the coordination dirty marker at
+  # THIS writer seam (the ONE writer every verb calls), so the GUI's own
+  # delegated CLI writes (lifecycle, title edits) and every future verb are
+  # covered without any hook splice. pl_mark_coord_dirty lives in
+  # progress-log-lib.sh (sourced above when present); guarded so a missing
+  # lib never breaks an append (never-blocks contract). Verbs that ALSO call
+  # pl_emit double-touch the marker — harmless (idempotent overwrite).
+  if declare -F pl_mark_coord_dirty >/dev/null 2>&1; then
+    pl_mark_coord_dirty "ask-registry:$record_type"
+  fi
+
   printf '%s' "$f"
   return 0
 }
@@ -1021,6 +1033,22 @@ cmd_selftest() {
     pass "self-test wrote only under its own sandboxed tempdir"
   else
     fail "self-test unexpectedly created a .claude path under $TMP"
+  fi
+
+  echo "Scenario Q (cockpit-roadmap-redesign Task 7, A5 iii): EVERY registry append touches the coordination dirty marker at the writer-lib seam — incl. a verb that emits NO progress event (override-project), the exact class a hook-layer-only marker would miss"
+  local q_marker="$TMP/coord-dirty-q"
+  rm -f "$q_marker" 2>/dev/null
+  COORD_DIRTY_MARKER_FILE="$q_marker" cmd_override_project \
+    --ask-id "ask-selftest-1" --project "regrouped-demo" >/dev/null 2>&1
+  if [[ -f "$q_marker" ]]; then
+    pass "override-project (no progress-log event of its own) still dirtied the coordination marker via _ar_append_record"
+  else
+    fail "expected dirty marker $q_marker after an override-project registry append"
+  fi
+  if [[ -f "$q_marker" ]] && grep -q "project_override" "$q_marker" 2>/dev/null; then
+    pass "marker content names the appended record_type (debug provenance)"
+  else
+    fail "expected marker content to name record_type project_override, got: '$(cat "$q_marker" 2>/dev/null)'"
   fi
 
   rm -rf "$TMP" 2>/dev/null || true

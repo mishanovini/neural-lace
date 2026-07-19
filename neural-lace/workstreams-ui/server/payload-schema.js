@@ -176,6 +176,15 @@ const LANDING_ALLOWED_KEYS = new Set([
   'unmerged', 'plans', 'plan_doc', 'tasks', 'id', 'provenance_label',
   'sessions', 'session_id', 'role', 'last_heartbeat_at', 'label',
   'last_refreshed_at', 'source',
+  // ----------------------------------------------------------------------
+  // Person-grouping fields (cockpit-roadmap-redesign Task 7, round 5) —
+  // peer-view.js#computePeerView: `person` on each peer entry (a mapped
+  // display name or the literal named state 'unassigned'), `persons` =
+  // [{person, hosts:[...]}] group aggregation, `people_map_error` = the
+  // NAMED failure string when config/people.json exists but is unreadable/
+  // malformed ('' otherwise) — plain prose, subject to the denylist scan
+  // like every other status string.
+  'person', 'persons', 'hosts', 'people_map_error',
 ]);
 
 const DETAIL_ALLOWED_KEYS = new Set([

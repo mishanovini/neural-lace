@@ -582,7 +582,7 @@
       // registry currently captures a REFERENCE (transcript path + prompt
       // offset), not the resolved prompt text itself — no read surface
       // exists yet to turn that pointer into displayed text, and building
-      // one is server/* work outside this task's file ownership (Tasks
+      // one is server-side work outside this task's file ownership (Tasks
       // 11/12 own server/). This renders the real reference, absolute and
       // copyable, rather than a fabricated "original text" the current
       // architecture cannot actually produce.
@@ -965,6 +965,64 @@
     return box;
   }
 
+  // renderPeerPersonGroups(body, peers) — cockpit-roadmap-redesign Task 7
+  // (round 5 verbatim: peers group by PERSON — "Misha: desktop + laptop").
+  //
+  // I3 ALTERNATE-VIEW LAW (unit-of-card + state persistence, both named):
+  //   unit-of-card    = the PERSON group (each machine renders as a row
+  //                     inside its person's group, via the UNCHANGED
+  //                     renderPeerEntry);
+  //   state persistence = each group's <details> open state persists per
+  //                     person in localStorage ('cockpit.peers.person.
+  //                     <person>'), defaulting OPEN; storage failures
+  //                     (privacy modes) degrade to default-open, silently.
+  //
+  // NAMED STATES (task-1 named-absence generalization):
+  //   - an unmapped hostname lands in the literal 'unassigned' group —
+  //     never a guessed person;
+  //   - peers.people_map_error non-empty (the map file exists but is
+  //     unreadable/malformed — server/config/people.js named the failure)
+  //     renders a visible system-failure line naming the component and the
+  //     remediation, with every machine under 'unassigned' meanwhile
+  //     (framing law: the SYSTEM failed, labeled, remediation shown);
+  //   - an older server payload with NO persons array degrades to one
+  //     'unassigned' group holding every entry — never a blank pane.
+  function renderPeerPersonGroups(body, peers) {
+    if (peers.people_map_error) {
+      var mapErr = document.createElement('div');
+      mapErr.className = 'peer-people-map-error';
+      mapErr.textContent = 'Person grouping unavailable — ' + peers.people_map_error +
+        ' (fix config/people.json to restore grouping; machines shown under "unassigned" meanwhile)';
+      body.appendChild(mapErr);
+    }
+    var byHost = {};
+    (peers.entries || []).forEach(function (e) { byHost[e.host] = e; });
+    var groups = (peers.persons && peers.persons.length)
+      ? peers.persons
+      : [{ person: 'unassigned', hosts: (peers.entries || []).map(function (e) { return e.host; }) }];
+    groups.forEach(function (g) {
+      var det = document.createElement('details');
+      det.className = 'peer-person-group';
+      var storeKey = 'cockpit.peers.person.' + g.person;
+      var stored = null;
+      // storage unavailable (privacy modes) -> stored stays null -> default open
+      try { stored = window.localStorage.getItem(storeKey); } catch (_) { stored = null; }
+      det.open = stored === null ? true : stored === '1';
+      det.addEventListener('toggle', function () {
+        // best-effort persistence; a write failure silently keeps default-open behavior
+        try { window.localStorage.setItem(storeKey, det.open ? '1' : '0'); } catch (_) { void 0; }
+      });
+      var sum = document.createElement('summary');
+      sum.className = 'peer-person-summary';
+      sum.textContent = g.person + ': ' + (g.hosts || []).join(' + ');
+      det.appendChild(sum);
+      (g.hosts || []).forEach(function (h) {
+        if (byHost[h]) det.appendChild(renderPeerEntry(byHost[h]));
+      });
+      body.appendChild(det);
+    });
+  }
+
   // renderPeersSection(peers) — ALWAYS renders a <details> (never returns
   // null, unlike renderCompletedGroup): a "Peers" section always exists on
   // the landing so the operator can see cross-machine state is a real
@@ -996,7 +1054,10 @@
       empty.textContent = 'No peer machine state received yet.';
       body.appendChild(empty);
     } else {
-      peers.entries.forEach(function (e) { body.appendChild(renderPeerEntry(e)); });
+      // Task 7: entries render grouped by PERSON (see renderPeerPersonGroups
+      // header for the I3 unit-of-card + persistence declaration and the
+      // named unassigned/map-error states).
+      renderPeerPersonGroups(body, peers);
     }
     details.appendChild(body);
     return details;

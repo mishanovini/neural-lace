@@ -10,3 +10,8 @@ wim-repos.json
 # Task 1, A4). Same rule: the generic completion-oracle.example.json IS
 # tracked; a real override file is per-machine config, not kit content.
 completion-oracle.json
+# Per-machine hostname→person map for the peer view's person grouping
+# (cockpit-roadmap-redesign Task 7, round 5). Real hostnames / personal
+# names never ship; the generic people.example.json + the people.js loader
+# ARE tracked.
+people.json

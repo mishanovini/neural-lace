@@ -592,6 +592,33 @@ ok('T3-31 CSS pairs every status class with the palette (stalled uses the --inte
   /\.rm-status-complete[^{]*\{[^}]*var\(--ok\)/.test(C));
 ok('T3-32 landed items are programmatically focusable (tabindex="-1" set on item containers)',
   /tabindex.*-1|tabIndex = -1/.test(roadmapJs));
+// cockpit-roadmap-redesign Task 7 — person-grouped peers (round 5:
+// "Misha: desktop + laptop"). Same PV-prefix, same DOM-free technique;
+// the server-side grouping derivation is peer-view.js's own self-test
+// (scenarios 16-18); these pin the RENDERER's contract.
+// ============================================================
+
+ok('PV-10 renderPeerPersonGroups() exists and is the path renderPeersSection takes when peer data is present',
+  /function renderPeerPersonGroups/.test(asksJsNoComments) &&
+  /renderPeerPersonGroups\(body, peers\)/.test(asksJsNoComments));
+
+ok('PV-11 the person-group header renders the round-5 literal shape: person + ": " + hosts joined by " + "',
+  /g\.person \+ ': ' \+ \(g\.hosts \|\| \[\]\)\.join\(' \+ '\)/.test(asksJsNoComments));
+
+ok('PV-12 an unmapped hostname renders under the literal named "unassigned" group (named state, never a guessed person) — incl. the older-server fallback when persons is absent',
+  /'unassigned'/.test(asksJsNoComments));
+
+ok('PV-13 a people_map_error (server-named map failure) renders as visible text NAMING the failing component + remediation, machines degrade to "unassigned" (framing law: system failed, labeled)',
+  /peers\.people_map_error/.test(asksJsNoComments) &&
+  /config\/people\.json/.test(asksJsNoComments));
+
+ok('PV-14 I3 alternate-view law: person groups are <details> with open-state PERSISTED per person in localStorage (unit-of-card = person; persistence named)',
+  /cockpit\.peers\.person\./.test(asksJsNoComments) &&
+  /localStorage\.setItem\(storeKey/.test(asksJsNoComments) &&
+  /localStorage\.getItem\(storeKey/.test(asksJsNoComments));
+
+ok('PV-15 CSS styles the person group + summary (peer-person-group / peer-person-summary present in app.css)',
+  /\.peer-person-group/.test(C) && /\.peer-person-summary/.test(C));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

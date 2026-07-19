@@ -343,6 +343,61 @@ _pl_release_lock() {
 }
 
 # ----------------------------------------------------------------------
+# COORDINATION DIRTY MARKER (cockpit-roadmap-redesign Task 7, binding A5 iii)
+#
+# The event-triggered coordination publisher (scripts/coord-sync.sh) needs a
+# near-free LOCAL signal that "something publish-worthy changed on this
+# machine". That signal lives HERE, at the WRITER-LIB seam — NOT as a hook
+# splice — because hook-layer-only placement misses the GUI's own delegated
+# CLI writes (ask-registry.sh lifecycle/title edits) and every future writer;
+# every emitter that appends a progress event flows through pl_emit, so one
+# touch here covers them all (the same one-writer-implementation argument as
+# the lib itself). ask-registry.sh's _ar_append_record calls
+# pl_mark_coord_dirty too (registry records that emit no progress event —
+# e.g. project_override — are still publish-worthy).
+#
+# NEVER-BLOCK LAW (writer semantics, constraint 5): the touch is pure local
+# filesystem (mkdir -p + printf), NO git, NO network, every failure swallowed
+# — a broken marker path can never break an emit (self-test Scenario 17c).
+#
+# Marker-path resolution (mirrors pl_state_dir's order):
+#   1. COORD_DIRTY_MARKER_FILE env (tests + explicit override — the SAME var
+#      scripts/coord-sync.sh honors, so one override wires both ends).
+#   2. HARNESS_SELFTEST=1 -> sandboxed tmp path (never the real state dir).
+#   3. $HOME/.claude/state/coord-sync/dirty — coord-sync.sh's own STATE_DIR
+#      default, so writer and consumer meet with zero configuration.
+# ----------------------------------------------------------------------
+pl_coord_dirty_marker_path() {
+  if [[ -n "${COORD_DIRTY_MARKER_FILE:-}" ]]; then
+    printf '%s' "$COORD_DIRTY_MARKER_FILE"
+    return 0
+  fi
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/coord-dirty-selftest/%s/dirty' "${TMPDIR:-/tmp}" "$$"
+    return 0
+  fi
+  printf '%s/.claude/state/coord-sync/dirty' "${HOME:-$PWD}"
+  return 0
+}
+
+# pl_mark_coord_dirty <tag> — touch the marker (content = the tag, for
+# debugging which writer dirtied it; existence is the actual signal; the
+# file's mtime is the "when" — no date fork on this path, splice budget).
+# Exit 0 on EVERY path.
+pl_mark_coord_dirty() {
+  local tag="${1:-unknown}"
+  local marker
+  marker="$(pl_coord_dirty_marker_path)"
+  [[ -n "$marker" ]] || return 0
+  local dir="${marker%/*}"
+  if [[ ! -d "$dir" ]]; then
+    mkdir -p "$dir" 2>/dev/null || return 0
+  fi
+  printf '%s\n' "$tag" > "$marker" 2>/dev/null || return 0
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # pl_emit --type <t> --ask <id> [--plan-slug <s>] [--task-id <n>]
 #         [--sha <sha>] [--needs-you-id <id>] [--session-id <id>]
 #         [--summary <text>] [--evidence-link <url-or-path>]
@@ -455,6 +510,15 @@ pl_emit() {
   printf '%s\n' "$json" >> "$path" 2>/dev/null || { [[ "$locked" == "1" ]] && _pl_release_lock "$path"; return 0; }
 
   [[ "$locked" == "1" ]] && _pl_release_lock "$path"
+
+  # Task 7 (A5 iii): a FRESH append is a publish-worthy state change — touch
+  # the coordination dirty marker. Deliberately AFTER the append landed (the
+  # event is on disk before any publisher could fire) and AFTER lock release
+  # (never hold the per-ask mutex over unrelated marker IO). The dedup no-op
+  # path above deliberately does NOT mark: nothing changed, nothing to
+  # publish (self-test Scenario 17b). Never-blocking by construction.
+  pl_mark_coord_dirty "pl:$type"
+
   printf '%s' "$path"
   return 0
 }
@@ -1179,6 +1243,58 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   else
     fail "expected rc=0/'spawned ask-stale-match' with an explicitly widened scan limit, got rc=$rc16c out='$out16c'"
   fi
+
+  echo "Scenario 17 (cockpit-roadmap-redesign Task 7, A5 iii): a FRESH pl_emit append touches the coordination dirty marker at the writer-lib seam"
+  T17_MARKER="$TMP/coord-dirty-t17"
+  rm -f "$T17_MARKER" 2>/dev/null
+  COORD_DIRTY_MARKER_FILE="$T17_MARKER" pl_emit --type task_done --ask "ask-dirty-1" \
+    --plan-slug "dirty-plan" --task-id "1" --sha "dirtysha1" \
+    --summary "dirty-marker scenario" --emitter plan-lifecycle >/dev/null 2>&1
+  if [[ -f "$T17_MARKER" ]]; then
+    pass "fresh append created the dirty marker (event-triggered publish seam)"
+  else
+    fail "expected dirty marker $T17_MARKER after a fresh append"
+  fi
+  if [[ -f "$T17_MARKER" ]] && grep -q "task_done" "$T17_MARKER" 2>/dev/null; then
+    pass "marker content carries the emitting event type (debug provenance)"
+  else
+    fail "expected marker content to name the event type, got: '$(cat "$T17_MARKER" 2>/dev/null)'"
+  fi
+
+  echo "Scenario 17b: a DEDUP no-op replay (identical natural key) does NOT touch the marker — nothing changed, nothing to publish"
+  rm -f "$T17_MARKER" 2>/dev/null
+  COORD_DIRTY_MARKER_FILE="$T17_MARKER" pl_emit --type task_done --ask "ask-dirty-1" \
+    --plan-slug "dirty-plan" --task-id "1" --sha "dirtysha1" \
+    --summary "dirty-marker scenario (replay)" --emitter plan-lifecycle >/dev/null 2>&1
+  if [[ ! -f "$T17_MARKER" ]]; then
+    pass "dedup replay left the marker untouched (no spurious publish trigger)"
+  else
+    fail "dedup replay recreated $T17_MARKER — a no-op write must not dirty the publisher"
+  fi
+
+  echo "Scenario 17c (never-block law): an un-creatable marker path (a FILE blocking the parent dir) never breaks the emit — the event still lands, exit 0"
+  T17C_BLOCK="$TMP/coord-dirty-blockfile"
+  : > "$T17C_BLOCK"
+  rc17c=1
+  COORD_DIRTY_MARKER_FILE="$T17C_BLOCK/dirty" pl_emit --type task_done --ask "ask-dirty-2" \
+    --plan-slug "dirty-plan" --task-id "2" --sha "dirtysha2" \
+    --summary "marker path blocked" --emitter plan-lifecycle >/dev/null 2>&1
+  rc17c=$?
+  f17c="$PROGRESS_LOG_STATE_DIR/ask-dirty-2.jsonl"
+  if [[ "$rc17c" == "0" && -f "$f17c" ]]; then
+    pass "emit succeeded (rc=0) and the event landed despite the marker path being un-creatable"
+  else
+    fail "expected rc=0 + event file despite blocked marker path, got rc=$rc17c file-exists=$([[ -f "$f17c" ]] && echo yes || echo no)"
+  fi
+
+  echo "Scenario 17d (sandboxing): under HARNESS_SELFTEST with no explicit override, the marker path resolves under the tmp sandbox, NEVER under \$HOME/.claude"
+  mp17d="$(pl_coord_dirty_marker_path)"
+  case "$mp17d" in
+    "${HOME}/.claude/"*)
+      fail "HARNESS_SELFTEST marker path resolved into the REAL state dir: $mp17d" ;;
+    *)
+      pass "HARNESS_SELFTEST marker path is sandboxed ($mp17d)" ;;
+  esac
 
   rm -rf "$TMP" 2>/dev/null || true
 
