@@ -280,7 +280,7 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   chip per belief-changing class (bookkeeping classes → Harness Health only); auditor's
   unmatched_dispatch oracle age-bounded to the marker-retention horizon (nl-issue spec) —
   Verification: full
-- [ ] 7. [serial] **Event-triggered publish + person grouping** (round 5, mechanics bound per A5).
+- [x] 7. [serial] **Event-triggered publish + person grouping** (round 5, mechanics bound per A5).
   - **Dirty marker at the WRITER-LIB seam** (progress-log-lib.sh emit + ask-registry.sh
     append), NOT in hooks — hook-layer-only placement misses the GUI's own delegated CLI
     writes (lifecycle, title edits) and every future writer. Marker touch is never-blocking
@@ -391,6 +391,13 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   whichever task next stages those two.
 - 2026-07-19: `neural-lace/workstreams-ui/web/asks.js` — task 6 badge-law renderer fix (already covered by task 3's `web/*` glob entry above; named explicitly here so task 6's commit is unambiguously attributed and doesn't depend on a different task's entry)
 - 2026-07-19: `neural-lace/workstreams-ui/web/cockpit.selftest.js` — task 6 badge-multiplicity fixture tests (T6-0..T6-5), same attribution note as the asks.js entry above
+- 2026-07-19: `neural-lace/workstreams-ui/server/requests-routes.js` — task 5 NEW route module (Requests ledger payload/title/amend-detach; task 1 owns server.js, task 2 owns ask-registry.sh — mount line + verb seams ship as fragments)
+- 2026-07-19: `neural-lace/workstreams-ui/server/requests-routes.selftest.js` — task 5 NEW sandboxed selftest (own file so task 1's server.selftest.js is never raced)
+- 2026-07-19: `neural-lace/workstreams-ui/web/requests.js` — task 5 NEW client view module (self-mounting into the existing `#tabRequestsPanel`; registers 'requests' via `WorkstreamsShell.registerView`, replacing app.js's interim placeholder — no edit to app.js/roadmap.js/asks.js)
+- 2026-07-19: `neural-lace/workstreams-ui/web/app.css` — task 5 CSS additions for the Requests ledger (`.rl-*` classes; same palette discipline as task 3's `.rm-*` section)
+- 2026-07-19: `neural-lace/workstreams-ui/web/cockpit.selftest.js` — task 5 extends the suite with the T5-* block (24 new assertions; 139 -> 163 composed, 0 failing)
+- 2026-07-19: `docs/plans/fragments/roadmap-t5-server-fragment.md` — task 5 coordination fragment (server.js mount + task-2 seams: reused set-title verb + NEW detach-amendment verb pinned)
+- 2026-07-19: `docs/plans/fragments/roadmap-t5-shell-fragment.md` — task 5 coordination fragment (the ONE index.html `<script src="/requests.js">` line; task 5's dispatch excluded direct index.html edits)
 
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store

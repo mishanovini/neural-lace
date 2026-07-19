@@ -1066,3 +1066,95 @@ details[open] > summary .rm-rollups { display: none; }
 .chip.inbox-type-chip { color: var(--warn); border-color: var(--warn); }
 .inbox-item-text { margin: 4px 0; }
 .inbox-win { color: var(--ok); }
+
+/* ============================================================
+   cockpit-roadmap-redesign Task 5 — Requests ledger view. Same palette
+   discipline as the Roadmap tree (Task 3): every chip is text + color,
+   never color-only (C9 / WCAG 1.4.1); no new accent introduced.
+   ============================================================ */
+.requests-ledger-section { max-width: 1200px; margin: 12px auto 16px; }
+.requests-ledger-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+#requestsFilter {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-height: 24px;
+  min-width: 280px;
+}
+.rl-section-head { font-size: 12px; font-weight: 700; color: var(--muted); padding: 8px 4px 4px; }
+
+/* ---- rows (I6 timeline anatomy): nested <details>/<summary> (C9) ---- */
+.rl-row { border-left: 2px solid var(--border); margin: 2px 0 2px 4px; padding-left: 6px; }
+.rl-row > summary.rl-row-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  cursor: pointer;
+  padding: 3px 4px;
+  min-height: 24px;
+}
+.rl-row > summary.rl-row-summary:hover { background: var(--panel2); }
+.rl-title { font-weight: 600; }
+.rl-recency-inline { font-size: 11px; color: var(--muted); }
+.rl-drill { display: none; padding: 4px 8px 6px 20px; font-size: 12px; color: var(--muted); }
+.rl-row[open] > .rl-drill { display: block; }
+.rl-title-edit, .rl-recency, .rl-subhead { margin: 4px 0; }
+.rl-subhead { font-weight: 600; color: var(--text); }
+
+/* ---- current-state chip (collapsed anatomy): text + color, never color-only ---- */
+.chip.rl-state-chip { white-space: nowrap; }
+.chip.rl-state-chip-open { color: var(--info); border-color: var(--info); }
+.chip.rl-state-chip-promoted { color: var(--ok); border-color: var(--ok); }
+.chip.rl-state-chip-done { color: var(--ok); border-color: var(--ok); }
+.chip.rl-state-chip-dismissed { color: var(--muted); border-color: var(--border2); }
+.chip.rl-state-chip-merged { color: var(--muted); border-color: var(--border2); font-style: italic; }
+
+/* ---- closed requests: age-grouped, default-collapsed (C8 findability) ---- */
+.rl-age-group { margin: 4px 0 4px 4px; border-left: 2px dotted var(--border); padding-left: 6px; }
+.rl-age-group-summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 3px 4px; min-height: 24px; }
+
+/* ---- title edit ---- */
+.rl-title-input {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  min-width: 240px;
+}
+.rl-edit-feedback { font-size: 12px; margin-top: 3px; }
+.rl-edit-feedback.rl-feedback-ok { color: var(--ok); }
+.rl-edit-feedback.rl-feedback-err { color: var(--err); }
+
+/* ---- verbatim reveal ---- */
+.rl-verbatim-body { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rl-verbatim-ref { font-family: monospace; font-size: 11px; }
+
+/* ---- evolution timeline (oldest-first; origin pinned first) ---- */
+.rl-timeline-list { list-style: none; margin: 4px 0; padding: 0; }
+.rl-timeline-event {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 3px 0;
+  border-bottom: 1px dotted var(--border2);
+}
+.rl-event-text { flex: 1 1 auto; }
+.rl-event-age { font-size: 11px; color: var(--muted); }
+.rl-event-origin .rl-event-text { font-weight: 600; }
+.rl-event-promoted .rl-event-text { color: var(--ok); font-weight: 600; }
+.rl-event-amendment .rl-event-text { color: var(--info); font-style: italic; }
+.rl-event-feedback { font-size: 11px; }
+.rl-event-feedback.rl-feedback-ok { color: var(--ok); }
+.rl-event-feedback.rl-feedback-err { color: var(--err); }

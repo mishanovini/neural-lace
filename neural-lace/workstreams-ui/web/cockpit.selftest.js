@@ -729,6 +729,111 @@ ok('PV-14 I3 alternate-view law: person groups are <details> with open-state PER
 ok('PV-15 CSS styles the person group + summary (peer-person-group / peer-person-summary present in app.css)',
   /\.peer-person-group/.test(C) && /\.peer-person-summary/.test(C));
 
+// ============================================================
+// cockpit-roadmap-redesign Task 5 — "Requests ledger view" (T5-prefix).
+// Same DOM-free source-regex technique as the T3 block above; the REAL
+// wiring proof (fixture registry, real HTTP) is
+// server/requests-routes.selftest.js. requests.js is read guarded so a
+// missing file fails THESE checks instead of crashing the whole suite.
+// ============================================================
+let requestsJs = '';
+try { requestsJs = fs.readFileSync(path.join(D, 'requests.js'), 'utf8'); } catch (_) { /* T5 checks fail honestly below */ }
+
+// T5-1: unlike T13-4/T3's "included by index.html" checks, this task's
+// dispatch explicitly excludes direct index.html edits (a shared shell
+// file) — the script tag ships as docs/plans/fragments/roadmap-t5-shell-
+// fragment.md for the orchestrator to apply at merge (same precedent as
+// task 3's server-side fragments). This assertion pins the FRAGMENT's
+// content (verifiable NOW, honestly) rather than asserting a live-index.html
+// state this task is barred from creating; the fragment's own "Integration
+// points" section calls for re-running this exact suite (T5-*) AFTER the
+// line lands, at which point a live-DOM check becomes the orchestrator's to
+// add if desired.
+let shellFragment = '';
+try {
+  shellFragment = fs.readFileSync(path.join(D, '..', '..', '..', 'docs', 'plans', 'fragments', 'roadmap-t5-shell-fragment.md'), 'utf8');
+} catch (_) { /* T5-1 fails honestly below if the fragment is missing */ }
+ok('T5-1 the shell fragment pins the exact <script src="/requests.js"> line, ordered AFTER app.js/roadmap.js',
+  /<script src="\/requests\.js"><\/script>/.test(shellFragment) &&
+  shellFragment.indexOf('<script src="/app.js">') < shellFragment.indexOf('<script src="/requests.js">') &&
+  shellFragment.indexOf('<script src="/roadmap.js">') < shellFragment.indexOf('<script src="/requests.js">'));
+
+ok('T5-2 requests.js mounts itself at runtime (no static requests-ledger markup added to index.html) and does not touch asks.js',
+  /getElementById\('tabRequestsPanel'\)/.test(requestsJs) && /insertBefore/.test(requestsJs) &&
+  !/id="requestsLedgerSection"/.test(html));
+
+ok('T5-3 requests.js registers a "requests" view adapter through the shell API (replacing app.js\'s interim placeholder)',
+  /registerView/.test(requestsJs) && /WorkstreamsShell/.test(requestsJs) &&
+  /registerView\('requests'/.test(requestsJs.replace(/\s+/g, ' ')));
+
+// --- timeline anatomy (I6): collapsed one-liner + oldest-first expanded chronology ---
+ok('T5-4 the collapsed one-liner distinguishes "became → <plan>" (closed/promoted) from "open, amended <age>"',
+  /became → /.test(requestsJs) && /open, amended /.test(requestsJs) && /open, registered /.test(requestsJs));
+ok('T5-5 the expanded timeline renders each event type distinctly (origin/promoted/amendment/etc. each own a dedicated CSS hook), trusting the server\'s oldest-first order (no client re-sort or reverse)',
+  /rl-event-'\s*\+\s*ev\.type/.test(requestsJs) && /'promoted'/.test(requestsJs) &&
+  /\.rl-event-origin/.test(C) && /\.rl-event-promoted/.test(C) &&
+  !/timeline[\s\S]{0,40}\.reverse\(\)/.test(requestsJs));
+ok('T5-6 amendment rows carry a Detach affordance (I6 correction) that posts to the pinned endpoint',
+  /Detach/.test(requestsJs) && /\/api\/requests\/amend\/detach/.test(requestsJs) && /detachable/.test(requestsJs));
+ok('T5-6b a missing detach verb surfaces a NAMED error in the row\'s aria-live feedback, never a silent success',
+  /rl-event-feedback/.test(requestsJs) && /aria-live/.test(requestsJs) &&
+  /Could not detach this amendment/.test(requestsJs));
+
+// --- "became →" cross-view arrow (C6 reciprocal law, C2 shell rules) ---
+ok('T5-7 "became →" links use #roadmap/<id> addressing via the shell\'s navigate()',
+  /#roadmap\/'\s*\+\s*item\.id/.test(requestsJs.replace(/\n\s*/g, ' ')) && /shell\.navigate/.test(requestsJs));
+
+// --- findability (C8): substring filter box + age-grouped closed requests ---
+ok('T5-8 a substring filter box matches title + distilled intent + verbatim origin',
+  /filterInput\.id = 'requestsFilter'/.test(requestsJs) && /distilled_intent/.test(requestsJs) && /verbatim_ref/.test(requestsJs));
+ok('T5-9 closed requests are grouped into "this week / this month / older" (default-collapsed) and search reaches inside',
+  /this week/.test(requestsJs) && /this month/.test(requestsJs) && /'older'/.test(requestsJs) &&
+  /rl-age-group/.test(requestsJs));
+ok('T5-9b an age group with zero items is never rendered as an expanded empty shell',
+  /if \(!groupItems\.length\) return/.test(requestsJs));
+
+// --- recency (I1) ---
+ok('T5-10 every row carries "last amended <age>", with an honest fallback when never amended',
+  /last amended /.test(requestsJs) && /no amendments yet/.test(requestsJs) && /formatAge/.test(requestsJs));
+
+// --- title editing (A3: ALWAYS operator-editable) ---
+ok('T5-11 title editing reuses the todo.js/roadmap.js pattern: an explicit Edit button, Escape cancels, focus returns',
+  /rl-edit-btn/.test(requestsJs) && /Escape/.test(requestsJs) && /\.focus\(\)/.test(requestsJs) &&
+  /\/api\/requests\/title/.test(requestsJs));
+
+// --- four UI states (C4) ---
+ok('T5-12 loading state is an honest, distinct copy with aria-busy',
+  /loading requests…/.test(requestsJs) && /aria-busy/.test(requestsJs));
+ok('T5-12b error state = pane-error + Retry, NEVER the empty state on failure',
+  /pane-error/.test(requestsJs) && /Retry/.test(requestsJs));
+ok('T5-12c FILTERED-empty names the filter substring + a one-click clear, distinct from TRUE-empty',
+  /no requests match/.test(requestsJs) && /clear filter/.test(requestsJs));
+ok('T5-12d TRUE-empty explains requests arrive automatically (no setup ask)',
+  /appear here automatically/.test(requestsJs));
+
+// --- refresh model (C7, task-3 law extended here) ---
+ok('T5-13 the view polls on the 30s tick and labels failures "derived <age> — STALE", never silent staleness',
+  /30000|REFRESH_INTERVAL/.test(requestsJs) && /STALE/.test(requestsJs));
+ok('T5-13b re-render is STATE-PRESERVING: open-details set + scroll + focus + uncommitted title edit captured and restored',
+  /captureUiState/.test(requestsJs) && /restoreUiState/.test(requestsJs) &&
+  /scrollY/.test(requestsJs) && /activeElement/.test(requestsJs));
+
+// --- cross-view landing (C2): shared shell contract ---
+ok('T5-14 the adapter implements landOn/missInfo/snapshotState/restoreState (the same shell contract roadmap.js implements)',
+  /landOn:/.test(requestsJs) && /missInfo:/.test(requestsJs) &&
+  /snapshotState:/.test(requestsJs) && /restoreState:/.test(requestsJs));
+
+// --- a11y hygiene (C9) ---
+ok('T5-15 requests.js builds interactive controls as real <button>s (the one btn() factory) and never wires click onto a bare div',
+  /function btn\([\s\S]{0,120}?createElement\('button'\)/.test(requestsJs) &&
+  (requestsJs.match(/btn\(/g) || []).length >= 8 &&
+  !/[Dd]iv\.addEventListener\('click'/.test(requestsJs));
+ok('T5-16 the tree/rows use nested native <details>/<summary> disclosure (C9 keyboard baseline)',
+  /createElement\('details'\)/.test(requestsJs) && /createElement\('summary'\)/.test(requestsJs));
+ok('T5-17 edit/detach feedback rows are aria-live (C9)', (requestsJs.match(/aria-live/g) || []).length >= 2);
+ok('T5-18 landed rows are programmatically focusable (tabindex="-1" set on row containers)',
+  /tabIndex = -1/.test(requestsJs));
+
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail === 0 ? 0 : 1);
