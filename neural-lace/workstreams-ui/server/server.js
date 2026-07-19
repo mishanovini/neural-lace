@@ -48,6 +48,10 @@ const deriveLib = require('./derive-lib.js');
 // separate module so the roadmap surface and server.js could build in
 // parallel; handle() returns true when it consumed the request.
 const roadmapRoutes = require('./roadmap-routes.js');
+// cockpit-roadmap-redesign Task 5 — Requests ledger view routes
+// (GET /api/requests, POST /api/requests/title, POST /api/requests/amend/detach,
+// GET /requests.js). Separate module; handle() returns true when it consumed the request.
+const requestsRoutes = require('./requests-routes.js');
 // cockpit-v2-push-materialized-store Task 4 — the "Peers" section on
 // GET /api/asks: a plain, no-fork/no-network READ of the local coord clone
 // (coord-sync.sh, Task 3, keeps it fresh out-of-band on its own cadence).
@@ -1070,6 +1074,7 @@ function lifecycleResultStatus(action) {
 
 const server = http.createServer((req, res) => {
   if (roadmapRoutes.handle(req, res)) return;
+  if (requestsRoutes.handle(req, res)) return;
   const parsedUrl = require('url').parse(req.url, true);
   const url = parsedUrl.pathname;
   const q = parsedUrl.query || {};
