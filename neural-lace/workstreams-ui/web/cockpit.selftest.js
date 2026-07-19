@@ -328,16 +328,30 @@ ok('T13-30 every flex-styled element asks.js toggles via .hidden has an explicit
 // rendered as 718 unlabeled "drift" chips (asks.js:213-238 pre-fix) —
 // renderDriftBadges had no grouping/cap/dedup at all.
 //
+// FIX ROUND (2026-07-19, both gates on the FIRST pass, addressed below):
+//   - task-verifier conf 7: the first pass CAPPED bookkeeping classes to
+//     one on-card chip; §5 and Acceptance Scenario 4 require SUPPRESSION
+//     (0 board chips; the counted summary belongs in Harness Health only).
+//     T6-1/T6-2/T6-3 below pin the corrected suppression semantics.
+//   - comprehension-reviewer conf 5: the drill-down materialized one DOM
+//     node per badge instance unboundedly. T6-5/T6-6/T6-6b/T6-6c below pin
+//     the DRILL_DOWN_LINE_CAP (50) + "+K more" bound.
+//   - T6H-* is new: the Harness Health half (app.js) that the suppressed
+//     bookkeeping classes now redirect to.
+//
 // Every other check in this file is DOM-free source-text regex (by design —
 // see the file header). That technique can prove the SHAPE of the fix
-// (a grouping construct exists) but cannot prove the fixture claim the plan
-// makes ("718 badges -> exactly ONE counted chip") — that requires actually
-// running the real function against fixture data and reading the output.
-// So this section sandboxes the ACTUAL renderDriftBadges source (extracted
-// verbatim between the BADGE-LAW-RENDER-BEGIN/END anchors in asks.js — not
-// a reimplementation) inside a minimal hand-rolled fake DOM via Node's
-// built-in `vm` module, staying dependency-free (no jsdom/headless browser,
-// preserving this file's "no build step" property).
+// (a grouping/suppression construct exists) but cannot prove the fixture
+// claims the plan makes ("700 bookkeeping badges -> 0 board chips",
+// "718 badges -> drill-down capped at 51 elements") — that requires
+// actually running the real function against fixture data and reading the
+// output. So this section sandboxes the ACTUAL renderDriftBadges source
+// (extracted verbatim between the BADGE-LAW-RENDER-BEGIN/END anchors in
+// asks.js — not a reimplementation) inside a minimal hand-rolled fake DOM
+// via Node's built-in `vm` module, staying dependency-free (no
+// jsdom/headless browser, preserving this file's "no build step"
+// property). The T6H-* section below does the same for app.js's
+// bookkeepingDivergenceSummary (a pure function — no fake DOM needed).
 // ============================================================
 const vmMod = require('vm');
 const badgeLawSrc = (function () {
@@ -381,41 +395,55 @@ function chipLabels(wrapNode) {
   return (wrapNode && wrapNode.children ? wrapNode.children : []).map((det) => det.children[0].textContent);
 }
 
-// --- fixture: 718 identical unmatched_dispatch badges (the exact live
-// production count, PROVEN in commit 0cb4f9b's message) --------------------
-const fixture718 = [];
-for (let i = 0; i < 718; i++) {
-  fixture718.push({
-    divergence_class: 'unmatched_dispatch',
-    message: 'a task-started update for task ' + i + ' has no matching dispatch record',
-    detail_ref: 'drift-ask-x-unmatched-dispatch-plan-x-' + i,
-    plan_slug: 'plan-x',
-    task_id: String(i),
-  });
+// --- FIX ROUND (task-verifier conf 7, Acceptance Scenario 4 literal shape):
+// 700 identical BOOKKEEPING (unmatched_dispatch) badges -> ZERO board chips,
+// not one. Suppression, not a cap. ------------------------------------------
+function makeBadges(cls, n, labelPrefix) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push({ divergence_class: cls, message: (labelPrefix || cls) + ' instance ' + i, detail_ref: 'drift-x-' + cls + '-' + i, plan_slug: 'plan-x', task_id: String(i) });
+  }
+  return out;
 }
-const result718 = runBadgeLaw(fixture718);
-ok('T6-1 718 identical unmatched_dispatch badges render as exactly ONE chip labeled "unmatched_dispatch ×718" (badge-storm regression fixture)',
-  result718 && result718.children && result718.children.length === 1 && chipLabels(result718)[0] === 'unmatched_dispatch ×718',
-  JSON.stringify(chipLabels(result718)));
-ok('T6-2 the one chip\'s drill-down list carries all 718 underlying badge lines on demand (never truncated, never lost)',
-  result718 && result718.children && result718.children[0].children[1].children.length === 718,
-  result718 && result718.children && result718.children[0].children[1].children.length);
+const fixture700Bookkeeping = makeBadges('unmatched_dispatch', 700);
+const result700 = runBadgeLaw(fixture700Bookkeeping);
+ok('T6-1 Acceptance Scenario 4: 700 identical unmatched_dispatch (bookkeeping) badges render ZERO board chips (suppressed, not capped)',
+  result700 === null, JSON.stringify(result700));
 
-// --- fixture: mixed classes, ONE PER CLASS, deliberately submitted OUT OF
-// precedence order — proves the renderer SORTS (precedence), not just
-// echoes insertion order. ---------------------------------------------------
-const mixedInput = [
-  { divergence_class: 'unknown_provenance', message: 'an update came from an unrecognized source and is shown for review only', de_emphasize: true },
-  { divergence_class: 'orphaned_waiting_item', message: 'a waiting-on-you update references a decision that could not be found' },
-  { divergence_class: 'unmatched_dispatch', message: 'a task-started update for task 9 has no matching dispatch record' },
+// --- the SAME 700-badge fixture's counted summary reaching Harness Health
+// is proven below (T6H-2, against app.js's bookkeepingDivergenceSummary) —
+// scenario 4's "0 board chips + Harness Health count present" is one claim
+// split across the two files that actually implement it. -------------------
+
+// --- mixed fixture: bookkeeping + belief-changing -> ONLY the
+// belief-changing chip renders on the board. --------------------------------
+const mixedBoard = []
+  .concat(makeBadges('unmatched_dispatch', 5))
+  .concat(makeBadges('orphaned_waiting_item', 2))
+  .concat(makeBadges('unknown_provenance', 1))
+  .concat([{ divergence_class: 'log_ahead_task_not_flipped', message: 'the progress log shows task 2 verified done, but the plan file still shows it open' }]);
+const resultMixedBoard = runBadgeLaw(mixedBoard);
+ok('T6-2 mixed bookkeeping+belief-changing fixture renders ONLY the belief-changing chip on the board (8 badges in, 1 chip out)',
+  resultMixedBoard && resultMixedBoard.children && resultMixedBoard.children.length === 1 && chipLabels(resultMixedBoard)[0] === 'log_ahead_task_not_flipped ×1',
+  JSON.stringify(chipLabels(resultMixedBoard)));
+
+// --- precedence STILL sorts among belief-changing classes when more than
+// one is present — using synthetic non-bookkeeping class names since
+// log_ahead_task_not_flipped is currently the only REAL belief-changing
+// class the auditor emits; this proves the ranked-then-stable-alphabetical
+// sort mechanism generically, for whatever future belief-changing classes
+// get added. ------------------------------------------------------------
+const precedenceFixture = [
+  { divergence_class: 'synthetic_zzz_belief_changing', message: 'm1' },
   { divergence_class: 'log_ahead_task_not_flipped', message: 'the progress log shows task 2 verified done, but the plan file still shows it open' },
+  { divergence_class: 'synthetic_aaa_belief_changing', message: 'm2' },
 ];
-const resultMixed = runBadgeLaw(mixedInput);
-ok('T6-3 mixed classes render ONE chip EACH, precedence-ordered (log_ahead_task_not_flipped > unmatched_dispatch > orphaned_waiting_item > unknown_provenance, per auditor.js\'s own divergence-class table order) regardless of input order',
-  JSON.stringify(chipLabels(resultMixed)) === JSON.stringify([
-    'log_ahead_task_not_flipped ×1', 'unmatched_dispatch ×1', 'orphaned_waiting_item ×1', 'unknown_provenance ×1',
+const resultPrecedence = runBadgeLaw(precedenceFixture);
+ok('T6-3 precedence still orders multiple belief-changing classes (ranked class first, unranked classes stable-alphabetical after) regardless of input order',
+  JSON.stringify(chipLabels(resultPrecedence)) === JSON.stringify([
+    'log_ahead_task_not_flipped ×1', 'synthetic_aaa_belief_changing ×1', 'synthetic_zzz_belief_changing ×1',
   ]),
-  JSON.stringify(chipLabels(resultMixed)));
+  JSON.stringify(chipLabels(resultPrecedence)));
 
 // --- fixture: zero badges -> NO chip, never an empty container ------------
 ok('T6-4 zero badges (empty array) renders null, not an empty wrapping <span> (the pre-fix code always appended an empty container)',
@@ -423,11 +451,85 @@ ok('T6-4 zero badges (empty array) renders null, not an empty wrapping <span> (t
 ok('T6-4b zero badges (drift_badges omitted/undefined, the pre-Task-12 shape) also renders null',
   runBadgeLaw(undefined) === null);
 
+// --- COMPREHENSION FIX (conf 5): the drill-down's own DOM footprint is
+// capped at DRILL_DOWN_LINE_CAP (50) + one "+K more" line, regardless of
+// upstream badge count -- using a belief-changing class here (bookkeeping
+// classes never reach the board at all post-suppression-fix, so a
+// bookkeeping fixture couldn't exercise the on-card drill-down anymore). ---
+const fixture718BeliefChanging = makeBadges('log_ahead_task_not_flipped', 718);
+const result718 = runBadgeLaw(fixture718BeliefChanging);
+ok('T6-5 718 identical belief-changing badges still render as exactly ONE chip labeled "log_ahead_task_not_flipped ×718"',
+  result718 && result718.children && result718.children.length === 1 && chipLabels(result718)[0] === 'log_ahead_task_not_flipped ×718',
+  JSON.stringify(chipLabels(result718)));
+ok('T6-6 the drill-down body is CAPPED at 51 elements (50 badge lines + one "+K more" line), not 718 -- the comprehension gate\'s fix',
+  result718 && result718.children && result718.children[0].children[1].children.length === 51,
+  result718 && result718.children && result718.children[0].children[1].children.length);
+ok('T6-6b the "+K more" line reads "+668 more" (718 - 50) and is the LAST child of the detail body',
+  result718 && result718.children && result718.children[0].children[1].children[50].textContent === '+668 more',
+  result718 && result718.children && result718.children[0].children[1].children[50] && result718.children[0].children[1].children[50].textContent);
+ok('T6-6c below the cap (5 badges, cap is 50), NO "+K more" line is appended -- the cap is a ceiling, never a floor',
+  runBadgeLaw(makeBadges('log_ahead_task_not_flipped', 5)).children[0].children[1].children.length === 5);
+
 // --- the live ask-card call site must only append the drift-badges node
 // when non-null (source-text check: the DOM-execution fixtures above prove
 // the FUNCTION's contract; this proves the CALL SITE honors it). -----------
-ok('T6-5 the ask-card call site only appends the drift-badges node when non-null (never wires an empty container into the live card)',
+ok('T6-7 the ask-card call site only appends the drift-badges node when non-null (never wires an empty container into the live card)',
   /var driftBadgesNode = renderDriftBadges\(ask\.drift_badges\);\s*\n\s*if \(driftBadgesNode\) statusRow\.appendChild\(driftBadgesNode\);/.test(asksJs));
+
+// ============================================================
+// Harness Health half of the fix (app.js) — bookkeeping classes suppressed
+// from the board (above) must surface their counted summary here. Same
+// vm-sandboxed real-source-execution technique; bookkeepingDivergenceSummary
+// is a PURE function (no DOM), so no fake DOM is needed for these.
+// ============================================================
+const appDiagSrc = (function () {
+  const beginMarker = '// BOOKKEEPING-DIAG-BEGIN';
+  const endMarker = '// BOOKKEEPING-DIAG-END';
+  const bi = js.indexOf(beginMarker);
+  const ei = js.indexOf(endMarker);
+  if (bi === -1 || ei === -1 || ei < bi) return null;
+  return js.slice(bi, ei);
+})();
+ok('T6H-1 selftest can locate the BOOKKEEPING-DIAG extraction anchors in app.js (source-execution harness precondition)',
+  !!appDiagSrc);
+
+function runBookkeepingSummary(badgesByAsk) {
+  if (!appDiagSrc) return { __error: 'extraction anchors missing' };
+  const sandbox = {};
+  vmMod.createContext(sandbox);
+  const code = appDiagSrc + '\nvar __result = bookkeepingDivergenceSummary(' + JSON.stringify(badgesByAsk) + ');';
+  try {
+    vmMod.runInContext(code, sandbox);
+  } catch (err) {
+    return { __error: String(err) };
+  }
+  return sandbox.__result;
+}
+
+const summary700 = runBookkeepingSummary({ 'ask-x': fixture700Bookkeeping });
+ok('T6H-2 Acceptance Scenario 4\'s Harness Health half: the SAME 700-bookkeeping-badge fixture summarizes to {total:700, classCount:1}',
+  summary700 && summary700.total === 700 && summary700.classCount === 1, JSON.stringify(summary700));
+
+const summaryMixedAcrossAsks = runBookkeepingSummary({
+  'ask-a': makeBadges('unmatched_dispatch', 3).concat(makeBadges('log_ahead_task_not_flipped', 1)),
+  'ask-b': makeBadges('orphaned_waiting_item', 2),
+});
+ok('T6H-3 bookkeeping summary aggregates ACROSS asks and excludes belief-changing classes from the count (3 unmatched_dispatch + 2 orphaned_waiting_item = 5 total, 2 classes; the 1 log_ahead_task_not_flipped is excluded)',
+  summaryMixedAcrossAsks && summaryMixedAcrossAsks.total === 5 && summaryMixedAcrossAsks.classCount === 2,
+  JSON.stringify(summaryMixedAcrossAsks));
+
+// --- cross-file consistency: asks.js's board-suppression set and app.js's
+// Harness Health set must name the SAME three bookkeeping classes -- there
+// is no shared module system between these two plain-script files, so this
+// is the mechanical guard against the two literal sets silently drifting
+// apart (e.g. a class added to one suppression list but not the other would
+// either vanish from both surfaces or double-count). ------------------------
+const BOOKKEEPING_SET_RE = /unmatched_dispatch:\s*true,\s*\n\s*orphaned_waiting_item:\s*true,\s*\n\s*unknown_provenance:\s*true,/;
+ok('T6H-4 asks.js and app.js declare the IDENTICAL BOOKKEEPING_DIVERGENCE_CLASSES literal (no drift between the two duplicated definitions)',
+  BOOKKEEPING_SET_RE.test(asksJs) && BOOKKEEPING_SET_RE.test(js));
+
+ok('T6H-5 the new Harness Health row sets visible textContent (text + color, never color-only), same a11y baseline as every other diag-row',
+  /bookkeepingRow\.textContent = 'progress-log bookkeeping divergences: '/.test(js));
 
 // ============================================================
 // ask-rooted-workstreams-p1 Task 16 — "Layout integration + Harness Health

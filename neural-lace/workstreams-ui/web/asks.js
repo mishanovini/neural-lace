@@ -218,30 +218,73 @@
   // a hardcoded literal because badges carry `divergence_class`, not
   // label/type/note). The auditor-side over-emission is fixed upstream
   // (commit 0cb4f9b ages out unmatched_dispatch past the marker-retention
-  // horizon) — this half is the renderer's OWN invariant, invulnerable to
-  // any future upstream emission bug by construction (§5: "the presentation
-  // layer must be invulnerable to upstream emission bugs by construction").
+  // horizon) — this half is the renderer's OWN invariant.
   //
-  // THE LAW: at most ONE counted, labeled chip PER divergence_class, ever —
-  // never one chip per badge instance. Precedence orders DISPLAY ONLY (a
-  // higher-precedence class never masks a lower one — every class present
-  // gets its own chip; same "precedence orders, never selects" law as the
-  // roadmap roll-up badges, task 1/3's separate mechanism for a different
-  // surface). Precedence follows the divergence-class table's own top-to-
-  // bottom order (server/auditor.js:27-36, decreasing authority-clarity):
-  // a log claiming done when the plan file disagrees is a direct
-  // contradiction of recorded truth; an unmatched dispatch record is a
-  // bookkeeping gap; an orphaned waiting item is a ledger-truth gap; unknown
-  // provenance is source-unverified (already de-emphasized in the UI, Class
-  // H) and sorts last. Zero badges renders NO chip and no wrapping
-  // container (never an empty <span> — the call site below only appends
-  // when this returns non-null).
+  // FIX ROUND (2026-07-19, task-verifier conf 7 + comprehension-reviewer
+  // conf 5 on the FIRST pass, both addressed here):
+  //
+  // (1) SUPPRESSION, not just a cap. §5 is explicit: "only divergence
+  // classes that change what the operator should believe about the card's
+  // own claim qualify at all... bookkeeping classes (unmatched_dispatch and
+  // kin) render NOWHERE on the board — they live in Harness Health's
+  // diagnostics pane, counted." The first pass capped bookkeeping classes to
+  // one on-card chip instead of suppressing them (Acceptance Scenario 4:
+  // 700 bookkeeping badges -> 0 board chips). BOOKKEEPING_DIVERGENCE_CLASSES
+  // below is read off the divergence-class table (server/auditor.js:27-36):
+  // `log_ahead_task_not_flipped` is the ONE class that directly contradicts
+  // a card's own claim ("shown done, but the plan file disagrees" — §5's
+  // literal "shown done, not merged" example) and is BELIEF-CHANGING, kept
+  // on the board; `unmatched_dispatch` (§5 names it explicitly),
+  // `orphaned_waiting_item`, and `unknown_provenance` are mechanism/ledger
+  // bookkeeping gaps ("kin") -- SUPPRESSED here, their counted summary
+  // rendered instead in Harness Health (web/app.js's renderDiagnostics /
+  // bookkeepingDivergenceSummary — reads the SAME per-ask badge data via
+  // the existing `/api/diagnostics/drift` -> `badges_by_ask` aggregate, no
+  // new endpoint or cross-module global needed). An unranked/future class
+  // (not in either list) defaults to BELIEF-CHANGING (visible on the
+  // board) — the safe default, since silently hiding an unclassified
+  // signal would repeat the "confident wrong bucket" failure this whole
+  // plan exists to kill (C5's generalization applied to badge
+  // classification).
+  //
+  // (2) DRILL-DOWN CAP (comprehension gate conf 5): the detail body used to
+  // materialize one hidden <div> PER badge instance -- unsurfaced reliance
+  // on the auditor's own age-bound fix staying in place forever to keep
+  // that count small. Capped to DRILL_DOWN_LINE_CAP (50) + one "+K more"
+  // line (the proposal's list-cap idiom, §5/D4: "274 artifact rows ->
+  // newest 5 + 'all 274 ->'"). SCOPED CLAIM (the gate's correction): the
+  // drill-down body's own DOM footprint is invulnerable to upstream
+  // over-emission by construction -- capped at 51 elements regardless of
+  // upstream badge count. That is the ONLY "invulnerable by construction"
+  // claim made here; it does not extend to the rest of this function or to
+  // any other surface.
+  //
+  // THE LAW (revised): belief-changing classes get at most ONE counted,
+  // labeled chip PER class, ever — never one chip per badge instance.
+  // Bookkeeping classes get ZERO chips here (Harness Health only).
+  // Precedence orders DISPLAY ONLY among the classes that DO render (a
+  // higher-precedence class never masks a lower one — every belief-
+  // changing class present gets its own chip; same "precedence orders,
+  // never selects" law as the roadmap roll-up badges, task 1/3's separate
+  // mechanism for a different surface). Zero renderable badges (whether
+  // truly zero, or every badge present was bookkeeping-suppressed) renders
+  // NO chip and no wrapping container (never an empty <span> — the call
+  // site below only appends when this returns non-null).
   // ============================================================
   // BADGE-LAW-RENDER-BEGIN (selftest extraction anchor — cockpit.selftest.js
   // sandboxes exactly this block, verbatim, against fixture badge arrays to
   // prove the RENDERED OUTPUT of the real function, not a reimplementation.
   // Keep this block self-contained between the BEGIN/END anchors: no
-  // reference to anything outside it except the global `document`.)
+  // reference to anything outside it except the global `document`. Mirrors
+  // web/app.js's BOOKKEEPING-DIAG-BEGIN/END block's own
+  // BOOKKEEPING_DIVERGENCE_CLASSES literal — cockpit.selftest.js T6H-4
+  // cross-checks the two stay identical, since there's no shared module
+  // system between these two plain-script files.)
+  var BOOKKEEPING_DIVERGENCE_CLASSES = {
+    unmatched_dispatch: true,
+    orphaned_waiting_item: true,
+    unknown_provenance: true,
+  };
   var DIVERGENCE_CLASS_PRECEDENCE = [
     'log_ahead_task_not_flipped',
     'unmatched_dispatch',
@@ -252,9 +295,16 @@
     var i = DIVERGENCE_CLASS_PRECEDENCE.indexOf(cls);
     return i === -1 ? DIVERGENCE_CLASS_PRECEDENCE.length : i; // unknown/future classes sort last, never crash
   }
+  var DRILL_DOWN_LINE_CAP = 50;
   function renderDriftBadges(badges) {
-    var list = badges || [];
-    if (!list.length) return null; // zero badges -> no chip, never an empty container
+    // bookkeeping classes render NOWHERE on the card (suppressed here, not
+    // capped) -- only belief-changing classes (or an unranked/future class,
+    // defaulting to belief-changing) ever reach the board.
+    var list = (badges || []).filter(function (b) {
+      var cls = (b && b.divergence_class) || 'drift';
+      return !BOOKKEEPING_DIVERGENCE_CLASSES[cls];
+    });
+    if (!list.length) return null; // zero belief-changing badges -> no chip, never an empty container
 
     // group by divergence_class (a badge with no class at all — legacy/
     // malformed — groups under the literal 'drift' fallback rather than
@@ -285,10 +335,13 @@
       var body = document.createElement('div');
       body.className = 'ask-badge-detail-body';
       // drill-down list on demand: one line per underlying badge instance in
-      // this class, on expand — Task 12 hasn't defined the divergence-detail
-      // shape beyond divergence_class, so render whatever fields the badge
-      // object carries rather than guessing a schema.
-      members.forEach(function (b) {
+      // this class, on expand — capped at DRILL_DOWN_LINE_CAP + one "+K
+      // more" line so the detail body's own DOM footprint stays bounded
+      // regardless of upstream count. Task 12 hasn't defined the
+      // divergence-detail shape beyond divergence_class, so each line
+      // renders whatever fields the badge object carries rather than
+      // guessing a schema.
+      members.slice(0, DRILL_DOWN_LINE_CAP).forEach(function (b) {
         var line = document.createElement('div');
         line.className = 'ask-badge-detail-line';
         var lines = [];
@@ -299,6 +352,12 @@
         line.textContent = lines.length ? lines.join(' · ') : 'divergence detail not yet available';
         body.appendChild(line);
       });
+      if (members.length > DRILL_DOWN_LINE_CAP) {
+        var more = document.createElement('div');
+        more.className = 'ask-badge-detail-line ask-badge-detail-more';
+        more.textContent = '+' + (members.length - DRILL_DOWN_LINE_CAP) + ' more';
+        body.appendChild(more);
+      }
       det.appendChild(body);
       wrap.appendChild(det);
     });

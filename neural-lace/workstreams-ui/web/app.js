@@ -903,6 +903,38 @@
   // first opens — not polled (this is background-auditor internals, not a
   // trust-bearing operator surface that needs live freshness).
   // ============================================================
+  // BOOKKEEPING-DIAG-BEGIN (selftest extraction anchor — cockpit-roadmap-
+  // redesign Task 6 fix round, task-verifier conf 7: proposal §5 says
+  // bookkeeping divergence classes render NOWHERE on the ask cards
+  // (web/asks.js's renderDriftBadges suppresses them, same anchored
+  // BOOKKEEPING_DIVERGENCE_CLASSES set — cockpit.selftest.js T6H-4
+  // cross-checks the two literal sets stay identical, since these two
+  // plain-script files share no module system); their counted summary
+  // surfaces HERE instead, reading the SAME per-ask badge data this pane
+  // already fetches (`d.badges_by_ask`, computed server-side by
+  // auditor.js:1158) — no new endpoint, no cross-module global. Kept
+  // self-contained between the BEGIN/END anchors (only references
+  // `Object.keys`/`Array.prototype.forEach`, both global) so the selftest
+  // can sandbox this pure function directly, no fake DOM needed.
+  var BOOKKEEPING_DIVERGENCE_CLASSES = {
+    unmatched_dispatch: true,
+    orphaned_waiting_item: true,
+    unknown_provenance: true,
+  };
+  function bookkeepingDivergenceSummary(badgesByAsk) {
+    var total = 0;
+    var classesSeen = {};
+    Object.keys(badgesByAsk || {}).forEach(function (askId) {
+      (badgesByAsk[askId] || []).forEach(function (b) {
+        var cls = (b && b.divergence_class) || 'drift';
+        if (!BOOKKEEPING_DIVERGENCE_CLASSES[cls]) return; // belief-changing classes stay on the board, not counted here
+        total++;
+        classesSeen[cls] = true;
+      });
+    });
+    return { total: total, classCount: Object.keys(classesSeen).length };
+  }
+  // BOOKKEEPING-DIAG-END
   function renderDiagnostics(d) {
     diagnosticsBody.innerHTML = '';
     if (!d || d.ok === false) {
@@ -948,6 +980,19 @@
     badgeRow.className = 'diag-row';
     badgeRow.textContent = askCountWithBadges + ' ask(s) currently carrying a drift badge';
     diagnosticsBody.appendChild(badgeRow);
+
+    // bookkeeping divergences suppressed from the ask cards (Task 6 fix
+    // round) surface here, counted — always rendered (even at 0), matching
+    // this pane's own existing convention (cycleRow/healedRow/errRow above
+    // never hide at zero either — Harness Health is the maintainer
+    // diagnostics surface, not the anti-noise operator glance surface the
+    // zero-renders-nothing law governs).
+    var bkSummary = bookkeepingDivergenceSummary(badgesByAsk);
+    var bookkeepingRow = document.createElement('div');
+    bookkeepingRow.className = 'diag-row';
+    bookkeepingRow.textContent = 'progress-log bookkeeping divergences: ' + bkSummary.total +
+      ' (' + bkSummary.classCount + ' class' + (bkSummary.classCount === 1 ? '' : 'es') + ')'; // text + color, never color-only
+    diagnosticsBody.appendChild(bookkeepingRow);
   }
 
   function loadDiagnostics() {
