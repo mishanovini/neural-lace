@@ -1,6 +1,8 @@
 # Plan: Cockpit UI polish — the operator's four usability items
 
-Status: ACTIVE
+Status: SUPERSEDED
+Superseded-by: docs/plans/cockpit-roadmap-redesign.md (2026-07-18 — all four items absorbed
+verbatim into its task 8; the badge law moved to its task 6)
 Mode: build
 rung: 2
 lifecycle-schema: v2
