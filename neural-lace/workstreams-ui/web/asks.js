@@ -784,6 +784,10 @@
   function renderAskCard(ask, isCompleted, onMoved) {
     var card = document.createElement('div');
     card.className = 'ask-card' + (isCompleted ? ' ask-card-completed' : '');
+    // cockpit-roadmap-redesign Task 3: the shell's #request/<id> addressing
+    // lands on this card (app.js's interim 'requests' adapter looks it up
+    // by this data attribute; task 5's full ledger view keeps the same id).
+    card.dataset.askId = ask.ask_id;
 
     var head = document.createElement('div');
     head.className = 'ask-card-head';

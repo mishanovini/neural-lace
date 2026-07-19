@@ -338,7 +338,7 @@ ok('T13-30 every flex-styled element asks.js toggles via .hidden has an explicit
 
 // --- (a) anti-noise landing-DOM check: every pane-family id appears ONLY
 // between the <template id="harnessHealthTemplate"> open/close tags, never
-// in the landing (#tabAsksPanel) portion of the document. -----------------
+// in the landing (non-Harness-Health) portion of the document. ------------
 const templateOpenTag = '<template id="harnessHealthTemplate">';
 const templateOpenIdx = html.indexOf(templateOpenTag);
 const templateCloseIdx = html.indexOf('</template>');
@@ -359,16 +359,21 @@ ok('T16-2 landing DOM (everything outside the Harness Health <template>) contain
 ok('T16-2b every pane-family id is present inside the template (moved, not deleted)',
   PANE_FAMILY_IDS.every((id) => html.indexOf('id="' + id + '"') !== -1));
 
-// --- Harness Health tab wire check: index.html tab shell -> app.js router
-// (the plan's own Wire checks block). ---------------------------------
-ok('T16-3 index.html defines the tab nav (#tabAsksBtn / #tabHealthBtn) driving app.js\'s router',
-  /id="tabAsksBtn"/.test(html) && /id="tabHealthBtn"/.test(html) &&
-  /id="tabAsksPanel"/.test(html) && /id="tabHealthPanel"/.test(html));
+// --- Harness Health tab wire check: index.html tab shell -> app.js router.
+// UPDATED by cockpit-roadmap-redesign Task 3 (C2): the two-tab Task 16
+// shell became the four-tab navigation shell — Roadmap / Requests / Inbox /
+// Harness Health, hash-routed; the Asks panel became the Requests tab's
+// interim content (same registry — asks ARE requests; task 5 rebuilds the
+// view). The Harness Health lazy-template quarantine is UNCHANGED.
+ok('T16-3 index.html defines the four-tab nav driving app.js\'s router (Roadmap/Requests/Inbox/Health)',
+  /id="tabRoadmapBtn"/.test(html) && /id="tabRequestsBtn"/.test(html) &&
+  /id="tabInboxBtn"/.test(html) && /id="tabHealthBtn"/.test(html) &&
+  /id="tabRequestsPanel"/.test(html) && /id="tabHealthPanel"/.test(html));
 ok('T16-4 app.js implements initHarnessHealthTab() which clones the template and activateTab() which drives the tab nav',
   /function initHarnessHealthTab/.test(js) && /function activateTab/.test(js) &&
   /harnessHealthTemplate\.content\.cloneNode\(true\)/.test(js));
-ok('T16-5 Asks is the default landing tab (activateTab(\'asks\') called at load, #tabHealthPanel starts hidden)',
-  /activateTab\('asks'\)/.test(js) && /id="tabHealthPanel"[^>]*\bhidden\b/.test(html));
+ok('T16-5 Roadmap is the default landing tab (router defaults to #roadmap; #tabHealthPanel starts hidden)',
+  /'#roadmap'/.test(js) && /routeFromHash\(\)/.test(js) && /id="tabHealthPanel"[^>]*\bhidden\b/.test(html));
 
 // --- no Team tab anywhere in P1 (review round 1 — no empty shell surfaces,
 // binding constraint carried through Task 16's own assembly). -------------
@@ -403,7 +408,8 @@ ok('T16-9 diagnostics healed/error counts render as visible TEXT, never a bare c
 // already covered by T13-22/23) is a real <button>/<a>, never a clickable
 // <div>. ------------------------------------------------------------------
 ok('T16-10 the tab-nav controls are real <button> elements, never clickable divs',
-  /<button[^>]+id="tabAsksBtn"/.test(html) && /<button[^>]+id="tabHealthBtn"/.test(html));
+  /<button[^>]+id="tabRoadmapBtn"/.test(html) && /<button[^>]+id="tabRequestsBtn"/.test(html) &&
+  /<button[^>]+id="tabInboxBtn"/.test(html) && /<button[^>]+id="tabHealthBtn"/.test(html));
 ok('T16-11 todo.js never wires a click handler onto a bare div (real buttons/inputs only)',
   !/[Dd]iv\.addEventListener\('click'/.test(todoJs));
 ok('T16-12 backlog.js never wires a click handler onto a bare div (real buttons only)',
@@ -464,6 +470,128 @@ ok('PV-9 CSS defines all three named peer states (fresh-ish/estate-unchanged/pee
   /\.peer-state-fresh-ish\s*\{[^}]*var\(--ok\)/.test(C) &&
   /\.peer-state-estate-unchanged\s*\{[^}]*var\(--warn\)/.test(C) &&
   /\.peer-state-peer-unreachable\s*\{[^}]*var\(--interrupt\)/.test(C));
+
+// ============================================================
+// cockpit-roadmap-redesign Task 3 — "Roadmap tree view + the navigation
+// shell" (T3-prefix). Same DOM-free source-regex technique as the rest of
+// this file; the REAL wiring proof (fixture registry + plan files, real
+// HTTP) is server/roadmap-routes.selftest.js. roadmap.js is read guarded so
+// a missing file fails THESE checks instead of crashing the whole suite.
+// ============================================================
+let roadmapJs = '';
+try { roadmapJs = fs.readFileSync(path.join(D, 'roadmap.js'), 'utf8'); } catch (_) { /* T3 checks fail honestly below */ }
+const roadmapJsNoComments = stripJsComments(roadmapJs);
+
+// --- shell: four tabs, Roadmap lands (C2) --------------------------------
+ok('T3-1 the shell defines all four tabs (Roadmap/Requests/Inbox/Harness Health) as real buttons + panels',
+  /<button[^>]+id="tabRoadmapBtn"/.test(html) && /<button[^>]+id="tabRequestsBtn"/.test(html) &&
+  /<button[^>]+id="tabInboxBtn"/.test(html) && /<button[^>]+id="tabHealthBtn"/.test(html) &&
+  /id="tabRoadmapPanel"/.test(html) && /id="tabRequestsPanel"/.test(html) &&
+  /id="tabInboxPanel"/.test(html) && /id="tabHealthPanel"/.test(html));
+ok('T3-2 Roadmap is the LANDING tab (aria-selected at parse + the router defaults to #roadmap)',
+  /id="tabRoadmapBtn"[^>]*aria-selected="true"/.test(html) && /'#roadmap'/.test(js));
+ok('T3-3 the Inbox tab carries a LIVE count element and app.js derives N from ANSWERABLE items only (lint-quarantined excluded — I4/A10)',
+  /id="inboxTabCount"/.test(html) && /lint_warnings/.test(js) && /answerable/i.test(js));
+
+// --- hash routing + the landed state (C2) --------------------------------
+ok('T3-4 hash router handles the three item address families (#roadmap/<id> #request/<id> #inbox/<id>) + hashchange',
+  /#\(\?:roadmap\|request\|inbox\)|\(roadmap\|request\|inbox\)/.test(js) && /hashchange/.test(js));
+ok('T3-5 landed state = scroll + programmatic focus + a visible highlight class',
+  /scrollIntoView/.test(js) && /landing-highlight/.test(js) && /\.focus\(\)/.test(js));
+ok('T3-6 an explicit return affordance is injected on the landed item and drives history.back()',
+  /landing-return/.test(js) && /history\.back\(\)/.test(js));
+ok('T3-7 the miss rule renders a "resolved <when> — <outcome>" banner, never a blank/404',
+  /resolved /.test(js) && /miss/i.test(js));
+ok('T3-8 a view-registration API exists (tasks 4-5 register into the shell) and roadmap.js registers through it',
+  /registerView/.test(js) && /WorkstreamsShell/.test(js) && /registerView\(/.test(roadmapJsNoComments));
+ok('T3-8b Back restores the prior view WITH its expansion + scroll (snapshot/restore wired through the router)',
+  /snapshotState/.test(js) && /restoreState/.test(js));
+
+// --- tree: six-value chips, progress text, roll-ups (Outcome §2 / C1) ----
+ok('T3-10 all six status enum values have a render class + label (not-started/in-progress/merged-unverified/complete/stalled/unknown)',
+  ['not-started', 'in-progress', 'merged-unverified', 'complete', 'stalled', 'unknown']
+    .every((v) => roadmapJs.indexOf("'" + v + "'") !== -1) && /rm-status-/.test(roadmapJs));
+ok('T3-11 status chips render TEXT from the label map (text + color, never color-only)',
+  /STATUS_LABEL/.test(roadmapJs) && /textContent/.test(roadmapJs));
+ok('T3-12 the merged-unverified label is the distinct operator copy ("merged — deploy unverified"), outside Complete',
+  /merged — deploy unverified/.test(roadmapJs));
+ok('T3-13 progress bars ALWAYS carry the "n/m" text and are OMITTED for zero-tracked-children items',
+  /progress\.done \+ '\/' \+ .*progress\.total|done \+ '\/' \+ /.test(roadmapJs) && /progress\.total/.test(roadmapJsNoComments));
+ok('T3-14 the tree is nested native <details>/<summary> disclosure (C9 keyboard baseline)',
+  /createElement\('details'\)/.test(roadmapJs) && /createElement\('summary'\)/.test(roadmapJs));
+ok('T3-15 roll-up badges render ONE PER attention class present (R4: precedence orders, never selects) in the pinned precedence order',
+  /ROLLUP_ORDER/.test(roadmapJs) &&
+  /'waiting-on-you',\s*'crashed',\s*'blocked-on',\s*'limit-parked',\s*'unknown'/.test(roadmapJs.replace(/\n\s*/g, ' ')));
+ok('T3-16 roll-up badges are counted + labeled real buttons whose click expands the path to the item',
+  /rm-rollup-badge/.test(roadmapJs) && /expandPathTo/.test(roadmapJs));
+ok('T3-17 CSS shows roll-up badges on COLLAPSED ancestors (hidden when the branch is open — the attention state is never masked while collapsed)',
+  /details\[open\][^{]*>\s*summary[^{]*\.rm-rollups[^{]*\{[^}]*display:\s*none/.test(C));
+
+// --- from-your-request links (C6) ----------------------------------------
+ok('T3-18 every drill-down carries "from your request(s):" linking via #request/<id>',
+  /from your request/.test(roadmapJs) && /#request\//.test(roadmapJs));
+
+// --- recency (I1) + completed aging (round 4 + I2) -----------------------
+ok('T3-19 status chips carry their transition age (formatAge on status.since / completed_at)',
+  /formatAge/.test(roadmapJs) && /status\.since|completed_at/.test(roadmapJs));
+ok('T3-19b transitions <24h old get a non-color-only "new" text marker',
+  /rm-new-marker/.test(roadmapJs) && /'new'/.test(roadmapJs));
+ok('T3-20 completed aging: in-place window + collapsed-subtree "completed <when>" headline + per-parent "N completed ▸ — latest: <title>" roll-up',
+  /completed /.test(roadmapJs) && / completed ▸ — latest: /.test(roadmapJs) && /completed_age_days/.test(roadmapJs));
+ok('T3-21 the "added mid-build" insertion marker is a labeled chip aging on the SAME tunable (one knob)',
+  /added mid-build/.test(roadmapJs) && /agedOut|completed_age_days/.test(roadmapJs));
+
+// --- kanban (I3 + R5) ----------------------------------------------------
+ok('T3-22 kanban toggle is an aria-pressed button and the mode persists (localStorage)',
+  /id="roadmapKanbanToggle"/.test(html) && /aria-pressed/.test(roadmapJs) && /roadmap\.viewMode/.test(roadmapJs));
+ok('T3-22b kanban cards = TOP-LEVEL items; merged-unverified + unknown are EXCEPTIONAL columns rendered only when non-empty (R5)',
+  /KANBAN_COLUMNS/.test(roadmapJs) && /EXCEPTIONAL/.test(roadmapJs));
+ok('T3-22c the stalled kanban column is visually distinct via a dedicated class (text label + accent, never color-only)',
+  /rm-kanban-col-stalled/.test(C) || /rm-kanban-col-stalled/.test(roadmapJs));
+
+// --- filters: substring box (R6), project chips, chore exclusion (A9) ----
+ok('T3-23 the tree ships its at-birth substring filter box (R6: chips are facets, not search)',
+  /id="roadmapFilter"/.test(html) && /roadmapFilter/.test(roadmapJs));
+ok('T3-23b project chips are aria-pressed toggles and persist (localStorage)',
+  /roadmap\.projectChips/.test(roadmapJs) && /aria-pressed/.test(roadmapJs));
+ok('T3-24 harness-chore exclusion keys on PROVENANCE (item.provenance), with hidden count + one-click reveal',
+  /provenance/.test(roadmapJs) && /harness chores/.test(roadmapJs) && /roadmap\.showChores/.test(roadmapJs));
+
+// --- four UI states (C4) -------------------------------------------------
+ok('T3-25 loading state uses the mandated copy ("deriving roadmap…") and aria-busy',
+  /deriving roadmap…/.test(roadmapJs) && /aria-busy/.test(roadmapJs));
+ok('T3-25b error state = pane-error + Retry, NEVER the empty state on failure',
+  /pane-error/.test(roadmapJs) && /Retry/.test(roadmapJs));
+ok('T3-25c FILTERED-empty names the filter + hidden count + a one-click clear, distinct from TRUE-empty',
+  /no items match/.test(roadmapJs) && /clear/i.test(roadmapJs) && /hidden/.test(roadmapJs));
+ok('T3-25d TRUE-empty explains items arrive automatically from sessions (no setup ask)',
+  /arrive automatically|appear here automatically/.test(roadmapJs));
+
+// --- refresh model (C7) --------------------------------------------------
+ok('T3-26 the view polls on the 30s tick and labels failures "derived <age> — STALE", never silent staleness',
+  /30000|REFRESH_INTERVAL/.test(roadmapJs) && /STALE/.test(roadmapJs));
+ok('T3-27 re-render is STATE-PRESERVING: open-details set + scroll + focus + uncommitted edits captured and restored',
+  /captureUiState/.test(roadmapJs) && /restoreUiState/.test(roadmapJs) &&
+  /scrollTop|scrollY/.test(roadmapJs) && /activeElement/.test(roadmapJs));
+
+// --- title editing + rank reorder (A3 / A7 / R2) -------------------------
+ok('T3-28 title editing reuses the todo.js pattern: an explicit Edit button, Escape cancels, focus returns',
+  /rm-title-edit|Edit/.test(roadmapJs) && /Escape/.test(roadmapJs) && /\.focus\(\)/.test(roadmapJs));
+ok('T3-28b edit feedback is aria-live (C9)', /aria-live/.test(roadmapJs));
+ok('T3-29 build-order reorder ships keyboard-operable move up/down REAL buttons (WCAG 2.2 2.5.7 — never drag-only)',
+  /[Mm]ove up/.test(roadmapJs) && /[Mm]ove down/.test(roadmapJs) && /\/api\/roadmap\/rank/.test(roadmapJs));
+
+// --- a11y hygiene (C9) ---------------------------------------------------
+ok('T3-30 roadmap.js builds interactive controls as real <button>s (the one btn() factory, used throughout) and never wires click onto a bare div',
+  /function btn\([\s\S]{0,120}?createElement\('button'\)/.test(roadmapJs) &&
+  (roadmapJs.match(/btn\(/g) || []).length >= 10 &&
+  !/[Dd]iv\.addEventListener\('click'/.test(roadmapJs));
+ok('T3-31 CSS pairs every status class with the palette (stalled uses the --interrupt accent; unknown visibly distinct)',
+  /\.rm-status-stalled[^{]*\{[^}]*var\(--interrupt\)/.test(C) &&
+  /\.rm-status-unknown[^{]*\{[^}]*var\(--warn\)/.test(C) &&
+  /\.rm-status-complete[^{]*\{[^}]*var\(--ok\)/.test(C));
+ok('T3-32 landed items are programmatically focusable (tabindex="-1" set on item containers)',
+  /tabindex.*-1|tabIndex = -1/.test(roadmapJs));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

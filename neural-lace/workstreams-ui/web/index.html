@@ -7,23 +7,30 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <!-- Workstreams cockpit — ask-rooted-workstreams-p1, Task 16 "Layout
-       integration + Harness Health demotion" (per the ux-designer round-1
-       ruling, LANDED 2026-07-10, binding). The ASK TREE is now the landing
-       surface; the six wave-O panes (specs-o §O.4) are DEMOTED to a
-       Harness Health tab — moved VERBATIM (see <template
-       id="harnessHealthTemplate"> below) so they keep working exactly as
-       built, but they NEVER form part of the landing DOM (anti-noise law,
-       hard constraint 1): a native <template>'s content is inert — not
-       parsed into the live document, not visible to the accessibility
-       tree, not matched by document.getElementById — until app.js's
-       initHarnessHealthTab() explicitly clones it in, the first time the
-       operator opens this tab. -->
+  <!-- Workstreams cockpit — cockpit-roadmap-redesign Task 3 "Roadmap tree
+       view + the navigation shell" (C2): ONE registry, THREE views, ONE
+       navigation shell. Tabs: Roadmap (the LANDING tab — the glance
+       surface), Requests (the conversation/intent ledger; interim content =
+       the existing ask tree until task 5 rebuilds it), Inbox (N) (live
+       ANSWERABLE-only count — I4/A10; interim answerable list until task 4
+       ships the full context-contract view), and Harness Health (kept —
+       the six wave-O panes stay quarantined in <template
+       id="harnessHealthTemplate"> below, inert until app.js's
+       initHarnessHealthTab() clones it in on first open). Hash addressing:
+       #roadmap/<id> / #request/<id> / #inbox/<id> — every cross-view link
+       switches tab + scrolls + expands + highlights + moves focus; Back
+       (hashchange) + an explicit return affordance restore the prior tab
+       with expansion + scroll intact; a followed link to a resolved item
+       renders "resolved <when> — <outcome>", never blank (C3). -->
   <header>
     <h1>Workstreams</h1>
     <nav id="tabNav" class="tab-nav" role="tablist" aria-label="workstreams views">
-      <button type="button" id="tabAsksBtn" class="tab-btn" role="tab"
-              aria-selected="true" aria-controls="tabAsksPanel">Asks</button>
+      <button type="button" id="tabRoadmapBtn" class="tab-btn" role="tab"
+              aria-selected="true" aria-controls="tabRoadmapPanel">Roadmap</button>
+      <button type="button" id="tabRequestsBtn" class="tab-btn" role="tab"
+              aria-selected="false" aria-controls="tabRequestsPanel">Requests</button>
+      <button type="button" id="tabInboxBtn" class="tab-btn" role="tab"
+              aria-selected="false" aria-controls="tabInboxPanel">Inbox <span id="inboxTabCount">(—)</span></button>
       <button type="button" id="tabHealthBtn" class="tab-btn" role="tab"
               aria-selected="false" aria-controls="tabHealthPanel">Harness Health</button>
     </nav>
@@ -32,17 +39,39 @@
   </header>
 
   <!-- ============================================================
-       TAB 1 — Asks (the landing surface). ask-rooted-workstreams-p1
-       Task 13/14/15: ask tree (main column) + My To-Do / Backlog
-       (persistent right sidebar, independent scroll, stacks under the
-       tree below ~1200px). UNCHANGED from Tasks 13-15 — Task 16 only
-       wraps it in the tab shell.
+       TAB 1 — Roadmap (the landing tab). Rendered by web/roadmap.js from
+       GET /api/roadmap (server/roadmap-routes.js). The toolbar controls
+       live HERE (static DOM) so filter text + toggle state trivially
+       survive the view's state-preserving re-renders (C7).
        ============================================================ -->
-  <div id="tabAsksPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabAsksBtn">
+  <div id="tabRoadmapPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabRoadmapBtn">
+    <section id="roadmapSection" class="pane roadmap-section" aria-label="roadmap">
+      <div class="roadmap-toolbar">
+        <input id="roadmapFilter" type="text" placeholder="filter the roadmap…"
+               aria-label="filter roadmap items (matches titles, requests, and ids)">
+        <div id="roadmapProjectChips" class="rm-project-chips" role="group" aria-label="project filters"></div>
+        <button type="button" id="roadmapChoreToggle" class="ghost small" aria-pressed="false">harness chores</button>
+        <button type="button" id="roadmapKanbanToggle" class="ghost small" aria-pressed="false">Kanban</button>
+        <span class="pane-age" data-age-for="roadmap">—</span>
+      </div>
+      <div id="roadmapMissBanner" class="miss-banner" hidden></div>
+      <div class="pane-body roadmap-body" id="roadmapBody"></div>
+    </section>
+  </div>
+
+  <!-- ============================================================
+       TAB 2 — Requests (the conversation/intent ledger). INTERIM CONTENT:
+       the ask-rooted-workstreams-p1 ask tree + sidebar, UNCHANGED (asks are
+       requests — same registry; task 5 rebuilds this view's anatomy:
+       evolution timeline, findability, close-on-promote). The shell's
+       #request/<id> addressing lands on the ask cards below.
+       ============================================================ -->
+  <div id="tabRequestsPanel" class="tab-panel" hidden role="tabpanel" aria-labelledby="tabRequestsBtn">
+    <div id="requestsMissBanner" class="miss-banner" hidden></div>
     <div class="ws-layout">
-      <section id="askTreeSection" class="ask-tree-section" aria-label="asks">
+      <section id="askTreeSection" class="ask-tree-section" aria-label="requests">
         <div class="ask-tree-head">
-          <h2 class="ask-tree-title">Asks</h2>
+          <h2 class="ask-tree-title">Requests</h2>
         </div>
         <div class="ask-tree-body" id="askTreeBody"></div>
       </section>
@@ -68,7 +97,29 @@
   </div>
 
   <!-- ============================================================
-       TAB 2 — Harness Health. Mount point (empty until first activation)
+       TAB 3 — Inbox (everything waiting on the operator). INTERIM CONTENT
+       (task 3): the ANSWERABLE items list rendered by app.js from the SAME
+       needs-me derivation the Harness Health Q2 pane reads — quarantined
+       (context-less) items are EXCLUDED from both the list and the tab
+       count (I4) and remain visible in Harness Health until task 4 ships
+       the full context-contract view (quarantine section, §3 anatomy,
+       lifecycle verbs, "My items"). Task 4 REGISTERS its view here via
+       WorkstreamsShell.registerView('inbox', ...), replacing app.js's
+       interim renderer.
+       ============================================================ -->
+  <div id="tabInboxPanel" class="tab-panel" hidden role="tabpanel" aria-labelledby="tabInboxBtn">
+    <section id="inboxSection" class="pane inbox-section" aria-label="inbox — waiting on you">
+      <div class="pane-head">
+        <span class="pane-title">Inbox — waiting on you</span>
+        <span class="pane-age" data-age-for="inbox">—</span>
+      </div>
+      <div id="inboxMissBanner" class="miss-banner" hidden></div>
+      <div class="pane-body inbox-body" id="inboxBody"></div>
+    </section>
+  </div>
+
+  <!-- ============================================================
+       TAB 4 — Harness Health. Mount point (empty until first activation)
        + the inert <template> carrying the six wave-O panes VERBATIM, plus
        the reconciler badge, interrupt strip, why-drawer, and a new
        Diagnostics section (auditor + reconciler internals — "Diagnostics
@@ -231,5 +282,9 @@
   <script src="/todo.js"></script>
   <script src="/backlog.js"></script>
   <script src="/app.js"></script>
+  <!-- roadmap.js loads AFTER app.js: it registers into the shell API
+       (window.WorkstreamsShell) app.js defines. Served by
+       server/roadmap-routes.js (the one-line server.js mount). -->
+  <script src="/roadmap.js"></script>
 </body>
 </html>

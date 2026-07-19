@@ -896,3 +896,165 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 
 /* ---- text contrast / target size baseline (WCAG 2.2 AA, amendment 12) ---- */
 button, a, [role="button"] { min-height: 24px; }
+
+/* ============================================================
+   cockpit-roadmap-redesign Task 3 — Roadmap tree view + navigation shell.
+   Palette discipline unchanged: --interrupt is spent ONLY on
+   interrupt-worthy classes (stalled/crashed roll-ups + the stalled kanban
+   column); every chip is text + color, never color-only (C9 / WCAG 1.4.1).
+   ============================================================ */
+
+/* ---- roadmap toolbar (static DOM — filter text + toggles survive the
+   view's state-preserving re-renders trivially, C7) ---- */
+.roadmap-section { max-width: 1400px; margin: 12px auto 24px; }
+.roadmap-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+#roadmapFilter {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-height: 24px;
+  min-width: 220px;
+}
+.rm-project-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.chip.rm-project-chip { cursor: pointer; color: var(--muted); border-color: var(--border2); }
+.chip.rm-project-chip[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+
+/* ---- tree nodes ---- */
+.rm-tree { padding: 4px 0; }
+.rm-node { border-left: 2px solid var(--border); margin: 2px 0 2px 4px; padding-left: 6px; }
+.rm-node > summary.rm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  cursor: pointer;
+  padding: 3px 4px;
+  min-height: 24px;
+}
+.rm-node > summary.rm-row:hover { background: var(--panel2); }
+.rm-title { font-weight: 600; }
+.rm-kind-task .rm-title { font-weight: 400; }
+.rm-children { margin-left: 14px; }
+.rm-drill { display: none; padding: 4px 8px 6px 20px; font-size: 12px; color: var(--muted); }
+.rm-node[open] > .rm-drill { display: block; }
+.rm-drill-label { font-weight: 600; }
+.rm-from-requests, .rm-status-reason, .rm-title-edit, .rm-rank-row { margin: 3px 0; }
+
+/* ---- six-value status chips (C5): text + color, never color-only ---- */
+.chip.rm-status { white-space: nowrap; }
+.chip.rm-status-not-started { color: var(--muted); border-color: var(--border2); }
+.chip.rm-status-in-progress { color: var(--info); border-color: var(--info); }
+.chip.rm-status-merged-unverified { color: var(--warn); border-color: var(--warn); }
+.chip.rm-status-complete { color: var(--ok); border-color: var(--ok); }
+.chip.rm-status-stalled { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; cursor: pointer; }
+.chip.rm-status-unknown { color: var(--warn); border-color: var(--warn); border-style: dashed; cursor: pointer; }
+
+/* ---- progress: the bar NEVER travels without its "n/m" text ---- */
+.rm-progress { display: inline-flex; align-items: center; gap: 4px; }
+.rm-progress-bar {
+  display: inline-block;
+  width: 72px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  overflow: hidden;
+}
+.rm-progress-fill { display: block; height: 100%; background: var(--ok); }
+.rm-progress-text { font-size: 12px; color: var(--muted); }
+
+/* ---- roll-up badges (C1/R4): visible on COLLAPSED ancestors; when a
+   branch is open its children's own chips carry the signal, so the
+   parent's badges hide — an attention state is NEVER masked while
+   collapsed. ---- */
+.rm-rollups { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+details[open] > summary .rm-rollups { display: none; }
+.chip.rm-rollup-badge { cursor: pointer; }
+.chip.rm-rollup-waiting-on-you, .chip.rm-rollup-crashed { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; }
+.chip.rm-rollup-blocked-on, .chip.rm-rollup-limit-parked { color: var(--warn); border-color: var(--warn); }
+.chip.rm-rollup-unknown { color: var(--warn); border-color: var(--warn); border-style: dashed; }
+
+/* ---- markers (I1/I2): text markers, never color-only ---- */
+.rm-new-marker { font-size: 10px; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 3px; }
+.chip.rm-marker-midbuild { color: var(--info); border-color: var(--info); font-style: italic; }
+.rm-completed-when { font-size: 11px; color: var(--muted); }
+
+/* ---- completed aging roll-up rows ---- */
+.rm-completed-rollup { margin: 4px 0 4px 4px; border-left: 2px dotted var(--border); padding-left: 6px; }
+.rm-completed-rollup-summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 3px 4px; min-height: 24px; }
+
+/* ---- title edit + rank + feedback ---- */
+.rm-title-input {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  min-width: 240px;
+}
+.rm-edit-feedback { font-size: 12px; margin-top: 3px; }
+.rm-edit-feedback.rm-feedback-ok { color: var(--ok); }
+.rm-edit-feedback.rm-feedback-err { color: var(--err); }
+.rm-chore-note { font-size: 12px; color: var(--muted); padding: 6px 8px; }
+
+/* ---- kanban (I3): stalled column visually distinct (text label already
+   carries the state — the accent is additive, never the only cue) ---- */
+.rm-kanban { display: flex; gap: 10px; align-items: flex-start; overflow-x: auto; padding: 8px 4px; }
+.rm-kanban-col {
+  flex: 1 1 200px;
+  min-width: 190px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+}
+.rm-kanban-col-head { font-size: 12px; font-weight: 700; color: var(--muted); padding: 2px 4px 6px; }
+.rm-kanban-col-stalled { border-color: var(--interrupt); }
+.rm-kanban-col-stalled .rm-kanban-col-head { color: var(--interrupt); }
+.rm-kanban-col-unknown, .rm-kanban-col-merged-unverified { border-style: dashed; }
+.rm-card {
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+}
+.rm-card-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.rm-card-chips { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-bottom: 4px; }
+.rm-kanban-empty { font-size: 11px; }
+
+/* ---- landing state (C2): the visible highlight + return affordance ---- */
+.landing-highlight {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.landing-return { margin-left: 8px; }
+.miss-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  margin: 8px 12px;
+  font-size: 13px;
+}
+.miss-banner[hidden] { display: none; } /* the R21 [hidden]-override class lock */
+
+/* ---- inbox (interim, task 3) ---- */
+.inbox-section { max-width: 1000px; margin: 12px auto 24px; }
+.inbox-item { border-bottom: 1px solid var(--border); padding: 8px 4px; }
+.inbox-item-head { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+.chip.inbox-type-chip { color: var(--warn); border-color: var(--warn); }
+.inbox-item-text { margin: 4px 0; }
+.inbox-win { color: var(--ok); }

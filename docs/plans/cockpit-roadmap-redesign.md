@@ -361,6 +361,10 @@ full-cycle floor), a `config/people.js`-style hostname→person map (machine-loc
 - 2026-07-19: `neural-lace/workstreams-ui/config/.gitignore` — adds
   `completion-oracle.json` to the existing per-machine-override ignore list
   (same convention already covering `projects.json` / `wim-repos.json`).
+- 2026-07-19: `neural-lace/workstreams-ui/web/*` — task 3 shell + Roadmap view (index.html, app.js, roadmap.js NEW, asks.js anchor, app.css, cockpit.selftest.js); scope-gate-parseable form of the prose Files-to-Modify entry
+- 2026-07-19: `neural-lace/workstreams-ui/server/roadmap-routes.js` — task 3 NEW route module (tasks 1/2 own server.js/derive-lib/ask-registry.sh; mount line ships as a fragment)
+- 2026-07-19: `neural-lace/workstreams-ui/server/roadmap-routes.selftest.js` — task 3 NEW sandboxed selftest (own file so task 1's server.selftest.js is never raced)
+- 2026-07-19: `docs/plans/fragments/roadmap-t3-server-fragment.md` — task 3 coordination fragment (server.js mount + task-1/2 seams)
 
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store

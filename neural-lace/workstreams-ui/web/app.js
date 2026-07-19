@@ -17,9 +17,10 @@
  * regions on every pane body, drawer is role=dialog with focus management +
  * Esc-close, targets >=24px, text contrast >=4.5:1 (see app.css).
  *
- * ask-rooted-workstreams-p1 Task 13 note: the ask-tree landing
- * (`web/asks.js`, `#askTreeSection`) is the PRIMARY view (`#tabAsksPanel`)
- * and is a fully independent module — it shares only the docs-viewer modal
+ * cockpit-roadmap-redesign Task 3 note: the ask tree (`web/asks.js`,
+ * `#askTreeSection`) now lives in the REQUESTS tab (`#tabRequestsPanel`) as
+ * its interim content (asks ARE requests — same registry; task 5 rebuilds
+ * the view). It remains a fully independent module — it shares only the docs-viewer modal
  * DOM (`docModal`/`docTitle`/`docBody`/`docOpenEditor`, whose close
  * affordances this file wires: Esc, `docClose`, `docScrim`) so plan-doc
  * links reuse the existing viewer rather than growing a second one
@@ -43,9 +44,8 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // ---- global element handles (always present in the live DOM at parse
-  // time — the tab shell + the docs browser, shared by both tabs) --------
-  var tabAsksBtn = $('tabAsksBtn'), tabHealthBtn = $('tabHealthBtn'),
-      tabAsksPanel = $('tabAsksPanel'), tabHealthPanel = $('tabHealthPanel'),
+  // time — the tab shell + the docs browser, shared by all tabs) --------
+  var tabHealthPanel = $('tabHealthPanel'),
       harnessHealthTemplate = $('harnessHealthTemplate'),
       docsBtn = $('docsBtn'), docScrim = $('docScrim'), docsPanel = $('docsPanel'),
       docsFilter = $('docsFilter'), docsBody = $('docsBody'), docsClose = $('docsClose'),
@@ -966,15 +966,15 @@
   }
 
   // ============================================================
-  // Tab router (Task 16 "Layout integration + Harness Health demotion").
-  // Asks is the default landing tab; Harness Health is lazily assembled the
-  // FIRST time it's opened — cloning <template id="harnessHealthTemplate">
-  // (the six wave-O panes + reconciler + interrupt strip + why-drawer +
-  // diagnostics, moved VERBATIM) into #tabHealthPanel, resolving every
-  // element handle declared above, wiring the listeners that reference
-  // them, and starting the poll loop / SSE subscription — none of which can
-  // run before the template exists in the live document. No Team tab: P1
-  // ships no nav entry and no markup for it (review round 1).
+  // Harness Health lazy assembly (kept verbatim from Task 16; the tab
+  // router itself is now the four-tab NAVIGATION SHELL below). Harness
+  // Health is lazily assembled the FIRST time it's opened — cloning
+  // <template id="harnessHealthTemplate"> (the six wave-O panes +
+  // reconciler + interrupt strip + why-drawer + diagnostics, moved
+  // VERBATIM) into #tabHealthPanel, resolving every element handle
+  // declared above, wiring the listeners that reference them, and starting
+  // the poll loop / SSE subscription — none of which can run before the
+  // template exists in the live document.
   // ============================================================
   var harnessHealthInitialized = false;
   function initHarnessHealthTab() {
@@ -1013,17 +1013,361 @@
     loadDiagnostics();
   }
 
-  function activateTab(name) {
-    var isAsks = name === 'asks';
-    tabAsksPanel.hidden = !isAsks;
-    tabHealthPanel.hidden = isAsks;
-    tabAsksBtn.setAttribute('aria-selected', String(isAsks));
-    tabHealthBtn.setAttribute('aria-selected', String(!isAsks));
-    if (!isAsks) initHarnessHealthTab();
+  // ============================================================
+  // NAVIGATION SHELL (cockpit-roadmap-redesign Task 3, C2). Four tabs —
+  // Roadmap (the LANDING tab), Requests, Inbox (N), Harness Health —
+  // driven by HASH ROUTING: '#roadmap' / '#requests' / '#inbox' /
+  // '#health' select tabs; '#roadmap/<id>' / '#request/<id>' /
+  // '#inbox/<id>' address ITEMS. Every cross-view arrow follows the
+  // four-spec LAW: target address (the hash), landed state (switch tab +
+  // expand + scroll + visible highlight + programmatic focus — see
+  // applyLanding), return path (browser Back via hashchange AND the
+  // injected "← back" affordance, BOTH restoring the prior tab with its
+  // expansion + scroll via snapshot/restoreState), and miss behavior (a
+  // followed link to a resolved/gone item renders a "resolved <when> —
+  // <outcome>" banner, never blank/404 — C3).
+  // Views register adapters via WorkstreamsShell.registerView: roadmap.js
+  // registers 'roadmap' now; tasks 4-5 replace the interim 'inbox' /
+  // 'requests' adapters below with their full views.
+  // ============================================================
+  var TABS = {
+    roadmap: { btn: $('tabRoadmapBtn'), panel: $('tabRoadmapPanel') },
+    requests: { btn: $('tabRequestsBtn'), panel: $('tabRequestsPanel') },
+    inbox: { btn: $('tabInboxBtn'), panel: $('tabInboxPanel') },
+    health: { btn: $('tabHealthBtn'), panel: tabHealthPanel },
+  };
+  var ITEM_HASH_RE = /^#(roadmap|request|inbox)\/(.+)$/;
+  var ITEM_FAMILY_TO_TAB = { roadmap: 'roadmap', request: 'requests', inbox: 'inbox' };
+  var viewAdapters = {};
+  var viewSnapshots = {}; // tab -> {expansion+scroll} saved when leaving via a cross-view arrow
+  var currentTab = null;
+  var pendingLanding = null; // an item landing waiting for its view adapter/data
+
+  function cssEsc(s) {
+    return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\\]]/g, '\\$&');
   }
-  tabAsksBtn.addEventListener('click', function () { activateTab('asks'); });
-  tabHealthBtn.addEventListener('click', function () { activateTab('health'); });
-  activateTab('asks'); // Asks is the landing tab (User-facing Outcome: "opening / shows asks grouped by project")
+
+  function activateTab(name) {
+    if (!TABS[name]) name = 'roadmap';
+    Object.keys(TABS).forEach(function (t) {
+      TABS[t].panel.hidden = t !== name;
+      TABS[t].btn.setAttribute('aria-selected', String(t === name));
+    });
+    currentTab = name;
+    if (name === 'health') initHarnessHealthTab();
+    var ad = viewAdapters[name];
+    if (ad && ad.onShow) ad.onShow();
+  }
+
+  // applyLanding(el, opts) — the SHARED landed state: visible highlight +
+  // scroll + programmatic focus + an explicit return affordance driving
+  // history.back() (the same journey the browser Back button takes, so
+  // both return paths hit the hashchange restore below).
+  function applyLanding(el, opts) {
+    opts = opts || {};
+    Array.prototype.forEach.call(document.querySelectorAll('.landing-highlight'), function (n) { n.classList.remove('landing-highlight'); });
+    Array.prototype.forEach.call(document.querySelectorAll('.landing-return'), function (n) { n.remove(); });
+    el.classList.add('landing-highlight');
+    if (opts.returnAffordance !== false) {
+      var back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'ghost small landing-return';
+      back.textContent = '← back';
+      back.title = 'return to the view you came from (its expansion and scroll are restored)';
+      back.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); history.back(); });
+      var host = el.tagName === 'DETAILS' ? el.querySelector('summary') : el;
+      (host || el).appendChild(back);
+    }
+    el.scrollIntoView({ block: 'center' });
+    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
+    el.focus();
+    return el;
+  }
+
+  // Miss behavior (C3): a followed link to a resolved/gone item renders
+  // "resolved <when> — <outcome>" (or the honest unknown-outcome copy the
+  // view supplies) — NEVER a blank pane or a 404.
+  function showMissBanner(tab, text) {
+    var banner = $(tab + 'MissBanner');
+    if (!banner) return;
+    banner.innerHTML = '';
+    banner.hidden = false;
+    banner.setAttribute('role', 'status');
+    var t = document.createElement('span');
+    t.className = 'miss-banner-text';
+    t.textContent = text;
+    banner.appendChild(t);
+    var back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'ghost small landing-return';
+    back.textContent = '← back';
+    back.addEventListener('click', function () { history.back(); });
+    banner.appendChild(back);
+    var dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'ghost small';
+    dismiss.textContent = 'dismiss';
+    dismiss.addEventListener('click', function () { banner.hidden = true; banner.innerHTML = ''; });
+    banner.appendChild(dismiss);
+    banner.focus && banner.setAttribute('tabindex', '-1');
+    banner.focus();
+  }
+  function clearMissBanners() {
+    ['roadmap', 'requests', 'inbox'].forEach(function (t) {
+      var b = $(t + 'MissBanner');
+      if (b) { b.hidden = true; b.innerHTML = ''; }
+    });
+  }
+
+  function snapshotTab(name) {
+    var ad = viewAdapters[name];
+    if (ad && ad.snapshotState) viewSnapshots[name] = ad.snapshotState();
+  }
+
+  function landOn(tab, id) {
+    var ad = viewAdapters[tab];
+    if (!ad) { pendingLanding = { tab: tab, id: id }; return; }
+    pendingLanding = null;
+    ad.landOn(id, function (el) {
+      if (el) { applyLanding(el); return; }
+      var fallback = 'resolved earlier — this item is no longer open here.';
+      if (ad.missInfo) ad.missInfo(id, function (text) { showMissBanner(tab, text || fallback); });
+      else showMissBanner(tab, fallback);
+    });
+  }
+
+  function routeFromHash() {
+    var h = location.hash || '#roadmap';
+    clearMissBanners();
+    var m = ITEM_HASH_RE.exec(h);
+    if (!m) {
+      var tab = h.replace(/^#/, '') || 'roadmap';
+      if (!TABS[tab]) tab = 'roadmap';
+      activateTab(tab);
+      // Back-restoration: returning to a view whose state was snapshotted
+      // when a cross-view arrow left it -> expansion + scroll come back.
+      var ad = viewAdapters[tab];
+      if (ad && ad.restoreState && viewSnapshots[tab]) {
+        ad.restoreState(viewSnapshots[tab]);
+        delete viewSnapshots[tab];
+      }
+      return;
+    }
+    var family = m[1], id = decodeURIComponent(m[2]);
+    var targetTab = ITEM_FAMILY_TO_TAB[family];
+    if (currentTab && currentTab !== targetTab) snapshotTab(currentTab);
+    activateTab(targetTab);
+    landOn(targetTab, id);
+  }
+
+  function registerView(name, adapter) {
+    viewAdapters[name] = adapter;
+    if (pendingLanding && pendingLanding.tab === name) landOn(name, pendingLanding.id);
+  }
+
+  window.WorkstreamsShell = {
+    registerView: registerView,
+    applyLanding: applyLanding,
+    navigate: function (hash) {
+      if (location.hash === hash) routeFromHash();
+      else location.hash = hash;
+    },
+    formatAge: formatAge,
+  };
+
+  window.addEventListener('hashchange', routeFromHash);
+  Object.keys(TABS).forEach(function (t) {
+    TABS[t].btn.addEventListener('click', function () {
+      var ad = viewAdapters[currentTab];
+      if (ad && ad.clearLanding) ad.clearLanding();
+      window.WorkstreamsShell.navigate('#' + t);
+    });
+  });
+
+  // ============================================================
+  // INBOX (interim, Task 3) — the live ANSWERABLE-only count (I4/A10) +
+  // a minimal answerable-items list, from the SAME needs-me derivation the
+  // Harness Health Q2 pane polls. Quarantine framing, §3 anatomy, lifecycle
+  // verbs and "My items" are task 4's view, which REPLACES this via
+  // registerView('inbox', ...). Excluded from the count AND this list:
+  // lint-quarantined (context-less) items — they remain visible in the
+  // Harness Health Q2 pane, so nothing is lost in the interim.
+  // ============================================================
+  var inboxTabCount = $('inboxTabCount'), inboxBody = $('inboxBody');
+  var inboxState = { items: null, failed: false, derivedAt: null };
+
+  function answerableOf(items) {
+    return (items || []).filter(function (it) {
+      if (it.state && it.state !== 'open') return false;
+      return !(it.lint_warnings && it.lint_warnings.length); // answerable = context-complete
+    });
+  }
+
+  function updateInboxCount() {
+    if (!inboxTabCount) return;
+    inboxTabCount.textContent = inboxState.items === null ? '(—)' : '(' + answerableOf(inboxState.items).length + ')';
+  }
+
+  function renderInboxInterim() {
+    if (!inboxBody) return;
+    var ageEl = document.querySelector('[data-age-for="inbox"]');
+    if (ageEl) {
+      ageEl.textContent = 'derived ' + formatAge(inboxState.derivedAt) +
+        (inboxState.failed ? ' — STALE (last refresh failed)' : '');
+      ageEl.classList.toggle('stale', inboxState.failed);
+    }
+    if (inboxState.items === null) {
+      if (inboxState.failed) {
+        // error state, NEVER the win state on failure (C4)
+        inboxBody.innerHTML = '';
+        var box = document.createElement('div');
+        box.className = 'pane-error';
+        box.setAttribute('role', 'alert');
+        box.appendChild(document.createTextNode('Could not read what is waiting on you. '));
+        var retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn-go small';
+        retry.textContent = 'Retry';
+        retry.addEventListener('click', loadInbox);
+        box.appendChild(retry);
+        inboxBody.appendChild(box);
+      } else {
+        inboxBody.innerHTML = '<div class="pane-loading" aria-busy="true">loading your inbox…</div>';
+      }
+      return;
+    }
+    var answerable = answerableOf(inboxState.items);
+    inboxBody.innerHTML = '';
+    if (answerable.length === 0) {
+      // The WIN state (C4), scoped to the answerable section (delta R1) and
+      // rendered ONLY on a successful derivation (failure renders the
+      // error state above).
+      var win = document.createElement('div');
+      win.className = 'pane-empty inbox-win';
+      win.textContent = 'Nothing waiting on you — all sessions running free. As of ' + formatAge(inboxState.derivedAt) + '.';
+      inboxBody.appendChild(win);
+      return;
+    }
+    answerable.forEach(function (it) {
+      var row = document.createElement('div');
+      row.className = 'inbox-item';
+      row.dataset.inboxId = it.id || '';
+      row.setAttribute('tabindex', '-1');
+      var head = document.createElement('div');
+      head.className = 'inbox-item-head';
+      var typeChip = document.createElement('span');
+      typeChip.className = 'chip inbox-type-chip inbox-type-' + (it.section || 'item');
+      typeChip.textContent = it.section || 'item'; // text + color, never color-only
+      head.appendChild(typeChip);
+      var age = document.createElement('span');
+      age.className = 'inbox-item-age';
+      age.textContent = it.created_at ? formatAge(it.created_at) : '';
+      head.appendChild(age);
+      if (it.session) {
+        var sess = document.createElement('span');
+        sess.className = 'inbox-item-session';
+        sess.textContent = 'from session ' + it.session;
+        head.appendChild(sess);
+      }
+      row.appendChild(head);
+      var text = document.createElement('div');
+      text.className = 'inbox-item-text';
+      text.textContent = it.text || '';
+      row.appendChild(text);
+      if (it.links && it.links.length) {
+        var links = document.createElement('div');
+        links.className = 'inbox-item-links';
+        it.links.forEach(function (l) { links.appendChild(resolveLink(l)); });
+        row.appendChild(links);
+      }
+      inboxBody.appendChild(row);
+    });
+  }
+
+  function loadInbox() {
+    return fetchPane('needs-me').then(function (resp) {
+      if (isLoading(resp)) {
+        // server cache still deriving — poll again shortly, keep loading state
+        setTimeout(loadInbox, 5000);
+        updateInboxCount();
+        renderInboxInterim();
+        return;
+      }
+      if (resp.rc !== 0 && !(resp.data && resp.data.items)) {
+        inboxState.failed = true;
+        updateInboxCount();
+        renderInboxInterim();
+        return;
+      }
+      inboxState.items = (resp.data && resp.data.items) || [];
+      inboxState.failed = false;
+      inboxState.derivedAt = resp.derived_at;
+      updateInboxCount();
+      renderInboxInterim();
+    }).catch(function () {
+      inboxState.failed = true;
+      updateInboxCount();
+      renderInboxInterim();
+    });
+  }
+
+  registerView('inbox', {
+    landOn: function (id, done) {
+      var tries = 0;
+      (function attempt() {
+        var el = inboxBody && inboxBody.querySelector('[data-inbox-id="' + cssEsc(id) + '"]');
+        if (el) { done(el); return; }
+        if (inboxState.items !== null) { done(null); return; } // loaded, item absent -> miss
+        if (++tries > 40) { done(null); return; }
+        setTimeout(attempt, 250);
+      })();
+    },
+    missInfo: function (id, cb) {
+      cb('resolved earlier — no longer waiting on you (answered or cleared in the ledger).');
+    },
+    snapshotState: function () { return { scrollY: window.scrollY }; },
+    restoreState: function (s) { if (s) window.scrollTo(0, s.scrollY); },
+  });
+
+  // ============================================================
+  // REQUESTS (interim adapter, Task 3) — #request/<id> lands on the ask
+  // card in the existing ask tree (asks are requests: same registry).
+  // Task 5 replaces this with the full ledger view's adapter.
+  // ============================================================
+  registerView('requests', {
+    landOn: function (id, done) {
+      var tries = 0;
+      (function attempt() {
+        var el = document.querySelector('#askTreeBody [data-ask-id="' + cssEsc(id) + '"]');
+        if (el) {
+          var group = el.closest('details');
+          if (group) group.open = true; // expand the enclosing project/completed group
+          done(el);
+          return;
+        }
+        if (++tries > 40) { done(null); return; } // ~10s: tree loaded without the card -> miss
+        setTimeout(attempt, 250);
+      })();
+    },
+    missInfo: function (id, cb) {
+      cb('resolved earlier — this request is no longer listed (completed, dismissed, or merged into another request).');
+    },
+    snapshotState: function () { return { scrollY: window.scrollY }; },
+    restoreState: function (s) { if (s) window.scrollTo(0, s.scrollY); },
+  });
+
+  // ---- boot: Roadmap lands (C2). replaceState so first Back leaves the
+  // app rather than bouncing '#roadmap' -> ''.
+  if (!location.hash) {
+    try { history.replaceState(null, '', '#roadmap'); } catch (_) { location.hash = '#roadmap'; }
+  }
+  routeFromHash();
+
+  // The shell's own 30s tick: the Inbox (N) headline count is LIVE
+  // regardless of which tab is open (the roadmap view runs its own tick in
+  // roadmap.js; the Harness Health poll loop stays lazy as before).
+  loadInbox();
+  setInterval(loadInbox, REFRESH_INTERVAL_MS);
 
   // ui_build auto-reload (kept from the old server): poll /api/health,
   // reload if the served web assets changed under us. Global — unrelated to
