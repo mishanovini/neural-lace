@@ -153,6 +153,40 @@ not activeElement), (c) confirm CG-2: encodeURIComponent at the hash generation 
 with the existing decode, (d) re-flip via a fresh evidence entry.
 Checkbox state: reverted to unchecked in this thread; NOT flipped.
 
+RE-VERIFY (2026-07-19T21:40:00Z, NARROW — the fix has landed on master)
+==============
+Task ID: 3
+Task description: [serial] Roadmap tree view + the navigation shell. (Shell C2 / Tree per Outcome 2 / Build order A7+R2 / Roadmap-to-Request C6 / Recency I1 / Completed aging + markers I2 / Kanban I3+R5 / Harness-chore exclusion A9 / Four UI states C4 / Refresh model C7 / A11y C9.) Verification: full
+Verified at: 2026-07-19T21:40:00Z
+Verifier: task-verifier agent (narrow re-verify after the comprehension-fix landed; prior verification-axis PASS conf 8 STANDS per the AMENDMENT above and is not re-derived; this run closes the two comprehension gaps in composed master code + the D2 title-fold routing routed to task 3)
+
+Oracle: derived-preexisting — cockpit.selftest.js (177) + roadmap-routes.selftest.js (30) re-run rc=0, both EXECUTING the real extracted source (not reimplementations); specified — task-2 title-precedence law ("operator ALWAYS outranks auto regardless of timestamp") exercised over a real HTTP GET /api/roadmap (S13); the comprehension-reviewer's own code-fix remediation as the closure oracle for the two FAIL gaps.
+
+Comprehension-gate: PASS (remediation satisfied) — the prior comprehension-reviewer FAIL (conf 6, 2 PROVEN gaps) named code-fix as sufficient remediation; both gaps are now closed IN COMPOSED MASTER CODE and pinned by executing (RED-capable) tests: CG-1 (roadmap.js:705 captureUiState presence-gate) pinned by T3-27c/d/e; CG-2 (roadmap.js:304 + app.js:1231 encodeURIComponent, decode symmetry app.js:1201) pinned by T3-4b/c. Fixes on master c874421 (d81c4c1 lineage). No new articulation gap surfaced by the fix diff.
+
+Checks run:
+1. cockpit.selftest.js re-run (node web/cockpit.selftest.js): 177 passed, 0 failed — matches expected 177. PASS
+2. roadmap-routes.selftest.js re-run (node server/roadmap-routes.selftest.js): 30 passed, 0 failed — matches expected 30. PASS
+3. CG-1 fix in code + RED differential: captureUiState now captures the uncommitted title edit by PRESENCE — document.querySelector('.rm-title-input') (roadmap.js:705), independent of document.activeElement. Diff (c874421) confirms the pre-fix predicate was ae.classList.contains('rm-title-input') on document.activeElement, so a focus-on-Save-button state returned edit:null. T3-27c/d/e EXECUTE the real extracted CAPTURE-UI-STATE source in a vm sandbox: 27c (activeElement=Save button, input present) captures item-42 + value — RED against pre-fix; 27d (activeElement null, input present) captures — RED against pre-fix; 27e (no input) stays null (no false-positive). PASS
+4. CG-2 fix in code + RED differential: both in-scope hash-generation sites encode the interpolated segment — roadmap.js:304 '#request/' + encodeURIComponent(r.id), app.js:1231 '#' + encodeURIComponent(t); decode symmetry preserved at app.js:1201 decodeURIComponent(m[2]). T3-4b builds a new Function from the REAL extracted navigate-arg source + REAL app.js ITEM_HASH_RE and round-trips an id containing '%25','#','/': lands as the exact original id without throwing — RED against the pre-fix raw-concat shape (which mis-decodes '%25' and throws URIError on a bare '%'). Third site roadmap.js:319 (shell.navigate(st.unblock.hash)) deliberately NOT wrapped — it passes an already-complete server hash string; encoding would double-encode the '#'/'/'delimiters. Documented in-code (roadmap.js:301-303 comment) + commit message. PASS
+5. D2 (routed here by the task-2 verifier) — title-fold routes summary_updated by title_source: foldRegistryForRoadmap (roadmap-routes.js:184-187) routes a summary_updated with title_source:'operator' into operator_title, else auto_title; the served title prefers operator (roadmap-routes.js:399 reg.operator_title || reg.auto_title || ...) and reports title_source:'operator' when an operator title exists (roadmap-routes.js:406). So a later auto summary_updated (distiller re-run) only ever overwrites auto_title — operator outranks auto regardless of timestamp by slot construction. PASS
+6. D2 end-to-end HTTP exercise (S13): the selftest appends an operator set-title (summary_updated + title_source:'operator', ts 07-15) then a NEWER auto summary_updated (title_source:'auto', ts 07-16, "distiller re-run, should be ignored"), then GET /api/roadmap over the real mounted route — asserts title === 'Alpha feature (operator title)' AND title_source === 'operator'. Green. Pre-fix routed every summary_updated into auto_title -> RED (title would be the distiller re-run, title_source 'auto'). S13b confirms a candidate_classified amendment label never retitles. PASS
+7. Fixes present on master: git show confirms c874421 (t3: captureUiState presence-gate + hash encode symmetry) and cdafdc9 (t2: title-fold restricted + D2 summary_updated routing) on the current branch; d81c4c1 is the same-subject lineage. Working tree clean; files read = committed master. PASS
+
+Runtime verification: test neural-lace/workstreams-ui/web/cockpit.selftest.js::full-suite (177/0)
+Runtime verification: test neural-lace/workstreams-ui/server/roadmap-routes.selftest.js::full-suite (30/0)
+Runtime verification: test neural-lace/workstreams-ui/web/cockpit.selftest.js::T3-27c-open-unfocused-editor-captured
+Runtime verification: test neural-lace/workstreams-ui/web/cockpit.selftest.js::T3-4b-hash-encode-decode-round-trip
+Runtime verification: test neural-lace/workstreams-ui/server/roadmap-routes.selftest.js::S13-operator-title-survives-newer-auto
+Runtime verification: file neural-lace/workstreams-ui/web/roadmap.js::var openInput = document.querySelector('.rm-title-input')
+Runtime verification: file neural-lace/workstreams-ui/web/app.js::navigate('#' + encodeURIComponent(t))
+Runtime verification: file neural-lace/workstreams-ui/server/roadmap-routes.js::if (rec.title_source === 'operator') cur.operator_title = rec.summary
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: both oracle suites re-run green at the expected composed counts (cockpit 177/0, roadmap-routes 30/0); the two comprehension-gate FAIL gaps are closed in composed master code and each pinned by a test that EXECUTES the real extracted source and is RED-capable against the pre-fix shape (CG-1 T3-27c/d/e vm-run captureUiState; CG-2 T3-4b new-Function round-trip of the real navigate-arg + real ITEM_HASH_RE); the D2 title-fold routing is correct in code (roadmap-routes.js:184-187/399/406) and exercised end-to-end over a real HTTP GET (S13) with a proven RED against the pre-fix shape. The prior verification-axis PASS (four suites green, live payload clean, ground-truth 18/18 inverted, A6 spawn-free GET, C9 pinned) STANDS unchanged. Confidence 9: oracle suites re-run + the fixed behaviors exercised via executing tests + the RED differential provable from the fix diff.
+Checkbox state: FLIPPED to [x] in this thread — fresh evidence entry authorizes exactly this one flip.
+
 ## Task 7 — [serial] Event-triggered publish + person grouping
 
 EVIDENCE BLOCK

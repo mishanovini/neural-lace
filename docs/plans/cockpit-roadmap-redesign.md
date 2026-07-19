@@ -137,7 +137,7 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
     an operator correction affordance — auto-capture without undo is a trust tax.
   - Merge/split of asks into items (existing affordance). —
   Verification: full
-- [ ] 3. [serial] **Roadmap tree view + the navigation shell.**
+- [x] 3. [serial] **Roadmap tree view + the navigation shell.**
   - **Shell (C2), built here; tasks 4-5 register into it:** three tabs (Roadmap lands;
     Requests; Inbox (N) live count = answerable items only); hash routing (`#roadmap/<id>` /
     `#request/<id>` / `#inbox/<id>`) with the landed-state (switch + scroll + expand +
