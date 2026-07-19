@@ -431,7 +431,14 @@ _ar_haiku_summarize() {
     # Fable is NEVER used here — hardcoded cheap-model-only (model-tiering
     # directive). Not exercised by --self-test (no live model call); Task
     # 18's acceptance pass is this path's real-world verification.
-    out="$(claude --model haiku -p "Summarize the following operator request in one plain-text sentence, no markdown, at most 140 characters: $text" 2>/dev/null)"
+    # env -u CLAUDECODE: this lane is typically spawned from a hook INSIDE a
+    # Claude Code session, where the CLI's nested-session guard refuses to
+    # launch (PROVEN 2026-07-19: rc=1, stderr "cannot be launched inside
+    # another Claude Code session", stdout empty — so degradation was silent
+    # but the lane was DEAD from any hook context). The guard's own message
+    # names unsetting CLAUDECODE as the bypass; a failure here still
+    # degrades silently (empty stdout -> return 1).
+    out="$(env -u CLAUDECODE claude --model haiku -p "Summarize the following operator request in one plain-text sentence, no markdown, at most 140 characters: $text" 2>/dev/null)"
   else
     printf ''
     return 1
@@ -513,7 +520,10 @@ _ar_classify_candidate_text() {
   if [[ -n "${_AR_CLASSIFY_CMD:-}" ]]; then
     out="$(printf '%s' "$text" | eval "$_AR_CLASSIFY_CMD" 2>/dev/null)"
   elif command -v claude >/dev/null 2>&1; then
-    out="$(claude --model haiku -p "You label operator prompts inside an ongoing request thread. Reply with EXACTLY 'amendment: <one plain-text sentence label, max 140 chars>' if the prompt changes, extends, or re-scopes the ongoing request; reply with EXACTLY 'noise' if it is conversational (acknowledgement, question, status check, tangent that changes nothing). The prompt: $text" 2>/dev/null)"
+    # env -u CLAUDECODE: same nested-session-guard bypass as
+    # _ar_haiku_summarize above (hook-spawned lane; failure degrades
+    # silently to "candidate stays pending").
+    out="$(env -u CLAUDECODE claude --model haiku -p "You label operator prompts inside an ongoing request thread. Reply with EXACTLY 'amendment: <one plain-text sentence label, max 140 chars>' if the prompt changes, extends, or re-scopes the ongoing request; reply with EXACTLY 'noise' if it is conversational (acknowledgement, question, status check, tangent that changes nothing). The prompt: $text" 2>/dev/null)"
   else
     printf ''
     return 1

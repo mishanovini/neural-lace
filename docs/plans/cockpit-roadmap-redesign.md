@@ -376,6 +376,7 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
 - 2026-07-19: `docs/plans/fragments/roadmap-t3-server-fragment.md` — task 3 coordination fragment (server.js mount + task-1/2 seams)
 - 2026-07-19: `adapters/claude-code/hooks/workstreams-read.sh` — Task 2's A2 layer (a) capture splice extends the already-wired UserPromptSubmit ask-capture splice hosted in this hook (the task text mandates the splice; the files list omitted its host file). Same edit reformatted the files list above into gate-parseable bullets (scope-enforcement-gate structural error NO_PARSEABLE_ENTRIES was blocking every commit) — content-preserving; paths made repo-root-relative; no scope added beyond this entry.
 - 2026-07-19: `docs/plans/fragments/` — cross-task patch fragments for concurrently-owned files (coordination convention this build round: a builder needing an edit in another in-flight task's file ships the proven diff here for the orchestrator to splice; first consumer: roadmap-t2-derive-lib-fragment.md).
+- 2026-07-19: `adapters/claude-code/manifest.json` — honest_status refresh for the ask-registry entry (Task 2 added five verbs + the title_source contract; constitution §10 requires the inventory line stay true).
 
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store
