@@ -226,3 +226,83 @@ Round 3 = the continuous-operation program plan draft (arch-review gate before b
 absorbing: supervisor (Q5 contract), reap-at-landing doctrine amendment, backlog
 drag-drop/edit UI, progressive-backoff resume policy, supervisor-tick consolidation
 (coord floor + health tick + doctor cache refresh under one scheduled task).
+
+---
+
+# Round 3 — machine affinity, hygiene enforcement, push-not-poll (2026-07-19 late)
+
+## Operator (condensed)
+
+(1) Specify in the backlog which machine each item builds on? Master Plans have phases,
+each phase its own plan doc — same-machine building for a whole program + easy delegation
++ plans linked to each other. (2) If the orchestrator owns its own hygiene, what makes it
+DILIGENT? Edge cases/challenges? (3) Did we agree on deterministic session status updates,
+such that the orchestrator only checks in when updates STOP arriving?
+
+## Orchestrator answers (round 3)
+
+### 1. Machine affinity — yes, but attach it to the PROGRAM, not the item
+
+- Plan headers gain `program: <slug>` + `phase: n/m` (machine-readable form of the
+  existing Master-Plan convention: nl-overhaul specs b-f, observability program). The
+  backlog row inherits its program's linkage; the roadmap tree renders program → phases.
+- Affinity attaches to the program: `machine-affinity: <hostname|person-machine label>`
+  (people-map vocabulary from task 7). One claim covers all phases. Default unset = any
+  machine claims. Operator can set/change it in the backlog UI (Q1 round-2 mandate).
+- WHY same-machine is mechanically real: worktree state, program context continuity,
+  per-machine harness deploy verification (~/.claude is per-machine), and no cross-machine
+  merge races inside one program's file surface.
+- Claim mechanics: LEASED, git-serialized. `claimed-by: <machine> @ <ts>` in the program
+  header (or state manifest); first push wins; the lease renews on heartbeat and EXPIRES
+  on silence (machine down ≠ program stuck — another machine may adopt after expiry via
+  the reconcile-git/disk-first salvage discipline). Affinity is advisory; availability wins.
+
+### 2. Hygiene diligence — make it transactional + audited, never rely on memory
+
+Self-discipline is a Pattern; the harness hierarchy demands Mechanism where it matters:
+- **Landing is a transaction**: cherry-pick → gates → flip → REAP is one unit; the landing
+  record in the state manifest is written only when the reap line is present. A COMPLETED
+  Status flip is GATED on zero unreaped worktrees/branches attributable to the plan
+  (cheap closing gate at plan-lifecycle time).
+- **Supervisor audits the orchestrator** (watchdog-for-watchdog): the per-machine tick runs
+  `worktree count ≤ live-dispatch count + K`; breach auto-files an Inbox item same-day.
+  Doctor keeps the trend check as the slow backstop.
+- Edge cases (each with its mitigation):
+  a. Crash mid-landing (picked but unreaped) → manifest records landed-pending-reap; the
+     successor session's reconcile step finishes half-done landings first.
+  b. Conflict-resolved cherry-picks defeat patch-id equivalence (PROVEN today: git cherry
+     reports + for union-resolved landings) → the reap consumes the LANDING RECORD
+     ("branch X landed as master-sha Y"), never patch-id archaeology.
+  c. Windows file locks (AV/editors/node) fail `worktree remove` → retry-with-backoff,
+     then Inbox escalation; NEVER silent skip (silent skip = the pile again).
+  d. Never reap a live agent → liveness from the dispatch registry (manifest in-flight
+     list), not mtime guessing.
+  e. Reviewer worktrees: report-only discipline (write to final message + scratchpad,
+     never the worktree) keeps them auto-cleanable; untracked-scratch-only counts as
+     clean-with-salvage-copy.
+  f. Orchestrator death: hygiene obligations transfer via the manifest; successor's first
+     move is reconcile (finish reaps, adopt in-flight). Was 20+ min of forensics this
+     weekend; the manifest makes it ~1 min mechanical.
+
+### 3. Push-not-poll — agreed, half-built, one missing piece
+
+- AGREED and now explicit: sessions/builders emit status at MECHANICAL touchpoints (hooks
+  fire regardless of model memory — no cooperative discipline). The orchestrator consumes
+  notifications + heartbeat files and intervenes ONLY on silence beyond the expected
+  cadence. Silence IS the signal (same law as the peer keepalive).
+- Exists today: per-session heartbeats at lifecycle points (Wave O), Stop-marker scan,
+  task-completion notifications (harness re-invokes the orchestrator), event publish (t7).
+- MISSING piece: a mid-flight liveness tick. Turn-boundary heartbeats can't distinguish a
+  builder legitimately quiet through a 2h suite from a wedged one. Fix: touch the
+  heartbeat at PostToolUse (every tool call) — then silence >~5min genuinely means
+  stalled/dead and thresholds can be tight. This is one hook line + budget check.
+- Escalation ladder when silence trips (reading is free; messaging/respawning costs):
+  read state (transcript mtime, worktree activity, pid) → one backoff wait → resume
+  nudge → fresh re-dispatch with the old worktree as salvage input. Never parallel
+  re-dispatch without standing down the original (this weekend's race lesson).
+
+## Disposition
+
+All three fold into the continuous-operation plan draft (round-4 artifact): program/phase
+headers + leased affinity claims; transactional landing + supervisor audit + the six edge
+mitigations; PostToolUse heartbeat tick + stall ladder.
