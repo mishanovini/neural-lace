@@ -347,8 +347,12 @@
       card.appendChild(text);
       // Cold-reader anatomy (constitution §3 amendment 53d3bee, operator
       // directive 2026-07-07): render lint_warnings HONESTLY when present —
-      // a degraded "needs context" card, never a rejected entry (the
-      // ledger is append-honest; needs-you.sh's add never blocks on lint).
+      // a degraded "needs context" card, never a rejected entry. Any item
+      // reaching this pane with lint_warnings arrived via a MECHANICAL
+      // caller's store-and-quarantine (cockpit-roadmap-redesign Task 4, A1
+      // — needs-you.sh's INTERACTIVE add path now BLOCKS a lint failure
+      // instead of landing it) or predates that change; this pane still
+      // never rejects what it reads, it only labels it.
       if (it.lint_warnings && it.lint_warnings.length) {
         var lintRow = document.createElement('div');
         lintRow.className = 'nm-lint-warning';
@@ -1233,149 +1237,18 @@
   });
 
   // ============================================================
-  // INBOX (interim, Task 3) — the live ANSWERABLE-only count (I4/A10) +
-  // a minimal answerable-items list, from the SAME needs-me derivation the
-  // Harness Health Q2 pane polls. Quarantine framing, §3 anatomy, lifecycle
-  // verbs and "My items" are task 4's view, which REPLACES this via
-  // registerView('inbox', ...). Excluded from the count AND this list:
-  // lint-quarantined (context-less) items — they remain visible in the
-  // Harness Health Q2 pane, so nothing is lost in the interim.
+  // INBOX — SUPERSEDED by web/inbox.js (cockpit-roadmap-redesign Task 4).
+  // The interim renderer that used to live here (the needs-me-derivation
+  // answerable-count + minimal item list this comment block's predecessor
+  // described) is fully replaced: inbox.js registers 'inbox' via
+  // WorkstreamsShell.registerView AND owns #inboxTabCount/#inboxBody/the
+  // 30s poll directly. Removed rather than left as overridden-but-live dead
+  // code, because (unlike the Requests tab, which has no independently
+  // polled header count) this view had its OWN setInterval driving
+  // #inboxTabCount — leaving it running would race inbox.js's own count
+  // update and risk the exact "the two counts can never disagree" law this
+  // plan names (A10). See git history for the removed implementation.
   // ============================================================
-  var inboxTabCount = $('inboxTabCount'), inboxBody = $('inboxBody');
-  var inboxState = { items: null, failed: false, derivedAt: null };
-
-  function answerableOf(items) {
-    return (items || []).filter(function (it) {
-      if (it.state && it.state !== 'open') return false;
-      return !(it.lint_warnings && it.lint_warnings.length); // answerable = context-complete
-    });
-  }
-
-  function updateInboxCount() {
-    if (!inboxTabCount) return;
-    inboxTabCount.textContent = inboxState.items === null ? '(—)' : '(' + answerableOf(inboxState.items).length + ')';
-  }
-
-  function renderInboxInterim() {
-    if (!inboxBody) return;
-    var ageEl = document.querySelector('[data-age-for="inbox"]');
-    if (ageEl) {
-      ageEl.textContent = 'derived ' + formatAge(inboxState.derivedAt) +
-        (inboxState.failed ? ' — STALE (last refresh failed)' : '');
-      ageEl.classList.toggle('stale', inboxState.failed);
-    }
-    if (inboxState.items === null) {
-      if (inboxState.failed) {
-        // error state, NEVER the win state on failure (C4)
-        inboxBody.innerHTML = '';
-        var box = document.createElement('div');
-        box.className = 'pane-error';
-        box.setAttribute('role', 'alert');
-        box.appendChild(document.createTextNode('Could not read what is waiting on you. '));
-        var retry = document.createElement('button');
-        retry.type = 'button';
-        retry.className = 'btn-go small';
-        retry.textContent = 'Retry';
-        retry.addEventListener('click', loadInbox);
-        box.appendChild(retry);
-        inboxBody.appendChild(box);
-      } else {
-        inboxBody.innerHTML = '<div class="pane-loading" aria-busy="true">loading your inbox…</div>';
-      }
-      return;
-    }
-    var answerable = answerableOf(inboxState.items);
-    inboxBody.innerHTML = '';
-    if (answerable.length === 0) {
-      // The WIN state (C4), scoped to the answerable section (delta R1) and
-      // rendered ONLY on a successful derivation (failure renders the
-      // error state above).
-      var win = document.createElement('div');
-      win.className = 'pane-empty inbox-win';
-      win.textContent = 'Nothing waiting on you — all sessions running free. As of ' + formatAge(inboxState.derivedAt) + '.';
-      inboxBody.appendChild(win);
-      return;
-    }
-    answerable.forEach(function (it) {
-      var row = document.createElement('div');
-      row.className = 'inbox-item';
-      row.dataset.inboxId = it.id || '';
-      row.setAttribute('tabindex', '-1');
-      var head = document.createElement('div');
-      head.className = 'inbox-item-head';
-      var typeChip = document.createElement('span');
-      typeChip.className = 'chip inbox-type-chip inbox-type-' + (it.section || 'item');
-      typeChip.textContent = it.section || 'item'; // text + color, never color-only
-      head.appendChild(typeChip);
-      var age = document.createElement('span');
-      age.className = 'inbox-item-age';
-      age.textContent = it.created_at ? formatAge(it.created_at) : '';
-      head.appendChild(age);
-      if (it.session) {
-        var sess = document.createElement('span');
-        sess.className = 'inbox-item-session';
-        sess.textContent = 'from session ' + it.session;
-        head.appendChild(sess);
-      }
-      row.appendChild(head);
-      var text = document.createElement('div');
-      text.className = 'inbox-item-text';
-      text.textContent = it.text || '';
-      row.appendChild(text);
-      if (it.links && it.links.length) {
-        var links = document.createElement('div');
-        links.className = 'inbox-item-links';
-        it.links.forEach(function (l) { links.appendChild(resolveLink(l)); });
-        row.appendChild(links);
-      }
-      inboxBody.appendChild(row);
-    });
-  }
-
-  function loadInbox() {
-    return fetchPane('needs-me').then(function (resp) {
-      if (isLoading(resp)) {
-        // server cache still deriving — poll again shortly, keep loading state
-        setTimeout(loadInbox, 5000);
-        updateInboxCount();
-        renderInboxInterim();
-        return;
-      }
-      if (resp.rc !== 0 && !(resp.data && resp.data.items)) {
-        inboxState.failed = true;
-        updateInboxCount();
-        renderInboxInterim();
-        return;
-      }
-      inboxState.items = (resp.data && resp.data.items) || [];
-      inboxState.failed = false;
-      inboxState.derivedAt = resp.derived_at;
-      updateInboxCount();
-      renderInboxInterim();
-    }).catch(function () {
-      inboxState.failed = true;
-      updateInboxCount();
-      renderInboxInterim();
-    });
-  }
-
-  registerView('inbox', {
-    landOn: function (id, done) {
-      var tries = 0;
-      (function attempt() {
-        var el = inboxBody && inboxBody.querySelector('[data-inbox-id="' + cssEsc(id) + '"]');
-        if (el) { done(el); return; }
-        if (inboxState.items !== null) { done(null); return; } // loaded, item absent -> miss
-        if (++tries > 40) { done(null); return; }
-        setTimeout(attempt, 250);
-      })();
-    },
-    missInfo: function (id, cb) {
-      cb('resolved earlier — no longer waiting on you (answered or cleared in the ledger).');
-    },
-    snapshotState: function () { return { scrollY: window.scrollY }; },
-    restoreState: function (s) { if (s) window.scrollTo(0, s.scrollY); },
-  });
 
   // ============================================================
   // REQUESTS (interim adapter, Task 3) — #request/<id> lands on the ask
@@ -1411,11 +1284,9 @@
   }
   routeFromHash();
 
-  // The shell's own 30s tick: the Inbox (N) headline count is LIVE
-  // regardless of which tab is open (the roadmap view runs its own tick in
-  // roadmap.js; the Harness Health poll loop stays lazy as before).
-  loadInbox();
-  setInterval(loadInbox, REFRESH_INTERVAL_MS);
+  // The Inbox (N) headline count is now owned entirely by web/inbox.js
+  // (its own 30s tick, regardless of which tab is open) — see the removed-
+  // interim comment above for why this shell no longer polls it directly.
 
   // ui_build auto-reload (kept from the old server): poll /api/health,
   // reload if the served web assets changed under us. Global — unrelated to

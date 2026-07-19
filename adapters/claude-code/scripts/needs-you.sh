@@ -35,10 +35,52 @@
 #     (c) per-option outcome text (does it say WHAT CHANGES per answer, not
 #     just list bare option words). Any failing check WARNS — a stderr
 #     notice, plus the stored item gains a `lint_warnings` array naming
-#     which check(s) failed — but NEVER blocks: `add` always exits 0 for a
-#     well-formed invocation, lint or no lint. The ledger's availability
-#     invocation, lint or no lint. The ledger's availability outranks its
-#     tidiness; see _ny_lint_decision_text() for the exact heuristics.
+#     which check(s) failed. See _ny_lint_decision_text() for the exact
+#     heuristics.
+#
+#     LINT PROMOTION — INTERACTIVE BLOCK vs MECHANICAL QUARANTINE (cockpit-
+#     roadmap-redesign Task 4, A1; constitution §10 compliance record below):
+#     a failing lint on --section decision now has TWO outcomes depending on
+#     the caller, controlled by the new `--mechanical` flag:
+#
+#       - INTERACTIVE/MODEL-INVOKED path (no `--mechanical` flag — a live
+#         session calling `add` directly, e.g. via the decision-log-entry.md
+#         template): a lint failure now BLOCKS. `add` prints the teaching
+#         message to stderr naming exactly which check(s) failed and how to
+#         fix them, writes NOTHING to the ledger, and exits 1. The calling
+#         session sees the error in the same turn and retries with the
+#         missing context — a teaching gate, not a dead end (a live actor is
+#         always present to fix and resubmit in the SAME turn).
+#       - MECHANICAL callers (stop-verdict-dispatcher.sh, session-resumer.sh
+#         park, session-honesty-gate.sh PAUSING — fire from a hook/dispatcher
+#         with no live actor able to retry) pass `--mechanical` and get the
+#         PRIOR behavior: STORE-AND-QUARANTINE. The entry lands in the
+#         ledger exactly as before (never rejected), `lint_warnings` is
+#         stamped, and a stderr notice fires — but `add` still exits 0. This
+#         preserves the shipped ledger-never-rejects contract (a waiting
+#         item must never land NOWHERE): a mechanical call that got REJECTED
+#         instead of quarantined would silently lose the item, since nothing
+#         downstream of a hook firing ever retries the call.
+#       - The cockpit Inbox view (server/inbox-routes.js) reads
+#         `lint_warnings` on open decision items to render the "needs
+#         context" quarantine section (I4/A8) — no second heuristic; same
+#         field this lint stamps at add-time.
+#
+#     Constitution §10 compliance (a new blocking gate requires a golden
+#     scenario, an expected false-positive rate, and a retirement condition):
+#       - GOLDEN SCENARIO: the 2026-07-18 bare-token sign-off incident
+#         (memory `feedback_needs_from_you_full_context` — a decision landed
+#         in the ledger as a bare title with no context, no anchor, no
+#         outcomes, forcing the operator to reconstruct intent from memory).
+#         The interactive block catches exactly this shape before it ever
+#         reaches the operator.
+#       - EXPECTED FALSE-POSITIVE RATE: <~5% of interactive adds. The
+#         session holds full context at write time — retry-with-context is
+#         the designed recovery, costing seconds, not a real block.
+#       - RETIREMENT CONDITION: demote back to warn-only if a weekly triage
+#         window shows false-positive blocks exceeding true catches, OR once
+#         every producer emits §3-complete items by construction and the
+#         lint has not fired for a month.
 #
 #   needs-you.sh resolve <id> [--note <str>]
 #     Marks entry <id> resolved (moves it out of its open section and into
@@ -522,7 +564,7 @@ _ny_lint_decision_text() {
 # ----------------------------------------------------------------------
 cmd_add() {
   _ny_ensure_state
-  local section="" text="" session_id="" tier=""
+  local section="" text="" session_id="" tier="" mechanical=0
   local -a links=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -531,6 +573,7 @@ cmd_add() {
       --session) session_id="$2"; shift 2 ;;
       --link) links+=("$2"); shift 2 ;;
       --tier) tier="$2"; shift 2 ;;
+      --mechanical) mechanical=1; shift ;;
       *) die "add: unknown flag '$1'" ;;
     esac
   done
@@ -553,7 +596,17 @@ cmd_add() {
       [[ -n "$_ny_lw" ]] && lint_warnings+=("$_ny_lw")
     done < <(_ny_lint_decision_text "$text")
     if [[ "${#lint_warnings[@]}" -gt 0 ]]; then
-      err "cold-reader lint: this decision entry is missing: ${lint_warnings[*]} (added anyway — the ledger's availability outranks its lint; see needs-you.sh header 'COLD-READER LINT' for what each code means)"
+      if [[ "$mechanical" == "1" ]]; then
+        # MECHANICAL caller: store-and-quarantine, never reject (A1 — the
+        # ledger-never-rejects contract; no live actor is present to retry a
+        # hook/dispatcher call, so the item must land somewhere).
+        err "cold-reader lint: this decision entry is missing: ${lint_warnings[*]} (added anyway — MECHANICAL caller, stored + quarantined, never rejected; see needs-you.sh header 'LINT PROMOTION' for what each code means and why mechanical callers differ from interactive ones)"
+      else
+        # INTERACTIVE/MODEL-INVOKED path: BLOCK. A live session is present
+        # and can retry with the missing context in the same turn — nothing
+        # is written to the ledger (die() exits before _ny_write_ledger).
+        die "cold-reader lint BLOCKED this add (interactive path): missing ${lint_warnings[*]}. Add the missing context — background/what-is-this prose, a concrete artifact anchor (a repo path, URL, or id like NL-FINDING-035/NY-123/#456/a SHA), and per-option outcome text — and retry. If this is a scripted/dispatcher caller with no live actor to retry, pass --mechanical instead (that path stores + quarantines rather than blocking). See needs-you.sh header 'LINT PROMOTION' for exactly what each code means."
+      fi
     fi
   fi
 
@@ -877,8 +930,12 @@ cmd_bootstrap_migrate() {
   # one of the normal 1|2|3 reversibility tiers and is never interpreted as
   # such by render (render only ever prints --tier for informational
   # purposes and doesn't currently render it at all, so this is safe).
+  # --mechanical: bootstrap-migrate is an automatic sweep with no live actor
+  # present to retry a blocked add — arbitrary legacy prose must land in the
+  # ledger regardless of cold-reader shape (A1 ledger-never-rejects; losing
+  # pre-existing content here would be strictly worse than a lint warning).
   cmd_add --section decision --text "$stripped" --session "legacy-migration" \
-    --tier "migrated_from_legacy_file" >/dev/null
+    --tier "migrated_from_legacy_file" --mechanical >/dev/null
 
   return 0
 }
@@ -1010,9 +1067,15 @@ cmd_selftest() {
 
   echo "needs-you.sh self-test (sandbox: $sandbox)"
 
-  # T1: add a decision entry, id returned, section renders.
+  # T1: add a decision entry, id returned, section renders. This fixture's
+  # prose is deliberately terse (below the cold-reader lint's own
+  # thresholds — no line >=40 chars, no in-text anchor token) since it
+  # predates the lint entirely; --mechanical keeps it exercising plain
+  # ledger mechanics (add/render/resolve/expire) rather than tripping the
+  # NEW interactive lint-block this task adds (that path gets its own
+  # dedicated fixtures at T22-T24d below).
   local id1
-  id1=$(cmd_add --section decision --text $'### Ship tonight?\nTier 1 — reversible.\nMy pick: yes.' --session "sess-aaa" --link "https://example.test/pr/1")
+  id1=$(cmd_add --section decision --text $'### Ship tonight?\nTier 1 — reversible.\nMy pick: yes.' --session "sess-aaa" --link "https://example.test/pr/1" --mechanical)
   if [[ "$id1" =~ ^NY- ]]; then ok "T1 add decision returns NY- id ($id1)"; else fail_ "T1 add did not return valid id (got '$id1')"; fi
 
   # T2: NEEDS-YOU.md exists with all 4 headers.
@@ -1075,8 +1138,10 @@ cmd_selftest() {
   [[ "$rc10" != "0" ]] && ok "T10 resolve unknown id exits non-zero" || fail_ "T10 resolve unknown id should have failed"
 
   # T11: 8-day-old resolved item collapses into a count line, not itemized.
+  # --mechanical: this fixture's bare-shorthand text predates the lint and
+  # is not the concern of this scenario (aging/collapse, not lint).
   local id_old
-  id_old=$(cmd_add --section decision --text "An old decision from last week" --session "sess-old")
+  id_old=$(cmd_add --section decision --text "An old decision from last week" --session "sess-old" --mechanical)
   cmd_resolve "$id_old" --note "decided a while back" >/dev/null
   # Backdate resolved_at to 8 days ago directly in the ledger state.
   local ledger_file="$NEEDS_YOU_STATE_DIR/ledger.json"
@@ -1303,17 +1368,18 @@ cmd_selftest() {
   fi
 
   # T23: an ANCHORLESS bare-shorthand decision (no path/URL/id-pattern
-  # anywhere, and too short to carry real context either) WARNS: stderr
-  # carries a lint notice, and the stored item's lint_warnings is non-empty
-  # and specifically names no-anchor (plus no-context, since this fixture
-  # is also just a bare title).
+  # anywhere, and too short to carry real context either), added via a
+  # MECHANICAL caller (--mechanical): STORE-AND-QUARANTINE — stderr carries
+  # a lint notice, and the stored item's lint_warnings is non-empty and
+  # specifically names no-anchor (plus no-context, since this fixture is
+  # also just a bare title). Mechanical callers never get blocked (A1).
   local bad_text="Ship tonight? My pick: yes."
   local id23_out; id23_out=$(mktemp)
   local stderr23 id23
-  stderr23=$(cmd_add --section decision --text "$bad_text" --session "sess-t23" 2>&1 >"$id23_out")
+  stderr23=$(cmd_add --section decision --text "$bad_text" --session "sess-t23" --mechanical 2>&1 >"$id23_out")
   id23=$(cat "$id23_out" 2>/dev/null); rm -f "$id23_out"
   if printf '%s' "$stderr23" | grep -qi "cold-reader lint"; then
-    ok "T23 anchorless bare-shorthand decision warns on stderr"
+    ok "T23 anchorless bare-shorthand decision (mechanical) warns on stderr, never blocks"
   else
     fail_ "T23 expected a cold-reader lint stderr warning, got: $stderr23"
   fi
@@ -1325,14 +1391,43 @@ cmd_selftest() {
     fail_ "T23b expected lint_warnings to include no-anchor, got: $lint23"
   fi
 
-  # T24: `add` NEVER blocks on a lint warning — exit code is still 0 even
-  # for the worst-case bare-shorthand fixture from T23, and an id is still
-  # returned (the ledger's availability outranks its lint).
+  # T24: a MECHANICAL caller NEVER blocks on a lint warning — exit code is
+  # still 0 even for the worst-case bare-shorthand fixture, and an id is
+  # still returned (store-and-quarantine, A1).
   local rc24
-  ( cmd_add --section decision --text "x" --session "sess-t24" >/dev/null 2>&1 )
+  ( cmd_add --section decision --text "x" --session "sess-t24" --mechanical >/dev/null 2>&1 )
   rc24=$?
-  [[ "$rc24" == "0" ]] && ok "T24 add never blocks on a lint warning (exit 0 even for the worst-case bare text)" \
-    || fail_ "T24 add exited non-zero ($rc24) on a lint-only warning — must never block"
+  [[ "$rc24" == "0" ]] && ok "T24 a MECHANICAL add never blocks on a lint warning (exit 0 even for the worst-case bare text)" \
+    || fail_ "T24 add exited non-zero ($rc24) on a lint-only warning from a mechanical caller — must never block"
+
+  # T24b/T24c (A1 — Lint promotion): the SAME worst-case bare text, added
+  # via the INTERACTIVE/MODEL-INVOKED path (no --mechanical), BLOCKS — exit
+  # non-zero, teaching message on stderr naming the missing checks, and
+  # NOTHING written to the ledger (the item must not silently appear).
+  local before_count24 after_count24
+  before_count24=$(jq '.items | length' "$NEEDS_YOU_STATE_DIR/ledger.json" 2>/dev/null)
+  local stderr24b rc24b
+  stderr24b=$(cmd_add --section decision --text "x" --session "sess-t24b" 2>&1 >/dev/null)
+  rc24b=$?
+  [[ "$rc24b" != "0" ]] && ok "T24b an INTERACTIVE add BLOCKS on a lint warning (exit non-zero)" \
+    || fail_ "T24b expected a non-zero exit for an interactive lint-blocked add, got 0"
+  if printf '%s' "$stderr24b" | grep -qi "BLOCKED"; then
+    ok "T24b2 the interactive block's stderr names it a BLOCK (teaching message, not a silent failure)"
+  else
+    fail_ "T24b2 expected a BLOCKED teaching message on stderr, got: $stderr24b"
+  fi
+  after_count24=$(jq '.items | length' "$NEEDS_YOU_STATE_DIR/ledger.json" 2>/dev/null)
+  [[ "$before_count24" == "$after_count24" ]] && ok "T24c a blocked interactive add writes NOTHING to the ledger (count unchanged: $before_count24)" \
+    || fail_ "T24c expected ledger item count unchanged ($before_count24), got $after_count24"
+
+  # T24d: an interactive decision add that PASSES the lint (well-formed
+  # text, no --mechanical needed) still succeeds normally — the block only
+  # ever fires ON a lint failure, never as a blanket interactive tax.
+  local rc24d
+  ( cmd_add --section decision --text "$good_text" --session "sess-t24d" >/dev/null 2>&1 )
+  rc24d=$?
+  [[ "$rc24d" == "0" ]] && ok "T24d a well-formed interactive decision add is never blocked (exit 0)" \
+    || fail_ "T24d expected exit 0 for a well-formed interactive add, got $rc24d"
 
   # T25: the lint is scoped to --section decision only — a question/inflight
   # entry with the same bare-shorthand shape gets no lint_warnings key
@@ -1383,9 +1478,9 @@ cmd_selftest() {
     fail_ "T26c expected an AUTO pointer bullet referencing needs-you \`$id26\` in $OPERATOR_TODO_PATH"
   fi
 
-  echo "Scenario T26d: a lint-flagged (anchorless) decision's progress-log summary carries §3-context missing(...), not a false 'present'"
+  echo "Scenario T26d: a lint-flagged (anchorless) decision's progress-log summary carries §3-context missing(...), not a false 'present' (mechanical caller — an interactive one would BLOCK before ever reaching this splice, see T24b)"
   local id26d
-  id26d=$(cmd_add --section decision --text "Ship tonight? My pick: yes." --session "sess-t26d")
+  id26d=$(cmd_add --section decision --text "Ship tonight? My pick: yes." --session "sess-t26d" --mechanical)
   if grep -qF "\"needs_you_id\":\"$id26d\"" "$pl_file26" 2>/dev/null && grep -q '§3-context missing(' "$pl_file26" 2>/dev/null; then
     ok "T26d anchorless decision's progress-log summary carries §3-context missing(...) (not falsely 'present')"
   else
@@ -1427,7 +1522,7 @@ cmd_selftest() {
     export NEEDS_YOU_MD_PATH="$sandbox8/NEEDS-YOU.md"
     export PROGRESS_LOG_STATE_DIR="$sandbox8/progress-logs"
     export OPERATOR_TODO_PATH="$todo8"
-    cmd_add --section decision --text "First pointer fixture" --session "sess-t28a" >/dev/null
+    cmd_add --section decision --text "First pointer fixture" --session "sess-t28a" --mechanical >/dev/null
     cmd_add --section question --text "Second pointer fixture" --session "sess-t28b" >/dev/null
   )
   if grep -qF "Buy more coffee for the office" "$todo8"; then
@@ -1453,7 +1548,7 @@ cmd_selftest() {
     export NEEDS_YOU_MD_PATH="$sandbox9/NEEDS-YOU.md"
     export PROGRESS_LOG_STATE_DIR="$sandbox9/progress-logs"
     export OPERATOR_TODO_PATH="$sandbox9/blocked/operator-todo.md"
-    cmd_add --section decision --text "Should still succeed despite a blocked operator-todo path" --session "sess-t29" >/dev/null
+    cmd_add --section decision --text "Should still succeed despite a blocked operator-todo path" --session "sess-t29" --mechanical >/dev/null
   )
   rc29=$?
   if [[ "$rc29" == "0" ]]; then
@@ -1489,7 +1584,7 @@ cmd_selftest() {
            OPERATOR_TODO_PATH="" \
            bash "$_NY_SELF_DIR/needs-you.sh" add --section decision \
              --text "From-worktree fixture: the operator-todo pointer must land in the MAIN checkout" \
-             --session "sess-t30" >/dev/null 2>&1 )
+             --session "sess-t30" --mechanical >/dev/null 2>&1 )
 
     local expected_main="$repo_dir/docs/operator-todo.md"
     if [[ -f "$expected_main" ]] && grep -q "sess-t30" "$expected_main"; then
@@ -1536,7 +1631,12 @@ Usage: needs-you.sh <verb> [args]
 Verbs:
   add                    --section decision|question|inflight|decided --text STR
                          [--session ID] [--link URL]* [--tier 1|2|3]
-                         -> prints new entry id, exit 0
+                         [--mechanical]
+                         -> prints new entry id, exit 0. For --section
+                         decision, a cold-reader-lint failure BLOCKS
+                         (exit 1, nothing written) unless --mechanical is
+                         passed, in which case it stores + quarantines
+                         instead (see header 'LINT PROMOTION').
   resolve <id>           [--note STR] -> moves entry to "Recently decided"
   expire                 collapse >7-day-old decided items into a count
   bootstrap-migrate      migrate a stale/hand-authored NEEDS-YOU.md into the

@@ -948,9 +948,15 @@ throttle_defer() {
       if ! _resumer_shadow_active; then
         local ny_bin="${RESUMER_NEEDS_YOU_BIN:-$SCRIPT_DIR/needs-you.sh}"
         if [[ -f "$ny_bin" ]]; then
+          # --mechanical (cockpit-roadmap-redesign Task 4, A1): a mechanical
+          # dispatcher call, no live actor to retry a lint block. --section
+          # inflight is never lint-checked today (needs-you.sh scopes the
+          # lint to --section decision only), but --mechanical is passed
+          # here anyway per the plan's explicit A1 file:line citation of
+          # this call site, and to stay correct if that scoping ever widens.
           bash "$ny_bin" add --section inflight \
             --text "Session ${sid} parked awaiting API-limit reset: >24h continuously throttled (${reason}); the resumer now checks it twice daily and will not resume inside the cooldown floor. Un-park: rm ${park_path} and $(_resumer_deferral_path "$sid")." \
-            --session "$sid" >/dev/null 2>&1 || true
+            --session "$sid" --mechanical >/dev/null 2>&1 || true
         fi
       fi
     fi

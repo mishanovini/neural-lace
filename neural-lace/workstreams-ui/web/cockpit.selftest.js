@@ -693,6 +693,14 @@ let roadmapJs = '';
 try { roadmapJs = fs.readFileSync(path.join(D, 'roadmap.js'), 'utf8'); } catch (_) { /* T3 checks fail honestly below */ }
 const roadmapJsNoComments = stripJsComments(roadmapJs);
 
+// inbox.js — read here (ahead of T3-3 below, which now points at THIS file
+// rather than app.js) even though the full T4 block lives further down;
+// cockpit-roadmap-redesign Task 4 moved the Inbox (N) derivation out of
+// app.js's interim renderer (REMOVED, not overridden — see the
+// build/roadmap-t4 commit) into this NEW file entirely.
+let inboxJs = '';
+try { inboxJs = fs.readFileSync(path.join(D, 'inbox.js'), 'utf8'); } catch (_) { /* T3-3/T4 checks fail honestly below */ }
+
 // ---- T3 comprehension-gate fixes (both PROVEN, conf 6): the two checks
 // below need real EXECUTION (not source-regex) to prove behavior, so they
 // reuse the T6 badge-law technique — extract the REAL source between
@@ -782,8 +790,8 @@ ok('T3-1 the shell defines all four tabs (Roadmap/Requests/Inbox/Harness Health)
   /id="tabInboxPanel"/.test(html) && /id="tabHealthPanel"/.test(html));
 ok('T3-2 Roadmap is the LANDING tab (aria-selected at parse + the router defaults to #roadmap)',
   /id="tabRoadmapBtn"[^>]*aria-selected="true"/.test(html) && /'#roadmap'/.test(js));
-ok('T3-3 the Inbox tab carries a LIVE count element and app.js derives N from ANSWERABLE items only (lint-quarantined excluded — I4/A10)',
-  /id="inboxTabCount"/.test(html) && /lint_warnings/.test(js) && /answerable/i.test(js));
+ok('T3-3 the Inbox tab carries a LIVE count element and inbox.js derives N from ANSWERABLE items only (lint-quarantined excluded — I4/A10; moved off app.js by Task 4, see T4-* below for the full view)',
+  /id="inboxTabCount"/.test(html) && /answerable/i.test(inboxJs) && !/loadInbox\(\)/.test(js));
 
 // --- hash routing + the landed state (C2) --------------------------------
 ok('T3-4 hash router handles the three item address families (#roadmap/<id> #request/<id> #inbox/<id>) + hashchange',
@@ -1129,6 +1137,158 @@ ok('T8-14 the Artifacts drill-down section is fully removed (no renderArtifact()
   !/renderArtifact\(/.test(asksJsNoComments) &&
   !/ask-artifacts-section/.test(asksJsNoComments) &&
   !/artHead\.textContent = 'Artifacts'/.test(asksJsNoComments));
+
+// ============================================================
+// cockpit-roadmap-redesign Task 4 — "Inbox view + context contract
+// enforcement" (T4-prefix). Same DOM-free source-regex technique as the
+// T3/T5 blocks above; the REAL wiring proof (fixture ledger, real HTTP) is
+// server/inbox-routes.selftest.js + server/auditor.js --self-test.
+// inbox.js is read guarded (see the declaration above, ahead of T3-3) so a
+// missing file fails these checks instead of crashing the whole suite.
+// ============================================================
+let needsYouSh = '';
+try { needsYouSh = fs.readFileSync(path.join(D, '..', '..', '..', 'adapters', 'claude-code', 'scripts', 'needs-you.sh'), 'utf8'); } catch (_) { /* T4-13/14 fail honestly below */ }
+let sessionHonestyGateSh = '';
+try { sessionHonestyGateSh = fs.readFileSync(path.join(D, '..', '..', '..', 'adapters', 'claude-code', 'hooks', 'session-honesty-gate.sh'), 'utf8'); } catch (_) {}
+let sessionResumerSh = '';
+try { sessionResumerSh = fs.readFileSync(path.join(D, '..', '..', '..', 'adapters', 'claude-code', 'scripts', 'session-resumer.sh'), 'utf8'); } catch (_) {}
+let stopVerdictDispatcherSh = '';
+try { stopVerdictDispatcherSh = fs.readFileSync(path.join(D, '..', '..', '..', 'adapters', 'claude-code', 'hooks', 'stop-verdict-dispatcher.sh'), 'utf8'); } catch (_) {}
+let inboxRoutesJs = '';
+try { inboxRoutesJs = fs.readFileSync(path.join(D, '..', 'server', 'inbox-routes.js'), 'utf8'); } catch (_) {}
+let auditorJs = '';
+try { auditorJs = fs.readFileSync(path.join(D, '..', 'server', 'auditor.js'), 'utf8'); } catch (_) {}
+let inboxShellFragment = '';
+try { inboxShellFragment = fs.readFileSync(path.join(D, '..', '..', '..', 'docs', 'plans', 'fragments', 'roadmap-t4-shell-fragment.md'), 'utf8'); } catch (_) {}
+let inboxServerFragment = '';
+try { inboxServerFragment = fs.readFileSync(path.join(D, '..', '..', '..', 'docs', 'plans', 'fragments', 'roadmap-t4-server-fragment.md'), 'utf8'); } catch (_) {}
+
+// T4-1: shell fragment (index.html is a shared shell file — same
+// fragment-not-direct-edit precedent as T5-1) pins the exact new script
+// line, ordered after app.js/roadmap.js.
+ok('T4-1 the shell fragment pins the exact <script src="/inbox.js"> line, ordered AFTER app.js/roadmap.js',
+  /<script src="\/inbox\.js"><\/script>/.test(inboxShellFragment) &&
+  inboxShellFragment.indexOf('<script src="/app.js">') < inboxShellFragment.indexOf('<script src="/inbox.js">') &&
+  inboxShellFragment.indexOf('<script src="/roadmap.js">') < inboxShellFragment.indexOf('<script src="/inbox.js">'));
+
+// T4-2: UNLIKE requests.js/roadmap.js, inbox.js binds to task 3's EXISTING
+// static markup (no NEW wrapper subtree inserted) — the tab already ships
+// #inboxSection/#inboxBody/#inboxMissBanner.
+ok('T4-2 inbox.js binds to the EXISTING static #inboxBody/#inboxTabCount markup (no new wrapper subtree inserted, unlike requests.js)',
+  /getElementById\('inboxBody'\)/.test(inboxJs) && /\$\('inboxTabCount'\)/.test(inboxJs) &&
+  !/insertBefore/.test(inboxJs));
+
+// T4-3: registers 'inbox' via the shell API; app.js's interim adapter was
+// REMOVED (not merely overridden) — its own independently-polled count
+// timer would otherwise race inbox.js's (A10: "the two counts can never
+// disagree").
+ok('T4-3 inbox.js registers an "inbox" view adapter through the shell API',
+  /registerView/.test(inboxJs) && /WorkstreamsShell/.test(inboxJs) &&
+  /registerView\('inbox'/.test(inboxJs.replace(/\s+/g, ' ')));
+ok('T4-3b app.js\'s interim Inbox renderer/count-timer was REMOVED (not left running to race inbox.js — A10 "counts can never disagree")',
+  !/function answerableOf/.test(js) && !/function renderInboxInterim/.test(js) && !/loadInbox\(\);/.test(js));
+
+// T4-4: server fragment pins the mount line.
+ok('T4-4 the server fragment pins the exact server.js mount line for inbox-routes.js',
+  /require\('\.\/inbox-routes\.js'\)/.test(inboxServerFragment) && /inboxRoutes\.handle\(req, res\)/.test(inboxServerFragment));
+
+// --- CONTEXT CONTRACT (I4/A8): a context-less item cannot render answerable ---
+ok('T4-5 the server pre-splits answerable/quarantined (no second heuristic client-side) — inbox-routes.js keys quarantine on lint_warnings, decision-section, open state only',
+  /lint_warnings/.test(inboxRoutesJs) && /section !== .decision./.test(inboxRoutesJs.replace(/'/g, '.')) || /it\.section === 'decision'/.test(inboxRoutesJs));
+ok('T4-5b inflight/decided sections are excluded ENTIRELY from the Inbox (never answerable, never quarantined) — needs-you.sh\'s own "waiting on the operator" scoping applied client-server',
+  /'decision' && it\.section !== 'question'/.test(inboxRoutesJs.replace(/\s+/g, ' ')));
+ok('T4-5c question items are NEVER quarantined (the lint is decision-only, T25 in needs-you.sh) — the server\'s quarantine test requires section === decision',
+  /lintWarnings\.length > 0/.test(inboxRoutesJs) && /it\.section === 'decision' && lintWarnings\.length > 0/.test(inboxRoutesJs));
+
+// --- item anatomy (I5) — collapsed row ---
+ok('T4-6 collapsed row anatomy: type glyph+label, one imperative ask sentence, source chip, age',
+  /typeGlyph/.test(inboxJs) && /typeLabel/.test(inboxJs) && /ib-ask-text/.test(inboxJs) &&
+  /ib-source-chip/.test(inboxJs) && /formatAge\(item\.created_at\)/.test(inboxJs));
+ok('T4-6b "blocks: <item>" only renders when the server actually names a roadmap id (never fabricated — HONEST LIMIT)',
+  /if \(item\.blocks_roadmap_id\)/.test(inboxJs) && /blocks_roadmap_id: null/.test(inboxRoutesJs));
+
+// --- expanded anatomy (constitution §3 compact format) ---
+ok('T4-7 expanded anatomy renders all five §3 steps: Decision/Action needed, Context, Trade-offs table, My pick, Reply-with',
+  /Decision needed: |Question: /.test(inboxJs) && /ib-context/.test(inboxJs) && /optionsTable/.test(inboxJs) &&
+  /My pick: /.test(inboxJs) && /How to answer: /.test(inboxJs));
+ok('T4-7b the trade-offs table parser + the reply stub are server-derived (parseDecisionAnatomy) and client-rendered, never a second parse',
+  /parseDecisionAnatomy/.test(inboxRoutesJs) && /reply_stub/.test(inboxRoutesJs) && /reply_stub/.test(inboxJs));
+ok('T4-7c the ANSWER lifecycle (C3a) is pointer + copyable stub (v1) — a Copy button, never inline answer submission to the ledger',
+  /ib-copy-btn/.test(inboxJs) && !/\/api\/inbox\/answer/.test(inboxJs));
+
+// --- quarantine (I4/A8) — system-failure framing ---
+ok('T4-8 quarantine framing blames the SYSTEM, never the operator, and names what the system DOES know (lint_reasons)',
+  /could not classify this as answerable/.test(inboxJs) && /ib-lint-reasons/.test(inboxJs) && /lint_reasons/.test(inboxJs));
+ok('T4-8b the auto-defect line is HONEST about whether filing has actually happened yet (never claims "filed" before the auditor cycle runs)',
+  /defect_filed[\s\S]{0,40}\?[\s\S]{0,80}has been filed/.test(inboxJs.replace(/\n\s*/g, ' ')) &&
+  /will be filed at the next background audit cycle/.test(inboxJs));
+ok('T4-8c "open source session" escape hatch is a copyable claude --resume command when a session is known, an honest no-session line otherwise (never a dead affordance)',
+  /claude --resume /.test(inboxRoutesJs) && /has_session/.test(inboxJs) && /nothing to resume/.test(inboxJs));
+ok('T4-8d every quarantined row still carries the SAME dismiss (RESOLVE) affordance as an answerable row — one lifecycle, two buckets',
+  /ib-dismiss-btn/.test(inboxJs) && /isQuarantined[\s\S]{0,300}quarantineExtra/.test(inboxJs.replace(/\n\s*/g, ' ')));
+
+// --- win state (C4, delta R1) ---
+ok('T4-9 the win state is SCOPED to the answerable section only — a non-empty quarantine section renders independently below it, never defeating the win',
+  /answerable\.length === 0/.test(inboxJs) && /quarantined\.length > 0/.test(inboxJs) &&
+  /Nothing waiting on you/.test(inboxJs));
+
+// --- four UI states (C4) ---
+ok('T4-10 loading/error states are honest and distinct, error NEVER degrades to the win/empty state',
+  /deriving your inbox…/.test(inboxJs) && /pane-error/.test(inboxJs) && /Retry/.test(inboxJs) &&
+  /if \(!lastPayload\) renderErrorState/.test(inboxJs));
+
+// --- refresh model (C7) ---
+ok('T4-11 the view polls on the 30s tick and labels failures "derived <age> — STALE", never silent staleness',
+  /30000|REFRESH_INTERVAL/.test(inboxJs) && /STALE/.test(inboxJs));
+ok('T4-11b re-render is STATE-PRESERVING: open-details sets (BOTH sections) + scroll + focus captured and restored',
+  /captureUiState/.test(inboxJs) && /restoreUiState/.test(inboxJs) && /openSetQ/.test(inboxJs) &&
+  /scrollY/.test(inboxJs) && /activeElement/.test(inboxJs));
+ok('T4-11c an uncommitted reply-stub edit survives a poll tick (typed-but-not-copied text is not silently destroyed)',
+  /replyEdits\[item\.id\] = input\.value/.test(inboxJs) && /hasOwnProperty\.call\(replyEdits, item\.id\)/.test(inboxJs));
+
+// --- cross-view landing (C2): shared shell contract ---
+ok('T4-12 the adapter implements landOn/missInfo/snapshotState/restoreState (the same shell contract roadmap.js/requests.js implement)',
+  /landOn:/.test(inboxJs) && /missInfo:/.test(inboxJs) &&
+  /snapshotState:/.test(inboxJs) && /restoreState:/.test(inboxJs));
+ok('T4-12b a followed link to a resolved/gone item renders an honest "resolved earlier" line, never blank (C3 STALE-LINK)',
+  /resolved earlier/.test(inboxJs));
+
+// --- Lint promotion (A1): interactive BLOCK vs mechanical STORE-AND-QUARANTINE ---
+ok('T4-13 needs-you.sh: a --section decision lint failure BLOCKS (die, non-zero, nothing written) on the interactive path',
+  /--mechanical\) mechanical=1/.test(needsYouSh) && /cold-reader lint BLOCKED this add/.test(needsYouSh));
+ok('T4-13b mechanical callers (--mechanical) STORE-AND-QUARANTINE instead — never rejected, still exit 0',
+  /MECHANICAL caller, stored \+ quarantined, never rejected/.test(needsYouSh));
+ok('T4-13c constitution §10 compliance is recorded in needs-you.sh: golden scenario + expected FP rate + retirement condition',
+  /GOLDEN SCENARIO/.test(needsYouSh) && /EXPECTED FALSE-POSITIVE RATE/.test(needsYouSh) && /RETIREMENT CONDITION/.test(needsYouSh));
+ok('T4-14 every named mechanical caller (stop-verdict-dispatcher.sh, session-resumer.sh park, session-honesty-gate.sh PAUSING) passes --mechanical',
+  /--mechanical/.test(stopVerdictDispatcherSh) && /--mechanical/.test(sessionResumerSh) && /--mechanical/.test(sessionHonestyGateSh));
+
+// --- A8: auditor-cycle-only auto-defect filing (never on render) ---
+ok('T4-15 the auditor files the quarantine auto-defect in its OWN cycle only (never in inbox-routes.js, which only READS whether one has been filed)',
+  /fileNeedsYouQuarantineDefects/.test(auditorJs) && !/fileNeedsYouQuarantineDefects|runCli\(/.test(inboxRoutesJs) &&
+  /readAuditorFiledIds/.test(inboxRoutesJs));
+ok('T4-15b quarantine defects are keyed by ledger item id and reuse the SAME filed-once + recurrence-escalation state fileNlIssueDivergences already maintains',
+  /'quarantine-' \+ item\.id/.test(auditorJs) && /loadNlIssueState\(statePath\)/.test(auditorJs) &&
+  (auditorJs.match(/loadNlIssueState\(statePath\)/g) || []).length >= 2);
+ok('T4-15c legacy no-producer items (no session) still file — keyed against the ledger id, never dropped',
+  /unknown\/legacy producer/.test(auditorJs));
+
+// --- a11y hygiene (C9) ---
+ok('T4-16 inbox.js builds interactive controls as real <button>s (the one btn() factory) and never wires click onto a bare div',
+  /function btn\([\s\S]{0,120}?createElement\('button'\)/.test(inboxJs) &&
+  (inboxJs.match(/btn\(/g) || []).length >= 6 &&
+  !/[Dd]iv\.addEventListener\('click'/.test(inboxJs));
+ok('T4-16b rows use nested native <details>/<summary> disclosure (C9 keyboard baseline)',
+  /createElement\('details'\)/.test(inboxJs));
+ok('T4-16c write/copy feedback is aria-live (C9)', (inboxJs.match(/aria-live/g) || []).length >= 1);
+ok('T4-16d landed rows are programmatically focusable (tabindex="-1"/tabIndex = -1 set on row containers)',
+  /tabIndex = -1/.test(inboxJs));
+ok('T4-16e every status/type signal is text + color, never color-only (type glyph carries a TEXT label chip alongside the glyph)',
+  /typeLabel\(item\.kind\)/.test(inboxJs));
+
+// --- "My items" (A10) — deferred to task 8, documented (not silently dropped) ---
+ok('T4-17 inbox.js does NOT build a "My items" section or touch todo.js/operator-todo (task 8 owns that relocation per its own bullet; documented here, not silently dropped)',
+  !/api\/todo/.test(inboxJs) && /task 8/.test(inboxJs));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

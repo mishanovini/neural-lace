@@ -1188,9 +1188,13 @@ MSG
       "$(_svd_json_escape "$check_f")" "$(_svd_json_escape "$msg_f")" >> "$gaps_path"
 
     if [[ -n "$nyu" ]]; then
+      # --mechanical (cockpit-roadmap-redesign Task 4, A1): a mechanical
+      # dispatcher call, no live actor to retry a lint block — see
+      # session-resumer.sh's identical note for why this is passed even
+      # though --section inflight is not lint-checked today.
       bash "$nyu" add --section inflight \
         --text "Unresolved Stop-gate gap (${gate_f}/${check_f}): ${msg_f}" \
-        --session "$session_id" >/dev/null 2>&1 || true
+        --session "$session_id" --mechanical >/dev/null 2>&1 || true
     fi
   done <<< "$all_gaps"
 

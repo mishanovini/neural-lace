@@ -487,7 +487,13 @@ needs_you_add_pausing_entry() {
     return 0
   fi
 
-  bash "$nyu" add --section decision --text "$summary" --session "$sid" >/dev/null 2>&1 || true
+  # --mechanical (cockpit-roadmap-redesign Task 4, A1): this gate fires
+  # automatically off a Stop-hook marker with no live actor present to
+  # retry — a cold-reader lint failure must STORE-AND-QUARANTINE rather
+  # than block, or the PAUSING ask would be silently lost (the exact
+  # "waiting-item must never land NOWHERE" contract this splice exists to
+  # uphold in the first place).
+  bash "$nyu" add --section decision --text "$summary" --session "$sid" --mechanical >/dev/null 2>&1 || true
   return 0
 }
 

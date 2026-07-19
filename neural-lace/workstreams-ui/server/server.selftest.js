@@ -731,7 +731,15 @@ async function main() {
       const goodText = 'Ship the fixture tonight?\nThe fixture (docs/plans/demo-plan-fixture.md) has been green for 3 days; shipping now vs later only changes who is on call.\nMy pick: ship tonight.';
       const goodRes = spawnSync(nyBash, [needsYouSh, 'add', '--section', 'decision', '--text', goodText, '--session', 'sess-orig-1', '--link', 'https://example.test/pr/1'], { env: nyEnv, encoding: 'utf8' });
       goodNeedsYouId = String(goodRes.stdout || '').trim();
-      const badRes = spawnSync(nyBash, [needsYouSh, 'add', '--section', 'decision', '--text', 'x', '--session', 'sess-orig-1'], { env: nyEnv, encoding: 'utf8' });
+      // --mechanical (cockpit-roadmap-redesign Task 4, A1): this fixture
+      // deliberately creates a context-less ("bad") decision entry to
+      // exercise how the REST of the pipeline (todo.js pointer rendering,
+      // waiting_count, the thin-entry defect form S25f) handles one that
+      // already exists in the ledger — it is not testing the interactive
+      // lint-block itself (that is needs-you.sh's own self-test's job, see
+      // T24b/T24c there), so --mechanical (store-and-quarantine) is the
+      // correct call here, not a block.
+      const badRes = spawnSync(nyBash, [needsYouSh, 'add', '--section', 'decision', '--text', 'x', '--session', 'sess-orig-1', '--mechanical'], { env: nyEnv, encoding: 'utf8' });
       badNeedsYouId = String(badRes.stdout || '').trim();
     }
     ok('S22b (setup) needs-you.sh fixture produced a good and a bad NY- id via the REAL script',

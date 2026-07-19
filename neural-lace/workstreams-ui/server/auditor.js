@@ -196,6 +196,28 @@ function askRegistryFile() {
 function needsYouMdPath() {
   return process.env.NEEDS_YOU_MD_PATH || path.join(mainRepoRoot(), 'NEEDS-YOU.md');
 }
+// needsYouStateDir/needsYouLedgerFile — the STRUCTURED-JSON oracle (cockpit-
+// roadmap-redesign Task 4, A8), distinct from needsYouMdPath() above (the
+// rendered .md this module already reads for Class C/G). Quarantine
+// classification needs `lint_warnings` — a field the rendered .md never
+// carries — so this reads `<state dir>/ledger.json` directly, mirroring
+// needs-you.sh's own `_ny_state_dir` resolution order (NEEDS_YOU_STATE_DIR
+// env override, else $HOME/.claude/state/needs-you) and od_needs_me's own
+// "THE oracle; never re-derives from the rendered NEEDS-YOU.md" precedent.
+// Small, deliberately duplicated reader (server/inbox-routes.js carries an
+// identical copy) — see file header "WHY THE READERS BELOW ARE DUPLICATED".
+function needsYouStateDir() {
+  return process.env.NEEDS_YOU_STATE_DIR ||
+    path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'needs-you');
+}
+function needsYouLedgerFile() { return path.join(needsYouStateDir(), 'ledger.json'); }
+function readNeedsYouLedgerItems() {
+  let raw;
+  try { raw = fs.readFileSync(needsYouLedgerFile(), 'utf8'); } catch (_) { return []; }
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (_) { return []; }
+  return (parsed && Array.isArray(parsed.items)) ? parsed.items : [];
+}
 // operator-todo.md -- mirrors needs-you.sh's `_ny_operator_todo_path` shape
 // (OPERATOR_TODO_PATH env override, else the main-checkout root), but
 // resolved in pure JS (no bash shell-out) the SAME way server.js resolves
@@ -277,9 +299,29 @@ function foldAskRegistry(registryFile) {
   lines.forEach((rec) => {
     if (!rec || !rec.ask_id) return;
     const cur = byAsk[rec.ask_id] || { plan_slugs: [] };
-    ['repo', 'project', 'summary', 'verbatim_ref', 'status'].forEach((f) => {
+    ['repo', 'project', 'verbatim_ref', 'status'].forEach((f) => {
       if (rec[f]) cur[f] = rec[f];
     });
+    // TITLE FOLD PRECEDENCE PARITY (cockpit-roadmap-redesign Task 2's A3 rule,
+    // spliced here at Task 4 per docs/plans/fragments/roadmap-t2-derive-lib-
+    // fragment.md's "Second seam, task-4-owned" note): server.js's own
+    // foldAskRegistry (derive-lib.js) stopped folding `summary` via plain
+    // last-non-empty-wins — operator-sourced titles (title_source:"operator")
+    // now ALWAYS outrank auto-sourced ones regardless of timestamp. This
+    // duplicate reader (see file header "WHY DUPLICATED") must honor the
+    // SAME precedence or its `summary`/`title_source` labels silently
+    // diverge from the canonical reader's. This module's own decision
+    // logic (auditAsk) only consumes `status`/`plan_slugs`, never `summary`
+    // — the practical exposure was label-level, not correctness-level, but
+    // parity is still the honest contract for any future consumer of this
+    // duplicate's summary/title_source fields.
+    if (rec.summary) {
+      const src = rec.title_source === 'operator' ? 'operator' : 'auto';
+      if (src === 'operator' || cur.title_source !== 'operator') {
+        cur.summary = rec.summary;
+        cur.title_source = src;
+      }
+    }
     if (rec.record_type === 'plan_linked' && rec.plan_slug && cur.plan_slugs.indexOf(rec.plan_slug) === -1) {
       cur.plan_slugs.push(rec.plan_slug);
     }
@@ -879,6 +921,105 @@ async function fileNlIssueDivergences(newBadgesByAsk, opts) {
 }
 
 // ========================================================================
+// QUARANTINE AUTO-DEFECT (cockpit-roadmap-redesign Task 4, A8) -- files ONE
+// nl-issue defect per context-less needs-you ledger item, ONCE per item
+// lifetime, in the AUDITOR CYCLE ONLY (never on render -- the Inbox view,
+// server/inbox-routes.js, only ever READS whether a defect has already been
+// filed via readAuditorFiledIds(); it never files one itself). Reuses the
+// SAME filed-once + recurrence-escalation state (auditorNlIssueStatePath())
+// fileNlIssueDivergences() already maintains above -- a quarantine's
+// detail_ref ('quarantine-<ledger id>') is namespaced distinctly from every
+// ask-drift detail_ref ('drift-<askId>-...'), so the two classes share one
+// state file with zero collision risk.
+//
+// KEYING (A8): "keyed by ledger item id" -- ALWAYS `item.id` (the needs-you
+// NY-... id), regardless of whether the item carries a `session` (a
+// producing session) or not. A "legacy no-producer item" (no session field,
+// or a session that no longer resolves to anything) files against the
+// SAME ledger id -- there is no separate "unknown producer" bucket, per the
+// plan's own "legacy no-producer items file against the ledger id" clause.
+//
+// RECURRENCE: identical shape to fileNlIssueDivergences's own recurrence
+// block (3+ distinct ids within a rolling 7-day window -> ONE escalated
+// summary note, ever, per class) -- scoped to this ONE class
+// ('quarantined_no_context') since quarantine ids never mix with ask-drift
+// classes in the SAME class-bucket scan.
+// ========================================================================
+const NEEDS_YOU_QUARANTINE_CLASS = 'quarantined_no_context';
+
+// quarantinedLedgerItems(items) -- the SAME context-contract test
+// server/inbox-routes.js applies (I4/A8): an OPEN 'decision' item whose
+// lint_warnings (stamped by needs-you.sh's cold-reader lint AT ADD TIME) is
+// non-empty. 'question' items are never quarantined (the lint is scoped to
+// --section decision only).
+function quarantinedLedgerItems(items) {
+  return (items || []).filter((it) => it && it.state === 'open' && it.section === 'decision' &&
+    Array.isArray(it.lint_warnings) && it.lint_warnings.length > 0);
+}
+
+function nlIssueMessageForQuarantine(item) {
+  const who = item.session ? ('session ' + item.session) : 'an unknown/legacy producer (no session recorded)';
+  const warn = (item.lint_warnings || []).join(', ');
+  return 'needs-you quarantine [' + NEEDS_YOU_QUARANTINE_CLASS + ']: item ' + item.id + ' (from ' + who +
+    ') arrived without full context (' + warn + ') and is quarantined in the cockpit Inbox, excluded from its ' +
+    'answerable count -- see NEEDS-YOU ledger id ' + item.id + '.';
+}
+
+// fileNeedsYouQuarantineDefects(ledgerItems, opts) -- mirrors
+// fileNlIssueDivergences's exact shape/guards (sandbox-awareness, dedup,
+// recurrence) but is intentionally a SEPARATE function rather than a
+// refactor of that one: fileNlIssueDivergences is keyed by askId (its
+// per-ask badge message names "ask <askId>"), while a quarantined item has
+// no ask at all -- reusing it as-is would force an awkward synthetic askId
+// into every quarantine message. Zero behavioral change to the
+// already-tested fileNlIssueDivergences path.
+async function fileNeedsYouQuarantineDefects(ledgerItems, opts) {
+  if (process.env.AUDITOR_NL_ISSUE_DISABLED === '1') return;
+  if (isNlIssueSandboxed()) return;
+
+  const cliPath = opts.cliPath;
+  const statePath = opts.statePath;
+  const timeoutMs = opts.cliTimeoutMs;
+  const st = loadNlIssueState(statePath);
+  const nowTs = nowIso();
+  let changed = false;
+
+  const items = quarantinedLedgerItems(ledgerItems);
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const id = 'quarantine-' + item.id; // keyed by ledger item id (A8) -- legacy no-producer items key the SAME way
+    if (!item.id || st.filed[id]) continue; // no id to key on, or already filed -- ONCE per item lifetime
+    const text = nlIssueMessageForQuarantine(item);
+    try { await runCli(cliPath, [text], timeoutMs); } catch (_) { /* best-effort */ }
+    st.filed[id] = { ts: nowTs, divergence_class: NEEDS_YOU_QUARANTINE_CLASS };
+    changed = true;
+  }
+
+  // Recurrence escalation -- same rolling-window/threshold shape as
+  // fileNlIssueDivergences, scoped to this one class.
+  const nowMs = Date.now();
+  const ids = [];
+  Object.keys(st.filed).forEach((fid) => {
+    const rec = st.filed[fid];
+    if (!rec || rec.divergence_class !== NEEDS_YOU_QUARANTINE_CLASS || !rec.ts) return;
+    const ageMs = nowMs - Date.parse(rec.ts);
+    if (!(ageMs >= 0) || ageMs > NL_ISSUE_RECURRENCE_WINDOW_MS) return;
+    ids.push(fid);
+  });
+  if (ids.length >= NL_ISSUE_RECURRENCE_THRESHOLD && !st.escalated[NEEDS_YOU_QUARANTINE_CLASS]) {
+    const sortedIds = ids.slice().sort();
+    const text = 'auditor RECURRENCE [' + NEEDS_YOU_QUARANTINE_CLASS + ']: ' + ids.length +
+      ' distinct occurrences filed in the last 7 days (' + sortedIds.join(', ') +
+      ') -- investigate the root cause (likely a specific producer emitting context-less decisions), not just the individual instances.';
+    try { await runCli(cliPath, [text], timeoutMs); } catch (_) { /* best-effort */ }
+    st.escalated[NEEDS_YOU_QUARANTINE_CLASS] = { ts: nowTs, count: ids.length, ids: sortedIds };
+    changed = true;
+  }
+
+  if (changed) saveNlIssueState(statePath, st);
+}
+
+// ========================================================================
 // createAuditor(userOpts) -- the auditor instance server.js mounts.
 // ========================================================================
 function createAuditor(userOpts) {
@@ -1075,6 +1216,23 @@ function createAuditor(userOpts) {
         });
       } catch (_) { /* best-effort; never wedges the cycle */ }
 
+      // A8 (Task 4): file the auto-defect for every context-less
+      // ("quarantined") needs-you decision item, in THIS cycle only (never
+      // on render — server/inbox-routes.js only ever READS whether a
+      // defect has been filed, via the same state file). Reuses the exact
+      // filed-once + recurrence-escalation state fileNlIssueDivergences
+      // just wrote to above — see fileNeedsYouQuarantineDefects's own
+      // header for why this is a sibling function rather than a reuse of
+      // that one's per-ask shape.
+      try {
+        const ledgerItems = readNeedsYouLedgerItems();
+        await fileNeedsYouQuarantineDefects(ledgerItems, {
+          cliPath: staticOpts.nlIssueCli,
+          statePath: rAuditorNlIssueStatePath(),
+          cliTimeoutMs: staticOpts.cliTimeoutMs,
+        });
+      } catch (_) { /* best-effort; never wedges the cycle */ }
+
       // §8-3 count reconciliation -- see header for why this is
       // diagnostics-only (never a per-card badge, never a landing banner).
       // HONEST LIMITATION: this metric intersects `renderedWaitingIdSet`
@@ -1200,6 +1358,15 @@ module.exports = {
   fileNlIssueDivergences: fileNlIssueDivergences,
   NL_ISSUE_BADGE_CLASSES: NL_ISSUE_BADGE_CLASSES,
   isNlIssueSandboxed: isNlIssueSandboxed,
+  // A8 (Task 4) exports -- for the self-test / server/inbox-routes.js's
+  // read-only "has a defect been filed yet" check.
+  needsYouStateDir: needsYouStateDir,
+  needsYouLedgerFile: needsYouLedgerFile,
+  readNeedsYouLedgerItems: readNeedsYouLedgerItems,
+  quarantinedLedgerItems: quarantinedLedgerItems,
+  nlIssueMessageForQuarantine: nlIssueMessageForQuarantine,
+  fileNeedsYouQuarantineDefects: fileNeedsYouQuarantineDefects,
+  NEEDS_YOU_QUARANTINE_CLASS: NEEDS_YOU_QUARANTINE_CLASS,
 };
 
 // ============================================================
@@ -1246,6 +1413,17 @@ async function selfTest() {
   fs.mkdirSync(path.join(repoDir, 'docs', 'plans'), { recursive: true });
   const needsYouPath = path.join(repoDir, 'NEEDS-YOU.md');
   const todoPath = path.join(repoDir, 'docs', 'operator-todo.md');
+  // Task 4 (A8): the auditor's runCycle() now ALSO reads NEEDS_YOU_STATE_DIR's
+  // ledger.json every cycle (fileNeedsYouQuarantineDefects) -- sandboxed to an
+  // EMPTY dir here from the very start of this self-test (no ledger.json ->
+  // readNeedsYouLedgerItems() returns [], a no-op) so every PRE-EXISTING
+  // scenario below (S1-S8, none of which know or care about needs-you
+  // quarantine) never accidentally reads the REAL machine's
+  // $HOME/.claude/state/needs-you/ledger.json. Scenario 9 below points this
+  // at its OWN fixture ledger for the duration of that scenario only, then
+  // restores it back to this same empty default.
+  const nyStateDirDefault = path.join(tmp, 'ny-state-default');
+  fs.mkdirSync(nyStateDirDefault, { recursive: true });
 
   process.env.HARNESS_SELFTEST = '1';
   process.env.PROGRESS_LOG_STATE_DIR = plDir;
@@ -1254,6 +1432,7 @@ async function selfTest() {
   process.env.DISPATCH_PROVENANCE_STATE_DIR = dpDir;
   process.env.NEEDS_YOU_MD_PATH = needsYouPath;
   process.env.OPERATOR_TODO_PATH = todoPath;
+  process.env.NEEDS_YOU_STATE_DIR = nyStateDirDefault;
 
   function writeRegistry(lines) {
     fs.writeFileSync(path.join(arDir, 'ask-registry.jsonl'), lines.map((o) => JSON.stringify(o)).join('\n') + '\n');
@@ -1647,6 +1826,112 @@ async function selfTest() {
   // ======================================================================
   ok('S8 self-test wrote only under its own sandboxed tempdir (no real ~/.claude/state pollution)',
     fs.existsSync(plDir) && fs.existsSync(arDir), 'plDir/arDir should exist under tmp');
+
+  // ======================================================================
+  // Scenario 9 (cockpit-roadmap-redesign Task 4, A8): the quarantine
+  // auto-defect. A fixture needs-you ledger.json with a clean answerable
+  // item, TWO quarantined decision items (one with a producing session,
+  // one legacy no-producer), a lint-flagged QUESTION item (must never
+  // quarantine -- the lint is decision-only), and an already-RESOLVED
+  // quarantined-shaped item (must never file -- it already left the
+  // Inbox). Reuses the exact filed-once + recurrence-escalation machinery
+  // fileNlIssueDivergences exercises above (Scenario 2e-2j), applied to
+  // fileNeedsYouQuarantineDefects instead.
+  // ======================================================================
+  const nyStateDir9 = path.join(tmp, 'ny-state-s9');
+  fs.mkdirSync(nyStateDir9, { recursive: true });
+  const ledgerItems9 = [
+    { id: 'NY-clean-1', section: 'decision', state: 'open', session: 'sess-clean', lint_warnings: [] },
+    { id: 'NY-q1', section: 'decision', state: 'open', session: 'sess-q1', lint_warnings: ['no-anchor', 'no-context'] },
+    { id: 'NY-q2-legacy', section: 'decision', state: 'open', lint_warnings: ['no-anchor'] }, // no `session` -- legacy no-producer
+    { id: 'NY-question-1', section: 'question', state: 'open', session: 'sess-q3', lint_warnings: ['no-anchor'] }, // must NEVER quarantine (question, not decision)
+    { id: 'NY-resolved-1', section: 'decision', state: 'resolved', session: 'sess-r1', lint_warnings: ['no-anchor'] }, // already left the Inbox -- must never file
+  ];
+  fs.writeFileSync(path.join(nyStateDir9, 'ledger.json'), JSON.stringify({ schema_version: 1, items: ledgerItems9 }));
+
+  ok('S9a (pure unit) quarantinedLedgerItems() selects exactly the open+decision+lint-flagged items (NY-q1, NY-q2-legacy), excluding the clean/question/resolved fixtures',
+    (() => {
+      const q = quarantinedLedgerItems(ledgerItems9).map((it) => it.id).sort();
+      return q.length === 2 && q[0] === 'NY-q1' && q[1] === 'NY-q2-legacy';
+    })());
+
+  const nlLedger9 = path.join(tmp, 'nl-issues-s9.jsonl');
+  const nlState9 = path.join(tmp, 'nl-issue-state-s9.json');
+  delete process.env.HARNESS_SELFTEST;
+  process.env.NEEDS_YOU_STATE_DIR = nyStateDir9;
+  process.env.NL_ISSUES_PATH = nlLedger9;
+  process.env.AUDITOR_NL_ISSUE_STATE_PATH = nlState9;
+
+  await auditor.runCycle();
+  const ledger9Lines = fs.existsSync(nlLedger9) ? readJsonlLines(nlLedger9) : [];
+  const quarantineLines9 = ledger9Lines.filter((l) => /quarantined_no_context/.test(l.text || ''));
+  ok('S9b the auditor cycle files EXACTLY 2 quarantine defects (NY-q1 + NY-q2-legacy), never the clean/question/resolved fixtures',
+    quarantineLines9.length === 2, JSON.stringify(quarantineLines9.map((l) => l.text)));
+  ok('S9c the session-backed item\'s message names its producing session',
+    quarantineLines9.some((l) => /NY-q1/.test(l.text) && /session sess-q1/.test(l.text)),
+    JSON.stringify(quarantineLines9.map((l) => l.text)));
+  ok('S9d the legacy no-producer item keys and messages against the LEDGER id, honestly naming the absent producer',
+    quarantineLines9.some((l) => /NY-q2-legacy/.test(l.text) && /unknown\/legacy producer/.test(l.text)),
+    JSON.stringify(quarantineLines9.map((l) => l.text)));
+  const state9 = fs.existsSync(nlState9) ? JSON.parse(fs.readFileSync(nlState9, 'utf8')) : { filed: {} };
+  ok('S9e the auditor\'s dedup state records BOTH quarantine ids as filed, keyed by ledger id',
+    !!(state9.filed && state9.filed['quarantine-NY-q1'] && state9.filed['quarantine-NY-q2-legacy']),
+    JSON.stringify(state9.filed));
+
+  await auditor.runCycle();
+  const ledger9LinesAfter = fs.existsSync(nlLedger9) ? readJsonlLines(nlLedger9) : [];
+  const quarantineLines9After = ledger9LinesAfter.filter((l) => /quarantined_no_context/.test(l.text || ''));
+  ok('S9f a SECOND cycle over the SAME 2 still-open quarantined items does NOT re-file (once per item lifetime, not per cycle)',
+    quarantineLines9After.length === 2, JSON.stringify(quarantineLines9After.map((l) => l.text)));
+
+  // ---- S9g: recurrence escalation -- a 3rd distinct quarantined id fires
+  // ONE additional escalated summary, exactly like fileNlIssueDivergences's
+  // own S2h/S2i pattern, scoped to the quarantined_no_context class.
+  ledgerItems9.push({ id: 'NY-q3', section: 'decision', state: 'open', session: 'sess-q3b', lint_warnings: ['no-outcomes'] });
+  fs.writeFileSync(path.join(nyStateDir9, 'ledger.json'), JSON.stringify({ schema_version: 1, items: ledgerItems9 }));
+  await auditor.runCycle();
+  const ledger9LinesG = fs.existsSync(nlLedger9) ? readJsonlLines(nlLedger9) : [];
+  const quarantineLines9G = ledger9LinesG.filter((l) => /quarantined_no_context/.test(l.text || ''));
+  ok('S9g escalation at 3 distinct quarantine ids: exactly 4 quarantine-class lines (3 individual filings + 1 escalation summary)',
+    quarantineLines9G.length === 4, JSON.stringify(quarantineLines9G.map((l) => l.text)));
+  ok('S9h exactly one of those lines is the RECURRENCE escalation summary, naming the class + a count of 3',
+    quarantineLines9G.filter((l) => /RECURRENCE/.test(l.text) && /quarantined_no_context/.test(l.text) && /\b3\b/.test(l.text)).length === 1,
+    JSON.stringify(quarantineLines9G.map((l) => l.text)));
+
+  await auditor.runCycle();
+  const ledger9LinesGAfter = fs.existsSync(nlLedger9) ? readJsonlLines(nlLedger9) : [];
+  ok('S9i a repeat cycle over the same 3 escalated ids does NOT re-escalate (still exactly 4 quarantine-class lines)',
+    ledger9LinesGAfter.filter((l) => /quarantined_no_context/.test(l.text || '')).length === 4);
+
+  // Restore the default sandbox posture -- NEEDS_YOU_STATE_DIR back to the
+  // EMPTY default dir (never deleted/unset), so any scenario after this one
+  // can't fall through to the real machine's ledger.json.
+  process.env.HARNESS_SELFTEST = '1';
+  process.env.NEEDS_YOU_STATE_DIR = nyStateDirDefault;
+  delete process.env.NL_ISSUES_PATH;
+  delete process.env.AUDITOR_NL_ISSUE_STATE_PATH;
+
+  // ======================================================================
+  // Scenario 10 (Task 2 A3 fold-precedence PARITY -- see
+  // docs/plans/fragments/roadmap-t2-derive-lib-fragment.md's "Second seam,
+  // task-4-owned" note): THIS module's own foldAskRegistry duplicate must
+  // honor the identical operator-beats-auto-regardless-of-timestamp rule
+  // server.js's canonical derive-lib.js reader already enforces (task 2).
+  // ======================================================================
+  {
+    const t10Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auditor-t10-fold-'));
+    const t10Line = (o) => JSON.stringify(Object.assign({ ask_id: 'ask-t10', record_type: '', ts: '', repo: '', project: '', summary: '', status: '', plan_slug: '', title_source: '' }, o));
+    fs.writeFileSync(path.join(t10Dir, 'ask-registry.jsonl'), [
+      t10Line({ record_type: 'created', ts: '2026-07-19T10:00:00Z', summary: 'auto captured title', title_source: 'auto', status: 'active' }),
+      t10Line({ record_type: 'summary_updated', ts: '2026-07-19T10:05:00Z', summary: 'Operator renamed this', title_source: 'operator' }),
+      t10Line({ record_type: 'summary_updated', ts: '2026-07-19T10:10:00Z', summary: 'distiller re-run title', title_source: 'auto' }),
+    ].join('\n') + '\n');
+    const folded10 = foldAskRegistry(path.join(t10Dir, 'ask-registry.jsonl'));
+    ok('S10 auditor.js\'s own foldAskRegistry duplicate ALSO keeps the operator title against a newer auto re-run (parity with derive-lib.js)',
+      folded10['ask-t10'] && folded10['ask-t10'].summary === 'Operator renamed this' && folded10['ask-t10'].title_source === 'operator',
+      JSON.stringify(folded10['ask-t10']));
+    fs.rmSync(t10Dir, { recursive: true, force: true });
+  }
 
   auditor.stop();
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}

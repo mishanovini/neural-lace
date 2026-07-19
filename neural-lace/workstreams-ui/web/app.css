@@ -1249,3 +1249,89 @@ details[open] > summary .rm-rollups { display: none; }
 .rl-event-feedback { font-size: 11px; }
 .rl-event-feedback.rl-feedback-ok { color: var(--ok); }
 .rl-event-feedback.rl-feedback-err { color: var(--err); }
+
+/* ============================================================
+   INBOX (cockpit-roadmap-redesign Task 4). Reuses .inbox-section/
+   .inbox-win from task 3's interim shell markup (index.html keeps that
+   markup; only the JS behind it changed — see web/inbox.js); everything
+   below is NEW, prefixed .ib-* (mirrors the .rl-*/.rm-* per-task section
+   convention already established for the Requests/Roadmap views).
+   ============================================================ */
+.ib-section-head { font-size: 12px; font-weight: 700; color: var(--muted); padding: 8px 4px 4px; }
+.ib-quarantine-head { color: var(--interrupt); } /* the ONE interrupt-worthy accent (system-failure framing, I4) */
+
+/* ---- collapsed row anatomy (I5) ---- */
+.ib-row { border-left: 2px solid var(--border); margin: 2px 0 2px 4px; padding-left: 6px; }
+.ib-row-quarantined { border-left-color: var(--interrupt); }
+.ib-row > summary.ib-row-summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 5px 4px;
+  min-height: 24px;
+  list-style: none;
+}
+.ib-row > summary.ib-row-summary::-webkit-details-marker { display: none; }
+.ib-row > summary.ib-row-summary:hover { background: var(--panel2); }
+.ib-type-glyph { font-size: 14px; }
+.ib-ask-text { flex: 1 1 auto; font-weight: 600; }
+.ib-source-chip { font-size: 11px; color: var(--muted); background: var(--panel2); border-radius: 3px; padding: 1px 6px; }
+.ib-age { font-size: 11px; color: var(--muted); }
+.ib-blocks-chip { color: var(--interrupt); border-color: var(--interrupt); }
+
+/* ---- expanded anatomy (constitution §3 compact format) ---- */
+.ib-drill { display: none; padding: 4px 8px 8px 20px; font-size: 12px; color: var(--muted); }
+.ib-row[open] > .ib-drill { display: block; }
+.ib-anatomy-head { font-weight: 700; color: var(--text); font-size: 13px; margin-bottom: 4px; }
+.ib-context { margin: 4px 0; }
+.ib-context-line { margin: 2px 0; }
+.ib-options-table { border-collapse: collapse; margin: 6px 0; font-size: 12px; }
+.ib-options-table th, .ib-options-table td { border: 1px solid var(--border2); padding: 3px 8px; text-align: left; }
+.ib-options-table th { color: var(--muted); font-weight: 600; }
+.ib-my-pick { margin: 4px 0; font-weight: 600; color: var(--text); }
+
+/* ---- reply (the ANSWER lifecycle verb, C3a — pointer + copyable stub) ---- */
+.ib-reply { margin: 6px 0; }
+.ib-reply-channel { font-weight: 600; color: var(--text); margin-bottom: 3px; }
+.ib-reply-with { color: var(--muted); margin-bottom: 3px; }
+.ib-reply-stub-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ib-reply-stub-input {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  min-width: 280px;
+  flex: 1 1 auto;
+}
+
+/* ---- quarantine-only anatomy (I4/A8 — system-failure framing) ---- */
+.ib-quarantine-extra { margin: 6px 0; border-left: 2px dotted var(--interrupt); padding-left: 8px; }
+.ib-quarantine-framing { color: var(--interrupt); font-weight: 600; margin-bottom: 4px; }
+.ib-lint-reasons { margin: 4px 0; padding-left: 18px; }
+.ib-lint-reasons li { margin: 2px 0; }
+.ib-defect-line { color: var(--muted); margin: 4px 0; }
+.ib-open-session-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+.ib-resume-cmd-input {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-family: monospace;
+  border-radius: 4px;
+  padding: 3px 6px;
+  min-width: 240px;
+}
+
+/* ---- actions + feedback ---- */
+.ib-actions { margin: 6px 0; }
+.ib-edit-feedback { font-size: 12px; margin-top: 3px; }
+.ib-edit-feedback.ib-feedback-ok { color: var(--ok); }
+.ib-edit-feedback.ib-feedback-err { color: var(--err); }
+
+/* ---- below-the-fold raw verbatim + session lineage ---- */
+.ib-raw-details { margin-top: 6px; }
+.ib-raw-body { padding: 4px 0 0 4px; }
+.ib-raw-text { white-space: pre-wrap; font-family: monospace; font-size: 11px; background: var(--panel2); padding: 6px; border-radius: 4px; margin: 4px 0; }
+.ib-raw-meta { font-size: 11px; color: var(--muted); }
