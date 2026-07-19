@@ -326,6 +326,15 @@ writer-lib seam — NOT hook splices), `adapters/claude-code/scripts/coord-sync.
 full-cycle floor), a `config/people.js`-style hostname→person map (machine-local overrides).
 
 ## In-flight scope updates
+- 2026-07-19: docs/reviews/2026-07-19-doctor-red-spike-diagnosis.md — deploy-leg restoration
+  prerequisite: doctor spike diagnosis; install/auto-install is this plan's deploy mechanism
+  and coord-sync/coord-push must be record-covered before task 7 lands (nl-issue 126).
+- 2026-07-19: docs/reviews/2026-07-19-doctor-quick-full-output.md — full doctor run output
+  backing the diagnosis (raw evidence).
+- 2026-07-19: docs/reviews/records/index.json — harness-change-review record registration for
+  the 9 withheld blobs (unblocks the deploy leg; 5512926 precedent).
+- 2026-07-19: docs/plans/cockpit-roadmap-redesign-evidence.md — task-verifier canonical
+  evidence companion (created by the t1 verification gate).
 - 2026-07-19: `neural-lace/workstreams-ui/server/derive-lib.js` — reconciles the
   original Files to Modify/Create table's BARE `derive-lib.js` token (no
   directory prefix — scope-enforcement-gate.sh matches the exact repo-root-
