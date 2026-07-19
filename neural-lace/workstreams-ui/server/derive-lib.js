@@ -342,6 +342,48 @@ function classifySessions(sessionIds) {
   });
 }
 
+// listRawHeartbeatsResult() — Task 1 comprehension-review fix (R-1): the
+// SAME enumeration as listRawHeartbeats() (below) but distinguishing WHY
+// the returned list might be empty — a distinction listRawHeartbeats()
+// itself cannot expose without breaking its existing array-only contract
+// (server/export-state.js:150 calls it expecting a plain array; that call
+// site is unchanged by this fix). Two genuinely different situations both
+// used to collapse to "empty array, keep going":
+//   ok:true,  heartbeats:[] — the store directory genuinely does not exist
+//             (ENOENT): no session has EVER heartbeated here. Benign; a
+//             derivation that needs this item's activity has zero evidence
+//             either way, and (per deriveItemStatus) conservatively renders
+//             stalled:crashed — never a derivation-input FAILURE.
+//   ok:false, heartbeats:[] — the store directory EXISTS but readdirSync
+//             failed for some other reason (EACCES/ENOTDIR/a mid-read race)
+//             — a genuine read failure, not "nothing was ever written
+//             here". A caller deriving an in-flight item's status from this
+//             MUST treat this as unknown(reason), never silently fold it
+//             into "no heartbeat found" (C5: a derivation-input failure is
+//             a named state, never a confident guessed bucket).
+function listRawHeartbeatsResult() {
+  const dir = heartbeatStateDir();
+  let files;
+  try {
+    files = fs.readdirSync(dir);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { ok: true, heartbeats: [] }; // genuinely never written — benign
+    return {
+      ok: false, heartbeats: [],
+      reason: 'heartbeat store unreadable (' + (err && err.code ? err.code : String(err)) + ')',
+    };
+  }
+  const out = [];
+  files.forEach((f) => {
+    if (!/\.json$/.test(f)) return;
+    try {
+      const obj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (obj && obj.session_id) out.push(obj);
+    } catch (_) { /* corrupt heartbeat file — skip, never crash */ }
+  });
+  return { ok: true, heartbeats: out };
+}
+
 // listRawHeartbeats() — A3c (BINDING, cockpit-v2-push-materialized-store
 // Task 2): enumerate every `<session-id>.json` in heartbeatStateDir() and
 // return its RAW parsed fields (schema, session_id, pid, cwd, repo_root,
@@ -353,19 +395,11 @@ function classifySessions(sessionIds) {
 // machine can classify by AGE against its own receive-time clock. Fail-open:
 // a missing heartbeat dir or an unreadable/corrupt file is skipped, never a
 // crash (mirrors readDispatchProvenanceMarkers' same discipline above).
+// UNCHANGED CONTRACT (still a plain array — server/export-state.js:150
+// depends on this): a caller that needs to distinguish store-absent from
+// store-unreadable (see above) calls listRawHeartbeatsResult() instead.
 function listRawHeartbeats() {
-  const dir = heartbeatStateDir();
-  let files;
-  try { files = fs.readdirSync(dir); } catch (_) { return []; }
-  const out = [];
-  files.forEach((f) => {
-    if (!/\.json$/.test(f)) return;
-    try {
-      const obj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-      if (obj && obj.session_id) out.push(obj);
-    } catch (_) { /* corrupt heartbeat file — skip, never crash */ }
-  });
-  return out;
+  return listRawHeartbeatsResult().heartbeats;
 }
 
 // ============================================================
@@ -414,6 +448,23 @@ const STALLED_REASONS = Object.freeze(['waiting-on-you', 'crashed', 'blocked-on'
 // class never masks a lower one).
 const ATTENTION_PRECEDENCE = Object.freeze(['waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'unknown']);
 
+// envMinutes(varName, defaultMinutes) — Task 1 comprehension-review fix:
+// `Number(process.env.X || default)` (the prior form) only falls back to
+// the default when the var is UNSET or empty; a SET-but-non-numeric value
+// (a typo'd override, e.g. "abc") is truthy, so `||` never reaches the
+// default and `Number('abc')` is NaN. NaN then poisons EVERY comparison in
+// classifyHeartbeatAge (`ageMs <= NaN` is always false for both bounds),
+// so every session — including a genuinely fresh one — falls through to
+// 'crashed'. Guard the parse explicitly: unset/empty/non-numeric all fall
+// back to the default; any other numeric string (including "0") is honored
+// verbatim.
+function envMinutes(varName, defaultMinutes) {
+  const raw = process.env[varName];
+  if (raw === undefined || raw === '') return defaultMinutes;
+  const n = Number(raw);
+  return isNaN(n) ? defaultMinutes : n;
+}
+
 // activityThresholdsMs() — A6's "T~24h activity window" (the proposal's
 // disjunct, restored), env-injectable per this codebase's established
 // threshold convention (peer-view.js#thresholds precedent). `activeMs` is
@@ -426,8 +477,8 @@ const ATTENTION_PRECEDENCE = Object.freeze(['waiting-on-you', 'crashed', 'blocke
 // long-running build between in-progress and "stalled: crashed" (F6).
 function activityThresholdsMs() {
   return {
-    activeMs: Number(process.env.COCKPIT_SESSION_ACTIVE_MIN || 30) * 60 * 1000,
-    activityWindowMs: Number(process.env.COCKPIT_SESSION_ACTIVITY_WINDOW_MIN || 24 * 60) * 60 * 1000,
+    activeMs: envMinutes('COCKPIT_SESSION_ACTIVE_MIN', 30) * 60 * 1000,
+    activityWindowMs: envMinutes('COCKPIT_SESSION_ACTIVITY_WINDOW_MIN', 24 * 60) * 60 * 1000,
   };
 }
 
@@ -454,31 +505,45 @@ function classifyHeartbeatAge(ageMs, th) {
 }
 
 // sessionActivityForIds(sessionIds, heartbeats, nowMs, th) -> 'live' |
-// 'quiet' | 'crashed' | 'no-heartbeat'
+// 'quiet' | 'crashed' | 'no-heartbeat' | 'invalid'
 //
 // Given the session ids attached to ONE roadmap item (its task_started /
 // dispatch-provenance sessions), finds the FRESHEST matching raw heartbeat
 // (from listRawHeartbeats(), passed in by the caller — this function never
-// reads disk itself) and classifies its age. 'no-heartbeat' — none of the
-// item's sessions has ANY heartbeat file — is a legitimate NAMED outcome,
-// not a derivation failure: listRawHeartbeats() already fails open on a
-// missing/unreadable heartbeat dir (see that function's own header), so an
-// empty match here honestly means "no live signal was ever found for this
-// item", which the caller treats as crashed (conservative: an in-flight
-// item with zero activity evidence is never rendered as "in-progress" by
-// default).
+// reads disk itself) and classifies its age.
+//
+// 'no-heartbeat' — none of the item's sessions has ANY matching heartbeat
+// record at all — is a legitimate NAMED outcome, not a derivation failure:
+// a session that has genuinely never heartbeated here is honestly absent
+// evidence, which the caller treats as crashed (conservative: zero
+// activity evidence is never rendered as "in-progress" by default).
+//
+// 'invalid' (Task 1 comprehension-review fix) — DISTINCT from 'no-heartbeat':
+// at least one heartbeat record's session_id MATCHES one of this item's
+// ids (the file exists and is attached to this item) but its own
+// `last_activity_ts` field fails to parse (Date.parse -> NaN) — a
+// present-but-schema-invalid record, e.g. corrupt/truncated write or a
+// future schema this reader doesn't understand. This IS a genuine
+// derivation-input failure (C5: "an unreadable heartbeat" is named in the
+// plan as unknown-worthy) and must be distinguished from the item simply
+// never having heartbeated at all. Only reported when NO OTHER matching
+// record produced a usable timestamp — real positive evidence (a fresh,
+// valid heartbeat on a DIFFERENT attached session) always wins over a
+// corrupt record for an unrelated session; 'invalid' fires only when the
+// corrupt record is the ONLY evidence found.
 function sessionActivityForIds(sessionIds, heartbeats, nowMs, th) {
   const ids = {};
   (sessionIds || []).forEach((sid) => { if (sid) ids[sid] = true; });
   if (!Object.keys(ids).length) return 'no-heartbeat';
   let freshest = null;
+  let sawInvalidRecord = false;
   (heartbeats || []).forEach((hb) => {
     if (!hb || !ids[hb.session_id]) return;
     const ts = Date.parse(hb.last_activity_ts);
-    if (isNaN(ts)) return;
+    if (isNaN(ts)) { sawInvalidRecord = true; return; }
     if (freshest === null || ts > freshest) freshest = ts;
   });
-  if (freshest === null) return 'no-heartbeat';
+  if (freshest === null) return sawInvalidRecord ? 'invalid' : 'no-heartbeat';
   return classifyHeartbeatAge(nowMs - freshest, th);
 }
 
@@ -511,7 +576,7 @@ function deriveStalledReason(signals) {
 //
 // THE ONE STATUS FUNCTION every roadmap item (a plan-level row or a
 // task-level row) calls. See the section header for the no-default-guess
-// invariant. Input fields (all optional except where noted):
+// invariant. Input fields:
 //
 //   planLoad          - the loadPlanFile() result for the OWNING plan, when
 //                        this item is plan-backed (null/omitted for an
@@ -520,8 +585,23 @@ function deriveStalledReason(signals) {
 //                        "not applicable", so it is not checked here).
 //                        `{ok:false}` (absent OR damaged) IS a genuine
 //                        derivation-input failure -> unknown.
-//   done               - bool (required): the item's own ground-truth
-//                        checkbox/completion state.
+//   done               - bool, REQUIRED (Task 1 comprehension-review fix):
+//                        the item's own ground-truth checkbox/completion
+//                        state. MUST be an explicit `true`/`false` — a
+//                        missing/non-boolean value (undefined, a string,
+//                        etc.) is itself a derivation-input failure
+//                        (the caller could not establish ground truth) and
+//                        renders unknown, never silently falls through to
+//                        a guessed not-started/in-progress bucket.
+//                        ASSUMPTION (zero-task-plan semantics): a plan with
+//                        zero parseable tasks (0 done / 0 total) is NEVER
+//                        "done" by vacuous 0-out-of-0 completion — a
+//                        caller aggregating a plan's own `done` MUST treat
+//                        a 0-total plan as not-started (false), consistent
+//                        with "absence must never render as complete".
+//                        This function does not count tasks itself (it
+//                        takes the already-computed boolean), so this is a
+//                        contract on CALLERS, not logic enforced here.
 //   startedEvent       - bool: a task_started (or equivalent) event exists
 //                        with no matching task_done — "this began".
 //   mergedAtMs         - number|null: this item's merge/ship timestamp.
@@ -534,6 +614,18 @@ function deriveStalledReason(signals) {
 //                        array (read ONCE per request, passed to every
 //                        item's derivation — this function never touches
 //                        disk).
+//   heartbeatsStoreOk  - bool, default true (Task 1 comprehension-review
+//                        fix, R-1): pass `false` when the caller's OWN read
+//                        of the heartbeat store failed at the STORE level
+//                        (listRawHeartbeatsResult().ok === false — the
+//                        directory exists but could not be read; NOT the
+//                        benign "directory doesn't exist" case, which
+//                        stays `ok:true, heartbeats:[]` and is handled by
+//                        the normal no-heartbeat->crashed path below).
+//                        `false` here is a genuine derivation-input
+//                        failure -> unknown, checked only where heartbeat
+//                        evidence would actually be consulted (a done or
+//                        not-started item never needs it).
 //   nowMs              - number (defaults to Date.now(); pass explicitly
 //                        for deterministic tests).
 //   thresholds         - override for activityThresholdsMs() (tests).
@@ -541,11 +633,14 @@ function deriveStalledReason(signals) {
 function deriveItemStatus(input) {
   input = input || {};
 
-  // ---- unknown: a genuine derivation-input failure, never a guessed
+  // ---- unknown: genuine derivation-input failures, never a guessed
   // bucket (C5). Checked FIRST — every other branch below assumes its own
-  // inputs are at least readable.
+  // inputs are at least readable/present.
   if (input.planLoad && input.planLoad.ok === false) {
     return { status: 'unknown', reason: 'plan parse failed (' + input.planLoad.reason + ')' };
+  }
+  if (typeof input.done !== 'boolean') {
+    return { status: 'unknown', reason: 'missing required input: done' };
   }
 
   const th = input.thresholds || activityThresholdsMs();
@@ -576,15 +671,30 @@ function deriveItemStatus(input) {
 
   // ---- in-flight: classify by session activity (A6 — pure-JS age, no
   // spawn, the T~24h window absorbs AV-pressure/API-throttle quiet spells).
+  // A store-level read failure (see heartbeatsStoreOk above) is checked
+  // HERE, not at the top — it only matters once we actually need heartbeat
+  // evidence; a done/not-started item never reaches this branch.
+  if (input.heartbeatsStoreOk === false) {
+    return { status: 'unknown', reason: 'unreadable heartbeat (heartbeat store could not be read)' };
+  }
   const activity = sessionActivityForIds(input.sessionIds, input.heartbeats || [], nowMs, th);
   if (activity === 'live' || activity === 'quiet') {
     return { status: 'in-progress', reason: null };
+  }
+  if (activity === 'invalid') {
+    // Present-but-schema-invalid record (matched this item, but its own
+    // last_activity_ts didn't parse) — DISTINCT from genuinely-absent
+    // ('no-heartbeat', handled below): a real derivation-input failure.
+    return { status: 'unknown', reason: 'unreadable heartbeat (present but schema-invalid last_activity_ts)' };
   }
 
   // ---- stalled: derive the reason. `crashed` is real here (heartbeat-
   // backed); the other three ride whatever the caller supplied (see
   // deriveStalledReason) and fall back to 'crashed' — the one reason this
   // task can always prove — when nothing more specific is known.
+  // NOTE: activity is 'crashed' or 'no-heartbeat' at this point (both
+  // genuinely-absent-or-past-window cases) — 'invalid' already returned
+  // above, so it can never reach this fold.
   const reason = deriveStalledReason(Object.assign({}, input.stalledSignals, {
     crashed: activity === 'crashed' || activity === 'no-heartbeat',
   }));
@@ -662,6 +772,7 @@ module.exports = {
   shQuote,
   classifySessions,
   listRawHeartbeats,
+  listRawHeartbeatsResult,
   // status derivation (Task 1, cockpit-roadmap-redesign)
   STATUS_VALUES,
   STALLED_REASONS,
@@ -717,8 +828,12 @@ async function selfTest() {
     sessionActivityForIds([], [hbFresh], now, TH) === 'no-heartbeat');
   ok('2e. sessionActivityForIds: ids given but none match any heartbeat -> no-heartbeat',
     sessionActivityForIds(['sess-zzz'], [hbFresh, hbOld], now, TH) === 'no-heartbeat');
-  ok('2f. sessionActivityForIds: an unparseable last_activity_ts is skipped, never crashes the caller',
-    sessionActivityForIds(['sess-c'], [hbCorrupt], now, TH) === 'no-heartbeat');
+  ok('2f. sessionActivityForIds: a PRESENT-but-schema-invalid last_activity_ts (matched id, unparseable timestamp) -> invalid, DISTINCT from genuinely-absent no-heartbeat (comprehension-review fix)',
+    sessionActivityForIds(['sess-c'], [hbCorrupt], now, TH) === 'invalid');
+  ok('2g. sessionActivityForIds: real positive evidence on one attached session wins over a corrupt record on ANOTHER attached session (never a false "invalid" over live data)',
+    sessionActivityForIds(['sess-a', 'sess-c'], [hbFresh, hbCorrupt], now, TH) === 'live');
+  ok('2h. sessionActivityForIds: no matching heartbeat record at ALL (genuinely absent, never even attempted) still -> no-heartbeat, not invalid',
+    sessionActivityForIds(['sess-zzz'], [hbCorrupt], now, TH) === 'no-heartbeat');
 
   // ---- deriveStalledReason precedence.
   ok('3. deriveStalledReason: waiting-on-you outranks every other signal',
@@ -763,8 +878,33 @@ async function selfTest() {
   ok('7. deriveItemStatus: started + a 48h-old heartbeat (past the activity window) -> stalled:crashed',
     stCrashed.status === 'stalled' && stCrashed.reason === 'crashed', JSON.stringify(stCrashed));
   const stNoHb = deriveItemStatus({ done: false, startedEvent: true, sessionIds: ['sess-nope'], heartbeats: [], nowMs: now, thresholds: TH });
-  ok('7b. deriveItemStatus: started but zero heartbeat evidence anywhere -> stalled:crashed (conservative, never a guessed in-progress)',
+  ok('7b. deriveItemStatus: started but zero heartbeat evidence anywhere (genuinely absent) -> stalled:crashed (conservative, never a guessed in-progress)',
     stNoHb.status === 'stalled' && stNoHb.reason === 'crashed');
+  const stInvalidHb = deriveItemStatus({ done: false, startedEvent: true, sessionIds: ['sess-c'], heartbeats: [hbCorrupt], nowMs: now, thresholds: TH });
+  ok('7c. deriveItemStatus: a PRESENT-but-schema-invalid heartbeat -> unknown("unreadable heartbeat..."), DISTINCT from stalled:crashed (comprehension-review fix)',
+    stInvalidHb.status === 'unknown' && /unreadable heartbeat/.test(stInvalidHb.reason), JSON.stringify(stInvalidHb));
+  const stStoreUnreadable = deriveItemStatus({
+    done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [], heartbeatsStoreOk: false, nowMs: now, thresholds: TH,
+  });
+  ok('7d. deriveItemStatus: heartbeatsStoreOk:false (the store itself could not be read) -> unknown, never silently folded into stalled:crashed',
+    stStoreUnreadable.status === 'unknown' && /heartbeat store could not be read/.test(stStoreUnreadable.reason), JSON.stringify(stStoreUnreadable));
+  const doneIgnoresStoreFailure = deriveItemStatus({ done: true, projectKey: 'neural-lace', heartbeatsStoreOk: false });
+  ok('7e. deriveItemStatus: a DONE item ignores heartbeatsStoreOk entirely (heartbeat evidence is never consulted once done short-circuits)',
+    doneIgnoresStoreFailure.status === 'complete');
+
+  // ---- deriveItemStatus: missing/non-boolean `done` (comprehension-review
+  // fix — a required-input guard in the function whose header bans
+  // guessing; `done` silently falling through to a guessed not-started was
+  // exactly such a guess).
+  const missingDone = deriveItemStatus({ startedEvent: false });
+  ok('7f. deriveItemStatus: `done` entirely omitted -> unknown("missing required input: done"), never a guessed not-started',
+    missingDone.status === 'unknown' && /missing required input: done/.test(missingDone.reason), JSON.stringify(missingDone));
+  const stringDone = deriveItemStatus({ done: 'true', startedEvent: false }); // a truthy but non-boolean value
+  ok('7g. deriveItemStatus: a non-boolean `done` (e.g. the string "true") -> unknown, never coerced/guessed',
+    stringDone.status === 'unknown' && /missing required input: done/.test(stringDone.reason));
+  const explicitFalseDone = deriveItemStatus({ done: false, startedEvent: false });
+  ok('7h. deriveItemStatus: an explicit `done:false` (a genuinely present, valid boolean) proceeds normally to not-started, NOT unknown',
+    explicitFalseDone.status === 'not-started');
 
   // ---- deriveItemStatus: stalled with a caller-supplied reason outranking crashed.
   const stWaiting = deriveItemStatus({
@@ -787,7 +927,11 @@ async function selfTest() {
 
   // ---- No-default-guess sweep: every scenario above returned a value from
   // the six-value enum — a class-level check, not just per-scenario.
-  const allResults = [unk, unk2, ns, ip, ipQuiet, stCrashed, stNoHb, stWaiting, doneHarness, doneNoSignal, doneOverride];
+  const allResults = [
+    unk, unk2, ns, ip, ipQuiet, stCrashed, stNoHb, stInvalidHb, stStoreUnreadable,
+    doneIgnoresStoreFailure, missingDone, stringDone, explicitFalseDone,
+    stWaiting, doneHarness, doneNoSignal, doneOverride,
+  ];
   ok('12. every deriveItemStatus result above is one of the six named STATUS_VALUES (no stray/guessed status string)',
     allResults.every((r) => STATUS_VALUES.indexOf(r.status) !== -1),
     JSON.stringify(allResults.map((r) => r.status)));
@@ -841,6 +985,80 @@ async function selfTest() {
   // badges, never a phantom entry.
   ok('17. rollUpAttentionBadges: an all-healthy subtree rolls up to zero badges',
     rollUpAttentionBadges([{ status: 'complete' }, { status: 'in-progress' }, { status: 'not-started' }]).length === 0);
+
+  // ---- Comprehension-review fix: env NaN poisoning (activityThresholdsMs).
+  // A non-numeric override used to poison BOTH thresholds to NaN, which
+  // made classifyHeartbeatAge's two `<=` comparisons false for every ageMs
+  // — even 0ms — so EVERY session classified crashed. Guarded now via
+  // envMinutes (falls back to the default on NaN/invalid, not just unset).
+  const savedActiveEnv = process.env.COCKPIT_SESSION_ACTIVE_MIN;
+  const savedWindowEnv = process.env.COCKPIT_SESSION_ACTIVITY_WINDOW_MIN;
+  try {
+    process.env.COCKPIT_SESSION_ACTIVE_MIN = 'not-a-number';
+    process.env.COCKPIT_SESSION_ACTIVITY_WINDOW_MIN = 'also-garbage';
+    const thPoisoned = activityThresholdsMs();
+    ok('18. activityThresholdsMs: a non-numeric env override falls back to the DEFAULT (30min), never NaN',
+      thPoisoned.activeMs === 30 * 60 * 1000, JSON.stringify(thPoisoned));
+    ok('18b. activityThresholdsMs: same guard applies to the activity-window var (falls back to 24h default)',
+      thPoisoned.activityWindowMs === 24 * 60 * 60 * 1000);
+    ok('18c. classifyHeartbeatAge with the recovered (non-NaN) thresholds correctly classifies a fresh (0ms) session live, NOT crashed',
+      classifyHeartbeatAge(0, thPoisoned) === 'live');
+
+    process.env.COCKPIT_SESSION_ACTIVE_MIN = '15';
+    const thValid = activityThresholdsMs();
+    ok('19. activityThresholdsMs: a VALID numeric override is honored verbatim (15min, not the default)',
+      thValid.activeMs === 15 * 60 * 1000);
+
+    process.env.COCKPIT_SESSION_ACTIVE_MIN = '0';
+    const thZero = activityThresholdsMs();
+    ok('19b. activityThresholdsMs: an explicit "0" override is honored as 0 (not treated as unset/falsy)',
+      thZero.activeMs === 0);
+  } finally {
+    if (savedActiveEnv === undefined) delete process.env.COCKPIT_SESSION_ACTIVE_MIN;
+    else process.env.COCKPIT_SESSION_ACTIVE_MIN = savedActiveEnv;
+    if (savedWindowEnv === undefined) delete process.env.COCKPIT_SESSION_ACTIVITY_WINDOW_MIN;
+    else process.env.COCKPIT_SESSION_ACTIVITY_WINDOW_MIN = savedWindowEnv;
+  }
+
+  // ---- Comprehension-review fix (R-1): listRawHeartbeatsResult()
+  // distinguishes a genuinely-absent store (ENOENT -> ok:true, benign)
+  // from a store that EXISTS but could not be read (ok:false, a genuine
+  // failure) — sandboxed via HEARTBEAT_STATE_DIR, never the real estate.
+  const savedHbDir = process.env.HEARTBEAT_STATE_DIR;
+  const tmp20 = fs.mkdtempSync(path.join(os.tmpdir(), 'derive-lib-hb-st-'));
+  try {
+    const absentDir = path.join(tmp20, 'never-created');
+    process.env.HEARTBEAT_STATE_DIR = absentDir;
+    const r20 = listRawHeartbeatsResult();
+    ok('20. listRawHeartbeatsResult: a genuinely-absent store dir (ENOENT) -> ok:true, heartbeats:[] (benign, never a failure)',
+      r20.ok === true && r20.heartbeats.length === 0, JSON.stringify(r20));
+    ok('20b. listRawHeartbeats() (the unchanged array-returning contract) still returns [] for the same absent dir',
+      Array.isArray(listRawHeartbeats()) && listRawHeartbeats().length === 0);
+
+    const populatedDir = path.join(tmp20, 'populated');
+    fs.mkdirSync(populatedDir, { recursive: true });
+    fs.writeFileSync(path.join(populatedDir, 'sess-x.json'), JSON.stringify({ schema: 1, session_id: 'sess-x', last_activity_ts: new Date().toISOString() }));
+    process.env.HEARTBEAT_STATE_DIR = populatedDir;
+    const r20c = listRawHeartbeatsResult();
+    ok('20c. listRawHeartbeatsResult: a real, readable store with one file -> ok:true, heartbeats:[the record]',
+      r20c.ok === true && r20c.heartbeats.length === 1 && r20c.heartbeats[0].session_id === 'sess-x', JSON.stringify(r20c));
+
+    // A file sitting where a DIRECTORY is expected reproduces a genuine
+    // readdirSync failure that is NOT ENOENT (ENOTDIR) — the store EXISTS
+    // (as a path) but cannot be enumerated as a directory.
+    const notADirPath = path.join(tmp20, 'not-a-dir.json');
+    fs.writeFileSync(notADirPath, '{}');
+    process.env.HEARTBEAT_STATE_DIR = notADirPath;
+    const r20d = listRawHeartbeatsResult();
+    ok('20d. listRawHeartbeatsResult: the store PATH exists but is not a directory (ENOTDIR) -> ok:false, a genuine store-unreadable failure, DISTINCT from the benign absent case',
+      r20d.ok === false && r20d.heartbeats.length === 0 && /unreadable/.test(r20d.reason), JSON.stringify(r20d));
+    ok('20e. listRawHeartbeats() (the unchanged array contract) still degrades to [] for the same unreadable store (never throws)',
+      Array.isArray(listRawHeartbeats()) && listRawHeartbeats().length === 0);
+  } finally {
+    if (savedHbDir === undefined) delete process.env.HEARTBEAT_STATE_DIR;
+    else process.env.HEARTBEAT_STATE_DIR = savedHbDir;
+    try { fs.rmSync(tmp20, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
+  }
 
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
   return failed === 0 ? 0 : 1;
