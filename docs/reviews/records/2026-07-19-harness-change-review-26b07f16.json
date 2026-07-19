@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260719-26b07f16",
+  "created_at": "2026-07-19T20:42:32Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "fable",
+  "plan_ref": "docs/reviews/2026-07-19-doctor-red-spike-diagnosis.md",
+  "change_ref": {
+    "commit_sha": "16ef4836b7ce4287a9fc2f622e799f456b63cac9",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/lib/merge-scan-lib.sh",
+      "blob_sha": "c78a78a18cd36501b00f2149d09609d8912c5f84"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "clean — convergence cursor is fail-open, oldest-first, kill-resilient; 36/36",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

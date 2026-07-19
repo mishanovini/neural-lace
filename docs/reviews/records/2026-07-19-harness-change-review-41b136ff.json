@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260719-41b136ff",
+  "created_at": "2026-07-19T20:42:37Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "fable",
+  "plan_ref": "docs/reviews/2026-07-19-doctor-red-spike-diagnosis.md",
+  "change_ref": {
+    "commit_sha": "16ef4836b7ce4287a9fc2f622e799f456b63cac9",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/plan-lifecycle.sh",
+      "blob_sha": "6d9c61050670bd0de7067e2c1f4e152db0380779"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "both layers widened (script dispatch + template matcher, PROVEN), MultiEdit needed no input-shape handling",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}
