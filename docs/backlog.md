@@ -1120,3 +1120,16 @@ Anthropic-side" theme).
 **What:** Inbox (inbox.js:32-36) and Requests stale-link misses render the honest generic "resolved earlier" fallback; the C3 LAW names "resolved <when> — <outcome>". Needs a resolved-items retention window in the payload (or a ledger lookback) to populate specifics. Same pattern in both views — fix as one class.
 **Fold-in:** cockpit follow-on polish or task-9 hardening round.
 **Filed:** 2026-07-19, t4 verifier residual (conf 9 PASS otherwise).
+## NL-ISSUES-TRIAGE-20260719 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 64 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 9d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## NL-ISSUES-TRIAGE-20260720 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 77 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 10d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
