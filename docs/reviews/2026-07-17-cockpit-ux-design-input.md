@@ -155,3 +155,30 @@ Gap analysis against the live render (all but #6 are drift from laws ALREADY in 
 6. NEW SPEC (this round): sibling plans under an intent render as CONNECTED NODES IN SERIES
    (phase 1 → 2 → 3 → 4, build order made visual), each expanding to its compact task-leaf
    list; the whole currently-active picture reads on ONE page.
+
+## Round 7 — 2026-07-20, follow-on to the live walkthrough (operator, verbatim)
+
+> "And there really should not be anything in paragraph form. Lists make it easy to scan
+> quickly and capture the information that I need within seconds.
+>
+> I also see several background tasks running right now. It would make sense to me to see those
+> as potentially sub-tasks within the tree. I'm not necessarily saying that all subtasks need to
+> be listed within that tree, but that general concept should apply. Tasks within a plan do
+> still have somewhat of a hierarchical structure, don't they? I want to see that structure in
+> the Workstreams UI."
+
+Two binding requirements (extend Round 6; same authority):
+7A. NO PARAGRAPH FORM ANYWHERE in the roadmap surface. Every unit of information is a scannable
+    list item: the tree, the item drill-downs, the Inbox anatomy, provenance. Prose blocks are
+    banned — if a field carries multi-part content it renders as a bulleted/labeled list, never
+    a sentence-paragraph. Design goal (operator): "capture the information I need within
+    seconds." This is a global rendering law, audited surface-wide, not a per-view note.
+7B. HIERARCHY IS VISIBLE. A plan's tasks have real sub-structure (task → subtasks → live work).
+    The tree must SHOW that structure — intent → plan(phase) → task → subtask — as nested
+    expandable nodes. Depth is opt-in (not every subtask forced into view; expandable), but the
+    concept is mandatory: the tree is a genuine hierarchy, not a two-level list.
+7B-i. LIVE BACKGROUND WORK AS SUB-TASKS. Currently-running background agents/sessions render as
+    live sub-task leaves under the task they serve (data source: the T1 in-progress derivation —
+    listRawHeartbeats + session→plan/task attribution), each with its own live status
+    (running / stalled / done). "Everything currently being worked on, on one page" (Round 6)
+    includes the live agents, positioned in the tree where the work actually sits.
