@@ -41,4 +41,4 @@ builder re-discovered independently was already fixed on master (dca80ed) before
 
 ## Gate results
 ### task-verifier: pending (opus, in flight)
-### comprehension-reviewer: pending (opus, in flight)
+### comprehension-reviewer (opus): PASS conf 8 — all 11 load-bearing claims grounded; question-carve-out ruled surfaced-by-construction (decision-scoped lint, T25, A8 no-second-heuristic); A10 two-counts claim PROVEN (interim renderer + timer genuinely removed); win/stale-link race coherent; both backlog rows honestly cover the NOT-covered gaps. Flip authorized from comprehension side. Two non-blocking phrasing notes (header gloss overclaim on questions; dead-session resume fallback is plan-accepted R3) — fold at next touch. (Reviewed pre-evidence-file via commit+code per dispatch authorization; this file is the durable record.)
