@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "kind": "fix-root-cause",
+  "record_id": "frc-20260720-01301d50",
+  "created_at": "2026-07-20T16:05:00Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/reviews/2026-07-20-f1-f3-rederived-harness-review.md",
+  "change_ref": {
+    "commit_sha": "09f29b7",
+    "branch": "build/cockpit-health-int"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/coord-sync.sh",
+      "blob_sha": "5a9ba6b8be22d9ab4f17111d1ef7de56f272b018"
+    },
+    {
+      "path": "adapters/claude-code/scripts/coord-push.sh",
+      "blob_sha": "79245cdb892a6679cc3d4d3a2e578a9c999d3a00"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "coord-sync's event-triggered cycle invokes coord-push WITHOUT --force, so coord-push's 600s throttle swallows event publishes (defeating the A5 ~1-min goal) and its noop-on-throttle outcome resets the A2c local-commit streak (starving the alert); the self-test's THROTTLE=0 hides both.",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {
+    "root_cause": {
+      "tag": "PROVEN",
+      "evidence": "coord-push.sh:71 THROTTLE default 600; coord-push.sh:283-291 early-return outcome=noop inside window; coord-sync.sh:432 push without --force; masking: COORD_PUSH_THROTTLE_SECONDS=0 at coord-sync.sh:518,663,681"
+    }
+  }
+}

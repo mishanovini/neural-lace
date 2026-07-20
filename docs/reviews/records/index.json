@@ -120,12 +120,30 @@
     },
     {
       "path": "adapters/claude-code/scripts/coord-push.sh",
+      "blob_sha": "79245cdb892a6679cc3d4d3a2e578a9c999d3a00",
+      "record_id": "frc-20260720-01301d50",
+      "kind": "fix-root-cause",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-20T16:05:00Z"
+    },
+    {
+      "path": "adapters/claude-code/scripts/coord-push.sh",
       "blob_sha": "b10b92456cb832583924b905da43ccb9185f3cb2",
       "record_id": "hcr-20260719-0b4258d6",
       "kind": "harness-change-review",
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-19T20:42:49Z"
+    },
+    {
+      "path": "adapters/claude-code/scripts/coord-sync.sh",
+      "blob_sha": "5a9ba6b8be22d9ab4f17111d1ef7de56f272b018",
+      "record_id": "frc-20260720-01301d50",
+      "kind": "fix-root-cause",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-20T16:05:00Z"
     },
     {
       "path": "adapters/claude-code/scripts/manifest-check.sh",
