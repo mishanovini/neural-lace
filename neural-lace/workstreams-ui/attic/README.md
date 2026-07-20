@@ -22,3 +22,5 @@ OLD tree-state contract) and OLD DOM ids — do not run them against the
 current `workstreams-ui/` without expecting every assertion to fail; that
 failure would be correct, not a regression, since the surface they tested
 was retired.
+
+- todo.js — retired 2026-07-19 (cockpit-roadmap-redesign tasks 4+8: My-To-Do pane superseded by the Inbox My-items section; server /api/todo endpoints remain live consumers)
