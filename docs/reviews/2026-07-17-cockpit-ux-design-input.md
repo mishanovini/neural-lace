@@ -124,3 +124,34 @@ Design response (agreed hybrid, folded into the redesign plan):
   desktop+laptop / Jaime: ..."), and Jaime's account gets push access to the private coord repo.
   Multiple sessions per machine are already aggregated (the exporter derives from machine-global
   state).
+
+## Round 6 — 2026-07-20, live-surface walkthrough (operator, verbatim; screenshot: #roadmap tab)
+
+> "This Workstreams UI is still not very helpful and is still not laid out the way that I've
+> told you to. I feel like I've told you this already, but I'll tell you again. What I have in
+> mind is I'm picturing a series of plans that are being worked on. We can call it phases one
+> through four. If each phase has its own plan and each plan has a list of tasks within it, I
+> want to be able to look at a tree that shows four connected tree nodes that are in series,
+> each of which is essentially a branch that has the list of tasks as leaves within that
+> branch. Each task in that list would display its status: not yet started, current progress,
+> or completed. But generally speaking, I want to be able to take a look at everything that is
+> currently being worked on and see it all on one single page, organized. Are you able to see
+> how what we have right now is not meeting that requirement?"
+
+Gap analysis against the live render (all but #6 are drift from laws ALREADY in the plan):
+1. Task leaves render the FULL plan-task markdown (spec/verification text walls) — must be
+   one-line: distilled task title + status chip + age; full text drill-down only.
+2. "from your request(s):" renders inline and VERBATIM-DUPLICATES the item title (3x on
+   screen for one item family) — provenance is a drill-down answer (C6), never inline default;
+   suppress entirely when identical to the title.
+3. Completed subtrees (18/18, 72-151h old) render fully expanded — the I2 collapse law
+   (immediate one-line headline for fully-complete nodes) is not applied; the "N completed ▸ —
+   latest:" roll-up prints the latest task's FULL TEXT instead of its title.
+4. Edit-title / Move-up / Move-down are always-on full-size buttons (2 rows of chrome per
+   item) — must be compact icon affordances on hover/focus (keyboard-reachable per R2).
+5. Conversational fragments ("is that really the cleanest way…") render as not-started
+   intents — the T2 distill+noise-classification lane is not running/not applied to the live
+   registry.
+6. NEW SPEC (this round): sibling plans under an intent render as CONNECTED NODES IN SERIES
+   (phase 1 → 2 → 3 → 4, build order made visual), each expanding to its compact task-leaf
+   list; the whole currently-active picture reads on ONE page.
