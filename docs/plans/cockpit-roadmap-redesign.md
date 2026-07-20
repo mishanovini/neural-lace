@@ -195,7 +195,7 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
     chips are real `<button>`s (inherits the 24px floor); the kanban toggle is an aria-pressed
     button. —
   Verification: full
-- [ ] 4. [serial] **Inbox view + context contract enforcement.**
+- [x] 4. [serial] **Inbox view + context contract enforcement.**
   - **Item anatomy (I5 — the operator-approved §3 compact format, reused not reinvented):**
     COLLAPSED ROW: type glyph + text label (decision / unblock) + the ask as ONE imperative
     sentence + source chip (session/plan) + age + "blocks: <item>" when it stalls live work

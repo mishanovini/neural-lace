@@ -40,5 +40,5 @@ dispatched by orchestrator covering both). The requests.js comment-splice defect
 builder re-discovered independently was already fixed on master (dca80ed) before landing.
 
 ## Gate results
-### task-verifier: pending (opus, in flight)
+### task-verifier (opus): PASS conf 9 — A1 sandbox falsification survived (interactive block writes 0; --mechanical quarantines with lint_warnings); A8 filed-once + recurrence pinned; I4 live-DOM count excludes quarantine + My-items; 8 suites re-run green incl. auditor 44/0 (no env-hang). Residual (non-blocking, T5-precedent): C3 stale-link renders honest generic fallback, not <when>—<outcome> — backlog row filed. Flipped on dual-gate authorization.
 ### comprehension-reviewer (opus): PASS conf 8 — all 11 load-bearing claims grounded; question-carve-out ruled surfaced-by-construction (decision-scoped lint, T25, A8 no-second-heuristic); A10 two-counts claim PROVEN (interim renderer + timer genuinely removed); win/stale-link race coherent; both backlog rows honestly cover the NOT-covered gaps. Flip authorized from comprehension side. Two non-blocking phrasing notes (header gloss overclaim on questions; dead-session resume fallback is plan-accepted R3) — fold at next touch. (Reviewed pre-evidence-file via commit+code per dispatch authorization; this file is the durable record.)

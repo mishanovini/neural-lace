@@ -1113,3 +1113,10 @@ Anthropic-side" theme).
 **What:** cockpit.selftest.js stripJsComments treats an unclosed `/*` inside a `//` line comment as a block-comment opener, silently swallowing subsequent code from parse checks. Instance defused at asks.js:585 (task 7); the CLASS remains.
 **Fold-in:** redesign task 9 acceptance hardening, or next cockpit selftest task.
 **Filed:** 2026-07-19, task-7 builder report (barred from backlog edits).
+
+## INBOX-STALE-LINK-OUTCOME-01 — populate resolved-item when/outcome in stale-link renders
+
+**Severity:** P3 (polish; safety property already holds — never blank)
+**What:** Inbox (inbox.js:32-36) and Requests stale-link misses render the honest generic "resolved earlier" fallback; the C3 LAW names "resolved <when> — <outcome>". Needs a resolved-items retention window in the payload (or a ledger lookback) to populate specifics. Same pattern in both views — fix as one class.
+**Fold-in:** cockpit follow-on polish or task-9 hardening round.
+**Filed:** 2026-07-19, t4 verifier residual (conf 9 PASS otherwise).

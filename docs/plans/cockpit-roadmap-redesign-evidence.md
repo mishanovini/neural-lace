@@ -456,3 +456,75 @@ Git evidence:
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: the prior run's sole FAIL basis (the <script src="/requests.js"> tag was spliced INSIDE index.html's comment block, so the view never mounted in a real browser — document.scripts lacked requests.js, #requestsLedgerSection was absent) is fixed at dca80ed and INDEPENDENTLY re-derived here in a real headless-Chrome render against the running :7733 server: requests.js is now a live parsed script in correct order, the ledger mounts, Open(3)/Closed(1) heads render, the filter narrows the rendered rows across states, and a gone-id shows the honest miss banner (never blank/404). Composed cockpit.selftest 205/0 with direct rc=0 (T5 block 24/24). The prior run's server-surface 25/0 + live curl + falsification probes a-d STAND. Two adversarial probes this run (filter narrowing showing output change; gone-id miss banner) were attempted and did not break. Out-of-scope residual (non-blocking): a 500 on /api/todo (My-To-Do pane, task 4/8), not /api/requests (200) — does not affect the Requests ledger.
+
+---
+
+## Task 4 — Inbox view + context contract enforcement
+
+EVIDENCE BLOCK
+==============
+Task ID: 4
+Task description: Inbox view + context contract enforcement (A1/A8/A10/C3/C4/I4/I5 + delta residuals).
+Verified at: 2026-07-19T18:05:00-07:00
+Verifier: task-verifier agent
+
+Oracle: specified — the deployed live cockpit at http://127.0.0.1:7733 (#inbox rendered DOM) is the user-facing source of truth; derived — the pre-existing needs-you.sh cold-reader lint field (lint_warnings) and the auditor filed-once state are the classifier oracles. Verification against current master HEAD (62bb460 core + 362f471 splice + a9f0cdf comprehension gate + 7cc793a My-items/pane-retirement + 0913cf0 backlog), which is what is deployed on :7733.
+
+Comprehension-gate: PASS (confidence 8) — recorded separately on commit a9f0cdf ("gate(cockpit-roadmap-redesign t4): comprehension PASS conf 8 — flip awaits verifier only"); orchestrator runs the comprehension gate as a distinct gate and holds the commit until both pass. This verdict covers functional verification.
+
+Checks run:
+1. Suite re-runs (all re-executed by verifier, not trusted from builder claim):
+   - inbox-routes.selftest.js: 23 passed, 0 failed (rc=0)
+   - cockpit.selftest.js: 242 passed, 0 failed (rc=0)
+   - server.selftest.js single-run: 173 passed, 0 failed (rc=0)
+   - HARNESS_SELFTEST=1 needs-you.sh --self-test: 45 passed, 0 failed (rc=0) — incl. T24b (interactive add BLOCKS), T24c (blocked add writes NOTHING, count unchanged), T24 (mechanical never blocks)
+   - auditor.js --self-test: 44 passed, 0 failed (rc=0, completed WITHOUT the prior env-hang) — S9a-i quarantine/filed-once suite
+   - session-honesty-gate.sh --self-test: 40 passed, 0 failed (Scenario 21: PAUSING marker -> needs-you.sh add actually called) — the load-bearing --section decision mechanical caller
+   - session-resumer.sh --self-test: 69 passed, 0 failed
+   - stop-verdict-dispatcher.sh --self-test: 73 passed, 0 failed (env-slow on git fixtures, completed)
+   Result: PASS
+2. LIVE curl http://127.0.0.1:7733/api/inbox: ok:true, ledger_present:true, answerable:3, quarantined:1. answerable[0] carries full §3 anatomy (title/context/options via reply_with/my_pick/reply_channel); quarantined item carries lint_warnings ["no-context"], humanized lint_reasons, defect_filed:true; resolved items absent (buildInboxPayload excludes state!==open). Result: PASS
+3. Browser render (headless Chrome / puppeteer-core, deployed :7733 #inbox): tabCount "(3)" = answerable only; section heads = ["Awaiting your answer (3)", "1 arrived without context — defects filed against the producing sessions", "My items (1 open)"]; 3 answerable rows, 1 quarantine row; SYSTEM-failure framing "The system could not classify this as answerable — it arrived without enough context."; defect line "A defect has been filed against the producing session." (matches auditor real filed state, never claimed early); win state absent (answerable non-empty); no JS errors. Count EXCLUDES both the 1 quarantined and the 1 My-item. Result: PASS
+
+Falsifications attempted (verifier's own, all survived):
+  (a) A1 interactive-block vs mechanical-quarantine — sandboxed NEEDS_YOU_STATE_DIR: interactive anchorless add ("Ship tonight? My pick: yes." no --mechanical) -> exit 1, BLOCKED, 0 items written; identical text --mechanical -> exit 0, stored with lint_warnings ["no-context","no-anchor","no-outcomes"]. All three mechanical callers grep-confirmed passing --mechanical at the correct call sites (session-honesty-gate.sh:496 --section decision [load-bearing]; stop-verdict-dispatcher.sh:1195-1197 --section inflight; session-resumer.sh:957-959 --section inflight) + one self-test scenario each. SURVIVED.
+  (b) A8 filed-once — auditor S9f: a SECOND cycle over the SAME still-open quarantined items does NOT re-file (once per item lifetime, keyed by 'quarantine-<ledger id>'); S9d/S9e legacy no-producer item keys against the ledger id; S9g/S9i recurrence escalates once then does NOT re-escalate. SURVIVED.
+  (c) C3 stale-link — missInfo renders "resolved earlier — no longer waiting on you (answered or cleared in the ledger)." NEVER blank/404. NOTED DEGRADATION (non-blocking): the specific "<when> — <outcome>" is not populated because resolved items leave the inbox payload; declared as an honest limit in inbox.js:32-36 and consistent with the identical generic-fallback pattern shipped in task 5 (requests.js, verified PASS conf 9). Safety-critical never-blank property holds. SURVIVED.
+  (d) I4 — quarantine framed as SYSTEM failure, rendered below answerable, EXCLUDED from the (N)=3 count. PROVEN at render (setTabCount(answerable.length), inbox.js:434). SURVIVED.
+
+§10 compliance (A1 new blocking gate): golden scenario (2026-07-18 bare-token sign-off incident) + expected FP rate (<~5% interactive adds) + retirement condition present in BOTH needs-you.sh header (lines 70-80) AND plan A1 bullet (lines 226-231). Result: PASS
+
+DEPENDENCY TRACE
+================
+Step 1: operator opens #inbox on the deployed cockpit
+  ↓ Verified at: headless-Chrome render, #inbox mounts, tabCount "(3)"
+Step 2: inbox.js fetches /api/inbox -> inbox-routes.js buildInboxPayload() splits answerable/quarantined by lint_warnings, excludes state!==open
+  ↓ Verified at: live curl (answerable:3, quarantined:1) + inbox-routes.js:290-316
+Step 3: answerable render §3 anatomy + count = answerable.length; quarantine renders SYSTEM-failure framing + honest defect line; win-state only when answerable empty AND ok:true
+  ↓ Verified at: render (section heads, framing, defect line) + inbox.js:428-460, 734-750
+Step 4: A1 lint promotion — interactive decision add BLOCKS (nothing written); mechanical callers quarantine (lint_warnings stamped)
+  ↓ Verified at: verifier sandbox probe (exit 1 / exit 0) + needs-you.sh:596-609 + 3 caller call-sites
+Step 5: auditor cycle files ONE quarantine defect per ledger-item lifetime, keyed by ledger id
+  ↓ Verified at: auditor.js:976-1020 + auditor --self-test S9b/S9d/S9e/S9f/S9g/S9i
+
+Git evidence:
+  Files modified in recent history:
+    - neural-lace/workstreams-ui/server/inbox-routes.js  (NEW, 62bb460, 2026-07-19)
+    - neural-lace/workstreams-ui/web/inbox.js  (NEW 62bb460; My-items section added 7cc793a)
+    - neural-lace/workstreams-ui/server/auditor.js  (quarantine auto-defect, 62bb460)
+    - adapters/claude-code/scripts/needs-you.sh  (A1 lint block + --mechanical, 62bb460)
+    - adapters/claude-code/hooks/session-honesty-gate.sh / stop-verdict-dispatcher.sh / adapters/claude-code/scripts/session-resumer.sh  (--mechanical, 62bb460)
+    - neural-lace/workstreams-ui/server/server.js + web/index.html  (mount + script tag, splice 362f471)
+
+Runtime verification: curl http://127.0.0.1:7733/api/inbox
+Runtime verification: test server/inbox-routes.selftest.js::inbox-routes self-test (23 passed, 0 failed)
+Runtime verification: test web/cockpit.selftest.js::self-test summary (242 passed, 0 failed)
+Runtime verification: test server/server.selftest.js::self-test summary (173 passed, 0 failed)
+Runtime verification: test adapters/claude-code/scripts/needs-you.sh::--self-test (45 passed, 0 failed; T24b/T24c interactive-block)
+Runtime verification: test neural-lace/workstreams-ui/server/auditor.js::--self-test (44 passed, 0 failed; S9f filed-once re-run)
+Runtime verification: file neural-lace/workstreams-ui/web/inbox.js::setTabCount(answerable.length)
+Runtime verification: file adapters/claude-code/hooks/session-honesty-gate.sh::--mechanical >/dev/null 2>&1
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: the user-facing outcome was exercised against the live deployed :7733 surface via headless-Chrome render — the Inbox mounts, the (N)=3 headline count is derived from answerable items ONLY and excludes both the quarantined item and the My-items section (A10/I4), quarantine renders as a framed SYSTEM failure with an honest "defect has been filed" line matching the auditor's real state (A8), and the win state correctly does NOT render while answerable items exist (C4). Adversarial falsification probes SURVIVED: the A1 interactive anchorless add BLOCKS with nothing written while the identical text --mechanical stores + quarantines with lint_warnings (verifier's own sandbox probe); the auditor files exactly ONE quarantine defect per ledger-item lifetime and does not re-file on a second cycle (S9f); all three mechanical callers pass --mechanical at the correct sites. §10 golden-scenario/FP-rate/retirement text is present in both needs-you.sh's header and the plan. One NON-BLOCKING documented residual: the C3 stale-link banner renders the honest generic "resolved earlier — ..." (never blank/404) but does not populate the specific "<when> — <outcome>" because resolved items leave the payload — declared as an honest limit and identical to the generic-fallback pattern already shipped and PASSED in task 5.
