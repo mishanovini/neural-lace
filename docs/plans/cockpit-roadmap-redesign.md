@@ -448,6 +448,23 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
 - 2026-07-19: `docs/plans/fragments/roadmap-t4-server-fragment.md` — task 4 coordination fragment (server.js mount line; also documents the pre-existing task-5 `requests.js` script-tag defect discovered adjacent to this work, corrected in the shell fragment below)
 - 2026-07-19: `docs/plans/fragments/roadmap-t4-shell-fragment.md` — task 4 coordination fragment (the ONE index.html `<script src="/inbox.js">` line; PLUS the corrective diff moving task 5's misplaced `<script src="/requests.js">` line out of an HTML comment it accidentally landed inside — bundled since whoever applies this fragment is already editing that exact region)
 - 2026-07-19: `docs/backlog.md` — task 4 files two follow-ups: `INBOX-MY-ITEMS-RELOCATION-01` (the "My items" section + standalone-pane retirement, confirmed task 8's per its own bullet) and `ROADMAP-WAITING-ON-YOU-SIGNAL-01` (roadmap-routes.js never populates `stalledSignals.waitingOnYouId`, so the Inbox's "blocks: `<item>`" chip has no live data source yet — HONEST LIMIT, never fabricated)
+- 2026-07-19: `neural-lace/workstreams-ui/attic/todo.js` — completes task 8 item 5 +
+  task 4's A10 clause (`INBOX-MY-ITEMS-RELOCATION-01` above, now resolved):
+  the standalone My-To-Do pane is retired. `web/todo.js` (git mv, salvaged not
+  deleted, per this attic directory's own existing salvage-before-reset
+  convention) lands at this NEW path, not covered by any existing scope
+  entry (the task 3 `neural-lace/workstreams-ui/web/*` glob is single-level
+  and does not reach `attic/`). Its two rendering functions (operator-item
+  row + pointer-item row, same POST verbs) moved into `web/inbox.js`'s new
+  "My items" section (already in scope via the same `web/*` glob), reusing
+  the UNCHANGED GET/POST /api/todo endpoints (server/server.js Task 14 —
+  no server file touched by this entry). `web/index.html`'s `#todoSection`
+  markup, its now-purposeless `#rowResizeHandle` (it used to split the
+  pane against Backlog; nothing remains for it to split), and the
+  `<script src="/todo.js">` tag are removed (also within the `web/*` glob).
+  `web/cockpit.selftest.js` T8-1/T16-11/T16-13/T4-17 updated (pinned the
+  OLD pane; now pin the new My-items surface per this task's own
+  instructions) + T8-15..T8-20/T4-18..T4-20 added.
 
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store

@@ -1,4 +1,17 @@
 'use strict';
+/* RETIRED 2026-07-19 (cockpit-roadmap-redesign Task 8 item 5 / A10) —
+ * salvaged here, not deleted, per the harness's salvage-before-reset
+ * discipline. This module is no longer served (no <script> tag in
+ * web/index.html) and no longer live in the app. Its two functions moved
+ * to web/inbox.js as the Inbox tab's "My items" section: the SAME GET/POST
+ * /api/todo endpoints (server/server.js, UNCHANGED), the SAME interactions
+ * (operator add/edit/toggle, the pointer operator-override escape hatch),
+ * the SAME CSS classes (.todo-item/.todo-checkbox/etc. — generic, never
+ * scoped to the now-removed #todoSection). See web/inbox.js's file header
+ * and docs/plans/cockpit-roadmap-redesign.md task 8 for the replacement.
+ * Everything below this notice is the file exactly as it last ran live —
+ * kept for history, not maintained further.
+ */
 /* todo.js — ask-rooted-workstreams-p1, Task 14 "My To-Do pane".
  *
  * Renders the sidebar's My To-Do pane: ONE list built from TWO sources in

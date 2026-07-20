@@ -18,7 +18,14 @@ const css = fs.readFileSync(path.join(D, 'app.css'), 'utf8');
 const html = fs.readFileSync(path.join(D, 'index.html'), 'utf8');
 const js = fs.readFileSync(path.join(D, 'app.js'), 'utf8');
 const asksJs = fs.readFileSync(path.join(D, 'asks.js'), 'utf8');
-const todoJs = fs.readFileSync(path.join(D, 'todo.js'), 'utf8');
+// todo.js was RETIRED (cockpit-roadmap-redesign Task 8 item 5 / A10) and
+// salvaged to attic/todo.js — no longer served, no longer read here. Its
+// hygiene assertions (formerly T16-11/T16-13 below) were repointed to
+// inbox.js's "My items" section, the functional replacement — read here
+// (not down near the rest of the T4 block) so the T16 section (which runs
+// much earlier in this file) can reference it too.
+let inboxJs = '';
+try { inboxJs = fs.readFileSync(path.join(D, 'inbox.js'), 'utf8'); } catch (_) { /* T16/T3-3/T4 checks fail honestly below */ }
 const backlogJs = fs.readFileSync(path.join(D, 'backlog.js'), 'utf8');
 
 let pass = 0, fail = 0;
@@ -615,18 +622,20 @@ ok('T16-9 diagnostics healed/error counts render as visible TEXT, never a bare c
   /diag-healed/.test(js) && /diag-errors/.test(js) && /healedRow\.textContent/.test(js) && /errRow\.textContent/.test(js));
 
 // --- (c) REAL-BUTTON check — every interactive control across the
-// assembled landing (index.html's tab nav + todo.js + backlog.js; asks.js
-// already covered by T13-22/23) is a real <button>/<a>, never a clickable
-// <div>. ------------------------------------------------------------------
+// assembled landing (index.html's tab nav + inbox.js's "My items" section
+// [todo.js's retired replacement, cockpit-roadmap-redesign Task 8 item 5]
+// + backlog.js; asks.js already covered by T13-22/23) is a real
+// <button>/<a>, never a clickable <div>. ----------------------------------
 ok('T16-10 the tab-nav controls are real <button> elements, never clickable divs',
   /<button[^>]+id="tabRoadmapBtn"/.test(html) && /<button[^>]+id="tabRequestsBtn"/.test(html) &&
   /<button[^>]+id="tabInboxBtn"/.test(html) && /<button[^>]+id="tabHealthBtn"/.test(html));
-ok('T16-11 todo.js never wires a click handler onto a bare div (real buttons/inputs only)',
-  !/[Dd]iv\.addEventListener\('click'/.test(todoJs));
+ok('T16-11 inbox.js\'s "My items" section (todo.js\'s retired replacement) never wires a click handler onto a bare div (real buttons/inputs only) — repointed from the retired todo.js',
+  !/[Dd]iv\.addEventListener\('click'/.test(inboxJs));
 ok('T16-12 backlog.js never wires a click handler onto a bare div (real buttons only)',
   !/[Dd]iv\.addEventListener\('click'/.test(backlogJs));
-ok('T16-13 todo.js and backlog.js build their interactive controls with createElement(\'button\'), not divs',
-  (todoJs.match(/createElement\('button'\)/g) || []).length >= 3 &&
+ok('T16-13 inbox.js\'s "My items" rows and backlog.js build their interactive controls with createElement(\'button\')/the shared btn() factory, not divs — repointed from the retired todo.js (the btn() factory itself + the add-form\'s explicit type="submit" button, which cannot use the type="button" factory, account for inbox.js\'s two literal call sites)',
+  /function renderMyItemOperatorRow/.test(inboxJs) && /function renderMyItemPointerRow/.test(inboxJs) &&
+  (inboxJs.match(/createElement\('button'\)/g) || []).length >= 2 &&
   (backlogJs.match(/createElement\('button'\)/g) || []).length >= 3);
 
 // --- DOM-id collision regression lock (REAL bug found during this task's
@@ -693,13 +702,12 @@ let roadmapJs = '';
 try { roadmapJs = fs.readFileSync(path.join(D, 'roadmap.js'), 'utf8'); } catch (_) { /* T3 checks fail honestly below */ }
 const roadmapJsNoComments = stripJsComments(roadmapJs);
 
-// inbox.js — read here (ahead of T3-3 below, which now points at THIS file
-// rather than app.js) even though the full T4 block lives further down;
+// inbox.js — already read near the top of this file (ahead of the T16
+// section, which needs it too); this note stands in its old place so a
+// reader following the T3/T4 block's original narrative still finds it.
 // cockpit-roadmap-redesign Task 4 moved the Inbox (N) derivation out of
 // app.js's interim renderer (REMOVED, not overridden — see the
-// build/roadmap-t4 commit) into this NEW file entirely.
-let inboxJs = '';
-try { inboxJs = fs.readFileSync(path.join(D, 'inbox.js'), 'utf8'); } catch (_) { /* T3-3/T4 checks fail honestly below */ }
+// build/roadmap-t4 commit) into that file entirely.
 
 // ---- T3 comprehension-gate fixes (both PROVEN, conf 6): the two checks
 // below need real EXECUTION (not source-regex) to prove behavior, so they
@@ -1060,17 +1068,22 @@ ok('T5-17 edit/detach feedback rows are aria-live (C9)', (requestsJs.match(/aria
 ok('T5-18 landed rows are programmatically focusable (tabindex="-1" set on row containers)',
   /tabIndex = -1/.test(requestsJs));
 // cockpit-roadmap-redesign Task 8 — "UI polish absorbed" (the four operator
-// items folded from the superseded cockpit-ui-polish.md; standalone
-// My-To-Do pane retirement is OUT of this task's scope — see this task's
-// commit message: task 4 (Inbox "My items" section, A10) has not landed,
-// so removing the pane now would strand operator-authored to-do items with
-// no UI surface at all).
+// items folded from the superseded cockpit-ui-polish.md, PLUS item 5, the
+// standalone My-To-Do pane retirement (A10) — held back in an earlier pass
+// of this task because task 4's Inbox "My items" section (its replacement
+// destination) had not landed yet; task 4 has since landed and item 5 is
+// completed here: #todoSection/#todoBody/#todoCount markup and the
+// <script src="/todo.js"> tag are removed from index.html, todo.js is
+// salvaged (git mv, never deleted) to attic/todo.js, and its operator/
+// pointer item rendering + interactions live on in inbox.js's "My items"
+// section — new assertions T8-15 onward, below the resize/backlog/
+// description/Artifacts items this task already shipped).
 // ============================================================
 
 // --- item 1: resizable + independently scrollable panes -------------------
-ok('T8-1 both resize handles exist in the DOM as ARIA "window splitter" separators (role=separator, keyboard-focusable)',
+ok('T8-1 the column resize handle still exists in the DOM as an ARIA "window splitter" separator (role=separator, keyboard-focusable); the row handle is RETIRED alongside the standalone My-To-Do pane it used to split against Backlog (item 5 below) — nothing remains for it to split, so it is gone rather than left as a dead, non-functional control',
   /id="colResizeHandle"[^>]*role="separator"[^>]*tabindex="0"/.test(html) &&
-  /id="rowResizeHandle"[^>]*role="separator"[^>]*tabindex="0"/.test(html));
+  !/id="rowResizeHandle"/.test(html));
 ok('T8-2 the resize feature is wired as its OWN additive IIFE in app.js (non-overlapping with the tab-router IIFE above it)',
   /function setupHandle/.test(js) && (js.match(/\(function \(\) \{/g) || []).length >= 2);
 ok('T8-3 pointer drag is wired (pointerdown/pointermove + setPointerCapture) for the primary drag-resize interaction',
@@ -1137,6 +1150,25 @@ ok('T8-14 the Artifacts drill-down section is fully removed (no renderArtifact()
   !/renderArtifact\(/.test(asksJsNoComments) &&
   !/ask-artifacts-section/.test(asksJsNoComments) &&
   !/artHead\.textContent = 'Artifacts'/.test(asksJsNoComments));
+
+// --- item 5: standalone My-To-Do pane REMOVED (A10) ------------------------
+ok('T8-15 the standalone My-To-Do pane markup (#todoSection/#todoBody/#todoCount) is fully REMOVED from index.html',
+  !/id="todoSection"/.test(html) && !/id="todoBody"/.test(html) && !/id="todoCount"/.test(html));
+ok('T8-16 the standalone <script src="/todo.js"> tag is REMOVED from index.html',
+  !/<script src="\/todo\.js">/.test(html));
+ok('T8-17 todo.js was salvaged to attic/todo.js (git mv), never deleted — the retired module still exists on disk for history',
+  fs.existsSync(path.join(D, '..', 'attic', 'todo.js')));
+ok('T8-18 inbox.js\'s "My items" section is the operator-authored items\' new home: it calls the SAME /api/todo endpoints (GET on load + POST toggle/edit/add/pointer_override), never a new parallel store',
+  /fetch\('\/api\/todo'\)/.test(inboxJs) && /action: 'toggle'/.test(inboxJs) &&
+  /action: 'edit'/.test(inboxJs) && /action: 'add'/.test(inboxJs) && /action: 'pointer_override'/.test(inboxJs));
+ok('T8-19 "My items" respects the noise_flag marker convention (server respec 2026-07-19) — renders a marker, never hides the flagged content',
+  /item\.noise_flag/.test(inboxJs) && /quotes internal identifiers/.test(inboxJs));
+ok('T8-20 "My items" is rendered in its OWN persistent subtree (myItemsWrap), structurally separate from the Inbox\'s own poll-wiped subtree (inboxSectionsWrap) — renderAll()/renderLoadingState()/renderErrorState() only ever wipe inboxSectionsWrap; the My-items renderers only ever wipe myItemsWrap',
+  /var myItemsWrap = document\.createElement/.test(inboxJs) && /var inboxSectionsWrap = document\.createElement/.test(inboxJs) &&
+  (inboxJs.match(/inboxSectionsWrap\.innerHTML = ''/g) || []).length >= 3 &&
+  (inboxJs.match(/myItemsWrap\.innerHTML = ''/g) || []).length >= 3 &&
+  !/function renderAll\(\)[\s\S]{0,900}myItemsWrap\.innerHTML/.test(inboxJs) &&
+  !/function loadMyItems\(\)[\s\S]{0,50}inboxSectionsWrap\.innerHTML/.test(inboxJs));
 
 // ============================================================
 // cockpit-roadmap-redesign Task 4 — "Inbox view + context contract
@@ -1286,9 +1318,19 @@ ok('T4-16d landed rows are programmatically focusable (tabindex="-1"/tabIndex = 
 ok('T4-16e every status/type signal is text + color, never color-only (type glyph carries a TEXT label chip alongside the glyph)',
   /typeLabel\(item\.kind\)/.test(inboxJs));
 
-// --- "My items" (A10) — deferred to task 8, documented (not silently dropped) ---
-ok('T4-17 inbox.js does NOT build a "My items" section or touch todo.js/operator-todo (task 8 owns that relocation per its own bullet; documented here, not silently dropped)',
-  !/api\/todo/.test(inboxJs) && /task 8/.test(inboxJs));
+// --- "My items" (A10) — built here (task 8 item 5, the standalone pane's
+// replacement destination; see file header) ---
+ok('T4-17 inbox.js DOES build a "My items" section from /api/todo (A10 — task 8 relocated the retired standalone pane\'s content here), reusing the SAME endpoints the pane always used, never a new parallel store',
+  /fetch\('\/api\/todo'\)/.test(inboxJs) && /My items/.test(inboxJs) && /function loadMyItems/.test(inboxJs));
+ok('T4-18 "My items" rows are EXCLUDED from the Inbox (N) tab count — the one functional setTabCount() call site passes the /api/inbox `answerable` length; no call site anywhere derives it from /api/todo data',
+  /setTabCount\(answerable\.length\)/.test(inboxJs) &&
+  !/setTabCount\([^)]*(?:todo|operatorItems|pointerItems|openCount)/i.test(inboxJs));
+ok('T4-19 "My items" preserves the retired pane\'s FULL interaction set: checkbox toggle, inline edit (Edit/Save/Cancel + Escape), the always-visible add form, and the pointer item\'s operator-override escape hatch — same POST verbs the pane always used',
+  /action: 'toggle', index: item\.index/.test(inboxJs) && /action: 'edit', index: item\.index/.test(inboxJs) &&
+  /action: 'add', text: text/.test(inboxJs) && /action: 'pointer_override'/.test(inboxJs) &&
+  /e\.key === 'Escape'/.test(inboxJs));
+ok('T4-20 "My items" is loaded ONCE at boot + after every write, deliberately NOT on the Inbox\'s 30s poll (so an in-progress edit is never destroyed by an unrelated tick) — the same load-once-then-reload-on-write discipline the retired pane used',
+  /loadMyItems\(\);/.test(inboxJs) && !/setInterval\(function \(\) \{ loadMyItems/.test(inboxJs));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

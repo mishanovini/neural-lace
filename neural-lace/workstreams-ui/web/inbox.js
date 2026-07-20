@@ -54,16 +54,50 @@
  *    signal is text + color; interactive chips are real <button>s;
  *    aria-live feedback on every write (dismiss/copy).
  *
- * "My items" (A10): this task's dispatch note says the operator-authored
- * "My items" section's ACTUAL relocation into this view is task 8's job
- * (task 8's own bullet claims ownership of "the standalone pane REMOVED —
- * its items move into the Inbox 'My items' section"), so it is not built
- * here — the standalone My-To-Do pane (todo.js, in the Requests tab sidebar)
- * is untouched. See docs/backlog.md for the tracked follow-up.
+ * "My items" (A10, built here — task 8 item 5): operator-authored to-do
+ * items from docs/operator-todo.md — GET/POST /api/todo, server/server.js's
+ * existing Task-14 endpoints, UNCHANGED — render as a THIRD, distinct
+ * section below quarantine: "My items". EXCLUDED from the Inbox (N)
+ * answerable count by construction: setTabCount() below is only ever
+ * called from renderAll() with THIS view's own /api/inbox `answerable`
+ * length; the /api/todo fetch feeding "My items" is a wholly separate data
+ * source setTabCount never reads — the two counts cannot disagree because
+ * only one of them is ever a count at all.
+ *
+ * Preserves every interaction the retired standalone pane (attic/todo.js)
+ * had: operator add/edit/toggle (POST actions add/edit/toggle) and the
+ * pointer item's operator-override escape hatch (POST action
+ * pointer_override) — reusing the exact same generic .todo-* CSS classes
+ * (not scoped to the retired #todoSection) so the operator loses no
+ * capability. Rendered in its OWN persistent subtree (myItemsWrap, a
+ * sibling of inboxSectionsWrap below) and loaded ONCE at boot + after
+ * every write — same as the original todo.js, deliberately NOT on the
+ * Inbox's 30s poll — so an in-progress edit is never destroyed by a timer
+ * tick that has nothing to do with it. Respects the noise_flag marker
+ * convention (server respec 2026-07-19: flag, never withhold).
+ *
+ * The standalone pane's markup/script tag are removed from index.html and
+ * todo.js itself is salvaged (git mv, never deleted) to attic/todo.js —
+ * see index.html's sidebar comment + docs/plans/cockpit-roadmap-redesign.md
+ * task 8.
  */
 (function () {
   var body = document.getElementById('inboxBody');
   if (!body) return; // pane not present on this page — no-op
+
+  // Two independent persistent subtrees inside #inboxBody (A10 + file
+  // header above): `inboxSectionsWrap` holds the Inbox's own
+  // poll-refreshed answerable/quarantine/win-state rendering — renderAll()
+  // below now wipes+rebuilds THIS wrapper (not #inboxBody directly) every
+  // 30s tick, so "My items" is never blown away by a poll it has nothing
+  // to do with. `myItemsWrap` holds "My items", loaded once at boot + after
+  // every write (todo.js's own precedent) rather than on a timer.
+  var inboxSectionsWrap = document.createElement('div');
+  inboxSectionsWrap.className = 'ib-sections-wrap';
+  body.appendChild(inboxSectionsWrap);
+  var myItemsWrap = document.createElement('div');
+  myItemsWrap.className = 'ib-my-items-wrap';
+  body.appendChild(myItemsWrap);
 
   function $(id) { return document.getElementById(id); }
   var shell = window.WorkstreamsShell || null;
@@ -346,19 +380,19 @@
   // four UI states + the state-preserving master render (C4 + C7)
   // ============================================================
   function renderLoadingState() {
-    body.innerHTML = '';
+    inboxSectionsWrap.innerHTML = '';
     var box = el('div', 'pane-loading', 'deriving your inbox…');
     box.setAttribute('aria-busy', 'true');
-    body.appendChild(box);
+    inboxSectionsWrap.appendChild(box);
   }
   function renderErrorState(message) {
-    body.innerHTML = '';
+    inboxSectionsWrap.innerHTML = '';
     var box = el('div', 'pane-error');
     box.setAttribute('role', 'alert');
     box.appendChild(el('div', 'pane-error-title', 'Could not read what is waiting on you'));
     box.appendChild(el('div', 'pane-error-cmd', String(message || 'unknown error — the server may be restarting')));
     box.appendChild(btn('btn-go small', 'Retry', function () { load(); }));
-    body.appendChild(box);
+    inboxSectionsWrap.appendChild(box);
   }
 
   function captureUiState() {
@@ -398,29 +432,300 @@
     var quarantined = lastPayload.quarantined || [];
 
     setTabCount(answerable.length);
-    body.innerHTML = '';
+    inboxSectionsWrap.innerHTML = '';
 
     // Win state (C4, delta R1): scoped to the answerable section — a
-    // non-empty quarantine section (rendered right below) never defeats
-    // it. Rendered ONLY on a successful derivation (the error state above
-    // already handles failure, so reaching here means ok:true).
+    // non-empty quarantine section (rendered right below) or a non-empty
+    // "My items" section (rendered in its own independent wrap, further
+    // below in the DOM) never defeats it. Rendered ONLY on a successful
+    // derivation (the error state above already handles failure, so
+    // reaching here means ok:true).
     if (answerable.length === 0) {
       var win = el('div', 'pane-empty inbox-win', 'Nothing waiting on you — all sessions running free. As of ' + formatAge(lastDerivedAt) + '.');
-      body.appendChild(win);
+      inboxSectionsWrap.appendChild(win);
     } else {
       var answerHead = el('div', 'ib-section-head', 'Awaiting your answer (' + answerable.length + ')');
-      body.appendChild(answerHead);
-      answerable.forEach(function (it) { body.appendChild(renderRow(it, false)); });
+      inboxSectionsWrap.appendChild(answerHead);
+      answerable.forEach(function (it) { inboxSectionsWrap.appendChild(renderRow(it, false)); });
     }
 
     if (quarantined.length > 0) {
       var qHead = el('div', 'ib-section-head ib-quarantine-head',
         quarantined.length + ' arrived without context — defects filed against the producing sessions');
-      body.appendChild(qHead);
-      quarantined.forEach(function (it) { body.appendChild(renderRow(it, true)); });
+      inboxSectionsWrap.appendChild(qHead);
+      quarantined.forEach(function (it) { inboxSectionsWrap.appendChild(renderRow(it, true)); });
     }
 
     restoreUiState(st);
+  }
+
+  // ============================================================
+  // "My items" (A10 — see file header). Operator-authored to-do items from
+  // docs/operator-todo.md, via the UNCHANGED GET/POST /api/todo endpoints.
+  // Loaded ONCE at boot + after every write (todo.js's own precedent — no
+  // 30s poll here, so an in-progress edit is never destroyed by a tick
+  // that has nothing to do with it). EXCLUDED from the Inbox (N) count:
+  // setTabCount() above is only ever invoked from renderAll() with the
+  // /api/inbox `answerable` length — this fetch cycle is a wholly separate
+  // data source setTabCount never reads.
+  // ============================================================
+  function postTodo(bodyObj) {
+    return fetch('/api/todo', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyObj),
+    }).then(function (r) { return r.json(); }).catch(function (err) { return { ok: false, error: String(err) }; });
+  }
+
+  var myItemsFeedbackEl = null;
+  var myItemsFeedbackTimer = null;
+  function showMyItemsFeedback(text, isError) {
+    if (!myItemsFeedbackEl) return;
+    if (myItemsFeedbackTimer) clearTimeout(myItemsFeedbackTimer);
+    myItemsFeedbackEl.hidden = false;
+    myItemsFeedbackEl.textContent = text;
+    myItemsFeedbackEl.className = 'todo-global-feedback' + (isError ? ' todo-feedback-error' : ' todo-feedback-ok');
+    myItemsFeedbackTimer = setTimeout(function () { myItemsFeedbackEl.hidden = true; }, isError ? 8000 : 3000);
+  }
+
+  // duplicated absolute-href helper (this codebase's own convention — see
+  // asks.js/attic/todo.js precedent; no shared client-side module system).
+  function myItemsFileUrl(p) {
+    if (typeof p !== 'string' || p === '') return null;
+    if (/^https?:\/\//i.test(p)) return p;
+    var norm = p.replace(/\\/g, '/');
+    if (/^[A-Za-z]:\//.test(norm)) return 'file:///' + norm;
+    if (/^\/\//.test(norm)) return null; // UNC — copy-only is the honest fallback
+    if (/^\//.test(norm)) return 'file://' + norm;
+    return null;
+  }
+
+  // operator item row — editable + checkable (ports attic/todo.js's
+  // renderOperatorItem exactly: same POST verbs, same noise_flag marker
+  // convention — respec 2026-07-19, availability outranks lint, the server
+  // flags rather than withholds).
+  function renderMyItemOperatorRow(item) {
+    var row = el('div', 'todo-item todo-item-operator');
+
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'todo-checkbox';
+    cb.checked = !!item.checked;
+    cb.setAttribute('aria-label', (item.checked ? 'mark not done: ' : 'mark done: ') + item.text);
+    cb.addEventListener('change', function () {
+      var wasChecked = cb.checked;
+      cb.disabled = true;
+      postTodo({ action: 'toggle', index: item.index }).then(function (r) {
+        if (r && r.ok) { showMyItemsFeedback('Saved.', false); loadMyItems(); }
+        else {
+          cb.checked = !wasChecked; // mistake recovery: revert the optimistic flip
+          cb.disabled = false;
+          showMyItemsFeedback('Could not update: ' + ((r && r.error) || 'unknown error'), true);
+        }
+      });
+    });
+    row.appendChild(cb);
+
+    var textSpan = el('span', 'todo-item-text' + (item.checked ? ' todo-item-checked' : ''), item.text);
+    if (item.noise_flag) {
+      var noiseMark = el('span', 'todo-noise-flag', ' ⚑ quotes internal identifiers');
+      noiseMark.title = 'This item quotes harness-internal command/script names. Rendered in full — flagged for awareness only.';
+      textSpan.appendChild(noiseMark);
+    }
+    row.appendChild(textSpan);
+
+    var editBtn = btn('ghost small todo-edit-btn', 'Edit', function () { startMyItemEdit(row, item, textSpan, editBtn); });
+    editBtn.setAttribute('aria-label', 'edit "' + item.text + '"');
+    row.appendChild(editBtn);
+
+    return row;
+  }
+
+  function startMyItemEdit(row, item, textSpan, editBtn) {
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'todo-edit-input';
+    input.value = item.text;
+    input.setAttribute('aria-label', 'edit to-do text');
+    var saveBtn = btn('btn-go small', 'Save', null);
+    var cancelBtn = btn('ghost small', 'Cancel', null);
+
+    textSpan.hidden = true;
+    editBtn.hidden = true;
+    row.appendChild(input);
+    row.appendChild(saveBtn);
+    row.appendChild(cancelBtn);
+    input.focus();
+    input.select();
+
+    function cancel() {
+      input.remove(); saveBtn.remove(); cancelBtn.remove();
+      textSpan.hidden = false; editBtn.hidden = false;
+    }
+    cancelBtn.addEventListener('click', cancel);
+    input.addEventListener('keydown', function (e) { if (e.key === 'Escape') cancel(); });
+    saveBtn.addEventListener('click', function () {
+      var text = input.value.trim();
+      if (!text) { showMyItemsFeedback('To-do text cannot be empty.', true); return; }
+      saveBtn.disabled = true;
+      postTodo({ action: 'edit', index: item.index, text: text }).then(function (r) {
+        if (r && r.ok) { showMyItemsFeedback('Saved.', false); loadMyItems(); }
+        else { saveBtn.disabled = false; showMyItemsFeedback('Could not save: ' + ((r && r.error) || 'unknown error'), true); }
+      });
+    });
+  }
+
+  // pointer item row — DERIVED, never a checkbox lookalike (ports
+  // attic/todo.js's renderPointerItem: lock glyph, aria-disabled,
+  // navigation-first affordance, "Mark handled" operator-override escape
+  // hatch for when the auditor's derivation can't see a resolution).
+  function renderMyItemPointerRow(item) {
+    var row = el('div', 'todo-item todo-item-pointer' + (item.checked ? ' todo-item-resolved' : ''));
+
+    var glyph = el('span', 'todo-pointer-glyph');
+    glyph.setAttribute('role', 'button');
+    glyph.setAttribute('aria-disabled', 'true');
+    glyph.setAttribute('tabindex', '-1');
+    glyph.title = 'resolves when you answer the underlying item — click to go there';
+    glyph.setAttribute('aria-label', item.checked ? 'automatically resolved, read-only' : 'automatic, read-only — not directly editable');
+    glyph.textContent = item.checked ? '🔒✓' : '🔒'; // lock (+ check when resolved) — text+color, never color-only
+    row.appendChild(glyph);
+
+    var pbody = el('div', 'todo-pointer-body');
+    var titleRow = el('div', 'todo-pointer-title');
+    var link = document.createElement('a');
+    link.className = 'todo-pointer-link';
+    link.title = 'resolves when you answer the underlying item — click to go there';
+    link.textContent = item.title || ('(untitled ' + (item.section || 'item') + ')');
+    var href = myItemsFileUrl(item.raw_link);
+    if (href) {
+      link.href = href;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+    } else {
+      link.href = '#';
+      link.setAttribute('aria-disabled', 'true');
+      link.addEventListener('click', function (e) { e.preventDefault(); });
+    }
+    titleRow.appendChild(link);
+    pbody.appendChild(titleRow);
+
+    if (item.body) {
+      pbody.appendChild(el('div', 'todo-pointer-preview', item.body.length > 200 ? item.body.slice(0, 200) + '…' : item.body));
+    }
+
+    var tierLabel = (item.tier && item.tier !== 'untiered') ? ('tier ' + item.tier) : 'no tier';
+    var stateLabel = item.checked ? (item.operator_override ? 'marked handled by you' : 'resolved') : 'waiting on you';
+    pbody.appendChild(el('div', 'todo-pointer-meta', (item.section || 'item') + ' · ' + tierLabel + ' · ' + stateLabel));
+
+    row.appendChild(pbody);
+
+    if (!item.checked) {
+      var overrideBtn = btn('ghost small todo-override-btn', 'Mark handled', function () {
+        overrideBtn.disabled = true;
+        postTodo({ action: 'pointer_override', needs_you_id: item.needs_you_id }).then(function (r) {
+          if (r && r.ok) { showMyItemsFeedback('Marked handled.', false); loadMyItems(); }
+          else { overrideBtn.disabled = false; showMyItemsFeedback('Could not mark handled: ' + ((r && r.error) || 'unknown error'), true); }
+        });
+      });
+      overrideBtn.title = 'use this if you already resolved it and the pointer did not auto-check';
+      row.appendChild(overrideBtn);
+    }
+
+    return row;
+  }
+
+  // add form — always visible (todo.js precedent: adding is not restricted
+  // to the empty state).
+  function renderMyItemsAddForm() {
+    var form = document.createElement('form');
+    form.className = 'todo-add-form';
+    form.setAttribute('aria-label', 'add a to-do item');
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'todo-add-input';
+    input.placeholder = 'add a to-do item…';
+    input.setAttribute('aria-label', 'new to-do item text');
+    var addBtn = document.createElement('button');
+    addBtn.type = 'submit';
+    addBtn.className = 'btn-go small';
+    addBtn.textContent = 'Add';
+    form.appendChild(input);
+    form.appendChild(addBtn);
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var text = input.value.trim();
+      if (!text) return;
+      addBtn.disabled = true;
+      postTodo({ action: 'add', text: text }).then(function (r) {
+        addBtn.disabled = false;
+        if (r && r.ok) { input.value = ''; showMyItemsFeedback('Added.', false); loadMyItems(); }
+        else { showMyItemsFeedback('Could not add: ' + ((r && r.error) || 'unknown error'), true); }
+      });
+    });
+    return form;
+  }
+
+  function renderMyItemsLoading() {
+    myItemsWrap.innerHTML = '';
+    myItemsWrap.appendChild(el('div', 'ib-section-head', 'My items'));
+    var box = el('div', 'todo-status');
+    var loading = el('div', 'pane-loading', 'loading your to-do items…');
+    loading.setAttribute('aria-busy', 'true');
+    box.appendChild(loading);
+    myItemsWrap.appendChild(box);
+  }
+  function renderMyItemsError(message) {
+    myItemsWrap.innerHTML = '';
+    myItemsWrap.appendChild(el('div', 'ib-section-head', 'My items'));
+    var box = el('div', 'todo-status pane-error');
+    box.setAttribute('role', 'alert');
+    box.appendChild(el('div', 'pane-error-title', 'Could not load your to-do list'));
+    box.appendChild(el('div', 'pane-error-cmd', String(message || 'unknown error — the server may be restarting')));
+    box.appendChild(btn('btn-go small', 'Retry', function () { loadMyItems(); }));
+    myItemsWrap.appendChild(box);
+  }
+  function renderMyItemsBody(payload) {
+    myItemsWrap.innerHTML = '';
+
+    var operatorItems = payload.operator_items || [];
+    var pointerItems = (payload.pointer_items || []).slice().sort(function (a, b) {
+      // outstanding pointers first, resolved ones sink — mirrors the
+      // ask-tree's own "active first, completed collapsed" ordering.
+      return (a.checked === b.checked) ? 0 : (a.checked ? 1 : -1);
+    });
+    var openCount = operatorItems.filter(function (i) { return !i.checked; }).length +
+      pointerItems.filter(function (i) { return !i.checked; }).length;
+
+    myItemsWrap.appendChild(el('div', 'ib-section-head', 'My items (' + openCount + ' open)'));
+
+    myItemsFeedbackEl = el('div', 'todo-global-feedback');
+    myItemsFeedbackEl.setAttribute('aria-live', 'polite');
+    myItemsFeedbackEl.hidden = true;
+    myItemsWrap.appendChild(myItemsFeedbackEl);
+
+    myItemsWrap.appendChild(renderMyItemsAddForm());
+
+    var list = el('div', 'todo-list');
+    if (operatorItems.length === 0 && pointerItems.length === 0) {
+      list.appendChild(el('div', 'pane-empty todo-empty', 'No to-do items yet — add one above. Items also appear automatically when a session parks a decision on you.'));
+    } else {
+      operatorItems.forEach(function (it) { list.appendChild(renderMyItemOperatorRow(it)); });
+      pointerItems.forEach(function (it) { list.appendChild(renderMyItemPointerRow(it)); });
+    }
+    myItemsWrap.appendChild(list);
+  }
+
+  function loadMyItems() {
+    renderMyItemsLoading();
+    return fetch('/api/todo')
+      .then(function (r) { return r.json(); })
+      .then(function (resp) {
+        if (!resp || resp.ok === false) {
+          renderMyItemsError(resp && resp.error ? resp.error : 'server returned ok:false');
+          return;
+        }
+        renderMyItemsBody(resp);
+      })
+      .catch(function (err) { renderMyItemsError(String(err)); });
   }
 
   // ============================================================
@@ -506,8 +811,11 @@
 
   // ============================================================
   // boot: initial load + the 30s tick (C7) — this view now owns the
-  // Inbox (N) count entirely (see file header).
+  // Inbox (N) count entirely (see file header). "My items" loads once here
+  // (+ after every write, from within its own handlers above) — never on
+  // the 30s tick, per its own section header.
   // ============================================================
   load();
+  loadMyItems();
   setInterval(function () { load(); }, REFRESH_INTERVAL_MS);
 })();

@@ -86,23 +86,21 @@
            aria-orientation="vertical" aria-label="resize requests and sidebar columns"
            tabindex="0"></div>
 
-      <aside id="sidebarSection" class="sidebar" aria-label="to-do and backlog">
-        <section id="todoSection" class="pane todo-section" aria-label="my to-do">
-          <div class="pane-head">
-            <span class="pane-title">My To-Do</span>
-            <span class="todo-count" id="todoCount" aria-live="off">—</span>
-          </div>
-          <div class="pane-body todo-body" id="todoBody"></div>
-        </section>
-
-        <!-- Row resize handle: drag OR arrow-keys resize the My To-Do pane's
-             own scroll height against Backlog below it — each pane body
-             then scrolls INDEPENDENTLY (own overflow-y:auto) rather than
-             only the whole sidebar scrolling as one unit. -->
-        <div id="rowResizeHandle" class="resize-handle resize-handle-row" role="separator"
-             aria-orientation="horizontal" aria-label="resize my to-do and backlog panes"
-             tabindex="0"></div>
-
+      <aside id="sidebarSection" class="sidebar" aria-label="backlog">
+        <!-- The standalone "My To-Do" pane (todo.js) is RETIRED here
+             (cockpit-roadmap-redesign Task 8 item 5 / A10): the Inbox
+             SUPERSEDES it as the canonical waiting-on-me surface.
+             Operator-authored to-do items (docs/operator-todo.md, via the
+             UNCHANGED GET/POST /api/todo endpoints — server/server.js Task
+             14) now render as the Inbox tab's "My items" section
+             (web/inbox.js), excluded from the Inbox (N) answerable count.
+             The retired module is salvaged, not deleted, at
+             attic/todo.js. The row resize handle that used to split this
+             pane against Backlog is retired alongside it (nothing remains
+             for it to split) — app.js's setupHandle() already no-ops
+             gracefully when a handle's target element is absent (the
+             exact precedent its own comment names for "todo.js/backlog.js").
+             The column handle (sidebar vs. requests) is unchanged. -->
         <section id="backlogSection" class="pane backlog-section" aria-label="backlog">
           <div class="pane-head">
             <span class="pane-title">Backlog</span>
@@ -115,15 +113,14 @@
   </div>
 
   <!-- ============================================================
-       TAB 3 — Inbox (everything waiting on the operator). INTERIM CONTENT
-       (task 3): the ANSWERABLE items list rendered by app.js from the SAME
-       needs-me derivation the Harness Health Q2 pane reads — quarantined
-       (context-less) items are EXCLUDED from both the list and the tab
-       count (I4) and remain visible in Harness Health until task 4 ships
-       the full context-contract view (quarantine section, §3 anatomy,
-       lifecycle verbs, "My items"). Task 4 REGISTERS its view here via
-       WorkstreamsShell.registerView('inbox', ...), replacing app.js's
-       interim renderer.
+       TAB 3 — Inbox (everything waiting on the operator). Rendered by
+       web/inbox.js from GET /api/inbox (server/inbox-routes.js):
+       answerable items, a below-the-fold quarantine section (context-less
+       items, I4), AND a third "My items" section (A10 — operator-authored
+       to-do items from /api/todo, EXCLUDED from the Inbox (N) count).
+       inbox.js REGISTERS its view here via
+       WorkstreamsShell.registerView('inbox', ...); this tab has no other
+       writer.
        ============================================================ -->
   <div id="tabInboxPanel" class="tab-panel" hidden role="tabpanel" aria-labelledby="tabInboxBtn">
     <section id="inboxSection" class="pane inbox-section" aria-label="inbox — waiting on you">
@@ -297,7 +294,6 @@
   </div>
 
   <script src="/asks.js"></script>
-  <script src="/todo.js"></script>
   <script src="/backlog.js"></script>
   <script src="/app.js"></script>
   <!-- roadmap.js loads AFTER app.js: it registers into the shell API

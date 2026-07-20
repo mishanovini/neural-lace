@@ -1335,3 +1335,12 @@ details[open] > summary .rm-rollups { display: none; }
 .ib-raw-body { padding: 4px 0 0 4px; }
 .ib-raw-text { white-space: pre-wrap; font-family: monospace; font-size: 11px; background: var(--panel2); padding: 6px; border-radius: 4px; margin: 4px 0; }
 .ib-raw-meta { font-size: 11px; color: var(--muted); }
+
+/* ---- "My items" (cockpit-roadmap-redesign Task 8 item 5 / A10) — the
+   retired standalone My-To-Do pane's replacement, as a third section below
+   the two above. Reuses the EXISTING generic .todo-* classes (todo-item,
+   todo-checkbox, todo-add-form, etc. — defined earlier in this file, never
+   scoped to the now-removed #todoSection) so no new item-row styling is
+   needed; only the section wrapper itself is new, visually separated the
+   same way .ask-completed-group already separates its own trailing group. */
+.ib-my-items-wrap { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--border); }
