@@ -47,6 +47,15 @@
       "created_at": "2026-07-16T06:27:55Z"
     },
     {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "7a28c56767590247756707ba1d617a49a3d996ce",
+      "record_id": "hcr-20260720-32c04a84",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-20T06:35:21Z"
+    },
+    {
       "path": "adapters/claude-code/hooks/lib/merge-scan-lib.sh",
       "blob_sha": "c78a78a18cd36501b00f2149d09609d8912c5f84",
       "record_id": "hcr-20260719-26b07f16",
@@ -90,6 +99,15 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-16T06:27:55Z"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-digest.sh",
+      "blob_sha": "62ae96ac7bb340ccd77e77726a4235b393147fb8",
+      "record_id": "hcr-20260720-71f86911",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-20T06:35:35Z"
     },
     {
       "path": "adapters/claude-code/manifest.json",
