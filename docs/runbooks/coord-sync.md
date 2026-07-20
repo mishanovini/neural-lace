@@ -22,9 +22,15 @@ Three cooperating pieces:
    - marker present → FULL cycle (exporter → coord-push → coord-pull), marker
      removed **BEFORE** the exporter reads state (A5 ii — a mid-export event
      re-dirties and the next fire republishes; clear-after loses updates).
-     Publish latency after a real status change: ~1 min. Bursts coalesce (N
-     events → one marker → one cycle); the exporter's content-hash gate is
-     unchanged.
+     Publish latency after a real status change: ~1 min — coord-sync calls
+     `coord-push.sh push --force` specifically so coord-push's own
+     independent 600s throttle (meant for callers other than coord-sync)
+     never re-adds latency on this path; coord-sync's own debounce + floor
+     is the SINGLE per-machine rate limiter (F1 fix,
+     `docs/reviews/2026-07-20-f1-f3-rederived-harness-review.md` —
+     pre-fix, a second event <600s after a prior push silently throttled
+     back to the pre-Task-7 ≤600s latency). Bursts coalesce (N events → one
+     marker → one cycle); the exporter's content-hash gate is unchanged.
    - clean, floor not due → marker-check-only no-op, logged to
      `STATE_DIR/debounce.log` (own rotation) — **never** `cycles.log`, which
      stays one-line-per-full-cycle (its `trigger=` field says event/floor/forced).

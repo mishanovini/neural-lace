@@ -287,7 +287,13 @@ _run_push() {
     delta=$((now - last))
     if [ "$delta" -lt "$COORD_PUSH_THROTTLE_SECONDS" ]; then
       _log "throttled (${delta}s < ${COORD_PUSH_THROTTLE_SECONDS}s since last push) — skipping"
-      _write_status_file noop "throttled (${delta}s < ${COORD_PUSH_THROTTLE_SECONDS}s since last push)"
+      # F1 (2026-07-20 review, REQUIRED-FIX 2): distinct outcome word — NOT
+      # 'noop'. 'noop' means "checked, genuinely nothing new to publish";
+      # 'throttled' means "never even checked". A caller that buckets both
+      # together (coord-sync.sh's old A2c streak logic did) can't tell "the
+      # remote is healthy and quiet" from "we skipped without looking" —
+      # the latter must never be read as a positive signal.
+      _write_status_file throttled "throttled (${delta}s < ${COORD_PUSH_THROTTLE_SECONDS}s since last push)"
       return 0
     fi
   fi
@@ -503,6 +509,38 @@ JSON
   peer9_sha=$(git -C "$peer9" rev-parse HEAD 2>/dev/null)
   [ -n "$origin9" ] && [ "$origin9" = "$peer9_sha" ]
   _ck "genuine conflict: origin unchanged (peer's commit intact, NEVER force-pushed over)" $?
+
+  # --- Scenario 10 (F1 REQUIRED-FIX 2, 2026-07-20 review): throttle
+  # early-return writes a DISTINCT outcome word 'throttled' (not 'noop') —
+  # coord-sync.sh's A2c streak tracker depends on telling "genuinely
+  # nothing to publish" (noop) apart from "never even checked because of
+  # the throttle window" (throttled); bucketing both as 'noop' would let a
+  # throttled skip masquerade as a healthy reset (see coord-sync.sh's
+  # _track_local_commit_streak). DEFAULT throttle (600s, NOT overridden to
+  # 0 here) + a LAST_PUSH_FILE stamped "now" -> the very next push (no
+  # --force) must throttle-skip without ever touching git.
+  local s10_state="$tmproot/state10" s10_status="$tmproot/status10.json"
+  mkdir -p "$s10_state"
+  date -u +%s > "$s10_state/last-push"
+  local pre10_head; pre10_head=$(git --git-dir="$bare" rev-parse main 2>/dev/null)
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$clone" COORD_BRANCH="main"
+    export WORKSTREAMS_STATE_DIR="$work/wstate"
+    unset COORD_PUSH_THROTTLE_SECONDS   # DEFAULT (600s) — the guard is ACTIVE
+    export COORD_PUSH_STATUS_FILE="$s10_status"
+    STATE_DIR="$s10_state" LAST_PUSH_FILE="$s10_state/last-push" \
+      bash "$SELF_PATH" push >/dev/null 2>&1   # no --force: throttle must fire
+  )
+  if command -v jq >/dev/null 2>&1; then
+    jq -e '.outcome=="throttled"' "$s10_status" >/dev/null 2>&1
+    _ck "throttle early-return (fresh LAST_PUSH_FILE, DEFAULT 600s window) writes outcome=throttled, not noop" $?
+  else
+    grep -q '"outcome"[[:space:]]*:[[:space:]]*"throttled"' "$s10_status" 2>/dev/null
+    _ck "throttle early-return writes outcome=throttled (jq unavailable, grep fallback)" $?
+  fi
+  local post10_head; post10_head=$(git --git-dir="$bare" rev-parse main 2>/dev/null)
+  [ "$pre10_head" = "$post10_head" ]
+  _ck "throttled push never attempted a git operation (origin unchanged)" $?
 
   rm -rf "$tmproot" 2>/dev/null || true
   echo "[self-test] coord-push: $pass passed, $fail failed"

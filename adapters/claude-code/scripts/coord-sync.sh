@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # coord-sync.sh — cockpit-v2-push-materialized-store Task 3 (A1, BINDING):
 # the SINGLE per-machine coordination cadence. Registered as the dedicated
-# Windows Scheduled Task `NL-CoordSync` (600s / 10min, ignore-new-instance)
+# Windows Scheduled Task `NL-CoordSync` (~60s fires, ignore-new-instance;
+# each fire is a cheap marker-check, NOT a guaranteed full cycle — see the
+# EVENT-TRIGGERED PUBLISH + PERIODIC FLOOR section below for the
+# debounce/floor mechanics, incl. the <=600s floor, that this reduces to)
 # via install-coord-sync-task.ps1 — see that file for the installer.
 #
 # WHAT IT DOES, IN ORDER (binding order per the architecture review, A1):
@@ -307,6 +310,20 @@ _track_local_commit_streak() {
       fi
       # else: already alerted for this episode — stay silent (dedup).
     fi
+  elif [ "$outcome" = "throttled" ]; then
+    # F1 (2026-07-20 review, REQUIRED-FIX 2): NO-SIGNAL, not a streak-
+    # breaker. 'throttled' means coord-push never even attempted the push
+    # this cycle — it tells us NOTHING about whether the underlying
+    # publish problem is resolved. Treating it as a reset (the old code
+    # bucketed it under 'noop', which resets) would starve A2c: a dead
+    # remote's first local-commit ALSO touches LAST_PUSH_FILE
+    # (coord-push.sh writes it on local-commit, not just on pushed), so
+    # every rapid retry after that would throttle-skip and silently erase
+    # the streak before it ever reached the alert threshold. Leave the
+    # streak (and any active-alert dedup marker) exactly as they are.
+    # ('noop' semantics are unchanged elsewhere — still bucketed below as
+    # a real reset; only the throttle early-return's word changed.)
+    :
   else
     # Streak broken (pushed / noop / unknown) — reset so a FUTURE stuck
     # episode can alert again (A2c: one alert per episode, not per run).
@@ -425,11 +442,24 @@ _run_cycle() {
   _log "exporter: rc=$export_rc"
 
   # ---- step 2: coord-push ----
+  # F1 (2026-07-20 review, REQUIRED-FIX 1): --force is REQUIRED here.
+  # coord-sync's own debounce+floor (event fires >=60s apart via the
+  # scheduled task; the floor caps FULL cycles at <=COORD_SYNC_FLOOR_SECONDS)
+  # is already the SINGLE per-machine rate limiter on this path — coord-
+  # push.sh's own independent COORD_PUSH_THROTTLE_SECONDS (600s default) is
+  # pure interference here: without --force, a second event cycle landing
+  # <600s after a prior push (or after a floor fire) gets throttle-skipped
+  # by the callee, silently defeating both A5 (the ~1min publish-latency
+  # contract) and A2c (a dead-remote local-commit streak never advances
+  # because the throttle keeps intercepting the retry). --force bypasses
+  # ONLY coord-push's throttle gate — every other WARN+exit-0 degradation
+  # path in coord-push.sh (no repo configured, clone failure, unresolvable
+  # rebase conflict) is untouched.
   local push_rc=0
   if [ -n "${COORD_SYNC_PUSH_CMD:-}" ]; then
     bash -c "$COORD_SYNC_PUSH_CMD" >/dev/null 2>&1; push_rc=$?
   else
-    bash "$COORD_PUSH_SH" push >/dev/null 2>&1; push_rc=$?
+    bash "$COORD_PUSH_SH" push --force >/dev/null 2>&1; push_rc=$?
   fi
   _log "coord-push: rc=$push_rc"
 
@@ -505,6 +535,16 @@ _self_test() {
   git -C "$seed" -c user.email=t@t -c user.name=t commit --allow-empty -m init >/dev/null 2>&1
   git -C "$seed" push -u origin HEAD:main >/dev/null 2>&1
   rm -rf "$seed"
+
+  # NOTE on COORD_PUSH_THROTTLE_SECONDS=0 in Scenarios 1 and 5 below: those
+  # scenarios exercise the REAL exporter/push/pull wiring (event/floor/
+  # debounce mechanics) and disable coord-push's throttle purely to keep
+  # that unrelated to what they're testing. They do NOT exercise the
+  # throttle guard itself — that was the F1 gap (2026-07-20 review: "the
+  # composition was never exercised with the guard ACTIVE"). Scenarios 10
+  # and 11 below close that gap: DEFAULT (never-overridden) throttle, guard
+  # genuinely active, proving --force bypasses it (10) and that a
+  # 'throttled' outcome no longer starves the A2c streak (11).
 
   # ================= Scenario 1: full cycle end-to-end =================
   local clone1="$tmproot/clone1"
@@ -804,6 +844,96 @@ _self_test() {
   s9_limit_min=$(grep -oE 'ExecutionTimeLimit \(New-TimeSpan -Minutes [0-9]+' "$s9_ps1" 2>/dev/null | grep -oE '[0-9]+$' | head -n1)
   [ -n "$s9_limit_min" ] && [ "$LOCK_STALE_SECONDS" -gt $(( s9_limit_min * 60 )) ]
   _ck "LOCK_STALE_SECONDS default (${LOCK_STALE_SECONDS}s) > installer ExecutionTimeLimit (${s9_limit_min:-?}min) — stale reclaim can never seize a live cycle's lock" $?
+
+  # ======== Scenario 10 (F1 REQUIRED-FIX 3a, 2026-07-20 review): --force
+  # truly bypasses coord-push's OWN throttle — an event cycle firing <600s
+  # after a prior push must STILL advance origin. Runs the REAL coord-
+  # push.sh (not stubbed) with COORD_PUSH_THROTTLE_SECONDS left at its
+  # DEFAULT (600s — never overridden in this scenario, unlike Scenarios 1/5
+  # above) so the guard is genuinely ACTIVE; only the exporter + pull steps
+  # are stubbed to keep the scenario fast/deterministic. Pre-fix, cycle 2
+  # would throttle-noop (LAST_PUSH_FILE was touched <1s earlier by cycle 1)
+  # and origin would stay on payload "A" forever. ========
+  local s10_clone="$tmproot/s10-clone" s10_state="$tmproot/s10-state" s10_status="$tmproot/s10-status.json"
+  mkdir -p "$s10_state"
+  local s10_export_a="mkdir -p '$s10_clone/plan-export' && printf 'A' > '$s10_clone/plan-export/testhost.json'"
+  local s10_export_b="mkdir -p '$s10_clone/plan-export' && printf 'B' > '$s10_clone/plan-export/testhost.json'"
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$s10_clone" COORD_BRANCH="main"
+    export STATE_DIR="$s10_state" COORD_PUSH_STATUS_FILE="$s10_status"
+    export COORD_SYNC_FLOOR_SECONDS=999999
+    unset COORD_PUSH_THROTTLE_SECONDS   # DEFAULT (600s) — the guard is ACTIVE
+    export COORD_SYNC_EXPORTER_CMD="$s10_export_a"
+    export COORD_SYNC_PULL_CMD="true"
+    bash "$SELF_PATH" --force >/dev/null 2>&1   # trigger=forced: seed "a prior push"
+  )
+  local s10_after_a; s10_after_a=$(git --git-dir="$bare" show main:plan-export/testhost.json 2>/dev/null)
+  [ "$s10_after_a" = "A" ]
+  _ck "Scenario 10 setup: prior push (payload A) reached origin" $?
+
+  printf 'selftest-event\n' > "$s10_state/dirty"
+  (
+    export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$s10_clone" COORD_BRANCH="main"
+    export STATE_DIR="$s10_state" COORD_PUSH_STATUS_FILE="$s10_status"
+    export COORD_SYNC_FLOOR_SECONDS=999999
+    unset COORD_PUSH_THROTTLE_SECONDS   # STILL default — <600s since cycle 1's push
+    export COORD_SYNC_EXPORTER_CMD="$s10_export_b"
+    export COORD_SYNC_PULL_CMD="true"
+    bash "$SELF_PATH" >/dev/null 2>&1   # dirty marker present, floor nowhere near due -> trigger=event
+  )
+  local s10_after_b; s10_after_b=$(git --git-dir="$bare" show main:plan-export/testhost.json 2>/dev/null)
+  [ "$s10_after_b" = "B" ]
+  _ck "event cycle <600s after a prior push STILL advances origin (payload B) — --force bypasses coord-push's callee throttle, guard ACTIVE (DEFAULT 600s, never overridden)" $?
+
+  if command -v jq >/dev/null 2>&1; then
+    jq -e '.outcome=="pushed"' "$s10_status" >/dev/null 2>&1
+    _ck "second cycle's status file records outcome=pushed (not throttled/noop)" $?
+  else
+    grep -q '"outcome"[[:space:]]*:[[:space:]]*"pushed"' "$s10_status" 2>/dev/null
+    _ck "second cycle's status file records outcome=pushed (jq unavailable, grep fallback)" $?
+  fi
+
+  # ======== Scenario 11 (F1 REQUIRED-FIX 3b, 2026-07-20 review): a
+  # 'throttled' coord-push outcome must be NO-SIGNAL to the A2c streak, not
+  # a streak-breaker — otherwise a dead remote's own first local-commit
+  # (which itself touches LAST_PUSH_FILE, per coord-push.sh's local-commit
+  # branch) would throttle-skip every rapid retry and silently erase the
+  # streak before it ever reached the alert threshold. Stubs the push step
+  # directly to interleave local-commit/throttled outcomes deterministically
+  # (real dead-remote/throttle-firing paths are coord-push.sh's own
+  # self-test's job — same precedent as Scenario 3 above). DEFAULT
+  # threshold (3): the streak must reach 4 (cross it) before alerting. ========
+  local s11_state="$tmproot/s11-state" s11_alerts="$tmproot/s11-alerts" s11_status="$tmproot/s11-status.json"
+  mkdir -p "$s11_state" "$s11_alerts"
+  local s11_clone="$tmproot/s11-clone"
+  local s11_local_commit s11_throttled
+  s11_local_commit="printf '{\"outcome\":\"local-commit\",\"ts\":\"%s\",\"detail\":\"simulated dead remote\"}\n' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > '$s11_status'"
+  s11_throttled="printf '{\"outcome\":\"throttled\",\"ts\":\"%s\",\"detail\":\"simulated coord-push default-throttle window\"}\n' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > '$s11_status'"
+  _s11_cycle() {
+    local push_cmd="$1"
+    (
+      export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$s11_clone" COORD_BRANCH="main"
+      export STATE_DIR="$s11_state" COORD_PUSH_STATUS_FILE="$s11_status"
+      export COORD_SYNC_FLOOR_SECONDS=0   # every run floor-due — this scenario tests ALERTING, not debounce
+      export EXTERNAL_MONITOR_ALERTS_DIR="$s11_alerts"
+      export COORD_SYNC_EXPORTER_CMD="true"
+      export COORD_SYNC_PUSH_CMD="$push_cmd"
+      export COORD_SYNC_PULL_CMD="true"
+      bash "$SELF_PATH" >/dev/null 2>&1
+    )
+  }
+  _s11_cycle "$s11_local_commit"   # streak=1
+  _s11_cycle "$s11_throttled"      # NO-SIGNAL: streak must stay 1
+  _s11_cycle "$s11_local_commit"   # streak=2
+  _s11_cycle "$s11_throttled"      # NO-SIGNAL: streak must stay 2
+  _s11_cycle "$s11_local_commit"   # streak=3
+  _s11_cycle "$s11_local_commit"   # streak=4 -> crosses threshold(3) -> ONE alert
+  local s11_streak; s11_streak=$(cat "$s11_state/local-commit-streak" 2>/dev/null || echo "?")
+  [ "$s11_streak" = "4" ]
+  _ck "throttled outcomes are no-signal: streak counts ONLY the 4 real local-commit cycles (2 throttled interruptions did not reset it)" $?
+  local n_alerts_11; n_alerts_11=$(ls "$s11_alerts"/*.json 2>/dev/null | wc -l | tr -d ' ')
+  [ "$n_alerts_11" = "1" ]
+  _ck "dead-remote streak interrupted by throttled no-signal cycles still crosses threshold 3 -> exactly ONE A2c alert fires (throttled no longer starves A2c)" $?
 
   rm -rf "$tmproot" 2>/dev/null || true
   echo "[self-test] coord-sync: $pass passed, $fail failed"
