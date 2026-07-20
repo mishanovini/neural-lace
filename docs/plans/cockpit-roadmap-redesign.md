@@ -280,7 +280,7 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   chip per belief-changing class (bookkeeping classes → Harness Health only); auditor's
   unmatched_dispatch oracle age-bounded to the marker-retention horizon (nl-issue spec) —
   Verification: full
-- [ ] 7. [serial] **Event-triggered publish + person grouping** (round 5, mechanics bound per A5).
+- [x] 7. [serial] **Event-triggered publish + person grouping** (round 5, mechanics bound per A5).
   - **Dirty marker at the WRITER-LIB seam** (progress-log-lib.sh emit + ask-registry.sh
     append), NOT in hooks — hook-layer-only placement misses the GUI's own delegated CLI
     writes (lifecycle, title edits) and every future writer. Marker touch is never-blocking

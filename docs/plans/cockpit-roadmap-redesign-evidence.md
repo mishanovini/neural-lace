@@ -598,3 +598,56 @@ Runtime verification: functionality-verifier 8::PASS (live headless-Chrome rende
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: the sole outstanding item (5 — standalone My-To-Do pane retirement per A10) is now landed on master (7cc793a/0913cf0, ancestors of HEAD) and INDEPENDENTLY re-derived here against the deployed :7733 surface. The standalone pane is fully gone from the live DOM (#todoSection/#todoBody/#todoCount null; no todo.js script), the operator's items relocated into the Inbox "My items" section (5 live pointer rows exactly matching /api/todo; always-visible add form), a REAL operator-checkbox toggle round-trips through POST /api/todo both ways with the user-visible strikethrough following the server state, and the Inbox (N) headline count excludes My-items — proven adversarially by adding an OPEN operator item and observing the count stay at answerable (3), not rise. The dead-splitter falsification (orphaned #rowResizeHandle focusable control) was attempted and failed: the element is absent and setupHandle no-ops. The three composed suites re-run directly are green (cockpit 251/0, server 173/0, inbox-routes 23/0). Items 1-4 were PROVEN 29/29 in the prior run and STAND, corroborated non-regressed by cockpit 251/0. Comprehension-gate PASS on record (rung 3), the retirement squarely within the already-reviewed t8 articulation's stated scope. The probe operator item added to exercise the checkbox path was removed; operator-todo.md restored byte-identical to its pre-test state.
+
+## Task 7 — RE-VERIFY: harness-F1 hold released (F1 fixed + landed)
+
+EVIDENCE BLOCK
+==============
+Task ID: 7
+Task description: [serial] Event-triggered publish + person grouping (round 5, mechanics bound per A5): dirty marker at the WRITER-LIB seam; debounced publisher <=~1/min; floor runs the FULL cycle (exporter+push+pull) at <=600s REGARDLESS of marker; marker cleared BEFORE export; 900s lock-stale verified at 60s cadence; hostname->person map with named unassigned/map-error states. Verification: full
+Verified at: 2026-07-20T20:50:39Z
+Verifier: task-verifier agent (F1-hold re-verify; the sole hold on the prior FAIL (line 253) was harness-review F1 — this run re-derives F1's resolution against live master and re-runs the guard-active suites directly rather than trusting the recorded exit-0)
+
+Oracle: derived-preexisting — the coord-push/coord-sync `--self-test` suites (incl. the REAL external-monitor-alert-surfacer.sh, the pre-existing A2c alert oracle) RE-RUN directly by the verifier; and specified — the prior held FAIL's own re-verify checklist (a-e, canonical Task 7 block line 256) + the review's REQUIRED-FIX 1-4. The originating defect was "suites masked via THROTTLE=0", so recorded green runs on this surface are treated as UNVERIFIED and re-executed.
+
+Comprehension-gate: PASS (confidence 8) — on record (rung 3). t7 comprehension-delta PASS conf 8 recorded at b652323 (all four canonical articulation sub-sections present in cockpit-roadmap-redesign-evidence-t7.md; gap-1/gap-2 amendments folded at cec3cb2, "6/6 citations grounded, flip authorized from comprehension side"). F1 is a composed-system defect surfaced by harness-review, not a builder mental-model gap; the fix (09f29b7) introduces no new task-7 comprehension surface. Not re-invoked.
+
+Checks run:
+1. F1 root cause = the exact hold reason. The t7 companion's hold directive (evidence-t7.md, b652323) reads "coord-sync × coord-push throttle composition defeats A5 ~1-min publish + starves A2c alert streak; suites masked via THROTTLE=0"; the root-cause record frc-20260720-01301d50 verdict_quote matches it line-for-line (coord-push.sh:71 default 600; :283-291 early-return outcome=noop; coord-sync.sh:432 push without --force; mask at coord-sync.sh:518/663/681). Result: PASS (hold reason == F1, PROVEN identical).
+2. Fix diff resolves it (read 09f29b7 in full). coord-sync.sh:462 now `push --force` (REQUIRED-FIX 1); coord-push.sh:296 writes distinct `throttled` outcome (REQUIRED-FIX 2); coord-sync.sh:313 `elif throttled` no-signal streak branch (REQUIRED-FIX 3b); S10/S11 run DEFAULT-throttle guard-active (un-mask). Live HEAD blobs match the review record exactly (coord-sync 5a9ba6b, coord-push 79245cd). Result: PASS.
+3. Records registered + PASS. frc-20260720-01301d50 (fix-root-cause, PASS) and hcr-20260720-79170b4e (harness-change-review, PASS: "REQUIRED-FIX 1-4 each implemented exactly as specced; --force bypasses only coord-push's throttle; nothing rode along") both present in docs/reviews/records/index.json, both covering the live blobs. Result: PASS.
+4. Suites re-run DIRECTLY (hooks neutralized for child git per NL-FINDING-029). coord-push --self-test = 14 passed / 0 failed (exit 0), incl. new S10. coord-sync --self-test = 25 passed / 1 failed (exit 1): F1 scenarios S10+S11 GREEN (event cycle <600s STILL advances origin with guard ACTIVE; outcome=pushed; throttled=no-signal streak preserved; dead-remote streak crosses threshold -> exactly ONE A2c alert). Result: PASS on F1 (the load-bearing scenarios).
+5. The single coord-sync FAIL (Scenario 5a marker-check-only) = PROVEN timing artifact, NOT a defect, NOT F1. This run was ~52 min wall-clock (12:25:19->13:17:10, slow git-fixture host); 5a reuses Scenario 1's floor stamp with no COORD_SYNC_FLOOR_SECONDS override, so >600s intervening slow scenarios make the floor genuinely due -> a clean fire correctly runs a full cycle ("fail toward publishing") instead of a marker-check-only skip. The SAME mechanism passes when the floor stamp is controlled-fresh: Scenario 6 assertion 2 (floor fresh + clean -> exporter not re-run, debounce) and Scenario 8 (8 clean fires -> zero extra cycles + debounce.log rotation), both green this run. Filed via nl-issue. Result: PASS (not a task-7 gap).
+6. Task-7 spec items all live on HEAD (spot-check vs 133b8f4): dirty marker at writer-lib seam (progress-log-lib.sh pl_mark_coord_dirty:387 from pl_emit; ask-registry.sh _ar_append_record:724 pl_mark_coord_dirty every verb); debounced publisher (coord-sync.sh trigger=event/floor/marker-check-only + debounce.log:172, own rotation, never cycles.log); floor <=600s (FLOOR_SECONDS default 600); marker cleared BEFORE export (:426 A5 ii, S7); 900s lock-stale (LOCK_STALE_SECONDS default 900, S9 > 5min ExecutionTimeLimit); person grouping (config/people.js loader w/ COCKPIT_PEOPLE_FILE override + case-insensitive map; peer-view.js person||'unassigned' NAMED state sorted last + people_map_error; asks.js renderPeerPersonGroups localStorage-per-group). Result: PASS.
+7. Prior comprehensive PASS axes STAND (F1 touched no server/web file — 09f29b7 = coord-sync.sh + coord-push.sh + docs/runbooks/coord-sync.md only): the recorded livesmoke (real server.js GET /api/asks -> persons=[{Misha:[desktop,laptop]},{unassigned:[mystery-box]}] + named map-error on malformed people.json), no-spawn-on-GET, -WhatIf scheduled task, export-state unchanged keepalive. Result: PASS (STAND).
+
+Runtime verification: test adapters/claude-code/scripts/coord-push.sh::--self-test (14 passed, 0 failed, exit 0; incl. S10 throttled-outcome-word + no-git-on-throttle)
+Runtime verification: test adapters/claude-code/scripts/coord-sync.sh::--self-test S10 (event cycle <600s after a prior push STILL advances origin, --force bypasses callee throttle, guard ACTIVE DEFAULT 600s; outcome=pushed)
+Runtime verification: test adapters/claude-code/scripts/coord-sync.sh::--self-test S11 (throttled outcomes are no-signal: streak counts ONLY the 4 real local-commit cycles; dead-remote streak crosses threshold -> exactly ONE A2c alert)
+Runtime verification: file adapters/claude-code/scripts/coord-sync.sh::bash "$COORD_PUSH_SH" push --force (line 462, REQUIRED-FIX 1)
+Runtime verification: file adapters/claude-code/scripts/coord-push.sh::_write_status_file throttled (line 296, REQUIRED-FIX 2 distinct outcome word)
+Runtime verification: file docs/reviews/records/index.json::hcr-20260720-79170b4e (delta review PASS) + frc-20260720-01301d50 (root-cause PASS), both covering live blobs coord-sync 5a9ba6b / coord-push 79245cd
+
+DEPENDENCY TRACE (F1 resolution path)
+================
+Step 1: a status change fires an event cycle; coord-sync's _run_cycle invokes coord-push
+  v Verified at: coord-sync.sh:462 `bash "$COORD_PUSH_SH" push --force`
+Step 2: coord-push's OWN 600s throttle no longer swallows the event publish (--force bypasses ONLY the throttle gate; all other WARN+exit-0 paths untouched)
+  v Verified at: coord-sync --self-test S10 (guard ACTIVE, payload B reaches origin within one fire); delta-review record "bypasses only coord-push's throttle, §9-safe plain push"
+Step 3: a throttled skip (when it does occur on the manual/non-force path) is a DISTINCT outcome word, read as NO-SIGNAL by the A2c streak tracker (never a reset)
+  v Verified at: coord-push.sh:296 outcome=throttled; coord-sync.sh:313 elif-throttled no-signal; S11 (streak preserved across throttled interruptions -> exactly ONE alert)
+Step 4: the composition is exercised with the guard genuinely ACTIVE (no THROTTLE=0 mask) in the shipped suite
+  v Verified at: coord-sync S10/S11 + coord-push S10 (DEFAULT 600s, never overridden), re-run green by the verifier
+
+Git evidence:
+  Files modified in recent history (F1 fix + records, all ancestors of HEAD fd9c3e5 = origin/master):
+    - adapters/claude-code/scripts/coord-sync.sh   (--force in _run_cycle + throttled no-signal branch + S10/S11; 09f29b7; HEAD blob 5a9ba6b)
+    - adapters/claude-code/scripts/coord-push.sh    (distinct `throttled` outcome word + S10; 09f29b7; HEAD blob 79245cd)
+    - docs/runbooks/coord-sync.md                   (header+runbook reconciled; 09f29b7)
+    - docs/reviews/records/2026-07-20-fix-root-cause-01301d50.json     (frc PASS; 8b83e76)
+    - docs/reviews/records/2026-07-20-harness-change-review-79170b4e.json (hcr PASS; fd9c3e5)
+    - T7 build itself: 133b8f4 (13 files, +979/-107), unchanged by the F1 fix
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: the task-7 checkbox was held solely on harness-review F1, and F1 is resolved, landed, record-covered, and independently re-exercised. The hold reason recorded in evidence-t7.md is line-for-line the F1 defect (matched against frc-20260720-01301d50); the fix 09f29b7 (live blobs coord-sync 5a9ba6b / coord-push 79245cd, identical to the delta-review record hcr-20260720-79170b4e's covered_files) implements all four REQUIRED-FIXes; and rather than trust the recorded exit-0 I re-ran both suites myself with the throttle guard ACTIVE — coord-push 14/0 and coord-sync's F1 scenarios S10 (event cycle <600s still advances origin, --force bypasses the callee throttle) + S11 (throttled is no-signal, dead-remote streak still fires exactly ONE A2c alert) are GREEN. The one coord-sync FAIL (Scenario 5a) is a proven ~52-min-runtime timing artifact unrelated to F1 or the code (the same marker-check-only mechanism is green in Scenarios 6 and 8, which control their own fresh floor stamp) — filed via nl-issue. Every other verification axis from the prior comprehensive PASS STANDS (F1 touched no server/web file). All five re-verify conditions the prior held FAIL enumerated (a-e) are satisfied.
