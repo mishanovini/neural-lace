@@ -304,7 +304,7 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
     a named state, never a guess (task-1 generalization). Unit-of-card + state persistence
     named (I3 law). Coord-repo access for the second account documented. —
   Verification: full
-- [ ] 8. [serial] **UI polish absorbed** (resizable/independently-scrollable panes without
+- [x] 8. [serial] **UI polish absorbed** (resizable/independently-scrollable panes without
   regressing the todo-clip fix; compact expandable backlog rows; task descriptions rendered +
   per-row plan links deduped; Artifacts section removed; the standalone My-To-Do pane REMOVED —
   its operator-authored items move into the Inbox "My items" section per A10/task 4) —

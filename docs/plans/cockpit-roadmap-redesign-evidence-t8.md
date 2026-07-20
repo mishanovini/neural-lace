@@ -40,5 +40,5 @@ destination) had not landed at build time (now in flight). Orchestrator sequence
 carry the reconciliation.
 
 ## Gate results
-### task-verifier (opus): INCOMPLETE conf 9 — 4/5 items PROVEN on live :7733 (29/29 browser checks: exact-delta keyboard resize + reload persistence, collapsed backlog rows, 18 real descriptions with no-undefined falsification, zero Artifacts UI vs 324 server-side; clamps + localStorage-blocked + crafted-payload probes all survived). Item 5 (pane retirement) = genuine completion criterion, correctly deferred behind t4 → checkbox stays open; re-invoke post-retirement (verify-t8*.js scripts reusable).
+### task-verifier (opus): INCOMPLETE conf 9 (4/5) → retirement landed → FINAL RE-VERIFY PASS conf 9 — 13/13 live checks incl. real POST /api/todo toggle round-trip; dead-splitter falsification survived; count-exclusion proven by-construction (adversarial open-item probe); suites 251/173/23. Flipped on dual-gate authorization.
 ### comprehension-reviewer (opus): PASS conf 8 — articulation faithful (all covered edges grounded incl. 500/501 boundary, quota-degradation, textContent escaping; deferral ruled genuine hard dependency, not convenience). Flip authorized from comprehension side, subject to item-5 completion.

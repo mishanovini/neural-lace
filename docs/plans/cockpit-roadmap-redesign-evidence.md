@@ -528,3 +528,73 @@ Runtime verification: file adapters/claude-code/hooks/session-honesty-gate.sh::-
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: the user-facing outcome was exercised against the live deployed :7733 surface via headless-Chrome render — the Inbox mounts, the (N)=3 headline count is derived from answerable items ONLY and excludes both the quarantined item and the My-items section (A10/I4), quarantine renders as a framed SYSTEM failure with an honest "defect has been filed" line matching the auditor's real state (A8), and the win state correctly does NOT render while answerable items exist (C4). Adversarial falsification probes SURVIVED: the A1 interactive anchorless add BLOCKS with nothing written while the identical text --mechanical stores + quarantines with lint_warnings (verifier's own sandbox probe); the auditor files exactly ONE quarantine defect per ledger-item lifetime and does not re-file on a second cycle (S9f); all three mechanical callers pass --mechanical at the correct sites. §10 golden-scenario/FP-rate/retirement text is present in both needs-you.sh's header and the plan. One NON-BLOCKING documented residual: the C3 stale-link banner renders the honest generic "resolved earlier — ..." (never blank/404) but does not populate the specific "<when> — <outcome>" because resolved items leave the payload — declared as an honest limit and identical to the generic-fallback pattern already shipped and PASSED in task 5.
+
+---
+
+## Task 8 — UI polish absorbed (FINAL — item 5 retirement now landed)
+
+EVIDENCE BLOCK
+==============
+Task ID: 8
+Task description: UI polish absorbed (resizable/independently-scrollable panes without regressing the todo-clip fix; compact expandable backlog rows; task descriptions rendered + per-row plan links deduped; Artifacts section removed; the standalone My-To-Do pane REMOVED — its operator-authored items move into the Inbox "My items" section per A10/task 4) — Verification: full, rung 3
+Verified at: 2026-07-20T01:32:09Z
+Verifier: task-verifier agent (FINAL re-verify — prior run INCOMPLETE conf 9 on item 5 only; items 1-4 PROVEN 29/29 live and STAND; this run closes item 5 now that the retirement landed on master at 7cc793a/0913cf0, both ancestors of HEAD 5a49c9b)
+
+Oracle: specified — the plan's User-facing Outcome §3 + A10 ("the Inbox SUPERSEDES the My-To-Do pane; operator items become a 'My items' section within the Inbox, EXCLUDED from Inbox (N)") + task-8 item 5; exercised as a live headless-Chrome render against the deployed cockpit on http://127.0.0.1:7733, plus the derived pre-existing oracle (the three composed selftest suites) re-run directly.
+
+Comprehension-gate: PASS (confidence 8) — on record (rung 3). The task-8 rung-3 articulation (docs/plans/cockpit-roadmap-redesign-evidence-t8.md) was reviewed PASS conf 8 with its Spec-meaning explicitly stating "retire My-To-Do per A10/task4"; the reviewer authorized flip "subject to item-5 completion." The retirement micro-task (7cc793a) executes exactly that articulated scope + the deferral record's stated sequence; no new mental-model surface introduced. The t4 comprehension PASS conf 8 (commit a9f0cdf) covers the "My items" destination surface. Not re-invoked for a deferred item squarely inside an already-PASS'd articulation.
+
+Checks run:
+1. Composed selftest suites, re-run directly by verifier (derived pre-existing oracle):
+   - web/cockpit.selftest.js: 251 passed, 0 failed (rc=0) — incl. T8-15..T8-20, T4-17..T4-20 (My-items relocation + count exclusion + interaction parity + load-once discipline), and T8-1/T16-11/T16-13/T4-17 repointed from the retired pane to the My-items surface
+   - server/server.selftest.js single-run: 173 passed, 0 failed (rc=0)
+   - server/inbox-routes.selftest.js: 23 passed, 0 failed (rc=0)
+   Result: PASS
+2. LIVE browser render (headless Chrome via puppeteer-core) against http://127.0.0.1:7733 (#inbox) — item 5, 13/13 checks, 0 failed:
+   - I5.1/I5.2 pane absent: getElementById("todoSection")/"todoBody"/"todoCount") all === null in the live DOM
+   - I5.3 no todo.js: document.scripts contains NO src matching /todo\.js/ (matches=[])
+   - I5.4 dead-splitter FALSIFICATION: getElementById("rowResizeHandle") === null AND no [role=separator] with that id (the only separator is #colResizeHandle, the legitimate items-1-4 column handle); app.js setupHandle() no-ops via `if (!handle || !target) return` (app.js:1371) since both #rowResizeHandle and #todoBody are gone — no orphaned focusable control. Falsification attempt did NOT break the claim.
+   - I5.5 My-items renders: header "My items (1 open)" + always-visible add form present
+   - I5.6 pointer rows: 5 rendered .todo-item-pointer rows == /api/todo pointer_items length (5) — exact DOM/API correspondence
+   - I5.7 Inbox (N) excludes My items: #inboxTabCount = "(3)" == /api/inbox answerable length (3), NOT +5 pointer / +operator
+   - I5.11/I5.12 REAL checkbox toggle round-trip: a probe operator item was added via POST /api/todo, then its rendered checkbox was CLICKED — server GET showed checked:true, the rendered DOM checkbox === checked, AND the user-visible .todo-item-checked strikethrough class appeared (rendered-output rule satisfied); a second click toggled back — server GET showed checked:false. Round-trips through POST /api/todo both ways.
+   Result: PASS
+3. Items 1-4 (resize/scroll, compact backlog rows, task descriptions, Artifacts removed): PROVEN 29/29 in the prior run (P1.1-P1.17 live browser on the same :7733 server); STAND per orchestrator instruction; corroborated non-regressed by this run's cockpit.selftest 251/0 (all T8-* structural pins green). Result: PASS (STAND)
+
+Falsifications attempted (verifier's own, all SURVIVED):
+  (a) Dead-splitter orphan — searched the live DOM + [role=separator] set for #rowResizeHandle; absent; setupHandle no-ops. SURVIVED (I5.4).
+  (b) Count-bleed — ADVERSARIAL: added an OPEN operator My-item (a probe, which is genuinely unchecked/open) and re-read #inboxTabCount: it stayed "(3)" == answerable, did NOT rise to 4. Proves the exclusion is by-construction (setTabCount only ever reads /api/inbox answerable), not a coincidence of empty operator data. SURVIVED (I5.10).
+  (c) Stale-render toggle — asserted the USER-VISIBLE strikethrough (.todo-item-checked), not merely the server field, after the click; both flipped together. SURVIVED (I5.11).
+
+Cleanup: the probe operator item was added only to exercise the operator-row checkbox path (live operator_items was empty); after the round-trip it was removed from docs/operator-todo.md — the file is now byte-identical to its pre-test state (diff against pre-test backup = IDENTICAL; /api/todo operator_items=[]).
+
+DEPENDENCY TRACE
+================
+Step 1: operator opens the cockpit; the standalone My-To-Do pane no longer exists
+  ↓ Verified at: live render I5.1-I5.3 (#todoSection/#todoBody/#todoCount null; no todo.js script) + git show HEAD:index.html grep = 0 pane refs
+Step 2: operator's to-do items relocated into the Inbox "My items" section, fed by the UNCHANGED GET/POST /api/todo endpoints
+  ↓ Verified at: live render I5.5/I5.6 (.ib-my-items-wrap header + 5 pointer rows == API) + inbox.js:686-729 renderMyItemsBody/loadMyItems
+Step 3: operator checks/unchecks a My-item; it persists through the server and re-renders with the strikethrough
+  ↓ Verified at: live click round-trip I5.11/I5.12 (server checked true→false, DOM + .todo-item-checked follow) + inbox.js:505-540 renderMyItemOperatorRow → POST /api/todo action:toggle → server.js:1241-1251
+Step 4: the Inbox (N) headline count never counts My-items, even when an open one exists
+  ↓ Verified at: live I5.7 + ADVERSARIAL I5.10 (open probe did not raise the count) + inbox.js:160-164 setTabCount(answerable.length) [cockpit.selftest T4-18]
+
+Git evidence:
+  Files modified in recent history (item 5 retirement, both ancestors of HEAD 5a49c9b):
+    - neural-lace/workstreams-ui/web/index.html  (pane markup + todo.js script tag + #rowResizeHandle removed, 7cc793a)
+    - neural-lace/workstreams-ui/web/inbox.js  (My-items section added, 7cc793a)
+    - neural-lace/workstreams-ui/{web => attic}/todo.js  (git mv, salvaged not deleted, 7cc793a)
+    - neural-lace/workstreams-ui/web/cockpit.selftest.js  (T8-15..T8-20/T4-18..T4-20 + repoints, 7cc793a)
+    - items 1-4: 9f68fac (prior build, PROVEN prior run)
+
+Runtime verification: test neural-lace/workstreams-ui/web/cockpit.selftest.js::self-test summary (251 passed, 0 failed)
+Runtime verification: test neural-lace/workstreams-ui/server/server.selftest.js::self-test summary (173 passed, 0 failed)
+Runtime verification: test neural-lace/workstreams-ui/server/inbox-routes.selftest.js::inbox-routes self-test (23 passed, 0 failed)
+Runtime verification: curl http://127.0.0.1:7733/api/todo (operator_items + pointer_items feed the My-items section)
+Runtime verification: file neural-lace/workstreams-ui/web/index.html::no #todoSection/#rowResizeHandle/<script src="/todo.js"> (0 occurrences, live + HEAD)
+Runtime verification: file neural-lace/workstreams-ui/web/inbox.js::setTabCount(answerable.length)
+Runtime verification: functionality-verifier 8::PASS (live headless-Chrome render on :7733 — pane absent, My-items renders, real checkbox toggle round-trips POST /api/todo with visible strikethrough, Inbox N excludes My-items incl. the adversarial open-item probe; dead-splitter falsification survived)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: the sole outstanding item (5 — standalone My-To-Do pane retirement per A10) is now landed on master (7cc793a/0913cf0, ancestors of HEAD) and INDEPENDENTLY re-derived here against the deployed :7733 surface. The standalone pane is fully gone from the live DOM (#todoSection/#todoBody/#todoCount null; no todo.js script), the operator's items relocated into the Inbox "My items" section (5 live pointer rows exactly matching /api/todo; always-visible add form), a REAL operator-checkbox toggle round-trips through POST /api/todo both ways with the user-visible strikethrough following the server state, and the Inbox (N) headline count excludes My-items — proven adversarially by adding an OPEN operator item and observing the count stay at answerable (3), not rise. The dead-splitter falsification (orphaned #rowResizeHandle focusable control) was attempted and failed: the element is absent and setupHandle no-ops. The three composed suites re-run directly are green (cockpit 251/0, server 173/0, inbox-routes 23/0). Items 1-4 were PROVEN 29/29 in the prior run and STAND, corroborated non-regressed by cockpit 251/0. Comprehension-gate PASS on record (rung 3), the retirement squarely within the already-reviewed t8 articulation's stated scope. The probe operator item added to exercise the checkbox path was removed; operator-todo.md restored byte-identical to its pre-test state.
