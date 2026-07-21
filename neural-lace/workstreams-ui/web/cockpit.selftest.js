@@ -935,6 +935,119 @@ ok('T3-31 CSS pairs every status class with the palette (stalled uses the --inte
   /\.rm-status-complete[^{]*\{[^}]*var\(--ok\)/.test(C));
 ok('T3-32 landed items are programmatically focusable (tabindex="-1" set on item containers)',
   /tabindex.*-1|tabIndex = -1/.test(roadmapJs));
+
+// ============================================================
+// cockpit-roadmap-redesign ROUND-6/7 FOLLOW-ON FIX (T3-33+): the operator's
+// live-surface walkthrough (docs/reviews/2026-07-17-cockpit-ux-design-
+// input.md, Round 6+7) — text-wall leaves, verbatim-duplicated provenance,
+// no immediate collapse for fully-complete nodes, chrome noise, no series
+// structure, no paragraph-form ban, no visible task->subtask hierarchy.
+// The three PURE (DOM-free) functions below are extracted from roadmap.js
+// and REALLY EXECUTED in a `vm` sandbox (the same T3-27b/T6 technique) —
+// real behavioral proof, not source-presence regex.
+// ============================================================
+function extractMarkedBlock(src, beginMarker, endMarker) {
+  const bi = src.indexOf(beginMarker);
+  const ei = src.indexOf(endMarker);
+  if (bi === -1 || ei === -1 || ei < bi) return null;
+  return src.slice(bi, ei);
+}
+function runPure(src, callExpr) {
+  if (!src) return { __error: 'extraction anchors missing' };
+  const sandbox = {};
+  vmMod.createContext(sandbox);
+  const code = src + '\nvar __result = (' + callExpr + ');';
+  try { vmMod.runInContext(code, sandbox); } catch (err) { return { __error: String(err) }; }
+  return sandbox.__result;
+}
+
+const provenanceDedupSrc = extractMarkedBlock(roadmapJs, '// PROVENANCE-DEDUP-BEGIN', '// PROVENANCE-DEDUP-END');
+const collapseLawSrc = extractMarkedBlock(roadmapJs, '// COLLAPSE-LAW-BEGIN', '// COLLAPSE-LAW-END');
+const phaseSeriesSrc = extractMarkedBlock(roadmapJs, '// PHASE-SERIES-BEGIN', '// PHASE-SERIES-END');
+ok('T3-33 selftest can locate the PROVENANCE-DEDUP/COLLAPSE-LAW/PHASE-SERIES extraction anchors (source-execution harness precondition)',
+  !!provenanceDedupSrc && !!collapseLawSrc && !!phaseSeriesSrc);
+
+// --- gap 2: provenance dedup (real execution) -----------------------------
+ok('T3-34 visibleFromRequests SUPPRESSES an entry whose (normalized) title is identical to the item\'s own title — no more self-duplicating "from your request(s)" on an intent\'s own drill-down',
+  (function () {
+    const r = runPure(provenanceDedupSrc, 'visibleFromRequests({title: "Build the Alpha Feature", from_requests: [{id: "ask-1", title: "  build the alpha feature  "}]})');
+    return !r.__error && r.entries.length === 0 && r.allSuppressed === true;
+  })());
+ok('T3-34b visibleFromRequests keeps a GENUINELY different request title (never over-suppresses)',
+  (function () {
+    const r = runPure(provenanceDedupSrc, 'visibleFromRequests({title: "task 1: Derived status", from_requests: [{id: "ask-1", title: "Build the alpha feature"}]})');
+    return !r.__error && r.entries.length === 1 && r.allSuppressed === false;
+  })());
+ok('T3-34c visibleFromRequests never reports allSuppressed when from_requests was ALREADY empty (a real "no captured request" case, distinct from an all-duplicate list)',
+  (function () {
+    const r = runPure(provenanceDedupSrc, 'visibleFromRequests({title: "x", from_requests: []})');
+    return !r.__error && r.entries.length === 0 && r.allSuppressed === false;
+  })());
+ok('T3-35 the drill-down renders the from-requests row conditionally on allSuppressed (never inline-by-default, never a stale fallback when a dup was suppressed)',
+  /frInfo\.allSuppressed/.test(roadmapJsNoComments) && /visibleFromRequests\(item\)/.test(roadmapJsNoComments));
+
+// --- gap 3: immediate collapse of a fully-complete node's children --------
+ok('T3-36 partitionChildren rolls up EVERY complete child immediately when parentFullyComplete=true, even ones well inside the 7-day "stay visible" window (the 18/18-recently-shipped case)',
+  (function () {
+    const kids = [
+      { status: { value: 'complete' }, completed_at: new Date().toISOString() },
+      { status: { value: 'complete' }, completed_at: new Date().toISOString() },
+    ];
+    const r = runPure(collapseLawSrc, 'partitionChildren(' + JSON.stringify(kids) + ', true, function(){ return false; })');
+    return !r.__error && r.live.length === 0 && r.aged.length === 2;
+  })());
+ok('T3-36b partitionChildren still uses the PER-CHILD 7-day window (agedOutFn) when the parent is NOT fully complete (round-4\'s "recently completed stays in place" for an ACTIVE parent is unchanged)',
+  (function () {
+    const kids = [{ status: { value: 'complete' }, completed_at: new Date().toISOString() }];
+    const r = runPure(collapseLawSrc, 'partitionChildren(' + JSON.stringify(kids) + ', false, function(){ return false; })');
+    return !r.__error && r.live.length === 1 && r.aged.length === 0;
+  })());
+ok('T3-36c partitionChildren never touches a NOT-complete child regardless of parentFullyComplete (only complete children are ever rolled up)',
+  (function () {
+    const kids = [{ status: { value: 'in-progress' }, completed_at: '' }];
+    const r = runPure(collapseLawSrc, 'partitionChildren(' + JSON.stringify(kids) + ', true, function(){ return true; })');
+    return !r.__error && r.live.length === 1 && r.aged.length === 0;
+  })());
+ok('T3-37 renderNode computes parentFullyComplete from THIS item\'s own status (complete implies every child already shipped) and threads it into renderChildList',
+  /parentFullyComplete\s*=\s*!!\(item\.status/.test(roadmapJsNoComments) &&
+  /renderChildList\(kids, item\.id, parentFullyComplete\)/.test(roadmapJsNoComments));
+ok('T3-38 the completed-rollup summary text uses the item\'s (already-distilled) TITLE, never a separate full-text field',
+  / completed ▸ — latest: '\s*\+\s*\(aged\[0\]\.title/.test(roadmapJsNoComments));
+
+// --- gap 6: connected phase series for sibling plan nodes -----------------
+ok('T3-39 isPhaseSeries/phaseLabel: sibling PLAN children render as a numbered "Phase N of M" series; non-plan children (tasks under a plan, intents at top level) do not',
+  (function () {
+    const a = runPure(phaseSeriesSrc, 'isPhaseSeries([{kind:"plan"},{kind:"plan"}])');
+    const b = runPure(phaseSeriesSrc, 'isPhaseSeries([{kind:"task"},{kind:"task"}])');
+    const c = runPure(phaseSeriesSrc, 'isPhaseSeries([])');
+    const label = runPure(phaseSeriesSrc, 'phaseLabel(1, 4)');
+    return a === true && b === false && c === false && label === 'Phase 2 of 4';
+  })());
+ok('T3-40 renderChildList wraps a phase-series in a text-labeled connector (.rm-phase-step/.rm-phase-label), never color-only, and CSS draws the connector as an ADDITIVE line (never the only cue)',
+  /rm-phase-series/.test(roadmapJsNoComments) && /rm-phase-step/.test(roadmapJsNoComments) &&
+  /rm-phase-label/.test(roadmapJsNoComments) &&
+  /\.rm-phase-step::before\s*\{[^}]*background:/.test(C) && /\.rm-phase-label\s*\{/.test(C));
+
+// --- gap 4: compact icon chrome, hover/focus-within, never hover-only -----
+ok('T3-41 Edit-title/Move-up/Move-down are compact icon buttons (short glyph text) carrying a full aria-label — never bare icons with no accessible name',
+  /rm-icon-btn/.test(roadmapJs) && /'✎'/.test(roadmapJs) && /'↑'/.test(roadmapJs) && /'↓'/.test(roadmapJs) &&
+  /edit the title of/.test(roadmapJs) && /Move up in build order/.test(roadmapJs) && /Move down in build order/.test(roadmapJs));
+ok('T3-42 CSS hides the chrome by default and reveals it on hover OR :focus-within (never hover-only — WCAG 2.2 2.5.7)',
+  /\.rm-title-edit,\s*\.rm-item-chrome\s*\{[^}]*opacity:\s*0/.test(C) &&
+  /:hover[^{,]*\.rm-title-edit[\s\S]{0,80}:focus-within/.test(C.replace(/\n/g, ' ')));
+ok('T3-42b an OPEN title editor stays visible through the whole edit (a JS-toggled class, not hover-state, keeps it shown — a stray mouseout never hides in-progress input/Save/Cancel)',
+  /classList\.add\('rm-editing'\)/.test(roadmapJs) && /classList\.remove\('rm-editing'\)/.test(roadmapJs) &&
+  /\.rm-title-edit\.rm-editing\s*\{/.test(C));
+
+// --- 7A: no paragraph form anywhere; 7B: visible task->subtask hierarchy -
+ok('T3-43 the task drill-down renders lead/subtask/live-agent content as bulleted LISTS (<ul>/<li>), never a single paragraph text blob',
+  /createElement\('ul'\)|el\('ul'/.test(roadmapJs) && /rm-lead-points/.test(roadmapJs) && /rm-subtasks/.test(roadmapJs));
+ok('T3-44 subtasks render each sub-bullet as its own labeled list item with a distilled title (round 7B: real visible task -> subtask structure, not a flat re-fold)',
+  /rm-subtask-title/.test(roadmapJs) && /s\.title/.test(roadmapJs) && /s\.body_points/.test(roadmapJs));
+ok('T3-45 currently-running sessions render as live agent leaves with a text status label (never color/glyph-only) under the task they serve (round 7B-i)',
+  /rm-agents/.test(roadmapJs) && /aria-hidden/.test(roadmapJs) && /rm-agent-text/.test(roadmapJs) &&
+  /AGENT_STATUS_GLYPH/.test(roadmapJs));
+
 // cockpit-roadmap-redesign Task 7 — person-grouped peers (round 5:
 // "Misha: desktop + laptop"). Same PV-prefix, same DOM-free technique;
 // the server-side grouping derivation is peer-view.js's own self-test

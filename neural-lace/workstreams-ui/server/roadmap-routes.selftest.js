@@ -124,12 +124,31 @@ async function main() {
     '',
   ].join('\n'));
   // ghost-plan deliberately DOES NOT EXIST on disk -> unknown(reason).
+  // rich-plan: ONE task with the real "**Bold lead-in.** prose — - **Label:**
+  // body — - **Label2:** body2" convention this repo's own plans use
+  // (round-6 gap 1 + round-7 7A/7B fixture — a controlled real-shape
+  // sample, distinct from demo-plan so its existing S3 assertions are
+  // untouched).
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'rich-plan.md'), [
+    '# Plan: rich', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. [serial] **Derived top-level status foundation.** Per-item status',
+    '  computed, never declared. Fixes the done-renders-ACTIVE defect.',
+    '  - **Enum (C5):** not-started / in-progress / complete / stalled(reason).',
+    '    When any derivation input fails the item renders unknown(reason), never',
+    '    a confident bucket.',
+    '  - **Complete oracle (A4):** per-project completion-oracle config with',
+    '    three named classes.',
+    '',
+  ].join('\n'));
 
   // ---- fixture registry --------------------------------------------------
   const reg = [
     // ask-alpha: operator ask, demo-plan linked (in-progress overall).
     { ask_id: 'ask-alpha', record_type: 'created', ts: '2026-07-10T10:00:00Z', summary: 'Build the alpha feature', repo: repoDir, project: 'fixture-proj', origin_session: 'sess-op-1', status: 'active', emitter: 'ask-registry' },
     { ask_id: 'ask-alpha', record_type: 'plan_linked', ts: '2026-07-10T10:05:00Z', plan_slug: 'demo-plan' },
+    // ask-rich: operator ask, rich-plan linked (round-6/7 fixture).
+    { ask_id: 'ask-rich', record_type: 'created', ts: '2026-07-13T10:00:00Z', summary: 'Rich structured ask', repo: repoDir, project: 'fixture-proj', origin_session: 'sess-op-1', status: 'active', emitter: 'ask-registry' },
+    { ask_id: 'ask-rich', record_type: 'plan_linked', ts: '2026-07-13T10:05:00Z', plan_slug: 'rich-plan' },
     // ask-beta: operator ask, ghost-plan linked (derivation input missing -> unknown).
     { ask_id: 'ask-beta', record_type: 'created', ts: '2026-07-11T10:00:00Z', summary: 'Beta effort', repo: repoDir, project: 'fixture-proj', origin_session: 'sess-op-2', status: 'active', emitter: 'ask-registry' },
     { ask_id: 'ask-beta', record_type: 'plan_linked', ts: '2026-07-11T10:05:00Z', plan_slug: 'ghost-plan' },
@@ -152,6 +171,14 @@ async function main() {
   fs.writeFileSync(path.join(progressDir, 'ask-alpha.jsonl'), [
     JSON.stringify({ type: 'task_started', ts: '2026-07-15T09:00:00Z', plan_slug: 'demo-plan', task_id: '2', session_id: 'sess-op-1' }),
     JSON.stringify({ type: 'task_done', ts: '2026-07-14T18:00:00Z', plan_slug: 'demo-plan', task_id: '1', session_id: 'sess-op-1', evidence_link: '' }),
+  ].join('\n') + '\n');
+  // rich-plan's task 1 is in-progress with TWO attached sessions — sess-op-1
+  // (the LIVE fixture heartbeat, fresh last_activity_ts) and sess-ghost (a
+  // session with NO heartbeat file at all) — the 7B-i fixture, covering
+  // both the "running" and the "unknown, no heartbeat evidence" leaf.
+  fs.writeFileSync(path.join(progressDir, 'ask-rich.jsonl'), [
+    JSON.stringify({ type: 'task_started', ts: '2026-07-15T09:00:00Z', plan_slug: 'rich-plan', task_id: '1', session_id: 'sess-op-1' }),
+    JSON.stringify({ type: 'task_started', ts: '2026-07-15T09:05:00Z', plan_slug: 'rich-plan', task_id: '1', session_id: 'sess-ghost' }),
   ].join('\n') + '\n');
 
   delete require.cache[require.resolve('./roadmap-routes.js')];
@@ -197,7 +224,7 @@ async function main() {
     const items = (r1.json && r1.json.items) || [];
     const topIds = items.map((i) => i.id);
     ok('S1b default build order = registry insertion order (created_ts ascending)',
-      JSON.stringify(topIds) === JSON.stringify(['ask-done', 'ask-shipped', 'ask-alpha', 'ask-beta', 'ask-chore']),
+      JSON.stringify(topIds) === JSON.stringify(['ask-done', 'ask-shipped', 'ask-alpha', 'ask-beta', 'ask-chore', 'ask-rich']),
       topIds.join(','));
     ok('S1c dismissed asks never appear on the roadmap', topIds.indexOf('ask-dismissed') === -1);
     ok('S1d payload carries the single completed-aging tunable (completed_age_days)',
@@ -332,6 +359,43 @@ async function main() {
     const alpha13b = findItem((r13b.json && r13b.json.items) || [], 'ask-alpha');
     ok('S13b a candidate_classified amendment label never retitles the ask — title stays the operator title, unchanged',
       alpha13b && alpha13b.title === 'Alpha feature (operator title)', alpha13b && alpha13b.title);
+
+    // ---- S15-S19: round-6 gap 1 + round-7 7A/7B/7B-i — task-leaf
+    // distillation, sentence-split lists (never a paragraph), sub-bullet
+    // structure, and live-agent leaves — against the REAL rich-plan fixture
+    // (bold lead-in + two "- **Label:**" sub-bullets, one attached to a
+    // LIVE fixture heartbeat).
+    const richTask = findItem(items, 'ask-rich/rich-plan/1');
+    ok('S15 the task-leaf TITLE is the distilled bold lead-in, never the raw folded plan-markdown wall (gap 1)',
+      richTask && richTask.title === 'task 1: Derived top-level status foundation',
+      richTask && richTask.title);
+    ok('S15b the raw folded text (Enum/Complete-oracle sub-bullet prose) never appears in the title',
+      richTask && richTask.title.indexOf('Complete oracle') === -1 && richTask.title.length < 80,
+      richTask && richTask.title);
+    ok('S16 the task carries lead_points as an ARRAY of sentences (7A: list, never a paragraph), covering the text the title did not consume',
+      richTask && Array.isArray(richTask.lead_points) && richTask.lead_points.length >= 1 &&
+      richTask.lead_points.every((p) => typeof p === 'string') &&
+      richTask.lead_points.join(' ').indexOf('Per-item status') !== -1,
+      richTask && JSON.stringify(richTask.lead_points));
+    ok('S17 the task carries its sub-bullets as REAL subtask nodes (round 7B: visible task -> subtask hierarchy), each with a distilled title',
+      richTask && Array.isArray(richTask.subtasks) && richTask.subtasks.length === 2 &&
+      richTask.subtasks[0].title === 'Enum (C5)' && richTask.subtasks[1].title === 'Complete oracle (A4)',
+      richTask && JSON.stringify(richTask.subtasks.map((s) => s.title)));
+    ok('S17b each subtask body is ALSO a sentence-split array, never a raw paragraph blob',
+      richTask && Array.isArray(richTask.subtasks[0].body_points) && richTask.subtasks[0].body_points.length >= 2,
+      richTask && JSON.stringify(richTask.subtasks[0].body_points));
+    ok('S18 an in-progress task with an attached LIVE-heartbeat session carries it as a live_sessions agent leaf, status=running (round 7B-i)',
+      richTask && Array.isArray(richTask.live_sessions) && richTask.live_sessions.length === 2 &&
+      richTask.live_sessions.some((a) => a.kind === 'agent' && a.title.indexOf('sess-op-1') !== -1 && a.status.value === 'running'),
+      richTask && JSON.stringify(richTask.live_sessions));
+    ok('S19 a task attached to a session with NO matching heartbeat file renders that agent leaf as unknown (named-absence, never a guessed "running")',
+      richTask && richTask.live_sessions.some((a) => a.title.indexOf('sess-ghost') !== -1 &&
+        a.status.value === 'unknown' && /no heartbeat/i.test(a.status.label || '')),
+      richTask && JSON.stringify(richTask.live_sessions));
+    const demoT1 = findItem(items, 'ask-alpha/demo-plan/1'); // done task -> no live agents (work is finished)
+    ok('S19b a DONE task carries NO live_sessions (finished work has no "currently running" agent)',
+      demoT1 && Array.isArray(demoT1.live_sessions) && demoT1.live_sessions.length === 0,
+      demoT1 && JSON.stringify(demoT1.live_sessions));
 
     // ---- S14: error honesty — a torn registry file never crashes the route
     fs.writeFileSync(path.join(stateDir, 'ask-registry.jsonl'), '{"broken json\n');

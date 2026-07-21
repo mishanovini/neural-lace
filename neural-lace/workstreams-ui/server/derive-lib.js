@@ -283,6 +283,138 @@ function clampTaskDescription(desc) {
   return s.length > TASK_DESC_PREVIEW_MAX_LEN ? s.slice(0, TASK_DESC_PREVIEW_MAX_LEN) + '…' : s;
 }
 
+// ----------------------------------------------------------------------
+// TASK-LEAF TITLE DISTILLATION + sub-structure (cockpit-roadmap-redesign,
+// round-6/7 operator rendering-gap fix). plan-parse.js's `description`
+// folds a task's ENTIRE indented block — its own lead sentence AND every
+// "  - **Label:** body" sub-bullet beneath it — into ONE flat, space-joined
+// string with no length limit of its own (this very plan's own task 1/3/4
+// bullets run 2000-4800+ chars once folded): exactly the "walls of
+// Prove-it-works/Wire-checks text" the operator's round-6 live walkthrough
+// flagged rendering as a tree LEAF's one-line label (never fixed by
+// TASK_DESC_PREVIEW_MAX_LEN above — that clamp bounds a DIFFERENT
+// consumer's full-text preview, computePlanRows/backlog.js, not the
+// roadmap tree's leaf LABEL). The two functions below are the named
+// derivation the plan's own "task-1 pattern" calls for (C5's no-blank,
+// no-silent-guess convention, applied here to tree-shape rather than
+// status): a task leaf's label is NEVER the raw folded text, and a
+// derivation failure (empty input) renders a distinct labeled placeholder,
+// never a blank string.
+// ----------------------------------------------------------------------
+
+// SUBTASK_MARKER_RE — the sub-bullet delimiter this repo's plans use for a
+// task's internal structure (round 7B: "tasks have subtasks; show that").
+// plan-parse.js's fold (parseTasks' continuation-line loop) strips ONLY
+// leading indentation from each folded line (`line.trim()`), never the
+// line's own leading "- " bullet marker — so every "  - **Label:** body"
+// sub-bullet survives inside the flat `description` string as the literal
+// substring " - **Label:** body", still delimited by " - **" (verified
+// directly against this very plan file's own task 1/3/4 text, which uses
+// this convention throughout). Splitting on that SURVIVING delimiter
+// recovers the sub-bullet boundaries the flat fold discarded, without
+// touching plan-parse.js's own grammar — computePlanRows/backlog.js (a
+// different consumer) keeps receiving today's unmodified flat string.
+const SUBTASK_MARKER_RE = /\s-\s(?=\*\*[^*\n]+\*\*)/;
+const SUBTASK_LABEL_RE = /^\*\*([^*]+)\*\*:?\s*([\s\S]*)$/;
+const DISTILL_MAX_LEN = 100;
+
+// distillTaskTitle(text) -> {title, source}
+//
+// Three tiers, in order — the named derivation behind a tree leaf's
+// one-line label:
+//   'bold-lead-in' — this repo's task-authoring convention opens almost
+//      every task/sub-bullet with a short bold clause ("**Derived
+//      top-level status foundation.** Per-item status computed, never
+//      declared...") — when present, THAT is the human-authored title,
+//      used verbatim (trailing "."/":" stripped).
+//   'first-sentence' — the first sentence (up to . ! or ?) when it is
+//      itself already <= DISTILL_MAX_LEN chars (covers both a short
+//      one-sentence task AND a short label with no terminal punctuation).
+//   'truncated' — word-boundary truncation to DISTILL_MAX_LEN chars with
+//      an ellipsis — the general fallback for prose with no early
+//      sentence break, NEVER a mid-word cut.
+// Empty/whitespace-only input is its OWN named failure state (never a
+// blank leaf label) — the task-1 no-default-guess pattern applied here.
+// The return also carries `remainder` — whatever raw text was NOT consumed
+// by the extracted title (e.g. the sentences following a bold lead-in) —
+// so a caller can show that leftover context as its OWN list content
+// (7A's no-paragraph law) instead of re-deriving the same split twice or
+// silently dropping it.
+function distillTaskTitle(text) {
+  const raw = String(text == null ? '' : text).trim();
+  if (!raw) return { title: '(no task text)', source: 'empty', remainder: '' };
+
+  const boldMatch = /^\*\*([^*]+)\*\*/.exec(raw);
+  if (boldMatch && boldMatch[1].trim()) {
+    return {
+      title: boldMatch[1].replace(/[.:]\s*$/, '').trim(),
+      source: 'bold-lead-in',
+      remainder: raw.slice(boldMatch[0].length).trim(),
+    };
+  }
+
+  const sentenceMatch = /^(.*?[.!?])(\s|$)/.exec(raw);
+  if (sentenceMatch && sentenceMatch[1].length >= 4 && sentenceMatch[1].length <= DISTILL_MAX_LEN) {
+    return {
+      title: sentenceMatch[1].trim(),
+      source: 'first-sentence',
+      remainder: raw.slice(sentenceMatch[0].length).trim(),
+    };
+  }
+
+  if (raw.length <= DISTILL_MAX_LEN) return { title: raw, source: 'first-sentence', remainder: '' };
+
+  let cut = raw.slice(0, DISTILL_MAX_LEN);
+  const lastSpace = cut.lastIndexOf(' ');
+  if (lastSpace > DISTILL_MAX_LEN * 0.5) cut = cut.slice(0, lastSpace);
+  return { title: cut.trim() + '…', source: 'truncated', remainder: '' };
+}
+
+// splitIntoSentences(text) -> string[]
+//
+// Round 7A ("no paragraph form anywhere"): a field carrying multi-part
+// prose renders as a list, never a paragraph blob. This is a best-effort
+// sentence boundary split (., !, ? followed by whitespace + an
+// uppercase/digit/quote/paren start) — good enough for this codebase's own
+// already-punctuated plan prose; NOT general NLP, and deliberately never
+// drops content (a mis-split still shows every character somewhere, just
+// possibly as a shorter-than-ideal bullet, which is a cosmetic quirk, not
+// a lost-information regression).
+const SENTENCE_BOUNDARY_TOKEN = 'SENT'; // a byte no real plan-text bullet contains
+function splitIntoSentences(text) {
+  const s = String(text == null ? '' : text).trim();
+  if (!s) return [];
+  return s
+    .replace(/([.!?])\s+(?=[A-Z0-9"'`(])/g, '$1' + SENTENCE_BOUNDARY_TOKEN)
+    .split(SENTENCE_BOUNDARY_TOKEN)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+// splitTaskStructure(description) -> { lead, subtasks: [{title, body}] }
+//
+// HONEST fallback: a description with no "- **Label:**" marker (a flat,
+// unstructured task) yields subtasks:[] and lead = the whole (trimmed)
+// description — never a fabricated split (round 7B's hierarchy is shown
+// only where the source text actually carries it). Each subtask's `title`
+// is ALSO run through distillTaskTitle so sub-bullet labels stay compact —
+// the same one-line-leaf law, applied one level deeper (7A/7B).
+function splitTaskStructure(description) {
+  const text = String(description || '').trim();
+  if (!text) return { lead: '', subtasks: [] };
+  const parts = text.split(SUBTASK_MARKER_RE);
+  if (parts.length < 2) return { lead: text, subtasks: [] };
+  const lead = parts[0].trim();
+  const subtasks = parts.slice(1).map((raw) => {
+    const chunk = raw.trim();
+    const m = SUBTASK_LABEL_RE.exec(chunk);
+    const label = m ? m[1].replace(/[.:]\s*$/, '').trim() : '';
+    const body = (m ? m[2] : chunk).trim();
+    return { title: distillTaskTitle(label || chunk).title, body: body };
+  });
+  return { lead: lead, subtasks: subtasks };
+}
+
 function computePlanRows(reg, events, getBadgesForAsk) {
   const badgesFn = typeof getBadgesForAsk === 'function' ? getBadgesForAsk : () => [];
   const slugs = (reg.plan_slugs || []).slice();
@@ -820,6 +952,11 @@ module.exports = {
   // task description clamp (Task 8, cockpit-roadmap-redesign)
   TASK_DESC_PREVIEW_MAX_LEN,
   clampTaskDescription,
+  // task-leaf title distillation + subtask structure (round-6/7 rendering fix)
+  DISTILL_MAX_LEN,
+  distillTaskTitle,
+  splitTaskStructure,
+  splitIntoSentences,
   // session classification (server-local) + raw export read
   sessionHeartbeatLibPath,
   shQuote,

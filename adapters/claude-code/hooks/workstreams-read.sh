@@ -186,7 +186,37 @@ _session_id() {
 # This entire block is called from a subshell in _run_read (see below) so
 # ANY internal failure/`exit` can only terminate that subshell, never this
 # hook's own UserPromptSubmit exit-0 contract.
+#
+# ASK_SUMMARIZER mechanical default (cockpit-roadmap-redesign round-6 gap 5
+# follow-on fix): the title-distiller + amendment-classifier LANE this
+# splice feeds (scripts/ask-registry.sh's `_ar_async_haiku_upgrade` /
+# `_ar_async_classify_candidate`, both gated on `ASK_SUMMARIZER=haiku`) was
+# PROVEN dormant in production — a grep across every hook, settings.json,
+# and launch config in this repo found zero callers ever exporting it, so
+# every ask/candidate fell through to the raw first-~140-char heuristic
+# forever (the operator's round-6 report: a conversational fragment
+# rendering as a raw-text roadmap intent — "is that really the cleanest way
+# to manage this process?"). The lane itself is proven functional
+# (ask-registry.sh's own --self-test Scenarios M/Q3/Q4/R2/R3 exercise it
+# end-to-end with a fake model command) and the one previously-fatal
+# hook-context bug — the `claude` CLI's nested-session guard refusing to
+# launch from inside a live Claude Code session — is ALREADY patched at the
+# call site (`_ar_haiku_summarize`'s `env -u CLAUDECODE`). Defaulting the
+# flag ON here — the ONE mechanical call site that feeds both `register`
+# and `capture-candidate` in production — flips the trigger from
+# model-memory ("remember to export this before every session") to
+# mechanical (every real prompt capture gets it for free, no session needs
+# to remember anything). Guarded OFF under HARNESS_SELFTEST=1 so this
+# file's own self-test (which registers real fixture asks end-to-end below)
+# never fires a live model call; an operator wanting to opt back out can
+# still export ASK_SUMMARIZER to any non-"haiku" value ahead of the
+# session (e.g. "off") — `:=` only fills in when the variable is genuinely
+# unset, never overriding an explicit value.
 # ============================================================================
+if [[ "${HARNESS_SELFTEST:-0}" != "1" ]]; then
+  : "${ASK_SUMMARIZER:=haiku}"
+  export ASK_SUMMARIZER
+fi
 
 _ask_capture_marker_dir() {
   if [[ -n "${ASK_CAPTURE_MARKER_DIR:-}" ]]; then printf '%s' "$ASK_CAPTURE_MARKER_DIR"; return 0; fi
@@ -921,6 +951,45 @@ _self_test() {
   _fire_ask "a prompt in a session whose first prompt yielded no text" "sess-ac9" "$tmp/ordinary/repo" >/dev/null
   ac9_count="$(jq -sc '[.[] | select(.session_id=="sess-ac9")] | length' "$AC_REG" 2>/dev/null)"
   _ck "AC9 no candidate for the ask-less guarded session" "$ac9_count" "0"
+
+  echo "AC10: round-6 gap 5 fix — a REAL (non-self-test) capture mechanically exports ASK_SUMMARIZER=haiku to the registry CLI, so the title-distiller/classifier lane runs without anyone remembering to set it; this file's OWN self-test stays exempt (HARNESS_SELFTEST=1 above), so the exemption itself never masks a live model call during a routine test run"
+  AC10_LOG="$tmp/ac10.log"
+  AC10_STUB="$tmp/ac10-fake-ask-registry.sh"
+  {
+    printf '#!/bin/bash\n'
+    printf 'printf "ASK_SUMMARIZER=%%s\\n" "${ASK_SUMMARIZER:-<unset>}" >> %s\n' "$(printf '%q' "$AC10_LOG")"
+    printf 'exit 0\n'
+  } > "$AC10_STUB"
+  chmod +x "$AC10_STUB"
+  printf '{"prompt":"first prompt of a genuinely production (non-self-test) capture","session_id":"sess-ac10","cwd":"%s","hook_event_name":"UserPromptSubmit"}' "$tmp/ordinary/repo3" \
+    | env -u HARNESS_SELFTEST \
+        ASK_CAPTURE_MARKER_DIR="$AC_MARKER_DIR" ASK_REGISTRY_STATE_DIR="$AC_AR_DIR" \
+        PROGRESS_LOG_STATE_DIR="$AC_PL_DIR" ASK_REGISTRY_MIRROR_PATH="$AC_MIRROR" \
+        DISPATCH_PROVENANCE_STATE_DIR="$AC_DP_DIR" ASK_REGISTRY_CLI_OVERRIDE="$AC10_STUB" \
+        CONV_TREE_STATE_PATH="$tmp/ac-unused-state.json" CONV_TREE_READ_CURSOR_DIR="$CDIR" \
+        CLAUDE_SESSION_ID="sess-ac10" \
+        bash "$SELF" >/dev/null 2>/dev/null
+  ac10_out="$(cat "$AC10_LOG" 2>/dev/null)"
+  _ck_has "AC10 the mechanical default exported ASK_SUMMARIZER=haiku to the registry CLI call for a real (HARNESS_SELFTEST unset) capture" "$ac10_out" "ASK_SUMMARIZER=haiku"
+
+  echo "AC11: control leg (proves AC10 discriminates, not a tautology) — THIS file's own self-test (HARNESS_SELFTEST=1, inherited from the top of _self_test, exactly as every OTHER self-test-spawned child in this suite gets it) never applies the default: the SAME stub-CLI capture, with HARNESS_SELFTEST left inherited instead of unset, sees ASK_SUMMARIZER stay <unset>"
+  AC11_LOG="$tmp/ac11.log"
+  AC11_STUB="$tmp/ac11-fake-ask-registry.sh"
+  {
+    printf '#!/bin/bash\n'
+    printf 'printf "ASK_SUMMARIZER=%%s\\n" "${ASK_SUMMARIZER:-<unset>}" >> %s\n' "$(printf '%q' "$AC11_LOG")"
+    printf 'exit 0\n'
+  } > "$AC11_STUB"
+  chmod +x "$AC11_STUB"
+  printf '{"prompt":"first prompt of an ordinary self-test-fired capture","session_id":"sess-ac11","cwd":"%s","hook_event_name":"UserPromptSubmit"}' "$tmp/ordinary/repo4" \
+    | ASK_CAPTURE_MARKER_DIR="$AC_MARKER_DIR" ASK_REGISTRY_STATE_DIR="$AC_AR_DIR" \
+        PROGRESS_LOG_STATE_DIR="$AC_PL_DIR" ASK_REGISTRY_MIRROR_PATH="$AC_MIRROR" \
+        DISPATCH_PROVENANCE_STATE_DIR="$AC_DP_DIR" ASK_REGISTRY_CLI_OVERRIDE="$AC11_STUB" \
+        CONV_TREE_STATE_PATH="$tmp/ac-unused-state.json" CONV_TREE_READ_CURSOR_DIR="$CDIR" \
+        CLAUDE_SESSION_ID="sess-ac11" \
+        bash "$SELF" >/dev/null 2>/dev/null
+  ac11_out="$(cat "$AC11_LOG" 2>/dev/null)"
+  _ck "AC11 with HARNESS_SELFTEST inherited (=1, the normal self-test condition), ASK_SUMMARIZER is NEVER defaulted — stays <unset>, so this suite never risks a live model call" "$ac11_out" "ASK_SUMMARIZER=<unset>"
 
   rm -rf "$tmp" 2>/dev/null || true
   echo "self-test: $pass passed, $fail failed"

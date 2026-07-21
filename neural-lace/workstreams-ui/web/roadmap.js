@@ -209,6 +209,69 @@
   }
 
   // ============================================================
+  // round-6/7 pure helpers (no DOM) — deliberately DOM-free so
+  // cockpit.selftest.js can extract + execute them in a Node `vm` sandbox
+  // for REAL behavioral proof, the same technique already used for
+  // captureUiState (T3-27b) and ITEM_HASH_RE (T3-4b).
+  // ============================================================
+  // PROVENANCE-DEDUP-BEGIN
+  // Round-6 gap 2: "from your request(s)" is inherited UNCHANGED by every
+  // descendant (C6), so an intent's own drill-down always duplicated its
+  // OWN title verbatim, and a plan/task nested under it repeated the exact
+  // same text a second/third time once several levels were open at once
+  // ("triple verbatim ... for one item family"). visibleFromRequests
+  // filters out any entry whose (normalized) title equals THIS item's own
+  // title; when that empties an otherwise non-empty list, the row must be
+  // SUPPRESSED ENTIRELY (allSuppressed), never fall back to "(no captured
+  // request)" — a request genuinely exists, it is just textually identical
+  // to the title already on screen.
+  function normalizeForCompare(s) {
+    return String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+  function visibleFromRequests(item) {
+    var ownTitle = normalizeForCompare(item && item.title);
+    var all = (item && item.from_requests) || [];
+    var visible = all.filter(function (r) { return normalizeForCompare(r && r.title) !== ownTitle; });
+    return { entries: visible, allSuppressed: all.length > 0 && visible.length === 0 };
+  }
+  // PROVENANCE-DEDUP-END
+
+  // COLLAPSE-LAW-BEGIN
+  // Round-6 gap 3: a FULLY-COMPLETE node (all children complete, by
+  // construction of the status derivation — a parent's own status can only
+  // be 'complete' once every child has shipped) collapses EVERY child into
+  // the aged/roll-up bucket IMMEDIATELY — never enumerating N already-done
+  // children individually just because each one is still inside the 7-day
+  // "stay visible in place" window (round 4's rule, which governs a
+  // STILL-ACTIVE parent's completed siblings, not a parent whose own work
+  // is entirely finished). partitionChildren is the one function both the
+  // per-parent child list (renderChildList) and the top-level list
+  // (renderTree) call, so the law reads identically at every level.
+  function partitionChildren(children, parentFullyComplete, agedOutFn) {
+    var live = [], aged = [];
+    (children || []).forEach(function (c) {
+      var isComplete = c.status && c.status.value === 'complete';
+      if (isComplete && (parentFullyComplete || agedOutFn(c.completed_at))) aged.push(c);
+      else live.push(c);
+    });
+    return { live: live, aged: aged };
+  }
+  // COLLAPSE-LAW-END
+
+  // PHASE-SERIES-BEGIN
+  // Round 6 gap 6: sibling PLAN nodes under an intent are the operator's
+  // "series of phases" ("phase one through four... each phase has its own
+  // plan") — rendered as connected, numbered steps in build order, never a
+  // plain flat list indistinguishable from an intent's other child kinds.
+  function isPhaseSeries(children) {
+    return !!(children && children.length && children[0] && children[0].kind === 'plan');
+  }
+  function phaseLabel(index, total) {
+    return 'Phase ' + (index + 1) + ' of ' + total;
+  }
+  // PHASE-SERIES-END
+
+  // ============================================================
   // status chip + roll-up badges + markers (shared by tree AND kanban)
   // ============================================================
   function statusChip(item) {
@@ -282,30 +345,103 @@
     return frag;
   }
 
+  // taskStructureBlock(item) — round-6 gap 1 + round-7 7A/7B/7B-i: renders
+  // the task's own lead sentences, its "- **Label:**" sub-bullets (visible
+  // hierarchy — 7B), and any currently-attached live agent sessions
+  // (7B-i), ALL as bulleted lists (7A: never a paragraph). Absent/empty
+  // server fields render nothing — never a fabricated empty section.
+  var AGENT_STATUS_GLYPH = { running: '●', stalled: '◐', unknown: '○' };
+  function taskStructureBlock(item) {
+    var frag = document.createDocumentFragment();
+
+    var leadPoints = item.lead_points || [];
+    if (leadPoints.length) {
+      var leadWrap = el('div', 'rm-lead');
+      leadWrap.appendChild(el('span', 'rm-drill-label', 'summary:'));
+      var leadList = el('ul', 'rm-lead-points');
+      leadPoints.forEach(function (p) { leadList.appendChild(el('li', '', p)); });
+      leadWrap.appendChild(leadList);
+      frag.appendChild(leadWrap);
+    }
+
+    var subtasks = item.subtasks || [];
+    if (subtasks.length) {
+      var subWrap = el('div', 'rm-subtasks-wrap');
+      subWrap.appendChild(el('span', 'rm-drill-label', 'subtasks (' + subtasks.length + '):'));
+      var subList = el('ul', 'rm-subtasks');
+      subtasks.forEach(function (s) {
+        var li = document.createElement('li');
+        li.appendChild(el('span', 'rm-subtask-title', s.title));
+        var bodyPoints = s.body_points || [];
+        if (bodyPoints.length) {
+          var bodyList = el('ul', 'rm-subtask-body');
+          bodyPoints.forEach(function (p) { bodyList.appendChild(el('li', '', p)); });
+          li.appendChild(bodyList);
+        }
+        subList.appendChild(li);
+      });
+      subWrap.appendChild(subList);
+      frag.appendChild(subWrap);
+    }
+
+    var liveSessions = item.live_sessions || [];
+    if (liveSessions.length) {
+      var agentWrap = el('div', 'rm-agents-wrap');
+      agentWrap.appendChild(el('span', 'rm-drill-label', 'currently running (' + liveSessions.length + '):'));
+      var agentList = el('ul', 'rm-agents');
+      liveSessions.forEach(function (a) {
+        var li = document.createElement('li');
+        li.className = 'rm-agent rm-agent-' + (a.status && a.status.value || 'unknown');
+        var glyph = el('span', 'rm-agent-glyph', AGENT_STATUS_GLYPH[a.status && a.status.value] || '○');
+        glyph.setAttribute('aria-hidden', 'true');
+        li.appendChild(glyph);
+        var label = (a.status && a.status.label) || 'status unknown';
+        var text = a.title + ' — ' + label;
+        if (a.status && a.status.since) text += ', ' + formatAge(a.status.since);
+        li.appendChild(el('span', 'rm-agent-text', text));
+        agentList.appendChild(li);
+      });
+      agentWrap.appendChild(agentList);
+      frag.appendChild(agentWrap);
+    }
+
+    return frag;
+  }
+
   // ============================================================
   // drill-down body (C6 + C5 reasons + title edit + rank reorder)
   // ============================================================
   function drilldown(item, topLevelIndex, topLevelCount) {
     var box = el('div', 'rm-drill');
 
-    // from your request(s) — C6, the round-1 verbatim direction. Both
+    // from your request(s) — C6, the round-1 verbatim direction: drill-down
+    // ONLY (never inline-by-default), and suppressed entirely when it would
+    // just echo this item's own title back (round-6 gap 2). Both
     // directions law: the Requests view renders "became →" back (task 5).
-    var fr = item.from_requests || [];
-    var frRow = el('div', 'rm-from-requests');
-    frRow.appendChild(el('span', 'rm-drill-label', 'from your request(s): '));
-    if (fr.length === 0) {
-      frRow.appendChild(el('span', 'rm-drill-none', '(no captured request — registered directly)'));
-    } else {
-      fr.forEach(function (r) {
-        frRow.appendChild(btn('ghost small rm-request-link', r.title || r.id, function () {
-          // T3-fix2: encode the id segment (encode/decode symmetry with
-          // app.js routeFromHash's decodeURIComponent) — a raw '%' in an id
-          // otherwise throws URIError in the hashchange handler.
-          if (shell) shell.navigate('#request/' + encodeURIComponent(r.id));
-        }));
-      });
+    var frInfo = visibleFromRequests(item);
+    if (!frInfo.allSuppressed) {
+      var frRow = el('div', 'rm-from-requests');
+      frRow.appendChild(el('span', 'rm-drill-label', 'from your request(s): '));
+      if (frInfo.entries.length === 0) {
+        frRow.appendChild(el('span', 'rm-drill-none', '(no captured request — registered directly)'));
+      } else {
+        frInfo.entries.forEach(function (r) {
+          frRow.appendChild(btn('ghost small rm-request-link', r.title || r.id, function () {
+            // T3-fix2: encode the id segment (encode/decode symmetry with
+            // app.js routeFromHash's decodeURIComponent) — a raw '%' in an id
+            // otherwise throws URIError in the hashchange handler.
+            if (shell) shell.navigate('#request/' + encodeURIComponent(r.id));
+          }));
+        });
+      }
+      box.appendChild(frRow);
     }
-    box.appendChild(frRow);
+
+    // task-leaf structure (round-6 gap 1 continuation + round-7 7A/7B/7B-i):
+    // a scannable LIST, never the raw folded plan-markdown paragraph. Only
+    // task-kind items carry these fields (server-populated); absent/empty
+    // arrays render nothing, never a placeholder paragraph.
+    box.appendChild(taskStructureBlock(item));
 
     // stalled/unknown: the derived reason + what-unblocks, one click away.
     var st = item.status || {};
@@ -333,30 +469,35 @@
         feedback.className = 'rm-edit-feedback' + (isErr ? ' rm-feedback-err' : ' rm-feedback-ok');
       }
 
-      // title edit — the todo.js pattern: explicit Edit button (never
-      // click-on-text-only), Escape cancels, focus returns (C9/A3).
+      // Compact item chrome (round-6 gap 4): ONE row of small ICON buttons
+      // (never two permanent rows), hidden until hover OR focus-within
+      // (CSS-only — keyboard reachable, WCAG 2.2 2.5.7 stands: never
+      // hover-only). The todo.js edit pattern (explicit Edit button, never
+      // click-on-text-only, Escape cancels, focus returns — C9/A3) and the
+      // keyboard-operable move up/down (A7 + delta R2) are UNCHANGED
+      // behaviorally — only the chrome's visual weight + grouping changed.
       var titleRow = el('div', 'rm-title-edit');
-      var editBtn = btn('ghost small rm-edit-btn', 'Edit title', null);
+      var chromeRow = el('div', 'rm-item-chrome');
+      var editBtn = btn('ghost small rm-edit-btn rm-icon-btn', '✎', null);
       editBtn.setAttribute('aria-label', 'edit the title of "' + item.title + '"');
       editBtn.dataset.focusKey = 'edit:' + item.id;
       editBtn.addEventListener('click', function () { openTitleEditor(titleRow, item, editBtn, say, null); });
-      titleRow.appendChild(editBtn);
-      box.appendChild(titleRow);
+      chromeRow.appendChild(editBtn);
 
       // build-order reorder — keyboard-operable REAL buttons, never
       // drag-only (A7 + WCAG 2.2 2.5.7, delta R2).
-      var rankRow = el('div', 'rm-rank-row');
-      var upBtn = btn('ghost small rm-rank-btn', '↑ Move up', function () { moveRank(item.id, 'up', say); });
+      var upBtn = btn('ghost small rm-rank-btn rm-icon-btn', '↑', function () { moveRank(item.id, 'up', say); });
       upBtn.setAttribute('aria-label', 'Move up in build order: ' + item.title);
       upBtn.dataset.focusKey = 'rank-up:' + item.id;
       upBtn.disabled = topLevelIndex === 0;
-      var downBtn = btn('ghost small rm-rank-btn', '↓ Move down', function () { moveRank(item.id, 'down', say); });
+      var downBtn = btn('ghost small rm-rank-btn rm-icon-btn', '↓', function () { moveRank(item.id, 'down', say); });
       downBtn.setAttribute('aria-label', 'Move down in build order: ' + item.title);
       downBtn.dataset.focusKey = 'rank-down:' + item.id;
       downBtn.disabled = topLevelIndex === topLevelCount - 1;
-      rankRow.appendChild(upBtn);
-      rankRow.appendChild(downBtn);
-      box.appendChild(rankRow);
+      chromeRow.appendChild(upBtn);
+      chromeRow.appendChild(downBtn);
+      box.appendChild(titleRow);
+      box.appendChild(chromeRow);
 
       // merged-unverified: the LABELED per-item operator override to
       // complete (A4's binding rule) — delegates to the existing lifecycle
@@ -392,6 +533,10 @@
     var saveBtn = btn('btn-go small', 'Save', null);
     var cancelBtn = btn('ghost small', 'Cancel', null);
     editBtn.hidden = true;
+    // gap 4: keep the (otherwise hover/focus-only) chrome row visible for
+    // the WHOLE edit, so a stray mouseout mid-edit never hides the open
+    // input/Save/Cancel controls.
+    titleRow.classList.add('rm-editing');
     titleRow.appendChild(input);
     titleRow.appendChild(saveBtn);
     titleRow.appendChild(cancelBtn);
@@ -402,6 +547,7 @@
     function close() {
       input.remove(); saveBtn.remove(); cancelBtn.remove();
       editBtn.hidden = false;
+      titleRow.classList.remove('rm-editing');
       editBtn.focus(); // focus-return (todo.js pattern)
       if (pendingEdit && pendingEdit.itemId === item.id) pendingEdit = null;
     }
@@ -464,22 +610,41 @@
     det.appendChild(drilldown(item, topLevelIndex, topLevelCount));
 
     var kids = item.children || [];
-    if (kids.length) det.appendChild(renderChildList(kids, item.id));
+    // round-6 gap 3: a FULLY-COMPLETE node's children collapse into the
+    // roll-up IMMEDIATELY, regardless of the per-child 7-day window — see
+    // the COLLAPSE-LAW block above. item.status is only ever 'complete'
+    // once every child has shipped, so this is never a false bypass.
+    var parentFullyComplete = !!(item.status && item.status.value === 'complete');
+    if (kids.length) det.appendChild(renderChildList(kids, item.id, parentFullyComplete));
     return det;
   }
 
   // renderChildList — applies COMPLETED AGING per parent (round 4 + I2):
   // complete children inside the window stay in place (collapsed, headline
   // keeps "completed <when>"); complete children PAST the window fold into
-  // ONE per-parent roll-up row: "N completed ▸ — latest: <title>".
-  function renderChildList(children, parentId) {
+  // ONE per-parent roll-up row: "N completed ▸ — latest: <title>". A
+  // FULLY-COMPLETE parent (parentFullyComplete) bypasses the window
+  // entirely — round-6 gap 3. Sibling PLAN nodes render as a connected,
+  // numbered series (round-6 gap 6 — the operator's "phase one through
+  // four" mental model).
+  function renderChildList(children, parentId, parentFullyComplete) {
     var wrap = el('div', 'rm-children');
-    var live = [], aged = [];
-    children.forEach(function (c) {
-      var isComplete = c.status && (c.status.value === 'complete');
-      if (isComplete && agedOut(c.completed_at)) aged.push(c); else live.push(c);
+    var part = partitionChildren(children, !!parentFullyComplete, agedOut);
+    var live = part.live, aged = part.aged;
+    var phaseSeries = isPhaseSeries(children);
+    var totalCount = children.length;
+    if (phaseSeries) wrap.classList.add('rm-phase-series');
+    live.forEach(function (c) {
+      var node = renderNode(c, -1, -1);
+      if (phaseSeries) {
+        var step = el('div', 'rm-phase-step');
+        step.appendChild(el('div', 'rm-phase-label', phaseLabel(children.indexOf(c), totalCount)));
+        step.appendChild(node);
+        wrap.appendChild(step);
+      } else {
+        wrap.appendChild(node);
+      }
     });
-    live.forEach(function (c) { wrap.appendChild(renderNode(c, -1, -1)); });
     if (aged.length) {
       aged.sort(function (a, b) { return String(b.completed_at).localeCompare(String(a.completed_at)); });
       var roll = document.createElement('details');

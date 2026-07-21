@@ -52,6 +52,30 @@
 //                                   // class present in the subtree; classes:
 //                                   // waiting-on-you|crashed|blocked-on|limit-parked|unknown
 //   children: [RoadmapItem],
+//   // ---- task-kind-only fields (round-6 gap 1 + round-7 7A/7B/7B-i) ----
+//   lead_points: [string],          // task kind only: the task's own lead
+//                                   // text (whatever `title` did NOT already
+//                                   // consume from plan-parse's folded
+//                                   // description), sentence-split — a LIST,
+//                                   // never a paragraph (7A). Empty when the
+//                                   // title already consumed the whole lead.
+//   subtasks: [{title, body_points: [string]}],  // task kind only: the
+//                                   // task's own "  - **Label:** body"
+//                                   // sub-bullets (derive-lib's
+//                                   // splitTaskStructure), each distilled +
+//                                   // sentence-split (7B: visible task ->
+//                                   // subtask hierarchy). Empty for a flat
+//                                   // task with no sub-bullet structure.
+//   live_sessions: [{id, kind:'agent', title, status:{value,label,since}}],
+//                                   // task kind only, and only while the
+//                                   // task is in-progress: currently-running
+//                                   // sessions attached to this task
+//                                   // (7B-i), status value running|stalled|
+//                                   // unknown (unknown = no heartbeat
+//                                   // evidence — the named-absence pattern,
+//                                   // never a guess). Empty for a done/
+//                                   // not-started task or one with no
+//                                   // attached session.
 // }
 //
 // ============================================================
@@ -286,9 +310,51 @@ function statusFromDerived(derived, opts) {
   });
 }
 
+// deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs) -> [AgentLeaf]
+//
+// Round 7B-i: currently-running background agents/sessions render as live
+// sub-task leaves under the task they serve. Data source = the SAME
+// session->task attribution task 1 already derives status from
+// (sessionsByTask, fed by real task_started events) crossed with the SAME
+// raw-heartbeat age classification task 1 uses for in-progress/stalled
+// (deriveLib.classifyHeartbeatAge) — no new attribution mechanism invented
+// here, per Chesterton's Fence: this reuses the one data path that exists.
+// A session with NO matching heartbeat record renders 'unknown' (the
+// named-absence pattern, C5) — never guessed as running or silently
+// dropped.
+function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs) {
+  const th = deriveLib.activityThresholdsMs();
+  const ids = (sessionIds || []).filter(Boolean);
+  return ids.map((sid) => {
+    const hb = (heartbeats || []).find((h) => h && h.session_id === sid);
+    if (!hb) {
+      return {
+        id: taskId + '/agent/' + sid,
+        kind: 'agent',
+        title: 'session ' + sid,
+        status: { value: 'unknown', label: 'status unknown — no heartbeat evidence', reason: 'no heartbeat file found for this session', since: '' },
+      };
+    }
+    const ageMs = nowMs - Date.parse(hb.last_activity_ts);
+    const ageCls = deriveLib.classifyHeartbeatAge(isNaN(ageMs) ? NaN : ageMs, th);
+    const value = ageCls === 'crashed' ? 'stalled' : 'running';
+    return {
+      id: taskId + '/agent/' + sid,
+      kind: 'agent',
+      title: 'session ' + sid + (hb.branch ? ' (' + hb.branch + ')' : ''),
+      status: {
+        value: value,
+        label: value === 'running' ? 'running' : 'stalled — no recent heartbeat',
+        reason: '', since: hb.last_activity_ts || '',
+      },
+    };
+  });
+}
+
 function deriveTaskNode(askId, slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx) {
   let status;
   let completedAt = '';
+  const taskSessionIds = (sessionsByTask && sessionsByTask[t.id]) || [];
   if (t.done) {
     // Task-level completion is a plan-internal checkbox, never itself the
     // shippable unit the completion-oracle judges — stays a simple,
@@ -299,17 +365,35 @@ function deriveTaskNode(askId, slug, t, startedTs, doneTs, sessionsByTask, fromR
     const derived = deriveLib.deriveItemStatus({
       done: false,
       startedEvent: !!startedTs[t.id],
-      sessionIds: (sessionsByTask && sessionsByTask[t.id]) || [],
+      sessionIds: taskSessionIds,
       heartbeats: hbCtx.heartbeats,
       heartbeatsStoreOk: hbCtx.heartbeatsStoreOk,
       nowMs: hbCtx.nowMs,
     });
     status = statusFromDerived(derived, { since: startedTs[t.id] || '' });
   }
+
+  // Round-6 gap 1 + round-7A/7B: the task-leaf LABEL is the named
+  // distillation (never the raw folded plan-markdown wall); the lead's
+  // remainder and each sub-bullet's body are sentence-split so the
+  // drill-down renders a scannable LIST, never a paragraph. Round 7B-i:
+  // currently-in-progress tasks also carry their live attached sessions as
+  // agent leaves (done tasks show none — their work is finished).
+  const struct = deriveLib.splitTaskStructure(t.description);
+  const distilled = deriveLib.distillTaskTitle(struct.lead);
+  const leadPoints = deriveLib.splitIntoSentences(distilled.remainder);
+  const subtasks = struct.subtasks.map((s) => ({
+    title: s.title,
+    body_points: deriveLib.splitIntoSentences(s.body),
+  }));
+  const liveSessions = (!t.done && taskSessionIds.length)
+    ? deriveLiveAgentLeaves(askId + '/' + slug + '/' + t.id, taskSessionIds, hbCtx.heartbeats, hbCtx.nowMs)
+    : [];
+
   return {
     id: askId + '/' + slug + '/' + t.id,
     kind: 'task',
-    title: 'task ' + t.id + (t.description ? ' — ' + t.description : ''),
+    title: 'task ' + t.id + ': ' + distilled.title,
     title_source: 'auto',
     project: '', provenance: 'operator', provenance_reason: '',
     rank: null, added_ts: '', added_mid_build: false,
@@ -317,6 +401,9 @@ function deriveTaskNode(askId, slug, t, startedTs, doneTs, sessionsByTask, fromR
     progress: null,
     completed_at: completedAt,
     from_requests: fromRequests,
+    lead_points: leadPoints,
+    subtasks: subtasks,
+    live_sessions: liveSessions,
     roll_up: {},
     children: [],
   };
