@@ -1,134 +1,112 @@
 'use strict';
 // roadmap-routes.js — the Roadmap view's server surface
-// (cockpit-roadmap-redesign Task 3: "Roadmap tree view + the navigation
-// shell"). A NEW file by design: Task 1 concurrently owns server.js +
-// derive-lib.js, so this task adds its route handlers HERE and the ONE
-// server.js mount line ships as a fragment
-// (docs/plans/fragments/roadmap-t3-server-fragment.md) for the orchestrator
-// to apply at merge — never a direct edit to a file another task owns.
-//
-// Routes (handle() returns true when it consumed the request):
-//   GET  /roadmap.js          — serves the client module (keeps the fragment
-//                               to ONE mount line instead of two).
+// (cockpit-roadmap-redesign Task 3, RE-ROOTED per the 2026-07-21 design-input
+// Round 8 operator decision — docs/reviews/2026-07-17-cockpit-ux-design-
+// input.md, "Round 8"). Routes (handle() returns true when it consumed the
+// request):
+//   GET  /roadmap.js          — serves the client module.
 //   GET  /api/roadmap         — the roadmap tree payload (contract below).
 //   POST /api/roadmap/rank    — keyboard-operable move up/down (A7/R2).
-//   POST /api/roadmap/title   — title edit, DELEGATED to ask-registry.sh
-//                               (A3 one-writer discipline; task 2 owns the
-//                               verb — see STATUS DERIVATION below).
+//   POST /api/roadmap/title   — title edit, delegated to ask-registry.sh
+//                               (A3 one-writer discipline) for the FIRST
+//                               ask linked to the target plan.
 //
 // ============================================================
-// PAYLOAD CONTRACT (pinned for task-1 merge re-verification)
+// ROUND 8 — THE RE-ROOTING (binding; supersedes the prior ask/intent-rooted
+// design this file shipped with)
+// ============================================================
+// The operator's repeatedly-stated vision: "a series of plans being worked
+// on, phases 1-4, each a branch with its tasks as leaves" (round 1/6), and
+// two round-8 data-shape residuals found on the deployed round-6/7 fix:
+// (a) junk conversational captures ("The computer rebooted.") rendered as
+//     top-level roadmap items — noise with no build value.
+// (b) the operator's ACTUAL active work (redesign, other in-flight plans)
+//     did NOT appear, because the tree rooted on the ask-registry and those
+//     plans have no linked ask.
+// FIX (8A): the Roadmap tree ROOTS ON PLAN FILES (docs/plans/*.md), each a
+// top-level phase-node with its tasks as leaves — asks are no longer the
+// root; they only supply OPTIONAL provenance (from_requests, C6) when a
+// plan happens to have one linked. Requests/asks live ENTIRELY in the
+// Requests tab now (server/requests-routes.js, unchanged by this task).
+// CONSEQUENCE (8B, free): an unlinked junk ask has no plan, so a plan-rooted
+// Roadmap never shows it — no separate junk filter was built; re-rooting
+// IS the fix.
+//
+// WHICH plan files root the tree (a documented scoping choice, not dictated
+// verbatim by round 8's prose):
+//   - every `docs/plans/*.md` (top-level only — NOT `fragments/`, NOT
+//     `deferred/`, which are directory-scoped OUT by the non-recursive
+//     scan) whose `Status:` header is non-empty and does not start with
+//     REFERENCE or NORMATIVE (a whole-corpus check, 2026-07-21, found only
+//     ACTIVE/NORMATIVE/REFERENCE headers among top-level plans, plus ~20
+//     files with NO header at all — the `*-evidence*.md` dumps; REFERENCE/
+//     NORMATIVE explicitly self-describe as "not an independent plan" and
+//     a header-less file is indistinguishable from an evidence dump, so
+//     both are excluded rather than guessed at).
+//   - every `docs/plans/archive/*.md` file, but ONLY when its mtime is
+//     within the SAME completed_age_days window used for the client's own
+//     completed-collapse aging (I2 — one tunable) — "do NOT dump the entire
+//     archive/ history ... ancient archived plans stay out" (round 8).
+//     File mtime is used as a proxy for "when this was archived/completed"
+//     (the archival mechanism moves/touches the file); this is an honest,
+//     documented approximation, not a guess dressed as a real timestamp.
+//   - every plan a REGISTERED ask still links to (`plan_linked`), resolved
+//     against THAT ask's own repo (preserving the pre-existing cross-repo
+//     plan-linking behavior), subject to the same status/aging filters —
+//     EXCEPT a linked plan that cannot be read at all (absent/damaged)
+//     still surfaces as an `unknown` root rather than silently vanishing
+//     (an operator's tracked work going dark is exactly what C5 exists to
+//     surface, never a silent omission).
+//
+// ============================================================
+// PAYLOAD CONTRACT (pinned for the T1 status-derivation seam)
 // ============================================================
 // GET /api/roadmap -> {
 //   ok, generated_at, completed_age_days,
-//   items: [RoadmapItem]            // top-level intents, BUILD ORDER
+//   items: [RoadmapItem]            // top-level PLANS, in BUILD ORDER
 // }
 // RoadmapItem = {
-//   id,                             // intent: <ask_id>; plan: <ask_id>/<slug>;
-//                                   // task: <ask_id>/<slug>/<task_id>
-//   kind: 'intent'|'plan'|'task',
+//   id,                             // plan: <slug>; task: <slug>/<task_id>
+//   kind: 'plan'|'task',
 //   title, title_source: 'operator'|'auto',
-//   project, provenance: 'operator'|'machine', provenance_reason,
+//   project, provenance: 'operator', provenance_reason: '',
 //   rank,                           // effective build-order rank (number|null)
-//   added_ts, added_mid_build,      // insertion marker (task 1 populates the flag)
+//   added_ts, added_mid_build,
 //   status: {
 //     value: 'not-started'|'in-progress'|'merged-unverified'|'complete'
-//            |'stalled'|'unknown',  // the six-value enum (C5) — nothing else
-//     reason,                       // stalled/unknown: the derived reason text
-//     reason_class,                 // stalled: waiting-on-you|crashed|blocked-on|limit-parked
-//     label,                        // the operator-facing chip text (named-absence pattern)
-//     since,                        // ISO ts of the transition (I1 recency)
-//     unblock,                      // OPTIONAL {label, hash} for a stalled item whose
-//                                   // reason has a known navigable target (e.g.
-//                                   // waiting-on-you -> #inbox/<id>); absent when no
-//                                   // real cross-reference exists yet (task 4's Inbox
-//                                   // data — not derived by this task, renderer already
-//                                   // treats it as optional).
+//            |'stalled'|'unknown',  // the six-value enum (C5)
+//     reason, reason_class, label, since,
+//     unblock,                      // OPTIONAL {label, hash}
 //   },
-//   progress: {done,total} | null,  // null = zero tracked children (no fake granularity)
-//   completed_at,                   // ISO ts | '' (completed aging, one 7d knob)
-//   from_requests: [{id,title}],    // C6 — inherited by every descendant
-//   roll_up: { <class>: {count, exemplar} },  // C1/R4 — one entry PER attention
-//                                   // class present in the subtree; classes:
-//                                   // waiting-on-you|crashed|blocked-on|limit-parked|unknown
-//   children: [RoadmapItem],
+//   progress: {done,total} | null,
+//   completed_at,                   // ISO ts | ''
+//   from_requests: [{id,title}],    // C6 — the ask(s), if any, that link to
+//                                   // this plan; empty for an unlinked plan
+//                                   // (never fabricated, never required)
+//   roll_up: { <class>: {count, exemplar} },
+//   children: [RoadmapItem],        // task kind
 //   // ---- task-kind-only fields (round-6 gap 1 + round-7 7A/7B/7B-i) ----
-//   lead_points: [string],          // task kind only: the task's own lead
-//                                   // text (whatever `title` did NOT already
-//                                   // consume from plan-parse's folded
-//                                   // description), sentence-split — a LIST,
-//                                   // never a paragraph (7A). Empty when the
-//                                   // title already consumed the whole lead.
-//   subtasks: [{title, body_points: [string]}],  // task kind only: the
-//                                   // task's own "  - **Label:** body"
-//                                   // sub-bullets (derive-lib's
-//                                   // splitTaskStructure), each distilled +
-//                                   // sentence-split (7B: visible task ->
-//                                   // subtask hierarchy). Empty for a flat
-//                                   // task with no sub-bullet structure.
+//   lead_points: [string],
+//   subtasks: [{title, body_points: [string]}],
 //   live_sessions: [{id, kind:'agent', title, status:{value,label,since}}],
-//                                   // task kind only, and only while the
-//                                   // task is in-progress: currently-running
-//                                   // sessions attached to this task
-//                                   // (7B-i), status value running|stalled|
-//                                   // unknown (unknown = no heartbeat
-//                                   // evidence — the named-absence pattern,
-//                                   // never a guess). Empty for a done/
-//                                   // not-started task or one with no
-//                                   // attached session.
 // }
 //
 // ============================================================
-// STATUS DERIVATION (wired to task 1's derive-lib.js — the seam this file
-// used to ship as a mechanical stub between STUB-STATUS-BEGIN/END; see
-// docs/plans/fragments/roadmap-t3-server-fragment.md §2 for the merge note)
+// STATUS DERIVATION (unchanged from the T1 wiring — this file supplies the
+// INPUTS to deriveLib.deriveItemStatus() and stays responsible for the
+// TREE-SHAPE concerns derive-lib does not own: `since`, `label`, roll-ups).
 // ============================================================
-// Every per-item status below is computed by calling
-// deriveLib.deriveItemStatus() (the ONE status function, C5's no-default-
-// guess invariant lives there, not here) — this file supplies the INPUTS
-// (ground-truth done/started booleans, session ids, the once-per-request
-// heartbeat read) and stays responsible for the TREE-SHAPE concerns
-// derive-lib deliberately does not own: `since` timestamps, the
-// operator-facing `label` text, and the bottom-up roll-up counts
-// (computeRollUps, below — unchanged by this wiring, since it already reads
-// any child's status.value/reason_class generically).
-//
-// ONE naming translation: derive-lib's internal enum spells the merged-but-
-// unverified state `merged-deploy-unverified`; this route's PINNED payload
-// contract (above) spells it `merged-unverified` (the name pinned by
-// web/roadmap.js + cockpit.selftest.js's T3-* block before this wiring
-// landed). mapDerivedValue() below is the one place that translates.
-//
-//   - task:   checkbox done -> complete, UNCONDITIONALLY (never routed
-//             through the completion-oracle — the oracle answers "has this
-//             SHIPPED unit been deploy-verified", a question that applies at
-//             plan/intent granularity, not to an individual checkbox inside
-//             an unmerged plan; this matches the pinned contract's own
-//             task-level rule, unchanged by this wiring). Not done ->
-//             deriveItemStatus's not-done branch, real heartbeat-backed
-//             in-progress/stalled/unknown (this is the seam that lights up
-//             stalled + unknown at task granularity — the stub never emitted
-//             either).
-//   - plan:   plan file absent/unreadable -> unknown(reason) — NEVER a
-//             confident bucket (C5), unchanged (plan-parse's own contract,
-//             not task 1's). All tasks done -> deriveItemStatus's done
-//             branch: the REAL per-project completion-oracle now decides
-//             complete vs merged-unverified (a configured project can now
-//             render true complete-PROVEN; an unconfigured one still renders
-//             merged-unverified, OUTSIDE complete — A4). Else: in-progress /
-//             not-started from child counts (tree-aggregation, unchanged —
-//             the ROLL-UP LAW, not this seam, is what surfaces a stalled/
-//             unknown descendant to a parent whose own status stays
-//             in-progress).
-//   - intent: registry status done/merged -> deriveItemStatus with
-//             overrideComplete:true (ALWAYS complete per derive-lib's own
-//             contract — A4's "manual done is always an override, labeled").
-//             All children shipped -> same oracle-backed done branch as
-//             plan-level. Else: rolled up from children (unchanged).
-//   - added_mid_build has NO derive-lib export (task 1 did not ship an
-//     insertion-marker data source) — stays `false` here, same as before
-//     this wiring; a real source is a future task's honest gap, not this
-//     one's (Chesterton's Fence: no mechanism invented for it here).
+//   - task:   checkbox done -> complete, UNCONDITIONALLY. Not done ->
+//             deriveItemStatus's not-done branch (real heartbeat-backed
+//             in-progress/stalled/unknown).
+//   - plan:   plan file absent/unreadable -> unknown(reason), never a
+//             confident bucket (C5). A linked ask manually marked
+//             done/merged is ALWAYS a labeled override (A4), same rule
+//             that used to live at the intent level — moved here since
+//             plans are now the root. All tasks done (no override) -> the
+//             real per-project completion-oracle decides complete vs
+//             merged-unverified (A4). Else: in-progress/not-started from
+//             child counts.
 
 const fs = require('fs');
 const path = require('path');
@@ -150,11 +128,14 @@ function sendJson(res, code, obj) {
 
 // ----------------------------------------------------------------------
 // Registry fold (roadmap flavor) — the derive-lib fold drops per-record
-// timestamps/emitters this view needs (created emitter for provenance,
-// status_change ts for completed aging, title records for A3 precedence),
-// so this reads the raw JSONL once and folds locally. Fold rules mirror
-// ask-registry.sh's documented contract; the TITLE fold applies the A3
-// rule: operator-sourced ALWAYS outranks auto REGARDLESS of timestamp.
+// timestamps/emitters this view needs (created emitter, status_change ts,
+// title records), so this reads the raw JSONL once and folds locally. Fold
+// rules mirror ask-registry.sh's documented contract; the TITLE fold
+// applies the A3 rule: operator-sourced ALWAYS outranks auto REGARDLESS of
+// timestamp. This fold is STILL needed post-round-8: it is the source of
+// (a) which plans an ask links to (provenance, C6) and (b) the ONE-WRITER
+// title/rank delegation target — asks are no longer the tree ROOT, but
+// they are still the store title/rank edits write through.
 // ----------------------------------------------------------------------
 function foldRegistryForRoadmap() {
   const lines = deriveLib.readAskRegistry().slice()
@@ -168,11 +149,6 @@ function foldRegistryForRoadmap() {
       summary: '', auto_title: '', operator_title: '', roadmap_rank: null,
     };
     ['repo', 'project'].forEach((f) => { if (rec[f]) cur[f] = rec[f]; });
-    // `summary` is title-bearing (D1's rule, applied identically here): only
-    // `created`/`summary_updated` may set it. Labels stamped by
-    // candidate_classified/amended (task 2's amendment timeline) live in
-    // `summary` too but must NEVER retitle — see derive-lib.js's
-    // foldAskRegistry header for the full rationale (the twin fold).
     if (rec.summary && (rec.record_type === 'created' || rec.record_type === 'summary_updated')) {
       cur.summary = rec.summary;
     }
@@ -190,29 +166,15 @@ function foldRegistryForRoadmap() {
     } else if (rec.record_type === 'created' && rec.status) {
       cur.status = rec.status; cur.status_ts = rec.ts || '';
     }
-    // Title records — task 2's REAL write shape (task-verifier FAIL fix,
-    // D2 — BINDING): `set-title` appends `summary_updated` +
-    // `title_source:"operator"` (ask-registry.sh's cmd_set_title; see its
-    // FOLD CONTRACT header) — there is NO `title_set {title}` writer in this
-    // codebase. The route into `operator_title` vs `auto_title` MUST key off
-    // `title_source` on the SAME summary_updated record, not on record_type
-    // alone: routing every summary_updated into auto_title (the prior bug)
-    // (a) misreported title_source as "auto" after an operator edit, and
-    // (b) let a LATER auto summary_updated (the distiller re-run) clobber
-    // the operator's title in the read this file serves (the F3 race, alive
-    // on this one reader). Storing operator/auto in SEPARATE slots — read
-    // side always prefers operator_title (see deriveIntentNode's
-    // `reg.operator_title || reg.auto_title || ...`) — makes "operator
-    // ALWAYS outranks auto REGARDLESS OF TIMESTAMP" hold for free: a later
-    // auto record only ever overwrites auto_title, never operator_title.
+    // Title records — task 2's REAL write shape (D2 — BINDING): `set-title`
+    // appends `summary_updated` + `title_source:"operator"`. Routing keys
+    // off `title_source` on the SAME record, not record_type alone, so a
+    // LATER auto summary_updated (distiller re-run) never clobbers an
+    // operator edit in this reader (the F3 race).
     if (rec.record_type === 'summary_updated' && rec.summary) {
       if (rec.title_source === 'operator') cur.operator_title = rec.summary;
       else cur.auto_title = rec.summary;
     }
-    // `title_set {title, title_source}` — kept for back-compat (trivial;
-    // no writer in this codebase produces it, but a reader that recognizes
-    // it costs nothing and protects a future/external writer using this
-    // shape). Same operator/auto routing rule applies.
     if (rec.record_type === 'title_set' && rec.title) {
       if (rec.title_source === 'operator') cur.operator_title = rec.title;
       else cur.auto_title = rec.title;
@@ -225,55 +187,168 @@ function foldRegistryForRoadmap() {
   return byAsk;
 }
 
-// ----------------------------------------------------------------------
-// Rank overlay — the INTERIM build-order store (a UI-state file, NOT the
-// registry: registry writes stay ask-registry.sh's alone). Registry
-// roadmap_rank records, once task 2's verb lands, take precedence per ask;
-// the overlay covers every ask the registry has no rank record for. The
-// fragment file documents the migration.
-// ----------------------------------------------------------------------
-function rankOverlayPath() {
-  return path.join(path.dirname(deriveLib.askRegistryFile()), 'roadmap-rank-overlay.json');
+// buildPlanAskLinks(byAsk) -> { <slug>: [{ask_id,title,title_source,project,
+// repo,created_ts,roadmap_rank,status,status_ts}, ...] } — the reverse index
+// from plan slug to every (non-dismissed) ask that links it. A plan can be
+// linked by more than one ask (rare); the FIRST entry (registry-fold order,
+// i.e. earliest `created_ts`) is the one title/rank edits delegate through
+// and the one whose title/project the plan node displays, by convention
+// with the prior single-owner-per-item behavior.
+function buildPlanAskLinks(byAsk) {
+  const bySlug = {};
+  Object.keys(byAsk).forEach((askId) => {
+    const reg = byAsk[askId];
+    if (reg.status === 'dismissed') return;
+    const title = reg.operator_title || reg.auto_title || reg.summary || askId;
+    (reg.plan_slugs || []).forEach((slug) => {
+      if (!bySlug[slug]) bySlug[slug] = [];
+      bySlug[slug].push({
+        ask_id: askId,
+        title: title,
+        title_source: reg.operator_title ? 'operator' : 'auto',
+        project: reg.project || '',
+        repo: reg.repo || '',
+        created_ts: reg.created_ts || '',
+        roadmap_rank: (reg.roadmap_rank === null || reg.roadmap_rank === undefined) ? null : reg.roadmap_rank,
+        status: reg.status || '',
+        status_ts: reg.status_ts || '',
+      });
+    });
+  });
+  return bySlug;
 }
-function readRankOverlay() {
-  try { return JSON.parse(fs.readFileSync(rankOverlayPath(), 'utf8')) || {}; }
+
+// ----------------------------------------------------------------------
+// Plan-file discovery (8A) — which files root the tree. See the header
+// note for the full rationale of each filter.
+// ----------------------------------------------------------------------
+function planScanRoot() {
+  // Sandboxable like every other state path in this codebase (ASK_REGISTRY_
+  // STATE_DIR etc.) — a dedicated override so tests never touch the real
+  // checkout's docs/plans/.
+  return process.env.ROADMAP_PLAN_SCAN_ROOT || deriveLib.mainRepoRoot();
+}
+
+const PLAN_STATUS_EXCLUDE_RE = /^(REFERENCE|NORMATIVE)\b/i;
+function isEligiblePlanStatus(statusText) {
+  const t = String(statusText || '').trim();
+  if (!t) return false; // no Status: header at all -> evidence dump / stub, not a plan
+  return !PLAN_STATUS_EXCLUDE_RE.test(t);
+}
+
+// scanPlanDir(dir, opts) -> [{slug, absPath, archived, mtimeMs}] for every
+// eligible top-level *.md file directly inside `dir` (non-recursive — a
+// subdirectory like fragments/ or archive/ itself is never descended into
+// by this call; archive/ is scanned via ITS OWN separate call).
+function scanPlanDir(dir, opts) {
+  const options = opts || {};
+  const out = [];
+  let ents;
+  try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return out; }
+  ents.forEach((e) => {
+    if (!e.isFile() || !/\.md$/i.test(e.name)) return;
+    const abs = path.join(dir, e.name);
+    let stat;
+    try { stat = fs.statSync(abs); } catch (_) { return; }
+    if (typeof options.cutoffMs === 'number' && stat.mtimeMs < options.cutoffMs) return;
+    let text;
+    try { text = fs.readFileSync(abs, 'utf8'); } catch (_) { return; }
+    if (!isEligiblePlanStatus(planParse.parsePlanStatus(text))) return;
+    out.push({ slug: e.name.replace(/\.md$/i, ''), absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs });
+  });
+  return out;
+}
+
+// discoverPlanFiles(scanRoot, planAskLinks) -> [{slug, absPath, archived, mtimeMs}]
+// the UNION of (1) scanRoot's own docs/plans/*.md, (2) scanRoot's docs/
+// plans/archive/*.md within the completed-aging window, and (3) every
+// ask-linked plan slug resolved against ITS OWN ask's repo (cross-repo
+// plan-linking, preserved) not already captured by (1)/(2). Deduped by
+// SLUG, not absolute path: a slug is the roadmap node's own identity
+// (`id: pf.slug`), and a registry `repo` field can be recorded in a
+// different path STYLE than this process's own path.win32 resolution
+// (e.g. a POSIX-style `/c/Users/...` string written by a git-bash session,
+// vs this Node process's `C:\Users\...`) — deduping by the resolved
+// absPath STRING let the same real plan slip through twice under two
+// textually-different-but-filesystem-equivalent paths (found via a real-
+// data live check, 2026-07-21: `ask-rooted-workstreams-p1` rendered
+// twice). Deduping by slug is also simply the correct invariant regardless
+// of that specific cause: two entries sharing one `id` would corrupt
+// client-side expand-state keying (openSet[item.id]) and DOM lookups
+// (data-item-id) even if the path-string mismatch above were fixed some
+// other way.
+function discoverPlanFiles(scanRoot, planAskLinks) {
+  const seenSlugs = {};
+  const out = [];
+  const cutoffMs = Date.now() - COMPLETED_AGE_DAYS * 86400000;
+
+  scanPlanDir(path.join(scanRoot, 'docs', 'plans'), { archived: false }).forEach((pf) => {
+    seenSlugs[pf.slug] = true; out.push(pf);
+  });
+  scanPlanDir(path.join(scanRoot, 'docs', 'plans', 'archive'), { archived: true, cutoffMs: cutoffMs }).forEach((pf) => {
+    if (seenSlugs[pf.slug]) return;
+    seenSlugs[pf.slug] = true; out.push(pf);
+  });
+
+  Object.keys(planAskLinks).forEach((slug) => {
+    if (seenSlugs[slug]) return;
+    const links = planAskLinks[slug];
+    let repo = scanRoot;
+    for (let i = 0; i < links.length; i++) { if (links[i].repo) { repo = links[i].repo; break; } }
+    // resolvePlanAbsPath returns null when the file exists at NEITHER
+    // docs/plans/ NOR docs/plans/archive/ under this repo — a genuinely
+    // missing linked plan (the "ghost-plan" case), not merely an unreadable
+    // one. Synthesize the expected docs/plans/<slug>.md path in that case
+    // so the read below honestly fails ENOENT and this still surfaces as an
+    // `unknown` root (C5) rather than silently vanishing — an operator's
+    // tracked work going dark must never look identical to "no such plan
+    // was ever linked".
+    const abs = planParse.resolvePlanAbsPath(repo, slug) || path.join(repo, 'docs', 'plans', slug + '.md');
+    let stat, text;
+    try { stat = fs.statSync(abs); text = fs.readFileSync(abs, 'utf8'); }
+    catch (_) {
+      // The linked plan file genuinely can't be read (missing/moved/
+      // permission error) — still surface it as a root so it renders
+      // unknown(reason) rather than an operator's tracked work silently
+      // going dark (C5).
+      seenSlugs[slug] = true;
+      out.push({ slug: slug, absPath: abs, archived: /[\\/]archive[\\/]/.test(abs), mtimeMs: 0 });
+      return;
+    }
+    const archived = /[\\/]archive[\\/]/.test(abs);
+    if (archived && stat.mtimeMs < cutoffMs) return; // ancient archived linked plan stays out too
+    if (!isEligiblePlanStatus(planParse.parsePlanStatus(text))) return;
+    seenSlugs[slug] = true;
+    out.push({ slug: slug, absPath: abs, archived: archived, mtimeMs: stat.mtimeMs });
+  });
+  return out;
+}
+
+// ----------------------------------------------------------------------
+// Plan-rank overlay — the INTERIM per-PLAN build-order store (a UI-state
+// file, NOT the registry). Keyed by plan SLUG (the roadmap item's own id,
+// now that plans are the root) — deliberately a SEPARATE file from any
+// prior ask-keyed overlay: the id-space changed with the re-rooting, and
+// reusing the old file name under new key semantics would risk a stale
+// on-disk file being silently misread under the new meaning.
+// ----------------------------------------------------------------------
+function planRankOverlayPath() {
+  return path.join(path.dirname(deriveLib.askRegistryFile()), 'roadmap-plan-rank-overlay.json');
+}
+function readPlanRankOverlay() {
+  try { return JSON.parse(fs.readFileSync(planRankOverlayPath(), 'utf8')) || {}; }
   catch (_) { return {}; }
 }
-function writeRankOverlay(map) {
-  const p = rankOverlayPath();
+function writePlanRankOverlay(map) {
+  const p = planRankOverlayPath();
   const tmp = p + '.tmp-' + process.pid + '-' + Date.now();
   fs.writeFileSync(tmp, JSON.stringify(map, null, 2));
   fs.renameSync(tmp, p);
 }
 
 // ----------------------------------------------------------------------
-// Provenance classifier (A9, operator B) — PROVENANCE, never subject
-// matter: machine-filed means a mechanical filer created the ask (nl-issue /
-// findings / auto-sweep / auditor emitters, or a mechanism-stamped summary
-// prefix). Derivation failure defaults to 'operator' (the safe side — A9's
-// stated risk is operator-requested work vanishing, never the reverse).
+// Status derivation (unchanged plumbing; see header note)
 // ----------------------------------------------------------------------
-const MACHINE_EMITTER_RE = /(auditor|auto-sweep|auto_sweep|nl-issue|nl_issue|findings|triage-bot|scheduled)/i;
-const MACHINE_SUMMARY_PREFIX_RE = /^\s*(nl-issue:|auto[-: ]|\[auto\]|finding[: ])/i;
-function classifyProvenance(reg) {
-  if (reg.created_emitter && reg.created_emitter !== 'ask-registry' && MACHINE_EMITTER_RE.test(reg.created_emitter)) {
-    return { provenance: 'machine', provenance_reason: 'filed by the "' + reg.created_emitter + '" mechanism, not from a conversation with you' };
-  }
-  if (MACHINE_SUMMARY_PREFIX_RE.test(reg.summary || '')) {
-    return { provenance: 'machine', provenance_reason: 'auto-filed (mechanism-stamped title prefix)' };
-  }
-  return { provenance: 'operator', provenance_reason: 'registered from a conversation with you' };
-}
-
-// ----------------------------------------------------------------------
-// Status derivation (task-1 seam — see the header block above)
-// ----------------------------------------------------------------------
-
-// mapDerivedValue(value) — the ONE enum-name translation (see header note):
-// derive-lib spells the merged-but-unverified state `merged-deploy-
-// unverified`; this route's pinned payload contract spells it
-// `merged-unverified`. Every other enum value is spelled identically in
-// both places (identity passthrough).
 function mapDerivedValue(value) {
   return value === 'merged-deploy-unverified' ? 'merged-unverified' : value;
 }
@@ -290,13 +365,6 @@ function statusObj(value, opts) {
   return { value: value, reason: o.reason || '', reason_class: o.reason_class || '', label: label, since: o.since || '' };
 }
 
-// statusFromDerived(derived, opts) — wraps a REAL deriveLib.deriveItemStatus()
-// result ({status, reason, oracle_class?, overridden?}) into this route's
-// statusObj shape. A stalled item's `reason` IS its reason_class already
-// (deriveStalledReason's return value is always one of the four named
-// classes — see derive-lib.js) so no separate lookup is needed. `since` is
-// a view-only recency timestamp derive-lib does not carry — the caller
-// supplies it from its own knowledge of the relevant event timestamp.
 function statusFromDerived(derived, opts) {
   const o = opts || {};
   const value = mapDerivedValue(derived.status);
@@ -311,17 +379,9 @@ function statusFromDerived(derived, opts) {
 }
 
 // deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs) -> [AgentLeaf]
-//
 // Round 7B-i: currently-running background agents/sessions render as live
-// sub-task leaves under the task they serve. Data source = the SAME
-// session->task attribution task 1 already derives status from
-// (sessionsByTask, fed by real task_started events) crossed with the SAME
-// raw-heartbeat age classification task 1 uses for in-progress/stalled
-// (deriveLib.classifyHeartbeatAge) — no new attribution mechanism invented
-// here, per Chesterton's Fence: this reuses the one data path that exists.
-// A session with NO matching heartbeat record renders 'unknown' (the
-// named-absence pattern, C5) — never guessed as running or silently
-// dropped.
+// sub-task leaves under the task they serve. A session with NO matching
+// heartbeat record renders 'unknown' (named-absence, C5) — never guessed.
 function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs) {
   const th = deriveLib.activityThresholdsMs();
   const ids = (sessionIds || []).filter(Boolean);
@@ -351,14 +411,14 @@ function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs) {
   });
 }
 
-function deriveTaskNode(askId, slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx) {
+// deriveTaskNode(slug, t, ...) — id scheme is now `<slug>/<task_id>` (the
+// ask_id segment is gone: plans, not asks, are the root, so a task's
+// address is relative to its plan alone).
+function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx) {
   let status;
   let completedAt = '';
   const taskSessionIds = (sessionsByTask && sessionsByTask[t.id]) || [];
   if (t.done) {
-    // Task-level completion is a plan-internal checkbox, never itself the
-    // shippable unit the completion-oracle judges — stays a simple,
-    // unconditional complete (see the header note).
     completedAt = doneTs[t.id] || '';
     status = statusObj('complete', { since: completedAt });
   } else {
@@ -373,12 +433,6 @@ function deriveTaskNode(askId, slug, t, startedTs, doneTs, sessionsByTask, fromR
     status = statusFromDerived(derived, { since: startedTs[t.id] || '' });
   }
 
-  // Round-6 gap 1 + round-7A/7B: the task-leaf LABEL is the named
-  // distillation (never the raw folded plan-markdown wall); the lead's
-  // remainder and each sub-bullet's body are sentence-split so the
-  // drill-down renders a scannable LIST, never a paragraph. Round 7B-i:
-  // currently-in-progress tasks also carry their live attached sessions as
-  // agent leaves (done tasks show none — their work is finished).
   const struct = deriveLib.splitTaskStructure(t.description);
   const distilled = deriveLib.distillTaskTitle(struct.lead);
   const leadPoints = deriveLib.splitIntoSentences(distilled.remainder);
@@ -387,11 +441,11 @@ function deriveTaskNode(askId, slug, t, startedTs, doneTs, sessionsByTask, fromR
     body_points: deriveLib.splitIntoSentences(s.body),
   }));
   const liveSessions = (!t.done && taskSessionIds.length)
-    ? deriveLiveAgentLeaves(askId + '/' + slug + '/' + t.id, taskSessionIds, hbCtx.heartbeats, hbCtx.nowMs)
+    ? deriveLiveAgentLeaves(slug + '/' + t.id, taskSessionIds, hbCtx.heartbeats, hbCtx.nowMs)
     : [];
 
   return {
-    id: askId + '/' + slug + '/' + t.id,
+    id: slug + '/' + t.id,
     kind: 'task',
     title: 'task ' + t.id + ': ' + distilled.title,
     title_source: 'auto',
@@ -409,14 +463,96 @@ function deriveTaskNode(askId, slug, t, startedTs, doneTs, sessionsByTask, fromR
   };
 }
 
-function derivePlanNode(reg, slug, events, fromRequests, hbCtx) {
-  const absPath = deriveLib.resolvePlanAbsPath(reg.repo, slug);
-  const loaded = planParse.loadPlanFile(absPath);
+// eventsForSlug(slug, linkedAsks) — plan-native events: every linked ask's
+// own progress-log file, PLUS the shared "unlinked" orphan lane
+// (progress-log-lib.sh's own documented fallback for events emitted with no
+// ask_id) always consulted too and filtered down to this plan's own slug —
+// this is how a plan with NO linked ask still gets real task_started/
+// task_done derivation (no new event mechanism invented; this lane already
+// exists and is where such events land today).
+function eventsForSlug(slug, linkedAsks) {
+  const seenAskIds = {};
+  let all = [];
+  (linkedAsks || []).forEach((a) => {
+    if (seenAskIds[a.ask_id]) return;
+    seenAskIds[a.ask_id] = true;
+    all = all.concat(deriveLib.readAskEvents(a.ask_id));
+  });
+  all = all.concat(deriveLib.readAskEvents(''));
+  return all.filter((e) => e && e.plan_slug === slug && e.task_id)
+    .sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+}
+
+function planFallbackAddedTs(pf, linkedAsks) {
+  const tss = (linkedAsks || []).map((a) => a.created_ts).filter(Boolean).sort();
+  if (tss.length) return tss[0];
+  return new Date(pf.mtimeMs || Date.now()).toISOString();
+}
+
+// planEffectiveRank — build order (A7 + round 8): a linked ask's own
+// registry roadmap_rank record (any linked ask carrying one) takes
+// precedence, then this plan's own rank-overlay entry, else null (falls to
+// the fallback-timestamp tie-break in buildRoadmapPayload's sort).
+function planEffectiveRank(pf, linkedAsks, planRankOverlay) {
+  for (let i = 0; i < (linkedAsks || []).length; i++) {
+    if (typeof linkedAsks[i].roadmap_rank === 'number') return linkedAsks[i].roadmap_rank;
+  }
+  if (typeof planRankOverlay[pf.slug] === 'number') return planRankOverlay[pf.slug];
+  return null;
+}
+
+// derivePlanRootNode(pf, linkedAsks, hbCtx) — the plan-file's own ROOT node
+// (was task-1's nested `derivePlanNode`; promoted to the tree's root by
+// 8A). Manual-done override (A4) moves here too: it used to live at the
+// intent level, which no longer exists — a linked ask marked done/merged is
+// still a labeled, honest way for the operator to force-complete an item
+// the oracle would otherwise render merged-unverified.
+function derivePlanRootNode(pf, linkedAsks, hbCtx) {
+  const fromRequests = (linkedAsks || []).map((a) => ({ id: a.ask_id, title: a.title }));
+  const addedTs = planFallbackAddedTs(pf, linkedAsks);
+  const node = {
+    id: pf.slug,
+    kind: 'plan',
+    title: (linkedAsks[0] && linkedAsks[0].title) || pf.slug,
+    title_source: (linkedAsks[0] && linkedAsks[0].title_source) || 'auto',
+    project: (linkedAsks[0] && linkedAsks[0].project) || '',
+    provenance: 'operator', provenance_reason: '',
+    rank: null, added_ts: addedTs, added_mid_build: false,
+    status: null, progress: null, completed_at: '',
+    from_requests: fromRequests,
+    roll_up: {}, children: [],
+  };
+
+  // A linked ask's manual done/merged is ALWAYS a labeled override (A4),
+  // short-circuiting the task-count-based derivation below.
+  const doneAsk = (linkedAsks || []).find((a) => a.status === 'done' || a.status === 'merged');
+  if (doneAsk) {
+    const statusTsMs = doneAsk.status_ts ? Date.parse(doneAsk.status_ts) : null;
+    const derived = deriveLib.deriveItemStatus({
+      done: true,
+      projectKey: node.project,
+      mergedAtMs: isNaN(statusTsMs) ? null : statusTsMs,
+      overrideComplete: true,
+    });
+    node.status = statusFromDerived(derived, { since: doneAsk.status_ts });
+    node.completed_at = doneAsk.status_ts || '';
+    return node;
+  }
+
+  const loaded = planParse.loadPlanFile(pf.absPath);
+  if (!loaded.ok) {
+    const reason = loaded.reason === 'damaged'
+      ? 'plan file unreadable (' + (loaded.error || 'read failed') + ')'
+      : 'plan file not found (docs/plans/' + pf.slug + '.md)';
+    node.status = statusObj('unknown', { reason: reason, since: '' });
+    return node;
+  }
+
+  const events = eventsForSlug(pf.slug, linkedAsks);
   const startedTs = {}, doneTs = {};
   const sessionsByTask = {};
   let latestActivity = '';
   events.forEach((e) => {
-    if (!e || e.plan_slug !== slug || !e.task_id) return;
     if (e.type === 'task_started') {
       startedTs[e.task_id] = e.ts || '';
       if (e.session_id) {
@@ -427,134 +563,43 @@ function derivePlanNode(reg, slug, events, fromRequests, hbCtx) {
     if (e.type === 'task_done') doneTs[e.task_id] = e.ts || '';
     if (e.ts && e.ts > latestActivity) latestActivity = e.ts;
   });
-  const node = {
-    id: reg.ask_id + '/' + slug,
-    kind: 'plan',
-    title: slug,
-    title_source: 'auto',
-    project: reg.project || '', provenance: 'operator', provenance_reason: '',
-    rank: null, added_ts: '', added_mid_build: false,
-    status: null,
-    progress: null,
-    completed_at: '',
-    from_requests: fromRequests,
-    roll_up: {},
-    children: [],
-  };
-  if (!loaded.ok) {
-    const reason = loaded.reason === 'damaged'
-      ? 'plan file unreadable (' + (loaded.error || 'read failed') + ')'
-      : 'plan file not found (docs/plans/' + slug + '.md)';
-    node.status = statusObj('unknown', { reason: reason, since: latestActivity });
-    return node;
-  }
+
   const tasks = loaded.tasks || [];
-  node.children = tasks.map((t) => deriveTaskNode(reg.ask_id, slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx));
+  node.children = tasks.map((t) => deriveTaskNode(pf.slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx));
   const total = tasks.length;
   const done = tasks.filter((t) => t.done).length;
   const anyInProgress = node.children.some((c) => c.status.value === 'in-progress');
   if (total > 0) node.progress = { done: done, total: total };
   const latestDone = Object.keys(doneTs).map((k) => doneTs[k]).sort().pop() || '';
+
   if (total === 0) {
     node.status = anyInProgress || latestActivity
       ? statusObj('in-progress', { since: latestActivity })
-      : statusObj('not-started', { since: reg.created_ts });
+      : statusObj('not-started', { since: addedTs });
   } else if (done === total) {
-    // All checked: the REAL per-project completion-oracle decides complete
-    // vs merged-unverified (A4) — no live deploy-signal collector on a GET
-    // path (A6), so deployReadyAtMs is always null here.
-    const mergedAtMs = latestDone ? Date.parse(latestDone) : null;
+    // All checked: the real per-project completion-oracle decides complete
+    // vs merged-unverified (A4); no live deploy-signal collector on a GET
+    // path (A6). completed_at prefers a real task_done event; falls back to
+    // the plan file's own mtime ONLY when every box is checked but no event
+    // ever recorded it (an archived/historical plan with no progress-log
+    // trail, or one with no linked ask at all) — an honest, documented
+    // proxy for "when this became complete", never applied to an
+    // unfinished plan.
+    const completedTsSource = latestDone || new Date(pf.mtimeMs || Date.now()).toISOString();
+    const mergedAtMs = Date.parse(completedTsSource);
     const derived = deriveLib.deriveItemStatus({
       done: true,
-      projectKey: reg.project,
+      projectKey: node.project,
       mergedAtMs: isNaN(mergedAtMs) ? null : mergedAtMs,
       deployReadyAtMs: null,
       overrideComplete: false,
     });
-    node.status = statusFromDerived(derived, { since: latestDone });
-    node.completed_at = latestDone;
+    node.status = statusFromDerived(derived, { since: completedTsSource });
+    node.completed_at = completedTsSource;
   } else if (anyInProgress || done > 0) {
     node.status = statusObj('in-progress', { since: latestActivity || latestDone });
   } else {
-    node.status = statusObj('not-started', { since: reg.created_ts });
-  }
-  return node;
-}
-
-function deriveIntentNode(reg, events, hbCtx) {
-  const prov = classifyProvenance(reg);
-  const title = reg.operator_title || reg.auto_title || reg.summary || reg.ask_id;
-  const fromRequests = [{ id: reg.ask_id, title: title }];
-  const children = (reg.plan_slugs || []).map((slug) => derivePlanNode(reg, slug, events, fromRequests, hbCtx));
-  const node = {
-    id: reg.ask_id,
-    kind: 'intent',
-    title: title,
-    title_source: reg.operator_title ? 'operator' : 'auto',
-    project: reg.project || '',
-    provenance: prov.provenance, provenance_reason: prov.provenance_reason,
-    rank: null,
-    added_ts: reg.created_ts || '', added_mid_build: false,
-    status: null,
-    progress: null,
-    completed_at: '',
-    from_requests: fromRequests,
-    roll_up: {},
-    children: children,
-  };
-  // leaf-task counts across every plan
-  let done = 0, total = 0;
-  children.forEach((p) => { if (p.progress) { done += p.progress.done; total += p.progress.total; } });
-  if (total > 0) node.progress = { done: done, total: total };
-
-  if (reg.status === 'done' || reg.status === 'merged') {
-    // Manual done is ALWAYS an override, labeled (A4) — overrideComplete:true
-    // guarantees derive-lib's done branch renders complete regardless of
-    // this project's configured oracle class.
-    const statusTsMs = reg.status_ts ? Date.parse(reg.status_ts) : null;
-    const derived = deriveLib.deriveItemStatus({
-      done: true,
-      projectKey: reg.project,
-      mergedAtMs: isNaN(statusTsMs) ? null : statusTsMs,
-      overrideComplete: true,
-    });
-    node.status = statusFromDerived(derived, { since: reg.status_ts });
-    node.completed_at = reg.status_ts || '';
-    return node;
-  }
-  const anyInProgress = children.some((c) => c.status.value === 'in-progress');
-  const knownChildren = children.filter((c) => c.status.value !== 'unknown');
-  const allShipped = knownChildren.length > 0 &&
-    knownChildren.every((c) => c.status.value === 'merged-unverified' || c.status.value === 'complete');
-  if (children.length === 0) {
-    node.status = statusObj('not-started', { since: reg.created_ts });
-  } else if (knownChildren.length === 0) {
-    // EVERY child failed derivation: this item's own status is underivable —
-    // unknown(reason), never a confident bucket (C5). The per-child reasons
-    // stay one click away on the children; the roll-up badge counts them.
-    node.status = statusObj('unknown', {
-      reason: children.length === 1
-        ? (children[0].status.reason || 'linked plan could not be derived')
-        : 'none of the ' + children.length + ' linked plans could be derived',
-      since: reg.created_ts,
-    });
-  } else if (allShipped) {
-    const latest = knownChildren.map((c) => c.completed_at).sort().pop() || reg.status_ts;
-    const latestMs = latest ? Date.parse(latest) : null;
-    const derived = deriveLib.deriveItemStatus({
-      done: true,
-      projectKey: reg.project,
-      mergedAtMs: isNaN(latestMs) ? null : latestMs,
-      deployReadyAtMs: null,
-      overrideComplete: false,
-    });
-    node.status = statusFromDerived(derived, { since: latest });
-    node.completed_at = latest || '';
-  } else if (anyInProgress || done > 0) {
-    const latestSince = children.map((c) => c.status.since || '').sort().pop() || '';
-    node.status = statusObj('in-progress', { since: latestSince });
-  } else {
-    node.status = statusObj('not-started', { since: reg.created_ts });
+    node.status = statusObj('not-started', { since: addedTs });
   }
   return node;
 }
@@ -562,6 +607,8 @@ function deriveIntentNode(reg, events, hbCtx) {
 // computeRollUps(node) — bottom-up: one entry PER attention class present
 // in the subtree (delta R4 — precedence never selects), each {count,
 // exemplar} where exemplar is one item id a badge click can expand to.
+// Unchanged by the re-rooting: it only ever reads a child's own
+// status.value/reason_class, generically, regardless of kind.
 function computeRollUps(node) {
   const agg = {};
   function absorb(cls, count, exemplar) {
@@ -586,41 +633,50 @@ function computeRollUps(node) {
 
 function buildRoadmapPayload() {
   const byAsk = foldRegistryForRoadmap();
-  const overlay = readRankOverlay();
-  // Heartbeats read ONCE per request (derive-lib's own convention — see
-  // derive-lib.js's heartbeat section header) and handed to every item's
-  // derivation below; heartbeatsStoreOk distinguishes a genuinely-absent
-  // store (benign) from one that exists but could not be read (a real
-  // derivation-input failure — C5). Pure fs read, no spawn (A6).
+  const planAskLinks = buildPlanAskLinks(byAsk);
+  const scanRoot = planScanRoot();
+  const planFiles = discoverPlanFiles(scanRoot, planAskLinks);
+  const planRankOverlay = readPlanRankOverlay();
+  // Heartbeats read ONCE per request (derive-lib's own convention) and
+  // handed to every item's derivation below; heartbeatsStoreOk distinguishes
+  // a genuinely-absent store (benign) from one that exists but could not be
+  // read (a real derivation-input failure — C5). Pure fs read, no spawn (A6).
   const hbResult = deriveLib.listRawHeartbeatsResult();
   const hbCtx = { heartbeats: hbResult.heartbeats, heartbeatsStoreOk: hbResult.ok, nowMs: Date.now() };
-  const items = [];
-  Object.keys(byAsk).forEach((askId) => {
-    const reg = byAsk[askId];
-    if (reg.status === 'dismissed') return; // off the roadmap entirely
-    const events = deriveLib.readAskEvents(askId).slice()
-      .sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-    const node = deriveIntentNode(reg, events, hbCtx);
-    // effective rank: registry roadmap_rank record > overlay > none
-    node.rank = (reg.roadmap_rank !== null && reg.roadmap_rank !== undefined) ? reg.roadmap_rank
-      : (typeof overlay[askId] === 'number' ? overlay[askId] : null);
+
+  const items = planFiles.map((pf) => {
+    const linkedAsks = planAskLinks[pf.slug] || [];
+    const node = derivePlanRootNode(pf, linkedAsks, hbCtx);
+    node.rank = planEffectiveRank(pf, linkedAsks, planRankOverlay);
     computeRollUps(node);
-    items.push(node);
+    return node;
   });
-  // Build order (A7): ranked items by rank, then everything else in
-  // registry-insertion (created_ts) order — the plan's pinned DEFAULT.
+
+  // Build order (A7 + round 8): ranked items by rank, then everything else
+  // by the fallback added_ts (earliest-created first) — the pinned DEFAULT.
   items.sort((a, b) => {
     const ar = a.rank === null ? Infinity : a.rank;
     const br = b.rank === null ? Infinity : b.rank;
     if (ar !== br) return ar - br;
     return String(a.added_ts).localeCompare(String(b.added_ts));
   });
+
   return {
     ok: true,
     generated_at: new Date().toISOString(),
     completed_age_days: COMPLETED_AGE_DAYS,
     items: items,
   };
+}
+
+// firstLinkedAskId(slug) — the ONE-writer delegation target for a title/
+// rank edit on a plan-rooted item: the first ask (registry-fold order)
+// that links this plan slug, or null when no ask links it at all (an
+// honest gap, not a crash — the caller answers with a named error).
+function firstLinkedAskId(slug) {
+  const byAsk = foldRegistryForRoadmap();
+  const links = buildPlanAskLinks(byAsk)[slug] || [];
+  return links.length ? links[0].ask_id : null;
 }
 
 // ----------------------------------------------------------------------
@@ -671,8 +727,8 @@ function readBody(req, cb) {
 }
 
 // ----------------------------------------------------------------------
-// handle(req, res) -> true when consumed. The ONE server.js mount line
-// (see the fragment file):  if (roadmapRoutes.handle(req, res)) return;
+// handle(req, res) -> true when consumed. The ONE server.js mount line:
+//   if (roadmapRoutes.handle(req, res)) return;
 // ----------------------------------------------------------------------
 function handle(req, res) {
   const urlPath = String(req.url || '').split('?')[0];
@@ -700,33 +756,39 @@ function handle(req, res) {
   if (urlPath === '/api/roadmap/rank' && req.method === 'POST') {
     readBody(req, (input) => {
       if (!input) return sendJson(res, 400, { ok: false, error: 'bad json' });
-      const askId = typeof input.ask_id === 'string' ? input.ask_id : '';
+      const itemId = typeof input.id === 'string' ? input.id : '';
       const direction = input.direction === 'up' ? 'up' : (input.direction === 'down' ? 'down' : '');
-      if (!askId || !direction) return sendJson(res, 400, { ok: false, error: 'ask_id and direction (up|down) are required' });
+      if (!itemId || !direction) return sendJson(res, 400, { ok: false, error: 'id and direction (up|down) are required' });
       let payload;
       try { payload = buildRoadmapPayload(); }
       catch (e) { return sendJson(res, 500, { ok: false, error: String(e && e.message || e) }); }
       const ids = payload.items.map((i) => i.id);
-      const idx = ids.indexOf(askId);
-      if (idx === -1) return sendJson(res, 404, { ok: false, error: 'roadmap item not found: ' + askId });
+      const idx = ids.indexOf(itemId);
+      if (idx === -1) return sendJson(res, 404, { ok: false, error: 'roadmap item not found: ' + itemId });
       const swapWith = direction === 'up' ? idx - 1 : idx + 1;
       if (swapWith < 0 || swapWith >= ids.length) {
         return sendJson(res, 200, { ok: true, unchanged: true, order: ids });
       }
       const newOrder = ids.slice();
       newOrder[idx] = ids[swapWith];
-      newOrder[swapWith] = askId;
-      // Materialize the FULL order into the overlay (instant, works today);
-      // additionally record the moved item's rank in the registry when the
-      // set-rank verb exists (task 2's fold then takes precedence per ask).
+      newOrder[swapWith] = itemId;
+      // Materialize the FULL order into the plan-rank overlay (instant,
+      // works today regardless of ask linkage); additionally best-effort
+      // record the moved plan's FIRST linked ask's rank in the registry
+      // when one exists (preserving the pre-existing registry-writeback
+      // for the common linked case) — a plan with no linked ask simply
+      // skips that best-effort delegation (registry_recorded:false), an
+      // honest degrade, never a crash.
       const overlay = {};
       newOrder.forEach((id, i) => { overlay[id] = (i + 1) * 10; });
-      try { writeRankOverlay(overlay); }
+      try { writePlanRankOverlay(overlay); }
       catch (e) { return sendJson(res, 500, { ok: false, error: 'could not save the new order' }); }
-      runAskRegistryCli(['set-rank', '--ask-id', askId, '--rank', String((newOrder.indexOf(askId) + 1) * 10), '--emitter', 'operator-ui'])
+      const linkedAskId = firstLinkedAskId(itemId);
+      if (!linkedAskId) {
+        return sendJson(res, 200, { ok: true, order: newOrder, registry_recorded: false });
+      }
+      runAskRegistryCli(['set-rank', '--ask-id', linkedAskId, '--rank', String((newOrder.indexOf(itemId) + 1) * 10), '--emitter', 'operator-ui'])
         .then((r) => {
-          // Registry delegation is best-effort until task 2's verb lands —
-          // the overlay already carries the order either way.
           sendJson(res, 200, { ok: true, order: newOrder, registry_recorded: !!r.ok });
         });
     });
@@ -736,16 +798,22 @@ function handle(req, res) {
   if (urlPath === '/api/roadmap/title' && req.method === 'POST') {
     readBody(req, (input) => {
       if (!input) return sendJson(res, 400, { ok: false, error: 'bad json' });
-      const askId = typeof input.ask_id === 'string' ? input.ask_id : '';
+      const itemId = typeof input.id === 'string' ? input.id : '';
       const title = typeof input.title === 'string' ? input.title.trim() : '';
-      if (!askId || !title) return sendJson(res, 400, { ok: false, error: 'ask_id and a non-empty title are required' });
-      // One-writer discipline (A3): the title lives in the registry, so this
-      // endpoint ONLY delegates — no overlay, no second title store. Until
-      // the work-item layer's set-title verb lands, the honest answer is a
-      // named error, never a silent success.
-      runAskRegistryCli(['set-title', '--ask-id', askId, '--title', title, '--title-source', 'operator', '--emitter', 'operator-ui'])
+      if (!itemId || !title) return sendJson(res, 400, { ok: false, error: 'id and a non-empty title are required' });
+      // One-writer discipline (A3): the title lives in the registry, keyed
+      // by ask id — this endpoint resolves the plan's FIRST linked ask and
+      // delegates there. A plan with no linked ask has no store to write a
+      // title into yet; the honest answer is a named error, never a
+      // silent success and never a second, plan-keyed title store invented
+      // here (Chesterton's Fence — no mechanism for that exists).
+      const linkedAskId = firstLinkedAskId(itemId);
+      if (!linkedAskId) {
+        return sendJson(res, 200, { ok: false, error: 'this plan has no linked request to attach a title edit to yet' });
+      }
+      runAskRegistryCli(['set-title', '--ask-id', linkedAskId, '--title', title, '--title-source', 'operator', '--emitter', 'operator-ui'])
         .then((r) => {
-          if (r.ok) return sendJson(res, 200, { ok: true, ask_id: askId, title: title, title_source: 'operator' });
+          if (r.ok) return sendJson(res, 200, { ok: true, id: itemId, title: title, title_source: 'operator' });
           const why = r.missing ? 'the title store is not available on this build yet'
             : ('the title store rejected the change' + (r.stderr ? ': ' + String(r.stderr).trim().split('\n').pop() : ''));
           sendJson(res, 200, { ok: false, error: 'could not save the title — ' + why });
@@ -760,8 +828,10 @@ function handle(req, res) {
 module.exports = {
   handle,
   buildRoadmapPayload,
-  classifyProvenance,
   foldRegistryForRoadmap,
+  buildPlanAskLinks,
+  discoverPlanFiles,
+  isEligiblePlanStatus,
   ROLLUP_CLASSES,
   COMPLETED_AGE_DAYS,
 };

@@ -12,6 +12,15 @@
  * locateAndExpand; Back restores expansion + scroll via
  * snapshotState/restoreState (C2).
  *
+ * ROUND 8 RE-ROOTING (2026-07-21, binding — docs/reviews/2026-07-17-cockpit-
+ * ux-design-input.md "Round 8"): the top-level items are now PLAN FILES
+ * (docs/plans/*.md), rendered as a connected phase-series in build order,
+ * each expanding to its own tasks as leaves. Asks/requests are NOT roots
+ * here any more — they only ever supply OPTIONAL provenance
+ * (from_requests, C6) on a plan that happens to have one linked; an
+ * unlinked junk ask has no plan and so never appears here (lives only in
+ * the Requests tab). `item.kind` is 'plan' | 'task' (no more 'intent').
+ *
  * Laws carried here (plan task 3, binding):
  *  - Six-value status chips with TEXT labels on every item; bars always
  *    carry the "n/m" text; zero-tracked-children items omit the bar (C5).
@@ -458,7 +467,7 @@
       box.appendChild(reasonRow);
     }
 
-    if (item.kind === 'intent') {
+    if (item.kind === 'plan') {
       // feedback line for every write below (aria-live — C9)
       var feedback = el('div', 'rm-edit-feedback');
       feedback.setAttribute('aria-live', 'polite');
@@ -503,9 +512,16 @@
       // complete (A4's binding rule) — delegates to the existing lifecycle
       // endpoint; manual done is always an override, labeled.
       if (st.value === 'merged-unverified') {
+        // The lifecycle endpoint is ask-id-keyed (server.js, unrelated to
+        // this plan-rooted tree) — resolve the plan's first linked ask
+        // (from_requests[0], the SAME target title/rank edits delegate
+        // through) when one exists; a plan with no linked ask has no
+        // ask-lifecycle record to override, so the fetch degrades to an
+        // honest server-side "not found" error rather than a silent no-op.
+        var overrideTargetId = (item.from_requests && item.from_requests[0] && item.from_requests[0].id) || item.id;
         var overrideBtn = btn('ghost small rm-override-btn', 'Mark complete anyway (override)', function () {
           overrideBtn.disabled = true;
-          fetch('/api/ask/' + encodeURIComponent(item.id) + '/lifecycle', {
+          fetch('/api/ask/' + encodeURIComponent(overrideTargetId) + '/lifecycle', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'done' }),
           }).then(function (r) { return r.json(); }).then(function (j) {
@@ -559,7 +575,7 @@
       saveBtn.disabled = true;
       fetch('/api/roadmap/title', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ask_id: item.id, title: t }),
+        body: JSON.stringify({ id: item.id, title: t }),
       }).then(function (r) { return r.json(); }).then(function (j) {
         if (j && j.ok) { say('Title saved.', false); close(); load(); }
         else { saveBtn.disabled = false; say((j && j.error) || 'Could not save the title.', true); }
@@ -567,10 +583,10 @@
     });
   }
 
-  function moveRank(askId, direction, say) {
+  function moveRank(itemId, direction, say) {
     fetch('/api/roadmap/rank', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ask_id: askId, direction: direction }),
+      body: JSON.stringify({ id: itemId, direction: direction }),
     }).then(function (r) { return r.json(); }).then(function (j) {
       if (j && j.ok) { say(j.unchanged ? 'Already at the edge of the list.' : 'Order updated.', false); load(); }
       else { say('Could not reorder: ' + ((j && j.error) || 'unknown error'), true); }
@@ -674,7 +690,24 @@
       var isComplete = it.status && it.status.value === 'complete';
       if (isComplete && agedOut(it.completed_at)) aged.push(it); else live.push(it);
     });
-    live.forEach(function (it, i) { tree.appendChild(renderNode(it, i, live.length)); });
+    // Round 8 (8A): the tree now ROOTS ON PLANS, so the top-level list IS
+    // the operator's "series of phases" (round 6: "phase one through
+    // four... each a branch with its tasks as leaves") — the SAME
+    // isPhaseSeries/phaseLabel connector treatment renderChildList already
+    // applies one level down is reused here at the top level too.
+    var phaseSeries = isPhaseSeries(live);
+    if (phaseSeries) tree.classList.add('rm-phase-series');
+    live.forEach(function (it, i) {
+      var node = renderNode(it, i, live.length);
+      if (phaseSeries) {
+        var step = el('div', 'rm-phase-step');
+        step.appendChild(el('div', 'rm-phase-label', phaseLabel(i, live.length)));
+        step.appendChild(node);
+        tree.appendChild(step);
+      } else {
+        tree.appendChild(node);
+      }
+    });
     if (aged.length) {
       aged.sort(function (a, b) { return String(b.completed_at).localeCompare(String(a.completed_at)); });
       var roll = document.createElement('details');

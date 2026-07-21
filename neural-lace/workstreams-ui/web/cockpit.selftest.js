@@ -1048,6 +1048,39 @@ ok('T3-45 currently-running sessions render as live agent leaves with a text sta
   /rm-agents/.test(roadmapJs) && /aria-hidden/.test(roadmapJs) && /rm-agent-text/.test(roadmapJs) &&
   /AGENT_STATUS_GLYPH/.test(roadmapJs));
 
+// ============================================================
+// ROUND 8 (2026-07-21) — the Roadmap RE-ROOTS on PLAN FILES, not the
+// ask-registry (docs/reviews/2026-07-17-cockpit-ux-design-input.md, "Round
+// 8"). The server-side re-rooting + fixture proof is
+// server/roadmap-routes.selftest.js's R8a-c block; these pins cover the
+// CLIENT contract: 'intent' kind is gone, the top-level list is now itself
+// the phase-series (reusing isPhaseSeries/phaseLabel, never reinvented, per
+// the task's own instruction), and the title/rank wire fields are id-keyed
+// (a plan slug), not ask_id-keyed.
+// ============================================================
+ok('R8-1 the "intent" kind is GONE from roadmap.js entirely — the tree roots on plans now, so there is no ask/intent tree level left to gate on',
+  !/kind === 'intent'/.test(roadmapJsNoComments) && !/'rm-kind-intent'/.test(roadmapJsNoComments));
+ok('R8-2 the compact edit/rank chrome (drilldown) now gates on kind:"plan" — plans are the new top-level, editable/reorderable object',
+  /item\.kind === 'plan'/.test(roadmapJsNoComments));
+ok('R8-3 renderTree (the TOP-LEVEL list) applies the SAME isPhaseSeries/phaseLabel connector treatment renderChildList already used one level down — reused, not reinvented, and now the top-level phases (round 6: "phase one through four") actually render connected',
+  /isPhaseSeries\(live\)/.test(roadmapJsNoComments) &&
+  /rm-phase-series/.test(roadmapJsNoComments) && /phaseLabel\(i, live\.length\)/.test(roadmapJsNoComments));
+ok('R8-4 the rank-move and title-save wire bodies are id-keyed (a plan slug), not ask_id-keyed (the old ask-rooted contract) — no POST body anywhere still sends ask_id',
+  /JSON\.stringify\(\{ id: item\.id, title: t \}\)/.test(roadmapJsNoComments) &&
+  /JSON\.stringify\(\{ id: itemId, direction: direction \}\)/.test(roadmapJsNoComments) &&
+  !/ask_id: item\.id/.test(roadmapJsNoComments) && !/ask_id: askId/.test(roadmapJsNoComments));
+ok('R8-5 the merged-unverified "mark complete anyway" override resolves its ask-lifecycle target via the plan\'s first linked request (from_requests[0]) — never posts a plan slug where an ask id is required',
+  /overrideTargetId\s*=\s*\(item\.from_requests/.test(roadmapJsNoComments) &&
+  /encodeURIComponent\(overrideTargetId\)/.test(roadmapJsNoComments));
+(function () {
+  // R8-6: isPhaseSeries/phaseLabel EXECUTION proof at the shape the
+  // top-level payload now actually sends (a flat array of plan-kind
+  // roots, no wrapping intent) — real execution, not source-presence.
+  const a = runPure(phaseSeriesSrc, 'isPhaseSeries([{kind:"plan", id:"demo-plan"},{kind:"plan", id:"redesign-plan"}])');
+  ok('R8-6 isPhaseSeries recognizes a top-level plan-rooted list (no intent wrapper) as a phase series',
+    a === true);
+})();
+
 // cockpit-roadmap-redesign Task 7 — person-grouped peers (round 5:
 // "Misha: desktop + laptop"). Same PV-prefix, same DOM-free technique;
 // the server-side grouping derivation is peer-view.js's own self-test
