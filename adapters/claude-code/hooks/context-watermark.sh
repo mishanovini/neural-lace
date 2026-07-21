@@ -28,6 +28,12 @@
 #   creation amount, a documented, harmless one-turn lag since the watermark
 #   re-evaluates every single tool call).
 #
+#   THE SAME assistant event also carries `message.model` — parsed in the
+#   SAME jq pass (see `_measure_context_tokens`) and fed to `_resolve_window`
+#   to pick the DENOMINATOR, not just the numerator. Verified on this machine
+#   (2026-07-20): this session's own last assistant event carried
+#   `"model":"claude-opus-4-8"` alongside its usage object.
+#
 #   FALLBACK (proxy, used only when PRIMARY is unavailable — no jq, transcript
 #   unreadable/unparseable, or no assistant event with a usage object yet):
 #   transcript file size in bytes × a calibration factor giving an estimated
@@ -46,12 +52,79 @@
 #   remotely precise. Default factor below uses the FIRST measurement (this
 #   repo's own transcript, most representative of this harness's actual usage
 #   pattern); override via CONTEXT_WATERMARK_BYTES_PER_TOKEN for a
-#   differently-calibrated machine/local config.
+#   differently-calibrated machine/local config. NOTE: the bytes-fallback path
+#   never has a `model` to key off (no assistant-usage line was found at
+#   all), so a fallback-measured call ALWAYS resolves the conservative
+#   200,000 default window, and the emitted message says so ("ASSUMED") —
+#   see WINDOW RESOLUTION below.
 #
-# WATERMARKS (against a 200,000-token context window):
-#   >= 70% (140,000 tokens): inject once per watermark (dedup marker, same
-#   pattern as doctrine-jit.sh) — "checkpoint state NOW per constitution §5".
-#   >= 85% (170,000 tokens): inject a STRONGER nag once + proactively run
+# WINDOW RESOLUTION (the denominator) — added 2026-07-20 after a PROVEN
+# incident: a hardcoded 200,000 denominator on a claude-opus-4-8 session (a
+# real 1,000,000-token window) made this hook claim "~95% of 200000" well
+# before the pause (that reading is ~190,000 tokens — 19% of the REAL 1M
+# window). By the time the session paused it had reached 322,800 tokens —
+# 32% of the ACTUAL window, 68% FREE — at which point the same wrong
+# arithmetic would read ~161% (322,800/200,000), further reinforcing the
+# false alarm. Either way, an autonomous orchestrator read the hook's output
+# as authoritative capacity and PAUSED a multi-hour program, abandoning 28
+# of 34 remaining work items. Recurring: the identical defect was reported
+# in nl-issues.jsonl on 2026-07-18 (one session, twice ~8 minutes apart) and
+# again on 2026-07-20 from a different project/session — this incident. See
+# docs/lessons/2026-07-20-context-watermark-window-and-context-pressure.md
+# for the full write-up.
+#
+#   Precedence: CONTEXT_WATERMARK_WINDOW env override (unset or non-numeric
+#   -> skip, never trusted blindly) > model->window lookup (`_model_window`,
+#   below) > conservative 200000 default.
+#
+#   MODEL -> WINDOW TABLE (`_model_window`) — verified LIVE against
+#   platform.claude.com/docs/en/about-claude/models/overview on 2026-07-20
+#   (both the "latest models" and "Legacy models" comparison tables), plus
+#   this machine's own transcripts as corroboration where noted:
+#     1,000,000 tokens — claude-fable-5*, claude-mythos-5*,
+#       claude-mythos-preview* (doc: "Claude Mythos 5 shares Claude Fable
+#       5's specs"), claude-opus-4-8* (doc + this session's own transcript,
+#       model="claude-opus-4-8"), claude-opus-4-7*, claude-opus-4-6*,
+#       claude-sonnet-5* (doc, corroborated by anthropic.com/news/claude-
+#       sonnet-5 via WebSearch), claude-sonnet-4-6*.
+#     200,000 tokens — claude-haiku-4-5* (doc; also directly observed in
+#       this machine's transcripts as `claude-haiku-4-5-20251001`),
+#       claude-sonnet-4-5*, claude-opus-4-5*, claude-opus-4-1*. Listed
+#       EXPLICITLY (rather than left to fall through) so the emitted message
+#       can say "detected" instead of "assumed" for these — the difference
+#       matters because "assumed" is the honest label for "we don't know",
+#       not for "we checked and it's 200k".
+#     Anything else (empty/unparseable model, a model not yet in this table
+#     — e.g. legacy claude-3-*, which were NOT re-verified for this change)
+#     falls through to the conservative 200000 default AND the emitted
+#     message says so explicitly ("ASSUMED") — never silently presented as
+#     measured fact. Prefix-matched (trailing `*`) so a dated snapshot ID
+#     like `claude-haiku-4-5-20251001` matches its family entry. Keep this
+#     table current when new models ship; when a model's window cannot be
+#     confidently verified, do NOT guess — let it fall through to assumed.
+#
+#   THRESHOLDS RECONSIDERED (kept unchanged): 70%/85% are proportions, not
+#   absolute token counts, so they scale with whatever window was resolved
+#   (e.g. 700k/850k of a 1M window vs. 140k/170k of a 200k window). The
+#   proportional margin against each window's max_output (128k for the 1M-
+#   window models, 64k for Haiku 4.5's 200k window) is comparable in both
+#   cases, so the SAME percentages remain a sane checkpoint moment regardless
+#   of which window was resolved — no threshold value was changed here.
+#
+#   NEVER A STOP REASON: this hook's nag is advisory, not authoritative
+#   capacity — and even a CORRECTLY measured high watermark is never a
+#   reason to pause or stop autonomous work. Compaction (see the PreCompact
+#   hook `pre-compact-continuity.sh`, docs/runbooks/pre-compaction-
+#   snapshots.md) handles overflow automatically; the correct response is
+#   "checkpoint state now, keep going" — the emitted message says this
+#   explicitly (operator directive, 2026-07-20; see also
+#   doctrine/session-end-protocol.md).
+#
+# WATERMARKS (against the RESOLVED window — see WINDOW RESOLUTION above; was
+# a hardcoded 200,000 before 2026-07-20):
+#   >= 70%: inject once per watermark (dedup marker, same pattern as
+#   doctrine-jit.sh) — "checkpoint state NOW per constitution §5".
+#   >= 85%: inject a STRONGER nag once + proactively run
 #   scripts/session-snapshot.sh (pure shell, zero model tokens) so a durable
 #   handoff snapshot exists regardless of whether the model acts on the nag.
 #
@@ -68,8 +141,16 @@
 # watermark nag must never break the triggering tool call.
 #
 # Self-test: --self-test exercises fixture transcripts below/at/above each
-# watermark (0/1/2 injections), dedup on re-run, snapshot-triggered-at-85, and
-# both the primary usage-parse path and the bytes-fallback path.
+# watermark (0/1/2 injections), dedup on re-run, snapshot-triggered-at-85,
+# both the primary usage-parse path and the bytes-fallback path, and (added
+# 2026-07-20) window resolution: a large-context model detected correctly, a
+# 200k model detected correctly (not just defaulted), the env override still
+# winning over model-detection, an unknown/absent model falling back to the
+# conservative default WHILE being labeled "ASSUMED" in the message, and (a
+# harness-reviewer finding, same day) that the model-prefix matching is
+# delimiter-anchored — a future numeric sibling of a listed model (e.g.
+# "claude-opus-4-10" against the listed "claude-opus-4-1") is NOT swallowed
+# by a bare-prefix glob and mislabeled "detected".
 
 set -u
 
@@ -82,7 +163,11 @@ if [ -f "$SCRIPT_DIR/lib/nl-paths.sh" ]; then
   source "$SCRIPT_DIR/lib/nl-paths.sh" 2>/dev/null || true
 fi
 
-CONTEXT_WINDOW_TOKENS="${CONTEXT_WATERMARK_WINDOW:-200000}"
+# CONTEXT_WATERMARK_WINDOW is the explicit escape-hatch override (highest
+# precedence in _resolve_window, below) — NOT resolved to a single global
+# here anymore, because the correct window now depends on which model
+# produced the transcript being measured, discovered per-call. See WINDOW
+# RESOLUTION in the header comment.
 # Calibration factor — see header comment for the measurement. Overridable
 # per-machine via local config (env var takes precedence; a
 # ~/.claude/local/context-watermark-bytes-per-token file is also honored so a
@@ -114,6 +199,83 @@ _state_dir() {
   printf '%s/.claude/state/context-watermark' "$HOME"
 }
 
+# ============================================================
+# Model -> context-window lookup
+# ============================================================
+# Maps a model ID (as read from the transcript's `message.model`, e.g.
+# "claude-opus-4-8", or a dated snapshot like "claude-haiku-4-5-20251001")
+# to its real context-window size in tokens. DELIMITER-ANCHORED matching:
+# each entry is "the bare ID" OR "the bare ID + literal dash" — deliberately
+# NOT a bare trailing `*` glob, which would also swallow a future numeric
+# sibling (e.g. "claude-opus-4-1*" would match "claude-opus-4-10" or
+# "claude-opus-4-18") and silently mislabel it "detected" if that sibling
+# ships with a different window (harness-reviewer finding, 2026-07-20 —
+# confident-and-wrong is worse than falling through to "assumed"). See the
+# header comment's WINDOW RESOLUTION section for the verification trail
+# (fetched live from platform.claude.com/docs on 2026-07-20) — keep that
+# comment and this table in sync when models ship/retire.
+#
+# Echoes the window token count and returns 0 on a match. Returns 1 with NO
+# output when the model is empty or not in this table — the caller
+# (_resolve_window) falls through to the conservative default and labels it
+# "assumed". This function never guesses a window for an unrecognized model.
+_model_window() {
+  local model="$1"
+  [ -n "$model" ] || return 1
+  case "$model" in
+    claude-fable-5|claude-fable-5-*|claude-mythos-5|claude-mythos-5-*|claude-mythos-preview|claude-mythos-preview-*|claude-opus-4-8|claude-opus-4-8-*|claude-opus-4-7|claude-opus-4-7-*|claude-opus-4-6|claude-opus-4-6-*|claude-sonnet-5|claude-sonnet-5-*|claude-sonnet-4-6|claude-sonnet-4-6-*)
+      printf '1000000'
+      return 0
+      ;;
+    claude-haiku-4-5|claude-haiku-4-5-*|claude-sonnet-4-5|claude-sonnet-4-5-*|claude-opus-4-5|claude-opus-4-5-*|claude-opus-4-1|claude-opus-4-1-*)
+      printf '200000'
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# ============================================================
+# Window resolution (the denominator)
+# ============================================================
+# Precedence: explicit CONTEXT_WATERMARK_WINDOW env override (the escape
+# hatch — kept; ignored if unset or not a positive integer, so a garbage env
+# var can't silently zero out the math) > model-detected window
+# (_model_window) > conservative 200000 default.
+#
+# Echoes "<window> <source>" where source is "override", "detected", or
+# "assumed" — "assumed" is the ONLY case where the window was not actually
+# established, and the caller's emitted message must say so explicitly (this
+# is the direct fix for the proven incident: a session must never read an
+# unlabeled percentage as authoritative capacity).
+_resolve_window() {
+  local model="${1:-}"
+
+  if [ -n "${CONTEXT_WATERMARK_WINDOW:-}" ]; then
+    case "$CONTEXT_WATERMARK_WINDOW" in
+      *[!0-9]*|'') : ;;  # non-numeric override -> don't trust it, fall through
+      *)
+        printf '%s override' "$CONTEXT_WATERMARK_WINDOW"
+        return 0
+        ;;
+    esac
+  fi
+
+  if [ -n "$model" ]; then
+    local w
+    w="$(_model_window "$model")"
+    if [ -n "$w" ]; then
+      printf '%s detected' "$w"
+      return 0
+    fi
+  fi
+
+  printf '200000 assumed'
+  return 0
+}
+
 _sweep_stale_markers() {
   local dir="$1"
   [ -d "$dir" ] || return 0
@@ -124,16 +286,19 @@ _sweep_stale_markers() {
 # Context measurement
 # ============================================================
 
-# Echoes "<tokens> <source>" where source is "usage" or "bytes-fallback", or
-# echoes nothing (measurement failed entirely — caller treats as "no watermark
-# reachable", never a crash).
+# Echoes "<tokens> <source> <model>" where source is "usage" or
+# "bytes-fallback", and model is the transcript's `message.model` string (the
+# SAME assistant event, same jq pass — used downstream to resolve the real
+# context window) or "-" when unavailable (bytes-fallback never has one: no
+# assistant-usage line was found at all). Echoes nothing (measurement failed
+# entirely — caller treats as "no watermark reachable", never a crash).
 _measure_context_tokens() {
   local transcript="$1"
   [ -f "$transcript" ] || return 0
 
-  # PRIMARY: parse the last assistant event's usage object.
+  # PRIMARY: parse the last assistant event's usage object (and its model).
   if command -v jq >/dev/null 2>&1; then
-    local usage_line input_tokens cache_read
+    local usage_line input_tokens cache_read model
     usage_line="$(tac "$transcript" 2>/dev/null | while IFS= read -r line; do
                     if printf '%s' "$line" | jq -e '.type=="assistant" and (.message.usage.input_tokens // empty) != null' >/dev/null 2>&1; then
                       printf '%s' "$line"
@@ -143,25 +308,27 @@ _measure_context_tokens() {
     if [ -n "$usage_line" ]; then
       input_tokens="$(printf '%s' "$usage_line" | jq -r '.message.usage.input_tokens // 0' 2>/dev/null)"
       cache_read="$(printf '%s' "$usage_line" | jq -r '.message.usage.cache_read_input_tokens // 0' 2>/dev/null)"
+      model="$(printf '%s' "$usage_line" | jq -r '.message.model // empty' 2>/dev/null)"
+      [ -z "$model" ] && model="-"
       if [ -n "$input_tokens" ] && [ -n "$cache_read" ]; then
         local total
         total=$(( input_tokens + cache_read )) 2>/dev/null
         if [ -n "${total:-}" ]; then
-          printf '%s usage' "$total"
+          printf '%s usage %s' "$total" "$model"
           return 0
         fi
       fi
     fi
   fi
 
-  # FALLBACK: bytes x calibration factor.
+  # FALLBACK: bytes x calibration factor. No model available via this path.
   local size bpt tokens
   size=$(wc -c < "$transcript" 2>/dev/null | tr -d ' ')
   [ -z "$size" ] && return 0
   bpt="$(_bytes_per_token)"
   tokens="$(awk -v s="$size" -v b="$bpt" 'BEGIN { if (b <= 0) { print 0 } else { printf "%d", s / b } }' 2>/dev/null)"
   [ -z "$tokens" ] && return 0
-  printf '%s bytes-fallback' "$tokens"
+  printf '%s bytes-fallback -' "$tokens"
   return 0
 }
 
@@ -183,20 +350,43 @@ _compute_watermark() {
   [ -n "$transcript" ] || return 0
   [ -n "$session_id" ] || return 0
 
-  local measured tokens source pct
+  local measured tokens source model
   measured="$(_measure_context_tokens "$transcript")"
   [ -z "$measured" ] && return 0
-  tokens="${measured%% *}"
-  source="${measured##* }"
+  tokens="$(printf '%s' "$measured" | awk '{print $1}')"
+  source="$(printf '%s' "$measured" | awk '{print $2}')"
+  model="$(printf '%s' "$measured" | awk '{print $3}')"
+  [ "$model" = "-" ] && model=""
   case "$tokens" in
     ''|*[!0-9]*) return 0 ;;
   esac
 
-  pct="$(awk -v t="$tokens" -v w="$CONTEXT_WINDOW_TOKENS" 'BEGIN { if (w<=0) {print 0} else {printf "%d", (t/w)*100} }' 2>/dev/null)"
+  local resolved window win_source window_clause pct
+  resolved="$(_resolve_window "$model")"
+  window="${resolved%% *}"
+  win_source="${resolved##* }"
+  case "$window" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+
+  case "$win_source" in
+    detected)
+      window_clause="model ${model}, window auto-detected"
+      ;;
+    override)
+      window_clause="window from CONTEXT_WATERMARK_WINDOW override"
+      ;;
+    *)
+      window_clause="window ASSUMED (model ${model:-not present in transcript} not in the known-window table; defaulting to the conservative ${window} — if this session's real window is larger, this percentage OVERESTIMATES usage)"
+      ;;
+  esac
+
+  pct="$(awk -v t="$tokens" -v w="$window" 'BEGIN { if (w<=0) {print 0} else {printf "%d", (t/w)*100} }' 2>/dev/null)"
   [ -z "$pct" ] && return 0
 
   local marker_70="$state_dir/${session_id}--watermark-70"
   local marker_85="$state_dir/${session_id}--watermark-85"
+  local never_stop="Context pressure is NEVER a reason to stop or pause autonomous work — compaction handles overflow automatically; checkpoint state and keep going."
 
   if [ "$pct" -ge 85 ]; then
     if [ -f "$marker_85" ]; then
@@ -211,7 +401,7 @@ _compute_watermark() {
       bash "$snapshot_script" "$transcript" >/dev/null 2>&1 || true
     fi
 
-    jq -n --arg ctx "[context-watermark] context ~${pct}% of ${CONTEXT_WINDOW_TOKENS} (measured: ${tokens} tokens via ${source}) — AT THE 85% MARK: checkpoint state NOW per constitution §5 (durable files, not chat) — a mechanical session-handoff snapshot has been written proactively (scripts/session-snapshot.sh); read it back after any compaction. This is your last comfortable window to persist operator directives, decisions+rationale, and pending asks in your OWN words before compaction summarizes them for you." \
+    jq -n --arg ctx "[context-watermark] context ~${pct}% of ${window} (${window_clause}) — measured ${tokens} tokens via ${source}. AT THE 85% MARK: checkpoint state NOW per constitution §5 (durable files, not chat) — a mechanical session-handoff snapshot has been written proactively (scripts/session-snapshot.sh); read it back after any compaction. This is your last comfortable window to persist operator directives, decisions+rationale, and pending asks in your OWN words before compaction summarizes them for you. ${never_stop}" \
       '{hookSpecificOutput:{hookEventName:"PostToolUse", additionalContext:$ctx}}'
     return 0
   fi
@@ -223,7 +413,7 @@ _compute_watermark() {
     mkdir -p "$state_dir" 2>/dev/null || true
     : > "$marker_70" 2>/dev/null || true
 
-    jq -n --arg ctx "[context-watermark] context ~${pct}% of ${CONTEXT_WINDOW_TOKENS} (measured: ${tokens} tokens via ${source}) — checkpoint state NOW per constitution §5 while you still have room: durable files (backlog/findings/plan/review), not chat." \
+    jq -n --arg ctx "[context-watermark] context ~${pct}% of ${window} (${window_clause}) — measured ${tokens} tokens via ${source}. checkpoint state NOW per constitution §5 while you still have room: durable files (backlog/findings/plan/review), not chat. ${never_stop}" \
       '{hookSpecificOutput:{hookEventName:"PostToolUse", additionalContext:$ctx}}'
     return 0
   fi
@@ -288,10 +478,19 @@ _self_test() {
 
   # Helper: build a fixture transcript whose last assistant event carries a
   # given usage total (input_tokens + cache_read_input_tokens split 2/rest).
+  # No `model` field -> exercises the "model absent -> assumed default" path.
   _mk_transcript() {
     local path="$1" total="$2"
     printf '{"type":"user","session_id":"sid","message":{"role":"user","content":"hi"}}\n' > "$path"
     printf '{"type":"assistant","session_id":"sid","message":{"role":"assistant","usage":{"input_tokens":2,"cache_read_input_tokens":%d}}}\n' "$((total-2))" >> "$path"
+  }
+
+  # Helper: same as above, but with an explicit `message.model` field, for
+  # exercising window auto-detection (added 2026-07-20).
+  _mk_transcript_model() {
+    local path="$1" total="$2" model="$3"
+    printf '{"type":"user","session_id":"sid","message":{"role":"user","content":"hi"}}\n' > "$path"
+    printf '{"type":"assistant","session_id":"sid","message":{"role":"assistant","model":"%s","usage":{"input_tokens":2,"cache_read_input_tokens":%d}}}\n' "$model" "$((total-2))" >> "$path"
   }
 
   # T1 — below 70% -> 0 injections.
@@ -436,6 +635,147 @@ EOF
     echo "  T11 fast early-exit when both watermarks already fired: PASS"; pass=$((pass+1))
   else
     echo "  T11 fast early-exit when both watermarks already fired: FAIL (rc=$rc out='$out')"; fail=$((fail+1))
+  fi
+
+  # ==========================================================
+  # T12-T19 — window resolution (added 2026-07-20, the incident fix).
+  # ==========================================================
+
+  # T12 — model absent (T1-T11's fixtures never set `message.model`) ->
+  # falls back to the conservative default AND the message says so
+  # explicitly. This is the direct regression test for the proven incident:
+  # an unlabeled percentage against a wrong denominator must never happen
+  # again — "assumed" must always be spelled out when the window wasn't
+  # actually established.
+  local t12="$tmp/modelabsent.jsonl"
+  _mk_transcript "$t12" 150000   # 75% of the assumed 200000 default
+  got="$(_compute_watermark "$t12" "sess-modelabsent" "$state_dir" "")"
+  if [ -n "$got" ] \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'ASSUMED' \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q '~75% of 200000'; then
+    echo "  T12 model absent -> conservative default, message says ASSUMED: PASS"; pass=$((pass+1))
+  else
+    echo "  T12 model absent -> conservative default, message says ASSUMED: FAIL (got: $got)"; fail=$((fail+1))
+  fi
+
+  # T13 — large-context model (claude-opus-4-8, the model in the real
+  # incident) detected -> correct pct against the 1,000,000 window, message
+  # names the model and is NOT labeled assumed.
+  local t13="$tmp/opus48.jsonl"
+  _mk_transcript_model "$t13" 750000 "claude-opus-4-8"   # 75% of 1,000,000
+  got="$(_compute_watermark "$t13" "sess-opus48" "$state_dir" "")"
+  if [ -n "$got" ] \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q '~75% of 1000000' \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'model claude-opus-4-8' \
+     && ! printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'ASSUMED'; then
+    echo "  T13 large-context model (claude-opus-4-8) detected, correct pct vs 1M, not assumed: PASS"; pass=$((pass+1))
+  else
+    echo "  T13 large-context model (claude-opus-4-8) detected, correct pct vs 1M, not assumed: FAIL (got: $got)"; fail=$((fail+1))
+  fi
+
+  # T13b — the exact real-incident numbers: 322,800 tokens on claude-opus-4-8
+  # (1,000,000 window) is 32% — BELOW even the 70% watermark, so the hook
+  # must stay completely silent (this is what should have happened live;
+  # instead the old 200000-denominator code would have reported ~161%).
+  local t13b="$tmp/realincident.jsonl"
+  _mk_transcript_model "$t13b" 322800 "claude-opus-4-8"
+  got="$(_compute_watermark "$t13b" "sess-realincident" "$state_dir" "")"
+  if [ -z "$got" ]; then
+    echo "  T13b real-incident numbers (322.8k/1M=32%) -> silent, no false alarm: PASS"; pass=$((pass+1))
+  else
+    echo "  T13b real-incident numbers (322.8k/1M=32%) -> silent, no false alarm: FAIL (got: $got)"; fail=$((fail+1))
+  fi
+
+  # T14 — a 200k model (claude-haiku-4-5, dated snapshot ID) is DETECTED
+  # explicitly, not just defaulted -- message says "auto-detected", not
+  # "ASSUMED", even though the resulting window value (200000) matches the
+  # default.
+  local t14="$tmp/haiku45.jsonl"
+  _mk_transcript_model "$t14" 150000 "claude-haiku-4-5-20251001"   # 75% of 200000
+  got="$(_compute_watermark "$t14" "sess-haiku45" "$state_dir" "")"
+  if [ -n "$got" ] \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'model claude-haiku-4-5-20251001' \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'auto-detected' \
+     && ! printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'ASSUMED'; then
+    echo "  T14 200k model (claude-haiku-4-5, dated ID) detected explicitly, not assumed: PASS"; pass=$((pass+1))
+  else
+    echo "  T14 200k model (claude-haiku-4-5, dated ID) detected explicitly, not assumed: FAIL (got: $got)"; fail=$((fail+1))
+  fi
+
+  # T15 — CONTEXT_WATERMARK_WINDOW env override still wins over a
+  # model-detected window (precedence: override > detected > assumed).
+  local t15="$tmp/override.jsonl"
+  _mk_transcript_model "$t15" 40000 "claude-opus-4-8"   # would be 4% at 1M
+  export CONTEXT_WATERMARK_WINDOW=50000                 # forces 80% instead
+  got="$(_compute_watermark "$t15" "sess-override" "$state_dir" "")"
+  unset CONTEXT_WATERMARK_WINDOW
+  if [ -n "$got" ] \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q '~80% of 50000' \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'override'; then
+    echo "  T15 CONTEXT_WATERMARK_WINDOW override wins over model-detected window: PASS"; pass=$((pass+1))
+  else
+    echo "  T15 CONTEXT_WATERMARK_WINDOW override wins over model-detected window: FAIL (got: $got)"; fail=$((fail+1))
+  fi
+
+  # T16 — an unrecognized model string (not empty, just not in the table)
+  # also falls back to conservative + ASSUMED, same as absent.
+  local t16="$tmp/unknownmodel.jsonl"
+  _mk_transcript_model "$t16" 150000 "claude-hypothetical-9"
+  got="$(_compute_watermark "$t16" "sess-unknownmodel" "$state_dir" "")"
+  if [ -n "$got" ] \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'ASSUMED' \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'claude-hypothetical-9'; then
+    echo "  T16 unrecognized (but non-empty) model -> conservative default, ASSUMED, names the model: PASS"; pass=$((pass+1))
+  else
+    echo "  T16 unrecognized (but non-empty) model -> conservative default, ASSUMED, names the model: FAIL (got: $got)"; fail=$((fail+1))
+  fi
+
+  # T17 — direct unit check of _model_window's table for a representative
+  # sample across both windows, plus confirming an unknown model returns
+  # nothing (never guesses).
+  local w
+  w="$(_model_window "claude-sonnet-5")"
+  local w2 w3
+  w2="$(_model_window "claude-opus-4-1")"
+  w3="$(_model_window "claude-does-not-exist")"
+  if [ "$w" = "1000000" ] && [ "$w2" = "200000" ] && [ -z "$w3" ]; then
+    echo "  T17 _model_window table spot-check (sonnet-5=1M, opus-4-1=200k, unknown=empty): PASS"; pass=$((pass+1))
+  else
+    echo "  T17 _model_window table spot-check (sonnet-5=1M, opus-4-1=200k, unknown=empty): FAIL (w=$w w2=$w2 w3=$w3)"; fail=$((fail+1))
+  fi
+
+  # T19 — prefix-collision guard (harness-reviewer finding, 2026-07-20): a
+  # FUTURE numeric sibling that merely starts with a listed model's ID (e.g.
+  # "claude-opus-4-10" or "claude-opus-4-18" starting with "claude-opus-4-1")
+  # must NOT be swallowed by that entry's bare-prefix glob — it has no dash
+  # delimiter after "claude-opus-4-1", so it must fall through to "unknown"
+  # (empty/nonzero from _model_window, and ASSUMED end-to-end), never get
+  # silently mislabeled "detected" with a possibly-wrong window. Same check
+  # for a "claude-sonnet-5" sibling ("claude-sonnet-50") against the 1M
+  # bucket, and confirms the LEGITIMATE dash-suffixed dated-snapshot form
+  # still matches (the anchoring must not be so strict it breaks real IDs).
+  local w4 w5 w6
+  w4="$(_model_window "claude-opus-4-10")"
+  w5="$(_model_window "claude-sonnet-50")"
+  w6="$(_model_window "claude-opus-4-1-20250805")"
+  if [ -z "$w4" ] && [ -z "$w5" ] && [ "$w6" = "200000" ]; then
+    echo "  T19 prefix-collision guard (4-10/sonnet-50 not swallowed by 4-1/sonnet-5; dated snapshot still matches): PASS"; pass=$((pass+1))
+  else
+    echo "  T19 prefix-collision guard (4-10/sonnet-50 not swallowed by 4-1/sonnet-5; dated snapshot still matches): FAIL (w4=$w4 w5=$w5 w6=$w6)"; fail=$((fail+1))
+  fi
+
+  # T18 — the never-a-stop-reason clause is present in every fired message
+  # (fresh session so this test is independent of any other test's dedup
+  # state).
+  local t18="$tmp/neverstop.jsonl"
+  _mk_transcript_model "$t18" 750000 "claude-opus-4-8"
+  got="$(_compute_watermark "$t18" "sess-neverstop" "$state_dir" "")"
+  if [ -n "$got" ] \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'NEVER a reason to stop or pause' \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'compaction handles overflow'; then
+    echo "  T18 fired message carries the never-a-stop-reason / compaction clause: PASS"; pass=$((pass+1))
+  else
+    echo "  T18 fired message carries the never-a-stop-reason / compaction clause: FAIL (got: $got)"; fail=$((fail+1))
   fi
 
   rm -rf "$tmp" 2>/dev/null
