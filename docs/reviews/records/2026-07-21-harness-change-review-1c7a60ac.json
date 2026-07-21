@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260721-1c7a60ac",
+  "created_at": "2026-07-21T00:47:39Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/plans/cockpit-roadmap-redesign.md",
+  "change_ref": {
+    "commit_sha": "16aad5117b507b88f179f17daf257c26db52cf0d",
+    "branch": "build/cockpit-health-int"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/lib/progress-log-lib.sh",
+      "blob_sha": "6f5d73361edb04d990c3e22dac62d7971f6ffd9f"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-honesty-gate.sh",
+      "blob_sha": "3ed542e59271e997f767050eefcf290c7ba54c0e"
+    },
+    {
+      "path": "adapters/claude-code/hooks/stop-verdict-dispatcher.sh",
+      "blob_sha": "105d48cf14ff8babb4e495790b4560e3245de462"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-read.sh",
+      "blob_sha": "7d7e03a62dcb1b83271f0add4d759ff403df501b"
+    },
+    {
+      "path": "adapters/claude-code/scripts/ask-registry.sh",
+      "blob_sha": "d2a3d046a6b4459f8f44fc6c4ba3864b7fcdbefc"
+    },
+    {
+      "path": "adapters/claude-code/scripts/session-resumer.sh",
+      "blob_sha": "6d191adbb77961d2a02a979910e7729df539385b"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Deploy files 1-6 (progress-log-lib, session-honesty-gate, stop-verdict-dispatcher, workstreams-read, ask-registry, session-resumer) - PASS. They are surgical, never-block, introduce no new exit-2 on the hot Stop/prompt paths, the ask-registry LLM lanes are dormant live (ASK_SUMMARIZER unset), and the T2/T7 logic is internally correct and well-tested.",
+    "findings_summary": "T2/T4-A1/T7 harness deliverables; A1 ledger-never-rejects contract VERIFIED (no mechanical caller drops a waiting item); needs-you.sh held separately (REFORMULATE, coupling)"
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}
