@@ -618,6 +618,20 @@ function planEffectiveRank(pf, linkedAsks, planRankOverlay) {
 // intent level, which no longer exists — a linked ask marked done/merged is
 // still a labeled, honest way for the operator to force-complete an item
 // the oracle would otherwise render merged-unverified.
+// planProjectFromPath(absPath) -> the repo directory name that owns the plan.
+// A plan's project is a property of the REPO IT LIVES IN, never of an optional
+// linked ask. Pre-fix this read `linkedAsks[0].project || ''`, so every plan
+// without a linked ask (most of them, post-round-8 re-rooting) got project:''
+// and was silently hidden by ANY active project chip — operator-reported
+// 2026-07-22: the roadmap rendered "PHASE 1 OF 1" because a persisted
+// neural-lace chip filtered out 16 of 17 phases. Path shape:
+// <...>/<repo>/docs/plans[/archive]/<slug>.md
+function planProjectFromPath(absPath) {
+  if (!absPath) return '';
+  const m = String(absPath).replace(/\\/g, '/').match(/([^/]+)\/docs\/plans\//);
+  return m ? m[1] : '';
+}
+
 function derivePlanRootNode(pf, linkedAsks, hbCtx) {
   const fromRequests = (linkedAsks || []).map((a) => ({ id: a.ask_id, title: a.title }));
   const addedTs = planFallbackAddedTs(pf, linkedAsks);
@@ -626,7 +640,7 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
     kind: 'plan',
     title: (linkedAsks[0] && linkedAsks[0].title) || pf.slug,
     title_source: (linkedAsks[0] && linkedAsks[0].title_source) || 'auto',
-    project: (linkedAsks[0] && linkedAsks[0].project) || '',
+    project: (linkedAsks[0] && linkedAsks[0].project) || planProjectFromPath(pf.absPath),
     provenance: 'operator', provenance_reason: '',
     rank: null, added_ts: addedTs, added_mid_build: false,
     status: null, progress: null, completed_at: '',
