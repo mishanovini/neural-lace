@@ -60,7 +60,14 @@ MODE="${1:-}"
 # HARNESS_SELFTEST_PATH-unset fallback pattern — so simply exporting
 # HARNESS_SELFTEST=1 (with no other setup, e.g. a bare sweep loop) is enough
 # to keep this hook's self-test off the real ~/.claude tree.
-if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+
+# GUARD MUST ALSO KEY ON $MODE (harness-review 2026-07-22, Critical): a direct
+# `bash workstreams-read.sh --self-test` evaluates this top-level guard BEFORE
+# _self_test sets HARNESS_SELFTEST, so keying on the env var alone let a direct
+# self-test run write to the REAL ~/.claude/logs. Same defect, same file, as the
+# ASK_SUMMARIZER guard below. House pattern: workstreams-task-binding.sh:76.
+if [[ "${HARNESS_SELFTEST:-0}" == "1" ]] || [[ "$MODE" == "--self-test" ]]; then
+  export HARNESS_SELFTEST=1
   if [[ -n "${HARNESS_SELFTEST_DIR:-}" ]]; then
     LOG_DIR="$HARNESS_SELFTEST_DIR/logs"
   else
@@ -213,7 +220,14 @@ _session_id() {
 # session (e.g. "off") — `:=` only fills in when the variable is genuinely
 # unset, never overriding an explicit value.
 # ============================================================================
-if [[ "${HARNESS_SELFTEST:-0}" != "1" ]]; then
+# $MODE is part of the guard (harness-review 2026-07-22, Critical): a direct
+# `--self-test` run reaches this line BEFORE _self_test exports
+# HARNESS_SELFTEST=1, so keying on the env var alone exported
+# ASK_SUMMARIZER=haiku into the suite's own process — every child inherited it,
+# AC11 (the negative/FP guard proving the suite never risks a live model call)
+# went RED, and AC1/AC5/AC6 drive the real ask-registry.sh whose async lane
+# would fork a live `claude --model haiku` on any machine with claude on PATH.
+if [[ "${HARNESS_SELFTEST:-0}" != "1" && "$MODE" != "--self-test" ]]; then
   : "${ASK_SUMMARIZER:=haiku}"
   export ASK_SUMMARIZER
 fi
