@@ -1081,6 +1081,16 @@ ok('R8-5 the merged-unverified "mark complete anyway" override resolves its ask-
     a === true);
 })();
 
+// GHOST-BOUNDING (2026-07-21 fix, folded into the same round-8 rewiring):
+// ask-linked plan slugs whose file cannot be resolved AND whose newest
+// link is older than completed_age_days are excluded from the tree
+// entirely (real-data proof: 154/164 roots were stale ghosts before this
+// fix — server/roadmap-routes.selftest.js's dedicated pins) but named as
+// ONE honest aggregate, never a silent drop (C5).
+ok('R8-7 renderAll surfaces stale_links_omitted as a single honest count line, never a per-item dead root',
+  /stale_links_omitted/.test(roadmapJsNoComments) &&
+  /linked plan.*not found/.test(roadmapJsNoComments));
+
 // cockpit-roadmap-redesign Task 7 — person-grouped peers (round 5:
 // "Misha: desktop + laptop"). Same PV-prefix, same DOM-free technique;
 // the server-side grouping derivation is peer-view.js's own self-test

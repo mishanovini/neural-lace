@@ -43,20 +43,33 @@
 //     NORMATIVE explicitly self-describe as "not an independent plan" and
 //     a header-less file is indistinguishable from an evidence dump, so
 //     both are excluded rather than guessed at).
-//   - every `docs/plans/archive/*.md` file, but ONLY when its mtime is
-//     within the SAME completed_age_days window used for the client's own
-//     completed-collapse aging (I2 — one tunable) — "do NOT dump the entire
-//     archive/ history ... ancient archived plans stay out" (round 8).
-//     File mtime is used as a proxy for "when this was archived/completed"
-//     (the archival mechanism moves/touches the file); this is an honest,
-//     documented approximation, not a guess dressed as a real timestamp.
+//   - every `docs/plans/archive/*.md` file, but ONLY with REAL recency
+//     EVIDENCE within the SAME completed_age_days window used for the
+//     client's own completed-collapse aging (I2 — one tunable) — "do NOT
+//     dump the entire archive/ history ... ancient archived plans stay
+//     out" (round 8). Evidence = a linked ask's newest created_ts, OR a
+//     progress-log task_started/task_done event for the slug, inside the
+//     window (see recentSlugsFromAskLinks/recentSlugsFromEvents). File
+//     mtime is DELIBERATELY NOT trusted for this: a git-worktree checkout
+//     (this harness's own standard per-builder-session workflow) resets
+//     EVERY file's mtime to checkout time regardless of true archival
+//     history — a whole-corpus live-data check (2026-07-21) found this
+//     made a naive mtime-based gate a total no-op (all 227 archived files
+//     read as "0.5 days old"), producing ~154 stale roots. A plan with
+//     zero evidence either way is excluded — the safer default given the
+//     goal (bounded noise), not a guess dressed as a real timestamp.
 //   - every plan a REGISTERED ask still links to (`plan_linked`), resolved
 //     against THAT ask's own repo (preserving the pre-existing cross-repo
-//     plan-linking behavior), subject to the same status/aging filters —
-//     EXCEPT a linked plan that cannot be read at all (absent/damaged)
-//     still surfaces as an `unknown` root rather than silently vanishing
-//     (an operator's tracked work going dark is exactly what C5 exists to
-//     surface, never a silent omission).
+//     plan-linking behavior), subject to the same status/eligibility
+//     filters (an archived linked plan needs the same recency evidence
+//     above) — EXCEPT a linked plan that cannot be read at all (absent/
+//     damaged): that surfaces as an `unknown` root ONLY when its OWN
+//     newest linking ask is recent (ghost-bounding, 2026-07-21) — an
+//     ancient ghost is excluded and counted in `stale_links_omitted`
+//     instead of becoming a permanent dead root (never a silent drop —
+//     C5's honesty requirement is met by the named aggregate, not by
+//     resurrecting every plan_linked record the registry has ever
+//     accumulated).
 //
 // ============================================================
 // PAYLOAD CONTRACT (pinned for the T1 status-derivation seam)
@@ -240,6 +253,25 @@ function isEligiblePlanStatus(statusText) {
 // eligible top-level *.md file directly inside `dir` (non-recursive — a
 // subdirectory like fragments/ or archive/ itself is never descended into
 // by this call; archive/ is scanned via ITS OWN separate call).
+//
+// AGING GATE (opts.cutoffMs, archive/ only): file MTIME IS NOT a trustworthy
+// recency signal here — a git-worktree checkout (this harness's own
+// standard per-builder-session workflow, `~/.claude/doctrine/orchestrator-
+// pattern.md`) resets EVERY file's mtime to checkout time regardless of
+// when its content was actually authored/archived. A whole-corpus live-data
+// check (2026-07-21) found this made a naive "mtime within window" gate a
+// complete no-op in a fresh worktree: all 227 archived files read as "0.5
+// days old" (the worktree's own checkout time), producing ~154 stale roots
+// on a page meant to show "what I'm working on right now" — and an
+// mtime-OR-evidence gate does not fix this either, since a falsely-fresh
+// mtime ALREADY satisfies the gate on its own, so adding more ways to ALSO
+// pass changes nothing. The actual fix: an archived plan is included ONLY
+// on POSITIVE, worktree-independent recency EVIDENCE — `opts.recentSlugs
+// [slug]` true (an ask-link or progress-log event genuinely timestamped
+// inside the window; see recentSlugsFromAskLinks/recentSlugsFromEvents
+// below). The one real caller (discoverPlanFiles) ALWAYS supplies
+// recentSlugs when it supplies cutoffMs, so evidence is unconditionally
+// required whenever aging is being gated at all — no mtime fallback path.
 function scanPlanDir(dir, opts) {
   const options = opts || {};
   const out = [];
@@ -250,16 +282,61 @@ function scanPlanDir(dir, opts) {
     const abs = path.join(dir, e.name);
     let stat;
     try { stat = fs.statSync(abs); } catch (_) { return; }
-    if (typeof options.cutoffMs === 'number' && stat.mtimeMs < options.cutoffMs) return;
+    const slug = e.name.replace(/\.md$/i, '');
+    if (typeof options.cutoffMs === 'number' && !(options.recentSlugs && options.recentSlugs[slug])) {
+      return; // aging is gated here and this slug has no recency evidence
+    }
     let text;
     try { text = fs.readFileSync(abs, 'utf8'); } catch (_) { return; }
     if (!isEligiblePlanStatus(planParse.parsePlanStatus(text))) return;
-    out.push({ slug: e.name.replace(/\.md$/i, ''), absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs });
+    out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs });
   });
   return out;
 }
 
-// discoverPlanFiles(scanRoot, planAskLinks) -> [{slug, absPath, archived, mtimeMs}]
+// recentSlugsFromAskLinks(planAskLinks, cutoffMs) -> {slug: true, ...} for
+// every slug whose NEWEST linking ask is inside the aging window —
+// registry-timestamp-based, so it holds regardless of file mtime/worktree
+// checkout state.
+function recentSlugsFromAskLinks(planAskLinks, cutoffMs) {
+  const set = {};
+  Object.keys(planAskLinks).forEach((slug) => {
+    const newest = newestLinkTs(planAskLinks[slug]);
+    const ms = newest ? Date.parse(newest) : NaN;
+    if (!isNaN(ms) && ms >= cutoffMs) set[slug] = true;
+  });
+  return set;
+}
+
+// recentSlugsFromEvents(cutoffMs) -> {slug: true, ...} for every plan slug
+// with a task_started/task_done event inside the window, sourced from the
+// shared "unlinked" progress-log lane (progress-log-lib.sh's own
+// documented orphan-lane fallback for events with no ask_id) — the SAME
+// data source an unlinked plan's own status derivation already reads
+// (eventsForSlug), so this is a real recency signal for genuinely-active
+// archived/historical plans with no ask attached, not a new mechanism.
+function recentSlugsFromEvents(cutoffMs) {
+  const set = {};
+  deriveLib.readAskEvents('').forEach((e) => {
+    if (!e || !e.plan_slug || !e.ts) return;
+    const ms = Date.parse(e.ts);
+    if (!isNaN(ms) && ms >= cutoffMs) set[e.plan_slug] = true;
+  });
+  return set;
+}
+
+// newestLinkTs(links) — the MOST RECENT created_ts among every ask that
+// links a slug (distinct from planFallbackAddedTs's EARLIEST, which is the
+// right signal for build-order; recency-gating below needs "has ANYONE
+// referenced this slug lately", so the newest link is the right signal —
+// one old ask plus one fresh one still counts as "recent").
+function newestLinkTs(links) {
+  const tss = (links || []).map((a) => a.created_ts).filter(Boolean).sort();
+  return tss.length ? tss[tss.length - 1] : '';
+}
+
+// discoverPlanFiles(scanRoot, planAskLinks) -> { files: [{slug, absPath,
+// archived, mtimeMs}], ghostCount }
 // the UNION of (1) scanRoot's own docs/plans/*.md, (2) scanRoot's docs/
 // plans/archive/*.md within the completed-aging window, and (3) every
 // ask-linked plan slug resolved against ITS OWN ask's repo (cross-repo
@@ -277,15 +354,38 @@ function scanPlanDir(dir, opts) {
 // client-side expand-state keying (openSet[item.id]) and DOM lookups
 // (data-item-id) even if the path-string mismatch above were fixed some
 // other way.
+//
+// GHOST BOUNDING (found via the SAME real-data live check, 2026-07-21): an
+// ask-linked slug whose file cannot be resolved/read at all (moved,
+// archived-and-pruned, renamed, or from years of registry history) used to
+// surface UNCONDITIONALLY as an `unknown` root — every plan_linked record
+// the registry has EVER accumulated, forever. Against the real
+// ~/.claude/state/ask-registry.jsonl this produced ~154 stale ghost roots
+// out of 164 total (only ~10 are genuine current plans). C5's "never
+// silently drop a derivation failure" is right for a plan that goes dark
+// WHILE IT IS STILL CURRENT WORK; it is wrong applied to years of history.
+// The fix bounds a ghost by RECENCY, reusing the SAME completed_age_days
+// window (one tunable, same knob as archive aging and I2 collapse): a
+// ghost whose NEWEST linking ask is within the window still renders as an
+// honest `unknown` root (the real C5 signal — "this active-looking work
+// went dark"); an ancient ghost is EXCLUDED from the roots entirely but
+// COUNTED (never a silent drop — the caller surfaces one honest aggregate
+// line, never 150+ individual dead roots). The originating ask itself
+// stays fully visible in the Requests tab regardless (unchanged).
 function discoverPlanFiles(scanRoot, planAskLinks) {
   const seenSlugs = {};
   const out = [];
   const cutoffMs = Date.now() - COMPLETED_AGE_DAYS * 86400000;
+  let ghostCount = 0;
+  // Worktree-independent recency evidence (see scanPlanDir's header note) —
+  // computed ONCE per request, threaded into the archive/ scan's aging gate
+  // alongside (never instead of) mtime.
+  const recentSlugs = Object.assign({}, recentSlugsFromAskLinks(planAskLinks, cutoffMs), recentSlugsFromEvents(cutoffMs));
 
   scanPlanDir(path.join(scanRoot, 'docs', 'plans'), { archived: false }).forEach((pf) => {
     seenSlugs[pf.slug] = true; out.push(pf);
   });
-  scanPlanDir(path.join(scanRoot, 'docs', 'plans', 'archive'), { archived: true, cutoffMs: cutoffMs }).forEach((pf) => {
+  scanPlanDir(path.join(scanRoot, 'docs', 'plans', 'archive'), { archived: true, cutoffMs: cutoffMs, recentSlugs: recentSlugs }).forEach((pf) => {
     if (seenSlugs[pf.slug]) return;
     seenSlugs[pf.slug] = true; out.push(pf);
   });
@@ -299,29 +399,40 @@ function discoverPlanFiles(scanRoot, planAskLinks) {
     // docs/plans/ NOR docs/plans/archive/ under this repo — a genuinely
     // missing linked plan (the "ghost-plan" case), not merely an unreadable
     // one. Synthesize the expected docs/plans/<slug>.md path in that case
-    // so the read below honestly fails ENOENT and this still surfaces as an
-    // `unknown` root (C5) rather than silently vanishing — an operator's
-    // tracked work going dark must never look identical to "no such plan
-    // was ever linked".
+    // so the read below honestly fails ENOENT.
     const abs = planParse.resolvePlanAbsPath(repo, slug) || path.join(repo, 'docs', 'plans', slug + '.md');
     let stat, text;
     try { stat = fs.statSync(abs); text = fs.readFileSync(abs, 'utf8'); }
     catch (_) {
       // The linked plan file genuinely can't be read (missing/moved/
-      // permission error) — still surface it as a root so it renders
-      // unknown(reason) rather than an operator's tracked work silently
-      // going dark (C5).
+      // permission error). RECENT (newest linking ask inside the aging
+      // window, or an undated link — no evidence either way defaults to
+      // the safer, less-noisy "ancient" bucket) -> still surface as an
+      // `unknown` root (C5: current work going dark must never look
+      // identical to "never linked"). ANCIENT -> excluded from roots,
+      // counted in ghostCount (never rendered, never silently dropped).
+      const newest = newestLinkTs(links);
+      const newestMs = newest ? Date.parse(newest) : NaN;
+      const isRecent = !isNaN(newestMs) && newestMs >= cutoffMs;
+      if (!isRecent) { ghostCount++; return; }
       seenSlugs[slug] = true;
       out.push({ slug: slug, absPath: abs, archived: /[\\/]archive[\\/]/.test(abs), mtimeMs: 0 });
       return;
     }
     const archived = /[\\/]archive[\\/]/.test(abs);
-    if (archived && stat.mtimeMs < cutoffMs) return; // ancient archived linked plan stays out too
+    // Same evidence-gated aging rule as scanPlanDir (mtime is not
+    // trustworthy — see that function's header note): a readable-but-
+    // archived linked plan needs real recency evidence, not just a fresh
+    // (possibly checkout-reset) mtime. `newest` (this slug's OWN newest
+    // linking ask, already computed above) already covers the ask-link
+    // half of recentSlugs; recentSlugsFromEvents covers the progress-log
+    // half — checking the shared recentSlugs set gets both for free.
+    if (archived && !recentSlugs[slug]) return; // no recency evidence -> ancient archived linked plan stays out
     if (!isEligiblePlanStatus(planParse.parsePlanStatus(text))) return;
     seenSlugs[slug] = true;
     out.push({ slug: slug, absPath: abs, archived: archived, mtimeMs: stat.mtimeMs });
   });
-  return out;
+  return { files: out, ghostCount: ghostCount };
 }
 
 // ----------------------------------------------------------------------
@@ -635,7 +746,8 @@ function buildRoadmapPayload() {
   const byAsk = foldRegistryForRoadmap();
   const planAskLinks = buildPlanAskLinks(byAsk);
   const scanRoot = planScanRoot();
-  const planFiles = discoverPlanFiles(scanRoot, planAskLinks);
+  const discovered = discoverPlanFiles(scanRoot, planAskLinks);
+  const planFiles = discovered.files;
   const planRankOverlay = readPlanRankOverlay();
   // Heartbeats read ONCE per request (derive-lib's own convention) and
   // handed to every item's derivation below; heartbeatsStoreOk distinguishes
@@ -665,6 +777,12 @@ function buildRoadmapPayload() {
     ok: true,
     generated_at: new Date().toISOString(),
     completed_age_days: COMPLETED_AGE_DAYS,
+    // stale_links_omitted (2026-07-21 ghost-bounding fix): the count of
+    // ask-linked plan slugs whose file could not be resolved AND whose
+    // newest linking ask is older than completed_age_days — excluded from
+    // `items` entirely (never 150+ dead roots), but named here as ONE
+    // honest aggregate rather than a silent drop (C5).
+    stale_links_omitted: discovered.ghostCount,
     items: items,
   };
 }

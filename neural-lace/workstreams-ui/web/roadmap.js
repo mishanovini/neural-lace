@@ -964,6 +964,15 @@
         body.appendChild(note);
       }
     }
+    // Ghost-bounding aggregate (2026-07-21): ask-linked plans whose file
+    // could not be found AND whose newest link is older than the aging
+    // window are excluded from the tree entirely (never 150+ dead roots)
+    // but named here as ONE honest count — never a silent drop (C5).
+    var staleOmitted = lastPayload.stale_links_omitted || 0;
+    if (staleOmitted > 0) {
+      body.appendChild(el('div', 'rm-chore-note rm-stale-links-note',
+        staleOmitted + ' linked plan' + (staleOmitted === 1 ? '' : 's') + ' not found (too old to show individually — still tracked in Requests)'));
+    }
     restoreUiState(st);
   }
 

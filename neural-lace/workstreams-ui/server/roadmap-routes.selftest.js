@@ -103,6 +103,12 @@ async function main() {
   // endpoint must return a NAMED error, never a silent success.
   process.env.ASK_REGISTRY_CLI = path.join(tmp, 'no-such-cli.sh');
 
+  // GHOST-BOUNDING fixture timestamps (2026-07-21 fix): computed relative
+  // to the ACTUAL test-run time, not a fixed 2026-07 date string, so the
+  // recent/ancient distinction holds regardless of when this suite runs.
+  const RECENT_ASK_TS = new Date(Date.now() - 2 * 86400000).toISOString(); // 2 days ago
+  const ANCIENT_ASK_TS = new Date(Date.now() - 400 * 86400000).toISOString(); // well over a year ago
+
   // ---- fixture plan files -------------------------------------------------
   // demo-plan: 3 tasks — 1 done, 1 started-in-flight, 1 untouched. Linked
   // to ask-alpha.
@@ -175,20 +181,25 @@ async function main() {
   fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'some-evidence.md'), [
     '# Evidence dump', '', 'Just captured command output, no plan structure.', '',
   ].join('\n'));
-  // archive/old-plan: COMPLETED, but its mtime is pushed well past the
-  // completed-aging window — "ancient archived plans stay out" (round 8).
+  // archive/old-plan: COMPLETED, with NO recency evidence at all (no ask
+  // link, no progress-log event) — "ancient archived plans stay out"
+  // (round 8). NOTE (2026-07-21 fix): eligibility is EVIDENCE-gated, not
+  // mtime-gated — file mtime is untrustworthy in a git-worktree checkout
+  // (every file reads as "just checked out" regardless of true history;
+  // see roadmap-routes.js's scanPlanDir header for the full real-data
+  // proof), so this fixture deliberately does NOT rely on fs.utimesSync
+  // to prove exclusion — the absence of any evidence is what excludes it,
+  // exactly like production.
   const oldPlanAbs = path.join(repoDir, 'docs', 'plans', 'archive', 'old-plan.md');
   fs.writeFileSync(oldPlanAbs, [
     '# Plan: old', '', 'Status: COMPLETED', '', '## Tasks', '',
     '- [x] 1. ancient work',
     '',
   ].join('\n'));
-  const ancientMs = Date.now() - 30 * 86400000; // 30 days old
-  fs.utimesSync(oldPlanAbs, ancientMs / 1000, ancientMs / 1000);
-  // archive/recent-plan: COMPLETED, mtime left at "now" — inside the
-  // aging window, so it MUST appear (no linked ask, no progress-log
-  // events at all — its completed_at must fall back to file mtime so the
-  // client's own aging/collapse logic has something real to key off).
+  // archive/recent-plan: COMPLETED, no linked ask, but a REAL progress-log
+  // task_done event within the aging window (the shared "unlinked" lane) —
+  // the worktree-independent recency EVIDENCE that includes it (2026-07-21
+  // fix: bare mtime no longer counts at all, since it cannot be trusted).
   fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'archive', 'recent-plan.md'), [
     '# Plan: recent', '', 'Status: COMPLETED', '', '## Tasks', '',
     '- [x] 1. recently finished work',
@@ -204,9 +215,17 @@ async function main() {
     // ask-rich: operator ask, rich-plan linked (round-6/7 fixture).
     { ask_id: 'ask-rich', record_type: 'created', ts: '2026-07-13T10:00:00Z', summary: 'Rich structured ask', repo: repoDir, project: 'fixture-proj', origin_session: 'sess-op-1', status: 'active', emitter: 'ask-registry' },
     { ask_id: 'ask-rich', record_type: 'plan_linked', ts: '2026-07-13T10:05:00Z', plan_slug: 'rich-plan' },
-    // ask-beta: operator ask, ghost-plan linked (derivation input missing -> unknown).
-    { ask_id: 'ask-beta', record_type: 'created', ts: '2026-07-11T10:00:00Z', summary: 'Beta effort', repo: repoDir, project: 'fixture-proj', origin_session: 'sess-op-2', status: 'active', emitter: 'ask-registry' },
-    { ask_id: 'ask-beta', record_type: 'plan_linked', ts: '2026-07-11T10:05:00Z', plan_slug: 'ghost-plan' },
+    // ask-beta: operator ask, ghost-plan linked (derivation input missing ->
+    // unknown). RECENT (2 days ago) — this is the real C5 signal ("current
+    // work went dark"), which must still surface as an honest unknown root.
+    { ask_id: 'ask-beta', record_type: 'created', ts: RECENT_ASK_TS, summary: 'Beta effort', repo: repoDir, project: 'fixture-proj', origin_session: 'sess-op-2', status: 'active', emitter: 'ask-registry' },
+    { ask_id: 'ask-beta', record_type: 'plan_linked', ts: RECENT_ASK_TS, plan_slug: 'ghost-plan' },
+    // ask-ancient-ghost: linked to a plan slug that ALSO never existed on
+    // disk, but its ONLY link is 400 days old — GHOST-BOUNDING (2026-07-21):
+    // must be EXCLUDED from items entirely (never a permanent dead root)
+    // and counted in stale_links_omitted instead.
+    { ask_id: 'ask-ancient-ghost', record_type: 'created', ts: ANCIENT_ASK_TS, summary: 'Ancient effort, long since forgotten', repo: repoDir, project: 'fixture-proj', origin_session: 'sess-op-6', status: 'active', emitter: 'ask-registry' },
+    { ask_id: 'ask-ancient-ghost', record_type: 'plan_linked', ts: ANCIENT_ASK_TS, plan_slug: 'ancient-ghost-plan' },
     // ask-shipped: all-done plan, no deploy signal -> merged-unverified.
     { ask_id: 'ask-shipped', record_type: 'created', ts: '2026-07-09T10:00:00Z', summary: 'Ship the widget', repo: repoDir, project: 'fixture-proj', origin_session: 'sess-op-3', status: 'active', emitter: 'ask-registry' },
     { ask_id: 'ask-shipped', record_type: 'plan_linked', ts: '2026-07-09T10:05:00Z', plan_slug: 'shipped-plan' },
@@ -246,11 +265,15 @@ async function main() {
     JSON.stringify({ type: 'task_started', ts: '2026-07-15T09:00:00Z', plan_slug: 'rich-plan', task_id: '1', session_id: 'sess-op-1' }),
     JSON.stringify({ type: 'task_started', ts: '2026-07-15T09:05:00Z', plan_slug: 'rich-plan', task_id: '1', session_id: 'sess-ghost' }),
   ].join('\n') + '\n');
-  // redesign-plan is UNLINKED — its task_done event lands in the shared
-  // "unlinked" orphan lane (progress-log-lib.sh's own documented fallback
-  // for events emitted with no ask_id), keyed only by plan_slug.
+  // redesign-plan and recent-plan are both UNLINKED — their task_done
+  // events land in the shared "unlinked" orphan lane (progress-log-lib.sh's
+  // own documented fallback for events emitted with no ask_id), keyed only
+  // by plan_slug. recent-plan's event uses RECENT_ASK_TS (relative to NOW,
+  // not a fixed 2026-07 date) — this IS the worktree-independent recency
+  // EVIDENCE that includes it in the archive scan (2026-07-21 fix).
   fs.writeFileSync(path.join(progressDir, 'unlinked.jsonl'), [
     JSON.stringify({ type: 'task_done', ts: '2026-07-20T09:00:00Z', plan_slug: 'redesign-plan', task_id: '1' }),
+    JSON.stringify({ type: 'task_done', ts: RECENT_ASK_TS, plan_slug: 'recent-plan', task_id: '1' }),
   ].join('\n') + '\n');
 
   delete require.cache[require.resolve('./roadmap-routes.js')];
@@ -302,19 +325,28 @@ async function main() {
     ok('R8a no ask id ever appears as a top-level id (the old ask-rooted ids are gone)',
       topIds.every((id) => id.indexOf('ask-') !== 0), topIds.join(','));
 
-    ok('S1b build order: the 5 explicitly-dated items sort by their (linked-ask-inherited) added_ts ascending',
+    ok('S1b build order: the 4 explicitly-2026-07-dated items sort by their (linked-ask-inherited) added_ts ascending (ghost-plan is asserted separately below — its recency-gating timestamp is relative to NOW, not a fixed 2026-07 date, so it does not belong in this fixed chain)',
       topIds.indexOf('done-plan') < topIds.indexOf('shipped-plan') &&
       topIds.indexOf('shipped-plan') < topIds.indexOf('demo-plan') &&
-      topIds.indexOf('demo-plan') < topIds.indexOf('ghost-plan') &&
-      topIds.indexOf('ghost-plan') < topIds.indexOf('rich-plan'),
+      topIds.indexOf('demo-plan') < topIds.indexOf('rich-plan'),
       topIds.join(','));
-    ok('S1c the 3 unlinked/mtime-fallback items (no linked ask created_ts) all appear, order unasserted',
-      topIds.indexOf('redesign-plan') !== -1 && topIds.indexOf('dismissed-linked-plan') !== -1 && topIds.indexOf('recent-plan') !== -1,
+    ok('S1c the unlinked/mtime-or-recency-fallback items all appear, order unasserted (redesign-plan, dismissed-linked-plan, recent-plan: mtime/now fallback; ghost-plan: RECENT per the ghost-bounding fix, still a real C5 unknown root)',
+      topIds.indexOf('redesign-plan') !== -1 && topIds.indexOf('dismissed-linked-plan') !== -1 &&
+      topIds.indexOf('recent-plan') !== -1 && topIds.indexOf('ghost-plan') !== -1,
       topIds.join(','));
     ok('S1d payload carries the single completed-aging tunable (completed_age_days)',
       typeof (r1.json && r1.json.completed_age_days) === 'number');
-    ok('S1e exactly 8 top-level plans (the ones that qualify) — no more, no less',
+    ok('S1e exactly 8 top-level plans (the ones that qualify) — no more, no less; ancient-ghost-plan is correctly EXCLUDED (not a 9th item)',
       items.length === 8, topIds.join(','));
+
+    // ---- GHOST-BOUNDING (2026-07-21 fix): a recently-linked missing plan
+    // still renders as an honest unknown root; an ANCIENT one (its only
+    // link 400 days old) is excluded entirely but counted, never silently
+    // dropped and never a permanent dead root.
+    ok('ghost-bounding: an ANCIENT ghost link (400 days old) never becomes a root',
+      topIds.indexOf('ancient-ghost-plan') === -1, topIds.join(','));
+    ok('ghost-bounding: the ancient ghost is COUNTED in stale_links_omitted (named aggregate, never a silent drop)',
+      r1.json.stale_links_omitted === 1, JSON.stringify(r1.json.stale_links_omitted));
 
     // ---- ROUND 8 (b): an active plan with NO linked ask still appears -----
     const redesign = findItem(items, 'redesign-plan');
@@ -350,13 +382,17 @@ async function main() {
     ok('a file with NO Status: header at all (an evidence-dump shape) never becomes a root',
       topIds.indexOf('some-evidence') === -1);
 
-    // ---- archive aging window: ancient stays out, recent gets in ----------
-    ok('an archived plan past the completed-aging window (30d old) is EXCLUDED entirely ("ancient archived plans stay out")',
+    // ---- archive aging: EVIDENCE-gated, not mtime-gated (2026-07-21 fix) --
+    // File mtime is untrustworthy (a git-worktree checkout resets it
+    // regardless of true archival history — see scanPlanDir's header for
+    // the real-data proof); old-plan has NO recency evidence at all (no ask
+    // link, no progress event) and must be excluded on that basis alone.
+    ok('an archived plan with NO recency evidence at all (no ask link, no progress-log event) is EXCLUDED entirely ("ancient archived plans stay out")',
       topIds.indexOf('old-plan') === -1);
     const recent = findItem(items, 'recent-plan');
-    ok('an archived plan WITHIN the completed-aging window is included',
+    ok('an archived plan WITH a real progress-log event inside the aging window is included',
       !!recent);
-    ok('a fully-done archived plan with NO progress-log trail falls back to file mtime for completed_at (so the client\'s aging/collapse logic has something real to key off)',
+    ok('its completed_at is sourced from the real task_done event (not a guessed/mtime-derived timestamp)',
       recent && !!recent.completed_at);
 
     // ---- S2: six-value enum only, everywhere -------------------------------
@@ -402,13 +438,20 @@ async function main() {
       ghostPlan.from_requests[0].id === 'ask-beta' && !!ghostPlan.from_requests[0].title);
 
     // ---- S8: rank move endpoint (now id-keyed, plan-slug-scoped) -----------
+    // ghost-plan's default position is no longer a fixed 2026-07 slot (its
+    // recency-gating timestamp is relative to NOW — the ghost-bounding
+    // fix), so this asserts the MOVE mechanically (an adjacent swap with
+    // whoever preceded it) rather than a specific named neighbor.
+    const ghostIdxBefore = topIds.indexOf('ghost-plan');
+    const predecessorBefore = topIds[ghostIdxBefore - 1];
     const move = await httpPostJson(PORT, '/api/roadmap/rank', { id: 'ghost-plan', direction: 'up' });
     ok('S8 POST /api/roadmap/rank succeeds (overlay fallback when the registry verb is absent)',
       move.status === 200 && move.json && move.json.ok === true, move.body && move.body.slice(0, 160));
     const r2 = await httpGet(PORT, '/api/roadmap');
     const topIds2 = ((r2.json && r2.json.items) || []).map((i) => i.id);
-    ok('S8b a subsequent GET reflects the new build order (ghost-plan moved above demo-plan)',
-      topIds2.indexOf('ghost-plan') === topIds2.indexOf('demo-plan') - 1, topIds2.join(','));
+    ok('S8b a subsequent GET reflects the new build order: ghost-plan moved up exactly one slot, swapping with its prior predecessor',
+      topIds2.indexOf('ghost-plan') === ghostIdxBefore - 1 && topIds2[ghostIdxBefore] === predecessorBefore,
+      topIds2.join(','));
 
     // ---- S9: /roadmap.js is served by this handler (single mount line) ----
     const asset = await httpGet(PORT, '/roadmap.js');
