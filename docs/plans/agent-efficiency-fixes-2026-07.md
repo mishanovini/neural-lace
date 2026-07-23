@@ -46,6 +46,7 @@ converts the diagnosis into shipped fixes. Diagnosis of record:
 - 2026-07-23: `adapters/claude-code/attic/**` — T5 shim retirements
 - 2026-07-23: `adapters/claude-code/install.sh` — T5 prune_retired_files additions
 - 2026-07-23: `docs/harness-architecture.md` — regen (structural changes)
+- 2026-07-23: `docs/backlog.md` — T2/T3 follow-up rows (health-tick-cached digest verdict; --full doc-theater) + auto-filed digest rows landing mid-batch
 
 ## In-flight amendments (2026-07-23, orchestrating session 29f2930a — operator authorized "build the efficiency batch")
 - T4 is built as a BLOCK (not warn) with a structured-waiver hatch and fail-open on internal error —
