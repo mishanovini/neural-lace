@@ -92,6 +92,24 @@ ss_singleflight() {
   return 1      # fresh stamp held by a recent session → skip
 }
 
+# ss_repo_key <path> — pure-bash (no subprocess spawn — the whole point of
+# this lib is to CUT spawns, not add one) sanitization of a filesystem path
+# into a short, collision-safe token for use as part of an ss_singleflight
+# <name>. auto-install's sync is machine-GLOBAL (one lock name suffices —
+# ~/.claude is the same shared mirror for every session). A caller whose
+# heavy work is instead REPO-SCOPED (e.g. a SessionStart digest that reports
+# on $PWD's git-freshness/worktree-state, which genuinely differs between
+# concurrently-starting sessions in DIFFERENT repos/worktrees) MUST fold
+# this into its lock name — otherwise a session-start-digest.sh in repo A
+# would wrongly skip its OWN report because a repo-B session's digest
+# claimed the SAME lock seconds earlier.
+# T3 (SESSIONSTART-SINGLEFLIGHT-01 extension, agent-efficiency-fixes-2026-07).
+ss_repo_key() {
+  local p="${1:-$PWD}"
+  p="${p//[:\\\/]/_}"
+  printf '%s' "${p:0:80}"
+}
+
 # ============================================================
 # Self-test
 # ============================================================
@@ -135,6 +153,17 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _ok "$acq" 0 "S7 held stamp → all 5 concurrent attempts skip"
   rm -rf "$SSF_STATE_DIR/s7.lock"
   ss_singleflight s7 120; rc=$?; _ok "$rc" 0 "S7 after release, next attempt acquires (rc 0)"
+
+  # S8: ss_repo_key — pure-bash path sanitization (T3 repo-scoping helper)
+  r8="$(ss_repo_key '/c/Users/x/repo-a')"
+  _ok "$r8" "_c_Users_x_repo-a" "S8a ss_repo_key sanitizes slashes/colons to underscores"
+  r8b="$(ss_repo_key '/c/Users/x/repo-a')"
+  r8c="$(ss_repo_key '/c/Users/x/repo-b')"
+  if [[ "$r8b" != "$r8c" ]]; then
+    echo "self-test: PASS — S8b different repo paths -> different keys" >&2; PASS=$((PASS+1))
+  else
+    echo "self-test: FAIL — S8b different repo paths produced the SAME key ('$r8b')" >&2; FAIL=$((FAIL+1))
+  fi
 
   echo "" >&2
   echo "self-test summary: $PASS passed, $FAIL failed" >&2

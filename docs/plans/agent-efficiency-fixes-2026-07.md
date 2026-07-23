@@ -37,6 +37,11 @@ converts the diagnosis into shipped fixes. Diagnosis of record:
 ## In-flight scope updates
 - 2026-07-22: docs/lessons/2026-07-20-efficiency-recurrence-live-diagnosis.md — the recurrence diagnosis this plan converts to build work
 - 2026-07-22: docs/plans/agent-efficiency-fixes-2026-07.md — this plan file
+- 2026-07-23: adapters/claude-code/hooks/lib/sessionstart-singleflight.sh — T3 builder note: the shared
+  lock lib session-start-auto-install.sh already uses is the SAME lib T3 extends to harness-doctor.sh
+  and session-start-digest.sh (per dispatch); it wasn't separately named in Files to Modify/Create,
+  added here (scope-enforcement-gate) rather than the header table since the orchestrator owns
+  plan bookkeeping proper — this entry is the scope-drift trail only.
 
 ## Notes
 T2/T3 are the highest-leverage (they contain the fork storm). T1 is bookkeeping to get the diagnosis
