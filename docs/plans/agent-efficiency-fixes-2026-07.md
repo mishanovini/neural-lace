@@ -55,6 +55,23 @@ converts the diagnosis into shipped fixes. Diagnosis of record:
   `adapters/claude-code/manifest.json` (T4 entry + T5 entry updates), `docs/harness-architecture.md`
   (regen), `adapters/claude-code/hooks/lib/sessionstart-singleflight.sh` (T3 extends the EXISTING lib).
 
+## Evidence Log
+
+### T2 trace RESOLVED (2026-07-23, orchestrator, live capture mid-storm — PROVEN)
+- The repeated `session-start-digest.sh --self-test` invoker is **harness-doctor.sh's
+  `wave-e-e1-digest` check (~line 704)**: it executes the digest's FULL self-test suite inline on
+  every doctor run — and `--quick` fires on every SessionStart, every session RESUME (each turn of
+  an active conversation, each subagent dispatch cycle), plus the hourly NL-health-tick
+  (`scripts/health-tick.sh`).
+- Observed live at ~10:15-10:26 local: 7 concurrent live-path digest `--self-test` processes
+  (spawn cadence minutes apart, each 12+ min under load — piling faster than finishing), 3
+  concurrent live-path `harness-doctor.sh --quick`, 94 bash.exe total; operator's Claude desktop
+  app unresponsive. Orchestrator killed the 7 redundant self-tests + 2 duplicate doctor runs as
+  live mitigation; class re-piles with session activity until T2/T3 land.
+- Defender note: exclusions verified in place (T6) yet Antimalware still 25% CPU during the storm —
+  behavior monitoring scans process creation regardless of exclusions; confirms fork-RATE reduction
+  (T2/T3) is the load-bearing fix.
+
 ## Notes
 T2/T3 are the highest-leverage (they contain the fork storm). T1 is bookkeeping to get the diagnosis
 onto master for the operator's review session (their explicit request: "land on master").
