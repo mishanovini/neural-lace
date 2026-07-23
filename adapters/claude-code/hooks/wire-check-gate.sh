@@ -563,6 +563,8 @@ Check 13. Re-author the plan task with a Wire checks block (or use
 the 'n/a — <reason>' carve-out for tasks with no code chain).
 
 See ~/.claude/doctrine/planning.md "Integration Verification".
+
+This gate: ~/.claude/hooks/wire-check-gate.sh (source: adapters/claude-code/hooks/wire-check-gate.sh)
 MSG
   exit 1
 fi
@@ -594,6 +596,8 @@ justification of why no UI→DB code chain applies to this task.
 This should have been caught at plan-creation by plan-reviewer.sh
 Check 13. Lengthen the carve-out reason or replace it with real
 arrow links.
+
+This gate: ~/.claude/hooks/wire-check-gate.sh (source: adapters/claude-code/hooks/wire-check-gate.sh)
 MSG
   exit 1
 fi
@@ -733,6 +737,8 @@ structured waiver naming BOTH purpose clauses:
 Re-attempt the checkbox flip after writing the waiver.
 
 See ~/.claude/doctrine/planning.md "Integration Verification".
+
+This gate: ~/.claude/hooks/wire-check-gate.sh (source: adapters/claude-code/hooks/wire-check-gate.sh)
 MSG
   exit 1
   fi
@@ -770,6 +776,8 @@ ledger-logged): a genuine static-trace false negative gets a fresh
   } > .claude/state/wire-check-waiver-${PLAN_SLUG}-${TASK_ID}-\$(date +%s).txt
 
 See ~/.claude/doctrine/planning.md "Integration Verification".
+
+This gate: ~/.claude/hooks/wire-check-gate.sh (source: adapters/claude-code/hooks/wire-check-gate.sh)
 MSG
   exit 1
   fi

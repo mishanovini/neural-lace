@@ -125,6 +125,7 @@ run_gate() {
     echo "  2. Pin the agent: add a 'model:' frontmatter line to agents/${atype:-<type>}.md."
     echo ""
     echo "Policy: adapters/claude-code/config/model-policy.json  ·  doctrine/model-selection.md"
+    echo "This gate: ~/.claude/hooks/model-pin-gate.sh (source: adapters/claude-code/hooks/model-pin-gate.sh)"
   } >&2
   return 2
 }

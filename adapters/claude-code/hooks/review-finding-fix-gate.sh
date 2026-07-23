@@ -273,6 +273,8 @@ fi
   echo "or stage the review file with an updated status note."
   echo ""
   echo "To bypass (not recommended): git commit --no-verify"
+  echo ""
+  echo "This gate: ~/.claude/hooks/review-finding-fix-gate.sh (source: adapters/claude-code/hooks/review-finding-fix-gate.sh)"
   echo "================================================================"
 } >&2
 exit 1

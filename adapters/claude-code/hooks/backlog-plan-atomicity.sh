@@ -298,6 +298,8 @@ if [ "${#PLANS_ABSORBING[@]}" -gt 0 ] && [ "$HAS_BACKLOG_STAGED" -eq 0 ]; then
     echo "header line to: 'Backlog items absorbed: none'"
     echo ""
     echo "To bypass (not recommended): git commit --no-verify"
+    echo ""
+    echo "This gate: ~/.claude/hooks/backlog-plan-atomicity.sh (source: adapters/claude-code/hooks/backlog-plan-atomicity.sh)"
     echo "================================================================"
   } >&2
   exit 1

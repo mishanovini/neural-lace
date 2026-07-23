@@ -295,6 +295,7 @@ if [[ "$FAIL_COUNT" -gt 0 ]]; then
   echo "" >&2
   echo "runtime-verification-executor: $FAIL_COUNT failure(s), $PASS_COUNT pass(es)" >&2
   echo "$FAILURES" >&2
+  echo "This gate: ~/.claude/hooks/runtime-verification-executor.sh (source: adapters/claude-code/hooks/runtime-verification-executor.sh)" >&2
   exit 1
 fi
 

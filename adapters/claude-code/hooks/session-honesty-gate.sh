@@ -1025,6 +1025,8 @@ Minimal-delta fix: append ONE line with the correct marker (e.g.
 "DONE: report above stands" or "BLOCKED: <blocker>"). This gate
 never demands you restate the report — the marker line alone is
 sufficient once it is correct.
+
+This gate: ~/.claude/hooks/session-honesty-gate.sh (source: adapters/claude-code/hooks/session-honesty-gate.sh)
 ================================================================
 MSG
 
@@ -1067,6 +1069,8 @@ work is incomplete. Two honest resolutions:
      work-integrity-gate identified.
 
 Do not re-assert DONE: without one of the above.
+
+This gate: ~/.claude/hooks/session-honesty-gate.sh (source: adapters/claude-code/hooks/session-honesty-gate.sh)
 ================================================================
 MSG
       command -v ledger_emit >/dev/null 2>&1 && ledger_emit "session-honesty-gate" "block" "done-vs-block-contradiction: ${CONTRA_EVIDENCE}"

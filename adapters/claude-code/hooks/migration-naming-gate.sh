@@ -196,6 +196,8 @@ _main_check() {
     echo "NOTE: this block prevented the ENTIRE command from running — including any"
     echo "fix/edit/git add prefix before the git commit. Nothing was executed. Re-run"
     echo "the non-commit part as its own call first, then commit separately."
+    echo ""
+    echo "This gate: ~/.claude/hooks/migration-naming-gate.sh (source: adapters/claude-code/hooks/migration-naming-gate.sh)"
   } >&2
   return 1
 }

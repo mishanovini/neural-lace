@@ -205,6 +205,7 @@ if [[ "$FINDING_COUNT" -gt 0 ]]; then
   echo "URL must hit that route. If it's a migration, the SQL must reference" >&2
   echo "the migrated table non-trivially." >&2
   echo "" >&2
+  echo "This gate: ~/.claude/hooks/runtime-verification-reviewer.sh (source: adapters/claude-code/hooks/runtime-verification-reviewer.sh)" >&2
   exit 1
 fi
 

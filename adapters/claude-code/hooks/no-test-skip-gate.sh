@@ -124,6 +124,8 @@ To unblock, choose ONE:
 (C) If you are completely stuck and cannot figure out how to test the
     feature, STOP and surface the blocker to the user so we can come up
     with a solution together. Do not paper over with a skip.
+
+This gate: ~/.claude/hooks/no-test-skip-gate.sh (source: adapters/claude-code/hooks/no-test-skip-gate.sh)
 MSG
 
 exit 1

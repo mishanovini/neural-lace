@@ -287,6 +287,8 @@ if [ "${#STRUCTURAL_CHANGES[@]}" -gt 0 ] && [ "$HAS_DOC_STAGED" -eq 0 ]; then
     echo "this gate — only structural changes (A/D/R) do."
     echo ""
     echo "To bypass (not recommended): git commit --no-verify"
+    echo ""
+    echo "This gate: ~/.claude/hooks/docs-freshness-gate.sh (source: adapters/claude-code/hooks/docs-freshness-gate.sh)"
     echo "================================================================"
   } >&2
   exit 1

@@ -1510,6 +1510,7 @@ file manually and retry:
 
   rm -f "${FILE_PATH}.lock"
 
+This gate: ~/.claude/hooks/plan-edit-validator.sh (source: adapters/claude-code/hooks/plan-edit-validator.sh)
 ERR
         exit 1
       fi
@@ -1571,6 +1572,7 @@ Why this works where a marker file didn't:
   executed requires doing the actual work. The adversarial review
   killed the marker-file escape hatch; this is the replacement.
 
+This gate: ~/.claude/hooks/plan-edit-validator.sh (source: adapters/claude-code/hooks/plan-edit-validator.sh)
 ERR
       exit 1
     fi
@@ -1604,6 +1606,7 @@ Once each task has an evidence block, COMPLETED is allowed.
 To defer the plan instead, set Status: DEFERRED with a reason.
 To abandon, set Status: ABANDONED with a reason.
 
+This gate: ~/.claude/hooks/plan-edit-validator.sh (source: adapters/claude-code/hooks/plan-edit-validator.sh)
 ERR
         exit 1
       fi

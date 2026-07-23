@@ -327,6 +327,8 @@ fi
   echo "  4. Re-run the commit"
   echo ""
   echo "To bypass (not recommended): git commit --no-verify"
+  echo ""
+  echo "This gate: ~/.claude/hooks/migration-claude-md-gate.sh (source: adapters/claude-code/hooks/migration-claude-md-gate.sh)"
   echo "================================================================"
 } >&2
 exit 1

@@ -2115,6 +2115,7 @@ fi
   echo "fix/edit/\`git add\` prefix before the \`git commit\`. Nothing was executed."
   echo "Re-run the non-commit part as its own call first, then commit separately."
   echo ""
+  echo "This gate: ~/.claude/hooks/scope-enforcement-gate.sh (source: adapters/claude-code/hooks/scope-enforcement-gate.sh)"
   echo "================================================================"
 } >&2
 

@@ -330,6 +330,8 @@ run_gate() {
       echo "  2. Run 'gh repo set-default' in this checkout to pin the default repo."
       echo ""
       echo "Decision: docs/decisions/064-never-diverge-single-canonical-master.md"
+      echo ""
+      echo "This gate: ~/.claude/hooks/gh-merge-canonical-gate.sh (source: adapters/claude-code/hooks/gh-merge-canonical-gate.sh)"
     } >&2
     return 2
   fi
@@ -357,6 +359,8 @@ run_gate() {
       echo "gh-CLI path on machines that have already synced it."
       echo ""
       echo "Decision: docs/decisions/064-never-diverge-single-canonical-master.md"
+      echo ""
+      echo "This gate: ~/.claude/hooks/gh-merge-canonical-gate.sh (source: adapters/claude-code/hooks/gh-merge-canonical-gate.sh)"
     } >&2
     return 2
   fi

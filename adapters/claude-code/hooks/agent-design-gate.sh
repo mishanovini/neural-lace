@@ -239,6 +239,7 @@ run_gate() {
   if [[ -z "$content" ]]; then
     emit_block "agent-design-gate: could not read tool_input.content for new agent file $(basename "$file_path") (jq unavailable or empty content) — cannot verify the GOLDEN CASE + seven-properties bar. See doctrine/artifact-evidence-bar.md."
     echo "[agent-design-gate] $([ "${AGENT_DESIGN_GATE_ENFORCE:-0}" = "1" ] && echo BLOCK || echo WOULD-BLOCK): could not extract content for $(basename "$file_path")" >&2
+    echo "[agent-design-gate] This gate: ~/.claude/hooks/agent-design-gate.sh (source: adapters/claude-code/hooks/agent-design-gate.sh)" >&2
     [ "${AGENT_DESIGN_GATE_ENFORCE:-0}" = "1" ] && return 2 || return 0
   fi
 
@@ -259,6 +260,7 @@ run_gate() {
   if [[ -n "$reasons" ]]; then
     emit_block "agent-design-gate: new agent $(basename "$file_path") does not meet the artifact-evidence-bar (constitution §10 generalized) — ${reasons}Add a '## GOLDEN CASE' section (a real historical defect this agent catches that a generic agent misses) and evidence of all seven properties. See doctrine/artifact-evidence-bar.md and doctrine/artifact-evidence-bar-full.md."
     echo "[agent-design-gate] $([ "${AGENT_DESIGN_GATE_ENFORCE:-0}" = "1" ] && echo BLOCK || echo WOULD-BLOCK): $(basename "$file_path") — ${reasons}" >&2
+    echo "[agent-design-gate] This gate: ~/.claude/hooks/agent-design-gate.sh (source: adapters/claude-code/hooks/agent-design-gate.sh)" >&2
     [ "${AGENT_DESIGN_GATE_ENFORCE:-0}" = "1" ] && return 2 || return 0
   fi
 
