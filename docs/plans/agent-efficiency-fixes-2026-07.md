@@ -85,6 +85,9 @@ converts the diagnosis into shipped fixes. Diagnosis of record:
   session-start-auto-install.sh already uses is the SAME lib T3 extends to harness-doctor.sh and
   session-start-digest.sh; separately declared above by the orchestrator — this line preserves the
   builder's own scope-drift trail.
+- 2026-07-23 (T3 builder trail): settings.json.template — SessionStart's `harness-doctor.sh --quick`
+  and `session-start-digest.sh` hook commands now carry an `NL_SESSIONSTART_ORIGIN=1` marker
+  (distinguishes SessionStart-origin calls from explicit/manual invocation for the single-flight gate).
 
 ## Notes
 T2/T3 are the highest-leverage (they contain the fork storm). T1 is bookkeeping to get the diagnosis
