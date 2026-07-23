@@ -42,6 +42,11 @@ converts the diagnosis into shipped fixes. Diagnosis of record:
   and session-start-digest.sh (per dispatch); it wasn't separately named in Files to Modify/Create,
   added here (scope-enforcement-gate) rather than the header table since the orchestrator owns
   plan bookkeeping proper — this entry is the scope-drift trail only.
+- 2026-07-23: adapters/claude-code/settings.json.template — T3 builder note: SessionStart's
+  `harness-doctor.sh --quick` and `session-start-digest.sh` hook commands now carry an
+  `NL_SESSIONSTART_ORIGIN=1` marker (the "argument the SessionStart wiring passes" the dispatch asked
+  for, distinguishing the SessionStart-origin call from an explicit/manual invocation for the
+  single-flight gate). Scope-drift trail entry only, per the same rationale as the row above.
 
 ## Notes
 T2/T3 are the highest-leverage (they contain the fork storm). T1 is bookkeeping to get the diagnosis
