@@ -1161,30 +1161,6 @@ Inbox views for the same gap.
 `linkedAsks[0].project`, so plans without a linked ask got `project:''`. Attribution now derives
 from the plan's own repo path. The DISCLOSURE gap above is the separate, still-open half.
 
-## PERF-ESTATE-PROGRAM-01 — machine bogs down under harness load; operator wants a perf-monitoring agent (added 2026-07-23, operator-requested)
-
-**Severity:** P1 (operator-reported: "my computer just starts getting way bogged down")
-**What:** Operator mandate 2026-07-23 (verbatim ask in session d3059d78): improve NL + Claude
-Code + desktop-app performance on this machine; build an agent that MONITORS performance,
-DOCUMENTS what actually slows things down, and MANAGES/remediates autonomously.
-**Live evidence (2026-07-23 snapshot):** 67 bash + 16 claude processes; one claude process at
-121 CPU-minutes; ask-registry self-test ~9 min; workstreams-read self-test ~40 min (reviewer-
-measured); nl-issue.sh one-line append >2 min under load; install.sh timed out at 2 min; ~85
-worktrees each with active-session broadcast scans; git commits ~15s each via global hooksPath.
-**Known levers already identified:** (a) the worktree/branch purge awaiting operator PURGE
-(NY-1784489893-c961 — 43 worktrees + 82 branches verified-on-master; 127/164 doctor reds);
-(b) NL-FINDING-029 hooksPath fixture tax — sweep every self-test fixture for `core.hooksPath ""`;
-(c) Defender behavior-monitoring/scheduled-scan interaction (exclusions added 2026-06-12 —
-re-audit); (d) per-hook latency profiling from manifest inventory (no data exists today);
-(e) orphan claude/bash reaping — extend the just-landed supervisor-tick.sh (f22b55d) with a
-perf leg: sample process counts + CPU + per-hook latency each tick, log offenders to a durable
-ledger, reap parent-dead orphans, alert on regressions. (f) concurrency ceilings honored
-mechanically (≤2 heavy agents) rather than by session discipline.
-**Fix path:** dedicated plan (`docs/plans/perf-estate-program.md`) — design first: measure
-(per-hook/per-suite latency ledger) → purge/cache the constant costs → build the perf-tick
-monitoring leg onto supervisor-tick. The monitoring agent is the operator's explicit ask, not
-an optional nicety.
-
 ## NL-ISSUES-TRIAGE-20260723 — nl-issue triage escalation (auto-filed)
 
 **Severity:** P3 (nagging, not blocking)
